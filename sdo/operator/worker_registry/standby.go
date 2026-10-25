@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"google.golang.org/protobuf/types/known/anypb"
+ batchv1 "k8s.io/api/batch/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
@@ -30,6 +31,7 @@ const standbyRoot = ".sdo-runtime/standby"
 // it must never launch a second worker after the claim may have been observed.
 type WarmBinding struct {
 	JobName   string    `json:"job_name"`
+ IncidentID string `json:"incident_id"`
 	Directory string    `json:"directory"`
 	Digest    string    `json:"request_digest"`
 	ClaimedAt time.Time `json:"claimed_at"`
@@ -51,6 +53,7 @@ type standbyJournal struct {
 type StandbyPool struct {
 	Executor             KubernetesExecutor
 	AgentID, Application string
+ ResponseBudget time.Duration
 	mu                   sync.Mutex
 	current              *WarmBinding
 	notify               chan struct{}
@@ -104,12 +107,13 @@ func (p *StandbyPool) Ensure(ctx context.Context) error {
 			return err
 		}
 		job, err := p.Executor.Client.BatchV1().Jobs(p.Executor.Namespace).Get(ctx, p.current.JobName, metav1.GetOptions{})
-		if err == nil && !jobFailed(job) && !jobCompleted(job) {
+		if err == nil && !jobFailed(job) && !jobCompleted(job) && standbyLifetimeCovers(job,time.Now(),p.responseBudget()) {
 			return nil
 		}
 		if err != nil && !apierrors.IsNotFound(err) {
 			return err
 		}
+		if err == nil { p.deleteSlot(ctx,p.current) }
 		p.current = nil
 	}
 	registration, err := p.Executor.Registry.Resolve(p.AgentID, "")
@@ -188,7 +192,11 @@ func (p *StandbyPool) TryBind(ctx context.Context, e KubernetesExecutor, task *c
 		}
 	}
 	job, jobErr := e.Client.BatchV1().Jobs(e.Namespace).Get(ctx, slot.JobName, metav1.GetOptions{})
-	if jobErr != nil || jobFailed(job) || jobCompleted(job) {
+	budget:=p.responseBudget()
+ incident:=new(contracts.IncidentRequest)
+ if task.GetRequest().UnmarshalTo(incident)==nil&&incident.GetResponseDeadline()!=nil {budget=time.Until(incident.GetResponseDeadline().AsTime())}
+ if task.GetDeadline()!=nil { budget=time.Until(task.GetDeadline().AsTime());if budget<0 {return e,nil} }
+ if jobErr != nil || jobFailed(job) || jobCompleted(job) || !standbyLifetimeCovers(job,time.Now(),budget) {
 		return e, nil
 	}
 	// A prepared cold request/result/Job owns this immutable task already.
@@ -224,7 +232,13 @@ func (p *StandbyPool) TryBind(ctx context.Context, e KubernetesExecutor, task *c
 		default:
 		}
 	}()
-	slot.Digest = taskRequestDigest(task)
+	stopLease:=holdStandbyReservation(ctx,slot)
+ bound:=false
+ defer func(){if !bound {stopLease()}}()
+ request:=new(contracts.IncidentRequest)
+ if err:=task.GetRequest().UnmarshalTo(request);err!=nil{return e,err}
+ slot.IncidentID=request.GetIncidentId()
+ slot.Digest = taskRequestDigest(task)
 	slot.ClaimedAt = time.Now().UTC()
 	sessionRelative, err := filepath.Rel(sessionPVCBase(e.RepositoryPVCSubPath), e.SessionPVCSubPath)
 	if err != nil {
@@ -273,6 +287,7 @@ func (p *StandbyPool) TryBind(ctx context.Context, e KubernetesExecutor, task *c
 		return e, nil
 	}
 	e.WarmBinding = slot
+ bound=true
 	return e, nil
 }
 
@@ -442,6 +457,20 @@ func (e KubernetesExecutor) publishWarmTask(ctx context.Context, task *contracts
 		return err
 	}
 	unpublished := func(err error) error { return &standbyClaimUnpublished{err} }
+ // Absence of the immutable inbox is proof the agent has never been released.
+ // A dead reservation can safely use the existing cold fallback, including after restart.
+ job,inspectErr:=e.Client.BatchV1().Jobs(e.Namespace).Get(ctx,b.JobName,metav1.GetOptions{})
+ if apierrors.IsNotFound(inspectErr){return unpublished(inspectErr)}
+ if inspectErr!=nil{return inspectErr}
+ budget:=15*time.Minute
+ incident:=new(contracts.IncidentRequest)
+ if task.GetRequest().UnmarshalTo(incident)==nil&&incident.GetResponseDeadline()!=nil{budget=time.Until(incident.GetResponseDeadline().AsTime())}
+ if task.GetDeadline()!=nil{budget=time.Until(task.GetDeadline().AsTime())}
+ if jobFailed(job)||jobCompleted(job)||job.DeletionTimestamp!=nil||!standbyLifetimeCovers(job,time.Now(),budget){return unpublished(errors.New("unpublished standby is no longer alive or lacks response lifetime"))}
+ for _,name:=range []string{"agent","history"}{
+ info,err:=os.Stat(filepath.Join(b.Directory,"ready",name))
+ if err!=nil||time.Since(info.ModTime())>2*time.Second{return unpublished(errors.New("unpublished standby lost readiness"))}
+ }
 	environment := cloneEnvironment(e.Environment)
 	environment["SDO_REQUEST_SHA256"] = taskRequestDigest(task)
 	environment["SDO_RESULT_CONFIGMAP"] = b.JobName + "-result"
@@ -527,4 +556,28 @@ func validWarmPaths(e KubernetesExecutor, task *contracts.AgentTask) bool {
 	}
 	session := filepath.Join(e.RepositoryMountPath, relative)
 	return checkout != session && !strings.HasPrefix(checkout, session+"/") && !strings.HasPrefix(session, checkout+"/")
+}
+
+const standbyExpiryMargin = time.Minute
+func (p *StandbyPool) responseBudget() time.Duration { if p.ResponseBudget>0{return p.ResponseBudget};return 15*time.Minute }
+func standbyLifetimeCovers(job *batchv1.Job,now time.Time,budget time.Duration) bool {
+ if job.Spec.ActiveDeadlineSeconds==nil{return true}
+ start:=job.CreationTimestamp.Time
+ if job.Status.StartTime!=nil{start=job.Status.StartTime.Time}
+ // An unscheduled new Job has not begun consuming its active deadline.
+ if start.IsZero(){return true}
+ return start.Add(time.Duration(*job.Spec.ActiveDeadlineSeconds)*time.Second).Sub(now)>=budget+standbyExpiryMargin
+}
+
+// Keep a reservation alive while checkout copying and tool-server publication
+// run. The lease ends at immutable task publication or controller cancellation.
+func holdStandbyReservation(ctx context.Context,b *WarmBinding) context.CancelFunc {
+ leaseCtx,cancel:=context.WithCancel(ctx)
+ go func(){ticker:=time.NewTicker(time.Second);defer ticker.Stop()
+ for {select {case <-leaseCtx.Done():return;case <-ticker.C:}
+ if _,err:=os.Stat(filepath.Join(b.Directory,"control",TaskDataKey));err==nil{return}
+ if err:=os.WriteFile(filepath.Join(b.Directory,"control/owner-heartbeat"),[]byte(time.Now().UTC().Format(time.RFC3339Nano)),0600);err!=nil{return}
+ }
+ }()
+ return cancel
 }

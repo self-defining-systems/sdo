@@ -596,7 +596,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			},
 		}
 	}
-	if !clientInjected && jobDispatch {
+	if !clientInjected && jobDispatch && standbyEnabled(jobEnvironment) {
 		d := dispatcher.(KubernetesJobDispatcher)
 		standbyEnvironment := make(map[string]string, len(jobEnvironment)+5)
 		for name, value := range jobEnvironment {
@@ -607,6 +607,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		standbyEnvironment["SDO_SESSION_SCRATCH"] = "/sdo/session/scratch"
 		standbyEnvironment["SDO_TOOLS_DIR"] = "/sdo/session/tools"
 		pool := worker_registry.NewStandbyPool(worker_registry.KubernetesExecutor{APIProxyImage: d.APIProxyImage, ToolchainImage: d.ToolchainImage, Client: d.Client, Namespace: d.Namespace, Registry: d.Registry, ServiceAccount: d.ServiceAccount, RepositoryPVC: d.RepositoryPVC, RepositoryMountPath: d.RepositoryMountPath, RepositoryPVCSubPath: d.RepositoryPVCSubPath, CredentialsSecret: d.CredentialsSecret, Environment: standbyEnvironment, CapturedCorpusReadOnly: true}, d.AgentID, *application)
+		pool.ResponseBudget = *responseTimeout
 		standbyCtx, stopStandby := context.WithCancel(renewalCtx)
 		if err := pool.Start(standbyCtx); err != nil {
 			stopStandby()
@@ -1636,3 +1637,6 @@ func executePendingEffects(ctx context.Context, controller *Controller) (err err
 	}
 	return nil
 }
+
+// Existing responder-env configuration also provides a cold-only rollout switch.
+func standbyEnabled(environment map[string]string) bool { return environment["SDO_RESPONDER_STANDBY"]!="0" }

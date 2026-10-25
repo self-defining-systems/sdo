@@ -126,13 +126,10 @@ func (e KubernetesExecutor) Execute(ctx context.Context, task *contracts.AgentTa
 	if err := e.Registry.ValidateTask(task); err != nil {
 		return nil, fmt.Errorf("validate agent task: %w", err)
 	}
-	if e.WarmBinding == nil {
-		binding, err := e.loadWarmBinding(task)
-		if err != nil {
-			return nil, err
-		}
-		e.WarmBinding = binding
-	}
+	// Executors survive continuation turns; bindings belong to immutable tasks.
+ binding, err := e.loadWarmBinding(task)
+ if err != nil { return nil, err }
+ e.WarmBinding = binding
 	if result, recovered, err := e.RecoverCompleted(ctx, task); err != nil {
 		return nil, err
 	} else if recovered {
@@ -238,11 +235,6 @@ func (e KubernetesExecutor) Execute(ctx context.Context, task *contracts.AgentTa
 		}
 	}
 	if e.WarmBinding != nil {
-		if _, err := e.Client.BatchV1().Jobs(e.Namespace).Get(ctx, jobName, metav1.GetOptions{}); apierrors.IsNotFound(err) {
-			return nil, &JobFailedError{JobName: jobName}
-		} else if err != nil {
-			return nil, err
-		}
 		if err := e.publishWarmTask(ctx, task); err != nil {
 			var unpublished *standbyClaimUnpublished
 			if errors.As(err, &unpublished) {

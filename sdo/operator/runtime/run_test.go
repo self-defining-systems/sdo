@@ -199,3 +199,8 @@ func TestAttachFiringTelemetryDefaultsByDispatcherMode(t *testing.T) {
 		t.Fatal("job-mode telemetry was not written under the repository mount")
 	}
 }
+
+func TestResponderStandbyColdOnlyConfiguration(t *testing.T){
+ if standbyEnabled(map[string]string{"SDO_RESPONDER_STANDBY":"0"}){t.Fatal("cold-only configuration still provisions standby")}
+ if !standbyEnabled(nil){t.Fatal("default standby disabled")}
+}

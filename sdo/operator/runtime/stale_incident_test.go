@@ -2,6 +2,8 @@ package runtime
 
 import (
 	"context"
+"os"
+"path/filepath"
 	"errors"
 	"fmt"
 	"google.golang.org/protobuf/proto"
@@ -420,4 +422,14 @@ func TestExpiredIncidentDoesNotInheritEarlierFailure(t *testing.T) {
 	if failure := state.FailedClosures[1].Failure; failure.IncidentId != request.IncidentID || failure.Reason != contracts.ClosureFailureReason_CLOSURE_FAILURE_REASON_AGENT_TIMEOUT {
 		t.Fatalf("current incident not expired: %v", failure)
 	}
+}
+
+func TestRWSBoundStandbyCountsAsLiveWork(t *testing.T){
+ root:=t.TempDir();dir:=filepath.Join(root,".sdo-runtime/standby/bindings");os.MkdirAll(dir,0700)
+ data:=[]byte(`{"job_name":"sdo-standby-live","incident_id":"stale","request_digest":"digest"}`);os.WriteFile(filepath.Join(dir,"digest.json"),data,0600)
+ job:=&batchv1.Job{ObjectMeta:metav1.ObjectMeta{Name:"sdo-standby-live",Namespace:"control"},Status:batchv1.JobStatus{Active:1}}
+ pod:=&corev1.Pod{ObjectMeta:metav1.ObjectMeta{Name:"worker",Namespace:"control",OwnerReferences:[]metav1.OwnerReference{{Kind:"Job",Name:job.Name}}},Status:corev1.PodStatus{Phase:corev1.PodRunning}}
+ client:=fake.NewSimpleClientset(job,pod);d:=KubernetesJobDispatcher{Client:client,Namespace:"control",RepositoryMountPath:root}
+ active,err:=d.IncidentWorkActive(context.Background(),"stale");if err!=nil||!active{t.Fatalf("bound worker invisible: %v %v",active,err)}
+ client.BatchV1().Jobs("control").Delete(context.Background(),job.Name,metav1.DeleteOptions{});active,err=d.IncidentWorkActive(context.Background(),"stale");if err!=nil||!active{t.Fatalf("orphan bound pod invisible: %v %v",active,err)}
 }

@@ -2,6 +2,10 @@ package operatorcli
 
 import (
 	"context"
+"google.golang.org/protobuf/types/known/anypb"
+contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+"sdo.dev/operator/contracts/wire"
+"sdo.dev/operator/worker_registry"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -51,7 +55,10 @@ func TestIncidentEvidenceUsesRunningControllerPodWithoutCreatingSyncPod(t *testi
 	}
 	job := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: install.ControllerJobName, Namespace: "sdo", UID: "controller-job"}}
 	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "controller-1", Namespace: "sdo", OwnerReferences: []metav1.OwnerReference{{Kind: "Job", Name: install.ControllerJobName, UID: job.UID}}, Labels: map[string]string{"job-name": install.ControllerJobName}}, Status: corev1.PodStatus{Phase: corev1.PodRunning}}
-	client := fake.NewSimpleClientset(job, pod)
+	warm:=&batchv1.Job{ObjectMeta:metav1.ObjectMeta{Name:"sdo-standby-completed",Namespace:"sdo"},Status:batchv1.JobStatus{Succeeded:1}}
+ request,_:=anypb.New(&contracts.IncidentRequest{IncidentId:"incident-1",RepositoryBaseCommit:"accepted",RepositoryWorktree:"/workspace/proposal"});task:=&contracts.AgentTask{SchemaVersion:"sdo.dev/v1alpha1",TaskId:"incident-1",AgentId:"responder",TaskType:"incident",Request:request,Workspace:&contracts.ProposalWorkspace{ProposalId:"proposal",CheckoutPath:"/workspace/proposal",BaseCommit:"accepted"}};payload,encodeErr:=wire.Canonical(task);if encodeErr!=nil{t.Fatal(encodeErr)}
+ cm:=&corev1.ConfigMap{ObjectMeta:metav1.ObjectMeta{Name:warm.Name+"-request",Namespace:"sdo"},Data:map[string]string{worker_registry.TaskDataKey:string(payload)}}
+ client := fake.NewSimpleClientset(job, pod,warm,cm)
 
 	afterStarted := time.Now()
 	result, err := runIncidentEvidence(context.Background(), client, IncidentEvidenceConfig{Sync: install.SyncConfig{ControlNamespace: "sdo", RepositoryPVC: "repo", ControllerImage: "controller:test"}, IncidentID: "incident-1", Repository: repository})
@@ -59,7 +66,8 @@ func TestIncidentEvidenceUsesRunningControllerPodWithoutCreatingSyncPod(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.IncidentID != "incident-1" {
+	if result.ResponderJobName!="sdo-standby-completed"{t.Fatalf("wrong receipt identity %q",result.ResponderJobName)}
+ if result.IncidentID != "incident-1" {
 		t.Fatalf("incident ID = %q", result.IncidentID)
 	}
 	accepted, err := os.ReadFile(filepath.Join(repository, "accepted.txt"))
