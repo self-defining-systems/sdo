@@ -641,7 +641,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		return err
 	}
 	if err := controller.AttachPendingOnboarding(ctx, bootstrapProvider.Client, *controlNamespace); err != nil {
-		return err
+		fmt.Fprintln(stderr, "namespace onboarding pending unavailable:", err)
 	}
 	if launchConfig != nil {
 		controller.discardRestoredHealthObservations(start)

@@ -168,8 +168,6 @@ func RunInstallExisting(ctx context.Context, launch InstallExistingConfig) (Inst
 		return InstallExistingResult{}, err
 	}
 	config := launch.Install
-	if launch.AdoptExistingMemory {
-	}
 	config.AcceptedCommit = commit
 	installer := install.Installer{
 		Client:         client,

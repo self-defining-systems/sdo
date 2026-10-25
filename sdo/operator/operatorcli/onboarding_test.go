@@ -2,7 +2,6 @@ package operatorcli
 
 import (
 	"context"
-	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,34 +16,27 @@ import (
 	"sdo.dev/operator/onboarding"
 )
 
-type onboardingHealthProbe struct {
-	err    error
-	status string
-	calls  int
-}
-
-func (p *onboardingHealthProbe) Evaluate(context.Context, string, string, string) (string, error) {
-	p.calls++
-	return p.status, p.err
-}
-func TestInstallExistingOnboardingRequiresIndependentClearAndNeverRecaptures(t *testing.T) {
+func TestInstallExistingOnboardingNeverRecapturesExistingRecord(t *testing.T) {
 	ctx := context.Background()
 	client := fake.NewSimpleClientset(&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "installer-script", Namespace: "app"}})
-	probe := &onboardingHealthProbe{status: "firing"}
 	launch := InstallExistingConfig{Repository: t.TempDir(), Install: install.Config{Namespace: "app", ControlNamespace: "control"}}
-	// Existing installer evidence wins over any new event or unhealthy probe.
-	if _, err := onboarding.Establish(ctx, client, "control", "app", strings.Repeat("a", 40), nil, time.Unix(100, 0)); err != nil {
+	// Existing installer evidence wins over any new install event.
+	if err := onboarding.Stage(ctx, client, "control", "app", strings.Repeat("a", 40), nil, time.Unix(100, 0)); err != nil {
 		t.Fatal(err)
 	}
-	if err := acknowledgeExistingNamespace(ctx, client, launch, strings.Repeat("b", 40), probe); err != nil {
+	pending, err := onboarding.Pending(ctx, client, "control", "app")
+	if err != nil {
 		t.Fatal(err)
 	}
-	if probe.calls != 0 {
-		t.Fatal("restart/reinstall repeated independent build or recaptured inventory")
+	if _, err := onboarding.Complete(ctx, client, "control", pending); err != nil {
+		t.Fatal(err)
+	}
+	if err := stageExistingNamespace(ctx, client, launch, strings.Repeat("b", 40)); err != nil {
+		t.Fatal(err)
 	}
 }
 
-func TestInstallExistingClearAdoptionPersistsOnlyOutOfSourceIdentities(t *testing.T) {
+func TestInstallExistingOnboardingStagesOnlyInstallIdentitiesWithoutHostProbe(t *testing.T) {
 	root := t.TempDir()
 	git := func(args ...string) string {
 		t.Helper()
@@ -88,14 +80,10 @@ func TestInstallExistingClearAdoptionPersistsOnlyOutOfSourceIdentities(t *testin
 	if _, err := client.BatchV1().Jobs("control").Get(context.Background(), install.ControllerJobName, metav1.GetOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	probe := &onboardingHealthProbe{err: &net.DNSError{Name: "consul.app.svc.cluster.local", Err: "no such host", IsNotFound: true}}
-	if err := acknowledgeExistingNamespace(context.Background(), client, launch, commit, probe); err != nil {
+	if err := stageExistingNamespace(context.Background(), client, launch, commit); err != nil {
 		t.Fatal(err)
 	}
 	record, err := onboarding.Load(context.Background(), client, "control", "app")
-	if probe.calls != 0 {
-		t.Fatalf("install ran %d host-local health probes; cluster DNS is unavailable on the host", probe.calls)
-	}
 	if err != nil || record != nil {
 		t.Fatalf("install must leave verification pending: %+v %v", record, err)
 	}

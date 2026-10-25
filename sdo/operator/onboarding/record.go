@@ -63,21 +63,6 @@ func load(ctx context.Context, client kubernetes.Interface, control, name, names
 	return Decode([]byte(cm.Data[DataKey]), namespace)
 }
 
-// Establish is create-once even across reinstall or memory/source publication.
-// Only the independently verified native install path calls it. A restart,
-// incident, or a later healthy interval can never expand this acknowledgement.
-func Establish(ctx context.Context, client kubernetes.Interface, control, namespace, commit string, source []*unstructured.Unstructured, now time.Time) (*contracts.NamespaceOnboarding, error) {
-	prior, err := Load(ctx, client, control, namespace)
-	if err != nil || prior != nil {
-		return prior, err
-	}
-	record, err := capture(ctx, client, namespace, commit, source, now)
-	if err != nil {
-		return nil, err
-	}
-	return persist(ctx, client, control, ConfigMapName, record)
-}
-
 func capture(ctx context.Context, client kubernetes.Interface, namespace, commit string, source []*unstructured.Unstructured, now time.Time) (*contracts.NamespaceOnboarding, error) {
 	objects, err := inventory(ctx, client, namespace)
 	if err != nil {

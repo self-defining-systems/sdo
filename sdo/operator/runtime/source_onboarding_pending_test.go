@@ -57,6 +57,7 @@ func TestSourceInventoryPendingOnboardingUsesFirstClusterEvaluation(t *testing.T
 	}
 	// Cluster detectors use the existing controller snapshot/prober, with no
 	// host resolver or additional health-probe process involved.
+	started := time.Now()
 	if err := c.EvaluateAll(ctx, time.Unix(101, 0)); err != nil {
 		t.Fatal(err)
 	}
@@ -64,6 +65,7 @@ func TestSourceInventoryPendingOnboardingUsesFirstClusterEvaluation(t *testing.T
 	if err != nil || record == nil {
 		t.Fatalf("first in-cluster clear did not establish onboarding: %v %v", record, err)
 	}
+	t.Logf("hermetic first evaluation to persisted record: %s", time.Since(started))
 	if !record.EstablishedAt.AsTime().Equal(time.Unix(100, 0)) {
 		t.Fatal("lost install boundary")
 	}
@@ -120,5 +122,47 @@ func TestSourceInventoryPendingOnboardingNeverRetriesUnclearOrChangedCommit(t *t
 				t.Fatalf("restart/later healthy period granted authority: %v %v", record, err)
 			}
 		})
+	}
+}
+
+func TestSourceInventoryPendingOnboardingCannotBlessFaultBeforeFirstEvaluation(t *testing.T) {
+	c, client := stagedInstallerController(t, inventoryHealth())
+	additions := latentInventoryObjects()
+	c.drift.Events.(*inventoryStore).objects = append(c.drift.Events.(*inventoryStore).objects, additions[0], additions[3], additions[4])
+	if err := c.EvaluateAll(context.Background(), time.Unix(101, 0)); err != nil {
+		t.Fatal(err)
+	}
+	record, err := onboarding.Load(context.Background(), client, "control", "app")
+	if err != nil || record != nil {
+		t.Fatalf("post-install latent incident must prevent onboarding: %+v %v", record, err)
+	}
+}
+
+func TestSourceInventoryPendingOnboardingWaitsForCompleteEvaluation(t *testing.T) {
+	c, client := stagedInstallerController(t, inventoryHealth())
+	peer := inventoryHealth().(*sequenceDetector)
+	peer.spec.ID, peer.spec.Interval = "peer-health", 10*time.Second
+	c, err := NewController(c.config, []sdk.Detector{inventoryHealth(), peer}, c.provider, c.dispatcher, time.Unix(100, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// No inventory integration is needed to check detector completeness here;
+	// install identities still come exclusively from the durable Stage snapshot.
+	if err := c.AttachPendingOnboarding(context.Background(), client, "control"); err != nil {
+		t.Fatal(err)
+	}
+	c.scheduler.SelectEvents(time.Unix(100, 0), nil)
+	c.scheduler.Expedite("health", time.Unix(100, 1))
+	if err := c.Step(context.Background(), time.Unix(100, 1), nil); err != nil {
+		t.Fatal(err)
+	}
+	if record, err := onboarding.Load(context.Background(), client, "control", "app"); err != nil || record != nil {
+		t.Fatalf("partial clear sample granted authority: %v %v", record, err)
+	}
+	if err := c.EvaluateAll(context.Background(), time.Unix(101, 0)); err != nil {
+		t.Fatal(err)
+	}
+	if record, err := onboarding.Load(context.Background(), client, "control", "app"); err != nil || record == nil {
+		t.Fatalf("complete clear sample did not establish record: %v %v", record, err)
 	}
 }
