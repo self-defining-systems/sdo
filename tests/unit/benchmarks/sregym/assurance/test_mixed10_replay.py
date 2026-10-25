@@ -298,8 +298,14 @@ p = Path(os.environ['REPLAY_TEST_STATE'])
 state = json.loads(p.read_text())
 args = sys.argv[1:]
 state['commands'].append(args)
+if 'delete' in args and args[args.index('delete') + 1].lower() == 'pod':
+    state.setdefault('deleted_pods', []).append(args[args.index('delete') + 2])
 p.write_text(json.dumps(state))
-if 'get' in args and 'deployments' in args:
+if 'get' in args and args[args.index('get') + 1].lower() in ('pod', 'pods') and '-o' in args and args[args.index('-o') + 1] == 'name':
+    name = args[args.index('get') + 2]
+    if name not in state.get('deleted_pods', []):
+        print('pod/' + name)
+elif 'get' in args and 'deployments' in args:
     print(json.dumps({'items': []}))
 elif 'get' in args and 'pods' in args:
     print(json.dumps({'items': [{'metadata': {'name': 'url-shorten-pending'}, 'status': {'phase': 'Pending'}}]}))
@@ -359,6 +365,8 @@ else:
     if slot == 9:
         commands = json.loads(state.read_text())["commands"]
         assert any("url-shorten-pending" in command for command in commands)
+        assert json.loads(state.read_text())["deleted_pods"] == ["url-shorten-pending"]
+        assert any("get" in command and "Pod" in command and "name" in command for command in commands)
         # The strategy restoration follows both Recreate and pod replacement.
         assert commands[-2][2:4] == ["patch", "deployment"]
 

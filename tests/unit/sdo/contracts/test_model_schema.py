@@ -46,6 +46,7 @@ def test_incident_schema_is_the_proto_message_minus_declared_omissions() -> None
     assert unrequested == {
         "schema_version",
         "final_detector_states",
+        "unresolved_findings",
         "proposed_artifact_ids",
         "usage",
         "responder_session_id",
