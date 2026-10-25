@@ -36,6 +36,8 @@ def test_continuation_has_only_current_findings_and_receipts() -> None:
     assert "third/api" in prompt
     assert "repair-a" in prompt
     assert "Continue the same incident" in prompt
+    assert "".join(part.text for part in prompt.parts) == prompt
+    assert {part.name for part in prompt.parts} == {"continuation.instructions", "continuation.incident_data"}
     template = Path("sdo/agents/responder/prompts/continuation.md").read_text()
     assert len(template) <= 1500
     assert ContinuationFeedback.model_validate(payload).still_broken[0].fingerprint == "third/api"

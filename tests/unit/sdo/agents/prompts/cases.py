@@ -19,6 +19,7 @@ from sdo.agents.lifecycle.agents import (
 )
 from sdo.agents.responder import codex, reflection
 from sdo.agents.responder.codex import _responder_prompt
+from sdo.agents.responder.continuation import continuation_prompt
 from sdo.agents.responder.reflection import CodexSessionBackend, ReflectionTurn, SessionReflector
 from sdo.agents.responder.reflection_brief import incident_brief
 from sdo.agents.responder.session_recovery import SessionRecovery
@@ -157,6 +158,54 @@ class ReflectionCapture:
 
 def rendered_cases() -> dict[str, str]:
     prompts: dict[str, str] = {}
+    prompts["responder_continuation"] = continuation_prompt(
+        json.dumps(
+            {
+                "attempt": 1,
+                "healthy": False,
+                "summary": "one current fault remains",
+                "still_broken": [
+                    {
+                        "primary_resource": {
+                            "api_version": "v1",
+                            "kind": "Service",
+                            "namespace": "toy",
+                            "name": "third",
+                        },
+                        "fingerprint": "health/third",
+                        "detector_id": "health",
+                        "rule_id": "routing",
+                        "summary": "third route is unavailable",
+                        "evidence": "fresh detector observation",
+                    }
+                ],
+                "already_done": [
+                    {
+                        "kind": "program-application",
+                        "action_id": f"repair-{index}",
+                        "application_id": f"application-{index}",
+                        "program_ids": ["restore-route"],
+                        "summary": f"repaired route {index}",
+                        "receipt": {
+                            "action_id": f"repair-{index}",
+                            "kind": "program-plan",
+                            "target": f"Service/route-{index}",
+                            "resources": [
+                                {"api_version": "v1", "kind": "Service", "namespace": "toy", "name": f"route-{index}"}
+                            ],
+                            "summary": "target port restored",
+                            "details": "synthetic controller receipt",
+                            "started_at": "2026-01-01T00:00:00Z",
+                            "completed_at": "2026-01-01T00:00:01Z",
+                            "success": True,
+                            "reversible": True,
+                        },
+                    }
+                    for index in range(2)
+                ],
+            }
+        )
+    )
     with pytest.MonkeyPatch.context() as patch:
         # Infrastructure configuration is an explicit fixture input, independent
         # of the checkout that runs the production builders.

@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
-from string import Template
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
+
+from sdo.agents.prompt_templates import RenderedPrompt, named_prompt, render_prompt
 
 
 class FindingResource(BaseModel):
@@ -64,8 +64,14 @@ class ContinuationFeedback(BaseModel):
     already_done: list[CompletedRepair]
 
 
-def continuation_prompt(payload: str) -> str:
+def continuation_prompt(payload: str) -> RenderedPrompt:
     """Validate the transport boundary before rendering the factual lists."""
     ContinuationFeedback.model_validate_json(payload)
-    template = Path(__file__).with_name("prompts").joinpath("continuation.md").read_text(encoding="utf-8")
-    return Template(template).substitute(feedback=json.dumps(json.loads(payload), ensure_ascii=False, indent=2))
+    return render_prompt(
+        "responder",
+        "continuation",
+        part="continuation.instructions",
+        feedback=named_prompt(
+            "continuation.incident_data", json.dumps(json.loads(payload), ensure_ascii=False, indent=2)
+        ),
+    )
