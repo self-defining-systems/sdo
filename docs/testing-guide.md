@@ -112,6 +112,8 @@ workload cannot render, with the render gap recorded for retry; application
 source changes must never reuse the old deployment images.
 The gate needs Go and `uv`, but no cluster or container runtime.
 
+`TestHermeticBringupPersistsPendingAndRestarts` rehearses a cold native bring-up against one fake Kubernetes API: retained onboarding and worker-result records, the production fresh-control reset, HY clean restore through kubectl, native prepared installation, a scripted startup judge with real broker/builder validation, confirmed never-served-port observations, real ConfigMap ControllerState validation, the read-only inventory evaluator, six quiet probe cycles, and restart. It uses simulated probe time and a two-minute test budget. This is the offline gate before repeating a live bring-up.
+
 ### Rendered deployment lock (LK1)
 
 The fast hermetic gate includes rollout/restart lock contracts, the FX1 memory
