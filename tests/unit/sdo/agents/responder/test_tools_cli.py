@@ -249,3 +249,23 @@ def test_detect_repeated_detector_selection(monkeypatch: pytest.MonkeyPatch) -> 
     assert tools_cli.main(["detect"]) == 0
     assert tools_cli.main(["detect", "--detector", "a", "b", "--detector", "c"]) == 0
     assert seen == [{"command": "detect"}, {"command": "detect", "detector_ids": ["a", "b", "c"]}]
+
+
+@pytest.mark.parametrize("command", ["plan", "mitigate"])
+def test_repair_cli_preserves_explicit_target_finding_fingerprints(monkeypatch, command):
+    seen = []
+
+    def exchange(request, _directory):
+        seen.append(request)
+        return {
+            "menu": {
+                "round_limit": 3,
+                "remaining_batches": 3,
+                "options": [{"option_id": "repair", "program_id": "repair"}],
+            },
+            "summary": "ok",
+        }
+
+    monkeypatch.setattr(tools_cli, "_exchange", exchange)
+    assert tools_cli.main([command, "repair", "--finding", "health/api/config", "--finding", "health/api/ready"]) == 0
+    assert seen[-1]["finding_fingerprints"] == ["health/api/config", "health/api/ready"]

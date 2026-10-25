@@ -46,3 +46,27 @@ func ProgramRepairReceipts(applications []RecordedPlanApplication, existing []Re
 	}
 	return result
 }
+
+// ApplicationRepairReceipts projects immutable application facts, including
+// receipts restored before a worker returned. Restoring a receipt grants no
+// plan handle or rollback authority. Controller receipts take precedence over
+// an agent echoing the same action ID.
+func (l *ResponderLoop) ApplicationRepairReceipts(existing []RepairActionReceipt) []RepairActionReceipt {
+	l.mu.Lock()
+	completed := l.applicationRepairsLocked()
+	l.mu.Unlock()
+	result := make([]RepairActionReceipt, 0, len(completed)+len(existing))
+	seen := map[string]bool{}
+	for _, repair := range completed {
+		receipt := repair.Receipt
+		result = append(result, RepairActionReceipt{ActionID: receipt.ActionID, Kind: receipt.Kind, Target: receipt.Target, Resources: append([]sdk.ObjectRef(nil), receipt.Resources...), Summary: receipt.Summary, Details: receipt.Details, StartedAt: receipt.StartedAt, CompletedAt: receipt.CompletedAt, Success: receipt.Success, Reversible: receipt.Reversible})
+		seen[receipt.ActionID] = true
+	}
+	for _, receipt := range existing {
+		if !seen[receipt.ActionID] {
+			result = append(result, receipt)
+			seen[receipt.ActionID] = true
+		}
+	}
+	return result
+}

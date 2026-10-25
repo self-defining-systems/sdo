@@ -269,7 +269,7 @@ func (d KubernetesJobDispatcher) Dispatch(ctx context.Context, request IncidentR
 		result.ProgramRuns = loop.ProgramRuns()
 		fillProgramRevisions(ctx, result.ProgramRuns, request.RepositoryWorktree, request.SourceCommit)
 		result.PlanApplications = loop.PlanApplications()
-		result.RepairActions = ProgramRepairReceipts(result.PlanApplications, result.RepairActions)
+		result.RepairActions = loop.ApplicationRepairReceipts(result.RepairActions)
 		if result.Status == IncidentCompleted {
 			loop.CreditEquivalentRepairs(ctx, result.RepairActions)
 			result.PlanApplications = loop.PlanApplications()
