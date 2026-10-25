@@ -77,3 +77,16 @@ func TestMemoryMigrationRejectsMissingCompilerBeforeCredentials(t *testing.T) {
 		t.Fatalf("missing compiler reached migration: %v", err)
 	}
 }
+
+func TestScriptImageSurvivesTypedControllerLaunch(t *testing.T) {
+	args := []string{"controller", "--toolchain-image", "controller:compiler", "--app", "/workspace/application", "--namespace", "demo", "--responder-image", "responder:test", "--repository-pvc", "repository", "--repository-mount-path", "/workspace", "--credentials-secret", "credentials", "--worktree-root", "/workspace/worktrees", "--validator-image", "validator:test", "--model", "model", "--broker-mode=native", "--worker-mount-mode=proposal-only", "--script-image", "script-tools:slim"}
+	config, _, err := ParseControllerLaunch(args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	message := config.Controller.ProtoReflect()
+	field := message.Descriptor().Fields().ByName("script_image")
+	if field == nil || message.Get(field).String() != "script-tools:slim" {
+		t.Fatal("script image lost at typed controller boundary")
+	}
+}

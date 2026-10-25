@@ -29,6 +29,9 @@ echo "==> validator schema identity"
         -count=1 -timeout=20s
 )
 
+echo "==> responder command reference"
+uv run python -m sdo.agents.responder.command_reference --check
+
 echo "==> ruff"
 if [ "$1" == "--fix" ]; then
     uv run ruff check --fix .

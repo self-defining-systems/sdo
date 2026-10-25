@@ -20,7 +20,7 @@ import (
 	"sdo.dev/operator/toolchain"
 )
 
-const sdkSchemaIdentity = "sdo.dev/v1alpha1+sdk.024852170664097f"
+const sdkSchemaIdentity = "sdo.dev/v1alpha1+sdk.fe3766443cbe3018"
 
 type repeatable []string
 
@@ -43,6 +43,7 @@ func ParseControllerLaunch(args []string) (builder.RunConfig, bool, error) {
 	application := flags.String("application", "", "application identity")
 	responderImage := flags.String("responder-image", "", "registered responder image")
 	toolchainImage := flags.String("toolchain-image", "", "trusted controller image supplying Go to workers and validators (required)")
+	scriptImage := flags.String("script-image", "", "fixed tool image for app-local RunScript Jobs")
 	proberImage := flags.String("prober-image", "", "traffic prober image")
 	repositoryPVC := flags.String("repository-pvc", "", "repository PVC")
 	repositoryMount := flags.String("repository-mount-path", "", "repository PVC mount")
@@ -116,7 +117,7 @@ func ParseControllerLaunch(args []string) (builder.RunConfig, bool, error) {
 		ResponseTimeout: durationpb.New(*responseTimeout), VerificationTimeout: durationpb.New(*verificationTimeout),
 		RepairPolicy: *repairPolicy, MaxResponseLoops: int32(*maxResponseLoops), DiagnosisDeadline: durationpb.New(*diagnosisDeadline), LeaseName: "sdo-controller", RestartAfterClosure: *supervise,
 		ExitAfterClosure: *exitAfterClosure,
-		ToolchainImage:   *toolchainImage, ProberImage: *proberImage, AgentRegistrationDirectory: *registrations, ResponderAgentId: *responderID,
+		ScriptImage:      *scriptImage, ToolchainImage: *toolchainImage, ProberImage: *proberImage, AgentRegistrationDirectory: *registrations, ResponderAgentId: *responderID,
 		BrokerMode: *brokerMode, WorkerMountMode: *workerMountMode, ValidatorImage: *validatorImage,
 		SchemaIdentity: *schemaIdentity, ResponderBackend: *backend, ResponderModel: *model, ReflectionSession: *reflectionSession, ReflectionGuidance: *reflectionGuidance, ForceReflection: *forceReflection, HealthyBaseline: *healthyBaseline, MetricsUrl: *metricsURL,
 	}

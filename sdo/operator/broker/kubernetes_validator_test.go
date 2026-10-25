@@ -198,17 +198,18 @@ func TestKubernetesValidatorProjectsHealthyBaselineOnlyForIncidentGate(t *testin
 func TestKubernetesValidatorCompilesProgramsOffline(t *testing.T) {
 	launcher := KubernetesValidationJobClient{RepositoryPVC: "repository", ToolchainImage: "controller:compiler"}
 	job := launcher.validationJob("sdo-validator-test", "worktrees/candidate", strings.Repeat("a", 40), false)
-	if len(job.Spec.Template.Spec.InitContainers) != 1 || job.Spec.Template.Spec.InitContainers[0].Image != "controller:compiler" {
-		t.Fatal("validator job missing controller compiler")
+	if len(job.Spec.Template.Spec.InitContainers) != 0 {
+		t.Fatal("validator must use its immutable image compiler without startup copying")
 	}
 	env := map[string]string{}
 	for _, entry := range job.Spec.Template.Spec.Containers[0].Env {
 		env[entry.Name] = entry.Value
 	}
 	for name, want := range map[string]string{
-		"GOMODCACHE": "/go/pkg/mod",
-		"GOPROXY":    "off",
-		"GOFLAGS":    "-mod=mod -p=2",
+		"GOMODCACHE":  "/go/pkg/mod",
+		"GOCACHEPROG": "/usr/local/bin/sdo-go-cache",
+		"GOPROXY":     "off",
+		"GOFLAGS":     "-mod=mod -p=2",
 	} {
 		if env[name] != want {
 			t.Errorf("%s = %q, want %q", name, env[name], want)

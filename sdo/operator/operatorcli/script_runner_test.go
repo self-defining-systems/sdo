@@ -49,8 +49,6 @@ func TestScriptProxyCapturesFirstPreimageAndSettledPostimage(t *testing.T) {
 	defer upstream.Close()
 	u, _ := url.Parse(upstream.URL)
 	recorder := newScriptRecorder(context.Background(), u, http.DefaultTransport)
-	proxy := httptest.NewServer(kubeproxy.New(u, http.DefaultTransport, http.DefaultTransport, recorder))
-	defer proxy.Close()
 	checkpointed := false
 	recorder.checkpoint = func(objects []program.ScriptObjectCapture, _ []program.ScriptAPIReceipt) error {
 		if len(objects) > 0 && objects[0].Before != nil {
@@ -58,6 +56,8 @@ func TestScriptProxyCapturesFirstPreimageAndSettledPostimage(t *testing.T) {
 		}
 		return nil
 	}
+	proxy := httptest.NewServer(kubeproxy.New(u, http.DefaultTransport, http.DefaultTransport, recorder))
+	defer proxy.Close()
 	execution := program.ScriptExecutionResult{}
 	runCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()

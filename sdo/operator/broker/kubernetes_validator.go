@@ -27,7 +27,6 @@ import (
 	kubescheme "k8s.io/client-go/kubernetes/scheme"
 	"sdo.dev/operator/devmount"
 	"sdo.dev/operator/memory/validate"
-	"sdo.dev/operator/toolchain"
 )
 
 var gitTreeID = regexp.MustCompile(`^[0-9a-f]{40}$`)
@@ -455,7 +454,7 @@ func (k KubernetesValidationJobClient) validationJob(name, subPath, tree string,
 		Name: "validator", Image: k.Image, ImagePullPolicy: corev1.PullIfNotPresent, Command: []string{"/bin/sh", "-eu", "-c", command}, WorkingDir: "/workspace", TerminationMessagePath: "/dev/termination-log", TerminationMessagePolicy: corev1.TerminationMessageReadFile,
 		Env: []corev1.EnvVar{
 			{Name: "SDO_CANDIDATE_TREE", Value: tree}, {Name: "SDO_SCHEMA_IDENTITY", Value: k.SchemaIdentity},
-			{Name: "HOME", Value: "/tmp"}, {Name: "GOCACHE", Value: "/tmp/go-cache"}, {Name: "SDO_GO_CACHE_SEED", Value: "/go/build-cache"},
+			{Name: "HOME", Value: "/tmp"}, {Name: "GOCACHE", Value: "/tmp/go-cache"}, {Name: "SDO_GO_CACHE_SEED", Value: "/go/build-cache"}, {Name: "GOCACHEPROG", Value: "/usr/local/bin/sdo-go-cache"},
 			{Name: "GOMODCACHE", Value: "/go/pkg/mod"}, {Name: "GOPROXY", Value: "off"}, {Name: "GOSUMDB", Value: "off"},
 			{Name: "GOMAXPROCS", Value: "2"}, {Name: "GOFLAGS", Value: "-mod=mod -p=2"}, {Name: "PYTHONDONTWRITEBYTECODE", Value: "1"},
 		},
@@ -467,7 +466,6 @@ func (k KubernetesValidationJobClient) validationJob(name, subPath, tree string,
 		job.Spec.Template.Spec.Containers[0].VolumeMounts = append(job.Spec.Template.Spec.Containers[0].VolumeMounts,
 			corev1.VolumeMount{Name: "healthy-baseline", MountPath: "/sdo/healthy-baseline", SubPath: filepath.ToSlash(filepath.Join(k.RepositoryPVCSubPath, ".sdo-baseline/healthy")), ReadOnly: true})
 	}
-	toolchain.Apply(&job.Spec.Template.Spec, k.ToolchainImage)
 	if devmount.Enabled() {
 		devmount.Apply(&job.Spec.Template.Spec)
 	}
