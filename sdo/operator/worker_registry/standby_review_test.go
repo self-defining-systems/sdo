@@ -8,6 +8,7 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes/fake"
 	"os"
 	"path/filepath"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
@@ -171,6 +172,11 @@ func TestRWSWarmReceiptIdentityDoesNotRequireRequestConfigMap(t *testing.T) {
 	}
 	if err := bound.publishWarmTask(context.Background(), task); err != nil {
 		t.Fatal(err)
+	}
+	for _, action := range e.Client.(*fake.Clientset).Actions() {
+		if action.GetVerb() == "update" && action.GetResource().Resource == "jobs" {
+			t.Fatal("claim requires absent Jobs update permission")
+		}
 	}
 	name, err := IncidentResponderJobName(context.Background(), e.Client, e.Namespace, "incident")
 	if err != nil || name != bound.WarmBinding.JobName {

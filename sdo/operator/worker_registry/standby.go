@@ -18,6 +18,7 @@ import (
 
 	"google.golang.org/protobuf/types/known/anypb"
 	batchv1 "k8s.io/api/batch/v1"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
@@ -498,19 +499,25 @@ func (e KubernetesExecutor) publishWarmTask(ctx context.Context, task *contracts
 			return unpublished(errors.New("unpublished standby lost readiness"))
 		}
 	}
-	// Persist execution identity on the existing Job, including requests too
-	// large for ConfigMaps. This is metadata only; the immutable inbox remains
-	// the sole release point and no worker permission changes.
-	incidentIdentity := new(contracts.IncidentRequest)
-	if err := task.GetRequest().UnmarshalTo(incidentIdentity); err != nil {
+	// Keep request transport independent identity in a small ConfigMap, using
+	// the controller's existing create grant (Jobs update is intentionally absent).
+	identity := new(contracts.IncidentRequest)
+	if err := task.GetRequest().UnmarshalTo(identity); err != nil {
 		return unpublished(err)
 	}
-	if job.Annotations == nil {
-		job.Annotations = map[string]string{}
-	}
-	job.Annotations["sdo.dev/incident-id"] = incidentIdentity.GetIncidentId()
-	job.Annotations["sdo.dev/task-id"] = task.GetTaskId()
-	if _, err := e.Client.BatchV1().Jobs(e.Namespace).Update(ctx, job, metav1.UpdateOptions{}); err != nil {
+	annotations := map[string]string{"sdo.dev/incident-id": identity.GetIncidentId(), "sdo.dev/task-id": task.GetTaskId(), "sdo.dev/job-name": b.JobName, "sdo.dev/request-sha256": taskRequestDigest(task), "sdo.dev/job-uid": string(job.UID)}
+	claim := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: b.JobName + "-binding", Annotations: annotations}}
+	if _, err := e.Client.CoreV1().ConfigMaps(e.Namespace).Create(ctx, claim, metav1.CreateOptions{}); apierrors.IsAlreadyExists(err) {
+		prior, readErr := e.Client.CoreV1().ConfigMaps(e.Namespace).Get(ctx, claim.Name, metav1.GetOptions{})
+		if readErr != nil {
+			return unpublished(readErr)
+		}
+		for key, value := range annotations {
+			if prior.Annotations[key] != value {
+				return unpublished(errors.New("conflicting standby execution identity"))
+			}
+		}
+	} else if err != nil {
 		return unpublished(err)
 	}
 	environment := cloneEnvironment(e.Environment)

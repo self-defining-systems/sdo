@@ -50,6 +50,17 @@ func IncidentExecutionNames(ctx context.Context, client kubernetes.Interface, na
 		return nil, fmt.Errorf("inspect incident execution requests: %w", err)
 	}
 	for _, cm := range maps.Items {
+		if strings.HasSuffix(cm.Name, "-binding") && cm.Annotations["sdo.dev/incident-id"] == incidentID && (!initialOnly || cm.Annotations["sdo.dev/task-id"] == incidentID) {
+			name := cm.Annotations["sdo.dev/job-name"]
+			if strings.HasPrefix(name, "sdo-standby-") && cm.Name == name+"-binding" {
+				job, err := client.BatchV1().Jobs(namespace).Get(ctx, name, metav1.GetOptions{})
+				if err == nil && string(job.UID) == cm.Annotations["sdo.dev/job-uid"] {
+					names[name] = true
+				} else if err != nil && !apierrors.IsNotFound(err) {
+					return nil, err
+				}
+			}
+		}
 		if !strings.HasSuffix(cm.Name, "-request") {
 			continue
 		}
@@ -65,15 +76,6 @@ func IncidentExecutionNames(ctx context.Context, client kubernetes.Interface, na
 			continue
 		}
 		names[strings.TrimSuffix(cm.Name, "-request")] = true
-	}
-	jobs, err := client.BatchV1().Jobs(namespace).List(ctx, metav1.ListOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("inspect bound incident Jobs: %w", err)
-	}
-	for _, job := range jobs.Items {
-		if job.Annotations["sdo.dev/incident-id"] == incidentID && (!initialOnly || job.Annotations["sdo.dev/task-id"] == incidentID) {
-			names[job.Name] = true
-		}
 	}
 	result := make([]string, 0, len(names))
 	for name := range names {
