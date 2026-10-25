@@ -20,6 +20,7 @@ package sdodev.contracts.v1alpha1;
 import "buf/validate/validate.proto";
 import "google/protobuf/struct.proto";
 import "google/protobuf/timestamp.proto";
+import "google/protobuf/duration.proto";
 import "sdodev/contracts/v1alpha1/common.proto";
 import "sdodev/contracts/v1alpha1/program.proto";
 import "sdodev/contracts/v1alpha1/traffic.proto";
@@ -368,7 +369,7 @@ message RepairActionReceipt {
   google.protobuf.Timestamp completed_at = 8 [(buf.validate.field).required = true];
   bool success = 9;
   bool reversible = 10;
-  string failure_reason = 11 [(buf.validate.field).string = {in: ["", "authorization_denied", "execution_failed", "delete_not_confirmed", "outcome_unknown"]}];
+  string failure_reason = 11 [(buf.validate.field).string = {in: ["", "authorization_denied", "execution_failed", "delete_not_confirmed", "outcome_unknown", "incident_verified"]}];
 }
 
 // IncidentResult is what the responder returns. The CEL enforces unique
@@ -483,4 +484,6 @@ message IncidentClosure {
   string observation_generation = 20;
   // Confirmed per-finding observations on a failed closure; never global health authority.
   repeated DetectorEvaluation partial_detector_states = 21;
+  bool verified_while_responder_running = 22;
+  google.protobuf.Duration closure_stability_window = 23;
 }

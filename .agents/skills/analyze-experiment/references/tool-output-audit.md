@@ -26,3 +26,18 @@ per-request cost-weighted input as `input_tokens - cached_input_tokens +
 0.1 * cached_input_tokens` for gpt-6-luna; keep raw tokens and output tokens
 separate. Defaults and incident summaries have measured `tool_stdout.*`
 budgets in `sdo/agents/prompt_budgets.toml`; `--json` is intentionally excluded.
+
+Mutating command displays separate the action result from whole-incident
+verification. They compare controller cached findings before/after by fingerprint
+and evidence into `fixed`, `new` (possible regression), and `unchanged` sets.
+Every invocation writes the complete output and evidence to
+`scratch/sdo-reports/<incident>/<sequence>-<command>.json` inside its private
+session. Native runtime-artifacts export admits only numbered act/apply/mitigate
+report filenames from that exact subtree. The report contains `actions`,
+`option_reports`, `findings`, `fixed`, `new`, `unchanged`; the printed schema is
+generated from Go/proto types. Large inventories explicitly point to the full
+arrays if their finding lines exceed the bounded display; verdicts and all set
+counts remain visible. `incident_verified` adds an informational timestamp/message
+to normal responses; it does not replace findings, states, reports or receipts.
+Plain verify uses cached state; `verify --wait SECONDS` waits for stable closure,
+a new/reactivated finding, or timeout. Detect remains the fresh evaluation path.

@@ -54,6 +54,7 @@ func (c *Controller) ExecuteDispatchEffect(ctx context.Context, effect DispatchE
 		cancel()
 		return err
 	}
+	c.responderCancel = cancel
 	c.dispatchState = contracts.DispatchState_DISPATCH_STATE_RUNNING
 	if c.incidentDispatchedAt.IsZero() {
 		c.incidentDispatchedAt = c.incidentDetectedAt

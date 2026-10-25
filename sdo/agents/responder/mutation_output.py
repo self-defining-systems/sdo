@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -59,7 +59,10 @@ def format_mutation_response(
     """Return bounded summary text and its complete JSON file; supports multiple actions."""
     actions = list(action_results)
     progress = finding_progress(before, after)
-    report = {"actions": actions, "findings": list(after), **progress}
+    option_reports = [item for action in actions for item in action.get("option_reports", [])]
+    if not option_reports:
+        option_reports = [action["report"] for action in actions if action.get("report")]
+    report = {"actions": actions, "option_reports": option_reports, "findings": list(after), **progress}
     # Workers set SDO_SESSION_SCRATCH to their private session work directory.
     # Standalone invocations retain the existing private tool-output directory.
     command = str(actions[-1].get("command", "mitigate")) if actions else "mitigate"
@@ -85,6 +88,8 @@ def format_mutation_response(
     lines += [
         f"Incident: {'verified' if warning else 'NOT verified'}, still broken: {len(after)}",
         f"fixed by/since this action: {len(progress['fixed'])}",
+        f"new since this action: {len(progress['new'])} (possible regression)",
+        f"still broken, unchanged: {len(progress['unchanged'])}",
     ]
     schema = command_report_schema()
     tail = [
@@ -94,9 +99,8 @@ def format_mutation_response(
     ]
     tail.extend(f"{key}[]: {description.removeprefix('array of ')}" for key, description in schema.items())
     rows = []
-    for key, label in (("new", "new since this action"), ("unchanged", "still broken, unchanged")):
-        rows.append(f"{label}: {len(progress[key])}" + (" (possible regression)" if key == "new" else ""))
-        rows.extend(_line(finding) for finding in progress[key])
+    for key in ("new", "unchanged"):
+        rows.extend(f"{key}: {_line(finding)}" for finding in progress[key])
     # The verdict, counts, warning, file and schema are never removed. When the
     # finding list itself exceeds the display budget, point explicitly to its
     # complete typed arrays instead of silently losing findings in truncation.

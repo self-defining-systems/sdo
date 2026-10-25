@@ -141,6 +141,11 @@ func (c *Controller) canRetireExpiredIncidentLocked(now time.Time) bool {
 }
 
 func (c *Controller) clearIncidentLocked() {
+	c.closureStableSince = time.Time{}
+	c.closureMutationRevision = ""
+ c.earlyLastMutationAt=time.Time{}
+	c.responderLoop = nil
+	c.responderCancel = nil
 	c.incidentOpen = false
 	c.responderDone = false
 	c.currentIncidentRequest = nil

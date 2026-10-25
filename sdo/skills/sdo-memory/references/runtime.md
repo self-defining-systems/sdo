@@ -111,7 +111,37 @@ The CLI decision file contains the unwrapped ReflectionResult below. The model's
 
 ## Mitigation menu and responder continuity
 
-The menu is a convenience over direct commands. It lists accepted Mitigators with their declared object and value parameters, plus registered raw actions as one-action plans. Execution uses the ordinary PlanExecutor under existing controller RBAC and always-on executor checks. It adds no selection ledger, fences, quiescence, provenance, health-reader or credential-delta preconditions. Reports return what ran, per-action results, value provenance and any error to the same responder session, with up to five rounds per incident. Pick from the menu when an option fits; if it fails, read the report and pick another or fix it directly. Current unexplained objects have controller-checked removal options; typed failure reasons guide recovery. Author Mitigators as self-contained repairs with declared parameters and specific failure context. Intermediate reports are not independent incident outcomes or program trust credit.
+The menu is a convenience over direct commands. It lists accepted Mitigators with their declared object and value parameters, plus registered raw actions as one-action plans. Execution uses the ordinary PlanExecutor under existing controller RBAC and always-on executor checks. The menu adds no selection ledger, quiescence, provenance, health-reader or credential-delta preconditions. Reports return what ran, per-action results, value provenance and any error to the same responder session, with up to five rounds per incident. Pick from the menu when an option fits; if it fails, read the report and pick another or fix it directly. Current unexplained objects have controller-checked removal options; typed failure reasons guide recovery. Author Mitigators as self-contained repairs with declared parameters and specific failure context. Intermediate reports are not independent incident outcomes or program trust credit.
+
+## Controller verification and command reports
+
+Plain verification returns the cached controller verdict immediately. Waiting returns on stable independent closure, a new or reactivated finding, or timeout, without running detectors. Fresh detector evaluation remains the detect path. After verified closure, incident_verified adds an informational timestamp and message to every normal result; reads and reports continue. New mutations receive a typed incident_verified rejection receipt.
+
+Mutating commands always store complete per-action results, evidence, program runs, reports and receipts under $SDO_SESSION_SCRATCH/sdo-reports/<incident>/<sequence>-<command>.json. Their compact output states action and incident verdicts separately, compares controller cached finding sets by fingerprint and evidence (fixed/new/unchanged), and prints the file path and generated schema.
+
+```json
+{
+  "actions": "array of {command,summary,program_runs,report}: complete independent option outputs/receipts; overlapping writes refused",
+  "findings": "array of {summary,status,detector_id,fingerprint,primary_resource,evidence}: current findings with full evidence",
+  "fixed": "array of Finding (findings[] shape): absent since the before snapshot",
+  "new": "array of Finding (findings[] shape): new fingerprint or changed evidence; possible regression",
+  "option_reports": "array of {status,rounds,attempt_id}: typed per-option execution reports in selection order",
+  "unchanged": "array of Finding (findings[] shape): same fingerprint and evidence"
+}
+```
+
+usage: sdo verify [-h] [--wait SECONDS]
+
+Reads the controller's cached health and inventory verdict immediately. Wait
+on SDO's verification instead of sleeping. After closure, incident_verified is
+an informational warning on every response; reads and reports remain
+available, while mutations are rejected.
+
+options:
+  -h, --help      show this help message and exit
+  --wait SECONDS  wait for stable verification, a new/reactivated finding, or
+                  this timeout (0: cached and instant)
+
 
 ## Supported open phase selections
 

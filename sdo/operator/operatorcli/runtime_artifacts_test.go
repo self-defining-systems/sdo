@@ -214,3 +214,35 @@ func TestRuntimeArtifactsExportsSetupUsageSeparatelyFromIncidents(t *testing.T) 
 		t.Fatalf("setup appeared in incident usage: %v", err)
 	}
 }
+
+func TestRuntimeArtifactsExportOnlyTypedCommandReports(t *testing.T) {
+	allowed := "sessions/session/scratch/sdo-reports/incident/0001-mitigate.json"
+	for _, name := range []string{allowed, "sessions/session/scratch/sdo-reports/incident/0002-act.json", "sessions/session/scratch/sdo-reports/incident/0003-apply.json"} {
+		if !allowedRuntimeArtifact(name) {
+			t.Fatalf("missing command report: %s", name)
+		}
+	}
+	for _, name := range []string{"sessions/session/scratch/arbitrary.json", "sessions/session/scratch/sdo-reports/incident/auth.json", "sessions/session/scratch/sdo-reports/incident/0001-source.json", "sessions/session/scratch/sdo-reports/incident/deeper/0001-act.json", "sessions/session/scratch/sdo-reports/incident/.sequence"} {
+		if allowedRuntimeArtifact(name) {
+			t.Fatalf("untyped scratch export: %s", name)
+		}
+	}
+	body := []byte(`{"actions":[{"command":"mitigate","report":{"status":"complete"}}],"findings":[],"fixed":[],"new":[],"unchanged":[]}`)
+	var archive bytes.Buffer
+	writer := tar.NewWriter(&archive)
+	if err := writer.WriteHeader(&tar.Header{Name: allowed, Mode: 0600, Size: int64(len(body))}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := writer.Write(body); err != nil {
+		t.Fatal(err)
+	}
+	writer.Close()
+	root := t.TempDir()
+	if err := extractRuntimeArtifacts(&archive, root); err != nil {
+		t.Fatal(err)
+	}
+	actual, err := os.ReadFile(filepath.Join(root, allowed))
+	if err != nil || !bytes.Equal(actual, body) {
+		t.Fatalf("report lost: %s %v", actual, err)
+	}
+}

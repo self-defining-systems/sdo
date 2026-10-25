@@ -65,7 +65,11 @@ func RunAPIProxy(ctx context.Context, args []string) error {
 	}
 	// Disabled markers and writer liveness make failed initialization Unknown.
 	// Recording failure must not prevent the forwarding endpoint from starting.
-	server := &http.Server{Addr: APIProxyAddress, Handler: kubeproxy.New(upstream, reads, writes, recorder), ReadHeaderTimeout: 10 * time.Second}
+	gate, err := apihistory.PrepareMutationGate(*directory)
+	if err != nil {
+		return err
+	}
+	server := &http.Server{Addr: APIProxyAddress, Handler: kubeproxy.NewWithMutationGate(upstream, reads, writes, recorder, gate), ReadHeaderTimeout: 10 * time.Second}
 	listener, err := net.Listen("tcp", APIProxyAddress)
 	if err != nil {
 		return err
