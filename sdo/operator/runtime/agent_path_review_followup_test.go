@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"k8s.io/client-go/kubernetes/fake"
 	"path/filepath"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
@@ -87,7 +88,15 @@ func TestCoverageRequiresExplicitFindingProgramRelationAndKeepsAggregateMatch(t 
 
 func TestApplicationReceiptsSurviveRestartBeforeFirstContinuation(t *testing.T) {
 	loop, client := trustedPortLoop(t, false, false, true)
-	dispatcher := KubernetesJobDispatcher{Client: client, Namespace: "app"}
+	request := goldenRequest(t)
+	request.Namespace = "app"
+	request.RepairPolicy = "recorded-actions"
+	request.Findings = loop.Request.Findings
+	request.RepositoryWorktree = filepath.Join(t.TempDir(), "proposal")
+	request.ResponseDeadline = time.Now().Add(time.Minute)
+	request.MaxResponseLoops = 3
+	loop.Request = request
+	dispatcher := KubernetesJobDispatcher{Client: client, Namespace: "demo"}
 	ctx := context.Background()
 	if err := dispatcher.restoreToolState(ctx, loop.Request, loop); err != nil {
 		t.Fatal(err)
@@ -112,6 +121,12 @@ func TestApplicationReceiptsSurviveRestartBeforeFirstContinuation(t *testing.T) 
 	if len(restored.applications) != 0 || len(restored.plans) != 0 {
 		t.Fatal("receipt restore must not resurrect mutation authority")
 	}
+	restored.ReadView = loop.ReadView
+	if check := restored.Handle(ctx, ToolRequest{Command: "verify"}); !check.Healthy {
+		t.Fatalf("restored real detector not clear: %+v", check)
+	}
+	assertRestoredApplicationReceiptReachesWorkerResult(t, client, restored, before[0].ActionID)
+
 }
 
 func TestCoverageRecognizesControllerOwnedProgramFinding(t *testing.T) {
@@ -124,4 +139,31 @@ func TestCoverageRecognizesControllerOwnedProgramFinding(t *testing.T) {
 	if len(got.Matches) != 1 || len(got.Matches[0].ExplainedFindingFingerprints) != 1 || len(got.UnexplainedFindingFingerprints) != 0 {
 		t.Fatalf("controller-owned finding lost its program relation: %+v", got)
 	}
+}
+
+func assertRestoredApplicationReceiptReachesWorkerResult(t *testing.T, client *fake.Clientset, loop *ResponderLoop, receiptID string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	dispatcher := KubernetesJobDispatcher{Client: client, Namespace: "demo", Registry: testIncidentRegistry(t, "responder:test"), AgentID: testIncidentAgentID(t), RepositoryPVC: "repo", RepositoryMountPath: filepath.Dir(loop.Request.RepositoryWorktree), ServiceAccount: "responder", PollInterval: time.Millisecond, RequireMemorySnapshot: true, Catalog: fixedMemoryCatalog{loop.Request.RepositoryBaseCommit}, LoopFactory: func(IncidentRequest) *ResponderLoop { return loop }}
+	type result struct {
+		value IncidentResult
+		err   error
+	}
+	done := make(chan result, 1)
+	go func() { value, err := dispatcher.Dispatch(ctx, loop.Request); done <- result{value, err} }()
+	job := awaitJob(t, client, IncidentJobName(loop.Request.IncidentID))
+	response := completedResult(loop.Request.IncidentID)
+	response.RepairActions = nil
+	publishContinuationResult(t, client, job, response)
+	completed := <-done
+	if completed.err != nil {
+		t.Fatal(completed.err)
+	}
+	for _, receipt := range completed.value.RepairActions {
+		if receipt.ActionID == receiptID && receipt.Success {
+			return
+		}
+	}
+	t.Fatalf("worker result lost pre-restart controller receipt: %+v", completed.value.RepairActions)
 }
