@@ -430,5 +430,14 @@ func (l *ResponderLoop) RefreshPendingMitigations(ctx context.Context) bool {
 }
 
 // hasPendingMitigationsLocked is consumed by the closure guard while it owns
-// both responder locks. It does no I/O and cannot grant mutation authority.
-func (l *ResponderLoop) hasPendingMitigationsLocked() bool { return len(l.pendingWrites) > 0 }
+// both responder locks. Poll only outstanding rollouts so a silent responder
+// does not leave settled targets reserved. Observation never writes objects.
+func (l *ResponderLoop) hasPendingMitigationsLocked() bool {
+	if len(l.pendingWrites) == 0 {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	l.settlePending(ctx)
+	return len(l.pendingWrites) > 0
+}
