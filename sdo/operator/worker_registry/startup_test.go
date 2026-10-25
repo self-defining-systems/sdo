@@ -154,3 +154,29 @@ func TestNativeStartupClockDirectoryIsReadOnlyToWorker(t *testing.T) {
 	}
 	t.Fatal("agent can replace native startup clocks")
 }
+
+func TestStartupAttemptEvidencePreservesInitialAndColdContinuation(t *testing.T) {
+	root := t.TempDir()
+	os.MkdirAll(filepath.Join(root, "session/startup"), 0700)
+	e := KubernetesExecutor{Client: fake.NewSimpleClientset(), Namespace: "control", RepositoryMountPath: root, SessionPVCSubPath: "session"}
+	first := time.Now().UTC()
+	later := first.Add(time.Second)
+	e.emitStartup(&ResponderStartup{IncidentID: "incident", JobName: "sdo-standby-first", Mode: "warm", TaskBoundAt: &first, ClaimedAt: &first, InitContainers: map[string]ContainerStartup{}})
+	e.emitStartup(&ResponderStartup{IncidentID: "incident", JobName: "sdo-continuation", Mode: "cold", TaskBoundAt: &later, InitContainers: map[string]ContainerStartup{}})
+	data, err := os.ReadFile(filepath.Join(root, "session/startup/attempts/sdo-continuation/startup-controller.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var record ResponderStartup
+	if err := json.Unmarshal(data, &record); err != nil {
+		t.Fatal(err)
+	}
+	if record.Mode != "cold" || record.ClaimedAt != nil || !record.TaskBoundAt.Equal(later) {
+		t.Fatalf("incorrect continuation clock %+v", record)
+	}
+	initial, _ := os.ReadFile(filepath.Join(root, "session/startup/startup-controller.json"))
+	json.Unmarshal(initial, &record)
+	if record.Mode != "warm" {
+		t.Fatal("initial clock overwritten")
+	}
+}

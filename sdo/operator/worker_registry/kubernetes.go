@@ -127,9 +127,11 @@ func (e KubernetesExecutor) Execute(ctx context.Context, task *contracts.AgentTa
 		return nil, fmt.Errorf("validate agent task: %w", err)
 	}
 	// Executors survive continuation turns; bindings belong to immutable tasks.
- binding, err := e.loadWarmBinding(task)
- if err != nil { return nil, err }
- e.WarmBinding = binding
+	binding, err := e.loadWarmBinding(task)
+	if err != nil {
+		return nil, err
+	}
+	e.WarmBinding = binding
 	if result, recovered, err := e.RecoverCompleted(ctx, task); err != nil {
 		return nil, err
 	} else if recovered {
@@ -228,6 +230,9 @@ func (e KubernetesExecutor) Execute(ctx context.Context, task *contracts.AgentTa
 		if relative, err := filepath.Rel(sessionPVCBase(e.RepositoryPVCSubPath), e.SessionPVCSubPath); err == nil {
 			session := filepath.Join(e.RepositoryMountPath, relative)
 			if info, err := os.Stat(session); err == nil && info.IsDir() {
+				if err := os.MkdirAll(filepath.Join(session, "startup-workers", jobName), 0700); err != nil {
+					return nil, err
+				}
 				if err := os.MkdirAll(filepath.Join(session, "startup"), 0700); err != nil {
 					return nil, err
 				}
@@ -512,7 +517,7 @@ func (e KubernetesExecutor) ensureJob(ctx context.Context, task *contracts.Agent
 	if e.SessionPVCSubPath != "" {
 		env = append(env, corev1.EnvVar{Name: "SDO_SESSION_DIR", Value: "/sdo/session"})
 		if task.GetRequest().MessageIs(&contracts.IncidentRequest{}) {
-			env = append(env, corev1.EnvVar{Name: "SDO_STARTUP_TIMING_PATH", Value: "/sdo/session/startup-worker.json"})
+			env = append(env, corev1.EnvVar{Name: "SDO_STARTUP_TIMING_PATH", Value: "/sdo/session/startup-workers/" + jobName + "/startup-worker.json"})
 		}
 	}
 	judge := task.GetRequest().MessageIs(&contracts.HealthJudgeRequest{})

@@ -120,7 +120,10 @@ func (e KubernetesExecutor) emitStartup(r *ResponderStartup) {
 	if e.SessionPVCSubPath != "" {
 		relative, err := filepath.Rel(sessionPVCBase(e.RepositoryPVCSubPath), e.SessionPVCSubPath)
 		if err == nil {
-			data, err := os.ReadFile(filepath.Join(e.RepositoryMountPath, relative, "startup-worker.json"))
+			data, err := os.ReadFile(filepath.Join(e.RepositoryMountPath, relative, "startup-workers", r.JobName, "startup-worker.json"))
+			if errors.Is(err, os.ErrNotExist) {
+				data, err = os.ReadFile(filepath.Join(e.RepositoryMountPath, relative, "startup-worker.json"))
+			}
 			if err == nil {
 				var worker WorkerStartup
 				if json.Unmarshal(data, &worker) == nil {
@@ -161,10 +164,36 @@ func (e KubernetesExecutor) emitStartup(r *ResponderStartup) {
 		}
 		if data, err := os.ReadFile(filepath.Join(e.RepositoryMountPath, relative, "startup", "startup-dispatch.json")); err == nil {
 			var timing DispatchStartup
-			if json.Unmarshal(data, &timing) == nil {
+			if json.Unmarshal(data, &timing) == nil && r.TaskBoundAt == nil {
 				r.Mode = timing.Mode
 				r.TaskBoundAt = &timing.TaskBoundAt
 				r.ClaimedAt = timing.ClaimedAt
+			}
+		}
+	}
+	// A continuation must not inherit worker/session boundaries from the initial attempt.
+	if r.TaskBoundAt != nil {
+		if r.SessionOpenedAt != nil && r.SessionOpenedAt.Before(*r.TaskBoundAt) {
+			r.SessionOpenedAt = nil
+			r.SessionOpenReceivedAt = nil
+		}
+		for _, timestamp := range []**time.Time{&r.WorkerReady, &r.AgentProcessStarted, &r.CodexProcessStarted, &r.FirstModelRequestSent} {
+			if *timestamp != nil && (*timestamp).Before(*r.TaskBoundAt) {
+				*timestamp = nil
+			}
+		}
+		if relative, err := filepath.Rel(sessionPVCBase(e.RepositoryPVCSubPath), e.SessionPVCSubPath); err == nil {
+			files, _ := filepath.Glob(filepath.Join(e.RepositoryMountPath, relative, "startup/session-opens/*.json"))
+			for _, filename := range files {
+				data, err := os.ReadFile(filename)
+				if err != nil {
+					continue
+				}
+				var timing SessionStartup
+				if json.Unmarshal(data, &timing) == nil && !timing.ReceivedAt.Before(*r.TaskBoundAt) && (r.SessionOpenedAt == nil || timing.OpenedAt.Before(*r.SessionOpenedAt)) {
+					r.SessionOpenedAt = &timing.OpenedAt
+					r.SessionOpenReceivedAt = &timing.ReceivedAt
+				}
 			}
 		}
 	}
@@ -202,6 +231,10 @@ func (e KubernetesExecutor) emitStartup(r *ResponderStartup) {
 		if e.SessionPVCSubPath != "" {
 			relative, err := filepath.Rel(sessionPVCBase(e.RepositoryPVCSubPath), e.SessionPVCSubPath)
 			if err == nil {
+				attempt := filepath.Join(e.RepositoryMountPath, relative, "startup/attempts", r.JobName)
+				if os.MkdirAll(attempt, 0700) == nil {
+					_ = writeStartupOnce(filepath.Join(attempt, "startup-controller.json"), r)
+				}
 				filename := filepath.Join(e.RepositoryMountPath, relative, "startup", "startup-controller.json")
 				file, err := os.OpenFile(filename, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 				if errors.Is(err, os.ErrExist) {

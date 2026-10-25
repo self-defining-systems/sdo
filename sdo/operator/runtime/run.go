@@ -166,6 +166,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	repositoryPVCSubPath := flags.String("repository-pvc-subpath", "", "optional shared repository PVC subPath for job mode")
 	credentialsSecret := flags.String("responder-credentials-secret", "", "Codex credentials Secret for job mode")
 	var responderEnvironment repeatedFlag
+	responderStandby := flags.Bool("responder-standby", true, "pre-start a responder; false forces cold Jobs")
 	flags.Var(&responderEnvironment, "responder-env", "responder Job environment NAME=VALUE; may be repeated")
 	telemetryPath := flags.String(
 		"firing-telemetry-path",
@@ -625,7 +626,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			},
 		}
 	}
-	if !clientInjected && jobDispatch && standbyEnabled(jobEnvironment) {
+	if !clientInjected && jobDispatch && *responderStandby && standbyEnabled(jobEnvironment) {
 		d := dispatcher.(KubernetesJobDispatcher)
 		standbyEnvironment := make(map[string]string, len(jobEnvironment)+5)
 		for name, value := range jobEnvironment {
@@ -1670,4 +1671,6 @@ func executePendingEffects(ctx context.Context, controller *Controller) (err err
 }
 
 // Existing responder-env configuration also provides a cold-only rollout switch.
-func standbyEnabled(environment map[string]string) bool { return environment["SDO_RESPONDER_STANDBY"]!="0" }
+func standbyEnabled(environment map[string]string) bool {
+	return environment["SDO_RESPONDER_STANDBY"] != "0"
+}

@@ -5,6 +5,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -280,4 +281,14 @@ func argPairs(args []string) map[string]string {
 		}
 	}
 	return pairs
+}
+
+func TestColdStandbySwitchSurvivesTypedRuntimeLaunch(t *testing.T) {
+	config := fullControllerConfig()
+	enabled := false
+	config.ResponderStandby = &enabled
+	args := controllerConfigToArgs(config)
+	if !slices.Contains(args, "--responder-standby=false") {
+		t.Fatalf("cold switch absent: %v", args)
+	}
 }

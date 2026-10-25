@@ -2,8 +2,7 @@ package runtime
 
 import (
 	"context"
-"os"
-"path/filepath"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"google.golang.org/protobuf/proto"
@@ -14,6 +13,8 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 	ktesting "k8s.io/client-go/testing"
 	"math/rand"
+	"os"
+	"path/filepath"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"sdo.dev/operator/sdk"
@@ -424,12 +425,61 @@ func TestExpiredIncidentDoesNotInheritEarlierFailure(t *testing.T) {
 	}
 }
 
-func TestRWSBoundStandbyCountsAsLiveWork(t *testing.T){
- root:=t.TempDir();dir:=filepath.Join(root,".sdo-runtime/standby/bindings");os.MkdirAll(dir,0700)
- data:=[]byte(`{"job_name":"sdo-standby-live","incident_id":"stale","request_digest":"digest"}`);os.WriteFile(filepath.Join(dir,"digest.json"),data,0600)
- job:=&batchv1.Job{ObjectMeta:metav1.ObjectMeta{Name:"sdo-standby-live",Namespace:"control"},Status:batchv1.JobStatus{Active:1}}
- pod:=&corev1.Pod{ObjectMeta:metav1.ObjectMeta{Name:"worker",Namespace:"control",OwnerReferences:[]metav1.OwnerReference{{Kind:"Job",Name:job.Name}}},Status:corev1.PodStatus{Phase:corev1.PodRunning}}
- client:=fake.NewSimpleClientset(job,pod);d:=KubernetesJobDispatcher{Client:client,Namespace:"control",RepositoryMountPath:root}
- active,err:=d.IncidentWorkActive(context.Background(),"stale");if err!=nil||!active{t.Fatalf("bound worker invisible: %v %v",active,err)}
- client.BatchV1().Jobs("control").Delete(context.Background(),job.Name,metav1.DeleteOptions{});active,err=d.IncidentWorkActive(context.Background(),"stale");if err!=nil||!active{t.Fatalf("orphan bound pod invisible: %v %v",active,err)}
+func TestRWSBoundStandbyCountsAsLiveWork(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, ".sdo-runtime/standby/bindings")
+	os.MkdirAll(dir, 0700)
+	data := []byte(`{"job_name":"sdo-standby-live","incident_id":"stale","request_digest":"digest"}`)
+	os.WriteFile(filepath.Join(dir, "digest.json"), data, 0600)
+	job := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "sdo-standby-live", Namespace: "control"}, Status: batchv1.JobStatus{Active: 1}}
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "worker", Namespace: "control", OwnerReferences: []metav1.OwnerReference{{Kind: "Job", Name: job.Name}}}, Status: corev1.PodStatus{Phase: corev1.PodRunning}}
+	client := fake.NewSimpleClientset(job, pod)
+	d := KubernetesJobDispatcher{Client: client, Namespace: "control", RepositoryMountPath: root}
+	active, err := d.IncidentWorkActive(context.Background(), "stale")
+	if err != nil || !active {
+		t.Fatalf("bound worker invisible: %v %v", active, err)
+	}
+	client.BatchV1().Jobs("control").Delete(context.Background(), job.Name, metav1.DeleteOptions{})
+	active, err = d.IncidentWorkActive(context.Background(), "stale")
+	if err != nil || !active {
+		t.Fatalf("orphan bound pod invisible: %v %v", active, err)
+	}
+}
+
+func TestRWSRestartAfterDeadlineRetainsBoundStandby(t *testing.T) {
+	ctx := context.Background()
+	start := time.Unix(1000, 0)
+	config := testControllerConfig()
+	config.FiringThreshold = 1
+	initial, err := NewController(config, []sdk.Detector{controllerDetector("fault", time.Hour, stateFinding("fault"))}, staticProvider{snapshot: sdktest.Snapshot{}}, &recordingDispatcher{requests: make(chan IncidentRequest, 1)}, start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := initial.Step(ctx, start, nil); err != nil {
+		t.Fatal(err)
+	}
+	state := exportState(t, initial)
+	id := state.IncidentRequest.IncidentId
+	state.DispatchState = contracts.DispatchState_DISPATCH_STATE_RUNNING
+	root := t.TempDir()
+	dir := filepath.Join(root, ".sdo-runtime/standby/bindings")
+	os.MkdirAll(dir, 0700)
+	data, _ := json.Marshal(map[string]string{"job_name": "sdo-standby-running", "incident_id": id})
+	os.WriteFile(filepath.Join(dir, "binding.json"), data, 0600)
+	job := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "sdo-standby-running", Namespace: "control"}, Status: batchv1.JobStatus{Active: 1}}
+	now := state.IncidentRequest.ResponseDeadline.AsTime().Add(time.Minute)
+	restored, err := NewController(config, []sdk.Detector{controllerDetector("fault", time.Hour, stateFinding("fault"))}, staticProvider{snapshot: sdktest.Snapshot{}}, KubernetesJobDispatcher{Client: fake.NewSimpleClientset(job), Namespace: "control", RepositoryMountPath: root}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := restored.RestoreState(state); err != nil {
+		t.Fatal(err)
+	}
+	if err := restored.retireExpiredIncident(ctx, now); err != nil {
+		t.Fatal(err)
+	}
+	got := exportState(t, restored)
+	if !got.IncidentOpen || got.IncidentRequest.IncidentId != id || len(got.FailedClosures) > 0 {
+		t.Fatal("restart archived a live warm responder")
+	}
 }

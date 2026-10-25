@@ -683,3 +683,5 @@ record. Legacy final records without reachability evidence emit a typed
 The legacy controller checkpoint is recognized by its exact name,
 `sdo.dev/state-revision` annotation and `runtime-state.json` key. Retiring it
 prevents restored controller state from resurrecting old onboarding authority. Fresh installs discard old maintenance generations and use the existing ACTIVE default when no maintenance record exists. Legacy maintenance records require the exact valid closed data shape; newly written records carry SDO ownership labels.
+
+The native installer and controller accept `--responder-standby=false` to force cold responder Jobs. The optional typed controller launch field `responder_standby` carries that choice. Standby admission requires enough remaining Job lifetime for the frozen response budget plus one minute; aging idle slots are replaced. Incident liveness and receipt export resolve durable execution identities, including bound standby Jobs. Initial startup clocks remain immutable; `startup/attempts/<job>/startup-controller.json` and `startup-workers/<job>/startup-worker.json` retain typed attempt evidence.

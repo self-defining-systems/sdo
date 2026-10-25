@@ -87,6 +87,13 @@ func RecordSessionStartup(repositoryMount, pvcSubPath, sessionSubPath string, re
 	if err := os.MkdirAll(directory, 0700); err != nil {
 		return err
 	}
+	attempts := filepath.Join(directory, "session-opens")
+	if err := os.MkdirAll(attempts, 0700); err != nil {
+		return err
+	}
+	if err := writeStartupOnce(filepath.Join(attempts, fmt.Sprintf("%d.json", received.UnixNano())), SessionStartup{ReceivedAt: received, OpenedAt: opened}); err != nil {
+		return err
+	}
 	filename := filepath.Join(directory, "startup-session.json")
 	return writeStartupOnce(filename, SessionStartup{ReceivedAt: received, OpenedAt: opened})
 }

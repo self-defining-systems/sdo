@@ -3,6 +3,7 @@ package worker_registry
 import (
 	"context"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -10,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/contracts/wire"
 	"strings"
 	"testing"
 	"time"
@@ -26,6 +28,29 @@ func TestRWSWarmContinuationCreatesColdJob(t *testing.T) {
 			}
 			if err := bound.publishWarmTask(context.Background(), task); err != nil {
 				t.Fatal(err)
+			}
+			response, _ := anypb.New(&contracts.IncidentResult{IncidentId: "incident", Status: "completed"})
+			result := &contracts.AgentResult{SchemaVersion: SchemaVersion, TaskId: task.TaskId, Status: "completed", ProposalId: task.Workspace.ProposalId, Response: response}
+			data, err := wire.Canonical(result)
+			if err != nil {
+				t.Fatal(err)
+			}
+			payload, err := wire.Canonical(task)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := bound.ensureRequest(context.Background(), bound.WarmBinding.JobName+"-request", string(payload)); err != nil {
+				t.Fatal(err)
+			}
+			_, err = e.Client.CoreV1().ConfigMaps(e.Namespace).Create(context.Background(), &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: bound.WarmBinding.JobName + "-result"}, Data: map[string]string{ResultDataKey: string(data)}}, metav1.CreateOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			job, _ := e.Client.BatchV1().Jobs(e.Namespace).Get(context.Background(), bound.WarmBinding.JobName, metav1.GetOptions{})
+			job.Status.Succeeded = 1
+			e.Client.BatchV1().Jobs(e.Namespace).UpdateStatus(context.Background(), job, metav1.UpdateOptions{})
+			if _, err := bound.Execute(context.Background(), task); err != nil {
+				t.Fatal("initial warm result was not recoverable", err)
 			}
 			file := filepath.Join(e.RepositoryMountPath, "session/startup/initial")
 			os.WriteFile(file, []byte("initial"), 0600)

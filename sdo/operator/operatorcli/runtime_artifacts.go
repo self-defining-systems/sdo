@@ -18,7 +18,7 @@ import (
 	"sdo.dev/operator/worker_registry"
 )
 
-const runtimeArtifactsArchiveScript = `cd "$1" 2>/dev/null || exit 0; find usage telemetry sessions setup codex/sessions claude/projects -type f 2>/dev/null | while IFS= read -r path; do lower_path=$(printf '%s' "$path" | tr '[:upper:]' '[:lower:]'); case "$lower_path" in *cache*|*plugin*|*catalog*) continue;; esac; base=${lower_path##*/}; case "$base" in *auth*|*credential*|*token*) [ "$base" = token_usage.json ] || continue;; esac; case "$path" in setup/*/*.jsonl|usage/*.jsonl|telemetry/*.jsonl|telemetry/*.jsonl.1|sessions/*/*.jsonl|sessions/*/token_usage.json|sessions/*/scratch/sdo-reports/*/[0-9][0-9][0-9][0-9]-act.json|sessions/*/scratch/sdo-reports/*/[0-9][0-9][0-9][0-9]-apply.json|sessions/*/scratch/sdo-reports/*/[0-9][0-9][0-9][0-9]-mitigate.json|sessions/*/startup-controller.json|sessions/*/startup-worker.json|sessions/*/startup-daemon.json|sessions/*/startup-session.json|sessions/*/startup-dispatch.json|sessions/*/corpus/*.json|sessions/*/model_io/*/*.json|sessions/*/checkpoints/*/request.json|sessions/*/checkpoints/*/result.json|sessions/*/checkpoints/*/file_edits.json|sessions/*/codex/sessions/*/rollout-*.jsonl|sessions/*/claude/projects/*.jsonl|codex/sessions/*/rollout-*.jsonl|claude/projects/*.jsonl) printf '%s\n' "$path";; esac; done | tar -cf - -T -`
+const runtimeArtifactsArchiveScript = `cd "$1" 2>/dev/null || exit 0; find usage telemetry sessions setup codex/sessions claude/projects -type f 2>/dev/null | while IFS= read -r path; do lower_path=$(printf '%s' "$path" | tr '[:upper:]' '[:lower:]'); case "$lower_path" in *cache*|*plugin*|*catalog*) continue;; esac; base=${lower_path##*/}; case "$base" in *auth*|*credential*|*token*) [ "$base" = token_usage.json ] || continue;; esac; case "$path" in setup/*/*.jsonl|usage/*.jsonl|telemetry/*.jsonl|telemetry/*.jsonl.1|sessions/*/*.jsonl|sessions/*/token_usage.json|sessions/*/scratch/sdo-reports/*/[0-9][0-9][0-9][0-9]-act.json|sessions/*/scratch/sdo-reports/*/[0-9][0-9][0-9][0-9]-apply.json|sessions/*/scratch/sdo-reports/*/[0-9][0-9][0-9][0-9]-mitigate.json|sessions/*/startup-controller.json|sessions/*/startup-workers/*/startup-worker.json|sessions/*/startup/attempts/*/startup-controller.json|sessions/*/startup-worker.json|sessions/*/startup-daemon.json|sessions/*/startup-session.json|sessions/*/startup-dispatch.json|sessions/*/corpus/*.json|sessions/*/model_io/*/*.json|sessions/*/checkpoints/*/request.json|sessions/*/checkpoints/*/result.json|sessions/*/checkpoints/*/file_edits.json|sessions/*/codex/sessions/*/rollout-*.jsonl|sessions/*/claude/projects/*.jsonl|codex/sessions/*/rollout-*.jsonl|claude/projects/*.jsonl) printf '%s\n' "$path";; esac; done | tar -cf - -T -`
 
 // RuntimeArtifactsConfig is a read-only export of whitelisted runtime evidence.
 // It contains no agent credentials and does not expose the accepted checkout.
@@ -127,6 +127,12 @@ func allowedRuntimeArtifact(name string) bool {
 	}
 	if len(parts) == 3 {
 		return strings.HasSuffix(base, ".jsonl") || base == "token_usage.json" || isStartupTimingArtifact(base)
+	}
+	if len(parts) == 5 && parts[2] == "startup-workers" {
+		return base == "startup-worker.json"
+	}
+	if len(parts) == 6 && parts[2] == "startup" && parts[3] == "attempts" {
+		return base == "startup-controller.json"
 	}
 	if len(parts) == 4 && parts[2] == "startup" {
 		return base == "startup-controller.json" || base == "startup-session.json" || base == "startup-dispatch.json"

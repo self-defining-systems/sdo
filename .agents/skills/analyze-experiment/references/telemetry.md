@@ -195,3 +195,5 @@ use the verification timestamp for these closures. Reflection waits for the
 report or grace and retains the controller's receipts and resumable session.
 The benchmark's ordinary grading remains after resolution/learning in
 `fastloop/loop.py`; no grader signal enters controller verification.
+
+Per-Job native timings are exported at `sessions/<session>/startup/attempts/<job>/startup-controller.json`; worker clocks are at `sessions/<session>/startup-workers/<job>/startup-worker.json`. Initial incident files remain unchanged. A cold continuation keeps `mode=cold` and its own task-bound boundary; missing per-attempt boundaries stay unavailable rather than inheriting an earlier prompt's timestamps. Use the actual `responder_job_name` from native incident evidence for strict Kubernetes receipts, including warm Jobs. `--responder-standby=false` on install-existing/controller forces cold execution.
