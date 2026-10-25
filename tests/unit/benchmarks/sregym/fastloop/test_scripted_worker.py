@@ -95,6 +95,11 @@ def test_scripted_entry_points_complete_on_seed_copy_with_fake_kubernetes_api(
 ) -> None:
     seed = tmp_path / "seed"
     shutil.copytree(seed_source, seed, ignore=shutil.ignore_patterns(".git"))
+    diagnostics = seed / ".sdo/diagnostics"
+    diagnostics.mkdir(parents=True, exist_ok=True)
+    (diagnostics / "go.mod").write_text(
+        "module fixture-diagnostics\n\ngo 1.24\n\nrequire sdo.dev/operator/sdk v0.0.0\n"
+    )
     raw = json.loads((FIXTURES / "incident_request.json").read_text(encoding="utf-8"))
     raw["repository_worktree"] = str(seed)
     raw["namespace"] = "hotel"
