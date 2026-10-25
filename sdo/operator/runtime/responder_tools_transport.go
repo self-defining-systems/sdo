@@ -281,5 +281,9 @@ func (l *ResponderLoop) detect(ctx context.Context, ids []string, response *Tool
 		response.DetectorStates = append(response.DetectorStates, state)
 	}
 	sortFindings(response.Findings)
+	response.Healthy = response.Error == "" && len(response.Findings) == 0 && len(response.DetectorStates) > 0
+	for _, state := range response.DetectorStates {
+		response.Healthy = response.Healthy && state.Status == DetectorEvaluationClear
+	}
 	response.Summary = fmt.Sprintf("%d detectors evaluated; %d current findings", len(response.DetectorStates), len(response.Findings))
 }
