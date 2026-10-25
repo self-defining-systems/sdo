@@ -191,6 +191,27 @@ func (p *StandbyPool) TryBind(ctx context.Context, e KubernetesExecutor, task *c
 	if jobErr != nil || jobFailed(job) || jobCompleted(job) {
 		return e, nil
 	}
+	// A prepared cold request/result/Job owns this immutable task already.
+	// Rejoin it instead of moving a live worker's checkout/session to standby.
+	// This also keeps controller-side refresh limited to never-executed proposals.
+	lookupCtx, cancelLookup := context.WithTimeout(ctx, 100*time.Millisecond)
+	priorName, lookupErr := e.taskJobName(lookupCtx, task)
+	if lookupErr != nil {
+		cancelLookup()
+		return e, nil
+	}
+	for _, suffix := range []string{"-request", "-result"} {
+		_, err := e.Client.CoreV1().ConfigMaps(e.Namespace).Get(lookupCtx, priorName+suffix, metav1.GetOptions{})
+		if err == nil || !apierrors.IsNotFound(err) {
+			cancelLookup()
+			return e, nil
+		}
+	}
+	_, priorErr := e.Client.BatchV1().Jobs(e.Namespace).Get(lookupCtx, priorName, metav1.GetOptions{})
+	cancelLookup()
+	if priorErr == nil || !apierrors.IsNotFound(priorErr) {
+		return e, nil
+	}
 	reservation, err := os.OpenFile(filepath.Join(slot.Directory, "reservation"), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if err != nil {
 		return e, nil

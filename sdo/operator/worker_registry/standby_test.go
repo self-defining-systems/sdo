@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"sdo.dev/operator/contracts/wire"
 	"sdo.dev/operator/memory"
 	"strings"
 	"testing"
@@ -475,5 +476,32 @@ func TestStandbyExecutorRejoinsDurableBindingWithoutPool(t *testing.T) {
 	}
 	if timing.Mode != "warm" || timing.ClaimedAt == nil {
 		t.Fatal("restart hid warm claim as cold", string(data))
+	}
+}
+
+func TestStandbyNeverReplacesAnExistingColdExecution(t *testing.T) {
+	pool, e, task := standbyFixture(t)
+	slot := readyStandby(t, pool)
+	payload, err := wire.Canonical(task)
+	if err != nil {
+		t.Fatal(err)
+	}
+	coldName := JobName(task.TaskId)
+	if err := e.ensureRequest(context.Background(), coldName+"-request", string(payload)); err != nil {
+		t.Fatal(err)
+	}
+	registration, err := e.Registry.Resolve(task.AgentId, task.TaskType)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.ensureJob(context.Background(), task, registration.GetKubernetesJob(), coldName, requestSource{ConfigMap: coldName + "-request"}, coldName+"-result", "proposal"); err != nil {
+		t.Fatal(err)
+	}
+	bound, err := pool.TryBind(context.Background(), e, task)
+	if err != nil || bound.WarmBinding != nil {
+		t.Fatal("cold retry was diverted to a second warm worker", err)
+	}
+	if _, err := os.Stat(filepath.Join(slot.Directory, "reservation")); !os.IsNotExist(err) {
+		t.Fatal("cold retry consumed standby")
 	}
 }
