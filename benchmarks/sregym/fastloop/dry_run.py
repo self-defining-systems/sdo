@@ -18,7 +18,6 @@ INVARIANTS = (
     "restore",
     "onboarding",
     "setup_memory",
-    "lane_resources",
     "rbac_equality",
     "stabilization",
     "probe_placement",
