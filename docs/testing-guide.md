@@ -447,3 +447,17 @@ uv run pytest -q tests/unit/benchmarks/sregym/fastloop/test_fast_image_delivery.
 Direct controller launches require `--toolchain-image <controller-image>`;
 `install-existing` supplies it automatically. The traffic prober image is
 independent. Missing compiler configuration fails at startup.
+
+CI checks out the immutable event commit (`github.sha`), so retargeting a PR
+cannot make an in-flight job fetch a newer merge ref. Compare the actual
+checkout SHA in job logs when two runs of the same PR head disagree: their
+merge parents may differ even when the API reports the same current base.
+
+The Python tests' native CLI is built by `scripts/operator_test_binary.py`.
+Its cache filename uses the full SHA-256 of the Go-selected dependency source,
+embedded files, module metadata, and effective toolchain/build settings. Each
+reuse checks the binary's embedded `source-hash` against those inputs and fails
+immediately on mismatch, including binaries without a stamp. This cache has no
+prefix fallback. Go's separate compiler/module caches remain content-addressed
+and can be shared across source revisions. To check an existing binary, run
+`uv run python scripts/operator_test_binary.py --check /absolute/path/to/sdo-operator`.
