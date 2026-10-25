@@ -6,17 +6,16 @@ description: Author or refine deterministic Go health and incident detectors fro
 # Authoring a detector
 
 A detector reads the runtime snapshot and returns findings. Keep it deterministic: no model, environment,
-clock, network access or benchmark data. Measure ages with `sdk.ObservationTime(ctx)`, never `time.Now()`. The installed `sdo-memory` skill explains ownership and logical IDs.
+clock, network access or benchmark data. Measure ages with `sdk.ObservationTime(ctx)`, never `time.Now()`. Read the [memory principles](../sdo-memory/SKILL.md#memory-principles) for evidence, reuse and generalization; that skill also explains ownership and logical IDs.
 
-1. Compare the confirmed mechanism with accepted detectors. Widen one when only resource identity or a
-   parameter differs; add one only for a different mechanism. The installed `service-endpoints` and
+1. Compare the confirmed mechanism with accepted detectors using the memory principles. The installed `service-endpoints` and
    `workload-health` detectors already cover endpoint readiness and generic pod/Deployment health.
    `pod-admission` checks a frozen server-side dry-run Pod create via `ctx.PodAdmission()`; API rejections fire,
    while missing observations and transport failures are errors. Test with `sdktest.Snapshot.Admission`.
 2. Before implementing, read the [generated SDK](references/sdk.md). Keep the detector's manifest and Spec
    identical, including watches, persistence, playbook IDs and accepted provenance.
 3. Derive relationships from observed objects. Use the context namespace for absent resources and emit
-   stable fingerprints and role bindings. Never hard-code incident names, ports or images.
+   stable fingerprints and role bindings.
 4. Prove a matching case and near misses with the [generated replay API](references/replay.md).
    The [restart-loop source](assets/restart-loop/detector.go) and
    [tests](assets/restart-loop/detector_test.go) show the current detector interface.
