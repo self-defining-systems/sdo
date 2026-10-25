@@ -116,7 +116,7 @@ func (e PlanExecutor) applyRuntimePlan(ctx context.Context, incident IncidentReq
 				}
 				users, readErr := catalog.DatabaseUsers(ctx, a.Target)
 				if readErr != nil {
-					return result, fmt.Errorf("database catalog observation unavailable")
+					return result, databaseSafeError(readErr, "database catalog observation unavailable")
 				}
 				keyTarget := a.Target
 				keyTarget.Auth = nil
@@ -198,7 +198,7 @@ func (e PlanExecutor) applyRuntimePlan(ctx context.Context, incident IncidentReq
 			result.Applied = true
 			if effectErr := catalog.EnsureDatabaseUser(ctx, a); effectErr != nil {
 				result.ActionReports[i].Status = "unknown"
-				return result, fmt.Errorf("database operation outcome unknown")
+				return result, databaseSafeError(effectErr, "database operation outcome unknown")
 			}
 			observedPod, podErr := e.Client.Get(ctx, ref)
 			if podErr != nil || observedPod == nil || observedPod.GetUID() != items[i].uid {

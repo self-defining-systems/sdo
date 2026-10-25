@@ -47,7 +47,7 @@ func TestDatabaseCatalogTransportProjectionAndCanaries(t *testing.T) {
 				q := r.URL.Query()
 				command := q["command"]
 				joined := strings.Join(command, " ")
-				if strings.Contains(joined, canary) || !strings.Contains(joined, "--host 127.0.0.1 --port 27017 --eval") || !strings.Contains(joined, "ADMIN_PASSWORD") {
+				if strings.Contains(joined, canary) || !strings.Contains(joined, "--host 127.0.0.1 --port 27017 /dev/stdin") || strings.Contains(joined, "ADMIN_PASSWORD") {
 					t.Errorf("command did not preserve reference-only noninteractive execution")
 				}
 				if q.Get("stdin") != "true" || q.Get("stderr") == "true" || q.Get("tty") == "true" || (q.Get("stdout") == "true") != (mode != "ensure") {
@@ -90,8 +90,9 @@ func TestDatabaseCatalogTransportProjectionAndCanaries(t *testing.T) {
 						return
 					}
 				}
-				if n, err := io.Copy(io.Discard, input); err != nil || n != 0 {
-					t.Errorf("unexpected stdin: %d %v", n, err)
+				script, err := io.ReadAll(input)
+				if err != nil || !strings.Contains(string(script), "ADMIN_PASSWORD") || strings.Contains(string(script), canary) {
+					t.Errorf("invalid reference-only stdin script: %v", err)
 				}
 				if output != nil {
 					body := `[{"name":"app","roles":[{"database":"app","name":"readWrite"}]}]`

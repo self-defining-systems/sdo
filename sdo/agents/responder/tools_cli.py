@@ -139,7 +139,12 @@ def _parser() -> argparse.ArgumentParser:
             "with version 1 and options [{option_id, bindings, parameters, finding_fingerprints}]. "
             "Each option has its own receipt; one call uses one round. Pending rollout returns its application ID "
             "and read-only tools remain available. A single option also accepts --NAME VALUE parameters. "
-            "Uses the ordinary executor and controller RBAC; up to five rounds per incident."
+            "Uses the ordinary executor and controller RBAC; up to five rounds per incident. "
+            "EnsureDatabaseUser repairs a MongoDB user in one call. Its password and target.auth "
+            "username/password take exactly one credential reference: {env: NAME} or "
+            "{config_map: {name: CONFIGMAP, key: KEY, assignment: optional_NAME}} in the target Pod namespace. "
+            "Assignment selects one literal NAME=value line. The executor resolves values privately; "
+            "never put credential values in arguments, evidence or memory. Direct Secret keys are unavailable."
         ),
     )
     mitigate.add_argument("option", nargs="?", help="option ID or unambiguous program ID from the current menu")

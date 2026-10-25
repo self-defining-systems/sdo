@@ -61,10 +61,16 @@ func (v *cachedReadView) DatabaseUsers(t program.DatabaseTarget) ([]program.Data
 }
 
 // mongoScript constructs fixed operations, encoding all identifiers as JSON.
-// Env references are evaluated by the Mongo shell, never the controller.
+// Env references are evaluated by the Mongo shell. This function never resolves values.
 func mongoScript(t program.DatabaseTarget, a *program.EnsureDatabaseUser) string {
+	return mongoScriptWithCredentials(t, a, func(r program.CredentialRef) string {
+		b, _ := json.Marshal(r.Env)
+		return "credential(" + string(b) + ")"
+	})
+}
+
+func mongoScriptWithCredentials(t program.DatabaseTarget, a *program.EnsureDatabaseUser, env func(program.CredentialRef) string) string {
 	q := func(v any) string { b, _ := json.Marshal(v); return string(b) }
-	env := func(r program.CredentialRef) string { return "credential(" + q(r.Env) + ")" }
 	script := `try { function credential(n){var v=(typeof process!=="undefined" && process.env)?process.env[n]:_getEnv(n);if(typeof v!=="string" || v.length===0){throw new Error("unavailable");}return v;}`
 	if t.Auth != nil {
 		script += "var authDB=db.getSiblingDB(" + q(t.Auth.Database) + ");if(!authDB.auth(" + env(t.Auth.Username) + "," + env(t.Auth.Password) + ")){throw new Error('auth');}"
@@ -114,7 +120,11 @@ func (c TypedPlanClient) mongo(ctx context.Context, t program.DatabaseTarget) ([
 	if shell == "" {
 		shell = "mongo"
 	}
-	command := []string{shell, "--quiet", "--norc", "--host", "127.0.0.1", "--port", "27017", "--eval", mongoScript(t, nil)}
+	input, err := c.mongoInput(ctx, t, nil)
+	if err != nil {
+		return nil, err
+	}
+	command := mongoCommandArgs(shell)
 	request := c.Client.CoreV1().RESTClient().Post().Resource("pods").Name(t.Pod.Name).Namespace(t.Pod.Namespace).SubResource("exec").VersionedParams(&corev1.PodExecOptions{Container: t.Container, Command: command, Stdin: true, Stdout: true, Stderr: false, TTY: false}, scheme.ParameterCodec)
 	config := rest.CopyConfig(c.ExecConfig)
 	transport, upgrader, err := spdytransport.RoundTripperFor(config)
@@ -127,7 +137,7 @@ func (c TypedPlanClient) mongo(ctx context.Context, t program.DatabaseTarget) ([
 	}
 	output := &catalogOutput{}
 	var stdout io.Writer = output
-	err = executor.StreamWithContext(ctx, remotecommand.StreamOptions{Stdin: strings.NewReader(""), Stdout: stdout})
+	err = executor.StreamWithContext(ctx, remotecommand.StreamOptions{Stdin: strings.NewReader(input), Stdout: stdout})
 	if err != nil {
 		return nil, fmt.Errorf("database operation failed or outcome unknown")
 	}
@@ -171,7 +181,12 @@ func (c TypedPlanClient) EnsureDatabaseUser(ctx context.Context, a program.Ensur
 	if shell == "" {
 		shell = "mongo"
 	}
-	command := program.Command{Pod: t.Pod, Container: t.Container, Args: []string{shell, "--quiet", "--norc", "--host", "127.0.0.1", "--port", "27017", "--eval", mongoScript(t, &a)}}
+	input, err := c.mongoInput(ctx, t, &a)
+	if err != nil {
+		return err
+	}
+	// This command is executor-local: only the reference-bearing action is recorded.
+	command := program.Command{Pod: t.Pod, Container: t.Container, Args: mongoCommandArgs(shell), Stdin: input}
 	code, err := c.runCommand(ctx, command)
 	if err != nil || code != 0 {
 		return fmt.Errorf("database operation failed or outcome unknown")
@@ -192,4 +207,35 @@ func unstructuredContainers(object map[string]any) ([]string, bool, error) {
 		names = append(names, name)
 	}
 	return names, found, err
+}
+
+// mongoCommandArgs keeps all scripts and credential bytes off process argv and
+// Kubernetes exec URLs. Legacy mongo accepts a filename; mongosh uses --file.
+func mongoCommandArgs(shell string) []string {
+	args := []string{shell, "--quiet", "--norc", "--host", "127.0.0.1", "--port", "27017"}
+	if shell == "mongosh" {
+		args = append(args, "--file")
+	}
+	return append(args, "/dev/stdin")
+}
+
+func (c TypedPlanClient) mongoInput(ctx context.Context, t program.DatabaseTarget, a *program.EnsureDatabaseUser) (string, error) {
+	var resolutionErr error
+	script := mongoScriptWithCredentials(t, a, func(ref program.CredentialRef) string {
+		if ref.ConfigMap == nil {
+			b, _ := json.Marshal(ref.Env)
+			return "credential(" + string(b) + ")"
+		}
+		value, err := c.resolveCredential(ctx, t.Pod.Namespace, ref)
+		if err != nil {
+			resolutionErr = err
+			return "null"
+		}
+		b, _ := json.Marshal(value)
+		return string(b)
+	})
+	if resolutionErr != nil {
+		return "", resolutionErr
+	}
+	return script, nil
 }
