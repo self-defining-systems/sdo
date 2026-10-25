@@ -529,8 +529,8 @@ after completion; the next launch replaces a stale record. The printed
 
 ### PR CI execution budget
 
-PR CI runs at most **three work jobs** in parallel: **Go modules**, **All runtime
-race tests**, and **Python, static, proto and affected images**. The fourth job,
+PR CI runs at most **three work jobs** in parallel: **Python/static/proto and Go modules**,
+**All runtime race tests**, and **Affected controller images**. The fourth job,
 `Required PR CI`, runs only after all three complete and remains the single
 branch-protection check. There is no selector job or test matrix. Repository
 policy rejects a fourth work job, counting every matrix expansion, as well as
@@ -547,15 +547,21 @@ upper bound enforces the complete path; aim for at most eight minutes of executi
 to retain headroom. All three work jobs time out after nine minutes.
 
 The Go module job starts its longest module alongside a sequential lane for
-smaller modules, with shared caches and bounded compiler parallelism. Runtime
+smaller modules. The full Python suite overlaps those lanes with one pytest worker
+and one Go compiler; both lane results are required even when one fails. Static
+and proto checks run first on that runner. Runtime
 uses **two disjoint partitions on one runner**, `contracts` and `integration`,
 without competing with unrelated module compilation. Run both locally with
 `uv run python scripts/test_runtime_shard.py --shard all`, or select either
-partition by name. Discovery compiles and lists tests once before both partitions
-start; both exit statuses are collected even if one fails. Every package,
+partition by name. Inventory discovery runs once before both partitions start,
+with shared Go build caches; both exit statuses are collected even if one fails. Every package,
 example, fuzz seed, replay, chaos and explorer test remains in the race suite.
 The exactly-once guard rejects missing or overlapping names; all nested scenarios
 and seeds remain unchanged. The unchanged 83 MiB restart fixtures stay on PRs.
+The partitions also retain the full trust property matrix. Immutable health-policy
+checks compile one binary per accepted policy revision and execute each observation
+against it; simulation pumps wait for completion events instead of scheduler ticks.
+Probe timeouts use Go's virtual clock while preserving their error/replay assertions.
 The Gate 1 names and `scripts/test_fastloop_hermetic.sh` selectors stay intact.
 Go emits `-json` timings for profiling; aggregate top-level `pass` event `Elapsed`
 values rather than adding nested subtest timings a second time.

@@ -27,6 +27,7 @@ INTEGRATION = (
     "TestSimScheduleQueuedDriftNeverRedispatchesAfterVerifiedClosure",
     "TestSimRenderedLockSchedule",
     "TestSimIncidentStream",
+    "FuzzSimIncidentSchedule",
 )
 _INTEGRATION = "(?:" + "|".join(INTEGRATION) + ")"
 PATTERNS = {
@@ -83,7 +84,7 @@ def main() -> None:
     )
     for shard, members in groups.items():
         print(f"{shard}: {len(members)} test names", flush=True)
-    # Discover and compile once, then run disjoint partitions on this runner.
+    # Discover the inventory once, then run disjoint partitions on this runner.
     # Both exit codes matter; a failed partition must not cancel its sibling.
     selected = list(groups) if args.shard == "all" else [args.shard]
     processes = []

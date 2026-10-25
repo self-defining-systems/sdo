@@ -153,7 +153,7 @@ def test_required_ci_rejects_any_applicable_unsuccessful_job(result: str, accept
 
 def test_go_build_cache_survives_test_failures_and_is_shared_with_python() -> None:
     jobs = workflow()["jobs"]
-    for name in ("go", "images", "runtime-integration"):
+    for name in ("go", "runtime-integration"):
         steps = jobs[name]["steps"]
         restore = next(step for step in steps if step.get("id") == "go-cache")
         assert "-shared-1.26.8-" in restore["with"]["key"]

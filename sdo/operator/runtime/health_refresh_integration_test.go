@@ -145,13 +145,14 @@ func TestTracingSwapRefreshPublishesAndBuildsCurrentRequirements(t *testing.T) {
 	ctx := context.Background()
 	root, _, _, worker, coordinator := tracingFixture(t)
 	old := tracingRefresh(t, root, coordinator)
-	tracingProbe(t, root, "jaeger", false)
+	oldProbe := tracingProbe(t, root, "jaeger")
+	oldProbe("jaeger", false)
 	tracingSwap(t, root)
 	guard := acceptedHealthGuard(root, old.Commit)
 	if err := guard(ctx); !errors.Is(err, memory.ErrHealthRefreshRequired) {
 		t.Fatalf("warm source advance allowed: %v", err)
 	}
-	tracingProbe(t, root, "collector", true) // old detector reproduces the false Jaeger alarm
+	oldProbe("collector", true) // old detector reproduces the false Jaeger alarm
 	architecture := nativeGit(t, root, "rev-parse", "HEAD:.sdo/arch.md")
 	current := tracingRefresh(t, root, coordinator)
 	if err := guard(ctx); !errors.Is(err, memory.ErrHealthRefreshRequired) {
@@ -163,8 +164,9 @@ func TestTracingSwapRefreshPublishesAndBuildsCurrentRequirements(t *testing.T) {
 	if err := acceptedHealthGuard(root, current.Commit)(ctx); err != nil {
 		t.Fatalf("new binary did not adopt policy: %v", err)
 	}
-	tracingProbe(t, root, "collector", false)
-	tracingProbe(t, root, "jaeger", true) // collector coverage still required
+	currentProbe := tracingProbe(t, root, "collector")
+	currentProbe("collector", false)
+	currentProbe("jaeger", true) // collector coverage still required
 	if nativeGit(t, root, "rev-parse", "HEAD:.sdo/arch.md") != architecture {
 		t.Fatal("refresh changed architecture ownership")
 	}
@@ -182,7 +184,7 @@ func TestTracingSwapRefreshPublishesAndBuildsCurrentRequirements(t *testing.T) {
 
 // Compile the accepted detector bundle and execute its generated registration
 // against an in-memory capture. No Kubernetes client or model backend is used.
-func tracingProbe(t *testing.T, root, live string, wantFiring bool) {
+func tracingProbe(t *testing.T, root, initialLive string) func(string, bool) {
 	t.Helper()
 	ctx := context.Background()
 	projected, err := memory.AcceptedDiagnostics(ctx, root)
@@ -193,25 +195,39 @@ func tracingProbe(t *testing.T, root, live string, wantFiring bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer workspace.Close()
+	t.Cleanup(func() { _ = workspace.Close() })
 	path := filepath.Join(workspace.Directory, "generated", "tracing_refresh_test.go")
+	// Compile one immutable accepted bundle per policy revision, then execute
+	// every live-state check against that same binary, including after source
+	// replacement. Changing the observation must not trigger another build.
 	source := fmt.Sprintf(`package generated
-import("context";"testing";appsv1 "k8s.io/api/apps/v1";metav1 "k8s.io/apimachinery/pkg/apis/meta/v1";"sdo.dev/operator/sdk/sdktest")
-func TestTracingCapture(t *testing.T){snapshot:=sdktest.Snapshot{NamespaceName:"demo",DeploymentList:[]appsv1.Deployment{{ObjectMeta:metav1.ObjectMeta{Name:%q,Namespace:"demo"}}}}
- count:=0; for _,d:=range All(){if d.Spec().ID!="health-objective"{continue};count++;findings,err:=d.Detect(context.Background(),snapshot);if err!=nil || (len(findings)>0)!=%t {t.Fatalf("unexpected tracing health: %%+v %%v",findings,err)}};if count!=1 {t.Fatalf("executed %%d health-objective detectors, want 1",count)}}
-`, live, wantFiring)
+import("context";"os";"strconv";"testing";appsv1 "k8s.io/api/apps/v1";metav1 "k8s.io/apimachinery/pkg/apis/meta/v1";"sdo.dev/operator/sdk/sdktest")
+func TestTracingCapture(t *testing.T){live:=os.Getenv("TRACING_LIVE");wantFiring:=false;if live==""{live=%q}else{var err error;wantFiring,err=strconv.ParseBool(os.Getenv("TRACING_WANT_FIRING"));if err!=nil{t.Fatal(err)}};snapshot:=sdktest.Snapshot{NamespaceName:"demo",DeploymentList:[]appsv1.Deployment{{ObjectMeta:metav1.ObjectMeta{Name:live,Namespace:"demo"}}}}
+ count:=0; for _,d:=range All(){if d.Spec().ID!="health-objective"{continue};count++;findings,err:=d.Detect(context.Background(),snapshot);if err!=nil || (len(findings)>0)!=wantFiring {t.Fatalf("unexpected tracing health: %%+v %%v",findings,err)}};if count!=1 {t.Fatalf("executed %%d health-objective detectors, want 1",count)}}
+`, initialLive)
+
 	if err := os.WriteFile(path, []byte(source), 0644); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := workspace.ValidateAndBuild(ctx); err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.CommandContext(ctx, "go", "test", "./generated", "-run", "TestTracingCapture", "-count=1")
+	binary := filepath.Join(t.TempDir(), "tracing-probe.test")
+	cmd := exec.CommandContext(ctx, "go", "test", "-c", "-o", binary, "./generated")
 	cmd.Dir = workspace.Directory
 	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("compiled tracing capture: %v: %s", err, out)
+		t.Fatalf("compile tracing capture: %v: %s", err, out)
+	}
+	return func(live string, wantFiring bool) {
+		t.Helper()
+		cmd := exec.CommandContext(ctx, binary, "-test.run=^TestTracingCapture$", "-test.count=1")
+		cmd.Env = append(os.Environ(), "TRACING_LIVE="+live, fmt.Sprintf("TRACING_WANT_FIRING=%t", wantFiring))
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("compiled tracing capture: %v: %s", err, out)
+		}
 	}
 }
+
 func TestSimHealthRefreshInterruptedAndAdopted(t *testing.T) {
 	for seed := int64(1); seed <= 6; seed++ {
 		t.Run(fmt.Sprint(seed), func(t *testing.T) {
