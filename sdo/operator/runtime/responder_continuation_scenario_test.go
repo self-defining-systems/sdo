@@ -168,3 +168,33 @@ func TestContinuationRepairsSurviveRestartAndDeduplicateReceipts(t *testing.T) {
 		t.Fatalf("duplicate resumed receipt: %+v", next)
 	}
 }
+
+func TestResponderContinuationWaitsForClearingWithoutNewJob(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	request := goldenRequest(t)
+	request.ResponseDeadline = time.Now().Add(time.Minute)
+	request.RepositoryWorktree = filepath.Join(t.TempDir(), "proposal")
+	loop := NewResponderLoop(request, nil, nil, nil, PlanExecutor{}, 3)
+	checks := 0
+	loop.VerifyClosure = func(context.Context) ToolResponse {
+		checks++
+		return ToolResponse{Command: "verify", Healthy: checks > 1, Summary: "waiting for clearing confirmation"}
+	}
+	client := fake.NewSimpleClientset()
+	dispatcher := KubernetesJobDispatcher{Client: client, Namespace: "demo", Registry: testIncidentRegistry(t, "responder:test"), AgentID: testIncidentAgentID(t), RepositoryPVC: "repo", RepositoryMountPath: filepath.Dir(request.RepositoryWorktree), ServiceAccount: "responder", PollInterval: time.Millisecond, LoopFactory: func(IncidentRequest) *ResponderLoop { return loop }}
+	done := make(chan error, 1)
+	go func() { _, err := dispatcher.Dispatch(ctx, request); done <- err }()
+	first := awaitJob(t, client, IncidentJobName(request.IncidentID))
+	publishContinuationResult(t, client, first, completedResult(request.IncidentID))
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	jobs, err := client.BatchV1().Jobs("demo").List(ctx, metav1.ListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(jobs.Items) != 1 || loop.continuation.Attempts != 1 {
+		t.Fatalf("clearing consumed another turn: jobs=%d attempts=%d", len(jobs.Items), loop.continuation.Attempts)
+	}
+}
