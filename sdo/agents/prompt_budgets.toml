@@ -148,12 +148,12 @@ reason = "Baseline synthetic fixture maximum: 191 Unicode code points; byte-iden
 max_chars = 200
 reason = "New responder workflow skill description; shares the existing 200-character skill-index allowance."
 [continuation.instructions]
-max_chars = 511
-reason = "Measured typed continuation instructions: 464 Unicode code points, with 10 percent headroom; the 1500-character instruction cap remains enforced."
+max_chars = 270
+reason = "Compact high-level continuation principles; instructions and real ten-receipt data together must fit 1500 characters."
 
 [continuation.incident_data]
-max_chars = 2214
-reason = "Measured typed current findings and complete completed-action receipts: 2012 Unicode code points, with 10 percent headroom; rendering never truncates factual lists."
+max_chars = 1230
+reason = "Production-rendered three-finding ten-receipt continuation, including two failures; full typed evidence stays in a private local JSON reference."
 
 [tool_stdout.act]
 max_chars = 450
