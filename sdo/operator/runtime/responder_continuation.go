@@ -83,7 +83,14 @@ func (d KubernetesJobDispatcher) continueResponder(ctx context.Context, executor
 		if err != nil {
 			return IncidentResult{}, err
 		}
-		verification := loop.Handle(ctx, ToolRequest{Command: "verify"})
+		result = accumulateResponderResult(state.Result, result)
+		verify := func() ToolResponse {
+			if loop.VerifyResult != nil {
+				return loop.VerifyResult(ctx, result)
+			}
+			return loop.Handle(ctx, ToolRequest{Command: "verify"})
+		}
+		verification := verify()
 		// Clearing persistence is observation work, not another response turn.
 		// Wait for the controller rather than re-prompting without a named fault.
 		for !verification.Healthy && len(verification.Findings) == 0 && verification.Error == "" && now().Before(request.ResponseDeadline) {
@@ -94,13 +101,12 @@ func (d KubernetesJobDispatcher) continueResponder(ctx context.Context, executor
 				return IncidentResult{}, ctx.Err()
 			case <-timer.C:
 			}
-			verification = loop.Handle(ctx, ToolRequest{Command: "verify"})
+			verification = verify()
 		}
 		if err := ctx.Err(); err != nil {
 			return IncidentResult{}, err
 		}
 		state.Attempts++
-		result = accumulateResponderResult(state.Result, result)
 		result.VerificationEvidence = append(result.VerificationEvidence, VerificationEvidence{Name: "controller-response-verification", Passed: verification.Healthy, Details: verification.Summary, ObservedAt: now().UTC()})
 		limit := loop.MaxBatches
 		if request.MaxResponseLoops > 0 && request.MaxResponseLoops < limit {
@@ -157,6 +163,15 @@ func accumulateResponderResult(previous *contracts.IncidentResult, current Incid
 	for _, action := range prior.RepairActions {
 		if !seen[action.ActionID] {
 			current.RepairActions = append(current.RepairActions, action)
+		}
+	}
+	seenDrift := map[string]bool{}
+	for _, event := range current.DriftEvents {
+		seenDrift[driftEventKey(event)] = true
+	}
+	for _, event := range prior.DriftEvents {
+		if !seenDrift[driftEventKey(event)] {
+			current.DriftEvents = append(current.DriftEvents, event)
 		}
 	}
 	current.RepairChanges = append(prior.RepairChanges, current.RepairChanges...)
@@ -449,6 +464,9 @@ func (c *Controller) continuationVerificationLocked(healthVerified, driftClear b
 // admitted drift is independently compared against a fresh snapshot, just as
 // maybeCloseIncident does. A tool never advances the controller's lifecycle.
 func (c *Controller) responderVerification(ctx context.Context, incidentID string) ToolResponse {
+	return c.responderResultVerification(ctx, incidentID, nil)
+}
+func (c *Controller) responderResultVerification(ctx context.Context, incidentID string, result *IncidentResult) ToolResponse {
 	c.observationMu.Lock()
 	defer c.observationMu.Unlock()
 	snapshot, err := c.provider.Snapshot(ctx)
@@ -461,17 +479,17 @@ func (c *Controller) responderVerification(ctx context.Context, incidentID strin
 	if !current {
 		return ToolResponse{Command: "verify", Error: "incident is no longer current"}
 	}
-	driftClear, driftFindings := c.verifyClosureDrift(ctx, time.Now().UTC(), snapshot)
+	driftClear, driftFindings := c.verifyClosureDriftWithResult(ctx, time.Now().UTC(), snapshot, result)
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.currentIncidentRequest == nil || c.currentIncidentRequest.IncidentID != incidentID {
 		return ToolResponse{Command: "verify", Error: "incident is no longer current"}
 	}
 	_, health := c.finalVerificationStates()
-	result := c.continuationVerificationLocked(health, driftClear, driftFindings)
+	response := c.continuationVerificationLocked(health, driftClear, driftFindings)
 	if c.currentIncidentRequest.ObservationGeneration != observationGeneration(snapshot) {
-		result.Healthy = false
-		result.Error = "observation scope changed; incident evidence superseded"
+		response.Healthy = false
+		response.Error = "observation scope changed; incident evidence superseded"
 	}
-	return result
+	return response
 }

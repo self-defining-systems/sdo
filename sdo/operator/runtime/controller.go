@@ -62,17 +62,23 @@ type dispatchCompletion struct {
 }
 
 type Controller struct {
-	config      ControllerConfig
-	startedAt   time.Time
-	scheduler   *Scheduler
-	detectors   map[string]sdk.Detector
-	tracker     *FindingStateTracker
-	batcher     *Batcher
-	provider    SnapshotProvider
-	dispatcher  Dispatcher
-	history     []DetectorEvaluation
-	drift       *DriftControllerConfig
-	driftEvents []sdk.DriftEvent
+	config                      ControllerConfig
+	startedAt                   time.Time
+	scheduler                   *Scheduler
+	detectors                   map[string]sdk.Detector
+	tracker                     *FindingStateTracker
+	batcher                     *Batcher
+	provider                    SnapshotProvider
+	dispatcher                  Dispatcher
+	history                     []DetectorEvaluation
+	drift                       *DriftControllerConfig
+	driftEvents                 []sdk.DriftEvent
+	sourceInventory             *SourceInventory
+	sourceInventoryError        string
+	sourceInventoryRetryAt      time.Time
+	sourceInventoryFindings     []sdk.Finding
+	acceptedSourceDrift         []sdk.DriftEvent
+	acceptedSourceDriftRevision string
 	// routingSweeps tracks background open@detect routing sweeps so tests can
 	// join them before removing the capture directory.
 	routingSweeps     sync.WaitGroup
@@ -265,6 +271,9 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 	if err := c.retireExpiredIncident(ctx, now); err != nil {
 		return err
 	}
+	if err := c.prepareSourceInventory(ctx); err != nil {
+		return err
+	}
 	c.processDispatchCompletions(now)
 	c.processBrokerCompletions()
 	c.attachPendingDrift()
@@ -290,6 +299,7 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 			c.mu.Unlock()
 		}
 	}
+	c.observeSourceInventory(now)
 	detectors := c.scheduler.SelectEvents(now, events)
 	probes := c.dueGateProbes(now, detectors)
 	var objectChanges []ObjectChange
@@ -1072,6 +1082,9 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 		ResponderCompletedAt: c.responderCompletedAt, VerifiedAt: verifiedAt,
 		CleanedHelpers: append([]string(nil), c.cleanedHelpers...),
 	}
+	if verified {
+		c.retainSourceInventoryAcceptancesLocked(c.currentIncidentResult)
+	}
 	closure.DetectorTimeline = cloneTimeline(c.timeline)
 	sortTimeline(closure.DetectorTimeline)
 	closure.IncidentDetectorFiredBeforeDispatch, closure.IncidentDetectorFiredAfterDispatch,
@@ -1257,6 +1270,7 @@ func (c *Controller) ExportState() (*contracts.ControllerState, error) {
 		ClosureReceipt: closureReceiptContract(c.closureReceipt), ClosureFailure: closureFailureContract(c.closureFailure), FailedClosures: cloneFailedClosures(c.failedClosures),
 		LastAcknowledgedIncidentId: c.lastAcknowledgedIncidentID,
 		EvaluationIteration:        int32(c.evaluationIteration), DetectorTimeline: timeline, IncidentView: view,
+		AcceptedSourceDrift: driftEventsContract(c.acceptedSourceDrift), AcceptedSourceDriftRevision: c.acceptedSourceDriftRevision,
 		DriftEvents: driftEventsContract(c.driftEvents), OwnershipAdoption: adoptionContract(c.ownershipAdoption),
 	}
 	if c.currentIncidentRequest != nil {
@@ -1326,6 +1340,8 @@ func (c *Controller) RestoreState(state *contracts.ControllerState) error {
 		c.currentIncidentResult = &result
 	}
 	c.driftEvents = append([]sdk.DriftEvent(nil), driftEventsState(state.GetDriftEvents())...)
+	c.acceptedSourceDrift = driftEventsState(state.GetAcceptedSourceDrift())
+	c.acceptedSourceDriftRevision = state.GetAcceptedSourceDriftRevision()
 	c.ownershipAdoption = adoptionState(state.GetOwnershipAdoption())
 	c.dispatchError = state.DispatchError
 	c.incidentDetectedAt = controllerTime(state.GetIncidentDetectedAt())
@@ -1504,4 +1520,23 @@ func (c *Controller) hasRetainedDrift() bool {
 		}
 	}
 	return false
+}
+
+// evaluationDetectorIDs labels the partial per-iteration sample in logs. An
+// absent detector was not evaluated; it did not report clearance.
+func (c *Controller) evaluationDetectorIDs() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	seen := map[string]bool{}
+	for _, evaluation := range c.history {
+		if evaluation.EvaluatedAt.Equal(c.evaluationAt) {
+			seen[evaluation.DetectorID] = true
+		}
+	}
+	ids := make([]string, 0, len(seen))
+	for id := range seen {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
 }

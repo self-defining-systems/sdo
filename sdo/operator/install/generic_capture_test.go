@@ -37,3 +37,33 @@ func TestDiscoveryCaptureGrantsCoverNewKindsWithoutSecretReads(t *testing.T) {
 		}
 	}
 }
+
+func TestInventoryWatchesNeedOnlyNonSecretReadGrants(t *testing.T) {
+	resources := []*metav1.APIResourceList{{GroupVersion: "rbac.authorization.k8s.io/v1", APIResources: []metav1.APIResource{{Kind: "ClusterRole", Name: "clusterroles", Verbs: []string{"get", "list", "watch", "patch"}}, {Kind: "ClusterRoleBinding", Name: "clusterrolebindings", Verbs: []string{"get", "list", "watch", "patch"}}}}}
+	plan, err := Resources(testConfig(), resources...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	watched := map[string]bool{}
+	for _, role := range plan.ClusterRoles {
+		if role.Name != captureGrantName(testConfig().controlNamespace()) {
+			continue
+		}
+		for _, rule := range role.Rules {
+			for _, verb := range rule.Verbs {
+				if verb == "watch" {
+					watched[rule.Resources[0]] = true
+				}
+				if verb != "get" && verb != "list" && verb != "watch" {
+					t.Fatalf("inventory acquired mutation: %+v", rule)
+				}
+			}
+		}
+	}
+	if !watched["clusterroles"] || !watched["clusterrolebindings"] {
+		t.Fatalf("missing RBAC informer authority: %v", watched)
+	}
+	if inventoryWatchResource("", "secrets") {
+		t.Fatal("Secret inventory was enabled")
+	}
+}
