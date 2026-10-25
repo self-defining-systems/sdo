@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/protobuf/types/known/timestamppb"
+
 	"sdo.dev/operator/broker"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/internal/testutil"
@@ -522,6 +524,12 @@ func TestNativeBrokerRequiresVerifiedDetectorRolloutBeforeAck(t *testing.T) {
 		t.Fatal(err)
 	}
 	testutil.CopyPortProgram(t, target, fixture)
+	// This scenario publishes a new detector, not a provenance rewrite of the
+	// detector now included by the shared accepted-program fixture.
+	if err := os.RemoveAll(filepath.Join(target, ".sdo/diagnostics/detectors/incidents/routing-relations")); err != nil {
+		t.Fatal(err)
+	}
+
 	copyFastloopTree(t, filepath.Join(fixture, "corpus"), filepath.Join(target, ".sdo/corpus"))
 	index := filepath.Join(target, ".sdo/playbooks/README.md")
 	data, _ := os.ReadFile(index)
@@ -535,16 +543,35 @@ func TestNativeBrokerRequiresVerifiedDetectorRolloutBeforeAck(t *testing.T) {
 		t.Fatal(err)
 	}
 	native := NativeIncidentBroker{
-		Repository: repositoryBroker, LedgerRoot: filepath.Join(t.TempDir(), "ledger"), ResponderBackend: "test", ResponderModel: "test",
+		Repository: repositoryBroker, LedgerRoot: filepath.Join(t.TempDir(), "ledger"), SessionRoot: t.TempDir(), ResponderBackend: "test", ResponderModel: "test",
 		Deriver: OutcomeDeriverFunc(func(_ context.Context, closure IncidentClosure, _, _, _ string) (DerivedOutcome, error) {
 			outcome := testDerivedOutcome(closure.Request.IncidentID, "success", true)
-			outcome.Record.ConfirmedRootCauses = []*contracts.ConfirmedRootCause{{Summary: "verified service port repair", Resources: []*contracts.ObjectRef{{Kind: "Service", Namespace: "demo", Name: "front"}}}}
+			ref := &contracts.ObjectRef{ApiVersion: "v1", Kind: "Service", Namespace: "demo", Name: "front"}
+			outcome.Record.ConfirmedRootCauses = []*contracts.ConfirmedRootCause{{Summary: "verified service port repair", Resources: []*contracts.ObjectRef{ref}}}
+			outcome.Record.Findings = []*contracts.Finding{{DetectorId: "routing-relations", RuleId: "targetport", Status: "active", Severity: "warn", Summary: "target port mismatch", Evidence: "selected pod has a different port", Fingerprint: "port-mismatch", PrimaryResource: ref}}
+			outcome.Record.RepairActions = []*contracts.RepairActionReceipt{{ActionId: "repair-port", Kind: "kubectl", Target: "Service/demo/front", Summary: "restore target port", Details: "target port restored and read back", Success: true, Resources: []*contracts.ObjectRef{ref}, StartedAt: timestamppb.New(closure.DetectedAt), CompletedAt: timestamppb.New(closure.ResponderCompletedAt)}}
+			outcome.Record.DetectorHistory = []*contracts.DetectorEvaluation{{DetectorId: "routing-relations", Status: "clear", EvaluatedAt: timestamppb.New(closure.VerifiedAt)}}
 			return outcome, nil
 		}),
 		Reflector: ReflectionWorkerFunc(func(_ context.Context, _ IncidentClosure, workspace IncidentWorkspace, _ *contracts.OutcomeRecord, _, _ string, _ ReflectionFeedback) (ReflectionDecision, error) {
 			fastloopWriteDetector(t, workspace.Worktree, "inc-rollout")
 			return ReflectionDecision{LearningDecision: "updated"}, nil
 		}),
+	}
+	capture, err := memory.IncidentCorpusDir(native.SessionRoot, "inc-rollout")
+	if err != nil {
+		t.Fatal(err)
+	}
+	healthy := filepath.Join(capture, "healthy")
+	if err := os.MkdirAll(healthy, 0755); err != nil {
+		t.Fatal(err)
+	}
+	baseline, err := os.ReadFile(filepath.Join(fixture, "corpus/targetport-mismatch/healthy.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(healthy, "healthy.json"), baseline, 0644); err != nil {
+		t.Fatal(err)
 	}
 	workspace, err := native.PrepareIncident(context.Background(), "inc-rollout")
 	if err != nil {
@@ -553,9 +580,15 @@ func TestNativeBrokerRequiresVerifiedDetectorRolloutBeforeAck(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(workspace.Worktree, "app.txt"), []byte("repair\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	receipt, err := native.ProcessClosure(context.Background(), nativeClosure(workspace))
+	closure := nativeClosure(workspace)
+	closure.Result.ResponderSessionID = "rollout-session"
+	receipt, err := native.ProcessClosure(context.Background(), closure)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if receipt.ReflectionCommit == "" {
+		ledger, err := native.readLedger(workspace.IncidentID)
+		t.Fatalf("reflection produced no detector commit: ledger=%v err=%v", ledger, err)
 	}
 	expectation, pending, err := native.PendingControllerRollout(receipt.ReflectionCommit)
 	if err != nil || !pending || expectation.AfterDetectorFingerprint == expectation.BeforeDetectorFingerprint {

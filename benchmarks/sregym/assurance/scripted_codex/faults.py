@@ -249,7 +249,7 @@ class NetworkPolicyBlock:
         )
 
     def memory(self, facts: Facts, *, incident_id: str, outcome_commit: str) -> MemoryFiles:
-        return _memory_files(
+        proposal = _memory_files(
             detector_id=self.detector_id,
             package=self.package,
             playbook_dir=self.playbook_id,
@@ -260,10 +260,19 @@ class NetworkPolicyBlock:
             test_go=_NP_TEST,
             imports='networkingv1 "k8s.io/api/networking/v1"',
             test_imports='networkingv1 "k8s.io/api/networking/v1"\n\tmetav1 "k8s.io/apimachinery/pkg/apis/meta/v1"',
-            readme_body=_NP_README,
-            scripts={"repair.sh": _NP_REPAIR, "verify.sh": _NP_VERIFY},
+            readme_body="Diagnose the bound deny-all NetworkPolicy <NETWORK_POLICY> and remove it to restore <WORKLOAD>. "
+            "Verify independent health after mitigation.",
+            scripts={},
             incident_id=incident_id,
             outcome_commit=outcome_commit,
+        )
+
+        directory = f".sdo/playbooks/{self.playbook_id}"
+        return MemoryFiles(
+            proposal.detector_id,
+            proposal.playbook_id,
+            {**proposal.files, f"{directory}/diagnose.go": _NP_PROGRAM},
+            (),
         )
 
     def claimed_memory(self, facts: Facts, *, incident_id: str, outcome_commit: str) -> MemoryFiles:
@@ -637,58 +646,49 @@ func TestIgnoresNearMissPolicyThatAllowsIngress(t *testing.T) {
 }
 """
 
-_NP_README = """
-The incident detector establishes that a NetworkPolicy in `<NAMESPACE>` selects the pods of `<DEPLOYMENT>` and
-denies all of their ingress and egress. Delete that policy; nothing else needs to change.
+_NP_PROGRAM = """package deny_all_networkpolicy_isolation
 
-Sanity check (fails while the policy is present):
+import (
+	"context"
 
-```sh
-sh {playbook_dir}/scripts/verify.sh <NAMESPACE> <DEPLOYMENT>
-```
+	networkingv1 "k8s.io/api/networking/v1"
+	"sdo.dev/operator/sdk/program"
+)
 
-Repair:
+type Program struct{}
 
-```sh
-sh {playbook_dir}/scripts/repair.sh <NAMESPACE> <NETWORK_POLICY>
-```
+func (Program) Spec() program.ProgramSpec {
+	return program.ProgramSpec{ID: "deny-all-networkpolicy-isolation", Params: []program.ParamSpec{{Name: "policy", Kind: "NetworkPolicy", Required: true}}}
+}
 
-Then run the verification and `python3 -m sdo.agents.responder.status_cli` together:
+func (Program) Diagnose(_ context.Context, view program.ReadView, bindings program.Bindings) (program.Verdict, error) {
+	ref := bindings.Objects["policy"]
+	for _, policy := range view.NetworkPolicies() {
+		if policy.Namespace != ref.Namespace || policy.Name != ref.Name {
+			continue
+		}
+		ingress, egress := false, false
+		for _, direction := range policy.Spec.PolicyTypes {
+			ingress = ingress || direction == networkingv1.PolicyTypeIngress
+			egress = egress || direction == networkingv1.PolicyTypeEgress
+		}
+		if ingress && egress && len(policy.Spec.Ingress) == 0 && len(policy.Spec.Egress) == 0 && policy.Spec.PodSelector.MatchLabels["io.kompose.service"] != "" {
+			return program.Verdict{Result: program.Match, Evidence: []program.Evidence{{Resource: ref, Fact: "workload network isolation", Observed: "deny-all ingress and egress", Expected: "workload connectivity"}}}, nil
+		}
+		return program.Verdict{Result: program.NoMatch}, nil
+	}
+	return program.Verdict{Result: program.NoMatch}, nil
+}
 
-```sh
-sh {playbook_dir}/scripts/verify.sh <NAMESPACE> <DEPLOYMENT> && python3 -m sdo.agents.responder.status_cli
-```
+func (p Program) Mitigate(ctx context.Context, view program.ReadView, bindings program.Bindings) (program.Plan, error) {
+	verdict, err := p.Diagnose(ctx, view, bindings)
+	if err != nil || verdict.Result != program.Match {
+		return program.Plan{}, err
+	}
+	return program.Plan{Actions: []program.Action{program.DeleteObject{Ref: bindings.Objects["policy"], Reason: "remove the deny-all policy isolating the workload"}}}, nil
+}
 """
 
-_NP_REPAIR = """
-#!/bin/sh
-set -eu
-if [ "$#" -ne 2 ]; then
-  echo "usage: $0 NAMESPACE NETWORK_POLICY" >&2
-  exit 2
-fi
-kubectl -n "$1" delete networkpolicy "$2" --ignore-not-found
-"""
-
-_NP_VERIFY = """
-#!/bin/sh
-set -eu
-if [ "$#" -ne 2 ]; then
-  echo "usage: $0 NAMESPACE DEPLOYMENT" >&2
-  exit 2
-fi
-kubectl -n "$1" get networkpolicy -o json | python3 -c '
-import json, sys
-target = sys.argv[1]
-for item in json.load(sys.stdin).get("items", []):
-    spec = item.get("spec", {})
-    selected = spec.get("podSelector", {}).get("matchLabels", {}).get("io.kompose.service") == target
-    types = set(spec.get("policyTypes") or [])
-    if selected and {"Ingress", "Egress"} <= types and not spec.get("ingress") and not spec.get("egress"):
-        raise SystemExit("NetworkPolicy " + item["metadata"]["name"] + " isolates " + target)
-print("no NetworkPolicy isolates " + target)
-' "$2"
-"""
 
 _CM_DETECT = """
 func (Detector) Detect(_ context.Context, snapshot sdk.DetectionContext) ([]sdk.Finding, error) {

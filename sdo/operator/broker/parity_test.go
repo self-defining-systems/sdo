@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"go/format"
+	"google.golang.org/protobuf/types/known/timestamppb"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -19,6 +20,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	"google.golang.org/protobuf/encoding/protojson"
 	"sdo.dev/operator/broker"
@@ -124,6 +126,14 @@ func TestCLIAndBrokerAgreeOnAcceptance(t *testing.T) {
 		allowAdditional bool
 	}
 	cases := []parityCase{
+		{"healthy refused service ports", validate.Responder, validate.ReflectionPhase, parityRefusedPortsDetector, []string{validate.RuleDetectorHealthyBaseline}, false},
+		{"healthy refused ports without recordings", validate.Responder, validate.ReflectionPhase, parityRefusedPortsDetector, []string{validate.RuleDetectorHealthyBaseline}, false},
+		{"missing controller healthy capture", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
+			put(t, r, ".sdo/diagnostics/detectors/incidents/cache/detector.go", parityDetector(t, "cache")+"\n// requires trusted healthy reference\n", 0644)
+		}, []string{validate.RuleDetectorHealthyBaseline}, false},
+		{"successful unrelated reported cause", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
+			put(t, r, ".sdo/diagnostics/detectors/incidents/cache/detector.go", parityDetector(t, "cache")+"\n// agent reported an unrelated cause\n", 0644)
+		}, []string{validate.RuleReflectionExecutableCause}, false},
 		{"unverified peer gaps", validate.Responder, validate.ReflectionPhase, func(*testing.T, string) {}, nil, false},
 		{"unverified peer no verified", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
 			put(t, r, ".sdo/diagnostics/detectors/incidents/cache/detector.go", parityDetector(t, "cache")+"\n// No verified cause.\n", 0644)
@@ -204,7 +214,7 @@ func TestReject(t *testing.T){t.Fatal("sentinel detector failure")}
 		}, []string{validate.RuleSnapshotBudget}, false},
 		{"always firing on healthy baseline", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
 			put(t, r, ".sdo/diagnostics/detectors/incidents/cache/detector.go", strings.Replace(parityDetector(t, "cache"), "return nil, nil", `return []sdk.Finding{{DetectorID:"cache",RuleID:"always",Status:sdk.FindingActive}}, nil`, 1), 0644)
-		}, []string{validate.RuleDetectorTest}, false},
+		}, []string{validate.RuleDetectorHealthyBaseline}, false},
 		{"missing accepted outcome", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
 			replaceParityText(t, r, ".sdo/playbooks/base/README.md", "Repair", "Carefully repair")
 		}, []string{validate.RuleAcceptedOutcome}, false},
@@ -612,6 +622,10 @@ func (p Program) Mitigate(ctx context.Context,v program.ReadView,b program.Bindi
 						outcome.ReflectionEligibility.Causes = nil
 					}
 				}
+				parityFindingRepairProof(outcome)
+				if test.name == "successful unrelated reported cause" {
+					outcome.Findings[0].PrimaryResource = &contracts.ObjectRef{Kind: "Service", Namespace: "demo", Name: "actual-fault"}
+				}
 				if _, err := repository.RecordOutcome(context.Background(), "incident", outcome); err != nil {
 					t.Fatal(err)
 				}
@@ -630,6 +644,28 @@ func (p Program) Mitigate(ctx context.Context,v program.ReadView,b program.Bindi
 			capture := filepath.Join(filepath.Dir(root), "captures")
 			if _, err := os.Stat(capture); os.IsNotExist(err) {
 				capture = ""
+			}
+			if capture == "" {
+				capture = t.TempDir()
+			}
+			if test.name != "missing controller healthy capture" {
+				put(t, capture, "healthy/healthy.json", `{"namespace":"demo","services":[],"pods":[]}`, 0644)
+			}
+			if strings.HasPrefix(test.name, "healthy refused") {
+				// The legacy/caller-authored healthy.json has no Consul ports.
+				// Only the controller capture retains the original healthy app.
+				snapshot := map[string]any{"namespace": "demo", "services": []any{map[string]any{"metadata": map[string]any{"name": "consul", "namespace": "demo"}, "spec": map[string]any{"ports": []any{map[string]any{"port": 8300}, map[string]any{"port": 8400}}}}}}
+				if test.name == "healthy refused service ports" {
+					snapshot["readings"] = []any{
+						map[string]any{"method": "ProbeTCP", "arguments": []any{map[string]any{"api_version": "v1", "kind": "Service", "namespace": "demo", "name": "consul"}, 8300}, "result": map[string]any{"success": false, "detail": "refused"}},
+						map[string]any{"method": "ProbeTCP", "arguments": []any{map[string]any{"api_version": "v1", "kind": "Service", "namespace": "demo", "name": "consul"}, 8400}, "result": map[string]any{"success": false, "detail": "refused"}},
+					}
+				}
+				raw, err := json.Marshal(snapshot)
+				if err != nil {
+					t.Fatal(err)
+				}
+				put(t, capture, "healthy/healthy.json", string(raw), 0644)
 			}
 			root = proposal.Path
 			decision := &contracts.ReflectionDecision{LearningDecision: "updated"}
@@ -892,7 +928,11 @@ func (j subprocessParityJob) Validate(ctx context.Context, r broker.ValidationJo
 		return broker.ValidationJobReceipt{}, err
 	}
 	if needed {
-		args = append(args, "--healthy-baseline", j.baseline)
+		baseline := j.baseline
+		if r.HealthyBaseline != "" {
+			baseline = r.HealthyBaseline
+		}
+		args = append(args, "--healthy-baseline", baseline)
 	}
 	cmd := exec.CommandContext(ctx, j.binary, args...)
 	var stdout, stderr bytes.Buffer
@@ -1046,4 +1086,45 @@ func parityCaseLabel(t *testing.T, root, caseID string, edit func(map[string]any
 		t.Fatal(err)
 	}
 	put(t, root, path, string(data), 0644)
+}
+
+func parityFindingRepairProof(outcome *contracts.OutcomeRecord) {
+	at := time.Unix(100, 0)
+	for index, cause := range outcome.GetConfirmedRootCauses() {
+		verified := outcome.GetClassification() == "success"
+		for _, work := range outcome.GetReflectionEligibility().GetCauses() {
+			verified = verified || work.GetCauseIndex() == uint32(index)
+		}
+		if !verified {
+			continue
+		}
+		for _, ref := range cause.GetResources() {
+			outcome.Findings = append(outcome.Findings, &contracts.Finding{DetectorId: "fixture", RuleId: "repair", Severity: "critical", Summary: "synthetic opening fault", Evidence: "synthetic opening observation", Status: "active", Fingerprint: ref.GetName(), PrimaryResource: ref})
+			outcome.RepairActions = append(outcome.RepairActions, &contracts.RepairActionReceipt{ActionId: "fixture-" + ref.GetName(), Kind: "kubectl-patch", Target: ref.GetKind() + "/" + ref.GetName(), Summary: "synthetic recorded mutation", Details: "synthetic controller receipt", Success: true, Resources: []*contracts.ObjectRef{ref}, StartedAt: timestamppb.New(at), CompletedAt: timestamppb.New(at.Add(time.Second))})
+		}
+	}
+	outcome.FinalHealthDetectorState = []*contracts.DetectorEvaluation{{DetectorId: "fixture", Status: "clear", EvaluatedAt: timestamppb.New(at.Add(2 * time.Second))}}
+}
+
+func parityRefusedPortsDetector(t *testing.T, root string) {
+	source := parityDetector(t, "cache")
+	source = strings.Replace(source, `"sdo.dev/operator/sdk"`, `"sdo.dev/operator/sdk"`+"\n"+`"sdo.dev/operator/sdk/program"`, 1)
+	start := strings.Index(source, "func (Detector) Detect(")
+	if start < 0 {
+		t.Fatal("detector fixture missing Detect")
+	}
+	source = source[:start] + `func (Detector) Detect(_ context.Context,ctx sdk.DetectionContext)([]sdk.Finding,error){
+  var findings []sdk.Finding
+  for _,service:=range ctx.Services(){
+   ref:=sdk.ObjectRef{APIVersion:"v1",Kind:"Service",Namespace:service.Namespace,Name:service.Name}
+   for _,port:=range service.Spec.Ports{
+    result,err:=program.ReadFrom(ctx).ProbeTCP(ref,port.Port)
+    if err!=nil{return nil,err}
+    if !result.Success{findings=append(findings,sdk.Finding{DetectorID:"cache",RuleID:"refused",Status:sdk.FindingActive,Severity:sdk.SeverityWarning,PrimaryResource:ref,Summary:"declared Service port refuses connections",Evidence:"recorded TCP refusal"})}
+   }
+  }
+  return findings,nil
+ }
+ `
+	put(t, root, ".sdo/diagnostics/detectors/incidents/cache/detector.go", source, 0644)
 }

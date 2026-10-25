@@ -131,7 +131,29 @@ func (k KubernetesValidationJobClient) Validate(ctx context.Context, request Val
 			return ValidationJobReceipt{}, fmt.Errorf("inspect detector baseline gate: %w", err)
 		}
 	}
+	if request.HealthyBaseline != "" {
+		useBaseline = true
+	}
 	job := k.validationJob(name, subPath, request.CandidateTree, useBaseline)
+	if request.HealthyBaseline != "" {
+		baseline, err := filepath.Abs(request.HealthyBaseline)
+		if err != nil {
+			return ValidationJobReceipt{}, err
+		}
+		if !within(mountRoot, baseline) || baseline == mountRoot {
+			return ValidationJobReceipt{}, errors.New("healthy baseline is outside repository PVC")
+		}
+		relative, err := filepath.Rel(mountRoot, baseline)
+		if err != nil {
+			return ValidationJobReceipt{}, err
+		}
+		mounts := job.Spec.Template.Spec.Containers[0].VolumeMounts
+		for i := range mounts {
+			if mounts[i].Name == "healthy-baseline" {
+				mounts[i].SubPath = filepath.ToSlash(filepath.Join(k.RepositoryPVCSubPath, relative))
+			}
+		}
+	}
 	if k.OnPhase != nil {
 		if err := k.OnPhase(validationCtx, "network_canaries_passed"); err != nil {
 			return ValidationJobReceipt{}, err

@@ -14,6 +14,8 @@ import (
 // credentials, and must enforce egress isolation. The root is broker-owned;
 // the worker never receives it.
 type ValidationJobRequest struct {
+	// HealthyBaseline is selected by shared Check, outside candidate memory.
+	HealthyBaseline         string
 	CandidateRoot           string
 	CandidateTree           string
 	ChangedPaths            []string
@@ -62,7 +64,7 @@ func JobValidator(client ValidationJobClient) Validator {
 			return err
 		}
 		request := ValidationJobRequest{
-			CandidateRoot: candidate, CandidateTree: tree, ChangedPaths: append([]string(nil), paths...),
+			HealthyBaseline: compileBaseline(ctx), CandidateRoot: candidate, CandidateTree: tree, ChangedPaths: append([]string(nil), paths...),
 			ReadOnly: true, NoPublishingCredentials: true, EgressIsolated: true,
 		}
 		receipt, err := client.Validate(ctx, request)
@@ -75,4 +77,9 @@ func JobValidator(client ValidationJobClient) Validator {
 		}
 		return nil
 	}
+}
+
+func compileBaseline(ctx context.Context) string {
+	baseline, _ := ctx.Value(compileBaselineKey{}).(string)
+	return baseline
 }

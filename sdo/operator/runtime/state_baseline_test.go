@@ -324,3 +324,24 @@ func TestStateTrackerStopEndsObservation(t *testing.T) {
 		t.Fatalf("a stopped tracker reports no diff: %+v", changes)
 	}
 }
+
+func TestHealthyBaselineDoesNotAbsorbAChangeAtTheEndOfSettle(t *testing.T) {
+	ctx := context.Background()
+	client := fake.NewSimpleClientset(hotelObjects()...)
+	tracker := startedTracker(t, client)
+	start := time.Unix(100, 0)
+	tracker.Observe(start, true)
+	tracker.Observe(start.Add(time.Second), true)
+	// A new change can still be below detector persistence on this observation.
+	// Only the candidate captured at the beginning of the clear stretch qualified.
+	service, _ := client.CoreV1().Services(hotel).Get(ctx, "frontend", metav1.GetOptions{})
+	service.Spec.Ports[0].TargetPort = intstr.FromInt(5001)
+	if _, err := client.CoreV1().Services(hotel).Update(ctx, service, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "the late port change", func() bool { return findChange(tracker.Changes(start), "Service", "frontend") != nil })
+	tracker.Observe(start.Add(62*time.Second), true)
+	if findChange(tracker.Changes(start.Add(62*time.Second)), "Service", "frontend") == nil {
+		t.Fatal("late change was absorbed without its own healthy settle")
+	}
+}

@@ -189,10 +189,10 @@ func StepReflection(state *contracts.BrokerLedger, event ReflectionEvent) (*cont
 		if kind != ReviewReflection {
 			return next, nil
 		}
+		// Even an empty diff must reach the broker's complete decision and
+		// accepted-outcome checks. The broker returns a commit-free receipt
+		// for a valid no-op; it also owns rejection and retry diagnostics.
 		next.ReflectionPhase = contracts.ReflectionPhase_REFLECTION_PHASE_PUBLISH
-		if len(next.ReflectionPaths) == 0 {
-			next.ReflectionPhase = contracts.ReflectionPhase_REFLECTION_PHASE_DONE
-		}
 	case ReflectionPublished:
 		if kind != PublishReflection {
 			return next, nil
