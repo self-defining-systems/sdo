@@ -114,3 +114,44 @@ def test_policy_runs_inside_required_pr_ci() -> None:
     assert "continue-on-error" not in policy
     assert "pull_request.base.sha" in policy["env"]["BUDGET_BASE"]
     assert "pull_request.head.sha" in policy["env"]["BUDGET_HEAD"]
+
+
+def test_merge_inherits_a_raise_already_checked_in_its_own_commit(history: tuple[Path, str]) -> None:
+    root, base = history
+    git(root, "switch", "-c", "budget-raise")
+    commit(root, limit=200, reason="larger", message="raise\n\nBudget-Reason: larger fixture")
+    git(root, "switch", "main")
+    (root / "README.md").write_text("independent source change", encoding="utf-8")
+    git(root, "add", ".")
+    git(root, "commit", "-m", "independent source change")
+    git(root, "merge", "--no-ff", "--no-edit", "budget-raise")
+    assert check_range(root, base, "HEAD") == []
+
+
+def test_merge_that_introduces_a_new_raise_still_needs_justification(history: tuple[Path, str]) -> None:
+    root, base = history
+    git(root, "switch", "-c", "budget-raise")
+    commit(root, limit=200, reason="larger", message="raise\n\nBudget-Reason: larger fixture")
+    git(root, "switch", "main")
+    (root / "README.md").write_text("independent source change", encoding="utf-8")
+    git(root, "add", ".")
+    git(root, "commit", "-m", "independent source change")
+    git(root, "merge", "--no-ff", "--no-commit", "budget-raise")
+    (root / BUDGET_PATH).write_text(document(300, "new merge raise"), encoding="utf-8")
+    git(root, "add", ".")
+    git(root, "commit", "-m", "merge with unexplained new raise")
+    assert any("Budget-Reason" in error for error in check_range(root, base, "HEAD"))
+
+
+def test_merge_cannot_hide_an_unjustified_parent_raise(history: tuple[Path, str]) -> None:
+    root, base = history
+    git(root, "switch", "-c", "bad-budget-raise")
+    bad = commit(root, limit=200, reason="larger", message="unexplained raise")
+    git(root, "switch", "main")
+    (root / "README.md").write_text("independent source change", encoding="utf-8")
+    git(root, "add", ".")
+    git(root, "commit", "-m", "independent source change")
+    git(root, "merge", "--no-ff", "--no-edit", "bad-budget-raise")
+    errors = check_range(root, base, "HEAD")
+    assert len(errors) == 1
+    assert errors[0].startswith(bad[:12])

@@ -103,7 +103,14 @@ def check_range(repository: Path, base: str, head: str) -> list[str]:
         if BUDGET_PATH not in changed:
             continue
         try:
-            before = at_commit(repository, parent) if parent else {}
+            # A merge inherits limits whose originating commits are checked
+            # separately. Only limits higher than every parent are new raises
+            # at the merge itself (including merge-queue integration commits).
+            before: dict[str, Budget] = {}
+            for ancestor in parents:
+                for name, entry in at_commit(repository, ancestor).items():
+                    if name not in before or entry.max_chars > before[name].max_chars:
+                        before[name] = entry
             after = at_commit(repository, commit)
             message = git(repository, "show", "-s", "--format=%B", commit)
             trailers = git(repository, "interpret-trailers", "--parse", input_text=message)
