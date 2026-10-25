@@ -248,3 +248,92 @@ func (p locatedProgram) Diagnose(ctx context.Context, view program.ReadView, bin
 	}
 
 }
+
+func TestCLIAndBrokerRetainHealthyInputForProgramOnlyEdits(t *testing.T) {
+	ctx := context.Background()
+	binary := filepath.Join(t.TempDir(), "sdo-operator")
+	if out, err := exec.Command("go", "build", "-p", "8", "-o", binary, "../cmd/sdo-operator").CombinedOutput(); err != nil {
+		t.Fatalf("build CLI: %v: %s", err, out)
+	}
+	operatorRoot, err := filepath.Abs("..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	schema, err := builder.SchemaIdentity(operatorRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseline := t.TempDir()
+	put(t, baseline, "healthy.json", `{"namespace":"demo","services":[{"metadata":{"name":"healthy-only","namespace":"demo"},"spec":{"selector":{"app":"no-pods"},"ports":[{"port":80,"targetPort":8080}]}}]}`, 0644)
+	root := copyParityTree(t)
+	runGit(t, root, "init", "-q")
+	runGit(t, root, "config", "user.name", "Fixture")
+	runGit(t, root, "config", "user.email", "fixture@example.test")
+	parityProgram(t, root)
+	source := parityDetector(t, "cache")
+	source = strings.Replace(source, "import (", "import (\n targetport \"fixture-diagnostics/playbooks/service-targetport-mismatch\"\n \"sdo.dev/operator/sdk/program\"", 1)
+	source = strings.Replace(source, `func New() sdk.Detector { return Detector{} }`, `func New() sdk.Detector {
+ return program.DetectorFromProgram(targetport.Program{},func(view sdk.DetectionContext) []program.Bindings {
+  var bindings []program.Bindings
+  for _, service:=range view.Services() {bindings=append(bindings,program.Bindings{Objects:program.ObjectBindings{"service":{APIVersion:"v1",Kind:"Service",Namespace:service.Namespace,Name:service.Name}}})}
+  return bindings
+ },Detector{}.Spec())
+}`, 1)
+	source = strings.Replace(source, `[]string{"base"}`, `[]string{"base","service-targetport-mismatch"}`, 1)
+	put(t, root, ".sdo/diagnostics/detectors/incidents/cache/detector.go", source, 0644)
+	replaceParityText(t, root, ".sdo/diagnostics/detectors/incidents/cache/manifest.yaml", "  - base\n", "  - base\n  - service-targetport-mismatch\n")
+	runGit(t, root, "add", "-f", ".sdo")
+	runGit(t, root, "commit", "-qm", "accepted learned program and detector")
+	repository, err := broker.New(root, t.TempDir(), broker.JobValidator(subprocessParityJob{binary: binary, operatorRoot: operatorRoot, schema: schema, baseline: baseline}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	outcome := &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: "incident", Classification: "success", ConfirmedRootCauses: []*contracts.ConfirmedRootCause{{Summary: "routing", Resources: []*contracts.ObjectRef{{ApiVersion: "v1", Kind: "Service", Namespace: "demo", Name: "front"}}}}}
+	if _, err := repository.RecordOutcome(ctx, "incident", outcome); err != nil {
+		t.Fatal(err)
+	}
+	proposal, err := repository.CreateProposalForPhase(ctx, "incident", broker.ReflectionPhase)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := ".sdo/playbooks/service-targetport-mismatch/diagnose.go"
+	data, err := os.ReadFile(filepath.Join(proposal.Path, path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	put(t, proposal.Path, path, string(data)+"\n// Reviewed against fresh evidence.\n", 0644)
+	decision := &contracts.ReflectionDecision{LearningDecision: "updated", PlaybookIds: []string{"service-targetport-mismatch"}}
+	data, err = protojson.Marshal(&contracts.ReflectionResult{LearningDecision: decision.LearningDecision, ProposedArtifactIds: decision.PlaybookIds})
+	if err != nil {
+		t.Fatal(err)
+	}
+	decisionPath := filepath.Join(t.TempDir(), "decision.json")
+	if err := os.WriteFile(decisionPath, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	cli := exec.Command(binary, "memory", "check", "--json", "--decision", decisionPath)
+	cli.Dir = proposal.Path
+	cli.Env = append(os.Environ(), "SDO_ACTOR=responder", "SDO_PHASE=reflection", "SDO_BASE_COMMIT="+proposal.BaseCommit, "SDO_OPERATOR_ROOT="+operatorRoot, "SDO_HEALTHY_BASELINE="+baseline, "SDO_CAPTURED_CORPUS_DIR=", "SDO_INCIDENT_ID=incident")
+	var stdout, stderr bytes.Buffer
+	cli.Stdout, cli.Stderr = &stdout, &stderr
+	cliErr := cli.Run()
+	var exit *exec.ExitError
+	if !errors.As(cliErr, &exit) || exit.ExitCode() != 1 {
+		t.Fatalf("program edit dropped healthy input or infrastructure failed: %v %s", cliErr, stderr.String())
+	}
+	report := new(contracts.MemoryCheckReport)
+	if err := protojson.Unmarshal(stdout.Bytes(), report); err != nil {
+		t.Fatal(err)
+	}
+	_, publishErr := repository.PublishReflection(ctx, "incident", decision)
+	var failure *validate.Failure
+	if !errors.As(publishErr, &failure) {
+		t.Fatalf("broker dropped healthy replay input: %v", publishErr)
+	}
+	if !proto.Equal(&contracts.MemoryCheckReport{Diagnostics: report.Diagnostics}, &contracts.MemoryCheckReport{Diagnostics: validate.ProtoDiagnostics(failure.Diagnostics)}) {
+		t.Fatalf("healthy input differs: CLI %v broker %v", report.Diagnostics, failure.Diagnostics)
+	}
+	if len(report.Diagnostics) != 1 || report.Diagnostics[0].Rule != validate.RuleDetectorTest || !strings.Contains(report.Diagnostics[0].Message, "healthy-only") {
+		t.Fatalf("healthy locator error omitted: %v", report)
+	}
+}
