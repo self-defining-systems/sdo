@@ -494,7 +494,7 @@ func TestHermeticRoutingCaptureCompilesReplayableMitigator(t *testing.T) {
 			t.Fatalf("agent-selected repair did not remain in place: %+v %v", live, err)
 		}
 	}
-	t.Log("captured routing repair passes save-time replay; two faults attempt one binding and roll back before responder handoff")
+	t.Log("captured routing repair passes save-time replay; agent applies one binding and leaves it in place while the peer remains unresolved")
 }
 
 func TestRoutingCaptureRecordsUnavailableCapabilityOnce(t *testing.T) {

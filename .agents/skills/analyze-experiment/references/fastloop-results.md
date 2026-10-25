@@ -40,9 +40,7 @@ For a confirmed watch-time program match, `DriftEvent.source` is `watch event pr
 
 ## Program trust evidence
 
-`runtime/program_trust.go` derives trust from accepted outcomes in completion order.
-The default threshold is three verified successes; `--program-trust-threshold=1`
-changes eligibility, not the evidence required. The broker persists
+`runtime/program_trust.go` derives informational success/failure counters from accepted outcomes in completion order. There is no automatic execution threshold. The broker persists
 `reflection_eligibility` version 1 before committing the authoritative outcome.
 Its cause groups exactly preserve `confirmed_root_causes` resources; observations
 outside those groups remain unassigned. Only `covered` items for the same program
@@ -86,10 +84,7 @@ covered instances. Newly authored or unmatched programs must earn their first
 credit on a later exact covered repair; corpus acceptance alone creates no credit.
 Do not reinterpret archived counters under the new policy.
 
-After a controller restart, fast-path closure requires fresh bound NoMatch
-results plus independent verification. Markers never replay a cached success or
-undo a prior write. A read-only recovery closure has no new applied-plan receipt
-and earns no additional program trust credit. `PlanApplication` keeps applied
+After a controller restart, the original coverage remains in the prepared incident task. The responder rechecks live state before choosing repairs. `PlanApplication` keeps applied
 actions and verification outcomes; rollback pre-images and patches are retired
 (reserved fields 11 and 13). The tools-state ConfigMap retains attempt counts,
 limits and revision-bound failure signals, not mutation history.

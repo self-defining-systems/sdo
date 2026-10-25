@@ -15,7 +15,7 @@ For active Go runs, inspect the configured runtime `LedgerRoot` and the Go broke
 Ledger files under `.git/sdo-broker/` and the controller's runtime-state ConfigMap are canonical ProtoJSON of `BrokerLedger` and `ControllerState` (`controller_state.proto`): snake_case keys, empty and zero fields omitted (so a missing key means the zero value), RFC3339 timestamps, enums as names, and the closure as an `IncidentClosure`. The Go structs carry no JSON tags, so pre-cutover ledgers with legacy keys (for example `playbooks` or `path` in place of `playbook_ids`) are not readable by the current tools. `reflection_rejections` lists each broker rejection of a reflection proposal (`attempt`, typed `diagnostics` of `rule`/`path`/`line`/`message`/`hint`, `rejected_at`); Go re-dispatches reflection with the previous rejection's diagnostics up to twice, and `reflection_rejected` marks the terminal rejection after the bound (the closure completes with no reflection commit). Current native ledgers use `reflection_rejections`, `reflection_rejected`,
 `reflection_processed`, and typed `reflection_decision` (decision, reason, logical
 playbook IDs, error, SDK gaps and usage). `ReflectionDecision.playbook_ids` remains
-wire field 3. A verified fast path skips reflection; exact accepted repair replay
+wire field 3. Every closed incident goes through learning settlement; exact accepted repair replay
 or wholly trusted program repair may also record a skip reason. A failed learning
 turn preserves the committed mitigation and records its error. The frozen reflection task's
 `ReflectionRequest.depth` is `refine` (Go-decided, resumed responder session only, first attempt
@@ -68,7 +68,7 @@ later incidents; archives are runtime evidence, not operational memory.
 ### Open incidents after controller restart
 
 The controller is the only application writer. Within a process it applies a
-plan, reports independent verification and leaves rollback to the responder (the fast path rolls back its own failed attempt; a partial multi-write failure is compensated). A restart
+plan, reports independent verification and leaves rollback to the responder (a partial multi-write failure is compensated). A restart
 never replays or compensates a stored application, rollback or pending write.
 
 `<IncidentJobName(incident_id)>-tools-state` still uses the CAS state store.
@@ -120,13 +120,12 @@ plan validation with `skipped_unreplayable_effect`, without post-plan replay.
 statuses `STATUS_REPLAYED` or `STATUS_SKIPPED_UNREPLAYABLE_EFFECT`, program/case IDs
 and effect types separately from rejecting diagnostics. Notes prove no external effect or trust.
 
-Corpus acceptance supplies no origin credit; current trust consumes only persisted covered instances. Default trust requires three independently
-verified live successes and zero failures for the unchanged revision. Equivalent
+Corpus acceptance supplies no origin credit; current trust consumes only persisted covered instances. Verified successes and revision-attributed failures are informational counters. Equivalent
 ad-hoc repairs retain bound plan-equivalence receipts and post-repair NoMatch;
 unrelated repairs in the outcome do not suppress credit. Every planned resource
 needs a successful receipt, exact observed plan equivalence, and independent
 outcome success. Match-to-NoMatch alone earns nothing. Summaries distinguish verification and mutation. Each program earns at most one
-success per outcome; failed live fast paths roll back and block revision trust.
+success per outcome; failed applications retain their writes for the responder and increment failure evidence.
 
 Source-comparison recordings preserve the accepted manifest fields and the full observed fields in `result.text` as `accepted: <JSON>\nobserved: <JSON>`, even when `changed` is false. Missing objects use `null`. The accepted side never contains live fields retained by an apply dry run. Compare relevant fields directly, including absence: `changed` still describes reconciliation against server-side-apply normalization (or declared-field projection offline), so it can be false for a live-only field owned by another manager. Source revision and kubectl last-applied bookkeeping annotations are excluded. Existing archived recordings are unchanged.
 

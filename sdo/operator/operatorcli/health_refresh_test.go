@@ -3,16 +3,15 @@ package operatorcli
 import (
 	"context"
 	"errors"
-	"strings"
-	"testing"
-	"time"
-
 	"google.golang.org/protobuf/types/known/anypb"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/worker_registry"
 	"sdo.dev/operator/worker_registry/registrytest"
+	"strings"
+	"testing"
+	"time"
 )
 
 func TestHealthRefreshPendingJobReturnsUnverifiedAndCanReattach(t *testing.T) {

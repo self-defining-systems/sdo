@@ -386,6 +386,7 @@ class SdoPersistentAgent:
         program_metrics = _program_metrics(
             outcome_document, tuple(str(reason) for reason in memory.get("match_reasons", []) or [])
         )
+        program_metrics["playbook_coverage"] = program_metrics["playbook_coverage"] or outcome.playbook_coverage
         program_metrics["resolution_path"] = program_metrics["resolution_path"] or outcome.resolution_path
 
         rollout_receipts = ledger.get("rollout_receipts")

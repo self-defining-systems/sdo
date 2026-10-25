@@ -2,10 +2,9 @@ package install
 
 import (
 	"encoding/json"
-	"testing"
-
 	"sdo.dev/operator/memory/observation"
 	"sdo.dev/operator/sdk"
+	"testing"
 )
 
 func TestObservationPlanGrantsOnlyControllerReads(t *testing.T) {

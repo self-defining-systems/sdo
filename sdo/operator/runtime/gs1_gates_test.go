@@ -47,7 +47,7 @@ func TestGS1DeployedIdentityAndNamespaceScope(t *testing.T) {
 func TestGS1TrustSurvivesProgramRevision(t *testing.T) {
 	first := verifiedTrustOutcome(t, "targetport", "revision-a")
 	next := &contracts.OutcomeRecord{ProgramRuns: []*contracts.ProgramRun{{ProgramId: "targetport", ProgramRevision: "revision-b"}}}
-	state := settledTrustStats([]*contracts.OutcomeRecord{first, next}, 1)["targetport"]
+	state := settledTrustStats([]*contracts.OutcomeRecord{first, next})["targetport"]
 	if !(state.VerifiedSuccesses > 0 && state.Failures == 0) || state.VerifiedSuccesses != 1 || state.LastChange != "revision-b" {
 		t.Fatalf("revision reset trust: %+v", state)
 	}

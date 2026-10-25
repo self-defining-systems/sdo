@@ -9,13 +9,12 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"runtime"
+	"sdo.dev/operator/apihistory"
+	"sdo.dev/operator/kubeproxy"
 	"sort"
 	"strings"
 	"testing"
 	"time"
-
-	"sdo.dev/operator/apihistory"
-	"sdo.dev/operator/kubeproxy"
 )
 
 // A fixed set of windows separates a sustained regression from a transient

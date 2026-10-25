@@ -1,12 +1,11 @@
 package install
 
 import (
-	"slices"
-	"strings"
-
 	rbacv1 "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"slices"
+	"strings"
 )
 
 func captureGrantName(control string) string { return control + "-object-capture" }

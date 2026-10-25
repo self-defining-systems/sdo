@@ -65,7 +65,7 @@ func (m *simTrustModel) apply(event simTrustEvent, revision, other string) {
 	}
 }
 
-func (m *simTrustModel) state(threshold int) ProgramTrust {
+func (m *simTrustModel) state() ProgramTrust {
 	return ProgramTrust{VerifiedSuccesses: m.streak, Failures: m.failures[m.revision], LastChange: m.revision}
 }
 
@@ -94,11 +94,10 @@ func simTrustOutcome(t *testing.T, event simTrustEvent, revision, other string) 
 
 // TestSimProgramTrustFollowsOnlyVerifiedRepairs sweeps random outcome histories:
 // trust accrues only from verified repairs at one revision. Questions preserve
-// prior credit, and the program is trusted exactly at the threshold.
+// prior credit; counters never authorize an automatic repair.
 func TestSimProgramTrustFollowsOnlyVerifiedRepairs(t *testing.T) {
 	sweepSimSeeds(t, func(t *testing.T, seed uint64) {
 		rng := newSimRNG(seed)
-		threshold := 1 + rng.IntN(4)
 		revisions := []string{"tree-a", "tree-b", "tree-c"}
 		model := &simTrustModel{failures: map[string]int{}}
 		var outcomes []*contracts.OutcomeRecord
@@ -121,14 +120,10 @@ func TestSimProgramTrustFollowsOnlyVerifiedRepairs(t *testing.T) {
 			model.apply(event, revision, other)
 			history = append(history, fmt.Sprintf("%d@%s", event, revision))
 			got := ProgramTrustStats(outcomes)["targetport"]
-			want := model.state(threshold)
+			want := model.state()
 			if got != want {
-				t.Fatalf("history %v threshold %d: trust %+v, model %+v", history, threshold, got, want)
+				t.Fatalf("history %v: counters %+v, model %+v", history, got, want)
 			}
 		}
 	})
 }
-
-// TestSimFastPathFiresExactlyAtTrustThreshold: the trusted fast path is
-// attempted after the third verified repair and not after the second, and a
-// failure afterward closes it again.

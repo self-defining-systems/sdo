@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"context"
 	"reflect"
 	"testing"
 
@@ -73,4 +74,20 @@ func TestPlaybookCoverageJoinsWorkloadServiceRelation(t *testing.T) {
 	if len(coverage.UnexplainedFindingFingerprints) != 0 || !reflect.DeepEqual(coverage.Matches[0].ExplainedFindingFingerprints, []string{"service-symptom"}) {
 		t.Fatalf("relation join: %v", coverage)
 	}
+}
+
+func TestPlaybookCoverageSweepBindingIsOfferedByMenu(t *testing.T) {
+	loop, _ := menuB3Loop(t)
+	loop.Request.Findings = nil
+	canMitigate := true
+	bindings := program.Bindings{Objects: program.ObjectBindings{"service": menuService, "deployment": menuDeployment}}
+	coverage := buildPlaybookCoverage(nil, []ProgramRun{{ProgramID: "routing-then-restart", CanMitigate: &canMitigate, Bindings: bindings, Verdict: program.Verdict{Result: program.Match}}}, nil, nil)
+	loop.Request.PlaybookCoverage = coverage
+	menu := loop.Handle(context.Background(), ToolRequest{Command: "menu"})
+	for _, option := range menu.Menu.Options {
+		if option.OptionId == coverage.Matches[0].MitigationSelection {
+			return
+		}
+	}
+	t.Fatalf("coverage selection absent from menu: %v", menu.Menu)
 }

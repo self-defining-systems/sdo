@@ -6,9 +6,8 @@ import (
 	"encoding/json"
 	"os/exec"
 	"path/filepath"
-	"testing"
-
 	"sdo.dev/operator/broker"
+	"testing"
 )
 
 func TestMemoryImportPrepareAndPublishRequirements(t *testing.T) {

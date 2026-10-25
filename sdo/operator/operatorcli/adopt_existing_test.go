@@ -4,11 +4,10 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"strings"
-	"testing"
-
 	"sdo.dev/operator/broker"
 	"sdo.dev/operator/builder"
+	"strings"
+	"testing"
 )
 
 func TestInstallExistingAdoptionRequiresExplicitOptIn(t *testing.T) {

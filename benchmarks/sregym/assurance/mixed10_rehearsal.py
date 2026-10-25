@@ -43,8 +43,6 @@ def runner_arguments(slot: int, run_dir: Path, output: Path) -> list[str]:
         str(slot),
         "--run-id",
         output.name,
-        "--program-trust-threshold",
-        "1",
         "--repair-policy",
         "recorded-actions",
         "--inject-before-resume",

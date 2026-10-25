@@ -175,6 +175,20 @@ func TestHermeticAgentRepairsTwoCoveredFaultsAndOneUnexplained(t *testing.T) {
 	if len(coverage.GetMatches()) != 2 || len(coverage.UnexplainedFindingFingerprints) != 1 || len(derived.Record.RepairActions) < 3 {
 		t.Fatalf("lost attribution: %v", derived.Record)
 	}
+	if derived.Record.Classification != "success" {
+		t.Fatalf("incident did not close successfully: %v", derived.Record)
+	}
+	applied := map[string]bool{}
+	for _, application := range derived.Record.PlanApplications {
+		for _, id := range application.ProgramIds {
+			applied[id] = true
+		}
+	}
+	for _, id := range []string{"image-pull-failure", "service-targetport-mismatch", "action:SetField"} {
+		if !applied[id] {
+			t.Fatalf("outcome lost program versus agent action attribution for %s: %v", id, derived.Record)
+		}
+	}
 	data, err := json.Marshal(derived.Record)
 	if err != nil || len(data) == 0 {
 		t.Fatalf("outcome: %v", err)
