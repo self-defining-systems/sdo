@@ -60,8 +60,10 @@ type OutcomeRecord struct {
 	FastPathSkippedReason           string                    `protobuf:"bytes,32,opt,name=fast_path_skipped_reason,json=fastPathSkippedReason,proto3" json:"fast_path_skipped_reason,omitempty"`
 	FastPathRelationCoveredFindings []*RelationCoveredFinding `protobuf:"bytes,33,rep,name=fast_path_relation_covered_findings,json=fastPathRelationCoveredFindings,proto3" json:"fast_path_relation_covered_findings,omitempty"`
 	ReflectionEligibility           *ReflectionEligibility    `protobuf:"bytes,34,opt,name=reflection_eligibility,json=reflectionEligibility,proto3" json:"reflection_eligibility,omitempty"`
-	unknownFields                   protoimpl.UnknownFields
-	sizeCache                       protoimpl.SizeCache
+	// Controller-owned visible skip when no provider session can be resumed.
+	ReflectionSkipReason string `protobuf:"bytes,35,opt,name=reflection_skip_reason,json=reflectionSkipReason,proto3" json:"reflection_skip_reason,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
 }
 
 func (x *OutcomeRecord) Reset() {
@@ -325,6 +327,13 @@ func (x *OutcomeRecord) GetReflectionEligibility() *ReflectionEligibility {
 	return nil
 }
 
+func (x *OutcomeRecord) GetReflectionSkipReason() string {
+	if x != nil {
+		return x.ReflectionSkipReason
+	}
+	return ""
+}
+
 type OutcomeTimestamps struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	DetectedAt    *timestamppb.Timestamp `protobuf:"bytes,1,opt,name=detected_at,json=detectedAt,proto3" json:"detected_at,omitempty"`
@@ -405,7 +414,7 @@ var File_sdodev_contracts_v1alpha1_outcome_proto protoreflect.FileDescriptor
 
 const file_sdodev_contracts_v1alpha1_outcome_proto_rawDesc = "" +
 	"\n" +
-	"'sdodev/contracts/v1alpha1/outcome.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a(sdodev/contracts/v1alpha1/messages.proto\x1a'sdodev/contracts/v1alpha1/program.proto\"\xdb\x12\n" +
+	"'sdodev/contracts/v1alpha1/outcome.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a(sdodev/contracts/v1alpha1/messages.proto\x1a'sdodev/contracts/v1alpha1/program.proto\"\xa6\x13\n" +
 	"\rOutcomeRecord\x12.\n" +
 	"\x0eschema_version\x18\x01 \x01(\x05B\a\xbaH\x04\x1a\x02\b\x01R\rschemaVersion\x12,\n" +
 	"\vincident_id\x18\x02 \x01(\tB\v\xbaH\br\x06\x10\x012\x02\\SR\n" +
@@ -443,7 +452,9 @@ const file_sdodev_contracts_v1alpha1_outcome_proto_rawDesc = "" +
 	"\x12fast_path_programs\x18\x1f \x03(\tR\x10fastPathPrograms\x127\n" +
 	"\x18fast_path_skipped_reason\x18  \x01(\tR\x15fastPathSkippedReason\x12\x7f\n" +
 	"#fast_path_relation_covered_findings\x18! \x03(\v21.sdodev.contracts.v1alpha1.RelationCoveredFindingR\x1ffastPathRelationCoveredFindings\x12g\n" +
-	"\x16reflection_eligibility\x18\" \x01(\v20.sdodev.contracts.v1alpha1.ReflectionEligibilityR\x15reflectionEligibilityB\x10\n" +
+	"\x16reflection_eligibility\x18\" \x01(\v20.sdodev.contracts.v1alpha1.ReflectionEligibilityR\x15reflectionEligibility\x12I\n" +
+	"\x16reflection_skip_reason\x18# \x01(\tB\x13\xbaH\x10r\x0eR\x00R\n" +
+	"no_sessionR\x14reflectionSkipReasonB\x10\n" +
 	"\x0e_repair_commitB\x10\n" +
 	"\x0e_memory_commitJ\x04\b\x16\x10\x17R\x16diagnosis_verification\"\xcc\x02\n" +
 	"\x11OutcomeTimestamps\x12;\n" +

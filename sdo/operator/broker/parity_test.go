@@ -124,6 +124,19 @@ func TestCLIAndBrokerAgreeOnAcceptance(t *testing.T) {
 		allowAdditional bool
 	}
 	cases := []parityCase{
+		{"unverified peer gaps", validate.Responder, validate.ReflectionPhase, func(*testing.T, string) {}, nil, false},
+		{"unverified peer no verified", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
+			put(t, r, ".sdo/diagnostics/detectors/incidents/cache/detector.go", parityDetector(t, "cache")+"\n// No verified cause.\n", 0644)
+		}, []string{"reflection.executable-cause"}, false},
+		{"verified cause executable with unverified peer", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) { parityProgram(t, r) }, nil, false},
+		{"unverified peer program", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) { parityProgram(t, r) }, []string{"reflection.executable-cause"}, false},
+		{"unverified peer script", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
+			put(t, r, ".sdo/playbooks/base/scripts/fix.sh", "#!/bin/bash\nset -eu\nkubectl rollout restart \"$1\"\n# unverified peer\n", 0755)
+		}, []string{"reflection.executable-cause"}, false},
+		{"unverified peer library", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) { put(t, r, ".sdo/lib/unbound/helper.go", "package unbound\n", 0644) }, []string{"reflection.executable-cause"}, false},
+		{"unverified peer executable", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
+			put(t, r, ".sdo/diagnostics/detectors/incidents/cache/detector.go", parityDetector(t, "cache")+"\n// Unverified peer signature.\n", 0644)
+		}, []string{"reflection.executable-cause"}, false},
 		{"unchanged good tree", validate.Responder, validate.ReflectionPhase, func(*testing.T, string) {}, nil, false},
 		{"responder adds a detector", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
 			put(t, r, ".sdo/diagnostics/detectors/incidents/dns/manifest.yaml", strings.Replace(incidentManifest, "%s", "base", 1), 0o644)
@@ -564,7 +577,29 @@ func (p Program) Mitigate(ctx context.Context,v program.ReadView,b program.Bindi
 				t.Fatal(err)
 			}
 			if test.phase == validate.ReflectionPhase && test.name != "missing accepted outcome" {
-				if _, err := repository.RecordOutcome(context.Background(), "incident", &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: "incident", Classification: "success"}); err != nil {
+				outcome := &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: "incident", Classification: "success"}
+				if len(paths) > 0 {
+					refs := []*contracts.ObjectRef{{Kind: "Service", Namespace: "demo", Name: "front"}}
+					if test.name == "program replay failure" {
+						refs[0].Name = "peer"
+					}
+					outcome.ConfirmedRootCauses = []*contracts.ConfirmedRootCause{{Summary: "independently verified fixture repair", Resources: refs}}
+					outcome.ReflectionEligibility = &contracts.ReflectionEligibility{Version: 1, Causes: []*contracts.ReflectionCauseWork{{CauseIndex: 0, Resources: refs, Items: []*contracts.ReflectionWorkItem{{ProgramId: "base", Disposition: "covered", Reason: "verified_equivalent_repair", Resources: refs}}}}}
+				}
+				if strings.HasPrefix(test.name, "unverified peer ") || test.name == "verified cause executable with unverified peer" {
+					a := []*contracts.ObjectRef{{Kind: "Service", Namespace: "demo", Name: "verified"}}
+					if test.name == "verified cause executable with unverified peer" {
+						a[0].Name = "front"
+					}
+					b := []*contracts.ObjectRef{{Kind: "Service", Namespace: "demo", Name: "unverified"}}
+					outcome.Classification = "failed"
+					outcome.ConfirmedRootCauses = []*contracts.ConfirmedRootCause{{Summary: "verified A", Resources: a}, {Summary: "unverified B", Resources: b}}
+					outcome.ReflectionEligibility = &contracts.ReflectionEligibility{Version: 1, Causes: []*contracts.ReflectionCauseWork{{CauseIndex: 0, Resources: a}}}
+					if test.name == "unverified peer no verified" {
+						outcome.ReflectionEligibility.Causes = nil
+					}
+				}
+				if _, err := repository.RecordOutcome(context.Background(), "incident", outcome); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -585,9 +620,29 @@ func (p Program) Mitigate(ctx context.Context,v program.ReadView,b program.Bindi
 			}
 			root = proposal.Path
 			decision := &contracts.ReflectionDecision{LearningDecision: "updated"}
+			if len(paths) > 0 {
+				// Coverage of this synthetic verified cause is intentionally
+				// declined; executable authorization is checked independently.
+				resource := "front"
+				if test.name == "program replay failure" {
+					resource = "peer"
+				}
+				decision.SdkGaps = []*contracts.SdkGap{{FaultClass: "fixture", Primitive: "fixture", Reason: "fixture coverage gap", ScratchScript: "scratch/fixture", Resources: []*contracts.ObjectRef{{Kind: "Service", Namespace: "demo", Name: resource}}}}
+			}
 			if len(paths) == 0 {
 				decision.LearningDecision = "no_change"
 				decision.NoChangeReason = "already covered"
+			}
+			if strings.HasPrefix(test.name, "unverified peer ") || test.name == "verified cause executable with unverified peer" {
+				decision.SdkGaps = []*contracts.SdkGap{{FaultClass: "verified", Primitive: "missing", Reason: "SDK gap for verified A", ScratchScript: "scratch/a", Resources: []*contracts.ObjectRef{{Kind: "Service", Namespace: "demo", Name: "verified"}}}}
+				if test.name == "verified cause executable with unverified peer" {
+					decision.SdkGaps[0].Resources[0].Name = "front"
+				}
+				if test.name == "unverified peer gaps" {
+					decision.LearningDecision = "sdk_gap"
+					decision.NoChangeReason = "typed gaps for both verified and unverified causes"
+					decision.SdkGaps = append(decision.SdkGaps, &contracts.SdkGap{FaultClass: "unverified", Primitive: "independent-evidence", Reason: "evidence_gap", ScratchScript: "scratch/b", Resources: []*contracts.ObjectRef{{Kind: "Service", Namespace: "demo", Name: "unverified"}}})
+				}
 			}
 			ids := map[string]bool{}
 			for _, p := range paths {

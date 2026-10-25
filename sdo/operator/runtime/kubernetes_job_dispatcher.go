@@ -291,7 +291,13 @@ func (d KubernetesJobDispatcher) Dispatch(ctx context.Context, request IncidentR
 	if err != nil {
 		var failed *worker_registry.JobFailedError
 		if errors.As(err, &failed) {
-			return IncidentResult{}, &ResponderJobFailedError{JobName: failed.JobName}
+			result := IncidentResult{SchemaVersion: ProtocolSchemaVersion, IncidentID: request.IncidentID, Status: IncidentFailed, Error: failed.Error()}
+			if loop != nil {
+				loop.mu.Lock()
+				result.ResponderSessionID = loop.menuSession.GetProviderSessionId()
+				loop.mu.Unlock()
+			}
+			return result, &ResponderJobFailedError{JobName: failed.JobName}
 		}
 		return IncidentResult{}, err
 	}

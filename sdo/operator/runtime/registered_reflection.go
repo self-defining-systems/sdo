@@ -87,8 +87,7 @@ func (w RegisteredReflectionWorker) Reflect(ctx context.Context, closure Inciden
 		guidance = "baseline"
 	}
 	if mode == "resume" && !hasResponderSession(closure) {
-		log.Printf("reflection incident %s: responder session ID is missing or invalid; starting fresh", workspace.IncidentID)
-		mode = "fresh"
+		return ReflectionDecision{LearningDecision: "no_change", NoChangeReason: "no_session"}, nil
 	}
 	if task != nil {
 		frozen := &contracts.ReflectionRequest{}

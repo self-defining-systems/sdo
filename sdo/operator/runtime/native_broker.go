@@ -275,8 +275,11 @@ func (n NativeIncidentBroker) ProcessClosure(ctx context.Context, closure Incide
 					ledger.OutcomeDocument.ReflectionEligibility = partialReflectionEligibility(eligibility, indices, false)
 					ledger.OutcomeDocument.ReflectionEligibility.Unassigned = unverifiedCauseWork(ledger.OutcomeDocument, indices)
 				} else {
-					ledger.ReflectionDecision = &contracts.ReflectionDecision{LearningDecision: "no_change", NoChangeReason: noVerifiedRepair}
+					ledger.ReflectionDecision = &contracts.ReflectionDecision{LearningDecision: "no_change", NoChangeReason: "no_session"}
 				}
+			}
+			if !hasResponderSession(closure) {
+				ledger.OutcomeDocument.ReflectionSkipReason = "no_session"
 			}
 			if err := n.saveLedger(ledger); err != nil {
 				return err

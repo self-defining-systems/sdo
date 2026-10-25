@@ -11,8 +11,6 @@ import (
 	"sdo.dev/operator/sdk"
 )
 
-const noVerifiedRepair = "no_independently_verified_repair"
-
 // Unverified causes remain questions, never positive repair evidence. Keep one
 // typed gap per original cause even when the executable-learning projection has
 // no causes at all. No benchmark recovery signal can supply this proof.

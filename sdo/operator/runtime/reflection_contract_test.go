@@ -431,7 +431,7 @@ func t1RunBroker(t *testing.T, c t1Class, reject bool) t1Run {
 		registry = nil
 		t1Captures(t, capture, t1Class{fixed: program.NoMatch})
 	}
-	worker := RegisteredReflectionWorker{AgentID: "t1-scripted", TaskType: reflectionTaskType(t), Outcomes: memory.OpenReader(root), Timeout: time.Minute}
+	worker := RegisteredReflectionWorker{AgentID: "t1-scripted", TaskType: reflectionTaskType(t), Outcomes: memory.OpenReader(root), Timeout: time.Minute, SessionMode: "fresh"}
 	worker.Executor = reflectionTaskExecutorFunc(func(_ context.Context, task *contracts.AgentTask) (*contracts.AgentResult, error) {
 		inspectCases(task.Workspace.CheckoutPath)
 		run.calls++

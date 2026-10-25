@@ -153,7 +153,7 @@ func TestNativeBrokerSkipsFailedClosureWithoutVerifiedRepair(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ledger.RequiresReflection || ledger.ReflectionDecision.GetNoChangeReason() != "no_independently_verified_repair" {
+	if ledger.RequiresReflection || ledger.ReflectionDecision.GetNoChangeReason() != "no_session" {
 		t.Fatalf("missing observable no-proof skip: %v", ledger)
 	}
 }

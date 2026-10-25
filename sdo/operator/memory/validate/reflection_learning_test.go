@@ -1,6 +1,7 @@
 package validate
 
 import (
+	"google.golang.org/protobuf/proto"
 	"os"
 	"path/filepath"
 	"testing"
@@ -84,5 +85,20 @@ func TestFailedReflectionRequiresOnlyIndependentlyVerifiedPartialCauses(t *testi
 	ds, err = ReflectionLearningDiagnostics(root, outcome, decision)
 	if err != nil || len(ds) != 0 {
 		t.Fatalf("unverified cause was made mandatory: %v %v", ds, err)
+	}
+}
+
+func TestReflectionCoverageCheckPreservesAcceptedCauseEvidence(t *testing.T) {
+	root := goodTree(t)
+	a := []*contracts.ObjectRef{{Kind: "Service", Namespace: "app", Name: "a"}}
+	b := []*contracts.ObjectRef{{Kind: "Service", Namespace: "app", Name: "b"}}
+	outcome := &contracts.OutcomeRecord{Classification: "failed", ReflectionEligibility: &contracts.ReflectionEligibility{Version: 1, Causes: []*contracts.ReflectionCauseWork{{CauseIndex: 0, Resources: a}, {CauseIndex: 1, Resources: b}}}}
+	before := proto.Clone(outcome)
+	_, err := ReflectionLearningDiagnostics(root, outcome, &contracts.ReflectionDecision{LearningDecision: "updated", SdkGaps: []*contracts.SdkGap{{FaultClass: "a", Primitive: "missing", Reason: "SDK gap for A", ScratchScript: "scratch/a", Resources: a}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !proto.Equal(before, outcome) {
+		t.Fatal("validation changed accepted cause evidence")
 	}
 }
