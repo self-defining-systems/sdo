@@ -121,10 +121,11 @@ func (s *SourceInventory) Findings(objects []*unstructured.Unstructured, now tim
 		if o.GetKind() == "ConfigMap" && o.GetName() == "kube-root-ca.crt" || o.GetKind() == "ServiceAccount" && o.GetName() == "default" {
 			continue
 		}
-		if generated(o, map[sdk.ObjectRef]bool{}) {
+		declared := s.declared[ref]
+		// Inherited identity cannot override explicit accepted-source obligations.
+		if declared == nil && !s.dependencies[ref] && generated(o, map[sdk.ObjectRef]bool{}) {
 			continue
 		}
-		declared := s.declared[ref]
 		deleting := o.GetDeletionTimestamp() != nil && !o.GetDeletionTimestamp().IsZero()
 		rbacChanged := declared != nil && strings.HasPrefix(o.GetAPIVersion(), "rbac.authorization.k8s.io/") && !reflect.DeepEqual(inventoryRBACProjection(declared), inventoryRBACProjection(o))
 		if declared == nil && !s.dependencies[ref] && s.acknowledged[ref] {
