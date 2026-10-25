@@ -88,7 +88,9 @@ func (c *Controller) AttachPendingOnboarding(ctx context.Context, client kuberne
 	if err != nil {
 		return err
 	}
-	c.pendingOnboarding = record
+	// Do not expose an actionable pending install until all continuity reads
+	// succeed, even if a caller mishandles an attachment error.
+	c.pendingOnboarding = nil
 	c.onboardingClient = client
 	c.onboardingControl = control
 	for _, name := range []string{onboarding.RejectedConfigMapName, onboarding.WindowConfigMapName} {
@@ -102,6 +104,7 @@ func (c *Controller) AttachPendingOnboarding(ctx context.Context, client kuberne
 			c.onboardingReachability.invalid = true
 		}
 	}
+	c.pendingOnboarding = record
 	return nil
 }
 

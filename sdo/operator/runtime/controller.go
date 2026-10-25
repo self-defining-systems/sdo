@@ -317,6 +317,15 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 	deferInventory := c.pendingOnboarding != nil
 	if deferInventory {
 		c.observePendingOnboarding(ctx, now)
+		// Persist known contradictions before snapshot acquisition or an idle
+		// return: either may fail, and a restart must not erase this evidence.
+		if c.onboardingReachability != nil && c.onboardingReachability.invalid {
+			if err := c.rejectPendingOnboarding(ctx, "install boundary contradicted or interrupted"); err != nil {
+				return err
+			}
+			deferInventory = false
+			c.observeSourceInventory(now)
+		}
 	} else {
 		c.observeSourceInventory(now)
 	}
