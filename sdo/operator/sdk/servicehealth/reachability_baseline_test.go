@@ -6,9 +6,11 @@ import (
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/servicehealth"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestReachabilityBaselineExcludesMeasuredFailureButNotChangedTarget(t *testing.T) {
@@ -115,5 +117,76 @@ func TestUnrelatedConfigurationFaultDoesNotInvalidateBaselineTarget(t *testing.T
 	s.NetworkPolicyList = []networkingv1.NetworkPolicy{{ObjectMeta: metav1.ObjectMeta{Name: "other-service"}, Spec: networkingv1.NetworkPolicySpec{PodSelector: metav1.LabelSelector{MatchLabels: map[string]string{"app": "unrelated"}}}}}
 	if got := detectReachability(t, s); len(got) != 0 {
 		t.Fatalf("unrelated live fault revived an accepted baseline false positive: %+v", got)
+	}
+}
+
+// A successful dial cannot roll out of the never-served reference evidence.
+func TestReachabilityBaselineNeverExcludesPreviouslyServingPort(t *testing.T) {
+	s := reachabilitySnapshot{Snapshot: geoSnapshot(intstr.FromInt32(8083), true), window: window(geoTarget(samples(servicehealth.DialRefused, false, false, false)))}
+	at := s.window.Targets[0].Samples[0].At.Add(-time.Second)
+	s.window.Targets[0].LastSuccess = &at
+	auth := servicehealth.BaselineAuthorization{SourceInputs: strings.Repeat("a", 64), ObjectiveDigest: strings.Repeat("b", 64), Reason: "healthy-baseline", GoalHealthy: true}
+	b, err := servicehealth.CaptureReachabilityBaseline(s, auth)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(b.Exclusions) != 0 {
+		t.Fatal("a port that served must still fire after three refusals")
+	}
+}
+
+func TestReachabilityReferenceObservationDoesNotHideLaterServingFailure(t *testing.T) {
+	s := reachabilitySnapshot{Snapshot: geoSnapshot(intstr.FromInt32(8083), true), window: window(geoTarget(samples(servicehealth.DialRefused, false, false, false)))}
+	auth := servicehealth.BaselineAuthorization{SourceInputs: strings.Repeat("a", 64), ObjectiveDigest: strings.Repeat("b", 64), Reason: "healthy-baseline", GoalHealthy: true}
+	reference, err := servicehealth.CaptureReachabilityBaseline(s, auth)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.window.Baseline = reference
+	s.window.SourceInputs = auth.SourceInputs
+	s.window.ObjectiveDigest = auth.ObjectiveDigest
+	observations := servicehealth.ReachabilityObservations(s)
+	if len(observations) != 1 || observations[0].Status != "declared-but-never-served" {
+		t.Fatalf("reference must remain visible: %+v", observations)
+	}
+	at := reference.CapturedAt.Add(time.Second)
+	s.window.Targets[0].LastSuccess = &at
+	s.window.ObservedAt = at.Add(30 * time.Second)
+	for i := range s.window.Targets[0].Samples {
+		s.window.Targets[0].Samples[i].At = at.Add(time.Duration(i+1) * 10 * time.Second)
+	}
+	if findings := detectReachability(t, s); len(findings) != 1 {
+		t.Fatal("a later success must restore the ordinary failure gate")
+	}
+	if len(servicehealth.ReachabilityObservations(s)) != 0 {
+		t.Fatal("served port still described as never served")
+	}
+}
+
+func TestReachabilityConfirmedRequiresCompleteFreshProbeWindow(t *testing.T) {
+	for _, mode := range []string{"complete", "missing", "two", "stale", "repeated", "omitted", "mixed"} {
+		t.Run(mode, func(t *testing.T) {
+			s := reachabilitySnapshot{Snapshot: geoSnapshot(intstr.FromInt32(8083), true), window: window(geoTarget(samples(servicehealth.DialRefused, false, false, false)))}
+			switch mode {
+			case "mixed":
+				s.window.Targets[0].Samples[0].OK = true
+			case "missing":
+				s.window.Targets = nil
+			case "two":
+				s.window.Targets[0].Samples = s.window.Targets[0].Samples[1:]
+			case "stale":
+				s.window.ObservedAt = s.window.ObservedAt.Add(time.Hour)
+			case "repeated":
+				s.window.Targets[0].Samples[1].At = s.window.Targets[0].Samples[0].At
+			case "omitted":
+				s.window.Omitted = 1
+			}
+			detector := servicehealth.NewReachabilityDetector(reachabilitySpec()).(interface {
+				Confirmed(sdk.DetectionContext) bool
+			})
+			if got := detector.Confirmed(s); got != (mode == "complete") {
+				t.Fatalf("confirmed=%v", got)
+			}
+		})
 	}
 }

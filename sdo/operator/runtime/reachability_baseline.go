@@ -30,7 +30,7 @@ func healthyBaselineGoal(ctx context.Context, detectors []sdk.Detector, snapshot
 		if spec.ID == "health-objective" {
 			objective = true
 		}
-		findings, err := detector.Detect(ctx, snapshot)
+		findings, err := sdk.DetectObserved(ctx, detector, snapshot)
 		if err != nil {
 			return false, fmt.Errorf("healthy baseline %s: %w", spec.ID, err)
 		}

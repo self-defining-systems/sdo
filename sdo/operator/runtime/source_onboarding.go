@@ -14,6 +14,7 @@ import (
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/onboarding"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/servicehealth"
 )
 
 func cloneNamespaceOnboarding(record *contracts.NamespaceOnboarding) *contracts.NamespaceOnboarding {
@@ -59,6 +60,24 @@ func (s *SourceInventory) SetNamespaceOnboarding(record *contracts.NamespaceOnbo
 
 // AttachPendingOnboarding restores the install snapshot, never live identities.
 func (c *Controller) AttachPendingOnboarding(ctx context.Context, client kubernetes.Interface, control string) error {
+	stored, err := onboarding.Load(ctx, client, control, c.config.Namespace)
+	if err != nil {
+		return err
+	}
+	if stored != nil {
+		if err := c.SetNamespaceOnboarding(stored); err != nil {
+			return err
+		}
+	}
+	reference, err := onboarding.LoadReachability(ctx, client, control, c.config.Namespace)
+	if err != nil {
+		return err
+	}
+	if reference != nil && reference.Authorization.ObjectiveDigest != c.reachabilityObjectiveDigest() {
+		reference = nil
+	}
+	c.onboardingReachability = &onboardingReachabilityState{reference: reference}
+	c.provider = onboardingSnapshotProvider{Base: c.provider, State: c.onboardingReachability}
 	if c.namespaceOnboarding != nil {
 		return nil
 	}
@@ -113,7 +132,7 @@ func (c *Controller) finishOnboarding(ctx context.Context, record *contracts.Nam
 	c.mu.Lock()
 	eligible := !c.incidentOpen && !c.closureBlocksNextLocked() && c.lastAcknowledgedIncidentID == "" && c.incidentDetectedAt.IsZero() && len(c.failedClosures) == 0 && commitVerified
 	c.mu.Unlock()
-	if !eligible || errored || len(findings) != 0 || len(c.healthDetectorIDs) == 0 || !c.pendingInventoryClear(record, now) {
+	if !eligible || (c.onboardingReachability != nil && c.onboardingReachability.invalid) || errored || len(findings) != 0 || len(c.healthDetectorIDs) == 0 || !c.pendingInventoryClear(record, now) {
 		return
 	}
 	actionCtx, cancel, err := c.actionContext(ctx)
@@ -121,9 +140,19 @@ func (c *Controller) finishOnboarding(ctx context.Context, record *contracts.Nam
 		return
 	}
 	defer cancel()
-	stored, err := onboarding.Complete(actionCtx, c.onboardingClient, c.onboardingControl, record)
+	var reference *servicehealth.ReachabilityBaseline
+	if c.onboardingReachability != nil {
+		reference = c.onboardingReachability.candidate
+	}
+	stored, err := onboarding.CompleteWithReachability(actionCtx, c.onboardingClient, c.onboardingControl, record, reference)
+	if err == nil && c.onboardingReachability != nil {
+		c.onboardingReachability.candidate, err = onboarding.LoadReachability(actionCtx, c.onboardingClient, c.onboardingControl, c.config.Namespace)
+	}
 	if err == nil {
 		err = c.SetNamespaceOnboarding(stored)
+		if err == nil {
+			c.publishOnboardingReachability(ctx)
+		}
 	}
 	if err == nil {
 		err = c.prepareSourceInventory(ctx)

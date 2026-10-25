@@ -122,12 +122,17 @@ func capture(ctx context.Context, client kubernetes.Interface, namespace, commit
 }
 
 func persist(ctx context.Context, client kubernetes.Interface, control, name string, record *contracts.NamespaceOnboarding) (*contracts.NamespaceOnboarding, error) {
+	return persistData(ctx, client, control, name, record, map[string]string{})
+}
+
+func persistData(ctx context.Context, client kubernetes.Interface, control, name string, record *contracts.NamespaceOnboarding, extra map[string]string) (*contracts.NamespaceOnboarding, error) {
 	data, err := protojson.Marshal(record)
 	if err != nil {
 		return nil, err
 	}
+	extra[DataKey] = string(data)
 	immutable := true
-	_, err = client.CoreV1().ConfigMaps(control).Create(ctx, &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: control, Labels: map[string]string{"app.kubernetes.io/managed-by": "sdo"}}, Immutable: &immutable, Data: map[string]string{DataKey: string(data)}}, metav1.CreateOptions{})
+	_, err = client.CoreV1().ConfigMaps(control).Create(ctx, &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: control, Labels: map[string]string{"app.kubernetes.io/managed-by": "sdo"}}, Immutable: &immutable, Data: extra}, metav1.CreateOptions{})
 	if apierrors.IsAlreadyExists(err) {
 		return load(ctx, client, control, name, record.Namespace)
 	}

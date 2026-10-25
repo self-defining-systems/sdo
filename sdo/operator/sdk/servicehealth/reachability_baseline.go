@@ -104,6 +104,16 @@ func CaptureReachabilityBaseline(ctx sdk.DetectionContext, a BaselineAuthorizati
 		}
 	}
 	for _, o := range w.Targets {
+		if o.LastSuccess != nil {
+			continue
+		}
+		served := false
+		for _, sample := range o.Samples {
+			served = served || sample.OK
+		}
+		if served {
+			continue
+		}
 		if !failing[fmt.Sprintf("%s/%d", o.Target.Service, o.Target.Port)] {
 			continue
 		}
@@ -281,5 +291,47 @@ func reachabilityBaselineStatus(ctx sdk.DetectionContext, w ReachabilityWindow, 
 }
 
 func excludedReachabilityTarget(ctx sdk.DetectionContext, w ReachabilityWindow, target ReachabilityTarget) bool {
+	for _, o := range w.Targets {
+		if o.Target != target {
+			continue
+		}
+		if o.LastSuccess != nil && !o.LastSuccess.Before(w.baselineCapturedAt()) {
+			return false
+		}
+		for _, s := range o.Samples {
+			if s.OK && !s.At.Before(w.baselineCapturedAt()) {
+				return false
+			}
+		}
+	}
 	return reachabilityBaselineStatus(ctx, w, target) == "accepted-exclusion"
+}
+
+func (w ReachabilityWindow) baselineCapturedAt() time.Time {
+	if w.Baseline == nil {
+		return time.Time{}
+	}
+	return w.Baseline.CapturedAt
+}
+
+// ReachabilityObservation is reference evidence, never a health finding.
+type ReachabilityObservation struct {
+	Target      ReachabilityTarget `json:"target"`
+	Status      string             `json:"status"`
+	ReferenceAt time.Time          `json:"referenceAt"`
+}
+
+// ReachabilityObservations reports currently applicable never-served evidence.
+func ReachabilityObservations(ctx sdk.DetectionContext) []ReachabilityObservation {
+	observations := []ReachabilityObservation{}
+	w, ok := ReachabilityFrom(ctx)
+	if !ok || w.Baseline == nil {
+		return observations
+	}
+	for _, e := range w.Baseline.Exclusions {
+		if excludedReachabilityTarget(ctx, w, e.Target) {
+			observations = append(observations, ReachabilityObservation{Target: e.Target, Status: "declared-but-never-served", ReferenceAt: w.Baseline.CapturedAt})
+		}
+	}
+	return observations
 }

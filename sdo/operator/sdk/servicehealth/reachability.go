@@ -206,7 +206,8 @@ type reachabilityDetector struct {
 // all made after the Service gained that ready backend, failed. A prior
 // successful dial is not required: a port that never accepted a connection
 // while its pods report Ready is exactly the fault this detects. Without dial
-// observations in the context it reports nothing.
+// observations in the context it reports nothing. A controller-authorized
+// healthy reference retains never-served declarations as observations instead.
 func NewReachabilityDetector(spec sdk.DetectorSpec) sdk.Detector {
 	return reachabilityDetector{spec: spec}
 }
@@ -214,6 +215,69 @@ func NewReachabilityDetector(spec sdk.DetectorSpec) sdk.Detector {
 func (d reachabilityDetector) Spec() sdk.DetectorSpec { return d.spec }
 
 func (d reachabilityDetector) ConsumesServiceReachability() bool { return true }
+
+// Confirmed distinguishes an empty verdict from a window still collecting
+// samples. An unavailable observer remains an error through Detect.
+func (d reachabilityDetector) Confirmed(ctx sdk.DetectionContext) bool {
+	w, ok := ReachabilityFrom(ctx)
+	if !ok {
+		return false
+	}
+	if w.LoadError != "" {
+		return true
+	}
+	count := w.Failures
+	if count < 2 {
+		count = DefaultReachabilityFailures
+	}
+	interval := w.Interval
+	if interval <= 0 {
+		interval = DefaultReachabilityInterval
+	}
+	targets, omitted := ReachabilityTargets(ctx)
+	if omitted > 0 || w.Omitted > 0 {
+		return false
+	}
+	for _, target := range targets {
+		found := false
+		for _, o := range w.Targets {
+			if o.Target != target || len(o.Samples) < count {
+				continue
+			}
+			recent := o.Samples[len(o.Samples)-count:]
+			if w.ObservedAt.Sub(recent[len(recent)-1].At) > 3*interval+w.Timeout {
+				continue
+			}
+			valid := true
+			since := time.Time{}
+			for _, service := range ctx.Services() {
+				if service.Name == target.Service {
+					since = readySince(readySelectedPods(ctx, service))
+					break
+				}
+			}
+			for i, s := range recent {
+				if s.At.IsZero() || s.At.Before(since) || s.At.After(w.ObservedAt) || (i > 0 && !s.At.After(recent[i-1].At)) {
+					valid = false
+				}
+			}
+			// A recent success proves reachability immediately. A trailing
+			// failure still needs the full consecutive-failure confirmation run.
+			if !recent[len(recent)-1].OK {
+				for _, sample := range recent {
+					if sample.OK {
+						valid = false
+					}
+				}
+			}
+			found = valid
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
+}
 
 type failingPort struct {
 	port     corev1.ServicePort

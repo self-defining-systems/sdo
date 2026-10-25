@@ -77,6 +77,7 @@ type Controller struct {
 	driftEvents                 []sdk.DriftEvent
 	sourceInventory             *SourceInventory
 	pendingOnboarding           *contracts.NamespaceOnboarding
+	onboardingReachability      *onboardingReachabilityState
 	onboardingClient            kubernetes.Interface
 	onboardingControl           string
 	namespaceOnboarding         *contracts.NamespaceOnboarding
@@ -338,9 +339,15 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 	}
 	c.processDrift(ctx, now, snapshot, objectChanges)
 
-	onboardingCandidate := c.beginOnboarding(ctx, detectors)
+	snapshot = c.prepareOnboardingReachability(ctx, now, snapshot, detectors)
+	var onboardingCandidate *contracts.NamespaceOnboarding
+	confirmed := detectorsConfirmed(detectors, snapshot)
+	confirmationExpired := !confirmed && c.onboardingConfirmationExpired(now, snapshot)
+	if confirmed || confirmationExpired {
+		onboardingCandidate = c.beginOnboarding(ctx, detectors)
+	}
 	sampleFindings := make([]sdk.Finding, 0)
-	errored := false
+	errored := confirmationExpired
 	c.mu.Lock()
 	c.evaluationIteration++
 	c.evaluationAt = now.UTC()
@@ -352,6 +359,14 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 			c.resetGate(spec.ID)
 			c.recordDetectorError(spec.ID, now, detectErr)
 			errored = true
+			continue
+		}
+		if len(findings) == 0 && !detectorConfirmed(detector, snapshot) {
+			c.history = append(c.history, DetectorEvaluation{DetectorID: spec.ID, EvaluatedAt: now.UTC(), Status: DetectorEvaluationPending})
+			if len(c.history) > 100 {
+				c.history = append([]DetectorEvaluation(nil), c.history[len(c.history)-100:]...)
+			}
+			c.trackClearStreak(spec.ID, now, false)
 			continue
 		}
 		validFindings := make([]sdk.Finding, 0, len(findings))
