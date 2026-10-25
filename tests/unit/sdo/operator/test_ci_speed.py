@@ -151,7 +151,7 @@ def test_required_ci_rejects_any_applicable_unsuccessful_job(result: str, accept
     assert (completed.returncode == 0) is accepted
 
 
-def test_go_build_cache_survives_test_failures_and_is_shared_with_python() -> None:
+def test_go_build_cache_is_shared_and_prs_do_not_publish_it() -> None:
     jobs = workflow()["jobs"]
     for name in ("go", "images", "runtime-integration"):
         steps = jobs[name]["steps"]
@@ -159,8 +159,5 @@ def test_go_build_cache_survives_test_failures_and_is_shared_with_python() -> No
         assert "-shared-1.26.8-" in restore["with"]["key"]
         assert "~/.cache/go-build" in restore["with"]["path"]
         assert "~/go/pkg/mod" in restore["with"]["path"]
-    save = next(
-        step for step in jobs["go"]["steps"] if step.get("name") == "Save shared Go builds even after test failures"
-    )
-    assert "always()" in save["if"]
-    assert "steps.go-cache.outputs.cache-primary-key" in save["with"]["key"]
+    # Cache publication is nightly; PR correctness is independent of upload time.
+    assert not any("actions/cache/save@" in step.get("uses", "") for job in jobs.values() for step in job["steps"])

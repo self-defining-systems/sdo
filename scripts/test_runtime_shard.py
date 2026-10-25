@@ -3,7 +3,7 @@
 
 Discovery uses Go's compiled test inventory, including replay, chaos, fuzz seeds
 and examples, across every package. Every name must match exactly one partition.
-PR CI uses two measured partitions, sharing dependency build caches.
+PR CI uses three measured partitions, sharing dependency build caches.
 """
 
 from __future__ import annotations
@@ -22,16 +22,18 @@ INTEGRATION = (
     "TestReflectionLearnedProgramCLIAndBroker",
     "TestT1ScriptedBrokerMatrix",
     "TestRenderedLockImageInputScope",
-    "TestExhaustiveReflectionLifecycle",
     "TestSimSchedule",
     "TestSimScheduleQueuedDriftNeverRedispatchesAfterVerifiedClosure",
     "TestSimRenderedLockSchedule",
     "TestSimIncidentStream",
+    "FuzzSimIncidentSchedule",
 )
 _INTEGRATION = "(?:" + "|".join(INTEGRATION) + ")"
+_LIFECYCLE = "(?:TestNative(?:Broker|Lifecycle).*|TestExhaustiveReflectionLifecycle)"
 PATTERNS = {
     "integration": "^" + _INTEGRATION + "$",
-    "contracts": "^(?!" + _INTEGRATION + "$)(?:Test|Fuzz|Example)",
+    "lifecycle": "^" + _LIFECYCLE + "$",
+    "contracts": "^(?!" + _INTEGRATION + "$)(?!" + _LIFECYCLE + "$)(?:Test|Fuzz|Example)",
 }
 RUNTIME = Path(__file__).resolve().parents[1] / "sdo/operator/runtime"
 
@@ -83,7 +85,7 @@ def main() -> None:
     )
     for shard, members in groups.items():
         print(f"{shard}: {len(members)} test names", flush=True)
-    # Discover and compile once, then run disjoint partitions on this runner.
+    # Discover the inventory once, then run disjoint partitions on this runner.
     # Both exit codes matter; a failed partition must not cancel its sibling.
     selected = list(groups) if args.shard == "all" else [args.shard]
     processes = []

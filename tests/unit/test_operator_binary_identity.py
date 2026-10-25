@@ -89,3 +89,22 @@ def test_build_settings_are_part_of_cache_identity(module: Path, monkeypatch: py
 def test_real_operator_embeds_its_input_identity(operator_binary: Path) -> None:
     repository = Path(__file__).resolve().parents[2]
     verify_operator(operator_binary, source_identity(repository / "sdo/operator"))
+
+
+def test_repository_binary_helper_wins_over_an_installed_scripts_package(tmp_path: Path) -> None:
+    import subprocess
+    import sys
+
+    repository = Path(__file__).resolve().parents[2]
+
+    installed = tmp_path / "site-packages"
+    package = installed / "scripts"
+    package.mkdir(parents=True)
+    (package / "__init__.py").write_text("raise RuntimeError('unrelated installed package selected')\n")
+    command = (
+        f"import sys; sys.path[:0] = [{str(repository)!r}, {str(installed)!r}]; "
+        "from scripts import operator_test_binary; "
+        f"assert operator_test_binary.__file__ == {str(repository / 'scripts/operator_test_binary.py')!r}"
+    )
+    completed = subprocess.run([sys.executable, "-c", command], capture_output=True, text=True, check=False)
+    assert completed.returncode == 0, completed.stderr

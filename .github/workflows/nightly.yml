@@ -17,12 +17,16 @@ env:
   GOFLAGS: "-p=4"
 
 # Moved checks and reasons:
+# - Go race-suite cache warming/publication: PRs consume content-addressed builds
+#   without a large cache upload in their enforced critical path. All cases run on PRs.
 # - Six 30s active boundary fuzz campaigns: mutation is valuable beyond the full
 #   seed corpus and 1s PR smoke, but adds at least three minutes to every PR.
 # - Three normal-build latency acceptance repeats, including the 3MiB response:
 #   distribution sampling needs repetition and a quiet runner. PRs keep a single
 #   repeat of all three tests (including the unresolved large-response failure)
 #   and every deterministic forwarding/redaction contract.
+# - Publishing the full shared image-layer cache: uploading compiler/toolchain
+#   layers cost 175s on a measured PR; PRs restore this cache and still build/probe.
 # - All four images even without image-input changes: catch base/tool service
 #   regressions daily. PRs still build/smoke/probe every affected image.
 jobs:
@@ -91,6 +95,10 @@ jobs:
           load: true
           set: |
             *.cache-from=type=gha,scope=sdo-images
+            *.cache-from+=type=gha,scope=sdo-controller
+            *.cache-from+=type=gha,scope=sdo-validator
+            *.cache-from+=type=gha,scope=sdo-responder
+            *.cache-from+=type=gha,scope=sdo-benchmark
             ${{ steps.image-inputs.outputs.cache-target }}.cache-to=type=gha,scope=sdo-images,mode=max
       - name: Smoke and probe every affected image
         env:
@@ -118,3 +126,36 @@ jobs:
           fi
 
 
+
+  go-cache:
+    name: Warm and publish shared Go compiler caches
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version: "1.26.8"
+          cache: false
+      - uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ci-go-${{ runner.os }}-${{ runner.arch }}-shared-1.26.8-${{ hashFiles('**/go.sum') }}-nightly-${{ github.sha }}
+          restore-keys: |
+            ci-go-${{ runner.os }}-${{ runner.arch }}-shared-1.26.8-${{ hashFiles('**/go.sum') }}-
+            ci-go-${{ runner.os }}-${{ runner.arch }}-shared-1.26.8-
+      - name: Compile every race suite without executing its cases
+        run: |
+          for module in sdo/operator/sdk sdo/operator/core sdo/operator/contracts benchmarks/sregym/protocol/native_receipt_go benchmarks/sregym/protocol/submission_go sdo/operator sdo/operator/runtime; do
+            toolchain=go1.26.8
+            if [[ "$module" = sdo/operator/sdk || "$module" = sdo/operator/core ]]; then
+              toolchain=go1.24.5
+            fi
+            (cd "$module" && GOTOOLCHAIN="$toolchain" go test -race -run '^$' -timeout=1m ./...)
+          done
+          # Warm normal-build dependencies too. This output is never a test CLI.
+          (cd sdo/operator && go build -o "$RUNNER_TEMP/native-cache-warm" ./cmd/sdo-operator)

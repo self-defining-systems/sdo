@@ -422,8 +422,8 @@ after completion; the next launch replaces a stale record. The printed
 
 ### PR CI execution budget
 
-PR CI runs at most **three work jobs** in parallel: **Go modules**, **All runtime
-race tests**, and **Python, static, proto and affected images**. The fourth job,
+PR CI runs at most **three work jobs** in parallel: **Go modules**, **All runtime race tests**,
+and **Python/static/proto plus affected images**. The fourth job,
 `Required PR CI`, runs only after all three complete and remains the single
 branch-protection check. There is no selector job or test matrix. Repository
 policy rejects a fourth work job, counting every matrix expansion, as well as
@@ -440,16 +440,20 @@ upper bound enforces the complete path; aim for at most eight minutes of executi
 to retain headroom. All three work jobs time out after nine minutes.
 
 The Go module job starts its longest module alongside a sequential lane for
-smaller modules, with shared caches and bounded compiler parallelism. Runtime
-uses **two disjoint partitions on one runner**, `contracts` and `integration`,
-without competing with unrelated module compilation. Run both locally with
+smaller modules, on a runner dedicated to Go. Python keeps two pytest workers on
+the image runner after static/proto and affected-image validation. Runtime
+uses **three disjoint partitions on one runner**, `contracts`, `integration` and
+`lifecycle`,
+without competing with unrelated module compilation. Run every partition locally with
 `uv run python scripts/test_runtime_shard.py --shard all`, or select either
-partition by name. Discovery compiles and lists tests once before both partitions
-start; both exit statuses are collected even if one fails. Every package,
+partition by name. Inventory discovery runs once before all partitions start,
+with shared Go build caches; every exit status are collected even if one fails. Every package,
 example, fuzz seed, replay, chaos and explorer test remains in the race suite.
 The exactly-once guard rejects missing or overlapping names; all nested scenarios
 and seeds remain unchanged. The unchanged 83 MiB restart fixtures stay on PRs.
-The Gate 1 names and `scripts/test_fastloop_hermetic.sh` selectors stay intact.
+Native broker/lifecycle cases and the exhaustive lifecycle model have their own
+partition, so long controller continuations cannot queue behind all contracts.
+The partitions also retain the full trust property matrix. The Gate 1 names and `scripts/test_fastloop_hermetic.sh` selectors stay intact.
 Go emits `-json` timings for profiling; aggregate top-level `pass` event `Elapsed`
 values rather than adding nested subtest timings a second time.
 
@@ -464,10 +468,12 @@ and deterministic forwarding/redaction contracts. Every affected image is still
 built, smoked, probed and checked for forbidden benchmark files on PRs.
 
 Static analysis already includes type and architecture checks, so their standalone
-jobs were redundant. They now run once inside the Python/static job, alongside
-formatting, proto lint/codegen drift and the Python contracts. Image builds share
-one maximal cache export for common layers instead of exporting those layers four
-times under separate scopes. Image setup reads the committed native SDK pin,
+jobs were redundant. They now run once on the Python/image runner alongside formatting
+and proto lint/codegen drift. Nightly warms and publishes shared Go compiler/module caches, plus one maximal
+image-layer cache; PR image jobs restore it without repeating the large compiler/toolchain
+layer upload (175 seconds in a hosted sample). Every affected image still builds
+and receives the same smoke, probe and forbidden-path audit.
+Image setup reads the committed native SDK pin,
 which the Go static gate and built-image validation independently verify, avoiding
 a second full controller build just to obtain its schema string.
 

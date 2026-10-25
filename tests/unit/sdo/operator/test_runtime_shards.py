@@ -19,6 +19,7 @@ SPEC.loader.exec_module(shards)
 def test_partitions_include_tests_fuzz_seeds_and_examples() -> None:
     names = [
         "TestAdmission",
+        "TestNativeBrokerRecoversCommittedPhasesAndRequiresReflection",
         "TestHermeticFastloopRealGoGate",
         "TestReflectionDirectFilesCLIAndBroker",
         "TestReflectionLearnedProgramCLIAndBroker",
@@ -39,7 +40,7 @@ def test_partitions_include_tests_fuzz_seeds_and_examples() -> None:
     assigned = shards.partition(names, shards.PATTERNS)
     assert sorted(name for group in assigned.values() for name in group) == sorted(names)
     assert all(assigned.values())
-    assert set(assigned) == {"contracts", "integration"}
+    assert set(assigned) == {"contracts", "integration", "lifecycle"}
 
 
 @pytest.mark.parametrize("patterns", [{"one": "^TestA$"}, {"one": "^Test", "two": "^Test"}])
@@ -57,7 +58,7 @@ def test_discovery_retains_fuzz_and_examples_but_not_benchmarks() -> None:
     ) == ["Example_one", "FuzzOne", "TestOne"]
 
 
-def test_two_runtime_partitions_preserve_the_gate_selectors() -> None:
+def test_runtime_partitions_preserve_the_gate_selectors() -> None:
     jobs = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())["jobs"]
     assert "strategy" not in jobs["go"]
     assert "go" in jobs["required-pr-ci"]["needs"]
@@ -89,6 +90,7 @@ def test_all_shards_run_real_discovered_tests_once_and_preserve_failure(
         "func mark(t *testing.T) {\n"
         'if err := os.WriteFile(t.Name(), []byte("ran"), 0600); err != nil { t.Fatal(err) } }\n'
         "func TestRestartClassHermetic(t *testing.T) { mark(t) }\n"
+        "func TestNativeBroker(t *testing.T) { mark(t) }\n"
         "func TestContracts(t *testing.T) { mark(t);\n"
         'if os.Getenv("FAIL_CONTRACTS") == "1" { t.Fatal("deliberate contract failure") } }\n'
     )
@@ -103,7 +105,25 @@ def test_all_shards_run_real_discovered_tests_once_and_preserve_failure(
     events = [json.loads(line) for line in output.splitlines() if line.startswith("{")]
     assert sorted(event["Test"] for event in events if event.get("Action") == "run") == [
         "TestContracts",
+        "TestNativeBroker",
         "TestRestartClassHermetic",
     ]
+    assert (tmp_path / "TestNativeBroker").read_text() == "ran"
     assert (tmp_path / "TestContracts").read_text() == "ran"
     assert (tmp_path / "TestRestartClassHermetic").read_text() == "ran"
+
+
+def test_native_lifecycle_cases_have_an_independent_partition() -> None:
+    groups = shards.partition(
+        [
+            "TestNativeBrokerRecoversCommittedPhasesAndRequiresReflection",
+            "TestNativeLifecycleToIncidentOutcomeUsesAcceptedState",
+            "TestExhaustiveReflectionLifecycle",
+        ],
+        shards.PATTERNS,
+    )
+    assert groups["lifecycle"] == [
+        "TestNativeBrokerRecoversCommittedPhasesAndRequiresReflection",
+        "TestNativeLifecycleToIncidentOutcomeUsesAcceptedState",
+        "TestExhaustiveReflectionLifecycle",
+    ]

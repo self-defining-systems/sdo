@@ -188,3 +188,27 @@ def test_independent_smokes_still_execute_after_a_module_test_failure() -> None:
         step = next(step for step in steps if step.get("name") == name)
         assert step.get("if") == "!cancelled()"
         assert not step.get("continue-on-error", False)
+
+
+def test_heavy_image_cache_publication_is_nightly_and_prs_consume_it() -> None:
+    pr = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
+    nightly = yaml.safe_load((ROOT / ".github/workflows/nightly.yml").read_text())
+    pr_build = next(s for s in pr["jobs"]["images"]["steps"] if "docker/bake-action@" in s.get("uses", ""))
+    nightly_build = next(s for s in nightly["jobs"]["images"]["steps"] if "docker/bake-action@" in s.get("uses", ""))
+    assert "*.cache-from=type=gha,scope=sdo-images" in pr_build["with"]["set"]
+    assert "cache-to" not in pr_build["with"]["set"]
+    assert ".cache-to=type=gha,scope=sdo-images,mode=max" in nightly_build["with"]["set"]
+
+
+def test_go_cache_publication_is_nightly_without_cached_test_executables() -> None:
+    pr = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
+    nightly = yaml.safe_load((ROOT / ".github/workflows/nightly.yml").read_text())
+    assert not any(
+        "actions/cache/save@" in step.get("uses", "") for config in pr["jobs"].values() for step in config["steps"]
+    )
+    cache = next(s for s in nightly["jobs"]["go-cache"]["steps"] if "actions/cache@" in s.get("uses", ""))
+    assert set(cache["with"]["path"].splitlines()) == {"~/.cache/go-build", "~/go/pkg/mod"}
+    warm = nightly["jobs"]["go-cache"]["steps"][-1]["run"]
+    assert "go test -race -run '^$'" in warm
+    assert "sdo/operator/runtime" in warm
+    assert "go1.24.5" in warm
