@@ -7,6 +7,11 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 (
     cd "$root/sdo/operator"
+    go test -run '^(TestKubernetesExecutorHealthJudge|TestRuntimeArtifactsExportsSetupUsage)' -count=1 ./worker_registry ./operatorcli
+)
+
+(
+    cd "$root/sdo/operator"
     go test -run '^TestInstallExisting.*Onboarding|^TestInstallExistingClearAdoption|^TestInstallExistingAdoptedVerifiedSeedOnboarding$' -count=1 ./operatorcli
 )
 
@@ -18,6 +23,8 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 cd "$root"
 uv run --extra test pytest -q -p no:tach \
+    tests/unit/libs/agent_cli/test_structured.py \
+    tests/unit/sdo/agents/test_health_judge_worker.py \
     tests/unit/benchmarks/sregym/fastloop/test_fastloop_hermetic_run.py \
     tests/unit/benchmarks/sregym/fastloop/test_fastloop_loop.py \
     tests/unit/benchmarks/sregym/fastloop/test_sdo3_descriptions.py \

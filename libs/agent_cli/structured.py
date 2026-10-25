@@ -51,7 +51,10 @@ from agentshim import (
     TokenUsage,
     ToolCall,
     TurnRequest,
+    cost_usd,
+    default_pricing,
     normalized_usage,
+    price_for,
 )
 from agentshim.providers.codex import install_rules
 
@@ -356,6 +359,15 @@ def _append_turn_usage(
         "shell_command_lines": [_bounded_command(command) for command in turn.shell_commands],
         "usage": turn_usage(turn),
     }
+    if turn.usage.total_cost_usd is not None:
+        record["cost_usd"] = turn.usage.total_cost_usd
+        record["cost_source"] = "provider"
+    elif (pricing := price_for(provider, model, default_pricing())) is not None:
+        record["cost_usd"] = cost_usd(turn.usage.tokens, pricing)
+        record["cost_source"] = "agentshim-pricing"
+    else:
+        record["cost_usd"] = None
+        record["cost_source"] = "pricing-unavailable"
     log = Path(path).expanduser()
     log.parent.mkdir(parents=True, exist_ok=True)
     with log.open("a", encoding="utf-8") as handle:

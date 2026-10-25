@@ -187,3 +187,30 @@ func TestRuntimeArtifactsRejectHardlinksToCredentials(t *testing.T) {
 		t.Fatal("credential hardlink accepted")
 	}
 }
+
+func TestRuntimeArtifactsExportsSetupUsageSeparatelyFromIncidents(t *testing.T) {
+	var archive bytes.Buffer
+	writer := tar.NewWriter(&archive)
+	content := []byte(`{"provider":"codex","model":"gpt-6-luna","model_requests":2,"usage":{"input_tokens":1000,"output_tokens":100,"total_cost_usd":0.00015}}` + "\n")
+	name := "setup/judge-task/setup-usage.jsonl"
+	if err := writer.WriteHeader(&tar.Header{Name: name, Mode: 0600, Size: int64(len(content))}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := writer.Write(content); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	if err := extractRuntimeArtifacts(&archive, root); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(filepath.Join(root, name))
+	if err != nil || !bytes.Equal(got, content) {
+		t.Fatalf("setup accounting lost: %q %v", got, err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "sessions")); !os.IsNotExist(err) {
+		t.Fatalf("setup appeared in incident usage: %v", err)
+	}
+}

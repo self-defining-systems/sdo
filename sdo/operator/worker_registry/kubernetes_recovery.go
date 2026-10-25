@@ -2,6 +2,7 @@ package worker_registry
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"time"
 
@@ -24,22 +25,22 @@ type ReflectionResultRecoverer interface {
 // TTL removes the Job, absence of live owned Pods establishes quiescence. The
 // server's result creation time preserves the original execution deadline.
 func (e KubernetesExecutor) RecoverCompleted(ctx context.Context, task *contracts.AgentTask) (*contracts.AgentResult, bool, error) {
-	if !task.GetRequest().MessageIs(&contracts.ReflectionRequest{}) {
-		return nil, false, nil
-	}
 	if e.Client == nil || e.Registry == nil || e.Namespace == "" {
-		return nil, false, fmt.Errorf("reflection recovery requires client, registry and namespace")
+		return nil, false, fmt.Errorf("agent recovery requires client, registry and namespace")
 	}
 	if err := e.Registry.ValidateTask(task); err != nil {
 		return nil, false, fmt.Errorf("validate recovered task: %w", err)
 	}
-	name := JobName(task.GetTaskId())
+	name, err := e.taskJobName(ctx, task)
+	if err != nil {
+		return nil, false, err
+	}
 	resultMap, err := e.Client.CoreV1().ConfigMaps(e.Namespace).Get(ctx, name+"-result", metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
 		return nil, false, nil
 	}
 	if err != nil {
-		return nil, false, fmt.Errorf("read durable reflection result: %w", err)
+		return nil, false, fmt.Errorf("read durable agent result: %w", err)
 	}
 	data, ok := resultMap.Data[ResultDataKey]
 	if !ok {
@@ -57,20 +58,14 @@ func (e KubernetesExecutor) RecoverCompleted(ctx context.Context, task *contract
 	if err == nil {
 		prior := new(contracts.AgentTask)
 		if err := wire.Unmarshal([]byte(request.Data[TaskDataKey]), prior); err != nil || !proto.Equal(prior, task) {
-			return nil, false, fmt.Errorf("durable reflection request differs from frozen task")
+			return nil, false, fmt.Errorf("durable agent request differs from frozen task")
 		}
 	} else if !apierrors.IsNotFound(err) {
-		return nil, false, fmt.Errorf("read frozen reflection request: %w", err)
+		return nil, false, fmt.Errorf("read frozen agent request: %w", err)
 	} else {
-		payload, err := wire.Canonical(task)
-		if err != nil {
-			return nil, false, err
+		if resultMap.Annotations[requestDigestAnnotation] != taskRequestDigest(task) {
+			return nil, false, fmt.Errorf("durable agent result has no matching frozen request")
 		}
-		if len(payload) <= MaxConfigMapRequestBytes {
-			return nil, false, fmt.Errorf("durable reflection result has no frozen request")
-		}
-		// Large requests were staged on the narrow PVC, then removed at return.
-		// Their caller retains the immutable typed task and result identity binding.
 	}
 	job, err := e.Client.BatchV1().Jobs(e.Namespace).Get(ctx, name, metav1.GetOptions{})
 	completedAt := time.Now()
@@ -85,11 +80,11 @@ func (e KubernetesExecutor) RecoverCompleted(ctx context.Context, task *contract
 			completedAt = job.Status.CompletionTime.Time
 		}
 	} else if !apierrors.IsNotFound(err) {
-		return nil, false, fmt.Errorf("inspect completed reflection Job: %w", err)
+		return nil, false, fmt.Errorf("inspect completed agent Job: %w", err)
 	} else {
 		pods, err := e.Client.CoreV1().Pods(e.Namespace).List(ctx, metav1.ListOptions{})
 		if err != nil {
-			return nil, false, fmt.Errorf("verify reflection worker quiescence: %w", err)
+			return nil, false, fmt.Errorf("verify agent worker quiescence: %w", err)
 		}
 		for _, pod := range pods.Items {
 			owned := pod.Labels["sdo.dev/incident"] == name || pod.Labels["job-name"] == name || pod.Labels["batch.kubernetes.io/job-name"] == name
@@ -97,7 +92,7 @@ func (e KubernetesExecutor) RecoverCompleted(ctx context.Context, task *contract
 				owned = owned || owner.Kind == "Job" && owner.Name == name
 			}
 			if owned && pod.Status.Phase != corev1.PodSucceeded && pod.Status.Phase != corev1.PodFailed {
-				return nil, false, fmt.Errorf("reflection result awaits worker quiescence: Pod %s is %s", pod.Name, pod.Status.Phase)
+				return nil, false, fmt.Errorf("agent result awaits worker quiescence: Pod %s is %s", pod.Name, pod.Status.Phase)
 			}
 		}
 		if !resultMap.CreationTimestamp.IsZero() {
@@ -108,4 +103,46 @@ func (e KubernetesExecutor) RecoverCompleted(ctx context.Context, task *contract
 		return nil, false, &TaskTimeoutError{TaskID: task.GetTaskId(), Deadline: deadline}
 	}
 	return result, true, nil
+}
+
+// taskJobName preserves legacy identities when their immutable request matches.
+// A conflicting or unbound legacy result is retained as evidence, while a new
+// request uses a content-addressed identity. Repeated restarts select that same
+// identity, independently of timestamps or controller process lifetime.
+func (e KubernetesExecutor) taskJobName(ctx context.Context, task *contracts.AgentTask) (string, error) {
+	name := JobName(task.GetTaskId())
+	maps := e.Client.CoreV1().ConfigMaps(e.Namespace)
+	request, err := maps.Get(ctx, name+"-request", metav1.GetOptions{})
+	if err == nil {
+		prior := new(contracts.AgentTask)
+		if wire.Unmarshal([]byte(request.Data[TaskDataKey]), prior) == nil && proto.Equal(prior, task) {
+			return name, nil
+		}
+	} else if !apierrors.IsNotFound(err) {
+		return "", fmt.Errorf("inspect durable agent request: %w", err)
+	} else {
+		result, err := maps.Get(ctx, name+"-result", metav1.GetOptions{})
+		if apierrors.IsNotFound(err) {
+			return name, nil
+		}
+		if err != nil {
+			return "", fmt.Errorf("inspect durable agent result: %w", err)
+		}
+		if result.Annotations[requestDigestAnnotation] == taskRequestDigest(task) {
+			return name, nil
+		}
+	}
+	payload, err := wire.Canonical(task)
+	if err != nil {
+		return "", err
+	}
+	digest := sha256.Sum256(payload)
+	return fmt.Sprintf("sdo-task-%x", digest[:26]), nil
+}
+
+const requestDigestAnnotation = "sdo.dev/request-sha256"
+
+func taskRequestDigest(task *contracts.AgentTask) string {
+	payload, _ := wire.Canonical(task) // validated task; canonical protobuf encoding cannot fail
+	return fmt.Sprintf("%x", sha256.Sum256(payload))
 }

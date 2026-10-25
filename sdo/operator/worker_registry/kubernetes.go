@@ -163,6 +163,17 @@ func (e KubernetesExecutor) Execute(ctx context.Context, task *contracts.AgentTa
 			return nil, errors.New("agent session PVC subPath must be a separate narrow directory")
 		}
 	}
+	if task.GetRequest().MessageIs(&contracts.HealthJudgeRequest{}) {
+		// Setup accounting survives publication failure and stays outside the
+		// incident session tree. Each immutable request has its own directory.
+		relative := path.Join(".sdo-runtime", "setup", taskRequestDigest(task))
+		if err := os.MkdirAll(filepath.Join(e.RepositoryMountPath, relative), 0700); err != nil {
+			return nil, fmt.Errorf("prepare health judge setup accounting: %w", err)
+		}
+		e.SessionPVCSubPath = path.Join(e.RepositoryPVCSubPath, relative)
+		e.Environment = cloneEnvironment(e.Environment)
+		e.Environment["SDO_TURN_USAGE_LOG"] = "/sdo/session/setup-usage.jsonl"
+	}
 	if e.PollInterval <= 0 {
 		e.PollInterval = time.Second
 	}
@@ -177,7 +188,10 @@ func (e KubernetesExecutor) Execute(ctx context.Context, task *contracts.AgentTa
 		}
 		payload = []byte(e.TaskPayload)
 	}
-	jobName := JobName(task.GetTaskId())
+	jobName, err := e.taskJobName(ctx, task)
+	if err != nil {
+		return nil, err
+	}
 	requestName, resultName := jobName+"-request", jobName+"-result"
 	request := requestSource{ConfigMap: requestName}
 	if len(payload) <= MaxConfigMapRequestBytes {
@@ -339,7 +353,8 @@ func (e KubernetesExecutor) ensureRequest(ctx context.Context, name, payload str
 	if err != nil {
 		return fmt.Errorf("get existing agent request ConfigMap: %w", err)
 	}
-	if existing.Data[TaskDataKey] != payload {
+	prior, next := new(contracts.AgentTask), new(contracts.AgentTask)
+	if wire.Unmarshal([]byte(existing.Data[TaskDataKey]), prior) != nil || wire.Unmarshal([]byte(payload), next) != nil || !proto.Equal(prior, next) {
 		return fmt.Errorf("existing agent request ConfigMap %q has different payload", name)
 	}
 	return nil
@@ -421,6 +436,7 @@ func (e KubernetesExecutor) ensureJob(ctx context.Context, task *contracts.Agent
 		{Name: "SDO_REQUEST_CONFIGMAP", Value: request.ConfigMap},
 		{Name: "SDO_RESULT_CONFIGMAP", Value: resultName},
 		{Name: "SDO_NAMESPACE", Value: e.Namespace},
+		{Name: "SDO_REQUEST_SHA256", Value: taskRequestDigest(task)},
 		{Name: "SDO_CODEX_HOME_ROOT", Value: CodexHomesMountPath},
 	}
 	if e.SessionPVCSubPath != "" {
@@ -444,7 +460,7 @@ func (e KubernetesExecutor) ensureJob(ctx context.Context, task *contracts.Agent
 	if reflection {
 		env = append(env, corev1.EnvVar{Name: "SDO_HEALTHY_BASELINE", Value: baseline}, corev1.EnvVar{Name: "SDO_CAPTURED_CORPUS_DIR", Value: captureDirectory})
 	}
-	reserved := map[string]bool{"SDO_CODEX_HOME_ROOT": true, "SDO_REQUEST_CONFIGMAP": true, "SDO_RESULT_CONFIGMAP": true, "SDO_NAMESPACE": true, "SDO_SESSION_DIR": e.SessionPVCSubPath != "", "SDO_ACTOR": memoryAuthor, "SDO_PHASE": memoryAuthor, "SDO_BASE_COMMIT": memoryAuthor, "SDO_HEALTHY_BASELINE": reflection, "SDO_CAPTURED_CORPUS_DIR": reflection, "SDO_API_PROXY_URL": true, "SDO_API_HISTORY_DIR": true}
+	reserved := map[string]bool{"SDO_REQUEST_SHA256": true, "SDO_CODEX_HOME_ROOT": true, "SDO_REQUEST_CONFIGMAP": true, "SDO_RESULT_CONFIGMAP": true, "SDO_NAMESPACE": true, "SDO_SESSION_DIR": e.SessionPVCSubPath != "", "SDO_ACTOR": memoryAuthor, "SDO_PHASE": memoryAuthor, "SDO_BASE_COMMIT": memoryAuthor, "SDO_HEALTHY_BASELINE": reflection, "SDO_CAPTURED_CORPUS_DIR": reflection, "SDO_API_PROXY_URL": true, "SDO_API_HISTORY_DIR": true}
 	names := make([]string, 0, len(e.Environment))
 	for name := range e.Environment {
 		if !reserved[name] {
@@ -540,4 +556,12 @@ func JobName(taskID string) string {
 		prefix = "task"
 	}
 	return "sdo-" + prefix + "-" + suffix
+}
+
+func cloneEnvironment(source map[string]string) map[string]string {
+	result := make(map[string]string, len(source)+1)
+	for key, value := range source {
+		result[key] = value
+	}
+	return result
 }

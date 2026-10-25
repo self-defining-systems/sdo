@@ -24,7 +24,11 @@ class KubernetesResultPublisher:
             {
                 "apiVersion": "v1",
                 "kind": "ConfigMap",
-                "metadata": {"name": name, "namespace": self.namespace},
+                "metadata": {
+                    "name": name,
+                    "namespace": self.namespace,
+                    "annotations": {"sdo.dev/request-sha256": os.environ.get("SDO_REQUEST_SHA256", "")},
+                },
                 "data": {key: payload},
             }
         ).encode()
