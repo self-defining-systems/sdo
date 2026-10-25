@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from sdo.agents.prompt_templates import render_prompt
+
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
@@ -17,13 +19,26 @@ def render_validation_feedback(validation_attempt: int, diagnostics: Iterable[Me
     if not rows:
         return ""
     lines = [
-        f"This is validation attempt {validation_attempt}. The controller's broker rejected your previous "
-        "proposal and rolled it back; the checkout is clean. Fix every diagnostic below:"
+        render_prompt(
+            "lifecycle",
+            "render_validation_feedback_01",
+            part="validation.instructions",
+            validation_attempt=validation_attempt,
+        )
     ]
     for row in rows:
         location = row.path if not row.line else f"{row.path}:{row.line}"
-        text = f"- [{row.rule}] {location + ': ' if location else ''}{row.message}"
+        text = render_prompt(
+            "lifecycle",
+            "render_validation_feedback_02",
+            part="validation.instructions",
+            rule=row.rule,
+            value=location + ": " if location else "",
+            message=row.message,
+        )
         if row.hint:
-            text += f" (hint: {row.hint})"
+            text += render_prompt(
+                "lifecycle", "render_validation_feedback_03", part="validation.instructions", hint=row.hint
+            )
         lines.append(text)
     return "\n".join(lines) + "\n"

@@ -5,27 +5,23 @@ description: Find and use operational memory by logical ID, or validate authoriz
 
 # Operational memory
 
-Memory records the health goal, accepted architecture, reusable playbooks and diagnostics, and controller outcomes.
-Read it freely; edit only the artifact classes and proposal checkout your task authorizes.
+Read memory freely; edit only the artifact classes and proposal checkout your task authorizes.
 
-1. Identify artifacts by logical ID from the supplied memory snapshot or memory inventory. Read the matching
-   playbook before applying it and confirm its diagnosis against current resources. Prefer a fitting mitigation
-   menu option; after a failure, read its report and choose another option or repair directly in the same
-   session. The menu is a convenience over direct commands, using the ordinary executor and existing RBAC,
-   with up to five rounds per incident and no menu-specific preconditions.
-2. Bind resource roles from the finding. Authored prose and results use logical IDs and role placeholders;
-   physical storage paths belong only to checkout editing and tooling.
-3. For authorized reflection, start with the installed `sdo-playbook-authoring` skill; for detector changes,
-   start with `sdo-detector-authoring`. Read only the reference needed for the current step.
-4. Validate final edits with [check_memory](references/runtime.md#check_memory). Supply typed decision fields
-   directly and return the same decision and logical IDs. Correct named diagnostics before checking again.
-   The broker independently validates the final bytes before acceptance.
+1. Find the matching logical IDs in the supplied snapshot or inventory; read a playbook before using it and check its diagnosis against current resources.
+2. Before editing, read the [generated layout and ownership map](references/layout.md); preserve accepted provenance and corpus cases, and the task's actor, phase, accepted base and incident identity.
+3. For reflection, read the installed `sdo-playbook-authoring` skill; for detector changes, read `sdo-detector-authoring`. Open only the reference needed for the current step.
+4. Validate final edits with [check_memory](references/runtime.md#check_memory), supply typed decision fields directly, and return the same decision and logical IDs; correct named diagnostics before checking again. The broker independently validates final bytes.
 
-The human owns the goal, the deployer owns architecture, the health judge owns health detectors, the responder
-owns incident detectors and playbooks, and the controller owns outcomes. Preserve accepted provenance and
-accepted corpus cases. The task supplies actor, phase, accepted base and incident identity; never replace them.
+## Memory principles
 
-The [generated runtime contract](references/runtime.md) defines decision fields, envelope shape, tool names,
-and capture phase values. The model's final answer uses the session envelope; the decision file used by the
-CLI contains only its reflection result. The typed validation tool handles that distinction.
+- Treat memory as advice and accepted source as intent; check both against live state before acting.
+- Learn only from independently verified evidence; a README alone does not establish learning.
+- Keep one failure mechanism per playbook; refine it when only a resource or parameter differs.
+- Generalize prose with role placeholders and Go with bindings; keep incident literals out of reusable logic.
+- Use detectors to find problems proactively and playbooks to diagnose and mitigate; their relationship need not be one to one.
+- Refine a playbook whose mitigation failed or was undone, or set `status: retired` and a nonempty `retired_reason` in its front matter; retired playbooks remain in history but are not compiled or offered.
+- Keep memory small and current: maintain its index, merge duplicates and respect the worker snapshot budget.
+- Exclude benchmark/grader details, secrets and physical paths from memory text; physical layout is only for checkout edits and tooling, while prose and results use logical IDs.
+
+The [generated runtime contract](references/runtime.md) defines decision fields, envelope shape, tool names and capture phases. The final answer uses the session envelope; the CLI decision file contains only its reflection result. The typed validation tool handles the distinction.
 Read [validator rules](references/rules.md) when a diagnostic names an ownership, layout or schema rule.

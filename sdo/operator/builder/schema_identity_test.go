@@ -43,7 +43,7 @@ func TestSchemaIdentityMatchesCommittedSDK(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const expected = "sdo.dev/v1alpha1+sdk.ebd75ebff606b900"
+	const expected = "sdo.dev/v1alpha1+sdk.5958ce662742bb04"
 	if identity != expected {
 		t.Fatalf("SDK schema identity drifted: got %s, expected %s", identity, expected)
 	}
