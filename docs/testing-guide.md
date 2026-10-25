@@ -527,31 +527,49 @@ signalling: a reused PID never authorizes a signal. Keep the record and logs
 after completion; the next launch replaces a stale record. The printed
 `persistent abort --state ...` command remains available as well.
 
-### Runtime CI shards
+### PR CI execution budget
 
-The controller matrix runs the runtime module in eight test-name partitions:
-`reflection`, `contracts`, `rendered`, `simulation`, `schedules`, `corpus`, `recovery`, and `remaining`. Run a partition locally
-with `python3 scripts/test_runtime_shard.py --shard reflection` from the repository
-root. Each shard first discovers the compiled tests across `./...`, including
-examples and fuzz seed tests, then requires every eligible name to match exactly
-one pattern in `scripts/test_runtime_shard.py`. Missing/overlapping patterns fail
-CI before execution. Replay, chaos, and explorer tests retain their dedicated jobs.
-All nested scenarios and simulation seeds run unchanged, with race instrumentation,
-`-parallel=2`, and the existing ten-minute package timeout. The `controller` matrix
-remains a dependency of the stable `Required PR CI` aggregate.
+PR CI runs three test jobs: **Go race and hermetic contracts**, **Python, static
+and proto**, and **controller images**. The image job selects affected images
+inside the job; there is no selector job or test matrix. `Required PR CI` remains
+the single branch-protection check and depends on all three. The repository policy
+test caps PR test jobs at four, counting every matrix expansion, and rejects missing
+or greater-than-ten-minute job timeouts and removal/bypassing of enforcement.
 
-For per-test timing, the shard runner emits `go test -json` events. To profile the
-unsharded suite with the same exclusions:
+The budget is **600 seconds of execution along the longest `needs` chain**.
+`scripts/check_ci_budget.py` reads Actions `started_at` / `completed_at` timestamps,
+including setup and cache teardown, and adds dependent durations. Queues never
+count; parallel siblings use their maximum, rather than their sum. The report
+names the critical path and five slowest jobs. Missing API evidence fails closed.
+Because the required check is still running when it measures, it reserves its
+entire one-minute job timeout for its own execution and cleanup. This conservative
+upper bound enforces the complete path; aim for at most eight minutes of execution
+to retain headroom. Individual test jobs time out after nine minutes (images ten).
 
-```bash
-(cd sdo/operator/runtime && go test -race -count=1 -json -parallel=2 \
-  -skip '^TestReplay|^TestChaos|^TestExhaustive|^TestExplorer' ./...) > runtime-timing.json
-```
+The Go job runs two lanes on one runner with shared Go caches and bounded compiler
+parallelism. Runtime tests now use **one** partition instead of eight. Run it with
+`python3 scripts/test_runtime_shard.py --shard all`. The compiled inventory includes
+every package, example, fuzz seed, replay, chaos and explorer test. The exactly-once
+coverage guard still rejects missing or overlapping names; every subtest is retained.
+The Gate 1 names and `scripts/test_fastloop_hermetic.sh` selectors stay intact.
+Go emits `-json` timings for profiling; aggregate top-level `pass` event `Elapsed`
+values rather than adding nested subtest timings a second time.
 
-Rebalance the name patterns using top-level `pass` event `Elapsed` values. Keep the
-matrix shard values in sync; `tests/unit/sdo/operator/test_runtime_shards.py` checks
-that contract. New test names are discovered automatically and must still pass the
-exactly-once guard.
+`nightly.yml` runs daily at 05:17 UTC and supports manual dispatch. It runs all six
+existing 30-second boundary fuzz campaigns, three normal-build proxy latency
+acceptance repeats (including the large-response distribution), and builds/probes
+all four images even when no image input changed. These checks need sustained
+mutation/repetition or full build/export work. PRs retain all fuzz seeds under
+`-race`, one-second active fuzz smoke, one normal-build proxy/projection smoke,
+and deterministic forwarding/redaction contracts. Every affected image is still
+built, smoked, probed and checked for forbidden benchmark files on PRs.
+
+Static analysis already includes type and architecture checks, so their standalone
+jobs were redundant. They now run once inside the Python/static job, alongside
+formatting, proto lint/codegen drift and the Python contracts. Image builds share
+one maximal cache export for common layers instead of exporting those layers four
+times under separate scopes.
+
 ### Fast image delivery
 
 Use `uv run python -m benchmarks.sregym.fastloop preflight` before image builds.

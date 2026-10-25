@@ -35,7 +35,7 @@ def workflow() -> dict:
     ],
 )
 def test_image_filters_follow_runtime_inputs(path: str, images: set[str]) -> None:
-    filters = yaml.safe_load(workflow()["jobs"]["changes"]["steps"][1]["with"]["filters"])
+    filters = yaml.safe_load(workflow()["jobs"]["images"]["steps"][1]["with"]["filters"])
     selected = {
         image
         for image in ("controller", "validator", "responder", "benchmark")
@@ -46,7 +46,7 @@ def test_image_filters_follow_runtime_inputs(path: str, images: set[str]) -> Non
 
 @pytest.mark.parametrize("event", ["pull_request", "merge_group"])
 def test_merge_queue_forces_every_image_and_test_area(event: str, tmp_path: Path) -> None:
-    step = next(s for s in workflow()["jobs"]["changes"]["steps"] if s.get("id") == "resolve")
+    step = next(s for s in workflow()["jobs"]["images"]["steps"] if s.get("id") == "resolve")
     output = tmp_path / "output"
     result = subprocess.run(
         ["bash", "-e", "-c", step["run"]],

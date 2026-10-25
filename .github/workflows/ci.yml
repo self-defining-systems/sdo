@@ -17,23 +17,88 @@ concurrency:
 
 # Every action is pinned to a commit (the tag it was taken from is in the
 # comment), and uv installs exactly uv.lock.
+permissions:
+  contents: read
+  pull-requests: read
+
+env:
+  # Two Go lanes, at most four compiler processes each on a single runner.
+  GOMAXPROCS: "2"
+  GOFLAGS: "-p=4"
+  SDO_PYTEST_WORKERS: "2"
+
 jobs:
-  # Decide which parts of the tree a change can affect so documentation-only and
-  # Python-only pull requests can skip the heavy Go and image jobs. This job
-  # always runs, and the aggregating "Required PR CI" job below is the single
-  # required status check, so a skipped job never blocks a merge. The filters are
-  # deliberately conservative: the unit tests compile Go and parse Go-authored
-  # contract fixtures, so they run whenever controller/proto change too.
-  changes:
-    name: affected jobs
+  # Static includes types and architecture; separate jobs duplicated those gates.
+  checks:
+    name: Python, static and proto
     runs-on: ubuntu-latest
-    outputs:
-      python: ${{ steps.resolve.outputs.python }}
-      go: ${{ steps.resolve.outputs.go }}
-      image_controller: ${{ steps.resolve.outputs.image_controller }}
-      image_validator: ${{ steps.resolve.outputs.image_validator }}
-      image_responder: ${{ steps.resolve.outputs.image_responder }}
-      image_benchmark: ${{ steps.resolve.outputs.image_benchmark }}
+    timeout-minutes: 9
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version: "1.26.8"
+          cache-dependency-path: '**/go.sum'
+      - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc # v6.4.3
+        with:
+          version: "0.9.24"
+          python-version: "3.12"
+          enable-cache: true
+      - run: uv sync --locked --all-extras
+      - name: Initialize boundary-test application sources
+        run: |
+          git config --global url."https://github.com/".insteadOf "git@github.com:"
+          git submodule update --init --depth 1 third_party/sregym
+          git -C third_party/sregym submodule update --init --depth 1 SREGym-applications
+          git -C third_party/sregym/SREGym-applications submodule update --init --depth 1 astronomy-shop
+      - name: Formatting, static, types and architecture
+        run: |
+          bash scripts/format_code.sh --check
+          bash scripts/check_errors.sh
+      - name: Proto lint and generated-code drift
+        run: |
+          go install github.com/bufbuild/buf/cmd/buf@v1.73.0
+          go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.12
+          export PATH="${HOME}/go/bin:${PATH}"
+          bash scripts/check_proto.sh
+          (cd sdo/operator/contracts && go build ./...)
+      - name: Warm native CLI and run Python contracts
+        run: |
+          (cd sdo/operator && go build -o "${RUNNER_TEMP}/sdo-operator" ./cmd/sdo-operator)
+          bash scripts/test_python.sh
+
+  go:
+    name: Go race and hermetic contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 9
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version: "1.26.8"
+          cache-dependency-path: '**/go.sum'
+      - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc # v6.4.3
+        with:
+          version: "0.9.24"
+          python-version: "3.12"
+          enable-cache: true
+      - run: uv sync --locked --all-extras
+      - name: All modules, runtime coverage guard, replay and chaos
+        run: bash scripts/test_go_ci.sh
+      # Repeated wall-clock acceptance and timed fuzzing are in nightly.yml.
+      # All seed corpora stay in the race suite; active mutation gets a short smoke.
+      - name: Normal-build proxy latency smoke
+        env:
+          GOMAXPROCS: "2"
+        run: go test -p 1 -count=1 -run '^(TestProxyWarmAddedP95|TestProjectionTailLatency)$' -v ./kubeproxy ./operatorcli
+        working-directory: sdo/operator
+      - name: Fuzz boundary smoke
+        run: bash scripts/test_ci_fuzz.sh 1s
+
+  images:
+    name: controller images
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3.0.2
@@ -132,301 +197,16 @@ jobs:
               echo "${area}=${!variable}" >> "${GITHUB_OUTPUT}"
             fi
           done
-
-  python:
-    name: ${{ matrix.name }}
-    needs: changes
-    if: needs.changes.outputs.python == 'true' || needs.changes.outputs.go == 'true'
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: static analysis
-            run: ./scripts/check_errors.sh
-          - name: type check
-            run: ./scripts/type_check.sh
-          - name: formatting
-            run: ./scripts/format_code.sh --check
-          - name: architecture
-            run: ./scripts/check_arch.sh
-          - name: unit tests
-            run: ./scripts/test_python.sh
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+          if [ "${EVENT}" = "merge_group" ] || [ "${IMAGE_CONTROLLER}" = "true" ] || [ "${IMAGE_VALIDATOR}" = "true" ] || [ "${IMAGE_RESPONDER}" = "true" ] || [ "${IMAGE_BENCHMARK}" = "true" ]; then
+            echo "any_image=true" >> "${GITHUB_OUTPUT}"
+          fi
       - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
-        if: matrix.name == 'static analysis' || matrix.name == 'architecture' || matrix.name == 'unit tests'
-        with:
-          go-version: "1.26.8"
-          cache-dependency-path: sdo/operator/go.sum
-      # The unit tests build the Go operator (adapter tests run it on fake
-      # controller state). Pin the toolchain so GOTOOLCHAIN=auto does not
-      # download go1.26 inside that build's timeout. The Go caches are
-      # restored by the dedicated cache step below.
-      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
-        if: matrix.name == 'unit tests'
-        with:
-          go-version: "1.26.8"
-          cache: false
-      - name: Check out the SREGym harness
-        run: |
-          git config --global url."https://github.com/".insteadOf "git@github.com:"
-          git submodule update --init --depth 1 third_party/sregym
-      - name: Check out application sources for SREGym boundary tests
-        if: matrix.name == 'unit tests'
-        run: |
-          git -C third_party/sregym submodule update --init --depth 1 SREGym-applications
-          git -C third_party/sregym/SREGym-applications submodule update --init --depth 1 astronomy-shop
-      - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc # v6.4.3
-        with:
-          version: "0.9.24"
-          python-version: "3.12"
-          enable-cache: true
-      - run: uv sync --locked --all-extras
-      # The detector-sandbox unit tests really compile Go in an isolated
-      # workspace. tests/conftest.py points them at the runner's default Go
-      # caches; persisting those across runs turns the first sandbox build warm
-      # (keyed on the controller module graph) instead of a cold stdlib+SDK
-      # rebuild every run. Only the leg that runs pytest needs it.
-      - name: Cache the detector-sandbox Go build and module caches
-        if: matrix.name == 'unit tests'
-        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
-        with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-          key: go-sandbox-${{ runner.os }}-${{ hashFiles('sdo/operator/**/go.sum') }}
-          restore-keys: |
-            go-sandbox-${{ runner.os }}-
-      - name: Warm the native operator build before timed Python integration checks
-        if: matrix.name == 'unit tests'
-        working-directory: sdo/operator
-        run: go build -mod=mod -o "${RUNNER_TEMP}/sdo-operator" ./cmd/sdo-operator
-      - run: ${{ matrix.run }}
-
-  controller:
-    name: controller (${{ matrix.module }})
-    needs: changes
-    if: needs.changes.outputs.go == 'true'
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        # The runtime module's floor is go 1.26 (buf.build/go/protovalidate);
-        # pin its toolchain explicitly so the job is deterministic rather than
-        # silently network-downloading 1.26 via GOTOOLCHAIN=auto. sdk/core stay
-        # on 1.24.5 to keep proving they still build under the lower floor.
-        include:
-          - module: sdk
-            directory: sdo/operator/sdk
-            go-version: "1.24.5"
-          - module: core
-            directory: sdo/operator/core
-            go-version: "1.24.5"
-          - module: contracts
-            directory: sdo/operator/contracts
-            go-version: "1.26.8"
-          - module: runtime-reflection
-            directory: sdo/operator/runtime
-            go-version: "1.26.8"
-            shard: reflection
-          - module: runtime-contracts
-            directory: sdo/operator/runtime
-            go-version: "1.26.8"
-            shard: contracts
-          - module: runtime-rendered
-            directory: sdo/operator/runtime
-            go-version: "1.26.8"
-            shard: rendered
-          - module: runtime-simulation
-            directory: sdo/operator/runtime
-            go-version: "1.26.8"
-            shard: simulation
-          - module: runtime-schedules
-            directory: sdo/operator/runtime
-            go-version: "1.26.8"
-            shard: schedules
-          - module: runtime-corpus
-            directory: sdo/operator/runtime
-            go-version: "1.26.8"
-            shard: corpus
-          - module: runtime-recovery
-            directory: sdo/operator/runtime
-            go-version: "1.26.8"
-            shard: recovery
-          - module: runtime-remaining
-            directory: sdo/operator/runtime
-            go-version: "1.26.8"
-            shard: remaining
-          - module: operator
-            directory: sdo/operator
-            go-version: "1.26.8"
-          - module: sregym-receipt
-            directory: benchmarks/sregym/protocol/native_receipt_go
-            go-version: "1.26.8"
-          - module: sregym-submission
-            directory: benchmarks/sregym/protocol/submission_go
-            go-version: "1.26.8"
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
-        with:
-          go-version: "${{ matrix.go-version }}"
-          cache: false
-      - name: Cache Go builds and subprocess builds
-        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
-        with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-          key: ci-go-${{ runner.os }}-${{ runner.arch }}-${{ matrix.shard && 'runtime' || matrix.module }}-${{ matrix.go-version }}-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
-          restore-keys: |
-            ci-go-${{ runner.os }}-${{ runner.arch }}-${{ matrix.shard && 'runtime' || matrix.module }}-${{ matrix.go-version }}-${{ hashFiles('**/go.sum') }}-
-            ci-go-${{ runner.os }}-${{ runner.arch }}-${{ matrix.shard && 'runtime' || matrix.module }}-${{ matrix.go-version }}-
-      - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc # v6.4.3
-        if: matrix.shard
-        with:
-          version: "0.9.24"
-          python-version: "3.12"
-          enable-cache: true
-      - run: uv sync --locked --all-extras
-        if: matrix.shard
-      # TestReplay* and TestChaos* have dedicated, 5-minute-capped jobs below;
-      # skip them here so the runtime module's tests aren't compiled and run a
-      # second time in this job.
-      - name: Run runtime shard with exhaustive coverage guard
-        if: matrix.shard
-        run: python3 scripts/test_runtime_shard.py --shard '${{ matrix.shard }}'
-      - if: ${{ !matrix.shard }}
-        run: go test -race -parallel=2 -skip '^TestReplay|^TestChaos|^TestExhaustive|^TestExplorer' ./...
-        working-directory: ${{ matrix.directory }}
-
-      # Wall-clock latency is meaningful only without race instrumentation.
-      # Retain all pass-through, redaction and gap contracts in the race suite.
-      - name: Normal-build proxy latency acceptance
-        if: matrix.module == 'operator'
-        env:
-          GOMAXPROCS: "2"
-        run: go test -p 1 -count=3 -run '^(TestProxyWarmAddedP95|TestLargeResponseWarmAddedP95|TestProjectionTailLatency)$' -v ./kubeproxy ./operatorcli
-        working-directory: sdo/operator
-
-      - name: Fuzz object reference boundary (bounded)
-        if: matrix.module == 'sdk'
-        run: |
-          timeout 120s go test -run '^$' -fuzz '^FuzzObjectRefParseFormat$' -fuzztime=30s -parallel=2 -timeout=2m .
-          timeout 120s go test -run '^$' -fuzz '^FuzzObjectRefTypedRoundTrip$' -fuzztime=30s -parallel=2 -timeout=2m .
-        working-directory: ${{ matrix.directory }}
-      - name: Fuzz observed evidence labels (bounded)
-        if: matrix.module == 'operator'
-        run: timeout 120s go test -run '^$' -fuzz '^FuzzStateChangeRefMatchesObservedLabel$' -fuzztime=30s -parallel=2 -timeout=2m ./outcome_derivation
-        working-directory: ${{ matrix.directory }}
-      - name: Fuzz native receipt boundary (bounded)
-        if: matrix.module == 'sregym-receipt'
-        run: timeout 120s go test -run '^$' -fuzz '^FuzzNativeReceiptBoundary$' -fuzzminimizetime=1s -fuzztime=30s -parallel=2 -timeout=2m .
-        working-directory: ${{ matrix.directory }}
-      - name: Fuzz submission phase boundary (bounded)
-        if: matrix.module == 'sregym-submission'
-        run: timeout 120s go test -run '^$' -fuzz '^FuzzSubmissionPhaseBoundary$' -fuzzminimizetime=1s -fuzztime=30s -parallel=2 -timeout=2m .
-        working-directory: ${{ matrix.directory }}
-
-      - name: Fuzz controller observation boundary (bounded)
-        if: matrix.module == 'operator'
-        run: timeout 120s go test -run '^$' -fuzz '^FuzzControllerObservationBoundary$' -fuzzminimizetime=1s -fuzztime=30s -parallel=2 -timeout=2m ./outcome_derivation
-        working-directory: ${{ matrix.directory }}
-
-  # Proto contracts are the single source of truth for the cross-seam types.
-  # This job lints the .proto source and asserts the committed Go/Python
-  # codegen matches `buf generate` — so schema drift is a build failure here.
-  proto:
-    name: proto contracts
-    needs: changes
-    if: needs.changes.outputs.go == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
-        with:
-          go-version: "1.24.5"
-      - name: Install the proto toolchain
-        run: |
-          go install github.com/bufbuild/buf/cmd/buf@v1.73.0
-          go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.12
-          echo "${HOME}/go/bin" >> "${GITHUB_PATH}"
-      - name: Lint and codegen-diff checks
-        run: |
-          ./scripts/check_proto.sh
-      - name: Build the generated Go contracts module
-        run: go build ./...
-        working-directory: sdo/operator/contracts
-
-  # The deterministic record-and-replay suite drives the durable artifacts of
-  # real recorded incidents (the detector-firing telemetry stream, the
-  # IncidentClosure, the persisted RuntimeState) back through the controller's
-  # deterministic artifact paths with no cluster, so a once-live incident is a
-  # permanent offline regression test. It is its own job with an explicit
-  # 5-minute cap (CLAUDE.md's property/fuzz limit); the suite is pure and
-  # cluster-free, so the cap is only a backstop. A diverging fixture names
-  # itself in the failing subtest.
-  replay:
-    name: replay (recorded incidents)
-    needs: changes
-    if: needs.changes.outputs.go == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
-        with:
-          go-version: "1.26.8"
-          cache-dependency-path: sdo/operator/runtime/go.sum
-      - name: Run the deterministic replay suite
-        run: go test -race -run '^TestReplay' -timeout 5m ./...
-        working-directory: sdo/operator/runtime
-
-  # The seeded, deterministic chaos/fault-injection suite attacks the
-  # timing/ordering bug class in the controller runtime. It is its own job with
-  # an explicit 5-minute cap (CLAUDE.md's property/fuzz limit); the suite is
-  # additionally self-bounded per dimension by chaosWallBudget. A failing seed
-  # is named in the subtest and replays with SDO_CHAOS_SEED=<n>.
-  chaos:
-    name: chaos (timing/ordering)
-    needs: changes
-    if: needs.changes.outputs.go == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
-        with:
-          go-version: "1.26.8"
-          cache-dependency-path: sdo/operator/runtime/go.sum
-      - name: Run bounded chaos and implementation state explorers
-        run: go test -race -run '^TestChaos|^TestExhaustive|^TestExplorer' -timeout 5m ./...
-        working-directory: sdo/operator/runtime
-
-      - name: Run short seeded incident schedules
-        run: go test -race -run '^TestSimSchedule$|^FuzzSimIncidentSchedule$' -timeout 2m .
-        working-directory: sdo/operator/runtime
-        env:
-          SDO_SIM_RUNS: "4"
-
-  # Builds the images SDO runs in and checks each one imports its entry points
-  # (SDO, agentshim, the benchmark submission client) at the pinned Codex CLI
-  # and agentshim versions, so a broken image fails here and not mid-experiment.
-  images:
-    name: controller images
-    needs: changes
-    if: >-
-      needs.changes.outputs.image_controller == 'true' ||
-      needs.changes.outputs.image_validator == 'true' ||
-      needs.changes.outputs.image_responder == 'true' ||
-      needs.changes.outputs.image_benchmark == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        if: steps.resolve.outputs.any_image == 'true'
         with:
           go-version: "1.26.8"
           cache: false
       - name: Cache image schema-identity build
+        if: steps.resolve.outputs.any_image == 'true'
         uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
         with:
           path: |
@@ -437,19 +217,23 @@ jobs:
             ci-go-${{ runner.os }}-${{ runner.arch }}-images-1.26.8-${{ hashFiles('**/go.sum') }}-
             ci-go-${{ runner.os }}-${{ runner.arch }}-operator-1.26.8-${{ hashFiles('**/go.sum') }}-
       - uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+        if: steps.resolve.outputs.any_image == 'true'
       - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc # v6.4.3
+        if: steps.resolve.outputs.any_image == 'true'
         with:
           version: "0.9.24"
           python-version: "3.12"
           enable-cache: true
       - run: uv sync --locked --all-extras
+        if: steps.resolve.outputs.any_image == 'true'
       - name: Select affected images and compute schema identity
+        if: steps.resolve.outputs.any_image == 'true'
         id: image-inputs
         env:
-          CONTROLLER: ${{ needs.changes.outputs.image_controller }}
-          VALIDATOR: ${{ needs.changes.outputs.image_validator }}
-          RESPONDER: ${{ needs.changes.outputs.image_responder }}
-          BENCHMARK: ${{ needs.changes.outputs.image_benchmark }}
+          CONTROLLER: ${{ steps.resolve.outputs.image_controller }}
+          VALIDATOR: ${{ steps.resolve.outputs.image_validator }}
+          RESPONDER: ${{ steps.resolve.outputs.image_responder }}
+          BENCHMARK: ${{ steps.resolve.outputs.image_benchmark }}
         run: |
           images=()
           for image in controller validator responder benchmark; do
@@ -459,10 +243,12 @@ jobs:
             fi
           done
           echo "images=${images[*]}" >> "${GITHUB_OUTPUT}"
+          echo "cache-target=${images[-1]}" >> "${GITHUB_OUTPUT}"
           (IFS=,; echo "targets=${images[*]}") >> "${GITHUB_OUTPUT}"
           identity="$(cd sdo/operator && go run ./cmd/sdo-operator schema-identity)"
           echo "SDO_VALIDATOR_SCHEMA_IDENTITY=${identity}" >> "${GITHUB_ENV}"
       - name: Build affected images with persistent layers
+        if: steps.resolve.outputs.any_image == 'true'
         uses: docker/bake-action@3acf805d94d93a86cce4ca44798a76464a75b88c # v6.9.0
         with:
           source: .
@@ -470,22 +256,17 @@ jobs:
           targets: ${{ steps.image-inputs.outputs.targets }}
           load: true
           set: |
-            controller.cache-from=type=gha,scope=sdo-controller
-            controller.cache-to=type=gha,scope=sdo-controller,mode=max
-            validator.cache-from=type=gha,scope=sdo-validator
-            validator.cache-to=type=gha,scope=sdo-validator,mode=max
-            responder.cache-from=type=gha,scope=sdo-responder
-            responder.cache-to=type=gha,scope=sdo-responder,mode=max
-            benchmark.cache-from=type=gha,scope=sdo-benchmark
-            benchmark.cache-to=type=gha,scope=sdo-benchmark,mode=max
+            *.cache-from=type=gha,scope=sdo-images
+            ${{ steps.image-inputs.outputs.cache-target }}.cache-to=type=gha,scope=sdo-images,mode=max
       - name: Smoke and probe every affected image
+        if: steps.resolve.outputs.any_image == 'true'
         env:
           SDO_IMAGES: ${{ steps.image-inputs.outputs.images }}
           SDO_SKIP_IMAGE_BUILD: "1"
           SDO_IMAGE_PREFLIGHT: "1"
         run: ./scripts/build_sdo_images.sh
       - name: Confirm the responder image carries no SREGym answer key
-        if: needs.changes.outputs.image_benchmark == 'true'
+        if: steps.resolve.outputs.image_benchmark == 'true'
         # Belt-and-braces over tests/unit/sdo/operator/test_dockerfile_benchmark_scope.py,
         # which checks the Dockerfile COPY lines statically: this lists the files an
         # actually built image carries, so a leak would fail here even if some other
@@ -504,24 +285,16 @@ jobs:
             exit 1
           fi
 
-  # One stable, always-present result for branch protection: the single required
-  # status check on main. It needs every other job and runs even when some were
-  # skipped by the affected-jobs filter. A skipped job is acceptable (it did not
-  # apply to this change); any other non-success result fails the merge. Adding,
-  # renaming, or path-skipping a job above never requires touching branch
-  # protection, because only this context is pinned.
+
   required-pr-ci:
     name: Required PR CI
-    needs:
-      - changes
-      - python
-      - controller
-      - proto
-      - replay
-      - chaos
-      - images
+    permissions:
+      contents: read
+      actions: read
+    needs: [checks, go, images]
     if: always()
     runs-on: ubuntu-latest
+    timeout-minutes: 1
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -545,3 +318,14 @@ jobs:
               raise SystemExit(f"Required CI jobs did not succeed: {failed}")
           print("all applicable CI jobs succeeded or were skipped:", results)
           PY
+      - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc # v6.4.3
+        if: always()
+        with:
+          version: "0.9.24"
+          python-version: "3.12"
+          enable-cache: true
+      - name: Enforce ten-minute execution critical path
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: uv run --locked python scripts/check_ci_budget.py
