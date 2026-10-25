@@ -84,7 +84,10 @@ func testProductionResponderMenuFactory(t *testing.T, enabled bool) {
 	mount := t.TempDir()
 	accepted := nativeRepository(t)
 	nativeMemoryFixture(t, accepted)
-	revision := nativeGit(t, accepted, "rev-parse", "HEAD")
+	// Declare the independently healthy application before injecting the bad
+	// route, so production source-inventory closure has accepted evidence.
+	healthyService := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: menuService.Name, Namespace: "app"}, Spec: corev1.ServiceSpec{Selector: map[string]string{"app": "backend"}, Ports: []corev1.ServicePort{{Port: 80, TargetPort: intstr.FromInt(8080)}}}}
+	revision := seedDeclaredInventory(t, accepted, "app", []kruntime.Object{healthyService})
 	repository, err := broker.New(accepted, filepath.Join(mount, "proposals"), func(context.Context, string, []string) error { return nil })
 	if err != nil {
 		t.Fatal(err)
@@ -136,7 +139,7 @@ func testProductionResponderMenuFactory(t *testing.T, enabled bool) {
 	done := make(chan error, 1)
 	start := time.Now().UTC()
 	go func() {
-		done <- RunWithOptions(ctx, []sdk.Detector{productionMenuHealth{}}, RuntimeOptions{Args: []string{"--toolchain-image", "synthetic/controller:compiler", "--namespace", "app", "--control-namespace", "demo", "--app-root", accepted, "--source-commit", revision, "--repository-pvc", "synthetic-repository", "--repository-mount-path", mount, "--responder-credentials-secret", "unused-placeholder", "--responder-image", "synthetic/responder:scripted", "--agent-registration-directory", registrytest.Directory(), "--repair-policy", "recorded-actions", "--state-baseline=false", "--synthetic-traffic=false", "--clean-responder-helpers=false", "--firing-telemetry-path", "off", "--lifecycle-telemetry-path", "off", "--verification-timeout", "5s", "--exit-after-closure"}, Client: client, Programs: registry, NativeBroker: native, Stdout: writer, Stderr: writer})
+		done <- RunWithOptions(ctx, []sdk.Detector{productionMenuHealth{}}, RuntimeOptions{Args: []string{"--toolchain-image", "synthetic/controller:compiler", "--namespace", "app", "--control-namespace", "demo", "--app-root", accepted, "--source-commit", revision, "--deployed-manifest-path", "app.yaml", "--deployed-commit", revision, "--repository-pvc", "synthetic-repository", "--repository-mount-path", mount, "--responder-credentials-secret", "unused-placeholder", "--responder-image", "synthetic/responder:scripted", "--agent-registration-directory", registrytest.Directory(), "--repair-policy", "recorded-actions", "--state-baseline=false", "--synthetic-traffic=false", "--clean-responder-helpers=false", "--firing-telemetry-path", "off", "--lifecycle-telemetry-path", "off", "--verification-timeout", "5s", "--exit-after-closure"}, Client: client, Programs: registry, NativeBroker: native, Stdout: writer, Stderr: writer})
 	}()
 	t.Cleanup(func() {
 		cancel()
