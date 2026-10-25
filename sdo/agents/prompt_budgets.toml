@@ -125,8 +125,8 @@ max_chars = 800
 reason = "Baseline synthetic fixture maximum: 723 Unicode code points; byte-identical template extraction."
 
 [responder.incident_data]
-max_chars = 3100
-reason = "Baseline synthetic fixture maximum: 3037 Unicode code points; byte-identical template extraction."
+max_chars = 3500
+reason = "Explicit five-fault matched-program fixture, including NoMatch compaction: maximum 3466 Unicode code points."
 
 [responder.inlined_architecture_summary]
 max_chars = 8100
