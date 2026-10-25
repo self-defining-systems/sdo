@@ -61,7 +61,7 @@ type OutcomeRecord struct {
 	FastPathRelationCoveredFindings []*RelationCoveredFinding `protobuf:"bytes,33,rep,name=fast_path_relation_covered_findings,json=fastPathRelationCoveredFindings,proto3" json:"fast_path_relation_covered_findings,omitempty"`
 	ReflectionEligibility           *ReflectionEligibility    `protobuf:"bytes,34,opt,name=reflection_eligibility,json=reflectionEligibility,proto3" json:"reflection_eligibility,omitempty"`
 	// Controller-owned visible skip when no provider session can be resumed.
-	ReflectionSkipReason string `protobuf:"bytes,35,opt,name=reflection_skip_reason,json=reflectionSkipReason,proto3" json:"reflection_skip_reason,omitempty"`
+	ReflectionSkipReason string `protobuf:"bytes,37,opt,name=reflection_skip_reason,json=reflectionSkipReason,proto3" json:"reflection_skip_reason,omitempty"`
 	unknownFields        protoimpl.UnknownFields
 	sizeCache            protoimpl.SizeCache
 }
@@ -453,7 +453,7 @@ const file_sdodev_contracts_v1alpha1_outcome_proto_rawDesc = "" +
 	"\x18fast_path_skipped_reason\x18  \x01(\tR\x15fastPathSkippedReason\x12\x7f\n" +
 	"#fast_path_relation_covered_findings\x18! \x03(\v21.sdodev.contracts.v1alpha1.RelationCoveredFindingR\x1ffastPathRelationCoveredFindings\x12g\n" +
 	"\x16reflection_eligibility\x18\" \x01(\v20.sdodev.contracts.v1alpha1.ReflectionEligibilityR\x15reflectionEligibility\x12I\n" +
-	"\x16reflection_skip_reason\x18# \x01(\tB\x13\xbaH\x10r\x0eR\x00R\n" +
+	"\x16reflection_skip_reason\x18% \x01(\tB\x13\xbaH\x10r\x0eR\x00R\n" +
 	"no_sessionR\x14reflectionSkipReasonB\x10\n" +
 	"\x0e_repair_commitB\x10\n" +
 	"\x0e_memory_commitJ\x04\b\x16\x10\x17R\x16diagnosis_verification\"\xcc\x02\n" +

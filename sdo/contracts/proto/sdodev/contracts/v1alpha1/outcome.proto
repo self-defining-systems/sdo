@@ -48,7 +48,7 @@ message OutcomeRecord {
   repeated RelationCoveredFinding fast_path_relation_covered_findings = 33;
   ReflectionEligibility reflection_eligibility = 34;
   // Controller-owned visible skip when no provider session can be resumed.
-  string reflection_skip_reason = 35 [(buf.validate.field).string = {in: ["", "no_session"]}];
+  string reflection_skip_reason = 37 [(buf.validate.field).string = {in: ["", "no_session"]}];
 }
 
 message OutcomeTimestamps {
