@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -216,18 +217,17 @@ func runSimPausedClosurePublishesOutcomeAndReflection(t *testing.T, seed uint64)
 		if err != nil {
 			t.Fatal(err)
 		}
-		reflections := 0
-		interrupted := false
+		var reflections atomic.Int32
+		var interrupted atomic.Bool
 		native := NativeIncidentBroker{Now: w.clock.Now, Repository: repository, LedgerRoot: filepath.Join(t.TempDir(), "ledger"), Deriver: ProtoOutcomeDeriver{}, ResponderBackend: "scripted", ResponderModel: "none",
 			Reflector: ReflectionWorkerFunc(func(_ context.Context, closure IncidentClosure, _ IncidentWorkspace, outcome *contracts.OutcomeRecord, _, outcomeCommit string, _ ReflectionFeedback) (ReflectionDecision, error) {
 				if closure.Result.ResponderSessionID != "sim-live-responder" || outcome.GetIncidentId() != closure.Request.IncidentID || outcomeCommit == "" {
 					return ReflectionDecision{}, fmt.Errorf("reflection lost closure/session/outcome binding")
 				}
-				if !interrupted {
-					interrupted = true
+				if interrupted.CompareAndSwap(false, true) {
 					return ReflectionDecision{}, errors.New("simulated validator transport interruption")
 				}
-				reflections++
+				reflections.Add(1)
 				return ReflectionDecision{
 					LearningDecision: "sdk_gap", NoChangeReason: "scripted schedule has no executable playbook author",
 					SDKGaps: []*contracts.SdkGap{{
@@ -435,12 +435,12 @@ func runSimPausedClosurePublishesOutcomeAndReflection(t *testing.T, seed uint64)
 			t.Fatalf("paused closure has no committed outcome: %v", err)
 		}
 		ledger, err := native.readLedger(id)
-		if err != nil || !ledger.ReflectionProcessed || ledger.ReflectionDecision.GetLearningDecision() != "sdk_gap" || reflections != 1 || ledger.AcknowledgedAt == nil {
+		if err != nil || !ledger.ReflectionProcessed || ledger.ReflectionDecision.GetLearningDecision() != "sdk_gap" || reflections.Load() != 1 || ledger.AcknowledgedAt == nil {
 			for _, rejection := range ledger.GetReflectionRejections() {
 				t.Logf("reflection rejection: %v", rejection.GetDiagnostics())
 				break
 			}
-			t.Fatalf("paused closure stranded reflection/ack: reflections=%d decision=%v acknowledged=%v err=%v", reflections, ledger.GetReflectionDecision(), ledger.GetAcknowledged(), err)
+			t.Fatalf("paused closure stranded reflection/ack: reflections=%d decision=%v acknowledged=%v err=%v", reflections.Load(), ledger.GetReflectionDecision(), ledger.GetAcknowledged(), err)
 		}
 		if ledger.OutcomeCommit != ledgerBefore.OutcomeCommit || ledger.OutcomeDocument.GetClassification() != ledgerBefore.OutcomeDocument.GetClassification() || ledger.ReflectionCommit != "" {
 			t.Fatal("scope restart rewrote historical outcome or credited interrupted learning")
@@ -452,7 +452,7 @@ func runSimPausedClosurePublishesOutcomeAndReflection(t *testing.T, seed uint64)
 		w.applyScheduleEvent(simScheduleEvent{kind: simResume})
 		w.step()
 		w.drain()
-		if !w.idle() || reflections != 1 || len(w.violations) > 0 {
+		if !w.idle() || reflections.Load() != 1 || len(w.violations) > 0 {
 			t.Fatalf("resume duplicated or stranded closure: %v", w.violations)
 		}
 	})
