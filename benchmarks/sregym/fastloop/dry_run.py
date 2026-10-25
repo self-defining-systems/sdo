@@ -17,6 +17,7 @@ INVARIANTS = (
     "restore",
     "onboarding",
     "setup_memory",
+    "lane_resources",
     "rbac_equality",
     "stabilization",
     "probe_placement",
@@ -141,7 +142,11 @@ def run_lane(run_dir: Path, timeout: int) -> int:
                 if not record.get("acceptedCommit") or not record.get("objects"):
                     raise ValueError("eval: native onboarding record is incomplete")
                 passed("onboarding", accepted_commit=record["acceptedCommit"])
-                for name, filename in (("setup_memory", "setup-lineage.json"), ("rbac_equality", "rbac.json")):
+                for name, filename in (
+                    ("setup_memory", "setup-lineage.json"),
+                    ("rbac_equality", "rbac.json"),
+                    ("lane_resources", "lane-resources.json"),
+                ):
                     path = directory / "admission" / filename
                     value = json.loads(path.read_text())
                     if value.get("passed") is not True:

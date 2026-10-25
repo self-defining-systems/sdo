@@ -81,10 +81,25 @@ func (c *Controller) clock() time.Time {
 	return time.Now().UTC()
 }
 
-// PausedWake is when a paused controller must wake: the next closure retry,
-// or zero. A pause stops observing the application, not committing memory.
+// PausedWake includes report grace and worker termination retries as well as
+// closure retries. A pause stops observation, not already-started closure work.
 func (c *Controller) PausedWake() time.Time {
-	return c.closureRetryWake(time.Time{})
+	c.mu.Lock()
+	var next time.Time
+	if c.earlyReportPendingLocked() {
+		next = c.pendingClosure.VerifiedAt.Add(c.config.ResponderReportGrace)
+		if c.responderDone {
+			next = c.clock()
+		}
+		if !c.earlyStopRetryAt.IsZero() {
+			next = c.earlyStopRetryAt
+		}
+	}
+	if retry := c.pausedEffectRetryAt; !retry.IsZero() && (next.IsZero() || retry.Before(next)) {
+		next = retry
+	}
+	c.mu.Unlock()
+	return c.closureRetryWake(next)
 }
 
 // closureRetryWake returns the next closure retry time when it is earlier than

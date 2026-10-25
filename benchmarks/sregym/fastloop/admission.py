@@ -11,6 +11,8 @@ from typing import TYPE_CHECKING, Any
 import yaml
 
 from benchmarks.sregym.adapter import (
+    assert_host_disk_headroom,
+    assert_lane_resources,
     assert_stable_workloads,
     controller_proof,
     kubectl,
@@ -127,8 +129,9 @@ class LaneAdmission:
         self._policy()
         env = self.environment
         self.directory.mkdir(parents=True, exist_ok=True)
-        # JG lane-resource admission belongs here, before proof or injection.
-        # The dry-run also uses this entry point; keep checks shared.
+        resources = assert_lane_resources(env.kubeconfig, app_namespaces={env.namespace})
+        resources["host_disk"] = assert_host_disk_headroom()
+        (self.directory / "lane-resources.json").write_text(json.dumps(resources, indent=2) + "\n")
         rbac = verify_rbac(env.kubeconfig, env.namespace)
         (self.directory / "rbac.json").write_text(json.dumps(rbac, indent=2) + "\n")
         boundary = datetime.now(timezone.utc).isoformat()
@@ -175,7 +178,11 @@ class LaneAdmission:
             restore_application(env, KubectlApplicationCluster(env.kubeconfig), self.worker, checks=checks)
             self._identity = workload_identity(env.kubeconfig, env.namespace)
 
-        return wait_for_proof(sample, restore, record, timeout_seconds=self.timeout_seconds)
+        proof = wait_for_proof(sample, restore, record, timeout_seconds=self.timeout_seconds)
+        resources = assert_lane_resources(env.kubeconfig, app_namespaces={env.namespace})
+        resources["host_disk"] = assert_host_disk_headroom()
+        (self.directory / "lane-resources.json").write_text(json.dumps(resources, indent=2) + "\n")
+        return proof
 
 
 class EvalAdmissionOps:

@@ -200,7 +200,8 @@ def _parser() -> argparse.ArgumentParser:
         description="Reads the controller's cached health and inventory verdict immediately. "
         "Pending observation windows, including unproven synthetic scenarios, are not healthy. "
         "Wait on SDO's verification instead of sleeping. After closure, incident_verified is an "
-        "informational warning on every response; reads and reports remain available, while mutations are rejected.",
+        "informational warning on every response; reads and reports remain available, while mutations are rejected. "
+        "After verified closure, report grace and outcome/reflection work continue during maintenance pauses.",
     )
     verify.add_argument(
         "--wait",
