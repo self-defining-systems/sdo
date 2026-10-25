@@ -105,7 +105,8 @@ RUN python3 -m pip install --break-system-packages --no-cache-dir --no-deps \
 
 FROM python-deps AS model-deps
 # Node is needed by model CLIs, never by controller, validator or scripted jobs.
-RUN apt-get update && apt-get install --yes --no-install-recommends libstdc++6 \
+RUN apt-get update && apt-get install --yes --no-install-recommends libstdc++6 jq \
+    && printf '%s\n' '{"probe":[{"ok":true}]}' | jq -e '.probe[0].ok == true' >/dev/null \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=node-tools /usr/local/bin/node /usr/local/bin/node
 COPY --from=node-tools /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/npm
