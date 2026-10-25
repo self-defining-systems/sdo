@@ -35,7 +35,7 @@ def workflow() -> dict:
     ],
 )
 def test_image_filters_follow_runtime_inputs(path: str, images: set[str]) -> None:
-    filters = yaml.safe_load(workflow()["jobs"]["changes"]["steps"][1]["with"]["filters"])
+    filters = yaml.safe_load(workflow()["jobs"]["images"]["steps"][1]["with"]["filters"])
     selected = {
         image
         for image in ("controller", "validator", "responder", "benchmark")
@@ -46,7 +46,7 @@ def test_image_filters_follow_runtime_inputs(path: str, images: set[str]) -> Non
 
 @pytest.mark.parametrize("event", ["pull_request", "merge_group"])
 def test_merge_queue_forces_every_image_and_test_area(event: str, tmp_path: Path) -> None:
-    step = next(s for s in workflow()["jobs"]["changes"]["steps"] if s.get("id") == "resolve")
+    step = next(s for s in workflow()["jobs"]["images"]["steps"] if s.get("id") == "resolve")
     output = tmp_path / "output"
     result = subprocess.run(
         ["bash", "-e", "-c", step["run"]],
@@ -137,7 +137,10 @@ def test_selected_images_are_built_and_smoked(tmp_path: Path, images: str, expec
 def test_required_ci_rejects_any_applicable_unsuccessful_job(result: str, accepted: bool) -> None:
     import json
 
-    step = workflow()["jobs"]["required-pr-ci"]["steps"][0]
+    steps = workflow()["jobs"]["required-pr-ci"]["steps"]
+    step = next(step for step in steps if "JOB_RESULTS" in step.get("env", {}))
+    assert "if" not in step
+    assert "continue-on-error" not in step
     completed = subprocess.run(
         ["bash", "-e", "-c", step["run"]],
         env={**os.environ, "JOB_RESULTS": json.dumps({"images": {"result": result}})},
@@ -146,3 +149,18 @@ def test_required_ci_rejects_any_applicable_unsuccessful_job(result: str, accept
         check=False,
     )
     assert (completed.returncode == 0) is accepted
+
+
+def test_go_build_cache_survives_test_failures_and_is_shared_with_python() -> None:
+    jobs = workflow()["jobs"]
+    for name in ("go", "images", "runtime-integration"):
+        steps = jobs[name]["steps"]
+        restore = next(step for step in steps if step.get("id") == "go-cache")
+        assert "-shared-1.26.8-" in restore["with"]["key"]
+        assert "~/.cache/go-build" in restore["with"]["path"]
+        assert "~/go/pkg/mod" in restore["with"]["path"]
+    save = next(
+        step for step in jobs["go"]["steps"] if step.get("name") == "Save shared Go builds even after test failures"
+    )
+    assert "always()" in save["if"]
+    assert "steps.go-cache.outputs.cache-primary-key" in save["with"]["key"]

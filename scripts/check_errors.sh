@@ -17,6 +17,15 @@ if ! command -v uv >/dev/null 2>&1; then
     exit 1
 fi
 
+# Bind image schema setup to the accepted SDK before the broader gates.
+echo "==> validator schema identity"
+(
+    cd "$PROJECT_ROOT/sdo/operator"
+    go test ./builder ./operatorcli \
+        -run '^(TestSchemaIdentityMatchesCommittedSDK|TestParseValidateLaunchRequiresBoundSchema)$' \
+        -count=1 -timeout=20s
+)
+
 echo "==> ruff"
 if [ "$1" == "--fix" ]; then
     uv run ruff check --fix .
