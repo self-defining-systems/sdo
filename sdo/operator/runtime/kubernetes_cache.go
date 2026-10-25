@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 	discoveryv1 "k8s.io/api/discovery/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	policyv1 "k8s.io/api/policy/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -112,7 +114,9 @@ func NewKubernetesCache(config KubernetesCacheConfig, detectors []sdk.Detector) 
 				// Metrics detectors run on their interval; no informer backs the watch.
 				continue
 			}
-			watch.Namespace = config.Namespace
+			if !inventoryClusterKind(watch.Kind) {
+				watch.Namespace = config.Namespace
+			}
 			declared[watch.APIVersion+"/"+watch.Kind] = watch
 		}
 	}
@@ -123,8 +127,15 @@ func NewKubernetesCache(config KubernetesCacheConfig, detectors []sdk.Detector) 
 			{APIVersion: "apps/v1", Kind: "ReplicaSet"}, {APIVersion: "v1", Kind: "Endpoints"},
 			{APIVersion: "discovery.k8s.io/v1", Kind: "EndpointSlice"},
 			{APIVersion: "networking.k8s.io/v1", Kind: "NetworkPolicy"},
+			{APIVersion: "apps/v1", Kind: "StatefulSet"}, {APIVersion: "apps/v1", Kind: "DaemonSet"},
+			{APIVersion: "v1", Kind: "ServiceAccount"}, {APIVersion: "v1", Kind: "PersistentVolumeClaim"},
+			{APIVersion: "batch/v1", Kind: "Job"}, {APIVersion: "batch/v1", Kind: "CronJob"},
+			{APIVersion: "rbac.authorization.k8s.io/v1", Kind: "Role"}, {APIVersion: "rbac.authorization.k8s.io/v1", Kind: "RoleBinding"},
+			{APIVersion: "rbac.authorization.k8s.io/v1", Kind: "ClusterRole"}, {APIVersion: "rbac.authorization.k8s.io/v1", Kind: "ClusterRoleBinding"},
 		} {
-			watch.Namespace = config.Namespace
+			if !inventoryClusterKind(watch.Kind) {
+				watch.Namespace = config.Namespace
+			}
 			declared[watch.APIVersion+"/"+watch.Kind] = watch
 		}
 	}
@@ -431,9 +442,109 @@ func informerFor(factory informers.SharedInformerFactory, key string) (cache.Sha
 		return factory.Discovery().V1().EndpointSlices().Informer(), nil
 	case "networking.k8s.io/v1/NetworkPolicy":
 		return factory.Networking().V1().NetworkPolicies().Informer(), nil
+	case "apps/v1/StatefulSet":
+		return factory.Apps().V1().StatefulSets().Informer(), nil
+	case "apps/v1/DaemonSet":
+		return factory.Apps().V1().DaemonSets().Informer(), nil
+	case "v1/ServiceAccount":
+		return factory.Core().V1().ServiceAccounts().Informer(), nil
+	case "v1/PersistentVolumeClaim":
+		return factory.Core().V1().PersistentVolumeClaims().Informer(), nil
+	case "batch/v1/Job":
+		return factory.Batch().V1().Jobs().Informer(), nil
+	case "batch/v1/CronJob":
+		return factory.Batch().V1().CronJobs().Informer(), nil
+	case "rbac.authorization.k8s.io/v1/Role":
+		return factory.Rbac().V1().Roles().Informer(), nil
+	case "rbac.authorization.k8s.io/v1/RoleBinding":
+		return factory.Rbac().V1().RoleBindings().Informer(), nil
+	case "rbac.authorization.k8s.io/v1/ClusterRole":
+		return factory.Rbac().V1().ClusterRoles().Informer(), nil
+	case "rbac.authorization.k8s.io/v1/ClusterRoleBinding":
+		return factory.Rbac().V1().ClusterRoleBindings().Informer(), nil
 	case "v1/Event":
 		return factory.Core().V1().Events().Informer(), nil
 	default:
 		return nil, fmt.Errorf("unsupported informer resource %q", key)
 	}
+}
+
+// SourceDriftObjects returns the current non-secret informer inventory. It does
+// no API reads and never includes resource versions or status in its verdict.
+func (c *KubernetesCache) SourceDriftObjects() []*unstructured.Unstructured {
+	c.informerMu.RLock()
+	defer c.informerMu.RUnlock()
+	objects := []*unstructured.Unstructured{}
+	// Resolve relevant cluster RBAC from binding subjects before converting any
+	// rule bodies. Unrelated cluster authorization is outside this inventory.
+	clusterRoles := map[string]bool{}
+	clusterBindings := map[string]bool{}
+	bound := func(subjects []rbacv1.Subject, namespace string) bool {
+		for _, subject := range subjects {
+			ns := subject.Namespace
+			if ns == "" {
+				ns = namespace
+			}
+			if subject.Kind == "ServiceAccount" && ns == c.config.Namespace {
+				return true
+			}
+		}
+		return false
+	}
+	for _, key := range []string{"rbac.authorization.k8s.io/v1/RoleBinding", "rbac.authorization.k8s.io/v1/ClusterRoleBinding"} {
+		informer := c.informers[key]
+		if informer == nil {
+			continue
+		}
+		for _, object := range informer.GetStore().List() {
+			switch binding := object.(type) {
+			case *rbacv1.RoleBinding:
+				if bound(binding.Subjects, binding.Namespace) && binding.RoleRef.Kind == "ClusterRole" {
+					clusterRoles[binding.RoleRef.Name] = true
+				}
+			case *rbacv1.ClusterRoleBinding:
+				if bound(binding.Subjects, "") {
+					clusterBindings[binding.Name] = true
+					if binding.RoleRef.Kind == "ClusterRole" {
+						clusterRoles[binding.RoleRef.Name] = true
+					}
+				}
+			case *unstructured.Unstructured:
+				for ref := range inventoryRBACScope(c.config.Namespace, []*unstructured.Unstructured{binding}) {
+					if ref.Kind == "ClusterRole" {
+						clusterRoles[ref.Name] = true
+					}
+					if ref.Kind == "ClusterRoleBinding" {
+						clusterBindings[ref.Name] = true
+					}
+				}
+			}
+		}
+	}
+	for key, informer := range c.informers {
+		api, kind := splitInformerKey(key)
+		for _, object := range informer.GetStore().List() {
+			if kind == "ClusterRole" && !clusterRoles[objectName(object)] || kind == "ClusterRoleBinding" && !clusterBindings[objectName(object)] {
+				continue
+			}
+			if observed := driftObject(object, sdk.WatchKind{APIVersion: api, Kind: kind}); observed != nil {
+				objects = append(objects, observed)
+			}
+		}
+	}
+	return objects
+}
+func splitInformerKey(key string) (string, string) {
+	index := strings.LastIndex(key, "/")
+	return key[:index], key[index+1:]
+}
+func (c *KubernetesCache) SourceDriftReady() bool {
+	c.informerMu.RLock()
+	defer c.informerMu.RUnlock()
+	for _, informer := range c.informers {
+		if !informer.HasSynced() {
+			return false
+		}
+	}
+	return true
 }

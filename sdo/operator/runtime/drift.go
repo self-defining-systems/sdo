@@ -24,6 +24,8 @@ const maxDriftFields = 12
 type DriftClassifier struct{}
 
 type DriftControllerConfig struct {
+	Inventory bool
+
 	Events interface{ TakeObjectChanges() []ObjectChange }
 	Source interface {
 		AcceptedManifests(context.Context, string, string) ([]*unstructured.Unstructured, error)
@@ -64,6 +66,9 @@ func (c *Controller) processDrift(ctx context.Context, now time.Time, snapshot s
 			if c.OnError != nil {
 				c.OnError(err)
 			}
+		}
+		if event != nil && c.drift.Inventory && sourceInventoryKind(object) && event.Source == "absent from accepted source" {
+			continue
 		}
 		if event == nil {
 			continue
@@ -249,13 +254,13 @@ func flattenDriftObject(object *unstructured.Unstructured) map[string]any {
 			result[path] = typed
 		}
 	}
-	for _, key := range []string{"spec", "data", "binaryData", "webhooks"} {
+	for _, key := range []string{"spec", "data", "binaryData", "webhooks", "rules", "roleRef", "subjects", "aggregationRule"} {
 		if value, ok := object.Object[key]; ok {
 			walk(key, value)
 		}
 	}
 	metadata, _ := object.Object["metadata"].(map[string]any)
-	for _, key := range []string{"labels", "annotations"} {
+	for _, key := range []string{"labels", "annotations", "deletionTimestamp", "finalizers"} {
 		if value, ok := metadata[key]; ok {
 			walk("metadata."+key, value)
 		}
