@@ -43,7 +43,7 @@ def test_image_jobs_need_no_host_go_toolchain() -> None:
         workflow = yaml.safe_load((ROOT / ".github/workflows" / name).read_text())
         steps = workflow["jobs"]["images"]["steps"]
         assert not any("actions/setup-go" in step.get("uses", "") for step in steps)
-        assert not any("Cache image schema-identity build" == step.get("name") for step in steps)
+        assert not any(step.get("name") == "Cache image schema-identity build" for step in steps)
         inputs = next(step for step in steps if step.get("id") == "image-inputs")
         assert "scripts/ci_schema_identity.py" in inputs["run"]
         assert "SDO_VALIDATOR_SCHEMA_IDENTITY" in inputs["run"]
