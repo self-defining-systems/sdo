@@ -631,6 +631,8 @@ def test_evidence_gap_count_preserves_unknown_zero_and_recorded_counts() -> None
 
 
 def test_program_metrics_exports_incident_open_coverage() -> None:
+    from benchmarks.sregym.fastloop.sdo_agent import _program_metrics
+
     coverage = {
         "matches": [{"playbook_id": "routing", "explained_finding_fingerprints": ["one", "two"]}],
         "unexplained_finding_fingerprints": ["three"],

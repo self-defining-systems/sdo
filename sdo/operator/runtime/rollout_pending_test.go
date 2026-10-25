@@ -181,7 +181,7 @@ func TestPendingRolloutDoesNotCountAsDurableTrustFailure(t *testing.T) {
 	for _, falseMatch := range []bool{false, true} {
 		t.Run(fmt.Sprint(falseMatch), func(t *testing.T) {
 			prior := &contracts.OutcomeRecord{Classification: "success", SourceCommit: "revision-a", ProgramRuns: []*contracts.ProgramRun{{ProgramId: "repair", ProgramRevision: "revision-a"}}, ReflectionEligibility: &contracts.ReflectionEligibility{Version: 1, Unassigned: []*contracts.ReflectionWorkItem{{Disposition: "covered", ProgramId: "repair", ProgramRevision: "revision-a"}}}}
-			pending := &contracts.OutcomeRecord{Classification: "failed", SourceCommit: "revision-a", ProgramRuns: []*contracts.ProgramRun{{ProgramId: "repair", ProgramRevision: "revision-a"}}, PlanApplications: []*contracts.PlanApplication{{ApplicationId: "fast-path-pending", Applied: true, ProgramIds: []string{"repair"}, Error: "rollout_pending", RolloutPending: &contracts.RolloutPending{Reason: "peer admission blocks rollout"}}}}
+			pending := &contracts.OutcomeRecord{Classification: "failed", SourceCommit: "revision-a", ProgramRuns: []*contracts.ProgramRun{{ProgramId: "repair", ProgramRevision: "revision-a"}}, PlanApplications: []*contracts.PlanApplication{{ApplicationId: "application-pending", Applied: true, ProgramIds: []string{"repair"}, Error: "rollout_pending", RolloutPending: &contracts.RolloutPending{Reason: "peer admission blocks rollout"}}}}
 			if falseMatch {
 				pending.ReflectionEligibility = &contracts.ReflectionEligibility{Version: 1, Unassigned: []*contracts.ReflectionWorkItem{{Disposition: "false_match", ProgramId: "repair", ProgramRevision: "revision-a"}}}
 			}

@@ -19,7 +19,7 @@ const (
 	// simInconclusive: the incident succeeded but its tool record has no
 	// post-apply evidence (truncated or missing).
 	simInconclusive
-	// simInterrupted: a fast-path attempt was cut off before it could finish;
+	// simInterrupted: a responder application was cut off before it could finish;
 	// only its failure signal remains.
 	simInterrupted
 	// simInterruptedElsewhere: the same signal bound to another revision.

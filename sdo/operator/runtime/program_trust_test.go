@@ -69,7 +69,7 @@ func boundTrustOutcome(t *testing.T, kind, classification string, result program
 }
 
 func TestProgramTrustRequiresIndependentSuccessForEveryApplicationKind(t *testing.T) {
-	for _, kind := range []string{"application-1", "fast-path-1", "equivalent-repair-1", "learned-repair-targetport"} {
+	for _, kind := range []string{"application-1", "mitigation-1", "equivalent-repair-1", "learned-repair-targetport"} {
 		for _, classification := range []string{"failed", "cleared_without_action", ""} {
 			t.Run(kind+"/"+classification, func(t *testing.T) {
 				outcome := boundTrustOutcome(t, kind, classification, program.NoMatch)
