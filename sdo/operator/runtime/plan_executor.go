@@ -62,6 +62,8 @@ type PlanPreImage struct {
 // PlanApplicationResult contains the PlanApplication fields, generated patches,
 // and the pre-images needed to reverse an applied plan.
 type PlanApplicationResult struct {
+	// MitigationHealth is process-local tool feedback, not closure evidence.
+	MitigationHealth         *MitigationHealth `json:"-"`
 	Plan                     program.Plan
 	Applied                  bool
 	DryRun                   bool
@@ -104,6 +106,12 @@ type PlanExecutor struct {
 // plan is compensated; once every write has landed, a failed rollout wait or
 // health verification is reported and left to the caller.
 func (e PlanExecutor) Apply(ctx context.Context, incident IncidentRequest, plan program.Plan, dryRun bool) (result PlanApplicationResult, err error) {
+	// A mitigation never spends the incident's global health budget. Keep
+	// write/rollout confirmation, then independently sample its own scope once.
+	if verifier := scopedMitigationVerifier(e.Verifier, plan); verifier != nil && !dryRun {
+		e.Verifier = verifier
+		defer func() { result.MitigationHealth = verifier.observation }()
+	}
 
 	for attempt := 0; attempt < maxRestoreAttempts; attempt++ {
 		result, err = e.applyOnce(ctx, incident, plan, dryRun)

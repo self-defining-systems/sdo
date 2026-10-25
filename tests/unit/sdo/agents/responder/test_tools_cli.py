@@ -241,3 +241,11 @@ def test_menu_does_not_gate_direct_act(monkeypatch):
     monkeypatch.setattr(tools_cli.recorded_actions, "run_and_record", lambda *_args, **_kwargs: 0)
     assert tools_cli.main(["act", "--resource", "Deployment/app/api", "--", "true"]) == 0
     assert seen == ["pre-apply"]
+
+
+def test_detect_repeated_detector_selection(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[dict[str, object]] = []
+    monkeypatch.setattr(tools_cli, "_exchange", lambda request, _: seen.append(request) or {"summary": "fresh"})
+    assert tools_cli.main(["detect"]) == 0
+    assert tools_cli.main(["detect", "--detector", "a", "b", "--detector", "c"]) == 0
+    assert seen == [{"command": "detect"}, {"command": "detect", "detector_ids": ["a", "b", "c"]}]
