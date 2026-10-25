@@ -21,9 +21,12 @@ PATTERNS = {
         r"^(Test(?:[A-G]|Reflection(?!DirectFilesCLIAndBroker$)|RegisteredReflection|HermeticFastloopRealGoGate$)"
         r"|Fuzz[A-M]|Example(?:[A-M_]|$))"
     ),
-    "rendered": r"^(Test(?!(?:HermeticFastloopRealGoGate)$)(?:[H-P]|Rendered|SimRendered)|Fuzz[N-Z]|Example[N-Z])",
+    "rendered": (
+        r"^(Test(?!(?:HermeticFastloopRealGoGate|SimRenderedLockSchedule)$)(?:[H-P]|Rendered|SimRendered)"
+        r"|Fuzz(?!SimIncidentSchedule$)[N-Z]|Example[N-Z])"
+    ),
     "simulation": r"^TestSim[A-M]",
-    "schedules": r"^TestSimSchedule",
+    "schedules": r"^(TestSimSchedule|TestSimRenderedLockSchedule$|FuzzSimIncidentSchedule$)",
     "corpus": r"^TestRejectedRepeatCorpusFallsBackToReflectionWorker$",
     "recovery": (
         r"^Test(?:Q|R(?!eflection|egisteredReflection|endered|ejectedRepeatCorpusFallsBackToReflectionWorker$)"
@@ -85,7 +88,7 @@ def main() -> None:
     # Anchoring whole top-level names retains all nested scenarios and fuzz seeds.
     selection = "^(" + "|".join(re.escape(name) for name in groups[args.shard]) + ")$"
     subprocess.run(
-        ["go", "test", "-race", "-parallel=2", "-count=1", "-timeout=10m", "-json", "-run", selection, "./..."],
+        ["go", "test", "-race", "-parallel=2", "-count=1", "-timeout=5m", "-json", "-run", selection, "./..."],
         cwd=RUNTIME,
         check=True,
     )

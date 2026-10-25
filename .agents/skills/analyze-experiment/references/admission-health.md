@@ -10,3 +10,17 @@ Steady synthetic traffic uses `pending` when a scenario has never succeeded sinc
 
 
 `fastloop eval-dry-run --run-dir <lane>` writes `eval-dry-run/report.json` with per-invariant pass/fail, elapsed seconds, and explicit `fault_injected:false` / `live_model_calls:false`. It executes the real pre-injection path using scripted registrations. A five-minute process deadline marks unfinished invariants failed; this evidence establishes eval plumbing, never learning. Admission evidence includes setup lineage, exact responder RBAC against the real installer plan, current controller detector states, qualified native prober scenarios, independent traffic and stable workload identity. Stabilization is recorded before the incident injection window and excluded from incident clocks. Preserve the report and the `admission/` evidence when a slot is rejected.
+
+## Lane resource evidence
+
+`admission/lane-resources.json` records namespace/Pod/container working-set
+measurements and budgets (default 8GiB; observer and app all-in-one Jaeger
+2GiB), host available memory, and `host_disk` evidence for the filesystem
+backing local Docker kind-node storage. The disk object names `mount`,
+`storage_path`, `total_bytes`, `free_bytes`, `used_percent`,
+`min_free_percent` and `floor_bytes`; default admission rejects at 90% used or
+below 100GiB free. Checks run before and after stabilization; the dry run
+reports the same `lane_resources` invariant. Resource rejection is an eval
+infrastructure failure, never evidence of agent or incident mitigation.
+Only the benchmark observer is capped by SREGym: app growth is detected,
+and application workload documents are preserved from accepted source.

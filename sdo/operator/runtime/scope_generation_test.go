@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
@@ -88,8 +89,11 @@ func TestScopedClosureGenerationSeededCuts(t *testing.T) {
 					}
 					return
 				}
-				if err == nil || !strings.Contains(err.Error(), "observation scope") {
-					t.Fatalf("obsolete scope success remained eligible: %v", err)
+				if err != nil {
+					t.Fatalf("obsolete scope closure crashed restart: %v", err)
+				}
+				if restored.closureState != contracts.ClosureState_CLOSURE_STATE_FAILED || !strings.Contains(restored.closureFailure.LastError, "observation scope") {
+					t.Fatal("obsolete scope closure was not durably retired")
 				}
 				if len(broker.calls()) != 0 {
 					t.Fatal("stale closure reached broker")

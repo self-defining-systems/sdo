@@ -40,20 +40,22 @@ const simStreamMaxTicks = 6000
 // responder and a scripted broker on a virtual clock. Effects are executed by
 // the pump (drain), never concurrently with the test goroutine's reads.
 type simWorld struct {
-	t          *testing.T
-	rng        *rand.Rand
-	clock      *simClock
-	kube       *simKube
-	cache      *simCache
-	controller *Controller
-	responder  *simResponder
-	broker     *simBroker
-	config     ControllerConfig
-	client     *fake.Clientset
-	restarts   int
-	storeFails int
-	detectors  []sdk.Detector
-	configure  func(*Controller)
+	t              *testing.T
+	rng            *rand.Rand
+	clock          *simClock
+	kube           *simKube
+	cache          *simCache
+	controller     *Controller
+	responder      *simResponder
+	broker         *simBroker
+	config         ControllerConfig
+	client         *fake.Clientset
+	restarts       int
+	storeFails     int
+	detectors      []sdk.Detector
+	configure      func(*Controller)
+	paused         bool
+	brokerOverride IncidentBroker
 
 	outcomes *memory.JSONStore
 
@@ -275,13 +277,21 @@ func (w *simWorld) startController() {
 	controller.dispatchJitter = w.rng.Float64
 	controller.OnError = func(err error) { w.t.Logf("controller effect: %v", err) }
 	controller.OnIncidentClosed = w.onClosed
-	if err := controller.SetIncidentBroker(w.broker); err != nil {
+	closureBroker := IncidentBroker(w.broker)
+	if w.brokerOverride != nil {
+		closureBroker = w.brokerOverride
+	}
+	if err := controller.SetIncidentBroker(closureBroker); err != nil {
 		w.t.Fatal(err)
 	}
 	if err := controller.AttachStateStore(context.Background(), lifecycleio.NewConfigMapStateStore(w.client, "app", "sdo-controller-state")); err != nil {
 		w.t.Fatalf("restore controller state: %v", err)
 	}
-	if err := controller.EvaluateAll(context.Background(), w.clock.Now()); err != nil {
+	if w.paused {
+		if err := controller.stepPaused(context.Background(), w.clock.Now()); err != nil {
+			w.t.Fatal(err)
+		}
+	} else if err := controller.EvaluateAll(context.Background(), w.clock.Now()); err != nil {
 		w.t.Fatal(err)
 	}
 	w.controller = controller
@@ -344,7 +354,13 @@ func (w *simWorld) checkOutcomeDocument(closure IncidentClosure) {
 }
 
 func (w *simWorld) step() {
-	if err := w.controller.Step(context.Background(), w.clock.Now(), nil); err != nil {
+	step := func() error {
+		if w.paused {
+			return w.controller.stepPaused(context.Background(), w.clock.Now())
+		}
+		return w.controller.Step(context.Background(), w.clock.Now(), nil)
+	}
+	if err := step(); err != nil {
 		w.t.Fatalf("step at %s: %v", w.clock.Now(), err)
 	}
 	w.persist()
@@ -369,13 +385,13 @@ func (w *simWorld) drain() {
 	for round := 0; round < 100; round++ {
 		progressed := false
 		w.persist()
-		if effect, ok := w.controller.PendingWorkspaceEffect(); ok {
+		if effect, ok := w.controller.PendingWorkspaceEffect(); ok && !w.paused {
 			if err := w.controller.ExecuteWorkspaceEffect(ctx, effect); err != nil {
 				return
 			}
 			w.await(func() bool { return len(w.controller.workspaceResults) > 0 })
 			progressed = true
-		} else if effect, ok := w.controller.PendingDispatchEffect(); ok {
+		} else if effect, ok := w.controller.PendingDispatchEffect(); ok && !w.paused {
 			if err := w.controller.ExecuteDispatchEffect(ctx, effect); err != nil {
 				return
 			}
