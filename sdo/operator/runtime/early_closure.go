@@ -33,6 +33,21 @@ func acquireClosureGuard(l *ResponderLoop) (*apihistory.MutationObservation, fun
 		return nil, noop, false
 	}
 	release := func() { l.mu.Unlock(); l.operationMu.Unlock() }
+	// MP exposes reservations through this optional, no-I/O interface. Keep the
+	// closure guard usable before that implementation is integrated.
+	if pending, ok := any(l).(interface{ hasPendingMitigationsLocked() bool }); ok {
+		if pending.hasPendingMitigationsLocked() {
+			release()
+			return nil, noop, false
+		}
+	} else {
+		for _, application := range l.applicationsLog {
+			if application.Pending {
+				release()
+				return nil, noop, false
+			}
+		}
+	}
 	if l.gateError != nil {
 		release()
 		return nil, noop, false
