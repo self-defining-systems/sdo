@@ -35,7 +35,7 @@ def workflow() -> dict:
     ],
 )
 def test_image_filters_follow_runtime_inputs(path: str, images: set[str]) -> None:
-    filters = yaml.safe_load(workflow()["jobs"]["changes"]["steps"][1]["with"]["filters"])
+    filters = yaml.safe_load(workflow()["jobs"]["images"]["steps"][1]["with"]["filters"])
     selected = {
         image
         for image in ("controller", "validator", "responder", "benchmark")
@@ -46,7 +46,7 @@ def test_image_filters_follow_runtime_inputs(path: str, images: set[str]) -> Non
 
 @pytest.mark.parametrize("event", ["pull_request", "merge_group"])
 def test_merge_queue_forces_every_image_and_test_area(event: str, tmp_path: Path) -> None:
-    step = next(s for s in workflow()["jobs"]["changes"]["steps"] if s.get("id") == "resolve")
+    step = next(s for s in workflow()["jobs"]["images"]["steps"] if s.get("id") == "resolve")
     output = tmp_path / "output"
     result = subprocess.run(
         ["bash", "-e", "-c", step["run"]],
@@ -149,3 +149,15 @@ def test_required_ci_rejects_any_applicable_unsuccessful_job(result: str, accept
         check=False,
     )
     assert (completed.returncode == 0) is accepted
+
+
+def test_go_build_cache_is_shared_and_prs_do_not_publish_it() -> None:
+    jobs = workflow()["jobs"]
+    for name in ("go", "images", "runtime-integration"):
+        steps = jobs[name]["steps"]
+        restore = next(step for step in steps if step.get("id") == "go-cache")
+        assert "-shared-1.26.8-" in restore["with"]["key"]
+        assert "~/.cache/go-build" in restore["with"]["path"]
+        assert "~/go/pkg/mod" in restore["with"]["path"]
+    # Cache publication is nightly; PR correctness is independent of upload time.
+    assert not any("actions/cache/save@" in step.get("uses", "") for job in jobs.values() for step in job["steps"])

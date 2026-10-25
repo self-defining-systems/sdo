@@ -536,31 +536,68 @@ signalling: a reused PID never authorizes a signal. Keep the record and logs
 after completion; the next launch replaces a stale record. The printed
 `persistent abort --state ...` command remains available as well.
 
-### Runtime CI shards
+### PR CI execution budget
 
-The controller matrix runs the runtime module in eight test-name partitions:
-`reflection`, `contracts`, `rendered`, `simulation`, `schedules`, `corpus`, `recovery`, and `remaining`. Run a partition locally
-with `python3 scripts/test_runtime_shard.py --shard reflection` from the repository
-root. Each shard first discovers the compiled tests across `./...`, including
-examples and fuzz seed tests, then requires every eligible name to match exactly
-one pattern in `scripts/test_runtime_shard.py`. Missing/overlapping patterns fail
-CI before execution. Replay, chaos, and explorer tests retain their dedicated jobs.
-All nested scenarios and simulation seeds run unchanged, with race instrumentation,
-`-parallel=2`, and the existing ten-minute package timeout. The `controller` matrix
-remains a dependency of the stable `Required PR CI` aggregate.
+PR CI runs at most **three work jobs** in parallel: **Go modules**, **All runtime race tests**,
+and **Python/static/proto plus affected images**. The fourth job,
+`Required PR CI`, runs only after all three complete and remains the single
+branch-protection check. There is no selector job or test matrix. Repository
+policy rejects a fourth work job, counting every matrix expansion, as well as
+missing or greater-than-ten-minute job timeouts and bypassed enforcement.
 
-For per-test timing, the shard runner emits `go test -json` events. To profile the
-unsharded suite with the same exclusions:
+The budget is **600 seconds of execution along the longest `needs` chain**.
+`scripts/check_ci_budget.py` reads Actions `started_at` / `completed_at` timestamps,
+including setup and cache teardown, and adds dependent durations. Queues never
+count; parallel siblings use their maximum, rather than their sum. The report
+names the critical path and five slowest jobs. Missing API evidence fails closed.
+Because the required check is still running when it measures, it reserves its
+entire one-minute job timeout for its own execution and cleanup. This conservative
+upper bound enforces the complete path; aim for at most eight minutes of execution
+to retain headroom. All three work jobs time out after nine minutes.
 
-```bash
-(cd sdo/operator/runtime && go test -race -count=1 -json -parallel=2 \
-  -skip '^TestReplay|^TestChaos|^TestExhaustive|^TestExplorer' ./...) > runtime-timing.json
-```
+The Go module job starts its longest module alongside a sequential lane for
+smaller modules, on a runner dedicated to Go. Python keeps two pytest workers on
+the image runner, with one compiler per worker, overlapping image build/export I/O
+after static/proto checks. Its separately recorded result is always required. Runtime
+uses **three disjoint partitions on one runner**, `contracts`, `integration` and
+`lifecycle`,
+without competing with unrelated module compilation. Run every partition locally with
+`uv run python scripts/test_runtime_shard.py --shard all`, or select either
+partition by name. Inventory discovery runs once before all partitions start,
+with shared Go build caches; every exit status are collected even if one fails. Every package,
+example, fuzz seed, replay, chaos and explorer test remains in the race suite.
+The exactly-once guard rejects missing or overlapping names; all nested scenarios
+and seeds remain unchanged. The unchanged 83 MiB restart fixtures stay on PRs.
+Native broker/lifecycle cases and the exhaustive lifecycle model have their own
+partition, so long controller continuations cannot queue behind all contracts.
+The partitions also retain the full trust property matrix. Immutable health-policy
+checks compile one binary per accepted policy revision and execute each observation
+against it; simulation pumps wait for completion events instead of scheduler ticks.
+Probe timeouts use Go's virtual clock while preserving their error/replay assertions.
+The Gate 1 names and `scripts/test_fastloop_hermetic.sh` selectors stay intact.
+Go emits `-json` timings for profiling; aggregate top-level `pass` event `Elapsed`
+values rather than adding nested subtest timings a second time.
 
-Rebalance the name patterns using top-level `pass` event `Elapsed` values. Keep the
-matrix shard values in sync; `tests/unit/sdo/operator/test_runtime_shards.py` checks
-that contract. New test names are discovered automatically and must still pass the
-exactly-once guard.
+`nightly.yml` runs daily at 05:17 UTC and supports manual dispatch. It runs all six
+existing 30-second boundary fuzz campaigns, three normal-build proxy latency
+acceptance repeats (including the large-response distribution), and builds/probes
+all four images even when no image input changed. These checks need sustained
+mutation/repetition or full build/export work. PRs retain all fuzz seeds under
+`-race`, one-second active fuzz smoke, one repeat of all three normal-build latency tests (including the large-response
+check with its unresolved intermittent failure),
+and deterministic forwarding/redaction contracts. Every affected image is still
+built, smoked, probed and checked for forbidden benchmark files on PRs.
+
+Static analysis already includes type and architecture checks, so their standalone
+jobs were redundant. They now run once on the Python/image runner alongside formatting
+and proto lint/codegen drift. Nightly warms and publishes shared Go compiler/module caches, plus one maximal
+image-layer cache; PR image jobs restore it without repeating the large compiler/toolchain
+layer upload (175 seconds in a hosted sample). Every affected image still builds
+and receives the same smoke, probe and forbidden-path audit.
+Image setup reads the committed native SDK pin,
+which the Go static gate and built-image validation independently verify, avoiding
+a second full controller build just to obtain its schema string.
+
 ### Fast image delivery
 
 Use `uv run python -m benchmarks.sregym.fastloop preflight` before image builds.

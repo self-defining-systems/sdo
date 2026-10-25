@@ -242,40 +242,38 @@ func testSimResponderMenuSchedule(t *testing.T, seed uint64, schedule string) {
 				if err := current.ExecuteWorkspaceEffect(ctx, effect); err != nil {
 					t.Fatal(err)
 				}
-				w.await(func() bool { return len(current.workspaceResults) > 0 })
+				awaitSimResult(t, current.workspaceResults)
 			} else if effect, ok := current.PendingDispatchEffect(); ok {
 				if err := current.ExecuteDispatchEffect(ctx, effect); err != nil {
 					t.Fatal(err)
 				}
-				select {
-				case task := <-driver.started:
-					runTask(task, failAll)
-				case <-time.After(time.Millisecond):
-				}
-				// A worker may first be scheduled after the short select. Await it or its
-				// already-cached completion, without advancing the simulated world.
-				deadline := time.Now().Add(5 * time.Second)
-				for len(current.results) == 0 && time.Now().Before(deadline) {
+				// Wait on either the actual worker start or a cached completion,
+				// rather than repeatedly sleeping while simulated time stands still.
+				settled := false
+				timer := time.NewTimer(5 * time.Second)
+				for !settled {
 					select {
 					case task := <-driver.started:
 						runTask(task, failAll)
-					default:
-						time.Sleep(time.Millisecond)
+					case result := <-current.results:
+						current.results <- result
+						settled = true
+					case <-timer.C:
+						t.Fatal("scripted responder did not settle")
 					}
 				}
-				if len(current.results) == 0 {
-					t.Fatal("scripted responder did not settle")
-				}
+				timer.Stop()
+
 			} else if effect, ok := current.PendingClosureEffect(); ok {
 				if err := current.ExecuteClosureEffect(ctx, effect); err != nil {
 					t.Fatal(err)
 				}
-				w.await(func() bool { return len(current.closureResults) > 0 })
+				awaitSimResult(t, current.closureResults)
 			} else if effect, ok := current.PendingClosureAcknowledgmentEffect(); ok {
 				if err := current.ExecuteClosureAcknowledgmentEffect(ctx, effect); err != nil {
 					t.Fatal(err)
 				}
-				w.await(func() bool { return len(current.acknowledgmentResults) > 0 })
+				awaitSimResult(t, current.acknowledgmentResults)
 			} else {
 				return
 			}

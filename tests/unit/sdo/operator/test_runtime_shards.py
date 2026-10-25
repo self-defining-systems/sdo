@@ -19,6 +19,7 @@ SPEC.loader.exec_module(shards)
 def test_partitions_include_tests_fuzz_seeds_and_examples() -> None:
     names = [
         "TestAdmission",
+        "TestNativeBrokerRecoversCommittedPhasesAndRequiresReflection",
         "TestHermeticFastloopRealGoGate",
         "TestReflectionDirectFilesCLIAndBroker",
         "TestReflectionLearnedProgramCLIAndBroker",
@@ -39,6 +40,7 @@ def test_partitions_include_tests_fuzz_seeds_and_examples() -> None:
     assigned = shards.partition(names, shards.PATTERNS)
     assert sorted(name for group in assigned.values() for name in group) == sorted(names)
     assert all(assigned.values())
+    assert set(assigned) == {"contracts", "integration", "lifecycle"}
 
 
 @pytest.mark.parametrize("patterns", [{"one": "^TestA$"}, {"one": "^Test", "two": "^Test"}])
@@ -56,12 +58,72 @@ def test_discovery_retains_fuzz_and_examples_but_not_benchmarks() -> None:
     ) == ["Example_one", "FuzzOne", "TestOne"]
 
 
-def test_every_matrix_shard_is_aggregated_and_script_changes_trigger_go() -> None:
+def test_runtime_partitions_preserve_the_gate_selectors() -> None:
     jobs = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())["jobs"]
-    matrix = jobs["controller"]["strategy"]["matrix"]["include"]
-    runtime = [row for row in matrix if row["module"].startswith("runtime")]
-    assert {row["shard"] for row in runtime} == shards.PATTERNS.keys()
-    assert len(runtime) == len(shards.PATTERNS)
-    assert "controller" in jobs["required-pr-ci"]["needs"]
-    filters = yaml.safe_load(jobs["changes"]["steps"][1]["with"]["filters"])
-    assert "scripts/test_runtime_shard.py" in filters["go"]
+    assert "strategy" not in jobs["go"]
+    assert "go" in jobs["required-pr-ci"]["needs"]
+    script = (ROOT / "scripts/test_go_ci.sh").read_text()
+    assert "test_runtime_shard.py" not in script
+    assert any("--shard all" in step.get("run", "") for step in jobs["runtime-integration"]["steps"])
+    for name in [
+        "TestReplayIncident",
+        "TestChaosRestart",
+        "TestExhaustiveHistory",
+        "TestExplorerState",
+        "TestHermeticFastloopRealGoGate",
+        "TestHermeticReflectionLearnsThenAgentSelectsIdenticalRecurrence",
+    ]:
+        assert shards.partition([name], shards.PATTERNS)["contracts"] == [name]
+
+
+@pytest.mark.parametrize("fail_contracts", [False, True])
+def test_all_shards_run_real_discovered_tests_once_and_preserve_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str], fail_contracts: bool
+) -> None:
+    """Exercise the runner against a real compiled Go module, including failure."""
+    import json
+    import sys
+
+    (tmp_path / "go.mod").write_text("module example.com/runtime-partitions\n\ngo 1.26.0\n")
+    (tmp_path / "runner_test.go").write_text(
+        'package partitions\nimport ("os"; "testing")\n'
+        "func mark(t *testing.T) {\n"
+        'if err := os.WriteFile(t.Name(), []byte("ran"), 0600); err != nil { t.Fatal(err) } }\n'
+        "func TestRestartClassHermetic(t *testing.T) { mark(t) }\n"
+        "func TestNativeBroker(t *testing.T) { mark(t) }\n"
+        "func TestContracts(t *testing.T) { mark(t);\n"
+        'if os.Getenv("FAIL_CONTRACTS") == "1" { t.Fatal("deliberate contract failure") } }\n'
+    )
+    monkeypatch.setattr(shards, "RUNTIME", tmp_path)
+    monkeypatch.setattr(sys, "argv", ["runtime-shards", "--shard", "all"])
+    monkeypatch.setenv("FAIL_CONTRACTS", "1" if fail_contracts else "0")
+    with pytest.raises(SystemExit) as result:
+        shards.main()
+    assert result.value.code == int(fail_contracts)
+    output = capfd.readouterr().out
+    assert output.count("Coverage guard:") == 1
+    events = [json.loads(line) for line in output.splitlines() if line.startswith("{")]
+    assert sorted(event["Test"] for event in events if event.get("Action") == "run") == [
+        "TestContracts",
+        "TestNativeBroker",
+        "TestRestartClassHermetic",
+    ]
+    assert (tmp_path / "TestNativeBroker").read_text() == "ran"
+    assert (tmp_path / "TestContracts").read_text() == "ran"
+    assert (tmp_path / "TestRestartClassHermetic").read_text() == "ran"
+
+
+def test_native_lifecycle_cases_have_an_independent_partition() -> None:
+    groups = shards.partition(
+        [
+            "TestNativeBrokerRecoversCommittedPhasesAndRequiresReflection",
+            "TestNativeLifecycleToIncidentOutcomeUsesAcceptedState",
+            "TestExhaustiveReflectionLifecycle",
+        ],
+        shards.PATTERNS,
+    )
+    assert groups["lifecycle"] == [
+        "TestNativeBrokerRecoversCommittedPhasesAndRequiresReflection",
+        "TestNativeLifecycleToIncidentOutcomeUsesAcceptedState",
+        "TestExhaustiveReflectionLifecycle",
+    ]
