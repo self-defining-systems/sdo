@@ -91,3 +91,15 @@ func TestPlaybookCoverageSweepBindingIsOfferedByMenu(t *testing.T) {
 	}
 	t.Fatalf("coverage selection absent from menu: %v", menu.Menu)
 }
+
+// C4 filters retired programs at the loader. Coverage must not resurrect an
+// unloaded playbook from a stale finding hint or surfaced README reference.
+func TestPlaybookCoverageDoesNotOfferUnloadedPlaybooks(t *testing.T) {
+	loop, _ := trustedPortLoop(t, false, false, true)
+	loop.Request.Findings[0].Playbooks = []string{"retired-playbook"}
+	runs := loop.InitialDiagnose(context.Background())
+	coverage := buildPlaybookCoverage(loop.Request.Findings, runs, loop.lastDiagnosisView, nil)
+	if len(coverage.Matches) != 1 || coverage.Matches[0].PlaybookId != "service-targetport-mismatch" {
+		t.Fatalf("coverage offered an unloaded playbook: %v", coverage)
+	}
+}

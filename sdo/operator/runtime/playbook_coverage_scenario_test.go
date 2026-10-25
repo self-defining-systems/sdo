@@ -8,12 +8,14 @@ import (
 	"time"
 
 	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/memory"
 	"sdo.dev/operator/outcome_derivation"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
@@ -188,6 +190,14 @@ func TestHermeticAgentRepairsTwoCoveredFaultsAndOneUnexplained(t *testing.T) {
 		if !applied[id] {
 			t.Fatalf("outcome lost program versus agent action attribution for %s: %v", id, derived.Record)
 		}
+	}
+	store := memory.NewJSONStore(t.TempDir())
+	if _, err := store.Put(ctx, derived.Record); err != nil {
+		t.Fatal(err)
+	}
+	persisted, err := store.Get(ctx, derived.Record.IncidentId)
+	if err != nil || !proto.Equal(persisted.Record.GetPlaybookCoverage(), typed.GetPlaybookCoverage()) {
+		t.Fatalf("memory edge changed initial coverage: %v %v", persisted.Record, err)
 	}
 	data, err := json.Marshal(derived.Record)
 	if err != nil || len(data) == 0 {
