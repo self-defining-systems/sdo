@@ -143,6 +143,9 @@ options:
   --wait SECONDS  wait for stable verification, a new/reactivated finding, or
                   this timeout (0: cached and instant)
 
+Key JSON fields (conditional): healthy, unresolved, findings[],
+detector_states[], drift_events[]
+
 
 ## Supported open phase selections
 
