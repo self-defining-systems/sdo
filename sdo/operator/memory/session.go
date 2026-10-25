@@ -11,12 +11,11 @@ import (
 	"strings"
 )
 
-// PrepareIncidentSession owns the physical storage location for one agent
-// conversation. Workers receive only its narrow PVC subPath, never the
-// accepted checkout or another incident's session directory.
-func PrepareIncidentSession(repositoryMount, pvcSubPath, incidentID string) (string, error) {
-	if !filepath.IsAbs(repositoryMount) || strings.TrimSpace(incidentID) == "" || len(incidentID) > 512 {
-		return "", errors.New("incident session requires an absolute repository mount and bounded incident ID")
+// IncidentSessionSubPath resolves one incident's narrow PVC mount without
+// creating directories, opening mutation gates, or advancing API generations.
+func IncidentSessionSubPath(pvcSubPath, incidentID string) (string, error) {
+	if strings.TrimSpace(incidentID) == "" || len(incidentID) > 512 {
+		return "", errors.New("incident session requires a bounded incident ID")
 	}
 	if pvcSubPath != "" {
 		clean := path.Clean(pvcSubPath)
@@ -25,7 +24,29 @@ func PrepareIncidentSession(repositoryMount, pvcSubPath, incidentID string) (str
 		}
 	}
 	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(incidentID)))[:32]
-	local := filepath.Join(repositoryMount, ".sdo-runtime", "sessions", digest)
+	return path.Join(pvcSubPath, ".sdo-runtime", "sessions", digest), nil
+}
+
+// PrepareIncidentSession owns the physical storage location for one agent
+// conversation. Workers receive only its narrow PVC subPath, never the
+// accepted checkout or another incident's session directory.
+func PrepareIncidentSession(repositoryMount, pvcSubPath, incidentID string) (string, error) {
+	if !filepath.IsAbs(repositoryMount) {
+		return "", errors.New("incident session requires an absolute repository mount and bounded incident ID")
+	}
+	subPath, err := IncidentSessionSubPath(pvcSubPath, incidentID)
+	if err != nil {
+		return "", err
+	}
+	base := pvcSubPath
+	if base == "" {
+		base = "."
+	}
+	relative, err := filepath.Rel(base, subPath)
+	if err != nil {
+		return "", err
+	}
+	local := filepath.Join(repositoryMount, relative)
 	for _, directory := range []string{filepath.Join(repositoryMount, ".sdo-runtime"), filepath.Join(repositoryMount, ".sdo-runtime", "sessions"), local, filepath.Join(local, "api-history")} {
 		if err := os.Mkdir(directory, 0700); err != nil && !errors.Is(err, os.ErrExist) {
 			return "", fmt.Errorf("prepare incident session directory: %w", err)
@@ -45,7 +66,7 @@ func PrepareIncidentSession(repositoryMount, pvcSubPath, incidentID string) (str
 	if _, err := apihistory.PrepareMutationGate(filepath.Join(local, "api-history")); err != nil {
 		return "", err
 	}
-	return path.Join(pvcSubPath, ".sdo-runtime", "sessions", digest), nil
+	return subPath, nil
 }
 
 // RemoveIncidentSession deletes only the acknowledged incident's private
