@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 from google.protobuf import json_format
 
 from libs.agent_cli.structured import AGENT_PROVIDERS, StructuredTurnError, run_structured_turn, turn_usage
+from libs.agent_cli.usage_checkpoint import UsageCheckpoint
 from sdo.agents.prompt_templates import RenderedPrompt, named_prompt, render_prompt
 from sdo.agents.provider import MODEL_ENV, resolve_agent
 from sdo.agents.responder import recorded_actions
@@ -106,6 +107,17 @@ def _execute_incident(
     options = session_turn_options(selected_provider, Path(request.repository_worktree))
     options["environment"] = {**(options.get("environment") or {}), "SDO_INCIDENT_ID": request.incident_id}
     while True:
+        checkpoint_directory = os.environ.get("SDO_RESPONDER_USAGE_DIR", "")
+        checkpoint = (
+            UsageCheckpoint(
+                Path(checkpoint_directory),
+                request.incident_id,
+                os.environ.get("SDO_RESPONDER_TASK_ID", request.incident_id),
+                "responder",
+            )
+            if checkpoint_directory
+            else None
+        )
         try:
             completed = run_structured_turn(
                 selected_provider,  # type: ignore[arg-type]
@@ -118,6 +130,7 @@ def _execute_incident(
                 resume_session_id=resume_session_id,
                 executor=executor,
                 on_session_started=recovery.checkpoint if recovery is not None else None,
+                on_usage=checkpoint.publish if checkpoint is not None else None,
                 **options,
             )
         except SessionRecoveryError as exc:
