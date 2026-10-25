@@ -111,6 +111,12 @@ func TestCLIAndBrokerAgreeOnVerifiedCauseReplayCoverage(t *testing.T) {
 }
 
 func TestCLIAndBrokerAgreeOnUnobservableDetectorLocator(t *testing.T) {
+	for _, mode := range []string{"unknown", "needs-judgement", "source-evidence-gap"} {
+		t.Run(mode, func(t *testing.T) { checkUnobservableDetectorLocator(t, mode) })
+	}
+}
+
+func checkUnobservableDetectorLocator(t *testing.T, mode string) {
 	ctx := context.Background()
 	binary := filepath.Join(t.TempDir(), "sdo-operator")
 	if out, err := exec.Command("go", "build", "-p", "8", "-o", binary, "../cmd/sdo-operator").CombinedOutput(); err != nil {
@@ -176,6 +182,28 @@ func TestCLIAndBrokerAgreeOnUnobservableDetectorLocator(t *testing.T) {
  }, Detector{}.Spec())
 }`, 1)
 	detector = strings.Replace(detector, `[]string{"base"}`, `[]string{"base", "service-targetport-mismatch"}`, 1)
+	if mode != "unknown" {
+		detector = strings.Replace(detector, "targetport.Program{}, func", "locatedProgram{}, func", 1)
+		behavior := `return program.Verdict{Result:program.NeedsJudgement, Question:"Which listener is intended?"}, nil`
+		if mode == "source-evidence-gap" {
+			behavior = `_, err := view.DiffAgainstSource(sdk.ObjectRef{APIVersion:"apps/v1", Kind:"Deployment", Namespace:"demo", Name:"catalog"}); return program.Verdict{Result:program.NoMatch}, err`
+			recordings := `[`
+			for index, phase := range []string{"open", "fixed", "healthy"} {
+				if index > 0 {
+					recordings += ","
+				}
+				recordings += `{"phase":"` + phase + `","method":"DiffAgainstSource","arguments":[{"api_version":"apps/v1","kind":"Deployment","namespace":"demo","name":"catalog"}],"error":"rendered deployment evidence unavailable: trusted deployment image evidence missing for catalog"}`
+			}
+			put(t, proposal.Path, ".sdo/corpus/targetport-mismatch/recordings.json", recordings+"]", 0644)
+		}
+		detector += `
+type locatedProgram struct { targetport.Program }
+func (p locatedProgram) Diagnose(ctx context.Context, view program.ReadView, bindings program.Bindings) (program.Verdict, error) {
+ if bindings.Objects["service"].Name == "unlabelled-peer" { ` + behavior + ` }
+ return p.Program.Diagnose(ctx, view, bindings)
+}
+`
+	}
 	put(t, proposal.Path, ".sdo/diagnostics/detectors/incidents/cache/detector.go", detector, 0644)
 	replaceParityText(t, proposal.Path, ".sdo/diagnostics/detectors/incidents/cache/manifest.yaml", "  - base\n", "  - base\n  - service-targetport-mismatch\n")
 	decision := &contracts.ReflectionDecision{LearningDecision: "updated", PlaybookIds: []string{"service-targetport-mismatch"}}
@@ -212,4 +240,11 @@ func TestCLIAndBrokerAgreeOnUnobservableDetectorLocator(t *testing.T) {
 	if len(report.Diagnostics) != 1 || report.Diagnostics[0].Rule != validate.RuleDetectorTest || !strings.Contains(report.Diagnostics[0].Message, "detector.corpus-observation") {
 		t.Fatalf("locator failure was not actionable: %v", report)
 	}
+	if mode == "needs-judgement" && !strings.Contains(report.Diagnostics[0].Message, "Which listener is intended?") {
+		t.Fatalf("judgement context lost: %v", report)
+	}
+	if mode == "source-evidence-gap" && !strings.Contains(report.Diagnostics[0].Message, "trusted deployment image evidence missing") {
+		t.Fatalf("source provenance gap was hidden: %v", report)
+	}
+
 }
