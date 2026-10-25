@@ -181,3 +181,13 @@ func TestRestoreRetiresProgramProducedFindings(t *testing.T) {
 		t.Fatalf("retired program finding survived in pending batch: %+v", pending)
 	}
 }
+
+func TestCoverageRequiresDetectorLinkInsteadOfSyntheticProgramIdentity(t *testing.T) {
+	ref := sdk.ObjectRef{Kind: "Service", Namespace: "app", Name: "api"}
+	finding := sdk.Finding{DetectorID: "drift.routing", RuleID: "routing", Status: sdk.FindingActive, PrimaryResource: ref}
+	run := ProgramRun{ProgramID: "routing", FindingFingerprint: FindingFingerprint(finding), Bindings: program.Bindings{Objects: program.ObjectBindings{"service": ref}}, Verdict: program.Verdict{Result: program.Match}}
+	got := buildPlaybookCoverage([]sdk.Finding{finding}, []ProgramRun{run}, nil, nil)
+	if len(got.Matches) != 1 || len(got.Matches[0].ExplainedFindingFingerprints) != 0 || len(got.UnexplainedFindingFingerprints) != 1 {
+		t.Fatalf("retired program identity implied a detector link: %+v", got)
+	}
+}

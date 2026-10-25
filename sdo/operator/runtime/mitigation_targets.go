@@ -9,10 +9,6 @@ import (
 // programExplainsFinding requires an authored finding-to-playbook link and the
 // exact diagnosed finding. Resource overlap alone is only a candidate binding.
 func programExplainsFinding(finding sdk.Finding, id string) bool {
-	// Native drift findings are produced by this concrete program run.
-	if finding.DetectorID == "drift."+id && finding.RuleID == id {
-		return true
-	}
 	for _, reference := range finding.Playbooks {
 		linked, err := layout.PlaybookID(reference)
 		if err == nil && linked == id {
