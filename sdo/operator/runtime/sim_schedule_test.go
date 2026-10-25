@@ -13,12 +13,13 @@ import (
 )
 
 // Schedule bytes choose restart frequency followed by ten (tick, Service)
-// pairs. The seed independently controls API faults and responder behavior.
+// pairs, optionally followed by maintenance pause start and duration bytes.
+// The seed independently controls API faults and responder behavior.
 // Each tick advances ten virtual seconds to bound instrumented fuzz costs.
 // Missing bytes are zero; excess bytes are ignored to keep every run bounded.
 func runSimSchedule(t *testing.T, seed uint64, raw []byte) {
 	t.Helper()
-	raw = raw[:min(len(raw), 21)]
+	raw = raw[:min(len(raw), 23)]
 	w := newSimWorld(t, seed)
 	at := func(i int) byte {
 		if i < len(raw) {
@@ -29,6 +30,14 @@ func runSimSchedule(t *testing.T, seed uint64, raw []byte) {
 	restartP := float64(at(0)) / 255 * 0.02
 	last := 0
 	for tick := 0; tick < simStreamMaxTicks/10; tick++ {
+		if at(21) != 0 {
+			if tick == 2+int(at(21)) {
+				w.applyScheduleEvent(simScheduleEvent{kind: simPause})
+			}
+			if tick == 3+int(at(21))+int(at(22))%60 {
+				w.applyScheduleEvent(simScheduleEvent{kind: simResume})
+			}
+		}
 		w.clock.now = w.clock.now.Add(10 * time.Second)
 		for i := 0; i < 10; i++ {
 			injection := 2 + i*20 + int(at(1+2*i))%10
@@ -42,7 +51,8 @@ func runSimSchedule(t *testing.T, seed uint64, raw []byte) {
 		}
 		w.step()
 		w.drain()
-		if tick > 210 && (w.idle() || w.endedUnverified()) {
+		maintenanceDone := at(21) == 0 || tick >= 3+int(at(21))+int(at(22))%60
+		if tick > 210 && maintenanceDone && (w.idle() || w.endedUnverified()) {
 			break
 		}
 	}
@@ -87,9 +97,21 @@ func TestSimSchedule(t *testing.T) {
 		return
 	}
 	sweepSimSeedsN(t, 4, func(t *testing.T, seed uint64) {
+
+		rng := newSimRNG(seed)
 		for _, restart := range []byte{0, 255} {
-			t.Run(fmt.Sprintf("restart=%d", restart), func(t *testing.T) { runSimSchedule(t, seed, []byte{restart}) })
+			schedule := []byte{restart}
+			if restart != 0 {
+				schedule = make([]byte, 23)
+				schedule[0] = restart
+				schedule[21], schedule[22] = byte(1+rng.IntN(200)), byte(rng.IntN(60))
+			}
+			t.Run(fmt.Sprintf("restart=%d", restart), func(t *testing.T) { runSimSchedule(t, seed, schedule) })
 		}
+		t.Run("paused-early-closure", func(t *testing.T) { runSimPausedClosurePublishesOutcomeAndReflection(t, seed) })
+		t.Run("foreign-pod", func(t *testing.T) { runSimForeignPodDuringUnrelatedIncident(t, seed) })
+		t.Run("restart-failing-traffic", func(t *testing.T) { runSimRestartOntoFailingTraffic(t, seed) })
+		t.Run("slow-setup-refresh", func(t *testing.T) { runSimSlowSetupRefresh(t, seed) })
 	})
 }
 
@@ -98,6 +120,7 @@ func FuzzSimIncidentSchedule(f *testing.F) {
 	f.Add(uint64(81), []byte{0})
 	f.Add(uint64(81), []byte{255, 1, 0, 4, 1, 0, 2})
 	f.Add(uint64(21), []byte{128, 99, 3, 33, 2})
+	f.Add(uint64(37), []byte{255, 1, 0, 4, 1, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4, 40})
 	f.Fuzz(func(t *testing.T, seed uint64, schedule []byte) { runSimSchedule(t, seed, schedule) })
 }
 

@@ -1119,7 +1119,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			}
 			controller.handleDispatchCompletion(completion, time.Now().UTC())
 			persistControllerState()
-			if err := executePendingEffects(runCtx, controller); err != nil {
+			if err := executeStartupEffects(runCtx, controller, applied.Paused); err != nil {
 				if runCtx.Err() != nil {
 					return nil
 				}
@@ -1131,7 +1131,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			}
 			controller.handleWorkspaceCompletion(completion)
 			persistControllerState()
-			if err := executePendingEffects(runCtx, controller); err != nil {
+			if err := executeStartupEffects(runCtx, controller, applied.Paused); err != nil {
 				if runCtx.Err() != nil {
 					return nil
 				}
@@ -1146,7 +1146,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			if err := ClosureFailureError(controller); err != nil && *exitAfterClosure {
 				return err
 			}
-			if err := executePendingEffects(runCtx, controller); err != nil {
+			if err := executeStartupEffects(runCtx, controller, applied.Paused); err != nil {
 				if runCtx.Err() != nil {
 					return nil
 				}
@@ -1158,7 +1158,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			}
 			controller.handleAcknowledgmentCompletion(completion)
 			persistControllerState()
-			if err := executePendingEffects(runCtx, controller); err != nil {
+			if err := executeStartupEffects(runCtx, controller, applied.Paused); err != nil {
 				if runCtx.Err() != nil {
 					return nil
 				}
@@ -1605,10 +1605,10 @@ func executeStartupEffects(ctx context.Context, controller *Controller, paused b
 	return executePendingEffects(ctx, controller)
 }
 
-// executePausedEffects runs only operational-memory effects: a paused
-// controller neither prepares nor dispatches a responder.
+// executePausedEffects finishes already-started closure work, including report
+// grace, without observing the application or starting responder work.
 func executePausedEffects(ctx context.Context, controller *Controller) (err error) {
-	if err := controller.prepareHealthEffects(ctx, time.Now().UTC()); err != nil {
+	if err := controller.stepPaused(ctx, controller.clock()); err != nil {
 		return err
 	}
 	defer func() {

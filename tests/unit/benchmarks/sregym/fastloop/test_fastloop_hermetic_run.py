@@ -706,6 +706,48 @@ def test_scripted_fastloop_reuses_reflected_target_port_program(
         return state
 
     monkeypatch.setattr(controller, "runtime_state", admission_state)
+    from benchmarks.sregym.adapter import lane_resources
+
+    def resource_snapshot(kubeconfig, *, app_namespaces):
+        assert kubeconfig == control_api.kubeconfig
+        now = datetime.now(timezone.utc)
+        pods = deepcopy(app.snapshot()["pods"])
+        measurements = []
+        for pod in pods:
+            pod["metadata"]["uid"] = pod["metadata"]["name"]
+            pod["status"] = {
+                "containerStatuses": [
+                    {"name": row["name"], "state": {"running": {}}} for row in pod["spec"]["containers"]
+                ]
+            }
+            measurements.append(
+                {
+                    "podRef": {key: pod["metadata"][key] for key in ("namespace", "name", "uid")},
+                    "containers": [
+                        {"name": row["name"], "memory": {"time": now.isoformat(), "workingSetBytes": 1024**2}}
+                        for row in pod["spec"]["containers"]
+                    ],
+                }
+            )
+        return lane_resources.evaluate_lane_resources(
+            namespaces={"items": [{"metadata": {"name": NAMESPACE}}]},
+            pods={"items": pods},
+            summaries=[{"pods": measurements}],
+            app_namespaces=app_namespaces,
+            host_available_bytes=32 * 1024**3,
+            now=now,
+        )
+
+    monkeypatch.setattr(admission, "assert_lane_resources", resource_snapshot)
+    monkeypatch.setattr(
+        admission,
+        "assert_host_disk_headroom",
+        lambda: lane_resources.evaluate_host_disk(
+            mount="/simulated-kind-storage",
+            total_bytes=1000 * 1024**3,
+            free_bytes=200 * 1024**3,
+        ),
+    )
     monkeypatch.setattr(admission, "kubectl", admission_api)
     monkeypatch.setattr(clean_start, "kubectl", admission_api)
     monkeypatch.setattr(rbac, "kubectl", admission_api)
