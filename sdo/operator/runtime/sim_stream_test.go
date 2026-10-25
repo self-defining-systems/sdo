@@ -362,6 +362,29 @@ func (w *simWorld) await(ready func() bool) {
 	w.t.Fatal("timed out waiting for a simulated effect to finish")
 }
 
+// awaitSimResult waits for the actual completion event and restores it for
+// Controller.Step. These simulation pumps own the sole consumer and dispatch
+// one effect at a time; a second queued completion is an invariant violation.
+// A readiness polling loop added a real scheduler tick to every virtual effect.
+func awaitSimResult[T any](t *testing.T, channel chan T) {
+	t.Helper()
+	if cap(channel) != 1 {
+		t.Fatal("simulation completion channel must hold one pending effect")
+	}
+	timer := time.NewTimer(30 * time.Second)
+	defer timer.Stop()
+	select {
+	case result := <-channel:
+		select {
+		case channel <- result:
+		default:
+			t.Fatal("multiple completions for one simulated effect")
+		}
+	case <-timer.C:
+		t.Fatal("timed out waiting for a simulated effect to finish")
+	}
+}
+
 // drain executes every pending controller effect, stepping after each, until
 // the controller has nothing left to do at the current virtual time.
 func (w *simWorld) drain() {
@@ -373,25 +396,25 @@ func (w *simWorld) drain() {
 			if err := w.controller.ExecuteWorkspaceEffect(ctx, effect); err != nil {
 				return
 			}
-			w.await(func() bool { return len(w.controller.workspaceResults) > 0 })
+			awaitSimResult(w.t, w.controller.workspaceResults)
 			progressed = true
 		} else if effect, ok := w.controller.PendingDispatchEffect(); ok {
 			if err := w.controller.ExecuteDispatchEffect(ctx, effect); err != nil {
 				return
 			}
-			w.await(func() bool { return len(w.controller.results) > 0 })
+			awaitSimResult(w.t, w.controller.results)
 			progressed = true
 		} else if effect, ok := w.controller.PendingClosureEffect(); ok {
 			if err := w.controller.ExecuteClosureEffect(ctx, effect); err != nil {
 				return
 			}
-			w.await(func() bool { return len(w.controller.closureResults) > 0 })
+			awaitSimResult(w.t, w.controller.closureResults)
 			progressed = true
 		} else if effect, ok := w.controller.PendingClosureAcknowledgmentEffect(); ok {
 			if err := w.controller.ExecuteClosureAcknowledgmentEffect(ctx, effect); err != nil {
 				return
 			}
-			w.await(func() bool { return len(w.controller.acknowledgmentResults) > 0 })
+			awaitSimResult(w.t, w.controller.acknowledgmentResults)
 			progressed = true
 		}
 		if !progressed {

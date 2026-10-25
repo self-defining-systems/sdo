@@ -577,7 +577,8 @@ which the Go static gate and built-image validation independently verify, avoidi
 a second full controller build just to obtain its schema string.
 
 The runtime suite uses virtual time for the cycle-read timeout and link-observer
-qualification/failure windows. The tracing refresh test compiles one immutable
+qualification/failure windows. Simulation pumps wait on completion events instead
+of adding a real polling tick to each virtual effect. The tracing refresh test compiles one immutable
 probe per accepted policy and reuses it before/after source changes. The trust
 arrival-order property uses the broker matrix's real persisted outcomes (all
 accept/reject classes, sixteen permutations per row); its former sixteen extra
