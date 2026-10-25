@@ -50,6 +50,15 @@ def _parser() -> argparse.ArgumentParser:
     )
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("status", help="read current findings and session state")
+    detect = commands.add_parser("detect", help="run all or selected detectors on fresh state (read-only)")
+    detect.add_argument(
+        "--detector",
+        action="extend",
+        nargs="+",
+        default=[],
+        metavar="ID",
+        help="detector IDs to run; repeat for more IDs (default: all)",
+    )
     for name in ("diagnose", "plan", "menu"):
         command = commands.add_parser(
             name,
@@ -118,7 +127,10 @@ def _parser() -> argparse.ArgumentParser:
 
 def _request(args: argparse.Namespace) -> dict[str, object]:
     request: dict[str, object] = {"command": args.command}
-    if args.command in ("diagnose", "plan", "menu"):
+    if args.command == "detect":
+        if args.detector:
+            request["detector_ids"] = args.detector
+    elif args.command in ("diagnose", "plan", "menu"):
         if args.program_id:
             request["program_id"] = args.program_id
         if args.bind:
