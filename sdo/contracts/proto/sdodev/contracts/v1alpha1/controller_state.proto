@@ -176,6 +176,10 @@ message ControllerState {
   repeated FailedIncidentClosure failed_closures = 36;
   // Separate incident-scoped CAS document; retained across source adoption.
   SelectionLedger selection_ledger = 37;
+  // Exact accepted-source drift assessments survive restart without reopening
+  // an unchanged object. Changing source or observed configuration invalidates them.
+  repeated DriftEvent accepted_source_drift = 38;
+  string accepted_source_drift_revision = 39;
   reserved 32, 33, 34;
   reserved "drift_investigation", "drift_admission", "program_sweep_cursors";
 }

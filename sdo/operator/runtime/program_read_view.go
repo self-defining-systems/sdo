@@ -303,14 +303,14 @@ func comparableFields(object map[string]any) map[string]any {
 		}
 	}
 	result := map[string]any{}
-	for _, key := range []string{"spec", "data", "binaryData", "webhooks", "subsets"} {
+	for _, key := range []string{"spec", "data", "binaryData", "webhooks", "subsets", "rules", "roleRef", "subjects", "aggregationRule"} {
 		if value, ok := object[key]; ok {
 			result[key] = value
 		}
 	}
 	if metadata, ok := object["metadata"].(map[string]any); ok {
 		selected := map[string]any{}
-		for _, key := range []string{"labels", "annotations"} {
+		for _, key := range []string{"labels", "annotations", "deletionTimestamp", "finalizers"} {
 			if value, ok := metadata[key]; ok {
 				selected[key] = value
 			}

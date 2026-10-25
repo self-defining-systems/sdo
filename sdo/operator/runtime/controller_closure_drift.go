@@ -14,21 +14,26 @@ import (
 // objects. Health clearance and responder claims cannot resolve a live/source
 // mismatch. Admission stays in the drift classifier, including for late drift.
 func (c *Controller) verifyClosureDrift(ctx context.Context, now time.Time, snapshot sdk.DetectionContext) (bool, []sdk.Finding) {
+	return c.verifyClosureDriftWithResult(ctx, now, snapshot, nil)
+}
+func (c *Controller) verifyClosureDriftWithResult(ctx context.Context, now time.Time, snapshot sdk.DetectionContext, result *IncidentResult) (bool, []sdk.Finding) {
 	c.mu.Lock()
 	findings := append([]sdk.Finding(nil), c.currentIncidentRequest.Findings...)
+	if result == nil {
+		result = c.currentIncidentResult
+	}
+	clear, unresolvedFindings := c.verifySourceInventoryLocked(result)
 	c.mu.Unlock()
-	clear := true
-	var unresolvedFindings []sdk.Finding
 	active := map[string][]sdk.Finding{}
 	errors := map[string]error{}
 	for _, finding := range findings {
-		if !strings.HasPrefix(finding.DetectorID, "drift.") {
+		if inventoryFinding(finding) || !strings.HasPrefix(finding.DetectorID, "drift.") {
 			continue
 		}
 		events := driftEventsForFindings(nil, []sdk.Finding{finding})
 		// Unowned program matches have no admitted source fields.
 		// Learned watch matches retain owned-field evidence when they have it.
-		if len(events) != 1 || len(events[0].Fields) == 0 || events[0].Source == "absent from accepted source" {
+		if len(events) != 1 || len(events[0].Fields) == 0 {
 			continue
 		}
 		if _, ok := active[finding.DetectorID]; !ok {
@@ -84,5 +89,8 @@ func (c *Controller) closureSourceRestored(ctx context.Context, snapshot sdk.Det
 		}
 	}
 	diff, err := c.drift.View(snapshot).DiffAgainstSource(finding.PrimaryResource)
-	return err == nil && (diff.SourceAbsent || driftFieldsRestored(diff, events) || (!diff.Changed && diff.Text == "")), err
+	if diff.SourceAbsent {
+		return err == nil && !diff.Changed, err
+	}
+	return err == nil && (driftFieldsRestored(diff, events) || (!diff.Changed && diff.Text == "")), err
 }

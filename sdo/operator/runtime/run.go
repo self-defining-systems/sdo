@@ -542,6 +542,12 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 					}
 					return controller.responderVerification(ctx, request.IncidentID)
 				}
+				loop.VerifyResult = func(ctx context.Context, result IncidentResult) ToolResponse {
+					if controller == nil {
+						return ToolResponse{Command: "verify", Error: "controller verification is unavailable"}
+					}
+					return controller.responderResultVerification(ctx, request.IncidentID, &result)
+				}
 				loop.CurrentEvidence = func() *IncidentRequest {
 					if controller == nil {
 						return nil
@@ -593,7 +599,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	if err != nil {
 		return err
 	}
-	controller.ConfigureDrift(DriftControllerConfig{Events: kubernetesCache, Source: planSource, Client: bootstrapProvider.Client, BatchWindow: *driftBatchWindow,
+	controller.ConfigureDrift(DriftControllerConfig{Inventory: true, Events: kubernetesCache, Source: planSource, Client: bootstrapProvider.Client, BatchWindow: *driftBatchWindow,
 		View: func(snapshot sdk.DetectionContext) program.ReadView {
 			if cycle, ok := snapshot.(*CycleReadView); ok {
 				return cycle
@@ -659,6 +665,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	controller.OnEvaluation = func(findings []sdk.Finding) {
 		if err := encoder.Encode(map[string]any{
 			"controller_iteration": iteration,
+			"evaluated_detectors":  controller.evaluationDetectorIDs(),
 			"returncode":           0,
 			"findings":             findings,
 		}); err != nil {
@@ -1260,8 +1267,11 @@ func evaluateOnce(
 	flags.SetOutput(stderr)
 	namespace := flags.String("namespace", "", "Kubernetes namespace to observe")
 	application := flags.String("application", "", "application identity")
+	var deployedManifestPaths repeatedFlag
+	flags.Var(&deployedManifestPaths, "deployed-manifest-path", "accepted deployed manifest path; repeat for each selection")
 	appRoot := flags.String("app-root", "", "accepted application repository root")
 	proberURL := flags.String("prober-url", "", "live traffic prober URL for bounded health evaluation")
+	sourceDriftReport := flags.String("source-drift-report", "", "read-only accepted-source inventory check; write full JSON to this path and print a summary")
 	acceptSeed := flags.Bool("accept-seed", false, "reject a seed unless the entire detector bundle evaluates without findings")
 	metricsURL := flags.String("metrics-url", "", "Prometheus-compatible API URL for metric and alert health evaluation")
 	metricsTokenFile := flags.String("metrics-token-file", "", "file holding a bearer token for --metrics-url")
@@ -1310,7 +1320,27 @@ func evaluateOnce(
 			return err
 		}
 		readCommit = revision
-		readSource = GitPlanSource{Repository: *appRoot}
+		readSource = GitPlanSource{Repository: *appRoot, ManifestPaths: deployedManifestPaths}
+	}
+	if *sourceDriftReport != "" {
+		if *appRoot == "" || readClient == nil {
+			return errors.New("source-drift-report requires app-root and a Kubernetes read client")
+		}
+		source := GitPlanSource{Repository: *appRoot, ManifestPaths: deployedManifestPaths}
+		objects, err := source.AcceptedManifests(ctx, readCommit, *namespace)
+		if err != nil {
+			return err
+		}
+		cache, err := NewKubernetesCache(KubernetesCacheConfig{Namespace: *namespace, Client: readClient, TrackDrift: true}, nil)
+		if err != nil {
+			return err
+		}
+		cache.Start(ctx)
+		defer cache.Stop()
+		if err := cache.WaitForSync(ctx); err != nil {
+			return err
+		}
+		return WriteSourceInventoryReport(stdout, *sourceDriftReport, NewSourceInventory(*namespace, readCommit, objects), cache.SourceDriftObjects())
 	}
 	trafficProvider := TrafficSnapshotProvider{Base: provider}
 	if *appRoot != "" {

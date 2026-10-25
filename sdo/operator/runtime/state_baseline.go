@@ -17,6 +17,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/informers"
@@ -337,6 +338,15 @@ func (t *StateTracker) snapshotLocked(now time.Time) *stateSnapshot {
 		for _, object := range informer.GetStore().List() {
 			name, state, include := kind.state(object)
 			if include {
+				if metadata, err := meta.Accessor(object); err == nil {
+					if deleted := metadata.GetDeletionTimestamp(); deleted != nil {
+						state["metadata.deletionTimestamp"] = deleted.UTC().Format(time.RFC3339Nano)
+					}
+					if finalizers := metadata.GetFinalizers(); len(finalizers) > 0 {
+						sort.Strings(finalizers)
+						state["metadata.finalizers"] = renderJSON(finalizers)
+					}
+				}
 				snapshot.objects[kind.kind+"/"+name] = state
 			}
 		}
