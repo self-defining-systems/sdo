@@ -6,19 +6,28 @@ from sdo.agents.responder.mutation_output import command_report_schema, format_m
 
 
 def finding(name: str) -> dict:
-    return {"detector_id": "service-reachability", "fingerprint": name,
-            "primary_resource": {"kind": "Service", "namespace": "app", "name": name},
-            "summary": name + " is unreachable", "evidence": "dial history and hints " * 120}
+    return {
+        "detector_id": "service-reachability",
+        "fingerprint": name,
+        "primary_resource": {"kind": "Service", "namespace": "app", "name": name},
+        "summary": name + " is unreachable",
+        "evidence": "dial history and hints " * 120,
+    }
 
 
 def test_seven_finding_response_preserves_full_report_and_bounded_verdict(tmp_path, monkeypatch):
     monkeypatch.setenv("SDO_SESSION_SCRATCH", str(tmp_path))
     before = [finding(str(i)) for i in range(7)]
     after = before[1:]
-    action = {"command": "mitigate", "summary": "completed", "targeted_healthy": True,
-              "healthy": False, "findings": after,
-              "program_runs": [{"program_id": "route", "evidence": "full diagnosis" * 100}],
-              "report": {"rounds": [{"request_id": "request", "observed_values": "complete" * 100}]}}
+    action = {
+        "command": "mitigate",
+        "summary": "completed",
+        "targeted_healthy": True,
+        "healthy": False,
+        "findings": after,
+        "program_runs": [{"program_id": "route", "evidence": "full diagnosis" * 100}],
+        "report": {"rounds": [{"request_id": "request", "observed_values": "complete" * 100}]},
+    }
     text, path = format_mutation_response(before, after, [action])
     assert text.startswith("This action: target finding cleared.")
     assert "Incident: NOT verified, still broken: 6" in text
@@ -50,8 +59,10 @@ def test_partial_progress_and_possible_regression(tmp_path, monkeypatch):
 
 def test_schema_and_each_action_survive_combined_response(tmp_path, monkeypatch):
     monkeypatch.setenv("SDO_SESSION_SCRATCH", str(tmp_path))
-    actions = [{"command": "mitigate", "summary": "first", "receipt": {"action_id": "one"}},
-               {"command": "mitigate", "summary": "second", "receipt": {"action_id": "two"}}]
+    actions = [
+        {"command": "mitigate", "summary": "first", "receipt": {"action_id": "one"}},
+        {"command": "mitigate", "summary": "second", "receipt": {"action_id": "two"}},
+    ]
     text, path = format_mutation_response([finding("A")], [], actions)
     assert "Actions: 2 completed" in text
     assert json.loads(path.read_text())["actions"] == actions
@@ -63,4 +74,6 @@ def test_changed_evidence_is_visible_as_possible_regression(tmp_path, monkeypatc
     after = {**before, "evidence": "different observed configuration"}
     _, path = format_mutation_response([before], [after], [{"command": "apply"}])
     report = json.loads(path.read_text())
-    assert report["new"] == [after] and not report["unchanged"] and not report["fixed"]
+    assert report["new"] == [after]
+    assert not report["unchanged"]
+    assert not report["fixed"]

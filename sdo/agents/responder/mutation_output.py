@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import json
 import os
-from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping, Sequence
 
 from sdo.agents.responder import tool_output
 
@@ -19,17 +21,24 @@ def command_report_schema() -> dict[str, str]:
 
 
 def finding_progress(
-    before: Sequence[Mapping[str, Any]], after: Sequence[Mapping[str, Any]],
+    before: Sequence[Mapping[str, Any]],
+    after: Sequence[Mapping[str, Any]],
 ) -> dict[str, list[dict[str, Any]]]:
     """Compare controller snapshots; changed evidence is visible as a possible regression."""
     prior = {str(item.get("fingerprint", "")): item for item in before}
     current = {str(item.get("fingerprint", "")): item for item in after}
     return {
         "fixed": [dict(item) for key, item in prior.items() if key not in current],
-        "new": [dict(item) for key, item in current.items()
-                if key not in prior or item.get("evidence") != prior[key].get("evidence")],
-        "unchanged": [dict(item) for key, item in current.items()
-                      if key in prior and item.get("evidence") == prior[key].get("evidence")],
+        "new": [
+            dict(item)
+            for key, item in current.items()
+            if key not in prior or item.get("evidence") != prior[key].get("evidence")
+        ],
+        "unchanged": [
+            dict(item)
+            for key, item in current.items()
+            if key in prior and item.get("evidence") == prior[key].get("evidence")
+        ],
     }
 
 
@@ -55,10 +64,10 @@ def format_mutation_response(
     # Standalone invocations retain the existing private tool-output directory.
     command = str(actions[-1].get("command", "mitigate")) if actions else "mitigate"
     directory = os.environ.get("SDO_SESSION_SCRATCH")
-    path = tool_output.write_json(report, command=command,
-                                  root=Path(directory) / "sdo-reports" if directory else None)
-    warning = next((action.get("incident_verified") for action in reversed(actions)
-                    if action.get("incident_verified")), None)
+    path = tool_output.write_json(report, command=command, root=Path(directory) / "sdo-reports" if directory else None)
+    warning = next(
+        (action.get("incident_verified") for action in reversed(actions) if action.get("incident_verified")), None
+    )
     if len(actions) == 1:
         action = actions[0]
         if action.get("error") or action.get("success") is False or action.get("exit_code"):
@@ -73,11 +82,16 @@ def format_mutation_response(
     else:
         failed = sum(bool(action.get("error") or action.get("success") is False) for action in actions)
         lines = [f"Actions: {len(actions) - failed} completed; {failed} failed (see individual receipts)."]
-    lines += [f"Incident: {'verified' if warning else 'NOT verified'}, still broken: {len(after)}",
-              f"fixed by/since this action: {len(progress['fixed'])}"]
+    lines += [
+        f"Incident: {'verified' if warning else 'NOT verified'}, still broken: {len(after)}",
+        f"fixed by/since this action: {len(progress['fixed'])}",
+    ]
     schema = command_report_schema()
-    tail = [f"incident_verified: {warning['message'] if warning else 'false'}",
-            f"Full JSON: {path}", "Schema (top-level keys):"]
+    tail = [
+        f"incident_verified: {warning['message'] if warning else 'false'}",
+        f"Full JSON: {path}",
+        "Schema (top-level keys):",
+    ]
     tail.extend(f"{key}[]: {description.removeprefix('array of ')}" for key, description in schema.items())
     rows = []
     for key, label in (("new", "new since this action"), ("unchanged", "still broken, unchanged")):
