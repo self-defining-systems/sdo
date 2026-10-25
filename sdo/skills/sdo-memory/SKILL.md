@@ -21,7 +21,7 @@ Read memory freely; edit only the artifact classes and proposal checkout your ta
 - Use detectors to find problems proactively and playbooks to diagnose and mitigate; their relationship need not be one to one.
 - Refine a playbook whose mitigation failed or was undone, or set `status: retired` and a nonempty `retired_reason` in its front matter; retired playbooks remain in history but are not compiled or offered.
 - Keep memory small and current: maintain its index, merge duplicates and respect the worker snapshot budget.
-- Preserve credential references, never resolved values: typed database repairs accept env or namespace-local ConfigMap keys and optional literal assignment names; only the executor resolves them.
+- Preserve [credential references](../sdo-incident-response/references/database-credentials.md), never resolved values: typed database repairs accept env or namespace-local ConfigMap keys and optional literal assignment names; only the executor resolves them.
 - Exclude benchmark/grader details, secrets and physical paths from memory text; physical layout is only for checkout edits and tooling, while prose and results use logical IDs.
 
 The [generated runtime contract](references/runtime.md) defines decision fields, envelope shape, tool names and capture phases. The final answer uses the session envelope; the CLI decision file contains only its reflection result. The typed validation tool handles the distinction.

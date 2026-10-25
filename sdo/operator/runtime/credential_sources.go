@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sdo.dev/operator/sdk/program"
@@ -27,7 +28,7 @@ func (e *CredentialReferenceError) Error() string {
 
 // Literal single-line assignments only; no shell is evaluated.
 var credentialAssignment = regexp.MustCompile(`^(?:export[ \t]+)?([A-Za-z_][A-Za-z0-9_]*)[ \t]*=[ \t]*(.*)$`)
-var bareCredential = regexp.MustCompile(`^[A-Za-z0-9_./:@%+,=!~^-]+$`)
+var bareCredential = regexp.MustCompile(`^[A-Za-z0-9_./:@%+,=!~^#-]+$`)
 
 func assignmentCredential(content, name string) (string, bool) {
 	matches := 0
@@ -54,7 +55,7 @@ func assignmentCredential(content, name string) (string, bool) {
 				continue
 			}
 			value = raw[1:end]
-			if strings.ContainsAny(value, "\\\r\x00") || (quote == '"' && strings.ContainsAny(value, "$`")) {
+			if strings.ContainsAny(value, "\r\x00") || (quote == '"' && strings.ContainsAny(value, "\\$`")) {
 				valid = false
 			}
 		} else {
@@ -107,7 +108,7 @@ func (c TypedPlanClient) resolveCredential(ctx context.Context, namespace string
 			return fail("expected exactly one nonempty literal assignment; expansion and duplicates refused")
 		}
 	}
-	if value == "" || strings.ContainsRune(value, 0) {
+	if value == "" || strings.ContainsRune(value, 0) || !utf8.ValidString(value) {
 		return fail("key is empty or invalid")
 	}
 	return value, nil

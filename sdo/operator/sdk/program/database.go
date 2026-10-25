@@ -58,8 +58,8 @@ type DatabaseUser struct {
 }
 
 // EnsureDatabaseUser creates a missing user or restores its exact direct roles.
-// Password is read inside the container only when creating the user. Existing
-// passwords and all unrelated users are preserved. This effect is irreversible.
+// Password is an executor-resolved reference, used only to create a missing user.
+// Existing passwords and unrelated users are preserved. This effect is irreversible.
 type EnsureDatabaseUser struct {
 	Target   DatabaseTarget
 	User     string

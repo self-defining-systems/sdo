@@ -7,6 +7,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
+	"sdo.dev/operator/sdk/sdktest"
 	"strings"
 	"testing"
 )
@@ -90,5 +91,23 @@ func TestEnsureDatabaseUserProductionContract(t *testing.T) {
 				t.Fatal("irreversible user creation was undoable")
 			}
 		})
+	}
+}
+
+func TestDatabasePlanCapturesOpenCatalogWithoutCredentials(t *testing.T) {
+	a := databaseAction()
+	ref := a.Target.Pod
+	object := planObject(ref, map[string]any{"containers": []any{map[string]any{"name": "mongo"}}})
+	object.SetUID("one")
+	object.SetResourceVersion("1")
+	client := &databaseFake{planFakeClient: &planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: object}}}
+	calls := []sdktest.PrimitiveCall{}
+	executor := PlanExecutor{Client: client, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{true}, RecordPrimitive: func(call sdktest.PrimitiveCall) error { calls = append(calls, call); return nil }}
+	result, err := executor.Apply(context.Background(), IncidentRequest{Namespace: "app", RepairPolicy: "recorded-actions"}, program.Plan{Actions: []program.Action{a}}, false)
+	if err != nil || !result.VerificationPassed {
+		t.Fatalf("repair failed: %v", err)
+	}
+	if len(calls) != 1 || calls[0].Method != "DatabaseUsers" || calls[0].Phase != "" || string(calls[0].Result) != "[]" {
+		t.Fatalf("pre-repair catalog was not captured for reflection: %+v", calls)
 	}
 }

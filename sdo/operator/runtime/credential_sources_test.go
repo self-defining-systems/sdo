@@ -4,8 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -93,5 +97,59 @@ func TestConfigMapCredentialContractRoundTrip(t *testing.T) {
 	after, _ := json.Marshal(restored)
 	if string(before) != string(after) {
 		t.Fatalf("reference round trip changed: %s != %s", before, after)
+	}
+}
+
+func FuzzCredentialAssignmentLiteral(f *testing.F) {
+	for _, seed := range []string{"sentinel", "spaces and $literal", "unicode-密碼", "\\literal", "punctuation#@!"} {
+		f.Add(seed)
+	}
+	f.Fuzz(func(t *testing.T, value string) {
+		if value == "" || !utf8.ValidString(value) || strings.ContainsAny(value, "'\r\n\x00") {
+			return
+		}
+		content := "ROOT_PASSWORD='" + value + "'\n"
+		got, ok := assignmentCredential(content, "ROOT_PASSWORD")
+		if !ok || got != value {
+			t.Fatal("quoted literal did not round trip")
+		}
+		if _, ok := assignmentCredential(content+content, "ROOT_PASSWORD"); ok {
+			t.Fatal("duplicate credential assignment accepted")
+		}
+	})
+}
+
+func TestLegacyMongoStdinBootstrapPreservesPrivateInput(t *testing.T) {
+	const sentinel = "DBC_PRIVATE_STDIN_SENTINEL"
+	// The real POSIX bootstrap must pass bytes as data, including shell syntax.
+	// The child stands in for mongo only at the process boundary; no database
+	// behavior or authentication is simulated by this test.
+	script := "print(\"" + sentinel + " $(printf injected) `printf injected` \\\"quoted\\\"\");"
+	directory := t.TempDir()
+	child := `#!/bin/sh
+[ "$_SDO_DATABASE_SCRIPT" = "$DBC_EXPECTED_SCRIPT" ] || exit 11
+for arg do
+ case "$arg" in *DBC_PRIVATE_STDIN_SENTINEL*|*injected*) exit 12;; esac
+done
+[ "$7" = "--eval" ] || exit 13
+[ "$8" = 'eval(_getEnv("_SDO_DATABASE_SCRIPT"))' ] || exit 14
+`
+	if err := os.WriteFile(filepath.Join(directory, "mongo"), []byte(child), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", directory+":"+os.Getenv("PATH"))
+	t.Setenv("DBC_EXPECTED_SCRIPT", script)
+	args := mongoCommandArgs("mongo")
+	command := exec.Command(args[0], args[1:]...)
+	command.Stdin = strings.NewReader(script + "\n")
+	if err := command.Run(); err != nil {
+		t.Fatalf("legacy shell did not preserve private stdin/environment boundary: %v", err)
+	}
+}
+
+func TestLegacyBootstrapDoesNotShadowCredentialEnv(t *testing.T) {
+	args := mongoCommandArgs("mongo", program.CredentialRef{Env: "_SDO_DATABASE_SCRIPT"}, program.CredentialRef{Env: "_SDO_DATABASE_SCRIPT_"})
+	if !strings.Contains(args[2], "read -r _SDO_DATABASE_SCRIPT__ ") || args[len(args)-1] != `eval(_getEnv("_SDO_DATABASE_SCRIPT__"))` {
+		t.Fatal("private stdin bootstrap shadows a declared credential env")
 	}
 }

@@ -1,12 +1,14 @@
 package runtime
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -25,6 +27,12 @@ import (
 // prove detector -> finding binding -> diagnosis -> catalog repair -> NoMatch.
 // No model, MongoDB server, credentials or cluster is involved.
 func TestReflectionMongoAuthUpgradesReadmeThroughCLIAndBroker(t *testing.T) {
+	testReflectionMongoAuthUpgrade(t, "mongo_auth_upgrade")
+}
+func TestReflectionHotelMongoAuthUpgradesReadmeThroughCLIAndBroker(t *testing.T) {
+	testReflectionMongoAuthUpgrade(t, "hotel_mongo_auth_upgrade")
+}
+func testReflectionMongoAuthUpgrade(t *testing.T, fixtureName string) {
 	ctx := context.Background()
 	const incidentID = "mongo-auth-upgrade"
 	operatorRoot, err := filepath.Abs("..")
@@ -39,7 +47,28 @@ func TestReflectionMongoAuthUpgradesReadmeThroughCLIAndBroker(t *testing.T) {
 	}
 	target := nativeRepository(t)
 	copyFastloopTree(t, "../memory/validate/testdata/good/.sdo", filepath.Join(target, ".sdo"))
-	fixture := "../../../tests/fixtures/sdo/mongo_auth_upgrade/.sdo"
+	fixture := filepath.Join("../../../tests/fixtures/sdo", fixtureName, ".sdo")
+	if fixtureName == "hotel_mongo_auth_upgrade" {
+		raw, err := os.ReadFile(filepath.Join(fixture, "corpus/mongo-auth/open.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var snapshot struct {
+			Pods []struct {
+				Spec struct{ Containers []struct{ Env []any } }
+			}
+		}
+		if err := json.Unmarshal(raw, &snapshot); err != nil {
+			t.Fatal(err)
+		}
+		for _, pod := range snapshot.Pods {
+			for _, container := range pod.Spec.Containers {
+				if len(container.Env) != 0 {
+					t.Fatal("hotel credential fixture must have no container env")
+				}
+			}
+		}
+	}
 	module, err := os.ReadFile("../../../tests/fixtures/sdo/playbook_program_app/.sdo/diagnostics/go.mod")
 	if err != nil {
 		t.Fatal(err)
@@ -98,11 +127,15 @@ func TestReflectionMongoAuthUpgradesReadmeThroughCLIAndBroker(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ref := &contracts.ObjectRef{ApiVersion: "v1", Kind: "Pod", Namespace: "demo", Name: "mongo-app"}
+	podName := "mongo-app"
+	if fixtureName == "hotel_mongo_auth_upgrade" {
+		podName = "mongodb-geo"
+	}
+	ref := &contracts.ObjectRef{ApiVersion: "v1", Kind: "Pod", Namespace: "demo", Name: podName}
 	opened := time.Now().Add(-time.Minute)
 	mutation := opened.Add(20 * time.Second)
 	verified := mutation.Add(10 * time.Second)
-	const fingerprint = "mongo-authentication/mongo-authentication/demo/Pod/mongo-app"
+	fingerprint := "mongo-authentication/mongo-authentication/demo/Pod/" + podName
 	outcome := &contracts.OutcomeRecord{
 		SchemaVersion: 1, IncidentId: incidentID, Classification: "success",
 		Findings:            []*contracts.Finding{{DetectorId: "mongo-authentication", RuleId: "mongo-authentication", Fingerprint: fingerprint, Status: "active", Severity: "warn", PrimaryResource: ref, Summary: "MongoDB application account absent", Evidence: "Synthetic open catalog lacks app user", PlaybookIds: []string{"mongo-auth-bootstrap"}}},
@@ -180,8 +213,18 @@ func TestReflectionMongoAuthUpgradesReadmeThroughCLIAndBroker(t *testing.T) {
 		if !proto.Equal(&contracts.MemoryCheckReport{Diagnostics: report.Diagnostics}, &contracts.MemoryCheckReport{Diagnostics: validate.ProtoDiagnostics(failure.Diagnostics)}) {
 			t.Fatalf("catalog replay diagnostics differ: CLI %v broker %v", report.Diagnostics, failure.Diagnostics)
 		}
-		if len(report.Diagnostics) != 1 || report.Diagnostics[0].Rule != validate.RuleProgramRepeatReachable {
-			t.Fatalf("unobserved open catalog did not break the repeat chain: %v", report.Diagnostics)
+		expectedRules := []string{validate.RuleProgramRepeatReachable}
+		if fixtureName == "hotel_mongo_auth_upgrade" {
+			expectedRules = append(expectedRules, "detector.test")
+		}
+		gotRules := make([]string, 0, len(report.Diagnostics))
+		for _, diagnostic := range report.Diagnostics {
+			gotRules = append(gotRules, diagnostic.Rule)
+		}
+		slices.Sort(expectedRules)
+		slices.Sort(gotRules)
+		if !slices.Equal(expectedRules, gotRules) {
+			t.Fatalf("unobserved open catalog did not fail program/detector evidence checks: %v", report.Diagnostics)
 		}
 		if err := os.WriteFile(recordingsPath, recorded, 0644); err != nil {
 			return nil, err
@@ -201,6 +244,40 @@ func TestReflectionMongoAuthUpgradesReadmeThroughCLIAndBroker(t *testing.T) {
 		for _, relative := range []string{book + "/diagnose.go", book + "/mitigate.go", ".sdo/diagnostics/detectors/incidents/mongo-authentication/detector.go"} {
 			if content := nativeGit(t, target, "show", receipt.Commit+":"+relative); strings.TrimSpace(content) == "" {
 				t.Fatalf("accepted executable absent: %s", relative)
+			}
+		}
+		if fixtureName == "hotel_mongo_auth_upgrade" {
+			// Publication's repeat-reachability check is followed by the full
+			// runtime loop: linked detector must also clear after real actions.
+			replayCommand := exec.Command("go", "run", "-p", "8", "./cmd/sdo-replay", "-sdo", filepath.Join(target, ".sdo"), "-operator", operatorRoot, "-fixtures", filepath.Join(target, ".sdo/corpus"), "-matrix=false")
+			replayCommand.Dir = operatorRoot
+			output, err := replayCommand.Output()
+			if err != nil {
+				var failed *exec.ExitError
+				if errors.As(err, &failed) {
+					t.Fatalf("hotel closed-loop replay failed: %v: %s", err, failed.Stderr)
+				}
+				t.Fatal(err)
+			}
+			var row struct {
+				Status    string
+				Post      struct{ Result string }
+				Effects   []string
+				Detectors map[string][]struct {
+					Active int
+					Error  string
+				}
+			}
+			if err := json.Unmarshal(bytes.TrimSpace(output), &row); err != nil {
+				t.Fatal(err)
+			}
+			if row.Status != "replayed" || row.Post.Result != "NoMatch" || len(row.Detectors["post"]) != 1 || row.Detectors["post"][0].Active != 0 || row.Detectors["post"][0].Error != "" {
+				t.Fatalf("hotel replay did not clear diagnosis and detector: %s", output)
+			}
+			for _, effect := range []string{"real:program.EnsureDatabaseUser:action:0", "real:program.RestartRollout:action:1"} {
+				if !slices.Contains(row.Effects, effect) {
+					t.Fatalf("hotel replay omitted %s", effect)
+				}
 			}
 		}
 		packed, err := anypb.New(decision)

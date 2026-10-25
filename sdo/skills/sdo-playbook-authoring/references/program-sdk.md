@@ -217,9 +217,9 @@ type EnsureDatabaseUser struct {
 	Reason   string
 }
     EnsureDatabaseUser creates a missing user or restores its exact direct
-    roles. Password is read inside the container only when creating the user.
-    Existing passwords and all unrelated users are preserved. This effect is
-    irreversible.
+    roles. Password is an executor-resolved reference, used only to create
+    a missing user. Existing passwords and unrelated users are preserved.
+    This effect is irreversible.
 
 func (a EnsureDatabaseUser) Validate() error
 
