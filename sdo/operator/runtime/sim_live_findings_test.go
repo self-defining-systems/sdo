@@ -307,6 +307,11 @@ func runSimPausedClosurePublishesOutcomeAndReflection(t *testing.T, seed uint64)
 			offset = time.Duration(1+w.rng.IntN(28)) * time.Second
 		}
 		w.clock.now = closure.VerifiedAt.Add(offset)
+		if seed%2 == 1 {
+			if err := w.controller.EvaluateAll(ctx, w.clock.Now()); err != nil {
+				t.Fatal(err)
+			}
+		}
 		observations := w.cache.snapshots
 		w.applyScheduleEvent(simScheduleEvent{kind: simPause})
 		if restart {
@@ -314,8 +319,26 @@ func runSimPausedClosurePublishesOutcomeAndReflection(t *testing.T, seed uint64)
 			w.await(func() bool { return len(active.results) > 0 })
 			w.restart()
 		}
+		if seed%2 == 1 {
+			// An ACTIVE save may fail immediately before maintenance starts.
+			// An unchanged paused step must restore known durability too.
+			failInherited := true
+			w.client.PrependReactor("update", "configmaps", func(ktesting.Action) (bool, kruntime.Object, error) {
+				if !failInherited {
+					return false, nil, nil
+				}
+				failInherited = false
+				return true, nil, errors.New("simulated pre-pause state write failure")
+			})
+			if err := w.controller.PersistState(ctx); err == nil {
+				t.Fatal("inherited state failure was not injected")
+			}
+		}
 		if err := executePausedEffects(ctx, w.controller); err != nil {
 			t.Fatal(err)
+		}
+		if w.controller.durable == nil {
+			t.Fatal("unchanged paused step stranded an inherited state-save failure")
 		}
 		if _, ok := w.controller.PendingClosureEffect(); ok {
 			t.Fatal("paused closure bypassed report grace")

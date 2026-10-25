@@ -316,7 +316,8 @@ func (c *Controller) stepPaused(ctx context.Context, now time.Time) error {
 		return err
 	}
 	c.mu.Lock()
-	retry := !c.pausedEffectRetryAt.IsZero()
+	// A failed ACTIVE save can enter maintenance with no confirmed state.
+	retry := !c.pausedEffectRetryAt.IsZero() || (c.stateStore != nil && c.durable == nil)
 	c.mu.Unlock()
 	// prepareHealthEffects already persists retirement archives. Avoid a second
 	// write that would consume that outbox before any paused work changes.
