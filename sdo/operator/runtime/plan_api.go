@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"sdo.dev/operator/sdk/program"
+	"strings"
 )
 
 // ErrKubernetesAPITransportUnavailable means no request crossed the API boundary.
@@ -21,6 +22,19 @@ var ErrKubernetesAPITransportUnavailable = errors.New("Kubernetes API transport 
 func (c TypedPlanClient) KubernetesRequest(ctx context.Context, r program.KubernetesRequest) (json.RawMessage, error) {
 	if err := r.Validate(); err != nil {
 		return nil, err
+	}
+	if err := c.checkPlanNamespace(r.Ref.Namespace); err != nil {
+		return nil, err
+	}
+	parts := strings.Split(strings.TrimPrefix(r.Path, "/"), "/")
+	index := 2
+	if parts[0] == "apis" {
+		index = 3
+	}
+	if len(parts) > index+1 && parts[index] == "namespaces" {
+		if err := c.checkPlanNamespace(parts[index+1]); err != nil {
+			return nil, err
+		}
 	}
 	var client *http.Client
 	var base *url.URL

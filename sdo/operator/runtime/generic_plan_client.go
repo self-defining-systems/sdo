@@ -18,6 +18,9 @@ type GenericPlanClient struct {
 }
 
 func (c GenericPlanClient) Get(ctx context.Context, ref sdk.ObjectRef) (*unstructured.Unstructured, error) {
+	if err := c.checkPlanNamespace(ref.Namespace); err != nil {
+		return nil, err
+	}
 	if c.Objects == nil {
 		return c.TypedPlanClient.Get(ctx, ref)
 	}
@@ -28,6 +31,9 @@ func (c GenericPlanClient) Get(ctx context.Context, ref sdk.ObjectRef) (*unstruc
 	return resource.Get(ctx, ref.Name, metav1.GetOptions{})
 }
 func (c GenericPlanClient) Patch(ctx context.Context, ref sdk.ObjectRef, kind types.PatchType, patch []byte) error {
+	if err := c.checkPlanNamespace(ref.Namespace); err != nil {
+		return err
+	}
 	if c.Objects == nil {
 		return c.TypedPlanClient.Patch(ctx, ref, kind, patch)
 	}
@@ -39,6 +45,9 @@ func (c GenericPlanClient) Patch(ctx context.Context, ref sdk.ObjectRef, kind ty
 	return err
 }
 func (c GenericPlanClient) Create(ctx context.Context, ref sdk.ObjectRef, object *unstructured.Unstructured) (*unstructured.Unstructured, error) {
+	if err := c.checkPlanNamespace(ref.Namespace); err != nil {
+		return nil, err
+	}
 	if c.Objects == nil {
 		return c.TypedPlanClient.Create(ctx, ref, object)
 	}
@@ -52,6 +61,9 @@ func (c GenericPlanClient) Create(ctx context.Context, ref sdk.ObjectRef, object
 	return resource.Create(ctx, object, metav1.CreateOptions{})
 }
 func (c GenericPlanClient) Delete(ctx context.Context, ref sdk.ObjectRef, uid types.UID, version string) error {
+	if err := c.checkPlanNamespace(ref.Namespace); err != nil {
+		return err
+	}
 	if c.Objects == nil {
 		return c.TypedPlanClient.Delete(ctx, ref, uid, version)
 	}

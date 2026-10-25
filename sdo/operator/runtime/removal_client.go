@@ -14,11 +14,11 @@ import (
 
 // This client is captured only by the checked callback, never by PlanExecutor.
 func newUnexplainedRemovalClient(config *rest.Config, capture *core.GenericCapture, namespace string) (PlanLifecycleClient, error) {
-	if config == nil || capture == nil {
+	if config == nil || capture == nil || namespace == capture.Namespace {
 		return nil, nil
 	}
 	removalConfig := rest.CopyConfig(config)
-	removalConfig.Impersonate = rest.ImpersonationConfig{UserName: "system:serviceaccount:" + namespace + ":sdo-unexplained-removal"}
+	removalConfig.Impersonate = rest.ImpersonationConfig{UserName: "sdo-unexplained-removal:" + namespace}
 	client, err := dynamic.NewForConfig(removalConfig)
 	if err != nil {
 		return nil, fmt.Errorf("create removal-only client: %w", err)

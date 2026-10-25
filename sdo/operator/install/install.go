@@ -319,6 +319,9 @@ func (i Installer) install(ctx context.Context, cfg Config, prepared bool) (Resu
 }
 
 func (i Installer) ensureBase(ctx context.Context, cfg Config, p Plan) error {
+	if err := i.reconcileUnexplainedRemovalGrants(ctx, cfg, p); err != nil {
+		return err
+	}
 	if p.Namespace != nil {
 		namespaces := i.Client.CoreV1().Namespaces()
 		prior, err := namespaces.Get(ctx, p.Namespace.Name, metav1.GetOptions{})

@@ -28,7 +28,7 @@ func TestGenericRawDeleteCannotReachRemovalIdentity(t *testing.T) {
 		if r.Method != "DELETE" || r.URL.Path != "/apis/rbac.authorization.k8s.io/v1/clusterroles/unrelated" {
 			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
 		}
-		if r.Header.Get("Impersonate-User") != "system:serviceaccount:control:sdo-unexplained-removal" {
+		if r.Header.Get("Impersonate-User") != "sdo-unexplained-removal:control" {
 			w.WriteHeader(http.StatusForbidden)
 			fmt.Fprint(w, `{"kind":"Status","status":"Failure","reason":"Forbidden","code":403}`)
 			return

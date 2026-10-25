@@ -235,6 +235,9 @@ func httpCommand(h program.HTTPRequest) program.Command {
 	return program.Command{Pod: h.Pod, Container: h.Container, Args: args, Stdin: h.Body}
 }
 func (c TypedPlanClient) runCommand(ctx context.Context, command program.Command) (int32, error) {
+	if err := c.checkPlanNamespace(command.Pod.Namespace); err != nil {
+		return 0, err
+	}
 	if err := command.Validate(); err != nil {
 		return 0, err
 	}
