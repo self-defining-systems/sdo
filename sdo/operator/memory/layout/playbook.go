@@ -3,11 +3,14 @@ package layout
 import (
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
 	"strings"
+
+	"gopkg.in/yaml.v3"
 )
 
 // HealthObjectivePlaybook is the health judge's playbook ID. Its fault class
@@ -81,4 +84,71 @@ func writeMemoryFile(root, rel string, content []byte, mode fs.FileMode) error {
 		return err
 	}
 	return os.Chmod(target, mode)
+}
+
+// PlaybookRetired validates optional lifecycle metadata. An omitted status is
+// active. A retired reason is preserved in history, never offered as advice.
+func PlaybookRetired(doc Document) (bool, error) {
+	value, present := doc.Meta["status"]
+	status := "active"
+	if present {
+		var ok bool
+		status, ok = value.(string)
+		if !ok || (status != "active" && status != "retired") {
+			return false, errors.New("playbook status must be active or retired")
+		}
+	}
+	reason, hasReason := doc.Meta["retired_reason"]
+	if status == "retired" {
+		text, ok := reason.(string)
+		if !ok || strings.TrimSpace(text) == "" {
+			return false, errors.New("retired playbook requires a nonempty string retired_reason")
+		}
+		return true, nil
+	}
+	if hasReason {
+		return false, errors.New("retired_reason requires status: retired")
+	}
+	return false, nil
+}
+
+// ReadPlaybookRetired reads the lifecycle marker before program discovery or
+// staging; malformed metadata fails closed rather than reactivating a program.
+func ReadPlaybookRetired(directory string) (bool, error) {
+	filename := filepath.Join(directory, PlaybookFileName)
+	info, err := os.Lstat(filename)
+	if err != nil {
+		return false, err
+	}
+	if !info.Mode().IsRegular() {
+		return false, fmt.Errorf("playbook README must be a regular file")
+	}
+	file, err := os.Open(filename)
+	if err != nil {
+		return false, err
+	}
+	defer file.Close()
+	data, err := io.ReadAll(io.LimitReader(file, MaxArtifactBytes))
+	if err != nil {
+		return false, err
+	}
+	return ParsePlaybookRetirement(data)
+}
+
+// ParsePlaybookRetirement reads only lifecycle metadata. Full schema/body/size
+// checks belong to document validation; old compiler fixtures can be prose-only
+// or have program front matter without the document schema.
+func ParsePlaybookRetirement(data []byte) (bool, error) {
+	if !strings.HasPrefix(string(data), "---\n") {
+		return false, nil
+	}
+	parts := strings.SplitN(string(data), "---\n", 3)
+	if len(parts) != 3 {
+		return false, errors.New("playbook front matter is not closed within the metadata budget")
+	}
+	var meta map[string]any
+	if err := yaml.Unmarshal([]byte(parts[1]), &meta); err != nil {
+		return false, fmt.Errorf("playbook front matter: %w", err)
+	}
+	return PlaybookRetired(Document{Meta: meta})
 }
