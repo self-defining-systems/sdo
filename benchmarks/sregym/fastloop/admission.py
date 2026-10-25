@@ -11,6 +11,8 @@ from typing import TYPE_CHECKING, Any
 import yaml
 
 from benchmarks.sregym.adapter import (
+    assert_host_disk_headroom,
+    assert_lane_resources,
     assert_stable_workloads,
     controller_proof,
     kubectl,
@@ -148,16 +150,15 @@ class LaneAdmission:
         )
 
     def check_resources(self, stage: str) -> None:
-        from benchmarks.sregym.adapter import assert_lane_resources
-
         self.directory.mkdir(parents=True, exist_ok=True)
         try:
             evidence = assert_lane_resources(self.environment.kubeconfig, app_namespaces={self.environment.namespace})
+            evidence["host_disk"] = assert_host_disk_headroom()
         except ValueError as exc:
             if self.progress:
                 self.progress("lane_resources", passed=False, reason=str(exc))
             raise
-        destination = self.directory / f"lane-resources-{stage}.json"
+        destination = self.directory / "lane-resources.json"
         destination.write_text(json.dumps(evidence, indent=2) + "\n")
         if self.progress:
             self.progress("lane_resources", evidence=str(destination))

@@ -366,13 +366,13 @@ def test_fresh_guard_accepts_actual_broker_health_bootstrap_and_rendered_commit(
 
 
 def test_lane_resources_reject_before_any_health_wait_or_restore(monkeypatch, tmp_path):
-    from benchmarks.sregym import adapter
+    from benchmarks.sregym.fastloop import admission
     from benchmarks.sregym.fastloop.admission import LaneAdmission
 
     def reject(*args, **kwargs):
         raise ValueError("eval: resource admission rejected foreign app")
 
-    monkeypatch.setattr(adapter, "assert_lane_resources", reject)
+    monkeypatch.setattr(admission, "assert_lane_resources", reject)
     env = SimpleNamespace(kubeconfig=tmp_path / "kubeconfig", namespace="application")
     gate = LaneAdmission(env, object(), object(), tmp_path / "proof")
     with pytest.raises(ValueError, match="foreign app"):

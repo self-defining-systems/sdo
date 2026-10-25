@@ -123,6 +123,7 @@ type Controller struct {
 	responderLoop           *ResponderLoop
 	responderCancel         context.CancelFunc
 	earlyStopRetryAt        time.Time
+	pausedEffectRetryAt     time.Time
 	closureStableSince      time.Time
 	closureMutationRevision string
 	earlyLastMutationAt     time.Time
@@ -292,6 +293,48 @@ func (c *Controller) Step(ctx context.Context, now time.Time, event *sdk.WatchKi
 		return c.StepEvents(ctx, now, nil)
 	}
 	return c.StepEvents(ctx, now, []sdk.WatchKind{*event})
+}
+
+// stepPaused advances only work belonging to an already accepted closure. A
+// maintenance pause suspends observation/admission, not the report deadline or
+// outcome and reflection bookkeeping. Persist before exposing broker effects.
+func (c *Controller) stepPaused(ctx context.Context, now time.Time) error {
+	c.observationMu.Lock()
+	defer c.observationMu.Unlock()
+	if err := c.prepareHealthEffects(ctx, now); err != nil {
+		return err
+	}
+	before, err := c.ExportState()
+	if err != nil {
+		return err
+	}
+	c.processDispatchCompletions(now)
+	c.finishEarlyReport(ctx, now)
+	c.processBrokerCompletions()
+	after, err := c.ExportState()
+	if err != nil {
+		return err
+	}
+	c.mu.Lock()
+	// A failed ACTIVE save can enter maintenance with no confirmed state.
+	retry := !c.pausedEffectRetryAt.IsZero() || (c.stateStore != nil && c.durable == nil)
+	c.mu.Unlock()
+	// prepareHealthEffects already persists retirement archives. Avoid a second
+	// write that would consume that outbox before any paused work changes.
+	if proto.Equal(before, after) && !retry {
+		return nil
+	}
+	if err := c.PersistState(ctx); err != nil {
+		c.mu.Lock()
+		c.pausedEffectRetryAt = now.Add(time.Second)
+		c.mu.Unlock()
+		c.reportBrokerError("persist paused controller state", err)
+		return nil
+	}
+	c.mu.Lock()
+	c.pausedEffectRetryAt = time.Time{}
+	c.mu.Unlock()
+	return nil
 }
 
 // StepEvents evaluates, against one snapshot, every detector that is due or

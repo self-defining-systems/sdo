@@ -22,6 +22,12 @@ type ClosureEffect struct {
 	Closure  IncidentClosure
 }
 
+// A committed outcome is historical evidence. Resuming its unfinished broker
+// bookkeeping cannot authorize a new repair or another outcome classification.
+type committedOutcomeClosureBroker interface {
+	committedOutcomeClosure(context.Context, IncidentClosure) (bool, error)
+}
+
 type ClosureAcknowledgmentEffect struct {
 	Identity string
 	Receipt  ClosureReceipt
@@ -101,21 +107,33 @@ func (c *Controller) ExecuteClosureEffect(ctx context.Context, effect ClosureEff
 			return err
 		}
 	}
-	// Refresh scope and observation state: restore, adoption and broker retries
-	// can retain success even when availability changes within one generation.
-	snapshot, err := c.provider.Snapshot(ctx)
-	if err != nil {
-		return fmt.Errorf("verify closure observation scope: %w", err)
+	committedOutcome := false
+	if proof, ok := configuredBroker.(committedOutcomeClosureBroker); ok {
+		var err error
+		committedOutcome, err = proof.committedOutcomeClosure(ctx, effect.Closure)
+		if err != nil {
+			return err
+		}
 	}
-	if recovered == nil && effect.Closure.ObservationGeneration != observationGeneration(snapshot) {
-		return fmt.Errorf("observation scope changed; pending closure %s is superseded and requires fresh verification", effect.Closure.Request.IncidentID)
+	// Only closures without an accepted outcome can make a new success decision.
+	// Scope supersession retires them durably; it is never a process-level error.
+	var snapshot sdk.DetectionContext
+	var verificationErr error
+	if recovered == nil && !committedOutcome {
+		var err error
+		snapshot, err = c.provider.Snapshot(ctx)
+		if err != nil {
+			return fmt.Errorf("verify closure observation scope: %w", err)
+		}
+		if effect.Closure.ObservationGeneration != observationGeneration(snapshot) {
+			verificationErr = fmt.Errorf("observation scope changed; pending closure %s is superseded and requires fresh verification", effect.Closure.Request.IncidentID)
+		}
 	}
 	actionCtx, cancel, err := c.actionContext(ctx)
 	if err != nil {
 		return err
 	}
-	var verificationErr error
-	if recovered == nil {
+	if recovered == nil && !committedOutcome && verificationErr == nil {
 		verificationErr = c.revalidateClosure(actionCtx, snapshot, effect.Closure)
 	}
 	if err := actionCtx.Err(); err != nil {

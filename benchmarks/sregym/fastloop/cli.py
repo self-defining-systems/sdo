@@ -31,7 +31,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from benchmarks.sregym.adapter import kubectl
+from benchmarks.sregym.adapter import assert_host_disk_headroom, assert_host_headroom, kubectl
 from benchmarks.sregym.fastloop.baseline_recovery import (
     KubectlApplicationCluster,
     application_namespaces,
@@ -195,6 +195,8 @@ def _free_bytes(path: Path) -> int | None:
 
 
 def check_host_capacity(args: argparse.Namespace) -> None:
+    assert_host_headroom()
+    assert_host_disk_headroom()
     # Match the live launch gate without depending on the legacy runner.
     minimum_neighbors = 65536
     limit = _neighbor_capacity()
@@ -226,9 +228,6 @@ def up_preflight(args: argparse.Namespace) -> None:
         if shutil.which(executable) is None:
             raise ValueError(f"fastloop preflight: missing {executable}")
     subprocess.run(["docker", "info", "--format", "{{.ServerVersion}}"], check=True, capture_output=True, text=True)
-    from benchmarks.sregym.adapter import assert_host_headroom
-
-    assert_host_headroom()
     check_host_capacity(args)
     if args.dev_mount is None:
         warnings.warn("--no-dev-mount: code changes require image rebuilds", stacklevel=2)
