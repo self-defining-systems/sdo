@@ -8,16 +8,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
-	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes/fake"
-	"sdo.dev/operator/builder"
-	"sdo.dev/operator/memory"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
@@ -116,109 +111,11 @@ func compileForeignInvariant(t *testing.T) compiledForeignInvariant {
 	return compiledForeignInvariant{binary: binary}
 }
 
-func compileReflectedForeignInvariant(t *testing.T, captureRoot, incidentID string) compiledForeignInvariant {
-	t.Helper()
-	capture, err := memory.IncidentCorpusDir(captureRoot, incidentID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	sourceDir, err := filepath.Abs("../../../benchmarks/sregym/fastloop/scripted_networkpolicy_program")
-	if err != nil {
-		t.Fatal(err)
-	}
-	app := t.TempDir()
-	copyFastloopTree(t, "../../../tests/fixtures/sdo/playbook_program_app/.sdo", filepath.Join(app, ".sdo"))
-	target := filepath.Join(app, ".sdo/playbooks/networkpolicy-service-isolation")
-	copyFastloopTree(t, sourceDir, target)
-	writeCapturedProgramCorpus(t, app, capture, incidentID, "networkpolicy-service-isolation", "policy", "NetworkPolicy", "app", "first-deny", "healthy-peer", "detect")
-	workspace, err := builder.BuildWorkspace(context.Background(), builder.Config{ApplicationRoot: app, DiagnosticsRoot: filepath.Join(app, ".sdo", "diagnostics"), OperatorRoot: ".."})
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = workspace.Close() })
-	if _, err := workspace.ValidateAndBuild(context.Background()); err != nil {
-		t.Fatalf("validate captured policy invariant and rename replay: %v", err)
-	}
-	runner := strings.Replace(foreignInvariantRunner, `candidate "foreign-invariant/candidate"`, `generated "`+workspace.ModulePath+`/generated"`, 1)
-	runner = strings.Replace(runner, `verdict,err:=(candidate.Program{}).Diagnose(context.Background(),view,input.Bindings)`, `registry,err:=generated.Programs(); if err!=nil {panic(err)}
-    candidate,ok:=registry.Diagnoser("networkpolicy-service-isolation"); if !ok {panic("missing learned program")}
-    verdict,err:=candidate.Diagnose(context.Background(),view,input.Bindings)`, 1)
-	dir := filepath.Join(workspace.Directory, "cmd", "foreign-invariant")
-	if err := os.MkdirAll(dir, 0700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte(runner), 0600); err != nil {
-		t.Fatal(err)
-	}
-	binary := filepath.Join(workspace.Directory, "foreign-invariant")
-	cmd := exec.Command("go", "build", "-p", "8", "-o", binary, "./cmd/foreign-invariant")
-	cmd.Dir = workspace.Directory
-	if output, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("build accepted invariant runner: %v: %s", err, output)
-	}
-	return compiledForeignInvariant{binary: binary}
-}
-
 func policyWorkloadSnapshot(policies ...networkingv1.NetworkPolicy) sdktest.Snapshot {
 	return sdktest.Snapshot{NamespaceName: "app", NetworkPolicyList: policies,
 		ServiceList: []corev1.Service{{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "app"}, Spec: corev1.ServiceSpec{Selector: map[string]string{"app": "api"}, Ports: []corev1.ServicePort{{Port: 80, TargetPort: driftService(8080).Spec.Ports[0].TargetPort}}}}},
 		PodList:     []corev1.Pod{{ObjectMeta: metav1.ObjectMeta{Name: "api-pod", Namespace: "app", Labels: map[string]string{"app": "api"}}, Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "api", Ports: []corev1.ContainerPort{{ContainerPort: 8080}}}}}}},
 	}
-}
-
-func TestHermeticForeignNetworkPolicyInvariantRepeat(t *testing.T) {
-	captureRoot, incidentID, source, commit := runForeignPolicyIncident(t)
-	learned := compileReflectedForeignInvariant(t, captureRoot, incidentID)
-	registry, err := program.NewRegistry([]program.Diagnoser{learned}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// The first verified incident supplies the diagnosis-only artifact. A distinct
-	// policy name and opposite direction exercise reuse rather than literal replay.
-	policy := foreignPolicy("second-deny")
-	policy.Spec.PolicyTypes = []networkingv1.PolicyType{networkingv1.PolicyTypeEgress}
-	snapshot := policyWorkloadSnapshot(*policy)
-	start := time.Unix(100, 0).UTC()
-	cache, err := NewKubernetesCache(KubernetesCacheConfig{Namespace: "app", Client: fake.NewSimpleClientset(), TrackDrift: true}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	watch := sdk.WatchKind{APIVersion: "networking.k8s.io/v1", Kind: "NetworkPolicy", Namespace: "app"}
-	cache.eventHandler(watch).OnAdd(policy, false)
-	config := testControllerConfig()
-	config.Namespace, config.SourceCommit, config.FiringThreshold, config.ClearThreshold = "app", commit, 1, 1
-	dispatcher := &recordingDispatcher{requests: make(chan IncidentRequest, 1)}
-	provider := &changingProvider{snapshot: snapshot}
-	controller, err := NewController(config, []sdk.Detector{quietHealthDetector()}, provider, dispatcher, start)
-	if err != nil {
-		t.Fatal(err)
-	}
-	controller.ConfigureDrift(DriftControllerConfig{ProgramPersistence: sdk.PersistencePolicy{Firing: 1, Clearing: 1}, Events: cache, Programs: registry, View: func(snapshot sdk.DetectionContext) program.ReadView {
-		return LiveReadView{DetectionContext: snapshot, Source: source, SourceCommit: commit}
-	}})
-	if err := controller.StepEvents(context.Background(), start.Add(time.Second), cache.TakeEvents()); err != nil {
-		t.Fatal(err)
-	}
-	if !controller.IncidentOpen() {
-		t.Fatalf("compiled program did not open repeat incident: %+v", exportState(t, controller))
-	}
-	executePendingEffect(t, controller)
-	request := awaitRequest(t, dispatcher.requests)
-	if len(request.Findings) != 1 || request.Findings[0].DetectorID != "drift.networkpolicy-service-isolation" || request.Findings[0].Severity != sdk.SeverityLatent {
-		t.Fatalf("repeat did not use invariant: %+v", request)
-	}
-	awaitDispatchCompletionQueued(t, controller)
-	snapshot.NetworkPolicyList = nil
-	provider.snapshot = snapshot
-	cache.eventHandler(watch).OnDelete(policy)
-	cache.eventHandler(watch).OnDelete(policy)
-	if err := controller.StepEvents(context.Background(), start.Add(2*time.Second), cache.TakeEvents()); err != nil {
-		t.Fatal(err)
-	}
-	if _, ok := controller.PendingIncidentClosure(); !ok {
-		t.Fatal("deleting the policy did not close the incident")
-	}
-
 }
 
 func TestForeignNetworkPolicyInvariantNearMisses(t *testing.T) {

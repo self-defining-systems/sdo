@@ -318,6 +318,29 @@ func TestReject(t *testing.T){t.Fatal("sentinel detector failure")}
 	}...)
 	cases = append(cases, []parityCase{
 		{"direct program", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) { parityProgram(t, r) }, nil, false},
+		{"program repeat has no detector", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
+			parityProgram(t, r)
+			if err := os.RemoveAll(filepath.Join(r, ".sdo/diagnostics/detectors/incidents/routing-relations")); err != nil {
+				t.Fatal(err)
+			}
+		}, []string{validate.RuleProgramRepeatReachable}, false},
+		{"program repeat missing seven deployment roles", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
+			parityProgram(t, r)
+			path := filepath.Join(r, ".sdo/playbooks/service-targetport-mismatch/diagnose.go")
+			data, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var roles strings.Builder
+			for _, name := range []string{"deployment", "search", "rate", "reservation", "profile", "recommendation", "user"} {
+				fmt.Fprintf(&roles, ", {Name:%q,Kind:\"Deployment\",Required:true}", name)
+			}
+			source := strings.Replace(string(data), `Required: true}}}`, `Required: true}`+roles.String()+`}}`, 1)
+			if source == string(data) {
+				t.Fatal("fixture spec was not changed")
+			}
+			put(t, r, ".sdo/playbooks/service-targetport-mismatch/diagnose.go", source, 0644)
+		}, []string{validate.RuleProgramRepeatReachable}, false},
 
 		{"program mitigation leaves target port faulty", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
 			parityProgram(t, r)
@@ -369,22 +392,15 @@ func (p Program) Mitigate(ctx context.Context,v program.ReadView,b program.Bindi
 		}, []string{validate.RuleDetectorCompile}, false},
 		{"program replay failure", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
 			parityProgram(t, r)
-			path := ".sdo/corpus/targetport-mismatch/labels.json"
+			path := ".sdo/diagnostics/detectors/incidents/routing-relations/detector.go"
 			data, err := os.ReadFile(filepath.Join(r, path))
 			if err != nil {
 				t.Fatal(err)
 			}
-			var label map[string]any
-			if err := json.Unmarshal(data, &label); err != nil {
-				t.Fatal(err)
-			}
-			label["bindings"] = label["peer_bindings"]
-			data, err = json.Marshal(label)
-			if err != nil {
-				t.Fatal(err)
-			}
-			put(t, r, path, string(data), 0644)
-		}, []string{validate.RuleProgramMitigationRepair}, false},
+			source := strings.Replace(string(data), `ref := sdk.ObjectRefFrom("Service", "v1", &service)`, `ref := sdk.ObjectRefFrom("Service", "v1", &service); ref.Name = "not-observed"`, 1)
+			put(t, r, path, source, 0644)
+		}, []string{validate.RuleProgramRepeatReachable}, false},
+
 		{"program corpus provenance", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
 			parityProgram(t, r)
 			path := ".sdo/corpus/targetport-mismatch/labels.json"

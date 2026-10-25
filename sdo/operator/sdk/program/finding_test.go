@@ -42,3 +42,12 @@ func TestBindFindingExplicitRolesWinAndRejectWrongKind(t *testing.T) {
 		t.Fatal("wrong explicit kind fell back to primary")
 	}
 }
+
+func TestBindFindingOptionalPeerDoesNotObscureRequiredRole(t *testing.T) {
+	spec := program.ProgramSpec{ID: "optional-peer", Params: []program.ParamSpec{{Name: "primary", Kind: "Service", Required: true}, {Name: "peer", Kind: "Service"}}}
+	ref := sdk.ObjectRef{Kind: "Service", Namespace: "app", Name: "api"}
+	got, err := program.BindFinding(spec, sdk.Finding{PrimaryResource: ref})
+	if err != nil || got.Objects["primary"] != ref || len(got.Objects) != 1 {
+		t.Fatalf("optional peer obscured the unique required binding: %+v %v", got, err)
+	}
+}

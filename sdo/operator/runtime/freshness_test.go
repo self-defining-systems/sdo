@@ -206,46 +206,7 @@ func TestClosureHandoffRechecksSourceFieldsAfterVerification(t *testing.T) {
 	}
 }
 
-func TestClosureHandoffRechecksLearnedDriftBindings(t *testing.T) {
-	for _, result := range []program.Result{program.Match, program.Unknown, program.NoMatch} {
-		t.Run(string(result), func(t *testing.T) {
-			now := time.Unix(100, 0)
-			broker := &recordingIncidentBroker{}
-			c := newClosureRetryController(t, ClosureRetryPolicy{}, broker, &now)
-			c.pendingClosure.FinalDetectorStates = []DetectorEvaluation{{DetectorID: "drift.learned", Status: DetectorEvaluationClear}}
-			c.pendingClosure.Request.Findings = []sdk.Finding{stateFinding("drift.learned")}
-			registry, err := program.NewRegistry([]program.Diagnoser{candidateProgram{spec: program.ProgramSpec{ID: "learned"}, run: func(context.Context, program.Bindings) program.Verdict { return program.Verdict{Result: result} }}}, nil)
-			if err != nil {
-				t.Fatal(err)
-			}
-			c.ConfigureDrift(DriftControllerConfig{Programs: registry, View: func(s sdk.DetectionContext) program.ReadView { return LiveReadView{DetectionContext: s} }})
-			effect, ok := c.PendingClosureEffect()
-			if !ok {
-				t.Fatal("missing pending closure")
-			}
-			if err := c.ExecuteClosureEffect(context.Background(), effect); err != nil {
-				t.Fatal(err)
-			}
-			if result == program.NoMatch {
-				awaitBrokerResult(t, c.closureResults)
-				if len(broker.calls()) != 1 {
-					t.Fatal("fresh NoMatch did not reach broker")
-				}
-				return
-			}
-			c.mu.Lock()
-			processing := c.closureState == contracts.ClosureState_CLOSURE_STATE_PROCESSING
-			c.mu.Unlock()
-			if processing {
-				awaitBrokerResult(t, c.closureResults)
-			}
-			state := exportState(t, c)
-			if len(broker.calls()) != 0 || state.ClosureState != contracts.ClosureState_CLOSURE_STATE_FAILED {
-				t.Fatalf("retained learned drift was not rechecked: calls=%v state=%v", broker.calls(), state.ClosureState)
-			}
-		})
-	}
-}
+
 
 func TestUnverifiedClosureRejectsStaleEffectIdentity(t *testing.T) {
 	now := time.Unix(100, 0)

@@ -16,27 +16,13 @@ Fastloop rows also expose `run_prelude_phase_seconds` on the first incident only
 
 Rows also count program diagnoses and verdicts, tool calls and commands, and response loops. On a permanently failed closure, the fastloop retains recoverable timing, usage, and program evidence from the controller's pending closure, records the closure error, and stops the stream. A missing diagnosis has `diagnosis_grade.skipped: true` with a reason; it is never sent to the diagnosis judge.
 
-## Learned-program watch confirmations
+## Finding-triggered playbook diagnosis
 
-Learned `drift.<program>` findings evaluate relevant non-initial watch changes
-without ownership or accepted-source admission gates. The attributed
-`drift.unexplained` path keeps its original field ownership rules. Watch matches
-retain `source="watch event program match"` (or the owned field event evidence)
-and hint bindings; fallback discoveries retain `source="periodic program sweep"`.
+Current controllers run incident detectors continuously. Playbook Diagnose runs only while handling detector findings, with one binding per finding/program; watch events and timers never enumerate playbook roles. Accepted-source drift remains `drift.unexplained`. Program diagnoses and matches belong to incident coverage, responder commands, and self-check evidence.
 
-Events, periodic sweeps and scheduled per-binding confirmations share the finding
-tracker. The default program policy requires 10 seconds of sustained Match,
-confirmed by a fresh diagnosis at or after the deadline, before activation;
-clearing is confirmed symmetrically. `--program-min-duration` configures this
-duration. Controller-state `finding_states` retain `first_seen_at`,
-`first_clear_at`, and `last_observed_at` so pending confirmations survive restart.
-Use the activation/detection timestamp for time to detection; a drift event's
-`observed_at` records the initial observation and can precede activation.
-Brief rollout mismatches should appear only as pending or `not_persisted`
-observations; rollouts that remain mismatched beyond the configured duration can
-still activate, regardless of which actor changed the object.
+Historical runs can contain `drift.<program>` findings and `DriftEvent.source` values `watch event program match` or `periodic program sweep`. Those were proactive playbook detections, with their own firing/clearing confirmation timers; do not interpret them as current detector-driven coverage. Current controller state has no program sweep cursor, and the former sweep/persistence flags have been removed.
 
-For a confirmed watch-time program match, `DriftEvent.source` is `watch event program match` for both owned and unowned objects. Owned-field diffs, manager/operation attribution and original watch timestamps remain attached as evidence. `differs from accepted manifest` remains the ordinary attributed path when no learned program matches. Older owned-object matches can carry that ordinary source string even though their detector and hint binding identify the learned program; do not confuse those historical labels with periodic sweep discovery.
+Reflection's shared memory check runs recorded faulty observations through incident detectors, production finding-to-program selection, Match diagnosis, and mitigation replay on that same binding. The recorded healthy baseline must stay quiet. `program.repeat-unreachable` names the failed link; case-file object bindings do not select the repeat-path diagnosis.
 
 ## Program trust evidence
 

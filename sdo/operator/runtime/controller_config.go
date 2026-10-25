@@ -95,8 +95,6 @@ func controllerConfigToArgs(config *contractsv1alpha1.ControllerConfig) []string
 		args = append(args, "--max-response-loops", strconv.Itoa(int(config.GetMaxResponseLoops())))
 	}
 	dur("--diagnosis-deadline", config.GetDiagnosisDeadline())
-	dur("--drift-sweep-interval", config.GetDriftSweepInterval())
-	dur("--program-min-duration", config.GetProgramMinDuration())
 	dur("--drift-batch-window", config.GetDriftBatchWindow())
 	str("--repair-policy", config.GetRepairPolicy())
 

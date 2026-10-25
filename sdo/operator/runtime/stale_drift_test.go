@@ -22,7 +22,7 @@ func TestPendingDriftJoinsIncidentBeforeVerifiedClosure(t *testing.T) {
 			name = "restore_before_verification"
 		}
 		t.Run(name, func(t *testing.T) {
-			c, client, cache, _, start := newDriftScenario(t, false)
+			c, client, cache, _, start := newDriftScenario(t)
 			c.drift.BatchWindow = 20 * time.Second
 			dispatcher := &recordingDispatcher{requests: make(chan IncidentRequest, 2)}
 			c.dispatcher = dispatcher
@@ -103,7 +103,7 @@ func TestPendingDriftPreventsVerificationWhenPeerIsUnresolved(t *testing.T) {
 			name = "source_unavailable"
 		}
 		t.Run(name, func(t *testing.T) {
-			c, client, cache, requests, start := newDriftScenario(t, false)
+			c, client, cache, requests, start := newDriftScenario(t)
 			c.drift.BatchWindow = 20 * time.Second
 			injectScenarioPort(t, client, cache, "api")
 			stepScenario(t, c, cache, start.Add(time.Second))

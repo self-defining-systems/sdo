@@ -168,8 +168,6 @@ message ControllerState {
   IncidentView incident_view = 29;
   repeated DriftEvent drift_events = 30;
   OwnershipAdoptionStatus ownership_adoption = 31;
-  // Next namespace assignment per learned program, preserved across restarts.
-  map<string, string> program_sweep_cursors = 34;
   // Incident-scoped attempt counts, limits and failure outcomes. Never stores
   // plans, applications, rollback progress or pending mutations.
   bytes responder_tool_state_json = 35 [(buf.validate.field).bytes.max_len = 700000];
@@ -178,8 +176,8 @@ message ControllerState {
   repeated FailedIncidentClosure failed_closures = 36;
   // Separate incident-scoped CAS document; retained across source adoption.
   SelectionLedger selection_ledger = 37;
-  reserved 32, 33;
-  reserved "drift_investigation", "drift_admission";
+  reserved 32, 33, 34;
+  reserved "drift_investigation", "drift_admission", "program_sweep_cursors";
 }
 
 // ReflectionDecision is the learning decision the broker recorded for an

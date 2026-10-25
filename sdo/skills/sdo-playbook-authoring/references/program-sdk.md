@@ -33,10 +33,6 @@ func CheckReads(view ReadView) (sdk.DetectionContext, func() error)
     CheckReads gives one evaluation its own failure tracking. A failed read
     cannot be ignored to turn Unknown into clearance.
 
-func DetectorFromProgram(p Diagnoser, locate Locator, spec sdk.DetectorSpec) sdk.Detector
-    DetectorFromProgram promotes a diagnoser to a detector using the same
-    runtime read surface.
-
 func ExpandedSetField(f SetField) bool
     ExpandedSetField reports whether an action uses the structured vocabulary.
 
@@ -208,8 +204,6 @@ type HTTPProbe struct {
 }
 
 type Kind string
-
-type Locator func(sdk.DetectionContext) []Bindings
 
 type Mitigator interface {
 	Spec() ProgramSpec

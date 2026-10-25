@@ -111,7 +111,8 @@ message ControllerConfig {
   int32 max_response_loops = 55 [(buf.validate.field).int32.gte = 0];
   google.protobuf.Duration diagnosis_deadline = 56;
   reserved 57;
-  google.protobuf.Duration drift_sweep_interval = 58;
+  reserved 58;
+  reserved "drift_sweep_interval";
   reserved 59, 60, 61;
   reserved "drift_investigation_window", "drift_investigation_dispatches_per_hour", "drift_investigation_tokens_per_hour";
   google.protobuf.Duration drift_batch_window = 66;
@@ -121,8 +122,8 @@ message ControllerConfig {
   repeated string deployed_manifest_paths = 63;
   reserved 64;
   reserved 65;
-  // Unset uses the runtime's 10-second firing and clearing confirmation.
-  google.protobuf.Duration program_min_duration = 69 [(buf.validate.field).duration.gte = {}];
+  reserved 69;
+  reserved "program_min_duration";
 
   // Prometheus-compatible API that metric and alert detectors query once per
   // evaluation cycle. Unset runs no metrics source: detectors that need one

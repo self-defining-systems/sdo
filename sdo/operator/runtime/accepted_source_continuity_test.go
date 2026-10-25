@@ -123,7 +123,7 @@ func testAcceptedSourceAfterMemoryCommit(t *testing.T, withTree bool) {
 			t.Fatal(err)
 		}
 		change := ObjectChange{Old: accepted, New: driftObject(service, sdk.WatchKind{APIVersion: "v1", Kind: "Service", Namespace: "app"}), Adoption: true}
-		event, _, err := (DriftClassifier{}).Classify(context.Background(), change, view, time.Unix(12, 0))
+		event, err := (DriftClassifier{}).Classify(context.Background(), change, view, time.Unix(12, 0))
 		if err != nil || event == nil || event.Classification != sdk.DriftUnexplained || !hasTargetPortChange(event) {
 			t.Fatalf("lost routing event: %+v %v", event, err)
 		}

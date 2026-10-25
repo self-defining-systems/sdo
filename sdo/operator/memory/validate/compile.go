@@ -71,7 +71,7 @@ func (s *run) compile(ctx context.Context) error {
 		rule = RuleDetectorTest
 	}
 	mitigationFailure := false
-	for _, rule := range []string{RuleProgramMitigationRepair, RuleProgramMitigationReplay} {
+	for _, rule := range []string{RuleProgramMitigationRepair, RuleProgramMitigationReplay, RuleProgramRepeatReachable} {
 		if strings.Contains(stage.Output, rule) {
 			messages := map[string]bool{}
 			for _, line := range strings.Split(stage.Output, "\n") {
@@ -91,7 +91,11 @@ func (s *run) compile(ctx context.Context) error {
 			if len(message) > maxCompileOutput {
 				message = message[:maxCompileOutput]
 			}
-			s.add(Compile, Diagnostic{Rule: rule, Path: layout.PlaybooksDir, Message: message, Hint: "mitigation must replay on the faulted fixture and clear its diagnosis"})
+			hint := "mitigation must replay on the faulted fixture and clear its diagnosis"
+			if rule == RuleProgramRepeatReachable {
+				hint = "repair the recorded detector → finding bindings → diagnosis → mitigation link; Diagnose reads additional objects through ReadView"
+			}
+			s.add(Compile, Diagnostic{Rule: rule, Path: layout.PlaybooksDir, Message: message, Hint: hint})
 			mitigationFailure = true
 		}
 	}

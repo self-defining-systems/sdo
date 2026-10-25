@@ -29,36 +29,38 @@ func BindFinding(spec ProgramSpec, finding sdk.Finding) (Bindings, error) {
 			used[key] = true
 		}
 	}
-	// A unique resource can fill exactly one unbound role of its kind. Two roles
-	// of the same kind require explicit names in ParameterBindings.
-	unbound := map[Kind]int{}
-	for _, p := range spec.Params {
-		if p.Kind != "" {
-			if _, ok := b.Objects[p.Name]; !ok {
-				unbound[p.Kind]++
-			}
-		}
-	}
+	// Resolve required roles before optional peers of the same kind. Within
+	// either group, two unbound roles of one kind require explicit named bindings.
 	refs := append([]sdk.ObjectRef{finding.PrimaryResource}, finding.RelatedResources...)
-	for _, p := range spec.Params {
-		if p.Kind == "" {
-			continue
-		}
-		if _, ok := b.Objects[p.Name]; ok {
-			continue
-		}
-		choices := map[objectIdentity]sdk.ObjectRef{}
-		if unbound[p.Kind] == 1 {
-			for _, ref := range refs {
-				if ref.Kind == string(p.Kind) && ref.Name != "" && !used[identity(ref)] {
-					choices[identity(ref)] = ref
+	for _, required := range []bool{true, false} {
+		unbound := map[Kind]int{}
+		for _, p := range spec.Params {
+			if p.Kind != "" && p.Required == required {
+				if _, ok := b.Objects[p.Name]; !ok {
+					unbound[p.Kind]++
 				}
 			}
 		}
-		if len(choices) == 1 {
-			for key, ref := range choices {
-				b.Objects[p.Name] = ref
-				used[key] = true
+		for _, p := range spec.Params {
+			if p.Kind == "" || p.Required != required {
+				continue
+			}
+			if _, ok := b.Objects[p.Name]; ok {
+				continue
+			}
+			choices := map[objectIdentity]sdk.ObjectRef{}
+			if unbound[p.Kind] == 1 {
+				for _, ref := range refs {
+					if ref.Kind == string(p.Kind) && ref.Name != "" && !used[identity(ref)] {
+						choices[identity(ref)] = ref
+					}
+				}
+			}
+			if len(choices) == 1 {
+				for key, ref := range choices {
+					b.Objects[p.Name] = ref
+					used[key] = true
+				}
 			}
 		}
 	}

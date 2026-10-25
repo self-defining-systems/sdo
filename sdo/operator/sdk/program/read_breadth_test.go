@@ -6,13 +6,12 @@ import (
 	"testing"
 	"time"
 
-	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/metrics"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
 )
 
-func TestPromotedDetectorReadsRecordedPrimitives(t *testing.T) {
+func TestDiagnoseReadsRecordedPrimitives(t *testing.T) {
 	args, _ := json.Marshal([]any{serviceRef, "web", time.Minute})
 	snapshot := sdktest.Snapshot{NamespaceName: "demo", Readings: []sdktest.PrimitiveCall{{Method: "Logs", Arguments: args, Result: json.RawMessage(`"broken"`)}}}
 	p := diagnostic{fn: func(_ context.Context, v program.ReadView, _ program.Bindings) (program.Verdict, error) {
@@ -25,17 +24,16 @@ func TestPromotedDetectorReadsRecordedPrimitives(t *testing.T) {
 		}
 		return program.Verdict{Result: program.NoMatch}, nil
 	}}
-	d := program.DetectorFromProgram(p, func(sdk.DetectionContext) []program.Bindings {
-		return []program.Bindings{{Objects: program.ObjectBindings{"service": serviceRef}}}
-	}, sdk.DetectorSpec{ID: "read-logs"})
-	findings, err := sdk.DetectObserved(context.Background(), d, snapshot)
-	if err != nil || len(findings) != 1 {
-		t.Fatalf("findings=%v err=%v", findings, err)
+	b := program.Bindings{Objects: program.ObjectBindings{"service": serviceRef}}
+	got := program.RunDiagnose(context.Background(), p, program.ReadFrom(snapshot), b, time.Second)
+	if got.Result != program.Match {
+		t.Fatalf("recorded primitive lost: %+v", got)
 	}
 	snapshot.Readings = nil
-	if _, err = sdk.DetectObserved(context.Background(), d, snapshot); err == nil {
-		t.Fatal("missing read cleared detector")
+	if got = program.RunDiagnose(context.Background(), p, program.ReadFrom(snapshot), b, time.Second); got.Result != program.Unknown {
+		t.Fatalf("missing read cleared diagnosis: %+v", got)
 	}
+
 }
 
 func TestDiagnoseReadsMetricsAndDoesNotIgnoreUnavailableMetrics(t *testing.T) {

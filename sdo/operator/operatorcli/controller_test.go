@@ -12,9 +12,10 @@ func TestInstallerNativeArgumentsProduceAtomicTypedBrokerLaunch(t *testing.T) {
 		t.Fatal(err)
 	}
 	launch := config.Controller
-	configured, _, configErr := ParseControllerLaunch(append(append([]string(nil), args...), "--program-min-duration", "3s"))
-	if configErr != nil || configured.Controller.GetProgramMinDuration().AsDuration().Seconds() != 3 {
-		t.Fatalf("program persistence did not reach the typed launch: %v", configErr)
+	for _, flag := range []string{"--program-min-duration", "--drift-sweep-interval"} {
+		if _, _, err := ParseControllerLaunch(append(append([]string(nil), args...), flag, "3s")); err == nil {
+			t.Fatalf("retired proactive flag accepted: %s", flag)
+		}
 	}
 	if !supervise || launch.GetBrokerMode() != "native" || launch.GetWorkerMountMode() != "proposal-only" || launch.GetValidatorImage() != "validator:test" || launch.GetResponderModel() != "model" || launch.GetAppRoot() != "/workspace/application" || launch.GetReflectionSession() != "resume" || launch.GetReflectionGuidance() != "generalize-spec" || !launch.GetForceReflection() || !launch.GetHealthyBaseline() || launch.GetMaxResponseLoops() != 3 || len(launch.GetDeployedManifestPaths()) != 1 || launch.GetDeployedManifestPaths()[0] != "kubernetes" {
 		t.Fatalf("native mode lost at typed child boundary: %+v", launch)

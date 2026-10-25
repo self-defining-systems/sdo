@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
-	"maps"
 	"path/filepath"
 	"reflect"
 	"sort"
@@ -20,51 +19,31 @@ import (
 	"sdo.dev/operator/sdk/program"
 )
 
-const DefaultDriftSweepInterval = 60 * time.Second
-const DefaultProgramMinDuration = 10 * time.Second
 const maxDriftFields = 12
 
-type DriftClassifier struct {
-	Programs program.ProgramRegistry
-	Deadline time.Duration
-}
+type DriftClassifier struct{}
 
 type DriftControllerConfig struct {
 	Events interface{ TakeObjectChanges() []ObjectChange }
 	Source interface {
 		AcceptedManifests(context.Context, string, string) ([]*unstructured.Unstructured, error)
 	}
-	Client             kubernetes.Interface
-	Programs           program.ProgramRegistry
-	View               func(sdk.DetectionContext) program.ReadView
-	Deadline           time.Duration
-	SweepInterval      time.Duration
-	ProgramPersistence sdk.PersistencePolicy
-	BatchWindow        time.Duration
+	Client      kubernetes.Interface
+	View        func(sdk.DetectionContext) program.ReadView
+	BatchWindow time.Duration
 }
 
 func (c *Controller) ConfigureDrift(config DriftControllerConfig) {
-	if config.ProgramPersistence == (sdk.PersistencePolicy{}) {
-		config.ProgramPersistence = sdk.PersistencePolicy{Firing: 1, Clearing: 1, MinDuration: DefaultProgramMinDuration}
-	}
-
-	if config.SweepInterval <= 0 {
-		config.SweepInterval = DefaultDriftSweepInterval
-	}
-	if config.Deadline <= 0 {
-		config.Deadline = DefaultDiagnosisDeadline
-	}
 	c.drift = &config
 	c.adoptionNeeded = config.Source != nil && config.Client != nil
-	c.nextDriftSweep = c.startedAt.Add(config.SweepInterval)
 }
 
-func (c *Controller) processDrift(ctx context.Context, now time.Time, snapshot sdk.DetectionContext, changes []ObjectChange, sweep bool) {
+func (c *Controller) processDrift(ctx context.Context, now time.Time, snapshot sdk.DetectionContext, changes []ObjectChange) {
 	if c.drift == nil || c.drift.View == nil {
 		return
 	}
 	view := c.drift.View(snapshot)
-	classifier := DriftClassifier{Programs: c.drift.Programs, Deadline: c.drift.Deadline}
+	classifier := DriftClassifier{}
 	for _, change := range changes {
 		object := change.New
 		if object == nil {
@@ -79,7 +58,7 @@ func (c *Controller) processDrift(ctx context.Context, now time.Time, snapshot s
 				continue
 			}
 		}
-		event, runs, err := classifier.Classify(ctx, change, view, now)
+		event, err := classifier.Classify(ctx, change, view, now)
 		if err != nil {
 			c.retryDrift(change)
 			if c.OnError != nil {
@@ -87,13 +66,6 @@ func (c *Controller) processDrift(ctx context.Context, now time.Time, snapshot s
 			}
 		}
 		if event == nil {
-			c.observeProgramRuns(now, nil, runs)
-			// A deleted foreign binding disappears from namespace enumeration.
-			// Recheck retained incident bindings rather than treating disappearance
-			// itself as proof that a learned finding cleared.
-			if change.New == nil && foreignDriftKind(change.Old) {
-				sweep = true
-			}
 			continue
 		}
 		c.mu.Lock()
@@ -105,76 +77,8 @@ func (c *Controller) processDrift(ctx context.Context, now time.Time, snapshot s
 		if event.Classification == sdk.DriftUnexplained {
 			c.queueUnexplainedFinding(now, *event)
 		}
-		c.observeProgramRuns(now, event, runs)
 	}
-	if sweep && c.drift.Programs != nil {
-		c.mu.Lock()
-		var findings []sdk.Finding
-		if c.currentIncidentRequest != nil {
-			findings = append(findings, c.currentIncidentRequest.Findings...)
-		}
-		cursors := maps.Clone(c.programSweepCursors)
-		if cursors == nil {
-			cursors = map[string]string{}
-		}
-		c.mu.Unlock()
-		runs := SelectProgramCandidatesWithOptions(ctx, c.drift.Programs, view, findings, CandidateOptions{Deadline: c.drift.Deadline, SweepCursors: cursors})
-		c.mu.Lock()
-		c.programSweepCursors = cursors
-		c.mu.Unlock()
-		c.observeProgramRuns(now, nil, runs)
-	}
-	c.confirmPrograms(ctx, now, view)
-}
 
-func (c *Controller) programFinding(event sdk.DriftEvent, run ProgramRun) sdk.Finding {
-	// Confirmations and sweeps preserve the original event evidence, including
-	// pending watch bindings that have not entered a batch yet.
-	if len(event.Fields) == 0 {
-		c.mu.Lock()
-		retained := append([]sdk.Finding(nil), c.batcher.Snapshot().Findings...)
-		for _, state := range c.tracker.Snapshot() {
-			if state.Active || state.FiringCount > 0 {
-				retained = append(retained, state.Finding)
-			}
-		}
-		if c.currentIncidentRequest != nil {
-			retained = append(retained, c.currentIncidentRequest.Findings...)
-		}
-		c.mu.Unlock()
-		for _, f := range retained {
-			if f.DetectorID == "drift."+run.ProgramID && bindingKey(program.Bindings{Objects: f.ParameterBindings}) == bindingKey(run.Bindings) {
-				events := driftEventsForFindings(nil, []sdk.Finding{f})
-				if len(events) == 1 {
-					event = events[0]
-					break
-				}
-			}
-		}
-	}
-	verdict := boundedDriftVerdict(run.Verdict)
-	encoded, _ := json.Marshal(map[string]any{"drift": event, "verdict": verdict})
-	evidence := bounded(string(encoded))
-	finding := sdk.Finding{DetectorID: "drift." + run.ProgramID, RuleID: run.ProgramID, Status: sdk.FindingActive,
-		Severity: sdk.SeverityLatent, Summary: "learned invariant matched after drift", Evidence: evidence,
-		PrimaryResource: event.Ref, ParameterBindings: run.Bindings.Objects,
-		Metadata: map[string]any{"drift_event": event, "program_verdict": verdict}}
-	finding.Fingerprint = fmt.Sprintf("%s/%x", FindingFingerprint(finding), sha256.Sum256([]byte(bindingKey(run.Bindings))))
-	return finding
-}
-
-func boundedDriftVerdict(verdict program.Verdict) program.Verdict {
-	verdict.Question = safeDriftText(verdict.Question)
-	if len(verdict.Evidence) > 6 {
-		verdict.Evidence = verdict.Evidence[:6]
-	}
-	for index := range verdict.Evidence {
-		item := &verdict.Evidence[index]
-		item.Fact = safeDriftText(item.Fact)
-		item.Observed = safeDriftText(item.Observed)
-		item.Expected = safeDriftText(item.Expected)
-	}
-	return verdict
 }
 
 func safeDriftText(value string) string {
@@ -188,64 +92,30 @@ func safeDriftText(value string) string {
 	return bounded(strings.Join(words, " "))
 }
 
-// Classify runs learned detectors on watch state independently of attribution.
-// Owned-field and reviewed foreign drift retain their existing admission rules.
-func (c DriftClassifier) Classify(ctx context.Context, change ObjectChange, view program.ReadView, now time.Time) (*sdk.DriftEvent, []ProgramRun, error) {
-	object := change.New
-	if object == nil {
-		object = change.Old
-	}
-	if object == nil || change.Initial || view == nil {
-		return nil, nil, nil
-	}
-	ref := sdk.ObjectRef{APIVersion: object.GetAPIVersion(), Kind: object.GetKind(), Namespace: object.GetNamespace(), Name: object.GetName()}
-	if !driftRefAllowed(view, ref) || ref.Name == "" {
-		return nil, nil, nil
-	}
-	event, _, err := c.classifyFields(ctx, change, view, now)
-	if change.Adoption {
-		return event, nil, err
-	}
-	ownedEvent := event != nil
-	if event == nil {
-		event = &sdk.DriftEvent{Ref: ref, Source: "watch event program match", ObservedAt: now.UTC()}
-	}
-	event, runs, _ := c.classifyPrograms(ctx, event, view)
-	if event.Classification == sdk.DriftFault {
-		// The match came from this watch evaluation even when field attribution
-		// supplied additional evidence. Keep that evidence and record the trigger.
-		event.Source = "watch event program match"
-	}
-	if !ownedEvent && event.Classification != sdk.DriftFault {
-		return nil, runs, err
-	}
-	return event, runs, err
-}
-
 // Classify admits changed declared SDO fields and reviewed source-absent kinds.
 // Neither admission path judges whether unexplained drift is a fault.
-func (c DriftClassifier) classifyFields(ctx context.Context, change ObjectChange, view program.ReadView, now time.Time) (*sdk.DriftEvent, []ProgramRun, error) {
+func (c DriftClassifier) Classify(ctx context.Context, change ObjectChange, view program.ReadView, now time.Time) (*sdk.DriftEvent, error) {
 	object := change.New
 	if object == nil {
 		object = change.Old
 	}
 	if object == nil || change.Initial || view == nil {
-		return nil, nil, nil
+		return nil, nil
 	}
 	ref := sdk.ObjectRef{APIVersion: object.GetAPIVersion(), Kind: object.GetKind(), Namespace: object.GetNamespace(), Name: object.GetName()}
 	if !driftRefAllowed(view, ref) || ref.Name == "" {
-		return nil, nil, nil
+		return nil, nil
 	}
 	// Foreign admission is independent of field-manager attribution. Restrict
 	// it to reviewed effect-bearing kinds and suppress controller churn.
 	if foreignDriftCandidate(change) {
 		diff, err := view.DiffAgainstSource(ref)
 		if err != nil {
-			return nil, nil, fmt.Errorf("compare %s/%s with accepted source: %w", ref.Kind, ref.Name, err)
+			return nil, fmt.Errorf("compare %s/%s with accepted source: %w", ref.Kind, ref.Name, err)
 		}
 		if diff.SourceAbsent {
 			if !diff.Changed && change.New != nil {
-				return nil, nil, nil
+				return nil, nil
 			}
 			paths := make([]string, 0)
 			for path := range flattenDriftObject(change.New) {
@@ -257,11 +127,11 @@ func (c DriftClassifier) classifyFields(ctx context.Context, change ObjectChange
 				ObservedAt: now.UTC(), Classification: sdk.DriftUnexplained,
 				Fields: []sdk.DriftField{{Path: "spec", Old: foreignDriftSpec(change.Old), New: foreignDriftSpec(change.New)}},
 			}
-			return event, nil, nil
+			return event, nil
 		}
 
 		if (sdk.ObservationTarget{Kind: ref.Kind}).Cluster() && diff.Changed {
-			return &sdk.DriftEvent{Ref: ref, Source: "accepted scoped configuration", ObservedAt: now.UTC(), Classification: sdk.DriftUnexplained, Fields: scopedDriftFields(change)}, nil, nil
+			return &sdk.DriftEvent{Ref: ref, Source: "accepted scoped configuration", ObservedAt: now.UTC(), Classification: sdk.DriftUnexplained, Fields: scopedDriftFields(change)}, nil
 		}
 	}
 	owner := change.Old
@@ -273,7 +143,7 @@ func (c DriftClassifier) classifyFields(ctx context.Context, change ObjectChange
 		owned = flattenDriftPaths(change.Old)
 	}
 	if len(owned) == 0 {
-		return nil, nil, nil
+		return nil, nil
 	}
 	before := flattenDriftObject(change.Old)
 	after := flattenDriftObject(change.New)
@@ -289,15 +159,15 @@ func (c DriftClassifier) classifyFields(ctx context.Context, change ObjectChange
 		}
 	}
 	if len(paths) == 0 {
-		return nil, nil, nil
+		return nil, nil
 	}
 	sort.Strings(paths)
 	diff, err := view.DiffAgainstSource(ref)
 	if err != nil {
-		return nil, nil, fmt.Errorf("compare %s/%s with accepted source: %w", ref.Kind, ref.Name, err)
+		return nil, fmt.Errorf("compare %s/%s with accepted source: %w", ref.Kind, ref.Name, err)
 	}
 	if !diff.Changed || diff.SourceAbsent {
-		return nil, nil, nil
+		return nil, nil
 	}
 	sourceValues := map[string]any{}
 	if strings.HasPrefix(diff.Text, "accepted: ") {
@@ -313,9 +183,9 @@ func (c DriftClassifier) classifyFields(ctx context.Context, change ObjectChange
 		event.Fields = append(event.Fields, sdk.DriftField{Path: path, Old: renderDriftValue(path, before[path]), Source: renderDriftValue(path, sourceValues[path]), New: renderDriftValue(path, after[path])})
 	}
 	if change.Adoption {
-		return event, nil, nil
+		return event, nil
 	}
-	return event, nil, nil
+	return event, nil
 }
 
 // The allowlist grows only with an impact argument and controller-churn tests.
@@ -353,18 +223,6 @@ func foreignDriftSpec(object *unstructured.Unstructured) string {
 		return ""
 	}
 	return string(encoded)
-}
-
-func (c DriftClassifier) classifyPrograms(ctx context.Context, event *sdk.DriftEvent, view program.ReadView) (*sdk.DriftEvent, []ProgramRun, error) {
-	runs := SelectProgramCandidatesWithOptions(ctx, c.Programs, view, nil, CandidateOptions{Deadline: c.Deadline, Affected: []sdk.ObjectRef{event.Ref}})
-	for index := range runs {
-		runs[index].BindingSource = "hint"
-		if runs[index].Verdict.Result == program.Match && event.ProgramID == "" {
-			event.Classification = sdk.DriftFault
-			event.ProgramID = runs[index].ProgramID
-		}
-	}
-	return event, runs, nil
 }
 
 func flattenDriftObject(object *unstructured.Unstructured) map[string]any {

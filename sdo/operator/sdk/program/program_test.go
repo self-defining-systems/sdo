@@ -126,33 +126,19 @@ func TestExampleProgramEndToEnd(t *testing.T) {
 	if got.Result != program.Match {
 		t.Fatalf("open verdict: %+v", got)
 	}
-	locate := func(v sdk.DetectionContext) []program.Bindings { return []program.Bindings{c.Bindings} }
-	d := program.DetectorFromProgram(p, locate, sdk.DetectorSpec{ID: p.Spec().ID, Class: sdk.DetectorClassIncident, Owner: sdk.DetectorOwnerResponder})
-	findings, err := d.Detect(context.Background(), c.Open)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(findings) != 1 || findings[0].PrimaryResource != c.Bindings.Objects["service"] || findings[0].Playbooks[0] != p.Spec().ID || findings[0].ParameterBindings["service"] != c.Bindings.Objects["service"] || findings[0].Evidence == "" {
-		t.Fatalf("findings: %+v", findings)
-	}
-	findings, err = d.Detect(context.Background(), c.Fixed)
-	if err != nil || len(findings) != 0 {
-		t.Fatalf("fixed findings: %+v, %v", findings, err)
-	}
+
 }
 
-func TestDetectorReportsUnavailableRuntimeRead(t *testing.T) {
+func TestDiagnoseReportsUnavailableRuntimeRead(t *testing.T) {
 	p := diagnostic{fn: func(_ context.Context, v program.ReadView, _ program.Bindings) (program.Verdict, error) {
 		_, err := v.ProbeTCP(serviceRef, 80)
 		return program.Verdict{}, err
 	}}
-	d := program.DetectorFromProgram(p, func(sdk.DetectionContext) []program.Bindings {
-		return []program.Bindings{{Objects: program.ObjectBindings{"service": serviceRef}}}
-	}, sdk.DetectorSpec{ID: "test"})
-	findings, err := d.Detect(context.Background(), sdktest.Snapshot{})
-	if err == nil || len(findings) != 0 {
-		t.Fatalf("findings: %+v, %v", findings, err)
+	got := program.RunDiagnose(context.Background(), p, program.ReadFrom(sdktest.Snapshot{}), program.Bindings{Objects: program.ObjectBindings{"service": serviceRef}}, time.Second)
+	if got.Result != program.Unknown {
+		t.Fatalf("unavailable read cleared diagnosis: %+v", got)
 	}
+
 }
 
 // Synthetic cases retain the matching/near-miss contract formerly bundled with a learned program.
