@@ -72,3 +72,17 @@ def test_response_fields_are_the_cli_help_contract(capsys):
             tools_cli.main([command, "--help"])
         assert stopped.value.code == 0
         assert fields in " ".join(capsys.readouterr().out.split())
+
+
+def test_mutation_reference_distinguishes_envelope_from_complete_file(capsys):
+    import pytest
+
+    from sdo.agents.responder.command_reference import render_reference
+
+    reference = render_reference()
+    for name in ("act", "apply", "mitigate", "rollback"):
+        section = reference.split(f"## {name}\n", 1)[1].split("\n## ", 1)[0]
+        assert "Complete report fields (`details_file`)" in section
+        with pytest.raises(SystemExit):
+            tools_cli.main([name, "--help"])
+        assert "Complete report fields (details_file)" in " ".join(capsys.readouterr().out.split())

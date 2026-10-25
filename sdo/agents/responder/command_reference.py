@@ -56,7 +56,7 @@ def render_reference() -> str:
                 arguments.append(f"- `{label}`: {action.help}")
         if arguments:
             parts.append("\n".join(arguments))
-        parts.append("Key JSON fields: `" + tools_cli.RESPONSE_FIELDS[name] + "`.")
+        parts.append(tools_cli.response_fields_help(name, markdown=True))
         sections.append("\n\n".join(parts))
     return "\n\n".join(sections) + "\n"
 

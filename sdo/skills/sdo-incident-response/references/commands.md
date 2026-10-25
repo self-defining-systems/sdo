@@ -105,7 +105,7 @@ apply a previously planned repair
 sdo apply [-h] plan_ids [plan_ids ...]
 ```
 
-Key JSON fields: `actions[].{application_id, targeted_healthy, mitigation_health, program_runs, report}`.
+Complete report fields (`details_file`): `actions[].{application_id, targeted_healthy, mitigation_health, program_runs, report}`.
 
 ## mitigate
 
@@ -123,7 +123,7 @@ Apply several independent options in one call; overlapping object write sets are
 - `--selection-set`: version 1 selection set with per-option bindings and parameters
 - `--option`: independent option ID; repeat, with per-option --param arguments
 
-Key JSON fields: `actions[].{application_id, targeted_healthy, mitigation_health, rollout_pending}, option_reports[]`.
+Complete report fields (`details_file`): `actions[].{application_id, targeted_healthy, mitigation_health, rollout_pending}, option_reports[]`.
 
 ## report
 
@@ -160,7 +160,7 @@ Run one live mutation and record its repair receipt (target, resources, timing, 
 - `--irreversible`: the mutation cannot be undone
 - `act_command`: the mutating command
 
-Key JSON fields: `actions[].{success, exit_code, receipt, output, failure_reason}`.
+Complete report fields (`details_file`): `actions[].{success, exit_code, receipt, output, failure_reason}`.
 
 ## verify
 
@@ -184,4 +184,4 @@ roll back a plan application
 sdo rollback [-h] application_id
 ```
 
-Key JSON fields: `actions[].{application_id, summary, error}`.
+Complete report fields (`details_file`): `actions[].{application_id, summary, error}`.
