@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from sdo.agents.responder import recorded_actions
+from sdo.agents.responder.mutation_output import compact_mutation_envelope
 from sdo.agents.responder.tool_output import render_summary, write_response
 
 PLAN_ACTIONS = (
@@ -209,7 +210,8 @@ def _parser() -> argparse.ArgumentParser:
     )
     commands.add_parser("rollback", help="roll back a plan application").add_argument("application_id")
     for name in ("mitigate", "act", "apply"):
-        commands.choices[name].epilog = (
+        example = ("Example: " + ACT_EXAMPLE + "\n\n") if name == "act" else ""
+        commands.choices[name].epilog = example + (
             "Action output separates target progress from incident verification and lists fixed, new "
             "(possible regression), and unchanged findings from controller snapshots. Every invocation saves "
             "the complete findings/evidence, program_runs, execution reports and receipts under "
@@ -477,19 +479,11 @@ def _print_response(response: dict[str, Any], *, full_json: bool) -> None:
         )
         from sdo.agents.responder.multi_output import format_selection_response
 
-        text, path = format_selection_response(before, after, response)
+        text, path = format_selection_response(before, after, response, json_output=full_json)
         if full_json:
             # JSON callers receive the same bounded summary and discoverable schema.
             print(
-                json.dumps(
-                    {
-                        "summary": text,
-                        "details_file": str(path),
-                        "command": response["command"],
-                        "incident_verified": response.get("incident_verified"),
-                        **{key: response[key] for key in ("error", "failure_reason") if response.get(key)},
-                    }
-                )
+                json.dumps(compact_mutation_envelope(text, path, response), ensure_ascii=False, separators=(",", ":"))
             )
         else:
             print(text)

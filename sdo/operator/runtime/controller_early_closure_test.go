@@ -201,3 +201,23 @@ func TestControllerEarlyClosureReportGraceAndRestart(t *testing.T) {
 		t.Fatalf("restart changed mitigation time: %+v", closure)
 	}
 }
+
+func TestControllerEarlyClosureRefusesPendingMitigation(t *testing.T) {
+	c, _, step := earlyWaitController(t, stateFinding("health"), stateFinding("health"), sdk.Finding{})
+	loop := NewResponderLoop(*c.currentIncidentRequest, nil, c.provider, nil, PlanExecutor{}, 3)
+	loop.applicationsLog = []RecordedPlanApplication{{ID: "pending-rollout", Pending: true}}
+	c.responderLoop = loop
+	for i := 2; i <= 30; i++ {
+		step(i)
+		if !c.IncidentOpen() {
+			t.Fatalf("early closure accepted pending mitigation at %d", i)
+		}
+	}
+	loop.applicationsLog[0].Pending = false
+	for i := 31; i <= 46; i++ {
+		step(i)
+	}
+	if c.IncidentOpen() {
+		t.Fatal("resolved pending mitigation never verified")
+	}
+}

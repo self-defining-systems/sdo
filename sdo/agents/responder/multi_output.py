@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -40,13 +41,30 @@ def option_action_results(response: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def format_selection_response(
-    before: Sequence[Mapping[str, Any]], after: Sequence[Mapping[str, Any]], response: dict[str, Any]
+    before: Sequence[Mapping[str, Any]],
+    after: Sequence[Mapping[str, Any]],
+    response: dict[str, Any],
+    *,
+    json_output: bool = False,
 ) -> tuple[str, Path]:
     """Use the shared summary and retain the complete controller response once."""
-    from sdo.agents.responder.mutation_output import MAX_MUTATION_OUTPUT_BYTES, format_mutation_response
+    from sdo.agents.responder.mutation_output import (
+        MAX_MUTATION_OUTPUT_BYTES,
+        compact_mutation_envelope,
+        format_mutation_response,
+    )
     from sdo.agents.responder.tool_output import _brief
 
-    text, path = format_mutation_response(before, after, [response])
+    text, path = format_mutation_response(before, after, [response], json_output=json_output)
+
+    def emitted_bytes(lines: list[str]) -> int:
+        rendered = "\n".join(lines)
+        if json_output:
+            rendered = json.dumps(
+                compact_mutation_envelope(rendered, path, response), ensure_ascii=False, separators=(",", ":")
+            )
+        return len(rendered.encode()) + 1
+
     if not response.get("option_reports"):
         if response.get("rollout_pending"):
             lines = text.splitlines()
@@ -81,7 +99,7 @@ def format_selection_response(
     ]
     reserve = sum(len(row.encode()) + 1 for row in rows[:2]) + 70
     removed_details = False
-    while len("\n".join(lines).encode()) + reserve > MAX_MUTATION_OUTPUT_BYTES - 1:
+    while emitted_bytes(lines) + reserve > MAX_MUTATION_OUTPUT_BYTES - 1:
         candidates = [index for index, line in enumerate(lines) if line.startswith(("new: -", "unchanged: -"))]
         if not candidates:
             break
@@ -93,7 +111,7 @@ def format_selection_response(
     for row in rows:
         omitted = len(rows) - len(shown) - 1
         tail = [f"Options omitted: {omitted}; see option_reports[] in Full JSON."] if omitted else []
-        if len("\n".join([*lines[:1], *shown, row, *tail, *lines[1:]]).encode()) > MAX_MUTATION_OUTPUT_BYTES - 1:
+        if emitted_bytes([*lines[:1], *shown, row, *tail, *lines[1:]]) > MAX_MUTATION_OUTPUT_BYTES - 1:
             break
         shown.append(row)
     omitted = len(rows) - len(shown)

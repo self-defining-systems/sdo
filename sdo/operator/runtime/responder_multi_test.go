@@ -302,3 +302,26 @@ func TestMultiMitigationProductionRolloutProbeReturnsImmediately(t *testing.T) {
 		t.Fatalf("expected one rollout sample, got %d", gets)
 	}
 }
+
+func TestMultiMitigationPendingRolloutBlocksEarlyClosure(t *testing.T) {
+	loop, _ := menuB3Loop(t)
+	loop.Request.RepairPolicy = "recorded-actions"
+	loop.Executor.Verifier = planFakeVerifier{true}
+	loop.Executor.Rollouts = peerBlockedRollout{entered: make(chan struct{}, 1)}
+	loop.Handle(context.Background(), ToolRequest{Command: "menu"})
+	response := multiCall(t, loop, `[{"option_id":"ScaleWorkload","parameters":{"ref":"Deployment/app/frontend","replicas":"1"}}]`)
+	if response.RolloutPending == nil {
+		t.Fatal("missing pending setup")
+	}
+	_, release, ok := acquireClosureGuard(loop)
+	release()
+	if ok {
+		t.Fatal("early closure accepted while rollout remained pending")
+	}
+	loop.Executor.Rollouts = &planFakeRollout{}
+	_, release, ok = acquireClosureGuard(loop)
+	release()
+	if !ok {
+		t.Fatal("settled rollout prevented independent closure check")
+	}
+}

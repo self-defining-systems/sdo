@@ -51,10 +51,23 @@ def _line(finding: Mapping[str, Any]) -> str:
     return f"- {detector} {resource}: {reason}"
 
 
+def compact_mutation_envelope(text: str, path: Path, action: Mapping[str, Any]) -> dict[str, Any]:
+    """The bounded JSON view carries typed errors plus the full-report pointer."""
+    return {
+        "summary": text,
+        "details_file": str(path),
+        "command": action.get("command", "mitigate"),
+        "incident_verified": action.get("incident_verified"),
+        **{key: tool_output._brief(action[key], 160) for key in ("error", "failure_reason") if action.get(key)},
+    }
+
+
 def format_mutation_response(
     before: Sequence[Mapping[str, Any]],
     after: Sequence[Mapping[str, Any]],
     action_results: Sequence[dict[str, Any]],
+    *,
+    json_output: bool = False,
 ) -> tuple[str, Path]:
     """Return bounded summary text and its complete JSON file; supports multiple actions."""
     actions = list(action_results)
@@ -101,13 +114,25 @@ def format_mutation_response(
     rows = []
     for key in ("new", "unchanged"):
         rows.extend(f"{key}: {_line(finding)}" for finding in progress[key])
+
     # The verdict, counts, warning, file and schema are never removed. When the
     # finding list itself exceeds the display budget, point explicitly to its
     # complete typed arrays instead of silently losing findings in truncation.
-    for row in rows:
-        candidate = "\n".join([*lines, row, *tail])
-        if len(candidate.encode()) > MAX_MUTATION_OUTPUT_BYTES - 100:
-            lines.append(f"Additional finding lines: {path} (new[], unchanged[])")
+    def emitted_bytes(candidate_lines: list[str]) -> int:
+        text = "\n".join(candidate_lines)
+        if json_output:
+            text = json.dumps(
+                compact_mutation_envelope(text, path, actions[-1] if actions else {}),
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+        return len(text.encode("utf-8")) + 1
+
+    omitted = "Additional finding lines are in the full report's new[] and unchanged[] arrays."
+    for index, row in enumerate(rows):
+        remainder = [omitted] if index + 1 < len(rows) else []
+        if emitted_bytes([*lines, row, *remainder, *tail]) > MAX_MUTATION_OUTPUT_BYTES:
+            lines.append(omitted)
             break
         lines.append(row)
     text = "\n".join([*lines, *tail])

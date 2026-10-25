@@ -307,6 +307,17 @@ func cleanupTool(t *testing.T, directory string, args ...string) ToolResponse {
 	if err != nil {
 		t.Fatalf("scripted CLI %v: %v %s", args, err, raw)
 	}
+	var pointer struct {
+		DetailsFile string `json:"details_file"`
+	}
+	if json.Unmarshal(raw, &pointer) == nil && pointer.DetailsFile != "" {
+		raw, err = os.ReadFile(pointer.DetailsFile)
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw = fullCommandReportPayload(t, raw)
+		t.Cleanup(func() { _ = os.Remove(pointer.DetailsFile) })
+	}
 	var response ToolResponse
 	var envelope map[string]json.RawMessage
 	if err = json.Unmarshal(raw, &response); err != nil {

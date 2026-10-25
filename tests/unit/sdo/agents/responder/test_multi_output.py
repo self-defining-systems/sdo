@@ -1,5 +1,7 @@
 from copy import deepcopy
 
+import pytest
+
 from sdo.agents.responder.multi_output import option_action_results
 
 
@@ -96,7 +98,8 @@ def test_combined_summary_uses_shared_progress_and_retains_complete_aggregate(tm
     assert report["option_reports"] == response["option_reports"]
 
 
-def test_many_options_keep_full_reports_and_explicit_omissions_within_budget(tmp_path, monkeypatch):
+@pytest.mark.parametrize("json_output", [False, True])
+def test_many_options_keep_full_reports_and_explicit_omissions_within_budget(tmp_path, monkeypatch, json_output):
     import json
 
     from sdo.agents.responder.multi_output import format_selection_response
@@ -123,7 +126,15 @@ def test_many_options_keep_full_reports_and_explicit_omissions_within_budget(tmp
         }
         for i in range(12)
     ]
-    text, path = format_selection_response(findings, findings, response)
+    text, path = format_selection_response(findings, findings, response, json_output=json_output)
+    from sdo.agents.responder.mutation_output import compact_mutation_envelope
+
+    emitted = (
+        json.dumps(compact_mutation_envelope(text, path, response), ensure_ascii=False, separators=(",", ":"))
+        if json_output
+        else text
+    )
+    assert len((emitted + "\n").encode()) <= 2048
     assert len((text + "\n").encode()) <= 2048
     assert "Options omitted:" in text
     assert "still broken, unchanged: 12" in text
