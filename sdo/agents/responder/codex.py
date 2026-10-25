@@ -94,8 +94,6 @@ def _execute_incident(
         recorded_actions.reset()
     if recovery is not None:
         prompt += recovery.recovered_prompt()
-    # D2 integration placeholder: replace this legacy block with its typed
-    # continuation_prompt renderer after the CLI/continuation change reaches dev.
     continuation = os.environ.get("SDO_RESPONSE_CONTINUATION", "")
     if continuation:
         if recovery is None or resume_session_id is None:

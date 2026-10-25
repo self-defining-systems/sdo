@@ -45,14 +45,9 @@ def incident_data_view(request: IncidentRequest) -> dict[str, Any]:
     if runs:
         document["initial_program_runs"] = actionable
         document["omitted_no_match_program_runs"] = len(runs) - len(actionable)
-    coverage_field = request.DESCRIPTOR.fields_by_name.get("playbook_coverage")
-    if coverage_field is None:
-        # D1 owns this typed field; remove this named integration placeholder
-        # after the coverage contract is merged into the production base.
-        document["playbook_coverage"] = {"availability": "pending-controller-coverage"}
-    elif request.HasField(coverage_field.name):
+    if request.HasField("playbook_coverage"):
         document["playbook_coverage"] = json_format.MessageToDict(
-            getattr(request, coverage_field.name),
+            request.playbook_coverage,
             preserving_proto_field_name=True,
             always_print_fields_with_no_presence=True,
         )

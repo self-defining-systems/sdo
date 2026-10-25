@@ -630,6 +630,54 @@ def test_controller_verification_resumes_same_session_with_remaining_budget(monk
     assert '"still_broken": []' in captured["prompt"]
 
 
+@pytest.mark.parametrize("fails", [False, True])
+def test_continuation_keeps_response_scoped_facts_alive_until_turn_exit(monkeypatch, fails: bool) -> None:
+    from contextlib import contextmanager
+    from types import SimpleNamespace
+
+    from libs.agent_cli.structured import StructuredTurn, StructuredTurnError
+    from sdo.agents.responder.continuation import continuation_prompt
+
+    feedback = '{"healthy":false,"attempt":1,"summary":"still unavailable","still_broken":[],"already_done":[]}'
+    monkeypatch.setenv("SDO_RESPONSE_CONTINUATION", feedback)
+    active = []
+
+    @contextmanager
+    def facts(request):
+        active.append(request.incident_id)
+        try:
+            yield "original response facts"
+        finally:
+            active.clear()
+
+    recovery = SimpleNamespace(
+        resume_session_id=lambda: "same-provider-session",
+        recovered_prompt=lambda: "",
+        remaining_seconds=lambda: 43.0,
+        checkpoint=lambda _: None,
+        acknowledge_reports=lambda: None,
+    )
+    monkeypatch.setattr("sdo.agents.responder.codex.prepared_incident_data", facts)
+    monkeypatch.setattr("sdo.agents.responder.codex.open_recovery", lambda *_: recovery)
+
+    def run_turn(provider, prompt, **options):
+        assert active == [_request().incident_id]
+        assert prompt == continuation_prompt(feedback)
+        if fails:
+            raise StructuredTurnError("synthetic continuation failure")
+        return StructuredTurn(output_json=json.dumps(_reply(_result())), session_id="same-provider-session", usage=None)
+
+    monkeypatch.setattr("sdo.agents.responder.codex.run_structured_turn", run_turn)
+    monkeypatch.setattr("sdo.agents.responder.codex.turn_usage", lambda _: {"llm_calls": 1})
+    monkeypatch.setattr("sdo.agents.responder.codex.recorded_actions.merge_into", lambda _: None)
+    if fails:
+        with pytest.raises(ResponderExecutionError, match="synthetic continuation failure"):
+            execute_incident(_request(), provider="codex")
+    else:
+        execute_incident(_request(), provider="codex")
+    assert active == []
+
+
 def test_app_drift_defaults_to_verified_accepted_source_restoration() -> None:
     request = _request()
     request.drift_events.add()

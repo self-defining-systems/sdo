@@ -238,6 +238,19 @@ def rendered_cases() -> dict[str, str]:
             verdict={"result": "RESULT_MATCH"},
         )
         matched.initial_program_runs.add(program_id="unrelated", verdict={"result": "RESULT_NO_MATCH"})
+        match = matched.playbook_coverage.matches.add(
+            playbook_id="repair-0",
+            program_revision="d" * 40,
+            can_mitigate=True,
+            mitigation_selection="restore-port",
+            verified_successes=2,
+            verified_failures=1,
+            explained_finding_fingerprints=["fingerprint-0"],
+        )
+        match.bindings.add(name="service").object.CopyFrom(matched.findings[0].primary_resource)
+        matched.playbook_coverage.unexplained_finding_fingerprints.extend(
+            finding.fingerprint for finding in matched.findings[1:]
+        )
         prompts["responder_matched_programs"] = responder_prompt(matched)
         patch.setenv("SDO_RESPONDER_EXTRA_INSTRUCTIONS", "Use the toy incident transport.")
         patch.setenv("SDO_LATE_FINDINGS", "pull")

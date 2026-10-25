@@ -5,8 +5,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
 from sdo.agents.responder.incident_context import incident_data_view, prepared_incident_data
 from sdo.contracts import IncidentRequest, OperationalMemorySnapshot, Verdict
 
@@ -89,14 +87,9 @@ def test_quiet_program_sweeps_are_omitted_without_losing_actionable_evidence() -
     assert document["omitted_no_match_program_runs"] == 20
 
 
-@pytest.mark.skipif(
-    "playbook_coverage" not in IncidentRequest.DESCRIPTOR.fields_by_name,
-    reason="D1 typed coverage contract is not on the production base yet",
-)
 def test_coverage_keeps_diagnosis_only_flags_counts_and_resource_bindings() -> None:
     request = _request()
-    coverage_field = request.DESCRIPTOR.fields_by_name["playbook_coverage"]
-    coverage = getattr(request, coverage_field.name)
+    coverage = request.playbook_coverage
     match = coverage.matches.add(playbook_id="diagnosis-only", can_mitigate=False)
     match.explained_finding_fingerprints.append("finding-0")
     binding = match.bindings.add(name="service")
@@ -112,3 +105,11 @@ def test_coverage_keeps_diagnosis_only_flags_counts_and_resource_bindings() -> N
     assert selected["bindings"][0]["object"]["name"] == "service-0"
     assert selected["explained_finding_fingerprints"] == ["finding-0"]
     assert view["unexplained_finding_fingerprints"] == ["finding-1"]
+
+
+def test_absent_coverage_keeps_every_finding_unexplained() -> None:
+    request = _request()
+    assert incident_data_view(request)["playbook_coverage"] == {
+        "matches": [],
+        "unexplained_finding_fingerprints": [item.fingerprint for item in request.findings],
+    }
