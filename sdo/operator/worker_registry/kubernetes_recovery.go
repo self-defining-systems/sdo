@@ -3,6 +3,7 @@ package worker_registry
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"time"
 
@@ -80,29 +81,32 @@ func (e KubernetesExecutor) RecoverCompleted(ctx context.Context, task *contract
 	completedAt := time.Now()
 	if err == nil {
 		if jobFailed(job) {
-			return nil, false, taskJobFailure(task, job)
-		}
-		if !jobCompleted(job) {
-			return nil, false, nil
-		}
-		if job.Status.CompletionTime != nil && !job.Status.CompletionTime.IsZero() {
-			completedAt = job.Status.CompletionTime.Time
+			failure := taskJobFailure(task, job)
+			if result.GetStatus() != "completed" || errors.Is(failure, context.DeadlineExceeded) {
+				return nil, false, failure
+			}
+			// A later incarnation may have failed publishing over this exact
+			// complete result. Terminal failure plus quiescence permits reuse;
+			// an active or terminating worker still blocks recovery.
+			if err := e.verifyWorkerQuiescence(ctx, name); err != nil {
+				return nil, false, err
+			}
+			if !resultMap.CreationTimestamp.IsZero() {
+				completedAt = resultMap.CreationTimestamp.Time
+			}
+		} else {
+			if !jobCompleted(job) {
+				return nil, false, nil
+			}
+			if job.Status.CompletionTime != nil && !job.Status.CompletionTime.IsZero() {
+				completedAt = job.Status.CompletionTime.Time
+			}
 		}
 	} else if !apierrors.IsNotFound(err) {
 		return nil, false, fmt.Errorf("inspect completed agent Job: %w", err)
 	} else {
-		pods, err := e.Client.CoreV1().Pods(e.Namespace).List(ctx, metav1.ListOptions{})
-		if err != nil {
-			return nil, false, fmt.Errorf("verify agent worker quiescence: %w", err)
-		}
-		for _, pod := range pods.Items {
-			owned := pod.Labels["sdo.dev/incident"] == name || pod.Labels["job-name"] == name || pod.Labels["batch.kubernetes.io/job-name"] == name
-			for _, owner := range pod.OwnerReferences {
-				owned = owned || owner.Kind == "Job" && owner.Name == name
-			}
-			if owned && pod.Status.Phase != corev1.PodSucceeded && pod.Status.Phase != corev1.PodFailed {
-				return nil, false, fmt.Errorf("agent result awaits worker quiescence: Pod %s is %s", pod.Name, pod.Status.Phase)
-			}
+		if err := e.verifyWorkerQuiescence(ctx, name); err != nil {
+			return nil, false, err
 		}
 		if !resultMap.CreationTimestamp.IsZero() {
 			completedAt = resultMap.CreationTimestamp.Time
@@ -175,4 +179,21 @@ func taskRequestDigest(task *contracts.AgentTask) string {
 // including workspace, base revision and deadline, rather than just task ID.
 func TaskJobName(task *contracts.AgentTask) string {
 	return "sdo-task-" + taskRequestDigest(task)[:52]
+}
+
+func (e KubernetesExecutor) verifyWorkerQuiescence(ctx context.Context, name string) error {
+	pods, err := e.Client.CoreV1().Pods(e.Namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return fmt.Errorf("verify agent worker quiescence: %w", err)
+	}
+	for _, pod := range pods.Items {
+		owned := pod.Labels["sdo.dev/incident"] == name || pod.Labels["job-name"] == name || pod.Labels["batch.kubernetes.io/job-name"] == name
+		for _, owner := range pod.OwnerReferences {
+			owned = owned || owner.Kind == "Job" && owner.Name == name
+		}
+		if owned && pod.Status.Phase != corev1.PodSucceeded && pod.Status.Phase != corev1.PodFailed {
+			return fmt.Errorf("agent result awaits worker quiescence: Pod %s is %s", pod.Name, pod.Status.Phase)
+		}
+	}
+	return nil
 }

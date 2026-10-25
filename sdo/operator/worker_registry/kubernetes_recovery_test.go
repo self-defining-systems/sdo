@@ -19,7 +19,7 @@ import (
 )
 
 func TestKubernetesExecutorNeverRecreatesWorkerWithUnsettledResult(t *testing.T) {
-	for _, scenario := range []string{"orphan-pod", "pod-api-error", "invalid-result", "late-result", "job-deadline-exceeded"} {
+	for _, scenario := range []string{"orphan-pod", "failed-job-live-pod", "pod-api-error", "invalid-result", "late-result", "job-deadline-exceeded"} {
 		t.Run(scenario, func(t *testing.T) {
 			task := reflectionTestTask(t)
 			task.Deadline = timestamppb.New(time.Now().Add(time.Minute))
@@ -44,13 +44,13 @@ func TestKubernetesExecutorNeverRecreatesWorkerWithUnsettledResult(t *testing.T)
 				t.Fatal(err)
 			}
 			client := fake.NewSimpleClientset(&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: name + "-request", Namespace: "demo"}, Data: map[string]string{TaskDataKey: string(payload)}}, &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: name + "-result", Namespace: "demo", CreationTimestamp: metav1.Now()}, Data: map[string]string{ResultDataKey: string(data)}})
-			if scenario == "job-deadline-exceeded" {
-				if _, err := client.BatchV1().Jobs("demo").Create(context.Background(), &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: name}, Status: batchv1.JobStatus{Conditions: []batchv1.JobCondition{{Type: batchv1.JobFailed, Status: corev1.ConditionTrue, Reason: "DeadlineExceeded"}}}}, metav1.CreateOptions{}); err != nil {
+			if scenario == "job-deadline-exceeded" || scenario == "failed-job-live-pod" {
+				if _, err := client.BatchV1().Jobs("demo").Create(context.Background(), &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: name}, Status: batchv1.JobStatus{Conditions: []batchv1.JobCondition{{Type: batchv1.JobFailed, Status: corev1.ConditionTrue, Reason: map[bool]string{true: "BackoffLimitExceeded", false: "DeadlineExceeded"}[scenario == "failed-job-live-pod"]}}}}, metav1.CreateOptions{}); err != nil {
 					t.Fatal(err)
 				}
 				client.ClearActions()
 			}
-			if scenario == "orphan-pod" {
+			if scenario == "orphan-pod" || scenario == "failed-job-live-pod" {
 				if _, err := client.CoreV1().Pods("demo").Create(context.Background(), &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "orphan", Labels: map[string]string{"job-name": name}}, Status: corev1.PodStatus{Phase: corev1.PodRunning}}, metav1.CreateOptions{}); err != nil {
 					t.Fatal(err)
 				}

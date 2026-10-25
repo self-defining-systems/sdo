@@ -7,7 +7,7 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 (
     cd "$root/sdo/operator"
-    go test -run '^(TestKubernetesExecutorConcurrentPayloads|TestKubernetesExecutorHealthJudge|TestKubernetesExecutorRecoversRequestBoundStagedResult|TestRuntimeArtifactsExportsSetupUsage)' -count=1 ./worker_registry ./operatorcli
+    go test -run '^(TestKubernetesExecutorNeverRecreatesWorkerWithUnsettledResult|TestKubernetesExecutorConcurrentPayloads|TestKubernetesExecutorHealthJudge|TestKubernetesExecutorRecoversRequestBoundStagedResult|TestRuntimeArtifactsExportsSetupUsage)' -count=1 ./worker_registry ./operatorcli
 )
 
 (

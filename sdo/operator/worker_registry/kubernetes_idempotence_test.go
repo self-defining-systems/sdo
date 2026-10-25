@@ -22,9 +22,9 @@ import (
 )
 
 func TestKubernetesExecutorHealthJudgeRerunIsIdempotent(t *testing.T) {
-	for _, scenario := range []string{"same-request", "request-payload", "workspace-base", "result-binding"} {
+	for _, scenario := range []string{"same-request", "failed-job", "request-payload", "workspace-base", "result-binding"} {
 		t.Run(scenario, func(t *testing.T) {
-			mismatch := scenario != "same-request"
+			mismatch := scenario != "same-request" && scenario != "failed-job"
 			registry, err := LoadDirectory("../../agents/registrations")
 			if err != nil {
 				t.Fatal(err)
@@ -53,6 +53,11 @@ func TestKubernetesExecutorHealthJudgeRerunIsIdempotent(t *testing.T) {
 				oldResult.Annotations = map[string]string{requestDigestAnnotation: "different-request"}
 			}
 			client := fake.NewSimpleClientset(oldRequest, oldResult)
+			if scenario == "failed-job" {
+				if _, err := client.BatchV1().Jobs("demo").Create(context.Background(), &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "demo"}, Status: batchv1.JobStatus{Failed: 1, Conditions: []batchv1.JobCondition{{Type: batchv1.JobFailed, Status: corev1.ConditionTrue, Reason: "BackoffLimitExceeded"}}}}, metav1.CreateOptions{}); err != nil {
+					t.Fatal(err)
+				}
+			}
 			dispatched := 0
 			client.PrependReactor("create", "jobs", func(action ktesting.Action) (bool, runtime.Object, error) {
 				dispatched++
