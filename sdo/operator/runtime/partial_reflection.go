@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"time"
 
@@ -11,6 +12,28 @@ import (
 )
 
 const noVerifiedRepair = "no_independently_verified_repair"
+
+// Unverified causes remain questions, never positive repair evidence. Keep one
+// typed gap per original cause even when the executable-learning projection has
+// no causes at all. No benchmark recovery signal can supply this proof.
+func unverifiedCauseWork(outcome *contracts.OutcomeRecord, indices []uint32) []*contracts.ReflectionWorkItem {
+	verified := map[uint32]bool{}
+	for _, index := range indices {
+		verified[index] = true
+	}
+	var work []*contracts.ReflectionWorkItem
+	for index, cause := range outcome.GetConfirmedRootCauses() {
+		if verified[uint32(index)] {
+			continue
+		}
+		item := &contracts.ReflectionWorkItem{Disposition: "question", Reason: "evidence_gap", Question: fmt.Sprintf("Cause %d (%s) has no independently verified repair. Record the missing evidence without treating reported command success as repair proof.", index, cause.GetSummary())}
+		for _, ref := range cause.GetResources() {
+			item.Resources = append(item.Resources, proto.Clone(ref).(*contracts.ObjectRef))
+		}
+		work = append(work, item)
+	}
+	return work
+}
 
 func reflectionResource(ref *contracts.ObjectRef) sdk.ObjectRef {
 	r := objectRefState(ref)
@@ -290,6 +313,7 @@ func partialReflectionOutcome(outcome *contracts.OutcomeRecord) *contracts.Outco
 	}
 	current.SurfacedPlaybooks, current.InspectedPlaybooks, current.ConfirmedPlaybooks, current.RejectedPlaybooks, current.AppliedPlaybooks = nil, nil, nil, nil, nil
 	current.ReflectionEligibility = partialReflectionEligibility(outcome.GetReflectionEligibility(), indices, true)
+	current.ReflectionEligibility.Unassigned = unverifiedCauseWork(outcome, indices)
 	return current
 }
 

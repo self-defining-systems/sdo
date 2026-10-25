@@ -49,6 +49,10 @@ type RegisteredReflectionWorker struct {
 
 var resumableSessionID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$`)
 
+func hasResponderSession(closure IncidentClosure) bool {
+	return closure.Result != nil && resumableSessionID.MatchString(closure.Result.ResponderSessionID)
+}
+
 func (w RegisteredReflectionWorker) Reflect(ctx context.Context, closure IncidentClosure, workspace IncidentWorkspace, outcome *contracts.OutcomeRecord, proposalCommit, outcomeCommit string, feedback ReflectionFeedback) (ReflectionDecision, error) {
 	if w.Executor == nil || w.Outcomes == nil || w.AgentID == "" || w.TaskType == "" || w.Timeout <= 0 {
 		return ReflectionDecision{}, errors.New("registered reflection worker requires executor, outcome store, agent ID, task type, and timeout")
@@ -76,13 +80,13 @@ func (w RegisteredReflectionWorker) Reflect(ctx context.Context, closure Inciden
 	}
 	mode := w.SessionMode
 	if mode == "" {
-		mode = "fresh"
+		mode = "resume"
 	}
 	guidance := w.Guidance
 	if guidance == "" {
 		guidance = "baseline"
 	}
-	if mode == "resume" && (closure.Result == nil || !resumableSessionID.MatchString(closure.Result.ResponderSessionID)) {
+	if mode == "resume" && !hasResponderSession(closure) {
 		log.Printf("reflection incident %s: responder session ID is missing or invalid; starting fresh", workspace.IncidentID)
 		mode = "fresh"
 	}
