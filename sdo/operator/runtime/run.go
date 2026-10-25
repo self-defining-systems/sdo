@@ -554,7 +554,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 					loop.CorpusSessionRoot = options.NativeBroker.SessionRoot
 				}
 				loop.ReadView = func(snapshot sdk.DetectionContext) program.ReadView {
-					return LiveReadView{DetectionContext: snapshot, Context: ctx, Client: bootstrapProvider.Client, Prober: primitiveProber,
+					return LiveReadView{DetectionContext: snapshot, Context: ctx, Client: bootstrapProvider.Client, DatabaseExecConfig: planExecConfig, Prober: primitiveProber,
 						Source: planSource, SourceCommit: request.SourceCommit, Baseline: request.StateChanges, BaselineSource: stateTracker}
 				}
 				return loop
@@ -563,7 +563,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	}
 	// Detectors and plan verification read through the same capped runtime view.
 	snapshotProvider = ReadSnapshotProvider{Base: snapshotProvider, View: func(snapshot sdk.DetectionContext) program.ReadView {
-		return LiveReadView{DetectionContext: snapshot, Context: ctx, Client: bootstrapProvider.Client, Prober: primitiveProber, Source: planSource, SourceCommit: resolvedSourceCommit, SourceRevision: func() string {
+		return LiveReadView{DetectionContext: snapshot, Context: ctx, Client: bootstrapProvider.Client, DatabaseExecConfig: planExecConfig, Prober: primitiveProber, Source: planSource, SourceCommit: resolvedSourceCommit, SourceRevision: func() string {
 			if controller != nil {
 				return controller.CurrentAcceptedCommit()
 			}
@@ -597,7 +597,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			if cycle, ok := snapshot.(*CycleReadView); ok {
 				return cycle
 			}
-			return NewCycleReadView(LiveReadView{DetectionContext: snapshot, Context: ctx, Client: bootstrapProvider.Client, Prober: primitiveProber,
+			return NewCycleReadView(LiveReadView{DetectionContext: snapshot, Context: ctx, Client: bootstrapProvider.Client, DatabaseExecConfig: planExecConfig, Prober: primitiveProber,
 				Source: planSource, SourceCommit: controller.CurrentAcceptedCommit(), BaselineSource: stateTracker})
 		},
 	})

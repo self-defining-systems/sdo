@@ -203,3 +203,13 @@ incident does not claim the current incident.
 Learning-origin Git reads use the durable accepted repository, not a retired
 proposal checkout. Missing optional origin evidence logs Git stderr and earns
 no extra credit, while responder dispatch remains available.
+
+## Retired playbooks
+
+Playbook README front matter may set `status: retired` with a nonempty string
+`retired_reason`; omitted status or `status: active` is active. The stored README,
+program source and immutable corpus remain evidence. Retirement removes the
+playbook from worker snapshots, detector hints, generated program registration,
+coverage and mitigation menus. A README change reloads the controller registry.
+Do not count a retired README as reusable learned coverage; inspect its reason
+and independently verified outcomes when assessing failed or undone mitigations.

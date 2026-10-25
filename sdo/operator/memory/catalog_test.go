@@ -88,3 +88,37 @@ func TestCatalogSnapshotRejectsUnmigratedMemory(t *testing.T) {
 		t.Fatalf("schema-version 1 repository entered worker snapshot: %v", err)
 	}
 }
+
+func TestCatalogExcludesRetiredPlaybooks(t *testing.T) {
+	root := t.TempDir()
+	for p, data := range map[string]string{
+		".sdo/schema-version": "3\n", ".sdo/goal.md": "---\nschema_version: 1\n---\nGoal\n", ".sdo/arch.md": "---\nschema_version: 1\n---\nArchitecture\n",
+		".sdo/playbooks/old/README.md":     "---\nschema_version: 1\nstatus: retired\nretired_reason: repair failed\n---\nRetired <RESOURCE>.\n",
+		".sdo/playbooks/current/README.md": "---\nschema_version: 1\n---\nCurrent <RESOURCE>.\n",
+	} {
+		target := filepath.Join(root, p)
+		if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(target, []byte(data), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	err := layout.WriteDetector(root, layout.Detector{Class: layout.ClassIncident, Files: []layout.File{{Name: "detector.go", Content: []byte("package detector\n")}}, Manifest: layout.DetectorManifest{
+		APIVersion: layout.APIVersion, Kind: layout.DetectorManifestKind, SDKVersion: layout.SDKVersion, ID: "probe", Constructor: "New", Class: "incident", Owner: "responder", Watches: []layout.Watch{{APIVersion: "v1", Kind: "Pod"}}, Interval: "10s", Persistence: layout.Persistence{Firing: 1, Clearing: 1}, Batching: layout.Batching{Severity: "warn", Debounce: "0"}, PossiblePlaybooks: []string{"old", "current"}, OriginatingIncident: "i", OriginatingCommit: "c",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := CandidateSnapshot(root, strings.Repeat("a", 40))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot.Playbooks) != 1 || snapshot.Playbooks[0].Id != "current" || strings.Contains(snapshot.PlaybookIndexMarkdown, "old") {
+		t.Fatalf("retired playbook offered: %v", snapshot)
+	}
+	ids := snapshot.Detectors[0].PossiblePlaybookIds
+	if len(ids) != 1 || ids[0] != "current" {
+		t.Fatalf("retired detector hint offered: %v", ids)
+	}
+}
