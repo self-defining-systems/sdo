@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import fcntl
-import hashlib
 import os
 import shutil
 import subprocess
@@ -10,6 +8,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from scripts.operator_test_binary import build_operator
+
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
@@ -17,21 +17,7 @@ if TYPE_CHECKING:
 @pytest.fixture(scope="session")
 def operator_binary() -> Path:
     repository = Path(__file__).resolve().parents[1]
-    root = repository / "sdo" / "operator"
-    digest = hashlib.sha256()
-    for path in sorted(root.rglob("*.go")) + sorted(root.rglob("go.mod")) + sorted(root.rglob("go.sum")):
-        digest.update(str(path.relative_to(root)).encode())
-        digest.update(path.read_bytes())
-    directory = repository / ".fastloop" / "test-bin"
-    directory.mkdir(parents=True, exist_ok=True)
-    binary = directory / f"sdo-operator-{digest.hexdigest()[:16]}"
-    with (directory / "build.lock").open("w") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
-        if not binary.is_file():
-            subprocess.run(
-                ["go", "build", "-buildvcs=false", "-o", str(binary), "./cmd/sdo-operator"], cwd=root, check=True
-            )
-    return binary
+    return build_operator(repository / "sdo/operator", repository / ".fastloop/test-bin")
 
 
 @pytest.fixture(scope="session", autouse=True)
