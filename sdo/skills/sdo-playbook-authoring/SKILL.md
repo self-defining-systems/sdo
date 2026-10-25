@@ -9,10 +9,9 @@ A playbook captures a verified failure mechanism and repair for reuse on differe
 Accepted Mitigators become responder menu options, a convenience over direct commands through the ordinary
 executor. Declare object and value parameters, group actions that must run together, and supply specific
 failure context for the report returned to the same responder session.
-The installed `sdo-memory` skill defines ownership, logical IDs and the generated decision/tool contract.
+Read the [memory principles](../sdo-memory/SKILL.md#memory-principles) for evidence, reuse, generalization and retirement; that skill also defines ownership and logical IDs.
 
-1. Compare the confirmed mechanism and repair with accepted playbooks. Refine one when only identity or a
-   parameter differs; create one only for a different mechanism or repair.
+1. Compare the confirmed mechanism and repair with accepted playbooks using the memory principles.
 2. For deterministic programs, read [program authoring](references/programs.md) before editing and the
    [generated program SDK](references/program-sdk.md) before choosing API types. The
    [authoring_reference](../sdo-memory/references/runtime.md#authoring_reference) tool retrieves these same
@@ -28,7 +27,7 @@ The installed `sdo-memory` skill defines ownership, logical IDs and the generate
    logical IDs. A README-only update fails for a verified repair. The only exception is a typed SDK gap
    naming the cause resources, missing primitive and concrete reason; it cannot excuse other causes.
 
-Use role placeholders in prose and bound resources in Go. Mitigation returns to accepted or observed state;
+Mitigation returns to accepted or observed state;
 intended-state changes are source repairs. An emergency literal is a declared parameter the responder fills
 and justifies.
 Read [validator rules](references/rules.md) when a diagnostic names a playbook, script or corpus rule.
