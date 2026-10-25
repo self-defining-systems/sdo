@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -176,4 +177,33 @@ func treeDigest(t *testing.T, root string) string {
 		t.Fatal(err)
 	}
 	return fmt.Sprintf("%x", hash.Sum(nil))
+}
+
+func TestConcurrentProcessesShareOnlyAtomicallyPublishedEntries(t *testing.T) {
+	c := cache{writable: t.TempDir()}
+	body := []byte("one deterministic compile output")
+	action, output := sha256.Sum256([]byte("shared action")), sha256.Sum256(body)
+	r := request{Command: "put", ActionID: action[:], OutputID: output[:], BodySize: int64(len(body))}
+	var workers sync.WaitGroup
+	for range 8 {
+		workers.Go(func() {
+			for range 30 {
+				if _, err := c.put(r, body); err != nil {
+					t.Error(err)
+					return
+				}
+				got := c.get(action[:])
+				if got.Miss {
+					t.Error("concurrent publication produced a cache miss")
+					return
+				}
+				data, err := os.ReadFile(got.DiskPath)
+				if err != nil || !bytes.Equal(data, body) {
+					t.Errorf("partially published output: %v: %q", err, data)
+					return
+				}
+			}
+		})
+	}
+	workers.Wait()
 }

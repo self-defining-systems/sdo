@@ -608,3 +608,28 @@ and can be shared across source revisions. To check an existing binary, run
 `uv run python scripts/operator_test_binary.py --check /absolute/path/to/sdo-operator`.
 
 `TestHermeticBringupMaintenanceGenerationDuringOnboarding` repeats that same native bring-up with a known pause/resume mid-window. It retains the original install identities, starts a new sampling budget, and finalizes at simulated61s (three new probe rounds); wall time remains below two minutes. `TestRunOnboardingMaintenanceGenerationPreservesSamples` exercises the actual runtime loop and real prober HTTP boundary: ACTIVE generation-only updates retain samples, while true pause/resume resets both traffic and reachability. Post-resume authority requires fresh samples and retains prior successful ports/configuration contradictions. Supported reset removes owned maintenance state so the next install starts ACTIVE with no inherited generation.
+
+### Validator cache and local startup measurement
+
+Validator Pods read the compiler, module cache and warmed SDK cache from immutable
+image layers. `sdo-go-cache` implements the pinned Go toolchain's `GOCACHEPROG`
+protocol, reading native disk-cache v1 entries in place and atomically publishing
+new entries only to private `GOCACHE` scratch. Its real-Go test proves source
+invalidation, seed reuse and private-delta reuse without a cluster.
+
+```bash
+(cd sdo/operator && go test -race ./cmd/sdo-go-cache ./builder ./broker)
+SDO_IMAGES=validator bash scripts/build_sdo_images.sh
+uv run python scripts/measure_validator_startup.py \
+  --baseline-controller sdo-controller:baseline \
+  --baseline-validator sdo-detector-validator:baseline \
+  --candidate-validator sdo-detector-validator:candidate \
+  --output /tmp/validator-startup.json
+```
+
+The image smoke gate uses a nonroot, read-only, network-disabled container and
+fails if exporting the SDK invokes the compiler. The measurement compares the
+old init-container copy plus fixture validation against direct image-backed
+validation under the same two-CPU limit. It reports image bytes and wall time;
+it excludes image delivery and Kubernetes scheduling. Images must already exist;
+the measurement never pulls images or prunes shared caches.
