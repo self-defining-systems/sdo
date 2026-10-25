@@ -399,6 +399,7 @@ def _print_response(response: dict[str, Any], *, full_json: bool) -> None:
                         "details_file": str(path),
                         "command": response["command"],
                         "incident_verified": response.get("incident_verified"),
+                        **{key: response[key] for key in ("error", "failure_reason") if response.get(key)},
                     }
                 )
             )

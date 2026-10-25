@@ -302,7 +302,10 @@ def select(program):
  option=next(o["option_id"] for o in menu["options"] if o.get("program_id")==program)
  code,text=turn.run(shlex.join([sys.executable,"-m","sdo.agents.responder.tools_cli","--json","mitigate",option,"--rounds","1"]))
  assert code==0,text
- return json.loads(text.splitlines()[0])["report"]
+ envelope=json.loads(text.splitlines()[0])
+ full=json.loads(Path(envelope["details_file"]).read_text())
+ assert len(full["actions"])==1,full
+ return full["actions"][0]["report"]
 first=select("try-wrong-port")
 assert first["status"]=="STATUS_UNRESOLVED",first
 second=select("restore-route")

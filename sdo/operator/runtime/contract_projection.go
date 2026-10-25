@@ -423,6 +423,9 @@ func incidentClosureContract(closure IncidentClosure) (*contracts.IncidentClosur
 		HealthClearedAt: optionalContractTimestamp(closure.HealthClearedAt),
 		CleanedHelpers:  append([]string(nil), closure.CleanedHelpers...),
 	}
+	if closure.ClosureStabilityWindow == 0 {
+		message.ClosureStabilityWindow = nil
+	}
 	if closure.Result != nil {
 		message.Result, err = incidentResultContract(*closure.Result)
 		if err != nil {
