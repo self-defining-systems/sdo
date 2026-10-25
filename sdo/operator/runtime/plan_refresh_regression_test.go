@@ -3,11 +3,9 @@ package runtime
 import (
 	"context"
 	"errors"
-	"strings"
 	"sync/atomic"
 	"testing"
 
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	"sdo.dev/operator/sdk"
@@ -76,46 +74,4 @@ func (p *refreshFailureProgram) Mitigate(ctx context.Context, view program.ReadV
 		}
 	}
 	return p.fastloopPortProgram.Mitigate(ctx, view, bindings)
-}
-
-func TestTrustedFastPathRejectsFailedRefreshedPlan(t *testing.T) {
-	for _, mode := range []string{"panic", "error", "empty", "invalid", "transient"} {
-		t.Run(mode, func(t *testing.T) {
-			ctx := context.Background()
-			loop, client := trustedPortLoop(t, false, true, true)
-			p := &refreshFailureProgram{mode: mode}
-			registry, err := program.NewRegistry([]program.Diagnoser{p}, []program.Mitigator{p})
-			if err != nil {
-				t.Fatal(err)
-			}
-			loop.Programs = registry
-			loop.InitialDiagnose(ctx)
-			// Verify that the initial matching snapshot really supplied a usable plan.
-			run := loop.ProgramRuns()[0]
-			planned := loop.Handle(ctx, ToolRequest{Command: "plan", ProgramID: run.ProgramID, Bindings: run.Bindings})
-			if planned.Error != "" || planned.PlanID == "" {
-				t.Fatalf("initial plan: %+v", planned)
-			}
-			service, err := client.CoreV1().Services("app").Get(ctx, "api", metav1.GetOptions{})
-			if err != nil {
-				t.Fatal(err)
-			}
-			service.Annotations = map[string]string{"synthetic-planning-state": "unsupported"}
-			if _, err := client.CoreV1().Services("app").Update(ctx, service, metav1.UpdateOptions{}); err != nil {
-				t.Fatal(err)
-			}
-			attempt := loop.TryTrustedFastPath(ctx, 3)
-			if attempt.Attempted || attempt.Resolved || attempt.SkippedReason != FastPathSkipInvalidPlan {
-				t.Fatalf("failed refreshed mitigation executed a cached plan: %+v", attempt)
-			}
-			if !strings.Contains(strings.Join(loop.FailureSignals(), ","), "mitigator_failure:"+p.Spec().ID) {
-				t.Fatalf("missing mitigation failure evidence: %v", loop.FailureSignals())
-			}
-			for _, action := range client.Actions() {
-				if action.GetVerb() == "patch" {
-					t.Fatal("failed refreshed mitigation submitted a patch")
-				}
-			}
-		})
-	}
 }

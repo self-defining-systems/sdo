@@ -5,9 +5,9 @@ Signs seen in live runs, what they meant, and where to look. Each fix has a regr
 | Sign | Meaning | Look at |
 | --- | --- | --- |
 | Grading or judge crashes on application files | The frozen worktree's SREGym applications checkout is empty | Pass a populated `--sregym-dir` to `up` |
-| Every incident is resolved by the responder with no fast-path log line | Skips were silent | Row `fast_path_skipped_reason`. `uncovered_finding` means a symptom finding no trusted program covers; `untrusted_program` means not enough verified applications at the current revision |
+| A learned match is absent from the responder coverage view | Diagnosis did not match a loaded program or the finding has no resource relation to its bindings | The outcome's `playbook_coverage`, `program_runs` and opening finding resources; counters never gate offering or execution |
 | A program matched but the responder's `sdo plan` returned an empty plan | The plan read a later snapshot than the match | The outcome's `program_runs` against `program_tool_calls` |
-| Trust never builds although programs are applied | The revision changed between applications, or applications were never verified | The outcome's `plan_applications[].verification` and `program_runs[].program_revision` |
+| Verified success counters stay zero although programs are applied | The revision changed or the application lacks independently bound repair evidence | The outcome's `reflection_eligibility`, `plan_applications[].verification` and `program_runs[].program_revision`; counters are information for the responder |
 | A latent fault times out with drift seen but no incident | The investigator never ran, or ran blind | Drift deferral reasons in controller status; drift result ConfigMaps (`sdo-drift-*-result`); a verdict reason that mentions blocked `kubectl` or a read-only filesystem |
 | The same pre-existing drift is investigated every incident | Verdicts were lost across resets | The drift verdict ConfigMap's age against the control namespace's age |
 | `learning failed` with a receipt validation error | Outcome derivation and the receipt disagree on the classification | The shared closure-classification policy and the outcome's `classification`; current receipts do not revalidate diagnosis evidence |

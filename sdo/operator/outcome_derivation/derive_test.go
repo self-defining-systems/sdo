@@ -84,28 +84,6 @@ func TestDeriveCarriesClassifiedDriftEvidence(t *testing.T) {
 	}
 }
 
-func TestDerivePreservesTrustedFastPathEvidence(t *testing.T) {
-	closure := fixtureClosure()
-	closure.Result.ResolutionPath = "fast_path"
-	closure.Result.FastPathPrograms = []string{"targetport"}
-	closure.Result.FastPathRelationCoveredFindings = []*contractsv1alpha1.RelationCoveredFinding{{FindingFingerprint: "health/service/api", ProgramId: "targetport", Bindings: []*contractsv1alpha1.Binding{{Name: "deployment", Object: &contractsv1alpha1.ObjectRef{Kind: "Deployment", Namespace: "app", Name: "api"}}}}}
-	closure.Result.PlanApplications = []*contractsv1alpha1.PlanApplication{{ApplicationId: "fast-path-1", Applied: true, ProgramIds: []string{"targetport"}, Verification: &contractsv1alpha1.Verdict{Result: contractsv1alpha1.Verdict_RESULT_NO_MATCH}}}
-	derived, err := Derive(context.Background(), closure, "", "codex", "test-model")
-	if err != nil || derived.Record.GetResolutionPath() != "fast_path" || len(derived.Record.GetFastPathPrograms()) != 1 || len(derived.Record.GetPlanApplications()) != 1 || len(derived.Record.GetFastPathRelationCoveredFindings()) != 1 || derived.Record.GetFastPathRelationCoveredFindings()[0].GetBindings()[0].GetObject().GetName() != "api" {
-		t.Fatalf("fast path evidence missing: %+v %v", derived.Record, err)
-	}
-}
-
-func TestDerivePreservesFastPathSkipReason(t *testing.T) {
-	closure := fixtureClosure()
-	closure.Result.ResolutionPath = "responder"
-	closure.Result.FastPathSkippedReason = "uncovered_finding"
-	derived, err := Derive(context.Background(), closure, "", "codex", "test-model")
-	if err != nil || derived.Record.GetFastPathSkippedReason() != "uncovered_finding" {
-		t.Fatalf("fast-path skip reason missing from outcome: %+v %v", derived.Record, err)
-	}
-}
-
 func TestDeriveMitigationTimeFromVerifiedRepair(t *testing.T) {
 	closure := fixtureClosure()
 	closure.Result.RepairActions[0].CompletedAt = timestamppb.New(closure.DetectedAt.AsTime().Add(90 * time.Second))

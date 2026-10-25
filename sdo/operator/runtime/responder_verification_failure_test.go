@@ -63,7 +63,7 @@ func TestResponderFailedHealthSurvivesRestart(t *testing.T) {
 			}
 			got := ProgramTrustStats(outcomes)["service-targetport-mismatch"]
 			t.Logf("restart=%v applications=%d signals=%v loops=%d trust=%+v", restart, len(loop.PlanApplications()), loop.FailureSignals(), loop.LoopsUsed(), got)
-			if got.Trusted || got.VerifiedSuccesses != 0 || got.Failures != 1 {
+			if (got.VerifiedSuccesses > 0 && got.Failures == 0) || got.VerifiedSuccesses != 0 || got.Failures != 1 {
 				t.Fatalf("failed verification must survive a successful retry: %+v", got)
 			}
 		})
@@ -77,17 +77,17 @@ func TestResponderVerificationFailureTrustIsRevisionBound(t *testing.T) {
 		{SourceCommit: "unrelated-source-commit", ProgramFailureSignals: []string{"application_verification_failure:targetport@revision-a"}},
 		verifiedTrustOutcome(t, "targetport", "revision-a"),
 	}
-	if got := ProgramTrustStats(outcomes)["targetport"]; got.Trusted || got.Failures != 1 || got.LastChange != "revision-a" {
+	if got := ProgramTrustStats(outcomes)["targetport"]; (got.VerifiedSuccesses > 0 && got.Failures == 0) || got.Failures != 1 || got.LastChange != "revision-a" {
 		t.Fatalf("successful retry erased revision failure: %+v", got)
 	}
 	for range 3 {
 		outcomes = append(outcomes, verifiedTrustOutcome(t, "targetport", "revision-b"))
 	}
-	if got := ProgramTrustStats(outcomes)["targetport"]; !got.Trusted || got.Failures != 0 || got.LastChange != "revision-b" {
+	if got := ProgramTrustStats(outcomes)["targetport"]; !(got.VerifiedSuccesses > 0 && got.Failures == 0) || got.Failures != 0 || got.LastChange != "revision-b" {
 		t.Fatalf("failure affected a different revision: %+v", got)
 	}
 	outcomes = append(outcomes, verifiedTrustOutcome(t, "targetport", "revision-a"))
-	if got := ProgramTrustStats(outcomes)["targetport"]; got.Trusted || got.Failures != 1 || got.LastChange != "revision-a" {
+	if got := ProgramTrustStats(outcomes)["targetport"]; (got.VerifiedSuccesses > 0 && got.Failures == 0) || got.Failures != 1 || got.LastChange != "revision-a" {
 		t.Fatalf("reverting to the failed revision erased failure: %+v", got)
 	}
 }
