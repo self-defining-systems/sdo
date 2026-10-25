@@ -1165,7 +1165,7 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 		ObservationGeneration: generation,
 		Request:               *cloneIncidentRequest(c.currentIncidentRequest), Result: cloneIncidentResult(c.currentIncidentResult),
 		DispatchError: c.dispatchError, FinalDetectorStates: finalStates,
-		IncidentDetectorStates: c.incidentDetectorStates(),
+		IncidentDetectorStates: c.reflectionDetectorStates(verified, scopeCurrent),
 		FinalStateChanges:      finalChanges,
 		HealthClearedAt:        healthClearedAt,
 		DetectedAt:             c.incidentDetectedAt, DispatchedAt: c.incidentDispatchedAt,

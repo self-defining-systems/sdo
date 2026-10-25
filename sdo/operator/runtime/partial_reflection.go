@@ -140,7 +140,7 @@ func partialRepairCauses(outcome *contracts.OutcomeRecord) []uint32 {
 	proof, applications := partialRepairProof(outcome)
 	repaired := map[sdk.ObjectRef]bool{}
 	for _, action := range outcome.GetRepairActions() {
-		if verifiedPartialAction(action, proof, applications) || coldPartialAction(outcome, action) {
+		if partialActionVerified(outcome, action, proof, applications) {
 			for _, ref := range action.GetResources() {
 				repaired[reflectionResource(ref)] = true
 			}
@@ -258,7 +258,7 @@ func partialReflectionOutcome(outcome *contracts.OutcomeRecord) *contracts.Outco
 	proof, applications := partialRepairProof(outcome)
 	current.RepairActions = nil
 	for _, action := range outcome.GetRepairActions() {
-		if (verifiedPartialAction(action, proof, applications) || coldPartialAction(outcome, action)) && onlyAllowed(action.GetResources()) {
+		if (partialActionVerified(outcome, action, proof, applications)) && onlyAllowed(action.GetResources()) {
 			current.RepairActions = append(current.RepairActions, proto.Clone(action).(*contracts.RepairActionReceipt))
 		}
 	}
