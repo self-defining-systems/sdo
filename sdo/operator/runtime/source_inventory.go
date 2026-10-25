@@ -23,6 +23,7 @@ type SourceInventory struct {
 	Identity     string
 	EvidenceGaps []rendered.InventoryEvidenceGap
 	declared     map[sdk.ObjectRef]*unstructured.Unstructured
+	dependencies map[sdk.ObjectRef]bool
 }
 
 func NewSourceInventory(namespace, revision string, objects []*unstructured.Unstructured) *SourceInventory {
@@ -37,6 +38,7 @@ func NewSourceInventory(namespace, revision string, objects []*unstructured.Unst
 		}
 		index.declared[inventoryRef(object)] = object
 	}
+	index.indexDependencies()
 	identities := make([]string, 0, len(index.declared))
 	for ref, object := range index.declared {
 		encoded, _ := json.Marshal(comparableFields(object.Object))
@@ -94,7 +96,7 @@ func (s *SourceInventory) Findings(objects []*unstructured.Unstructured, now tim
 		visited[ref] = true
 		for _, owner := range o.GetOwnerReferences() {
 			parent := sdk.ObjectRef{APIVersion: owner.APIVersion, Kind: owner.Kind, Namespace: o.GetNamespace(), Name: owner.Name}
-			if declared := s.declared[parent]; declared != nil {
+			if declared := s.declared[parent]; declared != nil || s.dependencies[parent] {
 				return true
 			}
 			if ancestor := observed[parent]; ancestor != nil && (inventoryOwned(ancestor) || generated(ancestor, visited)) {
@@ -120,12 +122,12 @@ func (s *SourceInventory) Findings(objects []*unstructured.Unstructured, now tim
 		declared := s.declared[ref]
 		deleting := o.GetDeletionTimestamp() != nil && !o.GetDeletionTimestamp().IsZero()
 		rbacChanged := declared != nil && strings.HasPrefix(o.GetAPIVersion(), "rbac.authorization.k8s.io/") && !reflect.DeepEqual(inventoryRBACProjection(declared), inventoryRBACProjection(o))
-		if declared != nil && !deleting && !rbacChanged {
+		if (declared != nil || s.dependencies[ref]) && !deleting && !rbacChanged {
 			continue
 		}
 		fields := inventoryFields(o)
 		source := "absent from accepted source"
-		if declared != nil {
+		if declared != nil || s.dependencies[ref] {
 			source = "deletion pending relative to accepted source"
 		}
 		if rbacChanged {

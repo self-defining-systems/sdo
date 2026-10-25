@@ -1341,7 +1341,7 @@ func evaluateOnce(
 			return err
 		}
 		index := NewSourceInventory(*namespace, readCommit, inventory.Objects)
-		index.EvidenceGaps = inventory.EvidenceGaps
+		index.EvidenceGaps = append(index.EvidenceGaps, inventory.EvidenceGaps...)
 		return WriteSourceInventoryReport(stdout, *sourceDriftReport, index, cache.SourceDriftObjects())
 	}
 	trafficProvider := TrafficSnapshotProvider{Base: provider}

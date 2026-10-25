@@ -42,7 +42,7 @@ func (c *Controller) prepareSourceInventory(ctx context.Context) error {
 		return nil
 	}
 	index := NewSourceInventory(c.config.Namespace, revision, inventory.Objects)
-	index.EvidenceGaps = inventory.EvidenceGaps
+	index.EvidenceGaps = append(index.EvidenceGaps, inventory.EvidenceGaps...)
 	c.mu.Lock()
 	c.sourceInventory = index
 	c.sourceInventoryError = ""
