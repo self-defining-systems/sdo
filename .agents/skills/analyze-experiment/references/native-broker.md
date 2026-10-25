@@ -15,8 +15,7 @@ For active Go runs, inspect the configured runtime `LedgerRoot` and the Go broke
 Ledger files under `.git/sdo-broker/` and the controller's runtime-state ConfigMap are canonical ProtoJSON of `BrokerLedger` and `ControllerState` (`controller_state.proto`): snake_case keys, empty and zero fields omitted (so a missing key means the zero value), RFC3339 timestamps, enums as names, and the closure as an `IncidentClosure`. The Go structs carry no JSON tags, so pre-cutover ledgers with legacy keys (for example `playbooks` or `path` in place of `playbook_ids`) are not readable by the current tools. `reflection_rejections` lists each broker rejection of a reflection proposal (`attempt`, typed `diagnostics` of `rule`/`path`/`line`/`message`/`hint`, `rejected_at`); Go re-dispatches reflection with the previous rejection's diagnostics up to twice, and `reflection_rejected` marks the terminal rejection after the bound (the closure completes with no reflection commit). Current native ledgers use `reflection_rejections`, `reflection_rejected`,
 `reflection_processed`, and typed `reflection_decision` (decision, reason, logical
 playbook IDs, error, SDK gaps and usage). `ReflectionDecision.playbook_ids` remains
-wire field 3. Every closed incident goes through learning settlement; exact accepted repair replay
-or wholly trusted program repair may also record a skip reason. A failed learning
+wire field 3. Every closed incident goes through learning settlement; inspect the recorded reflection decision and any explicit skip reason independently of program counters. A failed learning
 turn preserves the committed mitigation and records its error. The frozen reflection task's
 `ReflectionRequest.depth` is `refine` (Go-decided, resumed responder session only, first attempt
 only) when installed programs were applied, not dry-run or rolled back, and have bound post-apply

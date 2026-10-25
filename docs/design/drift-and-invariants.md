@@ -72,7 +72,7 @@ The design does not depend on admission webhooks or audit logs. Either can add u
 | Step | Condition | Result |
 |---|---|---|
 | 1 | Neither a changed declared field owned by `sdo-deployer` nor an admitted foreign spec change | ignore; not an unexplained event |
-| 2 | An invariant program (Diagnoser) returns `Match` on an affected binding after the change | **fault**: open an incident with `latent` severity; the normal loop takes over (trusted program or responder) |
+| 2 | An invariant program (Diagnoser) returns `Match` on an affected binding after the change | **fault**: open an incident with `latent` severity; the responder receives the match and selects any mitigation |
 | 3 | A trusted expected-drift rule classifies it `Benign` | benign, logged |
 | 4 | Otherwise | **unexplained**: open an ordinary `drift.unexplained` incident, or attach the observation to the open incident; this is a question, not a fault verdict |
 
