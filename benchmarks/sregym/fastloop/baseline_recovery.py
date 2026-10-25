@@ -294,3 +294,84 @@ def reconcile_application(
             cluster.apply(namespace, value)
             cleanup.restored.append(f"{kind}/{name}")
     return cleanup
+
+
+def accepted_restore_baselines(
+    workspace: Path, baselines: tuple[ApplicationBaseline, ...]
+) -> tuple[ApplicationBaseline, ...]:
+    """Use the sealed installed manifests as the sole source for selected objects.
+
+    Captured runtime-only objects and API defaults remain available. Never apply
+    a captured spec followed by a conflicting source spec (a second rollout).
+    """
+    import hashlib
+
+    import yaml
+
+    root = workspace / ".sdo/rendered"
+    lock_path = root / "lock.json"
+    if not lock_path.is_file():
+        return baselines
+    selected = {}
+    for row in json.loads(lock_path.read_text())["objects"]:
+        if row.get("ref", {}).get("kind") == "Secret":
+            continue
+        path = (root / row["file"]).resolve()
+        if not path.is_relative_to(root.resolve()):
+            raise ValueError("restore manifest escapes accepted rendered directory")
+        payload = path.read_bytes()
+        if hashlib.sha256(payload).hexdigest() != row["sha256"]:
+            raise ValueError(f"restore manifest digest differs from accepted lock: {path.name}")
+        value = yaml.safe_load(payload)
+        if value.get("kind") == "Secret":
+            continue
+        ref = value.get("metadata", {})
+        key = (value["kind"], ref.get("namespace", ""), ref["name"])
+        if key in selected:
+            raise ValueError(f"duplicate accepted restore manifest: {key}")
+        selected[key] = value
+    return tuple(
+        ApplicationBaseline(
+            baseline.namespace,
+            [
+                deepcopy(selected.get((value["kind"], baseline.namespace, value["metadata"]["name"]), value))
+                for value in baseline.objects
+            ],
+        )
+        for baseline in baselines
+    )
+
+
+def stalled_replica_sets(objects: list[dict[str, Any]]) -> list[str]:
+    """Generated FailedCreate state can outlive a removed admission fault."""
+    unready = {
+        row["metadata"]["uid"]
+        for row in objects
+        if row["kind"] == "Deployment"
+        and row.get("status", {}).get("readyReplicas", 0) < row.get("spec", {}).get("replicas", 1)
+    }
+    return sorted(
+        row["metadata"]["name"]
+        for row in objects
+        if row["kind"] == "ReplicaSet"
+        and any(
+            owner.get("kind") == "Deployment" and owner.get("controller") is True and owner.get("uid") in unready
+            for owner in row["metadata"].get("ownerReferences", [])
+        )
+        and any(
+            condition.get("type") == "ReplicaFailure" and condition.get("status") == "True"
+            for condition in row.get("status", {}).get("conditions", [])
+        )
+    )
+
+
+def retire_stalled_replicas(kubeconfig: Path, namespace: str) -> None:
+    listing = json.loads(
+        kubectl(["get", "deployments,replicasets", "-o", "json"], namespace=namespace, kubeconfig=kubeconfig).stdout
+    )["items"]
+    for name in stalled_replica_sets(listing):
+        kubectl(
+            ["delete", f"replicaset/{name}", "--cascade=foreground", "--wait=true", "--timeout=20s"],
+            namespace=namespace,
+            kubeconfig=kubeconfig,
+        )
