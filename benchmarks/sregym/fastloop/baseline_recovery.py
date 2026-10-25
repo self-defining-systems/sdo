@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import subprocess
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -355,8 +356,37 @@ def accepted_restore_baselines(
     if not lock_path.is_file():
         return baselines
     selected = {}
+    captured = {
+        (value.get("apiVersion"), value["kind"], baseline.namespace, value["metadata"]["name"]): value
+        for baseline in baselines
+        for value in baseline.objects
+    }
+    seen = set()
     for row in json.loads(lock_path.read_text())["objects"]:
-        if row.get("ref", {}).get("kind") == "Secret":
+        reference = row.get("ref", {})
+        if reference.get("kind") == "Secret":
+            continue
+        identity = tuple(reference.get(field) for field in ("api_version", "kind", "namespace", "name"))
+        if identity in seen:
+            raise ValueError(f"duplicate accepted restore manifest: {identity}")
+        seen.add(identity)
+        if row.get("error") or not row.get("file") or not row.get("sha256"):
+            name = reference.get("name", "")
+            known_gap = re.fullmatch(
+                rf"(?:Deployment/{re.escape(name)}: )?trusted deployment image evidence missing for container "
+                r"\S+ \(init=(?:true|false)\)",
+                str(row.get("error", "")),
+            )
+            if (
+                reference.get("kind") != "Deployment"
+                or not known_gap
+                or "file" in row
+                or "sha256" in row
+                or identity not in captured
+            ):
+                raise ValueError(f"unbacked or malformed rendered restore gap: {reference}")
+            # A typed evidence gap supplies no replacement spec. Retain the
+            # exact installed capture; it is never reconstructed from runtime.
             continue
         path = (root / row["file"]).resolve()
         if not path.is_relative_to(root.resolve()):
@@ -368,6 +398,14 @@ def accepted_restore_baselines(
         if value.get("kind") == "Secret":
             continue
         ref = value.get("metadata", {})
+        actual = {
+            "api_version": value.get("apiVersion"),
+            "kind": value.get("kind"),
+            "namespace": ref.get("namespace", ""),
+            "name": ref.get("name"),
+        }
+        if any(actual.get(field) != expected for field, expected in reference.items()):
+            raise ValueError(f"restore manifest identity differs from accepted lock: {path.name}")
         key = (value["kind"], ref.get("namespace", ""), ref["name"])
         if key in selected:
             raise ValueError(f"duplicate accepted restore manifest: {key}")
