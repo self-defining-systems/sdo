@@ -35,6 +35,7 @@ if TYPE_CHECKING:
         install_existing,
         reset_control_state,
         stop_runtime,
+        sync_existing,
     )
     from benchmarks.sregym.adapter.oracle_observability import prepare_oracle_observability, route_astronomy_traces
     from benchmarks.sregym.adapter.persistent import (
@@ -69,6 +70,7 @@ if TYPE_CHECKING:
     from benchmarks.sregym.adapter.scripted_replay_catalog import SCRIPTED_REPLAY_SLOTS
 
 _EXPORTS: dict[str, str] = {
+    "sync_existing": "native_operator",
     "assert_stable_workloads": "eval_guards",
     "closure_pending": "eval_guards",
     "controller_proof": "eval_guards",
@@ -156,6 +158,7 @@ __all__ = [
     "deployed_lifecycle",
     "launch_native_lifecycle",
     "native_install_config",
+    "sync_existing",
     "ControllerInstallError",
     "execute_operator",
     "inspect_existing",

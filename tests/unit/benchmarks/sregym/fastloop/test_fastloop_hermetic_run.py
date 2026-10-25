@@ -729,6 +729,16 @@ def test_scripted_fastloop_reuses_reflected_target_port_program(
         return SimpleNamespace(reused=False, accepted_commit="a" * 40)
 
     monkeypatch.setattr(driver, "install_existing", install)
+    from benchmarks.sregym.adapter import native_operator
+
+    def synchronize(config):
+        # This fixture's broker writes the actual accepted Git repository in
+        # place. The transport edge needs no PVC copy, but must bind that repo.
+        assert config.repository.resolve() == workspace.resolve()
+        assert (config.repository / ".git").exists()
+
+    monkeypatch.setattr(native_operator, "sync_existing", synchronize)
+    monkeypatch.setattr(adapter, "sync_existing", synchronize)
     monkeypatch.setattr(
         adapter,
         "launch_native_lifecycle",

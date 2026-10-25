@@ -203,6 +203,7 @@ def test_failed_learning_keeps_program_for_third_incident(tmp_path: Path, monkey
                 value = json.loads(json.dumps(original))
                 value["metadata"].update(uid="app-uid", generation=1)
                 value["spec"]["selector"] = {"matchLabels": {"app": "app"}}
+                value["status"] = {"observedGeneration": 1, "replicas": 1, "updatedReplicas": 1, "readyReplicas": 1}
                 objects.append(value)
             objects.append(
                 {

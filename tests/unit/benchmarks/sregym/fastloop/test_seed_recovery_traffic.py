@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -19,6 +20,11 @@ from benchmarks.sregym.fastloop import seed_recovery
     ],
 )
 def test_seed_recovery_requires_complete_successful_independent_traffic(monkeypatch, phase, ok, complete):
+    from benchmarks.sregym import adapter
+
+    api = Mock(return_value=SimpleNamespace(stdout=""))
+    monkeypatch.setattr(adapter, "kubectl", api)
+    monkeypatch.setenv("KUBECONFIG", "/fixture/kubeconfig")
     runner = Mock()
     runner.run_pod.return_value = phase, "synthetic probe log"
     entry = object()
@@ -41,6 +47,7 @@ def test_seed_recovery_requires_complete_successful_independent_traffic(monkeypa
     assert result["kind"] == "health-check"
     assert result["details"]["baseline_oracle"] is original
     runner.run_pod.assert_called_once_with({"metadata": {"name": "probe"}}, timeout_s=120)
+    assert json.loads(api.call_args.kwargs["input_text"])["metadata"]["name"] == "sregym"
 
 
 def test_failed_baseline_never_probes_or_credits_cleanup():
@@ -61,6 +68,29 @@ def test_hotel_client_refresh_is_scoped_and_reports_bounded_rollout(monkeypatch,
     problem = SimpleNamespace(
         app=SimpleNamespace(name="Hotel Reservation"), namespace="hotel-reservation", kubectl=kubectl
     )
+    from benchmarks.sregym import adapter
+
+    items = []
+    for name in ("consul", *seed_recovery.RESTORE_CLIENTS["hotel-reservation"]):
+        items.extend(
+            [
+                {
+                    "kind": "Deployment",
+                    "metadata": {"name": name},
+                    "spec": {"selector": {"matchLabels": {"app": name}}},
+                },
+                {
+                    "kind": "Pod",
+                    "metadata": {
+                        "name": name + "-pod",
+                        "labels": {"app": name},
+                        "creationTimestamp": "2026-10-25T20:00:00Z" if name == "consul" else "2026-10-25T20:01:00Z",
+                    },
+                },
+            ]
+        )
+    monkeypatch.setattr(adapter, "kubectl", lambda *a, **kw: SimpleNamespace(stdout=json.dumps({"items": items})))
+    monkeypatch.setenv("KUBECONFIG", "/fixture/kubeconfig")
     result = seed_recovery.refresh_baseline_clients(problem)
     assert result["success"] is settled
     command = kubectl.exec_command.call_args.args[0]

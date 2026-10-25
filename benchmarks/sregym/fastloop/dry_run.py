@@ -125,6 +125,10 @@ def run_lane(run_dir: Path, timeout: int) -> int:
                 str(timeout),
             ]
         )
+        # Leave a bounded share for the one app-only restore and retry.
+        remaining = timeout - (time.monotonic() - started) - 5
+        args.admission_timeout_seconds = max(1, (remaining - 60) / 2)
+        args.admission_progress = passed
         control = control_namespace_for(environment.namespace)
         with cli._worker(environment) as worker:
             agent = cli._sdo_agent(args, environment, directory, worker=worker)

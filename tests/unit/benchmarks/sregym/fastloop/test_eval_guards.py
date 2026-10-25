@@ -299,3 +299,67 @@ def test_astronomy_fetcher_uses_harness_namespace_and_app_service_dns(monkeypatc
     assert clean_start.prepare_harness_traffic(app, Path("unused"))
     app.start_workload()
     assert created == [("sregym", "load-generator.astronomy-shop.svc.cluster.local:8089")]
+
+
+@pytest.mark.parametrize(
+    "status",
+    [
+        {"observedGeneration": 1, "replicas": 1, "updatedReplicas": 1, "readyReplicas": 1},
+        {"observedGeneration": 2, "replicas": 2, "updatedReplicas": 1, "readyReplicas": 1},
+        {"observedGeneration": 2, "replicas": 1, "updatedReplicas": 0, "readyReplicas": 1},
+    ],
+)
+def test_old_ready_pods_do_not_prove_current_workload_rollout(monkeypatch, status):
+    from benchmarks.sregym.fastloop import admission
+
+    workload = {
+        "kind": "Deployment",
+        "metadata": {"name": "api", "generation": 2},
+        "spec": {"replicas": 1, "selector": {"matchLabels": {"app": "api"}}},
+        "status": status,
+    }
+    pod = {
+        "kind": "Pod",
+        "metadata": {"uid": "old", "labels": {"app": "api"}},
+        "status": {"conditions": [{"type": "Ready", "status": "True"}]},
+    }
+    monkeypatch.setattr(
+        admission, "kubectl", lambda *a, **kw: SimpleNamespace(stdout=json.dumps({"items": [workload, pod]}))
+    )
+    with pytest.raises(ValueError, match="rollout not complete"):
+        admission.workload_identity(Path("unused"), "any-app")
+
+
+def test_fresh_guard_accepts_actual_broker_health_bootstrap_and_rendered_commit(tmp_path):
+    import shutil
+    import subprocess
+
+    from benchmarks.sregym.adapter.eval_guards import setup_lineage
+
+    root = Path(__file__).resolve().parents[5]
+    repository = tmp_path / "accepted"
+    shutil.copytree(root / "apps/toy/seed", repository)
+    (repository / "service.yaml").write_text(
+        "apiVersion: v1\nkind: Service\nmetadata:\n  name: frontend\nspec:\n  ports:\n  - port: 80\n"
+    )
+    for args in (
+        ["init", "-q"],
+        ["add", "."],
+        ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.com", "commit", "-qm", "installed seed"],
+    ):
+        subprocess.run(["git", "-C", str(repository), *args], check=True, capture_output=True)
+    seed = subprocess.check_output(["git", "-C", str(repository), "rev-parse", "HEAD"], text=True).strip()
+    fixture = Path(__file__).with_name("fixtures") / "setup.go"
+    actual = subprocess.run(
+        ["go", "run", str(fixture), str(repository)],
+        cwd=root / "sdo/operator",
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    published = json.loads(actual.stdout)
+    assert ".sdo/playbooks/README.md" in published["health_paths"]
+    lineage = setup_lineage(repository, seed)
+    assert lineage["accepted_commit"] == published["head"]
+    assert [row["actor"] for row in lineage["commits"]] == ["health_judge", "controller"]
