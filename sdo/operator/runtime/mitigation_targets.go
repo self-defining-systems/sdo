@@ -78,3 +78,19 @@ func (l *ResponderLoop) validateFindingTargets(fingerprints []string) error {
 	}
 	return nil
 }
+
+// Unknown scope requires a clear sample. A known scope compares the original
+// target fingerprints, including the responder's freshest post-apply sample.
+func targetedFindingsClear(targets, current []sdk.Finding) bool {
+	if targets == nil {
+		return len(current) == 0
+	}
+	for _, finding := range current {
+		for _, target := range targets {
+			if FindingFingerprint(finding) == FindingFingerprint(target) {
+				return false
+			}
+		}
+	}
+	return true
+}

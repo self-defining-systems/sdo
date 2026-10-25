@@ -15,7 +15,7 @@ func programRunContract(run ProgramRun) *contracts.ProgramRun {
 	result := &contracts.ProgramRun{CanMitigate: run.CanMitigate, ProgramId: run.ProgramID, FindingFingerprint: run.FindingFingerprint, BindingSource: run.BindingSource, ProgramRevision: run.ProgramRevision, Duration: durationpb.New(run.Duration), Verdict: verdictContract(run.Verdict)}
 	result.Bindings = programBindingsContract(run.Bindings)
 	for _, evidence := range run.Verdict.Evidence {
-		if run.Verdict.Result == program.Unknown && evidence.Resource.Kind == "" && evidence.Fact == "diagnosis" {
+		if evidence.Resource.Kind == "" && (evidence.Fact == "" || (run.Verdict.Result == program.Unknown && evidence.Fact == "diagnosis")) {
 			result.Error = evidence.Observed
 			break
 		}

@@ -728,7 +728,9 @@ func (l *ResponderLoop) apply(ctx context.Context, request ToolRequest, response
 		// Application credit is binding-scoped; closure still independently
 		// requires global health. A different open fault is not a failed repair.
 		result.VerificationPassed = err == nil && response.Error == "" && result.VerificationCompleted &&
-			boundPlansNoMatch(selected, response.ProgramRuns) && result.VerificationPassed
+			boundPlansNoMatch(selected, response.ProgramRuns) &&
+			targetedFindingsClear(l.mitigationIncident(selected).Findings, response.Findings) &&
+			result.VerificationPassed
 		if !result.VerificationPassed {
 			// Program trust counts an unverified application against the program's
 			// current revision, durably, even if the responder is restarted.

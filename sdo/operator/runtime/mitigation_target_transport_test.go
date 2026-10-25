@@ -141,3 +141,25 @@ func TestUnknownTargetFindingIsRefusedBeforeRepair(t *testing.T) {
 		t.Fatalf("invalid scope changed state: %v %v", service, err)
 	}
 }
+
+func TestApplyRequiresTargetClearInLatestSelfCheck(t *testing.T) {
+	loop, _ := trustedPortLoop(t, false, false, true)
+	finding := loop.Request.Findings[0]
+	finding.RuleID = "endpoint"
+	finding.Fingerprint = "api-endpoint"
+	finding.Summary = "application endpoint unavailable"
+	loop.Request.Findings = []sdk.Finding{finding}
+	loop.findings = []sdk.Finding{finding}
+	detector := &sequenceDetector{spec: fastloopDetector{}.Spec(), samples: [][]sdk.Finding{nil, {finding}}}
+	loop.Detectors = []sdk.Detector{detector}
+	loop.Executor.Verifier = PlanHealthVerifier{Provider: loop.Provider, Detectors: loop.Detectors}
+	ctx := context.Background()
+	planned := loop.Handle(ctx, ToolRequest{Command: "plan", ProgramID: "service-targetport-mismatch", Bindings: program.Bindings{Objects: program.ObjectBindings{"service": finding.PrimaryResource}}, FindingFingerprints: []string{finding.Fingerprint}})
+	applied := loop.Handle(ctx, ToolRequest{Command: "apply", PlanIDs: []string{planned.PlanID}})
+	if planned.Error != "" || applied.Error != "" || len(applied.Findings) != 1 {
+		t.Fatalf("real apply/self-check: plan=%+v applied=%+v", planned, applied)
+	}
+	if applied.TargetedHealthy || loop.PlanApplications()[0].Result.VerificationPassed {
+		t.Fatalf("older clear sample overrode latest target finding: %+v", applied)
+	}
+}
