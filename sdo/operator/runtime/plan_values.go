@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -11,10 +12,14 @@ import (
 )
 
 type PlanActionReport struct {
-	ActionIndex int                       `json:"action_index"`
-	Status      string                    `json:"status"`
-	Values      []program.ValueProvenance `json:"values,omitempty"`
-	ExitCode    *int32                    `json:"exit_code,omitempty"`
+	ActionIndex      int                       `json:"action_index"`
+	Status           string                    `json:"status"`
+	Values           []program.ValueProvenance `json:"values,omitempty"`
+	ExitCode         *int32                    `json:"exit_code,omitempty"`
+	ExternalEffect   *program.ExternalEffect   `json:"external_effect,omitempty"`
+	KubernetesEffect *program.KubernetesEffect `json:"kubernetes_effect,omitempty"`
+	JobStatus        json.RawMessage           `json:"job_status,omitempty"`
+	RecordingError   string                    `json:"recording_error,omitempty"`
 }
 
 func newPlanReports(plan program.Plan) []PlanActionReport {

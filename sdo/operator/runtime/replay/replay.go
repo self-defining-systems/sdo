@@ -151,6 +151,9 @@ func Check(ctx context.Context, p program.Diagnoser, m program.Mitigator, detect
 	if err = client.seedDatabases(append(append([]sdktest.PrimitiveCall(nil), c.Corpus.Open.Readings...), c.Corpus.PhaseRecordings("open")...)); err != nil {
 		return fail(err)
 	}
+	if err = client.seedExternal(append(append([]sdktest.PrimitiveCall(nil), c.Corpus.Open.Readings...), c.Corpus.PhaseRecordings("open")...)); err != nil {
+		return fail(err)
+	}
 	r.Effects = append(r.Effects, "simulated:apiserver-metadata")
 	const commit = "offline-accepted"
 	incident := operator.IncidentRequest{IncidentID: c.ID, Application: c.Corpus.Open.NamespaceName, Namespace: c.Corpus.Open.NamespaceName, SourceCommit: commit, RepairPolicy: "recorded-actions"}
@@ -196,6 +199,10 @@ func Check(ctx context.Context, p program.Diagnoser, m program.Mitigator, detect
 		if a.Status == "applied" {
 			r.Effects = append(r.Effects, fmt.Sprintf("real:%T:action:%d", plan.Actions[a.ActionIndex], a.ActionIndex))
 			switch plan.Actions[a.ActionIndex].(type) {
+			case program.EnsureExec, *program.EnsureExec, program.EnsureHTTP, *program.EnsureHTTP:
+				r.Effects = append(r.Effects, "simulated:recorded-external-transition")
+			case program.RunJob, *program.RunJob:
+				r.Effects = append(r.Effects, "simulated:recorded-job-completion")
 			case program.EnsureDatabaseUser, *program.EnsureDatabaseUser:
 				r.Effects = append(r.Effects, "simulated:mongodb-user-catalog")
 			}
@@ -293,6 +300,7 @@ func (v *postVerifier) Verify(ctx context.Context) (bool, error) {
 	}
 	view := newReadView(ctx, s, unchangedPodProbes(v.cluster.initial, s, v.recordings), v.source)
 	view.catalog = v.cluster
+	view.external = v.cluster
 	v.result.Post = program.RunDiagnose(ctx, v.p, view, v.bindings, 5*time.Second)
 	v.result.Detectors["post"] = detect(ctx, v.detectors, s)
 	clear := v.result.Post.Result == program.NoMatch
@@ -382,6 +390,12 @@ type cluster struct {
 	original              sdktest.Snapshot
 	catalogs              map[string]databaseCatalog
 	catalogConfigurations map[string]program.DatabaseTarget
+	operationState        map[string]int32
+	externalEffects       []program.ExternalEffect
+	effectUsed            map[int]bool
+	externalCalls         []sdktest.PrimitiveCall
+	jobCallsUsed          map[int]bool
+	apiCallsUsed          map[int]bool
 	simCreated            map[sdk.ObjectRef]*unstructured.Unstructured
 	simDeleted            map[sdk.ObjectRef]bool
 	simStatus             map[sdk.ObjectRef]map[string]any

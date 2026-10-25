@@ -40,7 +40,13 @@ func FieldValue(object map[string]any, path string) (any, error)
     FieldValue resolves numeric indexes, unique [name=NAME] list identities and
     bracketed ConfigMap keys. It does not invent missing intermediate objects.
 
+func ProjectPatch(object map[string]any, a PatchObject) (map[string]any, error)
+    ProjectPatch is the shared atomic projection used by production and replay.
+    Errors leave the input untouched. The API server still validates its schema.
+
 func ValidateBindings(spec ProgramSpec, b Bindings) error
+func ValidateGeneralRef(ref sdk.ObjectRef) error
+func ValidateKubernetesRead(r KubernetesRequest) error
 func ValidateRemoveServicePort(a RemoveServicePort) error
     ValidateRemoveServicePort checks the target and exclusive port identity.
 
@@ -65,6 +71,20 @@ type Action interface {
 	// Has unexported methods.
 }
 
+type ApplyObject struct {
+	Ref    sdk.ObjectRef
+	Object map[string]any
+	Mode   string
+	Reason string
+}
+    ApplyObject creates a missing object or merges desired fields into
+    an existing object. Mode create refuses an existing object; replace
+    replaces its document. For server-side apply and field ownership,
+    use KubernetesRequest with the application/apply-patch+yaml content type and
+    fieldManager query parameter.
+
+func (a ApplyObject) Validate() error
+
 type Bindings struct {
 	Objects ObjectBindings `json:"objects,omitempty"`
 	Values  map[string]any `json:"values,omitempty"`
@@ -87,6 +107,18 @@ func (b Bindings) Parameter(spec ProgramSpec, name string) (any, error)
 func (b *Bindings) UnmarshalJSON(raw []byte) error
     UnmarshalJSON imports object-only corpus bindings from existing recordings.
     New recordings always use explicit objects and values maps.
+
+type Command struct {
+	Pod       sdk.ObjectRef `json:"pod"`
+	Container string        `json:"container"`
+	Args      []string      `json:"args"`
+	Stdin     string        `json:"stdin,omitempty"`
+}
+    Command runs inside a named container. Output is discarded; observations are
+    exit codes. Stdin permits scripts and byte streams (including tar for cp).
+    Credentials must be resolved inside the container through environment refs.
+
+func (c Command) Validate() error
 
 type CreateFromSource struct {
 	Ref    sdk.ObjectRef
@@ -182,6 +214,20 @@ type EnsureDatabaseUser struct {
 
 func (a EnsureDatabaseUser) Validate() error
 
+type EnsureExec struct {
+	Observe Command
+	Ensure  Command
+	Expect  int32
+	Reason  string
+}
+
+type EnsureHTTP struct {
+	Observe HTTPRequest
+	Ensure  HTTPRequest
+	Expect  int32
+	Reason  string
+}
+
 type Evidence struct {
 	Resource sdk.ObjectRef `json:"resource"`
 	Fact     string        `json:"fact"`
@@ -197,13 +243,95 @@ type Exec struct {
     Exec executes a provenance-derived command. Only its exit code is reported.
     The Kubernetes API enforces the controller's existing pods/exec RBAC grant.
 
+type ExternalEffect struct {
+	Observe  ExternalOperation `json:"observe"`
+	Ensure   ExternalOperation `json:"ensure"`
+	Before   int32             `json:"before"`
+	After    int32             `json:"after"`
+	ExitCode int32             `json:"exit_code"`
+}
+    ExternalEffect is controller-recorded transition evidence. It binds exact
+    observe/ensure operations and before/after exit codes, never an expected
+    fixed snapshot. Replay cannot invent this evidence from an authored program.
+
+type ExternalOperation struct {
+	Exec *Command     `json:"exec,omitempty"`
+	HTTP *HTTPRequest `json:"http,omitempty"`
+}
+    ExternalOperation is a serializable exact operation identity for recordings.
+
+func (o ExternalOperation) Pod() sdk.ObjectRef
+
+func (o ExternalOperation) Validate() error
+
 type HTTPProbe struct {
 	Method  string            `json:"method"`
 	Path    string            `json:"path"`
 	Headers map[string]string `json:"headers,omitempty"`
 }
 
+type HTTPRequest struct {
+	Pod       sdk.ObjectRef            `json:"pod"`
+	Container string                   `json:"container"`
+	Method    string                   `json:"method"`
+	URL       string                   `json:"url"`
+	Headers   map[string]string        `json:"headers,omitempty"`
+	HeaderEnv map[string]CredentialRef `json:"header_env,omitempty"`
+	Body      string                   `json:"body,omitempty"`
+	Bearer    *CredentialRef           `json:"bearer,omitempty"`
+}
+    HTTPRequest uses curl inside a selected container. Its result is curl's
+    exit code, including HTTP errors with --fail. Response bodies and stderr are
+    never captured. Bearer names an environment variable; it is expanded only
+    there.
+
+func (h HTTPRequest) Validate() error
+
 type Kind string
+
+type KubernetesEffect struct {
+	Request     KubernetesRequest `json:"request"`
+	Before      map[string]any    `json:"before,omitempty"`
+	After       map[string]any    `json:"after,omitempty"`
+	BeforeKnown bool              `json:"before_known"`
+	AfterKnown  bool              `json:"after_known"`
+	Response    json.RawMessage   `json:"response"`
+}
+    KubernetesEffect records a raw API mutation and measured object images.
+    Known distinguishes confirmed absence from an unavailable read. Replay
+    rejects missing images instead of inventing a subresource or admission
+    effect.
+
+type KubernetesRequest struct {
+	Ref         sdk.ObjectRef
+	Method      string            `json:"method"`
+	Path        string            `json:"path"`
+	Query       map[string]string `json:"query,omitempty"`
+	ContentType string            `json:"content_type,omitempty"`
+	Body        []byte            `json:"body,omitempty"`
+	Reason      string            `json:"reason,omitempty"`
+}
+    KubernetesRequest exposes the Kubernetes HTTP API, including subresources,
+    cluster resources and discovered kinds. Query carries API options.
+    Only the API server's RBAC authorizes operations. Secret endpoints are never
+    accessed.
+
+func (r KubernetesRequest) CredentialResponse() bool
+    CredentialResponse identifies API operations whose response is a credential,
+    rather than cluster evidence. Their bodies are never read by the controller.
+    Use a container command when the generated value must be consumed there.
+
+func (r KubernetesRequest) Validate() error
+
+type ListEdit struct {
+	Path  string         `json:"path"`
+	Match map[string]any `json:"match"`
+	Op    string         `json:"op"`
+	Value any            `json:"value,omitempty"`
+}
+    ListEdit selects exactly one list element by matching all fields in Match.
+    Op is remove, replace, or insert (immediately before the matched element).
+    Use ordinary JSON patch's /- path to append, including to an empty list.
 
 type Mitigator interface {
 	Spec() ProgramSpec
@@ -226,6 +354,20 @@ type ParamSpec struct {
     ParamSpec declares roles bound by triggering detector findings; Diagnose
     reads additional objects through ReadView by name or relation, never role
     enumeration.
+
+type PatchObject struct {
+	Ref    sdk.ObjectRef
+	Type   string
+	Patch  json.RawMessage
+	Edits  []ListEdit
+	Reason string
+}
+    PatchObject patches any nonsecret Kubernetes object. Type is json (RFC
+    6902), merge (RFC 7396), or strategic (Kubernetes built-in schema). Edits
+    resolve list identities against the current object before producing JSON
+    patch operations.
+
+func (a PatchObject) Validate() error
 
 type Plan struct {
 	Actions   []Action
@@ -277,6 +419,8 @@ type ReadView interface {
 	DiffAgainstSource(ref sdk.ObjectRef) (Diff, error)
 	DiffAgainstBaseline(ref sdk.ObjectRef) (Diff, error)
 	DatabaseUsers(DatabaseTarget) ([]DatabaseUser, error)
+	Observe(ExternalOperation) (int32, error)
+	KubernetesRead(KubernetesRequest) (json.RawMessage, error)
 }
 
 func ReadFrom(view sdk.DetectionContext) ReadView
@@ -316,6 +460,13 @@ type Rollback struct {
 	Ref        sdk.ObjectRef
 	ToRevision string
 }
+
+type RunJob struct {
+	Object     ApplyObject
+	Completion WaitFor
+}
+    RunJob creates a named Job or Pod and waits for its actual completion.
+    Replay requires a recorded completion for this exact manifest.
 
 type ScaleWorkload struct {
 	Ref      sdk.ObjectRef
@@ -415,6 +566,18 @@ type Verdict struct {
 func RunDiagnose(ctx context.Context, p Diagnoser, v ReadView, b Bindings, deadline time.Duration) (verdict Verdict)
 
 func (v Verdict) Validate() error
+
+type WaitFor struct {
+	Ref      sdk.ObjectRef
+	Path     string
+	Equals   any
+	Timeout  time.Duration
+	Interval time.Duration
+}
+    WaitFor observes a JSON pointer until it equals Equals. Timeout and Interval
+    bound polling; zero uses 30 seconds / 250 milliseconds respectively.
+
+func (w WaitFor) Validate() error
 
 ```
 

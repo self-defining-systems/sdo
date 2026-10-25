@@ -161,7 +161,27 @@ func NewResponderLoop(request IncidentRequest, programs program.ProgramRegistry,
 	if _, err := rand.Read(session); err != nil {
 		panic(err)
 	}
-	return &ResponderLoop{sessionID: fmt.Sprintf("%x", session), Request: request, Programs: programs, Provider: provider, Detectors: detectors, Executor: executor, MaxBatches: maxBatches, plans: map[string]selectedPlan{}, applications: map[string]PlanApplicationResult{}, matchedViews: map[string]program.ReadView{}, matchedPlans: map[string]PlanApplicationResult{}, findings: append([]sdk.Finding(nil), request.Findings...)}
+	loop := &ResponderLoop{sessionID: fmt.Sprintf("%x", session), Request: request, Programs: programs, Provider: provider, Detectors: detectors, Executor: executor, MaxBatches: maxBatches, plans: map[string]selectedPlan{}, applications: map[string]PlanApplicationResult{}, matchedViews: map[string]program.ReadView{}, matchedPlans: map[string]PlanApplicationResult{}, findings: append([]sdk.Finding(nil), request.Findings...)}
+	priorRecorder := executor.RecordPrimitive
+	loop.Executor.RecordPrimitive = func(call sdktest.PrimitiveCall) error {
+		if priorRecorder != nil {
+			if err := priorRecorder(call); err != nil {
+				return err
+			}
+		}
+		if loop.CorpusSessionRoot == "" {
+			return nil
+		}
+		phase := loop.capturePhase
+		if phase == "" {
+			phase = "open@detect"
+			if loop.preApplyCaptured {
+				phase = "open@pre-apply"
+			}
+		}
+		return memory.AppendCapturedRecording(loop.CorpusSessionRoot, loop.Request.IncidentID, phase, call)
+	}
+	return loop
 }
 
 func (l *ResponderLoop) ToolCalls() []ToolCall {

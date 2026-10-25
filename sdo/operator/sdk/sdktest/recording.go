@@ -284,6 +284,29 @@ func RecordPrimitiveCalls(view program.ReadView, calls []PrimitiveCall) ([]Primi
 		}
 
 		switch call.Method {
+		case "ExternalEffect", "JobCompletion", "KubernetesEffect":
+			// Effects are historical write evidence, never repeat mutations.
+			continue
+		case "Observe":
+			if len(args) != 1 {
+				return nil, errors.New("invalid Observe arguments")
+			}
+			var o program.ExternalOperation
+			if err := json.Unmarshal(args[0], &o); err != nil {
+				return nil, err
+			}
+			_, _ = recorder.Observe(o)
+			continue
+		case "KubernetesRead":
+			if len(args) != 1 {
+				return nil, errors.New("invalid KubernetesRead arguments")
+			}
+			var q program.KubernetesRequest
+			if err := json.Unmarshal(args[0], &q); err != nil {
+				return nil, err
+			}
+			_, _ = recorder.KubernetesRead(q)
+			continue
 		case "Object":
 			if len(args) != 1 {
 				return nil, errors.New("invalid Object arguments")

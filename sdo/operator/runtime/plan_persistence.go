@@ -3,6 +3,7 @@ package runtime
 import (
 	"encoding/json"
 	"fmt"
+	utiljson "k8s.io/apimachinery/pkg/util/json"
 
 	"sdo.dev/operator/sdk/program"
 )
@@ -69,6 +70,21 @@ func encodePersistedActions(actions []program.Action) ([]persistedAction, error)
 	for _, action := range actions {
 		var kind string
 		switch action.(type) {
+		case program.PatchObject, *program.PatchObject:
+			kind = "patch_object"
+		case program.ApplyObject, *program.ApplyObject:
+			kind = "apply_object"
+		case program.KubernetesRequest, *program.KubernetesRequest:
+			kind = "kubernetes_request"
+		case program.WaitFor, *program.WaitFor:
+			kind = "wait_for"
+		case program.EnsureExec, *program.EnsureExec:
+			kind = "ensure_exec"
+		case program.EnsureHTTP, *program.EnsureHTTP:
+			kind = "ensure_http"
+		case program.RunJob, *program.RunJob:
+			kind = "run_job"
+
 		case program.CreateFromSource, *program.CreateFromSource:
 			kind = "create_from_source"
 		case program.DeleteObject, *program.DeleteObject:
@@ -114,6 +130,21 @@ func decodePersistedActions(encoded []persistedAction) ([]program.Action, error)
 	for _, entry := range encoded {
 		var action program.Action
 		switch entry.Kind {
+		case "patch_object":
+			action = &program.PatchObject{}
+		case "apply_object":
+			action = &program.ApplyObject{}
+		case "kubernetes_request":
+			action = &program.KubernetesRequest{}
+		case "wait_for":
+			action = &program.WaitFor{}
+		case "ensure_exec":
+			action = &program.EnsureExec{}
+		case "ensure_http":
+			action = &program.EnsureHTTP{}
+		case "run_job":
+			action = &program.RunJob{}
+
 		case "create_from_source":
 			action = &program.CreateFromSource{}
 		case "delete_object":
@@ -142,10 +173,25 @@ func decodePersistedActions(encoded []persistedAction) ([]program.Action, error)
 		if len(entry.Action) == 0 || string(entry.Action) == "null" {
 			return nil, fmt.Errorf("missing %s action", entry.Kind)
 		}
-		if err := json.Unmarshal(entry.Action, action); err != nil {
+		if err := utiljson.Unmarshal(entry.Action, action); err != nil {
 			return nil, fmt.Errorf("decode %s action: %w", entry.Kind, err)
 		}
 		switch value := action.(type) {
+		case *program.PatchObject:
+			decoded = append(decoded, *value)
+		case *program.ApplyObject:
+			decoded = append(decoded, *value)
+		case *program.KubernetesRequest:
+			decoded = append(decoded, *value)
+		case *program.WaitFor:
+			decoded = append(decoded, *value)
+		case *program.EnsureExec:
+			decoded = append(decoded, *value)
+		case *program.EnsureHTTP:
+			decoded = append(decoded, *value)
+		case *program.RunJob:
+			decoded = append(decoded, *value)
+
 		case *program.CreateFromSource:
 			decoded = append(decoded, *value)
 		case *program.DeleteObject:

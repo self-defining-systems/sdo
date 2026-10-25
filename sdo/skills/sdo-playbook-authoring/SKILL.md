@@ -35,3 +35,5 @@ and justifies.
 Before returning memory edits, run the complete memory check and resolve every diagnostic until it passes.
 
 Read [validator rules](references/rules.md) when a diagnostic names a playbook, script or corpus rule.
+
+For object, command, HTTP, Job or subresource repairs, read the [general action vocabulary](references/general-actions.md).

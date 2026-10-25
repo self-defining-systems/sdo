@@ -23,3 +23,12 @@ Captured errors, redactions and size/discovery failures are evidence gaps.
 
 Discovery is the capture inventory. New API kinds require no capture or replay
 switch cases. Reinstall/update controller read grants after introducing new APIs.
+
+For generic operational observations, `ReadView.KubernetesRead` exposes read-only API
+requests (including metrics), and `ReadView.Observe` returns the exit code of a
+container command or HTTP request. These are recorded through the shared read
+view; missing/failed observations remain Unknown. Keep commands deterministic and
+free of LLM calls, and reference credentials only inside the container. Mutation
+belongs to a mitigator plan, using the
+[general action vocabulary](../../sdo-playbook-authoring/references/general-actions.md).
+Do not declare a fault-specific SDK gap when a general primitive covers the operation.

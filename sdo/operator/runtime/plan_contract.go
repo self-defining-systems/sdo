@@ -1,7 +1,9 @@
 package runtime
 
 import (
+	"encoding/json"
 	"fmt"
+	utiljson "k8s.io/apimachinery/pkg/util/json"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
@@ -57,6 +59,14 @@ func (r PlanApplicationResult) Proto() (*contracts.PlanApplication, error) {
 	}
 	for _, report := range r.ActionReports {
 		encoded := &contracts.ActionReport{ActionIndex: uint32(report.ActionIndex), Status: report.Status, ExitCode: report.ExitCode}
+		encoded.RecordingError = report.RecordingError
+		encoded.JobStatusJson = report.JobStatus
+		if report.ExternalEffect != nil {
+			encoded.ExternalEffectJson, _ = json.Marshal(report.ExternalEffect)
+		}
+		if report.KubernetesEffect != nil {
+			encoded.KubernetesEffectJson, _ = json.Marshal(report.KubernetesEffect)
+		}
 		for _, v := range report.Values {
 			var ref *contracts.ObjectRef
 			if v.Origin != program.ParameterValue {
@@ -93,6 +103,20 @@ func planApplicationState(application *contracts.PlanApplication) RecordedPlanAp
 	}
 	for _, report := range application.GetActionReports() {
 		decoded := PlanActionReport{ActionIndex: int(report.GetActionIndex()), Status: report.GetStatus(), ExitCode: report.ExitCode}
+		decoded.RecordingError = report.GetRecordingError()
+		decoded.JobStatus = report.GetJobStatusJson()
+		if len(report.GetExternalEffectJson()) > 0 {
+			var effect program.ExternalEffect
+			if json.Unmarshal(report.GetExternalEffectJson(), &effect) == nil {
+				decoded.ExternalEffect = &effect
+			}
+		}
+		if len(report.GetKubernetesEffectJson()) > 0 {
+			var effect program.KubernetesEffect
+			if utiljson.Unmarshal(report.GetKubernetesEffectJson(), &effect) == nil {
+				decoded.KubernetesEffect = &effect
+			}
+		}
 		for _, v := range report.GetValues() {
 			decoded.Values = append(decoded.Values, program.ValueProvenance{Origin: program.ValueOrigin(v.GetOrigin()), Ref: objectRefState(v.GetRef()), Path: v.GetPath(), SourceCommit: v.GetSourceCommit(), ResourceVersion: v.GetResourceVersion(), Parameter: v.GetParameter()})
 		}
@@ -108,6 +132,11 @@ func planApplicationState(application *contracts.PlanApplication) RecordedPlanAp
 }
 
 func planActionProto(action program.Action) (*contracts.Action, error) {
+	if isGeneralAction(action) {
+		if _, legacyDelete := generalAction(action).(program.DeleteObject); !legacyDelete {
+			return generalActionProto(action)
+		}
+	}
 	switch a := action.(type) {
 	case program.RemoveServicePort:
 		return &contracts.Action{Kind: &contracts.Action_RemoveServicePort{RemoveServicePort: &contracts.RemoveServicePort{Ref: planRefProto(a.Ref), Name: a.Name, Port: a.Port, Protocol: a.Protocol, AllowEmpty: a.AllowEmpty, Reason: a.Reason}}}, nil
@@ -202,6 +231,12 @@ func planRefProto(ref sdk.ObjectRef) *contracts.ObjectRef {
 
 func planActionState(action *contracts.Action) program.Action {
 	var decoded program.Action
+	if general, err := generalActionState(action); err == nil {
+		if (program.Plan{Actions: []program.Action{general}}).Validate() == nil {
+			return general
+		}
+		return nil
+	}
 	switch kind := action.GetKind().(type) {
 	case *contracts.Action_RemoveServicePort:
 		a := kind.RemoveServicePort

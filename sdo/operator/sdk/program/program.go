@@ -10,6 +10,7 @@ import (
 	"sdo.dev/operator/sdk/traffic"
 
 	"context"
+	"encoding/json"
 	"fmt"
 	"sync"
 	"time"
@@ -151,6 +152,8 @@ type ReadView interface {
 	DiffAgainstSource(ref sdk.ObjectRef) (Diff, error)
 	DiffAgainstBaseline(ref sdk.ObjectRef) (Diff, error)
 	DatabaseUsers(DatabaseTarget) ([]DatabaseUser, error)
+	Observe(ExternalOperation) (int32, error)
+	KubernetesRead(KubernetesRequest) (json.RawMessage, error)
 }
 
 type ProbeResult struct {
@@ -289,6 +292,9 @@ type Plan struct {
 
 func (p Plan) Validate() error {
 	for _, action := range p.Actions {
+		if err := validateGeneralAction(action); err != nil {
+			return err
+		}
 		if err := validateDatabaseAction(action); err != nil {
 			return err
 		}

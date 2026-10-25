@@ -153,6 +153,8 @@ func (v *RecordingReadView) DiffAgainstBaseline(ref sdk.ObjectRef) (program.Diff
 
 func (v *RecordingReadView) DiffAgainstSource(ref sdk.ObjectRef) (program.Diff, error)
 
+func (v *RecordingReadView) KubernetesRead(q program.KubernetesRequest) (json.RawMessage, error)
+
 func (v *RecordingReadView) Logs(ref sdk.ObjectRef, container string, since time.Duration) (string, error)
 
 func (v *RecordingReadView) MetricResult(id string) (metrics.Result, bool)
@@ -166,6 +168,8 @@ func (v *RecordingReadView) Object(ref sdk.ObjectRef) (*unstructured.Unstructure
 func (v *RecordingReadView) ObservationGeneration() string
 
 func (v *RecordingReadView) ObservationStatuses() []sdk.ObservationStatus
+
+func (v *RecordingReadView) Observe(o program.ExternalOperation) (int32, error)
 
 func (v *RecordingReadView) ObservedAt() time.Time
 
@@ -212,11 +216,15 @@ func (v *ReplayReadView) DiffAgainstBaseline(ref sdk.ObjectRef) (program.Diff, e
 
 func (v *ReplayReadView) DiffAgainstSource(ref sdk.ObjectRef) (program.Diff, error)
 
+func (v *ReplayReadView) KubernetesRead(q program.KubernetesRequest) (json.RawMessage, error)
+
 func (v *ReplayReadView) Logs(ref sdk.ObjectRef, container string, since time.Duration) (string, error)
 
 func (v *ReplayReadView) MetricResult(id string) (metrics.Result, bool)
 
 func (v *ReplayReadView) MutatingWebhookConfigurations() ([]admissionv1.MutatingWebhookConfiguration, error)
+
+func (v *ReplayReadView) Observe(o program.ExternalOperation) (int32, error)
 
 func (v *ReplayReadView) ObservedView() (sdk.DetectionContext, func() error)
 
@@ -300,6 +308,8 @@ func (s Snapshot) Events() []corev1.Event
 
 func (s Snapshot) HorizontalPodAutoscalers() []autoscalingv2.HorizontalPodAutoscaler
 
+func (s Snapshot) KubernetesRead(q program.KubernetesRequest) (json.RawMessage, error)
+
 func (s Snapshot) MetricResult(id string) (metrics.Result, bool)
     MetricResult implements metrics.Source.
 
@@ -308,6 +318,8 @@ func (s Snapshot) Namespace() string
 func (s Snapshot) NetworkPolicies() []networkingv1.NetworkPolicy
 
 func (s Snapshot) Object(ref sdk.ObjectRef) (*unstructured.Unstructured, error)
+
+func (s Snapshot) Observe(o program.ExternalOperation) (int32, error)
 
 func (s Snapshot) ObservedAt() time.Time
     ObservedAt implements sdk.ObservationClock; it is zero when unrecorded.

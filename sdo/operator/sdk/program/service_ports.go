@@ -80,10 +80,14 @@ func ApplyRemoveServicePort(object map[string]any, a RemoveServicePort) error {
 	if len(ports) == 1 && !a.AllowEmpty {
 		return fmt.Errorf("removing the final Service port requires AllowEmpty")
 	}
-	next := make([]any, 0, len(ports)-1)
-	next = append(next, ports[:index]...)
-	next = append(next, ports[index+1:]...)
-	spec["ports"] = next
+	patch, _ := json.Marshal([]any{map[string]any{"op": "remove", "path": fmt.Sprintf("/spec/ports/%d", index)}})
+	// Keep this convenience selector on the general patch implementation.
+	envelope := map[string]any{"apiVersion": a.Ref.APIVersion, "kind": a.Ref.Kind, "metadata": map[string]any{"name": a.Ref.Name, "namespace": a.Ref.Namespace}, "spec": spec}
+	next, err := ProjectPatch(envelope, PatchObject{Ref: a.Ref, Type: "json", Patch: patch, Reason: a.Reason})
+	if err != nil {
+		return err
+	}
+	spec["ports"] = next["spec"].(map[string]any)["ports"]
 	return nil
 }
 

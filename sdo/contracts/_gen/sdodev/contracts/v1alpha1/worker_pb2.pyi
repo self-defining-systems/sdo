@@ -3,7 +3,6 @@ import datetime
 from buf.validate import validate_pb2 as _validate_pb2
 from google.protobuf import any_pb2 as _any_pb2
 from google.protobuf import timestamp_pb2 as _timestamp_pb2
-from sdodev.contracts.v1alpha1 import common_pb2 as _common_pb2
 from sdodev.contracts.v1alpha1 import program_pb2 as _program_pb2
 from sdodev.contracts.v1alpha1 import memory_pb2 as _memory_pb2
 from sdodev.contracts.v1alpha1 import messages_pb2 as _messages_pb2
@@ -146,20 +145,6 @@ class ReflectionResult(_message.Message):
     no_change_reason: str
     proposed_artifact_ids: _containers.RepeatedScalarFieldContainer[str]
     artifact_proposal: _messages_pb2.OperationalArtifactProposal
-    sdk_gaps: _containers.RepeatedCompositeFieldContainer[SdkGap]
+    sdk_gaps: _containers.RepeatedCompositeFieldContainer[_outcome_pb2.SdkGap]
     decline_reason: str
-    def __init__(self, summary: _Optional[str] = ..., learning_decision: _Optional[str] = ..., no_change_reason: _Optional[str] = ..., proposed_artifact_ids: _Optional[_Iterable[str]] = ..., artifact_proposal: _Optional[_Union[_messages_pb2.OperationalArtifactProposal, _Mapping]] = ..., sdk_gaps: _Optional[_Iterable[_Union[SdkGap, _Mapping]]] = ..., decline_reason: _Optional[str] = ...) -> None: ...
-
-class SdkGap(_message.Message):
-    __slots__ = ("fault_class", "primitive", "reason", "scratch_script", "resources")
-    FAULT_CLASS_FIELD_NUMBER: _ClassVar[int]
-    PRIMITIVE_FIELD_NUMBER: _ClassVar[int]
-    REASON_FIELD_NUMBER: _ClassVar[int]
-    SCRATCH_SCRIPT_FIELD_NUMBER: _ClassVar[int]
-    RESOURCES_FIELD_NUMBER: _ClassVar[int]
-    fault_class: str
-    primitive: str
-    reason: str
-    scratch_script: str
-    resources: _containers.RepeatedCompositeFieldContainer[_common_pb2.ObjectRef]
-    def __init__(self, fault_class: _Optional[str] = ..., primitive: _Optional[str] = ..., reason: _Optional[str] = ..., scratch_script: _Optional[str] = ..., resources: _Optional[_Iterable[_Union[_common_pb2.ObjectRef, _Mapping]]] = ...) -> None: ...
+    def __init__(self, summary: _Optional[str] = ..., learning_decision: _Optional[str] = ..., no_change_reason: _Optional[str] = ..., proposed_artifact_ids: _Optional[_Iterable[str]] = ..., artifact_proposal: _Optional[_Union[_messages_pb2.OperationalArtifactProposal, _Mapping]] = ..., sdk_gaps: _Optional[_Iterable[_Union[_outcome_pb2.SdkGap, _Mapping]]] = ..., decline_reason: _Optional[str] = ...) -> None: ...

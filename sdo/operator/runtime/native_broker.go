@@ -313,6 +313,19 @@ func (n NativeIncidentBroker) ProcessClosure(ctx context.Context, closure Incide
 				return err
 			}
 		}
+		// Reflection follows the original outcome commit. Append its typed
+		// SDK gaps through the broker without changing incident evidence or the
+		// original commit used to identify the reflection task across restarts.
+		var gaps []*contracts.SdkGap
+		for _, decision := range ledger.GetReflectionResults() {
+			gaps = append(gaps, decision.GetSdkGaps()...)
+		}
+		gaps = append(gaps, ledger.GetReflectionDecision().GetSdkGaps()...)
+		if len(gaps) > 0 {
+			if _, err := n.Repository.RecordSDKGaps(ctx, id, gaps); err != nil {
+				return fmt.Errorf("record reflection SDK gaps: %w", err)
+			}
+		}
 		if ledger.OutcomeCommit == "" {
 			return errors.New("closure has no authoritative outcome commit")
 		}

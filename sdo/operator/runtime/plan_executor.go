@@ -18,6 +18,7 @@ import (
 	"sdo.dev/operator/core"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
+	"sdo.dev/operator/sdk/sdktest"
 )
 
 // PlanObjectClient is the Kubernetes object boundary used by plan application.
@@ -86,11 +87,12 @@ type PlanApplicationResult struct {
 
 type PlanExecutor struct {
 	// RolloutTimeout can shorten the default ninety-second rollout budget.
-	RolloutTimeout time.Duration
-	Client         PlanObjectClient
-	Source         PlanSource
-	Rollouts       PlanRollouts
-	Verifier       PlanVerifier
+	RecordPrimitive func(sdktest.PrimitiveCall) error
+	RolloutTimeout  time.Duration
+	Client          PlanObjectClient
+	Source          PlanSource
+	Rollouts        PlanRollouts
+	Verifier        PlanVerifier
 	// Observer, when set, is the cache the verifier reads; Apply waits for it to
 	// show the application's writes before verifying.
 	Observer WriteObserver
@@ -123,6 +125,9 @@ func (e PlanExecutor) Apply(ctx context.Context, incident IncidentRequest, plan 
 }
 
 func (e PlanExecutor) applyOnce(ctx context.Context, incident IncidentRequest, plan program.Plan, dryRun bool) (result PlanApplicationResult, err error) {
+	if hasGeneralActions(plan) {
+		return e.applyGeneralPlan(ctx, incident, plan, dryRun)
+	}
 	if hasRuntimeEffects(plan) {
 		return e.applyRuntimePlan(ctx, incident, plan, dryRun)
 	}
@@ -410,7 +415,7 @@ func (e PlanExecutor) restoreActionOnce(ctx context.Context, patch PlanPatch) er
 		return fmt.Errorf("rollback conflict: %s/%s was recreated", patch.Ref.Kind, patch.Ref.Name)
 	}
 	restored := current.DeepCopy()
-	for _, field := range []string{"spec", "data", "binaryData"} {
+	for _, field := range planPatchFields(patch) {
 		before, bok := patch.Before.Object[field]
 		after, aok := patch.After.Object[field]
 		live, lok := current.Object[field]
@@ -451,7 +456,7 @@ func (e PlanExecutor) restoreActionOnce(ctx context.Context, patch PlanPatch) er
 		if observed.GetUID() != current.GetUID() {
 			return fmt.Errorf("compensation observation unknown: UID changed")
 		}
-		for _, field := range []string{"spec", "data", "binaryData"} {
+		for _, field := range planPatchFields(patch) {
 			if !planValuesEqual(observed.Object[field], restored.Object[field]) {
 				return fmt.Errorf("compensation observation unknown: restored fields differ")
 			}
@@ -468,7 +473,13 @@ func conditionalPlanPatch(patch []byte, observed *unstructured.Unstructured) ([]
 	if err := json.Unmarshal(patch, &fields); err != nil {
 		return nil, err
 	}
-	fields["metadata"] = map[string]any{"uid": string(observed.GetUID()), "resourceVersion": observed.GetResourceVersion()}
+	metadata, _ := fields["metadata"].(map[string]any)
+	if metadata == nil {
+		metadata = map[string]any{}
+	}
+	metadata["uid"] = string(observed.GetUID())
+	metadata["resourceVersion"] = observed.GetResourceVersion()
+	fields["metadata"] = metadata
 	return json.Marshal(fields)
 }
 
@@ -700,7 +711,18 @@ func sourceFields(current, source *unstructured.Unstructured, ref sdk.ObjectRef)
 }
 
 func planActionRef(action program.Action) (sdk.ObjectRef, error) {
-	switch a := action.(type) {
+	if ref, ok := externalRef(action); ok {
+		return ref, nil
+	}
+	switch a := generalAction(action).(type) {
+	case program.PatchObject:
+		return a.Ref, nil
+	case program.ApplyObject:
+		return a.Ref, nil
+	case program.KubernetesRequest:
+		return a.Ref, nil
+	case program.WaitFor:
+		return a.Ref, nil
 	case program.EnsureDatabaseUser:
 		return a.Target.Pod, nil
 	case *program.EnsureDatabaseUser:

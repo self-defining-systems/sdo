@@ -8,7 +8,7 @@ Detector observations carry `class` from existing `Spec().Class`, validated agai
 
 These four category fields and `overlap` are trigger lists, omitted when empty. Legacy `false_positives` combines the two FP lists and excludes overlap. Stderr has five separate tables and deduplicates (category, case, trigger) per repetition; linked detector categories can repeat on program and detector JSONL rows, so raw list totals need the same deduplication. Overlap does not make the CLI fail. `detected` means active on Open; `negative` allows silent health detectors only when impact is false.
 
-`real:program.<Action>:action:<index>` means the production PlanExecutor applied the action through the fake Kubernetes client. `simulated:apiserver-metadata`, `simulated:rollout-status:<kind>/<name>`, `simulated:pod-recreation:<old-name>` and `simulated:pod-ready:<new-name>` disclose assumptions absent from client-go. Readiness/rollout completion requires a template matching accepted source; `simulated:pod-readiness-unresolved` and `simulated:rollout-unresolved` disclose unavailable models. Source/parameter writes must restore the accepted target value even if a weak diagnosis clears. Ready is simulated, not evidence of successful scheduling, application startup, network connectivity or correct credentials. Exec has no transport or new RBAC grant and reports refused. Unsupported post-plan primitive observations remain Unknown and fail; fixed recordings never supply a post-plan answer. Source diffs are recomputed from the mutated state and explicit accepted manifests. Rollback needs explicit revision fixtures.
+`real:program.<Action>:action:<index>` means the production PlanExecutor applied the action through the fake Kubernetes client. `simulated:apiserver-metadata`, `simulated:rollout-status:<kind>/<name>`, `simulated:pod-recreation:<old-name>` and `simulated:pod-ready:<new-name>` disclose assumptions absent from client-go. Readiness/rollout completion requires a template matching accepted source; `simulated:pod-readiness-unresolved` and `simulated:rollout-unresolved` disclose unavailable models. Source/parameter writes must restore the accepted target value even if a weak diagnosis clears. Ready is simulated, not evidence of successful scheduling, application startup, network connectivity or correct credentials. Legacy Exec without a recorded observation/effect pair remains unreplayable. General EnsureExec/EnsureHTTP use exact measured transitions through the production executor. Unsupported post-plan primitive observations remain Unknown and fail; fixed recordings never supply a post-plan answer. Source diffs are recomputed from the mutated state and explicit accepted manifests. Rollback needs explicit revision fixtures.
 
 The checker compares final objects with production executor after-images, plus explicitly named controller reactions, and checks other fields/objects for unintended changes. Matrix mode evaluates every detector and Diagnose on every fixture; root-cause labels identify matching families and detector Playbooks associate detectors with those families. Missing bindings, observation errors and Unknown remain failures. The CLI requires a linked detector for every expected matching program.
 
@@ -43,3 +43,34 @@ environment credential references. Replay seeds catalog state from successful op
 requires the recorded auth/shell configuration, and projects the typed mutation. Fixed replies, passwords,
 authentication success and arbitrary commands are never simulated as repair proof. `real:program.EnsureDatabaseUser`
 identifies the production executor path through this catalog simulator; it is not a live database receipt.
+
+
+## General operations and residual SDK gaps
+
+General object operations replay through the production executor and fake API, including
+JSON/merge/strategic patches, list edits by unique match, arbitrary apply/delete, metadata,
+cluster scopes and CRDs. `docs/sdk-action-inventory.json` is enforced by
+`TestGeneralKubectlCoverageFloor`; adding an operation requires an executable replay case.
+
+`ExternalEffect` records exact observe/ensure identities and measured exit-code transitions.
+Replay requires the full pair and its before observation. `JobCompletion` supplies actual
+status for the exact manifest, and `KubernetesEffect` supplies measured images for an exact
+raw API request. No Fixed reply proves an effect. Reports disclose the assumptions with
+`simulated:recorded-external-transition` / `simulated:recorded-job-completion`.
+`ActionReport` retains `external_effect_json`, `kubernetes_effect_json`, `job_status_json`
+and `recording_error` even when corpus capture I/O fails. Commands carry stdin but never
+stdout/stderr or resolved credentials. HTTP credentials are environment references. The
+controller discards TokenRequest response bodies without reading credential bytes.
+
+The broker appends reflection's typed `sdk_gaps` to the existing accepted OutcomeRecord
+(field 50), preserving the original incident evidence and original reflection-task commit.
+`SdkGap` retains fault class, primitive, reason, exact `scratch_script`, and resources.
+The definition moved from worker.proto to outcome.proto without changing its message name.
+Historical runs may retain these only in ledger `reflection_decision` / `reflection_results`.
+
+Run `uv run python scripts/list_sdk_gaps.py <outcomes-or-ledgers>...` offline. It prints
+one deterministic JSONL row per incident/gap, with every source path, and deduplicates
+outcome/ledger/retry copies. Include both outcome directories and broker ledgers to cover
+older runs. `--fail-on-gap` exits 1 if any gap exists; malformed/unreadable input exits 2.
+No cluster, benchmark verdict, or model is consulted. A gap is evidence of SDK demand,
+not evidence that the incident was fixed or the proposed operation would be correct.
