@@ -662,3 +662,17 @@ Program statistics retain independently verified success credit across broker-va
 ### RL1 executable learning
 
 Reflection uses only controller verification and responder session observations, never a benchmark grader or oracle. Each verified full or partial cause requires a diagnose/mitigate playbook, handling README, and a detector that references it; detector/playbook links are many-to-many. Go rejects incomplete coverage with retry diagnostics. Typed SDK gaps name exactly the affected cause resources. Session-authored replay fixtures do not require controller open/fixed capture provenance. The learning checks are compilation and an executed mitigation that changes diagnosis from Match to NoMatch. Accepted corpus bytes remain immutable and broker artifact ownership is unchanged. A new broker-validated program earns its initial trust credit from its controller-verified origin and replayed bound fixture, so threshold one can repair its first recurrence without a responder model call.
+
+A deliberate from-scratch reinstall can retire namespace-lifetime onboarding
+with `sdo-operator reset-control-state --control-namespace <namespace>`, after
+stopping the runtime. The onboarding package checks SDO ownership for the three
+onboarding ConfigMaps and controller checkpoint before deleting any, uses
+UID/resource-version preconditions,
+and logs deleted identities. This command does not access application objects,
+Secrets or repository memory. Warm reinstall/restart retains the immutable
+record. Legacy final records without reachability evidence emit a typed
+`reference_absent` note and authorize no exclusions.
+
+The legacy controller checkpoint is recognized by its exact name,
+`sdo.dev/state-revision` annotation and `runtime-state.json` key. Retiring it
+prevents restored controller state from resurrecting old onboarding authority.

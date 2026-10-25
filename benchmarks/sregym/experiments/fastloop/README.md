@@ -387,3 +387,24 @@ Every incident dispatches the responder with a playbook coverage view. `recorded
 One trusted match is selected by distinct findings covered, then program ID and canonical bindings. Uncovered findings and unexplained drift do not prevent the attempt. Whole-incident verification still decides success; failure rolls back reversible writes and dispatches the responder sequentially with the attempt summary. No source-plan policy file is needed, even when the deployed application name differs from its benchmark name. See [automatic repair checks](../../../../docs/plan-safety-authority.md).
 
 For a private scripted lane (no model calls), set `SDO_TOY_CLUSTER=gs1-toy` for `up --app toy --dev-mount "$PWD"` and use a fresh run directory outside the repository. `--cluster-prefix gs1-` selects an isolated toy cluster with the configured worker ID; `SDO_TOY_CLUSTER` remains an explicit override. Subsequent commands use the saved kubeconfig and environment. A target-port incident followed by a repeat exercises learning, save-time validation and agent-selected program reuse.
+
+### Fresh memory and namespace control state
+
+A fresh fastloop state file starts a new memory stream. Before native install,
+fastloop stops the old SDO runtime and runs the production command
+`sdo-operator reset-control-state --control-namespace <app>-sdo --kubeconfig <lane-config>`.
+This explicitly retires only SDO-owned `sdo-namespace-onboarding`,
+`sdo-namespace-onboarding-pending`, and `sdo-namespace-onboarding-attempt`
+ConfigMaps and `sdo-controller-state`; logs and the JSON receipt identify
+deletions. Repository memory,
+application objects and Secret data are outside this command's scope.
+Run it only with the controller/workers stopped and before a from-scratch
+reinstall. A new confirmed healthy install establishes the next reference.
+Warm repeats and `reset_environment(..., preserve_repository=True)` retain their
+controller record, skip this reset, and keep the original reference. A legacy
+final record without reachability evidence logs `reference_absent` and grants
+no reachability exclusions.
+
+The legacy controller checkpoint is recognized by its exact name,
+`sdo.dev/state-revision` annotation and `runtime-state.json` key. Retiring it
+prevents restored controller state from resurrecting old onboarding authority.

@@ -21,7 +21,13 @@ if TYPE_CHECKING:
         publish_agent_registrations,
     )
     from benchmarks.sregym.adapter.healthy_baseline import HealthyBaselineCaptureOps, kubectl_capture_ops
-    from benchmarks.sregym.adapter.native_operator import execute_operator, inspect_existing, install_existing
+    from benchmarks.sregym.adapter.native_operator import (
+        execute_operator,
+        inspect_existing,
+        install_existing,
+        reset_control_state,
+        stop_runtime,
+    )
     from benchmarks.sregym.adapter.oracle_observability import prepare_oracle_observability, route_astronomy_traces
     from benchmarks.sregym.adapter.persistent import (
         REJECTED_RECEIPT_FILENAME,
@@ -64,6 +70,8 @@ _EXPORTS: dict[str, str] = {
     "runtime_config_from_payload": "persistent",
     "ControllerRecord": "persistent",
     "install_existing": "native_operator",
+    "reset_control_state": "native_operator",
+    "stop_runtime": "native_operator",
     "publish_agent_registrations": "driver",
     "DeployedLifecycle": "driver",
     "DeployedLifecycleContext": "driver",
@@ -106,6 +114,8 @@ __all__ = [
     "runtime_config_from_payload",
     "ControllerRecord",
     "install_existing",
+    "reset_control_state",
+    "stop_runtime",
     "publish_agent_registrations",
     "REJECTED_RECEIPT_FILENAME",
     "STRICT_RECEIPT_FILENAME",

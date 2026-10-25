@@ -127,6 +127,15 @@
     "/fixture/lane.kubeconfig",
     "--inspect"
   ],
+  "reset-control-state": [
+    "reset-control-state",
+    "--control-namespace",
+    "hotel-sdo",
+    "--timeout",
+    "60s",
+    "--kubeconfig",
+    "/fixture/lane.kubeconfig"
+  ],
   "host": [
     "host",
     "--repository",
