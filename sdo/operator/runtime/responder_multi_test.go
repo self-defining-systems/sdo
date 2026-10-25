@@ -4,12 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	appsv1 "k8s.io/api/apps/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes/fake"
 	"os"
 	"os/exec"
 	"path/filepath"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/contracts/wire"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/program"
 	"strings"
 	"testing"
 	"time"
@@ -245,5 +249,56 @@ func TestMultiMitigationSameOptionHasIndependentInputsAndReceipts(t *testing.T) 
 	}
 	if response.OptionReports[0].ApplicationId == response.OptionReports[1].ApplicationId {
 		t.Fatal("options share application identity")
+	}
+}
+
+func TestMultiMitigationCanonicalAPIWriteConflictBeforeWrites(t *testing.T) {
+	for _, mismatch := range []bool{false, true} {
+		t.Run(fmt.Sprint(mismatch), func(t *testing.T) {
+			loop, _ := menuB3Loop(t)
+			client := fake.NewSimpleClientset()
+			client.Resources = []*metav1.APIResourceList{{GroupVersion: "apps/v1", APIResources: []metav1.APIResource{{Name: "deployments", Kind: "Deployment", Namespaced: true}}}}
+			loop.Executor.Client = TypedPlanClient{Client: client}
+			raw := program.KubernetesRequest{Method: "PATCH", Path: "/apis/apps/v1/namespaces/app/deployments/frontend/scale", Body: []byte(`{"spec":{"replicas":2}}`), Reason: "restore scale"}
+			want := "write_set_conflict"
+			if mismatch {
+				raw.Ref = menuDeployment
+				raw.Ref.Name = "wrong"
+				want = "write_set_unknown"
+			}
+			loop.MenuConfig.Plans = []ResponderMenuPlan{{ID: "raw", ProgramID: "raw", Plan: program.Plan{Actions: []program.Action{raw}}}, {ID: "scale", ProgramID: "scale", Plan: program.Plan{Actions: []program.Action{program.ScaleWorkload{Ref: menuDeployment, Replicas: testPlanValue(3)}}}}}
+			loop.Handle(context.Background(), ToolRequest{Command: "menu"})
+			response := multiCall(t, loop, `[{"option_id":"raw"},{"option_id":"scale"}]`)
+			if response.Report == nil || response.Report.ReasonCode != want || loop.LoopsUsed() != 0 {
+				t.Fatalf("canonical API write escaped batch guard: %+v", response)
+			}
+			for _, action := range client.Actions() {
+				if action.GetVerb() != "get" && action.GetVerb() != "list" {
+					t.Fatalf("conflicting option crossed write boundary: %+v", action)
+				}
+			}
+		})
+	}
+}
+
+func TestMultiMitigationProductionRolloutProbeReturnsImmediately(t *testing.T) {
+	replicas := int32(1)
+	client := fake.NewSimpleClientset(&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: menuDeployment.Name, Namespace: "app", UID: "pending-deployment", Generation: 2}, Spec: appsv1.DeploymentSpec{Replicas: &replicas}, Status: appsv1.DeploymentStatus{ObservedGeneration: 1}})
+	executor := PlanExecutor{PollRollouts: true, Rollouts: KubernetesPlanRollouts{Client: client}}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	started := time.Now()
+	pending, err := executor.waitForRollouts(ctx, IncidentRequest{ResponseDeadline: time.Now().Add(time.Minute)}, []sdk.ObjectRef{menuDeployment})
+	if pending == nil || err == nil || time.Since(started) > 500*time.Millisecond {
+		t.Fatalf("production rollout waited instead of observing once: %+v %v", pending, err)
+	}
+	gets := 0
+	for _, action := range client.Actions() {
+		if action.GetVerb() == "get" && action.GetResource().Resource == "deployments" {
+			gets++
+		}
+	}
+	if gets != 1 {
+		t.Fatalf("expected one rollout sample, got %d", gets)
 	}
 }
