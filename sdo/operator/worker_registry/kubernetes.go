@@ -225,6 +225,11 @@ func (e KubernetesExecutor) Execute(ctx context.Context, task *contracts.AgentTa
 		request = requestSource{PVCSubPath: staged}
 		defer e.unstageRequest(jobName)
 	}
+	if e.WarmBinding == nil {
+		if err := e.ensureIncidentExecution(ctx, task, jobName, ""); err != nil {
+			return nil, err
+		}
+	}
 	timing, err := e.prepareDispatchStartup(task, jobName)
 	if err != nil {
 		return nil, fmt.Errorf("persist responder dispatch timing: %w", err)

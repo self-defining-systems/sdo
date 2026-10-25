@@ -18,7 +18,6 @@ import (
 
 	"google.golang.org/protobuf/types/known/anypb"
 	batchv1 "k8s.io/api/batch/v1"
-	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
@@ -468,7 +467,25 @@ func (e KubernetesExecutor) publishWarmTask(ctx context.Context, task *contracts
 		if string(existing) != string(payload) {
 			return errors.New("standby already claimed by another task")
 		}
-		return nil
+		identity, err := e.loadIncidentExecution(ctx, task)
+		if err != nil {
+			return err
+		}
+		if identity != nil {
+			if identity.JobName != b.JobName {
+				return errors.New("published standby execution identity changed")
+			}
+			return nil
+		}
+		uid := ""
+		job, err := e.Client.BatchV1().Jobs(e.Namespace).Get(ctx, b.JobName, metav1.GetOptions{})
+		if err != nil && !apierrors.IsNotFound(err) {
+			return err
+		}
+		if err == nil {
+			uid = string(job.UID)
+		}
+		return e.ensureIncidentExecution(ctx, task, b.JobName, uid)
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
@@ -499,27 +516,6 @@ func (e KubernetesExecutor) publishWarmTask(ctx context.Context, task *contracts
 			return unpublished(errors.New("unpublished standby lost readiness"))
 		}
 	}
-	// Keep request transport independent identity in a small ConfigMap, using
-	// the controller's existing create grant (Jobs update is intentionally absent).
-	identity := new(contracts.IncidentRequest)
-	if err := task.GetRequest().UnmarshalTo(identity); err != nil {
-		return unpublished(err)
-	}
-	annotations := map[string]string{"sdo.dev/incident-id": identity.GetIncidentId(), "sdo.dev/task-id": task.GetTaskId(), "sdo.dev/job-name": b.JobName, "sdo.dev/request-sha256": taskRequestDigest(task), "sdo.dev/job-uid": string(job.UID)}
-	claim := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: b.JobName + "-binding", Annotations: annotations}}
-	if _, err := e.Client.CoreV1().ConfigMaps(e.Namespace).Create(ctx, claim, metav1.CreateOptions{}); apierrors.IsAlreadyExists(err) {
-		prior, readErr := e.Client.CoreV1().ConfigMaps(e.Namespace).Get(ctx, claim.Name, metav1.GetOptions{})
-		if readErr != nil {
-			return unpublished(readErr)
-		}
-		for key, value := range annotations {
-			if prior.Annotations[key] != value {
-				return unpublished(errors.New("conflicting standby execution identity"))
-			}
-		}
-	} else if err != nil {
-		return unpublished(err)
-	}
 	environment := cloneEnvironment(e.Environment)
 	environment["SDO_REQUEST_SHA256"] = taskRequestDigest(task)
 	environment["SDO_RESULT_CONFIGMAP"] = b.JobName + "-result"
@@ -530,6 +526,9 @@ func (e KubernetesExecutor) publishWarmTask(ctx context.Context, task *contracts
 		return unpublished(err)
 	}
 	if err := writeStandbyJSON(filepath.Join(b.Directory, "control/environment.json"), environment); err != nil {
+		return unpublished(err)
+	}
+	if err := e.ensureIncidentExecution(ctx, task, b.JobName, string(job.UID)); err != nil {
 		return unpublished(err)
 	}
 	file, err := os.CreateTemp(filepath.Dir(filename), ".task-")
@@ -574,6 +573,9 @@ func (e KubernetesExecutor) publishWarmTask(ctx context.Context, task *contracts
 // this path; a published/uncertain claim always rejoins its original Job.
 func (e KubernetesExecutor) abandonUnpublished(ctx context.Context, task *contracts.AgentTask) error {
 	b := e.WarmBinding
+	if err := e.removeUnpublishedIncidentExecution(ctx, task); err != nil {
+		return err
+	}
 	if err := os.Remove(e.warmBindingPath(task)); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
