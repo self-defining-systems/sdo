@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
+
+import pytest
 
 from sdo.agents.responder.mutation_output import command_report_schema, format_mutation_response
 
@@ -77,3 +80,48 @@ def test_changed_evidence_is_visible_as_possible_regression(tmp_path, monkeypatc
     assert report["new"] == [after]
     assert not report["unchanged"]
     assert not report["fixed"]
+
+
+@pytest.mark.parametrize("command", ["act", "apply", "mitigate"])
+@pytest.mark.parametrize("full_json", [False, True])
+@pytest.mark.parametrize("count", [7, 100])
+def test_emitted_mutation_stdout_utf8_including_json_framing_and_newline(
+    tmp_path,
+    monkeypatch,
+    capsys,
+    command,
+    full_json,
+    count,
+):
+    from sdo.agents.responder import tools_cli
+
+    monkeypatch.setenv("SDO_SESSION_SCRATCH", str(tmp_path))
+    before = [finding(str(i)) for i in range(count)]
+    after = [
+        {**item, "summary": '"界"\\' * 50, "evidence": item["evidence"] + " new observation"} for item in before[1:]
+    ]
+    action = {
+        "command": command,
+        "targeted_healthy": True,
+        "healthy": False,
+        "before_findings": before,
+        "controller_findings": after,
+        "receipt": {"success": True},
+    }
+    tools_cli._print_response(action, full_json=full_json)
+    stdout = capsys.readouterr().out
+    assert len(stdout.encode("utf-8")) <= 2048
+    if full_json:
+        envelope = json.loads(stdout)
+        text, path = envelope["summary"], Path(envelope["details_file"])
+    else:
+        text = stdout
+        path = Path(text.split("Full JSON: ", 1)[1].splitlines()[0])
+    assert text.startswith("This action: target finding cleared")
+    assert f"still broken: {count - 1}" in text
+    assert f"new since this action: {count - 1}" in text
+    assert "still broken, unchanged: 0" in text
+    report = json.loads(path.read_text())
+    assert report["actions"] == [action]
+    assert report["findings"] == after
+    assert set(report) == set(command_report_schema())
