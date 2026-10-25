@@ -264,10 +264,11 @@ Current outcome:
   "response_loop_exhausted": false,
   "drift_events": [],
   "resolution_path": "",
-  "reflection_skip_reason": ""
+  "reflection_skip_reason": "",
+  "sdk_gaps": []
 }
 
-Outcome history (prior incidents, compact; raw evidence omitted):
+Outcome history (prior incidents, bounded summaries; omissions are counted):
 [
   {
     "incident_id": "prior-toy",
@@ -278,7 +279,9 @@ Outcome history (prior incidents, compact; raw evidence omitted):
     "applied_playbooks": [],
     "confirmed_playbooks": [],
     "rejected_playbooks": [],
-    "detector_history": [],
-    "memory_commit": null
+    "detector_evaluations": 0,
+    "memory_commit": null,
+    "full_outcome_path": "<temporary reflection history>/a39ceebfeb5fe07ef06730b0b8c07ac81430fddf11f37e1f2701d01cea44faba.json"
   }
 ]
+Full prior outcomes are available at full_outcome_path; open relevant evidence when needed.

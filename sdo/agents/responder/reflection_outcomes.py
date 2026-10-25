@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 from typing import TYPE_CHECKING, Any
 
@@ -21,6 +22,7 @@ from google.protobuf import json_format
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+    from pathlib import Path
 
     from sdo.contracts import DetectorEvaluation, ObjectRef, OutcomeRecord
 
@@ -251,40 +253,68 @@ def _resource(ref: ObjectRef) -> str:
     return f"{ref.kind}/{ref.name}"
 
 
-def prior_outcome_view(record: OutcomeRecord) -> dict[str, Any]:
-    """A past incident reduced to the signal learning generalizes from."""
+# Prior history is context, not the current repair's evidence. Bound both the
+# number of entries and each narrative so a single long incident stays small.
+_HISTORY_ITEMS = 2
+_HISTORY_TEXT_CHARS = 160
 
-    return {
-        "incident_id": record.incident_id,
-        "classification": record.classification,
+
+def _history_text(value: str) -> str:
+    if len(value) <= _HISTORY_TEXT_CHARS:
+        return value
+    return value[:_HISTORY_TEXT_CHARS] + " [omitted]"
+
+
+def prior_outcome_view(record: OutcomeRecord) -> dict[str, Any]:
+    """A bounded orientation summary; the full prior record is available by reference."""
+
+    view: dict[str, Any] = {
+        "incident_id": _history_text(record.incident_id),
+        "classification": _history_text(record.classification),
         "findings": [
             {
-                "detector_id": finding.detector_id,
-                "rule_id": finding.rule_id,
-                "summary": finding.summary,
-                "fingerprint": finding.fingerprint,
-                "primary_resource": _resource(finding.primary_resource),
+                "detector_id": _history_text(finding.detector_id),
+                "rule_id": _history_text(finding.rule_id),
+                "summary": _history_text(finding.summary),
+                "fingerprint": _history_text(finding.fingerprint),
+                "primary_resource": _history_text(_resource(finding.primary_resource)),
             }
-            for finding in record.findings
+            for finding in record.findings[:_HISTORY_ITEMS]
         ],
         "confirmed_root_causes": [
             {
-                "summary": cause.summary,
-                "resources": [_resource(ref) for ref in cause.resources],
-                "explained_detectors": list(cause.explained_detectors),
+                "summary": _history_text(cause.summary),
+                "resources": [_history_text(_resource(ref)) for ref in cause.resources[:_HISTORY_ITEMS]],
             }
-            for cause in record.confirmed_root_causes
+            for cause in record.confirmed_root_causes[:_HISTORY_ITEMS]
         ],
         "repair_actions": [
-            {"kind": action.kind, "target": action.target, "summary": action.summary, "success": action.success}
-            for action in record.repair_actions
+            {
+                "kind": _history_text(action.kind),
+                "target": _history_text(action.target),
+                "summary": _history_text(action.summary),
+                "success": action.success,
+            }
+            for action in record.repair_actions[:_HISTORY_ITEMS]
         ],
-        "applied_playbooks": list(record.applied_playbooks),
-        "confirmed_playbooks": list(record.confirmed_playbooks),
-        "rejected_playbooks": list(record.rejected_playbooks),
-        "detector_history": collapse_detector_history(record.detector_history),
-        "memory_commit": record.memory_commit if record.HasField("memory_commit") else None,
+        "applied_playbooks": [_history_text(value) for value in record.applied_playbooks[:_HISTORY_ITEMS]],
+        "confirmed_playbooks": [_history_text(value) for value in record.confirmed_playbooks[:_HISTORY_ITEMS]],
+        "rejected_playbooks": [_history_text(value) for value in record.rejected_playbooks[:_HISTORY_ITEMS]],
+        "detector_evaluations": len(record.detector_history),
+        "memory_commit": _history_text(record.memory_commit) if record.HasField("memory_commit") else None,
     }
+    for field in (
+        "findings",
+        "confirmed_root_causes",
+        "repair_actions",
+        "applied_playbooks",
+        "confirmed_playbooks",
+        "rejected_playbooks",
+    ):
+        omitted = len(getattr(record, field)) - len(view[field])
+        if omitted:
+            view[field + "_omitted"] = omitted
+    return view
 
 
 #: Prior incidents carried in the reflection request. Each costs about 5k
@@ -292,8 +322,22 @@ def prior_outcome_view(record: OutcomeRecord) -> dict[str, Any]:
 MAX_HISTORY_INCIDENTS = 2
 
 
-def history_view(history: Sequence[OutcomeRecord], *, current_incident_id: str) -> list[dict[str, Any]]:
+def history_view(
+    history: Sequence[OutcomeRecord], *, current_incident_id: str, evidence_directory: Path | None = None
+) -> list[dict[str, Any]]:
     """The latest prior incidents only: the current incident is already shown separately."""
 
     prior = [record for record in history if record.incident_id != current_incident_id]
-    return [prior_outcome_view(record) for record in prior[-MAX_HISTORY_INCIDENTS:]]
+    views = []
+    for record in prior[-MAX_HISTORY_INCIDENTS:]:
+        view = prior_outcome_view(record)
+        if evidence_directory is not None:
+            # IDs are data, never paths. These private copies live outside the
+            # proposal tree and survive the backend's in-session corrections.
+            name = hashlib.sha256(record.incident_id.encode()).hexdigest() + ".json"
+            path = evidence_directory / name
+            with open(path, "w", encoding="utf-8", opener=lambda p, flags: os.open(p, flags, 0o600)) as stream:
+                stream.write(json_format.MessageToJson(record, preserving_proto_field_name=True))
+            view["full_outcome_path"] = str(path)
+        views.append(view)
+    return views

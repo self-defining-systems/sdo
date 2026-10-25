@@ -15,6 +15,11 @@ def test_prompt_goldens() -> None:
         prompt = re.sub(
             r"(?m)^Full incident facts: .+$", "Full incident facts: <temporary incident facts file>", prompt
         )
+        prompt = re.sub(
+            r'("full_outcome_path": ")[^"]*/sdo-reflection-history-[^/"]+/([^"]+)(")',
+            r"\1<temporary reflection history>/\2\3",
+            prompt,
+        )
         assert prompt.encode("utf-8") == (GOLDENS / f"{name}.md").read_bytes(), name
 
 

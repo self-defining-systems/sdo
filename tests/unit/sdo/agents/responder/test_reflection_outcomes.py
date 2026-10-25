@@ -4,6 +4,7 @@ import json
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
 
+import pytest
 from google.protobuf import json_format
 from google.protobuf.timestamp_pb2 import Timestamp
 
@@ -32,7 +33,6 @@ from sdo.contracts.proto import (
 if TYPE_CHECKING:
     from pathlib import Path
 
-    import pytest
 
 _T0 = datetime(2026, 9, 1, 12, 0, tzinfo=timezone.utc)
 _EVIDENCE = "FailedMount: configmap mongo-geo-script not found " * 40
@@ -404,3 +404,65 @@ def test_program_run_summary_names_unknown_bindings_when_runs_give_no_reason() -
     assert "unknown_reasons" not in summary[0]
     assert summary[0]["unknown_bindings"] == [f"Deployment/svc{index}" for index in range(5)]
     assert "unknown_bindings" not in summary[1]
+
+
+def test_prior_history_stays_bounded_when_one_incident_has_many_transitions(tmp_path: Path) -> None:
+    prior = _outcome("inc-prior")
+    # Prior timelines and long narratives must not dominate every reflection turn.
+    for index in range(100):
+        prior.detector_history.extend(_evaluations(f"detector-{index}", ["clear", "firing"] * 10))
+        prior.confirmed_root_causes.add(summary=f"cause {index}: " + "observed " * 1000)
+        prior.repair_actions.add(kind="exec", summary=f"repair {index}: " + "observed " * 1000)
+    before = prior.SerializeToString()
+    current = _outcome("inc-current")
+    small = _prompt([], current, tmp_path)
+    large = _prompt([prior], current, tmp_path)
+
+    assert len(large) - len(small) < 6_000
+    assert "omitted" in large
+    assert prior.SerializeToString() == before
+
+
+@pytest.mark.parametrize("session_mode", ["resume", "fresh"])
+def test_reflection_prior_evidence_reference_is_readable_during_the_turn(tmp_path: Path, session_mode: str) -> None:
+    import re
+
+    from sdo.agents.responder.reflection import ReflectionTurn
+    from tests.unit.sdo.agents.responder.test_reflection import _fresh_closure
+
+    prior = _outcome("inc-prior")
+    current = _outcome("inc-current")
+    references = []
+
+    class ReadingBackend:
+        def resume(self, **kwargs: object) -> ReflectionTurn:
+            prompt = str(kwargs["prompt"])
+            paths = re.findall(r'"full_outcome_path": "([^"]+)"', prompt)
+            assert len(paths) == 1
+            from pathlib import Path
+
+            path = Path(paths[0])
+            references.append(path)
+            loaded = json_format.Parse(path.read_text(), OutcomeRecord())
+            assert loaded == prior
+            assert path.stat().st_mode & 0o077 == 0
+            assert "FailedMount" not in prompt.split("Outcome history", 1)[1]
+            return ReflectionTurn(summary="covered", learning_decision="no_change", no_change_reason="already covered")
+
+        fresh = resume
+
+    closure = _fresh_closure(tmp_path)
+    closure.request.incident_id = current.incident_id
+    result = SessionReflector(ReadingBackend()).resume(
+        session_id="session",
+        incident_id=current.incident_id,
+        worktree=tmp_path,
+        outcome=current,
+        history=[prior, current],
+        outcome_commit="accepted",
+        closure=closure,
+        session_mode=session_mode,  # type: ignore[arg-type]
+    )
+    assert result.learning_decision == "no_change"
+    assert references
+    assert all(not path.exists() for path in references)
