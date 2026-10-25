@@ -40,7 +40,20 @@ func reflectionKey(node reflectionNode) string {
 		result.Write(frame[:])
 		result.Write(payload)
 	}
-	appendFrame(modelBytes(node.state))
+	// StepReflection stores dispatch/rejection timestamps but never branches on
+	// their values. Quotient only those historical clock values out of visited
+	// state; the concrete node still checks exact payloads and restart bytes on
+	// every edge. Fault/restart budgets and the current clock remain in the key.
+	state := proto.Clone(node.state).(*contracts.BrokerLedger)
+	if state.ReflectionDispatchAt != nil {
+		state.ReflectionDispatchAt = timestamppb.New(time.Unix(0, 0))
+	}
+	for _, rejection := range state.ReflectionRejections {
+		if rejection.RejectedAt != nil {
+			rejection.RejectedAt = timestamppb.New(time.Unix(0, 0))
+		}
+	}
+	appendFrame(modelBytes(state))
 	keys := make([]string, 0, len(node.payloads))
 	for id := range node.payloads {
 		keys = append(keys, id)
@@ -48,7 +61,14 @@ func reflectionKey(node reflectionNode) string {
 	slices.Sort(keys)
 	for _, id := range keys {
 		appendFrame([]byte(id))
-		appendFrame(node.payloads[id])
+		var effect ReflectionEffect
+		if err := json.Unmarshal(node.payloads[id], &effect); err != nil {
+			panic(err)
+		}
+		if effect.DispatchAt != nil {
+			effect.DispatchAt = timestamppb.New(time.Unix(0, 0))
+		}
+		appendFrame(reflectionBytes(effect))
 	}
 	return result.String()
 }
@@ -159,6 +179,12 @@ func TestExhaustiveReflectionLifecycle(t *testing.T) {
 			}
 			if event.Kind == ReflectionFault && (!proto.Equal(after, node.state)) {
 				t.Fatal("API fault changed proposal/result state")
+			}
+			if event.Kind == ReflectionInspected && node.state.ReflectionPhase == contracts.ReflectionPhase_REFLECTION_PHASE_INSPECT && after.ReflectionPhase == contracts.ReflectionPhase_REFLECTION_PHASE_DISPATCH && !after.ReflectionDispatchAt.AsTime().Equal(event.At) {
+				t.Fatal("dispatch timestamp did not preserve the observation clock")
+			}
+			if event.Kind == ReflectionRejected && len(after.ReflectionRejections) > len(node.state.ReflectionRejections) && !after.ReflectionRejections[len(after.ReflectionRejections)-1].RejectedAt.AsTime().Equal(event.At) {
+				t.Fatal("rejection timestamp did not preserve the observation clock")
 			}
 			if after.ReflectionPhase == contracts.ReflectionPhase_REFLECTION_PHASE_RESET && len(after.ReflectionRejections) == 0 {
 				t.Fatal("checkout reset without a durable typed rejection")
