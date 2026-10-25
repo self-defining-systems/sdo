@@ -19,7 +19,8 @@ def _brief(value: Any, limit: int) -> str:
     return text if len(text) <= limit else text[: limit - 1] + "…"
 
 
-def write_json(document: dict[str, Any], *, command: str, incident_id: str | None = None) -> Path:
+def write_json(document: dict[str, Any], *, command: str, incident_id: str | None = None,
+               root: Path | None = None) -> Path:
     """Allocate a process-safe sequence in the incident's private output directory."""
     identity = incident_id or os.environ.get("SDO_INCIDENT_ID") or "standalone"
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,199}", identity):
@@ -27,7 +28,7 @@ def write_json(document: dict[str, Any], *, command: str, incident_id: str | Non
     if not re.fullmatch(r"[a-z][a-z-]*", command):
         raise ValueError("invalid output command")
     encoded = json.dumps(document, ensure_ascii=False, separators=(",", ":"))
-    directory = OUTPUT_ROOT / identity
+    directory = (root or OUTPUT_ROOT) / identity
     directory.mkdir(mode=0o700, parents=True, exist_ok=True)
     with (directory / ".sequence").open("a+", encoding="utf-8") as sequence:
         fcntl.flock(sequence, fcntl.LOCK_EX)

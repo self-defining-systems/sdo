@@ -1,0 +1,7 @@
+{
+  "actions": "array of {command,summary,program_runs,report}: complete action outputs, program_runs, report, receipt",
+  "findings": "array of {summary,detector_id,fingerprint,primary_resource,evidence}: current findings with full evidence",
+  "fixed": "array of {summary,detector_id,fingerprint,primary_resource,evidence}: absent since the before snapshot",
+  "new": "array of {summary,detector_id,fingerprint,primary_resource,evidence}: new fingerprint or changed evidence; possible regression",
+  "unchanged": "array of {summary,detector_id,fingerprint,primary_resource,evidence}: same fingerprint and evidence"
+}
