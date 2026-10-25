@@ -137,8 +137,8 @@ max_chars = 4100
 reason = "Baseline synthetic fixture maximum: 4046 Unicode code points; byte-identical template extraction."
 
 [responder.instructions]
-max_chars = 1300
-reason = "Baseline synthetic fixture maximum: 1208 Unicode code points; byte-identical template extraction."
+max_chars = 1500
+reason = "Consolidate responder workflow routing and optional late-finding guidance into the agreed 1500-character instruction envelope before lowering measured final limits."
 
 [responder.late_findings_guidance]
 max_chars = 700
