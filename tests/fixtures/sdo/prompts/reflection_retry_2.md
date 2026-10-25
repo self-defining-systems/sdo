@@ -107,10 +107,7 @@ Current outcome:
   "response_loops_used": 0,
   "response_loop_exhausted": false,
   "drift_events": [],
-  "resolution_path": "",
-  "fast_path_programs": [],
-  "fast_path_skipped_reason": "",
-  "fast_path_relation_covered_findings": []
+  "resolution_path": ""
 }
 
 Outcome history (prior incidents, compact; raw evidence omitted):

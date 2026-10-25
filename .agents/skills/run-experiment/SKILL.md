@@ -1,6 +1,6 @@
 ---
 name: run-experiment
-description: Run live SDO experiments on SREGym with real LLM agents through fastloop, from frozen code and a warm lane to a per-incident report against a baseline, while keeping the feedback loop fast and unblocking it proactively. Use for every live SREGym run, smoke or full experiment; when rerunning or comparing a stream; when measuring playbook programs, the fast path or drift detection; or when a run is slow, stuck or blocked.
+description: Run live SDO experiments on SREGym with real LLM agents through fastloop, from frozen code and a warm lane to a per-incident report against a baseline, while keeping the feedback loop fast and unblocking it proactively. Use for every live SREGym run, smoke or full experiment; when rerunning or comparing a stream; when measuring playbook coverage, agent-selected mitigation or drift detection; or when a run is slow, stuck or blocked.
 ---
 
 # Run an experiment

@@ -67,8 +67,6 @@ func ParseOperateLaunch(args []string) (OperateConfig, error) {
 	reflectionGuidance := flags.String("reflection-guidance", "baseline", "reflection guidance mode")
 	forceReflection := flags.Bool("force-reflection", false, "always dispatch reflection after verified closure")
 	maxResponseLoops := flags.Int("max-response-loops", 10, "maximum sdo apply batches per incident")
-	programFastPath := flags.Bool("program-fast-path", true, "allow trusted programs to resolve incidents")
-	programTrustThreshold := flags.Int("program-trust-threshold", 1, "verified successes required to trust a program")
 	responseTimeout := flags.Duration("response-timeout", 30*time.Minute, "responder timeout")
 	verificationTimeout := flags.Duration("verification-timeout", 5*time.Minute, "independent verification timeout")
 	registryInsecure := flags.Bool("registry-insecure", false, "allow an explicitly configured HTTP image registry")
@@ -174,8 +172,7 @@ func ParseOperateLaunch(args []string) (OperateConfig, error) {
 			ControllerDurationSeconds: int(controllerDuration.Seconds()), ExitAfterClosure: *exitAfterClosure, WaitForCompletion: *controllerDuration > 0 || *exitAfterClosure,
 			LateFindings: *lateFindings, ReflectionSession: *reflectionSession, ReflectionGuidance: *reflectionGuidance, ForceReflection: *forceReflection,
 			MaxResponseLoops: *maxResponseLoops,
-			ProgramFastPath:  *programFastPath, ProgramTrustThreshold: *programTrustThreshold,
-			TimeoutSeconds: int(responseTimeout.Seconds()), VerificationTimeoutSeconds: int(verificationTimeout.Seconds()), RepairPolicy: *repairPolicy,
+			TimeoutSeconds:   int(responseTimeout.Seconds()), VerificationTimeoutSeconds: int(verificationTimeout.Seconds()), RepairPolicy: *repairPolicy,
 			NativeCommand:         []string{"/usr/local/bin/sdo-operator"},
 			ReuseExisting:         true,
 			RegistrationConfigMap: *registrationConfigMap, RegistrationDirectory: *registrations,

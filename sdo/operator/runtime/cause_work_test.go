@@ -1,10 +1,11 @@
 package runtime
 
 import (
+	"testing"
+
 	"google.golang.org/protobuf/proto"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/sdk/program"
-	"testing"
 )
 
 func TestCauseWorkKeepsConfirmedGroupsAndNeverCreditsUncertainRepairs(t *testing.T) {
@@ -62,8 +63,8 @@ func TestUnprovenFinalEquivalenceEarnsNeitherSuccessNorFailure(t *testing.T) {
 	notExact := false
 	outcome.PlanApplications[0].FinalEquivalenceVerified = &notExact
 	settleTestOutcome(outcome)
-	state := ProgramTrustStats([]*contracts.OutcomeRecord{outcome}, 1)["targetport"]
-	if state.Trusted || state.VerifiedSuccesses != 0 || state.Failures != 0 {
+	state := ProgramTrustStats([]*contracts.OutcomeRecord{outcome})["targetport"]
+	if (state.VerifiedSuccesses > 0 && state.Failures == 0) || state.VerifiedSuccesses != 0 || state.Failures != 0 {
 		t.Fatalf("question became a trust judgment: %+v", state)
 	}
 }

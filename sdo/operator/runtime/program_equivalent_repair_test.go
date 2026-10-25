@@ -2,6 +2,8 @@ package runtime
 
 import (
 	"context"
+	"testing"
+
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -10,7 +12,6 @@ import (
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
-	"testing"
 )
 
 type sourceRepairProgram struct{}
@@ -83,7 +84,7 @@ func TestCreditEquivalentSourceRepairIgnoresServerDefaultsAndUnownedFields(t *te
 	if len(loop.PlanApplications()) != 1 {
 		t.Fatalf("equivalent source repair with defaults earned no credit: %+v", loop.PlanApplications())
 	}
-	if state := ProgramTrustStats([]*contracts.OutcomeRecord{equivalentRepairOutcome(t, loop)}, 1)["source-repair"]; state.VerifiedSuccesses != 1 || !state.Trusted {
+	if state := ProgramTrustStats([]*contracts.OutcomeRecord{equivalentRepairOutcome(t, loop)})["source-repair"]; state.VerifiedSuccesses != 1 || !(state.VerifiedSuccesses > 0 && state.Failures == 0) {
 		t.Fatalf("equivalent source repair missing bound trust receipt: %+v", state)
 	}
 	// A subsequent repair can clear diagnosis while differing from the plan.
@@ -94,7 +95,7 @@ func TestCreditEquivalentSourceRepairIgnoresServerDefaultsAndUnownedFields(t *te
 	if len(applications) != 1 || applications[0].Result.FinalEquivalenceVerified == nil || *applications[0].Result.FinalEquivalenceVerified {
 		t.Fatalf("different fields retained exact credit: %+v", applications)
 	}
-	if state := ProgramTrustStats([]*contracts.OutcomeRecord{equivalentRepairOutcome(t, loop)}, 1)["source-repair"]; state.VerifiedSuccesses != 0 || state.Failures != 0 {
+	if state := ProgramTrustStats([]*contracts.OutcomeRecord{equivalentRepairOutcome(t, loop)})["source-repair"]; state.VerifiedSuccesses != 0 || state.Failures != 0 {
 		t.Fatalf("question received a trust judgment: %+v", state)
 	}
 }
