@@ -5,6 +5,12 @@ from __future__ import annotations
 import subprocess
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import argparse
+
+import pytest
 
 from sdo.agents.responder import tools_cli
 from sdo.agents.responder.credentials import AGENT_SKILLS, install_skills
@@ -13,7 +19,7 @@ ROOT = Path(__file__).resolve().parents[5]
 REFERENCE = ROOT / "sdo/skills/sdo-incident-response/references/commands.md"
 
 
-def test_generated_reference_covers_cli_and_installs_with_worker(tmp_path):
+def test_generated_reference_covers_cli_and_installs_with_worker(tmp_path: Path) -> None:
     from sdo.agents.responder.command_reference import render_reference
 
     generated = render_reference()
@@ -25,7 +31,7 @@ def test_generated_reference_covers_cli_and_installs_with_worker(tmp_path):
     assert (tmp_path / "skills/sdo-incident-response/references/commands.md").read_text() == generated
 
 
-def test_drift_check_rejects_stale_and_missing_reference_then_regenerates(tmp_path):
+def test_drift_check_rejects_stale_and_missing_reference_then_regenerates(tmp_path: Path) -> None:
     reference = tmp_path / "commands.md"
     invocation = [sys.executable, "-m", "sdo.agents.responder.command_reference", "--output", str(reference)]
     for stale in (None, "deliberately stale command guide\n"):
@@ -38,12 +44,12 @@ def test_drift_check_rejects_stale_and_missing_reference_then_regenerates(tmp_pa
     subprocess.run([*invocation, "--check"], check=True)
 
 
-def test_reference_tracks_parser_changes(monkeypatch):
+def test_reference_tracks_parser_changes(monkeypatch: pytest.MonkeyPatch) -> None:
     from sdo.agents.responder.command_reference import render_reference
 
     original = tools_cli._parser
 
-    def changed_parser():
+    def changed_parser() -> argparse.ArgumentParser:
         parser = original()
         parser.add_argument("--future-switch", help="new public argument")
         return parser
@@ -54,7 +60,7 @@ def test_reference_tracks_parser_changes(monkeypatch):
     assert "--future-switch" in render_reference()
 
 
-def test_model_image_installs_and_smokes_json_parser():
+def test_model_image_installs_and_smokes_json_parser() -> None:
     dockerfile = (ROOT / "sdo/operator/Dockerfile.runtime").read_text()
     model_layer = dockerfile.split("FROM python-deps AS model-deps\n", 1)[1].split("FROM go-deps AS go-runtime", 1)[0]
     os_install = model_layer.split("RUN apt-get update", 1)[1].split("COPY --from=node-tools", 1)[0]
@@ -63,9 +69,7 @@ def test_model_image_installs_and_smokes_json_parser():
     assert ".probe[0].ok == true" in os_install
 
 
-def test_response_fields_are_the_cli_help_contract(capsys):
-    import pytest
-
+def test_response_fields_are_the_cli_help_contract(capsys: pytest.CaptureFixture[str]) -> None:
     assert set(tools_cli.RESPONSE_FIELDS) == set(tools_cli.command_surface()["commands"])
     for command, fields in tools_cli.RESPONSE_FIELDS.items():
         with pytest.raises(SystemExit) as stopped:
@@ -74,9 +78,7 @@ def test_response_fields_are_the_cli_help_contract(capsys):
         assert fields in " ".join(capsys.readouterr().out.split())
 
 
-def test_mutation_reference_distinguishes_envelope_from_complete_file(capsys):
-    import pytest
-
+def test_mutation_reference_distinguishes_envelope_from_complete_file(capsys: pytest.CaptureFixture[str]) -> None:
     from sdo.agents.responder.command_reference import render_reference
 
     reference = render_reference()
