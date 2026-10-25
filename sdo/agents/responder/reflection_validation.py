@@ -10,12 +10,12 @@ import math
 import os
 import signal
 import tempfile
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
 from mcp.server.fastmcp import FastMCP
 
+from sdo.agents.responder.memory_check import VALIDATION_TIMEOUT_SECONDS, ValidationResult, validation_output
 from sdo.agents.responder.reflection_authoring import SdkGap, install_authoring_tools
 from sdo.agents.responder.reflection_evidence import install_evidence_tools
 
@@ -41,25 +41,7 @@ VALIDATION_ENVIRONMENT = (
     "GOFLAGS",
     "CGO_ENABLED",
 )
-VALIDATION_TIMEOUT_SECONDS = 300
 VALIDATION_TOOL_TIMEOUT_SECONDS = VALIDATION_TIMEOUT_SECONDS + 30
-_MAX_OUTPUT_CHARS = 24_000
-
-
-@dataclass(frozen=True)
-class ValidationResult:
-    exit_code: int
-    timed_out: bool
-    stdout: str
-    stderr: str
-
-
-def _output(raw: bytes) -> str:
-    text = raw.decode("utf-8", errors="replace")
-    if len(text) <= _MAX_OUTPUT_CHARS:
-        return text
-    half = _MAX_OUTPUT_CHARS // 2
-    return f"{text[:half]}\n[... {len(text) - _MAX_OUTPUT_CHARS} characters omitted ...]\n{text[-half:]}"
 
 
 def validation_server(root: Path, *, timeout_seconds: float = VALIDATION_TIMEOUT_SECONDS) -> FastMCP:
@@ -140,9 +122,12 @@ def validation_server(root: Path, *, timeout_seconds: float = VALIDATION_TIMEOUT
             if isinstance(exc, asyncio.CancelledError):
                 raise
             return ValidationResult(
-                2, True, _output(stdout), f"memory check timed out after {timeout_seconds:g}s\n{_output(stderr)}"
+                2,
+                True,
+                validation_output(stdout),
+                f"memory check timed out after {timeout_seconds:g}s\n{validation_output(stderr)}",
             )
-        return ValidationResult(process.returncode or 0, False, _output(stdout), _output(stderr))
+        return ValidationResult(process.returncode or 0, False, validation_output(stdout), validation_output(stderr))
 
     return server
 

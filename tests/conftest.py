@@ -10,6 +10,13 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from tests.reflection_memory import (
+    memory_binary as memory_binary,
+)
+from tests.reflection_memory import (
+    prepare_reflection_memory as prepare_reflection_memory,
+)
+
 if TYPE_CHECKING:
     from collections.abc import Iterator
 

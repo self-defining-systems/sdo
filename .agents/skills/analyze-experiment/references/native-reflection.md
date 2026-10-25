@@ -65,6 +65,11 @@ records a terminal `ReflectionDecision` with `learning_decision=failed` and
 `failure_reason=timeout`, then cleans the proposal; it is not a validation retry.
 Restart retains the original task/deadline and cannot create another Job once
 that deadline expires. Leadership cancellation before expiry remains retryable.
+Completed result recovery precedes execution: after Job TTL deletion, the frozen
+request/result identities must agree and no owned nonterminal Pod may remain.
+The result's server creation time (or the live Job's completion time) must fall
+within the original deadline; recovering that result after expiry does not grant
+a new execution budget. An unresolved prior result never authorizes a new Job.
 
 The persisted broker ledger, task ID and task payload preserve one logical
 reflection across restarts; validation corrections are separate attempts.

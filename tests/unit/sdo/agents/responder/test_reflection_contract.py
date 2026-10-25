@@ -45,7 +45,9 @@ class _Publisher:
         ("question", "unbound_write", True),
     ],
 )
-def test_t1_work_reaches_scripted_session(tmp_path: Path, disposition: str, reason: str, unassigned: bool) -> None:
+def test_t1_work_reaches_scripted_session(
+    tmp_path: Path, disposition: str, reason: str, unassigned: bool, prepare_reflection_memory
+) -> None:
     # This pre-existing transport fixture predates typed cause work. The new
     # expectations and cause items are hand-written independently of R6 tests.
     fixture = Path(__file__).resolve().parents[4] / "fixtures/sdo/contracts/go/closure_repaired.json"
@@ -83,15 +85,18 @@ def test_t1_work_reaches_scripted_session(tmp_path: Path, disposition: str, reas
         item.evaluation.error = "primitive observation unavailable"
         item.evaluation.duration.FromMilliseconds(1)
 
+    base = prepare_reflection_memory(tmp_path, incident)
+    request.outcome_commit = base
+    request.memory_snapshot.accepted_commit = base
     task = AgentTask(
         schema_version="sdo.dev/v1alpha1",
         task_id="t1-task",
         agent_id="sdo-reflector",
         task_type="outcome-reflection-direct-v1",
-        workspace={"proposal_id": "t1-proposal", "checkout_path": str(tmp_path), "base_commit": "accepted-outcome"},
+        workspace={"proposal_id": "t1-proposal", "checkout_path": str(tmp_path), "base_commit": base},
     )
     task.request.Pack(request)
-    task_path = tmp_path / "task.json"
+    task_path = tmp_path.with_suffix(".task.json")
     task_path.write_text(to_canonical_json(task), encoding="utf-8")
     agent = ScriptedAgent(
         lambda _: reply(

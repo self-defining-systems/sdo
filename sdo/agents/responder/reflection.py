@@ -4,6 +4,7 @@ import json
 import os
 import re
 import sys
+import time
 from typing import TYPE_CHECKING, ClassVar, Literal, Protocol, cast
 
 from agentshim import SessionResumeError
@@ -20,6 +21,7 @@ from libs.agent_cli.structured import (
 from sdo.agents.memory_diagnostics import render_validation_feedback
 from sdo.agents.prompt_templates import RenderedPrompt, named_prompt, render_prompt
 from sdo.agents.responder.credentials import SKILLS_ROOT
+from sdo.agents.responder.memory_check import VALIDATION_TIMEOUT_SECONDS, ValidationResult, check_reflection_result
 from sdo.agents.responder.reflection_authoring import SdkGap
 from sdo.agents.responder.reflection_brief import incident_brief
 from sdo.agents.responder.reflection_evidence import memory_view
@@ -32,6 +34,7 @@ from sdo.agents.responder.session_turn import (
     unwrap_branch,
 )
 from sdo.contracts import ReflectionResult, model_output_schema, validate
+from sdo.contracts import SdkGap as ProtoSdkGap
 
 ReflectionGuidance = Literal["baseline", "generalize", "generalize-spec"]
 ReflectionSessionMode = Literal["resume", "fresh"]
@@ -39,7 +42,7 @@ REFLECTION_GUIDANCE_MODES: tuple[ReflectionGuidance, ...] = ("baseline", "genera
 REFLECTION_SESSION_MODES: tuple[ReflectionSessionMode, ...] = ("resume", "fresh")
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
     from pathlib import Path
 
     from agentshim import CommandExecutor
@@ -82,6 +85,17 @@ class ReflectionTurn(BaseModel):
                 SdkGap.model_validate(json_format.MessageToDict(gap, preserving_proto_field_name=True))
                 for gap in result.sdk_gaps
             ],
+        )
+
+    def to_result(self) -> ReflectionResult:
+        """The exact decision checked locally and published in the worker envelope."""
+        return ReflectionResult(
+            summary=self.summary,
+            learning_decision=self.learning_decision,
+            no_change_reason=self.no_change_reason or "",
+            decline_reason=self.decline_reason,
+            proposed_artifact_ids=self.playbook_ids,
+            sdk_gaps=[json_format.ParseDict(gap.model_dump(), ProtoSdkGap()) for gap in self.sdk_gaps],
         )
 
     def with_usage(self, usage: dict[str, int | float]) -> ReflectionTurn:
@@ -296,6 +310,22 @@ class SessionReflector:
             )
 
 
+def memory_check_correction(check: ValidationResult, idempotency_key: str) -> RenderedPrompt:
+    correction = render_prompt(
+        "responder",
+        "reflection_check_correction",
+        part="reflection.instructions",
+        diagnostics=named_prompt("reflection.validation_feedback", check.stdout + "\n" + check.stderr),
+    )
+    return render_prompt(
+        "responder",
+        "turn_01",
+        part="reflection.instructions",
+        idempotency_key=idempotency_key,
+        prompt=correction,
+    )
+
+
 class CodexSessionBackend:
     """Resume the responder's own Codex session to reflect on its outcome.
 
@@ -311,11 +341,13 @@ class CodexSessionBackend:
         reasoning_effort: str = INCIDENT_REASONING_EFFORT,
         timeout_seconds: int = 900,
         executor: CommandExecutor | None = None,
+        memory_checker: Callable[[Path, ReflectionResult, float], ValidationResult] = check_reflection_result,
     ) -> None:
         self.model = model
         self.reasoning_effort = reasoning_effort
         self.timeout_seconds = timeout_seconds
         self.executor = executor
+        self.memory_checker = memory_checker
 
     def resume(
         self,
@@ -346,6 +378,7 @@ class CodexSessionBackend:
         idempotency_key: str,
         session_id: str | None,
     ) -> ReflectionTurn:
+        deadline = time.monotonic() + self.timeout_seconds
         turn = self._run(
             worktree=worktree,
             prompt=render_prompt(
@@ -353,15 +386,44 @@ class CodexSessionBackend:
             ),
             session_id=session_id,
         )
-        try:
-            payload = unwrap_branch(turn.output_json, "reflection")
-        except WrongBranchError:
-            # One resumed turn moves the answer to the right branch; a second miss is the caller's error.
-            turn = self._run(worktree=worktree, prompt=branch_correction("reflection"), session_id=turn.session_id)
-            payload = unwrap_branch(turn.output_json, "reflection")
-        return ReflectionTurn.from_model_output(payload).with_usage(turn_usage(turn))
+        usage: dict[str, int | float] = {}
+        for attempt in range(4):
+            for name, value in turn_usage(turn).items():
+                usage[name] = usage.get(name, 0) + value
+            try:
+                payload = unwrap_branch(turn.output_json, "reflection")
+            except WrongBranchError:
+                turn = self._run(
+                    worktree=worktree,
+                    prompt=branch_correction("reflection"),
+                    session_id=turn.session_id,
+                    timeout_seconds=max(0, deadline - time.monotonic()),
+                )
+                for name, value in turn_usage(turn).items():
+                    usage[name] = usage.get(name, 0) + value
+                payload = unwrap_branch(turn.output_json, "reflection")
+            # Preserve the complete returned proto through validation: Python's
+            # view must not discard deprecated payloads or reject a decision
+            # before the shared Go diagnostics can drive an in-session correction.
+            decision = json_format.ParseDict(payload, ReflectionResult())
+            check = self.memory_checker(
+                worktree, decision, min(VALIDATION_TIMEOUT_SECONDS, deadline - time.monotonic())
+            )
+            if check.exit_code == 0 and not check.timed_out:
+                return ReflectionTurn.from_model_output(payload).with_usage(usage)
+            if attempt == 3 or time.monotonic() >= deadline:
+                raise RuntimeError(f"reflection memory check failed before submission: {check.stdout}\n{check.stderr}")
+            turn = self._run(
+                worktree=worktree,
+                prompt=memory_check_correction(check, idempotency_key),
+                session_id=turn.session_id,
+                timeout_seconds=max(0, deadline - time.monotonic()),
+            )
+        raise AssertionError("unreachable reflection validation state")
 
-    def _run(self, *, worktree: Path, prompt: str, session_id: str | None) -> StructuredTurn:
+    def _run(
+        self, *, worktree: Path, prompt: str, session_id: str | None, timeout_seconds: float | None = None
+    ) -> StructuredTurn:
         if os.environ.get("SDO_API_HISTORY_DIR"):
             prompt += render_prompt("responder", "run_01", part="reflection.instructions")
         try:
@@ -372,7 +434,7 @@ class CodexSessionBackend:
                 access="danger-full-access",
                 model=self.model,
                 reasoning_effort=self.reasoning_effort,
-                timeout_seconds=self.timeout_seconds,
+                timeout_seconds=self.timeout_seconds if timeout_seconds is None else timeout_seconds,
                 resume_session_id=session_id,
                 executor=self.executor,
                 **session_turn_options(self.provider, worktree),

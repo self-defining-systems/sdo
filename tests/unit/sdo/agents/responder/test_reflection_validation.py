@@ -108,11 +108,12 @@ def test_reflection_backend_installs_blocking_validation_tool(
     provider: AgentProvider,
     backend_type: type[CodexSessionBackend],
     resume: bool,
+    prepare_reflection_memory,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    base = prepare_reflection_memory(tmp_path)
     monkeypatch.setenv("SDO_ACTOR", "responder")
     monkeypatch.setenv("SDO_PHASE", "reflection")
-    monkeypatch.setenv("SDO_BASE_COMMIT", "accepted-outcome")
     monkeypatch.setenv("PYTHONPATH", "/opt/sdo")
     monkeypatch.setenv("OPENAI_API_KEY", "must-not-reach-validator")
 
@@ -122,7 +123,7 @@ def test_reflection_backend_installs_blocking_validation_tool(
         assert server["command"] == sys.executable
         assert server["env"]["SDO_ACTOR"] == "responder"
         assert server["env"]["SDO_PHASE"] == "reflection"
-        assert server["env"]["SDO_BASE_COMMIT"] == "accepted-outcome"
+        assert server["env"]["SDO_BASE_COMMIT"] == base
         assert server["env"]["PYTHONPATH"] == "/opt/sdo"
         assert "OPENAI_API_KEY" not in server["env"]
         assert server["args"] == ["-m", "sdo.agents.responder.reflection_validation", "--root", str(tmp_path)]

@@ -8,8 +8,6 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, cast
 
-from google.protobuf import json_format
-
 from sdo.agents.provider import resolve_agent
 from sdo.agents.responder.credentials import AGENT_SKILLS, prepare_claude_home, prepare_codex_home
 from sdo.agents.responder.job import KubernetesResultPublisher
@@ -31,9 +29,7 @@ from sdo.contracts import (
     OutcomeRecord,
     ReflectionCauseWork,
     ReflectionRequest,
-    ReflectionResult,
     ReflectionWorkItem,
-    SdkGap,
     parse_json,
     to_canonical_json,
     validate,
@@ -152,14 +148,7 @@ def run_reflection_task(
                 os.environ.pop(key, None)
             else:
                 os.environ[key] = value
-    typed_result = ReflectionResult(
-        summary=turn.summary,
-        learning_decision=turn.learning_decision,
-        no_change_reason=turn.no_change_reason or "",
-        decline_reason=turn.decline_reason,
-        proposed_artifact_ids=turn.playbook_ids,
-        sdk_gaps=[json_format.ParseDict(gap.model_dump(), SdkGap()) for gap in turn.sdk_gaps],
-    )
+    typed_result = turn.to_result()
     result = AgentResult(
         schema_version=SCHEMA_VERSION,
         task_id=task.task_id,
