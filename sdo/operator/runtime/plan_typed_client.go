@@ -23,11 +23,15 @@ import (
 
 // TypedPlanClient limits plan mutations to the application kinds the SDK reads.
 type TypedPlanClient struct {
-	Client     kubernetes.Interface
-	ExecConfig *rest.Config
+	Client             kubernetes.Interface
+	ExecConfig         *rest.Config
+	ProtectedNamespace string
 }
 
 func (c TypedPlanClient) Get(ctx context.Context, ref sdk.ObjectRef) (*unstructured.Unstructured, error) {
+	if err := c.checkPlanNamespace(ref.Namespace); err != nil {
+		return nil, err
+	}
 	if c.Client == nil {
 		return nil, fmt.Errorf("Kubernetes plan client is required")
 	}
@@ -70,6 +74,9 @@ func (c TypedPlanClient) Get(ctx context.Context, ref sdk.ObjectRef) (*unstructu
 }
 
 func (c TypedPlanClient) Patch(ctx context.Context, ref sdk.ObjectRef, kind types.PatchType, patch []byte) error {
+	if err := c.checkPlanNamespace(ref.Namespace); err != nil {
+		return err
+	}
 	if c.Client == nil {
 		return fmt.Errorf("Kubernetes plan client is required")
 	}
@@ -113,6 +120,9 @@ func planUnstructured(object any, ref sdk.ObjectRef) (*unstructured.Unstructured
 }
 
 func (c TypedPlanClient) Create(ctx context.Context, ref sdk.ObjectRef, object *unstructured.Unstructured) (*unstructured.Unstructured, error) {
+	if err := c.checkPlanNamespace(ref.Namespace); err != nil {
+		return nil, err
+	}
 	if c.Client == nil || object == nil || !samePlanRef(object, ref) {
 		return nil, fmt.Errorf("matching named object is required")
 	}
@@ -181,6 +191,9 @@ func (c TypedPlanClient) Create(ctx context.Context, ref sdk.ObjectRef, object *
 }
 
 func (c TypedPlanClient) Delete(ctx context.Context, ref sdk.ObjectRef, uid types.UID, version string) error {
+	if err := c.checkPlanNamespace(ref.Namespace); err != nil {
+		return err
+	}
 	if c.Client == nil || uid == "" || version == "" {
 		return fmt.Errorf("delete requires current UID and resource version")
 	}

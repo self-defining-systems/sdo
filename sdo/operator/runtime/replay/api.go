@@ -187,3 +187,16 @@ func validateAPIRequestPreconditions(q program.KubernetesRequest, live *unstruct
 	}
 	return nil
 }
+
+// ResolveDeleteTarget binds replay to the same named whole-object identity as
+// production, using the recorded snapshot as its discovery universe.
+func (c *cluster) ResolveDeleteTarget(request program.KubernetesRequest) (sdk.ObjectRef, error) {
+	if err := request.Validate(); err != nil {
+		return sdk.ObjectRef{}, err
+	}
+	ref, ok := c.ordinaryAPIRef(request)
+	if !ok {
+		return sdk.ObjectRef{}, fmt.Errorf("recorded DELETE target cannot be resolved")
+	}
+	return ref, nil
+}

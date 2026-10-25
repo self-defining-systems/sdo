@@ -69,6 +69,17 @@ func hasGeneralActions(p program.Plan) bool {
 // source-value or menu-specific safety policy: Kubernetes enforces RBAC.
 func (e PlanExecutor) applyGeneralPlan(ctx context.Context, incident IncidentRequest, plan program.Plan, dry bool) (result PlanApplicationResult, err error) {
 	start := time.Now()
+	plan.Actions = append([]program.Action(nil), plan.Actions...)
+	for i, action := range plan.Actions {
+		if request, ok := generalAction(action).(program.KubernetesRequest); ok && request.Method == "DELETE" {
+			ref, resolveErr := e.resolveDeleteTarget(request)
+			if resolveErr != nil {
+				return PlanApplicationResult{Plan: plan, ActionReports: newPlanReports(plan)}, resolveErr
+			}
+			request.Ref = ref
+			plan.Actions[i] = request
+		}
+	}
 	result = PlanApplicationResult{Plan: plan, DryRun: dry, ActionReports: newPlanReports(plan)}
 	complete := false
 	defer func() {
@@ -153,6 +164,15 @@ func (e PlanExecutor) generalStep(ctx context.Context, incident IncidentRequest,
 	}
 	switch a := action.(type) {
 	case program.KubernetesRequest:
+		if a.Method == "DELETE" && !dry {
+			ref, resolveErr := e.resolveDeleteTarget(a)
+			if resolveErr != nil {
+				return r, resolveErr
+			}
+			a.Ref = ref
+			action = a
+			r.Plan.Actions[0] = a
+		}
 		client, ok := e.Client.(PlanAPIClient)
 		if !ok {
 			return r, fmt.Errorf("Kubernetes API transport unavailable")
@@ -207,6 +227,11 @@ func (e PlanExecutor) generalStep(ctx context.Context, incident IncidentRequest,
 				}
 				if effect.AfterKnown && effect.After == nil && effect.Before != nil {
 					patch.Operation = "delete"
+				}
+				if a.Method == "DELETE" && (!effect.AfterKnown || effect.After != nil) {
+					r.ActionReports[0].Status = "unknown"
+					r.ActionReports[0].FailureReason = "delete_not_confirmed"
+					return r, fmt.Errorf("delete_not_confirmed: API accepted DELETE but absence is unconfirmed")
 				}
 				if effect.BeforeKnown && effect.Before == nil && effect.After != nil {
 					patch.Operation = "create"

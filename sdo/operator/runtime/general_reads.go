@@ -18,7 +18,7 @@ func (v LiveReadView) Observe(o program.ExternalOperation) (int32, error) {
 	}
 	ctx, cancel := context.WithTimeout(v.context(), 5*time.Second)
 	defer cancel()
-	client := TypedPlanClient{Client: v.Client, ExecConfig: v.DatabaseExecConfig}
+	client := TypedPlanClient{Client: v.Client, ExecConfig: v.DatabaseExecConfig, ProtectedNamespace: v.ProtectedNamespace}
 	before, err := client.Get(ctx, o.Pod())
 	if err != nil || before == nil || before.GetUID() != captured.GetUID() {
 		return 0, fmt.Errorf("command Pod identity changed")
@@ -39,7 +39,7 @@ func (v LiveReadView) KubernetesRead(r program.KubernetesRequest) (json.RawMessa
 	}
 	ctx, cancel := context.WithTimeout(v.context(), 5*time.Second)
 	defer cancel()
-	return (TypedPlanClient{Client: v.Client, ExecConfig: v.DatabaseExecConfig}).KubernetesRequest(ctx, r)
+	return (TypedPlanClient{Client: v.Client, ExecConfig: v.DatabaseExecConfig, ProtectedNamespace: v.ProtectedNamespace}).KubernetesRequest(ctx, r)
 }
 func (v *cachedReadView) Observe(o program.ExternalOperation) (int32, error) {
 	var r int32

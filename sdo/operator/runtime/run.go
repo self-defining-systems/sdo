@@ -508,6 +508,14 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	if proberAddress != nil {
 		primitiveProber = HTTPProberClient{BaseURL: proberAddress}
 	}
+	removalClient, err := newUnexplainedRemovalClient(planExecConfig, genericCapture, *controlNamespace)
+	if err != nil {
+		return err
+	}
+	protectedNamespace := ""
+	if *controlNamespace != *namespace {
+		protectedNamespace = *controlNamespace
+	}
 	var controller *Controller
 	dispatcher := options.Dispatcher
 	if dispatcher == nil {
@@ -531,7 +539,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			Catalog: catalog, Outcomes: memory.OpenReader(resolvedRoot), RequireMemorySnapshot: options.NativeBroker != nil,
 			LoopFactory: func(request IncidentRequest) *ResponderLoop {
 				loop := NewResponderLoop(request, options.Programs, snapshotProvider, detectors, PlanExecutor{
-					Client: GenericPlanClient{TypedPlanClient: TypedPlanClient{Client: bootstrapProvider.Client, ExecConfig: planExecConfig}, Objects: genericCapture}, Source: planSource,
+					Client: GenericPlanClient{TypedPlanClient: TypedPlanClient{Client: bootstrapProvider.Client, ExecConfig: planExecConfig, ProtectedNamespace: protectedNamespace}, Objects: genericCapture}, Source: planSource,
 
 					Rollouts: KubernetesPlanRollouts{Client: bootstrapProvider.Client}, Verifier: PlanHealthVerifier{Detectors: detectors, Provider: snapshotProvider, Timeout: *verificationTimeout, PollInterval: scaledDuration(time.Second, timeScale)}, Observer: kubernetesCache,
 				}, *maxResponseLoops)
@@ -541,10 +549,16 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 						if controller == nil {
 							return nil, fmt.Errorf("controller is unavailable")
 						}
+						if removalClient == nil {
+							return nil, nil
+						}
 						return controller.unexplainedRemovals(request.IncidentID, *controlNamespace)
 					}
 					loop.MenuConfig.RemoveUnexplained = func(ctx context.Context, selected UnexplainedRemoval, client PlanLifecycleClient, ref sdk.ObjectRef, uid types.UID, rv string) error {
-						return controller.removeUnexplained(ctx, request.IncidentID, *controlNamespace, selected, client, ref, uid, rv)
+						if removalClient == nil {
+							return fmt.Errorf("removal-only client is unavailable")
+						}
+						return controller.removeUnexplained(ctx, request.IncidentID, *controlNamespace, selected, removalClient, ref, uid, rv)
 					}
 				}
 				loop.VerifyClosure = func(ctx context.Context) ToolResponse {
@@ -572,7 +586,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 					loop.CorpusSessionRoot = options.NativeBroker.SessionRoot
 				}
 				loop.ReadView = func(snapshot sdk.DetectionContext) program.ReadView {
-					return LiveReadView{DetectionContext: snapshot, Context: ctx, Client: bootstrapProvider.Client, DatabaseExecConfig: planExecConfig, Prober: primitiveProber,
+					return LiveReadView{DetectionContext: snapshot, Context: ctx, Client: bootstrapProvider.Client, DatabaseExecConfig: planExecConfig, ProtectedNamespace: protectedNamespace, Prober: primitiveProber,
 						Source: planSource, SourceCommit: request.SourceCommit, Baseline: request.StateChanges, BaselineSource: stateTracker}
 				}
 				return loop
@@ -581,7 +595,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	}
 	// Detectors and plan verification read through the same capped runtime view.
 	snapshotProvider = ReadSnapshotProvider{Base: snapshotProvider, View: func(snapshot sdk.DetectionContext) program.ReadView {
-		return LiveReadView{DetectionContext: snapshot, Context: ctx, Client: bootstrapProvider.Client, DatabaseExecConfig: planExecConfig, Prober: primitiveProber, Source: planSource, SourceCommit: resolvedSourceCommit, SourceRevision: func() string {
+		return LiveReadView{DetectionContext: snapshot, Context: ctx, Client: bootstrapProvider.Client, DatabaseExecConfig: planExecConfig, ProtectedNamespace: protectedNamespace, Prober: primitiveProber, Source: planSource, SourceCommit: resolvedSourceCommit, SourceRevision: func() string {
 			if controller != nil {
 				return controller.CurrentAcceptedCommit()
 			}
@@ -615,7 +629,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			if cycle, ok := snapshot.(*CycleReadView); ok {
 				return cycle
 			}
-			return NewCycleReadView(LiveReadView{DetectionContext: snapshot, Context: ctx, Client: bootstrapProvider.Client, DatabaseExecConfig: planExecConfig, Prober: primitiveProber,
+			return NewCycleReadView(LiveReadView{DetectionContext: snapshot, Context: ctx, Client: bootstrapProvider.Client, DatabaseExecConfig: planExecConfig, ProtectedNamespace: protectedNamespace, Prober: primitiveProber,
 				Source: planSource, SourceCommit: controller.CurrentAcceptedCommit(), BaselineSource: stateTracker})
 		},
 	})

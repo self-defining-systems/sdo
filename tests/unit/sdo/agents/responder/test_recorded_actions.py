@@ -779,3 +779,27 @@ def test_patch_receipt_attributes_only_the_executed_target(scratch: Path, tmp_pa
     assert receipt["success"] is True
     assert receipt["resources"] == [recorded_actions.resource_ref("ConfigMap/app/token")]
     assert receipt["target"] == "ConfigMap/app/token"
+
+
+def test_zero_executed_delete_targets_are_not_confirmed(scratch: Path, tmp_path: Path) -> None:
+    kubectl = tmp_path / "kubectl"
+    kubectl.write_text("#!/bin/sh\nexit 0\n")
+    kubectl.chmod(0o755)
+    tools_cli.main(
+        [
+            "act",
+            "--resource",
+            "Service/app/declared",
+            "--",
+            str(kubectl),
+            "-n",
+            "app",
+            "delete",
+            "services",
+            "--all",
+        ]
+    )
+    (receipt,) = _recorded(scratch)
+    assert receipt["resources"] == []
+    assert receipt["success"] is False
+    assert receipt["failure_reason"] == "delete_not_confirmed"

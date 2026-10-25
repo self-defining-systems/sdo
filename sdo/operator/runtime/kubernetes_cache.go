@@ -19,6 +19,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	kruntime "k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/informers"
+	rbacinformers "k8s.io/client-go/informers/rbac/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/cache"
 
@@ -150,6 +151,14 @@ func NewKubernetesCache(config KubernetesCacheConfig, detectors []sdk.Detector) 
 
 func (c *KubernetesCache) build() (informers.SharedInformerFactory, map[string]cache.SharedIndexInformer, error) {
 	factory := informers.NewSharedInformerFactoryWithOptions(c.config.Client, 0, informers.WithNamespace(c.config.Namespace))
+	// RoleBindings in other namespaces may reference an application-relevant
+	// ClusterRole. Observe them for ownership checks, without admitting foreign
+	// objects to the application inventory or detector snapshots.
+	if c.config.TrackDrift {
+		factory.InformerFor(&rbacv1.RoleBinding{}, func(client kubernetes.Interface, resync time.Duration) cache.SharedIndexInformer {
+			return rbacinformers.NewRoleBindingInformer(client, metav1.NamespaceAll, resync, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
+		})
+	}
 	built := make(map[string]cache.SharedIndexInformer, len(c.declared))
 	for key, watch := range c.declared {
 		informer, err := informerFor(factory, key)
@@ -359,6 +368,13 @@ func (c *KubernetesCache) eventHandler(watch sdk.WatchKind) cache.ResourceEventH
 		if identity == nil {
 			identity = previous
 		}
+		if watch.Kind == "RoleBinding" {
+			binding := driftObject(identity, watch)
+			if binding != nil && binding.GetNamespace() != c.config.Namespace {
+				c.enqueue(watch)
+				return
+			}
+		}
 		if watch.Kind == "ConfigMap" && objectName(identity) == c.config.StateConfigMapName {
 			return
 		}
@@ -524,9 +540,35 @@ func (c *KubernetesCache) SourceDriftObjects() []*unstructured.Unstructured {
 	for key, informer := range c.informers {
 		api, kind := splitInformerKey(key)
 		for _, object := range informer.GetStore().List() {
+			if kind == "RoleBinding" {
+				accessor, err := meta.Accessor(object)
+				if err != nil || accessor.GetNamespace() != c.config.Namespace {
+					continue
+				}
+			}
 			if kind == "ClusterRole" && !clusterRoles[objectName(object)] || kind == "ClusterRoleBinding" && !clusterBindings[objectName(object)] {
 				continue
 			}
+			if observed := driftObject(object, sdk.WatchKind{APIVersion: api, Kind: kind}); observed != nil {
+				objects = append(objects, observed)
+			}
+		}
+	}
+	return objects
+}
+
+// SourceRemovalObjects retains the complete RBAC graph for negative ownership
+// proofs. It is not exposed as application drift or as a detector read view.
+func (c *KubernetesCache) SourceRemovalObjects() []*unstructured.Unstructured {
+	c.informerMu.RLock()
+	defer c.informerMu.RUnlock()
+	var objects []*unstructured.Unstructured
+	for key, informer := range c.informers {
+		api, kind := splitInformerKey(key)
+		if api != "rbac.authorization.k8s.io/v1" {
+			continue
+		}
+		for _, object := range informer.GetStore().List() {
 			if observed := driftObject(object, sdk.WatchKind{APIVersion: api, Kind: kind}); observed != nil {
 				objects = append(objects, observed)
 			}

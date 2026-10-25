@@ -362,6 +362,8 @@ def _append(path: Path, state: str, receipt: dict[str, Any]) -> None:
 
 def _confirm_deleted(command: Sequence[str], resources: Sequence[dict[str, str]]) -> str:
     """A successful command does not prove every declared resource disappeared."""
+    if not resources:
+        return "delete_not_confirmed"
     context: list[str] = []
     flags = {"-n", "--namespace", "--context", "--kubeconfig", "--server", "--cluster", "--user", "--as", "--as-group"}
     args = iter(command[1:])

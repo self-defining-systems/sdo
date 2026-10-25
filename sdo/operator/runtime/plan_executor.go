@@ -117,8 +117,12 @@ func (e PlanExecutor) Apply(ctx context.Context, incident IncidentRequest, plan 
 			}
 			for i := range result.ActionReports {
 				if result.ActionReports[i].Status != "applied" {
-					if result.ActionReports[i].Status == "unknown" && reason != "authorization_denied" { reason = "outcome_unknown" }
-                    result.ActionReports[i].FailureReason = reason
+					if result.ActionReports[i].Status == "unknown" && reason != "authorization_denied" {
+						reason = "outcome_unknown"
+					}
+					if result.ActionReports[i].FailureReason == "" {
+						result.ActionReports[i].FailureReason = reason
+					}
 					break
 				}
 			}
