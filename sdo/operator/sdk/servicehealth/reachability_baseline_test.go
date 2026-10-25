@@ -164,10 +164,12 @@ func TestReachabilityReferenceObservationDoesNotHideLaterServingFailure(t *testi
 }
 
 func TestReachabilityConfirmedRequiresCompleteFreshProbeWindow(t *testing.T) {
-	for _, mode := range []string{"complete", "missing", "two", "stale", "repeated", "omitted"} {
+	for _, mode := range []string{"complete", "missing", "two", "stale", "repeated", "omitted", "mixed"} {
 		t.Run(mode, func(t *testing.T) {
 			s := reachabilitySnapshot{Snapshot: geoSnapshot(intstr.FromInt32(8083), true), window: window(geoTarget(samples(servicehealth.DialRefused, false, false, false)))}
 			switch mode {
+			case "mixed":
+				s.window.Targets[0].Samples[0].OK = true
 			case "missing":
 				s.window.Targets = nil
 			case "two":

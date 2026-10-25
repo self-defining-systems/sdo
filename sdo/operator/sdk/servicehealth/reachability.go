@@ -261,6 +261,15 @@ func (d reachabilityDetector) Confirmed(ctx sdk.DetectionContext) bool {
 					valid = false
 				}
 			}
+			// A recent success proves reachability immediately. A trailing
+			// failure still needs the full consecutive-failure confirmation run.
+			if !recent[len(recent)-1].OK {
+				for _, sample := range recent {
+					if sample.OK {
+						valid = false
+					}
+				}
+			}
 			found = valid
 		}
 		if !found {

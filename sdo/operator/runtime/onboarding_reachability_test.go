@@ -121,7 +121,7 @@ func TestSourceInventoryOnboardingConfirmsReachabilityReference(t *testing.T) {
 // A provisional reference cannot be learned from a window that contained an
 // independently unhealthy goal, changed configuration, or uncertain probes.
 func TestSourceInventoryOnboardingRejectsUnhealthyReachabilityReference(t *testing.T) {
-	for _, mode := range []string{"goal", "configuration", "timeout", "transport", "commit"} {
+	for _, mode := range []string{"goal", "configuration", "timeout", "transport", "commit", "served"} {
 		t.Run(mode, func(t *testing.T) {
 			ctx := context.Background()
 			goal := inventoryHealth().(*sequenceDetector)
@@ -160,7 +160,7 @@ func TestSourceInventoryOnboardingRejectsUnhealthyReachabilityReference(t *testi
 					snapshot.ServiceList[0].Spec.Ports[0].TargetPort = intstr.FromInt32(8888)
 				}
 				w.ObservedAt = now
-				w.Targets[0].Samples = append(w.Targets[0].Samples, servicehealth.DialSample{At: now, Class: class})
+				w.Targets[0].Samples = append(w.Targets[0].Samples, servicehealth.DialSample{At: now, Class: class, OK: mode == "served" && round == 0})
 				snapshot.Reachability = w
 				provider.set(snapshot)
 				if err := c.EvaluateAll(ctx, now); err != nil {
