@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -111,10 +112,19 @@ class KubectlApplicationCluster:
         )
 
 
+def _baseline_digest(objects: list[dict[str, Any]]) -> str:
+    return hashlib.sha256(json.dumps(objects, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
 @dataclass(frozen=True)
 class ApplicationBaseline:
     namespace: str
     objects: list[dict[str, Any]]
+    installed_digest: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.installed_digest is not None and self.installed_digest != _baseline_digest(self.objects):
+            raise ValueError("installed baseline digest differs from its sealed manifest set")
 
 
 @dataclass
@@ -249,10 +259,26 @@ def application_namespaces(path: Path, kubeconfig: Path, primary: str) -> tuple[
     )
 
 
-def save_application_baseline(path: Path, baselines: tuple[ApplicationBaseline, ...]) -> None:
+def save_application_baseline(
+    path: Path,
+    baselines: tuple[ApplicationBaseline, ...],
+    *,
+    installed: bool = False,
+) -> None:
     document = json.loads(path.read_text(encoding="utf-8"))
     document[APPLICATION_BASELINE_KEY] = {
-        "namespaces": [{"namespace": baseline.namespace, "objects": baseline.objects} for baseline in baselines]
+        "namespaces": [
+            {
+                "namespace": baseline.namespace,
+                "objects": baseline.objects,
+                **(
+                    {"installed_digest": _baseline_digest(baseline.objects)}
+                    if installed or baseline.installed_digest
+                    else {}
+                ),
+            }
+            for baseline in baselines
+        ]
     }
     temporary = path.with_suffix(".tmp")
     temporary.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
@@ -270,7 +296,9 @@ def load_application_baseline(path: Path, namespace: str) -> tuple[ApplicationBa
         return None
     if not all(isinstance(item, dict) and isinstance(item.get("objects"), list) for item in namespaces):
         return None
-    return tuple(ApplicationBaseline(item["namespace"], item["objects"]) for item in namespaces)
+    return tuple(
+        ApplicationBaseline(item["namespace"], item["objects"], item.get("installed_digest")) for item in namespaces
+    )
 
 
 def reconcile_application(
@@ -304,10 +332,10 @@ def accepted_restore_baselines(
     Captured runtime-only objects and API defaults remain available. Never apply
     a captured spec followed by a conflicting source spec (a second rollout).
     """
-    import hashlib
-
     import yaml
 
+    if all(baseline.installed_digest for baseline in baselines):
+        return baselines
     root = workspace / ".sdo/rendered"
     lock_path = root / "lock.json"
     if not lock_path.is_file():
@@ -331,7 +359,9 @@ def accepted_restore_baselines(
             raise ValueError(f"duplicate accepted restore manifest: {key}")
         selected[key] = value
     return tuple(
-        ApplicationBaseline(
+        baseline
+        if baseline.installed_digest
+        else ApplicationBaseline(
             baseline.namespace,
             [
                 deepcopy(selected.get((value["kind"], baseline.namespace, value["metadata"]["name"]), value))
@@ -375,3 +405,20 @@ def retire_stalled_replicas(kubeconfig: Path, namespace: str) -> None:
             namespace=namespace,
             kubeconfig=kubeconfig,
         )
+
+
+def seal_existing_install(path: Path, cluster: ApplicationCluster, namespace: str) -> None:
+    """Upgrade a clean pre-controller installation, never recapture fault state."""
+    baselines = load_application_baseline(path, namespace)
+    if not baselines:
+        raise ValueError("installed source seal requires the original up capture")
+    for baseline in baselines:
+        expected = {_identity(v): _content(v) for v in baseline.objects if _managed(v, baseline.namespace)}
+        actual = {
+            _identity(v): _content(v)
+            for v in cluster.list_objects(baseline.namespace)
+            if _managed(v, baseline.namespace)
+        }
+        if actual != expected:
+            raise ValueError("installed source seal differs from the original clean up capture")
+    save_application_baseline(path, baselines, installed=True)

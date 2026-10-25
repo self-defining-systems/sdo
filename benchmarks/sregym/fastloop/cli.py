@@ -226,6 +226,9 @@ def up_preflight(args: argparse.Namespace) -> None:
         if shutil.which(executable) is None:
             raise ValueError(f"fastloop preflight: missing {executable}")
     subprocess.run(["docker", "info", "--format", "{{.ServerVersion}}"], check=True, capture_output=True, text=True)
+    from benchmarks.sregym.adapter import assert_host_headroom
+
+    assert_host_headroom()
     check_host_capacity(args)
     if args.dev_mount is None:
         warnings.warn("--no-dev-mount: code changes require image rebuilds", stacklevel=2)
@@ -313,6 +316,11 @@ def _up(args: argparse.Namespace) -> int:
             if health.get("healthy"):
                 if previous.dev_mount is not None and previous.state_path.is_file():
                     return _reset(argparse.Namespace(run_dir=previous.run_dir, dev_mount=previous.dev_mount))
+                from benchmarks.sregym.fastloop.baseline_recovery import seal_existing_install
+
+                seal_existing_install(
+                    previous.baseline_path, KubectlApplicationCluster(previous.kubeconfig), previous.namespace
+                )
                 print(f"fastloop environment ready: reused verified node image digests -> {previous.path}")
                 return 0
     if args.builder:
@@ -366,10 +374,16 @@ def _up(args: argparse.Namespace) -> int:
     )
     cluster = KubectlApplicationCluster(environment.kubeconfig)
     namespaces = application_namespaces(environment.baseline_path, environment.kubeconfig, environment.namespace)
-    save_application_baseline(
-        environment.baseline_path,
-        tuple(capture_application_baseline(cluster, namespace) for namespace in namespaces),
-    )
+    if deployed.get("deployed") is True:
+        save_application_baseline(
+            environment.baseline_path,
+            tuple(capture_application_baseline(cluster, namespace) for namespace in namespaces),
+            installed=True,
+        )
+    else:
+        from benchmarks.sregym.fastloop.baseline_recovery import seal_existing_install
+
+        seal_existing_install(environment.baseline_path, cluster, environment.namespace)
     delivery_path = run_dir / "image_delivery.jsonl"
     if delivery_path.is_file():
         from benchmarks.sregym.fastloop.image_delivery import delivery_state

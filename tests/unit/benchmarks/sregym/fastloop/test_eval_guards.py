@@ -363,3 +363,65 @@ def test_fresh_guard_accepts_actual_broker_health_bootstrap_and_rendered_commit(
     lineage = setup_lineage(repository, seed)
     assert lineage["accepted_commit"] == published["head"]
     assert [row["actor"] for row in lineage["commits"]] == ["health_judge", "controller"]
+
+
+def test_lane_resources_reject_before_any_health_wait_or_restore(monkeypatch, tmp_path):
+    from benchmarks.sregym import adapter
+    from benchmarks.sregym.fastloop.admission import LaneAdmission
+
+    def reject(*args, **kwargs):
+        raise ValueError("eval: resource admission rejected foreign app")
+
+    monkeypatch.setattr(adapter, "assert_lane_resources", reject)
+    env = SimpleNamespace(kubeconfig=tmp_path / "kubeconfig", namespace="application")
+    gate = LaneAdmission(env, object(), object(), tmp_path / "proof")
+    with pytest.raises(ValueError, match="foreign app"):
+        gate.prove("application-sdo")
+
+
+def test_new_lane_restores_its_installed_source_instead_of_an_inherited_rendered_lock(tmp_path):
+    from benchmarks.sregym.fastloop.baseline_recovery import (
+        ApplicationBaseline,
+        accepted_restore_baselines,
+        load_application_baseline,
+        save_application_baseline,
+    )
+
+    path = tmp_path / "baseline.json"
+    path.write_text("{}")
+    installed = {
+        "kind": "Deployment",
+        "metadata": {"name": "api", "namespace": "app"},
+        "spec": {"replicas": 1, "template": {"spec": {"containers": [{"name": "api", "image": "new-lane"}]}}},
+    }
+    save_application_baseline(path, (ApplicationBaseline("app", [installed]),), installed=True)
+    root = tmp_path / ".sdo/rendered"
+    root.mkdir(parents=True)
+    (root / "lock.json").write_text('{"objects":[{"file":"missing-old-lane.yaml"}]}')
+    baseline = load_application_baseline(path, "app")
+    assert accepted_restore_baselines(tmp_path, baseline)[0].objects == [installed]
+    value = json.loads(path.read_text())
+    value["fastloop_application"]["namespaces"][0]["objects"][0]["spec"]["replicas"] = 0
+    path.write_text(json.dumps(value))
+    with pytest.raises(ValueError, match="installed baseline digest"):
+        load_application_baseline(path, "app")
+
+
+def test_reusing_a_lane_cannot_reseal_runtime_drift_as_installed_source(tmp_path):
+    from benchmarks.sregym.fastloop.baseline_recovery import (
+        ApplicationBaseline,
+        save_application_baseline,
+        seal_existing_install,
+    )
+
+    path = tmp_path / "baseline.json"
+    path.write_text("{}")
+    installed = {"kind": "Deployment", "metadata": {"name": "api", "namespace": "app"}, "spec": {"replicas": 1}}
+    save_application_baseline(path, (ApplicationBaseline("app", [installed]),))
+    original = path.read_bytes()
+    changed = deepcopy(installed)
+    changed["spec"]["replicas"] = 0
+    cluster = SimpleNamespace(list_objects=lambda _: [changed])
+    with pytest.raises(ValueError, match="original clean up capture"):
+        seal_existing_install(path, cluster, "app")
+    assert path.read_bytes() == original

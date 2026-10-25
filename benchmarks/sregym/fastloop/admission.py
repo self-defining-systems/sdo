@@ -147,14 +147,28 @@ class LaneAdmission:
             ).stdout
         )
 
+    def check_resources(self, stage: str) -> None:
+        from benchmarks.sregym.adapter import assert_lane_resources
+
+        self.directory.mkdir(parents=True, exist_ok=True)
+        try:
+            evidence = assert_lane_resources(self.environment.kubeconfig, app_namespaces={self.environment.namespace})
+        except ValueError as exc:
+            if self.progress:
+                self.progress("lane_resources", passed=False, reason=str(exc))
+            raise
+        destination = self.directory / f"lane-resources-{stage}.json"
+        destination.write_text(json.dumps(evidence, indent=2) + "\n")
+        if self.progress:
+            self.progress("lane_resources", evidence=str(destination))
+
     def prove(self, control: str, *, fresh: bool = False) -> dict[str, Any]:
         from benchmarks.sregym.fastloop.rbac import verify_rbac
 
+        self.check_resources("entry")
         self._policy()
         env = self.environment
         self.directory.mkdir(parents=True, exist_ok=True)
-        # JG lane-resource admission belongs here, before proof or injection.
-        # The dry-run also uses this entry point; keep checks shared.
         rbac = verify_rbac(env.kubeconfig, env.namespace)
         (self.directory / "rbac.json").write_text(json.dumps(rbac, indent=2) + "\n")
         boundary = datetime.now(timezone.utc).isoformat()
@@ -197,6 +211,7 @@ class LaneAdmission:
             from benchmarks.sregym.fastloop.baseline_recovery import KubectlApplicationCluster
             from benchmarks.sregym.fastloop.reset import RestoreChecks, restore_application
 
+            self.check_resources("restore")
             checks = RestoreChecks(env)
             checks.prepare(fresh=False)
             restore_application(env, KubectlApplicationCluster(env.kubeconfig), self.worker, checks=checks)
@@ -214,6 +229,7 @@ class LaneAdmission:
             destination.write_text(json.dumps(lineage, indent=2) + "\n")
             if self.progress:
                 self.progress("setup_memory", evidence=str(destination))
+        self.check_resources("injection")
         return proof
 
 

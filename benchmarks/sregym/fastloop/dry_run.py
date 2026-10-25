@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 INVARIANTS = (
+    "lane_resources",
     "restore",
     "onboarding",
     "setup_memory",
@@ -25,9 +26,22 @@ INVARIANTS = (
 )
 
 
+def code_revision() -> str:
+    root = Path(__file__).resolve().parents[3]
+    result = subprocess.run(
+        ["git", "-C", str(root), "describe", "--always", "--abbrev=40", "--dirty", "--match=__eval_no_tag__"],
+        check=True,
+        text=True,
+        capture_output=True,
+        timeout=5,
+    )
+    return result.stdout.strip()
+
+
 @dataclass
 class DryRunReport:
     lane: str
+    code_revision: str = field(default_factory=code_revision)
     started_at: float = field(default_factory=time.time)
     seconds: float = 0
     passed: bool = False
@@ -84,7 +98,7 @@ class NoFaultReady(Exception):
 
 
 def run_lane(run_dir: Path, timeout: int) -> int:
-    from benchmarks.sregym.adapter import closure_pending, control_namespace_for, kubectl
+    from benchmarks.sregym.adapter import assert_lane_resources, closure_pending, control_namespace_for, kubectl
     from benchmarks.sregym.fastloop import cli
     from benchmarks.sregym.fastloop.environment import FastloopEnvironment
 
@@ -101,6 +115,8 @@ def run_lane(run_dir: Path, timeout: int) -> int:
         report.save(report_path)
 
     try:
+        resources = assert_lane_resources(environment.kubeconfig, app_namespaces={environment.namespace})
+        passed("lane_resources", **resources)
         cli._reset(argparse.Namespace(run_dir=environment.run_dir, dev_mount=None))
         passed("restore", source="accepted installed manifests; independent traffic and stable workloads")
         os.environ["KUBECONFIG"] = str(environment.kubeconfig)

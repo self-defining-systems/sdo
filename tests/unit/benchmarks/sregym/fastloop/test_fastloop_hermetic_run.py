@@ -705,6 +705,42 @@ def test_scripted_fastloop_reuses_reflected_target_port_program(
         ]
         return state
 
+    def resource_proof(_config, *, app_namespaces):
+        from benchmarks.sregym.adapter.lane_resources import evaluate_lane_resources
+
+        now = datetime.now(timezone.utc)
+        pods, measures = [], []
+        for original in app.snapshot()["pods"]:
+            pod = deepcopy(original)
+            pod["metadata"].update(namespace=NAMESPACE, uid=pod["metadata"]["name"])
+            pod["spec"]["nodeName"] = "fixture-node"
+            containers = pod["spec"].get("containers", [])
+            pod["status"] = {
+                "phase": "Running",
+                "containerStatuses": [
+                    {"name": c["name"], "state": {"running": {"startedAt": now.isoformat()}}} for c in containers
+                ],
+            }
+            pods.append(pod)
+            measures.append(
+                {
+                    "podRef": {k: pod["metadata"][k] for k in ("namespace", "name", "uid")},
+                    "containers": [
+                        {"name": c["name"], "memory": {"time": now.isoformat(), "workingSetBytes": 16 * 1024**2}}
+                        for c in containers
+                    ],
+                }
+            )
+        return evaluate_lane_resources(
+            namespaces={"items": [{"metadata": {"name": NAMESPACE, "creationTimestamp": now.isoformat()}}]},
+            pods={"items": pods},
+            summaries=[{"node": {"nodeName": "fixture-node"}, "pods": measures}],
+            app_namespaces=app_namespaces,
+            host_available_bytes=32 * 1024**3,
+            now=now,
+        )
+
+    monkeypatch.setattr(adapter, "assert_lane_resources", resource_proof)
     monkeypatch.setattr(controller, "runtime_state", admission_state)
     monkeypatch.setattr(admission, "kubectl", admission_api)
     monkeypatch.setattr(clean_start, "kubectl", admission_api)
