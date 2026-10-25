@@ -9,11 +9,22 @@ import (
 // the ordinary verification grace. This path never establishes recovery.
 func (c *Controller) terminalInventoryBlockerLocked(verification ToolResponse) bool {
 	result := c.currentIncidentResult
-	if result == nil || result.Status != IncidentFailed || (!result.ResponseLoopExhausted && result.Error != "authorization_denied_no_progress" && result.Error != "shared_ownership") || verification.Error != "" || len(verification.Findings) == 0 || len(verification.Findings) != len(result.UnresolvedFindings) {
+	if result == nil || result.Status != IncidentFailed || (!result.ResponseLoopExhausted && result.Error != "authorization_denied_no_progress" && result.Error != "no_progress" && result.Error != "shared_ownership") || verification.Error != "" || len(verification.Findings) == 0 || len(verification.Findings) != len(result.UnresolvedFindings) {
 		return false
 	}
 	if result.Error == "shared_ownership" && !sharedOwnershipBlocker(verification, nil) {
 		return false
+	}
+	if result.Error == "no_progress" {
+		repairs := []continuationRepair{}
+		receipts := append(append([]RepairActionReceipt(nil), result.RepairActions...), ProgramRepairReceipts(result.PlanApplications, nil)...)
+		for _, receipt := range receipts {
+			repairs = append(repairs, continuationRepair{Kind: "recorded-action", ActionID: receipt.ActionID, Receipt: feedbackReceipt(receipt)})
+		}
+		previous, err := continuationFeedback(1, ToolResponse{Findings: result.UnresolvedFindings}, repairs...)
+		if err != nil || !responderNoProgress(string(previous), verification, repairs) {
+			return false
+		}
 	}
 	prior := map[string]bool{}
 	for _, finding := range result.UnresolvedFindings {
@@ -36,8 +47,7 @@ func (c *Controller) terminalInventoryBlockerLocked(verification ToolResponse) b
 		stable := false
 		for _, object := range objects {
 			if object != nil && inventoryRef(object) == finding.PrimaryResource {
-				_, ttl, _ := unstructured.NestedInt64(object.Object, "spec", "ttlSecondsAfterFinished")
-				stable = object.GetDeletionTimestamp() == nil && len(object.GetOwnerReferences()) == 0 && !(object.GetKind() == "Job" && ttl)
+				stable = stableInventoryObject(object)
 				for _, receipt := range result.RepairActions {
 					for _, ref := range receipt.Resources {
 						if ref == finding.PrimaryResource && (receipt.Success || receipt.FailureReason == "outcome_unknown" || receipt.FailureReason == "delete_not_confirmed") {

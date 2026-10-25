@@ -40,15 +40,22 @@ func (l *ResponderLoop) listMenu(ctx context.Context, request ToolRequest, respo
 		}
 	}
 	if l.MenuConfig.Unexplained != nil {
-		removals, err := l.MenuConfig.Unexplained(ctx)
+		assessment, err := l.MenuConfig.Unexplained(ctx)
 		if err != nil {
 			response.Error = err.Error()
 			return
 		}
-		for _, removal := range removals {
+		response.UnexplainedRemovalBlockers = assessment.Blockers
+		for _, removal := range assessment.Removals {
 			selected := removal
 			plan := program.Plan{Actions: []program.Action{program.DeleteObject{Ref: removal.Ref, Reason: "remove current source-absent unexplained object"}}}
 			entries["remove-unexplained-"+menuDigest(removal)] = menuEntry{programID: "remove-unexplained", bindings: program.Bindings{Objects: program.ObjectBindings{"resource": removal.Ref}}, plan: &plan, removal: &selected}
+		}
+	} else {
+		for _, finding := range l.Request.Findings {
+			if finding.DetectorID == "drift.unexplained" {
+				response.UnexplainedRemovalBlockers = append(response.UnexplainedRemovalBlockers, UnexplainedRemovalBlocker{FindingFingerprint: FindingFingerprint(finding), Ref: finding.PrimaryResource, Reason: RemovalUnavailable})
+			}
 		}
 	}
 	if l.Programs != nil {
