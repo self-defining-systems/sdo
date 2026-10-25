@@ -21,6 +21,7 @@ import (
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/validate"
 	"sdo.dev/operator/operatorcli"
+	"sdo.dev/operator/worker_registry"
 )
 
 func main() {
@@ -38,9 +39,17 @@ func run(ctx context.Context) error {
 	if *checkpoint == "" || *source == "" || *operatorRoot == "" || flag.NArg() != 0 {
 		return errors.New("replay broker requires checkpoint, source, and operator-root")
 	}
-	requestWire, err := os.ReadFile(filepath.Join(*checkpoint, "request.json"))
+	requestFile, err := os.Open(filepath.Join(*checkpoint, "request.json"))
 	if err != nil {
 		return err
+	}
+	defer requestFile.Close()
+	requestWire, err := io.ReadAll(io.LimitReader(requestFile, worker_registry.MaxStagedRequestBytes+1))
+	if err != nil {
+		return err
+	}
+	if len(requestWire) > worker_registry.MaxStagedRequestBytes {
+		return fmt.Errorf("dispatch request exceeds %d bytes", worker_registry.MaxStagedRequestBytes)
 	}
 	resultWire, err := os.ReadFile(filepath.Join(*checkpoint, "result.json"))
 	if err != nil {

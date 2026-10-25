@@ -28,6 +28,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import ExitStack, contextmanager
@@ -51,6 +52,7 @@ from agentshim import (
     TokenUsage,
     ToolCall,
     TurnRequest,
+    UsageReport,
     cost_usd,
     default_pricing,
     normalized_usage,
@@ -180,10 +182,27 @@ class _ShellCommandRecorder:
     commands: list[str] = field(default_factory=list[str])
     tool_calls: int = 0
     on_session_started: Callable[[str], None] | None = None
+    on_usage: Callable[[dict[str, int | float], bool], None] | None = None
+    session_id: str | None = None
+    incremental: dict[str, int | float] = field(default_factory=dict[str, int | float])
 
     def on_event(self, event: AgentEvent) -> None:
-        if isinstance(event, SessionStarted) and self.on_session_started is not None:
-            self.on_session_started(event.session_id)
+        if isinstance(event, SessionStarted):
+            self.session_id = event.session_id
+            if self.on_session_started is not None:
+                self.on_session_started(event.session_id)
+        if isinstance(event, UsageReport) and self.on_usage is not None and event.usage.provider == "claude":
+            observed = turn_usage(StructuredTurn("", self.session_id or "", event.usage))
+            # Claude assistant reports are incremental; the terminal report has
+            # num_turns and supersedes them. Codex reports only at turn end.
+            if event.usage.provider == "claude" and event.usage.tokens.turns == 0:
+                for name, value in observed.items():
+                    self.incremental[name] = self.incremental.get(name, 0) + value
+                self.incremental["llm_calls"] += 1
+                self.incremental["model_requests"] = self.incremental["llm_calls"]
+                self.on_usage(dict(self.incremental), False)
+            else:
+                self.on_usage(observed, False)
         if not isinstance(event, ToolCall):
             return
         self.tool_calls += 1
@@ -210,6 +229,7 @@ def run_structured_turn(
     mcp_servers: Sequence[McpServer] = (),
     environment: Mapping[str, str] | None = None,
     on_session_started: Callable[[str], None] | None = None,
+    on_usage: Callable[[dict[str, int | float], bool], None] | None = None,
 ) -> StructuredTurn:
     """Run one structured turn, fresh or resumed, and return its output.
 
@@ -234,7 +254,7 @@ def run_structured_turn(
         raise ValueError("a Codex workspace-write turn cannot be resumed: its session lives in a per-turn CODEX_HOME")
 
     workspace = Path(cwd).resolve()
-    recorder = _ShellCommandRecorder(on_session_started=on_session_started)
+    recorder = _ShellCommandRecorder(on_session_started=on_session_started, on_usage=on_usage)
     started = time.monotonic()
     try:
         with ExitStack() as turn_scope:
@@ -261,18 +281,63 @@ def run_structured_turn(
             session = agent.start_session(cwd=str(workspace), timeout=timeout_seconds)
             if resume_session_id is not None and not session.adopt(resume_session_id):
                 raise StructuredTurnError(f"{provider} cannot resume session {resume_session_id!r}")
-            codex_home = _codex_session_home(extra_env) if provider == "codex" else None
+            codex_home = _codex_session_home(effective_environment) if provider == "codex" else None
             rollout_before = _codex_rollout_totals(codex_home, resume_session_id)
-            schema_dir = turn_scope.enter_context(tempfile.TemporaryDirectory(prefix="sdo-structured-turn-"))
-            result = session.turn(
-                TurnRequest(
-                    prompt=prompt,
-                    output_schema=OutputSchema(schema=dict(output_schema), host_dir=Path(schema_dir)),
-                    reasoning_effort=reasoning_effort,
-                    extra_args=extra_args,
-                    mcp_servers=mcp_servers,
+            if (
+                on_usage is not None
+                and provider == "codex"
+                and resume_session_id is not None
+                and (rollout_before is None or (rollout_before.requests > 0 and rollout_before.totals is None))
+            ):
+                raise StructuredTurnError(
+                    "cannot checkpoint resumed usage without a readable cumulative token baseline"
                 )
-            )
+            schema_dir = turn_scope.enter_context(tempfile.TemporaryDirectory(prefix="sdo-structured-turn-"))
+            # Codex exposes response accounting in its rollout before its CLI
+            # emits a terminal usage event. Poll only in the worker, never Go.
+            stop_usage = threading.Event()
+            usage_errors: list[Exception] = []
+
+            def sample_usage() -> None:
+                if provider != "codex" or on_usage is None:
+                    return
+                latest = _codex_rollout_totals(codex_home, recorder.session_id or resume_session_id)
+                delta = latest.since(rollout_before) if latest is not None else None
+                if delta is not None and delta.tokens is not None and delta.requests > 0:
+                    from agentshim import ProviderUsage
+
+                    snapshot = StructuredTurn(
+                        "", recorder.session_id or "", ProviderUsage(tokens=delta.tokens), model_requests=delta.requests
+                    )
+                    on_usage(turn_usage(snapshot), False)
+
+            def monitor_usage() -> None:
+                try:
+                    while not stop_usage.wait(0.1):
+                        sample_usage()
+                except Exception as exc:
+                    usage_errors.append(exc)
+
+            monitor = threading.Thread(target=monitor_usage, name="sdo-usage-checkpoint", daemon=True)
+            if on_usage is not None:
+                monitor.start()
+            try:
+                result = session.turn(
+                    TurnRequest(
+                        prompt=prompt,
+                        output_schema=OutputSchema(schema=dict(output_schema), host_dir=Path(schema_dir)),
+                        reasoning_effort=reasoning_effort,
+                        extra_args=extra_args,
+                        mcp_servers=mcp_servers,
+                    )
+                )
+            finally:
+                stop_usage.set()
+                if on_usage is not None:
+                    monitor.join()
+                    sample_usage()
+                    if usage_errors:
+                        raise StructuredTurnError(f"usage checkpoint failed: {usage_errors[0]}") from usage_errors[0]
             # Read the rollout now: a workspace-write Codex home is deleted
             # when the turn scope closes.
             rollout_after = _codex_rollout_totals(codex_home, result.session_id or resume_session_id)
@@ -285,6 +350,13 @@ def run_structured_turn(
         raise StructuredTurnError(f"{provider} exited with code {exc.returncode}: {details or 'no output'}") from exc
     except AgentShimError as exc:
         raise StructuredTurnError(f"{provider} turn failed: {exc}") from exc
+
+    if on_usage is not None and provider == "codex" and resume_session_id is not None:
+        delta = rollout_after.since(rollout_before) if rollout_after is not None else None
+        if delta is None or delta.tokens is None:
+            # The CLI's whole-session total cannot safely become a turn delta.
+            # Keep any observed partial checkpoint rather than billing it twice.
+            raise StructuredTurnError("resumed cumulative token accounting unavailable after turn")
 
     structured_output: object = result.structured_output
     session_id = result.session_id or resume_session_id or ""
@@ -316,6 +388,8 @@ def run_structured_turn(
     )
     # A model can spend tokens and then fail the structured-response contract.
     # Persist its observed accounting before rejecting that response.
+    if on_usage is not None:
+        on_usage(turn_usage(turn), True)
     _append_turn_usage(provider, model, workspace, turn, time.monotonic() - started)
     if not isinstance(structured_output, dict):
         raise StructuredTurnError(f"{provider} turn returned no structured output")

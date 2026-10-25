@@ -1,0 +1,157 @@
+{
+  "namespace": "demo",
+  "deployments": [
+    {
+      "metadata": {
+        "namespace": "demo",
+        "name": "recommendation"
+      },
+      "spec": {
+        "selector": {
+          "matchLabels": {
+            "app": "recommendation"
+          }
+        },
+        "template": {
+          "metadata": {
+            "labels": {
+              "app": "recommendation"
+            }
+          },
+          "spec": {
+            "containers": [
+              {
+                "name": "app",
+                "image": "example.invalid/app:v1",
+                "ports": [
+                  {
+                    "containerPort": 8080
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "status": {
+        "availableReplicas": 1
+      }
+    },
+    {
+      "metadata": {
+        "namespace": "demo",
+        "name": "search"
+      },
+      "spec": {
+        "selector": {
+          "matchLabels": {
+            "app": "search"
+          }
+        },
+        "template": {
+          "metadata": {
+            "labels": {
+              "app": "search"
+            }
+          },
+          "spec": {
+            "containers": [
+              {
+                "name": "app",
+                "image": "example.invalid/app:v1",
+                "ports": [
+                  {
+                    "containerPort": 8080
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "status": {
+        "availableReplicas": 1
+      }
+    }
+  ],
+  "services": [
+    {
+      "metadata": {
+        "namespace": "demo",
+        "name": "recommendation"
+      },
+      "spec": {
+        "selector": {
+          "app": "recommendation"
+        },
+        "ports": [
+          {
+            "name": "http",
+            "port": 8080,
+            "targetPort": 8080
+          }
+        ]
+      }
+    },
+    {
+      "metadata": {
+        "namespace": "demo",
+        "name": "search"
+      },
+      "spec": {
+        "selector": {
+          "app": "search"
+        },
+        "ports": [
+          {
+            "name": "http",
+            "port": 8080,
+            "targetPort": 8080
+          }
+        ]
+      }
+    }
+  ],
+  "endpoints": [
+    {
+      "metadata": {
+        "namespace": "demo",
+        "name": "recommendation"
+      },
+      "subsets": [
+        {
+          "addresses": [
+            {
+              "ip": "192.0.2.10"
+            }
+          ],
+          "ports": [
+            {
+              "port": 8080
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "metadata": {
+        "namespace": "demo",
+        "name": "search"
+      },
+      "subsets": [
+        {
+          "addresses": [
+            {
+              "ip": "192.0.2.11"
+            }
+          ],
+          "ports": [
+            {
+              "port": 8080
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
