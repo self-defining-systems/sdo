@@ -31,9 +31,15 @@ func TestEarlyClosureMissingReportResumesReflectionWithVerifiedReceipts(t *testi
 	if !hasResponderSession(closure) || len(closure.Result.RepairActions) != 1 || len(closure.Result.ConfirmedRootCauses) != 1 {
 		t.Fatalf("missing durable receipt/session/cause: %+v", closure.Result)
 	}
+	closure.ResponderCompletedAt = time.Unix(47, 0)
 	derived, err := (ProtoOutcomeDeriver{}).Derive(context.Background(), closure, "", "test", "test")
 	if err != nil {
 		t.Fatal(err)
+	}
+	for _, stamp := range []time.Time{derived.Record.Timestamps.MitigatedAt.AsTime(), derived.Record.Timestamps.VerifiedAt.AsTime(), derived.Record.Timestamps.CompletedAt.AsTime()} {
+		if !stamp.Equal(time.Unix(17, 0)) {
+			t.Fatalf("report grace changed recovery time: %v", stamp)
+		}
 	}
 	if len(validate.VerifiedReflectionCauses(derived.Record)) != 1 {
 		t.Fatalf("receipt did not independently prove repair: %v", derived.Record)

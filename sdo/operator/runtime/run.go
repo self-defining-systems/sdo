@@ -348,12 +348,9 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			return fmt.Errorf("create dedicated leader-election client: %w", err)
 		}
 	}
-	planExecConfig := options.PlanExecConfig
-	if planExecConfig == nil && options.Client == nil {
-		planExecConfig, err = responderPlanExecConfig()
-		if err != nil {
-			return fmt.Errorf("load plan exec client configuration: %w", err)
-		}
+	planExecConfig, genericCapture, err := initializePlanTransports(options, clientInjected, *namespace)
+	if err != nil {
+		return err
 	}
 	stateStartTimeout := options.StateBaselineStartTimeout
 	if stateStartTimeout <= 0 {
@@ -405,13 +402,6 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	}
 	if err = scope.Within(ceiling); err != nil {
 		return err
-	}
-	genericCapture := options.GenericCapture
-	if genericCapture == nil && options.Client == nil {
-		genericCapture, err = core.NewGenericCapture(*namespace)
-		if err != nil {
-			return fmt.Errorf("create generic capture reader: %w", err)
-		}
 	}
 	kubernetesCache, err := NewKubernetesCache(KubernetesCacheConfig{
 		AcceptedScope: func(ctx context.Context) (sdk.ObservationScope, string, error) {
@@ -550,14 +540,21 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 				}, *maxResponseLoops)
 				if menuEnabled != "0" {
 					loop.MenuConfig = productionResponderMenu()
-					loop.MenuConfig.Unexplained = func(ctx context.Context) ([]UnexplainedRemoval, error) {
+					loop.MenuConfig.Unexplained = func(ctx context.Context) (UnexplainedRemovalAssessment, error) {
 						if controller == nil {
-							return nil, fmt.Errorf("controller is unavailable")
+							return UnexplainedRemovalAssessment{}, fmt.Errorf("controller is unavailable")
+						}
+						assessment, err := controller.unexplainedRemovalAssessment(request.IncidentID, *controlNamespace)
+						if err != nil {
+							return assessment, err
 						}
 						if removalClient == nil {
-							return nil, nil
+							for _, removal := range assessment.Removals {
+								assessment.Blockers = append(assessment.Blockers, UnexplainedRemovalBlocker{FindingFingerprint: removal.FindingFingerprint, Ref: removal.Ref, Reason: RemovalUnavailable})
+							}
+							assessment.Removals = nil
 						}
-						return controller.unexplainedRemovals(request.IncidentID, *controlNamespace)
+						return assessment, nil
 					}
 					loop.MenuConfig.RemoveUnexplained = func(ctx context.Context, selected UnexplainedRemoval, client PlanLifecycleClient, ref sdk.ObjectRef, uid types.UID, rv string) error {
 						if removalClient == nil {

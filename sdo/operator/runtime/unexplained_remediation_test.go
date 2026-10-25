@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -136,7 +137,7 @@ func TestAuthorizationDeniedNoProgressNeedsExactBrokenSet(t *testing.T) {
 }
 
 func TestTerminalUnchangedInventoryBlockerSkipsGrace(t *testing.T) {
-	for _, mode := range []string{"exhausted", "denied", "changed", "pending-delete", "not-terminal", "ttl-job", "delayed-informer", "unknown-mutation", "shared-ownership"} {
+	for _, mode := range []string{"exhausted", "denied", "no-progress", "changed", "pending-delete", "not-terminal", "ttl-job", "delayed-informer", "unknown-mutation", "shared-ownership", "changed-evidence", "legacy-untyped", "legacy-no-attempt", "legacy-pending"} {
 		t.Run(mode, func(t *testing.T) {
 			now := time.Now().UTC()
 			ref := sdk.ObjectRef{APIVersion: "v1", Kind: "ServiceAccount", Namespace: "app", Name: "cleanup"}
@@ -168,6 +169,20 @@ func TestTerminalUnchangedInventoryBlockerSkipsGrace(t *testing.T) {
 			result.Status = IncidentFailed
 			result.ResponseLoopExhausted = true
 			result.UnresolvedFindings = findings
+			if mode == "no-progress" || mode == "changed-evidence" || strings.HasPrefix(mode, "legacy-") {
+				result.ResponseLoopExhausted = false
+				result.Error = "no_progress"
+				result.RepairActions = []RepairActionReceipt{{ActionID: "failed", Kind: "sdk-plan", Resources: []sdk.ObjectRef{ref}, FailureReason: "execution_failed", StartedAt: now.Add(-2 * time.Second), CompletedAt: now.Add(-time.Second)}}
+				if mode == "legacy-untyped" {
+					result.RepairActions[0].FailureReason = ""
+				}
+				if mode == "legacy-no-attempt" {
+					result.RepairActions = nil
+				}
+				if mode == "legacy-pending" {
+					result.RepairActions[0].CompletedAt = time.Time{}
+				}
+			}
 			if mode == "denied" {
 				result.ResponseLoopExhausted = false
 				result.Error = "authorization_denied_no_progress"
@@ -190,6 +205,11 @@ func TestTerminalUnchangedInventoryBlockerSkipsGrace(t *testing.T) {
 			if mode == "delayed-informer" || mode == "unknown-mutation" {
 				result.RepairActions = []RepairActionReceipt{{Resources: []sdk.ObjectRef{ref}, Success: mode == "delayed-informer", FailureReason: "outcome_unknown", CompletedAt: now}}
 			}
+			if mode == "changed-evidence" {
+				// Keep identity fixed while the independent observation changes.
+				result.UnresolvedFindings = append([]sdk.Finding(nil), result.UnresolvedFindings...)
+				result.UnresolvedFindings[0].Evidence += "; previous different evidence"
+			}
 			controller.currentIncidentResult = &result
 			controller.incidentOpen = true
 			controller.responderDone = true
@@ -200,7 +220,7 @@ func TestTerminalUnchangedInventoryBlockerSkipsGrace(t *testing.T) {
 			var closed *IncidentClosure
 			controller.OnIncidentClosed = func(c IncidentClosure) { closed = &c }
 			controller.maybeCloseIncident(context.Background(), now, nil)
-			terminal := mode == "exhausted" || mode == "denied" || mode == "shared-ownership"
+			terminal := mode == "no-progress" || mode == "exhausted" || mode == "denied" || mode == "shared-ownership"
 			if terminal && (closed == nil || len(closed.FinalDetectorStates) != 0 || closed.Result.Status != IncidentFailed) {
 				t.Fatalf("terminal blocker waited or claimed healthy: %+v", closed)
 			}

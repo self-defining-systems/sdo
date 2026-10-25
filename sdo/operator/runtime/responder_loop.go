@@ -50,31 +50,33 @@ type ToolRequest struct {
 }
 
 type ToolResponse struct {
-	BeforeFindings          []sdk.Finding                  `json:"before_findings,omitempty"`
-	ControllerFindings      []sdk.Finding                  `json:"controller_findings,omitempty"`
-	Progress                *FindingProgress               `json:"progress,omitempty"`
-	IncidentVerified        *apihistory.IncidentVerified   `json:"incident_verified,omitempty"`
-	FailureReason           string                         `json:"failure_reason,omitempty"`
-	Receipt                 *contracts.RepairActionReceipt `json:"-"`
-	MitigationRoundsUsed    int                            `json:"mitigation_rounds_used"`
-	MitigationRoundsAllowed int                            `json:"mitigation_rounds_allowed"`
-	ResponseLoopsUsed       int                            `json:"response_loops_used"`
-	ResponseLoopsAllowed    int                            `json:"response_loops_allowed"`
-	MitigationHealth        *MitigationHealth              `json:"mitigation_health,omitempty"`
-	RolloutPending          *contracts.RolloutPending      `json:"rollout_pending,omitempty"`
-	MenuExecution           []MenuRoundExecution           `json:"-"`
-	MenuParameters          map[string][]MenuParameter     `json:"-"`
-	Menu                    *contracts.MitigationMenu      `json:"-"`
-	Report                  *contracts.MitigationReport    `json:"-"`
-	Session                 *contracts.MitigationSession   `json:"-"`
-	Command                 string                         `json:"command"`
-	Source                  map[string]any                 `json:"source,omitempty"`
-	Error                   string                         `json:"error,omitempty"`
-	Summary                 string                         `json:"summary"`
-	PlanID                  string                         `json:"plan_id,omitempty"`
-	ApplicationID           string                         `json:"application_id,omitempty"`
-	Patches                 []PlanPatch                    `json:"patches,omitempty"`
-	ProgramRuns             []ProgramRun                   `json:"program_runs,omitempty"`
+	UnexplainedRemovalBlockers []UnexplainedRemovalBlocker    `json:"unexplained_removal_blockers,omitempty"`
+	BeforeFindings             []sdk.Finding                  `json:"before_findings,omitempty"`
+	ControllerFindings         []sdk.Finding                  `json:"controller_findings,omitempty"`
+	Progress                   *FindingProgress               `json:"progress,omitempty"`
+	IncidentVerified           *apihistory.IncidentVerified   `json:"incident_verified,omitempty"`
+	FailureReason              string                         `json:"failure_reason,omitempty"`
+	Receipt                    *contracts.RepairActionReceipt `json:"-"`
+	MitigationRoundsUsed       int                            `json:"mitigation_rounds_used"`
+	MitigationRoundsAllowed    int                            `json:"mitigation_rounds_allowed"`
+	ResponseLoopsUsed          int                            `json:"response_loops_used"`
+	ResponseLoopsAllowed       int                            `json:"response_loops_allowed"`
+	MitigationHealth           *MitigationHealth              `json:"mitigation_health,omitempty"`
+	RolloutPending             *contracts.RolloutPending      `json:"rollout_pending,omitempty"`
+	MenuExecution              []MenuRoundExecution           `json:"-"`
+	MenuParameters             map[string][]MenuParameter     `json:"-"`
+	Menu                       *contracts.MitigationMenu      `json:"-"`
+	Report                     *contracts.MitigationReport    `json:"-"`
+	Session                    *contracts.MitigationSession   `json:"-"`
+	Command                    string                         `json:"command"`
+	Source                     map[string]any                 `json:"source,omitempty"`
+	Error                      string                         `json:"error,omitempty"`
+	Summary                    string                         `json:"summary"`
+	PlanID                     string                         `json:"plan_id,omitempty"`
+	ApplicationID              string                         `json:"application_id,omitempty"`
+	Patches                    []PlanPatch                    `json:"patches,omitempty"`
+	ProgramRuns                []ProgramRun                   `json:"program_runs,omitempty"`
+
 	// ProgramRunsOmitted counts runs a truncated record could not list; the
 	// trust reader fails closed on it. ProgramRunsUnrelatedOmitted counts apply
 	// runs of programs or bindings the applied plans do not name, which the
