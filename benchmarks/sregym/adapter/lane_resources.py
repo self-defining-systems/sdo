@@ -1,14 +1,16 @@
 """Read-only admission for long-lived lanes: bounded memory and one app.
 
 The decision is a pure function of namespace/pod inventory, kubelet summaries,
-host MemAvailable and a clock. The shell uses GET only, never metrics-server,
-Docker, exec, Secrets, or an agent/model. Missing measurements reject admission.
+host MemAvailable and a clock. Memory collection uses Kubernetes GET only.
+Disk collection reads DockerRootDir and its host filesystem; neither check
+uses exec, Secrets, or an agent/model. Missing measurements reject admission.
 """
 
 from __future__ import annotations
 
 import json
 import re
+import shutil
 import subprocess
 import time
 from collections.abc import Mapping
@@ -51,6 +53,8 @@ class LaneResourcePolicy:
     host_floor_bytes: int = 16 * _GIB
     default_container_budget_bytes: int = 8 * _GIB
     jaeger_budget_bytes: int = 2 * _GIB
+    host_disk_floor_bytes: int = 100 * _GIB
+    host_disk_min_free_percent: int = 10
     max_sample_age_seconds: int = 60
     # Exact namespace/pod/container or namespace/container overrides.
     component_budgets: Mapping[str, int] = field(default_factory=dict)
@@ -61,9 +65,13 @@ class LaneResourcePolicy:
             "host_floor_bytes",
             "default_container_budget_bytes",
             "jaeger_budget_bytes",
+            "host_disk_floor_bytes",
+            "host_disk_min_free_percent",
             "max_sample_age_seconds",
         ):
             _positive(getattr(self, name), name)
+        if self.host_disk_min_free_percent >= 100:
+            raise ValueError("host_disk_min_free_percent must be less than 100")
         if not isinstance(self.component_budgets, Mapping):
             raise TypeError("component_budgets must be a mapping")
         if not isinstance(self.infrastructure_namespaces, (set, frozenset)):
@@ -227,6 +235,64 @@ def _host_headroom(available_bytes: int, policy: LaneResourcePolicy) -> dict[str
 def assert_host_headroom(*, policy: LaneResourcePolicy | None = None) -> dict[str, Any]:
     """Reject a low-memory host before lane creation, without any cluster query."""
     return {"passed": True, **_host_headroom(host_available_memory(), policy or LaneResourcePolicy())}
+
+
+def evaluate_host_disk(
+    *, mount: str, total_bytes: int, free_bytes: int, policy: LaneResourcePolicy | None = None
+) -> dict[str, Any]:
+    """Reject full filesystems before OpenSearch high/flood watermarks interfere."""
+    policy = policy or LaneResourcePolicy()
+    _positive(total_bytes, "disk total_bytes")
+    if type(free_bytes) is not int or not 0 <= free_bytes <= total_bytes:
+        raise ValueError(f"eval: host disk mount {mount} free-byte measurement unavailable")
+    used_percent = 100 * (total_bytes - free_bytes) / total_bytes
+    if free_bytes * 100 <= total_bytes * policy.host_disk_min_free_percent or free_bytes < policy.host_disk_floor_bytes:
+        raise ValueError(
+            f"eval: host disk mount {mount} {used_percent:.1f}% used, {free_bytes} bytes free; "
+            f"require usage <{100 - policy.host_disk_min_free_percent}% and "
+            f">={policy.host_disk_floor_bytes} bytes free; free space on this mount before lane setup/injection"
+        )
+    return {
+        "passed": True,
+        "mount": mount,
+        "total_bytes": total_bytes,
+        "free_bytes": free_bytes,
+        "used_percent": used_percent,
+        "min_free_percent": policy.host_disk_min_free_percent,
+        "floor_bytes": policy.host_disk_floor_bytes,
+    }
+
+
+def assert_host_disk_headroom(path: Path | None = None, *, policy: LaneResourcePolicy | None = None) -> dict[str, Any]:
+    """Inspect the local Docker kind-node storage filesystem; never change it."""
+    try:
+        if path is None:
+            inspected = subprocess.run(
+                ["docker", "info", "--format", "{{.DockerRootDir}}"],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            location = inspected.stdout.strip()
+            if not location or not Path(location).is_absolute():
+                raise ValueError("DockerRootDir absent or not absolute")
+            path = Path(location)
+        storage = path.resolve(strict=True)
+        # Resolve the actual mount (including bind mounts), not the current
+        # worktree filesystem. mountinfo encodes whitespace/backslash as octal.
+        mounts = [
+            Path(re.sub(r"\\([0-7]{3})", lambda match: chr(int(match[1], 8)), line.split()[4]))
+            for line in Path("/proc/self/mountinfo").read_text().splitlines()
+        ]
+        mount = max((row for row in mounts if storage.is_relative_to(row)), key=lambda row: len(row.parts))
+        usage = shutil.disk_usage(storage)
+    except (OSError, subprocess.SubprocessError, ValueError, IndexError) as exc:
+        raise ValueError(f"eval: kind host storage filesystem unavailable ({path}): {exc}") from exc
+    return {
+        **evaluate_host_disk(mount=str(mount), total_bytes=usage.total, free_bytes=usage.free, policy=policy),
+        "storage_path": str(storage),
+    }
 
 
 def host_available_memory(path: Path = Path("/proc/meminfo")) -> int:

@@ -29,7 +29,7 @@ mirror Pods bind the kubelet hash through matching file/hash/Node ownership
 metadata, since the API mirror has a distinct UID. Missing
 or malformed evidence, errors and timeouts block admission. All queries together
 have a 15-second deadline, each subprocess at most 5 seconds. No metrics-server,
-Docker operation, exec, Secret read or model call is needed. The host floor
+Docker mutation, exec, Secret read or model call is needed. The host floor
 measures the local kind host; remote execution must supply the remote host's
 measurement to the pure `evaluate_lane_resources` function.
 
@@ -41,12 +41,16 @@ resource faults remain benchmark scenarios rather than admission exemptions.
 ## SREGym pin update
 
 The companion [SREGym PR 12](https://github.com/vic-lsh/SREGym/pull/12) targets
-`sdo3`; this branch pins its ready commit `b3214b9aca3e1d47613ca92131f3e1cd9286445d`.
+`sdo3`; this branch pins its ready commit `24339c2489446bcb5cbfc87d349cad5d1279afa1`.
 Merge that PR before adopting the SDO pin. The observer now stores at most
-10,000 traces with a 256 MiB request and 2 GiB container limit. SREGym applies
-the same policy to rendered app-local all-in-one manifests (hotel plain YAML
-and source overlays; social-network Helm dependencies). The pinned astronomy
-chart already uses Jaeger v2 with 25,000 traces and a 600 MiB limit.
+10,000 traces with a 256 MiB request and 2 GiB container limit. Application
+workload documents remain byte-identical to the accepted source at the Helm,
+kubectl and source-deploy rendering inputs; SREGym does not rewrite app-local
+Jaeger workloads. Admission detects app growth using the same 2 GiB all-in-one
+budget in every configured app namespace, and the 8 GiB budget for other
+containers. Failures identify namespace/Pod/container and the measured budget
+overrun. The pinned astronomy chart already uses Jaeger v2 with 25,000 traces
+and a 600 MiB limit.
 
 The PVC recovery oracle calls Jaeger's `/api/services`, not historical traces;
 span-metric alerts come from the OTel collector before trace storage. Bounded
@@ -54,3 +58,32 @@ retention does not change oracle criteria. A trace cap is not a byte cap, so the
 container limit provides the hard bound for unusually large traces. Updating
 the pin alone does not change existing warm-lane Pods: lane operators own the
 rollout, and resource admission rejects unhealthy lanes in the meantime.
+
+`fastloop` host preflight enforces the memory floor before lane creation.
+`LaneAdmission.prove` checks resources on entry and again after stabilization,
+writing `admission/lane-resources.json` before returning to injection. The
+no-fault dry run uses that same entry point. Application growth blocks the run;
+any desired app limit must be authored through its accepted source.
+
+## Host disk admission
+
+`assert_host_disk_headroom()` reads the local Docker daemon's `DockerRootDir`
+with a five-second read-only `docker info --format` query, resolves symlinks
+and the containing mount through `/proc/self/mountinfo`, then measures that
+filesystem with `disk_usage`. It checks the storage backing kind nodes rather
+than assuming that the checkout, `/tmp` or `/mnt/data` is on the right mount.
+An explicit absolute storage path can be supplied for offline inspection.
+This collector, like the memory guard, assumes a local kind Docker daemon.
+
+Defaults reject **90% or more used** (strictly more than 10% must be free),
+before OpenSearch high/flood watermarks, and reject fewer than **100 GiB free**.
+Both conditions must pass; the byte floor protects small filesystems even at
+a low utilization percentage. Policy fields are `host_disk_min_free_percent`
+and `host_disk_floor_bytes`. Missing storage/mount evidence rejects admission.
+Failures name the mount, percentage used and free bytes, thresholds, and the
+action to free space before setup/injection. The guard never deletes data.
+
+Host preflight checks disk next to memory, and shared lane admission checks
+it both before and after stabilization. `lane-resources.json` includes a
+`host_disk` object with mount, storage path, total/free bytes, used percentage
+and floors. The dry run records the same `lane_resources` invariant.

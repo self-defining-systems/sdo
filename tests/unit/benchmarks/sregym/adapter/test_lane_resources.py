@@ -272,3 +272,103 @@ def test_malformed_memory_reports_component_unavailability(snapshot):
 def test_wrong_configuration_shape_raises_type_error(kwargs):
     with pytest.raises(TypeError):
         lanes.LaneResourcePolicy(**kwargs)
+
+
+@pytest.mark.parametrize("namespace", ["hotel-reservation", "social-network", "astronomy-shop"])
+@pytest.mark.parametrize(
+    ("image", "budget"),
+    [
+        ("jaegertracing/all-in-one:1.57", 2 * Gi),
+        ("localhost:5000/jaegertracing/all-in-one@sha256:fixture", 2 * Gi),
+        ("registry/app:accepted", 8 * Gi),
+    ],
+)
+def test_app_namespace_container_growth_is_detected_with_component_identity(snapshot, namespace, image, budget):
+    pod = snapshot["pods"]["items"][0]
+    pod["metadata"].update(namespace=namespace, name="app-component")
+    pod["spec"]["containers"][0].update(name="container", image=image)
+    pod["status"]["containerStatuses"][0]["name"] = "container"
+    measured = snapshot["summary"]["pods"][0]
+    measured["podRef"].update(namespace=namespace, name="app-component")
+    measured["containers"][0]["name"] = "container"
+    snapshot["namespaces"]["items"] = [{"metadata": {"name": namespace}}]
+
+    def admit():
+        return lanes.evaluate_lane_resources(
+            namespaces=snapshot["namespaces"],
+            pods=snapshot["pods"],
+            summaries=[snapshot["summary"]],
+            app_namespaces={namespace},
+            host_available_bytes=32 * Gi,
+            now=NOW,
+        )
+
+    measured["containers"][0]["memory"]["workingSetBytes"] = budget
+    assert admit()["containers"] == [
+        {"component": f"{namespace}/app-component/container", "working_set_bytes": budget, "budget_bytes": budget}
+    ]
+    measured["containers"][0]["memory"]["workingSetBytes"] = budget + 1
+    with pytest.raises(ValueError, match=rf"eval: {namespace}/app-component/container memory .*budget {budget} bytes"):
+        admit()
+
+
+@pytest.mark.parametrize("used_percent", [90, 97, 98])
+def test_host_disk_watermark_rejects_with_mount_and_action(used_percent):
+    with pytest.raises(ValueError, match=r"eval:.*disk.*mount /mnt/data.*used.*free space"):
+        lanes.evaluate_host_disk(mount="/mnt/data", total_bytes=1000 * Gi, free_bytes=(100 - used_percent) * 10 * Gi)
+
+
+def test_host_disk_byte_floor_protects_small_filesystems():
+    with pytest.raises(ValueError, match=r"/mnt/data.*bytes.*free space"):
+        lanes.evaluate_host_disk(mount="/mnt/data", total_bytes=200 * Gi, free_bytes=99 * Gi)
+
+
+def test_host_disk_above_byte_floor_and_below_watermark_passes():
+    evidence = lanes.evaluate_host_disk(mount="/mnt/data", total_bytes=1000 * Gi, free_bytes=110 * Gi)
+    assert evidence["passed"]
+    assert evidence["mount"] == "/mnt/data"
+    assert evidence["free_bytes"] == 110 * Gi
+    assert evidence["used_percent"] == 89
+    assert lanes.evaluate_host_disk(mount="/mnt/data", total_bytes=500 * Gi, free_bytes=100 * Gi)["passed"]
+
+
+@pytest.mark.parametrize(("total", "free"), [(0, 0), (10, -1), (10, 11), (True, 0)])
+def test_invalid_disk_measurement_fails_closed(total, free):
+    with pytest.raises((TypeError, ValueError)):
+        lanes.evaluate_host_disk(mount="/mnt/data", total_bytes=total, free_bytes=free)
+
+
+@pytest.mark.parametrize(
+    "kwargs", [{"host_disk_floor_bytes": 0}, {"host_disk_min_free_percent": 0}, {"host_disk_min_free_percent": 100}]
+)
+def test_invalid_disk_policy_fails_at_construction(kwargs):
+    with pytest.raises((TypeError, ValueError)):
+        lanes.LaneResourcePolicy(**kwargs)
+
+
+def test_disk_collection_checks_the_filesystem_backing_kind_storage(monkeypatch, tmp_path):
+    inspected = []
+
+    def docker(command, **kwargs):
+        inspected.append(command)
+        assert command == ["docker", "info", "--format", "{{.DockerRootDir}}"]
+        assert kwargs["timeout"] <= 5
+        return subprocess.CompletedProcess(command, 0, str(tmp_path) + "\n", "")
+
+    def usage(path):
+        assert path == tmp_path.resolve()
+        return type("DiskUsage", (), {"total": 1000 * Gi, "free": 110 * Gi})()
+
+    monkeypatch.setattr(lanes.subprocess, "run", docker)
+    monkeypatch.setattr(lanes.shutil, "disk_usage", usage)
+    result = lanes.assert_host_disk_headroom()
+    assert result["passed"]
+    assert result["storage_path"] == str(tmp_path.resolve())
+    assert tmp_path.resolve().is_relative_to(result["mount"])
+    assert len(inspected) == 1
+
+
+def test_disk_collection_fails_closed_without_a_docker_storage_path(monkeypatch):
+    monkeypatch.setattr(lanes.subprocess, "run", lambda *args, **kwargs: subprocess.CompletedProcess(args, 0, "", ""))
+    with pytest.raises(ValueError, match="eval:.*kind.*storage.*unavailable"):
+        lanes.assert_host_disk_headroom()
