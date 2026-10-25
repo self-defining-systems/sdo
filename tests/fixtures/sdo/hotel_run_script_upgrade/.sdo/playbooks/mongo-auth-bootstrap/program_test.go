@@ -23,7 +23,7 @@ func TestRelationDerivedScriptAndObservedDiagnosis(t *testing.T) {
 	if got := program.RunDiagnose(ctx, p, fixed, c.Bindings, time.Second); got.Result != program.NoMatch {
 		t.Fatalf("fixed: %+v", got)
 	}
-	plan, err := p.Mitigate(ctx, open, c.Bindings)
+	plan, err := p.Mitigate(ctx, &sdktest.ReplayReadView{Snapshot: c.Open, Calls: c.PhaseRecordings("open")}, c.Bindings)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,5 +68,16 @@ func TestMissingOrAmbiguousInitializationRelationRemainsUnknown(t *testing.T) {
 				t.Fatalf("unavailable relation became %s", got.Result)
 			}
 		})
+	}
+}
+
+func TestFixedDiagnosisDoesNotStartScript(t *testing.T) {
+	c, err := sdktest.LoadCorpusCase("../../corpus/mongo-auth")
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := (Program{}).Mitigate(context.Background(), &sdktest.ReplayReadView{Snapshot: c.Fixed, Calls: c.PhaseRecordings("fixed")}, c.Bindings)
+	if err != nil || len(plan.Actions) != 0 {
+		t.Fatalf("fixed state proposed a script: %+v %v", plan, err)
 	}
 }

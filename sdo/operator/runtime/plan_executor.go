@@ -77,6 +77,7 @@ type PlanApplicationResult struct {
 	VerificationCompleted    bool
 	RolloutPending           *contracts.RolloutPending
 	FinalEquivalenceVerified *bool
+	FinalVerificationBasis   string
 	ActionsApplied           []program.Action
 	Patches                  []PlanPatch
 	Duration                 time.Duration

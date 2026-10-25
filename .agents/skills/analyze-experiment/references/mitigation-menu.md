@@ -116,3 +116,10 @@ every observed change. Fixed captures are never simulator action replies. At liv
 application time, script exit zero alone gives no verified program credit:
 Diagnose must return NoMatch and targeted findings must clear. Whole-app closure
 still requires global health. Script preimages do not authorize automatic undo.
+
+At final settlement, `PlanApplication.final_verification_basis` is
+`observed-transition` only after a fresh bound Diagnose NoMatch and scoped health
+clearance of the recorded target fingerprints. `final_equivalence_verified` stays
+unset for opaque scripts. The controller normalizes actual script menu invocation
+metadata into the existing bound plan/application evidence; this is provenance of
+the executed invocation, never simulated shell effects.

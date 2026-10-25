@@ -98,6 +98,7 @@ func (e PlanExecutor) scriptStep(ctx context.Context, incident IncidentRequest, 
 	for _, finding := range incident.Findings {
 		if finding.PrimaryResource.Kind != "" {
 			public.Scope = append(public.Scope, finding.PrimaryResource)
+			public.TargetFindings = append(public.TargetFindings, FindingFingerprint(finding))
 		}
 	}
 	public.ResultRef = "ConfigMap/" + incident.Namespace + "/" + run.JobName

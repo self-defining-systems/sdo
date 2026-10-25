@@ -70,7 +70,10 @@ timed repair receipt. The memory gate accepts `observed-transition`: open Diagno
 must Match, fixed Diagnose must return NoMatch and bindings/inputs must validate.
 It never supplies fixed captures to the action simulator or claims the rewritten
 script ran. Live reuse goes through the ordinary apply→Diagnose and targeted
-finding-clearance loop, while global health continues to own closure.
+finding-clearance loop, while global health continues to own closure. Final
+settlement records `final_verification_basis: observed-transition` after a fresh
+bound diagnosis and scoped health sample; it never claims exact typed-effect
+equivalence for a script.
 
 | Package | Responsibility |
 |---|---|

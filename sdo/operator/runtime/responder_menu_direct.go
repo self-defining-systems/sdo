@@ -295,6 +295,9 @@ func (l *ResponderLoop) executeMenuOption(ctx context.Context, selection *contra
 			application.Error = applyErr.Error()
 		}
 		l.applicationsLog = append(l.applicationsLog, application)
+		if hasAppliedScript(plan.Actions) && entry.action == nil {
+			l.recordScriptInvocation(application, entry.programID, bindings, targetVerdict)
+		}
 		if result.Applied {
 			l.applications[applicationID] = result
 		}

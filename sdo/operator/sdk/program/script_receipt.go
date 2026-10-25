@@ -30,6 +30,7 @@ type ScriptObjectCapture struct {
 // Kubernetes preimages permit future explicit undo; arbitrary external effects
 // are irreversible and must never trigger automatic compensation.
 type ScriptExecutionResult struct {
+	TargetFindings []string `json:"target_findings,omitempty"`
 	// Scope is the selected repair scope, not a claim of observed object writes.
 	Scope           []sdk.ObjectRef            `json:"scope,omitempty"`
 	ResultRef       string                     `json:"result_ref,omitempty"`

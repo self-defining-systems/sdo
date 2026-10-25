@@ -25,7 +25,7 @@ func classifyCauseWork(outcome *contracts.OutcomeRecord, fixed map[string]progra
 	credited := map[string][]program.Bindings{}
 	for _, app := range outcome.GetPlanApplications() {
 		if !app.GetApplied() || !app.GetVerificationCompleted() || !app.GetVerificationPassed() || app.GetVerification().GetResult() != contracts.Verdict_RESULT_NO_MATCH || app.GetRolledBack() || app.GetDryRun() || app.GetError() != "" || app.GetRollbackError() != "" ||
-			!app.GetFinalEquivalenceVerified() {
+			!finalApplicationVerified(app) {
 			continue
 		}
 		for _, id := range app.GetProgramIds() {

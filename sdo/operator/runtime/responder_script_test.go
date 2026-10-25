@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
@@ -10,6 +11,7 @@ import (
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
+	"strings"
 	"testing"
 )
 
@@ -77,7 +79,16 @@ func TestRunScriptActVerifyRequiresDiagnosisAndTargetedClearance(t *testing.T) {
 			if response.TargetedHealthy == remains || response.Healthy {
 				t.Fatalf("script credit/global closure: targeted=%v healthy=%v error=%s report=%v", response.TargetedHealthy, response.Healthy, response.Error, response.Report)
 			}
+			loop.CreditEquivalentRepairs(context.Background(), loop.MenuRepairActions())
 			applications := loop.PlanApplications()
+			encoded, _ := json.Marshal(applications[0].Result)
+			hasObservedBasis := strings.Contains(string(encoded), `"FinalVerificationBasis":"observed-transition"`)
+			if !remains && applications[0].Result.FinalEquivalenceVerified != nil {
+				t.Fatal("opaque script claimed exact effect equivalence")
+			}
+			if hasObservedBasis == remains {
+				t.Fatalf("script final settlement must use observed-transition without typed equivalence: %s", encoded)
+			}
 			receipts := ProgramRepairReceipts(applications, nil)
 			if len(receipts) == 0 || receipts[0].Reversible || len(receipts[0].Resources) != 1 || receipts[0].Resources[0].Kind != "Service" {
 				t.Fatalf("script repair scope/preimages lost: %+v", receipts)

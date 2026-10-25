@@ -6,7 +6,11 @@ import (
 	"sdo.dev/operator/sdk/program"
 )
 
-func (Program) Mitigate(_ context.Context, v program.ReadView, b program.Bindings) (program.Plan, error) {
+func (p Program) Mitigate(ctx context.Context, v program.ReadView, b program.Bindings) (program.Plan, error) {
+	verdict, err := p.Diagnose(ctx, v, b)
+	if err != nil || verdict.Result != program.Match {
+		return program.Plan{}, err
+	}
 	config, err := mongorelation.Configuration(v, b.Objects["pod"])
 	if err != nil {
 		return program.Plan{}, err

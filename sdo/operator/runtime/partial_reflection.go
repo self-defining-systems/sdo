@@ -47,7 +47,7 @@ func partialRepairProof(outcome *contracts.OutcomeRecord) (map[sdk.ObjectRef]tim
 	applications := map[*contracts.PlanApplication]bool{}
 	revisions := programRunRevisions(outcome)
 	for _, app := range outcome.GetPlanApplications() {
-		if !app.GetApplied() || app.GetDryRun() || app.GetRolledBack() || app.GetError() != "" || app.GetRollbackError() != "" || !app.GetVerificationCompleted() || !app.GetVerificationPassed() || !app.GetFinalEquivalenceVerified() || app.GetVerification().GetResult() != contracts.Verdict_RESULT_NO_MATCH || len(app.GetProgramIds()) == 0 {
+		if !app.GetApplied() || app.GetDryRun() || app.GetRolledBack() || app.GetError() != "" || app.GetRollbackError() != "" || !app.GetVerificationCompleted() || !app.GetVerificationPassed() || !finalApplicationVerified(app) || app.GetVerification().GetResult() != contracts.Verdict_RESULT_NO_MATCH || len(app.GetProgramIds()) == 0 {
 			continue
 		}
 		bound := map[sdk.ObjectRef]bool{}
@@ -68,14 +68,20 @@ func partialRepairProof(outcome *contracts.OutcomeRecord) (map[sdk.ObjectRef]tim
 			continue
 		}
 		refs := []sdk.ObjectRef{}
-		for _, action := range app.GetPlan().GetActions() {
-			ref, err := planActionRef(planActionState(action))
-			ref.APIVersion = ""
-			if err != nil || ref.Kind == "" || ref.Name == "" || !bound[ref] {
+		for index, action := range app.GetPlan().GetActions() {
+			scoped, err := applicationActionResources(app, index, action)
+			if err != nil || len(scoped) == 0 {
 				verified = false
 				break
 			}
-			refs = append(refs, ref)
+			for _, ref := range scoped {
+				ref.APIVersion = ""
+				if !bound[ref] {
+					verified = false
+					break
+				}
+				refs = append(refs, ref)
+			}
 		}
 		if !verified || len(refs) == 0 {
 			continue
@@ -118,11 +124,13 @@ func verifiedPartialAction(action *contracts.RepairActionReceipt, proof map[sdk.
 			continue
 		}
 		planned := map[sdk.ObjectRef]bool{}
-		for _, item := range app.GetPlan().GetActions() {
-			ref, err := planActionRef(planActionState(item))
+		for index, item := range app.GetPlan().GetActions() {
+			scoped, err := applicationActionResources(app, index, item)
 			if err == nil {
-				ref.APIVersion = ""
-				planned[ref] = true
+				for _, ref := range scoped {
+					ref.APIVersion = ""
+					planned[ref] = true
+				}
 			}
 		}
 		covered := true
@@ -265,10 +273,12 @@ func partialReflectionOutcome(outcome *contracts.OutcomeRecord) *contracts.Outco
 	current.PlanApplications = nil
 	for _, app := range outcome.GetPlanApplications() {
 		refs := []*contracts.ObjectRef{}
-		for _, action := range app.GetPlan().GetActions() {
-			ref, err := planActionRef(planActionState(action))
+		for index, action := range app.GetPlan().GetActions() {
+			scoped, err := applicationActionResources(app, index, action)
 			if err == nil {
-				refs = append(refs, objectRefContract(ref))
+				for _, ref := range scoped {
+					refs = append(refs, objectRefContract(ref))
+				}
 			}
 		}
 		if applications[app] && onlyAllowed(refs) {

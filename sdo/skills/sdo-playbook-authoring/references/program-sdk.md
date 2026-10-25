@@ -522,6 +522,7 @@ type ScriptAPIReceipt struct {
 }
 
 type ScriptExecutionResult struct {
+	TargetFindings []string `json:"target_findings,omitempty"`
 	// Scope is the selected repair scope, not a claim of observed object writes.
 	Scope           []sdk.ObjectRef            `json:"scope,omitempty"`
 	ResultRef       string                     `json:"result_ref,omitempty"`
