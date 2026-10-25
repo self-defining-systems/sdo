@@ -234,7 +234,36 @@ func (e PlanExecutor) applyOnce(ctx context.Context, incident IncidentRequest, p
 	// resourceVersion between our writes.
 	written := make(map[sdk.ObjectRef]bool)
 	for index, patch := range result.Patches {
-		if written[patch.Ref] {
+		if written[patch.Ref] && isRemoveServicePort(plan.Actions[index]) {
+			fresh, readErr := e.Client.Get(ctx, patch.Ref)
+			if readErr != nil || fresh == nil || !samePlanRef(fresh, patch.Ref) || fresh.GetUID() != originals[patch.Ref].GetUID() {
+				return result, errors.New("Service port removal identity changed")
+			}
+			next, prepareErr := e.prepareAction(ctx, incident, plan.Actions[index], fresh)
+			if prepareErr != nil {
+				return result, prepareErr
+			}
+			before, marshalErr := json.Marshal(fresh.Object)
+			if marshalErr != nil {
+				return result, marshalErr
+			}
+			after, marshalErr := json.Marshal(next.Object)
+			if marshalErr != nil {
+				return result, marshalErr
+			}
+			delta, patchErr := jsonpatch.CreateMergePatch(before, after)
+			if patchErr != nil {
+				return result, patchErr
+			}
+			delta, patchErr = conditionalPlanPatch(delta, fresh)
+			if patchErr != nil {
+				return result, patchErr
+			}
+			canonicalizePlanObject(next)
+			result.Patches[index].Before = fresh.DeepCopy()
+			result.Patches[index].After = next
+			result.Patches[index].Patch = delta
+		} else if written[patch.Ref] {
 			var patchErr error
 			result.Patches[index].Patch, patchErr = uidOnlyPlanPatch(patch.Patch, originals[patch.Ref])
 			if patchErr != nil {
@@ -842,6 +871,14 @@ func genericIncidentRef(incident IncidentRequest, action program.Action, ref sdk
 		if known == ref {
 			return true
 		}
+	}
+	return false
+}
+
+func isRemoveServicePort(action program.Action) bool {
+	switch action.(type) {
+	case program.RemoveServicePort, *program.RemoveServicePort:
+		return true
 	}
 	return false
 }
