@@ -112,11 +112,13 @@ class LaneAdmission:
         timeout_seconds: float = 300,
         synchronize: Callable[[], None] | None = None,
         progress: Callable[..., None] | None = None,
+        before_proof: Callable[[str, set[str]], None] | None = None,
     ) -> None:
         self.environment, self.worker, self.ops = environment, worker, ops
         self.directory = directory
         self.timeout_seconds = timeout_seconds
         self.synchronize, self.progress = synchronize, progress
+        self.before_proof = before_proof
         self.required_detectors = {"workload-health", "service-endpoints", "service-reachability", "traffic-health"}
         self.required_scenarios: set[str] = set()
         self._identity: dict[str, Any] | None = None
@@ -168,6 +170,8 @@ class LaneAdmission:
 
         self.check_resources("entry")
         self._policy()
+        if self.before_proof is not None:
+            self.before_proof(control, set(self.required_detectors))
         env = self.environment
         self.directory.mkdir(parents=True, exist_ok=True)
         rbac = verify_rbac(env.kubeconfig, env.namespace)

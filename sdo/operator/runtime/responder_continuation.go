@@ -10,9 +10,9 @@ import (
 	"sdo.dev/operator/sdk"
 
 	"google.golang.org/protobuf/proto"
-	"google.golang.org/protobuf/reflect/protoreflect"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/contracts/wire"
+	"sdo.dev/operator/memory"
 	"sdo.dev/operator/worker_registry"
 )
 
@@ -197,22 +197,7 @@ func accumulateResponderResult(previous *contracts.IncidentResult, current Incid
 	if prior.Timing.StartedAt.Before(current.Timing.StartedAt) {
 		current.Timing.StartedAt = prior.Timing.StartedAt
 	}
-	target := current.Usage.ProtoReflect()
-	source := prior.Usage.ProtoReflect()
-	fields := source.Descriptor().Fields()
-	for index := 0; index < fields.Len(); index++ {
-		field := fields.Get(index)
-		if field.HasPresence() && (!source.Has(field) || !target.Has(field)) {
-			target.Clear(field) // an unknown component cannot become a known total
-			continue
-		}
-		switch field.Kind() {
-		case protoreflect.Int64Kind:
-			target.Set(field, protoreflect.ValueOfInt64(target.Get(field).Int()+source.Get(field).Int()))
-		case protoreflect.DoubleKind:
-			target.Set(field, protoreflect.ValueOfFloat64(target.Get(field).Float()+source.Get(field).Float()))
-		}
-	}
+	current.Usage = *memory.AddUsage(&prior.Usage, &current.Usage)
 	return current
 }
 

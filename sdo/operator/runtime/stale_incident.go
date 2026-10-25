@@ -41,6 +41,10 @@ func (c *Controller) retireExpiredIncident(ctx context.Context, now time.Time) e
 			return nil
 		}
 	}
+	usage, err := c.responderUsage(request.IncidentID)
+	if err != nil {
+		return err
+	}
 	c.mu.Lock()
 	if c.currentIncidentRequest == nil || c.currentIncidentRequest.IncidentID != request.IncidentID || !c.canRetireExpiredIncidentLocked(now) {
 		c.mu.Unlock()
@@ -52,6 +56,12 @@ func (c *Controller) retireExpiredIncident(ctx context.Context, now time.Time) e
 		DispatchError:         "response deadline expired with no live incident work",
 		DetectedAt:            c.incidentDetectedAt, DispatchedAt: c.incidentDispatchedAt,
 		ResponderCompletedAt: now, VerifiedAt: now, DetectorTimeline: cloneTimeline(c.timeline),
+	}
+	if usage != nil {
+		if closure.Result == nil {
+			closure.Result = &IncidentResult{SchemaVersion: ProtocolSchemaVersion, IncidentID: request.IncidentID, Status: IncidentFailed, Timing: TimingMetrics{StartedAt: now, CompletedAt: now}}
+		}
+		closure.Result.Usage = *usage
 	}
 	projected, err := incidentClosureContract(closure)
 	if err == nil {
