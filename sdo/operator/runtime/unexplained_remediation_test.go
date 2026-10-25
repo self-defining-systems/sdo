@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -136,7 +137,7 @@ func TestAuthorizationDeniedNoProgressNeedsExactBrokenSet(t *testing.T) {
 }
 
 func TestTerminalUnchangedInventoryBlockerSkipsGrace(t *testing.T) {
-	for _, mode := range []string{"exhausted", "denied", "no-progress", "changed", "pending-delete", "not-terminal", "ttl-job", "delayed-informer", "unknown-mutation", "shared-ownership", "changed-evidence"} {
+	for _, mode := range []string{"exhausted", "denied", "no-progress", "changed", "pending-delete", "not-terminal", "ttl-job", "delayed-informer", "unknown-mutation", "shared-ownership", "changed-evidence", "legacy-untyped", "legacy-no-attempt", "legacy-pending"} {
 		t.Run(mode, func(t *testing.T) {
 			now := time.Now().UTC()
 			ref := sdk.ObjectRef{APIVersion: "v1", Kind: "ServiceAccount", Namespace: "app", Name: "cleanup"}
@@ -168,9 +169,19 @@ func TestTerminalUnchangedInventoryBlockerSkipsGrace(t *testing.T) {
 			result.Status = IncidentFailed
 			result.ResponseLoopExhausted = true
 			result.UnresolvedFindings = findings
-			if mode == "no-progress" || mode == "changed-evidence" {
+			if mode == "no-progress" || mode == "changed-evidence" || strings.HasPrefix(mode, "legacy-") {
 				result.ResponseLoopExhausted = false
 				result.Error = "no_progress"
+				result.RepairActions = []RepairActionReceipt{{ActionID: "failed", Kind: "sdk-plan", Resources: []sdk.ObjectRef{ref}, FailureReason: "execution_failed", StartedAt: now.Add(-2 * time.Second), CompletedAt: now.Add(-time.Second)}}
+				if mode == "legacy-untyped" {
+					result.RepairActions[0].FailureReason = ""
+				}
+				if mode == "legacy-no-attempt" {
+					result.RepairActions = nil
+				}
+				if mode == "legacy-pending" {
+					result.RepairActions[0].CompletedAt = time.Time{}
+				}
 			}
 			if mode == "denied" {
 				result.ResponseLoopExhausted = false

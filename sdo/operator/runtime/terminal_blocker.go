@@ -2,7 +2,6 @@ package runtime
 
 import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"sdo.dev/operator/sdk"
 )
 
 // Caller holds c.mu. Stable source-absent objects cannot become accepted merely
@@ -16,9 +15,20 @@ func (c *Controller) terminalInventoryBlockerLocked(verification ToolResponse) b
 	if result.Error == "shared_ownership" && !sharedOwnershipBlocker(verification, nil) {
 		return false
 	}
-	prior := map[string]sdk.Finding{}
+	if result.Error == "no_progress" {
+		repairs := []continuationRepair{}
+		receipts := append(append([]RepairActionReceipt(nil), result.RepairActions...), ProgramRepairReceipts(result.PlanApplications, nil)...)
+		for _, receipt := range receipts {
+			repairs = append(repairs, continuationRepair{Kind: "recorded-action", ActionID: receipt.ActionID, Receipt: feedbackReceipt(receipt)})
+		}
+		previous, err := continuationFeedback(1, ToolResponse{Findings: result.UnresolvedFindings}, repairs...)
+		if err != nil || !responderNoProgress(string(previous), verification, repairs) {
+			return false
+		}
+	}
+	prior := map[string]bool{}
 	for _, finding := range result.UnresolvedFindings {
-		prior[FindingFingerprint(finding)] = finding
+		prior[FindingFingerprint(finding)] = true
 	}
 	if c.drift == nil {
 		return false
@@ -31,11 +41,7 @@ func (c *Controller) terminalInventoryBlockerLocked(verification ToolResponse) b
 	}
 	objects := source.SourceDriftObjects()
 	for _, finding := range verification.Findings {
-		previous, found := prior[FindingFingerprint(finding)]
-		if !found || !inventoryFinding(finding) || inventoryEvent(finding).Source != "absent from accepted source" {
-			return false
-		}
-		if result.Error == "no_progress" && (previous.Summary != finding.Summary || inventoryProgressEvidence(previous.Evidence) != inventoryProgressEvidence(finding.Evidence)) {
+		if !prior[FindingFingerprint(finding)] || !inventoryFinding(finding) || inventoryEvent(finding).Source != "absent from accepted source" {
 			return false
 		}
 		stable := false
