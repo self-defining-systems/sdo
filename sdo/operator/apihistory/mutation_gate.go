@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -80,10 +81,11 @@ func (g *MutationGate) Verified() (*IncidentVerified, error) {
 type mutationLock struct {
 	*os.File
 	releaseStorage func()
+	releaseOnce    sync.Once
 }
 
 func (l *mutationLock) Close() error {
-	defer l.releaseStorage()
+	defer l.releaseOnce.Do(l.releaseStorage)
 	return l.File.Close()
 }
 func (g *MutationGate) lock(mode int) (*mutationLock, error) {

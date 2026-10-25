@@ -103,16 +103,30 @@ func writeStartupOnce(filename string, value any) error {
 	if err != nil {
 		return err
 	}
-	file, err := os.OpenFile(filename, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
-	if errors.Is(err, os.ErrExist) {
-		return nil
-	}
+	file, err := os.CreateTemp(filepath.Dir(filename), ".startup-")
 	if err != nil {
+		return err
+	}
+	defer os.Remove(file.Name())
+	if err := file.Chmod(0600); err != nil {
+		file.Close()
 		return err
 	}
 	if _, err := file.Write(data); err != nil {
 		file.Close()
 		return err
 	}
-	return file.Close()
+	if err := file.Sync(); err != nil {
+		file.Close()
+		return err
+	}
+	if err := file.Close(); err != nil {
+		return err
+	}
+	// Publication is create-once and atomic: a rejoining controller must never
+	// observe an empty or partially written original boundary.
+	if err := os.Link(file.Name(), filename); err != nil && !errors.Is(err, os.ErrExist) {
+		return err
+	}
+	return nil
 }
