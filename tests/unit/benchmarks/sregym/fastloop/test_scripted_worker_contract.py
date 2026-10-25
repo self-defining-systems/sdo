@@ -67,7 +67,7 @@ def _accepted_app(tmp_path: Path, *, verified: bool = False) -> Path:
 def test_scripted_reflector_writes_program_that_passes_real_memory_check(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operator_binary: Path, drift: bool
 ) -> None:
-    app = _accepted_app(tmp_path)
+    app = _accepted_app(tmp_path, verified=True)
     fixture = APP_FIXTURE / ".sdo/corpus/targetport-mismatch"
     capture = tmp_path / "capture"
     capture.mkdir()

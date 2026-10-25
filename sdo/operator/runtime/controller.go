@@ -92,7 +92,10 @@ type Controller struct {
 	// stagedTaskIncident is the incident whose prepared task the last saved state references on the repository volume.
 	stagedTaskIncident string
 
-	mu sync.Mutex
+	// observationMu serializes tool closure checks with a complete controller
+	// observation, including tracker and evaluation-history updates. Lock before mu.
+	observationMu sync.Mutex
+	mu            sync.Mutex
 	// durable is the state stateStore last confirmed durable. With a store
 	// attached, an effect runs only while this state records it, so a
 	// restarted controller can recover every effect that ran.
@@ -257,6 +260,8 @@ func (c *Controller) Step(ctx context.Context, now time.Time, event *sdk.WatchKi
 // StepEvents evaluates, against one snapshot, every detector that is due or
 // watches any of the coalesced watch events.
 func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk.WatchKind) error {
+	c.observationMu.Lock()
+	defer c.observationMu.Unlock()
 	if err := c.prepareHealthEffects(ctx, now); err != nil {
 		return err
 	}
@@ -897,6 +902,15 @@ func (c *Controller) handleDispatchCompletion(completion dispatchCompletion, obs
 		c.dispatchState = contracts.DispatchState_DISPATCH_STATE_COMPLETED
 		c.dispatchError = completion.err.Error()
 		c.currentIncidentResult = nil
+		if resumableSessionID.MatchString(completion.result.ResponderSessionID) {
+			// Preserve only the checkpoint identity on a failed Job; there is
+			// no worker result authorizing repair or learning claims.
+			startedAt := c.incidentDispatchedAt
+			if startedAt.IsZero() {
+				startedAt = c.responderCompletedAt
+			}
+			c.currentIncidentResult = &IncidentResult{SchemaVersion: ProtocolSchemaVersion, IncidentID: completion.incidentID, Status: IncidentFailed, ResponderSessionID: completion.result.ResponderSessionID, Error: completion.err.Error(), Timing: TimingMetrics{StartedAt: startedAt, CompletedAt: c.responderCompletedAt}}
+		}
 		c.resetDispatchRetryLocked()
 	} else if completion.err != nil {
 		// A watcher, transport, or leadership-guard failure does not prove that

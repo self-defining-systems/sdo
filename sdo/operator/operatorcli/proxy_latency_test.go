@@ -16,7 +16,6 @@ import (
 	"sdo.dev/operator/apihistory"
 	"sdo.dev/operator/kubeproxy"
 	"sort"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -114,14 +113,6 @@ func logForwardingStall(t *testing.T, path, endpoint string, start time.Time) {
 }
 
 func TestLargeResponseWarmAddedP95(t *testing.T) {
-	// Temporary investigation: retain every per-run assertion and exercise
-	// fresh connections often enough to capture the hosted-runner stall.
-	for i := range 10 {
-		t.Run(strconv.Itoa(i), testLargeResponseWarmAddedP95)
-	}
-}
-
-func testLargeResponseWarmAddedP95(t *testing.T) {
 	item := `{"metadata":{"name":"p","namespace":"app"},"spec":{"containers":[{"name":"c","env":[{"name":"MODE","value":"` + strings.Repeat("x", 3072) + `"}]}]}}`
 	// Bound parallelism without overriding a caller's single-CPU limit.
 	oldProcs := runtime.GOMAXPROCS(min(2, runtime.GOMAXPROCS(0)))

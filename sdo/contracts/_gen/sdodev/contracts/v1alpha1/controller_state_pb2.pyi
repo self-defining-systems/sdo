@@ -268,7 +268,7 @@ class ControllerState(_message.Message):
     def __init__(self, version: _Optional[str] = ..., scheduler_deadlines: _Optional[_Mapping[str, _timestamp_pb2.Timestamp]] = ..., finding_states: _Optional[_Mapping[str, FindingState]] = ..., pending_batch: _Optional[_Union[BatcherState, _Mapping]] = ..., history: _Optional[_Iterable[_Union[_messages_pb2.DetectorEvaluation, _Mapping]]] = ..., incident_open: _Optional[bool] = ..., responder_done: _Optional[bool] = ..., incident_request: _Optional[_Union[_messages_pb2.IncidentRequest, _Mapping]] = ..., incident_result: _Optional[_Union[_messages_pb2.IncidentResult, _Mapping]] = ..., dispatch_error: _Optional[str] = ..., incident_detected_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., incident_dispatched_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., responder_completed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., detector_clear_since: _Optional[_Mapping[str, _timestamp_pb2.Timestamp]] = ..., dispatch_state: _Optional[_Union[DispatchState, str]] = ..., incident_finding_keys: _Optional[_Iterable[str]] = ..., pending_closure: _Optional[_Union[_messages_pb2.IncidentClosure, _Mapping]] = ..., closure_state: _Optional[_Union[ClosureState, str]] = ..., closure_receipt: _Optional[_Union[ClosureReceipt, _Mapping]] = ..., closure_failure: _Optional[_Union[ClosureFailure, _Mapping]] = ..., last_acknowledged_incident_id: _Optional[str] = ..., evaluation_iteration: _Optional[int] = ..., detector_timeline: _Optional[_Iterable[_Union[_messages_pb2.DetectorTimelineEntry, _Mapping]]] = ..., incident_view: _Optional[_Union[_messages_pb2.IncidentView, _Mapping]] = ..., drift_events: _Optional[_Iterable[_Union[_messages_pb2.DriftEvent, _Mapping]]] = ..., ownership_adoption: _Optional[_Union[OwnershipAdoptionStatus, _Mapping]] = ..., program_sweep_cursors: _Optional[_Mapping[str, str]] = ..., responder_tool_state_json: _Optional[bytes] = ..., failed_closures: _Optional[_Iterable[_Union[FailedIncidentClosure, _Mapping]]] = ..., selection_ledger: _Optional[_Union[_mitigation_menu_pb2.SelectionLedger, _Mapping]] = ...) -> None: ...
 
 class ReflectionDecision(_message.Message):
-    __slots__ = ("learning_decision", "no_change_reason", "playbook_ids", "error", "sdk_gaps", "usage", "decline_reason")
+    __slots__ = ("learning_decision", "no_change_reason", "playbook_ids", "error", "sdk_gaps", "usage", "decline_reason", "failure_reason")
     LEARNING_DECISION_FIELD_NUMBER: _ClassVar[int]
     NO_CHANGE_REASON_FIELD_NUMBER: _ClassVar[int]
     PLAYBOOK_IDS_FIELD_NUMBER: _ClassVar[int]
@@ -276,6 +276,7 @@ class ReflectionDecision(_message.Message):
     SDK_GAPS_FIELD_NUMBER: _ClassVar[int]
     USAGE_FIELD_NUMBER: _ClassVar[int]
     DECLINE_REASON_FIELD_NUMBER: _ClassVar[int]
+    FAILURE_REASON_FIELD_NUMBER: _ClassVar[int]
     learning_decision: str
     no_change_reason: str
     playbook_ids: _containers.RepeatedScalarFieldContainer[str]
@@ -283,7 +284,8 @@ class ReflectionDecision(_message.Message):
     sdk_gaps: _containers.RepeatedCompositeFieldContainer[_worker_pb2.SdkGap]
     usage: _messages_pb2.UsageMetrics
     decline_reason: str
-    def __init__(self, learning_decision: _Optional[str] = ..., no_change_reason: _Optional[str] = ..., playbook_ids: _Optional[_Iterable[str]] = ..., error: _Optional[str] = ..., sdk_gaps: _Optional[_Iterable[_Union[_worker_pb2.SdkGap, _Mapping]]] = ..., usage: _Optional[_Union[_messages_pb2.UsageMetrics, _Mapping]] = ..., decline_reason: _Optional[str] = ...) -> None: ...
+    failure_reason: str
+    def __init__(self, learning_decision: _Optional[str] = ..., no_change_reason: _Optional[str] = ..., playbook_ids: _Optional[_Iterable[str]] = ..., error: _Optional[str] = ..., sdk_gaps: _Optional[_Iterable[_Union[_worker_pb2.SdkGap, _Mapping]]] = ..., usage: _Optional[_Union[_messages_pb2.UsageMetrics, _Mapping]] = ..., decline_reason: _Optional[str] = ..., failure_reason: _Optional[str] = ...) -> None: ...
 
 class ProposalRejection(_message.Message):
     __slots__ = ("attempt", "diagnostics", "rejected_at")

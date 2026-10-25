@@ -54,15 +54,15 @@ fi
 
 echo "==> buf generate"
 if ! timeout 240 buf generate 2>"${VALIDATE_TMP}/generate-error"; then
-    if ! grep -qi 'resource_exhausted' "${VALIDATE_TMP}/generate-error"; then
+    if ! grep -Eqi 'resource_exhausted|the server hosted at that remote is unavailable' "${VALIDATE_TMP}/generate-error"; then
         cat "${VALIDATE_TMP}/generate-error" >&2
         exit 1
     fi
     if ! command -v protoc >/dev/null 2>&1 || [ "$(protoc --version)" != "libprotoc 33.4" ]; then
-        echo "BSR rate limited: local fallback requires protoc 33.4 on PATH." >&2
+        echo "BSR unavailable or rate limited: local fallback requires protoc 33.4 on PATH." >&2
         exit 1
     fi
-    echo "   BSR rate limited; generating locally with pinned protoc 33.4" >&2
+    echo "   BSR unavailable or rate limited; generating locally with pinned protoc 33.4" >&2
     # Preserve the managed Go generation and replace only the remote plugins.
     sed -e 's|remote: buf.build/protocolbuffers/python:v33.4|protoc_builtin: python|' \
         -e 's|remote: buf.build/protocolbuffers/pyi:v33.4|protoc_builtin: pyi|' \
@@ -82,8 +82,8 @@ echo "==> vendor buf.validate python gencode"
 if timeout 60 buf generate --include-imports --template buf.gen.validate.yaml -o "${VALIDATE_TMP}" buf.build/bufbuild/protovalidate 2>"${VALIDATE_TMP}/error"; then
     rm -rf sdo/contracts/_gen/buf
     cp -r "${VALIDATE_TMP}/_gen_validate/buf" sdo/contracts/_gen/buf
-elif grep -qi 'resource_exhausted' "${VALIDATE_TMP}/error" && [ -d "${VALIDATE_TMP}/cached-validate" ]; then
-    echo "   using unchanged cached buf.validate gencode after BSR rate limit" >&2
+elif grep -Eqi 'resource_exhausted|the server hosted at that remote is unavailable' "${VALIDATE_TMP}/error" && [ -d "${VALIDATE_TMP}/cached-validate" ]; then
+    echo "   using unchanged cached buf.validate gencode after BSR outage or rate limit" >&2
     mkdir -p sdo/contracts/_gen/buf/validate
     cp -a "${VALIDATE_TMP}/cached-validate/." sdo/contracts/_gen/buf/validate/
 else

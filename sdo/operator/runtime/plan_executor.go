@@ -108,7 +108,7 @@ type PlanExecutor struct {
 func (e PlanExecutor) Apply(ctx context.Context, incident IncidentRequest, plan program.Plan, dryRun bool) (result PlanApplicationResult, err error) {
 	// A mitigation never spends the incident's global health budget. Keep
 	// write/rollout confirmation, then independently sample its own scope once.
-	if verifier := scopedMitigationVerifier(e.Verifier, plan); verifier != nil && !dryRun {
+	if verifier := scopedMitigationVerifier(e.Verifier, plan, incident.Findings); verifier != nil && !dryRun {
 		e.Verifier = verifier
 		defer func() { result.MitigationHealth = verifier.observation }()
 	}

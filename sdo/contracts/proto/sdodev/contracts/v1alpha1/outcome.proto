@@ -48,6 +48,8 @@ message OutcomeRecord {
   reserved 33;
   ReflectionEligibility reflection_eligibility = 34;
   PlaybookCoverage playbook_coverage = 35;
+  // Controller-owned visible skip when no provider session can be resumed.
+  string reflection_skip_reason = 37 [(buf.validate.field).string = {in: ["", "no_session"]}];
 }
 
 message OutcomeTimestamps {
