@@ -43,7 +43,7 @@ def test_partitions_include_tests_fuzz_seeds_and_examples() -> None:
     assigned = shards.partition(names, shards.PATTERNS)
     assert sorted(name for group in assigned.values() for name in group) == sorted(names)
     assert all(assigned.values())
-    assert assigned["schedules"] == ["TestSimSchedule", "FuzzSimIncidentSchedule"]
+    assert assigned["schedules"] == ["TestSimRenderedLockSchedule", "TestSimSchedule", "FuzzSimIncidentSchedule"]
 
 
 @pytest.mark.parametrize("patterns", [{"one": "^TestA$"}, {"one": "^Test", "two": "^Test"}])

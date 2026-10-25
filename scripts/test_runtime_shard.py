@@ -22,11 +22,11 @@ PATTERNS = {
         r"|Fuzz[A-M]|Example(?:[A-M_]|$))"
     ),
     "rendered": (
-        r"^(Test(?!(?:HermeticFastloopRealGoGate)$)(?:[H-P]|Rendered|SimRendered)"
+        r"^(Test(?!(?:HermeticFastloopRealGoGate|SimRenderedLockSchedule)$)(?:[H-P]|Rendered|SimRendered)"
         r"|Fuzz(?!SimIncidentSchedule$)[N-Z]|Example[N-Z])"
     ),
     "simulation": r"^TestSim[A-M]",
-    "schedules": r"^(TestSimSchedule|FuzzSimIncidentSchedule$)",
+    "schedules": r"^(TestSimSchedule|TestSimRenderedLockSchedule$|FuzzSimIncidentSchedule$)",
     "corpus": r"^TestRejectedRepeatCorpusFallsBackToReflectionWorker$",
     "recovery": (
         r"^Test(?:Q|R(?!eflection|egisteredReflection|endered|ejectedRepeatCorpusFallsBackToReflectionWorker$)"

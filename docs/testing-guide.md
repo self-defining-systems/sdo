@@ -548,10 +548,10 @@ examples and fuzz seed tests, then requires every eligible name to match exactly
 one pattern in `scripts/test_runtime_shard.py`. Missing/overlapping patterns fail
 CI before execution. Replay, chaos, and explorer tests retain their dedicated jobs.
 All nested scenarios and simulation seeds run unchanged, with race instrumentation,
-`-parallel=2`, and a five-minute package timeout. Incident-schedule fuzz seeds share
-the `schedules` partition with their seeded schedule sweep so they do not crowd
-the rendered-source partition. The `controller` matrix
-remains a dependency of the stable `Required PR CI` aggregate.
+`-parallel=2`, and a five-minute package timeout. Rendered-lock schedules and
+incident-schedule fuzz seeds share the `schedules` partition with their seeded
+schedule sweep so they do not crowd the rendered-source partition. The
+`controller` matrix remains a dependency of the stable `Required PR CI` aggregate.
 
 For per-test timing, the shard runner emits `go test -json` events. To profile the
 unsharded suite with the same exclusions:

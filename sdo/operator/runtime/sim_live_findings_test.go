@@ -12,6 +12,7 @@ import (
 	kruntime "k8s.io/apimachinery/pkg/runtime"
 	ktesting "k8s.io/client-go/testing"
 
+	"google.golang.org/protobuf/proto"
 	"sdo.dev/operator/broker"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory"
@@ -365,6 +366,21 @@ func runSimPausedClosurePublishesOutcomeAndReflection(t *testing.T, seed uint64)
 		}
 		if ledgerBefore.ReflectionProcessed || ledgerBefore.ReflectionCommit != "" {
 			t.Fatal("interrupted reflection received learning credit")
+		}
+		if seed%2 == 1 {
+			// The accepted Git commit survives a crash just before its ledger
+			// marker is written. Restore the last pre-commit checkpoint; the
+			// real broker must recover the existing attributed outcome.
+			checkpoint := &contracts.BrokerLedger{
+				IncidentId:         ledgerBefore.IncidentId,
+				Closure:            proto.Clone(ledgerBefore.Closure).(*contracts.IncidentClosure),
+				OutcomeDocument:    proto.Clone(ledgerBefore.OutcomeDocument).(*contracts.OutcomeRecord),
+				ProposalCommit:     ledgerBefore.ProposalCommit,
+				RequiresReflection: ledgerBefore.RequiresReflection,
+			}
+			if err := native.saveLedger(checkpoint); err != nil {
+				t.Fatal(err)
+			}
 		}
 		frozen, ok := w.controller.PendingIncidentClosure()
 		if !ok {

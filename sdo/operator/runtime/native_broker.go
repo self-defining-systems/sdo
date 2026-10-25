@@ -848,14 +848,16 @@ func (n NativeIncidentBroker) committedOutcomeClosure(ctx context.Context, closu
 		if err != nil {
 			return err
 		}
-		if ledger.OutcomeCommit == "" || ledger.OutcomeDocument == nil || ledger.OutcomeDocument.GetIncidentId() != closure.Request.IncidentID || !proto.Equal(ledger.Closure, projected) {
+		if ledger.OutcomeDocument == nil || ledger.OutcomeDocument.GetIncidentId() != closure.Request.IncidentID || !proto.Equal(ledger.Closure, projected) {
 			return nil
 		}
 		accepted, ok, err := n.Repository.AcceptedCommit(ctx, closure.Request.IncidentID, broker.OutcomePhase)
 		if err != nil {
 			return err
 		}
-		committed = ok && accepted.Commit == ledger.OutcomeCommit
+		// Git acceptance can survive a crash before its ledger marker is saved.
+		// ProcessClosure idempotently recovers that same commit before reflection.
+		committed = ok && (ledger.OutcomeCommit == "" || accepted.Commit == ledger.OutcomeCommit)
 		return nil
 	})
 	return committed, err
