@@ -489,8 +489,8 @@ func (e KubernetesExecutor) abandonUnpublished(ctx context.Context, task *contra
 }
 
 // ExistingBinding identifies a restart/retry that must retain its API-history generation.
-func (p *StandbyPool) ExistingBinding(task *contracts.AgentTask) (bool, error) {
-	binding, err := p.Executor.loadWarmBinding(task)
+func (e KubernetesExecutor) HasBoundStandby(task *contracts.AgentTask) (bool, error) {
+	binding, err := e.loadWarmBinding(task)
 	return binding != nil, err
 }
 

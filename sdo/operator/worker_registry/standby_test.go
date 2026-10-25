@@ -451,3 +451,29 @@ func TestStandbyInterruptedBindingRestoresCanonicalDirectories(t *testing.T) {
 		})
 	}
 }
+
+func TestStandbyExecutorRejoinsDurableBindingWithoutPool(t *testing.T) {
+	pool, e, task := standbyFixture(t)
+	slot := readyStandby(t, pool)
+	bound, err := pool.TryBind(context.Background(), e, task)
+	if err != nil || bound.WarmBinding == nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	_, _ = e.Execute(ctx, task)
+	if _, err := os.Stat(filepath.Join(slot.Directory, "control", TaskDataKey)); err != nil {
+		t.Fatal("restarted executor did not publish its durable claim without the pool", err)
+	}
+	data, err := os.ReadFile(filepath.Join(e.RepositoryMountPath, "session/startup/startup-dispatch.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var timing DispatchStartup
+	if err := json.Unmarshal(data, &timing); err != nil {
+		t.Fatal(err)
+	}
+	if timing.Mode != "warm" || timing.ClaimedAt == nil {
+		t.Fatal("restart hid warm claim as cold", string(data))
+	}
+}

@@ -126,6 +126,13 @@ func (e KubernetesExecutor) Execute(ctx context.Context, task *contracts.AgentTa
 	if err := e.Registry.ValidateTask(task); err != nil {
 		return nil, fmt.Errorf("validate agent task: %w", err)
 	}
+	if e.WarmBinding == nil {
+		binding, err := e.loadWarmBinding(task)
+		if err != nil {
+			return nil, err
+		}
+		e.WarmBinding = binding
+	}
 	if result, recovered, err := e.RecoverCompleted(ctx, task); err != nil {
 		return nil, err
 	} else if recovered {

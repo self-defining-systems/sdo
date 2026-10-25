@@ -206,11 +206,9 @@ func (d KubernetesJobDispatcher) Dispatch(ctx context.Context, request IncidentR
 	sessionSubPath := ""
 	if d.RequireMemorySnapshot {
 		rejoin := false
-		if d.Standby != nil {
-			rejoin, err = d.Standby.ExistingBinding(task)
-			if err != nil {
-				return IncidentResult{}, err
-			}
+		rejoin, err = (worker_registry.KubernetesExecutor{RepositoryMountPath: d.RepositoryMountPath}).HasBoundStandby(task)
+		if err != nil {
+			return IncidentResult{}, err
 		}
 		if rejoin {
 			sessionSubPath, err = memory.PrepareIncidentSession(d.RepositoryMountPath, d.RepositoryPVCSubPath, request.IncidentID)
