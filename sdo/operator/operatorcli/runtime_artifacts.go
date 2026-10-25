@@ -125,6 +125,9 @@ func allowedRuntimeArtifact(name string) bool {
 	if len(parts) == 3 {
 		return strings.HasSuffix(base, ".jsonl") || base == "token_usage.json" || isStartupTimingArtifact(base)
 	}
+	if len(parts) == 4 && parts[2] == "startup" {
+		return base == "startup-controller.json" || base == "startup-session.json" || base == "startup-dispatch.json"
+	}
 	if len(parts) == 4 && parts[2] == "corpus" {
 		return strings.HasSuffix(base, ".json")
 	}

@@ -20,6 +20,7 @@ type WorkerStartup struct {
 	Source                string     `json:"first_model_request_source"`
 }
 type DaemonStartup struct {
+	Imported *time.Time `json:"worker_imported_at"`
 	Started  *time.Time `json:"registered_agent_process_started"`
 	Released *time.Time `json:"worker_claim_released"`
 }
@@ -82,7 +83,11 @@ func RecordSessionStartup(repositoryMount, pvcSubPath, sessionSubPath string, re
 	if err != nil {
 		return err
 	}
-	filename := filepath.Join(repositoryMount, relative, "startup-session.json")
+	directory := filepath.Join(repositoryMount, relative, "startup")
+	if err := os.MkdirAll(directory, 0700); err != nil {
+		return err
+	}
+	filename := filepath.Join(directory, "startup-session.json")
 	return writeStartupOnce(filename, SessionStartup{ReceivedAt: received, OpenedAt: opened})
 }
 

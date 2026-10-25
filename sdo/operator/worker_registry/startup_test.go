@@ -53,12 +53,18 @@ func TestResponderStartupRecordContainsEveryMeasuredBoundary(t *testing.T) {
 	now := metav1.NewTime(time.Date(2026, 10, 25, 1, 0, 0, 0, time.UTC))
 	always := corev1.ContainerRestartPolicyAlways
 	record := &ResponderStartup{IncidentID: "i", JobName: "j", InitContainers: map[string]ContainerStartup{}, Missing: []string{}}
-	record.observe(&batchv1.Job{ObjectMeta: metav1.ObjectMeta{CreationTimestamp: now}}, []corev1.Pod{{Spec: corev1.PodSpec{InitContainers: []corev1.Container{{Name: "history", RestartPolicy: &always}, {Name: "legacy-init"}}}, Status: corev1.PodStatus{Conditions: []corev1.PodCondition{{Type: corev1.PodScheduled, Status: corev1.ConditionTrue, LastTransitionTime: now}}, InitContainerStatuses: []corev1.ContainerStatus{{Name: "history", State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{StartedAt: now}}}, {Name: "legacy-init", State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{StartedAt: now, FinishedAt: now}}}}, ContainerStatuses: []corev1.ContainerStatus{{Name: "agent", State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{StartedAt: now}}}}}}})
+	record.observe(&batchv1.Job{ObjectMeta: metav1.ObjectMeta{CreationTimestamp: now}}, []corev1.Pod{{Spec: corev1.PodSpec{InitContainers: []corev1.Container{{Name: "history", RestartPolicy: &always}, {Name: "legacy-init"}}}, Status: corev1.PodStatus{Conditions: []corev1.PodCondition{{Type: corev1.PodScheduled, Status: corev1.ConditionTrue, LastTransitionTime: now}, {Type: corev1.PodReady, Status: corev1.ConditionTrue, LastTransitionTime: now}}, InitContainerStatuses: []corev1.ContainerStatus{{Name: "history", State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{StartedAt: now}}}, {Name: "legacy-init", State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{StartedAt: now, FinishedAt: now}}}}, ContainerStatuses: []corev1.ContainerStatus{{Name: "agent", State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{StartedAt: now}}}}}}})
 	root := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, "session"), 0700); err != nil {
+	if err := os.MkdirAll(filepath.Join(root, "session/startup"), 0700); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(root, "session/startup-worker.json"), []byte(`{"worker_ready":"2026-10-25T01:00:01Z","agent_process_started":"2026-10-25T01:00:02Z","first_model_request_sent":"2026-10-25T01:00:03Z","first_model_request_source":"codex.otel.api_request.timestamp-minus-duration"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := RecordSessionStartup(root, "tenant", "tenant/session", now.Time, now.Time.Add(3*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeStartupOnce(filepath.Join(root, "session/startup/startup-dispatch.json"), DispatchStartup{Mode: "cold", TaskBoundAt: now.Time}); err != nil {
 		t.Fatal(err)
 	}
 	var logs bytes.Buffer
@@ -97,7 +103,7 @@ func TestWarmStartupKeepsPodAgeAndClaimClockSeparate(t *testing.T) {
 	if err := RecordSessionStartup(root, "", "session", claimed.Add(time.Hour), claimed.Add(time.Hour)); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeStartupOnce(filepath.Join(root, "session/startup-dispatch.json"), DispatchStartup{Mode: "warm", ClaimedAt: &claimed, TaskBoundAt: bound}); err != nil {
+	if err := writeStartupOnce(filepath.Join(root, "session/startup/startup-dispatch.json"), DispatchStartup{Mode: "warm", ClaimedAt: &claimed, TaskBoundAt: bound}); err != nil {
 		t.Fatal(err)
 	}
 	jobCreated := metav1.NewTime(claimed.Add(-2 * time.Minute))
@@ -127,4 +133,24 @@ func TestStartupArtifactRejectsArbitraryPayloads(t *testing.T) {
 	if err := ValidateStartupArtifact("startup-config.json", []byte(`{}`)); err == nil {
 		t.Fatal("unknown startup filename accepted")
 	}
+}
+
+func TestNativeStartupClockDirectoryIsReadOnlyToWorker(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	request, _ := anypb.New(&contracts.IncidentRequest{IncidentId: "i"})
+	task := &contracts.AgentTask{Request: request, Workspace: &contracts.ProposalWorkspace{CheckoutPath: "/workspace/proposal"}}
+	e := KubernetesExecutor{Client: client, Namespace: "control", RepositoryPVC: "repo", SessionPVCSubPath: "session"}
+	if err := e.ensureJob(context.Background(), task, &contracts.KubernetesJobLaunch{Image: "worker", Command: []string{"worker"}}, "j", requestSource{ConfigMap: "request"}, "result", "proposal"); err != nil {
+		t.Fatal(err)
+	}
+	job, err := client.BatchV1().Jobs("control").Get(context.Background(), "j", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, mount := range job.Spec.Template.Spec.Containers[0].VolumeMounts {
+		if mount.MountPath == "/sdo/session/startup" && mount.SubPath == "session/startup" && mount.ReadOnly {
+			return
+		}
+	}
+	t.Fatal("agent can replace native startup clocks")
 }

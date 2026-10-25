@@ -25,6 +25,7 @@ type ContainerStartup struct {
 // ResponderStartup is one structured controller telemetry record per launch.
 // Absent observations remain explicit; failed startup never invents times.
 type ResponderStartup struct {
+	WorkerImportedAt                    *time.Time                  `json:"worker_imported_at"`
 	TaskBoundAt                         *time.Time                  `json:"task_bound_at"`
 	PodReadyAt                          *metav1.Time                `json:"pod_ready_at"`
 	SessionOpenedAt                     *time.Time                  `json:"session_open_at"`
@@ -139,6 +140,7 @@ func (e KubernetesExecutor) emitStartup(r *ResponderStartup) {
 			if err == nil {
 				var daemon DaemonStartup
 				if json.Unmarshal(data, &daemon) == nil {
+					r.WorkerImportedAt = daemon.Imported
 					r.RegisteredAgentProcessStarted = daemon.Started
 				}
 			}
@@ -150,14 +152,14 @@ func (e KubernetesExecutor) emitStartup(r *ResponderStartup) {
 	}
 
 	if relative, err := filepath.Rel(sessionPVCBase(e.RepositoryPVCSubPath), e.SessionPVCSubPath); err == nil && e.SessionPVCSubPath != "" {
-		if data, err := os.ReadFile(filepath.Join(e.RepositoryMountPath, relative, "startup-session.json")); err == nil {
+		if data, err := os.ReadFile(filepath.Join(e.RepositoryMountPath, relative, "startup", "startup-session.json")); err == nil {
 			var timing SessionStartup
 			if json.Unmarshal(data, &timing) == nil {
 				r.SessionOpenedAt = &timing.OpenedAt
 				r.SessionOpenReceivedAt = &timing.ReceivedAt
 			}
 		}
-		if data, err := os.ReadFile(filepath.Join(e.RepositoryMountPath, relative, "startup-dispatch.json")); err == nil {
+		if data, err := os.ReadFile(filepath.Join(e.RepositoryMountPath, relative, "startup", "startup-dispatch.json")); err == nil {
 			var timing DispatchStartup
 			if json.Unmarshal(data, &timing) == nil {
 				r.Mode = timing.Mode
@@ -181,7 +183,7 @@ func (e KubernetesExecutor) emitStartup(r *ResponderStartup) {
 		}
 	}
 
-	for name, missing := range map[string]bool{"job_created_at": r.JobCreatedAt == nil, "pod_scheduled_at": r.PodScheduledAt == nil, "agent_container_started_at": r.AgentContainerStartedAt == nil, "worker_ready": r.WorkerReady == nil, "agent_process_started": r.AgentProcessStarted == nil, "first_model_request_sent": r.FirstModelRequestSent == nil} {
+	for name, missing := range map[string]bool{"pod_ready_at": r.PodReadyAt == nil, "task_bound_at": r.TaskBoundAt == nil, "session_open_at": r.SessionOpenedAt == nil, "job_created_at": r.JobCreatedAt == nil, "pod_scheduled_at": r.PodScheduledAt == nil, "agent_container_started_at": r.AgentContainerStartedAt == nil, "worker_ready": r.WorkerReady == nil, "agent_process_started": r.AgentProcessStarted == nil, "first_model_request_sent": r.FirstModelRequestSent == nil} {
 		if missing {
 			r.Missing = append(r.Missing, name)
 		}
@@ -200,7 +202,7 @@ func (e KubernetesExecutor) emitStartup(r *ResponderStartup) {
 		if e.SessionPVCSubPath != "" {
 			relative, err := filepath.Rel(sessionPVCBase(e.RepositoryPVCSubPath), e.SessionPVCSubPath)
 			if err == nil {
-				filename := filepath.Join(e.RepositoryMountPath, relative, "startup-controller.json")
+				filename := filepath.Join(e.RepositoryMountPath, relative, "startup", "startup-controller.json")
 				file, err := os.OpenFile(filename, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 				if errors.Is(err, os.ErrExist) {
 					return

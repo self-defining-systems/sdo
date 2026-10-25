@@ -289,3 +289,14 @@ func TestRuntimeArtifactArchiveIncludesExactStartupFiles(t *testing.T) {
 		t.Fatalf("startup timing omitted by native archive: %v", expected)
 	}
 }
+
+func TestProtectedControllerStartupFilesAreExported(t *testing.T) {
+	for _, name := range []string{"startup-controller.json", "startup-session.json", "startup-dispatch.json"} {
+		if !allowedRuntimeArtifact("sessions/id/startup/" + name) {
+			t.Fatalf("protected native timing omitted: %s", name)
+		}
+	}
+	if allowedRuntimeArtifact("sessions/id/startup/environment.json") {
+		t.Fatal("startup directory exported as arbitrary JSON")
+	}
+}

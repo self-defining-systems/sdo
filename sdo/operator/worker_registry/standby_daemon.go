@@ -122,6 +122,7 @@ func RunStandbyDaemon(ctx context.Context, options StandbyDaemonOptions) error {
 			return fmt.Errorf("preload registered worker: %w", err)
 		}
 	}
+	workerImportedAt := time.Now().UTC()
 	task, err := AwaitStandbyTask(ctx, options.Inbox, options.Ready)
 	if err != nil {
 		return err
@@ -151,7 +152,7 @@ func RunStandbyDaemon(ctx context.Context, options StandbyDaemonOptions) error {
 	// The Python process is already imported but holds no incident data. Its
 	// private pipe releases it only after the Go-owned bind and proxy readiness.
 	if options.SessionDirectory != "" {
-		_ = writeStandbyJSON(filepath.Join(options.SessionDirectory, "startup-daemon.json"), map[string]string{"registered_agent_process_started": workerStarted.Format(time.RFC3339Nano), "worker_claim_released": time.Now().UTC().Format(time.RFC3339Nano)})
+		_ = writeStandbyJSON(filepath.Join(options.SessionDirectory, "startup-daemon.json"), map[string]string{"registered_agent_process_started": workerStarted.Format(time.RFC3339Nano), "worker_imported_at": workerImportedAt.Format(time.RFC3339Nano), "worker_claim_released": time.Now().UTC().Format(time.RFC3339Nano)})
 	}
 	consumed, err := os.OpenFile(options.Ready+".consumed", os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if err != nil {

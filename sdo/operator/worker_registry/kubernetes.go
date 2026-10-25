@@ -220,6 +220,16 @@ func (e KubernetesExecutor) Execute(ctx context.Context, task *contracts.AgentTa
 		defer e.unstageRequest(jobName)
 	}
 	taskBoundAt := time.Now().UTC()
+	if e.SessionPVCSubPath != "" {
+		if relative, err := filepath.Rel(sessionPVCBase(e.RepositoryPVCSubPath), e.SessionPVCSubPath); err == nil {
+			session := filepath.Join(e.RepositoryMountPath, relative)
+			if info, err := os.Stat(session); err == nil && info.IsDir() {
+				if err := os.MkdirAll(filepath.Join(session, "startup"), 0700); err != nil {
+					return nil, err
+				}
+			}
+		}
+	}
 	if e.WarmBinding != nil {
 		if _, err := e.Client.BatchV1().Jobs(e.Namespace).Get(ctx, jobName, metav1.GetOptions{}); apierrors.IsNotFound(err) {
 			return nil, &JobFailedError{JobName: jobName}
@@ -250,7 +260,7 @@ func (e KubernetesExecutor) Execute(ctx context.Context, task *contracts.AgentTa
 		startup.TaskBoundAt = &taskBoundAt
 		if e.SessionPVCSubPath != "" {
 			if relative, err := filepath.Rel(sessionPVCBase(e.RepositoryPVCSubPath), e.SessionPVCSubPath); err == nil {
-				_ = writeStartupOnce(filepath.Join(e.RepositoryMountPath, relative, "startup-dispatch.json"), timing)
+				_ = writeStartupOnce(filepath.Join(e.RepositoryMountPath, relative, "startup", "startup-dispatch.json"), timing)
 			}
 		}
 	}
@@ -467,6 +477,9 @@ func (e KubernetesExecutor) ensureJob(ctx context.Context, task *contracts.Agent
 		// The same PVC is mounted a second time through the repository volume: two volumes backed by one claim
 		// leave the kubelet waiting forever for the pod's volumes.
 		mounts = append(mounts, corev1.VolumeMount{Name: "repository", MountPath: "/sdo/session", SubPath: e.SessionPVCSubPath})
+		if task.GetRequest().MessageIs(&contracts.IncidentRequest{}) {
+			mounts = append(mounts, corev1.VolumeMount{Name: "repository", MountPath: "/sdo/session/startup", SubPath: path.Join(e.SessionPVCSubPath, "startup"), ReadOnly: true})
+		}
 		if e.Environment["SDO_TOOLS_DIR"] != "" {
 			// Bind the directories individually so the worker cannot replace
 			// server-owned entries through the writable session parent. Replies

@@ -129,7 +129,7 @@ func (p *StandbyPool) Ensure(ctx context.Context) error {
 	}
 	name := "sdo-standby-" + hex.EncodeToString(random[:])
 	directory := filepath.Join(p.root(), name)
-	for _, sub := range []string{"checkout", "session/api-history", "session/corpus", "session/late-findings", "session/tools/requests", "session/tools/responses", "control", "ready"} {
+	for _, sub := range []string{"checkout", "session/api-history", "session/corpus", "session/startup", "session/late-findings", "session/tools/requests", "session/tools/responses", "control", "ready"} {
 		if err := os.MkdirAll(filepath.Join(directory, sub), 0700); err != nil {
 			return err
 		}
