@@ -263,3 +263,20 @@ func TestFailedClosureLearningIncludesControllerProgramReceipt(t *testing.T) {
 		t.Fatalf("controller-applied verified repairs lost: %v", got)
 	}
 }
+
+func TestFailedClosureLearningRetainsRepairWhenWorkerFailsAfterHealthClears(t *testing.T) {
+	closure := failedThreeFaultClosure(t)
+	closure.Result.Status = IncidentFailed
+	closure.PartialDetectorStates = nil
+	for _, finding := range closure.Request.Findings {
+		closure.FinalDetectorStates = append(closure.FinalDetectorStates, DetectorEvaluation{DetectorID: finding.DetectorID, Status: DetectorEvaluationClear, EvaluatedAt: time.Unix(3, 0)})
+	}
+	derived, err := (ProtoOutcomeDeriver{}).Derive(context.Background(), closure, "", "test", "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	view := partialReflectionOutcome(derived.Record)
+	if view.Classification != "failed" || len(view.ConfirmedRootCauses) != 3 || len(view.RepairActions) != 3 {
+		t.Fatalf("failed worker hid final independent clearance: %v", view)
+	}
+}

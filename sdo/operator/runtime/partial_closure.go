@@ -91,12 +91,12 @@ func closurePartialAction(outcome *contracts.OutcomeRecord, action *contracts.Re
 			}
 			triggered = triggered || primary
 			var latest *contracts.DetectorEvaluation
-			for _, evaluation := range outcome.GetDetectorHistory() {
+			for _, evaluation := range append(append([]*contracts.DetectorEvaluation{}, outcome.GetDetectorHistory()...), outcome.GetFinalHealthDetectorState()...) {
 				if evaluation.GetDetectorId() == finding.GetDetectorId() && evaluation.GetEvaluatedAt() != nil && evaluation.GetEvaluatedAt().IsValid() && (latest == nil || !evaluation.GetEvaluatedAt().AsTime().Before(latest.GetEvaluatedAt().AsTime())) {
 					latest = evaluation
 				}
 			}
-			if latest == nil || latest.GetError() != "" || latest.GetEvaluatedAt().AsTime().Before(times.GetCompletedAt().AsTime()) || latest.GetEvaluatedAt().AsTime().Before(lastMutation) {
+			if latest == nil || latest.GetError() != "" || (latest.GetEvaluatedAt().AsTime().Before(times.GetCompletedAt().AsTime()) && !slices.Contains(outcome.GetFinalHealthDetectorState(), latest)) || latest.GetEvaluatedAt().AsTime().Before(lastMutation) {
 				return false
 			}
 			clear := latest.GetStatus() == "clear" && len(latest.GetFingerprints()) == 0
@@ -131,8 +131,8 @@ func partialActionVerified(outcome *contracts.OutcomeRecord, action *contracts.R
 			continue
 		}
 		var latest *contracts.DetectorEvaluation
-		for _, evaluation := range outcome.GetDetectorHistory() {
-			if evaluation.GetDetectorId() == finding.GetDetectorId() && evaluation.GetEvaluatedAt() != nil && evaluation.GetEvaluatedAt().IsValid() && !evaluation.GetEvaluatedAt().AsTime().Before(completed.AsTime()) && (latest == nil || !evaluation.GetEvaluatedAt().AsTime().Before(latest.GetEvaluatedAt().AsTime())) {
+		for _, evaluation := range append(append([]*contracts.DetectorEvaluation{}, outcome.GetDetectorHistory()...), outcome.GetFinalHealthDetectorState()...) {
+			if evaluation.GetDetectorId() == finding.GetDetectorId() && evaluation.GetEvaluatedAt() != nil && evaluation.GetEvaluatedAt().IsValid() && (!evaluation.GetEvaluatedAt().AsTime().Before(completed.AsTime()) || slices.Contains(outcome.GetFinalHealthDetectorState(), evaluation)) && (latest == nil || !evaluation.GetEvaluatedAt().AsTime().Before(latest.GetEvaluatedAt().AsTime())) {
 				latest = evaluation
 			}
 		}
