@@ -109,6 +109,18 @@ func planApplicationState(application *contracts.PlanApplication) RecordedPlanAp
 
 func planActionProto(action program.Action) (*contracts.Action, error) {
 	switch a := action.(type) {
+	case program.RemoveServicePort:
+		return &contracts.Action{Kind: &contracts.Action_RemoveServicePort{RemoveServicePort: &contracts.RemoveServicePort{Ref: planRefProto(a.Ref), Name: a.Name, Port: a.Port, Protocol: a.Protocol, AllowEmpty: a.AllowEmpty, Reason: a.Reason}}}, nil
+	case *program.RemoveServicePort:
+		if a != nil {
+			return planActionProto(*a)
+		}
+	case program.EnsureDatabaseUser:
+		return databaseActionProto(a), nil
+	case *program.EnsureDatabaseUser:
+		if a != nil {
+			return planActionProto(*a)
+		}
 	case program.CreateFromSource:
 		return &contracts.Action{Kind: &contracts.Action_CreateFromSource{CreateFromSource: &contracts.CreateFromSource{Ref: planRefProto(a.Ref), Reason: a.Reason}}}, nil
 	case program.DeleteObject:
@@ -191,6 +203,11 @@ func planRefProto(ref sdk.ObjectRef) *contracts.ObjectRef {
 func planActionState(action *contracts.Action) program.Action {
 	var decoded program.Action
 	switch kind := action.GetKind().(type) {
+	case *contracts.Action_RemoveServicePort:
+		a := kind.RemoveServicePort
+		decoded = program.RemoveServicePort{Ref: objectRefState(a.GetRef()), Name: a.GetName(), Port: a.GetPort(), Protocol: a.GetProtocol(), AllowEmpty: a.GetAllowEmpty(), Reason: a.GetReason()}
+	case *contracts.Action_EnsureDatabaseUser:
+		decoded = databaseActionState(kind.EnsureDatabaseUser)
 	case *contracts.Action_CreateFromSource:
 		decoded = program.CreateFromSource{Ref: objectRefState(kind.CreateFromSource.GetRef()), Reason: kind.CreateFromSource.GetReason()}
 	case *contracts.Action_DeleteObject:

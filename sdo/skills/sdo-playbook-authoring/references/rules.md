@@ -79,3 +79,9 @@ controller RBAC and returns an exit code with no stdout/stderr; commands can rea
   optional. Mitigation must execute and clear diagnosis; skipped effects fail replay. Enforced by: `program.mitigation-not-repaired`.
 - Preserve every accepted case exactly as it appears at the accepted base commit, including snapshots, recordings,
   provenance, bindings and labels. Do not delete or relabel it; submit new evidence with a new case ID. Enforced by: `program.corpus-immutable`.
+
+- RemoveServicePort must identify exactly one port and explicitly allow removing the last entry.
+  EnsureDatabaseUser uses only container environment credential references, preserves other users and
+  existing passwords, and discloses irreversible effects. Catalog diagnosis/replay requires a successful
+  recorded open observation; fixed answers never substitute for applying the action. Enforced by:
+  `program.mitigation-unreplayable`, `program.mitigation-not-repaired`.
