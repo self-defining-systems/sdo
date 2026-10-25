@@ -45,6 +45,10 @@ class DryRunReport:
     started_at: float = field(default_factory=time.time)
     seconds: float = 0
     passed: bool = False
+    phase: str = "setup"
+    setup_seconds: float = 0
+    steady_seconds: float = 0
+    steady_started: float | None = None
     fault_injected: bool = False
     live_model_calls: bool = False
     invariants: dict[str, dict[str, Any]] = field(
@@ -53,7 +57,9 @@ class DryRunReport:
 
     def save(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(asdict(self), indent=2) + "\n")
+        temporary = path.with_suffix(".tmp")
+        temporary.write_text(json.dumps(asdict(self), indent=2) + "\n")
+        temporary.replace(path)
 
 
 def budget(value: str) -> int:
@@ -63,41 +69,74 @@ def budget(value: str) -> int:
     return seconds
 
 
-def execute(run_dir: Path, timeout: int) -> int:
+def setup_budget(value: str) -> int:
+    seconds = int(value)
+    if not 0 < seconds <= 900:
+        raise argparse.ArgumentTypeError("eval setup budget must be in 1..900 seconds")
+    return seconds
+
+
+def phase_deadline(document: dict[str, Any], started: float, setup_timeout: int, steady_timeout: int) -> float:
+    steady_started = document.get("steady_started")
+    return float(steady_started) + steady_timeout if steady_started is not None else started + setup_timeout
+
+
+def execute(run_dir: Path, timeout: int, setup_timeout: int = 900) -> int:
     directory = run_dir.resolve() / "eval-dry-run"
     directory.mkdir(parents=True, exist_ok=True)
     report_path = directory / "report.json"
-    report = DryRunReport(str(run_dir))
-    report.save(report_path)
-    command = [sys.executable, "-m", __name__, "--run-dir", str(run_dir), "--timeout", str(timeout)]
+    DryRunReport(str(run_dir)).save(report_path)
+    command = [
+        sys.executable,
+        "-m",
+        __name__,
+        "--run-dir",
+        str(run_dir),
+        "--timeout",
+        str(timeout),
+        "--setup-timeout",
+        str(setup_timeout),
+    ]
     started = time.monotonic()
     with (directory / "worker.log").open("w") as log:
         child = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
-        try:
-            code = child.wait(timeout=timeout)
-        except subprocess.TimeoutExpired:
-            os.killpg(child.pid, signal.SIGTERM)
-            try:
-                child.wait(timeout=2)
-            except subprocess.TimeoutExpired:
-                os.killpg(child.pid, signal.SIGKILL)
-                child.wait()
-            code = 1
+        while child.poll() is None:
             document = json.loads(report_path.read_text())
-            document.update(passed=False, error=f"eval: dry run exceeded {timeout}s budget")
-            report_path.write_text(json.dumps(document, indent=2) + "\n")
+            remaining = phase_deadline(document, started, setup_timeout, timeout) - time.monotonic()
+            if remaining <= 0:
+                os.killpg(child.pid, signal.SIGTERM)
+                try:
+                    child.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    os.killpg(child.pid, signal.SIGKILL)
+                    child.wait()
+                phase = "setup" if document.get("steady_started") is None else "steady-state"
+                document.update(
+                    passed=False,
+                    error=f"eval: {phase} exceeded its {setup_timeout if phase == 'setup' else timeout}s budget",
+                )
+                report_path.write_text(json.dumps(document, indent=2) + "\n")
+                break
+            try:
+                child.wait(timeout=min(1, remaining))
+            except subprocess.TimeoutExpired:
+                pass
     document = json.loads(report_path.read_text())
     document["seconds"] = time.monotonic() - started
+    if document.get("steady_started") is not None:
+        document["steady_seconds"] = time.monotonic() - document["steady_started"]
+    else:
+        document["setup_seconds"] = document["seconds"]
     report_path.write_text(json.dumps(document, indent=2) + "\n")
     print(json.dumps(document, indent=2))
-    return code
+    return 0 if document.get("passed") is True else 1
 
 
 class NoFaultReady(Exception):
     """The real pre-injection callback was reached; there is deliberately no fault."""
 
 
-def run_lane(run_dir: Path, timeout: int) -> int:
+def run_lane(run_dir: Path, timeout: int, setup_timeout: int = 900) -> int:
     from benchmarks.sregym.adapter import assert_lane_resources, closure_pending, control_namespace_for, kubectl
     from benchmarks.sregym.fastloop import cli
     from benchmarks.sregym.fastloop.environment import FastloopEnvironment
@@ -138,14 +177,49 @@ def run_lane(run_dir: Path, timeout: int) -> int:
                 "--healthy-baseline",
                 "--no-checkpoints",
                 "--timeout",
-                str(timeout),
+                str(setup_timeout + timeout),
             ]
         )
-        # Onboarding and proof share the remaining process budget.
-        remaining = timeout - (time.monotonic() - started) - 5
-        args.admission_timeout_seconds = max(1, remaining)
+        # Setup is separately bounded; only steady proof consumes five minutes.
+        args.admission_timeout_seconds = max(1, (timeout - 60) / 2)
         args.admission_progress = passed
         control = control_namespace_for(environment.namespace)
+
+        def prepare(control: str, required: set[str]) -> None:
+            last_error = "controller has not evaluated its installed checks"
+            while time.monotonic() < started + setup_timeout:
+                try:
+                    state = json.loads(
+                        kubectl(
+                            ["get", "configmap/sdo-controller-state", "-o", "json"],
+                            namespace=control,
+                            kubeconfig=environment.kubeconfig,
+                        ).stdout
+                    )
+                    runtime = json.loads(state["data"]["runtime-state.json"])
+                    observed = {row.get("detector_id") for row in runtime.get("history") or []}
+                    if required and required.issubset(observed):
+                        value = json.loads(
+                            kubectl(
+                                ["get", "configmap/sdo-namespace-onboarding", "-o", "json"],
+                                namespace=control,
+                                kubeconfig=environment.kubeconfig,
+                            ).stdout
+                        )
+                        record = json.loads(value["data"]["onboarding.json"])
+                        if record.get("acceptedCommit") and record.get("objects"):
+                            passed("onboarding", accepted_commit=record["acceptedCommit"])
+                            report.setup_seconds = time.monotonic() - started
+                            report.steady_started = time.monotonic()
+                            report.phase = "steady"
+                            report.save(report_path)
+                            return
+                except (RuntimeError, ValueError, KeyError) as exc:
+                    last_error = str(exc)
+                time.sleep(min(2, max(0, started + setup_timeout - time.monotonic())))
+            raise TimeoutError(f"eval: onboarding/setup exceeded {setup_timeout}s: {last_error}")
+
+        args.admission_before_proof = prepare
         with cli._worker(environment) as worker:
             agent = cli._sdo_agent(args, environment, directory, worker=worker)
 
@@ -201,6 +275,10 @@ def run_lane(run_dir: Path, timeout: int) -> int:
         traceback.print_exc()
         report.invariants["failure"] = {"passed": False, "class": "eval", "reason": str(exc)}
     report.seconds = time.monotonic() - started
+    if report.steady_started is not None:
+        report.steady_seconds = time.monotonic() - report.steady_started
+    else:
+        report.setup_seconds = report.seconds
     report.save(report_path)
     return 0 if report.passed else 1
 
@@ -209,5 +287,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--run-dir", type=Path, required=True)
     parser.add_argument("--timeout", type=budget, default=300)
+    parser.add_argument("--setup-timeout", type=setup_budget, default=900)
     arguments = parser.parse_args()
-    raise SystemExit(run_lane(arguments.run_dir, arguments.timeout))
+    raise SystemExit(run_lane(arguments.run_dir, arguments.timeout, arguments.setup_timeout))

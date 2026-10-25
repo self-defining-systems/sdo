@@ -538,6 +538,7 @@ def _sdo_agent(
             timeout_seconds=getattr(args, "admission_timeout_seconds", 300),
             synchronize=lambda: sync_existing(native_install_config(runtime_config)),
             progress=getattr(args, "admission_progress", None),
+            before_proof=getattr(args, "admission_before_proof", None),
         )
         ops = EvalAdmissionOps(ops, admission, fresh=fresh_memory_start)  # type: ignore[assignment]
 
@@ -1100,12 +1101,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     up.set_defaults(handler=_up)
 
-    from benchmarks.sregym.fastloop.dry_run import budget, execute
+    from benchmarks.sregym.fastloop.dry_run import budget, execute, setup_budget
 
     dry_run = commands.add_parser("eval-dry-run", help="scripted pre-injection proof on a real lane, without a fault")
     dry_run.add_argument("--run-dir", type=Path, required=True)
     dry_run.add_argument("--timeout", type=budget, default=300)
-    dry_run.set_defaults(handler=lambda args: execute(args.run_dir, args.timeout))
+    dry_run.add_argument("--setup-timeout", type=setup_budget, default=900)
+    dry_run.set_defaults(handler=lambda args: execute(args.run_dir, args.timeout, args.setup_timeout))
 
     reset = commands.add_parser("reset", help="restore a warm cluster to its application and controller baseline")
     reset.add_argument("--run-dir", type=Path, required=True)
