@@ -410,8 +410,9 @@ func TestReflectionLearnedProgramCLIAndBroker(t *testing.T) {
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build CLI: %v: %s", err, out)
 	}
-	for _, physical := range []bool{false, true} {
-		t.Run(fmt.Sprintf("physical_path_%v", physical), func(t *testing.T) {
+	for _, scenario := range []string{"valid", "physical_path", "failed_closure"} {
+		physical := scenario == "physical_path"
+		t.Run(scenario, func(t *testing.T) {
 			target := nativeRepository(t)
 			copyFastloopTree(t, "../memory/validate/testdata/good/.sdo", filepath.Join(target, ".sdo"))
 			module, err := os.ReadFile("../../../tests/fixtures/sdo/playbook_program_app/.sdo/diagnostics/go.mod")
@@ -473,7 +474,13 @@ func TestReflectionLearnedProgramCLIAndBroker(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := repository.RecordOutcome(ctx, incidentID, reflectionFixtureOutcome(incidentID)); err != nil {
+			outcome := reflectionFixtureOutcome(incidentID)
+			if scenario == "failed_closure" {
+				outcome.Classification = "failed"
+				outcome.ReflectionEligibility = &contracts.ReflectionEligibility{Version: 1, Causes: []*contracts.ReflectionCauseWork{{CauseIndex: 0, Resources: reflectionFixtureResources()}}}
+				outcome.ConfirmedRootCauses = append(outcome.ConfirmedRootCauses, &contracts.ConfirmedRootCause{Summary: "unresolved blocker", Resources: []*contracts.ObjectRef{{Kind: "Role", Namespace: "demo", Name: "blocker"}}})
+			}
+			if _, err := repository.RecordOutcome(ctx, incidentID, outcome); err != nil {
 				t.Fatal(err)
 			}
 			proposal, err := repository.CreateProposalForPhase(ctx, incidentID, broker.ReflectionPhase)
@@ -543,7 +550,7 @@ func TestReflectionLearnedProgramCLIAndBroker(t *testing.T) {
 				return &contracts.AgentResult{SchemaVersion: task.SchemaVersion, TaskId: task.TaskId, ProposalId: task.Workspace.ProposalId, Status: "completed", Response: response}, err
 			})
 			workspace := IncidentWorkspace{IncidentID: incidentID, Worktree: proposal.Path, BaseCommit: proposal.BaseCommit}
-			if _, err := worker.Reflect(ctx, nativeClosure(workspace), workspace, &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: incidentID, Classification: "success"}, "repair", proposal.BaseCommit, ReflectionFeedback{}); err != nil {
+			if _, err := worker.Reflect(ctx, nativeClosure(workspace), workspace, outcome, "repair", proposal.BaseCommit, ReflectionFeedback{}); err != nil {
 				t.Fatal(err)
 			}
 			if !physical && authoredTree == "" {

@@ -195,7 +195,7 @@ func recordedMutation(action *contracts.RepairActionReceipt) bool {
 		return false
 	}
 	switch action.GetKind() {
-	case "kubectl-patch", "kubectl-apply", "kubectl-delete", "kubectl-scale":
+	case "kubectl-patch", "kubectl-apply", "kubectl-delete", "kubectl-scale", "kubectl-exec":
 		return true
 	}
 	return false
