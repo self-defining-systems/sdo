@@ -113,64 +113,16 @@ max_chars = 100
 reason = "Baseline synthetic fixture maximum: 6 Unicode code points; byte-identical template extraction."
 
 [responder.additional_context]
-max_chars = 100
-reason = "Baseline synthetic fixture maximum: 79 Unicode code points; byte-identical template extraction."
-
-[responder.detector_evidence]
-max_chars = 400
-reason = "Baseline synthetic fixture maximum: 365 Unicode code points; byte-identical template extraction."
-
-[responder.drift_guidance]
-max_chars = 800
-reason = "Baseline synthetic fixture maximum: 723 Unicode code points; byte-identical template extraction."
+max_chars = 90
+reason = "Lean responder measured fixture maximum 79 Unicode code points with approximately 10 percent headroom; executable workflow moved to the installed skill."
 
 [responder.incident_data]
-max_chars = 13200
-reason = "Consolidate request, accepted intent and detector facts into a 12000-character production data cap with 10 percent headroom, replacing larger separate context allowances."
-
-[responder.inlined_architecture_summary]
-max_chars = 8100
-reason = "Baseline synthetic fixture maximum: 8050 Unicode code points; byte-identical template extraction."
-
-[responder.inlined_health_objective]
-max_chars = 4100
-reason = "Baseline synthetic fixture maximum: 4046 Unicode code points; byte-identical template extraction."
+max_chars = 6380
+reason = "Lean responder measured fixture maximum 5797 Unicode code points with approximately 10 percent headroom; executable workflow moved to the installed skill."
 
 [responder.instructions]
-max_chars = 1500
-reason = "Consolidate responder workflow routing and optional late-finding guidance into the agreed 1500-character instruction envelope before lowering measured final limits."
-
-[responder.late_findings_guidance]
-max_chars = 700
-reason = "Baseline synthetic fixture maximum: 605 Unicode code points; byte-identical template extraction."
-
-[responder.memory_guard]
-max_chars = 300
-reason = "Baseline synthetic fixture maximum: 269 Unicode code points; byte-identical template extraction."
-
-[responder.no_action_instructions]
-max_chars = 1000
-reason = "Baseline synthetic fixture maximum: 978 Unicode code points; byte-identical template extraction."
-
-[responder.program_guidance]
-max_chars = 700
-reason = "Baseline synthetic fixture maximum: 679 Unicode code points; byte-identical template extraction."
-
-[responder.state_changes_section]
-max_chars = 700
-reason = "Baseline synthetic fixture maximum: 644 Unicode code points; byte-identical template extraction."
-
-[responder.strategy]
-max_chars = 12600
-reason = "Baseline synthetic fixture maximum: 12565 Unicode code points; byte-identical template extraction."
-
-[responder.surfaced_context]
-max_chars = 10200
-reason = "Baseline synthetic fixture maximum: 10184 Unicode code points; byte-identical template extraction."
-
-[responder.verification_instructions]
-max_chars = 2600
-reason = "Baseline synthetic fixture maximum: 2519 Unicode code points; byte-identical template extraction."
+max_chars = 1280
+reason = "Lean responder measured fixture maximum 1162 Unicode code points with approximately 10 percent headroom; executable workflow moved to the installed skill."
 
 [session.incident_data]
 max_chars = 100

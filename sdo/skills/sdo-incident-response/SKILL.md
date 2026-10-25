@@ -14,4 +14,4 @@ Accepted source and developer changes express intent. Memory is fallible advice;
 5. Undo only on evidence that a change was wrong or harmful. Read the action report and current state first; do not undo useful repairs merely because another finding persists. Clean up temporary investigation resources and label helper Pods or Jobs `sdo.dev/responder-helper=true`, never application workloads.
 6. On a re-prompt, work only the `still_broken` list. Read `already_done` and its receipts to preserve completed repairs, then self-check again. The controller independently checks the result after you return.
 
-Write large tool output to a temporary file and grep or extract the relevant observations. Never infer missing evidence from a truncated prefix. Keep scratch files outside operational memory.
+Write large tool output to a temporary file and grep or extract the relevant observations. Never infer missing evidence from a truncated prefix. Keep scratch files outside operational memory. Allow blocking operations to finish in one call instead of polling across model turns. Static files belong in static_context, not live cause evidence.

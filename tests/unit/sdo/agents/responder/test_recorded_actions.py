@@ -22,11 +22,12 @@ from hypothesis import strategies as st
 
 from benchmarks.sregym.protocol import validate_production_receipt
 from sdo.agents.responder import recorded_actions, tools_cli
-from sdo.agents.responder.codex import ResponderExecutionError, _responder_prompt, execute_incident
+from sdo.agents.responder.codex import ResponderExecutionError, execute_incident
 from sdo.agents.responder.reflection_brief import responder_shell_commands
 from sdo.contracts import IncidentRequest, IncidentResult
 from tests.proto_messages import evolve
 from tests.structured_turns import ScriptedAgent, reply
+from tests.unit.sdo.agents.prompts.cases import responder_prompt as _responder_prompt
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Sequence
@@ -397,13 +398,11 @@ def test_a_receipt_the_model_returns_never_replaces_a_recorded_one(scratch: Path
     assert [action.action_id for action in completed.repair_actions][: len(model_ids)] == model_ids
 
 
-def test_prompt_routes_mutations_through_act_and_leaves_receipts_to_it() -> None:
+def test_prompt_routes_mutations_through_the_recorder_and_leaves_receipts_to_it() -> None:
     prompt = _responder_prompt(_request())
-
-    assert "sdo act" in prompt
-    assert "The recorder supplies receipts; do not hand-write them" in prompt
-    assert "repair-actions" not in prompt
-    assert "parameterized script" not in prompt
+    assert "session action recorder" in prompt
+    assert "declares changed resources" in prompt
+    assert "never hand-write receipts" in prompt
 
 
 def test_the_prompt_example_is_a_command_the_cli_accepts() -> None:
