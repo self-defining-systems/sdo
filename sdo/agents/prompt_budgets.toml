@@ -172,8 +172,8 @@ max_chars = 1400
 reason = "Measured production rendering 1125 Unicode characters across three-fault and 100-finding fixtures; 10 percent plus 128 characters of path/identity headroom."
 
 [tool_stdout.diagnose]
-max_chars = 550
-reason = "Measured production rendering 374 Unicode characters across three-fault and 100-finding fixtures; 10 percent plus 128 characters of path/identity headroom."
+max_chars = 600
+reason = "Measured default stdout 388 Unicode characters, including bounded controller/client errors; 10 percent plus 128 characters of path/identity headroom."
 
 [tool_stdout.incident]
 max_chars = 5400
@@ -188,20 +188,20 @@ max_chars = 1650
 reason = "Measured production rendering 1359 Unicode characters across three-fault and 100-finding fixtures; 10 percent plus 128 characters of path/identity headroom."
 
 [tool_stdout.plan]
-max_chars = 450
-reason = "Measured production rendering 252 Unicode characters across three-fault and 100-finding fixtures; 10 percent plus 128 characters of path/identity headroom."
+max_chars = 550
+reason = "Measured default stdout 380 Unicode characters, including bounded controller/client errors; 10 percent plus 128 characters of path/identity headroom."
 
 [tool_stdout.report]
-max_chars = 450
-reason = "Measured production rendering 283 Unicode characters across three-fault and 100-finding fixtures; 10 percent plus 128 characters of path/identity headroom."
+max_chars = 600
+reason = "Measured default stdout 384 Unicode characters, including bounded controller/client errors; 10 percent plus 128 characters of path/identity headroom."
 
 [tool_stdout.rollback]
 max_chars = 1500
 reason = "Measured production rendering 1213 Unicode characters across three-fault and 100-finding fixtures; 10 percent plus 128 characters of path/identity headroom."
 
 [tool_stdout.source]
-max_chars = 400
-reason = "Measured production rendering 231 Unicode characters across three-fault and 100-finding fixtures; 10 percent plus 128 characters of path/identity headroom."
+max_chars = 600
+reason = "Measured default stdout 384 Unicode characters, including bounded controller/client errors; 10 percent plus 128 characters of path/identity headroom."
 
 [tool_stdout.status]
 max_chars = 1550
