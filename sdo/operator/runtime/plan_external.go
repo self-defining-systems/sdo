@@ -33,6 +33,10 @@ type PlanJobClient interface {
 
 func concreteExternalAction(a program.Action) program.Action {
 	switch p := a.(type) {
+	case *program.RunScript:
+		if p != nil {
+			return *p
+		}
 	case *program.EnsureExec:
 		if p != nil {
 			return *p
@@ -50,7 +54,7 @@ func concreteExternalAction(a program.Action) program.Action {
 }
 func isExternalAction(a program.Action) bool {
 	switch concreteExternalAction(a).(type) {
-	case program.EnsureExec, program.EnsureHTTP, program.RunJob:
+	case program.EnsureExec, program.EnsureHTTP, program.RunJob, program.RunScript:
 		return true
 	}
 	return false
