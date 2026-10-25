@@ -19,9 +19,11 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	kruntime "k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/kubernetes/fake"
 	ktesting "k8s.io/client-go/testing"
@@ -477,8 +479,74 @@ func rehearseNativeOnboarding(t *testing.T, maintenanceChange bool) {
 	for round := probeRounds; round < probeRounds+6; round++ {
 		probe(round)
 	}
+	// Between encounters the app namespace and its objects are recreated while
+	// the control namespace retains the immutable install reference.
+	if err := client.CoreV1().Namespaces().Delete(ctx, "demo", metav1.DeleteOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.CoreV1().Namespaces().Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "demo", UID: "restored-namespace"}}, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	// The client-go tracker does not implement namespace garbage collection.
+	// Explicitly remove each app object, then recreate its accepted spec with
+	// new server identities, matching the app-only restore boundary.
+	for i, object := range baseline {
+		resource, _ := meta.UnsafeGuessKindToResource(object.GetObjectKind().GroupVersionKind())
+		accessor, err := meta.Accessor(object)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := client.Tracker().Delete(resource, "demo", accessor.GetName()); err != nil {
+			t.Fatal(err)
+		}
+		restored := object.DeepCopyObject()
+		identity, err := meta.Accessor(restored)
+		if err != nil {
+			t.Fatal(err)
+		}
+		identity.SetUID(types.UID("restored-" + identity.GetName()))
+		identity.SetResourceVersion("200")
+		switch object := restored.(type) {
+		case *corev1.Service:
+			object.Spec.ClusterIP = "10.96.21.87"
+			object.Spec.ClusterIPs = []string{object.Spec.ClusterIP}
+		case *corev1.Pod:
+			object.Status.PodIP = "10.244.2.3"
+		}
+		if err := client.Tracker().Create(resource, restored, "demo"); err != nil {
+			t.Fatal(err)
+		}
+		baseline[i] = restored
+	}
+	recreatedService, err := client.CoreV1().Services("demo").Get(ctx, "geo", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	recreatedPod, err := client.CoreV1().Pods("demo").Get(ctx, snapshot.PodList[0].Name, metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot.ServiceList[0], snapshot.PodList[0] = *recreatedService, *recreatedPod
+	for i := range window.Targets {
+		window.Targets[i].Samples = nil
+		window.Targets[i].LastSuccess = nil
+	}
+	// A restart must load the original reference for the recreated objects.
 	c = newController(c.evaluationAt.Add(time.Second))
-	probe(probeRounds + 7)
+	for round := probeRounds + 6; round < probeRounds+12; round++ {
+		probe(round)
+		if round >= probeRounds+8 {
+			restoredSnapshot, err := c.provider.Snapshot(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if observations := servicehealth.ReachabilityObservations(restoredSnapshot); len(observations) != 2 {
+				t.Fatalf("app restore lost never-served reference: %+v", observations)
+			}
+		}
+	}
+	c = newController(c.evaluationAt.Add(time.Second))
+	probe(probeRounds + 13)
 	recordAfter, err := client.CoreV1().ConfigMaps("demo-sdo").Get(ctx, onboarding.ConfigMapName, metav1.GetOptions{})
 	if err != nil || !reflect.DeepEqual(recordBefore.Data, recordAfter.Data) {
 		t.Fatal("restart recaptured native authority")
@@ -490,5 +558,5 @@ func rehearseNativeOnboarding(t *testing.T, maintenanceChange bool) {
 	if !time.Unix(100, 0).Equal(final.EstablishedAt.AsTime()) {
 		t.Fatal("refresh rewrote install time")
 	}
-	t.Logf("full native bring-up + real HY restore + recovered judge + validated pending checkpoint + six quiet cycles + restart passed in %s", time.Since(started))
+	t.Logf("full native bring-up + real HY restore + recovered judge + validated pending checkpoint + six quiet cycles + namespace recreation + six quiet cycles + restart passed in %s", time.Since(started))
 }

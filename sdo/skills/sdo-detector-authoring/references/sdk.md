@@ -482,7 +482,10 @@ func ReachabilityEligible(service corev1.Service) bool
 func ReachabilityTargetConfiguration(ctx sdk.DetectionContext, target ReachabilityTarget) (string, bool)
     ReachabilityTargetConfiguration binds a target to its observed Service,
     selected backend configuration, referenced ConfigMaps and selecting network
-    policy. It never reads credentials or Secret resources.
+    policy. Incarnation metadata and allocated routing addresses/ports are
+    not application configuration. The probe uses Service DNS + service port,
+    not NodePort or an allocated IP family. Headless versus virtual-IP routing
+    remains significant. It never reads credentials or Secret resources.
 
 func ReachabilityWatches() []sdk.WatchKind
     ReachabilityWatches are the kinds whose changes can change the verdict.

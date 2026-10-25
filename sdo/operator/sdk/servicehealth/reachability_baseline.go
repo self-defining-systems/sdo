@@ -151,6 +151,9 @@ func CaptureReachabilityBaseline(ctx sdk.DetectionContext, a BaselineAuthorizati
 
 // ReachabilityTargetConfiguration binds a target to its observed Service,
 // selected backend configuration, referenced ConfigMaps and selecting network policy.
+// Incarnation metadata and allocated routing addresses/ports are not application
+// configuration. The probe uses Service DNS + service port, not NodePort or an
+// allocated IP family. Headless versus virtual-IP routing remains significant.
 // It never reads credentials or Secret resources.
 func ReachabilityTargetConfiguration(ctx sdk.DetectionContext, target ReachabilityTarget) (string, bool) {
 	for _, s := range ctx.Services() {
@@ -251,11 +254,20 @@ func ReachabilityTargetConfiguration(ctx sdk.DetectionContext, target Reachabili
 			configMaps = append(configMaps, string(raw))
 		}
 		sort.Strings(configMaps)
+		spec := s.Spec.DeepCopy()
+		headless := spec.ClusterIP == corev1.ClusterIPNone
+		spec.ClusterIP, spec.ClusterIPs = "", nil
+		spec.IPFamilies, spec.IPFamilyPolicy = nil, nil
+		spec.HealthCheckNodePort = 0
+		for i := range spec.Ports {
+			spec.Ports[i].NodePort = 0
+		}
 		raw, _ := json.Marshal(struct {
-			Namespace, UID                 string
-			Spec                           corev1.ServiceSpec
+			Namespace                      string
+			Headless                       bool
+			Spec                           *corev1.ServiceSpec
 			Backends, Policies, ConfigMaps []string
-		}{ctx.Namespace(), string(s.UID), s.Spec, backends, policies, configMaps})
+		}{ctx.Namespace(), headless, spec, backends, policies, configMaps})
 		return fmt.Sprintf("%x", sha256.Sum256(raw)), true
 	}
 	return "", false
