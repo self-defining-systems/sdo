@@ -122,6 +122,7 @@ type Controller struct {
 	responderDone           bool
 	responderLoop           *ResponderLoop
 	responderCancel         context.CancelFunc
+	earlyStopRetryAt        time.Time
 	closureStableSince      time.Time
 	closureMutationRevision string
 	earlyLastMutationAt     time.Time
@@ -784,6 +785,9 @@ func (c *Controller) NextWake() time.Time {
 	}
 	if c.earlyReportPendingLocked() {
 		earlyDeadline = c.pendingClosure.VerifiedAt.Add(c.config.ResponderReportGrace)
+		if !c.earlyStopRetryAt.IsZero() {
+			earlyDeadline = c.earlyStopRetryAt
+		}
 	}
 	c.mu.Unlock()
 	if !earlyDeadline.IsZero() && (next.IsZero() || earlyDeadline.Before(next)) {
@@ -1025,7 +1029,11 @@ func (c *Controller) handleDispatchCompletion(completion dispatchCompletion, obs
 			c.pendingClosure.Result = cloneIncidentResult(&result)
 			c.pendingClosure.ResponderCompletedAt = observedAt.UTC()
 		}
-		c.responderDone = true
+		var terminal *ResponderJobFailedError
+		if completion.err == nil || errors.As(completion.err, &terminal) {
+			c.responderDone = true
+			c.emitLifecycleLocked(&contracts.LifecycleEvent{Event: PhaseResponderCompleted, RecordedAt: contractTimestamp(observedAt), IncidentId: completion.incidentID, DispatchError: completion.err != nil})
+		}
 		c.mu.Unlock()
 		return
 	}

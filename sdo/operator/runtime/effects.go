@@ -21,7 +21,7 @@ type DispatchEffect struct {
 func (c *Controller) PendingDispatchEffect() (DispatchEffect, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.dispatchState != contracts.DispatchState_DISPATCH_STATE_PENDING || c.currentIncidentRequest == nil {
+	if c.dispatchState != contracts.DispatchState_DISPATCH_STATE_PENDING || c.currentIncidentRequest == nil || c.earlyReportPendingLocked() {
 		return DispatchEffect{}, false
 	}
 	if !c.dispatchRetryDueLocked() {

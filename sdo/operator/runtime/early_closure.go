@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -116,6 +117,10 @@ func (c *Controller) finishEarlyReport(ctx context.Context, now time.Time) {
 		c.mu.Unlock()
 		return
 	}
+	if !c.earlyStopRetryAt.IsZero() && now.Before(c.earlyStopRetryAt) {
+		c.mu.Unlock()
+		return
+	}
 	done := c.responderDone
 	if !done && now.Before(c.pendingClosure.VerifiedAt.Add(c.config.ResponderReportGrace)) {
 		c.mu.Unlock()
@@ -136,7 +141,12 @@ func (c *Controller) finishEarlyReport(ctx context.Context, now time.Time) {
 				loop.mu.Unlock()
 			}
 			if err := stopper.StopResponder(ctx, id, attempts); err != nil {
-				c.reportBrokerError("end verified responder report grace", err)
+				c.mu.Lock()
+				c.earlyStopRetryAt = now.Add(time.Second)
+				c.mu.Unlock()
+				if !errors.Is(err, errResponderTerminating) {
+					c.reportBrokerError("end verified responder report grace", err)
+				}
 				return
 			}
 		}
@@ -146,10 +156,15 @@ func (c *Controller) finishEarlyReport(ctx context.Context, now time.Time) {
 	}
 	c.mu.Lock()
 	if c.earlyReportPendingLocked() && c.currentIncidentRequest.IncidentID == id {
+		if !done {
+			c.pendingClosure.ResponderCompletedAt = now.UTC()
+		}
 		c.clearIncidentLocked()
 	}
 	c.mu.Unlock()
 }
+
+var errResponderTerminating = errors.New("verified responder is still terminating")
 
 // Stop only this incident's worker Jobs, including its existing continuations.
 // The mutation fence remains in force while Kubernetes terminates their Pods.
@@ -164,6 +179,13 @@ func (d KubernetesJobDispatcher) StopResponder(ctx context.Context, id string, a
 		err := d.Client.BatchV1().Jobs(d.Namespace).Delete(ctx, IncidentJobName(taskID), metav1.DeleteOptions{GracePeriodSeconds: &zero, PropagationPolicy: &policy})
 		if err != nil && !apierrors.IsNotFound(err) {
 			return err
+		}
+		active, err := d.IncidentWorkActive(ctx, taskID)
+		if err != nil {
+			return err
+		}
+		if active {
+			return errResponderTerminating
 		}
 	}
 	return nil
