@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+import re
+import subprocess
 from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -111,10 +114,19 @@ class KubectlApplicationCluster:
         )
 
 
+def _baseline_digest(objects: list[dict[str, Any]]) -> str:
+    return hashlib.sha256(json.dumps(objects, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
 @dataclass(frozen=True)
 class ApplicationBaseline:
     namespace: str
     objects: list[dict[str, Any]]
+    installed_digest: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.installed_digest is not None and self.installed_digest != _baseline_digest(self.objects):
+            raise ValueError("installed baseline digest differs from its sealed manifest set")
 
 
 @dataclass
@@ -249,10 +261,26 @@ def application_namespaces(path: Path, kubeconfig: Path, primary: str) -> tuple[
     )
 
 
-def save_application_baseline(path: Path, baselines: tuple[ApplicationBaseline, ...]) -> None:
+def save_application_baseline(
+    path: Path,
+    baselines: tuple[ApplicationBaseline, ...],
+    *,
+    installed: bool = False,
+) -> None:
     document = json.loads(path.read_text(encoding="utf-8"))
     document[APPLICATION_BASELINE_KEY] = {
-        "namespaces": [{"namespace": baseline.namespace, "objects": baseline.objects} for baseline in baselines]
+        "namespaces": [
+            {
+                "namespace": baseline.namespace,
+                "objects": baseline.objects,
+                **(
+                    {"installed_digest": _baseline_digest(baseline.objects)}
+                    if installed or baseline.installed_digest
+                    else {}
+                ),
+            }
+            for baseline in baselines
+        ]
     }
     temporary = path.with_suffix(".tmp")
     temporary.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
@@ -270,7 +298,9 @@ def load_application_baseline(path: Path, namespace: str) -> tuple[ApplicationBa
         return None
     if not all(isinstance(item, dict) and isinstance(item.get("objects"), list) for item in namespaces):
         return None
-    return tuple(ApplicationBaseline(item["namespace"], item["objects"]) for item in namespaces)
+    return tuple(
+        ApplicationBaseline(item["namespace"], item["objects"], item.get("installed_digest")) for item in namespaces
+    )
 
 
 def reconcile_application(
@@ -297,24 +327,66 @@ def reconcile_application(
 
 
 def accepted_restore_baselines(
-    workspace: Path, baselines: tuple[ApplicationBaseline, ...]
+    workspace: Path,
+    baselines: tuple[ApplicationBaseline, ...],
+    *,
+    seed_commit: str | None = None,
 ) -> tuple[ApplicationBaseline, ...]:
     """Use the sealed installed manifests as the sole source for selected objects.
 
     Captured runtime-only objects and API defaults remain available. Never apply
     a captured spec followed by a conflicting source spec (a second rollout).
     """
-    import hashlib
-
     import yaml
 
+    installed_source = True
+    if seed_commit and any(baseline.installed_digest for baseline in baselines):
+        changes = subprocess.run(
+            ["git", "-C", str(workspace), "diff", "--name-only", seed_commit, "HEAD", "--", ".", ":(exclude).sdo"],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        ).stdout.strip()
+        installed_source = not changes
+    if installed_source and all(baseline.installed_digest for baseline in baselines):
+        return baselines
     root = workspace / ".sdo/rendered"
     lock_path = root / "lock.json"
     if not lock_path.is_file():
         return baselines
     selected = {}
+    captured = {
+        (value.get("apiVersion"), value["kind"], baseline.namespace, value["metadata"]["name"]): value
+        for baseline in baselines
+        for value in baseline.objects
+    }
+    seen = set()
     for row in json.loads(lock_path.read_text())["objects"]:
-        if row.get("ref", {}).get("kind") == "Secret":
+        reference = row.get("ref", {})
+        if reference.get("kind") == "Secret":
+            continue
+        identity = tuple(reference.get(field) for field in ("api_version", "kind", "namespace", "name"))
+        if identity in seen:
+            raise ValueError(f"duplicate accepted restore manifest: {identity}")
+        seen.add(identity)
+        if row.get("error") or not row.get("file") or not row.get("sha256"):
+            name = reference.get("name", "")
+            known_gap = re.fullmatch(
+                rf"(?:Deployment/{re.escape(name)}: )?trusted deployment image evidence missing for container "
+                r"\S+ \(init=(?:true|false)\)",
+                str(row.get("error", "")),
+            )
+            if (
+                reference.get("kind") != "Deployment"
+                or not known_gap
+                or "file" in row
+                or "sha256" in row
+                or identity not in captured
+            ):
+                raise ValueError(f"unbacked or malformed rendered restore gap: {reference}")
+            # A typed evidence gap supplies no replacement spec. Retain the
+            # exact installed capture; it is never reconstructed from runtime.
             continue
         path = (root / row["file"]).resolve()
         if not path.is_relative_to(root.resolve()):
@@ -326,12 +398,22 @@ def accepted_restore_baselines(
         if value.get("kind") == "Secret":
             continue
         ref = value.get("metadata", {})
+        actual = {
+            "api_version": value.get("apiVersion"),
+            "kind": value.get("kind"),
+            "namespace": ref.get("namespace", ""),
+            "name": ref.get("name"),
+        }
+        if any(actual.get(field) != expected for field, expected in reference.items()):
+            raise ValueError(f"restore manifest identity differs from accepted lock: {path.name}")
         key = (value["kind"], ref.get("namespace", ""), ref["name"])
         if key in selected:
             raise ValueError(f"duplicate accepted restore manifest: {key}")
         selected[key] = value
     return tuple(
-        ApplicationBaseline(
+        baseline
+        if baseline.installed_digest and installed_source
+        else ApplicationBaseline(
             baseline.namespace,
             [
                 deepcopy(selected.get((value["kind"], baseline.namespace, value["metadata"]["name"]), value))
@@ -375,3 +457,20 @@ def retire_stalled_replicas(kubeconfig: Path, namespace: str) -> None:
             namespace=namespace,
             kubeconfig=kubeconfig,
         )
+
+
+def seal_existing_install(path: Path, cluster: ApplicationCluster, namespace: str) -> None:
+    """Upgrade a clean pre-controller installation, never recapture fault state."""
+    baselines = load_application_baseline(path, namespace)
+    if not baselines:
+        raise ValueError("installed source seal requires the original up capture")
+    for baseline in baselines:
+        expected = {_identity(v): _content(v) for v in baseline.objects if _managed(v, baseline.namespace)}
+        actual = {
+            _identity(v): _content(v)
+            for v in cluster.list_objects(baseline.namespace)
+            if _managed(v, baseline.namespace)
+        }
+        if actual != expected:
+            raise ValueError("installed source seal differs from the original clean up capture")
+    save_application_baseline(path, baselines, installed=True)

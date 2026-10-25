@@ -48,6 +48,14 @@ To run just those checks:
 uv run --extra test python -m pytest -q -p no:tach tests/unit/test_architecture.py
 ```
 
+The responder command guide is generated from the production CLI definitions and
+checked in seconds by `scripts/check_errors.sh`. After changing the command surface,
+run `uv run python -m sdo.agents.responder.command_reference` and commit the updated
+`sdo/skills/sdo-incident-response/references/commands.md`. The focused contract tests
+are in `tests/unit/sdo/agents/responder/test_command_reference.py`; they include a
+missing/stale-reference negative control. The responder image's cached model-tool
+layer installs `jq` and runs a JSON extraction smoke check during the build.
+
 The proto gate runs `buf lint` and checks that committed Go/Python code matches
 regenerated output. The v1alpha1 schema may evolve freely, including breaking
 changes; compatibility with main is not a gate. Reserve deleted field numbers

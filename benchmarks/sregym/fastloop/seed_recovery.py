@@ -117,7 +117,7 @@ def require_dependency_order(dependency: StartupDependency, pod_times: dict[str,
         raise ValueError(f"restore clients must register after dependency {dependency.registry}")
 
 
-def refresh_baseline_clients(problem: Any) -> dict[str, Any]:
+def refresh_baseline_clients(problem: Any, *, dependencies_only: bool = False) -> dict[str, Any]:
     """Complete restoration after dependencies settle; never an agent repair.
 
     Every supported app declares its source-owned client set. Unknown topology
@@ -137,6 +137,8 @@ def refresh_baseline_clients(problem: Any) -> dict[str, Any]:
         raise ValueError(
             f"restore client profile differs from installed source topology: {sorted(set(clients) - deployed)}"
         )
+    if dependencies_only and not STARTUP_DEPENDENCIES[problem.namespace]:
+        return {"success": True, "scope": "application-dependencies", "deployments": [], "waited_s": 0}
     resources = " ".join(f"deployment/{name}" for name in clients)
     problem.kubectl.exec_command(f"kubectl rollout restart {resources} -n {shlex.quote(problem.namespace)}")
     clusters = importlib.import_module("sregym.conductor.problems.colocated_composite")

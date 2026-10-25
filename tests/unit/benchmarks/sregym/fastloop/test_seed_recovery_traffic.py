@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -19,6 +20,11 @@ from benchmarks.sregym.fastloop import seed_recovery
     ],
 )
 def test_seed_recovery_requires_complete_successful_independent_traffic(monkeypatch, phase, ok, complete):
+    from benchmarks.sregym import adapter
+
+    api = Mock(return_value=SimpleNamespace(stdout=""))
+    monkeypatch.setattr(adapter, "kubectl", api)
+    monkeypatch.setenv("KUBECONFIG", "/fixture/kubeconfig")
     runner = Mock()
     runner.run_pod.return_value = phase, "synthetic probe log"
     entry = object()
@@ -41,6 +47,7 @@ def test_seed_recovery_requires_complete_successful_independent_traffic(monkeypa
     assert result["kind"] == "health-check"
     assert result["details"]["baseline_oracle"] is original
     runner.run_pod.assert_called_once_with({"metadata": {"name": "probe"}}, timeout_s=120)
+    assert json.loads(api.call_args.kwargs["input_text"])["metadata"]["name"] == "sregym"
 
 
 def test_failed_baseline_never_probes_or_credits_cleanup():
@@ -61,6 +68,29 @@ def test_hotel_client_refresh_is_scoped_and_reports_bounded_rollout(monkeypatch,
     problem = SimpleNamespace(
         app=SimpleNamespace(name="Hotel Reservation"), namespace="hotel-reservation", kubectl=kubectl
     )
+    from benchmarks.sregym import adapter
+
+    items = []
+    for name in ("consul", *seed_recovery.RESTORE_CLIENTS["hotel-reservation"]):
+        items.extend(
+            [
+                {
+                    "kind": "Deployment",
+                    "metadata": {"name": name},
+                    "spec": {"selector": {"matchLabels": {"app": name}}},
+                },
+                {
+                    "kind": "Pod",
+                    "metadata": {
+                        "name": name + "-pod",
+                        "labels": {"app": name},
+                        "creationTimestamp": "2026-10-25T20:00:00Z" if name == "consul" else "2026-10-25T20:01:00Z",
+                    },
+                },
+            ]
+        )
+    monkeypatch.setattr(adapter, "kubectl", lambda *a, **kw: SimpleNamespace(stdout=json.dumps({"items": items})))
+    monkeypatch.setenv("KUBECONFIG", "/fixture/kubeconfig")
     result = seed_recovery.refresh_baseline_clients(problem)
     assert result["success"] is settled
     command = kubectl.exec_command.call_args.args[0]
@@ -77,4 +107,18 @@ def test_unknown_application_cannot_claim_a_client_refresh():
     problem = SimpleNamespace(app=SimpleNamespace(name="Unknown"), namespace="sample", kubectl=Mock())
     result = seed_recovery.refresh_baseline_clients(problem)
     assert result["success"] is False
+    problem.kubectl.exec_command.assert_not_called()
+
+
+@pytest.mark.parametrize("namespace", ["astronomy-shop", "social-network"])
+def test_registration_refresh_does_not_roll_apps_without_startup_dependencies(monkeypatch, namespace):
+    from benchmarks.sregym import adapter
+
+    items = [{"kind": "Deployment", "metadata": {"name": name}} for name in seed_recovery.RESTORE_CLIENTS[namespace]]
+    monkeypatch.setattr(adapter, "kubectl", lambda *a, **kw: SimpleNamespace(stdout=json.dumps({"items": items})))
+    monkeypatch.setenv("KUBECONFIG", "/fixture/kubeconfig")
+    problem = SimpleNamespace(namespace=namespace, kubectl=Mock())
+    result = seed_recovery.refresh_baseline_clients(problem, dependencies_only=True)
+    assert result["success"] is True
+    assert result["deployments"] == []
     problem.kubectl.exec_command.assert_not_called()
