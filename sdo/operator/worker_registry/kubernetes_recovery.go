@@ -43,6 +43,9 @@ func (e KubernetesExecutor) RecoverCompleted(ctx context.Context, task *contract
 		return nil, false, fmt.Errorf("read durable agent result: %w", err)
 	}
 	if digest := resultMap.Annotations[requestDigestAnnotation]; digest != "" && digest != taskRequestDigest(task) {
+		if name == JobName(task.GetTaskId()) {
+			return nil, false, nil
+		}
 		return nil, false, fmt.Errorf("result ConfigMap %q request digest differs from frozen task", name)
 	}
 	data, ok := resultMap.Data[ResultDataKey]
@@ -61,6 +64,9 @@ func (e KubernetesExecutor) RecoverCompleted(ctx context.Context, task *contract
 	if err == nil {
 		prior := new(contracts.AgentTask)
 		if err := wire.Unmarshal([]byte(request.Data[TaskDataKey]), prior); err != nil || !proto.Equal(prior, task) {
+			if name == JobName(task.GetTaskId()) {
+				return nil, false, nil
+			}
 			return nil, false, fmt.Errorf("durable agent request differs from frozen task")
 		}
 	} else if !apierrors.IsNotFound(err) {
@@ -116,7 +122,7 @@ func (e KubernetesExecutor) taskJobName(ctx context.Context, task *contracts.Age
 	boundName := TaskJobName(task)
 	maps := e.Client.CoreV1().ConfigMaps(e.Namespace)
 	// Prefer the content-addressed execution even if legacy evidence is later
-	// archived independently. New executions always use this identity.
+	// archived independently. Conflicting requests use this identity.
 	for _, suffix := range []string{"-request", "-result"} {
 		if _, err := maps.Get(ctx, boundName+suffix, metav1.GetOptions{}); err == nil {
 			return boundName, nil
@@ -146,7 +152,7 @@ func (e KubernetesExecutor) taskJobName(ctx context.Context, task *contracts.Age
 	} else {
 		result, err := maps.Get(ctx, name+"-result", metav1.GetOptions{})
 		if apierrors.IsNotFound(err) {
-			return boundName, nil
+			return name, nil
 		}
 		if err != nil {
 			return "", fmt.Errorf("inspect durable agent result: %w", err)

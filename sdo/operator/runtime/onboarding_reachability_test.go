@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +13,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"sdo.dev/operator/onboarding"
+	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/servicehealth"
 )
@@ -96,6 +98,23 @@ func TestSourceInventoryOnboardingConfirmsReachabilityReference(t *testing.T) {
 	if err != nil || len(servicehealth.ReachabilityObservations(bound)) != 2 {
 		t.Fatalf("restart lost typed observations: %v", err)
 	}
+	// A warm reinstall keeps the exact record, including reference bytes.
+	warm, err := client.CoreV1().ConfigMaps("control").Get(ctx, onboarding.ConfigMapName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := onboarding.Stage(ctx, client, "control", "app", c.config.SourceCommit, nil, time.Unix(350, 0)); err != nil {
+		t.Fatal(err)
+	}
+	unchanged, err := client.CoreV1().ConfigMaps("control").Get(ctx, onboarding.ConfigMapName, metav1.GetOptions{})
+	if err != nil || !reflect.DeepEqual(warm, unchanged) {
+		t.Fatalf("warm reinstall changed record: %v", err)
+	}
+	// Persist the idle warm restart, including its accepted onboarding authority.
+	checkpoint := lifecycleio.NewConfigMapStateStore(client, "control", "sdo-controller-state")
+	if _, err := checkpoint.Save(ctx, exportState(t, c), ""); err != nil {
+		t.Fatal(err)
+	}
 	// A served port retains exactly the existing three-sample fault latency.
 	for round := 0; round < 3; round++ {
 		now := time.Unix(int64(301+10*round), 0)
@@ -114,6 +133,55 @@ func TestSourceInventoryOnboardingConfirmsReachabilityReference(t *testing.T) {
 		if round == 2 && len(active) != 1 {
 			t.Fatalf("served-port fault latency changed: %+v", active)
 		}
+	}
+	// The supported fresh reset retires the legacy authority and attempt.
+	// Reinstall on this same lane must establish a new measured reference.
+	if _, err := onboarding.ResetControlState(ctx, client, "control"); err != nil {
+		t.Fatal(err)
+	}
+	if err := onboarding.Stage(ctx, client, "control", "app", c.config.SourceCommit, nil, time.Unix(400, 0)); err != nil {
+		t.Fatal(err)
+	}
+	fresh, err := NewController(staged.config, []sdk.Detector{goal, reach}, provider, staged.dispatcher, time.Unix(400, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := fresh.AttachStateStore(ctx, checkpoint); err != nil {
+		t.Fatal(err)
+	}
+	if err := fresh.AttachPendingOnboarding(ctx, client, "control"); err != nil {
+		t.Fatal(err)
+	}
+	for i := range window.Targets {
+		window.Targets[i].Samples = nil
+		window.Targets[i].LastSuccess = nil
+	}
+	for round := 0; round < 3; round++ {
+		now := time.Unix(int64(401+10*round), 0)
+		window.ObservedAt = now
+		for i := range window.Targets {
+			sample := servicehealth.DialSample{At: now, OK: i == 0}
+			if !sample.OK {
+				sample.Class = servicehealth.DialRefused
+			}
+			window.Targets[i].Samples = append(window.Targets[i].Samples, sample)
+			if sample.OK {
+				at := now
+				window.Targets[i].LastSuccess = &at
+			}
+		}
+		provider.set(snapshot)
+		if err := fresh.EvaluateAll(ctx, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	record, err := onboarding.Load(ctx, client, "control", "app")
+	if err != nil || record == nil || !record.EstablishedAt.AsTime().Equal(time.Unix(400, 0)) {
+		t.Fatalf("fresh install reused old record: %+v %v", record, err)
+	}
+	freshReference, err := onboarding.LoadReachability(ctx, client, "control", "app")
+	if err != nil || freshReference == nil || len(freshReference.Exclusions) != 2 || !freshReference.CapturedAt.Equal(time.Unix(421, 0)) {
+		t.Fatalf("fresh reference missing: %+v %v", freshReference, err)
 	}
 	t.Log("install_to_record=21s; confirmed fault=20s after first refusal (unchanged three rounds at 10s)")
 }
@@ -202,5 +270,47 @@ func TestSourceInventoryOnboardingConfirmationExpiryGrantsNoAuthority(t *testing
 	}
 	if record, err := onboarding.Load(context.Background(), client, "control", "app"); err != nil || record != nil {
 		t.Fatalf("expiry granted authority: %+v %v", record, err)
+	}
+}
+
+func TestSourceInventoryLegacyOnboardingReferenceAbsentFailsSafe(t *testing.T) {
+	ctx := context.Background()
+	goal := inventoryHealth().(*sequenceDetector)
+	staged, client := stagedInstallerController(t, goal)
+	pending, err := onboarding.Pending(ctx, client, "control", "app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := onboarding.Complete(ctx, client, "control", pending); err != nil {
+		t.Fatal(err)
+	}
+	snapshot := reachabilityApp(8083)
+	snapshot.NamespaceName = "app"
+	snapshot.ServiceList[0].Namespace = "app"
+	snapshot.PodList[0].Namespace = "app"
+	now := time.Unix(121, 0)
+	snapshot.Reachability = &servicehealth.ReachabilityWindow{ObservedAt: now, Failures: 3, Interval: 10 * time.Second, Targets: []servicehealth.TargetObservations{{Target: servicehealth.ReachabilityTarget{Service: "geo", Port: 8083, PortName: "grpc"}, Samples: []servicehealth.DialSample{{At: time.Unix(101, 0), Class: servicehealth.DialRefused}, {At: time.Unix(111, 0), Class: servicehealth.DialRefused}, {At: now, Class: servicehealth.DialRefused}}}}}
+	reach := servicehealth.NewReachabilityDetector(sdk.DetectorSpec{ID: "service-reachability", OriginatingCommit: "lifecycle-bootstrap", Playbooks: []string{"health-objective"}, Watches: servicehealth.ReachabilityWatches(), Class: sdk.DetectorClassHealth, Owner: sdk.DetectorOwnerHealthJudge, Interval: 10 * time.Second, Persistence: sdk.PersistencePolicy{Firing: 1, Clearing: 1}, Batching: sdk.BatchingPolicy{Severity: sdk.SeverityCritical}})
+	c, err := NewController(staged.config, []sdk.Detector{goal, reach}, &mutableSnapshots{snapshot: snapshot}, staged.dispatcher, time.Unix(100, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.AttachPendingOnboarding(ctx, client, "control"); err != nil {
+		t.Fatal(err)
+	}
+	bound, err := c.provider.Snapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := servicehealth.ReachabilityObservations(bound); len(got) != 0 {
+		t.Fatalf("legacy record granted exclusions: %+v", got)
+	}
+	findings, err := reach.Detect(ctx, bound)
+	if err != nil || len(findings) != 1 {
+		t.Fatalf("legacy never-served port must retain ordinary finding: %+v %v", findings, err)
+	}
+	_, note, err := onboarding.LoadReachabilityWithNote(ctx, client, "control", "app")
+	if err != nil || note == nil || note.Status != "reference_absent" || note.ConfigMap != onboarding.ConfigMapName || note.Key != onboarding.ReachabilityDataKey {
+		t.Fatalf("missing typed note: %+v %v", note, err)
 	}
 }

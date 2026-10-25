@@ -195,7 +195,17 @@ func (e KubernetesExecutor) Execute(ctx context.Context, task *contracts.AgentTa
 	requestName, resultName := jobName+"-request", jobName+"-result"
 	request := requestSource{ConfigMap: requestName}
 	if len(payload) <= MaxConfigMapRequestBytes {
-		if err := e.ensureRequest(ctx, requestName, string(payload)); err != nil {
+		err := e.ensureRequest(ctx, requestName, string(payload))
+		var conflict *RequestPayloadConflictError
+		if errors.As(err, &conflict) && jobName != TaskJobName(task) {
+			// Another controller may provision a different payload between
+			// the read-only recovery check and create-if-absent request write.
+			jobName = TaskJobName(task)
+			requestName, resultName = jobName+"-request", jobName+"-result"
+			request.ConfigMap = requestName
+			err = e.ensureRequest(ctx, requestName, string(payload))
+		}
+		if err != nil {
 			return nil, err
 		}
 	} else {
@@ -355,7 +365,7 @@ func (e KubernetesExecutor) ensureRequest(ctx context.Context, name, payload str
 	}
 	prior, next := new(contracts.AgentTask), new(contracts.AgentTask)
 	if wire.Unmarshal([]byte(existing.Data[TaskDataKey]), prior) != nil || wire.Unmarshal([]byte(payload), next) != nil || !proto.Equal(prior, next) {
-		return fmt.Errorf("existing agent request ConfigMap %q has different payload", name)
+		return &RequestPayloadConflictError{ConfigMap: name}
 	}
 	return nil
 }
@@ -564,4 +574,12 @@ func cloneEnvironment(source map[string]string) map[string]string {
 		result[key] = value
 	}
 	return result
+}
+
+// RequestPayloadConflictError retains the conflicting immutable request; the
+// caller may select its deterministic request-bound execution identity.
+type RequestPayloadConflictError struct{ ConfigMap string }
+
+func (e *RequestPayloadConflictError) Error() string {
+	return fmt.Sprintf("existing agent request ConfigMap %q has different payload", e.ConfigMap)
 }

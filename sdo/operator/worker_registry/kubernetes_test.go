@@ -63,7 +63,7 @@ func TestKubernetesExecutorRunsRegisteredReflectionInPrivateCheckout(t *testing.
 	results := make(chan *contracts.AgentResult, 1)
 	errs := make(chan error, 1)
 	go func() { result, err := executor.Execute(context.Background(), task); results <- result; errs <- err }()
-	jobName := TaskJobName(task)
+	jobName := JobName(task.TaskId)
 	var job *batchv1.Job
 	deadline := time.Now().Add(time.Second)
 	for time.Now().Before(deadline) {
@@ -335,7 +335,7 @@ func TestKubernetesExecutorStagesRequestsAboveConfigMapBudgetOnRepositoryVolume(
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { _, err := executor.Execute(ctx, task); done <- err }()
-	jobName := TaskJobName(task)
+	jobName := JobName(task.TaskId)
 	var job *batchv1.Job
 	for deadline := time.Now().Add(2 * time.Second); time.Now().Before(deadline) && job == nil; time.Sleep(time.Millisecond) {
 		job, _ = client.BatchV1().Jobs("demo").Get(ctx, jobName, metav1.GetOptions{})

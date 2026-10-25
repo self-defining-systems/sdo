@@ -563,3 +563,24 @@ def stop_runtime(
     ):
         raise NativeOperatorError("Go stop returned an invalid runtime inventory")
     return result
+
+
+def reset_control_state(control_namespace: str, *, kubeconfig: str | None = None) -> dict[str, Any]:
+    """Explicitly retire SDO onboarding authority before a fresh-memory install.
+
+    The caller must stop the previous runtime before invoking this command.
+    """
+    if not control_namespace:
+        raise ValueError("reset control state requires an explicit control namespace")
+    args = ["--control-namespace", control_namespace, "--timeout", "60s"]
+    if kubeconfig:
+        args.extend(("--kubeconfig", kubeconfig))
+    result = json.loads(execute_operator("reset-control-state", args, timeout=75))
+    if (
+        not isinstance(result, dict)
+        or result.get("control_namespace") != control_namespace
+        or not isinstance(result.get("deleted"), list)
+        or any(not isinstance(name, str) for name in result["deleted"])
+    ):
+        raise NativeOperatorError("Go reset-control-state returned an invalid audit receipt")
+    return result

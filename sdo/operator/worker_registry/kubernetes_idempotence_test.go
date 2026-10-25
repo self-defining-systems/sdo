@@ -6,8 +6,10 @@ import (
 	"google.golang.org/protobuf/types/known/anypb"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/kubernetes/fake"
 	ktesting "k8s.io/client-go/testing"
 	"os"
@@ -140,7 +142,7 @@ func TestKubernetesExecutorHealthJudgeRecordsSetupUsageBeforeResult(t *testing.T
 	if err == nil {
 		t.Fatal("unfinished worker unexpectedly returned a result")
 	}
-	job, err := client.BatchV1().Jobs("demo").Get(context.Background(), TaskJobName(task), metav1.GetOptions{})
+	job, err := client.BatchV1().Jobs("demo").Get(context.Background(), JobName(task.TaskId), metav1.GetOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -193,5 +195,59 @@ func TestKubernetesExecutorRecoversRequestBoundStagedResult(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestKubernetesExecutorConcurrentPayloadsKeepSeparateResults(t *testing.T) {
+	task := reflectionTestTask(t)
+	prior := proto.Clone(task).(*contracts.AgentTask)
+	prior.Workspace.BaseCommit = "another-base"
+	oldPayload, _ := wire.Canonical(prior)
+	response, _ := anypb.New(&contracts.ReflectionResult{LearningDecision: "no_change", NoChangeReason: "covered"})
+	result := &contracts.AgentResult{SchemaVersion: SchemaVersion, TaskId: task.TaskId, ProposalId: task.Workspace.ProposalId, Status: "completed", Response: response}
+	data, _ := wire.Canonical(result)
+	client := fake.NewSimpleClientset()
+	legacy := JobName(task.TaskId)
+	collided := false
+	client.PrependReactor("create", "configmaps", func(action ktesting.Action) (bool, runtime.Object, error) {
+		cm := action.(ktesting.CreateAction).GetObject().(*corev1.ConfigMap)
+		if cm.Name != legacy+"-request" {
+			return false, nil, nil
+		}
+		collided = true
+		existing := cm.DeepCopy()
+		existing.Data[TaskDataKey] = string(oldPayload)
+		if err := client.Tracker().Create(corev1.SchemeGroupVersion.WithResource("configmaps"), existing, "demo"); err != nil {
+			t.Fatal(err)
+		}
+		return true, nil, apierrors.NewAlreadyExists(schema.GroupResource{Resource: "configmaps"}, cm.Name)
+	})
+	dispatches := 0
+	client.PrependReactor("create", "jobs", func(action ktesting.Action) (bool, runtime.Object, error) {
+		dispatches++
+		job := action.(ktesting.CreateAction).GetObject().(*batchv1.Job).DeepCopy()
+		if job.Name != TaskJobName(task) {
+			t.Fatalf("conflicting payload reused legacy worker: %s", job.Name)
+		}
+		if err := client.Tracker().Create(corev1.SchemeGroupVersion.WithResource("configmaps"), &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: job.Name + "-result", Namespace: "demo"}, Data: map[string]string{ResultDataKey: string(data)}}, "demo"); err != nil {
+			t.Fatal(err)
+		}
+		job.Status.Succeeded = 1
+		return true, job, client.Tracker().Create(batchv1.SchemeGroupVersion.WithResource("jobs"), job, "demo")
+	})
+	executor := KubernetesExecutor{Client: client, Namespace: "demo", Registry: reflectionTestRegistry(t), RepositoryPVC: "repo", RepositoryMountPath: "/workspace", PollInterval: time.Millisecond}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	for attempt := 0; attempt < 2; attempt++ {
+		if _, err := executor.Execute(ctx, task); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if !collided || dispatches != 1 {
+		t.Fatalf("collision=%v dispatches=%d, want one new worker and cached rerun", collided, dispatches)
+	}
+	old, err := client.CoreV1().ConfigMaps("demo").Get(ctx, legacy+"-request", metav1.GetOptions{})
+	if err != nil || old.Data[TaskDataKey] != string(oldPayload) {
+		t.Fatalf("concurrent request was overwritten: %v", err)
 	}
 }

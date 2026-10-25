@@ -7,11 +7,13 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 (
     cd "$root/sdo/operator"
-    go test -run '^(TestKubernetesExecutorHealthJudge|TestKubernetesExecutorRecoversRequestBoundStagedResult|TestRuntimeArtifactsExportsSetupUsage)' -count=1 ./worker_registry ./operatorcli
+    go test -run '^(TestKubernetesExecutorConcurrentPayloads|TestKubernetesExecutorHealthJudge|TestKubernetesExecutorRecoversRequestBoundStagedResult|TestRuntimeArtifactsExportsSetupUsage)' -count=1 ./worker_registry ./operatorcli
 )
 
 (
     cd "$root/sdo/operator"
+    go test -run '^TestResetControlState|^TestParseResetControlState' -count=1 ./onboarding ./operatorcli
+
     go test -run '^TestInstallExisting.*Onboarding|^TestInstallExistingClearAdoption|^TestInstallExistingAdoptedVerifiedSeedOnboarding$' -count=1 ./operatorcli
 )
 
@@ -28,6 +30,7 @@ uv run --extra test pytest -q -p no:tach \
     tests/unit/sdo/agents/responder/test_result_publisher.py \
     tests/unit/benchmarks/sregym/fastloop/test_fastloop_hermetic_run.py \
     tests/unit/benchmarks/sregym/fastloop/test_fastloop_loop.py \
+    tests/unit/benchmarks/sregym/fastloop/test_fastloop_cli.py::test_fresh_memory_resets_control_state_before_install_but_warm_repeat_keeps_it \
     tests/unit/benchmarks/sregym/fastloop/test_sdo3_descriptions.py \
     tests/unit/benchmarks/sregym/fastloop/test_sdo3_s3a_contracts.py \
     tests/unit/benchmarks/sregym/fastloop/test_fastloop_composite.py::test_failed_composite_resets_only_after_verified_harness_recovery \

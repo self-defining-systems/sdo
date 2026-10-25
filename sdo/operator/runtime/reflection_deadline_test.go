@@ -79,7 +79,7 @@ func TestReflectionPendingJobDeadlineIsFrozenAndTerminal(t *testing.T) {
 			if err != nil || !found {
 				t.Fatalf("frozen task missing: %v", err)
 			}
-			job, err := client.BatchV1().Jobs("demo").Get(context.Background(), worker_registry.TaskJobName(task), metav1.GetOptions{})
+			job, err := client.BatchV1().Jobs("demo").Get(context.Background(), worker_registry.JobName(task.GetTaskId()), metav1.GetOptions{})
 			if err != nil {
 				t.Fatal(err)
 			}

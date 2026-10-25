@@ -7,14 +7,18 @@ import hashlib
 import json
 import shutil
 import subprocess
+import threading
 import time
 from copy import deepcopy
 from dataclasses import replace
 from datetime import datetime, timezone
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlsplit
 
+import pytest
 import yaml
 from google.protobuf import json_format
 from google.protobuf.any_pb2 import Any as ProtoAny
@@ -35,7 +39,7 @@ from tests.proto_messages import from_dict
 from tests.unit.benchmarks.sregym.adapter.test_persistent import FakeOps
 
 if TYPE_CHECKING:
-    import pytest
+    from collections.abc import Iterator
 
 ROOT = Path(__file__).resolve().parents[5]
 FIXTURE_SEED = ROOT / "tests/fixtures/sdo/scripted_seed"
@@ -108,6 +112,104 @@ func main() {
 	}
 }
 """
+
+
+@pytest.fixture
+def control_api(tmp_path: Path) -> Iterator[SimpleNamespace]:
+    """Run the real stop/reset CLI against prior-install control leftovers."""
+    names = [
+        "sdo-namespace-onboarding",
+        "sdo-namespace-onboarding-pending",
+        "sdo-namespace-onboarding-attempt",
+        "sdo-controller-state",
+    ]
+    objects = {
+        name: {
+            "apiVersion": "v1",
+            "kind": "ConfigMap",
+            "metadata": {
+                "name": name,
+                "namespace": NAMESPACE + "-sdo",
+                "uid": "uid-" + name,
+                "resourceVersion": "1",
+                "labels": {"app.kubernetes.io/managed-by": "sdo"},
+            },
+            "data": {},
+        }
+        for name in names
+    }
+    deleted: list[str] = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *_args: Any) -> None:
+            pass
+
+        def reply(self, status: int, value: dict[str, Any]) -> None:
+            raw = json.dumps(value).encode()
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+
+        def do_GET(self) -> None:
+            parts = urlsplit(self.path).path.split("/")
+            assert NAMESPACE + "-sdo" in parts, self.path
+            plural = parts[parts.index(NAMESPACE + "-sdo") + 1]
+            if plural == "configmaps":
+                name = parts[-1]
+                if name in objects:
+                    self.reply(200, objects[name])
+                else:
+                    self.reply(404, {"apiVersion": "v1", "kind": "Status", "reason": "NotFound", "code": 404})
+            else:
+                kinds = {
+                    "jobs": "JobList",
+                    "pods": "PodList",
+                    "services": "ServiceList",
+                    "networkpolicies": "NetworkPolicyList",
+                }
+                assert plural in kinds, self.path
+                self.reply(
+                    200,
+                    {
+                        "apiVersion": "/".join(parts[2:4]) if parts[1] == "apis" else "v1",
+                        "kind": kinds[plural],
+                        "items": [],
+                    },
+                )
+
+        def do_DELETE(self) -> None:
+            name = urlsplit(self.path).path.split("/")[-1]
+            assert name in objects, self.path
+            options = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            assert options["preconditions"] == {"uid": "uid-" + name, "resourceVersion": "1"}
+            objects.pop(name)
+            deleted.append(name)
+            self.reply(200, {"apiVersion": "v1", "kind": "Status", "status": "Success"})
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    kubeconfig = tmp_path / "control-kubeconfig"
+    kubeconfig.write_text(
+        json.dumps(
+            {
+                "apiVersion": "v1",
+                "kind": "Config",
+                "clusters": [{"name": "test", "cluster": {"server": f"http://127.0.0.1:{server.server_port}"}}],
+                "users": [{"name": "test", "user": {}}],
+                "contexts": [{"name": "test", "context": {"cluster": "test", "user": "test"}}],
+                "current-context": "test",
+            }
+        )
+    )
+    try:
+        yield SimpleNamespace(kubeconfig=kubeconfig, objects=objects, deleted=deleted, names=names)
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
 
 
 def now() -> str:
@@ -496,7 +598,7 @@ class Controller(FakeOps):
 
 
 def test_scripted_fastloop_reuses_reflected_target_port_program(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, control_api: SimpleNamespace
 ) -> None:
     workspace = tmp_path / "application_workspace"
     shutil.copytree(FIXTURE_SEED, workspace)
@@ -525,7 +627,7 @@ def test_scripted_fastloop_reuses_reflected_target_port_program(
     FastloopEnvironment(
         run_dir=tmp_path,
         cluster="fake",
-        kubeconfig=tmp_path / "unused-kubeconfig",
+        kubeconfig=control_api.kubeconfig,
         namespace=NAMESPACE,
         application=NAMESPACE,
         workspace=workspace,
@@ -618,6 +720,8 @@ def test_scripted_fastloop_reuses_reflected_target_port_program(
     assert all(row.error is None and row.injection_to_mitigation_seconds is not None for row in records)
     assert all("responder_tokens" in row and "reflection_tokens" in row for row in rows)
     assert all(Path(str(row.artifacts_dir), "sdo_production_receipt_strict.json").is_file() for row in records)
+    assert control_api.deleted == control_api.names
+    assert control_api.objects == {}
     assert controller.installs == 1
     assert controller.registrations == [REGISTRATIONS, REGISTRATIONS]
     assert records[0].run_prelude_phase_seconds["total_before_first_incident"] >= 0

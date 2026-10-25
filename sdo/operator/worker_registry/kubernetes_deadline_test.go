@@ -30,7 +30,7 @@ func TestKubernetesExecutorEnforcesFrozenReflectionDeadline(t *testing.T) {
 		if elapsed := time.Since(start); elapsed != time.Minute {
 			t.Errorf("wait escaped frozen deadline: %s", elapsed)
 		}
-		job, err := client.BatchV1().Jobs("demo").Get(context.Background(), TaskJobName(task), metav1.GetOptions{})
+		job, err := client.BatchV1().Jobs("demo").Get(context.Background(), JobName(task.TaskId), metav1.GetOptions{})
 		if err != nil {
 			t.Fatal(err)
 		}
