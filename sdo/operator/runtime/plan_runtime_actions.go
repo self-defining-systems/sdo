@@ -227,7 +227,7 @@ func (e PlanExecutor) applyRuntimePlan(ctx context.Context, incident IncidentReq
 			}
 			if readErr != nil || normalizeErr != nil || !planValuesEqual(actual, items[i].users) {
 				result.ActionReports[i].Status = "unknown"
-				return result, fmt.Errorf("database user change unverified")
+				return result, databaseSafeError(readErr, "database user change unverified")
 			}
 			result.ActionReports[i].Status = "applied"
 			continue

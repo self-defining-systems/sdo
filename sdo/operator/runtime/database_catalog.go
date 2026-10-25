@@ -21,7 +21,8 @@ import (
 )
 
 // DatabaseCatalogClient is the narrow nonsecret catalog boundary. Implementations
-// resolve credential references only inside the target application container.
+// resolve credential references only at execution time. Catalog interfaces and
+// observations never carry resolved credential bytes.
 type DatabaseCatalogClient interface {
 	DatabaseUsers(context.Context, program.DatabaseTarget) ([]program.DatabaseUser, error)
 	EnsureDatabaseUser(context.Context, program.EnsureDatabaseUser) error
