@@ -1,7 +1,9 @@
 package runtime
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -47,7 +49,7 @@ func TestUnqualifiedTrafficIsPendingWithoutOpeningIncident(t *testing.T) {
 	}
 	loop := NewResponderLoop(IncidentRequest{}, nil, provider, []sdk.Detector{detector}, PlanExecutor{}, 3)
 	loop.ReadView = func(snapshot sdk.DetectionContext) program.ReadView { return program.ReadFrom(snapshot) }
-	for _, command := range []string{"detect", "verify"} {
+	for _, command := range []string{"detect", "verify", "status"} {
 		response := loop.Handle(context.Background(), ToolRequest{Command: command})
 		if response.Healthy || len(response.Findings) != 0 || len(response.DetectorStates) != 1 || response.DetectorStates[0].Status != DetectorEvaluationPending || response.DetectorStates[0].Reason != c.history[0].Reason || !strings.Contains(response.Summary, "pending") {
 			t.Fatalf("%s falsely healthy: %+v", command, response)
@@ -241,5 +243,80 @@ func TestTrafficRestartMidIncidentCanVerifyRecovery(t *testing.T) {
 	verified := exchangeSelfCheck(t, &server, `{"command":"verify"}`)
 	if !verified.Healthy || restored.IncidentOpen() || closure.Request.IncidentID != request.IncidentID || len(closure.FinalDetectorStates) != 1 || closure.FinalDetectorStates[0].Status != DetectorEvaluationClear {
 		t.Fatalf("restart could not verify/close recovered incident: verified=%+v closure=%+v", verified, closure)
+	}
+}
+
+func TestEvaluateOnceUnqualifiedTrafficReportsPendingReason(t *testing.T) {
+	frontend := &fakeFrontend{}
+	frontend.broken.Store(true)
+	api := runProber(t, frontend)
+	address, err := api.BaseURL(context.Background(), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, accept := range []bool{false, true} {
+		var output bytes.Buffer
+		args := []string{"--evaluate-once", "--namespace", "hotel-reservation", "--prober-url", address}
+		if accept {
+			args = append(args, "--accept-seed")
+		}
+		err := RunWithOptions(context.Background(), []sdk.Detector{trafficDetector("traffic-health", "health")}, RuntimeOptions{Args: args, Stdout: &output, Provider: staticProvider{snapshot: sdktest.Snapshot{NamespaceName: "hotel-reservation"}}})
+		if (err != nil) != accept {
+			t.Fatalf("accept=%v: %v", accept, err)
+		}
+		var response evaluationResult
+		if err := json.Unmarshal(output.Bytes(), &response); err != nil {
+			t.Fatal(err)
+		}
+		if response.Status != evaluationStatus(DetectorEvaluationPending) || len(response.Findings) != 0 || len(response.DetectorStates) != 1 || response.DetectorStates[0].Status != DetectorEvaluationPending || !strings.Contains(response.DetectorStates[0].Reason, "no synthetic scenario has succeeded") {
+			t.Fatalf("unproven traffic read-only verdict: %s", output.String())
+		}
+	}
+}
+
+func TestTrafficSelfChecksRetainPartialQualificationAndRealFaults(t *testing.T) {
+	now := time.Unix(100, 0).UTC()
+	workload, err := traffic.ParseWorkloadJSON([]byte(`{"apiVersion":"sdo.dev/v1alpha1","kind":"TrafficWorkload","name":"health","purpose":"health-probe","scenarios":[{"id":"search"},{"id":"login"}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	scenario := func(id string, qualified, failed bool) traffic.ScenarioObservations {
+		observed := traffic.ScenarioObservations{Scenario: traffic.Descriptor{ID: id, Target: traffic.Target{Service: "frontend", Port: 5000}}, Qualified: qualified}
+		for i := 0; i < 3; i++ {
+			sample := traffic.Sample{At: now.Add(time.Duration(i-2) * time.Second), Outcome: traffic.OutcomeOK, Status: 200}
+			if failed {
+				sample.Outcome, sample.Status = traffic.OutcomeError, 500
+			}
+			observed.Samples = append(observed.Samples, sample)
+		}
+		return observed
+	}
+	for _, test := range []struct {
+		name         string
+		observations []traffic.ScenarioObservations
+		status       DetectorEvaluationStatus
+		findings     int
+		unproven     string
+	}{
+		{"qualified-healthy", []traffic.ScenarioObservations{scenario("search", true, false), scenario("login", true, false)}, DetectorEvaluationClear, 0, ""},
+		{"qualified-fault", []traffic.ScenarioObservations{scenario("search", true, true), scenario("login", true, false)}, DetectorEvaluationFiring, 1, ""},
+		{"partial", []traffic.ScenarioObservations{scenario("search", true, false), scenario("login", false, true)}, DetectorEvaluationPending, 0, "login"},
+		{"partial-fault", []traffic.ScenarioObservations{scenario("search", true, true), scenario("login", false, true)}, DetectorEvaluationFiring, 1, "login"},
+	} {
+		for _, command := range []string{"detect", "status", "verify"} {
+			t.Run(test.name+"/"+command, func(t *testing.T) {
+				provider := staticProvider{snapshot: sdktest.Snapshot{NamespaceName: "app", Traffic: map[string]traffic.Window{"health": {Workload: workload, ObservedAt: now, Scenarios: test.observations}}}}
+				loop := NewResponderLoop(IncidentRequest{}, nil, provider, []sdk.Detector{trafficDetector("traffic-health", "health")}, PlanExecutor{}, 3)
+				loop.ReadView = func(snapshot sdk.DetectionContext) program.ReadView { return program.ReadFrom(snapshot) }
+				response := loop.Handle(context.Background(), ToolRequest{Command: command})
+				if response.Error != "" || response.Healthy != (test.status == DetectorEvaluationClear) || len(response.Findings) != test.findings || len(response.DetectorStates) != 1 || response.DetectorStates[0].Status != test.status {
+					t.Fatalf("self-check changed traffic semantics: %+v", response)
+				}
+				reason := response.DetectorStates[0].Reason
+				if test.unproven == "" && reason != "" || test.unproven != "" && !strings.Contains(reason, test.unproven) {
+					t.Fatalf("missing unproven scenario explanation: %+v", response.DetectorStates)
+				}
+			})
+		}
 	}
 }

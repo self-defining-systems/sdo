@@ -1562,9 +1562,13 @@ func evaluateOnce(
 		return fmt.Errorf("health detector evaluation failed: %w", detectorErrors[0])
 	}
 	status := evaluationStatus(DetectorEvaluationClear)
+	var unconfirmed []DetectorEvaluation
 	for _, evaluation := range controller.history {
 		if evaluation.Status == DetectorEvaluationPending {
 			status = evaluationStatus(DetectorEvaluationPending)
+		}
+		if evaluation.Status == DetectorEvaluationPending || evaluation.Reason != "" {
+			unconfirmed = append(unconfirmed, evaluation)
 		}
 	}
 	if len(unavailable) > 0 {
@@ -1576,7 +1580,7 @@ func evaluateOnce(
 			break
 		}
 	}
-	if err := json.NewEncoder(stdout).Encode(evaluationResult{Status: status, Findings: findings, Unavailable: unavailable, DetectorStates: controller.history}); err != nil {
+	if err := json.NewEncoder(stdout).Encode(evaluationResult{Status: status, Findings: findings, Unavailable: unavailable, DetectorStates: unconfirmed}); err != nil {
 		return err
 	}
 	if *acceptSeed && status != evaluationStatus(DetectorEvaluationClear) {

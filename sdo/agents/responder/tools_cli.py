@@ -87,7 +87,7 @@ def _parser() -> argparse.ArgumentParser:
         action="store_true",
         help="print JSON for scripts (mutations: compact envelope and complete report path)",
     )
-    commands.add_parser("status", help="read current findings and session state")
+    commands.add_parser("status", help="read fresh findings and detector confirmation; pending is not healthy")
     for name, help_text in (
         ("detect", "run fresh detectors; pending with a reason means health is unproven"),
         ("check", "run fresh detectors then independent closure verification"),

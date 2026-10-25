@@ -375,13 +375,16 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 	case "status":
 		response.DriftEvents = append([]sdk.DriftEvent(nil), l.Request.DriftEvents...)
 		response.Trust = l.Trust
-		response.Findings, response.ProgramRuns, response.Error = l.refresh(ctx)
+		response.Findings, response.ProgramRuns, response.DetectorStates, response.Error = l.refresh(ctx)
 		response.Healthy = response.Error == "" && len(l.findings) == 0
+		for _, state := range response.DetectorStates {
+			response.Healthy = response.Healthy && state.Status == DetectorEvaluationClear
+		}
 		response.Unresolved = l.batches >= l.batchLimit() && !response.Healthy
-		response.Summary = fmt.Sprintf("%d open findings; %d of %d apply batches used", len(l.findings), l.batches, l.batchLimit())
+		response.Summary = fmt.Sprintf("%d open findings; %d of %d apply batches used", len(l.findings), l.batches, l.batchLimit()) + pendingEvaluationSummary(response.DetectorStates)
 	case "diagnose":
 		if request.ProgramID == "" {
-			response.Findings, response.ProgramRuns, response.Error = l.refresh(ctx)
+			response.Findings, response.ProgramRuns, response.DetectorStates, response.Error = l.refresh(ctx)
 		} else {
 			if l.Programs == nil {
 				response.Error = "no programs are compiled"
@@ -637,33 +640,44 @@ func (l *ResponderLoop) diagnose(ctx context.Context, findings []sdk.Finding) []
 	return runs
 }
 
-func (l *ResponderLoop) refresh(ctx context.Context) ([]sdk.Finding, []ProgramRun, string) {
+func (l *ResponderLoop) refresh(ctx context.Context) ([]sdk.Finding, []ProgramRun, []DetectorEvaluation, string) {
 	started := time.Now()
 	defer func() { l.timing.refresh += time.Since(started) }()
 	view, err := l.snapshotView(ctx)
 	if err != nil {
-		return nil, nil, err.Error()
+		return nil, nil, nil, err.Error()
 	}
 	findings := make([]sdk.Finding, 0)
+	states := make([]DetectorEvaluation, 0, len(l.Detectors))
 	for _, detector := range l.Detectors {
 		observed, err := sdk.DetectObserved(ctx, detector, view)
+		state := DetectorEvaluation{DetectorID: detector.Spec().ID, EvaluatedAt: l.clock().UTC(), Status: DetectorEvaluationClear, Reason: detectorConfirmationReason(detector, view)}
+		if err == nil && len(observed) == 0 && !detectorConfirmed(detector, view) {
+			state.Status = DetectorEvaluationPending
+		}
 		if err != nil {
-			return nil, nil, fmt.Sprintf("detector %s: %v", detector.Spec().ID, err)
+			state.Status, state.Error = DetectorEvaluationError, err.Error()
+			states = append(states, state)
+			return nil, nil, states, fmt.Sprintf("detector %s: %v", detector.Spec().ID, err)
 		}
 		for _, finding := range observed {
 			if finding.Status == sdk.FindingActive {
 				findings = append(findings, finding)
+				state.Status = DetectorEvaluationFiring
+				state.Fingerprints = append(state.Fingerprints, FindingFingerprint(finding))
 			}
 		}
+		states = append(states, state)
 	}
-	drift, _ := checkRetainedDrift(ctx, l.Request.Findings, view)
+	drift, driftStates := checkRetainedDrift(ctx, l.Request.Findings, view)
 	findings = append(findings, drift...)
+	states = append(states, driftStates...)
 	l.findings = findings
 	runs := SelectProgramCandidates(ctx, l.Programs, view, findings, l.deadline())
 	l.rememberMatchedViews(ctx, runs, view)
 	l.lastDiagnosisView = view
 	l.runs = append(l.runs, runs...)
-	return findings, runs, ""
+	return findings, runs, states, ""
 }
 
 func matchedViewKey(id string, bindings program.Bindings) string {
