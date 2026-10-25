@@ -425,3 +425,80 @@ def test_reusing_a_lane_cannot_reseal_runtime_drift_as_installed_source(tmp_path
     with pytest.raises(ValueError, match="original clean up capture"):
         seal_existing_install(path, cluster, "app")
     assert path.read_bytes() == original
+
+
+def test_sealed_install_preserves_metadata_setup_but_yields_to_accepted_source_repair(tmp_path):
+    import hashlib
+    import subprocess
+
+    import yaml
+
+    from benchmarks.sregym.fastloop.baseline_recovery import (
+        ApplicationBaseline,
+        accepted_restore_baselines,
+        load_application_baseline,
+        save_application_baseline,
+    )
+
+    def commit(message):
+        subprocess.run(["git", "-C", str(tmp_path), "add", "."], check=True, capture_output=True)
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                str(tmp_path),
+                "-c",
+                "user.name=Fixture",
+                "-c",
+                "user.email=fixture@example.com",
+                "commit",
+                "-qm",
+                message,
+            ],
+            check=True,
+            capture_output=True,
+        )
+        return subprocess.check_output(["git", "-C", str(tmp_path), "rev-parse", "HEAD"], text=True).strip()
+
+    subprocess.run(["git", "-C", str(tmp_path), "init", "-q"], check=True)
+    (tmp_path / "application.txt").write_text("installed source")
+    seed = commit("installed")
+    baseline_path = tmp_path / "baseline.json"
+    baseline_path.write_text("{}")
+    installed = {
+        "kind": "Deployment",
+        "metadata": {"namespace": "app", "name": "api"},
+        "spec": {"template": {"spec": {"containers": [{"name": "api", "image": "installed"}]}}},
+    }
+    save_application_baseline(baseline_path, (ApplicationBaseline("app", [installed]),), installed=True)
+    # The controller can publish metadata without changing installed source.
+    root = tmp_path / ".sdo/rendered"
+    root.mkdir(parents=True)
+    repaired = deepcopy(installed)
+    repaired["spec"]["template"]["spec"]["containers"][0]["image"] = "accepted-source-repair"
+    payload = yaml.safe_dump(repaired).encode()
+    (root / "api.yaml").write_bytes(payload)
+    (root / "lock.json").write_text(
+        json.dumps(
+            {
+                "objects": [
+                    {
+                        "ref": {"kind": "Deployment", "name": "api"},
+                        "file": "api.yaml",
+                        "sha256": hashlib.sha256(payload).hexdigest(),
+                    }
+                ]
+            }
+        )
+    )
+    # Keep benchmark capture files out of the application source diff.
+    (tmp_path / "baseline.json").unlink()
+    commit("controller metadata")
+    baseline_path.write_text("{}")
+    save_application_baseline(baseline_path, (ApplicationBaseline("app", [installed]),), installed=True)
+    baselines = load_application_baseline(baseline_path, "app")
+    assert accepted_restore_baselines(tmp_path, baselines, seed_commit=seed)[0].objects == [installed]
+    baseline_path.unlink()
+    (tmp_path / "application.txt").write_text("accepted repaired source")
+    commit("accepted source repair")
+    assert accepted_restore_baselines(tmp_path, baselines, seed_commit=seed)[0].objects == [repaired]

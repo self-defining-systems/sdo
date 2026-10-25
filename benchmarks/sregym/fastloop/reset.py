@@ -259,7 +259,7 @@ def restore_application(
     if baselines is None:
         raise ValueError("reset requires an application baseline captured by fastloop up")
     worker.request("clean_start", problem_id=environment.deploy_problem, timeout=200)
-    baselines = accepted_restore_baselines(environment.workspace, baselines)
+    baselines = accepted_restore_baselines(environment.workspace, baselines, seed_commit=environment.seed_commit)
     for baseline in baselines:
         reconcile_application(cluster, baseline, baseline.namespace)
     deadline = time.monotonic() + 60

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import subprocess
 from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -325,7 +326,10 @@ def reconcile_application(
 
 
 def accepted_restore_baselines(
-    workspace: Path, baselines: tuple[ApplicationBaseline, ...]
+    workspace: Path,
+    baselines: tuple[ApplicationBaseline, ...],
+    *,
+    seed_commit: str | None = None,
 ) -> tuple[ApplicationBaseline, ...]:
     """Use the sealed installed manifests as the sole source for selected objects.
 
@@ -334,7 +338,17 @@ def accepted_restore_baselines(
     """
     import yaml
 
-    if all(baseline.installed_digest for baseline in baselines):
+    installed_source = True
+    if seed_commit and any(baseline.installed_digest for baseline in baselines):
+        changes = subprocess.run(
+            ["git", "-C", str(workspace), "diff", "--name-only", seed_commit, "HEAD", "--", ".", ":(exclude).sdo"],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        ).stdout.strip()
+        installed_source = not changes
+    if installed_source and all(baseline.installed_digest for baseline in baselines):
         return baselines
     root = workspace / ".sdo/rendered"
     lock_path = root / "lock.json"
@@ -360,7 +374,7 @@ def accepted_restore_baselines(
         selected[key] = value
     return tuple(
         baseline
-        if baseline.installed_digest
+        if baseline.installed_digest and installed_source
         else ApplicationBaseline(
             baseline.namespace,
             [
