@@ -124,6 +124,7 @@ def control_api(tmp_path: Path) -> Iterator[SimpleNamespace]:
         "sdo-namespace-onboarding-window",
         "sdo-namespace-onboarding-rejected",
         "sdo-controller-state",
+        "sdo-controller-maintenance",
     ]
     objects = {
         name: {

@@ -886,11 +886,15 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	// fresh informer generation and evaluates every detector once. The mode
 	// record precedes that evaluation so observers can correlate it.
 	resume := func() error {
-		preserved := applied.Paused && applied.PreserveBaseline
+		wasPaused := applied.Paused
+		preserved := wasPaused && applied.PreserveBaseline
 		syncCtx, cancelSync := context.WithTimeout(runCtx, *resumeSyncTimeout)
 		defer cancelSync()
 		var syncErr error
-		if preserved {
+		if !wasPaused {
+			// A generation-only acknowledgement does not interrupt observation.
+			syncErr = kubernetesCache.WaitForSync(syncCtx)
+		} else if preserved {
 			// Observation continued while evaluation was paused. Keep watch
 			// changes and the healthy baseline for the first resumed step.
 			syncErr = kubernetesCache.WaitForSync(syncCtx)
@@ -909,26 +913,32 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			return nil
 		}
 		waitState := func() {}
-		if !preserved {
-			waitState = startState()
+		if wasPaused {
+			if !preserved {
+				waitState = startState()
+			}
+			startTraffic()
+			startReachability()
+			waitState()
 		}
-		startTraffic()
-		startReachability()
-		waitState()
 		if launchConfig != nil && options.NativeBroker != nil {
 			if err := acceptStartupReachabilityBaseline(runCtx, controller, resolvedRoot, options.NativeBroker.Repository, launchConfig.GetHealthyBaseline(), reachabilityObserver, snapshotProvider, detectors); err != nil {
 				return err
 			}
 		}
 		kubernetesCache.TakeEvents()
-		if !preserved {
+		if wasPaused && !preserved {
 			kubernetesCache.TakeObjectChanges()
 		}
 		applied = desired
 		if err := encoder.Encode(applied.Record()); err != nil {
 			fmt.Fprintln(stderr, err)
 		}
-		if err := controller.EvaluateAll(runCtx, time.Now().UTC()); err != nil {
+		evaluate := controller.EvaluateAll
+		if wasPaused {
+			evaluate = controller.ResumeObservation
+		}
+		if err := evaluate(runCtx, time.Now().UTC()); err != nil {
 			if runCtx.Err() != nil {
 				return nil
 			}

@@ -54,6 +54,8 @@ type onboardingReachabilityState struct {
 	invalid        bool
 	startedAt      time.Time
 	waitReason     string
+	resumedAt      time.Time
+	servedTargets  map[string]bool
 }
 
 type onboardingSnapshotProvider struct {
@@ -141,13 +143,23 @@ func (c *Controller) prepareOnboardingReachability(ctx context.Context, now time
 		state.invalid = true
 		return snapshot
 	}
-	_, ok := servicehealth.ReachabilityFrom(snapshot)
+	window, ok := servicehealth.ReachabilityFrom(snapshot)
 	if !ok {
 		return snapshot
 	}
 	if _, err := healthyBaselineGoal(ctx, c.detectorList(), snapshot); err != nil {
 		state.invalid = true
 		return snapshot
+	}
+	if state.servedTargets == nil {
+		state.servedTargets = map[string]bool{}
+	}
+	for _, observed := range window.Targets {
+		served := observed.LastSuccess != nil
+		for _, sample := range observed.Samples {
+			served = served || sample.OK
+		}
+		state.servedTargets[observed.Target.ID()] = state.servedTargets[observed.Target.ID()] || served
 	}
 	current := map[string]string{}
 	targets, _ := servicehealth.ReachabilityTargets(snapshot)
@@ -163,7 +175,7 @@ func (c *Controller) prepareOnboardingReachability(ctx context.Context, now time
 		state.invalid = true
 	}
 	state.configurations = current
-	if state.invalid || !detectorsConfirmed(detectors, snapshot) {
+	if state.invalid || !detectorsConfirmed(detectors, snapshot) || !onboardingSamplesSince(window, state.resumedAt) {
 		return snapshot
 	}
 	reference, err := servicehealth.CaptureReachabilityBaseline(snapshot, servicehealth.BaselineAuthorization{SourceInputs: objectiveDigest(c.pendingOnboarding.AcceptedCommit), ObjectiveDigest: c.reachabilityObjectiveDigest(), Reason: "healthy-baseline", GoalHealthy: true})
@@ -181,7 +193,7 @@ func (c *Controller) prepareOnboardingReachability(ctx context.Context, now time
 		for _, s := range e.Samples {
 			refused = refused && s.Class == servicehealth.DialRefused
 		}
-		if refused {
+		if refused && !state.servedTargets[e.Target.ID()] {
 			exclusions = append(exclusions, e)
 		}
 	}
@@ -248,4 +260,41 @@ func (c *Controller) onboardingConfirmationExpired(now time.Time, snapshot sdk.D
 		c.OnError(fmt.Errorf("onboarding confirmation window expired without confirmed detector verdicts"))
 	}
 	return expired
+}
+
+// A trusted maintenance pause has known process continuity. Restart only the
+// sampling clock, retaining all identity, configuration and invalidation facts.
+// The driver resets observer samples before invoking this entry point.
+func (c *Controller) ResumeObservation(ctx context.Context, now time.Time) error {
+	c.observationMu.Lock()
+	if c.pendingOnboarding != nil && c.onboardingReachability != nil {
+		state := c.onboardingReachability
+		state.startedAt = time.Time{}
+		state.resumedAt = now
+		state.candidate = nil
+		slog.InfoContext(ctx, "namespace onboarding sampling resumed", "sample_not_before", now)
+	}
+	c.observationMu.Unlock()
+	return c.EvaluateAll(ctx, now)
+}
+
+func onboardingSamplesSince(window servicehealth.ReachabilityWindow, since time.Time) bool {
+	if since.IsZero() {
+		return true
+	}
+	count := window.Failures
+	if count < servicehealth.DefaultReachabilityFailures {
+		count = servicehealth.DefaultReachabilityFailures
+	}
+	for _, observed := range window.Targets {
+		if len(observed.Samples) < count {
+			return false
+		}
+		for _, sample := range observed.Samples[len(observed.Samples)-count:] {
+			if sample.At.Before(since) {
+				return false
+			}
+		}
+	}
+	return true
 }

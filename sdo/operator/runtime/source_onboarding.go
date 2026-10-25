@@ -118,7 +118,7 @@ func (c *Controller) beginOnboarding(ctx context.Context, detectors []sdk.Detect
 		c.waitForOnboarding(ctx, "health detectors unavailable")
 		return nil
 	}
-	if ConsumesServiceReachability(detectors) && (c.onboardingReachability == nil || c.onboardingReachability.startedAt.IsZero()) {
+	if ConsumesServiceReachability(detectors) && (c.onboardingReachability == nil || c.onboardingReachability.candidate == nil) {
 		return nil
 	}
 	if !c.pendingInventoryClear(c.pendingOnboarding, now) {
