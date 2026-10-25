@@ -884,7 +884,7 @@ func (l *ResponderLoop) apply(ctx context.Context, request ToolRequest, response
 	}
 	entry.Result = result
 	entry.CompletedAt = completed
-	entry.Pending = result.PendingAction != nil || result.RollingBack
+	entry.Pending = planApplicationPending(result)
 	entry.RolledBack = result.RolledBack
 	entry.RollbackError = result.RollbackError
 	entry.Error = response.Error
@@ -1070,6 +1070,7 @@ func (l *ResponderLoop) rollbackApplication(ctx context.Context, request ToolReq
 	for i := range l.applicationsLog {
 		if l.applicationsLog[i].ID == request.ApplicationID {
 			l.applicationsLog[i].Result = application
+			l.applicationsLog[i].Pending = planApplicationPending(application)
 			l.applicationsLog[i].RolledBack = application.RolledBack
 			l.applicationsLog[i].RollbackError = application.RollbackError
 		}

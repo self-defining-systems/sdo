@@ -238,6 +238,7 @@ func (l *ResponderLoop) settlePending(ctx context.Context) {
 		for i := range l.applicationsLog {
 			if l.applicationsLog[i].ID == application {
 				l.applicationsLog[i].Result = result
+				l.applicationsLog[i].Pending = planApplicationPending(result)
 				l.applicationsLog[i].Error = ""
 				l.applicationsLog[i].CompletedAt = time.Now().UTC()
 			}
@@ -419,25 +420,41 @@ func (l *ResponderLoop) RefreshPendingMitigations(ctx context.Context) bool {
 		return true
 	}
 	defer l.mu.Unlock()
-	if len(l.pendingWrites) == 0 {
-		return false
+	if len(l.pendingWrites) > 0 {
+		l.settlePending(ctx)
 	}
-	l.settlePending(ctx)
 	if err := l.persistToolState(ctx); err != nil {
 		return true
 	}
-	return len(l.pendingWrites) > 0
+	return len(l.pendingWrites) > 0 || l.pendingApplicationResultsLocked()
+}
+
+func planApplicationPending(result PlanApplicationResult) bool {
+	return result.RolloutPending != nil || result.PendingAction != nil || result.RollingBack
+}
+
+func (l *ResponderLoop) pendingApplicationResultsLocked() bool {
+	for _, result := range l.applications {
+		if planApplicationPending(result) {
+			return true
+		}
+	}
+	for _, application := range l.applicationsLog {
+		if application.Pending || planApplicationPending(application.Result) {
+			return true
+		}
+	}
+	return false
 }
 
 // hasPendingMitigationsLocked is consumed by the closure guard while it owns
-// both responder locks. Poll only outstanding rollouts so a silent responder
-// does not leave settled targets reserved. Observation never writes objects.
+// both responder locks. Observe rollouts without writes, then check every
+// authoritative application result, including ambiguous writes and rollback.
 func (l *ResponderLoop) hasPendingMitigationsLocked() bool {
-	if len(l.pendingWrites) == 0 {
-		return false
+	if len(l.pendingWrites) > 0 {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		l.settlePending(ctx)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-	l.settlePending(ctx)
-	return len(l.pendingWrites) > 0
+	return len(l.pendingWrites) > 0 || l.pendingApplicationResultsLocked()
 }

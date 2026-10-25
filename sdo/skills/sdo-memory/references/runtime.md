@@ -121,7 +121,7 @@ Mutating commands always store complete per-action results, evidence, program ru
 
 ```json
 {
-  "actions": "array of {command,summary,program_runs,report}: complete independent option outputs/receipts; overlapping writes refused",
+  "actions": "array of {command,summary,program_runs,report,option_reports}: complete independent option outputs/receipts; overlapping writes refused",
   "findings": "array of {summary,status,detector_id,fingerprint,primary_resource,evidence}: current findings with full evidence",
   "fixed": "array of Finding (findings[] shape): absent since the before snapshot",
   "new": "array of Finding (findings[] shape): new fingerprint or changed evidence; possible regression",

@@ -219,7 +219,7 @@ func (l *ResponderLoop) executeMenuOption(ctx context.Context, selection *contra
 		description.ActionResults = result.ActionReports
 		description.ChangesRemain = result.Applied && !result.RolledBack
 		description.RolledBack = result.RolledBack
-		description.Pending = result.PendingAction != nil || result.RolloutPending != nil
+		description.Pending = planApplicationPending(result)
 		response.RolloutPending = result.RolloutPending
 		if applyErr != nil {
 			description.Error = boundedToolText(applyErr.Error())
@@ -283,7 +283,7 @@ func (l *ResponderLoop) executeMenuOption(ctx context.Context, selection *contra
 		rr.Verification = verdictContract(targetVerdict)
 		// Preserve program/raw-action attribution in the durable outcome, even
 		// when the larger menu response is truncated in the tool-call journal.
-		application := RecordedPlanApplication{ID: applicationID, ProgramIDs: []string{entry.programID}, Result: result, StartedAt: started, CompletedAt: completed, RolledBack: result.RolledBack, RollbackError: result.RollbackError}
+		application := RecordedPlanApplication{Pending: planApplicationPending(result), ID: applicationID, ProgramIDs: []string{entry.programID}, Result: result, StartedAt: started, CompletedAt: completed, RolledBack: result.RolledBack, RollbackError: result.RollbackError}
 		if applyErr != nil {
 			application.Error = applyErr.Error()
 		}
