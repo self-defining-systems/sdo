@@ -9,3 +9,5 @@ Started 2026-10-24 (UTC). Work only in le-d2; base 51d508af7.
 5. Merge latest dev, run formatting/static checks, focused race/Python tests and the hermetic gate, commit/push passing steps, open PR, and publish D2_READY and D2_HANDOFF.md.
 
 Risk: command protocol, closure classification, continuation/restart evidence. Required validation: Tier 0 contract fixtures plus Tier 1 scripted controller/transport checks (no model, cluster, Docker or secrets). Tier 1 on the integrated commit gates any later live run. Prompt plumbing is scripted here; this does not claim live model behavior.
+
+6. Added by orchestrator at 2026-10-25 00:52 UTC: fix live Gate 2's 300-second global-health apply stall. Fail-first two-fault transport tests for apply and mitigate; retain writes and touched-resource rollout checks, take one scoped health observation and report peer findings separately. Add the scenario to Gate 1 and update analysis receipt interpretation. Coordinate the small PlanExecutor.Apply hook with E. Time box extended up to 40 minutes for this critical-path item.

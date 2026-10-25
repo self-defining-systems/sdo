@@ -47,20 +47,21 @@ type ToolRequest struct {
 }
 
 type ToolResponse struct {
-	RolloutPending *contracts.RolloutPending    `json:"rollout_pending,omitempty"`
-	MenuExecution  []MenuRoundExecution         `json:"-"`
-	MenuParameters map[string][]MenuParameter   `json:"-"`
-	Menu           *contracts.MitigationMenu    `json:"-"`
-	Report         *contracts.MitigationReport  `json:"-"`
-	Session        *contracts.MitigationSession `json:"-"`
-	Command        string                       `json:"command"`
-	Source         map[string]any               `json:"source,omitempty"`
-	Error          string                       `json:"error,omitempty"`
-	Summary        string                       `json:"summary"`
-	PlanID         string                       `json:"plan_id,omitempty"`
-	ApplicationID  string                       `json:"application_id,omitempty"`
-	Patches        []PlanPatch                  `json:"patches,omitempty"`
-	ProgramRuns    []ProgramRun                 `json:"program_runs,omitempty"`
+	MitigationHealth *MitigationHealth            `json:"mitigation_health,omitempty"`
+	RolloutPending   *contracts.RolloutPending    `json:"rollout_pending,omitempty"`
+	MenuExecution    []MenuRoundExecution         `json:"-"`
+	MenuParameters   map[string][]MenuParameter   `json:"-"`
+	Menu             *contracts.MitigationMenu    `json:"-"`
+	Report           *contracts.MitigationReport  `json:"-"`
+	Session          *contracts.MitigationSession `json:"-"`
+	Command          string                       `json:"command"`
+	Source           map[string]any               `json:"source,omitempty"`
+	Error            string                       `json:"error,omitempty"`
+	Summary          string                       `json:"summary"`
+	PlanID           string                       `json:"plan_id,omitempty"`
+	ApplicationID    string                       `json:"application_id,omitempty"`
+	Patches          []PlanPatch                  `json:"patches,omitempty"`
+	ProgramRuns      []ProgramRun                 `json:"program_runs,omitempty"`
 	// ProgramRunsOmitted counts runs a truncated record could not list; the
 	// trust reader fails closed on it. ProgramRunsUnrelatedOmitted counts apply
 	// runs of programs or bindings the applied plans do not name, which the
@@ -72,6 +73,7 @@ type ToolResponse struct {
 	DetectorStates              []DetectorEvaluation    `json:"detector_states,omitempty"`
 	LoopsUsed                   int                     `json:"loops_used"`
 	LoopsAllowed                int                     `json:"loops_allowed"`
+	TargetedHealthy             bool                    `json:"targeted_healthy,omitempty"`
 	Healthy                     bool                    `json:"healthy"`
 	Unresolved                  bool                    `json:"unresolved"`
 	Trust                       map[string]ProgramTrust `json:"trust,omitempty"`
@@ -346,6 +348,10 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 		response.Summary = fmt.Sprintf("rendered source for %s/%s", request.Ref.Kind, request.Ref.Name)
 	case "apply":
 		l.apply(ctx, request, &response)
+		if result, ok := l.applications[response.ApplicationID]; ok {
+			response.MitigationHealth = result.MitigationHealth
+			response.TargetedHealthy = result.VerificationPassed
+		}
 	case "pre-apply":
 		if err := l.capturePreApply(ctx, request.Refs...); err != nil {
 			response.Error = err.Error()
@@ -393,7 +399,7 @@ func recordedToolResponseJSON(response ToolResponse, applied []selectedPlan) []b
 		return responseJSON
 	}
 	record := truncatedToolResponse{
-		ToolResponse: ToolResponse{Command: response.Command, Summary: boundedToolText(response.Summary), Error: boundedToolText(response.Error), PlanID: response.PlanID, ApplicationID: response.ApplicationID, LoopsUsed: response.LoopsUsed, LoopsAllowed: response.LoopsAllowed, Healthy: response.Healthy, Unresolved: response.Unresolved, RolloutPending: compactRolloutPending(response.RolloutPending)},
+		ToolResponse: ToolResponse{Command: response.Command, Summary: boundedToolText(response.Summary), Error: boundedToolText(response.Error), PlanID: response.PlanID, ApplicationID: response.ApplicationID, LoopsUsed: response.LoopsUsed, LoopsAllowed: response.LoopsAllowed, Healthy: response.Healthy, TargetedHealthy: response.TargetedHealthy, Unresolved: response.Unresolved, RolloutPending: compactRolloutPending(response.RolloutPending)},
 		Truncated:    true, FindingsCount: len(response.Findings), ProgramRunsCount: len(response.ProgramRuns), DetectorStatesCount: len(response.DetectorStates), PatchesCount: len(response.Patches),
 	}
 	if response.Command == "verify" {
