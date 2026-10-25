@@ -10,6 +10,8 @@ import pytest
 
 from scripts.operator_test_binary import build_operator, source_identity, verify_operator
 
+pytestmark = pytest.mark.go_integration
+
 
 @pytest.fixture
 def module(tmp_path: Path) -> Path:

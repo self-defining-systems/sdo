@@ -616,3 +616,14 @@ and can be shared across source revisions. To check an existing binary, run
 `uv run python scripts/operator_test_binary.py --check /absolute/path/to/sdo-operator`.
 
 `TestHermeticBringupMaintenanceGenerationDuringOnboarding` repeats that same native bring-up with a known pause/resume mid-window. It retains the original install identities, starts a new sampling budget, and finalizes at simulated61s (three new probe rounds); wall time remains below two minutes. `TestRunOnboardingMaintenanceGenerationPreservesSamples` exercises the actual runtime loop and real prober HTTP boundary: ACTIVE generation-only updates retain samples, while true pause/resume resets both traffic and reachability. Post-resume authority requires fresh samples and retains prior successful ports/configuration contradictions. Supported reset removes owned maintenance state so the next install starts ACTIVE with no inherited generation.
+
+### Go-backed Python contracts
+
+Tests marked `go_integration` execute real Go builds, generated controllers, or
+restart processes. Required CI runs them through
+`bash scripts/test_go_integration.sh`, which warms the normal operator/runtime
+build graph before entering short external-process deadlines. The ordinary
+Python lane uses `bash scripts/test_python.sh -m "not go_integration"`;
+unfiltered `pytest tests` still executes both groups. Add the marker to future
+contracts that compile Go. Compiler parallelism is bounded for parent and nested
+builds with `GOFLAGS=-p=2` and `GOMAXPROCS=2` on hosted runners.

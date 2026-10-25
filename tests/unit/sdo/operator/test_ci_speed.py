@@ -149,3 +149,17 @@ def test_required_ci_rejects_any_applicable_unsuccessful_job(result: str, accept
         check=False,
     )
     assert (completed.returncode == 0) is accepted
+
+
+def test_ci_bounds_nested_go_builds_and_routes_compiling_contracts() -> None:
+    configuration = workflow()
+    assert configuration["env"]["GOFLAGS"] == "-p=2"
+    assert configuration["env"]["GOMAXPROCS"] == "2"
+    jobs = configuration["jobs"]
+    assert all(0 < job.get("timeout-minutes", 0) <= 5 for job in jobs.values())
+    assert "go-integration" in jobs["required-pr-ci"]["needs"]
+    steps = jobs["go-integration"]["steps"]
+    assert any("scripts/test_go_integration.sh" in step.get("run", "") for step in steps)
+    python_runs = [row["run"] for row in jobs["python"]["strategy"]["matrix"]["include"]]
+    assert any("not go_integration" in run for run in python_runs)
+    assert len(python_runs) == 2  # check_errors already owns types and architecture.

@@ -38,6 +38,8 @@ from sdo.contracts import AgentResult, AgentTask, IncidentRequest, IncidentResul
 from tests.proto_messages import from_dict
 from tests.unit.benchmarks.sregym.adapter.test_persistent import FakeOps
 
+pytestmark = pytest.mark.go_integration
+
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
