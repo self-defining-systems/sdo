@@ -529,10 +529,10 @@ after completion; the next launch replaces a stale record. The printed
 
 ### PR CI execution budget
 
-PR CI runs three test jobs: **Go race and hermetic contracts**, **Python, static
-and proto**, and **controller images**. The image job selects affected images
+PR CI runs four test jobs: **Go modules and runtime contracts**, **Runtime compiled
+and restart acceptance**, **Python, static and proto**, and **controller images**. The image job selects affected images
 inside the job; there is no selector job or test matrix. `Required PR CI` remains
-the single branch-protection check and depends on all three. The repository policy
+the single branch-protection check and depends on all four. The repository policy
 test caps PR test jobs at four, counting every matrix expansion, and rejects missing
 or greater-than-ten-minute job timeouts and removal/bypassing of enforcement.
 
@@ -546,9 +546,13 @@ entire one-minute job timeout for its own execution and cleanup. This conservati
 upper bound enforces the complete path; aim for at most eight minutes of execution
 to retain headroom. Individual test jobs time out after nine minutes (images ten).
 
-The Go job runs two lanes on one runner with shared Go caches and bounded compiler
-parallelism. Runtime tests now use **one** partition instead of eight. Run it with
-`python3 scripts/test_runtime_shard.py --shard all`. The compiled inventory includes
+The Go module job starts its longest module immediately alongside the smaller
+modules and runtime contracts, with shared caches and bounded compiler parallelism.
+Runtime tests use **two** partitions instead of eight: `contracts` and `integration`.
+Run either with `python3 scripts/test_runtime_shard.py --shard integration`.
+One combined partition was measured and exceeded eight minutes during the unchanged
+83 MiB restart fixtures, even after removing avoidable waits and duplicate broker
+lifecycles. The two partitions retain that live-path acceptance on PRs. The compiled inventory includes
 every package, example, fuzz seed, replay, chaos and explorer test. The exactly-once
 coverage guard still rejects missing or overlapping names; every subtest is retained.
 The Gate 1 names and `scripts/test_fastloop_hermetic.sh` selectors stay intact.
@@ -568,7 +572,9 @@ Static analysis already includes type and architecture checks, so their standalo
 jobs were redundant. They now run once inside the Python/static job, alongside
 formatting, proto lint/codegen drift and the Python contracts. Image builds share
 one maximal cache export for common layers instead of exporting those layers four
-times under separate scopes.
+times under separate scopes. Image setup reads the committed native SDK pin,
+which the Go static gate and built-image validation independently verify, avoiding
+a second full controller build just to obtain its schema string.
 
 ### Fast image delivery
 

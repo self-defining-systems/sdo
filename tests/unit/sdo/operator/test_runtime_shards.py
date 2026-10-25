@@ -39,7 +39,7 @@ def test_partitions_include_tests_fuzz_seeds_and_examples() -> None:
     assigned = shards.partition(names, shards.PATTERNS)
     assert sorted(name for group in assigned.values() for name in group) == sorted(names)
     assert all(assigned.values())
-    assert list(assigned) == ["all"]
+    assert set(assigned) == {"contracts", "integration"}
 
 
 @pytest.mark.parametrize("patterns", [{"one": "^TestA$"}, {"one": "^Test", "two": "^Test"}])
@@ -57,12 +57,13 @@ def test_discovery_retains_fuzz_and_examples_but_not_benchmarks() -> None:
     ) == ["Example_one", "FuzzOne", "TestOne"]
 
 
-def test_one_runtime_partition_preserves_the_gate_selectors() -> None:
+def test_two_runtime_partitions_preserve_the_gate_selectors() -> None:
     jobs = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())["jobs"]
     assert "strategy" not in jobs["go"]
     assert "go" in jobs["required-pr-ci"]["needs"]
     script = (ROOT / "scripts/test_go_ci.sh").read_text()
-    assert "scripts/test_runtime_shard.py --shard all" in script
+    assert "scripts/test_runtime_shard.py --shard contracts" in script
+    assert any("--shard integration" in step.get("run", "") for step in jobs["runtime-integration"]["steps"])
     for name in [
         "TestReplayIncident",
         "TestChaosRestart",
@@ -71,4 +72,4 @@ def test_one_runtime_partition_preserves_the_gate_selectors() -> None:
         "TestHermeticFastloopRealGoGate",
         "TestHermeticReflectionLearnsThenAgentSelectsIdenticalRecurrence",
     ]:
-        assert shards.partition([name], shards.PATTERNS)["all"] == [name]
+        assert shards.partition([name], shards.PATTERNS)["contracts"] == [name]

@@ -86,7 +86,9 @@ jobs:
           echo "images=${images[*]}" >> "${GITHUB_OUTPUT}"
           echo "cache-target=${images[-1]}" >> "${GITHUB_OUTPUT}"
           (IFS=,; echo "targets=${images[*]}") >> "${GITHUB_OUTPUT}"
-          identity="$(cd sdo/operator && go run ./cmd/sdo-operator schema-identity)"
+          # The Go static gate and native image smoke both verify this pin.
+          # Avoid a redundant full CLI build just to obtain its schema string.
+          identity="$(python3 scripts/ci_schema_identity.py)"
           echo "SDO_VALIDATOR_SCHEMA_IDENTITY=${identity}" >> "${GITHUB_ENV}"
       - name: Build affected images with persistent layers
         uses: docker/bake-action@3acf805d94d93a86cce4ca44798a76464a75b88c # v6.9.0
