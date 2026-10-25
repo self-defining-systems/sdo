@@ -5,6 +5,7 @@ import (
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory"
+	"sdo.dev/operator/memory/validate"
 )
 
 // creditLearnedPrograms gives the first replayed repair its origin credit even
@@ -38,12 +39,24 @@ func creditLearnedPrograms(ctx context.Context, request IncidentRequest, outcome
 		verified := false
 		for _, resources := range causes {
 			covered := len(resources) > 0
+			observed := validate.RepairedCauseObserved(origin, resources)
 			for _, resource := range resources {
 				found := false
 				for _, ref := range learned.Bindings.Objects {
 					found = found || sameResource(ref, objectRefState(resource))
 				}
-				covered = covered && found
+				// The broker already validated replay. An independently observed
+				// recovered symptom needs no program parameter; every recorded write does.
+				written := false
+				for _, action := range origin.GetRepairActions() {
+					if !action.GetSuccess() {
+						continue
+					}
+					for _, ref := range action.GetResources() {
+						written = written || sameResource(objectRefState(ref), objectRefState(resource))
+					}
+				}
+				covered = covered && (found || (observed && !written))
 			}
 			verified = verified || covered
 		}
