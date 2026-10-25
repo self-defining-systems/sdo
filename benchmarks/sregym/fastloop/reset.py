@@ -183,6 +183,10 @@ def reset_environment(
     if not environment.seed_commit:
         raise ValueError("reset requires a seed commit captured by fastloop up")
     cluster.reset_controller(environment.seed_commit, preserve_repository=preserve_repository)
+    if not preserve_repository and isinstance(cluster, KubectlApplicationCluster):
+        from benchmarks.sregym.fastloop.rbac import reset_responder_grants
+
+        reset_responder_grants(environment.kubeconfig, environment.namespace)
     restore_application(environment, cluster, worker)
     if preserve_repository:
         state = PersistentState.load(environment.state_path)

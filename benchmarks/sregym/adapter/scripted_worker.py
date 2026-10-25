@@ -764,7 +764,7 @@ def scripted_health_judge(request: HealthJudgeRequest, checkout: Path) -> Health
     complete unchanged detector bundle. New topology/objectives require a judge
     outside this explicitly scripted rehearsal.
     """
-    if request.namespace == "sdo-toy":
+    if (checkout / ".sdo/diagnostics/detectors/health/toy-endpoints").is_dir():
         return _scripted_toy_health_judge(request, checkout)
     if "SDO_SCRIPTED_REPLAY_SLOT" in os.environ:
         from benchmarks.sregym.adapter.scripted_replay_catalog import SCRIPTED_REPLAY_SLOTS

@@ -239,3 +239,26 @@ def test_restore_retires_generated_failed_replicas_without_reapplying_app_specs(
     assert stalled_replica_sets([deployment, replica]) == ["api-old"]
     deployment["status"]["readyReplicas"] = 1
     assert stalled_replica_sets([deployment, replica]) == []
+
+
+def test_fresh_reset_removes_only_prior_responder_grants(monkeypatch):
+    from benchmarks.sregym.fastloop import rbac
+
+    calls = []
+
+    def binding(name, subject_namespace):
+        return {
+            "kind": "RoleBinding",
+            "metadata": {"name": name, "namespace": "app"},
+            "subjects": [{"kind": "ServiceAccount", "name": "sdo-responder", "namespace": subject_namespace}],
+        }
+
+    def api(args, **kwargs):
+        calls.append(args)
+        return SimpleNamespace(
+            stdout=json.dumps({"items": [binding("prior-permissive", "app-sdo"), binding("unrelated", "peer-sdo")]})
+        )
+
+    monkeypatch.setattr(rbac, "kubectl", api)
+    rbac.reset_responder_grants(Path("unused"), "app")
+    assert [call[1] for call in calls if call[0] == "delete"] == ["RoleBinding/prior-permissive"]

@@ -84,3 +84,34 @@ def verify_rbac(kubeconfig: Path, namespace: str) -> dict[str, Any]:
             ]
         )
     return require_rbac_equality(installer_rbac(namespace), listing, namespace)
+
+
+def reset_responder_grants(kubeconfig: Path, namespace: str) -> None:
+    """Fresh warm-lane reset retires previous run authority before reinstall.
+
+    Grant identity is the exact lane responder ServiceAccount, never a name
+    prefix alone. The installer recreates the current run's declared grants.
+    """
+    control = namespace + "-sdo"
+    seen = set()
+    for resources, scope in (("rolebindings", ["--all-namespaces"]), ("clusterrolebindings", [])):
+        rows = json.loads(
+            kubectl(["get", resources, *scope, "-o", "json"], namespace=None, kubeconfig=kubeconfig).stdout
+        )["items"]
+        for row in rows:
+            if not any(
+                subject.get("kind") == "ServiceAccount"
+                and subject.get("name") == "sdo-responder"
+                and subject.get("namespace", row["metadata"].get("namespace")) == control
+                for subject in row.get("subjects", [])
+            ):
+                continue
+            key = (row["kind"], row["metadata"].get("namespace"), row["metadata"]["name"])
+            if key in seen:
+                continue
+            seen.add(key)
+            kubectl(
+                ["delete", f"{key[0]}/{key[2]}", "--ignore-not-found=true", "--wait=true", "--timeout=20s"],
+                namespace=key[1],
+                kubeconfig=kubeconfig,
+            )
