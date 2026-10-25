@@ -7,6 +7,7 @@ project only namespace/name metadata, never credential values or encoded data.
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 from typing import TYPE_CHECKING, Any
 
 from benchmarks.sregym.adapter import kubectl
@@ -16,6 +17,36 @@ if TYPE_CHECKING:
 
 INJECTED_SELECTOR = "platform.io/injected=true"
 HARNESS_NAMESPACE = "sregym"
+
+
+def benchmark_owned(value: dict[str, Any]) -> bool:
+    labels = value.get("metadata", {}).get("labels", {})
+    return any(
+        str(label).startswith(("sregym", "benchmark"))
+        for key, label in labels.items()
+        if key == "app.kubernetes.io/managed-by" or key.startswith(("sregym.", "benchmark."))
+    )
+
+
+def isolate_benchmark_probe(manifest: dict[str, Any]) -> dict[str, Any]:
+    """Move only probe placement; its script still addresses the app's Service DNS."""
+    value = deepcopy(manifest)
+    if benchmark_owned(value):
+        value["metadata"]["namespace"] = HARNESS_NAMESPACE
+    return value
+
+
+def install_probe_isolation(grading: Any) -> None:
+    """Adapt the shared harness factory for baseline and composite oracle probes."""
+    original = grading.probe_pod_manifest
+    if getattr(original, "benchmark_isolated", False):
+        return
+
+    def isolated(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        return isolate_benchmark_probe(original(*args, **kwargs))
+
+    isolated.benchmark_isolated = True
+    grading.probe_pod_manifest = isolated
 
 
 def _injected_objects(kubeconfig: Path) -> list[dict[str, Any]]:
@@ -66,6 +97,16 @@ def assert_clean_baseline(kubeconfig: Path, *, namespace: str | None = None) -> 
         raise RuntimeError(f"clean baseline rejected: injected objects remain: {', '.join(identities)}")
 
     if namespace is not None:
+        listing = kubectl(
+            ["get", "pods,jobs,configmaps", "-o", "json"], namespace=namespace, kubeconfig=kubeconfig
+        ).stdout
+        foreign = [
+            f"{value['kind']}/{value['metadata']['name']}"
+            for value in json.loads(listing)["items"]
+            if benchmark_owned(value)
+        ]
+        if foreign:
+            raise RuntimeError(f"clean baseline rejected: benchmark objects in {namespace}: {', '.join(foreign)}")
         for resources in (
             ["job/wrk2-job", "configmap/wrk2-payload-script"],
             ["pods", "--selector=job-name=wrk2-job"],

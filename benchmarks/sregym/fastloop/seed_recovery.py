@@ -27,6 +27,9 @@ def verify_baseline_traffic(problem: Any, baseline: dict[str, Any]) -> dict[str,
         problem.namespace,
         entry,
     )
+    from benchmarks.sregym.fastloop.clean_start import isolate_benchmark_probe
+
+    manifest = isolate_benchmark_probe(manifest)
     phase, logs = clusters.KubeClusterIO().run_pod(manifest, timeout_s=grading.probe_deadline_s(entry) + 30)
     result = grading.parse_probe_log(logs)
     details.update(
