@@ -60,6 +60,7 @@ func TestCLIAndBrokerAgreeOnVerifiedCauseReplayCoverage(t *testing.T) {
 				outcome.ConfirmedRootCauses = append(outcome.ConfirmedRootCauses, &contracts.ConfirmedRootCause{Summary: "unverified", Resources: []*contracts.ObjectRef{{Kind: "Service", Namespace: "demo", Name: "unverified"}}})
 				outcome.ReflectionEligibility = &contracts.ReflectionEligibility{Version: 1, Causes: []*contracts.ReflectionCauseWork{{CauseIndex: 0, Resources: []*contracts.ObjectRef{covered}}, {CauseIndex: 1, Resources: []*contracts.ObjectRef{missing}}}}
 			}
+			parityFindingRepairProof(outcome)
 			if _, err := repository.RecordOutcome(ctx, "incident", outcome); err != nil {
 				t.Fatal(err)
 			}
@@ -144,6 +145,7 @@ func checkUnobservableDetectorLocator(t *testing.T, mode string) {
 		t.Fatal(err)
 	}
 	outcome := &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: "incident", Classification: "success", ConfirmedRootCauses: []*contracts.ConfirmedRootCause{{Summary: "routing", Resources: []*contracts.ObjectRef{{ApiVersion: "v1", Kind: "Service", Namespace: "demo", Name: "front"}}}}}
+	parityFindingRepairProof(outcome)
 	if _, err := repository.RecordOutcome(ctx, "incident", outcome); err != nil {
 		t.Fatal(err)
 	}
@@ -195,6 +197,8 @@ func checkUnobservableDetectorLocator(t *testing.T, mode string) {
 	detector = strings.Replace(detector, `for _, service := range s.Services() {`, `for _, service := range s.Services() { if service.Name == "unlabelled-peer" { `+behavior+` }`, 1)
 	put(t, proposal.Path, ".sdo/diagnostics/detectors/incidents/cache/detector.go", detector, 0644)
 	replaceParityText(t, proposal.Path, ".sdo/diagnostics/detectors/incidents/cache/manifest.yaml", "  - base\n", "  - service-targetport-mismatch\n")
+	capture := t.TempDir()
+	put(t, capture, "healthy/healthy.json", `{"namespace":"demo"}`, 0644)
 	decision := &contracts.ReflectionDecision{LearningDecision: "updated", PlaybookIds: []string{"service-targetport-mismatch"}}
 	data, err := protojson.Marshal(&contracts.ReflectionResult{LearningDecision: decision.LearningDecision, ProposedArtifactIds: decision.PlaybookIds})
 	if err != nil {
@@ -206,7 +210,7 @@ func checkUnobservableDetectorLocator(t *testing.T, mode string) {
 	}
 	cli := exec.Command(binary, "memory", "check", "--json", "--decision", decisionPath)
 	cli.Dir = proposal.Path
-	cli.Env = append(os.Environ(), "SDO_ACTOR=responder", "SDO_PHASE=reflection", "SDO_BASE_COMMIT="+proposal.BaseCommit, "SDO_OPERATOR_ROOT="+operatorRoot, "SDO_HEALTHY_BASELINE=", "SDO_CAPTURED_CORPUS_DIR=", "SDO_INCIDENT_ID=incident")
+	cli.Env = append(os.Environ(), "SDO_ACTOR=responder", "SDO_PHASE=reflection", "SDO_BASE_COMMIT="+proposal.BaseCommit, "SDO_OPERATOR_ROOT="+operatorRoot, "SDO_HEALTHY_BASELINE=", "SDO_CAPTURED_CORPUS_DIR="+capture, "SDO_INCIDENT_ID=incident")
 	var stdout, stderr bytes.Buffer
 	cli.Stdout, cli.Stderr = &stdout, &stderr
 	cliErr := cli.Run()
@@ -218,7 +222,7 @@ func checkUnobservableDetectorLocator(t *testing.T, mode string) {
 	if err := protojson.Unmarshal(stdout.Bytes(), report); err != nil {
 		t.Fatal(err)
 	}
-	_, publishErr := repository.PublishReflection(ctx, "incident", decision)
+	_, publishErr := repository.PublishReflection(validate.WithCaptureSource(ctx, capture, "incident"), "incident", decision)
 	var failure *validate.Failure
 	if !errors.As(publishErr, &failure) {
 		t.Fatalf("unobservable locator passed broker: %v", publishErr)
@@ -271,6 +275,7 @@ func TestCLIAndBrokerRetainHealthyInputForProgramOnlyEdits(t *testing.T) {
 		t.Fatal(err)
 	}
 	outcome := &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: "incident", Classification: "success", ConfirmedRootCauses: []*contracts.ConfirmedRootCause{{Summary: "routing", Resources: []*contracts.ObjectRef{{ApiVersion: "v1", Kind: "Service", Namespace: "demo", Name: "front"}}}}}
+	parityFindingRepairProof(outcome)
 	if _, err := repository.RecordOutcome(ctx, "incident", outcome); err != nil {
 		t.Fatal(err)
 	}
@@ -284,6 +289,12 @@ func TestCLIAndBrokerRetainHealthyInputForProgramOnlyEdits(t *testing.T) {
 		t.Fatal(err)
 	}
 	put(t, proposal.Path, path, string(data)+"\n// Reviewed against fresh evidence.\n", 0644)
+	capture := t.TempDir()
+	raw, readErr := os.ReadFile(filepath.Join(baseline, "healthy.json"))
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	put(t, capture, "healthy/healthy.json", string(raw), 0644)
 	decision := &contracts.ReflectionDecision{LearningDecision: "updated", PlaybookIds: []string{"service-targetport-mismatch"}}
 	data, err = protojson.Marshal(&contracts.ReflectionResult{LearningDecision: decision.LearningDecision, ProposedArtifactIds: decision.PlaybookIds})
 	if err != nil {
@@ -295,7 +306,7 @@ func TestCLIAndBrokerRetainHealthyInputForProgramOnlyEdits(t *testing.T) {
 	}
 	cli := exec.Command(binary, "memory", "check", "--json", "--decision", decisionPath)
 	cli.Dir = proposal.Path
-	cli.Env = append(os.Environ(), "SDO_ACTOR=responder", "SDO_PHASE=reflection", "SDO_BASE_COMMIT="+proposal.BaseCommit, "SDO_OPERATOR_ROOT="+operatorRoot, "SDO_HEALTHY_BASELINE="+baseline, "SDO_CAPTURED_CORPUS_DIR=", "SDO_INCIDENT_ID=incident")
+	cli.Env = append(os.Environ(), "SDO_ACTOR=responder", "SDO_PHASE=reflection", "SDO_BASE_COMMIT="+proposal.BaseCommit, "SDO_OPERATOR_ROOT="+operatorRoot, "SDO_HEALTHY_BASELINE="+baseline, "SDO_CAPTURED_CORPUS_DIR="+capture, "SDO_INCIDENT_ID=incident")
 	var stdout, stderr bytes.Buffer
 	cli.Stdout, cli.Stderr = &stdout, &stderr
 	cliErr := cli.Run()
@@ -307,7 +318,7 @@ func TestCLIAndBrokerRetainHealthyInputForProgramOnlyEdits(t *testing.T) {
 	if err := protojson.Unmarshal(stdout.Bytes(), report); err != nil {
 		t.Fatal(err)
 	}
-	_, publishErr := repository.PublishReflection(ctx, "incident", decision)
+	_, publishErr := repository.PublishReflection(validate.WithCaptureSource(ctx, capture, "incident"), "incident", decision)
 	var failure *validate.Failure
 	if !errors.As(publishErr, &failure) {
 		t.Fatalf("broker dropped healthy replay input: %v", publishErr)
@@ -315,7 +326,7 @@ func TestCLIAndBrokerRetainHealthyInputForProgramOnlyEdits(t *testing.T) {
 	if !proto.Equal(&contracts.MemoryCheckReport{Diagnostics: report.Diagnostics}, &contracts.MemoryCheckReport{Diagnostics: validate.ProtoDiagnostics(failure.Diagnostics)}) {
 		t.Fatalf("healthy input differs: CLI %v broker %v", report.Diagnostics, failure.Diagnostics)
 	}
-	if len(report.Diagnostics) != 1 || report.Diagnostics[0].Rule != validate.RuleDetectorTest || !strings.Contains(report.Diagnostics[0].Message, "healthy-only") {
+	if len(report.Diagnostics) != 1 || report.Diagnostics[0].Rule != validate.RuleDetectorHealthyBaseline || !strings.Contains(report.Diagnostics[0].Message, "healthy-only") {
 		t.Fatalf("healthy locator error omitted: %v", report)
 	}
 }

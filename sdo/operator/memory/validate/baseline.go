@@ -2,8 +2,10 @@ package validate
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 
+	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/layout"
 )
 
@@ -32,18 +34,37 @@ func BaselineGateRequired(candidate string, changedPaths []string) (bool, error)
 }
 
 func selectCompileBaseline(ctx context.Context, request Request) (Request, error) {
-	if request.HealthyBaseline != "" {
-		paths, err := ChangedPaths(ctx, request.Root, request.Base)
-		if err != nil {
-			return Request{}, err
+	paths, err := ChangedPaths(ctx, request.Root, request.Base)
+	if err != nil {
+		return Request{}, err
+	}
+	needed, err := BaselineGateRequired(request.Root, paths)
+	if err != nil {
+		return Request{}, err
+	}
+	if !needed {
+		request.HealthyBaseline = ""
+		return request, nil
+	}
+	if request.Actor == Responder && request.Phase == ReflectionPhase {
+		capture := request.CaptureDirectory
+		if capture == "" && request.CaptureRoot != "" {
+			capture, err = memory.IncidentCorpusDir(request.CaptureRoot, request.IncidentID)
+			if err != nil {
+				return Request{}, err
+			}
 		}
-		needed, err := BaselineGateRequired(request.Root, paths)
-		if err != nil {
-			return Request{}, err
+		request.HealthyBaseline = filepath.Join(capture, "healthy")
+		if capture == "" {
+			return Request{}, &Failure{Diagnostics: []Diagnostic{healthyCaptureDiagnostic("controller pre-incident healthy capture is unavailable")}}
 		}
-		if !needed {
-			request.HealthyBaseline = ""
+		if _, err := os.Stat(filepath.Join(request.HealthyBaseline, "healthy.json")); err != nil {
+			return Request{}, &Failure{Diagnostics: []Diagnostic{healthyCaptureDiagnostic("controller pre-incident healthy capture is unavailable")}}
 		}
 	}
 	return request, nil
+}
+
+func healthyCaptureDiagnostic(message string) Diagnostic {
+	return Diagnostic{Rule: RuleDetectorHealthyBaseline, Message: message, Hint: "record a clear controller evaluation and its observations before opening the incident; agent-authored healthy.json and post-repair state cannot supply this reference"}
 }

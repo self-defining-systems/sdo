@@ -30,19 +30,7 @@ func reflectionExecutableDiagnostics(root string, outcome *contracts.OutcomeReco
 	if !hasExecutable {
 		return nil, nil
 	}
-	causes := outcome.GetReflectionEligibility().GetCauses()
-	if outcome.GetClassification() == "success" {
-		causes = nil
-		for i, cause := range outcome.GetConfirmedRootCauses() {
-			work := &contracts.ReflectionCauseWork{CauseIndex: uint32(i), Resources: cause.GetResources()}
-			for _, eligible := range outcome.GetReflectionEligibility().GetCauses() {
-				if eligible.GetCauseIndex() == uint32(i) {
-					work.Items = eligible.GetItems()
-				}
-			}
-			causes = append(causes, work)
-		}
-	}
+	causes := VerifiedReflectionCauses(outcome)
 	bound := map[string]bool{}
 	// Already settled programs carry controller-owned resource bindings.
 	for _, cause := range causes {
@@ -72,7 +60,7 @@ func reflectionExecutableDiagnostics(root string, outcome *contracts.OutcomeReco
 		// A fixture spanning a known unverified cause cannot launder that cause
 		// through another resource's verification.
 		for i, cause := range outcome.GetConfirmedRootCauses() {
-			verified := outcome.GetClassification() == "success"
+			verified := false
 			for _, eligible := range causes {
 				verified = verified || eligible.GetCauseIndex() == uint32(i)
 			}
@@ -187,7 +175,7 @@ func reflectionExecutableDiagnostics(root string, outcome *contracts.OutcomeReco
 			dir = layout.PlaybookDir(book)
 		}
 		if !authorized[dir] || denied[dir] {
-			ds = append(ds, Diagnostic{Rule: RuleReflectionExecutableCause, Path: p, Message: "executable change is not bound to an independently verified cause of this incident", Hint: "bind its playbook replay resources to a verified cause; retain unverified causes as typed evidence gaps"})
+			ds = append(ds, Diagnostic{Rule: RuleReflectionExecutableCause, Path: p, Message: "executable change is not bound to an independently verified cause of this incident", Hint: "bind replay resources to an opening primary-resource finding cleared after its recorded repair; aggregate healthy closure and responder cause claims are insufficient; retain unproven causes as evidence gaps"})
 		}
 	}
 	return ds, nil

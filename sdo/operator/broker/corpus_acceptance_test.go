@@ -43,8 +43,8 @@ func TestAcceptedCorpusUsesAcceptedBaseCommit(t *testing.T) {
 	}
 }
 
-func TestSessionFixtureDoesNotRequireProvisionedCaptureContext(t *testing.T) {
-	for _, name := range []string{"missing directory", "absent directory", "file instead of directory", "missing incident", "empty provisioned context"} {
+func TestSessionFixtureRequiresAnIndependentHealthyReference(t *testing.T) {
+	for _, name := range []string{"missing directory", "absent directory", "file instead of directory", "missing incident", "empty provisioned context", "healthy reference only"} {
 		t.Run(name, func(t *testing.T) {
 			root := copyParityTree(t)
 			runGit(t, root, "init", "-q")
@@ -62,6 +62,9 @@ func TestSessionFixtureDoesNotRequireProvisionedCaptureContext(t *testing.T) {
 				CaptureDirectory: filepath.Join(filepath.Dir(root), "captures"), IncidentID: "incident"}
 			ctx := context.Background()
 			switch name {
+			case "healthy reference only":
+				request.CaptureDirectory = t.TempDir()
+				put(t, request.CaptureDirectory, "healthy/healthy.json", `{"namespace":"demo"}`, 0644)
 			case "missing directory":
 				request.CaptureDirectory = ""
 			case "absent directory":
@@ -86,8 +89,12 @@ func TestSessionFixtureDoesNotRequireProvisionedCaptureContext(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if len(diagnostics) != 0 || !compiled {
-				t.Fatalf("session fixture blocked on missing controller capture: %v", diagnostics)
+			if name == "healthy reference only" {
+				if len(diagnostics) != 0 || !compiled {
+					t.Fatalf("session-authored positive fixture rejected despite trusted healthy reference: %v", diagnostics)
+				}
+			} else if len(diagnostics) != 1 || diagnostics[0].Rule != validate.RuleDetectorHealthyBaseline || compiled {
+				t.Fatalf("missing independent healthy reference did not fail closed: %v compiled=%v", diagnostics, compiled)
 			}
 		})
 	}
@@ -103,6 +110,7 @@ func recordCorpusOutcome(t *testing.T, root string, verified bool) {
 	if verified {
 		outcome.ConfirmedRootCauses = []*contracts.ConfirmedRootCause{{Summary: "verified service port repair", Resources: []*contracts.ObjectRef{{Kind: "Service", Namespace: "demo", Name: "front"}}}}
 	}
+	parityFindingRepairProof(outcome)
 	if _, err := repository.RecordOutcome(context.Background(), "incident", outcome); err != nil {
 		t.Fatal(err)
 	}

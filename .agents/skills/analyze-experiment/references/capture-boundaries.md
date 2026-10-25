@@ -98,3 +98,24 @@ scoped arrays for the entire captured object.
 A discovery/list error fails capture explicitly. A protected missing or oversized
 snapshot is an evidence gap. Capture/replay does not establish a successful live
 repair, and synthetic fault tests do not grant program trust.
+
+## Controller-owned healthy reference
+
+Before opening an incident, the controller retains the clear evaluation adopted
+by its configuration StateBaseline, including recorded reads and a bounded TCP
+sweep of declared Service ports and selected Pod ports. Refused ports may be
+normal healthy behavior. Active/candidate references are private runtime storage keyed
+by accepted source commit and observation time; candidates retain their original
+recordings throughout healthy settling, and obsolete private captures are pruned; incident open freezes it under the protected
+session corpus `healthy/healthy.json`, with its source/time identity in the adjacent
+`reference` file. Later repairs and healthy evaluations
+cannot replace that incident's reference. `StateTracker.BaselineAt()` and closure
+`state_changes.baseline_at` identify the same adoption boundary.
+
+Reflection acceptance selects this frozen reference through shared memory check
+on both the CLI and broker. An agent-authored corpus `healthy.json` (often a fixed
+state) and the legacy caller-supplied baseline never replace it. Missing reference,
+missing required observations and active learned findings fail with
+`detector.healthy-baseline`. Baseline TCP sampling is bounded; an omitted read is
+an evidence gap, never a fabricated successful probe. This replay establishes
+quietness on the known healthy app, separately from positive repair replay.

@@ -77,6 +77,10 @@ func Check(ctx context.Context, request Request, compile CompileRunner) ([]Diagn
 
 	request, err = selectCompileBaseline(ctx, request)
 	if err != nil {
+		var failure *Failure
+		if errors.As(err, &failure) {
+			return failure.Diagnostics, nil
+		}
 		return nil, err
 	}
 	request.Layers = Compile
