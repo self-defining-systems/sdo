@@ -12,7 +12,7 @@ import (
 	"io"
 	"os/exec"
 	"reflect"
-	"strings"
+	"sync"
 
 	"sdo.dev/operator/sdk/program"
 )
@@ -26,6 +26,7 @@ type Message struct {
 }
 
 type View struct {
+	mu     sync.Mutex
 	Input  *json.Decoder
 	Output *json.Encoder
 }
@@ -33,6 +34,8 @@ type View struct {
 var _ program.ReadView = (*View)(nil)
 
 func (v *View) call(method string, args, outputs []any) error {
+	v.mu.Lock()
+	defer v.mu.Unlock()
 	request := Message{Method: method}
 	for _, arg := range args {
 		data, err := json.Marshal(arg)
@@ -73,8 +76,7 @@ func Run(ctx context.Context, binary string, request any, view program.ReadView)
 	if err != nil {
 		return nil, err
 	}
-	var stderr strings.Builder
-	command.Stderr = &stderr
+	command.Stderr = io.Discard
 	if err = command.Start(); err != nil {
 		return nil, err
 	}

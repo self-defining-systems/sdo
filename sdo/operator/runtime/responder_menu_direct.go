@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"k8s.io/apimachinery/pkg/types"
 	"sort"
+	"strings"
 	"time"
 
 	"sdo.dev/operator/sdk"
@@ -100,6 +101,18 @@ func (l *ResponderLoop) listMenu(ctx context.Context, request ToolRequest, respo
 			}
 		}
 	}
+	if registry, ok := l.Programs.(*workingProgramRegistry); ok {
+		for id, message := range registry.failures {
+			if request.ProgramID != "" && request.ProgramID != id {
+				continue
+			}
+			reason := strings.ReplaceAll(message, "\n", " ")
+			if len(reason) > 256 {
+				reason = reason[:200] + "; fix checkout source and retry"
+			}
+			entries["program-"+menuDigest([]any{id, program.Bindings{}})] = menuEntry{programID: id, spec: program.ProgramSpec{ID: id}, compileError: reason}
+		}
+	}
 	for _, plan := range l.MenuConfig.Plans {
 		p := plan.Plan
 		entries[plan.ID] = menuEntry{programID: plan.ProgramID, bindings: cloneProgramBindings(plan.Bindings), plan: &p}
@@ -118,7 +131,7 @@ func (l *ResponderLoop) listMenu(ctx context.Context, request ToolRequest, respo
 		} else {
 			response.MenuParameters[id] = menuProgramParameters(entry.spec)
 		}
-		menu.Options = append(menu.Options, &contracts.MitigationOption{OptionId: id, ProgramId: entry.programID, ProgramRevision: l.Request.SourceCommit, DependencyRevision: l.Request.SourceCommit, Effects: []contracts.MitigationOption_Effect{contracts.MitigationOption_EFFECT_SDK_PLAN_ACTION}, MaxActionsPerRound: 32, Bindings: menuBindings(entry.bindings)})
+		menu.Options = append(menu.Options, &contracts.MitigationOption{DisabledReason: entry.compileError, OptionId: id, ProgramId: entry.programID, ProgramRevision: l.programRevision(entry.programID), DependencyRevision: l.programRevision(entry.programID), Effects: []contracts.MitigationOption_Effect{contracts.MitigationOption_EFFECT_SDK_PLAN_ACTION}, MaxActionsPerRound: 32, Bindings: menuBindings(entry.bindings)})
 	}
 	menu.MenuId = "menu-" + menuDigest(menu)
 	l.menu = menu
@@ -146,6 +159,12 @@ func (l *ResponderLoop) executeMenuOption(ctx context.Context, selection *contra
 	if !ok {
 		response.Error = "unknown mitigation option"
 		return
+	}
+	if entry.action == nil && entry.plan == nil {
+		if response.ProgramRevisions == nil {
+			response.ProgramRevisions = map[string]string{}
+		}
+		response.ProgramRevisions[entry.programID] = l.programRevision(entry.programID)
 	}
 	bindings, bindingErr := menuBindProgram(entry, parameters)
 	attempt := fmt.Sprintf("mitigation-%s-%d", l.sessionID, len(l.menuReports)+1)
@@ -269,7 +288,7 @@ func (l *ResponderLoop) executeMenuOption(ctx context.Context, selection *contra
 				if viewErr == nil {
 					targetVerdict = program.RunDiagnose(ctx, diagnoser, view, bindings, l.deadline())
 				}
-				run := ProgramRun{ProgramID: entry.programID, Bindings: bindings, Verdict: targetVerdict}
+				run := ProgramRun{ProgramRevision: l.programRevision(entry.programID), ProgramID: entry.programID, Bindings: bindings, Verdict: targetVerdict}
 				response.ProgramRuns = append(response.ProgramRuns, run)
 				l.runs = append(l.runs, run)
 				result.VerificationPassed = result.VerificationPassed && targetVerdict.Result == program.NoMatch

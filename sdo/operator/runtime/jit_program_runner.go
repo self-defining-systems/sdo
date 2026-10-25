@@ -5,15 +5,21 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"time"
 
 	"sdo.dev/operator/runtime/jitview"
 	"sdo.dev/operator/sdk/program"
 )
 
+// jitBindings avoids the legacy binding decoder at this private boundary.
+// JSON numbers remain exact across the program process.
+type jitBindings program.Bindings
+
 type jitRequest struct {
-	Command   string           `json:"command"`
-	ProgramID string           `json:"program_id,omitempty"`
-	Bindings  program.Bindings `json:"bindings,omitempty"`
+	Deadline  time.Time   `json:"deadline,omitempty"`
+	Command   string      `json:"command"`
+	ProgramID string      `json:"program_id,omitempty"`
+	Bindings  jitBindings `json:"bindings,omitempty"`
 }
 type jitSpec struct {
 	Spec        program.ProgramSpec `json:"spec"`
@@ -24,6 +30,7 @@ type jitSpec struct {
 // It has a read-only RPC view, and returns ordinary typed executor plans.
 func ServeWorkingProgram(registry program.ProgramRegistry) {
 	decoder := json.NewDecoder(os.Stdin)
+	decoder.UseNumber()
 	encoder := json.NewEncoder(os.Stdout)
 	reply := func(result any, err error) {
 		message := jitview.Message{}
@@ -57,6 +64,12 @@ func ServeWorkingProgram(registry program.ProgramRegistry) {
 		return
 	}
 	view := &jitview.View{Input: decoder, Output: encoder}
+	ctx := context.Background()
+	if !request.Deadline.IsZero() {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithDeadline(ctx, request.Deadline)
+		defer cancel()
+	}
 	switch request.Command {
 	case "diagnose":
 		p, ok := registry.Diagnoser(request.ProgramID)
@@ -64,7 +77,7 @@ func ServeWorkingProgram(registry program.ProgramRegistry) {
 			reply(nil, fmt.Errorf("unknown working program %q", request.ProgramID))
 			return
 		}
-		verdict, err := p.Diagnose(context.Background(), view, request.Bindings)
+		verdict, err := p.Diagnose(ctx, view, program.Bindings(request.Bindings))
 		reply(verdict, err)
 	case "mitigate":
 		p, ok := registry.Mitigator(request.ProgramID)
@@ -72,7 +85,7 @@ func ServeWorkingProgram(registry program.ProgramRegistry) {
 			reply(nil, fmt.Errorf("working program %q has no mitigator", request.ProgramID))
 			return
 		}
-		plan, err := p.Mitigate(context.Background(), view, request.Bindings)
+		plan, err := p.Mitigate(ctx, view, program.Bindings(request.Bindings))
 		reply(PlanApplicationResult{Plan: plan}, err)
 	default:
 		reply(nil, fmt.Errorf("unknown working program operation"))

@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"go/format"
 	"os"
 	"reflect"
 	"sdo.dev/operator/sdk/program"
@@ -76,7 +77,11 @@ func main() {
 	}
 	source.WriteString(")\n")
 	source.WriteString(body.String())
-	if err := os.WriteFile("view_generated.go", []byte(source.String()), 0644); err != nil {
+	formatted, err := format.Source([]byte(source.String()))
+	if err != nil {
+		panic(err)
+	}
+	if err := os.WriteFile("view_generated.go", formatted, 0644); err != nil {
 		panic(err)
 	}
 }

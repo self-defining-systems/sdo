@@ -41,16 +41,18 @@ func BuildWorkingProgram(ctx context.Context, config Config, id string) (_ *Work
 			return nil, "", err
 		}
 	}
-	source, err := os.ReadFile(filepath.Join(config.ApplicationRoot, ".sdo/diagnostics/go.mod"))
-	if os.IsNotExist(err) {
-		source = []byte("module app-diagnostics\n\ngo 1.26.0\n")
-	} else if err != nil {
-		return nil, "", err
+	module := config.ProgramModule
+	if module == "" {
+		source, readErr := os.ReadFile(filepath.Join(config.ApplicationRoot, ".sdo/diagnostics/go.mod"))
+		if readErr != nil && !os.IsNotExist(readErr) {
+			return nil, "", readErr
+		}
+		module = "app-diagnostics"
+		if match := modulePattern.FindSubmatch(source); len(match) == 2 {
+			module = string(match[1])
+		}
 	}
-	module := "app-diagnostics"
-	if match := modulePattern.FindSubmatch(source); len(match) == 2 {
-		module = string(match[1])
-	}
+	source := []byte("module " + module + "\n\ngo 1.26.0\n")
 	workspace.ModulePath = module
 	if err = os.WriteFile(filepath.Join(directory, "go.mod"), []byte(workspaceModule(string(source), module, operator)), 0644); err != nil {
 		return nil, "", err

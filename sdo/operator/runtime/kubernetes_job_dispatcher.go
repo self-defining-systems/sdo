@@ -175,6 +175,10 @@ func (d KubernetesJobDispatcher) Dispatch(ctx context.Context, request IncidentR
 	if d.LoopFactory != nil {
 		loop = d.LoopFactory(request)
 		if loop != nil {
+			loop.WorkingProgramRoot = request.RepositoryWorktree
+			defer loop.CloseWorkingPrograms()
+		}
+		if loop != nil {
 			trust, err := d.programTrust(ctx, request)
 			if err != nil {
 				return IncidentResult{}, err
