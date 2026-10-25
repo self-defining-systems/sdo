@@ -75,6 +75,12 @@ type Bindings struct {
 }
     Bindings contains object identities and separately typed scalar parameters.
 
+func BindFinding(spec ProgramSpec, finding sdk.Finding) (Bindings, error)
+    BindFinding binds one finding without enumerating objects or assignments.
+    Explicit ParameterBindings take precedence; otherwise only a unique resource
+    of the declared kind in the finding can bind a role. Additional objects are
+    read by Diagnose through ReadView, by name or relation.
+
 func (b Bindings) Clone() Bindings
 
 func (b Bindings) Equal(other Bindings) bool
@@ -223,6 +229,9 @@ type ParamSpec struct {
 	// Default is optional; nil means no default.
 	Default any
 }
+    ParamSpec declares roles bound by triggering detector findings; Diagnose
+    reads additional objects through ReadView by name or relation, never role
+    enumeration.
 
 type Plan struct {
 	Actions   []Action
