@@ -137,4 +137,6 @@ message ControllerConfig {
   // Trusted controller image supplying Go to compiler-free workers and validators.
   // Required at startup, independently of the optional traffic prober image.
   string toolchain_image = 75;
+  google.protobuf.Duration closure_stability_window = 76;
+  google.protobuf.Duration responder_report_grace = 77;
 }

@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping, Sequence
+    from pathlib import Path
 
 
 def option_action_results(response: dict[str, Any]) -> list[dict[str, Any]]:
@@ -33,3 +37,61 @@ def option_action_results(response: dict[str, Any]) -> list[dict[str, Any]]:
             action["error"] = report.get("reason_code", status)
         actions.append(action)
     return actions
+
+
+def format_selection_response(
+    before: Sequence[Mapping[str, Any]], after: Sequence[Mapping[str, Any]], response: dict[str, Any]
+) -> tuple[str, Path]:
+    """Use the shared summary and retain the complete controller response once."""
+    from sdo.agents.responder.mutation_output import MAX_MUTATION_OUTPUT_BYTES, format_mutation_response
+    from sdo.agents.responder.tool_output import _brief
+
+    text, path = format_mutation_response(before, after, [response])
+    if not response.get("option_reports"):
+        return text, path
+    actions = option_action_results(response)
+    pending = sum(action["pending"] for action in actions)
+    failed = sum(bool(action.get("error")) for action in actions if not action["pending"])
+    succeeded = sum(action["targeted_healthy"] for action in actions)
+    unresolved = len(actions) - pending - failed - succeeded
+    lines = text.splitlines()
+    lines[0] = f"Options: {succeeded} succeeded; {pending} pending; {failed} failed; {unresolved} unresolved."
+    rows = []
+    for action in actions:
+        status = (
+            "pending"
+            if action["pending"]
+            else action["report"].get("status", "STATUS_UNRESOLVED").removeprefix("STATUS_").lower()
+        )
+        rows.append(
+            f"option: {_brief(action['option_id'], 48)} {status} application={_brief(action['application_id'], 64)}"
+        )
+    # Keep verdicts/counts/schema intact. Make room for option identities by
+    # moving only displayed finding details to the already complete report.
+    lines = [
+        "Additional finding details: Full JSON new[]/unchanged[]."
+        if line.startswith("Additional finding lines:")
+        else line
+        for line in lines
+    ]
+    reserve = sum(len(row.encode()) + 1 for row in rows[:2]) + 70
+    removed_details = False
+    while len("\n".join(lines).encode()) + reserve > MAX_MUTATION_OUTPUT_BYTES - 1:
+        candidates = [index for index, line in enumerate(lines) if line.startswith(("new: -", "unchanged: -"))]
+        if not candidates:
+            break
+        lines.pop(candidates[-1])
+        if not removed_details:
+            lines.insert(1, "Finding details omitted: see Full JSON findings/new/unchanged[].")
+            removed_details = True
+    shown = []
+    for row in rows:
+        omitted = len(rows) - len(shown) - 1
+        tail = [f"Options omitted: {omitted}; see option_reports[] in Full JSON."] if omitted else []
+        if len("\n".join([*lines[:1], *shown, row, *tail, *lines[1:]]).encode()) > MAX_MUTATION_OUTPUT_BYTES - 1:
+            break
+        shown.append(row)
+    omitted = len(rows) - len(shown)
+    if omitted:
+        shown.append(f"Options omitted: {omitted}; see option_reports[] in Full JSON.")
+    return "\n".join([*lines[:1], *shown, *lines[1:]]), path

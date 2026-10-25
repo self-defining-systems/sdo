@@ -342,15 +342,24 @@ def test_cli_bounds_stdout_and_preserves_full_response_in_private_json(monkeypat
     assert tools_cli.main(args) == 0
     stdout = capsys.readouterr().out
     assert len(stdout) <= 3200
-    assert "healthy=false" in stdout.split()
-    assert "targeted_healthy=true" in stdout.split()
-    assert "application_id=application" in stdout.split()
-    assert "findings=12" in stdout.split()
+    if command == "mitigate":
+        assert "This action: target finding cleared" in stdout
+        assert "Incident: NOT verified, still broken: 12" in stdout
+        assert len(stdout.encode()) <= 2049
+    else:
+        assert "healthy=false" in stdout.split()
+        assert "targeted_healthy=true" in stdout.split()
+        assert "application_id=application" in stdout.split()
+        assert "findings=12" in stdout.split()
     assert "large live observation" not in stdout
     details = Path(stdout.split("Full JSON: ", 1)[1].splitlines()[0])
     try:
         assert details.stat().st_mode & 0o777 == 0o600
-        assert json.loads(details.read_text()) == response
+        full = json.loads(details.read_text())
+        if command == "mitigate":
+            assert full["findings"] == response["findings"]
+            full = full["actions"][0]
+        assert full == response
     finally:
         details.unlink()
 
@@ -408,8 +417,8 @@ def test_act_full_json_preserves_existing_output_redaction(monkeypatch, capsys, 
     details = Path(text.split("Full JSON: ", 1)[1].splitlines()[0])
     full = details.read_text()
     assert "SYNTHETIC_PRIVATE_CANARY" not in text + full
-    assert json.loads(full)["output"] == "[withheld]"
-    assert json.loads(full)["receipt"]["success"] is True
+    assert json.loads(full)["actions"][0]["output"] == "[withheld]"
+    assert json.loads(full)["actions"][0]["receipt"]["success"] is True
 
 
 def test_client_side_failures_also_produce_compact_output_and_complete_json(monkeypatch, capsys):
@@ -420,7 +429,7 @@ def test_client_side_failures_also_produce_compact_output_and_complete_json(monk
     text = capsys.readouterr().out
     details = Path(text.split("Full JSON: ", 1)[1].splitlines()[0])
     try:
-        assert json.loads(details.read_text())["error"] == "current mitigation menu unavailable"
+        assert json.loads(details.read_text())["actions"][0]["error"] == "current mitigation menu unavailable"
         assert "current mitigation menu unavailable" in text
     finally:
         details.unlink()
@@ -520,3 +529,17 @@ def test_repeated_options_keep_finding_scope_per_option(monkeypatch):
         ["fault-one"],
         ["fault-two"],
     ]
+
+
+def test_verify_wait_uses_cached_controller_protocol(monkeypatch, capsys):
+    seen = []
+    monkeypatch.setattr(tools_cli, "_exchange", lambda request, _: seen.append(request) or {"summary": "cached"})
+    assert tools_cli.main(["verify", "--wait", "0.25"]) == 0
+    assert seen == [{"command": "verify", "wait_seconds": 0.25}]
+    assert "cached" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("value", ["-1", "nan", "inf", "86401"])
+def test_verify_wait_rejects_invalid_timeouts(value, monkeypatch):
+    monkeypatch.setattr(tools_cli, "_exchange", lambda *_: pytest.fail("invalid wait reached controller"))
+    assert tools_cli.main(["verify", "--wait", value]) == 1

@@ -171,3 +171,14 @@ truncating caller output. The
 Go memory edge writes the verified recovery marker before reflection. Only
 requests using the generated localhost kubeconfig are visible: direct network,
 alternate endpoints and controller SDK observations are outside this history.
+
+Early verified closure emits `incident_closed` at the controller's independent
+verification time with `verified_while_responder_running=true` and
+`closure_stability_window_seconds` (default 15). A new or reactivated finding,
+observed mutation, pending receipt or unknown write outcome prevents that stable
+pass. The response Job has a separate report grace (default 30 seconds); its
+actual completion may follow `verified_at`. Outcome mitigation and completion
+use the verification timestamp for these closures. Reflection waits for the
+report or grace and retains the controller's receipts and resumable session.
+The benchmark's ordinary grading remains after resolution/learning in
+`fastloop/loop.py`; no grader signal enters controller verification.

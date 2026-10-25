@@ -22,6 +22,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 
+	"sdo.dev/operator/apihistory"
 	contractsv1alpha1 "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/core"
 	"sdo.dev/operator/latefindings"
@@ -191,6 +192,8 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	leaseName := flags.String("lease-name", "sdo-controller", "leader-election Lease name")
 	leaseDuration := flags.Duration("lease-duration", 60*time.Second, "leader-election Lease duration")
 	identity := flags.String("identity", defaultIdentity(), "unique leader-election identity")
+	closureStability := flags.Duration("closure-stability-window", 15*time.Second, "stable independent verification required to close a running incident")
+	reportGrace := flags.Duration("responder-report-grace", 30*time.Second, "time for a verified responder to finish its report")
 	exitAfterClosure := flags.Bool("exit-after-closure", false, "exit after one closure is durably acknowledged")
 	restartAfterClosure := flags.Bool(
 		"restart-after-closure",
@@ -245,6 +248,8 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	}
 	detectors = scaleDetectors(detectors, timeScale)
 	*verificationTimeout = scaledDuration(*verificationTimeout, timeScale)
+	*closureStability = scaledDuration(*closureStability, timeScale)
+	*reportGrace = scaledDuration(*reportGrace, timeScale)
 	if options.NativeBroker != nil && *forceReflection {
 		options.NativeBroker.ForceReflection = true
 	}
@@ -562,8 +567,32 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 					if controller == nil {
 						return ToolResponse{Command: "verify", Error: "controller verification is unavailable"}
 					}
-					return controller.responderVerification(ctx, request.IncidentID)
+					return controller.cachedResponderVerification(ctx, request.IncidentID, 0)
 				}
+				loop.WaitClosure = func(ctx context.Context, wait time.Duration) ToolResponse {
+					return controller.cachedResponderVerification(ctx, request.IncidentID, wait)
+				}
+				loop.IncidentStatus = func() *apihistory.IncidentVerified { return controller.incidentVerificationWarning(request.IncidentID) }
+				if options.NativeBroker != nil {
+					gate, err := memory.IncidentMutationGate(*repositoryMountPath, request.IncidentID)
+					if err != nil {
+						loop.gateError = err
+					} else {
+						loop.MutationGate = gate
+					}
+				}
+				loop.CachedFindings = func() ToolResponse { return controller.cachedFindingView(request.IncidentID) }
+				loop.ExternalReceipts = func() ([]RepairActionReceipt, bool, string, error) {
+					rows, pending, revision, err := memory.IncidentActionReceipts(*repositoryMountPath, request.IncidentID)
+					if err != nil {
+						return nil, pending, revision, err
+					}
+					result := incidentResultState(&contractsv1alpha1.IncidentResult{RepairActions: rows})
+					return result.RepairActions, pending, revision, nil
+				}
+				controller.mu.Lock()
+				controller.responderLoop = loop
+				controller.mu.Unlock()
 				loop.VerifyResult = func(ctx context.Context, result IncidentResult) ToolResponse {
 					if controller == nil {
 						return ToolResponse{Command: "verify", Error: "controller verification is unavailable"}
@@ -608,10 +637,12 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		Application: *application, Namespace: *namespace,
 		SourceCommit: resolvedSourceCommit, DeployedCommit: resolvedDeployedCommit,
 		RepositoryWorktree: resolvedRoot, ResponseTimeout: *responseTimeout,
-		CorpusSessionRoot:   corpusSessionRoot,
-		VerificationTimeout: *verificationTimeout,
-		RepairPolicy:        *repairPolicy,
-		FiringThreshold:     2, ClearThreshold: 2, BatchDebounce: scaledDuration(500*time.Millisecond, timeScale),
+		CorpusSessionRoot:      corpusSessionRoot,
+		VerificationTimeout:    *verificationTimeout,
+		ClosureStabilityWindow: *closureStability,
+		ResponderReportGrace:   *reportGrace,
+		RepairPolicy:           *repairPolicy,
+		FiringThreshold:        2, ClearThreshold: 2, BatchDebounce: scaledDuration(500*time.Millisecond, timeScale),
 		ConfirmationInterval: scaledDuration(time.Second, timeScale),
 		// The submit gate confirms a clearing finding on 3 fresh evaluations
 		// over at least 2 s instead of waiting for the detector's interval;

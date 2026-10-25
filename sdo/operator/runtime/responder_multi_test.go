@@ -213,7 +213,7 @@ func multiCLIRefusal(t *testing.T, directory, option, reason string) {
 			ReasonCode string `json:"reason_code"`
 		} `json:"report"`
 	}
-	if err := json.Unmarshal([]byte(strings.SplitN(string(output), "\n", 2)[0]), &response); err != nil {
+	if err := json.Unmarshal(fullToolAction(t, []byte(strings.SplitN(string(output), "\n", 2)[0])), &response); err != nil {
 		t.Fatalf("invalid refusal: %s %v", output, err)
 	}
 	if response.Report.ReasonCode != reason {

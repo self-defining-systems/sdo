@@ -49,6 +49,8 @@ def write_json(
 def summarize_response(response: dict[str, Any], details_file: str) -> dict[str, Any]:
     """Preserve status and selected identifiers; never imply omitted evidence is complete."""
     summary: dict[str, Any] = {"details_file": details_file, "summarized": True}
+    if "incident_verified" in response:
+        summary["incident_verified"] = response["incident_verified"]
     for name in (
         "command",
         "summary",
@@ -153,6 +155,8 @@ def write_response(response: dict[str, Any]) -> dict[str, Any]:
 def render_summary(summary: dict[str, Any]) -> str:
     """Render the human default; scripts explicitly choose the complete --json view."""
     lines = [f"sdo {summary.get('command', 'response')}: {summary.get('summary', '')}"]
+    if summary.get("incident_verified"):
+        lines.append(str(summary["incident_verified"]["message"]))
     if summary.get("error") and summary["error"] != summary.get("summary"):
         lines.append("error: " + str(summary["error"]))
     status = [

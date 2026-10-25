@@ -127,9 +127,11 @@ type ControllerConfig struct {
 	MetricsTokenFile string `protobuf:"bytes,71,opt,name=metrics_token_file,json=metricsTokenFile,proto3" json:"metrics_token_file,omitempty"`
 	// Trusted controller image supplying Go to compiler-free workers and validators.
 	// Required at startup, independently of the optional traffic prober image.
-	ToolchainImage string `protobuf:"bytes,75,opt,name=toolchain_image,json=toolchainImage,proto3" json:"toolchain_image,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	ToolchainImage         string               `protobuf:"bytes,75,opt,name=toolchain_image,json=toolchainImage,proto3" json:"toolchain_image,omitempty"`
+	ClosureStabilityWindow *durationpb.Duration `protobuf:"bytes,76,opt,name=closure_stability_window,json=closureStabilityWindow,proto3" json:"closure_stability_window,omitempty"`
+	ResponderReportGrace   *durationpb.Duration `protobuf:"bytes,77,opt,name=responder_report_grace,json=responderReportGrace,proto3" json:"responder_report_grace,omitempty"`
+	unknownFields          protoimpl.UnknownFields
+	sizeCache              protoimpl.SizeCache
 }
 
 func (x *ControllerConfig) Reset() {
@@ -570,11 +572,25 @@ func (x *ControllerConfig) GetToolchainImage() string {
 	return ""
 }
 
+func (x *ControllerConfig) GetClosureStabilityWindow() *durationpb.Duration {
+	if x != nil {
+		return x.ClosureStabilityWindow
+	}
+	return nil
+}
+
+func (x *ControllerConfig) GetResponderReportGrace() *durationpb.Duration {
+	if x != nil {
+		return x.ResponderReportGrace
+	}
+	return nil
+}
+
 var File_sdodev_contracts_v1alpha1_controller_config_proto protoreflect.FileDescriptor
 
 const file_sdodev_contracts_v1alpha1_controller_config_proto_rawDesc = "" +
 	"\n" +
-	"1sdodev/contracts/v1alpha1/controller_config.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x1egoogle/protobuf/duration.proto\"\xa3\x1b\n" +
+	"1sdodev/contracts/v1alpha1/controller_config.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x1egoogle/protobuf/duration.proto\"\xc9\x1c\n" +
 	"\x10ControllerConfig\x12%\n" +
 	"\tnamespace\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\tnamespace\x12+\n" +
 	"\x11control_namespace\x18\x02 \x01(\tR\x10controlNamespace\x12\"\n" +
@@ -642,7 +658,9 @@ const file_sdodev_contracts_v1alpha1_controller_config_proto_rawDesc = "" +
 	"\vmetrics_url\x18F \x01(\tR\n" +
 	"metricsUrl\x12,\n" +
 	"\x12metrics_token_file\x18G \x01(\tR\x10metricsTokenFile\x12'\n" +
-	"\x0ftoolchain_image\x18K \x01(\tR\x0etoolchainImageB\x14\n" +
+	"\x0ftoolchain_image\x18K \x01(\tR\x0etoolchainImage\x12S\n" +
+	"\x18closure_stability_window\x18L \x01(\v2\x19.google.protobuf.DurationR\x16closureStabilityWindow\x12O\n" +
+	"\x16responder_report_grace\x18M \x01(\v2\x19.google.protobuf.DurationR\x14responderReportGraceB\x14\n" +
 	"\x12_synthetic_trafficB\x1a\n" +
 	"\x18_clean_responder_helpersB\x11\n" +
 	"\x0f_state_baselineJ\x04\b\x10\x10\x11J\x04\b\x12\x10\x13J\x04\b\x17\x10\x18J\x04\b\x18\x10\x19J\x04\b9\x10:J\x04\b:\x10;J\x04\b;\x10<J\x04\b<\x10=J\x04\b=\x10>J\x04\bC\x10DJ\x04\bD\x10EJ\x04\b@\x10AJ\x04\bA\x10BJ\x04\bE\x10FJ\x04\bH\x10IJ\x04\bI\x10JJ\x04\bJ\x10KR\x06brokerR\vbroker_argsR\x0emax_follow_upsR\x12follow_up_cooldownR\x14drift_sweep_intervalR\x1adrift_investigation_windowR'drift_investigation_dispatches_per_hourR#drift_investigation_tokens_per_hourR\x19drift_dispatches_per_hourR\x15drift_tokens_per_hourR\x14program_min_durationR\x17plan_safety_policy_jsonR\x19plan_safety_policy_sha256R\x17plan_source_policy_jsonB\x88\x02\n" +
@@ -666,20 +684,22 @@ var file_sdodev_contracts_v1alpha1_controller_config_proto_goTypes = []any{
 	(*durationpb.Duration)(nil), // 1: google.protobuf.Duration
 }
 var file_sdodev_contracts_v1alpha1_controller_config_proto_depIdxs = []int32{
-	1, // 0: sdodev.contracts.v1alpha1.ControllerConfig.duration:type_name -> google.protobuf.Duration
-	1, // 1: sdodev.contracts.v1alpha1.ControllerConfig.response_timeout:type_name -> google.protobuf.Duration
-	1, // 2: sdodev.contracts.v1alpha1.ControllerConfig.verification_timeout:type_name -> google.protobuf.Duration
-	1, // 3: sdodev.contracts.v1alpha1.ControllerConfig.lease_duration:type_name -> google.protobuf.Duration
-	1, // 4: sdodev.contracts.v1alpha1.ControllerConfig.maintenance_poll_interval:type_name -> google.protobuf.Duration
-	1, // 5: sdodev.contracts.v1alpha1.ControllerConfig.resume_sync_timeout:type_name -> google.protobuf.Duration
-	1, // 6: sdodev.contracts.v1alpha1.ControllerConfig.synthetic_traffic_warmup:type_name -> google.protobuf.Duration
-	1, // 7: sdodev.contracts.v1alpha1.ControllerConfig.diagnosis_deadline:type_name -> google.protobuf.Duration
-	1, // 8: sdodev.contracts.v1alpha1.ControllerConfig.drift_batch_window:type_name -> google.protobuf.Duration
-	9, // [9:9] is the sub-list for method output_type
-	9, // [9:9] is the sub-list for method input_type
-	9, // [9:9] is the sub-list for extension type_name
-	9, // [9:9] is the sub-list for extension extendee
-	0, // [0:9] is the sub-list for field type_name
+	1,  // 0: sdodev.contracts.v1alpha1.ControllerConfig.duration:type_name -> google.protobuf.Duration
+	1,  // 1: sdodev.contracts.v1alpha1.ControllerConfig.response_timeout:type_name -> google.protobuf.Duration
+	1,  // 2: sdodev.contracts.v1alpha1.ControllerConfig.verification_timeout:type_name -> google.protobuf.Duration
+	1,  // 3: sdodev.contracts.v1alpha1.ControllerConfig.lease_duration:type_name -> google.protobuf.Duration
+	1,  // 4: sdodev.contracts.v1alpha1.ControllerConfig.maintenance_poll_interval:type_name -> google.protobuf.Duration
+	1,  // 5: sdodev.contracts.v1alpha1.ControllerConfig.resume_sync_timeout:type_name -> google.protobuf.Duration
+	1,  // 6: sdodev.contracts.v1alpha1.ControllerConfig.synthetic_traffic_warmup:type_name -> google.protobuf.Duration
+	1,  // 7: sdodev.contracts.v1alpha1.ControllerConfig.diagnosis_deadline:type_name -> google.protobuf.Duration
+	1,  // 8: sdodev.contracts.v1alpha1.ControllerConfig.drift_batch_window:type_name -> google.protobuf.Duration
+	1,  // 9: sdodev.contracts.v1alpha1.ControllerConfig.closure_stability_window:type_name -> google.protobuf.Duration
+	1,  // 10: sdodev.contracts.v1alpha1.ControllerConfig.responder_report_grace:type_name -> google.protobuf.Duration
+	11, // [11:11] is the sub-list for method output_type
+	11, // [11:11] is the sub-list for method input_type
+	11, // [11:11] is the sub-list for extension type_name
+	11, // [11:11] is the sub-list for extension extendee
+	0,  // [0:11] is the sub-list for field type_name
 }
 
 func init() { file_sdodev_contracts_v1alpha1_controller_config_proto_init() }
