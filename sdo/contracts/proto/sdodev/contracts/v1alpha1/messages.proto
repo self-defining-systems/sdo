@@ -481,4 +481,6 @@ message IncidentClosure {
   reserved "detector_review_required_at", "detector_review_reason";
   repeated string cleaned_helpers = 19;
   string observation_generation = 20;
+  // Confirmed per-finding observations on a failed closure; never global health authority.
+  repeated DetectorEvaluation partial_detector_states = 21;
 }

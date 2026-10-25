@@ -3,6 +3,7 @@ package runtime
 import (
 	"slices"
 	"sort"
+	"strings"
 	"time"
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
@@ -14,13 +15,10 @@ import (
 // observations, including unresolved peers and incomplete confirmation windows.
 // Called with c.mu held; superseded observation scopes supply no repair proof.
 func (c *Controller) reflectionDetectorStates(verified, scopeCurrent bool) []DetectorEvaluation {
-	if !scopeCurrent {
+	if verified || !scopeCurrent {
 		return nil
 	}
-	if verified {
-		return c.incidentDetectorStates()
-	}
-	ids := append([]string(nil), c.healthDetectorIDs...)
+	ids := []string{}
 	for _, finding := range c.currentIncidentRequest.Findings {
 		if !slices.Contains(ids, finding.DetectorID) {
 			ids = append(ids, finding.DetectorID)
@@ -53,7 +51,7 @@ func (c *Controller) reflectionDetectorStates(verified, scopeCurrent bool) []Det
 // the last independent post-response detector verdict, without requiring an
 // agent-issued verify command. Aggregate failure never supplies repair proof.
 func closurePartialAction(outcome *contracts.OutcomeRecord, action *contracts.RepairActionReceipt) bool {
-	if !action.GetSuccess() || action.GetFailureReason() != "" || !validActionTimes(action) || !recordedMutation(action) || len(action.GetResources()) == 0 {
+	if !action.GetSuccess() || action.GetFailureReason() != "" || !validActionTimes(action) || !(recordedMutation(action) || (action.GetKind() == "program-plan" && strings.HasPrefix(action.GetActionId(), "sdo-program-") && action.GetActionId() != "sdo-program-")) || len(action.GetResources()) == 0 {
 		return false
 	}
 	times := outcome.GetTimestamps()

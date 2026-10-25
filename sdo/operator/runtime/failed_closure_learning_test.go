@@ -240,3 +240,26 @@ func TestFailedClosureLatestObservationOverridesEarlierVerify(t *testing.T) {
 		t.Fatalf("stale verification overrode unresolved closure finding: %v", got)
 	}
 }
+
+func TestFailedClosureLearningIncludesControllerProgramReceipt(t *testing.T) {
+	closure := failedThreeFaultClosure(t)
+	projected, err := incidentClosureContract(closure)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restored := incidentClosureState(projected)
+	if len(restored.PartialDetectorStates) != 3 {
+		t.Fatalf("partial evidence lost across durable closure: %v", projected)
+	}
+	derived, err := (ProtoOutcomeDeriver{}).Derive(context.Background(), restored, "", "test", "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, action := range derived.Record.RepairActions {
+		action.Kind = "program-plan"
+		action.ActionId = "sdo-program-" + action.ActionId
+	}
+	if got := partialRepairCauses(derived.Record); len(got) != 2 {
+		t.Fatalf("controller-applied verified repairs lost: %v", got)
+	}
+}
