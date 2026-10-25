@@ -273,6 +273,7 @@ func (l *ResponderLoop) continuationRepairs(result IncidentResult) []continuatio
 	repairs := make([]continuationRepair, 0)
 	l.mu.Lock()
 	previousFeedback := l.continuation.Feedback
+	completed := l.applicationRepairsLocked()
 	menuActions := map[string]MenuRoundExecution{}
 	for _, executions := range l.menuExecutions {
 		for _, execution := range executions {
@@ -289,13 +290,10 @@ func (l *ResponderLoop) continuationRepairs(result IncidentResult) []continuatio
 		_ = json.Unmarshal([]byte(previousFeedback), &previous)
 	}
 	seen := map[string]bool{}
-	applications := l.PlanApplications()
 	// Controller-produced receipts take precedence over provider-authored data.
-	for _, application := range applications {
-		for _, receipt := range ProgramRepairReceipts([]RecordedPlanApplication{application}, nil) {
-			repairs = append(repairs, continuationRepair{Kind: "program-application", ActionID: receipt.ActionID, ApplicationID: application.ID, ProgramIDs: application.ProgramIDs, Summary: receipt.Summary, RolledBack: application.RolledBack, Error: application.Error, Receipt: feedbackReceipt(receipt)})
-			seen[receipt.ActionID] = true
-		}
+	for _, repair := range completed {
+		repairs = append(repairs, repair)
+		seen[repair.ActionID] = true
 	}
 	for _, receipt := range append(l.MenuRepairActions(), result.RepairActions...) {
 		if seen[receipt.ActionID] {
@@ -339,6 +337,33 @@ func (l *ResponderLoop) continuationRepairs(result IncidentResult) []continuatio
 	}
 	return unique
 }
+
+// Caller holds l.mu. This projection contains immutable repair facts only;
+// execution plans, live handles and rollback preimages never enter tool state.
+func (l *ResponderLoop) applicationRepairsLocked() []continuationRepair {
+	result := append([]continuationRepair(nil), l.completedRepairs...)
+	seen := map[string]bool{}
+	for _, repair := range result {
+		seen[repair.ActionID] = true
+	}
+	for _, application := range l.applicationsLog {
+		for _, receipt := range ProgramRepairReceipts([]RecordedPlanApplication{application}, nil) {
+			repair := continuationRepair{Kind: "program-application", ActionID: receipt.ActionID, ApplicationID: application.ID, ProgramIDs: application.ProgramIDs, Summary: receipt.Summary, RolledBack: application.RolledBack, Error: application.Error, Receipt: feedbackReceipt(receipt)}
+			if seen[repair.ActionID] {
+				for i := range result {
+					if result[i].ActionID == repair.ActionID {
+						result[i] = repair
+					}
+				}
+			} else {
+				result = append(result, repair)
+				seen[repair.ActionID] = true
+			}
+		}
+	}
+	return result
+}
+
 func feedbackReceipt(receipt RepairActionReceipt) continuationReceipt {
 	return continuationReceipt{ActionID: receipt.ActionID, Kind: receipt.Kind, Target: receipt.Target, Resources: receipt.Resources, Summary: receipt.Summary, Details: receipt.Details, StartedAt: receipt.StartedAt, CompletedAt: receipt.CompletedAt, Success: receipt.Success, Reversible: receipt.Reversible}
 }
@@ -368,7 +393,7 @@ func (c *Controller) continuationVerificationLocked(healthVerified, driftClear b
 	}
 	states, _ := c.latestEvaluations(ids, time.Time{}, false)
 	result.DetectorStates = states
-	firing := map[string]bool{}
+	firing := map[string]map[string]bool{}
 	var errors, pending []string
 	for _, id := range ids {
 		var latest *DetectorEvaluation
@@ -383,14 +408,17 @@ func (c *Controller) continuationVerificationLocked(healthVerified, driftClear b
 			continue
 		}
 		if latest.Status == DetectorEvaluationFiring {
-			firing[id] = true
+			firing[id] = map[string]bool{}
+			for _, fp := range latest.Fingerprints {
+				firing[id][fp] = true
+			}
 		}
 		if latest.Status == DetectorEvaluationError {
 			errors = append(errors, id+": "+latest.Error)
 		}
 	}
 	for _, state := range c.tracker.Snapshot() {
-		if state.Active && firing[state.DetectorID] {
+		if state.Active && firing[state.DetectorID][FindingFingerprint(state.Finding)] {
 			result.Findings = append(result.Findings, state.Finding)
 		} else if state.Active {
 			for _, id := range ids {
@@ -421,6 +449,8 @@ func (c *Controller) continuationVerificationLocked(healthVerified, driftClear b
 // admitted drift is independently compared against a fresh snapshot, just as
 // maybeCloseIncident does. A tool never advances the controller's lifecycle.
 func (c *Controller) responderVerification(ctx context.Context, incidentID string) ToolResponse {
+	c.observationMu.Lock()
+	defer c.observationMu.Unlock()
 	snapshot, err := c.provider.Snapshot(ctx)
 	if err != nil {
 		return ToolResponse{Command: "verify", Error: "create verification snapshot: " + err.Error()}

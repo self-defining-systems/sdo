@@ -11,19 +11,21 @@ import (
 )
 
 // MitigationHealth is a single post-write observation. TargetedHealthy concerns
-// only touched resources and their directly related findings; Healthy concerns
+// only the targeted finding fingerprints; Healthy concerns
 // every accepted health detector. Neither replaces controller closure evidence.
 type MitigationHealth struct {
-	Resources        []sdk.ObjectRef `json:"resources"`
-	Findings         []sdk.Finding   `json:"findings"`
-	TargetedFindings []sdk.Finding   `json:"targeted_findings"`
-	TargetedHealthy  bool            `json:"targeted_healthy"`
-	Healthy          bool            `json:"healthy"`
+	Resources                   []sdk.ObjectRef `json:"resources"`
+	Findings                    []sdk.Finding   `json:"findings"`
+	TargetedFindingFingerprints []string        `json:"targeted_finding_fingerprints"`
+	TargetedFindings            []sdk.Finding   `json:"targeted_findings"`
+	TargetedHealthy             bool            `json:"targeted_healthy"`
+	Healthy                     bool            `json:"healthy"`
 }
 
 type mitigationHealthVerifier struct {
 	health      PlanHealthVerifier
 	plan        program.Plan
+	targets     []sdk.Finding
 	observation *MitigationHealth
 }
 
@@ -37,6 +39,9 @@ func (v *mitigationHealthVerifier) Verify(ctx context.Context) (bool, error) {
 	}
 	observation := &MitigationHealth{Findings: []sdk.Finding{}, TargetedFindings: []sdk.Finding{}, Healthy: true, TargetedHealthy: true}
 	v.observation = observation
+	for _, finding := range v.targets {
+		observation.TargetedFindingFingerprints = append(observation.TargetedFindingFingerprints, FindingFingerprint(finding))
+	}
 	for _, action := range v.plan.Actions {
 		ref, err := planActionRef(action)
 		if err != nil {
@@ -53,7 +58,7 @@ func (v *mitigationHealthVerifier) Verify(ctx context.Context) (bool, error) {
 	if len(health) == 0 {
 		return false, errors.New("health detectors are required")
 	}
-	sink := mitigationFindingSink{view: snapshot, observation: observation}
+	sink := mitigationFindingSink{observation: observation, targets: v.targets}
 	err = (core.Runner{Detectors: health, Provider: core.StaticSnapshotProvider{SnapshotValue: snapshot}, Sink: sink}).RunOnce(ctx)
 	if err != nil {
 		observation.Healthy = false
@@ -64,7 +69,7 @@ func (v *mitigationHealthVerifier) Verify(ctx context.Context) (bool, error) {
 }
 
 type mitigationFindingSink struct {
-	view        sdk.DetectionContext
+	targets     []sdk.Finding
 	observation *MitigationHealth
 }
 
@@ -75,37 +80,30 @@ func (s mitigationFindingSink) Emit(_ context.Context, finding sdk.Finding) erro
 	finding.Fingerprint = FindingFingerprint(finding)
 	s.observation.Findings = append(s.observation.Findings, finding)
 	s.observation.Healthy = false
-	if mitigationFindingRelated(s.view, finding, s.observation.Resources) {
+	targeted := false
+	if s.targets == nil {
+		targeted = true // Unknown target scope must not silently certify a repair.
+	} else {
+		for _, target := range s.targets {
+			if FindingFingerprint(target) == finding.Fingerprint {
+				targeted = true
+				break
+			}
+		}
+	}
+	if targeted {
 		s.observation.TargetedFindings = append(s.observation.TargetedFindings, finding)
 		s.observation.TargetedHealthy = false
 	}
 	return nil
 }
-func mitigationFindingRelated(view sdk.DetectionContext, finding sdk.Finding, refs []sdk.ObjectRef) bool {
-	if finding.PrimaryResource.Kind == "" || finding.PrimaryResource.Name == "" {
-		return true
-	}
-	subjects := append([]sdk.ObjectRef{finding.PrimaryResource}, finding.RelatedResources...)
-	for _, ref := range finding.ParameterBindings {
-		subjects = append(subjects, ref)
-	}
-	for _, subject := range subjects {
-		for _, ref := range refs {
-			if sameResource(subject, ref) || coverageDirectlyRelated(view, subject, ref) || coverageDirectlyRelated(view, ref, subject) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func scopedMitigationVerifier(verifier PlanVerifier, plan program.Plan) *mitigationHealthVerifier {
+func scopedMitigationVerifier(verifier PlanVerifier, plan program.Plan, targets []sdk.Finding) *mitigationHealthVerifier {
 	switch health := verifier.(type) {
 	case PlanHealthVerifier:
-		return &mitigationHealthVerifier{health: health, plan: plan}
+		return &mitigationHealthVerifier{health: health, plan: plan, targets: targets}
 	case *PlanHealthVerifier:
 		if health != nil {
-			return &mitigationHealthVerifier{health: *health, plan: plan}
+			return &mitigationHealthVerifier{health: *health, plan: plan, targets: targets}
 		}
 	}
 	return nil
