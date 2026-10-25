@@ -265,6 +265,9 @@ func (l *ResponderLoop) detect(ctx context.Context, ids []string, response *Tool
 		} else {
 			for _, finding := range observed {
 				if finding.Status == sdk.FindingActive {
+					if finding.DetectorID == "" {
+						finding.DetectorID = id
+					}
 					finding.Fingerprint = FindingFingerprint(finding)
 					response.Findings = append(response.Findings, finding)
 					state.Status = DetectorEvaluationFiring

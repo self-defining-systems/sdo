@@ -58,10 +58,17 @@ func mustToolEntries(t *testing.T, path string) []os.DirEntry {
 	return entries
 }
 
+type selfCheckSnapshotProvider struct{ calls *int }
+
+func (p selfCheckSnapshotProvider) Snapshot(context.Context) (sdk.DetectionContext, error) {
+	*p.calls++
+	return sdktest.Snapshot{NamespaceName: "app"}, nil
+}
+
 func TestResponderDetectFreshSelectionThroughTransport(t *testing.T) {
-	a, b := 0, 0
+	a, b, snapshots := 0, 0, 0
 	firing := true
-	loop := NewResponderLoop(IncidentRequest{Namespace: "app"}, nil, staticProvider{snapshot: sdktest.Snapshot{NamespaceName: "app"}}, []sdk.Detector{selfCheckDetector{"a", &a, &firing}, selfCheckDetector{"b", &b, &firing}}, PlanExecutor{}, 3)
+	loop := NewResponderLoop(IncidentRequest{Namespace: "app"}, nil, selfCheckSnapshotProvider{&snapshots}, []sdk.Detector{selfCheckDetector{"a", &a, &firing}, selfCheckDetector{"b", &b, &firing}}, PlanExecutor{}, 3)
 	server := SessionToolServer{Directory: filepath.Join(t.TempDir(), "tools"), Handle: loop.Handle}
 	if err := server.Prepare(); err != nil {
 		t.Fatal(err)
@@ -83,6 +90,9 @@ func TestResponderDetectFreshSelectionThroughTransport(t *testing.T) {
 	unknown := exchangeSelfCheck(t, &server, `{"command":"detect","detector_ids":["missing"]}`)
 	if !strings.Contains(unknown.Error, "missing") || !strings.Contains(unknown.Error, "a, b") || a != 2 || b != 2 {
 		t.Fatalf("unknown ID must fail before running: %+v", unknown)
+	}
+	if snapshots != 3 {
+		t.Fatalf("valid requests must each take one fresh snapshot: %d", snapshots)
 	}
 	if len(loop.PlanApplications()) != 0 || loop.LoopsUsed() != 0 || len(loop.ProgramRuns()) != 0 {
 		t.Fatal("detect performed diagnosis or mutation")
