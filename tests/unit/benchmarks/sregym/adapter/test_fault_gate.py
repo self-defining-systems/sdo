@@ -204,13 +204,13 @@ def test_persistent_gate_poll_can_follow_fastloop_time_scale() -> None:
 
 
 @pytest.mark.parametrize("logs", ["", _maintenance("active", "previous-stage") + "\n" + _evaluation()])
-def test_persistent_gate_has_a_short_bounded_readiness_wait(logs: str, caplog: pytest.LogCaptureFixture) -> None:
+def test_persistent_gate_has_a_bounded_startup_wait(logs: str, caplog: pytest.LogCaptureFixture) -> None:
     clock = _Clock()
 
     def kubectl(args: list[str], *, namespace: str, check: bool) -> subprocess.CompletedProcess[str]:
         return subprocess.CompletedProcess(args, 0, stdout=logs, stderr="")
 
-    with caplog.at_level("INFO"), pytest.raises(FaultGateError, match="hotel-sdo.*stage-1.*300s"):
+    with caplog.at_level("INFO"), pytest.raises(FaultGateError, match="hotel-sdo.*stage-1.*startup resume.*1800s"):
         inject_fault_after_resumed_baseline(
             "hotel-sdo",
             "stage-1",
@@ -220,7 +220,7 @@ def test_persistent_gate_has_a_short_bounded_readiness_wait(logs: str, caplog: p
             sleep=clock.sleep,
         )
 
-    assert clock.now == 300
+    assert clock.now == 1800
     assert "waiting for controller baseline" in caplog.text
 
 
@@ -243,6 +243,57 @@ def test_persistent_gate_reports_forbidden_observation_as_readiness_failure() ->
             monotonic=clock.monotonic,
             sleep=clock.sleep,
             timeout_seconds=3,
+            startup_timeout_seconds=3,
         )
 
     assert clock.now == 3
+
+
+def test_resumed_gate_readiness_budget_starts_after_slow_startup() -> None:
+    clock = _Clock()
+    injected = []
+
+    def kubectl(args: list[str], *, namespace: str, check: bool) -> subprocess.CompletedProcess[str]:
+        if clock.now < 400:
+            logs = "health refresh still running"
+        else:
+            logs = _maintenance("active", "stage-1")
+            logs += "\n" + (_evaluation("active") if clock.now < 699 else _evaluation())
+        return subprocess.CompletedProcess(args, 0, stdout=logs, stderr="")
+
+    timings = inject_fault_after_resumed_baseline(
+        "hotel-sdo",
+        "stage-1",
+        inject=lambda: injected.append(clock.now),
+        kubectl_runner=kubectl,
+        monotonic=clock.monotonic,
+        sleep=clock.sleep,
+    )
+
+    assert injected == [699]
+    assert timings["controller_startup_wait"] == 400
+    assert timings["controller_resumed_baseline_wait"] == 299
+    assert timings["controller_baseline_wait"] == 699
+
+
+def test_resumed_gate_still_expires_after_full_readiness_budget() -> None:
+    clock = _Clock()
+
+    def kubectl(args: list[str], *, namespace: str, check: bool) -> subprocess.CompletedProcess[str]:
+        logs = (
+            "starting health refresh"
+            if clock.now < 10
+            else _maintenance("active", "stage-1") + "\n" + _evaluation("active")
+        )
+        return subprocess.CompletedProcess(args, 0, stdout=logs, stderr="")
+
+    with pytest.raises(FaultGateError, match="300s.*active findings"):
+        inject_fault_after_resumed_baseline(
+            "hotel-sdo",
+            "stage-1",
+            inject=lambda: pytest.fail("unhealthy baseline injected"),
+            kubectl_runner=kubectl,
+            monotonic=clock.monotonic,
+            sleep=clock.sleep,
+        )
+    assert clock.now == 310

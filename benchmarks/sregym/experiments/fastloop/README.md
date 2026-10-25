@@ -190,7 +190,7 @@ uses the existing target-port and bad-image faults; it requires those fault
 variants in the local SREGym checkout. Do not use `pbprog_smoke.json` for this
 mode until its two composite specs are present.
 
-Unexplained drift opens an ordinary responder incident. The responder must establish a source contradiction and an observed violated relation or impact before repair; quiet health and missing port declarations alone are insufficient. An unsure result remains unresolved. Only an exact checked benign label, stored in accepted outcomes, suppresses a repeated observation. Fail-soft reset preserves accepted outcomes; a seed rollback discards their labels. Reset first cancels and awaits all Jobs, then cleans captures and checkouts with a temporary Pod.
+Unexplained drift opens an ordinary responder incident. The responder must establish a source contradiction and an observed violated relation or impact before repair; quiet health and missing port declarations alone are insufficient. An unsure result remains unresolved. Only an exact checked benign label, stored in accepted outcomes, suppresses a repeated observation. Fail-soft reset preserves accepted outcomes; a seed rollback discards their labels. Reset first cancels and awaits all Jobs and any orphan controller Pod, then retires only the transient controller-state and drift-verdict cache ConfigMaps so the next problem cannot resume a stale pending incident. Historical incident evidence ConfigMaps remain intact. A repository-preserving reset retains accepted Git and native broker ledgers while removing proposal and session scratch. An explicit seed rollback may remove old captures and worktrees with a temporary Pod; archive run history first.
 
 New `run_metadata.json` files declare accounting version `responder-drift/v2`: merged reasoning appears once in `responder_tokens`; `drift_tokens` remains a legacy zero field. Old result rows retain their recorded investigator costs.
 
@@ -305,7 +305,7 @@ kind is shared with fastloop, but they are fault-specific cluster-state checks.
 outcomes and toy drift verdicts, and restarts from the production-installed Job
 spec with fresh server identity. It removes the stopped controller's leadership
 lease, retains the PVC build cache, and waits for a fresh, adopted clear baseline.
-The hotel tier retains its existing reset behavior, including cached drift verdicts.
+The hotel tier also retires transient controller state and cached drift verdicts after stopping their writers.
 
 `--no-checkpoints` disables only optional offline replay checkpoint export. The
 real Go controller, broker, memory edge, captured-corpus validation, reflection,
