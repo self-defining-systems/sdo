@@ -42,6 +42,10 @@ func (l *ResponderLoop) persistToolState(ctx context.Context) error {
 	return nil
 }
 func (l *ResponderLoop) restoreToolSnapshot(payload []byte) error {
+	l.operationMu.Lock()
+	defer l.operationMu.Unlock()
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	var state responderToolState
 	if err := json.Unmarshal(payload, &state); err != nil {
 		return fmt.Errorf("decode responder attempt state: %w", err)

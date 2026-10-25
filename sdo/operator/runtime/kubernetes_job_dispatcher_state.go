@@ -26,6 +26,10 @@ func (d KubernetesJobDispatcher) restoreToolState(ctx context.Context, request I
 			return err
 		}
 	}
+	loop.operationMu.Lock()
+	defer loop.operationMu.Unlock()
+	loop.mu.Lock()
+	defer loop.mu.Unlock()
 	loop.saveToolState = func(ctx context.Context, payload []byte) error {
 		document := &contracts.ControllerState{Version: RuntimeStateVersion}
 		if state != nil {
