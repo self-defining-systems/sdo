@@ -3,13 +3,18 @@
 from __future__ import annotations
 
 import json
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from string import Template
-from tempfile import NamedTemporaryFile
+from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING, Any
 
 from google.protobuf import json_format
+
+from sdo.agents.responder.tool_output import write_json
+from sdo.agents.responder.tools_cli import command_surface
+
+MAX_INCIDENT_SUMMARY_CHARS = 5000
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -61,28 +66,107 @@ def incident_data_view(request: IncidentRequest) -> dict[str, Any]:
 
 def render_incident_data(request: IncidentRequest) -> str:
     """Render the complete projection; production uses prepared_incident_data for its cap."""
-    document = json.dumps(incident_data_view(request), ensure_ascii=False, separators=(",", ":"))
+    return _render_data(incident_data_view(request))
+
+
+def _render_data(document: dict[str, Any]) -> str:
+    encoded = json.dumps(document, ensure_ascii=False, separators=(",", ":"))
     template = Path(__file__).with_name("prompts") / "incident_data.md"
-    return Template(template.read_text(encoding="utf-8")).substitute(request_json=document)
+    return Template(template.read_text(encoding="utf-8")).substitute(request_json=encoded)
+
+
+def _render_summary(document: dict[str, Any], details_file: str) -> str:
+    template = Path(__file__).with_name("prompts") / "incident_data_overflow.md"
+    return Template(template.read_text(encoding="utf-8")).substitute(
+        summary_json=json.dumps(document, ensure_ascii=False, separators=(",", ":")), details_file=details_file
+    )
 
 
 @contextmanager
 def prepared_incident_data(request: IncidentRequest) -> Iterator[str]:
-    """Keep inline context below 12k; retain every overflow fact for the whole turn."""
-    rendered = render_incident_data(request)
-    if len(rendered) <= 12000:
-        yield rendered
-        return
-    with NamedTemporaryFile(mode="w", encoding="utf-8", prefix="sdo-incident-", suffix=".json") as facts:
-        json.dump(incident_data_view(request), facts, ensure_ascii=False, indent=2)
-        facts.flush()
+    """Keep actionable facts inline and complete supplements private for the whole turn."""
+    document = incident_data_view(request)
+    document["incident_tools"] = command_surface()
+    with ExitStack() as stack:
+        if request.memory_snapshot.playbooks:
+            directory = Path(stack.enter_context(TemporaryDirectory(prefix="sdo-playbooks-")))
+            documents = {}
+            for index, playbook in enumerate(sorted(request.memory_snapshot.playbooks, key=lambda item: item.id)):
+                path = directory / f"{index}.md"
+                path.touch(mode=0o600)
+                path.write_text(playbook.markdown, encoding="utf-8")
+                documents[playbook.id] = str(path)
+            document["playbook_documents"] = documents
+            document["memory_accepted_commit"] = request.memory_snapshot.accepted_commit
+        facts = write_json(document, command="incident", incident_id=request.incident_id)
+        stack.callback(facts.unlink, missing_ok=True)
+        inline = {**document, "details_file": str(facts)}
+        rendered = _render_data(inline)
+        if len(rendered) <= MAX_INCIDENT_SUMMARY_CHARS:
+            yield rendered
+            return
+        summary = dict(document)
+        summary["supplemental_fields"] = []
+        # Large live evidence remains complete in facts. Its presence must not
+        # hide finding identities, matched repairs or the local command surface.
+        findings = document.get("findings", [])
+        summary["findings"] = [
+            {
+                key: (value[:160] + "…" if len(value) > 160 else value) if isinstance(value, str) else value
+                for key, value in finding.items()
+                if key != "evidence"
+            }
+            for finding in findings[:8]
+        ]
+        summary["finding_count"] = len(findings)
+        summary["finding_details_file"] = str(facts)
+        if len(findings) > 8:
+            summary["findings_omitted"] = len(findings) - 8
+        for name in (
+            "intent",
+            "initial_program_runs",
+            "relevant_outcomes",
+            "state_changes",
+            "latest_detector_evaluations",
+            "observation_generation",
+            "playbook_documents",
+        ):
+            if name in summary:
+                summary.pop(name)
+                summary["supplemental_fields"].append(name)
+            rendered = _render_summary(summary, str(facts))
+            if len(rendered) <= MAX_INCIDENT_SUMMARY_CHARS:
+                yield rendered
+                return
+        # Exceptionally large findings or coverage still retain every byte in
+        # facts; never present a truncated finding as complete evidence.
         summary = {
             "incident_id": request.incident_id,
             "application": request.application,
             "namespace": request.namespace,
             "finding_count": len(request.findings),
+            "supplemental_fields": sorted(document),
+            "findings": [
+                {"fingerprint": item.fingerprint[:160], "summary": item.summary[:160]} for item in request.findings[:4]
+            ],
+            "findings_omitted": max(0, len(request.findings) - 4),
+            "playbook_coverage": {
+                "matches": [
+                    {
+                        "playbook_id": match.playbook_id[:100],
+                        "can_mitigate": match.can_mitigate,
+                        "mitigation_selection": match.mitigation_selection[:100],
+                    }
+                    for match in request.playbook_coverage.matches[:4]
+                ],
+                "matches_omitted": max(0, len(request.playbook_coverage.matches) - 4),
+                "unexplained_finding_fingerprints": [
+                    item[:160] for item in document["playbook_coverage"]["unexplained_finding_fingerprints"][:4]
+                ],
+                "unexplained_findings_omitted": max(
+                    0, len(document["playbook_coverage"]["unexplained_finding_fingerprints"]) - 4
+                ),
+            },
+            "incident_tools": document["incident_tools"],
         }
-        template = Path(__file__).with_name("prompts") / "incident_data_overflow.md"
-        yield Template(template.read_text(encoding="utf-8")).substitute(
-            summary_json=json.dumps(summary, ensure_ascii=False, separators=(",", ":")), details_file=facts.name
-        )
+        yield _render_summary(summary, str(facts))

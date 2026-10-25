@@ -103,6 +103,8 @@ def _execute_incident(
         except ValueError as exc:
             raise ResponderExecutionError(f"invalid controller continuation: {exc}") from exc
     corrected_branch = False
+    options = session_turn_options(selected_provider, Path(request.repository_worktree))
+    options["environment"] = {**(options.get("environment") or {}), "SDO_INCIDENT_ID": request.incident_id}
     while True:
         try:
             completed = run_structured_turn(
@@ -116,7 +118,7 @@ def _execute_incident(
                 resume_session_id=resume_session_id,
                 executor=executor,
                 on_session_started=recovery.checkpoint if recovery is not None else None,
-                **session_turn_options(selected_provider, Path(request.repository_worktree)),
+                **options,
             )
         except SessionRecoveryError as exc:
             raise ResponderExecutionError(str(exc)) from exc

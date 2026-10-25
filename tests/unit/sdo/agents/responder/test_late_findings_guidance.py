@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -28,7 +29,8 @@ def test_prompt_is_unchanged_when_the_flag_is_off(monkeypatch: pytest.MonkeyPatc
     baseline = _responder_prompt(_request())
     monkeypatch.setenv("SDO_LATE_FINDINGS", "off")
 
-    assert _responder_prompt(_request()) == baseline
+    facts_path = r"/tmp/sdo/[^\"\n]+-incident\.json"
+    assert re.sub(facts_path, "<facts>", _responder_prompt(_request())) == re.sub(facts_path, "<facts>", baseline)
     assert "late-findings" not in baseline
     assert late_findings_guidance(_request()) == ""
 

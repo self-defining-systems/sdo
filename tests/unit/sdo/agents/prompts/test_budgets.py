@@ -20,6 +20,7 @@ from sdo.agents.prompt_templates import (
 )
 from sdo.agents.responder.incident_context import prepared_incident_data
 from tests.unit.sdo.agents.prompts.cases import incident, rendered_cases, responder_prompt
+from tests.unit.sdo.agents.responder.tool_output_cases import rendered_stdout_cases
 
 if sys.version_info >= (3, 11):
     import tomllib
@@ -49,6 +50,13 @@ def measured_parts() -> dict[str, int]:
         description = frontmatter["description"]
         assert isinstance(description, str)
         maxima[f"skills.{skill.parent.name}"] = count_chars(description)
+    for name, output in rendered_stdout_cases().items():
+        command = name.split(".", 1)[0]
+        maxima[f"tool_stdout.{command}"] = max(maxima[f"tool_stdout.{command}"], count_chars(output))
+    for request in (incident(3, warm=True), incident(5, oversized=True), incident(100, oversized=True)):
+        with prepared_incident_data(request) as summary:
+            maxima["tool_stdout.incident"] = max(maxima["tool_stdout.incident"], count_chars(summary))
+    maxima["tool_stdout.incident"] = max(maxima["tool_stdout.incident"], maxima["responder.incident_data"])
     return dict(sorted(maxima.items()))
 
 
