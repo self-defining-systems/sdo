@@ -81,4 +81,5 @@ const (
 	RuleDetectorCompile         = "detector.compile"
 	RuleDetectorVet             = "detector.vet"
 	RuleDetectorTest            = "detector.test"
+	RuleDetectorHealthyBaseline = "detector.healthy-baseline"
 )

@@ -72,7 +72,7 @@ func (s *run) compile(ctx context.Context) error {
 		rule = RuleDetectorTest
 	}
 	mitigationFailure := false
-	for _, rule := range []string{RuleProgramMitigationRepair, RuleProgramMitigationReplay, RuleProgramRepeatReachable, detectorCorpusObservation} {
+	for _, rule := range []string{RuleProgramMitigationRepair, RuleProgramMitigationReplay, RuleProgramRepeatReachable, detectorCorpusObservation, RuleDetectorHealthyBaseline} {
 		if strings.Contains(stage.Output, rule) {
 			messages := map[string]bool{}
 			for _, line := range strings.Split(stage.Output, "\n") {
@@ -95,6 +95,10 @@ func (s *run) compile(ctx context.Context) error {
 			path, hint := layout.PlaybooksDir, "mitigation must replay on the faulted fixture and clear its diagnosis"
 			if rule == RuleProgramRepeatReachable {
 				hint = "repair the recorded detector → finding bindings → diagnosis → mitigation link; Diagnose reads additional objects through ReadView"
+			}
+			if rule == RuleDetectorHealthyBaseline {
+				path = layout.DiagnosticsDir
+				hint = "incident detectors must stay quiet on the controller pre-incident healthy state; missing observations require controller baseline capture, never post-repair or agent-authored substitutions"
 			}
 			if rule == detectorCorpusObservation {
 				rule = RuleDetectorTest

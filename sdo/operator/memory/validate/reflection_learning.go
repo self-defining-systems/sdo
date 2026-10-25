@@ -21,14 +21,7 @@ func ReflectionLearningDiagnostics(root string, outcome *contracts.OutcomeRecord
 	if decision.GetLearningDecision() == "no_change" && decision.GetNoChangeReason() == "no_session" && outcome.GetReflectionSkipReason() == "no_session" {
 		return nil, nil
 	}
-	var causes []*contracts.ReflectionCauseWork
-	if outcome.GetClassification() == "success" {
-		for i, c := range outcome.GetConfirmedRootCauses() {
-			causes = append(causes, &contracts.ReflectionCauseWork{CauseIndex: uint32(i), Resources: c.GetResources()})
-		}
-	} else {
-		causes = outcome.GetReflectionEligibility().GetCauses()
-	}
+	causes := VerifiedReflectionCauses(outcome)
 	var pending []*contracts.ReflectionCauseWork
 	for _, cause := range causes {
 		declined := false

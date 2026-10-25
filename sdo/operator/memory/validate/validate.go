@@ -94,8 +94,9 @@ type Request struct {
 	Layers Layer
 	// OperatorRoot holds the operator Go modules and is required for Compile.
 	OperatorRoot string
-	// HealthyBaseline optionally names recorded healthy snapshots that
-	// incident detectors must stay quiet on during Compile.
+	// HealthyBaseline names recorded healthy snapshots for Compile. Reflection
+	// Check always replaces caller input with the controller pre-incident capture.
+	// Other lifecycle phases may opt into an independently provisioned baseline.
 	HealthyBaseline string
 	// CaptureRoot and IncidentID bind proposed corpus to controller-owned captures.
 	CaptureRoot      string

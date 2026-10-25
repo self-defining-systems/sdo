@@ -21,9 +21,10 @@ type VerificationSummary struct {
 }
 
 type VerificationEvaluation struct {
-	DetectorID string                   `json:"detector_id"`
-	At         time.Time                `json:"at"`
-	Status     DetectorEvaluationStatus `json:"status"`
+	DetectorID   string                   `json:"detector_id"`
+	At           time.Time                `json:"at"`
+	Status       DetectorEvaluationStatus `json:"status"`
+	Fingerprints []string                 `json:"fingerprints,omitempty"`
 }
 
 func compactVerification(response ToolResponse) *VerificationSummary {
@@ -49,7 +50,15 @@ func compactVerification(response ToolResponse) *VerificationSummary {
 			summary.Complete = false
 		}
 		detectors[state.DetectorID] = true
-		summary.Evaluations = append(summary.Evaluations, VerificationEvaluation{state.DetectorID, state.EvaluatedAt, state.Status})
+		fingerprints := append([]string(nil), state.Fingerprints...)
+		if state.Status == DetectorEvaluationFiring && len(fingerprints) == 0 {
+			for _, finding := range response.Findings {
+				if finding.DetectorID == state.DetectorID && finding.Status == sdk.FindingActive {
+					fingerprints = append(fingerprints, FindingFingerprint(finding))
+				}
+			}
+		}
+		summary.Evaluations = append(summary.Evaluations, VerificationEvaluation{DetectorID: state.DetectorID, At: state.EvaluatedAt, Status: state.Status, Fingerprints: fingerprints})
 	}
 	if len(summary.Evaluations) == 0 {
 		summary.Complete = false

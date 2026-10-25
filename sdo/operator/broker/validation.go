@@ -13,7 +13,8 @@ import (
 func (b *Broker) checkCandidate(ctx context.Context, root, base string, actor Actor, phase Phase, paths []string, runner Validator, publication *validate.PublicationContext, decision *contracts.ReflectionDecision) ([]validate.Diagnostic, error) {
 	var compile validate.CompileRunner
 	if runner != nil {
-		compile = func(ctx context.Context, _ validate.Request) ([]validate.Diagnostic, error) {
+		compile = func(ctx context.Context, request validate.Request) ([]validate.Diagnostic, error) {
+			ctx = context.WithValue(ctx, compileBaselineKey{}, request.HealthyBaseline)
 			err := runner(ctx, root, paths)
 			var failure *validate.Failure
 			if errors.As(err, &failure) {
@@ -30,3 +31,5 @@ func (b *Broker) checkCandidate(ctx context.Context, root, base string, actor Ac
 func (b *Broker) PublishReflection(ctx context.Context, incidentID string, decision *contracts.ReflectionDecision) (Receipt, error) {
 	return b.publish(ctx, incidentID, Responder, ReflectionPhase, "", nil, decision)
 }
+
+type compileBaselineKey struct{}

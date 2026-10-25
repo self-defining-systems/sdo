@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"google.golang.org/protobuf/types/known/timestamppb"
 	"log"
 	"os"
 	"os/exec"
@@ -12,6 +13,7 @@ import (
 	"sdo.dev/operator/memory/validate"
 	"strings"
 	"testing"
+	"time"
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 
@@ -100,8 +102,27 @@ func acceptedPortLearning(t *testing.T, root string) {
 }
 
 func verifiedPortOutcome() *contracts.OutcomeRecord {
-	return &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: "incident", Classification: "success", ConfirmedRootCauses: []*contracts.ConfirmedRootCause{{Summary: "verified service port repair", Resources: []*contracts.ObjectRef{{Kind: "Service", Namespace: "demo", Name: "front"}}}}}
+	ref := &contracts.ObjectRef{Kind: "Service", Namespace: "demo", Name: "front"}
+	at := time.Unix(100, 0)
+	return &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: "incident", Classification: "success", ConfirmedRootCauses: []*contracts.ConfirmedRootCause{{Summary: "verified service port repair", Resources: []*contracts.ObjectRef{ref}}}, Findings: []*contracts.Finding{{DetectorId: "routing", RuleId: "target-port", Status: "active", Severity: "critical", Summary: "synthetic target-port fault", Evidence: "synthetic independent opening observation", Fingerprint: "routing/front", PrimaryResource: ref}}, RepairActions: []*contracts.RepairActionReceipt{{ActionId: "sdo-act-repair", Kind: "kubectl-patch", Target: "Service/demo/front", Summary: "restore target port", Details: "synthetic controller receipt", Success: true, Resources: []*contracts.ObjectRef{ref}, StartedAt: timestamppb.New(at), CompletedAt: timestamppb.New(at.Add(time.Second))}}, FinalHealthDetectorState: []*contracts.DetectorEvaluation{{DetectorId: "routing", Status: "clear", EvaluatedAt: timestamppb.New(at.Add(2 * time.Second))}}}
 }
+
+func portCaptureContext(t *testing.T, ctx context.Context) context.Context {
+	t.Helper()
+	capture := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(capture, "healthy"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile("../../../tests/fixtures/sdo/playbook_program_app/.sdo/corpus/targetport-mismatch/healthy.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(capture, "healthy", "healthy.json"), raw, 0444); err != nil {
+		t.Fatal(err)
+	}
+	return validate.WithCaptureSource(ctx, capture, "incident")
+}
+
 func TestValidateMemoryTreeRejectsUnformattedGo(t *testing.T) {
 	root := repository(t)
 	memoryFixture(t, root)
@@ -157,7 +178,7 @@ func TestResponderProgramProposalIgnoresPreexistingUnformattedHealthGo(t *testin
 	oldOutput := log.Writer()
 	log.SetOutput(&warnings)
 	defer log.SetOutput(oldOutput)
-	if _, err := b.PublishReflection(ctx, "incident", &contracts.ReflectionDecision{LearningDecision: "updated"}); err != nil {
+	if _, err := b.PublishReflection(portCaptureContext(t, ctx), "incident", &contracts.ReflectionDecision{LearningDecision: "updated"}); err != nil {
 		t.Fatalf("program proposal rejected: %v", err)
 	}
 	if !strings.Contains(warnings.String(), "owner: health_judge") || !strings.Contains(warnings.String(), "detector.go") {
@@ -202,7 +223,7 @@ func TestResponderDirectProgramEditRejectsUnformattedGo(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(proposal.Path, ".sdo", "playbooks", "base", "diagnose.go"), []byte("package base\nfunc Diagnose(){}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := b.PublishReflection(ctx, "incident", &contracts.ReflectionDecision{LearningDecision: "updated"}); err == nil || !strings.Contains(err.Error(), "not gofmt formatted") {
+	if _, err := b.PublishReflection(portCaptureContext(t, ctx), "incident", &contracts.ReflectionDecision{LearningDecision: "updated"}); err == nil || !strings.Contains(err.Error(), "not gofmt formatted") {
 		t.Fatalf("unformatted direct program edit accepted: %v", err)
 	}
 }
@@ -279,7 +300,7 @@ func TestResponderProposalCommitsCanonicalGo(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := b.PublishReflection(ctx, "incident", &contracts.ReflectionDecision{LearningDecision: "updated"}); err != nil {
+	if _, err := b.PublishReflection(portCaptureContext(t, ctx), "incident", &contracts.ReflectionDecision{LearningDecision: "updated"}); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(filepath.Join(target, ".sdo", "diagnostics", "detectors", "incidents", "fault", "detector.go"))
