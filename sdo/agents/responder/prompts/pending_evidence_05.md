@@ -1,1 +1,0 @@
-- `${path}`: owned by the registered incident detector `${id}`, which has not fired for this incident, so no incident-detector evidence exists yet. The sanity check must confirm the playbook's preconditions itself: inspect ${watched} in namespace `${namespace}` (plus the pods and recent events of the affected workload) against the preconditions the playbook states.${script_step}

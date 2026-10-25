@@ -11,13 +11,14 @@ from agentshim.testing import FakeRun, installed_mcp_servers
 from google.protobuf import json_format
 
 from sdo.agents.responder import CodexSessionBackend, execute_incident, session_output_schema, unwrap_branch
-from sdo.agents.responder.codex import ResponderExecutionError, _responder_prompt
+from sdo.agents.responder.codex import ResponderExecutionError
 from sdo.agents.responder.reflection import ClaudeSessionBackend
 from sdo.agents.responder.reflection_validation import validation_server
 from sdo.agents.responder.session_turn import WrongBranchError
 from sdo.contracts import IncidentRequest, IncidentResult
 from tests.proto_messages import evolve
 from tests.structured_turns import ScriptedAgent, reply
+from tests.unit.sdo.agents.prompts.cases import responder_prompt as _responder_prompt
 from tests.unit.sdo.agents.responder.test_codex_responder import _fixture
 
 _REFLECTION = {

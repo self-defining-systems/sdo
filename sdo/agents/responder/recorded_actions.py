@@ -248,6 +248,11 @@ def _receipt(
     code: int | None,
     output: str,
 ) -> dict[str, Any]:
+    try:
+        for argument in command:
+            argument.encode("utf-8")
+    except UnicodeEncodeError:
+        raise ValueError("cannot record an invalid repair receipt: command contains invalid UTF-8") from None
     kind = action_kind(command)
     target = (
         "{kind}/{namespace}/{name}".format(**resources[0])

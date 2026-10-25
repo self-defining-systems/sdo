@@ -33,6 +33,11 @@ def main() -> int:
         )
         if astronomy:
             prepare_astronomy()
+        if request.get("op") == "refresh_baseline_clients":
+            from benchmarks.sregym.fastloop.seed_recovery import refresh_baseline_clients
+
+            problem = self._problem_factory(str(request["problem_id"]))
+            return refresh_baseline_clients(problem)
         if request.get("op") == "baseline_oracle":
             problem = self._problem_factory(str(request["problem_id"]))
             verdict = self._grade(problem)

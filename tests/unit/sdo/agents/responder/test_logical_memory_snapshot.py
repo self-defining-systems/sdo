@@ -5,9 +5,9 @@ from pathlib import Path
 
 from google.protobuf import json_format
 
-from sdo.agents.responder import codex
 from sdo.contracts import IncidentRequest
 from tests.proto_messages import evolve
+from tests.unit.sdo.agents.prompts.cases import responder_prompt as _responder_prompt
 
 
 def _request() -> IncidentRequest:
@@ -54,11 +54,11 @@ def _request() -> IncidentRequest:
 
 def test_responder_uses_logical_snapshot_without_loading_memory_files() -> None:
     request = _request()
-    prompt = codex._responder_prompt(request)
+    prompt = _responder_prompt(request)
     assert "checkout-independent health objective" in prompt
     assert "checkout-independent architecture" in prompt
-    assert "Restore the ConfigMap safely" in prompt
-    assert ".sdo/playbooks/" not in prompt.split("Warm path:", 1)[1].split("During this response", 1)[0]
+    assert "missing-configmap" in prompt
+    assert "Restore the ConfigMap safely" not in prompt
     assert ".sdo/" not in prompt
 
 
