@@ -194,6 +194,7 @@ func (l *ResponderLoop) executeMenuOption(ctx context.Context, selection *contra
 			}
 		}
 		executor := l.Executor
+		executor.ApplicationID = applicationID
 		executor.PollRollouts = true
 		if entry.removal != nil {
 			targetFingerprints = []string{entry.removal.FindingFingerprint}
@@ -258,7 +259,13 @@ func (l *ResponderLoop) executeMenuOption(ctx context.Context, selection *contra
 			}
 			rr.Actions = append(rr.Actions, receipt)
 			if receipt.State == contracts.MitigationActionReceipt_STATE_APPLIED {
-				l.menuRepairs = append(l.menuRepairs, RepairActionReceipt{ActionID: receipt.ActionId, Kind: "mitigation-menu", Target: patch.Ref.Kind + "/" + patch.Ref.Name, Resources: []sdk.ObjectRef{patch.Ref}, Summary: "responder executed SDK plan action", Details: fmt.Sprintf("attempt %s round %d action %d via ordinary PlanExecutor", attempt, round, index+1), Success: !result.RolledBack, StartedAt: started, CompletedAt: completed})
+				resources := []sdk.ObjectRef{patch.Ref}
+				if index < len(result.ActionReports) {
+					if scriptRefs := scriptRepairResources(result.ActionReports[index]); len(scriptRefs) > 0 {
+						resources = scriptRefs
+					}
+				}
+				l.menuRepairs = append(l.menuRepairs, RepairActionReceipt{ActionID: receipt.ActionId, Kind: "mitigation-menu", Target: patch.Ref.Kind + "/" + patch.Ref.Name, Resources: resources, Summary: "responder executed SDK plan action", Details: fmt.Sprintf("attempt %s round %d action %d via ordinary PlanExecutor", attempt, round, index+1), Success: !result.RolledBack, StartedAt: started, CompletedAt: completed})
 			}
 		}
 		l.observeMitigationHealth(result, response)

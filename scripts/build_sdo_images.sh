@@ -4,10 +4,10 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 tag="${SDO_IMAGE_TAG:-v0.1.0}"
 # CI builds only changed targets through Bake, then uses these same smoke gates.
-read -r -a selected <<<"${SDO_IMAGES:-controller validator responder benchmark}"
+read -r -a selected <<<"${SDO_IMAGES:-controller validator responder benchmark script-tools}"
 for image in "${selected[@]}"; do
   case "${image}" in
-  controller | validator | responder | benchmark) ;;
+  controller | validator | responder | benchmark | script-tools) ;;
   *)
     echo "unknown SDO image target: ${image}" >&2
     exit 1
@@ -41,12 +41,21 @@ for target in "${selected[@]}"; do
     image=sdo-responder
     role=responder_image
     ;;
+  script-tools)
+    image=sdo-script-tools
+    role=
+    ;;
   benchmark)
     image=sdo-sregym-responder
     role=responder_image
     ;;
   esac
-  if [[ "${target}" == "controller" ]]; then
+  if [[ "${target}" == "script-tools" ]]; then
+    docker run --rm --user 65532:65532 "${image}:${tag}" sh -ec '
+      for tool in bash kubectl jq curl tar sdo-operator; do command -v "$tool" >/dev/null; done
+      ! command -v go
+    '
+  elif [[ "${target}" == "controller" ]]; then
     docker run --rm --user 65532:65532 "${image}:${tag}" sh -ec '
       command -v go >/dev/null
       test "$GOPROXY" = off
@@ -64,7 +73,7 @@ for target in "${selected[@]}"; do
       sdo-operator memory help >/dev/null
     '
   fi
-  if [[ "${SDO_IMAGE_PREFLIGHT:-0}" == "1" ]]; then
+  if [[ "${SDO_IMAGE_PREFLIGHT:-0}" == "1" && -n "${role}" ]]; then
     uv run python -m benchmarks.sregym.runner.preflight --image "${role}=${image}:${tag}"
   fi
   if [[ "${target}" == "responder" || "${target}" == "benchmark" ]]; then

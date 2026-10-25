@@ -66,6 +66,11 @@ func (w RegisteredReflectionWorker) Reflect(ctx context.Context, closure Inciden
 			log.Printf("API history recovery marker unavailable for incident %s: %v", workspace.IncidentID, err)
 		}
 	}
+	if w.CorpusSessionRoot != "" && outcome != nil {
+		if err := memory.CaptureRepairReceipts(w.CorpusSessionRoot, workspace.IncidentID, outcome); err != nil {
+			return ReflectionDecision{}, fmt.Errorf("capture original repair receipts: %w", err)
+		}
+	}
 	attempt := max(uint32(1), feedback.Attempt)
 	proposalID := lifecyclecore.ReflectionTaskID(workspace.IncidentID, outcomeCommit, attempt)
 	var task *contracts.AgentTask

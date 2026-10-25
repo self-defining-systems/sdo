@@ -12,6 +12,7 @@ import (
 )
 
 type PlanActionReport struct {
+	Script           *ScriptExecutionResult    `json:"script,omitempty"`
 	FailureReason    string                    `json:"failure_reason,omitempty"`
 	ActionIndex      int                       `json:"action_index"`
 	Status           string                    `json:"status"`

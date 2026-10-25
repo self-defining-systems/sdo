@@ -43,6 +43,9 @@ func (v *mitigationHealthVerifier) Verify(ctx context.Context) (bool, error) {
 		observation.TargetedFindingFingerprints = append(observation.TargetedFindingFingerprints, FindingFingerprint(finding))
 	}
 	for _, action := range v.plan.Actions {
+		if _, ok := concreteExternalAction(action).(program.RunScript); ok {
+			continue
+		}
 		ref, err := planActionRef(action)
 		if err != nil {
 			return false, err

@@ -1,6 +1,8 @@
 package program
 
 import (
+	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -55,4 +57,23 @@ func validateScriptAction(action Action) error {
 		return a.Validate()
 	}
 	return nil
+}
+
+// ScriptDigest identifies the authored bytes; it does not claim the rewritten
+// program was executed by its historical origin receipt.
+func ScriptDigest(script string) string { return fmt.Sprintf("%x", sha256.Sum256([]byte(script))) }
+
+// ScriptEnvText converts a scalar input into process environment text. It never
+// evaluates shell syntax, joins arguments, or serializes an object as shell code.
+func ScriptEnvText(value any) (string, error) {
+	switch value.(type) {
+	case string, bool, float64, float32, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, json.Number:
+	default:
+		return "", fmt.Errorf("script environment requires a scalar")
+	}
+	text := fmt.Sprint(value)
+	if strings.ContainsRune(text, 0) {
+		return "", fmt.Errorf("script environment contains NUL")
+	}
+	return text, nil
 }

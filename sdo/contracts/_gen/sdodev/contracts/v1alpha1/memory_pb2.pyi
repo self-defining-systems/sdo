@@ -30,9 +30,11 @@ class MitigationReplayNote(_message.Message):
         STATUS_UNSPECIFIED: _ClassVar[MitigationReplayNote.Status]
         STATUS_REPLAYED: _ClassVar[MitigationReplayNote.Status]
         STATUS_SKIPPED_UNREPLAYABLE_EFFECT: _ClassVar[MitigationReplayNote.Status]
+        STATUS_OBSERVED_TRANSITION: _ClassVar[MitigationReplayNote.Status]
     STATUS_UNSPECIFIED: MitigationReplayNote.Status
     STATUS_REPLAYED: MitigationReplayNote.Status
     STATUS_SKIPPED_UNREPLAYABLE_EFFECT: MitigationReplayNote.Status
+    STATUS_OBSERVED_TRANSITION: MitigationReplayNote.Status
     PROGRAM_ID_FIELD_NUMBER: _ClassVar[int]
     CASE_ID_FIELD_NUMBER: _ClassVar[int]
     STATUS_FIELD_NUMBER: _ClassVar[int]

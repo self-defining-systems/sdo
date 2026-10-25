@@ -91,3 +91,25 @@ The reviewed mixed10 source policy includes the deployed chart identity `opentel
 `RepairActionReceipt.failure_reason` and `ActionReport.failure_reason` distinguish `authorization_denied`, `execution_failed`, `delete_not_confirmed` and `outcome_unknown`. A command exit zero alone does not prove every declared deletion: CLI readback and independent Go ingestion check absence. Unconfirmed effects earn no success receipt. Continuation `already_done[].receipt.failure_reason` retains failures across restart. After one continuation, `error=no_progress` requires an unchanged stable source-absent inventory set, unchanged substantive finding evidence, and unchanged completed known failed receipts for every remaining resource. Inventory `metadata.stable_inventory` excludes deleting objects, owned children and TTL Jobs; inventory evidence comparison ignores only `observed_at`. Health findings, successful writes, untyped failures and `outcome_unknown`/`delete_not_confirmed` or pending effects keep the response budget. Fresh verification rechecks a persisted generic stop, including evidence changes, before rejecting continuation or immediate failed closure. When every remaining resource has a typed authorization denial, the more specific result remains `error=authorization_denied_no_progress`. Neither claims loop-budget exhaustion or recovery. Pending deletion/GC, Job TTL cleanup, successful or uncertain writes awaiting inventory observation, changed findings and health windows retain independent controller verification grace. Failed-decision timestamps remain distinct from verified recovery.
 
 `IncidentResult.unresolved_findings` records Go's terminal verification and is omitted from worker model output. Terminal unchanged source-absent objects without pending deletion or GC can close failed immediately, preserving grace for changing/recovering state, scheduled Job TTL cleanup, and successful/uncertain writes awaiting informer observation. Named raw DELETE paths resolve to their typed target; conflicting references are rejected and unconfirmed absence reports `delete_not_confirmed`, including receipts with zero executed targets. Inventory fingerprints include observed incarnation/configuration values; status/resourceVersion-only churn is excluded. Tool output distinguishes `mitigation_rounds_used/allowed` from `response_loops_used/allowed`; legacy `loops_used/allowed` describe write batches. Final `response_loops_used` counts provider executions. A missing API transport is refused before dispatch and never claims `changes_remain`.
+
+## RunScript evidence
+
+`Action.run_script` carries inline bash, Env Values, timeout and reason. Scripts
+are first-class learnable mitigations; typed actions remain optional upgrades.
+`ActionReport.script_result_json` retains the application ID, Job name/UID, script
+digest, input provenance, API receipt metadata, selected repair scope and touched
+object references. Scope identifies the selected repair and is not proof that an
+object was written. Raw output and captured preimages/postimages stay in the
+application-local private result ConfigMap named by `result_ref`; output is capped
+at 64 KiB per stream with truncation flags. Script Jobs have no retries or TTL;
+a durable reservation and Job UID forbid replacement after uncertain execution.
+
+A memory-check note with `STATUS_OBSERVED_TRANSITION` means open Diagnose matched,
+fixed Diagnose returned NoMatch, bindings/inputs validated, and the authored script
+digest links to an original successful timed controller `RepairReceipt` in the
+same incident. The corpus label `script_origins` maps digest to receipt ID. This
+basis neither executes bash offline nor proves the rewritten script ran or caused
+every observed change. Fixed captures are never simulator action replies. At live
+application time, script exit zero alone gives no verified program credit:
+Diagnose must return NoMatch and targeted findings must clear. Whole-app closure
+still requires global health. Script preimages do not authorize automatic undo.

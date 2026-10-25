@@ -221,6 +221,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		"prober-binary", "", "compiled routing and traffic prober on the shared repository volume; the controller runs it as an isolated pod",
 	)
 	toolchainImage := flags.String("toolchain-image", "", "trusted controller image supplying Go to workers and validators (required in job mode)")
+	scriptImage := flags.String("script-image", "", "fixed script-tools image; defaults to the trusted toolchain image")
 	proberImage := flags.String("prober-image", "", "image that runs the prober binary; defaults to --responder-image")
 	proberURL := flags.String("prober-url", "", "use an already running prober at this URL instead of starting one")
 	metricsURL := flags.String(
@@ -513,6 +514,13 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	if *controlNamespace != *namespace {
 		protectedNamespace = *controlNamespace
 	}
+	scriptJobImage := *scriptImage
+	if scriptJobImage == "" {
+		scriptJobImage = *toolchainImage
+	}
+	if scriptJobImage == "" {
+		scriptJobImage = *responderImage
+	}
 	var controller *Controller
 	dispatcher := options.Dispatcher
 	if dispatcher == nil {
@@ -541,7 +549,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			Catalog: catalog, Outcomes: memory.OpenReader(resolvedRoot), RequireMemorySnapshot: options.NativeBroker != nil,
 			LoopFactory: func(request IncidentRequest) *ResponderLoop {
 				loop := NewResponderLoop(request, options.Programs, snapshotProvider, detectors, PlanExecutor{
-					Client: GenericPlanClient{TypedPlanClient: TypedPlanClient{Client: bootstrapProvider.Client, ExecConfig: planExecConfig, ProtectedNamespace: protectedNamespace}, Objects: genericCapture}, Source: planSource,
+					Client: GenericPlanClient{TypedPlanClient: TypedPlanClient{Client: bootstrapProvider.Client, ExecConfig: planExecConfig, ProtectedNamespace: protectedNamespace, ScriptImage: scriptJobImage}, Objects: genericCapture}, Source: planSource,
 
 					Rollouts: KubernetesPlanRollouts{Client: bootstrapProvider.Client}, Verifier: PlanHealthVerifier{Detectors: detectors, Provider: snapshotProvider, Timeout: *verificationTimeout, PollInterval: scaledDuration(time.Second, timeScale)}, Observer: kubernetesCache,
 				}, *maxResponseLoops)

@@ -167,6 +167,7 @@ message ActionReport {
   bytes kubernetes_effect_json = 6;
   string recording_error = 7;
   bytes job_status_json = 8;
+  bytes script_result_json = 10;
   string failure_reason = 9 [(buf.validate.field).string = {in: ["", "authorization_denied", "execution_failed", "delete_not_confirmed", "outcome_unknown"]}];
 }
 

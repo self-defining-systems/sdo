@@ -1,0 +1,173 @@
+[
+  {
+    "method": "DatabaseUsers",
+    "arguments": [
+      {
+        "engine": "mongodb",
+        "pod": {
+          "api_version": "v1",
+          "kind": "Pod",
+          "namespace": "demo",
+          "name": "mongodb-geo"
+        },
+        "container": "mongo",
+        "database": "geo-db",
+        "auth": {
+          "database": "admin",
+          "username": {
+            "config_map": {
+              "name": "mongo-geo-script",
+              "key": "k8s-geo-mongo.sh",
+              "assignment": "ROOT_USER"
+            }
+          },
+          "password": {
+            "config_map": {
+              "name": "mongo-geo-script",
+              "key": "k8s-geo-mongo.sh",
+              "assignment": "ROOT_PWD"
+            }
+          }
+        }
+      }
+    ],
+    "result": [
+      {
+        "name": "root",
+        "roles": [
+          {
+            "database": "admin",
+            "name": "root"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "phase": "fixed",
+    "method": "DatabaseUsers",
+    "arguments": [
+      {
+        "engine": "mongodb",
+        "pod": {
+          "api_version": "v1",
+          "kind": "Pod",
+          "namespace": "demo",
+          "name": "mongodb-geo"
+        },
+        "container": "mongo",
+        "database": "geo-db",
+        "auth": {
+          "database": "admin",
+          "username": {
+            "config_map": {
+              "name": "mongo-geo-script",
+              "key": "k8s-geo-mongo.sh",
+              "assignment": "ROOT_USER"
+            }
+          },
+          "password": {
+            "config_map": {
+              "name": "mongo-geo-script",
+              "key": "k8s-geo-mongo.sh",
+              "assignment": "ROOT_PWD"
+            }
+          }
+        }
+      }
+    ],
+    "result": [
+      {
+        "name": "root",
+        "roles": [
+          {
+            "database": "admin",
+            "name": "root"
+          }
+        ]
+      },
+      {
+        "name": "admin",
+        "roles": [
+          {
+            "database": "geo-db",
+            "name": "readWrite"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "phase": "healthy",
+    "method": "DatabaseUsers",
+    "arguments": [
+      {
+        "engine": "mongodb",
+        "pod": {
+          "api_version": "v1",
+          "kind": "Pod",
+          "namespace": "demo",
+          "name": "mongodb-geo"
+        },
+        "container": "mongo",
+        "database": "geo-db",
+        "auth": {
+          "database": "admin",
+          "username": {
+            "config_map": {
+              "name": "mongo-geo-script",
+              "key": "k8s-geo-mongo.sh",
+              "assignment": "ROOT_USER"
+            }
+          },
+          "password": {
+            "config_map": {
+              "name": "mongo-geo-script",
+              "key": "k8s-geo-mongo.sh",
+              "assignment": "ROOT_PWD"
+            }
+          }
+        }
+      }
+    ],
+    "result": [
+      {
+        "name": "root",
+        "roles": [
+          {
+            "database": "admin",
+            "name": "root"
+          }
+        ]
+      },
+      {
+        "name": "admin",
+        "roles": [
+          {
+            "database": "geo-db",
+            "name": "readWrite"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "method": "RepairReceipt",
+    "arguments": [],
+    "result": {
+      "id": "manual-mongo-user",
+      "incident_id": "mongo-auth-upgrade",
+      "success": true,
+      "started_at": "2026-01-01T00:00:19Z",
+      "completed_at": "2026-01-01T00:00:20Z",
+      "resources": [
+        {
+          "api_version": "v1",
+          "kind": "Pod",
+          "namespace": "demo",
+          "name": "mongodb-geo"
+        }
+      ]
+    }
+  }
+]
