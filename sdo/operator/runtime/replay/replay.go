@@ -148,6 +148,9 @@ func Check(ctx context.Context, p program.Diagnoser, m program.Mitigator, detect
 	if err != nil {
 		return fail(err)
 	}
+	if err = client.seedDatabases(append(append([]sdktest.PrimitiveCall(nil), c.Corpus.Open.Readings...), c.Corpus.PhaseRecordings("open")...)); err != nil {
+		return fail(err)
+	}
 	r.Effects = append(r.Effects, "simulated:apiserver-metadata")
 	const commit = "offline-accepted"
 	incident := operator.IncidentRequest{IncidentID: c.ID, Application: c.Corpus.Open.NamespaceName, Namespace: c.Corpus.Open.NamespaceName, SourceCommit: commit, RepairPolicy: "recorded-actions"}
@@ -157,7 +160,7 @@ func Check(ctx context.Context, p program.Diagnoser, m program.Mitigator, detect
 		incident.Findings = append(incident.Findings, sdk.Finding{PrimaryResource: ref})
 	}
 	for _, d := range detectors {
-		findings, e := d.Detect(ctx, c.Corpus.Open)
+		findings, e := sdk.DetectObserved(ctx, d, recordedPhase(c.Corpus, "open"))
 		if e != nil {
 			return fail(e)
 		}
@@ -192,6 +195,10 @@ func Check(ctx context.Context, p program.Diagnoser, m program.Mitigator, detect
 	for _, a := range application.ActionReports {
 		if a.Status == "applied" {
 			r.Effects = append(r.Effects, fmt.Sprintf("real:%T:action:%d", plan.Actions[a.ActionIndex], a.ActionIndex))
+			switch plan.Actions[a.ActionIndex].(type) {
+			case program.EnsureDatabaseUser, *program.EnsureDatabaseUser:
+				r.Effects = append(r.Effects, "simulated:mongodb-user-catalog")
+			}
 		}
 	}
 	if err != nil {
@@ -284,7 +291,9 @@ func (v *postVerifier) Verify(ctx context.Context) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	v.result.Post = program.RunDiagnose(ctx, v.p, newReadView(ctx, s, unchangedPodProbes(v.cluster.initial, s, v.recordings), v.source), v.bindings, 5*time.Second)
+	view := newReadView(ctx, s, unchangedPodProbes(v.cluster.initial, s, v.recordings), v.source)
+	view.catalog = v.cluster
+	v.result.Post = program.RunDiagnose(ctx, v.p, view, v.bindings, 5*time.Second)
 	v.result.Detectors["post"] = detect(ctx, v.detectors, s)
 	clear := v.result.Post.Result == program.NoMatch
 	for _, d := range v.result.Detectors["post"] {
@@ -368,12 +377,14 @@ func comparable(o *unstructured.Unstructured) ([]byte, error) {
 // client-go's tracker is synthesized. No action implementation lives here.
 type cluster struct {
 	operator.TypedPlanClient
-	fake       *kubefake.Clientset
-	initial    map[sdk.ObjectRef]*unstructured.Unstructured
-	original   sdktest.Snapshot
-	simCreated map[sdk.ObjectRef]*unstructured.Unstructured
-	simDeleted map[sdk.ObjectRef]bool
-	simStatus  map[sdk.ObjectRef]map[string]any
+	fake                  *kubefake.Clientset
+	initial               map[sdk.ObjectRef]*unstructured.Unstructured
+	original              sdktest.Snapshot
+	catalogs              map[string]databaseCatalog
+	catalogConfigurations map[string]program.DatabaseTarget
+	simCreated            map[sdk.ObjectRef]*unstructured.Unstructured
+	simDeleted            map[sdk.ObjectRef]bool
+	simStatus             map[sdk.ObjectRef]map[string]any
 }
 
 func recordedPhase(c sdktest.CorpusCase, phase string) sdktest.Snapshot {

@@ -31,3 +31,15 @@ checker can independently derive them; Fixed recordings never prove a repair.
 ## Adopted existing memory
 
 Explicit `memory adopt-existing` / `install-existing --adopt-existing-memory` commits carry `SDO-Origin: adopted-existing` and `SDO-Validation: skipped`. Report these as an unvalidated accepted base, never as a successful import/replay. Only controller/program compilation is required initially. The exact unchanged inherited memory can be rebuilt without corpus acceptance; edits lose this exemption and follow normal broker validation. Inherited outcomes remain historical documents but supply no learning credit after adoption. Live executor refusals remain refusals. Healthy detector findings and excluded gallery detectors must be reported explicitly.
+
+## Typed Service-port and MongoDB catalog repairs
+
+`RemoveServicePort` receipts describe a conditional removal of exactly one Service port; final-port removal
+requires explicit allowance. Replay applies the production patch and preserves unrelated fields.
+`EnsureDatabaseUser` is an irreversible typed catalog operation, separate from arbitrary Exec. It restores
+one user's existence/direct roles, preserves existing passwords and unrelated users, and reports unknown
+on uncertain transport, changed Pod identity, or failed catalog read-back. Plans retain only container
+environment credential references. Replay seeds catalog state from successful open `DatabaseUsers` calls,
+requires the recorded auth/shell configuration, and projects the typed mutation. Fixed replies, passwords,
+authentication success and arbitrary commands are never simulated as repair proof. `real:program.EnsureDatabaseUser`
+identifies the production executor path through this catalog simulator; it is not a live database receipt.

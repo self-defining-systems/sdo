@@ -147,6 +147,8 @@ func (v *RecordingReadView) AlertsResult() (metrics.AlertsResult, bool)
 
 func (v *RecordingReadView) CaptureObjects(refs []sdk.ObjectRef) ([]unstructured.Unstructured, error)
 
+func (v *RecordingReadView) DatabaseUsers(t program.DatabaseTarget) ([]program.DatabaseUser, error)
+
 func (v *RecordingReadView) DiffAgainstBaseline(ref sdk.ObjectRef) (program.Diff, error)
 
 func (v *RecordingReadView) DiffAgainstSource(ref sdk.ObjectRef) (program.Diff, error)
@@ -203,6 +205,8 @@ type ReplayReadView struct {
     use.
 
 func (v *ReplayReadView) AlertsResult() (metrics.AlertsResult, bool)
+
+func (v *ReplayReadView) DatabaseUsers(t program.DatabaseTarget) ([]program.DatabaseUser, error)
 
 func (v *ReplayReadView) DiffAgainstBaseline(ref sdk.ObjectRef) (program.Diff, error)
 
@@ -283,6 +287,8 @@ func (s Snapshot) AlertsResult() (metrics.AlertsResult, bool)
 func (s Snapshot) CaptureObjects(refs []sdk.ObjectRef) ([]unstructured.Unstructured, error)
 
 func (s Snapshot) ConfigMaps() []corev1.ConfigMap
+
+func (s Snapshot) DatabaseUsers(t program.DatabaseTarget) ([]program.DatabaseUser, error)
 
 func (s Snapshot) Deployments() []appsv1.Deployment
 
