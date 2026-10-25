@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/traffic"
 )
 
 func developmentTimeScale() (float64, error) {
@@ -43,6 +44,24 @@ func (d timedDetector) Spec() sdk.DetectorSpec { return d.spec }
 
 func (d timedDetector) Detect(ctx context.Context, view sdk.DetectionContext) ([]sdk.Finding, error) {
 	return d.Detector.Detect(ctx, view)
+}
+
+func (d timedDetector) Confirmed(view sdk.DetectionContext) bool {
+	return detectorConfirmed(d.Detector, view)
+}
+
+func (d timedDetector) ConfirmationReason(view sdk.DetectionContext) string {
+	if detectorConfirmed(d.Detector, view) {
+		return ""
+	}
+	return detectorConfirmationReason(d.Detector, view)
+}
+
+func (d timedDetector) TrafficWorkloads() []string {
+	if consumer, ok := d.Detector.(traffic.Consumer); ok {
+		return consumer.TrafficWorkloads()
+	}
+	return nil
 }
 
 func scaleDetectors(detectors []sdk.Detector, scale float64) []sdk.Detector {

@@ -89,7 +89,7 @@ def _parser() -> argparse.ArgumentParser:
     )
     commands.add_parser("status", help="read current findings and session state")
     for name, help_text in (
-        ("detect", "run all or selected detectors on fresh state (read-only)"),
+        ("detect", "run fresh detectors; pending with a reason means health is unproven"),
         ("check", "run fresh detectors then independent closure verification"),
     ):
         check = commands.add_parser(name, help=help_text)
@@ -198,6 +198,7 @@ def _parser() -> argparse.ArgumentParser:
         "verify",
         help="read cached controller verification; optionally await a stable verdict",
         description="Reads the controller's cached health and inventory verdict immediately. "
+        "Pending observation windows, including unproven synthetic scenarios, are not healthy. "
         "Wait on SDO's verification instead of sleeping. After closure, incident_verified is an "
         "informational warning on every response; reads and reports remain available, while mutations are rejected.",
     )

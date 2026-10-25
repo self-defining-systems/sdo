@@ -103,18 +103,20 @@ class DriftEvidence(_message.Message):
     def __init__(self, kind: _Optional[str] = ..., observation: _Optional[str] = ...) -> None: ...
 
 class DetectorEvaluation(_message.Message):
-    __slots__ = ("detector_id", "evaluated_at", "status", "fingerprints", "error")
+    __slots__ = ("detector_id", "evaluated_at", "status", "fingerprints", "error", "reason")
     DETECTOR_ID_FIELD_NUMBER: _ClassVar[int]
     EVALUATED_AT_FIELD_NUMBER: _ClassVar[int]
     STATUS_FIELD_NUMBER: _ClassVar[int]
     FINGERPRINTS_FIELD_NUMBER: _ClassVar[int]
     ERROR_FIELD_NUMBER: _ClassVar[int]
+    REASON_FIELD_NUMBER: _ClassVar[int]
     detector_id: str
     evaluated_at: _timestamp_pb2.Timestamp
     status: str
     fingerprints: _containers.RepeatedScalarFieldContainer[str]
     error: str
-    def __init__(self, detector_id: _Optional[str] = ..., evaluated_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., status: _Optional[str] = ..., fingerprints: _Optional[_Iterable[str]] = ..., error: _Optional[str] = ...) -> None: ...
+    reason: str
+    def __init__(self, detector_id: _Optional[str] = ..., evaluated_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., status: _Optional[str] = ..., fingerprints: _Optional[_Iterable[str]] = ..., error: _Optional[str] = ..., reason: _Optional[str] = ...) -> None: ...
 
 class SurfacedPlaybook(_message.Message):
     __slots__ = ("playbook_id", "parameter_bindings")

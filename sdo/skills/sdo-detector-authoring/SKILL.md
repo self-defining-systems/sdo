@@ -35,6 +35,10 @@ Logs are capped at 64 KiB / 5 s; probes at 5 s. Read failures are errors/Unknown
 a successful probe with `Success:false` is an observed failure. Keep always-on reads cheap and use Diagnose for depth.
 Test using `sdktest.Snapshot.Readings` plus phase recordings; never fill absent evidence with healthy answers.
 
+## Synthetic traffic confirmation
+
+Steady traffic remains pending until every scenario has succeeded since observation began and has enough recent usable SLO samples. Pending carries a reason naming unproven scenarios, establishes no health and never opens an incident by itself. Qualified violations still fire alongside unproven peers. Process restarts lose qualification; recovery requires fresh observations and the controller's ordinary clearing check. A verify burst reports present scenario evidence, while controller verification owns incident closure.
+
 ## Metrics detectors (optional input)
 
 When the controller runs with a metrics source (`--metrics-url`, a Prometheus-compatible API), a health detector can

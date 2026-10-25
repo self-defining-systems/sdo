@@ -236,17 +236,21 @@ func (d KubernetesJobDispatcher) ContinueAfterVerification(ctx context.Context, 
 		limit = request.MaxResponseLoops
 	}
 	if state.Result == nil || state.Attempts >= limit || loop.Exhausted() {
-  return false, nil
- }
- repairs := loop.continuationRepairs(incidentResultState(state.Result))
- switch state.Result.GetError() {
- case "authorization_denied_no_progress":
-  return false, nil
- case "no_progress":
-  if responderNoProgress(state.Feedback, verification, repairs) { return false, nil }
- case "shared_ownership":
-  if sharedOwnershipBlocker(verification, repairs) { return false, nil }
- }
+		return false, nil
+	}
+	repairs := loop.continuationRepairs(incidentResultState(state.Result))
+	switch state.Result.GetError() {
+	case "authorization_denied_no_progress":
+		return false, nil
+	case "no_progress":
+		if responderNoProgress(state.Feedback, verification, repairs) {
+			return false, nil
+		}
+	case "shared_ownership":
+		if sharedOwnershipBlocker(verification, repairs) {
+			return false, nil
+		}
+	}
 	if !state.Done {
 		return true, nil
 	} // replay of a controller transition after a crash
@@ -445,7 +449,11 @@ func (c *Controller) continuationVerificationLocked(healthVerified, driftClear b
 			}
 		}
 		if latest == nil || latest.Status == DetectorEvaluationPending || (len(c.healthDetectorIDs) > 0 && latest.EvaluatedAt.Before(c.responderCompletedAt)) {
-			pending = append(pending, id)
+			description := id
+			if latest != nil && latest.Reason != "" {
+				description += ": " + latest.Reason
+			}
+			pending = append(pending, description)
 			continue
 		}
 		if latest.Status == DetectorEvaluationFiring {

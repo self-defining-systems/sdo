@@ -257,7 +257,7 @@ func (l *ResponderLoop) detect(ctx context.Context, ids []string, response *Tool
 			continue
 		}
 		observed, err := sdk.DetectObserved(ctx, detector, view)
-		state := DetectorEvaluation{DetectorID: id, EvaluatedAt: l.clock().UTC(), Status: DetectorEvaluationClear}
+		state := DetectorEvaluation{DetectorID: id, EvaluatedAt: l.clock().UTC(), Status: DetectorEvaluationClear, Reason: detectorConfirmationReason(detector, view)}
 		if err == nil && len(observed) == 0 && !detectorConfirmed(detector, view) {
 			state.Status = DetectorEvaluationPending
 		}
@@ -285,5 +285,5 @@ func (l *ResponderLoop) detect(ctx context.Context, ids []string, response *Tool
 	for _, state := range response.DetectorStates {
 		response.Healthy = response.Healthy && state.Status == DetectorEvaluationClear
 	}
-	response.Summary = fmt.Sprintf("%d detectors evaluated; %d current findings", len(response.DetectorStates), len(response.Findings))
+	response.Summary = fmt.Sprintf("%d detectors evaluated; %d current findings", len(response.DetectorStates), len(response.Findings)) + pendingEvaluationSummary(response.DetectorStates)
 }

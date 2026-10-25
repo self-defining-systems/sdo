@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"reflect"
+	"strings"
 	"sync"
 	"time"
 
@@ -37,6 +38,37 @@ func detectorConfirmed(detector sdk.Detector, snapshot sdk.DetectionContext) boo
 	}
 	return true
 }
+
+// detectorConfirmationReason is informational; pending is never an execution error.
+func detectorConfirmationReason(detector sdk.Detector, snapshot sdk.DetectionContext) string {
+	if d, ok := detector.(interface {
+		ConfirmationReason(sdk.DetectionContext) string
+	}); ok {
+		return d.ConfirmationReason(snapshot)
+	}
+	if !detectorConfirmed(detector, snapshot) {
+		return "observation window is incomplete"
+	}
+	return ""
+}
+
+func pendingEvaluationSummary(states []DetectorEvaluation) string {
+	var reasons []string
+	for _, state := range states {
+		if state.Status == DetectorEvaluationPending {
+			reason := state.Reason
+			if reason == "" {
+				reason = "observation window is incomplete"
+			}
+			reasons = append(reasons, state.DetectorID+": "+reason)
+		}
+	}
+	if len(reasons) == 0 {
+		return ""
+	}
+	return "; pending: " + strings.Join(reasons, "; ")
+}
+
 func detectorsConfirmed(detectors []sdk.Detector, snapshot sdk.DetectionContext) bool {
 	for _, d := range detectors {
 		if !detectorConfirmed(d, snapshot) {

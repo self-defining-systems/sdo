@@ -930,7 +930,7 @@ func (l *ResponderLoop) verify(ctx context.Context, applied []selectedPlan, resp
 	states := make([]DetectorEvaluation, 0, len(l.Detectors))
 	for _, detector := range l.Detectors {
 		observed, err := sdk.DetectObserved(ctx, detector, view)
-		state := DetectorEvaluation{DetectorID: detector.Spec().ID, EvaluatedAt: time.Now().UTC(), Status: DetectorEvaluationClear}
+		state := DetectorEvaluation{DetectorID: detector.Spec().ID, EvaluatedAt: time.Now().UTC(), Status: DetectorEvaluationClear, Reason: detectorConfirmationReason(detector, view)}
 		if err == nil && len(observed) == 0 && !detectorConfirmed(detector, view) {
 			state.Status = DetectorEvaluationPending
 		}
@@ -983,7 +983,7 @@ func (l *ResponderLoop) verify(ctx context.Context, applied []selectedPlan, resp
 	response.Healthy = response.Error == "" && len(findings) == 0 && (len(l.Detectors) > 0 || len(driftStates) > 0) && detectorsConfirmed(l.Detectors, view)
 	response.Unresolved = l.batches >= l.batchLimit() && !response.Healthy
 	if response.Error == "" {
-		response.Summary = fmt.Sprintf("verification: %d open findings", len(findings))
+		response.Summary = fmt.Sprintf("verification: %d open findings", len(findings)) + pendingEvaluationSummary(states)
 		if response.Healthy {
 			response.Summary = "verification: healthy; return the structured incident result immediately"
 		}

@@ -1372,9 +1372,10 @@ type unavailableEvaluation struct {
 }
 
 type evaluationResult struct {
-	Findings    []sdk.Finding           `json:"findings"`
-	Status      evaluationStatus        `json:"status"`
-	Unavailable []unavailableEvaluation `json:"unavailable,omitempty"`
+	Findings       []sdk.Finding           `json:"findings"`
+	Status         evaluationStatus        `json:"status"`
+	Unavailable    []unavailableEvaluation `json:"unavailable,omitempty"`
+	DetectorStates []DetectorEvaluation    `json:"detector_states,omitempty"`
 }
 
 func evaluateOnce(
@@ -1575,7 +1576,7 @@ func evaluateOnce(
 			break
 		}
 	}
-	if err := json.NewEncoder(stdout).Encode(evaluationResult{Status: status, Findings: findings, Unavailable: unavailable}); err != nil {
+	if err := json.NewEncoder(stdout).Encode(evaluationResult{Status: status, Findings: findings, Unavailable: unavailable, DetectorStates: controller.history}); err != nil {
 		return err
 	}
 	if *acceptSeed && status != evaluationStatus(DetectorEvaluationClear) {

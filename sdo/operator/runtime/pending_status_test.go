@@ -16,7 +16,7 @@ import (
 )
 
 func TestPendingDetectorStatusPersistsThroughControllerState(t *testing.T) {
-	evaluations := []DetectorEvaluation{{DetectorID: "service-reachability", EvaluatedAt: time.Unix(100, 0), Status: DetectorEvaluationPending}}
+	evaluations := []DetectorEvaluation{{DetectorID: "service-reachability", EvaluatedAt: time.Unix(100, 0), Status: DetectorEvaluationPending, Reason: "no synthetic scenario has succeeded since observation began"}}
 	store := lifecycleio.NewConfigMapStateStore(fake.NewSimpleClientset(), "control", "sdo-controller-state")
 	request := nativeClosure(IncidentWorkspace{IncidentID: "pending-incident", Worktree: "/proposal", BaseCommit: "base"}).Request
 	request.DetectorHistory = evaluations
@@ -33,7 +33,7 @@ func TestPendingDetectorStatusPersistsThroughControllerState(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := evaluationsState(restored.History)
-	if len(got) != 1 || got[0].Status != DetectorEvaluationPending || restored.IncidentRequest.DetectorHistory[0].Status != "pending" {
+	if len(got) != 1 || got[0].Status != DetectorEvaluationPending || restored.IncidentRequest.DetectorHistory[0].Status != "pending" || got[0].Reason != evaluations[0].Reason || restored.IncidentRequest.DetectorHistory[0].GetReason() != evaluations[0].Reason {
 		t.Fatalf("pending changed on restart: %+v", got)
 	}
 }

@@ -35,6 +35,7 @@ type DetectorEvaluation struct {
 	Status       DetectorEvaluationStatus
 	Fingerprints []string
 	Error        string
+	Reason       string `json:"Reason,omitempty"`
 }
 
 type SurfacedPlaybook struct {
