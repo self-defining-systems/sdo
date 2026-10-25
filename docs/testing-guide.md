@@ -550,14 +550,17 @@ The Go module job starts its longest module alongside a sequential lane for
 smaller modules. The full Python suite overlaps those lanes with two pytest workers
 and one Go compiler per worker; both lane results are required even when one fails. Static
 and proto checks run first on that runner. Runtime
-uses **two disjoint partitions on one runner**, `contracts` and `integration`,
+uses **three disjoint partitions on one runner**, `contracts`, `integration` and
+`lifecycle`,
 without competing with unrelated module compilation. Run both locally with
 `uv run python scripts/test_runtime_shard.py --shard all`, or select either
-partition by name. Inventory discovery runs once before both partitions start,
-with shared Go build caches; both exit statuses are collected even if one fails. Every package,
+partition by name. Inventory discovery runs once before all partitions start,
+with shared Go build caches; every exit status are collected even if one fails. Every package,
 example, fuzz seed, replay, chaos and explorer test remains in the race suite.
 The exactly-once guard rejects missing or overlapping names; all nested scenarios
 and seeds remain unchanged. The unchanged 83 MiB restart fixtures stay on PRs.
+Native broker/lifecycle cases and the exhaustive lifecycle model have their own
+partition, so long controller continuations cannot queue behind all contracts.
 The partitions also retain the full trust property matrix. Immutable health-policy
 checks compile one binary per accepted policy revision and execute each observation
 against it; simulation pumps wait for completion events instead of scheduler ticks.

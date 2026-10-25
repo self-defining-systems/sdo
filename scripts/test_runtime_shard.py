@@ -3,7 +3,7 @@
 
 Discovery uses Go's compiled test inventory, including replay, chaos, fuzz seeds
 and examples, across every package. Every name must match exactly one partition.
-PR CI uses two measured partitions, sharing dependency build caches.
+PR CI uses three measured partitions, sharing dependency build caches.
 """
 
 from __future__ import annotations
@@ -22,7 +22,6 @@ INTEGRATION = (
     "TestReflectionLearnedProgramCLIAndBroker",
     "TestT1ScriptedBrokerMatrix",
     "TestRenderedLockImageInputScope",
-    "TestExhaustiveReflectionLifecycle",
     "TestSimSchedule",
     "TestSimScheduleQueuedDriftNeverRedispatchesAfterVerifiedClosure",
     "TestSimRenderedLockSchedule",
@@ -30,9 +29,13 @@ INTEGRATION = (
     "FuzzSimIncidentSchedule",
 )
 _INTEGRATION = "(?:" + "|".join(INTEGRATION) + ")"
+_LIFECYCLE = "(?:TestNative(?:Broker|Lifecycle).*|TestExhaustiveReflectionLifecycle)"
 PATTERNS = {
     "integration": "^" + _INTEGRATION + "$",
-    "contracts": "^(?!" + _INTEGRATION + "$)(?:Test|Fuzz|Example)",
+    "lifecycle": "^" + _LIFECYCLE + "$",
+    "contracts": "^(?!"
+    + _INTEGRATION
+    + "$)(?!TestNative(?:Broker|Lifecycle)|TestExhaustiveReflectionLifecycle$)(?:Test|Fuzz|Example)",
 }
 RUNTIME = Path(__file__).resolve().parents[1] / "sdo/operator/runtime"
 

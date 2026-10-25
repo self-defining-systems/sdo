@@ -52,10 +52,12 @@ def test_cancellation_terminates_the_real_grandchild_process_group(tmp_path: Pat
         f"subprocess.Popen([sys.executable, '-c', {grandchild!r}])\n"
         "while True: time.sleep(60)\n"
     )
+    # Load the repository file explicitly: an optional dependency also ships
+    # a concrete `scripts` package, which takes precedence over our namespace.
     command = (
-        f"import sys; sys.path.insert(0, {str(ROOT)!r}); from scripts.test_ci_checks import Lane, run_lanes; "
-        f"from pathlib import Path; raise SystemExit(run_lanes([Lane('worker', (sys.executable, {str(worker)!r}))], "
-        f"Path({str(tmp_path)!r})))"
+        f"import sys, runpy; ns = runpy.run_path({str(ROOT / 'scripts/test_ci_checks.py')!r}); "
+        f"from pathlib import Path; raise SystemExit(ns['run_lanes']([ns['Lane']('worker', "
+        f"(sys.executable, {str(worker)!r}))], Path({str(tmp_path)!r})))"
     )
     owner = subprocess.Popen([sys.executable, "-c", command])
     try:
@@ -78,3 +80,19 @@ def test_cancellation_terminates_the_real_grandchild_process_group(tmp_path: Pat
                 os.killpg(int((tmp_path / "worker_pid").read_text()), signal.SIGKILL)
             except ProcessLookupError:
                 pass
+
+
+def test_repository_binary_helper_wins_over_an_installed_scripts_package(tmp_path: Path) -> None:
+    import subprocess
+
+    installed = tmp_path / "site-packages"
+    package = installed / "scripts"
+    package.mkdir(parents=True)
+    (package / "__init__.py").write_text("raise RuntimeError('unrelated installed package selected')\n")
+    command = (
+        f"import sys; sys.path[:0] = [{str(ROOT)!r}, {str(installed)!r}]; "
+        "from scripts import operator_test_binary; "
+        f"assert operator_test_binary.__file__ == {str(ROOT / 'scripts/operator_test_binary.py')!r}"
+    )
+    completed = subprocess.run([sys.executable, "-c", command], capture_output=True, text=True, check=False)
+    assert completed.returncode == 0, completed.stderr
