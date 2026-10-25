@@ -173,6 +173,9 @@ def run_lane(run_dir: Path, timeout: int) -> int:
             else:
                 raise ValueError("eval: pre-injection callback was not reached")
     except Exception as exc:
+        import traceback
+
+        traceback.print_exc()
         report.invariants["failure"] = {"passed": False, "class": "eval", "reason": str(exc)}
     report.seconds = time.monotonic() - started
     report.save(report_path)

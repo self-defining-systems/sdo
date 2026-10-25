@@ -262,3 +262,17 @@ def test_fresh_reset_removes_only_prior_responder_grants(monkeypatch):
     monkeypatch.setattr(rbac, "kubectl", api)
     rbac.reset_responder_grants(Path("unused"), "app")
     assert [call[1] for call in calls if call[0] == "delete"] == ["RoleBinding/prior-permissive"]
+
+
+@pytest.mark.parametrize("history", [None, []])
+def test_absent_controller_observations_are_unproven(history):
+    from benchmarks.sregym.adapter.eval_guards import controller_proof
+
+    assert not controller_proof({"history": history}, {"traffic-health"}, "2026-10-25T20:00:00Z")["passed"]
+
+
+@pytest.mark.parametrize("windows", [None, {}, {"health": {"scenarios": None}}])
+def test_unstarted_prober_windows_are_unproven(windows):
+    from benchmarks.sregym.adapter.eval_guards import qualified_scenarios
+
+    assert not qualified_scenarios({"windows": windows}, {"frontend"})

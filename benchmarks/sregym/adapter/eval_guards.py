@@ -56,7 +56,7 @@ def setup_lineage(repository: Path, seed: str, head: str = "HEAD") -> dict[str, 
 
 
 def controller_proof(state: dict[str, Any], required: set[str], not_before: str) -> dict[str, Any]:
-    latest = {row.get("detector_id"): row for row in state.get("history", [])}
+    latest = {row.get("detector_id"): row for row in (state.get("history") or [])}
     blocked = {}
     boundary = datetime.fromisoformat(not_before.replace("Z", "+00:00"))
     for key in required | set(latest):
@@ -79,8 +79,8 @@ def controller_proof(state: dict[str, Any], required: set[str], not_before: str)
 def qualified_scenarios(windows: dict[str, Any], required: set[str]) -> bool:
     observed = {
         row.get("scenario", {}).get("id"): row
-        for window in windows.get("windows", {}).values()
-        for row in window.get("scenarios", [])
+        for window in (windows.get("windows") or {}).values()
+        for row in (window.get("scenarios") or [])
     }
     return (
         bool(required)
