@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"k8s.io/client-go/kubernetes"
 	"sdo.dev/operator/core"
 	"sdo.dev/operator/onboarding"
 	"sdo.dev/operator/sdk"
@@ -75,6 +76,9 @@ type Controller struct {
 	drift                       *DriftControllerConfig
 	driftEvents                 []sdk.DriftEvent
 	sourceInventory             *SourceInventory
+	pendingOnboarding           *contracts.NamespaceOnboarding
+	onboardingClient            kubernetes.Interface
+	onboardingControl           string
 	namespaceOnboarding         *contracts.NamespaceOnboarding
 	sourceInventoryError        string
 	sourceInventoryRetryAt      time.Time
@@ -306,7 +310,10 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 			c.mu.Unlock()
 		}
 	}
-	c.observeSourceInventory(now)
+	deferInventory := c.pendingOnboarding != nil
+	if !deferInventory {
+		c.observeSourceInventory(now)
+	}
 	detectors := c.scheduler.SelectEvents(now, events)
 	probes := c.dueGateProbes(now, detectors)
 	var objectChanges []ObjectChange
@@ -329,6 +336,7 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 	}
 	c.processDrift(ctx, now, snapshot, objectChanges)
 
+	onboardingCandidate := c.beginOnboarding(ctx, detectors)
 	sampleFindings := make([]sdk.Finding, 0)
 	errored := false
 	c.mu.Lock()
@@ -392,6 +400,10 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 			}
 		}
 		c.recordFiring(spec, now, validFindings, changes)
+	}
+	c.finishOnboarding(ctx, onboardingCandidate, sampleFindings, errored, now)
+	if deferInventory && c.pendingOnboarding == nil {
+		c.observeSourceInventory(now)
 	}
 	c.probeGate(ctx, now, snapshot, probes)
 	c.forgetGate()

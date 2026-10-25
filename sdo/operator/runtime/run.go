@@ -640,6 +640,9 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	if err := controller.SetNamespaceOnboarding(acknowledgement); err != nil {
 		return err
 	}
+	if err := controller.AttachPendingOnboarding(ctx, bootstrapProvider.Client, *controlNamespace); err != nil {
+		return err
+	}
 	if launchConfig != nil {
 		controller.discardRestoredHealthObservations(start)
 	}

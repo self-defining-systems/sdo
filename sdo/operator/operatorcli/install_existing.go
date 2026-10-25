@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"sdo.dev/operator/builder"
-	"sdo.dev/operator/deployment"
 	"sdo.dev/operator/install"
 	"sdo.dev/operator/memory"
 )
@@ -177,15 +176,7 @@ func RunInstallExisting(ctx context.Context, launch InstallExistingConfig) (Inst
 		SeedRepository: install.KubectlTarSeederWithBrokerEvidence(launch.Repository, commit, launch.Kubeconfig, launch.SeedBrokerRoot),
 		SyncRepository: install.KubectlTarSynchronizerWithKubeconfig(launch.Repository, launch.Kubeconfig),
 	}
-	installer.BeforeControllerStart = func(ctx context.Context, _ install.Config) error {
-		probe := deployment.AcceptedDetectorProbe{RequireComplete: true, Kubeconfig: launch.Kubeconfig, MetricsURL: config.MetricsURL}
-		if err := acknowledgeExistingNamespace(ctx, client, launch, commit, probe); err != nil {
-			// Observation must remain available for an initially unhealthy adopted app.
-			// Missing independent evidence grants no identity acknowledgement.
-			fmt.Fprintln(os.Stderr, "namespace onboarding not acknowledged:", err)
-		}
-		return nil
-	}
+	installer.BeforeControllerStart = existingNamespaceOnboardingHook(client, launch, commit)
 	result, err := installer.Install(ctx, config)
 	if err != nil {
 		return InstallExistingResult{}, err
