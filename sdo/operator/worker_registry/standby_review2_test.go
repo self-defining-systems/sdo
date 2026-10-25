@@ -207,3 +207,34 @@ func TestRWS2StartupDurationsRequireRetainedBoundaries(t *testing.T) {
 		t.Fatalf("derived duration survived discarded request: %+v", record)
 	}
 }
+
+func TestRWS2RequestConflictDoesNotInheritInitialClock(t *testing.T) {
+	_, e, task := standbyFixture(t)
+	session := filepath.Join(e.RepositoryMountPath, "session")
+	if err := os.MkdirAll(filepath.Join(session, "startup"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	initial := time.Now().UTC().Add(-time.Hour)
+	if err := writeStartupOnce(filepath.Join(session, "startup/startup-dispatch.json"), DispatchStartup{Mode: "cold", TaskBoundAt: initial}); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.ensureRequest(context.Background(), JobName(task.TaskId)+"-request", `{"different":"request"}`); err != nil {
+		t.Fatal(err)
+	}
+	stopped := errors.New("leadership lost")
+	e.OnPhase = func(context.Context, string) error { return stopped }
+	if _, err := e.Execute(context.Background(), task); !errors.Is(err, stopped) {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(session, "startup/attempts", TaskJobName(task), "startup-controller.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var record ResponderStartup
+	if err := json.Unmarshal(data, &record); err != nil {
+		t.Fatal(err)
+	}
+	if record.TaskBoundAt == nil || !record.TaskBoundAt.After(initial) {
+		t.Fatalf("request conflict inherited another execution's clock: %s", data)
+	}
+}

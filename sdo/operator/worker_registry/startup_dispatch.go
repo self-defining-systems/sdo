@@ -40,7 +40,7 @@ func (e KubernetesExecutor) prepareDispatchStartup(task *contracts.AgentTask, jo
 		// Adopt an old initial-attempt record only when this is that same task.
 		// The incident-wide file must never supply a continuation's boundary.
 		incident := new(contracts.IncidentRequest)
-		if task.Request.UnmarshalTo(incident) == nil && task.GetTaskId() == incident.GetIncidentId() {
+		if task.Request.UnmarshalTo(incident) == nil && task.GetTaskId() == incident.GetIncidentId() && (e.WarmBinding != nil || jobName == JobName(task.GetTaskId())) {
 			if data, err := os.ReadFile(filepath.Join(session, "startup/startup-dispatch.json")); err == nil {
 				var previous DispatchStartup
 				if json.Unmarshal(data, &previous) == nil && previous.Mode == timing.Mode && !previous.TaskBoundAt.IsZero() &&
