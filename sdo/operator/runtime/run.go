@@ -1327,7 +1327,7 @@ func evaluateOnce(
 			return errors.New("source-drift-report requires app-root and a Kubernetes read client")
 		}
 		source := GitPlanSource{Repository: *appRoot, ManifestPaths: deployedManifestPaths}
-		objects, err := source.AcceptedManifests(ctx, readCommit, *namespace)
+		inventory, err := source.AcceptedInventory(ctx, readCommit, *namespace)
 		if err != nil {
 			return err
 		}
@@ -1340,7 +1340,9 @@ func evaluateOnce(
 		if err := cache.WaitForSync(ctx); err != nil {
 			return err
 		}
-		return WriteSourceInventoryReport(stdout, *sourceDriftReport, NewSourceInventory(*namespace, readCommit, objects), cache.SourceDriftObjects())
+		index := NewSourceInventory(*namespace, readCommit, inventory.Objects)
+		index.EvidenceGaps = inventory.EvidenceGaps
+		return WriteSourceInventoryReport(stdout, *sourceDriftReport, index, cache.SourceDriftObjects())
 	}
 	trafficProvider := TrafficSnapshotProvider{Base: provider}
 	if *appRoot != "" {
