@@ -157,5 +157,7 @@ jobs:
             fi
             (cd "$module" && GOTOOLCHAIN="$toolchain" go test -race -run '^$' -timeout=1m ./...)
           done
+          go install github.com/bufbuild/buf/cmd/buf@v1.73.0
+          go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.12
           # Warm normal-build dependencies too. This output is never a test CLI.
           (cd sdo/operator && go build -o "$RUNNER_TEMP/native-cache-warm" ./cmd/sdo-operator)
