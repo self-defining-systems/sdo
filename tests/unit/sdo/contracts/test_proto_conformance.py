@@ -74,3 +74,11 @@ def test_proto_schema_models_every_go_fixture(name: str, message_type: type) -> 
     raw = (GO_FIXTURES / name).read_text(encoding="utf-8")
     # Raises on any field the proto schema does not model.
     parse_json(raw, message_type())
+
+
+def test_detector_status_validation_includes_unconfirmed_pending() -> None:
+    from buf.validate import validate_pb2
+
+    field = contract_proto.DetectorEvaluation.DESCRIPTOR.fields_by_name["status"]
+    permitted = getattr(field.GetOptions().Extensions[validate_pb2.field].string, "in")
+    assert set(permitted) == {"firing", "clear", "error", "pending"}

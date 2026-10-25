@@ -418,7 +418,7 @@ func (c *Controller) continuationVerificationLocked(healthVerified, driftClear b
 				break
 			}
 		}
-		if latest == nil || (len(c.healthDetectorIDs) > 0 && latest.EvaluatedAt.Before(c.responderCompletedAt)) {
+		if latest == nil || latest.Status == DetectorEvaluationPending || (len(c.healthDetectorIDs) > 0 && latest.EvaluatedAt.Before(c.responderCompletedAt)) {
 			pending = append(pending, id)
 			continue
 		}

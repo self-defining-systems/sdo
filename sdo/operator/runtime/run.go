@@ -1445,6 +1445,11 @@ func evaluateOnce(
 		return fmt.Errorf("health detector evaluation failed: %w", detectorErrors[0])
 	}
 	status := DetectorEvaluationClear
+	for _, evaluation := range controller.history {
+		if evaluation.Status == DetectorEvaluationPending {
+			status = DetectorEvaluationPending
+		}
+	}
 	for _, finding := range findings {
 		if finding.Status == sdk.FindingActive {
 			status = DetectorEvaluationFiring
@@ -1454,8 +1459,8 @@ func evaluateOnce(
 	if err := json.NewEncoder(stdout).Encode(map[string]any{"status": status, "findings": findings}); err != nil {
 		return err
 	}
-	if *acceptSeed && len(findings) != 0 {
-		return fmt.Errorf("seed acceptance rejected: %d detector finding(s)", len(findings))
+	if *acceptSeed && status != DetectorEvaluationClear {
+		return fmt.Errorf("seed acceptance rejected: status %s; %d detector finding(s)", status, len(findings))
 	}
 	return nil
 }

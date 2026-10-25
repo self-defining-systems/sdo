@@ -822,6 +822,9 @@ func (l *ResponderLoop) verify(ctx context.Context, applied []selectedPlan, resp
 	for _, detector := range l.Detectors {
 		observed, err := sdk.DetectObserved(ctx, detector, view)
 		state := DetectorEvaluation{DetectorID: detector.Spec().ID, EvaluatedAt: time.Now().UTC(), Status: DetectorEvaluationClear}
+		if err == nil && len(observed) == 0 && !detectorConfirmed(detector, view) {
+			state.Status = DetectorEvaluationPending
+		}
 		if err != nil {
 			state.Status, state.Error = DetectorEvaluationError, err.Error()
 			response.Error = err.Error()
@@ -868,7 +871,7 @@ func (l *ResponderLoop) verify(ctx context.Context, applied []selectedPlan, resp
 		response.ProgramRuns = append(response.ProgramRuns, runs...)
 		l.runs = append(l.runs, runs...)
 	}
-	response.Healthy = response.Error == "" && len(findings) == 0 && (len(l.Detectors) > 0 || len(driftStates) > 0)
+	response.Healthy = response.Error == "" && len(findings) == 0 && (len(l.Detectors) > 0 || len(driftStates) > 0) && detectorsConfirmed(l.Detectors, view)
 	response.Unresolved = l.batches >= l.MaxBatches && !response.Healthy
 	if response.Error == "" {
 		response.Summary = fmt.Sprintf("verification: %d open findings", len(findings))

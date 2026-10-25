@@ -70,3 +70,10 @@ func TestIndependentHealthVerifierBindsAcceptedDetectorsAndDeployedSource(t *tes
 		t.Fatal("unaccepted source evidence passed")
 	}
 }
+
+func TestHealthVerdictPendingIsKnownWithoutEstablishingHealth(t *testing.T) {
+	status, err := decodeHealthVerdict([]byte(`{"status":"pending","findings":[]}`), nil)
+	if err != nil || status != "pending" {
+		t.Fatalf("pending verdict: %s %v", status, err)
+	}
+}
