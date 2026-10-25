@@ -8,28 +8,30 @@ import (
 )
 
 // responderToolState retains limits and revision-bound outcomes, never prepared
-// plans or mutation/rollback records. Version 1 journals are read only for these
+// plans or mutation/rollback authority. Immutable completed receipts are kept
+// independently of continuation feedback. Version 1 journals are read only for these
 // facts; their application fields are deliberately ignored.
 type responderToolState struct {
-	Continuation   responderContinuation
-	SessionID      string
-	MenuSession    *contracts.MitigationSession
-	MenuReports    []*contracts.MitigationReport
-	MenuRepairs    []RepairActionReceipt
-	MenuExecutions map[string][]MenuRoundExecution
-	Version        int
-	IncidentID     string
-	SourceCommit   string
-	FailureSignals []string
-	Batches        int
-	MaxBatches     int
+	CompletedRepairs []continuationRepair
+	Continuation     responderContinuation
+	SessionID        string
+	MenuSession      *contracts.MitigationSession
+	MenuReports      []*contracts.MitigationReport
+	MenuRepairs      []RepairActionReceipt
+	MenuExecutions   map[string][]MenuRoundExecution
+	Version          int
+	IncidentID       string
+	SourceCommit     string
+	FailureSignals   []string
+	Batches          int
+	MaxBatches       int
 }
 
 func (l *ResponderLoop) persistToolState(ctx context.Context) error {
 	if l.saveToolState == nil {
 		return nil
 	}
-	payload, err := json.Marshal(responderToolState{Continuation: l.continuation, Version: 2, SessionID: l.sessionID, MenuSession: l.menuSession, MenuReports: l.menuReports, MenuRepairs: l.menuRepairs, MenuExecutions: l.menuExecutions, IncidentID: l.Request.IncidentID, SourceCommit: l.Request.SourceCommit, FailureSignals: l.failureSignals, Batches: l.batches, MaxBatches: l.MaxBatches})
+	payload, err := json.Marshal(responderToolState{CompletedRepairs: l.applicationRepairsLocked(), Continuation: l.continuation, Version: 2, SessionID: l.sessionID, MenuSession: l.menuSession, MenuReports: l.menuReports, MenuRepairs: l.menuRepairs, MenuExecutions: l.menuExecutions, IncidentID: l.Request.IncidentID, SourceCommit: l.Request.SourceCommit, FailureSignals: l.failureSignals, Batches: l.batches, MaxBatches: l.MaxBatches})
 	if err != nil {
 		return fmt.Errorf("encode responder attempt state: %w", err)
 	}
@@ -61,6 +63,7 @@ func (l *ResponderLoop) restoreToolSnapshot(payload []byte) error {
 	if state.SessionID != "" {
 		l.sessionID = state.SessionID
 	}
+	l.completedRepairs = state.CompletedRepairs
 	l.continuation = state.Continuation
 	l.menuSession = state.MenuSession
 	l.menuReports = state.MenuReports

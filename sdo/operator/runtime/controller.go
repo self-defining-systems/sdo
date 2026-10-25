@@ -92,7 +92,10 @@ type Controller struct {
 	// stagedTaskIncident is the incident whose prepared task the last saved state references on the repository volume.
 	stagedTaskIncident string
 
-	mu sync.Mutex
+	// observationMu serializes tool closure checks with a complete controller
+	// observation, including tracker and evaluation-history updates. Lock before mu.
+	observationMu sync.Mutex
+	mu            sync.Mutex
 	// durable is the state stateStore last confirmed durable. With a store
 	// attached, an effect runs only while this state records it, so a
 	// restarted controller can recover every effect that ran.
@@ -257,6 +260,8 @@ func (c *Controller) Step(ctx context.Context, now time.Time, event *sdk.WatchKi
 // StepEvents evaluates, against one snapshot, every detector that is due or
 // watches any of the coalesced watch events.
 func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk.WatchKind) error {
+	c.observationMu.Lock()
+	defer c.observationMu.Unlock()
 	if err := c.prepareHealthEffects(ctx, now); err != nil {
 		return err
 	}

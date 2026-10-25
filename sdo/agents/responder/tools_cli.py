@@ -71,6 +71,14 @@ def _parser() -> argparse.ArgumentParser:
             epilog="Example: " + CLI_EXAMPLES[1 if name == "diagnose" else 2],
         )
         command.add_argument("program_id", nargs=None if name == "plan" else "?")
+        if name == "plan":
+            command.add_argument(
+                "--finding",
+                action="append",
+                default=[],
+                metavar="FINGERPRINT",
+                help="target finding fingerprint; repeat for each intended finding",
+            )
         command.add_argument(
             "--bind",
             action="append",
@@ -89,6 +97,13 @@ def _parser() -> argparse.ArgumentParser:
         ),
     )
     mitigate.add_argument("option", nargs="?", help="option ID or unambiguous program ID from the current menu")
+    mitigate.add_argument(
+        "--finding",
+        action="append",
+        default=[],
+        metavar="FINGERPRINT",
+        help="target finding fingerprint; repeat for each intended finding",
+    )
     mitigate.add_argument("--rounds", type=int, help="maximum rounds within the remaining incident allowance")
     mitigate.add_argument("--selection", type=Path, metavar="FILE")
     mitigate.add_argument("--param", action="append", type=_binding, default=[], metavar="NAME=VALUE")
@@ -127,6 +142,8 @@ def _parser() -> argparse.ArgumentParser:
 
 def _request(args: argparse.Namespace) -> dict[str, object]:
     request: dict[str, object] = {"command": args.command}
+    if getattr(args, "finding", None):
+        request["finding_fingerprints"] = args.finding
     if args.command == "detect":
         if args.detector:
             request["detector_ids"] = args.detector

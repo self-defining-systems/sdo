@@ -45,6 +45,9 @@ func testHermeticResponderThreeFaultContinuation(t *testing.T, mitigate bool) {
 	request.MaxResponseLoops = 3
 	snapshot, _ := provider.Snapshot(ctx)
 	request.Findings, _ = (fastloopDetector{}).Detect(ctx, snapshot)
+	for i := range request.Findings {
+		request.Findings[i].Playbooks = []string{"service-targetport-mismatch"}
+	}
 	loop := NewResponderLoop(request, registry, provider, []sdk.Detector{fastloopDetector{}}, PlanExecutor{Client: TypedPlanClient{Client: client}, Rollouts: KubernetesPlanRollouts{Client: client}, Verifier: PlanHealthVerifier{Detectors: []sdk.Detector{fastloopDetector{}}, Provider: provider}}, 3)
 	if mitigate {
 		loop.MenuConfig = productionResponderMenu()
