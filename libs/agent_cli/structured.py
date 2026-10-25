@@ -184,20 +184,22 @@ class _ShellCommandRecorder:
     on_session_started: Callable[[str], None] | None = None
     on_usage: Callable[[dict[str, int | float], bool], None] | None = None
     session_id: str | None = None
-    incremental: dict[str, int | float] = field(default_factory=dict)
+    incremental: dict[str, int | float] = field(default_factory=dict[str, int | float])
 
     def on_event(self, event: AgentEvent) -> None:
         if isinstance(event, SessionStarted):
             self.session_id = event.session_id
             if self.on_session_started is not None:
                 self.on_session_started(event.session_id)
-        if isinstance(event, UsageReport) and self.on_usage is not None:
+        if isinstance(event, UsageReport) and self.on_usage is not None and event.usage.provider == "claude":
             observed = turn_usage(StructuredTurn("", self.session_id or "", event.usage))
             # Claude assistant reports are incremental; the terminal report has
             # num_turns and supersedes them. Codex reports only at turn end.
             if event.usage.provider == "claude" and event.usage.tokens.turns == 0:
                 for name, value in observed.items():
                     self.incremental[name] = self.incremental.get(name, 0) + value
+                self.incremental["llm_calls"] += 1
+                self.incremental["model_requests"] = self.incremental["llm_calls"]
                 self.on_usage(dict(self.incremental), False)
             else:
                 self.on_usage(observed, False)
