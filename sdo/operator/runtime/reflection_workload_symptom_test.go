@@ -142,33 +142,38 @@ func TestReflectionLearnsDeploymentRepairWithUnwrittenServiceSymptoms(t *testing
 		checkout := task.Workspace.CheckoutPath
 		decision := &contracts.ReflectionResult{LearningDecision: "updated", ProposedArtifactIds: []string{"extra-workload-listener"}}
 		publication := &contracts.ReflectionDecision{LearningDecision: "updated", PlaybookIds: decision.ProposedArtifactIds}
-		reject := func(rule string) {
+		reject := func(rule string, publish bool) {
 			t.Helper()
 			writeReflectionCheckDecision(t, checkout, decision)
 			report, code := runReflectionMemoryCheck(t, binary, checkout, proposal.BaseCommit, operatorRoot)
-			_, publishErr := repository.PublishReflection(ctx, incidentID, publication)
-			var failure *validate.Failure
-			if code != 1 || !errors.As(publishErr, &failure) {
-				t.Fatalf("unsafe fixture accepted: CLI %d %v broker %v", code, report.Diagnostics, publishErr)
-			}
-			if !proto.Equal(&contracts.MemoryCheckReport{Diagnostics: report.Diagnostics}, &contracts.MemoryCheckReport{Diagnostics: validate.ProtoDiagnostics(failure.Diagnostics)}) {
-				t.Fatalf("CLI/broker diagnostics differ: %v / %v", report.Diagnostics, failure.Diagnostics)
-			}
 			found := false
 			for _, d := range report.Diagnostics {
 				found = found || d.Rule == rule
 			}
-			if !found {
-				t.Fatalf("wanted %s, got %v", rule, report.Diagnostics)
+			if code != 1 || !found {
+				t.Fatalf("wanted CLI rejection %s, code%d diagnostics%v", rule, code, report.Diagnostics)
+			}
+			if !publish {
+				return
+			}
+			_, publishErr := repository.PublishReflection(ctx, incidentID, publication)
+			var failure *validate.Failure
+			if !errors.As(publishErr, &failure) {
+				t.Fatalf("unsafe fixture accepted by broker: %v", publishErr)
+			}
+			if !proto.Equal(&contracts.MemoryCheckReport{Diagnostics: report.Diagnostics}, &contracts.MemoryCheckReport{Diagnostics: validate.ProtoDiagnostics(failure.Diagnostics)}) {
+				t.Fatalf("CLI/broker diagnostics differ: %v / %v", report.Diagnostics, failure.Diagnostics)
 			}
 		}
 		// README-only guidance still cannot represent an executable repair.
 		if err := os.WriteFile(filepath.Join(checkout, book, "README.md"), append(readme, []byte("\nObserved a successful manual workload repair.\n")...), 0644); err != nil {
 			return nil, err
 		}
-		reject(validate.RuleReflectionProgramRequired)
+		reject(validate.RuleReflectionProgramRequired, true)
 		copyFastloopTree(t, fixture, filepath.Join(checkout, ".sdo"))
 		// Negative controls exercise actual replay and production finding selection.
+		// Compile each once through the shared checker; publication below proves
+		// the same final bytes through the broker without duplicate failing builds.
 		mitigation := filepath.Join(checkout, book, "mitigate.go")
 		original, err := os.ReadFile(mitigation)
 		if err != nil {
@@ -185,7 +190,7 @@ func(Program) Mitigate(context.Context,program.ReadView,program.Bindings)(progra
 		if err := os.WriteFile(mitigation, formatted, 0644); err != nil {
 			return nil, err
 		}
-		reject(validate.RuleProgramMitigationRepair)
+		reject(validate.RuleProgramMitigationRepair, false)
 		if err := os.WriteFile(mitigation, original, 0644); err != nil {
 			return nil, err
 		}
@@ -205,7 +210,7 @@ func(Program) Mitigate(context.Context,program.ReadView,program.Bindings)(progra
 		if err := os.WriteFile(detectorPath, formatted, 0644); err != nil {
 			return nil, err
 		}
-		reject(validate.RuleProgramRepeatReachable)
+		reject(validate.RuleProgramRepeatReachable, false)
 		if err := os.WriteFile(detectorPath, detector, 0644); err != nil {
 			return nil, err
 		}
@@ -217,6 +222,11 @@ func(Program) Mitigate(context.Context,program.ReadView,program.Bindings)(progra
 		receipt, err := repository.PublishReflection(ctx, incidentID, publication)
 		if err != nil {
 			return nil, err
+		}
+		dispatcher := KubernetesJobDispatcher{Outcomes: memory.OpenReader(target)}
+		stats, err := dispatcher.programTrust(ctx, IncidentRequest{RepositoryWorktree: target, SourceCommit: receipt.Commit})
+		if err != nil || stats["extra-workload-listener"].VerifiedSuccesses != 1 {
+			t.Fatalf("accepted symptom-aware repair lost origin credit: %v %v", stats, err)
 		}
 		for _, p := range []string{book + "/diagnose.go", book + "/mitigate.go", ".sdo/diagnostics/detectors/incidents/listener-conflict/detector.go"} {
 			if content := nativeGit(t, target, "show", receipt.Commit+":"+p); strings.TrimSpace(content) == "" {
