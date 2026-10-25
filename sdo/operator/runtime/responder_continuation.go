@@ -311,3 +311,33 @@ func (c *Controller) continuationVerificationLocked(healthVerified, driftClear b
 	}
 	return result
 }
+
+// responderVerification uses the closure checker while a responder is still
+// running. Health/traffic persistence belongs to the observation controller;
+// admitted drift is independently compared against a fresh snapshot, just as
+// maybeCloseIncident does. A tool never advances the controller's lifecycle.
+func (c *Controller) responderVerification(ctx context.Context, incidentID string) ToolResponse {
+	snapshot, err := c.provider.Snapshot(ctx)
+	if err != nil {
+		return ToolResponse{Command: "verify", Error: "create verification snapshot: " + err.Error()}
+	}
+	c.mu.Lock()
+	current := c.currentIncidentRequest != nil && c.currentIncidentRequest.IncidentID == incidentID
+	c.mu.Unlock()
+	if !current {
+		return ToolResponse{Command: "verify", Error: "incident is no longer current"}
+	}
+	driftClear, driftFindings := c.verifyClosureDrift(ctx, time.Now().UTC(), snapshot)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.currentIncidentRequest == nil || c.currentIncidentRequest.IncidentID != incidentID {
+		return ToolResponse{Command: "verify", Error: "incident is no longer current"}
+	}
+	_, health := c.finalVerificationStates()
+	result := c.continuationVerificationLocked(health, driftClear, driftFindings)
+	if c.currentIncidentRequest.ObservationGeneration != observationGeneration(snapshot) {
+		result.Healthy = false
+		result.Error = "observation scope changed; incident evidence superseded"
+	}
+	return result
+}

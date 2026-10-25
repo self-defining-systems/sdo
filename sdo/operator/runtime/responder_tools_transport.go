@@ -9,6 +9,9 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sdo.dev/operator/sdk"
+	"slices"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -221,4 +224,56 @@ func (s *SessionToolServer) process(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// detect takes one fresh snapshot and runs only the selected deterministic
+// detectors. It never diagnoses programs, prepares plans or consumes a batch.
+func (l *ResponderLoop) detect(ctx context.Context, ids []string, response *ToolResponse) {
+	selected := map[string]bool{}
+	valid := make([]string, 0, len(l.Detectors))
+	for _, detector := range l.Detectors {
+		valid = append(valid, detector.Spec().ID)
+	}
+	sort.Strings(valid)
+	for _, id := range ids {
+		if !slices.Contains(valid, id) {
+			response.Error = fmt.Sprintf("unknown detector %q; valid detector IDs: %s", id, strings.Join(valid, ", "))
+			return
+		}
+		selected[id] = true
+	}
+	if l.Provider == nil {
+		response.Error = "fresh detector snapshot provider is unavailable"
+		return
+	}
+	view, err := l.Provider.Snapshot(ctx)
+	if err != nil {
+		response.Error = err.Error()
+		return
+	}
+	for _, detector := range l.Detectors {
+		id := detector.Spec().ID
+		if len(selected) > 0 && !selected[id] {
+			continue
+		}
+		observed, err := sdk.DetectObserved(ctx, detector, view)
+		state := DetectorEvaluation{DetectorID: id, EvaluatedAt: time.Now().UTC(), Status: DetectorEvaluationClear}
+		if err != nil {
+			state.Status = DetectorEvaluationError
+			state.Error = err.Error()
+			response.Error += fmt.Sprintf("detector %s: %v; ", id, err)
+		} else {
+			for _, finding := range observed {
+				if finding.Status == sdk.FindingActive {
+					finding.Fingerprint = FindingFingerprint(finding)
+					response.Findings = append(response.Findings, finding)
+					state.Status = DetectorEvaluationFiring
+					state.Fingerprints = append(state.Fingerprints, finding.Fingerprint)
+				}
+			}
+		}
+		response.DetectorStates = append(response.DetectorStates, state)
+	}
+	sortFindings(response.Findings)
+	response.Summary = fmt.Sprintf("%d detectors evaluated; %d current findings", len(response.DetectorStates), len(response.Findings))
 }

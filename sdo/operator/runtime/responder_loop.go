@@ -32,6 +32,7 @@ const maxRecordedToolResponse = 2048
 const maxRecordedApplyResponse = 8192
 
 type ToolRequest struct {
+	DetectorIDs   []string                               `json:"detector_ids,omitempty"`
 	Refs          []sdk.ObjectRef                        `json:"refs,omitempty"`
 	Parameters    map[string]string                      `json:"parameters,omitempty"`
 	Selection     *contracts.MitigationSelection         `json:"-"`
@@ -115,6 +116,7 @@ type ResponderLoop struct {
 	menuReports                     []*contracts.MitigationReport
 	menuExecutions                  map[string][]MenuRoundExecution
 	menuRepairs                     []RepairActionReceipt
+	VerifyClosure                   func(context.Context) ToolResponse
 	CurrentEvidence                 func() *IncidentRequest
 	Request                         IncidentRequest
 	Programs                        program.ProgramRegistry
@@ -265,6 +267,8 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 		l.checkpointMenuSession(ctx, request.Checkpoint, &response)
 	case "report":
 		l.selectionReport(ctx, request.ReportQuery, &response)
+	case "detect":
+		l.detect(ctx, request.DetectorIDs, &response)
 	case "status":
 		response.DriftEvents = append([]sdk.DriftEvent(nil), l.Request.DriftEvents...)
 		response.Trust = l.Trust
@@ -349,7 +353,13 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 		}
 		response.Summary = "first-mutation snapshot captured"
 	case "verify":
-		l.verify(ctx, nil, &response)
+		if l.VerifyClosure != nil {
+			response = l.VerifyClosure(ctx)
+			l.findings = append([]sdk.Finding(nil), response.Findings...)
+			response.LoopsAllowed = l.MaxBatches
+		} else {
+			l.verify(ctx, nil, &response)
+		}
 	case "rollback":
 		l.rollbackApplication(ctx, request, &response)
 	default:
