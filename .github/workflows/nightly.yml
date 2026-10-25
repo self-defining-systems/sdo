@@ -47,20 +47,6 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
-        with:
-          go-version: "1.26.8"
-          cache: false
-      - name: Cache image schema-identity build
-        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
-        with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-          key: ci-go-${{ runner.os }}-${{ runner.arch }}-images-1.26.8-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
-          restore-keys: |
-            ci-go-${{ runner.os }}-${{ runner.arch }}-images-1.26.8-${{ hashFiles('**/go.sum') }}-
-            ci-go-${{ runner.os }}-${{ runner.arch }}-operator-1.26.8-${{ hashFiles('**/go.sum') }}-
       - uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
       - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc # v6.4.3
         with:

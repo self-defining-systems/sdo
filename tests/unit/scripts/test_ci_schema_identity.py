@@ -6,6 +6,7 @@ import importlib.util
 from pathlib import Path
 
 import pytest
+import yaml
 
 ROOT = Path(__file__).resolve().parents[3]
 SPEC = importlib.util.spec_from_file_location("ci_schema_identity", ROOT / "scripts/ci_schema_identity.py")
@@ -35,3 +36,14 @@ def test_missing_invalid_or_ambiguous_pin_fails_closed(tmp_path: Path, source: s
     path.write_text(source)
     with pytest.raises(ValueError, match="exactly one native SDK schema pin"):
         identity.read_identity(tmp_path)
+
+
+def test_image_jobs_need_no_host_go_toolchain() -> None:
+    for name in ("ci.yml", "nightly.yml"):
+        workflow = yaml.safe_load((ROOT / ".github/workflows" / name).read_text())
+        steps = workflow["jobs"]["images"]["steps"]
+        assert not any("actions/setup-go" in step.get("uses", "") for step in steps)
+        assert not any("Cache image schema-identity build" == step.get("name") for step in steps)
+        inputs = next(step for step in steps if step.get("id") == "image-inputs")
+        assert "scripts/ci_schema_identity.py" in inputs["run"]
+        assert "SDO_VALIDATOR_SCHEMA_IDENTITY" in inputs["run"]
