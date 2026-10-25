@@ -25,6 +25,12 @@ func TestVerifiedCauseAllowsObservedRecoveredSymptomWithoutWrite(t *testing.T) {
 	if got := VerifiedReflectionCauses(outcome); len(got) != 1 || len(got[0].Resources) != 2 {
 		t.Fatalf("observed symptom disqualified hand repair: %v", got)
 	}
+	related := proto.Clone(outcome).(*contracts.OutcomeRecord)
+	related.Findings = related.Findings[:1]
+	related.Findings[0].RelatedResources = []*contracts.ObjectRef{service}
+	if got := VerifiedReflectionCauses(related); len(got) != 1 {
+		t.Fatalf("opening related symptom was not observed: %v", got)
+	}
 	for name, change := range map[string]func(*contracts.OutcomeRecord){
 		"missing symptom opening":   func(o *contracts.OutcomeRecord) { o.Findings = o.Findings[:1] },
 		"missing symptom clearance": func(o *contracts.OutcomeRecord) { o.DetectorHistory = o.DetectorHistory[:1] },
@@ -33,8 +39,17 @@ func TestVerifiedCauseAllowsObservedRecoveredSymptomWithoutWrite(t *testing.T) {
 			o.DetectorHistory[1].Status = "firing"
 			o.DetectorHistory[1].Fingerprints = []string{"service"}
 		},
+		"related clearance cannot hide primary symptom": func(o *contracts.OutcomeRecord) {
+			o.Findings[0].RelatedResources = []*contracts.ObjectRef{service}
+			o.DetectorHistory[1].Status = "firing"
+			o.DetectorHistory[1].Fingerprints = []string{"service"}
+		},
 		"no repair":        func(o *contracts.OutcomeRecord) { o.RepairActions = nil },
 		"unobserved write": func(o *contracts.OutcomeRecord) { o.Findings = o.Findings[1:] },
+		"written target only related": func(o *contracts.OutcomeRecord) {
+			o.Findings[0].PrimaryResource = &contracts.ObjectRef{Kind: "Deployment", Namespace: "app", Name: "other"}
+			o.Findings[0].RelatedResources = []*contracts.ObjectRef{deployment}
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			o := proto.Clone(outcome).(*contracts.OutcomeRecord)

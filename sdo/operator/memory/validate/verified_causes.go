@@ -48,6 +48,7 @@ func VerifiedReflectionCauses(outcome *contracts.OutcomeRecord) []*contracts.Ref
 // RepairedCauseObserved checks the shared evidence contract independently of
 // aggregate classification or eligibility projection: a timed mutation and
 // opening findings for every target/symptom cleared after the last cause write.
+// Written targets need primary findings; symptoms may be related observations.
 // Callers still enforce ownership, trusted action provenance and eligibility.
 func RepairedCauseObserved(outcome *contracts.OutcomeRecord, resources []*contracts.ObjectRef) bool {
 	repaired, after, valid := causeRepairs(outcome, resources)
@@ -55,7 +56,8 @@ func RepairedCauseObserved(outcome *contracts.OutcomeRecord, resources []*contra
 		return false
 	}
 	for _, resource := range resources {
-		if !clearedOpenFinding(outcome, resource, after) {
+		primary := slices.ContainsFunc(repaired, func(ref *contracts.ObjectRef) bool { return equalCauseResource(ref, resource) })
+		if !clearedOpenFinding(outcome, resource, after, primary) {
 			return false
 		}
 	}
@@ -93,9 +95,15 @@ func causeRepairs(outcome *contracts.OutcomeRecord, resources []*contracts.Objec
 	return repaired, after, true
 }
 
-func clearedOpenFinding(outcome *contracts.OutcomeRecord, resource *contracts.ObjectRef, after time.Time) bool {
+func clearedOpenFinding(outcome *contracts.OutcomeRecord, resource *contracts.ObjectRef, after time.Time, primaryOnly bool) bool {
+	// A primary symptom finding is the specific observation of that resource.
+	// A cleared relation on a peer finding cannot override its unresolved state.
+	primaryOnly = primaryOnly || slices.ContainsFunc(outcome.GetFindings(), func(f *contracts.Finding) bool {
+		return f.GetStatus() == "active" && equalCauseResource(f.GetPrimaryResource(), resource)
+	})
 	for _, finding := range outcome.GetFindings() {
-		if finding.GetStatus() != "active" || finding.GetDetectorId() == "" || !equalCauseResource(finding.GetPrimaryResource(), resource) {
+		observed := equalCauseResource(finding.GetPrimaryResource(), resource) || (!primaryOnly && slices.ContainsFunc(finding.GetRelatedResources(), func(ref *contracts.ObjectRef) bool { return equalCauseResource(ref, resource) }))
+		if finding.GetStatus() != "active" || finding.GetDetectorId() == "" || !observed {
 			continue
 		}
 		// Use the last controller evaluation for this detector. Missing,

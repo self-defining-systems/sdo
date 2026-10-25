@@ -20,7 +20,7 @@ import (
 	"sdo.dev/operator/toolchain"
 )
 
-const sdkSchemaIdentity = "sdo.dev/v1alpha1+sdk.bf502f127467ffe5"
+const sdkSchemaIdentity = "sdo.dev/v1alpha1+sdk.fc4d6d07c0cdec9d"
 
 type repeatable []string
 
