@@ -1,7 +1,10 @@
 package runtime
 
 import (
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/labels"
+	kruntime "k8s.io/apimachinery/pkg/runtime"
 	"sdo.dev/operator/sdk"
 	"strings"
 )
@@ -37,8 +40,25 @@ func exclusiveRemovalOwnership(object *unstructured.Unstructured, namespace stri
 			continue
 		}
 		if other.GetKind() == "ClusterRole" {
-			if _, found, _ := unstructured.NestedMap(other.Object, "aggregationRule"); found {
+			selectors, found, err := unstructured.NestedSlice(other.Object, "aggregationRule", "clusterRoleSelectors")
+			if err != nil {
 				return false
+			}
+			if found {
+				for _, raw := range selectors {
+					value, ok := raw.(map[string]any)
+					if !ok {
+						return false
+					}
+					var selector metav1.LabelSelector
+					if err := kruntime.DefaultUnstructuredConverter.FromUnstructured(value, &selector); err != nil {
+						return false
+					}
+					match, err := metav1.LabelSelectorAsSelector(&selector)
+					if err != nil || match.Matches(labels.Set(object.GetLabels())) {
+						return false
+					}
+				}
 			}
 		}
 		if other.GetKind() != "RoleBinding" && other.GetKind() != "ClusterRoleBinding" {

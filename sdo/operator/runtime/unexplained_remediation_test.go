@@ -136,7 +136,7 @@ func TestAuthorizationDeniedNoProgressNeedsExactBrokenSet(t *testing.T) {
 }
 
 func TestTerminalUnchangedInventoryBlockerSkipsGrace(t *testing.T) {
-	for _, mode := range []string{"exhausted", "denied", "changed", "pending-delete", "not-terminal", "ttl-job", "delayed-informer", "unknown-mutation"} {
+	for _, mode := range []string{"exhausted", "denied", "changed", "pending-delete", "not-terminal", "ttl-job", "delayed-informer", "unknown-mutation", "shared-ownership"} {
 		t.Run(mode, func(t *testing.T) {
 			now := time.Now().UTC()
 			ref := sdk.ObjectRef{APIVersion: "v1", Kind: "ServiceAccount", Namespace: "app", Name: "cleanup"}
@@ -145,6 +145,12 @@ func TestTerminalUnchangedInventoryBlockerSkipsGrace(t *testing.T) {
 				object.SetAPIVersion("batch/v1")
 				object.SetKind("Job")
 				object.Object["spec"] = map[string]any{"ttlSecondsAfterFinished": int64(30)}
+			}
+			if mode == "shared-ownership" {
+				object.SetAPIVersion("rbac.authorization.k8s.io/v1")
+				object.SetKind("ClusterRoleBinding")
+				object.SetNamespace("")
+				object.Object["subjects"] = []any{map[string]any{"kind": "ServiceAccount", "namespace": "app", "name": "cleanup"}, map[string]any{"kind": "User", "name": "outside"}}
 			}
 			store := &inventoryStore{objects: []*unstructured.Unstructured{object}}
 			index := NewSourceInventory("app", "accepted", nil)
@@ -165,6 +171,10 @@ func TestTerminalUnchangedInventoryBlockerSkipsGrace(t *testing.T) {
 			if mode == "denied" {
 				result.ResponseLoopExhausted = false
 				result.Error = "authorization_denied_no_progress"
+			}
+			if mode == "shared-ownership" {
+				result.ResponseLoopExhausted = false
+				result.Error = "shared_ownership"
 			}
 			if mode == "not-terminal" {
 				result.ResponseLoopExhausted = false
@@ -190,7 +200,7 @@ func TestTerminalUnchangedInventoryBlockerSkipsGrace(t *testing.T) {
 			var closed *IncidentClosure
 			controller.OnIncidentClosed = func(c IncidentClosure) { closed = &c }
 			controller.maybeCloseIncident(context.Background(), now, nil)
-			terminal := mode == "exhausted" || mode == "denied"
+			terminal := mode == "exhausted" || mode == "denied" || mode == "shared-ownership"
 			if terminal && (closed == nil || len(closed.FinalDetectorStates) != 0 || closed.Result.Status != IncidentFailed) {
 				t.Fatalf("terminal blocker waited or claimed healthy: %+v", closed)
 			}

@@ -26,6 +26,10 @@ is an environment reference. Plain `Headers` carry nonsecret values only.
   including eviction, server-side apply and other subresources. Supply `Ref` for
   measured object effects. Server-side apply uses its API content type and
   field-manager query. For reads, use `ReadView.KubernetesRead` (GET/HEAD).
+  DELETE requires a named whole-object path, resolves its typed target through
+  discovery, and rejects a conflicting `Ref`. Success requires absence readback;
+  accepted but still present or unreadable targets report `delete_not_confirmed`.
+  Generic actions cannot use the dedicated remove-unexplained identity.
   The controller never reads TokenRequest credential responses; use a container
   command when the generated credential must be consumed inside the container.
 - `WaitFor{Ref, Path, Equals, Timeout, Interval}` polls an actual JSON-pointer

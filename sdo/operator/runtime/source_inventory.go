@@ -81,6 +81,10 @@ func sourceInventoryKind(o *unstructured.Unstructured) bool {
 // deletion of declared objects. Generated children inherit their declared root;
 // controller status and ephemeral endpoint/event churn never enter the check.
 func (s *SourceInventory) Findings(objects []*unstructured.Unstructured, now time.Time) []sdk.Finding {
+	return s.findingsWithOwnership(objects, objects, now)
+}
+
+func (s *SourceInventory) findingsWithOwnership(objects, ownership []*unstructured.Unstructured, now time.Time) []sdk.Finding {
 	observed := make(map[sdk.ObjectRef]*unstructured.Unstructured, len(objects))
 	for _, o := range objects {
 		if o != nil {
@@ -163,7 +167,7 @@ func (s *SourceInventory) Findings(objects []*unstructured.Unstructured, now tim
 	}
 	for i := range findings {
 		finding := &findings[i]
-		if eligible[finding.PrimaryResource] && !exclusiveRemovalOwnership(observed[finding.PrimaryResource], s.Namespace, objects, eligible) {
+		if eligible[finding.PrimaryResource] && !exclusiveRemovalOwnership(observed[finding.PrimaryResource], s.Namespace, ownership, eligible) {
 			finding.Metadata["removal_blocker"] = "shared_ownership"
 			finding.Summary += "; removal blocked: shared_ownership"
 		}

@@ -123,7 +123,7 @@ func (c *Controller) observeSourceInventory(now time.Time) {
 	if !ok {
 		return
 	}
-	findings := index.Findings(reader.SourceDriftObjects(), now)
+	findings := sourceInventoryFindingsFor(index, reader, now)
 	c.mu.Lock()
 	c.sourceInventoryFindings = findings
 	c.mu.Unlock()
@@ -185,7 +185,7 @@ func (c *Controller) verifySourceInventoryLocked(result *IncidentResult) (bool, 
 	if source, ok := c.drift.Events.(interface {
 		SourceDriftObjects() []*unstructured.Unstructured
 	}); ok {
-		findings = c.sourceInventory.Findings(source.SourceDriftObjects(), time.Now().UTC())
+		findings = sourceInventoryFindingsFor(c.sourceInventory, source, time.Now().UTC())
 	}
 	remaining := []sdk.Finding{}
 	for _, finding := range findings {
@@ -218,4 +218,22 @@ func (c *Controller) retainSourceInventoryAcceptancesLocked(result *IncidentResu
 		}
 	}
 	c.acceptedSourceDriftRevision = c.sourceInventory.Identity
+}
+
+// Ownership checks need the full binding graph even though findings are scoped
+// to the application. Small in-memory readers already provide their full graph.
+type sourceInventoryReader interface {
+	SourceDriftObjects() []*unstructured.Unstructured
+}
+
+func removalOwnershipObjects(reader sourceInventoryReader) []*unstructured.Unstructured {
+	if full, ok := reader.(interface {
+		SourceRemovalObjects() []*unstructured.Unstructured
+	}); ok {
+		return full.SourceRemovalObjects()
+	}
+	return reader.SourceDriftObjects()
+}
+func sourceInventoryFindingsFor(index *SourceInventory, reader sourceInventoryReader, now time.Time) []sdk.Finding {
+	return index.findingsWithOwnership(reader.SourceDriftObjects(), removalOwnershipObjects(reader), now)
 }
