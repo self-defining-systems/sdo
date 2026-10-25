@@ -16,14 +16,41 @@ func ProgramRepairReceipts(applications []RecordedPlanApplication, existing []Re
 		used[receipt.ActionID] = true
 	}
 	for _, application := range applications {
-		if !application.Result.Applied {
-			continue
-		}
-		refs := make([]sdk.ObjectRef, 0)
+		refs := []sdk.ObjectRef{}
 		seen := map[sdk.ObjectRef]bool{}
-		for _, action := range application.Result.ActionsApplied {
+		actions := application.Result.Plan.Actions
+		if len(actions) == 0 {
+			actions = application.Result.ActionsApplied
+		}
+		for index, action := range actions {
 			ref, err := planActionRef(action)
-			if err == nil && !seen[ref] {
+			if err != nil || ref.Kind == "" {
+				continue
+			}
+			applied := index < len(application.Result.ActionsApplied)
+			reason := ""
+			if index < len(application.Result.ActionReports) {
+				report := application.Result.ActionReports[index]
+				applied = report.Status == "applied"
+				reason = report.FailureReason
+				if report.Status == "unknown" && reason == "" {
+					reason = "outcome_unknown"
+				}
+			} else if application.Error != "" && applied {
+				reason = "outcome_unknown"
+			}
+			for _, effect := range application.Result.ObjectEffects {
+				if effect.Ref == ref && !effect.Confirmed {
+					applied = false
+					reason = "outcome_unknown"
+				}
+			}
+			if reason != "" {
+				id := uniqueRepairID(fmt.Sprintf("sdo-program-%s-failed-%d", application.ID, index+1), used)
+				result = append(result, RepairActionReceipt{ActionID: id, Kind: "program-plan", Target: ref.Kind + "/" + ref.Name, Resources: []sdk.ObjectRef{ref}, Summary: "program plan action failed", Details: fmt.Sprintf("controller action %d in %s: %s", index+1, application.ID, reason), StartedAt: application.StartedAt, CompletedAt: application.CompletedAt, FailureReason: reason})
+				continue
+			}
+			if applied && application.Result.Applied && !seen[ref] {
 				refs = append(refs, ref)
 				seen[ref] = true
 			}
@@ -31,20 +58,24 @@ func ProgramRepairReceipts(applications []RecordedPlanApplication, existing []Re
 		if len(refs) == 0 {
 			continue
 		}
-		id := "sdo-program-" + application.ID
-		for suffix := 2; used[id]; suffix++ {
-			id = fmt.Sprintf("sdo-program-%s-%d", application.ID, suffix)
-		}
-		used[id] = true
+		id := uniqueRepairID("sdo-program-"+application.ID, used)
 		result = append(result, RepairActionReceipt{
-			ActionID: id, Kind: "program-plan", Target: refs[0].Kind + "/" + refs[0].Name,
-			Resources: refs, Summary: "applied program plan " + strings.Join(application.ProgramIDs, ", "),
-			Details:   fmt.Sprintf("controller applied %d plan actions in %s", len(application.Result.ActionsApplied), application.ID),
+			ActionID: id, Kind: "program-plan", Target: refs[0].Kind + "/" + refs[0].Name, Resources: refs,
+			Summary: "applied program plan " + strings.Join(application.ProgramIDs, ", "), Details: fmt.Sprintf("controller confirmed %d applied resource effects in %s", len(refs), application.ID),
 			StartedAt: application.StartedAt, CompletedAt: application.CompletedAt,
 			Success: !application.RolledBack && application.RollbackError == "", Reversible: len(application.Result.PreImages) >= len(refs),
 		})
 	}
 	return result
+}
+
+func uniqueRepairID(base string, used map[string]bool) string {
+	id := base
+	for suffix := 2; used[id]; suffix++ {
+		id = fmt.Sprintf("%s-%d", base, suffix)
+	}
+	used[id] = true
+	return id
 }
 
 // ApplicationRepairReceipts projects immutable application facts, including
@@ -59,7 +90,7 @@ func (l *ResponderLoop) ApplicationRepairReceipts(existing []RepairActionReceipt
 	seen := map[string]bool{}
 	for _, repair := range completed {
 		receipt := repair.Receipt
-		result = append(result, RepairActionReceipt{ActionID: receipt.ActionID, Kind: receipt.Kind, Target: receipt.Target, Resources: append([]sdk.ObjectRef(nil), receipt.Resources...), Summary: receipt.Summary, Details: receipt.Details, StartedAt: receipt.StartedAt, CompletedAt: receipt.CompletedAt, Success: receipt.Success, Reversible: receipt.Reversible})
+		result = append(result, RepairActionReceipt{ActionID: receipt.ActionID, Kind: receipt.Kind, Target: receipt.Target, Resources: append([]sdk.ObjectRef(nil), receipt.Resources...), Summary: receipt.Summary, Details: receipt.Details, StartedAt: receipt.StartedAt, CompletedAt: receipt.CompletedAt, Success: receipt.Success, Reversible: receipt.Reversible, FailureReason: receipt.FailureReason})
 		seen[receipt.ActionID] = true
 	}
 	for _, receipt := range existing {

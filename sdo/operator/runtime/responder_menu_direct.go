@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"fmt"
+	"k8s.io/apimachinery/pkg/types"
 	"sort"
 	"time"
 
@@ -31,6 +32,25 @@ func (l *ResponderLoop) listMenu(ctx context.Context, request ToolRequest, respo
 	}
 	l.openDirectMenuSession(response)
 	entries := rawMenuActions()
+	if capabilities, ok := l.Executor.Client.(interface{ unavailableMenuActions() map[string]bool }); ok {
+		for action, unavailable := range capabilities.unavailableMenuActions() {
+			if unavailable {
+				delete(entries, action)
+			}
+		}
+	}
+	if l.MenuConfig.Unexplained != nil {
+		removals, err := l.MenuConfig.Unexplained(ctx)
+		if err != nil {
+			response.Error = err.Error()
+			return
+		}
+		for _, removal := range removals {
+			selected := removal
+			plan := program.Plan{Actions: []program.Action{program.DeleteObject{Ref: removal.Ref, Reason: "remove current source-absent unexplained object"}}}
+			entries["remove-unexplained-"+menuDigest(removal)] = menuEntry{programID: "remove-unexplained", bindings: program.Bindings{Objects: program.ObjectBindings{"resource": removal.Ref}}, plan: &plan, removal: &selected}
+		}
+	}
 	if l.Programs != nil {
 		for _, spec := range l.Programs.List() {
 			if request.ProgramID != "" && request.ProgramID != spec.ID {
@@ -199,8 +219,18 @@ func (l *ResponderLoop) mitigateMenu(ctx context.Context, selection *contracts.M
 				description.Plan.Actions = append(description.Plan.Actions, converted)
 			}
 		}
+		executor := l.Executor
+		if entry.removal != nil {
+			targetFingerprints = []string{entry.removal.FindingFingerprint}
+			executor.DeleteObject = func(ctx context.Context, ref sdk.ObjectRef, uid types.UID, rv string) error {
+				if l.MenuConfig.RemoveUnexplained == nil {
+					return fmt.Errorf("unexplained removal executor is unavailable")
+				}
+				return l.MenuConfig.RemoveUnexplained(ctx, *entry.removal, executor.Client.(PlanLifecycleClient), ref, uid, rv)
+			}
+		}
 		started := time.Now().UTC()
-		result, applyErr := l.Executor.Apply(ctx, l.mitigationIncident([]selectedPlan{{programID: entry.programID, bindings: bindings, targetFingerprints: targetFingerprints}}), plan, false)
+		result, applyErr := executor.Apply(ctx, l.mitigationIncident([]selectedPlan{{programID: entry.programID, bindings: bindings, targetFingerprints: targetFingerprints}}), plan, false)
 		completed := time.Now().UTC()
 
 		if result.Applied || result.PendingAction != nil {
@@ -222,6 +252,9 @@ func (l *ResponderLoop) mitigateMenu(ctx context.Context, selection *contracts.M
 			if index < len(result.ActionsApplied) {
 				receipt.State = contracts.MitigationActionReceipt_STATE_APPLIED
 			}
+			if index < len(result.ActionReports) && result.ActionReports[index].Status != "applied" {
+				receipt.State = contracts.MitigationActionReceipt_STATE_NOT_APPLIED
+			}
 			if result.PendingAction != nil && index == len(result.ActionsApplied) {
 				receipt.State = contracts.MitigationActionReceipt_STATE_UNKNOWN
 			}
@@ -236,6 +269,10 @@ func (l *ResponderLoop) mitigateMenu(ctx context.Context, selection *contracts.M
 				receipt.ActionKind = "sdk-plan-patch"
 			}
 			receipt.ChangedFields = menuChangedFields(patch.Patch)
+			if patch.Before != nil {
+				receipt.Uid = string(patch.Before.GetUID())
+				receipt.ResourceVersion = patch.Before.GetResourceVersion()
+			}
 			if patch.After != nil {
 				receipt.Uid = string(patch.After.GetUID())
 				receipt.ResourceVersion = patch.After.GetResourceVersion()
@@ -296,6 +333,12 @@ func (l *ResponderLoop) mitigateMenu(ctx context.Context, selection *contracts.M
 				report.Status = contracts.MitigationReport_STATUS_EXECUTION_ERROR
 				report.FailedPhase = "forward"
 				report.ReasonCode = "direct_apply_failed"
+				for _, action := range result.ActionReports {
+					if action.FailureReason != "" {
+						report.ReasonCode = action.FailureReason
+						break
+					}
+				}
 			}
 			break
 		}

@@ -18,6 +18,7 @@ import (
 	"sdo.dev/operator/contracts/wire"
 	"sdo.dev/operator/runtime/internal/lifecycleio"
 
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 
@@ -536,6 +537,15 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 				}, *maxResponseLoops)
 				if menuEnabled != "0" {
 					loop.MenuConfig = productionResponderMenu()
+					loop.MenuConfig.Unexplained = func(ctx context.Context) ([]UnexplainedRemoval, error) {
+						if controller == nil {
+							return nil, fmt.Errorf("controller is unavailable")
+						}
+						return controller.unexplainedRemovals(request.IncidentID, *controlNamespace)
+					}
+					loop.MenuConfig.RemoveUnexplained = func(ctx context.Context, selected UnexplainedRemoval, client PlanLifecycleClient, ref sdk.ObjectRef, uid types.UID, rv string) error {
+						return controller.removeUnexplained(ctx, request.IncidentID, *controlNamespace, selected, client, ref, uid, rv)
+					}
 				}
 				loop.VerifyClosure = func(ctx context.Context) ToolResponse {
 					if controller == nil {

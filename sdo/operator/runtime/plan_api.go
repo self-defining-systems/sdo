@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -14,26 +15,41 @@ import (
 	"sdo.dev/operator/sdk/program"
 )
 
+// ErrKubernetesAPITransportUnavailable means no request crossed the API boundary.
+var ErrKubernetesAPITransportUnavailable = errors.New("Kubernetes API transport unavailable")
+
 func (c TypedPlanClient) KubernetesRequest(ctx context.Context, r program.KubernetesRequest) (json.RawMessage, error) {
 	if err := r.Validate(); err != nil {
 		return nil, err
 	}
-	if c.ExecConfig == nil {
-		return nil, fmt.Errorf("Kubernetes API transport unavailable")
+	var client *http.Client
+	var base *url.URL
+	var err error
+	if c.ExecConfig != nil {
+		config := rest.CopyConfig(c.ExecConfig)
+		client, err = rest.HTTPClientFor(config)
+		if err != nil {
+			return nil, ErrKubernetesAPITransportUnavailable
+		}
+		base, err = url.Parse(config.Host)
+		if err != nil {
+			return nil, fmt.Errorf("%w: invalid API host", ErrKubernetesAPITransportUnavailable)
+		}
+		base.Path += r.Path
+	} else if c.Client != nil {
+		transport, ok := c.Client.Discovery().RESTClient().(*rest.RESTClient)
+		if !ok || transport == nil || transport.Client == nil {
+			return nil, ErrKubernetesAPITransportUnavailable
+		}
+		client = transport.Client
+		base = transport.Verb(r.Method).AbsPath(r.Path).URL()
+	} else {
+		return nil, ErrKubernetesAPITransportUnavailable
 	}
-	config := rest.CopyConfig(c.ExecConfig)
-	// Never follow API redirects carrying controller authorization.
-	client, err := rest.HTTPClientFor(config)
-	if err != nil {
-		return nil, fmt.Errorf("Kubernetes API transport unavailable")
-	}
+	// Reuse the supplied client's authenticated transport, with bounded bodies
+	// and redirects disabled just as for an explicitly supplied rest.Config.
 	copyClient := *client
 	copyClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	base, err := url.Parse(config.Host)
-	if err != nil {
-		return nil, fmt.Errorf("invalid API host")
-	}
-	base.Path = base.Path + r.Path
 	values := url.Values{}
 	for k, v := range r.Query {
 		values.Set(k, v)
@@ -41,7 +57,7 @@ func (c TypedPlanClient) KubernetesRequest(ctx context.Context, r program.Kubern
 	base.RawQuery = values.Encode()
 	request, err := http.NewRequestWithContext(ctx, r.Method, base.String(), bytes.NewReader(r.Body))
 	if err != nil {
-		return nil, fmt.Errorf("invalid API request")
+		return nil, fmt.Errorf("%w: invalid API request", ErrKubernetesAPITransportUnavailable)
 	}
 	if r.ContentType != "" {
 		request.Header.Set("Content-Type", r.ContentType)

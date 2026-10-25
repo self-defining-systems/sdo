@@ -35,7 +35,9 @@ async def render_contract() -> str:
         "It adds no selection ledger, fences, quiescence, provenance, health-reader or credential-delta "
         "preconditions. Reports return what ran, per-action results, value provenance and any error to the "
         "same responder session, with up to five rounds per incident. Pick from the menu when an option "
-        "fits; if it fails, read the report and pick another or fix it directly. Author Mitigators as "
+        "fits; if it fails, read the report and pick another or fix it directly. "
+        "Current unexplained objects have controller-checked removal options; typed failure reasons guide recovery. "
+        "Author Mitigators as "
         "self-contained repairs with declared parameters and specific failure context. Intermediate reports "
         "are not independent incident outcomes or program trust credit.",
         "## Supported open phase selections\n\n"

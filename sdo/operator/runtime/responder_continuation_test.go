@@ -69,7 +69,7 @@ func (d continuationDetector) Detect(context.Context, sdk.DetectionContext) ([]s
 	if d.healthy.Load() {
 		return nil, nil
 	}
-	return []sdk.Finding{{DetectorID: "health-objective", RuleID: "unavailable", Status: sdk.FindingActive, PrimaryResource: sdk.ObjectRef{Kind: "Deployment", Namespace: "demo", Name: "api"}}}, nil
+	return []sdk.Finding{{DetectorID: "health-objective", RuleID: "unavailable", Status: sdk.FindingActive, Severity: sdk.SeverityWarning, Summary: "Scripted availability remains unhealthy", Evidence: "Scripted health observation is false", PrimaryResource: sdk.ObjectRef{Kind: "Deployment", Namespace: "demo", Name: "api"}}}, nil
 }
 
 func publishContinuationResult(t *testing.T, client *fake.Clientset, job *batchv1.Job, result IncidentResult) {

@@ -21,6 +21,7 @@ import shlex
 import signal
 import subprocess
 import sys
+import time
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
@@ -170,6 +171,52 @@ def action_kind(command: Sequence[str]) -> str:
     return f"kubectl-{words[0]}"
 
 
+def _executed_resources(command: Sequence[str], declared: Sequence[dict[str, str]]) -> list[dict[str, str]]:
+    """Keep only explicit kubectl patch/delete targets, never arbitrary attribution."""
+    if action_kind(command) not in {"kubectl-patch", "kubectl-delete"}:
+        return [dict(resource) for resource in declared]
+    words: list[str] = []
+    namespace: str | None = None
+    flags = _KUBECTL_VALUE_FLAGS | {
+        "-p",
+        "--patch",
+        "--type",
+        "--field-manager",
+        "--timeout",
+        "--request-timeout",
+        "--grace-period",
+        "--cascade",
+    }
+    args = iter(command[1:])
+    for token in args:
+        if token in flags:
+            value = next(args, "")
+            if token in {"-n", "--namespace"}:
+                namespace = value
+        elif token.startswith("--namespace="):
+            namespace = token.split("=", 1)[1]
+        elif not token.startswith("-"):
+            words.append(token)
+    targets: set[tuple[str, str]] = set()
+    if len(words) > 1:
+        arguments = words[1:]
+        if "/" in arguments[0]:
+            targets = {
+                (canonical_kind(word.split("/", 1)[0]), word.split("/", 1)[1])
+                for word in arguments
+                if word.count("/") == 1
+            }
+        elif len(arguments) > 1 and "," not in arguments[0]:
+            names = arguments[1:] if words[0] == "delete" else arguments[1:2]
+            targets = {(canonical_kind(arguments[0]), name) for name in names}
+    return [
+        dict(resource)
+        for resource in declared
+        if (resource["kind"], resource["name"]) in targets
+        and (not resource["namespace"] or resource["namespace"] == namespace)
+    ]
+
+
 def _timestamp(moment: datetime) -> str:
     return moment.astimezone(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
@@ -254,10 +301,15 @@ def _receipt(
     except UnicodeEncodeError:
         raise ValueError("cannot record an invalid repair receipt: command contains invalid UTF-8") from None
     kind = action_kind(command)
+    resources = _executed_resources(command, resources)
     target = (
-        "{kind}/{namespace}/{name}".format(**resources[0])
-        if resources[0]["namespace"]
-        else ("{kind}/{name}".format(**resources[0]))
+        kind
+        if not resources
+        else (
+            "{kind}/{namespace}/{name}".format(**resources[0])
+            if resources[0]["namespace"]
+            else ("{kind}/{name}".format(**resources[0]))
+        )
     )
     withheld = (
         any(resource["kind"] == "Secret" for resource in resources)
@@ -281,6 +333,15 @@ def _receipt(
         "completed_at": _timestamp(finished),
         "success": code == 0,
         "reversible": reversible,
+        "failure_reason": (
+            "outcome_unknown"
+            if code is None
+            else "authorization_denied"
+            if code != 0 and ("(Forbidden)" in output or "(Unauthorized)" in output)
+            else "execution_failed"
+            if code != 0
+            else ""
+        ),
     }
     # Protobuf loads only when an action is recorded, so `sdo --help` and the other commands stay fast.
     from google.protobuf import json_format
@@ -297,6 +358,50 @@ def _receipt(
 def _append(path: Path, state: str, receipt: dict[str, Any]) -> None:
     with path.open("a", encoding="utf-8") as stream:
         stream.write(json.dumps({"state": state, "receipt": receipt}, sort_keys=True) + "\n")
+
+
+def _confirm_deleted(command: Sequence[str], resources: Sequence[dict[str, str]]) -> str:
+    """A successful command does not prove every declared resource disappeared."""
+    context: list[str] = []
+    flags = {"-n", "--namespace", "--context", "--kubeconfig", "--server", "--cluster", "--user", "--as", "--as-group"}
+    args = iter(command[1:])
+    for arg in args:
+        if arg in flags:
+            context.extend((arg, next(args, "")))
+        elif arg.split("=", 1)[0] in flags:
+            context.append(arg)
+    deadline = time.monotonic() + 5
+    for resource in resources:
+        if resource["kind"].lower() == "secret":
+            return "delete_not_confirmed"
+        argv = [
+            command[0],
+            *context,
+            "get",
+            resource["kind"],
+            resource["name"],
+            "--ignore-not-found=true",
+            "-o",
+            "name",
+            "--request-timeout=5s",
+        ]
+        if resource["namespace"]:
+            argv.extend(("--namespace", resource["namespace"]))
+        try:
+            observed = subprocess.run(
+                argv, capture_output=True, text=True, timeout=max(0.01, deadline - time.monotonic()), check=False
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return "outcome_unknown"
+        if observed.returncode:
+            return (
+                "authorization_denied"
+                if "(Forbidden)" in observed.stderr or "(Unauthorized)" in observed.stderr
+                else "delete_not_confirmed"
+            )
+        if observed.stdout.strip():
+            return "delete_not_confirmed"
+    return ""
 
 
 def run_and_record(
@@ -344,6 +449,11 @@ def run_and_record(
         code, output = _run_in_own_group(command)
     finally:
         completed = receipt(code, output, datetime.now(UTC))
+        if code == 0 and action_kind(command) == "kubectl-delete":
+            reason = _confirm_deleted(command, _executed_resources(command, resources))
+            if reason:
+                completed["success"] = False
+                completed["failure_reason"] = reason
         _append(path, _FINISHED, completed)
     assert code is not None  # an interrupted call raised out of the try block
     if on_completed is None:

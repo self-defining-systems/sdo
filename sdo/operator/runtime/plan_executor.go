@@ -86,6 +86,7 @@ type PlanApplicationResult struct {
 }
 
 type PlanExecutor struct {
+	DeleteObject func(context.Context, sdk.ObjectRef, types.UID, string) error
 	// RolloutTimeout can shorten the default ninety-second rollout budget.
 	RecordPrimitive func(sdktest.PrimitiveCall) error
 	RolloutTimeout  time.Duration
@@ -108,6 +109,21 @@ type PlanExecutor struct {
 // plan is compensated; once every write has landed, a failed rollout wait or
 // health verification is reported and left to the caller.
 func (e PlanExecutor) Apply(ctx context.Context, incident IncidentRequest, plan program.Plan, dryRun bool) (result PlanApplicationResult, err error) {
+	defer func() {
+		if err != nil {
+			reason := "execution_failed"
+			if apierrors.IsForbidden(err) || apierrors.IsUnauthorized(err) {
+				reason = "authorization_denied"
+			}
+			for i := range result.ActionReports {
+				if result.ActionReports[i].Status != "applied" {
+					if result.ActionReports[i].Status == "unknown" && reason != "authorization_denied" { reason = "outcome_unknown" }
+                    result.ActionReports[i].FailureReason = reason
+					break
+				}
+			}
+		}
+	}()
 	// A mitigation never spends the incident's global health budget. Keep
 	// write/rollout confirmation, then independently sample its own scope once.
 	if verifier := scopedMitigationVerifier(e.Verifier, plan, incident.Findings); verifier != nil && !dryRun {

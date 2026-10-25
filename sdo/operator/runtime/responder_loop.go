@@ -47,21 +47,25 @@ type ToolRequest struct {
 }
 
 type ToolResponse struct {
-	MitigationHealth *MitigationHealth            `json:"mitigation_health,omitempty"`
-	RolloutPending   *contracts.RolloutPending    `json:"rollout_pending,omitempty"`
-	MenuExecution    []MenuRoundExecution         `json:"-"`
-	MenuParameters   map[string][]MenuParameter   `json:"-"`
-	Menu             *contracts.MitigationMenu    `json:"-"`
-	Report           *contracts.MitigationReport  `json:"-"`
-	Session          *contracts.MitigationSession `json:"-"`
-	Command          string                       `json:"command"`
-	Source           map[string]any               `json:"source,omitempty"`
-	Error            string                       `json:"error,omitempty"`
-	Summary          string                       `json:"summary"`
-	PlanID           string                       `json:"plan_id,omitempty"`
-	ApplicationID    string                       `json:"application_id,omitempty"`
-	Patches          []PlanPatch                  `json:"patches,omitempty"`
-	ProgramRuns      []ProgramRun                 `json:"program_runs,omitempty"`
+	MitigationRoundsUsed    int                          `json:"mitigation_rounds_used"`
+	MitigationRoundsAllowed int                          `json:"mitigation_rounds_allowed"`
+	ResponseLoopsUsed       int                          `json:"response_loops_used"`
+	ResponseLoopsAllowed    int                          `json:"response_loops_allowed"`
+	MitigationHealth        *MitigationHealth            `json:"mitigation_health,omitempty"`
+	RolloutPending          *contracts.RolloutPending    `json:"rollout_pending,omitempty"`
+	MenuExecution           []MenuRoundExecution         `json:"-"`
+	MenuParameters          map[string][]MenuParameter   `json:"-"`
+	Menu                    *contracts.MitigationMenu    `json:"-"`
+	Report                  *contracts.MitigationReport  `json:"-"`
+	Session                 *contracts.MitigationSession `json:"-"`
+	Command                 string                       `json:"command"`
+	Source                  map[string]any               `json:"source,omitempty"`
+	Error                   string                       `json:"error,omitempty"`
+	Summary                 string                       `json:"summary"`
+	PlanID                  string                       `json:"plan_id,omitempty"`
+	ApplicationID           string                       `json:"application_id,omitempty"`
+	Patches                 []PlanPatch                  `json:"patches,omitempty"`
+	ProgramRuns             []ProgramRun                 `json:"program_runs,omitempty"`
 	// ProgramRunsOmitted counts runs a truncated record could not list; the
 	// trust reader fails closed on it. ProgramRunsUnrelatedOmitted counts apply
 	// runs of programs or bindings the applied plans do not name, which the
@@ -220,7 +224,7 @@ func (l *ResponderLoop) LoopsUsed() int { l.mu.Lock(); defer l.mu.Unlock(); retu
 func (l *ResponderLoop) Exhausted() bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	return l.batches >= l.MaxBatches && len(l.findings) > 0
+	return l.batches >= l.batchLimit() && len(l.findings) > 0
 }
 
 // toolTiming accumulates the phase durations of one Handle call. capture is
@@ -247,8 +251,14 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 			l.Request.DriftEvents = append([]sdk.DriftEvent(nil), current.DriftEvents...)
 		}
 	}
-	response = ToolResponse{Command: request.Command, LoopsUsed: l.batches, LoopsAllowed: l.MaxBatches}
+	response = ToolResponse{Command: request.Command, LoopsUsed: l.batches, LoopsAllowed: l.batchLimit(),
+		MitigationRoundsUsed: l.batches, MitigationRoundsAllowed: l.batchLimit(), ResponseLoopsUsed: l.continuation.Attempts, ResponseLoopsAllowed: l.MaxBatches}
+	if l.Request.MaxResponseLoops > 0 {
+		response.ResponseLoopsAllowed = min(response.ResponseLoopsAllowed, l.Request.MaxResponseLoops)
+	}
 	defer func() {
+		response.MitigationRoundsUsed = l.batches
+		response.MitigationRoundsAllowed = l.batchLimit()
 		if response.Error != "" {
 			response.Summary = response.Error
 		}
@@ -296,8 +306,8 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 		response.Trust = l.Trust
 		response.Findings, response.ProgramRuns, response.Error = l.refresh(ctx)
 		response.Healthy = response.Error == "" && len(l.findings) == 0
-		response.Unresolved = l.batches >= l.MaxBatches && !response.Healthy
-		response.Summary = fmt.Sprintf("%d open findings; %d of %d apply batches used", len(l.findings), l.batches, l.MaxBatches)
+		response.Unresolved = l.batches >= l.batchLimit() && !response.Healthy
+		response.Summary = fmt.Sprintf("%d open findings; %d of %d apply batches used", len(l.findings), l.batches, l.batchLimit())
 	case "diagnose":
 		if request.ProgramID == "" {
 			response.Findings, response.ProgramRuns, response.Error = l.refresh(ctx)
@@ -389,7 +399,7 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 			l.operationMu.Lock()
 			l.mu.Lock()
 			l.findings = append([]sdk.Finding(nil), response.Findings...)
-			response.LoopsAllowed = l.MaxBatches
+			response.LoopsAllowed = l.batchLimit()
 		} else {
 			l.verify(ctx, nil, &response)
 		}
@@ -685,13 +695,13 @@ func (l *ResponderLoop) apply(ctx context.Context, request ToolRequest, response
 				if consumed == requested {
 					response.ApplicationID = entry.ID
 					response.Error = "prepared plan already consumed by " + entry.ID
-					response.Unresolved = l.batches >= l.MaxBatches
+					response.Unresolved = l.batches >= l.batchLimit()
 					return
 				}
 			}
 		}
 	}
-	if l.batches >= l.MaxBatches {
+	if l.batches >= l.batchLimit() {
 		response.Error = "response loop budget exhausted"
 		response.Unresolved = true
 		return
@@ -790,7 +800,7 @@ func (l *ResponderLoop) apply(ctx context.Context, request ToolRequest, response
 	if response.Error == "" {
 		response.Summary = fmt.Sprintf("%s applied; %d open findings", id, len(response.Findings))
 	}
-	response.Unresolved = l.batches >= l.MaxBatches && !response.Healthy
+	response.Unresolved = l.batches >= l.batchLimit() && !response.Healthy
 }
 
 func (l *ResponderLoop) verify(ctx context.Context, applied []selectedPlan, response *ToolResponse) {
@@ -872,7 +882,7 @@ func (l *ResponderLoop) verify(ctx context.Context, applied []selectedPlan, resp
 		l.runs = append(l.runs, runs...)
 	}
 	response.Healthy = response.Error == "" && len(findings) == 0 && (len(l.Detectors) > 0 || len(driftStates) > 0) && detectorsConfirmed(l.Detectors, view)
-	response.Unresolved = l.batches >= l.MaxBatches && !response.Healthy
+	response.Unresolved = l.batches >= l.batchLimit() && !response.Healthy
 	if response.Error == "" {
 		response.Summary = fmt.Sprintf("verification: %d open findings", len(findings))
 		if response.Healthy {
@@ -970,4 +980,13 @@ func (l *ResponderLoop) rollbackApplication(ctx context.Context, request ToolReq
 	if response.Error == "" {
 		response.Summary = "application rolled back and verified"
 	}
+}
+
+// Menu rounds and provider continuations have separate budgets. Advertise and
+// enforce the same incident-wide write-batch limit used by menu execution.
+func (l *ResponderLoop) batchLimit() int {
+	if l.MenuConfig != nil {
+		return min(5, l.MaxBatches)
+	}
+	return l.MaxBatches
 }

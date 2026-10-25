@@ -59,7 +59,8 @@ func (r PlanApplicationResult) Proto() (*contracts.PlanApplication, error) {
 	}
 	for _, report := range r.ActionReports {
 		encoded := &contracts.ActionReport{ActionIndex: uint32(report.ActionIndex), Status: report.Status, ExitCode: report.ExitCode}
-		encoded.RecordingError = report.RecordingError
+		encoded.FailureReason = report.FailureReason
+        encoded.RecordingError = report.RecordingError
 		encoded.JobStatusJson = report.JobStatus
 		if report.ExternalEffect != nil {
 			encoded.ExternalEffectJson, _ = json.Marshal(report.ExternalEffect)
@@ -103,7 +104,8 @@ func planApplicationState(application *contracts.PlanApplication) RecordedPlanAp
 	}
 	for _, report := range application.GetActionReports() {
 		decoded := PlanActionReport{ActionIndex: int(report.GetActionIndex()), Status: report.GetStatus(), ExitCode: report.ExitCode}
-		decoded.RecordingError = report.GetRecordingError()
+		decoded.FailureReason = report.GetFailureReason()
+        decoded.RecordingError = report.GetRecordingError()
 		decoded.JobStatus = report.GetJobStatusJson()
 		if len(report.GetExternalEffectJson()) > 0 {
 			var effect program.ExternalEffect

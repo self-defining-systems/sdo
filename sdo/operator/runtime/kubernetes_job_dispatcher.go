@@ -288,9 +288,9 @@ func (d KubernetesJobDispatcher) Dispatch(ctx context.Context, request IncidentR
 		loop.mu.Lock()
 		attempts := loop.continuation.Attempts
 		loop.mu.Unlock()
-		result.ResponseLoopsUsed = max(loop.LoopsUsed(), attempts)
+		result.ResponseLoopsUsed = attempts
 		result.ResolutionPath = "responder"
-		result.ResponseLoopExhausted = result.ResponseLoopExhausted || loop.Exhausted()
+		result.ResponseLoopExhausted = result.ResponseLoopExhausted || (loop.Exhausted() && result.Status != IncidentCompleted)
 		if result.ResponseLoopExhausted {
 			result.Status = IncidentFailed
 			result.Error = "response loop budget exhausted with unresolved findings"

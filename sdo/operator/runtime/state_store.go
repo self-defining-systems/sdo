@@ -62,6 +62,7 @@ func cloneIncidentResult(result *IncidentResult) *IncidentResult {
 		return nil
 	}
 	copy := *result
+	copy.UnresolvedFindings = append([]sdk.Finding(nil), result.UnresolvedFindings...)
 	copy.DriftEvents = driftEventsState(driftEventsContract(result.DriftEvents))
 	copy.ConfirmedRootCauses = append(make([]ConfirmedRootCause, 0, len(result.ConfirmedRootCauses)), result.ConfirmedRootCauses...)
 	for index := range copy.ConfirmedRootCauses {

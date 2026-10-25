@@ -284,11 +284,18 @@ func incidentResultContract(result IncidentResult) (*contracts.IncidentResult, e
 		}
 		message.AppliedPlaybooks = append(message.AppliedPlaybooks, item)
 	}
+	for _, finding := range result.UnresolvedFindings {
+		encoded, err := findingContract(finding)
+		if err != nil {
+			return nil, err
+		}
+		message.UnresolvedFindings = append(message.UnresolvedFindings, encoded)
+	}
 	for _, action := range result.RepairActions {
 		message.RepairActions = append(message.RepairActions, &contracts.RepairActionReceipt{
 			ActionId: action.ActionID, Kind: action.Kind, Target: action.Target, Resources: objectRefsContract(action.Resources),
 			Summary: action.Summary, Details: action.Details, StartedAt: optionalTimestamp(action.StartedAt),
-			CompletedAt: optionalTimestamp(action.CompletedAt), Success: action.Success, Reversible: action.Reversible,
+			CompletedAt: optionalTimestamp(action.CompletedAt), Success: action.Success, Reversible: action.Reversible, FailureReason: action.FailureReason,
 		})
 	}
 	for _, evidence := range result.VerificationEvidence {
@@ -372,7 +379,7 @@ func incidentResultState(message *contracts.IncidentResult) IncidentResult {
 		result.RepairActions = append(result.RepairActions, RepairActionReceipt{
 			ActionID: action.GetActionId(), Kind: action.GetKind(), Target: action.GetTarget(), Resources: objectRefsState(action.GetResources()),
 			Summary: action.GetSummary(), Details: action.GetDetails(), StartedAt: controllerTime(action.GetStartedAt()),
-			CompletedAt: controllerTime(action.GetCompletedAt()), Success: action.GetSuccess(), Reversible: action.GetReversible(),
+			CompletedAt: controllerTime(action.GetCompletedAt()), Success: action.GetSuccess(), Reversible: action.GetReversible(), FailureReason: action.GetFailureReason(),
 		})
 	}
 	for _, evidence := range message.GetVerificationEvidence() {
@@ -385,6 +392,9 @@ func incidentResultState(message *contracts.IncidentResult) IncidentResult {
 			IncidentID: pull.GetIncidentId(), PullCount: pull.GetPullCount(), DetectorIDs: append([]string(nil), pull.GetDetectorIds()...),
 			PlaybookIDs: append([]string(nil), pull.GetPlaybookIds()...), ReportDigest: pull.GetReportDigest(),
 		}
+	}
+	for _, finding := range message.GetUnresolvedFindings() {
+		result.UnresolvedFindings = append(result.UnresolvedFindings, findingState(finding))
 	}
 	return result
 }

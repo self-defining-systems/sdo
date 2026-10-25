@@ -128,7 +128,7 @@ func (e PlanExecutor) applyGeneralPlan(ctx context.Context, incident IncidentReq
 		if stepErr != nil {
 			return result, stepErr
 		}
-		if ref, refErr := planActionRef(a); refErr == nil && ref.Kind != "" {
+		if ref, refErr := planActionRef(a); refErr == nil && ref.Kind != "" && objectActionOperation(a) != "delete" {
 			refs = append(refs, ref)
 		}
 	}
@@ -186,7 +186,7 @@ func (e PlanExecutor) generalStep(ctx context.Context, incident IncidentRequest,
 			effect.Before, effect.BeforeKnown = readImage()
 		}
 		effect.Response, err = client.KubernetesRequest(ctx, a)
-		if apierrors.IsForbidden(err) || apierrors.IsUnauthorized(err) || apierrors.IsConflict(err) || apierrors.IsNotFound(err) {
+		if errors.Is(err, ErrKubernetesAPITransportUnavailable) || apierrors.IsForbidden(err) || apierrors.IsUnauthorized(err) || apierrors.IsConflict(err) || apierrors.IsNotFound(err) {
 			r.Applied = false
 			r.ActionsApplied = nil
 			r.Patches = nil
@@ -310,7 +310,11 @@ func (e PlanExecutor) generalStep(ctx context.Context, incident IncidentRequest,
 			r.Patches[0].After = created.DeepCopy()
 		}
 	case "delete":
-		err = e.Client.(PlanLifecycleClient).Delete(ctx, ref, before.GetUID(), before.GetResourceVersion())
+		if e.DeleteObject != nil {
+			err = e.DeleteObject(ctx, ref, before.GetUID(), before.GetResourceVersion())
+		} else {
+			err = e.Client.(PlanLifecycleClient).Delete(ctx, ref, before.GetUID(), before.GetResourceVersion())
+		}
 	default:
 		err = e.Client.Patch(ctx, ref, types.MergePatchType, patch.Patch)
 	}

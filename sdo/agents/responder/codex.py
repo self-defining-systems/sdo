@@ -159,6 +159,7 @@ _MODEL_OMITS: dict[str, tuple[str, ...]] = {
     "sdodev.contracts.v1alpha1.IncidentResult": (
         "schema_version",
         "final_detector_states",
+        "unresolved_findings",
         "proposed_artifact_ids",
         "usage",
         "responder_session_id",

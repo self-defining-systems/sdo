@@ -11,6 +11,7 @@ import (
 )
 
 type menuEntry struct {
+	removal   *UnexplainedRemoval
 	spec      program.ProgramSpec
 	action    protoreflect.FieldDescriptor
 	programID string
