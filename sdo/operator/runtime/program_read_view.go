@@ -431,7 +431,7 @@ func (v LiveReadView) Object(ref sdk.ObjectRef) (*unstructured.Unstructured, err
 }
 func (v LiveReadView) snapshotObject(ref sdk.ObjectRef) (*unstructured.Unstructured, error) {
 	object, err := v.Object(ref)
-	if errors.Is(err, sdk.ErrObjectNotCaptured) || apierrors.IsNotFound(err) {
+	if apierrors.IsNotFound(err) {
 		return nil, fmt.Errorf("%w: %v", errSnapshotObjectAbsent, err)
 	}
 	return object, err

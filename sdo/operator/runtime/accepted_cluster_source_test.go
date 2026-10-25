@@ -2,6 +2,9 @@ package runtime
 
 import (
 	"context"
+	"errors"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"os"
 	"path/filepath"
 	"strings"
@@ -49,6 +52,26 @@ rules:
 	diff, err := view.DiffAgainstSource(ref)
 	if err != nil || !diff.Changed || !strings.Contains(diff.Text, "rules") {
 		t.Fatalf("source RBAC drift: %+v %v", diff, err)
+	}
+
+	// Source-absent RBAC objects use the application lock too, without a foreign
+	// webhook ObservationTarget. Both status and verification consume this diff.
+	for _, kind := range []string{"ClusterRole", "ClusterRoleBinding"} {
+		oldRef := sdk.ObjectRef{APIVersion: "rbac.authorization.k8s.io/v1", Kind: kind, Name: "old-object"}
+		old := unstructured.Unstructured{Object: map[string]any{"apiVersion": oldRef.APIVersion, "kind": kind, "metadata": map[string]any{"name": oldRef.Name}}}
+		oldView := view
+		oldView.DetectionContext = sdktest.Snapshot{NamespaceName: "app", Objects: []unstructured.Unstructured{old}}
+		if d, e := oldView.DiffAgainstSource(oldRef); e != nil || !d.Changed || !d.SourceAbsent {
+			t.Fatalf("present old %s: %+v %v", kind, d, e)
+		}
+		oldView.DetectionContext = clusterEvidenceSnapshot{Snapshot: sdktest.Snapshot{NamespaceName: "app"}, err: apierrors.NewNotFound(schema.GroupResource{Group: "rbac.authorization.k8s.io", Resource: "clusterroles"}, oldRef.Name)}
+		if d, e := oldView.DiffAgainstSource(oldRef); e != nil || d.Changed || !d.SourceAbsent {
+			t.Fatalf("confirmed absent old %s: %+v %v", kind, d, e)
+		}
+		oldView.DetectionContext = clusterEvidenceSnapshot{Snapshot: sdktest.Snapshot{NamespaceName: "app"}, err: sdk.ErrObjectNotCaptured}
+		if d, e := oldView.DiffAgainstSource(oldRef); e == nil {
+			t.Fatalf("uncaptured old %s became healthy: %+v", kind, d)
+		}
 	}
 	loop := NewResponderLoop(IncidentRequest{Namespace: "app", SourceCommit: commit}, nil, nil, nil, PlanExecutor{Source: source}, 1)
 	if response := loop.Handle(ctx, ToolRequest{Command: "source", Ref: &ref}); response.Error != "" || response.Source == nil {
@@ -98,5 +121,32 @@ func TestSourceIdentityWithoutConfigurationNeedsNoAdoptionWrite(t *testing.T) {
 	}
 	if len(client.Actions()) != 0 {
 		t.Fatalf("identity-only source required API authority: %+v", client.Actions())
+	}
+}
+
+type clusterEvidenceSnapshot struct {
+	sdktest.Snapshot
+	err error
+}
+
+func (s clusterEvidenceSnapshot) Object(sdk.ObjectRef) (*unstructured.Unstructured, error) {
+	return nil, s.err
+}
+func TestAcceptedClusterSourceMissingObservationIsNotAbsence(t *testing.T) {
+	ref := sdk.ObjectRef{APIVersion: "rbac.authorization.k8s.io/v1", Kind: "ClusterRole", Name: "old-role"}
+	for _, tc := range []struct {
+		name string
+		err  error
+	}{
+		{"not-captured", sdk.ErrObjectNotCaptured},
+		{"forbidden", apierrors.NewForbidden(schema.GroupResource{Group: "rbac.authorization.k8s.io", Resource: "clusterroles"}, ref.Name, errors.New("denied"))},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			view := LiveReadView{DetectionContext: clusterEvidenceSnapshot{Snapshot: sdktest.Snapshot{NamespaceName: "app"}, err: tc.err}, Source: planFakeSource{}, SourceCommit: "accepted"}
+			_, err := view.snapshotObject(ref)
+			if !errors.Is(err, tc.err) {
+				t.Fatalf("missing observation became absence: %v", err)
+			}
+		})
 	}
 }

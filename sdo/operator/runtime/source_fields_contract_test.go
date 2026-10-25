@@ -5,7 +5,9 @@ import (
 	"reflect"
 	"testing"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
@@ -59,7 +61,7 @@ func TestSourceDiffPreservesIndependentCompletionAndDetectsMissingController(t *
 		t.Fatalf("external completion annotation flagged: %+v %v", diff, err)
 	}
 	snapshot.Objects = nil
-	view.DetectionContext = snapshot
+	view.DetectionContext = clusterEvidenceSnapshot{Snapshot: snapshot, err: apierrors.NewNotFound(schema.GroupResource{Group: "apps", Resource: "deployments"}, ref.Name)}
 	if diff, err := view.DiffAgainstSource(ref); err != nil || !diff.Changed || diff.SourceAbsent {
 		t.Fatalf("deleted source controller invisible: %+v %v", diff, err)
 	}
