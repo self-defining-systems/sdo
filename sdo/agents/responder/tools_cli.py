@@ -29,6 +29,37 @@ CLI_EXAMPLES = (
 )
 ACT_EXAMPLE = "sdo act --resource Deployment/app/api -- kubectl -n app set image deployment/api api=img:1.2"
 
+MUTATION_COMMANDS = frozenset({"act", "apply", "mitigate", "rollback"})
+
+# Key response paths are part of the CLI help contract, shared with the generated
+# responder reference. Fields are conditional, not a promise of success/presence.
+RESPONSE_FIELDS = {
+    "status": "healthy, findings[], detector_states[], drift_events[], program_runs[]",
+    "detect": "healthy, findings[], detector_states[]",
+    "check": "healthy, findings[], detector_states[], detection (fresh detect response)",
+    "diagnose": "program_runs[].{program_id, verdict, can_mitigate}",
+    "plan": "plan_id, patches[], program_runs[]",
+    "menu": "menu.options[].{option_id, program_id, parameters}, unexplained_removal_blockers[]",
+    "source": "source (accepted Kubernetes object)",
+    "verify": "healthy, unresolved, findings[], detector_states[], drift_events[]",
+    "report": "report.{status, attempt_id, rounds}, session",
+    "act": "actions[].{success, exit_code, receipt, output, failure_reason}",
+    "apply": "actions[].{application_id, targeted_healthy, mitigation_health, program_runs, report}",
+    "mitigate": "actions[].{application_id, targeted_healthy, mitigation_health, rollout_pending}, option_reports[]",
+    "rollback": "actions[].{application_id, summary, error}",
+}
+
+
+def response_fields_help(command: str, *, markdown: bool = False) -> str:
+    """Name which JSON document owns the fields, including bounded mutations."""
+    if command in MUTATION_COMMANDS:
+        location = "`details_file`" if markdown else "details_file"
+        label = f"Complete report fields ({location})"
+    else:
+        label = "Key JSON fields"
+    fields = RESPONSE_FIELDS[command]
+    return label + ": " + (f"`{fields}`." if markdown else fields)
+
 
 def _resource(value: str) -> dict[str, str]:
     try:
@@ -230,7 +261,8 @@ def _parser() -> argparse.ArgumentParser:
             "incident_verified is an extra "
             "informational warning; reads/reports keep their normal results, and new mutations are rejected."
         )
-    for command in commands.choices.values():
+    for name, command in commands.choices.items():
+        command.epilog = (command.epilog or "") + "\n\n" + response_fields_help(name)
         command.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
     return parser
 
@@ -485,7 +517,7 @@ def _print_response(response: dict[str, Any], *, full_json: bool) -> None:
         marker = Path(history) / "incident-verified.json"
         if marker.exists():
             response["incident_verified"] = json.loads(marker.read_text())
-    if response.get("command") in {"mitigate", "act", "apply", "rollback"}:
+    if response.get("command") in MUTATION_COMMANDS:
         before = response.get("before_findings")
         after = response.get("controller_findings")
         from sdo.agents.responder.multi_output import format_selection_response
