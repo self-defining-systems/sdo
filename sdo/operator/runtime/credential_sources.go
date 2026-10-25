@@ -2,13 +2,18 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"regexp"
 	"strings"
 	"unicode/utf8"
 
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/rest"
 	"sdo.dev/operator/sdk/program"
 )
 
@@ -89,7 +94,7 @@ func (c TypedPlanClient) resolveCredential(ctx context.Context, namespace string
 		return fail("ConfigMap transport unavailable")
 	}
 	k := ref.ConfigMap
-	cm, err := c.Client.CoreV1().ConfigMaps(namespace).Get(ctx, k.Name, metav1.GetOptions{})
+	cm, err := c.credentialConfigMap(ctx, namespace, k.Name)
 	if err != nil {
 		return fail("ConfigMap read unavailable; check name and existing RBAC")
 	}
@@ -120,4 +125,44 @@ func databaseSafeError(err error, fallback string) error {
 		return ref
 	}
 	return fmt.Errorf("%s", fallback)
+}
+
+// credentialConfigMap bypasses REST Request's response transformation: at V(10)
+// client-go logs entire successful and failed response bodies. Reuse the same
+// authenticated transport/RBAC while decoding bounded bytes privately here.
+func (c TypedPlanClient) credentialConfigMap(ctx context.Context, namespace, name string) (*corev1.ConfigMap, error) {
+	rawClient := c.Client.CoreV1().RESTClient()
+	client, ok := rawClient.(*rest.RESTClient)
+	if ok && client == nil {
+		// client-go's in-memory fake has no HTTP transport and no body logger.
+		return c.Client.CoreV1().ConfigMaps(namespace).Get(ctx, name, metav1.GetOptions{})
+	}
+	if !ok || client.Client == nil {
+		return nil, fmt.Errorf("credential API transport unavailable")
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, client.Get().Namespace(namespace).Resource("configmaps").Name(name).URL().String(), nil)
+	if err != nil {
+		return nil, fmt.Errorf("credential API request unavailable")
+	}
+	request.Header.Set("Accept", "application/json")
+	transport := *client.Client
+	transport.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	response, err := transport.Do(request)
+	if err != nil {
+		return nil, fmt.Errorf("credential API request failed")
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("credential API read refused")
+	}
+	const capBytes = 2 << 20
+	body, err := io.ReadAll(io.LimitReader(response.Body, capBytes+1))
+	if err != nil || len(body) > capBytes {
+		return nil, fmt.Errorf("credential API response unavailable")
+	}
+	var value corev1.ConfigMap
+	if err := json.Unmarshal(body, &value); err != nil {
+		return nil, fmt.Errorf("credential API response invalid")
+	}
+	return &value, nil
 }
