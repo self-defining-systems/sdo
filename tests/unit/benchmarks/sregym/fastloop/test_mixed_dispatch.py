@@ -174,14 +174,13 @@ def test_subprocess_command_uses_own_environment_and_global_slot(tmp_path: Path)
     from benchmarks.sregym.fastloop.stream import StreamConfig
 
     env = environment(tmp_path, "social_network")
-    flags = ("--program-fast-path", "--no-checkpoints")
+    flags = ("--no-checkpoints",)
     validate_run_args(flags)
     child = FastloopSlotEnvironment(env, StreamConfig((("problem",),)), flags)
     args = build_parser().parse_args(child.command(7, "problem", "mixed-slot-007")[3:])
     assert args.run_dir == env.run_dir
     assert (args.problem, args.incidents, args.slot_offset, args.run_id) == (["problem"], 1, 7, "mixed-slot-007")
     assert args.require_full_cleanup
-    assert args.program_fast_path
     assert args.no_checkpoints
     assert args.require_fault_tracking is False
     assert args.continue_on_error is False

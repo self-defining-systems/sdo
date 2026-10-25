@@ -632,14 +632,11 @@ class CompositeSdoAgent(SdoPersistentAgent):
         warm = False
         reasons: list[str] = []
         binding_sources: list[str] = []
-        fast_path_skip_reasons: list[str] = []
         receipts_seen = 0
         rebuild_verified = None
         closure_phases: dict[str, float] = {}
         skipped_reasons: list[str] = []
         paths: list[str] = []
-        fast_programs: list[str] = []
-        relation_covered: list[dict[str, Any]] = []
         timed_outcomes: list[AgentOutcome] = []
         for item in self._incidents:
             receipt = self._receipt(Path(item["receipt_dir"]))
@@ -669,12 +666,10 @@ class CompositeSdoAgent(SdoPersistentAgent):
             metrics = _program_metrics(outcome_document)
             if metrics["resolution_path"] is not None:
                 paths.append(metrics["resolution_path"])
-            fast_programs.extend(metrics["fast_path_programs"])
-            relation_covered.extend(metrics["fast_path_relation_covered_findings"])
+
             reasons.extend(metrics["match_reasons"])
             binding_sources.extend(metrics["binding_sources"])
-            if metrics["fast_path_skipped_reason"]:
-                fast_path_skip_reasons.append(metrics["fast_path_skipped_reason"])
+
             diagnoses += metrics["program_diagnoses"] or 0
             calls += metrics["program_tool_calls"] or 0
             loops += metrics["response_loops_used"] or 0
@@ -705,7 +700,6 @@ class CompositeSdoAgent(SdoPersistentAgent):
             warm_path=warm,
             match_reasons=tuple(dict.fromkeys(reasons)),
             binding_sources=tuple(dict.fromkeys(binding_sources)),
-            fast_path_skipped_reason="; ".join(dict.fromkeys(fast_path_skip_reasons)) or None,
             reflection_attempts=attempts,
             reflection_evidence_gap_count=sum(count for count in gap_counts if count is not None)
             if gap_counts and all(count is not None for count in gap_counts)
@@ -721,13 +715,7 @@ class CompositeSdoAgent(SdoPersistentAgent):
             program_tool_calls=calls,
             tool_commands=commands,
             response_loops_used=loops,
-            resolution_path="fast_path"
-            if paths and all(path == "fast_path" for path in paths)
-            else "responder"
-            if paths
-            else None,
-            fast_path_programs=tuple(dict.fromkeys(fast_programs)),
-            fast_path_relation_covered_findings=tuple(relation_covered),
+            resolution_path="responder" if paths else None,
             error="; ".join(filter(None, [outcome.error, error])) or None,
         )
 

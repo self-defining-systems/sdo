@@ -198,28 +198,11 @@ Failure signals recorded for reflection, the corpus and trust:
 | Fixed ad hoc, and some program would have matched | a binding or ranking bug |
 | Fixed ad hoc, and no program applies | a coverage gap: compile a new program or record an `sdk_gap` |
 
-## Fast path and trust
+## Agent-selected recurrence and coverage
 
-- A program is trusted after K verified successes (default 3, set with
-  `--program-trust-threshold`) with no failures since its last change. Accepted
-  program revisions have passed the broker's corpus replay. Any failure or edit
-  resets the count.
-- The fast path is implemented behind `--program-fast-path` (default off) and
-  requires `recorded-actions`. After the settle re-diagnosis, every active
-  finding must have exactly one trusted `Match`, or be directly related to a
-  bound object of a selected trusted run. Direct relations come only from the
-  settled snapshot: a Service selector matching workload pod template labels
-  in the same namespace, a Pod or ReplicaSet owned by the bound Deployment or
-  StatefulSet, or an HPA or PDB targeting the bound workload. An unrelated
-  finding skips with `uncovered_finding`. The controller applies the batch
-  through `PlanExecutor`, verifies program `NoMatch` and that every finding's
-  detector clears, and closes without a responder
-  or reflection turn. It allows one attempt per incident. An unsuccessful
-  attempt restores captured pre-images and hands its summary to the responder.
-- The outcome records `resolution_path`, `fast_path_programs`, plan verification,
-  rollback, failure signals, and `fast_path_relation_covered_findings` with the
-  finding fingerprint, program ID, and binding. The ledger and fastloop row
-  export the same relation evidence alongside the path and programs.
+Go diagnoses accepted, non-retired programs at incident open. `PlaybookCoverage` lists all Match results by program/revision/bindings, their explained finding fingerprints, informational verified counters and the menu option selecting their mitigation. Remaining active findings are listed explicitly. The responder chooses program mitigations and fixes uncovered findings; Go independently verifies closure. Completed repairs are undone only on explicit responder rollback. Partial-write compensation within an apply remains.
+
+Coverage is copied unchanged into the outcome; application and action receipts show which candidate repairs actually ran. See [agent-selected repair evidence](../../.agents/skills/analyze-experiment/references/automatic-repair.md).
 
 ## Reflection
 
@@ -245,7 +228,7 @@ Three arms on the same stream:
 
 Per incident: requests, tokens and time to mitigation (judge time excluded),
 `Diagnose` runs and verdicts, loop iterations, reuse on new services, SDK gaps,
-trust statistics, and fast-path-eligible incidents.
+verified counters and coverage of incident findings.
 
 ## Memory maintenance
 
@@ -310,7 +293,7 @@ rarely needed programs are the long-tail knowledge memory exists to keep.
 3. **Agents:** resume-mode reflection by default, the compile-to-programs or
    `sdk_gap` reflection contract, responder prompts for program verdicts and
    scratch scripts, and reflection token export.
-4. **Evaluation:** the three-arm experiment, then turning on the fast path.
+4. **Evaluation:** the scripted coverage gate, then live recurrence evaluation.
 
 Each phase updates `docs/architecture.md` (ownership: responders author
 playbook programs, the broker validates them, the controller executes them)

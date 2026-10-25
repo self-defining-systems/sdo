@@ -204,30 +204,14 @@ func validate(r *c.NativeProductionReceipt) error {
 		}
 	}
 	jobs := r.GetResponderJobEvidence()
-	if outcome.GetResolutionPath() == "fast_path" {
-		applications := outcome.GetPlanApplications()
-		// Current Go closures settle versioned cause work even on the fast path.
-		// Retain the legacy skip proof while requiring complete accepted settlement
-		// for current receipts; all program, health, commit and no-worker checks stay.
-		settled := outcome.GetReflectionEligibility().GetVersion() == 1 && l.GetRequiresReflection() && l.GetReflectionProcessed() && !l.GetReflectionRejected() && (decision.GetLearningDecision() == "updated" || decision.GetLearningDecision() == "no_change")
-		if len(jobs) != 0 || request.GetRepairPolicy() != "recorded-actions" || response.GetResolutionPath() != "fast_path" || !slices.Equal(response.GetFastPathPrograms(), outcome.GetFastPathPrograms()) || len(outcome.GetFastPathPrograms()) == 0 || (l.GetReflectionSkippedReason() != "trusted program fast path" && !settled) || len(response.GetProgramFailureSignals()) != 0 || len(applications) == 0 {
-			return errors.New("native fast path lacks verified program and reflection evidence")
-		}
-		for _, application := range applications {
-			if !application.GetApplied() || application.GetRolledBack() || application.GetVerification().GetResult() != c.Verdict_RESULT_NO_MATCH {
-				return errors.New("native fast path lacks verified program and reflection evidence")
-			}
-		}
-	} else {
-		if len(jobs) != 1 || jobs[0].GetIncidentId() != id || !jobs[0].GetSucceeded() {
-			return errors.New("native receipt requires one correlated successful responder Job")
-		}
-		if err := nonempty(jobs[0].GetJobUid(), "responder Job UID"); err != nil {
-			return err
-		}
-		if err := nonempty(jobs[0].GetJobName(), "responder Job name"); err != nil {
-			return err
-		}
+	if len(jobs) != 1 || jobs[0].GetIncidentId() != id || !jobs[0].GetSucceeded() {
+		return errors.New("native receipt requires one correlated successful responder Job")
+	}
+	if err := nonempty(jobs[0].GetJobUid(), "responder Job UID"); err != nil {
+		return err
+	}
+	if err := nonempty(jobs[0].GetJobName(), "responder Job name"); err != nil {
+		return err
 	}
 	if r.GetOutcomeCommit() != l.GetOutcomeCommit() || r.GetReflectionCommit() != l.GetReflectionCommit() || r.GetProposalCommit() != l.GetProposalCommit() {
 		return errors.New("native flat commit summary disagrees with ledger")

@@ -94,15 +94,10 @@ func controllerConfigToArgs(config *contractsv1alpha1.ControllerConfig) []string
 	if config.GetMaxResponseLoops() > 0 {
 		args = append(args, "--max-response-loops", strconv.Itoa(int(config.GetMaxResponseLoops())))
 	}
-	args = append(args, "--program-fast-path="+strconv.FormatBool(config.GetProgramFastPath()))
-	if config.GetProgramTrustThreshold() > 0 {
-		args = append(args, "--program-trust-threshold", strconv.Itoa(int(config.GetProgramTrustThreshold())))
-	}
 	dur("--diagnosis-deadline", config.GetDiagnosisDeadline())
 	dur("--drift-sweep-interval", config.GetDriftSweepInterval())
 	dur("--program-min-duration", config.GetProgramMinDuration())
 	dur("--drift-batch-window", config.GetDriftBatchWindow())
-	dur("--diagnosis-settle-delay", config.GetDiagnosisSettleDelay())
 	str("--repair-policy", config.GetRepairPolicy())
 
 	str("--lease-name", config.GetLeaseName())

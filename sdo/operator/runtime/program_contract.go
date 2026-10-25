@@ -1,8 +1,9 @@
 package runtime
 
 import (
-	"google.golang.org/protobuf/types/known/structpb"
 	"sort"
+
+	"google.golang.org/protobuf/types/known/structpb"
 
 	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -19,18 +20,6 @@ func programRunContract(run ProgramRun) *contracts.ProgramRun {
 			break
 		}
 	}
-	return result
-}
-
-func relationCoveredFindingContract(covered RelationCoveredFinding) *contracts.RelationCoveredFinding {
-	result := &contracts.RelationCoveredFinding{FindingFingerprint: covered.FindingFingerprint, ProgramId: covered.ProgramID}
-	result.Bindings = programBindingsContract(covered.Bindings)
-	return result
-}
-
-func relationCoveredFindingState(covered *contracts.RelationCoveredFinding) RelationCoveredFinding {
-	result := RelationCoveredFinding{FindingFingerprint: covered.GetFindingFingerprint(), ProgramID: covered.GetProgramId(), Bindings: program.Bindings{Objects: program.ObjectBindings{}}}
-	result.Bindings = programBindingsState(covered.GetBindings())
 	return result
 }
 

@@ -3,9 +3,10 @@ package runtime
 import (
 	"context"
 	"fmt"
-	"sdo.dev/operator/sdk"
 	"sort"
 	"time"
+
+	"sdo.dev/operator/sdk"
 
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -54,6 +55,13 @@ func (l *ResponderLoop) listMenu(ctx context.Context, request ToolRequest, respo
 			} else {
 				for _, finding := range l.Request.Findings {
 					bindings = append(bindings, candidateBindings(spec, finding)...)
+				}
+				// Namespace-sweep matches can bind resources absent from findings.
+				// Offer the exact option identified by incident-open coverage.
+				for _, match := range l.Request.PlaybookCoverage.GetMatches() {
+					if match.GetPlaybookId() == spec.ID && match.GetCanMitigate() {
+						bindings = append(bindings, programBindingsState(match.GetBindings()))
+					}
 				}
 			}
 			if len(bindings) == 0 {
@@ -194,6 +202,13 @@ func (l *ResponderLoop) mitigateMenu(ctx context.Context, selection *contracts.M
 		started := time.Now().UTC()
 		result, applyErr := l.Executor.Apply(ctx, l.Request, plan, false)
 		completed := time.Now().UTC()
+		// Preserve program/raw-action attribution in the durable outcome, even
+		// when the larger menu response is truncated in the tool-call journal.
+		application := RecordedPlanApplication{ID: applicationID, ProgramIDs: []string{entry.programID}, Result: result, StartedAt: started, CompletedAt: completed, RolledBack: result.RolledBack, RollbackError: result.RollbackError}
+		if applyErr != nil {
+			application.Error = applyErr.Error()
+		}
+		l.applicationsLog = append(l.applicationsLog, application)
 		if result.Applied || result.PendingAction != nil {
 			l.applications[applicationID] = result
 			response.ApplicationID = applicationID
