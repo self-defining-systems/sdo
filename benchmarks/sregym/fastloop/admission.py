@@ -51,7 +51,30 @@ def workload_identity(kubeconfig: Path, namespace: str) -> dict[str, Any]:
             for pod in pods
             if selector and all(pod["metadata"].get("labels", {}).get(key) == val for key, val in selector.items())
         ]
-        if spec.get("replicas", 1) == 0:
+        status = row.get("status", {})
+        desired = spec.get("replicas", 1)
+        if row["kind"] == "DaemonSet":
+            desired = status.get("desiredNumberScheduled", 0)
+            complete = (
+                status.get("updatedNumberScheduled") == desired
+                and status.get("currentNumberScheduled") == desired
+                and status.get("numberReady") == desired
+            )
+        else:
+            complete = (
+                status.get("updatedReplicas") == desired
+                and status.get("replicas") == desired
+                and status.get("readyReplicas") == desired
+            )
+            if row["kind"] == "StatefulSet":
+                complete = complete and status.get("currentRevision") == status.get("updateRevision")
+        if (
+            not complete
+            or status.get("observedGeneration", -1) < metadata.get("generation", 0)
+            or len(selected) != desired
+        ):
+            raise ValueError(f"restore invariant: rollout not complete: {row['kind']}/{metadata['name']}")
+        if desired == 0:
             raise ValueError(f"restore invariant: installed workload scaled to zero: {row['kind']}/{metadata['name']}")
         if not selected or any(
             not any(
@@ -87,10 +110,13 @@ class LaneAdmission:
         directory: Path,
         *,
         timeout_seconds: float = 300,
+        synchronize: Callable[[], None] | None = None,
+        progress: Callable[..., None] | None = None,
     ) -> None:
         self.environment, self.worker, self.ops = environment, worker, ops
         self.directory = directory
         self.timeout_seconds = timeout_seconds
+        self.synchronize, self.progress = synchronize, progress
         self.required_detectors = {"workload-health", "service-endpoints", "service-reachability", "traffic-health"}
         self.required_scenarios: set[str] = set()
         self._identity: dict[str, Any] | None = None
@@ -123,27 +149,40 @@ class LaneAdmission:
             ).stdout
         )
 
+    def check_resources(self, stage: str) -> None:
+        self.directory.mkdir(parents=True, exist_ok=True)
+        try:
+            evidence = assert_lane_resources(self.environment.kubeconfig, app_namespaces={self.environment.namespace})
+            evidence["host_disk"] = assert_host_disk_headroom()
+        except ValueError as exc:
+            if self.progress:
+                self.progress("lane_resources", passed=False, reason=str(exc))
+            raise
+        destination = self.directory / "lane-resources.json"
+        destination.write_text(json.dumps(evidence, indent=2) + "\n")
+        if self.progress:
+            self.progress("lane_resources", evidence=str(destination))
+
     def prove(self, control: str, *, fresh: bool = False) -> dict[str, Any]:
         from benchmarks.sregym.fastloop.rbac import verify_rbac
 
+        self.check_resources("entry")
         self._policy()
         env = self.environment
         self.directory.mkdir(parents=True, exist_ok=True)
-        resources = assert_lane_resources(env.kubeconfig, app_namespaces={env.namespace})
-        resources["host_disk"] = assert_host_disk_headroom()
-        (self.directory / "lane-resources.json").write_text(json.dumps(resources, indent=2) + "\n")
         rbac = verify_rbac(env.kubeconfig, env.namespace)
         (self.directory / "rbac.json").write_text(json.dumps(rbac, indent=2) + "\n")
         boundary = datetime.now(timezone.utc).isoformat()
-        if fresh:
-            lineage = setup_lineage(env.workspace, env.seed_commit or "HEAD")
-            (self.directory / "setup-lineage.json").write_text(json.dumps(lineage, indent=2) + "\n")
+        if self.progress:
+            self.progress("rbac_equality", evidence=str(self.directory / "rbac.json"))
         self._identity = workload_identity(env.kubeconfig, env.namespace)
         self._sequence += 1
         path = self.directory / f"stabilization-{self._sequence:03d}.jsonl"
 
         def sample() -> dict[str, Any]:
             assert_clean_baseline(env.kubeconfig, namespace=env.namespace)
+            if self.progress:
+                self.progress("probe_placement", namespace="sregym")
             assert_stable_workloads(self._identity or {}, workload_identity(env.kubeconfig, env.namespace))
             proof = controller_proof(self.ops.runtime_state(control), self.required_detectors, boundary)
             try:
@@ -173,15 +212,25 @@ class LaneAdmission:
             from benchmarks.sregym.fastloop.baseline_recovery import KubectlApplicationCluster
             from benchmarks.sregym.fastloop.reset import RestoreChecks, restore_application
 
+            self.check_resources("restore")
             checks = RestoreChecks(env)
             checks.prepare(fresh=False)
             restore_application(env, KubectlApplicationCluster(env.kubeconfig), self.worker, checks=checks)
             self._identity = workload_identity(env.kubeconfig, env.namespace)
 
         proof = wait_for_proof(sample, restore, record, timeout_seconds=self.timeout_seconds)
-        resources = assert_lane_resources(env.kubeconfig, app_namespaces={env.namespace})
-        resources["host_disk"] = assert_host_disk_headroom()
-        (self.directory / "lane-resources.json").write_text(json.dumps(resources, indent=2) + "\n")
+        if self.progress:
+            self.progress("stabilization", evidence=str(path))
+        if fresh:
+            if self.synchronize is None:
+                raise ValueError("eval: fresh-memory proof requires synchronization from the accepted repository")
+            self.synchronize()
+            lineage = setup_lineage(env.workspace, env.seed_commit or "HEAD")
+            destination = self.directory / "setup-lineage.json"
+            destination.write_text(json.dumps(lineage, indent=2) + "\n")
+            if self.progress:
+                self.progress("setup_memory", evidence=str(destination))
+        self.check_resources("injection")
         return proof
 
 

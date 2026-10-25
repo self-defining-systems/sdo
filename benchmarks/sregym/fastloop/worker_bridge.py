@@ -68,7 +68,7 @@ def main() -> int:
             from benchmarks.sregym.fastloop.seed_recovery import refresh_baseline_clients
 
             problem = self._problem_factory(str(request["problem_id"]))
-            return refresh_baseline_clients(problem)
+            return refresh_baseline_clients(problem, dependencies_only=request.get("dependencies_only", False))
         if request.get("op") == "baseline_oracle":
             problem = self._problem_factory(str(request["problem_id"]))
             assert_clean_baseline(Path(os.environ["KUBECONFIG"]), namespace=problem.namespace)

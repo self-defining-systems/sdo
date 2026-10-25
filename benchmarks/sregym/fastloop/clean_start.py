@@ -168,7 +168,14 @@ def prepare_harness_traffic(app: Any, kubeconfig: Path) -> bool:
             app.wrk.start()
             kubectl(["get", "pod/locust-fetcher", "-o", "name"], namespace=HARNESS_NAMESPACE, kubeconfig=kubeconfig)
             kubectl(
-                ["delete", "pod/locust-fetcher", "--ignore-not-found=true", "--wait=true", "--timeout=30s"],
+                [
+                    "delete",
+                    "pod/locust-fetcher",
+                    "--ignore-not-found=true",
+                    "--grace-period=0",
+                    "--wait=true",
+                    "--timeout=30s",
+                ],
                 namespace=app.namespace,
                 kubeconfig=kubeconfig,
             )

@@ -113,7 +113,14 @@ def test_run_repeats_fallback_warning_before_starting_workers(monkeypatch, tmp_p
 def test_explicit_mount_opt_out_warns(monkeypatch):
     from subprocess import CompletedProcess
 
-    monkeypatch.setattr(cli.subprocess, "run", lambda *a, **kw: CompletedProcess(a, 0, "", ""))
+    real_run = cli.subprocess.run
+
+    def command(argv, **kwargs):
+        if argv[0] == "docker":
+            return CompletedProcess(argv, 0, "", "")
+        return real_run(argv, **kwargs)
+
+    monkeypatch.setattr(cli.subprocess, "run", command)
     monkeypatch.setattr(cli, "check_host_capacity", lambda _: None)
     args = cli.build_parser().parse_args(["up", "--run-dir", "unused", "--no-dev-mount"])
     with pytest.warns(UserWarning, match="--no-dev-mount"):
