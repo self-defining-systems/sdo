@@ -529,8 +529,8 @@ after completion; the next launch replaces a stale record. The printed
 
 ### PR CI execution budget
 
-PR CI runs at most **three work jobs** in parallel: **Python/static/proto and Go modules**,
-**All runtime race tests**, and **Affected controller images**. The fourth job,
+PR CI runs at most **three work jobs** in parallel: **Go modules**, **All runtime race tests**,
+and **Python/static/proto plus affected images**. The fourth job,
 `Required PR CI`, runs only after all three complete and remains the single
 branch-protection check. There is no selector job or test matrix. Repository
 policy rejects a fourth work job, counting every matrix expansion, as well as
@@ -547,9 +547,8 @@ upper bound enforces the complete path; aim for at most eight minutes of executi
 to retain headroom. All three work jobs time out after nine minutes.
 
 The Go module job starts its longest module alongside a sequential lane for
-smaller modules. The full Python suite overlaps those lanes with two pytest workers
-and one Go compiler per worker; both lane results are required even when one fails. Static
-and proto checks run first on that runner. Runtime
+smaller modules, on a runner dedicated to Go. Python keeps two pytest workers on
+the image runner after static/proto and affected-image validation. Runtime
 uses **three disjoint partitions on one runner**, `contracts`, `integration` and
 `lifecycle`,
 without competing with unrelated module compilation. Run every partition locally with
@@ -580,9 +579,9 @@ and deterministic forwarding/redaction contracts. Every affected image is still
 built, smoked, probed and checked for forbidden benchmark files on PRs.
 
 Static analysis already includes type and architecture checks, so their standalone
-jobs were redundant. They now run once on the Go/Python runner alongside formatting
-and proto lint/codegen drift. Nightly publishes one maximal shared image-layer
-cache; PR image jobs restore it without repeating the large compiler/toolchain
+jobs were redundant. They now run once on the Python/image runner alongside formatting
+and proto lint/codegen drift. Nightly warms and publishes shared Go compiler/module caches, plus one maximal
+image-layer cache; PR image jobs restore it without repeating the large compiler/toolchain
 layer upload (175 seconds in a hosted sample). Every affected image still builds
 and receives the same smoke, probe and forbidden-path audit.
 Image setup reads the committed native SDK pin,

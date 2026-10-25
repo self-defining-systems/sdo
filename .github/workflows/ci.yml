@@ -22,14 +22,14 @@ permissions:
   pull-requests: read
 
 env:
-  # At most three work jobs; module checks have two lanes, runtime three partitions.
+  # At most three work jobs; Go modules and runtime use separate bounded runners.
   GOMAXPROCS: "2"
   GOFLAGS: "-p=2"
   SDO_PYTEST_WORKERS: "2"
 
 jobs:
   go:
-    name: Python, static, proto and Go modules
+    name: Go modules and boundary checks
     runs-on: ubuntu-latest
     timeout-minutes: 9
     steps:
@@ -53,31 +53,8 @@ jobs:
             ci-go-${{ runner.os }}-${{ runner.arch }}-shared-1.26.8-${{ hashFiles('**/go.sum') }}-
             ci-go-${{ runner.os }}-${{ runner.arch }}-shared-1.26.8-
             ci-go-${{ runner.os }}-${{ runner.arch }}-operator-1.26.8-
-      - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc # v6.4.3
-        with:
-          version: "0.9.24"
-          python-version: "3.12"
-          enable-cache: true
-      - run: uv sync --locked --all-extras
-      - name: Initialize boundary-test application sources
-        run: |
-          git config --global url."https://github.com/".insteadOf "git@github.com:"
-          git submodule update --init --depth 1 third_party/sregym
-          git -C third_party/sregym submodule update --init --depth 1 SREGym-applications
-          git -C third_party/sregym/SREGym-applications submodule update --init --depth 1 astronomy-shop
-      - name: Formatting, static, types and architecture
-        run: |
-          bash scripts/format_code.sh --check
-          bash scripts/check_errors.sh
-      - name: Proto lint and generated-code drift
-        run: |
-          go install github.com/bufbuild/buf/cmd/buf@v1.73.0
-          go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.12
-          export PATH="${HOME}/go/bin:${PATH}"
-          bash scripts/check_proto.sh
-          (cd sdo/operator/contracts && go build ./...)
-      - name: Complete Go and Python contracts
-        run: uv run python scripts/test_ci_checks.py
+      - name: Complete Go module race contracts
+        run: bash scripts/test_go_ci.sh
       # Repeated wall-clock acceptance and timed fuzzing are in nightly.yml.
       # All seed corpora stay in the race suite; active mutation gets a short smoke.
       - name: Normal-build proxy latency smoke
@@ -89,14 +66,6 @@ jobs:
       - name: Fuzz boundary smoke
         if: "!cancelled()"
         run: bash scripts/test_ci_fuzz.sh 1s
-      - name: Save shared Go builds even after test failures
-        if: always() && steps.go-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
-        with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-          key: ${{ steps.go-cache.outputs.cache-primary-key }}
 
   runtime-integration:
     name: All runtime race tests and restart acceptance
@@ -131,17 +100,9 @@ jobs:
       - run: uv sync --locked --all-extras
       - name: Compiled CLI, large-source restarts and lifecycle exploration
         run: python3 scripts/test_runtime_shard.py --shard all
-      - name: Save shared Go builds even after test failures
-        if: always() && steps.go-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
-        with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-          key: ${{ steps.go-cache.outputs.cache-primary-key }}
 
   images:
-    name: Affected controller images
+    name: Python, static, proto and affected images
     runs-on: ubuntu-latest
     timeout-minutes: 9
     steps:
@@ -247,16 +208,48 @@ jobs:
           if [ "${EVENT}" = "merge_group" ] || [ "${IMAGE_CONTROLLER}" = "true" ] || [ "${IMAGE_VALIDATOR}" = "true" ] || [ "${IMAGE_RESPONDER}" = "true" ] || [ "${IMAGE_BENCHMARK}" = "true" ]; then
             echo "any_image=true" >> "${GITHUB_OUTPUT}"
           fi
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version: "1.26.8"
+          cache: false
+      - name: Restore shared Go builds
+        id: go-cache
+        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ci-go-${{ runner.os }}-${{ runner.arch }}-shared-1.26.8-${{ hashFiles('**/go.sum') }}-${{ github.job }}-${{ github.sha }}
+          restore-keys: |
+            ci-go-${{ runner.os }}-${{ runner.arch }}-shared-1.26.8-${{ hashFiles('**/go.sum') }}-${{ github.job }}-
+            ci-go-${{ runner.os }}-${{ runner.arch }}-shared-1.26.8-${{ hashFiles('**/go.sum') }}-
+            ci-go-${{ runner.os }}-${{ runner.arch }}-shared-1.26.8-
+            ci-go-${{ runner.os }}-${{ runner.arch }}-operator-1.26.8-
       - uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
         if: steps.resolve.outputs.any_image == 'true'
       - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc # v6.4.3
-        if: steps.resolve.outputs.any_image == 'true'
         with:
           version: "0.9.24"
           python-version: "3.12"
           enable-cache: true
       - run: uv sync --locked --all-extras
-        if: steps.resolve.outputs.any_image == 'true'
+      - name: Initialize boundary-test application sources
+        run: |
+          git config --global url."https://github.com/".insteadOf "git@github.com:"
+          git submodule update --init --depth 1 third_party/sregym
+          git -C third_party/sregym submodule update --init --depth 1 SREGym-applications
+          git -C third_party/sregym/SREGym-applications submodule update --init --depth 1 astronomy-shop
+      - name: Formatting, static, types and architecture
+        run: |
+          bash scripts/format_code.sh --check
+          bash scripts/check_errors.sh
+      - name: Proto lint and generated-code drift
+        run: |
+          go install github.com/bufbuild/buf/cmd/buf@v1.73.0
+          go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.12
+          export PATH="${HOME}/go/bin:${PATH}"
+          bash scripts/check_proto.sh
+          (cd sdo/operator/contracts && go build ./...)
       - name: Select affected images and compute schema identity
         if: steps.resolve.outputs.any_image == 'true'
         id: image-inputs
@@ -290,6 +283,10 @@ jobs:
           # Nightly publishes the full cache; PRs avoid its large upload.
           set: |
             *.cache-from=type=gha,scope=sdo-images
+            *.cache-from+=type=gha,scope=sdo-controller
+            *.cache-from+=type=gha,scope=sdo-validator
+            *.cache-from+=type=gha,scope=sdo-responder
+            *.cache-from+=type=gha,scope=sdo-benchmark
       - name: Smoke and probe every affected image
         if: steps.resolve.outputs.any_image == 'true'
         env:
@@ -318,6 +315,11 @@ jobs:
           fi
 
 
+
+      - name: Warm native CLI and run Python contracts
+        run: |
+          uv run python scripts/operator_test_binary.py
+          bash scripts/test_python.sh
 
   required-pr-ci:
     name: Required PR CI

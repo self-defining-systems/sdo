@@ -42,8 +42,11 @@ def test_image_schema_setup_needs_no_redundant_host_go_build() -> None:
     for name in ("ci.yml", "nightly.yml"):
         workflow = yaml.safe_load((ROOT / ".github/workflows" / name).read_text())
         steps = workflow["jobs"]["images"]["steps"]
-        assert not any("actions/setup-go" in step.get("uses", "") for step in steps)
+        if name == "nightly.yml":
+            assert not any("actions/setup-go" in step.get("uses", "") for step in steps)
         assert not any(step.get("name") == "Cache image schema-identity build" for step in steps)
         inputs = next(step for step in steps if step.get("id") == "image-inputs")
+        assert "go run" not in inputs["run"]
+        assert "go build" not in inputs["run"]
         assert "scripts/ci_schema_identity.py" in inputs["run"]
         assert "SDO_VALIDATOR_SCHEMA_IDENTITY" in inputs["run"]
