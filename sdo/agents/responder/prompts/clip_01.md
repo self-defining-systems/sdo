@@ -1,0 +1,2 @@
+${text}
+[... ${omitted} characters omitted ...]

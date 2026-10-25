@@ -1,0 +1,2 @@
+Script ${name}:
+${bounded}

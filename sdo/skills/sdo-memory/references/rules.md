@@ -45,3 +45,5 @@ Missing inputs are errors; the caller supplies the accepted base and authoring r
   `memory.snapshot-budget`, `memory.snapshot`.
 - Generic service-endpoint, service-reachability and traffic health detectors come from Go policy. Do not author or overwrite them;
   the shared check prepares and validates them. Enforced by: `bootstrap.generic-health`.
+
+- A playbook status is omitted/`active` or `retired`; retirement requires a nonempty string `retired_reason`, which is invalid on an active playbook. Enforced by: `playbook.status`.

@@ -73,3 +73,14 @@ The optional health-owned `.sdo/diagnostics/detectors/health/service-reachabilit
 
 For partial repair, reflection publication and retirement evidence, read
 [native reflection](native-reflection.md).
+
+## Retired playbooks
+
+Playbook README front matter may set `status: retired` with a nonempty string
+`retired_reason`; omitted status or `status: active` is active. The stored README,
+program source and immutable corpus remain evidence. Retirement removes the
+playbook from worker snapshots, detector hints, generated program registration,
+coverage and mitigation menus. A README change reloads the controller registry.
+Do not count a retired README as reusable learned coverage; inspect its reason
+and independently verified outcomes when assessing failed or undone mitigations.
+

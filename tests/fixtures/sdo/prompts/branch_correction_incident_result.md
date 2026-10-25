@@ -1,0 +1,1 @@
+Your answer was not in the `incident_result` field of the output object. Resubmit the same answer in `incident_result` and set `reflection` to null. Change nothing else.
