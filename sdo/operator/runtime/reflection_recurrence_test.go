@@ -50,16 +50,17 @@ func runCompiledLearningRecurrence(t *testing.T, ctx context.Context, built *bui
 
 const compiledLearningRecurrence = `package generated
 import(
- "context";"encoding/json";"errors";"os";"path/filepath";"testing";"time"
+ "context";"encoding/json";"os";"path/filepath";"testing";"time"
  metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
- kruntime "k8s.io/apimachinery/pkg/runtime"
+
  "k8s.io/client-go/kubernetes/fake"
- ktesting "k8s.io/client-go/testing"
+
  contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
  "sdo.dev/operator/memory"
  operator "sdo.dev/operator/runtime"
  "sdo.dev/operator/sdk";"sdo.dev/operator/sdk/program";"sdo.dev/operator/sdk/sdktest"
  "sdo.dev/operator/worker_registry"
+ "google.golang.org/protobuf/encoding/protojson"
 )
 type recurrenceProvider struct{client *fake.Clientset}
 func(p recurrenceProvider) Snapshot(ctx context.Context)(sdk.DetectionContext,error){
@@ -76,8 +77,6 @@ func TestCompiledIdenticalRecurrence(t *testing.T){
  client:=fake.NewSimpleClientset()
  for _,item:=range c.Open.ServiceList{if _,err:=client.CoreV1().Services("app").Create(ctx,item.DeepCopy(),metav1.CreateOptions{});err!=nil{t.Fatal(err)}}
  for _,item:=range c.Open.PodList{if _,err:=client.CoreV1().Pods("app").Create(ctx,item.DeepCopy(),metav1.CreateOptions{});err!=nil{t.Fatal(err)}}
- modelCalls:=0
- client.PrependReactor("create","jobs",func(ktesting.Action)(bool,kruntime.Object,error){modelCalls++;return true,nil,errors.New("responder model dispatch forbidden on recurrence")})
  provider:=recurrenceProvider{client};snapshot,err:=provider.Snapshot(ctx);if err!=nil{t.Fatal(err)}
  allDetectors:=All()
  var detectors []sdk.Detector
@@ -87,16 +86,24 @@ func TestCompiledIdenticalRecurrence(t *testing.T){
  registry,err:=Programs();if err!=nil{t.Fatal(err)}
  workers,err:=worker_registry.LoadBuiltIn(os.Getenv("RL1_REGISTRATIONS"),"scripted:test");if err!=nil{t.Fatal(err)}
  agentID,err:=workers.AgentFor(&contracts.IncidentRequest{});if err!=nil{t.Fatal(err)}
- dispatcher:=operator.KubernetesJobDispatcher{Client:client,Namespace:"app",Registry:workers,AgentID:agentID,ServiceAccount:"scripted",RepositoryPVC:"scripted",RepositoryMountPath:filepath.Dir(request.RepositoryWorktree),ProgramFastPath:true,ProgramTrustThreshold:1,Outcomes:memory.OpenReader(request.RepositoryWorktree)}
+ dispatcher:=operator.KubernetesJobDispatcher{Client:client,Namespace:"app",Registry:workers,AgentID:agentID,ServiceAccount:"scripted",RepositoryPVC:"scripted",RepositoryMountPath:filepath.Dir(request.RepositoryWorktree),Outcomes:memory.OpenReader(request.RepositoryWorktree)}
  var lastLoop *operator.ResponderLoop
  dispatcher.LoopFactory=func(r operator.IncidentRequest)*operator.ResponderLoop{
   loop:=operator.NewResponderLoop(r,registry,provider,allDetectors,operator.PlanExecutor{Client:operator.TypedPlanClient{Client:client},Rollouts:operator.KubernetesPlanRollouts{Client:client},Verifier:operator.PlanHealthVerifier{Detectors:allDetectors,Provider:provider}},1)
   loop.ReadView=func(s sdk.DetectionContext) program.ReadView{return &sdktest.ReplayReadView{Snapshot:s.(sdktest.Snapshot)}}
-  loop.CorpusReplayPassed=true;loop.DiagnosisSettleDelay=time.Millisecond;lastLoop=loop;return loop
+  loop.MenuConfig=&operator.ResponderMenuConfig{};lastLoop=loop;return loop
  }
- result,err:=dispatcher.Dispatch(ctx,request)
- if err!=nil||result.ResolutionPath!="fast_path"||len(result.RepairActions)!=1||modelCalls!=0||result.Usage.GetInputTokens()!=0{t.Fatalf("second incident called responder or failed repair: result=%+v calls=%d err=%v trust=%+v runs=%+v actions=%+v failures=%+v",result,modelCalls,err,lastLoop.Trust,lastLoop.ProgramRuns(),lastLoop.PlanApplications(),lastLoop.FailureSignals())}
+ prepared,err:=dispatcher.PrepareDispatch(ctx,request);if err!=nil{t.Fatal(err)}
+ task:=new(contracts.AgentTask);if err:=protojson.Unmarshal([]byte(prepared.PreparedAgentTask),task);err!=nil{t.Fatal(err)}
+ typed:=new(contracts.IncidentRequest);if err:=task.GetRequest().UnmarshalTo(typed);err!=nil{t.Fatal(err)}
+ if len(typed.GetPlaybookCoverage().GetMatches())!=1{t.Fatalf("recurrence coverage: %v",typed.GetPlaybookCoverage())}
+ if len(lastLoop.PlanApplications())!=0{t.Fatal("controller applied before agent")}
+ menu:=lastLoop.Handle(ctx,operator.ToolRequest{Command:"menu"})
+ for _,option:=range menu.Menu.Options{if option.ProgramId==typed.PlaybookCoverage.Matches[0].PlaybookId{
+  applied:=lastLoop.Handle(ctx,operator.ToolRequest{Command:"mitigate",Selection:&contracts.MitigationSelection{OptionId:option.OptionId,RoundLimit:1}});if applied.Error!=""{t.Fatal(applied.Error)}
+ }}
+ verified:=lastLoop.Handle(ctx,operator.ToolRequest{Command:"verify"});if !verified.Healthy{t.Fatalf("agent repair did not verify: %+v",verified)}
  service,err:=client.CoreV1().Services("app").Get(ctx,"api",metav1.GetOptions{});if err!=nil||service.Spec.Ports[0].TargetPort.IntVal!=8080{t.Fatalf("identical recurrence not repaired: %+v %v",service,err)}
- t.Log("incident 1 committed programs and detector; identical incident 2 repaired by compiled fast path with zero responder model calls")
+ t.Log("incident 1 committed programs and detector; identical incident 2 exposes compiled program coverage and is repaired by scripted agent selection")
 }
 `

@@ -68,8 +68,6 @@ def _install() -> NativeInstallConfig:
         reflection_session="fresh",
         reflection_guidance="generalize-spec",
         force_reflection=True,
-        program_fast_path=True,
-        program_trust_threshold=4,
         max_response_loops=3,
         response_timeout_seconds=600,
         verification_timeout_seconds=90,

@@ -5,6 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
+	"testing"
+	"time"
+
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -12,9 +16,6 @@ import (
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
-	"strings"
-	"testing"
-	"time"
 )
 
 type peerBlockedRollout struct {
@@ -155,23 +156,6 @@ func TestKubernetesPendingRolloutCarriesOwnedPodCreationEvidence(t *testing.T) {
 	}
 }
 
-func TestPendingFastPathDoesNotUndoLandedRepairOrEarnTrust(t *testing.T) {
-	loop, client := trustedPortLoop(t, false, true, true)
-	loop.Executor.RolloutTimeout = time.Millisecond
-	loop.Executor.Rollouts = rolloutFunc(func(ctx context.Context, _ []sdk.ObjectRef) error { <-ctx.Done(); return ctx.Err() })
-	attempt := loop.TryTrustedFastPath(context.Background(), 1)
-	if !attempt.Attempted || attempt.Resolved || attempt.RolledBack || !strings.Contains(attempt.Summary, "rollout_pending") {
-		t.Fatalf("pending fast path misclassified: %+v", attempt)
-	}
-	service, err := client.CoreV1().Services("app").Get(context.Background(), "api", metav1.GetOptions{})
-	if err != nil || service.Spec.Ports[0].TargetPort.IntVal != 8080 {
-		t.Fatalf("pending landed repair undone: %v %v", service, err)
-	}
-	if len(loop.FailureSignals()) != 0 || loop.PlanApplications()[0].Result.VerificationPassed {
-		t.Fatal("pending application got trust success/failure credit")
-	}
-}
-
 func TestPendingRolloutToolRecordIsBoundedAndNotVerified(t *testing.T) {
 	p := &contracts.RolloutPending{Reason: strings.Repeat("blocked ", 2000), Blockers: []*contracts.RolloutBlocker{{Ref: planRefProto(menuDeployment), Reason: strings.Repeat("TLS failed ", 1000), WarningEvents: []string{strings.Repeat("FailedCreate ", 1000)}}}}
 	record := recordedToolResponseJSON(ToolResponse{Command: "mitigate", Summary: strings.Repeat("rollout_pending ", 1000), Error: strings.Repeat("pending ", 1000), RolloutPending: p}, nil)
@@ -197,16 +181,16 @@ func TestPendingRolloutDoesNotCountAsDurableTrustFailure(t *testing.T) {
 	for _, falseMatch := range []bool{false, true} {
 		t.Run(fmt.Sprint(falseMatch), func(t *testing.T) {
 			prior := &contracts.OutcomeRecord{Classification: "success", SourceCommit: "revision-a", ProgramRuns: []*contracts.ProgramRun{{ProgramId: "repair", ProgramRevision: "revision-a"}}, ReflectionEligibility: &contracts.ReflectionEligibility{Version: 1, Unassigned: []*contracts.ReflectionWorkItem{{Disposition: "covered", ProgramId: "repair", ProgramRevision: "revision-a"}}}}
-			pending := &contracts.OutcomeRecord{Classification: "failed", SourceCommit: "revision-a", ProgramRuns: []*contracts.ProgramRun{{ProgramId: "repair", ProgramRevision: "revision-a"}}, PlanApplications: []*contracts.PlanApplication{{ApplicationId: "fast-path-pending", Applied: true, ProgramIds: []string{"repair"}, Error: "rollout_pending", RolloutPending: &contracts.RolloutPending{Reason: "peer admission blocks rollout"}}}}
+			pending := &contracts.OutcomeRecord{Classification: "failed", SourceCommit: "revision-a", ProgramRuns: []*contracts.ProgramRun{{ProgramId: "repair", ProgramRevision: "revision-a"}}, PlanApplications: []*contracts.PlanApplication{{ApplicationId: "application-pending", Applied: true, ProgramIds: []string{"repair"}, Error: "rollout_pending", RolloutPending: &contracts.RolloutPending{Reason: "peer admission blocks rollout"}}}}
 			if falseMatch {
 				pending.ReflectionEligibility = &contracts.ReflectionEligibility{Version: 1, Unassigned: []*contracts.ReflectionWorkItem{{Disposition: "false_match", ProgramId: "repair", ProgramRevision: "revision-a"}}}
 			}
-			state := ProgramTrustStats([]*contracts.OutcomeRecord{prior, pending}, 1)["repair"]
+			state := ProgramTrustStats([]*contracts.OutcomeRecord{prior, pending})["repair"]
 			if falseMatch {
-				if state.Failures != 1 || state.Trusted {
+				if state.Failures != 1 || (state.VerifiedSuccesses > 0 && state.Failures == 0) {
 					t.Fatalf("pending masked independent false match: %+v", state)
 				}
-			} else if state.Failures != 0 || state.VerifiedSuccesses != 1 || !state.Trusted {
+			} else if state.Failures != 0 || state.VerifiedSuccesses != 1 || !(state.VerifiedSuccesses > 0 && state.Failures == 0) {
 				t.Fatalf("pending alone changed durable trust: %+v", state)
 			}
 		})

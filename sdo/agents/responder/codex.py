@@ -166,9 +166,6 @@ _MODEL_OMITS: dict[str, tuple[str, ...]] = {
         "response_loop_exhausted",
         "program_failure_signals",
         "resolution_path",
-        "fast_path_programs",
-        "fast_path_skipped_reason",
-        "fast_path_relation_covered_findings",
     ),
     "sdodev.contracts.v1alpha1.AppliedPlaybook": ("parameter_bindings", "script_names"),
     "sdodev.contracts.v1alpha1.DriftEvent": (
