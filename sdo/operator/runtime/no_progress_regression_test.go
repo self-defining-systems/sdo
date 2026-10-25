@@ -192,13 +192,13 @@ func TestResponderProgressContinuesToRecovery(t *testing.T) {
 			loop.VerifyResult = func(context.Context, IncidentResult) ToolResponse {
 				samples++
 				if samples == 3 {
-					return ToolResponse{Healthy: true}
+					return ToolResponse{Healthy: true, Summary: "independent recovery confirmed"}
 				}
 				current := finding
 				if samples == 2 && mode == "advancing-health" {
 					current.Evidence = "ready=2/3"
 				}
-				return ToolResponse{Findings: []sdk.Finding{current}}
+				return ToolResponse{Summary: "independent findings remain", Findings: []sdk.Finding{current}}
 			}
 			dispatcher := KubernetesJobDispatcher{Client: client, Namespace: "demo", Registry: testIncidentRegistry(t, "responder:test"), AgentID: testIncidentAgentID(t), RepositoryPVC: "repo", RepositoryMountPath: filepath.Dir(request.RepositoryWorktree), ServiceAccount: "responder", PollInterval: time.Millisecond, LoopFactory: func(IncidentRequest) *ResponderLoop { return loop }}
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -217,7 +217,7 @@ func TestResponderProgressContinuesToRecovery(t *testing.T) {
 				reason = ""
 				success = true
 			}
-			result.RepairActions = []RepairActionReceipt{{ActionID: repair.ActionID, Resources: repair.Receipt.Resources, FailureReason: reason, Success: success, StartedAt: repair.Receipt.StartedAt, CompletedAt: repair.Receipt.CompletedAt}}
+			result.RepairActions = []RepairActionReceipt{{ActionID: repair.ActionID, Kind: "sdk-plan", Summary: "synthetic mutation", Target: "ServiceAccount/app/cleanup", Details: "synthetic receipt", Resources: repair.Receipt.Resources, FailureReason: reason, Success: success, StartedAt: repair.Receipt.StartedAt, CompletedAt: repair.Receipt.CompletedAt}}
 			for turn := 0; turn < 3; turn++ {
 				id := request.IncidentID
 				if turn > 0 {
