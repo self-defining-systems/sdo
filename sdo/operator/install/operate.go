@@ -127,10 +127,6 @@ func OperateJob(cfg Config, healthObjective, operationID string, maxAttempts int
 		args = append(args, "--max-response-loops", fmt.Sprint(cfg.MaxResponseLoops))
 	}
 
-	args = append(args, fmt.Sprintf("--program-fast-path=%t", cfg.ProgramFastPath))
-	if cfg.ProgramTrustThreshold > 0 {
-		args = append(args, "--program-trust-threshold", fmt.Sprint(cfg.ProgramTrustThreshold))
-	}
 	if cfg.LateFindings == "pull" {
 		args = append(args, "--late-findings", cfg.LateFindings)
 	}

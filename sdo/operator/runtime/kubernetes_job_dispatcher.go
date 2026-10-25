@@ -6,13 +6,11 @@ import (
 	"fmt"
 	"log/slog"
 	"path/filepath"
-	"sdo.dev/operator/contracts/wire"
 	"strings"
 	"sync"
 	"time"
 
 	"google.golang.org/protobuf/encoding/protojson"
-	"google.golang.org/protobuf/types/known/anypb"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -51,8 +49,6 @@ type KubernetesJobDispatcher struct {
 	Outcomes              memory.Reader
 	RequireMemorySnapshot bool
 	LoopFactory           func(IncidentRequest) *ResponderLoop
-	ProgramFastPath       bool
-	ProgramTrustThreshold int
 }
 
 // PrepareDispatch freezes the worker task before the controller records its
@@ -97,6 +93,7 @@ func (d KubernetesJobDispatcher) PrepareDispatch(ctx context.Context, request In
 			for _, run := range typed.GetInitialProgramRuns() {
 				request.InitialProgramRuns = append(request.InitialProgramRuns, programRunState(run))
 			}
+			request.PlaybookCoverage = cloneCoverage(typed.GetPlaybookCoverage())
 			request.MaxResponseLoops = int(typed.GetMaxResponseLoops())
 			request.PreparedAgentTask = payload
 			return request, nil
@@ -114,8 +111,12 @@ func (d KubernetesJobDispatcher) PrepareDispatch(ctx context.Context, request In
 			loop.Trust = trust
 			request.InitialProgramRuns = loop.InitialDiagnose(ctx)
 			fillProgramRevisions(ctx, request.InitialProgramRuns, request.RepositoryWorktree, request.SourceCommit)
+			request.PlaybookCoverage = buildPlaybookCoverage(request.Findings, request.InitialProgramRuns, loop.lastDiagnosisView, trust)
 			request.MaxResponseLoops = loop.MaxBatches
 		}
+	}
+	if request.PlaybookCoverage == nil {
+		request.PlaybookCoverage = buildPlaybookCoverage(request.Findings, nil, nil, nil)
 	}
 	var snapshots []*contracts.OperationalMemorySnapshot
 	if d.RequireMemorySnapshot && d.Catalog == nil {
@@ -190,39 +191,7 @@ func (d KubernetesJobDispatcher) Dispatch(ctx context.Context, request IncidentR
 	if err := d.Registry.ValidateTask(task); err != nil {
 		return IncidentResult{}, fmt.Errorf("validate agent task: %w", err)
 	}
-	if d.ProgramFastPath && loop != nil {
-		fastResult, summary, resolved, err := d.tryFastPath(ctx, request, loop)
-		if err != nil {
-			return IncidentResult{}, err
-		}
-		if resolved {
-			return fastResult, nil
-		}
-		if summary != "" {
-			request.FastPathSummary = summary
-			prepared := new(contracts.IncidentRequest)
-			if err := task.GetRequest().UnmarshalTo(prepared); err != nil {
-				return IncidentResult{}, fmt.Errorf("decode prepared incident for fast-path handoff: %w", err)
-			}
-			prepared.FastPathSummary = summary
-			task.Request, err = anypb.New(prepared)
-			if err != nil {
-				return IncidentResult{}, err
-			}
-			payload, err := wire.Canonical(task)
-			if err != nil {
-				return IncidentResult{}, err
-			}
-			request.PreparedAgentTask = string(payload)
-			task = new(contracts.AgentTask)
-			if err := protojson.Unmarshal(payload, task); err != nil {
-				return IncidentResult{}, fmt.Errorf("decode fast-path handoff task: %w", err)
-			}
-			if err := d.Registry.ValidateTask(task); err != nil {
-				return IncidentResult{}, fmt.Errorf("validate fast-path handoff task: %w", err)
-			}
-		}
-	}
+
 	environment := make(map[string]string, len(d.Environment))
 	for name, value := range d.Environment {
 		environment[name] = value
@@ -291,7 +260,13 @@ func (d KubernetesJobDispatcher) Dispatch(ctx context.Context, request IncidentR
 	if err != nil {
 		var failed *worker_registry.JobFailedError
 		if errors.As(err, &failed) {
-			return IncidentResult{}, &ResponderJobFailedError{JobName: failed.JobName}
+			result := IncidentResult{SchemaVersion: ProtocolSchemaVersion, IncidentID: request.IncidentID, Status: IncidentFailed, Error: failed.Error()}
+			if loop != nil {
+				loop.mu.Lock()
+				result.ResponderSessionID = loop.menuSession.GetProviderSessionId()
+				loop.mu.Unlock()
+			}
+			return result, &ResponderJobFailedError{JobName: failed.JobName}
 		}
 		return IncidentResult{}, err
 	}
@@ -300,7 +275,7 @@ func (d KubernetesJobDispatcher) Dispatch(ctx context.Context, request IncidentR
 		result.ProgramRuns = loop.ProgramRuns()
 		fillProgramRevisions(ctx, result.ProgramRuns, request.RepositoryWorktree, request.SourceCommit)
 		result.PlanApplications = loop.PlanApplications()
-		result.RepairActions = ProgramRepairReceipts(result.PlanApplications, result.RepairActions)
+		result.RepairActions = loop.ApplicationRepairReceipts(result.RepairActions)
 		if result.Status == IncidentCompleted {
 			loop.CreditEquivalentRepairs(ctx, result.RepairActions)
 			result.PlanApplications = loop.PlanApplications()
@@ -315,9 +290,6 @@ func (d KubernetesJobDispatcher) Dispatch(ctx context.Context, request IncidentR
 		loop.mu.Unlock()
 		result.ResponseLoopsUsed = max(loop.LoopsUsed(), attempts)
 		result.ResolutionPath = "responder"
-		result.FastPathPrograms = append([]string(nil), loop.fastPathPrograms...)
-		result.FastPathSkippedReason = loop.fastPathSkippedReason
-		result.FastPathRelationCoveredFindings = append([]RelationCoveredFinding(nil), loop.fastPathRelationCoveredFindings...)
 		result.ResponseLoopExhausted = result.ResponseLoopExhausted || loop.Exhausted()
 		if result.ResponseLoopExhausted {
 			result.Status = IncidentFailed
@@ -358,10 +330,9 @@ func (d KubernetesJobDispatcher) programTrust(ctx context.Context, request Incid
 			records = append(records, outcome.Record)
 		}
 	}
-	stats := ProgramTrustStats(records, d.ProgramTrustThreshold)
-	threshold := max(1, d.ProgramTrustThreshold)
+	stats := ProgramTrustStats(records)
 	if request.RepositoryWorktree != "" && gitRevision.MatchString(request.SourceCommit) {
-		if err := creditLearnedPrograms(ctx, request, records, stats, threshold); err != nil {
+		if err := creditLearnedPrograms(ctx, request, records, stats); err != nil {
 			// Origin credit is optional. Keep ordinary settled trust when the
 			// extra Git evidence is unavailable; never invent origin credit.
 			slog.WarnContext(ctx, "optional program learning credit unavailable", "incident_id", request.IncidentID, "error", err)

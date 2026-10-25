@@ -18,7 +18,7 @@ value is required to interpret these facts.
 Reports return into the same responder session. A failed option may be followed by
 another option or direct repair. Up to five rounds share the incident allowance across
 options and ordinary plan batches; smaller configured limits remain effective.
-Session identity, reports, repair receipts and counters use the existing tool-state snapshot.
+Session identity, reports, repair receipts and counters use the existing tool-state snapshot. Immutable plan/application repair receipts persist at completion, before continuation feedback exists.
 Session/checkpoint messages remain presentation state, not mutation authority. There is no
 menu ledger, report outbox or automatic replay; historical ledger fields are retired on this path.
 Fully applied options that fail verification remain applied. Each execution identifies its
@@ -32,6 +32,12 @@ resources, timing, details and success. Menu reports are not legacy PlanApplicat
 proof and add no positive program trust credit. Intermediate rounds are not independent
 incidents. Terminal menu success alone is not controller health verification, broker
 ACK or a strict benchmark receipt.
+
+## Mitigation health scope
+
+`apply` and `mitigate` return after their writes and touched-resource rollout checks, then take one health observation; they never poll global health while unrelated faults remain. The built-in verifier retains the original target finding fingerprints independently of the written objects. Explicit repair scope (`--finding FINGERPRINT` on plan/mitigate) is validated before writes; otherwise authored finding/playbook links and coverage supply targets. Unidentified scope requires the whole single sample to clear. Unavailable health observations fail closed.
+
+Live responses include `mitigation_health` (written resources, original target fingerprints, current health findings, targeted findings and both health verdicts) and `targeted_healthy`. A cleared program diagnosis also gates the menu's targeted success. `STATUS_SUCCESS`, plan `verification_passed` and `targeted_healthy` describe the completed mitigation, and may coexist with `healthy: false` and named peer findings. Round `independently_healthy` retains the whole-health observation. Truncated tool records retain `targeted_healthy`; scope/findings may be omitted by the existing record size cap. None of these facts independently proves incident closure, broker ACK or a benchmark receipt. Read `sdo verify`/controller closure evidence for global recovery.
 
 ## Scripted production check
 

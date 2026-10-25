@@ -1,4 +1,4 @@
-# Unicode code points in production-rendered prompts; fixture maxima rounded upward to 100.
+# Unicode code points in production-rendered prompts; measured limits include explicit headroom.
 
 [deployer.incident_data]
 max_chars = 100
@@ -65,8 +65,8 @@ max_chars = 400
 reason = "Baseline synthetic fixture maximum: 366 Unicode code points; byte-identical template extraction."
 
 [reflection.incident_data]
-max_chars = 200
-reason = "Expanded synthetic coverage includes per-cause reflection work and complete backend prefix/history additions; maximum 128 Unicode code points."
+max_chars = 100
+reason = "Portable fixture configuration maximum: 86 Unicode code points, rounded upward to 100."
 
 [reflection.instructions]
 max_chars = 2400
@@ -113,64 +113,16 @@ max_chars = 100
 reason = "Baseline synthetic fixture maximum: 6 Unicode code points; byte-identical template extraction."
 
 [responder.additional_context]
-max_chars = 100
-reason = "Baseline synthetic fixture maximum: 79 Unicode code points; byte-identical template extraction."
-
-[responder.detector_evidence]
-max_chars = 400
-reason = "Baseline synthetic fixture maximum: 365 Unicode code points; byte-identical template extraction."
-
-[responder.drift_guidance]
-max_chars = 800
-reason = "Baseline synthetic fixture maximum: 723 Unicode code points; byte-identical template extraction."
+max_chars = 744
+reason = "Actual benchmark transport appendix: 676 Unicode code points, with 10 percent headroom."
 
 [responder.incident_data]
-max_chars = 3500
-reason = "Explicit five-fault matched-program fixture, including NoMatch compaction: maximum 3466 Unicode code points."
-
-[responder.inlined_architecture_summary]
-max_chars = 8100
-reason = "Baseline synthetic fixture maximum: 8050 Unicode code points; byte-identical template extraction."
-
-[responder.inlined_health_objective]
-max_chars = 4100
-reason = "Baseline synthetic fixture maximum: 4046 Unicode code points; byte-identical template extraction."
+max_chars = 6471
+reason = "Measured typed-coverage fixture maximum: 5882 Unicode code points, with 10 percent headroom; real coverage replaces the pending marker and complete overflow facts remain available."
 
 [responder.instructions]
-max_chars = 1300
-reason = "Baseline synthetic fixture maximum: 1208 Unicode code points; byte-identical template extraction."
-
-[responder.late_findings_guidance]
-max_chars = 700
-reason = "Baseline synthetic fixture maximum: 605 Unicode code points; byte-identical template extraction."
-
-[responder.memory_guard]
-max_chars = 300
-reason = "Baseline synthetic fixture maximum: 269 Unicode code points; byte-identical template extraction."
-
-[responder.no_action_instructions]
-max_chars = 1000
-reason = "Baseline synthetic fixture maximum: 978 Unicode code points; byte-identical template extraction."
-
-[responder.program_guidance]
-max_chars = 700
-reason = "Baseline synthetic fixture maximum: 679 Unicode code points; byte-identical template extraction."
-
-[responder.state_changes_section]
-max_chars = 700
-reason = "Baseline synthetic fixture maximum: 644 Unicode code points; byte-identical template extraction."
-
-[responder.strategy]
-max_chars = 12600
-reason = "Baseline synthetic fixture maximum: 12565 Unicode code points; byte-identical template extraction."
-
-[responder.surfaced_context]
-max_chars = 10200
-reason = "Baseline synthetic fixture maximum: 10184 Unicode code points; byte-identical template extraction."
-
-[responder.verification_instructions]
-max_chars = 2600
-reason = "Baseline synthetic fixture maximum: 2519 Unicode code points; byte-identical template extraction."
+max_chars = 513
+reason = "Measured workflow-routing and late-finding instructions: 466 Unicode code points, with 10 percent headroom; the full real transport prefix remains 1322 of 1500."
 
 [session.incident_data]
 max_chars = 100
@@ -191,3 +143,14 @@ reason = "Baseline synthetic fixture maximum: 175 Unicode code points; byte-iden
 [skills.sdo-playbook-authoring]
 max_chars = 200
 reason = "Baseline synthetic fixture maximum: 191 Unicode code points; byte-identical template extraction."
+
+[skills.sdo-incident-response]
+max_chars = 200
+reason = "New responder workflow skill description; shares the existing 200-character skill-index allowance."
+[continuation.instructions]
+max_chars = 511
+reason = "Measured typed continuation instructions: 464 Unicode code points, with 10 percent headroom; the 1500-character instruction cap remains enforced."
+
+[continuation.incident_data]
+max_chars = 2214
+reason = "Measured typed current findings and complete completed-action receipts: 2012 Unicode code points, with 10 percent headroom; rendering never truncates factual lists."

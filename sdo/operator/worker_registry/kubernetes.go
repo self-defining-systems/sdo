@@ -97,12 +97,43 @@ type JobFailedError struct{ JobName string }
 
 func (err *JobFailedError) Error() string { return fmt.Sprintf("agent Job %q failed", err.JobName) }
 
+// TaskTimeoutError is terminal for this frozen reflection task. Retrying a
+// transport may rejoin work, but must never grant a new execution budget.
+type TaskTimeoutError struct {
+	TaskID   string
+	Deadline time.Time
+}
+
+func (e *TaskTimeoutError) Error() string {
+	return fmt.Sprintf("reflection task %q exceeded frozen deadline %s", e.TaskID, e.Deadline.UTC().Format(time.RFC3339Nano))
+}
+func (e *TaskTimeoutError) Unwrap() error { return context.DeadlineExceeded }
+
+func frozenReflectionDeadline(task *contracts.AgentTask) (time.Time, bool) {
+	if task.GetDeadline() == nil || !task.GetRequest().MessageIs(&contracts.ReflectionRequest{}) {
+		return time.Time{}, false
+	}
+	return task.GetDeadline().AsTime(), true
+}
+
 func (e KubernetesExecutor) Execute(ctx context.Context, task *contracts.AgentTask) (*contracts.AgentResult, error) {
 	if e.Client == nil || e.Registry == nil || e.Namespace == "" || e.RepositoryPVC == "" {
 		return nil, fmt.Errorf("Kubernetes client, registry, namespace, and repository PVC are required")
 	}
 	if err := e.Registry.ValidateTask(task); err != nil {
 		return nil, fmt.Errorf("validate agent task: %w", err)
+	}
+	deadline, bounded := frozenReflectionDeadline(task)
+	if bounded {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithDeadline(ctx, deadline)
+		defer cancel()
+		if !time.Now().Before(deadline) {
+			return nil, &TaskTimeoutError{TaskID: task.GetTaskId(), Deadline: deadline}
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	registration, err := e.Registry.Resolve(task.GetAgentId(), task.GetTaskType())
 	if err != nil {
@@ -202,6 +233,13 @@ func (e KubernetesExecutor) Execute(ctx context.Context, task *contracts.AgentTa
 			return nil, fmt.Errorf("get agent Job: %w", jobErr)
 		}
 		if jobErr == nil && jobFailed(job) {
+			if bounded {
+				for _, condition := range job.Status.Conditions {
+					if condition.Type == batchv1.JobFailed && condition.Status == corev1.ConditionTrue && condition.Reason == "DeadlineExceeded" {
+						return nil, &TaskTimeoutError{TaskID: task.GetTaskId(), Deadline: deadline}
+					}
+				}
+			}
 			return nil, &JobFailedError{JobName: jobName}
 		}
 		resultMap, err := e.Client.CoreV1().ConfigMaps(e.Namespace).Get(ctx, resultName, metav1.GetOptions{})
@@ -234,6 +272,9 @@ func (e KubernetesExecutor) Execute(ctx context.Context, task *contracts.AgentTa
 		}
 		select {
 		case <-ctx.Done():
+			if bounded && !time.Now().Before(deadline) {
+				return nil, &TaskTimeoutError{TaskID: task.GetTaskId(), Deadline: deadline}
+			}
 			return nil, ctx.Err()
 		case <-ticker.C:
 		}
@@ -314,6 +355,18 @@ const (
 )
 
 func (e KubernetesExecutor) ensureJob(ctx context.Context, task *contracts.AgentTask, launch *contracts.KubernetesJobLaunch, jobName string, request requestSource, resultName, proposalSubPath string) error {
+	var activeDeadlineSeconds *int64
+	if deadline, bounded := frozenReflectionDeadline(task); bounded {
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return &TaskTimeoutError{TaskID: task.GetTaskId(), Deadline: deadline}
+		}
+		seconds := int64(remaining / time.Second)
+		if remaining%time.Second > 0 {
+			seconds++
+		}
+		activeDeadlineSeconds = &seconds
+	}
 	backoffLimit := int32(0)
 	ttl := int32(3600)
 	nonRoot := true
@@ -408,7 +461,7 @@ func (e KubernetesExecutor) ensureJob(ctx context.Context, task *contracts.Agent
 	// every capability dropped and privilege escalation off.
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{Name: jobName, Namespace: e.Namespace},
-		Spec: batchv1.JobSpec{BackoffLimit: &backoffLimit, TTLSecondsAfterFinished: &ttl,
+		Spec: batchv1.JobSpec{BackoffLimit: &backoffLimit, TTLSecondsAfterFinished: &ttl, ActiveDeadlineSeconds: activeDeadlineSeconds,
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app.kubernetes.io/name": "sdo-worker", "sdo.dev/incident": jobName}},
 				Spec: corev1.PodSpec{

@@ -49,8 +49,7 @@ class RuntimeConfig:
     reflection_session: str = "resume"
     reflection_guidance: str = "baseline"
     force_reflection: bool = False
-    program_fast_path: bool = True
-    program_trust_threshold: int = 1
+
     late_findings: str = "off"
     max_response_loops: int = 10
     healthy_baseline: bool = False
@@ -105,8 +104,7 @@ class RuntimeConfig:
             raise ValueError("max_response_loops must be positive")
         if self.max_deployment_attempts <= 0:
             raise ValueError("max_deployment_attempts must be positive")
-        if self.program_trust_threshold <= 0:
-            raise ValueError("program_trust_threshold must be positive")
+
         if self.agent_registrations is not None and not self.agent_registrations.is_absolute():
             raise ValueError("agent_registrations path must be absolute")
 
@@ -147,8 +145,6 @@ def native_install_config(config: RuntimeConfig) -> NativeInstallConfig:
         reflection_session=config.reflection_session,
         reflection_guidance=config.reflection_guidance,
         force_reflection=config.force_reflection,
-        program_fast_path=config.program_fast_path,
-        program_trust_threshold=config.program_trust_threshold,
         healthy_baseline=config.healthy_baseline,
         permissive_responder=config.permissive_responder,
         responder_namespaces=config.responder_namespaces,

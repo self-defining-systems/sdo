@@ -3,9 +3,10 @@ package runtime
 import (
 	"context"
 	"fmt"
-	"sdo.dev/operator/sdk"
 	"sort"
 	"time"
+
+	"sdo.dev/operator/sdk"
 
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -55,6 +56,13 @@ func (l *ResponderLoop) listMenu(ctx context.Context, request ToolRequest, respo
 				for _, finding := range l.Request.Findings {
 					bindings = append(bindings, candidateBindings(spec, finding)...)
 				}
+				// Namespace-sweep matches can bind resources absent from findings.
+				// Offer the exact option identified by incident-open coverage.
+				for _, match := range l.Request.PlaybookCoverage.GetMatches() {
+					if match.GetPlaybookId() == spec.ID && match.GetCanMitigate() {
+						bindings = append(bindings, programBindingsState(match.GetBindings()))
+					}
+				}
 			}
 			if len(bindings) == 0 {
 				bindings = append(bindings, program.Bindings{})
@@ -94,7 +102,7 @@ func (l *ResponderLoop) listMenu(ctx context.Context, request ToolRequest, respo
 
 // Invoke the ordinary plan executor, under its existing credentials. Selection
 // metadata is descriptive; no ledger, fencing, provenance or menu preflight runs.
-func (l *ResponderLoop) mitigateMenu(ctx context.Context, selection *contracts.MitigationSelection, parameters map[string]string, response *ToolResponse) {
+func (l *ResponderLoop) mitigateMenu(ctx context.Context, selection *contracts.MitigationSelection, parameters map[string]string, targetFingerprints []string, response *ToolResponse) {
 	if l.MenuConfig == nil {
 		response.Error = "mitigation menu is disabled"
 		return
@@ -192,8 +200,9 @@ func (l *ResponderLoop) mitigateMenu(ctx context.Context, selection *contracts.M
 			}
 		}
 		started := time.Now().UTC()
-		result, applyErr := l.Executor.Apply(ctx, l.Request, plan, false)
+		result, applyErr := l.Executor.Apply(ctx, l.mitigationIncident([]selectedPlan{{programID: entry.programID, bindings: bindings, targetFingerprints: targetFingerprints}}), plan, false)
 		completed := time.Now().UTC()
+
 		if result.Applied || result.PendingAction != nil {
 			l.applications[applicationID] = result
 			response.ApplicationID = applicationID
@@ -236,14 +245,41 @@ func (l *ResponderLoop) mitigateMenu(ctx context.Context, selection *contracts.M
 				l.menuRepairs = append(l.menuRepairs, RepairActionReceipt{ActionID: receipt.ActionId, Kind: "mitigation-menu", Target: patch.Ref.Kind + "/" + patch.Ref.Name, Resources: []sdk.ObjectRef{patch.Ref}, Summary: "responder executed SDK plan action", Details: fmt.Sprintf("attempt %s round %d action %d via ordinary PlanExecutor", attempt, round, index+1), Success: !result.RolledBack, StartedAt: started, CompletedAt: completed})
 			}
 		}
-		rr.IndependentlyHealthy = result.VerificationPassed
-		rr.Verification = verdictContract(program.Verdict{Result: program.Unknown})
+		l.observeMitigationHealth(result, response)
+		targetVerdict := program.Verdict{Result: program.Unknown}
+		if result.MitigationHealth != nil && entry.programID != "" && result.Applied && result.RolloutPending == nil && l.Programs != nil {
+			if diagnoser, ok := l.Programs.Diagnoser(entry.programID); ok {
+				view, viewErr := l.snapshotView(ctx)
+				if viewErr == nil {
+					targetVerdict = program.RunDiagnose(ctx, diagnoser, view, bindings, l.deadline())
+				}
+				run := ProgramRun{ProgramID: entry.programID, Bindings: bindings, Verdict: targetVerdict}
+				response.ProgramRuns = append(response.ProgramRuns, run)
+				l.runs = append(l.runs, run)
+				result.VerificationPassed = result.VerificationPassed && targetVerdict.Result == program.NoMatch
+			}
+		}
+		response.TargetedHealthy = result.VerificationPassed
+		rr.IndependentlyHealthy = response.Healthy
+		if result.MitigationHealth == nil {
+			rr.IndependentlyHealthy = result.VerificationPassed
+		}
+		rr.Verification = verdictContract(targetVerdict)
+		// Preserve program/raw-action attribution in the durable outcome, even
+		// when the larger menu response is truncated in the tool-call journal.
+		application := RecordedPlanApplication{ID: applicationID, ProgramIDs: []string{entry.programID}, Result: result, StartedAt: started, CompletedAt: completed, RolledBack: result.RolledBack, RollbackError: result.RollbackError}
+		if applyErr != nil {
+			application.Error = applyErr.Error()
+		}
+		l.applicationsLog = append(l.applicationsLog, application)
+		if result.Applied {
+			l.applications[applicationID] = result
+		}
 		if result.VerificationPassed {
 			rr.Verification = verdictContract(program.Verdict{Result: program.NoMatch})
 			report.Status = contracts.MitigationReport_STATUS_SUCCESS
 			report.FailedPhase = ""
 			report.ReasonCode = ""
-			l.findings = nil
 			break
 		}
 		if result.RolloutPending != nil {

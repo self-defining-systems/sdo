@@ -249,7 +249,7 @@ func TestT1ScriptedBrokerMatrix(t *testing.T) {
 					if run.positive != c.positive || run.negative != c.negative {
 						t.Errorf("published/attempted cases = +%d/-%d; want +%d/-%d", run.positive, run.negative, c.positive, c.negative)
 					}
-					if got := ProgramTrustStats([]*contracts.OutcomeRecord{run.outcome}, 1)[t1Program].VerifiedSuccesses; got != c.credit {
+					if got := ProgramTrustStats([]*contracts.OutcomeRecord{run.outcome})[t1Program].VerifiedSuccesses; got != c.credit {
 						t.Errorf("durable trust credit = %d; want %d (reflection rejected=%t)", got, c.credit, reject)
 					}
 					if c.negative > 0 && !run.ledger.ReflectionRejected {
@@ -431,7 +431,7 @@ func t1RunBroker(t *testing.T, c t1Class, reject bool) t1Run {
 		registry = nil
 		t1Captures(t, capture, t1Class{fixed: program.NoMatch})
 	}
-	worker := RegisteredReflectionWorker{AgentID: "t1-scripted", TaskType: reflectionTaskType(t), Outcomes: memory.OpenReader(root), Timeout: time.Minute}
+	worker := RegisteredReflectionWorker{AgentID: "t1-scripted", TaskType: reflectionTaskType(t), Outcomes: memory.OpenReader(root), Timeout: time.Minute, SessionMode: "fresh"}
 	worker.Executor = reflectionTaskExecutorFunc(func(_ context.Context, task *contracts.AgentTask) (*contracts.AgentResult, error) {
 		inspectCases(task.Workspace.CheckoutPath)
 		run.calls++
@@ -523,11 +523,11 @@ func TestT1TrustProperty(t *testing.T) {
 		// Arrival order must not alter chronological trust. Every sample uses
 		// the same program revision, with strictly increasing completion times.
 		run.outcome.Timestamps.CompletedAt = timestamppb.New(time.Unix(int64(200+trial), 0))
-		before := ProgramTrustStats(outcomes, 1)[t1Program]
+		before := ProgramTrustStats(outcomes)[t1Program]
 		outcomes = append(outcomes, run.outcome)
-		orderedStats := ProgramTrustStats(outcomes, 1)
+		orderedStats := ProgramTrustStats(outcomes)
 		rng.Shuffle(len(outcomes), func(i, j int) { outcomes[i], outcomes[j] = outcomes[j], outcomes[i] })
-		shuffledStats := ProgramTrustStats(outcomes, 1)
+		shuffledStats := ProgramTrustStats(outcomes)
 		if !reflect.DeepEqual(orderedStats, shuffledStats) {
 			t.Errorf("seed=186 trial=%d arrival order changed trust", trial)
 		}

@@ -503,6 +503,9 @@ def test_scripted_fastloop_reuses_reflected_target_port_program(
     diagnostics = workspace / ".sdo/diagnostics"
     diagnostics.mkdir(parents=True)
     (diagnostics / "manifest.yaml").write_text("detectors: []\n")
+    (diagnostics / "go.mod").write_text(
+        "module hermetic-diagnostics\n\ngo 1.24\n\nrequire sdo.dev/operator/sdk v0.0.0\n"
+    )
     (workspace / ".sdo/lifecycle-provenance.yaml").write_text("{}\n")
     subprocess.run(["git", "init", "-q"], cwd=workspace, check=True)
     subprocess.run(["git", "add", "."], cwd=workspace, check=True)

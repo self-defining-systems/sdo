@@ -20,7 +20,7 @@ import (
 	"sdo.dev/operator/toolchain"
 )
 
-const sdkSchemaIdentity = "sdo.dev/v1alpha1+sdk.e7afc699397961a5"
+const sdkSchemaIdentity = "sdo.dev/v1alpha1+sdk.7a16cb0ff847cbf9"
 
 type repeatable []string
 
@@ -68,11 +68,8 @@ func ParseControllerLaunch(args []string) (builder.RunConfig, bool, error) {
 	healthyBaseline := flags.Bool("healthy-baseline", false, "validate incident detectors against recorded healthy snapshots")
 	metricsURL := flags.String("metrics-url", "", "Prometheus-compatible API URL that metric and alert detectors query once per evaluation cycle")
 	maxResponseLoops := flags.Int("max-response-loops", 10, "maximum sdo apply batches per incident")
-	programFastPath := flags.Bool("program-fast-path", true, "allow trusted programs to resolve incidents")
-	programTrustThreshold := flags.Int("program-trust-threshold", 1, "verified successes required to trust a program")
 	diagnosisDeadline := flags.Duration("diagnosis-deadline", 10*time.Second, "shared candidate diagnosis deadline")
 	programMinDuration := flags.Duration("program-min-duration", 10*time.Second, "minimum sustained learned-program firing and clearing duration")
-	diagnosisSettleDelay := flags.Duration("diagnosis-settle-delay", 15*time.Second, "settle delay before a trusted-program fast-path attempt")
 	duration := flags.Duration("duration", 0, "bounded controller duration")
 	exitAfterClosure := flags.Bool("exit-after-closure", false, "exit after the first acknowledged closure")
 	supervise := flags.Bool("supervise", false, "rebuild and relaunch after closure")
@@ -95,9 +92,6 @@ func ParseControllerLaunch(args []string) (builder.RunConfig, bool, error) {
 	}
 	if *duration < 0 || (*supervise && (*duration > 0 || *exitAfterClosure)) {
 		return builder.RunConfig{}, false, errors.New("supervision cannot be combined with bounded duration or exit-after-closure")
-	}
-	if *programTrustThreshold < 1 {
-		return builder.RunConfig{}, false, errors.New("program trust threshold must be positive")
 	}
 	if *programMinDuration < 0 {
 		return builder.RunConfig{}, false, errors.New("program minimum duration must be nonnegative")
@@ -122,12 +116,11 @@ func ParseControllerLaunch(args []string) (builder.RunConfig, bool, error) {
 		RepositoryPvc: *repositoryPVC, RepositoryMountPath: *repositoryMount, RepositoryPvcSubpath: *repositorySubPath,
 		ResponderCredentialsSecret: *credentialsSecret, BrokerWorktreeRoot: *worktreeRoot,
 		ResponseTimeout: durationpb.New(*responseTimeout), VerificationTimeout: durationpb.New(*verificationTimeout),
-		RepairPolicy: *repairPolicy, MaxResponseLoops: int32(*maxResponseLoops), DiagnosisDeadline: durationpb.New(*diagnosisDeadline), DiagnosisSettleDelay: durationpb.New(*diagnosisSettleDelay), LeaseName: "sdo-controller", RestartAfterClosure: *supervise,
+		RepairPolicy: *repairPolicy, MaxResponseLoops: int32(*maxResponseLoops), DiagnosisDeadline: durationpb.New(*diagnosisDeadline), LeaseName: "sdo-controller", RestartAfterClosure: *supervise,
 		ExitAfterClosure: *exitAfterClosure,
 		ToolchainImage:   *toolchainImage, ProberImage: *proberImage, AgentRegistrationDirectory: *registrations, ResponderAgentId: *responderID,
 		BrokerMode: *brokerMode, WorkerMountMode: *workerMountMode, ValidatorImage: *validatorImage,
 		SchemaIdentity: *schemaIdentity, ResponderBackend: *backend, ResponderModel: *model, ReflectionSession: *reflectionSession, ReflectionGuidance: *reflectionGuidance, ForceReflection: *forceReflection, HealthyBaseline: *healthyBaseline, MetricsUrl: *metricsURL,
-		ProgramFastPath: *programFastPath, ProgramTrustThreshold: int32(*programTrustThreshold),
 		ProgramMinDuration: durationpb.New(*programMinDuration),
 	}
 	if *duration > 0 {

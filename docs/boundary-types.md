@@ -22,7 +22,7 @@ A generated envelope does not make a string inside it a typed reference.
 | Logical playbook IDs, script names, detector IDs and artifact IDs | `messages.proto`, `memory.proto`, `program.proto`; LLM ↔ Go | `memory/layout/{paths,tree}.go`, `memory/validate/{load,semantic}.go` split logical IDs or physical paths; Python agent output schemas and `sdo/contracts/proto.py` descriptor-derived ID rules | H |
 | Operational memory snapshots and deprecated artifact proposals | `messages.proto:OperationalMemorySnapshot`, `OperationalArtifactProposal`; Go ↔ agent | generated messages; Go memory materializes files; deprecated proposals rejected | G |
 | Program tool requests/responses (candidate/handle, source, run, apply, capture) | Go runtime tool structs; Python `agents/responder/{tools,tools_cli}.py`; CLI ↔ tool server | JSON dicts, action/command switches; `tools_cli.py` builds bindings from ref text | N |
-| Program specs, bindings, verdicts, evidence, plans/applications, preimages, tool-call records | `program.proto`; worker ↔ Go / durable outcome | runtime SDK ↔ proto projections; `protocol/native_receipt.py` checks fast-path plan verification via nested dicts and enum text | H |
+| Program specs, bindings, verdicts, evidence, plans/applications, preimages, tool-call records | `program.proto`; worker ↔ Go / durable outcome | runtime SDK ↔ proto projections; `protocol/native_receipt_go` checks plan verification and responder Job evidence through generated contracts | H |
 | Usage and timing metrics | `messages.proto:UsageMetrics`, `TimingMetrics`; worker → Go → benchmark | `sdo/contracts/proto.py` normalizes cache-read alias; adapter `persistent.py:_timestamp`, `_resolution_timings`; `driver.py` copies timing summaries | H |
 | Closure, acknowledgment receipt, failure, reflection decision, rollout expectation/receipt | `messages.proto:IncidentClosure`; `controller_state.proto`: `ClosureReceipt`, `ClosureFailure`, `ReflectionDecision`, `ControllerRolloutExpectation`, `ControllerRolloutReceipt`, `BrokerLedger` | `protocol/native_receipt.py` hand-validates all nested shapes, identity, clear states, reflection and rollout; `persistent.py:_closeout_settled`, `_raise_if_closure_failed`, `_collect_settled_receipt` repeat decisions | H |
 | Controller-state fields read by adapter | `controller_state.proto:ControllerState`; Go → adapter | `persistent.py` reads `last_acknowledged_incident_id`, `pending_closure`, `incident_request`, `closure_state`, `closure_failure`; `driver.py` reads raw ConfigMap JSON; baseline/fault-gate resource and log parsing is a separate row | H |
@@ -57,7 +57,7 @@ controller state representation. No operational behavior changes in this slice.
 `benchmark_receipt.proto` now defines the v2 receipt core, Job evidence,
 `NativeReceiptResult`, `ReceiptFailure`, `ReceiptDrainResult` and
 `RejectedProductionReceipt`. Receipt correlation/classification/reflection/
-rollout/fast-path decisions moved out of Python into the benchmark-only Go
+rollout/receipt decisions moved out of Python into the benchmark-only Go
 module `protocol/native_receipt_go`. These rows are now **G** at the decision
 boundary; timing/export annotations and raw diagnostic evidence remain opaque
 transport metadata. Python forwards the raw ledger to the generated Go decoder

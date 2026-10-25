@@ -72,7 +72,7 @@ The design does not depend on admission webhooks or audit logs. Either can add u
 | Step | Condition | Result |
 |---|---|---|
 | 1 | Neither a changed declared field owned by `sdo-deployer` nor an admitted foreign spec change | ignore; not an unexplained event |
-| 2 | An invariant program (Diagnoser) returns `Match` on an affected binding after the change | **fault**: open an incident with `latent` severity; the normal loop takes over (trusted program or responder) |
+| 2 | An invariant program (Diagnoser) returns `Match` on an affected binding after the change | **fault**: open an incident with `latent` severity; the responder receives the match and selects any mitigation |
 | 3 | A trusted expected-drift rule classifies it `Benign` | benign, logged |
 | 4 | Otherwise | **unexplained**: open an ordinary `drift.unexplained` incident, or attach the observation to the open incident; this is a question, not a fault verdict |
 
@@ -88,7 +88,7 @@ During an open incident, append drift to its evidence/findings instead of dispat
 
 **Evidence before action:** fault requires a concrete source contradiction AND a violated application relation or observed impact. Reuse evidence-kind validation, captured/tool observations, root-cause citations and repair receipts to establish evidence preceding mutation. Source absence alone, or missing containerPort declarations alone, is insufficient. Missing evidence means **unsure**, no action, unresolved. **Benign** means no action with a reason, not quiet health alone. The responder keeps write access: prompts enforce this ordering; existing diagnosis verification/attribution rejects unsupported repair credit and learning. It cannot prevent every direct kubectl write; D1 accepts that limitation.
 
-**Verification/closure:** reuse drift source comparison and `recordDriftClears` in loop refresh/verify and controller closure. Require existing health clearance PLUS every retained drift finding, including late arrivals; registered detectors cannot replace synthetic findings. Apply the same checks to status, fast-path verification and residual follow-ups.
+**Verification/closure:** reuse drift source comparison and `recordDriftClears` in loop refresh/verify and controller closure. Require existing health clearance PLUS every retained drift finding, including late arrivals; registered detectors cannot replace synthetic findings. Apply the same checks to status, agent-requested verification and residual follow-ups.
 
 - Unexplained drift clears on a fresh successful comparison proving the affected fields restored or source adopted, or a checked benign disposition. Source errors stay unresolved. Confirmed foreign deletion can clear the source difference; disappearance without attributed repair is externally cleared, not mitigation.
 - Learned drift requires explicit `NoMatch` for **each retained active binding**, including deleted objects. `Unknown`, missing bindings, errors and timeouts are not clear; one binding cannot clear another. This is already fixed in `8ec987c83:recordDriftClears`; preserve it and integrate the loop/health-configured closure paths.

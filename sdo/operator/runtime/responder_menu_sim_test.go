@@ -135,7 +135,6 @@ func testSimResponderMenuSchedule(t *testing.T, seed uint64, schedule string) {
 			loop.ReadView = func(v sdk.DetectionContext) program.ReadView {
 				return &sdktest.ReplayReadView{Snapshot: v.(sdktest.Snapshot)}
 			}
-			loop.DiagnosisSettleDelay = time.Nanosecond
 			loop.saveToolState = func(_ context.Context, payload []byte) error { saved = append([]byte(nil), payload...); return nil }
 			return loop
 		}
@@ -184,7 +183,7 @@ func testSimResponderMenuSchedule(t *testing.T, seed uint64, schedule string) {
 			if schedule == "health-flip" && round == badRounds+1 {
 				w.setPort(flipService, 8080)
 			}
-			response := loop.Handle(ctx, ToolRequest{Command: "mitigate", Selection: &contracts.MitigationSelection{OptionId: option, RoundLimit: 1}})
+			response := loop.Handle(ctx, ToolRequest{Command: "mitigate", Selection: &contracts.MitigationSelection{OptionId: option, RoundLimit: 1}, FindingFingerprints: []string{FindingFingerprint(request.Findings[0])}})
 			if response.Report == nil {
 				t.Fatalf("missing typed report: %s", response.Error)
 			}
@@ -205,7 +204,14 @@ func testSimResponderMenuSchedule(t *testing.T, seed uint64, schedule string) {
 				restart()
 				restoreLoop(saved)
 			}
-			if response.Report.Status == contracts.MitigationReport_STATUS_SUCCESS {
+			if schedule == "health-flip" && round == badRounds {
+				if response.Report.Status != contracts.MitigationReport_STATUS_SUCCESS || !response.TargetedHealthy || response.Healthy {
+					t.Fatalf("scoped repair must succeed while the peer fault remains: %+v", response)
+				}
+			}
+			// A scoped mitigation may succeed while the injected peer is still
+			// broken. The scripted worker must finish the global repair too.
+			if response.Report.Status == contracts.MitigationReport_STATUS_SUCCESS && response.Healthy {
 				break
 			}
 		}

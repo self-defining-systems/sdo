@@ -3,7 +3,7 @@
 Controller-owned responder loops preserve `open@pre-apply.json` immediately
 before the first live repair. `sdo act` requests the internal `pre-apply` tool
 and waits for its acknowledgement before starting the local mutation or its
-receipt. Typed `apply` and the trusted program fast path use the same helper.
+receipt. Agent-selected typed `apply` uses the same helper.
 The snapshot comes from the current provider for the current incident, not the
 preserved detect snapshot. `open@detect` stays unchanged as historical evidence.
 
@@ -14,7 +14,7 @@ repair. `sdo act` emits a `pre-apply evidence gap` warning and still executes th
 command, records its receipt, and returns its exit code. When the controller
 observes capture failure it logs the cause and adds `pre_apply_capture_gap` to
 `program_failure_signals`, retained in incident/revision-bound responder state.
-Typed apply and the trusted fast path proceed through their normal mutation and
+Agent-selected typed applies proceed through their normal mutation and
 independent verification. The gap alone does not mean the repair failed. A later
 request, including after state restore, cannot replace the missed first boundary
 with a repaired snapshot. An existing successful capture is acknowledged without

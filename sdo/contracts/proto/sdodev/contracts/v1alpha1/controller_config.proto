@@ -110,7 +110,7 @@ message ControllerConfig {
   bool healthy_baseline = 54;
   int32 max_response_loops = 55 [(buf.validate.field).int32.gte = 0];
   google.protobuf.Duration diagnosis_deadline = 56;
-  google.protobuf.Duration diagnosis_settle_delay = 57;
+  reserved 57;
   google.protobuf.Duration drift_sweep_interval = 58;
   reserved 59, 60, 61;
   reserved "drift_investigation_window", "drift_investigation_dispatches_per_hour", "drift_investigation_tokens_per_hour";
@@ -119,8 +119,8 @@ message ControllerConfig {
   reserved "drift_dispatches_per_hour", "drift_tokens_per_hour";
   bool force_reflection = 62;
   repeated string deployed_manifest_paths = 63;
-  bool program_fast_path = 64;
-  int32 program_trust_threshold = 65 [(buf.validate.field).int32.gte = 0];
+  reserved 64;
+  reserved 65;
   // Unset uses the runtime's 10-second firing and clearing confirmation.
   google.protobuf.Duration program_min_duration = 69 [(buf.validate.field).duration.gte = {}];
 

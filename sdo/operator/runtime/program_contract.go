@@ -1,8 +1,9 @@
 package runtime
 
 import (
-	"google.golang.org/protobuf/types/known/structpb"
 	"sort"
+
+	"google.golang.org/protobuf/types/known/structpb"
 
 	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -14,23 +15,11 @@ func programRunContract(run ProgramRun) *contracts.ProgramRun {
 	result := &contracts.ProgramRun{CanMitigate: run.CanMitigate, ProgramId: run.ProgramID, FindingFingerprint: run.FindingFingerprint, BindingSource: run.BindingSource, ProgramRevision: run.ProgramRevision, Duration: durationpb.New(run.Duration), Verdict: verdictContract(run.Verdict)}
 	result.Bindings = programBindingsContract(run.Bindings)
 	for _, evidence := range run.Verdict.Evidence {
-		if evidence.Resource.Kind == "" {
+		if evidence.Resource.Kind == "" && (evidence.Fact == "" || (run.Verdict.Result == program.Unknown && evidence.Fact == "diagnosis")) {
 			result.Error = evidence.Observed
 			break
 		}
 	}
-	return result
-}
-
-func relationCoveredFindingContract(covered RelationCoveredFinding) *contracts.RelationCoveredFinding {
-	result := &contracts.RelationCoveredFinding{FindingFingerprint: covered.FindingFingerprint, ProgramId: covered.ProgramID}
-	result.Bindings = programBindingsContract(covered.Bindings)
-	return result
-}
-
-func relationCoveredFindingState(covered *contracts.RelationCoveredFinding) RelationCoveredFinding {
-	result := RelationCoveredFinding{FindingFingerprint: covered.GetFindingFingerprint(), ProgramID: covered.GetProgramId(), Bindings: program.Bindings{Objects: program.ObjectBindings{}}}
-	result.Bindings = programBindingsState(covered.GetBindings())
 	return result
 }
 

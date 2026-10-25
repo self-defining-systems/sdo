@@ -49,10 +49,12 @@ func ExternalNameEndpointViolations(detector sdk.Detector, serviceNames []string
 
 func HealthyBaselineViolations(detector sdk.Detector, snapshots []Snapshot) []string
     HealthyBaselineViolations replays the detector on recorded snapshots of the
-    healthy application and returns one actionable message per active finding.
-    The snapshots are healthy by construction, so any active finding is a false
-    positive that would open an incident before any fault exists. Resolved
-    findings and detector errors are not violations here: other tests own them.
+    healthy application and returns actionable messages for active findings
+    and unavailable observations, using the production observation checks.
+    The snapshots are healthy by construction, so any active finding is a
+    false positive that would open an incident before any fault exists.
+    An error cannot prove quietness and is also a violation. Resolved findings
+    are ignored.
 
 func ProjectCapturedObject(raw []byte) ([]byte, error)
     ProjectCapturedObject preserves arbitrary Kubernetes fields while stripping

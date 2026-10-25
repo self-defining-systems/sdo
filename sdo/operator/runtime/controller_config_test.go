@@ -51,8 +51,6 @@ func fullControllerConfig() *contractsv1alpha1.ControllerConfig {
 		ResponseTimeout:            durationpb.New(1800000000000), // 30m
 		VerificationTimeout:        durationpb.New(120000000000),  // 2m
 		MaxResponseLoops:           4,
-		ProgramFastPath:            true,
-		ProgramTrustThreshold:      3,
 		ProgramMinDuration:         durationpb.New(3000000000),
 		RepairPolicy:               "recorded-actions",
 		LeaseName:                  "sdo-controller",
@@ -169,19 +167,18 @@ func TestControllerConfigExpandsValues(t *testing.T) {
 	pairs := argPairs(args)
 
 	wantValue := map[string]string{
-		"--namespace":               "hotel-reservation",
-		"--control-namespace":       "sdo-system",
-		"--app-root":                "/workspace/app",
-		"--dispatcher-mode":         "job",
-		"--repair-policy":           "recorded-actions",
-		"--max-response-loops":      "4",
-		"--program-trust-threshold": "3",
-		"--program-min-duration":    "3s",
-		"--response-timeout":        "30m0s",
-		"--lease-duration":          "1m0s",
-		"--metrics-url":             "http://prometheus:9090",
-		"--toolchain-image":         "registry/controller:compiler",
-		"--metrics-token-file":      "/var/run/secrets/metrics/token",
+		"--namespace":            "hotel-reservation",
+		"--control-namespace":    "sdo-system",
+		"--app-root":             "/workspace/app",
+		"--dispatcher-mode":      "job",
+		"--repair-policy":        "recorded-actions",
+		"--max-response-loops":   "4",
+		"--program-min-duration": "3s",
+		"--response-timeout":     "30m0s",
+		"--lease-duration":       "1m0s",
+		"--metrics-url":          "http://prometheus:9090",
+		"--toolchain-image":      "registry/controller:compiler",
+		"--metrics-token-file":   "/var/run/secrets/metrics/token",
 	}
 	for flag, want := range wantValue {
 		if got := pairs[flag]; got != want {
@@ -199,8 +196,8 @@ func TestControllerConfigExpandsValues(t *testing.T) {
 	if !contains(args, "--exit-after-closure") {
 		t.Fatalf("expected --exit-after-closure in args: %v", args)
 	}
-	if !contains(args, "--program-fast-path=true") {
-		t.Fatalf("expected --program-fast-path=true in args: %v", args)
+	if contains(args, "--program-fast-path=true") {
+		t.Fatalf("retired program flag in args: %v", args)
 	}
 	// Repeated fields expand once per element as --flag=value.
 	for _, flag := range []string{"--responder-env=FOO=bar", "--responder-env=BAZ=qux", "--deployed-manifest-path=kubernetes"} {

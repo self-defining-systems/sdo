@@ -43,11 +43,14 @@ message OutcomeRecord {
   int32 response_loops_used = 27;
   bool response_loop_exhausted = 28;
   repeated DriftEvent drift_events = 29;
-  string resolution_path = 30 [(buf.validate.field).string = {in: ["", "fast_path", "responder"]}];
-  repeated string fast_path_programs = 31;
-  string fast_path_skipped_reason = 32;
-  repeated RelationCoveredFinding fast_path_relation_covered_findings = 33;
+  string resolution_path = 30 [(buf.validate.field).string = {in: ["", "responder"]}];
+  reserved 31;
+  reserved 32;
+  reserved 33;
   ReflectionEligibility reflection_eligibility = 34;
+  PlaybookCoverage playbook_coverage = 35;
+  // Controller-owned visible skip when no provider session can be resumed.
+  string reflection_skip_reason = 37 [(buf.validate.field).string = {in: ["", "no_session"]}];
   // Broker-only append after reflection; incident evidence remains immutable.
   repeated SdkGap sdk_gaps = 50;
 }

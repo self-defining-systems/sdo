@@ -8,7 +8,6 @@ import "sdodev/contracts/v1alpha1/memory.proto";
 import "sdodev/contracts/v1alpha1/messages.proto";
 import "sdodev/contracts/v1alpha1/outcome.proto";
 import "sdodev/contracts/v1alpha1/worker.proto";
-import "sdodev/contracts/v1alpha1/program.proto";
 import "sdodev/contracts/v1alpha1/mitigation_menu.proto";
 
 option go_package = "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1;contractsv1alpha1";
@@ -193,6 +192,8 @@ message ReflectionDecision {
   repeated SdkGap sdk_gaps = 5;
   UsageMetrics usage = 6;
   string decline_reason = 7 [(buf.validate.field).string = {in: ["", "evidence_gap"]}];
+  // Controller-owned terminal execution failure; never a model-authored verdict.
+  string failure_reason = 8 [(buf.validate.field).string = {in: ["", "timeout"]}];
 }
 
 // ProposalRejection is one broker rejection of an agent proposal, with the
@@ -275,8 +276,8 @@ message BrokerLedger {
   bool reflection_rejected = 16;
   string reflection_skipped_reason = 17;
   map<string, google.protobuf.Timestamp> closure_phase_timestamps = 18;
-  string fast_path_skipped_reason = 19;
-  repeated RelationCoveredFinding fast_path_relation_covered_findings = 20;
+  reserved 19;
+  reserved 20;
   ReflectionPhase reflection_phase = 21 [(buf.validate.field).enum.defined_only = true];
   ProposalWorkspace reflection_workspace = 22;
   repeated string reflection_paths = 23;

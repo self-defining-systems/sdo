@@ -375,8 +375,6 @@ def test_environment_settings_reach_nonpersistent_native_install(
         json.dumps(
             {
                 "deployed_manifest_paths": ["kubernetes"],
-                "program_fast_path": True,
-                "program_trust_threshold": trust_threshold,
             }
         ),
     )
@@ -412,14 +410,16 @@ def test_environment_settings_reach_nonpersistent_native_install(
     assert len(commands) == 1
     command = commands[0]
     assert command[command.index("--deployed-manifest-path") + 1] == "kubernetes"
-    assert "--program-fast-path=true" in command
-    assert command[command.index("--program-trust-threshold") + 1] == str(trust_threshold)
 
 
 def test_driver_cli_overrides_environment_source_and_program_settings(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv(
         "SREGYM_EXPERIMENT_AGENT_CONFIG",
-        json.dumps({"deployed_manifest_paths": ["old"], "program_fast_path": True, "program_trust_threshold": 3}),
+        json.dumps(
+            {
+                "deployed_manifest_paths": ["old"],
+            }
+        ),
     )
     args = driver._parse_args(
         [
@@ -427,14 +427,9 @@ def test_driver_cli_overrides_environment_source_and_program_settings(monkeypatc
             "kubernetes",
             "--deployed-manifest-path",
             "extra.yaml",
-            "--no-program-fast-path",
-            "--program-trust-threshold",
-            "7",
         ]
     )
     assert args.deployed_manifest_paths == ("kubernetes", "extra.yaml")
-    assert args.program_fast_path is False
-    assert args.program_trust_threshold == 7
 
 
 @pytest.mark.parametrize("value", ["kubernetes", None, {}, [""], ["  "], [1]])
@@ -444,46 +439,21 @@ def test_driver_rejects_invalid_manifest_selection(monkeypatch: pytest.MonkeyPat
         driver._parse_args([])
 
 
-@pytest.mark.parametrize(
-    ("key", "value"),
-    [
-        ("program_fast_path", "false"),
-        ("program_fast_path", 1),
-        ("program_trust_threshold", 0),
-        ("program_trust_threshold", -1),
-        ("program_trust_threshold", True),
-        ("program_trust_threshold", 1.5),
-    ],
-)
-def test_driver_rejects_invalid_program_settings(monkeypatch: pytest.MonkeyPatch, key: str, value: object) -> None:
-    monkeypatch.setenv("SREGYM_EXPERIMENT_AGENT_CONFIG", json.dumps({key: value}))
-    with pytest.raises(ValueError, match=key):
-        driver._parse_args([])
-
-
 def test_driver_default_settings_enable_automatic_repair(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("SREGYM_EXPERIMENT_AGENT_CONFIG", raising=False)
     args = driver._parse_args([])
     assert args.deployed_manifest_paths == ()
-    assert args.program_fast_path is True
-    assert args.program_trust_threshold == 1
 
 
 @pytest.mark.parametrize(
     ("argv", "field"),
     [
         (["--deployed-manifest-path", ""], "deployed_manifest_paths"),
-        (["--program-trust-threshold", "0"], "program_trust_threshold"),
     ],
 )
 def test_driver_rejects_invalid_cli_settings(argv: list[str], field: str) -> None:
     with pytest.raises(ValueError, match=field):
         driver._parse_args(argv)
-
-
-def test_driver_cli_can_enable_program_fast_path(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("SREGYM_EXPERIMENT_AGENT_CONFIG", '{"program_fast_path": false}')
-    assert driver._parse_args(["--program-fast-path"]).program_fast_path is True
 
 
 def test_completed_nonpersistent_install_collects_strict_receipt(

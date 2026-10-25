@@ -20,7 +20,6 @@ import (
 )
 
 const DefaultMaxResponseLoops = 10
-const DefaultDiagnosisSettleDelay = 15 * time.Second
 const maxRecordedToolResponse = 2048
 
 // maxRecordedApplyResponse bounds an apply record that lists the runs of the
@@ -32,34 +31,37 @@ const maxRecordedToolResponse = 2048
 const maxRecordedApplyResponse = 8192
 
 type ToolRequest struct {
-	Refs          []sdk.ObjectRef                        `json:"refs,omitempty"`
-	Parameters    map[string]string                      `json:"parameters,omitempty"`
-	Selection     *contracts.MitigationSelection         `json:"-"`
-	ReportQuery   *contracts.MitigationReportQuery       `json:"-"`
-	Checkpoint    *contracts.MitigationSessionCheckpoint `json:"-"`
-	Command       string                                 `json:"command"`
-	Ref           *sdk.ObjectRef                         `json:"ref,omitempty"`
-	ProgramID     string                                 `json:"program_id,omitempty"`
-	Bindings      program.Bindings                       `json:"bindings,omitempty"`
-	PlanIDs       []string                               `json:"plan_ids,omitempty"`
-	ApplicationID string                                 `json:"application_id,omitempty"`
+	FindingFingerprints []string                               `json:"finding_fingerprints,omitempty"`
+	DetectorIDs         []string                               `json:"detector_ids,omitempty"`
+	Refs                []sdk.ObjectRef                        `json:"refs,omitempty"`
+	Parameters          map[string]string                      `json:"parameters,omitempty"`
+	Selection           *contracts.MitigationSelection         `json:"-"`
+	ReportQuery         *contracts.MitigationReportQuery       `json:"-"`
+	Checkpoint          *contracts.MitigationSessionCheckpoint `json:"-"`
+	Command             string                                 `json:"command"`
+	Ref                 *sdk.ObjectRef                         `json:"ref,omitempty"`
+	ProgramID           string                                 `json:"program_id,omitempty"`
+	Bindings            program.Bindings                       `json:"bindings,omitempty"`
+	PlanIDs             []string                               `json:"plan_ids,omitempty"`
+	ApplicationID       string                                 `json:"application_id,omitempty"`
 }
 
 type ToolResponse struct {
-	RolloutPending *contracts.RolloutPending    `json:"rollout_pending,omitempty"`
-	MenuExecution  []MenuRoundExecution         `json:"-"`
-	MenuParameters map[string][]MenuParameter   `json:"-"`
-	Menu           *contracts.MitigationMenu    `json:"-"`
-	Report         *contracts.MitigationReport  `json:"-"`
-	Session        *contracts.MitigationSession `json:"-"`
-	Command        string                       `json:"command"`
-	Source         map[string]any               `json:"source,omitempty"`
-	Error          string                       `json:"error,omitempty"`
-	Summary        string                       `json:"summary"`
-	PlanID         string                       `json:"plan_id,omitempty"`
-	ApplicationID  string                       `json:"application_id,omitempty"`
-	Patches        []PlanPatch                  `json:"patches,omitempty"`
-	ProgramRuns    []ProgramRun                 `json:"program_runs,omitempty"`
+	MitigationHealth *MitigationHealth            `json:"mitigation_health,omitempty"`
+	RolloutPending   *contracts.RolloutPending    `json:"rollout_pending,omitempty"`
+	MenuExecution    []MenuRoundExecution         `json:"-"`
+	MenuParameters   map[string][]MenuParameter   `json:"-"`
+	Menu             *contracts.MitigationMenu    `json:"-"`
+	Report           *contracts.MitigationReport  `json:"-"`
+	Session          *contracts.MitigationSession `json:"-"`
+	Command          string                       `json:"command"`
+	Source           map[string]any               `json:"source,omitempty"`
+	Error            string                       `json:"error,omitempty"`
+	Summary          string                       `json:"summary"`
+	PlanID           string                       `json:"plan_id,omitempty"`
+	ApplicationID    string                       `json:"application_id,omitempty"`
+	Patches          []PlanPatch                  `json:"patches,omitempty"`
+	ProgramRuns      []ProgramRun                 `json:"program_runs,omitempty"`
 	// ProgramRunsOmitted counts runs a truncated record could not list; the
 	// trust reader fails closed on it. ProgramRunsUnrelatedOmitted counts apply
 	// runs of programs or bindings the applied plans do not name, which the
@@ -71,6 +73,7 @@ type ToolResponse struct {
 	DetectorStates              []DetectorEvaluation    `json:"detector_states,omitempty"`
 	LoopsUsed                   int                     `json:"loops_used"`
 	LoopsAllowed                int                     `json:"loops_allowed"`
+	TargetedHealthy             bool                    `json:"targeted_healthy,omitempty"`
 	Healthy                     bool                    `json:"healthy"`
 	Unresolved                  bool                    `json:"unresolved"`
 	Trust                       map[string]ProgramTrust `json:"trust,omitempty"`
@@ -99,59 +102,56 @@ type RecordedPlanApplication struct {
 }
 
 type selectedPlan struct {
-	id        string
-	programID string
-	bindings  program.Bindings
-	plan      program.Plan
+	targetFingerprints []string
+	id                 string
+	programID          string
+	bindings           program.Bindings
+	plan               program.Plan
 }
 
 // ResponderLoop holds one incident's tool state while its responder Job runs.
 type ResponderLoop struct {
-	continuation                    responderContinuation
-	MenuConfig                      *ResponderMenuConfig
-	menu                            *contracts.MitigationMenu
-	menuEntries                     map[string]menuEntry
-	menuSession                     *contracts.MitigationSession
-	menuReports                     []*contracts.MitigationReport
-	menuExecutions                  map[string][]MenuRoundExecution
-	menuRepairs                     []RepairActionReceipt
-	CurrentEvidence                 func() *IncidentRequest
-	Request                         IncidentRequest
-	Programs                        program.ProgramRegistry
-	Provider                        SnapshotProvider
-	Detectors                       []sdk.Detector
-	Executor                        PlanExecutor
-	ReadView                        func(sdk.DetectionContext) program.ReadView
-	DiagnosisDeadline               time.Duration
-	DiagnosisSettleDelay            time.Duration
-	CandidateSweepLimit             int
-	MaxBatches                      int
-	Trust                           map[string]ProgramTrust
-	CorpusReplayPassed              bool
-	BeforeFastPathApply             func(context.Context, []ProgramRun) error
-	CorpusSessionRoot               string
-	capturePhase                    string
-	timing                          toolTiming
-	preApplyCaptured                bool
-	saveToolState                   func(context.Context, []byte) error
-	operationMu                     sync.Mutex
-	mu                              sync.Mutex
-	sessionID                       string
-	plans                           map[string]selectedPlan
-	applications                    map[string]PlanApplicationResult
-	applicationsLog                 []RecordedPlanApplication
-	failureSignals                  []string
-	calls                           []ToolCall
-	runs                            []ProgramRun
-	matchedViews                    map[string]program.ReadView
-	matchedPlans                    map[string]PlanApplicationResult
-	matchedPlanErrors               map[string]error
-	lastDiagnosisView               program.ReadView
-	findings                        []sdk.Finding
-	batches                         int
-	fastPathPrograms                []string
-	fastPathRelationCoveredFindings []RelationCoveredFinding
-	fastPathSkippedReason           FastPathSkipReason
+	continuation        responderContinuation
+	MenuConfig          *ResponderMenuConfig
+	menu                *contracts.MitigationMenu
+	menuEntries         map[string]menuEntry
+	menuSession         *contracts.MitigationSession
+	menuReports         []*contracts.MitigationReport
+	menuExecutions      map[string][]MenuRoundExecution
+	menuRepairs         []RepairActionReceipt
+	VerifyClosure       func(context.Context) ToolResponse
+	CurrentEvidence     func() *IncidentRequest
+	Request             IncidentRequest
+	Programs            program.ProgramRegistry
+	Provider            SnapshotProvider
+	Detectors           []sdk.Detector
+	Executor            PlanExecutor
+	ReadView            func(sdk.DetectionContext) program.ReadView
+	DiagnosisDeadline   time.Duration
+	CandidateSweepLimit int
+	MaxBatches          int
+	Trust               map[string]ProgramTrust
+	CorpusSessionRoot   string
+	capturePhase        string
+	timing              toolTiming
+	preApplyCaptured    bool
+	saveToolState       func(context.Context, []byte) error
+	operationMu         sync.Mutex
+	mu                  sync.Mutex
+	sessionID           string
+	plans               map[string]selectedPlan
+	applications        map[string]PlanApplicationResult
+	applicationsLog     []RecordedPlanApplication
+	completedRepairs    []continuationRepair
+	failureSignals      []string
+	calls               []ToolCall
+	runs                []ProgramRun
+	matchedViews        map[string]program.ReadView
+	matchedPlans        map[string]PlanApplicationResult
+	matchedPlanErrors   map[string]error
+	lastDiagnosisView   program.ReadView
+	findings            []sdk.Finding
+	batches             int
 }
 
 func NewResponderLoop(request IncidentRequest, programs program.ProgramRegistry, provider SnapshotProvider, detectors []sdk.Detector, executor PlanExecutor, maxBatches int) *ResponderLoop {
@@ -278,13 +278,19 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 	case "menu":
 		l.listMenu(ctx, request, &response)
 	case "mitigate":
-		l.mitigateMenu(ctx, request.Selection, request.Parameters, &response)
+		if err := l.validateFindingTargets(request.FindingFingerprints); err != nil {
+			response.Error = err.Error()
+			break
+		}
+		l.mitigateMenu(ctx, request.Selection, request.Parameters, request.FindingFingerprints, &response)
 	case "session-open":
 		l.openMenuSession(ctx, &response)
 	case "session-checkpoint":
 		l.checkpointMenuSession(ctx, request.Checkpoint, &response)
 	case "report":
 		l.selectionReport(ctx, request.ReportQuery, &response)
+	case "detect":
+		l.detect(ctx, request.DetectorIDs, &response)
 	case "status":
 		response.DriftEvents = append([]sdk.DriftEvent(nil), l.Request.DriftEvents...)
 		response.Trust = l.Trust
@@ -362,6 +368,10 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 		response.Summary = fmt.Sprintf("rendered source for %s/%s", request.Ref.Kind, request.Ref.Name)
 	case "apply":
 		l.apply(ctx, request, &response)
+		if result, ok := l.applications[response.ApplicationID]; ok {
+			response.MitigationHealth = result.MitigationHealth
+			response.TargetedHealthy = result.VerificationPassed
+		}
 	case "pre-apply":
 		if err := l.capturePreApply(ctx, request.Refs...); err != nil {
 			response.Error = err.Error()
@@ -369,7 +379,20 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 		}
 		response.Summary = "first-mutation snapshot captured"
 	case "verify":
-		l.verify(ctx, nil, &response)
+		if l.VerifyClosure != nil {
+			// The controller may persist continuation state while observing.
+			// A read-only closure check must not hold responder locks while
+			// waiting for that observation to finish.
+			l.mu.Unlock()
+			l.operationMu.Unlock()
+			response = l.VerifyClosure(ctx)
+			l.operationMu.Lock()
+			l.mu.Lock()
+			l.findings = append([]sdk.Finding(nil), response.Findings...)
+			response.LoopsAllowed = l.MaxBatches
+		} else {
+			l.verify(ctx, nil, &response)
+		}
 	case "rollback":
 		l.rollbackApplication(ctx, request, &response)
 	default:
@@ -403,7 +426,7 @@ func recordedToolResponseJSON(response ToolResponse, applied []selectedPlan) []b
 		return responseJSON
 	}
 	record := truncatedToolResponse{
-		ToolResponse: ToolResponse{Command: response.Command, Summary: boundedToolText(response.Summary), Error: boundedToolText(response.Error), PlanID: response.PlanID, ApplicationID: response.ApplicationID, LoopsUsed: response.LoopsUsed, LoopsAllowed: response.LoopsAllowed, Healthy: response.Healthy, Unresolved: response.Unresolved, RolloutPending: compactRolloutPending(response.RolloutPending)},
+		ToolResponse: ToolResponse{Command: response.Command, Summary: boundedToolText(response.Summary), Error: boundedToolText(response.Error), PlanID: response.PlanID, ApplicationID: response.ApplicationID, LoopsUsed: response.LoopsUsed, LoopsAllowed: response.LoopsAllowed, Healthy: response.Healthy, TargetedHealthy: response.TargetedHealthy, Unresolved: response.Unresolved, RolloutPending: compactRolloutPending(response.RolloutPending)},
 		Truncated:    true, FindingsCount: len(response.Findings), ProgramRunsCount: len(response.ProgramRuns), DetectorStatesCount: len(response.DetectorStates), PatchesCount: len(response.Patches),
 	}
 	if response.Command == "verify" {
@@ -599,6 +622,10 @@ func logicalToolResponse(response ToolResponse) ToolResponse {
 }
 
 func (l *ResponderLoop) plan(ctx context.Context, request ToolRequest, response *ToolResponse) {
+	if err := l.validateFindingTargets(request.FindingFingerprints); err != nil {
+		response.Error = err.Error()
+		return
+	}
 	if l.Programs == nil {
 		response.Error = "no programs are compiled"
 		return
@@ -646,7 +673,7 @@ func (l *ResponderLoop) plan(ctx context.Context, request ToolRequest, response 
 		return
 	}
 	id := fmt.Sprintf("plan-%s-%d", l.sessionID, len(l.plans)+1)
-	l.plans[id] = selectedPlan{id: id, programID: request.ProgramID, bindings: cloneProgramBindings(request.Bindings), plan: plan}
+	l.plans[id] = selectedPlan{targetFingerprints: append([]string(nil), request.FindingFingerprints...), id: id, programID: request.ProgramID, bindings: cloneProgramBindings(request.Bindings), plan: plan}
 	response.PlanID, response.Patches = id, preview.Patches
 	response.Summary = fmt.Sprintf("%s: %d dry-run patches", id, len(preview.Patches))
 }
@@ -702,7 +729,7 @@ func (l *ResponderLoop) apply(ctx context.Context, request ToolRequest, response
 		return
 	}
 	executor := l.Executor
-	result, err := executor.Apply(ctx, l.Request, batch, false)
+	result, err := executor.Apply(ctx, l.mitigationIncident(selected), batch, false)
 	completed := time.Now().UTC()
 	if result.Applied || result.PendingAction != nil {
 		l.applications[id] = result
@@ -720,10 +747,10 @@ func (l *ResponderLoop) apply(ctx context.Context, request ToolRequest, response
 	if result.Applied && result.RolloutPending == nil {
 		// Application credit is binding-scoped; closure still independently
 		// requires global health. A different open fault is not a failed repair.
-		unrelated := onlyUnrelatedFindings(selected, response.Findings)
 		result.VerificationPassed = err == nil && response.Error == "" && result.VerificationCompleted &&
 			boundPlansNoMatch(selected, response.ProgramRuns) &&
-			((result.VerificationPassed && response.Healthy) || unrelated)
+			targetedFindingsClear(l.mitigationIncident(selected).Findings, response.Findings) &&
+			result.VerificationPassed
 		if !result.VerificationPassed {
 			// Program trust counts an unverified application against the program's
 			// current revision, durably, even if the responder is restarted.

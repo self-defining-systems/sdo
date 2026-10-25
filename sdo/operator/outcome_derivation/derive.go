@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+
 	outcomeclass "sdo.dev/operator/contracts/outcome"
 
 	"google.golang.org/protobuf/proto"
@@ -120,7 +121,7 @@ func Derive(ctx context.Context, closure *contractsv1alpha1.IncidentClosure, rep
 		ProgramToolCalls: cloneMessages(result.GetProgramToolCalls()), ProgramRuns: cloneMessages(result.GetProgramRuns()),
 		PlanApplications: cloneMessages(result.GetPlanApplications()), ProgramFailureSignals: append([]string(nil), result.GetProgramFailureSignals()...),
 		ResponseLoopsUsed: result.GetResponseLoopsUsed(), ResponseLoopExhausted: result.GetResponseLoopExhausted(),
-		ResolutionPath: result.GetResolutionPath(), FastPathPrograms: append([]string(nil), result.GetFastPathPrograms()...), FastPathSkippedReason: result.GetFastPathSkippedReason(), FastPathRelationCoveredFindings: cloneMessages(result.GetFastPathRelationCoveredFindings()),
+		ResolutionPath: result.GetResolutionPath(), PlaybookCoverage: cloneMessage(request.GetPlaybookCoverage()),
 	}
 	for _, label := range CheckedDriftAssessments(request.GetDriftEvents(), result.GetDriftEvents()) {
 		for i, event := range record.DriftEvents {
@@ -180,4 +181,11 @@ func classify(closure *contractsv1alpha1.IncidentClosure, repairCommit string, h
 		return outcomeclass.ClearedWithoutAction
 	}
 	return outcomeclass.Success
+}
+
+func cloneMessage[T proto.Message](value T) T {
+	if !value.ProtoReflect().IsValid() {
+		return value
+	}
+	return proto.Clone(value).(T)
 }

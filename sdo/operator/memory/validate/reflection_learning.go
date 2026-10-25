@@ -18,6 +18,9 @@ import (
 // cause. Corpus bindings associate parameterized programs with cause resources;
 // detector references are many-to-many. Compilation and repair replay follow.
 func ReflectionLearningDiagnostics(root string, outcome *contracts.OutcomeRecord, decision *contracts.ReflectionDecision) ([]Diagnostic, error) {
+	if decision.GetLearningDecision() == "no_change" && decision.GetNoChangeReason() == "no_session" && outcome.GetReflectionSkipReason() == "no_session" {
+		return nil, nil
+	}
 	var causes []*contracts.ReflectionCauseWork
 	if outcome.GetClassification() == "success" {
 		for i, c := range outcome.GetConfirmedRootCauses() {
@@ -26,6 +29,17 @@ func ReflectionLearningDiagnostics(root string, outcome *contracts.OutcomeRecord
 	} else {
 		causes = outcome.GetReflectionEligibility().GetCauses()
 	}
+	var pending []*contracts.ReflectionCauseWork
+	for _, cause := range causes {
+		declined := false
+		for _, gap := range decision.GetSdkGaps() {
+			declined = declined || strings.TrimSpace(gap.GetReason()) != "" && gap.GetPrimitive() != "" && gap.GetFaultClass() != "" && gap.GetScratchScript() != "" && sameCauseResources(cause.GetResources(), gap.GetResources())
+		}
+		if !declined {
+			pending = append(pending, cause)
+		}
+	}
+	causes = pending
 	if len(causes) == 0 {
 		return nil, nil
 	}
@@ -54,16 +68,6 @@ func ReflectionLearningDiagnostics(root string, outcome *contracts.OutcomeRecord
 	}
 	var ds []Diagnostic
 	for _, cause := range causes {
-		declined := false
-		for _, gap := range decision.GetSdkGaps() {
-			if strings.TrimSpace(gap.GetReason()) != "" && gap.GetPrimitive() != "" && gap.GetFaultClass() != "" && gap.GetScratchScript() != "" && sameCauseResources(cause.GetResources(), gap.GetResources()) {
-				declined = true
-				break
-			}
-		}
-		if declined {
-			continue
-		}
 		hasProgram, hasDetector := false, false
 		for _, spec := range specs {
 			if spec.Mitigator == "" {
