@@ -354,7 +354,7 @@ func TestHermeticBringupPersistsPendingAndRestarts(t *testing.T) {
 	}
 	reportPath := filepath.Join(runDir, "source-report.json")
 	client.ClearActions()
-	if err := RunWithOptions(ctx, nil, RuntimeOptions{Args: []string{"--evaluate-once", "--namespace", "demo", "--app-root", root, "--deployed-manifest-path", "deploy/tracing.yaml", "--source-drift-acknowledgement", ackPath, "--source-drift-report", reportPath}, Provider: &core.KubernetesSnapshotProvider{Client: client, Namespace: "demo"}, Stdout: &bytes.Buffer{}}); err != nil {
+	if err := RunWithOptions(ctx, []sdk.Detector{servicehealth.NewReachabilityDetector(sdk.DetectorSpec{ID: "service-reachability", Interval: time.Second})}, RuntimeOptions{Args: []string{"--evaluate-once", "--namespace", "demo", "--app-root", root, "--deployed-manifest-path", "deploy/tracing.yaml", "--source-drift-acknowledgement", ackPath, "--source-drift-report", reportPath}, Provider: &core.KubernetesSnapshotProvider{Client: client, Namespace: "demo"}, Stdout: &bytes.Buffer{}}); err != nil {
 		t.Fatal(err)
 	}
 	report, err := os.ReadFile(reportPath)

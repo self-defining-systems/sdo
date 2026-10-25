@@ -107,7 +107,7 @@ func decodeHealthVerdict(stdout, stderr []byte) (string, error) {
 	if err := json.Unmarshal(stdout, &verdict); err != nil {
 		return "", fmt.Errorf("decode health detector verdict: %w (stdout=%q stderr=%q)", err, boundedHealthOutput(stdout), boundedHealthOutput(stderr))
 	}
-	if verdict.Status != "clear" && verdict.Status != "firing" && verdict.Status != "pending" {
+	if verdict.Status != "clear" && verdict.Status != "firing" && verdict.Status != "pending" && verdict.Status != "unavailable" {
 		return "", fmt.Errorf("unknown health detector verdict %q (stdout=%q stderr=%q)", verdict.Status, boundedHealthOutput(stdout), boundedHealthOutput(stderr))
 	}
 	return verdict.Status, nil

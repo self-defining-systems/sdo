@@ -1267,6 +1267,24 @@ func (evaluationDispatcher) Dispatch(context.Context, IncidentRequest) (Incident
 	return IncidentResult{}, fmt.Errorf("evaluate-once does not dispatch incidents")
 }
 
+// evaluationStatus is the bounded command verdict, not a persisted detector
+// observation. Unavailable means this invocation lacks a required capability;
+// pending means a detector can run but its observation window is incomplete.
+type evaluationStatus string
+
+const evaluationUnavailable evaluationStatus = "unavailable"
+
+type unavailableEvaluation struct {
+	DetectorID string `json:"detector_id"`
+	Reason     string `json:"reason"`
+}
+
+type evaluationResult struct {
+	Findings    []sdk.Finding           `json:"findings"`
+	Status      evaluationStatus        `json:"status"`
+	Unavailable []unavailableEvaluation `json:"unavailable,omitempty"`
+}
+
 func evaluateOnce(
 	ctx context.Context,
 	detectors []sdk.Detector,
@@ -1293,6 +1311,9 @@ func evaluateOnce(
 	}
 	if *namespace == "" {
 		return fmt.Errorf("namespace is required")
+	}
+	if *acceptSeed && *sourceDriftReport != "" {
+		return errors.New("seed acceptance cannot use source-drift-report: inventory is not detector health evidence")
 	}
 	if *application == "" {
 		*application = *namespace
@@ -1388,12 +1409,15 @@ func evaluateOnce(
 		}
 		trafficProvider.Observer = observer
 	}
+	var unavailable []unavailableEvaluation
 	if ConsumesServiceReachability(detectors) {
 		if *proberURL == "" {
-			if *acceptSeed {
-				return errors.New("seed acceptance requires --prober-url for service reachability")
+			for _, detector := range detectors {
+				if ConsumesServiceReachability([]sdk.Detector{detector}) {
+					unavailable = append(unavailable, unavailableEvaluation{DetectorID: detector.Spec().ID, Reason: "service reachability requires --prober-url"})
+				}
 			}
-			fmt.Fprintln(stderr, "service reachability skipped: evaluate-once has no --prober-url")
+			fmt.Fprintln(stderr, "service reachability unavailable: evaluate-once requires --prober-url")
 		} else {
 			// Gather the gate's history now: Failures rounds, a second apart,
 			// judged by the same observer and detector as the controller.
@@ -1444,23 +1468,26 @@ func evaluateOnce(
 	if len(detectorErrors) > 0 {
 		return fmt.Errorf("health detector evaluation failed: %w", detectorErrors[0])
 	}
-	status := DetectorEvaluationClear
+	status := evaluationStatus(DetectorEvaluationClear)
 	for _, evaluation := range controller.history {
 		if evaluation.Status == DetectorEvaluationPending {
-			status = DetectorEvaluationPending
+			status = evaluationStatus(DetectorEvaluationPending)
 		}
+	}
+	if len(unavailable) > 0 {
+		status = evaluationUnavailable
 	}
 	for _, finding := range findings {
 		if finding.Status == sdk.FindingActive {
-			status = DetectorEvaluationFiring
+			status = evaluationStatus(DetectorEvaluationFiring)
 			break
 		}
 	}
-	if err := json.NewEncoder(stdout).Encode(map[string]any{"status": status, "findings": findings}); err != nil {
+	if err := json.NewEncoder(stdout).Encode(evaluationResult{Status: status, Findings: findings, Unavailable: unavailable}); err != nil {
 		return err
 	}
-	if *acceptSeed && status != DetectorEvaluationClear {
-		return fmt.Errorf("seed acceptance rejected: status %s; %d detector finding(s)", status, len(findings))
+	if *acceptSeed && status != evaluationStatus(DetectorEvaluationClear) {
+		return fmt.Errorf("seed acceptance rejected: status %s; %d detector finding(s); unavailable: %v", status, len(findings), unavailable)
 	}
 	return nil
 }
