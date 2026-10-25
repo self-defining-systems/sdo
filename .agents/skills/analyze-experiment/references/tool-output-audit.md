@@ -41,3 +41,5 @@ counts remain visible. `incident_verified` adds an informational timestamp/messa
 to normal responses; it does not replace findings, states, reports or receipts.
 Plain verify uses cached state; `verify --wait SECONDS` waits for stable closure,
 a new/reactivated finding, or timeout. Detect remains the fresh evaluation path.
+
+Mutation output accounting includes the emitted UTF-8 bytes, JSON envelope/escaping and final newline for act, apply, mitigate and rollback. Controller progress is authoritative; absent snapshots are unknown, while explicit empty arrays remain empty. Action-local findings never substitute for controller observations. Full errors remain in the complete report; long-path fallback copies retain the original session-scratch report for export.
