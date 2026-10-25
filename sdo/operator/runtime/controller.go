@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"sdo.dev/operator/core"
+	"sdo.dev/operator/onboarding"
 	"sdo.dev/operator/sdk"
 )
 
@@ -74,6 +75,7 @@ type Controller struct {
 	drift                       *DriftControllerConfig
 	driftEvents                 []sdk.DriftEvent
 	sourceInventory             *SourceInventory
+	namespaceOnboarding         *contracts.NamespaceOnboarding
 	sourceInventoryError        string
 	sourceInventoryRetryAt      time.Time
 	sourceInventoryFindings     []sdk.Finding
@@ -790,8 +792,9 @@ func (c *Controller) incidentRequest(now time.Time, findings []sdk.Finding) Inci
 	return IncidentRequest{
 		SchemaVersion: ProtocolSchemaVersion, Application: c.config.Application, Namespace: c.config.Namespace,
 		IncidentID: incidentID, Findings: findings,
-		DriftEvents:     driftEvents,
-		DetectorHistory: compactDetectorHistory(c.history), SurfacedPlaybooks: surfacedPlaybooks(findings),
+		DriftEvents:         driftEvents,
+		NamespaceOnboarding: cloneNamespaceOnboarding(c.namespaceOnboarding),
+		DetectorHistory:     compactDetectorHistory(c.history), SurfacedPlaybooks: surfacedPlaybooks(findings),
 		RelevantOutcomes: relevantOutcomeEvidence(
 			c.config.RepositoryWorktree, findings, c.config.SourceCommit, c.detectorOrigins(),
 		),
@@ -1280,6 +1283,7 @@ func (c *Controller) ExportState() (*contracts.ControllerState, error) {
 		ClosureReceipt: closureReceiptContract(c.closureReceipt), ClosureFailure: closureFailureContract(c.closureFailure), FailedClosures: cloneFailedClosures(c.failedClosures),
 		LastAcknowledgedIncidentId: c.lastAcknowledgedIncidentID,
 		EvaluationIteration:        int32(c.evaluationIteration), DetectorTimeline: timeline, IncidentView: view,
+		NamespaceOnboarding: cloneNamespaceOnboarding(c.namespaceOnboarding),
 		AcceptedSourceDrift: driftEventsContract(c.acceptedSourceDrift), AcceptedSourceDriftRevision: c.acceptedSourceDriftRevision,
 		DriftEvents: driftEventsContract(c.driftEvents), OwnershipAdoption: adoptionContract(c.ownershipAdoption),
 	}
@@ -1309,6 +1313,11 @@ func (c *Controller) RestoreState(state *contracts.ControllerState) error {
 	state, err := c.resolvePreparedTask(state)
 	if err != nil {
 		return err
+	}
+	if state.GetNamespaceOnboarding() != nil {
+		if err := onboarding.Validate(state.GetNamespaceOnboarding(), c.config.Namespace); err != nil {
+			return err
+		}
 	}
 	if err := validateRuntimeState(state); err != nil {
 		return err
@@ -1353,6 +1362,8 @@ func (c *Controller) RestoreState(state *contracts.ControllerState) error {
 	c.acceptedSourceDrift = driftEventsState(state.GetAcceptedSourceDrift())
 	c.acceptedSourceDriftRevision = state.GetAcceptedSourceDriftRevision()
 	c.ownershipAdoption = adoptionState(state.GetOwnershipAdoption())
+	c.namespaceOnboarding = cloneNamespaceOnboarding(state.GetNamespaceOnboarding())
+	c.sourceInventory = nil
 	c.dispatchError = state.DispatchError
 	c.incidentDetectedAt = controllerTime(state.GetIncidentDetectedAt())
 	c.incidentDispatchedAt = controllerTime(state.GetIncidentDispatchedAt())

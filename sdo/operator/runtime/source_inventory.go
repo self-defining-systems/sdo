@@ -11,6 +11,7 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/rendered"
 	"sdo.dev/operator/sdk"
 )
@@ -18,12 +19,14 @@ import (
 // SourceInventory is an immutable index of the accepted deployment. Evaluation
 // uses informer objects only: no API requests, source rendering or model calls.
 type SourceInventory struct {
-	Namespace    string
-	Revision     string
-	Identity     string
-	EvidenceGaps []rendered.InventoryEvidenceGap
-	declared     map[sdk.ObjectRef]*unstructured.Unstructured
-	dependencies map[sdk.ObjectRef]bool
+	NamespaceOnboarding *contracts.NamespaceOnboarding
+	acknowledged        map[sdk.ObjectRef]bool
+	Namespace           string
+	Revision            string
+	Identity            string
+	EvidenceGaps        []rendered.InventoryEvidenceGap
+	declared            map[sdk.ObjectRef]*unstructured.Unstructured
+	dependencies        map[sdk.ObjectRef]bool
 }
 
 func NewSourceInventory(namespace, revision string, objects []*unstructured.Unstructured) *SourceInventory {
@@ -33,7 +36,9 @@ func NewSourceInventory(namespace, revision string, objects []*unstructured.Unst
 			continue
 		}
 		object = object.DeepCopy()
-		if object.GetNamespace() == "" && !inventoryClusterKind(object.GetKind()) {
+		if inventoryClusterKind(object.GetKind()) {
+			object.SetNamespace("")
+		} else if object.GetNamespace() == "" {
 			object.SetNamespace(namespace)
 		}
 		index.declared[inventoryRef(object)] = object
@@ -96,7 +101,7 @@ func (s *SourceInventory) Findings(objects []*unstructured.Unstructured, now tim
 		visited[ref] = true
 		for _, owner := range o.GetOwnerReferences() {
 			parent := sdk.ObjectRef{APIVersion: owner.APIVersion, Kind: owner.Kind, Namespace: o.GetNamespace(), Name: owner.Name}
-			if declared := s.declared[parent]; declared != nil || s.dependencies[parent] {
+			if declared := s.declared[parent]; declared != nil || s.dependencies[parent] || s.acknowledged[parent] {
 				return true
 			}
 			if ancestor := observed[parent]; ancestor != nil && (inventoryOwned(ancestor) || generated(ancestor, visited)) {
@@ -122,6 +127,9 @@ func (s *SourceInventory) Findings(objects []*unstructured.Unstructured, now tim
 		declared := s.declared[ref]
 		deleting := o.GetDeletionTimestamp() != nil && !o.GetDeletionTimestamp().IsZero()
 		rbacChanged := declared != nil && strings.HasPrefix(o.GetAPIVersion(), "rbac.authorization.k8s.io/") && !reflect.DeepEqual(inventoryRBACProjection(declared), inventoryRBACProjection(o))
+		if declared == nil && !s.dependencies[ref] && s.acknowledged[ref] {
+			continue
+		}
 		if (declared != nil || s.dependencies[ref]) && !deleting && !rbacChanged {
 			continue
 		}

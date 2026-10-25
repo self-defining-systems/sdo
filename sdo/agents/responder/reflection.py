@@ -187,7 +187,7 @@ def _logical_learning_request(
             indent=2,
         )
         work_section = render_prompt("responder", "learning_01", part="reflection.instructions", work_json=work_json)
-    return render_prompt(
+    prompt = render_prompt(
         "responder",
         "reflection",
         part="reflection.instructions",
@@ -201,6 +201,16 @@ def _logical_learning_request(
         ),
         history_section=named_prompt("reflection.history", _history_section(outcome, history, history_directory)),
     )
+    if closure.request.HasField("namespace_onboarding"):
+        prompt += render_prompt(
+            "responder",
+            "namespace_onboarding",
+            part="reflection.outcome",
+            onboarding_json=json_format.MessageToJson(
+                closure.request.namespace_onboarding, preserving_proto_field_name=True
+            ),
+        )
+    return prompt
 
 
 def _history_section(

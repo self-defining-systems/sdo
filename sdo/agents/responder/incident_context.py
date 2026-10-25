@@ -130,6 +130,7 @@ def prepared_incident_data(request: IncidentRequest) -> Iterator[str]:
             "latest_detector_evaluations",
             "observation_generation",
             "playbook_documents",
+            "namespace_onboarding",
         ):
             if name in summary:
                 summary.pop(name)

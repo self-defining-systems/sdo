@@ -85,3 +85,29 @@ func TestNativeInstallAdapterRejectsMissingAcceptedCommit(t *testing.T) {
 		t.Fatal("installer was called without an accepted commit")
 	}
 }
+
+type verifiedInstallCapture struct {
+	captureInstall
+	verified bool
+}
+
+func (c *verifiedInstallCapture) WithVerifiedDeployment(root, commit, namespace string, paths []string) InstallStrategy {
+	c.verified = root == "/accepted/repository" && commit == strings.Repeat("a", 40) && namespace == "production" && len(paths) == 1 && paths[0] == "app.yaml"
+	return c
+}
+func TestNativeInstallAdapterAcknowledgesOnlyVerifiedDeployment(t *testing.T) {
+	strategy := &verifiedInstallCapture{}
+	adapter := NativeInstallAdapter{Strategy: strategy, AcceptedRepository: "/accepted/repository"}
+	if err := adapter.Install(context.Background(), strings.Repeat("a", 40), "production"); err != nil {
+		t.Fatal(err)
+	}
+	if strategy.verified {
+		t.Fatal("unverified install acknowledged inventory")
+	}
+	if err := adapter.InstallDeployment(context.Background(), strings.Repeat("a", 40), "production", DeploymentReceipt{ManifestPaths: []string{"app.yaml"}}); err != nil {
+		t.Fatal(err)
+	}
+	if !strategy.verified {
+		t.Fatal("verified native lifecycle did not bind onboarding to accepted deployment")
+	}
+}

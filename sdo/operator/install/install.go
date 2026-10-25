@@ -32,13 +32,15 @@ type Extension interface {
 }
 
 type Installer struct {
-	Client             kubernetes.Interface
-	SeedRepository     RepositorySeeder
-	SyncRepository     RepositorySynchronizer
-	ReadAcceptedCommit func(context.Context, SyncConfig) (string, error)
-	Extension          Extension
-	PollInterval       time.Duration
-	SyncTimeout        time.Duration
+	// BeforeControllerStart runs trusted lifecycle bookkeeping after preparation.
+	BeforeControllerStart func(context.Context, Config) error
+	Client                kubernetes.Interface
+	SeedRepository        RepositorySeeder
+	SyncRepository        RepositorySynchronizer
+	ReadAcceptedCommit    func(context.Context, SyncConfig) (string, error)
+	Extension             Extension
+	PollInterval          time.Duration
+	SyncTimeout           time.Duration
 }
 
 type Result struct {
@@ -267,6 +269,11 @@ func (i Installer) install(ctx context.Context, cfg Config, prepared bool) (Resu
 		}
 		if err := i.markPreparedCommit(ctx, cfg); err != nil {
 			return Result{}, err
+		}
+	}
+	if i.BeforeControllerStart != nil {
+		if err := i.BeforeControllerStart(ctx, cfg); err != nil {
+			return Result{}, fmt.Errorf("before controller start: %w", err)
 		}
 	}
 	if _, err := i.Client.BatchV1().Jobs(control).Create(ctx, plan.Job, metav1.CreateOptions{}); err != nil {
