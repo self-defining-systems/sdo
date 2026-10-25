@@ -653,7 +653,7 @@ validation under the same two-CPU limit. It reports image bytes and wall time;
 it excludes image delivery and Kubernetes scheduling. Images must already exist;
 the measurement never pulls images or prunes shared caches.
 
-The PR image gate builds native and Python-worker images on separate runners.
+The PR image gate builds each affected image on a separate runner.
 All selected images still receive the same smoke, preflight and answer-key checks.
 Large intermediate-layer cache uploads run in `warm-ci-caches.yml` nightly or by
 manual dispatch; they are maintenance rather than a required merge gate. The
@@ -668,3 +668,11 @@ on preparation and require that exact cache; they do not start cold compilation
 inside short operation deadlines. Cache restoration uses Go's content-addressed
 compiler entries, while executable identity remains source-bound by
 `operator_test_binary.py`.
+
+The operator gate partitions the expensive CLI/broker acceptance matrix from
+other broker tests and remaining packages through `test_operator_shard.sh`.
+Runtime name partitions remain exhaustive; `test_runtime_shard.py --shard`
+accepts comma-separated partitions so short groups can share a runner without
+omitting or duplicating names. Image runners consume the preparation job's
+source-bound schema identity, avoiding a separate Go cache transfer and toolchain
+installation just to print it.

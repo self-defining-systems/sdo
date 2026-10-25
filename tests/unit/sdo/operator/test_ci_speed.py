@@ -170,7 +170,17 @@ def test_go_shards_restore_the_completed_preparation_cache() -> None:
     warm = jobs["prepare-go"]
     assert warm["timeout-minutes"] == 5
     assert any("scripts/prepare_go_ci.sh" in step.get("run", "") for step in warm["steps"])
-    for name in ("python", "controller", "go-integration", "images", "replay", "chaos"):
+    for name in ("python", "controller", "go-integration", "replay", "chaos"):
         assert "prepare-go" in jobs[name]["needs"]
         caches = [step for step in jobs[name]["steps"] if step.get("uses", "").startswith("actions/cache")]
         assert any("ci-prepared" in step["with"]["key"] for step in caches), name
+
+
+def test_image_jobs_use_the_compilation_owners_schema_identity() -> None:
+    jobs = workflow()["jobs"]
+    images = jobs["images"]
+    assert "prepare-go" in images["needs"]
+    assert images["env"]["SDO_VALIDATOR_SCHEMA_IDENTITY"] == "${{ needs.prepare-go.outputs.schema_identity }}"
+    assert set(images["strategy"]["matrix"]["family"]) == {"controller", "validator", "responder", "benchmark"}
+    partitions = [row["operator"] for row in jobs["controller"]["strategy"]["matrix"]["include"] if "operator" in row]
+    assert sorted(partitions) == ["acceptance", "broker", "remaining"]
