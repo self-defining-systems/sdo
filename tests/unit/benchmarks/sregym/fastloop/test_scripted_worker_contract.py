@@ -25,6 +25,7 @@ def _accepted_app(tmp_path: Path, *, verified: bool = False) -> Path:
     memory = app / ".sdo"
     shutil.rmtree(memory / "playbooks/service-targetport-mismatch")
     shutil.rmtree(memory / "corpus/targetport-mismatch")
+    shutil.rmtree(memory / "diagnostics/detectors/incidents/routing-relations")
     (memory / "schema-version").write_text("3\n")
     (memory / "goal.md").write_text("---\nschema_version: 1\nowner: human\n---\n\nKeep the app healthy.\n")
     (memory / "arch.md").write_text("---\nschema_version: 1\nowner: health_judge\n---\n\nOne service.\n")
