@@ -68,7 +68,11 @@ def _tool_definitions(root: Path) -> list[str]:
     ("provider", "backend_type"), [("codex", CodexSessionBackend), ("claude", ClaudeSessionBackend)]
 )
 def test_responder_and_reflection_turns_send_the_same_model_visible_schema_and_mcp_servers(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, provider: str, backend_type: type[CodexSessionBackend]
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    provider: str,
+    backend_type: type[CodexSessionBackend],
+    prepare_reflection_memory,
 ) -> None:
     # The turns deliberately run in different roots with different environments: the reflection turn
     # works in a scratch clone and the broker pins SDO_* values per phase. ``--root`` and the server
@@ -92,7 +96,7 @@ def test_responder_and_reflection_turns_send_the_same_model_visible_schema_and_m
 
     monkeypatch.setenv("SDO_PHASE", "responder")
     execute_incident(request, provider=provider, executor=responder.agent.executor)
-    monkeypatch.setenv("SDO_PHASE", "reflection")
+    prepare_reflection_memory(reflection_root)
     backend_type(executor=reflection.agent.executor).resume(
         session_id="session-1", worktree=reflection_root, prompt="reflect", idempotency_key="reflection:test"
     )
@@ -192,8 +196,9 @@ def test_the_responder_fails_with_the_typed_error_when_the_correction_is_also_wr
     ("provider", "backend_type"), [("codex", CodexSessionBackend), ("claude", ClaudeSessionBackend)]
 )
 def test_reflection_resumes_once_when_it_answers_in_the_wrong_branch(
-    tmp_path: Path, provider: str, backend_type: type[CodexSessionBackend]
+    tmp_path: Path, provider: str, backend_type: type[CodexSessionBackend], prepare_reflection_memory
 ) -> None:
+    prepare_reflection_memory(tmp_path)
     replies = [
         reply(provider, _result_output(), session_id="session-1", branch="incident_result"),
         reply(provider, _REFLECTION, session_id="session-1", branch="reflection"),

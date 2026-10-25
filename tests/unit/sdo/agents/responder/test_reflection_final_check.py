@@ -1,0 +1,202 @@
+"""A provider cannot return unchecked memory, even when it omits its check tool."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import subprocess
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+import pytest
+
+from sdo.agents.responder.reflection import ClaudeSessionBackend, CodexSessionBackend
+from tests.structured_turns import ScriptedAgent, reply
+
+if TYPE_CHECKING:
+    from agentshim import CommandRequest
+    from agentshim.testing import FakeRun
+
+ROOT = Path(__file__).resolve().parents[5]
+
+
+@pytest.fixture
+def accepted_reflection(tmp_path: Path, memory_binary: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    def git(*args: str) -> str:
+        return subprocess.check_output(["git", "-C", str(tmp_path), *args], text=True).strip()
+
+    git("init", "-q")
+    git("config", "user.name", "Fixture")
+    git("config", "user.email", "fixture@example.test")
+    # Minimal accepted memory; the only missing requirement is coverage of the verified cause.
+    (tmp_path / "app.txt").write_text("synthetic application\n")
+    git("add", ".")
+    git("commit", "-qm", "accepted source")
+    outcome = tmp_path / ".sdo/outcomes" / f"{hashlib.sha256(b'incident').hexdigest()}.json"
+    outcome.parent.mkdir(parents=True)
+    outcome.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "incident_id": "incident",
+                "classification": "success",
+                "confirmed_root_causes": [
+                    {
+                        "summary": "synthetic catalog repair",
+                        "resources": [{"api_version": "v1", "kind": "Service", "namespace": "demo", "name": "api"}],
+                    }
+                ],
+            }
+        )
+    )
+    git("add", "-f", ".sdo")
+    git("commit", "-qm", "accepted outcome\n\nSDO-Incident: incident\nSDO-Phase: outcome")
+    monkeypatch.setenv("PATH", f"{memory_binary.parent}{os.pathsep}{os.environ['PATH']}")
+    monkeypatch.setenv("SDO_ACTOR", "responder")
+    monkeypatch.setenv("SDO_PHASE", "reflection")
+    monkeypatch.setenv("SDO_BASE_COMMIT", git("rev-parse", "HEAD"))
+    monkeypatch.setenv("SDO_INCIDENT_ID", "incident")
+    monkeypatch.setenv("SDO_OPERATOR_ROOT", str(ROOT / "sdo/operator"))
+    monkeypatch.setenv("SDO_HEALTHY_BASELINE", "")
+    return tmp_path
+
+
+@pytest.mark.parametrize(
+    ("provider", "backend_type"), [("codex", CodexSessionBackend), ("claude", ClaudeSessionBackend)]
+)
+@pytest.mark.parametrize("fresh", [False, True])
+def test_final_check_corrects_missing_replay_in_same_session(
+    accepted_reflection: Path,
+    provider: str,
+    backend_type: type[CodexSessionBackend],
+    fresh: bool,
+) -> None:
+    calls = 0
+
+    def respond(request: CommandRequest) -> FakeRun:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            payload = {"summary": "covered", "learning_decision": "no_change", "no_change_reason": "covered"}
+        else:
+            assert calls == 2
+            # Fresh reflection must also retain its newly created provider session for correction.
+            assert "reflection-session" in request.argv
+            payload = {
+                "summary": "Cannot replay catalog writes with the installed SDK",
+                "learning_decision": "sdk_gap",
+                "no_change_reason": "Catalog replay primitive unavailable",
+                "sdk_gaps": [
+                    {
+                        "fault_class": "catalog",
+                        "primitive": "catalog replay",
+                        "reason": "No catalog read/write replay primitive",
+                        "scratch_script": "inspect catalog",
+                        "resources": [{"api_version": "v1", "kind": "Service", "namespace": "demo", "name": "api"}],
+                    }
+                ],
+            }
+        return reply(provider, payload, session_id="reflection-session", branch="reflection")
+
+    agent = ScriptedAgent(respond)
+    backend = backend_type(executor=agent.executor)
+    kwargs = {"worktree": accepted_reflection, "prompt": "reflect", "idempotency_key": "one-dispatch"}
+    result = backend.fresh(**kwargs) if fresh else backend.resume(session_id="responder-session", **kwargs)
+    assert result.learning_decision == "sdk_gap"
+    assert calls == 2
+    assert "reflection.program-required" in agent.prompts[1]
+    assert "verified cause 0" in agent.prompts[1]
+    assert "rolled back" not in agent.prompts[1]
+    assert result.usage["llm_calls"] == 2
+
+
+def test_worker_does_not_publish_persistently_rejected_memory(
+    accepted_reflection: Path,
+) -> None:
+    from google.protobuf import json_format
+
+    from sdo.agents.responder.reflection import SessionReflector
+    from sdo.agents.responder.reflection_worker import run_reflection_task
+    from sdo.contracts import AgentTask, IncidentClosure, OutcomeRecord, ReflectionRequest, to_canonical_json
+
+    incident = "incident"
+    base = os.environ["SDO_BASE_COMMIT"]
+    closure = IncidentClosure()
+    closure.request.incident_id = incident
+    closure.result.responder_session_id = "responder-session"
+    outcome_path = accepted_reflection / ".sdo/outcomes" / f"{hashlib.sha256(incident.encode()).hexdigest()}.json"
+    outcome = json_format.Parse(outcome_path.read_text(), OutcomeRecord())
+    request = ReflectionRequest(closure=closure, outcome=outcome, outcome_commit=base, session_mode="resume")
+    request.memory_snapshot.accepted_commit = base
+    task = AgentTask(
+        schema_version="sdo.dev/v1alpha1",
+        task_id="one-dispatch",
+        agent_id="sdo-reflector",
+        task_type="outcome-reflection-direct-v1",
+        workspace={"proposal_id": "proposal", "checkout_path": str(accepted_reflection), "base_commit": base},
+    )
+    task.request.Pack(request)
+    task_path = accepted_reflection.with_suffix(".task.json")
+    task_path.write_text(to_canonical_json(task))
+    published = []
+
+    class Publisher:
+        def publish_payload(self, *args: object) -> None:
+            published.append(args)
+
+    agent = ScriptedAgent(
+        lambda _: reply(
+            "codex",
+            {"summary": "covered", "learning_decision": "no_change", "no_change_reason": "covered"},
+            session_id="reflection-session",
+            branch="reflection",
+        )
+    )
+    with pytest.raises(RuntimeError, match="reflection.program-required"):
+        run_reflection_task(
+            task_path,
+            "result",
+            Publisher(),
+            reflector=SessionReflector(CodexSessionBackend(executor=agent.executor)),
+        )
+    assert len(agent.requests) == 4  # initial turn plus three bounded in-session corrections
+    assert not published
+    assert all("reflection-session" in request.argv for request in agent.requests[1:])
+
+
+def test_final_check_rechecks_edits_after_an_earlier_pass(
+    tmp_path: Path,
+    prepare_reflection_memory,
+) -> None:
+    prepare_reflection_memory(tmp_path)
+    decision = {"summary": "covered", "learning_decision": "no_change", "no_change_reason": "covered"}
+    decision_file = tmp_path.with_suffix(".decision.json")
+    decision_file.write_text(json.dumps(decision))
+    calls = 0
+
+    def respond(_: CommandRequest) -> FakeRun:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            # An earlier passing model-side check does not authorize later bytes.
+            subprocess.run(
+                ["sdo-operator", "memory", "check", "--json", "--decision", str(decision_file)],
+                cwd=tmp_path,
+                check=True,
+                capture_output=True,
+            )
+            (tmp_path / ".sdo/notes.txt").write_text("not an owned artifact\n")
+        else:
+            (tmp_path / ".sdo/notes.txt").unlink()
+        return reply("codex", decision, session_id="reflection-session", branch="reflection")
+
+    agent = ScriptedAgent(respond)
+    result = CodexSessionBackend(executor=agent.executor).fresh(
+        worktree=tmp_path,
+        prompt="reflect",
+        idempotency_key="one-dispatch",
+    )
+    assert result.learning_decision == "no_change"
+    assert calls == 2
+    assert "layout.unknown-path" in agent.prompts[1]
