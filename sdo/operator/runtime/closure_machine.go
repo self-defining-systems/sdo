@@ -36,6 +36,11 @@ func (c *Controller) applyClosureCoreLocked(state *contracts.ControllerState) {
 }
 
 func (c *Controller) stepClosureLocked(event lifecyclecore.Event) ([]lifecyclecore.Effect, error) {
+	if event.Kind == lifecyclecore.Begin && event.Closure != nil && !event.Closure.GetVerifiedWhileResponderRunning() {
+		if err := c.bindClosureUsage(event.Closure); err != nil {
+			return nil, err
+		}
+	}
 	state, err := c.closureCoreStateLocked()
 	if err != nil {
 		return nil, err

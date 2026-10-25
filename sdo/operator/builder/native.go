@@ -122,6 +122,10 @@ func (workspace *Workspace) validate(ctx context.Context, vet bool) (string, err
 }
 
 func seedGoBuildCache(ctx context.Context) error {
+	// The cache helper reads image entries in place and writes misses to scratch.
+	if os.Getenv("GOCACHEPROG") != "" {
+		return nil
+	}
 	seed := os.Getenv("SDO_GO_CACHE_SEED")
 	if seed == "" {
 		return nil
