@@ -183,6 +183,7 @@ def reset_environment(
     if baselines is None:
         raise ValueError("reset requires an application baseline captured by fastloop up")
     cluster.reset_controller(environment.seed_commit, preserve_repository=preserve_repository)
+    worker.request("clean_start", problem_id=environment.deploy_problem, timeout=200)
     for baseline in baselines:
         reconcile_application(cluster, baseline, baseline.namespace)
     if preserve_repository:

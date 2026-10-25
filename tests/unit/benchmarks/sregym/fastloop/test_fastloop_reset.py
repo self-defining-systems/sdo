@@ -83,7 +83,7 @@ def test_reset_restores_application_and_clears_controller_on_existing_environmen
     assert cluster.accepted_commit == environment.seed_commit
     assert cluster.sessions == cluster.jobs == []
     assert cluster.state == {}
-    assert worker.calls == ["health", "baseline_oracle"]
+    assert worker.calls == ["clean_start", "health", "baseline_oracle"]
 
 
 def test_reset_requires_a_captured_baseline_and_seed_commit(tmp_path: Path) -> None:
