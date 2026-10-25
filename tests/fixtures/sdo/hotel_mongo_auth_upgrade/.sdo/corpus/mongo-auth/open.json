@@ -1,0 +1,84 @@
+{
+  "namespace": "demo",
+  "pods": [
+    {
+      "metadata": {
+        "namespace": "demo",
+        "name": "mongodb-geo"
+      },
+      "spec": {
+        "containers": [
+          {
+            "name": "mongo",
+            "image": "mongo:synthetic",
+            "volumeMounts": [
+              {
+                "name": "mongo-init",
+                "mountPath": "/docker-entrypoint-initdb.d",
+                "readOnly": true
+              }
+            ]
+          }
+        ],
+        "volumes": [
+          {
+            "name": "mongo-init",
+            "configMap": {
+              "name": "mongo-geo-script",
+              "items": [
+                {
+                  "key": "k8s-geo-mongo.sh",
+                  "path": "init.sh"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "configMaps": [
+    {
+      "metadata": {
+        "namespace": "demo",
+        "name": "mongo-geo-script"
+      },
+      "data": {
+        "k8s-geo-mongo.sh": ""
+      }
+    }
+  ],
+  "deployments": [
+    {
+      "metadata": {
+        "namespace": "demo",
+        "name": "geo",
+        "uid": "geo-deployment",
+        "resourceVersion": "1"
+      },
+      "spec": {
+        "replicas": 1,
+        "selector": {
+          "matchLabels": {
+            "app": "geo"
+          }
+        },
+        "template": {
+          "metadata": {
+            "labels": {
+              "app": "geo"
+            }
+          },
+          "spec": {
+            "containers": [
+              {
+                "name": "geo",
+                "image": "geo:synthetic"
+              }
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

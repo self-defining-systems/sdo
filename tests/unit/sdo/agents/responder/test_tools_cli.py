@@ -545,3 +545,14 @@ def test_verify_wait_uses_cached_controller_protocol(monkeypatch, capsys):
 def test_verify_wait_rejects_invalid_timeouts(value, monkeypatch):
     monkeypatch.setattr(tools_cli, "_exchange", lambda *_: pytest.fail("invalid wait reached controller"))
     assert tools_cli.main(["verify", "--wait", value]) == 1
+
+
+def test_mitigation_help_preserves_database_reference_details(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit) as stopped:
+        tools_cli.main(["mitigate", "--help"])
+    assert stopped.value.code == 0
+    help_text = " ".join(capsys.readouterr().out.split())
+    assert "EnsureDatabaseUser" in help_text
+    assert "config_map" in help_text
+    assert "assignment" in help_text
+    assert "complete findings/evidence" in help_text

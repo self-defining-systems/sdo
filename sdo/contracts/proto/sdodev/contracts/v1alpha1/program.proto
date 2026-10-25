@@ -315,8 +315,17 @@ message RemoveServicePort {
   bool allow_empty = 5;
   string reason = 6;
 }
+message ConfigMapCredentialRef {
+  string name = 1 [(buf.validate.field).string.min_len = 1];
+  string key = 2 [(buf.validate.field).string.min_len = 1];
+  string assignment = 3 [(buf.validate.field).string.pattern = "^([A-Za-z_][A-Za-z0-9_]*)?$"];
+}
 message CredentialRef {
-  string env = 1 [(buf.validate.field).string = {min_len: 1, pattern: "^[A-Za-z_][A-Za-z0-9_]*$"}];
+  oneof kind {
+    option (buf.validate.oneof).required = true;
+    string env = 1 [(buf.validate.field).string = {min_len: 1, pattern: "^[A-Za-z_][A-Za-z0-9_]*$"}];
+    ConfigMapCredentialRef config_map = 2;
+  }
 }
 message DatabaseAuth {
   string database = 1 [(buf.validate.field).string.min_len = 1];

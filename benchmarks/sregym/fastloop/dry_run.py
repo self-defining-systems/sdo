@@ -14,10 +14,10 @@ from pathlib import Path
 from typing import Any
 
 INVARIANTS = (
+    "lane_resources",
     "restore",
     "onboarding",
     "setup_memory",
-    "lane_resources",
     "rbac_equality",
     "stabilization",
     "probe_placement",
@@ -26,9 +26,22 @@ INVARIANTS = (
 )
 
 
+def code_revision() -> str:
+    root = Path(__file__).resolve().parents[3]
+    result = subprocess.run(
+        ["git", "-C", str(root), "describe", "--always", "--abbrev=40", "--dirty", "--match=__eval_no_tag__"],
+        check=True,
+        text=True,
+        capture_output=True,
+        timeout=5,
+    )
+    return result.stdout.strip()
+
+
 @dataclass
 class DryRunReport:
     lane: str
+    code_revision: str = field(default_factory=code_revision)
     started_at: float = field(default_factory=time.time)
     seconds: float = 0
     passed: bool = False
@@ -85,7 +98,7 @@ class NoFaultReady(Exception):
 
 
 def run_lane(run_dir: Path, timeout: int) -> int:
-    from benchmarks.sregym.adapter import closure_pending, control_namespace_for, kubectl
+    from benchmarks.sregym.adapter import assert_lane_resources, closure_pending, control_namespace_for, kubectl
     from benchmarks.sregym.fastloop import cli
     from benchmarks.sregym.fastloop.environment import FastloopEnvironment
 
@@ -102,6 +115,8 @@ def run_lane(run_dir: Path, timeout: int) -> int:
         report.save(report_path)
 
     try:
+        resources = assert_lane_resources(environment.kubeconfig, app_namespaces={environment.namespace})
+        passed("lane_resources", **resources)
         cli._reset(argparse.Namespace(run_dir=environment.run_dir, dev_mount=None))
         passed("restore", source="accepted installed manifests; independent traffic and stable workloads")
         os.environ["KUBECONFIG"] = str(environment.kubeconfig)
@@ -126,6 +141,10 @@ def run_lane(run_dir: Path, timeout: int) -> int:
                 str(timeout),
             ]
         )
+        # Onboarding and proof share the remaining process budget.
+        remaining = timeout - (time.monotonic() - started) - 5
+        args.admission_timeout_seconds = max(1, remaining)
+        args.admission_progress = passed
         control = control_namespace_for(environment.namespace)
         with cli._worker(environment) as worker:
             agent = cli._sdo_agent(args, environment, directory, worker=worker)

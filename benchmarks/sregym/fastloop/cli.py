@@ -68,6 +68,9 @@ def _worker(environment: FastloopEnvironment) -> SregymWorker:
         from benchmarks.sregym.fastloop.toy import ToyWorker
 
         return ToyWorker(environment)  # type: ignore[return-value]
+    from benchmarks.sregym.fastloop.source_preflight import assert_harness_sources
+
+    assert_harness_sources(environment.sregym_dir)
     return SregymWorker(
         worker_argv(environment.sregym_dir, private_tmp=environment.private_tmp),
         env={**environment.worker_process_env(), "PYTHONPATH": str(REPO_ROOT)},
@@ -230,6 +233,9 @@ def up_preflight(args: argparse.Namespace) -> None:
         warnings.warn("--no-dev-mount: code changes require image rebuilds", stacklevel=2)
     elif not (args.dev_mount.resolve() / "sdo/operator/go.mod").is_file():
         raise ValueError(f"fastloop preflight: not an SDO worktree: {args.dev_mount}")
+    from benchmarks.sregym.fastloop.source_preflight import assert_harness_sources
+
+    assert_harness_sources(getattr(args, "sregym_dir", DEFAULT_SREGYM_DIR))
     for image in (args.controller_image, args.responder_image, args.validator_image):
         if image is None:
             continue
@@ -309,6 +315,11 @@ def _up(args: argparse.Namespace) -> int:
             if health.get("healthy"):
                 if previous.dev_mount is not None and previous.state_path.is_file():
                     return _reset(argparse.Namespace(run_dir=previous.run_dir, dev_mount=previous.dev_mount))
+                from benchmarks.sregym.fastloop.baseline_recovery import seal_existing_install
+
+                seal_existing_install(
+                    previous.baseline_path, KubectlApplicationCluster(previous.kubeconfig), previous.namespace
+                )
                 print(f"fastloop environment ready: reused verified node image digests -> {previous.path}")
                 return 0
     if args.builder:
@@ -362,10 +373,16 @@ def _up(args: argparse.Namespace) -> int:
     )
     cluster = KubectlApplicationCluster(environment.kubeconfig)
     namespaces = application_namespaces(environment.baseline_path, environment.kubeconfig, environment.namespace)
-    save_application_baseline(
-        environment.baseline_path,
-        tuple(capture_application_baseline(cluster, namespace) for namespace in namespaces),
-    )
+    if deployed.get("deployed") is True:
+        save_application_baseline(
+            environment.baseline_path,
+            tuple(capture_application_baseline(cluster, namespace) for namespace in namespaces),
+            installed=True,
+        )
+    else:
+        from benchmarks.sregym.fastloop.baseline_recovery import seal_existing_install
+
+        seal_existing_install(environment.baseline_path, cluster, environment.namespace)
     delivery_path = run_dir / "image_delivery.jsonl"
     if delivery_path.is_file():
         from benchmarks.sregym.fastloop.image_delivery import delivery_state
@@ -510,9 +527,18 @@ def _sdo_agent(
     # memory stream. Retained records identify warm repeats and warm resets.
     fresh_memory_start = environment.namespace not in PersistentState.load(environment.state_path).controllers
     if worker is not None and environment.app != "toy":
+        from benchmarks.sregym.adapter import native_install_config, sync_existing
         from benchmarks.sregym.fastloop.admission import EvalAdmissionOps, LaneAdmission
 
-        admission = LaneAdmission(environment, worker, ops, results_dir / "admission")
+        admission = LaneAdmission(
+            environment,
+            worker,
+            ops,
+            results_dir / "admission",
+            timeout_seconds=getattr(args, "admission_timeout_seconds", 300),
+            synchronize=lambda: sync_existing(native_install_config(runtime_config)),
+            progress=getattr(args, "admission_progress", None),
+        )
         ops = EvalAdmissionOps(ops, admission, fresh=fresh_memory_start)  # type: ignore[assignment]
 
     def start_native(context: object) -> bool:

@@ -3,9 +3,9 @@
 Choose a general primitive before declaring an SDK gap. The operation inventory
 and executable floor live in `docs/sdk-action-inventory.{md,json}`. API RBAC is
 the execution boundary. Programs propose plans; they never receive a writer.
-Credentials remain container environment references. Never read Kubernetes Secret
-data, resolve credentials in the controller, or include them in commands or
-recordings. Environment-backed authentication headers use `HeaderEnv`; `Bearer`
+Credentials remain references. Typed database actions accept env or namespace-local ConfigMap
+key/assignment references; only the executor resolves ConfigMap bytes into private exec stdin.
+Never read Kubernetes Secret data or include credential values in argv or recordings. Environment-backed authentication headers use `HeaderEnv`; `Bearer`
 is an environment reference. Plain `Headers` carry nonsecret values only.
 
 ## Kubernetes objects and subresources

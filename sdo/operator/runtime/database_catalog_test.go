@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	corev1 "k8s.io/api/core/v1"
@@ -30,7 +31,7 @@ func TestDatabaseCatalogTransportProjectionAndCanaries(t *testing.T) {
 	t.Setenv("APP_PASSWORD", canary)
 	t.Setenv("ADMIN_PASSWORD", canary)
 	t.Setenv("ADMIN_USERNAME", canary)
-	for _, mode := range []string{"read", "ensure", "malformed", "denied"} {
+	for _, mode := range []string{"read", "ensure", "malformed", "denied", "missing-env"} {
 		t.Run(mode, func(t *testing.T) {
 			a := databaseAction()
 			a.Target.Auth = &program.DatabaseAuth{Database: "admin", Username: program.CredentialRef{Env: "ADMIN_USERNAME"}, Password: program.CredentialRef{Env: "ADMIN_PASSWORD"}}
@@ -47,7 +48,7 @@ func TestDatabaseCatalogTransportProjectionAndCanaries(t *testing.T) {
 				q := r.URL.Query()
 				command := q["command"]
 				joined := strings.Join(command, " ")
-				if strings.Contains(joined, canary) || !strings.Contains(joined, "--host 127.0.0.1 --port 27017 --eval") || !strings.Contains(joined, "ADMIN_PASSWORD") {
+				if strings.Contains(joined, canary) || !strings.Contains(joined, "--host 127.0.0.1 --port 27017 --eval") || strings.Contains(joined, "ADMIN_PASSWORD") {
 					t.Errorf("command did not preserve reference-only noninteractive execution")
 				}
 				if q.Get("stdin") != "true" || q.Get("stderr") == "true" || q.Get("tty") == "true" || (q.Get("stdout") == "true") != (mode != "ensure") {
@@ -90,8 +91,9 @@ func TestDatabaseCatalogTransportProjectionAndCanaries(t *testing.T) {
 						return
 					}
 				}
-				if n, err := io.Copy(io.Discard, input); err != nil || n != 0 {
-					t.Errorf("unexpected stdin: %d %v", n, err)
+				script, err := io.ReadAll(input)
+				if err != nil || !strings.Contains(string(script), "ADMIN_PASSWORD") || strings.Contains(string(script), canary) {
+					t.Errorf("invalid reference-only stdin script: %v", err)
 				}
 				if output != nil {
 					body := `[{"name":"app","roles":[{"database":"app","name":"readWrite"}]}]`
@@ -101,7 +103,11 @@ func TestDatabaseCatalogTransportProjectionAndCanaries(t *testing.T) {
 					_, _ = io.WriteString(output, body)
 					_ = output.Close()
 				}
-				_ = json.NewEncoder(status).Encode(metav1.Status{Status: metav1.StatusSuccess})
+				exitStatus := metav1.Status{Status: metav1.StatusSuccess}
+				if mode == "missing-env" {
+					exitStatus = metav1.Status{Status: metav1.StatusFailure, Reason: "NonZeroExitCode", Message: canary, Details: &metav1.StatusDetails{Causes: []metav1.StatusCause{{Type: "ExitCode", Message: "43"}}}}
+				}
+				_ = json.NewEncoder(status).Encode(exitStatus)
 				_ = status.Close()
 				select {
 				case <-conn.CloseChan():
@@ -126,8 +132,14 @@ func TestDatabaseCatalogTransportProjectionAndCanaries(t *testing.T) {
 					t.Fatalf("%+v", users)
 				}
 			}
-			if (err != nil) != (mode == "malformed" || mode == "denied") {
+			if (err != nil) != (mode == "malformed" || mode == "denied" || mode == "missing-env") {
 				t.Fatalf("%v", err)
+			}
+			if mode == "missing-env" {
+				var refErr *CredentialReferenceError
+				if !errors.As(err, &refErr) || refErr.Reference.Env != "ADMIN_PASSWORD" {
+					t.Fatalf("missing env lacks typed reference: %v", err)
+				}
 			}
 			if strings.Contains(fmt.Sprint(err), canary) {
 				t.Fatal("transport leaked excluded field or credential")

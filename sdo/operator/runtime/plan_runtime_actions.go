@@ -11,6 +11,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
+	"sdo.dev/operator/sdk/sdktest"
 )
 
 var errPlanExecRefused = errors.New("exec refused")
@@ -116,7 +117,18 @@ func (e PlanExecutor) applyRuntimePlan(ctx context.Context, incident IncidentReq
 				}
 				users, readErr := catalog.DatabaseUsers(ctx, a.Target)
 				if readErr != nil {
-					return result, fmt.Errorf("database catalog observation unavailable")
+					return result, databaseSafeError(readErr, "database catalog observation unavailable")
+				}
+				// Preserve the measured pre-repair catalog for reflection, even
+				// when the responder invokes the raw typed action in one call.
+				// Values were already projected by DatabaseUsers; only refs
+				// and names/direct roles cross the recording boundary.
+				if !dryRun && e.RecordPrimitive != nil {
+					args, _ := json.Marshal([]any{a.Target})
+					value, _ := json.Marshal(users)
+					if recordErr := e.RecordPrimitive(sdktest.PrimitiveCall{Method: "DatabaseUsers", Arguments: args, Result: value}); recordErr != nil {
+						result.ActionReports[i].RecordingError = "database catalog capture unavailable"
+					}
 				}
 				keyTarget := a.Target
 				keyTarget.Auth = nil
@@ -198,7 +210,7 @@ func (e PlanExecutor) applyRuntimePlan(ctx context.Context, incident IncidentReq
 			result.Applied = true
 			if effectErr := catalog.EnsureDatabaseUser(ctx, a); effectErr != nil {
 				result.ActionReports[i].Status = "unknown"
-				return result, fmt.Errorf("database operation outcome unknown")
+				return result, databaseSafeError(effectErr, "database operation outcome unknown")
 			}
 			observedPod, podErr := e.Client.Get(ctx, ref)
 			if podErr != nil || observedPod == nil || observedPod.GetUID() != items[i].uid {
@@ -215,7 +227,7 @@ func (e PlanExecutor) applyRuntimePlan(ctx context.Context, incident IncidentReq
 			}
 			if readErr != nil || normalizeErr != nil || !planValuesEqual(actual, items[i].users) {
 				result.ActionReports[i].Status = "unknown"
-				return result, fmt.Errorf("database user change unverified")
+				return result, databaseSafeError(readErr, "database user change unverified")
 			}
 			result.ActionReports[i].Status = "applied"
 			continue

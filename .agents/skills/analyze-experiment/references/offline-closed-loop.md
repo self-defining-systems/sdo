@@ -38,8 +38,9 @@ Explicit `memory adopt-existing` / `install-existing --adopt-existing-memory` co
 requires explicit allowance. Replay applies the production patch and preserves unrelated fields.
 `EnsureDatabaseUser` is an irreversible typed catalog operation, separate from arbitrary Exec. It restores
 one user's existence/direct roles, preserves existing passwords and unrelated users, and reports unknown
-on uncertain transport, changed Pod identity, or failed catalog read-back. Plans retain only container
-environment credential references. Replay seeds catalog state from successful open `DatabaseUsers` calls,
+on uncertain transport, changed Pod identity, or failed catalog read-back. Plans retain only env or target-namespace ConfigMap key/optional assignment references.
+The executor resolves ConfigMap values privately into exec stdin; argv, receipts and corpus exclude them.
+Direct Secret-key refs are deferred because installed RBAC allows metadata list/watch only. Replay seeds catalog state from successful open `DatabaseUsers` calls,
 requires the recorded auth/shell configuration, and projects the typed mutation. Fixed replies, passwords,
 authentication success and arbitrary commands are never simulated as repair proof. `real:program.EnsureDatabaseUser`
 identifies the production executor path through this catalog simulator; it is not a live database receipt.

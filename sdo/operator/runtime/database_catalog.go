@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -15,11 +16,13 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/remotecommand"
 	spdytransport "k8s.io/client-go/transport/spdy"
+	utilexec "k8s.io/client-go/util/exec"
 	"sdo.dev/operator/sdk/program"
 )
 
 // DatabaseCatalogClient is the narrow nonsecret catalog boundary. Implementations
-// resolve credential references only inside the target application container.
+// resolve credential references only at execution time. Catalog interfaces and
+// observations never carry resolved credential bytes.
 type DatabaseCatalogClient interface {
 	DatabaseUsers(context.Context, program.DatabaseTarget) ([]program.DatabaseUser, error)
 	EnsureDatabaseUser(context.Context, program.EnsureDatabaseUser) error
@@ -61,11 +64,17 @@ func (v *cachedReadView) DatabaseUsers(t program.DatabaseTarget) ([]program.Data
 }
 
 // mongoScript constructs fixed operations, encoding all identifiers as JSON.
-// Env references are evaluated by the Mongo shell, never the controller.
+// Env references are evaluated by the Mongo shell. This function never resolves values.
 func mongoScript(t program.DatabaseTarget, a *program.EnsureDatabaseUser) string {
+	return mongoScriptWithCredentials(t, a, func(r program.CredentialRef) string {
+		b, _ := json.Marshal(r.Env)
+		return "credential(" + string(b) + fmt.Sprintf(",%d)", databaseCredentialCode(t, a, r))
+	})
+}
+
+func mongoScriptWithCredentials(t program.DatabaseTarget, a *program.EnsureDatabaseUser, env func(program.CredentialRef) string) string {
 	q := func(v any) string { b, _ := json.Marshal(v); return string(b) }
-	env := func(r program.CredentialRef) string { return "credential(" + q(r.Env) + ")" }
-	script := `try { function credential(n){var v=(typeof process!=="undefined" && process.env)?process.env[n]:_getEnv(n);if(typeof v!=="string" || v.length===0){throw new Error("unavailable");}return v;}`
+	script := `try { function credential(n,c){var v=(typeof process!=="undefined" && process.env)?process.env[n]:_getEnv(n);if(typeof v!=="string" || v.length===0){quit(c);}return v;}`
 	if t.Auth != nil {
 		script += "var authDB=db.getSiblingDB(" + q(t.Auth.Database) + ");if(!authDB.auth(" + env(t.Auth.Username) + "," + env(t.Auth.Password) + ")){throw new Error('auth');}"
 	}
@@ -114,7 +123,11 @@ func (c TypedPlanClient) mongo(ctx context.Context, t program.DatabaseTarget) ([
 	if shell == "" {
 		shell = "mongo"
 	}
-	command := []string{shell, "--quiet", "--norc", "--host", "127.0.0.1", "--port", "27017", "--eval", mongoScript(t, nil)}
+	input, err := c.mongoInput(ctx, t, nil)
+	if err != nil {
+		return nil, err
+	}
+	command := mongoCommandArgs(shell, databaseCredentialRefs(t, nil)...)
 	request := c.Client.CoreV1().RESTClient().Post().Resource("pods").Name(t.Pod.Name).Namespace(t.Pod.Namespace).SubResource("exec").VersionedParams(&corev1.PodExecOptions{Container: t.Container, Command: command, Stdin: true, Stdout: true, Stderr: false, TTY: false}, scheme.ParameterCodec)
 	config := rest.CopyConfig(c.ExecConfig)
 	transport, upgrader, err := spdytransport.RoundTripperFor(config)
@@ -127,8 +140,14 @@ func (c TypedPlanClient) mongo(ctx context.Context, t program.DatabaseTarget) ([
 	}
 	output := &catalogOutput{}
 	var stdout io.Writer = output
-	err = executor.StreamWithContext(ctx, remotecommand.StreamOptions{Stdin: strings.NewReader(""), Stdout: stdout})
+	err = executor.StreamWithContext(ctx, remotecommand.StreamOptions{Stdin: strings.NewReader(input), Stdout: stdout})
 	if err != nil {
+		var exited utilexec.ExitError
+		if errors.As(err, &exited) {
+			if refErr := databaseCredentialExit(t, nil, int32(exited.ExitStatus())); refErr != nil {
+				return nil, refErr
+			}
+		}
 		return nil, fmt.Errorf("database operation failed or outcome unknown")
 	}
 	current, readErr := c.Get(ctx, t.Pod)
@@ -171,8 +190,18 @@ func (c TypedPlanClient) EnsureDatabaseUser(ctx context.Context, a program.Ensur
 	if shell == "" {
 		shell = "mongo"
 	}
-	command := program.Command{Pod: t.Pod, Container: t.Container, Args: []string{shell, "--quiet", "--norc", "--host", "127.0.0.1", "--port", "27017", "--eval", mongoScript(t, &a)}}
+	input, err := c.mongoInput(ctx, t, &a)
+	if err != nil {
+		return err
+	}
+	// This command is executor-local: only the reference-bearing action is recorded.
+	command := program.Command{Pod: t.Pod, Container: t.Container, Args: mongoCommandArgs(shell, databaseCredentialRefs(t, &a)...), Stdin: input}
 	code, err := c.runCommand(ctx, command)
+	if err == nil {
+		if refErr := databaseCredentialExit(t, &a, code); refErr != nil {
+			return refErr
+		}
+	}
 	if err != nil || code != 0 {
 		return fmt.Errorf("database operation failed or outcome unknown")
 	}
@@ -192,4 +221,78 @@ func unstructuredContainers(object map[string]any) ([]string, bool, error) {
 		names = append(names, name)
 	}
 	return names, found, err
+}
+
+// mongoCommandArgs keeps credential bytes off process argv and exec URLs.
+// Legacy mongo execFile seeks its input, so /dev/stdin is not a script file.
+// A fixed POSIX read/export bootstrap transfers the one-line script from stdin
+// into exec's private environment; --eval sees only the fixed loader. It never
+// starts the legacy REPL or writes credential-bearing shell history. Mongosh
+// reads a noninteractive script directly from stdin through Node's file API.
+func mongoCommandArgs(shell string, refs ...program.CredentialRef) []string {
+	args := []string{shell, "--quiet", "--norc", "--host", "127.0.0.1", "--port", "27017"}
+	if shell == "mongosh" {
+		return append(args, "--file", "/dev/stdin")
+	}
+	privateEnv := "_SDO_DATABASE_SCRIPT"
+	for {
+		collision := false
+		for _, ref := range refs {
+			collision = collision || ref.Env == privateEnv
+		}
+		if !collision {
+			break
+		}
+		privateEnv += "_"
+	}
+	args = append(args, "--eval", `eval(_getEnv("`+privateEnv+`"))`)
+	return append([]string{"sh", "-c", `IFS= read -r ` + privateEnv + ` || exit 41; export ` + privateEnv + `; exec "$@"`, "sdo-database-stdin"}, args...)
+}
+
+func (c TypedPlanClient) mongoInput(ctx context.Context, t program.DatabaseTarget, a *program.EnsureDatabaseUser) (string, error) {
+	var resolutionErr error
+	script := mongoScriptWithCredentials(t, a, func(ref program.CredentialRef) string {
+		if ref.ConfigMap == nil {
+			b, _ := json.Marshal(ref.Env)
+			return "credential(" + string(b) + fmt.Sprintf(",%d)", databaseCredentialCode(t, a, ref))
+		}
+		value, err := c.resolveCredential(ctx, t.Pod.Namespace, ref)
+		if err != nil {
+			resolutionErr = err
+			return "null"
+		}
+		b, _ := json.Marshal(value)
+		return string(b)
+	})
+	if resolutionErr != nil {
+		return "", resolutionErr
+	}
+	return script, nil
+}
+
+func databaseCredentialRefs(t program.DatabaseTarget, a *program.EnsureDatabaseUser) []program.CredentialRef {
+	var refs []program.CredentialRef
+	if t.Auth != nil {
+		refs = append(refs, t.Auth.Username, t.Auth.Password)
+	}
+	if a != nil {
+		refs = append(refs, a.Password)
+	}
+	return refs
+}
+func databaseCredentialCode(t program.DatabaseTarget, a *program.EnsureDatabaseUser, ref program.CredentialRef) int {
+	for i, r := range databaseCredentialRefs(t, a) {
+		if r.ConfigMap == nil && r.Env == ref.Env {
+			return 42 + i
+		}
+	}
+	return 41
+}
+func databaseCredentialExit(t program.DatabaseTarget, a *program.EnsureDatabaseUser, code int32) error {
+	refs := databaseCredentialRefs(t, a)
+	i := int(code) - 42
+	if i >= 0 && i < len(refs) && refs[i].ConfigMap == nil {
+		return &CredentialReferenceError{Reference: refs[i], Reason: "container environment variable missing or empty"}
+	}
+	return nil
 }

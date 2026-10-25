@@ -26,7 +26,10 @@ class StabilizationError(RuntimeError):
 def validate_setup_commit(actor: str, phase: str, validation: str, paths: list[str]) -> None:
     if actor not in {"health_judge", "controller"} or phase not in {"initial", "rendered"} or validation != "passed":
         raise ValueError(f"unvalidated health setup commit: actor={actor}, phase={phase}, validation={validation}")
-    if not paths or any(not path.startswith(HEALTH_SETUP_PATHS) or ".." in Path(path).parts for path in paths):
+    if not paths or any(
+        (not path.startswith(HEALTH_SETUP_PATHS) and path != ".sdo/playbooks/README.md") or ".." in Path(path).parts
+        for path in paths
+    ):
         raise ValueError(f"setup changed paths outside health-owned artifacts: {paths}")
 
 

@@ -23,6 +23,7 @@ from sdo.agents.health_judge import run_judge_task
 from sdo.agents.responder import (
     KubernetesResultPublisher,
     ReflectionTurn,
+    await_standby_claim,
     recorded_actions,
     run_reflection_task,
     run_worker_task,
@@ -829,6 +830,7 @@ def scripted_health_judge(request: HealthJudgeRequest, checkout: Path) -> Health
 
 
 def main(argv: list[str] | None = None) -> int:
+    await_standby_claim()
     args = argv if argv is not None else sys.argv[1:]
     if len(args) != 1 or args[0] not in {"responder", "reflection", "health-judge"}:
         print("usage: scripted_worker responder|reflection|health-judge", file=sys.stderr)

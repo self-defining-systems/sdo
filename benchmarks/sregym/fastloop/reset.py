@@ -258,8 +258,8 @@ def restore_application(
     baselines = load_application_baseline(environment.baseline_path, environment.namespace)
     if baselines is None:
         raise ValueError("reset requires an application baseline captured by fastloop up")
+    baselines = accepted_restore_baselines(environment.workspace, baselines, seed_commit=environment.seed_commit)
     worker.request("clean_start", problem_id=environment.deploy_problem, timeout=200)
-    baselines = accepted_restore_baselines(environment.workspace, baselines)
     for baseline in baselines:
         reconcile_application(cluster, baseline, baseline.namespace)
     deadline = time.monotonic() + 60
@@ -273,11 +273,11 @@ def restore_application(
     if not health.get("healthy"):
         raise RuntimeError(f"reset left {environment.namespace} unhealthy: {health.get('unready')}")
     if checks and environment.app != "toy":
-        refreshed = worker.request("refresh_baseline_clients", problem_id=environment.deploy_problem, timeout=120)
+        refreshed = worker.request(
+            "refresh_baseline_clients", problem_id=environment.deploy_problem, dependencies_only=True, timeout=120
+        )
         if refreshed.get("success") is not True:
             raise RuntimeError("eval: restored application clients did not settle after dependencies")
-    if checks:
-        checks.ready()
     oracle = worker.request("baseline_oracle", problem_id=environment.deploy_problem, verify_traffic=True, timeout=200)
     if not oracle.get("success"):
         refreshed = worker.request("refresh_baseline_clients", problem_id=environment.deploy_problem, timeout=120)
@@ -292,4 +292,5 @@ def restore_application(
             raise RuntimeError(f"reset left independent traffic failing for {environment.deploy_problem}: {oracle}")
 
     if checks:
+        checks.ready()
         checks.complete()

@@ -72,7 +72,8 @@ def test_reset_without_registry_discards_prior_runtime_state_before_install(tmp_
     lease_exists = True
     workers_stopped = False
 
-    def reset_environment(*_args):
+    def reset_environment(*_args, checks):
+        assert checks.environment == environment
         nonlocal workers_stopped
         workers_stopped = True
 
