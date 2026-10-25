@@ -63,7 +63,7 @@ func TestReachabilityBaselineRequiresHealthyAuthorityAndMeasuredFailures(t *test
 }
 
 func TestReachabilityBaselineConfigurationAndRecordInvalidation(t *testing.T) {
-	for _, change := range []string{"objective", "backend", "configmap", "service-identity", "corrupt-record", "new-port"} {
+	for _, change := range []string{"objective", "backend", "configmap", "selector", "container-port", "command", "corrupt-record", "new-port"} {
 		t.Run(change, func(t *testing.T) {
 			s := reachabilitySnapshot{Snapshot: geoSnapshot(intstr.FromInt32(8083), true), window: window(geoTarget(samples(servicehealth.DialRefused, false, false, false)))}
 			s.PodList[0].Spec.Containers[0].EnvFrom = []corev1.EnvFromSource{{ConfigMapRef: &corev1.ConfigMapEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: "config"}}}}
@@ -88,8 +88,12 @@ func TestReachabilityBaselineConfigurationAndRecordInvalidation(t *testing.T) {
 				s.PodList[0].Spec.Containers[0].Image = "changed"
 			case "configmap":
 				s.ConfigMapList = []corev1.ConfigMap{{ObjectMeta: metav1.ObjectMeta{Name: "config"}, Data: map[string]string{"mode": "changed"}}}
-			case "service-identity":
-				s.ServiceList[0].UID = "new-service"
+			case "selector":
+				s.ServiceList[0].Spec.Selector = map[string]string{"app": "other"}
+			case "container-port":
+				s.PodList[0].Spec.Containers[0].Ports[0].ContainerPort = 8888
+			case "command":
+				s.PodList[0].Spec.Containers[0].Command = []string{"changed-server"}
 			case "corrupt-record":
 				restarted.Authorization.GoalHealthy = false
 			case "new-port":
@@ -188,5 +192,113 @@ func TestReachabilityConfirmedRequiresCompleteFreshProbeWindow(t *testing.T) {
 				t.Fatalf("confirmed=%v", got)
 			}
 		})
+	}
+}
+
+// API-assigned incarnation/routing values do not change what the app serves.
+func TestReachabilityReferenceSurvivesServiceRecreation(t *testing.T) {
+	for _, change := range []string{"cluster-ip", "uid", "resource-version", "node-port", "health-check-node-port", "ip-family-defaults", "pod-endpoint-identity", "all"} {
+		t.Run(change, func(t *testing.T) {
+			s := reachabilitySnapshot{Snapshot: geoSnapshot(intstr.FromInt32(8083), true), window: window(geoTarget(samples(servicehealth.DialRefused, false, false, false)))}
+			s.ServiceList[0].UID = "before-service"
+			s.ServiceList[0].Spec.ClusterIPs = []string{s.ServiceList[0].Spec.ClusterIP}
+			auth := servicehealth.BaselineAuthorization{SourceInputs: strings.Repeat("a", 64), ObjectiveDigest: strings.Repeat("b", 64), Reason: "healthy-baseline", GoalHealthy: true}
+			b, err := servicehealth.CaptureReachabilityBaseline(s, auth)
+			if err != nil {
+				t.Fatal(err)
+			}
+			raw, err := json.Marshal(b)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var reference servicehealth.ReachabilityBaseline
+			if err := json.Unmarshal(raw, &reference); err != nil {
+				t.Fatal(err)
+			}
+			s.window.Baseline, s.window.SourceInputs, s.window.ObjectiveDigest = &reference, auth.SourceInputs, auth.ObjectiveDigest
+			service := &s.ServiceList[0]
+			if change == "cluster-ip" || change == "all" {
+				service.Spec.ClusterIP = "10.96.21.87"
+				service.Spec.ClusterIPs = []string{service.Spec.ClusterIP}
+			}
+			if change == "uid" || change == "all" {
+				service.UID = "after-service"
+			}
+			if change == "resource-version" || change == "all" {
+				service.ResourceVersion = "200"
+			}
+			if change == "node-port" || change == "all" {
+				service.Spec.Ports[0].NodePort = 32001
+			}
+			if change == "health-check-node-port" || change == "all" {
+				service.Spec.HealthCheckNodePort = 32002
+			}
+			if change == "ip-family-defaults" || change == "all" {
+				service.Spec.IPFamilies = []corev1.IPFamily{corev1.IPv4Protocol}
+				policy := corev1.IPFamilyPolicySingleStack
+				service.Spec.IPFamilyPolicy = &policy
+			}
+			if change == "pod-endpoint-identity" || change == "all" {
+				s.PodList[0].Name, s.PodList[0].UID, s.PodList[0].ResourceVersion = "geo-recreated", "new-pod", "201"
+				s.PodList[0].Status.PodIP = "10.244.2.3"
+				s.EndpointList[0].UID = "new-endpoints"
+				s.EndpointList[0].Subsets = []corev1.EndpointSubset{{Addresses: []corev1.EndpointAddress{{IP: "10.244.2.3"}}, Ports: []corev1.EndpointPort{{Port: 8083}}}}
+			}
+			if got := detectReachability(t, s); len(got) != 0 {
+				t.Fatalf("recreated target lost exclusion: %+v", got)
+			}
+			if got := servicehealth.ReachabilityObservations(s); len(got) != 1 {
+				t.Fatalf("reference lost after recreation: %+v", got)
+			}
+		})
+	}
+}
+
+func TestReachabilityConfigurationRetainsProtocolAndHeadlessRouting(t *testing.T) {
+	for _, change := range []string{"protocol", "headless"} {
+		t.Run(change, func(t *testing.T) {
+			s := geoSnapshot(intstr.FromInt32(8083), true)
+			target := geoTarget(nil).Target
+			before, ok := servicehealth.ReachabilityTargetConfiguration(s, target)
+			if !ok {
+				t.Fatal("missing original target")
+			}
+			if change == "protocol" {
+				s.ServiceList[0].Spec.Ports[0].Protocol = corev1.ProtocolUDP
+			} else {
+				s.ServiceList[0].Spec.ClusterIP = corev1.ClusterIPNone
+			}
+			after, ok := servicehealth.ReachabilityTargetConfiguration(s, target)
+			if ok && before == after {
+				t.Fatal("routing configuration change retained reference identity")
+			}
+		})
+	}
+}
+
+func TestRecreatedServiceRealFaultRetainsThirdSampleGate(t *testing.T) {
+	s := reachabilitySnapshot{Snapshot: geoSnapshot(intstr.FromInt32(8083), true), window: window(geoTarget(samples(servicehealth.DialRefused, false, false, false)))}
+	auth := servicehealth.BaselineAuthorization{SourceInputs: strings.Repeat("a", 64), ObjectiveDigest: strings.Repeat("b", 64), Reason: "healthy-baseline", GoalHealthy: true}
+	b, err := servicehealth.CaptureReachabilityBaseline(s, auth)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.window.Baseline, s.window.SourceInputs, s.window.ObjectiveDigest = b, auth.SourceInputs, auth.ObjectiveDigest
+	s.ServiceList[0].UID, s.ServiceList[0].Spec.ClusterIP = "recreated", "10.96.21.87"
+	// A later serving observation ends the exclusion, even after recreation.
+	served := observedAt.Add(time.Minute)
+	s.window.Targets[0].LastSuccess = &served
+	s.window.Targets[0].Samples = nil
+	for i := 0; i < 3; i++ {
+		at := served.Add(time.Duration(i+1) * 10 * time.Second)
+		s.window.ObservedAt = at
+		s.window.Targets[0].Samples = append(s.window.Targets[0].Samples, servicehealth.DialSample{At: at, Class: servicehealth.DialRefused})
+		findings := detectReachability(t, s)
+		if i < 2 && len(findings) != 0 {
+			t.Fatal("real fault fired before third sample")
+		}
+		if i == 2 && (len(findings) != 1 || !strings.Contains(findings[0].Evidence, "over 20s")) {
+			t.Fatalf("real fault must fire on third sample over 20s: %+v", findings)
+		}
 	}
 }
