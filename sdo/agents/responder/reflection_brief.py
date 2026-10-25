@@ -91,7 +91,7 @@ def _fenced(text: str) -> str:
 
 
 def _finding(finding: Finding) -> str:
-    lines = [
+    lines: list[str] = [
         render_prompt(
             "responder",
             "finding_01",
@@ -132,7 +132,7 @@ def _history(evaluations: Sequence[DetectorEvaluation]) -> list[str]:
     by_detector: dict[str, list[DetectorEvaluation]] = {}
     for evaluation in evaluations:
         by_detector.setdefault(evaluation.detector_id, []).append(evaluation)
-    lines = []
+    lines: list[str] = []
     for detector_id, entries in sorted(by_detector.items()):
         statuses = ", ".join(entry.status for entry in entries[-6:])
         lines.append(
@@ -175,7 +175,7 @@ def _states(label: str, evaluations: Sequence[DetectorEvaluation]) -> list[str]:
 
 def _findings_section(closure: IncidentClosure) -> str:
     request = closure.request
-    lines = [
+    lines: list[str] = [
         render_prompt("responder", "findings_section_01", part="reflection_brief.instructions"),
         render_prompt(
             "responder",
@@ -254,7 +254,7 @@ def _findings_section(closure: IncidentClosure) -> str:
 
 
 def _result_section(result: IncidentResult | None, dispatch_error: str) -> str:
-    lines = [render_prompt("responder", "result_section_01", part="reflection_brief.instructions")]
+    lines: list[str] = [render_prompt("responder", "result_section_01", part="reflection_brief.instructions")]
     if result is None:
         lines.append(
             render_prompt(
@@ -523,7 +523,7 @@ def _logical_memory_section(closure: IncidentClosure, *, detector_detail: bool, 
     assert closure.request.HasField("memory_snapshot")
     snapshot = closure.request.memory_snapshot
     fired = {finding.detector_id for finding in closure.request.findings}
-    lines = [render_prompt("responder", "logical_memory_section_01", part="reflection_brief.instructions")]
+    lines: list[str] = [render_prompt("responder", "logical_memory_section_01", part="reflection_brief.instructions")]
     health = [item.id for item in snapshot.detectors if item.detector_class == "health"]
     lines.append(
         render_prompt("responder", "logical_memory_section_02", part="reflection_brief.instructions")

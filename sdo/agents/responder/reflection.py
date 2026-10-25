@@ -379,22 +379,13 @@ class CodexSessionBackend:
             )
         except StructuredTurnError as exc:
             if session_id is not None and (
-                str(exc)
-                == render_prompt(
-                    "responder",
-                    "run_02",
-                    part="reflection.instructions",
-                    provider=self.provider,
-                    session_id=repr(session_id),
-                )
+                str(exc) == f"{self.provider} cannot resume session {session_id!r}"
                 or (
                     isinstance(exc.__cause__, SessionResumeError)
                     and (
                         self.provider == "codex"
-                        or render_prompt("responder", "run_03", part="reflection.instructions")
-                        in exc.__cause__.stderr.lower()
-                        or render_prompt("responder", "run_04", part="reflection.instructions")
-                        in exc.__cause__.stderr.lower()
+                        or "no conversation found" in exc.__cause__.stderr.lower()
+                        or "session not found" in exc.__cause__.stderr.lower()
                     )
                 )
             ):

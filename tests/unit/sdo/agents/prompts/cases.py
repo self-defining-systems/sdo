@@ -17,8 +17,9 @@ from sdo.agents.lifecycle.agents import (
     HealthJudgeDraft,
     TopologyResourceDTO,
 )
+from sdo.agents.responder import reflection
 from sdo.agents.responder.codex import _responder_prompt
-from sdo.agents.responder.reflection import ReflectionTurn, SessionReflector
+from sdo.agents.responder.reflection import CodexSessionBackend, ReflectionTurn, SessionReflector
 from sdo.agents.responder.reflection_brief import incident_brief
 from sdo.agents.responder.session_recovery import SessionRecovery
 from sdo.agents.responder.session_turn import branch_correction, branch_instruction
@@ -39,6 +40,7 @@ from sdo.contracts import (
     OperationalMemorySnapshot,
     OutcomeRecord,
     PriorOutcomeEvidence,
+    ReflectionWorkItem,
     SourceDeploymentRequest,
     StateChange,
     StateChanges,
@@ -207,6 +209,51 @@ def rendered_cases() -> dict[str, str]:
                     else (),
                 )
                 prompts[f"reflection_{mode}_{count}"] = capture.prompt
+        capture = ReflectionCapture()
+        SessionReflector(capture).resume(
+            session_id="toy-session",
+            incident_id="toy-incident",
+            worktree=Path("/application"),
+            outcome=OutcomeRecord(schema_version=1, incident_id="toy-incident", classification="failed"),
+            history=[],
+            outcome_commit="d" * 40,
+            closure=IncidentClosure(request=incident(5)),
+            unassigned_work=[
+                ReflectionWorkItem(
+                    program_id="repair-0",
+                    disposition="question",
+                    question="Which live observation establishes the repair?",
+                    reason="synthetic work item",
+                )
+            ],
+        )
+        prompts["reflection_cause_work"] = capture.prompt
+
+        class CapturedPrompt(Exception):
+            pass
+
+        for api_history in (False, True):
+            if api_history:
+                patch.setenv("SDO_API_HISTORY_DIR", "/synthetic-history")
+            else:
+                patch.delenv("SDO_API_HISTORY_DIR", raising=False)
+
+            def capture_transport(
+                _provider: str, prompt: str, *, _api_history: bool = api_history, **_kwargs: object
+            ) -> None:
+                prompts[f"reflection_transport_{_api_history}"] = prompt
+                raise CapturedPrompt
+
+            patch.setattr(reflection, "run_structured_turn", capture_transport)
+            try:
+                CodexSessionBackend().fresh(
+                    worktree=Path("/application"),
+                    prompt=capture.prompt,
+                    idempotency_key="reflection:toy-incident:outcome",
+                )
+            except CapturedPrompt:
+                pass
+
         for count in (2, 5):
             closure = IncidentClosure(request=incident(count, oversized=True))
             prompts[f"reflection_brief_{count}"] = incident_brief(
