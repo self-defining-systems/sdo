@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"sdo.dev/operator/rendered"
 	"sdo.dev/operator/sdk"
 )
 
@@ -21,11 +22,12 @@ func WriteSourceInventoryReport(stdout io.Writer, path string, index *SourceInve
 	}
 	findings := index.Findings(objects, time.Now().UTC())
 	report := struct {
-		Namespace string        `json:"namespace"`
-		Revision  string        `json:"accepted_commit"`
-		Healthy   bool          `json:"healthy"`
-		Findings  []sdk.Finding `json:"findings"`
-	}{index.Namespace, index.Revision, len(findings) == 0, findings}
+		Namespace    string                          `json:"namespace"`
+		Revision     string                          `json:"accepted_commit"`
+		Healthy      bool                            `json:"healthy"`
+		Findings     []sdk.Finding                   `json:"findings"`
+		EvidenceGaps []rendered.InventoryEvidenceGap `json:"evidence_gaps"`
+	}{index.Namespace, index.Revision, len(findings) == 0, findings, index.EvidenceGaps}
 	data, err := json.MarshalIndent(report, "", "  ")
 	if err != nil {
 		return err
@@ -33,6 +35,6 @@ func WriteSourceInventoryReport(stdout io.Writer, path string, index *SourceInve
 	if err := os.WriteFile(path, append(data, '\n'), 0600); err != nil {
 		return err
 	}
-	_, err = fmt.Fprintf(stdout, "source drift: %d unexplained objects at %s; full JSON: %s\n", len(findings), index.Revision, path)
+	_, err = fmt.Fprintf(stdout, "source drift: %d unexplained objects, %d evidence gaps at %s; full JSON: %s\n", len(findings), len(index.EvidenceGaps), index.Revision, path)
 	return err
 }

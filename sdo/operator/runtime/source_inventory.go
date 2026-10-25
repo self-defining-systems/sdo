@@ -11,16 +11,18 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"sdo.dev/operator/rendered"
 	"sdo.dev/operator/sdk"
 )
 
 // SourceInventory is an immutable index of the accepted deployment. Evaluation
 // uses informer objects only: no API requests, source rendering or model calls.
 type SourceInventory struct {
-	Namespace string
-	Revision  string
-	Identity  string
-	declared  map[sdk.ObjectRef]*unstructured.Unstructured
+	Namespace    string
+	Revision     string
+	Identity     string
+	EvidenceGaps []rendered.InventoryEvidenceGap
+	declared     map[sdk.ObjectRef]*unstructured.Unstructured
 }
 
 func NewSourceInventory(namespace, revision string, objects []*unstructured.Unstructured) *SourceInventory {

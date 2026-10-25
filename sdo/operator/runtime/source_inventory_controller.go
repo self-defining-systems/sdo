@@ -7,6 +7,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sdo.dev/operator/outcome_derivation"
+	"sdo.dev/operator/rendered"
 	"sdo.dev/operator/sdk"
 )
 
@@ -28,7 +29,7 @@ func (c *Controller) prepareSourceInventory(ctx context.Context) error {
 	if time.Now().Before(retryAt) {
 		return nil
 	}
-	objects, err := c.drift.Source.AcceptedManifests(ctx, revision, c.config.Namespace)
+	inventory, err := acceptedSourceInventory(ctx, c.drift.Source, revision, c.config.Namespace)
 	if err != nil {
 		c.mu.Lock()
 		c.sourceInventory = nil
@@ -40,7 +41,8 @@ func (c *Controller) prepareSourceInventory(ctx context.Context) error {
 		}
 		return nil
 	}
-	index := NewSourceInventory(c.config.Namespace, revision, objects)
+	index := NewSourceInventory(c.config.Namespace, revision, inventory.Objects)
+	index.EvidenceGaps = inventory.EvidenceGaps
 	c.mu.Lock()
 	c.sourceInventory = index
 	c.sourceInventoryError = ""
@@ -50,7 +52,26 @@ func (c *Controller) prepareSourceInventory(ctx context.Context) error {
 		c.acceptedSourceDriftRevision = index.Identity
 	}
 	c.mu.Unlock()
+	if c.OnError != nil {
+		for _, gap := range inventory.EvidenceGaps {
+			c.OnError(fmt.Errorf("source inventory remains available with field evidence gap: %w", gap))
+		}
+	}
 	return nil
+}
+
+// In-memory source implementations may already provide complete objects. The
+// repository edge distinguishes identity evidence from rendered-field evidence.
+func acceptedSourceInventory(ctx context.Context, source interface {
+	AcceptedManifests(context.Context, string, string) ([]*unstructured.Unstructured, error)
+}, revision, namespace string) (rendered.Inventory, error) {
+	if source, ok := source.(interface {
+		AcceptedInventory(context.Context, string, string) (rendered.Inventory, error)
+	}); ok {
+		return source.AcceptedInventory(ctx, revision, namespace)
+	}
+	objects, err := source.AcceptedManifests(ctx, revision, namespace)
+	return rendered.Inventory{Objects: objects}, err
 }
 func inventoryFinding(finding sdk.Finding) bool {
 	value, _ := finding.Metadata["source_inventory"].(bool)

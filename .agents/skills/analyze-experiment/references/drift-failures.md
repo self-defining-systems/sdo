@@ -111,3 +111,16 @@ No phase-2 diff, quarantine or revalidation behavior is implied.
 State changes may carry `api_version` and `namespace`; qualify those together with kind/name before joining evidence. An empty namespace on admission webhooks is cluster scope, never the application namespace. Older app-local captures may omit both fields. Do not collapse same-name foreign Deployments from different namespaces.
 
 Named Mutating/ValidatingWebhookConfiguration changes can enter unexplained drift after a successful accepted-source lookup, including proven source-absent creates/deletes. An unavailable source is not proven absence. Qualified read-only lookup still proves application-lock selection/freshness and supplies no foreign image/apply authority. Pending comparisons survive observation gaps; revoked targets are dropped from observation, while scope additions establish initial baselines without synthetic changes. Initial observations are suppressed. Foreign Endpoints turnover supplies qualified baseline evidence and detector wakeups without automatically opening a configuration drift incident. Per-target unobserved-kind strings qualify API version/kind/namespace/name. Failed reads retain the prior comparison baseline and do not manufacture removals.
+
+## Source inventory with rendered evidence gaps
+
+Object presence and generated-owner ancestry use accepted source identities after
+validating the lock's selection and application-source freshness. Missing image
+receipts or per-object rendered bytes do not remove declared identities or block
+this inventory check. The read-only report includes `evidence_gaps` entries with
+`kind: rendered_object`, the object `ref`, and a `reason`; its compact summary
+counts them separately from unexplained objects. The live controller logs these
+typed gaps when loading its cached inventory. Zero inventory findings with gaps
+proves only the presence/ownership check, never image equality or global health.
+Image-field comparison still requires the durable rendered evidence, and an
+unavailable, mismatched or stale lock still prevents inventory verification.
