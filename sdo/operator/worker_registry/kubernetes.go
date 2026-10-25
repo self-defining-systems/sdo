@@ -238,14 +238,7 @@ func (e KubernetesExecutor) Execute(ctx context.Context, task *contracts.AgentTa
 			return nil, fmt.Errorf("get agent Job: %w", jobErr)
 		}
 		if jobErr == nil && jobFailed(job) {
-			if bounded {
-				for _, condition := range job.Status.Conditions {
-					if condition.Type == batchv1.JobFailed && condition.Status == corev1.ConditionTrue && condition.Reason == "DeadlineExceeded" {
-						return nil, &TaskTimeoutError{TaskID: task.GetTaskId(), Deadline: deadline}
-					}
-				}
-			}
-			return nil, &JobFailedError{JobName: jobName}
+			return nil, taskJobFailure(task, job)
 		}
 		resultMap, err := e.Client.CoreV1().ConfigMaps(e.Namespace).Get(ctx, resultName, metav1.GetOptions{})
 		if err == nil {
@@ -504,6 +497,17 @@ func jobFailed(job *batchv1.Job) bool {
 	}
 	return false
 }
+func taskJobFailure(task *contracts.AgentTask, job *batchv1.Job) error {
+	if deadline, bounded := frozenReflectionDeadline(task); bounded {
+		for _, condition := range job.Status.Conditions {
+			if condition.Type == batchv1.JobFailed && condition.Status == corev1.ConditionTrue && condition.Reason == "DeadlineExceeded" {
+				return &TaskTimeoutError{TaskID: task.GetTaskId(), Deadline: deadline}
+			}
+		}
+	}
+	return &JobFailedError{JobName: job.Name}
+}
+
 func jobCompleted(job *batchv1.Job) bool {
 	if job.Status.Succeeded > 0 {
 		return true

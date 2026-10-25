@@ -76,7 +76,7 @@ func (e KubernetesExecutor) RecoverCompleted(ctx context.Context, task *contract
 	completedAt := time.Now()
 	if err == nil {
 		if jobFailed(job) {
-			return nil, false, &JobFailedError{JobName: name}
+			return nil, false, taskJobFailure(task, job)
 		}
 		if !jobCompleted(job) {
 			return nil, false, nil
