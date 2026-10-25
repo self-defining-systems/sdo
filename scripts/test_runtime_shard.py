@@ -33,9 +33,7 @@ _LIFECYCLE = "(?:TestNative(?:Broker|Lifecycle).*|TestExhaustiveReflectionLifecy
 PATTERNS = {
     "integration": "^" + _INTEGRATION + "$",
     "lifecycle": "^" + _LIFECYCLE + "$",
-    "contracts": "^(?!"
-    + _INTEGRATION
-    + "$)(?!TestNative(?:Broker|Lifecycle)|TestExhaustiveReflectionLifecycle$)(?:Test|Fuzz|Example)",
+    "contracts": "^(?!" + _INTEGRATION + "$)(?!" + _LIFECYCLE + "$)(?:Test|Fuzz|Example)",
 }
 RUNTIME = Path(__file__).resolve().parents[1] / "sdo/operator/runtime"
 

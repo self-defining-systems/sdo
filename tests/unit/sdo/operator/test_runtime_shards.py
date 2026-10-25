@@ -40,7 +40,7 @@ def test_partitions_include_tests_fuzz_seeds_and_examples() -> None:
     assigned = shards.partition(names, shards.PATTERNS)
     assert sorted(name for group in assigned.values() for name in group) == sorted(names)
     assert all(assigned.values())
-    assert set(assigned) == {"contracts", "integration"}
+    assert set(assigned) == {"contracts", "integration", "lifecycle"}
 
 
 @pytest.mark.parametrize("patterns", [{"one": "^TestA$"}, {"one": "^Test", "two": "^Test"}])
@@ -105,6 +105,7 @@ def test_all_shards_run_real_discovered_tests_once_and_preserve_failure(
     events = [json.loads(line) for line in output.splitlines() if line.startswith("{")]
     assert sorted(event["Test"] for event in events if event.get("Action") == "run") == [
         "TestContracts",
+        "TestNativeBroker",
         "TestRestartClassHermetic",
     ]
     assert (tmp_path / "TestNativeBroker").read_text() == "ran"

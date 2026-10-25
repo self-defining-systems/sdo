@@ -22,7 +22,7 @@ permissions:
   pull-requests: read
 
 env:
-  # At most three work jobs; each Go runner has two bounded test lanes.
+  # At most three work jobs; module checks have two lanes, runtime three partitions.
   GOMAXPROCS: "2"
   GOFLAGS: "-p=2"
   SDO_PYTEST_WORKERS: "2"

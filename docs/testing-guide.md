@@ -552,7 +552,7 @@ and one Go compiler per worker; both lane results are required even when one fai
 and proto checks run first on that runner. Runtime
 uses **three disjoint partitions on one runner**, `contracts`, `integration` and
 `lifecycle`,
-without competing with unrelated module compilation. Run both locally with
+without competing with unrelated module compilation. Run every partition locally with
 `uv run python scripts/test_runtime_shard.py --shard all`, or select either
 partition by name. Inventory discovery runs once before all partitions start,
 with shared Go build caches; every exit status are collected even if one fails. Every package,
