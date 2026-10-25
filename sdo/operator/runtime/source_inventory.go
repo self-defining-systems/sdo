@@ -223,6 +223,12 @@ func inventoryRBACProjection(o *unstructured.Unstructured) map[string]any {
 				if subject["kind"] == "ServiceAccount" && (subject["namespace"] == nil || subject["namespace"] == "") {
 					subject["namespace"] = o.GetNamespace()
 				}
+				if subject["kind"] == "ServiceAccount" && (subject["apiGroup"] == nil || subject["apiGroup"] == "") {
+					delete(subject, "apiGroup")
+				}
+				if (subject["kind"] == "User" || subject["kind"] == "Group") && (subject["apiGroup"] == nil || subject["apiGroup"] == "") {
+					subject["apiGroup"] = "rbac.authorization.k8s.io"
+				}
 			}
 		}
 		normalized := inventorySortedSets(copy)

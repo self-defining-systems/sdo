@@ -393,6 +393,27 @@ func TestSourceInventoryRBACDefaultsAreNotDrift(t *testing.T) {
 	}
 }
 
+func TestSourceInventoryRBACSubjectAPIGroupDefaultsAreNotDrift(t *testing.T) {
+	for _, kind := range []string{"User", "Group", "ServiceAccount"} {
+		t.Run(kind, func(t *testing.T) {
+			binding := inventoryObject("rbac.authorization.k8s.io/v1", "RoleBinding", "app", "reader")
+			delete(binding.Object, "spec")
+			binding.Object["roleRef"] = map[string]any{"kind": "Role", "name": "reader"}
+			binding.Object["subjects"] = []any{map[string]any{"kind": kind, "name": "readers"}}
+			live := binding.DeepCopy()
+			live.Object["subjects"] = []any{map[string]any{"kind": kind, "name": "readers", "apiGroup": "rbac.authorization.k8s.io"}}
+			if kind == "ServiceAccount" {
+				binding.Object["subjects"] = []any{map[string]any{"kind": kind, "name": "readers", "apiGroup": ""}}
+				live.Object["subjects"] = []any{map[string]any{"kind": kind, "name": "readers"}}
+			}
+			index := NewSourceInventory("app", "accepted", []*unstructured.Unstructured{binding})
+			if findings := index.Findings([]*unstructured.Unstructured{live}, time.Unix(100, 0)); len(findings) != 0 {
+				t.Fatalf("defaulted subject API group caused a response: %+v", findings)
+			}
+		})
+	}
+}
+
 func TestSourceInventoryHelperLabelDoesNotHideApplicationControllers(t *testing.T) {
 	object := inventoryObject("apps/v1", "Deployment", "app", "extra-controller")
 	object.SetLabels(map[string]string{"sdo.dev/responder-helper": "true"})
