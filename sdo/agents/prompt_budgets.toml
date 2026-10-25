@@ -122,7 +122,7 @@ reason = "Lean responder measured fixture maximum 5797 Unicode code points with 
 
 [responder.instructions]
 max_chars = 1280
-reason = "Lean responder measured fixture maximum 1162 Unicode code points with approximately 10 percent headroom; executable workflow moved to the installed skill."
+reason = "Lean responder measured fixture maximum 1171 Unicode code points with approximately 10 percent headroom; executable workflow moved to the installed skill."
 
 [session.incident_data]
 max_chars = 100

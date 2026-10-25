@@ -138,3 +138,10 @@ def test_workflow_is_visible_in_the_real_provider_turn(tmp_path: Path, monkeypat
     result = execute_incident(request, provider=provider, model="synthetic", executor=agent.executor)
     assert result.responder_session_id
     assert len(agent.requests) == 1
+
+
+def test_responder_prompt_preserves_the_assurance_role_marker() -> None:
+    from benchmarks.sregym.assurance.scripted_codex.cli import RESPONDER_MARKER
+    from tests.unit.sdo.agents.prompts.cases import incident, responder_prompt
+
+    assert RESPONDER_MARKER in responder_prompt(incident())[:200]
