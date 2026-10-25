@@ -185,7 +185,11 @@ func testHermeticThreeFaultSelfCheck(t *testing.T, combined bool, batchPrograms 
 			if loop.LoopsUsed() != 1 {
 				t.Fatal("refused overlap consumed a round")
 			}
+			loop.operationMu.Lock()
+			loop.mu.Lock()
 			loop.Executor.Rollouts = &planFakeRollout{}
+			loop.mu.Unlock()
+			loop.operationMu.Unlock()
 		}
 
 	} else {
