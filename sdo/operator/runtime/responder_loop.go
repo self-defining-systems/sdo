@@ -353,7 +353,14 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 		response.Summary = "first-mutation snapshot captured"
 	case "verify":
 		if l.VerifyClosure != nil {
+			// The controller may persist continuation state while observing.
+			// A read-only closure check must not hold responder locks while
+			// waiting for that observation to finish.
+			l.mu.Unlock()
+			l.operationMu.Unlock()
 			response = l.VerifyClosure(ctx)
+			l.operationMu.Lock()
+			l.mu.Lock()
 			l.findings = append([]sdk.Finding(nil), response.Findings...)
 			response.LoopsAllowed = l.MaxBatches
 		} else {
@@ -691,7 +698,7 @@ func (l *ResponderLoop) apply(ctx context.Context, request ToolRequest, response
 		return
 	}
 	executor := l.Executor
-	result, err := executor.Apply(ctx, l.Request, batch, false)
+	result, err := executor.Apply(ctx, l.mitigationIncident(selected), batch, false)
 	completed := time.Now().UTC()
 	if result.Applied || result.PendingAction != nil {
 		l.applications[id] = result
@@ -709,10 +716,8 @@ func (l *ResponderLoop) apply(ctx context.Context, request ToolRequest, response
 	if result.Applied && result.RolloutPending == nil {
 		// Application credit is binding-scoped; closure still independently
 		// requires global health. A different open fault is not a failed repair.
-		unrelated := onlyUnrelatedFindings(selected, response.Findings)
 		result.VerificationPassed = err == nil && response.Error == "" && result.VerificationCompleted &&
-			boundPlansNoMatch(selected, response.ProgramRuns) &&
-			((result.VerificationPassed && response.Healthy) || unrelated)
+			boundPlansNoMatch(selected, response.ProgramRuns) && result.VerificationPassed
 		if !result.VerificationPassed {
 			// Program trust counts an unverified application against the program's
 			// current revision, durably, even if the responder is restarted.

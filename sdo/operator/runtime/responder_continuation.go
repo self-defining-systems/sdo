@@ -404,6 +404,8 @@ func (c *Controller) continuationVerificationLocked(healthVerified, driftClear b
 // admitted drift is independently compared against a fresh snapshot, just as
 // maybeCloseIncident does. A tool never advances the controller's lifecycle.
 func (c *Controller) responderVerification(ctx context.Context, incidentID string) ToolResponse {
+	c.observationMu.Lock()
+	defer c.observationMu.Unlock()
 	snapshot, err := c.provider.Snapshot(ctx)
 	if err != nil {
 		return ToolResponse{Command: "verify", Error: "create verification snapshot: " + err.Error()}

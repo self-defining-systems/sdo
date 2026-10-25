@@ -200,7 +200,7 @@ func (l *ResponderLoop) mitigateMenu(ctx context.Context, selection *contracts.M
 			}
 		}
 		started := time.Now().UTC()
-		result, applyErr := l.Executor.Apply(ctx, l.Request, plan, false)
+		result, applyErr := l.Executor.Apply(ctx, l.mitigationIncident([]selectedPlan{{programID: entry.programID, bindings: bindings}}), plan, false)
 		completed := time.Now().UTC()
 		// Preserve program/raw-action attribution in the durable outcome, even
 		// when the larger menu response is truncated in the tool-call journal.
