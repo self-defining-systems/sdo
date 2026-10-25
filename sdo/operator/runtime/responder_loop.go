@@ -140,6 +140,7 @@ type ResponderLoop struct {
 	plans               map[string]selectedPlan
 	applications        map[string]PlanApplicationResult
 	applicationsLog     []RecordedPlanApplication
+	completedRepairs    []continuationRepair
 	failureSignals      []string
 	calls               []ToolCall
 	runs                []ProgramRun
