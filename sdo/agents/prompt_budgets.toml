@@ -191,3 +191,11 @@ reason = "Baseline synthetic fixture maximum: 175 Unicode code points; byte-iden
 [skills.sdo-playbook-authoring]
 max_chars = 200
 reason = "Baseline synthetic fixture maximum: 191 Unicode code points; byte-identical template extraction."
+
+[continuation.instructions]
+max_chars = 1500
+reason = "Controller continuation instructions are capped separately from factual finding and receipt lists."
+
+[continuation.incident_data]
+max_chars = 12000
+reason = "Typed current findings and completed-action receipts; no list truncation is introduced by rendering."
