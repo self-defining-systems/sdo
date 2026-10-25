@@ -117,9 +117,10 @@ func (d KubernetesJobDispatcher) continueResponder(ctx context.Context, executor
 		}
 		exhausted := state.Attempts >= limit || loop.Exhausted() || !now().Before(request.ResponseDeadline)
 		repairs := loop.continuationRepairs(result)
-		deniedNoProgress := authorizationDeniedNoProgress(state.Feedback, verification, repairs)
+		noProgress := responderNoProgress(state.Feedback, verification, repairs)
+		deniedNoProgress := noProgress && authorizationDeniedNoProgress(state.Feedback, verification, repairs)
 		sharedOwnership := sharedOwnershipBlocker(verification, repairs)
-		state.Done = verification.Healthy || exhausted || deniedNoProgress || sharedOwnership
+		state.Done = verification.Healthy || exhausted || noProgress || sharedOwnership
 		if verification.Healthy {
 			result.Status = IncidentCompleted
 			result.FinalDetectorStates = verification.DetectorStates
@@ -129,6 +130,9 @@ func (d KubernetesJobDispatcher) continueResponder(ctx context.Context, executor
 		} else if deniedNoProgress {
 			result.Status = IncidentFailed
 			result.Error = "authorization_denied_no_progress"
+		} else if noProgress {
+			result.Status = IncidentFailed
+			result.Error = "no_progress"
 		} else if exhausted {
 			result.Status = IncidentFailed
 			result.ResponseLoopExhausted = true
@@ -231,7 +235,7 @@ func (d KubernetesJobDispatcher) ContinueAfterVerification(ctx context.Context, 
 	if request.MaxResponseLoops > 0 && request.MaxResponseLoops < limit {
 		limit = request.MaxResponseLoops
 	}
-	if state.Result == nil || state.Result.GetError() == "authorization_denied_no_progress" || (state.Result.GetError() == "shared_ownership" && sharedOwnershipBlocker(verification, loop.continuationRepairs(incidentResultState(state.Result)))) || state.Attempts >= limit || loop.Exhausted() {
+	if state.Result == nil || state.Result.GetError() == "authorization_denied_no_progress" || state.Result.GetError() == "no_progress" || (state.Result.GetError() == "shared_ownership" && sharedOwnershipBlocker(verification, loop.continuationRepairs(incidentResultState(state.Result)))) || state.Attempts >= limit || loop.Exhausted() {
 		return false, nil
 	}
 	if !state.Done {

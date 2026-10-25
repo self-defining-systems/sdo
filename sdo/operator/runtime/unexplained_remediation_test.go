@@ -136,7 +136,7 @@ func TestAuthorizationDeniedNoProgressNeedsExactBrokenSet(t *testing.T) {
 }
 
 func TestTerminalUnchangedInventoryBlockerSkipsGrace(t *testing.T) {
-	for _, mode := range []string{"exhausted", "denied", "changed", "pending-delete", "not-terminal", "ttl-job", "delayed-informer", "unknown-mutation", "shared-ownership"} {
+	for _, mode := range []string{"exhausted", "denied", "no-progress", "changed", "pending-delete", "not-terminal", "ttl-job", "delayed-informer", "unknown-mutation", "shared-ownership"} {
 		t.Run(mode, func(t *testing.T) {
 			now := time.Now().UTC()
 			ref := sdk.ObjectRef{APIVersion: "v1", Kind: "ServiceAccount", Namespace: "app", Name: "cleanup"}
@@ -168,6 +168,10 @@ func TestTerminalUnchangedInventoryBlockerSkipsGrace(t *testing.T) {
 			result.Status = IncidentFailed
 			result.ResponseLoopExhausted = true
 			result.UnresolvedFindings = findings
+			if mode == "no-progress" {
+				result.ResponseLoopExhausted = false
+				result.Error = "no_progress"
+			}
 			if mode == "denied" {
 				result.ResponseLoopExhausted = false
 				result.Error = "authorization_denied_no_progress"
@@ -200,7 +204,7 @@ func TestTerminalUnchangedInventoryBlockerSkipsGrace(t *testing.T) {
 			var closed *IncidentClosure
 			controller.OnIncidentClosed = func(c IncidentClosure) { closed = &c }
 			controller.maybeCloseIncident(context.Background(), now, nil)
-			terminal := mode == "exhausted" || mode == "denied" || mode == "shared-ownership"
+			terminal := mode == "no-progress" || mode == "exhausted" || mode == "denied" || mode == "shared-ownership"
 			if terminal && (closed == nil || len(closed.FinalDetectorStates) != 0 || closed.Result.Status != IncidentFailed) {
 				t.Fatalf("terminal blocker waited or claimed healthy: %+v", closed)
 			}

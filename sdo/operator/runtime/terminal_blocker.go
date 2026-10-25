@@ -9,7 +9,7 @@ import (
 // the ordinary verification grace. This path never establishes recovery.
 func (c *Controller) terminalInventoryBlockerLocked(verification ToolResponse) bool {
 	result := c.currentIncidentResult
-	if result == nil || result.Status != IncidentFailed || (!result.ResponseLoopExhausted && result.Error != "authorization_denied_no_progress" && result.Error != "shared_ownership") || verification.Error != "" || len(verification.Findings) == 0 || len(verification.Findings) != len(result.UnresolvedFindings) {
+	if result == nil || result.Status != IncidentFailed || (!result.ResponseLoopExhausted && result.Error != "authorization_denied_no_progress" && result.Error != "no_progress" && result.Error != "shared_ownership") || verification.Error != "" || len(verification.Findings) == 0 || len(verification.Findings) != len(result.UnresolvedFindings) {
 		return false
 	}
 	if result.Error == "shared_ownership" && !sharedOwnershipBlocker(verification, nil) {

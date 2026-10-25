@@ -83,3 +83,34 @@ func authorizationDeniedNoProgress(previous string, verification ToolResponse, r
 	}
 	return len(verification.Findings) > 0
 }
+
+// One unchanged continuation without a newly successful mutation is terminal,
+// regardless of whether attempts failed by authorization, planning or execution.
+// Observation grace stays in the controller's independent closure checker.
+func responderNoProgress(previous string, verification ToolResponse, repairs []continuationRepair) bool {
+	var prior responderFeedback
+	if verification.Healthy || verification.Error != "" || previous == "" || json.Unmarshal([]byte(previous), &prior) != nil || len(prior.StillBroken) == 0 || len(prior.StillBroken) != len(verification.Findings) {
+		return false
+	}
+	before := map[string]bool{}
+	for _, finding := range prior.StillBroken {
+		before[finding.Fingerprint] = true
+	}
+	for _, finding := range verification.Findings {
+		if !before[FindingFingerprint(finding)] {
+			return false
+		}
+	}
+	successful := map[string]bool{}
+	for _, repair := range prior.AlreadyDone {
+		if repair.Receipt.Success && !repair.RolledBack {
+			successful[repair.ActionID] = true
+		}
+	}
+	for _, repair := range repairs {
+		if repair.Receipt.Success && !repair.RolledBack && !successful[repair.ActionID] {
+			return false
+		}
+	}
+	return true
+}
