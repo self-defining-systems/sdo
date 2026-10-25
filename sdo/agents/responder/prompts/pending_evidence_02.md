@@ -1,0 +1,1 @@
+the detector's watched resources (${kinds})
