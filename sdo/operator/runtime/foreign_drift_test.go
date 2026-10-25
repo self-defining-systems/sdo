@@ -93,7 +93,7 @@ func TestForeignNetworkPolicyAdmission(t *testing.T) {
 				change.New = driftObject(tc.next, watch)
 			}
 			change.Initial = tc.initial
-			event, _, err := (DriftClassifier{}).Classify(context.Background(), change, view, time.Unix(10, 0))
+			event, err := (DriftClassifier{}).Classify(context.Background(), change, view, time.Unix(10, 0))
 			if err != nil || (event != nil) != tc.want {
 				t.Fatalf("event=%+v error=%v; want admitted=%v", event, err, tc.want)
 			}
@@ -195,7 +195,7 @@ func TestForeignDriftNormalChurn(t *testing.T) {
 		EventList:         []corev1.Event{*objects["Event"].(*corev1.Event)},
 	}
 	for _, change := range cache.TakeObjectChanges() {
-		event, _, err := (DriftClassifier{}).Classify(context.Background(), change, LiveReadView{DetectionContext: snapshot, Source: source, SourceCommit: commit}, time.Unix(10, 0))
+		event, err := (DriftClassifier{}).Classify(context.Background(), change, LiveReadView{DetectionContext: snapshot, Source: source, SourceCommit: commit}, time.Unix(10, 0))
 		t.Logf("%s: event=%v", change.New.GetKind(), event != nil)
 		if err != nil || event != nil {
 			t.Fatalf("controller churn admitted: %+v %v", event, err)
@@ -236,7 +236,7 @@ func runForeignPolicyIncident(t *testing.T) (string, string, GitPlanSource, stri
 		t.Fatal(err)
 	}
 	t.Cleanup(controller.routingSweeps.Wait)
-	controller.ConfigureDrift(DriftControllerConfig{ProgramPersistence: sdk.PersistencePolicy{Firing: 1, Clearing: 1}, Events: cache, View: func(snapshot sdk.DetectionContext) program.ReadView {
+	controller.ConfigureDrift(DriftControllerConfig{Events: cache, View: func(snapshot sdk.DetectionContext) program.ReadView {
 		return LiveReadView{DetectionContext: snapshot, Source: source, SourceCommit: commit}
 	}, BatchWindow: time.Second})
 	if err := controller.StepEvents(context.Background(), start.Add(time.Second), cache.TakeEvents()); err != nil {
@@ -304,7 +304,7 @@ func TestForeignNonPolicyWithStaleDeployerOwnershipIsIgnored(t *testing.T) {
 	next := old.DeepCopy()
 	next.Spec.Ports[0].TargetPort = driftService(9999).Spec.Ports[0].TargetPort
 	view := LiveReadView{DetectionContext: sdktest.Snapshot{NamespaceName: "app", ServiceList: []corev1.Service{*next}}, Source: source, SourceCommit: commit}
-	event, _, err := (DriftClassifier{}).Classify(context.Background(), objectChange(t, old, next, "v1", "Service"), view, time.Unix(10, 0))
+	event, err := (DriftClassifier{}).Classify(context.Background(), objectChange(t, old, next, "v1", "Service"), view, time.Unix(10, 0))
 	if err != nil || event != nil {
 		t.Fatalf("unlisted foreign kind admitted using stale ownership: %+v %v", event, err)
 	}

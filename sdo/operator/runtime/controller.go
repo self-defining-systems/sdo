@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"google.golang.org/protobuf/proto"
 	"log/slog"
-	"maps"
 	"math/rand/v2"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory"
@@ -63,24 +62,22 @@ type dispatchCompletion struct {
 }
 
 type Controller struct {
-	config              ControllerConfig
-	startedAt           time.Time
-	scheduler           *Scheduler
-	detectors           map[string]sdk.Detector
-	tracker             *FindingStateTracker
-	batcher             *Batcher
-	provider            SnapshotProvider
-	dispatcher          Dispatcher
-	history             []DetectorEvaluation
-	drift               *DriftControllerConfig
-	driftEvents         []sdk.DriftEvent
-	programSweepCursors map[string]string
+	config      ControllerConfig
+	startedAt   time.Time
+	scheduler   *Scheduler
+	detectors   map[string]sdk.Detector
+	tracker     *FindingStateTracker
+	batcher     *Batcher
+	provider    SnapshotProvider
+	dispatcher  Dispatcher
+	history     []DetectorEvaluation
+	drift       *DriftControllerConfig
+	driftEvents []sdk.DriftEvent
 	// routingSweeps tracks background open@detect routing sweeps so tests can
 	// join them before removing the capture directory.
 	routingSweeps     sync.WaitGroup
 	ownershipAdoption OwnershipAdoptionStatus
 	adoptionNeeded    bool
-	nextDriftSweep    time.Time
 	results           chan dispatchCompletion
 	// gateClears and gateProbes hold the submit gate's confirmation of active
 	// findings (GateConfirmationPolicy); they are never persisted, so a
@@ -296,20 +293,13 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 	detectors := c.scheduler.SelectEvents(now, events)
 	probes := c.dueGateProbes(now, detectors)
 	var objectChanges []ObjectChange
-	sweepDrift := false
-	confirmDrift := false
 	if c.drift != nil {
-		at := c.nextProgramConfirmation()
-		confirmDrift = !at.IsZero() && !now.Before(at)
 		if c.drift.Events != nil {
 			objectChanges = c.drift.Events.TakeObjectChanges()
 		}
-		sweepDrift = !now.Before(c.nextDriftSweep)
-		if sweepDrift {
-			c.nextDriftSweep = now.Add(c.drift.SweepInterval)
-		}
+
 	}
-	if len(detectors) == 0 && len(probes) == 0 && len(objectChanges) == 0 && !sweepDrift && !confirmDrift && !c.adoptionNeeded && !c.hasRetainedDrift() {
+	if len(detectors) == 0 && len(probes) == 0 && len(objectChanges) == 0 && !c.adoptionNeeded && !c.hasRetainedDrift() {
 		c.forgetGate()
 		c.maybeCloseIncident(ctx, now, nil)
 		err := c.dispatchReady(ctx, now, nil)
@@ -320,7 +310,7 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 	if err != nil {
 		return fmt.Errorf("create detection snapshot: %w", err)
 	}
-	c.processDrift(ctx, now, snapshot, objectChanges, sweepDrift)
+	c.processDrift(ctx, now, snapshot, objectChanges)
 
 	sampleFindings := make([]sdk.Finding, 0)
 	errored := false
@@ -644,12 +634,6 @@ func severityAtLeast(actual sdk.FindingSeverity, threshold sdk.FindingSeverity) 
 
 func (c *Controller) NextWake() time.Time {
 	next := c.scheduler.NextRun()
-	if at := c.nextProgramConfirmation(); !at.IsZero() && (next.IsZero() || at.Before(next)) {
-		next = at
-	}
-	if c.drift != nil && (next.IsZero() || c.nextDriftSweep.Before(next)) {
-		next = c.nextDriftSweep
-	}
 	c.mu.Lock()
 	// A batch deadline only matters when the batch can be dispatched or
 	// attached. Otherwise an expired deadline would spin the runtime loop for
@@ -929,7 +913,6 @@ func (c *Controller) handleDispatchCompletion(completion dispatchCompletion, obs
 		c.responderDone = true
 		if len(completion.result.RepairActions) > 0 || len(completion.result.RepairChanges) > 0 {
 			c.adoptionNeeded = c.drift != nil && c.drift.Source != nil && c.drift.Client != nil
-			c.nextDriftSweep = observedAt
 		}
 		c.responderCompletedAt = observedAt.UTC()
 		if c.responderCompletedAt.Before(c.incidentDispatchedAt) {
@@ -1274,7 +1257,7 @@ func (c *Controller) ExportState() (*contracts.ControllerState, error) {
 		ClosureReceipt: closureReceiptContract(c.closureReceipt), ClosureFailure: closureFailureContract(c.closureFailure), FailedClosures: cloneFailedClosures(c.failedClosures),
 		LastAcknowledgedIncidentId: c.lastAcknowledgedIncidentID,
 		EvaluationIteration:        int32(c.evaluationIteration), DetectorTimeline: timeline, IncidentView: view,
-		DriftEvents: driftEventsContract(c.driftEvents), OwnershipAdoption: adoptionContract(c.ownershipAdoption), ProgramSweepCursors: maps.Clone(c.programSweepCursors),
+		DriftEvents: driftEventsContract(c.driftEvents), OwnershipAdoption: adoptionContract(c.ownershipAdoption),
 	}
 	if c.currentIncidentRequest != nil {
 		message.IncidentRequest, err = incidentRequestContract(*c.currentIncidentRequest)
@@ -1309,8 +1292,26 @@ func (c *Controller) RestoreState(state *contracts.ControllerState) error {
 	if err := c.scheduler.RestoreDeadlines(timestampsState(state.GetSchedulerDeadlines())); err != nil {
 		return err
 	}
-	c.tracker.Restore(findingStatesState(state.GetFindingStates()))
-	c.batcher.Restore(BatcherState{Findings: findingsState(state.GetPendingBatch().GetFindings()), Deadlines: timestampsState(state.GetPendingBatch().GetDeadlines()), Deadline: controllerTime(state.GetPendingBatch().GetDeadline())})
+	// Retired proactive playbooks are not scheduled detectors. Keep genuine
+	// registered detector IDs and accepted-source drift, but retire their old
+	// synthetic tracker and batch entries instead of re-running Diagnose.
+	retired := func(id string) bool {
+		return strings.HasPrefix(id, "drift.") && id != "drift.unexplained" && c.detectors[id] == nil
+	}
+	findings := findingStatesState(state.GetFindingStates())
+	for key, finding := range findings {
+		if retired(finding.DetectorID) {
+			delete(findings, key)
+		}
+	}
+	c.tracker.Restore(findings)
+	pending := []sdk.Finding{}
+	for _, finding := range findingsState(state.GetPendingBatch().GetFindings()) {
+		if !retired(finding.DetectorID) {
+			pending = append(pending, finding)
+		}
+	}
+	c.batcher.Restore(BatcherState{Findings: pending, Deadlines: timestampsState(state.GetPendingBatch().GetDeadlines()), Deadline: controllerTime(state.GetPendingBatch().GetDeadline())})
 	c.history = append([]DetectorEvaluation(nil), evaluationsState(state.GetHistory())...)
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -1325,7 +1326,6 @@ func (c *Controller) RestoreState(state *contracts.ControllerState) error {
 		c.currentIncidentResult = &result
 	}
 	c.driftEvents = append([]sdk.DriftEvent(nil), driftEventsState(state.GetDriftEvents())...)
-	c.programSweepCursors = maps.Clone(state.ProgramSweepCursors)
 	c.ownershipAdoption = adoptionState(state.GetOwnershipAdoption())
 	c.dispatchError = state.DispatchError
 	c.incidentDetectedAt = controllerTime(state.GetIncidentDetectedAt())

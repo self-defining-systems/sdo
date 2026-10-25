@@ -173,40 +173,26 @@ func checkUnobservableDetectorLocator(t *testing.T, mode string) {
 		}
 		put(t, proposal.Path, ".sdo/corpus/targetport-mismatch/"+phase+".json", string(raw), 0644)
 	}
-	detector := parityDetector(t, "cache")
-	detector = strings.Replace(detector, "import (", "import (\n targetport \"fixture-diagnostics/playbooks/service-targetport-mismatch\"\n \"sdo.dev/operator/sdk/program\"", 1)
-	detector = strings.Replace(detector, `func New() sdk.Detector { return Detector{} }`, `func New() sdk.Detector {
- return program.DetectorFromProgram(targetport.Program{}, func(view sdk.DetectionContext) []program.Bindings {
-  var result []program.Bindings
-  for _, service := range view.Services() {
-   result = append(result, program.Bindings{Objects:program.ObjectBindings{"service": {APIVersion:"v1", Kind:"Service", Namespace:service.Namespace, Name:service.Name}}})
-  }
-  return result
- }, Detector{}.Spec())
-}`, 1)
-	detector = strings.Replace(detector, `[]string{"base"}`, `[]string{"service-targetport-mismatch"}`, 1)
-	if mode != "unknown" {
-		detector = strings.Replace(detector, "targetport.Program{}, func", "locatedProgram{}, func", 1)
-		behavior := `return program.Verdict{Result:program.NeedsJudgement, Question:"Which listener is intended?"}, nil`
-		if mode == "source-evidence-gap" {
-			behavior = `_, err := view.DiffAgainstSource(sdk.ObjectRef{APIVersion:"apps/v1", Kind:"Deployment", Namespace:"demo", Name:"catalog"}); return program.Verdict{Result:program.NoMatch}, err`
-			recordings := `[`
-			for index, phase := range []string{"open", "fixed", "healthy"} {
-				if index > 0 {
-					recordings += ","
-				}
-				recordings += `{"phase":"` + phase + `","method":"DiffAgainstSource","arguments":[{"api_version":"apps/v1","kind":"Deployment","namespace":"demo","name":"catalog"}],"error":"rendered deployment evidence unavailable: trusted deployment image evidence missing for catalog"}`
-			}
-			put(t, proposal.Path, ".sdo/corpus/targetport-mismatch/recordings.json", recordings+"]", 0644)
-		}
-		detector += `
-type locatedProgram struct { targetport.Program }
-func (p locatedProgram) Diagnose(ctx context.Context, view program.ReadView, bindings program.Bindings) (program.Verdict, error) {
- if bindings.Objects["service"].Name == "unlabelled-peer" { ` + behavior + ` }
- return p.Program.Diagnose(ctx, view, bindings)
-}
-`
+	detector := independentParityRoutingDetector(t)
+	behavior := `return nil, fmt.Errorf("selected Service observation unavailable")`
+	if mode == "needs-judgement" {
+		behavior = `return nil, fmt.Errorf("Which listener is intended?")`
 	}
+	if mode == "source-evidence-gap" {
+		behavior = `_, err := program.ReadFrom(s).DiffAgainstSource(sdk.ObjectRef{APIVersion:"apps/v1", Kind:"Deployment", Namespace:"demo", Name:"catalog"}); return nil, err`
+		recordings := `[`
+		for index, phase := range []string{"open", "fixed", "healthy"} {
+			if index > 0 {
+				recordings += ","
+			}
+			recordings += `{"phase":"` + phase + `","method":"DiffAgainstSource","arguments":[{"api_version":"apps/v1","kind":"Deployment","namespace":"demo","name":"catalog"}],"error":"rendered deployment evidence unavailable: trusted deployment image evidence missing for catalog"}`
+		}
+		put(t, proposal.Path, ".sdo/corpus/targetport-mismatch/recordings.json", recordings+"]", 0644)
+		detector = strings.Replace(detector, `"context"`, `"context"; "sdo.dev/operator/sdk/program"`, 1)
+	} else {
+		detector = strings.Replace(detector, `"context"`, `"context"; "fmt"`, 1)
+	}
+	detector = strings.Replace(detector, `for _, service := range s.Services() {`, `for _, service := range s.Services() { if service.Name == "unlabelled-peer" { `+behavior+` }`, 1)
 	put(t, proposal.Path, ".sdo/diagnostics/detectors/incidents/cache/detector.go", detector, 0644)
 	replaceParityText(t, proposal.Path, ".sdo/diagnostics/detectors/incidents/cache/manifest.yaml", "  - base\n", "  - service-targetport-mismatch\n")
 	decision := &contracts.ReflectionDecision{LearningDecision: "updated", PlaybookIds: []string{"service-targetport-mismatch"}}
@@ -240,7 +226,7 @@ func (p locatedProgram) Diagnose(ctx context.Context, view program.ReadView, bin
 	if !proto.Equal(&contracts.MemoryCheckReport{Diagnostics: report.Diagnostics}, &contracts.MemoryCheckReport{Diagnostics: validate.ProtoDiagnostics(failure.Diagnostics)}) {
 		t.Fatalf("diagnostics differ: CLI %v broker %v", report.Diagnostics, failure.Diagnostics)
 	}
-	if len(report.Diagnostics) != 1 || report.Diagnostics[0].Rule != validate.RuleDetectorTest || !strings.Contains(report.Diagnostics[0].Message, "detector.corpus-observation") {
+	if len(report.Diagnostics) != 2 || report.Diagnostics[0].Rule != validate.RuleDetectorTest || report.Diagnostics[1].Rule != validate.RuleProgramRepeatReachable || !strings.Contains(report.Diagnostics[0].Message, "detector.corpus-observation") {
 		t.Fatalf("locator failure was not actionable: %v", report)
 	}
 	if mode == "needs-judgement" && !strings.Contains(report.Diagnostics[0].Message, "Which listener is intended?") {
@@ -273,16 +259,9 @@ func TestCLIAndBrokerRetainHealthyInputForProgramOnlyEdits(t *testing.T) {
 	runGit(t, root, "config", "user.name", "Fixture")
 	runGit(t, root, "config", "user.email", "fixture@example.test")
 	parityProgram(t, root)
-	source := parityDetector(t, "cache")
-	source = strings.Replace(source, "import (", "import (\n targetport \"fixture-diagnostics/playbooks/service-targetport-mismatch\"\n \"sdo.dev/operator/sdk/program\"", 1)
-	source = strings.Replace(source, `func New() sdk.Detector { return Detector{} }`, `func New() sdk.Detector {
- return program.DetectorFromProgram(targetport.Program{},func(view sdk.DetectionContext) []program.Bindings {
-  var bindings []program.Bindings
-  for _, service:=range view.Services() {bindings=append(bindings,program.Bindings{Objects:program.ObjectBindings{"service":{APIVersion:"v1",Kind:"Service",Namespace:service.Namespace,Name:service.Name}}})}
-  return bindings
- },Detector{}.Spec())
-}`, 1)
-	source = strings.Replace(source, `[]string{"base"}`, `[]string{"base","service-targetport-mismatch"}`, 1)
+	source := independentParityRoutingDetector(t)
+	source = strings.Replace(source, `"context"`, `"context"; "fmt"`, 1)
+	source = strings.Replace(source, `for _, service := range s.Services() {`, `for _, service := range s.Services() { if service.Name == "healthy-only" { return nil, fmt.Errorf("healthy-only selected Pod observation unavailable") }`, 1)
 	put(t, root, ".sdo/diagnostics/detectors/incidents/cache/detector.go", source, 0644)
 	replaceParityText(t, root, ".sdo/diagnostics/detectors/incidents/cache/manifest.yaml", "  - base\n", "  - base\n  - service-targetport-mismatch\n")
 	runGit(t, root, "add", "-f", ".sdo")
@@ -339,4 +318,19 @@ func TestCLIAndBrokerRetainHealthyInputForProgramOnlyEdits(t *testing.T) {
 	if len(report.Diagnostics) != 1 || report.Diagnostics[0].Rule != validate.RuleDetectorTest || !strings.Contains(report.Diagnostics[0].Message, "healthy-only") {
 		t.Fatalf("healthy locator error omitted: %v", report)
 	}
+}
+
+// Preserve the independently authored detection predicate and the accepted cache spec.
+func independentParityRoutingDetector(t *testing.T) string {
+	t.Helper()
+	data, err := os.ReadFile("../../../tests/fixtures/sdo/service_port_detector/detector.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := parityDetector(t, "cache")
+	start := strings.Index(string(data), "func (Detector) Detect(")
+	source = strings.Replace(source, "func (Detector) Detect(context.Context, sdk.DetectionContext) ([]sdk.Finding, error) { return nil, nil }", string(data[start:]), 1)
+	source = strings.ReplaceAll(source, `DetectorID: "service-targetport-mismatch"`, `DetectorID: "cache"`)
+	source = strings.ReplaceAll(source, `[]string{"base"}`, `[]string{"service-targetport-mismatch"}`)
+	return source
 }

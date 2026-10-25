@@ -11,8 +11,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 
 	"sdo.dev/operator/sdk"
-	"sdo.dev/operator/sdk/program"
-	"sdo.dev/operator/sdk/routing"
 )
 
 const healthyServiceSnapshot = `{
@@ -185,28 +183,5 @@ func TestHealthyBaselineRejectsDetectorErrorsWithSnapshotContext(t *testing.T) {
 				}
 			}
 		})
-	}
-}
-
-func TestHealthyBaselineRejectsInconclusivePromotedRoutingDetector(t *testing.T) {
-	snapshots, err := LoadSnapshots(writeBaseline(t, map[string]string{"healthy.json": healthyServiceSnapshot}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	detector := program.DetectorFromProgram(routing.Program{}, func(snapshot sdk.DetectionContext) []program.Bindings {
-		var bindings []program.Bindings
-		for _, service := range snapshot.Services() {
-			bindings = append(bindings, program.Bindings{Objects: program.ObjectBindings{"service": sdk.ObjectRefFrom("Service", "v1", &service)}})
-		}
-		return bindings
-	}, sdk.DetectorSpec{ID: "learned-routing", Class: sdk.DetectorClassIncident})
-	violations := HealthyBaselineViolations(detector, snapshots)
-	if len(violations) != 1 {
-		t.Fatalf("unsupported healthy Service silently passed: %v", violations)
-	}
-	for _, detail := range []string{"learned-routing", "healthy.json", "service-targetport-mismatch", "cart", "Unknown"} {
-		if !strings.Contains(violations[0], detail) {
-			t.Errorf("diagnostic %q lacks %q", violations[0], detail)
-		}
 	}
 }

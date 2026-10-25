@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"go/format"
 	"os"
 	"path/filepath"
 	"testing"
@@ -16,6 +17,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory"
+	"sdo.dev/operator/memory/layout"
 	"sdo.dev/operator/memory/validate"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
@@ -155,6 +157,7 @@ func TestHermeticSourceReconcileLearningExposesVerifiedCounters(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, ".sdo/playbooks/README.md"), []byte("# Playbooks\n\n- [base](base/README.md)\n- [image-pull-failure](image-pull-failure/README.md)\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
+	writeSourceImageDetector(t, root)
 	operatorRoot, err := filepath.Abs("..")
 	if err != nil {
 		t.Fatal(err)
@@ -260,5 +263,37 @@ func TestHermeticSourceReconcileLearningExposesVerifiedCounters(t *testing.T) {
 	live, err := client.AppsV1().Deployments("app").Get(ctx, "api", metav1.GetOptions{})
 	if err != nil || live.Spec.Template.Spec.Containers[0].Image != "missing:v1" {
 		t.Fatalf("controller applied before agent: %v %v", live, err)
+	}
+}
+
+// The recorded fault is covered by an independently scheduled incident
+// detector. It observes source and pod state itself and never calls Diagnose.
+func writeSourceImageDetector(t *testing.T, root string) {
+	t.Helper()
+	source := `package sourceimagefault
+import("context";"time"; metav1 "k8s.io/apimachinery/pkg/apis/meta/v1";"k8s.io/apimachinery/pkg/labels";"sdo.dev/operator/sdk";"sdo.dev/operator/sdk/program")
+type Detector struct{}
+func New()sdk.Detector{return Detector{}}
+func (Detector) Spec()sdk.DetectorSpec{return sdk.DetectorSpec{ID:"source-image",Class:sdk.DetectorClassIncident,Owner:sdk.DetectorOwnerResponder,Watches:[]sdk.WatchKind{{APIVersion:"apps/v1",Kind:"Deployment"},{APIVersion:"v1",Kind:"Pod"}},Interval:time.Second,Persistence:sdk.PersistencePolicy{Firing:1,Clearing:1},Batching:sdk.BatchingPolicy{Severity:sdk.SeverityWarning,Debounce:100*time.Millisecond},Playbooks:[]string{"image-pull-failure"},OriginatingIncident:"image-origin",OriginatingCommit:"fixture"}}
+func (Detector) Detect(_ context.Context,s sdk.DetectionContext)([]sdk.Finding,error){
+ var findings []sdk.Finding
+ view:=program.ReadFrom(s)
+ for _,d:=range s.Deployments(){
+  ref:=sdk.ObjectRefFrom("Deployment","apps/v1",&d)
+  diff,err:=view.DiffAgainstSource(ref);if err!=nil{return nil,err};if !diff.Changed || d.Spec.Selector==nil{continue}
+  selector,err:=metav1.LabelSelectorAsSelector(d.Spec.Selector);if err!=nil{return nil,err}
+  failing:=false
+  for _,pod:=range s.Pods(){if pod.Namespace!=d.Namespace || !selector.Matches(labels.Set(pod.Labels)){continue};for _,status:=range pod.Status.ContainerStatuses{w:=status.State.Waiting;if w!=nil && (w.Reason=="ErrImagePull" || w.Reason=="ImagePullBackOff"){failing=true}}}
+  if failing{findings=append(findings,sdk.Finding{DetectorID:"source-image",RuleID:"source-image",Status:sdk.FindingActive,Severity:sdk.SeverityWarning,Summary:"Source image differs while selected Pod image pull fails",Evidence:"accepted-source difference and selected Pod waiting reason",PrimaryResource:ref,ParameterBindings:map[string]sdk.ObjectRef{"deployment":ref},Playbooks:[]string{"image-pull-failure"}})}
+ }
+ return findings,nil
+}`
+	formatted, err := format.Source([]byte(source))
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest := layout.DetectorManifest{APIVersion: layout.APIVersion, Kind: layout.DetectorManifestKind, SDKVersion: layout.SDKVersion, ID: "source-image", Constructor: "New", Class: "incident", Owner: "responder", Watches: []layout.Watch{{APIVersion: "apps/v1", Kind: "Deployment"}, {APIVersion: "v1", Kind: "Pod"}}, Interval: "1s", Persistence: layout.Persistence{Firing: 1, Clearing: 1}, Batching: layout.Batching{Severity: "warn", Debounce: "100ms"}, PossiblePlaybooks: []string{"image-pull-failure"}, OriginatingIncident: "image-origin", OriginatingCommit: "fixture"}
+	if err := layout.WriteDetector(root, layout.Detector{Class: layout.ClassIncident, Manifest: manifest, Files: []layout.File{{Name: "detector.go", Content: formatted}}}); err != nil {
+		t.Fatal(err)
 	}
 }

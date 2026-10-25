@@ -132,7 +132,7 @@ func TestProgramValidationRejectsUnsafeMemory(t *testing.T) {
 		{"syscall import", ".sdo/lib/ports/ports.go", "import (", "import (\n\t\"syscall\"", "may not import"},
 		{"plugin import", ".sdo/lib/ports/ports.go", "import (", "import (\n\t\"plugin\"", "may not import"},
 		{"missing diagnoser", ".sdo/playbooks/service-targetport-mismatch/diagnose.go", "func (Program) Diagnose", "func (Program) Inspect", "exactly one Diagnoser"},
-		{"bad binding", ".sdo/corpus/targetport-mismatch/labels.json", `"kind":"Service"`, `"kind":"Pod"`, "faulted diagnosis is Unknown"},
+		{"bad detector binding", ".sdo/diagnostics/detectors/incidents/routing-relations/detector.go", `ref := sdk.ObjectRefFrom("Service", "v1", &service)`, `ref := sdk.ObjectRefFrom("Service", "v1", &service); ref.Kind = "Pod"`, "program.repeat-unreachable"},
 		{"shell guidance", ".sdo/playbooks/service-targetport-mismatch/README.md", "Check the", "kubectl get services\nCheck the", "shell command"},
 		{"shell fence", ".sdo/playbooks/service-targetport-mismatch/README.md", "Check the", "```bash\n```\nCheck the", "shell command"},
 		{"spaced shell fence", ".sdo/playbooks/service-targetport-mismatch/README.md", "Check the", "``` bash\n```\nCheck the", "shell command"},

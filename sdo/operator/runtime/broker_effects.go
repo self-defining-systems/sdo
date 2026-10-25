@@ -202,7 +202,7 @@ func (c *Controller) revalidateClosure(ctx context.Context, snapshot sdk.Detecti
 	sort.Strings(ordered)
 	for _, id := range ordered {
 		detector := c.detectors[id]
-		if detector == nil && strings.HasPrefix(id, "drift.") {
+		if detector == nil && id == "drift.unexplained" {
 			retained := []sdk.Finding{}
 			for _, finding := range closure.Request.Findings {
 				if finding.DetectorID == id {
@@ -212,12 +212,7 @@ func (c *Controller) revalidateClosure(ctx context.Context, snapshot sdk.Detecti
 			if len(retained) == 0 || c.drift == nil || c.drift.View == nil {
 				return fmt.Errorf("closure observation drift %s is unavailable", id)
 			}
-			if id != "drift.unexplained" {
-				unresolved, _, _ := checkRetainedDrift(ctx, retained, c.drift.View(snapshot), c.drift.Programs, c.drift.Deadline)
-				if len(unresolved) > 0 {
-					return fmt.Errorf("closure observation drift %s lacks fresh bound NoMatch", id)
-				}
-			}
+
 			continue // Admitted source fields are independently rechecked below.
 		}
 		if detector == nil {

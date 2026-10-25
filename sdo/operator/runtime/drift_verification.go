@@ -12,14 +12,13 @@ import (
 	"time"
 )
 
-// checkRetainedDrift never infers clearance from missing namespace bindings or
-// quiet health. Each retained learned binding must explicitly return NoMatch.
-func checkRetainedDrift(ctx context.Context, retained []sdk.Finding, view program.ReadView, registry program.ProgramRegistry, deadline time.Duration) ([]sdk.Finding, []DetectorEvaluation, []ProgramRun) {
+// checkRetainedDrift rechecks unexplained drift against accepted source.
+// Playbooks never create or clear detector findings.
+func checkRetainedDrift(ctx context.Context, retained []sdk.Finding, view program.ReadView) ([]sdk.Finding, []DetectorEvaluation) {
 	unresolved := []sdk.Finding{}
 	states := map[string]DetectorEvaluation{}
-	runs := []ProgramRun{}
 	for _, finding := range retained {
-		if !strings.HasPrefix(finding.DetectorID, "drift.") {
+		if finding.DetectorID != "drift.unexplained" {
 			continue
 		}
 		state, exists := states[finding.DetectorID]
@@ -35,16 +34,8 @@ func checkRetainedDrift(ctx context.Context, retained []sdk.Finding, view progra
 			if err == nil {
 				clear = !diff.Changed || driftFieldsRestored(diff, events)
 			}
-		} else {
-			id := strings.TrimPrefix(finding.DetectorID, "drift.")
-			if registry != nil {
-				if p, ok := registry.Diagnoser(id); ok {
-					verdict := program.RunDiagnose(ctx, p, view, program.Bindings{Objects: finding.ParameterBindings}, deadline)
-					runs = append(runs, ProgramRun{ProgramID: id, Bindings: program.Bindings{Objects: finding.ParameterBindings}, Verdict: verdict})
-					clear = verdict.Result == program.NoMatch
-				}
-			}
 		}
+
 		if !clear {
 			unresolved = append(unresolved, finding)
 			state.Status = DetectorEvaluationFiring
@@ -61,7 +52,7 @@ func checkRetainedDrift(ctx context.Context, retained []sdk.Finding, view progra
 		evaluations = append(evaluations, state)
 	}
 	sort.Slice(evaluations, func(i, j int) bool { return evaluations[i].DetectorID < evaluations[j].DetectorID })
-	return unresolved, evaluations, runs
+	return unresolved, evaluations
 }
 
 func driftDiffValues(diff program.Diff) (map[string]any, map[string]any, bool) {

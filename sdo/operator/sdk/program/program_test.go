@@ -126,33 +126,19 @@ func TestExampleProgramEndToEnd(t *testing.T) {
 	if got.Result != program.Match {
 		t.Fatalf("open verdict: %+v", got)
 	}
-	locate := func(v sdk.DetectionContext) []program.Bindings { return []program.Bindings{c.Bindings} }
-	d := program.DetectorFromProgram(p, locate, sdk.DetectorSpec{ID: p.Spec().ID, Class: sdk.DetectorClassIncident, Owner: sdk.DetectorOwnerResponder})
-	findings, err := d.Detect(context.Background(), c.Open)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(findings) != 1 || findings[0].PrimaryResource != c.Bindings.Objects["service"] || findings[0].Playbooks[0] != p.Spec().ID || findings[0].ParameterBindings["service"] != c.Bindings.Objects["service"] || findings[0].Evidence == "" {
-		t.Fatalf("findings: %+v", findings)
-	}
-	findings, err = d.Detect(context.Background(), c.Fixed)
-	if err != nil || len(findings) != 0 {
-		t.Fatalf("fixed findings: %+v, %v", findings, err)
-	}
+
 }
 
-func TestDetectorReportsUnavailableRuntimeRead(t *testing.T) {
+func TestDiagnoseReportsUnavailableRuntimeRead(t *testing.T) {
 	p := diagnostic{fn: func(_ context.Context, v program.ReadView, _ program.Bindings) (program.Verdict, error) {
 		_, err := v.ProbeTCP(serviceRef, 80)
 		return program.Verdict{}, err
 	}}
-	d := program.DetectorFromProgram(p, func(sdk.DetectionContext) []program.Bindings {
-		return []program.Bindings{{Objects: program.ObjectBindings{"service": serviceRef}}}
-	}, sdk.DetectorSpec{ID: "test"})
-	findings, err := d.Detect(context.Background(), sdktest.Snapshot{})
-	if err == nil || len(findings) != 0 {
-		t.Fatalf("findings: %+v, %v", findings, err)
+	got := program.RunDiagnose(context.Background(), p, program.ReadFrom(sdktest.Snapshot{}), program.Bindings{Objects: program.ObjectBindings{"service": serviceRef}}, time.Second)
+	if got.Result != program.Unknown {
+		t.Fatalf("unavailable read cleared diagnosis: %+v", got)
 	}
+
 }
 
 // Synthetic cases retain the matching/near-miss contract formerly bundled with a learned program.
@@ -177,32 +163,6 @@ func TestExampleProgramSyntheticPortMatchesAndNearMisses(t *testing.T) {
 			got := program.RunDiagnose(context.Background(), targetport.Program{}, &sdktest.ReplayReadView{Snapshot: snapshot}, program.Bindings{Objects: program.ObjectBindings{"service": serviceRef}}, time.Second)
 			if got.Result != tc.want {
 				t.Fatalf("got %s, want %s", got.Result, tc.want)
-			}
-		})
-	}
-}
-
-func TestProgramDetectorExplainsInconclusiveDiagnosis(t *testing.T) {
-	for _, result := range []program.Result{program.Unknown, program.NeedsJudgement} {
-		t.Run(string(result), func(t *testing.T) {
-			p := diagnostic{fn: func(context.Context, program.ReadView, program.Bindings) (program.Verdict, error) {
-				verdict := program.Verdict{Result: result, Evidence: []program.Evidence{{Fact: "source", Observed: "accepted deployment evidence is unavailable"}}}
-				if result == program.NeedsJudgement {
-					verdict.Question = "which accepted deployment supplies source evidence?"
-				}
-				return verdict, nil
-			}}
-			detector := program.DetectorFromProgram(p, func(sdk.DetectionContext) []program.Bindings {
-				return []program.Bindings{{Objects: program.ObjectBindings{"service": serviceRef}}}
-			}, sdk.DetectorSpec{ID: "learned-source-check"})
-			findings, err := detector.Detect(context.Background(), sdktest.Snapshot{})
-			if len(findings) != 0 || err == nil {
-				t.Fatalf("inconclusive learned diagnosis silently cleared: findings=%v error=%v", findings, err)
-			}
-			for _, detail := range []string{p.Spec().ID, serviceRef.Name, string(result), "accepted deployment evidence is unavailable"} {
-				if !strings.Contains(err.Error(), detail) {
-					t.Errorf("diagnostic %q omits %q", err, detail)
-				}
 			}
 		})
 	}

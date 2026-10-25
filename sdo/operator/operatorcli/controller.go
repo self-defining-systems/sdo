@@ -20,7 +20,7 @@ import (
 	"sdo.dev/operator/toolchain"
 )
 
-const sdkSchemaIdentity = "sdo.dev/v1alpha1+sdk.84d1a00ca8b56ef4"
+const sdkSchemaIdentity = "sdo.dev/v1alpha1+sdk.960490f8381117ee"
 
 type repeatable []string
 
@@ -69,7 +69,6 @@ func ParseControllerLaunch(args []string) (builder.RunConfig, bool, error) {
 	metricsURL := flags.String("metrics-url", "", "Prometheus-compatible API URL that metric and alert detectors query once per evaluation cycle")
 	maxResponseLoops := flags.Int("max-response-loops", 10, "maximum sdo apply batches per incident")
 	diagnosisDeadline := flags.Duration("diagnosis-deadline", 10*time.Second, "shared candidate diagnosis deadline")
-	programMinDuration := flags.Duration("program-min-duration", 10*time.Second, "minimum sustained learned-program firing and clearing duration")
 	duration := flags.Duration("duration", 0, "bounded controller duration")
 	exitAfterClosure := flags.Bool("exit-after-closure", false, "exit after the first acknowledged closure")
 	supervise := flags.Bool("supervise", false, "rebuild and relaunch after closure")
@@ -92,9 +91,6 @@ func ParseControllerLaunch(args []string) (builder.RunConfig, bool, error) {
 	}
 	if *duration < 0 || (*supervise && (*duration > 0 || *exitAfterClosure)) {
 		return builder.RunConfig{}, false, errors.New("supervision cannot be combined with bounded duration or exit-after-closure")
-	}
-	if *programMinDuration < 0 {
-		return builder.RunConfig{}, false, errors.New("program minimum duration must be nonnegative")
 	}
 
 	if *app == "" || !filepath.IsAbs(*app) || *operatorRoot == "" || *namespace == "" || *responderImage == "" || *repositoryPVC == "" || *repositoryMount == "" ||
@@ -121,7 +117,6 @@ func ParseControllerLaunch(args []string) (builder.RunConfig, bool, error) {
 		ToolchainImage:   *toolchainImage, ProberImage: *proberImage, AgentRegistrationDirectory: *registrations, ResponderAgentId: *responderID,
 		BrokerMode: *brokerMode, WorkerMountMode: *workerMountMode, ValidatorImage: *validatorImage,
 		SchemaIdentity: *schemaIdentity, ResponderBackend: *backend, ResponderModel: *model, ReflectionSession: *reflectionSession, ReflectionGuidance: *reflectionGuidance, ForceReflection: *forceReflection, HealthyBaseline: *healthyBaseline, MetricsUrl: *metricsURL,
-		ProgramMinDuration: durationpb.New(*programMinDuration),
 	}
 	if *duration > 0 {
 		launch.Duration = durationpb.New(*duration)

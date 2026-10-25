@@ -282,7 +282,7 @@ func adoptionController(t *testing.T, target int32, detectors ...sdk.Detector) (
 	if err != nil {
 		t.Fatal(err)
 	}
-	controller.ConfigureDrift(DriftControllerConfig{ProgramPersistence: sdk.PersistencePolicy{Firing: 1, Clearing: 1}, Source: source, Client: client, View: func(snapshot sdk.DetectionContext) program.ReadView {
+	controller.ConfigureDrift(DriftControllerConfig{Source: source, Client: client, View: func(snapshot sdk.DetectionContext) program.ReadView {
 		return driftReadView{ReplayReadView: &sdktest.ReplayReadView{Snapshot: snapshot.(sdktest.Snapshot)}, diff: program.Diff{Changed: api.service.Spec.Ports[0].TargetPort.IntVal != 8080}}
 	}})
 	return controller, api, source, server.Close

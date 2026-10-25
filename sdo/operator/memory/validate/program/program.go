@@ -319,9 +319,9 @@ func checkProgramImports(root, module string) error {
 		}
 		for _, imported := range file.Imports {
 			name, err := strconv.Unquote(imported.Path.Value)
-			// Detectors can promote an application's diagnoser without copying its
-			// fault predicate. Tests may exercise the same public program contract.
-			playbookImport := (filepath.Base(root) == "detectors" || strings.HasSuffix(path, "_test.go")) && strings.HasPrefix(name, module+"/playbooks/")
+			// Only tests may import executable playbooks. Always-on detectors use
+			// independent detection entry points; shared predicates belong in lib.
+			playbookImport := strings.HasSuffix(path, "_test.go") && strings.HasPrefix(name, module+"/playbooks/")
 			if err != nil || !allowedProgramImport(name, module) && !playbookImport {
 				return fmt.Errorf("%s: authored Go may not import %q; use the read-only SDK or a shared library", path, name)
 			}
@@ -415,34 +415,33 @@ func noMatchCasesFor(root, programID string) ([]string, error) {
 	return result, nil
 }
 
-// ReplayTests checks the one save-time behavior contract: mitigation clears diagnosis.
+// ReplayTests proves detector reachability and mitigation clearance on each recorded incident.
 func ReplayTests(programs []Spec) string {
 	hasReplay := false
 	for _, item := range programs {
-		hasReplay = hasReplay || (item.Mitigator != "" && len(item.Cases) > 0)
+		hasReplay = hasReplay || len(item.Cases) > 0
 	}
 	if !hasReplay {
 		return "package generated\n"
 	}
 	var test strings.Builder
 	test.WriteString(`package generated
-import("context";"encoding/json";"os";"path/filepath";"testing";"sdo.dev/operator/runtime/replay";"sdo.dev/operator/sdk/sdktest")
+import("context";"encoding/json";"os";"path/filepath";"strings";"testing";"sdo.dev/operator/runtime/replay";"sdo.dev/operator/sdk/sdktest")
 func TestProgramCorpus(t *testing.T){
  var notes []sdktest.MitigationReplayResult
  defer func(){data,err:=json.Marshal(notes);if err!=nil{t.Fatal(err)};if err:=os.WriteFile("mitigation-replay.json",data,0600);err!=nil{t.Fatal(err)}}()
  registry,err:=Programs();if err!=nil{t.Fatal(err)}
 `)
 	for _, item := range programs {
-		if item.Mitigator == "" {
-			continue
-		}
 		for _, id := range item.Cases {
 			fmt.Fprintf(&test, `t.Run(%q,func(t *testing.T){
  c,err:=replay.LoadRepairCase(filepath.Join("..","corpus",%q));if err!=nil{t.Fatal(err)}
- p,ok:=registry.Diagnoser(%q);if !ok{t.Fatal("missing diagnoser")}
- m,ok:=registry.Mitigator(%q);if !ok{t.Fatal("missing mitigator")}
- r:=replay.CheckRepair(context.Background(),p,m,c);if r.Status!="replayed"{t.Fatalf("program.mitigation-not-repaired: mitigation must clear diagnosis: status=%%s errors=%%v faulted=%%s post=%%s",r.Status,r.Errors,r.Faulted.Result,r.Post.Result)}
- notes=append(notes,sdktest.MitigationReplayResult{ProgramID:p.Spec().ID,CaseID:%q,Status:sdktest.MitigationReplayPassed})
+ r:=replay.CheckRepeat(context.Background(),registry,All(),%q,c)
+ if r.Status!="replayed" {
+  for _,message:=range r.Errors {if strings.Contains(message,"program.repeat-unreachable:"){t.Fatal(message)}}
+  t.Fatalf("program.mitigation-not-repaired: mitigation must clear diagnosis: status=%%s errors=%%v faulted=%%s post=%%s",r.Status,r.Errors,r.Faulted.Result,r.Post.Result)
+ }
+ notes=append(notes,sdktest.MitigationReplayResult{ProgramID:%q,CaseID:%q,Status:sdktest.MitigationReplayPassed})
  })
 `, item.ID+"/"+id, id, item.ID, item.ID, id)
 		}

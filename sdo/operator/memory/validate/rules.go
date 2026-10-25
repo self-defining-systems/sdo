@@ -75,6 +75,7 @@ const (
 	RuleGenericHealth = "bootstrap.generic-health"
 
 	// Compile.
+	RuleProgramRepeatReachable  = "program.repeat-unreachable"
 	RuleProgramMitigationRepair = "program.mitigation-not-repaired"
 	RuleProgramMitigationReplay = "program.mitigation-unreplayable"
 	RuleDetectorCompile         = "detector.compile"

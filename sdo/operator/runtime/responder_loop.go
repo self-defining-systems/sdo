@@ -111,47 +111,46 @@ type selectedPlan struct {
 
 // ResponderLoop holds one incident's tool state while its responder Job runs.
 type ResponderLoop struct {
-	continuation        responderContinuation
-	MenuConfig          *ResponderMenuConfig
-	menu                *contracts.MitigationMenu
-	menuEntries         map[string]menuEntry
-	menuSession         *contracts.MitigationSession
-	menuReports         []*contracts.MitigationReport
-	menuExecutions      map[string][]MenuRoundExecution
-	menuRepairs         []RepairActionReceipt
-	VerifyClosure       func(context.Context) ToolResponse
-	CurrentEvidence     func() *IncidentRequest
-	Request             IncidentRequest
-	Programs            program.ProgramRegistry
-	Provider            SnapshotProvider
-	Detectors           []sdk.Detector
-	Executor            PlanExecutor
-	ReadView            func(sdk.DetectionContext) program.ReadView
-	DiagnosisDeadline   time.Duration
-	CandidateSweepLimit int
-	MaxBatches          int
-	Trust               map[string]ProgramTrust
-	CorpusSessionRoot   string
-	capturePhase        string
-	timing              toolTiming
-	preApplyCaptured    bool
-	saveToolState       func(context.Context, []byte) error
-	operationMu         sync.Mutex
-	mu                  sync.Mutex
-	sessionID           string
-	plans               map[string]selectedPlan
-	applications        map[string]PlanApplicationResult
-	applicationsLog     []RecordedPlanApplication
-	completedRepairs    []continuationRepair
-	failureSignals      []string
-	calls               []ToolCall
-	runs                []ProgramRun
-	matchedViews        map[string]program.ReadView
-	matchedPlans        map[string]PlanApplicationResult
-	matchedPlanErrors   map[string]error
-	lastDiagnosisView   program.ReadView
-	findings            []sdk.Finding
-	batches             int
+	continuation      responderContinuation
+	MenuConfig        *ResponderMenuConfig
+	menu              *contracts.MitigationMenu
+	menuEntries       map[string]menuEntry
+	menuSession       *contracts.MitigationSession
+	menuReports       []*contracts.MitigationReport
+	menuExecutions    map[string][]MenuRoundExecution
+	menuRepairs       []RepairActionReceipt
+	VerifyClosure     func(context.Context) ToolResponse
+	CurrentEvidence   func() *IncidentRequest
+	Request           IncidentRequest
+	Programs          program.ProgramRegistry
+	Provider          SnapshotProvider
+	Detectors         []sdk.Detector
+	Executor          PlanExecutor
+	ReadView          func(sdk.DetectionContext) program.ReadView
+	DiagnosisDeadline time.Duration
+	MaxBatches        int
+	Trust             map[string]ProgramTrust
+	CorpusSessionRoot string
+	capturePhase      string
+	timing            toolTiming
+	preApplyCaptured  bool
+	saveToolState     func(context.Context, []byte) error
+	operationMu       sync.Mutex
+	mu                sync.Mutex
+	sessionID         string
+	plans             map[string]selectedPlan
+	applications      map[string]PlanApplicationResult
+	applicationsLog   []RecordedPlanApplication
+	completedRepairs  []continuationRepair
+	failureSignals    []string
+	calls             []ToolCall
+	runs              []ProgramRun
+	matchedViews      map[string]program.ReadView
+	matchedPlans      map[string]PlanApplicationResult
+	matchedPlanErrors map[string]error
+	lastDiagnosisView program.ReadView
+	findings          []sdk.Finding
+	batches           int
 }
 
 func NewResponderLoop(request IncidentRequest, programs program.ProgramRegistry, provider SnapshotProvider, detectors []sdk.Detector, executor PlanExecutor, maxBatches int) *ResponderLoop {
@@ -513,7 +512,7 @@ func (l *ResponderLoop) diagnose(ctx context.Context, findings []sdk.Finding) []
 	if err != nil {
 		return nil
 	}
-	runs := SelectProgramCandidatesWithOptions(ctx, l.Programs, view, findings, CandidateOptions{Deadline: l.deadline(), SweepLimit: l.CandidateSweepLimit})
+	runs := SelectProgramCandidates(ctx, l.Programs, view, findings, l.deadline())
 	l.rememberMatchedViews(ctx, runs, view)
 	l.lastDiagnosisView = view
 	l.runs = append(l.runs, runs...)
@@ -539,11 +538,10 @@ func (l *ResponderLoop) refresh(ctx context.Context) ([]sdk.Finding, []ProgramRu
 			}
 		}
 	}
-	drift, _, driftRuns := checkRetainedDrift(ctx, l.Request.Findings, view, l.Programs, l.deadline())
+	drift, _ := checkRetainedDrift(ctx, l.Request.Findings, view)
 	findings = append(findings, drift...)
-	l.runs = append(l.runs, driftRuns...)
 	l.findings = findings
-	runs := SelectProgramCandidatesWithOptions(ctx, l.Programs, view, findings, CandidateOptions{Deadline: l.deadline(), SweepLimit: l.CandidateSweepLimit})
+	runs := SelectProgramCandidates(ctx, l.Programs, view, findings, l.deadline())
 	l.rememberMatchedViews(ctx, runs, view)
 	l.lastDiagnosisView = view
 	l.runs = append(l.runs, runs...)
@@ -815,11 +813,9 @@ func (l *ResponderLoop) verify(ctx context.Context, applied []selectedPlan, resp
 		}
 		states = append(states, state)
 	}
-	drift, driftStates, driftRuns := checkRetainedDrift(ctx, l.Request.Findings, view, l.Programs, l.deadline())
+	drift, driftStates := checkRetainedDrift(ctx, l.Request.Findings, view)
 	findings = append(findings, drift...)
 	states = append(states, driftStates...)
-	response.ProgramRuns = append(response.ProgramRuns, driftRuns...)
-	l.runs = append(l.runs, driftRuns...)
 	l.findings = findings
 	if len(applied) > 0 {
 		old := map[string]bool{}
@@ -847,7 +843,7 @@ func (l *ResponderLoop) verify(ctx context.Context, applied []selectedPlan, resp
 	}
 	response.Findings, response.DetectorStates = append([]sdk.Finding(nil), findings...), states
 	if len(findings) > 0 {
-		runs := SelectProgramCandidatesWithOptions(ctx, l.Programs, view, findings, CandidateOptions{Deadline: l.deadline(), SweepLimit: l.CandidateSweepLimit})
+		runs := SelectProgramCandidates(ctx, l.Programs, view, findings, l.deadline())
 		response.ProgramRuns = append(response.ProgramRuns, runs...)
 		l.runs = append(l.runs, runs...)
 	}

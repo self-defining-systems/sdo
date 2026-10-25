@@ -331,6 +331,29 @@ func TestReject(t *testing.T){t.Fatal("sentinel detector failure")}
 	}...)
 	cases = append(cases, []parityCase{
 		{"direct program", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) { parityProgram(t, r) }, nil, false},
+		{"program repeat has no detector", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
+			parityProgram(t, r)
+			if err := os.RemoveAll(filepath.Join(r, ".sdo/diagnostics/detectors/incidents/routing-relations")); err != nil {
+				t.Fatal(err)
+			}
+		}, []string{validate.RuleProgramRepeatReachable}, false},
+		{"program repeat missing seven deployment roles", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
+			parityProgram(t, r)
+			path := filepath.Join(r, ".sdo/playbooks/service-targetport-mismatch/diagnose.go")
+			data, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var roles strings.Builder
+			for _, name := range []string{"deployment", "search", "rate", "reservation", "profile", "recommendation", "user"} {
+				fmt.Fprintf(&roles, ", {Name:%q,Kind:\"Deployment\",Required:true}", name)
+			}
+			source := strings.Replace(string(data), `Required: true}}}`, `Required: true}`+roles.String()+`}}`, 1)
+			if source == string(data) {
+				t.Fatal("fixture spec was not changed")
+			}
+			put(t, r, ".sdo/playbooks/service-targetport-mismatch/diagnose.go", source, 0644)
+		}, []string{validate.RuleProgramRepeatReachable}, false},
 
 		{"program mitigation leaves target port faulty", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
 			parityProgram(t, r)
@@ -382,22 +405,15 @@ func (p Program) Mitigate(ctx context.Context,v program.ReadView,b program.Bindi
 		}, []string{validate.RuleDetectorCompile}, false},
 		{"program replay failure", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
 			parityProgram(t, r)
-			path := ".sdo/corpus/targetport-mismatch/labels.json"
+			path := ".sdo/diagnostics/detectors/incidents/routing-relations/detector.go"
 			data, err := os.ReadFile(filepath.Join(r, path))
 			if err != nil {
 				t.Fatal(err)
 			}
-			var label map[string]any
-			if err := json.Unmarshal(data, &label); err != nil {
-				t.Fatal(err)
-			}
-			label["bindings"] = label["peer_bindings"]
-			data, err = json.Marshal(label)
-			if err != nil {
-				t.Fatal(err)
-			}
-			put(t, r, path, string(data), 0644)
-		}, []string{validate.RuleProgramMitigationRepair}, false},
+			source := strings.Replace(string(data), `ref := sdk.ObjectRefFrom("Service", "v1", &service)`, `ref := sdk.ObjectRefFrom("Service", "v1", &service); ref.Name = "not-observed"`, 1)
+			put(t, r, path, source, 0644)
+		}, []string{validate.RuleProgramRepeatReachable}, false},
+
 		{"program corpus provenance", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
 			parityProgram(t, r)
 			path := ".sdo/corpus/targetport-mismatch/labels.json"
@@ -580,9 +596,6 @@ func (p Program) Mitigate(ctx context.Context,v program.ReadView,b program.Bindi
 				outcome := &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: "incident", Classification: "success"}
 				if len(paths) > 0 {
 					refs := []*contracts.ObjectRef{{Kind: "Service", Namespace: "demo", Name: "front"}}
-					if test.name == "program replay failure" {
-						refs[0].Name = "peer"
-					}
 					outcome.ConfirmedRootCauses = []*contracts.ConfirmedRootCause{{Summary: "independently verified fixture repair", Resources: refs}}
 					outcome.ReflectionEligibility = &contracts.ReflectionEligibility{Version: 1, Causes: []*contracts.ReflectionCauseWork{{CauseIndex: 0, Resources: refs, Items: []*contracts.ReflectionWorkItem{{ProgramId: "base", Disposition: "covered", Reason: "verified_equivalent_repair", Resources: refs}}}}}
 				}
@@ -624,9 +637,6 @@ func (p Program) Mitigate(ctx context.Context,v program.ReadView,b program.Bindi
 				// Coverage of this synthetic verified cause is intentionally
 				// declined; executable authorization is checked independently.
 				resource := "front"
-				if test.name == "program replay failure" {
-					resource = "peer"
-				}
 				decision.SdkGaps = []*contracts.SdkGap{{FaultClass: "fixture", Primitive: "fixture", Reason: "fixture coverage gap", ScratchScript: "scratch/fixture", Resources: []*contracts.ObjectRef{{Kind: "Service", Namespace: "demo", Name: resource}}}}
 			}
 			if len(paths) == 0 {

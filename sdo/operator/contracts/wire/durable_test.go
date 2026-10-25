@@ -40,3 +40,23 @@ func TestDurablePlanEvidenceStillRejectsUnknownFields(t *testing.T) {
 		}
 	}
 }
+
+func TestDurableControllerDropsRetiredSweepCursorOnly(t *testing.T) {
+	for _, key := range []string{"program_sweep_cursors", "programSweepCursors"} {
+		data := []byte(`{"version":"sdo.controller/v1","` + key + `":{"consul":"18,18,18,18,18,18,18"}}`)
+		if err := Unmarshal(data, new(contracts.ControllerState)); err == nil {
+			t.Fatal("live contract accepted retired cursor")
+		}
+		state := new(contracts.ControllerState)
+		if err := UnmarshalDurable(data, state); err != nil {
+			t.Fatalf("cannot restore prior controller state: %v", err)
+		}
+		if state.Version != "sdo.controller/v1" {
+			t.Fatal("migration lost state identity")
+		}
+		withUnknown := strings.TrimSuffix(string(data), "}") + `,"unknown":true}`
+		if err := UnmarshalDurable([]byte(withUnknown), new(contracts.ControllerState)); err == nil {
+			t.Fatal("cursor migration accepted unrelated unknown field")
+		}
+	}
+}

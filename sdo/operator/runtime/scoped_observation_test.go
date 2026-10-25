@@ -132,7 +132,7 @@ func TestScopedWebhookSourceAdmissionAndRedaction(t *testing.T) {
 		snapshot := sdktest.Snapshot{NamespaceName: "app", ScopedSnapshot: scoped}
 		view := LiveReadView{DetectionContext: snapshot, Source: source, SourceCommit: commit}
 		for _, initial := range []bool{true, false} {
-			event, _, err := (DriftClassifier{}).Classify(context.Background(), ObjectChange{New: object, Initial: initial}, view, time.Unix(20, 0))
+			event, err := (DriftClassifier{}).Classify(context.Background(), ObjectChange{New: object, Initial: initial}, view, time.Unix(20, 0))
 			if err != nil || (event != nil) == initial {
 				t.Fatalf("%s initial=%v event=%+v error=%v", kind, initial, event, err)
 			}
@@ -146,12 +146,12 @@ func TestScopedWebhookSourceAdmissionAndRedaction(t *testing.T) {
 		snapshot.ScopedSnapshot.Mutating = nil
 		snapshot.ScopedSnapshot.Validating = nil
 		view.DetectionContext = snapshot
-		event, _, err := (DriftClassifier{}).Classify(context.Background(), ObjectChange{Old: object}, view, time.Unix(21, 0))
+		event, err := (DriftClassifier{}).Classify(context.Background(), ObjectChange{Old: object}, view, time.Unix(21, 0))
 		if err != nil || event == nil {
 			t.Fatalf("%s delete=%+v error=%v", kind, event, err)
 		}
 		view.SourceCommit = "missing-source-revision"
-		if event, _, err = (DriftClassifier{}).Classify(context.Background(), ObjectChange{New: object}, view, time.Unix(22, 0)); err == nil || event != nil {
+		if event, err = (DriftClassifier{}).Classify(context.Background(), ObjectChange{New: object}, view, time.Unix(22, 0)); err == nil || event != nil {
 			t.Fatal("source error became proven absence")
 		}
 	}
@@ -354,7 +354,7 @@ func TestScopedPendingWebhookDriftSurvivesDenial(t *testing.T) {
 	denied := observed
 	denied.Statuses = append([]sdk.ObservationStatus(nil), observed.Statuses...)
 	denied.Statuses[0].State = "forbidden"
-	controller.processDrift(context.Background(), time.Unix(101, 0), sdktest.Snapshot{NamespaceName: "app", ScopedSnapshot: denied}, pending, false)
+	controller.processDrift(context.Background(), time.Unix(101, 0), sdktest.Snapshot{NamespaceName: "app", ScopedSnapshot: denied}, pending)
 	retained := cache.TakeObjectChanges()
 	if len(retained) != 1 {
 		t.Fatal("denial discarded pending drift")
@@ -363,7 +363,7 @@ func TestScopedPendingWebhookDriftSurvivesDenial(t *testing.T) {
 	if len(cache.TakeObjectChanges()) != 0 {
 		t.Fatal("regrant itself emitted object drift")
 	}
-	controller.processDrift(context.Background(), time.Unix(102, 0), sdktest.Snapshot{NamespaceName: "app", ScopedSnapshot: observed}, retained, false)
+	controller.processDrift(context.Background(), time.Unix(102, 0), sdktest.Snapshot{NamespaceName: "app", ScopedSnapshot: observed}, retained)
 	state, err := controller.ExportState()
 	if err != nil {
 		t.Fatal(err)
@@ -410,7 +410,7 @@ func TestScopedDeclaredSourceWebhookCannotClearWhileChanged(t *testing.T) {
 	scoped := sdk.ScopedSnapshot{Version: 1, Scope: sdk.ObservationScope{Version: 1, Targets: []sdk.ObservationTarget{target}}, Statuses: []sdk.ObservationStatus{{Target: target, State: sdk.ObservationObserved}}, Validating: []admissionv1.ValidatingWebhookConfiguration{{ObjectMeta: metav1.ObjectMeta{Name: "policy"}, Webhooks: []admissionv1.ValidatingWebhook{{Name: "policy.example", FailurePolicy: &policy, ClientConfig: admissionv1.WebhookClientConfig{Service: &admissionv1.ServiceReference{Name: "backend", Namespace: "policy-system"}}}}}}}
 	view := LiveReadView{DetectionContext: sdktest.Snapshot{NamespaceName: "app", ScopedSnapshot: scoped}, Source: source, SourceCommit: commit}
 	changed := scopedObjects(scoped)[target.Key()]["policy"]
-	event, _, err := (DriftClassifier{}).Classify(context.Background(), ObjectChange{Old: accepted, New: changed}, view, time.Unix(200, 0))
+	event, err := (DriftClassifier{}).Classify(context.Background(), ObjectChange{Old: accepted, New: changed}, view, time.Unix(200, 0))
 	if err != nil || event == nil {
 		t.Fatalf("declared webhook drift: %+v %v", event, err)
 	}
@@ -522,7 +522,7 @@ func TestScopedWebhookDefaultsChangedThenRestored(t *testing.T) {
 			before := scopedObjects(snapshot(10).ScopedSnapshot)[target.Key()]["policy"]
 			after := scopedObjects(snapshot(20).ScopedSnapshot)[target.Key()]["policy"]
 			view.DetectionContext = snapshot(20)
-			event, _, err := (DriftClassifier{}).Classify(context.Background(), ObjectChange{Old: before, New: after}, view, time.Unix(100, 0))
+			event, err := (DriftClassifier{}).Classify(context.Background(), ObjectChange{Old: before, New: after}, view, time.Unix(100, 0))
 			if err != nil || event == nil {
 				t.Fatalf("default changed: %v event=%+v", err, event)
 			}

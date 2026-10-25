@@ -25,6 +25,8 @@ type ProgramSpec struct {
 	Params []ParamSpec
 }
 
+// ParamSpec declares roles bound by triggering detector findings; Diagnose reads
+// additional objects through ReadView by name or relation, never role enumeration.
 type ParamSpec struct {
 	Name     string
 	Kind     Kind

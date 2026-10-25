@@ -14,144 +14,7 @@ import (
 	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
-	"sdo.dev/operator/sdk/sdktest"
 )
-
-// Reflection can legitimately learn a multi-resource program. A watch for a
-// kind outside its parameter domains must not search its Cartesian product.
-func TestLearnedProgramSkipsUnbindableWatchWithoutConsumingDeadline(t *testing.T) {
-	params := []program.ParamSpec{{Name: "service", Kind: "Service", Required: true}}
-	for i := 0; i < 7; i++ {
-		params = append(params, program.ParamSpec{Name: fmt.Sprintf("deployment%d", i), Kind: "Deployment", Required: true})
-	}
-	registry, err := program.NewRegistry([]program.Diagnoser{candidateProgram{
-		spec: program.ProgramSpec{ID: "learned-discovery", Params: params},
-		run: func(context.Context, program.Bindings) program.Verdict {
-			return program.Verdict{Result: program.NoMatch}
-		},
-	}}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	snapshot := sdktest.Snapshot{NamespaceName: "app"}
-	for i := 0; i < 24; i++ {
-		meta := metav1.ObjectMeta{Name: fmt.Sprintf("resource-%02d", i), Namespace: "app"}
-		snapshot.ServiceList = append(snapshot.ServiceList, corev1.Service{ObjectMeta: meta})
-		snapshot.DeploymentList = append(snapshot.DeploymentList, appsv1.Deployment{ObjectMeta: meta})
-	}
-	started := time.Now()
-	runs := SelectProgramCandidatesWithOptions(context.Background(), registry, &sdktest.ReplayReadView{Snapshot: snapshot}, nil, CandidateOptions{
-		Deadline: time.Second,
-		Affected: []sdk.ObjectRef{{APIVersion: "v1", Kind: "Pod", Namespace: "app", Name: "restarted"}},
-	})
-	if len(runs) != 0 {
-		t.Fatalf("unrelated Pod selected program: %+v", runs)
-	}
-	if elapsed := time.Since(started); elapsed > 500*time.Millisecond {
-		t.Fatalf("unrelated watch exhausted diagnosis budget before detector evaluation: %s", elapsed)
-	}
-}
-
-func TestLearnedProgramPrunesDuplicatePrefixesBeforeDiagnosis(t *testing.T) {
-	params := []program.ParamSpec{}
-	snapshot := sdktest.Snapshot{NamespaceName: "app"}
-	for i := 0; i < 7; i++ {
-		params = append(params, program.ParamSpec{Name: fmt.Sprintf("role%d", i), Kind: "Deployment", Required: true})
-	}
-	for i := 0; i < 24; i++ {
-		snapshot.DeploymentList = append(snapshot.DeploymentList, appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: fmt.Sprintf("deployment-%02d", i), Namespace: "app"}})
-	}
-	registry, err := program.NewRegistry([]program.Diagnoser{candidateProgram{
-		spec: program.ProgramSpec{ID: "learned-discovery", Params: params},
-		run: func(context.Context, program.Bindings) program.Verdict {
-			return program.Verdict{Result: program.NoMatch}
-		},
-	}}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, affected := range [][]sdk.ObjectRef{nil, {{Kind: "Deployment", Namespace: "app", Name: "deployment-23"}}} {
-		started := time.Now()
-		runs := SelectProgramCandidatesWithOptions(context.Background(), registry, &sdktest.ReplayReadView{Snapshot: snapshot}, nil, CandidateOptions{Deadline: time.Second, Affected: affected})
-		if len(runs) != DefaultSweepLimit {
-			t.Fatalf("candidate enumeration starved diagnosis: got %d runs", len(runs))
-		}
-		for _, run := range runs {
-			if run.Verdict.Result != program.NoMatch {
-				t.Fatalf("enumeration exhausted diagnosis deadline: %+v", run)
-			}
-		}
-		if elapsed := time.Since(started); elapsed > 500*time.Millisecond {
-			t.Fatalf("valid-prefix search exhausted diagnosis budget: %s", elapsed)
-		}
-	}
-}
-
-// Check pruning against exhaustive enumeration, including restored cursors that
-// point into a now-invalid prefix after the available object set changes.
-func TestCandidatePrefixPruningPreservesAssignmentsAcrossCursors(t *testing.T) {
-	snapshot := sdktest.Snapshot{NamespaceName: "app"}
-	for _, name := range []string{"a", "b", "c"} {
-		snapshot.ServiceList = append(snapshot.ServiceList, corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "app"}})
-	}
-	params := []program.ParamSpec{{Name: "from", Kind: "Service", Required: true}, {Name: "to", Kind: "Service", Required: true}, {Name: "peer", Kind: "Service"}}
-	registry, err := program.NewRegistry([]program.Diagnoser{candidateProgram{
-		spec: program.ProgramSpec{ID: "relationships", Params: params},
-		run: func(context.Context, program.Bindings) program.Verdict {
-			return program.Verdict{Result: program.NoMatch}
-		},
-	}}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	view := &sdktest.ReplayReadView{Snapshot: snapshot}
-	for _, affected := range [][]sdk.ObjectRef{nil, {{Kind: "Service", Namespace: "app", Name: "c"}}} {
-		expected := map[string]bool{}
-		for _, from := range snapshot.Services() {
-			for _, to := range snapshot.Services() {
-				if from.Name == to.Name {
-					continue
-				}
-				for _, peer := range append([]corev1.Service{{}}, snapshot.Services()...) {
-					if peer.Name == from.Name || peer.Name == to.Name {
-						continue
-					}
-					binding := program.Bindings{Objects: program.ObjectBindings{"from": sdk.ObjectRefFrom("Service", "v1", &from), "to": sdk.ObjectRefFrom("Service", "v1", &to)}}
-					if peer.Name != "" {
-						binding.Objects["peer"] = sdk.ObjectRefFrom("Service", "v1", &peer)
-					}
-					if len(affected) > 0 && from.Name != "c" && to.Name != "c" && peer.Name != "c" {
-						continue
-					}
-					expected[bindingKey(binding)] = true
-				}
-			}
-		}
-		for a := 0; a < 3; a++ {
-			for b := 0; b < 3; b++ {
-				for c := 0; c < 4; c++ {
-					cursor := fmt.Sprintf("%d,%d,%d", a, b, c)
-					started := time.Now()
-					runs := SelectProgramCandidatesWithOptions(context.Background(), registry, view, nil, CandidateOptions{Deadline: time.Second, SweepLimit: 100, SweepCursors: map[string]string{"relationships": cursor}, Affected: affected})
-					if elapsed := time.Since(started); elapsed > 500*time.Millisecond {
-						t.Errorf("cursor %s, affected %v exhausted enumeration budget: %s", cursor, affected, elapsed)
-					}
-					got := map[string]bool{}
-					for _, run := range runs {
-						key := bindingKey(run.Bindings)
-						if got[key] || !expected[key] {
-							t.Fatalf("cursor %s introduced duplicate/invalid assignment: %+v", cursor, run)
-						}
-						got[key] = true
-					}
-					if len(got) != len(expected) {
-						t.Fatalf("cursor %s: got %d assignments, want %d", cursor, len(got), len(expected))
-					}
-				}
-			}
-		}
-	}
-}
 
 type repeatHealthDetector struct{ missingConfigMapDetector }
 
@@ -192,15 +55,7 @@ func TestRunRepeatWithLearnedDetectorErrorAndQueuedPodChanges(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	unavailable := candidateProgram{spec: program.ProgramSpec{ID: "learned-unavailable", Params: []program.ParamSpec{{Name: "service", Kind: "Service", Required: true}}}, run: func(context.Context, program.Bindings) program.Verdict {
-		return program.Verdict{Result: program.Unknown, Evidence: []program.Evidence{{Fact: "source", Observed: "synthetic deployment evidence unavailable"}}}
-	}}
-	detector := program.DetectorFromProgram(unavailable, func(sdk.DetectionContext) []program.Bindings {
-		return []program.Bindings{{Objects: program.ObjectBindings{"service": {Kind: "Service", Namespace: "app", Name: "resource-00"}}}}
-	}, sdk.DetectorSpec{ID: "learned-unavailable", Class: sdk.DetectorClassIncident, Owner: sdk.DetectorOwnerResponder,
-		Watches: []sdk.WatchKind{{APIVersion: "v1", Kind: "Pod"}}, Interval: 20 * time.Millisecond,
-		Persistence: sdk.PersistencePolicy{Firing: 1, Clearing: 1}, Batching: sdk.BatchingPolicy{Severity: sdk.SeverityCritical},
-		OriginatingIncident: "synthetic-first-encounter", OriginatingCommit: accepted})
+	detector := repeatUnavailableDetector{accepted: accepted}
 	client := fake.NewSimpleClientset(objects...)
 	dispatcher := capturingDispatcher{requests: make(chan IncidentRequest, 1)}
 	output, writer := newRestartClassOutput()
@@ -211,7 +66,7 @@ func TestRunRepeatWithLearnedDetectorErrorAndQueuedPodChanges(t *testing.T) {
 		exited <- RunWithOptions(ctx, []sdk.Detector{detector, repeatHealthDetector{}}, RuntimeOptions{
 			Args: []string{"--namespace", "app", "--control-namespace", "app-sdo", "--app-root", repository, "--application", "app", "--source-commit", accepted,
 				"--synthetic-traffic=false", "--state-baseline=false", "--clean-responder-helpers=false", "--lease-duration", "3s", "--maintenance-poll-interval", "5ms",
-				"--diagnosis-deadline", "300ms", "--drift-sweep-interval", "1h", "--firing-telemetry-path", "off", "--lifecycle-telemetry-path", "off"},
+				"--diagnosis-deadline", "300ms", "--firing-telemetry-path", "off", "--lifecycle-telemetry-path", "off"},
 			Client: client, Programs: registry, Dispatcher: dispatcher, Stdout: writer, Stderr: errorWriter,
 		})
 	}()
@@ -267,4 +122,15 @@ func TestRunRepeatWithLearnedDetectorErrorAndQueuedPodChanges(t *testing.T) {
 		state, _, err := store.Load(ctx)
 		return err == nil && state.GetEvaluationIteration() >= 4
 	})
+}
+
+// An independent detector may fail to observe a dependency. That error must
+// remain visible while the scheduler and unrelated detectors keep progressing.
+type repeatUnavailableDetector struct{ accepted string }
+
+func (d repeatUnavailableDetector) Spec() sdk.DetectorSpec {
+	return sdk.DetectorSpec{ID: "learned-unavailable", Class: sdk.DetectorClassIncident, Owner: sdk.DetectorOwnerResponder, Watches: []sdk.WatchKind{{APIVersion: "v1", Kind: "Pod"}}, Interval: 20 * time.Millisecond, Persistence: sdk.PersistencePolicy{Firing: 1, Clearing: 1}, Batching: sdk.BatchingPolicy{Severity: sdk.SeverityCritical}, OriginatingIncident: "synthetic-first-encounter", OriginatingCommit: d.accepted}
+}
+func (repeatUnavailableDetector) Detect(context.Context, sdk.DetectionContext) ([]sdk.Finding, error) {
+	return nil, fmt.Errorf("synthetic deployment evidence unavailable")
 }

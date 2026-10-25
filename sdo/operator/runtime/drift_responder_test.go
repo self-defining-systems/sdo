@@ -59,7 +59,7 @@ func TestRepairedDriftRecursWithoutProgram(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c.ConfigureDrift(DriftControllerConfig{ProgramPersistence: sdk.PersistencePolicy{Firing: 1, Clearing: 1}, Events: cache, View: func(snapshot sdk.DetectionContext) program.ReadView {
+	c.ConfigureDrift(DriftControllerConfig{Events: cache, View: func(snapshot sdk.DetectionContext) program.ReadView {
 		return driftReadView{ReplayReadView: &sdktest.ReplayReadView{Snapshot: snapshot.(sdktest.Snapshot)}, diff: program.Diff{Changed: snapshot.(sdktest.Snapshot).ServiceList[0].Spec.Ports[0].TargetPort.IntVal == 9999}}
 	}})
 	cache.eventHandler(sdk.WatchKind{APIVersion: "v1", Kind: "Service", Namespace: "app"}).OnUpdate(before, broken)
@@ -94,7 +94,7 @@ func TestUnexplainedDriftDuringResponseAttachesToOpenIncident(t *testing.T) {
 	lateClient := fake.NewSimpleClientset()
 	lateStore := latefindings.Store{Client: lateClient, Namespace: "control"}
 	c.SetFiringSink(lateFindingSink{Downstream: sink, Store: lateStore})
-	c.ConfigureDrift(DriftControllerConfig{ProgramPersistence: sdk.PersistencePolicy{Firing: 1, Clearing: 1}, Events: cache, View: func(snapshot sdk.DetectionContext) program.ReadView {
+	c.ConfigureDrift(DriftControllerConfig{Events: cache, View: func(snapshot sdk.DetectionContext) program.ReadView {
 		return driftReadView{ReplayReadView: &sdktest.ReplayReadView{Snapshot: snapshot.(sdktest.Snapshot)}, diff: program.Diff{Changed: true}}
 	}})
 	if err := c.StepEvents(context.Background(), start, nil); err != nil {
@@ -164,7 +164,7 @@ func TestUnexplainedTargetPortOpensLatentIncidentWithDriftCorpus(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(c.routingSweeps.Wait)
-	c.ConfigureDrift(DriftControllerConfig{ProgramPersistence: sdk.PersistencePolicy{Firing: 1, Clearing: 1}, Events: cache, BatchWindow: time.Second, View: func(snapshot sdk.DetectionContext) program.ReadView {
+	c.ConfigureDrift(DriftControllerConfig{Events: cache, BatchWindow: time.Second, View: func(snapshot sdk.DetectionContext) program.ReadView {
 		return driftReadView{ReplayReadView: &sdktest.ReplayReadView{Snapshot: snapshot.(sdktest.Snapshot)}, diff: program.Diff{Changed: true}}
 	}})
 	cache.eventHandler(sdk.WatchKind{APIVersion: "v1", Kind: "Service", Namespace: "app"}).OnUpdate(driftService(8080), broken)
@@ -192,38 +192,6 @@ func TestUnexplainedTargetPortOpensLatentIncidentWithDriftCorpus(t *testing.T) {
 	}
 }
 
-func TestVerifyRetainedLearnedDriftRequiresEveryBinding(t *testing.T) {
-	ref := sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}
-	other := ref
-	other.Name = "peer"
-	first := sdk.Finding{DetectorID: "drift.targetport", RuleID: "targetport", Status: sdk.FindingActive, PrimaryResource: ref, ParameterBindings: map[string]sdk.ObjectRef{"service": ref}}
-	second := first
-	second.PrimaryResource = other
-	second.ParameterBindings = map[string]sdk.ObjectRef{"service": other}
-	for _, result := range []program.Result{program.Match, program.Unknown, program.NoMatch} {
-		t.Run(string(result), func(t *testing.T) {
-			registry, err := program.NewRegistry([]program.Diagnoser{candidateProgram{spec: program.ProgramSpec{ID: "targetport", Params: []program.ParamSpec{{Name: "service", Kind: "Service", Required: true}}}, run: func(_ context.Context, b program.Bindings) program.Verdict {
-				if b.Objects["service"].Name == "api" {
-					return program.Verdict{Result: program.NoMatch}
-				}
-				return program.Verdict{Result: result}
-			}}}, nil)
-			if err != nil {
-				t.Fatal(err)
-			}
-			loop := NewResponderLoop(IncidentRequest{IncidentID: "incident", Findings: []sdk.Finding{first, second}}, registry, staticProvider{snapshot: sdktest.Snapshot{}}, []sdk.Detector{controllerDetector("health", time.Second, sdk.Finding{})}, PlanExecutor{}, 1)
-			loop.ReadView = func(sdk.DetectionContext) program.ReadView { return &sdktest.ReplayReadView{} }
-			verify := loop.Handle(context.Background(), ToolRequest{Command: "verify"})
-			if verify.Healthy != (result == program.NoMatch) {
-				t.Fatalf("binding-specific clearance lost: %+v", verify)
-			}
-			if result != program.NoMatch && (len(verify.Findings) != 1 || verify.Findings[0].PrimaryResource != other) {
-				t.Fatalf("wrong binding remained: %+v", verify.Findings)
-			}
-		})
-	}
-}
-
 type failedSourceDriftView struct{ driftReadView }
 
 func (failedSourceDriftView) DiffAgainstSource(sdk.ObjectRef) (program.Diff, error) {
@@ -244,7 +212,7 @@ func TestUnexplainedDriftRetainsIndependentFieldSetsOnSameObject(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c.ConfigureDrift(DriftControllerConfig{ProgramPersistence: sdk.PersistencePolicy{Firing: 1, Clearing: 1}})
+	c.ConfigureDrift(DriftControllerConfig{})
 	event := sdk.DriftEvent{Ref: sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}, Classification: sdk.DriftUnexplained, Fields: []sdk.DriftField{{Path: "spec.ports[0].targetPort", New: "9999", Source: "8080"}}}
 	c.queueUnexplainedFinding(start, event)
 	event.Fields = []sdk.DriftField{{Path: "spec.selector.app", New: "wrong", Source: "api"}}
@@ -282,7 +250,7 @@ func pendingDriftController(t *testing.T, start time.Time, health []sdk.Finding,
 	}
 	sink := &memorySink{}
 	c.SetFiringSink(sink)
-	c.ConfigureDrift(DriftControllerConfig{ProgramPersistence: sdk.PersistencePolicy{Firing: 1, Clearing: 1}, Events: cache, BatchWindow: 20 * time.Second, View: func(snapshot sdk.DetectionContext) program.ReadView {
+	c.ConfigureDrift(DriftControllerConfig{Events: cache, BatchWindow: 20 * time.Second, View: func(snapshot sdk.DetectionContext) program.ReadView {
 		return driftReadView{ReplayReadView: &sdktest.ReplayReadView{Snapshot: snapshot.(sdktest.Snapshot)}, diff: program.Diff{Changed: *changed}}
 	}})
 	cache.eventHandler(sdk.WatchKind{APIVersion: "v1", Kind: "Service", Namespace: "app"}).OnUpdate(driftService(8080), driftService(9999))

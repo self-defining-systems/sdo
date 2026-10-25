@@ -32,9 +32,9 @@ func TestXV2ValueDefaultsDoNotBecomeObjectCandidates(t *testing.T) {
 		t.Fatal(err)
 	}
 	view := &sdktest.ReplayReadView{Snapshot: sdktest.Snapshot{NamespaceName: "app", ServiceList: []corev1.Service{{ObjectMeta: metav1.ObjectMeta{Name: "one", Namespace: "app"}}}}}
-	runs := SelectProgramCandidates(context.Background(), registry, view, nil, time.Second)
+	runs := SelectProgramCandidates(context.Background(), registry, view, []sdk.Finding{{Status: sdk.FindingActive, PrimaryResource: sdk.ObjectRef{Kind: "Service", Namespace: "app", Name: "one"}}}, time.Second)
 	if len(runs) != 1 || runs[0].Verdict.Result != program.Match || len(runs[0].Bindings.Objects) != 1 {
-		t.Fatalf("scalar default interfered with object sweep: %+v", runs)
+		t.Fatalf("scalar default interfered with finding binding: %+v", runs)
 	}
 }
 

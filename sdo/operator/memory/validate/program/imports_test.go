@@ -6,12 +6,12 @@ import (
 	"testing"
 )
 
-func TestDetectorMayImportApplicationPlaybook(t *testing.T) {
+func TestOnlyTestsMayImportApplicationPlaybook(t *testing.T) {
 	for _, tc := range []struct {
 		dir, file string
 		allowed   bool
 	}{
-		{"detectors", "detector.go", true}, {"lib", "matrix_test.go", true},
+		{"detectors", "detector.go", false}, {"lib", "matrix_test.go", true},
 		{"playbooks", "diagnose.go", false}, {"lib", "helper.go", false},
 	} {
 		t.Run(tc.dir+"/"+tc.file, func(t *testing.T) {

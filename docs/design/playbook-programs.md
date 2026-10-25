@@ -267,9 +267,8 @@ rarely needed programs are the long-tail knowledge memory exists to keep.
   diagnoser is an on-demand root-cause check over bound resources.
 - Shared `.sdo/lib` functions hold the logic once, and both kinds of code
   import them.
-- `sdk.DetectorFromProgram(p Diagnoser, locate Locator) sdk.Detector`
-  promotes a precise, snapshot-only diagnoser to an always-on incident
-  detector owned by the responder.
+- Detectors have independent detection entry points. Diagnose runs only when
+  handling a finding, with roles bound from that finding.
 - Health detectors stay symptom-level, owned by the health judge, and
   independent.
 
@@ -281,8 +280,7 @@ rarely needed programs are the long-tail knowledge memory exists to keep.
 
 ## Implementation phases
 
-1. **SDK and validation:** the `sdk/program` types, `DetectorFromProgram`
-   and `Locator`; record-and-replay `ReadView` and the corpus fixture format
+1. **SDK and validation:** the `sdk/program` types and finding bindings; record-and-replay `ReadView` and the corpus fixture format
    in `sdktest`; a module layout that lets detectors and playbook programs
    both import `.sdo/lib`; validator support (import allowlist, binding
    type-check, rename-invariance replay, generalization tests); protobuf

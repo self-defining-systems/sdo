@@ -1,65 +1,10 @@
 package program
 
 import (
-	"context"
-	"encoding/json"
 	"fmt"
-	"strings"
-	"time"
-
 	"sdo.dev/operator/sdk"
+	"time"
 )
-
-type Locator func(sdk.DetectionContext) []Bindings
-
-type programDetector struct {
-	program Diagnoser
-	locate  Locator
-	spec    sdk.DetectorSpec
-}
-
-// DetectorFromProgram promotes a diagnoser to a detector using the same runtime read surface.
-func DetectorFromProgram(p Diagnoser, locate Locator, spec sdk.DetectorSpec) sdk.Detector {
-	if spec.Playbooks == nil {
-		spec.Playbooks = []string{p.Spec().ID}
-	}
-	return programDetector{program: p, locate: locate, spec: spec}
-}
-
-func (d programDetector) Spec() sdk.DetectorSpec { return d.spec }
-
-func (d programDetector) Detect(ctx context.Context, snapshot sdk.DetectionContext) ([]sdk.Finding, error) {
-	findings := make([]sdk.Finding, 0)
-	for _, bindings := range d.locate(snapshot) {
-		view := ReadFrom(snapshot)
-		verdict := RunDiagnose(ctx, d.program, view, bindings, 10*time.Second)
-		if verdict.Result != Match && verdict.Result != NoMatch {
-			bound, _ := json.Marshal(bindings)
-			return nil, fmt.Errorf("detector diagnosis unavailable: program %q, bindings %s, result %s, question %q, evidence %v", d.program.Spec().ID, bound, verdict.Result, verdict.Question, verdict.Evidence)
-		}
-		if verdict.Result != Match {
-			continue
-		}
-		var primary sdk.ObjectRef
-		for _, param := range d.program.Spec().Params {
-			if param.Required && param.ValueKind == "" {
-				primary = bindings.Objects[param.Name]
-				break
-			}
-		}
-		parts := make([]string, 0, len(verdict.Evidence))
-		for _, evidence := range verdict.Evidence {
-			parts = append(parts, fmt.Sprintf("%s %s/%s %s: observed %s; expected %s", evidence.Resource.Kind, evidence.Resource.Namespace, evidence.Resource.Name, evidence.Fact, evidence.Observed, evidence.Expected))
-		}
-		findings = append(findings, sdk.Finding{
-			DetectorID: d.spec.ID, RuleID: d.spec.ID, Status: sdk.FindingActive,
-			Severity: d.spec.Batching.Severity, Summary: d.program.Spec().ID,
-			Evidence: strings.Join(parts, "; "), PrimaryResource: primary,
-			Playbooks: append([]string(nil), d.spec.Playbooks...), ParameterBindings: bindings.Objects,
-		})
-	}
-	return findings, nil
-}
 
 type snapshotReadView struct {
 	sdk.DetectionContext
