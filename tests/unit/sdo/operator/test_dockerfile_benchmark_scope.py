@@ -54,6 +54,8 @@ SCRIPTED_PROGRAM_FILES = {
     "benchmarks/sregym/fastloop/scripted_program/README.md",
     "benchmarks/sregym/fastloop/scripted_program/diagnose.go",
     "benchmarks/sregym/fastloop/scripted_program/mitigate.go",
+    "benchmarks/sregym/fastloop/scripted_program/detector.go.tmpl",
+    "benchmarks/sregym/fastloop/scripted_program/manifest.yaml.tmpl",
     "benchmarks/sregym/fastloop/scripted_networkpolicy_program/README.md",
     "benchmarks/sregym/fastloop/scripted_networkpolicy_program/diagnose.go",
 }
@@ -195,6 +197,8 @@ def test_scripted_test_wrapper_adds_only_the_scripted_codex_and_nothing_from_exp
         "benchmarks/sregym/fastloop/scripted_program/README.md",
         "benchmarks/sregym/fastloop/scripted_program/diagnose.go",
         "benchmarks/sregym/fastloop/scripted_program/mitigate.go",
+        "benchmarks/sregym/fastloop/scripted_program/detector.go.tmpl",
+        "benchmarks/sregym/fastloop/scripted_program/manifest.yaml.tmpl",
     }
 
 
@@ -260,6 +264,8 @@ def test_scripted_worker_stage_contains_only_entry_points_programs_and_toy_healt
         "benchmarks/sregym/fastloop/scripted_program/README.md",
         "benchmarks/sregym/fastloop/scripted_program/diagnose.go",
         "benchmarks/sregym/fastloop/scripted_program/mitigate.go",
+        "benchmarks/sregym/fastloop/scripted_program/detector.go.tmpl",
+        "benchmarks/sregym/fastloop/scripted_program/manifest.yaml.tmpl",
         "benchmarks/sregym/fastloop/scripted_networkpolicy_program/README.md",
         "benchmarks/sregym/fastloop/scripted_networkpolicy_program/diagnose.go",
     }

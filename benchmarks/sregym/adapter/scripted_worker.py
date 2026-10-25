@@ -687,6 +687,19 @@ class ScriptedReflector:
             ),
             encoding="utf-8",
         )
+        if not policy_pair:
+            # The port fixture must supply detector coverage as well as the
+            # program and recorded replay required by verified repair learning.
+            module = next(
+                line.split()[1]
+                for line in (worktree / ".sdo/diagnostics/go.mod").read_text().splitlines()
+                if line.startswith("module ")
+            )
+            detector = worktree / ".sdo/diagnostics/detectors/incidents" / program_id
+            detector.mkdir(parents=True, exist_ok=True)
+            for name in ("detector.go", "manifest.yaml"):
+                template = (program_source / f"{name}.tmpl").read_text()
+                (detector / name).write_text(template.replace("MODULE", module).replace("INCIDENT", incident))
         _check_reflection(worktree, [program_id])
         return ReflectionTurn(
             summary=f"Compiled {program_id} program from captured repair",

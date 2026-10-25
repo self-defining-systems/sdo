@@ -74,7 +74,7 @@ type IncidentRequest struct {
 	// healthy baseline when the incident opened; nil without a baseline.
 	StateChanges       *StateChanges
 	InitialProgramRuns []ProgramRun
-	FastPathSummary    string
+	PlaybookCoverage   *contracts.PlaybookCoverage
 	MaxResponseLoops   int
 	// PreparedAgentTask is the exact ProtoJSON task persisted before a Job may be created.
 	PreparedAgentTask string
@@ -137,32 +137,29 @@ type RepairActionReceipt struct {
 }
 
 type IncidentResult struct {
-	DriftEvents                     []sdk.DriftEvent
-	SchemaVersion                   string
-	IncidentID                      string
-	Status                          IncidentStatus
-	ConfirmedRootCauses             []ConfirmedRootCause
-	AppliedPlaybooks                []AppliedPlaybook
-	RepairChanges                   []string
-	RepairActions                   []RepairActionReceipt
-	FinalDetectorStates             []DetectorEvaluation
-	ProposedArtifactIDs             []string
-	VerificationEvidence            []VerificationEvidence
-	Usage                           UsageMetrics
-	Timing                          TimingMetrics
-	ResponderSessionID              string
-	LateFindingsPull                *LateFindingsPull
-	Error                           string
-	ProgramToolCalls                []ToolCall
-	ProgramRuns                     []ProgramRun
-	PlanApplications                []RecordedPlanApplication
-	ProgramFailureSignals           []string
-	ResponseLoopsUsed               int
-	ResponseLoopExhausted           bool
-	ResolutionPath                  string
-	FastPathPrograms                []string
-	FastPathSkippedReason           FastPathSkipReason
-	FastPathRelationCoveredFindings []RelationCoveredFinding
+	DriftEvents           []sdk.DriftEvent
+	SchemaVersion         string
+	IncidentID            string
+	Status                IncidentStatus
+	ConfirmedRootCauses   []ConfirmedRootCause
+	AppliedPlaybooks      []AppliedPlaybook
+	RepairChanges         []string
+	RepairActions         []RepairActionReceipt
+	FinalDetectorStates   []DetectorEvaluation
+	ProposedArtifactIDs   []string
+	VerificationEvidence  []VerificationEvidence
+	Usage                 UsageMetrics
+	Timing                TimingMetrics
+	ResponderSessionID    string
+	LateFindingsPull      *LateFindingsPull
+	Error                 string
+	ProgramToolCalls      []ToolCall
+	ProgramRuns           []ProgramRun
+	PlanApplications      []RecordedPlanApplication
+	ProgramFailureSignals []string
+	ResponseLoopsUsed     int
+	ResponseLoopExhausted bool
+	ResolutionPath        string
 }
 
 // LateFindingsPull is a worker's claim that it consumed a controller-authored

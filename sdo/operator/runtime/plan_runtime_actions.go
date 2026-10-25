@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -26,7 +27,7 @@ type planPodDeleter interface {
 func hasRuntimeEffects(plan program.Plan) bool {
 	for _, a := range plan.Actions {
 		switch a.(type) {
-		case program.Exec, *program.Exec, program.DeletePod, *program.DeletePod:
+		case program.EnsureDatabaseUser, *program.EnsureDatabaseUser, program.Exec, *program.Exec, program.DeletePod, *program.DeletePod:
 			return true
 		}
 	}
@@ -34,6 +35,10 @@ func hasRuntimeEffects(plan program.Plan) bool {
 }
 func concreteRuntimeAction(a program.Action) program.Action {
 	switch p := a.(type) {
+	case *program.EnsureDatabaseUser:
+		if p != nil {
+			return *p
+		}
 	case *program.Exec:
 		if p != nil {
 			return *p
@@ -82,8 +87,10 @@ func (e PlanExecutor) applyRuntimePlan(ctx context.Context, incident IncidentReq
 		uid     types.UID
 		rv      string
 		command []string
+		users   []program.DatabaseUser
 	}
 	items := make([]prepared, len(plan.Actions))
+	projectedCatalogs := map[string][]program.DatabaseUser{}
 	for i, original := range plan.Actions {
 		a := concreteRuntimeAction(original)
 		ref, refErr := planActionRef(a)
@@ -94,7 +101,7 @@ func (e PlanExecutor) applyRuntimePlan(ctx context.Context, incident IncidentReq
 			return result, fmt.Errorf("runtime action is outside incident namespace")
 		}
 		switch a := a.(type) {
-		case program.DeletePod, program.Exec:
+		case program.DeletePod, program.Exec, program.EnsureDatabaseUser:
 			object, getErr := e.Client.Get(ctx, ref)
 			if getErr != nil || object == nil || !samePlanRef(object, ref) || object.GetUID() == "" || object.GetResourceVersion() == "" {
 				return result, fmt.Errorf("runtime action requires current named Pod identity")
@@ -102,6 +109,28 @@ func (e PlanExecutor) applyRuntimePlan(ctx context.Context, incident IncidentReq
 			items[i].uid = object.GetUID()
 			items[i].rv = object.GetResourceVersion()
 			switch a := a.(type) {
+			case program.EnsureDatabaseUser:
+				catalog, ok := e.Client.(DatabaseCatalogClient)
+				if !ok {
+					return result, fmt.Errorf("database catalog transport unavailable")
+				}
+				users, readErr := catalog.DatabaseUsers(ctx, a.Target)
+				if readErr != nil {
+					return result, fmt.Errorf("database catalog observation unavailable")
+				}
+				keyTarget := a.Target
+				keyTarget.Auth = nil
+				keyTarget.Shell = ""
+				keyRaw, _ := json.Marshal(keyTarget)
+				key := string(keyRaw)
+				if projected, ok := projectedCatalogs[key]; ok {
+					users = projected
+				}
+				items[i].users, readErr = program.ApplyEnsureDatabaseUser(users, a)
+				projectedCatalogs[key] = items[i].users
+				if readErr != nil {
+					return result, readErr
+				}
 			case program.DeletePod:
 				if _, ok := e.Client.(planPodDeleter); !ok {
 					return result, fmt.Errorf("pod delete client unavailable")
@@ -156,6 +185,40 @@ func (e PlanExecutor) applyRuntimePlan(ctx context.Context, incident IncidentReq
 
 			result.ObjectEffects = append(result.ObjectEffects, PlanObjectEffect{Operation: "delete", Ref: ref, UID: string(items[i].uid), State: "applied", Confirmed: true, Irreversible: true})
 			result.Patches = append(result.Patches, PlanPatch{Ref: ref, Operation: "delete_pod", Irreversible: true})
+		case program.EnsureDatabaseUser:
+			current, getErr := e.Client.Get(ctx, ref)
+			if getErr != nil || current == nil || current.GetUID() != items[i].uid || current.GetResourceVersion() != items[i].rv {
+				return result, fmt.Errorf("database operation refused: Pod identity/version changed")
+			}
+			catalog := e.Client.(DatabaseCatalogClient)
+			// Dispatch may have changed the catalog even if transport fails. Retain
+			// irreversible uncertainty; only successful direct read-back confirms it.
+			result.Patches = append(result.Patches, PlanPatch{Ref: ref, Operation: "ensure_database_user", Irreversible: true})
+			result.ActionsApplied = append(result.ActionsApplied, original)
+			result.Applied = true
+			if effectErr := catalog.EnsureDatabaseUser(ctx, a); effectErr != nil {
+				result.ActionReports[i].Status = "unknown"
+				return result, fmt.Errorf("database operation outcome unknown")
+			}
+			observedPod, podErr := e.Client.Get(ctx, ref)
+			if podErr != nil || observedPod == nil || observedPod.GetUID() != items[i].uid {
+				result.ActionReports[i].Status = "unknown"
+				return result, fmt.Errorf("database operation identity unverified")
+			}
+
+			users, readErr := catalog.DatabaseUsers(ctx, a.Target)
+			actual, normalizeErr := program.NormalizeDatabaseUsers(users)
+			observedPod, podErr = e.Client.Get(ctx, ref)
+			if podErr != nil || observedPod == nil || observedPod.GetUID() != items[i].uid {
+				result.ActionReports[i].Status = "unknown"
+				return result, fmt.Errorf("database operation identity unverified")
+			}
+			if readErr != nil || normalizeErr != nil || !planValuesEqual(actual, items[i].users) {
+				result.ActionReports[i].Status = "unknown"
+				return result, fmt.Errorf("database user change unverified")
+			}
+			result.ActionReports[i].Status = "applied"
+			continue
 		case program.Exec:
 			current, getErr := e.Client.Get(ctx, ref)
 			if getErr != nil || current == nil || current.GetUID() != items[i].uid || current.GetResourceVersion() != items[i].rv {

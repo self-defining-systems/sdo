@@ -14,6 +14,7 @@ from libs.agent_cli.structured import AGENT_PROVIDERS, StructuredTurnError, run_
 from sdo.agents.prompt_templates import RenderedPrompt, named_prompt, render_prompt
 from sdo.agents.provider import MODEL_ENV, resolve_agent
 from sdo.agents.responder import recorded_actions
+from sdo.agents.responder.continuation import continuation_prompt
 from sdo.agents.responder.credentials import SKILLS_ROOT
 from sdo.agents.responder.reflection import INCIDENT_REASONING_EFFORT
 from sdo.agents.responder.result_output import parse_incident_result
@@ -93,7 +94,10 @@ def execute_incident(
     if continuation:
         if recovery is None or resume_session_id is None:
             raise ResponderExecutionError("controller continuation requires the existing provider session")
-        prompt = "Controller independent verification of your previous response:\n" + continuation
+        try:
+            prompt = continuation_prompt(continuation)
+        except ValueError as exc:
+            raise ResponderExecutionError(f"invalid controller continuation: {exc}") from exc
     corrected_branch = False
     while True:
         try:
@@ -162,9 +166,6 @@ _MODEL_OMITS: dict[str, tuple[str, ...]] = {
         "response_loop_exhausted",
         "program_failure_signals",
         "resolution_path",
-        "fast_path_programs",
-        "fast_path_skipped_reason",
-        "fast_path_relation_covered_findings",
     ),
     "sdodev.contracts.v1alpha1.AppliedPlaybook": ("parameter_bindings", "script_names"),
     "sdodev.contracts.v1alpha1.DriftEvent": (

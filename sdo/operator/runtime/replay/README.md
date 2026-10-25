@@ -23,3 +23,10 @@ Effects prefixed `real:` identify production executor writes through the fake AP
 Program statuses: `replayed`, `negative`, `failed`, `refused`. Independent detector rows use `program_id: detector:<id>` and `detected` or `negative` when correct. Exit 0 means all checks pass (overlap allowed), 1 means failures/refusals/false positives/false negatives, and 2 means setup or build error. `-repeat 50` measures repeated replay after one build; distinguish repeated fixture execution from distinct fixture coverage.
 
 Go callers can use `Check`, `Matrix`, `LoadCases`, and `Run`. The SDK cannot import the nested runtime module, so SDK-only `sdktest.CheckMitigation` retains its existing compatibility contract. The runtime checker never uses or emits its legacy skipped-effect result. Neither helper grants live program trust or writes operational memory.
+
+MongoDB catalog actions use the production executor against an explicit catalog simulator seeded only by
+successful Open `DatabaseUsers` observations. `EnsureDatabaseUser` projects membership and exact direct
+roles while preserving unrelated users; credentials, auth behavior, password changes and arbitrary Exec
+remain outside simulation. The exact recorded target auth/shell configuration is required. Projected
+catalog observations are available to post-plan diagnoses and linked detectors. `RemoveServicePort`
+uses the ordinary conditional Service patch and direct list verification.

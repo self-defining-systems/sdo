@@ -80,6 +80,8 @@ ControllerObservationFailure = controller_observation_pb2.ControllerObservationF
 ControllerObservation = controller_observation_pb2.ControllerObservation
 
 
+PlaybookCoverage = program_pb2.PlaybookCoverage
+PlaybookMatch = program_pb2.PlaybookMatch
 ProgramSpec = program_pb2.ProgramSpec
 ParamSpec = program_pb2.ParamSpec
 Binding = program_pb2.Binding
@@ -288,6 +290,8 @@ __all__ = [
     "Plan",
     "PlanApplication",
     "ProgramRun",
+    "PlaybookCoverage",
+    "PlaybookMatch",
     "ProgramSpec",
     "MemoryArtifact",
     "MemoryCheckReport",

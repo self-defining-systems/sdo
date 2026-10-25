@@ -59,9 +59,6 @@ def test_incident_schema_is_the_proto_message_minus_declared_omissions() -> None
         "response_loop_exhausted",
         "program_failure_signals",
         "resolution_path",
-        "fast_path_programs",
-        "fast_path_skipped_reason",
-        "fast_path_relation_covered_findings",
     }
 
 

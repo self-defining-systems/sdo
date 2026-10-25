@@ -6,13 +6,14 @@ import (
 	"os"
 	"path/filepath"
 
+	"strings"
+	"testing"
+
 	"sdo.dev/operator/broker"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/internal/testutil"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/validate"
-	"strings"
-	"testing"
 
 	"sdo.dev/operator/sdk/program"
 )
@@ -204,7 +205,7 @@ func testHermeticRepeatBroker(t *testing.T, rejectFirst, boundSession bool) {
 			t.Fatalf("unexpected repeat edit: %s", path)
 		}
 	}
-	if state := ProgramTrustStats([]*contracts.OutcomeRecord{outcome}, 1)[repeatProgram]; !state.Trusted {
+	if state := ProgramTrustStats([]*contracts.OutcomeRecord{outcome})[repeatProgram]; !(state.VerifiedSuccesses > 0 && state.Failures == 0) {
 		t.Fatalf("verified repeat earned no trust: %+v", state)
 	}
 	again, err := native.processReflection(ctx, ledger)

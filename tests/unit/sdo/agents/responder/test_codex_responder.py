@@ -518,13 +518,6 @@ def test_program_prompt_guides_codex_and_claude_sessions() -> None:
     assert '"program_id": "targetport"' in prompt
 
 
-def test_program_prompt_includes_failed_fast_path_handoff() -> None:
-    raw = json.loads(_fixture("incident_request.json"))
-    raw["fast_path_summary"] = "trusted targetport attempted; verification failed; rollback true"
-    prompt = _responder_prompt(from_dict(IncidentRequest, raw))
-    assert raw["fast_path_summary"] in prompt
-
-
 def test_responder_prompt_no_longer_asks_for_scratch_scripts() -> None:
     prompt = _responder_prompt(from_dict(IncidentRequest, json.loads(_fixture("incident_request.json"))))
     assert "parameterized script" not in prompt
@@ -693,7 +686,7 @@ def test_controller_verification_resumes_same_session_with_remaining_budget(monk
 
     from libs.agent_cli.structured import StructuredTurn
 
-    feedback = '{"healthy":false,"attempt":1,"summary":"still unavailable"}'
+    feedback = '{"healthy":false,"attempt":1,"summary":"still unavailable","still_broken":[],"already_done":[]}'
     monkeypatch.setenv("SDO_RESPONSE_CONTINUATION", feedback)
     recovery = SimpleNamespace(
         resume_session_id=lambda: "same-provider-session",
@@ -715,7 +708,8 @@ def test_controller_verification_resumes_same_session_with_remaining_budget(monk
     execute_incident(_request(), provider="codex")
     assert captured["resume_session_id"] == "same-provider-session"
     assert captured["timeout_seconds"] == 43.0
-    assert feedback in captured["prompt"]
+    assert "still unavailable" in captured["prompt"]
+    assert '"still_broken": []' in captured["prompt"]
 
 
 def test_app_drift_defaults_to_verified_accepted_source_restoration() -> None:

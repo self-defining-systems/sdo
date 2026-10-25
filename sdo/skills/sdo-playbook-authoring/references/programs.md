@@ -110,9 +110,9 @@ be reported with a typed SDK gap naming its cause resources, primitive, reason a
 
 Automatic plans require no source-policy file, reviewed-fixture digest, content predicate or credential-delta approval. Explicit FromSource selectors and CreateFromSource read accepted manifests at the incident commit; other repairs may use observed or declared parameter values. DeleteObject does not require source absence. All actions remain within the controller-derived incident namespace, with Kubernetes RBAC and schema checks. Cluster-scoped webhook mutations are outside this scope.
 
-Compilation and repair replay remain mandatory. Direct observation and independent post-apply verification still judge the executed plan. Failed fast-path attempts compensate all reversible writes before responder dispatch; deletes and exec are explicitly irreversible and are never auto-recreated or replayed. UID, conditional-write, lifecycle exclusivity and rollback conflict checks remain correctness constraints.
+Compilation and repair replay remain mandatory. Direct observation and independent post-apply verification still judge the executed plan. A partially failed write batch compensates its reversible writes; deletes and exec are explicitly irreversible and are never auto-recreated or replayed. UID, conditional-write, lifecycle exclusivity and rollback conflict checks remain correctness constraints.
 
-The fast path defaults on and chooses one trusted program/binding by findings covered, then stable program ID/bindings order. Uncovered findings go to the responder after whole-incident verification; failed verification rolls back the attempt. Success credit survives broker-validated revisions; real fast-path failure still revokes trust.
+At incident open, Go sends all matching diagnoses and unexplained findings to the responder. The agent selects mitigations and decides rollback. Verified program counters are information only; failed verification retains completed writes.
 
 Receipts report value provenance (`accepted-source`, `parameter`, `observed`, `incident-namespace`), not an administrator grant. JSON/YAML ConfigMap entry edits preserve unrelated values and numeric precision, including untouched large integers and exponent literals; document serialization may normalize formatting.
 
@@ -126,3 +126,31 @@ unavailable foreign read remains Unknown. They still cannot perform live logs, p
 A missing final `env[name=NAME]` SetField target may insert the accepted EnvVar with the same name, including
 when the env list was omitted. Existing entries must be unique; a different value name or missing parent
 container refuses. This preserves unrelated entries and does not change credential-channel authorization.
+
+## Removing one Service port
+
+Use `RemoveServicePort{Ref: service, Name: observedName, Reason: reason}` to remove exactly one
+unwanted port without restoring a stale source Service. Alternatively select `Port` and optional
+`Protocol` (TCP, UDP or SCTP); name and number are mutually exclusive. Missing and ambiguous entries
+refuse before writing. The last port is protected unless `AllowEmpty` is explicit; API validation still
+applies. The executor uses UID/version-conditional patches, proves the resulting list by direct read,
+and retains the preimage for conflict-checked compensation. Keep a hand-written open/fixed replay case
+showing the removed listener and preservation of other ports and Service fields.
+
+## Database catalogs
+
+`ReadView.DatabaseUsers(DatabaseTarget)` observes nonsecret user names and directly granted roles.
+Targets select `Engine: program.MongoDB`, a bound application Pod, container, database, and optional
+`Shell` (`mongo` default or `mongosh`). Optional `DatabaseAuth` names the authentication database and
+username/password `CredentialRef{Env: name}`. Environment variables may be populated by Secret refs;
+programs never carry credential literals, resolve Secret data, or store passwords or hashes.
+
+`EnsureDatabaseUser{Target, User, Roles, Password: CredentialRef{Env: name}, Reason}` creates a missing
+user with a password resolved inside the container. For an existing user it restores exact direct roles
+and preserves its password. Other users remain unchanged. Local unauthenticated bootstrap requires the
+database's existing policy; the action creates no Kubernetes grants. It is irreversible and never
+re-executed from a durable receipt. Diagnosis must inspect the typed catalog and propagate unavailable
+reads as Unknown. Build replay from recorded open `DatabaseUsers` results; fixed-phase replies never
+prove a repair. The simulator changes only the named user's direct roles/catalog membership and does
+not simulate credentials, arbitrary Exec, authentication policy, connectivity, or server availability.
+Independent live health verification remains required.

@@ -15,7 +15,7 @@ type scalingPolicySnapshot interface {
 	PodDisruptionBudgets() []policyv1.PodDisruptionBudget
 }
 
-func fastPathDirectlyRelated(view sdk.DetectionContext, subject, bound sdk.ObjectRef) bool {
+func coverageDirectlyRelated(view sdk.DetectionContext, subject, bound sdk.ObjectRef) bool {
 	if subject.Namespace == "" || subject.Namespace != bound.Namespace || bound.Name == "" {
 		return false
 	}

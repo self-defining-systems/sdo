@@ -197,7 +197,7 @@ func incidentRequestContract(request IncidentRequest) (*contracts.IncidentReques
 		RepairPolicy: request.RepairPolicy, StateChanges: stateChangesContract(request.StateChanges),
 		MaxResponseLoops: int32(request.MaxResponseLoops),
 		DriftEvents:      driftEventsContract(request.DriftEvents), PreparedAgentTask: request.PreparedAgentTask,
-		FastPathSummary: request.FastPathSummary,
+		PlaybookCoverage: cloneCoverage(request.PlaybookCoverage),
 	}
 	for _, run := range request.InitialProgramRuns {
 		result.InitialProgramRuns = append(result.InitialProgramRuns, programRunContract(run))
@@ -239,10 +239,7 @@ func incidentResultContract(result IncidentResult) (*contracts.IncidentResult, e
 		Timing:               &contracts.TimingMetrics{StartedAt: optionalTimestamp(result.Timing.StartedAt), CompletedAt: optionalTimestamp(result.Timing.CompletedAt)},
 		ResponseLoopsUsed:    int32(result.ResponseLoopsUsed), ResponseLoopExhausted: result.ResponseLoopExhausted,
 		ProgramFailureSignals: append([]string(nil), result.ProgramFailureSignals...),
-		ResolutionPath:        result.ResolutionPath, FastPathPrograms: append([]string(nil), result.FastPathPrograms...), FastPathSkippedReason: string(result.FastPathSkippedReason),
-	}
-	for _, covered := range result.FastPathRelationCoveredFindings {
-		message.FastPathRelationCoveredFindings = append(message.FastPathRelationCoveredFindings, relationCoveredFindingContract(covered))
+		ResolutionPath:        result.ResolutionPath,
 	}
 	for _, call := range result.ProgramToolCalls {
 		message.ProgramToolCalls = append(message.ProgramToolCalls, toolCallContract(call))
@@ -339,10 +336,7 @@ func incidentResultState(message *contracts.IncidentResult) IncidentResult {
 		ResponderSessionID:   message.GetResponderSessionId(), Error: message.GetError(),
 		ResponseLoopsUsed: int(message.GetResponseLoopsUsed()), ResponseLoopExhausted: message.GetResponseLoopExhausted(),
 		ProgramFailureSignals: append([]string(nil), message.GetProgramFailureSignals()...),
-		ResolutionPath:        message.GetResolutionPath(), FastPathPrograms: append([]string(nil), message.GetFastPathPrograms()...), FastPathSkippedReason: FastPathSkipReason(message.GetFastPathSkippedReason()),
-	}
-	for _, covered := range message.GetFastPathRelationCoveredFindings() {
-		result.FastPathRelationCoveredFindings = append(result.FastPathRelationCoveredFindings, relationCoveredFindingState(covered))
+		ResolutionPath:        message.GetResolutionPath(),
 	}
 	for _, call := range message.GetProgramToolCalls() {
 		result.ProgramToolCalls = append(result.ProgramToolCalls, toolCallState(call))
@@ -511,7 +505,7 @@ func incidentRequestState(message *contracts.IncidentRequest) *IncidentRequest {
 		RepositoryWorktree: message.GetRepositoryWorktree(), RepositoryBaseCommit: message.GetRepositoryBaseCommit(),
 		ResponseDeadline: controllerTime(message.GetResponseDeadline()), CancellationToken: message.GetCancellationToken(),
 		RepairPolicy: message.GetRepairPolicy(), StateChanges: stateChangesState(message.GetStateChanges()),
-		DriftEvents: driftEventsState(message.GetDriftEvents()), FastPathSummary: message.GetFastPathSummary(), MaxResponseLoops: int(message.GetMaxResponseLoops()), PreparedAgentTask: message.GetPreparedAgentTask(),
+		DriftEvents: driftEventsState(message.GetDriftEvents()), PlaybookCoverage: cloneCoverage(message.GetPlaybookCoverage()), MaxResponseLoops: int(message.GetMaxResponseLoops()), PreparedAgentTask: message.GetPreparedAgentTask(),
 	}
 	for _, run := range message.GetInitialProgramRuns() {
 		result.InitialProgramRuns = append(result.InitialProgramRuns, programRunState(run))

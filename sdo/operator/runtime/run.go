@@ -183,13 +183,10 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		"maximum wait for independent health detectors to clear after a response; the incident then closes as failed",
 	)
 	maxResponseLoops := flags.Int("max-response-loops", DefaultMaxResponseLoops, "maximum sdo apply batches per incident")
-	programFastPath := flags.Bool("program-fast-path", true, "allow trusted programs to resolve an incident without a responder")
-	programTrustThreshold := flags.Int("program-trust-threshold", 1, "verified successes required to trust a program")
 	diagnosisDeadline := flags.Duration("diagnosis-deadline", DefaultDiagnosisDeadline, "shared deadline for candidate diagnosis")
 	driftSweepInterval := flags.Duration("drift-sweep-interval", DefaultDriftSweepInterval, "periodic full program sweep interval")
 	programMinDuration := flags.Duration("program-min-duration", DefaultProgramMinDuration, "minimum sustained duration for learned-program firing and clearing")
 	driftBatchWindow := flags.Duration("drift-batch-window", 20*time.Second, "batch window for unexplained drift")
-	diagnosisSettleDelay := flags.Duration("diagnosis-settle-delay", DefaultDiagnosisSettleDelay, "settle delay before a trusted-program fast-path attempt")
 	repairPolicy := flags.String("repair-policy", "recorded-actions", "repair evidence policy: commit or recorded-actions")
 	leaseName := flags.String("lease-name", "sdo-controller", "leader-election Lease name")
 	leaseDuration := flags.Duration("lease-duration", 60*time.Second, "leader-election Lease duration")
@@ -247,7 +244,6 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		return err
 	}
 	detectors = scaleDetectors(detectors, timeScale)
-	*diagnosisSettleDelay = scaledDuration(*diagnosisSettleDelay, timeScale)
 	*verificationTimeout = scaledDuration(*verificationTimeout, timeScale)
 	if options.NativeBroker != nil && *forceReflection {
 		options.NativeBroker.ForceReflection = true
@@ -255,8 +251,8 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	if *programMinDuration < 0 {
 		return errors.New("program minimum duration must be nonnegative")
 	}
-	if *maxResponseLoops < 1 || *diagnosisDeadline <= 0 || *driftSweepInterval <= 0 || *driftBatchWindow <= 0 || *programTrustThreshold < 1 {
-		return errors.New("response loops, diagnosis deadline, drift sweep and batch windows, and program trust threshold must be positive")
+	if *maxResponseLoops < 1 || *diagnosisDeadline <= 0 || *driftSweepInterval <= 0 || *driftBatchWindow <= 0 {
+		return errors.New("response loops, diagnosis deadline, drift sweep and batch windows must be positive")
 	}
 
 	if *exitAfterClosure && *restartAfterClosure {
@@ -536,7 +532,6 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			CredentialsSecret: *credentialsSecret, PollInterval: time.Second,
 			Environment: jobEnvironment, DispatchEnvironment: ProberEnvironment(responderProberAddress),
 			Catalog: catalog, Outcomes: memory.OpenReader(resolvedRoot), RequireMemorySnapshot: options.NativeBroker != nil,
-			ProgramFastPath: *programFastPath, ProgramTrustThreshold: *programTrustThreshold,
 			LoopFactory: func(request IncidentRequest) *ResponderLoop {
 				loop := NewResponderLoop(request, options.Programs, snapshotProvider, detectors, PlanExecutor{
 					Client: GenericPlanClient{TypedPlanClient: TypedPlanClient{Client: bootstrapProvider.Client, ExecConfig: planExecConfig}, Objects: genericCapture}, Source: planSource,
@@ -545,6 +540,12 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 				}, *maxResponseLoops)
 				if menuEnabled != "0" {
 					loop.MenuConfig = productionResponderMenu()
+				}
+				loop.VerifyClosure = func(ctx context.Context) ToolResponse {
+					if controller == nil {
+						return ToolResponse{Command: "verify", Error: "controller verification is unavailable"}
+					}
+					return controller.responderVerification(ctx, request.IncidentID)
 				}
 				loop.CurrentEvidence = func() *IncidentRequest {
 					if controller == nil {
@@ -555,13 +556,11 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 					return cloneIncidentRequest(controller.currentIncidentRequest)
 				}
 				loop.DiagnosisDeadline = *diagnosisDeadline
-				loop.CorpusReplayPassed = options.NativeBroker != nil
-				loop.DiagnosisSettleDelay = *diagnosisSettleDelay
 				if options.NativeBroker != nil {
 					loop.CorpusSessionRoot = options.NativeBroker.SessionRoot
 				}
 				loop.ReadView = func(snapshot sdk.DetectionContext) program.ReadView {
-					return LiveReadView{DetectionContext: snapshot, Context: ctx, Client: bootstrapProvider.Client, Prober: primitiveProber,
+					return LiveReadView{DetectionContext: snapshot, Context: ctx, Client: bootstrapProvider.Client, DatabaseExecConfig: planExecConfig, Prober: primitiveProber,
 						Source: planSource, SourceCommit: request.SourceCommit, Baseline: request.StateChanges, BaselineSource: stateTracker}
 				}
 				return loop
@@ -570,7 +569,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	}
 	// Detectors and plan verification read through the same capped runtime view.
 	snapshotProvider = ReadSnapshotProvider{Base: snapshotProvider, View: func(snapshot sdk.DetectionContext) program.ReadView {
-		return LiveReadView{DetectionContext: snapshot, Context: ctx, Client: bootstrapProvider.Client, Prober: primitiveProber, Source: planSource, SourceCommit: resolvedSourceCommit, SourceRevision: func() string {
+		return LiveReadView{DetectionContext: snapshot, Context: ctx, Client: bootstrapProvider.Client, DatabaseExecConfig: planExecConfig, Prober: primitiveProber, Source: planSource, SourceCommit: resolvedSourceCommit, SourceRevision: func() string {
 			if controller != nil {
 				return controller.CurrentAcceptedCommit()
 			}
@@ -604,7 +603,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			if cycle, ok := snapshot.(*CycleReadView); ok {
 				return cycle
 			}
-			return NewCycleReadView(LiveReadView{DetectionContext: snapshot, Context: ctx, Client: bootstrapProvider.Client, Prober: primitiveProber,
+			return NewCycleReadView(LiveReadView{DetectionContext: snapshot, Context: ctx, Client: bootstrapProvider.Client, DatabaseExecConfig: planExecConfig, Prober: primitiveProber,
 				Source: planSource, SourceCommit: controller.CurrentAcceptedCommit(), BaselineSource: stateTracker})
 		},
 	})

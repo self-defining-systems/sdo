@@ -19,7 +19,7 @@ func TestAcceptedCorpusUsesAcceptedBaseCommit(t *testing.T) {
 	runGit(t, root, "config", "user.name", "T")
 	runGit(t, root, "config", "user.email", "t@example.com")
 	parityAcceptedProgram(t, root)
-	recordCorpusOutcome(t, root)
+	recordCorpusOutcome(t, root, false)
 	base, err := exec.Command("git", "-C", root, "rev-parse", "HEAD").Output()
 	if err != nil {
 		t.Fatal(err)
@@ -52,8 +52,11 @@ func TestSessionFixtureDoesNotRequireProvisionedCaptureContext(t *testing.T) {
 			runGit(t, root, "config", "user.email", "t@example.com")
 			runGit(t, root, "add", "-A")
 			runGit(t, root, "commit", "-qm", "base")
-			recordCorpusOutcome(t, root)
+			recordCorpusOutcome(t, root, true)
 			parityProgram(t, root)
+			if err := os.CopyFS(filepath.Join(root, ".sdo/diagnostics/detectors/incidents/service-targetport-mismatch"), os.DirFS("../../../tests/fixtures/sdo/service_port_detector")); err != nil {
+				t.Fatal(err)
+			}
 			request := validate.Request{Root: root, Base: "HEAD", Actor: validate.Responder, Phase: validate.ReflectionPhase,
 				Publication: &validate.PublicationContext{BaseCommit: "HEAD", IncidentID: "incident"}, Decision: &contracts.ReflectionDecision{LearningDecision: "updated", PlaybookIds: []string{"service-targetport-mismatch"}},
 				CaptureDirectory: filepath.Join(filepath.Dir(root), "captures"), IncidentID: "incident"}
@@ -90,13 +93,17 @@ func TestSessionFixtureDoesNotRequireProvisionedCaptureContext(t *testing.T) {
 	}
 }
 
-func recordCorpusOutcome(t *testing.T, root string) {
+func recordCorpusOutcome(t *testing.T, root string, verified bool) {
 	t.Helper()
 	repository, err := broker.New(root, t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repository.RecordOutcome(context.Background(), "incident", &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: "incident", Classification: "success"}); err != nil {
+	outcome := &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: "incident", Classification: "success"}
+	if verified {
+		outcome.ConfirmedRootCauses = []*contracts.ConfirmedRootCause{{Summary: "verified service port repair", Resources: []*contracts.ObjectRef{{Kind: "Service", Namespace: "demo", Name: "front"}}}}
+	}
+	if _, err := repository.RecordOutcome(context.Background(), "incident", outcome); err != nil {
 		t.Fatal(err)
 	}
 }

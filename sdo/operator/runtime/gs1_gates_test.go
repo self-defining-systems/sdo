@@ -8,7 +8,6 @@ import (
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
-	"sdo.dev/operator/sdk/sdktest"
 )
 
 // GL1b used a benchmark application name different from the deployed identity.
@@ -45,30 +44,11 @@ func TestGS1DeployedIdentityAndNamespaceScope(t *testing.T) {
 	}
 }
 
-func TestGS1BestMatchDeterministicWithUncoveredFindings(t *testing.T) {
-	findings := []sdk.Finding{{Fingerprint: "one"}, {Fingerprint: "two"}, {Fingerprint: "unexplained", DetectorID: "drift.unexplained"}}
-	run := func(id, fp, name string) ProgramRun {
-		return ProgramRun{ProgramID: id, ProgramRevision: "new-revision", FindingFingerprint: fp, Bindings: program.Bindings{Objects: program.ObjectBindings{"object": {Kind: "Service", Namespace: "app", Name: name}}}, Verdict: program.Verdict{Result: program.Match}}
-	}
-	runs := []ProgramRun{run("z", "one", "a"), run("b", "one", "b"), run("a", "two", "z"), run("a", "one", "z"), run("b", "two", "b"), run("a", "one", "a"), run("a", "two", "a")}
-	trust := map[string]ProgramTrust{}
-	for _, id := range []string{"a", "b", "z"} {
-		trust[id] = ProgramTrust{Trusted: true, VerifiedSuccesses: 1, LastChange: "old-revision"}
-	}
-	for offset := 0; offset < len(runs); offset++ {
-		rotated := append(append([]ProgramRun(nil), runs[offset:]...), runs[:offset]...)
-		selected, _, reason := selectTrustedFastPathRuns(findings, rotated, trust, 1, sdktest.Snapshot{})
-		if reason != "" || len(selected) != 1 || selected[0].ProgramID != "a" || selected[0].Bindings.Objects["object"].Name != "a" {
-			t.Fatalf("order %d: selected=%+v reason=%s", offset, selected, reason)
-		}
-	}
-}
-
 func TestGS1TrustSurvivesProgramRevision(t *testing.T) {
 	first := verifiedTrustOutcome(t, "targetport", "revision-a")
 	next := &contracts.OutcomeRecord{ProgramRuns: []*contracts.ProgramRun{{ProgramId: "targetport", ProgramRevision: "revision-b"}}}
-	state := settledTrustStats([]*contracts.OutcomeRecord{first, next}, 1)["targetport"]
-	if !state.Trusted || state.VerifiedSuccesses != 1 || state.LastChange != "revision-b" {
+	state := settledTrustStats([]*contracts.OutcomeRecord{first, next})["targetport"]
+	if (state.VerifiedSuccesses == 0 || state.Failures != 0) || state.VerifiedSuccesses != 1 || state.LastChange != "revision-b" {
 		t.Fatalf("revision reset trust: %+v", state)
 	}
 }
@@ -110,11 +90,11 @@ func TestGS1LifecycleKindsAndAcceptedSourceDelete(t *testing.T) {
 func TestGS1TrustDefaultAndRealFailure(t *testing.T) {
 	success := verifiedTrustOutcome(t, "targetport", "revision-a")
 	settledTrustStats([]*contracts.OutcomeRecord{success})
-	if state := ProgramTrustStats([]*contracts.OutcomeRecord{success})["targetport"]; !state.Trusted || state.VerifiedSuccesses != 1 {
+	if state := ProgramTrustStats([]*contracts.OutcomeRecord{success})["targetport"]; (state.VerifiedSuccesses == 0 || state.Failures != 0) || state.VerifiedSuccesses != 1 {
 		t.Fatalf("default threshold: %+v", state)
 	}
-	failure := &contracts.OutcomeRecord{ProgramFailureSignals: []string{"fast_path_failure:targetport@revision-a"}}
-	if state := ProgramTrustStats([]*contracts.OutcomeRecord{success, failure})["targetport"]; state.Trusted || state.VerifiedSuccesses != 0 || state.Failures != 1 {
+	failure := &contracts.OutcomeRecord{ProgramFailureSignals: []string{"application_verification_failure:targetport@revision-a"}}
+	if state := ProgramTrustStats([]*contracts.OutcomeRecord{success, failure})["targetport"]; (state.VerifiedSuccesses != 0 && state.Failures == 0) || state.VerifiedSuccesses != 0 || state.Failures != 1 {
 		t.Fatalf("real failure retained trust: %+v", state)
 	}
 }

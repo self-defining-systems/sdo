@@ -37,7 +37,7 @@ func (s sourceImageManifests) Revision(ctx context.Context, ref sdk.ObjectRef, r
 	return s.AcceptedManifest(ctx, revision, ref)
 }
 
-func TestHermeticSourceReconcileLearningAndTrustAtThreeSkipsResponder(t *testing.T) {
+func TestHermeticSourceReconcileLearningExposesVerifiedCounters(t *testing.T) {
 	ctx := context.Background()
 	root := nativeRepository(t)
 	copyFastloopTree(t, "../memory/validate/testdata/good/.sdo", filepath.Join(root, ".sdo"))
@@ -179,8 +179,6 @@ func TestHermeticSourceReconcileLearningAndTrustAtThreeSkipsResponder(t *testing
 		loop.ReadView = func(s sdk.DetectionContext) program.ReadView {
 			return LiveReadView{DetectionContext: s, Source: sourceReader, SourceCommit: request.SourceCommit}
 		}
-		loop.DiagnosisSettleDelay = time.Millisecond
-		loop.CorpusReplayPassed = true
 		return loop
 	}
 	origin := &contracts.OutcomeRecord{IncidentId: "image-origin", Classification: "success", SourceCommit: "before-learning", Timestamps: &contracts.OutcomeTimestamps{CompletedAt: timestamppb.New(time.Unix(1, 0))}}
@@ -191,7 +189,7 @@ func TestHermeticSourceReconcileLearningAndTrustAtThreeSkipsResponder(t *testing
 	request.RepositoryWorktree = root
 	request.SourceCommit = commit
 	request.RepositoryBaseCommit = commit
-	dispatcher := KubernetesJobDispatcher{Client: client, Namespace: "app", Registry: testIncidentRegistry(t, "responder:test"), AgentID: testIncidentAgentID(t), ServiceAccount: "sdo-responder", RepositoryPVC: "repository", RepositoryMountPath: root, ProgramFastPath: true, ProgramTrustThreshold: 3, LoopFactory: makeLoop}
+	dispatcher := KubernetesJobDispatcher{Client: client, Namespace: "app", Registry: testIncidentRegistry(t, "responder:test"), AgentID: testIncidentAgentID(t), ServiceAccount: "sdo-responder", RepositoryPVC: "repository", RepositoryMountPath: root, LoopFactory: makeLoop}
 	for index := 0; index < 3; index++ {
 		dispatcher.Outcomes = priorOutcomeReader{outcomes: outcomes}
 		trust, err := dispatcher.programTrust(ctx, request)
@@ -199,7 +197,7 @@ func TestHermeticSourceReconcileLearningAndTrustAtThreeSkipsResponder(t *testing
 			t.Fatal(err)
 		}
 		state := trust[p.Spec().ID]
-		if state.VerifiedSuccesses != index || state.Trusted {
+		if state.VerifiedSuccesses != index {
 			t.Fatalf("before repeat %d trust %+v", index, state)
 		}
 		snapshot, err := provider.Snapshot(ctx)
@@ -239,67 +237,28 @@ func TestHermeticSourceReconcileLearningAndTrustAtThreeSkipsResponder(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if state := trust[p.Spec().ID]; state.VerifiedSuccesses != 3 || state.Failures != 0 || !state.Trusted {
+	if state := trust[p.Spec().ID]; state.VerifiedSuccesses != 3 || state.Failures != 0 {
 		t.Fatalf("three credited successes: %+v", state)
 	}
-	request.IncidentID = "image-fast-fourth"
-	snapshot, _ := provider.Snapshot(ctx)
+	request.IncidentID = "image-agent-fourth"
+	snapshot, err := provider.Snapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
 	request.Findings, err = (fastloopDetector{}).Detect(ctx, snapshot)
 	if err != nil {
 		t.Fatal(err)
 	}
-	request, err = dispatcher.PrepareDispatch(ctx, request)
+	prepared, err := dispatcher.PrepareDispatch(ctx, request)
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := dispatcher.Dispatch(ctx, request)
-	if err != nil || result.ResolutionPath != "fast_path" || result.Status != IncidentCompleted || result.Usage.GetInputTokens() != 0 || result.Usage.GetOutputTokens() != 0 {
-		t.Fatalf("source fast path: %+v %v", result, err)
+	coverage := prepared.PlaybookCoverage
+	if len(coverage.GetMatches()) != 1 || coverage.Matches[0].VerifiedSuccesses != 3 {
+		t.Fatalf("source repair coverage lost verified counters: %v", coverage)
 	}
-	if len(result.PlanApplications) != 1 || len(result.PlanApplications[0].Result.ActionsApplied) != 1 {
-		t.Fatalf("missing source application: %+v", result.PlanApplications)
+	live, err := client.AppsV1().Deployments("app").Get(ctx, "api", metav1.GetOptions{})
+	if err != nil || live.Spec.Template.Spec.Containers[0].Image != "missing:v1" {
+		t.Fatalf("controller applied before agent: %v %v", live, err)
 	}
-	if _, ok := result.PlanApplications[0].Result.ActionsApplied[0].(program.ReconcileFromSource); !ok {
-		t.Fatalf("wrong action %T", result.PlanApplications[0].Result.ActionsApplied[0])
-	}
-	jobs, err := client.BatchV1().Jobs("app").List(ctx, metav1.ListOptions{})
-	if err != nil || len(jobs.Items) != 0 {
-		t.Fatalf("responder dispatched: %+v %v", jobs, err)
-	}
-	repaired, err := client.AppsV1().Deployments("app").Get(ctx, "api", metav1.GetOptions{})
-	if err != nil || repaired.Spec.Template.Spec.Containers[0].Image != "good:v1" {
-		t.Fatalf("image not reconciled: %+v %v", repaired, err)
-	}
-
-	request.IncidentID = "live-failure"
-	deployment.Spec.Template.Spec.Containers[0].Image = "missing:v1"
-	if _, err := client.AppsV1().Deployments("app").Update(ctx, deployment, metav1.UpdateOptions{}); err != nil {
-		t.Fatal(err)
-	}
-	failedLoop := makeLoop(request)
-	failedLoop.Trust = trust
-	failedLoop.Executor.Verifier = planFakeVerifier{passed: false}
-	failedAttempt := failedLoop.TryTrustedFastPath(ctx, 3)
-	if !failedAttempt.Attempted || failedAttempt.Resolved || !failedAttempt.RolledBack {
-		t.Fatalf("live failure did not roll back: %+v", failedAttempt)
-	}
-	failure := equivalentRepairOutcome(t, failedLoop)
-	failure.Classification = "failure"
-	failure.ProgramFailureSignals = failedLoop.FailureSignals()
-	failure.Timestamps = &contracts.OutcomeTimestamps{CompletedAt: timestamppb.New(time.Now().Add(time.Hour))}
-	dispatcher.Outcomes = priorOutcomeReader{outcomes: append(outcomes, memory.Outcome{IncidentID: failure.IncidentId, Record: failure})}
-	blocked, err := dispatcher.programTrust(ctx, request)
-	if err != nil {
-		t.Fatal(err)
-	}
-	state := blocked[p.Spec().ID]
-	if state.Trusted || state.Failures != 1 || state.VerifiedSuccesses != 0 {
-		t.Fatalf("live failure did not block trust: %+v", state)
-	}
-	blockedLoop := makeLoop(request)
-	blockedLoop.Trust = blocked
-	if attempt := blockedLoop.TryTrustedFastPath(ctx, 3); attempt.Attempted || attempt.SkippedReason != FastPathSkipUntrustedProgram {
-		t.Fatalf("failed revision used fast path: %+v", attempt)
-	}
-	t.Log("unreplayable plan accepted without origin credit; three live verified equivalent responder repairs => 3 successes, 0 failures; fourth image fault: ReconcileFromSource applied, independent health clear, zero responder Jobs/tokens")
 }

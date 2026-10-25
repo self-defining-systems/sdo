@@ -1416,14 +1416,12 @@ type BrokerLedger struct {
 	ReflectionRejections []*ProposalRejection `protobuf:"bytes,15,rep,name=reflection_rejections,json=reflectionRejections,proto3" json:"reflection_rejections,omitempty"`
 	// True once the retry bound is spent: the closure completes without a
 	// reflection commit and the last rejection is the terminal record.
-	ReflectionRejected              bool                              `protobuf:"varint,16,opt,name=reflection_rejected,json=reflectionRejected,proto3" json:"reflection_rejected,omitempty"`
-	ReflectionSkippedReason         string                            `protobuf:"bytes,17,opt,name=reflection_skipped_reason,json=reflectionSkippedReason,proto3" json:"reflection_skipped_reason,omitempty"`
-	ClosurePhaseTimestamps          map[string]*timestamppb.Timestamp `protobuf:"bytes,18,rep,name=closure_phase_timestamps,json=closurePhaseTimestamps,proto3" json:"closure_phase_timestamps,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	FastPathSkippedReason           string                            `protobuf:"bytes,19,opt,name=fast_path_skipped_reason,json=fastPathSkippedReason,proto3" json:"fast_path_skipped_reason,omitempty"`
-	FastPathRelationCoveredFindings []*RelationCoveredFinding         `protobuf:"bytes,20,rep,name=fast_path_relation_covered_findings,json=fastPathRelationCoveredFindings,proto3" json:"fast_path_relation_covered_findings,omitempty"`
-	ReflectionPhase                 ReflectionPhase                   `protobuf:"varint,21,opt,name=reflection_phase,json=reflectionPhase,proto3,enum=sdodev.contracts.v1alpha1.ReflectionPhase" json:"reflection_phase,omitempty"`
-	ReflectionWorkspace             *ProposalWorkspace                `protobuf:"bytes,22,opt,name=reflection_workspace,json=reflectionWorkspace,proto3" json:"reflection_workspace,omitempty"`
-	ReflectionPaths                 []string                          `protobuf:"bytes,23,rep,name=reflection_paths,json=reflectionPaths,proto3" json:"reflection_paths,omitempty"`
+	ReflectionRejected      bool                              `protobuf:"varint,16,opt,name=reflection_rejected,json=reflectionRejected,proto3" json:"reflection_rejected,omitempty"`
+	ReflectionSkippedReason string                            `protobuf:"bytes,17,opt,name=reflection_skipped_reason,json=reflectionSkippedReason,proto3" json:"reflection_skipped_reason,omitempty"`
+	ClosurePhaseTimestamps  map[string]*timestamppb.Timestamp `protobuf:"bytes,18,rep,name=closure_phase_timestamps,json=closurePhaseTimestamps,proto3" json:"closure_phase_timestamps,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	ReflectionPhase         ReflectionPhase                   `protobuf:"varint,21,opt,name=reflection_phase,json=reflectionPhase,proto3,enum=sdodev.contracts.v1alpha1.ReflectionPhase" json:"reflection_phase,omitempty"`
+	ReflectionWorkspace     *ProposalWorkspace                `protobuf:"bytes,22,opt,name=reflection_workspace,json=reflectionWorkspace,proto3" json:"reflection_workspace,omitempty"`
+	ReflectionPaths         []string                          `protobuf:"bytes,23,rep,name=reflection_paths,json=reflectionPaths,proto3" json:"reflection_paths,omitempty"`
 	// Completed decisions survive rejection/reset of a proposal checkout.
 	ReflectionResults    []*ReflectionDecision  `protobuf:"bytes,24,rep,name=reflection_results,json=reflectionResults,proto3" json:"reflection_results,omitempty"`
 	ReflectionMaxRetries uint32                 `protobuf:"varint,25,opt,name=reflection_max_retries,json=reflectionMaxRetries,proto3" json:"reflection_max_retries,omitempty"`
@@ -1590,20 +1588,6 @@ func (x *BrokerLedger) GetClosurePhaseTimestamps() map[string]*timestamppb.Times
 	return nil
 }
 
-func (x *BrokerLedger) GetFastPathSkippedReason() string {
-	if x != nil {
-		return x.FastPathSkippedReason
-	}
-	return ""
-}
-
-func (x *BrokerLedger) GetFastPathRelationCoveredFindings() []*RelationCoveredFinding {
-	if x != nil {
-		return x.FastPathRelationCoveredFindings
-	}
-	return nil
-}
-
 func (x *BrokerLedger) GetReflectionPhase() ReflectionPhase {
 	if x != nil {
 		return x.ReflectionPhase
@@ -1758,7 +1742,7 @@ var File_sdodev_contracts_v1alpha1_controller_state_proto protoreflect.FileDescr
 
 const file_sdodev_contracts_v1alpha1_controller_state_proto_rawDesc = "" +
 	"\n" +
-	"0sdodev/contracts/v1alpha1/controller_state.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a&sdodev/contracts/v1alpha1/memory.proto\x1a(sdodev/contracts/v1alpha1/messages.proto\x1a'sdodev/contracts/v1alpha1/outcome.proto\x1a&sdodev/contracts/v1alpha1/worker.proto\x1a'sdodev/contracts/v1alpha1/program.proto\x1a/sdodev/contracts/v1alpha1/mitigation_menu.proto\"\xf0\x03\n" +
+	"0sdodev/contracts/v1alpha1/controller_state.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a&sdodev/contracts/v1alpha1/memory.proto\x1a(sdodev/contracts/v1alpha1/messages.proto\x1a'sdodev/contracts/v1alpha1/outcome.proto\x1a&sdodev/contracts/v1alpha1/worker.proto\x1a/sdodev/contracts/v1alpha1/mitigation_menu.proto\"\xf0\x03\n" +
 	"\fFindingState\x12\x1f\n" +
 	"\vdetector_id\x18\x01 \x01(\tR\n" +
 	"detectorId\x12<\n" +
@@ -1892,7 +1876,7 @@ const file_sdodev_contracts_v1alpha1_controller_state_proto_rawDesc = "" +
 	"\x1dobserved_detector_fingerprint\x18\x04 \x01(\tR\x1bobservedDetectorFingerprint\x12\x18\n" +
 	"\asuccess\x18\x05 \x01(\bR\asuccess\x12;\n" +
 	"\vverified_at\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
-	"verifiedAt\"\xa4\x12\n" +
+	"verifiedAt\"\xf6\x10\n" +
 	"\fBrokerLedger\x12\x1f\n" +
 	"\vincident_id\x18\x01 \x01(\tR\n" +
 	"incidentId\x12D\n" +
@@ -1913,9 +1897,7 @@ const file_sdodev_contracts_v1alpha1_controller_state_proto_rawDesc = "" +
 	"\x15reflection_rejections\x18\x0f \x03(\v2,.sdodev.contracts.v1alpha1.ProposalRejectionR\x14reflectionRejections\x12/\n" +
 	"\x13reflection_rejected\x18\x10 \x01(\bR\x12reflectionRejected\x12:\n" +
 	"\x19reflection_skipped_reason\x18\x11 \x01(\tR\x17reflectionSkippedReason\x12}\n" +
-	"\x18closure_phase_timestamps\x18\x12 \x03(\v2C.sdodev.contracts.v1alpha1.BrokerLedger.ClosurePhaseTimestampsEntryR\x16closurePhaseTimestamps\x127\n" +
-	"\x18fast_path_skipped_reason\x18\x13 \x01(\tR\x15fastPathSkippedReason\x12\x7f\n" +
-	"#fast_path_relation_covered_findings\x18\x14 \x03(\v21.sdodev.contracts.v1alpha1.RelationCoveredFindingR\x1ffastPathRelationCoveredFindings\x12_\n" +
+	"\x18closure_phase_timestamps\x18\x12 \x03(\v2C.sdodev.contracts.v1alpha1.BrokerLedger.ClosurePhaseTimestampsEntryR\x16closurePhaseTimestamps\x12_\n" +
 	"\x10reflection_phase\x18\x15 \x01(\x0e2*.sdodev.contracts.v1alpha1.ReflectionPhaseB\b\xbaH\x05\x82\x01\x02\x10\x01R\x0freflectionPhase\x12_\n" +
 	"\x14reflection_workspace\x18\x16 \x01(\v2,.sdodev.contracts.v1alpha1.ProposalWorkspaceR\x13reflectionWorkspace\x12)\n" +
 	"\x10reflection_paths\x18\x17 \x03(\tR\x0freflectionPaths\x12\\\n" +
@@ -1927,7 +1909,7 @@ const file_sdodev_contracts_v1alpha1_controller_state_proto_rawDesc = "" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x120\n" +
 	"\x05value\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\x05value:\x028\x01:\xf1\x01\xbaH\xed\x01\x1a\xea\x01\n" +
 	"+broker_ledger.terminal_rejection_has_record\x12Va terminal reflection rejection requires a recorded rejection and no reflection commit\x1ac!this.reflection_rejected || (size(this.reflection_rejections) > 0 && this.reflection_commit == '')B \n" +
-	"\x1e_reflection_evidence_gap_count\"\xd7\x02\n" +
+	"\x1e_reflection_evidence_gap_countJ\x04\b\x13\x10\x14J\x04\b\x14\x10\x15\"\xd7\x02\n" +
 	"\x17OwnershipAdoptionStatus\x12#\n" +
 	"\rsource_commit\x18\x01 \x01(\tR\fsourceCommit\x12'\n" +
 	"\x0fadopted_objects\x18\x02 \x01(\x05R\x0eadoptedObjects\x120\n" +
@@ -2023,8 +2005,7 @@ var file_sdodev_contracts_v1alpha1_controller_state_proto_goTypes = []any{
 	(*UsageMetrics)(nil),                 // 34: sdodev.contracts.v1alpha1.UsageMetrics
 	(*MemoryDiagnostic)(nil),             // 35: sdodev.contracts.v1alpha1.MemoryDiagnostic
 	(*OutcomeRecord)(nil),                // 36: sdodev.contracts.v1alpha1.OutcomeRecord
-	(*RelationCoveredFinding)(nil),       // 37: sdodev.contracts.v1alpha1.RelationCoveredFinding
-	(*ProposalWorkspace)(nil),            // 38: sdodev.contracts.v1alpha1.ProposalWorkspace
+	(*ProposalWorkspace)(nil),            // 37: sdodev.contracts.v1alpha1.ProposalWorkspace
 }
 var file_sdodev_contracts_v1alpha1_controller_state_proto_depIdxs = []int32{
 	23, // 0: sdodev.contracts.v1alpha1.FindingState.finding:type_name -> sdodev.contracts.v1alpha1.Finding
@@ -2078,22 +2059,21 @@ var file_sdodev_contracts_v1alpha1_controller_state_proto_depIdxs = []int32{
 	24, // 48: sdodev.contracts.v1alpha1.BrokerLedger.acknowledged_at:type_name -> google.protobuf.Timestamp
 	11, // 49: sdodev.contracts.v1alpha1.BrokerLedger.reflection_rejections:type_name -> sdodev.contracts.v1alpha1.ProposalRejection
 	22, // 50: sdodev.contracts.v1alpha1.BrokerLedger.closure_phase_timestamps:type_name -> sdodev.contracts.v1alpha1.BrokerLedger.ClosurePhaseTimestampsEntry
-	37, // 51: sdodev.contracts.v1alpha1.BrokerLedger.fast_path_relation_covered_findings:type_name -> sdodev.contracts.v1alpha1.RelationCoveredFinding
-	3,  // 52: sdodev.contracts.v1alpha1.BrokerLedger.reflection_phase:type_name -> sdodev.contracts.v1alpha1.ReflectionPhase
-	38, // 53: sdodev.contracts.v1alpha1.BrokerLedger.reflection_workspace:type_name -> sdodev.contracts.v1alpha1.ProposalWorkspace
-	10, // 54: sdodev.contracts.v1alpha1.BrokerLedger.reflection_results:type_name -> sdodev.contracts.v1alpha1.ReflectionDecision
-	24, // 55: sdodev.contracts.v1alpha1.BrokerLedger.reflection_dispatch_at:type_name -> google.protobuf.Timestamp
-	24, // 56: sdodev.contracts.v1alpha1.OwnershipAdoptionStatus.retry_at:type_name -> google.protobuf.Timestamp
-	24, // 57: sdodev.contracts.v1alpha1.BatcherState.DeadlinesEntry.value:type_name -> google.protobuf.Timestamp
-	24, // 58: sdodev.contracts.v1alpha1.ControllerState.SchedulerDeadlinesEntry.value:type_name -> google.protobuf.Timestamp
-	4,  // 59: sdodev.contracts.v1alpha1.ControllerState.FindingStatesEntry.value:type_name -> sdodev.contracts.v1alpha1.FindingState
-	24, // 60: sdodev.contracts.v1alpha1.ControllerState.DetectorClearSinceEntry.value:type_name -> google.protobuf.Timestamp
-	24, // 61: sdodev.contracts.v1alpha1.BrokerLedger.ClosurePhaseTimestampsEntry.value:type_name -> google.protobuf.Timestamp
-	62, // [62:62] is the sub-list for method output_type
-	62, // [62:62] is the sub-list for method input_type
-	62, // [62:62] is the sub-list for extension type_name
-	62, // [62:62] is the sub-list for extension extendee
-	0,  // [0:62] is the sub-list for field type_name
+	3,  // 51: sdodev.contracts.v1alpha1.BrokerLedger.reflection_phase:type_name -> sdodev.contracts.v1alpha1.ReflectionPhase
+	37, // 52: sdodev.contracts.v1alpha1.BrokerLedger.reflection_workspace:type_name -> sdodev.contracts.v1alpha1.ProposalWorkspace
+	10, // 53: sdodev.contracts.v1alpha1.BrokerLedger.reflection_results:type_name -> sdodev.contracts.v1alpha1.ReflectionDecision
+	24, // 54: sdodev.contracts.v1alpha1.BrokerLedger.reflection_dispatch_at:type_name -> google.protobuf.Timestamp
+	24, // 55: sdodev.contracts.v1alpha1.OwnershipAdoptionStatus.retry_at:type_name -> google.protobuf.Timestamp
+	24, // 56: sdodev.contracts.v1alpha1.BatcherState.DeadlinesEntry.value:type_name -> google.protobuf.Timestamp
+	24, // 57: sdodev.contracts.v1alpha1.ControllerState.SchedulerDeadlinesEntry.value:type_name -> google.protobuf.Timestamp
+	4,  // 58: sdodev.contracts.v1alpha1.ControllerState.FindingStatesEntry.value:type_name -> sdodev.contracts.v1alpha1.FindingState
+	24, // 59: sdodev.contracts.v1alpha1.ControllerState.DetectorClearSinceEntry.value:type_name -> google.protobuf.Timestamp
+	24, // 60: sdodev.contracts.v1alpha1.BrokerLedger.ClosurePhaseTimestampsEntry.value:type_name -> google.protobuf.Timestamp
+	61, // [61:61] is the sub-list for method output_type
+	61, // [61:61] is the sub-list for method input_type
+	61, // [61:61] is the sub-list for extension type_name
+	61, // [61:61] is the sub-list for extension extendee
+	0,  // [0:61] is the sub-list for field type_name
 }
 
 func init() { file_sdodev_contracts_v1alpha1_controller_state_proto_init() }
@@ -2105,7 +2085,6 @@ func file_sdodev_contracts_v1alpha1_controller_state_proto_init() {
 	file_sdodev_contracts_v1alpha1_messages_proto_init()
 	file_sdodev_contracts_v1alpha1_outcome_proto_init()
 	file_sdodev_contracts_v1alpha1_worker_proto_init()
-	file_sdodev_contracts_v1alpha1_program_proto_init()
 	file_sdodev_contracts_v1alpha1_mitigation_menu_proto_init()
 	file_sdodev_contracts_v1alpha1_controller_state_proto_msgTypes[11].OneofWrappers = []any{}
 	type x struct{}

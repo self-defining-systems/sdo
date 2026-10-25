@@ -62,6 +62,8 @@ type PlanPreImage struct {
 // PlanApplicationResult contains the PlanApplication fields, generated patches,
 // and the pre-images needed to reverse an applied plan.
 type PlanApplicationResult struct {
+	// MitigationHealth is process-local tool feedback, not closure evidence.
+	MitigationHealth         *MitigationHealth `json:"-"`
 	Plan                     program.Plan
 	Applied                  bool
 	DryRun                   bool
@@ -104,6 +106,12 @@ type PlanExecutor struct {
 // plan is compensated; once every write has landed, a failed rollout wait or
 // health verification is reported and left to the caller.
 func (e PlanExecutor) Apply(ctx context.Context, incident IncidentRequest, plan program.Plan, dryRun bool) (result PlanApplicationResult, err error) {
+	// A mitigation never spends the incident's global health budget. Keep
+	// write/rollout confirmation, then independently sample its own scope once.
+	if verifier := scopedMitigationVerifier(e.Verifier, plan); verifier != nil && !dryRun {
+		e.Verifier = verifier
+		defer func() { result.MitigationHealth = verifier.observation }()
+	}
 
 	for attempt := 0; attempt < maxRestoreAttempts; attempt++ {
 		result, err = e.applyOnce(ctx, incident, plan, dryRun)
@@ -234,7 +242,36 @@ func (e PlanExecutor) applyOnce(ctx context.Context, incident IncidentRequest, p
 	// resourceVersion between our writes.
 	written := make(map[sdk.ObjectRef]bool)
 	for index, patch := range result.Patches {
-		if written[patch.Ref] {
+		if written[patch.Ref] && isRemoveServicePort(plan.Actions[index]) {
+			fresh, readErr := e.Client.Get(ctx, patch.Ref)
+			if readErr != nil || fresh == nil || !samePlanRef(fresh, patch.Ref) || fresh.GetUID() != originals[patch.Ref].GetUID() {
+				return result, errors.New("Service port removal identity changed")
+			}
+			next, prepareErr := e.prepareAction(ctx, incident, plan.Actions[index], fresh)
+			if prepareErr != nil {
+				return result, prepareErr
+			}
+			before, marshalErr := json.Marshal(fresh.Object)
+			if marshalErr != nil {
+				return result, marshalErr
+			}
+			after, marshalErr := json.Marshal(next.Object)
+			if marshalErr != nil {
+				return result, marshalErr
+			}
+			delta, patchErr := jsonpatch.CreateMergePatch(before, after)
+			if patchErr != nil {
+				return result, patchErr
+			}
+			delta, patchErr = conditionalPlanPatch(delta, fresh)
+			if patchErr != nil {
+				return result, patchErr
+			}
+			canonicalizePlanObject(next)
+			result.Patches[index].Before = fresh.DeepCopy()
+			result.Patches[index].After = next
+			result.Patches[index].Patch = delta
+		} else if written[patch.Ref] {
 			var patchErr error
 			result.Patches[index].Patch, patchErr = uidOnlyPlanPatch(patch.Patch, originals[patch.Ref])
 			if patchErr != nil {
@@ -566,6 +603,15 @@ func (e PlanExecutor) prepareAction(ctx context.Context, incident IncidentReques
 		}
 
 		return sourceFields(next, previous, a.Ref)
+	case program.RemoveServicePort:
+		if err := program.ApplyRemoveServicePort(next.Object, a); err != nil {
+			return nil, err
+		}
+	case *program.RemoveServicePort:
+		if a == nil {
+			return nil, errors.New("nil RemoveServicePort")
+		}
+		return e.prepareAction(ctx, incident, *a, current)
 	case program.SetField:
 		value, provenance, err := program.ResolveSetFieldValue(a, e.valueInputs(ctx, incident))
 		if err != nil {
@@ -655,6 +701,18 @@ func sourceFields(current, source *unstructured.Unstructured, ref sdk.ObjectRef)
 
 func planActionRef(action program.Action) (sdk.ObjectRef, error) {
 	switch a := action.(type) {
+	case program.EnsureDatabaseUser:
+		return a.Target.Pod, nil
+	case *program.EnsureDatabaseUser:
+		if a != nil {
+			return a.Target.Pod, nil
+		}
+	case program.RemoveServicePort:
+		return a.Ref, nil
+	case *program.RemoveServicePort:
+		if a != nil {
+			return a.Ref, nil
+		}
 	case program.DeletePod:
 		return a.Ref, nil
 	case program.ScaleWorkload:
@@ -821,6 +879,14 @@ func genericIncidentRef(incident IncidentRequest, action program.Action, ref sdk
 		if known == ref {
 			return true
 		}
+	}
+	return false
+}
+
+func isRemoveServicePort(action program.Action) bool {
+	switch action.(type) {
+	case program.RemoveServicePort, *program.RemoveServicePort:
+		return true
 	}
 	return false
 }

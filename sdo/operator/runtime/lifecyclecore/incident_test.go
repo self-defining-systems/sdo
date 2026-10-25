@@ -90,25 +90,3 @@ func TestIncidentCoreOwnsOutputPayloads(t *testing.T) {
 		t.Fatal("input and effect payloads alias core state")
 	}
 }
-
-func TestIncidentCoreFastPathThreshold(t *testing.T) {
-	for threshold := 1; threshold <= 4; threshold++ {
-		for successes := 0; successes <= 5; successes++ {
-			for failures := 0; failures <= 1; failures++ {
-				for _, trusted := range []bool{false, true} {
-					for _, revision := range []string{"", "old", "accepted"} {
-						credit := FastPathCredit{VerifiedSuccesses: successes, Failures: failures, Trusted: trusted, Revision: revision}
-						got := EligibleFastPath(credit, "accepted", threshold)
-						want := trusted && revision == "accepted" && failures == 0 && successes >= threshold
-						if got != want {
-							t.Fatalf("credit=%+v threshold=%d got=%t", credit, threshold, got)
-						}
-					}
-				}
-			}
-		}
-	}
-	if EligibleFastPath(FastPathCredit{Trusted: true, VerifiedSuccesses: 3, Revision: "accepted"}, "accepted", 0) {
-		t.Fatal("invalid threshold authorized repair")
-	}
-}
