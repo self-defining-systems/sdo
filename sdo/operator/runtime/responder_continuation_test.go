@@ -346,7 +346,7 @@ func TestContinuationFeedbackNamesDriftAndSharesSchema(t *testing.T) {
 	if err := json.Unmarshal(encoded, &payload); err != nil {
 		t.Fatal(err)
 	}
-	for _, key := range []string{"attempt", "healthy", "summary", "findings"} {
+	for _, key := range []string{"attempt", "healthy", "summary", "still_broken", "already_done"} {
 		if _, ok := payload[key]; !ok {
 			t.Fatalf("missing shared feedback field %s: %s", key, encoded)
 		}

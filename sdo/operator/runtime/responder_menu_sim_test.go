@@ -204,7 +204,14 @@ func testSimResponderMenuSchedule(t *testing.T, seed uint64, schedule string) {
 				restart()
 				restoreLoop(saved)
 			}
-			if response.Report.Status == contracts.MitigationReport_STATUS_SUCCESS {
+			if schedule == "health-flip" && round == badRounds {
+				if response.Report.Status != contracts.MitigationReport_STATUS_SUCCESS || !response.TargetedHealthy || response.Healthy {
+					t.Fatalf("scoped repair must succeed while the peer fault remains: %+v", response)
+				}
+			}
+			// A scoped mitigation may succeed while the injected peer is still
+			// broken. The scripted worker must finish the global repair too.
+			if response.Report.Status == contracts.MitigationReport_STATUS_SUCCESS && response.Healthy {
 				break
 			}
 		}
