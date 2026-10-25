@@ -70,7 +70,7 @@ func (v *mitigationHealthVerifier) Verify(ctx context.Context) (bool, error) {
 			continue
 		}
 		observation.Healthy = false
-		if v.targets == nil {
+		if len(v.targets) == 0 {
 			observation.TargetedHealthy = false
 		}
 		for _, target := range v.targets {

@@ -18,7 +18,13 @@ import (
 func TestPendingDetectorStatusPersistsThroughControllerState(t *testing.T) {
 	evaluations := []DetectorEvaluation{{DetectorID: "service-reachability", EvaluatedAt: time.Unix(100, 0), Status: DetectorEvaluationPending}}
 	store := lifecycleio.NewConfigMapStateStore(fake.NewSimpleClientset(), "control", "sdo-controller-state")
-	state := &contracts.ControllerState{Version: RuntimeStateVersion, History: evaluationsContract(evaluations)}
+	request := nativeClosure(IncidentWorkspace{IncidentID: "pending-incident", Worktree: "/proposal", BaseCommit: "base"}).Request
+	request.DetectorHistory = evaluations
+	typedRequest, err := incidentRequestContract(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := &contracts.ControllerState{Version: RuntimeStateVersion, History: evaluationsContract(evaluations), IncidentRequest: typedRequest}
 	if _, err := store.Save(context.Background(), state, ""); err != nil {
 		t.Fatalf("persist unconfirmed detector: %v", err)
 	}
@@ -27,7 +33,7 @@ func TestPendingDetectorStatusPersistsThroughControllerState(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := evaluationsState(restored.History)
-	if len(got) != 1 || got[0].Status != DetectorEvaluationPending {
+	if len(got) != 1 || got[0].Status != DetectorEvaluationPending || restored.IncidentRequest.DetectorHistory[0].Status != "pending" {
 		t.Fatalf("pending changed on restart: %+v", got)
 	}
 }

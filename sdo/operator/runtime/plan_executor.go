@@ -866,9 +866,12 @@ func (v PlanHealthVerifier) Verify(ctx context.Context) (bool, error) {
 
 // Confirmation and findings must come from the same fresh snapshot.
 func (v PlanHealthVerifier) sample(ctx context.Context, detectors []sdk.Detector, sink *planFindingSink) (bool, error) {
+	if v.Provider == nil {
+		return false, errors.New("snapshot provider is required")
+	}
 	snapshot, err := v.Provider.Snapshot(ctx)
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("create detection snapshot: %w", err)
 	}
 	if err := (core.Runner{Detectors: detectors, Provider: core.StaticSnapshotProvider{SnapshotValue: snapshot}, Sink: sink}).RunOnce(ctx); err != nil {
 		return false, err
