@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from sdo.agents.responder.reflection_delta import reflection_delta_values
+import json
+from pathlib import Path
+
+from sdo.agents.responder.reflection_delta import reflection_delta_data, reflection_delta_values
 from sdo.contracts import (
     ConfirmedRootCause,
     IncidentClosure,
@@ -87,3 +90,29 @@ def test_explicit_cause_work_preserves_materialized_questions() -> None:
     )
     assert delta["cause_work"][0]["cause_index"] == 2
     assert delta["cause_work"][0]["items"][0]["reason"] == "program_refinement"
+
+
+def test_small_delta_renders_inline_and_keeps_every_fact() -> None:
+    delta = reflection_delta_values(
+        OutcomeRecord(classification="success"), IncidentClosure(), outcome_commit="accepted"
+    )
+    with reflection_delta_data(delta) as rendered:
+        assert "SDO verdict: success" in rendered
+        assert "accepted" in rendered
+        assert "Receipts not already visible" in rendered
+        assert "$" not in rendered
+        assert len(rendered) <= 4000
+
+
+def test_large_delta_preserves_full_new_evidence_outside_the_checkout() -> None:
+    outcome = OutcomeRecord(classification="failed")
+    outcome.repair_actions.add(action_id="new", details="start\n" + "large evidence 界" * 1000 + "\nend")
+    delta = reflection_delta_values(outcome, IncidentClosure(), outcome_commit="accepted")
+    with reflection_delta_data(delta) as rendered:
+        assert len(rendered) <= 4000
+        assert "SDO verdict: failed" in rendered
+        assert "Read the full facts" in rendered
+        details = Path(rendered.split("Controller facts file: ", 1)[1].splitlines()[0])
+        assert json.loads(details.read_text(encoding="utf-8")) == delta
+        assert details.stat().st_mode & 0o777 == 0o600
+    assert not details.exists()

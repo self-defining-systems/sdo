@@ -57,6 +57,11 @@ def test_incident_workflow_installs_from_the_shipped_skill_root(tmp_path: Path, 
             2000,
         ),
         (
+            "reflection_delta_overflow",
+            {"outcome_commit": "accepted-outcome", "verdict": "failed", "details_file": "/tmp/controller-facts.json"},
+            4000,
+        ),
+        (
             "reflection_delta",
             {
                 "outcome_commit": "accepted-outcome",
