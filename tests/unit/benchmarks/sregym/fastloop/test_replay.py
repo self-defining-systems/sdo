@@ -504,3 +504,32 @@ def test_capture_keeps_current_incident_protojson_strict(tmp_path: Path, payload
     ]
     with pytest.raises(CheckpointError, match="invalid exported"):
         capture_checkpoints(CheckpointStore(tmp_path), 0, "incident-1", tmp_path / "incident", maps)
+
+
+def test_checkpoint_preserves_controller_healthy_reference(tmp_path: Path) -> None:
+    import hashlib
+
+    request, result = _task_and_result()
+    receipt = tmp_path / "receipt"
+    session = hashlib.sha256(b"incident-1").hexdigest()[:32]
+    reference = receipt / "sdo_runtime/sessions" / session / "corpus/healthy"
+    reference.mkdir(parents=True)
+    snapshot = b'{"namespace":"demo","services":[]}'
+    (reference / "healthy.json").write_bytes(snapshot)
+    (reference / "reference").write_bytes(b"accepted-source@clear-observation\n")
+    maps = [{"data": {"agent-task.json": request}}, {"data": {"agent-result.json": result}}]
+    store = CheckpointStore(tmp_path / "store")
+
+    capture_checkpoints(store, 0, "incident-1", receipt, maps)
+
+    assert store.load(0, "responder").captures == {
+        "healthy/healthy.json": snapshot,
+        "healthy/reference": b"accepted-source@clear-observation\n",
+    }
+
+
+@pytest.mark.parametrize("name", ["healthy/../outside", "healthy/extra.json", "nested/healthy.json"])
+def test_checkpoint_rejects_unowned_nested_capture_paths(tmp_path: Path, name: str) -> None:
+    request, result = _task_and_result()
+    with pytest.raises(CheckpointError, match="capture name"):
+        CheckpointStore(tmp_path).save(0, "responder", request=request, result=result, captures={name: b"{}"})

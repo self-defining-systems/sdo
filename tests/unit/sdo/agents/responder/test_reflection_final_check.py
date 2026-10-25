@@ -41,6 +41,43 @@ def accepted_reflection(tmp_path: Path, memory_binary: Path, monkeypatch: pytest
                 "schema_version": 1,
                 "incident_id": "incident",
                 "classification": "success",
+                "findings": [
+                    {
+                        "detector_id": "synthetic-catalog",
+                        "rule_id": "catalog",
+                        "status": "active",
+                        "severity": "warn",
+                        "summary": "catalog fault",
+                        "evidence": "controller observed catalog fault",
+                        "fingerprint": "catalog",
+                        "primary_resource": {
+                            "api_version": "v1",
+                            "kind": "Service",
+                            "namespace": "demo",
+                            "name": "api",
+                        },
+                    }
+                ],
+                "repair_actions": [
+                    {
+                        "action_id": "repair-catalog",
+                        "kind": "kubectl",
+                        "target": "Service/demo/api",
+                        "summary": "restore catalog",
+                        "details": "catalog restored and observed",
+                        "success": True,
+                        "resources": [{"api_version": "v1", "kind": "Service", "namespace": "demo", "name": "api"}],
+                        "started_at": "2026-01-01T00:00:01Z",
+                        "completed_at": "2026-01-01T00:00:02Z",
+                    }
+                ],
+                "detector_history": [
+                    {
+                        "detector_id": "synthetic-catalog",
+                        "status": "clear",
+                        "evaluated_at": "2026-01-01T00:00:03Z",
+                    }
+                ],
                 "confirmed_root_causes": [
                     {
                         "summary": "synthetic catalog repair",
@@ -289,6 +326,9 @@ def test_repeat_chain_is_corrected_in_the_same_reflection_session(
     outcome = next((root / ".sdo/outcomes").glob("*.json"))
     data = json.loads(outcome.read_text())
     data["confirmed_root_causes"][0]["resources"][0]["name"] = "front"
+    data["findings"][0]["primary_resource"]["name"] = "front"
+    data["repair_actions"][0]["resources"][0]["name"] = "front"
+    data["repair_actions"][0]["target"] = "Service/demo/front"
     outcome.write_text(json.dumps(data))
     git("add", "-f", ".sdo")
     git("commit", "-qm", "accepted outcome\n\nSDO-Incident: incident\nSDO-Phase: outcome")
@@ -312,10 +352,21 @@ def test_repeat_chain_is_corrected_in_the_same_reflection_session(
     label = json.loads((corpus / "labels.json").read_text())
     label["provenance"] = {
         "incident_id": "incident",
+        "open_at": "detect",
         "open_sha256": hashlib.sha256((corpus / "open.json").read_bytes()).hexdigest(),
         "fixed_sha256": hashlib.sha256((corpus / "fixed.json").read_bytes()).hexdigest(),
     }
     (corpus / "labels.json").write_text(json.dumps(label))
+    capture = root.parent / "repeat-chain-capture"
+    (capture / "healthy").mkdir(parents=True)
+    (capture / "healthy/healthy.json").write_text(json.dumps(fixed))
+    for target, source in {
+        "open@detect.json": "open.json",
+        "fixed.json": "fixed.json",
+        "open@detect-recordings.json": "recordings.json",
+    }.items():
+        (capture / target).write_bytes((corpus / source).read_bytes())
+    monkeypatch.setenv("SDO_CAPTURED_CORPUS_DIR", str(capture))
     path = root / ".sdo/diagnostics/detectors/incidents/routing-relations/detector.go"
     valid = path.read_text()
     calls = 0

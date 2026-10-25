@@ -24,7 +24,7 @@ MAX_CAPTURE_BYTES = 4 << 20
 MAX_BROKER_BYTES = 1 << 20
 MAX_CAPTURE_BUNDLE_BYTES = 32 << 20
 _DIGEST = re.compile(r"[0-9a-f]{64}\Z")
-_CAPTURE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9@_.-]{0,127}\Z")
+_CAPTURE_NAME = re.compile(r"(?:[A-Za-z0-9][A-Za-z0-9@_.-]{0,127}|healthy/(?:healthy\.json|reference))\Z")
 
 
 class CheckpointError(ValueError):
@@ -165,10 +165,20 @@ def _validate_envelopes(request: str, result: str | None) -> None:
 
 
 def _write(path: Path, data: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     temporary = path.with_name(path.name + ".tmp")
     with os.fdopen(os.open(temporary, os.O_CREAT | os.O_TRUNC | os.O_WRONLY, 0o600), "wb") as stream:
         stream.write(data)
     temporary.replace(path)
+
+
+def materialize_captures(directory: Path, captures: dict[str, bytes]) -> None:
+    """Restore bounded checkpoint names, including the protected healthy reference."""
+    for name, data in captures.items():
+        if not _CAPTURE_NAME.fullmatch(name):
+            raise CheckpointError(f"invalid corpus capture name {name!r}")
+        _bounded(data, MAX_CAPTURE_BYTES, f"corpus capture {name}")
+        _write(directory / name, data)
 
 
 def capture_checkpoints(
@@ -353,7 +363,15 @@ def _referenced_captures(receipt_dir: Path, incident_id: str, result: str | None
     root = receipt_dir / "sdo_runtime" / "sessions" / session / "corpus"
     found: dict[str, bytes] = {}
     total = 0
-    for path in root.glob("*.json"):
+    paths = list(root.glob("*.json"))
+    healthy = root / "healthy"
+    if healthy.is_symlink():
+        raise CheckpointError("invalid controller healthy reference directory")
+    for name in ("healthy.json", "reference"):
+        path = healthy / name
+        if path.exists() or path.is_symlink():
+            paths.append(path)
+    for path in paths:
         if path.is_symlink() or not path.is_file():
             raise CheckpointError(f"invalid corpus capture {path.name}")
         if path.stat().st_size > MAX_CAPTURE_BYTES:
@@ -363,14 +381,16 @@ def _referenced_captures(receipt_dir: Path, incident_id: str, result: str | None
         if total > MAX_CAPTURE_BUNDLE_BYTES:
             raise CheckpointError("corpus capture bundle exceeds its size limit")
         digest = hashlib.sha256(data).hexdigest()
+        name = path.relative_to(root).as_posix()
         if (
-            path.name in {"open@pre-apply.json", "open@settle.json", "open@detect.json", "fixed.json"}
+            name in {"healthy/healthy.json", "healthy/reference"}
+            or path.name in {"open@pre-apply.json", "open@settle.json", "open@detect.json", "fixed.json"}
             or path.name.endswith("-recordings.json")
             or path.name == "recordings.json"
             or digest in digests
         ):
             digests.discard(digest)
-            found[path.name] = data
+            found[name] = data
     if digests:
         raise CheckpointError(f"missing corpus captures referenced by digest: {', '.join(sorted(digests))}")
     return found
@@ -395,8 +415,7 @@ def replay_broker_result(checkpoint: StageCheckpoint, *, source: Path, operator_
             _write(directory / "file_edits.json", encode_file_edits(checkpoint.file_edits))
         capture_dir = directory / "captures"
         capture_dir.mkdir(mode=0o700)
-        for name, data in checkpoint.captures.items():
-            _write(capture_dir / name, data)
+        materialize_captures(capture_dir, checkpoint.captures)
         command = [
             "go",
             "run",
