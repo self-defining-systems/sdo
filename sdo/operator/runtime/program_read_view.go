@@ -43,6 +43,7 @@ type LiveReadView struct {
 	Context            context.Context
 	Client             kubernetes.Interface
 	DatabaseExecConfig *rest.Config
+	ProtectedNamespace string
 	Prober             PrimitiveProber
 	Source             PlanSource
 	SourceCommit       string
@@ -385,6 +386,9 @@ func (v LiveReadView) DiffAgainstBaseline(ref sdk.ObjectRef) (program.Diff, erro
 }
 
 func (v LiveReadView) Object(ref sdk.ObjectRef) (*unstructured.Unstructured, error) {
+	if err := (TypedPlanClient{ProtectedNamespace: v.ProtectedNamespace}).checkPlanNamespace(ref.Namespace); err != nil {
+		return nil, err
+	}
 	// Declared scoped observations carry availability and canonical projection.
 	// A generic reader must not turn that evidence into a missing object.
 	if ref.Namespace != v.Namespace() {

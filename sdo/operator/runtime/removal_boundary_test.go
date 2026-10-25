@@ -3,7 +3,9 @@ package runtime
 import (
 	"context"
 	"fmt"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	kruntime "k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -15,6 +17,7 @@ import (
 	"sdo.dev/operator/core"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
+	"sdo.dev/operator/sdk/sdktest"
 	"sync/atomic"
 	"testing"
 )
@@ -81,4 +84,30 @@ func TestGenericClientCannotReachControlIdentity(t *testing.T) {
 		})
 	}
 
+}
+
+func TestReadViewCannotReachControlIdentity(t *testing.T) {
+	ref := sdk.ObjectRef{APIVersion: "v1", Kind: "Pod", Namespace: "control", Name: "controller"}
+	pod := corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: ref.Name, Namespace: ref.Namespace, UID: "uid"}}
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{}`))
+	}))
+	defer server.Close()
+	client := fake.NewSimpleClientset(&pod)
+	view := LiveReadView{DetectionContext: sdktest.Snapshot{NamespaceName: "app", PodList: []corev1.Pod{pod}}, Client: client, DatabaseExecConfig: &rest.Config{Host: server.URL}, ProtectedNamespace: "control"}
+	if _, err := view.Object(ref); !apierrors.IsForbidden(err) {
+		t.Fatalf("control Pod admitted by diagnosis view: %v", err)
+	}
+	if _, err := view.Observe(program.ExternalOperation{Exec: &program.Command{Pod: ref, Container: "app", Args: []string{"true"}}}); err == nil {
+		t.Fatal("diagnosis can execute with controller identity")
+	}
+	if _, err := view.KubernetesRead(program.KubernetesRequest{Method: "GET", Path: "/api/v1/namespaces/control/pods/controller"}); !apierrors.IsForbidden(err) {
+		t.Fatalf("raw diagnosis can reach controller: %v", err)
+	}
+	if len(client.Actions()) != 0 || requests.Load() != 0 {
+		t.Fatal("diagnosis crossed protected control boundary")
+	}
 }

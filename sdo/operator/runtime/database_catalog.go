@@ -38,7 +38,7 @@ func (v LiveReadView) DatabaseUsers(t program.DatabaseTarget) ([]program.Databas
 	}
 	ctx, cancel := context.WithTimeout(v.context(), 5*time.Second)
 	defer cancel()
-	client := TypedPlanClient{Client: v.Client, ExecConfig: v.DatabaseExecConfig}
+	client := TypedPlanClient{Client: v.Client, ExecConfig: v.DatabaseExecConfig, ProtectedNamespace: v.ProtectedNamespace}
 	current, err := client.Get(ctx, t.Pod)
 	if err != nil || current == nil || current.GetUID() != captured.GetUID() {
 		return nil, fmt.Errorf("database Pod identity differs from snapshot")
