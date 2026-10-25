@@ -179,3 +179,12 @@ def test_nightly_extends_pr_checks_without_hiding_large_response_failure() -> No
     assert "-count=3" in nightly_latency
     assert any(s.get("run") == "bash scripts/test_ci_fuzz.sh 1s" for s in pr["jobs"]["go"]["steps"])
     assert any(s.get("run") == "bash scripts/test_ci_fuzz.sh 30s" for s in nightly["jobs"]["acceptance"]["steps"])
+
+
+def test_independent_smokes_still_execute_after_a_module_test_failure() -> None:
+    config = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
+    steps = config["jobs"]["go"]["steps"]
+    for name in ("Normal-build proxy latency smoke", "Fuzz boundary smoke"):
+        step = next(step for step in steps if step.get("name") == name)
+        assert step.get("if") == "!cancelled()"
+        assert not step.get("continue-on-error", False)

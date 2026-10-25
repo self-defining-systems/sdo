@@ -77,7 +77,7 @@ def test_two_runtime_partitions_preserve_the_gate_selectors() -> None:
 
 @pytest.mark.parametrize("fail_contracts", [False, True])
 def test_all_shards_run_real_discovered_tests_once_and_preserve_failure(
-    tmp_path: Path, monkeypatch, capfd, fail_contracts: bool
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str], fail_contracts: bool
 ) -> None:
     """Exercise the runner against a real compiled Go module, including failure."""
     import json

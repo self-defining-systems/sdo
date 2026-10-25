@@ -64,11 +64,13 @@ jobs:
       # Repeated wall-clock acceptance and timed fuzzing are in nightly.yml.
       # All seed corpora stay in the race suite; active mutation gets a short smoke.
       - name: Normal-build proxy latency smoke
+        if: "!cancelled()"
         env:
           GOMAXPROCS: "2"
         run: go test -p 1 -count=1 -run '^(TestProxyWarmAddedP95|TestLargeResponseWarmAddedP95|TestProjectionTailLatency)$' -v ./kubeproxy ./operatorcli
         working-directory: sdo/operator
       - name: Fuzz boundary smoke
+        if: "!cancelled()"
         run: bash scripts/test_ci_fuzz.sh 1s
       - name: Save shared Go builds even after test failures
         if: always() && steps.go-cache.outputs.cache-hit != 'true'
@@ -270,10 +272,6 @@ jobs:
           export PATH="${HOME}/go/bin:${PATH}"
           bash scripts/check_proto.sh
           (cd sdo/operator/contracts && go build ./...)
-      - name: Warm native CLI and run Python contracts
-        run: |
-          uv run python scripts/operator_test_binary.py
-          bash scripts/test_python.sh
       - name: Select affected images and compute schema identity
         if: steps.resolve.outputs.any_image == 'true'
         id: image-inputs
@@ -336,6 +334,10 @@ jobs:
           fi
 
 
+      - name: Warm native CLI and run Python contracts
+        run: |
+          uv run python scripts/operator_test_binary.py
+          bash scripts/test_python.sh
       - name: Save Python tooling Go builds even after test failures
         if: always() && steps.go-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3

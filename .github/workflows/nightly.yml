@@ -42,6 +42,7 @@ jobs:
         run: go test -p 1 -count=3 -run '^(TestProxyWarmAddedP95|TestLargeResponseWarmAddedP95|TestProjectionTailLatency)$' -v ./kubeproxy ./operatorcli
         working-directory: sdo/operator
       - name: Bounded 30-second fuzz campaigns
+        if: "!cancelled()"
         run: bash scripts/test_ci_fuzz.sh 30s
 
   images:
