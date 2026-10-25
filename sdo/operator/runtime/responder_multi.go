@@ -428,3 +428,7 @@ func (l *ResponderLoop) RefreshPendingMitigations(ctx context.Context) bool {
 	}
 	return len(l.pendingWrites) > 0
 }
+
+// hasPendingMitigationsLocked is consumed by the closure guard while it owns
+// both responder locks. It does no I/O and cannot grant mutation authority.
+func (l *ResponderLoop) hasPendingMitigationsLocked() bool { return len(l.pendingWrites) > 0 }
