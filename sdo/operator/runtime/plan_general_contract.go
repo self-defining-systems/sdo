@@ -18,12 +18,12 @@ func commandState(c *contracts.Command) program.Command {
 func httpProto(h program.HTTPRequest) *contracts.HttpRequest {
 	out := &contracts.HttpRequest{Pod: planRefProto(h.Pod), Container: h.Container, Method: h.Method, Url: h.URL, Headers: h.Headers, Body: h.Body}
 	if h.Bearer != nil {
-		out.Bearer = &contracts.CredentialRef{Env: h.Bearer.Env}
+		out.Bearer = credentialRefProto(*h.Bearer)
 	}
 	if h.HeaderEnv != nil {
 		out.HeaderEnv = map[string]*contracts.CredentialRef{}
 		for name, ref := range h.HeaderEnv {
-			out.HeaderEnv[name] = &contracts.CredentialRef{Env: ref.Env}
+			out.HeaderEnv[name] = credentialRefProto(ref)
 		}
 	}
 
@@ -32,12 +32,12 @@ func httpProto(h program.HTTPRequest) *contracts.HttpRequest {
 func httpState(h *contracts.HttpRequest) program.HTTPRequest {
 	out := program.HTTPRequest{Pod: objectRefState(h.GetPod()), Container: h.GetContainer(), Method: h.GetMethod(), URL: h.GetUrl(), Headers: h.GetHeaders(), Body: h.GetBody()}
 	if h.GetBearer() != nil {
-		out.Bearer = &program.CredentialRef{Env: h.GetBearer().GetEnv()}
+		out.Bearer = credentialRefPointer(h.GetBearer())
 	}
 	if h.GetHeaderEnv() != nil {
 		out.HeaderEnv = map[string]program.CredentialRef{}
 		for name, ref := range h.GetHeaderEnv() {
-			out.HeaderEnv[name] = program.CredentialRef{Env: ref.GetEnv()}
+			out.HeaderEnv[name] = credentialRefState(ref)
 		}
 	}
 
@@ -141,4 +141,9 @@ func generalActionState(action *contracts.Action) (program.Action, error) {
 		return program.RunJob{Object: object, Completion: completion}, err
 	}
 	return nil, fmt.Errorf("unknown general action")
+}
+
+func credentialRefPointer(r *contracts.CredentialRef) *program.CredentialRef {
+	out := credentialRefState(r)
+	return &out
 }

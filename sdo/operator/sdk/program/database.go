@@ -10,10 +10,20 @@ import (
 
 const MongoDB = "mongodb"
 
-// CredentialRef names a container environment variable, possibly populated by a
-// Kubernetes Secret reference. Credential bytes never enter plans or recordings.
+// CredentialRef selects exactly one reference kind. Values are resolved only by
+// the executor and never enter plans or recordings.
 type CredentialRef struct {
-	Env string `json:"env"`
+	Env       string                  `json:"env,omitempty"`
+	ConfigMap *ConfigMapCredentialRef `json:"config_map,omitempty"`
+}
+
+// ConfigMapCredentialRef selects a key in the target Pod namespace. Assignment
+// optionally selects exactly one literal NAME=value line (shell or dotenv).
+// Expansion, command substitution and duplicate assignments are refused.
+type ConfigMapCredentialRef struct {
+	Name       string `json:"name"`
+	Key        string `json:"key"`
+	Assignment string `json:"assignment,omitempty"`
 }
 
 // DatabaseAuth authenticates catalog access inside the selected container.
@@ -48,8 +58,8 @@ type DatabaseUser struct {
 }
 
 // EnsureDatabaseUser creates a missing user or restores its exact direct roles.
-// Password is read inside the container only when creating the user. Existing
-// passwords and all unrelated users are preserved. This effect is irreversible.
+// Password is an executor-resolved reference, used only to create a missing user.
+// Existing passwords and unrelated users are preserved. This effect is irreversible.
 type EnsureDatabaseUser struct {
 	Target   DatabaseTarget
 	User     string
@@ -63,6 +73,16 @@ func (EnsureDatabaseUser) action() {}
 var credentialEnv = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 func (r CredentialRef) Validate() error {
+	if (r.Env != "") == (r.ConfigMap != nil) {
+		return fmt.Errorf("credential requires exactly one env or config_map reference")
+	}
+	if r.ConfigMap != nil {
+		k := r.ConfigMap
+		if k.Name == "" || k.Key == "" || strings.ContainsAny(k.Name+k.Key, "/\\\x00\n\r") || (k.Assignment != "" && !credentialEnv.MatchString(k.Assignment)) {
+			return fmt.Errorf("credential config_map requires a name, key and optional assignment name")
+		}
+		return nil
+	}
 	if !credentialEnv.MatchString(r.Env) {
 		return fmt.Errorf("credential requires an environment variable reference")
 	}

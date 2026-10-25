@@ -72,11 +72,17 @@ func (h HTTPRequest) Validate() error {
 		if name == "" || strings.ContainsAny(name, "\r\n:") {
 			return fmt.Errorf("invalid HTTP header name")
 		}
+		if ref.ConfigMap != nil {
+			return fmt.Errorf("HTTP credentials require env references")
+		}
 		if err := ref.Validate(); err != nil {
 			return err
 		}
 	}
 	if h.Bearer != nil {
+		if h.Bearer.ConfigMap != nil {
+			return fmt.Errorf("HTTP credentials require env references")
+		}
 		return h.Bearer.Validate()
 	}
 	return nil

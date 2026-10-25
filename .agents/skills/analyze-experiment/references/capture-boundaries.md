@@ -131,3 +131,13 @@ evaluations and complete controller-verify evaluations with current finding
 fingerprints, allowing a proven repair to survive an unresolved peer. The final
 health-detector state remains health-only. Missing historical fingerprints remain
 an evidence gap, never fabricated clearance.
+
+## Database credentials and catalog boundaries
+
+Typed database plans retain env or target-namespace ConfigMap key/assignment references only.
+Only the executor resolves ConfigMap contents, through private exec stdin/environment; captured
+ConfigMaps retain key names without values. Raw EnsureDatabaseUser actions capture their measured
+pre-repair DatabaseUsers catalog, so reflection need not invent an observation after a manual repair.
+Within one immutable capture boundary, the first observation of each Pod/container/database catalog
+wins (including unavailable reads); later calls cannot overwrite it with restored state or establish
+an unobserved authentication configuration. Fixed-phase reads remain separate. No Secret data is read.
