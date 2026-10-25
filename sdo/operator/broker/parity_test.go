@@ -596,9 +596,6 @@ func (p Program) Mitigate(ctx context.Context,v program.ReadView,b program.Bindi
 				outcome := &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: "incident", Classification: "success"}
 				if len(paths) > 0 {
 					refs := []*contracts.ObjectRef{{Kind: "Service", Namespace: "demo", Name: "front"}}
-					if test.name == "program replay failure" {
-						refs[0].Name = "peer"
-					}
 					outcome.ConfirmedRootCauses = []*contracts.ConfirmedRootCause{{Summary: "independently verified fixture repair", Resources: refs}}
 					outcome.ReflectionEligibility = &contracts.ReflectionEligibility{Version: 1, Causes: []*contracts.ReflectionCauseWork{{CauseIndex: 0, Resources: refs, Items: []*contracts.ReflectionWorkItem{{ProgramId: "base", Disposition: "covered", Reason: "verified_equivalent_repair", Resources: refs}}}}}
 				}
@@ -640,9 +637,6 @@ func (p Program) Mitigate(ctx context.Context,v program.ReadView,b program.Bindi
 				// Coverage of this synthetic verified cause is intentionally
 				// declined; executable authorization is checked independently.
 				resource := "front"
-				if test.name == "program replay failure" {
-					resource = "peer"
-				}
 				decision.SdkGaps = []*contracts.SdkGap{{FaultClass: "fixture", Primitive: "fixture", Reason: "fixture coverage gap", ScratchScript: "scratch/fixture", Resources: []*contracts.ObjectRef{{Kind: "Service", Namespace: "demo", Name: resource}}}}
 			}
 			if len(paths) == 0 {
