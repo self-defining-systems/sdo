@@ -12,7 +12,14 @@ import (
 	"sdo.dev/operator/operatorcli"
 )
 
+// sourceHash is set by source-bound test builds; ordinary builds leave it empty.
+var sourceHash string
+
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "source-hash" {
+		fmt.Println(sourceHash)
+		return
+	}
 	if len(os.Args) == 2 && os.Args[1] == "observe-controller" {
 		if err := operatorcli.RunControllerObservation(os.Stdin, os.Stdout); err != nil {
 			fmt.Fprintln(os.Stderr, err)
