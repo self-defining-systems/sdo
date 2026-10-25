@@ -541,6 +541,12 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 				if menuEnabled != "0" {
 					loop.MenuConfig = productionResponderMenu()
 				}
+				loop.VerifyClosure = func(ctx context.Context) ToolResponse {
+					if controller == nil {
+						return ToolResponse{Command: "verify", Error: "controller verification is unavailable"}
+					}
+					return controller.responderVerification(ctx, request.IncidentID)
+				}
 				loop.CurrentEvidence = func() *IncidentRequest {
 					if controller == nil {
 						return nil
