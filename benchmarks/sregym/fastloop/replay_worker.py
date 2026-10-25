@@ -346,6 +346,19 @@ def replay_live_worker(
         captures.mkdir()
         for name, data in checkpoint.captures.items():
             (captures / name).write_bytes(data)
+        if stage == "reflection":
+            # Recorded provider streams do not execute their original file writes.
+            # Restore final authored bytes before the worker's mandatory check.
+            if checkpoint.file_edits is None:
+                raise CheckpointError("reflection recording has no direct file edits; record a new dispatch")
+            apply_file_edits(checkout, checkpoint.file_edits)
+            subprocess.run(
+                ["go", "build", "-p", "8", "-o", str(root / "sdo-operator"), "./cmd/sdo-operator"],
+                cwd=operator_root,
+                check=True,
+                capture_output=True,
+                timeout=180,
+            )
         with (
             FakeKubernetesAPIServer(snapshot) as server,
             patch.dict(
@@ -354,6 +367,9 @@ def replay_live_worker(
                     "KUBECONFIG": str(server.write_kubeconfig(root / "kubeconfig")),
                     "KUBERNETES_SERVICE_HOST": "",
                     "SDO_CAPTURED_CORPUS_DIR": str(captures),
+                    "SDO_OPERATOR_ROOT": str(operator_root),
+                    "SDO_HEALTHY_BASELINE": "",
+                    "PATH": f"{root}{os.pathsep}{os.environ['PATH']}",
                 },
             ),
         ):
@@ -382,9 +398,6 @@ def replay_live_worker(
                 raise CheckpointError("reflection worker returned the wrong result type")
             if response.HasField("artifact_proposal"):
                 raise CheckpointError("proposal-only reflection recordings are unsupported; record direct file edits")
-            if checkpoint.file_edits is None:
-                raise CheckpointError("reflection recording has no direct file edits; record a new dispatch")
-            apply_file_edits(checkout, checkpoint.file_edits)
             edits = record_file_edits(checkout, commit)
             verdict = replay_broker_result(
                 StageCheckpoint(checkpoint.request, publisher.payload, captures=checkpoint.captures, file_edits=edits),

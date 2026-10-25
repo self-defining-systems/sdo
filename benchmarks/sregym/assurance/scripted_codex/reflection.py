@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import json
 import re
+import shlex
+import tempfile
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from .faults import PLANS, Facts
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     from .directive import Binding
     from .store import Store
     from .turn import Turn
@@ -92,17 +93,22 @@ def reflect(turn: Turn, binding: Binding, prompt: str, worktree: Path, store: St
     if mode == "invalid_then_learn" and not retry and store.claim(f"{incident_id}:reflection-invalid"):
         readme = worktree / f".sdo/playbooks/{proposal.playbook_id}/README.md"
         readme.write_text("malformed README\n", encoding="utf-8")
-    code, output = turn.run("sdo-operator memory check")
-    if code and mode == "invalid_then_learn":
-        readme = worktree / f".sdo/playbooks/{proposal.playbook_id}/README.md"
-        readme.write_text(proposal.files[f".sdo/playbooks/{proposal.playbook_id}/README.md"], encoding="utf-8")
-        code, output = turn.run("sdo-operator memory check")
-    if code:
-        raise RuntimeError(f"scripted memory check failed ({code}): {output}")
-    return {
+    decision = {
         "summary": f"Encoded {proposal.detector_id} with playbook {proposal.playbook_id}"
         + (" (claimed cause)" if claimed else ""),
         "learning_decision": "updated",
         "no_change_reason": None,
         "proposed_artifact_ids": [proposal.playbook_id],
     }
+    with tempfile.TemporaryDirectory(prefix="sdo-scripted-decision-") as temporary:
+        decision_path = Path(temporary) / "decision.json"
+        decision_path.write_text(json.dumps(decision), encoding="utf-8")
+        check_command = f"sdo-operator memory check --decision {shlex.quote(str(decision_path))}"
+        code, output = turn.run(check_command)
+        if code and mode == "invalid_then_learn":
+            readme = worktree / f".sdo/playbooks/{proposal.playbook_id}/README.md"
+            readme.write_text(proposal.files[f".sdo/playbooks/{proposal.playbook_id}/README.md"], encoding="utf-8")
+            code, output = turn.run(check_command)
+        if code:
+            raise RuntimeError(f"scripted memory check failed ({code}): {output}")
+    return decision

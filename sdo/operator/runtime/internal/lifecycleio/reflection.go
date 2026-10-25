@@ -67,15 +67,8 @@ func (d ReflectionDriver) Execute(ctx context.Context, effect lifecyclecore.Refl
 		}
 		event.Kind = lifecyclecore.ReflectionCompleted
 	case lifecyclecore.ReviewReflection:
-		diagnostics := validate.ReflectionDiagnostics(effect.Decision, effect.Paths)
-		if effect.Outcome != nil && effect.Workspace != nil {
-			learning, learningErr := validate.ReflectionLearningDiagnostics(effect.Workspace.CheckoutPath, effect.Outcome, effect.Decision)
-			if learningErr != nil {
-				return event, learningErr
-			}
-			diagnostics = append(diagnostics, learning...)
-		}
-		err = validate.Err(diagnostics)
+		// Retain the durable review checkpoint, but leave every content rule
+		// to the broker's complete Check over final files and committed inputs.
 		event.Kind = lifecyclecore.ReflectionReviewed
 	case lifecyclecore.PublishReflection:
 		publishCtx := ctx

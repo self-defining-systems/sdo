@@ -22,10 +22,11 @@ func candidateHasIncidentDetector(candidate string) (bool, error) {
 
 // BaselineGateRequired selects the healthy replay gate for both transports.
 func BaselineGateRequired(candidate string, changedPaths []string) (bool, error) {
-	for _, path := range changedPaths {
-		if kind, _, ok := layout.Classify(path); ok && (kind == layout.KindIncidentDetectorManifest || kind == layout.KindIncidentDetectorSource) {
-			return candidateHasIncidentDetector(candidate)
-		}
+	// Promoted detectors execute playbook programs and shared libraries too.
+	// Reuse rollout dependency classification so editing those files cannot
+	// silently drop the healthy replay input on either acceptance transport.
+	if layout.RequiresControllerRollout(changedPaths) {
+		return candidateHasIncidentDetector(candidate)
 	}
 	return false, nil
 }
