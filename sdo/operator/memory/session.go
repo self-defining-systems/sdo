@@ -15,6 +15,9 @@ import (
 // conversation. Workers receive only its narrow PVC subPath, never the
 // accepted checkout or another incident's session directory.
 func PrepareIncidentSession(repositoryMount, pvcSubPath, incidentID string) (string, error) {
+	releaseSessionStorage := SessionStorageUse()
+	defer releaseSessionStorage()
+
 	if !filepath.IsAbs(repositoryMount) || strings.TrimSpace(incidentID) == "" || len(incidentID) > 512 {
 		return "", errors.New("incident session requires an absolute repository mount and bounded incident ID")
 	}
@@ -51,6 +54,9 @@ func PrepareIncidentSession(repositoryMount, pvcSubPath, incidentID string) (str
 // RemoveIncidentSession deletes only the acknowledged incident's private
 // agent session tree. Unacknowledged incidents retain it for durable retries.
 func RemoveIncidentSession(repositoryMount, incidentID string) error {
+	releaseSessionStorage := SessionStorageUse()
+	defer releaseSessionStorage()
+
 	if !filepath.IsAbs(repositoryMount) || strings.TrimSpace(incidentID) == "" || len(incidentID) > 512 {
 		return errors.New("incident session cleanup requires an absolute repository mount and bounded incident ID")
 	}

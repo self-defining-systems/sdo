@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -165,6 +166,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	repositoryPVCSubPath := flags.String("repository-pvc-subpath", "", "optional shared repository PVC subPath for job mode")
 	credentialsSecret := flags.String("responder-credentials-secret", "", "Codex credentials Secret for job mode")
 	var responderEnvironment repeatedFlag
+	responderStandby := flags.Bool("responder-standby", true, "pre-start a responder; false forces cold Jobs")
 	flags.Var(&responderEnvironment, "responder-env", "responder Job environment NAME=VALUE; may be repeated")
 	telemetryPath := flags.String(
 		"firing-telemetry-path",
@@ -514,6 +516,11 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	var controller *Controller
 	dispatcher := options.Dispatcher
 	if dispatcher == nil {
+		if !clientInjected {
+			if err := toolchain.Seed(ctx, *repositoryMountPath, *toolchainImage); err != nil {
+				return fmt.Errorf("prepare responder toolchain before dispatch: %w", err)
+			}
+		}
 		var catalog memory.CatalogReader
 		if options.NativeBroker != nil {
 			catalog = memory.OpenCatalogReader(resolvedRoot)
@@ -619,6 +626,29 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			},
 		}
 	}
+	if !clientInjected && jobDispatch && *responderStandby && standbyEnabled(jobEnvironment) {
+		d := dispatcher.(KubernetesJobDispatcher)
+		standbyEnvironment := make(map[string]string, len(jobEnvironment)+5)
+		for name, value := range jobEnvironment {
+			standbyEnvironment[name] = value
+		}
+		standbyEnvironment["CODEX_HOME"] = "/sdo/session/codex"
+		standbyEnvironment["CLAUDE_CONFIG_DIR"] = "/sdo/session/claude"
+		standbyEnvironment["SDO_SESSION_SCRATCH"] = "/sdo/session/scratch"
+		standbyEnvironment["SDO_TOOLS_DIR"] = "/sdo/session/tools"
+		pool := worker_registry.NewStandbyPool(worker_registry.KubernetesExecutor{APIProxyImage: d.APIProxyImage, ToolchainImage: d.ToolchainImage, Client: d.Client, Namespace: d.Namespace, Registry: d.Registry, ServiceAccount: d.ServiceAccount, RepositoryPVC: d.RepositoryPVC, RepositoryMountPath: d.RepositoryMountPath, RepositoryPVCSubPath: d.RepositoryPVCSubPath, CredentialsSecret: d.CredentialsSecret, Environment: standbyEnvironment, CapturedCorpusReadOnly: true}, d.AgentID, *application)
+		pool.ResponseBudget = *responseTimeout
+		standbyCtx, stopStandby := context.WithCancel(renewalCtx)
+		if err := pool.Start(standbyCtx); err != nil {
+			stopStandby()
+			slog.Warn("responder_standby_unavailable", "error", err)
+		} else {
+			defer func() { stopStandby(); pool.Wait() }()
+			d.Standby = pool
+			dispatcher = d
+		}
+	}
+
 	// Detectors and plan verification read through the same capped runtime view.
 	snapshotProvider = ReadSnapshotProvider{Base: snapshotProvider, View: func(snapshot sdk.DetectionContext) program.ReadView {
 		return LiveReadView{DetectionContext: snapshot, Context: ctx, Client: bootstrapProvider.Client, DatabaseExecConfig: planExecConfig, ProtectedNamespace: protectedNamespace, Prober: primitiveProber, Source: planSource, SourceCommit: resolvedSourceCommit, SourceRevision: func() string {
@@ -1638,4 +1668,9 @@ func executePendingEffects(ctx context.Context, controller *Controller) (err err
 		return nil
 	}
 	return nil
+}
+
+// Existing responder-env configuration also provides a cold-only rollout switch.
+func standbyEnabled(environment map[string]string) bool {
+	return environment["SDO_RESPONDER_STANDBY"] != "0"
 }

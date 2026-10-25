@@ -73,6 +73,7 @@ func ParseInstallExistingLaunch(args []string) (InstallExistingConfig, error) {
 	registrationConfigMap := flags.String("agent-registration-configmap", "", "registration ConfigMap")
 	kubeconfig := flags.String("kubeconfig", "", "Kubernetes client and kubectl config")
 	seedBrokerRoot := flags.String("seed-broker-root", "", "operator-controlled trusted seed broker directory, outside the accepted repository")
+	standby := flags.Bool("responder-standby", true, "pre-start a responder; false forces cold Jobs")
 	var responderEnv repeatable
 	flags.Var(&responderEnv, "responder-env", "responder environment NAME=VALUE")
 	var deployedManifestPaths repeatable
@@ -139,6 +140,11 @@ func ParseInstallExistingLaunch(args []string) (InstallExistingConfig, error) {
 	if *registrationConfigMap != "" {
 		config.RegistrationDirectory = "/sdo/registrations"
 	}
+	flags.Visit(func(f *flag.Flag) {
+		if f.Name == "responder-standby" {
+			config.ResponderStandby = standby
+		}
+	})
 	for _, value := range responderEnv {
 		name, _, found := strings.Cut(value, "=")
 		if !found || name == "" || strings.ContainsAny(name, "=\r\n") {

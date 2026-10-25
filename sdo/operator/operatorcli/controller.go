@@ -72,6 +72,7 @@ func ParseControllerLaunch(args []string) (builder.RunConfig, bool, error) {
 	duration := flags.Duration("duration", 0, "bounded controller duration")
 	exitAfterClosure := flags.Bool("exit-after-closure", false, "exit after the first acknowledged closure")
 	supervise := flags.Bool("supervise", false, "rebuild and relaunch after closure")
+	standby := flags.Bool("responder-standby", true, "pre-start a responder; false forces cold Jobs")
 	var responderEnv repeatable
 	flags.Var(&responderEnv, "responder-env", "responder environment NAME=VALUE")
 	var deployedManifestPaths repeatable
@@ -104,7 +105,8 @@ func ParseControllerLaunch(args []string) (builder.RunConfig, bool, error) {
 		*application = filepath.Base(*app)
 	}
 	launch := &contracts.ControllerConfig{
-		Namespace: *namespace, ControlNamespace: *controlNamespace, AppRoot: *app, Application: *application,
+		ResponderStandby: standby,
+		Namespace:        *namespace, ControlNamespace: *controlNamespace, AppRoot: *app, Application: *application,
 		SourceCommit: *sourceCommit, DeployedCommit: *deployedCommit,
 		DeployedManifestPaths: deployedManifestPaths,
 		Dispatcher:            "python3", DispatcherMode: "job", DispatcherArgs: []string{"-m", "sdo.agents.responder.worker"},

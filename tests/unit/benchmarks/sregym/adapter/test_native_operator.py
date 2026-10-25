@@ -211,9 +211,11 @@ def test_incident_evidence_requires_correlated_native_ledger(
         read_incident_evidence(_install(tmp_path), "")
 
 
+@pytest.mark.parametrize("job_name", ["sdo-incident-1-hash", "sdo-standby-bound-identity"])
 def test_collect_native_receipt_binds_go_ledger_to_cluster_job_and_pod(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    job_name: str,
 ) -> None:
     from tests.unit.benchmarks.sregym.protocol.test_native_receipt import _ledger
 
@@ -225,10 +227,10 @@ def test_collect_native_receipt_binds_go_ledger_to_cluster_job_and_pod(
         if command[0] == "/tmp/sdo-operator":
             payload: object = {
                 "incident_id": "incident-1",
-                "responder_job_name": "sdo-incident-1-hash",
+                "responder_job_name": job_name,
                 "ledger": _ledger(),
             }
-        elif "job/sdo-incident-1-hash" in command:
+        elif f"job/{job_name}" in command:
             payload = {"metadata": {"uid": "worker-uid"}, "status": {"succeeded": 1}}
         elif "job/sdo-controller-run" in command:
             payload = {"metadata": {"uid": "controller-job-uid"}}
@@ -252,9 +254,9 @@ def test_collect_native_receipt_binds_go_ledger_to_cluster_job_and_pod(
     assert receipt["schema_version"] == "sdo.production-receipt/v2"
     assert receipt["controller_pod_uid"] == "controller-uid"
     assert receipt["responder_job_evidence"] == [
-        {"incident_id": "incident-1", "job_name": "sdo-incident-1-hash", "job_uid": "worker-uid", "succeeded": True}
+        {"incident_id": "incident-1", "job_name": job_name, "job_uid": "worker-uid", "succeeded": True}
     ]
-    assert any("job/sdo-incident-1-hash" in call for call in calls)
+    assert any(f"job/{job_name}" in call for call in calls)
 
 
 def test_collect_native_receipt_rejects_missing_successful_worker_job(

@@ -72,6 +72,9 @@ func (err *RequestStagingError) Unwrap() error { return err.Err }
 // KubernetesExecutor is the implementation-neutral Job transport. By default,
 // a Job sees only its independent proposal checkout.
 type KubernetesExecutor struct {
+	WarmBinding            *WarmBinding
+	standbyMode            bool
+	standbySubPath         string
 	APIProxyImage          string
 	ToolchainImage         string
 	TaskPayload            string
@@ -123,6 +126,12 @@ func (e KubernetesExecutor) Execute(ctx context.Context, task *contracts.AgentTa
 	if err := e.Registry.ValidateTask(task); err != nil {
 		return nil, fmt.Errorf("validate agent task: %w", err)
 	}
+	// Executors survive continuation turns; bindings belong to immutable tasks.
+	binding, err := e.loadWarmBinding(task)
+	if err != nil {
+		return nil, err
+	}
+	e.WarmBinding = binding
 	if result, recovered, err := e.RecoverCompleted(ctx, task); err != nil {
 		return nil, err
 	} else if recovered {
@@ -216,9 +225,51 @@ func (e KubernetesExecutor) Execute(ctx context.Context, task *contracts.AgentTa
 		request = requestSource{PVCSubPath: staged}
 		defer e.unstageRequest(jobName)
 	}
-	if err := e.ensureJob(ctx, task, launch, jobName, request, resultName, proposalSubPath); err != nil {
+	taskBoundAt := time.Now().UTC()
+	if e.SessionPVCSubPath != "" {
+		if relative, err := filepath.Rel(sessionPVCBase(e.RepositoryPVCSubPath), e.SessionPVCSubPath); err == nil {
+			session := filepath.Join(e.RepositoryMountPath, relative)
+			if info, err := os.Stat(session); err == nil && info.IsDir() {
+				if err := os.MkdirAll(filepath.Join(session, "startup-workers", jobName), 0700); err != nil {
+					return nil, err
+				}
+				if err := os.MkdirAll(filepath.Join(session, "startup"), 0700); err != nil {
+					return nil, err
+				}
+			}
+		}
+	}
+	if e.WarmBinding != nil {
+		if err := e.publishWarmTask(ctx, task); err != nil {
+			var unpublished *standbyClaimUnpublished
+			if errors.As(err, &unpublished) {
+				if cleanupErr := e.abandonUnpublished(ctx, task); cleanupErr != nil && !apierrors.IsNotFound(cleanupErr) {
+					return nil, cleanupErr
+				}
+				e.WarmBinding = nil
+				return e.Execute(ctx, task)
+			}
+			return nil, err
+		}
+	} else if err := e.ensureJob(ctx, task, launch, jobName, request, resultName, proposalSubPath); err != nil {
 		return nil, err
 	}
+	startup := e.startupRecord(task, jobName)
+	if startup != nil {
+		timing := DispatchStartup{Mode: "cold", TaskBoundAt: taskBoundAt}
+		if e.WarmBinding != nil {
+			timing.Mode = "warm"
+			timing.ClaimedAt = &e.WarmBinding.ClaimedAt
+		}
+		startup.TaskBoundAt = &taskBoundAt
+		if e.SessionPVCSubPath != "" {
+			if relative, err := filepath.Rel(sessionPVCBase(e.RepositoryPVCSubPath), e.SessionPVCSubPath); err == nil {
+				_ = writeStartupOnce(filepath.Join(e.RepositoryMountPath, relative, "startup", "startup-dispatch.json"), timing)
+			}
+		}
+	}
+
+	defer e.emitStartup(startup)
 	if e.OnPhase != nil {
 		if err := e.OnPhase(ctx, "reflection_job_created"); err != nil {
 			return nil, err
@@ -228,6 +279,11 @@ func (e KubernetesExecutor) Execute(ctx context.Context, task *contracts.AgentTa
 	defer ticker.Stop()
 	observed := map[string]bool{}
 	for {
+		if e.WarmBinding != nil {
+			if err := e.projectWarmLateFindings(ctx); err != nil {
+				return nil, fmt.Errorf("project warm late findings: %w", err)
+			}
+		}
 		if e.OnPhase != nil && !observed["pod_ready"] {
 			pods, err := e.Client.CoreV1().Pods(e.Namespace).List(ctx, metav1.ListOptions{LabelSelector: "batch.kubernetes.io/job-name=" + jobName})
 			if err == nil {
@@ -260,6 +316,12 @@ func (e KubernetesExecutor) Execute(ctx context.Context, task *contracts.AgentTa
 		job, jobErr := e.Client.BatchV1().Jobs(e.Namespace).Get(ctx, jobName, metav1.GetOptions{})
 		if jobErr != nil && !apierrors.IsNotFound(jobErr) {
 			return nil, fmt.Errorf("get agent Job: %w", jobErr)
+		}
+		if startup != nil && jobErr == nil {
+			pods, err := e.Client.CoreV1().Pods(e.Namespace).List(ctx, metav1.ListOptions{LabelSelector: "batch.kubernetes.io/job-name=" + jobName})
+			if err == nil {
+				startup.observe(job, pods.Items)
+			}
 		}
 		if jobErr == nil && jobFailed(job) {
 			return nil, taskJobFailure(task, job)
@@ -419,6 +481,9 @@ func (e KubernetesExecutor) ensureJob(ctx context.Context, task *contracts.Agent
 		// The same PVC is mounted a second time through the repository volume: two volumes backed by one claim
 		// leave the kubelet waiting forever for the pod's volumes.
 		mounts = append(mounts, corev1.VolumeMount{Name: "repository", MountPath: "/sdo/session", SubPath: e.SessionPVCSubPath})
+		if task.GetRequest().MessageIs(&contracts.IncidentRequest{}) {
+			mounts = append(mounts, corev1.VolumeMount{Name: "repository", MountPath: "/sdo/session/startup", SubPath: path.Join(e.SessionPVCSubPath, "startup"), ReadOnly: true})
+		}
 		if e.Environment["SDO_TOOLS_DIR"] != "" {
 			// Bind the directories individually so the worker cannot replace
 			// server-owned entries through the writable session parent. Replies
@@ -451,6 +516,9 @@ func (e KubernetesExecutor) ensureJob(ctx context.Context, task *contracts.Agent
 	}
 	if e.SessionPVCSubPath != "" {
 		env = append(env, corev1.EnvVar{Name: "SDO_SESSION_DIR", Value: "/sdo/session"})
+		if task.GetRequest().MessageIs(&contracts.IncidentRequest{}) {
+			env = append(env, corev1.EnvVar{Name: "SDO_STARTUP_TIMING_PATH", Value: "/sdo/session/startup-workers/" + jobName + "/startup-worker.json"})
+		}
 	}
 	judge := task.GetRequest().MessageIs(&contracts.HealthJudgeRequest{})
 	memoryAuthor := reflection || judge
@@ -470,7 +538,7 @@ func (e KubernetesExecutor) ensureJob(ctx context.Context, task *contracts.Agent
 	if reflection {
 		env = append(env, corev1.EnvVar{Name: "SDO_HEALTHY_BASELINE", Value: baseline}, corev1.EnvVar{Name: "SDO_CAPTURED_CORPUS_DIR", Value: captureDirectory})
 	}
-	reserved := map[string]bool{"SDO_REQUEST_SHA256": true, "SDO_CODEX_HOME_ROOT": true, "SDO_REQUEST_CONFIGMAP": true, "SDO_RESULT_CONFIGMAP": true, "SDO_NAMESPACE": true, "SDO_SESSION_DIR": e.SessionPVCSubPath != "", "SDO_ACTOR": memoryAuthor, "SDO_PHASE": memoryAuthor, "SDO_BASE_COMMIT": memoryAuthor, "SDO_HEALTHY_BASELINE": reflection, "SDO_CAPTURED_CORPUS_DIR": reflection, "SDO_API_PROXY_URL": true, "SDO_API_HISTORY_DIR": true}
+	reserved := map[string]bool{"SDO_REQUEST_SHA256": true, "SDO_CODEX_HOME_ROOT": true, "SDO_REQUEST_CONFIGMAP": true, "SDO_RESULT_CONFIGMAP": true, "SDO_NAMESPACE": true, "SDO_SESSION_DIR": e.SessionPVCSubPath != "", "SDO_ACTOR": memoryAuthor, "SDO_PHASE": memoryAuthor, "SDO_BASE_COMMIT": memoryAuthor, "SDO_HEALTHY_BASELINE": reflection, "SDO_CAPTURED_CORPUS_DIR": reflection, "SDO_API_PROXY_URL": true, "SDO_API_HISTORY_DIR": true, "SDO_STARTUP_TIMING_PATH": true}
 	names := make([]string, 0, len(e.Environment))
 	for name := range e.Environment {
 		if !reserved[name] {
@@ -503,7 +571,14 @@ func (e KubernetesExecutor) ensureJob(ctx context.Context, task *contracts.Agent
 		},
 	}
 	e.addAPIHistory(job, task)
-	toolchain.Apply(&job.Spec.Template.Spec, e.ToolchainImage)
+	if e.standbyMode {
+		e.configureStandby(job, launch)
+	}
+	if task.GetRequest().MessageIs(&contracts.IncidentRequest{}) {
+		toolchain.ApplyShared(&job.Spec.Template.Spec, e.ToolchainImage, e.RepositoryPVCSubPath)
+	} else {
+		toolchain.Apply(&job.Spec.Template.Spec, e.ToolchainImage)
+	}
 	if devmount.Enabled() {
 		devmount.ApplyWorker(&job.Spec.Template.Spec)
 	}

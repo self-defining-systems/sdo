@@ -134,5 +134,7 @@ func runIncidentEvidence(ctx context.Context, client kubernetes.Interface, cfg I
 	if err != nil {
 		return IncidentEvidenceResult{}, err
 	}
-	return IncidentEvidenceResult{IncidentID: cfg.IncidentID, ResponderJobName: worker_registry.JobName(cfg.IncidentID), Ledger: ledger}, nil
+	jobName,err:=worker_registry.IncidentResponderJobName(ctx,client,cfg.Sync.ControlNamespace,cfg.IncidentID)
+ if err!=nil{return IncidentEvidenceResult{},err}
+ return IncidentEvidenceResult{IncidentID: cfg.IncidentID, ResponderJobName: jobName, Ledger: ledger}, nil
 }

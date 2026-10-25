@@ -15,6 +15,7 @@ from sdo.agents.responder import (
     CodexSessionBackend,
     KubernetesResultPublisher,
     SessionReflector,
+    await_standby_claim,
     execute_incident,
     prepare_claude_home,
     prepare_codex_home,
@@ -54,7 +55,17 @@ def _record_payload(path: Path, payload: str, *, limit: int = 1 << 20) -> None:
     temporary.replace(path)
 
 
+def recording_executor(directory: Path, wire: str) -> RecordingExecutor:
+    """Keep a warm worker's private path out of the canonical replay identity."""
+    replacements: dict[str, str] = {}
+    if alias := os.environ.get("SDO_WORKSPACE_ALIAS"):
+        task = parse_json(wire, AgentTask())
+        replacements[alias] = task.workspace.checkout_path
+    return RecordingExecutor(directory, request_json=wire, record=True, prompt_replacements=replacements)
+
+
 def main(argv: list[str] | None = None) -> int:
+    await_standby_claim()
     args = argv if argv is not None else sys.argv[1:]
     if len(args) != 1 or args[0] not in {"responder", "reflection"}:
         print("usage: recording_worker responder|reflection", file=sys.stderr)
@@ -67,7 +78,7 @@ def main(argv: list[str] | None = None) -> int:
     task_path = Path(os.environ.get("SDO_TASK_PATH", "/sdo/request/agent-task.json"))
     wire = task_path.read_text(encoding="utf-8")
     scratch = Path(os.environ.get("SDO_SESSION_SCRATCH", "/sdo/session/scratch"))
-    recording = RecordingExecutor(scratch.parent / "model_io", request_json=wire, record=True)
+    recording = recording_executor(scratch.parent / "model_io", wire)
     role = "reflector" if args[0] == "reflection" else "responder"
     prepare_codex_home(skills=AGENT_SKILLS[role])
     prepare_claude_home(skills=AGENT_SKILLS[role])

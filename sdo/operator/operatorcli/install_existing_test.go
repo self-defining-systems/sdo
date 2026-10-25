@@ -139,3 +139,25 @@ func TestGS1AutomaticRepairDefaultsAndOptOuts(t *testing.T) {
 		t.Fatalf("opt-out lost: %+v %v", controller, err)
 	}
 }
+
+func TestInstallExistingColdStandbySwitchReachesTypedController(t *testing.T) {
+	args := []string{"install-existing", "--repository", "/accepted/app", "--namespace", "demo", "--application", "demo", "--controller-image", "controller:test", "--responder-image", "responder:test", "--validator-image", "validator:test", "--repository-pvc", "repository", "--credentials-secret", "credentials", "--model", "model", "--responder-standby=false"}
+	launch, err := ParseInstallExistingLaunch(args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	launch.Install.AcceptedCommit = strings.Repeat("a", 40)
+	plan, err := install.Resources(launch.Install)
+	if err != nil {
+		t.Fatal(err)
+	}
+	controller, _, err := ParseControllerLaunch(plan.Job.Spec.Template.Spec.Containers[0].Args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	message := controller.Controller.ProtoReflect()
+	field := message.Descriptor().Fields().ByName("responder_standby")
+	if field == nil || !message.Has(field) || message.Get(field).Bool() {
+		t.Fatal("cold switch lost at typed boundary")
+	}
+}
