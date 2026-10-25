@@ -41,21 +41,26 @@ def option_action_results(response: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def format_selection_response(
-    before: Sequence[Mapping[str, Any]],
-    after: Sequence[Mapping[str, Any]],
+    before: Sequence[Mapping[str, Any]] | None,
+    after: Sequence[Mapping[str, Any]] | None,
     response: dict[str, Any],
     *,
     json_output: bool = False,
+    controller_progress: Mapping[str, Any] | None = None,
 ) -> tuple[str, Path]:
     """Use the shared summary and retain the complete controller response once."""
     from sdo.agents.responder.mutation_output import (
         MAX_MUTATION_OUTPUT_BYTES,
+        _bounded_text,
+        clamp_mutation_summary,
         compact_mutation_envelope,
         format_mutation_response,
     )
     from sdo.agents.responder.tool_output import _brief
 
-    text, path = format_mutation_response(before, after, [response], json_output=json_output)
+    text, path = format_mutation_response(
+        before, after, [response], json_output=json_output, controller_progress=controller_progress
+    )
 
     def emitted_bytes(lines: list[str]) -> int:
         rendered = "\n".join(lines)
@@ -68,9 +73,9 @@ def format_selection_response(
     if not response.get("option_reports"):
         if response.get("rollout_pending"):
             lines = text.splitlines()
-            application = _brief(response.get("application_id", "unknown"), 80)
+            application = _bounded_text(response.get("application_id", "unknown"), 80)
             lines[0] = f"This action: rollout pending; application={application}."
-            return "\n".join(lines), path
+            return clamp_mutation_summary("\n".join(lines), path, response, json_output=json_output), path
         return text, path
     actions = option_action_results(response)
     pending = sum(action["pending"] for action in actions)
@@ -117,4 +122,6 @@ def format_selection_response(
     omitted = len(rows) - len(shown)
     if omitted:
         shown.append(f"Options omitted: {omitted}; see option_reports[] in Full JSON.")
-    return "\n".join([*lines[:1], *shown, *lines[1:]]), path
+    return clamp_mutation_summary(
+        "\n".join([*lines[:1], *shown, *lines[1:]]), path, response, json_output=json_output
+    ), path

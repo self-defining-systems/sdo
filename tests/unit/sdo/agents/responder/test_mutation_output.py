@@ -125,3 +125,172 @@ def test_emitted_mutation_stdout_utf8_including_json_framing_and_newline(
     assert report["actions"] == [action]
     assert report["findings"] == after
     assert set(report) == set(command_report_schema())
+
+
+@pytest.mark.parametrize("command", ["act", "apply", "mitigate", "rollback"])
+@pytest.mark.parametrize("full_json", [False, True])
+@pytest.mark.parametrize("error", ["💥" * 500, '"\\\n\t界' * 500], ids=["emoji", "escaped"])
+def test_rec_mandatory_envelope_byte_cap(tmp_path, monkeypatch, capsys, command, full_json, error):
+    from sdo.agents.responder import tools_cli
+
+    monkeypatch.setenv("SDO_SESSION_SCRATCH", str(tmp_path))
+    action = {"command": command, "error": error, "failure_reason": "execution_failed", "summary": "repair failed"}
+    tools_cli._print_response(action, full_json=full_json)
+    stdout = capsys.readouterr().out
+    assert len(stdout.encode("utf-8")) <= 2048
+    path = (
+        Path(json.loads(stdout)["details_file"]) if full_json else Path(stdout.split("Full JSON: ")[1].splitlines()[0])
+    )
+    assert json.loads(path.read_text())["actions"][0]["error"] == error
+
+
+@pytest.mark.parametrize("full_json", [False, True])
+def test_rec_long_escaped_report_path_remains_readable(tmp_path, monkeypatch, capsys, full_json):
+    from sdo.agents.responder import tools_cli
+
+    directory = tmp_path
+    for _ in range(20):
+        directory /= '"\\界' * 20
+    monkeypatch.setenv("SDO_SESSION_SCRATCH", str(directory))
+    action = {"command": "mitigate", "error": "💥" * 500, "summary": "repair failed"}
+    tools_cli._print_response(action, full_json=full_json)
+    stdout = capsys.readouterr().out
+    assert len(stdout.encode("utf-8")) <= 2048
+    path = (
+        Path(json.loads(stdout)["details_file"]) if full_json else Path(stdout.split("Full JSON: ")[1].splitlines()[0])
+    )
+    report = json.loads(path.read_text())
+    assert report["actions"] == [action]
+    originals = list((directory / "sdo-reports").glob("*/*-mitigate.json"))
+    assert len(originals) == 1
+    assert json.loads(originals[0].read_text()) == report
+    assert path != originals[0]
+
+
+@pytest.mark.parametrize("snapshots", [{}, {"before_findings": [], "controller_findings": []}])
+def test_rec_controller_progress_is_authoritative(tmp_path, monkeypatch, capsys, snapshots):
+    from sdo.agents.responder import tools_cli
+
+    monkeypatch.setenv("SDO_SESSION_SCRATCH", str(tmp_path))
+    b = finding("B")
+    action = {
+        "command": "mitigate",
+        "findings": [b],
+        "progress": {"fixed": [], "new": [b], "unchanged": []},
+        **snapshots,
+    }
+    tools_cli._print_response(action, full_json=True)
+    envelope = json.loads(capsys.readouterr().out)
+    report = json.loads(Path(envelope["details_file"]).read_text())
+    assert report["new"] == [b]
+    assert report["unchanged"] == []
+    assert "new since this action: 1" in envelope["summary"]
+
+
+@pytest.mark.parametrize(("before", "after"), [(None, None), ([], []), ([], [finding("B")]), ([finding("A")], [])])
+def test_rec_snapshots_never_use_action_local_findings(tmp_path, monkeypatch, capsys, before, after):
+    from sdo.agents.responder import tools_cli
+
+    monkeypatch.setenv("SDO_SESSION_SCRATCH", str(tmp_path))
+    action = {
+        "command": "apply",
+        "findings": [finding("live")],
+        "before_findings": before,
+        "controller_findings": after,
+    }
+    tools_cli._print_response(action, full_json=True)
+    envelope = json.loads(capsys.readouterr().out)
+    report = json.loads(Path(envelope["details_file"]).read_text())
+    assert report["findings"] == (after or [])
+    assert not any(item["fingerprint"] == "live" for key in ("fixed", "new", "unchanged") for item in report[key])
+
+
+@pytest.mark.parametrize("command", ["act", "apply", "mitigate", "rollback"])
+@pytest.mark.parametrize("full_json", [False, True])
+def test_rec_maximum_variable_fields_and_path(tmp_path, monkeypatch, capsys, command, full_json):
+    from sdo.agents.responder import tools_cli
+
+    directory = tmp_path / "line\nbreak"
+    monkeypatch.setenv("SDO_SESSION_SCRATCH", str(directory))
+    monkeypatch.setenv("SDO_INCIDENT_ID", "i" * 199)
+    error = '\x00"\\💥' * 500
+    action = {
+        "command": command,
+        "error": error,
+        "summary": error,
+        "failure_reason": error,
+        "before_findings": [],
+        "controller_findings": [],
+        "incident_verified": {"message": error, "verified_at": error},
+    }
+    tools_cli._print_response(action, full_json=full_json)
+    stdout = capsys.readouterr().out
+    assert len(stdout.encode("utf-8")) <= 2048
+    envelope = json.loads(stdout) if full_json else None
+    text = envelope["summary"] if envelope else stdout
+    assert "failed:" in text
+    path = Path(envelope["details_file"]) if envelope else Path(text.split("Full JSON: ")[1].splitlines()[0])
+    assert json.loads(path.read_text())["actions"] == [action]
+    originals = list((directory / "sdo-reports").glob("*/*-" + command + ".json"))
+    assert len(originals) == 1
+    assert json.loads(originals[0].read_text())["actions"] == [action]
+
+
+@pytest.mark.parametrize(("before", "after"), [(None, [finding("B")]), ([finding("A")], None)])
+def test_rec_missing_snapshot_never_invents_progress(tmp_path, monkeypatch, capsys, before, after):
+    from sdo.agents.responder import tools_cli
+
+    monkeypatch.setenv("SDO_SESSION_SCRATCH", str(tmp_path))
+    tools_cli._print_response(
+        {"command": "apply", "before_findings": before, "controller_findings": after}, full_json=True
+    )
+    envelope = json.loads(capsys.readouterr().out)
+    assert "progress unknown" in envelope["summary"]
+    report = json.loads(Path(envelope["details_file"]).read_text())
+    assert report["fixed"] == report["new"] == report["unchanged"] == []
+
+
+@pytest.mark.parametrize("full_json", [False, True])
+def test_rec_rollback_honors_existing_smaller_policy(tmp_path, monkeypatch, capsys, full_json):
+    from sdo.agents.responder import tools_cli
+
+    monkeypatch.setenv("SDO_SESSION_SCRATCH", str(tmp_path))
+    after = [finding(str(index)) for index in range(100)]
+    action = {
+        "command": "rollback",
+        "summary": "rollback completed",
+        "before_findings": [],
+        "controller_findings": after,
+        "progress": {"fixed": [], "new": after, "unchanged": []},
+    }
+    tools_cli._print_response(action, full_json=full_json)
+    stdout = capsys.readouterr().out
+    assert len(stdout.encode("utf-8")) <= 1500
+    envelope = json.loads(stdout) if full_json else None
+    text = envelope["summary"] if envelope else stdout
+    assert "still broken: 100" in text
+    assert "new since this action: 100" in text
+    for key, description in command_report_schema().items():
+        assert key + "[]: " + description.removeprefix("array of ").split(": ", 1)[0] in text
+    path = Path(envelope["details_file"]) if envelope else Path(text.split("Full JSON: ")[1].splitlines()[0])
+    report = json.loads(path.read_text())
+    assert report["actions"] == [action]
+    assert report["findings"] == report["new"] == after
+
+
+@pytest.mark.parametrize("command", ["act", "apply", "mitigate", "rollback"])
+@pytest.mark.parametrize("full_json", [False, True])
+def test_rec_schema_growth_cannot_bypass_hard_output_limit(tmp_path, monkeypatch, capsys, command, full_json):
+    from sdo.agents.responder import mutation_output, tools_cli
+
+    monkeypatch.setenv("SDO_SESSION_SCRATCH", str(tmp_path))
+    schema = command_report_schema()
+    schema["actions"] = "array of {" + ",".join(f"future_field_{index}" for index in range(300)) + "}: full output"
+    monkeypatch.setattr(mutation_output, "command_report_schema", lambda: schema)
+    action = {"command": command, "summary": "completed", "before_findings": [], "controller_findings": []}
+    with pytest.raises(ValueError, match="2048-byte hard limit"):
+        tools_cli._print_response(action, full_json=full_json)
+    assert capsys.readouterr().out == ""
+    originals = list((tmp_path / "sdo-reports").glob("*/*-" + command + ".json"))
+    assert len(originals) == 1
+    assert json.loads(originals[0].read_text())["actions"] == [action]

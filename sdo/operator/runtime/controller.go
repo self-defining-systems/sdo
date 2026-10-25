@@ -1021,8 +1021,14 @@ func (c *Controller) handleDispatchCompletion(completion dispatchCompletion, obs
 	}
 	if c.earlyReportPendingLocked() {
 		if completion.err == nil {
-			prior, _ := incidentResultContract(*c.pendingClosure.Result)
-			result := accumulateResponderResult(prior, completion.result)
+			snapshot := *c.pendingClosure.Result
+			// The early snapshot owns controller evidence; the final report owns
+			// diagnosis text. Reconcile resource owners before receipt/usage merging.
+			reported := completion.result
+			reported.ConfirmedRootCauses = reconcileEarlyCauses(snapshot.ConfirmedRootCauses, reported.ConfirmedRootCauses)
+			snapshot.ConfirmedRootCauses = nil
+			prior, _ := incidentResultContract(snapshot)
+			result := accumulateResponderResult(prior, reported)
 			if result.ResponderSessionID == "" {
 				result.ResponderSessionID = c.pendingClosure.Result.ResponderSessionID
 			}

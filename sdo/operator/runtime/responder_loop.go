@@ -53,8 +53,8 @@ type ToolRequest struct {
 type ToolResponse struct {
 	OptionReports              []*contracts.MitigationReport  `json:"-"`
 	UnexplainedRemovalBlockers []UnexplainedRemovalBlocker    `json:"unexplained_removal_blockers,omitempty"`
-	BeforeFindings             []sdk.Finding                  `json:"before_findings,omitempty"`
-	ControllerFindings         []sdk.Finding                  `json:"controller_findings,omitempty"`
+	BeforeFindings             []sdk.Finding                  `json:"before_findings"`
+	ControllerFindings         []sdk.Finding                  `json:"controller_findings"`
 	Progress                   *FindingProgress               `json:"progress,omitempty"`
 	IncidentVerified           *apihistory.IncidentVerified   `json:"incident_verified,omitempty"`
 	FailureReason              string                         `json:"failure_reason,omitempty"`
@@ -260,7 +260,7 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	started := time.Now()
-	mutating := request.Command == "apply" || request.Command == "mitigate" || request.Command == "act-result"
+	mutating := request.Command == "rollback" || request.Command == "apply" || request.Command == "mitigate" || request.Command == "act-result"
 	var before []sdk.Finding
 	if mutating && l.CachedFindings != nil {
 		before = l.CachedFindings().Findings
