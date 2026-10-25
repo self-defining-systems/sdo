@@ -145,3 +145,17 @@ def test_responder_prompt_preserves_the_assurance_role_marker() -> None:
     from tests.unit.sdo.agents.prompts.cases import incident, responder_prompt
 
     assert RESPONDER_MARKER in responder_prompt(incident())[:200]
+
+
+def test_actual_benchmark_transport_and_pull_guidance_fit_the_instruction_cap(monkeypatch) -> None:
+    from benchmarks.sregym.adapter.runtime import _responder_instructions
+    from sdo.agents.responder.codex import _responder_prompt
+    from sdo.agents.responder.incident_context import prepared_incident_data
+    from tests.unit.sdo.agents.prompts.cases import incident
+
+    monkeypatch.setenv("SDO_RESPONDER_EXTRA_INSTRUCTIONS", _responder_instructions())
+    monkeypatch.setenv("SDO_LATE_FINDINGS", "pull")
+    request = incident()
+    with prepared_incident_data(request) as data:
+        prompt = _responder_prompt(request, incident_data=data)
+    assert len(prompt.split("Incident request", 1)[0]) <= 1500

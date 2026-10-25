@@ -8,6 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from benchmarks.sregym.adapter.runtime import _responder_instructions
 from sdo.agents.deployer import worker
 from sdo.agents.lifecycle.agents import (
     ActiveTopologyResourceDTO,
@@ -192,6 +193,9 @@ def rendered_cases() -> dict[str, str]:
         patch.setenv("SDO_RESPONDER_EXTRA_INSTRUCTIONS", "Use the toy incident transport.")
         patch.setenv("SDO_LATE_FINDINGS", "pull")
         prompts["responder_optional"] = responder_prompt(incident())
+        patch.setenv("SDO_RESPONDER_EXTRA_INSTRUCTIONS", _responder_instructions())
+        prompts["responder_transport"] = responder_prompt(incident())
+        patch.setenv("SDO_RESPONDER_EXTRA_INSTRUCTIONS", "Use the toy incident transport.")
 
         for mode in ("resume", "fresh", "retry"):
             for count in (2, 5):

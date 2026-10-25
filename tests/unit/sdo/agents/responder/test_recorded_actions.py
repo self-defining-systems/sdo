@@ -23,6 +23,7 @@ from hypothesis import strategies as st
 from benchmarks.sregym.protocol import validate_production_receipt
 from sdo.agents.responder import recorded_actions, tools_cli
 from sdo.agents.responder.codex import ResponderExecutionError, execute_incident
+from sdo.agents.responder.credentials import SKILLS_ROOT
 from sdo.agents.responder.reflection_brief import responder_shell_commands
 from sdo.contracts import IncidentRequest, IncidentResult
 from tests.proto_messages import evolve
@@ -400,9 +401,11 @@ def test_a_receipt_the_model_returns_never_replaces_a_recorded_one(scratch: Path
 
 def test_prompt_routes_mutations_through_the_recorder_and_leaves_receipts_to_it() -> None:
     prompt = _responder_prompt(_request())
-    assert "session action recorder" in prompt
-    assert "declares changed resources" in prompt
-    assert "never hand-write receipts" in prompt
+    assert "sdo-incident-response/SKILL.md" in prompt
+    workflow = (SKILLS_ROOT / "sdo-incident-response/SKILL.md").read_text(encoding="utf-8")
+    assert "Use recorded actions for live mutations" in workflow
+    assert "declare every changed resource" in workflow
+    assert "never hand-write receipts" in workflow
 
 
 def test_the_prompt_example_is_a_command_the_cli_accepts() -> None:

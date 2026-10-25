@@ -200,13 +200,14 @@ def test_codex_output_schema_is_strict_and_requires_defaulted_fields() -> None:
 def test_recorded_actions_policy_is_explicit_in_responder_prompt() -> None:
     prompt = _responder_prompt(evolve(_request(), repair_policy="recorded-actions"))
     assert "recorded-actions" in prompt
-    assert "session action recorder" in prompt
-    assert "never hand-write receipts" in prompt
+    assert "Use recorded actions for live mutations" in _workflow()
+    assert "never hand-write receipts" in _workflow()
 
 
 def test_prompt_tells_the_responder_to_cancel_an_already_healed_finding() -> None:
     prompt = _responder_prompt(_request())
-    assert "If findings cleared without your repair, return cancelled" in prompt
+    assert "sdo-incident-response/SKILL.md" in prompt
+    assert "return cancelled rather than inventing one" in _workflow()
     assert "never claim done without this self-check" in _workflow()
     assert "rather than inventing one" in _workflow()
 
@@ -278,7 +279,7 @@ def test_matched_memory_uses_the_workflow_without_repeating_playbook_bodies(tmp_
     assert document["available_playbook_ids"] == [INCIDENT_PLAYBOOK]
     assert "Restore `<MISSING_CONFIG_MAP>` from source" not in prompt
     assert "verify.sh" not in prompt
-    assert "live-check matched mitigations and apply them first" in prompt
+    assert "learned mitigations first, repair the rest" in prompt
     assert "Check current status and any late findings" in _workflow()
     assert "Investigate contradictions" in _workflow()
 
@@ -305,7 +306,7 @@ def test_nonexact_history_remains_advice_without_a_warm_instruction_branch(tmp_p
     document = json.loads(prompt.split("Incident request:\n", 1)[1])
     assert document["relevant_outcomes"][0]["match_reason"] == "detector-rule-resource-kind"
     assert "Warm path" not in prompt
-    assert "Operational memory is fallible advice" in prompt
+    assert "Operational memory is fallible advice" in _workflow()
 
 
 def test_cold_prompt_offers_logical_ids_without_inlining_playbook_content() -> None:
@@ -321,7 +322,7 @@ def test_cold_prompt_offers_logical_ids_without_inlining_playbook_content() -> N
 def test_every_path_requires_detector_self_check_then_independent_closure(tmp_path: Path) -> None:
     for request in (_request(), _warm_request(tmp_path)):
         prompt = _responder_prompt(request)
-        assert "Self-check the findings you worked on with fresh detectors, then verify" in prompt
+        assert "self-check before claiming recovery" in prompt
     workflow = _workflow()
     assert workflow.index("sdo detect") < workflow.index("sdo verify")
     assert "never claim done without this self-check" in workflow
@@ -341,8 +342,8 @@ def test_workflow_requires_helper_objects_to_carry_the_cleanup_label() -> None:
 
 def test_prompt_requires_live_evidence_for_every_root_cause() -> None:
     prompt = _responder_prompt(_request())
-    assert "live evidence" in prompt
-    assert "explained_detectors" in prompt
+    assert "sdo-incident-response/SKILL.md" in prompt
+    assert "Cite live cause observations, explained_detectors" in _workflow()
     assert "static_context" in _workflow()
 
 
@@ -430,9 +431,9 @@ def test_program_prompt_guides_codex_and_claude_sessions() -> None:
     ]
     request = from_dict(IncidentRequest, raw)
     prompt = _responder_prompt(request)
-    assert "live-check matched mitigations and apply them first" in prompt
+    assert "learned mitigations first, repair the rest" in prompt
     assert "Commit source repairs" in prompt
-    assert "Self-check" in prompt
+    assert "self-check" in prompt
     assert "targetport" in prompt
 
 
@@ -589,9 +590,10 @@ def test_workflow_separates_static_context_from_live_cause_evidence() -> None:
 def test_memory_matches_do_not_override_accepted_source(tmp_path: Path) -> None:
     for request in (_warm_request(tmp_path), _not_yet_fired_request(tmp_path), _request()):
         prompt = _responder_prompt(request)
-        assert "Accepted source and developer changes express intent." in prompt
-        assert "Operational memory is fallible advice." in prompt
-        assert "Recovery requires evidence from the intended application behavior." in prompt
+        assert "sdo-incident-response/SKILL.md" in prompt
+        assert "Accepted source and developer changes express intent." in _workflow()
+        assert "Operational memory is fallible advice." in _workflow()
+        assert "Recovery requires evidence from the intended application behavior." in _workflow()
         assert "repair exactly" not in prompt
         assert "do not explore the repository or cluster" not in prompt
         assert "Prefer a matching program's plan" not in prompt
@@ -642,7 +644,7 @@ def test_app_drift_defaults_to_verified_accepted_source_restoration() -> None:
     assert "Restore namespace drift to accepted source" in _workflow()
     assert "unless live evidence establishes an intended difference" in _workflow()
     assert "uncertainty alone does not block restoration" in _workflow()
-    assert "Explain benign drift with live evidence" in prompt
+    assert "Explain benign drift with live evidence" in _workflow()
 
 
 @pytest.mark.parametrize("fails", [False, True])
