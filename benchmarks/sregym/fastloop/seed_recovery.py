@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import importlib
+import json
+import os
 import secrets
 import shlex
+from pathlib import Path
 from typing import Any
 
 
@@ -27,7 +30,15 @@ def verify_baseline_traffic(problem: Any, baseline: dict[str, Any]) -> dict[str,
         problem.namespace,
         entry,
     )
-    from benchmarks.sregym.fastloop.clean_start import isolate_benchmark_probe
+    from benchmarks.sregym.adapter import kubectl
+    from benchmarks.sregym.fastloop.clean_start import HARNESS_NAMESPACE, isolate_benchmark_probe
+
+    kubectl(
+        ["apply", "-f", "-"],
+        namespace=None,
+        kubeconfig=Path(os.environ["KUBECONFIG"]),
+        input_text=json.dumps({"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": HARNESS_NAMESPACE}}),
+    )
 
     manifest = isolate_benchmark_probe(manifest)
     phase, logs = clusters.KubeClusterIO().run_pod(manifest, timeout_s=grading.probe_deadline_s(entry) + 30)

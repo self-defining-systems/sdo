@@ -37,6 +37,7 @@ from google.protobuf import json_format
 from pydantic import BaseModel, ConfigDict, Field
 
 from benchmarks.sregym.adapter.cluster_resources import kubectl
+from benchmarks.sregym.adapter.eval_guards import closure_pending
 from benchmarks.sregym.adapter.fault_gate import (
     BASELINE_TIMEOUT_SECONDS,
     RESUMED_BASELINE_TIMEOUT_SECONDS,
@@ -413,6 +414,8 @@ class KubectlClusterOps:
     def set_maintenance(
         self, control_namespace: str, *, paused: bool, generation: str, preserve_baseline: bool = False
     ) -> None:
+        if paused and closure_pending(self.runtime_state(control_namespace)):
+            raise PersistentControllerError("eval: cannot pause SDO while incident closure work is pending")
         kubeconfig = os.getenv("KUBECONFIG", "").strip()
         go_set_maintenance(
             control_namespace,
@@ -683,9 +686,7 @@ def run_persistent_stage(
     )
     verified_ready = clock.monotonic()
     if pause_after_verified:
-        paused_generation = f"{generation}-paused"
-        ops.set_maintenance(control, paused=True, generation=paused_generation)
-        wait_for_maintenance_ack(ops, control, paused_generation, clock)
+        pause_controller(ops, control, label=generation, clock=clock)
     paused_ready = clock.monotonic()
     stage_evidence = _export_stage_end_evidence(ops, control, config, inputs.receipt_dir, clock)
     closure = verified.closure or {}
@@ -804,6 +805,9 @@ def pause_controller(ops: ClusterOps, control: str, *, label: str, clock: Clock 
     """Pause the controller and wait for its acknowledgement (used when a composition ends)."""
 
     clock = clock or Clock()
+    if closure_pending(ops.runtime_state(control)):
+        logger.info("Leaving %s active: incident closure work is pending", control)
+        return
     generation = f"{label}-{uuid.uuid4().hex[:8]}-paused"
     ops.set_maintenance(control, paused=True, generation=generation)
     wait_for_maintenance_ack(ops, control, generation, clock)

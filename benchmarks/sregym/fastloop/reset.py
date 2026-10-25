@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from typing import TYPE_CHECKING, Any, Protocol
 
 from benchmarks.sregym.adapter import PersistentState, kubectl
 from benchmarks.sregym.fastloop.baseline_recovery import (
+    ApplicationCluster,
     KubectlApplicationCluster,
+    accepted_restore_baselines,
     load_application_baseline,
     reconcile_application,
 )
@@ -179,13 +182,8 @@ def reset_environment(
 ) -> None:
     if not environment.seed_commit:
         raise ValueError("reset requires a seed commit captured by fastloop up")
-    baselines = load_application_baseline(environment.baseline_path, environment.namespace)
-    if baselines is None:
-        raise ValueError("reset requires an application baseline captured by fastloop up")
     cluster.reset_controller(environment.seed_commit, preserve_repository=preserve_repository)
-    worker.request("clean_start", problem_id=environment.deploy_problem, timeout=200)
-    for baseline in baselines:
-        reconcile_application(cluster, baseline, baseline.namespace)
+    restore_application(environment, cluster, worker)
     if preserve_repository:
         state = PersistentState.load(environment.state_path)
         record = state.controllers.get(environment.namespace)
@@ -196,9 +194,44 @@ def reset_environment(
             state.save(environment.state_path)
     else:
         environment.state_path.unlink(missing_ok=True)
-    health = worker.request("health", namespace=environment.namespace, timeout=60)
+
+
+def restore_application(environment: FastloopEnvironment, cluster: ApplicationCluster, worker: HealthWorker) -> None:
+    """Restore only the app, from one captured installed manifest set, once.
+
+    The controller, accepted memory and incident clocks are untouched. This is
+    also the one allowed stabilization retry before any fault is injected.
+    """
+    baselines = load_application_baseline(environment.baseline_path, environment.namespace)
+    if baselines is None:
+        raise ValueError("reset requires an application baseline captured by fastloop up")
+    if isinstance(cluster, KubectlApplicationCluster):
+        from benchmarks.sregym.fastloop.clean_start import restore_admission_baseline
+
+        restore_admission_baseline(environment.kubeconfig, environment.baseline_path, environment.workspace)
+    worker.request("clean_start", problem_id=environment.deploy_problem, timeout=200)
+    baselines = accepted_restore_baselines(environment.workspace, baselines)
+    for baseline in baselines:
+        reconcile_application(cluster, baseline, baseline.namespace)
+    deadline = time.monotonic() + 60
+    if isinstance(cluster, KubectlApplicationCluster):
+        from benchmarks.sregym.fastloop.baseline_recovery import retire_stalled_replicas
+
+        retire_stalled_replicas(environment.kubeconfig, environment.namespace)
+    while True:
+        health = worker.request("health", namespace=environment.namespace, timeout=60)
+        if health.get("healthy") or time.monotonic() >= deadline:
+            break
+        time.sleep(min(1, max(0, deadline - time.monotonic())))
     if not health.get("healthy"):
         raise RuntimeError(f"reset left {environment.namespace} unhealthy: {health.get('unready')}")
+    from benchmarks.sregym.fastloop.admission import workload_identity
+
+    identity = None
+    if isinstance(cluster, KubectlApplicationCluster):
+        from benchmarks.sregym.fastloop.admission import workload_identity
+
+        identity = workload_identity(environment.kubeconfig, environment.namespace)
     oracle = worker.request("baseline_oracle", problem_id=environment.deploy_problem, verify_traffic=True, timeout=200)
     if not oracle.get("success"):
         refreshed = worker.request("refresh_baseline_clients", problem_id=environment.deploy_problem, timeout=120)
@@ -211,3 +244,8 @@ def reset_environment(
         )
         if not oracle.get("success"):
             raise RuntimeError(f"reset left independent traffic failing for {environment.deploy_problem}: {oracle}")
+
+    if identity is not None:
+        from benchmarks.sregym.adapter.eval_guards import assert_stable_workloads
+
+        assert_stable_workloads(identity, workload_identity(environment.kubeconfig, environment.namespace))

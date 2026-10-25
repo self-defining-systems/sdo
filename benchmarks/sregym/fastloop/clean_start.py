@@ -210,3 +210,39 @@ def prepare_harness_traffic(app: Any, kubeconfig: Path) -> bool:
 
     app.start_workload = start
     return True
+
+
+def restore_admission_baseline(kubeconfig: Path, baseline_path: Path, workspace: Path) -> None:
+    """Retire unlabelled legacy admission faults against captured/accepted identity.
+
+    The supported harness reset has the same captured-cluster boundary. Source
+    webhooks remain admitted even when the infrastructure snapshot predates them.
+    No Secret objects or credential-bearing namespace dumps are needed.
+    """
+    baseline = json.loads(baseline_path.read_text())
+    kinds = {
+        "MutatingWebhookConfiguration": "mutating_webhook_configs",
+        "ValidatingWebhookConfiguration": "validating_webhook_configs",
+    }
+    lock_path = workspace / ".sdo/rendered/lock.json"
+    accepted = json.loads(lock_path.read_text()).get("objects", []) if lock_path.is_file() else []
+    listing = json.loads(
+        kubectl(
+            ["get", "mutatingwebhookconfigurations,validatingwebhookconfigurations", "-o", "json"],
+            namespace=None,
+            kubeconfig=kubeconfig,
+        ).stdout
+    )["items"]
+    for value in listing:
+        kind, name = value["kind"], value["metadata"]["name"]
+        if kinds[kind] not in baseline:
+            raise ValueError("eval: restore requires captured admission identities")
+        source_owned = any(
+            row.get("ref", {}).get("kind") == kind and row["ref"].get("name") == name for row in accepted
+        )
+        if name not in baseline[kinds[kind]] and not source_owned:
+            kubectl(
+                ["delete", f"{kind}/{name}", "--ignore-not-found=true", "--wait=true", "--timeout=20s"],
+                namespace=None,
+                kubeconfig=kubeconfig,
+            )

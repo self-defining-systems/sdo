@@ -764,13 +764,14 @@ def scripted_health_judge(request: HealthJudgeRequest, checkout: Path) -> Health
     complete unchanged detector bundle. New topology/objectives require a judge
     outside this explicitly scripted rehearsal.
     """
-    from benchmarks.sregym.adapter.scripted_replay_catalog import SCRIPTED_REPLAY_SLOTS
-
-    if "SDO_SCRIPTED_REPLAY_SLOT" not in os.environ:
+    if request.namespace == "sdo-toy":
         return _scripted_toy_health_judge(request, checkout)
-    slot = int(os.environ["SDO_SCRIPTED_REPLAY_SLOT"])
-    if request.namespace != SCRIPTED_REPLAY_SLOTS[slot].namespace:
-        raise ValueError("scripted health refresh namespace differs from rehearsal")
+    if "SDO_SCRIPTED_REPLAY_SLOT" in os.environ:
+        from benchmarks.sregym.adapter.scripted_replay_catalog import SCRIPTED_REPLAY_SLOTS
+
+        slot = int(os.environ["SDO_SCRIPTED_REPLAY_SLOT"])
+        if request.namespace != SCRIPTED_REPLAY_SLOTS[slot].namespace:
+            raise ValueError("scripted health refresh namespace differs from rehearsal")
     goal_document = (checkout / ".sdo/goal.md").read_text(encoding="utf-8")
     parts = goal_document.split("---\n", 2)
     if len(parts) != 3 or parts[0]:

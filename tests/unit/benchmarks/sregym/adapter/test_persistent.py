@@ -544,7 +544,7 @@ def test_one_controller_serves_both_stages_and_the_second_skips_reinstall_and_li
     kinds = [
         event[0] for event in ops.events if event[0] in {"install", "reuse", "active", "paused", "fault", "delete"}
     ]
-    assert kinds == ["install", "active", "fault", "paused", "reuse", "active", "fault", "paused"]
+    assert kinds == ["install", "active", "fault", "reuse", "active", "fault"]
     # Each stage correlates its own incident.
     assert (first["incident_id"], second["incident_id"]) == ("incident-1", "incident-2")
 
@@ -1080,7 +1080,8 @@ def test_each_stage_exports_its_runtime_evidence_when_it_ends(tmp_path: Path) ->
     assert all(seconds >= 0 for seconds in evidence["export_seconds"].values())
     order = [event[0] for event in ops.events]
     # Exported after verified recovery, so it never delays the fault or the responder.
-    assert order.index("paused") < order.index("stage_evidence")
+    assert "paused" not in order
+    assert order.index("fault") < order.index("stage_evidence")
     recorded = json.loads((receipt_dir / RESOLUTION_FILENAME).read_text(encoding="utf-8"))
     assert recorded["stage_end_runtime_artifacts"]["error"] is None
 
@@ -1530,3 +1531,12 @@ def test_interrupted_install_retains_cleanup_target_before_controller_exists(tmp
     with pytest.raises(RuntimeError, match="launcher killed"):
         run_persistent_stage(inputs, ops=ops, run_lifecycle=interrupted, inject=lambda: None, clock=_clock(ops))
     assert PersistentState.load(inputs.state_path).cleanup_targets["hotel"].namespace == "hotel"
+
+
+def test_verified_early_report_leaves_controller_active_until_outcome_recorded(tmp_path: Path) -> None:
+    ops = FakeOps()
+    _run(tmp_path, ops, "s0", [])
+    # A verified pending closure still needs active controller steps to record
+    # its outcome. Pausing here deadlocks early-report finalization.
+    assert ops.states["hotel-sdo"].get("pending_closure")
+    assert not any(event[0] == "paused" for event in ops.events)
