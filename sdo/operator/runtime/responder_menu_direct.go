@@ -216,6 +216,9 @@ func (l *ResponderLoop) mitigateMenu(ctx context.Context, selection *contracts.M
 			if result.PendingAction != nil && index == len(result.ActionsApplied) {
 				receipt.State = contracts.MitigationActionReceipt_STATE_UNKNOWN
 			}
+			if index < len(result.ActionReports) && result.ActionReports[index].Status == "unknown" {
+				receipt.State = contracts.MitigationActionReceipt_STATE_UNKNOWN
+			}
 			if result.RolledBack && receipt.State == contracts.MitigationActionReceipt_STATE_APPLIED {
 				receipt.CompensationState = contracts.MitigationActionReceipt_STATE_APPLIED
 			}

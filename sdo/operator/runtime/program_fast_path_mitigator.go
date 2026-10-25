@@ -205,3 +205,10 @@ func (v mitigationReadView) ValidatingWebhookConfiguration(name string) (*admiss
 	result, err := sdk.ScopedSource(v.live).ValidatingWebhookConfiguration(name)
 	return result, err
 }
+
+func (v mitigationReadView) DatabaseUsers(t program.DatabaseTarget) ([]program.DatabaseUser, error) {
+	if err := v.ctx.Err(); err != nil {
+		return nil, err
+	}
+	return v.live.DatabaseUsers(t)
+}

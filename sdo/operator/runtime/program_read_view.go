@@ -20,6 +20,7 @@ import (
 	kruntime "k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	policyv1 "k8s.io/api/policy/v1"
@@ -39,11 +40,12 @@ type PrimitiveProber interface {
 // dependencies expose reads only; no program receives a Kubernetes writer.
 type LiveReadView struct {
 	sdk.DetectionContext
-	Context      context.Context
-	Client       kubernetes.Interface
-	Prober       PrimitiveProber
-	Source       PlanSource
-	SourceCommit string
+	Context            context.Context
+	Client             kubernetes.Interface
+	DatabaseExecConfig *rest.Config
+	Prober             PrimitiveProber
+	Source             PlanSource
+	SourceCommit       string
 	// SourceRevision resolves lazily, after snapshot acquisition has released controller locks.
 	SourceRevision func() string
 	Baseline       *StateChanges
