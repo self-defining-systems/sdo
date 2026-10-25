@@ -134,6 +134,22 @@ func main() {
 		}
 		return
 	}
+	if len(os.Args) > 1 && os.Args[1] == "reset-control-state" {
+		config, err := operatorcli.ParseResetControlStateLaunch(os.Args[1:])
+		if err == nil {
+			result, runErr := operatorcli.RunResetControlState(context.Background(), config)
+			err = runErr
+			encodeErr := json.NewEncoder(os.Stdout).Encode(result)
+			if err == nil {
+				err = encodeErr
+			}
+		}
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
 	if len(os.Args) > 1 && os.Args[1] == "stop" {
 		config, err := operatorcli.ParseStopLaunch(os.Args[1:])
 		if err == nil {

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
@@ -32,26 +33,43 @@ func CompleteWithReachability(ctx context.Context, client kubernetes.Interface, 
 	return persistData(ctx, client, control, ConfigMapName, record, map[string]string{ReachabilityDataKey: string(raw)})
 }
 
+// ReachabilityReferenceNote explains why a finalized record grants no exclusions.
+type ReachabilityReferenceNote struct {
+	Status    string `json:"status"`
+	Namespace string `json:"namespace"`
+	ConfigMap string `json:"configmap"`
+	Key       string `json:"key"`
+}
+
 // LoadReachability consumes only the finalized immutable install record.
 func LoadReachability(ctx context.Context, client kubernetes.Interface, control, namespace string) (*servicehealth.ReachabilityBaseline, error) {
-	record, err := Load(ctx, client, control, namespace)
-	if err != nil || record == nil {
-		return nil, err
-	}
+	reference, _, err := LoadReachabilityWithNote(ctx, client, control, namespace)
+	return reference, err
+}
+
+// LoadReachabilityWithNote preserves fail-safe legacy semantics and makes the
+// missing optional reference observable without treating it as startup failure.
+func LoadReachabilityWithNote(ctx context.Context, client kubernetes.Interface, control, namespace string) (*servicehealth.ReachabilityBaseline, *ReachabilityReferenceNote, error) {
 	cm, err := client.CoreV1().ConfigMaps(control).Get(ctx, ConfigMapName, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return nil, nil, nil
+	}
 	if err != nil {
-		return nil, err
+		return nil, nil, fmt.Errorf("read onboarding reachability: %w", err)
+	}
+	if _, err := Decode([]byte(cm.Data[DataKey]), namespace); err != nil {
+		return nil, nil, err
 	}
 	raw := cm.Data[ReachabilityDataKey]
 	if raw == "" {
-		return nil, nil
+		return nil, &ReachabilityReferenceNote{Status: "reference_absent", Namespace: control, ConfigMap: ConfigMapName, Key: ReachabilityDataKey}, nil
 	}
 	var reference servicehealth.ReachabilityBaseline
 	if err := json.Unmarshal([]byte(raw), &reference); err != nil {
-		return nil, fmt.Errorf("decode onboarding reachability: %w", err)
+		return nil, nil, fmt.Errorf("decode onboarding reachability: %w", err)
 	}
 	if err := reference.Validate(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return &reference, nil
+	return &reference, nil, nil
 }

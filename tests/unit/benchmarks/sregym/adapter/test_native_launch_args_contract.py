@@ -25,6 +25,7 @@ from benchmarks.sregym.adapter.native_operator import (
     install_existing,
     launch_host,
     read_incident_evidence,
+    reset_control_state,
     set_maintenance,
     stop_runtime,
     sync_existing,
@@ -44,6 +45,7 @@ ADAPTER_COMMANDS = {
     "runtime-artifacts",
     "observe-controller",
     "stop",
+    "reset-control-state",
 }
 FIXTURE = Path(__file__).resolve().parents[5] / "tests" / "fixtures" / "sdo" / "contracts" / "adapter_launch_args.json"
 
@@ -108,6 +110,7 @@ def _emitted(monkeypatch: pytest.MonkeyPatch) -> dict[str, list[str]]:
         lambda: read_incident_evidence(install, "incident-1", sync_repository=True),
         lambda: export_runtime_artifacts(install, Path("/fixture/out")),
         lambda: stop_runtime("hotel-sdo", kubeconfig=str(install.kubeconfig), inspect=True),
+        lambda: reset_control_state("hotel-sdo", kubeconfig=str(install.kubeconfig)),
     ):
         try:
             call()

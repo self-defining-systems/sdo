@@ -26,12 +26,13 @@ func TestAdapterEmittedLaunchArgsParse(t *testing.T) {
 		t.Fatalf("host rejects the adapter's arguments: %v", err)
 	}
 	parsers := map[string]func([]string) error{
-		"sync-existing":     func(args []string) error { _, err := ParseSyncExistingLaunch(args); return err },
-		"maintenance":       func(args []string) error { _, err := ParseMaintenanceLaunch(args); return err },
-		"inspect-existing":  func(args []string) error { _, err := ParseInspectExistingLaunch(args); return err },
-		"incident-evidence": func(args []string) error { _, err := ParseIncidentEvidenceLaunch(args); return err },
-		"runtime-artifacts": func(args []string) error { _, err := ParseRuntimeArtifactsLaunch(args); return err },
-		"stop":              func(args []string) error { _, err := ParseStopLaunch(args); return err },
+		"reset-control-state": func(args []string) error { _, err := ParseResetControlStateLaunch(args); return err },
+		"sync-existing":       func(args []string) error { _, err := ParseSyncExistingLaunch(args); return err },
+		"maintenance":         func(args []string) error { _, err := ParseMaintenanceLaunch(args); return err },
+		"inspect-existing":    func(args []string) error { _, err := ParseInspectExistingLaunch(args); return err },
+		"incident-evidence":   func(args []string) error { _, err := ParseIncidentEvidenceLaunch(args); return err },
+		"runtime-artifacts":   func(args []string) error { _, err := ParseRuntimeArtifactsLaunch(args); return err },
+		"stop":                func(args []string) error { _, err := ParseStopLaunch(args); return err },
 	}
 	if len(emitted) != len(parsers)+2 {
 		t.Fatalf("fixture commands %v are not all parsed", emitted)

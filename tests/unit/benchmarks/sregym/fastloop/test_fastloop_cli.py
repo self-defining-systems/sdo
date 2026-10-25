@@ -715,3 +715,77 @@ def test_normal_live_and_reduced_scripted_scales_pass_preflight(
     with pytest.raises(RuntimeError, match="passed time-scale preflight"):
         main(["run", "--run-dir", str(tmp_path), "--agent", agent, "--time-scale", scale, *flags])
     assert float(cli.os.environ["SDO_TIME_SCALE"]) == float(scale)
+
+
+def test_fresh_memory_resets_control_state_before_install_but_warm_repeat_keeps_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from benchmarks.sregym import adapter
+    from benchmarks.sregym.adapter import native_operator
+    from benchmarks.sregym.fastloop import cli
+    from tests.unit.benchmarks.sregym.fastloop.test_fastloop_sdo_agent import FakeOps, _clock, _inject
+
+    environment = FastloopEnvironment(
+        run_dir=tmp_path,
+        cluster="test",
+        kubeconfig=tmp_path / "kubeconfig",
+        namespace="hotel-reservation",
+        application="hotel-reservation",
+        workspace=tmp_path / "workspace",
+        sregym_dir=tmp_path / "sregym",
+        private_tmp=None,
+    )
+    ops = FakeOps()
+    calls: list[str] = []
+    monkeypatch.setattr(cli, "_cluster_ops", lambda *_args: ops)
+
+    real_execute = native_operator.execute_operator
+
+    def execute(command: str, args: list[str], **_kwargs: Any) -> str:
+        if command not in {"stop", "reset-control-state"}:
+            return real_execute(command, args, **_kwargs)
+        assert args[args.index("--control-namespace") + 1] == "hotel-reservation-sdo"
+        assert args[args.index("--kubeconfig") + 1] == str(environment.kubeconfig)
+        calls.append(command)
+        return json.dumps(
+            {"removed": [], "leftovers": []}
+            if command == "stop"
+            else {"control_namespace": "hotel-reservation-sdo", "deleted": ["sdo-namespace-onboarding"]}
+        )
+
+    def install(config: Any, *_args: Any) -> None:
+        calls.append("install")
+        ops.install(config)
+
+    monkeypatch.setattr(native_operator, "execute_operator", execute)
+    monkeypatch.setattr(adapter, "launch_native_lifecycle", install)
+    from benchmarks.sregym.adapter.driver import DeployedLifecycle, DeployedLifecycleContext
+
+    monkeypatch.setattr(
+        adapter,
+        "deployed_lifecycle",
+        lambda _namespace: DeployedLifecycle(
+            context=DeployedLifecycleContext(health_objective="objective", active_resources=[]),
+            fingerprint="test-topology",
+        ),
+    )
+    args = build_parser().parse_args(["run", "--run-dir", str(tmp_path), "--agent", "sdo", "--no-checkpoints"])
+    for fresh in range(2):
+        if fresh:
+            environment.state_path.unlink()
+        agent = cli._sdo_agent(args, environment, tmp_path / "results")
+        agent._clock = _clock()
+        agent.learn(agent.resolve(0, "p", _inject))
+        assert calls == ["stop", "reset-control-state", "install"] * (fresh + 1)
+        # A new CLI invocation and the warm reset/reinstall path retain memory.
+        state = adapter.PersistentState.load(environment.state_path)
+        record = state.controllers[environment.namespace]
+        record.controller_pod_uid = ""
+        record.controller_pod_name = ""
+        state.save(environment.state_path)
+        ops.delete_controller("hotel-reservation-sdo")
+        ops.namespace_exists = lambda _namespace: True
+        warm = cli._sdo_agent(args, environment, tmp_path / "results")
+        warm._clock = _clock()
+        warm.learn(warm.resolve(1, "p", _inject))
+        assert calls == ["stop", "reset-control-state", "install"] * (fresh + 1)
