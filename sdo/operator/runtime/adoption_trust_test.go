@@ -22,7 +22,7 @@ func TestAdoptedProgramsStartWithoutInheritedTrust(t *testing.T) {
 	d := KubernetesJobDispatcher{Outcomes: priorOutcomeReader{outcomes: []memory.Outcome{{IncidentID: old.IncidentId, Record: old}}}}
 	request := IncidentRequest{RepositoryWorktree: root, SourceCommit: nativeGit(t, root, "rev-parse", "HEAD")}
 	before, err := d.programTrust(ctx, request)
-	if err != nil || !(before["targetport"].VerifiedSuccesses > 0 && before["targetport"].Failures == 0) {
+	if err != nil || (before["targetport"].VerifiedSuccesses == 0 || before["targetport"].Failures != 0) {
 		t.Fatalf("fixture must have prior trust: %+v %v", before, err)
 	}
 	adopted, err := memory.MarkAdoptedExisting(ctx, root)
@@ -31,7 +31,7 @@ func TestAdoptedProgramsStartWithoutInheritedTrust(t *testing.T) {
 	}
 	request.SourceCommit = adopted
 	after, err := d.programTrust(ctx, request)
-	if err != nil || (after["targetport"].VerifiedSuccesses > 0 && after["targetport"].Failures == 0) || after["targetport"].VerifiedSuccesses != 0 {
+	if err != nil || (after["targetport"].VerifiedSuccesses != 0 && after["targetport"].Failures == 0) || after["targetport"].VerifiedSuccesses != 0 {
 		t.Fatalf("inherited trust survived adoption: %+v %v", after, err)
 	}
 }

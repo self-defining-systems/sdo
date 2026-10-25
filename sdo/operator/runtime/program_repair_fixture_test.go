@@ -54,23 +54,3 @@ func trustedPortLoop(t *testing.T, withOtherFault, trusted, healthyVerifier bool
 	}
 	return loop, client
 }
-
-type imagePullChangingDetector struct{ find func() []sdk.Finding }
-
-func (imagePullChangingDetector) Spec() sdk.DetectorSpec {
-	return sdk.DetectorSpec{ID: "deployment-image-pull-backoff"}
-}
-
-func (d imagePullChangingDetector) Detect(context.Context, sdk.DetectionContext) ([]sdk.Finding, error) {
-	return d.find(), nil
-}
-
-type judgementPortProgram struct{}
-
-func (judgementPortProgram) Spec() program.ProgramSpec {
-	return program.ProgramSpec{ID: "port-judgement", Params: []program.ParamSpec{{Name: "service", Kind: "Service", Required: true}}}
-}
-
-func (judgementPortProgram) Diagnose(context.Context, program.ReadView, program.Bindings) (program.Verdict, error) {
-	return program.Verdict{Result: program.NeedsJudgement, Question: "which port is intended?"}, nil
-}

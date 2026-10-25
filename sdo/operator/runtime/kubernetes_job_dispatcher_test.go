@@ -11,7 +11,6 @@ import (
 	"google.golang.org/protobuf/types/known/anypb"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/contracts/wire"
-	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/worker_registry"
 	"sdo.dev/operator/worker_registry/registrytest"
 
@@ -90,22 +89,6 @@ func TestNativeResponderSessionsAreIsolatedPerIncident(t *testing.T) {
 	if left, right := session(first), session(second); left == right {
 		t.Fatalf("separate incidents share agent session volume: %q", left)
 	}
-}
-
-type liveShapeImageDetector struct{}
-
-func (liveShapeImageDetector) Spec() sdk.DetectorSpec { return (fastloopDetector{}).Spec() }
-
-func (liveShapeImageDetector) Detect(ctx context.Context, view sdk.DetectionContext) ([]sdk.Finding, error) {
-	findings, err := (fastloopDetector{}).Detect(ctx, view)
-	if err != nil || len(findings) == 0 {
-		return findings, err
-	}
-	drift := findings[0]
-	drift.DetectorID = "drift.image-pull-failure"
-	drift.ParameterBindings = map[string]sdk.ObjectRef{"deployment": drift.PrimaryResource}
-	service := sdk.Finding{DetectorID: "availability", RuleID: "service-without-ready-endpoints", Status: sdk.FindingActive, Severity: sdk.SeverityCritical, Summary: "no ready endpoint", Evidence: "Service has no ready endpoint", PrimaryResource: sdk.ObjectRef{Kind: "Service", Namespace: "app", Name: "api"}}
-	return []sdk.Finding{drift, findings[0], service}, nil
 }
 
 func TestKubernetesJobDispatcherCrashReplayReattachesExactlyOnce(t *testing.T) {

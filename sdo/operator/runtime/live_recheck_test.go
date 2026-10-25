@@ -21,16 +21,6 @@ func restartPortLoop(original *ResponderLoop) *ResponderLoop {
 	return loop
 }
 
-type countingPlanClient struct {
-	PlanObjectClient
-	writes *int
-}
-
-func (c countingPlanClient) Patch(ctx context.Context, ref sdk.ObjectRef, kind types.PatchType, patch []byte) error {
-	*c.writes++
-	return c.PlanObjectClient.Patch(ctx, ref, kind, patch)
-}
-
 type liveCrashClient struct{ PlanObjectClient }
 
 func (c *liveCrashClient) Patch(ctx context.Context, ref sdk.ObjectRef, kind types.PatchType, patch []byte) error {
