@@ -187,7 +187,6 @@ func (d KubernetesJobDispatcher) dispatch(ctx context.Context, request IncidentR
 	if d.LoopFactory != nil {
 		loop = d.LoopFactory(request)
 		if loop != nil {
-			loop.WorkingProgramRoot = request.RepositoryWorktree
 			defer loop.CloseWorkingPrograms()
 		}
 		if loop != nil {

@@ -131,7 +131,7 @@ type selectedPlan struct {
 
 // ResponderLoop holds one incident's tool state while its responder Job runs.
 type ResponderLoop struct {
-	// WorkingProgramRoot is set by the dispatcher to the responder's mounted
+	// WorkingProgramRoot is set by the production loop factory to the mounted
 	// proposal checkout. Embedders with an in-memory registry may leave it empty.
 	WorkingProgramRoot string
 	workingPrograms    []*workingProgram
