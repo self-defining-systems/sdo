@@ -99,6 +99,11 @@ func RecordSessionStartup(repositoryMount, pvcSubPath, sessionSubPath string, re
 }
 
 func writeStartupOnce(filename string, value any) error {
+	if _, err := os.Stat(filename); err == nil {
+		return nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
 	data, err := json.Marshal(value)
 	if err != nil {
 		return err
