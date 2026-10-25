@@ -26,3 +26,5 @@ Only the benchmark observer is capped by SREGym: app growth is detected,
 and application workload documents are preserved from accepted source.
 
 New prepared-lane captures seal `fastloop_application.namespaces[].objects` with `installed_digest`. This installed set takes precedence over an inherited seed lock while source is unchanged; accepted source repairs restore from the current lock. Digest mismatches reject loading. Dry-run receipts include `code_revision` and per-stage resource, restoration, RBAC, setup and traffic results.
+
+Dry-run timing separates one-time setup (`setup_seconds`, at most900s) from steady admission (`steady_seconds`, at most300s). Native onboarding plus the first complete detector observation ends setup; every existing health, traffic, lineage, placement and closure check remains mandatory during steady proof.

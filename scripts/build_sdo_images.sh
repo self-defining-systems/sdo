@@ -46,7 +46,7 @@ for target in "${selected[@]}"; do
     role=responder_image
     ;;
   esac
-  if [[ "${target}" == "controller" ]]; then
+  if [[ "${target}" == "controller" || "${target}" == "validator" ]]; then
     docker run --rm --user 65532:65532 "${image}:${tag}" sh -ec '
       command -v go >/dev/null
       test "$GOPROXY" = off
@@ -66,6 +66,22 @@ for target in "${selected[@]}"; do
   fi
   if [[ "${SDO_IMAGE_PREFLIGHT:-0}" == "1" ]]; then
     uv run python -m benchmarks.sregym.runner.preflight --image "${role}=${image}:${tag}"
+  fi
+  if [[ "${target}" == "validator" ]]; then
+    # A readonly, offline build must hit the SDK seed without compiling it.
+    # A missing cache COPY or stale warm flags fails the image smoke gate.
+    docker run --rm --network none --read-only --tmpfs /tmp --user 65532:65532 \
+      "${image}:${tag}" sh -ec '
+        test "$GOCACHEPROG" = /usr/local/bin/sdo-go-cache
+        cd /opt/sdo/sdo/operator/sdk
+        go list -x -export ./program >/tmp/sdk-export 2>/tmp/sdk-build
+        go vet -x ./program 2>>/tmp/sdk-build
+        if grep -qE "/(compile|vet) " /tmp/sdk-build; then
+          cat /tmp/sdk-build >&2
+          echo "validator SDK cache is missing or stale" >&2
+          exit 1
+        fi
+      '
   fi
   if [[ "${target}" == "responder" || "${target}" == "benchmark" ]]; then
     docker run --rm --user 65532:65532 \

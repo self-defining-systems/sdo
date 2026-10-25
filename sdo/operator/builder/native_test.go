@@ -308,3 +308,28 @@ func TestBuildWorkspaceRejectsInvalidMetricsDetectors(t *testing.T) {
 		t.Fatalf("a detector with an empty metric expression must fail the build tests: %v", err)
 	}
 }
+
+func TestReadThroughGoCacheDoesNotCopySeedAtStartup(t *testing.T) {
+	seed, cache := t.TempDir(), filepath.Join(t.TempDir(), "private-cache")
+	if err := os.WriteFile(filepath.Join(seed, "compiled-sdk"), []byte("immutable"), 0400); err != nil {
+		t.Fatal(err)
+	}
+	bin := t.TempDir()
+	// Startup can invoke Go, but any hidden cache copy fails this test.
+	if err := os.WriteFile(filepath.Join(bin, "cp"), []byte("#!/bin/sh\nexit 99\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bin, "go"), []byte("#!/bin/sh\ntest ! -e \"$GOCACHE/compiled-sdk\"\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("GOCACHEPROG", "/usr/local/bin/sdo-go-cache")
+	t.Setenv("SDO_GO_CACHE_SEED", seed)
+	t.Setenv("GOCACHE", cache)
+	if _, err := (&Workspace{Directory: t.TempDir()}).ValidateAndBuild(context.Background()); err != nil {
+		t.Fatalf("startup copied immutable seed: %v", err)
+	}
+	if _, err := os.Stat(cache); !os.IsNotExist(err) {
+		t.Fatal("startup materialized the cache before Go requested an entry")
+	}
+}
