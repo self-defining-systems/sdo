@@ -455,7 +455,7 @@ class VerificationEvidence(_message.Message):
     def __init__(self, name: _Optional[str] = ..., passed: _Optional[bool] = ..., details: _Optional[str] = ..., observed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ...) -> None: ...
 
 class UsageMetrics(_message.Message):
-    __slots__ = ("llm_calls", "input_tokens", "output_tokens", "cached_input_tokens", "cache_read_input_tokens", "cache_write_input_tokens", "cache_write_1h_input_tokens", "uncached_input_tokens", "reasoning_output_tokens", "model_requests", "total_cost_usd")
+    __slots__ = ("llm_calls", "input_tokens", "output_tokens", "cached_input_tokens", "cache_read_input_tokens", "cache_write_input_tokens", "cache_write_1h_input_tokens", "uncached_input_tokens", "reasoning_output_tokens", "model_requests", "total_cost_usd", "partial")
     LLM_CALLS_FIELD_NUMBER: _ClassVar[int]
     INPUT_TOKENS_FIELD_NUMBER: _ClassVar[int]
     OUTPUT_TOKENS_FIELD_NUMBER: _ClassVar[int]
@@ -467,6 +467,7 @@ class UsageMetrics(_message.Message):
     REASONING_OUTPUT_TOKENS_FIELD_NUMBER: _ClassVar[int]
     MODEL_REQUESTS_FIELD_NUMBER: _ClassVar[int]
     TOTAL_COST_USD_FIELD_NUMBER: _ClassVar[int]
+    PARTIAL_FIELD_NUMBER: _ClassVar[int]
     llm_calls: int
     input_tokens: int
     output_tokens: int
@@ -478,7 +479,8 @@ class UsageMetrics(_message.Message):
     reasoning_output_tokens: int
     model_requests: int
     total_cost_usd: float
-    def __init__(self, llm_calls: _Optional[int] = ..., input_tokens: _Optional[int] = ..., output_tokens: _Optional[int] = ..., cached_input_tokens: _Optional[int] = ..., cache_read_input_tokens: _Optional[int] = ..., cache_write_input_tokens: _Optional[int] = ..., cache_write_1h_input_tokens: _Optional[int] = ..., uncached_input_tokens: _Optional[int] = ..., reasoning_output_tokens: _Optional[int] = ..., model_requests: _Optional[int] = ..., total_cost_usd: _Optional[float] = ...) -> None: ...
+    partial: bool
+    def __init__(self, llm_calls: _Optional[int] = ..., input_tokens: _Optional[int] = ..., output_tokens: _Optional[int] = ..., cached_input_tokens: _Optional[int] = ..., cache_read_input_tokens: _Optional[int] = ..., cache_write_input_tokens: _Optional[int] = ..., cache_write_1h_input_tokens: _Optional[int] = ..., uncached_input_tokens: _Optional[int] = ..., reasoning_output_tokens: _Optional[int] = ..., model_requests: _Optional[int] = ..., total_cost_usd: _Optional[float] = ..., partial: _Optional[bool] = ...) -> None: ...
 
 class TimingMetrics(_message.Message):
     __slots__ = ("started_at", "completed_at")

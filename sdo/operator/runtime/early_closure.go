@@ -180,8 +180,17 @@ func (c *Controller) finishEarlyReport(ctx context.Context, now time.Time) {
 			return
 		}
 	}
+	// Workers are now quiescent, so this includes their final atomic snapshot.
+	usage, err := c.responderUsage(id)
+	if err != nil {
+		c.reportBrokerError("recover retired responder usage", err)
+		return
+	}
 	c.mu.Lock()
 	if c.earlyReportPendingLocked() && c.currentIncidentRequest.IncidentID == id {
+		if usage != nil {
+			c.pendingClosure.Result.Usage = *usage
+		}
 		if !done {
 			c.pendingClosure.ResponderCompletedAt = now.UTC()
 		}

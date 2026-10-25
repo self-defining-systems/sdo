@@ -723,3 +723,30 @@ def test_real_turn_can_read_complete_overflow_facts_and_cleans_them_up(fails: bo
         execute_incident(request, executor=agent.executor)
     assert files
     assert all(not path.exists() for path in files)
+
+
+def test_responder_checkpoint_binds_worker_task_and_phase(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from agentshim import normalized_usage
+    from agentshim.testing import scripted_turn
+
+    directory = tmp_path / "usage"
+    monkeypatch.setenv("SDO_RESPONDER_USAGE_DIR", str(directory))
+    request = evolve(_request(), repository_worktree=str(tmp_path))
+    task_id = request.incident_id + "-continue-1"
+    monkeypatch.setenv("SDO_RESPONDER_TASK_ID", task_id)
+    agent = ScriptedAgent(
+        lambda _: scripted_turn(
+            "codex",
+            session_id="synthetic-usage-session",
+            structured_output=_reply(_result()),
+            usage=normalized_usage(input_tokens=120, output_tokens=10, turns=1),
+        )
+    )
+    result = execute_incident(request, provider="codex", executor=agent.executor)
+    documents = [json.loads(path.read_text()) for path in directory.glob("*.json")]
+    assert len(documents) == 1
+    assert documents[0]["incident_id"] == request.incident_id
+    assert documents[0]["task_id"] == task_id
+    assert documents[0]["phase"] == "responder"
+    assert documents[0]["complete"] is True
+    assert documents[0]["usage"]["input_tokens"] == result.usage.input_tokens == 120

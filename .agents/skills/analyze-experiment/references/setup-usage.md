@@ -1,4 +1,4 @@
-# Setup judge accounting
+# Setup and responder accounting
 
 Native exports retain health-judge turn logs separately at
 `sdo_runtime/setup/<sha256(canonical AgentTask)>/setup-usage.jsonl`.
@@ -13,3 +13,17 @@ zero; add the model to the pricing table before claiming a total. A reused
 complete result starts no worker and adds no turn. Old aborted attempts without
 these logs remain unavailable; the change cannot reconstruct their usage.
 
+
+## Interrupted responders
+
+Responder accounting survives interrupted workers through worker-owned neutral
+checkpoints in the incident session's `usage/<turn_id>.json` files. Each snapshot
+is cumulative for one process turn, bound to incident, task and `responder`
+phase. Runtime replaces the incident aggregate from the latest file for each
+turn at completion or retirement; never add these snapshots to final result
+usage or to each other over time. Distinct continuation and restart turns are
+summed once. `usage.partial: true` means at least one included turn did not
+finish accounting; totals are observed lower bounds. Missing checkpoints are
+unknown, not measured zero. Optional costs and request counts remain unknown
+when any included turn lacks them. Setup and reflection accounting are separate;
+a resumed provider transcript's whole-session totals can include both phases.
