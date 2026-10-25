@@ -159,6 +159,7 @@ COPY sdo /opt/sdo/sdo
 COPY libs/__init__.py /opt/sdo/libs/__init__.py
 COPY libs/agent_cli /opt/sdo/libs/agent_cli
 RUN test -f /opt/sdo/sdo/skills/sdo-memory/SKILL.md \
+    && test -f /opt/sdo/sdo/skills/sdo-incident-response/SKILL.md \
     && test -f /opt/sdo/sdo/skills/sdo-detector-authoring/SKILL.md \
     && test -f /opt/sdo/sdo/skills/sdo-playbook-authoring/SKILL.md \
     && command -v sdo-operator
@@ -178,6 +179,7 @@ COPY sdo /opt/sdo/sdo
 COPY libs/__init__.py /opt/sdo/libs/__init__.py
 COPY libs/agent_cli /opt/sdo/libs/agent_cli
 RUN test -f /opt/sdo/sdo/skills/sdo-memory/SKILL.md \
+    && test -f /opt/sdo/sdo/skills/sdo-incident-response/SKILL.md \
     && test -f /opt/sdo/sdo/skills/sdo-detector-authoring/SKILL.md \
     && test -f /opt/sdo/sdo/skills/sdo-playbook-authoring/SKILL.md \
     && command -v sdo-operator

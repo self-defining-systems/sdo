@@ -18,15 +18,8 @@ from sdo.agents.prompt_templates import (
     prompt_prefix,
     render_prompt,
 )
-from sdo.agents.responder.codex import (
-    _ARCH_INLINE_MAX_CHARS,
-    _GOAL_INLINE_MAX_CHARS,
-    _cold_surfaced_playbook_context,
-    _inlined_architecture_summary,
-    _inlined_health_objective,
-    _responder_prompt,
-)
-from tests.unit.sdo.agents.prompts.cases import incident, rendered_cases
+from sdo.agents.responder.incident_context import prepared_incident_data
+from tests.unit.sdo.agents.prompts.cases import incident, rendered_cases, responder_prompt
 
 if sys.version_info >= (3, 11):
     import tomllib
@@ -40,9 +33,9 @@ def measured_parts() -> dict[str, int]:
     maxima: dict[str, int] = defaultdict(int)
     prompts = rendered_cases()
     boundary = incident(5, oversized=True)
-    boundary.memory_snapshot.goal_markdown = "目" * _GOAL_INLINE_MAX_CHARS
-    boundary.memory_snapshot.architecture_markdown = "界" * _ARCH_INLINE_MAX_CHARS
-    prompts["responder_boundaries"] = _responder_prompt(boundary)
+    boundary.memory_snapshot.goal_markdown = "目" * 1000
+    boundary.memory_snapshot.architecture_markdown = "界" * 2000
+    prompts["responder_boundaries"] = responder_prompt(boundary)
     for name, prompt in prompts.items():
         assert isinstance(prompt, RenderedPrompt), name
         assert "".join(part.text for part in prompt.parts) == prompt.final == prompt, name
@@ -76,7 +69,7 @@ def test_count_unicode_code_points(text: str, expected: int) -> None:
 
 def test_strict_template_requires_every_value() -> None:
     with pytest.raises(KeyError, match="incident_id"):
-        render_prompt("responder", "incident", part="responder.instructions")
+        render_prompt("responder", "incident_response_instructions", part="responder.instructions")
 
 
 def test_parts_survive_composition_and_clipping() -> None:
@@ -96,13 +89,10 @@ def test_parts_survive_composition_and_clipping() -> None:
     assert "".join(part.text for part in clipped.parts) == clipped.final
 
 
-def test_existing_incident_data_caps_with_oversized_fixture() -> None:
+def test_incident_data_cap_preserves_overflow_instead_of_inline_memory_bodies() -> None:
     request = incident(5, oversized=True)
-    assert _inlined_health_objective(request) == ""
-    assert _inlined_architecture_summary(request) == ""
-    rendered = _cold_surfaced_playbook_context(request)
-    assert "手" * 8000 in rendered
-    assert "手" * 8001 not in rendered
-    assert "検" * 2000 in rendered
-    assert "検" * 2001 not in rendered
-    assert "1000 more characters omitted" in rendered
+    with prepared_incident_data(request) as rendered:
+        assert len(rendered) <= 12000
+        assert "Full incident facts" in rendered
+        assert "手" * 100 not in rendered
+        assert "検" * 100 not in rendered
