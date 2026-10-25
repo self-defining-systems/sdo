@@ -26,6 +26,7 @@ import (
 // No model, MongoDB server, credentials or cluster is involved.
 func TestReflectionMongoAuthUpgradesReadmeThroughCLIAndBroker(t *testing.T) {
 	ctx := context.Background()
+	const incidentID = "mongo-auth-upgrade"
 	operatorRoot, err := filepath.Abs("..")
 	if err != nil {
 		t.Fatal(err)
@@ -70,8 +71,24 @@ func TestReflectionMongoAuthUpgradesReadmeThroughCLIAndBroker(t *testing.T) {
 	}
 	nativeGit(t, target, "add", "-A")
 	nativeGit(t, target, "commit", "-qm", "accepted README-only Mongo guidance")
+	// Frozen controller-side healthy evidence lives outside authored memory.
+	capture := t.TempDir()
+	healthyBaseline := filepath.Join(capture, "healthy")
+	if err := os.MkdirAll(healthyBaseline, 0700); err != nil {
+		t.Fatal(err)
+	}
+	healthy, err := os.ReadFile(filepath.Join(fixture, "corpus/mongo-auth/healthy.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(healthyBaseline, "healthy.json"), healthy, 0400); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("SDO_CAPTURED_CORPUS_DIR", capture)
+	t.Setenv("SDO_INCIDENT_ID", incidentID)
+	ctx = validate.WithCaptureSource(ctx, capture, incidentID)
 	compile := func(ctx context.Context, root string, _ []string) error {
-		diagnostics, err := validate.CompileCandidate(ctx, validate.Request{Root: root, OperatorRoot: operatorRoot})
+		diagnostics, err := validate.CompileCandidate(ctx, validate.Request{Root: root, OperatorRoot: operatorRoot, HealthyBaseline: healthyBaseline})
 		if err != nil {
 			return err
 		}
@@ -81,11 +98,18 @@ func TestReflectionMongoAuthUpgradesReadmeThroughCLIAndBroker(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const incidentID = "mongo-auth-upgrade"
+	ref := &contracts.ObjectRef{ApiVersion: "v1", Kind: "Pod", Namespace: "demo", Name: "mongo-app"}
+	opened := time.Now().Add(-time.Minute)
+	mutation := opened.Add(20 * time.Second)
+	verified := mutation.Add(10 * time.Second)
+	const fingerprint = "mongo-authentication/mongo-authentication/demo/Pod/mongo-app"
 	outcome := &contracts.OutcomeRecord{
 		SchemaVersion: 1, IncidentId: incidentID, Classification: "success",
-		ConfirmedRootCauses: []*contracts.ConfirmedRootCause{{Summary: "Application MongoDB account absent; hand-created account recovered application", Resources: []*contracts.ObjectRef{{ApiVersion: "v1", Kind: "Pod", Namespace: "demo", Name: "mongo-app"}}}},
-		RepairActions:       []*contracts.RepairActionReceipt{{ActionId: "manual-mongo-user", Details: "synthetic user creation receipt; credential values omitted", StartedAt: timestamppb.Now(), CompletedAt: timestamppb.Now(), Kind: "exec", Target: "Pod/mongo-app", Summary: "Created missing application user with readWrite role; independently verified application recovery", Success: true}},
+		Findings:            []*contracts.Finding{{DetectorId: "mongo-authentication", RuleId: "mongo-authentication", Fingerprint: fingerprint, Status: "active", Severity: "warn", PrimaryResource: ref, Summary: "MongoDB application account absent", Evidence: "Synthetic open catalog lacks app user", PlaybookIds: []string{"mongo-auth-bootstrap"}}},
+		ConfirmedRootCauses: []*contracts.ConfirmedRootCause{{Summary: "Application MongoDB account absent; hand-created account recovered application", Resources: []*contracts.ObjectRef{ref}, ExplainedDetectors: []string{"mongo-authentication"}}},
+		RepairActions:       []*contracts.RepairActionReceipt{{ActionId: "manual-mongo-user", Resources: []*contracts.ObjectRef{ref}, Details: "synthetic user creation receipt; credential values omitted", StartedAt: timestamppb.New(mutation.Add(-time.Second)), CompletedAt: timestamppb.New(mutation), Kind: "exec", Target: "Pod/mongo-app", Summary: "Created missing application user with readWrite role; independently verified application recovery", Success: true}},
+		DetectorHistory:     []*contracts.DetectorEvaluation{{DetectorId: "mongo-authentication", Status: "firing", Fingerprints: []string{fingerprint}, EvaluatedAt: timestamppb.New(opened)}, {DetectorId: "mongo-authentication", Status: "clear", EvaluatedAt: timestamppb.New(verified)}},
+		Timestamps:          &contracts.OutcomeTimestamps{DetectedAt: timestamppb.New(opened), MitigatedAt: timestamppb.New(mutation), VerifiedAt: timestamppb.New(verified), CompletedAt: timestamppb.New(verified)},
 	}
 	if _, err := repository.RecordOutcome(ctx, incidentID, outcome); err != nil {
 		t.Fatal(err)

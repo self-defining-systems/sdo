@@ -193,15 +193,7 @@ Outcome history (prior incidents, bounded summaries; omissions are counted):
   {
     "incident_id": "prior-toy",
     "classification": "success",
-    "findings": [],
-    "confirmed_root_causes": [],
-    "repair_actions": [],
-    "applied_playbooks": [],
-    "confirmed_playbooks": [],
-    "rejected_playbooks": [],
-    "detector_evaluations": 0,
-    "memory_commit": null,
-    "full_outcome_path": "<temporary reflection history>/a39ceebfeb5fe07ef06730b0b8c07ac81430fddf11f37e1f2701d01cea44faba.json"
+    "full_outcome_path": "<temporary reflection history>/0.json"
   }
 ]
 Full prior outcomes are available at full_outcome_path; open relevant evidence when needed.

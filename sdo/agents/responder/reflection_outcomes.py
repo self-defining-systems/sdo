@@ -314,7 +314,7 @@ def prior_outcome_view(record: OutcomeRecord) -> dict[str, Any]:
         omitted = len(getattr(record, field)) - len(view[field])
         if omitted:
             view[field + "_omitted"] = omitted
-    return view
+    return {key: value for key, value in view.items() if value is not None and value != [] and value != 0}
 
 
 #: Prior incidents carried in the reflection request. Each costs about 5k
@@ -334,7 +334,7 @@ def history_view(
         if evidence_directory is not None:
             # IDs are data, never paths. These private copies live outside the
             # proposal tree and survive the backend's in-session corrections.
-            name = hashlib.sha256(record.incident_id.encode()).hexdigest() + ".json"
+            name = f"{len(views)}.json"
             path = evidence_directory / name
             with open(path, "w", encoding="utf-8", opener=lambda p, flags: os.open(p, flags, 0o600)) as stream:
                 stream.write(json_format.MessageToJson(record, preserving_proto_field_name=True))
