@@ -20,8 +20,9 @@ import (
 )
 
 func TestKubernetesExecutorHealthJudgeRerunIsIdempotent(t *testing.T) {
-	for _, mismatch := range []bool{false, true} {
-		t.Run(map[bool]string{false: "same-request", true: "different-request"}[mismatch], func(t *testing.T) {
+	for _, scenario := range []string{"same-request", "request-payload", "workspace-base", "result-binding"} {
+		t.Run(scenario, func(t *testing.T) {
+			mismatch := scenario != "same-request"
 			registry, err := LoadDirectory("../../agents/registrations")
 			if err != nil {
 				t.Fatal(err)
@@ -34,8 +35,10 @@ func TestKubernetesExecutorHealthJudgeRerunIsIdempotent(t *testing.T) {
 			}
 			task := &contracts.AgentTask{SchemaVersion: SchemaVersion, TaskId: "health-refresh-aborted", AgentId: "sdo-health-judge", TaskType: taskType, Request: request, Workspace: &contracts.ProposalWorkspace{ProposalId: "refresh", CheckoutPath: mount + "/proposals/refresh", BaseCommit: "abc"}}
 			prior := proto.Clone(task).(*contracts.AgentTask)
-			if mismatch {
+			if scenario == "workspace-base" {
 				prior.Workspace.BaseCommit = "different-base"
+			} else if scenario == "request-payload" {
+				prior.Request, _ = anypb.New(&contracts.HealthJudgeRequest{Application: "app", Namespace: "demo", HealthObjective: "different objective"})
 			}
 			payload, _ := wire.Canonical(prior)
 			response, _ := anypb.New(&contracts.HealthJudgeResult{Authored: true, AgentSessionId: "original-session", DetectorIds: []string{"health"}})
@@ -44,6 +47,9 @@ func TestKubernetesExecutorHealthJudgeRerunIsIdempotent(t *testing.T) {
 			name := JobName(task.TaskId)
 			oldRequest := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: name + "-request", Namespace: "demo"}, Data: map[string]string{TaskDataKey: string(payload)}}
 			oldResult := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: name + "-result", Namespace: "demo", CreationTimestamp: metav1.Now()}, Data: map[string]string{ResultDataKey: string(data)}}
+			if scenario == "result-binding" {
+				oldResult.Annotations = map[string]string{requestDigestAnnotation: "different-request"}
+			}
 			client := fake.NewSimpleClientset(oldRequest, oldResult)
 			dispatched := 0
 			client.PrependReactor("create", "jobs", func(action ktesting.Action) (bool, runtime.Object, error) {
@@ -95,6 +101,21 @@ func TestKubernetesExecutorHealthJudgeRerunIsIdempotent(t *testing.T) {
 			if err != nil || frozen.Data[TaskDataKey] != oldRequest.Data[TaskDataKey] {
 				t.Fatalf("stale request overwritten: %v", err)
 			}
+			if mismatch {
+				// Independent retention of the old evidence must not change
+				// the new request's already-established execution identity.
+				for _, name := range []string{oldRequest.Name, oldResult.Name} {
+					if err := client.CoreV1().ConfigMaps("demo").Delete(ctx, name, metav1.DeleteOptions{}); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if _, err := executor.Execute(ctx, task); err != nil {
+					t.Fatal(err)
+				}
+				if dispatched != wantCalls {
+					t.Fatalf("retiring unrelated evidence redispatched task: %d", dispatched)
+				}
+			}
 		})
 	}
 }
@@ -119,7 +140,7 @@ func TestKubernetesExecutorHealthJudgeRecordsSetupUsageBeforeResult(t *testing.T
 	if err == nil {
 		t.Fatal("unfinished worker unexpectedly returned a result")
 	}
-	job, err := client.BatchV1().Jobs("demo").Get(context.Background(), JobName(task.TaskId), metav1.GetOptions{})
+	job, err := client.BatchV1().Jobs("demo").Get(context.Background(), TaskJobName(task), metav1.GetOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -146,5 +167,31 @@ func TestKubernetesExecutorHealthJudgeRecordsSetupUsageBeforeResult(t *testing.T
 	}
 	if !found {
 		t.Fatal("missing setup accounting mount")
+	}
+}
+
+func TestKubernetesExecutorRecoversRequestBoundStagedResult(t *testing.T) {
+	for _, matches := range []bool{false, true} {
+		t.Run(map[bool]string{false: "unbound", true: "bound"}[matches], func(t *testing.T) {
+			task := largeReflectionTask(t, t.TempDir()+"/proposal", 2<<20)
+			response, _ := anypb.New(&contracts.ReflectionResult{LearningDecision: "no_change", NoChangeReason: "covered"})
+			result := &contracts.AgentResult{SchemaVersion: SchemaVersion, TaskId: task.TaskId, ProposalId: task.Workspace.ProposalId, Status: "completed", Response: response}
+			data, _ := wire.Canonical(result)
+			digest := "different-request"
+			if matches {
+				digest = taskRequestDigest(task)
+			}
+			client := fake.NewSimpleClientset(&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: JobName(task.TaskId) + "-result", Namespace: "demo", Annotations: map[string]string{requestDigestAnnotation: digest}}, Data: map[string]string{ResultDataKey: string(data)}})
+			executor := KubernetesExecutor{Client: client, Namespace: "demo", Registry: reflectionTestRegistry(t)}
+			got, recovered, err := executor.RecoverCompleted(context.Background(), task)
+			if err != nil || recovered != matches || (got != nil) != matches {
+				t.Fatalf("recovered=%v result=%v err=%v; want bound=%v", recovered, got, err, matches)
+			}
+			for _, action := range client.Actions() {
+				if action.GetVerb() != "get" && action.GetVerb() != "list" {
+					t.Fatalf("read-only recovery mutated %v", action)
+				}
+			}
+		})
 	}
 }

@@ -113,7 +113,10 @@ func allowedRuntimeArtifact(name string) bool {
 	if len(parts) >= 3 && parts[0] == "claude" && parts[1] == "projects" {
 		return strings.HasSuffix(base, ".jsonl")
 	}
-	if len(parts) < 3 || (parts[0] != "sessions" && parts[0] != "setup") {
+	if len(parts) == 3 && parts[0] == "setup" {
+		return strings.HasSuffix(base, ".jsonl")
+	}
+	if len(parts) < 3 || parts[0] != "sessions" {
 		return false
 	}
 	if len(parts) == 3 {

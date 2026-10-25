@@ -831,3 +831,20 @@ def test_turn_usage_log_prices_setup_tokens_when_provider_omits_dollars(
     assert record["model_requests"] == turn.model_requests
     assert record["usage"]["input_tokens"] == turn.usage.tokens.input_tokens
     assert record["usage"]["output_tokens"] == turn.usage.tokens.output_tokens
+
+
+def test_rejected_setup_output_still_records_spent_tokens(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    log = tmp_path / "setup-usage.jsonl"
+    monkeypatch.setenv(TURN_USAGE_LOG_ENV, str(log))
+    run = scripted_turn(
+        "codex",
+        text="no structured response",
+        session_id="judge",
+        usage=TokenUsage(input_tokens=1000, output_tokens=100, turns=1),
+    )
+    with pytest.raises(StructuredTurnError, match="no structured output"):
+        _run("codex", tmp_path, run=run, model="gpt-6-luna")
+    record = json.loads(log.read_text())
+    assert record["usage"]["input_tokens"] == 1000
+    assert record["usage"]["output_tokens"] == 100
+    assert record["cost_usd"] > 0

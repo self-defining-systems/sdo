@@ -280,11 +280,7 @@ def run_structured_turn(
         raise StructuredTurnError(f"{provider} turn failed: {exc}") from exc
 
     structured_output: object = result.structured_output
-    if not isinstance(structured_output, dict):
-        raise StructuredTurnError(f"{provider} turn returned no structured output")
-    session_id = result.session_id or resume_session_id
-    if not session_id:
-        raise StructuredTurnError(f"{provider} turn did not report a session id")
+    session_id = result.session_id or resume_session_id or ""
     model_requests: int | None = None
     model_requests_source: str | None = None
     usage = result.usage
@@ -311,7 +307,13 @@ def run_structured_turn(
         resumed=resume_session_id is not None,
         skill_directory=skill_directory,
     )
+    # A model can spend tokens and then fail the structured-response contract.
+    # Persist its observed accounting before rejecting that response.
     _append_turn_usage(provider, model, workspace, turn, time.monotonic() - started)
+    if not isinstance(structured_output, dict):
+        raise StructuredTurnError(f"{provider} turn returned no structured output")
+    if not session_id:
+        raise StructuredTurnError(f"{provider} turn did not report a session id")
     return turn
 
 

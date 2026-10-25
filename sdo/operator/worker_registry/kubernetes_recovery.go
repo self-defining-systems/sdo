@@ -42,6 +42,9 @@ func (e KubernetesExecutor) RecoverCompleted(ctx context.Context, task *contract
 	if err != nil {
 		return nil, false, fmt.Errorf("read durable agent result: %w", err)
 	}
+	if digest := resultMap.Annotations[requestDigestAnnotation]; digest != "" && digest != taskRequestDigest(task) {
+		return nil, false, fmt.Errorf("result ConfigMap %q request digest differs from frozen task", name)
+	}
 	data, ok := resultMap.Data[ResultDataKey]
 	if !ok {
 		return nil, false, fmt.Errorf("result ConfigMap %q has no %s", resultMap.Name, ResultDataKey)
@@ -110,12 +113,32 @@ func (e KubernetesExecutor) RecoverCompleted(ctx context.Context, task *contract
 // request uses a content-addressed identity. Repeated restarts select that same
 // identity, independently of timestamps or controller process lifetime.
 func (e KubernetesExecutor) taskJobName(ctx context.Context, task *contracts.AgentTask) (string, error) {
-	name := JobName(task.GetTaskId())
+	boundName := TaskJobName(task)
 	maps := e.Client.CoreV1().ConfigMaps(e.Namespace)
+	// Prefer the content-addressed execution even if legacy evidence is later
+	// archived independently. New executions always use this identity.
+	for _, suffix := range []string{"-request", "-result"} {
+		if _, err := maps.Get(ctx, boundName+suffix, metav1.GetOptions{}); err == nil {
+			return boundName, nil
+		} else if !apierrors.IsNotFound(err) {
+			return "", fmt.Errorf("inspect request-bound agent evidence: %w", err)
+		}
+	}
+	name := JobName(task.GetTaskId())
 	request, err := maps.Get(ctx, name+"-request", metav1.GetOptions{})
 	if err == nil {
 		prior := new(contracts.AgentTask)
 		if wire.Unmarshal([]byte(request.Data[TaskDataKey]), prior) == nil && proto.Equal(prior, task) {
+			result, err := maps.Get(ctx, name+"-result", metav1.GetOptions{})
+			if apierrors.IsNotFound(err) {
+				return name, nil
+			}
+			if err != nil {
+				return "", fmt.Errorf("inspect legacy agent result binding: %w", err)
+			}
+			if digest := result.Annotations[requestDigestAnnotation]; digest != "" && digest != taskRequestDigest(task) {
+				return boundName, nil
+			}
 			return name, nil
 		}
 	} else if !apierrors.IsNotFound(err) {
@@ -123,7 +146,7 @@ func (e KubernetesExecutor) taskJobName(ctx context.Context, task *contracts.Age
 	} else {
 		result, err := maps.Get(ctx, name+"-result", metav1.GetOptions{})
 		if apierrors.IsNotFound(err) {
-			return name, nil
+			return boundName, nil
 		}
 		if err != nil {
 			return "", fmt.Errorf("inspect durable agent result: %w", err)
@@ -132,12 +155,7 @@ func (e KubernetesExecutor) taskJobName(ctx context.Context, task *contracts.Age
 			return name, nil
 		}
 	}
-	payload, err := wire.Canonical(task)
-	if err != nil {
-		return "", err
-	}
-	digest := sha256.Sum256(payload)
-	return fmt.Sprintf("sdo-task-%x", digest[:26]), nil
+	return boundName, nil
 }
 
 const requestDigestAnnotation = "sdo.dev/request-sha256"
@@ -145,4 +163,10 @@ const requestDigestAnnotation = "sdo.dev/request-sha256"
 func taskRequestDigest(task *contracts.AgentTask) string {
 	payload, _ := wire.Canonical(task) // validated task; canonical protobuf encoding cannot fail
 	return fmt.Sprintf("%x", sha256.Sum256(payload))
+}
+
+// TaskJobName identifies an immutable validated task by its full request,
+// including workspace, base revision and deadline, rather than just task ID.
+func TaskJobName(task *contracts.AgentTask) string {
+	return "sdo-task-" + taskRequestDigest(task)[:52]
 }
