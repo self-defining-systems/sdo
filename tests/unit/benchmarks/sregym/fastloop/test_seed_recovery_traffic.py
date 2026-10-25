@@ -46,3 +46,35 @@ def test_seed_recovery_requires_complete_successful_independent_traffic(monkeypa
 def test_failed_baseline_never_probes_or_credits_cleanup():
     original = {"kind": "health-check", "success": False, "details": {"unready": ["api"]}}
     assert seed_recovery.verify_baseline_traffic(object(), original) is original
+
+
+@pytest.mark.parametrize("settled", [True, False])
+def test_hotel_client_refresh_is_scoped_and_reports_bounded_rollout(monkeypatch, settled):
+    kubectl = Mock()
+    runner = Mock()
+    runner.wait_for_rollouts.return_value = SimpleNamespace(
+        settled=settled, waited_s=3, reason="" if settled else "still rolling"
+    )
+    monkeypatch.setattr(
+        seed_recovery.importlib, "import_module", lambda _name: SimpleNamespace(KubeClusterIO=lambda: runner)
+    )
+    problem = SimpleNamespace(
+        app=SimpleNamespace(name="Hotel Reservation"), namespace="hotel-reservation", kubectl=kubectl
+    )
+    result = seed_recovery.refresh_baseline_clients(problem)
+    assert result["success"] is settled
+    command = kubectl.exec_command.call_args.args[0]
+    assert "deployment/geo" in command
+    assert "deployment/search" in command
+    assert "deployment/consul" not in command
+    assert "deployment/mongodb" not in command
+    assert "secret" not in command
+    assert "delete" not in command
+    runner.wait_for_rollouts.assert_called_once_with("hotel-reservation", timeout_s=90)
+
+
+def test_unknown_application_cannot_claim_a_client_refresh():
+    problem = SimpleNamespace(app=SimpleNamespace(name="Unknown"), namespace="sample", kubectl=Mock())
+    result = seed_recovery.refresh_baseline_clients(problem)
+    assert result["success"] is False
+    problem.kubectl.exec_command.assert_not_called()
