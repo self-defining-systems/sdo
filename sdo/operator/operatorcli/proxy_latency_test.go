@@ -3,17 +3,20 @@
 package operatorcli_test
 
 import (
+	"context"
 	"io"
 	"maps"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"os/exec"
 	"runtime"
 	"runtime/pprof"
 	"sdo.dev/operator/apihistory"
 	"sdo.dev/operator/kubeproxy"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -97,7 +100,28 @@ func TestForwardingWindowBudget(t *testing.T) {
 	}
 }
 
+func logForwardingStall(t *testing.T, path, endpoint string, start time.Time) {
+	t.Logf("stalled %s request to %s after %s", path, endpoint, time.Since(start))
+	pprof.Lookup("goroutine").WriteTo(os.Stderr, 2)
+	// Socket queues/retransmits distinguish TCP delivery stalls from
+	// blocked forwarding code. Missing platform tools are diagnostic.
+	for _, args := range [][]string{{"ss", "-tinm", "src", "127.0.0.1"}, {"ip", "-details", "link", "show", "lo"}} {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		output, err := exec.CommandContext(ctx, args[0], args[1:]...).CombinedOutput()
+		cancel()
+		t.Logf("stall diagnostic %v: %v\n%s", args, err, output)
+	}
+}
+
 func TestLargeResponseWarmAddedP95(t *testing.T) {
+	// Temporary investigation: retain every per-run assertion and exercise
+	// fresh connections often enough to capture the hosted-runner stall.
+	for i := range 10 {
+		t.Run(strconv.Itoa(i), testLargeResponseWarmAddedP95)
+	}
+}
+
+func testLargeResponseWarmAddedP95(t *testing.T) {
 	item := `{"metadata":{"name":"p","namespace":"app"},"spec":{"containers":[{"name":"c","env":[{"name":"MODE","value":"` + strings.Repeat("x", 3072) + `"}]}]}}`
 	// Bound parallelism without overriding a caller's single-CPU limit.
 	oldProcs := runtime.GOMAXPROCS(min(2, runtime.GOMAXPROCS(0)))
@@ -143,8 +167,7 @@ func TestLargeResponseWarmAddedP95(t *testing.T) {
 		watchdogDone := make(chan struct{})
 		timer := time.AfterFunc(time.Second, func() {
 			defer close(watchdogDone)
-			t.Logf("stalled %s request to %s after %s", path, endpoint, time.Since(start))
-			pprof.Lookup("goroutine").WriteTo(os.Stderr, 2)
+			logForwardingStall(t, path, endpoint, start)
 		})
 		defer func() {
 			if !timer.Stop() {
