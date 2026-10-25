@@ -637,6 +637,78 @@ def test_scripted_fastloop_reuses_reflected_target_port_program(
         sregym_dir=ROOT / "third_party/sregym",
         private_tmp=None,
     ).save()
+    # Model the newly required admission I/O from this simulated application's
+    # actual readiness and routing state. The pure production predicates still
+    # run; only the Kubernetes/prober subprocess boundaries are replaced.
+    from benchmarks.sregym.fastloop import admission, clean_start, rbac
+
+    traffic = workspace / ".sdo/diagnostics/traffic/workloads"
+    traffic.mkdir(parents=True)
+    (traffic / "health.yaml").write_text("purpose: health-probe\nscenarios:\n- id: frontend\n")
+    plan = rbac.installer_rbac(NAMESPACE)
+    grants = []
+    for key in ("ControlRoles", "AppRoles", "ControlBindings", "AppBindings"):
+        for original in plan[key]:
+            row = deepcopy(original)
+            row["kind"] = "RoleBinding" if key.endswith("Bindings") else "Role"
+            grants.append(row)
+
+    def admission_api(args, **_kwargs):
+        result = {"items": []}
+        if args[:2] == ["get", "roles,rolebindings"]:
+            result = {"items": grants}
+        elif args[:2] == ["get", "pod/sdo-prober"]:
+            result = {"status": {"podIP": "127.0.0.1"}}
+        elif args[0] == "exec":
+            result = {
+                "windows": {
+                    "health": {
+                        "scenarios": [
+                            {
+                                "scenario": {"id": "frontend"},
+                                "qualified": app.healthy(),
+                                "samples": [{"success": app.healthy()}],
+                            }
+                        ]
+                    }
+                }
+            }
+        elif args[:2] == ["get", "deployments,statefulsets,daemonsets,pods"]:
+            objects = [row for row in app.list_objects(NAMESPACE) if row["kind"] == "Deployment"]
+            for pod in app.snapshot()["pods"]:
+                pod.update(
+                    kind="Pod",
+                    status={"conditions": [{"type": "Ready", "status": "True" if app.healthy() else "False"}]},
+                )
+                pod["metadata"]["uid"] = pod["metadata"]["name"]
+                objects.append(pod)
+            result = {"items": objects}
+        if args[:2] == ["get", "secrets"]:
+            return SimpleNamespace(stdout="")
+        if args[0] == "get" and "-o" in args and args[args.index("-o") + 1] == "name":
+            return SimpleNamespace(stdout="")
+        if args[0] == "api-resources":
+            return SimpleNamespace(stdout="")
+        return SimpleNamespace(stdout=json.dumps(result))
+
+    original_state = controller.runtime_state
+
+    def admission_state(control):
+        state = original_state(control)
+        state["history"] = [
+            {
+                "detector_id": key,
+                "status": "clear" if app.healthy() else "firing",
+                "evaluated_at": datetime.now(timezone.utc).isoformat(),
+            }
+            for key in ("workload-health", "service-endpoints", "service-reachability", "traffic-health")
+        ]
+        return state
+
+    monkeypatch.setattr(controller, "runtime_state", admission_state)
+    monkeypatch.setattr(admission, "kubectl", admission_api)
+    monkeypatch.setattr(clean_start, "kubectl", admission_api)
+    monkeypatch.setattr(rbac, "kubectl", admission_api)
     monkeypatch.setattr(cli, "_worker", lambda _environment: worker)
     monkeypatch.setattr(cli, "kubectl", lambda *_args, **_kwargs: SimpleNamespace(returncode=0))
     monkeypatch.setattr(cli, "_cluster_ops", lambda _args, _namespace: controller)

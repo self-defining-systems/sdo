@@ -408,3 +408,34 @@ no reachability exclusions.
 The legacy controller checkpoint is recognized by its exact name,
 `sdo.dev/state-revision` annotation and `runtime-state.json` key. Retiring it
 prevents restored controller state from resurrecting old onboarding authority.
+
+
+## No-fault eval rehearsal
+
+Before live slots on a prepared lane, run:
+
+```bash
+uv run python -m benchmarks.sregym.fastloop eval-dry-run --run-dir "$SDO_FASTLOOP_RUN"
+```
+
+The command restores the app, installs and onboards SDO with scripted registrations,
+checks fresh-memory setup lineage and exact responder RBAC against the real installer,
+requires fresh controller traffic clearance and qualified native prober scenarios,
+checks benchmark probe placement, and captures the healthy baseline. Its final
+pre-injection callback stops without injecting anything or invoking models.
+`eval-dry-run/report.json` reports each invariant; all work shares a 300-second
+process deadline (`--timeout` may lower it). Run a supported `reset` afterward
+before transferring the lane or selecting live registrations.
+
+Normal SDO fastloop runs enforce the same pre-injection admission: pending traffic
+is not proof. Stabilization allows at most 300 seconds, one application-only restore
+and one retry; its time is kept outside the injection clock. Restore selects each
+object once from its sealed installed manifest, avoiding a later captured-spec patch.
+A workload changing generation, Pod identity or restart count after Ready rejects
+admission. SDO stays active while incident closure work remains pending.
+
+An idle lane mounted from a retired checkout can be adopted explicitly with
+`reset --dev-mount <worktree> --retarget-dev-mount`. After stopping writers and
+restoring the app, reset copies the mounted source allowlist into node-local storage
+and covers the old node mount; it never edits the old host checkout or changes images.
+Subsequent resets refresh the snapshot. A recreated node must be reset before use.

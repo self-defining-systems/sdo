@@ -78,3 +78,28 @@ def test_failed_build_cleans_partial_output_and_retains_previous_binary(worktree
     assert output.stat().st_mode & 0o777 == 0o755
     assert list(output.parent.iterdir()) == [output]
     assert not (tmp_path / "kind-dev.yaml").exists()
+
+
+def test_retarget_copies_into_node_storage_before_covering_old_host_mount(tmp_path, monkeypatch):
+    from benchmarks.sregym.fastloop.dev import retarget_dev_mount
+
+    calls = []
+
+    def run(args, **kwargs):
+        calls.append(args)
+        return subprocess.CompletedProcess(args, 0, stdout="lane-control-plane\nlane-worker\n", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", run)
+    monkeypatch.setattr(
+        "benchmarks.sregym.fastloop.dev._copy_dev_snapshot",
+        lambda worktree, node, target: calls.append(["snapshot", str(worktree), node, target]),
+    )
+    retarget_dev_mount("lane", tmp_path)
+    mounts = [call for call in calls if "--bind" in call]
+    assert len(mounts) == 2
+    assert all(call[-1] == "/opt/sdo-dev" for call in mounts)
+    for mount in mounts:
+        node = mount[2]
+        assert next(i for i, call in enumerate(calls) if call[:3] == ["snapshot", str(tmp_path), node]) < calls.index(
+            mount
+        )

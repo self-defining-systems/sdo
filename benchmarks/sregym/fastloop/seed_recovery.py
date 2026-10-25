@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import importlib
+import json
+import os
 import secrets
 import shlex
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 
@@ -27,6 +31,17 @@ def verify_baseline_traffic(problem: Any, baseline: dict[str, Any]) -> dict[str,
         problem.namespace,
         entry,
     )
+    from benchmarks.sregym.adapter import kubectl
+    from benchmarks.sregym.fastloop.clean_start import HARNESS_NAMESPACE, isolate_benchmark_probe
+
+    kubectl(
+        ["apply", "-f", "-"],
+        namespace=None,
+        kubeconfig=Path(os.environ["KUBECONFIG"]),
+        input_text=json.dumps({"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": HARNESS_NAMESPACE}}),
+    )
+
+    manifest = isolate_benchmark_probe(manifest)
     phase, logs = clusters.KubeClusterIO().run_pod(manifest, timeout_s=grading.probe_deadline_s(entry) + 30)
     result = grading.parse_probe_log(logs)
     details.update(
@@ -39,19 +54,109 @@ def verify_baseline_traffic(problem: Any, baseline: dict[str, Any]) -> dict[str,
     }
 
 
-def refresh_baseline_clients(problem: Any) -> dict[str, Any]:
-    """Re-register hotel clients after a restored Consul loses its in-memory catalog.
+@dataclass(frozen=True)
+class StartupDependency:
+    registry: str
+    clients: tuple[str, ...]
 
-    This is a benchmark restoration action, never an agent repair or health verdict.
-    The caller must independently re-check HTTP after the bounded rollout.
+    def __post_init__(self) -> None:
+        if not self.registry or not self.clients or self.registry in self.clients:
+            raise ValueError("startup dependency requires distinct registry and registering clients")
+
+
+# Source-declared stateless services. Storage workloads keep their data and
+# lifecycle; only processes holding connections/registrations are refreshed.
+RESTORE_CLIENTS = {
+    "hotel-reservation": ("frontend", "geo", "profile", "rate", "recommendation", "reservation", "search", "user"),
+    "astronomy-shop": (
+        "ad",
+        "cart",
+        "checkout",
+        "currency",
+        "email",
+        "fraud-detection",
+        "frontend",
+        "frontend-proxy",
+        "image-provider",
+        "llm",
+        "payment",
+        "product-catalog",
+        "product-reviews",
+        "quote",
+        "recommendation",
+        "shipping",
+    ),
+    "social-network": (
+        "compose-post-service",
+        "home-timeline-service",
+        "media-frontend",
+        "media-service",
+        "nginx-thrift",
+        "post-storage-service",
+        "social-graph-service",
+        "text-service",
+        "unique-id-service",
+        "url-shorten-service",
+        "user-mention-service",
+        "user-service",
+        "user-timeline-service",
+    ),
+}
+STARTUP_DEPENDENCIES = {
+    "hotel-reservation": (StartupDependency("consul", RESTORE_CLIENTS["hotel-reservation"]),),
+    "astronomy-shop": (),
+    "social-network": (),
+}
+
+
+def require_dependency_order(dependency: StartupDependency, pod_times: dict[str, list[str]]) -> None:
+    registry = pod_times.get(dependency.registry) or []
+    if not registry or any(not pod_times.get(client) for client in dependency.clients):
+        raise ValueError("restore dependency evidence missing")
+    if any(min(pod_times[client]) <= max(registry) for client in dependency.clients):
+        raise ValueError(f"restore clients must register after dependency {dependency.registry}")
+
+
+def refresh_baseline_clients(problem: Any) -> dict[str, Any]:
+    """Complete restoration after dependencies settle; never an agent repair.
+
+    Every supported app declares its source-owned client set. Unknown topology
+    fails rather than guessing storage safety or suppressing traffic evidence.
     """
-    if problem.app.name != "Hotel Reservation":
+    from benchmarks.sregym.adapter import kubectl
+
+    clients = RESTORE_CLIENTS.get(problem.namespace)
+    if clients is None:
         return {"success": False, "reason": "application has no baseline client refresh contract"}
-    clients = ("frontend", "geo", "profile", "rate", "recommendation", "reservation", "search", "user")
+    config = Path(os.environ["KUBECONFIG"])
+    listing = json.loads(
+        kubectl(["get", "deployments,pods", "-o", "json"], namespace=problem.namespace, kubeconfig=config).stdout
+    )["items"]
+    deployed = {row["metadata"]["name"] for row in listing if row["kind"] == "Deployment"}
+    if not set(clients).issubset(deployed):
+        raise ValueError(
+            f"restore client profile differs from installed source topology: {sorted(set(clients) - deployed)}"
+        )
     resources = " ".join(f"deployment/{name}" for name in clients)
     problem.kubectl.exec_command(f"kubectl rollout restart {resources} -n {shlex.quote(problem.namespace)}")
     clusters = importlib.import_module("sregym.conductor.problems.colocated_composite")
     settled = clusters.KubeClusterIO().wait_for_rollouts(problem.namespace, timeout_s=90)
+    if settled.settled:
+        listing = json.loads(
+            kubectl(["get", "deployments,pods", "-o", "json"], namespace=problem.namespace, kubeconfig=config).stdout
+        )["items"]
+        pod_times = {}
+        for deployment in (row for row in listing if row["kind"] == "Deployment"):
+            labels = deployment["spec"]["selector"]["matchLabels"]
+            pod_times[deployment["metadata"]["name"]] = [
+                row["metadata"]["creationTimestamp"]
+                for row in listing
+                if row["kind"] == "Pod"
+                and not row["metadata"].get("deletionTimestamp")
+                and all(row["metadata"].get("labels", {}).get(key) == value for key, value in labels.items())
+            ]
+        for dependency in STARTUP_DEPENDENCIES[problem.namespace]:
+            require_dependency_order(dependency, pod_times)
     return {
         "success": settled.settled,
         "scope": "application-clients",
