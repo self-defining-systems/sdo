@@ -84,3 +84,22 @@ func TestRECMutationCachedSnapshotTransport(t *testing.T) {
 		})
 	}
 }
+
+func TestRECRollbackSnapshotTransport(t *testing.T) {
+	loop := NewResponderLoop(IncidentRequest{IncidentID: "rollback-snapshots", Namespace: "app"}, nil, nil, nil, PlanExecutor{}, 5)
+	calls := 0
+	loop.CachedFindings = func() ToolResponse {
+		calls++
+		if calls == 1 {
+			return ToolResponse{Findings: []sdk.Finding{}}
+		}
+		return ToolResponse{Findings: []sdk.Finding{{Fingerprint: "new", DetectorID: "health"}}}
+	}
+	response := loop.Handle(context.Background(), ToolRequest{Command: "rollback", ApplicationID: "unknown"})
+	if response.Error == "" {
+		t.Fatal("expected unknown application rejection")
+	}
+	if response.Progress == nil || len(response.Progress.New) != 1 || response.BeforeFindings == nil {
+		t.Fatalf("rollback lost authoritative snapshots: %+v", response)
+	}
+}

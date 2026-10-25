@@ -89,6 +89,41 @@ def compact_mutation_envelope(text: str, path: Path, action: Mapping[str, Any]) 
     }
 
 
+def clamp_mutation_summary(text: str, path: Path, action: Mapping[str, Any], *, json_output: bool = False) -> str:
+    """Enforce the emitted budget after callers add option or pending summaries."""
+
+    def size(lines: list[str]) -> int:
+        rendered = "\n".join(lines)
+        if json_output:
+            rendered = json.dumps(
+                compact_mutation_envelope(rendered, path, action), ensure_ascii=False, separators=(",", ":")
+            )
+        return len(rendered.encode("utf-8")) + 1
+
+    lines = text.splitlines()
+    removed_findings = False
+    while size(lines) > MAX_MUTATION_OUTPUT_BYTES:
+        candidates = [i for i, line in enumerate(lines) if line.startswith(("new: -", "unchanged: -", "option: "))]
+        if not candidates:
+            break
+        removed = lines.pop(candidates[-1])
+        if removed.startswith("option: "):
+            shown = sum(line.startswith("option: ") for line in lines)
+            lines = [line for line in lines if not line.startswith("Options omitted:")]
+            lines.insert(
+                1,
+                f"Options omitted: {len(action.get('option_reports', [])) - shown}; see option_reports[] in Full JSON.",
+            )
+        elif not removed_findings:
+            lines.insert(1, "Finding details omitted: see Full JSON findings/new/unchanged[].")
+            removed_findings = True
+    if size(lines) > MAX_MUTATION_OUTPUT_BYTES:
+        lines = [line.split(": ", 2)[0] + ": " + line.split(": ", 2)[1] if "[]: " in line else line for line in lines]
+    if size(lines) > MAX_MUTATION_OUTPUT_BYTES:
+        raise ValueError(f"mutation response exceeds 2048-byte hard limit; full report: {path}")
+    return "\n".join(lines)
+
+
 def format_mutation_response(
     before: Sequence[Mapping[str, Any]] | None,
     after: Sequence[Mapping[str, Any]] | None,

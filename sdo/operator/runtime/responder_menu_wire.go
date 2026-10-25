@@ -16,9 +16,10 @@ func (r *ToolRequest) UnmarshalJSON(data []byte) error {
 	type plain ToolRequest
 	envelope := struct {
 		*plain
-		Selection   json.RawMessage `json:"selection"`
-		ReportQuery json.RawMessage `json:"report_query"`
-		Checkpoint  json.RawMessage `json:"checkpoint"`
+		SelectionSet json.RawMessage `json:"selection_set,omitempty"`
+		Selection    json.RawMessage `json:"selection"`
+		ReportQuery  json.RawMessage `json:"report_query"`
+		Checkpoint   json.RawMessage `json:"checkpoint"`
 	}{plain: (*plain)(r)}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
@@ -30,6 +31,7 @@ func (r *ToolRequest) UnmarshalJSON(data []byte) error {
 		message proto.Message
 	}{
 		{envelope.Selection, new(contracts.MitigationSelection)},
+		{envelope.SelectionSet, new(contracts.MitigationSelectionSet)},
 		{envelope.ReportQuery, new(contracts.MitigationReportQuery)},
 		{envelope.Checkpoint, new(contracts.MitigationSessionCheckpoint)},
 	} {
@@ -40,6 +42,8 @@ func (r *ToolRequest) UnmarshalJSON(data []byte) error {
 			return errors.New("invalid generated tool contract")
 		}
 		switch value := field.message.(type) {
+		case *contracts.MitigationSelectionSet:
+			r.SelectionSet = value
 		case *contracts.MitigationSelection:
 			r.Selection = value
 		case *contracts.MitigationReportQuery:
@@ -58,6 +62,10 @@ func toolContractJSON(message proto.Message) (json.RawMessage, error) {
 }
 func (r ToolRequest) MarshalJSON() ([]byte, error) {
 	type plain ToolRequest
+	selectionSet, err := toolContractJSON(r.SelectionSet)
+	if err != nil {
+		return nil, err
+	}
 	selection, err := toolContractJSON(r.Selection)
 	if err != nil {
 		return nil, err
@@ -72,10 +80,11 @@ func (r ToolRequest) MarshalJSON() ([]byte, error) {
 	}
 	return json.Marshal(struct {
 		plain
-		Selection   json.RawMessage `json:"selection,omitempty"`
-		ReportQuery json.RawMessage `json:"report_query,omitempty"`
-		Checkpoint  json.RawMessage `json:"checkpoint,omitempty"`
-	}{plain(r), selection, query, checkpoint})
+		SelectionSet json.RawMessage `json:"selection_set,omitempty"`
+		Selection    json.RawMessage `json:"selection,omitempty"`
+		ReportQuery  json.RawMessage `json:"report_query,omitempty"`
+		Checkpoint   json.RawMessage `json:"checkpoint,omitempty"`
+	}{plain(r), selectionSet, selection, query, checkpoint})
 }
 func (r ToolResponse) MarshalJSON() ([]byte, error) {
 	type plain ToolResponse
@@ -95,6 +104,14 @@ func (r ToolResponse) MarshalJSON() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	optionReports := make([]json.RawMessage, 0, len(r.OptionReports))
+	for _, item := range r.OptionReports {
+		encoded, err := toolContractJSON(item)
+		if err != nil {
+			return nil, err
+		}
+		optionReports = append(optionReports, encoded)
+	}
 	session, err := toolContractJSON(r.Session)
 	if err != nil {
 		return nil, err
@@ -105,11 +122,12 @@ func (r ToolResponse) MarshalJSON() ([]byte, error) {
 	}
 	return json.Marshal(struct {
 		plain
-		Receipt json.RawMessage `json:"receipt,omitempty"`
-		Menu    json.RawMessage `json:"menu,omitempty"`
-		Report  json.RawMessage `json:"report,omitempty"`
-		Session json.RawMessage `json:"session,omitempty"`
-	}{plain(r), receipt, menu, report, session})
+		OptionReports []json.RawMessage `json:"option_reports,omitempty"`
+		Receipt       json.RawMessage   `json:"receipt,omitempty"`
+		Menu          json.RawMessage   `json:"menu,omitempty"`
+		Report        json.RawMessage   `json:"report,omitempty"`
+		Session       json.RawMessage   `json:"session,omitempty"`
+	}{plain(r), optionReports, receipt, menu, report, session})
 }
 
 // Defining an outer marshaler prevents the embedded ToolResponse marshaler

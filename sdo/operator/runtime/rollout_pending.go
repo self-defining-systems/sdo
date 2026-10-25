@@ -24,6 +24,12 @@ func (e PlanExecutor) waitForRollouts(ctx context.Context, incident IncidentRequ
 	if budget <= 0 || budget > DefaultMitigationRolloutTimeout {
 		budget = DefaultMitigationRolloutTimeout
 	}
+	observer, canObserve := e.Rollouts.(interface {
+		Observe(context.Context, []sdk.ObjectRef) error
+	})
+	if e.PollRollouts && !canObserve {
+		budget = time.Millisecond
+	}
 	waitCtx, cancel := context.WithTimeout(ctx, budget)
 	defer cancel()
 	if !incident.ResponseDeadline.IsZero() {
@@ -31,14 +37,19 @@ func (e PlanExecutor) waitForRollouts(ctx context.Context, incident IncidentRequ
 		waitCtx, cancelDeadline = context.WithDeadline(waitCtx, incident.ResponseDeadline)
 		defer cancelDeadline()
 	}
-	err := e.Rollouts.Wait(waitCtx, refs)
+	var err error
+	if e.PollRollouts && canObserve {
+		err = observer.Observe(waitCtx, refs)
+	} else {
+		err = e.Rollouts.Wait(waitCtx, refs)
+	}
 	if err == nil {
 		return nil, nil
 	}
 	if !errors.Is(err, context.DeadlineExceeded) {
 		return nil, err
 	}
-	pending := &contracts.RolloutPending{Reason: "rollout budget expired; writes remain applied and are not independently verified"}
+	pending := &contracts.RolloutPending{Reason: "rollout is settling; writes remain applied and are not independently verified"}
 	var blocked *rolloutBlockedError
 	if errors.As(err, &blocked) {
 		pending.Blockers = blocked.blockers

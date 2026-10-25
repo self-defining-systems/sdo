@@ -49,7 +49,12 @@ func TestHermeticAgentRepairsTwoCoveredFaultsAndOneUnexplained(t *testing.T) {
 	t.Run("combined-self-check", func(t *testing.T) { testHermeticThreeFaultSelfCheck(t, true) })
 }
 
-func testHermeticThreeFaultSelfCheck(t *testing.T, combined bool) {
+func TestHermeticMultiMitigationThreeFaultShape(t *testing.T) {
+	t.Run("settled", func(t *testing.T) { testHermeticThreeFaultSelfCheck(t, true, true) })
+	t.Run("pending", func(t *testing.T) { testHermeticThreeFaultSelfCheck(t, true, true, true) })
+}
+
+func testHermeticThreeFaultSelfCheck(t *testing.T, combined bool, batchPrograms ...bool) {
 	if combined {
 		t.Setenv("SDO_SCRIPTED_COMPACT_OUTPUT", "1")
 	}
@@ -83,6 +88,9 @@ func testHermeticThreeFaultSelfCheck(t *testing.T, combined bool) {
 	request.RepositoryWorktree = filepath.Join(root, "application")
 	loop := NewResponderLoop(request, registry, provider, []sdk.Detector{detector}, PlanExecutor{Client: TypedPlanClient{Client: client}, Rollouts: &planFakeRollout{}, Verifier: PlanHealthVerifier{Detectors: []sdk.Detector{detector}, Provider: provider}}, 5)
 	loop.MenuConfig = &ResponderMenuConfig{}
+	if len(batchPrograms) > 1 && batchPrograms[1] {
+		loop.Executor.Rollouts = peerBlockedRollout{entered: make(chan struct{}, 1)}
+	}
 	loop.ReadView = func(v sdk.DetectionContext) program.ReadView {
 		return &sdktest.ReplayReadView{Snapshot: v.(sdktest.Snapshot)}
 	}
@@ -145,10 +153,51 @@ func testHermeticThreeFaultSelfCheck(t *testing.T, combined bool) {
 	go func() { defer close(served); _ = server.Serve(serverCtx) }()
 	t.Cleanup(func() { stop(); <-served })
 	// Every write is a scripted agent choice through the real menu transport.
-	for _, match := range typed.PlaybookCoverage.Matches {
-		response := fastloopTool(t, tools, "mitigate", match.MitigationSelection)
-		if response.ApplicationID == "" {
-			t.Fatalf("program not applied: %+v", response)
+	if len(batchPrograms) > 0 && batchPrograms[0] {
+		args := []string{"mitigate"}
+		for _, match := range typed.PlaybookCoverage.Matches {
+			args = append(args, "--option", match.MitigationSelection)
+		}
+		response := fastloopTool(t, tools, args...)
+		if response.ApplicationID == "" || loop.LoopsUsed() != 1 || len(loop.PlanApplications()) != 2 || len(loop.MenuRepairActions()) != 2 {
+			t.Fatalf("two programs did not execute in one call/round with two receipts: %+v", response)
+		}
+		observed, _ := provider.Snapshot(ctx)
+		remaining, _ := detector.Detect(ctx, observed)
+		if len(remaining) != 1 || remaining[0].RuleID != "unlearned-port" {
+			t.Fatalf("multi-program repair must leave only third fault: %+v", remaining)
+		}
+		if len(batchPrograms) > 1 && batchPrograms[1] {
+			if response.RolloutPending == nil {
+				t.Fatal("scripted batch omitted pending rollout")
+			}
+			for _, command := range []string{"status", "detect"} {
+				fresh := fastloopTool(t, tools, command)
+				if fresh.Error != "" {
+					t.Fatalf("%s unavailable during rollout: %s", command, fresh.Error)
+				}
+			}
+			for _, match := range typed.PlaybookCoverage.Matches {
+				if match.PlaybookId == "image-pull-failure" {
+					multiCLIRefusal(t, tools, match.MitigationSelection, "pending_write_conflict")
+				}
+			}
+			if loop.LoopsUsed() != 1 {
+				t.Fatal("refused overlap consumed a round")
+			}
+			loop.operationMu.Lock()
+			loop.mu.Lock()
+			loop.Executor.Rollouts = &planFakeRollout{}
+			loop.mu.Unlock()
+			loop.operationMu.Unlock()
+		}
+
+	} else {
+		for _, match := range typed.PlaybookCoverage.Matches {
+			response := fastloopTool(t, tools, "mitigate", match.MitigationSelection)
+			if response.ApplicationID == "" {
+				t.Fatalf("program not applied: %+v", response)
+			}
 		}
 	}
 	third := fastloopTool(t, tools, "mitigate", "SetField", "--param", "ref=Service/app/third", "--param", "path=spec.ports[0].targetPort", "--param", `value=8080`, "--param", "reason=repair uncovered finding")
@@ -157,6 +206,9 @@ func testHermeticThreeFaultSelfCheck(t *testing.T, combined bool) {
 	}
 	selfCheck := "verify"
 	commands := 3 // two learned mitigations and the uncovered repair
+	if len(batchPrograms) > 0 && batchPrograms[0] {
+		commands--
+	}
 	if combined {
 		selfCheck = "check"
 	} else {
