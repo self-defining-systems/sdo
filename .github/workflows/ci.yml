@@ -49,7 +49,6 @@ jobs:
             ~/go/pkg/mod
           key: ci-go-${{ runner.os }}-${{ runner.arch }}-shared-1.26.8-${{ hashFiles('**/go.sum') }}-${{ github.job }}-${{ github.sha }}
           restore-keys: |
-            ci-go-${{ runner.os }}-${{ runner.arch }}-shared-1.26.8-${{ hashFiles('**/go.sum') }}-${{ github.job }}-
             ci-go-${{ runner.os }}-${{ runner.arch }}-shared-1.26.8-${{ hashFiles('**/go.sum') }}-
             ci-go-${{ runner.os }}-${{ runner.arch }}-shared-1.26.8-
             ci-go-${{ runner.os }}-${{ runner.arch }}-operator-1.26.8-
@@ -88,7 +87,6 @@ jobs:
             ~/go/pkg/mod
           key: ci-go-${{ runner.os }}-${{ runner.arch }}-shared-1.26.8-${{ hashFiles('**/go.sum') }}-${{ github.job }}-${{ github.sha }}
           restore-keys: |
-            ci-go-${{ runner.os }}-${{ runner.arch }}-shared-1.26.8-${{ hashFiles('**/go.sum') }}-${{ github.job }}-
             ci-go-${{ runner.os }}-${{ runner.arch }}-shared-1.26.8-${{ hashFiles('**/go.sum') }}-
             ci-go-${{ runner.os }}-${{ runner.arch }}-shared-1.26.8-
             ci-go-${{ runner.os }}-${{ runner.arch }}-operator-1.26.8-
@@ -221,7 +219,6 @@ jobs:
             ~/go/pkg/mod
           key: ci-go-${{ runner.os }}-${{ runner.arch }}-shared-1.26.8-${{ hashFiles('**/go.sum') }}-${{ github.job }}-${{ github.sha }}
           restore-keys: |
-            ci-go-${{ runner.os }}-${{ runner.arch }}-shared-1.26.8-${{ hashFiles('**/go.sum') }}-${{ github.job }}-
             ci-go-${{ runner.os }}-${{ runner.arch }}-shared-1.26.8-${{ hashFiles('**/go.sum') }}-
             ci-go-${{ runner.os }}-${{ runner.arch }}-shared-1.26.8-
             ci-go-${{ runner.os }}-${{ runner.arch }}-operator-1.26.8-
@@ -250,6 +247,12 @@ jobs:
           export PATH="${HOME}/go/bin:${PATH}"
           bash scripts/check_proto.sh
           (cd sdo/operator/contracts && go build ./...)
+      - name: Start source-bound Python contracts
+        env:
+          GOMAXPROCS: "1"
+          GOFLAGS: "-p=1"
+        run: |
+          uv run python scripts/background_ci.py start "$RUNNER_TEMP/python-check" bash -e -c 'uv run python scripts/operator_test_binary.py; bash scripts/test_python.sh'
       - name: Select affected images and compute schema identity
         if: steps.resolve.outputs.any_image == 'true'
         id: image-inputs
@@ -316,10 +319,10 @@ jobs:
 
 
 
-      - name: Warm native CLI and run Python contracts
-        run: |
-          uv run python scripts/operator_test_binary.py
-          bash scripts/test_python.sh
+      - name: Require Python contracts to succeed
+        if: "!cancelled()"
+        run: uv run python scripts/background_ci.py finish "$RUNNER_TEMP/python-check"
+
 
   required-pr-ci:
     name: Required PR CI

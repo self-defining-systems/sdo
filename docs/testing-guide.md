@@ -441,7 +441,8 @@ to retain headroom. All three work jobs time out after nine minutes.
 
 The Go module job starts its longest module alongside a sequential lane for
 smaller modules, on a runner dedicated to Go. Python keeps two pytest workers on
-the image runner after static/proto and affected-image validation. Runtime
+the image runner, with one compiler per worker, overlapping image build/export I/O
+after static/proto checks. Its separately recorded result is always required. Runtime
 uses **three disjoint partitions on one runner**, `contracts`, `integration` and
 `lifecycle`,
 without competing with unrelated module compilation. Run every partition locally with
