@@ -16,6 +16,7 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
+	"google.golang.org/protobuf/types/known/timestamppb"
 	"sdo.dev/operator/broker"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/internal/testutil"
@@ -85,6 +86,13 @@ func TestReflectionDirectFilesCLIAndBroker(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			sessions := t.TempDir()
+			capture, err := memory.IncidentCorpusDir(sessions, "direct-files")
+			if err != nil {
+				t.Fatal(err)
+			}
+			reflectionFixtureHealthy(t, capture)
+			t.Setenv("SDO_CAPTURED_CORPUS_DIR", capture)
 			calls := 0
 			var authoredREADME, authoredGo []byte
 			worker := RegisteredReflectionWorker{AgentID: "reflector", TaskType: reflectionTaskType(t), Outcomes: memory.OpenReader(target), Catalog: memory.OpenCatalogReader(target), Timeout: time.Minute, SessionMode: "fresh"}
@@ -148,10 +156,10 @@ func TestReflectionDirectFilesCLIAndBroker(t *testing.T) {
 				packed, err := anypb.New(response)
 				return &contracts.AgentResult{SchemaVersion: task.SchemaVersion, TaskId: task.TaskId, ProposalId: task.Workspace.ProposalId, Status: "completed", Response: packed}, err
 			})
-			native := NativeIncidentBroker{Repository: repository, LedgerRoot: filepath.Join(t.TempDir(), "ledger"), Reflector: worker, ResponderBackend: "fake", ResponderModel: "fake", Deriver: OutcomeDeriverFunc(func(_ context.Context, c IncidentClosure, _, _, _ string) (DerivedOutcome, error) {
+			native := NativeIncidentBroker{Repository: repository, LedgerRoot: filepath.Join(t.TempDir(), "ledger"), SessionRoot: sessions, Reflector: worker, ResponderBackend: "fake", ResponderModel: "fake", Deriver: OutcomeDeriverFunc(func(_ context.Context, c IncidentClosure, _, _, _ string) (DerivedOutcome, error) {
 				derived := testDerivedOutcome(c.Request.IncidentID, "success", true)
 				if scenario != "no change" && scenario != "SDK gap" {
-					derived.Record.ConfirmedRootCauses = []*contracts.ConfirmedRootCause{{Summary: "verified synthetic routing repair", Resources: reflectionFixtureResources()}}
+					derived.Record = reflectionFixtureOutcome(c.Request.IncidentID)
 				}
 				return derived, nil
 			})}
@@ -453,6 +461,7 @@ func TestReflectionLearnedProgramCLIAndBroker(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
+			reflectionFixtureHealthy(t, capture)
 			compile := func(ctx context.Context, root string, _ []string) error {
 				diagnostics, err := validate.CompileCandidate(ctx, validate.Request{Root: root, OperatorRoot: operatorRoot})
 				if err != nil {
@@ -464,7 +473,7 @@ func TestReflectionLearnedProgramCLIAndBroker(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := repository.RecordOutcome(ctx, incidentID, &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: incidentID, Classification: "success", ConfirmedRootCauses: []*contracts.ConfirmedRootCause{{Summary: "verified synthetic routing repair", Resources: reflectionFixtureResources()}}}); err != nil {
+			if _, err := repository.RecordOutcome(ctx, incidentID, reflectionFixtureOutcome(incidentID)); err != nil {
 				t.Fatal(err)
 			}
 			proposal, err := repository.CreateProposalForPhase(ctx, incidentID, broker.ReflectionPhase)
@@ -549,4 +558,30 @@ func reflectionFixtureResources() []*contracts.ObjectRef {
 }
 func reflectionFixtureGap() *contracts.SdkGap {
 	return &contracts.SdkGap{FaultClass: "synthetic-routing", Primitive: "fixture-coverage", Reason: "transport fixture records an explicit SDK coverage gap", ScratchScript: "scratch/fixture", Resources: reflectionFixtureResources()}
+}
+
+func reflectionFixtureOutcome(incidentID string) *contracts.OutcomeRecord {
+	resources := reflectionFixtureResources()
+	return &contracts.OutcomeRecord{
+		SchemaVersion: 1, IncidentId: incidentID, Classification: "success",
+		ConfirmedRootCauses: []*contracts.ConfirmedRootCause{{Summary: "verified synthetic routing repair", Resources: resources}},
+		Findings:            []*contracts.Finding{{DetectorId: "routing-relations", RuleId: "targetport", Status: "active", Severity: "warn", Summary: "port mismatch", Evidence: "selected pod exposes another port", Fingerprint: "front-port", PrimaryResource: resources[0]}},
+		RepairActions:       []*contracts.RepairActionReceipt{{ActionId: "repair-front-port", Kind: "kubectl", Target: "Service/demo/front", Summary: "restore port", Details: "port restored and read back", Success: true, Resources: resources, StartedAt: timestamppb.New(time.Unix(1, 0)), CompletedAt: timestamppb.New(time.Unix(2, 0))}},
+		DetectorHistory:     []*contracts.DetectorEvaluation{{DetectorId: "routing-relations", Status: "clear", EvaluatedAt: timestamppb.New(time.Unix(3, 0))}},
+	}
+}
+
+func reflectionFixtureHealthy(t *testing.T, capture string) {
+	t.Helper()
+	healthy := filepath.Join(capture, "healthy")
+	if err := os.MkdirAll(healthy, 0755); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile("../../../tests/fixtures/sdo/playbook_program_app/.sdo/corpus/targetport-mismatch/healthy.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(healthy, "healthy.json"), data, 0644); err != nil {
+		t.Fatal(err)
+	}
 }

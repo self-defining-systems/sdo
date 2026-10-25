@@ -19,7 +19,13 @@ from benchmarks.sregym.adapter import scripted_worker
 from benchmarks.sregym.fastloop.fake_kube import FakeKubernetesAPIServer
 from benchmarks.sregym.fastloop.file_edits import apply_file_edits, record_file_edits
 from benchmarks.sregym.fastloop.model_recording import RecordingExecutor
-from benchmarks.sregym.fastloop.replay import CheckpointError, CheckpointStore, StageCheckpoint, replay_broker_result
+from benchmarks.sregym.fastloop.replay import (
+    CheckpointError,
+    CheckpointStore,
+    StageCheckpoint,
+    materialize_captures,
+    replay_broker_result,
+)
 from sdo.agents.responder import (
     CodexSessionBackend,
     SessionReflector,
@@ -203,8 +209,7 @@ def replay_scripted_reflection(
         task_path.write_text(to_canonical_json(task), encoding="utf-8")
         captures = root / "corpus"
         captures.mkdir()
-        for name, data in checkpoint.captures.items():
-            (captures / name).write_bytes(data)
+        materialize_captures(captures, checkpoint.captures)
         publisher = _Publisher()
         binary = root / "sdo-operator"
 
@@ -344,8 +349,7 @@ def replay_live_worker(
         publisher = _Publisher()
         captures = root / "corpus"
         captures.mkdir()
-        for name, data in checkpoint.captures.items():
-            (captures / name).write_bytes(data)
+        materialize_captures(captures, checkpoint.captures)
         if stage == "reflection":
             # Recorded provider streams do not execute their original file writes.
             # Restore final authored bytes before the worker's mandatory check.

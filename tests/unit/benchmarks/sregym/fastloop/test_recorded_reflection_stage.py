@@ -70,6 +70,19 @@ def reflection_recording(
     if verified_service:
         resource = record.confirmed_root_causes[0].resources[0]
         resource.kind, resource.namespace, resource.name = "Service", "demo", "front"
+        record.findings[0].primary_resource.CopyFrom(resource)
+        del record.repair_actions[0].resources[:]
+        record.repair_actions[0].resources.append(resource)
+        observed = max(evaluation.evaluated_at.seconds for evaluation in record.detector_history)
+        record.repair_actions[0].started_at.seconds = observed + 1
+        record.repair_actions[0].completed_at.seconds = observed + 2
+        cleared = record.detector_history.add(detector_id=record.findings[0].detector_id, status="clear")
+        cleared.evaluated_at.seconds = observed + 3
+        record.timestamps.completed_at.seconds = observed + 3
+        captures = dict(captures or {})
+        fixture = ROOT / "tests/fixtures/sdo/playbook_program_app/.sdo/corpus/targetport-mismatch"
+        captures["healthy/healthy.json"] = (fixture / "healthy.json").read_bytes()
+        captures["healthy/reference"] = b"synthetic-pre-incident-source@clear-observation\n"
         record.reflection_eligibility.version = 1
         cause = record.reflection_eligibility.causes.add(cause_index=0)
         cause.resources.append(resource)
@@ -149,7 +162,9 @@ func main() {
     capture_dir = tmp_path / "captures"
     capture_dir.mkdir()
     for name, data in (captures or {}).items():
-        (capture_dir / name).write_bytes(data)
+        path = capture_dir / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
     binary = tmp_path / "sdo-operator"
     subprocess.run(["go", "build", "-o", str(binary), "./cmd/sdo-operator"], cwd=ROOT / "sdo/operator", check=True)
     publisher = Publisher()
