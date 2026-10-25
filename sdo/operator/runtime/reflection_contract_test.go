@@ -233,6 +233,12 @@ func TestT1ClassificationMatrix(t *testing.T) {
 // protobuf task/result transport, deterministic corpus writes, broker review,
 // acceptance/rejection and restart. The scripted executor never launches a model.
 func TestT1ScriptedBrokerMatrix(t *testing.T) {
+	// Reuse the real persisted outcomes from every accept/reject row for the
+	// ordering property. Re-running 16 broker lifecycles only to shuffle the
+	// resulting documents duplicated this matrix's integration coverage.
+	rng := rand.New(rand.NewSource(186))
+	outcomes := []*contracts.OutcomeRecord{}
+	trial := 0
 	for _, c := range t1Classes() {
 		t.Run(c.name, func(t *testing.T) {
 			for _, reject := range []bool{false, true} {
@@ -258,6 +264,23 @@ func TestT1ScriptedBrokerMatrix(t *testing.T) {
 					if !reject && !c.model && run.ledger.ReflectionCommit == "" {
 						t.Error("covered case was not accepted through the broker")
 					}
+					outcome := proto.Clone(run.outcome).(*contracts.OutcomeRecord)
+					outcome.Timestamps.CompletedAt = timestamppb.New(time.Unix(int64(200+trial), 0))
+					before := ProgramTrustStats(outcomes)[t1Program]
+					outcomes = append(outcomes, outcome)
+					orderedStats := ProgramTrustStats(outcomes)
+					for permutation := 0; permutation < 16; permutation++ {
+						rng.Shuffle(len(outcomes), func(i, j int) { outcomes[i], outcomes[j] = outcomes[j], outcomes[i] })
+						shuffledStats := ProgramTrustStats(outcomes)
+						if !reflect.DeepEqual(orderedStats, shuffledStats) {
+							t.Errorf("seed=186 trial=%d permutation=%d arrival order changed trust", trial, permutation)
+						}
+						after := shuffledStats[t1Program]
+						if c.credit == 0 && after.VerifiedSuccesses > before.VerifiedSuccesses {
+							t.Errorf("seed=186 trial=%d class=%s non-covered instance increased trust (before=%+v after=%+v)", trial, c.name, before, after)
+						}
+					}
+					trial++
 					if int(run.ledger.GetReflectionEvidenceGapCount()) != c.gaps {
 						t.Errorf("durable gap count = %d; want %d", run.ledger.GetReflectionEvidenceGapCount(), c.gaps)
 					}
@@ -501,41 +524,6 @@ func t1RunBroker(t *testing.T, c t1Class, reject bool) t1Run {
 		t.Error("closure replay dispatched reflection twice")
 	}
 	return run
-}
-
-func TestT1TrustProperty(t *testing.T) {
-	// Fixed seed makes failures reproducible. 16 independent short broker runs
-	// randomize acceptance/rejection, class and outcome arrival order; the test
-	// deadline is below the repository's five-minute property-test cap.
-	deadline := time.Now().Add(4 * time.Minute)
-	rng := rand.New(rand.NewSource(186))
-	outcomes := []*contracts.OutcomeRecord{}
-	classes := t1Classes()
-	for trial := 0; trial < 16; trial++ {
-		if time.Now().After(deadline) {
-			t.Fatal("property-test wall-clock budget exhausted")
-		}
-		c := classes[trial%len(classes)]
-		if trial >= len(classes) {
-			c = classes[rng.Intn(len(classes))]
-		}
-		run := t1RunBroker(t, c, rng.Intn(2) == 0)
-		// Arrival order must not alter chronological trust. Every sample uses
-		// the same program revision, with strictly increasing completion times.
-		run.outcome.Timestamps.CompletedAt = timestamppb.New(time.Unix(int64(200+trial), 0))
-		before := ProgramTrustStats(outcomes)[t1Program]
-		outcomes = append(outcomes, run.outcome)
-		orderedStats := ProgramTrustStats(outcomes)
-		rng.Shuffle(len(outcomes), func(i, j int) { outcomes[i], outcomes[j] = outcomes[j], outcomes[i] })
-		shuffledStats := ProgramTrustStats(outcomes)
-		if !reflect.DeepEqual(orderedStats, shuffledStats) {
-			t.Errorf("seed=186 trial=%d arrival order changed trust", trial)
-		}
-		after := shuffledStats[t1Program]
-		if c.credit == 0 && after.VerifiedSuccesses > before.VerifiedSuccesses {
-			t.Errorf("seed=186 trial=%d class=%s non-covered instance increased trust (before=%+v after=%+v)", trial, c.name, before, after)
-		}
-	}
 }
 
 func TestT1EvidenceGapDeclineRequiresControllerFlag(t *testing.T) {
