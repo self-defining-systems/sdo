@@ -470,3 +470,37 @@ def test_capture_recovers_worker_checkpoint_when_result_configmap_is_gone(tmp_pa
 
     assert CheckpointStore(tmp_path).load(0, "responder").request == request
     assert CheckpointStore(tmp_path).load(0, "responder").result == result
+
+
+@pytest.mark.parametrize("historical_source", ["configmap", "session"])
+def test_capture_ignores_other_incident_payloads_from_retired_schema(tmp_path: Path, historical_source: str) -> None:
+    request, result = _task_and_result()
+    old_request, old_result = json.loads(request), json.loads(result)
+    old_request["task_id"] = old_result["task_id"] = "old-task"
+    old_request["request"]["incident_id"] = "old-incident"
+    old_request["request"]["retired_field"] = "unrelated old schema"
+    old_result["response"]["retired_field"] = "unrelated old schema"
+    maps = [{"data": {"agent-task.json": request}}, {"data": {"agent-result.json": result}}]
+    receipt_dir = tmp_path / "incident"
+    if historical_source == "configmap":
+        maps.append({"data": {"agent-task.json": json.dumps(old_request), "agent-result.json": json.dumps(old_result)}})
+    else:
+        exported = receipt_dir / "sdo_runtime/sessions/old/checkpoints/digest"
+        exported.mkdir(parents=True)
+        (exported / "request.json").write_text(json.dumps(old_request))
+        (exported / "result.json").write_text(json.dumps(old_result))
+    capture_checkpoints(CheckpointStore(tmp_path), 0, "incident-1", receipt_dir, maps)
+    assert CheckpointStore(tmp_path).load(0, "responder").result == result
+
+
+@pytest.mark.parametrize("payload", ["request", "result"])
+def test_capture_keeps_current_incident_protojson_strict(tmp_path: Path, payload: str) -> None:
+    request, result = _task_and_result()
+    wire = json.loads(request if payload == "request" else result)
+    wire["request" if payload == "request" else "response"]["retired_field"] = "invalid current schema"
+    maps = [
+        {"data": {"agent-task.json": json.dumps(wire) if payload == "request" else request}},
+        {"data": {"agent-result.json": json.dumps(wire) if payload == "result" else result}},
+    ]
+    with pytest.raises(CheckpointError, match="invalid exported"):
+        capture_checkpoints(CheckpointStore(tmp_path), 0, "incident-1", tmp_path / "incident", maps)
