@@ -67,6 +67,9 @@ func recordRoutingProbeUnavailable(dir, incidentID, phase, reason, detail string
 // captureRoutingEvidence samples real TCP observations even before a program
 // exists. It uses the protected phase snapshot and never probes on corpus replay.
 func captureRoutingEvidence(ctx context.Context, root, incidentID, phase string, findings []sdk.Finding, view program.ReadView) error {
+	releaseSessionStorage := memory.SessionStorageUse()
+	defer releaseSessionStorage()
+
 	live, ok := routingLiveView(view)
 
 	routingCaptureMu.Lock()

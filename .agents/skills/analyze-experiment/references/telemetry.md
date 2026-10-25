@@ -172,6 +172,19 @@ Go memory edge writes the verified recovery marker before reflection. Only
 requests using the generated localhost kubeconfig are visible: direct network,
 alternate endpoints and controller SDK observations are outside this history.
 
+## Responder startup
+
+The controller emits one `responder_startup` structured log record per incident worker launch. The `startup_json` field contains Kubernetes Job creation and Pod scheduling timestamps, each init container start/end, the agent container start, worker readiness, agent process start and first model request send time. Native restartable init sidecars have no end before the agent starts; `restartable=true` explains that null. Missing observations are explicit in `missing`; never substitute controller poll time for a Kubernetes timestamp. Codex first-request time comes from its local OTLP `codex.api_request` or `codex.websocket_request` event timestamp minus request duration, so it can arrive after the request finishes. This is the client request-attempt boundary, including transport/authentication setup, rather than first response time. Only timing fields are retained; the local collector discards other telemetry content. No model request event means the boundary is unavailable, including scripted workers that do not execute the model CLI.
+
+Incident Jobs consume the image-bound read-only compiler seed prepared before controller dispatch; their init timings no longer include `prepare-toolchain`. Validator and reflection Jobs retain their own private compiler initialization.
+
+Warm startup records explicitly carry `mode=warm`, `claimed_at`, `task_bound_at`, `pod_ready_at`, native `session_open_received_at`/`session_open_at`, `claim_to_session_open_ms`, `task_bound_to_session_open_ms`, `claim_to_first_model_ms` and literal `job_created_to_session_open_ms`. Cold starts carry `mode=cold` and a null claim boundary. Standby Job age is retained as provenance, never subtracted from a cold measurement or used as the warm claim denominator. The registered Python process may start before a warm claim; `registered_agent_process_started` is distinct from `codex_process_started`. Exactly one initial startup record is retained per incident; continuation turns do not reset its clock.
+
+Native runtime-artifact export includes only the typed, exact session-level filenames `startup-controller.json`, `startup-worker.json`, `startup-daemon.json`, `startup-session.json`, and `startup-dispatch.json`; unknown JSON fields, unsupported timing sources and oversized timing files are rejected. These files distinguish preloaded imports, claim/binding, controller session opening and provider-request attempts without exporting the standby environment or inbox. A missing boundary stays unavailable, including first-request timing in scripted runs.
+
+Controller startup, dispatch and session-open files live in the session's `startup/` directory, mounted read-only to the responder. Worker/daemon timing files stay at the session root. Native mode and claim/session clocks therefore cannot be rewritten by the responder. The exporter retains root-level exact legacy timing filenames as well as these three exact protected paths.
+
+Warm recording workers normalize their local checkout alias to the canonical task checkout only for the model-I/O replay cache digest. The live request remains unchanged. Offline replay continues normalizing its temporary checkout to that same canonical task path; a warm encounter therefore replays without a live cache miss.
 Early verified closure emits `incident_closed` at the controller's independent
 verification time with `verified_while_responder_running=true` and
 `closure_stability_window_seconds` (default 15). A new or reactivated finding,
@@ -182,3 +195,5 @@ use the verification timestamp for these closures. Reflection waits for the
 report or grace and retains the controller's receipts and resumable session.
 The benchmark's ordinary grading remains after resolution/learning in
 `fastloop/loop.py`; no grader signal enters controller verification.
+
+Per-Job native timings are exported at `sessions/<session>/startup/attempts/<job>/startup-controller.json`; worker clocks are at `sessions/<session>/startup-workers/<job>/startup-worker.json`. Initial incident files remain unchanged. A cold continuation keeps `mode=cold` and its own task-bound boundary; missing per-attempt boundaries stay unavailable rather than inheriting an earlier prompt's timestamps. Use the actual `responder_job_name` from native incident evidence for strict Kubernetes receipts, including warm Jobs. `--responder-standby=false` on install-existing/controller forces cold execution.

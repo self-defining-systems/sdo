@@ -123,6 +123,11 @@ func (e KubernetesExecutor) RecoverCompleted(ctx context.Context, task *contract
 // request uses a content-addressed identity. Repeated restarts select that same
 // identity, independently of timestamps or controller process lifetime.
 func (e KubernetesExecutor) taskJobName(ctx context.Context, task *contracts.AgentTask) (string, error) {
+	if binding, err := e.loadWarmBinding(task); err != nil {
+		return "", err
+	} else if binding != nil {
+		return binding.JobName, nil
+	}
 	boundName := TaskJobName(task)
 	maps := e.Client.CoreV1().ConfigMaps(e.Namespace)
 	// Prefer the content-addressed execution even if legacy evidence is later

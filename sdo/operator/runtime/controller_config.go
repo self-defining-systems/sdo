@@ -78,6 +78,7 @@ func controllerConfigToArgs(config *contractsv1alpha1.ControllerConfig) []string
 
 	str("--dispatcher-mode", config.GetDispatcherMode())
 	str("--responder-image", config.GetResponderImage())
+	optBool("--responder-standby", config.ResponderStandby)
 	str("--agent-registration-directory", config.GetAgentRegistrationDirectory())
 	str("--responder-agent-id", config.GetResponderAgentId())
 	str("--repository-pvc", config.GetRepositoryPvc())

@@ -58,6 +58,8 @@ from agentshim import (
 )
 from agentshim.providers.codex import install_rules
 
+from libs.agent_cli.startup import StartupTelemetry
+
 if TYPE_CHECKING:
     from agentshim import AgentEvent, CommandExecutor, McpServer, Provider, ProviderUsage
 
@@ -237,6 +239,11 @@ def run_structured_turn(
     try:
         with ExitStack() as turn_scope:
             selected, extra_args, extra_env = _provider_for(provider, access, workspace, turn_scope)
+            startup = turn_scope.enter_context(StartupTelemetry(provider))
+            if provider == "codex":
+                extra_args = [*extra_args, *startup.codex_args()]
+            if startup.endpoint:
+                executor = startup.executor(executor)
             effective_environment = {**os.environ, **(environment or {}), **extra_env}
             home_variable = "CODEX_HOME" if provider == "codex" else "CLAUDE_CONFIG_DIR"
             default_home = Path.home() / (".codex" if provider == "codex" else ".claude")

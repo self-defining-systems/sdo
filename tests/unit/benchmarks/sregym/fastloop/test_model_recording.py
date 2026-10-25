@@ -127,3 +127,23 @@ def test_ordered_replay_honors_explicit_live_fallback(tmp_path: Path) -> None:
     assert replay.run(_request("first"), Sink()).stdout == "recorded\n"
     assert replay.run(_request("new prompt"), Sink()).stdout == "new\n"
     assert len(fallback.requests) == 1
+
+
+def test_warm_recording_replays_with_canonical_checkout_identity(tmp_path: Path, monkeypatch) -> None:
+    from benchmarks.sregym.fastloop.recording_worker import recording_executor
+    from sdo.contracts import AgentTask, to_canonical_json
+
+    wire = to_canonical_json(AgentTask(task_id="one", workspace={"checkout_path": "/workspace/incident"}))
+    monkeypatch.setenv("SDO_WORKSPACE_ALIAS", "/sdo/proposal")
+    fake = FakeExecutor(FakeRun(stdout=["recorded\n"]))
+    recording = recording_executor(tmp_path, wire)
+    recording.live = fake
+    recording.run(_request("inspect /sdo/proposal"), Sink())
+    replay = RecordingExecutor(
+        tmp_path,
+        request_json=wire,
+        prompt_replacements={"/tmp/replay": "/workspace/incident"},
+    )
+    assert replay.run(_request("inspect /tmp/replay"), Sink()).stdout == "recorded\n"
+    assert fake.requests[0].argv[-1] == "inspect /sdo/proposal"
+    assert len(fake.requests) == 1
