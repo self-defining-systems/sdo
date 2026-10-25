@@ -225,7 +225,10 @@ func (e KubernetesExecutor) Execute(ctx context.Context, task *contracts.AgentTa
 		request = requestSource{PVCSubPath: staged}
 		defer e.unstageRequest(jobName)
 	}
-	taskBoundAt := time.Now().UTC()
+	timing, err := e.prepareDispatchStartup(task, jobName)
+	if err != nil {
+		return nil, fmt.Errorf("persist responder dispatch timing: %w", err)
+	}
 	if e.SessionPVCSubPath != "" {
 		if relative, err := filepath.Rel(sessionPVCBase(e.RepositoryPVCSubPath), e.SessionPVCSubPath); err == nil {
 			session := filepath.Join(e.RepositoryMountPath, relative)
@@ -256,17 +259,9 @@ func (e KubernetesExecutor) Execute(ctx context.Context, task *contracts.AgentTa
 	}
 	startup := e.startupRecord(task, jobName)
 	if startup != nil {
-		timing := DispatchStartup{Mode: "cold", TaskBoundAt: taskBoundAt}
-		if e.WarmBinding != nil {
-			timing.Mode = "warm"
-			timing.ClaimedAt = &e.WarmBinding.ClaimedAt
-		}
-		startup.TaskBoundAt = &taskBoundAt
-		if e.SessionPVCSubPath != "" {
-			if relative, err := filepath.Rel(sessionPVCBase(e.RepositoryPVCSubPath), e.SessionPVCSubPath); err == nil {
-				_ = writeStartupOnce(filepath.Join(e.RepositoryMountPath, relative, "startup", "startup-dispatch.json"), timing)
-			}
-		}
+		startup.TaskBoundAt = &timing.TaskBoundAt
+		startup.Mode = timing.Mode
+		startup.ClaimedAt = timing.ClaimedAt
 	}
 
 	defer e.emitStartup(startup)

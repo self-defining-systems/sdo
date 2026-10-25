@@ -334,7 +334,7 @@ func TestRuntimeArtifactsExportOnlyTypedCommandReports(t *testing.T) {
 }
 
 func TestRuntimeArtifactsAllowOnlyTypedPerJobStartup(t *testing.T) {
-	for _, path := range []string{"sessions/id/startup/attempts/sdo-job/startup-controller.json", "sessions/id/startup-workers/sdo-job/startup-worker.json"} {
+	for _, path := range []string{"sessions/id/startup/attempts/sdo-job/startup-controller.json", "sessions/id/startup/attempts/sdo-job/startup-dispatch.json", "sessions/id/startup-workers/sdo-job/startup-worker.json"} {
 		if !allowedRuntimeArtifact(path) {
 			t.Fatal("per-Job timing omitted", path)
 		}
