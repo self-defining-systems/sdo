@@ -192,6 +192,17 @@ def test_act_warns_about_a_kubectl_object_no_resource_covers(
     assert len(_recorded(scratch)) == 1
 
 
+def test_undecodable_redacted_command_is_rejected_before_execution(scratch: Path, tmp_path: Path) -> None:
+    marker = tmp_path / "executed"
+    command = tmp_path / "secret-command"
+    command.write_text(f"#!/bin/sh\ntouch {shlex.quote(str(marker))}\n", encoding="utf-8")
+    command.chmod(0o755)
+    with pytest.raises(ValueError, match="cannot record an invalid repair receipt"):
+        recorded_actions.run_and_record([str(command), "\udc80"], [recorded_actions.resource_ref("Deployment/app/api")])
+    assert not marker.exists()
+    assert not recorded_actions.actions_path().exists()
+
+
 def test_act_withholds_the_command_line_when_a_secret_is_involved(scratch: Path) -> None:
     assert tools_cli.main(["act", "--resource", "Secret/app/db", "--", "echo", "hunter2"]) == 0
 
