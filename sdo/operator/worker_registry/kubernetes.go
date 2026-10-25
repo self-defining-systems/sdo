@@ -123,6 +123,11 @@ func (e KubernetesExecutor) Execute(ctx context.Context, task *contracts.AgentTa
 	if err := e.Registry.ValidateTask(task); err != nil {
 		return nil, fmt.Errorf("validate agent task: %w", err)
 	}
+	if result, recovered, err := e.RecoverCompleted(ctx, task); err != nil {
+		return nil, err
+	} else if recovered {
+		return result, nil
+	}
 	deadline, bounded := frozenReflectionDeadline(task)
 	if bounded {
 		var cancel context.CancelFunc
