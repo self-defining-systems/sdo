@@ -68,13 +68,8 @@ func (d ReflectionDriver) Execute(ctx context.Context, effect lifecyclecore.Refl
 		event.Kind = lifecyclecore.ReflectionCompleted
 	case lifecyclecore.ReviewReflection:
 		diagnostics := validate.ReflectionDiagnostics(effect.Decision, effect.Paths)
-		if effect.Outcome != nil && effect.Workspace != nil {
-			learning, learningErr := validate.ReflectionLearningDiagnostics(effect.Workspace.CheckoutPath, effect.Outcome, effect.Decision)
-			if learningErr != nil {
-				return event, learningErr
-			}
-			diagnostics = append(diagnostics, learning...)
-		}
+		// Learning content is checked once by the broker's complete Check,
+		// against the committed outcome, never the effect's in-memory copy.
 		err = validate.Err(diagnostics)
 		event.Kind = lifecyclecore.ReflectionReviewed
 	case lifecyclecore.PublishReflection:
