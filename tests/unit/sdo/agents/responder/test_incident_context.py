@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from sdo.agents.responder.incident_context import incident_data_view, prepared_incident_data
 from sdo.contracts import IncidentRequest, OperationalMemorySnapshot, Verdict
 
@@ -85,3 +87,27 @@ def test_quiet_program_sweeps_are_omitted_without_losing_actionable_evidence() -
     assert [item["program_id"] for item in document["initial_program_runs"]] == ["repair"]
     assert document["initial_program_runs"][0]["verdict"]["evidence"][0]["observed"] == "wrong port"
     assert document["omitted_no_match_program_runs"] == 20
+
+
+@pytest.mark.skipif(
+    "playbook_coverage" not in IncidentRequest.DESCRIPTOR.fields_by_name,
+    reason="D1 typed coverage contract is not on the production base yet",
+)
+def test_coverage_keeps_diagnosis_only_flags_counts_and_resource_bindings() -> None:
+    request = _request()
+    coverage = getattr(request, "playbook_coverage")
+    match = coverage.matches.add(playbook_id="diagnosis-only", can_mitigate=False)
+    match.explained_finding_fingerprints.append("finding-0")
+    binding = match.bindings.add(name="service")
+    binding.object.kind = "Service"
+    binding.object.name = "service-0"
+    coverage.unexplained_finding_fingerprints.append("finding-1")
+
+    view = incident_data_view(request)["playbook_coverage"]
+    selected = view["matches"][0]
+    assert selected["can_mitigate"] is False
+    assert selected["verified_successes"] == 0
+    assert selected["verified_failures"] == 0
+    assert selected["bindings"][0]["object"]["name"] == "service-0"
+    assert selected["explained_finding_fingerprints"] == ["finding-0"]
+    assert view["unexplained_finding_fingerprints"] == ["finding-1"]

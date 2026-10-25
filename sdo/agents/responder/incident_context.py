@@ -49,6 +49,12 @@ def incident_data_view(request: IncidentRequest) -> dict[str, Any]:
         # D1 owns this typed field; remove this named integration placeholder
         # after the coverage contract is merged into the production base.
         document["playbook_coverage"] = {"availability": "pending-controller-coverage"}
+    elif request.HasField("playbook_coverage"):
+        document["playbook_coverage"] = json_format.MessageToDict(
+            getattr(request, "playbook_coverage"),
+            preserving_proto_field_name=True,
+            always_print_fields_with_no_presence=True,
+        )
     else:
         document.setdefault(
             "playbook_coverage",
