@@ -153,7 +153,7 @@ func (v LiveReadView) DiffAgainstSource(ref sdk.ObjectRef) (program.Diff, error)
 	defer cancel()
 	var source *unstructured.Unstructured
 	acceptedCluster := false
-	if ref.Namespace == "" {
+	if ref.Namespace == "" && !(sdk.ObservationTarget{Kind: ref.Kind}).Cluster() {
 		if _, ok := v.Source.(interface {
 			AcceptedApplicationManifest(context.Context, string, string, sdk.ObjectRef) (*unstructured.Unstructured, error)
 		}); ok {
