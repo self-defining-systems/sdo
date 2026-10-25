@@ -11,6 +11,7 @@ import (
 
 	"google.golang.org/protobuf/proto"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/memory"
 	"sdo.dev/operator/onboarding"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/servicehealth"
@@ -127,8 +128,9 @@ func (c *Controller) finishOnboarding(ctx context.Context, record *contracts.Nam
 	if record == nil {
 		return
 	}
+	commitVerified := c.onboardingCommitVerified(ctx, record.AcceptedCommit)
 	c.mu.Lock()
-	eligible := !c.incidentOpen && !c.closureBlocksNextLocked() && c.lastAcknowledgedIncidentID == "" && c.incidentDetectedAt.IsZero() && len(c.failedClosures) == 0 && c.config.SourceCommit == record.AcceptedCommit
+	eligible := !c.incidentOpen && !c.closureBlocksNextLocked() && c.lastAcknowledgedIncidentID == "" && c.incidentDetectedAt.IsZero() && len(c.failedClosures) == 0 && commitVerified
 	c.mu.Unlock()
 	if !eligible || (c.onboardingReachability != nil && c.onboardingReachability.invalid) || errored || len(findings) != 0 || len(c.healthDetectorIDs) == 0 || !c.pendingInventoryClear(record, now) {
 		return
@@ -187,4 +189,18 @@ func (c *Controller) pendingInventoryClear(record *contracts.NamespaceOnboarding
 		return false
 	}
 	return len(preview.Findings(reader.SourceDriftObjects(), now)) == 0
+}
+
+// A startup judge may publish health memory before the first evaluation. Keep
+// the install identity/commit immutable, and accept only that verified lineage.
+func (c *Controller) onboardingCommitVerified(ctx context.Context, installed string) bool {
+	current := c.CurrentAcceptedCommit()
+	if current == installed {
+		return true
+	}
+	ok, err := memory.HealthRefreshPreservesInstall(ctx, c.config.RepositoryWorktree, installed, current)
+	if err != nil && c.OnError != nil {
+		c.OnError(fmt.Errorf("verify onboarding health refresh: %w", err))
+	}
+	return err == nil && ok
 }
