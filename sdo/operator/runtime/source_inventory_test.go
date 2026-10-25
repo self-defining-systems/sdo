@@ -45,6 +45,9 @@ func hotelInventory() ([]*unstructured.Unstructured, []*unstructured.Unstructure
 	}
 	managed := inventoryObject("apps/v1", "Deployment", "app", "operator-worker")
 	managed.SetLabels(map[string]string{"app.kubernetes.io/managed-by": "sdo"})
+	helper := inventoryObject("v1", "Pod", "app", "read-only-inspection")
+	helper.SetLabels(map[string]string{"sdo.dev/responder-helper": "true"})
+	live = append(live, helper)
 	live = append(live, managed, inventoryObject("v1", "ConfigMap", "app", "kube-root-ca.crt"), inventoryObject("v1", "ServiceAccount", "app", "default"))
 	return declared, live
 }
@@ -387,5 +390,13 @@ func TestSourceInventoryRBACDefaultsAreNotDrift(t *testing.T) {
 	liveBinding.Object["subjects"] = []any{map[string]any{"kind": "ServiceAccount", "name": "api", "namespace": "app"}}
 	if findings := index.Findings([]*unstructured.Unstructured{liveRole, liveBinding}, time.Unix(100, 0)); len(findings) != 0 {
 		t.Fatalf("API-defaulted authorization caused an extra response: %+v", findings)
+	}
+}
+
+func TestSourceInventoryHelperLabelDoesNotHideApplicationControllers(t *testing.T) {
+	object := inventoryObject("apps/v1", "Deployment", "app", "extra-controller")
+	object.SetLabels(map[string]string{"sdo.dev/responder-helper": "true"})
+	if findings := NewSourceInventory("app", "accepted", nil).Findings([]*unstructured.Unstructured{object}, time.Unix(100, 0)); len(findings) != 1 {
+		t.Fatal("Pod/Job helper label hid a persistent application controller")
 	}
 }

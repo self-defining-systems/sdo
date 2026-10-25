@@ -144,6 +144,9 @@ func (s *SourceInventory) Findings(objects []*unstructured.Unstructured, now tim
 	return findings
 }
 func inventoryOwned(o *unstructured.Unstructured) bool {
+	if (o.GetKind() == "Pod" || o.GetKind() == "Job") && o.GetLabels()["sdo.dev/responder-helper"] == "true" {
+		return true
+	}
 	return sdoOwned(metav1.ObjectMeta{Name: o.GetName(), Labels: o.GetLabels()})
 }
 func inventoryFields(o *unstructured.Unstructured) []sdk.DriftField {
