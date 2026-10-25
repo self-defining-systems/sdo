@@ -34,7 +34,8 @@ raise SystemExit(w.main(["responder"]))
     os.close(claim_read)
     try:
         readable, _, _ = select.select([ready_read], [], [], 5)
-        assert readable and os.read(ready_read, 1) == b"R", "worker exited before native ready handshake"
+        assert readable, "worker exited before native ready handshake"
+        assert os.read(ready_read, 1) == b"R"
         assert child.poll() is None
         (tmp_path / "environment.json").write_text(
             json.dumps({"SDO_NAMESPACE": "app-sdo", "SDO_RESULT_CONFIGMAP": "result"})
