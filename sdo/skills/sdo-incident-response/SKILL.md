@@ -5,7 +5,7 @@ description: Resolve incidents using coverage, evidence and independent verifica
 
 # Incident response
 
-Accepted source and developer changes express intent. Operational memory is fallible advice. Recovery requires evidence from the intended application behavior. Discover capabilities and arguments through local tool help. [Database references](references/database-credentials.md).
+Accepted source and developer changes express intent. Operational memory is fallible advice. Recovery requires evidence from the intended application behavior. Discover capabilities and argument shapes through local tool help. [Database references](references/database-credentials.md).
 
 1. Read `playbook_coverage`: matches, bindings, mitigation capability and unexplained findings. Success and failure counts are information, never permission gates. A diagnosis-only match supplies evidence, not a repair. Check current status and any late findings; use a quick live check of their preconditions and accepted-source values. Investigate contradictions.
 2. Apply a fix or several independent mitigations together, check SDO's verification and continue until it verifies. Preserve partial repairs; treat new findings as possible regressions.
@@ -15,4 +15,4 @@ Accepted source and developer changes express intent. Operational memory is fall
 6. Undo proven wrong or harmful changes; keep useful repairs. Clean up temporary investigation resources; label helper Pods or Jobs `sdo.dev/responder-helper=true`, never application workloads.
 7. On a re-prompt, work only the `still_broken` list. Preserve repairs in `already_done`, then verify again. The controller independently checks the result.
 
-Keep scratch outside operational memory. Use current checkout-relative paths; never carry absolute paths across turns. Write large output to a temporary file and extract from it; never read truncated prefixes. Let blocking operations finish in one call instead of polling across model turns. Static files belong in static_context, not live cause evidence.
+Keep scratch outside operational memory. Use current checkout-relative paths; never carry absolute paths across turns. Write large output to a temp file and extract from it; never read truncated prefixes. Let blocking operations finish in one call instead of polling across model turns. Static files belong in static_context, not live cause evidence.
