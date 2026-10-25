@@ -10,10 +10,10 @@ from typing import TYPE_CHECKING, Any
 
 import yaml
 
-from benchmarks.sregym.adapter import kubectl
-from benchmarks.sregym.adapter.eval_guards import (
+from benchmarks.sregym.adapter import (
     assert_stable_workloads,
     controller_proof,
+    kubectl,
     qualified_scenarios,
     setup_lineage,
     wait_for_proof,
@@ -127,6 +127,8 @@ class LaneAdmission:
         self._policy()
         env = self.environment
         self.directory.mkdir(parents=True, exist_ok=True)
+        # JG lane-resource admission belongs here, before proof or injection.
+        # The dry-run also uses this entry point; keep checks shared.
         rbac = verify_rbac(env.kubeconfig, env.namespace)
         (self.directory / "rbac.json").write_text(json.dumps(rbac, indent=2) + "\n")
         boundary = datetime.now(timezone.utc).isoformat()
@@ -166,9 +168,11 @@ class LaneAdmission:
 
         def restore() -> None:
             from benchmarks.sregym.fastloop.baseline_recovery import KubectlApplicationCluster
-            from benchmarks.sregym.fastloop.reset import restore_application
+            from benchmarks.sregym.fastloop.reset import RestoreChecks, restore_application
 
-            restore_application(env, KubectlApplicationCluster(env.kubeconfig), self.worker)
+            checks = RestoreChecks(env)
+            checks.prepare(fresh=False)
+            restore_application(env, KubectlApplicationCluster(env.kubeconfig), self.worker, checks=checks)
             self._identity = workload_identity(env.kubeconfig, env.namespace)
 
         return wait_for_proof(sample, restore, record, timeout_seconds=self.timeout_seconds)

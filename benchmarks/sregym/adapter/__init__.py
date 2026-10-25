@@ -20,6 +20,14 @@ if TYPE_CHECKING:
         launch_native_lifecycle,
         publish_agent_registrations,
     )
+    from benchmarks.sregym.adapter.eval_guards import (
+        assert_stable_workloads,
+        closure_pending,
+        controller_proof,
+        qualified_scenarios,
+        setup_lineage,
+        wait_for_proof,
+    )
     from benchmarks.sregym.adapter.healthy_baseline import HealthyBaselineCaptureOps, kubectl_capture_ops
     from benchmarks.sregym.adapter.native_operator import (
         execute_operator,
@@ -61,6 +69,12 @@ if TYPE_CHECKING:
     from benchmarks.sregym.adapter.scripted_replay_catalog import SCRIPTED_REPLAY_SLOTS
 
 _EXPORTS: dict[str, str] = {
+    "assert_stable_workloads": "eval_guards",
+    "closure_pending": "eval_guards",
+    "controller_proof": "eval_guards",
+    "qualified_scenarios": "eval_guards",
+    "setup_lineage": "eval_guards",
+    "wait_for_proof": "eval_guards",
     "replay_recorded_repair": "scripted_replay",
     "SCRIPTED_REPLAY_SLOTS": "scripted_replay_catalog",
     "prepare_oracle_observability": "oracle_observability",
@@ -105,6 +119,12 @@ _EXPORTS: dict[str, str] = {
 }
 
 __all__ = [
+    "assert_stable_workloads",
+    "closure_pending",
+    "controller_proof",
+    "qualified_scenarios",
+    "setup_lineage",
+    "wait_for_proof",
     "replay_recorded_repair",
     "SCRIPTED_REPLAY_SLOTS",
     "prepare_oracle_observability",

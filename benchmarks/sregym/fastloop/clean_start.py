@@ -21,7 +21,7 @@ HARNESS_NAMESPACE = "sregym"
 
 def benchmark_owned(value: dict[str, Any]) -> bool:
     labels = value.get("metadata", {}).get("labels", {})
-    return any(
+    return labels.get("job") == "workload" or any(
         str(label).startswith(("sregym", "benchmark"))
         for key, label in labels.items()
         if key == "app.kubernetes.io/managed-by" or key.startswith(("sregym.", "benchmark."))
@@ -45,7 +45,7 @@ def install_probe_isolation(grading: Any) -> None:
     def isolated(*args: Any, **kwargs: Any) -> dict[str, Any]:
         return isolate_benchmark_probe(original(*args, **kwargs))
 
-    isolated.benchmark_isolated = True
+    isolated.__dict__["benchmark_isolated"] = True
     grading.probe_pod_manifest = isolated
 
 
@@ -147,6 +147,34 @@ def remove_injected_objects(kubeconfig: Path) -> None:
 
 def prepare_harness_traffic(app: Any, kubeconfig: Path) -> bool:
     """Adapt the app's existing wrk manager; its payload and rate settings stay intact."""
+    if app.namespace == "astronomy-shop" and callable(getattr(app, "create_workload", None)):
+        if hasattr(app, "wrk"):
+            app.wrk.namespace = HARNESS_NAMESPACE
+            app.wrk.locust_url = f"load-generator.{app.namespace}.svc.cluster.local:8089"
+
+        def start_fetcher() -> None:
+            if not hasattr(app, "wrk"):
+                app.create_workload()
+            app.wrk.namespace = HARNESS_NAMESPACE
+            app.wrk.locust_url = f"load-generator.{app.namespace}.svc.cluster.local:8089"
+            kubectl(
+                ["apply", "-f", "-"],
+                namespace=None,
+                kubeconfig=kubeconfig,
+                input_text=json.dumps(
+                    {"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": HARNESS_NAMESPACE}}
+                ),
+            )
+            app.wrk.start()
+            kubectl(["get", "pod/locust-fetcher", "-o", "name"], namespace=HARNESS_NAMESPACE, kubeconfig=kubeconfig)
+            kubectl(
+                ["delete", "pod/locust-fetcher", "--ignore-not-found=true", "--wait=true", "--timeout=30s"],
+                namespace=app.namespace,
+                kubeconfig=kubeconfig,
+            )
+
+        app.start_workload = start_fetcher
+        return True
     if not callable(getattr(app, "create_workload", None)) or not hasattr(app, "frontend_service"):
         return False
     # Only the two DeathStarBench apps use this Wrk2 manager contract. Astronomy

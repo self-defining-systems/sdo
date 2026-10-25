@@ -84,8 +84,7 @@ class NoFaultReady(Exception):
 
 
 def run_lane(run_dir: Path, timeout: int) -> int:
-    from benchmarks.sregym.adapter import control_namespace_for, kubectl
-    from benchmarks.sregym.adapter.eval_guards import closure_pending
+    from benchmarks.sregym.adapter import closure_pending, control_namespace_for, kubectl
     from benchmarks.sregym.fastloop import cli
     from benchmarks.sregym.fastloop.environment import FastloopEnvironment
 

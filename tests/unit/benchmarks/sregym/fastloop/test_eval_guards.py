@@ -276,3 +276,26 @@ def test_unstarted_prober_windows_are_unproven(windows):
     from benchmarks.sregym.adapter.eval_guards import qualified_scenarios
 
     assert not qualified_scenarios({"windows": windows}, {"frontend"})
+
+
+def test_dependency_restart_requires_clients_newer_than_dependency_for_any_app():
+    from benchmarks.sregym.fastloop.seed_recovery import StartupDependency, require_dependency_order
+
+    dependency = StartupDependency("registry-x", ("api-y",))
+    with pytest.raises(ValueError, match="register after"):
+        require_dependency_order(
+            dependency, {"registry-x": ["2026-10-25T20:00:02Z"], "api-y": ["2026-10-25T20:00:01Z"]}
+        )
+    require_dependency_order(dependency, {"registry-x": ["2026-10-25T20:00:02Z"], "api-y": ["2026-10-25T20:00:03Z"]})
+
+
+def test_astronomy_fetcher_uses_harness_namespace_and_app_service_dns(monkeypatch):
+    manager = SimpleNamespace(namespace="astronomy-shop", locust_url="load-generator:8089")
+    created = []
+    manager.start = lambda: created.append((manager.namespace, manager.locust_url))
+    app = SimpleNamespace(namespace="astronomy-shop", frontend_service="frontend-proxy", wrk=manager)
+    app.create_workload = lambda: None
+    monkeypatch.setattr(clean_start, "kubectl", lambda *_args, **_kwargs: SimpleNamespace(stdout=""))
+    assert clean_start.prepare_harness_traffic(app, Path("unused"))
+    app.start_workload()
+    assert created == [("sregym", "load-generator.astronomy-shop.svc.cluster.local:8089")]

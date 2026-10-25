@@ -77,13 +77,14 @@ def _worker(environment: FastloopEnvironment) -> SregymWorker:
 
 def _reset_failed_incident(environment: FastloopEnvironment, worker: SregymWorker) -> None:
     from benchmarks.sregym.adapter import control_namespace_for
-    from benchmarks.sregym.fastloop.reset import KubectlResetCluster, reset_environment
+    from benchmarks.sregym.fastloop.reset import KubectlResetCluster, RestoreChecks, reset_environment
 
     reset_environment(
         environment,
         KubectlResetCluster(environment.kubeconfig, control_namespace_for(environment.namespace)),
         worker,
         preserve_repository=True,
+        checks=RestoreChecks(environment),
     )
 
 
@@ -970,7 +971,7 @@ def _down(args: argparse.Namespace) -> int:
 
 def _reset(args: argparse.Namespace) -> int:
     from benchmarks.sregym.adapter import control_namespace_for
-    from benchmarks.sregym.fastloop.reset import KubectlResetCluster, reset_environment
+    from benchmarks.sregym.fastloop.reset import KubectlResetCluster, RestoreChecks, reset_environment
 
     environment = FastloopEnvironment.load(args.run_dir.resolve())
     if environment.seed_commit is None:
@@ -990,7 +991,7 @@ def _reset(args: argparse.Namespace) -> int:
         saved_toy = ToyControllerTemplate.capture(environment)
     cluster = KubectlResetCluster(environment.kubeconfig, control_namespace_for(environment.namespace))
     with _worker(environment) as worker:
-        reset_environment(environment, cluster, worker)
+        reset_environment(environment, cluster, worker, checks=RestoreChecks(environment))
     _restore_seed(environment)
     if retarget or environment.dev_mount_snapshot:
         from benchmarks.sregym.fastloop.dev import retarget_dev_mount
