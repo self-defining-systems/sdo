@@ -1348,8 +1348,6 @@ def test_driver_environment_settings_are_recorded_and_preserved_on_persistent_re
         json.dumps(
             {
                 "deployed_manifest_paths": ["kubernetes"],
-                "program_fast_path": True,
-                "program_trust_threshold": trust_threshold,
             }
         ),
     )
@@ -1391,16 +1389,12 @@ def test_driver_environment_settings_are_recorded_and_preserved_on_persistent_re
         record = PersistentState.load(state_path).controllers["hotel"]
         config = runtime_config_from_payload(record.runtime_config)
         assert config.deployed_manifest_paths == ("kubernetes",)
-        assert config.program_fast_path is True
-        assert config.program_trust_threshold == trust_threshold
         ops.reflectable.add(resolution["incident_id"])
     assert resolution["lifecycle_reused"] is True
     assert ops.installs == 1
     assert len(commands) == 1
     command = commands[0]
     assert command[command.index("--deployed-manifest-path") + 1] == "kubernetes"
-    assert "--program-fast-path=true" in command
-    assert command[command.index("--program-trust-threshold") + 1] == str(trust_threshold)
 
 
 def test_unrepresentable_rejected_receipt_stays_one_incidents_typed_failure(tmp_path: Path) -> None:

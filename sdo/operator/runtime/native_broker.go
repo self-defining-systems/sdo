@@ -9,13 +9,14 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
+	"syscall"
+	"time"
+
 	outcomeclass "sdo.dev/operator/contracts/outcome"
 	"sdo.dev/operator/contracts/wire"
 	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"sdo.dev/operator/runtime/lifecyclecore"
-	"strings"
-	"syscall"
-	"time"
 
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -209,10 +210,6 @@ func (n NativeIncidentBroker) ProcessClosure(ctx context.Context, closure Incide
 		if ledger.Closure == nil {
 			ledger.Closure = projected
 			if closure.Result != nil {
-				ledger.FastPathSkippedReason = string(closure.Result.FastPathSkippedReason)
-				for _, covered := range closure.Result.FastPathRelationCoveredFindings {
-					ledger.FastPathRelationCoveredFindings = append(ledger.FastPathRelationCoveredFindings, relationCoveredFindingContract(covered))
-				}
 			}
 			if err := n.saveLedger(ledger); err != nil {
 				return err

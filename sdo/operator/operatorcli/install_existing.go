@@ -60,8 +60,6 @@ func ParseInstallExistingLaunch(args []string) (InstallExistingConfig, error) {
 	reflectionGuidance := flags.String("reflection-guidance", "baseline", "reflection guidance mode")
 	forceReflection := flags.Bool("force-reflection", false, "always dispatch reflection after verified closure")
 	maxResponseLoops := flags.Int("max-response-loops", 10, "maximum sdo apply batches per incident")
-	programFastPath := flags.Bool("program-fast-path", true, "allow trusted programs to resolve incidents")
-	programTrustThreshold := flags.Int("program-trust-threshold", 1, "verified successes required to trust a program")
 	responseTimeout := flags.Duration("response-timeout", 30*time.Minute, "responder timeout")
 	verificationTimeout := flags.Duration("verification-timeout", 5*time.Minute, "verification timeout")
 	duration := flags.Duration("duration", 0, "bounded controller duration")
@@ -119,9 +117,6 @@ func ParseInstallExistingLaunch(args []string) (InstallExistingConfig, error) {
 	if *duration < 0 || *responseTimeout <= 0 || *verificationTimeout <= 0 {
 		return InstallExistingConfig{}, errors.New("controller timeouts must be positive")
 	}
-	if *programTrustThreshold < 1 {
-		return InstallExistingConfig{}, errors.New("program trust threshold must be positive")
-	}
 	menu := os.Getenv("SDO_RESPONDER_MENU")
 	if menu != "" && menu != "0" && menu != "1" {
 		return InstallExistingConfig{}, errors.New("SDO_RESPONDER_MENU must be 0 or 1")
@@ -133,9 +128,8 @@ func ParseInstallExistingLaunch(args []string) (InstallExistingConfig, error) {
 		RepairPolicy: *repairPolicy, ReflectionSession: *reflectionSession, ReflectionGuidance: *reflectionGuidance, ForceReflection: *forceReflection, AgentProvider: *provider,
 		MaxResponseLoops: *maxResponseLoops,
 		ResponderMenu:    menu != "0",
-		ProgramFastPath:  *programFastPath, ProgramTrustThreshold: *programTrustThreshold,
-		LateFindings:    *lateFindings,
-		HealthyBaseline: *healthyBaseline, PermissiveResponder: *permissiveResponder, ResponderNamespaces: responderNamespaces,
+		LateFindings:     *lateFindings,
+		HealthyBaseline:  *healthyBaseline, PermissiveResponder: *permissiveResponder, ResponderNamespaces: responderNamespaces,
 		TimeoutSeconds: int(responseTimeout.Seconds()), VerificationTimeoutSeconds: int(verificationTimeout.Seconds()),
 		MetricsURL:    *metricsURL,
 		NativeCommand: []string{"/usr/local/bin/sdo-operator"},
@@ -175,7 +169,6 @@ func RunInstallExisting(ctx context.Context, launch InstallExistingConfig) (Inst
 	}
 	config := launch.Install
 	if launch.AdoptExistingMemory {
-		config.ProgramFastPath = false
 	}
 	config.AcceptedCommit = commit
 	installer := install.Installer{

@@ -1699,9 +1699,9 @@ type IncidentRequest struct {
 	InitialProgramRuns    []*ProgramRun              `protobuf:"bytes,21,rep,name=initial_program_runs,json=initialProgramRuns,proto3" json:"initial_program_runs,omitempty"`
 	MaxResponseLoops      int32                      `protobuf:"varint,22,opt,name=max_response_loops,json=maxResponseLoops,proto3" json:"max_response_loops,omitempty"`
 	DriftEvents           []*DriftEvent              `protobuf:"bytes,23,rep,name=drift_events,json=driftEvents,proto3" json:"drift_events,omitempty"`
-	FastPathSummary       string                     `protobuf:"bytes,24,opt,name=fast_path_summary,json=fastPathSummary,proto3" json:"fast_path_summary,omitempty"`
 	PreparedAgentTask     string                     `protobuf:"bytes,25,opt,name=prepared_agent_task,json=preparedAgentTask,proto3" json:"prepared_agent_task,omitempty"`
 	ObservationGeneration string                     `protobuf:"bytes,26,opt,name=observation_generation,json=observationGeneration,proto3" json:"observation_generation,omitempty"`
+	PlaybookCoverage      *PlaybookCoverage          `protobuf:"bytes,27,opt,name=playbook_coverage,json=playbookCoverage,proto3" json:"playbook_coverage,omitempty"`
 	unknownFields         protoimpl.UnknownFields
 	sizeCache             protoimpl.SizeCache
 }
@@ -1876,13 +1876,6 @@ func (x *IncidentRequest) GetDriftEvents() []*DriftEvent {
 	return nil
 }
 
-func (x *IncidentRequest) GetFastPathSummary() string {
-	if x != nil {
-		return x.FastPathSummary
-	}
-	return ""
-}
-
 func (x *IncidentRequest) GetPreparedAgentTask() string {
 	if x != nil {
 		return x.PreparedAgentTask
@@ -1895,6 +1888,13 @@ func (x *IncidentRequest) GetObservationGeneration() string {
 		return x.ObservationGeneration
 	}
 	return ""
+}
+
+func (x *IncidentRequest) GetPlaybookCoverage() *PlaybookCoverage {
+	if x != nil {
+		return x.PlaybookCoverage
+	}
+	return nil
 }
 
 type RootCauseEvidence struct {
@@ -2461,35 +2461,32 @@ func (x *RepairActionReceipt) GetReversible() bool {
 // IncidentResult is what the responder returns. The CEL enforces unique
 // repair action IDs at the component boundary.
 type IncidentResult struct {
-	state                           protoimpl.MessageState    `protogen:"open.v1"`
-	SchemaVersion                   string                    `protobuf:"bytes,1,opt,name=schema_version,json=schemaVersion,proto3" json:"schema_version,omitempty"`
-	IncidentId                      string                    `protobuf:"bytes,2,opt,name=incident_id,json=incidentId,proto3" json:"incident_id,omitempty"`
-	Status                          string                    `protobuf:"bytes,3,opt,name=status,proto3" json:"status,omitempty"`
-	ConfirmedRootCauses             []*ConfirmedRootCause     `protobuf:"bytes,4,rep,name=confirmed_root_causes,json=confirmedRootCauses,proto3" json:"confirmed_root_causes,omitempty"`
-	AppliedPlaybooks                []*AppliedPlaybook        `protobuf:"bytes,5,rep,name=applied_playbooks,json=appliedPlaybooks,proto3" json:"applied_playbooks,omitempty"`
-	RepairChanges                   []string                  `protobuf:"bytes,6,rep,name=repair_changes,json=repairChanges,proto3" json:"repair_changes,omitempty"`
-	RepairActions                   []*RepairActionReceipt    `protobuf:"bytes,7,rep,name=repair_actions,json=repairActions,proto3" json:"repair_actions,omitempty"`
-	FinalDetectorStates             []*DetectorEvaluation     `protobuf:"bytes,8,rep,name=final_detector_states,json=finalDetectorStates,proto3" json:"final_detector_states,omitempty"`
-	ProposedArtifactIds             []string                  `protobuf:"bytes,9,rep,name=proposed_artifact_ids,json=proposedArtifactIds,proto3" json:"proposed_artifact_ids,omitempty"`
-	VerificationEvidence            []*VerificationEvidence   `protobuf:"bytes,10,rep,name=verification_evidence,json=verificationEvidence,proto3" json:"verification_evidence,omitempty"`
-	Usage                           *UsageMetrics             `protobuf:"bytes,11,opt,name=usage,proto3" json:"usage,omitempty"`
-	Timing                          *TimingMetrics            `protobuf:"bytes,12,opt,name=timing,proto3" json:"timing,omitempty"`
-	ResponderSessionId              *string                   `protobuf:"bytes,13,opt,name=responder_session_id,json=responderSessionId,proto3,oneof" json:"responder_session_id,omitempty"`
-	Error                           *string                   `protobuf:"bytes,14,opt,name=error,proto3,oneof" json:"error,omitempty"`
-	LateFindingsPull                *LateFindingsPull         `protobuf:"bytes,15,opt,name=late_findings_pull,json=lateFindingsPull,proto3" json:"late_findings_pull,omitempty"`
-	ProgramToolCalls                []*ProgramToolCall        `protobuf:"bytes,16,rep,name=program_tool_calls,json=programToolCalls,proto3" json:"program_tool_calls,omitempty"`
-	ProgramRuns                     []*ProgramRun             `protobuf:"bytes,17,rep,name=program_runs,json=programRuns,proto3" json:"program_runs,omitempty"`
-	PlanApplications                []*PlanApplication        `protobuf:"bytes,18,rep,name=plan_applications,json=planApplications,proto3" json:"plan_applications,omitempty"`
-	ResponseLoopsUsed               int32                     `protobuf:"varint,19,opt,name=response_loops_used,json=responseLoopsUsed,proto3" json:"response_loops_used,omitempty"`
-	ResponseLoopExhausted           bool                      `protobuf:"varint,20,opt,name=response_loop_exhausted,json=responseLoopExhausted,proto3" json:"response_loop_exhausted,omitempty"`
-	ProgramFailureSignals           []string                  `protobuf:"bytes,21,rep,name=program_failure_signals,json=programFailureSignals,proto3" json:"program_failure_signals,omitempty"`
-	ResolutionPath                  string                    `protobuf:"bytes,22,opt,name=resolution_path,json=resolutionPath,proto3" json:"resolution_path,omitempty"`
-	FastPathPrograms                []string                  `protobuf:"bytes,23,rep,name=fast_path_programs,json=fastPathPrograms,proto3" json:"fast_path_programs,omitempty"`
-	FastPathSkippedReason           string                    `protobuf:"bytes,24,opt,name=fast_path_skipped_reason,json=fastPathSkippedReason,proto3" json:"fast_path_skipped_reason,omitempty"`
-	FastPathRelationCoveredFindings []*RelationCoveredFinding `protobuf:"bytes,25,rep,name=fast_path_relation_covered_findings,json=fastPathRelationCoveredFindings,proto3" json:"fast_path_relation_covered_findings,omitempty"`
-	DriftEvents                     []*DriftEvent             `protobuf:"bytes,26,rep,name=drift_events,json=driftEvents,proto3" json:"drift_events,omitempty"`
-	unknownFields                   protoimpl.UnknownFields
-	sizeCache                       protoimpl.SizeCache
+	state                 protoimpl.MessageState  `protogen:"open.v1"`
+	SchemaVersion         string                  `protobuf:"bytes,1,opt,name=schema_version,json=schemaVersion,proto3" json:"schema_version,omitempty"`
+	IncidentId            string                  `protobuf:"bytes,2,opt,name=incident_id,json=incidentId,proto3" json:"incident_id,omitempty"`
+	Status                string                  `protobuf:"bytes,3,opt,name=status,proto3" json:"status,omitempty"`
+	ConfirmedRootCauses   []*ConfirmedRootCause   `protobuf:"bytes,4,rep,name=confirmed_root_causes,json=confirmedRootCauses,proto3" json:"confirmed_root_causes,omitempty"`
+	AppliedPlaybooks      []*AppliedPlaybook      `protobuf:"bytes,5,rep,name=applied_playbooks,json=appliedPlaybooks,proto3" json:"applied_playbooks,omitempty"`
+	RepairChanges         []string                `protobuf:"bytes,6,rep,name=repair_changes,json=repairChanges,proto3" json:"repair_changes,omitempty"`
+	RepairActions         []*RepairActionReceipt  `protobuf:"bytes,7,rep,name=repair_actions,json=repairActions,proto3" json:"repair_actions,omitempty"`
+	FinalDetectorStates   []*DetectorEvaluation   `protobuf:"bytes,8,rep,name=final_detector_states,json=finalDetectorStates,proto3" json:"final_detector_states,omitempty"`
+	ProposedArtifactIds   []string                `protobuf:"bytes,9,rep,name=proposed_artifact_ids,json=proposedArtifactIds,proto3" json:"proposed_artifact_ids,omitempty"`
+	VerificationEvidence  []*VerificationEvidence `protobuf:"bytes,10,rep,name=verification_evidence,json=verificationEvidence,proto3" json:"verification_evidence,omitempty"`
+	Usage                 *UsageMetrics           `protobuf:"bytes,11,opt,name=usage,proto3" json:"usage,omitempty"`
+	Timing                *TimingMetrics          `protobuf:"bytes,12,opt,name=timing,proto3" json:"timing,omitempty"`
+	ResponderSessionId    *string                 `protobuf:"bytes,13,opt,name=responder_session_id,json=responderSessionId,proto3,oneof" json:"responder_session_id,omitempty"`
+	Error                 *string                 `protobuf:"bytes,14,opt,name=error,proto3,oneof" json:"error,omitempty"`
+	LateFindingsPull      *LateFindingsPull       `protobuf:"bytes,15,opt,name=late_findings_pull,json=lateFindingsPull,proto3" json:"late_findings_pull,omitempty"`
+	ProgramToolCalls      []*ProgramToolCall      `protobuf:"bytes,16,rep,name=program_tool_calls,json=programToolCalls,proto3" json:"program_tool_calls,omitempty"`
+	ProgramRuns           []*ProgramRun           `protobuf:"bytes,17,rep,name=program_runs,json=programRuns,proto3" json:"program_runs,omitempty"`
+	PlanApplications      []*PlanApplication      `protobuf:"bytes,18,rep,name=plan_applications,json=planApplications,proto3" json:"plan_applications,omitempty"`
+	ResponseLoopsUsed     int32                   `protobuf:"varint,19,opt,name=response_loops_used,json=responseLoopsUsed,proto3" json:"response_loops_used,omitempty"`
+	ResponseLoopExhausted bool                    `protobuf:"varint,20,opt,name=response_loop_exhausted,json=responseLoopExhausted,proto3" json:"response_loop_exhausted,omitempty"`
+	ProgramFailureSignals []string                `protobuf:"bytes,21,rep,name=program_failure_signals,json=programFailureSignals,proto3" json:"program_failure_signals,omitempty"`
+	ResolutionPath        string                  `protobuf:"bytes,22,opt,name=resolution_path,json=resolutionPath,proto3" json:"resolution_path,omitempty"`
+	DriftEvents           []*DriftEvent           `protobuf:"bytes,26,rep,name=drift_events,json=driftEvents,proto3" json:"drift_events,omitempty"`
+	unknownFields         protoimpl.UnknownFields
+	sizeCache             protoimpl.SizeCache
 }
 
 func (x *IncidentResult) Reset() {
@@ -2674,27 +2671,6 @@ func (x *IncidentResult) GetResolutionPath() string {
 		return x.ResolutionPath
 	}
 	return ""
-}
-
-func (x *IncidentResult) GetFastPathPrograms() []string {
-	if x != nil {
-		return x.FastPathPrograms
-	}
-	return nil
-}
-
-func (x *IncidentResult) GetFastPathSkippedReason() string {
-	if x != nil {
-		return x.FastPathSkippedReason
-	}
-	return ""
-}
-
-func (x *IncidentResult) GetFastPathRelationCoveredFindings() []*RelationCoveredFinding {
-	if x != nil {
-		return x.FastPathRelationCoveredFindings
-	}
-	return nil
 }
 
 func (x *IncidentResult) GetDriftEvents() []*DriftEvent {
@@ -3353,7 +3329,7 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	"\x12traffic_generators\x18\x03 \x03(\v23.sdodev.contracts.v1alpha1.ProposedTrafficGeneratorR\x11trafficGenerators\x12W\n" +
 	"\x11traffic_workloads\x18\x04 \x03(\v2*.sdodev.contracts.v1alpha1.TrafficWorkloadR\x10trafficWorkloads\x12.\n" +
 	"\x13delete_detector_ids\x18\x05 \x03(\tR\x11deleteDetectorIds\x12.\n" +
-	"\x13delete_playbook_ids\x18\x06 \x03(\tR\x11deletePlaybookIds:\x02\x18\x01\"\xc7\f\n" +
+	"\x13delete_playbook_ids\x18\x06 \x03(\tR\x11deletePlaybookIds:\x02\x18\x01\"\xfb\f\n" +
 	"\x0fIncidentRequest\x12>\n" +
 	"\x0eschema_version\x18\x01 \x01(\tB\x17\xbaH\x14r\x12\n" +
 	"\x10sdo.dev/v1alpha1R\rschemaVersion\x12)\n" +
@@ -3377,10 +3353,10 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	"\x0fmemory_snapshot\x18\x14 \x01(\v24.sdodev.contracts.v1alpha1.OperationalMemorySnapshotR\x0ememorySnapshot\x12W\n" +
 	"\x14initial_program_runs\x18\x15 \x03(\v2%.sdodev.contracts.v1alpha1.ProgramRunR\x12initialProgramRuns\x12,\n" +
 	"\x12max_response_loops\x18\x16 \x01(\x05R\x10maxResponseLoops\x12H\n" +
-	"\fdrift_events\x18\x17 \x03(\v2%.sdodev.contracts.v1alpha1.DriftEventR\vdriftEvents\x12*\n" +
-	"\x11fast_path_summary\x18\x18 \x01(\tR\x0ffastPathSummary\x12.\n" +
+	"\fdrift_events\x18\x17 \x03(\v2%.sdodev.contracts.v1alpha1.DriftEventR\vdriftEvents\x12.\n" +
 	"\x13prepared_agent_task\x18\x19 \x01(\tR\x11preparedAgentTask\x125\n" +
-	"\x16observation_generation\x18\x1a \x01(\tR\x15observationGenerationJ\x04\b\v\x10\fJ\x04\b\f\x10\rJ\x04\b\x13\x10\x14R\x19architecture_summary_pathR\x15health_objective_pathR\tfollow_up\"\xbf\x01\n" +
+	"\x16observation_generation\x18\x1a \x01(\tR\x15observationGeneration\x12X\n" +
+	"\x11playbook_coverage\x18\x1b \x01(\v2+.sdodev.contracts.v1alpha1.PlaybookCoverageR\x10playbookCoverageJ\x04\b\v\x10\fJ\x04\b\f\x10\rJ\x04\b\x13\x10\x14J\x04\b\x18\x10\x19R\x19architecture_summary_pathR\x15health_objective_pathR\tfollow_up\"\xbf\x01\n" +
 	"\x11RootCauseEvidence\x12^\n" +
 	"\x04kind\x18\x01 \x01(\tBJ\xbaHGrER\x10detector-findingR\x11synthetic-trafficR\fstate-changeR\x10live-observationR\x04kind\x12\x1f\n" +
 	"\x06source\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x06source\x12)\n" +
@@ -3450,7 +3426,7 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	"reversible\x18\n" +
 	" \x01(\bR\n" +
 	"reversible:n\xbaHk\x1ai\n" +
-	"\x15repair_action.ordered\x12*completed_at must not be before started_at\x1a$this.completed_at >= this.started_at\"\x96\x10\n" +
+	"\x15repair_action.ordered\x12*completed_at must not be before started_at\x1a$this.completed_at >= this.started_at\"\xb5\x0e\n" +
 	"\x0eIncidentResult\x12>\n" +
 	"\x0eschema_version\x18\x01 \x01(\tB\x17\xbaH\x14r\x12\n" +
 	"\x10sdo.dev/v1alpha1R\rschemaVersion\x12(\n" +
@@ -3475,15 +3451,12 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	"\x11plan_applications\x18\x12 \x03(\v2*.sdodev.contracts.v1alpha1.PlanApplicationR\x10planApplications\x12.\n" +
 	"\x13response_loops_used\x18\x13 \x01(\x05R\x11responseLoopsUsed\x126\n" +
 	"\x17response_loop_exhausted\x18\x14 \x01(\bR\x15responseLoopExhausted\x126\n" +
-	"\x17program_failure_signals\x18\x15 \x03(\tR\x15programFailureSignals\x12F\n" +
-	"\x0fresolution_path\x18\x16 \x01(\tB\x1d\xbaH\x1ar\x18R\x00R\tfast_pathR\tresponderR\x0eresolutionPath\x12,\n" +
-	"\x12fast_path_programs\x18\x17 \x03(\tR\x10fastPathPrograms\x127\n" +
-	"\x18fast_path_skipped_reason\x18\x18 \x01(\tR\x15fastPathSkippedReason\x12\x7f\n" +
-	"#fast_path_relation_covered_findings\x18\x19 \x03(\v21.sdodev.contracts.v1alpha1.RelationCoveredFindingR\x1ffastPathRelationCoveredFindings\x12H\n" +
+	"\x17program_failure_signals\x18\x15 \x03(\tR\x15programFailureSignals\x12;\n" +
+	"\x0fresolution_path\x18\x16 \x01(\tB\x12\xbaH\x0fr\rR\x00R\tresponderR\x0eresolutionPath\x12H\n" +
 	"\fdrift_events\x18\x1a \x03(\v2%.sdodev.contracts.v1alpha1.DriftEventR\vdriftEvents:\xad\x01\xbaH\xa9\x01\x1a\xa6\x01\n" +
 	"\x1fresult.unique_repair_action_ids\x12 repair action IDs must be unique\x1aathis.repair_actions.all(a, this.repair_actions.filter(b, b.action_id == a.action_id).size() == 1)B\x17\n" +
 	"\x15_responder_session_idB\b\n" +
-	"\x06_error\"\xaa\x02\n" +
+	"\x06_errorJ\x04\b\x17\x10\x18J\x04\b\x18\x10\x19J\x04\b\x19\x10\x1a\"\xaa\x02\n" +
 	"\x10LateFindingsPull\x12(\n" +
 	"\vincident_id\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\n" +
 	"incidentId\x12&\n" +
@@ -3606,9 +3579,9 @@ var file_sdodev_contracts_v1alpha1_messages_proto_goTypes = []any{
 	(*timestamppb.Timestamp)(nil),       // 39: google.protobuf.Timestamp
 	(*TrafficWorkload)(nil),             // 40: sdodev.contracts.v1alpha1.TrafficWorkload
 	(*ProgramRun)(nil),                  // 41: sdodev.contracts.v1alpha1.ProgramRun
-	(*ProgramToolCall)(nil),             // 42: sdodev.contracts.v1alpha1.ProgramToolCall
-	(*PlanApplication)(nil),             // 43: sdodev.contracts.v1alpha1.PlanApplication
-	(*RelationCoveredFinding)(nil),      // 44: sdodev.contracts.v1alpha1.RelationCoveredFinding
+	(*PlaybookCoverage)(nil),            // 42: sdodev.contracts.v1alpha1.PlaybookCoverage
+	(*ProgramToolCall)(nil),             // 43: sdodev.contracts.v1alpha1.ProgramToolCall
+	(*PlanApplication)(nil),             // 44: sdodev.contracts.v1alpha1.PlanApplication
 }
 var file_sdodev_contracts_v1alpha1_messages_proto_depIdxs = []int32{
 	37, // 0: sdodev.contracts.v1alpha1.Finding.primary_resource:type_name -> sdodev.contracts.v1alpha1.ObjectRef
@@ -3647,27 +3620,27 @@ var file_sdodev_contracts_v1alpha1_messages_proto_depIdxs = []int32{
 	14, // 33: sdodev.contracts.v1alpha1.IncidentRequest.memory_snapshot:type_name -> sdodev.contracts.v1alpha1.OperationalMemorySnapshot
 	41, // 34: sdodev.contracts.v1alpha1.IncidentRequest.initial_program_runs:type_name -> sdodev.contracts.v1alpha1.ProgramRun
 	2,  // 35: sdodev.contracts.v1alpha1.IncidentRequest.drift_events:type_name -> sdodev.contracts.v1alpha1.DriftEvent
-	37, // 36: sdodev.contracts.v1alpha1.ConfirmedRootCause.resources:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	21, // 37: sdodev.contracts.v1alpha1.ConfirmedRootCause.evidence:type_name -> sdodev.contracts.v1alpha1.RootCauseEvidence
-	35, // 38: sdodev.contracts.v1alpha1.AppliedPlaybook.parameter_bindings:type_name -> sdodev.contracts.v1alpha1.AppliedPlaybook.ParameterBindingsEntry
-	39, // 39: sdodev.contracts.v1alpha1.VerificationEvidence.observed_at:type_name -> google.protobuf.Timestamp
-	39, // 40: sdodev.contracts.v1alpha1.TimingMetrics.started_at:type_name -> google.protobuf.Timestamp
-	39, // 41: sdodev.contracts.v1alpha1.TimingMetrics.completed_at:type_name -> google.protobuf.Timestamp
-	37, // 42: sdodev.contracts.v1alpha1.RepairActionReceipt.resources:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	39, // 43: sdodev.contracts.v1alpha1.RepairActionReceipt.started_at:type_name -> google.protobuf.Timestamp
-	39, // 44: sdodev.contracts.v1alpha1.RepairActionReceipt.completed_at:type_name -> google.protobuf.Timestamp
-	22, // 45: sdodev.contracts.v1alpha1.IncidentResult.confirmed_root_causes:type_name -> sdodev.contracts.v1alpha1.ConfirmedRootCause
-	23, // 46: sdodev.contracts.v1alpha1.IncidentResult.applied_playbooks:type_name -> sdodev.contracts.v1alpha1.AppliedPlaybook
-	27, // 47: sdodev.contracts.v1alpha1.IncidentResult.repair_actions:type_name -> sdodev.contracts.v1alpha1.RepairActionReceipt
-	4,  // 48: sdodev.contracts.v1alpha1.IncidentResult.final_detector_states:type_name -> sdodev.contracts.v1alpha1.DetectorEvaluation
-	24, // 49: sdodev.contracts.v1alpha1.IncidentResult.verification_evidence:type_name -> sdodev.contracts.v1alpha1.VerificationEvidence
-	25, // 50: sdodev.contracts.v1alpha1.IncidentResult.usage:type_name -> sdodev.contracts.v1alpha1.UsageMetrics
-	26, // 51: sdodev.contracts.v1alpha1.IncidentResult.timing:type_name -> sdodev.contracts.v1alpha1.TimingMetrics
-	29, // 52: sdodev.contracts.v1alpha1.IncidentResult.late_findings_pull:type_name -> sdodev.contracts.v1alpha1.LateFindingsPull
-	42, // 53: sdodev.contracts.v1alpha1.IncidentResult.program_tool_calls:type_name -> sdodev.contracts.v1alpha1.ProgramToolCall
-	41, // 54: sdodev.contracts.v1alpha1.IncidentResult.program_runs:type_name -> sdodev.contracts.v1alpha1.ProgramRun
-	43, // 55: sdodev.contracts.v1alpha1.IncidentResult.plan_applications:type_name -> sdodev.contracts.v1alpha1.PlanApplication
-	44, // 56: sdodev.contracts.v1alpha1.IncidentResult.fast_path_relation_covered_findings:type_name -> sdodev.contracts.v1alpha1.RelationCoveredFinding
+	42, // 36: sdodev.contracts.v1alpha1.IncidentRequest.playbook_coverage:type_name -> sdodev.contracts.v1alpha1.PlaybookCoverage
+	37, // 37: sdodev.contracts.v1alpha1.ConfirmedRootCause.resources:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	21, // 38: sdodev.contracts.v1alpha1.ConfirmedRootCause.evidence:type_name -> sdodev.contracts.v1alpha1.RootCauseEvidence
+	35, // 39: sdodev.contracts.v1alpha1.AppliedPlaybook.parameter_bindings:type_name -> sdodev.contracts.v1alpha1.AppliedPlaybook.ParameterBindingsEntry
+	39, // 40: sdodev.contracts.v1alpha1.VerificationEvidence.observed_at:type_name -> google.protobuf.Timestamp
+	39, // 41: sdodev.contracts.v1alpha1.TimingMetrics.started_at:type_name -> google.protobuf.Timestamp
+	39, // 42: sdodev.contracts.v1alpha1.TimingMetrics.completed_at:type_name -> google.protobuf.Timestamp
+	37, // 43: sdodev.contracts.v1alpha1.RepairActionReceipt.resources:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	39, // 44: sdodev.contracts.v1alpha1.RepairActionReceipt.started_at:type_name -> google.protobuf.Timestamp
+	39, // 45: sdodev.contracts.v1alpha1.RepairActionReceipt.completed_at:type_name -> google.protobuf.Timestamp
+	22, // 46: sdodev.contracts.v1alpha1.IncidentResult.confirmed_root_causes:type_name -> sdodev.contracts.v1alpha1.ConfirmedRootCause
+	23, // 47: sdodev.contracts.v1alpha1.IncidentResult.applied_playbooks:type_name -> sdodev.contracts.v1alpha1.AppliedPlaybook
+	27, // 48: sdodev.contracts.v1alpha1.IncidentResult.repair_actions:type_name -> sdodev.contracts.v1alpha1.RepairActionReceipt
+	4,  // 49: sdodev.contracts.v1alpha1.IncidentResult.final_detector_states:type_name -> sdodev.contracts.v1alpha1.DetectorEvaluation
+	24, // 50: sdodev.contracts.v1alpha1.IncidentResult.verification_evidence:type_name -> sdodev.contracts.v1alpha1.VerificationEvidence
+	25, // 51: sdodev.contracts.v1alpha1.IncidentResult.usage:type_name -> sdodev.contracts.v1alpha1.UsageMetrics
+	26, // 52: sdodev.contracts.v1alpha1.IncidentResult.timing:type_name -> sdodev.contracts.v1alpha1.TimingMetrics
+	29, // 53: sdodev.contracts.v1alpha1.IncidentResult.late_findings_pull:type_name -> sdodev.contracts.v1alpha1.LateFindingsPull
+	43, // 54: sdodev.contracts.v1alpha1.IncidentResult.program_tool_calls:type_name -> sdodev.contracts.v1alpha1.ProgramToolCall
+	41, // 55: sdodev.contracts.v1alpha1.IncidentResult.program_runs:type_name -> sdodev.contracts.v1alpha1.ProgramRun
+	44, // 56: sdodev.contracts.v1alpha1.IncidentResult.plan_applications:type_name -> sdodev.contracts.v1alpha1.PlanApplication
 	2,  // 57: sdodev.contracts.v1alpha1.IncidentResult.drift_events:type_name -> sdodev.contracts.v1alpha1.DriftEvent
 	39, // 58: sdodev.contracts.v1alpha1.IncidentView.observed_at:type_name -> google.protobuf.Timestamp
 	0,  // 59: sdodev.contracts.v1alpha1.IncidentView.blocking_findings:type_name -> sdodev.contracts.v1alpha1.Finding

@@ -51,7 +51,7 @@ func TestParseInstallExistingUsesNativeAcceptedController(t *testing.T) {
 		"--controller-image", "controller:test", "--responder-image", "responder:test", "--validator-image", "validator:test",
 		"--repository-pvc", "repository", "--credentials-secret", "agent-credentials", "--model", "model",
 		"--seed-broker-root", "/trusted/seed-broker",
-		"--repair-policy", "recorded-actions", "--reflection-session", "resume", "--reflection-guidance", "generalize-spec", "--responder-env", "SDO_SUBMISSION_MODE=relay", "--deployed-manifest-path", "kubernetes", "--late-findings", "pull", "--program-fast-path", "--program-trust-threshold", "4",
+		"--repair-policy", "recorded-actions", "--reflection-session", "resume", "--reflection-guidance", "generalize-spec", "--responder-env", "SDO_SUBMISSION_MODE=relay", "--deployed-manifest-path", "kubernetes", "--late-findings", "pull",
 	}
 	launch, err := ParseInstallExistingLaunch(args)
 	if err != nil {
@@ -62,7 +62,7 @@ func TestParseInstallExistingUsesNativeAcceptedController(t *testing.T) {
 	}
 	if !launch.Install.ReuseExisting || launch.Install.RepairPolicy != "recorded-actions" || launch.Install.ReflectionSession != "resume" || launch.Install.ReflectionGuidance != "generalize-spec" || launch.Install.LateFindings != "pull" ||
 		launch.Install.NativeCommand[0] != "/usr/local/bin/sdo-operator" || len(launch.Install.ExtraControllerArgs) != 2 ||
-		launch.Install.ExtraControllerArgs[0] != "--responder-env=SDO_SUBMISSION_MODE=relay" || launch.Install.ExtraControllerArgs[1] != "--deployed-manifest-path=kubernetes" || !launch.Install.ProgramFastPath || launch.Install.ProgramTrustThreshold != 4 {
+		launch.Install.ExtraControllerArgs[0] != "--responder-env=SDO_SUBMISSION_MODE=relay" || launch.Install.ExtraControllerArgs[1] != "--deployed-manifest-path=kubernetes" {
 		t.Fatalf("existing installation lost native contract: %+v", launch.Install)
 	}
 	if launch.Install.WaitForCompletion {
@@ -122,10 +122,10 @@ func TestGS1AutomaticRepairDefaultsAndOptOuts(t *testing.T) {
 		t.Fatal(err)
 	}
 	c := launch.Install
-	if !c.ProgramFastPath || !c.ResponderMenu || c.RepairPolicy != "recorded-actions" || c.ProgramTrustThreshold != 1 || c.MaxResponseLoops != 10 || c.VerificationTimeoutSeconds != 300 {
+	if !c.ResponderMenu || c.RepairPolicy != "recorded-actions" || c.MaxResponseLoops != 10 || c.VerificationTimeoutSeconds != 300 {
 		t.Fatalf("defaults: %+v", c)
 	}
-	disabled, err := ParseInstallExistingLaunch(append(args, "--program-fast-path=false", "--repair-policy=commit"))
+	disabled, err := ParseInstallExistingLaunch(append(args, "--repair-policy=commit"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,7 +135,7 @@ func TestGS1AutomaticRepairDefaultsAndOptOuts(t *testing.T) {
 		t.Fatal(err)
 	}
 	controller, _, err := ParseControllerLaunch(plan.Job.Spec.Template.Spec.Containers[0].Args)
-	if err != nil || controller.Controller.GetProgramFastPath() || controller.Controller.GetRepairPolicy() != "commit" {
+	if err != nil || controller.Controller.GetRepairPolicy() != "commit" {
 		t.Fatalf("opt-out lost: %+v %v", controller, err)
 	}
 }

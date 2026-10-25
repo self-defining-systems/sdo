@@ -471,11 +471,9 @@ func TestHermeticRoutingCaptureCompilesReplayableMitigator(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		outcomes = append(outcomes, memory.Outcome{IncidentID: fmt.Sprintf("routing-success-%d", i), Record: verifiedTrustOutcome(t, p.Spec().ID, revision)})
 	}
-	warm := KubernetesJobDispatcher{Client: client, Namespace: "app", Registry: testIncidentRegistry(t, "responder:test"), AgentID: testIncidentAgentID(t), ProgramFastPath: true, ServiceAccount: "sdo-responder", RepositoryPVC: "repository", RepositoryMountPath: root, Outcomes: priorOutcomeReader{outcomes: outcomes}, LoopFactory: func(request IncidentRequest) *ResponderLoop {
+	warm := KubernetesJobDispatcher{Client: client, Namespace: "app", Registry: testIncidentRegistry(t, "responder:test"), AgentID: testIncidentAgentID(t), ServiceAccount: "sdo-responder", RepositoryPVC: "repository", RepositoryMountPath: root, Outcomes: priorOutcomeReader{outcomes: outcomes}, LoopFactory: func(request IncidentRequest) *ResponderLoop {
 		loop := NewResponderLoop(request, registry, liveProvider, []sdk.Detector{fastloopDetector{}}, PlanExecutor{Client: TypedPlanClient{Client: client}, Rollouts: &planFakeRollout{}, Verifier: PlanHealthVerifier{Detectors: []sdk.Detector{fastloopDetector{}}, Provider: liveProvider}}, 1)
 		loop.ReadView = func(s sdk.DetectionContext) program.ReadView { return LiveReadView{DetectionContext: s, Prober: probe} }
-		loop.CorpusReplayPassed = true
-		loop.DiagnosisSettleDelay = time.Millisecond
 		return loop
 	}}
 	loop := warm.LoopFactory(repeated)
@@ -484,18 +482,19 @@ func TestHermeticRoutingCaptureCompilesReplayableMitigator(t *testing.T) {
 		t.Fatal(err)
 	}
 	loop.InitialDiagnose(ctx)
-	attempt := loop.TryTrustedFastPath(ctx, 1)
+	planned := loop.Handle(ctx, ToolRequest{Command: "plan", ProgramID: "service-targetport-mismatch", Bindings: program.Bindings{Objects: program.ObjectBindings{"service": serviceRef("api")}}})
+	attempt := loop.Handle(ctx, ToolRequest{Command: "apply", PlanIDs: []string{planned.PlanID}})
 	applications := loop.PlanApplications()
-	if !attempt.Attempted || attempt.Resolved || !attempt.RolledBack || len(applications) != 1 || len(applications[0].Result.ActionsApplied) != 1 {
+	if attempt.ApplicationID == "" || attempt.Healthy || len(applications) != 1 || len(applications[0].Result.ActionsApplied) != 1 {
 		t.Fatalf("single-binding attempt: %+v applications=%+v", attempt, applications)
 	}
 	for _, name := range []string{snapshot.ServiceList[0].Name, snapshot.ServiceList[1].Name} {
 		live, err := client.CoreV1().Services("app").Get(ctx, name, metav1.GetOptions{})
-		if err != nil || live.Spec.Ports[0].TargetPort.IntVal != 9999 {
-			t.Fatalf("verification failure left a partial repair: %+v %v", live, err)
+		if err != nil || live.Spec.Ports[0].TargetPort.IntVal != map[string]int32{snapshot.ServiceList[0].Name: 8080, snapshot.ServiceList[1].Name: 9999}[name] {
+			t.Fatalf("agent-selected repair did not remain in place: %+v %v", live, err)
 		}
 	}
-	t.Log("captured routing repair passes save-time replay; two faults attempt one binding and roll back before responder handoff")
+	t.Log("captured routing repair passes save-time replay; agent applies one binding and leaves it in place while the peer remains unresolved")
 }
 
 func TestRoutingCaptureRecordsUnavailableCapabilityOnce(t *testing.T) {

@@ -467,8 +467,6 @@ def _sdo_agent(
         model=args.model,
         timeout_seconds=args.timeout,
         repair_policy=args.repair_policy,
-        program_fast_path=args.program_fast_path,
-        program_trust_threshold=args.program_trust_threshold,
         agent_provider=args.provider,
         reflection_session=args.reflection_session,
         reflection_guidance=args.reflection_guidance,
@@ -1116,19 +1114,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=1.0,
         help="multiply controller and wait windows; values below 1 require scripted agents (default 1)",
     )
-    run.add_argument(
-        "--program-fast-path",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help="allow trusted playbook programs to resolve incidents",
-    )
-    run.add_argument(
-        "--program-trust-threshold",
-        type=int,
-        default=1,
-        metavar="K",
-        help="verified successes required for a trusted program (default 1)",
-    )
+
     run.add_argument(
         "--detection-timeout",
         type=float,

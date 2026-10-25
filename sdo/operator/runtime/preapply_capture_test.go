@@ -4,11 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	kruntime "k8s.io/apimachinery/pkg/runtime"
-	ktesting "k8s.io/client-go/testing"
 	"os"
 	"path/filepath"
 	"testing"
+
+	kruntime "k8s.io/apimachinery/pkg/runtime"
+	ktesting "k8s.io/client-go/testing"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -118,24 +119,6 @@ func TestPreApplyCaptureFailureReportsEvidenceGap(t *testing.T) {
 	assertPreApplyGap(t, loop)
 }
 
-func TestTrustedFastPathCapturesBeforeMutation(t *testing.T) {
-	loop, client := trustedPortLoop(t, false, true, true)
-	loop.CorpusSessionRoot = t.TempDir()
-	dir, err := memory.IncidentCorpusDir(loop.CorpusSessionRoot, loop.Request.IncidentID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	client.PrependReactor("patch", "services", func(ktesting.Action) (bool, kruntime.Object, error) {
-		if _, err := os.Stat(filepath.Join(dir, "open@pre-apply.json")); err != nil {
-			t.Fatalf("fast path mutation lacks pre-apply capture: %v", err)
-		}
-		return false, nil, nil
-	})
-	if attempt := loop.TryTrustedFastPath(context.Background(), 3); !attempt.Resolved {
-		t.Fatalf("fast path: %+v", attempt)
-	}
-}
-
 func BenchmarkFirstMutationCapture(b *testing.B) {
 	snapshot := sdktest.Snapshot{NamespaceName: "app"}
 	for i := 0; i < 20; i++ {
@@ -200,24 +183,6 @@ func TestTypedApplyCaptureFailureStillRepairsAndRecordsGap(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, "open@pre-apply.json")); !os.IsNotExist(err) {
 		t.Fatalf("failed first capture was replaced after repair: %v", err)
 	}
-}
-
-func TestTrustedFastPathCaptureFailureStillRepairsAndRecordsGap(t *testing.T) {
-	loop, client := trustedPortLoop(t, false, true, true)
-	loop.CorpusSessionRoot = t.TempDir()
-	provider := loop.Provider
-	loop.BeforeFastPathApply = func(context.Context, []ProgramRun) error {
-		loop.Provider = nil
-		return nil
-	}
-	client.PrependReactor("patch", "services", func(ktesting.Action) (bool, kruntime.Object, error) {
-		loop.Provider = provider
-		return false, nil, nil
-	})
-	if attempt := loop.TryTrustedFastPath(context.Background(), 3); !attempt.Resolved {
-		t.Fatalf("capture failure blocked trusted repair: %+v", attempt)
-	}
-	assertPreApplyGap(t, loop)
 }
 
 func assertPreApplyGap(t *testing.T, loop *ResponderLoop) {
