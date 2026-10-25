@@ -63,6 +63,7 @@ For fastloop timing, trust and learned findings, read [fastloop results](referen
 For scripted repair gates, read [scripted rehearsal evidence](references/scripted-rehearsals.md).
 Before judging mixed-app slot validity or recovery, read [slot cleanup evidence](references/slot-cleanup.md).
 Before reconstructing a timeline, read [telemetry and trajectories](references/telemetry.md).
+For oversized responder outputs, default stdout budgets and offline size audits, read [tool output audits](references/tool-output-audit.md).
 When classifying behavior, read [common failures](references/failure-patterns.md); for latent drift or toy lanes,
 also read [drift and toy failures](references/drift-failures.md).
 

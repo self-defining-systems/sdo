@@ -46,7 +46,7 @@ def _run(run: Runner, argv: list[str], *, timeout: float = 240) -> str:
 
 
 def _tool(run: Runner, *args: str) -> dict[str, Any]:
-    output = _run(run, ["sdo", *args])
+    output = _run(run, ["sdo", *args, "--json"])
     try:
         response = json.loads(output.splitlines()[0])
     except (IndexError, json.JSONDecodeError) as exc:

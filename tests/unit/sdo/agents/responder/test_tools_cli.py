@@ -33,7 +33,7 @@ def test_sdo_cli_exchanges_typed_request_with_fake_controller(tmp_path, monkeypa
     worker = threading.Thread(target=controller)
     worker.start()
     try:
-        assert tools_cli.main(["diagnose", "targetport", "--bind", "service=Service/app/api"]) == 0
+        assert tools_cli.main(["--json", "diagnose", "targetport", "--bind", "service=Service/app/api"]) == 0
     finally:
         worker.join(timeout=2)
     assert seen == [
@@ -57,7 +57,7 @@ def test_sdo_source_cli_sends_a_namespaced_resource(monkeypatch, capsys):
 
     monkeypatch.setattr(tools_cli, "_exchange", exchange)
 
-    assert tools_cli.main(["source", "Deployment/app/rate"]) == 0
+    assert tools_cli.main(["--json", "source", "Deployment/app/rate"]) == 0
     assert seen == [
         {
             "command": "source",
@@ -70,7 +70,7 @@ def test_sdo_source_cli_sends_a_namespaced_resource(monkeypatch, capsys):
 @pytest.mark.parametrize("command", [[], ["source"], ["plan"]])
 def test_cli_help_shows_concrete_source_and_named_binding_examples(command, capsys):
     with pytest.raises(SystemExit) as captured:
-        tools_cli.main([*command, "--help"])
+        tools_cli.main(["--json", *command, "--help"])
     assert captured.value.code == 0
     output = capsys.readouterr().out
     if command != ["plan"]:
@@ -84,7 +84,7 @@ def test_documented_cli_examples_send_valid_requests(monkeypatch):
     monkeypatch.setattr(tools_cli, "_exchange", lambda request, _: seen.append(request) or {"summary": "ok"})
 
     for example in tools_cli.CLI_EXAMPLES:
-        assert tools_cli.main(shlex.split(example)[1:]) == 0
+        assert tools_cli.main(["--json", *shlex.split(example)[1:]]) == 0
 
     assert seen[0] == {
         "command": "source",
@@ -112,7 +112,7 @@ def test_sdo_cli_preserves_program_capability_metadata(monkeypatch, capsys, can_
     }
     monkeypatch.setattr(tools_cli, "_exchange", lambda _request, _directory: response)
 
-    assert tools_cli.main(["diagnose", "targetport", "--bind", "service=Service/app/api"]) == 0
+    assert tools_cli.main(["--json", "diagnose", "targetport", "--bind", "service=Service/app/api"]) == 0
 
     output = json.loads(capsys.readouterr().out.splitlines()[0])
     assert output["program_runs"][0]["can_mitigate"] is can_mitigate
@@ -122,9 +122,9 @@ def test_sdo_cli_preserves_program_capability_metadata(monkeypatch, capsys, can_
 def test_cli_passes_agent_ref_text_to_go_without_parsing(raw, monkeypatch):
     seen = []
     monkeypatch.setattr(tools_cli, "_exchange", lambda request, _: seen.append(request) or {"summary": "ok"})
-    assert tools_cli.main(["source", raw]) == 0
+    assert tools_cli.main(["--json", "source", raw]) == 0
     assert seen == [{"command": "source", "ref": raw}]
-    assert tools_cli.main(["plan", "toy", "--bind", "resource=" + raw]) == 0
+    assert tools_cli.main(["--json", "plan", "toy", "--bind", "resource=" + raw]) == 0
     assert seen[-1]["bindings"] == {"resource": raw}
 
 
@@ -177,7 +177,7 @@ def test_act_waits_for_controller_capture_before_running(tmp_path, monkeypatch, 
 
     monkeypatch.setattr(tools_cli, "_exchange", exchange)
     monkeypatch.setattr(tools_cli.recorded_actions, "run_and_record", run)
-    result = tools_cli.main(["act", "--resource", "Service/app/api", "--", "true"])
+    result = tools_cli.main(["--json", "act", "--resource", "Service/app/api", "--", "true"])
     assert result == 0
     assert seen == ["capture", "mutation"]
 
@@ -212,7 +212,7 @@ def test_mitigate_option_uses_fresh_menu_and_incident_round_allowance(monkeypatc
         return {"menu": menu, "summary": "menu"} if request["command"] == "menu" else {"summary": "report"}
 
     monkeypatch.setattr(tools_cli, "_exchange", exchange)
-    assert tools_cli.main(["mitigate", "route", "--rounds", "3"]) == 0
+    assert tools_cli.main(["--json", "mitigate", "route", "--rounds", "3"]) == 0
     assert [request["command"] for request in seen] == ["menu", "mitigate"]
     assert seen[1]["selection"]["round_limit"] == 3
     assert seen[1]["selection"]["option_id"] == "route"
@@ -229,7 +229,9 @@ def test_mitigate_passes_named_parameters_for_controller_schema_parsing(monkeypa
         return {"summary": "report"}
 
     monkeypatch.setattr(tools_cli, "_exchange", exchange)
-    assert tools_cli.main(["mitigate", "ScaleWorkload", "--ref", "Deployment/app/api", "--replicas", "3"]) == 0
+    assert (
+        tools_cli.main(["--json", "mitigate", "ScaleWorkload", "--ref", "Deployment/app/api", "--replicas", "3"]) == 0
+    )
     assert seen[-1]["parameters"] == {"ref": "Deployment/app/api", "replicas": "3"}
     assert seen[-1]["selection"]["round_limit"] == 1
 
@@ -239,15 +241,15 @@ def test_menu_does_not_gate_direct_act(monkeypatch):
     seen = []
     monkeypatch.setattr(tools_cli, "_exchange", lambda request, _directory: seen.append(request["command"]) or {})
     monkeypatch.setattr(tools_cli.recorded_actions, "run_and_record", lambda *_args, **_kwargs: 0)
-    assert tools_cli.main(["act", "--resource", "Deployment/app/api", "--", "true"]) == 0
+    assert tools_cli.main(["--json", "act", "--resource", "Deployment/app/api", "--", "true"]) == 0
     assert seen == ["pre-apply"]
 
 
 def test_detect_repeated_detector_selection(monkeypatch: pytest.MonkeyPatch) -> None:
     seen: list[dict[str, object]] = []
     monkeypatch.setattr(tools_cli, "_exchange", lambda request, _: seen.append(request) or {"summary": "fresh"})
-    assert tools_cli.main(["detect"]) == 0
-    assert tools_cli.main(["detect", "--detector", "a", "b", "--detector", "c"]) == 0
+    assert tools_cli.main(["--json", "detect"]) == 0
+    assert tools_cli.main(["--json", "detect", "--detector", "a", "b", "--detector", "c"]) == 0
     assert seen == [{"command": "detect"}, {"command": "detect", "detector_ids": ["a", "b", "c"]}]
 
 
@@ -267,5 +269,158 @@ def test_repair_cli_preserves_explicit_target_finding_fingerprints(monkeypatch, 
         }
 
     monkeypatch.setattr(tools_cli, "_exchange", exchange)
-    assert tools_cli.main([command, "repair", "--finding", "health/api/config", "--finding", "health/api/ready"]) == 0
+    assert (
+        tools_cli.main(["--json", command, "repair", "--finding", "health/api/config", "--finding", "health/api/ready"])
+        == 0
+    )
     assert seen[-1]["finding_fingerprints"] == ["health/api/config", "health/api/ready"]
+
+
+@pytest.mark.parametrize("detection_error", [False, True])
+def test_check_retains_fresh_detection_and_independent_closure(monkeypatch, capsys, detection_error):
+    seen = []
+    detection = {"command": "detect", "findings": [{"fingerprint": "peer"}], "summary": "fresh peer"}
+    if detection_error:
+        detection["error"] = "one detector failed"
+    closure = {"command": "verify", "healthy": False, "summary": "peer remains", "findings": [{"fingerprint": "peer"}]}
+
+    def exchange(request, _directory):
+        seen.append(request)
+        return detection if request["command"] == "detect" else closure
+
+    monkeypatch.setattr(tools_cli, "_exchange", exchange)
+    assert tools_cli.main(["--json", "check", "--detector", "routing", "--detector", "availability"]) == int(
+        detection_error
+    )
+    assert seen == [{"command": "detect", "detector_ids": ["routing", "availability"]}, {"command": "verify"}]
+    output = json.loads(capsys.readouterr().out.splitlines()[0])
+    assert output["command"] == "check"
+    assert output["detection"] == detection
+    assert all(output[key] == value for key, value in closure.items() if key != "command")
+    assert output["healthy"] is False
+    assert output["findings"] == closure["findings"]
+
+
+def test_check_does_not_report_health_when_detection_failed(monkeypatch, capsys):
+    responses = iter(
+        [
+            {"command": "detect", "error": "read unavailable", "summary": "read unavailable"},
+            {"command": "verify", "healthy": True, "summary": "closure clear"},
+        ]
+    )
+    monkeypatch.setattr(tools_cli, "_exchange", lambda *_: next(responses))
+    assert tools_cli.main(["--json", "check"]) == 1
+    output = json.loads(capsys.readouterr().out.splitlines()[0])
+    assert output["healthy"] is False
+    assert output["error"] == "read unavailable"
+    assert output["detection"]["error"] == "read unavailable"
+
+
+@pytest.mark.parametrize("command", ["menu", "detect", "mitigate", "source"])
+def test_cli_bounds_stdout_and_preserves_full_response_in_private_json(monkeypatch, capsys, tmp_path, command):
+    from pathlib import Path
+
+    response = {
+        "command": command,
+        "summary": "peer findings remain",
+        "healthy": False,
+        "targeted_healthy": True,
+        "application_id": "application",
+        "findings": [{"fingerprint": f"finding-{i}", "evidence": "large live observation " * 500} for i in range(12)],
+        "report": {"status": "STATUS_UNRESOLVED", "details": "complete repair evidence " * 1000},
+        "menu": {"round_limit": 3, "options": [{"option_id": "repair", "program_id": "repair"}]},
+        "source": {"spec": {"arbitrary": "accepted intent " * 1000}},
+    }
+    monkeypatch.setattr(tools_cli, "_exchange", lambda *_: response)
+    args = {
+        "menu": ["menu"],
+        "detect": ["detect"],
+        "mitigate": ["mitigate", "repair"],
+        "source": ["source", "Service/app/api"],
+    }[command]
+
+    assert tools_cli.main(args) == 0
+    stdout = capsys.readouterr().out
+    assert len(stdout) <= 3200
+    assert "healthy=false" in stdout.split()
+    assert "targeted_healthy=true" in stdout.split()
+    assert "application_id=application" in stdout.split()
+    assert "findings=12" in stdout.split()
+    assert "large live observation" not in stdout
+    details = Path(stdout.split("Full JSON: ", 1)[1].splitlines()[0])
+    try:
+        assert details.stat().st_mode & 0o777 == 0o600
+        assert json.loads(details.read_text()) == response
+    finally:
+        details.unlink()
+
+
+def test_cli_persists_small_responses_too(monkeypatch, capsys):
+    from pathlib import Path
+
+    response = {"command": "verify", "healthy": True, "summary": "clear"}
+    monkeypatch.setattr(tools_cli, "_exchange", lambda *_: response)
+    assert tools_cli.main(["verify"]) == 0
+    output = capsys.readouterr().out
+    details = Path(output.split("Full JSON: ", 1)[1].splitlines()[0])
+    try:
+        assert "sdo verify: clear" in output
+        assert "healthy=true" in output.split()
+        assert json.loads(details.read_text()) == response
+    finally:
+        details.unlink()
+
+
+@pytest.mark.parametrize("arguments", [["--json", "verify"], ["verify", "--json"]])
+def test_json_flag_works_before_or_after_the_subcommand(monkeypatch, capsys, arguments):
+    response = {"command": "verify", "healthy": False, "findings": [{"evidence": "full live fact"}]}
+    monkeypatch.setattr(tools_cli, "_exchange", lambda *_: response)
+    assert tools_cli.main(arguments) == 0
+    assert json.loads(capsys.readouterr().out) == response
+
+
+def test_act_full_json_preserves_existing_output_redaction(monkeypatch, capsys, tmp_path):
+    from pathlib import Path
+
+    from sdo.agents.responder import tool_output
+
+    monkeypatch.setattr(tool_output, "OUTPUT_ROOT", tmp_path / "outputs")
+    monkeypatch.setenv("SDO_INCIDENT_ID", "toy")
+    monkeypatch.setenv("SDO_SESSION_SCRATCH", str(tmp_path / "scratch"))
+    monkeypatch.setattr(tools_cli, "_exchange", lambda *_: {"summary": "captured"})
+    assert (
+        tools_cli.main(
+            [
+                "act",
+                "--resource",
+                "Deployment/toy/api",
+                "--summary",
+                "Update secret-dependent settings",
+                "--",
+                sys.executable,
+                "-c",
+                "print('SYNTHETIC_PRIVATE_CANARY')",
+            ]
+        )
+        == 0
+    )
+    text = capsys.readouterr().out
+    details = Path(text.split("Full JSON: ", 1)[1].splitlines()[0])
+    full = details.read_text()
+    assert "SYNTHETIC_PRIVATE_CANARY" not in text + full
+    assert json.loads(full)["output"] == "[withheld]"
+    assert json.loads(full)["receipt"]["success"] is True
+
+
+def test_client_side_failures_also_produce_compact_output_and_complete_json(monkeypatch, capsys):
+    from pathlib import Path
+
+    monkeypatch.setattr(tools_cli, "_exchange", lambda *_: {"error": "menu read failed"})
+    assert tools_cli.main(["mitigate", "repair"]) == 1
+    text = capsys.readouterr().out
+    details = Path(text.split("Full JSON: ", 1)[1].splitlines()[0])
+    try:
+        assert json.loads(details.read_text())["error"] == "current mitigation menu unavailable"
+        assert "current mitigation menu unavailable" in text
+    finally:
+        details.unlink()

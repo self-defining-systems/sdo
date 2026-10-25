@@ -8,13 +8,22 @@ from tests.unit.sdo.agents.prompts.cases import rendered_cases
 GOLDENS = Path(__file__).resolve().parents[5] / "tests/fixtures/sdo/prompts"
 
 
+def normalize_prompt(prompt: str) -> str:
+    prompt = re.sub(r'"/tmp/sdo/[^"\n]+-incident\.json"', '"<temporary incident facts file>"', prompt)
+    prompt = re.sub(r'"[^"\n]*/sdo-playbooks-[^/"\n]+/(\d+\.md)"', r'"<temporary playbook documents>/\1"', prompt)
+    prompt = re.sub(
+        r'("full_outcome_path": ")[^"]*/sdo-reflection-history-[^/"]+/([^"]+)(")',
+        r"\1<temporary reflection history>/\2\3",
+        prompt,
+    )
+    return re.sub(r"(?m)^Full incident facts: .+$", "Full incident facts: <temporary incident facts file>", prompt)
+
+
 def test_prompt_goldens() -> None:
     prompts = rendered_cases()
     assert set(prompts) == {path.stem for path in GOLDENS.glob("*.md")}
     for name, prompt in prompts.items():
-        prompt = re.sub(
-            r"(?m)^Full incident facts: .+$", "Full incident facts: <temporary incident facts file>", prompt
-        )
+        prompt = normalize_prompt(prompt)
         assert prompt.encode("utf-8") == (GOLDENS / f"{name}.md").read_bytes(), name
 
 

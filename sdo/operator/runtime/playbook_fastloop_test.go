@@ -212,7 +212,12 @@ func fastloopTool(t *testing.T, directory string, args ...string) ToolResponse {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
-	command := exec.CommandContext(ctx, "uv", append([]string{"run", "python", "-m", "sdo.agents.responder.tools_cli"}, args...)...)
+	prefix := []string{"run", "python", "-m", "sdo.agents.responder.tools_cli"}
+	compact := os.Getenv("SDO_SCRIPTED_COMPACT_OUTPUT") == "1"
+	if !compact {
+		prefix = append(prefix, "--json")
+	}
+	command := exec.CommandContext(ctx, "uv", append(prefix, args...)...)
 	command.Dir = filepath.Join("..", "..", "..")
 	command.Env = append(os.Environ(), "SDO_TOOLS_DIR="+directory)
 	command.WaitDelay = time.Second
@@ -224,6 +229,34 @@ func fastloopTool(t *testing.T, directory string, args ...string) ToolResponse {
 	}
 	var response ToolResponse
 	encoded := []byte(strings.SplitN(string(output), "\n", 2)[0])
+	if compact {
+		parts := strings.SplitN(string(output), "Full JSON: ", 2)
+		if len(parts) != 2 {
+			t.Fatalf("compact sdo %v must name complete JSON: %s", args, output)
+		}
+		detailsFile := strings.TrimSpace(parts[1])
+		if len([]rune(string(output))) > 3001 {
+			t.Fatalf("compact sdo %s: %d characters exceeds 3001", args[0], len([]rune(string(output))))
+		}
+		t.Logf("compact sdo %s stdout=%d characters", args[0], len([]rune(string(output))))
+		if destination := os.Getenv("SDO_SCRIPTED_TOOL_RESPONSES"); destination != "" {
+			if err := os.WriteFile(filepath.Join(destination, args[0]+".summary.txt"), output, 0600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		encoded, err = os.ReadFile(detailsFile)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Remove(detailsFile) })
+		var full ToolResponse
+		if err := json.Unmarshal(encoded, &full); err != nil {
+			t.Fatal(err)
+		}
+		if full.Healthy && !strings.Contains(string(output), "healthy=true") {
+			t.Fatal("compact output omitted verified health")
+		}
+	}
 	if err := json.Unmarshal(encoded, &response); err != nil {
 		t.Fatalf("decode sdo %v: %v: stdout: %s; stderr: %s", args, err, output, stderr.String())
 	}
