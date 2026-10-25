@@ -148,10 +148,11 @@ def test_fail_soft_controller_reset_preserves_accepted_repository(
     monkeypatch.setattr("benchmarks.sregym.fastloop.reset.kubectl", fake_kubectl)
     KubectlResetCluster(tmp_path / "kubeconfig", "sdo").reset_controller("a" * 40, preserve_repository=True)
 
-    command = next(value for value in payloads if value.get("kind") == "Pod")["spec"]["containers"][0]["command"]
-    assert "rm -rf /workspace/.sdo-runtime/sessions /workspace/worktrees" in command
-    assert all("git -C /workspace/application" not in arg for arg in command)
-    assert not any(args[:2] == ["delete", "configmap"] for args in calls)
+    assert payloads, "warm reset must remove proposal scratch without deleting accepted history"
+    assert "git -C" not in payloads[0]["spec"]["containers"][0]["command"][2]
+    stopped = next(i for i, args in enumerate(calls) if args[:2] == ["delete", "jobs"])
+    retired = next(i for i, args in enumerate(calls) if args[:3] == ["delete", "configmap", "sdo-controller-state"])
+    assert stopped < retired
     assert not any(args[:2] == ["delete", "namespace"] for args in calls)
 
 
@@ -290,3 +291,134 @@ def test_reset_cancels_and_awaits_workers_before_deleting_captures(tmp_path: Pat
     monkeypatch.setattr(reset, "kubectl", fake_kubectl)
     KubectlResetCluster(tmp_path / "kubeconfig", "sdo").reset_controller("a" * 40)
     assert cleaned
+
+
+@pytest.mark.parametrize(
+    ("has_job", "orphan_phase"), [(True, None), (False, None), (False, "Running"), (False, "Pending")]
+)
+@pytest.mark.parametrize("preserve", [True, False])
+@pytest.mark.parametrize("stop_fails_once", [False, True])
+def test_pending_reset_retires_state_and_preserves_durable_history(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    has_job: bool,
+    orphan_phase: str | None,
+    preserve: bool,
+    stop_fails_once: bool,
+) -> None:
+    """Execute the actual cleanup script on synthetic Git and ledger files."""
+    import shlex
+
+    workspace = tmp_path / "workspace"
+    repository = workspace / "application"
+    repository.mkdir(parents=True)
+    subprocess.run(["git", "init", "-q", str(repository)], check=True)
+    commit = ["git", "-C", str(repository), "-c", "user.name=Test", "-c", "user.email=test@example.invalid"]
+    (repository / "README.md").write_text("seed\n")
+    subprocess.run([*commit, "add", "."], check=True)
+    subprocess.run([*commit, "commit", "-qm", "seed"], check=True)
+    seed = subprocess.check_output([*commit, "rev-parse", "HEAD"], text=True).strip()
+    memory = repository / ".sdo/playbooks/repair/diagnose.go"
+    memory.parent.mkdir(parents=True)
+    memory.write_text("package repair\n")
+    subprocess.run([*commit, "add", "."], check=True)
+    subprocess.run([*commit, "commit", "-qm", "accepted memory"], check=True)
+    accepted = subprocess.check_output([*commit, "rev-parse", "HEAD"], text=True).strip()
+    ledger = workspace / "worktrees/native-ledger/prior.json"
+    ledger.parent.mkdir(parents=True)
+    ledger.write_text('{"incident_id":"prior","version":1}\n')
+    ledger_bytes = ledger.read_bytes()
+    session = workspace / ".sdo-runtime/sessions/prior/evidence.json"
+    session.parent.mkdir(parents=True)
+    session.write_text("{}\n")
+    proposal = workspace / "worktrees/proposal-prior/proposal.txt"
+    proposal.parent.mkdir(parents=True)
+    proposal.write_text("scratch\n")
+    unrelated = workspace / "credentials/opaque"
+    unrelated.parent.mkdir(parents=True)
+    unrelated.write_bytes(b"synthetic-do-not-touch")
+    historical = {"sdo-prior-request": "evidence", "sdo-prior-result": "evidence"}
+    transient = {"sdo-controller-state", "sdo-controller-state-drift-verdicts"}
+    configmaps = {**historical, **dict.fromkeys(transient, "pending")}
+    state: dict[str, Any] = {"incident_open": True, "incident_request": {"incident_id": "prior"}}
+    stopped = False
+    fail_stop = stop_fails_once
+    orphan_stopped: list[bool] = []
+    spec = {
+        "containers": [
+            {
+                "name": "controller",
+                "image": "controller:test",
+                "volumeMounts": [{"name": "repository", "mountPath": "/workspace"}],
+            }
+        ],
+        "volumes": [{"name": "repository", "persistentVolumeClaim": {"claimName": "accepted"}}],
+    }
+
+    def fake_kubectl(args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        nonlocal stopped, fail_stop
+        if args[:2] == ["get", "pods"]:
+            items = (
+                [{"metadata": {"name": "orphan-controller"}, "status": {"phase": orphan_phase}, "spec": spec}]
+                if orphan_phase
+                else []
+            )
+            return subprocess.CompletedProcess(args, 0, json.dumps({"items": items}), "")
+        if args[:2] == ["get", "job"]:
+            return subprocess.CompletedProcess(
+                args,
+                0 if has_job else 1,
+                json.dumps({"spec": {"template": {"spec": spec}}}) if has_job else "",
+                "NotFound" if not has_job else "",
+            )
+        if args[:2] == ["delete", "jobs"]:
+            if fail_stop:
+                fail_stop = False
+                raise RuntimeError("synthetic writer stop failed")
+            assert "--wait=true" in args
+            assert "--cascade=foreground" in args
+            stopped = True
+        if args[:3] == ["delete", "pod", "orphan-controller"]:
+            assert "--wait=true" in args
+            orphan_stopped.append(True)
+        if args[:3] == ["delete", "configmap", "sdo-controller-state"]:
+            assert stopped, "reset retired state while a controller could recreate it"
+            assert not orphan_phase or orphan_stopped, "orphan controller still running"
+            for name in args[2:]:
+                configmaps.pop(name, None)
+            state.clear()
+        if args[:1] == ["apply"]:
+            assert stopped
+            pod = json.loads(kwargs["input_text"])
+            command = pod["spec"]["containers"][0]["command"]
+            command[2] = command[2].replace("/workspace", shlex.quote(str(workspace)))
+            subprocess.run(command, check=True, capture_output=True)
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    monkeypatch.setattr(reset, "kubectl", fake_kubectl)
+    cluster = KubectlResetCluster(tmp_path / "kubeconfig", "sdo")
+    if stop_fails_once:
+        with pytest.raises(RuntimeError, match="synthetic writer stop failed"):
+            cluster.reset_controller(seed, preserve_repository=preserve)
+        assert state["incident_open"] is True
+        assert set(configmaps) == set(historical) | transient
+        assert ledger.read_bytes() == ledger_bytes
+        assert proposal.exists()
+        assert session.exists()
+        assert memory.exists()
+    cluster.reset_controller(seed, preserve_repository=preserve)
+    head = subprocess.check_output([*commit, "rev-parse", "HEAD"], text=True).strip()
+    if preserve or not (has_job or orphan_phase):
+        assert head == accepted
+        assert memory.is_file()
+        assert ledger.read_bytes() == ledger_bytes, "warm reset destroyed durable broker history"
+    else:
+        assert head == seed
+        assert not ledger.exists()
+        assert not session.exists()
+    assert state == {}, "next controller would resume an expired prior incident"
+    assert configmaps == historical, "reset must retire transient drift cache and retain historical evidence"
+    assert unrelated.read_bytes() == b"synthetic-do-not-touch"
+    if has_job or orphan_phase:
+        assert not proposal.exists(), "proposal checkout must not survive a completed reset"
+        assert not session.exists(), "session scratch must not survive a completed reset"

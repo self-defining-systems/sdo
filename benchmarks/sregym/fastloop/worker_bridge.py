@@ -35,7 +35,12 @@ def main() -> int:
             prepare_astronomy()
         if request.get("op") == "baseline_oracle":
             problem = self._problem_factory(str(request["problem_id"]))
-            return self._grade(problem)
+            verdict = self._grade(problem)
+            if request.get("verify_traffic"):
+                from benchmarks.sregym.fastloop.seed_recovery import verify_baseline_traffic
+
+                return verify_baseline_traffic(problem, verdict)
+            return verdict
         reply = handle(self, request)
         if astronomy:
             from pathlib import Path
