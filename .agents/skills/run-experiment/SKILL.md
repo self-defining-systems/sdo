@@ -26,11 +26,12 @@ Live runs spend real money and quota.
 5. **Reuse a warm lane.** Rebuild only when dependencies, OS tools or Dockerfiles change. Up delivers images through a lane-owned registry, preserving shared layers. Never flatten or manually load images.
    - Existing mounted lane: run `fastloop reset --dev-mount` and skip image work; production Python, live recording, reflection, scripted workers and the host-built operator come from the worktree.
    - No lane: run `fastloop up --dev-mount` with a unique cluster prefix, the image tag and a populated `--sregym-dir`. Mounts default to this worktree; a populated applications checkout is needed for grading.
-6. **Credentials.** Start the keeper for the lane and confirm the agent credentials Secret exists before `run`.
-7. **Run the stream** through the [detached launcher](../../../docs/testing-guide.md#detached-launches), wrapping `fastloop run` and reusing the lane record to adopt existing work. Add `--continue-on-error`, plus `--detection-timeout` for streams with latent faults.
-8. **Check early.** After the first incident of each kind, read its row and the controller log. On a plumbing failure, stop the run, save the evidence, and go back to "When something fails" in [test-sdo](../test-sdo/SKILL.md).
-9. **Report** image delivery mode and any fallback reason from the lane and every incident row; fallback warns on stderr at delivery and run startup. Report per incident against the baseline run of the same stream. The fields and their sources are in [report.md](references/report.md).
-10. **Clean up.** Kill only the processes you started, by exact PID; leave the cluster up when a rerun is planned.
+6. **Rehearse the eval.** Run `fastloop eval-dry-run --run-dir <lane>` before live slots. It uses scripted workers, injects no fault, and reports each admission invariant under a shared five-minute cap. Resolve eval failures before spending a live slot.
+7. **Credentials.** Start the keeper for the lane and confirm the agent credentials Secret exists before `run`.
+8. **Run the stream** through the [detached launcher](../../../docs/testing-guide.md#detached-launches), wrapping `fastloop run` and reusing the lane record to adopt existing work. Add `--continue-on-error`, plus `--detection-timeout` for streams with latent faults.
+9. **Check early.** After the first incident of each kind, read its row and the controller log. On a plumbing failure, stop the run, save the evidence, and go back to "When something fails" in [test-sdo](../test-sdo/SKILL.md).
+10. **Report** image delivery mode and any fallback reason from the lane and every incident row; fallback warns on stderr at delivery and run startup. Report per incident against the baseline run of the same stream. The fields and their sources are in [report.md](references/report.md).
+11. **Clean up.** Kill only the processes you started, by exact PID; leave the cluster up when a rerun is planned.
 
 ## Keep the loop fast
 
