@@ -11,6 +11,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/runtime/lifecyclecore"
+"sdo.dev/operator/worker_registry"
 )
 
 // IncidentWorkActive checks durable work before an expired request is retired.
@@ -19,7 +20,15 @@ func (d KubernetesJobDispatcher) IncidentWorkActive(ctx context.Context, inciden
 	if d.Client == nil {
 		return false, fmt.Errorf("incident worker client is required")
 	}
-	name := IncidentJobName(incidentID)
+	names,err:=worker_registry.IncidentExecutionNames(ctx,d.Client,d.Namespace,d.RepositoryMountPath,incidentID,false)
+ if err!=nil{return false,err}
+ for _,name:=range names {
+ active,err:=d.incidentExecutionActive(ctx,name)
+ if err!=nil||active{return active,err}
+ }
+ return false,nil
+}
+func(d KubernetesJobDispatcher) incidentExecutionActive(ctx context.Context,name string)(bool,error){
 	job, err := d.Client.BatchV1().Jobs(d.Namespace).Get(ctx, name, metav1.GetOptions{})
 	if err != nil && !apierrors.IsNotFound(err) {
 		return false, fmt.Errorf("inspect incident worker: %w", err)

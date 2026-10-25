@@ -19,6 +19,9 @@ import (
 var capturedRecordingsMu sync.Mutex
 
 func AppendCapturedRecording(repositoryMount, incidentID, phase string, call sdktest.PrimitiveCall) error {
+	releaseSessionStorage := SessionStorageUse()
+	defer releaseSessionStorage()
+
 	if phase != "open@detect" && phase != "open@settle" && phase != "open@pre-apply" {
 		return fmt.Errorf("invalid corpus recording phase %q", phase)
 	}
@@ -188,6 +191,9 @@ func ValidateCapturedCorpusDirectory(trusted, candidate, incidentID string, chan
 
 // CaptureIncidentSnapshot stores the first namespace-local view at each boundary.
 func CaptureIncidentSnapshot(repositoryMount, incidentID, phase string, view sdk.DetectionContext, namespace string, refs ...sdk.ObjectRef) error {
+	releaseSessionStorage := SessionStorageUse()
+	defer releaseSessionStorage()
+
 	if phase != "open" && phase != "fixed" && phase != "open@detect" && phase != "open@settle" && phase != "open@pre-apply" {
 		return fmt.Errorf("invalid corpus capture phase %q", phase)
 	}
@@ -253,6 +259,9 @@ func writeCapturedFile(path string, data []byte) error {
 // fixed boundary for every primitive inspected before repair. They travel in
 // the same protected recordings file with explicit phase metadata.
 func CaptureRepairedProgramReads(repositoryMount, incidentID string, readView func(sdk.DetectionContext) program.ReadView) error {
+	releaseSessionStorage := SessionStorageUse()
+	defer releaseSessionStorage()
+
 	dir, err := IncidentCorpusDir(repositoryMount, incidentID)
 	if err != nil {
 		return err

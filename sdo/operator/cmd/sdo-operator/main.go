@@ -20,6 +20,22 @@ func main() {
 		fmt.Println(sourceHash)
 		return
 	}
+	if len(os.Args) > 1 && (os.Args[1] == "standby" || os.Args[1] == "standby-history" || os.Args[1] == "standby-ready") {
+		var err error
+		switch os.Args[1] {
+		case "standby":
+			err = operatorcli.RunStandby(context.Background(), os.Args[2:])
+		case "standby-history":
+			err = operatorcli.RunStandbyHistory(context.Background(), os.Args[2:])
+		default:
+			err = operatorcli.RunStandbyReady(os.Args[2:])
+		}
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
 	if len(os.Args) > 1 && (os.Args[1] == "evidence" || os.Args[1] == "api-proxy") {
 		var err error
 		if os.Args[1] == "evidence" {

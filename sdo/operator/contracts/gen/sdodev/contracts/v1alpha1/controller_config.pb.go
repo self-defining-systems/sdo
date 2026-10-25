@@ -130,8 +130,10 @@ type ControllerConfig struct {
 	ToolchainImage         string               `protobuf:"bytes,75,opt,name=toolchain_image,json=toolchainImage,proto3" json:"toolchain_image,omitempty"`
 	ClosureStabilityWindow *durationpb.Duration `protobuf:"bytes,76,opt,name=closure_stability_window,json=closureStabilityWindow,proto3" json:"closure_stability_window,omitempty"`
 	ResponderReportGrace   *durationpb.Duration `protobuf:"bytes,77,opt,name=responder_report_grace,json=responderReportGrace,proto3" json:"responder_report_grace,omitempty"`
-	unknownFields          protoimpl.UnknownFields
-	sizeCache              protoimpl.SizeCache
+	// Pre-start one idle responder; false forces the ordinary cold Job path.
+	ResponderStandby *bool `protobuf:"varint,78,opt,name=responder_standby,json=responderStandby,proto3,oneof" json:"responder_standby,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *ControllerConfig) Reset() {
@@ -586,11 +588,18 @@ func (x *ControllerConfig) GetResponderReportGrace() *durationpb.Duration {
 	return nil
 }
 
+func (x *ControllerConfig) GetResponderStandby() bool {
+	if x != nil && x.ResponderStandby != nil {
+		return *x.ResponderStandby
+	}
+	return false
+}
+
 var File_sdodev_contracts_v1alpha1_controller_config_proto protoreflect.FileDescriptor
 
 const file_sdodev_contracts_v1alpha1_controller_config_proto_rawDesc = "" +
 	"\n" +
-	"1sdodev/contracts/v1alpha1/controller_config.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x1egoogle/protobuf/duration.proto\"\xc9\x1c\n" +
+	"1sdodev/contracts/v1alpha1/controller_config.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x1egoogle/protobuf/duration.proto\"\x91\x1d\n" +
 	"\x10ControllerConfig\x12%\n" +
 	"\tnamespace\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\tnamespace\x12+\n" +
 	"\x11control_namespace\x18\x02 \x01(\tR\x10controlNamespace\x12\"\n" +
@@ -660,10 +669,12 @@ const file_sdodev_contracts_v1alpha1_controller_config_proto_rawDesc = "" +
 	"\x12metrics_token_file\x18G \x01(\tR\x10metricsTokenFile\x12'\n" +
 	"\x0ftoolchain_image\x18K \x01(\tR\x0etoolchainImage\x12S\n" +
 	"\x18closure_stability_window\x18L \x01(\v2\x19.google.protobuf.DurationR\x16closureStabilityWindow\x12O\n" +
-	"\x16responder_report_grace\x18M \x01(\v2\x19.google.protobuf.DurationR\x14responderReportGraceB\x14\n" +
+	"\x16responder_report_grace\x18M \x01(\v2\x19.google.protobuf.DurationR\x14responderReportGrace\x120\n" +
+	"\x11responder_standby\x18N \x01(\bH\x03R\x10responderStandby\x88\x01\x01B\x14\n" +
 	"\x12_synthetic_trafficB\x1a\n" +
 	"\x18_clean_responder_helpersB\x11\n" +
-	"\x0f_state_baselineJ\x04\b\x10\x10\x11J\x04\b\x12\x10\x13J\x04\b\x17\x10\x18J\x04\b\x18\x10\x19J\x04\b9\x10:J\x04\b:\x10;J\x04\b;\x10<J\x04\b<\x10=J\x04\b=\x10>J\x04\bC\x10DJ\x04\bD\x10EJ\x04\b@\x10AJ\x04\bA\x10BJ\x04\bE\x10FJ\x04\bH\x10IJ\x04\bI\x10JJ\x04\bJ\x10KR\x06brokerR\vbroker_argsR\x0emax_follow_upsR\x12follow_up_cooldownR\x14drift_sweep_intervalR\x1adrift_investigation_windowR'drift_investigation_dispatches_per_hourR#drift_investigation_tokens_per_hourR\x19drift_dispatches_per_hourR\x15drift_tokens_per_hourR\x14program_min_durationR\x17plan_safety_policy_jsonR\x19plan_safety_policy_sha256R\x17plan_source_policy_jsonB\x88\x02\n" +
+	"\x0f_state_baselineB\x14\n" +
+	"\x12_responder_standbyJ\x04\b\x10\x10\x11J\x04\b\x12\x10\x13J\x04\b\x17\x10\x18J\x04\b\x18\x10\x19J\x04\b9\x10:J\x04\b:\x10;J\x04\b;\x10<J\x04\b<\x10=J\x04\b=\x10>J\x04\bC\x10DJ\x04\bD\x10EJ\x04\b@\x10AJ\x04\bA\x10BJ\x04\bE\x10FJ\x04\bH\x10IJ\x04\bI\x10JJ\x04\bJ\x10KR\x06brokerR\vbroker_argsR\x0emax_follow_upsR\x12follow_up_cooldownR\x14drift_sweep_intervalR\x1adrift_investigation_windowR'drift_investigation_dispatches_per_hourR#drift_investigation_tokens_per_hourR\x19drift_dispatches_per_hourR\x15drift_tokens_per_hourR\x14program_min_durationR\x17plan_safety_policy_jsonR\x19plan_safety_policy_sha256R\x17plan_source_policy_jsonB\x88\x02\n" +
 	"\x1dcom.sdodev.contracts.v1alpha1B\x15ControllerConfigProtoP\x01ZJsdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1;contractsv1alpha1\xa2\x02\x03SCX\xaa\x02\x19Sdodev.Contracts.V1alpha1\xca\x02\x19Sdodev\\Contracts\\V1alpha1\xe2\x02%Sdodev\\Contracts\\V1alpha1\\GPBMetadata\xea\x02\x1bSdodev::Contracts::V1alpha1b\x06proto3"
 
 var (

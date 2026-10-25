@@ -10,6 +10,7 @@ import importlib
 from typing import TYPE_CHECKING, Any
 
 _EXPORTS = {
+    "await_standby_claim": "standby",
     "AGENT_SKILLS": "credentials",
     "ClaudeSessionBackend": "reflection",
     "CodexSessionBackend": "reflection",
@@ -114,6 +115,7 @@ if TYPE_CHECKING:
     from sdo.agents.responder.session_turn import (
         unwrap_branch as unwrap_branch,
     )
+    from sdo.agents.responder.standby import await_standby_claim as await_standby_claim
     from sdo.agents.responder.worker import (
         run_worker_task as run_worker_task,
     )

@@ -55,6 +55,7 @@ type Config struct {
 	NativeCommand, NativeArgs                       []string
 	ExtraControllerArgs                             []string
 	ResponderEnv                                    []string
+	ResponderStandby                                *bool
 	Credentials                                     map[string][]byte
 	RegistrationConfigMap, RegistrationDirectory    string
 	RegistrationData                                map[string]string
@@ -294,8 +295,10 @@ func Resources(c Config, resources ...*metav1.APIResourceList) (Plan, error) {
 	if err := addCaptureGrants(c, &plan, resources); err != nil {
 		return Plan{}, err
 	}
-	if err := addUnexplainedRemovalGrants(c, &plan, resources); err != nil { return Plan{}, err }
-    addObservationGrants(&plan, c)
+	if err := addUnexplainedRemovalGrants(c, &plan, resources); err != nil {
+		return Plan{}, err
+	}
+	addObservationGrants(&plan, c)
 	plan.SyncPod = syncPod(c)
 	plan.Job = controllerJob(c)
 	if c.AcceptedCommit != "" {
@@ -412,6 +415,9 @@ func controllerJob(c Config) *batchv1.Job {
 	}
 	if c.LateFindings == "pull" {
 		args = append(args, "--responder-env=SDO_LATE_FINDINGS=pull")
+	}
+	if c.ResponderStandby != nil {
+		args = append(args, fmt.Sprintf("--responder-standby=%t", *c.ResponderStandby))
 	}
 	args = append(args, c.NativeArgs...)
 	args = append(args, c.ExtraControllerArgs...)

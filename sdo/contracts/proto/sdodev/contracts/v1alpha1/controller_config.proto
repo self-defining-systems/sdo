@@ -139,4 +139,6 @@ message ControllerConfig {
   string toolchain_image = 75;
   google.protobuf.Duration closure_stability_window = 76;
   google.protobuf.Duration responder_report_grace = 77;
+  // Pre-start one idle responder; false forces the ordinary cold Job path.
+  optional bool responder_standby = 78;
 }
