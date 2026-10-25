@@ -37,13 +37,46 @@ def _accepted_app(tmp_path: Path, *, verified: bool = False) -> Path:
     )
     outcomes = memory / "outcomes"
     outcomes.mkdir()
-    record = {"schema_version": 1, "incident_id": "scripted-incident", "classification": "failed"}
+    record: dict[str, object] = {"schema_version": 1, "incident_id": "scripted-incident", "classification": "failed"}
     if verified:
+        resource = {"api_version": "v1", "kind": "Service", "namespace": "demo", "name": "front"}
         record["classification"] = "success"
+        record["findings"] = [
+            {
+                "detector_id": "routing-relations",
+                "rule_id": "targetport",
+                "status": "active",
+                "severity": "warn",
+                "summary": "Service target port has no listener",
+                "evidence": "selected pod exposes a different port",
+                "fingerprint": "front-targetport",
+                "primary_resource": resource,
+            }
+        ]
+        record["repair_actions"] = [
+            {
+                "action_id": "restore-front-port",
+                "kind": "kubectl",
+                "target": "Service/demo/front",
+                "summary": "restore accepted target port",
+                "details": "target port patched and read back",
+                "success": True,
+                "resources": [resource],
+                "started_at": "2026-01-01T00:00:01Z",
+                "completed_at": "2026-01-01T00:00:02Z",
+            }
+        ]
+        record["detector_history"] = [
+            {
+                "detector_id": "routing-relations",
+                "status": "clear",
+                "evaluated_at": "2026-01-01T00:00:03Z",
+            }
+        ]
         record["confirmed_root_causes"] = [
             {
                 "summary": "routing fault",
-                "resources": [{"api_version": "v1", "kind": "Service", "namespace": "demo", "name": "front"}],
+                "resources": [resource],
             }
         ]
     (outcomes / f"{hashlib.sha256(b'scripted-incident').hexdigest()}.json").write_text(json.dumps(record))
@@ -80,6 +113,9 @@ def test_scripted_reflector_writes_program_that_passes_real_memory_check(
     (capture / "open@detect.json").write_text(json.dumps(opened))
     (capture / "open@detect-recordings.json").write_text("[]")
     (capture / "fixed.json").write_text(json.dumps(fixed))
+    # Freeze the hand-written known-good state as the controller's reference.
+    (capture / "healthy").mkdir()
+    (capture / "healthy/healthy.json").write_text(json.dumps(fixed))
     monkeypatch.setenv("SDO_CAPTURED_CORPUS_DIR", str(capture))
     monkeypatch.setattr(scripted_worker, "PROGRAM_SOURCE", ROOT / "benchmarks/sregym/fastloop/scripted_program")
     monkeypatch.setenv("SDO_ACTOR", "responder")

@@ -86,3 +86,14 @@ A full seed-compatible cleanup intentionally removes fault-created objects. Its 
 The persistent fault gate keeps controller startup (including health refresh) separate from its 300-second resumed-baseline readiness budget. The matching maintenance `active` record starts that readiness clock once; later polls or pauses cannot restart it. Startup remains bounded by the existing lifecycle/startup budget. `controller_baseline_wait` retains the total pre-injection wait; `controller_startup_wait` and `controller_resumed_baseline_wait` split it. None belongs to incident TTM or per-incident responder/reflection usage.
 
 Warm resets require structural health and independent HTTP. Failed HTTP permits one bounded hotel-client refresh and recheck, preserving backends/memory. Failed refresh or HTTP blocks admission; restoration earns no responder credit.
+
+### Protected healthy references in offline checkpoints
+
+Checkpoint capture maps retain the controller's frozen `healthy/healthy.json` and
+`healthy/reference` alongside ordinary incident capture files. These are the only
+nested capture names; traversal and other nested paths are rejected. Export and
+both worker/broker replay restore the same private directory and retain existing
+per-file, bundle and content-digest checks. A missing historical healthy reference
+is a replay evidence gap; never substitute an agent-authored corpus healthy state
+or the repaired fixed state. A session-authored positive replay case can still
+omit incident captures when its controller healthy reference is retained.

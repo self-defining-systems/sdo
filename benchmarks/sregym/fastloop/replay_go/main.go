@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -153,18 +154,43 @@ func run(ctx context.Context) error {
 	if err := os.MkdirAll(captureDir, 0700); err != nil {
 		return err
 	}
-	captures, err := os.ReadDir(filepath.Join(*checkpoint, "captures"))
-	if err != nil {
-		return err
-	}
-	for _, capture := range captures {
-		data, err := os.ReadFile(filepath.Join(*checkpoint, "captures", capture.Name()))
+	captureRoot := filepath.Join(*checkpoint, "captures")
+	err = filepath.WalkDir(captureRoot, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		relative, err := filepath.Rel(captureRoot, path)
 		if err != nil {
 			return err
 		}
-		if err := os.WriteFile(filepath.Join(captureDir, capture.Name()), data, 0600); err != nil {
+		relative = filepath.ToSlash(relative)
+		if entry.Type()&os.ModeSymlink != 0 {
+			return fmt.Errorf("symlink capture %q", relative)
+		}
+		if entry.IsDir() {
+			if relative == "." || relative == "healthy" {
+				return nil
+			}
+			return fmt.Errorf("unexpected capture directory %q", relative)
+		}
+		if !entry.Type().IsRegular() {
+			return fmt.Errorf("non-regular capture %q", relative)
+		}
+		if strings.Contains(relative, "/") && relative != "healthy/healthy.json" && relative != "healthy/reference" {
+			return fmt.Errorf("unexpected nested capture %q", relative)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
 			return err
 		}
+		destination := filepath.Join(captureDir, filepath.FromSlash(relative))
+		if err := os.MkdirAll(filepath.Dir(destination), 0700); err != nil {
+			return err
+		}
+		return os.WriteFile(destination, data, 0600)
+	})
+	if err != nil {
+		return err
 	}
 
 	receipt, err := repository.PublishReflection(validate.WithCaptureSource(ctx, captureDir, incidentID), incidentID, &contracts.ReflectionDecision{LearningDecision: response.GetLearningDecision(), NoChangeReason: response.GetNoChangeReason(), PlaybookIds: response.GetProposedArtifactIds(), SdkGaps: response.GetSdkGaps()})

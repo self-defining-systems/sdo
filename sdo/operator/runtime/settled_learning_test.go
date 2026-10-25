@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"sdo.dev/operator/broker"
 	"sdo.dev/operator/internal/testutil"
@@ -16,6 +17,7 @@ import (
 	"sdo.dev/operator/memory/validate"
 
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/timestamppb"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/sdk"
@@ -175,6 +177,8 @@ func TestFalseFixedMatchIsDurableBeforeReflectionRejectionAndNeverCredited(t *te
 	o.SourceCommit = base
 	o.IncidentId = "false-fixed-match"
 	o.RepairActions[0].Resources = []*contracts.ObjectRef{repeatService}
+	o.Findings = []*contracts.Finding{{DetectorId: "service-port", RuleId: "targetport", Status: "active", Severity: "warn", Summary: "port mismatch", Evidence: "controller observed target port mismatch", Fingerprint: "reservation-port", PrimaryResource: repeatService}}
+	o.DetectorHistory = []*contracts.DetectorEvaluation{{DetectorId: "service-port", Status: "clear", EvaluatedAt: timestamppb.New(time.Unix(1_700_000_101, 0))}}
 	for _, run := range o.ProgramRuns {
 		run.ProgramRevision = revision
 	}
