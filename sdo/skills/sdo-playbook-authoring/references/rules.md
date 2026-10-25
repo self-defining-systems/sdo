@@ -51,7 +51,7 @@ diagnostic; look it up here.
 - A mitigator must clear its diagnosis after its patches are applied to the faulted fixture, An already-faulty target value is not a repair. Enforced by: `program.mitigation-not-repaired`.
 - Prefer narrow typed SetField repairs when the damaged field is known; whole-object ReconcileFromSource requires whole-object justification. Observed and parameter-derived fields require valid patches and available observations; accepted-source field selectors require accepted manifests in the fixture. Enforced by: `program.mitigation-unreplayable`, `program.mitigation-not-repaired`.
 
-- CreateFromSource requires accepted-source presence; DeleteObject targets the incident namespace without a source-absence gate. Both require direct current UID/absence verification. Delete is disclosed as irreversible and never auto-recreated. They must execute successfully in replay to prove repair. Enforced by: `program.mitigation-unreplayable`.
+- CreateFromSource requires accepted-source presence; DeleteObject targets any named nonsecret object without a source-absence gate. Both require direct current UID/absence verification. Delete is disclosed as irreversible and never auto-recreated. They must execute successfully in replay to prove repair. Enforced by: `program.mitigation-unreplayable`.
 
 ## Value provenance and runtime effects
 
@@ -85,3 +85,8 @@ controller RBAC and returns an exit code with no stdout/stderr; commands can rea
   existing passwords, and discloses irreversible effects. Catalog diagnosis/replay requires a successful
   recorded open observation; fixed answers never substitute for applying the action. Enforced by:
   `program.mitigation-unreplayable`, `program.mitigation-not-repaired`.
+
+General actions do not require per-fault value provenance or accepted-source presence. Use the
+[general action vocabulary](general-actions.md) and retain exact recorded transition evidence
+for commands, HTTP, raw API effects and one-off completion. Missing evidence remains Unknown;
+Fixed replies never establish an effect. Existing compilation/replay diagnostics still apply.

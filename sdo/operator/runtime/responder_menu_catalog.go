@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"strconv"
@@ -125,6 +126,9 @@ func menuActionParameter(field protoreflect.FieldDescriptor, raw string, inputs 
 			return converted, nil
 		}
 		return menuRawValue(value, string(field.Name()), inputs)
+	}
+	if field.Kind() == protoreflect.BytesKind && !field.IsList() {
+		return base64.StdEncoding.EncodeToString([]byte(raw)), nil
 	}
 	if field.Kind() == protoreflect.StringKind && !field.IsList() {
 		return raw, nil

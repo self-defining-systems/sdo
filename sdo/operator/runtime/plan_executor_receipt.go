@@ -32,7 +32,7 @@ func (e PlanExecutor) Reconcile(ctx context.Context, result PlanApplicationResul
 			return result, fmt.Errorf("structured receipt unknown: UID changed")
 		}
 		before, after := true, true
-		for _, field := range []string{"spec", "data", "binaryData"} {
+		for _, field := range planPatchFields(patch) {
 			b, bok := patch.Before.Object[field]
 			a, aok := patch.After.Object[field]
 			v, vok := live.Object[field]
@@ -46,7 +46,7 @@ func (e PlanExecutor) Reconcile(ctx context.Context, result PlanApplicationResul
 	// The write landed unless the object still holds its pre-image. Anything else
 	// is the write plus whatever the server made of it, so no after-image is compared.
 	landed := false
-	for _, field := range []string{"spec", "data", "binaryData"} {
+	for _, field := range planPatchFields(patch) {
 		b, bok := patch.Before.Object[field]
 		a, aok := patch.After.Object[field]
 		v, vok := live.Object[field]

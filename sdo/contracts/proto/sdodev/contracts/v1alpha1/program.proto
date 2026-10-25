@@ -85,6 +85,13 @@ message Action {
     Exec exec = 9;
     RemoveServicePort remove_service_port = 10;
     EnsureDatabaseUser ensure_database_user = 11;
+    PatchObject patch_object = 12;
+    ApplyObject apply_object = 13;
+    KubernetesRequest kubernetes_request = 14;
+    WaitFor wait_for = 15;
+    EnsureExec ensure_exec = 16;
+    EnsureHttp ensure_http = 17;
+    RunJob run_job = 18;
   }
 }
 
@@ -159,6 +166,11 @@ message ActionReport {
   string status = 2 [(buf.validate.field).string = {in: ["prepared", "applied", "refused", "unknown"]}];
   repeated ValueProvenance values = 3;
   optional int32 exit_code = 4;
+  // Measured effects remain outcome evidence even when capture I/O fails.
+  bytes external_effect_json = 5;
+  bytes kubernetes_effect_json = 6;
+  string recording_error = 7;
+  bytes job_status_json = 8;
 }
 
 message DeletePod {
@@ -316,4 +328,73 @@ message EnsureDatabaseUser {
   repeated DatabaseRole roles = 3;
   CredentialRef password = 4 [(buf.validate.field).required = true];
   string reason = 5;
+}
+
+// General Kubernetes actions retain JSON number tokens in document payloads.
+message PatchObject {
+  ObjectRef ref = 1 [(buf.validate.field).required = true];
+  string type = 2;
+  bytes patch_json = 3;
+  repeated ListEdit edits = 4;
+  string reason = 5;
+}
+message ListEdit {
+  string path = 1;
+  bytes match_json = 2;
+  string op = 3;
+  bytes value_json = 4;
+}
+message ApplyObject {
+  ObjectRef ref = 1 [(buf.validate.field).required = true];
+  bytes object_json = 2;
+  string mode = 3;
+  string reason = 4;
+}
+message KubernetesRequest {
+  ObjectRef ref = 1;
+  string method = 2;
+  string path = 3;
+  map<string, string> query = 4;
+  string content_type = 5;
+  bytes body = 6;
+  string reason = 7;
+}
+message WaitFor {
+  ObjectRef ref = 1 [(buf.validate.field).required = true];
+  string path = 2;
+  bytes equals_json = 3;
+  google.protobuf.Duration timeout = 4;
+  google.protobuf.Duration interval = 5;
+}
+message Command {
+  ObjectRef pod = 1 [(buf.validate.field).required = true];
+  string container = 2;
+  repeated string args = 3;
+  string stdin = 4;
+}
+message HttpRequest {
+  ObjectRef pod = 1 [(buf.validate.field).required = true];
+  string container = 2;
+  string method = 3;
+  string url = 4;
+  map<string, string> headers = 5;
+  string body = 6;
+  CredentialRef bearer = 7;
+  map<string, CredentialRef> header_env = 8;
+}
+message EnsureExec {
+  Command observe = 1 [(buf.validate.field).required = true];
+  Command ensure = 2 [(buf.validate.field).required = true];
+  int32 expect = 3;
+  string reason = 4;
+}
+message EnsureHttp {
+  HttpRequest observe = 1 [(buf.validate.field).required = true];
+  HttpRequest ensure = 2 [(buf.validate.field).required = true];
+  int32 expect = 3;
+  string reason = 4;
+}
+message RunJob {
+  ApplyObject object = 1 [(buf.validate.field).required = true];
+  WaitFor completion = 2 [(buf.validate.field).required = true];
 }

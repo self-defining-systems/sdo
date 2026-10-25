@@ -262,6 +262,11 @@ func (c *cluster) snapshot(ctx context.Context) (sdktest.Snapshot, error) {
 		result, _ := json.Marshal(catalog.users)
 		s.Readings = append(s.Readings, sdktest.PrimitiveCall{Method: "DatabaseUsers", Arguments: args, Result: result})
 	}
+	for key, code := range c.operationState {
+		args := json.RawMessage("[" + key + "]")
+		value, _ := json.Marshal(code)
+		s.Readings = append(s.Readings, sdktest.PrimitiveCall{Method: "Observe", Arguments: args, Result: value})
+	}
 	sort.Slice(s.Readings, func(i, j int) bool { return string(s.Readings[i].Arguments) < string(s.Readings[j].Arguments) })
 	sdk.SortObjects(s.Objects)
 	if err := sdk.DecodeTypedObjects(&s, local); err != nil {

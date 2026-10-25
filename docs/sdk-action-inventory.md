@@ -68,3 +68,18 @@ SDK gaps recorded by reflection must be enumerable offline with incident ID,
 fault class, requested primitive, reason and scratch operation. Inventory status
 and executable coverage are updated with the implementation; a planned mapping
 in this baseline document is not a claim that the operation already works.
+
+
+## Implemented coverage contract
+
+`docs/sdk-action-inventory.json` is the machine-readable inventory.
+`runtime/replay.TestGeneralKubectlCoverageFloor` executes every non-excluded row
+and rejects missing, duplicate, removed or newly unimplemented operations. General
+object changes run the production executor against the fake API; external and
+subresource effects require exact recorded transitions. Transport tests separately
+exercise stdin-only SPDY, API options, redirect rejection and Secret boundaries.
+See the [authoring vocabulary](../sdo/skills/sdo-playbook-authoring/references/general-actions.md)
+for signatures and replay limitations. Token issuance can run through RBAC, but
+credential responses are discarded; consume generated values inside a container.
+The inventory's cp case covers input streams and container-side transfer; command
+stdout is intentionally unavailable because credential data stays in containers.

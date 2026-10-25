@@ -281,10 +281,10 @@ class ReflectionDecision(_message.Message):
     no_change_reason: str
     playbook_ids: _containers.RepeatedScalarFieldContainer[str]
     error: str
-    sdk_gaps: _containers.RepeatedCompositeFieldContainer[_worker_pb2.SdkGap]
+    sdk_gaps: _containers.RepeatedCompositeFieldContainer[_outcome_pb2.SdkGap]
     usage: _messages_pb2.UsageMetrics
     decline_reason: str
-    def __init__(self, learning_decision: _Optional[str] = ..., no_change_reason: _Optional[str] = ..., playbook_ids: _Optional[_Iterable[str]] = ..., error: _Optional[str] = ..., sdk_gaps: _Optional[_Iterable[_Union[_worker_pb2.SdkGap, _Mapping]]] = ..., usage: _Optional[_Union[_messages_pb2.UsageMetrics, _Mapping]] = ..., decline_reason: _Optional[str] = ...) -> None: ...
+    def __init__(self, learning_decision: _Optional[str] = ..., no_change_reason: _Optional[str] = ..., playbook_ids: _Optional[_Iterable[str]] = ..., error: _Optional[str] = ..., sdk_gaps: _Optional[_Iterable[_Union[_outcome_pb2.SdkGap, _Mapping]]] = ..., usage: _Optional[_Union[_messages_pb2.UsageMetrics, _Mapping]] = ..., decline_reason: _Optional[str] = ...) -> None: ...
 
 class ProposalRejection(_message.Message):
     __slots__ = ("attempt", "diagnostics", "rejected_at")

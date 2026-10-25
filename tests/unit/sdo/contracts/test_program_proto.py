@@ -101,3 +101,44 @@ def test_lifecycle_actions_and_effects_are_public_contracts() -> None:
     )
     encoded = contracts.to_canonical_json(application)
     assert contracts.parse_json(encoded, contracts.PlanApplication()) == application
+
+
+def test_general_actions_are_public_and_round_trip() -> None:
+    from sdo.contracts import (
+        ApplyObject,
+        Command,
+        EnsureExec,
+        EnsureHttp,
+        HttpRequest,
+        KubernetesRequest,
+        PatchObject,
+        RunJob,
+        WaitFor,
+    )
+
+    ref = contracts.ObjectRef(api_version="v1", kind="ConfigMap", namespace="app", name="flags")
+    pod = contracts.ObjectRef(api_version="v1", kind="Pod", namespace="app", name="api")
+    command = Command(pod=pod, container="app", args=["sh", "-s"], stdin="fixture script")
+    http = HttpRequest(pod=pod, container="app", method="POST", url="http://api.app.svc/reload")
+    object_action = ApplyObject(ref=ref, object_json=b'{"apiVersion":"v1"}')
+    actions = [
+        contracts.Action(
+            patch_object=PatchObject(ref=ref, type="json", patch_json=b'[{"op":"remove","path":"/data/stale"}]')
+        ),
+        contracts.Action(apply_object=object_action),
+        contracts.Action(
+            kubernetes_request=KubernetesRequest(
+                ref=ref, method="PATCH", path="/api/v1/namespaces/app/configmaps/flags", body=b"{}"
+            )
+        ),
+        contracts.Action(wait_for=WaitFor(ref=ref, path="/data/ready", equals_json=b"true")),
+        contracts.Action(ensure_exec=EnsureExec(observe=command, ensure=command)),
+        contracts.Action(ensure_http=EnsureHttp(observe=http, ensure=http)),
+        contracts.Action(
+            run_job=RunJob(
+                object=object_action, completion=WaitFor(ref=ref, path="/status/succeeded", equals_json=b"1")
+            )
+        ),
+    ]
+    for action in actions:
+        assert contracts.parse_json(contracts.to_canonical_json(action), contracts.Action()) == action

@@ -3,27 +3,21 @@ package runtime
 import (
 	"context"
 	"fmt"
-	"strings"
-
-	"errors"
 
 	appsv1 "k8s.io/api/apps/v1"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	policyv1 "k8s.io/api/policy/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	kruntime "k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
-	"k8s.io/client-go/tools/remotecommand"
-	utilexec "k8s.io/client-go/util/exec"
 
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/program"
 )
 
 // TypedPlanClient limits plan mutations to the application kinds the SDK reads.
@@ -201,27 +195,6 @@ func (c TypedPlanClient) Delete(ctx context.Context, ref sdk.ObjectRef, uid type
 // Exec requests no stdout/stderr streams. Kubernetes requires at least one I/O
 // stream, so stdin is opened and immediately closed at EOF. Existing RBAC applies.
 func (c TypedPlanClient) Exec(ctx context.Context, pod sdk.ObjectRef, container string, command []string) (int, error) {
-	if c.Client == nil || c.ExecConfig == nil || c.Client.CoreV1().RESTClient() == nil {
-		return 0, fmt.Errorf("%w: controller exec transport unavailable", errPlanExecRefused)
-	}
-	if pod.APIVersion != "v1" || pod.Kind != "Pod" || pod.Name == "" || pod.Namespace == "" || container == "" || len(command) == 0 {
-		return 0, fmt.Errorf("exec requires named Pod, container and command")
-	}
-	request := c.Client.CoreV1().RESTClient().Post().Resource("pods").Name(pod.Name).Namespace(pod.Namespace).SubResource("exec").VersionedParams(&corev1.PodExecOptions{Container: container, Command: command, Stdin: true, Stdout: false, Stderr: false, TTY: false}, scheme.ParameterCodec)
-	executor, err := remotecommand.NewSPDYExecutor(c.ExecConfig, "POST", request.URL())
-	if err != nil {
-		return 0, fmt.Errorf("exec transport unavailable")
-	}
-	err = executor.StreamWithContext(ctx, remotecommand.StreamOptions{Stdin: strings.NewReader("")})
-	if err == nil {
-		return 0, nil
-	}
-	var exited utilexec.ExitError
-	if errors.As(err, &exited) {
-		return exited.ExitStatus(), nil
-	}
-	if apierrors.IsForbidden(err) || apierrors.IsUnauthorized(err) {
-		return 0, err
-	}
-	return 0, fmt.Errorf("exec transport failed")
+	code, err := c.runCommand(ctx, program.Command{Pod: pod, Container: container, Args: command})
+	return int(code), err
 }

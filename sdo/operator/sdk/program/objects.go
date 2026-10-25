@@ -31,7 +31,7 @@ func validateObjectAction(action Action) error {
 	if ref.Name == "" || strings.TrimSpace(reason) == "" {
 		return fmt.Errorf("object action requires a named reference and reason")
 	}
-	if ref.APIVersion == "" || ref.Kind == "" || ref.Namespace == "" {
+	if ref.APIVersion == "" || ref.Kind == "" || (ref.Namespace == "" && !isDeleteObject(action)) {
 		return fmt.Errorf("object action requires a namespaced object reference")
 	}
 	return nil
@@ -74,4 +74,12 @@ func validateRuntimeAction(action Action) error {
 		return validateRuntimeAction(*a)
 	}
 	return nil
+}
+
+func isDeleteObject(a Action) bool {
+	switch a.(type) {
+	case DeleteObject, *DeleteObject:
+		return true
+	}
+	return false
 }

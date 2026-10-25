@@ -32,3 +32,5 @@ Use role placeholders in prose and bound resources in Go. Mitigation returns to 
 intended-state changes are source repairs. An emergency literal is a declared parameter the responder fills
 and justifies.
 Read [validator rules](references/rules.md) when a diagnostic names a playbook, script or corpus rule.
+
+For object, command, HTTP, Job or subresource repairs, read the [general action vocabulary](references/general-actions.md).

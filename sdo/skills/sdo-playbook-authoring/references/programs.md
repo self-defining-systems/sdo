@@ -108,7 +108,7 @@ Go's missing-observation flags describe optional controller captures. They do no
 from session observations and cannot justify an evidence_gap decline. An unavailable SDK capability can
 be reported with a typed SDK gap naming its cause resources, primitive, reason and scratch script.
 
-Automatic plans require no source-policy file, reviewed-fixture digest, content predicate or credential-delta approval. Explicit FromSource selectors and CreateFromSource read accepted manifests at the incident commit; other repairs may use observed or declared parameter values. DeleteObject does not require source absence. All actions remain within the controller-derived incident namespace, with Kubernetes RBAC and schema checks. Cluster-scoped webhook mutations are outside this scope.
+Automatic plans require no source-policy file, reviewed-fixture digest, content predicate or credential-delta approval. Explicit FromSource selectors and CreateFromSource read accepted manifests at the incident commit; other repairs may use observed or declared parameter values. DeleteObject does not require source absence. Legacy field actions retain their declared scope checks. The [general action vocabulary](general-actions.md) covers arbitrary nonsecret resources and subresources through Kubernetes RBAC.
 
 Compilation and repair replay remain mandatory. Direct observation and independent post-apply verification still judge the executed plan. Failed fast-path attempts compensate all reversible writes before responder dispatch; deletes and exec are explicitly irreversible and are never auto-recreated or replayed. UID, conditional-write, lifecycle exclusivity and rollback conflict checks remain correctness constraints.
 
@@ -118,7 +118,7 @@ Receipts report value provenance (`accepted-source`, `parameter`, `observed`, `i
 
 `spec.template.spec.dnsPolicy` is a schema-checked SetField path for Deployment and StatefulSet source
 restoration. A DNS policy repair does not remove an injected dnsConfig; if that field was absent from
-accepted source, report the missing removal capability rather than inventing an empty source value.
+accepted source, use general JSON patch removal rather than inventing an empty source value.
 
 Promoted snapshot-only detectors preserve the configured scoped observation source; an undeclared or
 unavailable foreign read remains Unknown. They still cannot perform live logs, probes or source diffs.
@@ -154,3 +154,5 @@ reads as Unknown. Build replay from recorded open `DatabaseUsers` results; fixed
 prove a repair. The simulator changes only the named user's direct roles/catalog membership and does
 not simulate credentials, arbitrary Exec, authentication policy, connectivity, or server availability.
 Independent live health verification remains required.
+
+General object edits, replayable commands/HTTP, and one-off scripts use the [general action vocabulary](general-actions.md).

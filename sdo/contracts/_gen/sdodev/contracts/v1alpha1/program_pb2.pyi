@@ -99,7 +99,7 @@ class Plan(_message.Message):
     def __init__(self, actions: _Optional[_Iterable[_Union[Action, _Mapping]]] = ..., rationale: _Optional[str] = ...) -> None: ...
 
 class Action(_message.Message):
-    __slots__ = ("reconcile_from_source", "rollback", "set_field", "restart_rollout", "create_from_source", "delete_object", "delete_pod", "scale_workload", "exec", "remove_service_port", "ensure_database_user")
+    __slots__ = ("reconcile_from_source", "rollback", "set_field", "restart_rollout", "create_from_source", "delete_object", "delete_pod", "scale_workload", "exec", "remove_service_port", "ensure_database_user", "patch_object", "apply_object", "kubernetes_request", "wait_for", "ensure_exec", "ensure_http", "run_job")
     RECONCILE_FROM_SOURCE_FIELD_NUMBER: _ClassVar[int]
     ROLLBACK_FIELD_NUMBER: _ClassVar[int]
     SET_FIELD_FIELD_NUMBER: _ClassVar[int]
@@ -111,6 +111,13 @@ class Action(_message.Message):
     EXEC_FIELD_NUMBER: _ClassVar[int]
     REMOVE_SERVICE_PORT_FIELD_NUMBER: _ClassVar[int]
     ENSURE_DATABASE_USER_FIELD_NUMBER: _ClassVar[int]
+    PATCH_OBJECT_FIELD_NUMBER: _ClassVar[int]
+    APPLY_OBJECT_FIELD_NUMBER: _ClassVar[int]
+    KUBERNETES_REQUEST_FIELD_NUMBER: _ClassVar[int]
+    WAIT_FOR_FIELD_NUMBER: _ClassVar[int]
+    ENSURE_EXEC_FIELD_NUMBER: _ClassVar[int]
+    ENSURE_HTTP_FIELD_NUMBER: _ClassVar[int]
+    RUN_JOB_FIELD_NUMBER: _ClassVar[int]
     reconcile_from_source: ReconcileFromSource
     rollback: Rollback
     set_field: SetField
@@ -122,7 +129,14 @@ class Action(_message.Message):
     exec: Exec
     remove_service_port: RemoveServicePort
     ensure_database_user: EnsureDatabaseUser
-    def __init__(self, reconcile_from_source: _Optional[_Union[ReconcileFromSource, _Mapping]] = ..., rollback: _Optional[_Union[Rollback, _Mapping]] = ..., set_field: _Optional[_Union[SetField, _Mapping]] = ..., restart_rollout: _Optional[_Union[RestartRollout, _Mapping]] = ..., create_from_source: _Optional[_Union[CreateFromSource, _Mapping]] = ..., delete_object: _Optional[_Union[DeleteObject, _Mapping]] = ..., delete_pod: _Optional[_Union[DeletePod, _Mapping]] = ..., scale_workload: _Optional[_Union[ScaleWorkload, _Mapping]] = ..., exec: _Optional[_Union[Exec, _Mapping]] = ..., remove_service_port: _Optional[_Union[RemoveServicePort, _Mapping]] = ..., ensure_database_user: _Optional[_Union[EnsureDatabaseUser, _Mapping]] = ...) -> None: ...
+    patch_object: PatchObject
+    apply_object: ApplyObject
+    kubernetes_request: KubernetesRequest
+    wait_for: WaitFor
+    ensure_exec: EnsureExec
+    ensure_http: EnsureHttp
+    run_job: RunJob
+    def __init__(self, reconcile_from_source: _Optional[_Union[ReconcileFromSource, _Mapping]] = ..., rollback: _Optional[_Union[Rollback, _Mapping]] = ..., set_field: _Optional[_Union[SetField, _Mapping]] = ..., restart_rollout: _Optional[_Union[RestartRollout, _Mapping]] = ..., create_from_source: _Optional[_Union[CreateFromSource, _Mapping]] = ..., delete_object: _Optional[_Union[DeleteObject, _Mapping]] = ..., delete_pod: _Optional[_Union[DeletePod, _Mapping]] = ..., scale_workload: _Optional[_Union[ScaleWorkload, _Mapping]] = ..., exec: _Optional[_Union[Exec, _Mapping]] = ..., remove_service_port: _Optional[_Union[RemoveServicePort, _Mapping]] = ..., ensure_database_user: _Optional[_Union[EnsureDatabaseUser, _Mapping]] = ..., patch_object: _Optional[_Union[PatchObject, _Mapping]] = ..., apply_object: _Optional[_Union[ApplyObject, _Mapping]] = ..., kubernetes_request: _Optional[_Union[KubernetesRequest, _Mapping]] = ..., wait_for: _Optional[_Union[WaitFor, _Mapping]] = ..., ensure_exec: _Optional[_Union[EnsureExec, _Mapping]] = ..., ensure_http: _Optional[_Union[EnsureHttp, _Mapping]] = ..., run_job: _Optional[_Union[RunJob, _Mapping]] = ...) -> None: ...
 
 class CreateFromSource(_message.Message):
     __slots__ = ("ref", "reason")
@@ -223,16 +237,24 @@ class ValueProvenance(_message.Message):
     def __init__(self, origin: _Optional[str] = ..., ref: _Optional[_Union[_common_pb2.ObjectRef, _Mapping]] = ..., path: _Optional[str] = ..., source_commit: _Optional[str] = ..., resource_version: _Optional[str] = ..., parameter: _Optional[str] = ...) -> None: ...
 
 class ActionReport(_message.Message):
-    __slots__ = ("action_index", "status", "values", "exit_code")
+    __slots__ = ("action_index", "status", "values", "exit_code", "external_effect_json", "kubernetes_effect_json", "recording_error", "job_status_json")
     ACTION_INDEX_FIELD_NUMBER: _ClassVar[int]
     STATUS_FIELD_NUMBER: _ClassVar[int]
     VALUES_FIELD_NUMBER: _ClassVar[int]
     EXIT_CODE_FIELD_NUMBER: _ClassVar[int]
+    EXTERNAL_EFFECT_JSON_FIELD_NUMBER: _ClassVar[int]
+    KUBERNETES_EFFECT_JSON_FIELD_NUMBER: _ClassVar[int]
+    RECORDING_ERROR_FIELD_NUMBER: _ClassVar[int]
+    JOB_STATUS_JSON_FIELD_NUMBER: _ClassVar[int]
     action_index: int
     status: str
     values: _containers.RepeatedCompositeFieldContainer[ValueProvenance]
     exit_code: int
-    def __init__(self, action_index: _Optional[int] = ..., status: _Optional[str] = ..., values: _Optional[_Iterable[_Union[ValueProvenance, _Mapping]]] = ..., exit_code: _Optional[int] = ...) -> None: ...
+    external_effect_json: bytes
+    kubernetes_effect_json: bytes
+    recording_error: str
+    job_status_json: bytes
+    def __init__(self, action_index: _Optional[int] = ..., status: _Optional[str] = ..., values: _Optional[_Iterable[_Union[ValueProvenance, _Mapping]]] = ..., exit_code: _Optional[int] = ..., external_effect_json: _Optional[bytes] = ..., kubernetes_effect_json: _Optional[bytes] = ..., recording_error: _Optional[str] = ..., job_status_json: _Optional[bytes] = ...) -> None: ...
 
 class DeletePod(_message.Message):
     __slots__ = ("ref",)
@@ -487,3 +509,158 @@ class EnsureDatabaseUser(_message.Message):
     password: CredentialRef
     reason: str
     def __init__(self, target: _Optional[_Union[DatabaseTarget, _Mapping]] = ..., user: _Optional[str] = ..., roles: _Optional[_Iterable[_Union[DatabaseRole, _Mapping]]] = ..., password: _Optional[_Union[CredentialRef, _Mapping]] = ..., reason: _Optional[str] = ...) -> None: ...
+
+class PatchObject(_message.Message):
+    __slots__ = ("ref", "type", "patch_json", "edits", "reason")
+    REF_FIELD_NUMBER: _ClassVar[int]
+    TYPE_FIELD_NUMBER: _ClassVar[int]
+    PATCH_JSON_FIELD_NUMBER: _ClassVar[int]
+    EDITS_FIELD_NUMBER: _ClassVar[int]
+    REASON_FIELD_NUMBER: _ClassVar[int]
+    ref: _common_pb2.ObjectRef
+    type: str
+    patch_json: bytes
+    edits: _containers.RepeatedCompositeFieldContainer[ListEdit]
+    reason: str
+    def __init__(self, ref: _Optional[_Union[_common_pb2.ObjectRef, _Mapping]] = ..., type: _Optional[str] = ..., patch_json: _Optional[bytes] = ..., edits: _Optional[_Iterable[_Union[ListEdit, _Mapping]]] = ..., reason: _Optional[str] = ...) -> None: ...
+
+class ListEdit(_message.Message):
+    __slots__ = ("path", "match_json", "op", "value_json")
+    PATH_FIELD_NUMBER: _ClassVar[int]
+    MATCH_JSON_FIELD_NUMBER: _ClassVar[int]
+    OP_FIELD_NUMBER: _ClassVar[int]
+    VALUE_JSON_FIELD_NUMBER: _ClassVar[int]
+    path: str
+    match_json: bytes
+    op: str
+    value_json: bytes
+    def __init__(self, path: _Optional[str] = ..., match_json: _Optional[bytes] = ..., op: _Optional[str] = ..., value_json: _Optional[bytes] = ...) -> None: ...
+
+class ApplyObject(_message.Message):
+    __slots__ = ("ref", "object_json", "mode", "reason")
+    REF_FIELD_NUMBER: _ClassVar[int]
+    OBJECT_JSON_FIELD_NUMBER: _ClassVar[int]
+    MODE_FIELD_NUMBER: _ClassVar[int]
+    REASON_FIELD_NUMBER: _ClassVar[int]
+    ref: _common_pb2.ObjectRef
+    object_json: bytes
+    mode: str
+    reason: str
+    def __init__(self, ref: _Optional[_Union[_common_pb2.ObjectRef, _Mapping]] = ..., object_json: _Optional[bytes] = ..., mode: _Optional[str] = ..., reason: _Optional[str] = ...) -> None: ...
+
+class KubernetesRequest(_message.Message):
+    __slots__ = ("ref", "method", "path", "query", "content_type", "body", "reason")
+    class QueryEntry(_message.Message):
+        __slots__ = ("key", "value")
+        KEY_FIELD_NUMBER: _ClassVar[int]
+        VALUE_FIELD_NUMBER: _ClassVar[int]
+        key: str
+        value: str
+        def __init__(self, key: _Optional[str] = ..., value: _Optional[str] = ...) -> None: ...
+    REF_FIELD_NUMBER: _ClassVar[int]
+    METHOD_FIELD_NUMBER: _ClassVar[int]
+    PATH_FIELD_NUMBER: _ClassVar[int]
+    QUERY_FIELD_NUMBER: _ClassVar[int]
+    CONTENT_TYPE_FIELD_NUMBER: _ClassVar[int]
+    BODY_FIELD_NUMBER: _ClassVar[int]
+    REASON_FIELD_NUMBER: _ClassVar[int]
+    ref: _common_pb2.ObjectRef
+    method: str
+    path: str
+    query: _containers.ScalarMap[str, str]
+    content_type: str
+    body: bytes
+    reason: str
+    def __init__(self, ref: _Optional[_Union[_common_pb2.ObjectRef, _Mapping]] = ..., method: _Optional[str] = ..., path: _Optional[str] = ..., query: _Optional[_Mapping[str, str]] = ..., content_type: _Optional[str] = ..., body: _Optional[bytes] = ..., reason: _Optional[str] = ...) -> None: ...
+
+class WaitFor(_message.Message):
+    __slots__ = ("ref", "path", "equals_json", "timeout", "interval")
+    REF_FIELD_NUMBER: _ClassVar[int]
+    PATH_FIELD_NUMBER: _ClassVar[int]
+    EQUALS_JSON_FIELD_NUMBER: _ClassVar[int]
+    TIMEOUT_FIELD_NUMBER: _ClassVar[int]
+    INTERVAL_FIELD_NUMBER: _ClassVar[int]
+    ref: _common_pb2.ObjectRef
+    path: str
+    equals_json: bytes
+    timeout: _duration_pb2.Duration
+    interval: _duration_pb2.Duration
+    def __init__(self, ref: _Optional[_Union[_common_pb2.ObjectRef, _Mapping]] = ..., path: _Optional[str] = ..., equals_json: _Optional[bytes] = ..., timeout: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ..., interval: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ...) -> None: ...
+
+class Command(_message.Message):
+    __slots__ = ("pod", "container", "args", "stdin")
+    POD_FIELD_NUMBER: _ClassVar[int]
+    CONTAINER_FIELD_NUMBER: _ClassVar[int]
+    ARGS_FIELD_NUMBER: _ClassVar[int]
+    STDIN_FIELD_NUMBER: _ClassVar[int]
+    pod: _common_pb2.ObjectRef
+    container: str
+    args: _containers.RepeatedScalarFieldContainer[str]
+    stdin: str
+    def __init__(self, pod: _Optional[_Union[_common_pb2.ObjectRef, _Mapping]] = ..., container: _Optional[str] = ..., args: _Optional[_Iterable[str]] = ..., stdin: _Optional[str] = ...) -> None: ...
+
+class HttpRequest(_message.Message):
+    __slots__ = ("pod", "container", "method", "url", "headers", "body", "bearer", "header_env")
+    class HeadersEntry(_message.Message):
+        __slots__ = ("key", "value")
+        KEY_FIELD_NUMBER: _ClassVar[int]
+        VALUE_FIELD_NUMBER: _ClassVar[int]
+        key: str
+        value: str
+        def __init__(self, key: _Optional[str] = ..., value: _Optional[str] = ...) -> None: ...
+    class HeaderEnvEntry(_message.Message):
+        __slots__ = ("key", "value")
+        KEY_FIELD_NUMBER: _ClassVar[int]
+        VALUE_FIELD_NUMBER: _ClassVar[int]
+        key: str
+        value: CredentialRef
+        def __init__(self, key: _Optional[str] = ..., value: _Optional[_Union[CredentialRef, _Mapping]] = ...) -> None: ...
+    POD_FIELD_NUMBER: _ClassVar[int]
+    CONTAINER_FIELD_NUMBER: _ClassVar[int]
+    METHOD_FIELD_NUMBER: _ClassVar[int]
+    URL_FIELD_NUMBER: _ClassVar[int]
+    HEADERS_FIELD_NUMBER: _ClassVar[int]
+    BODY_FIELD_NUMBER: _ClassVar[int]
+    BEARER_FIELD_NUMBER: _ClassVar[int]
+    HEADER_ENV_FIELD_NUMBER: _ClassVar[int]
+    pod: _common_pb2.ObjectRef
+    container: str
+    method: str
+    url: str
+    headers: _containers.ScalarMap[str, str]
+    body: str
+    bearer: CredentialRef
+    header_env: _containers.MessageMap[str, CredentialRef]
+    def __init__(self, pod: _Optional[_Union[_common_pb2.ObjectRef, _Mapping]] = ..., container: _Optional[str] = ..., method: _Optional[str] = ..., url: _Optional[str] = ..., headers: _Optional[_Mapping[str, str]] = ..., body: _Optional[str] = ..., bearer: _Optional[_Union[CredentialRef, _Mapping]] = ..., header_env: _Optional[_Mapping[str, CredentialRef]] = ...) -> None: ...
+
+class EnsureExec(_message.Message):
+    __slots__ = ("observe", "ensure", "expect", "reason")
+    OBSERVE_FIELD_NUMBER: _ClassVar[int]
+    ENSURE_FIELD_NUMBER: _ClassVar[int]
+    EXPECT_FIELD_NUMBER: _ClassVar[int]
+    REASON_FIELD_NUMBER: _ClassVar[int]
+    observe: Command
+    ensure: Command
+    expect: int
+    reason: str
+    def __init__(self, observe: _Optional[_Union[Command, _Mapping]] = ..., ensure: _Optional[_Union[Command, _Mapping]] = ..., expect: _Optional[int] = ..., reason: _Optional[str] = ...) -> None: ...
+
+class EnsureHttp(_message.Message):
+    __slots__ = ("observe", "ensure", "expect", "reason")
+    OBSERVE_FIELD_NUMBER: _ClassVar[int]
+    ENSURE_FIELD_NUMBER: _ClassVar[int]
+    EXPECT_FIELD_NUMBER: _ClassVar[int]
+    REASON_FIELD_NUMBER: _ClassVar[int]
+    observe: HttpRequest
+    ensure: HttpRequest
+    expect: int
+    reason: str
+    def __init__(self, observe: _Optional[_Union[HttpRequest, _Mapping]] = ..., ensure: _Optional[_Union[HttpRequest, _Mapping]] = ..., expect: _Optional[int] = ..., reason: _Optional[str] = ...) -> None: ...
+
+class RunJob(_message.Message):
+    __slots__ = ("object", "completion")
+    OBJECT_FIELD_NUMBER: _ClassVar[int]
+    COMPLETION_FIELD_NUMBER: _ClassVar[int]
+    object: ApplyObject
+    completion: WaitFor
+    def __init__(self, object: _Optional[_Union[ApplyObject, _Mapping]] = ..., completion: _Optional[_Union[WaitFor, _Mapping]] = ...) -> None: ...

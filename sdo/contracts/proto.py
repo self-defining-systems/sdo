@@ -87,6 +87,16 @@ Verdict = program_pb2.Verdict
 Evidence = program_pb2.Evidence
 Plan = program_pb2.Plan
 Action = program_pb2.Action
+PatchObject = program_pb2.PatchObject
+ListEdit = program_pb2.ListEdit
+ApplyObject = program_pb2.ApplyObject
+KubernetesRequest = program_pb2.KubernetesRequest
+WaitFor = program_pb2.WaitFor
+Command = program_pb2.Command
+HttpRequest = program_pb2.HttpRequest
+EnsureExec = program_pb2.EnsureExec
+EnsureHttp = program_pb2.EnsureHttp
+RunJob = program_pb2.RunJob
 CreateFromSource = program_pb2.CreateFromSource
 DeleteObject = program_pb2.DeleteObject
 PlanObjectEffect = program_pb2.PlanObjectEffect
@@ -190,7 +200,7 @@ ReflectionRequest = worker_pb2.ReflectionRequest
 ReflectionResult = worker_pb2.ReflectionResult
 DriftEvent = messages_pb2.DriftEvent
 DriftEvidence = messages_pb2.DriftEvidence
-SdkGap = worker_pb2.SdkGap
+SdkGap = outcome_pb2.SdkGap
 SourceDeploymentRequest = lifecycle_pb2.SourceDeploymentRequest
 SourceDeploymentResult = lifecycle_pb2.SourceDeploymentResult
 DeploymentPlan = lifecycle_pb2.DeploymentPlan
@@ -203,6 +213,16 @@ HealthJudgeResult = lifecycle_pb2.HealthJudgeResult
 SourceResource = lifecycle_pb2.SourceResource
 
 __all__ = [
+    "PatchObject",
+    "ListEdit",
+    "ApplyObject",
+    "KubernetesRequest",
+    "WaitFor",
+    "Command",
+    "HttpRequest",
+    "EnsureExec",
+    "EnsureHttp",
+    "RunJob",
     "MitigationSession",
     "MitigationSessionCheckpoint",
     "MitigationMenu",
