@@ -724,8 +724,32 @@ func sourceFields(current, source *unstructured.Unstructured, ref sdk.ObjectRef)
 	if source == nil || !samePlanRef(source, ref) {
 		return nil, fmt.Errorf("source object does not match %s/%s", ref.Kind, ref.Name)
 	}
-	for _, field := range []string{"spec", "data", "binaryData"} {
-		if value, ok := source.Object[field]; ok {
+	// Source configuration is open-ended (RBAC, admission, custom resources).
+	// Identity/status stay API-owned; source metadata keys merge so an
+	// independent controller's completion annotations survive reconciliation.
+	for field, value := range source.Object {
+		switch field {
+		case "apiVersion", "kind", "status":
+			continue
+		case "metadata":
+			metadata, _ := value.(map[string]any)
+			for key, declared := range metadata {
+				switch key {
+				case "name", "namespace", "uid", "resourceVersion", "generation", "creationTimestamp", "deletionTimestamp", "managedFields":
+					continue
+				}
+				if key == "annotations" || key == "labels" {
+					values, _ := declared.(map[string]any)
+					for name, item := range values {
+						if err := unstructured.SetNestedField(current.Object, runtime.DeepCopyJSONValue(item), "metadata", key, name); err != nil {
+							return nil, err
+						}
+					}
+				} else if err := unstructured.SetNestedField(current.Object, runtime.DeepCopyJSONValue(declared), "metadata", key); err != nil {
+					return nil, err
+				}
+			}
+		default:
 			current.Object[field] = runtime.DeepCopyJSONValue(value)
 		}
 	}

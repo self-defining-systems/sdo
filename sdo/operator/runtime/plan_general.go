@@ -408,14 +408,14 @@ func (e PlanExecutor) waitForField(ctx context.Context, w program.WaitFor) error
 }
 
 func planPatchFields(p PlanPatch) []string {
-	if p.Authorization != "general" {
+	if p.Authorization != "general" && p.Authorization != "accepted-source" {
 		return []string{"spec", "data", "binaryData"}
 	}
 	keys := map[string]bool{}
 	for _, o := range []*unstructured.Unstructured{p.Before, p.After} {
 		if o != nil {
 			for k := range o.Object {
-				if k != "apiVersion" && k != "kind" {
+				if k != "apiVersion" && k != "kind" && k != "status" {
 					keys[k] = true
 				}
 			}
