@@ -148,6 +148,7 @@ type ReadView interface {
 	ProbeHTTP(to sdk.ObjectRef, req HTTPProbe) (ProbeResult, error)
 	DiffAgainstSource(ref sdk.ObjectRef) (Diff, error)
 	DiffAgainstBaseline(ref sdk.ObjectRef) (Diff, error)
+	DatabaseUsers(DatabaseTarget) ([]DatabaseUser, error)
 }
 
 type ProbeResult struct {
@@ -286,6 +287,12 @@ type Plan struct {
 
 func (p Plan) Validate() error {
 	for _, action := range p.Actions {
+		if err := validateDatabaseAction(action); err != nil {
+			return err
+		}
+		if err := validateServicePortAction(action); err != nil {
+			return err
+		}
 		if err := validateRuntimeAction(action); err != nil {
 			return err
 		}
