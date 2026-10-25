@@ -8,7 +8,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"runtime"
+	"runtime/pprof"
 	"sdo.dev/operator/apihistory"
 	"sdo.dev/operator/kubeproxy"
 	"sort"
@@ -136,16 +138,27 @@ func TestLargeResponseWarmAddedP95(t *testing.T) {
 		io.Copy(w, res.Body)
 	}))
 	defer controlHop.Close()
-	get := func(endpoint string) time.Duration {
+	get := func(path, endpoint string) time.Duration {
 		start := time.Now()
+		watchdogDone := make(chan struct{})
+		timer := time.AfterFunc(time.Second, func() {
+			defer close(watchdogDone)
+			t.Logf("stalled %s request to %s after %s", path, endpoint, time.Since(start))
+			pprof.Lookup("goroutine").WriteTo(os.Stderr, 2)
+		})
+		defer func() {
+			if !timer.Stop() {
+				<-watchdogDone
+			}
+		}()
 		res, err := client.Get(endpoint + "/api/v1/namespaces/app/pods")
 		if err != nil {
-			t.Fatal(err)
+			t.Fatalf("%s request: %v", path, err)
 		}
 		n, err := io.Copy(io.Discard, res.Body)
 		res.Body.Close()
 		if err != nil || n != int64(len(payload)) {
-			t.Fatalf("read %d %v", n, err)
+			t.Fatalf("%s request to %s read %d/%d after %s: %v", path, endpoint, n, len(payload), time.Since(start), err)
 		}
 		return time.Since(start)
 	}
@@ -159,11 +172,11 @@ func TestLargeResponseWarmAddedP95(t *testing.T) {
 			for _, step := range [][3]int{{0, 1, 2}, {2, 0, 1}, {1, 2, 0}}[i%3] {
 				switch step {
 				case 0:
-					direct = get(up.URL)
+					direct = get("direct", up.URL)
 				case 1:
-					control = get(controlHop.URL)
+					control = get("control", controlHop.URL)
 				case 2:
-					proxied = get(proxy.URL)
+					proxied = get("proxy", proxy.URL)
 				}
 			}
 			directs[i] = direct
