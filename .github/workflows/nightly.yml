@@ -23,6 +23,8 @@ env:
 #   distribution sampling needs repetition and a quiet runner. PRs keep a single
 #   repeat of all three tests (including the unresolved large-response failure)
 #   and every deterministic forwarding/redaction contract.
+# - Publishing the full shared image-layer cache: uploading compiler/toolchain
+#   layers cost 175s on a measured PR; PRs restore this cache and still build/probe.
 # - All four images even without image-input changes: catch base/tool service
 #   regressions daily. PRs still build/smoke/probe every affected image.
 jobs:

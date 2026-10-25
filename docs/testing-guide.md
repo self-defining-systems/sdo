@@ -577,10 +577,12 @@ and deterministic forwarding/redaction contracts. Every affected image is still
 built, smoked, probed and checked for forbidden benchmark files on PRs.
 
 Static analysis already includes type and architecture checks, so their standalone
-jobs were redundant. They now run once inside the Python/static job, alongside
-formatting, proto lint/codegen drift and the Python contracts. Image builds share
-one maximal cache export for common layers instead of exporting those layers four
-times under separate scopes. Image setup reads the committed native SDK pin,
+jobs were redundant. They now run once on the Go/Python runner alongside formatting
+and proto lint/codegen drift. Nightly publishes one maximal shared image-layer
+cache; PR image jobs restore it without repeating the large compiler/toolchain
+layer upload (175 seconds in a hosted sample). Every affected image still builds
+and receives the same smoke, probe and forbidden-path audit.
+Image setup reads the committed native SDK pin,
 which the Go static gate and built-image validation independently verify, avoiding
 a second full controller build just to obtain its schema string.
 

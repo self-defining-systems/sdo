@@ -274,7 +274,6 @@ jobs:
             fi
           done
           echo "images=${images[*]}" >> "${GITHUB_OUTPUT}"
-          echo "cache-target=${images[-1]}" >> "${GITHUB_OUTPUT}"
           (IFS=,; echo "targets=${images[*]}") >> "${GITHUB_OUTPUT}"
           # The Go static gate and native image smoke both verify this pin.
           # Avoid a redundant full CLI build just to obtain its schema string.
@@ -288,9 +287,9 @@ jobs:
           files: scripts/sdo-images.hcl
           targets: ${{ steps.image-inputs.outputs.targets }}
           load: true
+          # Nightly publishes the full cache; PRs avoid its large upload.
           set: |
             *.cache-from=type=gha,scope=sdo-images
-            ${{ steps.image-inputs.outputs.cache-target }}.cache-to=type=gha,scope=sdo-images,mode=max
       - name: Smoke and probe every affected image
         if: steps.resolve.outputs.any_image == 'true'
         env:

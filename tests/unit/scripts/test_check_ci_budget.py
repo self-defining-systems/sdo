@@ -188,3 +188,13 @@ def test_independent_smokes_still_execute_after_a_module_test_failure() -> None:
         step = next(step for step in steps if step.get("name") == name)
         assert step.get("if") == "!cancelled()"
         assert not step.get("continue-on-error", False)
+
+
+def test_heavy_image_cache_publication_is_nightly_and_prs_consume_it() -> None:
+    pr = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
+    nightly = yaml.safe_load((ROOT / ".github/workflows/nightly.yml").read_text())
+    pr_build = next(s for s in pr["jobs"]["images"]["steps"] if "docker/bake-action@" in s.get("uses", ""))
+    nightly_build = next(s for s in nightly["jobs"]["images"]["steps"] if "docker/bake-action@" in s.get("uses", ""))
+    assert "*.cache-from=type=gha,scope=sdo-images" in pr_build["with"]["set"]
+    assert "cache-to" not in pr_build["with"]["set"]
+    assert ".cache-to=type=gha,scope=sdo-images,mode=max" in nightly_build["with"]["set"]
