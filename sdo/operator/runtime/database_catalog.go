@@ -99,7 +99,7 @@ func (c TypedPlanClient) mongo(ctx context.Context, t program.DatabaseTarget, a 
 	if shell == "" {
 		shell = "mongo"
 	}
-	command := []string{shell, "--quiet", "--norc", t.Database}
+	command := []string{shell, "--quiet", "--norc", t.Database, "--eval", mongoScript(t, a)}
 	request := c.Client.CoreV1().RESTClient().Post().Resource("pods").Name(t.Pod.Name).Namespace(t.Pod.Namespace).SubResource("exec").VersionedParams(&corev1.PodExecOptions{Container: t.Container, Command: command, Stdin: true, Stdout: a == nil, Stderr: false, TTY: false}, scheme.ParameterCodec)
 	config := rest.CopyConfig(c.ExecConfig)
 	executor, err := remotecommand.NewSPDYExecutor(config, "POST", request.URL())
@@ -111,7 +111,7 @@ func (c TypedPlanClient) mongo(ctx context.Context, t program.DatabaseTarget, a 
 	if a == nil {
 		stdout = output
 	}
-	err = executor.StreamWithContext(ctx, remotecommand.StreamOptions{Stdin: strings.NewReader(mongoScript(t, a)), Stdout: stdout})
+	err = executor.StreamWithContext(ctx, remotecommand.StreamOptions{Stdin: strings.NewReader(""), Stdout: stdout})
 	if err != nil {
 		return nil, fmt.Errorf("database operation failed or outcome unknown")
 	}

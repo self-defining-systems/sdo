@@ -664,6 +664,12 @@ func sourceFields(current, source *unstructured.Unstructured, ref sdk.ObjectRef)
 
 func planActionRef(action program.Action) (sdk.ObjectRef, error) {
 	switch a := action.(type) {
+	case program.EnsureDatabaseUser:
+		return a.Target.Pod, nil
+	case *program.EnsureDatabaseUser:
+		if a != nil {
+			return a.Target.Pod, nil
+		}
 	case program.RemoveServicePort:
 		return a.Ref, nil
 	case *program.RemoveServicePort:

@@ -20,7 +20,7 @@ func databaseActionProto(a program.EnsureDatabaseUser) *contracts.Action {
 func databaseActionState(a *contracts.EnsureDatabaseUser) program.Action {
 	t := a.GetTarget()
 	target := program.DatabaseTarget{Engine: t.GetEngine(), Pod: objectRefState(t.GetPod()), Container: t.GetContainer(), Database: t.GetDatabase(), Shell: t.GetShell()}
-	if t.Auth != nil {
+	if t != nil && t.Auth != nil {
 		target.Auth = &program.DatabaseAuth{Database: t.Auth.GetDatabase(), Username: program.CredentialRef{Env: t.Auth.GetUsername().GetEnv()}, Password: program.CredentialRef{Env: t.Auth.GetPassword().GetEnv()}}
 	}
 	out := program.EnsureDatabaseUser{Target: target, User: a.GetUser(), Password: program.CredentialRef{Env: a.GetPassword().GetEnv()}, Reason: a.GetReason()}

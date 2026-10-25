@@ -148,6 +148,9 @@ func Check(ctx context.Context, p program.Diagnoser, m program.Mitigator, detect
 	if err != nil {
 		return fail(err)
 	}
+	if err = client.seedDatabases(append(append([]sdktest.PrimitiveCall(nil), c.Corpus.Open.Readings...), c.Corpus.PhaseRecordings("open")...)); err != nil {
+		return fail(err)
+	}
 	r.Effects = append(r.Effects, "simulated:apiserver-metadata")
 	const commit = "offline-accepted"
 	incident := operator.IncidentRequest{IncidentID: c.ID, Application: c.Corpus.Open.NamespaceName, Namespace: c.Corpus.Open.NamespaceName, SourceCommit: commit, RepairPolicy: "recorded-actions"}
@@ -284,7 +287,9 @@ func (v *postVerifier) Verify(ctx context.Context) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	v.result.Post = program.RunDiagnose(ctx, v.p, newReadView(ctx, s, unchangedPodProbes(v.cluster.initial, s, v.recordings), v.source), v.bindings, 5*time.Second)
+	view := newReadView(ctx, s, unchangedPodProbes(v.cluster.initial, s, v.recordings), v.source)
+	view.catalog = v.cluster
+	v.result.Post = program.RunDiagnose(ctx, v.p, view, v.bindings, 5*time.Second)
 	v.result.Detectors["post"] = detect(ctx, v.detectors, s)
 	clear := v.result.Post.Result == program.NoMatch
 	for _, d := range v.result.Detectors["post"] {
@@ -371,6 +376,7 @@ type cluster struct {
 	fake       *kubefake.Clientset
 	initial    map[sdk.ObjectRef]*unstructured.Unstructured
 	original   sdktest.Snapshot
+	catalogs   map[string]databaseCatalog
 	simCreated map[sdk.ObjectRef]*unstructured.Unstructured
 	simDeleted map[sdk.ObjectRef]bool
 	simStatus  map[sdk.ObjectRef]map[string]any

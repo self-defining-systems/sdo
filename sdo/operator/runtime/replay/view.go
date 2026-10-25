@@ -16,8 +16,9 @@ import (
 // fixed recordings are never used to prove the effect of a plan.
 type readView struct {
 	*sdktest.ReplayReadView
-	source *source
-	ctx    context.Context
+	source  *source
+	ctx     context.Context
+	catalog operator.DatabaseCatalogClient
 }
 
 func newReadView(ctx context.Context, s sdktest.Snapshot, calls []sdktest.PrimitiveCall, source *source) *readView {
