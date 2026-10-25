@@ -149,3 +149,18 @@ def test_required_ci_rejects_any_applicable_unsuccessful_job(result: str, accept
         check=False,
     )
     assert (completed.returncode == 0) is accepted
+
+
+def test_go_build_cache_survives_test_failures_and_is_shared_with_python() -> None:
+    jobs = workflow()["jobs"]
+    for name in ("go", "checks"):
+        steps = jobs[name]["steps"]
+        restore = next(step for step in steps if step.get("id") == "go-cache")
+        assert "-shared-1.26.8-" in restore["with"]["key"]
+        assert "~/.cache/go-build" in restore["with"]["path"]
+        assert "~/go/pkg/mod" in restore["with"]["path"]
+    save = next(
+        step for step in jobs["go"]["steps"] if step.get("name") == "Save shared Go builds even after test failures"
+    )
+    assert "always()" in save["if"]
+    assert "steps.go-cache.outputs.cache-primary-key" in save["with"]["key"]
