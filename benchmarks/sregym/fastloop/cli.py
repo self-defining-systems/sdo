@@ -677,6 +677,7 @@ def _run(args: argparse.Namespace) -> int:
         driver = SregymFaultDriver(
             worker,
             namespace=environment.namespace,
+            baseline_problem_id=environment.deploy_problem if baseline is not None else None,
             baseline=baseline,
             cluster=KubectlApplicationCluster(environment.kubeconfig) if baseline is not None else None,
             health_timeout_seconds=args.health_timeout * args.time_scale,

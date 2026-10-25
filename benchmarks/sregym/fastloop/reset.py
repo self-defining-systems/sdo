@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import TYPE_CHECKING, Any, Protocol
 
 from benchmarks.sregym.adapter import PersistentState, kubectl
@@ -16,6 +17,9 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from benchmarks.sregym.fastloop.environment import FastloopEnvironment
+
+
+logger = logging.getLogger(__name__)
 
 
 class ResetCluster(Protocol):
@@ -56,7 +60,7 @@ class KubectlResetCluster(KubectlApplicationCluster):
                 kubeconfig=self.kubeconfig,
             ).stdout
         )["items"]
-        running = [pod for pod in pods if pod.get("status", {}).get("phase") == "Running"]
+        running = [pod for pod in pods if pod.get("status", {}).get("phase") not in {"Succeeded", "Failed"}]
         job = kubectl(
             ["get", "job", "sdo-controller-run", "-o", "json"],
             namespace=namespace,
@@ -85,16 +89,49 @@ class KubectlResetCluster(KubectlApplicationCluster):
             namespace=namespace,
             kubeconfig=self.kubeconfig,
         )
+        # A controller Pod can outlive its Job. Await those observed writers
+        # too before deleting the state that their next write could recreate.
+        for pod in running:
+            kubectl(
+                ["delete", "pod", pod["metadata"]["name"], "--ignore-not-found=true", "--wait=true", "--timeout=120s"],
+                namespace=namespace,
+                kubeconfig=self.kubeconfig,
+            )
+        # Retire only transient controller state after all writers stop. The
+        # next incident must not resume an expired request/proposal checkout.
+        kubectl(
+            [
+                "delete",
+                "configmap",
+                "sdo-controller-state",
+                "sdo-controller-state-drift-verdicts",
+                "--ignore-not-found=true",
+                "--wait=true",
+            ],
+            namespace=namespace,
+            kubeconfig=self.kubeconfig,
+        )
+        # Without a trusted controller template there is no safe image/mount
+        # for filesystem cleanup. State retirement still applies to this path.
         if cleanup_spec is None:
+            logger.info("Reset retired controller state without a controller template; filesystem scratch retained")
             return
         controller = next(container for container in cleanup_spec["containers"] if container["name"] == "controller")
         mount = next(mount for mount in controller["volumeMounts"] if mount["mountPath"] == "/workspace")
         volume = next(volume for volume in cleanup_spec["volumes"] if volume["name"] == mount["name"])
-        cleanup = "rm -rf /workspace/.sdo-runtime/sessions /workspace/worktrees"
-        if not preserve_repository:
+        # Native ledgers are durable broker history, unlike sibling proposal
+        # checkouts. Keep them across warm resets; remove only transient scratch.
+        cleanup = "rm -rf /workspace/.sdo-runtime/sessions && "
+        if preserve_repository:
+            cleanup += (
+                "if [ -d /workspace/worktrees ]; then "
+                "find /workspace/worktrees -mindepth 1 -maxdepth 1 ! -name native-ledger "
+                "-exec rm -rf -- {} +; fi"
+            )
+        else:
             cleanup = (
                 'git -C /workspace/application reset --hard "$1" && '
-                "git -C /workspace/application clean -fd && " + cleanup
+                "git -C /workspace/application clean -fd && " + cleanup + "rm -rf /workspace/worktrees"
             )
         pod = {
             "apiVersion": "v1",
