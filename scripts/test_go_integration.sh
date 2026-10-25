@@ -10,4 +10,4 @@ uv run python scripts/operator_test_binary.py
 (cd sdo/operator/runtime && go test -run '^$' .)
 # Compile the bootstrap fixture and generated detector/controller dependencies.
 (cd sdo/operator && go build -o "$root/.fastloop/test-bin/setup" "$root/tests/unit/benchmarks/sregym/fastloop/fixtures/setup.go")
-uv run --extra test pytest -q -p no:tach -n 0 -m go_integration tests
+uv run --extra test pytest -q -p no:tach -n 2 -m go_integration tests
