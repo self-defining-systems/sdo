@@ -1,6 +1,6 @@
 ---
 name: test-sdo
-description: Test SDO changes and debug SDO behavior by climbing a tier ladder from unit tests through fastloop kind clusters to live LLM runs on SREGym, and report live runs against a baseline. Use when validating or debugging controller, broker, memory-edge, responder, reflection, drift or fast-path behavior; when running, rerunning or comparing any live SREGym test or experiment; when a live run fails; or when an iteration loop is taking too long.
+description: Test SDO changes and debug SDO behavior by climbing a tier ladder from unit tests through fastloop kind clusters to live LLM runs on SREGym, and report live runs against a baseline. Use when validating or debugging controller, broker, memory-edge, responder, reflection, drift or learned-mitigation behavior; when running, rerunning or comparing any live SREGym test or experiment; when a live run fails; or when an iteration loop is taking too long.
 ---
 
 # Test SDO
@@ -47,7 +47,7 @@ In a brief, state the change's risk classes, the tiers required before handoff, 
 - Run `fastloop preflight` before image builds; up repeats host and image checks before any build or cluster change.
 - Before a live run, gates 0 and 1 must pass on the exact commit the images are built from.
 - Run live work from a frozen, detached worktree through the [detached launcher](../../../docs/testing-guide.md#detached-launches); adopt the shared lane record after an agent restart.
-- Before trusting a skip or a silent no-op, make it observable. A decision point that returns without a recorded reason (fast-path skip, drift deferral, learning failure) is a bug.
+- Before trusting a skip or a silent no-op, make it observable. A decision point that returns without a recorded reason (coverage omission, drift deferral, learning failure) is a bug.
 - Scripted agents prove plumbing, not learning: they return hand-written verdicts and programs. Claim that SDO learned something only from a live run.
 - Make tests hermetic: no dependence on exported cluster prefixes, host paths or a warm cluster.
 - When builds or tests are slow, check disk and network filesystem wait before CPU, and keep build caches on local disk.

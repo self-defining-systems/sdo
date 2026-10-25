@@ -114,7 +114,6 @@ func menuB3Loop(t *testing.T) (*ResponderLoop, *menuB3Cluster) {
 	loop.ReadView = func(view sdk.DetectionContext) program.ReadView {
 		return &sdktest.ReplayReadView{Snapshot: view.(sdktest.Snapshot)}
 	}
-	loop.DiagnosisSettleDelay = time.Nanosecond
 	loop.MenuConfig = &ResponderMenuConfig{}
 	return loop, cluster
 }

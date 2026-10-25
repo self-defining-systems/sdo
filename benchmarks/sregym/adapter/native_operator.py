@@ -51,8 +51,7 @@ class NativeInstallConfig:
     reflection_session: str = "resume"
     reflection_guidance: str = "baseline"
     force_reflection: bool = False
-    program_fast_path: bool = True
-    program_trust_threshold: int = 1
+
     max_response_loops: int = 10
     response_timeout_seconds: int = 1800
     verification_timeout_seconds: int = 300
@@ -94,8 +93,7 @@ class NativeInstallConfig:
             raise ValueError("agent_provider must be codex or claude")
         if self.repair_policy not in ("commit", "recorded-actions"):
             raise ValueError("repair_policy must be commit or recorded-actions")
-        if self.program_trust_threshold <= 0:
-            raise ValueError("program_trust_threshold must be positive")
+
         if self.late_findings not in ("off", "pull"):
             raise ValueError("late_findings must be off or pull")
         if self.reflection_session not in ("fresh", "resume"):
@@ -379,22 +377,15 @@ def collect_native_receipt(
 ) -> dict[str, Any]:
     evidence = read_incident_evidence(config, incident_id, sync_repository=sync_repository)
     job_name = evidence["responder_job_name"]
-    ledger = evidence["ledger"]
-    outcome = ledger.get("outcome_document")
-    fast_path = isinstance(outcome, dict) and outcome.get("resolution_path") == "fast_path"
-    responder_job_evidence: list[dict[str, Any]] = []
-    if not fast_path:
-        job = _kubectl_json(config, "get", f"job/{job_name}")
-        job_metadata = job.get("metadata")
-        job_status = job.get("status")
-        if not isinstance(job_metadata, dict) or not isinstance(job_status, dict):
-            raise NativeOperatorError("responder Job has no metadata or status")
-        job_uid = job_metadata.get("uid")
-        if not isinstance(job_uid, str) or not job_uid or job_status.get("succeeded") != 1:
-            raise NativeOperatorError("responder Job is not durably successful")
-        responder_job_evidence = [
-            {"incident_id": incident_id, "job_name": job_name, "job_uid": job_uid, "succeeded": True}
-        ]
+    job = _kubectl_json(config, "get", f"job/{job_name}")
+    job_metadata = job.get("metadata")
+    job_status = job.get("status")
+    if not isinstance(job_metadata, dict) or not isinstance(job_status, dict):
+        raise NativeOperatorError("responder Job has no metadata or status")
+    job_uid = job_metadata.get("uid")
+    if not isinstance(job_uid, str) or not job_uid or job_status.get("succeeded") != 1:
+        raise NativeOperatorError("responder Job is not durably successful")
+    responder_job_evidence = [{"incident_id": incident_id, "job_name": job_name, "job_uid": job_uid, "succeeded": True}]
     controller_job = _kubectl_json(config, "get", "job/sdo-controller-run")
     controller_metadata = controller_job.get("metadata")
     controller_job_uid = controller_metadata.get("uid") if isinstance(controller_metadata, dict) else None
@@ -474,8 +465,7 @@ def install_existing(config: NativeInstallConfig) -> NativeInstallReceipt:
         args.append("--force-reflection")
     for path in config.deployed_manifest_paths:
         args.extend(("--deployed-manifest-path", path))
-    args.append(f"--program-fast-path={str(config.program_fast_path).lower()}")
-    args.extend(("--program-trust-threshold", str(config.program_trust_threshold)))
+
     args.extend(("--max-response-loops", str(config.max_response_loops)))
     args.extend(("--response-timeout", f"{config.response_timeout_seconds}s"))
     args.extend(("--verification-timeout", f"{config.verification_timeout_seconds}s"))
@@ -531,8 +521,7 @@ def launch_host(config: NativeHostConfig) -> dict[str, Any]:
     args.extend(("--reflection-guidance", config.install.reflection_guidance))
     if config.install.force_reflection:
         args.append("--force-reflection")
-    args.append(f"--program-fast-path={str(config.install.program_fast_path).lower()}")
-    args.extend(("--program-trust-threshold", str(config.install.program_trust_threshold)))
+
     args.extend(("--max-response-loops", str(config.install.max_response_loops)))
     args.extend(("--repair-policy", config.install.repair_policy))
     args.extend(("--response-timeout", f"{config.install.response_timeout_seconds}s"))

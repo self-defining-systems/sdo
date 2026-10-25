@@ -1,7 +1,7 @@
 """Sequential mixed-app dispatch through independently prepared fastloop environments.
 
 Run with ``python -m benchmarks.sregym.fastloop.dispatch --config dispatch.json
---output-dir /outside/repo/run --run-id mixed -- --program-fast-path``. The
+--output-dir /outside/repo/run --run-id mixed -- --max-response-loops 10``. The
 process is foreground work; the shared detached launcher owns process lifetime.
 """
 

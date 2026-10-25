@@ -180,16 +180,3 @@ func StepIncident(state *contracts.ControllerState, event IncidentEvent) (*contr
 func incidentIdentity(request *contracts.IncidentRequest, kind IncidentEffectKind) string {
 	return fmt.Sprintf("%s/incident/%d", Identity(request.GetIncidentId(), request.GetRepositoryBaseCommit(), ProcessClosure), kind)
 }
-
-// FastPathCredit is computed from accepted outcomes at the memory edge. A
-// revision change or failure prevents a counter from authorizing a repair.
-type FastPathCredit struct {
-	VerifiedSuccesses int
-	Failures          int
-	Trusted           bool
-	Revision          string
-}
-
-func EligibleFastPath(credit FastPathCredit, revision string, threshold int) bool {
-	return threshold > 0 && revision != "" && credit.Trusted && credit.Revision == revision && credit.Failures == 0 && credit.VerifiedSuccesses >= threshold
-}

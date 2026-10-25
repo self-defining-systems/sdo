@@ -378,7 +378,7 @@ func TestHermeticFastloopRealGoGate(t *testing.T) {
 	runHermeticFastloopRealGoGate(t, false)
 }
 
-func TestHermeticReflectionLearnsThenIdenticalRecurrenceSkipsResponder(t *testing.T) {
+func TestHermeticReflectionLearnsThenAgentSelectsIdenticalRecurrence(t *testing.T) {
 	runHermeticFastloopRealGoGate(t, true)
 }
 

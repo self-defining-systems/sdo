@@ -20,7 +20,6 @@ import (
 )
 
 const DefaultMaxResponseLoops = 10
-const DefaultDiagnosisSettleDelay = 15 * time.Second
 const maxRecordedToolResponse = 2048
 
 // maxRecordedApplyResponse bounds an apply record that lists the runs of the
@@ -110,52 +109,46 @@ type selectedPlan struct {
 
 // ResponderLoop holds one incident's tool state while its responder Job runs.
 type ResponderLoop struct {
-	continuation                    responderContinuation
-	MenuConfig                      *ResponderMenuConfig
-	menu                            *contracts.MitigationMenu
-	menuEntries                     map[string]menuEntry
-	menuSession                     *contracts.MitigationSession
-	menuReports                     []*contracts.MitigationReport
-	menuExecutions                  map[string][]MenuRoundExecution
-	menuRepairs                     []RepairActionReceipt
-	VerifyClosure                   func(context.Context) ToolResponse
-	CurrentEvidence                 func() *IncidentRequest
-	Request                         IncidentRequest
-	Programs                        program.ProgramRegistry
-	Provider                        SnapshotProvider
-	Detectors                       []sdk.Detector
-	Executor                        PlanExecutor
-	ReadView                        func(sdk.DetectionContext) program.ReadView
-	DiagnosisDeadline               time.Duration
-	DiagnosisSettleDelay            time.Duration
-	CandidateSweepLimit             int
-	MaxBatches                      int
-	Trust                           map[string]ProgramTrust
-	CorpusReplayPassed              bool
-	BeforeFastPathApply             func(context.Context, []ProgramRun) error
-	CorpusSessionRoot               string
-	capturePhase                    string
-	timing                          toolTiming
-	preApplyCaptured                bool
-	saveToolState                   func(context.Context, []byte) error
-	operationMu                     sync.Mutex
-	mu                              sync.Mutex
-	sessionID                       string
-	plans                           map[string]selectedPlan
-	applications                    map[string]PlanApplicationResult
-	applicationsLog                 []RecordedPlanApplication
-	failureSignals                  []string
-	calls                           []ToolCall
-	runs                            []ProgramRun
-	matchedViews                    map[string]program.ReadView
-	matchedPlans                    map[string]PlanApplicationResult
-	matchedPlanErrors               map[string]error
-	lastDiagnosisView               program.ReadView
-	findings                        []sdk.Finding
-	batches                         int
-	fastPathPrograms                []string
-	fastPathRelationCoveredFindings []RelationCoveredFinding
-	fastPathSkippedReason           FastPathSkipReason
+	continuation        responderContinuation
+	MenuConfig          *ResponderMenuConfig
+	menu                *contracts.MitigationMenu
+	menuEntries         map[string]menuEntry
+	menuSession         *contracts.MitigationSession
+	menuReports         []*contracts.MitigationReport
+	menuExecutions      map[string][]MenuRoundExecution
+	menuRepairs         []RepairActionReceipt
+	VerifyClosure       func(context.Context) ToolResponse
+	CurrentEvidence     func() *IncidentRequest
+	Request             IncidentRequest
+	Programs            program.ProgramRegistry
+	Provider            SnapshotProvider
+	Detectors           []sdk.Detector
+	Executor            PlanExecutor
+	ReadView            func(sdk.DetectionContext) program.ReadView
+	DiagnosisDeadline   time.Duration
+	CandidateSweepLimit int
+	MaxBatches          int
+	Trust               map[string]ProgramTrust
+	CorpusSessionRoot   string
+	capturePhase        string
+	timing              toolTiming
+	preApplyCaptured    bool
+	saveToolState       func(context.Context, []byte) error
+	operationMu         sync.Mutex
+	mu                  sync.Mutex
+	sessionID           string
+	plans               map[string]selectedPlan
+	applications        map[string]PlanApplicationResult
+	applicationsLog     []RecordedPlanApplication
+	failureSignals      []string
+	calls               []ToolCall
+	runs                []ProgramRun
+	matchedViews        map[string]program.ReadView
+	matchedPlans        map[string]PlanApplicationResult
+	matchedPlanErrors   map[string]error
+	lastDiagnosisView   program.ReadView
+	findings            []sdk.Finding
+	batches             int
 }
 
 func NewResponderLoop(request IncidentRequest, programs program.ProgramRegistry, provider SnapshotProvider, detectors []sdk.Detector, executor PlanExecutor, maxBatches int) *ResponderLoop {

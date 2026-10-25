@@ -2,7 +2,6 @@ package runtime
 
 import (
 	"encoding/json"
-	"fmt"
 	"sort"
 	"strings"
 
@@ -15,17 +14,12 @@ type ProgramTrust struct {
 	VerifiedSuccesses int    `json:"verified_successes"`
 	Failures          int    `json:"failures"`
 	LastChange        string `json:"last_change"`
-	Trusted           bool   `json:"trusted"`
 }
 
 // ProgramTrustStats derives counters from durable outcomes. A changed
 // failed application breaks its success streak; broker-validated revisions retain credit.
 // Accepted program revisions have passed the broker's corpus replay gate.
-func ProgramTrustStats(outcomes []*contracts.OutcomeRecord, threshold ...int) map[string]ProgramTrust {
-	minimum := 1
-	if len(threshold) > 0 && threshold[0] > 0 {
-		minimum = threshold[0]
-	}
+func ProgramTrustStats(outcomes []*contracts.OutcomeRecord) map[string]ProgramTrust {
 	ordered := append([]*contracts.OutcomeRecord(nil), outcomes...)
 	sort.SliceStable(ordered, func(i, j int) bool { return outcomeCompletedAt(ordered[i]).Before(outcomeCompletedAt(ordered[j])) })
 	stats := map[string]ProgramTrust{}
@@ -36,7 +30,6 @@ func ProgramTrustStats(outcomes []*contracts.OutcomeRecord, threshold ...int) ma
 		if revision != state.LastChange {
 			state.LastChange = revision
 			state.Failures = failures[id][revision]
-			state.Trusted = state.VerifiedSuccesses >= minimum && state.Failures == 0
 		}
 		return state
 	}
@@ -71,7 +64,7 @@ func ProgramTrustStats(outcomes []*contracts.OutcomeRecord, threshold ...int) ma
 			if application.GetRolloutPending() != nil {
 				continue
 			}
-			if !application.GetApplied() && !strings.HasPrefix(application.GetApplicationId(), "fast-path") {
+			if !application.GetApplied() {
 				continue
 			}
 			for _, id := range application.GetProgramIds() {
@@ -88,8 +81,8 @@ func ProgramTrustStats(outcomes []*contracts.OutcomeRecord, threshold ...int) ma
 					if strings.HasPrefix(signal, "application_verification_failure:") {
 						continue
 					}
-					failedID, failedRevision, fastFailure := parseFastPathTrustFailureSignal(signal)
-					if strings.HasSuffix(signal, ":"+id) || (fastFailure && failedID == id && (failedRevision == "" || failedRevision == revision)) {
+					failedID, failedRevision, signalFailure := parseProgramTrustFailureSignal(signal)
+					if strings.HasSuffix(signal, ":"+id) || (signalFailure && failedID == id && (failedRevision == "" || failedRevision == revision)) {
 						failed = true
 						break
 					}
@@ -99,7 +92,6 @@ func ProgramTrustStats(outcomes []*contracts.OutcomeRecord, threshold ...int) ma
 					state.VerifiedSuccesses = 0
 					failedInApplication[id] = true
 				}
-				state.Trusted = state.VerifiedSuccesses >= minimum && state.Failures == 0
 				stats[id] = state
 			}
 		}
@@ -121,7 +113,6 @@ func ProgramTrustStats(outcomes []*contracts.OutcomeRecord, threshold ...int) ma
 					state.Failures = recordFailure(id, revision)
 				}
 				state.VerifiedSuccesses = 0
-				state.Trusted = false
 				failedInApplication[id] = true
 				stats[id] = state
 			}
@@ -132,7 +123,6 @@ func ProgramTrustStats(outcomes []*contracts.OutcomeRecord, threshold ...int) ma
 				}
 				state := stateForRevision(id, revision)
 				state.VerifiedSuccesses++
-				state.Trusted = state.VerifiedSuccesses >= minimum && state.Failures == 0
 				stats[id] = state
 				creditedInOutcome[id] = true
 			}
@@ -169,7 +159,6 @@ func ProgramTrustStats(outcomes []*contracts.OutcomeRecord, threshold ...int) ma
 			state.LastChange = revision
 			state.Failures = count
 			state.VerifiedSuccesses = 0
-			state.Trusted = false
 			stats[id] = state
 		}
 	}
@@ -266,64 +255,7 @@ func boundPostApplyNoMatch(outcome *contracts.OutcomeRecord, application *contra
 	return false
 }
 
-// fastPathTrustFailureSignals is the durable trust input for a fast-path
-// marker. Persist its JSON string array under "trust_failure_signals" before
-// application, retain it through failed verification, and restore it on handoff.
-// The revision comes from the accepted trust snapshot, not the source commit
-// of a later responder outcome.
-func (l *ResponderLoop) fastPathTrustFailureSignals(ids []string) []string {
-	signals := make([]string, 0, len(ids))
-	for _, id := range ids {
-		revision := l.Trust[id].LastChange
-		if revision == "" {
-			revision = l.Request.SourceCommit
-		}
-		signal := "fast_path_failure:" + id
-		if revision != "" {
-			signal += "@" + revision
-		}
-		signals = append(signals, signal)
-	}
-	return signals
-}
-
-// restoreFastPathTrustFailureSignals restores only trust evidence. The marker
-// owner rechecks live state without restoring applications or rollback state.
-func (l *ResponderLoop) restoreFastPathTrustFailureSignals(encoded string) error {
-	if encoded == "" {
-		return nil
-	}
-	var signals []string
-	if err := json.Unmarshal([]byte(encoded), &signals); err != nil {
-		return fmt.Errorf("decode fast-path trust failures: %w", err)
-	}
-	for _, signal := range signals {
-		if _, _, ok := parseFastPathTrustFailureSignal(signal); !ok {
-			return fmt.Errorf("invalid fast-path trust failure signal %q", signal)
-		}
-	}
-	for _, signal := range signals {
-		id, _, _ := parseFastPathTrustFailureSignal(signal)
-		l.addFailureSignal(signal)
-		exists := false
-		for _, prior := range l.fastPathPrograms {
-			exists = exists || prior == id
-		}
-		if !exists {
-			l.fastPathPrograms = append(l.fastPathPrograms, id)
-		}
-	}
-	return nil
-}
-
-func parseFastPathTrustFailureSignal(signal string) (id, revision string, ok bool) {
-	return parseTrustFailureSignal(signal, "fast_path_failure:")
-}
-
 func parseProgramTrustFailureSignal(signal string) (id, revision string, ok bool) {
-	if id, revision, ok = parseFastPathTrustFailureSignal(signal); ok {
-		return id, revision, true
-	}
 	return parseTrustFailureSignal(signal, "application_verification_failure:")
 }
 

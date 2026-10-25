@@ -10,7 +10,7 @@ import (
 // creditLearnedPrograms gives the first replayed repair its origin credit even
 // though that program did not exist during the scratch repair. Only broker-
 // validated reflection commits and controller-verified cause resources count.
-func creditLearnedPrograms(ctx context.Context, request IncidentRequest, outcomes []*contracts.OutcomeRecord, stats map[string]ProgramTrust, threshold int) error {
+func creditLearnedPrograms(ctx context.Context, request IncidentRequest, outcomes []*contracts.OutcomeRecord, stats map[string]ProgramTrust) error {
 	evidence, err := memory.ReadProgramLearningEvidence(ctx, request.RepositoryWorktree, request.SourceCommit)
 	if err != nil {
 		return err
@@ -73,7 +73,6 @@ func creditLearnedPrograms(ctx context.Context, request IncidentRequest, outcome
 		}
 		state.VerifiedSuccesses++
 		state.LastChange = revision
-		state.Trusted = state.VerifiedSuccesses >= threshold
 		stats[id] = state
 		credited[id] = true
 	}

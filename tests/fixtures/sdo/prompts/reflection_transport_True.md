@@ -76,9 +76,6 @@ Current outcome:
   "response_loop_exhausted": false,
   "drift_events": [],
   "resolution_path": "",
-  "fast_path_programs": [],
-  "fast_path_skipped_reason": "",
-  "fast_path_relation_covered_findings": [],
   "reflection_skip_reason": ""
 }
 
