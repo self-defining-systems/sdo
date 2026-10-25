@@ -213,3 +213,11 @@ validation, or grant broker acceptance. A recorder rejecting a native-supported
 request before the model runs is an **eval** failure; a failed reflection Job
 or exhausted closure retries does not prove accepted learning. Preserve the
 startup traceback and terminal native ledger separately from oracle grades.
+
+For the private LE interaction report `le.interactions/decision129-v2`, include
+and deduplicate every continuation event for the same provider session ID.
+Bound responder/reflection role windows by native `responder_completed_at`
+and `reflection_dispatch_at`; the first task's cutoff can miss later
+continuations, including turns with empty usage. Do not substitute `llm_calls`
+or `response_loops_used` for interaction counts. Empty usage remains unknown
+usage rather than evidence that no interaction occurred.
