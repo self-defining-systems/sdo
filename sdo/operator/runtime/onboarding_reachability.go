@@ -40,6 +40,7 @@ type onboardingReachabilityState struct {
 	candidate      *servicehealth.ReachabilityBaseline
 	configurations map[string]string
 	invalid        bool
+	startedAt      time.Time
 }
 
 type onboardingSnapshotProvider struct {
@@ -90,12 +91,26 @@ func (v onboardingReadView) ServiceReachability() (servicehealth.ReachabilityWin
 // The install window is the sole automatic authority for never-served ports.
 // Every sampled evaluation must independently satisfy the application's goal;
 // configuration changes or any unhealthy observation permanently reject it.
-func (c *Controller) prepareOnboardingReachability(ctx context.Context, snapshot sdk.DetectionContext, detectors []sdk.Detector) sdk.DetectionContext {
+func (c *Controller) prepareOnboardingReachability(ctx context.Context, now time.Time, snapshot sdk.DetectionContext, detectors []sdk.Detector) sdk.DetectionContext {
 	state := c.onboardingReachability
 	if state == nil || c.pendingOnboarding == nil || !ConsumesServiceReachability(detectors) {
 		return snapshot
 	}
+	if state.startedAt.IsZero() {
+		state.startedAt = now
+	}
 	state.candidate = nil
+	if !c.onboardingCommitVerified(ctx, c.pendingOnboarding.AcceptedCommit) {
+		state.invalid = true
+		return snapshot
+	}
+	c.mu.Lock()
+	busy := c.incidentOpen || c.currentIncidentRequest != nil || c.closureBlocksNextLocked()
+	c.mu.Unlock()
+	if busy {
+		state.invalid = true
+		return snapshot
+	}
 	_, ok := servicehealth.ReachabilityFrom(snapshot)
 	if !ok {
 		return snapshot
@@ -183,7 +198,7 @@ func (c *Controller) reachabilityObjectiveDigest() string {
 // A missing/stale/over-capacity observer must not defer inventory forever.
 // Expiry consumes the failed onboarding opportunity, never a clear verdict.
 func (c *Controller) onboardingConfirmationExpired(now time.Time, snapshot sdk.DetectionContext) bool {
-	if c.pendingOnboarding == nil {
+	if c.pendingOnboarding == nil || c.onboardingReachability == nil || c.onboardingReachability.startedAt.IsZero() {
 		return false
 	}
 	interval, timeout, count := servicehealth.DefaultReachabilityInterval, servicehealth.DefaultReachabilityTimeout, servicehealth.DefaultReachabilityFailures
@@ -198,7 +213,7 @@ func (c *Controller) onboardingConfirmationExpired(now time.Time, snapshot sdk.D
 			count = w.Failures
 		}
 	}
-	expired := !now.Before(c.startedAt.Add(time.Duration(count)*interval + 4*timeout))
+	expired := !now.Before(c.onboardingReachability.startedAt.Add(time.Duration(count)*interval + 4*timeout))
 	if expired && c.OnError != nil {
 		c.OnError(fmt.Errorf("onboarding confirmation window expired without confirmed detector verdicts"))
 	}

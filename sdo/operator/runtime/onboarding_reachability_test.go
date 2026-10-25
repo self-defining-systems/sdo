@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -120,7 +121,7 @@ func TestSourceInventoryOnboardingConfirmsReachabilityReference(t *testing.T) {
 // A provisional reference cannot be learned from a window that contained an
 // independently unhealthy goal, changed configuration, or uncertain probes.
 func TestSourceInventoryOnboardingRejectsUnhealthyReachabilityReference(t *testing.T) {
-	for _, mode := range []string{"goal", "configuration", "timeout", "transport"} {
+	for _, mode := range []string{"goal", "configuration", "timeout", "transport", "commit"} {
 		t.Run(mode, func(t *testing.T) {
 			ctx := context.Background()
 			goal := inventoryHealth().(*sequenceDetector)
@@ -151,6 +152,9 @@ func TestSourceInventoryOnboardingRejectsUnhealthyReachabilityReference(t *testi
 				}
 				if mode == "goal" && round == 0 {
 					goal.errors = map[int]error{goal.calls: fmt.Errorf("independent goal unavailable")}
+				}
+				if mode == "commit" {
+					c.config.SourceCommit = strings.Repeat("b", 40)
 				}
 				if mode == "configuration" && round == 1 {
 					snapshot.ServiceList[0].Spec.Ports[0].TargetPort = intstr.FromInt32(8888)

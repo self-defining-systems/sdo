@@ -339,7 +339,7 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 	}
 	c.processDrift(ctx, now, snapshot, objectChanges)
 
-	snapshot = c.prepareOnboardingReachability(ctx, snapshot, detectors)
+	snapshot = c.prepareOnboardingReachability(ctx, now, snapshot, detectors)
 	var onboardingCandidate *contracts.NamespaceOnboarding
 	confirmed := detectorsConfirmed(detectors, snapshot)
 	confirmationExpired := !confirmed && c.onboardingConfirmationExpired(now, snapshot)
