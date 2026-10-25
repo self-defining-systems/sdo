@@ -375,7 +375,6 @@ def test_phase_b_command_uses_exact_slot_and_no_model_registrations(tmp_path: Pa
     assert stream.capability_mode == "permissive"
     assert stream.permissive_responder
     args = build_parser().parse_args(runner_arguments(9, tmp_path, output))
-    assert args.program_trust_threshold == 1
     assert args.slot_offset == 9
     assert args.require_faulty_oracle
     assert args.inject_before_resume

@@ -33,6 +33,12 @@ proof and add no positive program trust credit. Intermediate rounds are not inde
 incidents. Terminal menu success alone is not controller health verification, broker
 ACK or a strict benchmark receipt.
 
+## Mitigation health scope
+
+`apply` and `mitigate` return after their writes and touched-resource rollout checks, then take one health observation; they never poll global health while unrelated faults remain. The built-in verifier scopes active findings to touched resources, explicit related resources/bindings and direct snapshot relations. Unknown-resource findings and unavailable health observations fail closed.
+
+Live responses include `mitigation_health` (resources, current health findings, targeted findings and both health verdicts) and `targeted_healthy`. A cleared program diagnosis also gates the menu's targeted success. `STATUS_SUCCESS`, plan `verification_passed` and `targeted_healthy` describe the completed mitigation, and may coexist with `healthy: false` and named peer findings. Round `independently_healthy` retains the whole-health observation. Truncated tool records retain `targeted_healthy`; scope/findings may be omitted by the existing record size cap. None of these facts independently proves incident closure, broker ACK or a benchmark receipt. Read `sdo verify`/controller closure evidence for global recovery.
+
 ## Scripted production check
 
 The hermetic production test goes through real `RunWithOptions`, `LoopFactory`,

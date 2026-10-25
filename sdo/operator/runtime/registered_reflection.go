@@ -18,6 +18,7 @@ import (
 	"sdo.dev/operator/contracts/wire"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/layout"
+	"sdo.dev/operator/memory/validate"
 	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"sdo.dev/operator/runtime/lifecyclecore"
 	"sdo.dev/operator/worker_registry"
@@ -49,6 +50,10 @@ type RegisteredReflectionWorker struct {
 
 var resumableSessionID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$`)
 
+func hasResponderSession(closure IncidentClosure) bool {
+	return closure.Result != nil && resumableSessionID.MatchString(closure.Result.ResponderSessionID)
+}
+
 func (w RegisteredReflectionWorker) Reflect(ctx context.Context, closure IncidentClosure, workspace IncidentWorkspace, outcome *contracts.OutcomeRecord, proposalCommit, outcomeCommit string, feedback ReflectionFeedback) (ReflectionDecision, error) {
 	if w.Executor == nil || w.Outcomes == nil || w.AgentID == "" || w.TaskType == "" || w.Timeout <= 0 {
 		return ReflectionDecision{}, errors.New("registered reflection worker requires executor, outcome store, agent ID, task type, and timeout")
@@ -76,15 +81,14 @@ func (w RegisteredReflectionWorker) Reflect(ctx context.Context, closure Inciden
 	}
 	mode := w.SessionMode
 	if mode == "" {
-		mode = "fresh"
+		mode = "resume"
 	}
 	guidance := w.Guidance
 	if guidance == "" {
 		guidance = "baseline"
 	}
-	if mode == "resume" && (closure.Result == nil || !resumableSessionID.MatchString(closure.Result.ResponderSessionID)) {
-		log.Printf("reflection incident %s: responder session ID is missing or invalid; starting fresh", workspace.IncidentID)
-		mode = "fresh"
+	if mode == "resume" && !hasResponderSession(closure) {
+		return ReflectionDecision{LearningDecision: "no_change", NoChangeReason: "no_session"}, nil
 	}
 	if task != nil {
 		frozen := &contracts.ReflectionRequest{}
@@ -203,7 +207,38 @@ func (w RegisteredReflectionWorker) Reflect(ctx context.Context, closure Inciden
 			}
 		}
 	}
-	result, err := executor.Execute(ctx, task)
+	if task.GetDeadline() == nil || task.GetDeadline().CheckValid() != nil {
+		return ReflectionDecision{}, errors.New("frozen reflection task requires a valid deadline")
+	}
+	deadline := task.GetDeadline().AsTime()
+	timeout := func() (ReflectionDecision, error) {
+		return w.withUsage(ReflectionDecision{LearningDecision: "failed", FailureReason: "timeout", Error: fmt.Sprintf("reflection task %s exceeded frozen deadline %s", task.GetTaskId(), deadline.UTC().Format(time.RFC3339Nano))}, workspace.IncidentID)
+	}
+	var result *contracts.AgentResult
+	var err error
+	recovered := false
+	if recovery, ok := executor.(worker_registry.ReflectionResultRecoverer); ok {
+		result, recovered, err = recovery.RecoverCompleted(ctx, task)
+		if err != nil {
+			var terminalTimeout *worker_registry.TaskTimeoutError
+			if errors.As(err, &terminalTimeout) || !time.Now().Before(deadline) {
+				return timeout()
+			}
+			return ReflectionDecision{}, err
+		}
+	}
+	if !recovered {
+		if !time.Now().Before(deadline) {
+			return timeout()
+		}
+		executionCtx, cancel := context.WithDeadline(ctx, deadline)
+		defer cancel()
+		result, err = executor.Execute(executionCtx, task)
+		var terminalTimeout *worker_registry.TaskTimeoutError
+		if errors.As(err, &terminalTimeout) || !time.Now().Before(deadline) {
+			return timeout()
+		}
+	}
 	if err != nil {
 		return ReflectionDecision{}, err
 	}
@@ -231,26 +266,8 @@ func (w RegisteredReflectionWorker) Reflect(ctx context.Context, closure Inciden
 	} else if len(encoded) > 700<<10 {
 		return ReflectionDecision{}, fmt.Errorf("reflection result exceeds transport limit: %d bytes", len(encoded))
 	}
-	if err := wire.Validate(response); err != nil {
+	if err := validate.Err(validate.ReflectionResultDiagnostics(response)); err != nil {
 		return ReflectionDecision{}, err
-	}
-	if response.GetLearningDecision() == "sdk_gap" && len(response.GetSdkGaps()) == 0 {
-		return ReflectionDecision{}, errors.New("sdk_gap reflection requires a typed SDK gap")
-	}
-	if response.GetLearningDecision() == "no_change" && len(response.GetSdkGaps()) > 0 {
-		return ReflectionDecision{}, errors.New("no-change reflection cannot report SDK gaps")
-	}
-	if response.GetLearningDecision() == "sdk_gap" && response.GetArtifactProposal() != nil {
-		return ReflectionDecision{}, errors.New("sdk_gap reflection cannot propose artifacts")
-	}
-	for _, gap := range response.GetSdkGaps() {
-		if gap.GetFaultClass() == "" || gap.GetPrimitive() == "" || gap.GetReason() == "" || gap.GetScratchScript() == "" {
-			return ReflectionDecision{}, errors.New("SDK gap requires fault class, primitive, reason, and scratch script")
-		}
-	}
-	// The direct-edit capability never accepts the retired content payload.
-	if response.GetArtifactProposal() != nil {
-		return ReflectionDecision{}, errors.New("direct-edit reflection rejects deprecated artifact_proposal")
 	}
 	decision := ReflectionDecision{DeclineReason: response.GetDeclineReason(), LearningDecision: response.GetLearningDecision(), NoChangeReason: response.GetNoChangeReason(), PlaybookIDs: append([]string(nil), response.GetProposedArtifactIds()...), SDKGaps: response.GetSdkGaps()}
 	return w.withUsage(decision, workspace.IncidentID)

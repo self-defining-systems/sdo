@@ -21,7 +21,7 @@ func TestReflectionRetryReusesFrozenTaskDespiteChangedClockAndMemory(t *testing.
 	workspace := IncidentWorkspace{IncidentID: "frozen", Worktree: root, BaseCommit: base}
 	closure := nativeClosure(workspace)
 	outcomes := memory.NewJSONStore(t.TempDir())
-	worker := RegisteredReflectionWorker{AgentID: "reflector", TaskType: reflectionTaskType(t), Outcomes: outcomes, Timeout: time.Minute, TaskStore: &lifecycleio.TaskStore{Root: t.TempDir()}}
+	worker := RegisteredReflectionWorker{AgentID: "reflector", TaskType: reflectionTaskType(t), Outcomes: outcomes, Timeout: time.Minute, SessionMode: "fresh", TaskStore: &lifecycleio.TaskStore{Root: t.TempDir()}}
 	var first *contracts.AgentTask
 	calls := 0
 	worker.Executor = reflectionTaskExecutorFunc(func(_ context.Context, task *contracts.AgentTask) (*contracts.AgentResult, error) {
@@ -37,7 +37,7 @@ func TestReflectionRetryReusesFrozenTaskDespiteChangedClockAndMemory(t *testing.
 		return &contracts.AgentResult{SchemaVersion: task.SchemaVersion, TaskId: task.TaskId, ProposalId: task.Workspace.ProposalId, Status: "completed", Response: response}, err
 	})
 	record := &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: "frozen", Classification: "success"}
-	feedback := ReflectionFeedback{DispatchAt: time.Unix(1000, 0)}
+	feedback := ReflectionFeedback{DispatchAt: time.Now().UTC()}
 	if _, err := worker.Reflect(context.Background(), closure, workspace, record, "repair", "outcome", feedback); err == nil {
 		t.Fatal("expected result read fault")
 	}
@@ -59,7 +59,7 @@ func TestNativeBrokerPicksUpCompletedReflectionAfterResultReadFailure(t *testing
 	h := newRejectionHarness(t, "completed-result-read", nil)
 	var frozen *contracts.AgentTask
 	calls := 0
-	h.native.Reflector = RegisteredReflectionWorker{AgentID: "reflector", TaskType: reflectionTaskType(t), Outcomes: memory.NewJSONStore(t.TempDir()), Timeout: time.Minute, TaskStore: &lifecycleio.TaskStore{Root: t.TempDir()}, Executor: reflectionTaskExecutorFunc(func(_ context.Context, task *contracts.AgentTask) (*contracts.AgentResult, error) {
+	h.native.Reflector = RegisteredReflectionWorker{AgentID: "reflector", TaskType: reflectionTaskType(t), Outcomes: memory.NewJSONStore(t.TempDir()), Timeout: time.Minute, SessionMode: "fresh", TaskStore: &lifecycleio.TaskStore{Root: t.TempDir()}, Executor: reflectionTaskExecutorFunc(func(_ context.Context, task *contracts.AgentTask) (*contracts.AgentResult, error) {
 		calls++
 		if frozen == nil {
 			frozen = proto.Clone(task).(*contracts.AgentTask)

@@ -6,13 +6,14 @@ import (
 	"os"
 	"path/filepath"
 
+	"strings"
+	"testing"
+
 	"sdo.dev/operator/broker"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/internal/testutil"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/validate"
-	"strings"
-	"testing"
 
 	"sdo.dev/operator/sdk/program"
 )
@@ -37,14 +38,18 @@ func TestCompositeRepairKeepsBoundSuccessWhileOtherFaultIsOpen(t *testing.T) {
 }
 
 func TestHermeticRepeatCorpusUsesBrokerWithoutReflectionModel(t *testing.T) {
-	testHermeticRepeatBroker(t, false)
+	testHermeticRepeatBroker(t, false, false)
 }
 
 func TestRejectedRepeatCorpusFallsBackToReflectionWorker(t *testing.T) {
-	testHermeticRepeatBroker(t, true)
+	testHermeticRepeatBroker(t, true, false)
 }
 
-func testHermeticRepeatBroker(t *testing.T, rejectFirst bool) {
+func TestReflectionSettledRepeatStillResumesResponder(t *testing.T) {
+	testHermeticRepeatBroker(t, false, true)
+}
+
+func testHermeticRepeatBroker(t *testing.T, rejectFirst, boundSession bool) {
 	t.Helper()
 	ctx := context.Background()
 	target := nativeRepository(t)
@@ -176,13 +181,17 @@ func testHermeticRepeatBroker(t *testing.T, rejectFirst bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if boundSession {
+		sessionID := "settled-responder"
+		closure.Result.ResponderSessionId = &sessionID
+	}
 	ledger := &contracts.BrokerLedger{IncidentId: outcome.IncidentId, Closure: closure, OutcomeCommit: accepted.Commit, OutcomeDocument: outcome}
 	paths, err := native.processReflection(ctx, ledger)
 	if err != nil {
 		t.Fatal(err)
 	}
 	expectedCalls := 0
-	if rejectFirst {
+	if rejectFirst || boundSession {
 		expectedCalls = 1
 	}
 	if rejected != rejectFirst || modelCalls != expectedCalls || ledger.ReflectionCommit == "" || len(paths) != 5 || validations == 0 {
@@ -196,7 +205,7 @@ func testHermeticRepeatBroker(t *testing.T, rejectFirst bool) {
 			t.Fatalf("unexpected repeat edit: %s", path)
 		}
 	}
-	if state := ProgramTrustStats([]*contracts.OutcomeRecord{outcome}, 1)[repeatProgram]; !state.Trusted {
+	if state := ProgramTrustStats([]*contracts.OutcomeRecord{outcome})[repeatProgram]; !(state.VerifiedSuccesses > 0 && state.Failures == 0) {
 		t.Fatalf("verified repeat earned no trust: %+v", state)
 	}
 	again, err := native.processReflection(ctx, ledger)

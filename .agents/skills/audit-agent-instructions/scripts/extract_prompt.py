@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 DATA_START = re.compile(
-    r"(?m)^(?:Incident request|Request(?: data)?|Task data|Outcome(?: data)?|"
+    r"(?m)^(?:Incident request(?: summary)?|Request(?: data)?|Task data|Outcome(?: data)?|"
     r"Operational memory snapshot|Accepted memory snapshot|Per-cause work|Current outcome|"
     r"Outcome commit|Architecture summary \(trusted memory snapshot\)|"
     r"Health objective \(trusted memory snapshot\)|Latest detector evidence \(compacted from detector_history\))"

@@ -41,6 +41,37 @@ func TestReflectionDirectFilesCLIAndBroker(t *testing.T) {
 			if err := os.CopyFS(target, os.DirFS("../memory/validate/testdata/good")); err != nil {
 				t.Fatal(err)
 			}
+			// Accepted executable and session observations bind the detector to
+			// the independently verified Service cause used below.
+			fixture := "../../../tests/fixtures/sdo/playbook_program_app/.sdo"
+			module, err := os.ReadFile(filepath.Join(fixture, "diagnostics/go.mod"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(target, ".sdo/diagnostics/go.mod"), module, 0644); err != nil {
+				t.Fatal(err)
+			}
+			testutil.CopyPortProgram(t, target, fixture)
+			copyFastloopTree(t, filepath.Join(fixture, "corpus"), filepath.Join(target, ".sdo/corpus"))
+			for _, relative := range []string{".sdo/diagnostics/detectors/incidents/cache/manifest.yaml", ".sdo/diagnostics/detectors/incidents/cache/detector.go"} {
+				path := filepath.Join(target, relative)
+				data, err := os.ReadFile(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				data = []byte(strings.ReplaceAll(string(data), "base", "service-targetport-mismatch"))
+				if err := os.WriteFile(path, data, 0644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			index := filepath.Join(target, ".sdo/playbooks/README.md")
+			data, err := os.ReadFile(index)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(index, append(data, []byte("\n- [service-targetport-mismatch](service-targetport-mismatch/README.md)\n")...), 0644); err != nil {
+				t.Fatal(err)
+			}
 			nativeGit(t, target, "add", "-A")
 			nativeGit(t, target, "commit", "-qm", "memory")
 			compile := func(ctx context.Context, root string, _ []string) error {
@@ -56,7 +87,7 @@ func TestReflectionDirectFilesCLIAndBroker(t *testing.T) {
 			}
 			calls := 0
 			var authoredREADME, authoredGo []byte
-			worker := RegisteredReflectionWorker{AgentID: "reflector", TaskType: reflectionTaskType(t), Outcomes: memory.OpenReader(target), Catalog: memory.OpenCatalogReader(target), Timeout: time.Minute}
+			worker := RegisteredReflectionWorker{AgentID: "reflector", TaskType: reflectionTaskType(t), Outcomes: memory.OpenReader(target), Catalog: memory.OpenCatalogReader(target), Timeout: time.Minute, SessionMode: "fresh"}
 			worker.Executor = reflectionTaskExecutorFunc(func(ctx context.Context, task *contracts.AgentTask) (*contracts.AgentResult, error) {
 				calls++
 				checkout, base := task.Workspace.CheckoutPath, task.Workspace.BaseCommit
@@ -85,7 +116,7 @@ func TestReflectionDirectFilesCLIAndBroker(t *testing.T) {
 					if err := os.WriteFile(readme, authoredREADME, 0o644); err != nil {
 						return nil, err
 					}
-					response = &contracts.ReflectionResult{LearningDecision: "updated", ProposedArtifactIds: []string{"base"}}
+					response = &contracts.ReflectionResult{LearningDecision: "updated", ProposedArtifactIds: []string{"base"}, SdkGaps: []*contracts.SdkGap{reflectionFixtureGap()}}
 					if scenario == "malformed then fixed" {
 						if err := os.WriteFile(readme, []byte("malformed README\n"), 0o644); err != nil {
 							return nil, err
@@ -118,7 +149,11 @@ func TestReflectionDirectFilesCLIAndBroker(t *testing.T) {
 				return &contracts.AgentResult{SchemaVersion: task.SchemaVersion, TaskId: task.TaskId, ProposalId: task.Workspace.ProposalId, Status: "completed", Response: packed}, err
 			})
 			native := NativeIncidentBroker{Repository: repository, LedgerRoot: filepath.Join(t.TempDir(), "ledger"), Reflector: worker, ResponderBackend: "fake", ResponderModel: "fake", Deriver: OutcomeDeriverFunc(func(_ context.Context, c IncidentClosure, _, _, _ string) (DerivedOutcome, error) {
-				return testDerivedOutcome(c.Request.IncidentID, "success", true), nil
+				derived := testDerivedOutcome(c.Request.IncidentID, "success", true)
+				if scenario != "no change" && scenario != "SDK gap" {
+					derived.Record.ConfirmedRootCauses = []*contracts.ConfirmedRootCause{{Summary: "verified synthetic routing repair", Resources: reflectionFixtureResources()}}
+				}
+				return derived, nil
 			})}
 			workspace, err := native.PrepareIncident(ctx, "direct-files")
 			if err != nil {
@@ -190,7 +225,7 @@ func TestReflectionBrokerDiagnosticRetryIsDurableAndBounded(t *testing.T) {
 		t.Fatal(err)
 	}
 	calls := 0
-	worker := RegisteredReflectionWorker{AgentID: "reflector", TaskType: reflectionTaskType(t), Outcomes: memory.OpenReader(target), Catalog: memory.OpenCatalogReader(target), Timeout: time.Minute}
+	worker := RegisteredReflectionWorker{AgentID: "reflector", TaskType: reflectionTaskType(t), Outcomes: memory.OpenReader(target), Catalog: memory.OpenCatalogReader(target), Timeout: time.Minute, SessionMode: "fresh"}
 	worker.Executor = reflectionTaskExecutorFunc(func(_ context.Context, task *contracts.AgentTask) (*contracts.AgentResult, error) {
 		request := &contracts.ReflectionRequest{}
 		if err := task.Request.UnmarshalTo(request); err != nil {
@@ -429,7 +464,7 @@ func TestReflectionLearnedProgramCLIAndBroker(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := repository.RecordOutcome(ctx, incidentID, &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: incidentID, Classification: "success"}); err != nil {
+			if _, err := repository.RecordOutcome(ctx, incidentID, &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: incidentID, Classification: "success", ConfirmedRootCauses: []*contracts.ConfirmedRootCause{{Summary: "verified synthetic routing repair", Resources: reflectionFixtureResources()}}}); err != nil {
 				t.Fatal(err)
 			}
 			proposal, err := repository.CreateProposalForPhase(ctx, incidentID, broker.ReflectionPhase)
@@ -437,7 +472,7 @@ func TestReflectionLearnedProgramCLIAndBroker(t *testing.T) {
 				t.Fatal(err)
 			}
 			var authoredTree string
-			worker := RegisteredReflectionWorker{AgentID: "reflector", TaskType: reflectionTaskType(t), Outcomes: memory.NewJSONStore(t.TempDir()), Timeout: time.Minute}
+			worker := RegisteredReflectionWorker{AgentID: "reflector", TaskType: reflectionTaskType(t), Outcomes: memory.NewJSONStore(t.TempDir()), Timeout: time.Minute, SessionMode: "fresh"}
 			worker.Executor = reflectionTaskExecutorFunc(func(ctx context.Context, task *contracts.AgentTask) (*contracts.AgentResult, error) {
 				checkout := task.Workspace.CheckoutPath
 				testutil.CopyPortProgram(t, checkout, "../../../tests/fixtures/sdo/playbook_program_app/.sdo")
@@ -461,7 +496,7 @@ func TestReflectionLearnedProgramCLIAndBroker(t *testing.T) {
 						return nil, err
 					}
 				}
-				decision := &contracts.ReflectionResult{LearningDecision: "updated", ProposedArtifactIds: []string{"service-targetport-mismatch"}}
+				decision := &contracts.ReflectionResult{LearningDecision: "updated", ProposedArtifactIds: []string{"service-targetport-mismatch"}, SdkGaps: []*contracts.SdkGap{reflectionFixtureGap()}}
 				writeReflectionCheckDecision(t, checkout, decision)
 				command := exec.Command(binary, "memory", "check", "--json")
 				command.Dir = checkout
@@ -471,7 +506,7 @@ func TestReflectionLearnedProgramCLIAndBroker(t *testing.T) {
 				if err := protojson.Unmarshal(output, report); err != nil {
 					t.Fatalf("CLI report: %v: %s", err, output)
 				}
-				receipt, publishErr := repository.PublishReflection(validate.WithCaptureSource(ctx, capture, incidentID), incidentID, &contracts.ReflectionDecision{LearningDecision: "updated", PlaybookIds: []string{"service-targetport-mismatch"}})
+				receipt, publishErr := repository.PublishReflection(validate.WithCaptureSource(ctx, capture, incidentID), incidentID, &contracts.ReflectionDecision{LearningDecision: "updated", PlaybookIds: []string{"service-targetport-mismatch"}, SdkGaps: []*contracts.SdkGap{reflectionFixtureGap()}})
 				if physical {
 					var failure *validate.Failure
 					if checkErr == nil || !errors.As(publishErr, &failure) {
@@ -507,4 +542,11 @@ func TestReflectionLearnedProgramCLIAndBroker(t *testing.T) {
 			}
 		})
 	}
+}
+
+func reflectionFixtureResources() []*contracts.ObjectRef {
+	return []*contracts.ObjectRef{{Kind: "Service", Namespace: "demo", Name: "front"}}
+}
+func reflectionFixtureGap() *contracts.SdkGap {
+	return &contracts.SdkGap{FaultClass: "synthetic-routing", Primitive: "fixture-coverage", Reason: "transport fixture records an explicit SDK coverage gap", ScratchScript: "scratch/fixture", Resources: reflectionFixtureResources()}
 }

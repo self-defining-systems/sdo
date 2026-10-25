@@ -6,11 +6,12 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"testing"
+	"time"
+
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/contracts/wire"
 	"sdo.dev/operator/runtime/internal/lifecycleio"
-	"testing"
-	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -60,7 +61,7 @@ func TestStateRoundTripRetainsAppliedActionsAndProgramEvidenceWithoutRollbackSta
 	if err != nil {
 		t.Fatal(err)
 	}
-	trust := map[string]ProgramTrust{"capacity": {VerifiedSuccesses: 3, LastChange: "abc", Trusted: true}}
+	trust := map[string]ProgramTrust{"capacity": {VerifiedSuccesses: 3, LastChange: "abc"}}
 	response, err := json.Marshal(ToolResponse{Command: "status", Trust: trust, ProgramRuns: []ProgramRun{{ProgramID: "capacity", Bindings: program.Bindings{Objects: program.ObjectBindings{"deployment": ref}}, Verdict: program.Verdict{Result: program.NoMatch}}}})
 	if err != nil {
 		t.Fatal(err)
@@ -508,7 +509,7 @@ func TestControllerStateDropsRetiredRollbackFieldsFromPriorBuild(t *testing.T) {
 	action := program.SetField{Ref: ref, Path: "spec.ports[0].targetPort", Value: testPlanValue(8080), Reason: "restore port"}
 	result := completedResult("legacy-state")
 	result.PlanApplications = []RecordedPlanApplication{{ID: "old-application", ProgramIDs: []string{"targetport"}, Result: PlanApplicationResult{Plan: program.Plan{Actions: []program.Action{action}}, Applied: true, ActionsApplied: []program.Action{action}}}}
-	result.ProgramFailureSignals = []string{"fast_path_failure:targetport@original-revision"}
+	result.ProgramFailureSignals = []string{"application_verification_failure:targetport@original-revision"}
 	payload, err := encodeControllerState(&contracts.ControllerState{Version: RuntimeStateVersion, IncidentResult: mustProject(t, incidentResultContract, result)})
 	if err != nil {
 		t.Fatal(err)

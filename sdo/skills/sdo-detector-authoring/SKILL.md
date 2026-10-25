@@ -21,6 +21,8 @@ clock, network access or benchmark data. Measure ages with `sdk.ObservationTime(
    [tests](assets/restart-loop/detector_test.go) show the current detector interface.
 5. Validate final proposal files through the memory check. The broker repeats this check independently.
 
+Before returning memory edits, run the complete memory check and resolve every diagnostic until it passes.
+
 Read [validator rules](references/rules.md) before changing a manifest or when a diagnostic names a detector rule.
 
 ## Runtime reads

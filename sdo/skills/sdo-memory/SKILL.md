@@ -24,4 +24,6 @@ Read memory freely; edit only the artifact classes and proposal checkout your ta
 - Exclude benchmark/grader details, secrets and physical paths from memory text; physical layout is only for checkout edits and tooling, while prose and results use logical IDs.
 
 The [generated runtime contract](references/runtime.md) defines decision fields, envelope shape, tool names and capture phases. The final answer uses the session envelope; the CLI decision file contains only its reflection result. The typed validation tool handles the distinction.
+Before returning memory edits, run the complete memory check and resolve every diagnostic until it passes.
+
 Read [validator rules](references/rules.md) when a diagnostic names an ownership, layout or schema rule.

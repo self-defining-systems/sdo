@@ -80,7 +80,7 @@ Historical plumbing regressions have focused checks in the same suites:
 
 | Regression | Contract check |
 | --- | --- |
-| Restart live recheck | `TestRestartFastPathRechecksLiveStateAtEveryCrashPoint` covers write, marker and receipt crash points; `TestResponderRestartRediagnosesWithoutUndoOrRestoredHandles` preserves fixes and budgets. `TestStateRoundTripRetainsAppliedActionsAndProgramEvidenceWithoutRollbackState` checks durable outcome evidence without rollback authority. |
+| Restart live recheck | `TestResponderRestartRediagnosesWithoutUndoOrRestoredHandles` preserves fixes and budgets. `TestStateRoundTripRetainsAppliedActionsAndProgramEvidenceWithoutRollbackState` checks durable outcome evidence without rollback authority. |
 | Physical `.sdo/` tool evidence | The responder loop test rejects physical paths in recorded tool calls; `TestSyntheticWorkerResultsThroughContracts` covers typed worker envelopes; responder validation rejects physical tool evidence. |
 | Plan apply RBAC | `sdo/operator/install` tests check Service and Deployment get/patch grants. |
 | Tool session restart permissions | The responder loop reparses real directory modes; `TestSessionToolServerIgnoresAtomicRequestTemporaryFiles` protects the CLI write protocol. |

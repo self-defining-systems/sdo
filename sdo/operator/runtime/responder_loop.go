@@ -20,7 +20,6 @@ import (
 )
 
 const DefaultMaxResponseLoops = 10
-const DefaultDiagnosisSettleDelay = 15 * time.Second
 const maxRecordedToolResponse = 2048
 
 // maxRecordedApplyResponse bounds an apply record that lists the runs of the
@@ -32,6 +31,7 @@ const maxRecordedToolResponse = 2048
 const maxRecordedApplyResponse = 8192
 
 type ToolRequest struct {
+	DetectorIDs   []string                               `json:"detector_ids,omitempty"`
 	Refs          []sdk.ObjectRef                        `json:"refs,omitempty"`
 	Parameters    map[string]string                      `json:"parameters,omitempty"`
 	Selection     *contracts.MitigationSelection         `json:"-"`
@@ -46,20 +46,21 @@ type ToolRequest struct {
 }
 
 type ToolResponse struct {
-	RolloutPending *contracts.RolloutPending    `json:"rollout_pending,omitempty"`
-	MenuExecution  []MenuRoundExecution         `json:"-"`
-	MenuParameters map[string][]MenuParameter   `json:"-"`
-	Menu           *contracts.MitigationMenu    `json:"-"`
-	Report         *contracts.MitigationReport  `json:"-"`
-	Session        *contracts.MitigationSession `json:"-"`
-	Command        string                       `json:"command"`
-	Source         map[string]any               `json:"source,omitempty"`
-	Error          string                       `json:"error,omitempty"`
-	Summary        string                       `json:"summary"`
-	PlanID         string                       `json:"plan_id,omitempty"`
-	ApplicationID  string                       `json:"application_id,omitempty"`
-	Patches        []PlanPatch                  `json:"patches,omitempty"`
-	ProgramRuns    []ProgramRun                 `json:"program_runs,omitempty"`
+	MitigationHealth *MitigationHealth            `json:"mitigation_health,omitempty"`
+	RolloutPending   *contracts.RolloutPending    `json:"rollout_pending,omitempty"`
+	MenuExecution    []MenuRoundExecution         `json:"-"`
+	MenuParameters   map[string][]MenuParameter   `json:"-"`
+	Menu             *contracts.MitigationMenu    `json:"-"`
+	Report           *contracts.MitigationReport  `json:"-"`
+	Session          *contracts.MitigationSession `json:"-"`
+	Command          string                       `json:"command"`
+	Source           map[string]any               `json:"source,omitempty"`
+	Error            string                       `json:"error,omitempty"`
+	Summary          string                       `json:"summary"`
+	PlanID           string                       `json:"plan_id,omitempty"`
+	ApplicationID    string                       `json:"application_id,omitempty"`
+	Patches          []PlanPatch                  `json:"patches,omitempty"`
+	ProgramRuns      []ProgramRun                 `json:"program_runs,omitempty"`
 	// ProgramRunsOmitted counts runs a truncated record could not list; the
 	// trust reader fails closed on it. ProgramRunsUnrelatedOmitted counts apply
 	// runs of programs or bindings the applied plans do not name, which the
@@ -71,6 +72,7 @@ type ToolResponse struct {
 	DetectorStates              []DetectorEvaluation    `json:"detector_states,omitempty"`
 	LoopsUsed                   int                     `json:"loops_used"`
 	LoopsAllowed                int                     `json:"loops_allowed"`
+	TargetedHealthy             bool                    `json:"targeted_healthy,omitempty"`
 	Healthy                     bool                    `json:"healthy"`
 	Unresolved                  bool                    `json:"unresolved"`
 	Trust                       map[string]ProgramTrust `json:"trust,omitempty"`
@@ -107,51 +109,46 @@ type selectedPlan struct {
 
 // ResponderLoop holds one incident's tool state while its responder Job runs.
 type ResponderLoop struct {
-	continuation                    responderContinuation
-	MenuConfig                      *ResponderMenuConfig
-	menu                            *contracts.MitigationMenu
-	menuEntries                     map[string]menuEntry
-	menuSession                     *contracts.MitigationSession
-	menuReports                     []*contracts.MitigationReport
-	menuExecutions                  map[string][]MenuRoundExecution
-	menuRepairs                     []RepairActionReceipt
-	CurrentEvidence                 func() *IncidentRequest
-	Request                         IncidentRequest
-	Programs                        program.ProgramRegistry
-	Provider                        SnapshotProvider
-	Detectors                       []sdk.Detector
-	Executor                        PlanExecutor
-	ReadView                        func(sdk.DetectionContext) program.ReadView
-	DiagnosisDeadline               time.Duration
-	DiagnosisSettleDelay            time.Duration
-	CandidateSweepLimit             int
-	MaxBatches                      int
-	Trust                           map[string]ProgramTrust
-	CorpusReplayPassed              bool
-	BeforeFastPathApply             func(context.Context, []ProgramRun) error
-	CorpusSessionRoot               string
-	capturePhase                    string
-	timing                          toolTiming
-	preApplyCaptured                bool
-	saveToolState                   func(context.Context, []byte) error
-	operationMu                     sync.Mutex
-	mu                              sync.Mutex
-	sessionID                       string
-	plans                           map[string]selectedPlan
-	applications                    map[string]PlanApplicationResult
-	applicationsLog                 []RecordedPlanApplication
-	failureSignals                  []string
-	calls                           []ToolCall
-	runs                            []ProgramRun
-	matchedViews                    map[string]program.ReadView
-	matchedPlans                    map[string]PlanApplicationResult
-	matchedPlanErrors               map[string]error
-	lastDiagnosisView               program.ReadView
-	findings                        []sdk.Finding
-	batches                         int
-	fastPathPrograms                []string
-	fastPathRelationCoveredFindings []RelationCoveredFinding
-	fastPathSkippedReason           FastPathSkipReason
+	continuation        responderContinuation
+	MenuConfig          *ResponderMenuConfig
+	menu                *contracts.MitigationMenu
+	menuEntries         map[string]menuEntry
+	menuSession         *contracts.MitigationSession
+	menuReports         []*contracts.MitigationReport
+	menuExecutions      map[string][]MenuRoundExecution
+	menuRepairs         []RepairActionReceipt
+	VerifyClosure       func(context.Context) ToolResponse
+	CurrentEvidence     func() *IncidentRequest
+	Request             IncidentRequest
+	Programs            program.ProgramRegistry
+	Provider            SnapshotProvider
+	Detectors           []sdk.Detector
+	Executor            PlanExecutor
+	ReadView            func(sdk.DetectionContext) program.ReadView
+	DiagnosisDeadline   time.Duration
+	CandidateSweepLimit int
+	MaxBatches          int
+	Trust               map[string]ProgramTrust
+	CorpusSessionRoot   string
+	capturePhase        string
+	timing              toolTiming
+	preApplyCaptured    bool
+	saveToolState       func(context.Context, []byte) error
+	operationMu         sync.Mutex
+	mu                  sync.Mutex
+	sessionID           string
+	plans               map[string]selectedPlan
+	applications        map[string]PlanApplicationResult
+	applicationsLog     []RecordedPlanApplication
+	failureSignals      []string
+	calls               []ToolCall
+	runs                []ProgramRun
+	matchedViews        map[string]program.ReadView
+	matchedPlans        map[string]PlanApplicationResult
+	matchedPlanErrors   map[string]error
+	lastDiagnosisView   program.ReadView
+	findings            []sdk.Finding
+	batches             int
 }
 
 func NewResponderLoop(request IncidentRequest, programs program.ProgramRegistry, provider SnapshotProvider, detectors []sdk.Detector, executor PlanExecutor, maxBatches int) *ResponderLoop {
@@ -265,6 +262,8 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 		l.checkpointMenuSession(ctx, request.Checkpoint, &response)
 	case "report":
 		l.selectionReport(ctx, request.ReportQuery, &response)
+	case "detect":
+		l.detect(ctx, request.DetectorIDs, &response)
 	case "status":
 		response.DriftEvents = append([]sdk.DriftEvent(nil), l.Request.DriftEvents...)
 		response.Trust = l.Trust
@@ -342,6 +341,10 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 		response.Summary = fmt.Sprintf("rendered source for %s/%s", request.Ref.Kind, request.Ref.Name)
 	case "apply":
 		l.apply(ctx, request, &response)
+		if result, ok := l.applications[response.ApplicationID]; ok {
+			response.MitigationHealth = result.MitigationHealth
+			response.TargetedHealthy = result.VerificationPassed
+		}
 	case "pre-apply":
 		if err := l.capturePreApply(ctx, request.Refs...); err != nil {
 			response.Error = err.Error()
@@ -349,7 +352,13 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 		}
 		response.Summary = "first-mutation snapshot captured"
 	case "verify":
-		l.verify(ctx, nil, &response)
+		if l.VerifyClosure != nil {
+			response = l.VerifyClosure(ctx)
+			l.findings = append([]sdk.Finding(nil), response.Findings...)
+			response.LoopsAllowed = l.MaxBatches
+		} else {
+			l.verify(ctx, nil, &response)
+		}
 	case "rollback":
 		l.rollbackApplication(ctx, request, &response)
 	default:
@@ -383,7 +392,7 @@ func recordedToolResponseJSON(response ToolResponse, applied []selectedPlan) []b
 		return responseJSON
 	}
 	record := truncatedToolResponse{
-		ToolResponse: ToolResponse{Command: response.Command, Summary: boundedToolText(response.Summary), Error: boundedToolText(response.Error), PlanID: response.PlanID, ApplicationID: response.ApplicationID, LoopsUsed: response.LoopsUsed, LoopsAllowed: response.LoopsAllowed, Healthy: response.Healthy, Unresolved: response.Unresolved, RolloutPending: compactRolloutPending(response.RolloutPending)},
+		ToolResponse: ToolResponse{Command: response.Command, Summary: boundedToolText(response.Summary), Error: boundedToolText(response.Error), PlanID: response.PlanID, ApplicationID: response.ApplicationID, LoopsUsed: response.LoopsUsed, LoopsAllowed: response.LoopsAllowed, Healthy: response.Healthy, TargetedHealthy: response.TargetedHealthy, Unresolved: response.Unresolved, RolloutPending: compactRolloutPending(response.RolloutPending)},
 		Truncated:    true, FindingsCount: len(response.Findings), ProgramRunsCount: len(response.ProgramRuns), DetectorStatesCount: len(response.DetectorStates), PatchesCount: len(response.Patches),
 	}
 	if response.Command == "verify" {

@@ -897,6 +897,15 @@ func (c *Controller) handleDispatchCompletion(completion dispatchCompletion, obs
 		c.dispatchState = contracts.DispatchState_DISPATCH_STATE_COMPLETED
 		c.dispatchError = completion.err.Error()
 		c.currentIncidentResult = nil
+		if resumableSessionID.MatchString(completion.result.ResponderSessionID) {
+			// Preserve only the checkpoint identity on a failed Job; there is
+			// no worker result authorizing repair or learning claims.
+			startedAt := c.incidentDispatchedAt
+			if startedAt.IsZero() {
+				startedAt = c.responderCompletedAt
+			}
+			c.currentIncidentResult = &IncidentResult{SchemaVersion: ProtocolSchemaVersion, IncidentID: completion.incidentID, Status: IncidentFailed, ResponderSessionID: completion.result.ResponderSessionID, Error: completion.err.Error(), Timing: TimingMetrics{StartedAt: startedAt, CompletedAt: c.responderCompletedAt}}
+		}
 		c.resetDispatchRetryLocked()
 	} else if completion.err != nil {
 		// A watcher, transport, or leadership-guard failure does not prove that

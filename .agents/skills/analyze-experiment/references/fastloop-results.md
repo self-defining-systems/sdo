@@ -1,14 +1,12 @@
 # Fastloop result evidence
 
-`fastloop.json` and every new incident row carry `image_delivery` (`registry`, `kind-load-fallback`, or `unknown` for older lanes) and `image_delivery_reason`. Surface fallback and its registry error in reports. Incident rows reread delivery history at completion so source deployments that fall back mid-run are included. `image_delivery.jsonl` records each attempted delivery's cluster, image list, path, reason and wall seconds; the lane additionally retains `image_delivery_seconds` and `image_delivery_images`. Successful registry delivery of every affected image clears fallback mode; a partial success cannot hide another image's fallback. Code-only resets retain the last mode and never transfer images. Fallback warns on stderr when delivery fails, after the archive transfer, and at each run startup. These are benchmark transport facts, not production outcome evidence.
+`fastloop.json` and every new incident row carry `image_delivery` (`registry`, `kind-load-fallback`, or `unknown` for older lanes) and `image_delivery_reason`. Surface fallback and its registry error in reports. Completion rows include mid-run source-deployment fallbacks. `image_delivery.jsonl` records each attempted delivery's cluster, image list, path, reason and wall seconds; the lane additionally retains `image_delivery_seconds` and `image_delivery_images`. Successful registry delivery of every affected image clears fallback mode; a partial success cannot hide another image's fallback. Code resets preserve delivery mode without transferring images. Fallback warns on stderr when delivery fails, after the archive transfer, and at each run startup. Delivery metadata is benchmark transport evidence.
 
 Fastloop runs write `results/<run-id>/incidents.jsonl` and `incidents.csv`, one row per injected stream entry. `problem_id` joins explicitly composed IDs with `+`. Use `oracle.success`, `recovery_oracle.success`, and `error` together: a failed incident oracle or failed post-recovery oracle is a failed incident. `injection_started_at`, `detected_at`, `responder_started_at`, `responder_finished_at`, `mitigation_applied_at`, `oracle_finished_at`, `reflection_started_at`, `reflection_finished_at`, `rebuild_done_at`, and `recovery_finished_at` are timestamp columns; `responder_tokens`, `drift_tokens`, and `reflection_tokens` are separate objects in JSONL and JSON strings in CSV. New `run_metadata.json` declares `token_accounting_version: responder-drift/v2`: `drift_tokens` is legacy zero and merged reasoning is charged once to `responder_tokens`. Older rows retain recorded investigator costs; the historical reader sums completed investigations between injection start and resolution end. `diagnosis_grade` is separate from the deterministic oracle: when enabled, it contains SREGym's diagnosis-judge success, accuracy, D1/D2/D3 details, judge tokens, latency, and any judge error. Explicit composites receive one whole-set diagnosis grade. Deferred grades are merged into both result files at run end and never gate the next injection; inline grades run before recovery. With deferred grading, fastloop time-to-mitigation is `injection_to_mitigation_seconds` directly; inline grading occurs after responder resolution and before recovery, so it is excluded from that metric too. Reflection timestamps are the harness-observed drain interval; newer native broker ledgers separately expose closure phase instants. Do not mix these fastloop rows into pipeline stage cost calculations without accounting for that different timing scope.
 
 New native broker ledgers expose `closure_phase_timestamps` as UTC instants and `reflection_skipped_reason`; fastloop rows expose `closure_phase_seconds`, the elapsed seconds since each preceding observed closure phase. Missing phases mean that path did not execute or that the run predates instrumentation. The immutable outcome document is committed before reflection, so join later phases from the broker ledger using the incident ID and outcome commit.
 
-Native `OutcomeRecord.resolution_path` is `fast_path` or `responder`; `fast_path_programs` lists the programs attempted, including a failed attempt handed to the responder. `plan_applications` records each plan's verification plus `rolled_back` and `rollback_error`, and `program_failure_signals` breaks a failed program's trust streak. A fully resolved fast path has no responder Job and zero responder usage. Current closures still settle per-cause learning evidence; older versions skipped reflection for fast paths. The strict native receipt accepts an empty `responder_job_evidence` only for that verified outcome path. Fastloop rows carry `resolution_path` and `fast_path_programs`; composite rows use `fast_path` only when every component receipt used it and combine distinct program IDs. Older outcomes and rows omit these fields.
-
-When a configured fast path does not attempt a plan, `fast_path_skipped_reason` records the typed eligibility gate in the native ledger, outcome, and fastloop row. The controller log prints the same reason. Historical `uncovered_finding` meant a missing direct match/relation. GS1 attempts the best single match despite uncovered findings; see [automatic repair evidence](automatic-repair.md). `fast_path_relation_covered_findings` is a list of finding fingerprints paired with the covering `program_id` and its named `bindings`; it appears in the fast-path result, native ledger, outcome, and fastloop row. A relation-covered finding must clear during verification or the attempt rolls back, hands off to the responder, and records `fast_path_failure` for the program. Fastloop `match_reasons` includes program verdict evidence facts and `binding_sources` lists the sources of matching runs (`hint`, `finding`, or `sweep`); duplicate reasons and sources are collapsed in each row. Older records omit these fields.
+Native `OutcomeRecord.resolution_path` is `responder` when populated. `playbook_coverage` records incident-open matches and unexplained findings; rows retain it even if receipt validation fails. Every current native receipt requires one successful responder Job. Program selections, raw agent actions, final verification and explicit rollbacks are recorded separately. See [agent-selected repair evidence](automatic-repair.md).
 
 Snapshot captures may include `statefulSets`, `horizontalPodAutoscalers`, and `podDisruptionBudgets` alongside Deployments, Services, ReplicaSets, and Pods. Use their same-namespace selectors, scale targets, and controller owner references to audit relation coverage; a matching name alone is insufficient.
 
@@ -42,9 +40,7 @@ For a confirmed watch-time program match, `DriftEvent.source` is `watch event pr
 
 ## Program trust evidence
 
-`runtime/program_trust.go` derives trust from accepted outcomes in completion order.
-The default threshold is three verified successes; `--program-trust-threshold=1`
-changes eligibility, not the evidence required. The broker persists
+`runtime/program_trust.go` derives informational success/failure counters from accepted outcomes in completion order. There is no automatic execution threshold. The broker persists
 `reflection_eligibility` version 1 before committing the authoritative outcome.
 Its cause groups exactly preserve `confirmed_root_causes` resources; observations
 outside those groups remain unassigned. Only `covered` items for the same program
@@ -71,16 +67,7 @@ do not add credit or manufacture failures. Inspect the accepted outcome and
 broker reflection ledger separately; publication failure cannot change the
 already committed eligibility facts.
 
-`program_failure_signals` can contain
-`fast_path_failure:<program_id>@<accepted_dependency_revision>`. The fast-path
-marker freezes this revision before mutation, then restores the signal on failed
-handoff or interrupted recovery. Failures remain associated with that revision
-after unrelated source commits, edits and later reversions; later successes do
-not erase them. Legacy `fast_path_failure:<program_id>` uses the known program
-revision, falling back to the source commit only when none is available. Generic
-signals such as `adhoc_coverage_gap` are not a failure of every program. Inspect
-the attempt facts and live recheck evidence described in [native broker evidence](native-broker.md)
-when an outcome has not yet been committed.
+Program failures are recorded as `application_verification_failure:<program_id>@<accepted_dependency_revision>`; counters describe evidence and never gate dispatch.
 
 Responder applications record the same revision-bound trust failure as
 `application_verification_failure:<program_id>@<accepted_dependency_revision>`.
@@ -97,10 +84,7 @@ covered instances. Newly authored or unmatched programs must earn their first
 credit on a later exact covered repair; corpus acceptance alone creates no credit.
 Do not reinterpret archived counters under the new policy.
 
-After a controller restart, fast-path closure requires fresh bound NoMatch
-results plus independent verification. Markers never replay a cached success or
-undo a prior write. A read-only recovery closure has no new applied-plan receipt
-and earns no additional program trust credit. `PlanApplication` keeps applied
+After a controller restart, the original coverage remains in the prepared incident task. The responder rechecks live state before choosing repairs. `PlanApplication` keeps applied
 actions and verification outcomes; rollback pre-images and patches are retired
 (reserved fields 11 and 13). The tools-state ConfigMap retains attempt counts,
 limits and revision-bound failure signals, not mutation history.
@@ -114,3 +98,5 @@ A full seed-compatible cleanup intentionally removes fault-created objects. Its 
 ### Startup versus resumed baseline timing
 
 The persistent fault gate keeps controller startup (including health refresh) separate from its 300-second resumed-baseline readiness budget. The matching maintenance `active` record starts that readiness clock once; later polls or pauses cannot restart it. Startup remains bounded by the existing lifecycle/startup budget. `controller_baseline_wait` retains the total pre-injection wait; `controller_startup_wait` and `controller_resumed_baseline_wait` split it. None belongs to incident TTM or per-incident responder/reflection usage.
+
+Warm resets require structural health and independent HTTP. Failed HTTP permits one bounded hotel-client refresh and recheck, preserving backends/memory. Failed refresh or HTTP blocks admission; restoration earns no responder credit.

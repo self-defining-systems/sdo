@@ -1,9 +1,8 @@
 package runtime
 
 import (
-	"bytes"
 	"context"
-	"log"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,6 +13,7 @@ import (
 	"google.golang.org/protobuf/types/known/durationpb"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory"
+	"sdo.dev/operator/memory/validate"
 	"sdo.dev/operator/worker_registry/registrytest"
 )
 
@@ -111,7 +111,7 @@ func TestRegisteredReflectionWorkerUsesTypedTaskAndPriorMemory(t *testing.T) {
 	if _, err := store.Put(context.Background(), &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: "prior", Classification: "success"}); err != nil {
 		t.Fatal(err)
 	}
-	w := RegisteredReflectionWorker{TaskType: reflectionTaskType(t), AgentID: "reflector", Outcomes: store, Timeout: time.Minute}
+	w := RegisteredReflectionWorker{TaskType: reflectionTaskType(t), AgentID: "reflector", Outcomes: store, Timeout: time.Minute, SessionMode: "fresh"}
 	w.Executor = reflectionTaskExecutorFunc(func(_ context.Context, task *contracts.AgentTask) (*contracts.AgentResult, error) {
 		if task.TaskType != reflectionTaskType(t) || task.Workspace.CheckoutPath != root {
 			t.Fatalf("wrong task: %+v", task)
@@ -139,56 +139,29 @@ func TestRegisteredReflectionWorkerUsesTypedTaskAndPriorMemory(t *testing.T) {
 	}
 }
 
-func TestRegisteredReflectionWorkerResumeFallsBackWithoutBoundSession(t *testing.T) {
+func TestRegisteredReflectionWorkerMissingSessionNeverStartsFresh(t *testing.T) {
 	root := nativeRepository(t)
-	base := nativeGit(t, root, "rev-parse", "HEAD")
-	store := memory.NewJSONStore(t.TempDir())
-	closure := nativeClosure(IncidentWorkspace{IncidentID: "current", Worktree: root, BaseCommit: base})
-	worker := RegisteredReflectionWorker{AgentID: "reflector", TaskType: reflectionTaskType(t), Outcomes: store, Timeout: time.Minute, SessionMode: "resume", Guidance: "generalize-spec"}
-	called := false
-	var modes []string
-	var logs bytes.Buffer
-	log.SetOutput(&logs)
-	defer log.SetOutput(os.Stderr)
-	worker.Executor = reflectionTaskExecutorFunc(func(_ context.Context, task *contracts.AgentTask) (*contracts.AgentResult, error) {
-		called = true
-		request := &contracts.ReflectionRequest{}
-		if err := task.Request.UnmarshalTo(request); err != nil {
-			return nil, err
-		}
-		if request.GetSessionMode() != "resume" && request.GetSessionMode() != "fresh" || request.GetGuidance() != "generalize-spec" {
-			t.Fatalf("resume lost accepted session binding: %+v", request)
-		}
-		modes = append(modes, request.GetSessionMode())
-		response, err := anypb.New(&contracts.ReflectionResult{LearningDecision: "no_change", NoChangeReason: "already learned"})
-		if err != nil {
-			return nil, err
-		}
-		return &contracts.AgentResult{SchemaVersion: task.SchemaVersion, TaskId: task.TaskId, ProposalId: task.Workspace.ProposalId, Status: "completed", Response: response}, nil
+	workspace := IncidentWorkspace{IncidentID: "current", Worktree: root, BaseCommit: nativeGit(t, root, "rev-parse", "HEAD")}
+	closure := nativeClosure(workspace)
+	worker := RegisteredReflectionWorker{AgentID: "reflector", TaskType: reflectionTaskType(t), Outcomes: memory.NewJSONStore(t.TempDir()), Timeout: time.Minute, SessionMode: "resume"}
+	calls := 0
+	worker.Executor = reflectionTaskExecutorFunc(func(ctx context.Context, task *contracts.AgentTask) (*contracts.AgentResult, error) {
+		calls++
+		return reflectionNoChangeResult(ctx, task)
 	})
-	worker.SessionExecutor = func(id string) (ReflectionTaskExecutor, error) {
-		if id != "current" {
-			t.Fatalf("session transport received another incident: %q", id)
+	worker.SessionExecutor = func(string) (ReflectionTaskExecutor, error) { return worker.Executor, nil }
+	for _, id := range []string{"", "../escape", "session-123"} {
+		closure.Result.ResponderSessionID = id
+		decision, err := worker.Reflect(context.Background(), closure, workspace, &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: "current", Classification: "success"}, "repair", "outcome", ReflectionFeedback{})
+		if err != nil {
+			t.Fatal(err)
 		}
-		return worker.Executor, nil
+		if id != "session-123" && (calls != 0 || decision.NoChangeReason != "no_session") {
+			t.Fatalf("absent session executed: calls=%d decision=%v", calls, decision)
+		}
 	}
-	if _, err := worker.Reflect(context.Background(), closure, IncidentWorkspace{IncidentID: "current", Worktree: root, BaseCommit: base}, &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: "current", Classification: "success"}, "repair", "outcome", ReflectionFeedback{}); err != nil || !called {
-		t.Fatalf("missing session did not fall back: %v", err)
-	}
-	called = false
-	closure.Result.ResponderSessionID = "../escape"
-	if _, err := worker.Reflect(context.Background(), closure, IncidentWorkspace{IncidentID: "current", Worktree: root, BaseCommit: base}, &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: "current", Classification: "success"}, "repair", "outcome", ReflectionFeedback{}); err != nil || !called {
-		t.Fatalf("invalid session token did not fall back: %v", err)
-	}
-	closure.Result.ResponderSessionID = "session-123"
-	if _, err := worker.Reflect(context.Background(), closure, IncidentWorkspace{IncidentID: "current", Worktree: root, BaseCommit: base}, &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: "current", Classification: "success"}, "repair", "outcome", ReflectionFeedback{}); err != nil || !called {
-		t.Fatalf("valid session was not dispatched: %v", err)
-	}
-	if len(modes) != 3 || modes[0] != "fresh" || modes[1] != "fresh" || modes[2] != "resume" {
-		t.Fatalf("wrong fallback modes: %v", modes)
-	}
-	if !bytes.Contains(logs.Bytes(), []byte("session ID is missing or invalid; starting fresh")) {
-		t.Fatalf("fallback reason was not logged: %s", logs.String())
+	if calls != 1 {
+		t.Fatalf("saved session calls=%d", calls)
 	}
 }
 
@@ -196,7 +169,7 @@ func TestRegisteredReflectionRetryUsesANewTaskIdentity(t *testing.T) {
 	root := nativeRepository(t)
 	base := nativeGit(t, root, "rev-parse", "HEAD")
 	store := memory.NewJSONStore(t.TempDir())
-	worker := RegisteredReflectionWorker{TaskType: reflectionTaskType(t), AgentID: "reflector", Outcomes: store, Timeout: time.Minute}
+	worker := RegisteredReflectionWorker{TaskType: reflectionTaskType(t), AgentID: "reflector", Outcomes: store, Timeout: time.Minute, SessionMode: "fresh"}
 	var ids []string
 	worker.Executor = reflectionTaskExecutorFunc(func(_ context.Context, task *contracts.AgentTask) (*contracts.AgentResult, error) {
 		ids = append(ids, task.TaskId)
@@ -255,7 +228,7 @@ func TestRegisteredReflectionWorkerDirectEdits(t *testing.T) {
 			root := nativeRepository(t)
 			nativeMemoryFixture(t, root)
 			base := nativeGit(t, root, "rev-parse", "HEAD")
-			worker := RegisteredReflectionWorker{AgentID: "reflector", TaskType: reflectionTaskType(t), Outcomes: memory.NewJSONStore(t.TempDir()), Timeout: time.Minute}
+			worker := RegisteredReflectionWorker{AgentID: "reflector", TaskType: reflectionTaskType(t), Outcomes: memory.NewJSONStore(t.TempDir()), Timeout: time.Minute, SessionMode: "fresh"}
 			worker.Executor = reflectionTaskExecutorFunc(func(_ context.Context, task *contracts.AgentTask) (*contracts.AgentResult, error) {
 				if task.TaskType != reflectionTaskType(t) {
 					t.Fatalf("legacy capability: %s", task.TaskType)
@@ -283,6 +256,17 @@ func TestRegisteredReflectionWorkerDirectEdits(t *testing.T) {
 			if (err != nil) != tc.wantError {
 				t.Fatalf("error = %v, wantError %v", err, tc.wantError)
 			}
+			if tc.wantError {
+				var failure *validate.Failure
+				if !errors.As(err, &failure) || len(failure.Diagnostics) == 0 {
+					t.Fatalf("result rejection omitted shared diagnostics: %v", err)
+				}
+				for _, diagnostic := range failure.Diagnostics {
+					if diagnostic.Rule != validate.RuleReflectionDecision {
+						t.Fatalf("result rejection rule = %q", diagnostic.Rule)
+					}
+				}
+			}
 		})
 	}
 }
@@ -295,7 +279,7 @@ func TestRegisteredReflectionRequestCarriesProgramRunsOnlyOnceAndNotForPriorOutc
 	if _, err := store.Put(context.Background(), &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: "prior", Classification: "success", ProgramRuns: []*contracts.ProgramRun{run, run}}); err != nil {
 		t.Fatal(err)
 	}
-	w := RegisteredReflectionWorker{TaskType: reflectionTaskType(t), AgentID: "reflector", Outcomes: store, Timeout: time.Minute}
+	w := RegisteredReflectionWorker{TaskType: reflectionTaskType(t), AgentID: "reflector", Outcomes: store, Timeout: time.Minute, SessionMode: "fresh"}
 	w.Executor = reflectionTaskExecutorFunc(func(_ context.Context, task *contracts.AgentTask) (*contracts.AgentResult, error) {
 		request := &contracts.ReflectionRequest{}
 		if err := task.Request.UnmarshalTo(request); err != nil {

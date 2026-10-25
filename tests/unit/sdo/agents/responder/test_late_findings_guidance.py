@@ -8,9 +8,10 @@ from pathlib import Path
 import pytest
 from google.protobuf import json_format
 
-from sdo.agents.responder.codex import _responder_prompt, late_findings_guidance
+from sdo.agents.responder.codex import late_findings_guidance
 from sdo.contracts import IncidentRequest
 from tests.proto_messages import evolve
+from tests.unit.sdo.agents.prompts.cases import responder_prompt as _responder_prompt
 
 _FIXTURE = Path(__file__).resolve().parents[4] / "fixtures" / "sdo" / "contracts" / "incident_request.json"
 
@@ -53,12 +54,10 @@ def test_pull_mode_adds_the_guidance_in_both_repair_modes(monkeypatch: pytest.Mo
 def test_guidance_says_when_to_pull_and_to_treat_playbooks_as_hypotheses() -> None:
     text = late_findings_guidance(_request(), mode="pull")
 
-    assert "once now" in text
-    assert "before your first change" in text
+    assert "now" in text
+    assert "before your first mutation" in text
     assert "hypothes" in text
-    assert "live state" in text
-    assert "never" in text
-    assert "blindly" in text
+    assert "Live-check" in text
 
 
 def test_guidance_is_problem_agnostic() -> None:

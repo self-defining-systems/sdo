@@ -70,6 +70,9 @@ def reflection_recording(
     if verified_service:
         resource = record.confirmed_root_causes[0].resources[0]
         resource.kind, resource.namespace, resource.name = "Service", "demo", "front"
+        record.reflection_eligibility.version = 1
+        cause = record.reflection_eligibility.causes.add(cause_index=0)
+        cause.resources.append(resource)
     else:
         # These tests isolate transport and frontmatter from verified repair learning.
         del record.confirmed_root_causes[:]
@@ -259,17 +262,13 @@ def test_recorded_program_replay_accepts_session_fixture_without_captures(tmp_pa
     files[".sdo/lib/ports/ports.go"] = (fixture / "lib/ports/ports.go").read_bytes()
     files[".sdo/diagnostics/go.mod"] = (fixture / "diagnostics/go.mod").read_bytes()
     labels["provenance"] = {"incident_id": _closure().request.incident_id}
-    detector = fixture / "diagnostics/detectors/incidents/missing-configmap"
-    manifest = (detector / "manifest.yaml").read_text()
-    manifest = manifest.replace("    - missing-configmap", "    - missing-configmap\n    - service-targetport-mismatch")
-    manifest = manifest.replace("firing: 2", "firing: 1")
-    files[".sdo/diagnostics/detectors/incidents/missing-configmap/manifest.yaml"] = manifest.encode()
-    detector_source = (detector / "detector.go").read_text()
-    detector_source = detector_source.replace("Firing: 2", "Firing: 1")
-    detector_source = detector_source.replace(
-        "[]string{playbookPath}", '[]string{playbookPath, "service-targetport-mismatch"}'
-    )
-    files[".sdo/diagnostics/detectors/incidents/missing-configmap/detector.go"] = detector_source.encode()
+    # Author a detector for the verified service program, leaving the unrelated
+    # accepted ConfigMap detector and its playbook unchanged.
+    for name in ("manifest.yaml", "detector.go"):
+        data = (ROOT / "tests/fixtures/sdo/service_port_detector" / name).read_bytes()
+        files[f".sdo/diagnostics/detectors/incidents/service-targetport-mismatch/{name}"] = data.replace(
+            b"scripted-incident", _closure().request.incident_id.encode()
+        )
 
     for name, data in {
         "open.json": captures["open@detect.json"],

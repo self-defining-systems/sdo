@@ -11,9 +11,13 @@ from google.protobuf import json_format
 from sdo.agents.responder.codex import (
     ResponderExecutionError,
     _incident_result_schema,
-    _responder_prompt,
     execute_incident,
 )
+from sdo.agents.responder.codex import (
+    _responder_prompt as _build_responder_prompt,
+)
+from sdo.agents.responder.credentials import SKILLS_ROOT
+from sdo.agents.responder.incident_context import prepared_incident_data
 from sdo.contracts import (
     IncidentRequest,
     IncidentResult,
@@ -39,6 +43,15 @@ def _fixture(name: str) -> str:
         "architecture_markdown": "# Architecture\nSource-grounded system.",
     }
     return json.dumps(request)
+
+
+def _responder_prompt(request: IncidentRequest) -> str:
+    with prepared_incident_data(request) as data:
+        return _build_responder_prompt(request, incident_data=data)
+
+
+def _workflow() -> str:
+    return (SKILLS_ROOT / "sdo-incident-response/SKILL.md").read_text(encoding="utf-8")
 
 
 def _request(name: str = "incident_request.json") -> IncidentRequest:
@@ -130,8 +143,7 @@ def test_responder_cannot_reflect_before_controller_verification(monkeypatch) ->
     prompt = _responder_prompt(request)
 
     assert "Operational memory is read-only" in prompt
-    assert "separate reflection task may later edit operational memory in its own checkout" in prompt
-    assert "controller verifies recovery" in prompt
+    assert "controller independently checks the result" in _workflow()
     assert "After recovery, reflect into `.sdo`" not in prompt
 
     assert "SREGym" not in prompt
@@ -186,23 +198,18 @@ def test_codex_output_schema_is_strict_and_requires_defaulted_fields() -> None:
 
 
 def test_recorded_actions_policy_is_explicit_in_responder_prompt() -> None:
-    request = evolve(_request(), repair_policy="recorded-actions")
-
-    prompt = _responder_prompt(request)
-
+    prompt = _responder_prompt(evolve(_request(), repair_policy="recorded-actions"))
     assert "recorded-actions" in prompt
-    assert "sdo act" in prompt
+    assert "Use recorded actions for live mutations" in _workflow()
+    assert "never hand-write receipts" in _workflow()
 
 
 def test_prompt_tells_the_responder_to_cancel_an_already_healed_finding() -> None:
-    request = _request()
-
-    prompt = _responder_prompt(request)
-
-    assert "self-heal" in prompt
-    assert "cancelled" in prompt
-    assert "no repair actions and no applied playbooks" in prompt
-    assert "Never return `completed` while the health objective is still failing" in prompt
+    prompt = _responder_prompt(_request())
+    assert "sdo-incident-response/SKILL.md" in prompt
+    assert "return cancelled rather than inventing one" in _workflow()
+    assert "never claim done without this self-check" in _workflow()
+    assert "rather than inventing one" in _workflow()
 
 
 def _exact_match_outcome(match_reason: str = "exact-fingerprint") -> PriorOutcomeEvidence:
@@ -266,172 +273,100 @@ def _not_yet_fired_request(worktree: Path, *, prior_incident: str = "incident-se
     return evolve(request, findings=[health], surfaced_playbooks=[], relevant_outcomes=[prior])
 
 
-def test_exact_match_on_incident_detector_inlines_playbook_and_fast_procedure(tmp_path: Path) -> None:
+def test_matched_memory_uses_the_workflow_without_repeating_playbook_bodies(tmp_path: Path) -> None:
     prompt = _responder_prompt(_warm_request(tmp_path))
-
-    assert "Warm path" in prompt
-    assert "Restore `<MISSING_CONFIG_MAP>` from source" in prompt
-    assert "verify.sh" in prompt
-    assert 'kubectl -n "$1" get configmap geo-config' in prompt
-    assert "Check them against accepted source and intended behavior" in prompt
-    assert "one combined sanity check" in prompt
-    assert "do not re-diagnose them" not in prompt
-    assert "has not fired" not in prompt
-    assert "Investigate contradictions, missing evidence" in prompt
-    assert "Confirm a surfaced playbook against live state before applying it" not in prompt
-    # The learned playbook owns the repair; SDO adds no fault-specific repair tip of its own.
-    assert "mount backoff" not in prompt
-    assert "stuck pods" not in prompt
+    document = json.loads(prompt.split("Incident request:\n", 1)[1])
+    assert document["available_playbook_ids"] == [INCIDENT_PLAYBOOK]
+    assert "Restore `<MISSING_CONFIG_MAP>` from source" not in prompt
+    assert "verify.sh" not in prompt
+    assert "learned mitigations first, repair the rest" in prompt
+    assert "Check current status and any late findings" in _workflow()
+    assert "Investigate contradictions" in _workflow()
 
 
-def test_registered_but_not_fired_incident_detector_gets_precondition_sanity_check(tmp_path: Path) -> None:
-    prompt = _responder_prompt(_not_yet_fired_request(tmp_path))
-
-    assert "Warm path" in prompt
-    assert f"`{INCIDENT_PLAYBOOK}`: owned by the registered incident detector `missing-configmap`" in prompt
-    assert "has not fired for this incident, so no incident-detector evidence exists yet" in prompt
-    assert "Deployment (apps/v1)" in prompt
-    assert "namespace `hotel-reservation`" in prompt
-    assert "Run `verify.sh` inside that check" in prompt
-    assert "one combined sanity check" in prompt
-    assert "accepted source and intended application behavior" in prompt
-    assert "already establishes the playbook's preconditions" not in prompt
-    assert "Confirm a surfaced playbook against live state before applying it" not in prompt
-
-
-def test_warm_path_limits_checks_to_repair_evidence_and_accepted_source_values(tmp_path: Path) -> None:
-    for request in (_warm_request(tmp_path), _not_yet_fired_request(tmp_path)):
-        prompt = _responder_prompt(request)
-
-        assert (
-            "Check only the evidence the repair needs and the accepted-source values it would write, then act" in prompt
-        )
-        assert "Explore the repository or cluster further only to resolve a contradiction" in prompt
-
-
-def test_cold_prompt_is_unchanged_without_exact_incident_detector_match(tmp_path: Path) -> None:
-    registered = tmp_path / "registered"
-    no_prior = evolve(_request(), repository_worktree=str(registered))
-    cold_requests = [
-        no_prior,
-        _warm_request(registered, match_reason="detector-rule-resource-kind"),
-        evolve(
-            _warm_request(registered),
-            memory_snapshot=evolve(_warm_request(registered).memory_snapshot, detectors=[]),
-        ),
-        _not_yet_fired_request(registered, prior_incident="unrelated-incident"),
-    ]
-
-    for request in cold_requests:
-        prompt = _responder_prompt(request)
-        assert "Warm path" not in prompt
-        assert "Treat them as hypotheses" in prompt
-        assert "Confirm a surfaced playbook against live state before applying it" in prompt
-
-
-def test_cold_prompt_inlines_surfaced_logical_playbook_without_memory_file_read() -> None:
-    request = _request()
-    snapshot = evolve(
-        request.memory_snapshot,
-        playbooks=[
-            MemoryPlaybook(
-                id="missing-configmap",
-                markdown="Restore the source-backed configuration safely.",
-                scripts=[MemoryScript(name="verify.sh", content="kubectl get configmap")],
-            )
-        ],
-    )
-    request = evolve(request, memory_snapshot=snapshot)
-
+def test_historical_detector_match_does_not_invent_current_coverage(tmp_path: Path) -> None:
+    request = _not_yet_fired_request(tmp_path)
     prompt = _responder_prompt(request)
-
+    document = json.loads(prompt.split("Incident request:\n", 1)[1])
+    assert document["findings"][0]["detector_id"] == "health-objective"
     assert "Warm path" not in prompt
-    assert "Restore the source-backed configuration safely." in prompt
-    assert "verify.sh" in prompt
+    assert "quick live check of their preconditions" in _workflow()
+
+
+def test_warm_and_cold_paths_share_live_precondition_checks(tmp_path: Path) -> None:
+    for request in (_warm_request(tmp_path), _not_yet_fired_request(tmp_path), _request()):
+        prompt = _responder_prompt(request)
+        assert str(SKILLS_ROOT / "sdo-incident-response/SKILL.md") in prompt
+        assert "accepted-source values" in _workflow()
+
+
+def test_nonexact_history_remains_advice_without_a_warm_instruction_branch(tmp_path: Path) -> None:
+    request = _warm_request(tmp_path, match_reason="detector-rule-resource-kind")
+    prompt = _responder_prompt(request)
+    document = json.loads(prompt.split("Incident request:\n", 1)[1])
+    assert document["relevant_outcomes"][0]["match_reason"] == "detector-rule-resource-kind"
+    assert "Warm path" not in prompt
+    assert "Operational memory is fallible advice" in _workflow()
+
+
+def test_cold_prompt_offers_logical_ids_without_inlining_playbook_content() -> None:
+    request = _request()
+    request.memory_snapshot.playbooks.add(id="missing-configmap", markdown="Large reusable repair content")
+    prompt = _responder_prompt(request)
+    document = json.loads(prompt.split("Incident request:\n", 1)[1])
+    assert document["available_playbook_ids"] == ["missing-configmap"]
+    assert "Large reusable repair content" not in prompt
     assert ".sdo/" not in prompt
 
 
-def test_every_path_verifies_with_incident_status_before_submitting(tmp_path: Path) -> None:
-    cold = _request()
-
-    for prompt in (_responder_prompt(cold), _responder_prompt(_warm_request(tmp_path))):
-        assert "`python3 -m sdo.agents.responder.status_cli`" in prompt
-        assert "same synthetic traffic the controller requires before it closes this incident" in prompt
-        assert "other health detectors still fire" in prompt
-        assert "changed after this request was taken" in prompt
-        assert "Do not submit mitigation through any channel, and do not return a completed result" in prompt
-        assert "reports unavailable" in prompt
-        assert "`sdo-incident-status`" in prompt
-    warm = _responder_prompt(_warm_request(tmp_path))
-    assert "Run the playbook's verification and `python3 -m sdo.agents.responder.status_cli`" in warm
+def test_every_path_requires_detector_self_check_then_independent_closure(tmp_path: Path) -> None:
+    for request in (_request(), _warm_request(tmp_path)):
+        prompt = _responder_prompt(request)
+        assert "self-check before claiming recovery" in prompt
+    workflow = _workflow()
+    assert workflow.index("sdo detect") < workflow.index("sdo verify")
+    assert "never claim done without this self-check" in workflow
+    assert "controller independently checks the result" in workflow
 
 
-def test_every_path_prefers_one_blocking_wait_over_manual_poll_turns(tmp_path: Path) -> None:
-    """Each check-in on a backgrounded command is a separate model turn that resends the whole context.
-
-    Audited rollouts show the
-    responder issuing a short-yield exec check, getting nothing new, and returning later in a fresh
-    turn to check again; each such turn cost about as much context as any other turn in the session.
-    The prompt should steer the responder toward a single command that blocks until done instead.
-    """
-    cold = _request()
-
-    for prompt in (_responder_prompt(cold), _responder_prompt(_warm_request(tmp_path))):
-        assert "one blocking command" in prompt
-        assert "checking in on a backgrounded" in prompt
-        assert "kubectl rollout status" in prompt
-        assert "--timeout" in prompt
+def test_workflow_prefers_finishing_blocking_operations_to_model_polling() -> None:
+    assert "finish in one call instead of polling across model turns" in _workflow()
 
 
-def test_prompt_requires_helper_objects_to_carry_the_cleanup_label() -> None:
-    prompt = _responder_prompt(_request())
-
-    assert "sdo.dev/responder-helper=true" in prompt
-    assert "deletes them when you finish" in prompt
-    assert "Clean up the temporary state changes you introduced while troubleshooting" in prompt
-    assert "kubectl run" not in prompt
+def test_workflow_requires_helper_objects_to_carry_the_cleanup_label() -> None:
+    workflow = _workflow()
+    assert "sdo.dev/responder-helper=true" in workflow
+    assert "never application workloads" in workflow
+    assert "Clean up temporary investigation resources" in workflow
 
 
 def test_prompt_requires_live_evidence_for_every_root_cause() -> None:
     prompt = _responder_prompt(_request())
+    assert "sdo-incident-response/SKILL.md" in prompt
+    assert "Cite live cause observations, explained_detectors" in _workflow()
+    assert "static_context" in _workflow()
 
-    assert "Every confirmed root cause cites the live evidence behind it" in prompt
-    assert "static_context" in prompt
-    assert "explained_detectors" in prompt
 
-
-def test_prompt_lists_changes_since_the_healthy_baseline_once() -> None:
+def test_prompt_keeps_typed_healthy_baseline_changes_once() -> None:
     request = _request("incident_request_state_changes.json")
-
     prompt = _responder_prompt(request)
-
-    assert "Changes since the last healthy state (baseline 2026-09-27T10:00:00Z" in prompt
-    assert (
-        "- Service/frontend modified: selector: io.kompose.service=frontend -> "
-        "current_service_name=frontend,io.kompose.service=frontend" in prompt
+    document = json.loads(prompt.split("Incident request:\n", 1)[1])
+    assert document["state_changes"] == json_format.MessageToDict(
+        request.state_changes, preserving_proto_field_name=True
     )
-    assert "- NetworkPolicy/deny-all added: policyTypes: Ingress" in prompt
-    assert "- ConfigMap/geo-config removed" in prompt
-    assert "2 more changes omitted" in prompt
-    assert "not observed: Secret" in prompt
-    assert "existed unchanged while the application was healthy" in prompt
-    # The inference is neutral: no steer about names or contents that look suspicious.
-    assert "suspicious" not in prompt
-    assert "did not cause a new incident on their own" in prompt
     assert prompt.count("current_service_name=frontend,io.kompose.service=frontend") == 1
 
 
-def test_prompt_says_when_nothing_changed_since_the_healthy_baseline() -> None:
+def test_prompt_distinguishes_an_empty_baseline_diff_from_an_absent_one() -> None:
     request = _request("incident_request_state_changes.json")
-    unchanged = evolve(
-        request,
-        state_changes=evolve(request.state_changes, changes=[], omitted=None, unobserved_kinds=[]),
+    request = evolve(
+        request, state_changes=evolve(request.state_changes, changes=[], omitted=None, unobserved_kinds=[])
     )
-
-    prompt = _responder_prompt(unchanged)
-
-    assert "No Service, workload, NetworkPolicy, ConfigMap, Secret, or RBAC object changed" in prompt
-    assert "Changes since the last healthy state" not in _responder_prompt(_request())
+    document = json.loads(_responder_prompt(request).split("Incident request:\n", 1)[1])
+    assert document["state_changes"] == json_format.MessageToDict(
+        request.state_changes, preserving_proto_field_name=True
+    )
+    assert "state_changes" not in json.loads(_responder_prompt(_request()).split("Incident request:\n", 1)[1])
 
 
 def test_warm_path_requires_the_incident_playbook_to_exist(tmp_path: Path) -> None:
@@ -442,65 +377,50 @@ def test_warm_path_requires_the_incident_playbook_to_exist(tmp_path: Path) -> No
     assert "Warm path" not in prompt
 
 
-def test_warm_path_caps_inlined_playbook_text(tmp_path: Path) -> None:
+def test_prompt_never_inlines_large_playbook_bodies(tmp_path: Path) -> None:
     request = _warm_request(tmp_path)
-    playbook = evolve(
-        request.memory_snapshot.playbooks[0],
-        markdown="Restore `<MISSING_CONFIG_MAP>` from source.\n" + "x" * 50_000 + "TAIL-MARKER\n",
-    )
-    snapshot = evolve(request.memory_snapshot, playbooks=[playbook])
-    prompt = _responder_prompt(evolve(request, memory_snapshot=snapshot))
-
-    assert "Warm path" in prompt
+    request.memory_snapshot.playbooks[0].markdown = "x" * 50000 + "TAIL-MARKER"
+    prompt = _responder_prompt(request)
     assert "TAIL-MARKER" not in prompt
-    assert "truncated" in prompt
-    assert len(prompt) < 30_000
+    assert len(prompt) < 6000
+    assert INCIDENT_PLAYBOOK in prompt
 
 
 def test_prompt_compacts_detector_history_to_latest_evidence(tmp_path: Path) -> None:
     request = evolve(_request(), repository_worktree=str(tmp_path))
-
     prompt = _responder_prompt(request)
-
-    assert '"detector_history"' not in prompt
-    assert "2026-07-09T18:00:00Z" not in prompt
-    assert "missing-configmap: firing at 2026-07-09T18:00:30Z" in prompt
+    document = json.loads(prompt.split("Incident request:\n", 1)[1])
+    assert "detector_history" not in document
+    latest = next(
+        item for item in document["latest_detector_evaluations"] if item["detector_id"] == "missing-configmap"
+    )
+    assert latest["evaluated_at"] == "2026-07-09T18:00:30Z"
+    assert latest["status"] == "firing"
     assert "hotel-reservation/geo/geo-config" in prompt
 
 
-def test_prompt_inlines_a_small_health_objective(tmp_path: Path) -> None:
+def test_prompt_keeps_accepted_health_intent_and_bounds_large_intent(tmp_path: Path) -> None:
     request = evolve(_request(), repository_worktree=str(tmp_path))
-    request = evolve(
-        request,
-        memory_snapshot=evolve(request.memory_snapshot, goal_markdown="The application serves successful requests."),
-    )
-
-    prompt = _responder_prompt(request)
-
-    assert "The application serves successful requests." in prompt
-    assert "trusted memory snapshot" in prompt
-
-    large = evolve(request.memory_snapshot, goal_markdown="y" * 20_000)
-    assert "y" * 5_000 not in _responder_prompt(evolve(request, memory_snapshot=large))
+    request.memory_snapshot.goal_markdown = "The application serves successful requests."
+    document = json.loads(_responder_prompt(request).split("Incident request:\n", 1)[1])
+    assert document["intent"]["goal"] == request.memory_snapshot.goal_markdown
+    request.memory_snapshot.goal_markdown = "y" * 20000
+    with prepared_incident_data(request) as data:
+        assert len(data) <= 12000
+        assert "y" * 5000 not in data
+        assert "Full incident facts" in data
 
 
-def test_prompt_inlines_a_small_architecture_summary(tmp_path: Path) -> None:
-    """The accepted architecture summary is supplied by the logical memory snapshot."""
+def test_prompt_keeps_accepted_architecture_and_bounds_large_intent(tmp_path: Path) -> None:
     request = evolve(_request(), repository_worktree=str(tmp_path))
-    request = evolve(
-        request,
-        memory_snapshot=evolve(
-            request.memory_snapshot, architecture_markdown="The entrypoint uses the configuration service."
-        ),
-    )
-
-    prompt = _responder_prompt(request)
-
-    assert "The entrypoint uses the configuration service." in prompt
-    assert "trusted memory snapshot" in prompt
-
-    large = evolve(request.memory_snapshot, architecture_markdown="y" * 20_000)
-    assert "y" * 5_000 not in _responder_prompt(evolve(request, memory_snapshot=large))
+    request.memory_snapshot.architecture_markdown = "The entrypoint uses the configuration service."
+    document = json.loads(_responder_prompt(request).split("Incident request:\n", 1)[1])
+    assert document["intent"]["architecture"] == request.memory_snapshot.architecture_markdown
+    request.memory_snapshot.architecture_markdown = "y" * 20000
+    with prepared_incident_data(request) as data:
+        assert len(data) <= 12000
+        assert "y" * 5000 not in data
+        assert "Full incident facts" in data
 
 
 def test_program_prompt_guides_codex_and_claude_sessions() -> None:
@@ -511,18 +431,10 @@ def test_program_prompt_guides_codex_and_claude_sessions() -> None:
     ]
     request = from_dict(IncidentRequest, raw)
     prompt = _responder_prompt(request)
-    assert "ranked program verdicts" in prompt
-    assert "matching program's plan" in prompt
-    assert "Finish with independent verification" in prompt
-    assert "return once findings are clear and source changes are committed" in prompt
-    assert '"program_id": "targetport"' in prompt
-
-
-def test_program_prompt_includes_failed_fast_path_handoff() -> None:
-    raw = json.loads(_fixture("incident_request.json"))
-    raw["fast_path_summary"] = "trusted targetport attempted; verification failed; rollback true"
-    prompt = _responder_prompt(from_dict(IncidentRequest, raw))
-    assert raw["fast_path_summary"] in prompt
+    assert "learned mitigations first, repair the rest" in prompt
+    assert "Commit source repairs" in prompt
+    assert "self-check" in prompt
+    assert "targetport" in prompt
 
 
 def test_responder_prompt_no_longer_asks_for_scratch_scripts() -> None:
@@ -645,10 +557,10 @@ def test_prompt_marks_known_program_capabilities(can_mitigate: bool | None) -> N
         assert view["capability"] == "diagnosis-and-mitigation"
     else:
         assert view["capability"] == "unknown"
-    assert "matching program's plan as a repair hypothesis when can_mitigate=true" in prompt
-    assert "concise capability help" in prompt
+    assert "diagnosis-only match supplies evidence, not a repair" in _workflow()
+    assert "Success and failure counts are information, never permission gates" in _workflow()
+    assert "Discover capabilities and argument shapes" in _workflow()
     assert "--bind" not in prompt
-    assert "Use that index instead of broad tool-catalog output" in prompt
 
 
 def _scripted_reply(result: IncidentResult, session: str) -> FakeRun:
@@ -663,19 +575,18 @@ def _scripted_reply(result: IncidentResult, session: str) -> FakeRun:
     )
 
 
-def test_prompt_names_the_evidence_source_forms_without_promising_checks() -> None:
-    prompt = _responder_prompt(_request())
-
-    assert "`Kind/name` or `Kind/namespace/name`" in prompt
-    assert "SDO checks" not in prompt
+def test_workflow_separates_static_context_from_live_cause_evidence() -> None:
+    assert "Static files belong in static_context" in _workflow()
+    assert "live cause evidence" in _workflow()
 
 
 def test_memory_matches_do_not_override_accepted_source(tmp_path: Path) -> None:
     for request in (_warm_request(tmp_path), _not_yet_fired_request(tmp_path), _request()):
         prompt = _responder_prompt(request)
-        assert "Accepted source and developer changes express intent." in prompt
-        assert "Operational memory is fallible advice." in prompt
-        assert "Recovery requires evidence from the intended application behavior." in prompt
+        assert "sdo-incident-response/SKILL.md" in prompt
+        assert "Accepted source and developer changes express intent." in _workflow()
+        assert "Operational memory is fallible advice." in _workflow()
+        assert "Recovery requires evidence from the intended application behavior." in _workflow()
         assert "repair exactly" not in prompt
         assert "do not explore the repository or cluster" not in prompt
         assert "Prefer a matching program's plan" not in prompt
@@ -693,7 +604,7 @@ def test_controller_verification_resumes_same_session_with_remaining_budget(monk
 
     from libs.agent_cli.structured import StructuredTurn
 
-    feedback = '{"healthy":false,"attempt":1,"summary":"still unavailable"}'
+    feedback = '{"healthy":false,"attempt":1,"summary":"still unavailable","still_broken":[],"already_done":[]}'
     monkeypatch.setenv("SDO_RESPONSE_CONTINUATION", feedback)
     recovery = SimpleNamespace(
         resume_session_id=lambda: "same-provider-session",
@@ -715,20 +626,93 @@ def test_controller_verification_resumes_same_session_with_remaining_budget(monk
     execute_incident(_request(), provider="codex")
     assert captured["resume_session_id"] == "same-provider-session"
     assert captured["timeout_seconds"] == 43.0
-    assert feedback in captured["prompt"]
+    assert "still unavailable" in captured["prompt"]
+    assert '"still_broken": []' in captured["prompt"]
+
+
+@pytest.mark.parametrize("fails", [False, True])
+def test_continuation_keeps_response_scoped_facts_alive_until_turn_exit(monkeypatch, fails: bool) -> None:
+    from contextlib import contextmanager
+    from types import SimpleNamespace
+
+    from libs.agent_cli.structured import StructuredTurn, StructuredTurnError
+    from sdo.agents.responder.continuation import continuation_prompt
+
+    feedback = '{"healthy":false,"attempt":1,"summary":"still unavailable","still_broken":[],"already_done":[]}'
+    monkeypatch.setenv("SDO_RESPONSE_CONTINUATION", feedback)
+    active = []
+
+    @contextmanager
+    def facts(request):
+        active.append(request.incident_id)
+        try:
+            yield "original response facts"
+        finally:
+            active.clear()
+
+    recovery = SimpleNamespace(
+        resume_session_id=lambda: "same-provider-session",
+        recovered_prompt=lambda: "",
+        remaining_seconds=lambda: 43.0,
+        checkpoint=lambda _: None,
+        acknowledge_reports=lambda: None,
+    )
+    monkeypatch.setattr("sdo.agents.responder.codex.prepared_incident_data", facts)
+    monkeypatch.setattr("sdo.agents.responder.codex.open_recovery", lambda *_: recovery)
+
+    def run_turn(provider, prompt, **options):
+        assert active == [_request().incident_id]
+        assert prompt == continuation_prompt(feedback)
+        if fails:
+            raise StructuredTurnError("synthetic continuation failure")
+        return StructuredTurn(output_json=json.dumps(_reply(_result())), session_id="same-provider-session", usage=None)
+
+    monkeypatch.setattr("sdo.agents.responder.codex.run_structured_turn", run_turn)
+    monkeypatch.setattr("sdo.agents.responder.codex.turn_usage", lambda _: {"llm_calls": 1})
+    monkeypatch.setattr("sdo.agents.responder.codex.recorded_actions.merge_into", lambda _: None)
+    if fails:
+        with pytest.raises(ResponderExecutionError, match="synthetic continuation failure"):
+            execute_incident(_request(), provider="codex")
+    else:
+        execute_incident(_request(), provider="codex")
+    assert active == []
 
 
 def test_app_drift_defaults_to_verified_accepted_source_restoration() -> None:
     request = _request()
-    request.drift_events.add(operation="Update", classification="unexplained")
-
+    request.drift_events.add()
     prompt = _responder_prompt(request)
+    assert "drift_events" in prompt
+    assert "Restore namespace drift to accepted source" in _workflow()
+    assert "unless live evidence establishes an intended difference" in _workflow()
+    assert "uncertainty alone does not block restoration" in _workflow()
+    assert "Explain benign drift with live evidence" in _workflow()
 
-    assert "restore app-namespace drift to accepted source" in prompt
-    assert "positive evidence" in prompt
-    assert "runtime-managed field" in prompt
-    assert "recorded accepted change" in prompt
-    assert "verify the restoration" in prompt
-    assert "uncertainty alone must not block restoration" in prompt
-    assert "AND a violated application relation" not in prompt
-    assert "take no action and leave the finding unresolved" not in prompt
+
+@pytest.mark.parametrize("fails", [False, True])
+def test_real_turn_can_read_complete_overflow_facts_and_cleans_them_up(fails: bool) -> None:
+    request = _request()
+    request.findings[-1].evidence = "start " + "large live evidence 界" * 1000 + " end"
+    files: list[Path] = []
+
+    def respond(command) -> FakeRun:
+        prompt = command.stdin or ""
+        data = prompt.split("Incident request summary:\n", 1)[1]
+        assert len(data) < 12000
+        details = Path(data.split("Full incident facts: ", 1)[1].splitlines()[0])
+        files.append(details)
+        assert (
+            json.loads(details.read_text(encoding="utf-8"))["findings"][-1]["evidence"] == request.findings[-1].evidence
+        )
+        if fails:
+            return failure(stderr="synthetic model failure", returncode=1)
+        return _scripted_reply(_result(), "session-overflow")
+
+    agent = ScriptedAgent(respond)
+    if fails:
+        with pytest.raises(ResponderExecutionError, match="synthetic model failure"):
+            execute_incident(request, executor=agent.executor)
+    else:
+        execute_incident(request, executor=agent.executor)
+    assert files
+    assert all(not path.exists() for path in files)

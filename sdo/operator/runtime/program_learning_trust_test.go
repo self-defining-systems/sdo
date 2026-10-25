@@ -7,11 +7,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+	"testing"
+
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/sdk/program"
-	"strings"
-	"testing"
 )
 
 func learningTrustRepository(t *testing.T) (string, string) {
@@ -48,9 +49,9 @@ func learningTrustRepository(t *testing.T) (string, string) {
 func TestAcceptedCorpusDoesNotInventTrustForAnUnmatchedOrigin(t *testing.T) {
 	root, commit := learningTrustRepository(t)
 	record := &contracts.OutcomeRecord{IncidentId: "learning", Classification: "success"}
-	dispatcher := KubernetesJobDispatcher{ProgramTrustThreshold: 1, Outcomes: priorOutcomeReader{outcomes: []memory.Outcome{{IncidentID: "learning", Record: record}}}}
+	dispatcher := KubernetesJobDispatcher{Outcomes: priorOutcomeReader{outcomes: []memory.Outcome{{IncidentID: "learning", Record: record}}}}
 	trust, err := dispatcher.programTrust(context.Background(), IncidentRequest{RepositoryWorktree: root, SourceCommit: commit})
-	if err != nil || trust["service-targetport-mismatch"].VerifiedSuccesses != 0 || trust["service-targetport-mismatch"].Trusted {
+	if err != nil || trust["service-targetport-mismatch"].VerifiedSuccesses != 0 || trust["service-targetport-mismatch"].Failures != 0 {
 		t.Fatalf("corpus invented origin credit: %+v %v", trust, err)
 	}
 }
@@ -58,16 +59,16 @@ func TestAcceptedCorpusDoesNotInventTrustForAnUnmatchedOrigin(t *testing.T) {
 func TestNewProgramGetsOneVerifiedOriginCreditWithoutPriorProgramRun(t *testing.T) {
 	root, commit := learningTrustRepository(t)
 	origin := &contracts.OutcomeRecord{IncidentId: "learning", Classification: "success", ConfirmedRootCauses: []*contracts.ConfirmedRootCause{{Resources: []*contracts.ObjectRef{t1Ref("api")}}}}
-	dispatcher := KubernetesJobDispatcher{ProgramTrustThreshold: 1, Outcomes: priorOutcomeReader{outcomes: []memory.Outcome{{IncidentID: "learning", Record: origin}}}}
+	dispatcher := KubernetesJobDispatcher{Outcomes: priorOutcomeReader{outcomes: []memory.Outcome{{IncidentID: "learning", Record: origin}}}}
 	request := IncidentRequest{RepositoryWorktree: root, SourceCommit: commit}
 	trust, err := dispatcher.programTrust(context.Background(), request)
-	if err != nil || !trust["service-targetport-mismatch"].Trusted || trust["service-targetport-mismatch"].VerifiedSuccesses != 1 {
+	if err != nil || trust["service-targetport-mismatch"].VerifiedSuccesses != 1 || trust["service-targetport-mismatch"].Failures != 0 {
 		t.Fatalf("new replayed program has no first-encounter credit: %+v %v", trust, err)
 	}
-	failure := &contracts.OutcomeRecord{IncidentId: "repeat", SourceCommit: trust["service-targetport-mismatch"].LastChange, ProgramFailureSignals: []string{"fast_path_failure:service-targetport-mismatch"}}
+	failure := &contracts.OutcomeRecord{IncidentId: "repeat", SourceCommit: trust["service-targetport-mismatch"].LastChange, ProgramFailureSignals: []string{"application_verification_failure:service-targetport-mismatch"}}
 	dispatcher.Outcomes = priorOutcomeReader{outcomes: []memory.Outcome{{IncidentID: "learning", Record: origin}, {IncidentID: "repeat", Record: failure}}}
 	trust, err = dispatcher.programTrust(context.Background(), request)
-	if err != nil || trust["service-targetport-mismatch"].Trusted {
+	if err != nil || trust["service-targetport-mismatch"].VerifiedSuccesses != 0 || trust["service-targetport-mismatch"].Failures != 1 {
 		t.Fatalf("origin replay erased a real failure: %+v %v", trust, err)
 	}
 }
@@ -90,9 +91,9 @@ func TestLearningEvidenceGitErrorIncludesStderr(t *testing.T) {
 func TestLearningTrustUsesAcceptedRepositoryAfterProposalRetirement(t *testing.T) {
 	root, commit := learningTrustRepository(t)
 	origin := &contracts.OutcomeRecord{IncidentId: "learning", Classification: "success", ConfirmedRootCauses: []*contracts.ConfirmedRootCause{{Resources: []*contracts.ObjectRef{t1Ref("api")}}}}
-	dispatcher := KubernetesJobDispatcher{AcceptedRepository: root, ProgramTrustThreshold: 1, Outcomes: priorOutcomeReader{outcomes: []memory.Outcome{{IncidentID: "learning", Record: origin}}}}
+	dispatcher := KubernetesJobDispatcher{AcceptedRepository: root, Outcomes: priorOutcomeReader{outcomes: []memory.Outcome{{IncidentID: "learning", Record: origin}}}}
 	trust, err := dispatcher.programTrust(context.Background(), IncidentRequest{RepositoryWorktree: filepath.Join(t.TempDir(), "deleted-proposal"), SourceCommit: commit})
-	if err != nil || !trust["service-targetport-mismatch"].Trusted {
+	if err != nil || trust["service-targetport-mismatch"].VerifiedSuccesses != 1 || trust["service-targetport-mismatch"].Failures != 0 {
 		t.Fatalf("accepted credit depended on deleted proposal: %v %v", trust, err)
 	}
 }
