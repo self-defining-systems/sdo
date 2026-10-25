@@ -293,11 +293,11 @@ rollout=Rollout.create(Path(os.environ["CODEX_HOME"]),cwd=str(Path.cwd()))
 recovery.checkpoint(rollout.session_id)
 turn=Turn("responder",175,Path.cwd(),rollout,EventStream(io.StringIO()))
 def select(program):
- code,text=turn.run(shlex.join([sys.executable,"-m","sdo.agents.responder.tools_cli","menu"]))
+ code,text=turn.run(shlex.join([sys.executable,"-m","sdo.agents.responder.tools_cli","--json","menu"]))
  assert code==0,text
  menu=json.loads(text.splitlines()[0])["menu"]
  option=next(o["option_id"] for o in menu["options"] if o.get("program_id")==program)
- code,text=turn.run(shlex.join([sys.executable,"-m","sdo.agents.responder.tools_cli","mitigate",option,"--rounds","1"]))
+ code,text=turn.run(shlex.join([sys.executable,"-m","sdo.agents.responder.tools_cli","--json","mitigate",option,"--rounds","1"]))
  assert code==0,text
  return json.loads(text.splitlines()[0])["report"]
 first=select("try-wrong-port")

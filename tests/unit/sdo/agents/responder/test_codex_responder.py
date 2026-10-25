@@ -560,7 +560,8 @@ def test_prompt_marks_known_program_capabilities(can_mitigate: bool | None) -> N
     assert "diagnosis-only match supplies evidence, not a repair" in _workflow()
     assert "Success and failure counts are information, never permission gates" in _workflow()
     assert "Discover capabilities and argument shapes" in _workflow()
-    assert "--bind" not in prompt
+    assert "--bind" not in prompt.split("Incident request:", 1)[0]
+    assert "--bind" in json.loads(prompt.split("Incident request:\n", 1)[1])["incident_tools"]["commands"]["plan"]
 
 
 def _scripted_reply(result: IncidentResult, session: str) -> FakeRun:

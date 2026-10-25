@@ -33,7 +33,7 @@ CAPTURE_DIR = Path(os.environ.get("SDO_CAPTURED_CORPUS_DIR", "/sdo/session/corpu
 
 
 def _tool(turn: Turn, *args: str) -> dict[str, Any]:
-    code, output = turn.run(" ".join(["sdo", *(shlex.quote(arg) for arg in args)]), timeout=240)
+    code, output = turn.run(" ".join(["sdo", *(shlex.quote(arg) for arg in args), "--json"]), timeout=240)
     first = output.splitlines()[0] if output else ""
     try:
         response = json.loads(first)

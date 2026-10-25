@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator, Sequence
+    from collections.abc import Callable, Iterator, Sequence
 
     from sdo.contracts import IncidentResult, RepairActionReceipt
 
@@ -305,6 +305,7 @@ def run_and_record(
     *,
     summary: str | None = None,
     reversible: bool = True,
+    on_completed: Callable[[int, str, dict[str, Any]], None] | None = None,
 ) -> int:
     """Run *command*, print its output, record its receipt, and return its exit code.
 
@@ -342,9 +343,18 @@ def run_and_record(
     try:
         code, output = _run_in_own_group(command)
     finally:
-        _append(path, _FINISHED, receipt(code, output, datetime.now(UTC)))
-    sys.stdout.write(output)
+        completed = receipt(code, output, datetime.now(UTC))
+        _append(path, _FINISHED, completed)
     assert code is not None  # an interrupted call raised out of the try block
+    if on_completed is None:
+        sys.stdout.write(output)
+    else:
+        withheld = (
+            any(resource["kind"] == "Secret" for resource in resources)
+            or withholds_command(shlex.join(command))
+            or withholds_command(summary or "")
+        )
+        on_completed(code, "[withheld]" if withheld else output, completed)
     return code
 
 
