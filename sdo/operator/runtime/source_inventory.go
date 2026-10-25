@@ -153,7 +153,7 @@ func (s *SourceInventory) findingsWithOwnership(objects, ownership []*unstructur
 		finding := sdk.Finding{DetectorID: "drift.unexplained", RuleID: "unexplained", Status: sdk.FindingActive, Severity: sdk.SeverityLatent,
 			Summary:  fmt.Sprintf("unexplained %s/%s: %s", ref.Kind, ref.Name, source),
 			Evidence: fmt.Sprintf("Accepted commit %s; %s", s.Revision, encoded), PrimaryResource: ref,
-			ParameterBindings: map[string]sdk.ObjectRef{"resource": ref}, Metadata: map[string]any{"drift_event": event, "source_inventory": true},
+			ParameterBindings: map[string]sdk.ObjectRef{"resource": ref}, Metadata: map[string]any{"drift_event": event, "source_inventory": true, "stable_inventory": stableInventoryObject(o)},
 		}
 
 		finding.Fingerprint = fmt.Sprintf("%s/%x", FindingFingerprint(finding), sum)
@@ -294,4 +294,11 @@ func inventorySortedSets(value any) any {
 	default:
 		return value
 	}
+}
+
+// Stable inventory cannot disappear through deletion, garbage collection or
+// scheduled Job TTL cleanup without another explicit mutation.
+func stableInventoryObject(object *unstructured.Unstructured) bool {
+	_, ttl, err := unstructured.NestedInt64(object.Object, "spec", "ttlSecondsAfterFinished")
+	return object.GetDeletionTimestamp() == nil && len(object.GetOwnerReferences()) == 0 && !(object.GetKind() == "Job" && (ttl || err != nil))
 }

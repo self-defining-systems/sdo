@@ -76,15 +76,19 @@ func TestHermeticUnexplainedCleanupRemediation(t *testing.T) {
 				{GroupVersion: "apps/v1", APIResources: []metav1.APIResource{{Name: "deployments", Kind: "Deployment", Namespaced: true, Verbs: []string{"get", "list", "delete"}}}},
 				{GroupVersion: "rbac.authorization.k8s.io/v1", APIResources: []metav1.APIResource{{Name: "clusterroles", Kind: "ClusterRole", Verbs: []string{"get", "list", "delete"}}, {Name: "clusterrolebindings", Kind: "ClusterRoleBinding", Verbs: []string{"get", "list", "delete"}}}},
 			}
-			refs := []sdk.ObjectRef{{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "app", Name: "cleanup-controller"}, {APIVersion: "rbac.authorization.k8s.io/v1", Kind: "ClusterRole", Name: "cleanup-controller"}, {APIVersion: "rbac.authorization.k8s.io/v1", Kind: "ClusterRoleBinding", Name: "cleanup-controller"}, {APIVersion: "v1", Kind: "ServiceAccount", Namespace: "app", Name: "cleanup-controller"}}
+			refs := []sdk.ObjectRef{{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "app", Name: "cleanup-controller"}, {APIVersion: "rbac.authorization.k8s.io/v1", Kind: "ClusterRole", Name: "configmap-cleanup-controller"}, {APIVersion: "rbac.authorization.k8s.io/v1", Kind: "ClusterRoleBinding", Name: "configmap-cleanup-controller"}, {APIVersion: "v1", Kind: "ServiceAccount", Namespace: "app", Name: "cleanup-controller"}}
 			var objects []kruntime.Object
 			paths := map[sdk.ObjectRef]schema.GroupVersionResource{}
 			listKinds := map[schema.GroupVersionResource]string{}
 			for _, ref := range refs {
 				object := urObject(ref)
+				object.SetLabels(map[string]string{"platform.io/injected": "true"})
+				if ref.Kind == "ClusterRole" {
+					object.Object["rules"] = []any{map[string]any{"apiGroups": []any{""}, "resources": []any{"configmaps"}, "verbs": []any{"get", "list", "watch"}}, map[string]any{"apiGroups": []any{"apps"}, "resources": []any{"deployments"}, "verbs": []any{"get", "patch"}}}
+				}
 				if ref.Kind == "ClusterRoleBinding" {
 					object.Object["subjects"] = []any{map[string]any{"kind": "ServiceAccount", "name": "cleanup-controller", "namespace": "app"}}
-					object.Object["roleRef"] = map[string]any{"apiGroup": "rbac.authorization.k8s.io", "kind": "ClusterRole", "name": "cleanup-controller"}
+					object.Object["roleRef"] = map[string]any{"apiGroup": "rbac.authorization.k8s.io", "kind": "ClusterRole", "name": "configmap-cleanup-controller"}
 				}
 				objects = append(objects, object)
 				gvk := schema.FromAPIVersionAndKind(ref.APIVersion, ref.Kind)
@@ -130,8 +134,8 @@ func TestHermeticUnexplainedCleanupRemediation(t *testing.T) {
 			controller.history = []DetectorEvaluation{{DetectorID: "health", Status: DetectorEvaluationClear, EvaluatedAt: time.Now()}}
 			loop := NewResponderLoop(request, nil, provider, nil, PlanExecutor{Client: GenericPlanClient{TypedPlanClient: TypedPlanClient{Client: kube}, Objects: &core.GenericCapture{Namespace: "app", Client: checkedLive, Discovery: discovery}}, Rollouts: KubernetesPlanRollouts{Client: kube}, Verifier: cleanupVerifier{controller}}, 10)
 			loop.MenuConfig = productionResponderMenu()
-			loop.MenuConfig.Unexplained = func(context.Context) ([]UnexplainedRemoval, error) {
-				return controller.unexplainedRemovals(request.IncidentID, "demo")
+			loop.MenuConfig.Unexplained = func(context.Context) (UnexplainedRemovalAssessment, error) {
+				return controller.unexplainedRemovalAssessment(request.IncidentID, "demo")
 			}
 			loop.MenuConfig.RemoveUnexplained = func(ctx context.Context, selected UnexplainedRemoval, client PlanLifecycleClient, ref sdk.ObjectRef, uid types.UID, rv string) error {
 				return controller.removeUnexplained(ctx, request.IncidentID, "demo", selected, client, ref, uid, rv)
