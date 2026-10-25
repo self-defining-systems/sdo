@@ -426,8 +426,7 @@ func ReplayTests(programs []Spec) string {
 	}
 	var test strings.Builder
 	test.WriteString(`package generated
-import("context";"encoding/json";"os";"path/filepath";"testing";"sdo.dev/operator/runtime/replay";"sdo.dev/operator/sdk/sdktest"
- "sdo.dev/operator/memory/layout")
+import("context";"encoding/json";"os";"path/filepath";"testing";"sdo.dev/operator/runtime/replay";"sdo.dev/operator/sdk/sdktest")
 func TestProgramCorpus(t *testing.T){
  var notes []sdktest.MitigationReplayResult
  defer func(){data,err:=json.Marshal(notes);if err!=nil{t.Fatal(err)};if err:=os.WriteFile("mitigation-replay.json",data,0600);err!=nil{t.Fatal(err)}}()

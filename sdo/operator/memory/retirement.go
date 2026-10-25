@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+
 	"sdo.dev/operator/memory/layout"
-	"strings"
 )
 
 // PlaybookActivationChanged compares accepted lifecycle metadata, so ordinary
@@ -30,16 +30,7 @@ func PlaybookActivationChanged(ctx context.Context, repository, before, after st
 			if err != nil {
 				return false, fmt.Errorf("read playbook at %s: %w: %s", revision, err, data)
 			}
-			// Legacy prose has no lifecycle marker and is active.
-			if !strings.HasPrefix(string(data), "---\n") {
-				states = append(states, false)
-				continue
-			}
-			doc, err := layout.ParseDocument(data)
-			if err != nil {
-				return false, err
-			}
-			retired, err := layout.PlaybookRetired(doc)
+			retired, err := layout.ParsePlaybookRetirement(data)
 			if err != nil {
 				return false, err
 			}

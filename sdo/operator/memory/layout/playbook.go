@@ -3,11 +3,14 @@ package layout
 import (
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
 	"strings"
+
+	"gopkg.in/yaml.v3"
 )
 
 // HealthObjectivePlaybook is the health judge's playbook ID. Its fault class
@@ -112,16 +115,40 @@ func PlaybookRetired(doc Document) (bool, error) {
 // ReadPlaybookRetired reads the lifecycle marker before program discovery or
 // staging; malformed metadata fails closed rather than reactivating a program.
 func ReadPlaybookRetired(directory string) (bool, error) {
-	data, err := readRegular(filepath.Join(directory, PlaybookFileName), PlaybookFileName)
+	filename := filepath.Join(directory, PlaybookFileName)
+	info, err := os.Lstat(filename)
 	if err != nil {
 		return false, err
 	}
+	if !info.Mode().IsRegular() {
+		return false, fmt.Errorf("playbook README must be a regular file")
+	}
+	file, err := os.Open(filename)
+	if err != nil {
+		return false, err
+	}
+	defer file.Close()
+	data, err := io.ReadAll(io.LimitReader(file, MaxArtifactBytes))
+	if err != nil {
+		return false, err
+	}
+	return ParsePlaybookRetirement(data)
+}
+
+// ParsePlaybookRetirement reads only lifecycle metadata. Full schema/body/size
+// checks belong to document validation; old compiler fixtures can be prose-only
+// or have program front matter without the document schema.
+func ParsePlaybookRetirement(data []byte) (bool, error) {
 	if !strings.HasPrefix(string(data), "---\n") {
 		return false, nil
 	}
-	doc, err := ParseDocument(data)
-	if err != nil {
-		return false, err
+	parts := strings.SplitN(string(data), "---\n", 3)
+	if len(parts) != 3 {
+		return false, errors.New("playbook front matter is not closed within the metadata budget")
 	}
-	return PlaybookRetired(doc)
+	var meta map[string]any
+	if err := yaml.Unmarshal([]byte(parts[1]), &meta); err != nil {
+		return false, fmt.Errorf("playbook front matter: %w", err)
+	}
+	return PlaybookRetired(Document{Meta: meta})
 }

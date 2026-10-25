@@ -16,7 +16,10 @@ from typing import Any
 
 DATA_START = re.compile(
     r"(?m)^(?:Incident request|Request(?: data)?|Task data|Outcome(?: data)?|"
-    r"Operational memory snapshot|Accepted memory snapshot)(?: JSON)?:[ \t]*|"
+    r"Operational memory snapshot|Accepted memory snapshot|Per-cause work|Current outcome|"
+    r"Outcome commit|Architecture summary \(trusted memory snapshot\)|"
+    r"Health objective \(trusted memory snapshot\)|Latest detector evidence \(compacted from detector_history\))"
+    r"(?: JSON)?:[ \t]*|"
     r"(?m:^<(?:request|incident_request|request_data)>\s*)"
 )
 SKILL_PATH = re.compile(r"[^\s\"'`;|<>]*skills/[^\s\"'`;|<>]+(?:SKILL\.md|references/[^\s\"'`;|<>]+\.md)")

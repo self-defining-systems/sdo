@@ -15,11 +15,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-COMMAND = re.compile(r"(?:`|(?m:^\s*))sdo\s+([a-z][a-z0-9-]*)")
+COMMAND = re.compile(r"\bsdo[ \t]+([a-z][a-z0-9-]*)")
 FIELD = re.compile(
     r"\b(request|[A-Z][A-Za-z]+Request)\.([a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)*)|\brequest field\s+`([a-z][a-z0-9_]*)`"
 )
 SKILL = re.compile(r"(?:sdo/)?skills/(sdo-[a-z][a-z0-9-]*)(/[a-zA-Z0-9_./-]+)?")
+SKILL_FILE = re.compile(r"\b(sdo-[a-z][a-z0-9-]*)(/(?:SKILL\.md|references/[\w./-]+|assets/[\w./-]+))")
 
 
 @dataclass(frozen=True)
@@ -68,6 +69,8 @@ def catalogs(root: Path) -> Catalogs:
 
 
 def field_exists(role: str, path: str, available: dict[str, Any]) -> bool:
+    if role != "request" and role not in available:
+        return False
     messages = (
         [available[role]] if role in available else [m for name, m in available.items() if name.endswith("Request")]
     )
@@ -91,17 +94,20 @@ def check_text(text: str, available: Catalogs, *, source: str = "") -> list[Prob
         problems.append(Problem(kind, name, text.count("\n", 0, offset) + 1, source))
 
     for match in COMMAND.finditer(text):
+        # "the local sdo interface exposes ..." names the interface, not a command.
+        if match[1] == "interface" and text[match.end() :].startswith(" exposes"):
+            continue
         if match[1] not in available.commands:
             report("command", match[1], match.start())
     for match in FIELD.finditer(text):
         role, path = (match[1], match[2]) if match[1] else ("request", match[3])
         if not field_exists(role, path, available.fields):
             report("field", f"{role}.{path}", match.start())
-    for match in SKILL.finditer(text):
+    for match in [*SKILL.finditer(text), *SKILL_FILE.finditer(text)]:
         name, suffix = match[1], (match[2] or "/SKILL.md").rstrip("./")
         if not (available.root / "sdo/skills" / name / suffix.lstrip("/")).exists():
             report("skill", match.group(), match.start())
-    return problems
+    return list(dict.fromkeys(problems))
 
 
 def instruction_files(root: Path) -> list[Path]:

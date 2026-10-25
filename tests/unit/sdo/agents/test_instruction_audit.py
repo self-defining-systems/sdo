@@ -4,12 +4,13 @@ import importlib.util
 import json
 import sys
 from pathlib import Path
+from types import ModuleType
 
 ROOT = Path(__file__).resolve().parents[4]
 SCRIPTS = ROOT / ".agents/skills/audit-agent-instructions/scripts"
 
 
-def load(name: str):
+def load(name: str) -> ModuleType:
     spec = importlib.util.spec_from_file_location(name, SCRIPTS / f"{name}.py")
     assert spec
     assert spec.loader
@@ -67,3 +68,35 @@ def test_name_checker_reports_command_field_and_skill_typos(tmp_path: Path) -> N
 def test_instruction_names_match_current_cli_contracts_and_installed_skills() -> None:
     check = load("check_names")
     assert check.check_repository(ROOT) == []
+
+
+def test_unknown_request_type_and_nested_field_are_rejected() -> None:
+    check = load("check_names")
+    catalogs = check.catalogs(ROOT)
+    assert check.check_text("MadeUpRequest.incident_id", catalogs)
+    assert check.check_text("IncidentRequest.memory_snapshot.not_a_real_field", catalogs)
+
+
+def test_checker_covers_unquoted_command_names() -> None:
+    check = load("check_names")
+    catalogs = check.catalogs(ROOT)
+    assert check.check_text("Run sdo diagnoze before continuing.", catalogs)
+
+
+def test_extract_counts_inlined_memory_as_data(tmp_path: Path) -> None:
+    extract = load("extract_prompt")
+    data = "Architecture summary (trusted memory snapshot):\nA café.\nIncident request:\n{}"
+    row = {"type": "response_item", "payload": {"type": "message", "role": "user", "content": "Check memory.\n" + data}}
+    path = tmp_path / "inlined.jsonl"
+    path.write_text(json.dumps(row), encoding="utf-8")
+    report = extract.extract(path, include_text=True)
+    assert report["sizes"]["our_instructions"] == len("Check memory.\n")
+    assert report["sizes"]["request_data"] == len(data)
+    assert report["segments"]["request_data"][0]["text"] == data
+
+
+def test_checker_resolves_skill_paths_under_dynamic_install_root() -> None:
+    check = load("check_names")
+    catalogs = check.catalogs(ROOT)
+    assert check.check_text("{SKILLS_ROOT}/sdo-missing/SKILL.md", catalogs)
+    assert not check.check_text("../sdo-memory/SKILL.md", catalogs)
