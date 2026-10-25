@@ -29,6 +29,7 @@ if TYPE_CHECKING:
         wait_for_proof,
     )
     from benchmarks.sregym.adapter.healthy_baseline import HealthyBaselineCaptureOps, kubectl_capture_ops
+    from benchmarks.sregym.adapter.lane_resources import LaneResourcePolicy, assert_host_headroom, assert_lane_resources
     from benchmarks.sregym.adapter.native_operator import (
         execute_operator,
         inspect_existing,
@@ -70,6 +71,9 @@ if TYPE_CHECKING:
     from benchmarks.sregym.adapter.scripted_replay_catalog import SCRIPTED_REPLAY_SLOTS
 
 _EXPORTS: dict[str, str] = {
+    "LaneResourcePolicy": "lane_resources",
+    "assert_host_headroom": "lane_resources",
+    "assert_lane_resources": "lane_resources",
     "sync_existing": "native_operator",
     "assert_stable_workloads": "eval_guards",
     "closure_pending": "eval_guards",
@@ -121,6 +125,9 @@ _EXPORTS: dict[str, str] = {
 }
 
 __all__ = [
+    "LaneResourcePolicy",
+    "assert_host_headroom",
+    "assert_lane_resources",
     "assert_stable_workloads",
     "closure_pending",
     "controller_proof",
