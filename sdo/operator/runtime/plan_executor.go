@@ -566,6 +566,15 @@ func (e PlanExecutor) prepareAction(ctx context.Context, incident IncidentReques
 		}
 
 		return sourceFields(next, previous, a.Ref)
+	case program.RemoveServicePort:
+		if err := program.ApplyRemoveServicePort(next.Object, a); err != nil {
+			return nil, err
+		}
+	case *program.RemoveServicePort:
+		if a == nil {
+			return nil, errors.New("nil RemoveServicePort")
+		}
+		return e.prepareAction(ctx, incident, *a, current)
 	case program.SetField:
 		value, provenance, err := program.ResolveSetFieldValue(a, e.valueInputs(ctx, incident))
 		if err != nil {
@@ -655,6 +664,12 @@ func sourceFields(current, source *unstructured.Unstructured, ref sdk.ObjectRef)
 
 func planActionRef(action program.Action) (sdk.ObjectRef, error) {
 	switch a := action.(type) {
+	case program.RemoveServicePort:
+		return a.Ref, nil
+	case *program.RemoveServicePort:
+		if a != nil {
+			return a.Ref, nil
+		}
 	case program.DeletePod:
 		return a.Ref, nil
 	case program.ScaleWorkload:

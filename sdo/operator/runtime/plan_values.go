@@ -73,6 +73,8 @@ func (e PlanExecutor) verifyValueWrite(ctx context.Context, action program.Actio
 		}
 	case program.ScaleWorkload, *program.ScaleWorkload:
 		path = "spec.replicas"
+	case program.RemoveServicePort, *program.RemoveServicePort:
+		path = "spec.ports"
 	default:
 		return nil
 	}
