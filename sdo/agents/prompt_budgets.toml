@@ -1,4 +1,4 @@
-# Unicode code points in production-rendered prompts; fixture maxima rounded upward to 100.
+# Unicode code points in production-rendered prompts; measured limits include explicit headroom.
 
 [deployer.incident_data]
 max_chars = 100
@@ -113,16 +113,16 @@ max_chars = 100
 reason = "Baseline synthetic fixture maximum: 6 Unicode code points; byte-identical template extraction."
 
 [responder.additional_context]
-max_chars = 750
-reason = "Actual benchmark transport instructions measure 676 Unicode code points; budget the real shipped appendix with approximately 10 percent headroom instead of the small toy appendix."
+max_chars = 744
+reason = "Actual benchmark transport appendix: 676 Unicode code points, with 10 percent headroom."
 
 [responder.incident_data]
-max_chars = 6380
-reason = "Lean responder measured fixture maximum 5797 Unicode code points with approximately 10 percent headroom; executable workflow moved to the installed skill."
+max_chars = 6471
+reason = "Measured typed-coverage fixture maximum: 5882 Unicode code points, with 10 percent headroom; real coverage replaces the pending marker and complete overflow facts remain available."
 
 [responder.instructions]
-max_chars = 520
-reason = "Workflow-routing instructions including late-finding guidance measure 466 Unicode code points, with approximately 10 percent headroom; behavior principles live in the installed skill."
+max_chars = 513
+reason = "Measured workflow-routing and late-finding instructions: 466 Unicode code points, with 10 percent headroom; the full real transport prefix remains 1322 of 1500."
 
 [session.incident_data]
 max_chars = 100
@@ -148,9 +148,9 @@ reason = "Baseline synthetic fixture maximum: 191 Unicode code points; byte-iden
 max_chars = 200
 reason = "New responder workflow skill description; shares the existing 200-character skill-index allowance."
 [continuation.instructions]
-max_chars = 1500
-reason = "Controller continuation instructions are capped separately from factual finding and receipt lists."
+max_chars = 511
+reason = "Measured typed continuation instructions: 464 Unicode code points, with 10 percent headroom; the 1500-character instruction cap remains enforced."
 
 [continuation.incident_data]
-max_chars = 12000
-reason = "Typed current findings and completed-action receipts; no list truncation is introduced by rendering."
+max_chars = 2214
+reason = "Measured typed current findings and complete completed-action receipts: 2012 Unicode code points, with 10 percent headroom; rendering never truncates factual lists."
