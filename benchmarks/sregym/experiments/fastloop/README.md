@@ -148,6 +148,24 @@ cleanup stops slot reuse; successful reset alone does not verify full cleanup.
 Older harness pins must be updated before seed-based cleanup can run. The benchmark
 adapter never reads Secret contents or implements database credential resets.
 
+Clean-baseline admission also rejects any remaining SREGym object labelled
+`platform.io/injected=true`, including cluster-scoped RBAC. The worker removes
+those objects after full harness recovery and before deploy/reset baselines,
+then lists again to prove deletion. Partial composite recovery leaves other
+injections intact. Secret cleanup projects only namespace/name metadata.
+Unlabelled source objects and the SDO control namespace keep their existing
+restoration contracts.
+
+Hotel and social-network Wrk2 traffic runs in the harness namespace `sregym`.
+The existing payload, request rates and oracle thresholds are preserved; the
+manager and its Wrk2 client both target that namespace for creation and logs.
+Traffic addresses the application frontend by cluster Service DNS. Warm-lane
+restore starts the generator there and removes the legacy `wrk2-job`, its Pods
+and `wrk2-payload-script` from the application namespace. Admission rejects
+legacy traffic residue even when it has no injection label. The pinned harness
+implementation is reused through the worker bridge; no production exemption
+or SREGym pin change is required.
+
 # Scripted SDO loop (kind, no LLM)
 
 Level 1 exercises both scripted worker entry points with a fake Kubernetes API:

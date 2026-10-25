@@ -19,7 +19,7 @@ class API:
         self.calls: list[tuple[list[str], Any]] = []
         self.objects = [
             {
-                "apiVersion": "v1",
+                "apiVersion": "rbac.authorization.k8s.io/v1" if kind.startswith("ClusterRole") else "v1",
                 "kind": kind,
                 "metadata": {"name": name, **scope, "labels": {"platform.io/injected": "true"}},
             }
@@ -45,10 +45,22 @@ class API:
             )
             return SimpleNamespace(stdout=resources)
         if args[0] == "get":
+            if args[args.index("-o") + 1] == "name":
+                return SimpleNamespace(stdout="")
+            assert args[args.index("-l") + 1] == "platform.io/injected=true"
             namespaced = "--all-namespaces" in args
             return SimpleNamespace(
                 stdout=json.dumps(
-                    {"items": deepcopy([v for v in self.objects if bool(v["metadata"].get("namespace")) == namespaced])}
+                    {
+                        "items": deepcopy(
+                            [
+                                v
+                                for v in self.objects
+                                if bool(v["metadata"].get("namespace")) == namespaced
+                                and v["metadata"].get("labels", {}).get("platform.io/injected") == "true"
+                            ]
+                        )
+                    }
                 )
             )
         if args[0] == "delete":
@@ -147,6 +159,17 @@ def run_bridge(monkeypatch: Any, requests: list[dict[str, Any]], api: API) -> li
             return SimpleNamespace(namespace="hotel-reservation")
 
         def handle(self, request: dict[str, Any]) -> dict[str, Any]:
+            if request.get("op") == "deploy" and getattr(api, "inject_during_deploy", False):
+                api.objects.append(
+                    {
+                        "kind": "ConfigMap",
+                        "metadata": {
+                            "namespace": "hotel-reservation",
+                            "name": "late-fault",
+                            "labels": {"platform.io/injected": "true"},
+                        },
+                    }
+                )
             return {"success": True, "deployed": True}
 
         def _grade(self, _problem: Any) -> dict[str, Any]:
@@ -227,3 +250,51 @@ def test_admission_rejects_legacy_harness_traffic_even_without_injection_label(m
     monkeypatch.setattr(clean_start, "kubectl", with_traffic)
     with pytest.raises(RuntimeError, match="harness traffic remains"):
         clean_start.assert_clean_baseline(Path("synthetic-kubeconfig"), namespace="hotel-reservation")
+
+
+def test_real_wrk2_creates_harness_objects_and_grader_reads_the_same_namespace() -> None:
+    import os
+    import subprocess
+
+    root = Path(__file__).resolve().parents[5]
+    reply = subprocess.run(
+        [
+            "uv",
+            "run",
+            "--directory",
+            str(root / "third_party/sregym"),
+            "python",
+            "-m",
+            "tests.unit.benchmarks.sregym.fastloop.clean_start_wrk2_worker",
+        ],
+        env={**os.environ, "PYTHONPATH": str(root)},
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    assert reply.returncode == 0, (reply.stdout + reply.stderr)[-4000:]
+    assert "real Wrk2 Job, payload, settings and grader log namespace: pass" in reply.stdout
+
+
+def test_worker_checks_admission_after_deployment_before_baseline_capture(monkeypatch: Any) -> None:
+    api = API()
+    api.inject_during_deploy = True
+    with pytest.raises(RuntimeError, match="injected objects remain"):
+        run_bridge(monkeypatch, [{"op": "deploy", "problem_id": "synthetic"}], api)
+
+
+def test_cleanup_preserves_unlabelled_application_rbac_and_control_objects(monkeypatch: Any) -> None:
+    api = API()
+    accepted = [
+        {
+            "kind": "ClusterRoleBinding",
+            "metadata": {"name": "accepted-app-binding"},
+            "subjects": [{"kind": "ServiceAccount", "name": "default", "namespace": "hotel"}],
+        },
+        {"kind": "ConfigMap", "metadata": {"name": "sdo-controller-state", "namespace": "hotel-sdo"}},
+    ]
+    api.objects.extend(deepcopy(accepted))
+    monkeypatch.setattr(clean_start, "kubectl", api)
+    clean_start.remove_injected_objects(Path("synthetic-kubeconfig"))
+    assert api.objects == accepted
