@@ -1,0 +1,1 @@
+- ${id} (watches: ${watches}, firing: ${firing}, playbooks: ${list}, originatingIncident: ${originating_incident})${marker}

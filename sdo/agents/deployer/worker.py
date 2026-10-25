@@ -17,6 +17,7 @@ from sdo.agents.lifecycle import (
     DeployerAssessment,
     TopologyResourceDTO,
 )
+from sdo.agents.prompt_templates import render_prompt
 from sdo.agents.provider import MODEL_ENV, resolve_agent
 from sdo.agents.responder import AGENT_SKILLS, KubernetesResultPublisher, prepare_claude_home, prepare_codex_home
 from sdo.contracts import (
@@ -93,21 +94,17 @@ def propose_source(request: SourceDeploymentRequest, checkout: Path) -> SourceDe
     """Let the built-in coding agent edit a proposal and return a constrained plan."""
 
     provider = _provider("deployment")
-    prompt = f"""You are the SDO source deployer for application {request.application!r}.
-Inspect this proposal checkout and prepare source/manifests to run in Kubernetes namespace {request.namespace!r}.
-The human health objective is: {request.health_objective}
-Feedback from the prior independently verified attempt: {request.correction_feedback or "none"}.
-The operator's trusted image registry is {request.registry_host!r}; every image build target must start with
-{request.registry_host + "/"!r}. Use an image path under that host in manifests as well.
-
-Edit only application source and conventional deployment files. Do not edit .sdo/. Do not run kubectl apply,
-build/push images, or claim the deployment is healthy. A trusted Go adapter will build the exact candidate source,
-apply manifests, and independently verify live resources after your task ends. Return a plan containing image builds
-(image name, repository-relative context and Dockerfile paths), repository-relative manifest paths, and expected
-workload IDs as Kind/namespace/name. Every plan path must be inside this checkout. Set proposed=true only when the
-files and plan are ready for that independent adapter. Do not create a separate health-check script or inspect
-benchmark data.
-"""
+    prompt = render_prompt(
+        "deployer",
+        "source_deployment",
+        part="deployer.instructions",
+        application=repr(request.application),
+        namespace=repr(request.namespace),
+        health_objective=request.health_objective,
+        correction_feedback=request.correction_feedback or "none",
+        registry_host=repr(request.registry_host),
+        registry_host_2=repr(request.registry_host + "/"),
+    )
     turn = run_structured_turn(
         provider,
         prompt,
@@ -157,8 +154,14 @@ def describe_architecture(request: ArchitectureRequest, checkout: Path) -> Archi
         repository=checkout,
         application=request.application,
         correction_feedback=(
-            "Copy the trusted source commit and topology fingerprint exactly:\n"
-            + f"{request.accepted_source_commit}\n{request.source_topology_fingerprint}\n"
+            render_prompt("deployer", "describe_architecture_01", part="deployer.instructions")
+            + render_prompt(
+                "deployer",
+                "describe_architecture_02",
+                part="deployer.instructions",
+                accepted_source_commit=request.accepted_source_commit,
+                source_topology_fingerprint=request.source_topology_fingerprint,
+            )
             + request.correction_feedback
         ),
     )
