@@ -15,6 +15,7 @@ import (
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 
+	"sdo.dev/operator/internal/testutil"
 	"sdo.dev/operator/memory"
 )
 
@@ -69,6 +70,38 @@ func memoryFixture(t *testing.T, root string) {
 	git(t, root, "commit", "-qm", "initial memory")
 }
 
+func acceptedPortLearning(t *testing.T, root string) {
+	t.Helper()
+	fixture := "../../../tests/fixtures/sdo/playbook_program_app/.sdo"
+	module, err := os.ReadFile(filepath.Join(fixture, "diagnostics/go.mod"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".sdo/diagnostics/go.mod"), module, 0644); err != nil {
+		t.Fatal(err)
+	}
+	testutil.CopyPortProgram(t, root, fixture)
+	if err := os.CopyFS(filepath.Join(root, ".sdo/corpus"), os.DirFS(filepath.Join(fixture, "corpus"))); err != nil {
+		t.Fatal(err)
+	}
+	index := filepath.Join(root, ".sdo/playbooks/README.md")
+	data, err := os.ReadFile(index)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(index, append(data, []byte("\n- [service-targetport-mismatch](service-targetport-mismatch/README.md)\n")...), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.CopyFS(filepath.Join(root, ".sdo/diagnostics/detectors/incidents/service-targetport-mismatch"), os.DirFS("../../../tests/fixtures/sdo/service_port_detector")); err != nil {
+		t.Fatal(err)
+	}
+	git(t, root, "add", ".")
+	git(t, root, "commit", "-qm", "accepted executable learning")
+}
+
+func verifiedPortOutcome() *contracts.OutcomeRecord {
+	return &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: "incident", Classification: "success", ConfirmedRootCauses: []*contracts.ConfirmedRootCause{{Summary: "verified service port repair", Resources: []*contracts.ObjectRef{{Kind: "Service", Namespace: "demo", Name: "front"}}}}}
+}
 func TestValidateMemoryTreeRejectsUnformattedGo(t *testing.T) {
 	root := repository(t)
 	memoryFixture(t, root)
@@ -89,15 +122,9 @@ func TestResponderProgramProposalIgnoresPreexistingUnformattedHealthGo(t *testin
 	ctx := context.Background()
 	target := repository(t)
 	memoryFixture(t, target)
+	acceptedPortLearning(t, target)
 	health := filepath.Join(target, ".sdo", "diagnostics", "detectors", "health", "health", "detector.go")
 	if err := os.WriteFile(health, []byte("package objective\nfunc f(){println(1)}\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	program := filepath.Join(target, ".sdo", "lib", "base", "base.go")
-	if err := os.MkdirAll(filepath.Dir(program), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(program, []byte("package base\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	git(t, target, "add", ".")
@@ -116,14 +143,14 @@ func TestResponderProgramProposalIgnoresPreexistingUnformattedHealthGo(t *testin
 	if _, err := b.Publish(ctx, "incident", Responder, ProposalPhase); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := b.RecordOutcome(ctx, "incident", &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: "incident", Classification: "success"}); err != nil {
+	if _, err := b.RecordOutcome(ctx, "incident", verifiedPortOutcome()); err != nil {
 		t.Fatal(err)
 	}
 	proposal, err := b.CreateProposalForPhase(ctx, "incident", ReflectionPhase)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(proposal.Path, ".sdo", "lib", "base", "base.go"), []byte("package base\n\nfunc Diagnose() {}\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(proposal.Path, ".sdo", "lib", "ports", "ports.go"), append([]byte("package ports\n\n// Retain the accepted helper implementation.\n"), mustReadPortHelper(t, target)...), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	var warnings bytes.Buffer
@@ -212,6 +239,7 @@ func TestResponderProposalCommitsCanonicalGo(t *testing.T) {
 	ctx := context.Background()
 	target := repository(t)
 	memoryFixture(t, target)
+	acceptedPortLearning(t, target)
 	health := filepath.Join(target, ".sdo", "diagnostics", "detectors", "health", "health", "detector.go")
 	if err := os.WriteFile(health, []byte("package objective\nfunc f(){println(1)}\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -232,14 +260,14 @@ func TestResponderProposalCommitsCanonicalGo(t *testing.T) {
 	if _, err := b.Publish(ctx, "incident", Responder, ProposalPhase); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := b.RecordOutcome(ctx, "incident", &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: "incident", Classification: "success"}); err != nil {
+	if _, err := b.RecordOutcome(ctx, "incident", verifiedPortOutcome()); err != nil {
 		t.Fatal(err)
 	}
 	proposal, err := b.CreateProposalForPhase(ctx, "incident", ReflectionPhase)
 	if err != nil {
 		t.Fatal(err)
 	}
-	manifest := "apiVersion: sdo.dev/v1alpha1\nkind: DetectorManifest\nsdkVersion: v0.1\nid: fault\nconstructor: New\nclass: incident\nowner: responder\nwatches:\n- apiVersion: v1\n  kind: Pod\ninterval: 30s\npersistence: {firing: 1, clearing: 1}\nbatching: {severity: critical, debounce: 500ms}\noriginatingIncident: incident\noriginatingCommit: accepted\npossiblePlaybooks: [base]\n"
+	manifest := "apiVersion: sdo.dev/v1alpha1\nkind: DetectorManifest\nsdkVersion: v0.1\nid: fault\nconstructor: New\nclass: incident\nowner: responder\nwatches:\n- apiVersion: v1\n  kind: Pod\ninterval: 30s\npersistence: {firing: 1, clearing: 1}\nbatching: {severity: critical, debounce: 500ms}\noriginatingIncident: incident\noriginatingCommit: accepted\npossiblePlaybooks: [service-targetport-mismatch]\n"
 	dir := filepath.Join(proposal.Path, ".sdo/diagnostics/detectors/incidents/fault")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
@@ -781,4 +809,13 @@ func detectorYAML(class, id string, firing int, possiblePlaybook string) string 
 		owner, origin = "responder", "originatingIncident: inc\n"
 	}
 	return fmt.Sprintf("apiVersion: sdo.dev/v1alpha1\nkind: DetectorManifest\nsdkVersion: v0.1\nid: %s\nconstructor: New\nclass: %s\nowner: %s\nwatches:\n  - apiVersion: v1\n    kind: Pod\ninterval: 30s\npersistence:\n  firing: %d\n  clearing: 1\nbatching:\n  severity: critical\n  debounce: 500ms\npossiblePlaybooks:\n  - %s\n%soriginatingCommit: initial\n", id, class, owner, firing, possiblePlaybook, origin)
+}
+
+func mustReadPortHelper(t *testing.T, root string) []byte {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(root, ".sdo/lib/ports/ports.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return []byte(strings.TrimPrefix(string(data), "package ports\n"))
 }

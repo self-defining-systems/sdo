@@ -137,7 +137,10 @@ def test_selected_images_are_built_and_smoked(tmp_path: Path, images: str, expec
 def test_required_ci_rejects_any_applicable_unsuccessful_job(result: str, accepted: bool) -> None:
     import json
 
-    step = workflow()["jobs"]["required-pr-ci"]["steps"][0]
+    steps = workflow()["jobs"]["required-pr-ci"]["steps"]
+    step = next(step for step in steps if "JOB_RESULTS" in step.get("env", {}))
+    assert "if" not in step
+    assert "continue-on-error" not in step
     completed = subprocess.run(
         ["bash", "-e", "-c", step["run"]],
         env={**os.environ, "JOB_RESULTS": json.dumps({"images": {"result": result}})},

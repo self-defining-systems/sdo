@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"sort"
 	"strings"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -255,6 +256,13 @@ func (c *cluster) snapshot(ctx context.Context) (sdktest.Snapshot, error) {
 			}
 		}
 	}
+	for _, target := range c.catalogConfigurations {
+		catalog := c.catalogs[databaseKey(target)]
+		args, _ := json.Marshal([]any{target})
+		result, _ := json.Marshal(catalog.users)
+		s.Readings = append(s.Readings, sdktest.PrimitiveCall{Method: "DatabaseUsers", Arguments: args, Result: result})
+	}
+	sort.Slice(s.Readings, func(i, j int) bool { return string(s.Readings[i].Arguments) < string(s.Readings[j].Arguments) })
 	sdk.SortObjects(s.Objects)
 	if err := sdk.DecodeTypedObjects(&s, local); err != nil {
 		return sdktest.Snapshot{}, err

@@ -126,3 +126,31 @@ unavailable foreign read remains Unknown. They still cannot perform live logs, p
 A missing final `env[name=NAME]` SetField target may insert the accepted EnvVar with the same name, including
 when the env list was omitted. Existing entries must be unique; a different value name or missing parent
 container refuses. This preserves unrelated entries and does not change credential-channel authorization.
+
+## Removing one Service port
+
+Use `RemoveServicePort{Ref: service, Name: observedName, Reason: reason}` to remove exactly one
+unwanted port without restoring a stale source Service. Alternatively select `Port` and optional
+`Protocol` (TCP, UDP or SCTP); name and number are mutually exclusive. Missing and ambiguous entries
+refuse before writing. The last port is protected unless `AllowEmpty` is explicit; API validation still
+applies. The executor uses UID/version-conditional patches, proves the resulting list by direct read,
+and retains the preimage for conflict-checked compensation. Keep a hand-written open/fixed replay case
+showing the removed listener and preservation of other ports and Service fields.
+
+## Database catalogs
+
+`ReadView.DatabaseUsers(DatabaseTarget)` observes nonsecret user names and directly granted roles.
+Targets select `Engine: program.MongoDB`, a bound application Pod, container, database, and optional
+`Shell` (`mongo` default or `mongosh`). Optional `DatabaseAuth` names the authentication database and
+username/password `CredentialRef{Env: name}`. Environment variables may be populated by Secret refs;
+programs never carry credential literals, resolve Secret data, or store passwords or hashes.
+
+`EnsureDatabaseUser{Target, User, Roles, Password: CredentialRef{Env: name}, Reason}` creates a missing
+user with a password resolved inside the container. For an existing user it restores exact direct roles
+and preserves its password. Other users remain unchanged. Local unauthenticated bootstrap requires the
+database's existing policy; the action creates no Kubernetes grants. It is irreversible and never
+re-executed from a durable receipt. Diagnosis must inspect the typed catalog and propagate unavailable
+reads as Unknown. Build replay from recorded open `DatabaseUsers` results; fixed-phase replies never
+prove a repair. The simulator changes only the named user's direct roles/catalog membership and does
+not simulate credentials, arbitrary Exec, authentication policy, connectivity, or server availability.
+Independent live health verification remains required.

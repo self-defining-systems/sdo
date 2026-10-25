@@ -693,7 +693,7 @@ def test_controller_verification_resumes_same_session_with_remaining_budget(monk
 
     from libs.agent_cli.structured import StructuredTurn
 
-    feedback = '{"healthy":false,"attempt":1,"summary":"still unavailable"}'
+    feedback = '{"healthy":false,"attempt":1,"summary":"still unavailable","still_broken":[],"already_done":[]}'
     monkeypatch.setenv("SDO_RESPONSE_CONTINUATION", feedback)
     recovery = SimpleNamespace(
         resume_session_id=lambda: "same-provider-session",
@@ -715,7 +715,8 @@ def test_controller_verification_resumes_same_session_with_remaining_budget(monk
     execute_incident(_request(), provider="codex")
     assert captured["resume_session_id"] == "same-provider-session"
     assert captured["timeout_seconds"] == 43.0
-    assert feedback in captured["prompt"]
+    assert "still unavailable" in captured["prompt"]
+    assert '"still_broken": []' in captured["prompt"]
 
 
 def test_app_drift_defaults_to_verified_accepted_source_restoration() -> None:

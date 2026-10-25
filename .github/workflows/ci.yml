@@ -523,6 +523,14 @@ jobs:
     if: always()
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+      - name: Enforce prompt budget changes in every commit
+        env:
+          BUDGET_BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
+          BUDGET_HEAD: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}
+        run: python3 scripts/check_prompt_budgets.py --base "$BUDGET_BASE" --head "$BUDGET_HEAD"
       - name: Require every applicable CI job to succeed
         env:
           JOB_RESULTS: ${{ toJSON(needs) }}
