@@ -110,6 +110,7 @@ func earlyResultSnapshot(l *ResponderLoop, request IncidentRequest, at time.Time
 			result.RepairActions = append(result.RepairActions, receipt)
 		}
 	}
+	causeByResource := map[sdk.ObjectRef]int{}
 	for _, finding := range request.Findings {
 		repaired := false
 		for _, receipt := range result.RepairActions {
@@ -118,7 +119,13 @@ func earlyResultSnapshot(l *ResponderLoop, request IncidentRequest, at time.Time
 			}
 		}
 		if repaired {
-			result.ConfirmedRootCauses = append(result.ConfirmedRootCauses, ConfirmedRootCause{Summary: finding.Summary, Resources: []sdk.ObjectRef{finding.PrimaryResource}, ExplainedDetectors: []string{finding.DetectorID}, Evidence: []RootCauseEvidence{{Kind: "detector-finding", Source: finding.DetectorID, Observation: finding.Evidence}}})
+			cause := ConfirmedRootCause{Summary: finding.Summary, Resources: []sdk.ObjectRef{finding.PrimaryResource}, ExplainedDetectors: []string{finding.DetectorID}, Evidence: []RootCauseEvidence{{Kind: "detector-finding", Source: finding.DetectorID, Observation: finding.Evidence}}}
+			if index, ok := causeByResource[finding.PrimaryResource]; ok {
+				mergeEarlyCauseEvidence(&result.ConfirmedRootCauses[index], cause)
+			} else {
+				causeByResource[finding.PrimaryResource] = len(result.ConfirmedRootCauses)
+				result.ConfirmedRootCauses = append(result.ConfirmedRootCauses, cause)
+			}
 		}
 	}
 	return result
