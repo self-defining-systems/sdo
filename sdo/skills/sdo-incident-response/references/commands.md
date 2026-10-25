@@ -148,6 +148,10 @@ Apply several independent options in one call; overlapping object write sets are
 - `--selection-set`: version 1 selection set with per-option bindings and parameters
 - `--option`: independent option ID; repeat, with per-option --param arguments
 
+```text
+EnsureDatabaseUser repairs a MongoDB user in one call. Its password and target.auth username/password take exactly one credential reference: {env: NAME} or {config_map: {name: CONFIGMAP, key: KEY, assignment: optional_NAME}} in the target Pod namespace. Assignment selects one literal NAME=value line. The executor resolves values privately; never put credential values in arguments, evidence or memory. Direct Secret keys are unavailable.
+```
+
 Complete report fields (`details_file`): `actions[].{application_id, targeted_healthy, mitigation_health, rollout_pending}, option_reports[]`.
 
 ## report

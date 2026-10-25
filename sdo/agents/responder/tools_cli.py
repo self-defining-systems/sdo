@@ -172,6 +172,13 @@ def _parser() -> argparse.ArgumentParser:
             "and read-only tools remain available. A single option also accepts --NAME VALUE parameters. "
             "Uses the ordinary executor and controller RBAC; up to five rounds per incident."
         ),
+        epilog=(
+            "EnsureDatabaseUser repairs a MongoDB user in one call. Its password and target.auth "
+            "username/password take exactly one credential reference: {env: NAME} or "
+            "{config_map: {name: CONFIGMAP, key: KEY, assignment: optional_NAME}} in the target Pod namespace. "
+            "Assignment selects one literal NAME=value line. The executor resolves values privately; "
+            "never put credential values in arguments, evidence or memory. Direct Secret keys are unavailable."
+        ),
     )
     mitigate.add_argument("option", nargs="?", help="option ID or unambiguous program ID from the current menu")
     mitigate.add_argument(
@@ -242,8 +249,8 @@ def _parser() -> argparse.ArgumentParser:
     )
     commands.add_parser("rollback", help="roll back a plan application").add_argument("application_id")
     for name in ("mitigate", "act", "apply", "rollback"):
-        example = ("Example: " + ACT_EXAMPLE + "\n\n") if name == "act" else ""
-        commands.choices[name].epilog = example + (
+        specific_help = commands.choices[name].epilog
+        commands.choices[name].epilog = (specific_help + "\n\n" if specific_help else "") + (
             "Action output separates target progress from incident verification and lists fixed, new "
             "(possible regression), and unchanged findings from authoritative controller progress. "
             "Mutation stdout is at most 2048 UTF-8 bytes, including JSON framing and newline. Every invocation saves "
