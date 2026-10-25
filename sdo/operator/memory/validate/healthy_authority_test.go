@@ -20,8 +20,11 @@ func TestReflectionBaselineUsesControllerCaptureInsteadOfAuthoredHealthy(t *test
 	if err := os.MkdirAll(filepath.Join(capture, "healthy"), 0700); err != nil {
 		t.Fatal(err)
 	}
-	write(t, capture, "healthy/healthy.json", `{"namespace":"app","services":[]}`)
-	authored := t.TempDir()
+	write(t, capture, "healthy/healthy.json", `{"namespace":"app","services":[{"metadata":{"name":"consul","namespace":"app"},"spec":{"ports":[{"port":8300},{"port":8400},{"port":8500}]}}]}`)
+	authored := filepath.Join(root, ".sdo", "corpus", "consul-refused-service-ports")
+	// The agent's healthy reconstruction is its post-repair state, with the
+	// ordinary healthy app's unused ports removed. It supplies no authority.
+	write(t, authored, "healthy.json", `{"namespace":"app","services":[{"metadata":{"name":"consul","namespace":"app"},"spec":{"ports":[{"port":8500}]}}]}`)
 	got, err := selectCompileBaseline(context.Background(), Request{Root: root, Base: "HEAD", Actor: Responder, Phase: ReflectionPhase, CaptureDirectory: capture, HealthyBaseline: authored})
 	if err != nil || got.HealthyBaseline != filepath.Join(capture, "healthy") {
 		t.Fatalf("baseline=%q err=%v, want controller-owned capture", got.HealthyBaseline, err)

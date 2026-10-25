@@ -119,3 +119,13 @@ missing required observations and active learned findings fail with
 `detector.healthy-baseline`. Baseline TCP sampling is bounded; an omitted read is
 an evidence gap, never a fabricated successful probe. This replay establishes
 quietness on the known healthy app, separately from positive repair replay.
+
+Executable cause bindings also require an opening primary-resource finding,
+a successful timed repair on the cause resource, and fresh independent clearance
+after its latest mutation. Aggregate success does not prove every reported cause;
+ambiguous same-resource cause groups abstain. Failed outcomes additionally require
+controller eligibility. Outcome `detector_history` retains post-response incident
+evaluations and complete controller-verify evaluations with current finding
+fingerprints, allowing a proven repair to survive an unresolved peer. The final
+health-detector state remains health-only. Missing historical fingerprints remain
+an evidence gap, never fabricated clearance.
