@@ -11,6 +11,7 @@ import json
 import re
 import subprocess
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -18,7 +19,7 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Set
+    from collections.abc import Set
 
 _GIB = 1024**3
 _DNS = re.compile(r"[a-z0-9](?:[-a-z0-9.]*[a-z0-9])?\Z")
@@ -63,6 +64,10 @@ class LaneResourcePolicy:
             "max_sample_age_seconds",
         ):
             _positive(getattr(self, name), name)
+        if not isinstance(self.component_budgets, Mapping):
+            raise TypeError("component_budgets must be a mapping")
+        if not isinstance(self.infrastructure_namespaces, (set, frozenset)):
+            raise TypeError("infrastructure_namespaces must be a set of namespace names")
         for name, budget in self.component_budgets.items():
             if not isinstance(name, str) or not name:
                 raise ValueError("component budget requires a nonempty component identity")
@@ -158,7 +163,8 @@ def evaluate_lane_resources(
                 key = (ref["namespace"], ref["name"], ref["uid"], container["name"])
                 if key in measured:
                     raise ValueError(f"eval: duplicate memory measurement for {'/'.join(key)}")
-                measured[key] = container.get("memory", {})
+                memory = container.get("memory")
+                measured[key] = memory if isinstance(memory, dict) else {}
     containers = []
     for pod in pods["items"]:
         if pod.get("status", {}).get("phase") in {"Succeeded", "Failed"}:

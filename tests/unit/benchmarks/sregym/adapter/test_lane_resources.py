@@ -249,3 +249,26 @@ def test_unbound_mirror_annotation_cannot_bypass_pod_uid(snapshot):
     snapshot["summary"]["pods"][0]["podRef"]["uid"] = "retired-pod"
     with pytest.raises(ValueError, match="memory.*identity"):
         evaluate(snapshot)
+
+
+def test_component_override_is_exact_and_pod_override_wins(snapshot):
+    snapshot["summary"]["pods"][0]["containers"][0]["memory"]["workingSetBytes"] = 3 * Gi
+    policy = lanes.LaneResourcePolicy(component_budgets={"observe/jaeger-agent": 4 * Gi})
+    assert evaluate(snapshot, policy=policy)["containers"][0]["budget_bytes"] == 4 * Gi
+    policy = lanes.LaneResourcePolicy(
+        component_budgets={"observe/jaeger-agent": 4 * Gi, "observe/jaeger-agent-abc/jaeger-agent": 2 * Gi}
+    )
+    with pytest.raises(ValueError, match="budget"):
+        evaluate(snapshot, policy=policy)
+
+
+def test_malformed_memory_reports_component_unavailability(snapshot):
+    snapshot["summary"]["pods"][0]["containers"][0]["memory"] = None
+    with pytest.raises(ValueError, match="observe/jaeger-agent-abc/jaeger-agent.*memory"):
+        evaluate(snapshot)
+
+
+@pytest.mark.parametrize("kwargs", [{"component_budgets": "not-a-map"}, {"infrastructure_namespaces": "observe"}])
+def test_wrong_configuration_shape_raises_type_error(kwargs):
+    with pytest.raises(TypeError):
+        lanes.LaneResourcePolicy(**kwargs)
