@@ -108,3 +108,17 @@ def test_unknown_application_cannot_claim_a_client_refresh():
     result = seed_recovery.refresh_baseline_clients(problem)
     assert result["success"] is False
     problem.kubectl.exec_command.assert_not_called()
+
+
+@pytest.mark.parametrize("namespace", ["astronomy-shop", "social-network"])
+def test_registration_refresh_does_not_roll_apps_without_startup_dependencies(monkeypatch, namespace):
+    from benchmarks.sregym import adapter
+
+    items = [{"kind": "Deployment", "metadata": {"name": name}} for name in seed_recovery.RESTORE_CLIENTS[namespace]]
+    monkeypatch.setattr(adapter, "kubectl", lambda *a, **kw: SimpleNamespace(stdout=json.dumps({"items": items})))
+    monkeypatch.setenv("KUBECONFIG", "/fixture/kubeconfig")
+    problem = SimpleNamespace(namespace=namespace, kubectl=Mock())
+    result = seed_recovery.refresh_baseline_clients(problem, dependencies_only=True)
+    assert result["success"] is True
+    assert result["deployments"] == []
+    problem.kubectl.exec_command.assert_not_called()

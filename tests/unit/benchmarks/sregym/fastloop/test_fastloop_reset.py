@@ -453,3 +453,41 @@ def test_pending_reset_retires_state_and_preserves_durable_history(
     if has_job or orphan_phase:
         assert not proposal.exists(), "proposal checkout must not survive a completed reset"
         assert not session.exists(), "session scratch must not survive a completed reset"
+
+
+def test_restore_finishes_recovery_mutations_before_ready_snapshot(tmp_path: Path) -> None:
+    from types import SimpleNamespace
+
+    from benchmarks.sregym.fastloop.baseline_recovery import save_application_baseline
+
+    environment = FastloopEnvironment(
+        run_dir=tmp_path,
+        cluster="fake",
+        kubeconfig=tmp_path / "kubeconfig",
+        namespace="hotel",
+        application="hotel",
+        workspace=tmp_path / "workspace",
+        sregym_dir=tmp_path / "sregym",
+        private_tmp=None,
+    )
+    environment.baseline_path.write_text("{}")
+    save_application_baseline(environment.baseline_path, (ApplicationBaseline("hotel", FakeCluster().objects),))
+    events = []
+    oracle_calls = 0
+
+    def request(op, **kwargs):
+        nonlocal oracle_calls
+        events.append(op)
+        if op == "health":
+            return {"healthy": True}
+        if op == "baseline_oracle":
+            oracle_calls += 1
+            return {"success": oracle_calls > 1}
+        return {"success": True}
+
+    checks = SimpleNamespace(
+        settle=lambda: None, ready=lambda: events.append("ready"), complete=lambda: events.append("complete")
+    )
+    reset.restore_application(environment, FakeCluster(), SimpleNamespace(request=request), checks=checks)
+    assert events[-2:] == ["ready", "complete"]
+    assert events.count("baseline_oracle") == 2
