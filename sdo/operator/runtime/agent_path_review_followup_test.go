@@ -129,18 +129,6 @@ func TestApplicationReceiptsSurviveRestartBeforeFirstContinuation(t *testing.T) 
 
 }
 
-func TestCoverageRecognizesControllerOwnedProgramFinding(t *testing.T) {
-	c := &Controller{}
-	ref := sdk.ObjectRef{Kind: "Service", Namespace: "app", Name: "api"}
-	run := ProgramRun{ProgramID: "routing", Bindings: program.Bindings{Objects: program.ObjectBindings{"service": ref}}, Verdict: program.Verdict{Result: program.Match}}
-	finding := c.programFinding(sdk.DriftEvent{Ref: ref, Fields: []sdk.DriftField{{Path: "spec.ports[0].targetPort"}}}, run)
-	run.FindingFingerprint = FindingFingerprint(finding)
-	got := buildPlaybookCoverage([]sdk.Finding{finding}, []ProgramRun{run}, nil, nil)
-	if len(got.Matches) != 1 || len(got.Matches[0].ExplainedFindingFingerprints) != 1 || len(got.UnexplainedFindingFingerprints) != 0 {
-		t.Fatalf("controller-owned finding lost its program relation: %+v", got)
-	}
-}
-
 func assertRestoredApplicationReceiptReachesWorkerResult(t *testing.T, client *fake.Clientset, loop *ResponderLoop, receiptID string) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

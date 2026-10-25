@@ -39,11 +39,11 @@ func TestIncidentRequestCarriesOnlyFindingDriftAndPreservesStatusHistory(t *test
 		t.Fatal(err)
 	}
 	old := sdk.DriftEvent{Ref: sdk.ObjectRef{Kind: "Service", Namespace: "app", Name: "reservation"},
-		ObservedAt: start, Classification: sdk.DriftFault, ProgramID: "targetport", InvestigationVerdict: "bug"}
+		ObservedAt: start, Classification: sdk.DriftUnexplained, InvestigationVerdict: "bug"}
 	current := sdk.DriftEvent{Ref: sdk.ObjectRef{Kind: "Service", Namespace: "app", Name: "peer"},
-		ObservedAt: start.Add(time.Minute), Classification: sdk.DriftFault, ProgramID: "targetport"}
+		ObservedAt: start.Add(time.Minute), Classification: sdk.DriftUnexplained}
 	controller.driftEvents = []sdk.DriftEvent{old, current}
-	finding := sdk.Finding{DetectorID: "drift.targetport", RuleID: "targetport", Status: sdk.FindingActive,
+	finding := sdk.Finding{DetectorID: "drift.unexplained", RuleID: "unexplained", Status: sdk.FindingActive,
 		PrimaryResource: current.Ref, Metadata: map[string]any{"drift_event": current}}
 	request := controller.incidentRequest(start.Add(2*time.Minute), []sdk.Finding{finding})
 	if len(request.DriftEvents) != 1 || request.DriftEvents[0].Ref != current.Ref {
@@ -51,25 +51,6 @@ func TestIncidentRequestCarriesOnlyFindingDriftAndPreservesStatusHistory(t *test
 	}
 	if events := exportState(t, controller).DriftEvents; len(events) != 2 || objectRefState(events[0].Ref) != old.Ref {
 		t.Fatalf("status lost drift history: %+v", events)
-	}
-}
-
-func TestIncidentRequestCarriesProgramSweepDriftFinding(t *testing.T) {
-	start := time.Unix(10, 0).UTC()
-	config := testControllerConfig()
-	config.Namespace = "app"
-	controller, err := NewController(config, nil, staticProvider{snapshot: sdktest.Snapshot{NamespaceName: "app"}},
-		&recordingDispatcher{requests: make(chan IncidentRequest, 1)}, start)
-	if err != nil {
-		t.Fatal(err)
-	}
-	event := sdk.DriftEvent{Ref: sdk.ObjectRef{Kind: "Service", Namespace: "app", Name: "api"},
-		ObservedAt: start, Classification: sdk.DriftFault, ProgramID: "targetport"}
-	finding := sdk.Finding{DetectorID: "drift.targetport", RuleID: "targetport", Status: sdk.FindingActive,
-		PrimaryResource: event.Ref, Metadata: map[string]any{"drift_event": event}}
-	request := controller.incidentRequest(start.Add(time.Second), []sdk.Finding{finding})
-	if len(request.DriftEvents) != 1 || request.DriftEvents[0].ProgramID != "targetport" {
-		t.Fatalf("program sweep evidence missing from request: %+v", request.DriftEvents)
 	}
 }
 
@@ -82,83 +63,9 @@ func TestDriftClassifierIgnoresHPAOwnedReplicas(t *testing.T) {
 	}}, Spec: appsv1.DeploymentSpec{Replicas: &before}}
 	next := old.DeepCopy()
 	next.Spec.Replicas = &after
-	event, _, err := (DriftClassifier{}).Classify(context.Background(), objectChange(t, old, next, "apps/v1", "Deployment"), driftReadView{ReplayReadView: &sdktest.ReplayReadView{Snapshot: sdktest.Snapshot{NamespaceName: "app"}}, diff: program.Diff{Changed: true}}, time.Unix(10, 0))
+	event, err := (DriftClassifier{}).Classify(context.Background(), objectChange(t, old, next, "apps/v1", "Deployment"), driftReadView{ReplayReadView: &sdktest.ReplayReadView{Snapshot: sdktest.Snapshot{NamespaceName: "app"}}, diff: program.Diff{Changed: true}}, time.Unix(10, 0))
 	if err != nil || event != nil {
 		t.Fatalf("HPA replicas entered drift feed: %+v, %v", event, err)
-	}
-}
-
-func TestDriftClassifierMatchesTargetPortOnAffectedBinding(t *testing.T) {
-	old := driftService(8080)
-	next := driftService(9999)
-	next.ManagedFields = append(next.ManagedFields, metav1.ManagedFieldsEntry{Manager: "unknown-editor", Operation: metav1.ManagedFieldsOperationUpdate, FieldsType: "FieldsV1", FieldsV1: &metav1.FieldsV1{Raw: []byte(`{"f:spec":{"f:ports":{"k:{\"port\":80,\"protocol\":\"TCP\"}":{"f:targetPort":{}}}}}`)}})
-	registry, err := program.NewRegistry([]program.Diagnoser{candidateProgram{spec: program.ProgramSpec{ID: "targetport", Params: []program.ParamSpec{{Name: "service", Kind: "Service", Required: true}}}, run: func(_ context.Context, bindings program.Bindings) program.Verdict {
-		if bindings.Objects["service"].Name == "api" {
-			return program.Verdict{Result: program.Match}
-		}
-		return program.Verdict{Result: program.NoMatch}
-	}}}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	view := driftReadView{ReplayReadView: &sdktest.ReplayReadView{Snapshot: sdktest.Snapshot{NamespaceName: "app", ServiceList: []corev1.Service{*next, *driftService(8080)}}}, diff: program.Diff{Changed: true, Text: "accepted manifest differs"}}
-	event, runs, err := (DriftClassifier{Programs: registry, Deadline: time.Second}).Classify(context.Background(), objectChange(t, old, next, "v1", "Service"), view, time.Unix(10, 0))
-	if err != nil || event == nil || event.Classification != sdk.DriftFault || event.Manager != "unknown-editor" || len(runs) != 1 || runs[0].Verdict.Result != program.Match || len(event.Fields) != 1 || event.Fields[0].Path != "spec.ports[0].targetPort" {
-		t.Fatalf("targetPort was not classified: event=%+v runs=%+v err=%v", event, runs, err)
-	}
-}
-
-func TestWatchEventProgramsUseHintOnceForOwnedAndUnownedChanges(t *testing.T) {
-	for _, owned := range []bool{true, false} {
-		t.Run(map[bool]string{true: "owned", false: "unowned"}[owned], func(t *testing.T) {
-			before, after := driftService(8080), driftService(9999)
-			if !owned {
-				before.ManagedFields, after.ManagedFields = nil, nil
-			}
-			calls := 0
-			registry, err := program.NewRegistry([]program.Diagnoser{candidateProgram{spec: scenarioPortProgram{}.Spec(), run: func(context.Context, program.Bindings) program.Verdict {
-				calls++
-				return program.Verdict{Result: program.Match}
-			}}}, nil)
-			if err != nil {
-				t.Fatal(err)
-			}
-			view := serviceDriftView{&sdktest.ReplayReadView{Snapshot: sdktest.Snapshot{NamespaceName: "app", ServiceList: []corev1.Service{*after, {ObjectMeta: metav1.ObjectMeta{Name: "unrelated", Namespace: "app"}}}}}}
-			event, runs, err := (DriftClassifier{Programs: registry}).Classify(context.Background(), objectChange(t, before, after, "v1", "Service"), view, time.Unix(10, 0))
-			if err != nil || event == nil || calls != 1 || len(runs) != 1 || runs[0].BindingSource != "hint" || runs[0].Bindings.Objects["service"].Name != "api" {
-				t.Fatalf("watch binding was not diagnosed exactly once as hint: event=%+v runs=%+v calls=%d err=%v", event, runs, calls, err)
-			}
-			if event.Source != "watch event program match" {
-				t.Fatalf("watch program source lost: %+v", event)
-			}
-			if owned && (len(event.Fields) != 1 || event.Fields[0].Old != "8080" || event.Fields[0].New != "9999" || event.Manager != "sdo-deployer") {
-				t.Fatalf("owned field evidence replaced: %+v", event)
-			}
-		})
-	}
-}
-
-func TestWatchEventProgramsSkipInitialButAllowSourceAbsentObjects(t *testing.T) {
-	for _, initial := range []bool{false, true} {
-		calls := 0
-		registry, err := program.NewRegistry([]program.Diagnoser{candidateProgram{spec: scenarioPortProgram{}.Spec(), run: func(context.Context, program.Bindings) program.Verdict {
-			calls++
-			return program.Verdict{Result: program.Match}
-		}}}, nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-		after := driftService(9999)
-		change := objectChange(t, driftService(8080), after, "v1", "Service")
-		change.Initial = initial
-		view := driftReadView{ReplayReadView: &sdktest.ReplayReadView{Snapshot: sdktest.Snapshot{NamespaceName: "app", ServiceList: []corev1.Service{*after}}}, diff: program.Diff{Changed: true, SourceAbsent: !initial}}
-		event, runs, err := (DriftClassifier{Programs: registry}).Classify(context.Background(), change, view, time.Unix(10, 0))
-		if initial && (err != nil || event != nil || len(runs) != 0 || calls != 0) {
-			t.Fatalf("initial object ran a program: event=%+v runs=%+v calls=%d err=%v", event, runs, calls, err)
-		}
-		if !initial && (err != nil || event == nil || len(runs) != 1 || calls != 1) {
-			t.Fatalf("source absence gated a learned detector: event=%+v runs=%+v calls=%d err=%v", event, runs, calls, err)
-		}
 	}
 }
 
@@ -166,22 +73,22 @@ func TestDriftClassifierRecordsUnexplainedSDOChange(t *testing.T) {
 	old := driftService(8080)
 	next := driftService(8081)
 	view := driftReadView{ReplayReadView: &sdktest.ReplayReadView{Snapshot: sdktest.Snapshot{NamespaceName: "app", ServiceList: []corev1.Service{*next}}}, diff: program.Diff{Changed: true}}
-	event, runs, err := (DriftClassifier{}).Classify(context.Background(), objectChange(t, old, next, "v1", "Service"), view, time.Unix(10, 0))
-	if err != nil || event == nil || event.Classification != sdk.DriftUnexplained || len(runs) != 0 {
-		t.Fatalf("unexplained change lost: event=%+v runs=%+v err=%v", event, runs, err)
+	event, err := (DriftClassifier{}).Classify(context.Background(), objectChange(t, old, next, "v1", "Service"), view, time.Unix(10, 0))
+	if err != nil || event == nil || event.Classification != sdk.DriftUnexplained {
+		t.Fatalf("unexplained change lost: event=%+v err=%v", event, err)
 	}
 }
 
 func TestDriftClassifierRecordsAddedDeclaredObject(t *testing.T) {
 	added := driftService(9999)
 	view := driftReadView{ReplayReadView: &sdktest.ReplayReadView{Snapshot: sdktest.Snapshot{NamespaceName: "app", ServiceList: []corev1.Service{*added}}}, diff: program.Diff{Changed: true}}
-	event, _, err := (DriftClassifier{}).Classify(context.Background(), ObjectChange{New: driftObject(added, sdk.WatchKind{APIVersion: "v1", Kind: "Service"})}, view, time.Unix(10, 0))
+	event, err := (DriftClassifier{}).Classify(context.Background(), ObjectChange{New: driftObject(added, sdk.WatchKind{APIVersion: "v1", Kind: "Service"})}, view, time.Unix(10, 0))
 	if err != nil || event == nil || event.Classification != sdk.DriftUnexplained {
 		t.Fatalf("added SDO object was not classified: %+v, %v", event, err)
 	}
 }
 
-func TestControllerOpensLatentIncidentOnDriftWithinOneStep(t *testing.T) {
+func TestControllerOpensUnexplainedIncidentAfterBatchWindow(t *testing.T) {
 	start := time.Unix(10, 0).UTC()
 	old := driftService(8080)
 	next := driftService(9999)
@@ -194,10 +101,6 @@ func TestControllerOpensLatentIncidentOnDriftWithinOneStep(t *testing.T) {
 	config := testControllerConfig()
 	config.Namespace = "app"
 	controller, err := NewController(config, nil, provider, &recordingDispatcher{requests: make(chan IncidentRequest, 1)}, start)
-	if err != nil {
-		t.Fatal(err)
-	}
-	registry, err := program.NewRegistry([]program.Diagnoser{candidateProgram{spec: program.ProgramSpec{ID: "targetport", Params: []program.ParamSpec{{Name: "service", Kind: "Service", Required: true}}}, run: func(context.Context, program.Bindings) program.Verdict { return program.Verdict{Result: program.Match} }}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -214,14 +117,20 @@ func TestControllerOpensLatentIncidentOnDriftWithinOneStep(t *testing.T) {
 		t.Fatal(err)
 	}
 	source := planFakeSource{source: &unstructured.Unstructured{Object: map[string]any{"apiVersion": "v1", "kind": "Service", "metadata": map[string]any{"name": "api", "namespace": "app"}, "spec": map[string]any{"ports": []any{map[string]any{"port": float64(80), "targetPort": float64(8080)}}}}}}
-	controller.ConfigureDrift(DriftControllerConfig{ProgramPersistence: sdk.PersistencePolicy{Firing: 1, Clearing: 1}, Events: cache, Programs: registry, View: func(snapshot sdk.DetectionContext) program.ReadView {
+	controller.ConfigureDrift(DriftControllerConfig{Events: cache, View: func(snapshot sdk.DetectionContext) program.ReadView {
 		return LiveReadView{DetectionContext: snapshot, Client: apiClient, Source: source, SourceCommit: "accepted"}
 	}})
 	if err := controller.StepEvents(context.Background(), start.Add(time.Second), cache.TakeEvents()); err != nil {
 		t.Fatal(err)
 	}
+	if controller.IncidentOpen() {
+		t.Fatal("source drift bypassed its batch window")
+	}
+	if err := controller.StepEvents(context.Background(), start.Add(21*time.Second), nil); err != nil {
+		t.Fatal(err)
+	}
 	state := exportState(t, controller)
-	if !state.IncidentOpen || len(state.IncidentRequest.Findings) != 1 || state.IncidentRequest.Findings[0].Severity != string(sdk.SeverityLatent) || len(state.DriftEvents) != 1 || state.DriftEvents[0].Classification != string(sdk.DriftFault) || state.IncidentView == nil || len(state.IncidentView.DriftEvents) != 1 {
+	if !state.IncidentOpen || len(state.IncidentRequest.Findings) != 1 || state.IncidentRequest.Findings[0].Severity != string(sdk.SeverityLatent) || len(state.DriftEvents) != 1 || state.DriftEvents[0].Classification != string(sdk.DriftUnexplained) || state.IncidentView == nil || len(state.IncidentView.DriftEvents) != 1 {
 		t.Fatalf("latent incident not opened in one reconcile: %+v", state)
 	}
 }
@@ -233,37 +142,6 @@ func TestResponderStatusIncludesDriftClassification(t *testing.T) {
 	status := loop.Handle(context.Background(), ToolRequest{Command: "status"})
 	if len(status.DriftEvents) != 1 || status.DriftEvents[0].Classification != sdk.DriftUnexplained {
 		t.Fatalf("status lost drift classification: %+v", status)
-	}
-}
-
-func TestControllerFullProgramSweepFallsBackAfterConfiguredInterval(t *testing.T) {
-	start := time.Unix(10, 0).UTC()
-	service := driftService(9999)
-	provider := staticProvider{snapshot: sdktest.Snapshot{NamespaceName: "app", ServiceList: []corev1.Service{*service}}}
-	config := testControllerConfig()
-	config.Namespace = "app"
-	controller, err := NewController(config, nil, provider, &recordingDispatcher{requests: make(chan IncidentRequest, 1)}, start)
-	if err != nil {
-		t.Fatal(err)
-	}
-	registry, err := program.NewRegistry([]program.Diagnoser{candidateProgram{spec: program.ProgramSpec{ID: "targetport", Params: []program.ParamSpec{{Name: "service", Kind: "Service", Required: true}}}, run: func(context.Context, program.Bindings) program.Verdict { return program.Verdict{Result: program.Match} }}}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	controller.ConfigureDrift(DriftControllerConfig{ProgramPersistence: sdk.PersistencePolicy{Firing: 1, Clearing: 1}, Programs: registry, SweepInterval: 10 * time.Second, View: func(snapshot sdk.DetectionContext) program.ReadView {
-		return driftReadView{ReplayReadView: &sdktest.ReplayReadView{Snapshot: snapshot.(sdktest.Snapshot)}}
-	}})
-	if err := controller.StepEvents(context.Background(), start.Add(9*time.Second), nil); err != nil {
-		t.Fatal(err)
-	}
-	if controller.IncidentOpen() || !controller.NextWake().Equal(start.Add(10*time.Second)) {
-		t.Fatalf("program swept early: %+v", exportState(t, controller))
-	}
-	if err := controller.StepEvents(context.Background(), start.Add(10*time.Second), nil); err != nil {
-		t.Fatal(err)
-	}
-	if !controller.IncidentOpen() {
-		t.Fatal("full sweep missed latent invariant")
 	}
 }
 
@@ -282,7 +160,7 @@ func TestControllerPersistsUnexplainedChangeWithoutIncident(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	controller.ConfigureDrift(DriftControllerConfig{ProgramPersistence: sdk.PersistencePolicy{Firing: 1, Clearing: 1}, Events: cache, View: func(snapshot sdk.DetectionContext) program.ReadView {
+	controller.ConfigureDrift(DriftControllerConfig{Events: cache, View: func(snapshot sdk.DetectionContext) program.ReadView {
 		return driftReadView{ReplayReadView: &sdktest.ReplayReadView{Snapshot: snapshot.(sdktest.Snapshot)}, diff: program.Diff{Changed: true}}
 	}})
 	if err := controller.StepEvents(context.Background(), start.Add(time.Second), cache.TakeEvents()); err != nil {

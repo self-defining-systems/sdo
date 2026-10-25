@@ -266,3 +266,90 @@ def test_final_check_timeout_kills_the_validator_process_group(
     assert "validation started" in result.stdout
     time.sleep(0.5)
     assert not marker.exists()
+
+
+def test_repeat_chain_is_corrected_in_the_same_reflection_session(
+    accepted_reflection: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The real compiler's finding-binding rejection reaches the live correction loop."""
+    import shutil
+
+    root = accepted_reflection
+
+    def git(*args: str) -> str:
+        return subprocess.check_output(["git", "-C", str(root), *args], text=True).strip()
+
+    good = ROOT / "sdo/operator/memory/validate/testdata/good/.sdo"
+    shutil.copytree(good, root / ".sdo", dirs_exist_ok=True)
+    (root / ".sdo/playbooks/base/scripts/fix.sh").chmod(0o755)
+    fixture = ROOT / "tests/fixtures/sdo/playbook_program_app/.sdo"
+    shutil.copyfile(fixture / "diagnostics/go.mod", root / ".sdo/diagnostics/go.mod")
+    git("add", "-f", ".sdo")
+    git("commit", "-qm", "accepted memory")
+    outcome = next((root / ".sdo/outcomes").glob("*.json"))
+    data = json.loads(outcome.read_text())
+    data["confirmed_root_causes"][0]["resources"][0]["name"] = "front"
+    outcome.write_text(json.dumps(data))
+    git("add", "-f", ".sdo")
+    git("commit", "-qm", "accepted outcome\n\nSDO-Incident: incident\nSDO-Phase: outcome")
+    monkeypatch.setenv("SDO_BASE_COMMIT", git("rev-parse", "HEAD"))
+    for relative in [
+        "playbooks/service-targetport-mismatch",
+        "lib",
+        "corpus/targetport-mismatch",
+        "diagnostics/detectors/incidents/routing-relations",
+    ]:
+        shutil.copytree(fixture / relative, root / ".sdo" / relative, dirs_exist_ok=True)
+    index = root / ".sdo/playbooks/README.md"
+    index.write_text(index.read_text() + "\n- [service-targetport-mismatch](service-targetport-mismatch/README.md)\n")
+    corpus = root / ".sdo/corpus/targetport-mismatch"
+    fixed = json.loads((corpus / "fixed.json").read_text())
+    for key, value in json.loads((corpus / "healthy.json").read_text()).items():
+        if isinstance(value, list):
+            fixed.setdefault(key, []).extend(value)
+    for phase in ["fixed", "healthy"]:
+        (corpus / f"{phase}.json").write_text(json.dumps(fixed))
+    label = json.loads((corpus / "labels.json").read_text())
+    label["provenance"] = {
+        "incident_id": "incident",
+        "open_sha256": hashlib.sha256((corpus / "open.json").read_bytes()).hexdigest(),
+        "fixed_sha256": hashlib.sha256((corpus / "fixed.json").read_bytes()).hexdigest(),
+    }
+    (corpus / "labels.json").write_text(json.dumps(label))
+    path = root / ".sdo/diagnostics/detectors/incidents/routing-relations/detector.go"
+    valid = path.read_text()
+    calls = 0
+
+    def respond(request: CommandRequest) -> FakeRun:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            path.write_text(
+                valid.replace(
+                    '"service": ref',
+                    '"service": {APIVersion: "v1", Kind: "Service", Namespace: "demo", Name: "not-observed"}',
+                )
+            )
+        else:
+            assert calls == 2, agent.prompts[-1]
+            assert "reflection-session" in request.argv
+            path.write_text(valid)
+        return reply(
+            "codex",
+            {
+                "summary": "learned routing repair",
+                "learning_decision": "updated",
+                "proposed_artifact_ids": ["service-targetport-mismatch"],
+            },
+            session_id="reflection-session",
+            branch="reflection",
+        )
+
+    agent = ScriptedAgent(respond)
+    result = CodexSessionBackend(executor=agent.executor).fresh(
+        worktree=root, prompt="reflect", idempotency_key="repeat-chain"
+    )
+    assert calls == 2
+    assert result.learning_decision == "updated"
+    assert "program.repeat-unreachable" in agent.prompts[1]
+    assert "service-targetport-mismatch" in agent.prompts[1]

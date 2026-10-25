@@ -91,11 +91,33 @@ func TestDatabaseReplayRefusesUnrecordedAuthenticationConfiguration(t *testing.T
 	}
 }
 
-func TestDatabaseProjectedCatalogAlsoClearsPromotedDetector(t *testing.T) {
+func TestDatabaseProjectedCatalogAlsoClearsIncidentDetector(t *testing.T) {
 	p := databaseProgram{}
-	detector := program.DetectorFromProgram(p, func(sdk.DetectionContext) []program.Bindings { return []program.Bindings{{}} }, sdk.DetectorSpec{ID: "db-catalog", Class: sdk.DetectorClassIncident, Playbooks: []string{"database-user"}})
+	detector := databaseCatalogDetector{}
 	result := Check(context.Background(), p, p, []sdk.Detector{detector}, databaseCase())
 	if result.Status != "replayed" {
 		t.Fatalf("%+v", result)
 	}
+}
+
+type databaseCatalogDetector struct{}
+
+func (databaseCatalogDetector) Spec() sdk.DetectorSpec {
+	return sdk.DetectorSpec{ID: "db-catalog", Class: sdk.DetectorClassIncident, Playbooks: []string{"database-user"}}
+}
+func (databaseCatalogDetector) Detect(_ context.Context, s sdk.DetectionContext) ([]sdk.Finding, error) {
+	users, err := program.ReadFrom(s).DatabaseUsers(dbAction().Target)
+	if err != nil {
+		return nil, err
+	}
+	for _, u := range users {
+		if u.Name == "app" {
+			for _, r := range u.Roles {
+				if r == dbAction().Roles[0] {
+					return nil, nil
+				}
+			}
+		}
+	}
+	return []sdk.Finding{{DetectorID: "db-catalog", RuleID: "missing-user", Status: sdk.FindingActive, Severity: sdk.SeverityWarning, Summary: "Application database user missing", Evidence: "recorded catalog lacks the required direct role", PrimaryResource: dbAction().Target.Pod, Playbooks: []string{"database-user"}}}, nil
 }

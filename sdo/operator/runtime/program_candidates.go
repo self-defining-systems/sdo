@@ -4,31 +4,17 @@ import (
 	"context"
 	"encoding/json"
 	"sdo.dev/operator/memory/layout"
-	"slices"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
-
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 )
 
 const DefaultDiagnosisDeadline = 10 * time.Second
-const maxCandidateAssignments = 32
-const DefaultSweepLimit = 64
 
-type CandidateOptions struct {
-	Deadline   time.Duration
-	SweepLimit int
-	Affected   []sdk.ObjectRef
-	// SweepCursors stores the next mixed-radix assignment per program.
-	SweepCursors map[string]string
-}
-
-// ProgramRun is one diagnosis for a concrete finding, hint, or sweep binding.
+// ProgramRun is one diagnosis for a concrete finding or hint binding.
 type ProgramRun struct {
 	CanMitigate        *bool            `json:"can_mitigate,omitempty"`
 	FindingFingerprint string           `json:"finding_fingerprint,omitempty"`
@@ -40,23 +26,13 @@ type ProgramRun struct {
 	ProgramRevision    string           `json:"program_revision,omitempty"`
 }
 
-// SelectProgramCandidates diagnoses all bindable programs under one deadline.
+// SelectProgramCandidates diagnoses finding-bound programs under one deadline.
 func SelectProgramCandidates(ctx context.Context, registry program.ProgramRegistry, view program.ReadView, findings []sdk.Finding, deadline time.Duration) []ProgramRun {
-	return SelectProgramCandidatesWithOptions(ctx, registry, view, findings, CandidateOptions{Deadline: deadline})
-}
-
-// SelectProgramCandidatesWithOptions diagnoses finding and namespace-sweep bindings.
-func SelectProgramCandidatesWithOptions(ctx context.Context, registry program.ProgramRegistry, view program.ReadView, findings []sdk.Finding, options CandidateOptions) []ProgramRun {
 	if registry == nil {
 		return nil
 	}
-	deadline := options.Deadline
 	if deadline <= 0 {
 		deadline = DefaultDiagnosisDeadline
-	}
-	limit := options.SweepLimit
-	if limit <= 0 {
-		limit = DefaultSweepLimit
 	}
 	ctx, cancel := context.WithTimeout(ctx, deadline)
 	defer cancel()
@@ -74,19 +50,6 @@ func SelectProgramCandidatesWithOptions(ctx context.Context, registry program.Pr
 	seen := map[string]bool{}
 	aliases := map[string][]candidate{}
 	add := func(id string, bindings program.Bindings, fingerprint, source string) {
-		if len(options.Affected) > 0 {
-			matched := false
-			for _, ref := range bindings.Objects {
-				for _, affected := range options.Affected {
-					if ref.Kind == affected.Kind && ref.Namespace == affected.Namespace && ref.Name == affected.Name {
-						matched = true
-					}
-				}
-			}
-			if !matched {
-				return
-			}
-		}
 		key := id + "\x00" + bindingKey(bindings)
 		if seen[key] {
 			if fingerprint != "" {
@@ -126,127 +89,6 @@ func SelectProgramCandidatesWithOptions(ctx context.Context, registry program.Pr
 					}
 				}
 				add(spec.ID, bindings, FindingFingerprint(finding), source)
-			}
-		}
-	}
-	for _, spec := range registry.List() {
-		if len(spec.Params) == 0 {
-			continue
-		}
-		refs := make([][]sdk.ObjectRef, len(spec.Params))
-		valid := true
-		for index, param := range spec.Params {
-			if param.ValueKind != "" {
-				if param.Required && param.Default == nil {
-					valid = false
-					break
-				}
-				refs[index] = []sdk.ObjectRef{{}}
-				continue
-			}
-
-			if !param.Required {
-				refs[index] = append([]sdk.ObjectRef{{}}, sweepRefs(view, param.Kind)...)
-				continue
-			}
-			if param.Kind == "" {
-				valid = false
-				break
-			}
-			refs[index] = sweepRefs(view, param.Kind)
-			if len(refs[index]) == 0 {
-				valid = false
-				break
-			}
-		}
-		if !valid {
-			continue
-		}
-		// Prune unrelated watch events before enumerating assignments. Learned
-		// programs may have many roles of the same kind; their Cartesian
-		// product must not consume the deadline for an unbindable event.
-		affectedSuffix := make([]bool, len(refs)+1)
-		for i := len(refs) - 1; i >= 0; i-- {
-			affectedSuffix[i] = affectedSuffix[i+1]
-			for _, ref := range refs[i] {
-				if candidateAffected(ref, options.Affected) {
-					affectedSuffix[i] = true
-				}
-			}
-		}
-		if len(options.Affected) > 0 && !affectedSuffix[0] {
-			continue
-		}
-		indices := make([]int, len(refs))
-		if cursor := options.SweepCursors[spec.ID]; cursor != "" {
-			parts := strings.Split(cursor, ",")
-			if len(parts) == len(indices) {
-				for i, part := range parts {
-					n, err := strconv.Atoi(part)
-					if err == nil && n >= 0 && (len(refs[i]) == 0 && n == 0 || n < len(refs[i])) {
-						indices[i] = n
-					}
-				}
-			}
-		}
-		encode := func() string {
-			parts := make([]string, len(indices))
-			for i, n := range indices {
-				parts[i] = strconv.Itoa(n)
-			}
-			return strings.Join(parts, ",")
-		}
-		start := slices.Clone(indices)
-		wraps := 0
-		count := 0
-		for ctx.Err() == nil {
-			bindings := program.Bindings{Objects: program.ObjectBindings{}}
-			valid := true
-			matched := len(options.Affected) == 0
-			advanceAt := len(indices) - 1
-			for i, param := range spec.Params {
-				if param.ValueKind == "" && (param.Required || indices[i] != 0) {
-					ref := refs[i][indices[i]]
-					if bindingUses(bindings, ref) {
-						valid, advanceAt = false, i
-						break
-					}
-					bindings.Objects[param.Name] = ref
-					matched = matched || candidateAffected(ref, options.Affected)
-				}
-				if !matched && !affectedSuffix[i+1] {
-					valid, advanceAt = false, i
-					break
-				}
-			}
-			if valid {
-				before := len(candidates)
-				add(spec.ID, bindings, "", "sweep")
-				if len(candidates) > before {
-					count++
-				}
-			}
-			// An invalid prefix rules out every suffix, not just this leaf.
-			// Advance that prefix directly, preserving mixed-radix cursors.
-			for i := advanceAt + 1; i < len(indices); i++ {
-				indices[i] = 0
-			}
-			for i := advanceAt; i >= 0; i-- {
-				indices[i]++
-				if indices[i] < len(refs[i]) {
-					break
-				}
-				indices[i] = 0
-				if i == 0 {
-					wraps++
-				}
-			}
-			next := encode()
-			if options.SweepCursors != nil {
-				options.SweepCursors[spec.ID] = next
-			}
-			if count >= limit || wraps > 1 || wraps == 1 && slices.Compare(indices, start) >= 0 {
-				break
 			}
 		}
 	}
@@ -300,147 +142,12 @@ func SelectProgramCandidatesWithOptions(ctx context.Context, registry program.Pr
 	return runs
 }
 
-func candidateAffected(ref sdk.ObjectRef, affected []sdk.ObjectRef) bool {
-	for _, item := range affected {
-		if ref.Kind == item.Kind && ref.Namespace == item.Namespace && ref.Name == item.Name {
-			return true
-		}
-	}
-	return false
-}
-
-func sweepRefs(view program.ReadView, kind program.Kind) []sdk.ObjectRef {
-	if view == nil || view.Namespace() == "" {
-		return nil
-	}
-	var objects []metav1.Object
-	apiVersion := "v1"
-	switch kind {
-	case "Service":
-		items := view.Services()
-		for i := range items {
-			objects = append(objects, &items[i])
-		}
-	case "ConfigMap":
-		items := view.ConfigMaps()
-		for i := range items {
-			objects = append(objects, &items[i])
-		}
-	case "Pod":
-		items := view.Pods()
-		for i := range items {
-			objects = append(objects, &items[i])
-		}
-	case "Endpoints":
-		items := view.Endpoints()
-		for i := range items {
-			objects = append(objects, &items[i])
-		}
-	case "Event":
-		items := view.Events()
-		for i := range items {
-			objects = append(objects, &items[i])
-		}
-	case "Deployment":
-		apiVersion = "apps/v1"
-		items := view.Deployments()
-		for i := range items {
-			objects = append(objects, &items[i])
-		}
-	case "ReplicaSet":
-		apiVersion = "apps/v1"
-		items := view.ReplicaSets()
-		for i := range items {
-			objects = append(objects, &items[i])
-		}
-	case "EndpointSlice":
-		apiVersion = "discovery.k8s.io/v1"
-		items := view.EndpointSlices()
-		for i := range items {
-			objects = append(objects, &items[i])
-		}
-	case "NetworkPolicy":
-		apiVersion = "networking.k8s.io/v1"
-		items := view.NetworkPolicies()
-		for i := range items {
-			objects = append(objects, &items[i])
-		}
-	default:
-		return nil
-	}
-	refs := make([]sdk.ObjectRef, 0, len(objects))
-	for _, object := range objects {
-		if object.GetNamespace() == view.Namespace() && object.GetName() != "" {
-			refs = append(refs, sdk.ObjectRefFrom(string(kind), apiVersion, object))
-		}
-	}
-	sort.Slice(refs, func(i, j int) bool { return refs[i].Name < refs[j].Name })
-	return refs
-}
-
 func candidateBindings(spec program.ProgramSpec, finding sdk.Finding) []program.Bindings {
-	refs := append([]sdk.ObjectRef{finding.PrimaryResource}, finding.RelatedResources...)
-	for _, ref := range finding.ParameterBindings {
-		refs = append(refs, ref)
+	bindings, err := program.BindFinding(spec, finding)
+	if err != nil {
+		return nil
 	}
-	unique := make([]sdk.ObjectRef, 0, len(refs))
-	seen := map[sdk.ObjectRef]bool{}
-	for _, ref := range refs {
-		if ref.Kind != "" && !seen[ref] {
-			seen[ref] = true
-			unique = append(unique, ref)
-		}
-	}
-	var result []program.Bindings
-	var bind func(int, program.Bindings)
-	bind = func(index int, current program.Bindings) {
-		if len(result) >= maxCandidateAssignments {
-			return
-		}
-		if index == len(spec.Params) {
-			if program.ValidateBindings(spec, current) == nil {
-				result = append(result, current)
-			}
-			return
-		}
-		param := spec.Params[index]
-		if param.ValueKind != "" {
-			if !param.Required || param.Default != nil {
-				bind(index+1, current)
-			}
-			return
-		}
-		if hint, ok := finding.ParameterBindings[param.Name]; ok && hint.Kind == string(param.Kind) {
-			if !bindingUses(current, hint) {
-				next := cloneProgramBindings(current)
-				next.Objects[param.Name] = hint
-				bind(index+1, next)
-			}
-			return
-		}
-		for _, ref := range unique {
-			if ref.Kind != string(param.Kind) || bindingUses(current, ref) {
-				continue
-			}
-			next := cloneProgramBindings(current)
-			next.Objects[param.Name] = ref
-			bind(index+1, next)
-		}
-		if !param.Required {
-			bind(index+1, current)
-		}
-	}
-	bind(0, program.Bindings{Objects: program.ObjectBindings{}})
-	return result
-}
-
-func bindingUses(bindings program.Bindings, ref sdk.ObjectRef) bool {
-	for _, existing := range bindings.Objects {
-		if existing == ref {
-			return true
-		}
-	}
-	return false
+	return []program.Bindings{bindings}
 }
 
 func cloneProgramBindings(source program.Bindings) program.Bindings {

@@ -33,10 +33,6 @@ func CheckReads(view ReadView) (sdk.DetectionContext, func() error)
     CheckReads gives one evaluation its own failure tracking. A failed read
     cannot be ignored to turn Unknown into clearance.
 
-func DetectorFromProgram(p Diagnoser, locate Locator, spec sdk.DetectorSpec) sdk.Detector
-    DetectorFromProgram promotes a diagnoser to a detector using the same
-    runtime read surface.
-
 func ExpandedSetField(f SetField) bool
     ExpandedSetField reports whether an action uses the structured vocabulary.
 
@@ -94,6 +90,12 @@ type Bindings struct {
 	Values  map[string]any `json:"values,omitempty"`
 }
     Bindings contains object identities and separately typed scalar parameters.
+
+func BindFinding(spec ProgramSpec, finding sdk.Finding) (Bindings, error)
+    BindFinding binds one finding without enumerating objects or assignments.
+    Explicit ParameterBindings take precedence; otherwise only a unique resource
+    of the declared kind in the finding can bind a role. Additional objects are
+    read by Diagnose through ReadView, by name or relation.
 
 func (b Bindings) Clone() Bindings
 
@@ -331,8 +333,6 @@ type ListEdit struct {
     Op is remove, replace, or insert (immediately before the matched element).
     Use ordinary JSON patch's /- path to append, including to an empty list.
 
-type Locator func(sdk.DetectionContext) []Bindings
-
 type Mitigator interface {
 	Spec() ProgramSpec
 	Mitigate(context.Context, ReadView, Bindings) (Plan, error)
@@ -351,6 +351,9 @@ type ParamSpec struct {
 	// Default is optional; nil means no default.
 	Default any
 }
+    ParamSpec declares roles bound by triggering detector findings; Diagnose
+    reads additional objects through ReadView by name or relation, never role
+    enumeration.
 
 type PatchObject struct {
 	Ref    sdk.ObjectRef

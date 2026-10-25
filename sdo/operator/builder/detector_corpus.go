@@ -45,7 +45,7 @@ func TestProgramDetectorCorpusObservations(t *testing.T) {
    for _, phase := range []struct{name string; snapshot sdktest.Snapshot}{
     {"open", corpus.Open}, {"fixed", corpus.Fixed}, {"healthy", corpus.Healthy},
    } {
-    // Snapshot.ObservedView and DetectorFromProgram use the same checked SDK
+    // Snapshot.ObservedView uses the same checked SDK
     // ReadView as production, including phase-bound recorded primitive reads.
     snapshot := phase.snapshot
     snapshot.Readings = append(append([]sdktest.PrimitiveCall(nil), snapshot.Readings...), corpus.PhaseRecordings(phase.name)...)

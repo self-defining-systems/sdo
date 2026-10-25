@@ -11,7 +11,7 @@ import (
 	"sdo.dev/operator/sdk/sdktest"
 )
 
-// The positive program binding is valid, but the promoted detector locates all
+// The positive program binding is valid, but the independent detector inspects all
 // Services. An unlabelled peer with no pods must not be skipped by save-time checks.
 func TestProgramDetectorCorpusChecksEveryLocatedBinding(t *testing.T) {
 	root := programFixture(t)
@@ -20,18 +20,16 @@ func TestProgramDetectorCorpusChecksEveryLocatedBinding(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sourceText := strings.Replace(string(source), "import (", "import (\n targetport \"fixture-diagnostics/playbooks/service-targetport-mismatch\"\n \"sdo.dev/operator/sdk/program\"", 1)
-	old := "func New() sdk.Detector {\n\treturn Detector{}\n}"
-	if !strings.Contains(sourceText, old) {
-		t.Fatalf("fixture constructor changed: %s", sourceText)
+	sourceText := string(source)
+	start := strings.Index(sourceText, "func (Detector) Detect(")
+	if start < 0 {
+		t.Fatal("missing detector entry point")
 	}
-	sourceText = strings.Replace(sourceText, old, `func New() sdk.Detector {
- return program.DetectorFromProgram(targetport.Program{}, func(view sdk.DetectionContext) []program.Bindings {
-  var bindings []program.Bindings
-  for _, service := range view.Services() { bindings = append(bindings, program.Bindings{Objects: program.ObjectBindings{"service": {APIVersion:"v1", Kind:"Service", Namespace:service.Namespace, Name:service.Name}}}) }
-  return bindings
- }, Detector{}.Spec())
-}`, 1)
+	sourceText = sourceText[:start] + `func (Detector) Detect(_ context.Context, view sdk.DetectionContext) ([]sdk.Finding, error) {
+ for _, service := range view.Services() { if service.Name == "unlabelled-peer" { return nil, fmt.Errorf("unlabelled-peer Pod observation unavailable") } }
+ return nil, nil
+ }
+`
 	// Retain constructor metadata; its declared playbook is now the executable program.
 	sourceText = strings.ReplaceAll(sourceText, `const playbookPath = "missing-configmap"`, `const playbookPath = "service-targetport-mismatch"`)
 	if err := os.WriteFile(detectorPath, []byte(sourceText), 0644); err != nil {

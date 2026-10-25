@@ -8,7 +8,6 @@ import (
 	"reflect"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
-	"sdo.dev/operator/sdk/sdktest"
 	"testing"
 	"testing/quick"
 )
@@ -166,14 +165,4 @@ func (valueFirstProgram) Spec() program.ProgramSpec {
 }
 func (valueFirstProgram) Diagnose(context.Context, program.ReadView, program.Bindings) (program.Verdict, error) {
 	return program.Verdict{Result: program.Match}, nil
-}
-func TestDetectorSelectsRequiredObjectAfterValueParameter(t *testing.T) {
-	ref := sdk.ObjectRef{Kind: "Service", Namespace: "app", Name: "service"}
-	detector := program.DetectorFromProgram(valueFirstProgram{}, func(sdk.DetectionContext) []program.Bindings {
-		return []program.Bindings{{Objects: program.ObjectBindings{"service": ref}}}
-	}, sdk.DetectorSpec{ID: "value-first"})
-	findings, err := detector.Detect(context.Background(), sdktest.Snapshot{})
-	if err != nil || len(findings) != 1 || findings[0].PrimaryResource != ref {
-		t.Fatalf("wrong primary resource after scalar declaration: %+v %v", findings, err)
-	}
 }

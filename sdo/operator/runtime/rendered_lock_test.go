@@ -320,7 +320,7 @@ func TestRenderedLockConsulGapAfterMemoryCommitKeepsReservationDrift(t *testing.
 		t.Fatal(err)
 	}
 	view := LiveReadView{DetectionContext: sdktest.Snapshot{NamespaceName: "app", ServiceList: []corev1.Service{*service}}, Source: source, SourceCommit: revision}
-	event, _, err := (DriftClassifier{}).Classify(context.Background(), ObjectChange{Old: accepted, New: driftObject(service, sdk.WatchKind{APIVersion: "v1", Kind: "Service", Namespace: "app"}), Adoption: true}, view, time.Unix(20, 0))
+	event, err := (DriftClassifier{}).Classify(context.Background(), ObjectChange{Old: accepted, New: driftObject(service, sdk.WatchKind{APIVersion: "v1", Kind: "Service", Namespace: "app"}), Adoption: true}, view, time.Unix(20, 0))
 	if err != nil || event == nil || event.Classification != sdk.DriftUnexplained || !hasTargetPortChange(event) {
 		t.Fatalf("consul gap hid reservation drift after memory: %+v %v", event, err)
 	}

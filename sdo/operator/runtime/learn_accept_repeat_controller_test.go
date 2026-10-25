@@ -143,7 +143,7 @@ func TestAcceptedLearnedControllerRepeat(t *testing.T) {
 		exited <- operator.RunWithOptions(ctx, detectors, operator.RuntimeOptions{
 			Args: []string{"--namespace", "app", "--control-namespace", "app-sdo", "--app-root", accepted.RepositoryWorktree, "--application", "app", "--source-commit", accepted.SourceCommit,
 				"--repository-mount-path", evidenceRoot, "--synthetic-traffic=false", "--state-baseline=false", "--clean-responder-helpers=false", "--lease-duration", "3s", "--maintenance-poll-interval", "5ms",
-				"--diagnosis-deadline", "300ms", "--drift-sweep-interval", "1h", "--firing-telemetry-path", "off", "--lifecycle-telemetry-path", "off"},
+				"--diagnosis-deadline", "300ms", "--firing-telemetry-path", "off", "--lifecycle-telemetry-path", "off"},
 			Client: client, Programs: registry, Dispatcher: dispatcher, Stdout: output, Stderr: diagnostics})
 	}()
 	defer func() {

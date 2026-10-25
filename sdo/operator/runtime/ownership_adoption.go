@@ -157,10 +157,10 @@ func (c *Controller) adoptOwnership(ctx context.Context, now time.Time, snapshot
 		if len(changes) == 0 {
 			return nil
 		}
-		classifier := DriftClassifier{Programs: c.drift.Programs, Deadline: c.drift.Deadline}
+		classifier := DriftClassifier{}
 		events := make([]sdk.DriftEvent, 0, len(changes))
 		for _, change := range changes {
-			event, _, err := classifier.Classify(actionCtx, change, view, now)
+			event, err := classifier.Classify(actionCtx, change, view, now)
 			if err != nil {
 				return fmt.Errorf("classify pre-adoption difference: %w", err)
 			}

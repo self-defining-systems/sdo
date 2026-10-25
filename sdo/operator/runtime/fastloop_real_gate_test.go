@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sdo.dev/operator/runtime/internal/lifecycleio"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -136,12 +137,13 @@ func fastloopWriteDetector(t *testing.T, root, incidentID string) {
 	if len(module) != 2 {
 		t.Fatal("missing module")
 	}
-	source := fmt.Sprintf(`package routingrelations
-import("time";"sdo.dev/operator/sdk";"sdo.dev/operator/sdk/program"; learned %q)
-func New() sdk.Detector {return program.DetectorFromProgram(learned.Program{},func(s sdk.DetectionContext) []program.Bindings {
- var result []program.Bindings;for _,service:=range s.Services(){result=append(result,program.Bindings{Objects:program.ObjectBindings{"service":{APIVersion:"v1",Kind:"Service",Namespace:service.Namespace,Name:service.Name}}})};return result
-},sdk.DetectorSpec{ID:"routing-relations",Class:sdk.DetectorClassIncident,Owner:sdk.DetectorOwnerResponder,Watches:[]sdk.WatchKind{{APIVersion:"v1",Kind:"Service"},{APIVersion:"v1",Kind:"Pod"}},Interval:time.Second,Persistence:sdk.PersistencePolicy{Firing:1,Clearing:1},Batching:sdk.BatchingPolicy{Severity:sdk.SeverityWarning,Debounce:500*time.Millisecond},Playbooks:[]string{"service-targetport-mismatch"},OriginatingIncident:%q,OriginatingCommit:"reflection"})}
-`, string(module[1])+"/playbooks/service-targetport-mismatch", incidentID)
+	sourceBytes, err := os.ReadFile("../../../tests/fixtures/sdo/playbook_program_app/.sdo/diagnostics/detectors/incidents/routing-relations/detector.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := strings.ReplaceAll(string(sourceBytes), `"fixture-diagnostics/lib/ports"`, "")
+	source = strings.ReplaceAll(source, "ports.Matches(port.TargetPort, exposed)", "(port.TargetPort.Type == 0 && port.TargetPort.IntVal == exposed.ContainerPort || port.TargetPort.Type == 1 && port.TargetPort.StrVal == exposed.Name)")
+	source = strings.Replace(source, `OriginatingIncident: "incident"`, `OriginatingIncident: `+strconv.Quote(incidentID), 1)
 	formatted, err := format.Source([]byte(source))
 	if err != nil {
 		t.Fatal(err)
@@ -408,6 +410,10 @@ func runHermeticFastloopRealGoGate(t *testing.T, mode fastloopGateMode) {
 	nativeMemoryFixture(t, accepted)
 	fixture := filepath.Join("..", "..", "..", "tests", "fixtures", "sdo", "playbook_program_app", ".sdo")
 	copyFastloopTree(t, filepath.Join(fixture, "diagnostics"), filepath.Join(accepted, ".sdo", "diagnostics"))
+	// This test learns the routing detector during reflection, after the seed.
+	if err := os.RemoveAll(filepath.Join(accepted, ".sdo/diagnostics/detectors/incidents/routing-relations")); err != nil {
+		t.Fatal(err)
+	}
 	// The broker-only fixture has no constructor; the isolated compiler gate needs executable health code.
 	source := `package objective
 import("context";"time";"sdo.dev/operator/sdk")
@@ -559,7 +565,7 @@ func (detector) Detect(context.Context,sdk.DetectionContext)([]sdk.Finding,error
 			}
 			return []StateChange{}
 		}}
-		controller.ConfigureDrift(DriftControllerConfig{ProgramPersistence: sdk.PersistencePolicy{Firing: 1, Clearing: 1}, Events: changes, View: func(snapshot sdk.DetectionContext) program.ReadView {
+		controller.ConfigureDrift(DriftControllerConfig{Events: changes, View: func(snapshot sdk.DetectionContext) program.ReadView {
 			services := snapshot.(sdktest.Snapshot).ServiceList
 			changed := false
 			for _, service := range services {
@@ -681,27 +687,23 @@ func (detector) Detect(context.Context,sdk.DetectionContext)([]sdk.Finding,error
 	if _, err := client.CoreV1().Services("app").Update(ctx, peerService, metav1.UpdateOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	registry, err := program.NewRegistry([]program.Diagnoser{fastloopPortProgram{}}, []program.Mitigator{fastloopPortProgram{}})
-	if err != nil {
-		t.Fatal(err)
-	}
 	change := objectChange(t, healthyPeer, peerService, "v1", "Service")
 	secondSnapshot, err := provider.Snapshot(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	classified, _, err := (DriftClassifier{Programs: registry}).Classify(ctx, change, driftReadView{ReplayReadView: &sdktest.ReplayReadView{Snapshot: secondSnapshot.(sdktest.Snapshot)}, diff: program.Diff{Changed: true}}, start.Add(2*time.Second))
-	if err != nil || classified == nil || classified.Classification != sdk.DriftFault {
+	classified, err := (DriftClassifier{}).Classify(ctx, change, driftReadView{ReplayReadView: &sdktest.ReplayReadView{Snapshot: secondSnapshot.(sdktest.Snapshot)}, diff: program.Diff{Changed: true}}, start.Add(2*time.Second))
+	if err != nil || classified == nil || classified.Classification != sdk.DriftUnexplained {
 		t.Fatalf("changed peer was not classified: %+v %v; before=%+v after=%+v owned=%+v managed=%+v", classified, err, flattenDriftObject(change.Old), flattenDriftObject(change.New), ownedDriftPaths(change.Old, "sdo-deployer"), change.Old.GetManagedFields())
 	}
 	second, secondDispatch, secondRequest := fastloopGateIncident(t, ctx, client, native, accepted, captureRoot, "fastloop-second", start.Add(2*time.Second), true, func(controller *Controller) {
 		controller.driftEvents = append([]sdk.DriftEvent(nil), driftEventsState(exportState(t, first).DriftEvents)...)
-		controller.ConfigureDrift(DriftControllerConfig{ProgramPersistence: sdk.PersistencePolicy{Firing: 1, Clearing: 1}, Events: &fixedObjectChanges{changes: []ObjectChange{change}}, Programs: registry, View: func(snapshot sdk.DetectionContext) program.ReadView {
+		controller.ConfigureDrift(DriftControllerConfig{Events: &fixedObjectChanges{changes: []ObjectChange{change}}, View: func(snapshot sdk.DetectionContext) program.ReadView {
 			return serviceDriftView{ReplayReadView: &sdktest.ReplayReadView{Snapshot: snapshot.(sdktest.Snapshot)}}
 		}, BatchWindow: time.Nanosecond})
 	})
-	if len(secondRequest.DriftEvents) != 1 || secondRequest.DriftEvents[0].Ref.Name != "peer" || secondRequest.DriftEvents[0].Classification != sdk.DriftFault || secondRequest.DriftEvents[0].ProgramID != "service-targetport-mismatch" {
-		t.Fatalf("second fault missed sweep-on-change: %+v", secondRequest.DriftEvents)
+	if len(secondRequest.DriftEvents) != 1 || secondRequest.DriftEvents[0].Ref.Name != "peer" || secondRequest.DriftEvents[0].Classification != sdk.DriftUnexplained || secondRequest.DriftEvents[0].ProgramID != "" {
+		t.Fatalf("second fault lost accepted-source drift: %+v", secondRequest.DriftEvents)
 	}
 	secondView, err := provider.Snapshot(ctx)
 	if err != nil {

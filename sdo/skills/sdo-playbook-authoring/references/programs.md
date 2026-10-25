@@ -4,10 +4,7 @@ Programs implement the [generated program SDK](program-sdk.md). Diagnose reads a
 mitigation returns typed actions. Import shared SDK helpers (`sdk/observe`, `sdk/routing`) instead of copying them into `.sdo/lib`.
 Keep names, ports and images in bindings or observed state, never in the learned predicate.
 
-Snapshot-only detectors may import their application's playbook package and promote its Diagnoser with
-`program.DetectorFromProgram`. Set `DetectorSpec.Playbooks` to the actual logical playbook IDs; detector IDs
-may differ. Findings preserve those declared references. Tests may import application playbooks to exercise
-their public contracts; production helper and playbook packages cannot import other playbook packages.
+Detectors detect continuously; playbook Diagnose runs only while handling their findings, using one finding-bound assignment. Read additional objects through ReadView by name or relation.
 
 Accepted Mitigators become selectable options in the responder menu, a convenience over direct commands.
 Declare object and typed value parameters and group related actions into one plan. Raw registered actions
@@ -33,8 +30,8 @@ its observed primitive replies; fixed.json and healthy.json remain readable cont
 
 Every independently verified cause requires diagnose and mitigate programs, a README describing fault
 handling, and a detector that references its playbook. One detector may reference several playbooks.
-Replay must diagnose Match, execute the mitigation with the production executor, and reach NoMatch.
-Only compilation and that closed loop are save-time learning checks. Rename, healthy-peer and controller
+Replay runs incident detectors on the recorded fault, binds through production finding selection, requires Diagnose Match, executes mitigation on that same binding, and reaches NoMatch; the healthy baseline must remain quiet.
+Compilation and that repeat path are save-time learning checks. Rename, healthy-peer and controller
 capture-provenance checks are offline analysis, not publication prerequisites. Preserve accepted fixture bytes.
 
 ## Source restoration
@@ -120,8 +117,7 @@ Receipts report value provenance (`accepted-source`, `parameter`, `observed`, `i
 restoration. A DNS policy repair does not remove an injected dnsConfig; if that field was absent from
 accepted source, use general JSON patch removal rather than inventing an empty source value.
 
-Promoted snapshot-only detectors preserve the configured scoped observation source; an undeclared or
-unavailable foreign read remains Unknown. They still cannot perform live logs, probes or source diffs.
+An undeclared or unavailable scoped observation remains Unknown.
 
 A missing final `env[name=NAME]` SetField target may insert the accepted EnvVar with the same name, including
 when the env list was omitted. Existing entries must be unique; a different value name or missing parent
