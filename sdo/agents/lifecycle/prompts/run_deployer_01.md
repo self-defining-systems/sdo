@@ -1,0 +1,1 @@
+No prior attempt; inspect the source from first principles.

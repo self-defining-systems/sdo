@@ -1,0 +1,1 @@
+Detected ${iso}, dispatched ${iso_2}, responder completed ${iso_3}, health verified ${iso_4}.

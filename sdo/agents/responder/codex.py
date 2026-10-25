@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 from google.protobuf import json_format
 
 from libs.agent_cli.structured import AGENT_PROVIDERS, StructuredTurnError, run_structured_turn, turn_usage
+from sdo.agents.prompt_templates import RenderedPrompt, named_prompt, render_prompt
 from sdo.agents.provider import MODEL_ENV, resolve_agent
 from sdo.agents.responder import recorded_actions
 from sdo.agents.responder.credentials import SKILLS_ROOT
@@ -232,7 +233,9 @@ _PRECONDITION_SCRIPT_KEYWORDS = ("diagnose", "check", "verify")
 def _bounded(text: str, limit: int) -> str:
     if len(text) <= limit:
         return text
-    return f"{text[:limit]}\n[... truncated: {len(text) - limit} more characters omitted ...]\n"
+    return render_prompt(
+        "responder", "bounded_01", part="responder.instructions", text=text[:limit], len=len(text) - limit
+    )
 
 
 def warm_playbooks(request: IncidentRequest) -> list[WarmPlaybook]:
@@ -328,7 +331,7 @@ def _detector_evidence(request: IncidentRequest) -> str:
         if firing is not None and firing is not latest[detector_id]:
             lines.append(line(firing))
         lines.append(line(latest[detector_id]))
-    return "Latest detector evidence (compacted from detector_history):\n" + "".join(lines)
+    return render_prompt("responder", "detector_evidence_01", part="responder.instructions") + "".join(lines)
 
 
 def _timestamp(value: Timestamp) -> str:
@@ -341,7 +344,9 @@ def _inlined_health_objective(request: IncidentRequest) -> str:
         raise ValueError("incident responder requires a logical memory snapshot")
     text = snapshot.goal_markdown
     if text and len(text) <= _GOAL_INLINE_MAX_CHARS:
-        return f"Health objective (trusted memory snapshot):\n{text.rstrip()}\n\n"
+        return render_prompt(
+            "responder", "inlined_health_objective_01", part="responder.instructions", text=text.rstrip()
+        )
     return ""
 
 
@@ -357,18 +362,14 @@ def _inlined_architecture_summary(request: IncidentRequest) -> str:
         raise ValueError("incident responder requires a logical memory snapshot")
     text = snapshot.architecture_markdown
     if text and len(text) <= _ARCH_INLINE_MAX_CHARS:
-        return f"Architecture summary (trusted memory snapshot):\n{text.rstrip()}\n\n"
+        return render_prompt(
+            "responder", "inlined_architecture_summary_01", part="responder.instructions", text=text.rstrip()
+        )
     return ""
 
 
 def _cold_instructions() -> str:
-    return (
-        "The incident request may contain compact relevant_outcomes selected deterministically from prior verified "
-        "successes. Treat them as hypotheses, compare them with live state, and adapt or reject them explicitly; "
-        "never replay a prior action without confirming its assumptions. "
-        "Confirm a surfaced playbook against live state before applying it, repair the source of truth, redeploy when "
-        "needed, and collect evidence that the independent health objective is restored. "
-    )
+    return render_prompt("responder", "cold_instructions_01", part="responder.instructions")
 
 
 def _cold_surfaced_playbook_context(request: IncidentRequest) -> str:
@@ -386,44 +387,84 @@ def _cold_surfaced_playbook_context(request: IncidentRequest) -> str:
     for playbook_id in sorted(relevant_ids & available.keys())[:4]:
         playbook = available[playbook_id]
         scripts = "".join(
-            f"Script {script.name}:\n{_bounded(script.content, 2_000)}\n" for script in playbook.scripts[:4]
+            render_prompt(
+                "responder",
+                "cold_surfaced_playbook_context_01",
+                part="responder.instructions",
+                name=script.name,
+                bounded=_bounded(script.content, 2_000),
+            )
+            for script in playbook.scripts[:4]
         )
         entries.append(
-            f"Playbook {playbook_id} (hypothesis; verify against live state):\n"
-            f"{_bounded(playbook.markdown, _WARM_PLAYBOOK_MAX_CHARS)}\n{scripts}"
+            render_prompt(
+                "responder",
+                "cold_surfaced_playbook_context_02",
+                part="responder.instructions",
+                playbook_id=playbook_id,
+                bounded=_bounded(playbook.markdown, _WARM_PLAYBOOK_MAX_CHARS),
+                scripts=scripts,
+            )
         )
     return "\n".join(entries) + "\n" if entries else ""
 
 
 def _fired_evidence(playbook: WarmPlaybook) -> str:
     findings = ", ".join(
-        sorted({f"{finding.detector_id} ({finding.fingerprint or finding.rule_id})" for finding in playbook.findings})
+        sorted(
+            {
+                render_prompt(
+                    "responder",
+                    "fired_evidence_01",
+                    part="responder.instructions",
+                    detector_id=finding.detector_id,
+                    fingerprint=finding.fingerprint or finding.rule_id,
+                )
+                for finding in playbook.findings
+            }
+        )
     )
-    return (
-        f"- `{playbook.path}`: the finding(s) {findings} come from its validated incident detector. That evidence "
-        "supports the playbook's preconditions. Check them against accepted source and intended behavior. Confirm the "
-        "specific finding evidence is still live (for example the missing resource is still absent and the "
-        "affected workload still fails).\n"
+    return render_prompt(
+        "responder", "fired_evidence_02", part="responder.instructions", path=playbook.path, findings=findings
     )
 
 
 def _pending_evidence(playbook: WarmPlaybook, namespace: str) -> str:
     detector = playbook.match.detector
-    kinds = ", ".join(sorted({f"{watch.kind} ({watch.api_version})" for watch in detector.watches}))
-    watched = f"the detector's watched resources ({kinds})" if kinds else "the resources the playbook names"
+    kinds = ", ".join(
+        sorted(
+            {
+                render_prompt(
+                    "responder",
+                    "pending_evidence_01",
+                    part="responder.instructions",
+                    kind=watch.kind,
+                    api_version=watch.api_version,
+                )
+                for watch in detector.watches
+            }
+        )
+    )
+    watched = (
+        render_prompt("responder", "pending_evidence_02", part="responder.instructions", kinds=kinds)
+        if kinds
+        else render_prompt("responder", "pending_evidence_03", part="responder.instructions")
+    )
     script = playbook.precondition_script()
     script_step = (
-        f" Run `{script}` inside that check with the incident's values; a verify script is expected to fail "
-        "before the repair, and its failure must point at the playbook's fault."
+        render_prompt("responder", "pending_evidence_04", part="responder.instructions", script=script)
         if script is not None
         else ""
     )
-    return (
-        f"- `{playbook.path}`: owned by the registered incident detector `{detector.id}`, which has not fired for "
-        "this incident, so no incident-detector evidence exists yet. The sanity check must confirm the playbook's "
-        f"preconditions itself: inspect {watched} in namespace `{namespace}` "
-        "(plus the pods and recent events of the affected workload) against the preconditions the playbook "
-        f"states.{script_step}\n"
+    return render_prompt(
+        "responder",
+        "pending_evidence_05",
+        part="responder.instructions",
+        path=playbook.path,
+        id=detector.id,
+        watched=watched,
+        namespace=namespace,
+        script_step=script_step,
     )
 
 
@@ -435,26 +476,32 @@ def _warm_instructions(playbooks: list[WarmPlaybook], namespace: str) -> str:
     priors = sorted({incident for playbook in playbooks for incident in playbook.match.prior_incidents})
     sections = []
     for playbook in playbooks:
-        section = f"--- Playbook `{playbook.path}` (inlined; do not re-read it) ---\n{playbook.text.rstrip()}\n"
+        section = render_prompt(
+            "responder",
+            "warm_instructions_01",
+            part="responder.instructions",
+            path=playbook.path,
+            text=playbook.text.rstrip(),
+        )
         for script_path, script_text in playbook.scripts:
-            section += f"--- Playbook script `{script_path}` ---\n{script_text.rstrip()}\n"
+            section += render_prompt(
+                "responder",
+                "warm_instructions_02",
+                part="responder.instructions",
+                script_path=script_path,
+                script_text=script_text.rstrip(),
+            )
         sections.append(section)
     return (
-        "Warm path: incident memory supplies repair hypotheses for this incident. "
-        f"Prior verified outcome(s): {', '.join(priors)}. Historical matches and detector validation do not "
-        "establish applicability to current accepted source.\n"
-        "Check only the evidence the repair needs and the accepted-source values it would write, then act. "
-        "Explore the repository or cluster further only to resolve a contradiction.\n"
-        f"Playbook evidence:\n{evidence}"
-        "Fast procedure:\n"
-        "1. Run one combined sanity check of current evidence, accepted source and intended application behavior.\n"
-        "2. If the repair respects that intent, submit the diagnosis through any configured environment-specific "
-        "channel and apply the supported repair.\n"
-        "3. Verify intended application recovery independently. "
-        "Run the playbook's verification and `python3 -m sdo.agents.responder.status_cli` before "
-        "submitting mitigation and returning the IncidentResult with applied logical playbook IDs.\n"
-        "Investigate contradictions, missing evidence, failed repairs or failed verification. Investigate any "
-        "other active finding the playbook's fault does not explain.\n\n" + "\n".join(sections) + "\n"
+        render_prompt(
+            "responder",
+            "warm_instructions_03",
+            part="responder.instructions",
+            join=", ".join(priors),
+            evidence=evidence,
+        )
+        + "\n".join(sections)
+        + "\n"
     )
 
 
@@ -462,8 +509,17 @@ def _field_change(field: StateFieldChange) -> str:
     if not field.HasField("before") and not field.HasField("after"):
         return field.field
     if not field.HasField("before"):
-        return f"{field.field}: {field.after}"
-    return f"{field.field}: {field.before} -> {field.after or '(none)'}"
+        return render_prompt(
+            "responder", "field_change_01", part="responder.instructions", field=field.field, after=field.after
+        )
+    return render_prompt(
+        "responder",
+        "field_change_02",
+        part="responder.instructions",
+        field=field.field,
+        before=field.before,
+        after=field.after or "(none)",
+    )
 
 
 def _state_changes_section(request: IncidentRequest) -> str:
@@ -472,84 +528,62 @@ def _state_changes_section(request: IncidentRequest) -> str:
     changes = request.state_changes
     if not request.HasField("state_changes"):
         return ""
-    window = f"baseline {_timestamp(changes.baseline_at)}, observed {_timestamp(changes.observed_at)}"
+    window = render_prompt(
+        "responder",
+        "state_changes_section_01",
+        part="responder.instructions",
+        timestamp=_timestamp(changes.baseline_at),
+        timestamp_2=_timestamp(changes.observed_at),
+    )
     unobserved = (
-        f"(not observed: {', '.join(changes.unobserved_kinds)}; changes to these kinds are unknown)\n"
+        render_prompt(
+            "responder",
+            "state_changes_section_02",
+            part="responder.instructions",
+            join=", ".join(changes.unobserved_kinds),
+        )
         if changes.unobserved_kinds
         else ""
     )
     if not changes.changes and not changes.omitted:
-        return (
-            "No Service, workload, NetworkPolicy, ConfigMap, Secret, or RBAC object changed since the last healthy "
-            f"state ({window}). The fault is likely not a configuration change in these kinds (for example a "
-            "process, data, permission-inside-a-database, or dependency fault); objects present then existed "
-            "unchanged while the application was healthy.\n"
-            f"{unobserved}\n"
+        return render_prompt(
+            "responder", "state_changes_section_03", part="responder.instructions", window=window, unobserved=unobserved
         )
     lines = []
     for change in changes.changes:
-        line = f"- {change.kind}/{change.name} {change.change}"
+        line = render_prompt(
+            "responder",
+            "state_changes_section_04",
+            part="responder.instructions",
+            kind=change.kind,
+            name=change.name,
+            change=change.change,
+        )
         if change.fields:
             line += ": " + "; ".join(_field_change(field) for field in change.fields)
         lines.append(line + "\n")
-    omitted = f"({changes.omitted} more changes omitted)\n" if changes.omitted else ""
-    return (
-        f"Changes since the last healthy state ({window}; SDO's deterministic configuration diff, with "
-        "ConfigMap and Secret values shown only as digests):\n"
-        f"{''.join(lines)}{omitted}{unobserved}"
-        "A change listed here happened after the application was last verified healthy and is a prime suspect. "
-        "Objects not listed existed unchanged while the application was healthy, so they did not cause a new "
-        "incident on their own. If no listed change explains the symptoms, the fault is likely not a "
-        "configuration change in these kinds.\n\n"
+    omitted = (
+        render_prompt("responder", "state_changes_section_05", part="responder.instructions", omitted=changes.omitted)
+        if changes.omitted
+        else ""
+    )
+    return render_prompt(
+        "responder",
+        "state_changes_section_06",
+        part="responder.instructions",
+        window=window,
+        join="".join(lines),
+        omitted=omitted,
+        unobserved=unobserved,
     )
 
 
 def _verification_instructions() -> str:
-    return (
-        "Prefer one blocking command over checking in on a backgrounded one: give a command enough time to "
-        "finish inside a single call (for example `kubectl rollout status deployment/<NAME> --timeout=60s` or "
-        "`kubectl wait --for=condition=Ready pod -l <SELECTOR> --timeout=60s`) rather than starting it in the "
-        "background and returning in a later turn to check on it; each check-in is a separate model turn that "
-        "resends the whole conversation so far.\n\n"
-        "Verify before you submit or return: after the repair, run one `sdo verify` and "
-        "`python3 -m sdo.agents.responder.status_cli` in a single shell call, with no verification script of your "
-        "own (exit 0 healthy, 1 unhealthy, 3 unavailable; about 3-5 seconds). It runs the health judge's verify "
-        "burst through SDO's isolated prober, the same synthetic traffic the controller requires before it closes "
-        "this incident. "
-        "It also reports unhealthy while the controller's other health detectors still fire (a fault traffic "
-        "cannot see yet), and it lists configuration that changed after this request was taken, which the "
-        "request's state diff lacks. "
-        "Do not submit mitigation through any channel, and do not return a completed result, until it reports "
-        "healthy. When it reports unhealthy, its failing scenarios, status codes, and request paths are live "
-        "evidence: a change that leaves them failing did not fix the incident, however plausible the artifact it "
-        "addressed, so keep investigating along those request paths. Only when it reports unavailable, rely on "
-        "`sdo verify` and plain `kubectl get`/`rollout status` checks. Record its final output as a "
-        "verification_evidence entry named `sdo-incident-status`.\n\n"
-        "Every confirmed root cause cites the live evidence behind it: a detector finding (source: its detector ID "
-        "or finding fingerprint), a failing synthetic scenario (source: its scenario ID), a change listed since the "
-        "last healthy state (source: the changed object as `Kind/name` or `Kind/namespace/name`), or a live "
-        "observation (source: the command; observation: what its output showed). Scripts, manifests, ConfigMap "
-        "bodies, source files, and architecture notes show what could go wrong, not what did: list them only in "
-        "static_context. Name in explained_detectors the detectors whose findings the cause explains.\n\n"
-        "Label pods or Jobs you create only to investigate or check with `sdo.dev/responder-helper=true`; the "
-        "controller deletes them when you finish. Never label application workloads with it. "
-        "Clean up the temporary state changes you introduced while troubleshooting before you submit.\n\n"
-    )
+    return render_prompt("responder", "verification_instructions_01", part="responder.instructions")
 
 
 def _no_action_instructions() -> str:
-    return (
-        "Some triggering findings are transient and self-heal: if `python3 -m sdo.agents.responder.status_cli` already "
-        "reports healthy before you make any change, or clears on its own while you are still investigating and "
-        "nothing you did explains it, do not fabricate a repair. Return status `cancelled`, with no repair "
-        "actions and no applied playbooks, and say in your summary that the finding had already cleared. Return "
-        "`completed` only when a repair you made or recorded was needed and applied, or when all remaining drift "
-        "has an evidence-grounded benign disposition; a `completed` result with no "
-        "successful repair action, submitted while every triggering finding is already clear, is treated as that "
-        "same no-op, never credited as a mitigation, and never learned from, so returning `cancelled` costs "
-        "nothing extra. Never return `completed` while the health objective is still failing: a completion claim "
-        "with no repair evidence is rejected outright when nothing is confirmed fixed.\n\n"
-    )
+    return render_prompt("responder", "no_action_instructions_01", part="responder.instructions")
 
 
 LATE_FINDINGS_ENV = "SDO_LATE_FINDINGS"
@@ -565,15 +599,14 @@ def late_findings_guidance(request: IncidentRequest, *, mode: str | None = None)
         raise ValueError(f"late-findings mode must be one of {', '.join(LATE_FINDINGS_MODES)}: {selected!r}")
     if selected == "off":
         return ""
-    command = f"{LATE_FINDINGS_COMMAND} --incident-id {request.incident_id}"
-    return (
-        "Late findings: evidence for this incident can arrive after you start, and this request cannot change. "
-        f"Run `{command}` once now, and again immediately before your first change to the cluster or the "
-        "repository. It is read-only and prints compact JSON listing findings that activated after this request "
-        "was built, each with surfaced logical playbook IDs. Treat every returned playbook as a hypothesis: read it, "
-        "confirm its preconditions against live state, adapt or reject it, and never replay its steps blindly. "
-        "An empty list means nothing more has arrived yet.\n\n"
+    command = render_prompt(
+        "responder",
+        "late_findings_guidance_01",
+        part="responder.instructions",
+        late_findings_command=LATE_FINDINGS_COMMAND,
+        incident_id=request.incident_id,
     )
+    return render_prompt("responder", "late_findings_guidance_02", part="responder.instructions", command=command)
 
 
 def _prompt_request(request: IncidentRequest) -> dict[str, object]:
@@ -600,77 +633,52 @@ def _prompt_request(request: IncidentRequest) -> dict[str, object]:
     return document
 
 
-def _responder_prompt(request: IncidentRequest) -> str:
+def _responder_prompt(request: IncidentRequest) -> RenderedPrompt:
     if not request.HasField("memory_snapshot"):
         raise ValueError("incident responder requires a logical memory snapshot")
     extra_instructions = os.getenv("SDO_RESPONDER_EXTRA_INSTRUCTIONS", "").strip()
     additional_context = (
-        f"\nAdditional environment-specific instructions:\n{extra_instructions}\n" if extra_instructions else ""
+        render_prompt("responder", "incident_01", part="responder.instructions", extra_instructions=extra_instructions)
+        if extra_instructions
+        else ""
     )
     playbooks = warm_playbooks(request)
     strategy = _warm_instructions(playbooks, request.namespace) if playbooks else _cold_instructions()
     surfaced_context = "" if playbooks else _cold_surfaced_playbook_context(request)
-    memory_guard = (
-        "Operational memory is read-only. The controller verifies recovery and records the authoritative outcome; "
-        "a separate reflection task may later edit operational memory in its own checkout. "
-        "Report applied playbooks by logical playbook_id, with no repository memory paths. "
-    )
+    memory_guard = render_prompt("responder", "incident_02", part="responder.instructions")
     program_guidance = (
-        "Pick from the mitigation menu when an option fits; if it fails, read the report and pick another "
-        "option or fix it directly in this same session. "
-        "Start with ranked program verdicts and evidence in initial_program_runs. "
-        "Treat a matching program's plan as a repair hypothesis when can_mitigate=true; "
-        "a diagnosis-only program supplies evidence, "
-        "not a repair. Investigate Unknown or NeedsJudgement against current state and accepted source. "
-        "The local sdo interface exposes concise capability help and resource argument schemas. "
-        "Use that index instead of broad tool-catalog output. "
-        "Finish with independent verification; return once findings are clear and source changes are committed. "
+        render_prompt("responder", "incident_03", part="responder.instructions")
         if request.max_response_loops > 0
         else ""
     )
     drift_guidance = (
-        "By default, restore app-namespace drift to accepted source and verify the restoration unless "
-        "positive evidence shows the difference is intended, such as a runtime-managed field or a "
-        "recorded accepted change; uncertainty alone must not block restoration. "
-        "For a checked benign observation, return its exact ref, fields and manager in drift_events with "
-        "investigation_verdict benign, a concrete reason and observation evidence. A wholly benign no-op "
-        "may return completed with no repairs; it earns no mitigation or learning credit. "
-        "For a fault, repair only after the evidence, follow the configured repair policy, and verify every "
-        "retained drift finding as well as health. Pull status/diagnose to read late drift before acting. "
-        if request.drift_events
-        else ""
+        render_prompt("responder", "incident_04", part="responder.instructions") if request.drift_events else ""
     )
     request_json = json.dumps(_prompt_request(request), indent=2)
-    return (
-        f"You are the SDO incident responder for incident {request.incident_id}.\n\n"
-        "Accepted source and developer changes express intent. Operational memory is fallible advice. "
-        "Recovery requires evidence from the intended application behavior. "
-        f"Skill index: {SKILLS_ROOT}/sdo-memory/SKILL.md. Read relevant guidance once. "
-        "Work autonomously in the supplied repository and Kubernetes namespace to resolve every triggering finding. "
-        "Keep investigating and repairing until verification is healthy or your response budget is spent; "
-        "a partial fix is not a reason to stop. "
-        f"{strategy}"
-        f"{program_guidance}"
-        f"{drift_guidance}"
-        f"{surfaced_context}"
-        f"{_no_action_instructions()}"
-        f"{_verification_instructions()}"
-        "During this response, use plain commands and chain independent ones in one shell call. "
-        "Do not write helper scripts for repairs, receipts or verification; keep interpretation and decisions in "
-        "natural language. Never put scratch files in operational memory. "
-        f"{memory_guard}Return only the IncidentResult JSON "
-        f"required by the output schema. {branch_instruction('incident_result')}\n\n"
-        f"Repair evidence mode: {request.repair_policy}. Every live mutation uses the session's sdo act recorder "
-        "and declares every changed resource. The recorder supplies receipts; do not hand-write them. "
-        "A confirmed cause requires a successful repair action that began before health cleared and mutated "
-        "that cause's resources. Commit repository source changes when present.\n\n"
-        f"{late_findings_guidance(request)}"
-        f"{additional_context}\n"
-        f"{_inlined_architecture_summary(request)}"
-        f"{_inlined_health_objective(request)}"
-        f"{_detector_evidence(request)}\n"
-        f"{_state_changes_section(request)}"
-        f"Incident request:\n{request_json}\n"
+    return render_prompt(
+        "responder",
+        "incident",
+        part="responder.instructions",
+        incident_id=request.incident_id,
+        skills_root=SKILLS_ROOT,
+        strategy=named_prompt("responder.strategy", strategy),
+        program_guidance=named_prompt("responder.program_guidance", program_guidance),
+        drift_guidance=named_prompt("responder.drift_guidance", drift_guidance),
+        surfaced_context=named_prompt("responder.surfaced_context", surfaced_context),
+        no_action_instructions=named_prompt("responder.no_action_instructions", _no_action_instructions()),
+        verification_instructions=named_prompt("responder.verification_instructions", _verification_instructions()),
+        memory_guard=named_prompt("responder.memory_guard", memory_guard),
+        branch_instruction=branch_instruction("incident_result"),
+        repair_policy=request.repair_policy,
+        late_findings_guidance=named_prompt("responder.late_findings_guidance", late_findings_guidance(request)),
+        additional_context=named_prompt("responder.additional_context", additional_context),
+        inlined_architecture_summary=named_prompt(
+            "responder.inlined_architecture_summary", _inlined_architecture_summary(request)
+        ),
+        inlined_health_objective=named_prompt("responder.inlined_health_objective", _inlined_health_objective(request)),
+        detector_evidence=named_prompt("responder.detector_evidence", _detector_evidence(request)),
+        state_changes_section=named_prompt("responder.state_changes_section", _state_changes_section(request)),
+        request_json=request_json,
     )
 
 

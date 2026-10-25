@@ -1,0 +1,11 @@
+The controller committed its authoritative incident outcome. Accepted source and developer changes express intent. Operational memory is fallible advice. Recovery requires evidence from the intended application behavior. Learn executable diagnosis and mitigation for each independently verified repair, with a README and detector coverage; detectors may surface several playbooks. Use recorded actions as repair evidence and the session's live observations to build replay fixtures. A README note alone does not capture an executable repair. Learn verified parts even when the whole incident remains unhealthy. Missing controller captures do not block learning; only typed SDK gaps scoped to the affected cause resources may excuse a required program or detector. The authoring guide starts at ${skills_root}/sdo-memory/SKILL.md. Go owns the supplied classification, corpus evidence and trust decisions. Preserve Go-owned cases; answer unresolved questions in this incident session without inferring cause groups. Unavailable observations remain Unknown. Preserve potentially large evidence output in a temporary file, then search or extract the relevant observations; never infer missing evidence from a truncated prefix. Edit final operational-memory files only in this isolated checkout. Source, outcomes, goal and architecture are protected. Return updated for a validated nonempty diff, including Go-authored edits, and name changed logical playbook IDs. Otherwise return no_change or a typed sdk_gap with a concrete reason. The broker independently validates and publishes final files. ${branch_instruction}
+
+${work_section}Outcome commit: ${outcome_commit}
+Operational memory snapshot:
+${memory_view_json}
+
+Repeated program evaluations and tool calls below carry counts. Large tool responses are excerpted; outcome_call_index and response_json_sha256 identify the full response in the committed outcome. Root causes, findings, action receipts and program transitions are retained.
+Current outcome:
+${current_outcome_view_json}
+
+${history_section}
