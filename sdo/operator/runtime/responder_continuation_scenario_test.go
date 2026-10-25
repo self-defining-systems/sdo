@@ -19,6 +19,10 @@ import (
 // Gate 1 B uses actual detector reads, program execution, session filesystem
 // transport, the Python CLI, persisted continuation and the controller closure.
 func TestHermeticResponderThreeFaultContinuation(t *testing.T) {
+	t.Run("plan-apply", func(t *testing.T) { testHermeticResponderThreeFaultContinuation(t, false) })
+	t.Run("mitigate", func(t *testing.T) { testHermeticResponderThreeFaultContinuation(t, true) })
+}
+func testHermeticResponderThreeFaultContinuation(t *testing.T, mitigate bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	client := fake.NewSimpleClientset()
@@ -42,6 +46,9 @@ func TestHermeticResponderThreeFaultContinuation(t *testing.T) {
 	snapshot, _ := provider.Snapshot(ctx)
 	request.Findings, _ = (fastloopDetector{}).Detect(ctx, snapshot)
 	loop := NewResponderLoop(request, registry, provider, []sdk.Detector{fastloopDetector{}}, PlanExecutor{Client: TypedPlanClient{Client: client}, Rollouts: KubernetesPlanRollouts{Client: client}, Verifier: PlanHealthVerifier{Detectors: []sdk.Detector{fastloopDetector{}}, Provider: provider}}, 3)
+	if mitigate {
+		loop.MenuConfig = productionResponderMenu()
+	}
 	loop.ReadView = func(snapshot sdk.DetectionContext) program.ReadView {
 		return &sdktest.ReplayReadView{Snapshot: snapshot.(sdktest.Snapshot)}
 	}
@@ -62,8 +69,12 @@ func TestHermeticResponderThreeFaultContinuation(t *testing.T) {
 		t.Fatalf("initial self-check: %+v", detected)
 	}
 	for _, name := range []string{"first", "second"} {
-		plan := fastloopTool(t, tools, "plan", "service-targetport-mismatch", "--bind", "service=Service/app/"+name)
-		fastloopTool(t, tools, "apply", plan.PlanID)
+		if mitigate {
+			fastloopTool(t, tools, "mitigate", "service-targetport-mismatch", "--service", "Service/app/"+name)
+		} else {
+			plan := fastloopTool(t, tools, "plan", "service-targetport-mismatch", "--bind", "service=Service/app/"+name)
+			fastloopTool(t, tools, "apply", plan.PlanID)
+		}
 	}
 	verify := fastloopTool(t, tools, "verify")
 	if verify.Healthy || len(verify.Findings) != 1 || verify.Findings[0].PrimaryResource.Name != "third" {
@@ -90,7 +101,7 @@ func TestHermeticResponderThreeFaultContinuation(t *testing.T) {
 		t.Fatalf("both repairs must have receipts: %s", feedback)
 	}
 	for _, repair := range parsed.AlreadyDone {
-		if repair.Kind != "program-application" || repair.ApplicationID == "" || !repair.Receipt.Success {
+		if repair.Kind != "program-application" || repair.ApplicationID == "" || len(repair.ProgramIDs) != 1 || repair.ProgramIDs[0] != "service-targetport-mismatch" || !repair.Receipt.Success {
 			t.Fatalf("missing repair receipt: %+v", repair)
 		}
 	}

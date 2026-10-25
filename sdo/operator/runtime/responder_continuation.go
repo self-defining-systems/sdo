@@ -273,6 +273,16 @@ func (l *ResponderLoop) continuationRepairs(result IncidentResult) []continuatio
 	repairs := make([]continuationRepair, 0)
 	l.mu.Lock()
 	previousFeedback := l.continuation.Feedback
+	menuActions := map[string]MenuRoundExecution{}
+	for _, executions := range l.menuExecutions {
+		for _, execution := range executions {
+			for _, receipt := range l.menuRepairs {
+				if execution.ApplicationID != "" && strings.HasPrefix(receipt.ActionID, execution.ApplicationID+"-a") {
+					menuActions[receipt.ActionID] = execution
+				}
+			}
+		}
+	}
 	l.mu.Unlock()
 	var previous responderFeedback
 	if previousFeedback != "" {
@@ -292,7 +302,17 @@ func (l *ResponderLoop) continuationRepairs(result IncidentResult) []continuatio
 			continue
 		}
 		seen[receipt.ActionID] = true
-		repairs = append(repairs, continuationRepair{Kind: "recorded-action", ActionID: receipt.ActionID, Summary: receipt.Summary, Receipt: feedbackReceipt(receipt)})
+		repair := continuationRepair{Kind: "recorded-action", ActionID: receipt.ActionID, Summary: receipt.Summary, Receipt: feedbackReceipt(receipt)}
+		if execution, ok := menuActions[receipt.ActionID]; ok {
+			repair.Kind = "program-application"
+			repair.ApplicationID = execution.ApplicationID
+			if execution.ProgramID != "" {
+				repair.ProgramIDs = []string{execution.ProgramID}
+			}
+			repair.RolledBack = execution.RolledBack
+			repair.Error = execution.Error
+		}
+		repairs = append(repairs, repair)
 	}
 	for _, repair := range previous.AlreadyDone {
 		if !seen[repair.ActionID] {
