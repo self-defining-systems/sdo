@@ -154,3 +154,59 @@ reason = "Measured typed continuation instructions: 464 Unicode code points, wit
 [continuation.incident_data]
 max_chars = 2214
 reason = "Measured typed current findings and complete completed-action receipts: 2012 Unicode code points, with 10 percent headroom; rendering never truncates factual lists."
+
+[tool_stdout.act]
+max_chars = 450
+reason = "Measured production rendering 283 Unicode characters across three-fault and 100-finding fixtures; 10 percent plus 128 characters of path/identity headroom."
+
+[tool_stdout.apply]
+max_chars = 1650
+reason = "Measured production rendering 1339 Unicode characters across three-fault and 100-finding fixtures; 10 percent plus 128 characters of path/identity headroom."
+
+[tool_stdout.check]
+max_chars = 1400
+reason = "Measured production rendering 1123 Unicode characters across three-fault and 100-finding fixtures; 10 percent plus 128 characters of path/identity headroom."
+
+[tool_stdout.detect]
+max_chars = 1400
+reason = "Measured production rendering 1125 Unicode characters across three-fault and 100-finding fixtures; 10 percent plus 128 characters of path/identity headroom."
+
+[tool_stdout.diagnose]
+max_chars = 550
+reason = "Measured production rendering 374 Unicode characters across three-fault and 100-finding fixtures; 10 percent plus 128 characters of path/identity headroom."
+
+[tool_stdout.incident]
+max_chars = 5400
+reason = "Measured production rendering 4776 Unicode characters across three-/five-fault, 100-finding and overflow incident fixtures; 10 percent plus 128 characters of path/identity headroom."
+
+[tool_stdout.menu]
+max_chars = 550
+reason = "Measured production rendering 380 Unicode characters across three-fault and 100-finding fixtures; 10 percent plus 128 characters of path/identity headroom."
+
+[tool_stdout.mitigate]
+max_chars = 1650
+reason = "Measured production rendering 1359 Unicode characters across three-fault and 100-finding fixtures; 10 percent plus 128 characters of path/identity headroom."
+
+[tool_stdout.plan]
+max_chars = 450
+reason = "Measured production rendering 252 Unicode characters across three-fault and 100-finding fixtures; 10 percent plus 128 characters of path/identity headroom."
+
+[tool_stdout.report]
+max_chars = 450
+reason = "Measured production rendering 283 Unicode characters across three-fault and 100-finding fixtures; 10 percent plus 128 characters of path/identity headroom."
+
+[tool_stdout.rollback]
+max_chars = 1500
+reason = "Measured production rendering 1213 Unicode characters across three-fault and 100-finding fixtures; 10 percent plus 128 characters of path/identity headroom."
+
+[tool_stdout.source]
+max_chars = 400
+reason = "Measured production rendering 231 Unicode characters across three-fault and 100-finding fixtures; 10 percent plus 128 characters of path/identity headroom."
+
+[tool_stdout.status]
+max_chars = 1550
+reason = "Measured production rendering 1264 Unicode characters across three-fault and 100-finding fixtures; 10 percent plus 128 characters of path/identity headroom."
+
+[tool_stdout.verify]
+max_chars = 1400
+reason = "Measured production rendering 1125 Unicode characters across three-fault and 100-finding fixtures; 10 percent plus 128 characters of path/identity headroom."
