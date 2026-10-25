@@ -95,7 +95,8 @@ def test_quiet_program_sweeps_are_omitted_without_losing_actionable_evidence() -
 )
 def test_coverage_keeps_diagnosis_only_flags_counts_and_resource_bindings() -> None:
     request = _request()
-    coverage = getattr(request, "playbook_coverage")
+    coverage_field = request.DESCRIPTOR.fields_by_name["playbook_coverage"]
+    coverage = getattr(request, coverage_field.name)
     match = coverage.matches.add(playbook_id="diagnosis-only", can_mitigate=False)
     match.explained_finding_fingerprints.append("finding-0")
     binding = match.bindings.add(name="service")
