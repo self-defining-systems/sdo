@@ -7,6 +7,7 @@ project only namespace/name metadata, never credential values or encoded data.
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 from typing import TYPE_CHECKING, Any
 
 from benchmarks.sregym.adapter import kubectl
@@ -16,6 +17,36 @@ if TYPE_CHECKING:
 
 INJECTED_SELECTOR = "platform.io/injected=true"
 HARNESS_NAMESPACE = "sregym"
+
+
+def benchmark_owned(value: dict[str, Any]) -> bool:
+    labels = value.get("metadata", {}).get("labels", {})
+    return labels.get("job") == "workload" or any(
+        str(label).startswith(("sregym", "benchmark"))
+        for key, label in labels.items()
+        if key == "app.kubernetes.io/managed-by" or key.startswith(("sregym.", "benchmark."))
+    )
+
+
+def isolate_benchmark_probe(manifest: dict[str, Any]) -> dict[str, Any]:
+    """Move only probe placement; its script still addresses the app's Service DNS."""
+    value = deepcopy(manifest)
+    if benchmark_owned(value):
+        value["metadata"]["namespace"] = HARNESS_NAMESPACE
+    return value
+
+
+def install_probe_isolation(grading: Any) -> None:
+    """Adapt the shared harness factory for baseline and composite oracle probes."""
+    original = grading.probe_pod_manifest
+    if getattr(original, "benchmark_isolated", False):
+        return
+
+    def isolated(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        return isolate_benchmark_probe(original(*args, **kwargs))
+
+    isolated.__dict__["benchmark_isolated"] = True
+    grading.probe_pod_manifest = isolated
 
 
 def _injected_objects(kubeconfig: Path) -> list[dict[str, Any]]:
@@ -66,6 +97,16 @@ def assert_clean_baseline(kubeconfig: Path, *, namespace: str | None = None) -> 
         raise RuntimeError(f"clean baseline rejected: injected objects remain: {', '.join(identities)}")
 
     if namespace is not None:
+        listing = kubectl(
+            ["get", "pods,jobs,configmaps", "-o", "json"], namespace=namespace, kubeconfig=kubeconfig
+        ).stdout
+        foreign = [
+            f"{value['kind']}/{value['metadata']['name']}"
+            for value in json.loads(listing)["items"]
+            if benchmark_owned(value)
+        ]
+        if foreign:
+            raise RuntimeError(f"clean baseline rejected: benchmark objects in {namespace}: {', '.join(foreign)}")
         for resources in (
             ["job/wrk2-job", "configmap/wrk2-payload-script"],
             ["pods", "--selector=job-name=wrk2-job"],
@@ -106,6 +147,34 @@ def remove_injected_objects(kubeconfig: Path) -> None:
 
 def prepare_harness_traffic(app: Any, kubeconfig: Path) -> bool:
     """Adapt the app's existing wrk manager; its payload and rate settings stay intact."""
+    if app.namespace == "astronomy-shop" and callable(getattr(app, "create_workload", None)):
+        if hasattr(app, "wrk"):
+            app.wrk.namespace = HARNESS_NAMESPACE
+            app.wrk.locust_url = f"load-generator.{app.namespace}.svc.cluster.local:8089"
+
+        def start_fetcher() -> None:
+            if not hasattr(app, "wrk"):
+                app.create_workload()
+            app.wrk.namespace = HARNESS_NAMESPACE
+            app.wrk.locust_url = f"load-generator.{app.namespace}.svc.cluster.local:8089"
+            kubectl(
+                ["apply", "-f", "-"],
+                namespace=None,
+                kubeconfig=kubeconfig,
+                input_text=json.dumps(
+                    {"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": HARNESS_NAMESPACE}}
+                ),
+            )
+            app.wrk.start()
+            kubectl(["get", "pod/locust-fetcher", "-o", "name"], namespace=HARNESS_NAMESPACE, kubeconfig=kubeconfig)
+            kubectl(
+                ["delete", "pod/locust-fetcher", "--ignore-not-found=true", "--wait=true", "--timeout=30s"],
+                namespace=app.namespace,
+                kubeconfig=kubeconfig,
+            )
+
+        app.start_workload = start_fetcher
+        return True
     if not callable(getattr(app, "create_workload", None)) or not hasattr(app, "frontend_service"):
         return False
     # Only the two DeathStarBench apps use this Wrk2 manager contract. Astronomy
@@ -169,3 +238,39 @@ def prepare_harness_traffic(app: Any, kubeconfig: Path) -> bool:
 
     app.start_workload = start
     return True
+
+
+def restore_admission_baseline(kubeconfig: Path, baseline_path: Path, workspace: Path) -> None:
+    """Retire unlabelled legacy admission faults against captured/accepted identity.
+
+    The supported harness reset has the same captured-cluster boundary. Source
+    webhooks remain admitted even when the infrastructure snapshot predates them.
+    No Secret objects or credential-bearing namespace dumps are needed.
+    """
+    baseline = json.loads(baseline_path.read_text())
+    kinds = {
+        "MutatingWebhookConfiguration": "mutating_webhook_configs",
+        "ValidatingWebhookConfiguration": "validating_webhook_configs",
+    }
+    lock_path = workspace / ".sdo/rendered/lock.json"
+    accepted = json.loads(lock_path.read_text()).get("objects", []) if lock_path.is_file() else []
+    listing = json.loads(
+        kubectl(
+            ["get", "mutatingwebhookconfigurations,validatingwebhookconfigurations", "-o", "json"],
+            namespace=None,
+            kubeconfig=kubeconfig,
+        ).stdout
+    )["items"]
+    for value in listing:
+        kind, name = value["kind"], value["metadata"]["name"]
+        if kinds[kind] not in baseline:
+            raise ValueError("eval: restore requires captured admission identities")
+        source_owned = any(
+            row.get("ref", {}).get("kind") == kind and row["ref"].get("name") == name for row in accepted
+        )
+        if name not in baseline[kinds[kind]] and not source_owned:
+            kubectl(
+                ["delete", f"{kind}/{name}", "--ignore-not-found=true", "--wait=true", "--timeout=20s"],
+                namespace=None,
+                kubeconfig=kubeconfig,
+            )

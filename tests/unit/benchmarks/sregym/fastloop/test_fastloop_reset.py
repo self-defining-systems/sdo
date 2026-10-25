@@ -186,6 +186,36 @@ def test_failed_learning_keeps_program_for_third_incident(tmp_path: Path, monkey
     environment.baseline_path.write_text(json.dumps({"fastloop_application": {"namespaces": [baseline.__dict__]}}))
     cluster = FakeCluster()
     monkeypatch.setattr(reset, "KubectlResetCluster", lambda *_args: cluster)
+    # This callback exercises the full CLI restore shell around the fake app.
+    # Expose its actual ready workload through the Kubernetes read boundary.
+    from types import SimpleNamespace
+
+    from benchmarks.sregym.fastloop import admission, baseline_recovery, clean_start
+
+    document = json.loads(environment.baseline_path.read_text())
+    document.update(mutating_webhook_configs=[], validating_webhook_configs=[])
+    environment.baseline_path.write_text(json.dumps(document))
+
+    def api(args, **_kwargs):
+        objects = []
+        if args[:2] in (["get", "deployments,replicasets"], ["get", "deployments,statefulsets,daemonsets,pods"]):
+            for original in cluster.objects:
+                value = json.loads(json.dumps(original))
+                value["metadata"].update(uid="app-uid", generation=1)
+                value["spec"]["selector"] = {"matchLabels": {"app": "app"}}
+                objects.append(value)
+            objects.append(
+                {
+                    "kind": "Pod",
+                    "metadata": {"name": "app-pod", "uid": "app-pod-uid", "labels": {"app": "app"}},
+                    "status": {"conditions": [{"type": "Ready", "status": "True"}]},
+                }
+            )
+        return SimpleNamespace(stdout=json.dumps({"items": objects}))
+
+    monkeypatch.setattr(admission, "kubectl", api)
+    monkeypatch.setattr(baseline_recovery, "kubectl", api)
+    monkeypatch.setattr(clean_start, "kubectl", api)
     now = datetime(2026, 10, 21, tzinfo=timezone.utc)
     accepted_commit = ""
 

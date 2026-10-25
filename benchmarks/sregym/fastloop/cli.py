@@ -77,13 +77,14 @@ def _worker(environment: FastloopEnvironment) -> SregymWorker:
 
 def _reset_failed_incident(environment: FastloopEnvironment, worker: SregymWorker) -> None:
     from benchmarks.sregym.adapter import control_namespace_for
-    from benchmarks.sregym.fastloop.reset import KubectlResetCluster, reset_environment
+    from benchmarks.sregym.fastloop.reset import KubectlResetCluster, RestoreChecks, reset_environment
 
     reset_environment(
         environment,
         KubectlResetCluster(environment.kubeconfig, control_namespace_for(environment.namespace)),
         worker,
         preserve_repository=True,
+        checks=RestoreChecks(environment),
     )
 
 
@@ -437,6 +438,7 @@ def _sdo_agent(
     *,
     composite: bool = False,
     stream_faults: dict[str, tuple[FaultSpec, ...]] | None = None,
+    worker: SregymWorker | None = None,
 ) -> IncidentAgent:
     from benchmarks.sregym.adapter import (
         RuntimeConfig,
@@ -505,6 +507,11 @@ def _sdo_agent(
     # A new state path (including the v2 launcher's fresh-seed clone) starts a
     # memory stream. Retained records identify warm repeats and warm resets.
     fresh_memory_start = environment.namespace not in PersistentState.load(environment.state_path).controllers
+    if worker is not None and environment.app != "toy":
+        from benchmarks.sregym.fastloop.admission import EvalAdmissionOps, LaneAdmission
+
+        admission = LaneAdmission(environment, worker, ops, results_dir / "admission")
+        ops = EvalAdmissionOps(ops, admission, fresh=fresh_memory_start)  # type: ignore[assignment]
 
     def start_native(context: object) -> bool:
         nonlocal fresh_memory_start
@@ -723,6 +730,7 @@ def _run(args: argparse.Namespace) -> int:
                     results_dir,
                     composite=registered_composites,
                     stream_faults=faults_by_incident,
+                    worker=worker,
                 ),
                 driver,
                 config,
@@ -963,19 +971,19 @@ def _down(args: argparse.Namespace) -> int:
 
 def _reset(args: argparse.Namespace) -> int:
     from benchmarks.sregym.adapter import control_namespace_for
-    from benchmarks.sregym.fastloop.reset import KubectlResetCluster, reset_environment
+    from benchmarks.sregym.fastloop.reset import KubectlResetCluster, RestoreChecks, reset_environment
 
     environment = FastloopEnvironment.load(args.run_dir.resolve())
     if environment.seed_commit is None:
         raise ValueError("reset requires a seed commit captured by fastloop up")
-    if args.dev_mount is not None and environment.dev_mount != args.dev_mount.resolve():
+    retarget = getattr(args, "retarget_dev_mount", False)
+    if args.dev_mount is not None and environment.dev_mount != args.dev_mount.resolve() and not retarget:
         raise ValueError("reset --dev-mount must match the worktree mounted by up")
-    if environment.dev_mount is not None:
+    mount = args.dev_mount.resolve() if retarget and args.dev_mount else environment.dev_mount
+    if mount is not None:
         from benchmarks.sregym.fastloop.dev import prepare_dev_mount
 
-        prepare_dev_mount(
-            environment.dev_mount, None if environment.app == "toy" else environment.sregym_dir, environment.run_dir
-        )
+        prepare_dev_mount(mount, None if environment.app == "toy" else environment.sregym_dir, environment.run_dir)
     saved_toy = None
     if environment.app == "toy":
         from benchmarks.sregym.fastloop.toy_reset import ToyControllerTemplate
@@ -983,8 +991,17 @@ def _reset(args: argparse.Namespace) -> int:
         saved_toy = ToyControllerTemplate.capture(environment)
     cluster = KubectlResetCluster(environment.kubeconfig, control_namespace_for(environment.namespace))
     with _worker(environment) as worker:
-        reset_environment(environment, cluster, worker)
+        reset_environment(environment, cluster, worker, checks=RestoreChecks(environment))
     _restore_seed(environment)
+    if retarget or environment.dev_mount_snapshot:
+        from benchmarks.sregym.fastloop.dev import retarget_dev_mount
+
+        if mount is None:
+            raise ValueError("retarget requires --dev-mount WORKTREE")
+        retarget_dev_mount(environment.cluster, mount)
+        environment.dev_mount = mount
+        environment.dev_mount_snapshot = True
+        environment.save()
     if environment.app == "toy":
         if saved_toy is not None:
             saved_toy.restart(environment)
@@ -1055,10 +1072,22 @@ def build_parser() -> argparse.ArgumentParser:
     )
     up.set_defaults(handler=_up)
 
+    from benchmarks.sregym.fastloop.dry_run import budget, execute
+
+    dry_run = commands.add_parser("eval-dry-run", help="scripted pre-injection proof on a real lane, without a fault")
+    dry_run.add_argument("--run-dir", type=Path, required=True)
+    dry_run.add_argument("--timeout", type=budget, default=300)
+    dry_run.set_defaults(handler=lambda args: execute(args.run_dir, args.timeout))
+
     reset = commands.add_parser("reset", help="restore a warm cluster to its application and controller baseline")
     reset.add_argument("--run-dir", type=Path, required=True)
     reset.add_argument(
         "--dev-mount", type=Path, nargs="?", const=REPO_ROOT, help="worktree mounted when this environment was created"
+    )
+    reset.add_argument(
+        "--retarget-dev-mount",
+        action="store_true",
+        help="adopt an idle lane using node-local source snapshots without editing its old checkout",
     )
     reset.set_defaults(handler=_reset)
 

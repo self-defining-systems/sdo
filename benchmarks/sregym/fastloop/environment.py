@@ -41,6 +41,7 @@ class FastloopEnvironment(BaseModel):
     deploy_problem: str = DEFAULT_PROBLEM
     seed_commit: str | None = None
     dev_mount: Path | None = None
+    dev_mount_snapshot: bool = False
     images: Images = Field(default_factory=Images)
     #: Environment for the SREGym worker process (deploy-from-source, kind, builder settings).
     worker_env: dict[str, str] = Field(default_factory=dict)
