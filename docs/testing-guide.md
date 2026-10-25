@@ -576,6 +576,14 @@ times under separate scopes. Image setup reads the committed native SDK pin,
 which the Go static gate and built-image validation independently verify, avoiding
 a second full controller build just to obtain its schema string.
 
+The runtime suite uses virtual time for the cycle-read timeout and link-observer
+qualification/failure windows. The tracing refresh test compiles one immutable
+probe per accepted policy and reuses it before/after source changes. The trust
+arrival-order property uses the broker matrix's real persisted outcomes (all
+accept/reject classes, sixteen permutations per row); its former sixteen extra
+broker lifecycles duplicated that matrix's integration coverage. Existing Gate 1
+selectors and all forwarding, publication, replay and trust assertions remain.
+
 ### Fast image delivery
 
 Use `uv run python -m benchmarks.sregym.fastloop preflight` before image builds.
