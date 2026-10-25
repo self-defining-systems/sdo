@@ -219,6 +219,8 @@ func (e KubernetesExecutor) Execute(ctx context.Context, task *contracts.AgentTa
 	if err := e.ensureJob(ctx, task, launch, jobName, request, resultName, proposalSubPath); err != nil {
 		return nil, err
 	}
+	startup := e.startupRecord(task, jobName)
+	defer e.emitStartup(startup)
 	if e.OnPhase != nil {
 		if err := e.OnPhase(ctx, "reflection_job_created"); err != nil {
 			return nil, err
@@ -260,6 +262,12 @@ func (e KubernetesExecutor) Execute(ctx context.Context, task *contracts.AgentTa
 		job, jobErr := e.Client.BatchV1().Jobs(e.Namespace).Get(ctx, jobName, metav1.GetOptions{})
 		if jobErr != nil && !apierrors.IsNotFound(jobErr) {
 			return nil, fmt.Errorf("get agent Job: %w", jobErr)
+		}
+		if startup != nil && jobErr == nil {
+			pods, err := e.Client.CoreV1().Pods(e.Namespace).List(ctx, metav1.ListOptions{LabelSelector: "batch.kubernetes.io/job-name=" + jobName})
+			if err == nil {
+				startup.observe(job, pods.Items)
+			}
 		}
 		if jobErr == nil && jobFailed(job) {
 			return nil, taskJobFailure(task, job)
@@ -451,6 +459,9 @@ func (e KubernetesExecutor) ensureJob(ctx context.Context, task *contracts.Agent
 	}
 	if e.SessionPVCSubPath != "" {
 		env = append(env, corev1.EnvVar{Name: "SDO_SESSION_DIR", Value: "/sdo/session"})
+		if task.GetRequest().MessageIs(&contracts.IncidentRequest{}) {
+			env = append(env, corev1.EnvVar{Name: "SDO_STARTUP_TIMING_PATH", Value: "/sdo/session/startup-worker.json"})
+		}
 	}
 	judge := task.GetRequest().MessageIs(&contracts.HealthJudgeRequest{})
 	memoryAuthor := reflection || judge
@@ -470,7 +481,7 @@ func (e KubernetesExecutor) ensureJob(ctx context.Context, task *contracts.Agent
 	if reflection {
 		env = append(env, corev1.EnvVar{Name: "SDO_HEALTHY_BASELINE", Value: baseline}, corev1.EnvVar{Name: "SDO_CAPTURED_CORPUS_DIR", Value: captureDirectory})
 	}
-	reserved := map[string]bool{"SDO_REQUEST_SHA256": true, "SDO_CODEX_HOME_ROOT": true, "SDO_REQUEST_CONFIGMAP": true, "SDO_RESULT_CONFIGMAP": true, "SDO_NAMESPACE": true, "SDO_SESSION_DIR": e.SessionPVCSubPath != "", "SDO_ACTOR": memoryAuthor, "SDO_PHASE": memoryAuthor, "SDO_BASE_COMMIT": memoryAuthor, "SDO_HEALTHY_BASELINE": reflection, "SDO_CAPTURED_CORPUS_DIR": reflection, "SDO_API_PROXY_URL": true, "SDO_API_HISTORY_DIR": true}
+	reserved := map[string]bool{"SDO_REQUEST_SHA256": true, "SDO_CODEX_HOME_ROOT": true, "SDO_REQUEST_CONFIGMAP": true, "SDO_RESULT_CONFIGMAP": true, "SDO_NAMESPACE": true, "SDO_SESSION_DIR": e.SessionPVCSubPath != "", "SDO_ACTOR": memoryAuthor, "SDO_PHASE": memoryAuthor, "SDO_BASE_COMMIT": memoryAuthor, "SDO_HEALTHY_BASELINE": reflection, "SDO_CAPTURED_CORPUS_DIR": reflection, "SDO_API_PROXY_URL": true, "SDO_API_HISTORY_DIR": true, "SDO_STARTUP_TIMING_PATH": true}
 	names := make([]string, 0, len(e.Environment))
 	for name := range e.Environment {
 		if !reserved[name] {
@@ -503,7 +514,11 @@ func (e KubernetesExecutor) ensureJob(ctx context.Context, task *contracts.Agent
 		},
 	}
 	e.addAPIHistory(job, task)
-	toolchain.Apply(&job.Spec.Template.Spec, e.ToolchainImage)
+	if task.GetRequest().MessageIs(&contracts.IncidentRequest{}) {
+		toolchain.ApplyShared(&job.Spec.Template.Spec, e.ToolchainImage, e.RepositoryPVCSubPath)
+	} else {
+		toolchain.Apply(&job.Spec.Template.Spec, e.ToolchainImage)
+	}
 	if devmount.Enabled() {
 		devmount.ApplyWorker(&job.Spec.Template.Spec)
 	}

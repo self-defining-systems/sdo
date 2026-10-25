@@ -171,3 +171,9 @@ truncating caller output. The
 Go memory edge writes the verified recovery marker before reflection. Only
 requests using the generated localhost kubeconfig are visible: direct network,
 alternate endpoints and controller SDK observations are outside this history.
+
+## Responder startup
+
+The controller emits one `responder_startup` structured log record per incident worker launch. `startup` contains Kubernetes Job creation and Pod scheduling timestamps, each init container start/end, the agent container start, worker readiness, agent process start and first model request send time. Native restartable init sidecars have no end before the agent starts; `restartable=true` explains that null. Missing observations are explicit in `missing`; never substitute controller poll time for a Kubernetes timestamp. Codex first-request time comes from its local OTLP `codex.api_request` or `codex.websocket.request` event timestamp minus request duration, so it can arrive after the request finishes. This is the client request-attempt boundary, including transport/authentication setup, rather than first response time. Only timing fields are retained; the local collector discards other telemetry content. No model request event means the boundary is unavailable, including scripted workers that do not execute the model CLI.
+
+Incident Jobs consume the image-bound read-only compiler seed prepared before controller dispatch; their init timings no longer include `prepare-toolchain`. Validator and reflection Jobs retain their own private compiler initialization.

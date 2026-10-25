@@ -519,6 +519,11 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	var controller *Controller
 	dispatcher := options.Dispatcher
 	if dispatcher == nil {
+		if !clientInjected {
+			if err := toolchain.Seed(ctx, *repositoryMountPath, *toolchainImage); err != nil {
+				return fmt.Errorf("prepare responder toolchain before dispatch: %w", err)
+			}
+		}
 		var catalog memory.CatalogReader
 		if options.NativeBroker != nil {
 			catalog = memory.OpenCatalogReader(resolvedRoot)

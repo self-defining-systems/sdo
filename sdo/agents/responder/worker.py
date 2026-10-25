@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Protocol, cast
 
 from google.protobuf import json_format
 
+from libs.agent_cli.startup import mark_startup
 from sdo.agents.responder.codex import ResponderExecutionError, execute_incident
 from sdo.agents.responder.credentials import AGENT_SKILLS, prepare_claude_home, prepare_codex_home
 from sdo.agents.responder.job import KubernetesResultPublisher, write_application_kubeconfig
@@ -105,6 +106,7 @@ def run_worker_task(
     kubeconfig = write_application_kubeconfig(request.namespace)
     if kubeconfig is not None:
         os.environ["KUBECONFIG"] = str(kubeconfig)
+    mark_startup("worker_ready")
     result = executor(request)
     if result.incident_id != request.incident_id:
         raise ResponderExecutionError("responder result incident_id does not match request")
