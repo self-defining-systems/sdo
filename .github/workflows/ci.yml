@@ -143,9 +143,39 @@ jobs:
             fi
           done
 
+  prepare-go:
+    name: prepare shared Go builds
+    needs: changes
+    if: needs.changes.outputs.python == 'true' || needs.changes.outputs.go == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version: "1.26.8"
+          cache: false
+      - name: Publish the completed normal and race build graph
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ci-prepared-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
+          restore-keys: |
+            ci-prepared-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-
+            ci-prepared-${{ runner.os }}-${{ runner.arch }}-1.26.8-
+            ci-go-${{ runner.os }}-${{ runner.arch }}-runtime-1.26.8-
+            ci-go-${{ runner.os }}-${{ runner.arch }}-operator-1.26.8-
+            go-sandbox-${{ runner.os }}-
+      - name: Compile dependency graphs outside operation timeouts
+        run: bash scripts/prepare_go_ci.sh
+
   python:
     name: ${{ matrix.name }}
-    needs: changes
+    needs: [changes, prepare-go]
     if: needs.changes.outputs.python == 'true' || needs.changes.outputs.go == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -162,17 +192,16 @@ jobs:
         with:
           # A mutable PR merge ref can change after a retarget; test this event.
           ref: ${{ github.sha }}
+      - name: Restore the prepared normal and race build graph
+        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ci-prepared-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
+          fail-on-cache-miss: true
       - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
         if: matrix.name == 'static analysis' || matrix.name == 'architecture' || matrix.name == 'unit tests'
-        with:
-          go-version: "1.26.8"
-          cache-dependency-path: sdo/operator/go.sum
-      # The unit tests build the Go operator (adapter tests run it on fake
-      # controller state). Pin the toolchain so GOTOOLCHAIN=auto does not
-      # download go1.26 inside that build's timeout. The Go caches are
-      # restored by the dedicated cache step below.
-      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
-        if: matrix.name == 'unit tests'
         with:
           go-version: "1.26.8"
           cache: false
@@ -196,16 +225,6 @@ jobs:
       # caches; persisting those across runs turns the first sandbox build warm
       # (keyed on the controller module graph) instead of a cold stdlib+SDK
       # rebuild every run. Only the leg that runs pytest needs it.
-      - name: Cache the detector-sandbox Go build and module caches
-        if: matrix.name == 'unit tests'
-        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
-        with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-          key: go-sandbox-${{ runner.os }}-${{ hashFiles('sdo/operator/**/go.sum') }}
-          restore-keys: |
-            go-sandbox-${{ runner.os }}-
       - name: Build and verify the source-bound test CLI
         if: matrix.name == 'unit tests'
         run: uv run python scripts/operator_test_binary.py
@@ -213,7 +232,7 @@ jobs:
 
   controller:
     name: controller (${{ matrix.module }})
-    needs: changes
+    needs: [changes, prepare-go]
     if: needs.changes.outputs.go == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -225,15 +244,14 @@ jobs:
         # silently network-downloading 1.26 via GOTOOLCHAIN=auto. sdk/core stay
         # on 1.24.5 to keep proving they still build under the lower floor.
         include:
-          - module: sdk
+          - module: foundation-sdk
             directory: sdo/operator/sdk
             go-version: "1.24.5"
-          - module: core
-            directory: sdo/operator/core
-            go-version: "1.24.5"
-          - module: contracts
+            foundation: stable
+          - module: foundation-contracts
             directory: sdo/operator/contracts
             go-version: "1.26.8"
+            foundation: contracts
           - module: runtime-reflection
             directory: sdo/operator/runtime
             go-version: "1.26.8"
@@ -269,32 +287,23 @@ jobs:
           - module: operator
             directory: sdo/operator
             go-version: "1.26.8"
-          - module: sregym-receipt
-            directory: benchmarks/sregym/protocol/native_receipt_go
-            go-version: "1.26.8"
-          - module: sregym-submission
-            directory: benchmarks/sregym/protocol/submission_go
-            go-version: "1.26.8"
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           # A mutable PR merge ref can change after a retarget; test this event.
           ref: ${{ github.sha }}
-      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
-        with:
-          go-version: "${{ matrix.go-version }}"
-          cache: false
-      - name: Cache Go builds and subprocess builds
-        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+      - name: Restore the prepared normal and race build graph
+        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
         with:
           path: |
             ~/.cache/go-build
             ~/go/pkg/mod
-          key: ci-go-${{ runner.os }}-${{ runner.arch }}-${{ matrix.shard && 'runtime' || matrix.module }}-${{ matrix.go-version }}-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
-          restore-keys: |
-            ci-go-${{ runner.os }}-${{ runner.arch }}-${{ matrix.shard && 'runtime' || matrix.module }}-${{ matrix.go-version }}-${{ hashFiles('**/go.sum') }}-
-            ci-go-${{ runner.os }}-${{ runner.arch }}-${{ matrix.shard && 'runtime' || matrix.module }}-${{ matrix.go-version }}-
-            ci-go-${{ runner.os }}-${{ runner.arch }}-operator-${{ matrix.go-version }}-
+          key: ci-prepared-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
+          fail-on-cache-miss: true
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version: "${{ matrix.go-version }}"
+          cache: false
       - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc # v6.4.3
         if: matrix.shard
         with:
@@ -309,7 +318,10 @@ jobs:
       - name: Run runtime shard with exhaustive coverage guard
         if: matrix.shard
         run: python3 scripts/test_runtime_shard.py --shard '${{ matrix.shard }}'
-      - if: ${{ !matrix.shard }}
+      - name: Run small module contracts with shared build caches
+        if: matrix.foundation
+        run: bash scripts/test_go_foundation.sh '${{ matrix.foundation }}'
+      - if: ${{ !matrix.shard && !matrix.foundation }}
         run: go test -race -parallel=2 -skip '^TestReplay|^TestChaos|^TestExhaustive|^TestExplorer' ./...
         working-directory: ${{ matrix.directory }}
 
@@ -323,7 +335,7 @@ jobs:
         working-directory: sdo/operator
 
       - name: Fuzz object reference boundary (bounded)
-        if: matrix.module == 'sdk'
+        if: matrix.module == 'foundation-sdk'
         run: |
           timeout 120s go test -run '^$' -fuzz '^FuzzObjectRefParseFormat$' -fuzztime=30s -parallel=2 -timeout=2m .
           timeout 120s go test -run '^$' -fuzz '^FuzzObjectRefTypedRoundTrip$' -fuzztime=30s -parallel=2 -timeout=2m .
@@ -333,13 +345,13 @@ jobs:
         run: timeout 120s go test -run '^$' -fuzz '^FuzzStateChangeRefMatchesObservedLabel$' -fuzztime=30s -parallel=2 -timeout=2m ./outcome_derivation
         working-directory: ${{ matrix.directory }}
       - name: Fuzz native receipt boundary (bounded)
-        if: matrix.module == 'sregym-receipt'
+        if: matrix.module == 'foundation-contracts'
         run: timeout 120s go test -run '^$' -fuzz '^FuzzNativeReceiptBoundary$' -fuzzminimizetime=1s -fuzztime=30s -parallel=2 -timeout=2m .
-        working-directory: ${{ matrix.directory }}
+        working-directory: benchmarks/sregym/protocol/native_receipt_go
       - name: Fuzz submission phase boundary (bounded)
-        if: matrix.module == 'sregym-submission'
+        if: matrix.module == 'foundation-contracts'
         run: timeout 120s go test -run '^$' -fuzz '^FuzzSubmissionPhaseBoundary$' -fuzzminimizetime=1s -fuzztime=30s -parallel=2 -timeout=2m .
-        working-directory: ${{ matrix.directory }}
+        working-directory: benchmarks/sregym/protocol/submission_go
 
       - name: Fuzz controller observation boundary (bounded)
         if: matrix.module == 'operator'
@@ -348,7 +360,7 @@ jobs:
 
   go-integration:
     name: Go-backed Python contracts
-    needs: changes
+    needs: [changes, prepare-go]
     if: needs.changes.outputs.python == 'true' || needs.changes.outputs.go == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -356,20 +368,18 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           ref: ${{ github.sha }}
-      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
-        with:
-          go-version: "1.26.8"
-          cache: false
-      - uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+      - name: Restore the prepared normal and race build graph
+        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
         with:
           path: |
             ~/.cache/go-build
             ~/go/pkg/mod
-          key: ci-go-${{ runner.os }}-${{ runner.arch }}-python-integration-1.26.8-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
-          restore-keys: |
-            ci-go-${{ runner.os }}-${{ runner.arch }}-python-integration-1.26.8-${{ hashFiles('**/go.sum') }}-
-            ci-go-${{ runner.os }}-${{ runner.arch }}-python-integration-1.26.8-
-            ci-go-${{ runner.os }}-${{ runner.arch }}-operator-1.26.8-
+          key: ci-prepared-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
+          fail-on-cache-miss: true
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version: "1.26.8"
+          cache: false
       - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc # v6.4.3
         with:
           version: "0.9.24"
@@ -418,7 +428,7 @@ jobs:
   # itself in the failing subtest.
   replay:
     name: replay (recorded incidents)
-    needs: changes
+    needs: [changes, prepare-go]
     if: needs.changes.outputs.go == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -427,10 +437,18 @@ jobs:
         with:
           # A mutable PR merge ref can change after a retarget; test this event.
           ref: ${{ github.sha }}
+      - name: Restore the prepared normal and race build graph
+        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ci-prepared-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
+          fail-on-cache-miss: true
       - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
         with:
           go-version: "1.26.8"
-          cache-dependency-path: sdo/operator/runtime/go.sum
+          cache: false
       - name: Run the deterministic replay suite
         run: go test -race -run '^TestReplay' -timeout 5m ./...
         working-directory: sdo/operator/runtime
@@ -442,7 +460,7 @@ jobs:
   # is named in the subtest and replays with SDO_CHAOS_SEED=<n>.
   chaos:
     name: chaos (timing/ordering)
-    needs: changes
+    needs: [changes, prepare-go]
     if: needs.changes.outputs.go == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -451,10 +469,18 @@ jobs:
         with:
           # A mutable PR merge ref can change after a retarget; test this event.
           ref: ${{ github.sha }}
+      - name: Restore the prepared normal and race build graph
+        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ci-prepared-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
+          fail-on-cache-miss: true
       - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
         with:
           go-version: "1.26.8"
-          cache-dependency-path: sdo/operator/runtime/go.sum
+          cache: false
       - name: Run bounded chaos and implementation state explorers
         run: go test -race -run '^TestChaos|^TestExhaustive|^TestExplorer' -timeout 5m ./...
         working-directory: sdo/operator/runtime
@@ -469,8 +495,12 @@ jobs:
   # (SDO, agentshim, the benchmark submission client) at the pinned Codex CLI
   # and agentshim versions, so a broken image fails here and not mid-experiment.
   images:
-    name: controller images
-    needs: changes
+    name: images (${{ matrix.family }})
+    strategy:
+      fail-fast: false
+      matrix:
+        family: [native, workers]
+    needs: [changes, prepare-go]
     if: >-
       needs.changes.outputs.image_controller == 'true' ||
       needs.changes.outputs.image_validator == 'true' ||
@@ -483,20 +513,18 @@ jobs:
         with:
           # A mutable PR merge ref can change after a retarget; test this event.
           ref: ${{ github.sha }}
-      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
-        with:
-          go-version: "1.26.8"
-          cache: false
-      - name: Cache image schema-identity build
-        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+      - name: Restore the prepared normal and race build graph
+        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
         with:
           path: |
             ~/.cache/go-build
             ~/go/pkg/mod
-          key: ci-go-${{ runner.os }}-${{ runner.arch }}-images-1.26.8-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
-          restore-keys: |
-            ci-go-${{ runner.os }}-${{ runner.arch }}-images-1.26.8-${{ hashFiles('**/go.sum') }}-
-            ci-go-${{ runner.os }}-${{ runner.arch }}-operator-1.26.8-${{ hashFiles('**/go.sum') }}-
+          key: ci-prepared-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
+          fail-on-cache-miss: true
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version: "1.26.8"
+          cache: false
       - uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
       - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc # v6.4.3
         with:
@@ -507,10 +535,10 @@ jobs:
       - name: Select affected images and compute schema identity
         id: image-inputs
         env:
-          CONTROLLER: ${{ needs.changes.outputs.image_controller }}
-          VALIDATOR: ${{ needs.changes.outputs.image_validator }}
-          RESPONDER: ${{ needs.changes.outputs.image_responder }}
-          BENCHMARK: ${{ needs.changes.outputs.image_benchmark }}
+          CONTROLLER: ${{ matrix.family == 'native' && needs.changes.outputs.image_controller || 'false' }}
+          VALIDATOR: ${{ matrix.family == 'native' && needs.changes.outputs.image_validator || 'false' }}
+          RESPONDER: ${{ matrix.family == 'workers' && needs.changes.outputs.image_responder || 'false' }}
+          BENCHMARK: ${{ matrix.family == 'workers' && needs.changes.outputs.image_benchmark || 'false' }}
         run: |
           images=()
           for image in controller validator responder benchmark; do
@@ -524,6 +552,7 @@ jobs:
           identity="$(cd sdo/operator && go run ./cmd/sdo-operator schema-identity)"
           echo "SDO_VALIDATOR_SCHEMA_IDENTITY=${identity}" >> "${GITHUB_ENV}"
       - name: Build affected images with persistent layers
+        if: steps.image-inputs.outputs.targets != ''
         uses: docker/bake-action@3acf805d94d93a86cce4ca44798a76464a75b88c # v6.9.0
         with:
           source: .
@@ -532,21 +561,18 @@ jobs:
           load: true
           set: |
             controller.cache-from=type=gha,scope=sdo-controller
-            controller.cache-to=type=gha,scope=sdo-controller,mode=max
             validator.cache-from=type=gha,scope=sdo-validator
-            validator.cache-to=type=gha,scope=sdo-validator,mode=max
             responder.cache-from=type=gha,scope=sdo-responder
-            responder.cache-to=type=gha,scope=sdo-responder,mode=max
             benchmark.cache-from=type=gha,scope=sdo-benchmark
-            benchmark.cache-to=type=gha,scope=sdo-benchmark,mode=max
       - name: Smoke and probe every affected image
+        if: steps.image-inputs.outputs.targets != ''
         env:
           SDO_IMAGES: ${{ steps.image-inputs.outputs.images }}
           SDO_SKIP_IMAGE_BUILD: "1"
           SDO_IMAGE_PREFLIGHT: "1"
         run: ./scripts/build_sdo_images.sh
       - name: Confirm the responder image carries no SREGym answer key
-        if: needs.changes.outputs.image_benchmark == 'true'
+        if: matrix.family == 'workers' && needs.changes.outputs.image_benchmark == 'true'
         # Belt-and-braces over tests/unit/sdo/operator/test_dockerfile_benchmark_scope.py,
         # which checks the Dockerfile COPY lines statically: this lists the files an
         # actually built image carries, so a leak would fail here even if some other
@@ -575,6 +601,7 @@ jobs:
     name: Required PR CI
     needs:
       - changes
+      - prepare-go
       - python
       - go-integration
       - controller

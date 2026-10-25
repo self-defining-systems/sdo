@@ -101,7 +101,7 @@ const (
 // Any caller-only diagnostic or omitted layer changes these verdicts/rules.
 func TestCLIAndBrokerAgreeOnAcceptance(t *testing.T) {
 	binary := filepath.Join(t.TempDir(), "sdo-operator")
-	build := exec.Command("go", "build", "-p", "8", "-o", binary, "../cmd/sdo-operator")
+	build := exec.Command("go", "build", "-o", binary, "../cmd/sdo-operator")
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build CLI: %v: %s", err, out)
 	}

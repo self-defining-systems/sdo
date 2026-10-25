@@ -163,3 +163,14 @@ def test_ci_bounds_nested_go_builds_and_routes_compiling_contracts() -> None:
     python_runs = [row["run"] for row in jobs["python"]["strategy"]["matrix"]["include"]]
     assert any("not go_integration" in run for run in python_runs)
     assert len(python_runs) == 2  # check_errors already owns types and architecture.
+
+
+def test_go_shards_restore_the_completed_preparation_cache() -> None:
+    jobs = workflow()["jobs"]
+    warm = jobs["prepare-go"]
+    assert warm["timeout-minutes"] == 5
+    assert any("scripts/prepare_go_ci.sh" in step.get("run", "") for step in warm["steps"])
+    for name in ("python", "controller", "go-integration", "images", "replay", "chaos"):
+        assert "prepare-go" in jobs[name]["needs"]
+        caches = [step for step in jobs[name]["steps"] if step.get("uses", "").startswith("actions/cache")]
+        assert any("ci-prepared" in step["with"]["key"] for step in caches), name

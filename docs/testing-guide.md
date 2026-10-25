@@ -652,3 +652,19 @@ old init-container copy plus fixture validation against direct image-backed
 validation under the same two-CPU limit. It reports image bytes and wall time;
 it excludes image delivery and Kubernetes scheduling. Images must already exist;
 the measurement never pulls images or prunes shared caches.
+
+The PR image gate builds native and Python-worker images on separate runners.
+All selected images still receive the same smoke, preflight and answer-key checks.
+Large intermediate-layer cache uploads run in `warm-ci-caches.yml` nightly or by
+manual dispatch; they are maintenance rather than a required merge gate. The
+small Go modules share two runners through `scripts/test_go_foundation.sh`;
+SDK/core continue to run under Go 1.24.5, while the contracts and benchmark wire
+modules use Go 1.26.8. Explicit fixture compiler parallelism must not override
+`GOFLAGS`, so nested builds inherit the same runner memory bound.
+
+`prepare-go` compiles normal and race dependency graphs once per pushed event
+commit, then publishes a shared Go compiler/module cache. The test jobs depend
+on preparation and require that exact cache; they do not start cold compilation
+inside short operation deadlines. Cache restoration uses Go's content-addressed
+compiler entries, while executable identity remains source-bound by
+`operator_test_binary.py`.
