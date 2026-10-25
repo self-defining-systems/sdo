@@ -13,6 +13,7 @@ from google.protobuf import json_format
 from libs.agent_cli.structured import AGENT_PROVIDERS, StructuredTurnError, run_structured_turn, turn_usage
 from sdo.agents.provider import MODEL_ENV, resolve_agent
 from sdo.agents.responder import recorded_actions
+from sdo.agents.responder.continuation import continuation_prompt
 from sdo.agents.responder.credentials import SKILLS_ROOT
 from sdo.agents.responder.reflection import INCIDENT_REASONING_EFFORT
 from sdo.agents.responder.result_output import parse_incident_result
@@ -92,7 +93,10 @@ def execute_incident(
     if continuation:
         if recovery is None or resume_session_id is None:
             raise ResponderExecutionError("controller continuation requires the existing provider session")
-        prompt = "Controller independent verification of your previous response:\n" + continuation
+        try:
+            prompt = continuation_prompt(continuation)
+        except ValueError as exc:
+            raise ResponderExecutionError(f"invalid controller continuation: {exc}") from exc
     corrected_branch = False
     while True:
         try:

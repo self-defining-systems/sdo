@@ -84,6 +84,18 @@ func (d KubernetesJobDispatcher) continueResponder(ctx context.Context, executor
 			return IncidentResult{}, err
 		}
 		verification := loop.Handle(ctx, ToolRequest{Command: "verify"})
+		// Clearing persistence is observation work, not another response turn.
+		// Wait for the controller rather than re-prompting without a named fault.
+		for !verification.Healthy && len(verification.Findings) == 0 && verification.Error == "" && now().Before(request.ResponseDeadline) {
+			timer := time.NewTimer(100 * time.Millisecond)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return IncidentResult{}, ctx.Err()
+			case <-timer.C:
+			}
+			verification = loop.Handle(ctx, ToolRequest{Command: "verify"})
+		}
 		if err := ctx.Err(); err != nil {
 			return IncidentResult{}, err
 		}
@@ -104,7 +116,7 @@ func (d KubernetesJobDispatcher) continueResponder(ctx context.Context, executor
 			result.ResponseLoopExhausted = true
 			result.Error = "response deadline or loop budget exhausted with unresolved findings"
 		}
-		encoded, err := continuationFeedback(state.Attempts, verification)
+		encoded, err := continuationFeedback(state.Attempts, verification, loop.continuationRepairs(result)...)
 		if err != nil {
 			return IncidentResult{}, err
 		}
@@ -198,7 +210,7 @@ func (d KubernetesJobDispatcher) ContinueAfterVerification(ctx context.Context, 
 	if !state.Done {
 		return true, nil
 	} // replay of a controller transition after a crash
-	feedback, err := continuationFeedback(state.Attempts, verification)
+	feedback, err := continuationFeedback(state.Attempts, verification, loop.continuationRepairs(incidentResultState(state.Result))...)
 	if err != nil {
 		return false, err
 	}
@@ -226,23 +238,78 @@ func (l *ResponderLoop) saveContinuation(ctx context.Context, state responderCon
 
 // Both continuation paths publish the same factual schema, including object and
 // finding identity. A pending observation window is not an unhealthy finding.
-func continuationFeedback(attempt int, verification ToolResponse) ([]byte, error) {
-	feedback := struct {
-		Attempt  int                  `json:"attempt"`
-		Healthy  bool                 `json:"healthy"`
-		Error    string               `json:"error,omitempty"`
-		Summary  string               `json:"summary"`
-		Findings []sdkFindingFeedback `json:"findings"`
-	}{Attempt: attempt, Healthy: verification.Healthy, Error: verification.Error, Summary: verification.Summary, Findings: []sdkFindingFeedback{}}
+type continuationReceipt struct {
+	ActionID    string          `json:"action_id"`
+	Kind        string          `json:"kind"`
+	Target      string          `json:"target"`
+	Resources   []sdk.ObjectRef `json:"resources"`
+	Summary     string          `json:"summary"`
+	Details     string          `json:"details"`
+	StartedAt   time.Time       `json:"started_at"`
+	CompletedAt time.Time       `json:"completed_at"`
+	Success     bool            `json:"success"`
+	Reversible  bool            `json:"reversible"`
+}
+type continuationRepair struct {
+	Kind          string              `json:"kind"`
+	ActionID      string              `json:"action_id"`
+	ApplicationID string              `json:"application_id,omitempty"`
+	ProgramIDs    []string            `json:"program_ids,omitempty"`
+	Summary       string              `json:"summary"`
+	RolledBack    bool                `json:"rolled_back,omitempty"`
+	Error         string              `json:"error,omitempty"`
+	Receipt       continuationReceipt `json:"receipt"`
+}
+type responderFeedback struct {
+	Attempt     int                  `json:"attempt"`
+	Healthy     bool                 `json:"healthy"`
+	Error       string               `json:"error,omitempty"`
+	Summary     string               `json:"summary"`
+	StillBroken []sdkFindingFeedback `json:"still_broken"`
+	AlreadyDone []continuationRepair `json:"already_done"`
+}
+
+func (l *ResponderLoop) continuationRepairs(result IncidentResult) []continuationRepair {
+	repairs := make([]continuationRepair, 0)
+	l.mu.Lock()
+	previousFeedback := l.continuation.Feedback
+	l.mu.Unlock()
+	var previous responderFeedback
+	if previousFeedback != "" {
+		_ = json.Unmarshal([]byte(previousFeedback), &previous)
+	}
+	seen := map[string]bool{}
+	applications := l.PlanApplications()
+	// Controller-produced receipts take precedence over provider-authored data.
+	for _, application := range applications {
+		for _, receipt := range ProgramRepairReceipts([]RecordedPlanApplication{application}, nil) {
+			repairs = append(repairs, continuationRepair{Kind: "program-application", ActionID: receipt.ActionID, ApplicationID: application.ID, ProgramIDs: application.ProgramIDs, Summary: receipt.Summary, RolledBack: application.RolledBack, Error: application.Error, Receipt: feedbackReceipt(receipt)})
+			seen[receipt.ActionID] = true
+		}
+	}
+	for _, receipt := range append(l.MenuRepairActions(), result.RepairActions...) {
+		if seen[receipt.ActionID] {
+			continue
+		}
+		seen[receipt.ActionID] = true
+		repairs = append(repairs, continuationRepair{Kind: "recorded-action", ActionID: receipt.ActionID, Summary: receipt.Summary, Receipt: feedbackReceipt(receipt)})
+	}
+	for _, repair := range previous.AlreadyDone {
+		if !seen[repair.ActionID] {
+			repairs = append(repairs, repair)
+			seen[repair.ActionID] = true
+		}
+	}
+	return repairs
+}
+func feedbackReceipt(receipt RepairActionReceipt) continuationReceipt {
+	return continuationReceipt{ActionID: receipt.ActionID, Kind: receipt.Kind, Target: receipt.Target, Resources: receipt.Resources, Summary: receipt.Summary, Details: receipt.Details, StartedAt: receipt.StartedAt, CompletedAt: receipt.CompletedAt, Success: receipt.Success, Reversible: receipt.Reversible}
+}
+
+func continuationFeedback(attempt int, verification ToolResponse, repairs ...continuationRepair) ([]byte, error) {
+	feedback := responderFeedback{Attempt: attempt, Healthy: verification.Healthy, Error: verification.Error, Summary: verification.Summary, StillBroken: []sdkFindingFeedback{}, AlreadyDone: append([]continuationRepair{}, repairs...)}
 	for _, finding := range verification.Findings {
-		evidence := finding.Evidence
-		if len(evidence) > 1200 {
-			evidence = evidence[:1200]
-		}
-		feedback.Findings = append(feedback.Findings, sdkFindingFeedback{Resource: finding.PrimaryResource, Fingerprint: FindingFingerprint(finding), DetectorID: finding.DetectorID, RuleID: finding.RuleID, Summary: finding.Summary, Evidence: evidence})
-		if len(feedback.Findings) >= 24 {
-			break
-		}
+		feedback.StillBroken = append(feedback.StillBroken, sdkFindingFeedback{Resource: finding.PrimaryResource, Fingerprint: FindingFingerprint(finding), DetectorID: finding.DetectorID, RuleID: finding.RuleID, Summary: finding.Summary, Evidence: finding.Evidence})
 	}
 	return json.Marshal(feedback)
 }
