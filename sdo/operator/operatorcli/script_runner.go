@@ -36,6 +36,7 @@ func RunScriptRunner(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	config.QPS, config.Burst = 50, 100
 	client, err := kubernetes.NewForConfig(config)
 	if err != nil {
 		return err
@@ -73,6 +74,9 @@ func RunScriptRunner(ctx context.Context) error {
 		return err
 	}
 	recorder := newScriptRecorder(runCtx, upstream, reads)
+	store := scriptCaptureStore{maps: client.CoreV1().ConfigMaps(namespace), namespace: namespace, application: indexName, jobUID: out.JobUID}
+	recorder.persistImage = store.save
+	recorder.persistReceipt = store.receipt
 	identity := out
 	recorder.checkpoint = func(objects []program.ScriptObjectCapture, receipts []program.ScriptAPIReceipt) error {
 		capture := identity
@@ -147,6 +151,16 @@ func RunScriptRunner(ctx context.Context) error {
 		raw, err = json.Marshal(out)
 		if err != nil {
 			return err
+		}
+	}
+	if len(raw) > 900<<10 && len(out.Objects) > 0 {
+		out.CaptureGaps = append(out.CaptureGaps, "inline object inventory clipped; complete images remain in ConfigMaps labelled sdo.dev/script-capture="+indexName)
+		for len(raw) > 900<<10 && len(out.Objects) > 0 {
+			out.Objects = out.Objects[:len(out.Objects)/2]
+			raw, err = json.Marshal(out)
+			if err != nil {
+				return err
+			}
 		}
 	}
 	if len(raw) > 900<<10 {

@@ -100,7 +100,10 @@ are first-class learnable mitigations; typed actions remain optional upgrades.
 digest, input provenance, API receipt metadata, selected repair scope and touched
 object references. Scope identifies the selected repair and is not proof that an
 object was written. Raw output and captured preimages/postimages stay in the
-application-local private result ConfigMap named by `result_ref`; output is capped
+application-local private result ConfigMap named by `result_ref`; complete object
+images use `images_ref` manifests and binary chunks labelled by script application,
+with immutable first-write preimages and explicit settled absence. Request receipts
+also have private per-request records. Output is capped
 at 64 KiB per stream with truncation flags. Script Jobs have no retries or TTL;
 a durable reservation and Job UID forbid replacement after uncertain execution.
 

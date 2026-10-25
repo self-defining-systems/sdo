@@ -17,10 +17,13 @@ type ScriptAPIReceipt struct {
 }
 
 type ScriptObjectCapture struct {
-	Written bool                       `json:"written,omitempty"`
-	Ref     sdk.ObjectRef              `json:"ref"`
-	Before  *unstructured.Unstructured `json:"before,omitempty"`
-	After   *unstructured.Unstructured `json:"after,omitempty"`
+	BeforeAbsent bool                       `json:"before_absent,omitempty"`
+	AfterAbsent  bool                       `json:"after_absent,omitempty"`
+	ImagesRef    string                     `json:"images_ref,omitempty"`
+	Written      bool                       `json:"written,omitempty"`
+	Ref          sdk.ObjectRef              `json:"ref"`
+	Before       *unstructured.Unstructured `json:"before,omitempty"`
+	After        *unstructured.Unstructured `json:"after,omitempty"`
 }
 
 // ScriptExecutionResult retains measured evidence, never invented effect replies.

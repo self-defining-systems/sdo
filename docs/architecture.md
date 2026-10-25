@@ -59,7 +59,8 @@ and records the Job UID. A restart joins that Job or recovers its result; an
 uncertain missing/replaced Job never permits another invocation. The native runner
 routes kubectl through the existing Kubernetes proxy, checkpoints first-write
 preimages before forwarding and records settled postimages, receipts and explicit
-capture gaps. Raw output/preimages stay at that runtime storage edge; durable
+capture gaps. Object images use private chunked ConfigMaps so a large object or repair batch
+cannot exhaust the bounded result envelope. Raw output/preimages stay at that runtime storage edge; durable
 outcomes retain references, digest, exit code and input provenance. Arbitrary
 external effects remain opaque. Undo is explicit only; script undo from captured
 preimages is follow-up work.

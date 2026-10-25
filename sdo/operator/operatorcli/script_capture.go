@@ -21,16 +21,18 @@ import (
 // scriptRecorder is a synchronous first-write edge around the existing proxy.
 // It never stores request bodies or Secret data. Explicit gaps survive in receipts.
 type scriptRecorder struct {
-	checkpoint func([]program.ScriptObjectCapture, []program.ScriptAPIReceipt) error
-	written    map[string]bool
-	ctx        context.Context
-	upstream   *url.URL
-	transport  http.RoundTripper
-	mu         sync.Mutex
-	objects    map[string]*program.ScriptObjectCapture
-	receipts   []program.ScriptAPIReceipt
-	gaps       []string
-	bytes      int
+	persistReceipt func(context.Context, program.ScriptAPIReceipt) error
+	persistImage   func(context.Context, string, program.ScriptObjectCapture) (string, error)
+	checkpoint     func([]program.ScriptObjectCapture, []program.ScriptAPIReceipt) error
+	written        map[string]bool
+	ctx            context.Context
+	upstream       *url.URL
+	transport      http.RoundTripper
+	mu             sync.Mutex
+	objects        map[string]*program.ScriptObjectCapture
+	receipts       []program.ScriptAPIReceipt
+	gaps           []string
+	bytes          int
 }
 
 func newScriptRecorder(ctx context.Context, u *url.URL, t http.RoundTripper) *scriptRecorder {
@@ -100,10 +102,16 @@ func (r *scriptRecorder) Record(e apihistory.Event, raw []byte) {
 	if e.Phase != "end" {
 		return
 	}
+	receipt := program.ScriptAPIReceipt{Method: e.Verb, Path: path, Subresource: e.Subresource, Status: e.Status, StartedAt: e.Started, CompletedAt: e.Finished, Omission: e.Omission}
+	if r.persistReceipt != nil {
+		if err := r.persistReceipt(r.ctx, receipt); err != nil {
+			r.gap("private API receipt storage unavailable")
+		}
+	}
 	if len(r.receipts) < 512 {
-		r.receipts = append(r.receipts, program.ScriptAPIReceipt{Method: e.Verb, Path: path, Subresource: e.Subresource, Status: e.Status, StartedAt: e.Started, CompletedAt: e.Finished, Omission: e.Omission})
+		r.receipts = append(r.receipts, receipt)
 	} else {
-		r.gap("API receipt count exceeded")
+		r.gap("inline API receipt inventory clipped; complete receipts remain in private capture storage")
 	}
 	if e.Omission != "" && e.Omission != "upgrade_metadata_only" && e.Omission != "redacted_stream_metadata_only" && e.Omission != "redacted_log_metadata_only" {
 		r.gap("API response capture omitted: " + e.Omission)
@@ -115,6 +123,9 @@ func (r *scriptRecorder) Record(e apihistory.Event, raw []byte) {
 				path += "/" + url.PathEscape(object.GetName())
 				if write && e.Verb == "create" {
 					r.written[path] = true
+					if r.objects[path] == nil {
+						r.objects[path] = &program.ScriptObjectCapture{BeforeAbsent: true}
+					}
 				}
 			}
 			// Collection create has no preimage. Read-only objects retain their measured image.
@@ -135,10 +146,6 @@ func (r *scriptRecorder) preimage(path string, e apihistory.Event) {
 		return
 	}
 	r.written[path] = true
-	if len(r.objects) >= 64 {
-		r.gap("object capture count exceeded")
-		return
-	}
 	object, err := r.read(path)
 	if err != nil {
 		r.gap("first-write preimage unavailable: " + path)
@@ -146,16 +153,12 @@ func (r *scriptRecorder) preimage(path string, e apihistory.Event) {
 		return
 	}
 	if object == nil {
-		r.objects[path] = &program.ScriptObjectCapture{}
+		r.objects[path] = &program.ScriptObjectCapture{BeforeAbsent: true}
 		return
 	}
 	r.retain(path, object, nil)
 }
 func (r *scriptRecorder) retain(path string, before, after *unstructured.Unstructured) {
-	if len(r.objects) >= 64 && r.objects[path] == nil {
-		r.gap("object capture count exceeded")
-		return
-	}
 	object := after
 	if object == nil {
 		object = before
@@ -189,11 +192,25 @@ func (r *scriptRecorder) retain(path string, before, after *unstructured.Unstruc
 	}
 	if after != nil {
 		candidate.After = after.DeepCopy()
+		candidate.AfterAbsent = false
+	}
+	if r.persistImage != nil {
+		ref, err := r.persistImage(r.ctx, path, candidate)
+		if err != nil {
+			r.gap("private object image storage unavailable")
+		} else {
+			candidate.ImagesRef = ref
+			candidate.Before = nil
+			candidate.After = nil
+		}
 	}
 	next, _ := json.Marshal(candidate)
 	delta := len(next) - len(old)
 	if r.bytes+delta > 512<<10 {
 		r.gap("object preimage/postimage capture budget exceeded")
+		candidate.Before = nil
+		candidate.After = nil
+		r.objects[path] = &candidate
 		return
 	}
 	r.bytes += delta
@@ -221,8 +238,8 @@ func (r *scriptRecorder) read(path string) (*unstructured.Unstructured, error) {
 	if response.StatusCode != 200 {
 		return nil, fmt.Errorf("object read status %d", response.StatusCode)
 	}
-	raw, err := io.ReadAll(io.LimitReader(response.Body, 256<<10+1))
-	if err != nil || len(raw) > 256<<10 {
+	raw, err := io.ReadAll(io.LimitReader(response.Body, apihistory.MaxBodyBytes+1))
+	if err != nil || len(raw) > apihistory.MaxBodyBytes {
 		return nil, fmt.Errorf("object image exceeds capture bound")
 	}
 	object := &unstructured.Unstructured{}
@@ -247,6 +264,15 @@ func (r *scriptRecorder) settle(out *program.ScriptExecutionResult) {
 			r.retain(path, nil, object)
 		} else {
 			r.objects[path].After = nil
+			r.objects[path].AfterAbsent = true
+			if r.persistImage != nil {
+				ref, err := r.persistImage(r.ctx, path, *r.objects[path])
+				if err != nil {
+					r.gap("settled absence storage unavailable")
+				} else {
+					r.objects[path].ImagesRef = ref
+				}
+			}
 		}
 		if r.objects[path].Ref.Kind != "" {
 			out.Objects = append(out.Objects, *r.objects[path])

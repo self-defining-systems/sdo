@@ -107,7 +107,7 @@ func (e PlanExecutor) scriptStep(ctx context.Context, incident IncidentRequest, 
 	public.Stderr = ""
 	public.Objects = make([]ScriptObjectCapture, 0, len(run.Objects))
 	for _, object := range run.Objects {
-		public.Objects = append(public.Objects, ScriptObjectCapture{Ref: object.Ref, Written: object.Written})
+		public.Objects = append(public.Objects, ScriptObjectCapture{Ref: object.Ref, Written: object.Written, ImagesRef: object.ImagesRef, BeforeAbsent: object.BeforeAbsent, AfterAbsent: object.AfterAbsent})
 	}
 	r.ActionReports[0].Script = &public
 	r.ActionReports[0].ExitCode = run.ExitCode
