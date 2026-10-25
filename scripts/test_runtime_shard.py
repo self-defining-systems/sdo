@@ -22,6 +22,10 @@ INTEGRATION = (
     "TestReflectionLearnedProgramCLIAndBroker",
     "TestRenderedLockImageInputScope",
     "TestExhaustiveReflectionLifecycle",
+    "TestSimSchedule",
+    "TestSimScheduleQueuedDriftNeverRedispatchesAfterVerifiedClosure",
+    "TestSimRenderedLockSchedule",
+    "TestSimIncidentStream",
 )
 _INTEGRATION = "(?:" + "|".join(INTEGRATION) + ")"
 PATTERNS = {
