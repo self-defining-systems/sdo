@@ -171,6 +171,14 @@ def rendered_cases() -> dict[str, str]:
             "warm_oversized": incident(warm=True, oversized=True),
         }.items():
             prompts[f"responder_{name}"] = _responder_prompt(request)
+        matched = incident(5, warm=True)
+        matched.initial_program_runs.add(
+            program_id="repair-0",
+            can_mitigate=True,
+            verdict={"result": "RESULT_MATCH"},
+        )
+        matched.initial_program_runs.add(program_id="unrelated", verdict={"result": "RESULT_NO_MATCH"})
+        prompts["responder_matched_programs"] = _responder_prompt(matched)
         patch.setenv("SDO_RESPONDER_EXTRA_INSTRUCTIONS", "Use the toy incident transport.")
         patch.setenv("SDO_LATE_FINDINGS", "pull")
         prompts["responder_optional"] = _responder_prompt(incident())
