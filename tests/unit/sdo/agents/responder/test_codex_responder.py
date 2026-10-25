@@ -628,7 +628,9 @@ def test_controller_verification_resumes_same_session_with_remaining_budget(monk
     assert captured["resume_session_id"] == "same-provider-session"
     assert captured["timeout_seconds"] == 43.0
     assert "still unavailable" in captured["prompt"]
-    assert '"still_broken": []' in captured["prompt"]
+    assert "still_broken: (0)" in captured["prompt"]
+    evidence = Path(captured["prompt"].split("Full JSON: ", 1)[1].splitlines()[0])
+    assert json.loads(evidence.read_text()) == json.loads(feedback)
 
 
 @pytest.mark.parametrize("fails", [False, True])
