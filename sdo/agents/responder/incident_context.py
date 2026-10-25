@@ -72,7 +72,7 @@ def prepared_incident_data(request: IncidentRequest) -> Iterator[str]:
         yield rendered
         return
     with NamedTemporaryFile(mode="w", encoding="utf-8", prefix="sdo-incident-", suffix=".json") as facts:
-        json.dump(incident_data_view(request), facts, ensure_ascii=False)
+        json.dump(incident_data_view(request), facts, ensure_ascii=False, indent=2)
         facts.flush()
         summary = {
             "incident_id": request.incident_id,
