@@ -375,14 +375,30 @@ func fastloopGateAcknowledge(t *testing.T, ctx context.Context, controller *Cont
 }
 
 func TestHermeticFastloopRealGoGate(t *testing.T) {
-	runHermeticFastloopRealGoGate(t, false)
+	runHermeticFastloopRealGoGate(t, fastloopInitial)
 }
 
 func TestHermeticReflectionLearnsThenAgentSelectsIdenticalRecurrence(t *testing.T) {
-	runHermeticFastloopRealGoGate(t, true)
+	runHermeticFastloopRealGoGate(t, fastloopCompiledRecurrence)
 }
 
-func runHermeticFastloopRealGoGate(t *testing.T, recurrence bool) {
+// This cycle publishes learned Go while the first controller is active, then
+// runs the accepted compiled bundle across its required controller rollout.
+func TestHermeticLearnAcceptRepeatKeepsControllerIterating(t *testing.T) {
+	runHermeticFastloopRealGoGate(t, fastloopControllerRepeat)
+}
+
+type fastloopGateMode uint8
+
+const (
+	fastloopInitial fastloopGateMode = iota
+	fastloopCompiledRecurrence
+	fastloopControllerRepeat
+)
+
+func runHermeticFastloopRealGoGate(t *testing.T, mode fastloopGateMode) {
+	recurrence := mode != fastloopInitial
+	repeatController := mode == fastloopControllerRepeat
 	testutil.OfflineGo(t, "..")
 	t.Setenv("GOFLAGS", "-mod=mod -p=2")
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
@@ -607,6 +623,11 @@ func (detector) Detect(context.Context,sdk.DetectionContext)([]sdk.Finding,error
 	if built == nil {
 		t.Fatal("program builder did not validate accepted reflection")
 	}
+	if repeatController {
+		// Do not certify the rollout before running the accepted detector in the
+		// long-running controller and observing its later fault and iterations.
+		runCompiledLearnAcceptRepeatController(t, ctx, built, accepted, firstRequest)
+	}
 	if expectation, pending, err := native.PendingControllerRollout(receipt.ReflectionCommit); err != nil {
 		t.Fatal(err)
 	} else if pending {
@@ -641,6 +662,9 @@ func (detector) Detect(context.Context,sdk.DetectionContext)([]sdk.Finding,error
 		t.Fatalf("rendered source restore lost deployed image: %s", image)
 	}
 	if recurrence {
+		if repeatController {
+			return
+		}
 		runCompiledLearningRecurrence(t, ctx, built, accepted, firstRequest)
 		return
 	}

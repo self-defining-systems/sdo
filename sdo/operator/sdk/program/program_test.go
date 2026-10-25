@@ -181,3 +181,29 @@ func TestExampleProgramSyntheticPortMatchesAndNearMisses(t *testing.T) {
 		})
 	}
 }
+
+func TestProgramDetectorExplainsInconclusiveDiagnosis(t *testing.T) {
+	for _, result := range []program.Result{program.Unknown, program.NeedsJudgement} {
+		t.Run(string(result), func(t *testing.T) {
+			p := diagnostic{fn: func(context.Context, program.ReadView, program.Bindings) (program.Verdict, error) {
+				verdict := program.Verdict{Result: result, Evidence: []program.Evidence{{Fact: "source", Observed: "accepted deployment evidence is unavailable"}}}
+				if result == program.NeedsJudgement {
+					verdict.Question = "which accepted deployment supplies source evidence?"
+				}
+				return verdict, nil
+			}}
+			detector := program.DetectorFromProgram(p, func(sdk.DetectionContext) []program.Bindings {
+				return []program.Bindings{{Objects: program.ObjectBindings{"service": serviceRef}}}
+			}, sdk.DetectorSpec{ID: "learned-source-check"})
+			findings, err := detector.Detect(context.Background(), sdktest.Snapshot{})
+			if len(findings) != 0 || err == nil {
+				t.Fatalf("inconclusive learned diagnosis silently cleared: findings=%v error=%v", findings, err)
+			}
+			for _, detail := range []string{p.Spec().ID, serviceRef.Name, string(result), "accepted deployment evidence is unavailable"} {
+				if !strings.Contains(err.Error(), detail) {
+					t.Errorf("diagnostic %q omits %q", err, detail)
+				}
+			}
+		})
+	}
+}
