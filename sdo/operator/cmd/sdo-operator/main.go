@@ -12,7 +12,14 @@ import (
 	"sdo.dev/operator/operatorcli"
 )
 
+// sourceHash is set by source-bound test builds; ordinary builds leave it empty.
+var sourceHash string
+
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "source-hash" {
+		fmt.Println(sourceHash)
+		return
+	}
 	if len(os.Args) > 1 && (os.Args[1] == "evidence" || os.Args[1] == "api-proxy") {
 		var err error
 		if os.Args[1] == "evidence" {

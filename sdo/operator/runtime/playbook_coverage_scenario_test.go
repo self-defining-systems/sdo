@@ -45,6 +45,14 @@ func (coverageThreeFaultDetector) Detect(ctx context.Context, view sdk.Detection
 // Gate 1 A uses the real dispatcher, worker task, Python tool transport, menu,
 // executor, health verifier and outcome derivation. The worker is scripted.
 func TestHermeticAgentRepairsTwoCoveredFaultsAndOneUnexplained(t *testing.T) {
+	t.Run("separate-self-check", func(t *testing.T) { testHermeticThreeFaultSelfCheck(t, false) })
+	t.Run("combined-self-check", func(t *testing.T) { testHermeticThreeFaultSelfCheck(t, true) })
+}
+
+func testHermeticThreeFaultSelfCheck(t *testing.T, combined bool) {
+	if combined {
+		t.Setenv("SDO_SCRIPTED_COMPACT_OUTPUT", "1")
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	client := fastloopClient("good:v1")
@@ -147,10 +155,23 @@ func TestHermeticAgentRepairsTwoCoveredFaultsAndOneUnexplained(t *testing.T) {
 	if third.ApplicationID == "" {
 		t.Fatalf("agent action not recorded: %+v", third)
 	}
-	checked := fastloopTool(t, tools, "verify")
+	selfCheck := "verify"
+	commands := 3 // two learned mitigations and the uncovered repair
+	if combined {
+		selfCheck = "check"
+	} else {
+		fresh := fastloopTool(t, tools, "detect")
+		commands++
+		if fresh.Error != "" || len(fresh.Findings) != 0 {
+			t.Fatalf("fresh detection after all three repairs: %+v", fresh)
+		}
+	}
+	checked := fastloopTool(t, tools, selfCheck)
+	commands++
 	if !checked.Healthy || len(checked.Findings) != 0 {
 		t.Fatalf("three faults did not close: %+v", checked)
 	}
+	t.Logf("three-fault scripted public commands=%d (combined_self_check=%v); controller checks remain independent", commands, combined)
 	result := completedResult(request.IncidentID)
 	result.RepairActions = nil
 	result.FinalDetectorStates = checked.DetectorStates
