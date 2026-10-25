@@ -50,6 +50,25 @@ func IncidentExecutionNames(ctx context.Context, client kubernetes.Interface, na
 		return nil, fmt.Errorf("inspect incident execution requests: %w", err)
 	}
 	for _, cm := range maps.Items {
+		if cm.Labels[incidentExecutionLabel] != "" && cm.Annotations["sdo.dev/incident-id"] == incidentID {
+			identity, err := decodeIncidentExecution(&cm)
+			if err != nil {
+				return nil, err
+			}
+			if identity.JobUID != "" {
+				job, err := client.BatchV1().Jobs(namespace).Get(ctx, identity.JobName, metav1.GetOptions{})
+				if err == nil && string(job.UID) != identity.JobUID {
+					return nil, fmt.Errorf("incident execution Job UID changed for %s", identity.JobName)
+				}
+				if err != nil && !apierrors.IsNotFound(err) {
+					return nil, err
+				}
+			}
+			if !initialOnly || identity.TaskID == incidentID {
+				names[identity.JobName] = true
+			}
+			continue
+		}
 		if strings.HasSuffix(cm.Name, "-binding") && cm.Annotations["sdo.dev/incident-id"] == incidentID && (!initialOnly || cm.Annotations["sdo.dev/task-id"] == incidentID) {
 			name := cm.Annotations["sdo.dev/job-name"]
 			if strings.HasPrefix(name, "sdo-standby-") && cm.Name == name+"-binding" {

@@ -5,63 +5,18 @@ import (
 	"fmt"
 	"time"
 
-	batchv1 "k8s.io/api/batch/v1"
-	corev1 "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/runtime/lifecyclecore"
-"sdo.dev/operator/worker_registry"
 )
 
 // IncidentWorkActive checks durable work before an expired request is retired.
 // API uncertainty is an error, never evidence that an existing worker is gone.
 func (d KubernetesJobDispatcher) IncidentWorkActive(ctx context.Context, incidentID string) (bool, error) {
-	if d.Client == nil {
-		return false, fmt.Errorf("incident worker client is required")
-	}
-	names,err:=worker_registry.IncidentExecutionNames(ctx,d.Client,d.Namespace,d.RepositoryMountPath,incidentID,false)
- if err!=nil{return false,err}
- for _,name:=range names {
- active,err:=d.incidentExecutionActive(ctx,name)
- if err!=nil||active{return active,err}
- }
- return false,nil
-}
-func(d KubernetesJobDispatcher) incidentExecutionActive(ctx context.Context,name string)(bool,error){
-	job, err := d.Client.BatchV1().Jobs(d.Namespace).Get(ctx, name, metav1.GetOptions{})
-	if err != nil && !apierrors.IsNotFound(err) {
-		return false, fmt.Errorf("inspect incident worker: %w", err)
-	}
-	if err == nil {
-		// Deleting Jobs can still have running Pods. Await their removal.
-		if job.Status.Active > 0 || job.DeletionTimestamp != nil {
-			return true, nil
-		}
-		terminal := job.Status.CompletionTime != nil
-		for _, condition := range job.Status.Conditions {
-			terminal = terminal || condition.Status == corev1.ConditionTrue && (condition.Type == batchv1.JobComplete || condition.Type == batchv1.JobFailed)
-		}
-		if !terminal {
-			return true, nil
-		}
-	}
-	// A Job can disappear before its orphaned Pod does. Do not retire the
-	// incident while any worker container or tool sidecar can still act.
-	pods, err := d.Client.CoreV1().Pods(d.Namespace).List(ctx, metav1.ListOptions{})
+	inventory, err := d.responderExecutions(ctx, incidentID, 0)
 	if err != nil {
-		return false, fmt.Errorf("inspect incident worker Pods: %w", err)
+		return false, err
 	}
-	for _, pod := range pods.Items {
-		owned := pod.Labels["sdo.dev/incident"] == name || pod.Labels["job-name"] == name || pod.Labels["batch.kubernetes.io/job-name"] == name
-		for _, owner := range pod.OwnerReferences {
-			owned = owned || owner.Kind == "Job" && owner.Name == name
-		}
-		if owned && pod.Status.Phase != corev1.PodSucceeded && pod.Status.Phase != corev1.PodFailed {
-			return true, nil
-		}
-	}
-	return false, nil
+	return inventory.active(), nil
 }
 
 // retireExpiredIncident refuses to resume an abandoned request after its

@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"google.golang.org/protobuf/proto"
@@ -127,6 +128,14 @@ func (e KubernetesExecutor) taskJobName(ctx context.Context, task *contracts.Age
 		return "", err
 	} else if binding != nil {
 		return binding.JobName, nil
+	}
+	if identity, err := e.loadIncidentExecution(ctx, task); err != nil {
+		return "", err
+	} else if identity != nil {
+		if strings.HasPrefix(identity.JobName, "sdo-standby-") {
+			return "", errors.New("warm execution identity is missing its durable session binding")
+		}
+		return identity.JobName, nil
 	}
 	boundName := TaskJobName(task)
 	maps := e.Client.CoreV1().ConfigMaps(e.Namespace)

@@ -148,10 +148,7 @@ func (e KubernetesExecutor) emitStartup(r *ResponderStartup) {
 				}
 			}
 		}
-		if r.ClaimedAt != nil && r.FirstModelRequestSent != nil {
-			elapsed := float64(r.FirstModelRequestSent.Sub(*r.ClaimedAt).Microseconds()) / 1000
-			r.ClaimToFirstModelMilliseconds = &elapsed
-		}
+
 	}
 
 	if relative, err := filepath.Rel(sessionPVCBase(e.RepositoryPVCSubPath), e.SessionPVCSubPath); err == nil && e.SessionPVCSubPath != "" {
@@ -162,7 +159,11 @@ func (e KubernetesExecutor) emitStartup(r *ResponderStartup) {
 				r.SessionOpenReceivedAt = &timing.ReceivedAt
 			}
 		}
-		if data, err := os.ReadFile(filepath.Join(e.RepositoryMountPath, relative, "startup", "startup-dispatch.json")); err == nil {
+		data, dispatchErr := os.ReadFile(filepath.Join(e.RepositoryMountPath, relative, "startup/attempts", r.JobName, "startup-dispatch.json"))
+		if errors.Is(dispatchErr, os.ErrNotExist) && r.TaskBoundAt == nil {
+			data, dispatchErr = os.ReadFile(filepath.Join(e.RepositoryMountPath, relative, "startup", "startup-dispatch.json"))
+		}
+		if dispatchErr == nil {
 			var timing DispatchStartup
 			if json.Unmarshal(data, &timing) == nil && r.TaskBoundAt == nil {
 				r.Mode = timing.Mode
@@ -197,20 +198,22 @@ func (e KubernetesExecutor) emitStartup(r *ResponderStartup) {
 			}
 		}
 	}
-	if r.SessionOpenedAt != nil {
-		if r.JobCreatedAt != nil {
-			elapsed := float64(r.SessionOpenedAt.Sub(r.JobCreatedAt.Time).Microseconds()) / 1000
-			r.JobCreatedToSessionOpenMilliseconds = &elapsed
+	// Derive intervals only after validating/selecting the measured boundaries.
+	elapsed := func(start, end *time.Time) *float64 {
+		if start == nil || end == nil || end.Before(*start) {
+			return nil
 		}
-		if r.ClaimedAt != nil {
-			elapsed := float64(r.SessionOpenedAt.Sub(*r.ClaimedAt).Microseconds()) / 1000
-			r.ClaimToSessionOpenMilliseconds = &elapsed
-		}
-		if r.TaskBoundAt != nil {
-			elapsed := float64(r.SessionOpenedAt.Sub(*r.TaskBoundAt).Microseconds()) / 1000
-			r.TaskBoundToSessionOpenMilliseconds = &elapsed
-		}
+		milliseconds := float64(end.Sub(*start).Microseconds()) / 1000
+		return &milliseconds
 	}
+	r.ClaimToFirstModelMilliseconds = elapsed(r.ClaimedAt, r.FirstModelRequestSent)
+	r.ClaimToSessionOpenMilliseconds = elapsed(r.ClaimedAt, r.SessionOpenedAt)
+	r.TaskBoundToSessionOpenMilliseconds = elapsed(r.TaskBoundAt, r.SessionOpenedAt)
+	var created *time.Time
+	if r.JobCreatedAt != nil {
+		created = &r.JobCreatedAt.Time
+	}
+	r.JobCreatedToSessionOpenMilliseconds = elapsed(created, r.SessionOpenedAt)
 
 	for name, missing := range map[string]bool{"pod_ready_at": r.PodReadyAt == nil, "task_bound_at": r.TaskBoundAt == nil, "session_open_at": r.SessionOpenedAt == nil, "job_created_at": r.JobCreatedAt == nil, "pod_scheduled_at": r.PodScheduledAt == nil, "agent_container_started_at": r.AgentContainerStartedAt == nil, "worker_ready": r.WorkerReady == nil, "agent_process_started": r.AgentProcessStarted == nil, "first_model_request_sent": r.FirstModelRequestSent == nil} {
 		if missing {

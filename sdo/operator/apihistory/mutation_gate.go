@@ -9,8 +9,11 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
+
+	"sdo.dev/operator/sessionstorage"
 )
 
 // IncidentVerified supplements a command's normal result. Mutations also use
@@ -30,12 +33,12 @@ func VerificationWarning(at time.Time) *IncidentVerified {
 type MutationGate struct{ Directory string }
 type MutationLease struct {
 	gate *MutationGate
-	file *os.File
+	file *mutationLock
 	name string
 }
 type MutationObservation struct {
 	gate     *MutationGate
-	file     *os.File
+	file     *mutationLock
 	Revision string
 	Pending  bool
 }
@@ -72,16 +75,32 @@ func (g *MutationGate) Verified() (*IncidentVerified, error) {
 	}
 	return &result, nil
 }
-func (g *MutationGate) lock(mode int) (*os.File, error) {
+
+// A file lock alone cannot pin an inode across canonical session replacement.
+// Keep the controller's storage pin until the observation or lease closes.
+type mutationLock struct {
+	*os.File
+	releaseStorage func()
+	releaseOnce    sync.Once
+}
+
+func (l *mutationLock) Close() error {
+	defer l.releaseOnce.Do(l.releaseStorage)
+	return l.File.Close()
+}
+func (g *MutationGate) lock(mode int) (*mutationLock, error) {
+	releaseStorage := sessionstorage.Use()
 	f, err := os.OpenFile(filepath.Join(g.Directory, "mutation.lock"), os.O_RDONLY, 0)
 	if err != nil {
+		releaseStorage()
 		return nil, err
 	}
 	if err := syscall.Flock(int(f.Fd()), mode); err != nil {
 		f.Close()
+		releaseStorage()
 		return nil, err
 	}
-	return f, nil
+	return &mutationLock{File: f, releaseStorage: releaseStorage}, nil
 }
 func (g *MutationGate) Begin() (*MutationLease, error) {
 	f, err := g.lock(syscall.LOCK_SH)

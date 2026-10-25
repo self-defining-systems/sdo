@@ -1,17 +1,10 @@
 package memory
 
-import "sync"
+import "sdo.dev/operator/sessionstorage"
 
 // SessionStorageUse protects an in-flight capture while a standby binds its
-// pre-mounted directory inodes to canonical incident paths. Writers never wait
-// for standby readiness; a busy capture makes the optional warm claim abstain.
-var sessionStorage sync.RWMutex
+// pre-mounted directory inodes to canonical incident paths. Mutation leases and
+// observations share this pin, so binding cannot replace their locked inodes.
+func SessionStorageUse() func() { return sessionstorage.Use() }
 
-func SessionStorageUse() func() { sessionStorage.RLock(); return sessionStorage.RUnlock }
-
-func TrySessionStorageBinding() (func(), bool) {
-	if !sessionStorage.TryLock() {
-		return nil, false
-	}
-	return sessionStorage.Unlock, true
-}
+func TrySessionStorageBinding() (func(), bool) { return sessionstorage.TryBind() }

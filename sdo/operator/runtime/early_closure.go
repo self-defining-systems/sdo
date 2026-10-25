@@ -7,12 +7,10 @@ import (
 	"fmt"
 	"time"
 
-	batchv1 "k8s.io/api/batch/v1"
-	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"sdo.dev/operator/apihistory"
-	"sdo.dev/operator/memory"
 	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/worker_registry"
@@ -231,118 +229,46 @@ func (d KubernetesJobDispatcher) responderJobNames(ctx context.Context, id strin
 	return names, nil
 }
 
-// Request termination for every owned worker, then independently check all Jobs
-// and Pods. Keep the closure fence on uncertainty or asynchronous termination.
+// Request termination for every owned worker, then independently re-read the
+// same inventory used by restart retirement. Delete acceptance is not quiescence.
 func (d KubernetesJobDispatcher) StopResponder(ctx context.Context, id string, attempts int) error {
-	names, err := d.responderJobNames(ctx, id, attempts)
+	inventory, err := d.responderExecutions(ctx, id, attempts)
 	if err != nil {
 		return err
 	}
-	// Staged requests may have no request ConfigMap at their content-addressed
-	// Job name. Every continuation still mounts the same narrow incident session.
-	var sessionSubPath string
-	if d.RepositoryPVC != "" {
-		sessionSubPath, err = memory.IncidentSessionSubPath(d.RepositoryPVCSubPath, id)
-		if err != nil {
-			return fmt.Errorf("resolve responder session ownership: %w", err)
-		}
-	}
-	ownsSession := func(spec corev1.PodSpec) bool {
-		if sessionSubPath == "" {
-			return false
-		}
-		volumes := map[string]bool{}
-		for _, volume := range spec.Volumes {
-			volumes[volume.Name] = volume.PersistentVolumeClaim != nil && volume.PersistentVolumeClaim.ClaimName == d.RepositoryPVC
-		}
-		containers := append(append([]corev1.Container(nil), spec.Containers...), spec.InitContainers...)
-		for _, container := range containers {
-			for _, mount := range container.VolumeMounts {
-				if volumes[mount.Name] && mount.MountPath == "/sdo/session" && mount.SubPath == sessionSubPath && mount.SubPathExpr == "" {
-					return true
-				}
-			}
-		}
-		return false
-	}
-	ownsPod := func(pod corev1.Pod) bool {
-		if ownsSession(pod.Spec) {
-			return true
-		}
-		for _, key := range []string{"sdo.dev/incident", "job-name", "batch.kubernetes.io/job-name"} {
-			if names[pod.Labels[key]] {
-				return true
-			}
-		}
-		for _, owner := range pod.OwnerReferences {
-			if owner.Kind == "Job" && names[owner.Name] {
-				return true
-			}
-		}
-		return false
-	}
-	terminalPod := func(pod corev1.Pod) bool {
-		return pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed
-	}
-	jobs, err := d.Client.BatchV1().Jobs(d.Namespace).List(ctx, metav1.ListOptions{})
-	if err != nil {
-		return fmt.Errorf("enumerate responder Jobs: %w", err)
-	}
-	pods, err := d.Client.CoreV1().Pods(d.Namespace).List(ctx, metav1.ListOptions{})
-	if err != nil {
-		return fmt.Errorf("enumerate responder Pods: %w", err)
-	}
-	for _, job := range jobs.Items {
-		if ownsSession(job.Spec.Template.Spec) {
-			names[job.Name] = true
-		}
-	}
 	zero := int64(0)
 	policy := metav1.DeletePropagationForeground
-	options := metav1.DeleteOptions{GracePeriodSeconds: &zero, PropagationPolicy: &policy}
+	options := func(uid types.UID) metav1.DeleteOptions {
+		result := metav1.DeleteOptions{GracePeriodSeconds: &zero, PropagationPolicy: &policy}
+		if uid != "" {
+			result.Preconditions = &metav1.Preconditions{UID: &uid}
+		}
+		return result
+	}
 	var failures []error
-	for _, job := range jobs.Items {
-		if names[job.Name] {
-			if err := d.Client.BatchV1().Jobs(d.Namespace).Delete(ctx, job.Name, options); err != nil && !apierrors.IsNotFound(err) {
+	for _, job := range inventory.jobs {
+		if inventory.names[job.Name] {
+			if err := d.Client.BatchV1().Jobs(d.Namespace).Delete(ctx, job.Name, options(job.UID)); err != nil && !apierrors.IsNotFound(err) {
 				failures = append(failures, fmt.Errorf("stop responder Job %s: %w", job.Name, err))
 			}
 		}
 	}
-	for _, pod := range pods.Items {
-		if ownsPod(pod) && !terminalPod(pod) {
-			if err := d.Client.CoreV1().Pods(d.Namespace).Delete(ctx, pod.Name, options); err != nil && !apierrors.IsNotFound(err) {
+	for _, pod := range inventory.pods {
+		if inventory.ownsPod(pod) && !terminalResponderPod(pod) {
+			if err := d.Client.CoreV1().Pods(d.Namespace).Delete(ctx, pod.Name, options(pod.UID)); err != nil && !apierrors.IsNotFound(err) {
 				failures = append(failures, fmt.Errorf("stop responder Pod %s: %w", pod.Name, err))
 			}
 		}
 	}
-	// Delete acceptance does not establish container termination.
-	jobs, err = d.Client.BatchV1().Jobs(d.Namespace).List(ctx, metav1.ListOptions{})
+	remaining, err := d.responderExecutions(ctx, id, attempts)
 	if err != nil {
-		failures = append(failures, fmt.Errorf("verify responder Jobs: %w", err))
-	}
-	pods, err = d.Client.CoreV1().Pods(d.Namespace).List(ctx, metav1.ListOptions{})
-	if err != nil {
-		failures = append(failures, fmt.Errorf("verify responder Pods: %w", err))
+		failures = append(failures, err)
 	}
 	if len(failures) > 0 {
 		return errors.Join(failures...)
 	}
-	for _, job := range jobs.Items {
-		if !names[job.Name] && !ownsSession(job.Spec.Template.Spec) {
-			continue
-		}
-		terminal := job.Status.CompletionTime != nil
-		for _, condition := range job.Status.Conditions {
-			terminal = terminal || condition.Status == corev1.ConditionTrue && (condition.Type == batchv1.JobComplete || condition.Type == batchv1.JobFailed)
-		}
-		if job.Status.Active > 0 || job.DeletionTimestamp != nil || !terminal {
-			return errResponderTerminating
-		}
-	}
-	for _, pod := range pods.Items {
-		if ownsPod(pod) && !terminalPod(pod) {
-			return errResponderTerminating
-		}
+	if remaining.active() {
+		return errResponderTerminating
 	}
 	return nil
 }
