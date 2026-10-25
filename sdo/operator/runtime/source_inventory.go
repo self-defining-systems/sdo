@@ -151,6 +151,7 @@ func inventoryFields(o *unstructured.Unstructured) []sdk.DriftField {
 	// A reason accepts this exact incarnation and configuration. Re-creation or
 	// spec/deletion changes invalidate it; status and resourceVersion do not.
 	projection["uid"] = string(o.GetUID())
+	projection["owner_references"] = o.GetOwnerReferences()
 	encoded, _ := json.Marshal(projection)
 	sum := sha256.Sum256(encoded)
 	fields := []sdk.DriftField{{Path: "object", New: fmt.Sprintf("sha256:%x", sum)}}
@@ -207,6 +208,11 @@ func inventoryRBACProjection(o *unstructured.Unstructured) map[string]any {
 		encoded, _ := json.Marshal(value)
 		var copy any
 		_ = json.Unmarshal(encoded, &copy)
+		if field == "roleRef" {
+			if reference, ok := copy.(map[string]any); ok && (reference["apiGroup"] == nil || reference["apiGroup"] == "") {
+				reference["apiGroup"] = "rbac.authorization.k8s.io"
+			}
+		}
 		if field == "subjects" {
 			subjects, _ := copy.([]any)
 			for _, raw := range subjects {
@@ -216,7 +222,14 @@ func inventoryRBACProjection(o *unstructured.Unstructured) map[string]any {
 				}
 			}
 		}
-		projection[field] = inventorySortedSets(copy)
+		normalized := inventorySortedSets(copy)
+		if normalized == nil {
+			continue
+		}
+		if list, ok := normalized.([]any); ok && len(list) == 0 {
+			continue
+		}
+		projection[field] = normalized
 	}
 	return projection
 }

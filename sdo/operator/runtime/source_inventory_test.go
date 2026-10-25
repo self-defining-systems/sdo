@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -116,10 +117,14 @@ func (s *inventoryStore) TakeObjectChanges() []ObjectChange                { ret
 type inventorySource struct {
 	objects []*unstructured.Unstructured
 	calls   int
+	err     error
 }
 
 func (s *inventorySource) AcceptedManifests(context.Context, string, string) ([]*unstructured.Unstructured, error) {
 	s.calls++
+	if s.err != nil {
+		return nil, s.err
+	}
 	return s.objects, nil
 }
 func inventoryHealth() sdk.Detector {
@@ -208,6 +213,9 @@ func TestLatentAllHealthClearClosureRequiresRemovalOrRecordedAcceptance(t *testi
 						t.Fatal("outcome lost explicit acceptance reason")
 					}
 				}
+				if err := c.revalidateClosure(context.Background(), sdktest.Snapshot{NamespaceName: "app"}, closed[0]); err != nil {
+					t.Fatalf("broker rejected the same verified acceptance at handoff: %v", err)
+				}
 				state := exportState(t, c)
 				restored, err := NewController(config, []sdk.Detector{inventoryHealth()}, c.provider, dispatcher, start)
 				if err != nil {
@@ -223,10 +231,18 @@ func TestLatentAllHealthClearClosureRequiresRemovalOrRecordedAcceptance(t *testi
 				if restored.IncidentOpen() || !restored.tracker.Quiet() {
 					t.Fatal("unchanged accepted drift reopened after restart")
 				}
+				// Publishing memory alone keeps accepted application-source identity.
+				restored.config.SourceCommit = "memory-only-advance"
+				if err := restored.Step(context.Background(), start.Add(5*time.Second), nil); err != nil {
+					t.Fatal(err)
+				}
+				if restored.IncidentOpen() || !restored.tracker.Quiet() {
+					t.Fatal("memory-only publication reopened accepted inventory")
+				}
 				changed := store.objects[len(store.objects)-5].DeepCopy()
 				changed.Object["spec"] = map[string]any{"replicas": int64(0)}
 				store.objects[len(store.objects)-5] = changed
-				if err := restored.Step(context.Background(), start.Add(5*time.Second), nil); err != nil {
+				if err := restored.Step(context.Background(), start.Add(6*time.Second), nil); err != nil {
 					t.Fatal(err)
 				}
 				if restored.tracker.Quiet() {
@@ -304,5 +320,72 @@ func TestSourceInventoryCacheOnlyExposesNamespaceBoundClusterRBAC(t *testing.T) 
 		if o.GetName() == unrelated.GetName() {
 			t.Fatal("unrelated cluster role leaked into app inventory")
 		}
+	}
+}
+
+func TestSourceInventoryMissingAuthorityPreservesMonitoringButNeverVerifies(t *testing.T) {
+	start := time.Unix(100, 0).UTC()
+	config := testControllerConfig()
+	config.Namespace = "app"
+	c, err := NewController(config, []sdk.Detector{inventoryHealth()}, staticProvider{snapshot: sdktest.Snapshot{NamespaceName: "app"}}, &recordingDispatcher{requests: make(chan IncidentRequest, 1)}, start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.ConfigureDrift(DriftControllerConfig{Inventory: true, Events: &inventoryStore{}, Source: &inventorySource{err: errors.New("accepted deployment evidence unavailable")}})
+	if err := c.Step(context.Background(), start, nil); err != nil {
+		t.Fatalf("source unavailability stopped independent health observation: %v", err)
+	}
+	c.currentIncidentRequest = &IncidentRequest{IncidentID: "unverified", Namespace: "app", ResponseDeadline: start.Add(time.Minute)}
+	c.incidentOpen = true
+	c.responderDone = true
+	c.responderCompletedAt = start
+	if check := c.responderVerification(context.Background(), "unverified"); check.Healthy || len(check.Findings) != 1 || !strings.Contains(check.Findings[0].Evidence, "unavailable") {
+		t.Fatalf("missing source authority became clear: %+v", check)
+	}
+	closed := false
+	c.OnIncidentClosed = func(IncidentClosure) { closed = true }
+	c.maybeCloseIncident(context.Background(), start.Add(time.Second), sdktest.Snapshot{NamespaceName: "app"})
+	if closed {
+		t.Fatal("health clearance verified without accepted source authority")
+	}
+}
+func TestSourceInventoryAcceptanceBindsObjectIncarnationAndOwnership(t *testing.T) {
+	object := inventoryObject("apps/v1", "Deployment", "app", "extra")
+	object.SetUID("first-incarnation")
+	index := NewSourceInventory("app", "accepted", nil)
+	original := index.Findings([]*unstructured.Unstructured{object}, time.Unix(100, 0))
+	accepted := acceptInventoryFindings(original)
+	for _, change := range []string{"new-incarnation", "new-owner"} {
+		t.Run(change, func(t *testing.T) {
+			current := object.DeepCopy()
+			if change == "new-incarnation" {
+				current.SetUID("second-incarnation")
+			} else {
+				_ = unstructured.SetNestedSlice(current.Object, []any{map[string]any{"apiVersion": "apps/v1", "kind": "Deployment", "name": "another-controller", "uid": "another"}}, "metadata", "ownerReferences")
+			}
+			findings := index.Findings([]*unstructured.Unstructured{current}, time.Unix(101, 0))
+			if len(findings) != 1 || checkedInventoryAcceptance(findings[0], accepted) {
+				t.Fatalf("accepted a different ownership/incarnation: %+v", findings)
+			}
+		})
+	}
+}
+
+func TestSourceInventoryRBACDefaultsAreNotDrift(t *testing.T) {
+	role := inventoryObject("rbac.authorization.k8s.io/v1", "Role", "app", "reader")
+	delete(role.Object, "spec")
+	role.Object["rules"] = []any{}
+	binding := inventoryObject("rbac.authorization.k8s.io/v1", "RoleBinding", "app", "reader")
+	delete(binding.Object, "spec")
+	binding.Object["roleRef"] = map[string]any{"kind": "Role", "name": "reader"}
+	binding.Object["subjects"] = []any{map[string]any{"kind": "ServiceAccount", "name": "api"}}
+	index := NewSourceInventory("app", "accepted", []*unstructured.Unstructured{role, binding})
+	liveRole := role.DeepCopy()
+	liveRole.Object["rules"] = nil
+	liveBinding := binding.DeepCopy()
+	liveBinding.Object["roleRef"].(map[string]any)["apiGroup"] = "rbac.authorization.k8s.io"
+	liveBinding.Object["subjects"] = []any{map[string]any{"kind": "ServiceAccount", "name": "api", "namespace": "app"}}
+	if findings := index.Findings([]*unstructured.Unstructured{liveRole, liveBinding}, time.Unix(100, 0)); len(findings) != 0 {
+		t.Fatalf("API-defaulted authorization caused an extra response: %+v", findings)
 	}
 }

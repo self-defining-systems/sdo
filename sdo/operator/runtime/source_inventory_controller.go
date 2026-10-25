@@ -70,7 +70,10 @@ func inventoryEvent(finding sdk.Finding) sdk.DriftEvent {
 func checkedInventoryAcceptance(finding sdk.Finding, labels []sdk.DriftEvent) bool {
 	event := inventoryEvent(finding)
 	checked := outcome_derivation.CheckedDriftAssessments(driftEventsContract([]sdk.DriftEvent{event}), driftEventsContract(labels))
-	return len(checked) == 1 && checked[0].GetInvestigationVerdict() == "benign"
+	// A closure carries the result assessment while the same checked label
+	// already lives in durable state. Rechecking that identical decision is
+	// idempotent; a later valid assessment overrides an earlier one.
+	return len(checked) > 0 && checked[len(checked)-1].GetInvestigationVerdict() == "benign"
 }
 
 func (c *Controller) observeSourceInventory(now time.Time) {
@@ -172,8 +175,8 @@ func (c *Controller) retainSourceInventoryAcceptancesLocked(result *IncidentResu
 	}
 	for _, finding := range c.sourceInventoryFindings {
 		checked := outcome_derivation.CheckedDriftAssessments(driftEventsContract([]sdk.DriftEvent{inventoryEvent(finding)}), driftEventsContract(result.DriftEvents))
-		if len(checked) == 1 && checked[0].GetInvestigationVerdict() == "benign" {
-			event := driftEventsState(checked)[0]
+		if len(checked) > 0 && checked[len(checked)-1].GetInvestigationVerdict() == "benign" {
+			event := driftEventsState(checked)[len(checked)-1]
 			found := false
 			for i, old := range c.acceptedSourceDrift {
 				if old.Ref == event.Ref {
