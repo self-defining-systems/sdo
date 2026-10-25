@@ -53,9 +53,11 @@ health objective needs more.
   tests run during `memory check` and fail it when they fail. Enforced by: `detector.test`.
 Advice, not validator-checked: make tests generalize by varying resource names, namespaces, and counts from the
 incident that taught the pattern.
-- Incident detectors must stay quiet on recorded healthy baselines and health detectors must not report
-  ExternalName Services for missing endpoints; the compile layer runs those generated checks. Enforced by:
-  `detector.test`.
+- Incident detectors must stay quiet on the controller's pre-incident healthy reference, including required
+  recorded observations; a fixed or agent-authored healthy state cannot replace it. Enforced by:
+  `detector.healthy-baseline`.
+- Health detectors must not report ExternalName Services for missing endpoints; the compile layer runs this
+  generated check. Enforced by: `detector.test`.
 
 ## Playbooks by ID
 

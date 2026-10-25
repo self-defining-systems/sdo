@@ -13,9 +13,13 @@ import (
 	"testing"
 	"time"
 
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	kruntime "k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
+	"k8s.io/client-go/kubernetes/scheme"
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/contracts/wire"
@@ -134,6 +138,13 @@ func testRunAttachesStateChanges(t *testing.T, observationBarrier, latent bool) 
 	for index := range readyFrontend() {
 		objects = append(objects, &readyFrontend()[index])
 	}
+	for _, object := range objects {
+		if deployment, ok := object.(*appsv1.Deployment); ok {
+			for i := range deployment.Spec.Template.Spec.Containers {
+				deployment.Spec.Template.Spec.Containers[i].Image = "example.test/app@sha256:" + strings.Repeat("1", 64)
+			}
+		}
+	}
 	client := fake.NewSimpleClientset(objects...)
 	dispatcher := capturingDispatcher{requests: make(chan IncidentRequest, 1)}
 	startTimeout := 300 * time.Millisecond
@@ -159,26 +170,10 @@ func testRunAttachesStateChanges(t *testing.T, observationBarrier, latent bool) 
 	runArgs := []string{"--namespace", hotel, "--control-namespace", hotel + "-sdo", "--app-root", repository,
 		"--application", "hotel", "--synthetic-traffic=false", "--lease-duration", "3s", "--drift-batch-window", "20ms"}
 	if latent {
-		service, err := client.CoreV1().Services(hotel).Get(ctx, "frontend", metav1.GetOptions{})
-		if err != nil {
-			t.Fatal(err)
-		}
-		service.APIVersion, service.Kind = "v1", "Service"
-		manifest, err := json.Marshal(service)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(repository+"/app.json", manifest, 0600); err != nil {
-			t.Fatal(err)
-		}
-		for _, args := range [][]string{{"add", "app.json"}, {"commit", "-m", "accepted service"}} {
-			if output, err := exec.Command("git", append([]string{"-C", repository}, args...)...).CombinedOutput(); err != nil {
-				t.Fatalf("%s: %v", output, err)
-			}
-		}
-		seedRenderedLock(t, GitPlanSource{Repository: repository, ManifestPaths: []string{"app.json"}}, nativeGit(t, repository, "rev-parse", "HEAD"), hotel)
-		runArgs = append(runArgs, "--deployed-manifest-path", "app.json")
+		seedDeclaredInventory(t, repository, hotel, objects)
+		runArgs = append(runArgs, "--deployed-manifest-path", "app.yaml")
 	}
+
 	go func() {
 		defer close(exited)
 		runErr = RunWithOptions(ctx, []sdk.Detector{detector}, RuntimeOptions{
@@ -310,4 +305,47 @@ func testRunAttachesStateChanges(t *testing.T, observationBarrier, latent bool) 
 	if findChange(request.StateChanges, "ConfigMap", "mongo-geo-script") != nil {
 		t.Fatalf("the dispatched request keeps its own snapshot: %+v", request.StateChanges.Changes)
 	}
+}
+
+// The source-anchored controller must see a complete declared healthy fixture;
+// a service-only source with unrelated live controllers/configuration is latent
+// drift before this test injects its observation-barrier fault.
+func seedDeclaredInventory(t *testing.T, root, namespace string, objects []kruntime.Object) string {
+	t.Helper()
+	var documents strings.Builder
+	for _, object := range objects {
+		if _, secret := object.(*corev1.Secret); secret {
+			continue
+		}
+		accessor, err := meta.Accessor(object)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if sdoOwned(metav1.ObjectMeta{Name: accessor.GetName(), Labels: accessor.GetLabels()}) {
+			continue
+		}
+		content, err := kruntime.DefaultUnstructuredConverter.ToUnstructured(object)
+		if err != nil {
+			t.Fatal(err)
+		}
+		kinds, _, err := scheme.Scheme.ObjectKinds(object)
+		if err != nil || len(kinds) == 0 {
+			t.Fatalf("fixture kind: %v", err)
+		}
+		content["apiVersion"] = kinds[0].GroupVersion().String()
+		content["kind"] = kinds[0].Kind
+		delete(content, "status")
+		data, err := json.Marshal(content)
+		if err != nil {
+			t.Fatal(err)
+		}
+		documents.Write(data)
+		documents.WriteString("\n---\n")
+	}
+	if err := os.WriteFile(filepath.Join(root, "app.yaml"), []byte(documents.String()), 0600); err != nil {
+		t.Fatal(err)
+	}
+	nativeGit(t, root, "add", "app.yaml")
+	nativeGit(t, root, "commit", "-qm", "declare complete healthy application fixture")
+	return seedRenderedLock(t, GitPlanSource{Repository: root, ManifestPaths: []string{"app.yaml"}}, nativeGit(t, root, "rev-parse", "HEAD"), namespace)
 }

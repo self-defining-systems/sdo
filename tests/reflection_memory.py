@@ -26,7 +26,7 @@ def memory_binary(tmp_path_factory: pytest.TempPathFactory, operator_binary: Pat
 
 @pytest.fixture
 def prepare_reflection_memory(memory_binary: Path, monkeypatch: pytest.MonkeyPatch) -> Callable[..., str]:
-    def prepare(root: Path, incident_id: str = "incident") -> str:
+    def prepare(root: Path, incident_id: str = "incident", *, outcome_record: dict[str, object] | None = None) -> str:
         root.mkdir(parents=True, exist_ok=True)
 
         def git(*args: str) -> str:
@@ -40,7 +40,13 @@ def prepare_reflection_memory(memory_binary: Path, monkeypatch: pytest.MonkeyPat
         git("commit", "-qm", "accepted source")
         outcome = root / ".sdo/outcomes" / f"{hashlib.sha256(incident_id.encode()).hexdigest()}.json"
         outcome.parent.mkdir(parents=True, exist_ok=True)
-        outcome.write_text(json.dumps({"schema_version": 1, "incident_id": incident_id, "classification": "success"}))
+        outcome.write_text(
+            json.dumps(
+                outcome_record
+                if outcome_record is not None
+                else {"schema_version": 1, "incident_id": incident_id, "classification": "success"}
+            )
+        )
         git("add", "-f", ".sdo")
         git("commit", "-qm", f"accepted outcome\n\nSDO-Incident: {incident_id}\nSDO-Phase: outcome")
         base = git("rev-parse", "HEAD")

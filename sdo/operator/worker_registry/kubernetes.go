@@ -353,6 +353,7 @@ const (
 )
 
 func (e KubernetesExecutor) ensureJob(ctx context.Context, task *contracts.AgentTask, launch *contracts.KubernetesJobLaunch, jobName string, request requestSource, resultName, proposalSubPath string) error {
+	reflection := task.GetRequest().MessageIs(&contracts.ReflectionRequest{})
 	var activeDeadlineSeconds *int64
 	if deadline, bounded := frozenReflectionDeadline(task); bounded {
 		remaining := time.Until(deadline)
@@ -403,7 +404,7 @@ func (e KubernetesExecutor) ensureJob(ctx context.Context, task *contracts.Agent
 				corev1.VolumeMount{Name: "repository", MountPath: "/sdo/session/tools/responses", SubPath: path.Join(e.SessionPVCSubPath, "tools/responses")},
 			)
 		}
-		if e.CapturedCorpusReadOnly {
+		if e.CapturedCorpusReadOnly || reflection {
 			mounts = append(mounts, corev1.VolumeMount{Name: "repository", MountPath: "/sdo/session/corpus", SubPath: path.Join(e.SessionPVCSubPath, "corpus"), ReadOnly: true})
 		}
 	}
@@ -425,13 +426,13 @@ func (e KubernetesExecutor) ensureJob(ctx context.Context, task *contracts.Agent
 	if e.SessionPVCSubPath != "" {
 		env = append(env, corev1.EnvVar{Name: "SDO_SESSION_DIR", Value: "/sdo/session"})
 	}
-	reflection := task.GetRequest().MessageIs(&contracts.ReflectionRequest{})
 	judge := task.GetRequest().MessageIs(&contracts.HealthJudgeRequest{})
 	memoryAuthor := reflection || judge
 	baseline := ""
-	if reflection && e.HealthyBaseline {
-		baseline = "/sdo/healthy-baseline"
-		mounts = append(mounts, corev1.VolumeMount{Name: "repository", MountPath: baseline, SubPath: path.Join(e.RepositoryPVCSubPath, ".sdo-baseline/healthy"), ReadOnly: true})
+	captureDirectory := ""
+	if reflection && e.SessionPVCSubPath != "" {
+		captureDirectory = "/sdo/session/corpus"
+		baseline = path.Join(captureDirectory, "healthy")
 	}
 	if memoryAuthor {
 		actor, phase := "responder", "reflection"
@@ -441,9 +442,9 @@ func (e KubernetesExecutor) ensureJob(ctx context.Context, task *contracts.Agent
 		env = append(env, corev1.EnvVar{Name: "SDO_ACTOR", Value: actor}, corev1.EnvVar{Name: "SDO_PHASE", Value: phase}, corev1.EnvVar{Name: "SDO_BASE_COMMIT", Value: task.GetWorkspace().GetBaseCommit()})
 	}
 	if reflection {
-		env = append(env, corev1.EnvVar{Name: "SDO_HEALTHY_BASELINE", Value: baseline})
+		env = append(env, corev1.EnvVar{Name: "SDO_HEALTHY_BASELINE", Value: baseline}, corev1.EnvVar{Name: "SDO_CAPTURED_CORPUS_DIR", Value: captureDirectory})
 	}
-	reserved := map[string]bool{"SDO_CODEX_HOME_ROOT": true, "SDO_REQUEST_CONFIGMAP": true, "SDO_RESULT_CONFIGMAP": true, "SDO_NAMESPACE": true, "SDO_SESSION_DIR": e.SessionPVCSubPath != "", "SDO_ACTOR": memoryAuthor, "SDO_PHASE": memoryAuthor, "SDO_BASE_COMMIT": memoryAuthor, "SDO_HEALTHY_BASELINE": reflection, "SDO_API_PROXY_URL": true, "SDO_API_HISTORY_DIR": true}
+	reserved := map[string]bool{"SDO_CODEX_HOME_ROOT": true, "SDO_REQUEST_CONFIGMAP": true, "SDO_RESULT_CONFIGMAP": true, "SDO_NAMESPACE": true, "SDO_SESSION_DIR": e.SessionPVCSubPath != "", "SDO_ACTOR": memoryAuthor, "SDO_PHASE": memoryAuthor, "SDO_BASE_COMMIT": memoryAuthor, "SDO_HEALTHY_BASELINE": reflection, "SDO_CAPTURED_CORPUS_DIR": reflection, "SDO_API_PROXY_URL": true, "SDO_API_HISTORY_DIR": true}
 	names := make([]string, 0, len(e.Environment))
 	for name := range e.Environment {
 		if !reserved[name] {

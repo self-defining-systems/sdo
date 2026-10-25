@@ -538,3 +538,46 @@ func TestKubernetesValidatorRepairsADriftedPolicyInPlaceAndFailsClosedWithoutOne
 		t.Fatal("validator may start without the default-deny policy")
 	}
 }
+
+func TestKubernetesValidatorUsesFrozenControllerBaselineWithoutLegacyOptIn(t *testing.T) {
+	root := repository(t)
+	baseline := filepath.Join(filepath.Dir(root), ".sdo-runtime", "sessions", "fixture", "corpus", "healthy")
+	if err := os.MkdirAll(baseline, 0700); err != nil {
+		t.Fatal(err)
+	}
+	client := fake.NewSimpleClientset()
+	var validated *batchv1.Job
+	client.PrependReactor("create", "jobs", func(action ktesting.Action) (bool, runtime.Object, error) {
+		job := action.(ktesting.CreateAction).GetObject().(*batchv1.Job).DeepCopy()
+		if strings.HasPrefix(job.Name, "sdo-validator-") && !strings.Contains(job.Name, "canary") {
+			validated = job.DeepCopy()
+		}
+		now := metav1.Now()
+		job.Status.Succeeded = 1
+		job.Status.CompletionTime = &now
+		if err := client.Tracker().Create(batchv1.SchemeGroupVersion.WithResource("jobs"), job, "sdo"); err != nil {
+			t.Fatal(err)
+		}
+		return true, job, nil
+	})
+	launcher := KubernetesValidationJobClient{Client: client, Namespace: "sdo", Image: "validator:test", RepositoryPVC: "repository", RepositoryMountPath: filepath.Dir(root), RepositoryPVCSubPath: "tenant", SchemaIdentity: "schema", PollInterval: time.Millisecond}
+	ctx := context.WithValue(context.Background(), compileBaselineKey{}, baseline)
+	if err := JobValidator(launcher)(ctx, root, []string{"app.txt"}); err != nil {
+		t.Fatal(err)
+	}
+	if validated == nil {
+		t.Fatal("validator Job missing")
+	}
+	found := false
+	for _, mount := range validated.Spec.Template.Spec.Containers[0].VolumeMounts {
+		if mount.Name == "healthy-baseline" {
+			found = true
+			if !mount.ReadOnly || mount.SubPath != "tenant/.sdo-runtime/sessions/fixture/corpus/healthy" {
+				t.Fatalf("wrong baseline projection: %+v", mount)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("frozen controller baseline not mounted")
+	}
+}

@@ -120,6 +120,7 @@ type ResponderLoop struct {
 	menuExecutions    map[string][]MenuRoundExecution
 	menuRepairs       []RepairActionReceipt
 	VerifyClosure     func(context.Context) ToolResponse
+	VerifyResult      func(context.Context, IncidentResult) ToolResponse
 	CurrentEvidence   func() *IncidentRequest
 	Request           IncidentRequest
 	Programs          program.ProgramRegistry

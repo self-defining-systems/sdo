@@ -27,7 +27,11 @@ func addCaptureGrants(c Config, p *Plan, resources []*metav1.APIResourceList) er
 				continue
 			}
 			verbs := []string{}
-			for _, verb := range []string{"get", "list"} {
+			readVerbs := []string{"get", "list"}
+			if inventoryWatchResource(gv.Group, resource.Name) {
+				readVerbs = append(readVerbs, "watch")
+			}
+			for _, verb := range readVerbs {
 				if slices.Contains(resource.Verbs, verb) {
 					verbs = append(verbs, verb)
 				}
@@ -50,4 +54,17 @@ func addCaptureGrants(c Config, p *Plan, resources []*metav1.APIResourceList) er
 	p.ClusterRoles = append(p.ClusterRoles, &rbacv1.ClusterRole{ObjectMeta: metav1.ObjectMeta{Name: name}, Rules: rules})
 	p.ClusterBindings = append(p.ClusterBindings, &rbacv1.ClusterRoleBinding{ObjectMeta: metav1.ObjectMeta{Name: name}, RoleRef: rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "ClusterRole", Name: name}, Subjects: []rbacv1.Subject{{Kind: "ServiceAccount", Name: "sdo-controller", Namespace: c.controlNamespace()}}})
 	return nil
+}
+
+// Only the source inventory's reviewed non-secret collections need watch.
+func inventoryWatchResource(group, resource string) bool {
+	switch group + "/" + resource {
+	case "/configmaps", "/services", "/serviceaccounts", "/pods", "/persistentvolumeclaims",
+		"apps/deployments", "apps/statefulsets", "apps/daemonsets", "apps/replicasets",
+		"batch/jobs", "batch/cronjobs", "networking.k8s.io/networkpolicies",
+		"rbac.authorization.k8s.io/roles", "rbac.authorization.k8s.io/rolebindings",
+		"rbac.authorization.k8s.io/clusterroles", "rbac.authorization.k8s.io/clusterrolebindings":
+		return true
+	}
+	return false
 }

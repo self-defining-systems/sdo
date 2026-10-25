@@ -237,12 +237,18 @@ func (c *Controller) revalidateClosure(ctx context.Context, snapshot sdk.Detecti
 			}
 		}
 	}
+	c.mu.Lock()
+	inventoryClear, _ := c.verifySourceInventoryLocked(closure.Result)
+	c.mu.Unlock()
+	if !inventoryClear {
+		return fmt.Errorf("closure accepted-source inventory remains unexplained")
+	}
 	for _, finding := range closure.Request.Findings {
-		if !strings.HasPrefix(finding.DetectorID, "drift.") {
+		if inventoryFinding(finding) || !strings.HasPrefix(finding.DetectorID, "drift.") {
 			continue
 		}
 		events := driftEventsForFindings(nil, []sdk.Finding{finding})
-		if len(events) != 1 || len(events[0].Fields) == 0 || events[0].Source == "absent from accepted source" {
+		if len(events) != 1 || len(events[0].Fields) == 0 {
 			continue
 		}
 		restored, err := c.closureSourceRestored(ctx, snapshot, finding, events)

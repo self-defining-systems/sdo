@@ -448,7 +448,10 @@ func t1RunBroker(t *testing.T, c t1Class, reject bool) t1Run {
 		}
 		response := &contracts.ReflectionResult{LearningDecision: "updated", ProposedArtifactIds: []string{"base"}}
 		if c.gaps > 0 || c.decline {
-			response = &contracts.ReflectionResult{LearningDecision: "no_change", NoChangeReason: "protected fixed observation missing", DeclineReason: "evidence_gap"}
+			response = &contracts.ReflectionResult{LearningDecision: "no_change", NoChangeReason: "protected fixed observation missing"}
+			if c.decline {
+				response.DeclineReason = "evidence_gap"
+			}
 		} else {
 			// A visible, bounded scripted edit ensures questions exercise publication.
 			file := filepath.Join(task.Workspace.CheckoutPath, ".sdo/playbooks/base/README.md")
@@ -472,6 +475,11 @@ func t1RunBroker(t *testing.T, c t1Class, reject bool) t1Run {
 	}
 	closure := nativeClosure(workspace)
 	closure.Request.RepairPolicy = "recorded-actions"
+	if c.decline {
+		// A real reflection session must exercise publication rejection, rather
+		// than the controller-owned no-session settlement.
+		closure.Result.ResponderSessionID = "t1-scripted-session"
+	}
 	if _, err := native.ProcessClosure(ctx, closure); err != nil {
 		t.Fatal(err)
 	}

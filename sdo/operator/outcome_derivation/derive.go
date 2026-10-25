@@ -107,7 +107,7 @@ func Derive(ctx context.Context, closure *contractsv1alpha1.IncidentClosure, rep
 	}
 	record := &contractsv1alpha1.OutcomeRecord{
 		SchemaVersion: 1, IncidentId: request.GetIncidentId(), SourceCommit: request.GetSourceCommit(), DeployedCommit: request.GetDeployedCommit(),
-		DetectorHistory: cloneMessages(request.GetDetectorHistory()), Findings: cloneMessages(request.GetFindings()),
+		DetectorHistory: append(cloneMessages(request.GetDetectorHistory()), cloneMessages(closure.GetIncidentDetectorStates())...), Findings: cloneMessages(request.GetFindings()),
 		DriftEvents:       cloneMessages(request.GetDriftEvents()),
 		SurfacedPlaybooks: surfaced, InspectedPlaybooks: append([]string(nil), surfaced...), ConfirmedPlaybooks: append([]string(nil), applied...),
 		RejectedPlaybooks: rejected, AppliedPlaybooks: applied,

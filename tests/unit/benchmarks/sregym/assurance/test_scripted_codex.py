@@ -7,6 +7,7 @@ executor, with a stub ``kubectl`` standing in for the cluster.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -14,6 +15,7 @@ import stat
 import subprocess
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 from google.protobuf import json_format
@@ -24,6 +26,9 @@ from benchmarks.sregym.assurance.scripted_codex.usage import request_usage
 from sdo.agents.responder.codex import execute_incident
 from sdo.agents.responder.reflection import CodexSessionBackend
 from sdo.contracts import AgentTask, IncidentRequest, to_canonical_json
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 REPO_ROOT = Path(__file__).resolve().parents[5]
 SEED = REPO_ROOT / "tests" / "fixtures" / "sdo" / "contracts" / "incident_request.json"
@@ -242,6 +247,103 @@ def test_wrong_only_honest_fails_and_claimed_lies_about_verification(
     assert [(ref.kind, ref.name) for ref in wrong.resources] == [("Deployment", "frontend")]
 
 
+def _prepare_policy_reflection(
+    worktree: Path,
+    incident_id: str,
+    prepare_reflection_memory: Callable[..., str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> str:
+    """Controller-owned opening, repair and fresh-clear evidence for the toy policy."""
+    resource = {"api_version": "networking.k8s.io/v1", "kind": "NetworkPolicy", "namespace": NAMESPACE, "name": POLICY}
+    policy = {
+        "metadata": {"name": POLICY, "namespace": NAMESPACE},
+        "spec": {
+            "podSelector": {"matchLabels": {"io.kompose.service": "recommendation"}},
+            "policyTypes": ["Ingress", "Egress"],
+        },
+    }
+    peer = {
+        **policy,
+        "metadata": {"name": "allow-recommendation", "namespace": NAMESPACE},
+        "spec": {**policy["spec"], "ingress": [{}]},
+    }
+    opened = json.dumps({"namespace": NAMESPACE, "networkPolicies": [policy, peer]}).encode()
+    fixed = json.dumps({"namespace": NAMESPACE, "networkPolicies": [peer]}).encode()
+    corpus = worktree / ".sdo/corpus/deny-all-networkpolicy-isolation"
+    corpus.mkdir(parents=True)
+    for name, content in {
+        "open.json": opened,
+        "fixed.json": fixed,
+        "healthy.json": fixed,
+        "recordings.json": b"[]",
+    }.items():
+        (corpus / name).write_bytes(content)
+    (corpus / "labels.json").write_text(
+        json.dumps(
+            {
+                "root_cause_program_ids": ["deny-all-networkpolicy-isolation"],
+                "bindings": {"policy": resource},
+                "peer_bindings": {"policy": {**resource, "name": "allow-recommendation"}},
+                "provenance": {
+                    "incident_id": incident_id,
+                    "open_at": "detect",
+                    "open_sha256": hashlib.sha256(opened).hexdigest(),
+                    "fixed_sha256": hashlib.sha256(fixed).hexdigest(),
+                },
+            }
+        )
+    )
+    capture = worktree.parent / "policy-capture"
+    (capture / "healthy").mkdir(parents=True)
+    (capture / "healthy/healthy.json").write_bytes(fixed)
+    (capture / "open@detect.json").write_bytes(opened)
+    (capture / "fixed.json").write_bytes(fixed)
+    (capture / "open@detect-recordings.json").write_text("[]")
+    monkeypatch.setenv("SDO_CAPTURED_CORPUS_DIR", str(capture))
+    return prepare_reflection_memory(
+        worktree,
+        incident_id,
+        outcome_record={
+            "schema_version": 1,
+            "incident_id": incident_id,
+            "classification": "success",
+            "confirmed_root_causes": [{"summary": "deny-all policy isolates recommendation", "resources": [resource]}],
+            "findings": [
+                {
+                    "detector_id": "deny-all-networkpolicy-isolation",
+                    "rule_id": "total-isolation",
+                    "status": "active",
+                    "severity": "critical",
+                    "summary": "policy isolates recommendation",
+                    "evidence": "deny-all rules select workload",
+                    "primary_resource": resource,
+                    "fingerprint": "policy-isolation",
+                }
+            ],
+            "repair_actions": [
+                {
+                    "action_id": "delete-policy",
+                    "kind": "kubectl",
+                    "target": "NetworkPolicy/" + POLICY,
+                    "summary": "remove isolation",
+                    "details": "policy deleted and absence observed",
+                    "success": True,
+                    "resources": [resource],
+                    "started_at": "2026-01-01T00:00:01Z",
+                    "completed_at": "2026-01-01T00:00:02Z",
+                }
+            ],
+            "detector_history": [
+                {
+                    "detector_id": "deny-all-networkpolicy-isolation",
+                    "status": "clear",
+                    "evaluated_at": "2026-01-01T00:00:03Z",
+                }
+            ],
+        },
+    )
+
+
 def test_resumed_reflection_accounts_its_tokens_and_edits_final_files(
     scripted: dict[str, Path], monkeypatch: pytest.MonkeyPatch, prepare_reflection_memory
 ) -> None:
@@ -251,7 +353,7 @@ def test_resumed_reflection_accounts_its_tokens_and_edits_final_files(
     result = execute_incident(request, model="gpt-6-luna", provider="codex")
     assert result.responder_session_id
 
-    commit = prepare_reflection_memory(worktree, request.incident_id)
+    commit = _prepare_policy_reflection(worktree, request.incident_id, prepare_reflection_memory, monkeypatch)
     turn = CodexSessionBackend(model="gpt-6-luna").resume(
         session_id=result.responder_session_id,
         worktree=worktree,
@@ -368,7 +470,7 @@ def test_scripted_reflection_fixes_local_diagnostics_in_the_same_checkout(
     request = _request(worktree, scripted["tmp"], monkeypatch)
     _directive(scripted["store"], reflection="invalid_then_learn")
     responder = execute_incident(request, model="gpt-6-luna", provider="codex")
-    prepare_reflection_memory(worktree, request.incident_id)
+    _prepare_policy_reflection(worktree, request.incident_id, prepare_reflection_memory, monkeypatch)
     turn = CodexSessionBackend(model="gpt-6-luna").resume(
         session_id=responder.responder_session_id,
         worktree=worktree,

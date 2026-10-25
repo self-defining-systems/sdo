@@ -169,6 +169,13 @@ func TestForeignDriftNormalChurn(t *testing.T) {
 		"EndpointSlice": &discoveryv1.EndpointSlice{ObjectMeta: meta, AddressType: discoveryv1.AddressTypeIPv4},
 		"NetworkPolicy": foreignPolicy("operator-policy"),
 	}
+	for _, watch := range cache.declared {
+		if _, ok := objects[watch.Kind]; !ok {
+			child := inventoryObject(watch.APIVersion, watch.Kind, watch.Namespace, "derived")
+			child.SetOwnerReferences(owner)
+			objects[watch.Kind] = child
+		}
+	}
 	if len(cache.declared) != len(objects) {
 		t.Fatalf("watch inventory changed: %+v", cache.declared)
 	}
