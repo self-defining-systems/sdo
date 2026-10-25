@@ -280,3 +280,21 @@ func TestFailedClosureLearningRetainsRepairWhenWorkerFailsAfterHealthClears(t *t
 		t.Fatalf("failed worker hid final independent clearance: %v", view)
 	}
 }
+
+func TestFailedClosurePartialEvidenceSnapshotIsIsolated(t *testing.T) {
+	closure := failedThreeFaultClosure(t)
+	controller := &Controller{pendingClosure: &closure}
+	first, ok := controller.PendingIncidentClosure()
+	if !ok {
+		t.Fatal("closure not pending")
+	}
+	first.PartialDetectorStates[0].Status = DetectorEvaluationClear
+	first.PartialDetectorStates[0].Fingerprints[0] = "caller-mutated"
+	second, ok := controller.PendingIncidentClosure()
+	if !ok {
+		t.Fatal("closure no longer pending")
+	}
+	if second.PartialDetectorStates[0].Status != DetectorEvaluationFiring || second.PartialDetectorStates[0].Fingerprints[0] != "blocker" {
+		t.Fatal("caller changed controller-owned partial proof through an exported snapshot")
+	}
+}
