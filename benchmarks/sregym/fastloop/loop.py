@@ -449,7 +449,10 @@ def _run_one(
             recovery_seconds = 0.0
             for _ in range(config.cleanup_passes):
                 recovery_seconds += driver.recover()
-                recovery_oracle = grade()
+                # Seed cleanup can remove injected workloads; grade the recovered baseline.
+                recovery_oracle = getattr(driver, "recovery_oracle", lambda: None)()
+                if recovery_oracle is None:
+                    recovery_oracle = grade()
                 if not recovery_oracle.success:
                     raise RuntimeError("recovery residue: the fault oracle still fails after harness recovery")
                 full_cleanup = getattr(driver, "last_full_cleanup_verified", False)
