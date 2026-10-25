@@ -139,6 +139,18 @@ func (d KubernetesJobDispatcher) PrepareDispatch(ctx context.Context, request In
 }
 
 func (d KubernetesJobDispatcher) Dispatch(ctx context.Context, request IncidentRequest) (IncidentResult, error) {
+	result, err := d.dispatch(ctx, request)
+	usage, usageErr := d.ResponderUsage(request.IncidentID)
+	if usageErr != nil {
+		return result, fmt.Errorf("recover responder usage: %w", usageErr)
+	}
+	if usage != nil {
+		result.Usage = *usage
+	}
+	return result, err
+}
+
+func (d KubernetesJobDispatcher) dispatch(ctx context.Context, request IncidentRequest) (IncidentResult, error) {
 	if d.Registry == nil || d.AgentID == "" {
 		return IncidentResult{}, errors.New("incident dispatch requires an agent registry and responder agent ID")
 	}
@@ -221,6 +233,7 @@ func (d KubernetesJobDispatcher) Dispatch(ctx context.Context, request IncidentR
 		environment["CODEX_HOME"] = "/sdo/session/codex"
 		environment["CLAUDE_CONFIG_DIR"] = "/sdo/session/claude"
 		environment["SDO_SESSION_SCRATCH"] = "/sdo/session/scratch"
+		environment["SDO_RESPONDER_USAGE_DIR"] = "/sdo/session/usage"
 		environment[latefindings.ReceiptsPathEnv] = latefindings.DefaultReceiptsPath
 		store := latefindings.Store{Client: d.Client, Namespace: d.Namespace}
 		if err := store.Ensure(ctx, request.IncidentID); err != nil {

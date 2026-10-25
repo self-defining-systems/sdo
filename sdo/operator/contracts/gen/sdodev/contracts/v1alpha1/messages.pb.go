@@ -2268,8 +2268,10 @@ type UsageMetrics struct {
 	ReasoningOutputTokens    int64                  `protobuf:"varint,9,opt,name=reasoning_output_tokens,json=reasoningOutputTokens,proto3" json:"reasoning_output_tokens,omitempty"`
 	ModelRequests            *int64                 `protobuf:"varint,10,opt,name=model_requests,json=modelRequests,proto3,oneof" json:"model_requests,omitempty"`
 	TotalCostUsd             *float64               `protobuf:"fixed64,11,opt,name=total_cost_usd,json=totalCostUsd,proto3,oneof" json:"total_cost_usd,omitempty"`
-	unknownFields            protoimpl.UnknownFields
-	sizeCache                protoimpl.SizeCache
+	// True when at least one included turn was interrupted before final accounting.
+	Partial       bool `protobuf:"varint,12,opt,name=partial,proto3" json:"partial,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *UsageMetrics) Reset() {
@@ -2377,6 +2379,13 @@ func (x *UsageMetrics) GetTotalCostUsd() float64 {
 		return *x.TotalCostUsd
 	}
 	return 0
+}
+
+func (x *UsageMetrics) GetPartial() bool {
+	if x != nil {
+		return x.Partial
+	}
+	return false
 }
 
 type TimingMetrics struct {
@@ -3519,7 +3528,7 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	"\x06passed\x18\x02 \x01(\bR\x06passed\x12!\n" +
 	"\adetails\x18\x03 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\adetails\x12C\n" +
 	"\vobserved_at\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampB\x06\xbaH\x03\xc8\x01\x01R\n" +
-	"observedAt\"\x81\x12\n" +
+	"observedAt\"\x9b\x12\n" +
 	"\fUsageMetrics\x12$\n" +
 	"\tllm_calls\x18\x01 \x01(\x03B\a\xbaH\x04\"\x02(\x00R\bllmCalls\x12*\n" +
 	"\finput_tokens\x18\x02 \x01(\x03B\a\xbaH\x04\"\x02(\x00R\vinputTokens\x12,\n" +
@@ -3532,7 +3541,8 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	"\x17reasoning_output_tokens\x18\t \x01(\x03B\a\xbaH\x04\"\x02(\x00R\x15reasoningOutputTokens\x123\n" +
 	"\x0emodel_requests\x18\n" +
 	" \x01(\x03B\a\xbaH\x04\"\x02(\x00H\x03R\rmodelRequests\x88\x01\x01\x129\n" +
-	"\x0etotal_cost_usd\x18\v \x01(\x01B\x0e\xbaH\v\x12\t)\x00\x00\x00\x00\x00\x00\x00\x00H\x04R\ftotalCostUsd\x88\x01\x01:\xf5\v\xbaH\xf1\v\x1a\x86\x01\n" +
+	"\x0etotal_cost_usd\x18\v \x01(\x01B\x0e\xbaH\v\x12\t)\x00\x00\x00\x00\x00\x00\x00\x00H\x04R\ftotalCostUsd\x88\x01\x01\x12\x18\n" +
+	"\apartial\x18\f \x01(\bR\apartial:\xf5\v\xbaH\xf1\v\x1a\x86\x01\n" +
 	"\x19usage.reasoning_le_output\x125reasoning_output_tokens must not exceed output_tokens\x1a2this.reasoning_output_tokens <= this.output_tokens\x1a\xd8\x01\n" +
 	"#usage.cache_write_1h_le_cache_write\x12Dcache_write_1h_input_tokens must not exceed cache_write_input_tokens\x1ak!has(this.cache_write_1h_input_tokens) || this.cache_write_1h_input_tokens <= this.cache_write_input_tokens\x1a\xaa\x01\n" +
 	"\"usage.cached_le_input_when_no_read\x120cached_input_tokens must not exceed input_tokens\x1aRhas(this.cache_read_input_tokens) || this.cached_input_tokens <= this.input_tokens\x1a\xc8\x01\n" +

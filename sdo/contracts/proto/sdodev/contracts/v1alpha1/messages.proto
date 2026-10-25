@@ -343,6 +343,8 @@ message UsageMetrics {
   int64 reasoning_output_tokens = 9 [(buf.validate.field).int64.gte = 0];
   optional int64 model_requests = 10 [(buf.validate.field).int64.gte = 0];
   optional double total_cost_usd = 11 [(buf.validate.field).double.gte = 0];
+  // True when at least one included turn was interrupted before final accounting.
+  bool partial = 12;
 }
 
 message TimingMetrics {

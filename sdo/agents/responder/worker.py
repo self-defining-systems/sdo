@@ -110,6 +110,7 @@ def run_worker_task(
     if alias := os.environ.pop("SDO_WORKSPACE_ALIAS", None):
         request.repository_worktree = alias
     mark_startup("worker_ready")
+    os.environ["SDO_RESPONDER_TASK_ID"] = task.task_id
     result = executor(request)
     if result.incident_id != request.incident_id:
         raise ResponderExecutionError("responder result incident_id does not match request")
