@@ -213,15 +213,30 @@ func (w RegisteredReflectionWorker) Reflect(ctx context.Context, closure Inciden
 	timeout := func() (ReflectionDecision, error) {
 		return w.withUsage(ReflectionDecision{LearningDecision: "failed", FailureReason: "timeout", Error: fmt.Sprintf("reflection task %s exceeded frozen deadline %s", task.GetTaskId(), deadline.UTC().Format(time.RFC3339Nano))}, workspace.IncidentID)
 	}
-	if !time.Now().Before(deadline) {
-		return timeout()
+	var result *contracts.AgentResult
+	var err error
+	recovered := false
+	if recovery, ok := executor.(worker_registry.ReflectionResultRecoverer); ok {
+		result, recovered, err = recovery.RecoverCompleted(ctx, task)
+		if err != nil {
+			var terminalTimeout *worker_registry.TaskTimeoutError
+			if errors.As(err, &terminalTimeout) || !time.Now().Before(deadline) {
+				return timeout()
+			}
+			return ReflectionDecision{}, err
+		}
 	}
-	executionCtx, cancel := context.WithDeadline(ctx, deadline)
-	defer cancel()
-	result, err := executor.Execute(executionCtx, task)
-	var terminalTimeout *worker_registry.TaskTimeoutError
-	if errors.As(err, &terminalTimeout) || !time.Now().Before(deadline) {
-		return timeout()
+	if !recovered {
+		if !time.Now().Before(deadline) {
+			return timeout()
+		}
+		executionCtx, cancel := context.WithDeadline(ctx, deadline)
+		defer cancel()
+		result, err = executor.Execute(executionCtx, task)
+		var terminalTimeout *worker_registry.TaskTimeoutError
+		if errors.As(err, &terminalTimeout) || !time.Now().Before(deadline) {
+			return timeout()
+		}
 	}
 	if err != nil {
 		return ReflectionDecision{}, err
