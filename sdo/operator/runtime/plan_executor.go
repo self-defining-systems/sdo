@@ -86,6 +86,8 @@ type PlanApplicationResult struct {
 }
 
 type PlanExecutor struct {
+	// PollRollouts returns pending after one observation instead of waiting.
+	PollRollouts bool
 	DeleteObject func(context.Context, sdk.ObjectRef, types.UID, string) error
 	// RolloutTimeout can shorten the default ninety-second rollout budget.
 	RecordPrimitive func(sdktest.PrimitiveCall) error

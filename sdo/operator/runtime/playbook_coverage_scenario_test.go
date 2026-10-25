@@ -49,7 +49,11 @@ func TestHermeticAgentRepairsTwoCoveredFaultsAndOneUnexplained(t *testing.T) {
 	t.Run("combined-self-check", func(t *testing.T) { testHermeticThreeFaultSelfCheck(t, true) })
 }
 
-func testHermeticThreeFaultSelfCheck(t *testing.T, combined bool) {
+func TestHermeticMultiMitigationThreeFaultShape(t *testing.T) {
+	testHermeticThreeFaultSelfCheck(t, true, true)
+}
+
+func testHermeticThreeFaultSelfCheck(t *testing.T, combined bool, batchPrograms ...bool) {
 	if combined {
 		t.Setenv("SDO_SCRIPTED_COMPACT_OUTPUT", "1")
 	}
@@ -145,10 +149,26 @@ func testHermeticThreeFaultSelfCheck(t *testing.T, combined bool) {
 	go func() { defer close(served); _ = server.Serve(serverCtx) }()
 	t.Cleanup(func() { stop(); <-served })
 	// Every write is a scripted agent choice through the real menu transport.
-	for _, match := range typed.PlaybookCoverage.Matches {
-		response := fastloopTool(t, tools, "mitigate", match.MitigationSelection)
-		if response.ApplicationID == "" {
-			t.Fatalf("program not applied: %+v", response)
+	if len(batchPrograms) > 0 && batchPrograms[0] {
+		args := []string{"mitigate"}
+		for _, match := range typed.PlaybookCoverage.Matches {
+			args = append(args, "--option", match.MitigationSelection)
+		}
+		response := fastloopTool(t, tools, args...)
+		if response.ApplicationID == "" || loop.LoopsUsed() != 1 || len(loop.PlanApplications()) != 2 || len(loop.MenuRepairActions()) != 2 {
+			t.Fatalf("two programs did not execute in one call/round with two receipts: %+v", response)
+		}
+		observed, _ := provider.Snapshot(ctx)
+		remaining, _ := detector.Detect(ctx, observed)
+		if len(remaining) != 1 || remaining[0].RuleID != "unlearned-port" {
+			t.Fatalf("multi-program repair must leave only third fault: %+v", remaining)
+		}
+	} else {
+		for _, match := range typed.PlaybookCoverage.Matches {
+			response := fastloopTool(t, tools, "mitigate", match.MitigationSelection)
+			if response.ApplicationID == "" {
+				t.Fatalf("program not applied: %+v", response)
+			}
 		}
 	}
 	third := fastloopTool(t, tools, "mitigate", "SetField", "--param", "ref=Service/app/third", "--param", "path=spec.ports[0].targetPort", "--param", `value=8080`, "--param", "reason=repair uncovered finding")
@@ -157,6 +177,9 @@ func testHermeticThreeFaultSelfCheck(t *testing.T, combined bool) {
 	}
 	selfCheck := "verify"
 	commands := 3 // two learned mitigations and the uncovered repair
+	if len(batchPrograms) > 0 && batchPrograms[0] {
+		commands--
+	}
 	if combined {
 		selfCheck = "check"
 	} else {

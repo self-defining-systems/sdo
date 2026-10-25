@@ -12,6 +12,7 @@ import (
 // independently of continuation feedback. Version 1 journals are read only for these
 // facts; their application fields are deliberately ignored.
 type responderToolState struct {
+	PendingWrites    map[string]pendingMitigation
 	CompletedRepairs []continuationRepair
 	Continuation     responderContinuation
 	SessionID        string
@@ -31,7 +32,7 @@ func (l *ResponderLoop) persistToolState(ctx context.Context) error {
 	if l.saveToolState == nil {
 		return nil
 	}
-	payload, err := json.Marshal(responderToolState{CompletedRepairs: l.applicationRepairsLocked(), Continuation: l.continuation, Version: 2, SessionID: l.sessionID, MenuSession: l.menuSession, MenuReports: l.menuReports, MenuRepairs: l.menuRepairs, MenuExecutions: l.menuExecutions, IncidentID: l.Request.IncidentID, SourceCommit: l.Request.SourceCommit, FailureSignals: l.failureSignals, Batches: l.batches, MaxBatches: l.MaxBatches})
+	payload, err := json.Marshal(responderToolState{PendingWrites: l.pendingWrites, CompletedRepairs: l.applicationRepairsLocked(), Continuation: l.continuation, Version: 2, SessionID: l.sessionID, MenuSession: l.menuSession, MenuReports: l.menuReports, MenuRepairs: l.menuRepairs, MenuExecutions: l.menuExecutions, IncidentID: l.Request.IncidentID, SourceCommit: l.Request.SourceCommit, FailureSignals: l.failureSignals, Batches: l.batches, MaxBatches: l.MaxBatches})
 	if err != nil {
 		return fmt.Errorf("encode responder attempt state: %w", err)
 	}
@@ -63,6 +64,7 @@ func (l *ResponderLoop) restoreToolSnapshot(payload []byte) error {
 	if state.SessionID != "" {
 		l.sessionID = state.SessionID
 	}
+	l.pendingWrites = state.PendingWrites
 	l.completedRepairs = state.CompletedRepairs
 	l.continuation = state.Continuation
 	l.menuSession = state.MenuSession

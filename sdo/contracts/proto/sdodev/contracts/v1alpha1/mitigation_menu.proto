@@ -75,6 +75,25 @@ message MitigationSelection {
   uint32 round_limit = 14 [(buf.validate.field).uint32 = {gte: 1, lte: 100}];
 }
 
+// One controller mitigation round. Options carry independent inputs; overlapping
+// object write sets are refused before any option is applied.
+message MitigationSelectionSet {
+  uint32 version = 1 [(buf.validate.field).uint32.const = 1];
+  repeated MitigationOptionSelection options = 2 [(buf.validate.field).repeated = {min_items: 1, max_items: 32}];
+}
+
+message MitigationOptionSelection {
+  option (buf.validate.message).cel = {
+    id: "mitigation_option_selection.unique_bindings"
+    message: "binding names must be unique"
+    expression: "this.bindings.map(b, b.name).unique()"
+  };
+  string option_id = 1 [(buf.validate.field).string.min_len = 1];
+  repeated Binding bindings = 2;
+  map<string, string> parameters = 3;
+  repeated string finding_fingerprints = 4;
+}
+
 message MitigationReportQuery {
   uint32 version = 1 [(buf.validate.field).uint32.const = 1];
   string incident_id = 2 [(buf.validate.field).string.min_len = 1];
@@ -115,6 +134,9 @@ message MitigationReport {
   string reason_code = 13 [(buf.validate.field).string = {max_len: 128, pattern: "^[a-z0-9_]*$"}];
   // No further mutations (including fallback) until the old owner is quiescent.
   bool writes_frozen = 14;
+  // Per-option attribution in a selection-set response; empty on its aggregate.
+  string option_id = 15;
+  string application_id = 16;
 }
 
 message MitigationRoundReport {

@@ -117,12 +117,16 @@ func (l *ResponderLoop) listMenu(ctx context.Context, request ToolRequest, respo
 	l.menu = menu
 	l.menuEntries = entries
 	response.Menu = proto.Clone(menu).(*contracts.MitigationMenu)
-	response.Summary = fmt.Sprintf("%d mitigation options", len(menu.Options))
+	response.Summary = fmt.Sprintf("%d mitigation options; apply several independent options in one call; overlapping object write sets are refused before writes", len(menu.Options))
 }
 
 // Invoke the ordinary plan executor, under its existing credentials. Selection
 // metadata is descriptive; no ledger, fencing, provenance or menu preflight runs.
 func (l *ResponderLoop) mitigateMenu(ctx context.Context, selection *contracts.MitigationSelection, parameters map[string]string, targetFingerprints []string, response *ToolResponse) {
+	l.executeMenuOption(ctx, selection, parameters, targetFingerprints, response, true)
+}
+
+func (l *ResponderLoop) executeMenuOption(ctx context.Context, selection *contracts.MitigationSelection, parameters map[string]string, targetFingerprints []string, response *ToolResponse, consumeRound bool) {
 	if l.MenuConfig == nil {
 		response.Error = "mitigation menu is disabled"
 		return
@@ -142,7 +146,7 @@ func (l *ResponderLoop) mitigateMenu(ctx context.Context, selection *contracts.M
 	if requestID == "" {
 		requestID = attempt
 	}
-	report := &contracts.MitigationReport{Version: 1, IncidentId: l.Request.IncidentID, SessionId: l.sessionID, RequestId: requestID, AttemptId: attempt, AcceptanceEpoch: 1, Status: contracts.MitigationReport_STATUS_UNRESOLVED}
+	report := &contracts.MitigationReport{Version: 1, IncidentId: l.Request.IncidentID, SessionId: l.sessionID, RequestId: requestID, AttemptId: attempt, AcceptanceEpoch: 1, Status: contracts.MitigationReport_STATUS_UNRESOLVED, OptionId: selection.OptionId}
 	rounds := selection.RoundLimit
 	if rounds == 0 {
 		rounds = 1
@@ -150,58 +154,21 @@ func (l *ResponderLoop) mitigateMenu(ctx context.Context, selection *contracts.M
 	if rounds > 5 {
 		rounds = 5
 	}
-	if rounds > uint32(max(0, min(5, l.MaxBatches)-l.batches)) {
+	if consumeRound && rounds > uint32(max(0, min(5, l.MaxBatches)-l.batches)) {
 		response.Error = "response loop budget exhausted"
 		return
 	}
 	for round := uint32(1); round <= rounds; round++ {
 		rr := &contracts.MitigationRoundReport{RoundIndex: round, RoundId: fmt.Sprintf("%s-r%d", attempt, round)}
 		report.Rounds = append(report.Rounds, rr)
-		l.batches++
+		if consumeRound {
+			l.batches++
+		}
 		// Preserve the ordinary incident counter before a potentially lost reply.
 		_ = l.persistToolState(ctx)
-		plan := program.Plan{}
-		var err error
+		plan, err := l.prepareMenuPlan(ctx, entry, parameters, bindings)
 		if bindingErr != nil {
 			err = bindingErr
-		} else if entry.action != nil {
-			inputs := program.ValueInputs{Spec: program.ProgramSpec{ID: string(entry.action.Message().Name())}}
-			observed := map[sdk.ObjectRef]*unstructured.Unstructured{}
-			inputs.Observed = func(ref sdk.ObjectRef) (map[string]any, error) {
-				if err := program.FromObserved(ref, "metadata.name").Validate(); err != nil {
-					return nil, err
-				}
-				if object := observed[ref]; object != nil {
-					return object.DeepCopy().Object, nil
-				}
-				object, err := l.Executor.Client.Get(ctx, ref)
-				if err != nil {
-					return nil, err
-				}
-				if object == nil {
-					return nil, fmt.Errorf("observed value object unavailable")
-				}
-				observed[ref] = object.DeepCopy()
-				return object.DeepCopy().Object, nil
-			}
-			plan, err = menuRawPlan(entry.action, parameters, &inputs)
-			if err == nil {
-				plan = program.BindPlanValues(plan, inputs)
-			}
-		} else if entry.plan != nil {
-			plan = *entry.plan
-		} else {
-			mitigator, found := l.Programs.Mitigator(entry.programID)
-			if !found {
-				err = fmt.Errorf("mitigator %s is unavailable", entry.programID)
-			} else {
-				view, viewErr := l.snapshotView(ctx)
-				if viewErr != nil {
-					err = viewErr
-				} else {
-					plan, err = l.runMitigator(ctx, entry.programID, mitigator, view, bindings)
-				}
-			}
 		}
 		if err != nil {
 			report.Status = contracts.MitigationReport_STATUS_EXECUTION_ERROR
@@ -220,6 +187,7 @@ func (l *ResponderLoop) mitigateMenu(ctx context.Context, selection *contracts.M
 			}
 		}
 		executor := l.Executor
+		executor.PollRollouts = true
 		if entry.removal != nil {
 			targetFingerprints = []string{entry.removal.FindingFingerprint}
 			executor.DeleteObject = func(ctx context.Context, ref sdk.ObjectRef, uid types.UID, rv string) error {
@@ -236,6 +204,10 @@ func (l *ResponderLoop) mitigateMenu(ctx context.Context, selection *contracts.M
 		if result.Applied || result.PendingAction != nil {
 			l.applications[applicationID] = result
 			response.ApplicationID = applicationID
+			report.ApplicationId = applicationID
+			if result.RolloutPending != nil {
+				l.reservePending(applicationID, plan, attempt, entry.programID, bindings, targetFingerprints)
+			}
 		}
 		description.ActionResults = result.ActionReports
 		description.ChangesRemain = result.Applied && !result.RolledBack
@@ -351,4 +323,49 @@ func (l *ResponderLoop) mitigateMenu(ctx context.Context, selection *contracts.M
 	l.menuExecutions[attempt] = cloneMenuExecution(response.MenuExecution)
 	response.Report = report
 	response.Summary = "mitigation " + report.Status.String()
+}
+
+func (l *ResponderLoop) prepareMenuPlan(ctx context.Context, entry menuEntry, parameters map[string]string, bindings program.Bindings) (program.Plan, error) {
+	plan := program.Plan{}
+	var err error
+	if entry.action != nil {
+		inputs := program.ValueInputs{Spec: program.ProgramSpec{ID: string(entry.action.Message().Name())}}
+		observed := map[sdk.ObjectRef]*unstructured.Unstructured{}
+		inputs.Observed = func(ref sdk.ObjectRef) (map[string]any, error) {
+			if err := program.FromObserved(ref, "metadata.name").Validate(); err != nil {
+				return nil, err
+			}
+			if object := observed[ref]; object != nil {
+				return object.DeepCopy().Object, nil
+			}
+			object, err := l.Executor.Client.Get(ctx, ref)
+			if err != nil {
+				return nil, err
+			}
+			if object == nil {
+				return nil, fmt.Errorf("observed value object unavailable")
+			}
+			observed[ref] = object.DeepCopy()
+			return object.DeepCopy().Object, nil
+		}
+		plan, err = menuRawPlan(entry.action, parameters, &inputs)
+		if err == nil {
+			plan = program.BindPlanValues(plan, inputs)
+		}
+	} else if entry.plan != nil {
+		plan = *entry.plan
+	} else {
+		mitigator, found := l.Programs.Mitigator(entry.programID)
+		if !found {
+			err = fmt.Errorf("mitigator %s is unavailable", entry.programID)
+		} else {
+			view, viewErr := l.snapshotView(ctx)
+			if viewErr != nil {
+				err = viewErr
+			} else {
+				plan, err = l.runMitigator(ctx, entry.programID, mitigator, view, bindings)
+			}
+		}
+	}
+	return plan, err
 }

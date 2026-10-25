@@ -424,3 +424,73 @@ def test_client_side_failures_also_produce_compact_output_and_complete_json(monk
         assert "current mitigation menu unavailable" in text
     finally:
         details.unlink()
+
+
+def test_mitigate_selection_set_has_independent_parameters(tmp_path, monkeypatch):
+    selection = tmp_path / "selection.json"
+    selection.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "options": [
+                    {"option_id": "ScaleWorkload", "parameters": {"ref": "Deployment/app/a", "replicas": "2"}},
+                    {"option_id": "ScaleWorkload", "parameters": {"ref": "Deployment/app/b", "replicas": "3"}},
+                ],
+            }
+        )
+    )
+    seen = []
+    monkeypatch.setattr(tools_cli, "_exchange", lambda request, _: seen.append(request) or {"summary": "ok"})
+    assert tools_cli.main(["--json", "mitigate", "--selection-set", str(selection)]) == 0
+    assert seen[0]["selection_set"]["options"][1]["parameters"]["replicas"] == "3"
+
+
+def test_mitigate_repeated_options_group_parameters(monkeypatch):
+    seen = []
+    monkeypatch.setattr(tools_cli, "_exchange", lambda request, _: seen.append(request) or {"summary": "ok"})
+    assert (
+        tools_cli.main(
+            [
+                "--json",
+                "mitigate",
+                "--option",
+                "ScaleWorkload",
+                "--param",
+                "ref=Deployment/app/a",
+                "--param",
+                "replicas=2",
+                "--option",
+                "ScaleWorkload",
+                "--param",
+                "ref=Deployment/app/b",
+                "--param",
+                "replicas=3",
+            ]
+        )
+        == 0
+    )
+    assert seen[0]["selection_set"]["options"] == [
+        {"option_id": "ScaleWorkload", "parameters": {"ref": "Deployment/app/a", "replicas": "2"}},
+        {"option_id": "ScaleWorkload", "parameters": {"ref": "Deployment/app/b", "replicas": "3"}},
+    ]
+
+
+def test_multi_option_help_and_generated_surface_are_discoverable(capsys):
+    with pytest.raises(SystemExit):
+        tools_cli.main(["mitigate", "--help"])
+    help_text = capsys.readouterr().out
+    assert "independent options" in help_text
+    assert "overlapping" in help_text.lower()
+    assert "independent options" in tools_cli.command_surface()["mitigation"]
+
+
+def test_act_does_not_bypass_pending_mutation_refusal(monkeypatch):
+    called = []
+    monkeypatch.setattr(
+        tools_cli,
+        "_exchange",
+        lambda *_: {"error": "pending target", "report": {"reason_code": "pending_write_conflict"}},
+    )
+    monkeypatch.setattr(tools_cli.recorded_actions, "run_and_record", lambda *_args, **_kw: called.append(True) or 0)
+    assert tools_cli.main(["act", "--resource", "Deployment/app/api", "--", "true"]) == 2
+    assert not called
