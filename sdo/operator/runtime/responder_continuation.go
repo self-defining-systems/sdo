@@ -320,7 +320,24 @@ func (l *ResponderLoop) continuationRepairs(result IncidentResult) []continuatio
 			seen[repair.ActionID] = true
 		}
 	}
-	return repairs
+	// A recorded application summarizes all of its applied action resources.
+	// Menu receipts remain durable evidence, but must not list that same repair
+	// twice in the continuation. Preserve individual receipts when no application
+	// summary exists, including restored feedback from older tool state.
+	aggregateApplications := map[string]bool{}
+	for _, repair := range repairs {
+		if repair.ApplicationID != "" && repair.Receipt.Kind == "program-plan" {
+			aggregateApplications[repair.ApplicationID] = true
+		}
+	}
+	unique := repairs[:0]
+	for _, repair := range repairs {
+		if aggregateApplications[repair.ApplicationID] && repair.Receipt.Kind != "program-plan" {
+			continue
+		}
+		unique = append(unique, repair)
+	}
+	return unique
 }
 func feedbackReceipt(receipt RepairActionReceipt) continuationReceipt {
 	return continuationReceipt{ActionID: receipt.ActionID, Kind: receipt.Kind, Target: receipt.Target, Resources: receipt.Resources, Summary: receipt.Summary, Details: receipt.Details, StartedAt: receipt.StartedAt, CompletedAt: receipt.CompletedAt, Success: receipt.Success, Reversible: receipt.Reversible}
