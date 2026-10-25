@@ -78,7 +78,7 @@ func TestNativeLifecycleToIncidentOutcomeUsesAcceptedState(t *testing.T) {
 
 	native := NativeIncidentBroker{
 		Repository: repository, LedgerRoot: filepath.Join(t.TempDir(), "ledger"), Deriver: ProtoOutcomeDeriver{},
-		Reflector:        RegisteredReflectionWorker{Executor: workers, AgentID: "sdo-reflector", TaskType: reflectionTaskType(t), Outcomes: memory.OpenReader(accepted), Timeout: time.Minute},
+		Reflector:        RegisteredReflectionWorker{Executor: workers, AgentID: "sdo-reflector", TaskType: reflectionTaskType(t), Outcomes: memory.OpenReader(accepted), Timeout: time.Minute, SessionMode: "fresh"},
 		ResponderBackend: "test", ResponderModel: "test",
 	}
 	workspace, err := native.PrepareIncident(ctx, "native-incident")

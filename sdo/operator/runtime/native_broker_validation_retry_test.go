@@ -2,7 +2,6 @@ package runtime
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -20,6 +19,7 @@ import (
 	ktesting "k8s.io/client-go/testing"
 	"sdo.dev/operator/broker"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/internal/testutil"
 	"sdo.dev/operator/memory"
 )
 
@@ -69,6 +69,27 @@ func TestNativeBrokerRetriesValidationWithoutRedispatchingReflection(t *testing.
 					}
 				}
 				return broker.JobValidator(launcher)(ctx, root, paths)
+			}, func(target string) {
+				fixture := "../../../tests/fixtures/sdo/playbook_program_app/.sdo"
+				module, err := os.ReadFile(filepath.Join(fixture, "diagnostics/go.mod"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(target, ".sdo/diagnostics/go.mod"), module, 0644); err != nil {
+					t.Fatal(err)
+				}
+				testutil.CopyPortProgram(t, target, fixture)
+				copyFastloopTree(t, filepath.Join(fixture, "corpus"), filepath.Join(target, ".sdo/corpus"))
+				index := filepath.Join(target, ".sdo/playbooks/README.md")
+				data, err := os.ReadFile(index)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(index, append(data, []byte("\n- [service-targetport-mismatch](service-targetport-mismatch/README.md)\n")...), 0644); err != nil {
+					t.Fatal(err)
+				}
+				nativeGit(t, target, "add", "-A")
+				nativeGit(t, target, "commit", "-qm", "accepted synthetic replay program")
 			})
 			workspaceRoot := filepath.Dir(filepath.Dir(filepath.Dir(h.workspace.Worktree)))
 			launcher = broker.KubernetesValidationJobClient{
@@ -78,22 +99,35 @@ func TestNativeBrokerRetriesValidationWithoutRedispatchingReflection(t *testing.
 			}
 			dispatches := 0
 			h.native.Reflector = RegisteredReflectionWorker{
-				AgentID: "reflector", TaskType: reflectionTaskType(t), Outcomes: memory.NewJSONStore(t.TempDir()), Timeout: time.Minute,
+				AgentID: "reflector", TaskType: reflectionTaskType(t), Outcomes: memory.NewJSONStore(t.TempDir()), Timeout: time.Minute, SessionMode: "fresh",
 				Executor: reflectionTaskExecutorFunc(func(_ context.Context, task *contracts.AgentTask) (*contracts.AgentResult, error) {
 					dispatches++
 					if reflectionTask != nil && !proto.Equal(reflectionTask, task) {
-						return nil, errors.New("existing agent request ConfigMap has different payload")
+						return nil, fmt.Errorf("existing agent request ConfigMap has different payload: %v", task)
 					}
 					reflectionTask = proto.Clone(task).(*contracts.AgentTask)
 					if _, err := writeGoodPlaybook(IncidentWorkspace{Worktree: task.Workspace.CheckoutPath}); err != nil {
 						return nil, err
 					}
-					// Prose alone skips the validator Job; a library edit exercises it.
-					library := filepath.Join(task.Workspace.CheckoutPath, ".sdo", "lib", "base")
-					if err := os.MkdirAll(library, 0o755); err != nil {
+					// A new negative corpus case exercises the same validation
+					// Job boundary without inventing an unverified executable.
+					corpus := filepath.Join(task.Workspace.CheckoutPath, ".sdo", "corpus", "inspection-negative")
+					if err := os.MkdirAll(corpus, 0755); err != nil {
 						return nil, err
 					}
-					if err := os.WriteFile(filepath.Join(library, "helper.go"), []byte("package base\n"), 0o644); err != nil {
+					healthy, err := os.ReadFile(filepath.Join(task.Workspace.CheckoutPath, ".sdo/corpus/targetport-mismatch/healthy.json"))
+					if err != nil {
+						return nil, err
+					}
+					for _, name := range []string{"open.json", "fixed.json", "healthy.json"} {
+						if err := os.WriteFile(filepath.Join(corpus, name), healthy, 0644); err != nil {
+							return nil, err
+						}
+					}
+					if err := os.WriteFile(filepath.Join(corpus, "recordings.json"), []byte(`[]`), 0644); err != nil {
+						return nil, err
+					}
+					if err := os.WriteFile(filepath.Join(corpus, "labels.json"), []byte(`{"no_match_program_ids":["service-targetport-mismatch"],"synthetic_no_match_reason":"synthetic healthy observation for validator transport"}`), 0644); err != nil {
 						return nil, err
 					}
 					response, err := anypb.New(&contracts.ReflectionResult{LearningDecision: "updated", ProposedArtifactIds: []string{"base"}})

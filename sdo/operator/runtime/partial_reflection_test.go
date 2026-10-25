@@ -153,7 +153,7 @@ func TestNativeBrokerSkipsFailedClosureWithoutVerifiedRepair(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ledger.RequiresReflection || ledger.ReflectionDecision.GetNoChangeReason() != "no_independently_verified_repair" {
+	if ledger.RequiresReflection || ledger.ReflectionDecision.GetNoChangeReason() != "no_session" {
 		t.Fatalf("missing observable no-proof skip: %v", ledger)
 	}
 }
@@ -234,7 +234,7 @@ func TestPartialReflectionProjectionDoesNotLeakUnverifiedEvidence(t *testing.T) 
 	if len(current.ConfirmedRootCauses) != 1 || current.ConfirmedRootCauses[0].Resources[0].Name != "api" || len(current.RepairActions) != 1 || len(current.ProgramRuns) != 1 || len(current.PlanApplications) != 1 || len(current.ProgramToolCalls) != 0 {
 		t.Fatalf("unverified evidence leaked: %v", current)
 	}
-	if len(current.ReflectionEligibility.Causes) != 1 || current.ReflectionEligibility.Causes[0].CauseIndex != 0 || len(current.ReflectionEligibility.Unassigned) != 0 || current.ReflectionEligibility.GetEvidenceGapCount() != 0 {
+	if len(current.ReflectionEligibility.Causes) != 1 || current.ReflectionEligibility.Causes[0].CauseIndex != 0 || len(current.ReflectionEligibility.Unassigned) != 1 || current.ReflectionEligibility.Unassigned[0].GetReason() != "evidence_gap" || current.ReflectionEligibility.GetEvidenceGapCount() != 0 {
 		t.Fatalf("learning work escaped verified cause: %v", current.ReflectionEligibility)
 	}
 	current.ConfirmedRootCauses[0].Summary = "changed projection"

@@ -39,14 +39,18 @@ func TestCompositeRepairKeepsBoundSuccessWhileOtherFaultIsOpen(t *testing.T) {
 }
 
 func TestHermeticRepeatCorpusUsesBrokerWithoutReflectionModel(t *testing.T) {
-	testHermeticRepeatBroker(t, false)
+	testHermeticRepeatBroker(t, false, false)
 }
 
 func TestRejectedRepeatCorpusFallsBackToReflectionWorker(t *testing.T) {
-	testHermeticRepeatBroker(t, true)
+	testHermeticRepeatBroker(t, true, false)
 }
 
-func testHermeticRepeatBroker(t *testing.T, rejectFirst bool) {
+func TestReflectionSettledRepeatStillResumesResponder(t *testing.T) {
+	testHermeticRepeatBroker(t, false, true)
+}
+
+func testHermeticRepeatBroker(t *testing.T, rejectFirst, boundSession bool) {
 	t.Helper()
 	ctx := context.Background()
 	target := nativeRepository(t)
@@ -178,13 +182,17 @@ func testHermeticRepeatBroker(t *testing.T, rejectFirst bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if boundSession {
+		sessionID := "settled-responder"
+		closure.Result.ResponderSessionId = &sessionID
+	}
 	ledger := &contracts.BrokerLedger{IncidentId: outcome.IncidentId, Closure: closure, OutcomeCommit: accepted.Commit, OutcomeDocument: outcome}
 	paths, err := native.processReflection(ctx, ledger)
 	if err != nil {
 		t.Fatal(err)
 	}
 	expectedCalls := 0
-	if rejectFirst {
+	if rejectFirst || boundSession {
 		expectedCalls = 1
 	}
 	if rejected != rejectFirst || modelCalls != expectedCalls || ledger.ReflectionCommit == "" || len(paths) != 5 || validations == 0 {

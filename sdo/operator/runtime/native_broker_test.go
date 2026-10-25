@@ -13,6 +13,7 @@ import (
 
 	"sdo.dev/operator/broker"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/internal/testutil"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/sdk"
 )
@@ -508,6 +509,23 @@ func TestNativeBrokerRequiresVerifiedDetectorRolloutBeforeAck(t *testing.T) {
 	t.Parallel()
 	target := nativeRepository(t)
 	nativeMemoryFixture(t, target)
+	fixture := "../../../tests/fixtures/sdo/playbook_program_app/.sdo"
+	module, err := os.ReadFile(filepath.Join(fixture, "diagnostics/go.mod"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(target, ".sdo/diagnostics/go.mod"), module, 0644); err != nil {
+		t.Fatal(err)
+	}
+	testutil.CopyPortProgram(t, target, fixture)
+	copyFastloopTree(t, filepath.Join(fixture, "corpus"), filepath.Join(target, ".sdo/corpus"))
+	index := filepath.Join(target, ".sdo/playbooks/README.md")
+	data, _ := os.ReadFile(index)
+	if err := os.WriteFile(index, append(data, []byte("\n- [service-targetport-mismatch](service-targetport-mismatch/README.md)\n")...), 0644); err != nil {
+		t.Fatal(err)
+	}
+	nativeGit(t, target, "add", ".")
+	nativeGit(t, target, "commit", "-qm", "accepted port program")
 	repositoryBroker, err := broker.New(target, filepath.Join(t.TempDir(), "proposals"), func(_ context.Context, _ string, _ []string) error { return nil })
 	if err != nil {
 		t.Fatal(err)
@@ -515,21 +533,13 @@ func TestNativeBrokerRequiresVerifiedDetectorRolloutBeforeAck(t *testing.T) {
 	native := NativeIncidentBroker{
 		Repository: repositoryBroker, LedgerRoot: filepath.Join(t.TempDir(), "ledger"), ResponderBackend: "test", ResponderModel: "test",
 		Deriver: OutcomeDeriverFunc(func(_ context.Context, closure IncidentClosure, _, _, _ string) (DerivedOutcome, error) {
-			return testDerivedOutcome(closure.Request.IncidentID, "success", true), nil
+			outcome := testDerivedOutcome(closure.Request.IncidentID, "success", true)
+			outcome.Record.ConfirmedRootCauses = []*contracts.ConfirmedRootCause{{Summary: "verified service port repair", Resources: []*contracts.ObjectRef{{Kind: "Service", Namespace: "demo", Name: "front"}}}}
+			return outcome, nil
 		}),
 		Reflector: ReflectionWorkerFunc(func(_ context.Context, _ IncidentClosure, workspace IncidentWorkspace, _ *contracts.OutcomeRecord, _, _ string, _ ReflectionFeedback) (ReflectionDecision, error) {
-			manifest := filepath.Join(workspace.Worktree, ".sdo", "diagnostics", "detectors", "incidents", "learned", "manifest.yaml")
-			if err := os.MkdirAll(filepath.Dir(manifest), 0o755); err != nil {
-				return ReflectionDecision{}, err
-			}
-			if err := os.WriteFile(manifest, []byte(nativeDetectorManifest("incident", "learned", "inc-rollout")), 0o644); err != nil {
-				return ReflectionDecision{}, err
-			}
-			path := filepath.Join(workspace.Worktree, ".sdo", "diagnostics", "detectors", "incidents", "learned", "detector.go")
-			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-				return ReflectionDecision{}, err
-			}
-			return ReflectionDecision{LearningDecision: "updated"}, os.WriteFile(path, []byte("package learned\n"), 0o644)
+			fastloopWriteDetector(t, workspace.Worktree, "inc-rollout")
+			return ReflectionDecision{LearningDecision: "updated"}, nil
 		}),
 	}
 	workspace, err := native.PrepareIncident(context.Background(), "inc-rollout")
