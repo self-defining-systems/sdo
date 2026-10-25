@@ -479,7 +479,7 @@ func TestRestartClassRefusesChangedObservationBeforeCommit(t *testing.T) {
 				t.Fatal("missing durable closure")
 			}
 			err := c.ExecuteClosureEffect(ctx, effect)
-			if mutation == "generation" && (err == nil || !strings.Contains(err.Error(), "observation scope changed")) {
+			if mutation == "generation" && (err != nil || exportState(t, c).GetClosureState() != contracts.ClosureState_CLOSURE_STATE_FAILED || !strings.Contains(exportState(t, c).GetClosureFailure().GetLastError(), "observation scope changed")) {
 				t.Fatalf("changed generation was trusted: %v", err)
 			}
 			if mutation == "health" && (err != nil || exportState(t, c).GetClosureState() != contracts.ClosureState_CLOSURE_STATE_FAILED || !strings.Contains(exportState(t, c).GetClosureFailure().GetLastError(), "is active")) {
