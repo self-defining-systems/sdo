@@ -54,7 +54,7 @@ def _command(argv: list[str], *, timeout: int = 180) -> str:
 
 
 def _tool(*args: str) -> dict[str, Any]:
-    output = _command(["sdo", *args])
+    output = _command(["sdo", *args, "--json"])
     response = json.loads(output.splitlines()[0])
     if not isinstance(response, dict) or response.get("error"):
         raise RuntimeError(f"sdo {' '.join(args)}: {response.get('error') if isinstance(response, dict) else output}")

@@ -76,6 +76,7 @@ def scratch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 def test_act_runs_one_mutation_and_records_its_receipt(scratch: Path, capsys: pytest.CaptureFixture[str]) -> None:
     code = tools_cli.main(
         [
+            "--json",
             "act",
             "--resource",
             "Deployment/app/rate",

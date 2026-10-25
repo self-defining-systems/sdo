@@ -11,6 +11,7 @@ import uuid
 from pathlib import Path
 
 from sdo.agents.responder import recorded_actions
+from sdo.agents.responder.tool_output import render_summary, write_response
 
 PLAN_ACTIONS = (
     "SetField updates a schema-checked field by index or unique name, optionally from accepted source; "
@@ -49,16 +50,21 @@ def _parser() -> argparse.ArgumentParser:
         epilog="Examples (replace names with incident resources):\n  " + "\n  ".join(CLI_EXAMPLES),
     )
     commands = parser.add_subparsers(dest="command", required=True)
+    parser.add_argument("--json", action="store_true", help="print the complete JSON response for scripts")
     commands.add_parser("status", help="read current findings and session state")
-    detect = commands.add_parser("detect", help="run all or selected detectors on fresh state (read-only)")
-    detect.add_argument(
-        "--detector",
-        action="extend",
-        nargs="+",
-        default=[],
-        metavar="ID",
-        help="detector IDs to run; repeat for more IDs (default: all)",
-    )
+    for name, help_text in (
+        ("detect", "run all or selected detectors on fresh state (read-only)"),
+        ("check", "run fresh detectors then independent closure verification"),
+    ):
+        check = commands.add_parser(name, help=help_text)
+        check.add_argument(
+            "--detector",
+            action="extend",
+            nargs="+",
+            default=[],
+            metavar="ID",
+            help="detector IDs to run; repeat for more IDs (default: all)",
+        )
     for name in ("diagnose", "plan", "menu"):
         command = commands.add_parser(
             name,
@@ -137,7 +143,22 @@ def _parser() -> argparse.ArgumentParser:
     act.add_argument("act_command", nargs=argparse.REMAINDER, metavar="-- COMMAND", help="the mutating command")
     commands.add_parser("verify", help="verify health and retained drift findings")
     commands.add_parser("rollback", help="roll back a plan application").add_argument("application_id")
+    for command in commands.choices.values():
+        command.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
     return parser
+
+
+def command_surface() -> dict[str, object]:
+    """Generate incident-facing signatures from the same parser that accepts commands."""
+    parser = _parser()
+    subcommands = next(action for action in parser._actions if isinstance(action, argparse._SubParsersAction))
+    return {
+        "commands": {
+            name: " ".join(command.format_usage().removeprefix("usage: ").split())
+            for name, command in subcommands.choices.items()
+        },
+        "output": "Text ends with Full JSON: path; --json prints complete JSON for scripts. Extract needed fields.",
+    }
 
 
 def _request(args: argparse.Namespace) -> dict[str, object]:
@@ -282,13 +303,52 @@ def _act(args: argparse.Namespace) -> int:
                 raise ValueError(str(response["error"]))
         except (OSError, ValueError, TimeoutError) as exc:
             print(f"sdo: pre-apply evidence gap: {exc}; proceeding with repair", file=sys.stderr)
+
+        def completed(code: int, output: str, receipt: dict[str, object]) -> None:
+            response: dict[str, object] = {
+                "command": "act",
+                "summary": receipt["summary"],
+                "success": code == 0,
+                "exit_code": code,
+                "receipt": receipt,
+                "output": output,
+            }
+            _print_response(response, full_json=args.json)
+
         result = recorded_actions.run_and_record(
-            command, args.resource, summary=args.summary, reversible=not args.irreversible
+            command, args.resource, summary=args.summary, reversible=not args.irreversible, on_completed=completed
         )
         return result
     except (OSError, ValueError, TimeoutError) as exc:
-        print(f"sdo: {exc}", file=sys.stderr)
+        _print_client_error(args, exc)
         return 2
+
+
+def _print_response(response: dict[str, object], *, full_json: bool) -> None:
+    output = write_response(response)
+    print(json.dumps(response, ensure_ascii=False, sort_keys=True) if full_json else render_summary(output))
+
+
+def _print_client_error(args: argparse.Namespace, error: Exception) -> None:
+    print(f"sdo: {error}", file=sys.stderr)
+    try:
+        _print_response({"command": args.command, "error": str(error), "summary": str(error)}, full_json=args.json)
+    except (OSError, ValueError) as persistence_error:
+        print(f"sdo: cannot save full error output: {persistence_error}", file=sys.stderr)
+
+
+def _check(args: argparse.Namespace, directory: Path) -> dict[str, object]:
+    request: dict[str, object] = {"command": "detect"}
+    if args.detector:
+        request["detector_ids"] = args.detector
+    detection = _exchange(request, directory)
+    verification = _exchange({"command": "verify"}, directory)
+    response = dict(verification)
+    response.update(command="check", detection=detection)
+    if detection.get("error") or verification.get("error"):
+        response["error"] = "; ".join(str(item) for item in (detection.get("error"), verification.get("error")) if item)
+        response["healthy"] = False
+    return response
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -304,12 +364,12 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "act":
         return _act(args)
     try:
-        response = _exchange(_request(args), Path(os.environ.get("SDO_TOOLS_DIR", "/sdo/session/tools")))
+        directory = Path(os.environ.get("SDO_TOOLS_DIR", "/sdo/session/tools"))
+        response = _check(args, directory) if args.command == "check" else _exchange(_request(args), directory)
+        _print_response(response, full_json=args.json)
     except (OSError, ValueError, TimeoutError) as exc:
-        print(f"sdo: {exc}", file=sys.stderr)
+        _print_client_error(args, exc)
         return 1
-    print(json.dumps(response, sort_keys=True))
-    print(response.get("summary", ""))
     return 1 if response.get("error") else 0
 
 
