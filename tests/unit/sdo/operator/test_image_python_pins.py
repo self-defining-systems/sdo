@@ -127,7 +127,7 @@ def test_validator_image_contains_no_python_dependency_install() -> None:
     )
     assert "pip install" not in text
     assert "python3" not in text
-    assert "COPY --from=go" not in text
+    assert "COPY --from=go-runtime /usr/local/bin/sdo-operator" in text
 
 
 def test_worker_image_ships_offline_program_example_and_toolchain() -> None:
@@ -154,13 +154,13 @@ def test_worker_image_ships_offline_program_example_and_toolchain() -> None:
         assert (REPO_ROOT / "examples/playbook-programs" / relative).is_file(), relative
 
 
-def test_validator_image_uses_controller_supplied_offline_toolchain() -> None:
+def test_validator_image_uses_its_immutable_offline_toolchain() -> None:
     runtime = (REPO_ROOT / "sdo/operator/Dockerfile.runtime").read_text()
     assert 'cd "$dir" && go mod download all' in runtime
     assert "GOPROXY=off" in runtime
     assert 'GOFLAGS="-mod=mod -p=2"' in runtime
-    source = (REPO_ROOT / "sdo/operator/broker/kubernetes_validator.go").read_text()
-    assert "toolchain.Apply(&job.Spec.Template.Spec, k.ToolchainImage)" in source
+    assert "FROM validator-toolchain AS validator" in runtime
+    assert "ENV GOCACHEPROG=/usr/local/bin/sdo-go-cache" in runtime
 
 
 def test_health_refresh_forwards_the_typed_controller_toolchain() -> None:

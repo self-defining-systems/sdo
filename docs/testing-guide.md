@@ -627,3 +627,28 @@ Python lane uses `bash scripts/test_python.sh -m "not go_integration"`;
 unfiltered `pytest tests` still executes both groups. Add the marker to future
 contracts that compile Go. Compiler parallelism is bounded for parent and nested
 builds with `GOFLAGS=-p=2` and `GOMAXPROCS=2` on hosted runners.
+
+### Validator cache and local startup measurement
+
+Validator Pods read the compiler, module cache and warmed SDK cache from immutable
+image layers. `sdo-go-cache` implements the pinned Go toolchain's `GOCACHEPROG`
+protocol, reading native disk-cache v1 entries in place and atomically publishing
+new entries only to private `GOCACHE` scratch. Its real-Go test proves source
+invalidation, seed reuse and private-delta reuse without a cluster.
+
+```bash
+(cd sdo/operator && go test -race ./cmd/sdo-go-cache ./builder ./broker)
+SDO_IMAGES=validator bash scripts/build_sdo_images.sh
+uv run python scripts/measure_validator_startup.py \
+  --baseline-controller sdo-controller:baseline \
+  --baseline-validator sdo-detector-validator:baseline \
+  --candidate-validator sdo-detector-validator:candidate \
+  --output /tmp/validator-startup.json
+```
+
+The image smoke gate uses a nonroot, read-only, network-disabled container and
+fails if exporting the SDK invokes the compiler. The measurement compares the
+old init-container copy plus fixture validation against direct image-backed
+validation under the same two-CPU limit. It reports image bytes and wall time;
+it excludes image delivery and Kubernetes scheduling. Images must already exist;
+the measurement never pulls images or prunes shared caches.
