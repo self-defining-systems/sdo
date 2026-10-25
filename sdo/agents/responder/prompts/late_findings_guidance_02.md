@@ -1,0 +1,2 @@
+Late findings: evidence for this incident can arrive after you start, and this request cannot change. Run `${command}` once now, and again immediately before your first change to the cluster or the repository. It is read-only and prints compact JSON listing findings that activated after this request was built, each with surfaced logical playbook IDs. Treat every returned playbook as a hypothesis: read it, confirm its preconditions against live state, adapt or reject it, and never replay its steps blindly. An empty list means nothing more has arrived yet.
+

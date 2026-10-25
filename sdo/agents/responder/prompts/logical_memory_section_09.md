@@ -1,0 +1,1 @@
+Excerpt of playbook ${playbook_id}:

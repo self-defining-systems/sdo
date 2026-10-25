@@ -18,6 +18,7 @@ from libs.agent_cli.structured import (
     turn_usage,
 )
 from sdo.agents.memory_diagnostics import render_validation_feedback
+from sdo.agents.prompt_templates import RenderedPrompt, named_prompt, render_prompt
 from sdo.agents.responder.credentials import SKILLS_ROOT
 from sdo.agents.responder.reflection_authoring import SdkGap
 from sdo.agents.responder.reflection_brief import incident_brief
@@ -154,7 +155,7 @@ def _logical_learning_request(
     guidance: ReflectionGuidance,
     cause_work: Sequence[ReflectionCauseWork] = (),
     unassigned_work: Sequence[ReflectionWorkItem] = (),
-) -> str:
+) -> RenderedPrompt:
     if not closure.request.HasField("memory_snapshot"):
         raise ValueError("logical reflection requires an operational memory snapshot")
     snapshot = closure.request.memory_snapshot
@@ -169,54 +170,30 @@ def _logical_learning_request(
             },
             indent=2,
         )
-        work_section = (
-            "Go has settled covered items and materialized their evidence in this checkout. "
-            "Preserve Go-owned cases and address only the per-cause questions in the same incident session. "
-            "A false-match fixed capture is a required NoMatch regression. "
-            "Missing controller captures do not block learning from recorded session observations. "
-            "Return updated whenever final files include Go or agent edits.\n"
-            f"Per-cause work:\n{work_json}\n"
-        )
-    return (
-        "The controller committed its authoritative incident outcome. "
-        "Accepted source and developer changes express intent. Operational memory is fallible advice. "
-        "Recovery requires evidence from the intended application behavior. "
-        "Learn executable diagnosis and mitigation for each independently verified repair, with a README and "
-        "detector coverage; detectors may surface several playbooks. "
-        "Use recorded actions as repair evidence and the session's live observations to build replay fixtures. "
-        "A README note alone does not capture an executable repair. "
-        "Learn verified parts even when the whole incident remains unhealthy. "
-        "Missing controller captures do not block learning; only typed SDK gaps scoped to the affected cause "
-        "resources may excuse a required program or detector. "
-        f"The authoring guide starts at {SKILLS_ROOT}/sdo-memory/SKILL.md. "
-        "Go owns the supplied classification, corpus evidence and trust decisions. "
-        "Preserve Go-owned cases; answer unresolved questions in this incident session without inferring cause groups. "
-        "Unavailable observations remain Unknown. "
-        "Preserve potentially large evidence output in a temporary file, then search or extract the relevant "
-        "observations; never infer missing evidence from a truncated prefix. "
-        "Edit final operational-memory files only in this isolated checkout. "
-        "Source, outcomes, goal and architecture are protected. "
-        "Return updated for a validated nonempty diff, including Go-authored edits, "
-        "and name changed logical playbook IDs. "
-        "Otherwise return no_change or a typed sdk_gap with a concrete reason. "
-        "The broker independently validates and publishes final files. "
-        f"{branch_instruction('reflection')}\n\n"
-        f"{work_section}"
-        f"Outcome commit: {outcome_commit}\n"
-        f"Operational memory snapshot:\n{json.dumps(memory_view(snapshot), indent=2)}\n\n"
-        "Repeated program evaluations and tool calls below carry counts. Large tool responses are excerpted; "
-        "outcome_call_index and response_json_sha256 identify the full response in the committed outcome. "
-        "Root causes, findings, action receipts and program transitions are retained.\n"
-        f"Current outcome:\n{json.dumps(current_outcome_view(outcome), indent=2)}\n\n"
-        f"{_history_section(outcome, history)}"
+        work_section = render_prompt("responder", "learning_01", part="reflection.instructions", work_json=work_json)
+    return render_prompt(
+        "responder",
+        "reflection",
+        part="reflection.instructions",
+        skills_root=SKILLS_ROOT,
+        branch_instruction=branch_instruction("reflection"),
+        work_section=named_prompt("reflection.cause_work", work_section),
+        outcome_commit=outcome_commit,
+        memory_view_json=named_prompt("reflection.memory", json.dumps(memory_view(snapshot), indent=2)),
+        current_outcome_view_json=named_prompt(
+            "reflection.outcome", json.dumps(current_outcome_view(outcome), indent=2)
+        ),
+        history_section=named_prompt("reflection.history", _history_section(outcome, history)),
     )
 
 
 def _history_section(outcome: OutcomeRecord, history: list[OutcomeRecord]) -> str:
     prior = history_view(history, current_incident_id=outcome.incident_id)
     if not prior:
-        return "Outcome history (prior incidents, compact): none\n"
-    return f"Outcome history (prior incidents, compact; raw evidence omitted):\n{json.dumps(prior, indent=2)}\n"
+        return render_prompt("responder", "history_section_01", part="reflection.instructions")
+    return render_prompt(
+        "responder", "history_section_02", part="reflection.instructions", prior_json=json.dumps(prior, indent=2)
+    )
 
 
 class SessionReflector:
@@ -266,15 +243,14 @@ class SessionReflector:
         idempotency_key = f"reflection:{incident_id}:{outcome_commit}"
         if diagnostics:
             # Keep the incident session; only rejected-edit feedback is new.
-            prompt = (
-                "Author corrected final files. You are correcting operational-memory edits that SDO's broker rejected. "
-                "The controller has "
-                "committed its authoritative incident outcome; the responder's "
-                "session context remains available.\n\n"
-                f"{render_validation_feedback(validation_attempt, diagnostics)}\n"
-                "The rejected edit was rolled back, so the worktree is clean at the accepted outcome commit. "
-                "Resolve the broker diagnostics in the final proposal files.\n\n"
-                f"Original reflection request:\n{request}"
+            prompt = render_prompt(
+                "responder",
+                "reflection_retry",
+                part="reflection.instructions",
+                render_validation_feedback=named_prompt(
+                    "reflection.validation_feedback", render_validation_feedback(validation_attempt, diagnostics)
+                ),
+                request=request,
             )
             if session_mode == "resume":
                 return self.backend.resume(
@@ -292,19 +268,11 @@ class SessionReflector:
                 detector_detail=self.guidance in _GENERALIZING_GUIDANCE,
                 event_dependence=self.guidance == "generalize-spec",
             )
-            prompt = (
-                "The controller has committed its authoritative incident "
-                "outcome. You are reflecting in a fresh session: the responder's session transcript is not "
-                "available, so rely on the incident brief below and supplied memory context.\n\n"
-                f"{brief}\n"
-                f"Reflection request:\n{request}"
+            prompt = render_prompt(
+                "responder", "reflection_fresh", part="reflection.instructions", brief=brief, request=request
             )
             return self.backend.fresh(worktree=worktree, prompt=prompt, idempotency_key=idempotency_key)
-        prompt = (
-            "The controller has committed its authoritative incident outcome.\n"
-            "Reflect using the same incident context.\n"
-            f"{request}"
-        )
+        prompt = render_prompt("responder", "reflection_resume", part="reflection.instructions", request=request)
         try:
             return self.backend.resume(
                 session_id=session_id,
@@ -313,7 +281,7 @@ class SessionReflector:
                 idempotency_key=idempotency_key,
             )
         except ResponderSessionUnavailable as exc:
-            print(f"reflection: cannot resume responder session ({exc}); starting fresh", file=sys.stderr)
+            print(render_prompt("responder", "resume_04", part="reflection.instructions", exc=exc), file=sys.stderr)
             return self.resume(
                 session_id=session_id,
                 incident_id=incident_id,
@@ -379,7 +347,11 @@ class CodexSessionBackend:
         session_id: str | None,
     ) -> ReflectionTurn:
         turn = self._run(
-            worktree=worktree, prompt=f"Idempotency key: {idempotency_key}\n\n{prompt}", session_id=session_id
+            worktree=worktree,
+            prompt=render_prompt(
+                "responder", "turn_01", part="reflection.instructions", idempotency_key=idempotency_key, prompt=prompt
+            ),
+            session_id=session_id,
         )
         try:
             payload = unwrap_branch(turn.output_json, "reflection")
@@ -391,7 +363,7 @@ class CodexSessionBackend:
 
     def _run(self, *, worktree: Path, prompt: str, session_id: str | None) -> StructuredTurn:
         if os.environ.get("SDO_API_HISTORY_DIR"):
-            prompt += "\n\nRead-only Kubernetes API history is available through `sdo-operator evidence`."
+            prompt += render_prompt("responder", "run_01", part="reflection.instructions")
         try:
             return run_structured_turn(
                 self.provider,
