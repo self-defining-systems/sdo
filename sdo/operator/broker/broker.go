@@ -265,7 +265,7 @@ func (b *Broker) publish(ctx context.Context, incidentID string, actor Actor, ph
 		}
 		publication := &validate.PublicationContext{BaseCommit: proposal.BaseCommit, IncidentID: incidentID, VerifiedSourceTree: expectedSourceTree}
 		if phase == ReflectionPhase && decision == nil {
-			decision, err = validate.LoadReflectionDecision(ctx, proposal.Path, "")
+			decision, err = validate.LoadCheckedReflectionDecision(ctx, proposal.Path, "")
 			if err != nil {
 				return err
 			}

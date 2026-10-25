@@ -402,12 +402,15 @@ class CodexSessionBackend:
                 for name, value in turn_usage(turn).items():
                     usage[name] = usage.get(name, 0) + value
                 payload = unwrap_branch(turn.output_json, "reflection")
-            result = ReflectionTurn.from_model_output(payload)
+            # Preserve the complete returned proto through validation: Python's
+            # view must not discard deprecated payloads or reject a decision
+            # before the shared Go diagnostics can drive an in-session correction.
+            decision = json_format.ParseDict(payload, ReflectionResult())
             check = self.memory_checker(
-                worktree, result.to_result(), min(VALIDATION_TIMEOUT_SECONDS, deadline - time.monotonic())
+                worktree, decision, min(VALIDATION_TIMEOUT_SECONDS, deadline - time.monotonic())
             )
             if check.exit_code == 0 and not check.timed_out:
-                return result.with_usage(usage)
+                return ReflectionTurn.from_model_output(payload).with_usage(usage)
             if attempt == 3 or time.monotonic() >= deadline:
                 raise RuntimeError(f"reflection memory check failed before submission: {check.stdout}\n{check.stderr}")
             turn = self._run(

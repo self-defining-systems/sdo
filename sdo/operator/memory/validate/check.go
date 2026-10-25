@@ -57,6 +57,9 @@ func Check(ctx context.Context, request Request, compile CompileRunner) ([]Diagn
 			return nil, err
 		}
 	}
+	if request.Phase == ReflectionPhase && request.Actor == Responder {
+		diagnostics = append(diagnostics, ReflectionDecisionContractDiagnostics(request.Decision)...)
+	}
 	// Publication content gates run before executing candidate Go code.
 	extra, err := publicationChecks(ctx, request, len(diagnostics) == 0)
 	if err != nil {
