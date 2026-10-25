@@ -88,23 +88,7 @@ Failed responder verification adds
 responder-issued rollback and restarts without retaining executable application state. A successful
 retry does not erase the earlier revision's failure or restore its trust.
 
-`<IncidentJobName(incident_id)>-fast-path` stores `state` (`attempting`, `failed`,
-`resolved`), bound `program_runs`, revision-bound `trust_failure_signals`, and a
-failure `summary`. The controller freezes the diagnoses and failure suspicion
-before writing, and consumes its one fast-path attempt durably. After restart,
-every original binding must diagnose NoMatch at the same program revision and
-pass fresh detector and independent health verification to close. A remaining
-Match, Unknown, NeedsJudgement, missing program, changed revision or read error
-hands the incident to the responder. The existing one-attempt limit prevents a
-second fast-path write; the remaining responder budget still applies.
-
-A resolved marker is an observation, never cached authority to close. Failed
-attempts retain their original revision-bound signals even if the cluster later
-recovers. Suspicion frozen for an interrupted attempt is restored when live
-rechecking cannot establish a verified fix. Legacy markers without bound diagnoses
-escalate; their `application`, `preimages`, `tool_state` and `result` are ignored.
-Do not infer a repair receipt or new trust credit from a restart's read-only
-closure: it has fresh diagnosis and verification, but no application receipt.
+Incident-open `playbook_coverage` survives prepared-task replay and is copied unchanged into the outcome. No automatic apply or fast-path restart marker is used. Native receipts require responder Job evidence.
 
 Outcome `PlanApplication` fields 11 (`pre_images`) and 13 (`patches`) are reserved.
 Concrete `actions_applied`, verification and timing remain durable evidence.
@@ -115,8 +99,7 @@ remain in process; there is no durable rollback owner or cursor.
 
 Sources: `controller_state.proto`, `program.proto`,
 `runtime/kubernetes_job_dispatcher_state.go`, `runtime/responder_loop_state.go`,
-`runtime/plan_executor{,_receipt}.go`, `runtime/program_fast_path_recheck.go` and
-`runtime/kubernetes_fast_path.go`. For accepted success/failure evidence, see
+`runtime/plan_executor{,_receipt}.go` and `runtime/playbook_coverage.go`. For accepted success/failure evidence, see
 [program trust evidence](fastloop-results.md#program-trust-evidence).
 
 Foreign NetworkPolicy drift uses the existing typed DriftEvent evidence: `source` states absence from accepted source and the `spec` field records create/edit values. Admission requires a confirmed source-absence read and reviewed kind, not a failed source lookup. A learned repeat is `drift.networkpolicy-service-isolation`; policy deletion triggers replay on the retained binding and requires explicit NoMatch before clearing. Normal controller churn remains excluded.

@@ -2,11 +2,10 @@ package runtime
 
 import (
 	"context"
-	"testing"
-	"time"
-
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/contracts/wire"
+	"testing"
+	"time"
 
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/sdktest"

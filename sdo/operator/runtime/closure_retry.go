@@ -2,9 +2,8 @@ package runtime
 
 import (
 	"fmt"
-	"time"
-
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"time"
 )
 
 const (

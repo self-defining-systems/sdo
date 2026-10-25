@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 
 	"google.golang.org/protobuf/proto"

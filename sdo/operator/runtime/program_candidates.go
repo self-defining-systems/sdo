@@ -3,12 +3,11 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"sdo.dev/operator/memory/layout"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
-
-	"sdo.dev/operator/memory/layout"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 

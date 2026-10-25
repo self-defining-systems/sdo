@@ -4,12 +4,11 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
-
-	"sdo.dev/operator/runtime/internal/lifecycleio"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"

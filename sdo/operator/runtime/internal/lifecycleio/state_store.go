@@ -7,10 +7,6 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
-	"strconv"
-	"strings"
-	"sync"
-
 	"google.golang.org/protobuf/proto"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -18,6 +14,9 @@ import (
 	"k8s.io/client-go/kubernetes"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/contracts/wire"
+	"strconv"
+	"strings"
+	"sync"
 )
 
 const (

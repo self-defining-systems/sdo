@@ -3,9 +3,8 @@ package runtime
 import (
 	"context"
 	"path/filepath"
-	"testing"
-
 	"sdo.dev/operator/runtime/internal/lifecycleio"
+	"testing"
 
 	"k8s.io/client-go/kubernetes/fake"
 )

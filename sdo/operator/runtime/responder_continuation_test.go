@@ -3,12 +3,6 @@ package runtime
 import (
 	"context"
 	"encoding/json"
-	"path/filepath"
-	"strings"
-	"sync/atomic"
-	"testing"
-	"time"
-
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
@@ -16,11 +10,16 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
+	"path/filepath"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/contracts/wire"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
+	"strings"
+	"sync/atomic"
+	"testing"
+	"time"
 )
 
 func TestUnhealthyFailedResponderDoesNotFinishWithBudgetRemaining(t *testing.T) {

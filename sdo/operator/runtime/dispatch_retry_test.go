@@ -2,10 +2,9 @@ package runtime
 
 import (
 	"errors"
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"testing"
 	"time"
-
-	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/sdktest"

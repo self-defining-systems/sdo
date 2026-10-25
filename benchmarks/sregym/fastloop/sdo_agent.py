@@ -213,15 +213,9 @@ def _program_metrics(result: dict[str, Any], memory_reasons: tuple[str, ...] = (
                 commands[name] = commands.get(name, 0) + 1
     loops = result.get("response_loops_used")
     return {
+        "playbook_coverage": result.get("playbook_coverage"),
         "program_diagnoses": len(runs) if isinstance(runs, list) else None,
-        "resolution_path": result.get("resolution_path")
-        if result.get("resolution_path") in ("fast_path", "responder")
-        else None,
-        "fast_path_programs": tuple(str(item) for item in result.get("fast_path_programs", []) or []),
-        "fast_path_relation_covered_findings": tuple(
-            item for item in result.get("fast_path_relation_covered_findings", []) or [] if isinstance(item, dict)
-        ),
-        "fast_path_skipped_reason": result.get("fast_path_skipped_reason") or None,
+        "resolution_path": result.get("resolution_path") if result.get("resolution_path") == "responder" else None,
         "match_reasons": tuple(dict.fromkeys(match_reasons)),
         "binding_sources": tuple(dict.fromkeys(binding_sources)),
         "program_verdicts": verdicts,
@@ -325,10 +319,8 @@ class SdoPersistentAgent:
             previous_reflection_drain_seconds=costs.get("previous_incident_reflection_drain"),
             incident_id=str(resolution["incident_id"]),
             artifacts_dir=str(receipt_dir),
+            playbook_coverage=resolution.get("playbook_coverage"),
             resolution_path=resolution.get("resolution_path"),
-            fast_path_programs=tuple(resolution.get("fast_path_programs") or []),
-            fast_path_relation_covered_findings=tuple(resolution.get("fast_path_relation_covered_findings") or []),
-            fast_path_skipped_reason=resolution.get("fast_path_skipped_reason"),
         )
 
     def learn(self, outcome: AgentOutcome) -> AgentOutcome:
@@ -395,13 +387,7 @@ class SdoPersistentAgent:
             outcome_document, tuple(str(reason) for reason in memory.get("match_reasons", []) or [])
         )
         program_metrics["resolution_path"] = program_metrics["resolution_path"] or outcome.resolution_path
-        program_metrics["fast_path_programs"] = program_metrics["fast_path_programs"] or outcome.fast_path_programs
-        program_metrics["fast_path_relation_covered_findings"] = (
-            program_metrics["fast_path_relation_covered_findings"] or outcome.fast_path_relation_covered_findings
-        )
-        program_metrics["fast_path_skipped_reason"] = (
-            program_metrics["fast_path_skipped_reason"] or outcome.fast_path_skipped_reason
-        )
+
         rollout_receipts = ledger.get("rollout_receipts")
         rollout_receipts = rollout_receipts if isinstance(rollout_receipts, list) else []
         rebuild_verified = next(

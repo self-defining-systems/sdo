@@ -2,10 +2,9 @@ package runtime
 
 import (
 	"context"
-	"testing"
-
 	"sdo.dev/operator/lifecycle"
 	"sdo.dev/operator/memory"
+	"testing"
 )
 
 func TestRV6NoopJudgeAfterSourceAdvance(t *testing.T) {

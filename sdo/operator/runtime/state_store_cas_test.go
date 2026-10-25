@@ -3,13 +3,12 @@ package runtime
 import (
 	"context"
 	"errors"
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"strconv"
 	"sync"
 	"testing"
 	"time"
-
-	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
-	"sdo.dev/operator/runtime/internal/lifecycleio"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"

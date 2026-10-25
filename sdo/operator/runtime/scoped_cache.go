@@ -5,13 +5,12 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
-	"reflect"
-	"sort"
-	"time"
-
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"reflect"
 	controllercore "sdo.dev/operator/core"
 	"sdo.dev/operator/sdk"
+	"sort"
+	"time"
 )
 
 // scopedObjects accepts only the already projected snapshot; raw Kubernetes

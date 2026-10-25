@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"reflect"
-
 	"sdo.dev/operator/broker"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/sdk"

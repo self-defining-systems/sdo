@@ -2,14 +2,13 @@ package runtime
 
 import (
 	"encoding/json"
-	"testing"
-	"time"
-
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/sdk/program"
+	"testing"
+	"time"
 )
 
 const (

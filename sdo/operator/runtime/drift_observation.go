@@ -1,10 +1,9 @@
 package runtime
 
 import (
+	"sdo.dev/operator/sdk"
 	"sort"
 	"strings"
-
-	"sdo.dev/operator/sdk"
 )
 
 func driftEventKey(event sdk.DriftEvent) string {

@@ -3,10 +3,9 @@ package runtime
 import (
 	"context"
 	"fmt"
+	"sdo.dev/operator/sdk"
 	"sort"
 	"time"
-
-	"sdo.dev/operator/sdk"
 
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"

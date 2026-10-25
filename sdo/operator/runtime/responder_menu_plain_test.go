@@ -2,9 +2,8 @@ package runtime
 
 import (
 	"context"
-	"testing"
-
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"testing"
 )
 
 func TestResponderMenuPlainNeedsNoCapabilities(t *testing.T) {

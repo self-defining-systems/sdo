@@ -2,7 +2,6 @@ package runtime
 
 import (
 	"encoding/json"
-
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 	"sdo.dev/operator/sdk/program"

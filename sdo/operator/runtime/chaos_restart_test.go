@@ -2,10 +2,9 @@ package runtime
 
 import (
 	"context"
+	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"testing"
 	"time"
-
-	"sdo.dev/operator/runtime/internal/lifecycleio"
 
 	"k8s.io/client-go/kubernetes/fake"
 

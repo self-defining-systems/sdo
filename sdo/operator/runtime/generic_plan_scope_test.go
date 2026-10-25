@@ -2,11 +2,10 @@ package runtime
 
 import (
 	"context"
-	"testing"
-
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
+	"testing"
 )
 
 func TestGenericPlanCanRepairExactlyReferencedForeignObject(t *testing.T) {

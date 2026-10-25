@@ -6,13 +6,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"net/http"
 	"sort"
 	"strings"
 	"sync"
 	"time"
-
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	"sdo.dev/operator/runtime/prober"
 	"sdo.dev/operator/sdk"

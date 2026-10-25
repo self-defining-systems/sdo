@@ -6,9 +6,7 @@ Fastloop runs write `results/<run-id>/incidents.jsonl` and `incidents.csv`, one 
 
 New native broker ledgers expose `closure_phase_timestamps` as UTC instants and `reflection_skipped_reason`; fastloop rows expose `closure_phase_seconds`, the elapsed seconds since each preceding observed closure phase. Missing phases mean that path did not execute or that the run predates instrumentation. The immutable outcome document is committed before reflection, so join later phases from the broker ledger using the incident ID and outcome commit.
 
-Native `OutcomeRecord.resolution_path` is `fast_path` or `responder`; `fast_path_programs` lists the programs attempted, including a failed attempt handed to the responder. `plan_applications` records each plan's verification plus `rolled_back` and `rollback_error`, and `program_failure_signals` breaks a failed program's trust streak. A fully resolved fast path has no responder Job and zero responder usage. Current closures still settle per-cause learning evidence; older versions skipped reflection for fast paths. The strict native receipt accepts an empty `responder_job_evidence` only for that verified outcome path. Fastloop rows carry `resolution_path` and `fast_path_programs`; composite rows use `fast_path` only when every component receipt used it and combine distinct program IDs. Older outcomes and rows omit these fields.
-
-When a configured fast path does not attempt a plan, `fast_path_skipped_reason` records the typed eligibility gate in the native ledger, outcome, and fastloop row. The controller log prints the same reason. Historical `uncovered_finding` meant a missing direct match/relation. GS1 attempts the best single match despite uncovered findings; see [automatic repair evidence](automatic-repair.md). `fast_path_relation_covered_findings` is a list of finding fingerprints paired with the covering `program_id` and its named `bindings`; it appears in the fast-path result, native ledger, outcome, and fastloop row. A relation-covered finding must clear during verification or the attempt rolls back, hands off to the responder, and records `fast_path_failure` for the program. Fastloop `match_reasons` includes program verdict evidence facts and `binding_sources` lists the sources of matching runs (`hint`, `finding`, or `sweep`); duplicate reasons and sources are collapsed in each row. Older records omit these fields.
+Native `OutcomeRecord.resolution_path` is `responder` when populated. `playbook_coverage` records incident-open matches and unexplained findings; rows retain it even if receipt validation fails. Every current native receipt requires one successful responder Job. Program selections, raw agent actions, final verification and explicit rollbacks are recorded separately. See [agent-selected repair evidence](automatic-repair.md).
 
 Snapshot captures may include `statefulSets`, `horizontalPodAutoscalers`, and `podDisruptionBudgets` alongside Deployments, Services, ReplicaSets, and Pods. Use their same-namespace selectors, scale targets, and controller owner references to audit relation coverage; a matching name alone is insufficient.
 
@@ -71,16 +69,7 @@ do not add credit or manufacture failures. Inspect the accepted outcome and
 broker reflection ledger separately; publication failure cannot change the
 already committed eligibility facts.
 
-`program_failure_signals` can contain
-`fast_path_failure:<program_id>@<accepted_dependency_revision>`. The fast-path
-marker freezes this revision before mutation, then restores the signal on failed
-handoff or interrupted recovery. Failures remain associated with that revision
-after unrelated source commits, edits and later reversions; later successes do
-not erase them. Legacy `fast_path_failure:<program_id>` uses the known program
-revision, falling back to the source commit only when none is available. Generic
-signals such as `adhoc_coverage_gap` are not a failure of every program. Inspect
-the attempt facts and live recheck evidence described in [native broker evidence](native-broker.md)
-when an outcome has not yet been committed.
+Program failures are recorded as `application_verification_failure:<program_id>@<accepted_dependency_revision>`; counters describe evidence and never gate dispatch.
 
 Responder applications record the same revision-bound trust failure as
 `application_verification_failure:<program_id>@<accepted_dependency_revision>`.

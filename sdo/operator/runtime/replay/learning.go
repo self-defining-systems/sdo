@@ -3,11 +3,10 @@ package replay
 import (
 	"context"
 	"encoding/json"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"os"
 	"path/filepath"
 	"reflect"
-
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sdo.dev/operator/sdk"
 
 	"sdo.dev/operator/sdk/program"

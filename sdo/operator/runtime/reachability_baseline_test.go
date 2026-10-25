@@ -3,15 +3,10 @@ package runtime
 import (
 	"context"
 	"errors"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"net"
 	"os"
 	"path/filepath"
-	"strings"
-	"syscall"
-	"testing"
-	"time"
-
-	"k8s.io/apimachinery/pkg/util/intstr"
 	"sdo.dev/operator/broker"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory"
@@ -19,6 +14,10 @@ import (
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/servicehealth"
 	"sdo.dev/operator/sdk/traffic"
+	"strings"
+	"syscall"
+	"testing"
+	"time"
 )
 
 func baselineRepository(t *testing.T) (string, *broker.Broker) {

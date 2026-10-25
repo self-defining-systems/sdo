@@ -14,7 +14,7 @@ repair. `sdo act` emits a `pre-apply evidence gap` warning and still executes th
 command, records its receipt, and returns its exit code. When the controller
 observes capture failure it logs the cause and adds `pre_apply_capture_gap` to
 `program_failure_signals`, retained in incident/revision-bound responder state.
-Typed apply and the trusted fast path proceed through their normal mutation and
+Agent-selected typed applies proceed through their normal mutation and
 independent verification. The gap alone does not mean the repair failed. A later
 request, including after state restore, cannot replace the missed first boundary
 with a repaired snapshot. An existing successful capture is acknowledged without

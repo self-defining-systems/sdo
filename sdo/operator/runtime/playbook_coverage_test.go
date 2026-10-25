@@ -4,8 +4,12 @@ import (
 	"reflect"
 	"testing"
 
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
+	"sdo.dev/operator/sdk/sdktest"
 )
 
 func TestPlaybookCoverageIncludesEveryMatchAndUnexplainedFinding(t *testing.T) {
@@ -42,5 +46,31 @@ func TestPlaybookCoverageIncludesEveryMatchAndUnexplainedFinding(t *testing.T) {
 	}
 	if !reflect.DeepEqual(coverage, buildPlaybookCoverage(findings, runs, nil, map[string]ProgramTrust{"repair-a": {VerifiedSuccesses: 2, Failures: 3}})) {
 		t.Fatal("coverage depends on input ordering")
+	}
+}
+
+func TestPlaybookCoverageJoinsRelatedAndParameterResources(t *testing.T) {
+	bound := sdk.ObjectRef{Kind: "Deployment", Namespace: "app", Name: "api"}
+	unrelated := sdk.ObjectRef{Kind: "Service", Namespace: "app", Name: "other"}
+	findings := []sdk.Finding{
+		{Fingerprint: "primary", Status: sdk.FindingActive, PrimaryResource: bound},
+		{Fingerprint: "related", Status: sdk.FindingActive, PrimaryResource: unrelated, RelatedResources: []sdk.ObjectRef{bound}},
+		{Fingerprint: "parameter", Status: sdk.FindingActive, PrimaryResource: unrelated, ParameterBindings: map[string]sdk.ObjectRef{"workload": bound}},
+		{Fingerprint: "foreign", Status: sdk.FindingActive, PrimaryResource: sdk.ObjectRef{Kind: "Deployment", Namespace: "elsewhere", Name: "api"}},
+	}
+	runs := []ProgramRun{{ProgramID: "repair", Bindings: program.Bindings{Objects: program.ObjectBindings{"workload": bound}}, Verdict: program.Verdict{Result: program.Match}}}
+	coverage := buildPlaybookCoverage(findings, runs, nil, nil)
+	if !reflect.DeepEqual(coverage.Matches[0].ExplainedFindingFingerprints, []string{"parameter", "primary", "related"}) || !reflect.DeepEqual(coverage.UnexplainedFindingFingerprints, []string{"foreign"}) {
+		t.Fatalf("resource joins: %v", coverage)
+	}
+}
+
+func TestPlaybookCoverageJoinsWorkloadServiceRelation(t *testing.T) {
+	snapshot := sdktest.Snapshot{NamespaceName: "app", DeploymentList: []appsv1.Deployment{{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "app"}, Spec: appsv1.DeploymentSpec{Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": "api"}}}}}}, ServiceList: []corev1.Service{{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "app"}, Spec: corev1.ServiceSpec{Selector: map[string]string{"app": "api"}}}}}
+	findings := []sdk.Finding{{Fingerprint: "service-symptom", Status: sdk.FindingActive, PrimaryResource: sdk.ObjectRef{Kind: "Service", Namespace: "app", Name: "api"}}}
+	runs := []ProgramRun{{ProgramID: "repair", Bindings: program.Bindings{Objects: program.ObjectBindings{"workload": {Kind: "Deployment", Namespace: "app", Name: "api"}}}, Verdict: program.Verdict{Result: program.Match}}}
+	coverage := buildPlaybookCoverage(findings, runs, snapshot, nil)
+	if len(coverage.UnexplainedFindingFingerprints) != 0 || !reflect.DeepEqual(coverage.Matches[0].ExplainedFindingFingerprints, []string{"service-symptom"}) {
+		t.Fatalf("relation join: %v", coverage)
 	}
 }
