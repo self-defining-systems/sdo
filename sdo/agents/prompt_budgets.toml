@@ -65,8 +65,8 @@ max_chars = 400
 reason = "Baseline synthetic fixture maximum: 366 Unicode code points; byte-identical template extraction."
 
 [reflection.incident_data]
-max_chars = 200
-reason = "Expanded synthetic coverage includes per-cause reflection work and complete backend prefix/history additions; maximum 128 Unicode code points."
+max_chars = 100
+reason = "Portable fixture configuration maximum: 86 Unicode code points, rounded upward to 100."
 
 [reflection.instructions]
 max_chars = 2400
