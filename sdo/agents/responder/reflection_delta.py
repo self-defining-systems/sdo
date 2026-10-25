@@ -19,8 +19,6 @@ from google.protobuf import json_format
 if TYPE_CHECKING:
     from collections.abc import Iterator, Sequence
 
-    from google.protobuf.message import Message
-
     from sdo.contracts import IncidentClosure, OutcomeRecord, ReflectionCauseWork, ReflectionWorkItem
 
 
@@ -33,15 +31,6 @@ class ReflectionDelta(TypedDict):
     unassigned_work: list[dict[str, Any]]
 
 
-def _unseen(current: Sequence[Message], seen: Sequence[Message]) -> list[dict[str, Any]]:
-    known = {item.SerializeToString(deterministic=True) for item in seen}
-    return [
-        json_format.MessageToDict(item, preserving_proto_field_name=True)
-        for item in current
-        if item.SerializeToString(deterministic=True) not in known
-    ]
-
-
 def reflection_delta_values(
     outcome: OutcomeRecord,
     closure: IncidentClosure,
@@ -50,12 +39,14 @@ def reflection_delta_values(
     cause_work: Sequence[ReflectionCauseWork] = (),
     unassigned_work: Sequence[ReflectionWorkItem] = (),
 ) -> ReflectionDelta:
-    """Keep verified cause indices and new execution/verification receipts intact.
+    """Keep verified cause indices and final execution/verification receipts intact.
 
     Older successful outcomes predate explicit eligibility. Failed historical
     outcomes provide no independent proof and cannot promote reported causes.
-    A changed receipt is new information even if its action/application ID is
-    unchanged, for example when Go adds final verification after the response.
+    Native receipts and final application proof are merged after the model
+    returns, so presence in closure.result does not establish model visibility.
+    Tool calls already observed during the response are omitted; controller
+    calls after the model-return timestamp remain new facts.
     """
     if outcome.HasField("reflection_eligibility"):
         verified = {item.cause_index for item in outcome.reflection_eligibility.causes}
@@ -73,14 +64,26 @@ def reflection_delta_values(
         if index in verified
     ]
     result = closure.result
+    known_calls = {item.SerializeToString(deterministic=True) for item in result.program_tool_calls}
+    returned_at = result.timing.completed_at.ToNanoseconds() if result.timing.HasField("completed_at") else None
+    new_calls = [
+        json_format.MessageToDict(item, preserving_proto_field_name=True)
+        for item in outcome.program_tool_calls
+        if item.SerializeToString(deterministic=True) not in known_calls
+        or (returned_at is not None and item.at.ToNanoseconds() > returned_at)
+    ]
     return ReflectionDelta(
         outcome_commit=outcome_commit,
         verdict=outcome.classification,
         confirmed_fixed=fixed,
         unseen_receipts={
-            "repair_actions": _unseen(outcome.repair_actions, result.repair_actions),
-            "plan_applications": _unseen(outcome.plan_applications, result.plan_applications),
-            "program_tool_calls": _unseen(outcome.program_tool_calls, result.program_tool_calls),
+            "repair_actions": [
+                json_format.MessageToDict(item, preserving_proto_field_name=True) for item in outcome.repair_actions
+            ],
+            "plan_applications": [
+                json_format.MessageToDict(item, preserving_proto_field_name=True) for item in outcome.plan_applications
+            ],
+            "program_tool_calls": new_calls,
         },
         cause_work=[
             json_format.MessageToDict(item, preserving_proto_field_name=True)

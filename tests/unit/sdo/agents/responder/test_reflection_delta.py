@@ -51,7 +51,7 @@ def test_delta_keeps_independent_verdict_and_only_confirmed_fixed_faults() -> No
     assert outcome.SerializeToString() == before
 
 
-def test_delta_sends_only_receipts_not_already_in_the_responder_result() -> None:
+def test_delta_sends_final_receipts_without_repeating_observed_tool_calls() -> None:
     seen = RepairActionReceipt(action_id="seen", details="already observed")
     new = RepairActionReceipt(action_id="controller", details="independent controller observation")
     seen_plan = PlanApplication(application_id="seen-plan", applied=True)
@@ -71,8 +71,8 @@ def test_delta_sends_only_receipts_not_already_in_the_responder_result() -> None
 
     receipts = reflection_delta_values(outcome, closure, outcome_commit="accepted")["unseen_receipts"]
 
-    assert [item["action_id"] for item in receipts["repair_actions"]] == ["controller"]
-    assert receipts["repair_actions"][0]["details"] == new.details
+    assert [item["action_id"] for item in receipts["repair_actions"]] == ["seen", "controller"]
+    assert receipts["repair_actions"][1]["details"] == new.details
     assert receipts["plan_applications"][0]["verification_passed"] is True
     assert [item["command"] for item in receipts["program_tool_calls"]] == ["verify"]
 
@@ -116,3 +116,27 @@ def test_large_delta_preserves_full_new_evidence_outside_the_checkout() -> None:
         assert json.loads(details.read_text(encoding="utf-8")) == delta
         assert details.stat().st_mode & 0o777 == 0o600
     assert not details.exists()
+
+
+def test_worker_merged_receipts_are_new_even_when_present_in_the_closure() -> None:
+    receipt = RepairActionReceipt(action_id="native", details="worker-generated final receipt")
+    application = PlanApplication(application_id="native", verification_completed=True, verification_passed=True)
+    closure = IncidentClosure(result=IncidentResult(repair_actions=[receipt], plan_applications=[application]))
+    outcome = OutcomeRecord(classification="success", repair_actions=[receipt], plan_applications=[application])
+
+    unseen = reflection_delta_values(outcome, closure, outcome_commit="accepted")["unseen_receipts"]
+
+    assert unseen["repair_actions"][0]["action_id"] == "native"
+    assert unseen["plan_applications"][0]["verification_passed"] is True
+
+
+def test_controller_calls_after_model_return_are_new_even_when_merged_into_result() -> None:
+    closure = IncidentClosure(result=IncidentResult())
+    closure.result.timing.completed_at.FromJsonString("2026-10-24T18:00:00Z")
+    call = closure.result.program_tool_calls.add(command="verify", response_json='{"healthy":true}')
+    call.at.FromJsonString("2026-10-24T18:00:01Z")
+    outcome = OutcomeRecord(classification="success", program_tool_calls=[call])
+
+    unseen = reflection_delta_values(outcome, closure, outcome_commit="accepted")["unseen_receipts"]
+
+    assert unseen["program_tool_calls"][0]["command"] == "verify"
