@@ -227,7 +227,7 @@ class ValueProvenance(_message.Message):
     def __init__(self, origin: _Optional[str] = ..., ref: _Optional[_Union[_common_pb2.ObjectRef, _Mapping]] = ..., path: _Optional[str] = ..., source_commit: _Optional[str] = ..., resource_version: _Optional[str] = ..., parameter: _Optional[str] = ...) -> None: ...
 
 class ActionReport(_message.Message):
-    __slots__ = ("action_index", "status", "values", "exit_code", "external_effect_json", "kubernetes_effect_json", "recording_error", "job_status_json")
+    __slots__ = ("action_index", "status", "values", "exit_code", "external_effect_json", "kubernetes_effect_json", "recording_error", "job_status_json", "failure_reason")
     ACTION_INDEX_FIELD_NUMBER: _ClassVar[int]
     STATUS_FIELD_NUMBER: _ClassVar[int]
     VALUES_FIELD_NUMBER: _ClassVar[int]
@@ -236,6 +236,7 @@ class ActionReport(_message.Message):
     KUBERNETES_EFFECT_JSON_FIELD_NUMBER: _ClassVar[int]
     RECORDING_ERROR_FIELD_NUMBER: _ClassVar[int]
     JOB_STATUS_JSON_FIELD_NUMBER: _ClassVar[int]
+    FAILURE_REASON_FIELD_NUMBER: _ClassVar[int]
     action_index: int
     status: str
     values: _containers.RepeatedCompositeFieldContainer[ValueProvenance]
@@ -244,7 +245,8 @@ class ActionReport(_message.Message):
     kubernetes_effect_json: bytes
     recording_error: str
     job_status_json: bytes
-    def __init__(self, action_index: _Optional[int] = ..., status: _Optional[str] = ..., values: _Optional[_Iterable[_Union[ValueProvenance, _Mapping]]] = ..., exit_code: _Optional[int] = ..., external_effect_json: _Optional[bytes] = ..., kubernetes_effect_json: _Optional[bytes] = ..., recording_error: _Optional[str] = ..., job_status_json: _Optional[bytes] = ...) -> None: ...
+    failure_reason: str
+    def __init__(self, action_index: _Optional[int] = ..., status: _Optional[str] = ..., values: _Optional[_Iterable[_Union[ValueProvenance, _Mapping]]] = ..., exit_code: _Optional[int] = ..., external_effect_json: _Optional[bytes] = ..., kubernetes_effect_json: _Optional[bytes] = ..., recording_error: _Optional[str] = ..., job_status_json: _Optional[bytes] = ..., failure_reason: _Optional[str] = ...) -> None: ...
 
 class DeletePod(_message.Message):
     __slots__ = ("ref",)

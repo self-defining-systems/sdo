@@ -124,9 +124,10 @@ type TimingMetrics struct {
 }
 
 type RepairActionReceipt struct {
-	ActionID string
-	Kind     string
-	Target   string
+	FailureReason string
+	ActionID      string
+	Kind          string
+	Target        string
 	// Resources are the objects the action mutated; diagnosis verification
 	// credits a root cause only to a repair that touched its resources.
 	Resources   []sdk.ObjectRef

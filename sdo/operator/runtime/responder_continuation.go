@@ -83,6 +83,7 @@ func (d KubernetesJobDispatcher) continueResponder(ctx context.Context, executor
 		if err != nil {
 			return IncidentResult{}, err
 		}
+		result.RepairActions = loop.checkDeletionReceipts(ctx, result.RepairActions)
 		result = accumulateResponderResult(state.Result, result)
 		verify := func() ToolResponse {
 			if loop.VerifyResult != nil {
@@ -113,16 +114,21 @@ func (d KubernetesJobDispatcher) continueResponder(ctx context.Context, executor
 			limit = request.MaxResponseLoops
 		}
 		exhausted := state.Attempts >= limit || loop.Exhausted() || !now().Before(request.ResponseDeadline)
-		state.Done = verification.Healthy || exhausted
+		repairs := loop.continuationRepairs(result)
+		deniedNoProgress := authorizationDeniedNoProgress(state.Feedback, verification, repairs)
+		state.Done = verification.Healthy || exhausted || deniedNoProgress
 		if verification.Healthy {
 			result.Status = IncidentCompleted
 			result.FinalDetectorStates = verification.DetectorStates
+		} else if deniedNoProgress {
+			result.Status = IncidentFailed
+			result.Error = "authorization_denied_no_progress"
 		} else if exhausted {
 			result.Status = IncidentFailed
 			result.ResponseLoopExhausted = true
 			result.Error = "response deadline or loop budget exhausted with unresolved findings"
 		}
-		encoded, err := continuationFeedback(state.Attempts, verification, loop.continuationRepairs(result)...)
+		encoded, err := continuationFeedback(state.Attempts, verification, repairs...)
 		if err != nil {
 			return IncidentResult{}, err
 		}
@@ -219,7 +225,7 @@ func (d KubernetesJobDispatcher) ContinueAfterVerification(ctx context.Context, 
 	if request.MaxResponseLoops > 0 && request.MaxResponseLoops < limit {
 		limit = request.MaxResponseLoops
 	}
-	if state.Result == nil || state.Attempts >= limit || loop.Exhausted() {
+	if state.Result == nil || state.Result.GetError() == "authorization_denied_no_progress" || state.Attempts >= limit || loop.Exhausted() {
 		return false, nil
 	}
 	if !state.Done {
@@ -254,16 +260,17 @@ func (l *ResponderLoop) saveContinuation(ctx context.Context, state responderCon
 // Both continuation paths publish the same factual schema, including object and
 // finding identity. A pending observation window is not an unhealthy finding.
 type continuationReceipt struct {
-	ActionID    string          `json:"action_id"`
-	Kind        string          `json:"kind"`
-	Target      string          `json:"target"`
-	Resources   []sdk.ObjectRef `json:"resources"`
-	Summary     string          `json:"summary"`
-	Details     string          `json:"details"`
-	StartedAt   time.Time       `json:"started_at"`
-	CompletedAt time.Time       `json:"completed_at"`
-	Success     bool            `json:"success"`
-	Reversible  bool            `json:"reversible"`
+	FailureReason string          `json:"failure_reason,omitempty"`
+	ActionID      string          `json:"action_id"`
+	Kind          string          `json:"kind"`
+	Target        string          `json:"target"`
+	Resources     []sdk.ObjectRef `json:"resources"`
+	Summary       string          `json:"summary"`
+	Details       string          `json:"details"`
+	StartedAt     time.Time       `json:"started_at"`
+	CompletedAt   time.Time       `json:"completed_at"`
+	Success       bool            `json:"success"`
+	Reversible    bool            `json:"reversible"`
 }
 type continuationRepair struct {
 	Kind          string              `json:"kind"`
@@ -380,7 +387,7 @@ func (l *ResponderLoop) applicationRepairsLocked() []continuationRepair {
 }
 
 func feedbackReceipt(receipt RepairActionReceipt) continuationReceipt {
-	return continuationReceipt{ActionID: receipt.ActionID, Kind: receipt.Kind, Target: receipt.Target, Resources: receipt.Resources, Summary: receipt.Summary, Details: receipt.Details, StartedAt: receipt.StartedAt, CompletedAt: receipt.CompletedAt, Success: receipt.Success, Reversible: receipt.Reversible}
+	return continuationReceipt{ActionID: receipt.ActionID, Kind: receipt.Kind, Target: receipt.Target, Resources: receipt.Resources, Summary: receipt.Summary, Details: receipt.Details, StartedAt: receipt.StartedAt, CompletedAt: receipt.CompletedAt, Success: receipt.Success, Reversible: receipt.Reversible, FailureReason: receipt.FailureReason}
 }
 
 func continuationFeedback(attempt int, verification ToolResponse, repairs ...continuationRepair) ([]byte, error) {

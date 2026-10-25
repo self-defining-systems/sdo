@@ -368,6 +368,7 @@ message RepairActionReceipt {
   google.protobuf.Timestamp completed_at = 8 [(buf.validate.field).required = true];
   bool success = 9;
   bool reversible = 10;
+  string failure_reason = 11 [(buf.validate.field).string = {in: ["", "authorization_denied", "execution_failed", "delete_not_confirmed", "outcome_unknown"]}];
 }
 
 // IncidentResult is what the responder returns. The CEL enforces unique

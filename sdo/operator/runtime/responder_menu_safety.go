@@ -1,13 +1,20 @@
 package runtime
 
 import (
+	"context"
 	"encoding/json"
+	"k8s.io/apimachinery/pkg/types"
+	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 	"sort"
 )
 
 // ResponderMenuConfig enables a convenience catalog over the ordinary executor.
-type ResponderMenuConfig struct{ Plans []ResponderMenuPlan }
+type ResponderMenuConfig struct {
+	Plans             []ResponderMenuPlan
+	Unexplained       func(context.Context) ([]UnexplainedRemoval, error)
+	RemoveUnexplained func(context.Context, UnexplainedRemoval, PlanLifecycleClient, sdk.ObjectRef, types.UID, string) error
+}
 type ResponderMenuPlan struct {
 	ID        string
 	ProgramID string

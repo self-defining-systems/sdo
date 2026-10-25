@@ -308,7 +308,8 @@ def _act(args: argparse.Namespace) -> int:
             response: dict[str, object] = {
                 "command": "act",
                 "summary": receipt["summary"],
-                "success": code == 0,
+                "success": receipt["success"],
+                "failure_reason": receipt.get("failure_reason", ""),
                 "exit_code": code,
                 "receipt": receipt,
                 "output": output,

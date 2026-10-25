@@ -1413,6 +1413,7 @@ type ActionReport struct {
 	KubernetesEffectJson []byte `protobuf:"bytes,6,opt,name=kubernetes_effect_json,json=kubernetesEffectJson,proto3" json:"kubernetes_effect_json,omitempty"`
 	RecordingError       string `protobuf:"bytes,7,opt,name=recording_error,json=recordingError,proto3" json:"recording_error,omitempty"`
 	JobStatusJson        []byte `protobuf:"bytes,8,opt,name=job_status_json,json=jobStatusJson,proto3" json:"job_status_json,omitempty"`
+	FailureReason        string `protobuf:"bytes,9,opt,name=failure_reason,json=failureReason,proto3" json:"failure_reason,omitempty"`
 	unknownFields        protoimpl.UnknownFields
 	sizeCache            protoimpl.SizeCache
 }
@@ -1501,6 +1502,13 @@ func (x *ActionReport) GetJobStatusJson() []byte {
 		return x.JobStatusJson
 	}
 	return nil
+}
+
+func (x *ActionReport) GetFailureReason() string {
+	if x != nil {
+		return x.FailureReason
+	}
+	return ""
 }
 
 type DeletePod struct {
@@ -3925,7 +3933,7 @@ const file_sdodev_contracts_v1alpha1_program_proto_rawDesc = "" +
 	"\x04path\x18\x03 \x01(\tR\x04path\x12#\n" +
 	"\rsource_commit\x18\x04 \x01(\tR\fsourceCommit\x12)\n" +
 	"\x10resource_version\x18\x05 \x01(\tR\x0fresourceVersion\x12\x1c\n" +
-	"\tparameter\x18\x06 \x01(\tR\tparameter\"\xa2\x03\n" +
+	"\tparameter\x18\x06 \x01(\tR\tparameter\"\xa1\x04\n" +
 	"\fActionReport\x12!\n" +
 	"\faction_index\x18\x01 \x01(\rR\vactionIndex\x12B\n" +
 	"\x06status\x18\x02 \x01(\tB*\xbaH'r%R\bpreparedR\aappliedR\arefusedR\aunknownR\x06status\x12B\n" +
@@ -3934,7 +3942,8 @@ const file_sdodev_contracts_v1alpha1_program_proto_rawDesc = "" +
 	"\x14external_effect_json\x18\x05 \x01(\fR\x12externalEffectJson\x124\n" +
 	"\x16kubernetes_effect_json\x18\x06 \x01(\fR\x14kubernetesEffectJson\x12'\n" +
 	"\x0frecording_error\x18\a \x01(\tR\x0erecordingError\x12&\n" +
-	"\x0fjob_status_json\x18\b \x01(\fR\rjobStatusJsonB\f\n" +
+	"\x0fjob_status_json\x18\b \x01(\fR\rjobStatusJson\x12}\n" +
+	"\x0efailure_reason\x18\t \x01(\tBV\xbaHSrQR\x00R\x14authorization_deniedR\x10execution_failedR\x14delete_not_confirmedR\x0foutcome_unknownR\rfailureReasonB\f\n" +
 	"\n" +
 	"_exit_code\"K\n" +
 	"\tDeletePod\x12>\n" +

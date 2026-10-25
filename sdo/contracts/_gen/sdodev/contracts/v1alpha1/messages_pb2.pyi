@@ -486,7 +486,7 @@ class TimingMetrics(_message.Message):
     def __init__(self, started_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., completed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ...) -> None: ...
 
 class RepairActionReceipt(_message.Message):
-    __slots__ = ("action_id", "kind", "target", "resources", "summary", "details", "started_at", "completed_at", "success", "reversible")
+    __slots__ = ("action_id", "kind", "target", "resources", "summary", "details", "started_at", "completed_at", "success", "reversible", "failure_reason")
     ACTION_ID_FIELD_NUMBER: _ClassVar[int]
     KIND_FIELD_NUMBER: _ClassVar[int]
     TARGET_FIELD_NUMBER: _ClassVar[int]
@@ -497,6 +497,7 @@ class RepairActionReceipt(_message.Message):
     COMPLETED_AT_FIELD_NUMBER: _ClassVar[int]
     SUCCESS_FIELD_NUMBER: _ClassVar[int]
     REVERSIBLE_FIELD_NUMBER: _ClassVar[int]
+    FAILURE_REASON_FIELD_NUMBER: _ClassVar[int]
     action_id: str
     kind: str
     target: str
@@ -507,7 +508,8 @@ class RepairActionReceipt(_message.Message):
     completed_at: _timestamp_pb2.Timestamp
     success: bool
     reversible: bool
-    def __init__(self, action_id: _Optional[str] = ..., kind: _Optional[str] = ..., target: _Optional[str] = ..., resources: _Optional[_Iterable[_Union[_common_pb2.ObjectRef, _Mapping]]] = ..., summary: _Optional[str] = ..., details: _Optional[str] = ..., started_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., completed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., success: _Optional[bool] = ..., reversible: _Optional[bool] = ...) -> None: ...
+    failure_reason: str
+    def __init__(self, action_id: _Optional[str] = ..., kind: _Optional[str] = ..., target: _Optional[str] = ..., resources: _Optional[_Iterable[_Union[_common_pb2.ObjectRef, _Mapping]]] = ..., summary: _Optional[str] = ..., details: _Optional[str] = ..., started_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., completed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., success: _Optional[bool] = ..., reversible: _Optional[bool] = ..., failure_reason: _Optional[str] = ...) -> None: ...
 
 class IncidentResult(_message.Message):
     __slots__ = ("schema_version", "incident_id", "status", "confirmed_root_causes", "applied_playbooks", "repair_changes", "repair_actions", "final_detector_states", "proposed_artifact_ids", "verification_evidence", "usage", "timing", "responder_session_id", "error", "late_findings_pull", "program_tool_calls", "program_runs", "plan_applications", "response_loops_used", "response_loop_exhausted", "program_failure_signals", "resolution_path", "drift_events")

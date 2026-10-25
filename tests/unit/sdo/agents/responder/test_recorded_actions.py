@@ -717,3 +717,31 @@ def test_arbitrary_command_text_round_trips_through_the_recorded_receipts(
     [loaded] = recorded_actions._read_receipts(path)
     assert loaded.action_id == "sdo-act-1"
     assert loaded.success == (code == 0)
+
+
+def test_delete_receipt_does_not_claim_extra_existing_resources(scratch: Path, tmp_path: Path) -> None:
+    kubectl = tmp_path / "kubectl"
+    kubectl.write_text(
+        '#!/bin/sh\ncase " $* " in\n'
+        "*' get '*) echo serviceaccount/cleanup;;\n"
+        "*) echo deployment.apps/cleanup deleted;; esac\n"
+    )
+    kubectl.chmod(0o755)
+    tools_cli.main(
+        [
+            "act",
+            "--resource",
+            "Deployment/app/cleanup",
+            "--resource",
+            "ServiceAccount/app/cleanup",
+            "--",
+            str(kubectl),
+            "delete",
+            "deployment/cleanup",
+            "-n",
+            "app",
+        ]
+    )
+    (receipt,) = _recorded(scratch)
+    assert receipt["success"] is False
+    assert receipt["failure_reason"] == "delete_not_confirmed"

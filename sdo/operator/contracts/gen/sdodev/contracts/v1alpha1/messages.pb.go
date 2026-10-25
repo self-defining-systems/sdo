@@ -2433,6 +2433,7 @@ type RepairActionReceipt struct {
 	CompletedAt   *timestamppb.Timestamp `protobuf:"bytes,8,opt,name=completed_at,json=completedAt,proto3" json:"completed_at,omitempty"`
 	Success       bool                   `protobuf:"varint,9,opt,name=success,proto3" json:"success,omitempty"`
 	Reversible    bool                   `protobuf:"varint,10,opt,name=reversible,proto3" json:"reversible,omitempty"`
+	FailureReason string                 `protobuf:"bytes,11,opt,name=failure_reason,json=failureReason,proto3" json:"failure_reason,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2535,6 +2536,13 @@ func (x *RepairActionReceipt) GetReversible() bool {
 		return x.Reversible
 	}
 	return false
+}
+
+func (x *RepairActionReceipt) GetFailureReason() string {
+	if x != nil {
+		return x.FailureReason
+	}
+	return ""
 }
 
 // IncidentResult is what the responder returns. The CEL enforces unique
@@ -3495,7 +3503,7 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	"\n" +
 	"started_at\x18\x01 \x01(\v2\x1a.google.protobuf.TimestampB\x06\xbaH\x03\xc8\x01\x01R\tstartedAt\x12E\n" +
 	"\fcompleted_at\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampB\x06\xbaH\x03\xc8\x01\x01R\vcompletedAt:g\xbaHd\x1ab\n" +
-	"\x0etiming.ordered\x12*completed_at must not be before started_at\x1a$this.completed_at >= this.started_at\"\xb7\x04\n" +
+	"\x0etiming.ordered\x12*completed_at must not be before started_at\x1a$this.completed_at >= this.started_at\"\xb6\x05\n" +
 	"\x13RepairActionReceipt\x12$\n" +
 	"\taction_id\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\bactionId\x12\x1b\n" +
 	"\x04kind\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x04kind\x12\x1f\n" +
@@ -3510,7 +3518,8 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	"\n" +
 	"reversible\x18\n" +
 	" \x01(\bR\n" +
-	"reversible:n\xbaHk\x1ai\n" +
+	"reversible\x12}\n" +
+	"\x0efailure_reason\x18\v \x01(\tBV\xbaHSrQR\x00R\x14authorization_deniedR\x10execution_failedR\x14delete_not_confirmedR\x0foutcome_unknownR\rfailureReason:n\xbaHk\x1ai\n" +
 	"\x15repair_action.ordered\x12*completed_at must not be before started_at\x1a$this.completed_at >= this.started_at\"\xb5\x0e\n" +
 	"\x0eIncidentResult\x12>\n" +
 	"\x0eschema_version\x18\x01 \x01(\tB\x17\xbaH\x14r\x12\n" +

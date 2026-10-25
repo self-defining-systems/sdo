@@ -310,7 +310,11 @@ func (e PlanExecutor) generalStep(ctx context.Context, incident IncidentRequest,
 			r.Patches[0].After = created.DeepCopy()
 		}
 	case "delete":
-		err = e.Client.(PlanLifecycleClient).Delete(ctx, ref, before.GetUID(), before.GetResourceVersion())
+		if e.DeleteObject != nil {
+			err = e.DeleteObject(ctx, ref, before.GetUID(), before.GetResourceVersion())
+		} else {
+			err = e.Client.(PlanLifecycleClient).Delete(ctx, ref, before.GetUID(), before.GetResourceVersion())
+		}
 	default:
 		err = e.Client.Patch(ctx, ref, types.MergePatchType, patch.Patch)
 	}

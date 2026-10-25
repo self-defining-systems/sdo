@@ -119,6 +119,8 @@ comes from program and action registries, so adding an action requires no menu-s
 The menu adds no selection ledger, fences, quiescence, provenance, health-reader or credential-delta
 preconditions. Direct commands and recorded `act` remain available in the same responder session.
 
+Current source-absent `drift.unexplained` findings also expose a `remove-unexplained` option bound to the exact UID/resourceVersion. At the API delete boundary Go rechecks the current accepted-source inventory, onboarding acknowledgements, SDO ownership and control namespace. The controller executes and audits the conditional delete; the installer adds only get/delete grants for the discovered non-secret inventory surface to the controller. Worker RBAC is unchanged. Deletion receipts require absence readback, and failed actions retain typed reasons. An unchanged broken set covered by authorization denials stops after one no-progress continuation with `authorization_denied_no_progress`.
+
 Versioned generated menu/report contracts carry session, attempt, round and action identities.
 The tool response includes parameter schemas, what ran, per-action results, each value's provenance,
 and any error. Failed and successful reports return to the same responder session so it can choose

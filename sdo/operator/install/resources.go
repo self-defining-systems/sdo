@@ -294,7 +294,8 @@ func Resources(c Config, resources ...*metav1.APIResourceList) (Plan, error) {
 	if err := addCaptureGrants(c, &plan, resources); err != nil {
 		return Plan{}, err
 	}
-	addObservationGrants(&plan, c)
+	if err := addUnexplainedRemovalGrants(c, &plan, resources); err != nil { return Plan{}, err }
+    addObservationGrants(&plan, c)
 	plan.SyncPod = syncPod(c)
 	plan.Job = controllerJob(c)
 	if c.AcceptedCommit != "" {
