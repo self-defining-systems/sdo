@@ -369,12 +369,19 @@ minutes) in `sdo/operator/memory` to explore further. The Go and Python object-r
 parsers share `tests/fixtures/sdo/contracts/object_ref_grammar.json`, and Hypothesis
 covers `sdo act` receipt recording in `test_recorded_actions.py`.
 
-Proxy latency acceptance runs in the operator CI job without race instrumentation:
+Proxy forwarding acceptance runs in the operator CI job:
 `GOMAXPROCS=2 go test -p 1 -count=3 -run '^(TestProxyWarmAddedP95|TestLargeResponseWarmAddedP95|TestProjectionTailLatency)$' -v ./kubeproxy ./operatorcli`.
-The `!race` forwarding tests use 50 warmup pairs and 200 measured pairs, balanced direct/proxy
-ordering, and 1 ms pacing outside the measured pair. The acceptance threshold is
-10 ms for the nearest-rank paired added p95. Redaction, exact forwarding, bounded
-admission and gap assertions continue to run under `-race`.
+The large-response check uses a blocked upstream to prove that response bytes
+stream before completion, then checks exact forwarding, the projection cap and
+durable recording-gap evidence. It also runs under `-race`.
+`TestRecordAdmissionWithStalledConsumers` holds the queue or all projection
+workers full and checks that admission completes with a gap and no queued raw
+body. These ordering and capacity checks remain deterministic under CI load.
+The small-response `!race` test retains its 10 ms paired added-p95 check.
+For large-response performance measurements, run
+`go test -run '^$' -bench '^BenchmarkLargeResponseWarmAddedP95$' -benchtime=1x -count=3 ./operatorcli`
+from `sdo/operator`. It retains the three balanced windows and reports the
+control-adjusted budget ratio; host scheduling is not a correctness verdict.
 
 Record-admission latency also uses 50 warmups and 200 paced normal-build samples, with a 10 ms p95 limit. Its metadata-only omission, bounded admission and dropped/incomplete checks remain in the race suite.
 
