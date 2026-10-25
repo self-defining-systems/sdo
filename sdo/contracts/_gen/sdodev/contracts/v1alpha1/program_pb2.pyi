@@ -99,7 +99,7 @@ class Plan(_message.Message):
     def __init__(self, actions: _Optional[_Iterable[_Union[Action, _Mapping]]] = ..., rationale: _Optional[str] = ...) -> None: ...
 
 class Action(_message.Message):
-    __slots__ = ("reconcile_from_source", "rollback", "set_field", "restart_rollout", "create_from_source", "delete_object", "delete_pod", "scale_workload", "exec")
+    __slots__ = ("reconcile_from_source", "rollback", "set_field", "restart_rollout", "create_from_source", "delete_object", "delete_pod", "scale_workload", "exec", "remove_service_port", "ensure_database_user")
     RECONCILE_FROM_SOURCE_FIELD_NUMBER: _ClassVar[int]
     ROLLBACK_FIELD_NUMBER: _ClassVar[int]
     SET_FIELD_FIELD_NUMBER: _ClassVar[int]
@@ -109,6 +109,8 @@ class Action(_message.Message):
     DELETE_POD_FIELD_NUMBER: _ClassVar[int]
     SCALE_WORKLOAD_FIELD_NUMBER: _ClassVar[int]
     EXEC_FIELD_NUMBER: _ClassVar[int]
+    REMOVE_SERVICE_PORT_FIELD_NUMBER: _ClassVar[int]
+    ENSURE_DATABASE_USER_FIELD_NUMBER: _ClassVar[int]
     reconcile_from_source: ReconcileFromSource
     rollback: Rollback
     set_field: SetField
@@ -118,7 +120,9 @@ class Action(_message.Message):
     delete_pod: DeletePod
     scale_workload: ScaleWorkload
     exec: Exec
-    def __init__(self, reconcile_from_source: _Optional[_Union[ReconcileFromSource, _Mapping]] = ..., rollback: _Optional[_Union[Rollback, _Mapping]] = ..., set_field: _Optional[_Union[SetField, _Mapping]] = ..., restart_rollout: _Optional[_Union[RestartRollout, _Mapping]] = ..., create_from_source: _Optional[_Union[CreateFromSource, _Mapping]] = ..., delete_object: _Optional[_Union[DeleteObject, _Mapping]] = ..., delete_pod: _Optional[_Union[DeletePod, _Mapping]] = ..., scale_workload: _Optional[_Union[ScaleWorkload, _Mapping]] = ..., exec: _Optional[_Union[Exec, _Mapping]] = ...) -> None: ...
+    remove_service_port: RemoveServicePort
+    ensure_database_user: EnsureDatabaseUser
+    def __init__(self, reconcile_from_source: _Optional[_Union[ReconcileFromSource, _Mapping]] = ..., rollback: _Optional[_Union[Rollback, _Mapping]] = ..., set_field: _Optional[_Union[SetField, _Mapping]] = ..., restart_rollout: _Optional[_Union[RestartRollout, _Mapping]] = ..., create_from_source: _Optional[_Union[CreateFromSource, _Mapping]] = ..., delete_object: _Optional[_Union[DeleteObject, _Mapping]] = ..., delete_pod: _Optional[_Union[DeletePod, _Mapping]] = ..., scale_workload: _Optional[_Union[ScaleWorkload, _Mapping]] = ..., exec: _Optional[_Union[Exec, _Mapping]] = ..., remove_service_port: _Optional[_Union[RemoveServicePort, _Mapping]] = ..., ensure_database_user: _Optional[_Union[EnsureDatabaseUser, _Mapping]] = ...) -> None: ...
 
 class CreateFromSource(_message.Message):
     __slots__ = ("ref", "reason")
@@ -413,3 +417,73 @@ class ReflectionEligibility(_message.Message):
     unassigned: _containers.RepeatedCompositeFieldContainer[ReflectionWorkItem]
     evidence_gap_count: int
     def __init__(self, version: _Optional[int] = ..., causes: _Optional[_Iterable[_Union[ReflectionCauseWork, _Mapping]]] = ..., unassigned: _Optional[_Iterable[_Union[ReflectionWorkItem, _Mapping]]] = ..., evidence_gap_count: _Optional[int] = ...) -> None: ...
+
+class RemoveServicePort(_message.Message):
+    __slots__ = ("ref", "name", "port", "protocol", "allow_empty", "reason")
+    REF_FIELD_NUMBER: _ClassVar[int]
+    NAME_FIELD_NUMBER: _ClassVar[int]
+    PORT_FIELD_NUMBER: _ClassVar[int]
+    PROTOCOL_FIELD_NUMBER: _ClassVar[int]
+    ALLOW_EMPTY_FIELD_NUMBER: _ClassVar[int]
+    REASON_FIELD_NUMBER: _ClassVar[int]
+    ref: _common_pb2.ObjectRef
+    name: str
+    port: int
+    protocol: str
+    allow_empty: bool
+    reason: str
+    def __init__(self, ref: _Optional[_Union[_common_pb2.ObjectRef, _Mapping]] = ..., name: _Optional[str] = ..., port: _Optional[int] = ..., protocol: _Optional[str] = ..., allow_empty: _Optional[bool] = ..., reason: _Optional[str] = ...) -> None: ...
+
+class CredentialRef(_message.Message):
+    __slots__ = ("env",)
+    ENV_FIELD_NUMBER: _ClassVar[int]
+    env: str
+    def __init__(self, env: _Optional[str] = ...) -> None: ...
+
+class DatabaseAuth(_message.Message):
+    __slots__ = ("database", "username", "password")
+    DATABASE_FIELD_NUMBER: _ClassVar[int]
+    USERNAME_FIELD_NUMBER: _ClassVar[int]
+    PASSWORD_FIELD_NUMBER: _ClassVar[int]
+    database: str
+    username: CredentialRef
+    password: CredentialRef
+    def __init__(self, database: _Optional[str] = ..., username: _Optional[_Union[CredentialRef, _Mapping]] = ..., password: _Optional[_Union[CredentialRef, _Mapping]] = ...) -> None: ...
+
+class DatabaseTarget(_message.Message):
+    __slots__ = ("engine", "pod", "container", "database", "auth", "shell")
+    ENGINE_FIELD_NUMBER: _ClassVar[int]
+    POD_FIELD_NUMBER: _ClassVar[int]
+    CONTAINER_FIELD_NUMBER: _ClassVar[int]
+    DATABASE_FIELD_NUMBER: _ClassVar[int]
+    AUTH_FIELD_NUMBER: _ClassVar[int]
+    SHELL_FIELD_NUMBER: _ClassVar[int]
+    engine: str
+    pod: _common_pb2.ObjectRef
+    container: str
+    database: str
+    auth: DatabaseAuth
+    shell: str
+    def __init__(self, engine: _Optional[str] = ..., pod: _Optional[_Union[_common_pb2.ObjectRef, _Mapping]] = ..., container: _Optional[str] = ..., database: _Optional[str] = ..., auth: _Optional[_Union[DatabaseAuth, _Mapping]] = ..., shell: _Optional[str] = ...) -> None: ...
+
+class DatabaseRole(_message.Message):
+    __slots__ = ("database", "name")
+    DATABASE_FIELD_NUMBER: _ClassVar[int]
+    NAME_FIELD_NUMBER: _ClassVar[int]
+    database: str
+    name: str
+    def __init__(self, database: _Optional[str] = ..., name: _Optional[str] = ...) -> None: ...
+
+class EnsureDatabaseUser(_message.Message):
+    __slots__ = ("target", "user", "roles", "password", "reason")
+    TARGET_FIELD_NUMBER: _ClassVar[int]
+    USER_FIELD_NUMBER: _ClassVar[int]
+    ROLES_FIELD_NUMBER: _ClassVar[int]
+    PASSWORD_FIELD_NUMBER: _ClassVar[int]
+    REASON_FIELD_NUMBER: _ClassVar[int]
+    target: DatabaseTarget
+    user: str
+    roles: _containers.RepeatedCompositeFieldContainer[DatabaseRole]
+    password: CredentialRef
+    reason: str
+    def __init__(self, target: _Optional[_Union[DatabaseTarget, _Mapping]] = ..., user: _Optional[str] = ..., roles: _Optional[_Iterable[_Union[DatabaseRole, _Mapping]]] = ..., password: _Optional[_Union[CredentialRef, _Mapping]] = ..., reason: _Optional[str] = ...) -> None: ...

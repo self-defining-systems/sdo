@@ -26,6 +26,9 @@ func newPlanReports(plan program.Plan) []PlanActionReport {
 }
 func settlePlanReports(result *PlanApplicationResult, err error) {
 	for i := range result.ActionReports {
+		if result.ActionReports[i].Status == "unknown" {
+			continue
+		}
 		if i < len(result.ActionsApplied) {
 			result.ActionReports[i].Status = "applied"
 		} else if err != nil && result.ActionReports[i].Status != "unknown" {
@@ -73,6 +76,8 @@ func (e PlanExecutor) verifyValueWrite(ctx context.Context, action program.Actio
 		}
 	case program.ScaleWorkload, *program.ScaleWorkload:
 		path = "spec.replicas"
+	case program.RemoveServicePort, *program.RemoveServicePort:
+		path = "spec.ports"
 	default:
 		return nil
 	}

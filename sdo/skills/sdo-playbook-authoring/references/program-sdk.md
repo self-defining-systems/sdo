@@ -8,7 +8,16 @@ Current Go APIs follow.
 package program // import "sdo.dev/operator/sdk/program"
 
 
+CONSTANTS
+
+const MongoDB = "mongodb"
+
 FUNCTIONS
+
+func ApplyRemoveServicePort(object map[string]any, a RemoveServicePort) error
+    ApplyRemoveServicePort projects a removal without changing any unrelated
+    field. Missing or ambiguous matches and a protected final port leave object
+    untouched.
 
 func ApplySetField(object map[string]any, path string, value any) error
     ApplySetField mutates one field. Named list selectors must resolve uniquely,
@@ -36,6 +45,9 @@ func FieldValue(object map[string]any, path string) (any, error)
     bracketed ConfigMap keys. It does not invent missing intermediate objects.
 
 func ValidateBindings(spec ProgramSpec, b Bindings) error
+func ValidateRemoveServicePort(a RemoveServicePort) error
+    ValidateRemoveServicePort checks the target and exclusive port identity.
+
 func ValidateResolvedSetField(f SetField, value any) error
     ValidateResolvedSetField checks the resolved schema without changing
     provenance.
@@ -80,6 +92,58 @@ type CreateFromSource struct {
 }
     CreateFromSource restores a missing named object from accepted source.
 
+type CredentialRef struct {
+	Env string `json:"env"`
+}
+    CredentialRef names a container environment variable, possibly populated
+    by a Kubernetes Secret reference. Credential bytes never enter plans or
+    recordings.
+
+func (r CredentialRef) Validate() error
+
+type DatabaseAuth struct {
+	Database string        `json:"database"`
+	Username CredentialRef `json:"username"`
+	Password CredentialRef `json:"password"`
+}
+    DatabaseAuth authenticates catalog access inside the selected container. Nil
+    Auth uses the database's existing local unauthenticated bootstrap policy.
+
+type DatabaseRole struct {
+	Database string `json:"database"`
+	Name     string `json:"name"`
+}
+
+type DatabaseTarget struct {
+	Engine    string        `json:"engine"`
+	Pod       sdk.ObjectRef `json:"pod"`
+	Container string        `json:"container"`
+	Database  string        `json:"database"`
+	Auth      *DatabaseAuth `json:"auth,omitempty"`
+	Shell     string        `json:"shell,omitempty"`
+}
+    DatabaseTarget selects one MongoDB catalog on a named application Pod. Shell
+    is mongo (default) or mongosh. Connections are local to that container.
+
+func (t DatabaseTarget) Validate() error
+
+type DatabaseUser struct {
+	Name  string         `json:"name"`
+	Roles []DatabaseRole `json:"roles"`
+}
+    DatabaseUser contains only catalog identity and directly granted roles.
+    Password hashes, credentials and authentication restrictions are excluded.
+
+func ApplyEnsureDatabaseUser(users []DatabaseUser, a EnsureDatabaseUser) ([]DatabaseUser, error)
+    ApplyEnsureDatabaseUser projects a typed catalog mutation on a recorded open
+    catalog. It never reads credentials or invents an unavailable observation.
+
+func NormalizeDatabaseUsers(users []DatabaseUser) ([]DatabaseUser, error)
+    NormalizeDatabaseUsers validates, sorts and defensively copies nonsecret
+    catalog observations. Duplicate users or roles are refused.
+
+func (u DatabaseUser) Validate() error
+
 type DeleteObject struct {
 	Ref    sdk.ObjectRef
 	Reason string
@@ -101,6 +165,20 @@ type Diff struct {
 	Changed      bool   `json:"changed"`
 	Text         string `json:"text,omitempty"`
 }
+
+type EnsureDatabaseUser struct {
+	Target   DatabaseTarget
+	User     string
+	Roles    []DatabaseRole
+	Password CredentialRef
+	Reason   string
+}
+    EnsureDatabaseUser creates a missing user or restores its exact direct
+    roles. Password is read inside the container only when creating the user.
+    Existing passwords and all unrelated users are preserved. This effect is
+    irreversible.
+
+func (a EnsureDatabaseUser) Validate() error
 
 type Evidence struct {
 	Resource sdk.ObjectRef `json:"resource"`
@@ -195,6 +273,7 @@ type ReadView interface {
 	ProbeHTTP(to sdk.ObjectRef, req HTTPProbe) (ProbeResult, error)
 	DiffAgainstSource(ref sdk.ObjectRef) (Diff, error)
 	DiffAgainstBaseline(ref sdk.ObjectRef) (Diff, error)
+	DatabaseUsers(DatabaseTarget) ([]DatabaseUser, error)
 }
 
 func ReadFrom(view sdk.DetectionContext) ReadView
@@ -202,6 +281,20 @@ func ReadFrom(view sdk.DetectionContext) ReadView
     context returns explicit unavailable results for unsupported reads.
 
 type ReconcileFromSource struct{ Ref sdk.ObjectRef }
+
+type RemoveServicePort struct {
+	Ref        sdk.ObjectRef
+	Name       string
+	Port       int32
+	Protocol   string
+	AllowEmpty bool
+	Reason     string
+}
+    RemoveServicePort removes exactly one Service port. Select by Name OR Port;
+    Protocol optionally disambiguates a numeric port (omitted protocol means
+    TCP). The last port is protected unless AllowEmpty is explicitly set;
+    Kubernetes schema validation still applies. Conditional writes preserve
+    concurrent edits.
 
 type RestartRollout struct {
 	Ref    sdk.ObjectRef
