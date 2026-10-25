@@ -218,8 +218,8 @@ def _parser() -> argparse.ArgumentParser:
     )
     commands.add_parser("rollback", help="roll back a plan application").add_argument("application_id")
     for name in ("mitigate", "act", "apply", "rollback"):
-        example = ("Example: " + ACT_EXAMPLE + "\n\n") if name == "act" else ""
-        commands.choices[name].epilog = example + (
+        specific_help = commands.choices[name].epilog
+        commands.choices[name].epilog = (specific_help + "\n\n" if specific_help else "") + (
             "Action output separates target progress from incident verification and lists fixed, new "
             "(possible regression), and unchanged findings from authoritative controller progress. "
             "Mutation stdout is at most 2048 UTF-8 bytes, including JSON framing and newline. Every invocation saves "
