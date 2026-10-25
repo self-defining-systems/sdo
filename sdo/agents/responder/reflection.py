@@ -5,6 +5,8 @@ import os
 import re
 import sys
 import time
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING, ClassVar, Literal, Protocol, cast
 
 from agentshim import SessionResumeError
@@ -43,7 +45,6 @@ REFLECTION_SESSION_MODES: tuple[ReflectionSessionMode, ...] = ("resume", "fresh"
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
-    from pathlib import Path
 
     from agentshim import CommandExecutor
 
@@ -167,6 +168,7 @@ def _logical_learning_request(
     outcome_commit: str,
     closure: IncidentClosure,
     guidance: ReflectionGuidance,
+    history_directory: Path | None = None,
     cause_work: Sequence[ReflectionCauseWork] = (),
     unassigned_work: Sequence[ReflectionWorkItem] = (),
 ) -> RenderedPrompt:
@@ -197,12 +199,14 @@ def _logical_learning_request(
         current_outcome_view_json=named_prompt(
             "reflection.outcome", json.dumps(current_outcome_view(outcome), indent=2)
         ),
-        history_section=named_prompt("reflection.history", _history_section(outcome, history)),
+        history_section=named_prompt("reflection.history", _history_section(outcome, history, history_directory)),
     )
 
 
-def _history_section(outcome: OutcomeRecord, history: list[OutcomeRecord]) -> str:
-    prior = history_view(history, current_incident_id=outcome.incident_id)
+def _history_section(
+    outcome: OutcomeRecord, history: list[OutcomeRecord], evidence_directory: Path | None = None
+) -> str:
+    prior = history_view(history, current_incident_id=outcome.incident_id, evidence_directory=evidence_directory)
     if not prior:
         return render_prompt("responder", "history_section_01", part="reflection.instructions")
     return render_prompt(
@@ -245,69 +249,71 @@ class SessionReflector:
             raise ValueError(f"unsupported reflection session mode: {session_mode!r}")
         if closure is None or not closure.request.HasField("memory_snapshot"):
             raise ValueError("reflection requires a logical memory snapshot")
-        request = _logical_learning_request(
-            outcome=outcome,
-            history=history,
-            outcome_commit=outcome_commit,
-            closure=closure,
-            guidance=self.guidance,
-            cause_work=cause_work,
-            unassigned_work=unassigned_work,
-        )
-        idempotency_key = f"reflection:{incident_id}:{outcome_commit}"
-        if diagnostics:
-            # Keep the incident session; only rejected-edit feedback is new.
-            prompt = render_prompt(
-                "responder",
-                "reflection_retry",
-                part="reflection.instructions",
-                render_validation_feedback=named_prompt(
-                    "reflection.validation_feedback", render_validation_feedback(validation_attempt, diagnostics)
-                ),
-                request=request,
-            )
-            if session_mode == "resume":
-                return self.backend.resume(
-                    session_id=session_id, worktree=worktree, prompt=prompt, idempotency_key=idempotency_key
-                )
-            return self.backend.fresh(worktree=worktree, prompt=prompt, idempotency_key=idempotency_key)
-        if session_mode == "fresh":
-            if closure is None:
-                raise ValueError("a fresh first reflection attempt requires the verified closure for its brief")
-            # The brief replaces the responder transcript, which a resumed
-            # session would re-send on every model request.
-            brief = incident_brief(
-                closure,
-                worktree=worktree,
-                detector_detail=self.guidance in _GENERALIZING_GUIDANCE,
-                event_dependence=self.guidance == "generalize-spec",
-            )
-            prompt = render_prompt(
-                "responder", "reflection_fresh", part="reflection.instructions", brief=brief, request=request
-            )
-            return self.backend.fresh(worktree=worktree, prompt=prompt, idempotency_key=idempotency_key)
-        prompt = render_prompt("responder", "reflection_resume", part="reflection.instructions", request=request)
-        try:
-            return self.backend.resume(
-                session_id=session_id,
-                worktree=worktree,
-                prompt=prompt,
-                idempotency_key=idempotency_key,
-            )
-        except ResponderSessionUnavailable as exc:
-            print(render_prompt("responder", "resume_04", part="reflection.instructions", exc=exc), file=sys.stderr)
-            return self.resume(
-                session_id=session_id,
-                incident_id=incident_id,
-                worktree=worktree,
+        with TemporaryDirectory(prefix="sdo-reflection-history-") as history_directory:
+            request = _logical_learning_request(
                 outcome=outcome,
                 history=history,
                 outcome_commit=outcome_commit,
-                session_mode="fresh",
                 closure=closure,
+                guidance=self.guidance,
+                history_directory=Path(history_directory),
                 cause_work=cause_work,
                 unassigned_work=unassigned_work,
             )
+            idempotency_key = f"reflection:{incident_id}:{outcome_commit}"
+            if diagnostics:
+                # Keep the incident session; only rejected-edit feedback is new.
+                prompt = render_prompt(
+                    "responder",
+                    "reflection_retry",
+                    part="reflection.instructions",
+                    render_validation_feedback=named_prompt(
+                        "reflection.validation_feedback", render_validation_feedback(validation_attempt, diagnostics)
+                    ),
+                    request=request,
+                )
+                if session_mode == "resume":
+                    return self.backend.resume(
+                        session_id=session_id, worktree=worktree, prompt=prompt, idempotency_key=idempotency_key
+                    )
+                return self.backend.fresh(worktree=worktree, prompt=prompt, idempotency_key=idempotency_key)
+            if session_mode == "fresh":
+                if closure is None:
+                    raise ValueError("a fresh first reflection attempt requires the verified closure for its brief")
+                # The brief replaces the responder transcript, which a resumed
+                # session would re-send on every model request.
+                brief = incident_brief(
+                    closure,
+                    worktree=worktree,
+                    detector_detail=self.guidance in _GENERALIZING_GUIDANCE,
+                    event_dependence=self.guidance == "generalize-spec",
+                )
+                prompt = render_prompt(
+                    "responder", "reflection_fresh", part="reflection.instructions", brief=brief, request=request
+                )
+                return self.backend.fresh(worktree=worktree, prompt=prompt, idempotency_key=idempotency_key)
+            prompt = render_prompt("responder", "reflection_resume", part="reflection.instructions", request=request)
+            try:
+                return self.backend.resume(
+                    session_id=session_id,
+                    worktree=worktree,
+                    prompt=prompt,
+                    idempotency_key=idempotency_key,
+                )
+            except ResponderSessionUnavailable as exc:
+                print(render_prompt("responder", "resume_04", part="reflection.instructions", exc=exc), file=sys.stderr)
+                return self.resume(
+                    session_id=session_id,
+                    incident_id=incident_id,
+                    worktree=worktree,
+                    outcome=outcome,
+                    history=history,
+                    outcome_commit=outcome_commit,
+                    session_mode="fresh",
+                    closure=closure,
+                    cause_work=cause_work,
+                    unassigned_work=unassigned_work,
+                )
 
 
 def memory_check_correction(check: ValidationResult, idempotency_key: str) -> RenderedPrompt:
