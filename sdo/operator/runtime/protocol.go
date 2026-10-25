@@ -15,9 +15,10 @@ var ProtocolSchemaVersion = wire.StringConst(&contracts.IncidentRequest{}, "sche
 type DetectorEvaluationStatus string
 
 const (
-	DetectorEvaluationFiring DetectorEvaluationStatus = "firing"
-	DetectorEvaluationClear  DetectorEvaluationStatus = "clear"
-	DetectorEvaluationError  DetectorEvaluationStatus = "error"
+	DetectorEvaluationFiring  DetectorEvaluationStatus = "firing"
+	DetectorEvaluationClear   DetectorEvaluationStatus = "clear"
+	DetectorEvaluationError   DetectorEvaluationStatus = "error"
+	DetectorEvaluationPending DetectorEvaluationStatus = "pending"
 )
 
 type IncidentStatus string

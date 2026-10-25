@@ -464,7 +464,8 @@ func NewReachabilityDetector(spec sdk.DetectorSpec) sdk.Detector
     all made after the Service gained that ready backend, failed. A prior
     successful dial is not required: a port that never accepted a connection
     while its pods report Ready is exactly the fault this detects. Without dial
-    observations in the context it reports nothing.
+    observations in the context it reports nothing. A controller-authorized
+    healthy reference retains never-served declarations as observations instead.
 
 func NewReadyEndpointsDetector(spec sdk.DetectorSpec) sdk.Detector
     NewReadyEndpointsDetector reports every Service with a selector that has
@@ -558,6 +559,16 @@ type ReachabilityExclusion struct {
 	Configuration string             `json:"configuration"`
 	Samples       []DialSample       `json:"samples"`
 }
+
+type ReachabilityObservation struct {
+	Target      ReachabilityTarget `json:"target"`
+	Status      string             `json:"status"`
+	ReferenceAt time.Time          `json:"referenceAt"`
+}
+    ReachabilityObservation is reference evidence, never a health finding.
+
+func ReachabilityObservations(ctx sdk.DetectionContext) []ReachabilityObservation
+    ReachabilityObservations reports currently applicable never-served evidence.
 
 type ReachabilitySource interface {
 	ServiceReachability() (ReachabilityWindow, bool)
