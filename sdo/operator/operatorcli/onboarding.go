@@ -3,19 +3,20 @@ package operatorcli
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
 	"k8s.io/client-go/kubernetes"
-	"sdo.dev/operator/deployment"
+	"sdo.dev/operator/install"
 	"sdo.dev/operator/onboarding"
 	"sdo.dev/operator/rendered"
 )
 
 // Seed adoption is an explicit install event, never an incident-time baseline.
-// Verify accepted detectors once; subsequent installs reuse the immutable record
-// without building detectors, sampling health, or expanding the identities.
-func acknowledgeExistingNamespace(ctx context.Context, client kubernetes.Interface, launch InstallExistingConfig, commit string, probe deployment.HealthProbe) error {
+// Freeze identities now; the in-cluster controller verifies them without a
+// host-local probe or any blocking startup health check.
+func stageExistingNamespace(ctx context.Context, client kubernetes.Interface, launch InstallExistingConfig, commit string) error {
 	control := launch.Install.ControlNamespace
 	if control == "" {
 		control = launch.Install.Namespace
@@ -23,13 +24,6 @@ func acknowledgeExistingNamespace(ctx context.Context, client kubernetes.Interfa
 	record, err := onboarding.Load(ctx, client, control, launch.Install.Namespace)
 	if err != nil || record != nil {
 		return err
-	}
-	status, err := probe.Evaluate(ctx, launch.Repository, launch.OperatorRoot, launch.Install.Namespace)
-	if err != nil {
-		return fmt.Errorf("independent onboarding health: %w", err)
-	}
-	if status != "clear" {
-		return fmt.Errorf("independent onboarding health is %s; no identities acknowledged", status)
 	}
 	var paths []string
 	for i, arg := range launch.Install.ExtraControllerArgs {
@@ -50,8 +44,17 @@ func acknowledgeExistingNamespace(ctx context.Context, client kubernetes.Interfa
 		return err
 	}
 	if current != commit {
-		return fmt.Errorf("accepted commit changed during onboarding verification")
+		return fmt.Errorf("accepted commit changed during onboarding staging")
 	}
-	_, err = onboarding.Establish(ctx, client, control, launch.Install.Namespace, commit, objects, time.Now())
-	return err
+	return onboarding.Stage(ctx, client, control, launch.Install.Namespace, commit, objects, time.Now())
+}
+
+func existingNamespaceOnboardingHook(client kubernetes.Interface, launch InstallExistingConfig, commit string) func(context.Context, install.Config) error {
+	return func(ctx context.Context, _ install.Config) error {
+		if err := stageExistingNamespace(ctx, client, launch, commit); err != nil {
+			// Missing install evidence grants no acknowledgement; monitoring proceeds.
+			fmt.Fprintln(os.Stderr, "namespace onboarding not staged:", err)
+		}
+		return nil
+	}
 }

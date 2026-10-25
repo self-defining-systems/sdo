@@ -1,7 +1,13 @@
 package runtime
 
 import (
+	"context"
 	"fmt"
+	"log/slog"
+	"time"
+
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/client-go/kubernetes"
 
 	"google.golang.org/protobuf/proto"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
@@ -48,4 +54,108 @@ func (s *SourceInventory) SetNamespaceOnboarding(record *contracts.NamespaceOnbo
 		s.acknowledged[objectRefState(ref)] = true
 	}
 	return nil
+}
+
+// AttachPendingOnboarding restores the install snapshot, never live identities.
+func (c *Controller) AttachPendingOnboarding(ctx context.Context, client kubernetes.Interface, control string) error {
+	if c.namespaceOnboarding != nil {
+		return nil
+	}
+	record, err := onboarding.Pending(ctx, client, control, c.config.Namespace)
+	if err != nil {
+		return err
+	}
+	c.pendingOnboarding = record
+	c.onboardingClient = client
+	c.onboardingControl = control
+	return nil
+}
+
+func (c *Controller) beginOnboarding(ctx context.Context, detectors []sdk.Detector) *contracts.NamespaceOnboarding {
+	if c.pendingOnboarding == nil || len(detectors) != len(c.detectors) {
+		return nil
+	}
+	actionCtx, cancel, err := c.actionContext(ctx)
+	if err != nil {
+		return nil
+	}
+	defer cancel()
+	record := c.pendingOnboarding
+	c.pendingOnboarding = nil
+	claimed, err := onboarding.Claim(actionCtx, c.onboardingClient, c.onboardingControl)
+	if err != nil && c.OnError != nil {
+		c.OnError(fmt.Errorf("claim onboarding evaluation: %w", err))
+	}
+	if !claimed {
+		if err == nil {
+			existing, loadErr := onboarding.Load(ctx, c.onboardingClient, c.onboardingControl, c.config.Namespace)
+			if loadErr == nil {
+				loadErr = c.SetNamespaceOnboarding(existing)
+			}
+			if loadErr == nil {
+				loadErr = c.prepareSourceInventory(ctx)
+			}
+			if loadErr != nil && c.OnError != nil {
+				c.OnError(loadErr)
+			}
+		}
+		return nil
+	}
+	return record
+}
+
+func (c *Controller) finishOnboarding(ctx context.Context, record *contracts.NamespaceOnboarding, findings []sdk.Finding, errored bool, now time.Time) {
+	if record == nil {
+		return
+	}
+	c.mu.Lock()
+	eligible := !c.incidentOpen && !c.closureBlocksNextLocked() && c.lastAcknowledgedIncidentID == "" && c.incidentDetectedAt.IsZero() && len(c.failedClosures) == 0 && c.config.SourceCommit == record.AcceptedCommit
+	c.mu.Unlock()
+	if !eligible || errored || len(findings) != 0 || len(c.healthDetectorIDs) == 0 || !c.pendingInventoryClear(record, now) {
+		return
+	}
+	actionCtx, cancel, err := c.actionContext(ctx)
+	if err != nil {
+		return
+	}
+	defer cancel()
+	stored, err := onboarding.Complete(actionCtx, c.onboardingClient, c.onboardingControl, record)
+	if err == nil {
+		err = c.SetNamespaceOnboarding(stored)
+	}
+	if err == nil {
+		err = c.prepareSourceInventory(ctx)
+	}
+	if err != nil {
+		if c.OnError != nil {
+			c.OnError(fmt.Errorf("complete onboarding: %w", err))
+		}
+	} else {
+		slog.InfoContext(ctx, "namespace onboarding established", "accepted_commit", record.AcceptedCommit, "install_to_record", time.Since(record.EstablishedAt.AsTime()))
+	}
+}
+
+// Preview acknowledgement only to distinguish install identities from later
+// drift. It grants no authority and never mutates the accepted inventory index.
+func (c *Controller) pendingInventoryClear(record *contracts.NamespaceOnboarding, now time.Time) bool {
+	if c.drift == nil || !c.drift.Inventory {
+		return true
+	}
+	if c.sourceInventory == nil {
+		return false
+	}
+	reader, ok := c.drift.Events.(interface {
+		SourceDriftObjects() []*unstructured.Unstructured
+	})
+	if !ok {
+		return false
+	}
+	if readiness, ok := c.drift.Events.(interface{ SourceDriftReady() bool }); ok && !readiness.SourceDriftReady() {
+		return false
+	}
+	preview := *c.sourceInventory
+	if err := preview.SetNamespaceOnboarding(record); err != nil {
+		return false
+	}
+	return len(preview.Findings(reader.SourceDriftObjects(), now)) == 0
 }

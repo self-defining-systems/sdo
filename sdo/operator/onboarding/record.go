@@ -1,5 +1,5 @@
 // Package onboarding owns the immutable identity acknowledgement made by the
-// native lifecycle after independent health verification, before controller install.
+// installer and the in-cluster controller at the first complete evaluation.
 package onboarding
 
 import (
@@ -50,7 +50,10 @@ func Validate(record *contracts.NamespaceOnboarding, namespace string) error {
 	return nil
 }
 func Load(ctx context.Context, client kubernetes.Interface, control, namespace string) (*contracts.NamespaceOnboarding, error) {
-	cm, err := client.CoreV1().ConfigMaps(control).Get(ctx, ConfigMapName, metav1.GetOptions{})
+	return load(ctx, client, control, ConfigMapName, namespace)
+}
+func load(ctx context.Context, client kubernetes.Interface, control, name, namespace string) (*contracts.NamespaceOnboarding, error) {
+	cm, err := client.CoreV1().ConfigMaps(control).Get(ctx, name, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
 		return nil, nil
 	}
@@ -60,14 +63,7 @@ func Load(ctx context.Context, client kubernetes.Interface, control, namespace s
 	return Decode([]byte(cm.Data[DataKey]), namespace)
 }
 
-// Establish is create-once even across reinstall or memory/source publication.
-// Only the independently verified native install path calls it. A restart,
-// incident, or a later healthy interval can never expand this acknowledgement.
-func Establish(ctx context.Context, client kubernetes.Interface, control, namespace, commit string, source []*unstructured.Unstructured, now time.Time) (*contracts.NamespaceOnboarding, error) {
-	prior, err := Load(ctx, client, control, namespace)
-	if err != nil || prior != nil {
-		return prior, err
-	}
+func capture(ctx context.Context, client kubernetes.Interface, namespace, commit string, source []*unstructured.Unstructured, now time.Time) (*contracts.NamespaceOnboarding, error) {
 	objects, err := inventory(ctx, client, namespace)
 	if err != nil {
 		return nil, err
@@ -122,14 +118,18 @@ func Establish(ctx context.Context, client kubernetes.Interface, control, namesp
 	if err := Validate(record, namespace); err != nil {
 		return nil, err
 	}
+	return record, nil
+}
+
+func persist(ctx context.Context, client kubernetes.Interface, control, name string, record *contracts.NamespaceOnboarding) (*contracts.NamespaceOnboarding, error) {
 	data, err := protojson.Marshal(record)
 	if err != nil {
 		return nil, err
 	}
 	immutable := true
-	_, err = client.CoreV1().ConfigMaps(control).Create(ctx, &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: ConfigMapName, Namespace: control, Labels: map[string]string{"app.kubernetes.io/managed-by": "sdo"}}, Immutable: &immutable, Data: map[string]string{DataKey: string(data)}}, metav1.CreateOptions{})
+	_, err = client.CoreV1().ConfigMaps(control).Create(ctx, &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: control, Labels: map[string]string{"app.kubernetes.io/managed-by": "sdo"}}, Immutable: &immutable, Data: map[string]string{DataKey: string(data)}}, metav1.CreateOptions{})
 	if apierrors.IsAlreadyExists(err) {
-		return Load(ctx, client, control, namespace)
+		return load(ctx, client, control, name, record.Namespace)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("persist onboarding acknowledgement: %w", err)

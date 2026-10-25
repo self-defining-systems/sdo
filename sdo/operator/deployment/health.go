@@ -30,6 +30,10 @@ type AcceptedDetectorProbe struct {
 	Kubeconfig      string
 	MetricsURL      string
 	Limit           time.Duration
+	// Resolver supplies the host DNS transport preflight; nil uses the OS resolver.
+	Resolver interface {
+		LookupHost(context.Context, string) ([]string, error)
+	}
 }
 
 func (probe AcceptedDetectorProbe) Evaluate(ctx context.Context, acceptedRoot, operatorRoot, namespace string) (string, error) {
@@ -48,6 +52,11 @@ func (probe AcceptedDetectorProbe) Evaluate(ctx context.Context, acceptedRoot, o
 		return "", fmt.Errorf("stage accepted diagnostics: %w", err)
 	}
 	defer workspace.Close()
+	if workspace.HasProber {
+		if err := probe.checkTransport(bounded); err != nil {
+			return "", err
+		}
+	}
 	binary, err := workspace.ValidateAndBuild(bounded)
 	if err != nil {
 		return "", fmt.Errorf("compile accepted health detectors: %w", err)
@@ -66,7 +75,7 @@ func (probe AcceptedDetectorProbe) Evaluate(ctx context.Context, acceptedRoot, o
 	if workspace.HasProber {
 		listener, err := net.Listen("tcp", "127.0.0.1:0")
 		if err != nil {
-			return "", fmt.Errorf("reserve local prober address: %w", err)
+			return "", fmt.Errorf("probe transport unavailable: reserve local prober address: %w", err)
 		}
 		address := listener.Addr().String()
 		_ = listener.Close()
@@ -74,7 +83,7 @@ func (probe AcceptedDetectorProbe) Evaluate(ctx context.Context, acceptedRoot, o
 		prober.Dir = workspace.Directory
 		prober.Env = environment
 		if err := prober.Start(); err != nil {
-			return "", fmt.Errorf("start bounded health prober: %w", err)
+			return "", fmt.Errorf("probe transport unavailable: start bounded health prober: %w", err)
 		}
 		defer func() { _ = prober.Process.Kill(); _ = prober.Wait() }()
 		args = append(args, "--prober-url", "http://"+address)
@@ -202,6 +211,21 @@ func (v IndependentHealthVerifier) Validate() error {
 	}
 	if _, err := os.Stat(filepath.Join(v.OperatorRoot, "runtime", "go.mod")); err != nil {
 		return fmt.Errorf("operator runtime module: %w", err)
+	}
+	return nil
+}
+
+// A host without cluster Service DNS cannot interpret failed traffic probes as
+// application health. Onboarding never uses this legacy host verifier.
+func (probe AcceptedDetectorProbe) checkTransport(ctx context.Context) error {
+	resolver := probe.Resolver
+	if resolver == nil {
+		resolver = net.DefaultResolver
+	}
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	if _, err := resolver.LookupHost(ctx, "kubernetes.default.svc.cluster.local"); err != nil {
+		return fmt.Errorf("probe transport unavailable: host cannot resolve cluster Service DNS: %w", err)
 	}
 	return nil
 }

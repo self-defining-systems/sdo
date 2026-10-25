@@ -38,7 +38,7 @@ func (s KubernetesInstallStrategy) InstallPrepared(ctx context.Context, config i
 }
 
 // WithVerifiedDeployment binds acknowledgement to this independently healthy
-// native deployment, after installer preparation and before controller start.
+// native deployment; verification is completed by the in-cluster controller.
 func (s KubernetesInstallStrategy) WithVerifiedDeployment(root, commit, namespace string, paths []string) InstallStrategy {
 	s.Installer.BeforeControllerStart = func(ctx context.Context, config install.Config) error {
 		control := config.ControlNamespace
@@ -54,8 +54,7 @@ func (s KubernetesInstallStrategy) WithVerifiedDeployment(root, commit, namespac
 		if err != nil {
 			return fmt.Errorf("onboarding accepted source: %w", err)
 		}
-		_, err = onboarding.Establish(ctx, s.Installer.Client, control, namespace, commit, objects, time.Now())
-		return err
+		return onboarding.Stage(ctx, s.Installer.Client, control, namespace, commit, objects, time.Now())
 	}
 	return s
 }
