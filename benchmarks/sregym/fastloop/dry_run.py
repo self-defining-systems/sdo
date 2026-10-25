@@ -136,6 +136,23 @@ class NoFaultReady(Exception):
     """The real pre-injection callback was reached; there is deliberately no fault."""
 
 
+def prepare_scripted_credentials(kubeconfig: Path, control: str) -> str:
+    """Scripted transports need an install mount, never model credentials."""
+    from benchmarks.sregym.adapter import kubectl
+
+    kubectl(
+        ["apply", "-f", "-"],
+        namespace=None,
+        kubeconfig=kubeconfig,
+        input_text=json.dumps({"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": control}}),
+    )
+    name = "sdo-scripted-credentials"
+    result = kubectl(["create", "secret", "generic", name], namespace=control, kubeconfig=kubeconfig, check=False)
+    if result.returncode and "AlreadyExists" not in result.stderr:
+        raise RuntimeError(f"eval: scripted credential mount creation failed: {result.stderr}")
+    return name
+
+
 def run_lane(run_dir: Path, timeout: int, setup_timeout: int = 900) -> int:
     from benchmarks.sregym.adapter import assert_lane_resources, closure_pending, control_namespace_for, kubectl
     from benchmarks.sregym.fastloop import cli
@@ -184,6 +201,7 @@ def run_lane(run_dir: Path, timeout: int, setup_timeout: int = 900) -> int:
         args.admission_timeout_seconds = max(1, (timeout - 60) / 2)
         args.admission_progress = passed
         control = control_namespace_for(environment.namespace)
+        args.credentials_secret = prepare_scripted_credentials(environment.kubeconfig, control)
 
         def prepare(control: str, required: set[str]) -> None:
             last_error = "controller has not evaluated its installed checks"

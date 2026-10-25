@@ -484,7 +484,7 @@ def _sdo_agent(
         validator_image=environment.images.validator,
         deployed_manifest_paths=_accepted_manifest_paths(environment.workspace),
         repository_pvc="sdo-application-repository",
-        credentials_secret="sdo-agent-credentials",
+        credentials_secret=getattr(args, "credentials_secret", "sdo-agent-credentials"),
         model=args.model,
         timeout_seconds=args.timeout,
         repair_policy=args.repair_policy,
