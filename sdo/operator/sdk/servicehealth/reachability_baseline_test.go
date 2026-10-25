@@ -9,6 +9,7 @@ import (
 	"sdo.dev/operator/sdk/servicehealth"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestReachabilityBaselineExcludesMeasuredFailureButNotChangedTarget(t *testing.T) {
@@ -115,5 +116,20 @@ func TestUnrelatedConfigurationFaultDoesNotInvalidateBaselineTarget(t *testing.T
 	s.NetworkPolicyList = []networkingv1.NetworkPolicy{{ObjectMeta: metav1.ObjectMeta{Name: "other-service"}, Spec: networkingv1.NetworkPolicySpec{PodSelector: metav1.LabelSelector{MatchLabels: map[string]string{"app": "unrelated"}}}}}
 	if got := detectReachability(t, s); len(got) != 0 {
 		t.Fatalf("unrelated live fault revived an accepted baseline false positive: %+v", got)
+	}
+}
+
+// A successful dial cannot roll out of the never-served reference evidence.
+func TestReachabilityBaselineNeverExcludesPreviouslyServingPort(t *testing.T) {
+	s := reachabilitySnapshot{Snapshot: geoSnapshot(intstr.FromInt32(8083), true), window: window(geoTarget(samples(servicehealth.DialRefused, false, false, false)))}
+	at := s.window.Targets[0].Samples[0].At.Add(-time.Second)
+	s.window.Targets[0].LastSuccess = &at
+	auth := servicehealth.BaselineAuthorization{SourceInputs: strings.Repeat("a", 64), ObjectiveDigest: strings.Repeat("b", 64), Reason: "healthy-baseline", GoalHealthy: true}
+	b, err := servicehealth.CaptureReachabilityBaseline(s, auth)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(b.Exclusions) != 0 {
+		t.Fatal("a port that served must still fire after three refusals")
 	}
 }

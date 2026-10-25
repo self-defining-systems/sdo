@@ -104,6 +104,16 @@ func CaptureReachabilityBaseline(ctx sdk.DetectionContext, a BaselineAuthorizati
 		}
 	}
 	for _, o := range w.Targets {
+		if o.LastSuccess != nil {
+			continue
+		}
+		served := false
+		for _, sample := range o.Samples {
+			served = served || sample.OK
+		}
+		if served {
+			continue
+		}
 		if !failing[fmt.Sprintf("%s/%d", o.Target.Service, o.Target.Port)] {
 			continue
 		}
