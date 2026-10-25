@@ -48,6 +48,11 @@ def format_selection_response(
 
     text, path = format_mutation_response(before, after, [response])
     if not response.get("option_reports"):
+        if response.get("rollout_pending"):
+            lines = text.splitlines()
+            application = _brief(response.get("application_id", "unknown"), 80)
+            lines[0] = f"This action: rollout pending; application={application}."
+            return "\n".join(lines), path
         return text, path
     actions = option_action_results(response)
     pending = sum(action["pending"] for action in actions)

@@ -499,3 +499,22 @@ func TestImageProgramsRecognizeBothPullFailurePhases(t *testing.T) {
 		})
 	}
 }
+
+// The scripted client follows the production file contract instead of treating
+// compact display metadata as the completed execution result.
+func fullCommandReportPayload(t *testing.T, encoded []byte) []byte {
+	t.Helper()
+	var report struct {
+		Actions []json.RawMessage `json:"actions"`
+	}
+	if err := json.Unmarshal(encoded, &report); err != nil {
+		t.Fatal(err)
+	}
+	if report.Actions == nil {
+		return encoded
+	}
+	if len(report.Actions) != 1 {
+		t.Fatalf("single command has %d full action results", len(report.Actions))
+	}
+	return report.Actions[0]
+}

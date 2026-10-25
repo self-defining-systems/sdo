@@ -131,3 +131,20 @@ def test_many_options_keep_full_reports_and_explicit_omissions_within_budget(tmp
     document = json.loads(path.read_text())
     assert document["actions"] == [response]
     assert len(document["option_reports"]) == 32
+
+
+def test_single_pending_application_identity_is_visible(tmp_path, monkeypatch):
+    from sdo.agents.responder.multi_output import format_selection_response
+
+    monkeypatch.setenv("SDO_SESSION_SCRATCH", str(tmp_path))
+    text, _ = format_selection_response(
+        [],
+        [],
+        {
+            "command": "mitigate",
+            "application_id": "pending-application",
+            "rollout_pending": {"reason": "settling"},
+            "summary": "unresolved",
+        },
+    )
+    assert "rollout pending; application=pending-application" in text
