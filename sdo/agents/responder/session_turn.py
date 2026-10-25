@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Literal
 
 from agentshim import StdioMcpServer
 
+from sdo.agents.prompt_templates import render_prompt
 from sdo.agents.responder.reflection_validation import VALIDATION_ENVIRONMENT, VALIDATION_TOOL_TIMEOUT_SECONDS
 
 if TYPE_CHECKING:
@@ -27,8 +28,8 @@ if TYPE_CHECKING:
 TurnBranch = Literal["incident_result", "reflection"]
 
 _BRANCH_DESCRIPTIONS: dict[TurnBranch, str] = {
-    "incident_result": "Fill this on the incident-response turn. It is null on the reflection turn.",
-    "reflection": "Fill this on the reflection turn. It is null on the incident-response turn.",
+    "incident_result": render_prompt("responder", "branch_description_01", part="session.instructions"),
+    "reflection": render_prompt("responder", "branch_description_02", part="session.instructions"),
 }
 
 
@@ -43,15 +44,25 @@ def other_branch(branch: TurnBranch) -> TurnBranch:
 def branch_instruction(branch: TurnBranch) -> str:
     """One line for a prompt's output instructions."""
 
-    return f"Answer in the `{branch}` field and leave `{other_branch(branch)}` null."
+    return render_prompt(
+        "responder",
+        "branch_instruction_01",
+        part="session.instructions",
+        branch=branch,
+        other_branch=other_branch(branch),
+    )
 
 
 def branch_correction(branch: TurnBranch) -> str:
     """The resumed turn that asks for the same answer in the right branch."""
 
-    return (
-        f"Your answer was not in the `{branch}` field of the output object. "
-        f"Resubmit the same answer in `{branch}` and set `{other_branch(branch)}` to null. Change nothing else."
+    return render_prompt(
+        "responder",
+        "branch_correction_01",
+        part="session.instructions",
+        branch=branch,
+        branch_2=branch,
+        other_branch=other_branch(branch),
     )
 
 

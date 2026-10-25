@@ -22,7 +22,6 @@ import (
 	"sdo.dev/operator/broker"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory"
-	"sdo.dev/operator/memory/layout"
 	"sdo.dev/operator/sdk/program"
 )
 
@@ -522,7 +521,11 @@ func (n NativeIncidentBroker) PruneIncidentSessions(now time.Time) error {
 }
 
 func (n NativeIncidentBroker) setRolloutExpectation(ctx context.Context, ledger *contracts.BrokerLedger, paths []string) error {
-	if !layout.RequiresControllerRollout(paths) {
+	required, err := n.Repository.RequiresControllerRollout(ctx, ledger.OutcomeCommit, ledger.ReflectionCommit, paths)
+	if err != nil {
+		return err
+	}
+	if !required {
 		return nil
 	}
 	if ledger.OutcomeCommit == "" || ledger.ReflectionCommit == "" {

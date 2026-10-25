@@ -19,6 +19,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from sdo.agents.prompt_templates import RenderedPrompt, named_prompt, render_prompt
 from sdo.contracts import MitigationSession, MitigationSessionCheckpoint, to_canonical_json
 
 if TYPE_CHECKING:
@@ -191,17 +192,18 @@ class SessionRecovery:
             raise SessionRecoveryError("interrupted: original deadline expired")
         return remaining
 
-    def recovered_prompt(self) -> str:
+    def recovered_prompt(self) -> RenderedPrompt:
         if not self.session.pending_reports:
-            return ""
+            return named_prompt("recovery.reports", "")
         reports = ",".join(
             json.dumps(json.loads(to_canonical_json(report)), separators=(",", ":"))
             for report in self.session.pending_reports
         )
-        return (
-            "\nRecovered controller reports for this same responder session. These are immutable terminal "
-            "receipts; do not replay their actions. Continue within the original deadline and budget.\n"
-            f"[{reports}]\n"
+        return render_prompt(
+            "responder",
+            "session_recovery",
+            part="recovery.instructions",
+            reports=named_prompt("recovery.reports", reports),
         )
 
     def acknowledge_reports(self) -> None:
