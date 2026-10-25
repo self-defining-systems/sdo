@@ -1,81 +1,9 @@
-Controller independent verification of your previous response:
-Continue the same incident in this session. Focus on the current still_broken findings. Use already_done and its receipts to preserve completed work and avoid repeating repairs. A recorded action is evidence of execution; its success and rollback fields describe its outcome. Resolve verification errors before claiming recovery. Return your incident result after independent verification succeeds.
+Continue the same incident in this session. Focus on still_broken; preserve already_done verified work. Last action success does not clear an active finding. Full typed evidence is in the referenced local file. Resolve verification errors before claiming recovery.
 
-{
-  "attempt": 1,
-  "healthy": false,
-  "summary": "one current fault remains",
-  "still_broken": [
-    {
-      "primary_resource": {
-        "api_version": "v1",
-        "kind": "Service",
-        "namespace": "toy",
-        "name": "third"
-      },
-      "fingerprint": "health/third",
-      "detector_id": "health",
-      "rule_id": "routing",
-      "summary": "third route is unavailable",
-      "evidence": "fresh detector observation"
-    }
-  ],
-  "already_done": [
-    {
-      "kind": "program-application",
-      "action_id": "repair-0",
-      "application_id": "application-0",
-      "program_ids": [
-        "restore-route"
-      ],
-      "summary": "repaired route 0",
-      "receipt": {
-        "action_id": "repair-0",
-        "kind": "program-plan",
-        "target": "Service/route-0",
-        "resources": [
-          {
-            "api_version": "v1",
-            "kind": "Service",
-            "namespace": "toy",
-            "name": "route-0"
-          }
-        ],
-        "summary": "target port restored",
-        "details": "synthetic controller receipt",
-        "started_at": "2026-01-01T00:00:00Z",
-        "completed_at": "2026-01-01T00:00:01Z",
-        "success": true,
-        "reversible": true
-      }
-    },
-    {
-      "kind": "program-application",
-      "action_id": "repair-1",
-      "application_id": "application-1",
-      "program_ids": [
-        "restore-route"
-      ],
-      "summary": "repaired route 1",
-      "receipt": {
-        "action_id": "repair-1",
-        "kind": "program-plan",
-        "target": "Service/route-1",
-        "resources": [
-          {
-            "api_version": "v1",
-            "kind": "Service",
-            "namespace": "toy",
-            "name": "route-1"
-          }
-        ],
-        "summary": "target port restored",
-        "details": "synthetic controller receipt",
-        "started_at": "2026-01-01T00:00:00Z",
-        "completed_at": "2026-01-01T00:00:01Z",
-        "success": true,
-        "reversible": true
-      }
-    }
-  ]
-}
+attempt=1 healthy=false one current fault remains
+still_broken: (1)
+- health/third third route is unavailable; last=none
+already_done: (2)
+- repair-0 success repaired route 0
+- repair-1 success repaired route 1
+Full JSON: /tmp/sdo/continuations/fd99fc88f8a9027757b0c0df5d449f138fabfba7885dfd297ec89dc05d443b91.json
