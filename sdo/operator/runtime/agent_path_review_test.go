@@ -51,11 +51,12 @@ func TestMitigationScopeFollowsTargetFindingRatherThanWrittenObject(t *testing.T
 
 func TestResponderVerifyConcurrentControllerObservations(t *testing.T) {
 	now := time.Now().UTC()
-	c, err := NewController(testControllerConfig(), []sdk.Detector{fastloopDetector{}}, staticProvider{snapshot: sdktest.Snapshot{NamespaceName: "app"}}, &verificationRetryDispatcher{}, now)
+	finding := sdk.Finding{DetectorID: "availability", RuleID: "persistent", Fingerprint: "persistent", Status: sdk.FindingActive, Severity: sdk.SeverityCritical, Summary: "persistent failure", Evidence: "synthetic sample", PrimaryResource: sdk.ObjectRef{Kind: "Service", Namespace: "app", Name: "api"}, Playbooks: []string{"base"}}
+	c, err := NewController(testControllerConfig(), []sdk.Detector{reviewScopeDetector{finding}}, staticProvider{snapshot: sdktest.Snapshot{NamespaceName: "app"}}, &verificationRetryDispatcher{}, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := IncidentRequest{IncidentID: "concurrent", Namespace: "app"}
+	request := IncidentRequest{IncidentID: "concurrent", Namespace: "app", Findings: []sdk.Finding{finding}, ResponseDeadline: now.Add(200 * time.Hour)}
 	c.currentIncidentRequest = &request
 	c.incidentOpen = true
 	loop := NewResponderLoop(request, nil, c.provider, nil, PlanExecutor{}, 3)

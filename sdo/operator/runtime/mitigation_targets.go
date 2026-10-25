@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"fmt"
 	"sdo.dev/operator/memory/layout"
 	"sdo.dev/operator/sdk"
 )
@@ -8,6 +9,10 @@ import (
 // programExplainsFinding requires an authored finding-to-playbook link and the
 // exact diagnosed finding. Resource overlap alone is only a candidate binding.
 func programExplainsFinding(finding sdk.Finding, id string) bool {
+	// Native drift findings are produced by this concrete program run.
+	if finding.DetectorID == "drift."+id && finding.RuleID == id {
+		return true
+	}
 	for _, reference := range finding.Playbooks {
 		linked, err := layout.PlaybookID(reference)
 		if err == nil && linked == id {
@@ -26,6 +31,14 @@ func (l *ResponderLoop) mitigationIncident(selected []selectedPlan) IncidentRequ
 	for _, finding := range l.Request.Findings {
 		targeted := false
 		for _, plan := range selected {
+			if len(plan.targetFingerprints) > 0 {
+				for _, fp := range plan.targetFingerprints {
+					if fp == FindingFingerprint(finding) {
+						targeted = true
+					}
+				}
+				continue
+			}
 			for _, match := range l.Request.PlaybookCoverage.GetMatches() {
 				if match.GetPlaybookId() != plan.programID || !programBindingsState(match.GetBindings()).Equal(plan.bindings) {
 					continue
@@ -44,5 +57,24 @@ func (l *ResponderLoop) mitigationIncident(selected []selectedPlan) IncidentRequ
 			request.Findings = append(request.Findings, finding)
 		}
 	}
+	if len(request.Findings) == 0 && len(l.Request.Findings) > 0 {
+		request.Findings = nil
+	} // Unknown target: require the whole sample to clear.
 	return request
+}
+
+func (l *ResponderLoop) validateFindingTargets(fingerprints []string) error {
+	for _, fp := range fingerprints {
+		found := false
+		for _, finding := range l.Request.Findings {
+			if finding.Status == sdk.FindingActive && FindingFingerprint(finding) == fp {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return fmt.Errorf("unknown active target finding %q", fp)
+		}
+	}
+	return nil
 }

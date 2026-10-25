@@ -58,7 +58,7 @@ func (v *mitigationHealthVerifier) Verify(ctx context.Context) (bool, error) {
 	if len(health) == 0 {
 		return false, errors.New("health detectors are required")
 	}
-	sink := mitigationFindingSink{view: snapshot, observation: observation, targets: v.targets}
+	sink := mitigationFindingSink{observation: observation, targets: v.targets}
 	err = (core.Runner{Detectors: health, Provider: core.StaticSnapshotProvider{SnapshotValue: snapshot}, Sink: sink}).RunOnce(ctx)
 	if err != nil {
 		observation.Healthy = false
@@ -70,7 +70,6 @@ func (v *mitigationHealthVerifier) Verify(ctx context.Context) (bool, error) {
 
 type mitigationFindingSink struct {
 	targets     []sdk.Finding
-	view        sdk.DetectionContext
 	observation *MitigationHealth
 }
 
@@ -83,7 +82,7 @@ func (s mitigationFindingSink) Emit(_ context.Context, finding sdk.Finding) erro
 	s.observation.Healthy = false
 	targeted := false
 	if s.targets == nil {
-		targeted = mitigationFindingRelated(s.view, finding, s.observation.Resources)
+		targeted = true // Unknown target scope must not silently certify a repair.
 	} else {
 		for _, target := range s.targets {
 			if FindingFingerprint(target) == finding.Fingerprint {
@@ -98,24 +97,6 @@ func (s mitigationFindingSink) Emit(_ context.Context, finding sdk.Finding) erro
 	}
 	return nil
 }
-func mitigationFindingRelated(view sdk.DetectionContext, finding sdk.Finding, refs []sdk.ObjectRef) bool {
-	if finding.PrimaryResource.Kind == "" || finding.PrimaryResource.Name == "" {
-		return true
-	}
-	subjects := append([]sdk.ObjectRef{finding.PrimaryResource}, finding.RelatedResources...)
-	for _, ref := range finding.ParameterBindings {
-		subjects = append(subjects, ref)
-	}
-	for _, subject := range subjects {
-		for _, ref := range refs {
-			if sameResource(subject, ref) || coverageDirectlyRelated(view, subject, ref) || coverageDirectlyRelated(view, ref, subject) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
 func scopedMitigationVerifier(verifier PlanVerifier, plan program.Plan, targets []sdk.Finding) *mitigationHealthVerifier {
 	switch health := verifier.(type) {
 	case PlanHealthVerifier:

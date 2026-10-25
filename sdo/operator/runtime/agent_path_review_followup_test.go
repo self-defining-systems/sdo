@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"path/filepath"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
@@ -11,24 +12,52 @@ import (
 
 func TestContinuationStillBrokenExcludesFindingAwaitingClearing(t *testing.T) {
 	now := time.Now().UTC()
-	c, err := NewController(testControllerConfig(), nil, staticProvider{snapshot: sdktest.Snapshot{}}, &verificationRetryDispatcher{}, now)
+	a := sdk.Finding{DetectorID: "availability", RuleID: "a", Fingerprint: "a", Status: sdk.FindingActive, Severity: sdk.SeverityCritical, Summary: "a failing", Evidence: "synthetic sample", PrimaryResource: sdk.ObjectRef{Kind: "Service", Namespace: "app", Name: "a"}, Playbooks: []string{"base"}}
+	b := a
+	b.RuleID = "b"
+	b.Fingerprint = "b"
+	b.PrimaryResource.Name = "b"
+	spec := fastloopDetector{}.Spec()
+	spec.Persistence.Clearing = 2
+	detector := &sequenceDetector{spec: spec, samples: [][]sdk.Finding{{a, b}, {b}, nil, nil}}
+	provider := staticProvider{snapshot: sdktest.Snapshot{NamespaceName: "app"}}
+	c, err := NewController(testControllerConfig(), []sdk.Detector{detector}, provider, &verificationRetryDispatcher{}, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	c.healthDetectorIDs = []string{"health"}
+	request := IncidentRequest{IncidentID: "clearing", Namespace: "app", Findings: []sdk.Finding{a, b}, ResponseDeadline: now.Add(time.Minute)}
+	c.currentIncidentRequest = &request
+	c.incidentOpen = true
 	c.responderCompletedAt = now
-	a := sdk.Finding{DetectorID: "health", Fingerprint: "a", Status: sdk.FindingActive}
-	b := sdk.Finding{DetectorID: "health", Fingerprint: "b", Status: sdk.FindingActive}
-	c.tracker.SetPolicy("health", 1, 2, 0)
-	c.tracker.Observe(now, "health", []sdk.Finding{a, b})
-	c.tracker.Observe(now.Add(time.Second), "health", []sdk.Finding{b})
-	c.recordEvaluation("health", now.Add(time.Second), []sdk.Finding{b})
-	got := c.continuationVerificationLocked(false, true, nil)
+	loop := NewResponderLoop(request, nil, provider, nil, PlanExecutor{}, 3)
+	loop.VerifyClosure = func(ctx context.Context) ToolResponse { return c.responderVerification(ctx, request.IncidentID) }
+	server := SessionToolServer{Directory: filepath.Join(t.TempDir(), "tools"), Handle: loop.Handle}
+	if err = server.Prepare(); err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+	observe := func(sample int) {
+		if err := c.StepEvents(context.Background(), now.Add(time.Duration(sample)*time.Second), []sdk.WatchKind{{APIVersion: "v1", Kind: "Service"}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	observe(0)
+	observe(1)
+	got := exchangeSelfCheck(t, &server, `{"command":"verify"}`)
 	if len(got.Findings) != 1 || FindingFingerprint(got.Findings[0]) != "b" {
 		t.Fatalf("repaired finding resurrected: %+v", got)
 	}
 	if got.Healthy {
 		t.Fatal("clearing persistence must still gate closure")
+	}
+	observe(2)
+	pending := exchangeSelfCheck(t, &server, `{"command":"verify"}`)
+	if pending.Healthy || len(pending.Findings) != 0 {
+		t.Fatalf("clearing must wait without another repair: %+v", pending)
+	}
+	observe(3)
+	if final := exchangeSelfCheck(t, &server, `{"command":"verify"}`); !final.Healthy {
+		t.Fatalf("confirmed clearing never verified: %+v", final)
 	}
 }
 
@@ -82,5 +111,17 @@ func TestApplicationReceiptsSurviveRestartBeforeFirstContinuation(t *testing.T) 
 	}
 	if len(restored.applications) != 0 || len(restored.plans) != 0 {
 		t.Fatal("receipt restore must not resurrect mutation authority")
+	}
+}
+
+func TestCoverageRecognizesControllerOwnedProgramFinding(t *testing.T) {
+	c := &Controller{}
+	ref := sdk.ObjectRef{Kind: "Service", Namespace: "app", Name: "api"}
+	run := ProgramRun{ProgramID: "routing", Bindings: program.Bindings{Objects: program.ObjectBindings{"service": ref}}, Verdict: program.Verdict{Result: program.Match}}
+	finding := c.programFinding(sdk.DriftEvent{Ref: ref, Fields: []sdk.DriftField{{Path: "spec.ports[0].targetPort"}}}, run)
+	run.FindingFingerprint = FindingFingerprint(finding)
+	got := buildPlaybookCoverage([]sdk.Finding{finding}, []ProgramRun{run}, nil, nil)
+	if len(got.Matches) != 1 || len(got.Matches[0].ExplainedFindingFingerprints) != 1 || len(got.UnexplainedFindingFingerprints) != 0 {
+		t.Fatalf("controller-owned finding lost its program relation: %+v", got)
 	}
 }
