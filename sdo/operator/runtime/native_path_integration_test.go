@@ -89,6 +89,8 @@ func TestNativeLifecycleToIncidentOutcomeUsesAcceptedState(t *testing.T) {
 		t.Fatal(err)
 	}
 	closure := nativeClosure(workspace)
+	closure.Result.ResponderSessionID = "native-responder-session"
+	closure.Request.Findings[0].PrimaryResource = sdk.ObjectRef{Kind: "Deployment", Name: "app"}
 	closure.Request.SourceCommit, closure.Request.DeployedCommit = result.SourceCommit, result.SourceCommit
 	closure.Request.DetectorHistory = []DetectorEvaluation{{DetectorID: "health", EvaluatedAt: closure.DetectedAt, Status: DetectorEvaluationFiring}}
 	closure.Result.ConfirmedRootCauses = []ConfirmedRootCause{{
@@ -107,12 +109,23 @@ func TestNativeLifecycleToIncidentOutcomeUsesAcceptedState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if receipt.ProposalCommit == "" || receipt.OutcomeCommit == "" || receipt.OutcomeCommit != nativeGit(t, accepted, "rev-parse", "HEAD") {
+	if receipt.ProposalCommit == "" || receipt.OutcomeCommit == "" {
 		t.Fatalf("closure did not accept repair and outcome: %+v", receipt)
 	}
 	stored, err := memory.OpenReader(accepted).Get(ctx, "native-incident")
 	if err != nil {
 		t.Fatal(err)
+	}
+	// Reflection's typed SDK gaps append to the accepted outcome without
+	// changing the immutable commit that identified its original request.
+	head := nativeGit(t, accepted, "rev-parse", "HEAD")
+	nativeGit(t, accepted, "merge-base", "--is-ancestor", receipt.OutcomeCommit, head)
+	if head == receipt.OutcomeCommit || len(stored.Record.GetSdkGaps()) != 1 {
+		t.Fatalf("reflection SDK gap was not committed after the original outcome: head=%s receipt=%+v outcome=%v", head, receipt, stored.Record)
+	}
+	original := nativeGit(t, accepted, "show", receipt.OutcomeCommit+":"+layout.OutcomePath("native-incident"))
+	if strings.Contains(original, "fixture-capability") {
+		t.Fatal("reflection changed its original committed outcome")
 	}
 	if stored.Record.GetClassification() != "success" || stored.Record.GetSourceCommit() != result.SourceCommit {
 		t.Fatalf("logical outcome lost verified source: %+v", stored.Record)
