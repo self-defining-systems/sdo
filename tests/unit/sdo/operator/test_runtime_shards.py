@@ -39,6 +39,7 @@ def test_partitions_include_tests_fuzz_seeds_and_examples() -> None:
     assigned = shards.partition(names, shards.PATTERNS)
     assert sorted(name for group in assigned.values() for name in group) == sorted(names)
     assert all(assigned.values())
+    assert set(assigned) == {"contracts", "integration"}
 
 
 @pytest.mark.parametrize("patterns", [{"one": "^TestA$"}, {"one": "^Test", "two": "^Test"}])
@@ -56,12 +57,19 @@ def test_discovery_retains_fuzz_and_examples_but_not_benchmarks() -> None:
     ) == ["Example_one", "FuzzOne", "TestOne"]
 
 
-def test_every_matrix_shard_is_aggregated_and_script_changes_trigger_go() -> None:
+def test_two_runtime_partitions_preserve_the_gate_selectors() -> None:
     jobs = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())["jobs"]
-    matrix = jobs["controller"]["strategy"]["matrix"]["include"]
-    runtime = [row for row in matrix if row["module"].startswith("runtime")]
-    assert {row["shard"] for row in runtime} == shards.PATTERNS.keys()
-    assert len(runtime) == len(shards.PATTERNS)
-    assert "controller" in jobs["required-pr-ci"]["needs"]
-    filters = yaml.safe_load(jobs["changes"]["steps"][1]["with"]["filters"])
-    assert "scripts/test_runtime_shard.py" in filters["go"]
+    assert "strategy" not in jobs["go"]
+    assert "go" in jobs["required-pr-ci"]["needs"]
+    script = (ROOT / "scripts/test_go_ci.sh").read_text()
+    assert "scripts/test_runtime_shard.py --shard contracts" in script
+    assert any("--shard integration" in step.get("run", "") for step in jobs["runtime-integration"]["steps"])
+    for name in [
+        "TestReplayIncident",
+        "TestChaosRestart",
+        "TestExhaustiveHistory",
+        "TestExplorerState",
+        "TestHermeticFastloopRealGoGate",
+        "TestHermeticReflectionLearnsThenAgentSelectsIdenticalRecurrence",
+    ]:
+        assert shards.partition([name], shards.PATTERNS)["contracts"] == [name]

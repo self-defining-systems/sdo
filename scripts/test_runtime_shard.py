@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 """Run one exhaustive runtime test-name partition, preserving all subtests/seeds.
 
-Discovery uses Go's compiled test inventory, including fuzz seed tests and examples,
-across every package in the runtime module. Every eligible name must match exactly
-one partition before any shard runs. Replay/chaos/explorers retain their dedicated
-CI jobs. Keep PATTERNS and the controller matrix's shard values in sync.
+Discovery uses Go's compiled test inventory, including replay, chaos, fuzz seeds
+and examples, across every package. Every name must match exactly one partition.
+PR CI uses two measured partitions, sharing dependency build caches.
 """
 
 from __future__ import annotations
@@ -15,23 +14,25 @@ import re
 import subprocess
 from pathlib import Path
 
+# Real compiled CLI/large-repository paths exceeded eight minutes alongside
+# all remaining contracts. Retain every case, including the 83MiB inventories.
+INTEGRATION = (
+    "TestRestartClassHermetic",
+    "TestReflectionDirectFilesCLIAndBroker",
+    "TestReflectionLearnedProgramCLIAndBroker",
+    "TestT1ScriptedBrokerMatrix",
+    "TestRenderedLockImageInputScope",
+    "TestExhaustiveReflectionLifecycle",
+    "TestSimSchedule",
+    "TestSimScheduleQueuedDriftNeverRedispatchesAfterVerifiedClosure",
+    "TestSimRenderedLockSchedule",
+    "TestSimIncidentStream",
+)
+_INTEGRATION = "(?:" + "|".join(INTEGRATION) + ")"
 PATTERNS = {
-    "reflection": r"^TestReflectionDirectFilesCLIAndBroker$",
-    "contracts": (
-        r"^(Test(?:[A-G]|Reflection(?!DirectFilesCLIAndBroker$)|RegisteredReflection|HermeticFastloopRealGoGate$)"
-        r"|Fuzz[A-M]|Example(?:[A-M_]|$))"
-    ),
-    "rendered": r"^(Test(?!(?:HermeticFastloopRealGoGate)$)(?:[H-P]|Rendered|SimRendered)|Fuzz[N-Z]|Example[N-Z])",
-    "simulation": r"^TestSim[A-M]",
-    "schedules": r"^TestSimSchedule",
-    "corpus": r"^TestRejectedRepeatCorpusFallsBackToReflectionWorker$",
-    "recovery": (
-        r"^Test(?:Q|R(?!eflection|egisteredReflection|endered|ejectedRepeatCorpusFallsBackToReflectionWorker$)"
-        r"|Sim(?!Rendered|Schedule)(?:[N-Z]|$))"
-    ),
-    "remaining": r"^Test(?:S(?!im)|[T-Z])",
+    "integration": "^" + _INTEGRATION + "$",
+    "contracts": "^(?!" + _INTEGRATION + "$)(?:Test|Fuzz|Example)",
 }
-DEDICATED = re.compile(r"^Test(?:Replay|Chaos|Exhaustive|Explorer)")
 RUNTIME = Path(__file__).resolve().parents[1] / "sdo/operator/runtime"
 
 
@@ -71,24 +72,26 @@ def main() -> None:
     names = discovered_names([json.loads(line) for line in discovery.stdout.splitlines()])
     if not names:
         raise ValueError("Go test discovery returned no tests")
-    eligible = [name for name in names if not DEDICATED.match(name)]
+    eligible = names
     groups = partition(eligible, PATTERNS)
     if not all(groups.values()):
         raise ValueError("Every runtime shard must contain tests")
     print(
         f"Coverage guard: {len(eligible)} names assigned exactly once; "
-        f"{len(names) - len(eligible)} names covered by dedicated jobs",
+        "including replay, chaos, examples and fuzz seeds",
         flush=True,
     )
     for shard, members in groups.items():
         print(f"{shard}: {len(members)} test names", flush=True)
     # Anchoring whole top-level names retains all nested scenarios and fuzz seeds.
     selection = "^(" + "|".join(re.escape(name) for name in groups[args.shard]) + ")$"
-    subprocess.run(
-        ["go", "test", "-race", "-parallel=2", "-count=1", "-timeout=10m", "-json", "-run", selection, "./..."],
+    result = subprocess.run(
+        ["go", "test", "-race", "-parallel=2", "-count=1", "-timeout=8m", "-json", "-run", selection, "./..."],
         cwd=RUNTIME,
-        check=True,
+        check=False,
     )
+    # Go printed the failing test; avoid dumping an 800-name argv on failure.
+    raise SystemExit(result.returncode)
 
 
 if __name__ == "__main__":
