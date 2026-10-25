@@ -43,13 +43,18 @@ def ten_receipt_continuation() -> dict[str, Any]:
         "still_broken": findings,
         "already_done": [
             {
-                "kind": "recorded-action",
+                "kind": "program-application" if index < 4 else "recorded-action",
                 "action_id": action_id(index),
+                **(
+                    {"application_id": f"application-{index}", "program_ids": [f"restore-component-{index}"]}
+                    if index < 4
+                    else {}
+                ),
                 "summary": summary,
                 "error": "Forbidden" if not success else "",
                 "receipt": {
                     "action_id": action_id(index),
-                    "kind": "kubectl",
+                    "kind": "program-plan" if index < 4 else "kubectl",
                     "summary": summary,
                     "resources": [resources[index - 8]]
                     if index >= 8

@@ -126,7 +126,7 @@ def _status(repair: CompletedRepair) -> str:
 
 
 def _action(repair: CompletedRepair, width: int) -> str:
-    detail = repair.error or repair.receipt.failure_reason or repair.summary or repair.receipt.summary
+    detail = repair.receipt.failure_reason or repair.error or repair.summary or repair.receipt.summary
     detail_width = max(width, 32) if repair.receipt.failure_reason else width
     return f"{_brief(repair.action_id, 48)} {_status(repair)} {_brief(detail, detail_width)}"
 

@@ -118,7 +118,7 @@ def test_typed_failure_reason_and_same_name_other_namespace_are_not_success() ->
 
     payload = ten_receipt_continuation()
     failed = payload["already_done"][8]
-    failed["error"] = ""
+    failed["error"] = "mutation failed after an independently observed authorization rejection"
     failed["receipt"]["failure_reason"] = "authorization_denied"
     other = payload["already_done"][0]
     other["receipt"]["resources"] = [{**payload["still_broken"][0]["primary_resource"], "namespace": "peer"}]
