@@ -261,6 +261,8 @@ func TestHermeticBringupPersistsPendingAndRestarts(t *testing.T) {
 	assertNoAttempt()
 	goal := inventoryHealth().(*sequenceDetector)
 	goal.spec.ID = "health-objective"
+	goal.spec.Interval = time.Hour
+	goal.spec.Watches = []sdk.WatchKind{{APIVersion: "apps/v1", Kind: "Deployment"}}
 	reach := servicehealth.NewReachabilityDetector(sdk.DetectorSpec{ID: "service-reachability", OriginatingCommit: "lifecycle-bootstrap", Playbooks: []string{"health-objective"}, Watches: servicehealth.ReachabilityWatches(), Class: sdk.DetectorClassHealth, Owner: sdk.DetectorOwnerHealthJudge, Interval: 10 * time.Second, Persistence: sdk.PersistencePolicy{Firing: 1, Clearing: 1}, Batching: sdk.BatchingPolicy{Severity: sdk.SeverityCritical}})
 	provider := &mutableSnapshots{snapshot: snapshot}
 	dispatcher := &recordingDispatcher{requests: make(chan IncidentRequest, 10)}
@@ -303,8 +305,17 @@ func TestHermeticBringupPersistsPendingAndRestarts(t *testing.T) {
 		}
 		snapshot.Reachability = window
 		provider.set(snapshot)
-		if err := c.EvaluateAll(ctx, at); err != nil {
+		// Real event-driven scheduling: startup selects all, then Service events
+		// select only reachability while the goal detector is not interval-due.
+		historyStart := len(c.history)
+		if err := c.StepEvents(ctx, at, []sdk.WatchKind{{APIVersion: "v1", Kind: "Service", Namespace: "demo"}}); err != nil {
 			t.Fatal(err)
+		}
+		if round == 1 {
+			evaluated := c.history[historyStart:]
+			if len(evaluated) != 1 || evaluated[0].DetectorID != "service-reachability" {
+				t.Fatalf("rehearsal did not exercise a partial scheduler batch: %+v", evaluated)
+			}
 		}
 		if err := c.PersistState(ctx); err != nil {
 			t.Fatalf("real controller checkpoint round %d: %v", round, err)
@@ -333,8 +344,13 @@ func TestHermeticBringupPersistsPendingAndRestarts(t *testing.T) {
 	}
 	final, err := onboarding.Load(ctx, client, "demo-sdo", "demo")
 	if err != nil || !proto.Equal(final, pending) {
-		t.Fatalf("final changed frozen install: %v %v", final, err)
+		t.Fatalf("onboarding missing at install_to_record=21s (same 34s confirmation budget), or changed frozen install: %v %v", final, err)
 	}
+	installToRecord := c.evaluationAt.Sub(final.EstablishedAt.AsTime())
+	if installToRecord != 21*time.Second {
+		t.Fatalf("install_to_record exceeded the original three-probe schedule: %s", installToRecord)
+	}
+	t.Logf("install_to_record=%s; scheduler startup full, second batch partial, confirmed full sweep at third probe; confirmation budget=34s", installToRecord)
 	reference, err := onboarding.LoadReachability(ctx, client, "demo-sdo", "demo")
 	if err != nil || reference == nil || len(reference.Exclusions) != 2 {
 		t.Fatalf("never-served reference: %+v %v", reference, err)

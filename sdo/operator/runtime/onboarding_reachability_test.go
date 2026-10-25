@@ -245,6 +245,8 @@ func TestSourceInventoryOnboardingRejectsUnhealthyReachabilityReference(t *testi
 func TestSourceInventoryOnboardingConfirmationExpiryGrantsNoAuthority(t *testing.T) {
 	goal := inventoryHealth().(*sequenceDetector)
 	goal.spec.ID = "health-objective"
+	goal.spec.Interval = time.Hour
+	goal.spec.Watches = []sdk.WatchKind{{APIVersion: "apps/v1", Kind: "Deployment"}}
 	staged, client := stagedInstallerController(t, goal)
 	detector := servicehealth.NewReachabilityDetector(sdk.DetectorSpec{ID: "service-reachability", Interval: 10 * time.Second})
 	// Incomplete observation is a pending verdict, even with no finding.
@@ -262,7 +264,7 @@ func TestSourceInventoryOnboardingConfirmationExpiryGrantsNoAuthority(t *testing
 	if c.pendingOnboarding == nil {
 		t.Fatal("confirmation did not get its window")
 	}
-	if err := c.EvaluateAll(context.Background(), time.Unix(135, 0)); err != nil {
+	if err := c.StepEvents(context.Background(), time.Unix(135, 0), nil); err != nil {
 		t.Fatal(err)
 	}
 	if c.pendingOnboarding != nil {
@@ -312,5 +314,48 @@ func TestSourceInventoryLegacyOnboardingReferenceAbsentFailsSafe(t *testing.T) {
 	_, note, err := onboarding.LoadReachabilityWithNote(ctx, client, "control", "app")
 	if err != nil || note == nil || note.Status != "reference_absent" || note.ConfigMap != onboarding.ConfigMapName || note.Key != onboarding.ReachabilityDataKey {
 		t.Fatalf("missing typed note: %+v %v", note, err)
+	}
+}
+
+func TestSourceInventoryOnboardingRejectsLateConfirmedSweep(t *testing.T) {
+	ctx := context.Background()
+	goal := inventoryHealth().(*sequenceDetector)
+	goal.spec.Interval = time.Hour
+	staged, client := stagedInstallerController(t, goal)
+	snapshot := reachabilityApp(8083)
+	snapshot.NamespaceName = "app"
+	snapshot.ServiceList[0].Namespace = "app"
+	snapshot.PodList[0].Namespace = "app"
+	window := &servicehealth.ReachabilityWindow{Failures: 3, Interval: 10 * time.Second, ObservedAt: time.Unix(101, 0), Targets: []servicehealth.TargetObservations{{Target: servicehealth.ReachabilityTarget{Service: "geo", Port: 8083, PortName: "grpc"}}}}
+	snapshot.Reachability = window
+	provider := &mutableSnapshots{snapshot: snapshot}
+	reach := servicehealth.NewReachabilityDetector(sdk.DetectorSpec{ID: "service-reachability", Interval: 10 * time.Second})
+	c, err := NewController(staged.config, []sdk.Detector{goal, reach}, provider, staged.dispatcher, time.Unix(100, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.AttachPendingOnboarding(ctx, client, "control"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.StepEvents(ctx, time.Unix(101, 0), nil); err != nil {
+		t.Fatal(err)
+	}
+	for _, second := range []int64{101, 111, 135} {
+		window.Targets[0].Samples = append(window.Targets[0].Samples, servicehealth.DialSample{At: time.Unix(second, 0), OK: true})
+	}
+	window.ObservedAt = time.Unix(135, 0)
+	window.Targets[0].LastSuccess = &window.ObservedAt
+	provider.set(snapshot)
+	if !detectorConfirmed(reach, snapshot) {
+		t.Fatal("fixture must provide a clear confirmed verdict at expiry")
+	}
+	if err := c.StepEvents(ctx, window.ObservedAt, nil); err != nil {
+		t.Fatal(err)
+	}
+	if c.pendingOnboarding != nil {
+		t.Fatal("late confirmation did not consume the expired attempt")
+	}
+	if record, err := onboarding.Load(ctx, client, "control", "app"); err != nil || record != nil {
+		t.Fatalf("late clear verdict extended the confirmation budget: %v %v", record, err)
 	}
 }

@@ -314,7 +314,9 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 		}
 	}
 	deferInventory := c.pendingOnboarding != nil
-	if !deferInventory {
+	if deferInventory {
+		c.observePendingOnboarding(ctx, now)
+	} else {
 		c.observeSourceInventory(now)
 	}
 	detectors := c.scheduler.SelectEvents(now, events)
@@ -339,10 +341,28 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 	}
 	c.processDrift(ctx, now, snapshot, objectChanges)
 
-	snapshot = c.prepareOnboardingReachability(ctx, now, snapshot, detectors)
+	// Startup's full batch may precede confirmation. Once the observation
+	// windows are ready, evaluate every detector together on this snapshot;
+	// event-driven partial batches must not strand the install opportunity.
+	onboardingDetectors := detectors
+	if c.pendingOnboarding != nil {
+		onboardingDetectors = c.detectorList()
+	}
+	snapshot = c.prepareOnboardingReachability(ctx, now, snapshot, onboardingDetectors)
 	var onboardingCandidate *contracts.NamespaceOnboarding
-	confirmed := detectorsConfirmed(detectors, snapshot)
-	confirmationExpired := !confirmed && c.onboardingConfirmationExpired(now, snapshot)
+	confirmed := detectorsConfirmed(onboardingDetectors, snapshot)
+	confirmationExpired := c.onboardingConfirmationExpired(now, snapshot)
+	if c.pendingOnboarding != nil {
+		if len(detectors) != len(onboardingDetectors) && detectorsNeedConfirmation(onboardingDetectors) && (confirmed || confirmationExpired) {
+			// This extra install sweep must not postpone ordinary fault checks.
+			deadlines := c.scheduler.Deadlines()
+			c.scheduler.ExpediteAll(now)
+			detectors = c.scheduler.SelectEvents(now, nil)
+			if err := c.scheduler.RestoreDeadlines(deadlines); err != nil {
+				return err
+			}
+		}
+	}
 	if confirmed || confirmationExpired {
 		onboardingCandidate = c.beginOnboarding(ctx, detectors)
 	}

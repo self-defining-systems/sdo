@@ -7,11 +7,14 @@ import (
 	"testing"
 	"time"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	kruntime "k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/kubernetes/scheme"
 	"sdo.dev/operator/onboarding"
+	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/sdktest"
 )
@@ -183,5 +186,131 @@ func TestSourceInventoryPendingOnboardingPrecedesStartupReconciliation(t *testin
 	}
 	if calls != 1 {
 		t.Fatalf("normal reconciliation did not resume after onboarding: %d", calls)
+	}
+}
+
+type installWindowDetector struct {
+	sdk.Detector
+	confirmed *bool
+}
+
+func (d installWindowDetector) Confirmed(sdk.DetectionContext) bool { return *d.confirmed }
+
+func TestSourceInventoryPendingOnboardingConfirmedSweep(t *testing.T) {
+	for _, mode := range []string{"clear", "goal-error", "peer-error", "goal-finding", "commit", "prior-incident", "inventory", "transient-inventory", "transient-commit", "restart"} {
+		t.Run(mode, func(t *testing.T) {
+			ctx := context.Background()
+			goal := inventoryHealth().(*sequenceDetector)
+			goal.spec.Interval = time.Hour
+			goal.spec.Watches = []sdk.WatchKind{{APIVersion: "apps/v1", Kind: "Deployment"}}
+			staged, client := stagedInstallerController(t, goal)
+			peer := inventoryHealth().(*sequenceDetector)
+			peer.spec.ID, peer.spec.Interval = "peer-health", time.Hour
+			peer.spec.Watches = []sdk.WatchKind{{APIVersion: "v1", Kind: "Service"}}
+			confirmed := false
+			c, err := NewController(staged.config, []sdk.Detector{goal, installWindowDetector{Detector: peer, confirmed: &confirmed}}, staged.provider, staged.dispatcher, time.Unix(100, 0))
+			if err != nil {
+				t.Fatal(err)
+			}
+			c.ConfigureDrift(*staged.drift)
+			if err := c.AttachPendingOnboarding(ctx, client, "control"); err != nil {
+				t.Fatal(err)
+			}
+			if err := c.StepEvents(ctx, time.Unix(101, 0), nil); err != nil {
+				t.Fatal(err)
+			}
+			event := []sdk.WatchKind{{APIVersion: "v1", Kind: "Service", Namespace: "app"}}
+			historyStart := len(c.history)
+			store := c.drift.Events.(*inventoryStore)
+			initialObjects := append([]*unstructured.Unstructured(nil), store.objects...)
+			if mode == "transient-inventory" {
+				store.objects = append(store.objects, latentInventoryObjects()[0])
+			}
+			if mode == "transient-commit" {
+				c.config.SourceCommit = strings.Repeat("b", 40)
+			}
+			if err := c.StepEvents(ctx, time.Unix(102, 0), event); err != nil {
+				t.Fatal(err)
+			}
+			if evaluated := c.history[historyStart:]; len(evaluated) != 1 || evaluated[0].DetectorID != peer.spec.ID || evaluated[0].Status != DetectorEvaluationPending {
+				t.Fatalf("expected partial pending event batch: %+v", evaluated)
+			}
+			if _, err := client.CoreV1().ConfigMaps("control").Get(ctx, onboarding.AttemptConfigMapName, metav1.GetOptions{}); !apierrors.IsNotFound(err) {
+				t.Fatalf("partial unconfirmed batch consumed attempt: %v", err)
+			}
+			store.objects = initialObjects
+			c.config.SourceCommit = staged.config.SourceCommit
+			deadline := c.scheduler.Deadlines()[goal.spec.ID]
+			confirmed = true
+			if mode == "restart" {
+				checkpoint := lifecycleio.NewConfigMapStateStore(client, "control", "sdo-controller-state")
+				if err := c.AttachStateStore(ctx, checkpoint); err != nil {
+					t.Fatal(err)
+				}
+				if err := c.PersistState(ctx); err != nil {
+					t.Fatal(err)
+				}
+				restarted, err := NewController(c.config, []sdk.Detector{goal, installWindowDetector{Detector: peer, confirmed: &confirmed}}, staged.provider, staged.dispatcher, time.Unix(102, 0))
+				if err != nil {
+					t.Fatal(err)
+				}
+				restarted.ConfigureDrift(*staged.drift)
+				if err := restarted.AttachStateStore(ctx, checkpoint); err != nil {
+					t.Fatal(err)
+				}
+				if err := restarted.AttachPendingOnboarding(ctx, client, "control"); err != nil {
+					t.Fatal(err)
+				}
+				c = restarted
+			}
+			switch mode {
+			case "goal-error":
+				goal.errors = map[int]error{goal.calls: errors.New("goal transport unavailable")}
+			case "peer-error":
+				peer.errors = map[int]error{peer.calls: errors.New("peer transport unavailable")}
+			case "goal-finding":
+				goal.samples = [][]sdk.Finding{{stateFinding("broken")}}
+			case "commit":
+				c.config.SourceCommit = strings.Repeat("b", 40)
+			case "prior-incident":
+				c.lastAcknowledgedIncidentID = "closed-during-install"
+			case "inventory":
+				store := c.drift.Events.(*inventoryStore)
+				store.objects = append(store.objects, latentInventoryObjects()[0])
+			}
+			historyStart = len(c.history)
+			if err := c.StepEvents(ctx, time.Unix(103, 0), event); err != nil {
+				t.Fatal(err)
+			}
+			evaluated := map[string]int{}
+			for _, evaluation := range c.history[historyStart:] {
+				evaluated[evaluation.DetectorID]++
+			}
+			if evaluated[goal.spec.ID] != 1 || evaluated[peer.spec.ID] != 1 {
+				t.Fatalf("confirmed event batch did not sweep every detector exactly once: %+v", evaluated)
+			}
+			if next := c.scheduler.Deadlines()[goal.spec.ID]; !next.Equal(deadline) {
+				t.Fatalf("install sweep postponed ordinary fault detection: %s -> %s", deadline, next)
+			}
+			record, err := onboarding.Load(ctx, client, "control", "app")
+			if err != nil || (record != nil) != (mode == "clear" || mode == "restart") {
+				t.Fatalf("full-sweep authority: mode=%s record=%v err=%v", mode, record, err)
+			}
+			if _, err := client.CoreV1().ConfigMaps("control").Get(ctx, onboarding.AttemptConfigMapName, metav1.GetOptions{}); err != nil {
+				t.Fatalf("confirmed full sweep did not durably consume attempt: %v", err)
+			}
+			if mode != "clear" && mode != "restart" {
+				goal.errors, peer.errors = nil, nil
+				goal.samples = [][]sdk.Finding{{}}
+				c.config.SourceCommit = staged.config.SourceCommit
+				c.lastAcknowledgedIncidentID = ""
+				if err := c.EvaluateAll(ctx, time.Unix(104, 0)); err != nil {
+					t.Fatal(err)
+				}
+				if record, err := onboarding.Load(ctx, client, "control", "app"); err != nil || record != nil {
+					t.Fatalf("later healthy period retried the sole attempt: %v %v", record, err)
+				}
+			}
+		})
 	}
 }

@@ -17,10 +17,21 @@ import (
 
 // Confirmation is an optional detector contract. No findings alone cannot
 // establish health when its observation window is still incomplete.
+type confirmedDetector interface {
+	Confirmed(sdk.DetectionContext) bool
+}
+
+func detectorsNeedConfirmation(detectors []sdk.Detector) bool {
+	for _, detector := range detectors {
+		if _, ok := detector.(confirmedDetector); ok {
+			return true
+		}
+	}
+	return false
+}
+
 func detectorConfirmed(detector sdk.Detector, snapshot sdk.DetectionContext) bool {
-	if d, ok := detector.(interface {
-		Confirmed(sdk.DetectionContext) bool
-	}); ok {
+	if d, ok := detector.(confirmedDetector); ok {
 		return d.Confirmed(snapshot)
 	}
 	return true

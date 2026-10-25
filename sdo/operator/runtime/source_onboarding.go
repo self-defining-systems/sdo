@@ -172,26 +172,46 @@ func (c *Controller) finishOnboarding(ctx context.Context, record *contracts.Nam
 // Preview acknowledgement only to distinguish install identities from later
 // drift. It grants no authority and never mutates the accepted inventory index.
 func (c *Controller) pendingInventoryClear(record *contracts.NamespaceOnboarding, now time.Time) bool {
+	findings, observed := c.pendingInventoryFindings(record, now)
+	return observed && len(findings) == 0
+}
+
+// Retain contradictions observed during partial install batches even if the
+// object or commit is restored before the confirmed full sweep. Unavailable
+// inventory is not itself drift, but still cannot authorize completion.
+func (c *Controller) observePendingOnboarding(ctx context.Context, now time.Time) {
+	if c.pendingOnboarding == nil || c.onboardingReachability == nil {
+		return
+	}
+	if !c.onboardingCommitVerified(ctx, c.pendingOnboarding.AcceptedCommit) {
+		c.onboardingReachability.invalid = true
+	}
+	if findings, observed := c.pendingInventoryFindings(c.pendingOnboarding, now); observed && len(findings) != 0 {
+		c.onboardingReachability.invalid = true
+	}
+}
+
+func (c *Controller) pendingInventoryFindings(record *contracts.NamespaceOnboarding, now time.Time) ([]sdk.Finding, bool) {
 	if c.drift == nil || !c.drift.Inventory {
-		return true
+		return nil, true
 	}
 	if c.sourceInventory == nil {
-		return false
+		return nil, false
 	}
 	reader, ok := c.drift.Events.(interface {
 		SourceDriftObjects() []*unstructured.Unstructured
 	})
 	if !ok {
-		return false
+		return nil, false
 	}
 	if readiness, ok := c.drift.Events.(interface{ SourceDriftReady() bool }); ok && !readiness.SourceDriftReady() {
-		return false
+		return nil, false
 	}
 	preview := *c.sourceInventory
 	if err := preview.SetNamespaceOnboarding(record); err != nil {
-		return false
+		return nil, false
 	}
-	return len(preview.Findings(reader.SourceDriftObjects(), now)) == 0
+	return preview.Findings(reader.SourceDriftObjects(), now), true
 }
 
 // A startup judge may publish health memory before the first evaluation. Keep
