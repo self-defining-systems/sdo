@@ -64,145 +64,14 @@ as content-addressed `sdo-failed-closure-*` ConfigMaps (`failed-closure.json`, l
 later incidents; archives are runtime evidence, not operational memory.
 
 
-### Open incidents after controller restart
-
-The controller is the only application writer. Within a process it applies a
-plan, reports independent verification and leaves rollback to the responder (a partial multi-write failure is compensated). A restart
-never replays or compensates a stored application, rollback or pending write.
-
-`<IncidentJobName(incident_id)>-tools-state` still uses the CAS state store.
-Its `runtime-state.json` is canonical `ControllerState` ProtoJSON;
-`responder_tool_state_json` (field 35) is base64-encoded version-2 JSON with
-`IncidentID`, `SourceCommit`, `Batches`, `MaxBatches` and `FailureSignals`.
-These are attempt limits and revision-bound outcomes. Prepared plans, application
-handles, patches, pre-images, rollback progress and tool histories are not saved.
-Version-1 state contributes only identity, budgets and failure signals; its old
-mutation records are ignored. A restart cannot restore an old handle or increase
-the saved response budget. The responder continues or redispatches against live
-state and prepares a fresh plan when needed.
-
-Failed responder verification adds
-`application_verification_failure:<program_id>@<accepted_dependency_revision>` to
-`FailureSignals` and saves it; `apply` does not roll back. It survives any later
-responder-issued rollback and restarts without retaining executable application state. A successful
-retry does not erase the earlier revision's failure or restore its trust.
-
-Incident-open `playbook_coverage` survives prepared-task replay and is copied unchanged into the outcome. No automatic apply or fast-path restart marker is used. Native receipts require responder Job evidence.
-
-Outcome `PlanApplication` fields 11 (`pre_images`) and 13 (`patches`) are reserved.
-Concrete `actions_applied`, verification and timing remain durable evidence.
-Controller-state and broker-ledger readers discard only those retired fields
-from prior builds; other unknown fields remain errors.
-Rollback UID/resourceVersion guards and the refusal of reordered named lists
-remain in process; there is no durable rollback owner or cursor.
-
-Sources: `controller_state.proto`, `program.proto`,
-`runtime/kubernetes_job_dispatcher_state.go`, `runtime/responder_loop_state.go`,
-`runtime/plan_executor{,_receipt}.go` and `runtime/playbook_coverage.go`. For accepted success/failure evidence, see
-[program trust evidence](fastloop-results.md#program-trust-evidence).
-
-Foreign NetworkPolicy drift uses the existing typed DriftEvent evidence: `source` states absence from accepted source and the `spec` field records create/edit values. Admission requires a confirmed source-absence read and reviewed kind, not a failed source lookup. Current repeats require a finding from an independently scheduled incident detector; playbooks never produce findings. Source-drift verification checks policy deletion against accepted source. Historical `drift.networkpolicy-service-isolation` entries came from the retired proactive path. Normal controller churn remains excluded.
-
-Current state has no `program_sweep_cursors` or proactive playbook timer. Historical cursors indexed a mixed-radix namespace sweep and do not describe current finding-bound candidate selection.
-
-Primitive recordings now carry optional `phase` metadata (`open`, `fixed`, or `healthy`); omitted phases mean `open` only. Generalization and rename replay select the matching phase instead of reusing open answers. Since the captured healthy snapshot equals fixed, healthy replay uses fixed observations unless explicit healthy observations exist. The responder source tool records `DiffAgainstSource` through the same live read view, including source absence, even before any program exists. At verified closure the controller repeats inspected primitives against the captured fixed snapshot and appends actual `fixed` observations to each protected open recordings file. Missing later observations yield Unknown, never invented healthy answers.
-
-Program revision identity includes the accepted program directory and its transitive shared-library import closure. Unrelated libraries do not reset trust; changed imported helper sources do.
-
-Mitigator validation is best-effort for external effects. Diagnosis open/fixed,
-healthy-peer, generalization and rename replay remain mandatory. SetField-only
-plans must repair the open fixture to NoMatch; `program.mitigation-not-repaired`
-rejects a retained match, and unavailable post-plan observations remain
-`program.mitigation-unreplayable`. A plan containing any non-SetField effect passes
-plan validation with `skipped_unreplayable_effect`, without post-plan replay.
-`MemoryCheckReport.mitigation_replay_notes` carries typed `MitigationReplayNote`
-statuses `STATUS_REPLAYED` or `STATUS_SKIPPED_UNREPLAYABLE_EFFECT`, program/case IDs
-and effect types separately from rejecting diagnostics. Notes prove no external effect or trust.
-
-Corpus acceptance supplies no origin credit; current trust consumes only persisted covered instances. Verified successes and revision-attributed failures are informational counters. Equivalent
-ad-hoc repairs retain bound plan-equivalence receipts and post-repair NoMatch;
-unrelated repairs in the outcome do not suppress credit. Every planned resource
-needs a successful receipt, exact observed plan equivalence, and independent
-outcome success. Match-to-NoMatch alone earns nothing. Summaries distinguish verification and mutation. Each program earns at most one
-success per outcome; failed applications retain their writes for the responder and increment failure evidence.
-
-Source-comparison recordings preserve the accepted manifest fields and the full observed fields in `result.text` as `accepted: <JSON>\nobserved: <JSON>`, even when `changed` is false. Missing objects use `null`. The accepted side never contains live fields retained by an apply dry run. Compare relevant fields directly, including absence: `changed` still describes reconciliation against server-side-apply normalization (or declared-field projection offline), so it can be false for a live-only field owned by another manager. Source revision and kubectl last-applied bookkeeping annotations are excluded. Existing archived recordings are unchanged.
-
-
-Responder continuation retains the same incident, proposal checkout, provider session and original deadline. The native dispatcher independently verifies each returned response and persists a bounded continuation before creating its distinct immutable task/Job. Controller verification can resume a dispatch that initially looked healthy. A failed model return is not terminal while continuation time/loop budget remains. Inspect responder tool state Continuation, per-task checkpoints and controller verification evidence; sum incremental per-turn usage, deduplicate repair action IDs, and do not count continued jobs as separate incidents. Optional usage totals remain unknown if any component is unknown. ResponseLoopsUsed includes returned response attempts as well as the maximum observed apply-batch count.
+For incident restart evidence, read [native incident recovery](native-incident-recovery.md).
 
 ### Accepted reachability baseline evidence
 
 The optional health-owned `.sdo/diagnostics/detectors/health/service-reachability/baseline.json` records fresh failed dial samples captured by the trusted, opt-in healthy-baseline gate while all other health detectors and the authored objective independently passed. It is broker-published as `health_judge` in `initial`, followed by detector-bundle adoption. Read version, authorization/source/objective bindings, capture time, exact targets, configuration hashes and measured samples. A missing historical success alone never authorizes an exclusion. A changed source/objective/Service identity or target/backend/config/policy invalidates the record for that target; a resulting finding reports `baseline_status`. A restart reuses the accepted record, including an empty record, and restored incidents cannot capture their failures as baseline exclusions. Candidate failures in saved logs are not accepted exclusions without this measured healthy-baseline evidence.
 
-### Partial repair reflection
-
-Aggregate `classification=failed` does not erase independently verified repairs.
-For an existing executable repair, the broker admits a confirmed cause only when every cause resource has a successful,
-timed repair receipt linked to its controller application (or exact-equivalent manual repair): not dry-run or
-rolled back, no application/rollback error, affirmative verification and final exact
-equivalence, and revision/binding-scoped post-apply NoMatch in its matching tool
-transcript. A successful command, flat NoMatch, or worker-authored verification
-claim alone is insufficient. This includes controller-verified equivalent manual
-repairs. Missing independent proof remains unlearned. Overlapping cause groups on one object are ambiguous under resource-level receipts and conservatively abstain; an unverified application cannot inherit another application’s proof on the same object. No benchmark grade is used.
-
-Cold first-generation repairs need no prior program or plan. Their trusted recorded
-mutation receipts must follow dispatch and the original resource-bound triggering
-findings. The latest error-free controller `verify` must evaluate those detectors
-after the mutation, with no remaining finding on any cause resource (including
-related refs). A peer may remain active, or a complete controller all-clear may
-prove the repair even though the authoritative aggregate closure remains failed. A later write invalidates older
-clearance; missing triggers, stale evaluation, or same-resource cause ambiguity
-abstain. Read-only operations and worker-authored success claims do not qualify.
-
-Controller verification records above the existing 2KiB opaque-response cap retain
-a typed `verification_summary`: version, completeness, exact open-finding count,
-all distinct primary/related open-resource refs, and detector IDs/status/timestamps.
-The controller derives it before dropping verbose findings. If even this summary
-cannot fit, it is omitted; learning abstains instead of using counts or mutable
-response files. Historical truncated calls without this summary remain unknown.
-The worker sees only repaired refs, supporting evaluations/time, and the count of
-other open findings, without the peer cause or opaque transcript.
-
-The committed outcome retains all causes, receipts, and its failed classification.
-Its `reflection_eligibility.causes` contains only verified repaired cause groups,
-with indices into the full outcome; unassigned questions are excluded. The worker
-receives compact cause indices and only those causes, verified receipts and typed
-applications/diagnoses and scoped cold-verification evidence. Opaque tool transcripts and unattributed playbook/drift
-claims are omitted from that learning view. No global recovery, positive fixed
-capture, program trust credit, or repaired peer is inferred from partial repair.
-A missing fixed capture remains an evidence gap. Full-success reflection retains
-its existing behavior.
-
-If no cause qualifies, `requires_reflection=false` and the durable
-`reflection_decision` is `no_change` with
-`no_change_reason=no_independently_verified_repair`; no model is dispatched.
-When reflection runs, its usage follows the existing decision/result ledger path,
-including across retries. A pre-cleanup benchmark grade and cleanup status remain
-separate measurements; neither authorizes production learning.
-
-## RL1 learning content and isolation
-
-Verified full and partial causes require executable diagnosis and mitigation, a handling README, and detector coverage. Go reports reflection.program-required or reflection.detector-required and retries incomplete results; README-only updated is a failed attempt. The only exception is a typed SDK gap naming the cause resources and reason. Controller capture gaps are telemetry, not a learning gate: fixtures may be authored from recorded actions and existing session observations. Publication compiles programs and executes mitigation to prove Match becomes NoMatch. Capture digest matching and rename/peer generalization are no longer save-time prerequisites. Broker-validated new programs receive one origin trust credit from their verified cause/bound fixture. Benchmark learning is invoked before grading, oracle evaluation and cleanup; none of those verdicts supply verification or enter production outcomes or reflection requests.
-
-
-### Expired incident retirement between encounters
-
-As a restart backstop, an expired response request with no active Job or orphan
-worker Pod is archived through the failed-closure outbox with typed reason
-`CLOSURE_FAILURE_REASON_AGENT_TIMEOUT`. API uncertainty preserves the binding;
-a live worker may still be rejoined. The archive is persisted before another
-incident's effects can execute. This terminal archive has no health success or
-new learning credit. New observations can open a fresh incident even when the
-old fault is still firing. Already committed closures retain their receipts.
-Stale-health evidence retirement precedes expiry retirement and preserves its
-original visible failure and single notification. Expiry skips incidents already
-claimed by a pending or terminal closure; a failed closure from an earlier
-incident does not claim the current incident.
-
-Learning-origin Git reads use the durable accepted repository, not a retired
-proposal checkout. Missing optional origin evidence logs Git stderr and earns
-no extra credit, while responder dispatch remains available.
+For partial repair, reflection publication and retirement evidence, read
+[native reflection](native-reflection.md).
 
 ## Retired playbooks
 
@@ -213,3 +82,4 @@ playbook from worker snapshots, detector hints, generated program registration,
 coverage and mitigation menus. A README change reloads the controller registry.
 Do not count a retired README as reusable learned coverage; inspect its reason
 and independently verified outcomes when assessing failed or undone mitigations.
+

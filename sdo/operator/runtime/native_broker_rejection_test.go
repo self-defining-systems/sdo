@@ -29,10 +29,13 @@ func newRejectionHarness(t *testing.T, incident string, behave func(call int, w 
 	return newRejectionHarnessValidator(t, incident, behave, func(context.Context, string, []string) error { return nil })
 }
 
-func newRejectionHarnessValidator(t *testing.T, incident string, behave func(int, IncidentWorkspace) (ReflectionDecision, error), validator broker.Validator) *rejectionHarness {
+func newRejectionHarnessValidator(t *testing.T, incident string, behave func(int, IncidentWorkspace) (ReflectionDecision, error), validator broker.Validator, setup ...func(string)) *rejectionHarness {
 	t.Helper()
 	target := nativeRepository(t)
 	nativeMemoryFixture(t, target)
+	for _, prepare := range setup {
+		prepare(target)
+	}
 	repository, err := broker.New(target, filepath.Join(t.TempDir(), "proposals"), validator)
 	if err != nil {
 		t.Fatal(err)

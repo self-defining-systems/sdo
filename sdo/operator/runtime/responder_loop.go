@@ -31,18 +31,19 @@ const maxRecordedToolResponse = 2048
 const maxRecordedApplyResponse = 8192
 
 type ToolRequest struct {
-	DetectorIDs   []string                               `json:"detector_ids,omitempty"`
-	Refs          []sdk.ObjectRef                        `json:"refs,omitempty"`
-	Parameters    map[string]string                      `json:"parameters,omitempty"`
-	Selection     *contracts.MitigationSelection         `json:"-"`
-	ReportQuery   *contracts.MitigationReportQuery       `json:"-"`
-	Checkpoint    *contracts.MitigationSessionCheckpoint `json:"-"`
-	Command       string                                 `json:"command"`
-	Ref           *sdk.ObjectRef                         `json:"ref,omitempty"`
-	ProgramID     string                                 `json:"program_id,omitempty"`
-	Bindings      program.Bindings                       `json:"bindings,omitempty"`
-	PlanIDs       []string                               `json:"plan_ids,omitempty"`
-	ApplicationID string                                 `json:"application_id,omitempty"`
+	FindingFingerprints []string                               `json:"finding_fingerprints,omitempty"`
+	DetectorIDs         []string                               `json:"detector_ids,omitempty"`
+	Refs                []sdk.ObjectRef                        `json:"refs,omitempty"`
+	Parameters          map[string]string                      `json:"parameters,omitempty"`
+	Selection           *contracts.MitigationSelection         `json:"-"`
+	ReportQuery         *contracts.MitigationReportQuery       `json:"-"`
+	Checkpoint          *contracts.MitigationSessionCheckpoint `json:"-"`
+	Command             string                                 `json:"command"`
+	Ref                 *sdk.ObjectRef                         `json:"ref,omitempty"`
+	ProgramID           string                                 `json:"program_id,omitempty"`
+	Bindings            program.Bindings                       `json:"bindings,omitempty"`
+	PlanIDs             []string                               `json:"plan_ids,omitempty"`
+	ApplicationID       string                                 `json:"application_id,omitempty"`
 }
 
 type ToolResponse struct {
@@ -101,10 +102,11 @@ type RecordedPlanApplication struct {
 }
 
 type selectedPlan struct {
-	id        string
-	programID string
-	bindings  program.Bindings
-	plan      program.Plan
+	targetFingerprints []string
+	id                 string
+	programID          string
+	bindings           program.Bindings
+	plan               program.Plan
 }
 
 // ResponderLoop holds one incident's tool state while its responder Job runs.
@@ -139,6 +141,7 @@ type ResponderLoop struct {
 	plans             map[string]selectedPlan
 	applications      map[string]PlanApplicationResult
 	applicationsLog   []RecordedPlanApplication
+	completedRepairs  []continuationRepair
 	failureSignals    []string
 	calls             []ToolCall
 	runs              []ProgramRun
@@ -254,7 +257,11 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 	case "menu":
 		l.listMenu(ctx, request, &response)
 	case "mitigate":
-		l.mitigateMenu(ctx, request.Selection, request.Parameters, &response)
+		if err := l.validateFindingTargets(request.FindingFingerprints); err != nil {
+			response.Error = err.Error()
+			break
+		}
+		l.mitigateMenu(ctx, request.Selection, request.Parameters, request.FindingFingerprints, &response)
 	case "session-open":
 		l.openMenuSession(ctx, &response)
 	case "session-checkpoint":
@@ -352,7 +359,14 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 		response.Summary = "first-mutation snapshot captured"
 	case "verify":
 		if l.VerifyClosure != nil {
+			// The controller may persist continuation state while observing.
+			// A read-only closure check must not hold responder locks while
+			// waiting for that observation to finish.
+			l.mu.Unlock()
+			l.operationMu.Unlock()
 			response = l.VerifyClosure(ctx)
+			l.operationMu.Lock()
+			l.mu.Lock()
 			l.findings = append([]sdk.Finding(nil), response.Findings...)
 			response.LoopsAllowed = l.MaxBatches
 		} else {
@@ -586,6 +600,10 @@ func logicalToolResponse(response ToolResponse) ToolResponse {
 }
 
 func (l *ResponderLoop) plan(ctx context.Context, request ToolRequest, response *ToolResponse) {
+	if err := l.validateFindingTargets(request.FindingFingerprints); err != nil {
+		response.Error = err.Error()
+		return
+	}
 	if l.Programs == nil {
 		response.Error = "no programs are compiled"
 		return
@@ -633,7 +651,7 @@ func (l *ResponderLoop) plan(ctx context.Context, request ToolRequest, response 
 		return
 	}
 	id := fmt.Sprintf("plan-%s-%d", l.sessionID, len(l.plans)+1)
-	l.plans[id] = selectedPlan{id: id, programID: request.ProgramID, bindings: cloneProgramBindings(request.Bindings), plan: plan}
+	l.plans[id] = selectedPlan{targetFingerprints: append([]string(nil), request.FindingFingerprints...), id: id, programID: request.ProgramID, bindings: cloneProgramBindings(request.Bindings), plan: plan}
 	response.PlanID, response.Patches = id, preview.Patches
 	response.Summary = fmt.Sprintf("%s: %d dry-run patches", id, len(preview.Patches))
 }
@@ -689,7 +707,7 @@ func (l *ResponderLoop) apply(ctx context.Context, request ToolRequest, response
 		return
 	}
 	executor := l.Executor
-	result, err := executor.Apply(ctx, l.Request, batch, false)
+	result, err := executor.Apply(ctx, l.mitigationIncident(selected), batch, false)
 	completed := time.Now().UTC()
 	if result.Applied || result.PendingAction != nil {
 		l.applications[id] = result
@@ -707,10 +725,10 @@ func (l *ResponderLoop) apply(ctx context.Context, request ToolRequest, response
 	if result.Applied && result.RolloutPending == nil {
 		// Application credit is binding-scoped; closure still independently
 		// requires global health. A different open fault is not a failed repair.
-		unrelated := onlyUnrelatedFindings(selected, response.Findings)
 		result.VerificationPassed = err == nil && response.Error == "" && result.VerificationCompleted &&
 			boundPlansNoMatch(selected, response.ProgramRuns) &&
-			((result.VerificationPassed && response.Healthy) || unrelated)
+			targetedFindingsClear(l.mitigationIncident(selected).Findings, response.Findings) &&
+			result.VerificationPassed
 		if !result.VerificationPassed {
 			// Program trust counts an unverified application against the program's
 			// current revision, durably, even if the responder is restarted.

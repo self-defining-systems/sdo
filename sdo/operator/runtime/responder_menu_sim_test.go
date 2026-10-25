@@ -183,7 +183,7 @@ func testSimResponderMenuSchedule(t *testing.T, seed uint64, schedule string) {
 			if schedule == "health-flip" && round == badRounds+1 {
 				w.setPort(flipService, 8080)
 			}
-			response := loop.Handle(ctx, ToolRequest{Command: "mitigate", Selection: &contracts.MitigationSelection{OptionId: option, RoundLimit: 1}})
+			response := loop.Handle(ctx, ToolRequest{Command: "mitigate", Selection: &contracts.MitigationSelection{OptionId: option, RoundLimit: 1}, FindingFingerprints: []string{FindingFingerprint(request.Findings[0])}})
 			if response.Report == nil {
 				t.Fatalf("missing typed report: %s", response.Error)
 			}

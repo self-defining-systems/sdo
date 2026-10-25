@@ -1012,8 +1012,10 @@ type ReflectionDecision struct {
 	SdkGaps          []*SdkGap              `protobuf:"bytes,5,rep,name=sdk_gaps,json=sdkGaps,proto3" json:"sdk_gaps,omitempty"`
 	Usage            *UsageMetrics          `protobuf:"bytes,6,opt,name=usage,proto3" json:"usage,omitempty"`
 	DeclineReason    string                 `protobuf:"bytes,7,opt,name=decline_reason,json=declineReason,proto3" json:"decline_reason,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	// Controller-owned terminal execution failure; never a model-authored verdict.
+	FailureReason string `protobuf:"bytes,8,opt,name=failure_reason,json=failureReason,proto3" json:"failure_reason,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ReflectionDecision) Reset() {
@@ -1091,6 +1093,13 @@ func (x *ReflectionDecision) GetUsage() *UsageMetrics {
 func (x *ReflectionDecision) GetDeclineReason() string {
 	if x != nil {
 		return x.DeclineReason
+	}
+	return ""
+}
+
+func (x *ReflectionDecision) GetFailureReason() string {
+	if x != nil {
+		return x.FailureReason
 	}
 	return ""
 }
@@ -1819,7 +1828,7 @@ const file_sdodev_contracts_v1alpha1_controller_state_proto_rawDesc = "" +
 	"*state.failed_closure_has_permanent_failure\x126a failed closure requires its permanent failure record\x1aXthis.closure_state != 5 || (has(this.closure_failure) && this.closure_failure.permanent)\x1a\xe0\x02\n" +
 	"-state.closure_failure_matches_pending_closure\x12da closure failure must belong to the pending closure and its permanence must match the closure state\x1a\xc8\x01!has(this.closure_failure) || (has(this.pending_closure) && this.closure_failure.incident_id == this.pending_closure.request.incident_id && this.closure_failure.permanent == (this.closure_state == 5))\x1a\x9c\x01\n" +
 	"!state.pending_closure_has_payload\x129pending or processing closure requires its frozen payload\x1a<!(this.closure_state in [1, 2]) || has(this.pending_closure)\x1a\x9c\x01\n" +
-	"#state.committed_closure_has_receipt\x127committed or acknowledging closure requires its receipt\x1a<!(this.closure_state in [3, 4]) || has(this.closure_receipt)J\x04\b\x0e\x10\x0fJ\x04\b\x0f\x10\x10J\x04\b\x10\x10\x11J\x04\b\x12\x10\x13J\x04\b\x1a\x10\x1bJ\x04\b \x10!J\x04\b!\x10\"J\x04\b\"\x10#R\x18detector_review_requiredR\x1bdetector_review_required_atR\x16detector_review_reasonR\x19incident_observed_changesR\x10pending_releasesR\x13drift_investigationR\x0fdrift_admissionR\x15program_sweep_cursors\"\x8b\x03\n" +
+	"#state.committed_closure_has_receipt\x127committed or acknowledging closure requires its receipt\x1a<!(this.closure_state in [3, 4]) || has(this.closure_receipt)J\x04\b\x0e\x10\x0fJ\x04\b\x0f\x10\x10J\x04\b\x10\x10\x11J\x04\b\x12\x10\x13J\x04\b\x1a\x10\x1bJ\x04\b \x10!J\x04\b!\x10\"J\x04\b\"\x10#R\x18detector_review_requiredR\x1bdetector_review_required_atR\x16detector_review_reasonR\x19incident_observed_changesR\x10pending_releasesR\x13drift_investigationR\x0fdrift_admissionR\x15program_sweep_cursors\"\xc4\x03\n" +
 	"\x12ReflectionDecision\x12W\n" +
 	"\x11learning_decision\x18\x01 \x01(\tB*\xbaH'r%R\aupdatedR\tno_changeR\asdk_gapR\x06failedR\x10learningDecision\x12(\n" +
 	"\x10no_change_reason\x18\x02 \x01(\tR\x0enoChangeReason\x12!\n" +
@@ -1827,7 +1836,8 @@ const file_sdodev_contracts_v1alpha1_controller_state_proto_rawDesc = "" +
 	"\x05error\x18\x04 \x01(\tR\x05error\x12<\n" +
 	"\bsdk_gaps\x18\x05 \x03(\v2!.sdodev.contracts.v1alpha1.SdkGapR\asdkGaps\x12=\n" +
 	"\x05usage\x18\x06 \x01(\v2'.sdodev.contracts.v1alpha1.UsageMetricsR\x05usage\x12<\n" +
-	"\x0edecline_reason\x18\a \x01(\tB\x15\xbaH\x12r\x10R\x00R\fevidence_gapR\rdeclineReason\"\xcc\x01\n" +
+	"\x0edecline_reason\x18\a \x01(\tB\x15\xbaH\x12r\x10R\x00R\fevidence_gapR\rdeclineReason\x127\n" +
+	"\x0efailure_reason\x18\b \x01(\tB\x10\xbaH\rr\vR\x00R\atimeoutR\rfailureReason\"\xcc\x01\n" +
 	"\x11ProposalRejection\x12!\n" +
 	"\aattempt\x18\x01 \x01(\rB\a\xbaH\x04*\x02(\x01R\aattempt\x12W\n" +
 	"\vdiagnostics\x18\x02 \x03(\v2+.sdodev.contracts.v1alpha1.MemoryDiagnosticB\b\xbaH\x05\x92\x01\x02\b\x01R\vdiagnostics\x12;\n" +

@@ -67,6 +67,7 @@ type ReflectionDecision struct {
 	DeclineReason    string
 	PlaybookIDs      []string
 	Error            string
+	FailureReason    string
 	SDKGaps          []*contracts.SdkGap
 	Usage            *UsageMetrics
 }
@@ -265,13 +266,17 @@ func (n NativeIncidentBroker) ProcessClosure(ctx context.Context, closure Incide
 				ledger.RequiresReflection = true
 			} else {
 				indices := partialRepairCauses(ledger.OutcomeDocument)
-				ledger.RequiresReflection = len(indices) > 0
+				ledger.RequiresReflection = len(indices) > 0 || hasResponderSession(closure)
 				if ledger.RequiresReflection {
 					eligibility := n.prepareCauseWork(ctx, ledger.OutcomeDocument, IncidentWorkspace{IncidentID: id, Worktree: closure.Request.RepositoryWorktree, BaseCommit: closure.Request.RepositoryBaseCommit})
 					ledger.OutcomeDocument.ReflectionEligibility = partialReflectionEligibility(eligibility, indices, false)
+					ledger.OutcomeDocument.ReflectionEligibility.Unassigned = unverifiedCauseWork(ledger.OutcomeDocument, indices)
 				} else {
-					ledger.ReflectionDecision = &contracts.ReflectionDecision{LearningDecision: "no_change", NoChangeReason: noVerifiedRepair}
+					ledger.ReflectionDecision = &contracts.ReflectionDecision{LearningDecision: "no_change", NoChangeReason: "no_session"}
 				}
+			}
+			if !hasResponderSession(closure) {
+				ledger.OutcomeDocument.ReflectionSkipReason = "no_session"
 			}
 			if err := n.saveLedger(ledger); err != nil {
 				return err
@@ -379,7 +384,7 @@ func (n NativeIncidentBroker) processReflection(ctx context.Context, ledger *con
 			}
 			negativePrepared = true
 		}
-		if effect.Attempt == 1 && !n.ForceReflection && (prepared || negativePrepared) && !causeWorkNeedsModel(work) && !reflectionItemsNeedModel(unassigned) {
+		if effect.Attempt == 1 && !n.ForceReflection && !hasResponderSession(incidentClosureState(effect.Closure)) && (prepared || negativePrepared) && !causeWorkNeedsModel(work) && !reflectionItemsNeedModel(unassigned) {
 			return &contracts.ReflectionDecision{LearningDecision: "updated"}, nil
 		}
 		if n.Reflector == nil {
@@ -388,6 +393,13 @@ func (n NativeIncidentBroker) processReflection(ctx context.Context, ledger *con
 		decision, err := n.Reflector.Reflect(ctx, incidentClosureState(effect.Closure), workspace, effect.Outcome, effect.ProposalCommit, effect.OutcomeCommit, ReflectionFeedback{Attempt: effect.Attempt, Diagnostics: effect.Diagnostics, DispatchAt: controllerTime(effect.DispatchAt), CauseWork: work, UnassignedWork: unassigned})
 		if err != nil {
 			return nil, fmt.Errorf("reflection worker: %w", err)
+		}
+		// A failed/no-op closure with no independently repaired cause may
+		// explain its evidence gap, but cannot publish README-only learning or
+		// turn the responder's unverified repair claims into executable memory.
+		if effect.Outcome.GetClassification() != outcomeclass.Success && len(effect.Outcome.GetConfirmedRootCauses()) == 0 && decision.LearningDecision == "updated" {
+			decision.LearningDecision = "failed"
+			decision.Error = "reflection without an independently verified repaired cause requires no_change with an evidence-gap reason or a typed SDK gap"
 		}
 		if prepared {
 			if _, err := memory.RecordRepeatCorpus(workspace.Worktree, capture, effect.IncidentID, positive, origins); err != nil {
@@ -400,7 +412,7 @@ func (n NativeIncidentBroker) processReflection(ctx context.Context, ledger *con
 				return nil, err
 			}
 		}
-		result := &contracts.ReflectionDecision{DeclineReason: decision.DeclineReason, LearningDecision: decision.LearningDecision, NoChangeReason: decision.NoChangeReason, Error: decision.Error, SdkGaps: decision.SDKGaps, PlaybookIds: decision.PlaybookIDs}
+		result := &contracts.ReflectionDecision{DeclineReason: decision.DeclineReason, LearningDecision: decision.LearningDecision, NoChangeReason: decision.NoChangeReason, Error: decision.Error, FailureReason: decision.FailureReason, SdkGaps: decision.SDKGaps, PlaybookIds: decision.PlaybookIDs}
 		if decision.Usage != nil {
 			result.Usage = proto.Clone(decision.Usage).(*contracts.UsageMetrics)
 		}

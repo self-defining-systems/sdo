@@ -73,7 +73,8 @@ Current outcome:
   "response_loops_used": 0,
   "response_loop_exhausted": false,
   "drift_events": [],
-  "resolution_path": ""
+  "resolution_path": "",
+  "reflection_skip_reason": ""
 }
 
 Outcome history (prior incidents, compact): none

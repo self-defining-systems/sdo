@@ -2,6 +2,7 @@ package sdktest
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -140,5 +141,47 @@ func TestHealthyBaselineViolationsReportsTheSameFindingOncePerSnapshot(t *testin
 	// message dozens of times and bury the remedy the reflector needs to read.
 	if got := HealthyBaselineViolations(repeatingDetector{}, snapshots); len(got) != 2 {
 		t.Fatalf("violations = %d, want one per snapshot: %v", len(got), got)
+	}
+}
+
+type baselineFailureDetector struct{ scoped bool }
+
+func (d baselineFailureDetector) Spec() sdk.DetectorSpec {
+	spec := sdk.DetectorSpec{ID: "learned-baseline", Class: sdk.DetectorClassIncident}
+	if d.scoped {
+		spec.Watches = []sdk.WatchKind{{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "dependency"}}
+	}
+	return spec
+}
+func (d baselineFailureDetector) Detect(context.Context, sdk.DetectionContext) ([]sdk.Finding, error) {
+	if d.scoped {
+		return nil, nil
+	}
+	return nil, fmt.Errorf("accepted manifest: trusted deployment image evidence missing")
+}
+
+func TestHealthyBaselineRejectsDetectorErrorsWithSnapshotContext(t *testing.T) {
+	snapshots := []Snapshot{{SourceName: "healthy-a.json", NamespaceName: "app"}, {SourceName: "healthy-b.json", NamespaceName: "app"}}
+	for _, tc := range []struct {
+		name       string
+		detector   sdk.Detector
+		diagnostic string
+	}{
+		{"source gap", baselineFailureDetector{}, "trusted deployment image evidence missing"},
+		{"undeclared observation", baselineFailureDetector{scoped: true}, "observation dependency undeclared"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := HealthyBaselineViolations(tc.detector, snapshots)
+			if len(got) != 2 {
+				t.Fatalf("healthy baseline silently accepted an erroring detector: %v", got)
+			}
+			for i, violation := range got {
+				for _, detail := range []string{"learned-baseline", snapshots[i].SourceName, "app", tc.diagnostic} {
+					if !strings.Contains(violation, detail) {
+						t.Errorf("diagnostic %q lacks %q", violation, detail)
+					}
+				}
+			}
+		})
 	}
 }

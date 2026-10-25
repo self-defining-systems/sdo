@@ -22,11 +22,13 @@ func TestPlaybookCoverageIncludesEveryMatchAndUnexplainedFinding(t *testing.T) {
 	yes := true
 	runs := []ProgramRun{}
 	for i, id := range []string{"repair-b", "repair-a"} {
-		runs = append(runs, ProgramRun{ProgramID: id, ProgramRevision: "rev", CanMitigate: &yes, Bindings: program.Bindings{Objects: program.ObjectBindings{"service": refs[i]}}, Verdict: program.Verdict{Result: program.Match}})
+		runs = append(runs, ProgramRun{FindingFingerprint: FindingFingerprint(findings[i]), ProgramID: id, ProgramRevision: "rev", CanMitigate: &yes, Bindings: program.Bindings{Objects: program.ObjectBindings{"service": refs[i]}}, Verdict: program.Verdict{Result: program.Match}})
 	}
+	findings[0].Playbooks = []string{"repair-b", "other"}
+	findings[1].Playbooks = []string{"repair-a"}
 	// The same binding may be diagnosed through multiple findings; it appears once.
 	runs = append(runs, runs[0])
-	runs = append(runs, ProgramRun{ProgramID: "other", Bindings: runs[0].Bindings, Verdict: program.Verdict{Result: program.Match}})
+	runs = append(runs, ProgramRun{FindingFingerprint: FindingFingerprint(findings[0]), ProgramID: "other", Bindings: runs[0].Bindings, Verdict: program.Verdict{Result: program.Match}})
 	for _, result := range []program.Result{program.NoMatch, program.Unknown, program.NeedsJudgement} {
 		runs = append(runs, ProgramRun{ProgramID: string(result), Bindings: program.Bindings{Objects: program.ObjectBindings{"service": refs[2]}}, Verdict: program.Verdict{Result: result}})
 	}
@@ -50,7 +52,7 @@ func TestPlaybookCoverageIncludesEveryMatchAndUnexplainedFinding(t *testing.T) {
 	}
 }
 
-func TestPlaybookCoverageJoinsRelatedAndParameterResources(t *testing.T) {
+func TestPlaybookCoverageRequiresDeclaredFindingRelations(t *testing.T) {
 	bound := sdk.ObjectRef{Kind: "Deployment", Namespace: "app", Name: "api"}
 	unrelated := sdk.ObjectRef{Kind: "Service", Namespace: "app", Name: "other"}
 	findings := []sdk.Finding{
@@ -59,7 +61,11 @@ func TestPlaybookCoverageJoinsRelatedAndParameterResources(t *testing.T) {
 		{Fingerprint: "parameter", Status: sdk.FindingActive, PrimaryResource: unrelated, ParameterBindings: map[string]sdk.ObjectRef{"workload": bound}},
 		{Fingerprint: "foreign", Status: sdk.FindingActive, PrimaryResource: sdk.ObjectRef{Kind: "Deployment", Namespace: "elsewhere", Name: "api"}},
 	}
-	runs := []ProgramRun{{ProgramID: "repair", Bindings: program.Bindings{Objects: program.ObjectBindings{"workload": bound}}, Verdict: program.Verdict{Result: program.Match}}}
+	runs := []ProgramRun{}
+	for i := range findings[:3] {
+		findings[i].Playbooks = []string{"repair"}
+		runs = append(runs, ProgramRun{FindingFingerprint: FindingFingerprint(findings[i]), ProgramID: "repair", Bindings: program.Bindings{Objects: program.ObjectBindings{"workload": bound}}, Verdict: program.Verdict{Result: program.Match}})
+	}
 	coverage := buildPlaybookCoverage(findings, runs, nil, nil)
 	if !reflect.DeepEqual(coverage.Matches[0].ExplainedFindingFingerprints, []string{"parameter", "primary", "related"}) || !reflect.DeepEqual(coverage.UnexplainedFindingFingerprints, []string{"foreign"}) {
 		t.Fatalf("resource joins: %v", coverage)
@@ -68,8 +74,8 @@ func TestPlaybookCoverageJoinsRelatedAndParameterResources(t *testing.T) {
 
 func TestPlaybookCoverageJoinsWorkloadServiceRelation(t *testing.T) {
 	snapshot := sdktest.Snapshot{NamespaceName: "app", DeploymentList: []appsv1.Deployment{{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "app"}, Spec: appsv1.DeploymentSpec{Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": "api"}}}}}}, ServiceList: []corev1.Service{{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "app"}, Spec: corev1.ServiceSpec{Selector: map[string]string{"app": "api"}}}}}
-	findings := []sdk.Finding{{Fingerprint: "service-symptom", Status: sdk.FindingActive, PrimaryResource: sdk.ObjectRef{Kind: "Service", Namespace: "app", Name: "api"}}}
-	runs := []ProgramRun{{ProgramID: "repair", Bindings: program.Bindings{Objects: program.ObjectBindings{"workload": {Kind: "Deployment", Namespace: "app", Name: "api"}}}, Verdict: program.Verdict{Result: program.Match}}}
+	findings := []sdk.Finding{{Fingerprint: "service-symptom", Playbooks: []string{"repair"}, Status: sdk.FindingActive, PrimaryResource: sdk.ObjectRef{Kind: "Service", Namespace: "app", Name: "api"}}}
+	runs := []ProgramRun{{FindingFingerprint: "service-symptom", ProgramID: "repair", Bindings: program.Bindings{Objects: program.ObjectBindings{"workload": {Kind: "Deployment", Namespace: "app", Name: "api"}}}, Verdict: program.Verdict{Result: program.Match}}}
 	coverage := buildPlaybookCoverage(findings, runs, snapshot, nil)
 	if len(coverage.UnexplainedFindingFingerprints) != 0 || !reflect.DeepEqual(coverage.Matches[0].ExplainedFindingFingerprints, []string{"service-symptom"}) {
 		t.Fatalf("relation join: %v", coverage)

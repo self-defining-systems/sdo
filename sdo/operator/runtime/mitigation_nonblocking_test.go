@@ -38,6 +38,9 @@ func TestMitigationReturnsWithUnrelatedFaultBeforeGlobalHealthBudget(t *testing.
 			}
 			snapshot, _ := provider.Snapshot(ctx)
 			findings, _ := (fastloopDetector{}).Detect(ctx, snapshot)
+			for i := range findings {
+				findings[i].Playbooks = []string{"service-targetport-mismatch"}
+			}
 			loop := NewResponderLoop(IncidentRequest{IncidentID: "two-fault", Namespace: "app", RepairPolicy: "recorded-actions", Findings: findings}, registry, provider, []sdk.Detector{fastloopDetector{}}, PlanExecutor{Client: TypedPlanClient{Client: client}, Rollouts: KubernetesPlanRollouts{Client: client}, Verifier: PlanHealthVerifier{Detectors: []sdk.Detector{fastloopDetector{}}, Provider: provider, Timeout: 5 * time.Second, PollInterval: time.Second}}, 3)
 			loop.ReadView = func(snapshot sdk.DetectionContext) program.ReadView {
 				return &sdktest.ReplayReadView{Snapshot: snapshot.(sdktest.Snapshot)}

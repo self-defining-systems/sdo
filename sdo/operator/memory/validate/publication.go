@@ -100,7 +100,7 @@ func LoadReflectionDecision(ctx context.Context, root, path string) (*contracts.
 	}, nil
 }
 
-func lifecycleChecks(ctx context.Context, r Request, paths []string) ([]Diagnostic, error) {
+func lifecycleChecks(ctx context.Context, r Request, paths []string, structurallyValid bool) ([]Diagnostic, error) {
 	var ds []Diagnostic
 	add := func(rule, message, hint string) {
 		ds = append(ds, Diagnostic{Rule: rule, Message: message, Hint: hint})
@@ -172,6 +172,13 @@ func lifecycleChecks(ctx context.Context, r Request, paths []string) ([]Diagnost
 					return nil, err
 				}
 				ds = append(ds, learning...)
+				if structurallyValid {
+					executable, err := reflectionExecutableDiagnostics(r.Root, outcome, paths)
+					if err != nil {
+						return nil, err
+					}
+					ds = append(ds, executable...)
+				}
 			}
 		}
 	}
@@ -266,7 +273,7 @@ func publicationChecks(ctx context.Context, r Request, structurallyValid bool) (
 	if err != nil {
 		return nil, err
 	}
-	ds, err := lifecycleChecks(ctx, r, paths)
+	ds, err := lifecycleChecks(ctx, r, paths, structurallyValid)
 	if err != nil {
 		return nil, err
 	}

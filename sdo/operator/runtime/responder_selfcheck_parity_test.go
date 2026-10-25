@@ -29,6 +29,7 @@ func TestResponderSelfCheckClosureParity(t *testing.T) {
 			switch scenario {
 			case "health-firing":
 				state.Status = DetectorEvaluationFiring
+				state.Fingerprints = []string{FindingFingerprint(finding)}
 				c.tracker.SetPolicy("health", 1, 1, 0)
 				c.tracker.Observe(now, "health", []sdk.Finding{finding})
 			case "drift-remaining":
