@@ -547,8 +547,8 @@ upper bound enforces the complete path; aim for at most eight minutes of executi
 to retain headroom. All three work jobs time out after nine minutes.
 
 The Go module job starts its longest module alongside a sequential lane for
-smaller modules. The full Python suite overlaps those lanes with one pytest worker
-and one Go compiler; both lane results are required even when one fails. Static
+smaller modules. The full Python suite overlaps those lanes with two pytest workers
+and one Go compiler per worker; both lane results are required even when one fails. Static
 and proto checks run first on that runner. Runtime
 uses **two disjoint partitions on one runner**, `contracts` and `integration`,
 without competing with unrelated module compilation. Run both locally with

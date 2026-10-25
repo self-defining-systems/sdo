@@ -83,9 +83,9 @@ def run_lanes(lanes: list[Lane], directory: Path) -> int:
 
 def main() -> None:
     root = Path(__file__).resolve().parents[1]
-    # The Go script has two lanes. Python uses one worker and one compiler so
-    # native CLI/fixture builds can overlap without exhausting the runner.
-    python_environment = {**os.environ, "GOMAXPROCS": "1", "GOFLAGS": "-p=1", "SDO_PYTEST_WORKERS": "1"}
+    # The Go script has two lanes. Each of two Python workers gets one compiler;
+    # at most six compiler processes can overlap on this runner.
+    python_environment = {**os.environ, "GOMAXPROCS": "1", "GOFLAGS": "-p=1", "SDO_PYTEST_WORKERS": "2"}
     raise SystemExit(
         run_lanes(
             [
