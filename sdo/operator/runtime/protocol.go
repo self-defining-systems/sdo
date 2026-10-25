@@ -178,6 +178,8 @@ type LateFindingsPull struct {
 }
 
 type IncidentClosure struct {
+	VerifiedWhileResponderRunning bool
+	ClosureStabilityWindow        time.Duration
 	// ObservationGeneration identifies the scope used for independent verification.
 	ObservationGeneration string
 	Request               IncidentRequest

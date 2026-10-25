@@ -4,6 +4,7 @@ package kubeproxy
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"io"
 	"log"
 	"mime"
@@ -13,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"sdo.dev/operator/apihistory"
@@ -27,6 +29,12 @@ type Recorder interface {
 // fresh connections: net/http can retry a reused connection with idempotency
 // headers even for POST. The production adapter disables keepalives for writes.
 func New(upstream *url.URL, readTransport, writeTransport http.RoundTripper, recorder Recorder) http.Handler {
+	return NewWithMutationGate(upstream, readTransport, writeTransport, recorder, nil)
+}
+
+// NewWithMutationGate keeps the incident fence below all worker API callers,
+// including raw kubectl and GET-based exec/attach upgrades.
+func NewWithMutationGate(upstream *url.URL, readTransport, writeTransport http.RoundTripper, recorder Recorder, gate *apihistory.MutationGate) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// The transport can still be probing the request body for EOF when an
 		// upstream response arrives. HTTP/1's default response flush drains and
@@ -35,6 +43,26 @@ func New(upstream *url.URL, readTransport, writeTransport http.RoundTripper, rec
 		// not expose this optional control.
 		_ = http.NewResponseController(w).EnableFullDuplex()
 		e := requestEvent(r)
+		var uncertain atomic.Bool
+		if gate != nil && (mutating(r.Method) || e.Subresource == "exec" || e.Subresource == "attach" || e.Subresource == "portforward") {
+			lease, err := gate.Begin()
+			if err != nil {
+				warning, _ := gate.Verified()
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusConflict)
+				_ = json.NewEncoder(w).Encode(struct {
+					Kind             string                       `json:"kind"`
+					APIVersion       string                       `json:"apiVersion"`
+					Status           string                       `json:"status"`
+					Reason           string                       `json:"reason"`
+					Message          string                       `json:"message"`
+					Code             int                          `json:"code"`
+					IncidentVerified *apihistory.IncidentVerified `json:"incident_verified,omitempty"`
+				}{"Status", "v1", "Failure", err.Error(), "incident mutation rejected", 409, warning})
+				return
+			}
+			defer func() { _ = lease.Finish(uncertain.Load()) }()
+		}
 		record := func(event apihistory.Event, body []byte) {
 			if recorder != nil {
 				recorder.Record(event, body)
@@ -103,6 +131,7 @@ func New(upstream *url.URL, readTransport, writeTransport http.RoundTripper, rec
 			res.Body = &captureBody{ReadCloser: res.Body, mode: mode, finish: func(body []byte, tooLarge, broken bool) {
 				end.Finished = time.Now().UTC()
 				if broken {
+					uncertain.Store(true)
 					end.Omission = "incomplete_response"
 					body = nil
 					if recorder != nil {
@@ -122,6 +151,7 @@ func New(upstream *url.URL, readTransport, writeTransport http.RoundTripper, rec
 			return nil
 		}
 		proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
+			uncertain.Store(true)
 			end := e
 			end.Phase = "end"
 			end.Status = http.StatusBadGateway

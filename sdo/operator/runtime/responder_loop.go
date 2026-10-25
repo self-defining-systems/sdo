@@ -12,6 +12,7 @@ import (
 
 	"sdo.dev/operator/memory/layout"
 
+	"sdo.dev/operator/apihistory"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/sdk"
@@ -31,6 +32,8 @@ const maxRecordedToolResponse = 2048
 const maxRecordedApplyResponse = 8192
 
 type ToolRequest struct {
+	WaitSeconds         float64                                `json:"wait_seconds,omitempty"`
+	PreviousFindings    []sdk.Finding                          `json:"previous_findings,omitempty"`
 	FindingFingerprints []string                               `json:"finding_fingerprints,omitempty"`
 	DetectorIDs         []string                               `json:"detector_ids,omitempty"`
 	Refs                []sdk.ObjectRef                        `json:"refs,omitempty"`
@@ -47,26 +50,33 @@ type ToolRequest struct {
 }
 
 type ToolResponse struct {
-	UnexplainedRemovalBlockers []UnexplainedRemovalBlocker  `json:"unexplained_removal_blockers,omitempty"`
-	MitigationRoundsUsed       int                          `json:"mitigation_rounds_used"`
-	MitigationRoundsAllowed    int                          `json:"mitigation_rounds_allowed"`
-	ResponseLoopsUsed          int                          `json:"response_loops_used"`
-	ResponseLoopsAllowed       int                          `json:"response_loops_allowed"`
-	MitigationHealth           *MitigationHealth            `json:"mitigation_health,omitempty"`
-	RolloutPending             *contracts.RolloutPending    `json:"rollout_pending,omitempty"`
-	MenuExecution              []MenuRoundExecution         `json:"-"`
-	MenuParameters             map[string][]MenuParameter   `json:"-"`
-	Menu                       *contracts.MitigationMenu    `json:"-"`
-	Report                     *contracts.MitigationReport  `json:"-"`
-	Session                    *contracts.MitigationSession `json:"-"`
-	Command                    string                       `json:"command"`
-	Source                     map[string]any               `json:"source,omitempty"`
-	Error                      string                       `json:"error,omitempty"`
-	Summary                    string                       `json:"summary"`
-	PlanID                     string                       `json:"plan_id,omitempty"`
-	ApplicationID              string                       `json:"application_id,omitempty"`
-	Patches                    []PlanPatch                  `json:"patches,omitempty"`
-	ProgramRuns                []ProgramRun                 `json:"program_runs,omitempty"`
+	UnexplainedRemovalBlockers []UnexplainedRemovalBlocker    `json:"unexplained_removal_blockers,omitempty"`
+	BeforeFindings             []sdk.Finding                  `json:"before_findings,omitempty"`
+	ControllerFindings         []sdk.Finding                  `json:"controller_findings,omitempty"`
+	Progress                   *FindingProgress               `json:"progress,omitempty"`
+	IncidentVerified           *apihistory.IncidentVerified   `json:"incident_verified,omitempty"`
+	FailureReason              string                         `json:"failure_reason,omitempty"`
+	Receipt                    *contracts.RepairActionReceipt `json:"-"`
+	MitigationRoundsUsed       int                            `json:"mitigation_rounds_used"`
+	MitigationRoundsAllowed    int                            `json:"mitigation_rounds_allowed"`
+	ResponseLoopsUsed          int                            `json:"response_loops_used"`
+	ResponseLoopsAllowed       int                            `json:"response_loops_allowed"`
+	MitigationHealth           *MitigationHealth              `json:"mitigation_health,omitempty"`
+	RolloutPending             *contracts.RolloutPending      `json:"rollout_pending,omitempty"`
+	MenuExecution              []MenuRoundExecution           `json:"-"`
+	MenuParameters             map[string][]MenuParameter     `json:"-"`
+	Menu                       *contracts.MitigationMenu      `json:"-"`
+	Report                     *contracts.MitigationReport    `json:"-"`
+	Session                    *contracts.MitigationSession   `json:"-"`
+	Command                    string                         `json:"command"`
+	Source                     map[string]any                 `json:"source,omitempty"`
+	Error                      string                         `json:"error,omitempty"`
+	Summary                    string                         `json:"summary"`
+	PlanID                     string                         `json:"plan_id,omitempty"`
+	ApplicationID              string                         `json:"application_id,omitempty"`
+	Patches                    []PlanPatch                    `json:"patches,omitempty"`
+	ProgramRuns                []ProgramRun                   `json:"program_runs,omitempty"`
+
 	// ProgramRunsOmitted counts runs a truncated record could not list; the
 	// trust reader fails closed on it. ProgramRunsUnrelatedOmitted counts apply
 	// runs of programs or bindings the applied plans do not name, which the
@@ -116,6 +126,14 @@ type selectedPlan struct {
 
 // ResponderLoop holds one incident's tool state while its responder Job runs.
 type ResponderLoop struct {
+	MutationGate      *apihistory.MutationGate
+	Now               func() time.Time
+	CachedFindings    func() ToolResponse
+	IncidentStatus    func() *apihistory.IncidentVerified
+	WaitClosure       func(context.Context, time.Duration) ToolResponse
+	ExternalReceipts  func() ([]RepairActionReceipt, bool, string, error)
+	gateError         error
+	closureReceipts   []RepairActionReceipt
 	continuation      responderContinuation
 	MenuConfig        *ResponderMenuConfig
 	menu              *contracts.MitigationMenu
@@ -239,6 +257,11 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	started := time.Now()
+	mutating := request.Command == "apply" || request.Command == "mitigate" || request.Command == "act-result"
+	var before []sdk.Finding
+	if mutating && l.CachedFindings != nil {
+		before = l.CachedFindings().Findings
+	}
 	l.timing = toolTiming{}
 	defer func() {
 		slog.Info("responder_tool_timing", "incident_id", l.Request.IncidentID, "command", request.Command,
@@ -258,6 +281,19 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 		response.ResponseLoopsAllowed = min(response.ResponseLoopsAllowed, l.Request.MaxResponseLoops)
 	}
 	defer func() {
+		if mutating && l.CachedFindings != nil {
+			after := l.CachedFindings()
+			response.BeforeFindings = append([]sdk.Finding{}, before...)
+			response.ControllerFindings = append([]sdk.Finding{}, after.Findings...)
+			progress := CompareFindingProgress(before, after.Findings)
+			response.Progress = &progress
+		}
+		if l.IncidentStatus != nil {
+			response.IncidentVerified = l.IncidentStatus()
+		}
+		if response.IncidentVerified == nil && l.MutationGate != nil {
+			response.IncidentVerified, _ = l.MutationGate.Verified()
+		}
 		response.MitigationRoundsUsed = l.batches
 		response.MitigationRoundsAllowed = l.batchLimit()
 		if response.Error != "" {
@@ -285,6 +321,34 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 	}()
 	response.DriftEvents = append([]sdk.DriftEvent(nil), l.Request.DriftEvents...)
 
+	if request.Command == "apply" || request.Command == "mitigate" || request.Command == "rollback" || request.Command == "pre-apply" {
+		if l.gateError != nil {
+			response.Error = l.gateError.Error()
+			return response
+		}
+		if l.MutationGate != nil {
+			lease, err := l.MutationGate.Begin()
+			if err != nil {
+				response.Error = err.Error()
+				response.FailureReason = "execution_failed"
+				if response.Error == "incident_verified" {
+					response.FailureReason = "incident_verified"
+				}
+				response.Receipt = &contracts.RepairActionReceipt{FailureReason: response.FailureReason, ActionId: "sdo-rejected-" + l.sessionID, Kind: request.Command, Summary: "incident is closed", StartedAt: contractTimestamp(started.UTC()), CompletedAt: contractTimestamp(time.Now().UTC())}
+				return response
+			}
+			defer func() {
+				if err := lease.Finish(false); err != nil {
+					response.Error = err.Error()
+				}
+			}()
+		} else if l.IncidentStatus != nil && l.IncidentStatus() != nil {
+			response.Error = "incident_verified"
+			response.FailureReason = "incident_verified"
+			response.Receipt = &contracts.RepairActionReceipt{FailureReason: "incident_verified", ActionId: "sdo-rejected-" + l.sessionID, Kind: request.Command, Summary: "incident is closed", StartedAt: contractTimestamp(started.UTC()), CompletedAt: contractTimestamp(time.Now().UTC())}
+			return response
+		}
+	}
 	switch request.Command {
 	case "menu":
 		l.listMenu(ctx, request, &response)
@@ -384,6 +448,9 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 			response.TargetedHealthy = result.VerificationPassed
 		}
 	case "pre-apply":
+		if l.CachedFindings != nil {
+			response.Findings = l.CachedFindings().Findings
+		}
 		if err := l.capturePreApply(ctx, request.Refs...); err != nil {
 			response.Error = err.Error()
 			break
@@ -396,9 +463,19 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 			// waiting for that observation to finish.
 			l.mu.Unlock()
 			l.operationMu.Unlock()
-			response = l.VerifyClosure(ctx)
+			if request.WaitSeconds < 0 || request.WaitSeconds > 86400 {
+				response = ToolResponse{Command: "verify", Error: "wait seconds must be between 0 and 86400"}
+			} else if request.WaitSeconds > 0 && l.WaitClosure != nil {
+				response = l.WaitClosure(ctx, time.Duration(request.WaitSeconds*float64(time.Second)))
+			} else {
+				response = l.VerifyClosure(ctx)
+			}
 			l.operationMu.Lock()
 			l.mu.Lock()
+			if request.PreviousFindings != nil {
+				progress := CompareFindingProgress(request.PreviousFindings, response.Findings)
+				response.Progress = &progress
+			}
 			l.findings = append([]sdk.Finding(nil), response.Findings...)
 			response.LoopsAllowed = l.batchLimit()
 		} else {
@@ -990,4 +1067,11 @@ func (l *ResponderLoop) batchLimit() int {
 		return min(5, l.MaxBatches)
 	}
 	return l.MaxBatches
+}
+
+func (l *ResponderLoop) clock() time.Time {
+	if l.Now != nil {
+		return l.Now()
+	}
+	return time.Now()
 }

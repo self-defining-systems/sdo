@@ -70,7 +70,7 @@ func (c *Controller) ExecuteWorkspaceEffect(ctx context.Context, effect Workspac
 func (c *Controller) PendingClosureEffect() (ClosureEffect, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.broker == nil {
+	if c.broker == nil || c.earlyReportPendingLocked() {
 		return ClosureEffect{}, false
 	}
 	effects, err := c.closureEffectsLocked()

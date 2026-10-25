@@ -42,6 +42,9 @@ func PrepareIncidentSession(repositoryMount, pvcSubPath, incidentID string) (str
 	} else if err != nil {
 		return "", err
 	}
+	if _, err := apihistory.PrepareMutationGate(filepath.Join(local, "api-history")); err != nil {
+		return "", err
+	}
 	return path.Join(pvcSubPath, ".sdo-runtime", "sessions", digest), nil
 }
 

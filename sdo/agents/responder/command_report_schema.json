@@ -1,0 +1,8 @@
+{
+  "actions": "array of {command,summary,program_runs,report}: complete independent option outputs/receipts; overlapping writes refused",
+  "findings": "array of {summary,status,detector_id,fingerprint,primary_resource,evidence}: current findings with full evidence",
+  "fixed": "array of Finding (findings[] shape): absent since the before snapshot",
+  "new": "array of Finding (findings[] shape): new fingerprint or changed evidence; possible regression",
+  "option_reports": "array of {status,rounds,attempt_id}: typed per-option execution reports in selection order",
+  "unchanged": "array of Finding (findings[] shape): same fingerprint and evidence"
+}

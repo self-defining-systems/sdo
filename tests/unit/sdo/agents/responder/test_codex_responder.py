@@ -324,7 +324,11 @@ def test_every_path_requires_detector_self_check_then_independent_closure(tmp_pa
         prompt = _responder_prompt(request)
         assert "self-check before claiming recovery" in prompt
     workflow = _workflow()
-    assert workflow.index("sdo detect") < workflow.index("sdo verify")
+    assert "SDO's independent verification is the source of truth" in workflow
+    assert "wait on it instead of sleeping" in workflow
+    assert "continue until it verifies" in workflow
+    assert "sdo detect" not in workflow
+    assert "sdo verify" not in workflow
     assert "never claim done without this self-check" in workflow
     assert "controller independently checks the result" in workflow
 

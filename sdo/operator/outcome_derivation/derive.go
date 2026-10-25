@@ -53,7 +53,7 @@ func Derive(ctx context.Context, closure *contractsv1alpha1.IncidentClosure, rep
 		return Result{}, errors.New("verified_at is required when health is verified")
 	}
 	ordered := []*timestamppb.Timestamp{closure.GetDetectedAt(), closure.GetDispatchedAt(), closure.GetResponderCompletedAt()}
-	if healthVerified {
+	if healthVerified && !closure.GetVerifiedWhileResponderRunning() {
 		ordered = append(ordered, closure.GetVerifiedAt())
 	}
 	for index := 1; index < len(ordered); index++ {
@@ -100,6 +100,9 @@ func Derive(ctx context.Context, closure *contractsv1alpha1.IncidentClosure, rep
 		if latest != nil {
 			mitigatedAt = latest
 		}
+	}
+	if healthVerified && closure.GetVerifiedWhileResponderRunning() {
+		mitigatedAt = closure.GetVerifiedAt()
 	}
 	var commit *string
 	if repairCommit != "" {

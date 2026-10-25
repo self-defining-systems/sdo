@@ -84,7 +84,7 @@ func TestResponderDetectFreshSelectionThroughTransport(t *testing.T) {
 	}
 	firing = false
 	fresh := exchangeSelfCheck(t, &server, `{"command":"detect","detector_ids":["a"]}`)
-	if fresh.Error != "" || len(fresh.Findings) != 0 || a != 2 {
+	if fresh.Error != "" || len(fresh.Findings) != 0 || !fresh.Healthy || a != 2 {
 		t.Fatalf("stale findings: %+v", fresh)
 	}
 	unknown := exchangeSelfCheck(t, &server, `{"command":"detect","detector_ids":["missing"]}`)

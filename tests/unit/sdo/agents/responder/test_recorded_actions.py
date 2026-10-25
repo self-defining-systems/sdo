@@ -91,7 +91,9 @@ def test_act_runs_one_mutation_and_records_its_receipt(scratch: Path, capsys: py
     )
 
     assert code == 0
-    assert "deployment.apps/rate image updated" in capsys.readouterr().out
+    printed = json.loads(capsys.readouterr().out)
+    full = json.loads(Path(printed["details_file"]).read_text())
+    assert "deployment.apps/rate image updated" in full["actions"][0]["output"]
     (receipt,) = _recorded(scratch)
     assert str(receipt["action_id"]).startswith("sdo-act-")
     assert receipt["kind"] == "command-echo"
@@ -803,3 +805,26 @@ def test_zero_executed_delete_targets_are_not_confirmed(scratch: Path, tmp_path:
     assert receipt["resources"] == []
     assert receipt["success"] is False
     assert receipt["failure_reason"] == "delete_not_confirmed"
+
+
+def test_verified_incident_act_returns_rejection_receipt_without_running(tmp_path, monkeypatch, capsys):
+    history = tmp_path / "history"
+    history.mkdir()
+    (history / "mutation.lock").touch(mode=0o600)
+    warning = {
+        "verified_at": "2026-10-25T00:00:00Z",
+        "message": "SDO verified this incident; you may finish your report",
+    }
+    (history / "incident-verified.json").write_text(json.dumps(warning))
+    monkeypatch.setenv("SDO_API_HISTORY_DIR", str(history))
+    monkeypatch.setenv("SDO_SESSION_SCRATCH", str(tmp_path / "scratch"))
+    monkeypatch.setattr(tools_cli, "_exchange", lambda *_: {"summary": "readable", "incident_verified": warning})
+    marker = tmp_path / "must-not-run"
+    assert tools_cli.main(["act", "--resource", "Service/app/api", "--", "touch", str(marker)]) == 1
+    assert not marker.exists()
+    text = capsys.readouterr().out
+    details = Path(text.split("Full JSON: ", 1)[1].splitlines()[0])
+    action = json.loads(details.read_text())["actions"][0]
+    assert action["receipt"]["failure_reason"] == "incident_verified"
+    assert action["receipt"]["success"] is False
+    assert action["incident_verified"] == warning

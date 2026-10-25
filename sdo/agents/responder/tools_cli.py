@@ -9,8 +9,10 @@ import sys
 import time
 import uuid
 from pathlib import Path
+from typing import Any
 
 from sdo.agents.responder import recorded_actions
+from sdo.agents.responder.mutation_output import compact_mutation_envelope, format_mutation_response
 from sdo.agents.responder.tool_output import render_summary, write_response
 
 PLAN_ACTIONS = (
@@ -50,7 +52,11 @@ def _parser() -> argparse.ArgumentParser:
         epilog="Examples (replace names with incident resources):\n  " + "\n  ".join(CLI_EXAMPLES),
     )
     commands = parser.add_subparsers(dest="command", required=True)
-    parser.add_argument("--json", action="store_true", help="print the complete JSON response for scripts")
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="print JSON for scripts (mutations: compact envelope and complete report path)",
+    )
     commands.add_parser("status", help="read current findings and session state")
     for name, help_text in (
         ("detect", "run all or selected detectors on fresh state (read-only)"),
@@ -96,7 +102,7 @@ def _parser() -> argparse.ArgumentParser:
     commands.add_parser("apply", help="apply a previously planned repair").add_argument("plan_ids", nargs="+")
     mitigate = commands.add_parser(
         "mitigate",
-        help="run a program or one-action plan through the ordinary executor",
+        help="run a program or one-action plan; show progress and a complete JSON report",
         description=(
             "Run an option with --NAME VALUE parameters. Read the typed report before trying another option. "
             "Uses the ordinary executor and controller RBAC; up to five rounds per incident."
@@ -123,7 +129,7 @@ def _parser() -> argparse.ArgumentParser:
     ).add_argument("ref", metavar="Kind/namespace/name")
     act = commands.add_parser(
         "act",
-        help="run a live mutation and record its receipt",
+        help="record a live mutation; show progress and a complete JSON report",
         description=(
             "Run one live mutation and record its repair receipt (target, resources, timing, outcome and "
             "command line). The command's exit code is returned. Do not hand-write receipts."
@@ -141,11 +147,41 @@ def _parser() -> argparse.ArgumentParser:
     act.add_argument("--summary", help="one line describing the repair")
     act.add_argument("--irreversible", action="store_true", help="the mutation cannot be undone")
     act.add_argument("act_command", nargs=argparse.REMAINDER, metavar="-- COMMAND", help="the mutating command")
-    commands.add_parser("verify", help="verify health and retained drift findings")
+    verify = commands.add_parser(
+        "verify",
+        help="read cached controller verification; optionally await a stable verdict",
+        description="Reads the controller's cached health and inventory verdict immediately. "
+        "Wait on SDO's verification instead of sleeping. After closure, incident_verified is an "
+        "informational warning on every response; reads and reports remain available, while mutations are rejected.",
+    )
+    verify.add_argument(
+        "--wait",
+        type=float,
+        default=0,
+        metavar="SECONDS",
+        help="wait for stable verification, a new/reactivated finding, or this timeout (0: cached and instant)",
+    )
     commands.add_parser("rollback", help="roll back a plan application").add_argument("application_id")
+    for name in ("mitigate", "act", "apply"):
+        example = ("Example: " + ACT_EXAMPLE + "\n\n") if name == "act" else ""
+        commands.choices[name].epilog = example + (
+            "Action output separates target progress from incident verification and lists fixed, new "
+            "(possible regression), and unchanged findings from controller snapshots. Every invocation saves "
+            "the complete findings/evidence, program_runs, execution reports and receipts under "
+            "$SDO_SESSION_SCRATCH/sdo-reports/<incident>/<sequence>-<command>.json. The response includes "
+            "that path and a generated schema for querying its arrays. incident_verified is an extra "
+            "informational warning; reads/reports keep their normal results, and new mutations are rejected."
+        )
     for command in commands.choices.values():
         command.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
     return parser
+
+
+def verification_help() -> str:
+    """Generate verification help from the same parser used for invocation."""
+    parser = _parser()
+    commands = next(action for action in parser._actions if isinstance(action, argparse._SubParsersAction))
+    return commands.choices["verify"].format_help()
 
 
 def command_surface() -> dict[str, object]:
@@ -157,7 +193,8 @@ def command_surface() -> dict[str, object]:
             name: " ".join(command.format_usage().removeprefix("usage: ").split())
             for name, command in subcommands.choices.items()
         },
-        "output": "Text ends with Full JSON: path; --json prints complete JSON for scripts. Extract needed fields.",
+        "output": "Full JSON: path retains complete evidence. Mutations print progress and the file schema; "
+        "--json keeps mutations compact and prints other complete responses. Extract needed fields.",
     }
 
 
@@ -165,6 +202,10 @@ def _request(args: argparse.Namespace) -> dict[str, object]:
     request: dict[str, object] = {"command": args.command}
     if getattr(args, "finding", None):
         request["finding_fingerprints"] = args.finding
+    if args.command == "verify" and args.wait:
+        if not 0 <= args.wait <= 86400:
+            raise ValueError("wait seconds must be between 0 and 86400")
+        request["wait_seconds"] = args.wait
     if args.command == "detect":
         if args.detector:
             request["detector_ids"] = args.detector
@@ -272,7 +313,7 @@ def _exchange(request: dict[str, object], directory: Path) -> dict[str, object]:
         os.fsync(stream.fileno())
     os.replace(temporary, target)
     response = responses / identifier
-    deadline = time.monotonic() + 180
+    deadline = time.monotonic() + max(180, float(str(request.get("wait_seconds", 0))) + 10)
     while time.monotonic() < deadline:
         try:
             data = response.read_text(encoding="utf-8")
@@ -292,6 +333,7 @@ def _act(args: argparse.Namespace) -> int:
     try:
         if not command:
             raise ValueError("a command is required after --")
+        response: dict[str, Any] = {}
         # Capture is evidence collection, not mutation authority. Keep repairs and
         # their receipts available even when the controller cannot capture.
         try:
@@ -304,6 +346,8 @@ def _act(args: argparse.Namespace) -> int:
         except (OSError, ValueError, TimeoutError) as exc:
             print(f"sdo: pre-apply evidence gap: {exc}; proceeding with repair", file=sys.stderr)
 
+        before = response.get("findings", [])
+
         def completed(code: int, output: str, receipt: dict[str, object]) -> None:
             response: dict[str, object] = {
                 "command": "act",
@@ -314,6 +358,16 @@ def _act(args: argparse.Namespace) -> int:
                 "receipt": receipt,
                 "output": output,
             }
+            if os.environ.get("SDO_RESPONDER_SESSION") == "1":
+                verified = _exchange(
+                    {"command": "verify", "previous_findings": before},
+                    Path(os.environ.get("SDO_TOOLS_DIR", "/sdo/session/tools")),
+                )
+                response["before_findings"] = before
+                response["controller_findings"] = verified.get("findings", [])
+                response["healthy"] = verified.get("healthy", False)
+                if verified.get("incident_verified"):
+                    response["incident_verified"] = verified["incident_verified"]
             _print_response(response, full_json=args.json)
 
         result = recorded_actions.run_and_record(
@@ -325,7 +379,26 @@ def _act(args: argparse.Namespace) -> int:
         return 2
 
 
-def _print_response(response: dict[str, object], *, full_json: bool) -> None:
+def _print_response(response: dict[str, Any], *, full_json: bool) -> None:
+    history = os.environ.get("SDO_API_HISTORY_DIR")
+    if history and "incident_verified" not in response:
+        marker = Path(history) / "incident-verified.json"
+        if marker.exists():
+            response["incident_verified"] = json.loads(marker.read_text())
+    if response.get("command") in {"mitigate", "act", "apply"}:
+        before = response.get("before_findings", response.get("findings", []))
+        after = response.get(
+            "controller_findings", response.get("findings", response.get("mitigation_health", {}).get("findings", []))
+        )
+        text, path = format_mutation_response(before, after, [response], json_output=full_json)
+        if full_json:
+            # JSON callers receive the same bounded summary and discoverable schema.
+            print(
+                json.dumps(compact_mutation_envelope(text, path, response), ensure_ascii=False, separators=(",", ":"))
+            )
+        else:
+            print(text)
+        return
     output = write_response(response)
     print(json.dumps(response, ensure_ascii=False, sort_keys=True) if full_json else render_summary(output))
 
@@ -367,6 +440,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         directory = Path(os.environ.get("SDO_TOOLS_DIR", "/sdo/session/tools"))
         response = _check(args, directory) if args.command == "check" else _exchange(_request(args), directory)
+        response.setdefault("command", args.command)
         _print_response(response, full_json=args.json)
     except (OSError, ValueError, TimeoutError) as exc:
         _print_client_error(args, exc)

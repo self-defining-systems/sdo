@@ -156,12 +156,12 @@ max_chars = 1230
 reason = "Production-rendered three-finding ten-receipt continuation, including two failures; full typed evidence stays in a private local JSON reference."
 
 [tool_stdout.act]
-max_chars = 450
-reason = "Measured production rendering 283 Unicode characters across three-fault and 100-finding fixtures; 10 percent plus 128 characters of path/identity headroom."
+max_chars = 2048
+reason = "User decisions 130/134 require action/incident progress, the full-report path and generated schema within a 2 KiB emitted UTF-8 cap, including JSON framing; separately tested at the CLI boundary."
 
 [tool_stdout.apply]
-max_chars = 1650
-reason = "Measured production rendering 1339 Unicode characters across three-fault and 100-finding fixtures; 10 percent plus 128 characters of path/identity headroom."
+max_chars = 2048
+reason = "User decisions 130/134 require action/incident progress, the full-report path and generated schema within a 2 KiB emitted UTF-8 cap, including JSON framing; separately tested at the CLI boundary."
 
 [tool_stdout.check]
 max_chars = 1400
@@ -184,8 +184,8 @@ max_chars = 550
 reason = "Measured production rendering 380 Unicode characters across three-fault and 100-finding fixtures; 10 percent plus 128 characters of path/identity headroom."
 
 [tool_stdout.mitigate]
-max_chars = 1650
-reason = "Measured production rendering 1359 Unicode characters across three-fault and 100-finding fixtures; 10 percent plus 128 characters of path/identity headroom."
+max_chars = 2048
+reason = "User decisions 130/134 require action/incident progress, the full-report path and generated schema within a 2 KiB emitted UTF-8 cap, including JSON framing; separately tested at the CLI boundary."
 
 [tool_stdout.plan]
 max_chars = 550

@@ -11,8 +11,10 @@ from pathlib import Path
 from typing import get_args
 
 from sdo.agents.responder.credentials import SKILLS_ROOT
+from sdo.agents.responder.mutation_output import command_report_schema
 from sdo.agents.responder.reflection_authoring import OpenPhase
 from sdo.agents.responder.reflection_validation import validation_server
+from sdo.agents.responder.tools_cli import verification_help
 from sdo.contracts import ReflectionResult, model_output_schema
 
 CONTRACT_PATH = SKILLS_ROOT / "sdo-memory/references/runtime.md"
@@ -32,7 +34,7 @@ async def render_contract() -> str:
         "The menu is a convenience over direct commands. It lists accepted Mitigators with their declared "
         "object and value parameters, plus registered raw actions as one-action plans. Execution uses the "
         "ordinary PlanExecutor under existing controller RBAC and always-on executor checks. "
-        "It adds no selection ledger, fences, quiescence, provenance, health-reader or credential-delta "
+        "The menu adds no selection ledger, quiescence, provenance, health-reader or credential-delta "
         "preconditions. Reports return what ran, per-action results, value provenance and any error to the "
         "same responder session, with up to five rounds per incident. Pick from the menu when an option "
         "fits; if it fails, read the report and pick another or fix it directly. "
@@ -40,6 +42,17 @@ async def render_contract() -> str:
         "Author Mitigators as "
         "self-contained repairs with declared parameters and specific failure context. Intermediate reports "
         "are not independent incident outcomes or program trust credit.",
+        "## Controller verification and command reports\n\n"
+        "Plain verification returns the cached controller verdict immediately. Waiting returns on stable "
+        "independent closure, a new or reactivated finding, or timeout, without running detectors. "
+        "Fresh detector evaluation remains the detect path. After verified closure, incident_verified "
+        "adds an informational timestamp and message to every normal result; reads and reports continue. "
+        "New mutations receive a typed incident_verified rejection receipt.\n\n"
+        "Mutating commands always store complete per-action results, evidence, program runs, reports and receipts "
+        "under $SDO_SESSION_SCRATCH/sdo-reports/<incident>/<sequence>-<command>.json. Their compact output "
+        "states action and incident verdicts separately, compares controller cached finding sets by fingerprint "
+        "and evidence (fixed/new/unchanged), and prints the file path and generated schema.\n\n"
+        f"```json\n{json.dumps(command_report_schema(), indent=2)}\n```\n\n" + verification_help(),
         "## Supported open phase selections\n\n"
         + "\n".join(
             f"- When captured, filename: open@{phase}.json; provenance open_at: {phase}."

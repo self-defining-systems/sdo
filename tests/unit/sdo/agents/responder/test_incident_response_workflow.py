@@ -35,8 +35,13 @@ def test_incident_workflow_installs_from_the_shipped_skill_root(tmp_path: Path, 
     assert metadata["name"] == WORKFLOW
     assert 0 < len(metadata["description"]) <= 200
     assert len(document) <= 3000
-    assert "sdo detect" in body
-    assert "sdo verify" in body
+    assert "SDO's independent verification is the source of truth" in body
+    assert "wait on it instead of sleeping" in body
+    assert "several independent mitigations together" in body
+    assert "possible regressions" in body
+    assert "complete JSON report" in body
+    assert "warning is informational" in body
+    assert "closed-incident mutations are rejected" in body
     assert "still_broken" in body
 
 

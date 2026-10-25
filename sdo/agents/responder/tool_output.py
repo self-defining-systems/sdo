@@ -19,7 +19,9 @@ def _brief(value: Any, limit: int) -> str:
     return text if len(text) <= limit else text[: limit - 1] + "…"
 
 
-def write_json(document: dict[str, Any], *, command: str, incident_id: str | None = None) -> Path:
+def write_json(
+    document: dict[str, Any], *, command: str, incident_id: str | None = None, root: Path | None = None
+) -> Path:
     """Allocate a process-safe sequence in the incident's private output directory."""
     identity = incident_id or os.environ.get("SDO_INCIDENT_ID") or "standalone"
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,199}", identity):
@@ -27,7 +29,7 @@ def write_json(document: dict[str, Any], *, command: str, incident_id: str | Non
     if not re.fullmatch(r"[a-z][a-z-]*", command):
         raise ValueError("invalid output command")
     encoded = json.dumps(document, ensure_ascii=False, separators=(",", ":"))
-    directory = OUTPUT_ROOT / identity
+    directory = (root or OUTPUT_ROOT) / identity
     directory.mkdir(mode=0o700, parents=True, exist_ok=True)
     with (directory / ".sequence").open("a+", encoding="utf-8") as sequence:
         fcntl.flock(sequence, fcntl.LOCK_EX)
@@ -47,6 +49,8 @@ def write_json(document: dict[str, Any], *, command: str, incident_id: str | Non
 def summarize_response(response: dict[str, Any], details_file: str) -> dict[str, Any]:
     """Preserve status and selected identifiers; never imply omitted evidence is complete."""
     summary: dict[str, Any] = {"details_file": details_file, "summarized": True}
+    if "incident_verified" in response:
+        summary["incident_verified"] = response["incident_verified"]
     for name in (
         "command",
         "summary",
@@ -151,6 +155,8 @@ def write_response(response: dict[str, Any]) -> dict[str, Any]:
 def render_summary(summary: dict[str, Any]) -> str:
     """Render the human default; scripts explicitly choose the complete --json view."""
     lines = [f"sdo {summary.get('command', 'response')}: {summary.get('summary', '')}"]
+    if summary.get("incident_verified"):
+        lines.append(str(summary["incident_verified"]["message"]))
     if summary.get("error") and summary["error"] != summary.get("summary"):
         lines.append("error: " + str(summary["error"]))
     status = [
