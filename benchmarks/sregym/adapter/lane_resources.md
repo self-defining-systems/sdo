@@ -41,7 +41,7 @@ resource faults remain benchmark scenarios rather than admission exemptions.
 ## SREGym pin update
 
 The companion [SREGym PR 12](https://github.com/vic-lsh/SREGym/pull/12) targets
-`sdo3`; this branch pins its ready commit `b810b1db504757c4736aafaebfef940bcc62c71c`.
+`sdo3`; this branch pins its ready commit `b3214b9aca3e1d47613ca92131f3e1cd9286445d`.
 Merge that PR before adopting the SDO pin. The observer now stores at most
 10,000 traces with a 256 MiB request and 2 GiB container limit. SREGym applies
 the same policy to rendered app-local all-in-one manifests (hotel plain YAML
