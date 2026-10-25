@@ -113,8 +113,8 @@ max_chars = 100
 reason = "Baseline synthetic fixture maximum: 6 Unicode code points; byte-identical template extraction."
 
 [responder.additional_context]
-max_chars = 90
-reason = "Lean responder measured fixture maximum 79 Unicode code points with approximately 10 percent headroom; executable workflow moved to the installed skill."
+max_chars = 750
+reason = "Actual benchmark transport instructions measure 676 Unicode code points; budget the real shipped appendix with approximately 10 percent headroom instead of the small toy appendix."
 
 [responder.incident_data]
 max_chars = 6380
