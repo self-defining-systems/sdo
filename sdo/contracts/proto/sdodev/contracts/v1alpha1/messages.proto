@@ -72,10 +72,11 @@ message DriftEvidence {
 }
 
 // DetectorEvaluation is one detector's status at a point in time.
+// Pending means observations are incomplete: it establishes neither a fault nor health.
 message DetectorEvaluation {
   string detector_id = 1 [(buf.validate.field).string = {min_len: 1, pattern: "^[a-z0-9][a-z0-9_.-]*$"}];
   google.protobuf.Timestamp evaluated_at = 2 [(buf.validate.field).required = true];
-  string status = 3 [(buf.validate.field).string = {in: ["firing", "clear", "error"]}];
+  string status = 3 [(buf.validate.field).string = {in: ["firing", "clear", "error", "pending"]}];
   repeated string fingerprints = 4;
   optional string error = 5;
 }
