@@ -53,7 +53,7 @@ func TestShellPreparedInstallUsesOnlyRuntimePrivileges(t *testing.T) {
 	cfg.CodePath = &contracts.CodePathConfig{Name: "shell"}
 	client := fake.NewSimpleClientset(&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: cfg.CredentialsSecret, Namespace: cfg.ControlNamespace}})
 	installer := Installer{Client: client, PollInterval: time.Millisecond}
-	go markSyncPodReady(client, cfg.ControlNamespace)
+	readySyncPodOnActivation(client, cfg.ControlNamespace)
 	if err := installer.Prepare(context.Background(), cfg, func(context.Context, Config) error { return nil }); err != nil {
 		t.Fatal(err)
 	}
