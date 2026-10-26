@@ -86,7 +86,7 @@ def controller_proof(state: dict[str, Any], required: set[str], not_before: str)
             fresh = False
         if row.get("status") != "clear" or row.get("error") or not fresh:
             blocked[key] = row or {"reason": "no controller observation"}
-    busy = any(state.get(key) for key in ("incident_open", "incident_request", "pending_closure"))
+    busy = incident_work_open(state)
     return {
         "passed": bool(required) and not blocked and not busy,
         "blocked": blocked,
@@ -114,8 +114,41 @@ def assert_stable_workloads(before: dict[str, Any], after: dict[str, Any]) -> No
         raise ValueError(f"restore invariant: workloads rolled after Ready: {changed}")
 
 
-def closure_pending(state: dict[str, Any]) -> bool:
-    return bool(state.get("pending_closure") or state.get("incident_request") or state.get("incident_open"))
+#: Closure states in which no incident is being closed, reflected or acknowledged.
+IDLE_CLOSURE_STATES = frozenset({None, 0, "", "CLOSURE_STATE_UNSPECIFIED"})
+
+
+def terminal_incident_ids(state: dict[str, Any]) -> set[str]:
+    """Incidents whose closure is over: acknowledged, permanently failed or retired."""
+    terminal = {state.get("last_acknowledged_incident_id")}
+    for failure in state.get("failed_closures") or []:
+        terminal.add(failure.get("closure", {}).get("request", {}).get("incident_id"))
+    failure = state.get("closure_failure") or {}
+    if state.get("closure_state") == "CLOSURE_STATE_FAILED" and failure.get("permanent") is True:
+        terminal.add(failure.get("incident_id"))
+    return {incident_id for incident_id in terminal if isinstance(incident_id, str)}
+
+
+def incident_work_open(state: dict[str, Any]) -> bool:
+    """The one "closure is over" rule: whether SDO still owns incident work.
+
+    An open incident or request is work. A pending closure or a non-idle
+    closure state is work unless its incident's closure is terminal
+    (acknowledged, permanently failed or retired).
+    """
+    if state.get("incident_request") or state.get("incident_open"):
+        return True
+    closure_state = state.get("closure_state")
+    pending = state.get("pending_closure")
+    if not pending and closure_state in IDLE_CLOSURE_STATES:
+        return False
+    request = (pending or {}).get("request") or {}
+    incident_id = (
+        request.get("incident_id")
+        or (state.get("closure_receipt") or {}).get("incident_id")
+        or (state.get("closure_failure") or {}).get("incident_id")
+    )
+    return incident_id not in terminal_incident_ids(state)
 
 
 def wait_for_proof(

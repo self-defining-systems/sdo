@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from benchmarks.sregym.adapter import closure_pending, persistent
+from benchmarks.sregym.adapter import incident_work_open, persistent
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -115,7 +115,7 @@ def test_teardown_retires_open_closure_and_keeps_namespace_authority(
 
     assert persistent.teardown(path, ops=persistent.KubectlClusterOps()) == []
 
-    assert not closure_pending(api.runtime_state())
+    assert not incident_work_open(api.runtime_state())
     assert set(api.configmaps) == {"onboarding", "unrelated"}
     archived = json.loads(
         (tmp_path / "sdo_persistent_controller.json.teardown-state" / CONTROL / "checkpoint.json").read_text()
@@ -136,9 +136,9 @@ def test_abort_retires_open_closure_only_on_a_quiet_lane(tmp_path: Path, api: Fa
     monkeypatch.setattr(ops, "abort_leftovers", lambda _target: leftovers)
 
     assert persistent.abort(path, ops=ops) == ["hotel: leftover pod/stuck"]
-    assert closure_pending(api.runtime_state()), "a lane with live leftovers keeps its evidence"
+    assert incident_work_open(api.runtime_state()), "a lane with live leftovers keeps its evidence"
 
     leftovers.clear()
     assert persistent.abort(path, ops=ops) == []
-    assert not closure_pending(api.runtime_state())
+    assert not incident_work_open(api.runtime_state())
     assert "onboarding" in api.configmaps
