@@ -7,6 +7,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from benchmarks.sregym.adapter import WaitKind, wait_for
 from benchmarks.sregym.fastloop.records import DiagnosisGrade
 from benchmarks.sregym.faults.sregym_subprocess import SregymSubprocessError, run_sregym_json, sregym_env
 
@@ -19,7 +20,7 @@ class DiagnosisJudgeError(SregymSubprocessError):
 class SregymDiagnosisGrader:
     sregym_dir: Path
     judge_model_id: str
-    timeout_seconds: float = 1800.0
+    timeout_seconds: float = wait_for(WaitKind.RESPONSE)
 
     def grade(self, problem_ids: tuple[str, ...], diagnosis: str) -> DiagnosisGrade:
         root = Path(__file__).resolve().parents[3]

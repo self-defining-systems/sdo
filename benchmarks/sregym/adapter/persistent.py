@@ -36,6 +36,7 @@ from typing import TYPE_CHECKING, Any, Protocol, get_args, get_type_hints
 from google.protobuf import json_format
 from pydantic import BaseModel, ConfigDict, Field
 
+from benchmarks.sregym.adapter.budgets import WaitKind, wait_for
 from benchmarks.sregym.adapter.cluster_resources import kubectl
 from benchmarks.sregym.adapter.eval_guards import (
     INCIDENT_EXECUTION_LABEL,
@@ -46,7 +47,6 @@ from benchmarks.sregym.adapter.eval_guards import (
     queued_reflection_ids,
     terminal_incident_ids,
 )
-from benchmarks.sregym.adapter.eval_guards import reflection_attempt_seconds as default_reflection_attempt_seconds
 from benchmarks.sregym.adapter.fault_gate import (
     BASELINE_TIMEOUT_SECONDS,
     RESUMED_BASELINE_TIMEOUT_SECONDS,
@@ -97,19 +97,19 @@ STRICT_RECEIPT_FILENAME = "sdo_production_receipt_strict.json"
 # A drained receipt that failed production validation, kept with its error for analysis.
 REJECTED_RECEIPT_FILENAME = "sdo_rejected_production_receipt.json"
 CONTROLLER_LOGS_SUBDIR = Path(RUNTIME_ARTIFACTS_DIRNAME) / "controller_logs"
-POLL_SECONDS = 1.0
+POLL_SECONDS = wait_for(WaitKind.POLL_FAST)
 #: A state read at or past a deadline still gets this long to be observed, so it decides the outcome.
-OBSERVATION_FLOOR_SECONDS = 5.0
+OBSERVATION_FLOOR_SECONDS = wait_for(WaitKind.POLL)
 CONTROLLER_JOB_NAME = "sdo-controller-run"
 # The runtime storage edge's checkpoint identity (lifecycleio.StateRevisionAnnotation
 # and StateDataKey): its CAS annotation plus typed data key, never its name.
 STATE_REVISION_ANNOTATION = "sdo.dev/state-revision"
 STATE_DATA_KEY = "runtime-state.json"
-MAINTENANCE_ACK_TIMEOUT_SECONDS = 600.0
+MAINTENANCE_ACK_TIMEOUT_SECONDS = wait_for(WaitKind.OPERATION)
 #: Recovery waits this long for SDO to close an incident that opened after the graded one closed.
 #: Live P4 responder runtime p90 was 442 s (18 rows, 2026-10-26); the rest is closure margin, capped at 10 min.
-POST_CLOSURE_WAIT_SECONDS = 600.0
-DRAIN_TIMEOUT_SECONDS = 3600.0
+POST_CLOSURE_WAIT_SECONDS = wait_for(WaitKind.OPERATION)
+DRAIN_TIMEOUT_SECONDS = wait_for(WaitKind.REFLECTION_DRAIN)
 # After the reflection drain returns, the controller's asynchronous close-out may
 # still be settling the two volatile signals the strict receipt samples: the
 # durable responder result reaching a terminal ``completed`` status, and the
@@ -118,10 +118,10 @@ DRAIN_TIMEOUT_SECONDS = 3600.0
 # retries), so the gate must wait for these to settle before it samples, or a
 # solved incident is rejected. Bounded so a genuinely unsettled receipt still
 # rejects promptly.
-CLOSEOUT_SETTLE_TIMEOUT_SECONDS = 120.0
+CLOSEOUT_SETTLE_TIMEOUT_SECONDS = wait_for(WaitKind.CLOSEOUT_SETTLE)
 # Resume can require informer resync, state baseline startup and workload probes
 # before reconciliation starts. Bound that path separately from receipt drain.
-RENDERED_LOCK_SETTLE_TIMEOUT_SECONDS = 600.0
+RENDERED_LOCK_SETTLE_TIMEOUT_SECONDS = wait_for(WaitKind.OPERATION)
 STAGE_END_EVIDENCE_SCOPE = "stage-end snapshot; the drained strict receipt supersedes it"
 _ZERO_TIME = "0001-01-01T00:00:00Z"
 
@@ -768,7 +768,7 @@ class StageInputs:
     receipt_dir: Path
     state_path: Path
     kubeconfig: str | None = None
-    verification_timeout_seconds: float = 3900.0
+    verification_timeout_seconds: float = wait_for(WaitKind.INCIDENT_VERIFICATION)
     #: End the stage as a detection miss if no incident has opened this long
     #: after injection. None waits the whole verification budget.
     detection_timeout_seconds: float | None = None
@@ -776,7 +776,7 @@ class StageInputs:
     #: Budget from a verified closure to its reflection's acknowledgment, shared by every drain of the incident.
     reflection_wait_seconds: float = DRAIN_TIMEOUT_SECONDS
     #: SDO's worst case to finish or abandon one queued reflection; the deadline adds one per reflection ahead.
-    reflection_attempt_seconds: float = default_reflection_attempt_seconds()
+    reflection_attempt_seconds: float = wait_for(WaitKind.REFLECTION_ATTEMPT)
 
     def __post_init__(self) -> None:
         if self.detection_timeout_seconds is not None and self.detection_timeout_seconds <= 0:
@@ -1147,7 +1147,7 @@ def pause_for_recovery(
     incident_id: str | None = None,
     clock: Clock | None = None,
     followup_wait_seconds: float = POST_CLOSURE_WAIT_SECONDS,
-    reflection_attempt_seconds: float = default_reflection_attempt_seconds(),
+    reflection_attempt_seconds: float = wait_for(WaitKind.REFLECTION_ATTEMPT),
     closure_open: bool = False,
 ) -> FollowupClosureWait | None:
     """Fence harness mutations behind a terminal incident and acknowledged intake pause.
@@ -1358,7 +1358,7 @@ def _rendered_lock_settled(repository: Path) -> bool:
         cwd=repository,
         capture_output=True,
         check=False,
-        timeout=30,
+        timeout=wait_for(WaitKind.COMMAND),
     )
     return result.returncode == 0
 
@@ -1854,7 +1854,7 @@ def _observe_state(
     *,
     known: set[str] | None = None,
     incident_id: str = "",
-    timeout: float = 30.0,
+    timeout: float = wait_for(WaitKind.COMMAND),
 ) -> ControllerObservation:
     try:
         observed = observe_controller_state(state, known=known, incident_id=incident_id, timeout=timeout)
@@ -1874,7 +1874,9 @@ def _known_incident_ids(state: dict[str, Any]) -> set[str]:
     return set(_observe_state(state).known_incident_ids)
 
 
-def _wait_for_controller_pod(ops: ClusterOps, control: str, clock: Clock, timeout: float = 300.0) -> ControllerPod:
+def _wait_for_controller_pod(
+    ops: ClusterOps, control: str, clock: Clock, timeout: float = wait_for(WaitKind.ROLLOUT)
+) -> ControllerPod:
     deadline = clock.monotonic() + timeout
     while clock.monotonic() < deadline:
         pod = ops.controller_pod(control)

@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from apps.toy.faults import IMAGE, command, fault_spec
+from benchmarks.sregym.adapter import WaitKind, wait_for
 from benchmarks.sregym.fastloop.environment import FastloopEnvironment, Images
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -35,7 +36,7 @@ class ToyWorker:
     def __exit__(self, *args: object) -> None:
         pass
 
-    def request(self, op: str, *, timeout: float = 120, **args: Any) -> dict[str, Any]:
+    def request(self, op: str, *, timeout: float = int(wait_for(WaitKind.SLOW_COMMAND)), **args: Any) -> dict[str, Any]:
         env = self.environment
         config = str(env.kubeconfig)
         if op == "clean_start":
@@ -304,7 +305,7 @@ def install_controller(environment: FastloopEnvironment, config: Any = None) -> 
             repository_pvc="sdo-application-repository",
             credentials_secret="sdo-agent-credentials",
             model="gpt-6-luna",
-            timeout_seconds=3600,
+            timeout_seconds=wait_for(WaitKind.RESPONSE, 2),
             repair_policy="recorded-actions",
             persistent=True,
             kind_cluster_name=environment.cluster,

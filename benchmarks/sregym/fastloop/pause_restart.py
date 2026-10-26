@@ -15,7 +15,7 @@ import time
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
-from benchmarks.sregym.adapter import kubectl
+from benchmarks.sregym.adapter import WaitKind, kubectl, wait_for
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 
     from benchmarks.sregym.adapter import ClusterOps
 
-RESTART_TIMEOUT_SECONDS = 300.0
+RESTART_TIMEOUT_SECONDS = wait_for(WaitKind.ROLLOUT)
 
 
 class PauseRestartError(RuntimeError):

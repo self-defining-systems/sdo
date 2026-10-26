@@ -10,6 +10,8 @@ from pathlib import Path
 
 import yaml
 
+from benchmarks.sregym.adapter import WaitKind, wait_for
+
 
 def write_kind_config(source: Path, destination: Path, worktree: Path, parallel_root: Path | None = None) -> Path:
     config = yaml.safe_load(source.read_text(encoding="utf-8"))
@@ -98,12 +100,12 @@ def _copy_dev_snapshot(worktree: Path, node: str, target: str) -> None:
             ["docker", "exec", "-i", node, "tar", "-xf", "-", "-C", target],
             stdin=producer.stdout,
             check=True,
-            timeout=60,
+            timeout=wait_for(WaitKind.SLOW_COMMAND),
         )
     finally:
         if producer.stdout:
             producer.stdout.close()
-        if producer.wait(timeout=10):
+        if producer.wait(timeout=wait_for(WaitKind.PROBE)):
             raise RuntimeError("failed to snapshot the dev worktree")
 
 
@@ -118,12 +120,16 @@ def retarget_dev_mount(cluster: str, worktree: Path) -> None:
 
     target = "/opt/sdo-fastloop-" + hashlib.sha256(str(worktree.resolve()).encode()).hexdigest()[:16]
     nodes = subprocess.run(
-        ["kind", "get", "nodes", "--name", cluster], capture_output=True, text=True, check=True, timeout=10
+        ["kind", "get", "nodes", "--name", cluster],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=wait_for(WaitKind.PROBE),
     ).stdout.splitlines()
     if not nodes:
         raise ValueError(f"dev retarget found no nodes for {cluster}")
     for node in nodes:
-        subprocess.run(["docker", "exec", node, "mkdir", "-p", target], check=True, timeout=10)
+        subprocess.run(["docker", "exec", node, "mkdir", "-p", target], check=True, timeout=wait_for(WaitKind.PROBE))
         _copy_dev_snapshot(worktree, node, target)
 
         def identity(path: str, node: str = node) -> str:
@@ -132,14 +138,26 @@ def retarget_dev_mount(cluster: str, worktree: Path) -> None:
                 check=True,
                 capture_output=True,
                 text=True,
-                timeout=10,
+                timeout=wait_for(WaitKind.PROBE),
             ).stdout.strip()
 
         # Isolate propagation before covering the original host bind, then keep
         # the resulting mount private. Repeated reset must not stack mounts.
-        subprocess.run(["docker", "exec", node, "mount", "--make-private", "/opt/sdo-dev"], check=True, timeout=10)
+        subprocess.run(
+            ["docker", "exec", node, "mount", "--make-private", "/opt/sdo-dev"],
+            check=True,
+            timeout=wait_for(WaitKind.PROBE),
+        )
         if identity(target) != identity("/opt/sdo-dev"):
-            subprocess.run(["docker", "exec", node, "mount", "--bind", target, "/opt/sdo-dev"], check=True, timeout=10)
-        subprocess.run(["docker", "exec", node, "mount", "--make-private", "/opt/sdo-dev"], check=True, timeout=10)
+            subprocess.run(
+                ["docker", "exec", node, "mount", "--bind", target, "/opt/sdo-dev"],
+                check=True,
+                timeout=wait_for(WaitKind.PROBE),
+            )
+        subprocess.run(
+            ["docker", "exec", node, "mount", "--make-private", "/opt/sdo-dev"],
+            check=True,
+            timeout=wait_for(WaitKind.PROBE),
+        )
         if identity(target) != identity("/opt/sdo-dev"):
             raise ValueError(f"eval: dev mount identity differs after retarget on {node}")

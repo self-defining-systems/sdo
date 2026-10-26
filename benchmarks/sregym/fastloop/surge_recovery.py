@@ -17,14 +17,16 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol
 
+from benchmarks.sregym.adapter import WaitKind, wait_for
+
 if TYPE_CHECKING:
     from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
 #: Upper bound on one workload's graceful termination while it is scaled to zero.
-TERMINATION_TIMEOUT_S = 60.0
-POLL_INTERVAL_S = 1.0
+TERMINATION_TIMEOUT_S = wait_for(WaitKind.SLOW_COMMAND)
+POLL_INTERVAL_S = wait_for(WaitKind.POLL_FAST)
 UNSCHEDULABLE = "Unschedulable"
 
 

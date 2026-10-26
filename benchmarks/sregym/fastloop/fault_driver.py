@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Protocol
 
+from benchmarks.sregym.adapter import WaitKind, wait_for
 from benchmarks.sregym.fastloop.baseline_recovery import (
     ApplicationBaseline,
     RecoveryCleanup,
@@ -23,9 +24,9 @@ if TYPE_CHECKING:
 
     from benchmarks.sregym.fastloop.baseline_recovery import ApplicationCluster
 
-HEALTH_POLL_SECONDS = 1.0
+HEALTH_POLL_SECONDS = wait_for(WaitKind.POLL_FAST)
 #: The oracle waits up to 60 s for rollouts itself; injection and recovery wait on rollouts too.
-WORKER_OP_TIMEOUT_SECONDS = 900.0
+WORKER_OP_TIMEOUT_SECONDS = wait_for(WaitKind.LONG_OPERATION)
 logger = logging.getLogger(__name__)
 SEED_RECOVERY_CONTRACT = "seed-compatible/v1"
 
@@ -102,7 +103,7 @@ class SregymFaultDriver:
         baseline_problem_id: str | None = None,
         baseline: ApplicationBaseline | tuple[ApplicationBaseline, ...] | None = None,
         cluster: ApplicationCluster | None = None,
-        health_timeout_seconds: float = 300.0,
+        health_timeout_seconds: float = wait_for(WaitKind.ROLLOUT),
         health_poll_seconds: float = HEALTH_POLL_SECONDS,
         monotonic: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], None] = time.sleep,
@@ -343,7 +344,7 @@ class SregymFaultDriver:
         health: dict[str, Any] = {}
         unready_rollouts: list[str] = []
         while True:
-            health = self._worker.request("health", namespace=self._namespace, timeout=60)
+            health = self._worker.request("health", namespace=self._namespace, timeout=wait_for(WaitKind.SLOW_COMMAND))
             if health.get("healthy"):
                 unready_rollouts = self._unready_rollouts()
                 if not unready_rollouts:

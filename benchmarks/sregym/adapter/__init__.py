@@ -12,6 +12,7 @@ import importlib
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from benchmarks.sregym.adapter.budgets import SdoBounds, WaitKind, wait_for
     from benchmarks.sregym.adapter.cluster_resources import kubectl
     from benchmarks.sregym.adapter.driver import (
         DeployedLifecycle,
@@ -32,7 +33,6 @@ if TYPE_CHECKING:
         job_labels,
         qualified_scenarios,
         queued_reflection_count,
-        reflection_attempt_seconds,
         setup_lineage,
         shell_runner_proof,
         terminal_incident_ids,
@@ -118,7 +118,9 @@ _EXPORTS: dict[str, str] = {
     "assert_stable_workloads": "eval_guards",
     "incident_work_open": "eval_guards",
     "queued_reflection_count": "eval_guards",
-    "reflection_attempt_seconds": "eval_guards",
+    "SdoBounds": "budgets",
+    "WaitKind": "budgets",
+    "wait_for": "budgets",
     "terminal_incident_ids": "eval_guards",
     "idle_standby_jobs": "eval_guards",
     "job_labels": "eval_guards",
@@ -197,7 +199,9 @@ __all__ = [
     "assert_stable_workloads",
     "incident_work_open",
     "queued_reflection_count",
-    "reflection_attempt_seconds",
+    "SdoBounds",
+    "WaitKind",
+    "wait_for",
     "terminal_incident_ids",
     "idle_standby_jobs",
     "job_labels",

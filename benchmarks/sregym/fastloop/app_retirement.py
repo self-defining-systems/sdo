@@ -7,7 +7,7 @@ import subprocess
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol
 
-from benchmarks.sregym.adapter import control_namespace_for, kubectl
+from benchmarks.sregym.adapter import WaitKind, control_namespace_for, kubectl, wait_for
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -118,7 +118,7 @@ class KubectlRetirementOps:
             subprocess.check_output(
                 ["kind", "get", "nodes", "--name", self.request.cluster],
                 text=True,
-                timeout=10,
+                timeout=wait_for(WaitKind.PROBE),
             ).split()
         )
         observed = set(

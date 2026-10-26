@@ -13,6 +13,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from benchmarks.sregym.adapter import WaitKind, wait_for
 from benchmarks.sregym.fastloop.observation_conformance import check_observations
 from benchmarks.sregym.fastloop.setup_proof import INVARIANTS
 
@@ -31,7 +32,7 @@ def code_revision() -> str:
         check=True,
         text=True,
         capture_output=True,
-        timeout=5,
+        timeout=wait_for(WaitKind.PROBE),
     )
     return result.stdout.strip()
 
@@ -83,7 +84,7 @@ def phase_deadline(document: dict[str, Any], started: float, setup_timeout: int,
     return float(steady_started) + steady_timeout if steady_started is not None else started + setup_timeout
 
 
-def execute(run_dir: Path, timeout: int, setup_timeout: int = 900) -> int:
+def execute(run_dir: Path, timeout: int, setup_timeout: int = int(wait_for(WaitKind.LONG_OPERATION))) -> int:
     directory = run_dir.resolve() / "eval-dry-run"
     directory.mkdir(parents=True, exist_ok=True)
     report_path = directory / "report.json"
@@ -108,7 +109,7 @@ def execute(run_dir: Path, timeout: int, setup_timeout: int = 900) -> int:
             if remaining <= 0:
                 os.killpg(child.pid, signal.SIGTERM)
                 try:
-                    child.wait(timeout=2)
+                    child.wait(timeout=wait_for(WaitKind.PROBE))
                 except subprocess.TimeoutExpired:
                     os.killpg(child.pid, signal.SIGKILL)
                     child.wait()
@@ -202,7 +203,7 @@ def assert_seed_supports_scripted_judge(workspace: Path, seed_commit: str | None
                 archive = subprocess.run(
                     ["git", "-C", str(workspace), "archive", "--format=tar", seed_commit, "--", ".sdo"],
                     capture_output=True,
-                    timeout=30,
+                    timeout=wait_for(WaitKind.COMMAND),
                 )
                 if archive.returncode:
                     raise ValueError(f"seed has no accepted .sdo ({archive.stderr.decode().strip()})")
@@ -305,7 +306,7 @@ def refresh_reused_proof(
     report.passed = True
 
 
-def run_lane(run_dir: Path, timeout: int, setup_timeout: int = 900) -> int:
+def run_lane(run_dir: Path, timeout: int, setup_timeout: int = int(wait_for(WaitKind.LONG_OPERATION))) -> int:
     from benchmarks.sregym.adapter import assert_lane_resources, control_namespace_for, incident_work_open, kubectl
     from benchmarks.sregym.fastloop import cli
     from benchmarks.sregym.fastloop.environment import FastloopEnvironment

@@ -11,6 +11,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from benchmarks.sregym.adapter.budgets import WaitKind, wait_for
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -53,7 +55,11 @@ def validate_setup_commit(actor: str, phase: str, validation: str, paths: list[s
 def setup_lineage(repository: Path, seed: str, head: str = "HEAD") -> dict[str, Any]:
     def git(*args: str) -> str:
         return subprocess.run(
-            ["git", "-C", str(repository), *args], check=True, capture_output=True, text=True, timeout=10
+            ["git", "-C", str(repository), *args],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=wait_for(WaitKind.PROBE),
         ).stdout.strip()
 
     git("merge-base", "--is-ancestor", seed, head)
@@ -205,23 +211,6 @@ def incident_work_open(state: dict[str, Any]) -> bool:
     return incident_id not in terminal_incident_ids(state)
 
 
-#: A queued reflection runs for at most the controller's response timeout: its frozen deadline is
-#: dispatch time + ``--response-timeout`` (registered_reflection.go ReflectionDeadline), 30 min by default (run.go).
-DEFAULT_RESPONSE_TIMEOUT_SECONDS = 1800.0
-#: Transient failures retry with the default closure backoff (2+4+8+16+32+60+60 s, closure_retry.go and
-#: reflection_queue.go) before the reflection is abandoned.
-CLOSURE_RETRY_BACKOFF_SECONDS = 182.0
-#: Commit, cleanup and detector-rollout handoff after the last attempt.
-REFLECTION_CLOSEOUT_SECONDS = 120.0
-
-
-def reflection_attempt_seconds(response_timeout_seconds: float = DEFAULT_RESPONSE_TIMEOUT_SECONDS) -> float:
-    """SDO's worst case to finish or abandon one queued reflection (the FIFO runs one at a time)."""
-    if response_timeout_seconds <= 0:
-        raise ValueError(f"response_timeout_seconds must be positive, got {response_timeout_seconds}")
-    return response_timeout_seconds + CLOSURE_RETRY_BACKOFF_SECONDS + REFLECTION_CLOSEOUT_SECONDS
-
-
 def queued_reflection_ids(state: dict[str, Any]) -> list[str]:
     """Incidents whose acknowledged closure still has a reflection queued, oldest first."""
     ids = state.get("queued_reflection_incident_ids") or []
@@ -237,7 +226,7 @@ def wait_for_proof(
     sample: Callable[[], dict[str, Any]],
     record: Callable[[dict[str, Any]], None],
     *,
-    timeout_seconds: float = 300,
+    timeout_seconds: float = int(wait_for(WaitKind.ROLLOUT)),
     monotonic: Callable[[], float] = time.monotonic,
     sleep: Callable[[float], None] = time.sleep,
     deadline: Deadline | None = None,

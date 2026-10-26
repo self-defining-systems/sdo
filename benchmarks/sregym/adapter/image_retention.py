@@ -13,6 +13,8 @@ import subprocess
 from dataclasses import dataclass
 from typing import Any
 
+from benchmarks.sregym.adapter.budgets import WaitKind, wait_for
+
 _REPOSITORIES = frozenset(
     {"sdo-controller", "sdo-detector-validator", "sdo-responder", "sdo-sregym-responder", "sdo-script-tools"}
 )
@@ -99,7 +101,7 @@ def _run(node: str, command: list[str], **kwargs: Any) -> str:
         check=True,
         capture_output=True,
         text=True,
-        timeout=60,
+        timeout=wait_for(WaitKind.SLOW_COMMAND),
         **kwargs,
     ).stdout
 
@@ -213,7 +215,11 @@ def retain_lane_images(cluster: str, delivered: list[str]) -> dict[str, Any]:
     if not any(owned_repository(ref) for ref in delivered):
         return {"nodes": {}, "freed_bytes": 0}
     nodes = subprocess.run(
-        ["kind", "get", "nodes", "--name", cluster], check=True, capture_output=True, text=True, timeout=30
+        ["kind", "get", "nodes", "--name", cluster],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=wait_for(WaitKind.COMMAND),
     ).stdout.splitlines()
     if not nodes:
         raise ValueError(f"eval: image retention found no kind nodes for {cluster}")

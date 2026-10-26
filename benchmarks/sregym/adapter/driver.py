@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
+from benchmarks.sregym.adapter.budgets import WaitKind, wait_for
 from benchmarks.sregym.adapter.cluster_resources import (
     BenchmarkClusterResourcesConfig,
     kubectl,
@@ -556,7 +557,9 @@ def _configure_turn_usage_log(logs_dir: str | None) -> None:
         os.environ[TURN_USAGE_LOG_ENV] = str(Path(logs_dir) / "sdo_turn_usage.jsonl")
 
 
-def _wait_for_installed_controller(install: NativeInstallConfig, *, timeout_seconds: float = 300.0) -> None:
+def _wait_for_installed_controller(
+    install: NativeInstallConfig, *, timeout_seconds: float = wait_for(WaitKind.ROLLOUT)
+) -> None:
     """An unbounded persistent install returns at creation; wait for its ready Pod."""
 
     deadline = time.monotonic() + timeout_seconds
@@ -568,7 +571,7 @@ def _wait_for_installed_controller(install: NativeInstallConfig, *, timeout_seco
             if time.monotonic() >= deadline:
                 raise
             logger.info("waiting for the seeded controller: %s", exc)
-            time.sleep(3)
+            time.sleep(wait_for(WaitKind.POLL))
 
 
 def _has_accepted_lifecycle(repository: Path) -> bool:
@@ -706,7 +709,7 @@ def _launch_native_lifecycle(
         healthy_baseline=args.healthy_baseline,
         max_response_loops=args.max_response_loops,
         response_timeout_seconds=args.timeout_sec,
-        verification_timeout_seconds=300,
+        verification_timeout_seconds=wait_for(WaitKind.VERIFICATION_SAMPLE),
         duration_seconds=None if persistent else args.timeout_sec,
         exit_after_closure=not persistent,
         registration_configmap="sdo-agent-registrations" if args.agent_registrations else None,
@@ -811,7 +814,7 @@ def _native_install_for_run(
         responder_namespaces=args.responder_namespaces,
         max_response_loops=args.max_response_loops,
         response_timeout_seconds=args.timeout_sec,
-        verification_timeout_seconds=300,
+        verification_timeout_seconds=wait_for(WaitKind.VERIFICATION_SAMPLE),
         duration_seconds=args.timeout_sec,
         exit_after_closure=True,
         responder_env=(
@@ -900,7 +903,7 @@ class _FaultGate:
             self._error = exc
 
     def join(self) -> None:
-        self._thread.join(timeout=5)
+        self._thread.join(timeout=wait_for(WaitKind.PROBE))
         if isinstance(self._error, InvalidInjectionError):
             raise self._error
         if self._error is not None:
@@ -965,7 +968,7 @@ def _run_persistent(args: argparse.Namespace, api_base: str, started: float) -> 
     initial_stage = poll_stage_sync(
         api_base,
         wait_for=READY_STAGES | {AWAITING_FAULT_INJECTION},
-        timeout=300,
+        timeout=wait_for(WaitKind.ROLLOUT),
         on_timeout="raise",
     )
     if initial_stage != AWAITING_FAULT_INJECTION:
@@ -1062,7 +1065,7 @@ def _run(args: argparse.Namespace) -> dict[str, Any]:
     initial_stage = poll_stage_sync(
         api_base,
         wait_for=READY_STAGES | {AWAITING_FAULT_INJECTION},
-        timeout=300,
+        timeout=wait_for(WaitKind.ROLLOUT),
         on_timeout="raise",
     )
     fault_deferred = initial_stage == AWAITING_FAULT_INJECTION

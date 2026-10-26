@@ -21,6 +21,8 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
+from benchmarks.sregym.adapter.budgets import WaitKind, wait_for
+
 if TYPE_CHECKING:
     from collections.abc import Set
 
@@ -268,7 +270,7 @@ def assert_host_disk_headroom(path: Path | None = None, *, policy: LaneResourceP
                 check=True,
                 capture_output=True,
                 text=True,
-                timeout=5,
+                timeout=wait_for(WaitKind.PROBE),
             )
             location = inspected.stdout.strip()
             if not location or not Path(location).is_absolute():

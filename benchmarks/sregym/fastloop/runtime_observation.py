@@ -16,6 +16,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 from urllib.parse import quote
 
+from benchmarks.sregym.adapter import WaitKind, wait_for
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -154,7 +156,9 @@ class KubectlObservationTransport:
     def _read(self, command: list[str], *, stdin: str | None = None) -> str:
         result = None
         try:
-            result = self.run(command, input=stdin, capture_output=True, text=True, check=False, timeout=10)
+            result = self.run(
+                command, input=stdin, capture_output=True, text=True, check=False, timeout=wait_for(WaitKind.PROBE)
+            )
         except Exception:
             # Raise outside the handler: even __context__ must not retain a
             # private exception, subprocess output, or credential-bearing stdin.
