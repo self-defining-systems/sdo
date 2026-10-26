@@ -3,16 +3,18 @@ package memory
 import (
 	"os"
 	"path/filepath"
+	"testing"
+
+	"sdo.dev/operator/internal/capturefixture"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
-	"testing"
 )
 
 func TestFixedNoMatchEvidenceUsesExactFixedCaptureAndNoTrustLabel(t *testing.T) {
 	for _, phase := range []string{"detect", "pre-apply"} {
 		t.Run(phase, func(t *testing.T) {
 			root, capture := t.TempDir(), t.TempDir()
-			fixed := []byte(`{"namespace":"app","services":[]}`)
+			fixed := capturefixture.FromView(t, `{"namespace":"app","services":[]}`)
 			if err := os.WriteFile(filepath.Join(capture, "fixed.json"), fixed, 0644); err != nil {
 				t.Fatal(err)
 			}

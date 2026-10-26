@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"sdo.dev/operator/broker"
+	"sdo.dev/operator/internal/capturefixture"
 	"sdo.dev/operator/internal/testutil"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/validate"
@@ -62,7 +63,7 @@ func TestIndependentFixedDiagnosesShareImmutableRecordingWithoutConsumption(t *t
 	if err := os.WriteFile(filepath.Join(capture, "open@pre-apply-recordings.json"), calls, 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(capture, "fixed.json"), []byte(`{}`), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(capture, "fixed.json"), capturefixture.Raw(t, "empty fixed view: only recordings answer", []byte(`{}`)), 0600); err != nil {
 		t.Fatal(err)
 	}
 	registry, err := program.NewRegistry([]program.Diagnoser{sharedProbeProgram{"probe-a"}, sharedProbeProgram{"probe-b"}}, nil)
@@ -206,8 +207,9 @@ func TestFalseFixedMatchIsDurableBeforeReflectionRejectionAndNeverCredited(t *te
 	if err := os.MkdirAll(capture, 0755); err != nil {
 		t.Fatal(err)
 	}
-	for name, body := range map[string]string{"fixed.json": `{"namespace":"default"}`, "open@detect.json": `{"namespace":"default"}`, "open@detect-recordings.json": "[]"} {
-		if err := os.WriteFile(filepath.Join(capture, name), []byte(body), 0600); err != nil {
+	empty := capturefixture.FromView(t, `{"namespace":"default"}`)
+	for name, body := range map[string][]byte{"fixed.json": empty, "open@detect.json": empty, "open@detect-recordings.json": []byte("[]")} {
+		if err := os.WriteFile(filepath.Join(capture, name), body, 0600); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -293,8 +295,8 @@ func TestSettlementUsesMatchedRevisionInsteadOfALaterRun(t *testing.T) {
 	if err := os.MkdirAll(capture, 0755); err != nil {
 		t.Fatal(err)
 	}
-	for name, body := range map[string]string{"fixed.json": "{}", "open@detect-recordings.json": "[]"} {
-		if err := os.WriteFile(filepath.Join(capture, name), []byte(body), 0644); err != nil {
+	for name, body := range map[string][]byte{"fixed.json": capturefixture.Raw(t, "empty fixed view: only recordings answer", []byte("{}")), "open@detect-recordings.json": []byte("[]")} {
+		if err := os.WriteFile(filepath.Join(capture, name), body, 0644); err != nil {
 			t.Fatal(err)
 		}
 	}

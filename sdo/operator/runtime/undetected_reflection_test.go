@@ -1,8 +1,6 @@
 package runtime
 
 import (
-	"encoding/json"
-	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -12,6 +10,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/internal/capturefixture"
 	"sdo.dev/operator/memory/validate"
 	"sdo.dev/operator/sdk/sdktest"
 )
@@ -27,10 +26,7 @@ func TestUndetectedRepairSurvivesFailedReflectionProjection(t *testing.T) {
 			observed = at.Add(3 * time.Second)
 		}
 		snapshot := sdktest.Snapshot{NamespaceName: "demo", ObservedAtTime: &observed, ServiceList: []corev1.Service{{ObjectMeta: metav1.ObjectMeta{Name: "front", Namespace: "demo", UID: "same"}, Spec: corev1.ServiceSpec{Ports: []corev1.ServicePort{{Port: 80, TargetPort: intstr.FromInt32(port)}}}}}}
-		raw, _ := json.Marshal(snapshot)
-		if err := os.WriteFile(filepath.Join(capture, phase+".json"), raw, 0600); err != nil {
-			t.Fatal(err)
-		}
+		capturefixture.WriteBoundary(t, filepath.Join(capture, phase+".json"), snapshot, "demo")
 	}
 	outcome.UndetectedCauses = validate.CaptureUndetectedCauses(outcome, capture)
 	if len(outcome.UndetectedCauses) != 1 {

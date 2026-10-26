@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand/v2"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -317,6 +318,12 @@ func (w *simWorld) onClosed(closure IncidentClosure) {
 	w.mu.Unlock()
 	if faulty := w.faulty(); len(faulty) > 0 && len(closure.FinalDetectorStates) > 0 {
 		w.violate("incident %s closed verified while %v still faulty", closure.Request.IncidentID, faulty)
+	}
+	// A failed responder Job leaves nothing to verify; waiting out the
+	// verification timeout only delays the next attempt.
+	jobFailed := strings.HasPrefix(closure.DispatchError, "responder Job ") && strings.HasSuffix(closure.DispatchError, " failed")
+	if jobFailed && !closure.VerifiedAt.Before(closure.ResponderCompletedAt.Add(w.config.VerificationTimeout)) {
+		w.violate("incident %s waited %s after its responder Job failed", closure.Request.IncidentID, closure.VerifiedAt.Sub(closure.ResponderCompletedAt))
 	}
 }
 

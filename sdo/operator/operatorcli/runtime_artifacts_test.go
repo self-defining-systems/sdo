@@ -3,12 +3,15 @@ package operatorcli
 import (
 	"archive/tar"
 	"bytes"
+	"context"
+	"errors"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestRuntimeArtifactsNeverRecordCredentialsOrCaches(t *testing.T) {
@@ -343,5 +346,63 @@ func TestRuntimeArtifactsAllowOnlyTypedPerJobStartup(t *testing.T) {
 		if allowedRuntimeArtifact(path) {
 			t.Fatal("untyped attempt export", path)
 		}
+	}
+}
+
+// GNU tar pads its output to a 10 KiB record after the end-of-archive
+// marker. The export must consume that padding so the exec stream can finish;
+// live rows otherwise waited for the 2-minute exec deadline and failed.
+func TestRuntimeArtifactsCopyFinishesWhenArchiveHasRecordPadding(t *testing.T) {
+	var archive bytes.Buffer
+	writer := tar.NewWriter(&archive)
+	if err := writer.WriteHeader(&tar.Header{Name: "sessions/id/session.jsonl", Mode: 0600, Size: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := writer.Write([]byte("x")); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	const record = 10240
+	archive.Write(make([]byte, record-archive.Len()%record))
+	execute := func(_ context.Context, _, _ string, _ []string, stdout, _ io.Writer) error {
+		_, err := stdout.Write(archive.Bytes())
+		return err
+	}
+	root := t.TempDir()
+	done := make(chan error, 1)
+	go func() { done <- copyRuntimeArtifacts(context.Background(), execute, "control", root) }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("runtime artifact copy did not finish after the archive ended")
+	}
+	if _, err := os.Stat(filepath.Join(root, "sessions/id/session.jsonl")); err != nil {
+		t.Fatalf("missing exported evidence: %v", err)
+	}
+}
+
+// A producer that fails partway breaks the copy too; the producer's stderr
+// says why and must reach the caller.
+func TestRuntimeArtifactsCopyReportsProducerStderrWhenStreamBreaks(t *testing.T) {
+	var archive bytes.Buffer
+	writer := tar.NewWriter(&archive)
+	if err := writer.WriteHeader(&tar.Header{Name: "sessions/id/session.jsonl", Mode: 0600, Size: 4096}); err != nil {
+		t.Fatal(err)
+	}
+	execute := func(_ context.Context, _, _ string, _ []string, stdout, stderr io.Writer) error {
+		if _, err := stdout.Write(archive.Bytes()); err != nil {
+			return err
+		}
+		_, _ = io.WriteString(stderr, "tar: sessions/id/session.jsonl: Read error")
+		return errors.New("command terminated with exit code 2")
+	}
+	err := copyRuntimeArtifacts(context.Background(), execute, "control", t.TempDir())
+	if err == nil || !strings.Contains(err.Error(), "Read error") || !strings.Contains(err.Error(), "exit code 2") {
+		t.Fatalf("producer failure hidden: %v", err)
 	}
 }

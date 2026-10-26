@@ -72,37 +72,45 @@ func RunRuntimeArtifacts(ctx context.Context, cfg RuntimeArtifactsConfig) (Runti
 	}
 	installer := install.Installer{Client: client}
 	err = installer.WithSyncPod(ctx, cfg.Sync, func(ctx context.Context, _ install.Config) error {
-		// Archive only evidence files; extraction applies the same allowlist.
-
-		streamCtx, stop := context.WithCancel(ctx)
-		defer stop()
-		reader, writer := io.Pipe()
-		defer reader.Close()
-		var stderr bytes.Buffer
-		done := make(chan error, 1)
-		go func() {
-			err := execute(streamCtx, cfg.Sync.ControlNamespace, install.RepositorySyncPodName, []string{"sh", "-c", runtimeArtifactsArchiveScript, "sh", "/workspace/.sdo-runtime"}, writer, &stderr)
-			_ = writer.CloseWithError(err)
-			done <- err
-		}()
-		copyErr := extractRuntimeArtifacts(reader, destination)
-		if copyErr != nil {
-			stop()
-			_ = reader.CloseWithError(copyErr)
-		}
-		waitErr := <-done
-		if copyErr != nil {
-			return copyErr
-		}
-		if waitErr != nil {
-			return fmt.Errorf("export runtime artifacts: %w: %s", waitErr, strings.TrimSpace(stderr.String()))
-		}
-		return nil
+		return copyRuntimeArtifacts(ctx, execute, cfg.Sync.ControlNamespace, destination)
 	})
 	if err != nil {
 		return RuntimeArtifactsResult{}, err
 	}
 	return RuntimeArtifactsResult{Directory: destination}, nil
+}
+
+// copyRuntimeArtifacts streams the sync Pod's evidence archive into destination.
+// Archive only evidence files; extraction applies the same allowlist.
+func copyRuntimeArtifacts(ctx context.Context, execute podExecutor, namespace, destination string) error {
+	streamCtx, stop := context.WithCancel(ctx)
+	defer stop()
+	reader, writer := io.Pipe()
+	defer reader.Close()
+	var stderr bytes.Buffer
+	done := make(chan error, 1)
+	go func() {
+		err := execute(streamCtx, namespace, install.RepositorySyncPodName, []string{"sh", "-c", runtimeArtifactsArchiveScript, "sh", "/workspace/.sdo-runtime"}, writer, &stderr)
+		_ = writer.CloseWithError(err)
+		done <- err
+	}()
+	copyErr := extractRuntimeArtifacts(reader, destination)
+	if copyErr != nil {
+		stop()
+		_ = reader.CloseWithError(copyErr)
+	}
+	waitErr := <-done
+	if waitErr != nil {
+		// A producer failing partway also breaks the copy; its stderr says why.
+		waitErr = fmt.Errorf("export runtime artifacts: %w: %s", waitErr, strings.TrimSpace(stderr.String()))
+	}
+	if copyErr != nil && waitErr != nil && !errors.Is(waitErr, copyErr) {
+		return errors.Join(copyErr, waitErr)
+	}
+	if waitErr != nil {
+		return waitErr
+	}
+	return copyErr
 }
 
 var commandReportName = regexp.MustCompile(`^[0-9]{4,}-(act|apply|mitigate)\.json$`)
@@ -177,6 +185,11 @@ func extractRuntimeArtifacts(source io.Reader, destination string) error {
 	for {
 		header, err := reader.Next()
 		if err == io.EOF {
+			// Consume the record padding after the end marker so the
+			// producer's stream can complete instead of blocking on write.
+			if _, err := io.Copy(io.Discard, source); err != nil {
+				return fmt.Errorf("drain runtime artifact archive: %w", err)
+			}
 			return nil
 		}
 		if err != nil {

@@ -2,12 +2,12 @@ package builder
 
 import (
 	"context"
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"sdo.dev/operator/internal/capturefixture"
 	"sdo.dev/operator/sdk/sdktest"
 )
 
@@ -50,18 +50,12 @@ func TestProgramDetectorCorpusChecksEveryLocatedBinding(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		var snapshot sdktest.Snapshot
-		if err := json.Unmarshal(raw, &snapshot); err != nil {
-			t.Fatal(err)
-		}
-		extra := snapshot.ServiceList[0].DeepCopy()
-		extra.Name = "unlabelled-peer"
-		extra.Spec.Selector = map[string]string{"app": "no-pods"}
-		snapshot.ServiceList = append(snapshot.ServiceList, *extra)
-		raw, err = json.Marshal(snapshot)
-		if err != nil {
-			t.Fatal(err)
-		}
+		raw = capturefixture.Recapture(t, raw, func(snapshot *sdktest.Snapshot) {
+			extra := snapshot.ServiceList[0].DeepCopy()
+			extra.Name = "unlabelled-peer"
+			extra.Spec.Selector = map[string]string{"app": "no-pods"}
+			snapshot.ServiceList = append(snapshot.ServiceList, *extra)
+		})
 		if err := os.WriteFile(path, raw, 0644); err != nil {
 			t.Fatal(err)
 		}
@@ -85,15 +79,9 @@ func TestProgramDetectorCorpusChecksEveryLocatedBinding(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		var snapshot sdktest.Snapshot
-		if err := json.Unmarshal(raw, &snapshot); err != nil {
-			t.Fatal(err)
-		}
-		snapshot.ServiceList = snapshot.ServiceList[:len(snapshot.ServiceList)-1]
-		raw, err = json.Marshal(snapshot)
-		if err != nil {
-			t.Fatal(err)
-		}
+		raw = capturefixture.Recapture(t, raw, func(snapshot *sdktest.Snapshot) {
+			snapshot.ServiceList = snapshot.ServiceList[:len(snapshot.ServiceList)-1]
+		})
 		if err := os.WriteFile(path, raw, 0644); err != nil {
 			t.Fatal(err)
 		}
