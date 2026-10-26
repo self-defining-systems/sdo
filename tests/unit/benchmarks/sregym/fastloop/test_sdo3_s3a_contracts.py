@@ -256,3 +256,37 @@ def test_real_v2_worker_removes_cluster_objects_the_injection_created(tmp_path):
         assert driver.recover() >= 0
         assert worker.request("inventory")["objects"] == before
         driver.inject("single")
+
+
+@pytest.mark.requires_sregym
+def test_real_v2_worker_returns_the_app_namespace_to_its_pre_injection_inventory(tmp_path):
+    """LEAK3: an HPA the fault ensured on recovery stayed in the app namespace for the next row."""
+    from pathlib import Path
+
+    from benchmarks.sregym.fastloop.worker_client import SregymWorker
+
+    root = Path(__file__).resolve().parents[5]
+    command = [
+        "uv",
+        "run",
+        "--directory",
+        str(root / "third_party/sregym"),
+        "python",
+        str(root / "tests/fixtures/sregym/sdo3/worker.py"),
+    ]
+    with SregymWorker(command, env={}, log_path=tmp_path / "worker.log") as worker:
+        before = worker.request("inventory")["objects"]
+        driver = SregymFaultDriver(worker, namespace="hotel-reservation")
+        driver.inject("ensures-hpa")
+        assert "HorizontalPodAutoscaler/hotel-reservation/frontend-capacity" in worker.request("inventory")["objects"]
+        assert driver.recover() >= 0
+        assert worker.request("inventory")["objects"] == before
+        # Anything else left in the namespace fails recovery loudly and blocks the next row.
+        driver.inject("leaves-policy")
+        with pytest.raises(FastloopFaultError, match="full recovery failed"):
+            driver.recover()
+        with pytest.raises(Exception, match="recovery failed"):
+            driver.inject("single")
+        worker.request("remove-policy")
+        assert driver.recover() >= 0
+        driver.inject("single")
