@@ -123,3 +123,76 @@ def test_reused_admission_receives_full_steady_budget(monkeypatch, tmp_path):
     assert probes[0][0][-3:] == ["/usr/local/bin/sdo-observation-check", "--namespace", "app"]
     assert probes[0][1]["namespace"] == "app-sdo"
     assert probes[0][1]["kubeconfig"] == environment.kubeconfig
+
+
+def _probe_without(missing):
+    import json
+    from types import SimpleNamespace
+
+    calls = []
+
+    def run(command, **kwargs):
+        calls.append(command)
+        script = command[-1]
+        error = f"{missing}: ModuleNotFoundError: No module named '{missing}'" if missing in script else None
+        return SimpleNamespace(returncode=0, stdout=json.dumps({"agentshim": None, "import_error": error}), stderr="")
+
+    return run, calls
+
+
+def test_scripted_preflight_rejects_production_responder_image():
+    run, calls = _probe_without("benchmarks.sregym.adapter.scripted_worker")
+    with pytest.raises(ValueError) as error:
+        dry_run.assert_responder_runs_registrations(
+            "sdo-sregym-responder:le-p4-h7", dry_run.SCRIPTED_REGISTRATIONS, run=run
+        )
+    message = str(error.value)
+    assert "sdo-sregym-responder:le-p4-h7" in message
+    assert "benchmarks.sregym.adapter.scripted_worker" in message
+    assert "SDO_SCRIPTED_WORKER=1" in message
+    assert "SDO_IMAGE_TAG=le-p4-h7-scripted" in message
+    assert len(calls) == 1
+    assert "--network" in calls[0] and "none" in calls[0]
+
+
+def test_scripted_preflight_covers_every_registered_worker_module():
+    run, calls = _probe_without("absent.module")
+    evidence = dry_run.assert_responder_runs_registrations(
+        "sdo-sregym-responder:scripted", dry_run.SCRIPTED_REGISTRATIONS, run=run
+    )
+    assert evidence["image"] == "sdo-sregym-responder:scripted"
+    assert evidence["modules"] == ["benchmarks.sregym.adapter.scripted_worker"]
+    assert "benchmarks.sregym.adapter.scripted_worker" in calls[0][-1]
+
+
+def test_dry_run_fails_on_responder_image_before_any_lane_mutation(monkeypatch, tmp_path):
+    import json
+    from types import SimpleNamespace
+
+    from benchmarks.sregym import adapter
+    from benchmarks.sregym.fastloop import environment, setup_proof
+
+    lane = SimpleNamespace(
+        run_dir=tmp_path,
+        cluster="lane",
+        kubeconfig=tmp_path / "kubeconfig",
+        dev_mount=None,
+        images=SimpleNamespace(responder="sdo-sregym-responder:prod"),
+    )
+    monkeypatch.setattr(environment.FastloopEnvironment, "load", classmethod(lambda cls, path: lane))
+    monkeypatch.setattr(dry_run, "assert_image_entrypoints", _missing_scripted_worker)
+
+    def reached(*args, **kwargs):
+        raise AssertionError("dry run touched the lane before checking its responder image")
+
+    monkeypatch.setattr(setup_proof, "check_reuse", lambda env: (None, {"reused": False}))
+    monkeypatch.setattr(adapter, "assert_lane_resources", reached)
+    assert dry_run.run_lane(tmp_path, 300, 900) == 1
+    report = json.loads((tmp_path / "eval-dry-run" / "report.json").read_text())
+    assert report["passed"] is False
+    assert "SDO_SCRIPTED_WORKER=1" in report["invariants"]["failure"]["reason"]
+    assert report["seconds"] < 60
+
+
+def _missing_scripted_worker(ref, modules, **kwargs):
+    raise ValueError(f"eval: image {ref} entrypoint smoke failed: {modules[0]}: ModuleNotFoundError")
