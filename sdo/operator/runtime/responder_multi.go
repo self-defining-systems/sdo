@@ -201,7 +201,7 @@ type pendingMitigation struct {
 	FindingFingerprints []string
 	ReservedAt          time.Time
 	// Released reservations no longer hold their writes but are still observed;
-	// Superseded ones saw a later overlapping write and earn no late credit.
+	// Superseded ones saw a later write and earn no late credit.
 	Released   bool
 	Superseded bool
 }
@@ -246,7 +246,7 @@ func (l *ResponderLoop) settlePending(ctx context.Context) {
 			continue // Restart cannot recreate process-local verification authority.
 		}
 		if pending.Superseded {
-			// A later write to the released target may have finished this rollout.
+			// A write after the release may have finished this rollout.
 			result.VerificationCompleted = true
 			result.VerificationPassed = false
 			l.applications[application] = result
@@ -346,15 +346,17 @@ func (l *ResponderLoop) heldPendingWrites() int {
 }
 
 func (l *ResponderLoop) pendingConflict(refs []sdk.ObjectRef, response *ToolResponse) bool {
+	return l.pendingConflictExcept(refs, response, "")
+}
+
+// A held reservation refuses overlapping writes. A released one is superseded
+// by any later write that is not refused: the write may be what let its
+// rollout finish (an owned ReplicaSet or Pod, a claim, a node), so the stalled
+// application earns no late credit. Reservations of attempt itself are skipped.
+func (l *ResponderLoop) pendingConflictExcept(refs []sdk.ObjectRef, response *ToolResponse, attempt string) bool {
 	for _, ref := range refs {
 		for application, pending := range l.pendingWrites {
-			if pending.Released {
-				for _, target := range pending.Refs {
-					if ref.Kind == "*" || target.Kind == "*" || writeObjectKey(ref) == writeObjectKey(target) {
-						pending.Superseded = true
-						l.pendingWrites[application] = pending
-					}
-				}
+			if pending.Released || (attempt != "" && pending.AttemptID == attempt) {
 				continue
 			}
 			if len(pending.Refs) == 0 {
@@ -367,6 +369,12 @@ func (l *ResponderLoop) pendingConflict(refs []sdk.ObjectRef, response *ToolResp
 					return true
 				}
 			}
+		}
+	}
+	for application, pending := range l.pendingWrites {
+		if pending.Released && (attempt == "" || pending.AttemptID != attempt) {
+			pending.Superseded = true
+			l.pendingWrites[application] = pending
 		}
 	}
 	return false

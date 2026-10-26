@@ -16,6 +16,7 @@ from mcp.client.stdio import stdio_client
 from mcp.server.fastmcp import FastMCP
 
 from sdo.agents.responder.reflection import ClaudeSessionBackend, CodexSessionBackend
+from sdo.agents.responder.reflection_validation import validation_server
 from tests.structured_turns import ScriptedAgent, reply
 
 if TYPE_CHECKING:
@@ -83,23 +84,36 @@ sys.exit(1)
 async def test_validation_tool_timeout_returns_failure_and_stops_children(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    marker = tmp_path / "child-finished"
-    child_code = f"import time; from pathlib import Path; time.sleep(1.2); Path({str(marker)!r}).touch()"
+    started = tmp_path / "validator-started"
     _validator(
         tmp_path,
-        f"""import subprocess, sys, time
-subprocess.Popen([sys.executable, "-c", {child_code!r}])
+        f"""import os, subprocess, sys, time
+child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(600)"])
 print("checking replay", flush=True)
-time.sleep(20)
+with open({str(started)!r} + ".tmp", "w") as handle:
+    handle.write(str(child.pid))
+os.replace({str(started)!r} + ".tmp", {str(started)!r})
+time.sleep(600)
 """,
         monkeypatch,
     )
-    result = await _call(tmp_path, timeout=0.3)
+
+    async def expire_once_started(_seconds: float) -> None:
+        # The deadline fires only after the validator has output and a child.
+        while not started.exists():
+            await asyncio.sleep(0.01)
+
+    server = validation_server(tmp_path, timeout_seconds=0.3, expire=expire_once_started)
+    (block,) = await server.call_tool("check_memory", {"decision_path": "decision.json"})
+    result = json.loads(block.text)
     assert result["timed_out"]
     assert result["exit_code"] != 0
     assert "checking replay" in result["stdout"]
-    await asyncio.sleep(1.5)
-    assert not marker.exists()
+    assert "timed out after 0.3s" in result["stderr"]
+    child = pathlib.Path("/proc") / started.read_text()
+    async with asyncio.timeout(60):  # Bounds only a failure: a killed child is already exiting.
+        while child.exists() and (child / "stat").read_text().split(") ")[-1][0] != "Z":
+            await asyncio.sleep(0.01)
 
 
 @pytest.mark.parametrize(

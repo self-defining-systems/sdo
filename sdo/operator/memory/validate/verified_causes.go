@@ -99,9 +99,11 @@ func causeRepairs(outcome *contracts.OutcomeRecord, resources []*contracts.Objec
 		if !action.GetSuccess() {
 			continue
 		}
-		if len(OwnedCauseWrites(action, resources)) > 0 {
+		if len(OwnedCauseWrites(action, resources)) > 0 || unchainedControlledWrite(action, resources) {
 			// A write to an object a cause resource controls is part of that
 			// cause's repair: its findings must clear after this write too.
+			// A controlled object no open phase observed (e.g. a ReplicaSet a
+			// rollout created after open) has no chain, so it bounds every cause.
 			if action.GetStartedAt() == nil || !action.GetStartedAt().IsValid() || action.GetCompletedAt() == nil || !action.GetCompletedAt().IsValid() || action.GetCompletedAt().AsTime().Before(action.GetStartedAt().AsTime()) {
 				return nil, time.Time{}, false
 			}
@@ -146,6 +148,23 @@ func OwnedCauseWrites(action *contracts.RepairActionReceipt, resources []*contra
 		}
 	}
 	return owned
+}
+
+// unchainedControlledWrite reports a write to a Pod, ReplicaSet or Job that
+// is not a cause resource and has no recorded owner chain. Its owner is
+// unknown, so it conservatively counts as part of every cause's repair.
+func unchainedControlledWrite(action *contracts.RepairActionReceipt, resources []*contracts.ObjectRef) bool {
+	return slices.ContainsFunc(action.GetResources(), func(written *contracts.ObjectRef) bool {
+		switch written.GetKind() {
+		case "Pod", "ReplicaSet", "Job":
+		default:
+			return false
+		}
+		return !slices.ContainsFunc(resources, func(ref *contracts.ObjectRef) bool { return equalCauseResource(ref, written) }) &&
+			!slices.ContainsFunc(action.GetOwners(), func(owners *contracts.ResourceOwners) bool {
+				return len(owners.GetOwnerChain()) > 0 && equalCauseResource(owners.GetResource(), written)
+			})
+	})
 }
 
 func clearedOpenFinding(outcome *contracts.OutcomeRecord, resource *contracts.ObjectRef, after time.Time, primaryOnly bool) bool {
