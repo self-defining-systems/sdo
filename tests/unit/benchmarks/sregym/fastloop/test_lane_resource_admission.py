@@ -464,6 +464,7 @@ def test_malformed_execution_identity_fails_closed(lane, monkeypatch):
 
 def closure_record(gate, state):
     gate.prior_closure_timeout_seconds = 0.01
+    gate.reflection_attempt_seconds = 0.01
     gate.ops = SimpleNamespace(runtime_state=lambda _control: state)
 
 
@@ -512,6 +513,26 @@ def test_admission_waits_while_a_closure_is_open(lane, state):
     with pytest.raises(admission.PriorClosureIncompleteError):
         gate.await_prior_closure("hotel-reservation-sdo")
     assert "traffic" not in calls
+
+
+def test_admission_budget_covers_every_queued_reflection(lane, monkeypatch):
+    """A queue of N reflections is N response timeouts of SDO work; the default 1800 s budget is one."""
+    gate, _ = lane
+    gate.prior_closure_timeout_seconds = 30
+    gate.reflection_attempt_seconds = 2102.0
+    polls = iter([2, 2, 2, 1, 0])
+
+    def state(_control):
+        return {
+            "last_acknowledged_incident_id": "row-008",
+            "queued_reflection_incident_ids": [f"row-{index}" for index in range(next(polls))],
+        }
+
+    gate.ops = SimpleNamespace(runtime_state=state)
+    monkeypatch.setattr(admission.time, "sleep", lambda _seconds: None)
+    evidence = gate.await_prior_closure("hotel-reservation-sdo")
+    assert evidence["passed"] is True
+    assert evidence["budget_seconds"] >= 2 * 2102.0
 
 
 def test_new_work_during_stabilization_waits_on_its_own_job_deadline_then_restarts(lane, monkeypatch):

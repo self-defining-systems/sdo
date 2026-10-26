@@ -1665,3 +1665,21 @@ def test_a_controller_job_past_its_backoff_limit_is_terminal() -> None:
     )
     assert controller_job_failure({"status": {"active": 1, "failed": 3}}) is None
     assert controller_job_failure({"status": {"conditions": [{"type": "Failed", "status": "False"}]}}) is None
+
+
+def test_reflection_deadline_covers_the_queued_reflections_ahead_of_the_closure(tmp_path: Path) -> None:
+    """A closure behind N queued reflections waits for them under the same per-incident deadline."""
+    from benchmarks.sregym.adapter.persistent import reflection_deadline
+
+    now = datetime(2026, 10, 26, tzinfo=timezone.utc)
+    clock = Clock(now=lambda: now)
+    inputs = replace(_inputs(tmp_path, "s0"), reflection_wait_seconds=3600.0, reflection_attempt_seconds=2102.0)
+
+    idle = FakeOps(states={"hotel-sdo": {}})
+    assert reflection_deadline(idle, "hotel-sdo", inputs, clock) == now + timedelta(seconds=3600)
+
+    queued = FakeOps(states={"hotel-sdo": {"queued_reflection_incident_ids": ["a", "b"]}})
+    assert reflection_deadline(queued, "hotel-sdo", inputs, clock) == now + timedelta(seconds=3600 + 2 * 2102)
+
+    unknown = FakeOps(states={"hotel-sdo": {"queued_reflections_unknown": True}})
+    assert reflection_deadline(unknown, "hotel-sdo", inputs, clock) == now + timedelta(seconds=3600 + 2102)

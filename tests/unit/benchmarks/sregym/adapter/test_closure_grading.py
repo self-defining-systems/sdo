@@ -291,6 +291,59 @@ def test_recovery_stops_when_the_followup_incident_outlives_the_bound() -> None:
     assert not ops.events
 
 
+def _queued_reflection_ops(queued: list[str], open_polls: int | None) -> FakeOps:
+    """Controller whose graded incident-1 closed (failed attempt) and whose reflections are queued behind its ACK."""
+    from tests.unit.benchmarks.sregym.adapter.test_persistent import FakeOps
+
+    reads = [0]
+
+    class QueuedOps(FakeOps):
+        def runtime_state(self, control_namespace: str) -> dict[str, Any]:
+            reads[0] += 1
+            if open_polls is None or reads[0] <= open_polls:
+                return {"last_acknowledged_incident_id": "incident-1", "queued_reflection_incident_ids": queued}
+            return {"last_acknowledged_incident_id": "incident-1"}
+
+    return QueuedOps(logs={"hotel-sdo": []})
+
+
+def test_recovery_waits_for_the_graded_incidents_queued_reflection_up_to_its_own_deadline() -> None:
+    """SDO may run a reflection for its whole response timeout; recovery's follow-up bound is not that deadline."""
+    from benchmarks.sregym.adapter.persistent import POST_CLOSURE_WAIT_SECONDS, pause_for_recovery
+
+    elapsed, clock = _fake_clock()
+    ops = _queued_reflection_ops(["incident-1"], open_polls=1800)
+
+    wait = pause_for_recovery(
+        ops, "hotel-sdo", incident_id="incident-1", clock=clock, reflection_attempt_seconds=2102.0
+    )
+
+    assert wait is not None
+    assert wait.closed is True
+    assert wait.waited_seconds == 1800.0 > POST_CLOSURE_WAIT_SECONDS
+    assert wait.followup_incident_ids == ("incident-1",)
+    assert ops.events == [("paused", "hotel-sdo")]
+
+
+def test_recovery_bounds_the_queued_reflection_wait_by_the_queue_length() -> None:
+    from benchmarks.sregym.adapter.persistent import (
+        POST_CLOSURE_WAIT_SECONDS,
+        FollowupClosureTimeout,
+        pause_for_recovery,
+    )
+
+    elapsed, clock = _fake_clock()
+    ops = _queued_reflection_ops(["incident-0", "incident-1"], open_polls=None)
+
+    with pytest.raises(FollowupClosureTimeout) as raised:
+        pause_for_recovery(ops, "hotel-sdo", incident_id="incident-1", clock=clock, reflection_attempt_seconds=2102.0)
+
+    assert raised.value.wait.bound_seconds == POST_CLOSURE_WAIT_SECONDS + 2 * 2102.0
+    assert raised.value.wait.waited_seconds == elapsed[0] == raised.value.wait.bound_seconds
+    assert raised.value.wait.followup_incident_ids == ("incident-0", "incident-1")
+    assert not ops.events
+
+
 def test_recovery_without_a_graded_incident_does_not_wait_for_open_incidents() -> None:
     from benchmarks.sregym.adapter.persistent import PersistentControllerError, pause_for_recovery
 
