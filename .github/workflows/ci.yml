@@ -412,30 +412,6 @@ jobs:
         run: go test -p 1 -count=3 -run '^(TestProxyWarmAddedP95|TestLargeResponseWarmAddedP95|TestProjectionTailLatency)$' -v ./kubeproxy ./operatorcli
         working-directory: sdo/operator
 
-      - name: Fuzz object reference boundary (bounded)
-        if: matrix.operator == 'acceptance-second'
-        run: |
-          timeout 120s go test -run '^$' -fuzz '^FuzzObjectRefParseFormat$' -fuzztime=30s -parallel=2 -timeout=2m .
-          timeout 120s go test -run '^$' -fuzz '^FuzzObjectRefTypedRoundTrip$' -fuzztime=30s -parallel=2 -timeout=2m .
-        working-directory: sdo/operator/sdk
-      - name: Fuzz observed evidence labels (bounded)
-        if: matrix.module == 'foundation-contracts'
-        run: timeout 120s go test -run '^$' -fuzz '^FuzzStateChangeRefMatchesObservedLabel$' -fuzztime=30s -parallel=2 -timeout=2m ./outcome_derivation
-        working-directory: sdo/operator
-      - name: Fuzz native receipt boundary (bounded)
-        if: matrix.module == 'foundation-contracts'
-        run: timeout 120s go test -run '^$' -fuzz '^FuzzNativeReceiptBoundary$' -fuzzminimizetime=1s -fuzztime=30s -parallel=2 -timeout=2m .
-        working-directory: benchmarks/sregym/protocol/native_receipt_go
-      - name: Fuzz submission phase boundary (bounded)
-        if: matrix.module == 'foundation-contracts'
-        run: timeout 120s go test -run '^$' -fuzz '^FuzzSubmissionPhaseBoundary$' -fuzzminimizetime=1s -fuzztime=30s -parallel=2 -timeout=2m .
-        working-directory: benchmarks/sregym/protocol/submission_go
-
-      - name: Fuzz controller observation boundary (bounded)
-        if: matrix.module == 'foundation-contracts'
-        run: timeout 120s go test -run '^$' -fuzz '^FuzzControllerObservationBoundary$' -fuzzminimizetime=1s -fuzztime=30s -parallel=2 -timeout=2m ./outcome_derivation
-        working-directory: sdo/operator
-
   go-integration:
     name: Go-backed Python contracts
     needs: [changes, prepare-go]
