@@ -65,7 +65,11 @@ class KubectlApplicationCluster:
         self.kubeconfig = kubeconfig
 
     def list_objects(self, namespace: str) -> list[dict[str, Any]]:
-        output = kubectl(["get", _RESOURCE_NAMES, "-o", "json"], namespace=namespace, kubeconfig=self.kubeconfig).stdout
+        output = kubectl(
+            ["get", _RESOURCE_NAMES, "--show-managed-fields=true", "-o", "json"],
+            namespace=namespace,
+            kubeconfig=self.kubeconfig,
+        ).stdout
         return json.loads(output)["items"]
 
     def delete(self, namespace: str, kind: str, name: str) -> None:
@@ -253,10 +257,44 @@ def _content(value: dict[str, Any]) -> tuple[Any, ...]:
     return tuple(value.get(key) for key in RESTORED_FIELDS)
 
 
+def _sdo_owned_objects(objects: list[dict[str, Any]]) -> set[int]:
+    """Follow installer metadata before capture strips server-assigned fields."""
+    owned: set[int] = set()
+    for index, value in enumerate(objects):
+        metadata = value.get("metadata", {})
+        labels = metadata.get("labels", {})
+        managers = metadata.get("managedFields", [])
+        if (
+            labels.get("app.kubernetes.io/managed-by") == "sdo"
+            or any(labels.get(key) for key in ("sdo.dev/observation-owner", "sdo.dev/responder-read-owner"))
+            # Older installers did not label RBAC. An exclusive Update manager
+            # identifies installer ownership; SSA repair ownership is insufficient.
+            or (
+                managers
+                and all(row.get("manager") == "sdo-operator" and row.get("operation") == "Update" for row in managers)
+            )
+        ):
+            owned.add(index)
+    while True:
+        uids = {objects[index].get("metadata", {}).get("uid") for index in owned} - {None}
+        descendants = {
+            index
+            for index, value in enumerate(objects)
+            if any(owner.get("uid") in uids for owner in value.get("metadata", {}).get("ownerReferences", []))
+        }
+        if descendants <= owned:
+            return owned
+        owned.update(descendants)
+
+
 def capture_application_baseline(cluster: ApplicationCluster, namespace: str) -> ApplicationBaseline:
     if not namespace or namespace.endswith("-sdo") or namespace in NON_APPLICATION_NAMESPACES:
         raise ValueError(f"refusing to capture non-application namespace {namespace!r}")
-    objects = [_manifest(value) for value in cluster.list_objects(namespace) if _managed(value, namespace)]
+    listed = cluster.list_objects(namespace)
+    excluded = _sdo_owned_objects(listed)
+    objects = [
+        _manifest(value) for index, value in enumerate(listed) if index not in excluded and _managed(value, namespace)
+    ]
     return ApplicationBaseline(namespace=namespace, objects=objects)
 
 
