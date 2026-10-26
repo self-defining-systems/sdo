@@ -9,13 +9,14 @@ import (
 	p1 "k8s.io/api/core/v1"
 	p5 "k8s.io/api/discovery/v1"
 	p10 "k8s.io/api/networking/v1"
-	p12 "k8s.io/api/policy/v1"
-	p11 "k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	p13 "k8s.io/api/policy/v1"
+	p12 "k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	p11 "k8s.io/metrics/pkg/apis/metrics/v1beta1"
 	p4 "sdo.dev/operator/sdk"
 	p0 "sdo.dev/operator/sdk/metrics"
 	p2 "sdo.dev/operator/sdk/program"
-	p13 "sdo.dev/operator/sdk/servicehealth"
-	p14 "sdo.dev/operator/sdk/traffic"
+	p14 "sdo.dev/operator/sdk/servicehealth"
+	p15 "sdo.dev/operator/sdk/traffic"
 	p8 "time"
 )
 
@@ -93,8 +94,8 @@ func (v *View) Logs(a0 p4.ObjectRef, a1 string, a2 p8.Duration) (r0 string, r1 e
 	r1 = err
 	return
 }
-func (v *View) LogsWithOptions(a0 p4.ObjectRef, a1 string, a2 p2.LogOptions) (r0 string, r1 error) {
-	err := v.call("LogsWithOptions", []any{a0, a1, a2}, []any{&r0})
+func (v *View) LogsWithOptions(a0 p4.ObjectRef, a1 p1.PodLogOptions) (r0 string, r1 error) {
+	err := v.call("LogsWithOptions", []any{a0, a1}, []any{&r0})
 	r1 = err
 	return
 }
@@ -129,12 +130,12 @@ func (v *View) NetworkPolicies() (r0 []p10.NetworkPolicy) {
 	}
 	return
 }
-func (v *View) NodeUsage(a0 p4.ObjectRef) (r0 p0.Usage, r1 error) {
+func (v *View) NodeUsage(a0 p4.ObjectRef) (r0 *p11.NodeMetrics, r1 error) {
 	err := v.call("NodeUsage", []any{a0}, []any{&r0})
 	r1 = err
 	return
 }
-func (v *View) Object(a0 p4.ObjectRef) (r0 *p11.Unstructured, r1 error) {
+func (v *View) Object(a0 p4.ObjectRef) (r0 *p12.Unstructured, r1 error) {
 	err := v.call("Object", []any{a0}, []any{&r0})
 	r1 = err
 	return
@@ -172,14 +173,14 @@ func (v *View) PodAdmission() (r0 p4.PodAdmissionResult, r1 bool) {
 	}
 	return
 }
-func (v *View) PodDisruptionBudgets() (r0 []p12.PodDisruptionBudget) {
+func (v *View) PodDisruptionBudgets() (r0 []p13.PodDisruptionBudget) {
 	err := v.call("PodDisruptionBudgets", []any{}, []any{&r0})
 	if err != nil {
 		panic(err)
 	}
 	return
 }
-func (v *View) PodUsage(a0 p4.ObjectRef) (r0 []p0.Usage, r1 error) {
+func (v *View) PodUsage(a0 p4.ObjectRef) (r0 *p11.PodMetrics, r1 error) {
 	err := v.call("PodUsage", []any{a0}, []any{&r0})
 	r1 = err
 	return
@@ -251,7 +252,7 @@ func (v *View) ScopedServices(a0 string) (r0 []p1.Service, r1 error) {
 	r1 = err
 	return
 }
-func (v *View) ServiceReachability() (r0 p13.ReachabilityWindow, r1 bool) {
+func (v *View) ServiceReachability() (r0 p14.ReachabilityWindow, r1 bool) {
 	err := v.call("ServiceReachability", []any{}, []any{&r0, &r1})
 	if err != nil {
 		panic(err)
@@ -272,7 +273,7 @@ func (v *View) StatefulSets() (r0 []p3.StatefulSet) {
 	}
 	return
 }
-func (v *View) TrafficWindow(a0 string) (r0 p14.Window, r1 bool) {
+func (v *View) TrafficWindow(a0 string) (r0 p15.Window, r1 bool) {
 	err := v.call("TrafficWindow", []any{a0}, []any{&r0, &r1})
 	if err != nil {
 		panic(err)

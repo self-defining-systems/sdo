@@ -163,7 +163,7 @@ func (v *RecordingReadView) KubernetesRead(q program.KubernetesRequest) (json.Ra
 
 func (v *RecordingReadView) Logs(ref sdk.ObjectRef, container string, since time.Duration) (string, error)
 
-func (v *RecordingReadView) LogsWithOptions(ref sdk.ObjectRef, container string, options program.LogOptions) (string, error)
+func (v *RecordingReadView) LogsWithOptions(ref sdk.ObjectRef, options corev1.PodLogOptions) (string, error)
 
 func (v *RecordingReadView) MetricResult(id string) (metrics.Result, bool)
 
@@ -171,7 +171,7 @@ func (v *RecordingReadView) MutatingWebhookConfiguration(name string) (*admissio
 
 func (v *RecordingReadView) MutatingWebhookConfigurations() ([]admissionv1.MutatingWebhookConfiguration, error)
 
-func (v *RecordingReadView) NodeUsage(ref sdk.ObjectRef) (metrics.Usage, error)
+func (v *RecordingReadView) NodeUsage(ref sdk.ObjectRef) (*metricsv1beta1.NodeMetrics, error)
 
 func (v *RecordingReadView) Object(ref sdk.ObjectRef) (*unstructured.Unstructured, error)
 
@@ -185,7 +185,7 @@ func (v *RecordingReadView) ObservedAt() time.Time
 
 func (v *RecordingReadView) ObservedView() (sdk.DetectionContext, func() error)
 
-func (v *RecordingReadView) PodUsage(ref sdk.ObjectRef) ([]metrics.Usage, error)
+func (v *RecordingReadView) PodUsage(ref sdk.ObjectRef) (*metricsv1beta1.PodMetrics, error)
 
 func (v *RecordingReadView) ProbeHTTP(ref sdk.ObjectRef, req program.HTTPProbe) (program.ProbeResult, error)
 
@@ -232,19 +232,19 @@ func (v *ReplayReadView) KubernetesRead(q program.KubernetesRequest) (json.RawMe
 
 func (v *ReplayReadView) Logs(ref sdk.ObjectRef, container string, since time.Duration) (string, error)
 
-func (v *ReplayReadView) LogsWithOptions(ref sdk.ObjectRef, container string, options program.LogOptions) (string, error)
+func (v *ReplayReadView) LogsWithOptions(ref sdk.ObjectRef, options corev1.PodLogOptions) (string, error)
 
 func (v *ReplayReadView) MetricResult(id string) (metrics.Result, bool)
 
 func (v *ReplayReadView) MutatingWebhookConfigurations() ([]admissionv1.MutatingWebhookConfiguration, error)
 
-func (v *ReplayReadView) NodeUsage(ref sdk.ObjectRef) (metrics.Usage, error)
+func (v *ReplayReadView) NodeUsage(ref sdk.ObjectRef) (*metricsv1beta1.NodeMetrics, error)
 
 func (v *ReplayReadView) Observe(o program.ExternalOperation) (int32, error)
 
 func (v *ReplayReadView) ObservedView() (sdk.DetectionContext, func() error)
 
-func (v *ReplayReadView) PodUsage(ref sdk.ObjectRef) ([]metrics.Usage, error)
+func (v *ReplayReadView) PodUsage(ref sdk.ObjectRef) (*metricsv1beta1.PodMetrics, error)
 
 func (v *ReplayReadView) ProbeHTTP(ref sdk.ObjectRef, req program.HTTPProbe) (program.ProbeResult, error)
 
@@ -328,7 +328,7 @@ func (s Snapshot) HorizontalPodAutoscalers() []autoscalingv2.HorizontalPodAutosc
 
 func (s Snapshot) KubernetesRead(q program.KubernetesRequest) (json.RawMessage, error)
 
-func (s Snapshot) LogsWithOptions(ref sdk.ObjectRef, container string, options program.LogOptions) (string, error)
+func (s Snapshot) LogsWithOptions(ref sdk.ObjectRef, options corev1.PodLogOptions) (string, error)
 
 func (s Snapshot) MetricResult(id string) (metrics.Result, bool)
     MetricResult implements metrics.Source.
@@ -337,7 +337,7 @@ func (s Snapshot) Namespace() string
 
 func (s Snapshot) NetworkPolicies() []networkingv1.NetworkPolicy
 
-func (s Snapshot) NodeUsage(ref sdk.ObjectRef) (metrics.Usage, error)
+func (s Snapshot) NodeUsage(ref sdk.ObjectRef) (*metricsv1beta1.NodeMetrics, error)
 
 func (s Snapshot) Object(ref sdk.ObjectRef) (*unstructured.Unstructured, error)
 
@@ -353,7 +353,7 @@ func (s Snapshot) PodAdmission() (sdk.PodAdmissionResult, bool)
 
 func (s Snapshot) PodDisruptionBudgets() []policyv1.PodDisruptionBudget
 
-func (s Snapshot) PodUsage(ref sdk.ObjectRef) ([]metrics.Usage, error)
+func (s Snapshot) PodUsage(ref sdk.ObjectRef) (*metricsv1beta1.PodMetrics, error)
 
 func (s Snapshot) Pods() []corev1.Pod
 

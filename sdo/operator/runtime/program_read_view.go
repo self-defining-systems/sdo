@@ -1,7 +1,6 @@
 package runtime
 
 import (
-	"io"
 	admissionv1 "k8s.io/api/admissionregistration/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	"sdo.dev/operator/sdk/servicehealth"
@@ -11,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"time"
 
@@ -64,50 +64,46 @@ func (v LiveReadView) context() context.Context {
 }
 
 func (v LiveReadView) Logs(ref sdk.ObjectRef, container string, since time.Duration) (string, error) {
-	return v.logs(ref, container, program.LogOptions{SinceDuration: since})
-}
-
-func (v LiveReadView) LogsWithOptions(ref sdk.ObjectRef, container string, o program.LogOptions) (string, error) {
-	if container == "" {
-		return "", errors.New("logs require an explicit container")
+	if since < 0 {
+		return "", errors.New("pod log duration must not be negative")
 	}
-	return v.logs(ref, container, o)
-}
-func (v LiveReadView) logs(ref sdk.ObjectRef, container string, o program.LogOptions) (string, error) {
-	if ref.Kind != "Pod" || (ref.APIVersion != "" && ref.APIVersion != "v1") || ref.Namespace != v.Namespace() || ref.Name == "" || v.Client == nil {
-		return "", errors.New("pod logs require explicit Pod/container identity in the snapshot namespace and a Kubernetes reader")
-	}
-	if err := o.Validate(); err != nil {
-		return "", err
-	}
-	limit := o.LimitBytes
-	if limit == 0 {
-		limit = 64 * 1024
-	}
-	options := &corev1.PodLogOptions{Container: container, Previous: o.Previous, TailLines: o.TailLines, Timestamps: o.Timestamps, LimitBytes: &limit}
-	if o.SinceDuration > 0 {
-		seconds := int64(o.SinceDuration / time.Second)
-		if o.SinceDuration%time.Second != 0 {
+	options := corev1.PodLogOptions{Container: container}
+	if since > 0 {
+		seconds := int64(since / time.Second)
+		if since%time.Second != 0 {
 			seconds++
 		}
 		options.SinceSeconds = &seconds
 	}
-	if !o.SinceTime.IsZero() {
-		t := metav1.NewTime(o.SinceTime)
-		options.SinceTime = &t
+	return v.logs(ref, options)
+}
+
+func (v LiveReadView) LogsWithOptions(ref sdk.ObjectRef, options corev1.PodLogOptions) (string, error) {
+	if options.Container == "" {
+		return "", errors.New("logs require an explicit container")
+	}
+	return v.logs(ref, options)
+}
+func (v LiveReadView) logs(ref sdk.ObjectRef, options corev1.PodLogOptions) (string, error) {
+	if ref.Kind != "Pod" || (ref.APIVersion != "" && ref.APIVersion != "v1") || ref.Namespace != v.Namespace() || ref.Name == "" || v.Client == nil {
+		return "", errors.New("pod logs require a Pod in the snapshot namespace and a Kubernetes reader")
+	}
+	bounded, err := program.BoundedLogOptions(options)
+	if err != nil {
+		return "", err
 	}
 	ctx, cancel := context.WithTimeout(v.context(), 5*time.Second)
 	defer cancel()
-	stream, err := v.Client.CoreV1().Pods(ref.Namespace).GetLogs(ref.Name, options).Stream(ctx)
+	stream, err := v.Client.CoreV1().Pods(ref.Namespace).GetLogs(ref.Name, &bounded).Stream(ctx)
 	if err != nil {
 		return "", fmt.Errorf("read logs of pod %s/%s: %w", ref.Namespace, ref.Name, err)
 	}
 	defer stream.Close()
-	data, err := io.ReadAll(io.LimitReader(stream, limit+1))
+	data, err := io.ReadAll(io.LimitReader(stream, *bounded.LimitBytes+1))
 	if err != nil {
 		return "", err
 	}
-	if int64(len(data)) > limit {
+	if int64(len(data)) > *bounded.LimitBytes {
 		return "", errors.New("logs exceed byte limit")
 	}
 	return string(data), nil

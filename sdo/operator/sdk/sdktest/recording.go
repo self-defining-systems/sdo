@@ -426,18 +426,14 @@ func RecordPrimitiveCalls(view program.ReadView, calls []PrimitiveCall) ([]Primi
 			}
 			_, _ = recorder.ProbeHTTP(ref, request)
 		case "LogsWithOptions":
-			if len(args) != 3 {
+			if len(args) != 2 {
 				return nil, errors.New("invalid LogsWithOptions arguments")
 			}
-			var container string
-			var options program.LogOptions
-			if err := json.Unmarshal(args[1], &container); err != nil {
+			var options corev1.PodLogOptions
+			if err := json.Unmarshal(args[1], &options); err != nil {
 				return nil, err
 			}
-			if err := json.Unmarshal(args[2], &options); err != nil {
-				return nil, err
-			}
-			_, _ = recorder.LogsWithOptions(ref, container, options)
+			_, _ = recorder.LogsWithOptions(ref, options)
 		case "PodUsage", "NodeUsage":
 			if len(args) != 1 {
 				return nil, fmt.Errorf("invalid %s arguments", call.Method)

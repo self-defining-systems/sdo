@@ -146,10 +146,10 @@ an unobserved authentication configuration. Fixed-phase reads remain separate. N
 
 ## Typed logs and resource usage
 
-`LogsWithOptions` recordings bind Pod, container and the complete `program.LogOptions`
-(previous instance, exclusive since time/duration, tail, timestamps and byte cap).
-`PodUsage`/`NodeUsage` bind the explicit resource and preserve metrics.k8s.io CPU/memory
-quantities, container identity, sample timestamp and window. They use the existing
+`LogsWithOptions` recordings bind Pod and upstream `corev1.PodLogOptions`
+(container, previous instance, exclusive since time/seconds, tail, timestamps and byte cap).
+`PodUsage`/`NodeUsage` bind the resource and preserve upstream metrics.k8s.io/v1beta1
+`PodMetrics`/`NodeMetrics`, including quantities, container identity, timestamp and window. They use the existing
 PrimitiveCall shape and phase rules. Missing metrics-server, malformed samples and
 unrecorded usage remain unavailable errors, including offline replay; never infer
 zero usage or borrow a fixed-phase sample to explain opening state.
