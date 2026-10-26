@@ -133,6 +133,8 @@ type selectedPlan struct {
 
 // ResponderLoop holds one incident's tool state while its responder Job runs.
 type ResponderLoop struct {
+	stageProgress        map[string]responseStageProgress
+	waitForStageRollouts bool
 	// WorkingProgramRoot is set by the production loop factory to the mounted
 	// proposal checkout. Embedders with an in-memory registry may leave it empty.
 	WorkingProgramRoot string
@@ -890,7 +892,7 @@ func (l *ResponderLoop) apply(ctx context.Context, request ToolRequest, response
 	}
 	executor := l.Executor
 	executor.ApplicationID = id
-	executor.PollRollouts = true
+	executor.PollRollouts = !l.waitForStageRollouts
 	result, err := executor.Apply(ctx, l.mitigationIncident(selected), batch, false)
 	completed := time.Now().UTC()
 	if result.RolloutPending != nil {

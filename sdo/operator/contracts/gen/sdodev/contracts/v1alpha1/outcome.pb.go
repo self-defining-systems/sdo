@@ -492,7 +492,7 @@ var File_sdodev_contracts_v1alpha1_outcome_proto protoreflect.FileDescriptor
 
 const file_sdodev_contracts_v1alpha1_outcome_proto_rawDesc = "" +
 	"\n" +
-	"'sdodev/contracts/v1alpha1/outcome.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a(sdodev/contracts/v1alpha1/messages.proto\x1a&sdodev/contracts/v1alpha1/common.proto\x1a'sdodev/contracts/v1alpha1/program.proto\"\xa8\x13\n" +
+	"'sdodev/contracts/v1alpha1/outcome.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a(sdodev/contracts/v1alpha1/messages.proto\x1a&sdodev/contracts/v1alpha1/common.proto\x1a'sdodev/contracts/v1alpha1/program.proto\"\xb7\x13\n" +
 	"\rOutcomeRecord\x12.\n" +
 	"\x0eschema_version\x18\x01 \x01(\x05B\a\xbaH\x04\x1a\x02\b\x01R\rschemaVersion\x12,\n" +
 	"\vincident_id\x18\x02 \x01(\tB\v\xbaH\br\x06\x10\x012\x02\\SR\n" +
@@ -525,8 +525,8 @@ const file_sdodev_contracts_v1alpha1_outcome_proto_rawDesc = "" +
 	"\x17program_failure_signals\x18\x1a \x03(\tR\x15programFailureSignals\x12.\n" +
 	"\x13response_loops_used\x18\x1b \x01(\x05R\x11responseLoopsUsed\x126\n" +
 	"\x17response_loop_exhausted\x18\x1c \x01(\bR\x15responseLoopExhausted\x12H\n" +
-	"\fdrift_events\x18\x1d \x03(\v2%.sdodev.contracts.v1alpha1.DriftEventR\vdriftEvents\x12;\n" +
-	"\x0fresolution_path\x18\x1e \x01(\tB\x12\xbaH\x0fr\rR\x00R\tresponderR\x0eresolutionPath\x12g\n" +
+	"\fdrift_events\x18\x1d \x03(\v2%.sdodev.contracts.v1alpha1.DriftEventR\vdriftEvents\x12J\n" +
+	"\x0fresolution_path\x18\x1e \x01(\tB!\xbaH\x1er\x1cR\x00R\tresponderR\rdeterministicR\x0eresolutionPath\x12g\n" +
 	"\x16reflection_eligibility\x18\" \x01(\v20.sdodev.contracts.v1alpha1.ReflectionEligibilityR\x15reflectionEligibility\x12X\n" +
 	"\x11playbook_coverage\x18# \x01(\v2+.sdodev.contracts.v1alpha1.PlaybookCoverageR\x10playbookCoverage\x12I\n" +
 	"\fprior_stages\x18$ \x03(\v2&.sdodev.contracts.v1alpha1.StageReportR\vpriorStages\x12I\n" +

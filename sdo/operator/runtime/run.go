@@ -181,6 +181,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			"in job mode and to disabled in local mode; \"off\" disables it",
 	)
 	duration := flags.Duration("duration", 0, "bounded controller duration; zero runs until cancellation")
+	responseStages := flags.String("response-stages", "deterministic,agent", "ordered incident response stages; agent alone preserves baseline")
 	responseTimeout := flags.Duration("response-timeout", 30*time.Minute, "incident responder timeout")
 	verificationTimeout := flags.Duration(
 		"verification-timeout",
@@ -674,7 +675,8 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	}
 	controller, err = NewController(ControllerConfig{
 		Application: *application, Namespace: *namespace,
-		SourceCommit: resolvedSourceCommit, DeployedCommit: resolvedDeployedCommit,
+		ResponseStages: strings.Split(*responseStages, ","),
+		SourceCommit:   resolvedSourceCommit, DeployedCommit: resolvedDeployedCommit,
 		RepositoryWorktree: resolvedRoot, ResponseTimeout: *responseTimeout,
 		CorpusSessionRoot:      corpusSessionRoot,
 		VerificationTimeout:    *verificationTimeout,

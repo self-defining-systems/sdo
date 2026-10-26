@@ -193,3 +193,35 @@ def test_many_finding_summary_keeps_unexplained_counts_and_complete_facts() -> N
         assert len(coverage["unexplained_finding_fingerprints"]) + coverage["unexplained_findings_omitted"] == 100
         details = Path(rendered.split("Full incident facts: ", 1)[1].splitlines()[0])
         assert len(json.loads(details.read_text())["findings"]) == 100
+
+
+def test_prior_stage_summary_stays_inline_and_full_receipt_stays_in_private_facts() -> None:
+    from sdo.contracts import StageReport
+
+    request = _request()
+    stage = StageReport(stage="deterministic", remaining_finding_fingerprints=["finding-1"])
+    mitigation = stage.mitigations.add(
+        playbook_id="restore-port",
+        program_revision="accepted-revision",
+        plan_id="plan-1",
+        result="applied_cleared",
+        cleared_finding_fingerprints=["finding-0"],
+    )
+    mitigation.apply_receipt.application_id = "apply-1"
+    mitigation.apply_receipt.applied = True
+    mitigation.apply_receipt.plan.rationale = "full receipt evidence " * 4000
+    mitigation.post_apply_diagnose.verdict.result = Verdict.RESULT_NO_MATCH
+    request.prior_stages.append(stage)
+
+    with prepared_incident_data(request) as rendered:
+        inline = json.loads(rendered.split("\n", 1)[1])
+        prior = inline["prior_stages"][0]
+        assert prior["mitigations"][0]["result"] == "applied_cleared"
+        assert prior["mitigations"][0]["apply_receipt"]["application_id"] == "apply-1"
+        assert prior["remaining_finding_fingerprints"] == ["finding-1"]
+        assert "full receipt evidence" not in rendered
+        full = json.loads(Path(inline["details_file"]).read_text())
+        assert full["prior_stages"][0]["mitigations"][0]["apply_receipt"]["plan"]["rationale"].startswith(
+            "full receipt evidence"
+        )
+        assert len(rendered) <= MAX_INCIDENT_SUMMARY_CHARS

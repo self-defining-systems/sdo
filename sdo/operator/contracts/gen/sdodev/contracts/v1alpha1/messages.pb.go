@@ -3316,6 +3316,7 @@ type StageReport struct {
 	Mitigations                  []*StageMitigation     `protobuf:"bytes,2,rep,name=mitigations,proto3" json:"mitigations,omitempty"`
 	RemainingFindingFingerprints []string               `protobuf:"bytes,3,rep,name=remaining_finding_fingerprints,json=remainingFindingFingerprints,proto3" json:"remaining_finding_fingerprints,omitempty"`
 	Error                        string                 `protobuf:"bytes,4,opt,name=error,proto3" json:"error,omitempty"`
+	ClearedFindingFingerprints   []string               `protobuf:"bytes,5,rep,name=cleared_finding_fingerprints,json=clearedFindingFingerprints,proto3" json:"cleared_finding_fingerprints,omitempty"`
 	unknownFields                protoimpl.UnknownFields
 	sizeCache                    protoimpl.SizeCache
 }
@@ -3376,6 +3377,13 @@ func (x *StageReport) GetError() string {
 		return x.Error
 	}
 	return ""
+}
+
+func (x *StageReport) GetClearedFindingFingerprints() []string {
+	if x != nil {
+		return x.ClearedFindingFingerprints
+	}
+	return nil
 }
 
 type StageMitigation struct {
@@ -3779,7 +3787,7 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	" \x01(\bR\n" +
 	"reversible\x12\x90\x01\n" +
 	"\x0efailure_reason\x18\v \x01(\tBi\xbaHfrdR\x00R\x14authorization_deniedR\x10execution_failedR\x14delete_not_confirmedR\x0foutcome_unknownR\x11incident_verifiedR\rfailureReason:n\xbaHk\x1ai\n" +
-	"\x15repair_action.ordered\x12*completed_at must not be before started_at\x1a$this.completed_at >= this.started_at\"\x8a\x0f\n" +
+	"\x15repair_action.ordered\x12*completed_at must not be before started_at\x1a$this.completed_at >= this.started_at\"\x99\x0f\n" +
 	"\x0eIncidentResult\x12>\n" +
 	"\x0eschema_version\x18\x01 \x01(\tB\x17\xbaH\x14r\x12\n" +
 	"\x10sdo.dev/v1alpha1R\rschemaVersion\x12(\n" +
@@ -3804,8 +3812,8 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	"\x11plan_applications\x18\x12 \x03(\v2*.sdodev.contracts.v1alpha1.PlanApplicationR\x10planApplications\x12.\n" +
 	"\x13response_loops_used\x18\x13 \x01(\x05R\x11responseLoopsUsed\x126\n" +
 	"\x17response_loop_exhausted\x18\x14 \x01(\bR\x15responseLoopExhausted\x126\n" +
-	"\x17program_failure_signals\x18\x15 \x03(\tR\x15programFailureSignals\x12;\n" +
-	"\x0fresolution_path\x18\x16 \x01(\tB\x12\xbaH\x0fr\rR\x00R\tresponderR\x0eresolutionPath\x12H\n" +
+	"\x17program_failure_signals\x18\x15 \x03(\tR\x15programFailureSignals\x12J\n" +
+	"\x0fresolution_path\x18\x16 \x01(\tB!\xbaH\x1er\x1cR\x00R\tresponderR\rdeterministicR\x0eresolutionPath\x12H\n" +
 	"\fdrift_events\x18\x1a \x03(\v2%.sdodev.contracts.v1alpha1.DriftEventR\vdriftEvents\x12S\n" +
 	"\x13unresolved_findings\x18\x1b \x03(\v2\".sdodev.contracts.v1alpha1.FindingR\x12unresolvedFindings:\xad\x01\xbaH\xa9\x01\x1a\xa6\x01\n" +
 	"\x1fresult.unique_repair_action_ids\x12 repair action IDs must be unique\x1aathis.repair_actions.all(a, this.repair_actions.filter(b, b.action_id == a.action_id).size() == 1)B\x17\n" +
@@ -3877,12 +3885,13 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	" verified_while_responder_running\x18\x16 \x01(\bR\x1dverifiedWhileResponderRunning\x12S\n" +
 	"\x18closure_stability_window\x18\x17 \x01(\v2\x19.google.protobuf.DurationR\x16closureStabilityWindowB\x11\n" +
 	"\x0f_dispatch_errorB\x14\n" +
-	"\x12_health_cleared_atJ\x04\b\x10\x10\x11J\x04\b\x11\x10\x12J\x04\b\x12\x10\x13R\x16observed_state_changesR\x1bdetector_review_required_atR\x16detector_review_reason\"\xd6\x01\n" +
+	"\x12_health_cleared_atJ\x04\b\x10\x10\x11J\x04\b\x11\x10\x12J\x04\b\x12\x10\x13R\x16observed_state_changesR\x1bdetector_review_required_atR\x16detector_review_reason\"\x98\x02\n" +
 	"\vStageReport\x12\x1d\n" +
 	"\x05stage\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x05stage\x12L\n" +
 	"\vmitigations\x18\x02 \x03(\v2*.sdodev.contracts.v1alpha1.StageMitigationR\vmitigations\x12D\n" +
 	"\x1eremaining_finding_fingerprints\x18\x03 \x03(\tR\x1cremainingFindingFingerprints\x12\x14\n" +
-	"\x05error\x18\x04 \x01(\tR\x05error\"\xe1\x06\n" +
+	"\x05error\x18\x04 \x01(\tR\x05error\x12@\n" +
+	"\x1ccleared_finding_fingerprints\x18\x05 \x03(\tR\x1aclearedFindingFingerprints\"\xe1\x06\n" +
 	"\x0fStageMitigation\x12(\n" +
 	"\vplaybook_id\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\n" +
 	"playbookId\x12)\n" +

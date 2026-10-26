@@ -43,7 +43,7 @@ message OutcomeRecord {
   int32 response_loops_used = 27;
   bool response_loop_exhausted = 28;
   repeated DriftEvent drift_events = 29;
-  string resolution_path = 30 [(buf.validate.field).string = {in: ["", "responder"]}];
+  string resolution_path = 30 [(buf.validate.field).string = {in: ["", "responder", "deterministic"]}];
   reserved 31;
   reserved 32;
   reserved 33;

@@ -26,3 +26,44 @@ func TestResponsePipelineStopsWhenFindingsClear(t *testing.T) {
 		t.Fatalf("pipeline: %+v, %v, calls %d/%d", state, err, first, second)
 	}
 }
+
+func TestResponseStageConfigSelectsBaselineAndRejectsAmbiguity(t *testing.T) {
+	for _, names := range [][]string{{"agent"}, {"deterministic", "agent"}, {"deterministic"}} {
+		if _, err := responseStageNames(names); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, names := range [][]string{{""}, {"agent", "agent"}, {"trust-gate"}} {
+		if _, err := responseStageNames(names); err == nil {
+			t.Fatalf("accepted stages %v", names)
+		}
+	}
+	defaults, err := responseStageNames(nil)
+	if err != nil || len(defaults) != 2 || defaults[0] != "deterministic" || defaults[1] != "agent" {
+		t.Fatalf("default stages %v: %v", defaults, err)
+	}
+}
+
+func TestResponseStageAgentOnlyPreservesExactDispatchContract(t *testing.T) {
+	dispatcher := &recordingDispatcher{requests: make(chan IncidentRequest, 1)}
+	controller := &Controller{config: ControllerConfig{ResponseStages: []string{"agent"}}, dispatcher: dispatcher}
+	request := goldenRequest(t)
+	request.PreparedAgentTask = "frozen-original-task"
+	expected := completedResult(request.IncidentID)
+	result, reports, err := controller.runResponsePipeline(context.Background(), request)
+	got := <-dispatcher.requests
+	if err != nil || len(reports) != 0 || !sameIncidentRequest(got, request) || result.Status != expected.Status || result.IncidentID != expected.IncidentID {
+		t.Fatalf("baseline changed: request=%+v, result=%+v, reports=%v, err=%v", got, result, reports, err)
+	}
+}
+
+func TestResponseStageMergesOverlappingFindingCausesWithoutLosingResources(t *testing.T) {
+	a := sdk.ObjectRef{Kind: "Service", Namespace: "app", Name: "a"}
+	b := sdk.ObjectRef{Kind: "Deployment", Namespace: "app", Name: "b"}
+	c := sdk.ObjectRef{Kind: "Service", Namespace: "app", Name: "c"}
+	causes := []ConfirmedRootCause{{Summary: "first", Resources: []sdk.ObjectRef{a, b}, ExplainedDetectors: []string{"one"}}}
+	causes = mergeStageCause(causes, ConfirmedRootCause{Summary: "second", Resources: []sdk.ObjectRef{b, c}, ExplainedDetectors: []string{"two"}})
+	if len(causes) != 1 || len(causes[0].Resources) != 3 || len(causes[0].ExplainedDetectors) != 2 {
+		t.Fatalf("lost or multiply owned stage cause: %+v", causes)
+	}
+}

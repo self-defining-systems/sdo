@@ -406,7 +406,7 @@ message IncidentResult {
   int32 response_loops_used = 19;
   bool response_loop_exhausted = 20;
   repeated string program_failure_signals = 21;
-  string resolution_path = 22 [(buf.validate.field).string = {in: ["", "responder"]}];
+  string resolution_path = 22 [(buf.validate.field).string = {in: ["", "responder", "deterministic"]}];
   reserved 23;
   reserved 24;
   reserved 25;
@@ -500,6 +500,7 @@ message StageReport {
   repeated StageMitigation mitigations = 2;
   repeated string remaining_finding_fingerprints = 3;
   string error = 4;
+  repeated string cleared_finding_fingerprints = 5;
 }
 
 message StageMitigation {

@@ -123,7 +123,10 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="sdo",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="Examples (replace names with incident resources):\n  " + "\n  ".join(CLI_EXAMPLES),
+        epilog="Earlier stages’ actions and results are in prior_stages. "
+        "Build on them; do not repeat verified repairs. "
+        "The complete incident facts retain apply receipts and post-apply diagnoses.\n\n"
+        "Examples (replace names with incident resources):\n  " + "\n  ".join(CLI_EXAMPLES),
     )
     commands = parser.add_subparsers(dest="command", required=True)
     parser.add_argument(

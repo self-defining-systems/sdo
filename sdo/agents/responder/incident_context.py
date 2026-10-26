@@ -19,7 +19,7 @@ MAX_INCIDENT_SUMMARY_CHARS = 5000
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-    from sdo.contracts import IncidentRequest
+    from sdo.contracts import IncidentRequest, StageReport
 
 
 def incident_data_view(request: IncidentRequest) -> dict[str, Any]:
@@ -64,6 +64,34 @@ def incident_data_view(request: IncidentRequest) -> dict[str, Any]:
     return document
 
 
+def prior_stage_summary(reports: list[StageReport]) -> list[dict[str, Any]]:
+    """Project typed controller evidence without repeating executable plan bodies."""
+    summaries = []
+    for report in reports:
+        stage = json_format.MessageToDict(report, preserving_proto_field_name=True)
+        mitigations = []
+        for attempt in report.mitigations:
+            item = json_format.MessageToDict(attempt, preserving_proto_field_name=True)
+            receipt = item.get("apply_receipt")
+            if receipt is not None:
+                item["apply_receipt"] = {
+                    key: receipt[key]
+                    for key in ("application_id", "applied", "rolled_back", "error", "rollout_pending")
+                    if key in receipt
+                }
+            diagnosis = item.get("post_apply_diagnose")
+            if diagnosis is not None:
+                item["post_apply_diagnose"] = {
+                    key: diagnosis[key]
+                    for key in ("program_id", "program_revision", "verdict", "error")
+                    if key in diagnosis
+                }
+            mitigations.append(item)
+        stage["mitigations"] = mitigations
+        summaries.append(stage)
+    return summaries
+
+
 def render_incident_data(request: IncidentRequest) -> str:
     """Render the complete projection; production uses prepared_incident_data for its cap."""
     return _render_data(incident_data_view(request))
@@ -101,11 +129,13 @@ def prepared_incident_data(request: IncidentRequest) -> Iterator[str]:
         facts = write_json(document, command="incident", incident_id=request.incident_id)
         stack.callback(facts.unlink, missing_ok=True)
         inline = {**document, "details_file": str(facts)}
+        if request.prior_stages:
+            inline["prior_stages"] = prior_stage_summary(list(request.prior_stages))
         rendered = _render_data(inline)
         if len(rendered) <= MAX_INCIDENT_SUMMARY_CHARS:
             yield rendered
             return
-        summary = dict(document)
+        summary = dict(inline)
         summary["supplemental_fields"] = []
         # Large live evidence remains complete in facts. Its presence must not
         # hide finding identities, matched repairs or the local command surface.
@@ -170,4 +200,22 @@ def prepared_incident_data(request: IncidentRequest) -> Iterator[str]:
             },
             "incident_tools": document["incident_tools"],
         }
+        if request.prior_stages:
+            summary["prior_stages"] = [
+                {
+                    "stage": report.stage,
+                    "mitigations": [
+                        {
+                            "playbook_id": attempt.playbook_id[:100],
+                            "result": attempt.result,
+                            "skip_reason": attempt.skip_reason,
+                            "error": attempt.error[:160],
+                        }
+                        for attempt in report.mitigations[:4]
+                    ],
+                    "mitigations_omitted": max(0, len(report.mitigations) - 4),
+                    "remaining_finding_fingerprints": list(report.remaining_finding_fingerprints[:4]),
+                }
+                for report in request.prior_stages[:2]
+            ]
         yield _render_summary(summary, str(facts))
