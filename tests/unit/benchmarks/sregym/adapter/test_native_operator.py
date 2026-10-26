@@ -212,7 +212,7 @@ def test_incident_evidence_requires_correlated_native_ledger(
 
 
 @pytest.mark.parametrize("job_name", ["sdo-incident-1-hash", "sdo-standby-bound-identity"])
-def test_collect_native_receipt_binds_go_ledger_to_cluster_job_and_pod(
+def test_collect_native_receipt_survives_retired_responder_job(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     job_name: str,
@@ -228,10 +228,17 @@ def test_collect_native_receipt_binds_go_ledger_to_cluster_job_and_pod(
             payload: object = {
                 "incident_id": "incident-1",
                 "responder_job_name": job_name,
-                "ledger": _ledger(),
+                "ledger": {
+                    **_ledger(),
+                    "closure": {
+                        **_ledger()["closure"],
+                        "dispatched_at": "2026-10-18T03:00:00Z",
+                        "responder_completed_at": "2026-10-18T03:01:00Z",
+                    },
+                },
             }
         elif f"job/{job_name}" in command:
-            payload = {"metadata": {"uid": "worker-uid"}, "status": {"succeeded": 1}}
+            raise AssertionError("receipt queried a retired responder Job")
         elif "job/sdo-controller-run" in command:
             payload = {"metadata": {"uid": "controller-job-uid"}}
         else:
@@ -253,34 +260,8 @@ def test_collect_native_receipt_binds_go_ledger_to_cluster_job_and_pod(
     receipt = collect_native_receipt(replace(_install(tmp_path), namespace="demo"), "incident-1")
     assert receipt["schema_version"] == "sdo.production-receipt/v2"
     assert receipt["controller_pod_uid"] == "controller-uid"
-    assert receipt["responder_job_evidence"] == [
-        {"incident_id": "incident-1", "job_name": job_name, "job_uid": "worker-uid", "succeeded": True}
-    ]
-    assert any(f"job/{job_name}" in call for call in calls)
-
-
-def test_collect_native_receipt_rejects_missing_successful_worker_job(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from tests.unit.benchmarks.sregym.protocol.test_native_receipt import _ledger
-
-    monkeypatch.setenv("SDO_OPERATOR_BIN", "/tmp/sdo-operator")
-
-    def run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
-        if command[0] == "/tmp/sdo-operator":
-            payload: object = {
-                "incident_id": "incident-1",
-                "responder_job_name": "sdo-incident-1-hash",
-                "ledger": _ledger(),
-            }
-        else:
-            payload = {"metadata": {"uid": "worker-uid"}, "status": {"failed": 1}}
-        return subprocess.CompletedProcess(command, 0, json.dumps(payload), "")
-
-    monkeypatch.setattr(subprocess, "run", run)
-    with pytest.raises(NativeOperatorError, match="durably successful"):
-        collect_native_receipt(replace(_install(tmp_path), namespace="demo"), "incident-1")
+    assert receipt["responder_job_evidence"] == []
+    assert not any(f"job/{job_name}" in call for call in calls)
 
 
 def test_runtime_artifacts_export_is_go_owned(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

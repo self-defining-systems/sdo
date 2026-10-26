@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from benchmarks.sregym.fastloop import admission, cli, rbac
+from benchmarks.sregym.fastloop import admission, cli, hotel_helpers, rbac
 
 
 @pytest.fixture
@@ -36,6 +36,7 @@ def lane(tmp_path, monkeypatch):
         environment, SimpleNamespace(request=request), SimpleNamespace(runtime_state=state), tmp_path / "admission"
     )
     monkeypatch.setattr(rbac, "verify_rbac", lambda *args: {"passed": True})
+    monkeypatch.setattr(hotel_helpers, "admit_install", lambda *args: {"passed": True, "profile": "ABSENT"})
     monkeypatch.setattr(admission, "workload_identity", lambda *args: {"Deployment/app": {"generation": 1}})
     monkeypatch.setattr(admission, "assert_clean_baseline", lambda *args, **kwargs: None)
     monkeypatch.setattr(

@@ -154,7 +154,7 @@ def test_traffic_start_removes_orphan_legacy_pods_after_harness_creation(monkeyp
 
 
 def run_bridge(monkeypatch: Any, requests: list[dict[str, Any]], api: API) -> list[dict[str, Any]]:
-    from benchmarks.sregym.fastloop import worker_bridge
+    from benchmarks.sregym.fastloop import hotel_helpers, worker_bridge
 
     class Worker:
         def _problem_factory(self, _problem_id: str) -> Any:
@@ -178,6 +178,10 @@ def run_bridge(monkeypatch: Any, requests: list[dict[str, Any]], api: API) -> li
             assert api.objects == [], "grading must not admit injected leftovers"
             return {"success": True}
 
+    # Existing cleanup fixtures isolate injected-object ownership. Helper policy
+    # has its own worker-boundary fixtures in test_hotel_helpers.py.
+    monkeypatch.setattr(hotel_helpers, "prepare_install", lambda *args: None)
+    requests = [{**request, "baseline_path": "synthetic-baseline.json"} for request in requests]
     worker = Worker()
     module = SimpleNamespace(FastloopWorker=Worker, main=lambda: [worker.handle(request) for request in requests])
     monkeypatch.setenv("KUBECONFIG", "synthetic-kubeconfig")

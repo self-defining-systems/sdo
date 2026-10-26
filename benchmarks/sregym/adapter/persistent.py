@@ -295,6 +295,11 @@ class ClusterOps(Protocol):
 class KubectlClusterOps:
     """Production implementation over kubectl and the SDO controller installer."""
 
+    def __init__(self, *, preserve_applications: bool = True) -> None:
+        if not isinstance(preserve_applications, bool):
+            raise TypeError("preserve_applications must be bool")
+        self.preserve_applications = preserve_applications
+
     def controller_pod(self, control_namespace: str) -> ControllerPod | None:
         completed = kubectl(
             [
@@ -358,6 +363,8 @@ class KubectlClusterOps:
 
     def abort_workload(self, target: CleanupTarget) -> None:
         self.stop_transport(target)
+        if self.preserve_applications:
+            return
         config = Path(target.kubeconfig) if target.kubeconfig else None
         if target.namespace == target.control_namespace:
             raise PersistentControllerError("refusing to delete an application namespace containing accepted memory")
@@ -384,6 +391,8 @@ class KubectlClusterOps:
             ),
             (None, [f"namespace/{target.namespace}"]),
         ):
+            if namespace is None and self.preserve_applications:
+                continue
             response = kubectl(
                 ["get", *names, "--ignore-not-found=true", "-o", "name"], namespace=namespace, kubeconfig=config
             )
@@ -1268,6 +1277,11 @@ def abort(state_path: Path, *, ops: AbortClusterOps) -> list[str]:
         errors = [f"host helper cleanup failed: {exc}"]
     state_path = state_path.resolve()
     state = PersistentState.load(state_path)
+    try:
+        with state_path.with_name(state_path.name + ".abort-evidence.json").open("x", encoding="utf-8") as evidence:
+            evidence.write(state.model_dump_json(indent=2) + "\n")
+    except FileExistsError:
+        pass  # A retry must retain the original pending-incident evidence.
     targets = dict(state.cleanup_targets)
     for namespace, record in state.controllers.items():
         targets[namespace] = CleanupTarget(

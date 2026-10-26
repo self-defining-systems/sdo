@@ -59,6 +59,32 @@ func TestReceiptBuildAndValidation(t *testing.T) {
 	}
 }
 
+func TestReceiptSurvivesResponderRetirement(t *testing.T) {
+	r := fixture()
+	r.ResponderJobEvidence = nil
+	closure := r.NativeLedger.Closure
+	closure.DispatchedAt, closure.ResponderCompletedAt = closure.VerifiedAt, closure.VerifiedAt
+	if got := Evaluate(encoded(t, r), true); got.GetFailure() != nil {
+		t.Fatal(got.GetFailure())
+	}
+	for name, mutate := range map[string]func(*c.IncidentClosure){
+		"missing dispatch":   func(c *c.IncidentClosure) { c.DispatchedAt = nil },
+		"missing completion": func(c *c.IncidentClosure) { c.ResponderCompletedAt = nil },
+		"reversed lifecycle": func(c *c.IncidentClosure) {
+			c.DispatchedAt = timestamppb.New(c.ResponderCompletedAt.AsTime().Add(time.Second))
+		},
+		"failed result": func(c *c.IncidentClosure) { c.Result.Status = "failed" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			bad := proto.Clone(r).(*c.NativeProductionReceipt)
+			mutate(bad.NativeLedger.Closure)
+			if got := Evaluate(encoded(t, bad), true); got.GetFailure() == nil {
+				t.Fatal("accepted retired worker without a valid durable lifecycle")
+			}
+		})
+	}
+}
+
 func TestReceiptRejectsConflictingEvidence(t *testing.T) {
 	cases := map[string]func(*c.NativeProductionReceipt){
 		"partial":        func(r *c.NativeProductionReceipt) { r.NativeLedger.OutcomeDocument.Classification = "partial" },
