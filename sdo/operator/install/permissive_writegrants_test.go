@@ -137,3 +137,30 @@ func TestPermissiveResponderWritesQuotasAndLimitRanges(t *testing.T) {
 		}
 	}
 }
+
+func TestPermissiveResponderEditsOnlyAdmittedNamespaces(t *testing.T) {
+	cfg := testConfig()
+	cfg.PermissiveResponder = true
+	cfg.ResponderNamespaces = []string{"policy-system"}
+	plan, err := Resources(cfg, builtinNamespacedKinds()...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var edits []rbacv1.PolicyRule
+	for _, r := range plan.ClusterRoles {
+		if r.Name != permissiveGrantName("demo-sdo") {
+			continue
+		}
+		for _, rule := range r.Rules {
+			if slices.Contains(rule.Resources, "namespaces") && slices.Contains(rule.Verbs, "patch") {
+				edits = append(edits, rule)
+			}
+		}
+	}
+	if len(edits) != 1 {
+		t.Fatalf("want one namespace edit rule, got %v", edits)
+	}
+	if !slices.Equal(edits[0].ResourceNames, []string{"demo", "policy-system"}) || !slices.Equal(edits[0].Verbs, []string{"update", "patch"}) {
+		t.Errorf("namespace edits must be update/patch on the admitted namespaces by name, got %+v", edits[0])
+	}
+}

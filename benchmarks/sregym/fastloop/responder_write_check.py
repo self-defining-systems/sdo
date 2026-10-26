@@ -23,6 +23,9 @@ from typing import Any
 from benchmarks.sregym.adapter import kubectl
 
 WRITE_VERBS = ("create", "update", "patch", "delete")
+# A fault's Namespace is edited (labels such as Pod Security), never created or
+# deleted by the repair.
+NEEDED_VERBS: dict[str, tuple[str, ...]] = {"Namespace": ("update", "patch")}
 
 # footprint kind -> (API group, resource, namespaced). A kind missing here is an
 # error: a new fault object needs an explicit grant decision.
@@ -52,7 +55,6 @@ WITHHELD_BY_DESIGN: dict[str, str] = {
     "ServiceAccount": "identity kind: never granted to the responder",
     "ClusterRole": "RBAC escalation kind: never granted to the responder",
     "ClusterRoleBinding": "RBAC escalation kind: never granted to the responder",
-    "Namespace": "cluster lifecycle: the fault's backend namespace is not repaired by deleting it",
 }
 
 APP_NAMESPACES = {
@@ -99,9 +101,10 @@ class Row:
     denied_verbs: tuple[str, ...]
     status: str  # "ok", "withheld" or "GAP"
     reason: str
+    name: str = ""
 
 
-Allowed = Callable[[str, str, str, str], bool]  # (namespace, group, resource, verb)
+Allowed = Callable[[str, str, str, str, str], bool]  # (namespace, group, resource, verb, name)
 
 
 def fault_objects(plan: Path) -> list[FaultObject]:
@@ -120,20 +123,24 @@ def fault_objects(plan: Path) -> list[FaultObject]:
 
 
 def check(objects: Iterable[FaultObject], allowed: Allowed) -> list[Row]:
-    grouped: dict[tuple[str, str], set[str]] = {}
+    # Grants can be named (Namespace edits are limited to admitted names), so a
+    # Namespace is checked per name; other kinds share one row per scope.
+    grouped: dict[tuple[str, str, str], set[str]] = {}
     for obj in objects:
-        grouped.setdefault((obj.kind, obj.namespace), set()).add(obj.fault)
+        name = obj.name if obj.kind == "Namespace" else ""
+        grouped.setdefault((obj.kind, obj.namespace, name), set()).add(obj.fault)
     rows = []
-    for (kind, namespace), faults in sorted(grouped.items()):
+    for (kind, namespace, name), faults in sorted(grouped.items()):
         group, resource, _ = KIND_RESOURCES[kind]
-        denied = tuple(verb for verb in WRITE_VERBS if not allowed(namespace, group, resource, verb))
+        verbs = NEEDED_VERBS.get(kind, WRITE_VERBS)
+        denied = tuple(verb for verb in verbs if not allowed(namespace, group, resource, verb, name))
         if not denied:
             status, reason = "ok", ""
         elif kind in WITHHELD_BY_DESIGN:
             status, reason = "withheld", WITHHELD_BY_DESIGN[kind]
         else:
             status, reason = "GAP", "responder cannot write a kind a fault creates or mutates"
-        rows.append(Row(kind, group, resource, namespace, tuple(sorted(faults)), denied, status, reason))
+        rows.append(Row(kind, group, resource, namespace, tuple(sorted(faults)), denied, status, reason, name))
     return rows
 
 
@@ -143,7 +150,7 @@ def render(rows: list[Row]) -> str:
         faults = ", ".join(row.faults)
         reason = f" ({row.reason})" if row.reason else ""
         lines.append(
-            f"{row.kind} | {row.namespace or 'cluster'} | {','.join(row.denied_verbs) or '-'} | {row.status}{reason} | {faults}"
+            f"{row.kind}{'/' + row.name if row.name else ''} | {row.namespace or 'cluster'} | {','.join(row.denied_verbs) or '-'} | {row.status}{reason} | {faults}"
         )
     return "\n".join(lines)
 
@@ -161,10 +168,12 @@ def subject_access_review(
     user = f"system:serviceaccount:{control_namespace}:sdo-responder"
     groups = ["system:serviceaccounts", f"system:serviceaccounts:{control_namespace}", "system:authenticated"]
 
-    def allowed(namespace: str, group: str, resource: str, verb: str) -> bool:
+    def allowed(namespace: str, group: str, resource: str, verb: str, name: str = "") -> bool:
         attributes: dict[str, str] = {"verb": verb, "group": group, "resource": resource}
         if namespace:
             attributes["namespace"] = namespace
+        if name:
+            attributes["name"] = name
         review = {
             "apiVersion": "authorization.k8s.io/v1",
             "kind": "SubjectAccessReview",
@@ -187,7 +196,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--kubeconfig", type=Path, required=True)
     parser.add_argument("--control-namespace", required=True, help="namespace of the sdo-responder ServiceAccount")
     args = parser.parse_args(argv)
-    rows = check(fault_objects(args.plan), subject_access_review(args.kubeconfig, control_namespace=args.control_namespace))
+    rows = check(
+        fault_objects(args.plan), subject_access_review(args.kubeconfig, control_namespace=args.control_namespace)
+    )
     print(render(rows))
     return 1 if gaps(rows) else 0
 

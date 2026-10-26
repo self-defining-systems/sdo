@@ -89,6 +89,10 @@ func addPermissiveGrants(c Config, p *Plan, resources []*metav1.APIResourceList)
 		p.AppRoles = append(p.AppRoles, role(ns, name, rules))
 		p.AppBindings = append(p.AppBindings, binding(ns, name, "sdo-responder", c.controlNamespace()))
 	}
+	// Namespace labels carry Pod Security and similar policy, so a repair can need
+	// to edit them. Reads stay cluster-wide; edits are limited to admitted
+	// namespaces by name (create and delete stay withheld).
+	clusterRules = append(clusterRules, namespaceEditRule(slices.Compact(slices.Clone(namespaces))))
 	clusterRules = append(clusterRules, rule("admissionregistration.k8s.io", []string{"mutatingwebhookconfigurations", "validatingwebhookconfigurations"}, "get", "list", "watch", "create", "update", "patch", "delete"))
 	p.ClusterRoles = append(p.ClusterRoles, &rbacv1.ClusterRole{ObjectMeta: metav1.ObjectMeta{Name: name}, Rules: clusterRules}, &rbacv1.ClusterRole{ObjectMeta: metav1.ObjectMeta{Name: permissiveReadGrantName(c.controlNamespace())}, Rules: readRules})
 	addPermissiveReadBindings(c, p, namespaces)
@@ -98,6 +102,12 @@ func addPermissiveGrants(c Config, p *Plan, resources []*metav1.APIResourceList)
 		Subjects:   []rbacv1.Subject{{Kind: "ServiceAccount", Name: "sdo-responder", Namespace: c.controlNamespace()}},
 	})
 	return nil
+}
+
+func namespaceEditRule(names []string) rbacv1.PolicyRule {
+	r := rule("", []string{"namespaces"}, "update", "patch")
+	r.ResourceNames = slices.Clone(names)
+	return r
 }
 
 // permissiveKind is one reviewed namespaced kind. Discovery cannot authorize

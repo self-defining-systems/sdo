@@ -32,7 +32,10 @@ def api_server(rules: list[dict]):
         assert spec["user"] == "system:serviceaccount:app-sdo:sdo-responder"
         attrs = spec["resourceAttributes"]
         allowed = any(
-            attrs["group"] in rule["groups"] and attrs["resource"] in rule["resources"] and attrs["verb"] in rule["verbs"]
+            attrs["group"] in rule["groups"]
+            and attrs["resource"] in rule["resources"]
+            and attrs["verb"] in rule["verbs"]
+            and (not rule.get("names") or attrs.get("name") in rule["names"])
             for rule in rules
         )
         return SimpleNamespace(stdout=json.dumps({"status": {"allowed": allowed}}))
@@ -40,8 +43,11 @@ def api_server(rules: list[dict]):
     return run
 
 
-def rules(resources: list[tuple[str, str]], verbs=check.WRITE_VERBS) -> list[dict]:
-    return [{"groups": [group], "resources": [resource], "verbs": list(verbs)} for group, resource in resources]
+def rules(resources: list[tuple[str, str]], verbs=check.WRITE_VERBS, names: list[str] | None = None) -> list[dict]:
+    return [
+        {"groups": [group], "resources": [resource], "verbs": list(verbs), "names": names or []}
+        for group, resource in resources
+    ]
 
 
 def plan_file(tmp_path: Path) -> Path:
@@ -54,28 +60,58 @@ def asks(rule_set: list[dict]) -> check.Allowed:
     return check.subject_access_review(Path("/dev/null"), control_namespace="app-sdo", run=api_server(rule_set))
 
 
-def test_missing_quota_write_is_a_reported_gap(tmp_path):
+NAMESPACE_EDITS = rules([("", "namespaces")], verbs=("update", "patch"), names=["policy-system"])
+
+
+def granted_without_quota() -> list[dict]:
     granted = rules([("apps", "deployments"), ("admissionregistration.k8s.io", "mutatingwebhookconfigurations")])
-    granted += rules([("", "resourcequotas")], verbs=("get", "list", "watch"))
-    rows = check.check(check.fault_objects(plan_file(tmp_path)), asks(granted))
-    gap = [row for row in check.gaps(rows)]
-    assert [(row.kind, row.namespace, row.denied_verbs) for row in gap] == [
+    return granted + NAMESPACE_EDITS + rules([("", "resourcequotas")], verbs=("get", "list", "watch"))
+
+
+def test_missing_quota_write_is_a_reported_gap(tmp_path):
+    rows = check.check(check.fault_objects(plan_file(tmp_path)), asks(granted_without_quota()))
+    assert [(row.kind, row.namespace, row.denied_verbs) for row in check.gaps(rows)] == [
         ("ResourceQuota", "hotel-reservation", check.WRITE_VERBS)
     ]
     assert "namespace_memory_limit" in check.render(rows)
 
 
-def test_granting_quota_writes_clears_the_gap_and_withheld_kinds_stay_listed(tmp_path):
-    granted = rules(
+def test_granting_quota_writes_clears_the_gap(tmp_path):
+    granted = granted_without_quota() + rules([("", "resourcequotas")])
+    assert check.gaps(check.check(check.fault_objects(plan_file(tmp_path)), asks(granted))) == []
+
+
+def test_namespace_edit_grant_is_checked_by_name(tmp_path):
+    objects = check.fault_objects(plan_file(tmp_path))
+    full = rules(
         [
             ("apps", "deployments"),
             ("", "resourcequotas"),
             ("admissionregistration.k8s.io", "mutatingwebhookconfigurations"),
         ]
     )
-    rows = check.check(check.fault_objects(plan_file(tmp_path)), asks(granted))
-    assert check.gaps(rows) == []
-    assert {row.kind: row.status for row in rows}["Namespace"] == "withheld"
+    elsewhere = rules([("", "namespaces")], verbs=("update", "patch"), names=["other"])
+    gap = check.gaps(check.check(objects, asks(full + elsewhere)))
+    assert [(row.kind, row.name, row.denied_verbs) for row in gap] == [
+        ("Namespace", "policy-system", ("update", "patch"))
+    ]
+
+
+def test_withheld_kinds_are_listed_apart_from_gaps(tmp_path):
+    path = tmp_path / "plan.json"
+    path.write_text(
+        json.dumps(
+            [
+                {
+                    "draws": [
+                        "FaultDraw(key='rotation', app='astronomy_shop', params=(), footprints=(Footprint(kind='Secret', name='s', field=None),))"
+                    ]
+                }
+            ]
+        )
+    )
+    rows = check.check(check.fault_objects(path), asks([]))
+    assert [(row.kind, row.status) for row in rows] == [("Secret", "withheld")] and check.gaps(rows) == []
 
 
 def test_cluster_scoped_kinds_are_asked_without_a_namespace(tmp_path):
