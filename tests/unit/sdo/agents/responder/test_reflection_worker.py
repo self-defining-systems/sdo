@@ -381,3 +381,108 @@ def test_registered_task_preserves_settled_work_in_actual_session_prompt(
     assert "leave the tree unchanged" not in prompt
     assert "skip validation" not in prompt
     assert prompt.count(reason) == 1
+
+
+def _task_path(tmp_path: Path, *, deadline: float | None = None) -> Path:
+    closure = _closure()
+    request = ReflectionRequest(closure=closure, outcome=_outcome(closure.request.incident_id), outcome_commit="c")
+    request.memory_snapshot.accepted_commit = "c"
+    task = AgentTask(
+        schema_version="sdo.dev/v1alpha1",
+        task_id="reflection-1",
+        agent_id="sdo-reflector",
+        task_type="outcome-reflection-direct-v1",
+        workspace={"proposal_id": "proposal-1", "checkout_path": str(tmp_path), "base_commit": "c"},
+    )
+    task.request.Pack(request)
+    if deadline is not None:
+        task.deadline.FromNanoseconds(int(deadline * 1e9))
+    path = tmp_path / "agent-task.json"
+    path.write_text(to_canonical_json(task), encoding="utf-8")
+    return path
+
+
+class FailingReflector:
+    def __init__(self, error: BaseException) -> None:
+        self.error = error
+
+    def resume(self, **_: object) -> ReflectionTurn:
+        raise self.error
+
+
+def _timed_out() -> RuntimeError:
+    from libs.agent_cli.structured import StructuredTurnTimeout
+
+    try:
+        raise StructuredTurnTimeout(451.02)
+    except StructuredTurnTimeout as exc:
+        try:
+            raise RuntimeError(f"codex reflection failed: {exc}") from exc
+        except RuntimeError as wrapped:
+            return wrapped
+
+
+@pytest.mark.parametrize(
+    ("error", "reason"),
+    [(_timed_out(), "agent_timeout"), (RuntimeError("model I/O exceeds 4194304 bytes"), "agent_failed")],
+)
+def test_failed_reflection_publishes_a_typed_reason_instead_of_failing_the_job(
+    tmp_path: Path, error: BaseException, reason: str
+) -> None:
+    publisher = Publisher()
+
+    run_reflection_task(_task_path(tmp_path), "result-map", publisher, reflector=FailingReflector(error))
+
+    assert publisher.payload is not None
+    result = parse_json(publisher.payload, AgentResult())
+    assert (result.status, result.failure_reason, result.error_summary) == ("failed", reason, str(error))
+    assert not result.HasField("response")
+
+
+def test_reflection_budget_ends_before_the_frozen_task_deadline(tmp_path: Path) -> None:
+    # The Job's active deadline and any claimed standby end no earlier than the task
+    # deadline, so an agent budget derived from it cannot be killed from outside first.
+    import time
+
+    from sdo.agents.responder.reflection import REFLECTION_RESULT_MARGIN_SECONDS, reflection_budget_seconds
+
+    deadline = time.time() + 1800
+    budgets: list[float] = []
+
+    class BudgetReflector(Reflector):
+        def resume(self, **kwargs: object) -> ReflectionTurn:
+            budgets.append(reflection_budget_seconds())
+            return super().resume(**kwargs)
+
+    run_reflection_task(_task_path(tmp_path, deadline=deadline), "result-map", Publisher(), reflector=BudgetReflector())
+
+    (budget,) = budgets
+    assert 1800 - REFLECTION_RESULT_MARGIN_SECONDS - 5 < budget <= 1800 - REFLECTION_RESULT_MARGIN_SECONDS
+
+
+def test_expired_task_deadline_is_a_typed_timeout(tmp_path: Path) -> None:
+    import time
+
+    from sdo.agents.responder.reflection import reflection_budget_seconds
+
+    class BudgetReflector(Reflector):
+        def resume(self, **kwargs: object) -> ReflectionTurn:
+            reflection_budget_seconds()
+            return super().resume(**kwargs)
+
+    publisher = Publisher()
+    run_reflection_task(
+        _task_path(tmp_path, deadline=time.time() + 60), "result-map", publisher, reflector=BudgetReflector()
+    )
+
+    assert publisher.payload is not None
+    assert parse_json(publisher.payload, AgentResult()).failure_reason == "agent_timeout"
+
+
+def test_reflection_default_budget_fits_the_controller_and_eval_deadlines() -> None:
+    from benchmarks.sregym.adapter.native_operator import NativeInstallConfig
+    from benchmarks.sregym.adapter.persistent import DRAIN_TIMEOUT_SECONDS
+    from sdo.agents.responder.reflection import DEFAULT_REFLECTION_SECONDS
+
+    response_timeout = NativeInstallConfig.__dataclass_fields__["response_timeout_seconds"].default
+    assert DEFAULT_REFLECTION_SECONDS < response_timeout < DRAIN_TIMEOUT_SECONDS

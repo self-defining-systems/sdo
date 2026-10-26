@@ -190,15 +190,18 @@ def test_worker_does_not_publish_persistently_rejected_memory(
             branch="reflection",
         )
     )
-    with pytest.raises(RuntimeError, match="reflection.program-required"):
-        run_reflection_task(
-            task_path,
-            "result",
-            Publisher(),
-            reflector=SessionReflector(CodexSessionBackend(executor=agent.executor)),
-        )
+    result = run_reflection_task(
+        task_path,
+        "result",
+        Publisher(),
+        reflector=SessionReflector(CodexSessionBackend(executor=agent.executor)),
+    )
     assert len(agent.requests) == 4  # initial turn plus three bounded in-session corrections
-    assert not published
+    # The rejected memory is never published; the controller receives a typed failure instead.
+    assert (result.status, result.failure_reason) == ("failed", "agent_failed")
+    assert not result.HasField("response")
+    assert "reflection.program-required" in result.error_summary
+    assert len(published) == 1
     assert all("reflection-session" in request.argv for request in agent.requests[1:])
 
 
