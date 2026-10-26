@@ -31,7 +31,7 @@ func TestDatabaseCatalogTransportProjectionAndCanaries(t *testing.T) {
 	t.Setenv("APP_PASSWORD", canary)
 	t.Setenv("ADMIN_PASSWORD", canary)
 	t.Setenv("ADMIN_USERNAME", canary)
-	for _, mode := range []string{"read", "ensure", "malformed", "denied", "missing-env"} {
+	for _, mode := range []string{"read", "ensure", "malformed", "denied", "missing-env", "authentication", "catalog-read", "client-binary", "duplicate-users"} {
 		t.Run(mode, func(t *testing.T) {
 			a := databaseAction()
 			a.Target.Auth = &program.DatabaseAuth{Database: "admin", Username: program.CredentialRef{Env: "ADMIN_USERNAME"}, Password: program.CredentialRef{Env: "ADMIN_PASSWORD"}}
@@ -97,6 +97,9 @@ func TestDatabaseCatalogTransportProjectionAndCanaries(t *testing.T) {
 				}
 				if output != nil {
 					body := `[{"name":"app","roles":[{"database":"app","name":"readWrite"}]}]`
+					if mode == "duplicate-users" {
+						body = `[{"name":"app","roles":[]},{"name":"app","roles":[]}]`
+					}
 					if mode == "malformed" {
 						body = `[{"name":"app","roles":[],"password":"` + canary + `"}]`
 					}
@@ -106,6 +109,11 @@ func TestDatabaseCatalogTransportProjectionAndCanaries(t *testing.T) {
 				exitStatus := metav1.Status{Status: metav1.StatusSuccess}
 				if mode == "missing-env" {
 					exitStatus = metav1.Status{Status: metav1.StatusFailure, Reason: "NonZeroExitCode", Message: canary, Details: &metav1.StatusDetails{Causes: []metav1.StatusCause{{Type: "ExitCode", Message: "43"}}}}
+				}
+				for step, code := range map[string]string{"authentication": "60", "catalog-read": "61", "client-binary": "127"} {
+					if mode == step {
+						exitStatus = metav1.Status{Status: metav1.StatusFailure, Reason: "NonZeroExitCode", Message: canary, Details: &metav1.StatusDetails{Causes: []metav1.StatusCause{{Type: "ExitCode", Message: code}}}}
+					}
 				}
 				_ = json.NewEncoder(status).Encode(exitStatus)
 				_ = status.Close()
@@ -132,7 +140,7 @@ func TestDatabaseCatalogTransportProjectionAndCanaries(t *testing.T) {
 					t.Fatalf("%+v", users)
 				}
 			}
-			if (err != nil) != (mode == "malformed" || mode == "denied" || mode == "missing-env") {
+			if (err != nil) != (mode != "read" && mode != "ensure") {
 				t.Fatalf("%v", err)
 			}
 			if mode == "missing-env" {
@@ -140,6 +148,15 @@ func TestDatabaseCatalogTransportProjectionAndCanaries(t *testing.T) {
 				if !errors.As(err, &refErr) || refErr.Reference.Env != "ADMIN_PASSWORD" {
 					t.Fatalf("missing env lacks typed reference: %v", err)
 				}
+			}
+			if mode == "authentication" || mode == "catalog-read" || mode == "client-binary" {
+				safe := databaseSafeError(err, "database catalog observation unavailable")
+				if !strings.Contains(safe.Error(), mode) {
+					t.Fatalf("failure step lost: %v", safe)
+				}
+			}
+			if (mode == "malformed" || mode == "duplicate-users") && !strings.Contains(databaseSafeError(err, "unavailable").Error(), "catalog-parse") {
+				t.Fatal("parse failure step lost")
 			}
 			if strings.Contains(fmt.Sprint(err), canary) {
 				t.Fatal("transport leaked excluded field or credential")

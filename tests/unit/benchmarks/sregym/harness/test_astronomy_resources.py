@@ -2,6 +2,7 @@
 
 import shutil
 import subprocess
+import tarfile
 from pathlib import Path
 
 import pytest
@@ -11,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[5]
 APPLICATIONS = ROOT / "third_party/sregym/SREGym-applications"
 OVERRIDES = ROOT / "third_party/sregym/sregym/service/metadata/astronomy-shop-resources.yaml"
 CHART = APPLICATIONS / "astronomy-shop/charts/opentelemetry-demo"
+DEPENDENCIES = ROOT / "tests/fixtures/benchmarks/astronomy-chart-dependencies"
 MINIMUM_PROXY_MEMORY_MIB = 192
 # Independent floors from LH's accepted 9/9 no-fault baseline (decision 287).
 PROVEN_LIMITS_MIB = {
@@ -66,13 +68,27 @@ def test_astronomy_proxy_override_preserves_proven_memory_floor() -> None:
     shutil.which("helm") is None or not (CHART / "Chart.yaml").exists(),
     reason="rendered contract requires Helm and the populated harness chart",
 )
-def test_astronomy_rendered_proxy_preserves_proven_memory_floor() -> None:
+def test_astronomy_rendered_proxy_preserves_proven_memory_floor(tmp_path: Path) -> None:
+    # Always start cold: local helm dependency builds must not affect this test.
+    chart = tmp_path / "opentelemetry-demo"
+    shutil.copytree(CHART, chart, ignore=shutil.ignore_patterns("charts"))
+    dependencies = yaml.safe_load((chart / "Chart.yaml").read_text())["dependencies"]
+    for dependency in dependencies:
+        name, version = dependency["name"], dependency["version"]
+        archive = DEPENDENCIES / f"{name}-{version}.tgz"
+        with tarfile.open(archive) as package:
+            metadata = package.extractfile(f"{name}/Chart.yaml")
+            assert metadata is not None
+            packaged = yaml.safe_load(metadata.read())
+        assert (packaged["name"], packaged["version"]) == (name, version)
+        (chart / "charts").mkdir(exist_ok=True)
+        shutil.copy2(archive, chart / "charts" / archive.name)
     rendered = subprocess.run(
         [
             "helm",
             "template",
             "astronomy-shop",
-            str(CHART),
+            str(chart),
             "--namespace",
             "astronomy-shop",
             "--values",
@@ -87,6 +103,8 @@ def test_astronomy_rendered_proxy_preserves_proven_memory_floor() -> None:
             "charts/opensearch/templates/statefulset.yaml",
             "--show-only",
             "charts/grafana/templates/deployment.yaml",
+            "--show-only",
+            "charts/opensearch/templates/configmap.yaml",
         ],
         check=True,
         capture_output=True,
@@ -109,3 +127,15 @@ def test_astronomy_rendered_proxy_preserves_proven_memory_floor() -> None:
         assert memory.endswith("Mi"), (name, memory)
         assert int(memory[:-2]) >= minimum, (name, memory, minimum)
     assert containers["opentelemetry-collector"]["resources"]["requests"]["memory"] == "200Mi"
+    configurations = [item for item in yaml.safe_load_all(rendered.stdout) if item and item.get("kind") == "ConfigMap"]
+    search_config = next(
+        item["data"]["opensearch.yml"] for item in configurations if "opensearch.yml" in item.get("data", {})
+    )
+    settings = yaml.safe_load(search_config)
+    assert {
+        key: settings[f"cluster.routing.allocation.disk.watermark.{key}"] for key in ("low", "high", "flood_stage")
+    } == {
+        "low": "130gb",
+        "high": "115gb",
+        "flood_stage": "100gb",
+    }

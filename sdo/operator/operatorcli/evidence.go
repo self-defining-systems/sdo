@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"sdo.dev/operator/apihistory"
+	"sdo.dev/operator/sdk"
 )
 
 type observedState struct {
@@ -31,14 +32,14 @@ type observedState struct {
 // RunEvidence is an offline reader. It has no cluster client or writer capability.
 func RunEvidence(args []string, getenv func(string) string, out io.Writer) error {
 	if len(args) == 0 {
-		return errors.New("evidence requires history, show, or state <Kind/namespace/name> --at <RFC3339|before-first-mutation|after-fix>")
+		return errors.New("evidence requires history, show, or state <object-reference> --at <RFC3339|before-first-mutation|after-fix>")
 	}
 	command := args[0]
 	args = args[1:]
 	object := ""
 	if command == "state" {
 		if len(args) == 0 {
-			return errors.New("state requires Kind/namespace/name")
+			return errors.New("state requires an object reference (Kind/name, Kind/namespace/name or JSON)")
 		}
 		object = args[0]
 		args = args[1:]
@@ -109,12 +110,20 @@ func RunEvidence(args []string, getenv func(string) string, out io.Writer) error
 }
 func stateAt(h apihistory.History, directory, object, at string) observedState {
 	s := observedState{Unknown: true, Stale: true, Origin: "responder_api_proxy", Complete: h.Manifest.Complete && !h.Manifest.Open, Dropped: h.Manifest.Dropped, Reason: "last observed only; watches are metadata-only, continuity is Unknown"}
-	parts := strings.Split(object, "/")
-	if len(parts) != 3 || parts[0] == "" || parts[1] == "" || parts[2] == "" {
-		s.Reason = "object must be Kind/namespace/name"
+	ref, err := sdk.ParseObjectRef(object)
+	if err != nil {
+		s.Reason = err.Error()
 		return s
 	}
-	identity, ok := resolveStateResource(parts[0])
+	identity, ok := resolveStateResource(ref.Kind)
+	// Citation normalization must not erase a supplied API-group restriction.
+	// State reconstruction still uses only its reviewed GroupResource table.
+	if group, qualified := evidenceReferenceGroup(object, ref); qualified && group != identity.Group {
+		ok = false
+	}
+	if group, _, qualified := strings.Cut(ref.APIVersion, "/"); qualified && group != identity.Group {
+		ok = false
+	}
 	if !ok {
 		s.Reason = "Unknown: unsupported or ambiguous API group/resource"
 		return s
@@ -170,7 +179,7 @@ func stateAt(h apihistory.History, directory, object, at string) observedState {
 		if e.Group != identity.Group || e.Resource != identity.Resource {
 			continue
 		}
-		if e.Status == 404 && e.Namespace == parts[1] && e.Name == parts[2] && e.Verb == "get" {
+		if e.Status == 404 && e.Namespace == ref.Namespace && e.Name == ref.Name && e.Verb == "get" {
 			s.ObservedAt = e.Finished
 			s.ObservedAbsent = true
 			s.Event = e.Sequence
@@ -205,7 +214,7 @@ func stateAt(h apihistory.History, directory, object, at string) observedState {
 			continue
 		}
 		var match json.RawMessage
-		if o.Metadata.Name == parts[2] && o.Metadata.Namespace == parts[1] && strings.EqualFold(identity.Kind, o.Kind) {
+		if o.Metadata.Name == ref.Name && o.Metadata.Namespace == ref.Namespace && strings.EqualFold(identity.Kind, o.Kind) {
 			match = body
 		}
 		if strings.HasSuffix(o.Kind, "List") {
@@ -219,13 +228,13 @@ func stateAt(h apihistory.History, directory, object, at string) observedState {
 						Namespace string `json:"namespace"`
 					} `json:"metadata"`
 				}
-				if json.Unmarshal(item, &itemMeta) == nil && itemMeta.Metadata.Name == parts[2] && itemMeta.Metadata.Namespace == parts[1] {
+				if json.Unmarshal(item, &itemMeta) == nil && itemMeta.Metadata.Name == ref.Name && itemMeta.Metadata.Namespace == ref.Namespace {
 					match = item
 					break
 				}
 			}
 			// Only a complete, unfiltered namespace list can observe absence.
-			if match == nil && e.Namespace == parts[1] && e.Verb == "list" && !e.Partial && o.Metadata.Continue == "" {
+			if match == nil && e.Namespace == ref.Namespace && e.Verb == "list" && !e.Partial && o.Metadata.Continue == "" {
 				s.ObservedAt = e.Finished
 				s.ObservedAbsent = true
 				s.LastObserved = nil
@@ -276,4 +285,26 @@ func isMutation(e apihistory.Event) bool {
 		return true
 	}
 	return opaqueMutation(e)
+}
+
+// Recover only a supplied group qualifier after the shared parser has validated
+// the citation. This preserves evidence's stricter reviewed-resource boundary.
+func evidenceReferenceGroup(raw string, ref sdk.ObjectRef) (string, bool) {
+	var fields map[string]string
+	kind := ""
+	if json.Unmarshal([]byte(raw), &fields) == nil && fields != nil {
+		kind = fields["kind"]
+	} else {
+		text := strings.TrimSpace(raw)
+		if _, after, ok := strings.Cut(text, "@"); ok {
+			text = after
+		}
+		parts := strings.Split(text, "/")
+		kind = parts[0]
+		if len(parts) == 3 && sdk.CanonicalObjectKind(kind) != ref.Kind && sdk.CanonicalObjectKind(parts[1]) == ref.Kind {
+			kind = parts[1]
+		}
+	}
+	_, group, qualified := strings.Cut(kind, ".")
+	return group, qualified
 }

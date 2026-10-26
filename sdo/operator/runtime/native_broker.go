@@ -23,6 +23,7 @@ import (
 	"sdo.dev/operator/broker"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory"
+	"sdo.dev/operator/memory/validate"
 	"sdo.dev/operator/sdk/program"
 )
 
@@ -259,6 +260,12 @@ func (n NativeIncidentBroker) ProcessClosure(ctx context.Context, closure Incide
 			}
 			ledger.OutcomeDocument = proto.Clone(derived.Record).(*contracts.OutcomeRecord)
 			ledger.RequiresReflection = derived.RequiresReflection
+			if n.SessionRoot != "" {
+				capture, captureErr := memory.IncidentCorpusDir(n.SessionRoot, id)
+				if captureErr == nil {
+					ledger.OutcomeDocument.UndetectedCauses = validate.CaptureUndetectedCauses(ledger.OutcomeDocument, capture)
+				}
+			}
 			// Every verified closure settles current evidence before committing its
 			// authoritative outcome. Prior repair text is never an eligibility proof.
 			if derived.Record.GetClassification() == "success" {
@@ -309,9 +316,8 @@ func (n NativeIncidentBroker) ProcessClosure(ctx context.Context, closure Incide
 				return err
 			}
 			ledger.ReflectionProcessed = true
-			if err := n.saveLedger(ledger); err != nil {
-				return err
-			}
+			// Persist this marker together with its receipt below. A checkpoint
+			// declaring processing complete without a receipt cannot authorize ACK.
 		}
 		// Reflection follows the original outcome commit. Append its typed
 		// SDK gaps through the broker without changing incident evidence or the
@@ -324,6 +330,11 @@ func (n NativeIncidentBroker) ProcessClosure(ctx context.Context, closure Incide
 		if len(gaps) > 0 {
 			if _, err := n.Repository.RecordSDKGaps(ctx, id, gaps); err != nil {
 				return fmt.Errorf("record reflection SDK gaps: %w", err)
+			}
+		}
+		if len(ledger.ReflectionRejections) > 0 {
+			if _, err := n.Repository.RecordReflectionRejections(ctx, id, ledger.ReflectionRejections); err != nil {
+				return fmt.Errorf("record reflection rejections: %w", err)
 			}
 		}
 		if ledger.OutcomeCommit == "" {
@@ -410,9 +421,9 @@ func (n NativeIncidentBroker) processReflection(ctx context.Context, ledger *con
 		// A failed/no-op closure with no independently repaired cause may
 		// explain its evidence gap, but cannot publish README-only learning or
 		// turn the responder's unverified repair claims into executable memory.
-		if effect.Outcome.GetClassification() != outcomeclass.Success && len(effect.Outcome.GetConfirmedRootCauses()) == 0 && decision.LearningDecision == "updated" {
+		if effect.Outcome.GetClassification() != outcomeclass.Success && len(validate.VerifiedReflectionCauses(effect.Outcome)) == 0 && decision.LearningDecision == "updated" {
 			decision.LearningDecision = "failed"
-			decision.Error = "reflection without an independently verified repaired cause requires no_change with an evidence-gap reason or a typed SDK gap"
+			decision.Error = "reflection without a verified repaired cause or controller-observed undetected transition requires no_change with an evidence-gap reason or a typed SDK gap"
 		}
 		if prepared {
 			if _, err := memory.RecordRepeatCorpus(workspace.Worktree, capture, effect.IncidentID, positive, origins); err != nil {
@@ -834,31 +845,80 @@ func (n NativeIncidentBroker) committedRepairHealthReceipt(ctx context.Context, 
 // committedOutcomeClosure authenticates a historical outcome before allowing
 // restart to resume reflection/receipt work. Exact frozen evidence and the
 // broker's accepted Git commit are both required; no receipt is needed yet.
-func (n NativeIncidentBroker) committedOutcomeClosure(ctx context.Context, closure IncidentClosure) (bool, error) {
-	committed := false
-	err := n.withLock(func() error {
-		if n.Repository == nil || closure.Request.IncidentID == "" {
-			return nil
-		}
-		ledger, err := n.readLedger(closure.Request.IncidentID)
-		if err != nil {
-			return err
-		}
-		projected, err := incidentClosureContract(closure)
-		if err != nil {
-			return err
-		}
-		if ledger.OutcomeDocument == nil || ledger.OutcomeDocument.GetIncidentId() != closure.Request.IncidentID || !proto.Equal(ledger.Closure, projected) {
-			return nil
-		}
-		accepted, ok, err := n.Repository.AcceptedCommit(ctx, closure.Request.IncidentID, broker.OutcomePhase)
-		if err != nil {
-			return err
-		}
+func (n NativeIncidentBroker) committedOutcomeClosure(ctx context.Context, closure IncidentClosure, receipt *ClosureReceipt) (bool, error) {
+	if n.Repository == nil || closure.Request.IncidentID == "" {
+		return false, nil
+	}
+	// Ledger writes use fsync + atomic rename. Read the immutable accepted
+	// outcome checkpoint without the effect lock: reflection may still own that
+	// lock while its Job runs, and health checks must not wait for the worker.
+	ledger, err := n.readLedger(closure.Request.IncidentID)
+	if err != nil {
+		return false, err
+	}
+	projected, err := incidentClosureContract(closure)
+	if err != nil {
+		return false, err
+	}
+	if ledger.OutcomeDocument == nil || ledger.OutcomeDocument.GetIncidentId() != closure.Request.IncidentID || !proto.Equal(ledger.Closure, projected) {
+		return false, nil
+	}
+	if receipt != nil && (ledger.Receipt == nil || !proto.Equal(ledger.Receipt, closureReceiptContract(receipt))) {
+		return false, nil
+	}
+	if ledger.ReflectionProcessed && ledger.Receipt == nil {
+		return false, nil
+	}
+	accepted := false
+	if ledger.OutcomeCommit != "" {
+		_, accepted, err = n.Repository.AcceptedCommitAt(ctx, closure.Request.IncidentID, broker.OutcomePhase, ledger.OutcomeCommit)
+	} else {
 		// Git acceptance can survive a crash before its ledger marker is saved.
-		// ProcessClosure idempotently recovers that same commit before reflection.
-		committed = ok && (ledger.OutcomeCommit == "" || accepted.Commit == ledger.OutcomeCommit)
-		return nil
-	})
-	return committed, err
+		_, accepted, err = n.Repository.AcceptedCommit(ctx, closure.Request.IncidentID, broker.OutcomePhase)
+	}
+	if err != nil || !accepted {
+		return accepted, err
+	}
+	return true, nil
+}
+
+func (n NativeIncidentBroker) checkHistoricalClosureHealth(ctx context.Context, closure IncidentClosure) error {
+	ledger, err := n.readLedger(closure.Request.IncidentID)
+	if err != nil {
+		return err
+	}
+	verifiedRevision := closure.Request.SourceCommit
+	if ledger.ReflectionCommit != "" {
+		_, accepted, err := n.Repository.AcceptedCommitAt(ctx, closure.Request.IncidentID, broker.ReflectionPhase, ledger.ReflectionCommit)
+		if err != nil {
+			return err
+		}
+		if accepted {
+			// Its own validated library publication cannot invalidate its ACK.
+			// Later objective/policy advances still compare against that commit.
+			verifiedRevision = ledger.ReflectionCommit
+		}
+	}
+	diagnostics, err := n.Repository.ReflectionHealthDiagnostics(ctx, verifiedRevision)
+	if err != nil {
+		return err
+	}
+	if len(diagnostics) > 0 {
+		// Record the rejection before the controller durably retires ownership,
+		// including when leadership is lost before the worker finishes.
+		attempt, _ := lifecyclecore.ReflectionFeedback(ledger)
+		rejection := &contracts.ProposalRejection{Attempt: attempt, Diagnostics: diagnostics, RejectedAt: contractTimestamp(n.clock())}
+		for _, prior := range ledger.GetReflectionRejections() {
+			if len(prior.Diagnostics) == 1 && proto.Equal(prior.Diagnostics[0], diagnostics[0]) {
+				rejection = prior
+				break
+			}
+		}
+		_, err = n.Repository.RecordReflectionRejections(ctx, closure.Request.IncidentID, []*contracts.ProposalRejection{rejection})
+		if err != nil {
+			return err
+		}
+		return ErrStaleHealthInvestigation
+	}
+	return nil
 }

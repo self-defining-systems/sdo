@@ -55,7 +55,7 @@ func reflectionExecutableDiagnostics(root string, outcome *contracts.OutcomeReco
 		}
 		matched := false
 		for _, cause := range causes {
-			matched = matched || bindingsCoverRepairs(outcome, c.Bindings.Objects, cause.GetResources())
+			matched = matched || bindingsCoverRepairs(outcome, c.Bindings.Objects, cause.GetResources()) && UndetectedCaseMatches(outcome, c, cause)
 		}
 		// A fixture spanning a known unverified cause cannot launder that cause
 		// through another resource's verification.
