@@ -468,6 +468,9 @@ def test_completed_nonpersistent_install_collects_strict_receipt(
     monkeypatch.setenv("SREGYM_KIND_CLUSTER_NAME", "sregym-w1")
     monkeypatch.setenv("SREGYM_BASE_KUBECONFIG", str(tmp_path / "config"))
     monkeypatch.setattr(driver, "get_api_base", lambda: "http://localhost:8000")
+    from contextlib import nullcontext
+
+    monkeypatch.setattr(driver, "_closure_grading_monitor", lambda *_args: nullcontext())
     monkeypatch.setattr(driver, "poll_stage_sync", lambda *_args, **_kwargs: "diagnosis")
     monkeypatch.setattr(driver, "get_app_info", lambda *_args: {"namespace": "demo", "app_name": "demo"})
     monkeypatch.setattr(driver, "_application_repository", lambda: tmp_path)
