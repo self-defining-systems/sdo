@@ -65,7 +65,7 @@ func TestReflectionPendingJobDeadlineIsFrozenAndTerminal(t *testing.T) {
 					}), nil
 				}}
 				native.Reflector = worker
-				_, firstErr := native.ProcessClosure(parent, closure)
+				_, firstErr := closeAndReflect(t, parent, native, closure)
 				if restart {
 					if !errors.Is(firstErr, context.Canceled) {
 						t.Fatalf("expected injected leadership interruption, got %v", firstErr)
@@ -101,7 +101,7 @@ func TestReflectionPendingJobDeadlineIsFrozenAndTerminal(t *testing.T) {
 					native.Reflector = worker
 					ctx, stop := context.WithTimeout(context.Background(), time.Second)
 					defer stop()
-					if _, err := native.ProcessClosure(ctx, closure); err != nil {
+					if _, err := closeAndReflect(t, ctx, native, closure); err != nil {
 						t.Fatalf("expired frozen task was not recovered as timeout: %v", err)
 					}
 				} else if firstErr != nil {
@@ -118,7 +118,7 @@ func TestReflectionPendingJobDeadlineIsFrozenAndTerminal(t *testing.T) {
 				if err != nil || !found || !frozen.Deadline.AsTime().Equal(task.Deadline.AsTime()) {
 					t.Fatalf("restart extended deadline: %v", err)
 				}
-				if _, err := native.ProcessClosure(context.Background(), closure); err != nil {
+				if _, err := closeAndReflect(t, context.Background(), native, closure); err != nil {
 					t.Fatal(err)
 				}
 				creates := 0

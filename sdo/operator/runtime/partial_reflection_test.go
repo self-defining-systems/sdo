@@ -115,7 +115,7 @@ func TestNativeBrokerReflectsOnlyVerifiedPartialRepair(t *testing.T) {
 				response, err := anypb.New(&contracts.ReflectionResult{LearningDecision: "sdk_gap", NoChangeReason: "synthetic transport fixture lacks SDK evidence", SdkGaps: gaps})
 				return &contracts.AgentResult{SchemaVersion: task.SchemaVersion, TaskId: task.TaskId, ProposalId: task.Workspace.ProposalId, Status: "completed", Response: response}, err
 			})}
-			receipt, err := native.ProcessClosure(ctx, closure)
+			receipt, err := closeAndReflect(t, ctx, native, closure)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -155,7 +155,7 @@ func TestNativeBrokerSkipsFailedClosureWithoutVerifiedRepair(t *testing.T) {
 	}
 	closure := nativeClosure(workspace)
 	closure.Request.RepairPolicy = "recorded-actions"
-	if _, err := native.ProcessClosure(ctx, closure); err != nil {
+	if _, err := closeAndReflect(t, ctx, native, closure); err != nil {
 		t.Fatal(err)
 	}
 	ledger, err := native.readLedger("contract")
