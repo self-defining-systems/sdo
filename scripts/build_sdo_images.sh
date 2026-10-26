@@ -3,6 +3,7 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 tag="${SDO_IMAGE_TAG:-v0.1.0}"
+export SDO_SOURCE_REVISION="$(git -C "${repo_root}" rev-parse HEAD)"
 # CI builds only changed targets through Bake, then uses these same smoke gates.
 read -r -a selected <<<"${SDO_IMAGES:-controller validator responder benchmark script-tools}"
 for image in "${selected[@]}"; do

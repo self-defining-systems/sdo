@@ -195,7 +195,9 @@ def test_preparation_warms_build_graphs_without_linking_or_running_tests(tmp_pat
     result = subprocess.run(
         ["bash", str(ROOT / "scripts/prepare_go_ci.sh")],
         env={**os.environ, "PATH": f"{tmp_path}:{os.environ['PATH']}", "SDO_TEST_CALLS": str(calls)},
-        capture_output=True, text=True, check=False,
+        capture_output=True,
+        text=True,
+        check=False,
     )
     assert result.returncode == 0, result.stderr
     invocations = [line.split(":", 1) for line in calls.read_text().splitlines()]

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import subprocess
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 FIRST_PARTY_APPS = ("hotel-reservation", "astronomy-shop", "social-network")
 
@@ -33,3 +34,67 @@ def assert_harness_sources(directory: Path) -> None:
             source = applications / value["Helm Config"]["chart_path"] / "Chart.yaml"
         if not source.exists():
             raise ValueError(f"eval: application source prerequisite missing for {app}: {source}")
+
+
+if TYPE_CHECKING:
+    from benchmarks.sregym.fastloop.environment import Images
+
+
+def assert_runtime_images(images: Images, worktree: Path) -> None:
+    """Reject saved lane images from other code before resetting or injecting."""
+    revision = subprocess.run(
+        ["git", "-C", str(worktree), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    ).stdout.strip()
+    dirty = subprocess.run(
+        ["git", "-C", str(worktree), "diff", "--quiet", "HEAD", "--", "sdo/operator", "scripts/sdo-images.hcl"],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    if dirty.returncode:
+        raise ValueError(
+            "eval: image source has uncommitted changes; commit and rebuild with scripts/build_sdo_images.sh"
+        )
+    for image in (images.controller, images.validator):
+        inspected = subprocess.run(
+            ["docker", "image", "inspect", image],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+        labels = json.loads(inspected.stdout)[0].get("Config", {}).get("Labels") or {}
+        if labels.get("org.opencontainers.image.revision") != revision:
+            raise ValueError(
+                f"eval: image {image} source differs from {revision}; rebuild with scripts/build_sdo_images.sh"
+            )
+    try:
+        subprocess.run(
+            [
+                "docker",
+                "run",
+                "--rm",
+                "--network",
+                "none",
+                "--read-only",
+                "--tmpfs",
+                "/tmp",
+                "--user",
+                "65532:65532",
+                images.validator,
+                "go",
+                "version",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+        raise ValueError(
+            f"eval: validator {images.validator} Go toolchain cannot run; rebuild with scripts/build_sdo_images.sh"
+        ) from exc

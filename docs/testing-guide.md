@@ -672,8 +672,10 @@ SDK/core continue to run under Go 1.24.5, while the contracts and benchmark wire
 modules use Go 1.26.8. Explicit fixture compiler parallelism must not override
 `GOFLAGS`, so nested builds inherit the same runner memory bound.
 
-`prepare-go` compiles normal and race dependency graphs once per pushed event
-commit, then publishes a shared Go compiler/module cache. The test jobs depend
+`prepare-go` builds normal and race archives once per pushed event commit,
+then publishes a shared Go compiler/module cache. Preparation never links or
+starts test binaries; each test shard owns those steps. This avoids serially
+linking every test package before any shard can start. The test jobs depend
 on preparation and require that exact cache; they do not start cold compilation
 inside short operation deadlines. Cache restoration uses Go's content-addressed
 compiler entries, while executable identity remains source-bound by
@@ -686,3 +688,13 @@ accepts comma-separated partitions so short groups can share a runner without
 omitting or duplicating names. Image runners consume the preparation job's
 source-bound schema identity, avoiding a separate Go cache transfer and toolchain
 installation just to print it.
+
+
+Fastloop checks saved controller and validator image source revisions against
+the code under test before starting its SREGym worker, verifies lane image
+content against local images, and runs the validator's Go toolchain as nonroot
+in a read-only offline container. `scripts/build_sdo_images.sh` records the source
+revision in the existing Bake graph. Missing or stale labels require rebuilding
+through that script and delivering through `fastloop up`; tag names alone do
+not prove provenance. Focused regressions live in
+`tests/unit/benchmarks/sregym/fastloop/test_source_preflight.py` and `test_dev.py`.
