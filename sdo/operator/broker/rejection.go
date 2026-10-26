@@ -20,8 +20,12 @@ const MaxValidationRetries = 5
 
 // RejectionDiagnostics returns the typed validator diagnostics carried by a
 // broker rejection. Errors that are not validator failures (infrastructure,
-// stale proposals, isolated-job failures) report false and are not retried.
+// isolated-job failures) report false and are not retried.
 func RejectionDiagnostics(err error) ([]*contracts.MemoryDiagnostic, bool) {
+	var conflict *MemoryConflict
+	if errors.As(err, &conflict) {
+		return []*contracts.MemoryDiagnostic{conflict.Diagnostic()}, true
+	}
 	var failure *validate.Failure
 	if !errors.As(err, &failure) || len(failure.Diagnostics) == 0 {
 		return nil, false

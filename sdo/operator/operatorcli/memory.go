@@ -46,7 +46,9 @@ commands:
         proposed_artifact_ids, sdk_gaps; the returned result JSON can be written
         as is) to .git/sdo-reflection-decision.json
         or --decision FILE. The returned result must use the same decision and
-        logical IDs.
+        logical IDs. A broker memory.conflict carries the newer accepted commit,
+        conflicting paths, peer incidents and validator errors; merge both
+        incidents' intent and preserve accepted learning before resubmitting.
         Exit 0 when clean,
         1 for diagnostics, 2 for missing inputs or infrastructure/usage errors.
   ls [--root .] [--kind goal|architecture|playbook|script|detector] [--json]

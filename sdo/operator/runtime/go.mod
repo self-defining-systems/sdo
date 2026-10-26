@@ -8,6 +8,7 @@ require (
 	k8s.io/api v0.30.3
 	k8s.io/apimachinery v0.30.3
 	k8s.io/client-go v0.30.3
+	k8s.io/metrics v0.30.3
 	sdo.dev/operator/contracts v0.0.0
 	sdo.dev/operator/core v0.0.0
 	sdo.dev/operator/sdk v0.0.0

@@ -3,6 +3,7 @@ package program
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 )
 
@@ -41,5 +42,31 @@ func TestExternalSharedModuleStillRefused(t *testing.T) {
 	}
 	if err := checkProgramImports(root, "app"); err == nil {
 		t.Fatal("external module accepted")
+	}
+}
+
+func TestAuthoredReadsMayNameUpstreamMetricsSchemasOnly(t *testing.T) {
+	for _, tc := range []struct {
+		path    string
+		allowed bool
+	}{
+		{"k8s.io/metrics/pkg/apis/metrics/v1beta1", true},
+		{"k8s.io/metrics/pkg/client/clientset/versioned", false},
+		{"k8s.io/client-go/rest", false},
+	} {
+		t.Run(tc.path, func(t *testing.T) {
+			root := filepath.Join(t.TempDir(), "playbooks")
+			if err := os.MkdirAll(root, 0755); err != nil {
+				t.Fatal(err)
+			}
+			source := "package example\nimport _ " + strconv.Quote(tc.path) + "\n"
+			if err := os.WriteFile(filepath.Join(root, "diagnose.go"), []byte(source), 0644); err != nil {
+				t.Fatal(err)
+			}
+			err := checkProgramImports(root, "app")
+			if (err == nil) != tc.allowed {
+				t.Fatalf("schema import allowed=%v: %v", tc.allowed, err)
+			}
+		})
 	}
 }

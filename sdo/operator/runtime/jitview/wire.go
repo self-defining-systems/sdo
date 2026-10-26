@@ -14,15 +14,17 @@ import (
 	"reflect"
 	"sync"
 
+	"sdo.dev/operator/sdk/metrics"
 	"sdo.dev/operator/sdk/program"
 )
 
 type Message struct {
-	Method    string            `json:"method,omitempty"`
-	Arguments []json.RawMessage `json:"arguments,omitempty"`
-	Values    []json.RawMessage `json:"values,omitempty"`
-	Result    json.RawMessage   `json:"result,omitempty"`
-	Error     string            `json:"error,omitempty"`
+	Method           string                         `json:"method,omitempty"`
+	Arguments        []json.RawMessage              `json:"arguments,omitempty"`
+	Values           []json.RawMessage              `json:"values,omitempty"`
+	Result           json.RawMessage                `json:"result,omitempty"`
+	Error            string                         `json:"error,omitempty"`
+	UsageUnavailable *metrics.UsageUnavailableError `json:"usage_unavailable,omitempty"`
 }
 
 type View struct {
@@ -52,6 +54,9 @@ func (v *View) call(method string, args, outputs []any) error {
 		return err
 	}
 	if response.Error != "" {
+		if response.UsageUnavailable != nil {
+			return response.UsageUnavailable
+		}
 		return errors.New(response.Error)
 	}
 	if len(response.Values) != len(outputs) {
@@ -126,7 +131,12 @@ func read(view program.ReadView, request Message) (response Message) {
 	for _, value := range values {
 		if value.Type() == reflect.TypeFor[error]() {
 			if !value.IsNil() {
-				response.Error = value.Interface().(error).Error()
+				err := value.Interface().(error)
+				response.Error = err.Error()
+				var unavailable *metrics.UsageUnavailableError
+				if errors.As(err, &unavailable) {
+					response.UsageUnavailable = unavailable
+				}
 			}
 			continue
 		}

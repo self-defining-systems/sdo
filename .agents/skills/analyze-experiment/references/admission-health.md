@@ -49,3 +49,35 @@ state to manufacture a clean seal. Old helper-assisted repairs are eval evidence
 not learned SDK repairs.
 
 Host disk admission uses an absolute free-byte floor (default100GiB) on the Docker storage mount. The receipt names `rule: absolute-free-bytes`, the measured free bytes and floor; used percent is informational. A large volume with hundreds of GiB free must not fail solely on percentage. For historical comparisons retain the previous percent-and-byte rule and its rejection as eval evidence.
+
+## Reused no-fault setup proof
+
+A passing no-fault report now records `fingerprint` and `setup_proof`.
+`setup-proof/latest.json` points to an immutable content-addressed receipt
+containing the full passing report and `sdo.setup-proof/v1` fingerprint.
+`eval-dry-run/report.json.setup_proof` and each live result's `setup-proof.json`
+record `reused`, the original `receipt`, and named `changed` components.
+A hit also records `message: "reused <receipt>"`. Missing, corrupt, dirty or
+unavailable evidence requires full setup, never a silent skip.
+
+The fingerprint binds the clean code revision, each configured role's image
+digests on every node, app/control Pod image and process identities, accepted
+workspace and installed accepted-memory commits, installed baseline/selected
+manifest bytes, app/control object UIDs and configuration, cluster authority,
+and proof source/operator hashes, including deployment configuration. Collection uses three GET inventories plus one read-only Git HEAD read
+through the installed controller Pod, sharing a 15-second deadline; no Secret
+values or Docker inspection are read. The persisted drift-inventory revision is
+a content hash and is never interpreted as the accepted Git commit.
+Runtime-state observations and maintenance generations are deliberately omitted
+from configuration hashes. A recreated object or changed configuration after
+reset invalidates reuse even when its name is unchanged.
+
+Reuse skips the dry run's reset/deploy/onboarding and the live SDO runner's deploy
+request. Admission still checks exact RBAC, clean baseline placement, fresh
+controller detector clearance/no incident work, qualified probe scenarios,
+independent traffic, stable workloads and lane memory/disk floors. The reused
+dry run additionally requires active intake and the same fingerprint after
+these checks; failure cannot fall back to a passing cached health verdict.
+Inherited setup invariants name `reused_from`; fresh admission evidence is
+written under the current `admission/` directory. The whole-learning-loop
+report remains an independent gate and is never satisfied by a setup receipt.

@@ -45,6 +45,10 @@ class FastloopEnvironment(BaseModel):
     images: Images = Field(default_factory=Images)
     #: Environment for the SREGym worker process (deploy-from-source, kind, builder settings).
     worker_env: dict[str, str] = Field(default_factory=dict)
+    #: Optional host directory mounted on every kind node before shared attachment.
+    parallel_root: Path | None = None
+    parallel_lane: str = ""
+    shared_accepted_id: str = ""
 
     @field_validator("application")
     @classmethod
