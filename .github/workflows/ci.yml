@@ -564,6 +564,7 @@ jobs:
       needs.changes.outputs.image_benchmark == 'true'
     runs-on: ubuntu-latest
     env:
+      SDO_SOURCE_REVISION: ${{ github.sha }}
       SDO_VALIDATOR_SCHEMA_IDENTITY: ${{ needs.prepare-go.outputs.schema_identity }}
     timeout-minutes: 5
     steps:

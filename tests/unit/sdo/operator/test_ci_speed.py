@@ -180,6 +180,7 @@ def test_image_jobs_use_the_compilation_owners_schema_identity() -> None:
     jobs = workflow()["jobs"]
     images = jobs["images"]
     assert "prepare-go" in images["needs"]
+    assert images["env"]["SDO_SOURCE_REVISION"] == "${{ github.sha }}"
     assert images["env"]["SDO_VALIDATOR_SCHEMA_IDENTITY"] == "${{ needs.prepare-go.outputs.schema_identity }}"
     assert set(images["strategy"]["matrix"]["family"]) == {"controller", "validator", "responder", "benchmark"}
     partitions = [row["operator"] for row in jobs["controller"]["strategy"]["matrix"]["include"] if "operator" in row]
@@ -218,3 +219,22 @@ def test_normal_and_race_preparation_are_independent_bounded_jobs() -> None:
         keys = [step["with"]["key"] for step in jobs[name]["steps"] if step.get("uses", "").startswith("actions/cache")]
         assert any("ci-prepared-normal-" in key for key in keys)
         assert any("ci-prepared-race-" in key for key in keys)
+
+
+def test_image_builder_refuses_dirty_source_before_docker(tmp_path: Path) -> None:
+    command = tmp_path / "git"
+    command.write_text('#!/bin/sh\nprintf "?? sdo/operator/uncommitted.go\\n"\n')
+    command.chmod(0o755)
+    docker = tmp_path / "docker"
+    docker.write_text("#!/bin/sh\necho unexpected-docker >&2\nexit 99\n")
+    docker.chmod(0o755)
+    result = subprocess.run(
+        ["bash", str(ROOT / "scripts/build_sdo_images.sh")],
+        env={**os.environ, "PATH": f"{tmp_path}:{os.environ['PATH']}"},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 1
+    assert "image source has uncommitted changes" in result.stderr
+    assert "unexpected-docker" not in result.stderr
