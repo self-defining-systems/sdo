@@ -382,7 +382,9 @@ def test_stuck_previous_reflection_is_a_typed_not_measured_row(lane, monkeypatch
     gate, calls = lane
     gate.prior_closure_timeout_seconds = 600
     previous_reflection(gate, monkeypatch, finishes_at=10_000)
-    with pytest.raises(admission.PriorClosureIncompleteError, match=r"previous incident closure did not finish") as info:
+    with pytest.raises(
+        admission.PriorClosureIncompleteError, match=r"previous incident closure did not finish"
+    ) as info:
         gate.prove("hotel-reservation-sdo")
     assert info.value.reason == "prior_closure_incomplete"
     assert "traffic" not in calls

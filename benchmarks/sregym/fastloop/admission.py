@@ -292,12 +292,7 @@ class LaneAdmission:
             except (RuntimeError, ValueError, KeyError) as exc:
                 state, workers, error = {}, [], str(exc)
             closure_state = state.get("closure_state")
-            done = (
-                error is None
-                and not closure_pending(state)
-                and closure_state in IDLE_CLOSURE_STATES
-                and not workers
-            )
+            done = error is None and not closure_pending(state) and closure_state in IDLE_CLOSURE_STATES and not workers
             evidence = {
                 "passed": done,
                 "closure_state": closure_state,
