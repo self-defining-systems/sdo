@@ -661,6 +661,12 @@ def test_scripted_fastloop_reuses_reflected_target_port_program(
             result = {"items": grants}
         elif args[:2] == ["get", "pod/sdo-prober"]:
             result = {"status": {"podIP": "127.0.0.1"}}
+        elif args[:2] == ["get", "configmap/sdo-namespace-onboarding"]:
+            # The fake controller's install is already onboarded when admission starts.
+            record = {"acceptedCommit": "a" * 40, "objects": [{"kind": "Deployment"}]}
+            result = {"data": {"onboarding.json": json.dumps(record)}}
+        elif args[:2] == ["get", "configmap/sdo-namespace-onboarding-pending"]:
+            return SimpleNamespace(stdout="")
         elif args[0] == "exec":
             result = {
                 "windows": {
