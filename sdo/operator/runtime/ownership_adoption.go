@@ -107,6 +107,10 @@ func (c *Controller) adoptOwnership(ctx context.Context, now time.Time, snapshot
 	if status.SourceCommit != c.config.SourceCommit {
 		status = OwnershipAdoptionStatus{SourceCommit: c.config.SourceCommit, AcceptedObjects: status.AcceptedObjects}
 	}
+	// A retry pass follows a failed one. Objects it already adopted and
+	// recorded are not dry-run again: one permanently refused object would
+	// otherwise cost a sweep of every accepted object per retry.
+	retrying := status.Failures > 0
 	accepted := map[string]bool{}
 	for _, key := range status.AcceptedObjects {
 		accepted[key] = true
@@ -169,6 +173,10 @@ func (c *Controller) adoptOwnership(ctx context.Context, now time.Time, snapshot
 		live, err := resource.get(actionCtx, ref)
 		if err != nil && !apierrors.IsNotFound(err) {
 			objectFailed(ref, fmt.Errorf("read live %s/%s for adoption: %w", ref.Kind, ref.Name, err))
+			continue
+		}
+		if retrying && live != nil && adoptedAndRecorded(live, source) {
+			accepted[acceptedObjectKey(ref)] = true
 			continue
 		}
 		normalized, err := resource.apply(actionCtx, ref, source, true)
@@ -353,6 +361,22 @@ func (c *Controller) adoptOwnership(ctx context.Context, now time.Time, snapshot
 	c.acceptanceSettleWaits = 0
 	c.adoptionNeeded = false
 	return nil
+}
+
+// adoptedAndRecorded reports whether live already has every declared field
+// owned by the deployer and a current acceptance record bound to its UID:
+// adoption has nothing left to do for it.
+func adoptedAndRecorded(live, source *unstructured.Unstructured) bool {
+	if !acceptanceRecordBound(live, source) {
+		return false
+	}
+	owned := ownedDriftPaths(live, "sdo-deployer")
+	for path := range flattenDriftPaths(source) {
+		if !ownsDriftPath(owned, path) {
+			return false
+		}
+	}
+	return true
 }
 
 // recordLost reports whether live, which needs a new record, lost the one

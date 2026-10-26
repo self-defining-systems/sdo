@@ -9,6 +9,7 @@ import (
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	kruntime "k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -122,5 +123,54 @@ func TestAdoptionObjectFailureSitesAreIsolated(t *testing.T) {
 				t.Fatalf("failed object not retried: %+v", controller.ownershipAdoption)
 			}
 		})
+	}
+}
+
+// A retry pass caused by one failing object must not re-dry-run the objects
+// that already carry a current, bound acceptance record: a permanently
+// refused object otherwise costs a sweep of every accepted object per retry.
+func TestAdoptionRetrySkipsObjectsAlreadyRecorded(t *testing.T) {
+	beta := settledDeployment("beta")
+	beta.ManagedFields = []metav1.ManagedFieldsEntry{{Manager: "sdo-deployer", Operation: metav1.ManagedFieldsOperationApply, FieldsType: "FieldsV1", FieldsV1: &metav1.FieldsV1{Raw: []byte(`{"f:metadata":{},"f:spec":{}}`)}}}
+	fakeClient := fake.NewSimpleClientset(settledDeployment("alpha"), beta)
+	failing := true
+	var betaPatches atomic.Int32
+	fakeClient.PrependReactor("patch", "deployments", func(action ktesting.Action) (bool, kruntime.Object, error) {
+		switch action.(ktesting.PatchAction).GetName() {
+		case "alpha":
+			if failing {
+				return true, nil, errors.New("unknown")
+			}
+		case "beta":
+			betaPatches.Add(1)
+		}
+		return false, nil, nil
+	})
+	sources := adoptionSources{deploymentSource("alpha"), deploymentSource("beta")}
+	controller, client := fakeAdoptionController(t, fakeClient, sources)
+	betaRef := sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "app", Name: "beta"}
+	controller.adoptionNeeded = true
+
+	now := time.Unix(11, 0).UTC()
+	err := controller.adoptOwnership(context.Background(), now, sdktest.Snapshot{NamespaceName: "app"})
+	if err == nil || !recordedOn(t, client, betaRef, sources[1]) {
+		t.Fatalf("first pass did not record the healthy object while failing the other: %v", err)
+	}
+	controller.recordAdoptionError(now, err)
+	betaPatches.Store(0)
+
+	now = controller.ownershipAdoption.RetryAt
+	if err := controller.adoptOwnership(context.Background(), now, sdktest.Snapshot{NamespaceName: "app"}); err == nil {
+		t.Fatal("failing object stopped failing")
+	}
+	if patches := betaPatches.Load(); patches != 0 {
+		t.Fatalf("retry pass re-dry-ran an already recorded object (%d patches)", patches)
+	}
+
+	failing = false
+	controller.recordAdoptionError(now, errors.New("retry"))
+	now = controller.ownershipAdoption.RetryAt
+	if err := controller.adoptOwnership(context.Background(), now, sdktest.Snapshot{NamespaceName: "app"}); err != nil || controller.adoptionNeeded {
+		t.Fatalf("recovered object not adopted: %v %+v", err, controller.ownershipAdoption)
 	}
 }
