@@ -30,6 +30,11 @@ if TYPE_CHECKING:
         wait_for_proof,
     )
     from benchmarks.sregym.adapter.healthy_baseline import HealthyBaselineCaptureOps, kubectl_capture_ops
+    from benchmarks.sregym.adapter.image_entrypoints import (
+        BENCHMARK_IMAGE_ENTRY_POINTS,
+        assert_image_entrypoints,
+        image_entrypoint_script,
+    )
     from benchmarks.sregym.adapter.image_retention import ImageRetentionError, retain_lane_images
     from benchmarks.sregym.adapter.lane_resources import (
         LaneResourcePolicy,
@@ -80,6 +85,9 @@ if TYPE_CHECKING:
     from benchmarks.sregym.adapter.scripted_replay_catalog import SCRIPTED_REPLAY_SLOTS
 
 _EXPORTS: dict[str, str] = {
+    "BENCHMARK_IMAGE_ENTRY_POINTS": "image_entrypoints",
+    "assert_image_entrypoints": "image_entrypoints",
+    "image_entrypoint_script": "image_entrypoints",
     "ImageRetentionError": "image_retention",
     "retain_lane_images": "image_retention",
     "Deadline": "eval_guards",
@@ -140,6 +148,9 @@ _EXPORTS: dict[str, str] = {
 }
 
 __all__ = [
+    "BENCHMARK_IMAGE_ENTRY_POINTS",
+    "assert_image_entrypoints",
+    "image_entrypoint_script",
     "ImageRetentionError",
     "retain_lane_images",
     "Deadline",
