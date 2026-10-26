@@ -881,12 +881,15 @@ def test_act_accepts_printed_object_reference_forms(scratch: Path, reference: st
     ]
 
 
-_OWNER_STUB = """
+def _owned_by(kind: str, name: str) -> str:
+    reference = {"apiVersion": "apps/v1", "kind": kind, "name": name, "controller": True}
+    return shlex.quote(json.dumps({"metadata": {"ownerReferences": [reference]}}))
+
+
+_OWNER_STUB = f"""
 case "$*" in
-  *"get Pod geo-84fbc958c7-5krwl"*)
-    echo '{"metadata":{"ownerReferences":[{"apiVersion":"apps/v1","kind":"ReplicaSet","name":"geo-84fbc958c7","controller":true}]}}' ;;
-  *"get ReplicaSet geo-84fbc958c7"*)
-    echo '{"metadata":{"ownerReferences":[{"apiVersion":"apps/v1","kind":"Deployment","name":"geo","controller":true}]}}' ;;
+  *"get Pod geo-84fbc958c7-5krwl"*) echo {_owned_by("ReplicaSet", "geo-84fbc958c7")} ;;
+  *"get ReplicaSet geo-84fbc958c7"*) echo {_owned_by("Deployment", "geo")} ;;
   *"get ReplicaSet geo-67f6d98b75"*) exit 1 ;;
 esac
 exit 0
