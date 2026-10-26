@@ -702,6 +702,22 @@ It reuses the scripted registrations and ordinary loop, including a real isolate
 validator Job, and must finish within five minutes. See the
 [fastloop proof instructions](../benchmarks/sregym/experiments/fastloop/README.md#required-learning-loop-proof-before-live-firstrepeat-runs)
 for report identity, stage receipts and rehearsal workspace requirements.
+### Concurrent shared memory
+
+`TestHermeticSharedMemoryControllers` runs two real controllers with distinct
+workspace/ledger roots against one accepted Git checkout. Scripted resumed
+reflection workers overlap; independent Go compilation checks both disjoint
+playbook updates and a same-playbook conflict corrected with preserved peer intent.
+The catalog and broker tests bind snapshots to proposal commits and check merged
+validation failures, accepted incident provenance and concurrent publication:
+
+```bash
+(cd sdo/operator && go test -race ./broker ./memory -run 'TestConcurrentMemory|TestCatalogSnapshotAt')
+(cd sdo/operator/runtime && go test -race . ./lifecyclecore -run 'TestHermeticSharedMemoryControllers|TestReflectionMemoryConflict')
+```
+
+This is a hermetic plumbing proof, with no cluster or model. Cross-cluster shared
+storage and live parallel-lane runner proof are separate benchmark work.
 
 Fastloop checks saved controller and validator image source revisions against
 the code under test before starting its SREGym worker, verifies lane image
