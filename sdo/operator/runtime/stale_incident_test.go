@@ -146,7 +146,15 @@ func TestExpiredIncidentRetainsLiveWorkAndUncertainBindings(t *testing.T) {
 	}
 }
 
+// A paused step retires and then saves again; the second save must not consume
+// the retirement archive the first one wrote.
 func TestExpiredIncidentFailureArchiveSurvivesRestart(t *testing.T) {
+	for _, paused := range []bool{false, true} {
+		t.Run(fmt.Sprintf("paused=%v", paused), func(t *testing.T) { testExpiredIncidentFailureArchiveSurvivesRestart(t, paused) })
+	}
+}
+
+func testExpiredIncidentFailureArchiveSurvivesRestart(t *testing.T, paused bool) {
 	ctx := context.Background()
 	start := time.Unix(1000, 0)
 	config := testControllerConfig()
@@ -170,7 +178,11 @@ func TestExpiredIncidentFailureArchiveSurvivesRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := old.ResponseDeadline.AsTime().Add(time.Second)
-	if err := controller.Step(ctx, now, nil); err != nil {
+	step := controller.Step
+	if paused {
+		step = func(ctx context.Context, now time.Time, _ *sdk.WatchKind) error { return controller.stepPaused(ctx, now) }
+	}
+	if err := step(ctx, now, nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := controller.PersistState(ctx); err != nil {
@@ -188,6 +200,13 @@ func TestExpiredIncidentFailureArchiveSurvivesRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	request := exportState(t, fresh).IncidentRequest
+	if paused {
+		// A pause admits no fresh incident; it only retires the expired one.
+		if request != nil {
+			t.Fatalf("restart after a paused retirement resumed %v", request)
+		}
+		return
+	}
 	if request.IncidentId == old.IncidentId {
 		t.Fatal("restart resumed expired incident")
 	}
