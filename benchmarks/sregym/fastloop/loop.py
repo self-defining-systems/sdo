@@ -128,6 +128,8 @@ class IncidentAgent(Protocol):
 
     def learn(self, outcome: AgentOutcome) -> AgentOutcome: ...
 
+    def prepare_recovery(self, outcome: AgentOutcome | None) -> None: ...
+
     def close(self) -> None: ...
 
 
@@ -323,6 +325,14 @@ def run_incidents(
     return records
 
 
+def _recover_fault(agent: IncidentAgent, driver: FaultDriver, outcome: AgentOutcome | None) -> float:
+    # All harness recovery paths, including invalid injection and interruption,
+    # pass this fence. Missing SDO pause support fails before a recovery write.
+    if agent.name == "sdo":
+        agent.prepare_recovery(outcome)
+    return driver.recover()
+
+
 def _run_one(
     agent: IncidentAgent,
     driver: FaultDriver,
@@ -359,7 +369,7 @@ def _run_one(
         recovered = False
         recovery_seconds = None
         try:
-            recovery_seconds = driver.recover()
+            recovery_seconds = _recover_fault(agent, driver, outcome)
             recovered = cleanup_error is None
         except Exception as recovery_exc:
             cleanup_error = f"invalid injection cleanup failed: {_describe(recovery_exc)}"
@@ -390,7 +400,7 @@ def _run_one(
     except KeyboardInterrupt:
         if windows:
             try:
-                driver.recover()
+                _recover_fault(agent, driver, outcome)
                 if not driver.oracle().success:
                     logger.error("fault oracle still fails after interrupt recovery for incident %d", index)
             except Exception:
@@ -466,7 +476,7 @@ def _run_one(
         try:
             recovery_seconds = 0.0
             for _ in range(config.cleanup_passes):
-                recovery_seconds += driver.recover()
+                recovery_seconds += _recover_fault(agent, driver, outcome)
                 # Seed cleanup can remove injected workloads; grade the recovered baseline.
                 recovery_oracle = getattr(driver, "recovery_oracle", lambda: None)()
                 if recovery_oracle is None:

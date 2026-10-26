@@ -180,6 +180,9 @@ def test_invalid_injection_is_terminal_infrastructure_without_response_or_learni
         def learn(self, outcome):
             pytest.fail("must not learn after invalid injection")
 
+        def prepare_recovery(self, outcome):
+            assert outcome is None  # Invalid injection never admitted an incident.
+
         def close(self):
             pass
 

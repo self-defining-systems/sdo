@@ -30,6 +30,16 @@ Fastloop rows also expose `run_prelude_phase_seconds` on the first incident only
 
 Rows also count program diagnoses and verdicts, tool calls and commands, and response loops. On a permanently failed closure, the fastloop retains recoverable timing, usage, and program evidence from the controller's pending closure, records the closure error, and stops the stream. A missing diagnosis has `diagnosis_grade.skipped: true` with a reason; it is never sent to the diagnosis judge.
 
+Benchmark fault recovery has a separate intake fence: SDO must have no pending
+closure, prove the expected incident durably acknowledged (or terminally failed),
+request maintenance pause, observe its exact paused-generation acknowledgment,
+and recheck that no incident raced admission. Missing state, missing pause support,
+unclosed incidents or failed acknowledgment stop recovery before any harness write.
+Normal cleanup, invalid-injection cleanup, interruption and repeated cleanup passes
+all use this fence. Intake remains paused through recovery verification; the next
+stage resumes it only through the existing baseline/injection gate. A blocked
+recovery is an eval failure, not an SDO repair or a repeat encounter.
+
 ## Finding-triggered playbook diagnosis
 
 Current controllers run incident detectors continuously. Playbook Diagnose runs only while handling detector findings, with one binding per finding/program; watch events and timers never enumerate playbook roles. Accepted-source drift remains `drift.unexplained`. Program diagnoses and matches belong to incident coverage, responder commands, and self-check evidence.

@@ -250,6 +250,9 @@ def test_failed_learning_keeps_program_for_third_incident(tmp_path: Path, monkey
                 raise RuntimeError("learning failed")
             return outcome
 
+        def prepare_recovery(self, outcome: AgentOutcome | None) -> None:
+            """This scripted agent has no background controller."""
+
         def close(self) -> None:
             pass
 

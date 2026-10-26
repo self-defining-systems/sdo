@@ -94,6 +94,9 @@ class FakeAgent:
             sdo_resolution=self.resolution,
         )
 
+    def prepare_recovery(self, outcome: AgentOutcome | None) -> None:
+        """This scripted agent has no background incident intake."""
+
     def close(self) -> None:
         self.events.append("close")
 
@@ -729,3 +732,42 @@ def test_grade_is_persisted_before_failed_reflection_and_never_changed(tmp_path:
     assert records[0].oracle.success is True
     assert "reflection failed" in records[0].error
     assert json.loads((tmp_path / "incidents.grades/000000.json").read_text()) == saved
+
+
+def test_recovery_cannot_open_incidents_while_sdo_intake_is_live(tmp_path: Path) -> None:
+    clock = FakeClock()
+    state = {"closed": False, "intake_live": True}
+    unsolicited = []
+
+    class Agent(FakeAgent):
+        def learn(self, outcome: AgentOutcome) -> AgentOutcome:
+            learned = super().learn(outcome)
+            state["closed"] = True
+            return learned
+
+        def prepare_recovery(self, outcome: AgentOutcome | None) -> None:
+            assert state["closed"], "recovery must wait for terminal closure"
+            state["intake_live"] = False
+
+    class Driver(FakeDriver):
+        def recover(self) -> float:
+            if state["intake_live"]:
+                unsolicited.append("cleanup opened an unsolicited incident")
+            assert state["closed"]
+            return super().recover()
+
+    records = run_incidents(Agent(clock), Driver(clock), _config(tmp_path, 1), monotonic=clock.monotonic)
+    assert not unsolicited
+    assert records[0].recovery_error is None
+
+
+def test_sdo_without_recovery_pause_cannot_mutate_the_cluster(tmp_path: Path) -> None:
+    clock = FakeClock()
+    driver = FakeDriver(clock)
+
+    class Agent(FakeAgent):
+        prepare_recovery = None
+
+    records = run_incidents(Agent(clock), driver, _config(tmp_path, 1), monotonic=clock.monotonic)
+    assert "recover" not in driver.events
+    assert records[0].recovery_error is not None

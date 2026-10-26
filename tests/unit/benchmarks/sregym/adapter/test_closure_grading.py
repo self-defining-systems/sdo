@@ -193,3 +193,39 @@ def test_uncorrelated_closure_cannot_reach_benchmark_transport(tmp_path: Path) -
     with pytest.raises(ValueError, match="incident-correlated"):
         grader.observe(evidence)
     assert not grader.path.exists()
+
+
+@pytest.mark.parametrize("busy", ["incident_open", "incident_request", "pending_closure"])
+def test_recovery_pause_rejects_unclosed_incident(busy: str) -> None:
+    from benchmarks.sregym.adapter.persistent import PersistentControllerError, pause_for_recovery
+    from tests.unit.benchmarks.sregym.adapter.test_persistent import FakeOps
+
+    ops = FakeOps(states={"hotel-sdo": {busy: {"request": {"incident_id": "active"}}}})
+    with pytest.raises(PersistentControllerError, match="recovery.*closed"):
+        pause_for_recovery(ops, "hotel-sdo", incident_id="incident-1")
+    assert not ops.events
+
+
+def test_recovery_pause_requires_ack_then_rechecks_for_racing_incident() -> None:
+    from benchmarks.sregym.adapter.persistent import PersistentControllerError, pause_for_recovery
+    from tests.unit.benchmarks.sregym.adapter.test_persistent import FakeOps
+
+    class RacingOps(FakeOps):
+        def controller_logs(self, control: str) -> str:
+            self.states[control]["incident_open"] = True
+            return super().controller_logs(control)
+
+    ops = RacingOps(states={"hotel-sdo": {"last_acknowledged_incident_id": "incident-1"}}, logs={"hotel-sdo": []})
+    with pytest.raises(PersistentControllerError, match="recovery.*closed"):
+        pause_for_recovery(ops, "hotel-sdo", incident_id="incident-1")
+    assert ops.events == [("paused", "hotel-sdo")]
+
+
+def test_recovery_pause_acknowledges_closed_incident_before_return() -> None:
+    from benchmarks.sregym.adapter.persistent import pause_for_recovery
+    from tests.unit.benchmarks.sregym.adapter.test_persistent import FakeOps
+
+    ops = FakeOps(states={"hotel-sdo": {"last_acknowledged_incident_id": "incident-1"}}, logs={"hotel-sdo": []})
+    pause_for_recovery(ops, "hotel-sdo", incident_id="incident-1")
+    assert ops.events == [("paused", "hotel-sdo")]
+    assert json.loads(ops.logs["hotel-sdo"][-1])["controller_maintenance"] == "paused"
