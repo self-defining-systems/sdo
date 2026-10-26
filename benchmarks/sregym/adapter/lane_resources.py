@@ -347,7 +347,6 @@ def assert_lane_resources(
 
     try:
         namespaces = get(["namespaces", "-o", "json"])
-        pods = get(["pods", "--all-namespaces", "-o", "json"])
         nodes = get(["nodes", "-o", "json"])
         summaries = []
         if not nodes["items"]:
@@ -360,6 +359,11 @@ def assert_lane_resources(
             if summary["node"]["nodeName"] != name:
                 raise ValueError(f"eval: node memory inventory identity mismatch: {name}")
             summaries.append(summary)
+        # A short-lived startup container may finish before the kubelet sample
+        # is collected. Judge the current running set, rather than requiring a
+        # measurement for an earlier lifetime that has already ended. New or
+        # still-running containers retain exact UID/sample requirements.
+        pods = get(["pods", "--all-namespaces", "-o", "json"])
         return evaluate_lane_resources(
             namespaces=namespaces,
             pods=pods,

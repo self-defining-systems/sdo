@@ -198,8 +198,10 @@ func testHermeticRepeatBroker(t *testing.T, rejectFirst, boundSession bool) {
 	if rejected != rejectFirst || modelCalls != expectedCalls || ledger.ReflectionCommit == "" || len(paths) != 5 || validations == 0 {
 		t.Fatalf("model=%d paths=%v ledger=%v checks=%d", modelCalls, paths, ledger, validations)
 	}
-	if ledger.ReflectionEvidenceGapCount == nil || ledger.GetReflectionEvidenceGapCount() != 2 {
-		t.Fatalf("incident did not persist its missing open/fixed observations: %v", ledger)
+	// The protected open/fixed snapshots already contain the bound Service.
+	// Primitive calls are not required for an object to count as observed.
+	if ledger.ReflectionEvidenceGapCount == nil || ledger.GetReflectionEvidenceGapCount() != 0 {
+		t.Fatalf("incident mislabeled captured open/fixed objects as missing observations: %v", ledger)
 	}
 	for _, path := range paths {
 		if !strings.HasPrefix(path, ".sdo/corpus/repeat-") {

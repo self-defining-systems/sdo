@@ -71,7 +71,7 @@ func ReflectionLearningDiagnostics(root string, outcome *contracts.OutcomeRecord
 				if err != nil {
 					return nil, err
 				}
-				if !slices.Contains(c.RootCauseProgramIDs, spec.ID) || !bindingsCoverCause(c.Bindings.Objects, cause.GetResources()) {
+				if !slices.Contains(c.RootCauseProgramIDs, spec.ID) || !bindingsCoverRepairs(outcome, c.Bindings.Objects, cause.GetResources()) {
 					continue
 				}
 				hasProgram = true
@@ -85,6 +85,14 @@ func ReflectionLearningDiagnostics(root string, outcome *contracts.OutcomeRecord
 		}
 	}
 	return ds, nil
+}
+
+// Only repaired targets need parameters. Symptom resources remain in the cause
+// and replay snapshot, with independent opening/clearance evidence checked by
+// VerifiedReflectionCauses; they need not be written or exposed as extra roles.
+func bindingsCoverRepairs(outcome *contracts.OutcomeRecord, bindings map[string]sdk.ObjectRef, resources []*contracts.ObjectRef) bool {
+	repaired, _, valid := causeRepairs(outcome, resources)
+	return valid && bindingsCoverCause(bindings, repaired)
 }
 
 func bindingsCoverCause(bindings map[string]sdk.ObjectRef, resources []*contracts.ObjectRef) bool {
