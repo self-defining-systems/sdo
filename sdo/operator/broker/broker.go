@@ -289,6 +289,15 @@ func (b *Broker) publish(ctx context.Context, incidentID string, actor Actor, ph
 		if err != nil {
 			return err
 		}
+		// Authored memory whitespace is normalized, never a rejection; the
+		// changed set is recomputed in case a file now equals its base.
+		if normalized, err := validate.NormalizeAuthoredWhitespace(proposal.Path, paths); err != nil {
+			return fmt.Errorf("normalize authored whitespace: %w", err)
+		} else if len(normalized) > 0 {
+			if paths, err = validate.ChangedPaths(ctx, proposal.Path, proposal.BaseCommit); err != nil {
+				return err
+			}
+		}
 		candidateRoot := proposal.Path
 		if actor == Responder && phase == ProposalPhase {
 			paths = SourceRepairPaths(paths)
