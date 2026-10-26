@@ -146,8 +146,22 @@ func checkCommittedRepairHealth(ctx context.Context, root, compiled string, clos
 	if err != nil {
 		return err
 	}
-	if old.Objective != current.Objective || old.DetectorRevision != current.DetectorRevision || repair.SourceInputs != current.SourceInputs || repair.Objective != current.Objective {
+	if old.Objective != current.Objective || old.DetectorRevision != repair.DetectorRevision || repair.SourceInputs != current.SourceInputs || repair.Objective != current.Objective {
 		return ErrStaleHealthInvestigation
+	}
+	if repair.DetectorRevision == current.DetectorRevision {
+		return nil
+	}
+	// Adopting the repair makes the judge rewrite the health detectors. Those
+	// refreshes follow this incident's own repair, so they may not stale it;
+	// any other policy writer still does. This guard is not the health
+	// evidence: the replayed ExecuteClosureEffect revalidates the closure and
+	// health detectors on the live cluster before any outcome is committed.
+	if err := memory.CheckRepairAdoption(ctx, root, repairCommit, compiled); err != nil {
+		if errors.Is(err, memory.ErrReflectionPolicyChanged) || errors.Is(err, memory.ErrReflectionObjectiveChanged) {
+			return ErrStaleHealthInvestigation
+		}
+		return err
 	}
 	return nil
 }

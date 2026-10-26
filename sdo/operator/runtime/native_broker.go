@@ -1026,7 +1026,9 @@ func (n NativeIncidentBroker) committedRepairHealthReceipt(ctx context.Context, 
 // accepted proposal commit for the incident must both match, and no outcome
 // may be committed yet (later states have their own proofs). Like
 // committedOutcomeClosure it reads the atomically replaced ledger without the
-// effect lock.
+// effect lock. It authenticates the repair only: health freshness after
+// adoption comes from ExecuteClosureEffect's live revalidation of the closure
+// and health detectors, which must stay ahead of the outcome commit.
 func (n NativeIncidentBroker) ownAcceptedProposal(ctx context.Context, closure IncidentClosure) (string, error) {
 	id := closure.Request.IncidentID
 	if n.Repository == nil || id == "" || len(closure.FinalDetectorStates) == 0 {
