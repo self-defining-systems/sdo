@@ -564,11 +564,7 @@ with (
     assert len(catalog) == 50
     assert sum(len(d.faults) for d in catalog.values()) == 170
     unsupported = {f.class_name for d in catalog.values() for f in d.faults if not f.tracking_supported}
-    assert unsupported == {
-        'KafkaQueueProblems', 'KafkaPoisonPillHOLBlock', 'ValkeyMemoryDisruption', 'ValkeyAuthDisruption',
-        'MongoDBUserUnregistered', 'MongoDBRevokeAuth', 'SecretRotationStaleEnvCredentialsAstronomyShop',
-        'EphemeralPortRangeHotelReservation', 'ExpiredTlsHotelReservation',
-    }, unsupported
+    assert unsupported == set(), unsupported
     for key, item in catalog.items():
         if item.tracking_supported:
             validate_suite({key: item}, require_tracking=True, capability_mode='permissive')

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 from copy import deepcopy
 from decimal import Decimal, InvalidOperation
@@ -253,3 +254,15 @@ def admitted_memory_probe(read: ObjectReader, component: str) -> Callable[[], bo
         )
 
     return restored
+
+
+def flag_disabled(read: Callable[[str, str], dict[str, Any] | None], flag_name: str) -> bool:
+    configmap = read("configmap", "flagd-config")
+    if not configmap:
+        return False
+    raw = (configmap.get("data") or {}).get("demo.flagd.json")
+    if not isinstance(raw, str):
+        return False
+    flag = (json.loads(raw).get("flags") or {}).get(flag_name) or {}
+    # Missing/unknown variants are not evidence of recovery.
+    return flag.get("defaultVariant") == "off"
