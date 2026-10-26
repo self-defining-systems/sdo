@@ -13,8 +13,10 @@ import yaml
 
 from benchmarks.sregym.adapter import (
     INCIDENT_EXECUTION_LABEL,
+    POST_CLOSURE_WAIT_SECONDS,
     STANDBY_LABEL,
     Deadline,
+    StabilizationError,
     assert_host_disk_headroom,
     assert_lane_resources,
     assert_stable_workloads,
@@ -27,8 +29,6 @@ from benchmarks.sregym.adapter import (
     setup_lineage,
     wait_for_proof,
 )
-from benchmarks.sregym.adapter.eval_guards import StabilizationError
-from benchmarks.sregym.adapter.persistent import POST_CLOSURE_WAIT_SECONDS
 from benchmarks.sregym.fastloop.clean_start import assert_clean_baseline
 
 if TYPE_CHECKING:
