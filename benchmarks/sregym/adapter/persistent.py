@@ -1936,10 +1936,10 @@ def controller_job_failure(job: dict[str, Any]) -> str | None:
     """A Job's terminal condition as ``reason: message``; a Failed or Complete Job never runs another pod."""
 
     for condition in (job.get("status") or {}).get("conditions") or []:
-        if isinstance(condition, dict) and condition.get("type") in {"Failed", "Complete"}:
-            if condition.get("status") == "True":
-                reason = condition.get("reason") or condition["type"]
-                return f"{reason}: {condition.get('message') or 'no message'}"
+        terminal = isinstance(condition, dict) and condition.get("type") in {"Failed", "Complete"}
+        if terminal and condition.get("status") == "True":
+            reason = condition.get("reason") or condition["type"]
+            return f"{reason}: {condition.get('message') or 'no message'}"
     return None
 
 
@@ -1992,7 +1992,8 @@ def _wait_for_reflection_drain(
             f"{deadline_at.isoformat()}: {error}"
         )
     raise ReflectionDeadlineError(
-        f"incident {incident_id!r} was not reflected and rolled out by its reflection deadline {deadline_at.isoformat()}"
+        f"incident {incident_id!r} was not reflected and rolled out by its reflection deadline "
+        f"{deadline_at.isoformat()}"
     )
 
 
