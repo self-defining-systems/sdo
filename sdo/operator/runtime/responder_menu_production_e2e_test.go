@@ -353,7 +353,7 @@ func testProductionResponderMenuFactory(t *testing.T, enabled bool) {
 
 const productionMenuScript = `import io,json,os,shlex,sys
 from pathlib import Path
-from benchmarks.sregym.assurance.scripted_codex.turn import Turn
+from benchmarks.sregym.assurance.scripted_codex.turn import MAX_STRUCTURED_OUTPUT_CHARS,Turn
 from benchmarks.sregym.assurance.scripted_codex.wire import EventStream,Rollout
 from sdo.agents.responder.session_recovery import open_recovery
 incident,directory=sys.argv[1],Path(sys.argv[2])
@@ -363,7 +363,7 @@ rollout=Rollout.create(Path(os.environ["CODEX_HOME"]),cwd=str(Path.cwd()))
 recovery.checkpoint(rollout.session_id)
 turn=Turn("responder",175,Path.cwd(),rollout,EventStream(io.StringIO()))
 def select(program):
- code,text=turn.run(shlex.join([sys.executable,"-m","sdo.agents.responder.tools_cli","--json","menu"]))
+ code,text=turn.run(shlex.join([sys.executable,"-m","sdo.agents.responder.tools_cli","--json","menu"]),max_output_chars=MAX_STRUCTURED_OUTPUT_CHARS)
  assert code==0,text
  menu=json.loads(text.splitlines()[0])["menu"]
  option=next(o["option_id"] for o in menu["options"] if o.get("program_id")==program)

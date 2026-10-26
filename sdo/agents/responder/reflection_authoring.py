@@ -52,9 +52,12 @@ class SessionObservations(BaseModel):
 
 
 def authoring_reference(topic: ReferenceTopic = "programs") -> str:
-    """Read the references shipped with this worker, without guessed installation paths."""
+    """Read shipped authoring references. SDK includes detector source-diff access before playbook selection."""
     if topic == "sdk":
-        paths = [SKILLS_ROOT / "sdo-playbook-authoring/references/program-sdk.md"]
+        paths = [
+            SKILLS_ROOT / "sdo-playbook-authoring/references/program-sdk.md",
+            SKILLS_ROOT / "sdo-detector-authoring/references/sdk.md",
+        ]
     elif topic == "rules":
         paths = [
             SKILLS_ROOT / name / "references/rules.md"

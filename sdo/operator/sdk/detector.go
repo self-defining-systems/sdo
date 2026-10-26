@@ -200,7 +200,19 @@ func ConfigMapReferencesForDeployment(deployment appsv1.Deployment) []ConfigMapR
 	return result
 }
 
+// SourceDiff is the read-only comparison with the accepted source for one resource.
+// Missing source or observation evidence is an error, never a clean comparison.
+type SourceDiff struct {
+	// SourceAbsent is true only after a successful accepted-source lookup finds no object.
+	SourceAbsent bool   `json:"source_absent,omitempty"`
+	Changed      bool   `json:"changed"`
+	Text         string `json:"text,omitempty"`
+}
+
 type DetectionContext interface {
+	// DiffAgainstSource compares a captured resource with accepted source, including
+	// source absence. Runtime reads are frozen per snapshot and recorded for replay.
+	DiffAgainstSource(ref ObjectRef) (SourceDiff, error)
 	// PodAdmission returns the frozen dry-run result, false when unobserved.
 	PodAdmission() (PodAdmissionResult, bool)
 	Namespace() string
