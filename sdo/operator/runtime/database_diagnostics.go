@@ -44,13 +44,17 @@ type DatabaseOperationError struct {
 	Reason DatabaseFailureReason
 }
 
-func (e *DatabaseOperationError) Error() string {
-	step, reason := e.Step, e.Reason
-	switch step {
+func (s DatabaseOperationStep) safe() DatabaseOperationStep {
+	switch s {
 	case DatabaseContainerLookup, DatabaseExecTransport, DatabaseClientBinary, DatabaseAuthentication, DatabaseCatalogRead, DatabaseCatalogParse, DatabaseMutation:
+		return s
 	default:
-		step = "operation"
+		return "operation"
 	}
+}
+
+func (e *DatabaseOperationError) Error() string {
+	step, reason := e.Step.safe(), e.Reason
 	switch reason {
 	case DatabaseUnavailable, databaseForbidden, databaseTimeout, databaseNotFound, databaseClientFailed, databaseRejected, databaseIdentityChanged, databaseInvalidProjection, databaseAmbiguousAuth:
 	default:

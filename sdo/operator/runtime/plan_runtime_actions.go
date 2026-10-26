@@ -105,6 +105,9 @@ func (e PlanExecutor) applyRuntimePlan(ctx context.Context, incident IncidentReq
 		case program.DeletePod, program.Exec, program.EnsureDatabaseUser:
 			object, getErr := e.Client.Get(ctx, ref)
 			if getErr != nil || object == nil || !samePlanRef(object, ref) || object.GetUID() == "" || object.GetResourceVersion() == "" {
+				if _, database := a.(program.EnsureDatabaseUser); database {
+					return result, databaseOperationFailure(DatabaseContainerLookup, getErr)
+				}
 				return result, fmt.Errorf("runtime action requires current named Pod identity")
 			}
 			items[i].uid = object.GetUID()

@@ -43,6 +43,13 @@ func TestObservationConformanceCoversEachMatchingDatabaseWorkload(t *testing.T) 
 	if report.Observations[0].Error == client.err.Error() {
 		t.Fatal("probe returned private upstream message")
 	}
+	client.err = &DatabaseOperationError{Step: DatabaseOperationStep("SYNTHETIC_PRIVATE_MESSAGE"), Reason: DatabaseFailureReason("SYNTHETIC_PRIVATE_MESSAGE")}
+	report = CheckObservationConformance(context.Background(), client, pods, nil)
+	raw, _ := json.Marshal(report)
+	if strings.Contains(string(raw), "SYNTHETIC_PRIVATE_MESSAGE") {
+		t.Fatal("probe returned unrecognized diagnostic values")
+	}
+
 }
 
 func TestObservationConformanceFindsHotelDatabaseBehindRegistryRewrite(t *testing.T) {

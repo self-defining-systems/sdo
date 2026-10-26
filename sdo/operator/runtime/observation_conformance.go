@@ -121,7 +121,7 @@ func CheckObservationConformance(ctx context.Context, client DatabaseObservation
 			var container *DatabaseTargetError
 			switch {
 			case errors.As(safe, &operation):
-				row.FailureStage = string(operation.Step)
+				row.FailureStage = string(operation.Step.safe())
 			case errors.As(safe, &reference):
 				row.FailureStage = "credential-reference"
 			case errors.As(safe, &container):

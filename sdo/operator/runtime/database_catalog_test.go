@@ -31,7 +31,7 @@ func TestDatabaseCatalogTransportProjectionAndCanaries(t *testing.T) {
 	t.Setenv("APP_PASSWORD", canary)
 	t.Setenv("ADMIN_PASSWORD", canary)
 	t.Setenv("ADMIN_USERNAME", canary)
-	for _, mode := range []string{"read", "ensure", "malformed", "denied", "missing-env", "authentication", "catalog-read", "client-binary"} {
+	for _, mode := range []string{"read", "ensure", "malformed", "denied", "missing-env", "authentication", "catalog-read", "client-binary", "duplicate-users"} {
 		t.Run(mode, func(t *testing.T) {
 			a := databaseAction()
 			a.Target.Auth = &program.DatabaseAuth{Database: "admin", Username: program.CredentialRef{Env: "ADMIN_USERNAME"}, Password: program.CredentialRef{Env: "ADMIN_PASSWORD"}}
@@ -97,6 +97,9 @@ func TestDatabaseCatalogTransportProjectionAndCanaries(t *testing.T) {
 				}
 				if output != nil {
 					body := `[{"name":"app","roles":[{"database":"app","name":"readWrite"}]}]`
+					if mode == "duplicate-users" {
+						body = `[{"name":"app","roles":[]},{"name":"app","roles":[]}]`
+					}
 					if mode == "malformed" {
 						body = `[{"name":"app","roles":[],"password":"` + canary + `"}]`
 					}
@@ -152,7 +155,7 @@ func TestDatabaseCatalogTransportProjectionAndCanaries(t *testing.T) {
 					t.Fatalf("failure step lost: %v", safe)
 				}
 			}
-			if mode == "malformed" && !strings.Contains(databaseSafeError(err, "unavailable").Error(), "catalog-parse") {
+			if (mode == "malformed" || mode == "duplicate-users") && !strings.Contains(databaseSafeError(err, "unavailable").Error(), "catalog-parse") {
 				t.Fatal("parse failure step lost")
 			}
 			if strings.Contains(fmt.Sprint(err), canary) {

@@ -175,7 +175,11 @@ func (c TypedPlanClient) DatabaseUsers(ctx context.Context, t program.DatabaseTa
 	if err = d.Decode(&users); err != nil || d.Decode(new(any)) != io.EOF {
 		return nil, &DatabaseOperationError{Step: DatabaseCatalogParse, Reason: databaseInvalidProjection}
 	}
-	return program.NormalizeDatabaseUsers(users)
+	normalized, err := program.NormalizeDatabaseUsers(users)
+	if err != nil {
+		return nil, &DatabaseOperationError{Step: DatabaseCatalogParse, Reason: databaseInvalidProjection}
+	}
+	return normalized, nil
 }
 func (c TypedPlanClient) EnsureDatabaseUser(ctx context.Context, a program.EnsureDatabaseUser) error {
 	if err := a.Validate(); err != nil {
