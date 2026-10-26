@@ -224,7 +224,8 @@ func (v LiveReadView) DiffAgainstSource(ref sdk.ObjectRef) (program.Diff, error)
 			}
 		}
 		after, _ := json.Marshal(actual)
-		return program.Diff{Changed: string(before) != string(after), Text: fmt.Sprintf("accepted: %s\nobserved: %s", before, after)}, nil
+		changed := string(before) != string(after) || len(addedSourceFields(observed, comparableFields(source.Object))) > 0
+		return program.Diff{Changed: changed, Text: fmt.Sprintf("accepted: %s\nobserved: %s", before, after)}, nil
 	}
 	if observed == nil {
 		if v.Client != nil {
@@ -250,8 +251,9 @@ func (v LiveReadView) DiffAgainstSource(ref sdk.ObjectRef) (program.Diff, error)
 		left = comparableFields(normalized.Object)
 		right = actual
 	}
-	// Apply normalization answers whether reconciliation changes live state. It
-	// may retain externally owned fields and cannot represent accepted source.
+	// Apply normalization answers whether reconciliation changes declared
+	// fields. It retains externally owned fields, so fields written after
+	// acceptance that source does not declare are checked separately.
 	// Keep the two complete, source-grounded sides even when Changed is false,
 	// so callers can compare individual fields (including source absence).
 	normalizedBefore, err := json.Marshal(left)
@@ -270,7 +272,8 @@ func (v LiveReadView) DiffAgainstSource(ref sdk.ObjectRef) (program.Diff, error)
 	if err != nil {
 		return program.Diff{}, err
 	}
-	return program.Diff{Changed: string(normalizedBefore) != string(normalizedAfter), Text: fmt.Sprintf("accepted: %s\nobserved: %s", before, after)}, nil
+	changed := string(normalizedBefore) != string(normalizedAfter) || len(addedSourceFields(observed, accepted)) > 0
+	return program.Diff{Changed: changed, Text: fmt.Sprintf("accepted: %s\nobserved: %s", before, after)}, nil
 }
 
 func dryRunAcceptedSource(ctx context.Context, client kubernetes.Interface, ref sdk.ObjectRef, source *unstructured.Unstructured) (*unstructured.Unstructured, error) {
