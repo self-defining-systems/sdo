@@ -250,8 +250,8 @@ func TestSourceInventoryPendingOnboardingConfirmedSweep(t *testing.T) {
 				if rejected, err := onboarding.Marked(ctx, client, "control", onboarding.RejectedConfigMapName); err != nil || !rejected {
 					t.Fatalf("contradiction not durably rejected: %v %v", rejected, err)
 				}
-				if len(c.sourceInventoryFindings) == 0 {
-					t.Fatal("rejection suppressed ordinary inventory detection")
+				if mode == "transient-inventory" && len(c.sourceInventoryFindings) == 0 {
+					t.Fatal("rejection suppressed a post-install inventory addition")
 				}
 			}
 			if _, err := client.CoreV1().ConfigMaps("control").Get(ctx, onboarding.AttemptConfigMapName, metav1.GetOptions{}); !apierrors.IsNotFound(err) {
@@ -344,5 +344,57 @@ func TestSourceInventoryPendingOnboardingConfirmedSweep(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// Environmental inventory exists before SDO starts. A failed health evaluation
+// must report the fault without converting the frozen environment into drift.
+func TestInstallEnvironmentInventorySurvivesFailedHealthAndRestart(t *testing.T) {
+	health := inventoryHealth().(*sequenceDetector)
+	fault := stateFinding("health")
+	fault.PrimaryResource = sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "source-app"}
+	health.samples = [][]sdk.Finding{{fault}}
+	c, client := stagedInstallerController(t, health)
+	for turn := 0; turn < 2; turn++ {
+		if err := c.EvaluateAll(context.Background(), time.Unix(int64(101+turn), 0)); err != nil {
+			t.Fatal(err)
+		}
+		if c.namespaceOnboarding != nil {
+			t.Fatal("environment inventory granted healthy onboarding")
+		}
+		if turn == 0 {
+			reported := false
+			for _, evaluation := range c.history {
+				for _, fingerprint := range evaluation.Fingerprints {
+					if fingerprint == FindingFingerprint(fault) {
+						reported = true
+					}
+				}
+			}
+			if !reported {
+				t.Fatal("environment inventory hid the application health fault")
+			}
+		}
+		c.observeSourceInventory(time.Unix(int64(102+turn), 0))
+		if len(c.sourceInventoryFindings) != 0 {
+			t.Fatalf("pre-install environment became drift after failed health: %+v", c.sourceInventoryFindings)
+		}
+		if turn == 0 {
+			restarted, err := NewController(c.config, []sdk.Detector{health}, c.provider, c.dispatcher, time.Unix(102, 0))
+			if err != nil {
+				t.Fatal(err)
+			}
+			restarted.ConfigureDrift(*c.drift)
+			if err := restarted.AttachPendingOnboarding(context.Background(), client, "control"); err != nil {
+				t.Fatal(err)
+			}
+			c = restarted
+		}
+	}
+	later := inventoryObject("v1", "Service", "app", "later-service")
+	c.drift.Events.(*inventoryStore).objects = append(c.drift.Events.(*inventoryStore).objects, later)
+	c.observeSourceInventory(time.Unix(105, 0))
+	if len(c.sourceInventoryFindings) != 1 || c.sourceInventoryFindings[0].PrimaryResource.Name != "later-service" {
+		t.Fatalf("later fault hidden: %+v", c.sourceInventoryFindings)
 	}
 }

@@ -290,6 +290,9 @@ func rehearseNativeOnboarding(t *testing.T, maintenanceChange bool) {
 	controllerConfig.SourceCommit = accepted.Commit
 	newController := func(at time.Time) *Controller {
 		t.Helper()
+		// Production startup uses the accepted repository head, including the
+		// rendered lock published before a pending incident was checkpointed.
+		controllerConfig.SourceCommit = nativeGit(t, root, "rev-parse", "HEAD")
 		c, err := NewController(controllerConfig, []sdk.Detector{goal, reach}, provider, dispatcher, at)
 		if err != nil {
 			t.Fatal(err)
@@ -324,6 +327,7 @@ func rehearseNativeOnboarding(t *testing.T, maintenanceChange bool) {
 		window.Targets = append(window.Targets, servicehealth.TargetObservations{Target: servicehealth.ReachabilityTarget{Service: "geo", Port: port.Port, PortName: port.Name}})
 	}
 	var maintenanceShift int64
+	replacementInventory := false
 	probe := func(round int) {
 		t.Helper()
 		at := time.Unix(int64(101+round*10)+maintenanceShift, 0)
@@ -363,12 +367,26 @@ func rehearseNativeOnboarding(t *testing.T, maintenanceChange bool) {
 		if err := c.PersistState(ctx); err != nil {
 			t.Fatalf("real controller checkpoint round %d: %v", round, err)
 		}
-		if c.IncidentOpen() {
+		if replacementInventory {
+			// Reachability's namespace-lifetime exclusion remains valid, but
+			// an install inventory exemption cannot bless a recreated object.
+			findings := c.sourceInventoryFindings
+			if len(findings) != 1 || findings[0].PrimaryResource.Kind != "ConfigMap" || findings[0].PrimaryResource.Name != "failure-admin-geo" {
+				t.Fatalf("replacement install object must remain visible: findings=%+v inventory=%v error=%s revision=%s", findings, c.sourceInventory != nil, c.sourceInventoryError, c.CurrentAcceptedCommit())
+			}
+			for _, state := range c.tracker.Snapshot() {
+				if state.Active && !inventoryFinding(state.Finding) {
+					t.Fatalf("namespace restore broke reachability exclusion: %+v", state.Finding)
+				}
+			}
+		} else if c.IncidentOpen() {
 			t.Fatal("never-served declaration opened incident")
 		}
 		select {
 		case request := <-dispatcher.requests:
-			t.Fatalf("unsolicited responder: %s", request.IncidentID)
+			if !replacementInventory || len(request.Findings) != 1 || !inventoryFinding(request.Findings[0]) || request.Findings[0].PrimaryResource.Name != "failure-admin-geo" {
+				t.Fatalf("unsolicited responder findings: %+v", request.Findings)
+			}
 		default:
 		}
 	}
@@ -531,7 +549,9 @@ func rehearseNativeOnboarding(t *testing.T, maintenanceChange bool) {
 		window.Targets[i].Samples = nil
 		window.Targets[i].LastSuccess = nil
 	}
-	// A restart must load the original reference for the recreated objects.
+	// A restart keeps reachability authority but cannot recapture inventory
+	// authority for the replacement ConfigMap absent from accepted source.
+	replacementInventory = true
 	c = newController(c.evaluationAt.Add(time.Second))
 	for round := probeRounds + 6; round < probeRounds+12; round++ {
 		probe(round)
@@ -558,5 +578,5 @@ func rehearseNativeOnboarding(t *testing.T, maintenanceChange bool) {
 	if !time.Unix(100, 0).Equal(final.EstablishedAt.AsTime()) {
 		t.Fatal("refresh rewrote install time")
 	}
-	t.Logf("full native bring-up + real HY restore + recovered judge + validated pending checkpoint + six quiet cycles + namespace recreation + six quiet cycles + restart passed in %s", time.Since(started))
+	t.Logf("full native bring-up + real HY restore + recovered judge + validated pending checkpoint + six quiet cycles + namespace recreation with visible replacement inventory + restart passed in %s", time.Since(started))
 }

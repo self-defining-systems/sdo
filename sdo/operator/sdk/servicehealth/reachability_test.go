@@ -136,6 +136,8 @@ func TestReachabilityFiresWhenReadyPodsRefuseFromTheFirstDial(t *testing.T) {
 		Snapshot: geoSnapshot(intstr.FromInt32(8083), true),
 		window:   window(geoTarget(samples(servicehealth.DialRefused, false, false, false))),
 	}
+	// Applying app source through SDO must not hide a real application fault.
+	snapshot.ServiceList[0].ManagedFields = []metav1.ManagedFieldsEntry{{Manager: "sdo-deployer", Operation: metav1.ManagedFieldsOperationApply}}
 	findings := detectReachability(t, snapshot)
 	if len(findings) != 1 {
 		t.Fatalf("ready pods refusing every fresh dial must fire without a prior success, got %v", findings)

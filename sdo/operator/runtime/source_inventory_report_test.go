@@ -5,13 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"google.golang.org/protobuf/encoding/protojson"
-	"google.golang.org/protobuf/types/known/timestamppb"
 	appsv1 "k8s.io/api/apps/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 	"os"
 	"path/filepath"
-	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/core"
 	"sdo.dev/operator/onboarding"
 	"strings"
@@ -78,7 +76,13 @@ func TestSourceInventoryEvaluateOnceUsesInstallerAcknowledgementWithoutRecapture
 	provider := &core.KubernetesSnapshotProvider{Client: client, Namespace: "app"}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	ack := &contracts.NamespaceOnboarding{Namespace: "app", AcceptedCommit: strings.Repeat("a", 40), EstablishedAt: timestamppb.New(time.Unix(100, 0)), Objects: []*contracts.ObjectRef{{ApiVersion: "apps/v1", Kind: "Deployment", Namespace: "app", Name: "pre-existing"}}}
+	if err := onboarding.Stage(ctx, client, "control", "app", strings.Repeat("a", 40), nil, time.Unix(100, 0)); err != nil {
+		t.Fatal(err)
+	}
+	ack, err := onboarding.Pending(ctx, client, "control", "app")
+	if err != nil {
+		t.Fatal(err)
+	}
 	data, err := protojson.Marshal(ack)
 	if err != nil {
 		t.Fatal(err)
