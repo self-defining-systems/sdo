@@ -119,25 +119,82 @@ def reset() -> None:
 
 
 def canonical_kind(raw: str) -> str:
-    """Go's ``CanonicalObjectKind``: aliases and group-qualified kinds resolve, unknown kinds are lowercased."""
+    """Go's ``CanonicalObjectKind``: aliases and group-qualified kinds resolve, unknown kind spelling is preserved."""
 
     kind = raw.strip().lower().split(".", 1)[0]
-    return OBJECT_KINDS.get(kind, kind)
+    return OBJECT_KINDS.get(kind, raw.strip().split(".", 1)[0])
 
 
 def resource_ref(value: str) -> dict[str, str]:
-    """Parse ``Kind/name`` or ``Kind/namespace/name`` like Go's ``ParseObjectRef`` (legacy order included)."""
+    """Receipt projection of the shared Go citation grammar; pinned by the same corpus."""
 
-    parts = value.split("/")
-    if len(parts) not in (2, 3) or not all(_REF_COMPONENT.fullmatch(part) for part in parts):
-        raise ValueError(f"resource must be Kind/name or Kind/namespace/name: {value!r}")
-    kind, name = parts[0], parts[-1]
-    namespace = parts[1] if len(parts) == 3 else ""
-    first_known, second_known = (part.lower().split(".", 1)[0] in OBJECT_KINDS for part in parts[:2])
-    if len(parts) == 3 and not first_known and second_known:
-        kind, namespace = parts[1], parts[0]
+    def reject() -> ValueError:
+        example = "Kind/namespace/name"
+        candidate = re.split(r"[,;\s]+", value.strip(), maxsplit=1)[0]
+        parts = candidate.split("/")
+        if len(parts) in (2, 3) and all(_REF_COMPONENT.fullmatch(part) for part in parts):
+            example = candidate
+        try:
+            fields = json.loads(value)
+            if isinstance(fields, dict):
+                components = [fields.get("kind", "Kind"), fields.get("namespace", ""), fields.get("name", "name")]
+                components = [part for part in components if isinstance(part, str) and _REF_COMPONENT.fullmatch(part)]
+                if components:
+                    example = "/".join(components)
+        except ValueError:
+            pass
+        return ValueError(
+            "resource must reference exactly one object: Kind/name, Kind/namespace/name, "
+            f"or JSON {{kind,name,namespace?,api_version?}}; example: {example}"
+        )
+
+    def unique_fields(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key, field in pairs:
+            key = "api_version" if key == "apiVersion" else key
+            if key in result:
+                raise reject()
+            result[key] = field
+        return result
+
+    text = value.strip()
+    if text.startswith("{"):
+        try:
+            fields = json.loads(text, object_pairs_hook=unique_fields)
+        except ValueError as exc:
+            raise reject() from exc
+        if set(fields) - {"api_version", "kind", "namespace", "name"} or not all(
+            isinstance(field, str) for field in fields.values()
+        ):
+            raise reject()
+        kind, name, namespace = fields.get("kind", ""), fields.get("name", ""), fields.get("namespace", "")
+        version = fields.get("api_version")
+        if (
+            not _REF_COMPONENT.fullmatch(kind)
+            or not _REF_COMPONENT.fullmatch(name)
+            or (namespace and not _REF_COMPONENT.fullmatch(namespace))
+        ):
+            raise reject()
+    else:
+        version = None
+        if "@" in text:
+            version, text = text.split("@", 1)
+        parts = text.split("/")
+        if len(parts) not in (2, 3) or not all(_REF_COMPONENT.fullmatch(part) for part in parts):
+            raise reject()
+        kind, name = parts[0], parts[-1]
+        namespace = parts[1] if len(parts) == 3 else ""
+        first_known, second_known = (part.lower().split(".", 1)[0] in OBJECT_KINDS for part in parts[:2])
+        if len(parts) == 3 and not first_known and second_known:
+            kind, namespace = parts[1], parts[0]
     kind = canonical_kind(kind)
-    return {"api_version": API_VERSIONS.get(kind, ""), "kind": kind, "namespace": namespace, "name": name}
+    if version is None:
+        version = API_VERSIONS.get(kind, "")
+    if version and (
+        len(version.split("/")) > 2 or not all(_REF_COMPONENT.fullmatch(part) for part in version.split("/"))
+    ):
+        raise reject()
+    return {"api_version": version, "kind": kind, "namespace": namespace, "name": name}
 
 
 def withholds_command(text: str) -> bool:
