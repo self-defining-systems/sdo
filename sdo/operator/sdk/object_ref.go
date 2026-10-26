@@ -3,7 +3,9 @@ package sdk
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"strings"
+	"unicode"
 )
 
 // ObjectRefError is a rejected agent citation, not an operational failure.
@@ -21,7 +23,104 @@ const (
 )
 
 func (e *ObjectRefError) Error() string {
-	return fmt.Sprintf("%s: %q must reference exactly one object: Kind/name or Kind/namespace/name", e.Code, e.Input)
+	return fmt.Sprintf("%s: expected one object: Kind/name, Kind/namespace/name, or JSON {kind,name,namespace?,api_version?}; example: %s", e.Code, objectRefExample(e.Input))
+}
+
+// Error examples use only reference components, never extra supplied fields.
+func objectRefExample(raw string) string {
+	var fields map[string]any
+	if json.Unmarshal([]byte(raw), &fields) == nil && fields != nil {
+		kind, _ := fields["kind"].(string)
+		name, _ := fields["name"].(string)
+		namespace, _ := fields["namespace"].(string)
+		if !refComponent(kind) {
+			kind = "Kind"
+		}
+		if !refComponent(name) {
+			name = "name"
+		}
+		if refComponent(namespace) {
+			return kind + "/" + namespace + "/" + name
+		}
+		return kind + "/" + name
+	}
+	candidates := strings.FieldsFunc(raw, func(c rune) bool { return c == ',' || c == ';' || unicode.IsSpace(c) })
+	if len(candidates) > 0 {
+		if ref, err := ParseObjectRef(candidates[0]); err == nil {
+			text := ref.Kind + "/" + ref.Name
+			if ref.Namespace != "" {
+				text = ref.Kind + "/" + ref.Namespace + "/" + ref.Name
+			}
+			return text
+		}
+	}
+	return "Kind/namespace/name"
+}
+
+// Decode explicitly so duplicate fields, unknown keys and null components do
+// not silently turn an ambiguous citation into a different write target.
+func parseObjectRefJSON(raw string) (ObjectRef, error) {
+	reject := func() (ObjectRef, error) { return ObjectRef{}, &ObjectRefError{Code: ObjectRefMalformed, Input: raw} }
+	decoder := json.NewDecoder(strings.NewReader(raw))
+	first, err := decoder.Token()
+	if err != nil || first != json.Delim('{') {
+		return reject()
+	}
+	fields := map[string]string{}
+	for decoder.More() {
+		token, err := decoder.Token()
+		if err != nil {
+			return reject()
+		}
+		key, ok := token.(string)
+		if !ok {
+			return reject()
+		}
+		if key == "apiVersion" {
+			key = "api_version"
+		}
+		switch key {
+		case "api_version", "kind", "namespace", "name":
+		default:
+			return reject()
+		}
+		if _, duplicate := fields[key]; duplicate {
+			return reject()
+		}
+		var value any
+		if decoder.Decode(&value) != nil {
+			return reject()
+		}
+		text, ok := value.(string)
+		if !ok {
+			return reject()
+		}
+		fields[key] = text
+	}
+	if _, err := decoder.Token(); err != nil {
+		return reject()
+	}
+	if _, err := decoder.Token(); err != io.EOF {
+		return reject()
+	}
+	kind, name, namespace := fields["kind"], fields["name"], fields["namespace"]
+	if !refComponent(kind) || !refComponent(name) || (namespace != "" && !refComponent(namespace)) {
+		return reject()
+	}
+	kind = CanonicalObjectKind(kind)
+	version, explicit := fields["api_version"]
+	if !explicit {
+		version = objectAPIVersion(kind)
+	}
+	if !validObjectAPIVersion(version) {
+		return reject()
+	}
+	return ObjectRef{APIVersion: version, Kind: kind, Namespace: namespace, Name: name}, nil
+}
+
+func validObjectAPIVersion(version string) bool {
+	parts := strings.Split(version, "/")
+	return version == "" || (len(parts) <= 2 && refComponent(parts[0]) && (len(parts) == 1 || refComponent(parts[1])))
 }
 
 var objectKinds = map[string]string{
@@ -41,12 +140,13 @@ var objectKinds = map[string]string{
 }
 
 // CanonicalObjectKind accepts kubectl aliases and group-qualified kinds.
-// Unknown kinds remain usable without inventing an API version.
+// Unknown kind spelling is preserved, without inventing an API version.
 func CanonicalObjectKind(raw string) string {
 	kind, _, _ := strings.Cut(strings.ToLower(strings.TrimSpace(raw)), ".")
 	if canonical, ok := objectKinds[kind]; ok {
 		return canonical
 	}
+	kind, _, _ = strings.Cut(strings.TrimSpace(raw), ".")
 	return kind
 }
 
@@ -86,6 +186,7 @@ func refComponent(value string) bool {
 
 // ParseObjectRef is the single grammar for agent object citations. Bare and
 // namespaced refs, kubectl aliases and legacy namespace/Kind/name are accepted;
+// JSON objects with kind/name and optional namespace/api_version are accepted;
 // compound refs produce a typed rejection. An optional apiVersion@ prefix
 // preserves explicit versions when formatting a typed ref.
 func ParseObjectRef(raw string) (ObjectRef, error) {
@@ -93,6 +194,9 @@ func ParseObjectRef(raw string) (ObjectRef, error) {
 		return ObjectRef{}, &ObjectRefError{Code: code, Input: raw}
 	}
 	text := strings.TrimSpace(raw)
+	if strings.HasPrefix(text, "{") {
+		return parseObjectRefJSON(text)
+	}
 	if strings.ContainsAny(text, ";,") || len(strings.Fields(text)) > 1 {
 		return reject(ObjectRefCompound)
 	}
@@ -100,8 +204,7 @@ func ParseObjectRef(raw string) (ObjectRef, error) {
 	explicitVersion := false
 	if before, after, ok := strings.Cut(text, "@"); ok {
 		version, text, explicitVersion = before, after, true
-		parts := strings.Split(version, "/")
-		if version != "" && (len(parts) > 2 || !refComponent(parts[0]) || (len(parts) == 2 && !refComponent(parts[1]))) {
+		if !validObjectAPIVersion(version) {
 			return reject(ObjectRefMalformed)
 		}
 	}

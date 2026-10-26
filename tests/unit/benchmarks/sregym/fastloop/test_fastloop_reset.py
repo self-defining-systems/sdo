@@ -521,3 +521,61 @@ def test_restore_rejects_malformed_lock_before_any_application_mutation(tmp_path
     with pytest.raises(ValueError, match="rendered.*gap"):
         reset.restore_application(environment, FakeCluster(), worker)
     assert worker.calls == []
+
+
+@pytest.mark.parametrize("operation", ["reset", "restore"])
+def test_recovery_never_mutates_while_native_reflection_is_pending(tmp_path: Path, operation: str) -> None:
+    from datetime import datetime, timezone
+
+    from benchmarks.sregym.adapter.persistent import ControllerRecord, PendingIncident, PersistentState
+
+    environment = FastloopEnvironment(
+        run_dir=tmp_path,
+        cluster="kind-test",
+        kubeconfig=tmp_path / "kubeconfig",
+        namespace="hotel",
+        application="hotel",
+        workspace=tmp_path / "workspace",
+        sregym_dir=tmp_path / "sregym",
+        private_tmp=None,
+        seed_commit="a" * 40,
+    )
+    environment.save()
+    baseline = ApplicationBaseline(
+        "hotel", [{"kind": "Deployment", "metadata": {"name": "app", "namespace": "hotel"}, "spec": {"replicas": 1}}]
+    )
+    environment.baseline_path.write_text(json.dumps({"fastloop_application": {"namespaces": [baseline.__dict__]}}))
+    record = ControllerRecord(
+        application="hotel",
+        namespace="hotel",
+        control_namespace="hotel-sdo",
+        lifecycle_fingerprint="f",
+        controller_pod_uid="uid",
+        controller_pod_name="controller",
+        installed_by_stage="test",
+        installed_at=datetime.now(timezone.utc),
+        runtime_config={},
+        pending=PendingIncident(
+            incident_id="i1",
+            stage_label="test",
+            receipt_dir=tmp_path,
+            repository=environment.workspace,
+            verified_at=datetime.now(timezone.utc),
+            stage_receipt={},
+        ),
+    )
+    state = PersistentState(controllers={"hotel": record})
+    state.save(environment.state_path)
+    cluster, worker = FakeCluster(), FakeWorker()
+    invoke = reset_environment if operation == "reset" else reset.restore_application
+    with pytest.raises(RuntimeError, match="durable terminal reflection"):
+        invoke(environment, cluster, worker)
+    assert cluster.accepted_commit == "changed"
+    assert cluster.sessions == ["old-session"]
+    assert worker.calls == []
+
+    # The native learning edge clears pending only after its durable finalization.
+    record.pending = None
+    state.save(environment.state_path)
+    invoke(environment, cluster, worker)
+    assert worker.calls == ["clean_start", "health", "baseline_oracle"]

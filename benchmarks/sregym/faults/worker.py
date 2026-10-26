@@ -11,19 +11,12 @@ from typing import Any, cast
 from unittest.mock import patch
 
 from benchmarks.sregym.faults.description import PROBE_KINDS, FaultSpec, ProblemDescription
+from benchmarks.sregym.faults.probe_catalog import CLASS_KINDS, PROBE_ATTRIBUTES, UNSUPPORTED_REASONS
 
 # Class names are interpreted only at this benchmark subprocess boundary.
 # Unknown faults remain describable but fail capability validation until reviewed.
-KINDS = {
-    "K8STargetPortMisconfig": "target_port",
-    "IncorrectImage": "incorrect_image",
-    "ReadinessProbeMisconfiguration": "readiness",
-    "WrongServiceSelector": "wrong_selector",
-    "NetworkPolicyBlock": "network_policy",
-    "MissingConfigMap": "configmap",
-    "ResourceRequestTooLarge": "resource_request",
-    "ResourceRequestTooSmall": "resource_request",
-}
+KINDS = CLASS_KINDS
+
 CAPABILITIES = {
     **dict.fromkeys(
         (
@@ -45,6 +38,7 @@ CAPABILITIES = {
     "NetworkPolicyBlock": ("application-networkpolicies",),
     "DuplicatePVCMounts": ("application-pvcs", "application-workloads"),
     "MongoDBUserUnregistered": ("application-pod-exec",),
+    "MongoDBRevokeAuth": ("application-pod-exec",),
     "PSARestrictedBlocksRecreation": ("Namespace-labels/PSA",),
     "NamespaceMemoryLimit": ("ResourceQuota",),
     "AdmissionWebhookTLSMismatch": ("Webhook-configuration", "foreign-namespace"),
@@ -74,16 +68,32 @@ def describe_problem(problem_id: str, problem: Any) -> ProblemDescription:
         service = (
             getattr(part, "faulty_service", None)
             or getattr(part, "faulty_services", None)
+            or getattr(part, "worker_name", None)
             or getattr(part, "namespace", "unknown")
         )
         if isinstance(service, (list, tuple)):
             targets = cast("list[str] | tuple[str, ...]", service)
             service = targets[0] if len(targets) == 1 else ",".join(targets)
-            single_target = len(targets) == 1
+            target_components = tuple(targets)
         else:
-            single_target = isinstance(service, str)
+            target_components = (service,) if isinstance(service, str) else ()
         component = str(service)
-        supported = kind in PROBE_KINDS and single_target
+        supported = class_name in KINDS and kind in PROBE_KINDS and bool(target_components)
+        if (
+            class_name == "ServiceDNSResolutionFailure"
+            and getattr(part, "dns_failure_layer", None) != "network_policy_block_dns"
+        ):
+            supported = False
+        if (
+            class_name == "EphemeralPortRangeHotelReservation"
+            and getattr(part, "sysctl_scope", None) != "frontend_only"
+        ):
+            supported = False
+        if class_name in {"MongoDBUserUnregistered", "MongoDBRevokeAuth"} and component not in {
+            "mongodb-geo",
+            "mongodb-rate",
+        }:
+            supported = False
         params: dict[str, Any] = (
             dict(draw.param_dict())
             if draw is not None
@@ -102,6 +112,9 @@ def describe_problem(problem_id: str, problem: Any) -> ProblemDescription:
                     "path",
                     "image",
                     "tag",
+                    "ingress_name",
+                    "correct_service",
+                    "dns_failure_layer",
                     "requested_memory",
                     "requested_cpu",
                 }
@@ -110,6 +123,12 @@ def describe_problem(problem_id: str, problem: Any) -> ProblemDescription:
         )
         if indices is not None and colocated is None and hasattr(problem, "spec"):
             params.update(dict(problem.spec.components[index].params))
+        for key, attribute in PROBE_ATTRIBUTES.get(class_name, {}).items():
+            value = getattr(part, attribute, None)
+            if isinstance(value, (str, int, float, bool)):
+                params[key] = value
+            else:
+                supported = False
         footprints = getattr(draw, "footprints", ())
         requirements = set(CAPABILITIES.get(class_name, ("unreviewed:" + class_name,)))
         for footprint in footprints:
@@ -124,12 +143,15 @@ def describe_problem(problem_id: str, problem: Any) -> ProblemDescription:
             FaultSpec(
                 kind=kind,
                 component=component,
+                targets=target_components,
                 declared_index=index,
                 class_name=class_name,
                 fault_key=draw.key if draw is not None else class_name,
                 parameters=params,
                 tracking_supported=supported,
-                tracking_reason=None if supported else f"no attributable probe for {class_name}",
+                tracking_reason=None
+                if supported
+                else UNSUPPORTED_REASONS.get(class_name, f"no attributable probe for {class_name}"),
                 required_capabilities=tuple(sorted(requirements)),
                 policy_name=getattr(part, "policy_name", None),
                 pod_label_key=getattr(part, "pod_label_key", "io.kompose.service"),

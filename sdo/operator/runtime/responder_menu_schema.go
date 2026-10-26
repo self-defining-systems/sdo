@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/dynamicpb"
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"strings"
 	"unicode/utf8"
 
@@ -91,6 +92,9 @@ func menuFieldSchema(field protoreflect.FieldDescriptor) *MenuSchema {
 		return &MenuSchema{Type: "object", AdditionalProperties: menuSingularSchema(field.MapValue())}
 	}
 	schema := menuSingularSchema(field)
+	if field.Message() != nil && field.Message().Name() == "ObjectRef" {
+		schema = menuReferenceSchema()
+	}
 	rules, _ := proto.GetExtension(field.Options(), validate.E_Field).(*validate.FieldRules)
 	if field.IsList() {
 		return &MenuSchema{Type: "array", Items: schema, MinItems: rules.GetRepeated().GetMinItems(), MaxItems: rules.GetRepeated().GetMaxItems()}
@@ -147,9 +151,6 @@ func menuNumericRules(schema *MenuSchema, rules *validate.FieldRules, kind proto
 
 func menuInputSchema(field protoreflect.FieldDescriptor) *MenuSchema {
 	schema := menuFieldSchema(field)
-	if field.Message() != nil && field.Message().Name() == "ObjectRef" {
-		schema = &MenuSchema{AnyOf: []*MenuSchema{{Type: "string", Description: "Kind/namespace/name"}, schema}}
-	}
 	if field.Message() != nil && field.Message().Name() == "PlanValue" || field.IsMap() && field.MapValue().Message() != nil && field.MapValue().Message().Name() == "PlanValue" {
 		value := menuValueSchema()
 		if field.IsMap() {
@@ -172,8 +173,7 @@ func menuValueSchema() *MenuSchema {
 	descriptor := menuMessageSchema(field.Message())
 	delete(descriptor.Properties, "parameter") // raw scalars become controller-bound parameters
 	for _, origin := range []string{"source", "observed"} {
-		ref := descriptor.Properties[origin].Properties["ref"]
-		descriptor.Properties[origin].Properties["ref"] = &MenuSchema{AnyOf: []*MenuSchema{{Type: "string", Description: "Kind/namespace/name"}, ref}}
+		descriptor.Properties[origin].Properties["ref"] = menuReferenceSchema()
 	}
 	descriptor.AllOf[0].OneOf = descriptor.AllOf[0].OneOf[:2]
 	return &MenuSchema{AnyOf: []*MenuSchema{{Type: "string"}, {Type: "integer"}, {Type: "boolean"}, descriptor}, Description: "Literal scalar, or {source: {ref: ObjectRef, path: string}} / {observed: {ref: ObjectRef, path: string}}; ref also accepts Kind/namespace/name."}
@@ -319,4 +319,10 @@ func menuValidateMessage(message protoreflect.MessageDescriptor, object map[stri
 		}
 	}
 	return nil
+}
+
+func menuReferenceSchema() *MenuSchema {
+	object := menuMessageSchema((&contracts.ObjectRef{}).ProtoReflect().Descriptor())
+	object.Required = []string{"kind", "name"}
+	return &MenuSchema{AnyOf: []*MenuSchema{{Type: "string", Description: "Kind/name or Kind/namespace/name (kubectl aliases accepted)"}, object}}
 }

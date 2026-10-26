@@ -183,12 +183,18 @@ def test_dry_run_reuse_does_not_reset_or_redeploy_and_refreshes_health(tmp_path,
     monkeypatch.setattr(admission.LaneAdmission, "prove", live_admission)
     monkeypatch.setattr(adapter, "KubectlClusterOps", lambda: object())
     monkeypatch.setattr(dry_run, "assert_active_intake", lambda env: calls.append("intake"))
+
+    def observations(env, directory):
+        calls.append("observation-conformance")
+        return {"passed": True, "observations": 1}
+
+    monkeypatch.setattr(dry_run, "check_observations", observations)
     assert dry_run.run_lane(tmp_path, 300) == 0
     result = json.loads((tmp_path / "eval-dry-run/report.json").read_text())
     assert result["setup_proof"]["receipt"] == str(original)
     assert result["setup_proof"]["reused"] is True
     assert result["fingerprint"]["live_objects"] == fingerprint.live_objects
-    assert calls == ["intake", "live-admission"]
+    assert calls == ["intake", "live-admission", "observation-conformance"]
 
 
 def test_dry_run_reuse_rejects_drift_during_live_checks(tmp_path, fingerprint, monkeypatch):
@@ -218,6 +224,7 @@ def test_dry_run_reuse_rejects_drift_during_live_checks(tmp_path, fingerprint, m
     monkeypatch.setattr(admission.LaneAdmission, "prove", lambda *args, **kwargs: None)
     monkeypatch.setattr(adapter, "KubectlClusterOps", lambda: object())
     monkeypatch.setattr(dry_run, "assert_active_intake", lambda env: None)
+    monkeypatch.setattr(dry_run, "check_observations", lambda env, directory: {"passed": True, "observations": 1})
     assert dry_run.run_lane(tmp_path, 300) == 1
     result = json.loads((tmp_path / "eval-dry-run/report.json").read_text())
     assert result["passed"] is False

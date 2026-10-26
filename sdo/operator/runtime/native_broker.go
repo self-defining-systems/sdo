@@ -23,6 +23,7 @@ import (
 	"sdo.dev/operator/broker"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory"
+	"sdo.dev/operator/memory/validate"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/shellpath"
 )
@@ -264,6 +265,12 @@ func (n NativeIncidentBroker) ProcessClosure(ctx context.Context, closure Incide
 			ledger.OutcomeDocument = proto.Clone(derived.Record).(*contracts.OutcomeRecord)
 			ledger.OutcomeDocument.CodePath = codePathContract(n.CodePath)
 			ledger.RequiresReflection = derived.RequiresReflection
+			if n.SessionRoot != "" {
+				capture, captureErr := memory.IncidentCorpusDir(n.SessionRoot, id)
+				if captureErr == nil {
+					ledger.OutcomeDocument.UndetectedCauses = validate.CaptureUndetectedCauses(ledger.OutcomeDocument, capture)
+				}
+			}
 			// Every verified closure settles current evidence before committing its
 			// authoritative outcome. Prior repair text is never an eligibility proof.
 			if derived.Record.GetClassification() == "success" {
@@ -430,9 +437,9 @@ func (n NativeIncidentBroker) processReflection(ctx context.Context, ledger *con
 		// A failed/no-op closure with no independently repaired cause may
 		// explain its evidence gap, but cannot publish README-only learning or
 		// turn the responder's unverified repair claims into executable memory.
-		if effect.Outcome.GetClassification() != outcomeclass.Success && len(effect.Outcome.GetConfirmedRootCauses()) == 0 && decision.LearningDecision == "updated" {
+		if effect.Outcome.GetClassification() != outcomeclass.Success && len(validate.VerifiedReflectionCauses(effect.Outcome)) == 0 && decision.LearningDecision == "updated" {
 			decision.LearningDecision = "failed"
-			decision.Error = "reflection without an independently verified repaired cause requires no_change with an evidence-gap reason or a typed SDK gap"
+			decision.Error = "reflection without a verified repaired cause or controller-observed undetected transition requires no_change with an evidence-gap reason or a typed SDK gap"
 		}
 		if prepared {
 			if _, err := memory.RecordRepeatCorpus(workspace.Worktree, capture, effect.IncidentID, positive, origins); err != nil {

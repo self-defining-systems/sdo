@@ -1137,6 +1137,21 @@ def _parallel_attach(args: argparse.Namespace) -> int:
     return 0
 
 
+def _check_plan(args: argparse.Namespace) -> int:
+    from benchmarks.sregym.fastloop.probe_coverage import check_plan
+
+    report = check_plan(args.plan, sregym_dir=args.sregym_dir)
+    print(json.dumps({"tracking_supported": True, **report}))
+    return 0
+
+
+def _preflight(args: argparse.Namespace) -> int:
+    if args.plan is not None:
+        _check_plan(args)
+    up_preflight(args)
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="fastloop", description=__doc__, formatter_class=argparse.RawTextHelpFormatter
@@ -1148,7 +1163,18 @@ def build_parser() -> argparse.ArgumentParser:
     preflight.add_argument("--kind-worker-nodes", type=int, default=1)
     for role in ("controller", "responder", "validator"):
         preflight.add_argument(f"--{role}-image", default=None)
-    preflight.set_defaults(handler=lambda args: up_preflight(args) or 0)
+    preflight.add_argument(
+        "--plan", type=Path, help="require attributable probes for every problem in this plan before host checks"
+    )
+    preflight.add_argument("--sregym-dir", type=Path, default=DEFAULT_SREGYM_DIR)
+    preflight.set_defaults(handler=_preflight)
+
+    check_plan = commands.add_parser(
+        "check-plan", help="offline per-fault tracking validation for an entire plan or stream"
+    )
+    check_plan.add_argument("--plan", type=Path, required=True)
+    check_plan.add_argument("--sregym-dir", type=Path, default=DEFAULT_SREGYM_DIR)
+    check_plan.set_defaults(handler=_check_plan)
 
     up = commands.add_parser("up", help="create or reuse the cluster and deploy the application once")
     up.add_argument("--run-dir", type=Path, required=True)

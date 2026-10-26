@@ -42,6 +42,9 @@ uv run pytest tests/ --cov=sdo
 architecture checks, and benchmark Go compilation. It also checks proto drift
 when Buf is installed. The AST checks always run with Tach's pytest impact
 plugin disabled; this gate installs the `test` extra through `uv run --extra test`.
+The architecture gate also resolves every tracked `from benchmarks.sregym.adapter import ...`
+statement through the real facade, with a missing-export negative control. This catches
+missing lazy exports before worker startup; test doubles must stay scoped to their owning module.
 To run just those checks:
 
 ```bash
@@ -558,34 +561,44 @@ after completion; the next launch replaces a stale record. The printed
 
 ### Runtime CI shards
 
-The controller matrix runs the runtime module in ten test-name partitions:
+The controller matrix keeps eight runtime runners and ten logical partitions:
 `reflection`, `reflection-mongo`, `reflection-programs`, `contracts`, `rendered`,
-`simulation`, `schedules`, `corpus`, `recovery`, and `remaining`. The two reflection
-compile/replay groups have separate budgets so repeated real CLI builds cannot
-consume the general contracts job's entire deadline. Run a partition locally
+`simulation`, `schedules`, `corpus`, `recovery`, and `remaining`. Run a partition
 with `python3 scripts/test_runtime_shard.py --shard reflection` from the repository
-root. Each shard first discovers the compiled tests across `./...`, including
-examples and fuzz seed tests, then requires every eligible name to match exactly
-one pattern in `scripts/test_runtime_shard.py`. Missing/overlapping patterns fail
-CI before execution. Replay, chaos, and explorer tests retain their dedicated jobs.
-All nested scenarios and simulation seeds run unchanged, with race instrumentation,
-`-parallel=2`, and a five-minute package timeout. Rendered-lock schedules and
-incident-schedule fuzz seeds share the `schedules` partition with their seeded
-schedule sweep so they do not crowd the rendered-source partition. The
-`controller` matrix remains a dependency of the stable `Required PR CI` aggregate.
+root. Names are historical labels: measured expensive tests are assigned by cost,
+so a reflection test can run in the rendered partition.
 
-For per-test timing, the shard runner emits `go test -json` events. To profile the
-unsharded suite with the same exclusions:
+The runner discovers compiled tests across every module package, including
+examples and fuzz seeds, and checks exhaustive alphabetical ownership before
+balancing. `scripts/runtime_test_costs.json` stores measured top-level costs;
+longest tests are assigned first to the least-loaded existing runner, with stable
+name tie-breaking. Unmeasured tests retain their alphabetical owner and a small
+planning estimate. The paired `reflection,corpus` and `simulation,remaining`
+partitions are balanced as one runner each. Matrix changes must preserve that
+mapping; the focused tests verify all eight allocations without adding a job.
+Replay, chaos and explorer tests keep their dedicated jobs.
 
-```bash
-(cd sdo/operator/runtime && go test -race -count=1 -json -parallel=2 \
-  -skip '^TestReplay|^TestChaos|^TestExhaustive|^TestExplorer' ./...) > runtime-timing.json
-```
+Race instrumentation, `-parallel=2`, every nested scenario and seed, and the
+five-minute Go package timeout remain unchanged. A shared JSON watchdog bounds
+runtime test execution and discovery/linking to 210 seconds (70% of the job), leaving room for
+runner setup within the five-minute job deadline. It kills the entire process
+group on a regression and reports the slowest and still-running test names.
+For parents with parallel children, timing uses JSON lifecycle timestamps minus
+any top-level pause, because Go's parent `Elapsed` excludes parallel-child waits.
+The restart sweep, shared-memory modes, broker matrix and trust-property worlds
+overlap independent scenario waits under
+the existing two-test concurrency cap; all repositories and process state stay
+owned by their scenario. The trust property precomputes the same seed-186 choices
+and arrival permutations, then retains every prefix invariant. Two measured
+placement corrections use that recovered capacity without reshuffling already
+validated runners.
 
-Rebalance the name patterns using top-level `pass` event `Elapsed` values. Keep the
-matrix shard values in sync; `tests/unit/sdo/operator/test_runtime_shards.py` checks
-that contract. New test names are discovered automatically and must still pass the
-exactly-once guard.
+Update the cost profile from complete `go test -json` runs, then inspect every
+runner's resulting duration. `tests/unit/sdo/operator/test_runtime_shards.py`
+checks deterministic assignment, unchanged coverage, matrix ownership and invalid
+cost rejection. New slow tests fail the named budget guard rather than silently
+consuming the whole hosted timeout.
+
 ### Fast image delivery
 
 Use `uv run python -m benchmarks.sregym.fastloop preflight` before image builds.
@@ -680,19 +693,46 @@ pushed event commit, publishing a cache for each mode. Normal-only consumers
 restore the normal graph and the sole module archive. Go test shards restore
 the race graph to a separate directory, then `scripts/merge_go_ci_caches.sh`
 unions immutable compiler entries with hard links. Each archive destination is
-restored once; Go module files are never unpacked over another restored cache. Preparation never links or
-starts test binaries; each test shard owns those steps. This avoids serially
-linking every test package before any shard can start. The test jobs depend
+restored once; Go module files are never unpacked over another restored cache.
+Both preparation modes compile every operator/runtime test archive with
+`go test -c` without starting TestMain. Normal preparation also compiles the
+CGO-disabled runtime graph used by generated traffic probers, publishes the
+source-bound Python test CLI, and runs the complete assurance seed/overlay check
+once to populate generated-package archives. All hosted builds retain
+`-trimpath`, including tests that add their own module flags, so equal source in
+fresh isolated workspaces reuses those archives. Changed source still gets a
+new Go build ID; a real-Go relocation/invalidation contract checks both cases.
+The test jobs depend
 on preparation and require that exact cache; they do not start cold compilation
 inside short operation deadlines. Cache restoration uses Go's content-addressed
 compiler entries, while executable identity remains source-bound by
 `operator_test_binary.py`.
 
-The operator gate partitions the expensive CLI/broker acceptance matrix from
-other broker tests and remaining packages through `test_operator_shard.sh`.
-Runtime name partitions remain exhaustive; `test_runtime_shard.py --shard`
-accepts comma-separated partitions so short groups can share a runner without
-omitting or duplicating names. Image runners consume the preparation job's
+The operator gate discovers builder, broker, validator, CLI and worker-registry
+names (including examples and fuzz seeds), assigning each exactly once through
+`scripts/test_operator_shard.py`. `scripts/operator_test_costs.json` records
+hosted run provenance, active top-level timings and explicit measured moves;
+new names retain their package default. Remaining packages are discovered too,
+with the same exhaustive ownership guard. Runtime allocations use the hosted
+costs in `scripts/runtime_test_costs.json` for longest-first balancing. Both
+profiles currently derive from hosted run40276560613; active parent time
+includes parallel subtests and excludes top-level pauses. The redundant-link
+regression shares the located-binding fixture's real acceptance compilation.
+
+The five existing operator jobs and four-minute Go timeouts stay unchanged.
+Every partition emits JSON per-test timings and lists its five slowest tests
+and unfinished names. The former 210-second process and 180-second top-level guards are report-only:
+they print slow and unfinished names without killing processes or failing a
+successful suite. The unchanged four-minute operator Go timeout, five-minute
+runtime Go timeout and five-minute hosted job limit own failure. Race checking,
+all seeds and exhaustive name ownership remain required. Run
+`bash scripts/test_operator_shard.sh compiler` locally; the runner's contract
+tests cover reporting, real test failures, malformed output and exhaustive
+ownership. Runtime name partitions remain exhaustive; `test_runtime_shard.py
+--shard` accepts comma-separated partitions so short groups can share a runner.
+Explicit Python worker settings pass
+through unchanged; local unset defaults use at most four CPUs and hosted CI
+explicitly uses two workers. Image runners consume the preparation job's
 source-bound schema identity, avoiding a separate Go cache transfer and toolchain
 installation just to print it.
 
@@ -736,3 +776,13 @@ GitHub Actions expression contexts are checked locally by
 actionlint1.7.7 with external shell/Python linters disabled; Ruff and the existing
 shell gates retain those responsibilities. This catches invalid job-level
 contexts before GitHub rejects the workflow without creating a check run.
+
+
+The no-fault rehearsal also runs `sdo-observation-check` in the installed controller Pod before
+accepting or reusing setup proof. It exercises production `DatabaseUsers` reads for discovered
+MongoDB containers without models, mutation or Secret reads. Each workload returns a safe named
+failure stage; namespace/selector discovery failures fail setup. Registry-rewritten images retain
+Mongo identification through declared container names and listener ports. Source-declared auth
+references can override a database target for a read-only reproduction with
+`go -C sdo/operator/runtime run ./cmd/sdo-observation-check --namespace NS --kubeconfig PATH --target JSON`.
+The target's `auth` references authenticate the catalog read separately from any create-user password.

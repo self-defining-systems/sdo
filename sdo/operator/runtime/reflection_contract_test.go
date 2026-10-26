@@ -235,6 +235,8 @@ func TestT1ClassificationMatrix(t *testing.T) {
 func TestT1ScriptedBrokerMatrix(t *testing.T) {
 	for _, c := range t1Classes() {
 		t.Run(c.name, func(t *testing.T) {
+			// Each row owns its repositories, captures and worker state.
+			t.Parallel()
 			for _, reject := range []bool{false, true} {
 				t.Run(fmt.Sprintf("reject=%t", reject), func(t *testing.T) {
 					run := t1RunBroker(t, c, reject)
@@ -512,36 +514,61 @@ func t1RunBroker(t *testing.T, c t1Class, reject bool) t1Run {
 }
 
 func TestT1TrustProperty(t *testing.T) {
-	// Fixed seed makes failures reproducible. 16 independent short broker runs
-	// randomize acceptance/rejection, class and outcome arrival order; the test
-	// deadline is below the repository's five-minute property-test cap.
+	// Precompute the original seed-186 choices and arrival permutations before
+	// running independent broker worlds under the existing -parallel bound.
 	deadline := time.Now().Add(4 * time.Minute)
 	rng := rand.New(rand.NewSource(186))
-	outcomes := []*contracts.OutcomeRecord{}
 	classes := t1Classes()
-	for trial := 0; trial < 16; trial++ {
-		if time.Now().After(deadline) {
-			t.Fatal("property-test wall-clock budget exhausted")
-		}
+	type trialPlan struct {
+		class   t1Class
+		reject  bool
+		arrival []int
+		outcome *contracts.OutcomeRecord
+	}
+	plans := make([]trialPlan, 16)
+	arrival := []int{}
+	for trial := range plans {
 		c := classes[trial%len(classes)]
 		if trial >= len(classes) {
 			c = classes[rng.Intn(len(classes))]
 		}
-		run := t1RunBroker(t, c, rng.Intn(2) == 0)
-		// Arrival order must not alter chronological trust. Every sample uses
-		// the same program revision, with strictly increasing completion times.
-		run.outcome.Timestamps.CompletedAt = timestamppb.New(time.Unix(int64(200+trial), 0))
+		reject := rng.Intn(2) == 0
+		arrival = append(arrival, trial)
+		rng.Shuffle(len(arrival), func(i, j int) { arrival[i], arrival[j] = arrival[j], arrival[i] })
+		plans[trial] = trialPlan{class: c, reject: reject, arrival: append([]int(nil), arrival...)}
+	}
+	t.Run("broker worlds", func(t *testing.T) {
+		for trial := range plans {
+			t.Run(fmt.Sprintf("trial=%d", trial), func(t *testing.T) {
+				t.Parallel()
+				if time.Now().After(deadline) {
+					t.Fatal("property-test wall-clock budget exhausted")
+				}
+				plans[trial].outcome = t1RunBroker(t, plans[trial].class, plans[trial].reject).outcome
+			})
+		}
+	})
+	outcomes := []*contracts.OutcomeRecord{}
+	for trial, plan := range plans {
+		if time.Now().After(deadline) {
+			t.Fatal("property-test wall-clock budget exhausted")
+		}
+		plan.outcome.Timestamps.CompletedAt = timestamppb.New(time.Unix(int64(200+trial), 0))
 		before := ProgramTrustStats(outcomes)[t1Program]
-		outcomes = append(outcomes, run.outcome)
+		outcomes = append(outcomes, plan.outcome)
 		orderedStats := ProgramTrustStats(outcomes)
-		rng.Shuffle(len(outcomes), func(i, j int) { outcomes[i], outcomes[j] = outcomes[j], outcomes[i] })
+		shuffled := make([]*contracts.OutcomeRecord, len(outcomes))
+		for i, index := range plan.arrival {
+			shuffled[i] = plans[index].outcome
+		}
+		outcomes = shuffled
 		shuffledStats := ProgramTrustStats(outcomes)
 		if !reflect.DeepEqual(orderedStats, shuffledStats) {
 			t.Errorf("seed=186 trial=%d arrival order changed trust", trial)
 		}
 		after := shuffledStats[t1Program]
-		if c.credit == 0 && after.VerifiedSuccesses > before.VerifiedSuccesses {
-			t.Errorf("seed=186 trial=%d class=%s non-covered instance increased trust (before=%+v after=%+v)", trial, c.name, before, after)
+		if plan.class.credit == 0 && after.VerifiedSuccesses > before.VerifiedSuccesses {
+			t.Errorf("seed=186 trial=%d class=%s non-covered instance increased trust (before=%+v after=%+v)", trial, plan.class.name, before, after)
 		}
 	}
 }

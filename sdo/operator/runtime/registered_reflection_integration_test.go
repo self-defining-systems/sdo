@@ -22,6 +22,7 @@ import (
 	"sdo.dev/operator/internal/testutil"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/validate"
+	"sdo.dev/operator/sdk/sdktest"
 )
 
 func TestReflectionDirectFilesCLIAndBroker(t *testing.T) {
@@ -410,7 +411,7 @@ func TestReflectionLearnedProgramCLIAndBroker(t *testing.T) {
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build CLI: %v: %s", err, out)
 	}
-	for _, scenario := range []string{"valid", "physical_path", "failed_closure"} {
+	for _, scenario := range []string{"valid", "physical_path", "failed_closure", "undetected_repair"} {
 		physical := scenario == "physical_path"
 		t.Run(scenario, func(t *testing.T) {
 			target := nativeRepository(t)
@@ -458,6 +459,26 @@ func TestReflectionLearnedProgramCLIAndBroker(t *testing.T) {
 						t.Fatal(err)
 					}
 				}
+				if scenario == "undetected_repair" && destination != "open@detect-recordings.json" {
+					var snapshot sdktest.Snapshot
+					if err := json.Unmarshal(data, &snapshot); err != nil {
+						t.Fatal(err)
+					}
+					observed := time.Unix(0, 0).UTC()
+					if destination == "fixed.json" {
+						observed = time.Unix(3, 0).UTC()
+					}
+					snapshot.ObservedAtTime = &observed
+					for i := range snapshot.ServiceList {
+						if snapshot.ServiceList[i].Name == "front" {
+							snapshot.ServiceList[i].UID = "same-front-object"
+						}
+					}
+					data, err = json.Marshal(snapshot)
+					if err != nil {
+						t.Fatal(err)
+					}
+				}
 				if err := os.WriteFile(filepath.Join(capture, destination), data, 0644); err != nil {
 					t.Fatal(err)
 				}
@@ -475,6 +496,22 @@ func TestReflectionLearnedProgramCLIAndBroker(t *testing.T) {
 				t.Fatal(err)
 			}
 			outcome := reflectionFixtureOutcome(incidentID)
+			// A second independently repaired cause has a real, resource-scoped
+			// SDK gap. It must not excuse the learnable Service cause.
+			peer := &contracts.ObjectRef{ApiVersion: "v1", Kind: "Pod", Namespace: "demo", Name: "database"}
+			gap := &contracts.SdkGap{FaultClass: "database", Primitive: "DatabaseUsers", Reason: "synthetic unavailable catalog", ScratchScript: "scratch/catalog", Resources: []*contracts.ObjectRef{peer}}
+			outcome.ConfirmedRootCauses = append(outcome.ConfirmedRootCauses, &contracts.ConfirmedRootCause{Summary: "database user repaired", Resources: []*contracts.ObjectRef{peer}})
+			outcome.Findings = append(outcome.Findings, &contracts.Finding{DetectorId: "database-health", RuleId: "catalog", Severity: "warn", Summary: "missing application account", Evidence: "synthetic observed database fault", Status: "active", PrimaryResource: peer, Fingerprint: "database"})
+			outcome.RepairActions = append(outcome.RepairActions, &contracts.RepairActionReceipt{ActionId: "repair-database", Kind: "exec", Target: "Pod/demo/database", Summary: "restore application account", Details: "synthetic controller-recorded repair", Success: true, Resources: []*contracts.ObjectRef{peer}, StartedAt: timestamppb.New(time.Unix(1, 0)), CompletedAt: timestamppb.New(time.Unix(2, 0))})
+			outcome.DetectorHistory = append(outcome.DetectorHistory, &contracts.DetectorEvaluation{DetectorId: "database-health", Status: "clear", EvaluatedAt: timestamppb.New(time.Unix(3, 0))})
+			if scenario == "undetected_repair" {
+				outcome.ConfirmedRootCauses = outcome.ConfirmedRootCauses[1:]
+				outcome.Findings = outcome.Findings[1:]
+				outcome.UndetectedCauses = validate.CaptureUndetectedCauses(outcome, capture)
+				if len(outcome.UndetectedCauses) != 1 {
+					t.Fatal("recorded Service repair was not offered as undetected learning")
+				}
+			}
 			if scenario == "failed_closure" {
 				outcome.Classification = "failed"
 				outcome.ReflectionEligibility = &contracts.ReflectionEligibility{Version: 1, Causes: []*contracts.ReflectionCauseWork{{CauseIndex: 0, Resources: reflectionFixtureResources()}}}
@@ -488,6 +525,8 @@ func TestReflectionLearnedProgramCLIAndBroker(t *testing.T) {
 				t.Fatal(err)
 			}
 			var authoredTree string
+			var checkErr error
+			var report contracts.MemoryCheckReport
 			worker := RegisteredReflectionWorker{AgentID: "reflector", TaskType: reflectionTaskType(t), Outcomes: memory.NewJSONStore(t.TempDir()), Timeout: time.Minute, SessionMode: "fresh"}
 			worker.Executor = reflectionTaskExecutorFunc(func(ctx context.Context, task *contracts.AgentTask) (*contracts.AgentResult, error) {
 				checkout := task.Workspace.CheckoutPath
@@ -512,46 +551,52 @@ func TestReflectionLearnedProgramCLIAndBroker(t *testing.T) {
 						return nil, err
 					}
 				}
-				decision := &contracts.ReflectionResult{LearningDecision: "updated", ProposedArtifactIds: []string{"service-targetport-mismatch"}, SdkGaps: []*contracts.SdkGap{reflectionFixtureGap()}}
+				decision := &contracts.ReflectionResult{LearningDecision: "updated", ProposedArtifactIds: []string{"service-targetport-mismatch"}, SdkGaps: []*contracts.SdkGap{gap}}
 				writeReflectionCheckDecision(t, checkout, decision)
 				command := exec.Command(binary, "memory", "check", "--json")
 				command.Dir = checkout
 				command.Env = append(os.Environ(), "SDO_ACTOR=responder", "SDO_PHASE=reflection", "SDO_BASE_COMMIT="+proposal.BaseCommit, "SDO_OPERATOR_ROOT="+operatorRoot, "SDO_HEALTHY_BASELINE=", "SDO_CAPTURED_CORPUS_DIR="+capture, "SDO_INCIDENT_ID="+incidentID)
-				output, checkErr := command.Output()
-				report := new(contracts.MemoryCheckReport)
-				if err := protojson.Unmarshal(output, report); err != nil {
+				output, err := command.Output()
+				checkErr = err
+				if err := protojson.Unmarshal(output, &report); err != nil {
 					t.Fatalf("CLI report: %v: %s", err, output)
 				}
-				receipt, publishErr := repository.PublishReflection(validate.WithCaptureSource(ctx, capture, incidentID), incidentID, &contracts.ReflectionDecision{LearningDecision: "updated", PlaybookIds: []string{"service-targetport-mismatch"}, SdkGaps: []*contracts.SdkGap{reflectionFixtureGap()}})
-				if physical {
-					var failure *validate.Failure
-					if checkErr == nil || !errors.As(publishErr, &failure) {
-						t.Fatalf("physical path accepted: CLI %v broker %v", checkErr, publishErr)
-					}
-					if !proto.Equal(&contracts.MemoryCheckReport{Diagnostics: report.Diagnostics}, &contracts.MemoryCheckReport{Diagnostics: validate.ProtoDiagnostics(failure.Diagnostics)}) {
-						t.Fatalf("diagnostics differ: CLI %v broker %v", report.Diagnostics, failure.Diagnostics)
-					}
-					if len(report.Diagnostics) != 1 || report.Diagnostics[0].Rule != "text.physical-path" {
-						t.Fatalf("unexpected physical-path diagnostics: %v", report.Diagnostics)
-					}
-				} else {
-					if checkErr != nil || publishErr != nil {
-						t.Fatalf("learned program rejected: CLI %v %v broker %v", checkErr, report.Diagnostics, publishErr)
-					}
-					// The proposal checkout and accepted commit contain exactly the same tree.
-					nativeGit(t, checkout, "add", "-f", ".sdo")
-					authoredTree = nativeGit(t, checkout, "write-tree")
-					acceptedTree := nativeGit(t, target, "rev-parse", receipt.Commit+"^{tree}")
-					if authoredTree != acceptedTree {
-						t.Fatalf("accepted tree %s differs from authored %s", acceptedTree, authoredTree)
-					}
-				}
-				response, err := anypb.New(&contracts.ReflectionResult{LearningDecision: "updated", ProposedArtifactIds: []string{"service-targetport-mismatch"}})
+				nativeGit(t, checkout, "add", "-f", ".sdo")
+				authoredTree = nativeGit(t, checkout, "write-tree")
+				response, err := anypb.New(decision)
 				return &contracts.AgentResult{SchemaVersion: task.SchemaVersion, TaskId: task.TaskId, ProposalId: task.Workspace.ProposalId, Status: "completed", Response: response}, err
 			})
 			workspace := IncidentWorkspace{IncidentID: incidentID, Worktree: proposal.Path, BaseCommit: proposal.BaseCommit}
-			if _, err := worker.Reflect(ctx, nativeClosure(workspace), workspace, outcome, "repair", proposal.BaseCommit, ReflectionFeedback{}); err != nil {
+			reflected, err := worker.Reflect(ctx, nativeClosure(workspace), workspace, outcome, "repair", proposal.BaseCommit, ReflectionFeedback{})
+			if err != nil {
 				t.Fatal(err)
+			}
+			if reflected.LearningDecision != "updated" || len(reflected.SDKGaps) != 1 || len(reflected.PlaybookIDs) != 1 {
+				t.Fatalf("mixed publication lost repaired playbook or peer gap: %+v", reflected)
+			}
+			// Broker validation is controller work after the worker returns; it must
+			// not consume the worker execution deadline. Both still compile for real.
+			receipt, publishErr := repository.PublishReflection(validate.WithCaptureSource(ctx, capture, incidentID), incidentID, &contracts.ReflectionDecision{LearningDecision: "updated", PlaybookIds: []string{"service-targetport-mismatch"}, SdkGaps: []*contracts.SdkGap{gap}})
+			if physical {
+				var failure *validate.Failure
+				if checkErr == nil || !errors.As(publishErr, &failure) {
+					t.Fatalf("physical path accepted: CLI %v broker %v", checkErr, publishErr)
+				}
+				if !proto.Equal(&contracts.MemoryCheckReport{Diagnostics: report.Diagnostics}, &contracts.MemoryCheckReport{Diagnostics: validate.ProtoDiagnostics(failure.Diagnostics)}) {
+					t.Fatalf("diagnostics differ: CLI %v broker %v", report.Diagnostics, failure.Diagnostics)
+				}
+				if len(report.Diagnostics) != 1 || report.Diagnostics[0].Rule != "text.physical-path" {
+					t.Fatalf("unexpected physical-path diagnostics: %v", report.Diagnostics)
+				}
+			} else {
+				if checkErr != nil || publishErr != nil {
+					t.Fatalf("learned program rejected: CLI %v %v broker %v", checkErr, report.Diagnostics, publishErr)
+				}
+				// The proposal checkout and accepted commit contain exactly the same tree.
+				acceptedTree := nativeGit(t, target, "rev-parse", receipt.Commit+"^{tree}")
+				if authoredTree != acceptedTree {
+					t.Fatalf("accepted tree %s differs from authored %s", acceptedTree, authoredTree)
+				}
 			}
 			if !physical && authoredTree == "" {
 				t.Fatal("program was not committed")
