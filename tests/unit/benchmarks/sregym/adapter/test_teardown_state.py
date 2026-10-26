@@ -5,12 +5,14 @@ from __future__ import annotations
 import json
 import subprocess
 from datetime import datetime, timezone
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
 from benchmarks.sregym.adapter import closure_pending, persistent
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 CONTROL = "hotel-sdo"
 PENDING = {"pending_closure": {"request": {"incident_id": "unclosable"}}, "closure_state": "CLOSURE_STATE_PENDING"}
