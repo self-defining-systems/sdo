@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -220,23 +221,74 @@ func (c *KubernetesCache) Resync(ctx context.Context) error {
 	return c.WaitForSync(ctx)
 }
 
+// InformerSyncError reports the informers whose initial list never completed,
+// by apiVersion/kind. A controller that cannot observe a kind is blind to it,
+// so callers fail with this error instead of continuing on a partial cache.
+type InformerSyncError struct {
+	Kinds []string
+	Err   error
+}
+
+func (e *InformerSyncError) Error() string {
+	return fmt.Sprintf("Kubernetes informer cache did not sync %s: %v", strings.Join(e.Kinds, ", "), e.Err)
+}
+
+func (e *InformerSyncError) Unwrap() error { return e.Err }
+
 func (c *KubernetesCache) WaitForSync(ctx context.Context) error {
 	c.informerMu.RLock()
-	syncs := make([]cache.InformerSynced, 0, len(c.informers))
-	for _, informer := range c.informers {
-		syncs = append(syncs, informer.HasSynced)
+	synced := make(map[string]cache.InformerSynced, len(c.informers))
+	for key, informer := range c.informers {
+		synced[key] = informer.HasSynced
 	}
 	c.informerMu.RUnlock()
-	if len(syncs) == 0 {
-		return nil
-	}
-	if !cache.WaitForCacheSync(ctx.Done(), syncs...) {
-		if err := ctx.Err(); err != nil {
-			return err
+	unsynced := func() []string {
+		kinds := []string{}
+		for key, hasSynced := range synced {
+			if !hasSynced() {
+				kinds = append(kinds, key)
+			}
 		}
-		return fmt.Errorf("Kubernetes informer cache failed to sync")
+		sort.Strings(kinds)
+		return kinds
+	}
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for len(unsynced()) > 0 {
+		select {
+		case <-ctx.Done():
+			kinds := unsynced()
+			if len(kinds) == 0 {
+				return nil
+			}
+			return &InformerSyncError{Kinds: kinds, Err: ctx.Err()}
+		case <-ticker.C:
+		}
 	}
 	return nil
+}
+
+// InformerGrant is the read access one started informer needs: ClusterWide
+// informers list and watch across namespaces and need a ClusterRole, the rest
+// need a Role in the observed namespace.
+type InformerGrant struct {
+	Key, Group, Resource string
+	ClusterWide          bool
+}
+
+// RequiredGrants lists the grants every informer this cache starts depends
+// on. The install ratchet derives the controller's list/watch grants from it.
+func (c *KubernetesCache) RequiredGrants() []InformerGrant {
+	grants := make([]InformerGrant, 0, len(c.informers))
+	for key := range c.informers {
+		resource := informerResources[key]
+		kind := key[strings.LastIndex(key, "/")+1:]
+		// With drift tracking, RoleBindings are observed in every namespace (see build).
+		clusterWide := inventoryClusterKind(kind) || kind == "RoleBinding" && c.config.TrackDrift
+		grants = append(grants, InformerGrant{Key: key, Group: resource.Group, Resource: resource.Resource, ClusterWide: clusterWide})
+	}
+	sort.Slice(grants, func(i, j int) bool { return grants[i].Key < grants[j].Key })
+	return grants
 }
 
 // Notifications signals that at least one watched kind changed since the last
@@ -438,6 +490,30 @@ func objectName(object any) string {
 		return ""
 	}
 	return accessor.GetName()
+}
+
+// informerResources maps every informer key to the REST resource its list and
+// watch calls need, in the same order as informerFor.
+var informerResources = map[string]struct{ Group, Resource string }{
+	"v1/ConfigMap":                                    {"", "configmaps"},
+	"v1/Service":                                      {"", "services"},
+	"v1/Pod":                                          {"", "pods"},
+	"apps/v1/Deployment":                              {"apps", "deployments"},
+	"apps/v1/ReplicaSet":                              {"apps", "replicasets"},
+	"v1/Endpoints":                                    {"", "endpoints"},
+	"discovery.k8s.io/v1/EndpointSlice":               {"discovery.k8s.io", "endpointslices"},
+	"networking.k8s.io/v1/NetworkPolicy":              {"networking.k8s.io", "networkpolicies"},
+	"apps/v1/StatefulSet":                             {"apps", "statefulsets"},
+	"apps/v1/DaemonSet":                               {"apps", "daemonsets"},
+	"v1/ServiceAccount":                               {"", "serviceaccounts"},
+	"v1/PersistentVolumeClaim":                        {"", "persistentvolumeclaims"},
+	"batch/v1/Job":                                    {"batch", "jobs"},
+	"batch/v1/CronJob":                                {"batch", "cronjobs"},
+	"rbac.authorization.k8s.io/v1/Role":               {"rbac.authorization.k8s.io", "roles"},
+	"rbac.authorization.k8s.io/v1/RoleBinding":        {"rbac.authorization.k8s.io", "rolebindings"},
+	"rbac.authorization.k8s.io/v1/ClusterRole":        {"rbac.authorization.k8s.io", "clusterroles"},
+	"rbac.authorization.k8s.io/v1/ClusterRoleBinding": {"rbac.authorization.k8s.io", "clusterrolebindings"},
+	"v1/Event":                                        {"", "events"},
 }
 
 func informerFor(factory informers.SharedInformerFactory, key string) (cache.SharedIndexInformer, error) {

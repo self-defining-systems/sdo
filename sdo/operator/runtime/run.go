@@ -93,6 +93,10 @@ func RunWithPrograms(detectors []sdk.Detector, programs program.ProgramRegistry)
 	}
 }
 
+// startupSyncTimeout bounds the first informer sync so a kind the controller
+// cannot list fails the start with its name instead of hanging silently.
+const startupSyncTimeout = 5 * time.Minute
+
 func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options RuntimeOptions) (runErr error) {
 	// The typed launch path fills options.Client itself; that is still a
 	// production client and must receive the metadata transport below.
@@ -996,7 +1000,13 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	if !desired.Paused {
 		kubernetesCache.Start(runCtx)
 		cacheStarted = true
-		if err := kubernetesCache.WaitForSync(runCtx); err != nil {
+		startSyncCtx, cancelStartSync := context.WithTimeout(runCtx, startupSyncTimeout)
+		err := kubernetesCache.WaitForSync(startSyncCtx)
+		cancelStartSync()
+		if err != nil {
+			if runCtx.Err() != nil {
+				return nil
+			}
 			return fmt.Errorf("sync Kubernetes informer cache: %w", err)
 		}
 		waitState := startState()
@@ -1061,8 +1071,10 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			if runCtx.Err() != nil {
 				return nil
 			}
-			fmt.Fprintf(stderr, "resume observation of namespace %s: %v\n", *namespace, syncErr)
-			return nil
+			// An unsynced informer reads as an empty namespace. Staying paused
+			// (the old behavior) left the controller blind with no detections,
+			// so fail loudly and let the restart name the kind again.
+			return fmt.Errorf("resume observation of namespace %s: %w", *namespace, syncErr)
 		}
 		waitState := func() {}
 		if wasPaused {
