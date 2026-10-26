@@ -379,6 +379,7 @@ def run_lane(run_dir: Path, timeout: int, lease: str | None = None) -> int:
 
     signal.signal(signal.SIGTERM, deadline)
     try:
+        cli.up_preflight(cli.build_parser().parse_args(["preflight", "--dev-mount", str(cli.REPO_ROOT)]))
         report.images = image_identity(environment)
         report.save(path)
         os.environ["KUBECONFIG"] = str(environment.kubeconfig)
