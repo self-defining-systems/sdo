@@ -13,6 +13,7 @@ class AbortOps:
     def __init__(self, leftovers=()):
         self.remaining = list(leftovers)
         self.stopped = []
+        self.retired = []
 
     def protect_incident_work(self, target, directory):
         pass
@@ -25,6 +26,10 @@ class AbortOps:
 
     def abort_leftovers(self, target):
         return self.remaining
+
+    def retire_controller_state(self, target, archive_dir):
+        self.retired.append(target.control_namespace)
+        return []
 
     def runtime_state(self, *_):
         raise AssertionError("abort must never drain or inspect controller state")
@@ -327,6 +332,9 @@ def test_abort_only_retires_proven_idle_standby(tmp_path, monkeypatch, claim):
     def invoke(argv, **kwargs):
         nonlocal assigned
         calls.append(argv)
+        if argv == ["get", "configmaps", "-o", "json"]:
+            assert stopped, "checkpoint inventory before the lane was quiet"
+            return SimpleNamespace(stdout=json.dumps({"items": []}), returncode=0, stderr="")
         if argv[:2] == ["get", "configmaps"]:
             assert "sdo.dev/incident-execution" in argv
             if claim == "unavailable":
