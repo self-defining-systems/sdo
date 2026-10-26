@@ -174,10 +174,10 @@ func (c *Controller) adoptOwnership(ctx context.Context, now time.Time, snapshot
 				break
 			}
 		}
-		recorded := acceptanceRecordCurrent(live, source)
-		if recorded {
+		if acceptanceRecordCurrent(live, source) {
 			accepted[acceptedObjectKey(ref)] = true
 		}
+		recorded := acceptanceRecordBound(live, source)
 		if allOwned && recorded {
 			continue
 		}
@@ -334,12 +334,16 @@ func (c *Controller) adoptOwnership(ctx context.Context, now time.Time, snapshot
 	return nil
 }
 
-// recordLost reports whether live, which has no current record, lost one
-// that SDO took earlier: SDO accepted the object before, or live carries a
-// record taken on another object instance.
+// recordLost reports whether live, which needs a new record, lost the one
+// SDO took earlier: it carries a record taken on another object instance, or
+// it carries none although SDO accepted it before. A record of this instance
+// (taken against older source, or before UID binding) is not lost: its
+// additions carry forward.
 func recordLost(live *unstructured.Unstructured, acceptedBefore bool) bool {
-	record, ok := readAcceptanceRecord(live)
-	return acceptedBefore || (ok && record.UID != string(live.GetUID()))
+	if record, ok := readAcceptanceRecord(live); ok {
+		return record.UID != "" && record.UID != string(live.GetUID())
+	}
+	return acceptedBefore
 }
 
 func declaredFieldDifference(expected, observed *unstructured.Unstructured, declared map[string]bool) bool {

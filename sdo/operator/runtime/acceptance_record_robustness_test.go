@@ -260,3 +260,39 @@ func TestAdoptionBacksOffWhileObjectStaysUnsettled(t *testing.T) {
 		t.Fatalf("unsettled waits stayed short: %v", previous)
 	}
 }
+
+// Records written before UID binding stay readable, and adoption upgrades
+// them in place, carrying their additions forward.
+func TestAdoptionUpgradesRecordWithoutUID(t *testing.T) {
+	controller, api, source, closeServer := adoptionController(t, 8080)
+	defer closeServer()
+	ctx := context.Background()
+	ref := sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}
+	if err := controller.StepEvents(ctx, time.Unix(10, 0).UTC(), nil); err != nil {
+		t.Fatal(err)
+	}
+	legacy := serviceObject(t, &api.service)
+	legacy.SetUID("")
+	if err := RecordAcceptance(legacy, source.object); err != nil {
+		t.Fatal(err)
+	}
+	api.service.Annotations[acceptedPathsAnnotation] = legacy.GetAnnotations()[acceptedPathsAnnotation]
+	api.service.Annotations["example.com/maintenance"] = "true"
+	diff := func() (program.Diff, error) {
+		snapshot := sdktest.Snapshot{NamespaceName: "app", ServiceList: []corev1.Service{*api.service.DeepCopy()}}
+		return LiveReadView{DetectionContext: snapshot, Source: planFakeSource{source: source.object}, SourceCommit: "accepted"}.DiffAgainstSource(ref)
+	}
+	if result, err := diff(); err != nil || !result.Changed {
+		t.Fatalf("record without UID not read: %+v %v", result, err)
+	}
+	controller.adoptionNeeded = true
+	if err := controller.StepEvents(ctx, time.Unix(11, 0).UTC(), nil); err != nil {
+		t.Fatal(err)
+	}
+	if !acceptanceRecordBound(serviceObject(t, &api.service), source.object) {
+		t.Fatal("adoption did not bind the record to the object UID")
+	}
+	if result, err := diff(); err != nil || !result.Changed {
+		t.Fatalf("upgrade absorbed an addition: %+v %v", result, err)
+	}
+}

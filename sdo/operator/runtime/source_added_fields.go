@@ -60,7 +60,9 @@ func declaredSourceDiff(view program.ReadView, ref sdk.ObjectRef) (program.Diff,
 }
 
 // An acceptance record belongs to one object instance (its UID): copied onto
-// a recreated object it is not that object's acceptance point.
+// a recreated object it is not that object's acceptance point. A record
+// without a UID predates the binding; it stays readable until adoption
+// re-stamps it (with its additions carried forward).
 type acceptanceRecord struct {
 	Source string   `json:"source"`
 	UID    string   `json:"uid"`
@@ -98,7 +100,7 @@ func readAcceptanceRecord(object *unstructured.Unstructured) (acceptanceRecord, 
 // object instance against source.
 func currentAcceptanceRecord(observed, source *unstructured.Unstructured) (acceptanceRecord, bool) {
 	record, ok := readAcceptanceRecord(observed)
-	if !ok || record.UID != string(observed.GetUID()) || record.Source != acceptedSourceShape(source) {
+	if !ok || (record.UID != "" && record.UID != string(observed.GetUID())) || record.Source != acceptedSourceShape(source) {
 		return acceptanceRecord{}, false
 	}
 	return record, true
@@ -109,6 +111,13 @@ func currentAcceptanceRecord(observed, source *unstructured.Unstructured) (accep
 func acceptanceRecordCurrent(observed, source *unstructured.Unstructured) bool {
 	_, ok := currentAcceptanceRecord(observed, source)
 	return ok
+}
+
+// acceptanceRecordBound reports whether observed's current record is also
+// bound to its UID, so adoption need not re-stamp it.
+func acceptanceRecordBound(observed, source *unstructured.Unstructured) bool {
+	record, ok := currentAcceptanceRecord(observed, source)
+	return ok && record.UID == string(observed.GetUID())
 }
 
 // buildAcceptanceRecord records every path of applied, the server's dry-run
