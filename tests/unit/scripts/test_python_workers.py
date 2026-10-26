@@ -100,6 +100,10 @@ def test_ci_reuses_existing_python_runners_and_combines_every_coverage_file() ->
     rows = jobs["python"]["strategy"]["matrix"]["include"]
     assert {row["shard"] for row in rows} == {"core", "fastloop"}
     assert all("scripts/test_python.sh" in row["run"] for row in rows)
+    upload = next(
+        step for step in jobs["python"]["steps"] if step.get("uses", "").startswith("actions/upload-artifact@")
+    )
+    assert upload["with"]["overwrite"] is True  # Rerunning a job replaces its prior attempt.
     steps = jobs["required-pr-ci"]["steps"]
     download = next(step for step in steps if step.get("uses", "").startswith("actions/download-artifact@"))
     assert download["with"]["pattern"] == "python-coverage-*"

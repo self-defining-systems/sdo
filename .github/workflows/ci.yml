@@ -274,6 +274,7 @@ jobs:
           name: python-coverage-${{ matrix.shard }}
           path: .coverage.${{ matrix.shard }}
           include-hidden-files: true
+          overwrite: true
           if-no-files-found: error
           retention-days: 1
 
