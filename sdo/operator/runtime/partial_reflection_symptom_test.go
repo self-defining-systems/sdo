@@ -27,6 +27,7 @@ func TestPartialReflectionRetainsRecoveredUnwrittenSymptoms(t *testing.T) {
 		t.Fatalf("partial learning projection lost symptoms or upgraded closure: %v", projected)
 	}
 	for name, mutate := range map[string]func(*contracts.OutcomeRecord){
+		// Without health closure, a later-activating finding may still name it.
 		"no symptom open":  func(o *contracts.OutcomeRecord) { o.Findings = o.Findings[:2] },
 		"no symptom fixed": func(o *contracts.OutcomeRecord) { o.DetectorHistory = o.DetectorHistory[:1] },
 		"symptom still broken": func(o *contracts.OutcomeRecord) {
