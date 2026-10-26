@@ -90,7 +90,8 @@ func TestRV10bRestoredClosureAfterSameGenerationDenial(t *testing.T) {
 			if calls := broker.calls(); len(calls) != 0 {
 				t.Errorf("stale verified closure reached broker: %v", calls)
 			}
-			if after.ClosureState != contracts.ClosureState_CLOSURE_STATE_FAILED || after.ClosureFailure == nil || !strings.Contains(after.ClosureFailure.LastError, "observation") {
+			if after.ClosureState != contracts.ClosureState_CLOSURE_STATE_FAILED || after.ClosureFailure == nil || !strings.Contains(after.ClosureFailure.LastError, "observation") ||
+				after.ClosureFailure.Reason != contracts.ClosureFailureReason_CLOSURE_FAILURE_REASON_OBSERVER_DENIED {
 				t.Errorf("denied closure was not visibly retired: state=%s failure=%v", after.ClosureState, after.ClosureFailure)
 			}
 			if !after.PendingClosure.ResponderCompletedAt.AsTime().Equal(completed) {
@@ -205,8 +206,6 @@ func TestClosureHandoffRechecksSourceFieldsAfterVerification(t *testing.T) {
 		t.Fatalf("source regression reused old verification: state=%v failure=%v calls=%v", state.ClosureState, state.ClosureFailure, broker.calls())
 	}
 }
-
-
 
 func TestUnverifiedClosureRejectsStaleEffectIdentity(t *testing.T) {
 	now := time.Unix(100, 0)
