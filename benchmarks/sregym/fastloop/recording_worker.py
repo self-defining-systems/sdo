@@ -8,6 +8,7 @@ import os
 import sys
 from pathlib import Path
 
+from benchmarks.sregym.fastloop.checkpoint_limits import MAX_RESULT_BYTES, MAX_TASK_BYTES
 from benchmarks.sregym.fastloop.file_edits import MAX_FILE_EDITS_BYTES, encode_file_edits, record_file_edits
 from benchmarks.sregym.fastloop.model_recording import RecordingExecutor
 from sdo.agents.responder import (
@@ -45,7 +46,7 @@ def recording_registrations(results_dir: Path, image: str) -> Path:
     return directory
 
 
-def _record_payload(path: Path, payload: str, *, limit: int = 1 << 20) -> None:
+def _record_payload(path: Path, payload: str, *, limit: int = MAX_RESULT_BYTES) -> None:
     if len(payload.encode()) > limit:
         raise ValueError(f"worker checkpoint {path.name} exceeds {limit} bytes")
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -83,7 +84,7 @@ def main(argv: list[str] | None = None) -> int:
     prepare_codex_home(skills=AGENT_SKILLS[role])
     prepare_claude_home(skills=AGENT_SKILLS[role])
     directory = scratch.parent / "checkpoints" / hashlib.sha256(wire.encode()).hexdigest()
-    _record_payload(directory / "request.json", wire)
+    _record_payload(directory / "request.json", wire, limit=MAX_TASK_BYTES)
     remote = KubernetesResultPublisher(namespace=namespace)
 
     class Publisher:

@@ -16,6 +16,29 @@ import (
 // fixed calls carry the explicit fixed phase. Never infer timing from file mtimes.
 func appendEvidenceGaps(work []*contracts.ReflectionCauseWork, capture string) uint32 {
 	observed := map[string][]sdk.ObjectRef{}
+	// Object snapshots are observations too. A detector can observe symptoms
+	// without any program primitive being called on them. Only protected capture
+	// boundaries count; an authored corpus or a healthy baseline supplies no proof.
+	for _, boundary := range []string{"open@detect", "open@settle", "open@pre-apply", "fixed"} {
+		raw, err := os.ReadFile(filepath.Join(capture, boundary+".json"))
+		if err != nil {
+			continue
+		}
+		var snapshot sdktest.Snapshot
+		if json.Unmarshal(raw, &snapshot) != nil {
+			continue
+		}
+		phase := "open"
+		if boundary == "fixed" {
+			phase = "fixed"
+		}
+		for _, object := range append(sdk.TypedObjects(snapshot), snapshot.Objects...) {
+			ref := sdk.ObjectIdentity(object)
+			if ref.Kind != "Secret" {
+				observed[phase] = append(observed[phase], ref)
+			}
+		}
+	}
 	files, _ := filepath.Glob(filepath.Join(capture, "open@*-recordings.json"))
 	for _, file := range files {
 		raw, err := os.ReadFile(file)

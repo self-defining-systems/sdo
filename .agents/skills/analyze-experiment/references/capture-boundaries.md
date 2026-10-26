@@ -121,8 +121,12 @@ an evidence gap, never a fabricated successful probe. This replay establishes
 quietness on the known healthy app, separately from positive repair replay.
 
 Executable cause bindings also require an opening primary-resource finding,
-a successful timed repair on the cause resource, and fresh independent clearance
-after its latest mutation. Aggregate success does not prove every reported cause;
+at least one successful timed repair in the cause, and fresh independent clearance
+for every cause resource after the latest cause mutation. Unwritten symptoms need
+opening and recovered observations, not a mutation receipt. Related resources
+on an opening finding count as symptom observations; written targets still
+require a primary-resource finding. Program bindings must
+cover mutation targets; symptoms can be read through the replay snapshot. Aggregate success does not prove every reported cause;
 ambiguous same-resource cause groups abstain. Failed outcomes additionally require
 controller eligibility. Outcome `detector_history` retains post-response incident
 evaluations and complete controller-verify evaluations with current finding

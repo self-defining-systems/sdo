@@ -47,7 +47,8 @@ Current reflection workers can materialize positive cases through the typed `cre
 Reflection evidence browsing is a bounded projection only: inventory and field pages carry the accepted outcome commit, incident ID and capture digests. Oversized page items require narrower field selection, not a conclusion that evidence is absent. Full captures and the committed outcome remain authoritative.
 
 `reflection_evidence_gap_count` on the native ledger and first-party incident row counts distinct confirmed
-resource/phase pairs with no observation in the complete protected recordings. Historical absence is unknown,
+resource/phase pairs with no observation in the complete protected recordings or controller object snapshots.
+A captured symptom object counts as observed even when no program primitive read it. Historical absence is unknown,
 not zero. Recorded errors count as present calls, not as successful evidence. `decline_reason=evidence_gap`
 identifies an actual no-change decline; Go rejects it when no gap was flagged. A nonzero presence-gap count
 alone does not establish blocked learning, and already-proven covered repairs still skip the model.
