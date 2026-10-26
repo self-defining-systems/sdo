@@ -483,3 +483,130 @@ func TestRWSRestartAfterDeadlineRetainsBoundStandby(t *testing.T) {
 		t.Fatal("restart archived a live warm responder")
 	}
 }
+
+// ownerlessIncidentState models P39: the controller restarts on an open
+// incident whose owner (the responder Job, or the controller that would have
+// begun its closure) is gone. Only durable state survives.
+func ownerlessIncidentState(t *testing.T, responderDone bool) (ControllerConfig, *contracts.ControllerState, time.Time) {
+	t.Helper()
+	start := time.Unix(1000, 0)
+	config := testControllerConfig()
+	config.FiringThreshold = 1
+	controller, err := NewController(config, []sdk.Detector{controllerDetector("fault", time.Hour, stateFinding("fault"))}, staticProvider{snapshot: sdktest.Snapshot{}}, &recordingDispatcher{requests: make(chan IncidentRequest, 1)}, start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := controller.Step(context.Background(), start, nil); err != nil {
+		t.Fatal(err)
+	}
+	state := exportState(t, controller)
+	if responderDone {
+		completed := start.Add(time.Second)
+		state.ResponderDone = true
+		state.DispatchState = contracts.DispatchState_DISPATCH_STATE_COMPLETED
+		state.ResponderCompletedAt = contractTimestamp(completed)
+		return config, state, completed.Add(controller.config.VerificationTimeout + ownerLostGrace)
+	}
+	state.DispatchState = contracts.DispatchState_DISPATCH_STATE_RUNNING
+	return config, state, state.GetIncidentRequest().GetResponseDeadline().AsTime().Add(ownerLostGrace)
+}
+
+func TestOwnerlessIncidentWorkBecomesTypedFailureAndFreesAdmission(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		responderDone bool
+		paused        bool
+	}{
+		{name: "responder-done-closure-never-began", responderDone: true},
+		{name: "responder-done-while-paused", responderDone: true, paused: true},
+		{name: "running-dispatch-job-deleted"},
+		{name: "running-dispatch-job-deleted-while-paused", paused: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			config, state, bound := ownerlessIncidentState(t, tc.responderDone)
+			oldID := state.GetIncidentRequest().GetIncidentId()
+			dispatcher := liveIncidentDispatcher{recordingDispatcher: &recordingDispatcher{requests: make(chan IncidentRequest, 1)}}
+			restored, err := NewController(config, []sdk.Detector{controllerDetector("fault", time.Hour, stateFinding("fault"))}, staticProvider{snapshot: sdktest.Snapshot{}}, dispatcher, bound)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := restored.RestoreState(state); err != nil {
+				t.Fatal(err)
+			}
+			step := func(at time.Time) {
+				t.Helper()
+				if tc.paused {
+					err = restored.stepPaused(ctx, at)
+				} else {
+					err = restored.retireExpiredIncident(ctx, at)
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tc.paused {
+				restored.now = func() time.Time { return bound.Add(-time.Second) }
+				if wake := restored.PausedWake(); !wake.Equal(bound) {
+					t.Fatalf("paused controller does not wake at the ownerless bound: %v want %v", wake, bound)
+				}
+			}
+			step(bound.Add(-time.Second))
+			if got := exportState(t, restored); !got.GetIncidentOpen() || len(got.GetFailedClosures()) != 0 {
+				t.Fatalf("ownerless work retired before its bound: %v", got)
+			}
+			step(bound)
+			got := exportState(t, restored)
+			if got.GetIncidentOpen() || got.GetIncidentRequest().GetIncidentId() == oldID {
+				t.Fatalf("ownerless incident still blocks admission: %v", got)
+			}
+			if len(got.GetFailedClosures()) != 1 {
+				t.Fatalf("ownerless incident dropped without a terminal record: %v", got)
+			}
+			failure := got.GetFailedClosures()[0].GetFailure()
+			if failure.GetReason() != contracts.ClosureFailureReason_CLOSURE_FAILURE_REASON_OWNER_LOST || !failure.GetPermanent() || failure.GetIncidentId() != oldID {
+				t.Fatalf("ownerless incident is not a typed OWNER_LOST failure: %v", failure)
+			}
+			if tc.paused {
+				return
+			}
+			if err := restored.Step(ctx, bound, nil); err != nil {
+				t.Fatal(err)
+			}
+			executePendingEffect(t, restored)
+			if request := awaitRequest(t, dispatcher.requests); request.IncidentID == oldID {
+				t.Fatal("next incident not admitted after ownerless retirement")
+			}
+		})
+	}
+}
+
+func TestOwnerlessRetirementKeepsLiveOrUncertainWork(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		active bool
+		err    error
+	}{
+		{name: "live", active: true}, {name: "uncertain", err: errors.New("API unavailable")},
+	} {
+		for _, responderDone := range []bool{true, false} {
+			t.Run(fmt.Sprintf("%s-done=%v", tc.name, responderDone), func(t *testing.T) {
+				config, state, bound := ownerlessIncidentState(t, responderDone)
+				dispatcher := liveIncidentDispatcher{recordingDispatcher: &recordingDispatcher{requests: make(chan IncidentRequest, 1)}, active: tc.active, err: tc.err}
+				restored, err := NewController(config, []sdk.Detector{controllerDetector("fault", time.Hour, stateFinding("fault"))}, staticProvider{snapshot: sdktest.Snapshot{}}, dispatcher, bound)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := restored.RestoreState(state); err != nil {
+					t.Fatal(err)
+				}
+				if err := restored.retireExpiredIncident(context.Background(), bound.Add(time.Hour)); (err != nil) != (tc.err != nil) {
+					t.Fatalf("uncertainty not surfaced: %v", err)
+				}
+				if got := exportState(t, restored); !got.GetIncidentOpen() || len(got.GetFailedClosures()) != 0 {
+					t.Fatalf("live or uncertain owner retired: %v", got)
+				}
+			})
+		}
+	}
+}

@@ -556,11 +556,13 @@ Graceful `teardown --state ...` still drains before calling the production stop
 step. `sdo-operator stop --control-namespace ... --inspect` inventories production
 runtime without modifying it; stop leaves memory, Secrets and ConfigMaps intact.
 The expiry guard archives abandoned requests
-with typed `AGENT_TIMEOUT` evidence and requires fresh observations for a new
-incident. These hermetic regressions run with:
+with typed `AGENT_TIMEOUT` evidence, and open work that lost its owner (a running
+dispatch with no Job, or a finished responder with no closure past the
+verification bound plus a grace) with `OWNER_LOST`, also while paused; both
+require fresh observations for a new incident. These hermetic regressions run with:
 
 ```bash
-(cd sdo/operator/runtime && go test -race . ./lifecyclecore -run 'TestExpiredIncident|TestResponseExpiry|TestLearningTrustUsesAccepted|TestMissingOptionalLearning|TestMissingLearningCommit|TestPreparedResponderRequestSurvives|TestLearningEvidenceGitError' -count=1 -timeout=5m)
+(cd sdo/operator/runtime && go test -race . ./lifecyclecore -run 'TestExpiredIncident|TestOwnerless|TestResponseExpiry|TestLearningTrustUsesAccepted|TestMissingOptionalLearning|TestMissingLearningCommit|TestPreparedResponderRequestSurvives|TestLearningEvidenceGitError' -count=1 -timeout=5m)
 ```
 
 ### Detached launches
