@@ -517,3 +517,14 @@ commit ancestry across each encounter. Exact native request/outcome/reflection
 commits remain in strict receipts. This runner has hermetic scheduling and broker
 proofs; measure actual speedup and learning with a live pair before making either
 claim.
+Passing no-fault setup reports are reusable on an unchanged lane. A subsequent
+`eval-dry-run` checks the content-bound receipt in `setup-proof/` before reset
+or deployment. An exact match skips setup and reruns live admission; a miss
+records the changed fingerprint components and performs the full rehearsal.
+The live SDO `run` command also records its decision in `results/<run>/setup-proof.json`
+and skips its deploy request only on the same exact match. Traffic, incident,
+intake and resource/disk admission still apply at injection time. Changed code,
+images, accepted memory, manifests, object UIDs/configuration or proof tools
+invalidate the receipt, including changes made by reset. Unknown identity or
+uncommitted source cannot authorize reuse. This setup receipt does not replace
+the separate whole-learning-loop proof.
