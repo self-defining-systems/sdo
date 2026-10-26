@@ -77,7 +77,7 @@ func (c *Controller) driveQueuedReflections(ctx context.Context, now time.Time) 
 	c.mu.Lock()
 	state.running = id
 	c.mu.Unlock()
-	c.goBackground(func() {
+	go func() {
 		defer cancel()
 		var err error
 		if attempts >= limit {
@@ -86,7 +86,7 @@ func (c *Controller) driveQueuedReflections(ctx context.Context, now time.Time) 
 			err = queue.ProcessQueuedReflection(actionCtx, id)
 		}
 		c.reflectionResults <- reflectionCompletion{incidentID: id, err: err}
-	})
+	}()
 }
 
 func (c *Controller) handleReflectionCompletion(completion reflectionCompletion) {
