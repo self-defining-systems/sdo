@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 
-@pytest.mark.parametrize("failure", ["none", "first_runtime", "second_runtime", "reflection"])
+@pytest.mark.parametrize("failure", ["none", "first_runtime", "second_runtime", "reflection", "python"])
 def test_hermetic_driver_propagates_each_shard_failure(tmp_path: Path, failure: str) -> None:
     root = Path(__file__).resolve().parents[3]
     commands = tmp_path / "bin"
@@ -27,7 +27,9 @@ def test_hermetic_driver_propagates_each_shard_failure(tmp_path: Path, failure: 
     )
     go.chmod(0o755)
     uv = commands / "uv"
-    uv.write_text('#!/bin/bash\nprintf "uv\\n" >> "$LG_DRIVER_LOG"\n')
+    uv.write_text(
+        '#!/bin/bash\nprintf "uv\\n" >> "$LG_DRIVER_LOG"\nif [[ "$LG_DRIVER_FAILURE" == "python" ]]; then exit 7; fi\n'
+    )
     uv.chmod(0o755)
     env = {
         **os.environ,
@@ -47,4 +49,7 @@ def test_hermetic_driver_propagates_each_shard_failure(tmp_path: Path, failure: 
     assert result.returncode == (0 if failure == "none" else 7), result.stderr
     lines = log.read_text().splitlines()
     assert any("TestReflectionMongoAuth" in line for line in lines)
-    assert ("uv" in lines) == (failure == "none")
+    # Python is a joined parallel shard: it must run even when another shard
+    # fails, and its own failure must propagate after every Go shard is joined.
+    assert "uv" in lines
+    assert any("TestLearnedOriginCredit" in line for line in lines)
