@@ -369,13 +369,13 @@ def restore_application(
         restore_social_fixture(environment.kubeconfig)
     if checks and environment.app != "toy":
         refreshed = worker.request(
-            "refresh_baseline_clients", problem_id=environment.deploy_problem, dependencies_only=True, timeout=120
+            "refresh_baseline_clients", problem_id=environment.deploy_problem, dependencies_only=True, timeout=240
         )
         if refreshed.get("success") is not True:
             raise RuntimeError("eval: restored application clients did not settle after dependencies")
     oracle = worker.request("baseline_oracle", problem_id=environment.deploy_problem, verify_traffic=True, timeout=200)
     if not oracle.get("success"):
-        refreshed = worker.request("refresh_baseline_clients", problem_id=environment.deploy_problem, timeout=120)
+        refreshed = worker.request("refresh_baseline_clients", problem_id=environment.deploy_problem, timeout=240)
         if refreshed.get("success") is not True:
             raise RuntimeError(
                 f"reset client refresh failed for {environment.namespace}: {refreshed}; traffic: {oracle}"
