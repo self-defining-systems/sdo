@@ -11,6 +11,7 @@ import pytest
 from benchmarks.sregym.adapter import ControllerInstallError, RuntimeConfig
 from benchmarks.sregym.adapter.driver import DeployedLifecycle, DeployedLifecycleContext
 from benchmarks.sregym.adapter.persistent import (
+    REJECTED_RECEIPT_FILENAME,
     CONTROLLER_LOGS_SUBDIR,
     Clock,
     ControllerPod,
@@ -665,3 +666,108 @@ def test_recovery_reports_a_followup_incident_that_outlives_the_bounded_wait(
     assert raised.value.wait.followup_incident_ids == ["incident-late"]
     assert raised.value.wait.closed is False
     assert raised.value.wait.waited_seconds == raised.value.wait.bound_seconds == 600.0
+
+
+class _WebhookDriver:
+    """Injects a cluster-scoped webhook that only the fault's own recover removes."""
+
+    def __init__(self, events: list[str] | None = None) -> None:
+        self.events = events if events is not None else []
+        self.webhook = False
+
+    def inject(self, problem_id: str) -> InjectionWindow:
+        self.events.append("inject")
+        self.webhook = True
+        return _inject()
+
+    def oracle(self) -> OracleVerdict:
+        return OracleVerdict(kind="sregym-mitigation-oracle", success=True)
+
+    def recover(self) -> float:
+        self.events.append("recover")
+        self.webhook = False
+        return 0.0
+
+
+class _ClosureRetiredOps(FakeOps):
+    """SDO verifies the incident, then retires its closure permanently (the pending closure stays recorded)."""
+
+    def _reflect(self, control_namespace: str, incident_id: str) -> None:
+        self.states[control_namespace].update(
+            {
+                "closure_state": "CLOSURE_STATE_FAILED",
+                "closure_failure": {
+                    "incident_id": incident_id,
+                    "permanent": True,
+                    "last_error": "closure observation detector service-reachability is unconfirmed",
+                },
+            }
+        )
+
+
+def _single_row(tmp_path: Path) -> LoopConfig:
+    return LoopConfig(
+        run_id="leak4", problems=("webhook",), incidents=1, results_path=tmp_path / "results" / "incidents.jsonl"
+    )
+
+
+def test_a_closure_failed_row_still_recovers_the_injected_webhook(tmp_path: Path) -> None:
+    driver = _WebhookDriver()
+
+    [record] = run_incidents(_agent(tmp_path, _ClosureRetiredOps(), []), driver, _single_row(tmp_path))
+
+    assert driver.events == ["inject", "recover"]
+    assert driver.webhook is False
+    assert record.recovery_error is None
+    assert record.recovery_trigger == "closure_failed"
+    assert "closure permanently failed" in (record.error or "")
+    assert (Path(str(record.artifacts_dir)) / REJECTED_RECEIPT_FILENAME).is_file()
+    state = PersistentState.load(tmp_path / "sdo_persistent_controller.json")
+    assert state.controllers["hotel-reservation"].pending is None
+
+
+def test_a_running_reflection_delays_recovery_until_it_ends(tmp_path: Path) -> None:
+    events: list[str] = []
+
+    class SlowReflectionOps(FakeOps):
+        polls: int = 0
+
+        def runtime_state(self, control_namespace: str) -> dict[str, Any]:
+            closure = self.states[control_namespace].get("pending_closure")
+            if (
+                isinstance(closure, dict)
+                and (control_namespace, closure["request"]["incident_id"]) in self.seen_closures
+            ):
+                self.polls += 1
+                if self.polls < 3:
+                    events.append("reflecting")
+                    return self.states[control_namespace]
+                events.append("reflected")
+            return super().runtime_state(control_namespace)
+
+    driver = _WebhookDriver(events)
+
+    [record] = run_incidents(_agent(tmp_path, SlowReflectionOps(), []), driver, _single_row(tmp_path))
+
+    assert events == ["inject", "reflecting", "reflecting", "reflected", "recover"]
+    assert record.recovery_trigger == "natural_closure"
+    assert record.recovery_error is None
+
+
+def test_recovery_past_the_reflection_deadline_leaves_the_closure_to_sdo(tmp_path: Path) -> None:
+    class StuckReflectionOps(FakeOps):
+        def _reflect(self, control_namespace: str, incident_id: str) -> None:
+            """Reflection never finishes."""
+
+    ops, driver = StuckReflectionOps(), _WebhookDriver()
+    agent = _agent(tmp_path, ops, [])
+    agent._settings = replace(agent._settings, reflection_wait_seconds=30)
+
+    [record] = run_incidents(agent, driver, _single_row(tmp_path))
+
+    assert driver.webhook is False
+    assert record.recovery_trigger == "reflection_deadline"
+    assert record.recovery_error is None
+    assert "learning failed" in (record.error or "")
+    state = PersistentState.load(tmp_path / "sdo_persistent_controller.json")
+    assert state.controllers["hotel-reservation"].pending is not None
