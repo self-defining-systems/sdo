@@ -171,6 +171,20 @@ func TestDatabaseConfigMapOneCallNeverEmitsCredentialArtifacts(t *testing.T) {
 	target, _ := json.Marshal(a.Target)
 	password, _ := json.Marshal(a.Password)
 	roles, _ := json.Marshal(a.Roles)
+	wrong := a.Target
+	wrong.Container = "wrong-mongo"
+	wrongTarget, _ := json.Marshal(wrong)
+	refused := loop.Handle(ctx, ToolRequest{Command: "mitigate", Selection: &contracts.MitigationSelection{OptionId: "EnsureDatabaseUser", RoundLimit: 1}, Parameters: map[string]string{"target": string(wrongTarget), "user": a.User, "roles": string(roles), "password": string(password)}})
+	refusedJSON, _ := json.Marshal(refused)
+	if !strings.Contains(string(refusedJSON), "container wrong-mongo not found; containers: [mongo]") {
+		t.Fatalf("wrong target lost actionable safe diagnostic: %s", refusedJSON)
+	}
+	mu.Lock()
+	wrongReads, wrongWrites := refsRead, mutations
+	mu.Unlock()
+	if wrongReads != 0 || wrongWrites != 0 || len(loop.MenuRepairActions()) != 0 {
+		t.Fatal("wrong container reached credentials or writes")
+	}
 	response := loop.Handle(ctx, ToolRequest{Command: "mitigate", Selection: &contracts.MitigationSelection{OptionId: "EnsureDatabaseUser", RoundLimit: 1}, Parameters: map[string]string{"target": string(target), "user": a.User, "roles": string(roles), "password": string(password)}})
 	if response.Error != "" || response.Report == nil || response.Report.Status != contracts.MitigationReport_STATUS_SUCCESS {
 		t.Fatalf("one-call typed repair failed: %s %+v", response.Error, response.Report)

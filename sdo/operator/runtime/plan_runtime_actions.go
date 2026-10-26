@@ -111,6 +111,9 @@ func (e PlanExecutor) applyRuntimePlan(ctx context.Context, incident IncidentReq
 			items[i].rv = object.GetResourceVersion()
 			switch a := a.(type) {
 			case program.EnsureDatabaseUser:
+				if err := validateDatabaseContainer(object, a.Target.Container); err != nil {
+					return result, err
+				}
 				catalog, ok := e.Client.(DatabaseCatalogClient)
 				if !ok {
 					return result, fmt.Errorf("database catalog transport unavailable")
