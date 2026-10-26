@@ -417,6 +417,14 @@ def accepted_restore_baselines(
         key = (value["kind"], ref.get("namespace", ""), ref["name"])
         if key in selected:
             raise ValueError(f"duplicate accepted restore manifest: {key}")
+        # A source PVC may omit its admission-defaulted immutable class.
+        # Retain that installed allocation; an explicit source class still wins.
+        installed = captured.get(identity)
+        if value["kind"] == "PersistentVolumeClaim" and "storageClassName" not in value.get("spec", {}):
+            installed_spec = installed.get("spec", {}) if installed else {}
+            if "storageClassName" in installed_spec:
+                value = deepcopy(value)
+                value.setdefault("spec", {})["storageClassName"] = installed_spec["storageClassName"]
         selected[key] = value
     return tuple(
         baseline

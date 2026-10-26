@@ -82,3 +82,12 @@ and home Redis reference against post storage before resuming the original
 traffic. Treat fixture restoration as **eval setup**, never a responder repair or
 learning outcome. A contract failure invalidates admission even if sampled HTTP
 passes; the checker rejects empty fixtures and preserves exact int64 IDs.
+
+For bound PVCs, a rendered source manifest may omit the admission-defaulted
+`storageClassName`. Restore must retain that field from the identity-matched
+installed capture when source omits it. An explicit source class (including the
+empty string) remains authoritative. Replacing the complete source spec without
+this merge rejects an otherwise healthy bound claim as an immutable-field change.
+On a reused lane, check for foreign applications after the supported restore has
+retired prior applications, and before health/traffic admission and injection.
+Never bypass the foreign-application guard with an added namespace allowlist.
