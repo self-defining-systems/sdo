@@ -306,7 +306,7 @@ def refresh_reused_proof(
 
 
 def run_lane(run_dir: Path, timeout: int, setup_timeout: int = 900) -> int:
-    from benchmarks.sregym.adapter import assert_lane_resources, closure_pending, control_namespace_for, kubectl
+    from benchmarks.sregym.adapter import assert_lane_resources, control_namespace_for, incident_work_open, kubectl
     from benchmarks.sregym.fastloop import cli
     from benchmarks.sregym.fastloop.environment import FastloopEnvironment
     from benchmarks.sregym.fastloop.setup_proof import RECEIPTS, check_reuse, collect_fingerprint, save_receipt
@@ -425,7 +425,7 @@ def run_lane(run_dir: Path, timeout: int, setup_timeout: int = 900) -> int:
                         kubeconfig=environment.kubeconfig,
                     ).stdout
                 )
-                if closure_pending(json.loads(state["data"]["runtime-state.json"])):
+                if incident_work_open(json.loads(state["data"]["runtime-state.json"])):
                     raise ValueError("eval: closure work pending in a no-fault rehearsal")
                 passed(
                     "closure_policy",

@@ -28,8 +28,8 @@ from benchmarks.sregym.adapter import (
     ClosureFailedError,
     ClusterOps,
     FollowupClosureTimeout,
-    PersistentControllerError,
     PersistentState,
+    ReflectionDeadlineError,
     StageInputs,
     drain_pending_incident,
     pause_for_recovery,
@@ -500,8 +500,10 @@ class SdoPersistentAgent:
             record_failed_closure(pending, str(exc), self._clock.monotonic() - started)
             record.pending = None
             return "closure_failed"
-        except PersistentControllerError as exc:
-            # SDO is still working past the deadline: the closure stays pending for SDO to finish.
+        except ReflectionDeadlineError as exc:
+            # SDO was observed still working past the deadline: the closure stays pending for SDO to finish.
+            # Any other error (an unreadable state, a receipt failure) propagates, so recovery never
+            # skips the closed-incident fence on a read error.
             logger.warning("recovering incident %s past its reflection deadline: %s", pending.incident_id, exc)
             return "reflection_deadline"
         record.pending = None
