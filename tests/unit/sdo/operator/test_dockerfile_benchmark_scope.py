@@ -15,11 +15,15 @@ instead of leaking the answer key or breaking the image.
 
 from __future__ import annotations
 
+import ast
+import importlib.util
 import json
 import re
 import subprocess
 import sys
 from pathlib import Path
+
+import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 RUNTIME_DOCKERFILE = REPO_ROOT / "sdo" / "operator" / "Dockerfile.runtime"
@@ -34,13 +38,12 @@ FORBIDDEN_PREFIXES = (
     "tests/",
 )
 
-ALLOWED_FASTLOOP_FILES = {
-    "benchmarks/sregym/fastloop/__init__.py",
-    "benchmarks/sregym/fastloop/model_recording.py",
-    "benchmarks/sregym/fastloop/file_edits.py",
-    "benchmarks/sregym/fastloop/recording_worker.py",
-    "benchmarks/sregym/fastloop/checkpoint_limits.py",
-}
+SPEC = importlib.util.spec_from_file_location("responder_image", REPO_ROOT / "scripts/check_responder_image.py")
+assert SPEC is not None
+assert SPEC.loader is not None
+image_policy = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(image_policy)
+ALLOWED_FASTLOOP_FILES = image_policy.ALLOWED_FASTLOOP_FILES
 SCRIPTED_REPLAY_FILES = {
     "benchmarks/sregym/adapter/scripted_worker.py",
     "benchmarks/sregym/adapter/scripted_replay.py",
@@ -159,6 +162,7 @@ def test_sregym_responder_image_copies_no_forbidden_paths() -> None:
     leaked = {path for path in copied if any(path.startswith(prefix) for prefix in FORBIDDEN_PREFIXES)}
 
     assert leaked == set(), f"sregym-responder image would copy answer-key paths: {sorted(leaked)}"
+    assert image_policy.forbidden_image_paths(copied) == []
     assert {path for path in copied if path.startswith("benchmarks/sregym/fastloop/")} == ALLOWED_FASTLOOP_FILES
     scripted = _expand(_stage_copy_sources(BENCHMARK_DOCKERFILE, "scripted-worker"))
     assert scripted == SCRIPTED_REPLAY_FILES | SCRIPTED_PROGRAM_FILES | SCRIPTED_TOY_FILES
@@ -270,3 +274,112 @@ def test_scripted_worker_stage_contains_only_entry_points_programs_and_toy_healt
         "benchmarks/sregym/fastloop/scripted_networkpolicy_program/README.md",
         "benchmarks/sregym/fastloop/scripted_networkpolicy_program/diagnose.go",
     }
+
+
+def test_image_guard_accepts_checkpoint_limits_and_its_bytecode() -> None:
+    paths = (
+        "/opt/sdo/benchmarks/sregym/fastloop/checkpoint_limits.py\n"
+        "/opt/sdo/benchmarks/sregym/fastloop/__pycache__/checkpoint_limits.cpython-312.pyc\n"
+    )
+    completed = subprocess.run(
+        [sys.executable, str(REPO_ROOT / "scripts/check_responder_image.py")],
+        input=paths,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "benchmarks/sregym/experiments/assurance/composites.toml",
+        "benchmarks/sregym/assurance/scripted_codex/faults.py",
+        "benchmarks/sregym/fastloop/oracle.py",
+        "benchmarks/sregym/fastloop/__pycache__/oracle.cpython-312.pyc",
+        "benchmarks/sregym/fastloop/recording_worker.py/answer.json",
+        "benchmarks/sregym/fastloop/checkpoint_limits.py.bak",
+        "benchmarks/sregym/analysis/report.py",
+        "benchmarks/sregym/runner/main.py",
+        "benchmarks/sregym/agents/main.py",
+        "docs/answers.md",
+        "tests/answers.py",
+    ],
+)
+def test_image_guard_rejects_answer_keys_and_unknown_recording_files(path: str) -> None:
+    absolute = f"/opt/sdo/{path}"
+    assert image_policy.forbidden_image_paths([absolute]) == [absolute]
+
+
+@pytest.mark.parametrize("suffix", [".py", ".cpython-312.pyc", ".cpython-314.opt-2.pyc"])
+def test_image_guard_allows_only_recording_modules_and_their_bytecode(suffix: str) -> None:
+    paths = []
+    for source in ALLOWED_FASTLOOP_FILES:
+        path = Path(source)
+        relative = path if suffix == ".py" else path.parent / "__pycache__" / (path.stem + suffix)
+        paths.append(f"/opt/sdo/{relative}")
+    assert image_policy.forbidden_image_paths(paths) == []
+
+
+def _fastloop_imports(source: str) -> set[str]:
+    """Inspect every import, including conditional and function-local dependencies."""
+    modules = set()
+    package = "benchmarks.sregym.fastloop"
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Import):
+            modules.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            base = importlib.util.resolve_name("." * node.level + (node.module or ""), package)
+            if base == package:
+                modules.update(f"{base}.{alias.name}" for alias in node.names)
+            else:
+                modules.add(base)
+    return {module.replace(".", "/") + ".py" for module in modules if module.startswith(package + ".")}
+
+
+def test_recording_worker_transitive_fastloop_imports_are_allowlisted() -> None:
+    for path in sorted(ALLOWED_FASTLOOP_FILES):
+        imports = _fastloop_imports((REPO_ROOT / path).read_text())
+        missing = imports - ALLOWED_FASTLOOP_FILES
+        assert not missing, f"{path} imports unapproved fastloop modules: {sorted(missing)}"
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "import benchmarks.sregym.fastloop.oracle",
+        "from benchmarks.sregym.fastloop.oracle import answers",
+        "from benchmarks.sregym.fastloop import oracle",
+        "from .oracle import answers",
+        "from . import oracle",
+        "if False:\n    from . import oracle",
+    ],
+)
+def test_import_guard_negative_control(source: str) -> None:
+    assert _fastloop_imports(source) - ALLOWED_FASTLOOP_FILES == {"benchmarks/sregym/fastloop/oracle.py"}
+
+
+def test_image_guard_fails_closed_on_empty_inventory() -> None:
+    completed = subprocess.run(
+        [sys.executable, str(REPO_ROOT / "scripts/check_responder_image.py")],
+        input="",
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.returncode == 1
+    assert "empty responder image inventory" in completed.stderr
+
+
+def test_image_guard_cli_rejects_fault_catalog() -> None:
+    path = "/opt/sdo/benchmarks/sregym/assurance/scripted_codex/faults.py"
+    completed = subprocess.run(
+        [sys.executable, str(REPO_ROOT / "scripts/check_responder_image.py")],
+        input=path + "\n",
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.returncode == 1
+    assert path in completed.stderr
