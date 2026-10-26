@@ -62,3 +62,6 @@ Report tokens the same way for every arm (SDO responder, SDO reflection, one-tim
   - Codex numbers come from the exported rollouts (per-request `last_token_usage`), which carry reasoning and request counts that receipts written before agentshim 0.7 lack. Receipts are the fallback.
   - A Claude baseline is read from its `stream-json` result frames, because SREGym's own `usage_metrics` for Claude excludes cache reads from input and drops cache writes.
   - Old SDO records whose `cached_input_tokens` counted Claude cache writes are split back into reads and writes by `agentshim.TokenUsage.from_dict`.
+
+The fault-observation tooling map and offline plan gate are documented in
+[`faults/README.md`](faults/README.md).

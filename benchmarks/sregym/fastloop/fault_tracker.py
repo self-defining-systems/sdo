@@ -13,6 +13,7 @@ change is not counted as resolved early.
 
 from __future__ import annotations
 
+import copy
 import json
 import subprocess
 import threading
@@ -22,7 +23,18 @@ from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from benchmarks.sregym.fastloop.object_probes import (
+    admitted_memory_probe,
+    cronjob_recovered,
+    finalizer_recovered,
+    hpa_recovered,
+    shared_memory_recovered,
+)
+from benchmarks.sregym.fastloop.object_probes import (
+    deployment_available as _deployment_available,
+)
 from benchmarks.sregym.faults.description import FaultSpec, ProblemDescription, describe_sregym_problems
+from benchmarks.sregym.faults.probe_catalog import AVAILABILITY_KINDS, BASELINE_FIELDS, FEATURE_FLAGS, FLAG_FIELDS
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
@@ -75,24 +87,6 @@ def stream_faults(
     return tuple(faults)
 
 
-def _deployment_available(read: Callable[[str, str], dict[str, Any] | None], name: str) -> bool:
-    deployment = read("deployment", name)
-    if not deployment:
-        return False
-    spec = deployment.get("spec") or {}
-    status = deployment.get("status") or {}
-    desired = spec.get("replicas")
-    desired = 1 if desired is None else int(desired)
-    generation = (deployment.get("metadata") or {}).get("generation") or 0
-    return (
-        desired >= 1
-        and int(status.get("observedGeneration") or 0) >= int(generation)
-        and int(status.get("readyReplicas") or 0) == desired
-        and int(status.get("updatedReplicas") or 0) == desired
-        and int(status.get("replicas") or 0) == desired
-    )
-
-
 def _network_policy_open(
     read: Callable[[str, str], dict[str, Any] | None], component: str, name: str, label_key: str
 ) -> bool:
@@ -130,6 +124,141 @@ def _target_port_matches(read: Callable[[str, str], dict[str, Any] | None], comp
     )
 
 
+def _field_value(value: Any, path: tuple[str, ...]) -> Any:
+    if not path:
+        return copy.deepcopy(value)
+    head, *tail = path
+    if head == "*":
+        if not isinstance(value, list) or any(not isinstance(item, dict) or not item.get("name") for item in value):
+            raise ValueError("probe requires a named object list")
+        names = [item["name"] for item in value]
+        if len(set(names)) != len(names):
+            raise ValueError("probe requires distinct list names")
+        return {item["name"]: _field_value(item, tuple(tail)) for item in value}
+    if not isinstance(value, dict) or head not in value:
+        return ("absent",)
+    return _field_value(value[head], tuple(tail))
+
+
+def _restoration_probe(
+    read: Callable[[str, str], dict[str, Any] | None], component: str, fields: tuple[str, ...]
+) -> Callable[[], bool]:
+    # Called before inject(), not at first poll (which happens after injection).
+    baseline = read("deployment", component)
+    if not baseline or not _deployment_available(lambda _kind, _name: baseline, component):
+        raise ValueError(f"probe needs an available pre-injection baseline for {component}")
+    paths = tuple(tuple(field.split(".")) for field in fields)
+    expected = tuple(_field_value(baseline, path) for path in paths)
+
+    def restored() -> bool:
+        current = read("deployment", component)
+        return bool(current) and (
+            tuple(_field_value(current, path) for path in paths) == expected
+            and _deployment_available(lambda _kind, _name: current, component)
+        )
+
+    return restored
+
+
+def _flag_disabled(read: Callable[[str, str], dict[str, Any] | None], flag_name: str) -> bool:
+    configmap = read("configmap", "flagd-config")
+    if not configmap:
+        return False
+    raw = (configmap.get("data") or {}).get("demo.flagd.json")
+    if not isinstance(raw, str):
+        return False
+    flag = (json.loads(raw).get("flags") or {}).get(flag_name) or {}
+    # Missing/unknown variants are not evidence of recovery.
+    return flag.get("defaultVariant") == "off"
+
+
+def _dns_egress_open(read: Callable[[str, str], dict[str, Any] | None], component: str) -> bool:
+    policy = read("networkpolicy", f"deny-dns-egress-{component}")
+    if policy is None:
+        return True
+    spec = policy.get("spec") or {}
+    if "Egress" not in spec.get("policyTypes", ["Ingress", "Egress"] if "egress" in spec else ["Ingress"]):
+        return True
+    protocols: set[str] = set()
+    for rule in spec.get("egress") or []:
+        if rule.get("to"):
+            continue  # Cannot prove those destinations contain the DNS resolver.
+        if not rule.get("ports"):
+            return True
+        for port in rule["ports"]:
+            if port.get("port") in (None, 53):
+                protocols.add(port.get("protocol", "TCP"))
+    return {"TCP", "UDP"} <= protocols
+
+
+def _ingress_routes_to_target(read: Callable[[str, str], dict[str, Any] | None], fault: FaultSpec) -> bool:
+    obj = read("ingress", fault.parameters["ingress_name"])
+    if not obj:
+        return False
+    routes = [
+        route
+        for rule in (obj.get("spec") or {}).get("rules") or []
+        for route in (rule.get("http") or {}).get("paths") or []
+        if str(route.get("path", "")).startswith(fault.parameters["path"])
+    ]
+    return bool(routes) and all(
+        ((route.get("backend") or {}).get("service") or {}).get("name") == fault.parameters["correct_service"]
+        for route in routes
+    )
+
+
+def _probe_for(
+    fault: FaultSpec, read: Callable[[str, str], dict[str, Any] | None], component: str
+) -> Callable[[], bool]:
+    if fault.kind == "hpa_missing_effective_cpu_request":
+        return lambda: hpa_recovered(read, fault, component)
+    if fault.kind == "dev_shm_exhaustion_hotel_reservation":
+        return lambda: shared_memory_recovered(read, fault, component)
+    if fault.kind == "finalizer_deadlock_controller":
+        return lambda: finalizer_recovered(read, fault, component)
+    if fault.kind == "cronjob_sidecar_blocks_completion_hotel_reservation":
+        return lambda: cronjob_recovered(read, fault)
+    if fault.kind == "mutating_webhook_resource_limits_social_network":
+        return admitted_memory_probe(read, component)
+    if fault.kind in FLAG_FIELDS:
+        flag, fields = FLAG_FIELDS[fault.kind]
+        restored = _restoration_probe(read, component, fields)
+        return lambda: _flag_disabled(read, flag) and restored()
+    if fault.kind == "service_dns_resolution_failure_netpol":
+        return lambda: _dns_egress_open(read, component)
+    if fault.kind == "ingress_misroute":
+        return lambda: _ingress_routes_to_target(read, fault)
+    if fault.kind == "internal_traffic_policy_local_astronomy_shop":
+
+        def cluster_routing() -> bool:
+            service = read("service", component)
+            return (
+                bool(service)
+                and (service.get("spec") or {}).get("internalTrafficPolicy", "Cluster") == "Cluster"
+                and _service_has_endpoints(read, component)
+            )
+
+        return cluster_routing
+    if fault.kind in BASELINE_FIELDS:
+        return _restoration_probe(read, component, BASELINE_FIELDS[fault.kind])
+    if fault.kind in FEATURE_FLAGS:
+        return lambda: _flag_disabled(read, FEATURE_FLAGS[fault.kind])
+    if fault.kind in {"readiness", "configmap", "resource_request", "incorrect_image"} | AVAILABILITY_KINDS:
+        return lambda: _deployment_available(read, component)
+    if fault.kind == "target_port":
+        return lambda: _target_port_matches(read, component)
+    if fault.kind == "network_policy":
+        name = fault.policy_name or f"deny-all-{component}"
+        return lambda: (
+            _network_policy_open(read, component, name, fault.pod_label_key) and _deployment_available(read, component)
+        )
+    if fault.kind == "wrong_selector":
+        return lambda: _service_has_endpoints(read, component)
+    if fault.kind == "missing_service":
+        return lambda: bool(read("service", component)) and _service_has_endpoints(read, component)
+    raise ValueError(f"no probe for fault kind {fault.kind!r}")
+
+
 def probes_for(
     faults: Sequence[FaultSpec], read: Callable[[str, str], dict[str, Any] | None]
 ) -> dict[str, Callable[[], bool]]:
@@ -139,21 +268,9 @@ def probes_for(
             raise ValueError(f"per-fault tracking unsupported: {fault.tracking_reason}")
         if fault.name in probes:
             raise ValueError(f"duplicate probe identity {fault.name}")
-        component = fault.component
-        if fault.kind in {"readiness", "configmap", "resource_request", "incorrect_image"}:
-            probes[fault.name] = lambda component=component: _deployment_available(read, component)
-        elif fault.kind == "target_port":
-            probes[fault.name] = lambda component=component: _target_port_matches(read, component)
-        elif fault.kind == "network_policy":
-            name = fault.policy_name or f"deny-all-{component}"
-            label_key = fault.pod_label_key
-            probes[fault.name] = lambda component=component, name=name, label_key=label_key: (
-                _network_policy_open(read, component, name, label_key) and (_deployment_available(read, component))
-            )
-        elif fault.kind == "wrong_selector":
-            probes[fault.name] = lambda component=component: _service_has_endpoints(read, component)
-        else:
-            raise ValueError(f"no probe for fault kind {fault.kind!r}")
+        components = (fault.component,) if fault.kind == "ingress_misroute" else fault.target_components
+        target_probes = tuple(_probe_for(fault, read, component) for component in components)
+        probes[fault.name] = lambda target_probes=target_probes: all(probe() for probe in target_probes)
     return probes
 
 
@@ -263,7 +380,25 @@ class KubectlReader:
         command = ["kubectl"]
         if self._kubeconfig:
             command += ["--kubeconfig", self._kubeconfig]
-        command += ["-n", self._namespace, "get", kind, name, "-o", "json", "--ignore-not-found"]
+        if kind not in {
+            "deployment",
+            "service",
+            "endpoints",
+            "networkpolicy",
+            "configmap",
+            "ingress",
+            "hpa",
+            "cronjob",
+            "jobs",
+            "pods",
+            "clusterrole",
+            "clusterrolebinding",
+            "serviceaccount",
+        }:
+            raise ValueError(f"resource {kind!r} is outside the read-only fault probe inventory")
+        if not name and kind not in {"jobs", "pods"}:
+            raise ValueError("only Pod and Job inventories may be listed")
+        command += ["-n", self._namespace, "get", kind, *([name] if name else []), "-o", "json", "--ignore-not-found"]
         completed = subprocess.run(command, capture_output=True, text=True, timeout=self._timeout, check=False)
         if completed.returncode != 0:
             raise RuntimeError(completed.stderr.strip() or f"kubectl exited {completed.returncode}")

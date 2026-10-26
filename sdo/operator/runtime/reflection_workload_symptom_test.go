@@ -32,7 +32,7 @@ func TestReflectionLearnsDeploymentRepairWithUnwrittenServiceSymptoms(t *testing
 		t.Fatal(err)
 	}
 	binary := filepath.Join(t.TempDir(), "sdo-operator")
-	build := exec.Command("go", "build", "-p", "8", "-o", binary, "./cmd/sdo-operator")
+	build := exec.Command("go", "build", "-o", binary, "./cmd/sdo-operator")
 	build.Dir = operatorRoot
 	if output, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build CLI: %v: %s", err, output)

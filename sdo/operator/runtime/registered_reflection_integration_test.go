@@ -525,6 +525,8 @@ func TestReflectionLearnedProgramCLIAndBroker(t *testing.T) {
 				t.Fatal(err)
 			}
 			var authoredTree string
+			var checkErr error
+			var report contracts.MemoryCheckReport
 			worker := RegisteredReflectionWorker{AgentID: "reflector", TaskType: reflectionTaskType(t), Outcomes: memory.NewJSONStore(t.TempDir()), Timeout: time.Minute, SessionMode: "fresh"}
 			worker.Executor = reflectionTaskExecutorFunc(func(ctx context.Context, task *contracts.AgentTask) (*contracts.AgentResult, error) {
 				checkout := task.Workspace.CheckoutPath
@@ -554,35 +556,13 @@ func TestReflectionLearnedProgramCLIAndBroker(t *testing.T) {
 				command := exec.Command(binary, "memory", "check", "--json")
 				command.Dir = checkout
 				command.Env = append(os.Environ(), "SDO_ACTOR=responder", "SDO_PHASE=reflection", "SDO_BASE_COMMIT="+proposal.BaseCommit, "SDO_OPERATOR_ROOT="+operatorRoot, "SDO_HEALTHY_BASELINE=", "SDO_CAPTURED_CORPUS_DIR="+capture, "SDO_INCIDENT_ID="+incidentID)
-				output, checkErr := command.Output()
-				report := new(contracts.MemoryCheckReport)
-				if err := protojson.Unmarshal(output, report); err != nil {
+				output, err := command.Output()
+				checkErr = err
+				if err := protojson.Unmarshal(output, &report); err != nil {
 					t.Fatalf("CLI report: %v: %s", err, output)
 				}
-				receipt, publishErr := repository.PublishReflection(validate.WithCaptureSource(ctx, capture, incidentID), incidentID, &contracts.ReflectionDecision{LearningDecision: "updated", PlaybookIds: []string{"service-targetport-mismatch"}, SdkGaps: []*contracts.SdkGap{gap}})
-				if physical {
-					var failure *validate.Failure
-					if checkErr == nil || !errors.As(publishErr, &failure) {
-						t.Fatalf("physical path accepted: CLI %v broker %v", checkErr, publishErr)
-					}
-					if !proto.Equal(&contracts.MemoryCheckReport{Diagnostics: report.Diagnostics}, &contracts.MemoryCheckReport{Diagnostics: validate.ProtoDiagnostics(failure.Diagnostics)}) {
-						t.Fatalf("diagnostics differ: CLI %v broker %v", report.Diagnostics, failure.Diagnostics)
-					}
-					if len(report.Diagnostics) != 1 || report.Diagnostics[0].Rule != "text.physical-path" {
-						t.Fatalf("unexpected physical-path diagnostics: %v", report.Diagnostics)
-					}
-				} else {
-					if checkErr != nil || publishErr != nil {
-						t.Fatalf("learned program rejected: CLI %v %v broker %v", checkErr, report.Diagnostics, publishErr)
-					}
-					// The proposal checkout and accepted commit contain exactly the same tree.
-					nativeGit(t, checkout, "add", "-f", ".sdo")
-					authoredTree = nativeGit(t, checkout, "write-tree")
-					acceptedTree := nativeGit(t, target, "rev-parse", receipt.Commit+"^{tree}")
-					if authoredTree != acceptedTree {
-						t.Fatalf("accepted tree %s differs from authored %s", acceptedTree, authoredTree)
-					}
-				}
+				nativeGit(t, checkout, "add", "-f", ".sdo")
+				authoredTree = nativeGit(t, checkout, "write-tree")
 				response, err := anypb.New(decision)
 				return &contracts.AgentResult{SchemaVersion: task.SchemaVersion, TaskId: task.TaskId, ProposalId: task.Workspace.ProposalId, Status: "completed", Response: response}, err
 			})
@@ -593,6 +573,30 @@ func TestReflectionLearnedProgramCLIAndBroker(t *testing.T) {
 			}
 			if reflected.LearningDecision != "updated" || len(reflected.SDKGaps) != 1 || len(reflected.PlaybookIDs) != 1 {
 				t.Fatalf("mixed publication lost repaired playbook or peer gap: %+v", reflected)
+			}
+			// Broker validation is controller work after the worker returns; it must
+			// not consume the worker execution deadline. Both still compile for real.
+			receipt, publishErr := repository.PublishReflection(validate.WithCaptureSource(ctx, capture, incidentID), incidentID, &contracts.ReflectionDecision{LearningDecision: "updated", PlaybookIds: []string{"service-targetport-mismatch"}, SdkGaps: []*contracts.SdkGap{gap}})
+			if physical {
+				var failure *validate.Failure
+				if checkErr == nil || !errors.As(publishErr, &failure) {
+					t.Fatalf("physical path accepted: CLI %v broker %v", checkErr, publishErr)
+				}
+				if !proto.Equal(&contracts.MemoryCheckReport{Diagnostics: report.Diagnostics}, &contracts.MemoryCheckReport{Diagnostics: validate.ProtoDiagnostics(failure.Diagnostics)}) {
+					t.Fatalf("diagnostics differ: CLI %v broker %v", report.Diagnostics, failure.Diagnostics)
+				}
+				if len(report.Diagnostics) != 1 || report.Diagnostics[0].Rule != "text.physical-path" {
+					t.Fatalf("unexpected physical-path diagnostics: %v", report.Diagnostics)
+				}
+			} else {
+				if checkErr != nil || publishErr != nil {
+					t.Fatalf("learned program rejected: CLI %v %v broker %v", checkErr, report.Diagnostics, publishErr)
+				}
+				// The proposal checkout and accepted commit contain exactly the same tree.
+				acceptedTree := nativeGit(t, target, "rev-parse", receipt.Commit+"^{tree}")
+				if authoredTree != acceptedTree {
+					t.Fatalf("accepted tree %s differs from authored %s", acceptedTree, authoredTree)
+				}
 			}
 			if !physical && authoredTree == "" {
 				t.Fatal("program was not committed")
