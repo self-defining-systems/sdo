@@ -77,5 +77,9 @@ def test_settle_uses_the_shared_closure_rule(monkeypatch) -> None:
 
     monkeypatch.setattr(harness.time, "sleep", never_sleep)
     for state in (failed, acknowledged):
-        monkeypatch.setattr(adapter, "KubectlClusterOps", lambda state=state: type("Ops", (), {"runtime_state": lambda self, _c: state})())
+        monkeypatch.setattr(
+            adapter,
+            "KubectlClusterOps",
+            lambda state=state: type("Ops", (), {"runtime_state": lambda self, _c: state})(),
+        )
         assert agent._wait_idle() is state
