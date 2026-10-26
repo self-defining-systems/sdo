@@ -481,7 +481,7 @@ class CodexSessionBackend:
                 worktree,
                 decision,
                 check,
-                min(VALIDATION_TIMEOUT_SECONDS, remaining()),
+                min(VALIDATION_TIMEOUT_SECONDS, deadline - time.monotonic()),
                 self.memory_checker,
             )
             if check.exit_code == 0 and not check.timed_out:
