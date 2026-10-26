@@ -178,6 +178,9 @@ def test_act_help_and_workflow_share_the_one_cause_per_action_principle() -> Non
 
     act_help = tools_cli._parser()._subparsers._group_actions[0].choices["act"].description
     body = (SKILLS_ROOT / WORKFLOW / "SKILL.md").read_text(encoding="utf-8")
-    for principle in ("one cause per independently fixable fault", "combine only faults that can't be fixed separately"):
+    for principle in (
+        "one cause per independently fixable fault",
+        "combine only faults that can't be fixed separately",
+    ):
         assert principle in body
         assert principle in act_help
