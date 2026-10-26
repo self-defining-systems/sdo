@@ -30,6 +30,16 @@ func TestObservationNarrowingPreservesPermissiveGrants(t *testing.T) {
 	if len(combined.ObservationRoles) != 1 || len(combined.ObservationClusterRoles) != 1 {
 		t.Fatal("combined plan lost observation grants")
 	}
+	if len(combined.ObservationClusterBindings) != 2 {
+		t.Fatal("observation lifecycle must retain controller and script bindings")
+	}
+	scriptFound := false
+	for _, b := range combined.ObservationClusterBindings {
+		scriptFound = scriptFound || (b.RoleRef.Name == combined.ObservationClusterRoles[0].Name && len(b.Subjects) == 1 && b.Subjects[0].Name == "sdo-script" && b.Subjects[0].Namespace == cfg.Namespace)
+	}
+	if !scriptFound {
+		t.Fatal("script lost its inherited observation permission")
+	}
 	if !reflect.DeepEqual(combined.AppRoles, permissive.AppRoles) || !reflect.DeepEqual(combined.AppBindings, permissive.AppBindings) || !reflect.DeepEqual(combined.ClusterRoles, permissive.ClusterRoles) || !reflect.DeepEqual(combined.ClusterBindings, permissive.ClusterBindings) {
 		t.Fatal("observation policy changed permissive grants")
 	}
@@ -86,5 +96,9 @@ func TestObservationNarrowingPreservesPermissiveGrants(t *testing.T) {
 	roles, _ := client.RbacV1().ClusterRoles().List(ctx, metav1.ListOptions{})
 	if len(roles.Items) != len(permissive.ClusterRoles) {
 		t.Fatal("observation cluster grant survived narrowing")
+	}
+	bindings, err := client.RbacV1().ClusterRoleBindings().List(ctx, metav1.ListOptions{})
+	if err != nil || len(bindings.Items) != len(permissive.ClusterBindings) {
+		t.Fatal("observation binding survived narrowing")
 	}
 }

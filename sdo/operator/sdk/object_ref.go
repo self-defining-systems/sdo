@@ -25,6 +25,7 @@ func (e *ObjectRefError) Error() string {
 }
 
 var objectKinds = map[string]string{
+	"clusterrole": "ClusterRole", "clusterroles": "ClusterRole", "clusterrolebinding": "ClusterRoleBinding", "clusterrolebindings": "ClusterRoleBinding",
 	"cm": "ConfigMap", "configmap": "ConfigMap", "configmaps": "ConfigMap",
 	"cj": "CronJob", "cronjob": "CronJob", "cronjobs": "CronJob",
 	"ds": "DaemonSet", "daemonset": "DaemonSet", "daemonsets": "DaemonSet",
@@ -59,7 +60,7 @@ func objectAPIVersion(kind string) string {
 		return "networking.k8s.io/v1"
 	case "HorizontalPodAutoscaler":
 		return "autoscaling/v2"
-	case "Role", "RoleBinding":
+	case "Role", "RoleBinding", "ClusterRole", "ClusterRoleBinding":
 		return "rbac.authorization.k8s.io/v1"
 	case "ConfigMap", "Secret", "Pod", "Service", "ServiceAccount", "PersistentVolumeClaim":
 		return "v1"

@@ -254,16 +254,8 @@ func flattenDriftObject(object *unstructured.Unstructured) map[string]any {
 			result[path] = typed
 		}
 	}
-	for _, key := range []string{"spec", "data", "binaryData", "webhooks", "rules", "roleRef", "subjects", "aggregationRule"} {
-		if value, ok := object.Object[key]; ok {
-			walk(key, value)
-		}
-	}
-	metadata, _ := object.Object["metadata"].(map[string]any)
-	for _, key := range []string{"labels", "annotations", "deletionTimestamp", "finalizers"} {
-		if value, ok := metadata[key]; ok {
-			walk("metadata."+key, value)
-		}
+	for key, value := range comparableFields(object.Object) {
+		walk(key, value)
 	}
 	return result
 }
