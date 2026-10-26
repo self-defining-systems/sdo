@@ -393,3 +393,31 @@ func TestResponseStageNoMatchProofBindsReceiptRevisionAndBindings(t *testing.T) 
 		}
 	}
 }
+
+func TestResponseStageFreshNoMatchRemovesStaleFindingsBeforeAgent(t *testing.T) {
+	loop, state := pipelineTestLoop(t, false)
+	client := loop.Executor.Client.(TypedPlanClient).Client
+	service, err := client.CoreV1().Services("app").Get(context.Background(), "api", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	service.Spec.Ports[0].TargetPort.IntVal = 8080
+	if _, err := client.CoreV1().Services("app").Update(context.Background(), service, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	deployment, err := client.AppsV1().Deployments("app").Get(context.Background(), "api", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	deployment.Spec.Template.Spec.Containers[0].Image = "good:v1"
+	if _, err := client.AppsV1().Deployments("app").Update(context.Background(), deployment, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	if err := RunResponseStages(context.Background(), state, []ResponseStage{&DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return loop }}, clearingResponseStage{"agent", &calls}}); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 0 || len(state.Findings) != 0 || len(loop.PlanApplications()) != 0 || state.PriorStages[0].Mitigations[0].SkipReason != "diagnose_no_longer_matches" {
+		t.Fatalf("stale work was dispatched after live NoMatch: calls=%d reports=%v", calls, state.PriorStages)
+	}
+}

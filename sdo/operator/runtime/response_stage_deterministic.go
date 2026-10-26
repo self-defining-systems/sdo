@@ -113,7 +113,7 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 		report.Mitigations = append(report.Mitigations, attempt)
 		skip := func(reason string) error {
 			attempt.SkipReason = reason
-			attempt.RemainingFindingFingerprints = append([]string(nil), match.ExplainedFindingFingerprints...)
+			recordStageFindingProgress(attempt, match.ExplainedFindingFingerprints, state.Findings)
 			return save(false)
 		}
 		if state.Request.RepairPolicy != "recorded-actions" {
@@ -179,6 +179,9 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 			reason := "diagnose_unavailable"
 			if before.Result == program.NoMatch {
 				reason = "diagnose_no_longer_matches"
+				observed := ToolResponse{}
+				loop.verify(ctx, nil, &observed)
+				updateStageFindings(state, observed)
 			}
 			if err := skip(reason); err != nil {
 				return report, err
@@ -236,17 +239,7 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 				break
 			}
 		}
-		remaining := map[string]bool{}
-		for _, finding := range state.Findings {
-			remaining[FindingFingerprint(finding)] = true
-		}
-		for _, fp := range match.ExplainedFindingFingerprints {
-			if remaining[fp] {
-				attempt.RemainingFindingFingerprints = append(attempt.RemainingFindingFingerprints, fp)
-			} else {
-				attempt.ClearedFindingFingerprints = append(attempt.ClearedFindingFingerprints, fp)
-			}
-		}
+		recordStageFindingProgress(attempt, match.ExplainedFindingFingerprints, state.Findings)
 		switch {
 		case attempt.ApplyReceipt.GetRolloutPending() != nil:
 			attempt.Result = "rollout_pending_at_handoff"
@@ -397,4 +390,20 @@ func (progress *responseStageProgress) UnmarshalJSON(raw []byte) error {
 		return protojson.Unmarshal(encoded.Report, progress.Report)
 	}
 	return nil
+}
+
+func recordStageFindingProgress(attempt *contracts.StageMitigation, covered []string, findings []sdk.Finding) {
+	remaining := map[string]bool{}
+	for _, finding := range findings {
+		remaining[FindingFingerprint(finding)] = true
+	}
+	attempt.RemainingFindingFingerprints = nil
+	attempt.ClearedFindingFingerprints = nil
+	for _, fp := range covered {
+		if remaining[fp] {
+			attempt.RemainingFindingFingerprints = append(attempt.RemainingFindingFingerprints, fp)
+		} else {
+			attempt.ClearedFindingFingerprints = append(attempt.ClearedFindingFingerprints, fp)
+		}
+	}
 }
