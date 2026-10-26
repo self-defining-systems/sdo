@@ -5,11 +5,11 @@ from __future__ import annotations
 import dataclasses
 import json
 import os
-import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from benchmarks.sregym.faults.description import ProblemDescription
+from benchmarks.sregym.faults.description import FaultDescriptionError, ProblemDescription
+from benchmarks.sregym.faults.sregym_subprocess import run_sregym_json, sregym_env
 
 if TYPE_CHECKING:
     from benchmarks.sregym.runner.experiment import ExperimentConfig
@@ -21,24 +21,13 @@ def describe_suite(config: ExperimentConfig, sregym_dir: Path) -> dict[str, Prob
         from benchmarks.sregym.runner.experiment import resolve_tasklist_source
 
         selection["tasklist"] = str(resolve_tasklist_source(config.tasklist, sregym_dir).resolve())
-    env = {**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[3])}
-    reply = subprocess.run(
-        [
-            "uv",
-            "run",
-            "--directory",
-            str(sregym_dir),
-            "python",
-            "-m",
-            "benchmarks.sregym.faults.worker",
-        ],
-        input=json.dumps({"selection": selection}),
-        capture_output=True,
-        text=True,
+    env = sregym_env(os.environ, PYTHONPATH=str(Path(__file__).resolve().parents[3]))
+    reply = run_sregym_json(
+        "suite discovery",
+        ["uv", "run", "--directory", str(sregym_dir), "python", "-m", "benchmarks.sregym.faults.worker"],
+        input_text=json.dumps({"selection": selection}),
         env=env,
         timeout=180,
-        check=False,
+        error=FaultDescriptionError,
     )
-    if reply.returncode:
-        raise ValueError(f"suite discovery failed: {(reply.stderr or reply.stdout)[-2000:]}")
-    return {key: ProblemDescription.model_validate(value) for key, value in json.loads(reply.stdout).items()}
+    return {key: ProblemDescription.model_validate(value) for key, value in reply.items()}

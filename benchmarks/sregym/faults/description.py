@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
@@ -15,9 +14,27 @@ if TYPE_CHECKING:
 from pydantic import BaseModel, ConfigDict, model_validator
 
 from benchmarks.sregym.faults.probe_catalog import CLASS_KINDS
+from benchmarks.sregym.faults.sregym_subprocess import SregymSubprocessError, run_sregym_json, sregym_env
 
 PROBE_KINDS = frozenset(CLASS_KINDS.values())
 CapabilityMode = Literal["strict", "permissive"]
+
+
+class FaultDescriptionError(SregymSubprocessError, ValueError):
+    """SREGym could not describe the selected problems."""
+
+
+class CompositeConflictError(ValueError):
+    """A composite whose faults cannot all be installed; SREGym would burn its settle timeouts finding out."""
+
+    reason = "composite_fault_conflict"
+
+    def __init__(self, conflicts: dict[str, tuple[str, ...]]) -> None:
+        self.conflicts = conflicts
+        super().__init__(
+            f"{self.reason}: "
+            + "; ".join(f"{problem_id}: {', '.join(items)}" for problem_id, items in sorted(conflicts.items()))
+        )
 
 
 class FaultCapability(BaseModel):
@@ -37,6 +54,13 @@ class SuiteCapabilities(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     mode: CapabilityMode = "strict"
     faults: tuple[FaultCapability, ...] = ()
+
+
+# A fault of the first kind leaves its component's pods unsettled for good, so SREGym's settle wait for a later
+# fault of the second kind on the same component times out (300 s, retried once) and the injection is invalid.
+UNSETTLING_FAULT_BLOCKS: dict[str, frozenset[str]] = {
+    "rolling_update_misconfigured": frozenset({"missing_service"}),
+}
 
 
 @dataclass(frozen=True)
@@ -109,6 +133,18 @@ class ProblemDescription(BaseModel):
         faults = {fault.declared_index: fault for fault in self.faults}
         return tuple(faults[index] for index in self.injection_order)
 
+    def conflicts(self) -> tuple[str, ...]:
+        """Faults that cannot be installed after an earlier fault of this same composite."""
+
+        ordered = self.ordered_faults()
+        return tuple(
+            f"{later.name} cannot follow {earlier.name}"
+            for position, earlier in enumerate(ordered)
+            for later in ordered[position + 1 :]
+            if later.kind in UNSETTLING_FAULT_BLOCKS.get(earlier.kind, frozenset())
+            and set(earlier.target_components) & set(later.target_components)
+        )
+
 
 # Matches the installer Role and informer snapshot at the S3 boundary. Expanding this
 # set requires a production permission AND snapshot change, with authorizer tests.
@@ -122,6 +158,14 @@ SDO_CAPABILITIES = frozenset(
         "application-pod-exec",
     }
 )
+
+
+def check_composites(catalog: Mapping[str, ProblemDescription]) -> None:
+    """Fail before deploy, with a typed reason, on composites SREGym cannot install."""
+
+    conflicts = {problem_id: found for problem_id, item in catalog.items() if (found := item.conflicts())}
+    if conflicts:
+        raise CompositeConflictError(conflicts)
 
 
 def validate_suite(
@@ -181,32 +225,19 @@ def describe_sregym_problems(
     if not problem_ids:
         return {}
     root = Path(__file__).resolve().parents[3]
-    env = {
-        **os.environ,
-        "PYTHONPATH": os.pathsep.join(filter(None, (str(root), os.environ.get("PYTHONPATH", "")))),
-    }
+    env = sregym_env(
+        os.environ, PYTHONPATH=os.pathsep.join(filter(None, (str(root), os.environ.get("PYTHONPATH", ""))))
+    )
     if app_source_dir is not None:
         env["SREGYM_APP_SOURCE_DIR"] = str(app_source_dir)
-    completed = subprocess.run(
-        [
-            "uv",
-            "run",
-            "--directory",
-            str(sregym_dir),
-            "python",
-            "-m",
-            "benchmarks.sregym.faults.worker",
-        ],
-        input=json.dumps(problem_ids),
-        capture_output=True,
-        text=True,
+    described = run_sregym_json(
+        "fault description",
+        ["uv", "run", "--directory", str(sregym_dir), "python", "-m", "benchmarks.sregym.faults.worker"],
+        input_text=json.dumps(problem_ids),
         env=env,
         timeout=120,
-        check=False,
+        error=FaultDescriptionError,
     )
-    if completed.returncode != 0:
-        raise ValueError(f"SREGym fault description failed: {(completed.stderr or completed.stdout)[-2000:]}")
-    described = json.loads(completed.stdout)
     if set(described) != set(problem_ids):
         raise ValueError("SREGym returned incomplete fault descriptions")
     return {problem_id: ProblemDescription.model_validate(item) for problem_id, item in described.items()}

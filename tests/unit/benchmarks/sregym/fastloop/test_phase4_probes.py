@@ -549,7 +549,7 @@ from pathlib import Path
 from unittest.mock import patch
 from kubernetes.client.rest import RESTClientObject
 from benchmarks.sregym.faults.worker import describe
-from benchmarks.sregym.faults.description import ProblemDescription, validate_suite
+from benchmarks.sregym.faults.description import ProblemDescription, check_composites, validate_suite
 
 def forbidden(*args, **kwargs):
     raise AssertionError('offline discovery attempted a command or network/API call')
@@ -565,6 +565,10 @@ with (
     assert sum(len(d.faults) for d in catalog.values()) == 170
     unsupported = {f.class_name for d in catalog.values() for f in d.faults if not f.tracking_supported}
     assert unsupported == set(), unsupported
+    # Deterministic composites SREGym cannot install; admission rejects them with composite_fault_conflict.
+    conflicting = {key for key, item in catalog.items() if item.conflicts()}
+    assert conflicting == {'mf__social_network__n2__s3496062482__reliable__v_'}, conflicting
+    check_composites({key: item for key, item in catalog.items() if key not in conflicting})
     for key, item in catalog.items():
         if item.tracking_supported:
             validate_suite({key: item}, require_tracking=True, capability_mode='permissive')
