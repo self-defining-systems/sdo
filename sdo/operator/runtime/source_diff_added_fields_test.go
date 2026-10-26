@@ -136,7 +136,7 @@ func diffEveryViewResults(t *testing.T, live *unstructured.Unstructured) map[str
 			client.PrependReactor("patch", "deployments", func(ktesting.Action) (bool, kruntime.Object, error) {
 				return true, typed.DeepCopy(), nil
 			})
-			view.Client = client
+			view.Client = bridgeFake(t, client)
 		case "replayed-capture":
 			view.DetectionContext = stored
 		}

@@ -16,6 +16,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/internal/capturefixture"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/layout"
 	"sdo.dev/operator/memory/validate"
@@ -145,8 +146,8 @@ func TestHermeticSourceReconcileLearningExposesVerifiedCounters(t *testing.T) {
 		t.Fatal(err)
 	}
 	recordingsRaw, _ := json.Marshal(corpus.Recordings)
-	openRaw, _ := json.Marshal(open)
-	fixedRaw, _ := json.Marshal(fixed)
+	openRaw := capturefixture.Boundary(t, open, open.NamespaceName)
+	fixedRaw := capturefixture.Boundary(t, fixed, fixed.NamespaceName)
 	labels, _ := json.Marshal(map[string]any{"bindings": corpus.Bindings, "peer_bindings": program.Bindings{Objects: program.ObjectBindings{"deployment": {APIVersion: ref.APIVersion, Kind: ref.Kind, Namespace: ref.Namespace, Name: "peer"}}}, "root_cause_program_ids": []string{p.Spec().ID}, "provenance": sdktest.CorpusProvenance{IncidentID: "image-origin", OpenSHA256: fmt.Sprintf("%x", sha256.Sum256(openRaw)), FixedSHA256: fmt.Sprintf("%x", sha256.Sum256(fixedRaw))}})
 	acceptedRaw, _ := json.Marshal(sourceReader.objects)
 	for name, data := range map[string][]byte{"accepted.json": acceptedRaw, "open.json": openRaw, "fixed.json": fixedRaw, "healthy.json": fixedRaw, "recordings.json": recordingsRaw, "labels.json": labels} {

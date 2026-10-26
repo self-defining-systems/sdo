@@ -25,13 +25,7 @@
                 "value": "admin"
               },
               {
-                "name": "APP_PASSWORD",
-                "valueFrom": {
-                  "secretKeyRef": {
-                    "name": "synthetic-credentials",
-                    "key": "app_password"
-                  }
-                }
+                "name": "APP_PASSWORD"
               },
               {
                 "name": "MONGO_INITDB_ROOT_USERNAME",
@@ -43,13 +37,7 @@
                 }
               },
               {
-                "name": "MONGO_INITDB_ROOT_PASSWORD",
-                "valueFrom": {
-                  "secretKeyRef": {
-                    "name": "synthetic-credentials",
-                    "key": "mongo_initdb_root_password"
-                  }
-                }
+                "name": "MONGO_INITDB_ROOT_PASSWORD"
               }
             ]
           },

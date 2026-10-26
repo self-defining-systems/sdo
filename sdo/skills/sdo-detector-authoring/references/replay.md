@@ -57,10 +57,10 @@ func HealthyBaselineViolations(detector sdk.Detector, snapshots []Snapshot) []st
     are ignored.
 
 func ProjectCapturedObject(raw []byte) ([]byte, error)
-    ProjectCapturedObject preserves arbitrary Kubernetes fields while stripping
-    credential payloads, last-applied copies and volatile write metadata.
-    Discovery callers exclude Secrets entirely; this also protects recorded
-    JSON.
+    ProjectCapturedObject preserves arbitrary Kubernetes fields, including
+    object identity (metadata.uid), while stripping credential payloads,
+    last-applied copies and volatile write metadata. Discovery callers exclude
+    Secrets entirely; this also protects recorded JSON.
 
 func ScriptOrigin(script program.RunScript, c CorpusCase) (program.ScriptOriginReceipt, error)
     ScriptOrigin checks linkage against controller-recorded successful receipts.

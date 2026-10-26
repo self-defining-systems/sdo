@@ -15,10 +15,7 @@ import (
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	kruntime "k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/client-go/kubernetes"
 
 	"sdo.dev/operator/deployment"
 	"sdo.dev/operator/sdk"
@@ -69,15 +66,6 @@ func (c *Controller) recordAdoptionError(now time.Time, err error) {
 // settle before its acceptance record is taken.
 const acceptanceSettleRetry = 5 * time.Second
 
-func supportsAcceptedSource(ref sdk.ObjectRef) bool {
-	switch ref.APIVersion + "/" + ref.Kind {
-	case "v1/ServiceAccount", "rbac.authorization.k8s.io/v1/ClusterRole", "rbac.authorization.k8s.io/v1/ClusterRoleBinding", "rbac.authorization.k8s.io/v1/Role", "rbac.authorization.k8s.io/v1/RoleBinding", "v1/Service", "v1/ConfigMap", "v1/Pod", "apps/v1/Deployment", "apps/v1/ReplicaSet", "v1/Endpoints", "discovery.k8s.io/v1/EndpointSlice", "networking.k8s.io/v1/NetworkPolicy":
-		return true
-	default:
-		return false
-	}
-}
-
 func (c *Controller) adoptOwnership(ctx context.Context, now time.Time, snapshot sdk.DetectionContext) error {
 	if c.CanAct != nil && !c.CanAct() {
 		return nil
@@ -113,6 +101,7 @@ func (c *Controller) adoptOwnership(ctx context.Context, now time.Time, snapshot
 	changes := make([]ObjectChange, 0)
 	type candidate struct {
 		ref        sdk.ObjectRef
+		resource   acceptedResource
 		source     *unstructured.Unstructured
 		normalized *unstructured.Unstructured
 		conflicts  int
@@ -123,20 +112,35 @@ func (c *Controller) adoptOwnership(ctx context.Context, now time.Time, snapshot
 	unsettled := false
 	for _, source := range objects {
 		ref := sdk.ObjectRef{APIVersion: source.GetAPIVersion(), Kind: source.GetKind(), Namespace: source.GetNamespace(), Name: source.GetName()}
-		if !supportsAcceptedSource(ref) || (ref.Namespace != c.config.Namespace && !inventoryClusterKind(ref.Kind)) {
-			return fmt.Errorf("unsupported accepted manifest %s/%s/%s", ref.Kind, ref.Namespace, ref.Name)
-		}
 		// Identity-only declarations have no configuration fields to adopt.
 		// Presence remains an inventory/source obligation without requiring an
 		// otherwise unnecessary API write (for example a bare ServiceAccount).
 		if len(flattenDriftPaths(source)) == 0 {
 			continue
 		}
-		live, err := getAdoptionObject(actionCtx, c.drift.Client, ref)
+		// Secret values are never read, so adoption cannot compare or claim
+		// them; a declared Secret remains an inventory/source obligation.
+		if isSecretRef(ref) {
+			continue
+		}
+		resource, err := resolveAcceptedResource(c.drift.Client, ref)
+		if err != nil {
+			return fmt.Errorf("unsupported accepted manifest %s/%s/%s: %w", ref.Kind, ref.Namespace, ref.Name, err)
+		}
+		if resource.namespaced && ref.Namespace != c.config.Namespace {
+			return fmt.Errorf("accepted manifest %s/%s/%s is outside namespace %s", ref.Kind, ref.Namespace, ref.Name, c.config.Namespace)
+		}
+		// Shared cluster objects (CRDs, StorageClasses, webhooks, ...) are not
+		// the app's to own: another tenant's edit must not become its drift.
+		// Only the app's own RBAC grants are adopted at cluster scope.
+		if !resource.namespaced && !inventoryClusterKind(ref.Kind) {
+			continue
+		}
+		live, err := resource.get(actionCtx, ref)
 		if err != nil && !apierrors.IsNotFound(err) {
 			return fmt.Errorf("read live %s/%s for adoption: %w", ref.Kind, ref.Name, err)
 		}
-		normalized, err := dryRunAcceptedSource(actionCtx, c.drift.Client, ref, source)
+		normalized, err := resource.apply(actionCtx, ref, source, true)
 		if err != nil {
 			return fmt.Errorf("dry run adoption of %s/%s: %w", ref.Kind, ref.Name, err)
 		}
@@ -171,7 +175,7 @@ func (c *Controller) adoptOwnership(ctx context.Context, now time.Time, snapshot
 		}
 		if allOwned {
 			if record != "" {
-				pending = append(pending, candidate{ref: ref, normalized: normalized, record: record})
+				pending = append(pending, candidate{ref: ref, resource: resource, normalized: normalized, record: record})
 			}
 			continue
 		}
@@ -182,7 +186,7 @@ func (c *Controller) adoptOwnership(ctx context.Context, now time.Time, snapshot
 		conditional := source.DeepCopy()
 		conditional.SetUID(live.GetUID())
 		conditional.SetResourceVersion(live.GetResourceVersion())
-		pending = append(pending, candidate{ref: ref, source: conditional, normalized: normalized, conflicts: conflicts, managers: managers, record: record})
+		pending = append(pending, candidate{ref: ref, resource: resource, source: conditional, normalized: normalized, conflicts: conflicts, managers: managers, record: record})
 	}
 	persistDifferences := func(changes []ObjectChange, view program.ReadView) error {
 		if len(changes) == 0 {
@@ -221,14 +225,14 @@ func (c *Controller) adoptOwnership(ctx context.Context, now time.Time, snapshot
 	}
 	for _, item := range pending {
 		if item.source == nil {
-			if err := applyAcceptanceRecord(actionCtx, c.drift.Client, item.ref, item.record); err != nil {
+			if err := item.resource.recordAcceptance(actionCtx, item.ref, item.record); err != nil {
 				return fmt.Errorf("record acceptance of %s/%s: %w", item.ref.Kind, item.ref.Name, err)
 			}
 			continue
 		}
-		if _, err := applyAcceptedSource(actionCtx, c.drift.Client, item.ref, item.source, false); err != nil {
+		if _, err := item.resource.apply(actionCtx, item.ref, item.source, false); err != nil {
 			if apierrors.IsConflict(err) || apierrors.IsNotFound(err) {
-				live, readErr := getAdoptionObject(actionCtx, c.drift.Client, item.ref)
+				live, readErr := item.resource.get(actionCtx, item.ref)
 				if readErr != nil && !apierrors.IsNotFound(readErr) {
 					return fmt.Errorf("re-read %s/%s after adoption conflict: %w", item.ref.Kind, item.ref.Name, readErr)
 				}
@@ -249,7 +253,7 @@ func (c *Controller) adoptOwnership(ctx context.Context, now time.Time, snapshot
 			return fmt.Errorf("adopt %s/%s: %w", item.ref.Kind, item.ref.Name, err)
 		}
 		if item.record != "" {
-			if err := applyAcceptanceRecord(actionCtx, c.drift.Client, item.ref, item.record); err != nil {
+			if err := item.resource.recordAcceptance(actionCtx, item.ref, item.record); err != nil {
 				return fmt.Errorf("record acceptance of %s/%s: %w", item.ref.Kind, item.ref.Name, err)
 			}
 		}
@@ -322,52 +326,6 @@ func adoptionConflicts(live *unstructured.Unstructured, declared map[string]bool
 		result = append(result, manager)
 	}
 	return count, result
-}
-
-func getAdoptionObject(ctx context.Context, client kubernetes.Interface, ref sdk.ObjectRef) (*unstructured.Unstructured, error) {
-	var object any
-	var err error
-	switch ref.APIVersion + "/" + ref.Kind {
-	case "v1/ServiceAccount":
-		object, err = client.CoreV1().ServiceAccounts(ref.Namespace).Get(ctx, ref.Name, metav1.GetOptions{})
-	case "rbac.authorization.k8s.io/v1/ClusterRole":
-		object, err = client.RbacV1().ClusterRoles().Get(ctx, ref.Name, metav1.GetOptions{})
-	case "rbac.authorization.k8s.io/v1/ClusterRoleBinding":
-		object, err = client.RbacV1().ClusterRoleBindings().Get(ctx, ref.Name, metav1.GetOptions{})
-	case "rbac.authorization.k8s.io/v1/Role":
-		object, err = client.RbacV1().Roles(ref.Namespace).Get(ctx, ref.Name, metav1.GetOptions{})
-	case "rbac.authorization.k8s.io/v1/RoleBinding":
-		object, err = client.RbacV1().RoleBindings(ref.Namespace).Get(ctx, ref.Name, metav1.GetOptions{})
-	case "v1/Service":
-		object, err = client.CoreV1().Services(ref.Namespace).Get(ctx, ref.Name, metav1.GetOptions{})
-	case "v1/ConfigMap":
-		object, err = client.CoreV1().ConfigMaps(ref.Namespace).Get(ctx, ref.Name, metav1.GetOptions{})
-	case "v1/Pod":
-		object, err = client.CoreV1().Pods(ref.Namespace).Get(ctx, ref.Name, metav1.GetOptions{})
-	case "apps/v1/Deployment":
-		object, err = client.AppsV1().Deployments(ref.Namespace).Get(ctx, ref.Name, metav1.GetOptions{})
-	case "apps/v1/ReplicaSet":
-		object, err = client.AppsV1().ReplicaSets(ref.Namespace).Get(ctx, ref.Name, metav1.GetOptions{})
-	case "v1/Endpoints":
-		object, err = client.CoreV1().Endpoints(ref.Namespace).Get(ctx, ref.Name, metav1.GetOptions{})
-	case "discovery.k8s.io/v1/EndpointSlice":
-		object, err = client.DiscoveryV1().EndpointSlices(ref.Namespace).Get(ctx, ref.Name, metav1.GetOptions{})
-	case "networking.k8s.io/v1/NetworkPolicy":
-		object, err = client.NetworkingV1().NetworkPolicies(ref.Namespace).Get(ctx, ref.Name, metav1.GetOptions{})
-	default:
-		return nil, fmt.Errorf("unsupported adoption object %s/%s", ref.APIVersion, ref.Kind)
-	}
-	if err != nil {
-		return nil, err
-	}
-	content, err := kruntime.DefaultUnstructuredConverter.ToUnstructured(object)
-	if err != nil {
-		return nil, err
-	}
-	result := &unstructured.Unstructured{Object: content}
-	result.SetAPIVersion(ref.APIVersion)
-	result.SetKind(ref.Kind)
-	return result, nil
 }
 
 // adoptionConflictView binds source comparison to the API state already read

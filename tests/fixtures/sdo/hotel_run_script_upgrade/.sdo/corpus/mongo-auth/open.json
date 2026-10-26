@@ -47,7 +47,8 @@
           "example.test/user": "admin",
           "example.test/auth-database": "admin",
           "example.test/root-user-assignment": "ROOT_USER",
-          "example.test/root-password-assignment": "ROOT_PWD"
+          "example.test/root-password-assignment": "ROOT_PWD",
+          "sdo.dev/configmap-values-redacted": "true"
         }
       },
       "data": {

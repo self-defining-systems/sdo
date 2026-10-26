@@ -78,6 +78,9 @@ func (a *adoptionServiceAPI) applyAnnotations(manager string, applied map[string
 }
 
 func (a *adoptionServiceAPI) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
+	if serveTestDiscovery(writer, request) {
+		return
+	}
 	writer.Header().Set("Content-Type", "application/json")
 	if request.Method == http.MethodGet {
 		_ = json.NewEncoder(writer).Encode(&a.service)
@@ -502,11 +505,12 @@ func TestAdoptionRecordsAcceptanceOnlyOnceSettled(t *testing.T) {
 		Spec:       appsv1.DeploymentSpec{Replicas: &one, Selector: &metav1.LabelSelector{MatchLabels: labelsOf}, Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: labelsOf}, Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "search", Image: "search:1"}}}}},
 		Status:     appsv1.DeploymentStatus{ObservedGeneration: 1},
 	}
-	client := fake.NewSimpleClientset(live)
+	fakeClient := fake.NewSimpleClientset(live)
+	client := bridgeFake(t, fakeClient)
 	source := adoptionSource{object: &unstructured.Unstructured{Object: map[string]any{"apiVersion": "apps/v1", "kind": "Deployment", "metadata": map[string]any{"name": "search", "namespace": "app"}, "spec": map[string]any{"replicas": int64(1), "template": map[string]any{"spec": map[string]any{"containers": []any{map[string]any{"name": "search", "image": "search:1"}}}}}}}}
 	config := testControllerConfig()
 	config.Namespace, config.SourceCommit = "app", "accepted"
-	controller, err := NewController(config, nil, fastloopObjects{client: client}, &recordingDispatcher{requests: make(chan IncidentRequest, 1)}, time.Unix(10, 0).UTC())
+	controller, err := NewController(config, nil, fastloopObjects{client: fakeClient}, &recordingDispatcher{requests: make(chan IncidentRequest, 1)}, time.Unix(10, 0).UTC())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -515,7 +519,12 @@ func TestAdoptionRecordsAcceptanceOnlyOnceSettled(t *testing.T) {
 	}})
 	recorded := func() bool {
 		t.Helper()
-		object, err := getAdoptionObject(ctx, client, sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "app", Name: "search"})
+		ref := sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "app", Name: "search"}
+		resource, err := resolveAcceptedResource(client, ref)
+		if err != nil {
+			t.Fatal(err)
+		}
+		object, err := resource.get(ctx, ref)
 		if err != nil {
 			t.Fatal(err)
 		}

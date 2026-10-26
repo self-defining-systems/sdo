@@ -31,7 +31,7 @@ func TestSourceDiffRecordingPreservesAbsentAcceptedProbe(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		client kubernetes.Interface
-	}{{"live", client}, {"offline", nil}} {
+	}{{"live", bridgeFake(t, client)}, {"offline", nil}} {
 		t.Run(tc.name, func(t *testing.T) {
 			recorder := &sdktest.RecordingReadView{ReadView: LiveReadView{DetectionContext: sdktest.Snapshot{NamespaceName: "app", DeploymentList: []appsv1.Deployment{live}}, Source: planFakeSource{source: source}, SourceCommit: "accepted", Client: tc.client}}
 			diff, err := recorder.DiffAgainstSource(ref)
@@ -77,7 +77,7 @@ func TestSourceDiffIgnoresLastAppliedAnnotationNoise(t *testing.T) {
 		obj.Annotations = nil
 		return true, obj, nil
 	})
-	view := LiveReadView{DetectionContext: sdktest.Snapshot{NamespaceName: "app", ConfigMapList: []corev1.ConfigMap{live}}, Source: planFakeSource{source: source}, SourceCommit: "accepted", Client: client}
+	view := LiveReadView{DetectionContext: sdktest.Snapshot{NamespaceName: "app", ConfigMapList: []corev1.ConfigMap{live}}, Source: planFakeSource{source: source}, SourceCommit: "accepted", Client: bridgeFake(t, client)}
 	if diff, err := view.DiffAgainstSource(ref); err != nil || diff.Changed {
 		t.Fatalf("bookkeeping annotation is not source drift: %+v %v", diff, err)
 	}

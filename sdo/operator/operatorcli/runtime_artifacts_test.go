@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"os"
 	"os/exec"
@@ -382,5 +383,26 @@ func TestRuntimeArtifactsCopyFinishesWhenArchiveHasRecordPadding(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(root, "sessions/id/session.jsonl")); err != nil {
 		t.Fatalf("missing exported evidence: %v", err)
+	}
+}
+
+// A producer that fails partway breaks the copy too; the producer's stderr
+// says why and must reach the caller.
+func TestRuntimeArtifactsCopyReportsProducerStderrWhenStreamBreaks(t *testing.T) {
+	var archive bytes.Buffer
+	writer := tar.NewWriter(&archive)
+	if err := writer.WriteHeader(&tar.Header{Name: "sessions/id/session.jsonl", Mode: 0600, Size: 4096}); err != nil {
+		t.Fatal(err)
+	}
+	execute := func(_ context.Context, _, _ string, _ []string, stdout, stderr io.Writer) error {
+		if _, err := stdout.Write(archive.Bytes()); err != nil {
+			return err
+		}
+		_, _ = io.WriteString(stderr, "tar: sessions/id/session.jsonl: Read error")
+		return errors.New("command terminated with exit code 2")
+	}
+	err := copyRuntimeArtifacts(context.Background(), execute, "control", t.TempDir())
+	if err == nil || !strings.Contains(err.Error(), "Read error") || !strings.Contains(err.Error(), "exit code 2") {
+		t.Fatalf("producer failure hidden: %v", err)
 	}
 }

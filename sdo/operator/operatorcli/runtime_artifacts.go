@@ -100,13 +100,17 @@ func copyRuntimeArtifacts(ctx context.Context, execute podExecutor, namespace, d
 		_ = reader.CloseWithError(copyErr)
 	}
 	waitErr := <-done
-	if copyErr != nil {
-		return copyErr
+	if waitErr != nil {
+		// A producer failing partway also breaks the copy; its stderr says why.
+		waitErr = fmt.Errorf("export runtime artifacts: %w: %s", waitErr, strings.TrimSpace(stderr.String()))
+	}
+	if copyErr != nil && waitErr != nil && !errors.Is(waitErr, copyErr) {
+		return errors.Join(copyErr, waitErr)
 	}
 	if waitErr != nil {
-		return fmt.Errorf("export runtime artifacts: %w: %s", waitErr, strings.TrimSpace(stderr.String()))
+		return waitErr
 	}
-	return nil
+	return copyErr
 }
 
 var commandReportName = regexp.MustCompile(`^[0-9]{4,}-(act|apply|mitigate)\.json$`)
