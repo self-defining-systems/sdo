@@ -236,7 +236,7 @@ func Resources(c Config, resources ...*metav1.APIResourceList) (Plan, error) {
 		// The baseline negotiates metadata strictly and never needs Secret get.
 		rule("", []string{"secrets"}, "list", "watch"),
 		rule("", []string{"configmaps"}, "get", "list", "watch", "create", "update", "delete"),
-		rule("", []string{"services", "pods", "endpoints", "events"}, "get", "list", "watch"),
+		rule("", []string{"services", "pods", "endpoints", "events", "persistentvolumeclaims", "serviceaccounts"}, "get", "list", "watch"),
 		rule("", []string{"pods/log"}, "get"),
 		rule("", []string{"pods", "services"}, "create", "delete"),
 		rule("apps", []string{"deployments", "replicasets", "statefulsets", "daemonsets"}, "get", "list", "watch"),
@@ -247,6 +247,7 @@ func Resources(c Config, resources ...*metav1.APIResourceList) (Plan, error) {
 		rule("rbac.authorization.k8s.io", []string{"roles", "rolebindings"}, "get", "list", "watch"),
 		rule("coordination.k8s.io", []string{"leases"}, "get", "create", "update", "patch"),
 		rule("batch", []string{"jobs"}, "get", "list", "watch", "create", "delete"),
+		rule("batch", []string{"cronjobs"}, "get", "list", "watch"),
 	}
 	responderRules := []rbacv1.PolicyRule{
 		rule("", []string{"configmaps", "services", "pods", "persistentvolumeclaims"}, "get", "list", "watch", "create", "update", "patch", "delete"),

@@ -160,6 +160,12 @@ func testCLIAndBrokerAgreeOnAcceptance(t *testing.T, shard int) {
 			put(t, r, ".sdo/diagnostics/detectors/incidents/dns/manifest.yaml", strings.Replace(incidentManifest, "%s", "base", 1), 0o644)
 			put(t, r, ".sdo/diagnostics/detectors/incidents/dns/detector.go", parityDetector(t, "dns"), 0o644)
 		}, nil, false},
+		{"detector watches a resource the controller cannot load", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
+			watchDetector(t, r, "policy", "v1", "PodDisruptionBudget")
+		}, []string{validate.RuleDetectorControllerStart}, false},
+		{"detector watches PersistentVolumeClaims", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
+			watchDetector(t, r, "", "v1", "PersistentVolumeClaim")
+		}, nil, false},
 		{"detector names a missing playbook", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
 			put(t, r, ".sdo/diagnostics/detectors/incidents/dns/manifest.yaml", strings.Replace(incidentManifest, "%s", "ghost", 1), 0o644)
 			put(t, r, ".sdo/diagnostics/detectors/incidents/dns/detector.go", parityDetector(t, "dns"), 0o644)
@@ -874,6 +880,20 @@ func parityDetector(t *testing.T, id string) string {
 		source = strings.ReplaceAll(source, `"inc-1"`, `"inc-2"`)
 	}
 	return source
+}
+
+// watchDetector adds an incident detector whose manifest and spec both declare
+// one watch of the given resource.
+func watchDetector(t *testing.T, root, group, version, kind string) {
+	t.Helper()
+	apiVersion := version
+	if group != "" {
+		apiVersion = group + "/" + version
+	}
+	manifest := strings.Replace(strings.Replace(incidentManifest, "%s", "base", 1), "  - apiVersion: v1\n    kind: Pod\n", "  - apiVersion: "+apiVersion+"\n    kind: "+kind+"\n", 1)
+	put(t, root, ".sdo/diagnostics/detectors/incidents/dns/manifest.yaml", manifest, 0o644)
+	source := strings.Replace(parityDetector(t, "dns"), `{APIVersion: "v1", Kind: "Pod"}`, fmt.Sprintf("{APIVersion: %q, Kind: %q}", apiVersion, kind), 1)
+	put(t, root, ".sdo/diagnostics/detectors/incidents/dns/detector.go", source, 0o644)
 }
 
 // overlayParityCase preserves executable bits and applies the fixture’s deletions.
