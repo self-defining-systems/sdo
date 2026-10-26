@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
+import logging
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Protocol
 
-from benchmarks.sregym.fastloop.baseline_recovery import ApplicationBaseline, RecoveryCleanup, reconcile_application
+from benchmarks.sregym.fastloop.baseline_recovery import (
+    ApplicationBaseline,
+    ApplicationNamespaceAbsent,
+    RecoveryCleanup,
+    reconcile_application,
+)
 from benchmarks.sregym.fastloop.loop import InjectionWindow
 from benchmarks.sregym.fastloop.records import EvalNote, OracleVerdict
 from benchmarks.sregym.protocol.injection import FaultComponent, InvalidInjectionError, check_injection
@@ -21,6 +27,7 @@ if TYPE_CHECKING:
 HEALTH_POLL_SECONDS = 1.0
 #: The oracle waits up to 60 s for rollouts itself; injection and recovery wait on rollouts too.
 WORKER_OP_TIMEOUT_SECONDS = 900.0
+logger = logging.getLogger(__name__)
 SEED_RECOVERY_CONTRACT = "seed-compatible/v1"
 
 
@@ -314,6 +321,8 @@ class SregymFaultDriver:
         if self._baselines is not None and self._cluster is not None:
             for baseline in self._baselines:
                 cleaned = reconcile_application(self._cluster, baseline, baseline.namespace)
+                if cleaned.absent_namespace is not None:
+                    logger.info("restore: namespace %s was absent; %s", baseline.namespace, cleaned.absent_namespace)
                 for kind, count in cleaned.deleted_counts.items():
                     self.last_cleanup.deleted_counts[kind] = self.last_cleanup.deleted_counts.get(kind, 0) + count
                 self.last_cleanup.restored.extend(
@@ -360,7 +369,12 @@ class SregymFaultDriver:
         namespaces = (baseline.namespace for baseline in self._baselines) if self._baselines else (self._namespace,)
         unready: list[str] = []
         for namespace in namespaces:
-            for value in self._cluster.list_objects(namespace):
+            try:
+                listed = self._cluster.list_objects(namespace)
+            except ApplicationNamespaceAbsent:
+                # Restore leaves a defaults-only namespace absent; it has no rollouts.
+                continue
+            for value in listed:
                 kind = value.get("kind")
                 metadata = value.get("metadata", {})
                 if kind == "Pod" and metadata.get("deletionTimestamp"):
