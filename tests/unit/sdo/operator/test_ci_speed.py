@@ -198,7 +198,7 @@ def test_image_jobs_use_the_compilation_owners_schema_identity() -> None:
 
 
 @pytest.mark.parametrize("mode", ["normal", "race"])
-def test_preparation_warms_build_graphs_without_linking_or_running_tests(tmp_path: Path, mode: str) -> None:
+def test_preparation_compiles_shared_race_test_archive_without_running_tests(tmp_path: Path, mode: str) -> None:
     """Preparation shares archives; each shard owns its test binary and execution."""
     command = tmp_path / "go"
     command.write_text('#!/bin/sh\nprintf "%s:%s\\n" "$PWD" "$*" >> "$SDO_TEST_CALLS"\n')
@@ -215,8 +215,15 @@ def test_preparation_warms_build_graphs_without_linking_or_running_tests(tmp_pat
     invocations = [line.split(":", 1) for line in calls.read_text().splitlines()]
     for module in ("sdo/operator", "sdo/operator/runtime"):
         commands = [shlex.split(args) for directory, args in invocations if directory == str(ROOT / module)]
-        assert commands == [["build", *(["-race"] if mode == "race" else []), "./..."]]
-    assert all(shlex.split(args)[0] == "build" for _, args in invocations)
+        expected = [["build", *(["-race"] if mode == "race" else []), "./..."]]
+        if mode == "race" and module.endswith("/runtime"):
+            assert len(commands) == 2
+            assert commands[1][:4] == ["test", "-race", "-c", "-o"]
+            assert commands[1][-1] == "."
+            assert "-run" not in commands[1]
+            assert commands[:1] == expected
+        else:
+            assert commands == expected
 
 
 def test_normal_and_race_preparation_are_independent_bounded_jobs() -> None:

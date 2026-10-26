@@ -690,8 +690,10 @@ pushed event commit, publishing a cache for each mode. Normal-only consumers
 restore the normal graph and the sole module archive. Go test shards restore
 the race graph to a separate directory, then `scripts/merge_go_ci_caches.sh`
 unions immutable compiler entries with hard links. Each archive destination is
-restored once; Go module files are never unpacked over another restored cache. Preparation never links or
-starts test binaries; each test shard owns those steps. This avoids serially
+restored once; Go module files are never unpacked over another restored cache. Race preparation additionally compiles the runtime root test package once with
+`go test -race -c`, discards that executable, and publishes its content-addressed
+archives. It never starts TestMain or tests. This avoids repeating the same large
+test-package compilation in eight runners; shards retain discovery and linking. This avoids serially
 linking every test package before any shard can start. The test jobs depend
 on preparation and require that exact cache; they do not start cold compilation
 inside short operation deadlines. Cache restoration uses Go's content-addressed

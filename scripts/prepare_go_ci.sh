@@ -16,3 +16,13 @@ esac
 for module in sdo/operator sdo/operator/runtime; do
   (cd "$root/$module" && go build "${build_flags[@]}" ./...)
 done
+
+# Eight runtime runners otherwise compile the same large external-test package
+# during inventory discovery. Publish that exact race archive once at the same
+# source path/toolchain; -c never starts TestMain or any test. Its disposable
+# executable is not an artifact: shards retain their own discovery and linking.
+if [[ "$mode" == race ]]; then
+  runtime_test_build="$(mktemp -d)"
+  trap 'rm -rf "$runtime_test_build"' EXIT
+  (cd "$root/sdo/operator/runtime" && go test -race -c -o "$runtime_test_build/runtime.test" .)
+fi
