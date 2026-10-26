@@ -28,3 +28,5 @@ and application workload documents are preserved from accepted source.
 New prepared-lane captures seal `fastloop_application.namespaces[].objects` with `installed_digest`. This installed set takes precedence over an inherited seed lock while source is unchanged; accepted source repairs restore from the current lock. Digest mismatches reject loading. Dry-run receipts include `code_revision` and per-stage resource, restoration, RBAC, setup and traffic results.
 
 Dry-run timing separates one-time setup (`setup_seconds`, at most900s) from steady admission (`steady_seconds`, at most300s). Native onboarding plus the first complete detector observation ends setup; every existing health, traffic, lineage, placement and closure check remains mandatory during steady proof.
+
+Host disk admission uses an absolute free-byte floor (default100GiB) on the Docker storage mount. The receipt names `rule: absolute-free-bytes`, the measured free bytes and floor; used percent is informational. A large volume with hundreds of GiB free must not fail solely on percentage. For historical comparisons retain the previous percent-and-byte rule and its rejection as eval evidence.
