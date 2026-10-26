@@ -24,6 +24,7 @@ from benchmarks.sregym.adapter.persistent import (
     _wait_for_reflection_drain,
     collect_followup_incident,
     control_namespace_for,
+    controller_job_failure,
     drain_pending_incident,
     publish_deferred_receipts,
     run_persistent_stage,
@@ -108,6 +109,9 @@ class FakeOps:
 
     def controller_pod(self, control_namespace: str) -> ControllerPod | None:
         return self.pods.get(control_namespace)
+
+    def controller_job_failure(self, control_namespace: str) -> str | None:
+        return None
 
     def namespace_exists(self, namespace: str) -> bool:
         return namespace in self.existing_namespaces or namespace in self.pods
@@ -235,6 +239,16 @@ class FakeOps:
         log.write_text(self.controller_logs(control_namespace) + "\n", encoding="utf-8")
 
 
+def _elapsed_clock(elapsed: list[float]) -> Clock:
+    """Fake time whose wall clock agrees with the stage clock that stamped the reflection deadline."""
+
+    return Clock(
+        monotonic=lambda: elapsed[0],
+        sleep=lambda seconds: elapsed.__setitem__(0, elapsed[0] + seconds),
+        now=lambda: DETECTED + timedelta(seconds=elapsed[0]),
+    )
+
+
 def _clock(ops: FakeOps) -> Clock:
     now = [0.0]
 
@@ -252,7 +266,7 @@ def test_maintenance_ack_timeout_follows_time_scale(monkeypatch: pytest.MonkeyPa
             return ""
 
     elapsed = [0.0]
-    clock = Clock(monotonic=lambda: elapsed[0], sleep=lambda seconds: elapsed.__setitem__(0, elapsed[0] + seconds))
+    clock = _elapsed_clock(elapsed)
 
     with pytest.raises(PersistentControllerError, match="did not acknowledge maintenance"):
         wait_for_maintenance_ack(NoAck(), "hotel-sdo", "generation", clock)  # type: ignore[arg-type]
@@ -295,7 +309,7 @@ def test_drain_receipt_reports_ack_and_collection_phases(tmp_path: Path) -> None
         return collect(config, incident_id, artifacts_dir)
 
     ops.collect_receipt = timed_collect  # type: ignore[method-assign]
-    clock = Clock(monotonic=lambda: elapsed[0], sleep=lambda seconds: elapsed.__setitem__(0, elapsed[0] + seconds))
+    clock = _elapsed_clock(elapsed)
 
     drain_pending_incident(
         record, ops=ops, repository=tmp_path / "s0" / "application_workspace", drained_by="test", clock=clock
@@ -325,7 +339,7 @@ def test_closeout_settle_timeout_follows_time_scale(tmp_path: Path, monkeypatch:
 
     ops.collect_receipt = unsettled  # type: ignore[method-assign]
     elapsed = [0.0]
-    clock = Clock(monotonic=lambda: elapsed[0], sleep=lambda seconds: elapsed.__setitem__(0, elapsed[0] + seconds))
+    clock = _elapsed_clock(elapsed)
 
     result = drain_pending_incident(
         record, ops=ops, repository=tmp_path / "s0" / "application_workspace", drained_by="test", clock=clock
@@ -519,7 +533,7 @@ def test_recreated_namespace_regains_controller_access_before_resume_and_injecti
         ops=ops,
         run_lifecycle=lambda: pytest.fail("reused controller must preserve learned memory"),
         inject=lambda: None,
-        clock=Clock(monotonic=lambda: elapsed[0], sleep=lambda seconds: elapsed.__setitem__(0, elapsed[0] + seconds)),
+        clock=_elapsed_clock(elapsed),
     )
 
     assert ops.grants_present
@@ -1411,7 +1425,11 @@ def test_followup_refuses_to_start_while_an_incident_is_undrained(tmp_path: Path
 def test_reflection_drain_accepts_acknowledged_closure_without_controller_relaunch() -> None:
     ops = FakeOps(states={"demo-sdo": {"last_acknowledged_incident_id": "incident-1"}})
     state = _wait_for_reflection_drain(
-        ops, "demo-sdo", "incident-1", 1.0, Clock(sleep=lambda _: pytest.fail("closure should already be drained"))
+        ops,
+        "demo-sdo",
+        "incident-1",
+        datetime.now(timezone.utc) + timedelta(seconds=1),
+        Clock(sleep=lambda _: pytest.fail("closure should already be drained")),
     )
     assert state["last_acknowledged_incident_id"] == "incident-1"
 
@@ -1618,3 +1636,32 @@ def test_verified_early_report_leaves_controller_active_until_outcome_recorded(t
     # its outcome. Pausing here deadlocks early-report finalization.
     assert ops.states["hotel-sdo"].get("pending_closure")
     assert not any(event[0] == "paused" for event in ops.events)
+
+
+# The status of job/sdo-controller-run after its controller crash-looped past the backoff limit (lane 55, 2026-10-26).
+_BACKOFF_EXCEEDED_CONTROLLER_JOB: dict[str, Any] = {
+    "apiVersion": "batch/v1",
+    "kind": "Job",
+    "metadata": {"name": "sdo-controller-run", "namespace": "hotel-reservation-sdo"},
+    "status": {
+        "failed": 7,
+        "conditions": [
+            {"type": "FailureTarget", "status": "True", "reason": "BackoffLimitExceeded"},
+            {
+                "type": "Failed",
+                "status": "True",
+                "reason": "BackoffLimitExceeded",
+                "message": "Job has reached the specified backoff limit",
+            },
+        ],
+    },
+}
+
+
+def test_a_controller_job_past_its_backoff_limit_is_terminal() -> None:
+    assert (
+        controller_job_failure(_BACKOFF_EXCEEDED_CONTROLLER_JOB)
+        == "BackoffLimitExceeded: Job has reached the specified backoff limit"
+    )
+    assert controller_job_failure({"status": {"active": 1, "failed": 3}}) is None
+    assert controller_job_failure({"status": {"conditions": [{"type": "Failed", "status": "False"}]}}) is None
