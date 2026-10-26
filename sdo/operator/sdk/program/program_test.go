@@ -167,3 +167,17 @@ func TestExampleProgramSyntheticPortMatchesAndNearMisses(t *testing.T) {
 		})
 	}
 }
+
+func TestScaleWorkloadAcceptsReplicaSetWithKubectlParity(t *testing.T) {
+	set := sdk.ObjectRef{APIVersion: "apps/v1", Kind: "ReplicaSet", Namespace: "demo", Name: "web-old"}
+	if err := (program.Plan{Actions: []program.Action{program.ScaleWorkload{Ref: set, Replicas: program.FromParam("replicas")}}}).Validate(); err != nil {
+		t.Fatalf("an old-template ReplicaSet must be scalable: %v", err)
+	}
+	if err := program.ValidateSetField(program.SetField{Ref: set, Path: "spec.replicas", Value: program.FromParam("replicas"), Reason: "retire old template"}); err != nil {
+		t.Fatalf("ReplicaSet replicas must be a typed field: %v", err)
+	}
+	pod := sdk.ObjectRef{APIVersion: "v1", Kind: "Pod", Namespace: "demo", Name: "web"}
+	if err := (program.Plan{Actions: []program.Action{program.ScaleWorkload{Ref: pod, Replicas: program.FromParam("replicas")}}}).Validate(); err == nil {
+		t.Fatal("a Pod is not a scale target")
+	}
+}

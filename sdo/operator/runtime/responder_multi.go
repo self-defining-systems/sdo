@@ -199,6 +199,7 @@ type pendingMitigation struct {
 	ProgramID           string
 	Bindings            program.Bindings
 	FindingFingerprints []string
+	ReservedAt          time.Time
 }
 
 func (l *ResponderLoop) reservePending(application string, plan program.Plan, attempt, programID string, bindings program.Bindings, fingerprints []string) {
@@ -216,7 +217,7 @@ func (l *ResponderLoop) reservePending(application string, plan program.Plan, at
 		diagnoser, _ = l.Programs.Diagnoser(programID)
 		revision = l.programRevision(programID)
 	}
-	l.pendingWrites[application] = pendingMitigation{diagnoser: diagnoser, ProgramRevision: revision, Refs: refs, AttemptID: attempt, ProgramID: programID, Bindings: cloneProgramBindings(bindings), FindingFingerprints: append([]string(nil), fingerprints...)}
+	l.pendingWrites[application] = pendingMitigation{diagnoser: diagnoser, ProgramRevision: revision, Refs: refs, AttemptID: attempt, ProgramID: programID, Bindings: cloneProgramBindings(bindings), FindingFingerprints: append([]string(nil), fingerprints...), ReservedAt: time.Now().UTC()}
 }
 
 // Reservations are observation state, never restored write or rollback authority.
@@ -231,6 +232,7 @@ func (l *ResponderLoop) settlePending(ctx context.Context) {
 			continue
 		}
 		if _, err := executor.waitForRollouts(ctx, l.Request, pending.Refs); err != nil {
+			l.releaseStalledPending(application, pending)
 			continue
 		}
 		delete(l.pendingWrites, application)
@@ -273,6 +275,47 @@ func (l *ResponderLoop) settlePending(ctx context.Context) {
 			}
 		}
 		l.updatePendingReport(application, pending.AttemptID, result.VerificationPassed, "direct_verification_unresolved")
+	}
+}
+
+// A pending application that does not converge within its bound releases its
+// writes to the responder. Its writes stay applied and remain unverified; the
+// typed reason tells the responder to finish the repair itself.
+func (l *ResponderLoop) releaseStalledPending(application string, pending pendingMitigation) {
+	if pending.ReservedAt.IsZero() {
+		// Restored reservations start their bound at restore time.
+		pending.ReservedAt = time.Now().UTC()
+		l.pendingWrites[application] = pending
+		return
+	}
+	bound := l.PendingStallTimeout
+	if bound <= 0 {
+		bound = DefaultPendingApplicationStall
+	}
+	if time.Since(pending.ReservedAt) < bound {
+		return
+	}
+	delete(l.pendingWrites, application)
+	const reason = "rollout_stalled"
+	if result, ok := l.applications[application]; ok {
+		result.RolloutPending = nil
+		result.VerificationCompleted = true
+		result.VerificationPassed = false
+		l.applications[application] = result
+		for i := range l.applicationsLog {
+			if l.applicationsLog[i].ID == application {
+				l.applicationsLog[i].Result = result
+				l.applicationsLog[i].Pending = planApplicationPending(result)
+				l.applicationsLog[i].Error = reason + ": rollout did not converge within " + bound.String() + "; writes remain applied and unverified"
+				l.applicationsLog[i].CompletedAt = time.Now().UTC()
+			}
+		}
+	}
+	l.updatePendingReport(application, pending.AttemptID, false, reason)
+	for _, report := range l.menuReports {
+		if report.AttemptId == pending.AttemptID {
+			report.FailedPhase = "rollout"
+		}
 	}
 }
 
