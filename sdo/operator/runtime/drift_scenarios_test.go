@@ -60,6 +60,9 @@ func newDriftScenario(t *testing.T) (*Controller, *fake.Clientset, *KubernetesCa
 	config.Namespace = "app"
 	config.FiringThreshold = 1
 	config.ClearThreshold = 1
+	// Drift scenarios step in whole seconds; a short success soak keeps
+	// their timelines while still exercising the gate.
+	config.ClosureStabilityWindow = 500 * time.Millisecond
 	health := controllerDetector("health", time.Second, sdk.Finding{})
 
 	health.spec.Class = sdk.DetectorClassHealth
@@ -134,6 +137,7 @@ func TestHermeticDriftlive4NewFaultAfterHealthyBaseline(t *testing.T) {
 	}
 	awaitDispatchCompletionQueued(t, c)
 	stepScenario(t, c, cache, start.Add(2*time.Second))
+	stepScenario(t, c, cache, start.Add(2*time.Second+c.config.ClosureStabilityWindow))
 	if _, ok := c.PendingIncidentClosure(); !ok {
 		t.Fatal("first repair did not close")
 	}

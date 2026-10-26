@@ -50,7 +50,7 @@ func TestIncidentClosureRecordsWhenHealthBeganItsFinalClearStreak(t *testing.T) 
 	executePendingEffect(t, controller)
 	awaitRequest(t, dispatcher.requests)
 	awaitDispatchCompletionQueued(t, controller)
-	for sample := 2; sample < 6; sample++ {
+	for sample := 2; sample < 21; sample++ {
 		if err := controller.Step(context.Background(), time.Unix(int64(sample), 0), nil); err != nil {
 			t.Fatalf("step %d: %v", sample, err)
 		}

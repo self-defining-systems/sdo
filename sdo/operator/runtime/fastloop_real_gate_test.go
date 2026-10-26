@@ -347,8 +347,10 @@ func fastloopGateClose(t *testing.T, ctx context.Context, controller *Controller
 	controller.OnIncidentClosed = func(closure IncidentClosure) { closed <- closure }
 	dispatcher.results <- result
 	fastloopGateWait(t, 90*time.Second, func() bool { return len(controller.results) > 0 })
-	if err := controller.Step(ctx, at.Add(time.Second), nil); err != nil {
-		t.Fatal(err)
+	for _, wait := range []time.Duration{time.Second, time.Second + controller.config.ClosureStabilityWindow} {
+		if err := controller.Step(ctx, at.Add(wait), nil); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if err := controller.PersistState(ctx); err != nil {
 		t.Fatal(err)
