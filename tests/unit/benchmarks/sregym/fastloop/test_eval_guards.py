@@ -118,7 +118,7 @@ def test_stabilization_restores_once_then_fails_without_injecting():
             sleep=clock.sleep,
         )
     assert restores == ["app-only"]
-    assert clock.now == 10
+    assert clock.now == 5
     assert samples[-1]["passed"] is False
 
 
@@ -584,3 +584,25 @@ def test_restore_rejects_sealed_manifest_for_another_object(tmp_path):
     )
     with pytest.raises(ValueError, match="identity"):
         accepted_restore_baselines(tmp_path, (ApplicationBaseline("app", []),))
+
+
+def test_stabilization_rejects_late_success_and_does_not_renew_retry_budget():
+    from benchmarks.sregym.adapter.eval_guards import StabilizationError, wait_for_proof
+
+    now = [0.0]
+    records = []
+
+    def slow_sample():
+        now[0] += 6
+        return {"passed": True}
+
+    with pytest.raises(StabilizationError):
+        wait_for_proof(
+            slow_sample,
+            lambda: None,
+            records.append,
+            timeout_seconds=5,
+            monotonic=lambda: now[0],
+            sleep=lambda seconds: None,
+        )
+    assert not records[-1]["passed"]
