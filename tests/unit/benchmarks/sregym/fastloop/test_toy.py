@@ -214,3 +214,18 @@ def test_toy_scripted_health_refresh_needs_no_rehearsal_slot(tmp_path, monkeypat
     else:
         with pytest.raises(ValueError, match="scripted toy health refresh"):
             scripted_worker.scripted_health_judge(request, tmp_path)
+
+
+def test_ready_baseline_retains_verified_install_identity_after_health_refresh():
+    from benchmarks.sregym.fastloop.toy import baseline_ready
+
+    state = {
+        "evaluation_iteration": 2,
+        "history": [{"detector_id": "health", "status": "clear"}],
+        "ownership_adoption": {"source_commit": "health-refresh"},
+        "namespace_onboarding": {"accepted_commit": "installed", "objects": [{"name": "frontend"}]},
+    }
+    assert baseline_ready(state, "installed")
+    assert not baseline_ready(state, "unrelated")
+    state["namespace_onboarding"]["objects"] = []
+    assert not baseline_ready(state, "installed")

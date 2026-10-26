@@ -420,6 +420,7 @@ def wait_for_baseline(environment: FastloopEnvironment, accepted_commit: str) ->
         )
         if completed.returncode == 0:
             state = json.loads(json.loads(completed.stdout)["data"]["runtime-state.json"])
+            (environment.run_dir / "toy-baseline-observation.json").write_text(json.dumps(state, indent=2) + "\n")
             pods = json.loads(
                 command(
                     str(environment.kubeconfig),
@@ -466,5 +467,12 @@ def baseline_ready(state: dict[str, Any], accepted_commit: str, observed_after: 
             )
         )
         and all(item.get("status") == "clear" for item in latest.values())
-        and state.get("ownership_adoption", {}).get("source_commit") == accepted_commit
+        and bool(state.get("ownership_adoption", {}).get("source_commit"))
+        and (
+            state.get("ownership_adoption", {}).get("source_commit") == accepted_commit
+            or (
+                state.get("namespace_onboarding", {}).get("accepted_commit") == accepted_commit
+                and bool(state["namespace_onboarding"].get("objects"))
+            )
+        )
     )
