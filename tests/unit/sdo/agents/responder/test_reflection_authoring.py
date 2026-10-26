@@ -43,7 +43,10 @@ def test_program_reference_uses_shipped_sdk_and_worked_example() -> None:
     assert "func" in reference
     assert "program.ReadView" in reference
     assert "ProbeTCP" in reference
-    assert "type ReadView interface" in authoring_reference("sdk")
+    sdk_reference = authoring_reference("sdk")
+    assert "type ReadView interface" in sdk_reference
+    assert "type DetectionContext interface" in sdk_reference
+    assert "DiffAgainstSource(ref ObjectRef) (SourceDiff, error)" in sdk_reference
 
 
 @pytest.mark.parametrize("phase", ["detect", "pre-apply"])

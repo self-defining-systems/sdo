@@ -363,9 +363,11 @@ rollout=Rollout.create(Path(os.environ["CODEX_HOME"]),cwd=str(Path.cwd()))
 recovery.checkpoint(rollout.session_id)
 turn=Turn("responder",175,Path.cwd(),rollout,EventStream(io.StringIO()))
 def select(program):
- code,text=turn.run(shlex.join([sys.executable,"-m","sdo.agents.responder.tools_cli","--json","menu"]))
+ # Menus include complete schemas and can exceed the scripted tool's output cap.
+ menu_path=directory/"menu.json"
+ code,text=turn.run(shlex.join([sys.executable,"-m","sdo.agents.responder.tools_cli","--json","menu"])+" > "+shlex.quote(str(menu_path)))
  assert code==0,text
- menu=json.loads(text.splitlines()[0])["menu"]
+ menu=json.loads(menu_path.read_text())["menu"]
  option=next(o["option_id"] for o in menu["options"] if o.get("program_id")==program)
  code,text=turn.run(shlex.join([sys.executable,"-m","sdo.agents.responder.tools_cli","--json","mitigate",option,"--rounds","1"]))
  assert code==0,text
