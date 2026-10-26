@@ -53,3 +53,4 @@ def test_hermetic_driver_propagates_each_shard_failure(tmp_path: Path, failure: 
     # fails, and its own failure must propagate after every Go shard is joined.
     assert "uv" in lines
     assert any("TestLearnedOriginCredit" in line for line in lines)
+    assert any("TestHermeticControllerClosureReachesNativeOutcomeBroker" in line for line in lines)
