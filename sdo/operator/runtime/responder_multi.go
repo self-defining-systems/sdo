@@ -117,6 +117,12 @@ func (l *ResponderLoop) mitigateSelection(ctx context.Context, request ToolReque
 		if l.pendingConflict(refs, response) {
 			return
 		}
+		// Preserve reservation ownership diagnostics even when an earlier
+		// pending write has already cleared the program's live diagnosis.
+		if err := l.validateMenuPreconditions(ctx, entry, bindings); err != nil {
+			l.refuseSelection(response, "direct_plan_failed", err.Error())
+			return
+		}
 
 		entry.bindings = bindings
 		entry.plan = &plan

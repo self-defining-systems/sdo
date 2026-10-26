@@ -205,6 +205,9 @@ func (l *ResponderLoop) executeMenuEntry(ctx context.Context, entry menuEntry, s
 		if bindingErr != nil {
 			err = bindingErr
 		}
+		if err == nil && consumeRound {
+			err = l.validateMenuPreconditions(ctx, entry, bindings)
+		}
 		if err != nil {
 			report.Status = contracts.MitigationReport_STATUS_EXECUTION_ERROR
 			report.FailedPhase = "planning"
@@ -408,17 +411,28 @@ func (l *ResponderLoop) prepareMenuPlan(ctx context.Context, entry menuEntry, pa
 			if viewErr != nil {
 				err = viewErr
 			} else {
-				diagnoser, found := l.Programs.Diagnoser(entry.programID)
-				if !found {
-					return plan, fmt.Errorf("diagnoser %s is unavailable", entry.programID)
-				}
-				verdict := program.RunDiagnose(ctx, diagnoser, view, bindings, l.deadline())
-				if verdict.Result != program.Match {
-					return plan, fmt.Errorf("program %s no longer matches live state: %s", entry.programID, verdict.Result)
-				}
 				plan, err = l.runMitigator(ctx, entry.programID, mitigator, view, bindings)
 			}
 		}
 	}
 	return plan, err
+}
+
+func (l *ResponderLoop) validateMenuPreconditions(ctx context.Context, entry menuEntry, bindings program.Bindings) error {
+	if entry.action != nil || entry.plan != nil {
+		return nil
+	}
+	diagnoser, found := l.Programs.Diagnoser(entry.programID)
+	if !found {
+		return fmt.Errorf("diagnoser %s is unavailable", entry.programID)
+	}
+	view, err := l.snapshotView(ctx)
+	if err != nil {
+		return err
+	}
+	verdict := program.RunDiagnose(ctx, diagnoser, view, bindings, l.deadline())
+	if verdict.Result != program.Match {
+		return fmt.Errorf("program %s no longer matches live state: %s", entry.programID, verdict.Result)
+	}
+	return nil
 }

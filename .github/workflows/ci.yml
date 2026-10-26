@@ -297,6 +297,14 @@ jobs:
             directory: sdo/operator/runtime
             go-version: "1.26.8"
             shard: rendered
+          - module: runtime-hermetic
+            directory: sdo/operator/runtime
+            go-version: "1.26.8"
+            shard: hermetic
+          - module: runtime-shared-memory
+            directory: sdo/operator/runtime
+            go-version: "1.26.8"
+            shard: shared-memory
           - module: runtime-simulation-remaining
             directory: sdo/operator/runtime
             go-version: "1.26.8"
