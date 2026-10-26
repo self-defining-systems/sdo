@@ -163,7 +163,7 @@ def test_public_admission_uses_selected_arm_and_keeps_independent_traffic(
 
     monkeypatch.setattr(gate, "_windows", windows)
 
-    def wait(sample, restore, record, **kwargs):
+    def wait(sample, record, **kwargs):
         proof = sample()
         record(proof)
         return proof
