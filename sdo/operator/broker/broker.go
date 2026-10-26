@@ -86,6 +86,7 @@ type Broker struct {
 	applicationNamespace string
 	target               string
 	workspaceRoot        string
+	lockPath             string
 	validator            Validator
 }
 
@@ -127,7 +128,11 @@ func New(target, workspaceRoot string, validator Validator, policy ...Observatio
 	if repositoryRoot != absoluteTarget {
 		return nil, errors.New("accepted repository path must be its Git root")
 	}
-	b := &Broker{target: absoluteTarget, workspaceRoot: absoluteWorkspaces, validator: validator}
+	gitCommon, err := gitText(context.Background(), absoluteTarget, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	if err != nil {
+		return nil, err
+	}
+	b := &Broker{target: absoluteTarget, workspaceRoot: absoluteWorkspaces, validator: validator, lockPath: filepath.Join(gitCommon, "sdo-broker.lock")}
 	if len(policy) > 1 {
 		return nil, errors.New("one observation policy is required")
 	}
@@ -262,8 +267,8 @@ func (b *Broker) publish(ctx context.Context, incidentID string, actor Actor, ph
 		if err != nil {
 			return err
 		}
-		if current != proposal.BaseCommit {
-			return errors.New("proposal base is stale; re-create the proposal from accepted state")
+		if current != proposal.BaseCommit && expectedSourceTree != "" {
+			return errors.New("verified source proposal base is stale; redeploy from accepted state")
 		}
 		paths, err := validate.ChangedPaths(ctx, proposal.Path, proposal.BaseCommit)
 		if err != nil {
@@ -283,6 +288,9 @@ func (b *Broker) publish(ctx context.Context, incidentID string, actor Actor, ph
 				return err
 			}
 			defer cleanup()
+			if _, err := runGit(ctx, sourceStage, "checkout", "--quiet", "--detach", proposal.BaseCommit); err != nil {
+				return err
+			}
 			for _, path := range paths {
 				if err := copyChange(proposal.Path, sourceStage, path); err != nil {
 					return err
@@ -330,16 +338,31 @@ func (b *Broker) publish(ctx context.Context, incidentID string, actor Actor, ph
 			return err
 		}
 		defer cleanup()
-		for _, path := range paths {
-			if err := copyChange(candidateRoot, stage, path); err != nil {
+		if current != proposal.BaseCommit {
+			if err := b.replayCandidate(ctx, proposal, candidateRoot, stage, current, paths); err != nil {
 				return err
 			}
+		} else {
+			for _, path := range paths {
+				if err := copyChange(candidateRoot, stage, path); err != nil {
+					return err
+				}
+			}
 		}
-		diagnostics, err := b.checkCandidate(ctx, stage, proposal.BaseCommit, actor, phase, paths, b.validator, publication, decision)
+		// Validation is bound to the current accepted head and the exact merged tree.
+		publication.BaseCommit = current
+		paths, err = validate.ChangedPaths(ctx, stage, current)
+		if err != nil {
+			return err
+		}
+		diagnostics, err := b.checkCandidate(ctx, stage, current, actor, phase, paths, b.validator, publication, decision)
 		if err != nil {
 			return fmt.Errorf("proposal validation: %w", err)
 		}
 		if err := validate.Err(diagnostics); err != nil {
+			if current != proposal.BaseCommit {
+				return b.memoryConflict(ctx, proposal.BaseCommit, current, paths, err)
+			}
 			return fmt.Errorf("candidate validation: %w", err)
 		}
 		if expectedSourceTree != "" {
@@ -353,7 +376,7 @@ func (b *Broker) publish(ctx context.Context, incidentID string, actor Actor, ph
 		}
 		// The shared check may install generic health registrations. Publish
 		// every checked file, including those explicit Go bootstrap outputs.
-		paths, err = validate.ChangedPaths(ctx, stage, proposal.BaseCommit)
+		paths, err = validate.ChangedPaths(ctx, stage, current)
 		if err != nil {
 			return err
 		}
@@ -524,7 +547,7 @@ func (b *Broker) locked(fn func() error) error {
 	if err := os.MkdirAll(b.workspaceRoot, 0o700); err != nil {
 		return err
 	}
-	file, err := os.OpenFile(filepath.Join(b.workspaceRoot, "broker.lock"), os.O_CREATE|os.O_RDWR, 0o600)
+	file, err := os.OpenFile(b.lockPath, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return err
 	}

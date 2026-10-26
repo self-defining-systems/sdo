@@ -246,6 +246,8 @@ def reset_environment(
     preserve_repository: bool = False,
     checks: RestoreChecks | None = None,
 ) -> None:
+    if environment.shared_accepted_id:
+        raise ValueError("shared accepted memory cannot use lane reset; retain the prepared controller")
     if not environment.seed_commit:
         raise ValueError("reset requires a seed commit captured by fastloop up")
     cluster.reset_controller(environment.seed_commit, preserve_repository=preserve_repository)

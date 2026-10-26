@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"sync/atomic"
 	"testing"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -61,9 +62,9 @@ func TestReadClientHidesMutationMethods(t *testing.T) {
 }
 
 func TestDiscoveryMapperCachesCustomKinds(t *testing.T) {
-	calls := 0
+	var calls atomic.Int32
 	client, err := kubeclient.NewReadClient(func(_ context.Context, _ string, path string, _ url.Values) ([]byte, error) {
-		calls++
+		calls.Add(1)
 		switch path {
 		case "/api":
 			return []byte(`{"kind":"APIVersions","apiVersion":"v1","versions":["v1"]}`), nil
@@ -84,12 +85,12 @@ func TestDiscoveryMapperCachesCustomKinds(t *testing.T) {
 	if err != nil || first.Resource.Resource != "widgets" {
 		t.Fatalf("mapping: %v %v", first, err)
 	}
-	captured := calls
+	captured := calls.Load()
 	if _, err := client.RESTMapper().RESTMapping(schema.GroupKind{Group: "example.test", Kind: "Widget"}, "v1"); err != nil {
 		t.Fatal(err)
 	}
-	if calls != captured {
-		t.Fatalf("discovery was not cached: %d -> %d", captured, calls)
+	if calls.Load() != captured {
+		t.Fatalf("discovery was not cached: %d -> %d", captured, calls.Load())
 	}
 }
 

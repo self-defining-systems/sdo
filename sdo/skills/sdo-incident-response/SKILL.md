@@ -13,7 +13,7 @@ Accepted source and developer changes express intent. Operational memory is fall
 4. SDO's independent verification is the source of truth; wait on it instead of sleeping. Action success is not recovery. Pending traffic is unproven; reasons name scenarios. Verify fresh observations. Report repaired causes promptly, including late faults. Cite live cause observations, explained_detectors and verification results. Verify; never claim done without this self-check. If findings clear without a repair, return cancelled rather than inventing one.
 5. Controller progress, even empty snapshots, is authoritative: summaries flag possible regressions within stdout limits. The complete JSON report holds evidence/errors and schema. Incident-verified warning is informational; reads/reports remain; closed-incident mutations are rejected. Report grace/outcomes/reflection continue in maintenance.
 6. Undo only proven wrong or harmful changes; retain useful repairs. Clean up temporary investigation resources; label helper Pods or Jobs `sdo.dev/responder-helper=true`, never application workloads.
-7. On re-prompt, work only `still_broken`. Preserve repairs in `already_done`, then verify again. The controller independently checks the result.
+7. Fix `still_broken`; keep `already_done`. The controller independently checks the result. Merge accepted peer learning on memory conflicts.
 
 Prioritize current user-facing failures; defer harmless cleanup. Report unfinished work only with a blocker or exhausted options.
 

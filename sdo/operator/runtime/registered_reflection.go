@@ -152,7 +152,7 @@ func (w RegisteredReflectionWorker) Reflect(ctx context.Context, closure Inciden
 		trimReflectionClosure(closed)
 		request := &contracts.ReflectionRequest{Closure: closed, Outcome: current, PriorOutcomes: history, ProposalCommit: proposalCommit, OutcomeCommit: outcomeCommit, SessionMode: mode, Guidance: guidance, ValidationAttempt: attempt, PreviousDiagnostics: feedback.Diagnostics, CauseWork: feedback.CauseWork, UnassignedWork: feedback.UnassignedWork}
 		if w.Catalog != nil {
-			snapshot, err := w.Catalog.Snapshot(ctx)
+			snapshot, err := memory.SnapshotAt(ctx, w.Catalog, workspace.BaseCommit)
 			if err != nil {
 				return ReflectionDecision{}, fmt.Errorf("read logical operational memory: %w", err)
 			}
