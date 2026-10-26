@@ -259,6 +259,9 @@ def _parser() -> argparse.ArgumentParser:
         description=(
             "Run one live mutation and record its repair receipt (target, resources, timing, outcome and "
             "command line). The command's exit code is returned. Do not hand-write receipts. "
+            "Report one cause per independently fixable fault and record a separate act for each, declaring "
+            "only that cause's resources, so each receipt is attributed to its cause; "
+            "combine only faults that can't be fixed separately. "
             "When an admission control blocks recovery and its backend is gone, restore the backend if you can. "
             "Otherwise a scoped fail-open or removal that restores availability is acceptable; report it. "
             "SDO options go before --; the command after it runs verbatim, except that a kubectl command "

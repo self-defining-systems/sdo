@@ -37,7 +37,10 @@ def test_incident_workflow_installs_from_the_shipped_skill_root(tmp_path: Path, 
     assert len(document) <= 3000
     assert "SDO's independent verification is the source of truth" in body
     assert "wait on it instead of sleeping" in body
-    assert "several independent mitigations together" in body
+    assert "one cause per independently fixable fault" in body
+    assert "own action" in body
+    assert "applied together" in body
+    assert "combine only faults that can't be fixed separately" in body
     assert "possible regressions" in body
     assert "complete JSON report" in body
     assert "warning is informational" in body
@@ -169,3 +172,15 @@ def test_actual_benchmark_transport_and_pull_guidance_fit_the_instruction_cap(mo
     with prepared_incident_data(request) as data:
         prompt = _responder_prompt(request, incident_data=data)
     assert len(prompt.split("Incident request", 1)[0]) <= 1500
+
+
+def test_act_help_and_workflow_share_the_one_cause_per_action_principle() -> None:
+    commands = (SKILLS_ROOT / WORKFLOW / "references/commands.md").read_text(encoding="utf-8")
+    act_help = commands.split("\n## act\n", 1)[1].split("\n## ", 1)[0]
+    body = (SKILLS_ROOT / WORKFLOW / "SKILL.md").read_text(encoding="utf-8")
+    for principle in (
+        "one cause per independently fixable fault",
+        "combine only faults that can't be fixed separately",
+    ):
+        assert principle in body
+        assert principle in act_help
