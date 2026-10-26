@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 	ktesting "k8s.io/client-go/testing"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
 )
 
@@ -185,5 +187,38 @@ func TestSourceDiffUnchangedForServerDefaultsAndBookkeeping(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// Detection, repair and closure agree: accepted-source reconciliation removes
+// the added field, and the same comparison then reports the object restored.
+func TestReconcileFromSourceClearsAddedFieldDrift(t *testing.T) {
+	ref := addedFieldsRef()
+	live := addedFieldsLive()
+	containers := addedFieldsContainers(live)
+	containers[0].(map[string]any)["ports"].([]any)[0].(map[string]any)["hostPort"] = int64(8080)
+	_ = unstructured.SetNestedSlice(live.Object, containers, "spec", "template", "spec", "containers")
+	addManagedEntry(live, addedFieldsEntry("kubectl-patch", metav1.ManagedFieldsOperationUpdate, "", addedFieldsDrifted,
+		`{"f:spec":{"f:template":{"f:spec":{"f:containers":{"k:{\"name\":\"search\"}":{"f:ports":{"k:{\"containerPort\":8080,\"protocol\":\"TCP\"}":{"f:hostPort":{}}}}}}}}}`))
+	client := &planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: live}}
+	diff := func() bool {
+		t.Helper()
+		snapshot := sdktest.Snapshot{NamespaceName: ref.Namespace, Objects: []unstructured.Unstructured{*client.objects[ref].DeepCopy()}}
+		result, err := (LiveReadView{DetectionContext: snapshot, Source: planFakeSource{source: addedFieldsSource()}, SourceCommit: "accepted"}).DiffAgainstSource(ref)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return result.Changed
+	}
+	if !diff() {
+		t.Fatal("injected hostPort not reported as source drift")
+	}
+	executor := PlanExecutor{Client: client, Source: planFakeSource{source: addedFieldsSource()}, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{passed: true}}
+	result, err := executor.Apply(context.Background(), IncidentRequest{SourceCommit: "accepted", RepairPolicy: "recorded-actions"}, program.Plan{Actions: []program.Action{program.ReconcileFromSource{Ref: ref}}}, false)
+	if err != nil || !result.Applied {
+		t.Fatalf("reconcile: %+v %v", result, err)
+	}
+	if diff() {
+		t.Fatalf("reconciled object still reported as drift: %v", client.objects[ref].Object["spec"])
 	}
 }
