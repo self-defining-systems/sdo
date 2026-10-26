@@ -1658,8 +1658,12 @@ type OwnershipAdoptionStatus struct {
 	// across source commits. A later record loss on one of them is re-stamped
 	// without absorbing other managers' undeclared fields.
 	AcceptedObjects []string `protobuf:"bytes,9,rep,name=accepted_objects,json=acceptedObjects,proto3" json:"accepted_objects,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// Declared objects this pass left alone because adoption cannot handle
+	// their kind ("apiVersion/kind/namespace/name: reason"). They stay in the
+	// source inventory; they carry no acceptance record.
+	UnadoptedObjects []string `protobuf:"bytes,10,rep,name=unadopted_objects,json=unadoptedObjects,proto3" json:"unadopted_objects,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *OwnershipAdoptionStatus) Reset() {
@@ -1751,6 +1755,13 @@ func (x *OwnershipAdoptionStatus) GetFailures() int32 {
 func (x *OwnershipAdoptionStatus) GetAcceptedObjects() []string {
 	if x != nil {
 		return x.AcceptedObjects
+	}
+	return nil
+}
+
+func (x *OwnershipAdoptionStatus) GetUnadoptedObjects() []string {
+	if x != nil {
+		return x.UnadoptedObjects
 	}
 	return nil
 }
@@ -1924,7 +1935,7 @@ const file_sdodev_contracts_v1alpha1_controller_state_proto_rawDesc = "" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x120\n" +
 	"\x05value\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\x05value:\x028\x01:\xf1\x01\xbaH\xed\x01\x1a\xea\x01\n" +
 	"+broker_ledger.terminal_rejection_has_record\x12Va terminal reflection rejection requires a recorded rejection and no reflection commit\x1ac!this.reflection_rejected || (size(this.reflection_rejections) > 0 && this.reflection_commit == '')B \n" +
-	"\x1e_reflection_evidence_gap_countJ\x04\b\x13\x10\x14J\x04\b\x14\x10\x15\"\x82\x03\n" +
+	"\x1e_reflection_evidence_gap_countJ\x04\b\x13\x10\x14J\x04\b\x14\x10\x15\"\xaf\x03\n" +
 	"\x17OwnershipAdoptionStatus\x12#\n" +
 	"\rsource_commit\x18\x01 \x01(\tR\fsourceCommit\x12'\n" +
 	"\x0fadopted_objects\x18\x02 \x01(\x05R\x0eadoptedObjects\x120\n" +
@@ -1935,7 +1946,9 @@ const file_sdodev_contracts_v1alpha1_controller_state_proto_rawDesc = "" +
 	"\x0eskipped_reason\x18\x06 \x01(\tR\rskippedReason\x125\n" +
 	"\bretry_at\x18\a \x01(\v2\x1a.google.protobuf.TimestampR\aretryAt\x12\x1a\n" +
 	"\bfailures\x18\b \x01(\x05R\bfailures\x12)\n" +
-	"\x10accepted_objects\x18\t \x03(\tR\x0facceptedObjects*\x93\x02\n" +
+	"\x10accepted_objects\x18\t \x03(\tR\x0facceptedObjects\x12+\n" +
+	"\x11unadopted_objects\x18\n" +
+	" \x03(\tR\x10unadoptedObjects*\x93\x02\n" +
 	"\rDispatchState\x12\x1e\n" +
 	"\x1aDISPATCH_STATE_UNSPECIFIED\x10\x00\x12\x17\n" +
 	"\x13DISPATCH_STATE_IDLE\x10\x01\x12$\n" +

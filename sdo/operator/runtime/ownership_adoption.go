@@ -36,6 +36,9 @@ type OwnershipAdoptionStatus struct {
 	// AcceptedObjects lists the objects SDO has recorded as accepted, kept
 	// across source commits (see acceptedObjectKey).
 	AcceptedObjects []string `json:"accepted_objects,omitempty"`
+	// UnadoptedObjects lists declared objects adoption left alone because it
+	// cannot handle their kind, each with the reason (see inventoryKind).
+	UnadoptedObjects []string `json:"unadopted_objects,omitempty"`
 }
 
 func acceptedObjectKey(ref sdk.ObjectRef) string {
@@ -131,6 +134,7 @@ func (c *Controller) adoptOwnership(ctx context.Context, now time.Time, snapshot
 	// only that object without an acceptance point; the pass continues and
 	// the failure is retried with the adoption backoff.
 	objectFailures := []error{}
+	unadopted := []string{}
 	objectFailed := func(ref sdk.ObjectRef, err error) {
 		objectFailures = append(objectFailures, &ObjectAdoptionError{Ref: ref, Err: err})
 	}
@@ -145,6 +149,10 @@ func (c *Controller) adoptOwnership(ctx context.Context, now time.Time, snapshot
 		// Secret values are never read, so adoption cannot compare or claim
 		// them; a declared Secret remains an inventory/source obligation.
 		if isSecretRef(ref) {
+			continue
+		}
+		if reason := adoptionNotAdopted(ref); reason != "" {
+			unadopted = append(unadopted, acceptedObjectKey(ref)+": "+reason)
 			continue
 		}
 		resource, err := resolveAcceptedResource(c.drift.Client, ref)
@@ -324,6 +332,8 @@ func (c *Controller) adoptOwnership(ctx context.Context, now time.Time, snapshot
 	}
 	status.SkippedReason = ""
 	status.RetryAt = time.Time{}
+	sort.Strings(unadopted)
+	status.UnadoptedObjects = unadopted
 	c.mu.Lock()
 	c.ownershipAdoption = status
 	c.mu.Unlock()

@@ -275,6 +275,9 @@ func Resources(c Config, resources ...*metav1.APIResourceList) (Plan, error) {
 			}
 			readRules = append(readRules, rule(r.APIGroups[0], r.Resources, "get", "list", "watch"))
 		}
+		// The controller watches Jobs and CronJobs in the application namespace;
+		// the batch rules above also carry control-namespace writes it must not get here.
+		readRules = append(readRules, rule("batch", []string{"jobs", "cronjobs"}, "get", "list", "watch"))
 		readRules = append(readRules, programApplyRules()...)
 		readRules = append(readRules, adoptionRules()...)
 		plan.AppRoles = append(plan.AppRoles, role(c.Namespace, "sdo-controller", readRules), role(c.Namespace, "sdo-operate", responderRules), role(c.Namespace, "sdo-responder", responderRules), role(c.Namespace, "sdo-controller-helper-cleanup", []rbacv1.PolicyRule{rule("", []string{"pods"}, "list", "delete"), rule("batch", []string{"jobs"}, "list", "delete")}))
@@ -344,10 +347,17 @@ func programApplyRules() []rbacv1.PolicyRule {
 	}
 }
 
+// adoptionRules are the verbs the ownership-adoption pass needs on every kind
+// it handles: get to read, patch to adopt, and create because the server-side
+// dry run of a declared object that is absent is authorized as a create. RBAC
+// kinds are absent on purpose: Kubernetes escalation checks would refuse the
+// patch unless the controller held escalate or bind, so adoption leaves them
+// inventory-only (runtime sourceInventoryKinds).
 func adoptionRules() []rbacv1.PolicyRule {
 	return []rbacv1.PolicyRule{
-		rule("", []string{"configmaps", "pods", "endpoints"}, "get", "patch"),
-		rule("apps", []string{"replicasets"}, "get", "patch"),
+		rule("", []string{"configmaps", "pods", "endpoints", "serviceaccounts", "persistentvolumeclaims"}, "get", "patch", "create"),
+		rule("apps", []string{"replicasets", "daemonsets"}, "get", "patch", "create"),
+		rule("batch", []string{"jobs", "cronjobs"}, "get", "patch", "create"),
 		rule("discovery.k8s.io", []string{"endpointslices"}, "get", "patch"),
 		rule("networking.k8s.io", []string{"networkpolicies"}, "get", "patch"),
 	}

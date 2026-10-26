@@ -63,19 +63,55 @@ func inventoryClusterKind(kind string) bool {
 	return kind == "ClusterRole" || kind == "ClusterRoleBinding"
 }
 
+// inventoryKind describes a kind the source inventory declares: the REST
+// resource the controller's grants name, and why adoption leaves it alone
+// (empty when adoption handles it).
+type inventoryKind struct {
+	Group, Resource string
+	NotAdopted      string
+}
+
+// rbacNotAdopted explains why RBAC objects are inventory-only: the API server
+// refuses to patch a Role or ClusterRole unless the caller already holds every
+// permission it lists (or has escalate), and a binding needs bind. The
+// controller holds neither, so granting patch would 403 on any Role wider than
+// its own, depending on the app.
+const rbacNotAdopted = "RBAC objects need escalate or bind to patch; the controller holds neither"
+
+// sourceInventoryKinds is keyed by apiVersion/kind. Adoption's grant needs
+// derive from it: every kind without NotAdopted must have get and patch in the
+// controller's installed Role.
+var sourceInventoryKinds = map[string]inventoryKind{
+	"v1/ConfigMap":                                    {Resource: "configmaps"},
+	"v1/Service":                                      {Resource: "services"},
+	"v1/ServiceAccount":                               {Resource: "serviceaccounts"},
+	"v1/Pod":                                          {Resource: "pods"},
+	"v1/PersistentVolumeClaim":                        {Resource: "persistentvolumeclaims"},
+	"apps/v1/Deployment":                              {Group: "apps", Resource: "deployments"},
+	"apps/v1/StatefulSet":                             {Group: "apps", Resource: "statefulsets"},
+	"apps/v1/DaemonSet":                               {Group: "apps", Resource: "daemonsets"},
+	"apps/v1/ReplicaSet":                              {Group: "apps", Resource: "replicasets"},
+	"batch/v1/Job":                                    {Group: "batch", Resource: "jobs"},
+	"batch/v1/CronJob":                                {Group: "batch", Resource: "cronjobs"},
+	"networking.k8s.io/v1/NetworkPolicy":              {Group: "networking.k8s.io", Resource: "networkpolicies"},
+	"rbac.authorization.k8s.io/v1/Role":               {Group: "rbac.authorization.k8s.io", Resource: "roles", NotAdopted: rbacNotAdopted},
+	"rbac.authorization.k8s.io/v1/RoleBinding":        {Group: "rbac.authorization.k8s.io", Resource: "rolebindings", NotAdopted: rbacNotAdopted},
+	"rbac.authorization.k8s.io/v1/ClusterRole":        {Group: "rbac.authorization.k8s.io", Resource: "clusterroles", NotAdopted: rbacNotAdopted},
+	"rbac.authorization.k8s.io/v1/ClusterRoleBinding": {Group: "rbac.authorization.k8s.io", Resource: "clusterrolebindings", NotAdopted: rbacNotAdopted},
+}
+
 func sourceInventoryKind(o *unstructured.Unstructured) bool {
 	if o == nil {
 		return false
 	}
-	switch o.GetAPIVersion() + "/" + o.GetKind() {
-	case "v1/ConfigMap", "v1/Service", "v1/ServiceAccount", "v1/Pod", "v1/PersistentVolumeClaim",
-		"apps/v1/Deployment", "apps/v1/StatefulSet", "apps/v1/DaemonSet", "apps/v1/ReplicaSet",
-		"batch/v1/Job", "batch/v1/CronJob", "networking.k8s.io/v1/NetworkPolicy",
-		"rbac.authorization.k8s.io/v1/Role", "rbac.authorization.k8s.io/v1/RoleBinding",
-		"rbac.authorization.k8s.io/v1/ClusterRole", "rbac.authorization.k8s.io/v1/ClusterRoleBinding":
-		return true
-	}
-	return false
+	_, ok := sourceInventoryKinds[o.GetAPIVersion()+"/"+o.GetKind()]
+	return ok
+}
+
+// adoptionNotAdopted returns the reason adoption leaves ref's kind alone, or
+// "" when adoption handles it.
+func adoptionNotAdopted(ref sdk.ObjectRef) string {
+	return sourceInventoryKinds[ref.APIVersion+"/"+ref.Kind].NotAdopted
 }
 
 // Findings accounts for top-level objects absent from source and pending
