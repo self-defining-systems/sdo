@@ -127,7 +127,7 @@ opening and recovered observations, not a mutation receipt. Related resources
 on an opening finding count as symptom observations; a written target that an
 opening finding names must clear its own primary-resource finding. On a `success`
 outcome, a written target no opening finding names is covered by another cleared
-finding of the same cause. Program bindings must
+finding whose primary resource is in the same cause (a related-only match never covers). Program bindings must
 cover mutation targets; symptoms can be read through the replay snapshot. Aggregate success does not prove every reported cause;
 ambiguous same-resource cause groups abstain. Failed outcomes additionally require
 controller eligibility. Outcome `detector_history` retains post-response incident

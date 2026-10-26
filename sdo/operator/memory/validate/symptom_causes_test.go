@@ -202,6 +202,14 @@ func TestVerifiedCauseCoversFindinglessWrittenTargetByItsCause(t *testing.T) {
 	if got := VerifiedReflectionCauses(h4); len(got) != 1 || got[0].GetCauseIndex() != 0 {
 		t.Fatalf("h4: want only cause 0 covered by its cleared Service finding: %v", got)
 	}
+	// Listing cause 0's related-only resource in cause 1 does not make cause
+	// 0's finding cover cause 1: only a finding whose primary resource is in
+	// the cause covers its finding-less written target.
+	related := proto.Clone(h4).(*contracts.OutcomeRecord)
+	related.ConfirmedRootCauses[1].Resources = append(related.ConfirmedRootCauses[1].Resources, compose)
+	if got := VerifiedReflectionCauses(related); len(got) != 1 || got[0].GetCauseIndex() != 0 {
+		t.Fatalf("h4: a related-only resource of another cause's finding covered cause 1: %v", got)
+	}
 
 	// h8/54/004: one combined act wrote the ConfigMap (observed) plus
 	// Deployment/search and the webhook (no finding); the cause's other
@@ -236,6 +244,12 @@ func TestVerifiedCauseCoversFindinglessWrittenTargetByItsCause(t *testing.T) {
 		// The Service finding cleared before the last write to media-service.
 		"cause finding cleared before the last write": {h4, func(o *contracts.OutcomeRecord) {
 			o.RepairActions = append(o.RepairActions, write(200*time.Second, media))
+		}},
+		// The written target has no finding, and the only observed resource
+		// of its cause is related-only on a finding whose primary is elsewhere.
+		"written finding-less target with only a related-only observation": {h4, func(o *contracts.OutcomeRecord) {
+			o.ConfirmedRootCauses = []*contracts.ConfirmedRootCause{{Resources: []*contracts.ObjectRef{user, compose}}}
+			o.RepairActions = []*contracts.RepairActionReceipt{write(37*time.Second, user)}
 		}},
 		"cause finding still firing": {h8, func(o *contracts.OutcomeRecord) {
 			o.FinalHealthDetectorState[1] = &contracts.DetectorEvaluation{DetectorId: "service-endpoints", Status: "firing", Fingerprints: []string{"geo-endpoints"}, EvaluatedAt: timestamppb.New(at.Add(90 * time.Second))}
