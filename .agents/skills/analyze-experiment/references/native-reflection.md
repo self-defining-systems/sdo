@@ -33,7 +33,24 @@ The committed outcome retains all causes, receipts, and its failed classificatio
 Its `reflection_eligibility.causes` contains only verified repaired cause groups,
 with indices into the full outcome. Unverified causes are represented separately
 as typed `unassigned` questions with `reason=evidence_gap`; they do not authorize
-executable learning. The worker
+executable learning. A cause is verified when each written target's own primary finding and each
+observed symptom cleared after the last write. On `success` outcomes only, cause
+resources that no opening finding named (for example a traffic-only caller
+Service) are unobserved context and, since LEARN1 (2026-10-26), no longer cause
+an `evidence_gap`. Partial and failed outcomes, like this one, still need a cleared
+finding for every unwritten cause resource, because opening findings omit
+findings that activate after launch. Since LEARN2 (2026-10-26), a repair
+receipt's `owners` records each written object's controller owner chain as SDO
+observed it: plan pre-images for controller writes, and for `sdo act` writes the
+broker's walk of the incident's open capture (LEARN2B). Worker-reported chains
+are dropped at ingest, so the agent cannot claim ownership.
+A write whose chain reaches a cause resource (e.g. scaling a Deployment's old
+ReplicaSet) is that cause's work, not an `unassigned` `unbound_write`, and the
+cause's findings must clear after it. Receipts without `owners` (older runs, or
+an object the capture never observed) keep such writes unassigned; names never bind.
+An unchained Pod/ReplicaSet/Job write (e.g. to a ReplicaSet a rollout created after
+open) still bounds every cause's clearance (FIX14A): each cause's findings must
+clear after it. The worker
 receives compact cause indices and only those causes, verified receipts and typed
 applications/diagnoses and scoped cold-verification evidence. Opaque tool transcripts and unattributed playbook/drift
 claims are omitted from that learning view. No global recovery, positive fixed
