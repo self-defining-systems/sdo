@@ -60,6 +60,9 @@ def test_sigkill_launcher_leaves_no_registered_helpers(tmp_path, cut):
         def abort_leftovers(self, target):
             return sorted(objects)
 
+        def retire_controller_state(self, target, archive_dir):
+            return []
+
     child = subprocess.Popen(
         [
             sys.executable,
