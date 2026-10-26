@@ -31,8 +31,4 @@ if [[ "$mode" == normal ]]; then
   # This source-bound executable is verified again by every Python consumer.
   python3 "$root/scripts/operator_test_binary.py"
   (cd "$root/sdo/operator" && go build -o "$root/.fastloop/test-bin/setup" "$root/tests/unit/benchmarks/sregym/fastloop/fixtures/setup.go")
-  # Populate the compiler cache for every seed/overlay once. The race shard
-  # repeats the complete acceptance gate; equal generated source now reuses
-  # these archives despite a different isolated workspace directory.
-  (cd "$root/sdo/operator" && go test -v -count=1 -timeout=4m -run '^TestAssuranceSeedsPassHealthJudgeCheck$' ./memory/validate)
 fi

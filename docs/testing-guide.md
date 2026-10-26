@@ -707,8 +707,11 @@ restored once; Go module files are never unpacked over another restored cache.
 Both preparation modes compile every operator/runtime test archive with
 `go test -c` without starting TestMain. Normal preparation also compiles the
 CGO-disabled runtime graph used by generated traffic probers, publishes the
-source-bound Python test CLI, and runs the complete assurance seed/overlay check
-once to populate generated-package archives. All hosted builds retain
+source-bound Python test CLI. Before publishing the normal cache, CI keeps only
+that verified executable and removes old source-hash executables, so restoring
+and republishing successive commits cannot accumulate obsolete binaries.
+Preparation never executes tests; the operator
+partition remains the sole owner of the complete assurance seed/overlay check. All hosted builds retain
 `-trimpath`, including tests that add their own module flags, so equal source in
 fresh isolated workspaces reuses those archives. Changed source still gets a
 new Go build ID; a real-Go relocation/invalidation contract checks both cases.
@@ -796,3 +799,24 @@ Mongo identification through declared container names and listener ports. Source
 references can override a database target for a read-only reproduction with
 `go -C sdo/operator/runtime run ./cmd/sdo-observation-check --namespace NS --kubeconfig PATH --target JSON`.
 The target's `auth` references authenticate the catalog read separately from any create-user password.
+
+
+### Hosted Python balance and coverage
+
+`scripts/test_python.sh` keeps its full-suite default. Hosted CI sets
+`SDO_PYTEST_SHARD=fastloop` for `tests/unit/benchmarks/sregym/fastloop` on the
+existing static-analysis runner, and `core` for every other test on the unit
+runner. New paths outside that subtree automatically belong to core. Both
+shards retain the `not go_integration` marker filter; external-process contracts
+still run through `scripts/test_go_integration.sh`.
+
+Each shard uploads its raw coverage database. The existing Required PR CI job
+requires both databases, combines them, and enforces the unchanged project
+coverage threshold on the complete suite. Shards suppress their partial reports
+rather than applying the global coverage threshold to a partial suite. Local
+full-suite runs continue to enforce coverage directly.
+
+The SDK/core compatibility suite remains on Go 1.24.5. The two bounded SDK fuzz
+campaigns run on the shorter operator acceptance-second runner with Go 1.26.8,
+reusing its prepared compiler graph; campaign duration and seed coverage stay
+unchanged. No hosted or Go timeout is raised and no runner is added.
