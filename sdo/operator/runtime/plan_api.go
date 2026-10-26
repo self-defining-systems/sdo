@@ -99,7 +99,7 @@ func (c TypedPlanClient) KubernetesRequest(ctx context.Context, r program.Kubern
 	if len(raw) == 0 {
 		return json.RawMessage("null"), nil
 	}
-	if strings.HasSuffix(r.Path, "/log") || r.Query["watch"] == "true" {
+	if strings.HasSuffix(r.Path, "/log") || r.Query["watch"] == "true" || strings.HasSuffix(r.Path, "/proxy") || strings.Contains(r.Path, "/proxy/") {
 		return json.Marshal(string(raw))
 	}
 	if !json.Valid(raw) {

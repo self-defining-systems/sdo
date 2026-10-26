@@ -87,3 +87,70 @@ func TestRecordedClientSecretReadsNeverReachTransport(t *testing.T) {
 		t.Fatal("Secret endpoint reached recording or API")
 	}
 }
+
+func TestRecordedClientPreservesProxyReadBytes(t *testing.T) {
+	const text = "ready\nmetric 1\n"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		io.WriteString(w, text)
+	}))
+	defer server.Close()
+	config := &rest.Config{Host: server.URL}
+	upstream, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	captured := &sdktest.RecordingReadView{ReadView: LiveReadView{DetectionContext: sdktest.Snapshot{NamespaceName: "app"}, Client: upstream, DatabaseExecConfig: config}}
+	client, err := program.Kubernetes(captured)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := client.CoreV1().Services("app").ProxyGet("http", "api", "80", "health", nil).DoRaw(context.Background())
+	if err != nil || string(raw) != text {
+		t.Fatalf("proxy bytes changed: %q %v", raw, err)
+	}
+	offline, err := program.Kubernetes(&sdktest.ReplayReadView{Calls: captured.Calls})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err = offline.CoreV1().Services("app").ProxyGet("http", "api", "80", "health", nil).DoRaw(context.Background())
+	if err != nil || string(raw) != text {
+		t.Fatalf("offline proxy bytes changed: %q %v", raw, err)
+	}
+}
+
+func TestRecordedClientFiniteWatchReplaysEvents(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("watch") != "true" || r.URL.Query().Get("labelSelector") != "app=api" {
+			t.Errorf("watch options lost: %s", r.URL)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		io.WriteString(w, `{"type":"MODIFIED","object":{"apiVersion":"v1","kind":"Pod","metadata":{"name":"api","namespace":"app"}}}`+"\n")
+	}))
+	defer server.Close()
+	config := &rest.Config{Host: server.URL}
+	upstream, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	captured := &sdktest.RecordingReadView{ReadView: LiveReadView{DetectionContext: sdktest.Snapshot{NamespaceName: "app"}, Client: upstream, DatabaseExecConfig: config}}
+	for _, view := range []program.ReadView{captured, &sdktest.ReplayReadView{Calls: nil}} {
+		if replay, ok := view.(*sdktest.ReplayReadView); ok {
+			replay.Calls = captured.Calls
+		}
+		client, err := program.Kubernetes(view)
+		if err != nil {
+			t.Fatal(err)
+		}
+		stream, err := client.CoreV1().Pods("app").Watch(context.Background(), metav1.ListOptions{LabelSelector: "app=api"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		event, ok := <-stream.ResultChan()
+		stream.Stop()
+		pod, typed := event.Object.(*corev1.Pod)
+		if !ok || !typed || pod.Name != "api" || event.Type != "MODIFIED" {
+			t.Fatalf("watch event changed: %+v", event)
+		}
+	}
+}

@@ -115,7 +115,7 @@ func (t readTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 		return nil, err
 	}
 	contentType := "application/json"
-	if strings.HasSuffix(r.URL.Path, "/log") || r.URL.Query().Get("watch") == "true" {
+	if strings.HasSuffix(r.URL.Path, "/log") || r.URL.Query().Get("watch") == "true" || strings.HasSuffix(r.URL.Path, "/proxy") || strings.Contains(r.URL.Path, "/proxy/") {
 		var stream string
 		if err := json.Unmarshal(raw, &stream); err == nil {
 			raw = []byte(stream)
