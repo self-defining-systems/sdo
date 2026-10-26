@@ -238,6 +238,10 @@ class LaneAdmission:
             destination.write_text(json.dumps(lineage, indent=2) + "\n")
             if self.progress:
                 self.progress("setup_memory", evidence=str(destination))
+        from benchmarks.sregym.fastloop.hotel_helpers import admit_install
+
+        helper_evidence = admit_install(env.kubeconfig, env.namespace)
+        (self.directory / "hotel-script-profile.json").write_text(json.dumps(helper_evidence, indent=2) + "\n")
         self.check_resources("injection")
         deadline.remaining()
         return proof

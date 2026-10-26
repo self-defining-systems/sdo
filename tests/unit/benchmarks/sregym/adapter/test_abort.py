@@ -1,5 +1,7 @@
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
 
 from benchmarks.sregym.adapter import persistent
 
@@ -50,11 +52,46 @@ def test_abort_never_drains_and_records_aborted_incident(tmp_path):
     seed_state(path)
     ops = AbortOps()
     assert persistent.abort(path, ops=ops) == []
+    archived = persistent.PersistentState.load(path.with_name(path.name + ".abort-evidence.json"))
+    assert archived.controllers["demo"].pending.incident_id == "i1"
     assert ops.stopped == ["demo-sdo"]
     state = persistent.PersistentState.load(path)
     assert state.controllers == {}
     assert state.aborted_incidents[0].incident_id == "i1"
     assert persistent.abort(path, ops=ops) == []
+    archived = persistent.PersistentState.load(path.with_name(path.name + ".abort-evidence.json"))
+    assert archived.controllers["demo"].pending.incident_id == "i1"
+
+
+def test_abort_stops_transport_and_preserves_app_namespace(monkeypatch: Any) -> None:
+    calls: list[list[str]] = []
+
+    def invoke(argv: list[str], **_kwargs: Any) -> SimpleNamespace:
+        calls.append(argv)
+        return SimpleNamespace(stdout="", returncode=0)
+
+    monkeypatch.setattr(persistent, "kubectl", invoke)
+    target = persistent.CleanupTarget(namespace="hotel-reservation", control_namespace="hotel-reservation-sdo")
+    persistent.KubectlClusterOps().abort_workload(target)
+    assert calls
+    assert not any(argv[:2] == ["delete", "namespace"] for argv in calls)
+    persistent.KubectlClusterOps(preserve_applications=False).abort_workload(target)
+    assert any(argv[:2] == ["delete", "namespace"] for argv in calls)
+
+
+def test_preserved_namespace_is_not_abort_leftover(monkeypatch: Any) -> None:
+    from benchmarks.sregym.adapter import native_operator
+
+    monkeypatch.setattr(native_operator, "stop_runtime", lambda *_args, **_kwargs: {"leftovers": ["pod/stuck"]})
+
+    def invoke(argv: list[str], **_kwargs: Any) -> SimpleNamespace:
+        if argv[:2] == ["get", "namespace/hotel-reservation"]:
+            return SimpleNamespace(stdout="namespace/hotel-reservation\n", returncode=0)
+        return SimpleNamespace(stdout="{}" if "json" in argv else "", returncode=0)
+
+    monkeypatch.setattr(persistent, "kubectl", invoke)
+    target = persistent.CleanupTarget(namespace="hotel-reservation", control_namespace="hotel-reservation-sdo")
+    assert persistent.KubectlClusterOps().abort_leftovers(target) == ["pod/stuck"]
 
 
 def test_abort_lists_leftovers_and_keeps_retry_targets(tmp_path):

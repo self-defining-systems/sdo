@@ -642,7 +642,7 @@ def test_scripted_fastloop_reuses_reflected_target_port_program(
     # Model the newly required admission I/O from this simulated application's
     # actual readiness and routing state. The pure production predicates still
     # run; only the Kubernetes/prober subprocess boundaries are replaced.
-    from benchmarks.sregym.fastloop import admission, clean_start, rbac
+    from benchmarks.sregym.fastloop import admission, baseline_recovery, clean_start, rbac
 
     traffic = workspace / ".sdo/diagnostics/traffic/workloads"
     traffic.mkdir(parents=True)
@@ -757,6 +757,7 @@ def test_scripted_fastloop_reuses_reflected_target_port_program(
     monkeypatch.setattr(cli, "kubectl", lambda *_args, **_kwargs: SimpleNamespace(returncode=0))
     monkeypatch.setattr(cli, "_cluster_ops", lambda _args, _namespace: controller)
     monkeypatch.setattr(cli, "KubectlApplicationCluster", lambda _kubeconfig: app)
+    monkeypatch.setattr(baseline_recovery, "KubectlApplicationCluster", lambda _kubeconfig: app)
     monkeypatch.setattr(cli, "_composite_settings", lambda _args: CompositeSettings(20, 1, 0.001, 0.001))
     monkeypatch.setattr(
         adapter,
@@ -839,6 +840,8 @@ def test_scripted_fastloop_reuses_reflected_target_port_program(
         == 0
     )
 
+    helper_proof = json.loads((tmp_path / "results/hermetic/admission/hotel-script-profile.json").read_text())
+    assert helper_proof == {"profile": "hotel-script-free/v1", "passed": True, "objects_checked": len(app.objects)}
     records = load_records(tmp_path / "results/hermetic/incidents.jsonl")
     with (tmp_path / "results/hermetic/incidents.csv").open(newline="") as handle:
         rows = list(csv.DictReader(handle))

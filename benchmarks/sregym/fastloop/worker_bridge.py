@@ -15,6 +15,7 @@ def main() -> int:
     worker = importlib.import_module("sregym.fastloop.worker")
     handle = worker.FastloopWorker.handle
     from benchmarks.sregym.fastloop.clean_start import install_probe_isolation
+    from benchmarks.sregym.fastloop.hotel_helpers import admit_install, configure_profile, prepare_install
 
     install_probe_isolation(importlib.import_module("sregym.conductor.problems.composition.grading"))
 
@@ -44,6 +45,7 @@ def main() -> int:
             def isolated_factory(problem_id: str) -> Any:
                 problem = factory(problem_id)
                 if hasattr(problem, "app"):
+                    configure_profile(problem.app)
                     prepare_harness_traffic(problem.app, Path(os.environ["KUBECONFIG"]))
                 return problem
 
@@ -64,6 +66,13 @@ def main() -> int:
             request.get("op") == "deploy"
             and self._problem_factory(str(request["problem_id"])).namespace == "astronomy-shop"
         )
+        if op == "deploy":
+            problem = self._problem_factory(str(request["problem_id"]))
+            if problem.namespace == "hotel-reservation":
+                prepare_install(Path(os.environ["KUBECONFIG"]), problem.namespace, Path(request["baseline_path"]))
+        if op == "inject":
+            problem = self._problem_factory(str(request["problem_id"]))
+            admit_install(Path(os.environ["KUBECONFIG"]), problem.namespace)
         if astronomy:
             prepare_astronomy()
         if request.get("op") == "refresh_baseline_clients":

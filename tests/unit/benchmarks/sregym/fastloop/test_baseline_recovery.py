@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -10,7 +11,9 @@ from typing import Any
 import pytest
 
 from benchmarks.sregym.fastloop.baseline_recovery import (
+    ApplicationBaseline,
     KubectlApplicationCluster,
+    accepted_restore_baselines,
     application_namespaces,
     capture_application_baseline,
     load_application_baseline,
@@ -507,3 +510,43 @@ def test_reconciliation_never_deletes_an_extra_pvc(phase: str) -> None:
     assert reconcile_application(cluster, baseline, "hotel").deleted_counts == {}
     assert ("hotel", "PersistentVolumeClaim", "data") in cluster.objects
     assert cluster.touched == []
+
+
+@pytest.mark.parametrize(("source_class", "expected"), [(None, "openebs-hostpath"), ("explicit", "explicit"), ("", "")])
+def test_source_claim_retains_installed_default_only_when_source_omits_class(
+    tmp_path: Path, source_class: str | None, expected: str
+) -> None:
+    value: dict[str, Any] = {
+        "apiVersion": "v1",
+        "kind": "PersistentVolumeClaim",
+        "metadata": {"name": "data", "namespace": "hotel-reservation"},
+        "spec": {"accessModes": ["ReadWriteOnce"]},
+    }
+    captured = deepcopy(value)
+    captured["spec"]["storageClassName"] = "openebs-hostpath"
+    if source_class is not None:
+        value["spec"]["storageClassName"] = source_class
+    root = tmp_path / ".sdo/rendered"
+    root.mkdir(parents=True)
+    payload = json.dumps(value).encode()
+    (root / "claim.json").write_bytes(payload)
+    (root / "lock.json").write_text(
+        json.dumps(
+            {
+                "objects": [
+                    {
+                        "ref": {
+                            "api_version": "v1",
+                            "kind": "PersistentVolumeClaim",
+                            "namespace": "hotel-reservation",
+                            "name": "data",
+                        },
+                        "file": "claim.json",
+                        "sha256": hashlib.sha256(payload).hexdigest(),
+                    }
+                ]
+            }
+        )
+    )
+    result = accepted_restore_baselines(tmp_path, (ApplicationBaseline("hotel-reservation", [captured]),))
+    assert result[0].objects[0]["spec"]["storageClassName"] == expected
