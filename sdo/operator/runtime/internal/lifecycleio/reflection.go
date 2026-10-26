@@ -81,7 +81,7 @@ func (d ReflectionDriver) Execute(ctx context.Context, effect lifecyclecore.Refl
 			if err != nil {
 				break
 			}
-			publishCtx = validate.WithCaptureSource(ctx, captureDir, id)
+			publishCtx = validate.WithCaptureSource(publishCtx, captureDir, id)
 		}
 		var accepted broker.Receipt
 		accepted, err = d.Repository.PublishReflection(publishCtx, id, effect.Decision)

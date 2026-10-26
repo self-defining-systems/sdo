@@ -14,12 +14,58 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
+	"sdo.dev/operator/broker"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/contracts/wire"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/runtime/internal/lifecycleio"
+	"sdo.dev/operator/runtime/lifecyclecore"
 	"sdo.dev/operator/worker_registry"
 )
+
+// A corrected proposal may start at a newer accepted head. Adding captured
+// evidence must preserve the original incident's health authority in context.
+func TestReflectionPublicationRetainsFrozenHealthWithCapture(t *testing.T) {
+	for _, change := range []string{"objective", "policy", "missing-source"} {
+		t.Run(change, func(t *testing.T) {
+			ctx := context.Background()
+			h := newRejectionHarness(t, "capture-"+change, nil)
+			frozen := h.closure.Request.SourceCommit
+			if _, err := h.native.Repository.RecordOutcome(ctx, h.workspace.IncidentID, testDerivedOutcome(h.workspace.IncidentID, "success", true).Record); err != nil {
+				t.Fatal(err)
+			}
+			if change == "missing-source" {
+				frozen = "missing-source-revision"
+			} else {
+				path, body := ".sdo/lib/policy.txt", "changed policy\n"
+				if change == "objective" {
+					path, body = ".sdo/goal.md", "---\nschema_version: 1\nowner: human\n---\n# Health objective\nChanged objective.\n"
+				}
+				tracingWrite(t, h.target, path, body)
+				nativeGit(t, h.target, "add", ".")
+				nativeGit(t, h.target, "commit", "-qm", "synthetic accepted health advance")
+			}
+			if _, err := h.native.Repository.CreateProposalForPhase(ctx, h.workspace.IncidentID, broker.ReflectionPhase); err != nil {
+				t.Fatal(err)
+			}
+			driver := lifecycleio.ReflectionDriver{Repository: h.native.Repository, SessionRoot: t.TempDir(), Now: time.Now}
+			event, err := driver.Execute(ctx, lifecyclecore.ReflectionEffect{
+				Kind: lifecyclecore.PublishReflection, ID: "publish", IncidentID: h.workspace.IncidentID,
+				Closure:  &contracts.IncidentClosure{Request: &contracts.IncidentRequest{SourceCommit: frozen}},
+				Decision: &contracts.ReflectionDecision{LearningDecision: "no_change", NoChangeReason: "synthetic check"},
+			})
+			if change == "missing-source" {
+				if err == nil || !strings.Contains(err.Error(), "read health provenance") {
+					t.Fatalf("unavailable frozen source did not fail closed: %+v %v", event, err)
+				}
+				return
+			}
+			if err != nil || event.Kind != lifecyclecore.ReflectionRejected || len(event.Diagnostics) != 1 || event.Diagnostics[0].Rule != "reflection."+change+"-changed" {
+				t.Fatalf("capture lost frozen health authority: %+v %v", event, err)
+			}
+		})
+	}
+}
 
 // Hand-written schedule: freeze an outcome, start a real registered Job, lose
 // controller leadership, adopt new health inputs, then complete the original

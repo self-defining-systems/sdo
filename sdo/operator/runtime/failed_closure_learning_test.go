@@ -121,6 +121,9 @@ func TestFailedClosureReflectionReceivesExactlyVerifiedCauses(t *testing.T) {
 	}
 	closure.Request.RepositoryWorktree = workspace.Worktree
 	closure.Request.RepositoryBaseCommit = workspace.BaseCommit
+	// The standalone controller fixture uses symbolic source IDs. Crossing the
+	// real broker boundary requires the accepted repository's immutable commit.
+	closure.Request.SourceCommit = workspace.BaseCommit
 	closure.Request.RepairPolicy = "recorded-actions"
 	calls := 0
 	native.Reflector = RegisteredReflectionWorker{TaskType: reflectionTaskType(t), AgentID: "reflector", Outcomes: memory.OpenReader(root), Timeout: time.Minute, SessionMode: "fresh", Executor: reflectionTaskExecutorFunc(func(_ context.Context, task *contracts.AgentTask) (*contracts.AgentResult, error) {
