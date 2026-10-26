@@ -153,6 +153,9 @@ const (
 	ClosureFailureReason_CLOSURE_FAILURE_REASON_INVALID_RECEIPT ClosureFailureReason = 2
 	ClosureFailureReason_CLOSURE_FAILURE_REASON_RETRY_EXHAUSTED ClosureFailureReason = 3
 	ClosureFailureReason_CLOSURE_FAILURE_REASON_AGENT_TIMEOUT   ClosureFailureReason = 4
+	// The closure recheck was denied its observation scope (RBAC, undeclared or
+	// unsupported dependency). A misconfiguration, never a contradicted repair.
+	ClosureFailureReason_CLOSURE_FAILURE_REASON_OBSERVER_DENIED ClosureFailureReason = 5
 )
 
 // Enum value maps for ClosureFailureReason.
@@ -163,6 +166,7 @@ var (
 		2: "CLOSURE_FAILURE_REASON_INVALID_RECEIPT",
 		3: "CLOSURE_FAILURE_REASON_RETRY_EXHAUSTED",
 		4: "CLOSURE_FAILURE_REASON_AGENT_TIMEOUT",
+		5: "CLOSURE_FAILURE_REASON_OBSERVER_DENIED",
 	}
 	ClosureFailureReason_value = map[string]int32{
 		"CLOSURE_FAILURE_REASON_UNSPECIFIED":     0,
@@ -170,6 +174,7 @@ var (
 		"CLOSURE_FAILURE_REASON_INVALID_RECEIPT": 2,
 		"CLOSURE_FAILURE_REASON_RETRY_EXHAUSTED": 3,
 		"CLOSURE_FAILURE_REASON_AGENT_TIMEOUT":   4,
+		"CLOSURE_FAILURE_REASON_OBSERVER_DENIED": 5,
 	}
 )
 
@@ -1882,13 +1887,14 @@ const file_sdodev_contracts_v1alpha1_controller_state_proto_rawDesc = "" +
 	"\x18CLOSURE_STATE_PROCESSING\x10\x02\x12\x1b\n" +
 	"\x17CLOSURE_STATE_COMMITTED\x10\x03\x12\x1f\n" +
 	"\x1bCLOSURE_STATE_ACKNOWLEDGING\x10\x04\x12\x18\n" +
-	"\x14CLOSURE_STATE_FAILED\x10\x05*\xe9\x01\n" +
+	"\x14CLOSURE_STATE_FAILED\x10\x05*\x95\x02\n" +
 	"\x14ClosureFailureReason\x12&\n" +
 	"\"CLOSURE_FAILURE_REASON_UNSPECIFIED\x10\x00\x12'\n" +
 	"#CLOSURE_FAILURE_REASON_BROKER_ERROR\x10\x01\x12*\n" +
 	"&CLOSURE_FAILURE_REASON_INVALID_RECEIPT\x10\x02\x12*\n" +
 	"&CLOSURE_FAILURE_REASON_RETRY_EXHAUSTED\x10\x03\x12(\n" +
-	"$CLOSURE_FAILURE_REASON_AGENT_TIMEOUT\x10\x04*\xac\x02\n" +
+	"$CLOSURE_FAILURE_REASON_AGENT_TIMEOUT\x10\x04\x12*\n" +
+	"&CLOSURE_FAILURE_REASON_OBSERVER_DENIED\x10\x05*\xac\x02\n" +
 	"\x0fReflectionPhase\x12 \n" +
 	"\x1cREFLECTION_PHASE_UNSPECIFIED\x10\x00\x12\x1c\n" +
 	"\x18REFLECTION_PHASE_INSPECT\x10\x01\x12\x1d\n" +

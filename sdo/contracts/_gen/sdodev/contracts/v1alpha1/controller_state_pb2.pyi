@@ -42,6 +42,7 @@ class ClosureFailureReason(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     CLOSURE_FAILURE_REASON_INVALID_RECEIPT: _ClassVar[ClosureFailureReason]
     CLOSURE_FAILURE_REASON_RETRY_EXHAUSTED: _ClassVar[ClosureFailureReason]
     CLOSURE_FAILURE_REASON_AGENT_TIMEOUT: _ClassVar[ClosureFailureReason]
+    CLOSURE_FAILURE_REASON_OBSERVER_DENIED: _ClassVar[ClosureFailureReason]
 
 class ReflectionPhase(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     __slots__ = ()
@@ -72,6 +73,7 @@ CLOSURE_FAILURE_REASON_BROKER_ERROR: ClosureFailureReason
 CLOSURE_FAILURE_REASON_INVALID_RECEIPT: ClosureFailureReason
 CLOSURE_FAILURE_REASON_RETRY_EXHAUSTED: ClosureFailureReason
 CLOSURE_FAILURE_REASON_AGENT_TIMEOUT: ClosureFailureReason
+CLOSURE_FAILURE_REASON_OBSERVER_DENIED: ClosureFailureReason
 REFLECTION_PHASE_UNSPECIFIED: ReflectionPhase
 REFLECTION_PHASE_INSPECT: ReflectionPhase
 REFLECTION_PHASE_DISPATCH: ReflectionPhase

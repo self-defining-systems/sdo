@@ -2,11 +2,14 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/sdktest"
@@ -18,6 +21,7 @@ type windowDetector struct {
 	mu        sync.Mutex
 	confirmed bool
 	active    bool
+	err       error
 }
 
 func (d *windowDetector) Spec() sdk.DetectorSpec {
@@ -27,6 +31,9 @@ func (d *windowDetector) Spec() sdk.DetectorSpec {
 func (d *windowDetector) Detect(context.Context, sdk.DetectionContext) ([]sdk.Finding, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	if d.err != nil {
+		return nil, d.err
+	}
 	if d.active {
 		return []sdk.Finding{stateFinding("health")}, nil
 	}
@@ -142,7 +149,7 @@ func TestClosureRecheckSupersedesWhenWindowReopens(t *testing.T) {
 	now = now.Add(time.Second)
 	executeRecheck(t, controller)
 	if controller.closureState != contracts.ClosureState_CLOSURE_STATE_FAILED || len(failures) != 1 || broker.processCalls() != 0 ||
-		!strings.Contains(failures[0].LastError, "health is active") {
+		!strings.Contains(failures[0].LastError, "health is active") || failures[0].Reason == contracts.ClosureFailureReason_CLOSURE_FAILURE_REASON_OBSERVER_DENIED {
 		t.Fatalf("a reopened finding must supersede: state=%v failures=%+v processed=%d", controller.closureState, failures, broker.processCalls())
 	}
 }
@@ -175,5 +182,43 @@ func TestClosureRecheckIncompleteAtBoundCommitsUnconfirmed(t *testing.T) {
 	if controller.closureState != contracts.ClosureState_CLOSURE_STATE_COMMITTED || len(failures) != 0 || len(broker.closures) != 1 ||
 		broker.closures[0].UnconfirmedReason != contracts.ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_OBSERVATION_INCOMPLETE {
 		t.Fatalf("unconfirmed closure must commit its outcome: state=%v failures=%+v closures=%+v", controller.closureState, failures, broker.closures)
+	}
+}
+
+func TestClosureRecheckUnavailableObserverAtBoundCommitsUnconfirmed(t *testing.T) {
+	now := time.Unix(1000, 0).UTC()
+	detector := &windowDetector{confirmed: true, err: errors.New("Get \"https://api/services\": dial tcp: connection refused")}
+	broker := &recordingClosureBroker{}
+	controller := newClosureRecheckController(t, detector, broker, &now)
+
+	executeRecheck(t, controller)
+	assertStillPending(t, controller, broker)
+	now = now.Add(windowRecheckBound)
+	executeRecheck(t, controller)
+	assertStillPending(t, controller, broker)
+	if controller.pendingClosure.UnconfirmedReason != contracts.ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_OBSERVER_UNAVAILABLE ||
+		len(controller.pendingClosure.FinalDetectorStates) != 0 || !strings.Contains(controller.pendingClosure.UnconfirmedDetail, "connection refused") {
+		t.Fatalf("an unavailable observer at the bound must commit unconfirmed: %+v", controller.pendingClosure)
+	}
+	executeRecheck(t, controller)
+	awaitBrokerResult(t, controller.closureResults)
+	controller.processBrokerCompletions()
+	if controller.closureState != contracts.ClosureState_CLOSURE_STATE_COMMITTED || len(broker.closures) != 1 {
+		t.Fatalf("unconfirmed closure must commit: state=%v closures=%d", controller.closureState, len(broker.closures))
+	}
+}
+
+func TestClosureRecheckDeniedObserverFailsWithTypedReason(t *testing.T) {
+	now := time.Unix(1000, 0).UTC()
+	detector := &windowDetector{confirmed: true, err: apierrors.NewForbidden(schema.GroupResource{Resource: "services"}, "", errors.New("RBAC denied"))}
+	broker := &recordingClosureBroker{}
+	controller := newClosureRecheckController(t, detector, broker, &now)
+	var failures []ClosureFailure
+	controller.OnClosureFailed = func(failure ClosureFailure) { failures = append(failures, failure) }
+
+	executeRecheck(t, controller)
+	if controller.closureState != contracts.ClosureState_CLOSURE_STATE_FAILED || len(failures) != 1 || broker.processCalls() != 0 ||
+		failures[0].Reason != contracts.ClosureFailureReason_CLOSURE_FAILURE_REASON_OBSERVER_DENIED {
+		t.Fatalf("a denied observer must fail with its typed reason: state=%v failures=%+v", controller.closureState, failures)
 	}
 }
