@@ -174,9 +174,8 @@ def test_actual_benchmark_transport_and_pull_guidance_fit_the_instruction_cap(mo
 
 
 def test_act_help_and_workflow_share_the_one_cause_per_action_principle() -> None:
-    from sdo.agents.responder import tools_cli
-
-    act_help = tools_cli._parser()._subparsers._group_actions[0].choices["act"].description
+    commands = (SKILLS_ROOT / WORKFLOW / "references/commands.md").read_text(encoding="utf-8")
+    act_help = commands.split("\n## act\n", 1)[1].split("\n## ", 1)[0]
     body = (SKILLS_ROOT / WORKFLOW / "SKILL.md").read_text(encoding="utf-8")
     for principle in (
         "one cause per independently fixable fault",
