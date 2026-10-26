@@ -148,11 +148,15 @@ sdo mitigate [-h] [--finding FINGERPRINT] [--rounds ROUNDS] [--selection FILE] [
 
 Apply several independent options in one call; overlapping object write sets are refused before writes. Use repeated --option ID followed by that option's --param NAME=VALUE, or --selection-set FILE with version 1 and options [{option_id, bindings, parameters, finding_fingerprints}]. Each option has its own receipt; one call uses one round. Pending rollout returns its application ID and read-only tools remain available. A single option also accepts --NAME VALUE parameters. Uses the ordinary executor and controller RBAC; up to five rounds per incident. A script fix is a first-class learnable mitigation with relation-derived Values, within incident budgets. Program commands use the current checkout, including shared libraries and new playbook IDs. Edits compile on demand; fix compile errors in place and retry. Revision receipts use working-tree:<source digest> for unpublished code. Reusable API reads use program.Kubernetes(view) with upstream client-go options; reads are recorded for replay.
 
-- `option`: option ID or unambiguous program ID from the current menu
+- `option`: advertised option ID or unambiguous program ID
 - `--finding`: target finding fingerprint; repeat for each intended finding
 - `--rounds`: maximum rounds within the remaining incident allowance
 - `--selection-set`: version 1 selection set with per-option bindings and parameters
 - `--option`: independent option ID; repeat, with per-option --param arguments
+
+```text
+Advertised option IDs remain valid for this session across filtered menu calls. Learned program preconditions are rechecked against live state before any batch writes.
+```
 
 ```text
 Parameters accept ordinary JSON objects, arrays, numbers and booleans, as well as strings. sdo menu exports recursive parameters[].schema for every option, plus selection_schema and selection_set_schema; nested properties, required fields and oneOf choices describe accepted shapes. parameters[].example supplies typed synthetic inputs; replace names/values using incident evidence. CLI --param NAME=VALUE accepts JSON text for structured values. EnsureDatabaseUser repairs a MongoDB user in one call. Its password and target.auth username/password take exactly one credential reference: {env: NAME} or {config_map: {name: CONFIGMAP, key: KEY, assignment: optional_NAME}} in the target Pod namespace. Assignment selects one literal NAME=value line. The executor resolves values privately; never put credential values in arguments, evidence or memory. Direct Secret keys are unavailable.

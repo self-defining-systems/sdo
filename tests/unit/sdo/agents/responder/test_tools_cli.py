@@ -236,6 +236,25 @@ def test_mitigate_passes_named_parameters_for_controller_schema_parsing(monkeypa
     assert seen[-1]["selection"]["round_limit"] == 1
 
 
+@pytest.mark.parametrize("error", [None, "unknown mitigation option"])
+def test_mitigate_resolves_previously_advertised_id_in_controller_catalog(monkeypatch, error):
+    seen = []
+    advertised = "program-previous-explicit-bindings"
+
+    def exchange(request, _directory):
+        seen.append(request)
+        if request["command"] == "menu":
+            # The current presentation omits the previously advertised binding.
+            return {"menu": {"remaining_batches": 3, "options": [{"option_id": "ScaleWorkload"}]}}
+        assert request["selection"]["option_id"] == advertised
+        assert request["selection"]["round_limit"] == 2
+        return {"error": error} if error else {"summary": "applied retained option"}
+
+    monkeypatch.setattr(tools_cli, "_exchange", exchange)
+    assert tools_cli.main(["--json", "mitigate", advertised, "--rounds", "2"]) == int(error is not None)
+    assert [request["command"] for request in seen] == ["menu", "mitigate"]
+
+
 def test_menu_does_not_gate_direct_act(monkeypatch):
     monkeypatch.setenv("SDO_MITIGATION_SESSION", "1")
     seen = []
