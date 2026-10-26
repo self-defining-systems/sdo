@@ -308,9 +308,17 @@ def reconcile_application(
 ) -> RecoveryCleanup:
     if baseline.namespace != namespace or namespace.endswith("-sdo") or namespace in NON_APPLICATION_NAMESPACES:
         raise ValueError(f"refusing to reconcile non-application namespace {namespace!r}")
+    from benchmarks.sregym.fastloop.hotel_helpers import retire_helpers, without_helpers
+
+    desired, _ = without_helpers(baseline.objects, namespace)
+    listed = cluster.list_objects(namespace)
+    retire_helpers(cluster, namespace, objects=listed)
+    current_objects, _ = without_helpers(
+        [v for v in listed if v.get("kind") != "Pod" or not v.get("metadata", {}).get("ownerReferences")], namespace
+    )
     cleanup = RecoveryCleanup()
-    expected = {_identity(value): value for value in baseline.objects if _managed(value, namespace)}
-    current = {_identity(value): value for value in cluster.list_objects(namespace) if _managed(value, namespace)}
+    expected = {_identity(value): value for value in desired if _managed(value, namespace)}
+    current = {_identity(value): value for value in current_objects if _managed(value, namespace)}
     for kind, name in sorted(current):
         if (kind, name) in expected:
             continue
@@ -461,6 +469,10 @@ def retire_stalled_replicas(kubeconfig: Path, namespace: str) -> None:
 
 def seal_existing_install(path: Path, cluster: ApplicationCluster, namespace: str) -> None:
     """Upgrade a clean pre-controller installation, never recapture fault state."""
+    from benchmarks.sregym.fastloop.hotel_helpers import migrate_baseline, retire_helpers
+
+    migrate_baseline(path, namespace)
+    retire_helpers(cluster, namespace)
     baselines = load_application_baseline(path, namespace)
     if not baselines:
         raise ValueError("installed source seal requires the original up capture")
