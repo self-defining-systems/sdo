@@ -43,6 +43,8 @@ func (d sharedMemoryResponder) Dispatch(_ context.Context, r IncidentRequest) (I
 func TestHermeticSharedMemoryControllers(t *testing.T) {
 	for _, conflict := range []bool{false, true} {
 		t.Run(fmt.Sprintf("same-playbook=%t", conflict), func(t *testing.T) {
+			// Conflict modes own separate repositories and controller/process state.
+			t.Parallel()
 			ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 			defer cancel()
 			root := nativeRepository(t)

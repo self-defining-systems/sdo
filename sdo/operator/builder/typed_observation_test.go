@@ -22,7 +22,7 @@ import (
 // including rejected stale observations, rather than a test-only Diagnoser.
 func TestTypedObservationProgramCompilesAndRejectsStaleEvidence(t *testing.T) {
 	testutil.OfflineGo(t, "..")
-	t.Setenv("GOFLAGS", "-mod=mod -p=2")
+	t.Setenv("GOFLAGS", os.Getenv("GOFLAGS")+" -mod=mod -p=2")
 	root := programFixture(t)
 	path := filepath.Join(root, ".sdo", "playbooks", "service-targetport-mismatch", "diagnose.go")
 	data, err := os.ReadFile(path)

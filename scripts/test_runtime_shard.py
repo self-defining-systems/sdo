@@ -11,8 +11,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import re
 import subprocess
+import sys
+import time
 from pathlib import Path
 
 PATTERNS = {
@@ -67,6 +70,66 @@ def partition(names: list[str], patterns: dict[str, str]) -> dict[str, list[str]
     return groups
 
 
+# These are the eight existing runner allocations, not additional CI jobs.
+RUNNER_GROUPS = {
+    "reflection": ("reflection", "corpus"),
+    "reflection-mongo": ("reflection-mongo",),
+    "reflection-programs": ("reflection-programs",),
+    "contracts": ("contracts",),
+    "rendered": ("rendered",),
+    "simulation": ("simulation", "remaining"),
+    "schedules": ("schedules",),
+    "recovery": ("recovery",),
+}
+COST_FILE = Path(__file__).with_name("runtime_test_costs.json")
+# Report when work exceeds 70% of the unchanged five-minute controller job.
+# The Go and job deadlines alone enforce failure.
+SHARD_BUDGET_SECONDS = 5 * 60 * 70 // 100
+# Hosted costs drive all measured placements; no local-only overrides.
+PLACEMENTS: dict[str, str] = {}
+
+
+def balanced_partition(names: list[str], patterns: dict[str, str], costs: dict[str, float]) -> dict[str, list[str]]:
+    """Keep unmeasured names exhaustive; place measured work by longest first."""
+    if any(
+        isinstance(cost, bool) or not isinstance(cost, (int, float)) or not math.isfinite(cost) or cost <= 0
+        for cost in costs.values()
+    ):
+        raise ValueError("measured runtime costs must be finite positive seconds")
+    original = partition(sorted(names), patterns)
+    groups: dict[str, list[str]] = {shard: [] for shard in patterns}
+    totals = dict.fromkeys(RUNNER_GROUPS, 0.0)
+    owners = {part: runner for runner, parts in RUNNER_GROUPS.items() for part in parts}
+    measured: list[str] = []
+    for shard, members in original.items():
+        for name in members:
+            # Keep the small logical corpus partition usable by existing callers.
+            if name in costs and shard != "corpus":
+                measured.append(name)
+            else:
+                groups[shard].append(name)
+                totals[owners[shard]] += costs.get(name, 0.1)
+    for name in sorted(measured, key=lambda name: (-costs[name], name)):
+        runner = min(totals, key=lambda runner: (totals[runner], runner))
+        groups[runner].append(name)
+        totals[runner] += costs[name]
+    for name, target in PLACEMENTS.items():
+        for members in groups.values():
+            if name in members:
+                members.remove(name)
+                groups[target].append(name)
+                break
+    return {shard: sorted(members) for shard, members in groups.items()}
+
+
+def run_tests(command: list[str], *, started: float) -> None:
+    # Both runners use the same report-only JSON timing diagnostics.
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from test_operator_shard import run_tests as run_go_tests
+
+    run_go_tests(command, started=started, cwd=RUNTIME, budget_seconds=SHARD_BUDGET_SECONDS)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--shard", required=True, help="comma-separated runtime partitions")
@@ -74,6 +137,7 @@ def main() -> None:
     selected = args.shard.split(",")
     if len(selected) != len(set(selected)) or set(selected) - PATTERNS.keys():
         parser.error("select distinct known runtime partitions: " + ",".join(PATTERNS))
+    started = time.monotonic()
     discovery = subprocess.run(
         ["go", "test", "-race", "-list", ".", "-json", "./..."],
         cwd=RUNTIME,
@@ -85,9 +149,10 @@ def main() -> None:
     if not names:
         raise ValueError("Go test discovery returned no tests")
     eligible = [name for name in names if not DEDICATED.match(name)]
-    groups = partition(eligible, PATTERNS)
-    if not all(groups.values()):
-        raise ValueError("Every runtime shard must contain tests")
+    costs = json.loads(COST_FILE.read_text())["costs"]
+    groups = balanced_partition(eligible, PATTERNS, costs)
+    if not all(any(groups[part] for part in parts) for parts in RUNNER_GROUPS.values()):
+        raise ValueError("Every runtime runner must contain tests")
     print(
         f"Coverage guard: {len(eligible)} names assigned exactly once; "
         f"{len(names) - len(eligible)} names covered by dedicated jobs",
@@ -97,10 +162,9 @@ def main() -> None:
         print(f"{shard}: {len(members)} test names", flush=True)
     # Anchoring whole top-level names retains all nested scenarios and fuzz seeds.
     selection = "^(" + "|".join(re.escape(name) for shard in selected for name in groups[shard]) + ")$"
-    subprocess.run(
+    run_tests(
         ["go", "test", "-race", "-parallel=2", "-count=1", "-timeout=5m", "-json", "-run", selection, "./..."],
-        cwd=RUNTIME,
-        check=True,
+        started=started,
     )
 
 
