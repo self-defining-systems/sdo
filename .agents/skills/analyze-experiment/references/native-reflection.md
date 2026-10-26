@@ -103,7 +103,12 @@ Verified full and partial causes require executable diagnosis and mitigation, a 
 
 As a restart backstop, an expired response request with no active Job or orphan
 worker Pod is archived through the failed-closure outbox with typed reason
-`CLOSURE_FAILURE_REASON_AGENT_TIMEOUT`. API uncertainty preserves the binding;
+`CLOSURE_FAILURE_REASON_AGENT_TIMEOUT`. Open work that lost its owner is archived
+the same way with `CLOSURE_FAILURE_REASON_OWNER_LOST`: a dispatch still RUNNING
+past the response deadline plus one minute with no Job, or a finished responder
+whose closure never began within the verification timeout plus one minute (for
+example, a controller torn down mid-incident and later restarted). The rule runs
+at startup, every step and while paused. API uncertainty preserves the binding;
 a live worker may still be rejoined. The archive is persisted before another
 incident's effects can execute. This terminal archive has no health success or
 new learning credit. New observations can open a fresh incident even when the
