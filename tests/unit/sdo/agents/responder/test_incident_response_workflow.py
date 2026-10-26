@@ -39,6 +39,7 @@ def test_incident_workflow_installs_from_the_shipped_skill_root(tmp_path: Path, 
     assert "wait on it instead of sleeping" in body
     assert "one cause per independently fixable fault" in body
     assert "own action" in body
+    assert "applied together" in body
     assert "combine only faults that can't be fixed separately" in body
     assert "possible regressions" in body
     assert "complete JSON report" in body
