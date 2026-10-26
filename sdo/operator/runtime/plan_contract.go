@@ -28,7 +28,7 @@ func (r PlanApplicationResult) Proto() (*contracts.PlanApplication, error) {
 		}
 		plan.Actions = append(plan.Actions, converted)
 	}
-	application := &contracts.PlanApplication{RolledBack: r.RolledBack, RollbackError: r.RollbackError, Plan: plan, Applied: r.Applied, DryRun: r.DryRun, VerificationCompleted: r.VerificationCompleted, VerificationPassed: r.VerificationPassed, FinalEquivalenceVerified: r.FinalEquivalenceVerified, RolloutPending: r.RolloutPending}
+	application := &contracts.PlanApplication{RolledBack: r.RolledBack, RollbackError: r.RollbackError, Plan: plan, Applied: r.Applied, DryRun: r.DryRun, VerificationCompleted: r.VerificationCompleted, VerificationPassed: r.VerificationPassed, FinalEquivalenceVerified: r.FinalEquivalenceVerified, FinalVerificationBasis: r.FinalVerificationBasis, RolloutPending: r.RolloutPending}
 	for _, action := range r.ActionsApplied {
 		converted, err := planActionProto(action)
 		if err != nil {
@@ -60,8 +60,11 @@ func (r PlanApplicationResult) Proto() (*contracts.PlanApplication, error) {
 	for _, report := range r.ActionReports {
 		encoded := &contracts.ActionReport{ActionIndex: uint32(report.ActionIndex), Status: report.Status, ExitCode: report.ExitCode}
 		encoded.FailureReason = report.FailureReason
-        encoded.RecordingError = report.RecordingError
+		encoded.RecordingError = report.RecordingError
 		encoded.JobStatusJson = report.JobStatus
+		if report.Script != nil {
+			encoded.ScriptResultJson, _ = json.Marshal(report.Script)
+		}
 		if report.ExternalEffect != nil {
 			encoded.ExternalEffectJson, _ = json.Marshal(report.ExternalEffect)
 		}
@@ -81,7 +84,7 @@ func (r PlanApplicationResult) Proto() (*contracts.PlanApplication, error) {
 }
 
 func planApplicationState(application *contracts.PlanApplication) RecordedPlanApplication {
-	result := PlanApplicationResult{RolledBack: application.GetRolledBack(), RollbackError: application.GetRollbackError(), Applied: application.GetApplied(), DryRun: application.GetDryRun(), FinalEquivalenceVerified: application.FinalEquivalenceVerified, RolloutPending: application.GetRolloutPending()}
+	result := PlanApplicationResult{RolledBack: application.GetRolledBack(), RollbackError: application.GetRollbackError(), Applied: application.GetApplied(), DryRun: application.GetDryRun(), FinalEquivalenceVerified: application.FinalEquivalenceVerified, FinalVerificationBasis: application.GetFinalVerificationBasis(), RolloutPending: application.GetRolloutPending()}
 	if application.GetPlan() != nil {
 		result.Plan.Rationale = application.GetPlan().GetRationale()
 		for _, action := range application.GetPlan().GetActions() {
@@ -105,8 +108,14 @@ func planApplicationState(application *contracts.PlanApplication) RecordedPlanAp
 	for _, report := range application.GetActionReports() {
 		decoded := PlanActionReport{ActionIndex: int(report.GetActionIndex()), Status: report.GetStatus(), ExitCode: report.ExitCode}
 		decoded.FailureReason = report.GetFailureReason()
-        decoded.RecordingError = report.GetRecordingError()
+		decoded.RecordingError = report.GetRecordingError()
 		decoded.JobStatus = report.GetJobStatusJson()
+		if len(report.GetScriptResultJson()) > 0 {
+			var script ScriptExecutionResult
+			if json.Unmarshal(report.GetScriptResultJson(), &script) == nil {
+				decoded.Script = &script
+			}
+		}
 		if len(report.GetExternalEffectJson()) > 0 {
 			var effect program.ExternalEffect
 			if json.Unmarshal(report.GetExternalEffectJson(), &effect) == nil {

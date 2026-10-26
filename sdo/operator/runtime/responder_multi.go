@@ -95,6 +95,12 @@ func (l *ResponderLoop) mitigateSelection(ctx context.Context, request ToolReque
 			return
 		}
 		refs, err := l.menuPlanWriteRefs(plan)
+		for _, ref := range refs {
+			if ref.Kind == "*" && len(set.Options) > 1 {
+				l.refuseSelection(response, "write_set_conflict", "script write scope requires one option per application")
+				return
+			}
+		}
 		if err != nil {
 			l.refuseSelection(response, "write_set_unknown", err.Error())
 			return
@@ -275,7 +281,7 @@ func (l *ResponderLoop) pendingConflict(refs []sdk.ObjectRef, response *ToolResp
 				return true
 			}
 			for _, target := range pending.Refs {
-				if writeObjectKey(ref) == writeObjectKey(target) {
+				if ref.Kind == "*" || target.Kind == "*" || writeObjectKey(ref) == writeObjectKey(target) {
 					l.refuseSelection(response, "pending_write_conflict", fmt.Sprintf("%s conflicts with pending application %s", writeObjectKey(ref), application))
 					return true
 				}
@@ -290,6 +296,11 @@ func (l *ResponderLoop) pendingConflict(refs []sdk.ObjectRef, response *ToolResp
 func (l *ResponderLoop) menuPlanWriteRefs(plan program.Plan) ([]sdk.ObjectRef, error) {
 	var refs []sdk.ObjectRef
 	for _, action := range plan.Actions {
+		if _, ok := concreteExternalAction(action).(program.RunScript); ok {
+			// An opaque write set conflicts with every pending/batched write.
+			refs = append(refs, sdk.ObjectRef{Kind: "*", Namespace: l.Request.Namespace, Name: "*"})
+			continue
+		}
 		if _, ok := generalAction(action).(program.WaitFor); ok {
 			continue
 		}

@@ -180,7 +180,10 @@ def _parser() -> argparse.ArgumentParser:
             "with version 1 and options [{option_id, bindings, parameters, finding_fingerprints}]. "
             "Each option has its own receipt; one call uses one round. Pending rollout returns its application ID "
             "and read-only tools remain available. A single option also accepts --NAME VALUE parameters. "
-            "Uses the ordinary executor and controller RBAC; up to five rounds per incident. " + WORKING_PROGRAM_HELP
+            "Uses the ordinary executor and controller RBAC; up to five rounds per incident. "
+            "A script fix is a first-class learnable mitigation with relation-derived Values, within incident budgets."
+            + " "
+            + WORKING_PROGRAM_HELP
         ),
         epilog=(
             "EnsureDatabaseUser repairs a MongoDB user in one call. Its password and target.auth "

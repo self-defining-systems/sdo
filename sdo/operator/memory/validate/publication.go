@@ -14,6 +14,7 @@ import (
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/layout"
+	programvalidation "sdo.dev/operator/memory/validate/program"
 	"sdo.dev/operator/sdk"
 )
 
@@ -173,6 +174,9 @@ func lifecycleChecks(ctx context.Context, r Request, paths []string, structurall
 				}
 				ds = append(ds, learning...)
 				if structurallyValid {
+					if err := programvalidation.ValidateScriptOrigins(r.Root, outcome, paths); err != nil {
+						ds = append(ds, Diagnostic{Rule: RuleProgramMitigationRepair, Message: err.Error()})
+					}
 					executable, err := reflectionExecutableDiagnostics(r.Root, outcome, paths)
 					if err != nil {
 						return nil, err

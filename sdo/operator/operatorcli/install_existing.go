@@ -50,6 +50,7 @@ func ParseInstallExistingLaunch(args []string) (InstallExistingConfig, error) {
 	application := flags.String("application", "", "application identity")
 	controllerImage := flags.String("controller-image", "", "Go controller image")
 	responderImage := flags.String("responder-image", "", "agent worker image")
+	scriptImage := flags.String("script-image", "", "fixed slim script-tools image; defaults to the controller image")
 	validatorImage := flags.String("validator-image", "", "isolated validator image")
 	repositoryPVC := flags.String("repository-pvc", "", "shared accepted repository PVC")
 	credentialsSecret := flags.String("credentials-secret", "", "agent credentials Secret")
@@ -124,7 +125,7 @@ func ParseInstallExistingLaunch(args []string) (InstallExistingConfig, error) {
 	}
 	config := install.Config{
 		Namespace: *namespace, ControlNamespace: *controlNamespace, Application: *application,
-		ControllerImage: *controllerImage, ResponderImage: *responderImage, ValidatorImage: *validatorImage,
+		ScriptImage: *scriptImage, ControllerImage: *controllerImage, ResponderImage: *responderImage, ValidatorImage: *validatorImage,
 		RepositoryPVC: *repositoryPVC, CredentialsSecret: *credentialsSecret, Model: *model,
 		RepairPolicy: *repairPolicy, ReflectionSession: *reflectionSession, ReflectionGuidance: *reflectionGuidance, ForceReflection: *forceReflection, AgentProvider: *provider,
 		MaxResponseLoops: *maxResponseLoops,

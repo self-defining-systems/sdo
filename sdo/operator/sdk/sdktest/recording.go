@@ -150,6 +150,7 @@ func (v *ReplayReadView) DiffAgainstBaseline(ref sdk.ObjectRef) (program.Diff, e
 }
 
 type CorpusCase struct {
+	ScriptOrigins          map[string]string `json:"script_origins,omitempty"`
 	Open                   Snapshot
 	Fixed                  Snapshot
 	Healthy                Snapshot
@@ -185,14 +186,15 @@ func LoadCorpusCase(dir string) (CorpusCase, error) {
 	}{
 		{"open.json", &c.Open}, {"fixed.json", &c.Fixed}, {"healthy.json", &c.Healthy}, {"recordings.json", &c.Recordings},
 		{"labels.json", &struct {
-			RootCauseProgramIDs    *[]string         `json:"root_cause_program_ids"`
-			NoMatchProgramIDs      *[]string         `json:"no_match_program_ids"`
-			Bindings               *program.Bindings `json:"bindings"`
-			PeerBindings           *program.Bindings `json:"peer_bindings"`
-			Provenance             *CorpusProvenance `json:"provenance"`
-			SyntheticNoMatchReason *string           `json:"synthetic_no_match_reason"`
-			HealthImpact           **bool            `json:"health_impact"`
-		}{&c.RootCauseProgramIDs, &c.NoMatchProgramIDs, &c.Bindings, &c.PeerBindings, &c.Provenance, &c.SyntheticNoMatchReason, &c.HealthImpact}},
+			RootCauseProgramIDs    *[]string          `json:"root_cause_program_ids"`
+			NoMatchProgramIDs      *[]string          `json:"no_match_program_ids"`
+			Bindings               *program.Bindings  `json:"bindings"`
+			PeerBindings           *program.Bindings  `json:"peer_bindings"`
+			Provenance             *CorpusProvenance  `json:"provenance"`
+			SyntheticNoMatchReason *string            `json:"synthetic_no_match_reason"`
+			HealthImpact           **bool             `json:"health_impact"`
+			ScriptOrigins          *map[string]string `json:"script_origins,omitempty"`
+		}{&c.RootCauseProgramIDs, &c.NoMatchProgramIDs, &c.Bindings, &c.PeerBindings, &c.Provenance, &c.SyntheticNoMatchReason, &c.HealthImpact, &c.ScriptOrigins}},
 	} {
 		path := filepath.Join(dir, item.name)
 		raw, err := os.ReadFile(path)
@@ -284,7 +286,7 @@ func RecordPrimitiveCalls(view program.ReadView, calls []PrimitiveCall) ([]Primi
 		}
 
 		switch call.Method {
-		case "ExternalEffect", "JobCompletion", "KubernetesEffect":
+		case "ExternalEffect", "JobCompletion", "KubernetesEffect", "RunScriptReceipt", "RepairReceipt":
 			// Effects are historical write evidence, never repeat mutations.
 			continue
 		case "Observe":

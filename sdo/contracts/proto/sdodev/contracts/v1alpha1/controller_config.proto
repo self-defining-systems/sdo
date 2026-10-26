@@ -141,4 +141,6 @@ message ControllerConfig {
   google.protobuf.Duration responder_report_grace = 77;
   // Pre-start one idle responder; false forces the ordinary cold Job path.
   optional bool responder_standby = 78;
+  // Fixed tool image for application-local RunScript Jobs.
+  string script_image = 79;
 }

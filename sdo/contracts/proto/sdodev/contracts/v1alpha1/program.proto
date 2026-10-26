@@ -87,6 +87,7 @@ message Action {
     EnsureExec ensure_exec = 16;
     EnsureHttp ensure_http = 17;
     RunJob run_job = 18;
+    RunScript run_script = 19;
   }
 }
 
@@ -166,6 +167,7 @@ message ActionReport {
   bytes kubernetes_effect_json = 6;
   string recording_error = 7;
   bytes job_status_json = 8;
+  bytes script_result_json = 10;
   string failure_reason = 9 [(buf.validate.field).string = {in: ["", "authorization_denied", "execution_failed", "delete_not_confirmed", "outcome_unknown"]}];
 }
 
@@ -238,6 +240,8 @@ message PlanApplication {
   repeated PlanObjectEffect object_effects = 19;
   repeated ActionReport action_reports = 20;
   RolloutPending rollout_pending = 21;
+  // Fresh bound diagnosis and targeted health for opaque scripts, never exact effects.
+  string final_verification_basis = 22 [(buf.validate.field).string = {in: ["", "observed-transition"]}];
 }
 
 message ProgramToolCall {
@@ -419,4 +423,12 @@ message EnsureHttp {
 message RunJob {
   ApplyObject object = 1 [(buf.validate.field).required = true];
   WaitFor completion = 2 [(buf.validate.field).required = true];
+}
+
+// Opaque bash effects use recorded open/fixed diagnosis, never invented effects.
+message RunScript {
+  string script = 1 [(buf.validate.field).string = {min_len: 1, max_bytes: 65536}];
+  map<string, PlanValue> env = 2;
+  google.protobuf.Duration timeout = 3;
+  string reason = 4;
 }

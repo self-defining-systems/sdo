@@ -251,6 +251,19 @@ func BindPlanValues(plan Plan, in ValueInputs) Plan {
 	bind := func(v Value) Value { v.bound = &in; return v }
 	for i, action := range plan.Actions {
 		switch a := action.(type) {
+		case RunScript:
+			env := make(map[string]Value, len(a.Env))
+			for key, value := range a.Env {
+				env[key] = bind(value)
+			}
+			a.Env = env
+			out.Actions[i] = a
+		case *RunScript:
+			if a != nil {
+				out.Actions[i] = BindPlanValues(Plan{Actions: []Action{*a}}, in).Actions[0]
+			} else {
+				out.Actions[i] = action
+			}
 		case SetField:
 			a.Value = bind(a.Value)
 			out.Actions[i] = a
