@@ -225,6 +225,14 @@ message NamespaceOnboarding {
   string accepted_commit = 2;
   google.protobuf.Timestamp established_at = 3;
   repeated ObjectRef objects = 4;
+  // Install observations carry no health authority. The digest binds UID,
+  // configuration and ownership, excluding API bookkeeping and status.
+  repeated InstallEnvironmentObject environment_objects = 5;
+}
+
+message InstallEnvironmentObject {
+  ObjectRef ref = 1;
+  string digest = 2;
 }
 
 message IncidentRequest {

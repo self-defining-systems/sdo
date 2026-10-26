@@ -12,6 +12,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/onboarding"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
@@ -85,7 +86,7 @@ func TestUnexplainedRemovalChecksExecutionState(t *testing.T) {
 			case "accepted-source":
 				c.sourceInventory = NewSourceInventory("app", "accepted", []*unstructured.Unstructured{object})
 			case "acknowledged":
-				c.sourceInventory.acknowledged = map[sdk.ObjectRef]bool{ref: true}
+				c.sourceInventory.environment = map[sdk.ObjectRef]string{ref: onboarding.EnvironmentDigest(object)}
 			case "owned":
 				store.objects[0].SetLabels(map[string]string{"app.kubernetes.io/managed-by": "sdo"})
 			case "control":

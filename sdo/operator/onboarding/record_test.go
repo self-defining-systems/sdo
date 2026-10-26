@@ -94,3 +94,40 @@ func TestPendingOnboardingNeverRecapturesAndClaimSurvivesRestart(t *testing.T) {
 		t.Fatalf("claim alone granted authority: %v %v", record, err)
 	}
 }
+
+func TestInstallEnvironmentDigestBindsIncarnationAndConfiguration(t *testing.T) {
+	object := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "rbac.authorization.k8s.io/v1", "kind": "ClusterRole",
+		"metadata": map[string]any{"name": "environment-role", "uid": "installed"},
+		"rules":    []any{map[string]any{"apiGroups": []any{""}, "resources": []any{"configmaps"}, "verbs": []any{"get"}}},
+	}}
+	before := EnvironmentDigest(object)
+	bookkeeping := object.DeepCopy()
+	bookkeeping.SetResourceVersion("999")
+	bookkeeping.SetGeneration(9)
+	bookkeeping.SetCreationTimestamp(metav1.NewTime(time.Unix(999, 0)))
+	bookkeeping.Object["status"] = map[string]any{"observed": "new status"}
+	if EnvironmentDigest(bookkeeping) != before {
+		t.Fatal("API bookkeeping changed the install observation")
+	}
+	for _, change := range []string{"uid", "rules", "owner", "labels", "annotations"} {
+		t.Run(change, func(t *testing.T) {
+			changed := object.DeepCopy()
+			switch change {
+			case "uid":
+				changed.SetUID("replacement")
+			case "rules":
+				changed.Object["rules"] = []any{map[string]any{"verbs": []any{"delete"}}}
+			case "owner":
+				changed.SetOwnerReferences([]metav1.OwnerReference{{APIVersion: "v1", Kind: "ServiceAccount", Name: "owner", UID: "owner"}})
+			case "labels":
+				changed.SetLabels(map[string]string{"owner": "changed"})
+			case "annotations":
+				changed.SetAnnotations(map[string]string{"configuration": "changed"})
+			}
+			if EnvironmentDigest(changed) == before {
+				t.Fatal("changed environment inherited install observation")
+			}
+		})
+	}
+}

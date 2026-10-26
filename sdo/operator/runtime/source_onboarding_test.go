@@ -9,6 +9,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/onboarding"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/sdktest"
 )
@@ -31,6 +32,12 @@ func cleanInstallerInventory() ([]*unstructured.Unstructured, []*unstructured.Un
 	rbac[0].SetName("configmap-cleanup-controller")
 	rbac[1].SetName("configmap-cleanup-controller")
 	rbac[1].Object["roleRef"].(map[string]any)["name"] = "configmap-cleanup-controller"
+	// Give the captured environment root the UID named by its children.
+	for _, object := range live {
+		if object.GetKind() == "Job" && object.GetName() == "wrk2-job" {
+			object.SetUID("owner")
+		}
+	}
 	return declared, append(live, rbac...)
 }
 func TestSourceInventoryOnboardingCleanThenLaterControllerBlocksAndRestartPreserves(t *testing.T) {
@@ -42,7 +49,13 @@ func TestSourceInventoryOnboardingCleanThenLaterControllerBlocksAndRestartPreser
 	}
 	record := &contracts.NamespaceOnboarding{Namespace: "app", AcceptedCommit: strings.Repeat("a", 40), EstablishedAt: timestamppb.New(time.Unix(100, 0))}
 	for _, finding := range before {
-		record.Objects = append(record.Objects, objectRefContract(finding.PrimaryResource))
+		ref := objectRefContract(finding.PrimaryResource)
+		record.Objects = append(record.Objects, ref)
+		for _, object := range live {
+			if inventoryRef(object) == finding.PrimaryResource {
+				record.EnvironmentObjects = append(record.EnvironmentObjects, &contracts.InstallEnvironmentObject{Ref: ref, Digest: onboarding.EnvironmentDigest(object)})
+			}
+		}
 	}
 	c, err := NewController(testControllerConfig(), []sdk.Detector{inventoryHealth()}, staticProvider{snapshot: sdktest.Snapshot{NamespaceName: "app"}}, &recordingDispatcher{requests: make(chan IncidentRequest, 1)}, time.Unix(100, 0))
 	if err != nil {
@@ -60,8 +73,9 @@ func TestSourceInventoryOnboardingCleanThenLaterControllerBlocksAndRestartPreser
 	if len(c.sourceInventoryFindings) != 0 {
 		t.Fatalf("clean namespace created response work: %+v", c.sourceInventoryFindings)
 	}
-	// The acknowledged Job may produce new children after onboarding.
-	live = append(live, inventoryChild("v1", "Pod", "wrk2-later-pod", "Job", "wrk2-job"))
+	// A generated child belongs to the exact captured parent incarnation.
+	child := inventoryChild("v1", "Pod", "wrk2-later-pod", "Job", "wrk2-job")
+	live = append(live, child)
 	additions := latentInventoryObjects()
 	live = append(live, additions[0], additions[3], additions[4])
 	c.drift.Events.(*inventoryStore).objects = live
