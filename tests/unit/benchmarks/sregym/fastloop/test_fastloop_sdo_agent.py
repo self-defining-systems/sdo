@@ -771,3 +771,55 @@ def test_recovery_past_the_reflection_deadline_leaves_the_closure_to_sdo(tmp_pat
     assert "learning failed" in (record.error or "")
     state = PersistentState.load(tmp_path / "sdo_persistent_controller.json")
     assert state.controllers["hotel-reservation"].pending is not None
+
+
+def test_a_transient_state_read_failure_does_not_skip_the_closure_fence(tmp_path: Path) -> None:
+    events: list[str] = []
+
+    class FlakyStateOps(FakeOps):
+        reads: int = 0
+
+        def runtime_state(self, control_namespace: str) -> dict[str, Any]:
+            closure = self.states[control_namespace].get("pending_closure")
+            if (
+                isinstance(closure, dict)
+                and (control_namespace, closure["request"]["incident_id"]) in self.seen_closures
+            ):
+                self.reads += 1
+                if self.reads == 1:
+                    events.append("unreadable")
+                    return {}
+                if self.reads == 2:
+                    events.append("read error")
+                    raise RuntimeError("kubectl: connection refused")
+            return super().runtime_state(control_namespace)
+
+    driver = _WebhookDriver(events)
+
+    [record] = run_incidents(_agent(tmp_path, FlakyStateOps(), []), driver, _single_row(tmp_path))
+
+    assert events == ["inject", "unreadable", "read error", "recover"]
+    assert record.recovery_trigger == "natural_closure"
+    assert record.recovery_error is None
+
+
+def test_an_unreadable_state_at_the_deadline_fails_typed_without_recovering(tmp_path: Path) -> None:
+    class UnreadableOps(FakeOps):
+        def runtime_state(self, control_namespace: str) -> dict[str, Any]:
+            closure = self.states[control_namespace].get("pending_closure")
+            if (
+                isinstance(closure, dict)
+                and (control_namespace, closure["request"]["incident_id"]) in self.seen_closures
+            ):
+                return {}
+            return super().runtime_state(control_namespace)
+
+    ops, driver = UnreadableOps(), _WebhookDriver()
+    agent = _agent(tmp_path, ops, [])
+    agent._settings = replace(agent._settings, reflection_wait_seconds=30)
+
+    [record] = run_incidents(agent, driver, _single_row(tmp_path))
+
+    assert driver.events == ["inject"], "recovery mutated the app while the closure state was unknown"
+    assert "closure state unknown" in (record.recovery_error or "")
+    assert record.recovery_trigger != "reflection_deadline"
