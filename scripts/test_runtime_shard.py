@@ -82,6 +82,9 @@ RUNNER_GROUPS = {
     "recovery": ("recovery",),
 }
 COST_FILE = Path(__file__).with_name("runtime_test_costs.json")
+# Use 70% of the unchanged five-minute controller job: reserve the remaining
+# 90 seconds for checkout, toolchain/cache setup and linking on hosted runners.
+SHARD_BUDGET_SECONDS = 5 * 60 * 70 // 100
 # The first complete sweep exposed active-wall skew within these allocations.
 # Shared-memory modes and trust-property worlds now overlap their independent
 # waits; move two measured peers into that recovered capacity, without changing
@@ -130,7 +133,7 @@ def run_tests(command: list[str], *, started: float) -> None:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     from test_operator_shard import run_tests as run_go_tests
 
-    run_go_tests(command, started=started, cwd=RUNTIME, budget_seconds=180)
+    run_go_tests(command, started=started, cwd=RUNTIME, budget_seconds=SHARD_BUDGET_SECONDS)
 
 
 def main() -> None:
