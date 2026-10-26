@@ -140,6 +140,14 @@ class EvalNote(BaseModel):
     error: str = ""
 
 
+class RecoveryOracleSample(BaseModel):
+    """One recovery-oracle sample taken while the app settled after harness recovery."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    seconds: float = Field(ge=0)
+    success: bool
+
+
 class PostClosureWait(BaseModel):
     """Recovery waited for SDO to close incidents that opened after the graded incident closed."""
 
@@ -185,6 +193,8 @@ class IncidentRecord(_PersistedModel):
     recovery_finished_at: AwareDatetime | None = None
     oracle: OracleVerdict | None = None
     recovery_oracle: OracleVerdict | None = None
+    #: Every recovery-oracle sample until the app settled; only the last decides residue.
+    recovery_oracle_samples: list[RecoveryOracleSample] = Field(default_factory=list)
     diagnosis_grade: DiagnosisGrade | None = None
     diagnosis: str = ""
     mitigation: str = ""

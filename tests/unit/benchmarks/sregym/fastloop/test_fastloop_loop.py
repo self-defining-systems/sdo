@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import csv
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
 
@@ -155,6 +155,7 @@ def test_grade_precedes_learning_and_cleanup_without_feedback(
         Driver(clock, oracle_success=oracle_success, recover_fails=recover_fails),
         _config(tmp_path, 1),
         monotonic=clock.monotonic,
+        sleep=clock.advance,
         grader=Grader(),
         diagnosis_grading="inline",
     )
@@ -638,10 +639,57 @@ def test_recovery_residue_fails_the_record_and_stops_before_next_injection(tmp_p
             return OracleVerdict(kind="sregym-mitigation-oracle", success=not self.recovered)
 
     driver = ResidualDriver(clock)
-    records = run_incidents(FakeAgent(clock), driver, _config(tmp_path, 2), monotonic=clock.monotonic)
+    records = run_incidents(
+        FakeAgent(clock), driver, _config(tmp_path, 2), monotonic=clock.monotonic, sleep=clock.advance
+    )
 
     assert len(records) == 1
     assert "recovery residue" in str(records[0].error)
+
+
+@dataclass
+class _SettlingDriver(FakeDriver):
+    """Recovery succeeded, but traffic only passes after ``settle_samples`` failing recovery samples."""
+
+    settle_samples: int = 0
+    recovery_samples: int = 0
+
+    def recovery_oracle(self) -> OracleVerdict:
+        self.recovery_samples += 1
+        self.clock.advance(5)
+        settled = self.recovered and self.recovery_samples > self.settle_samples
+        return OracleVerdict(kind="health-check", success=settled)
+
+
+def test_transient_traffic_loss_after_recovery_settles_and_is_not_residue(tmp_path: Path) -> None:
+    clock = FakeClock()
+    driver = _SettlingDriver(clock, settle_samples=3)
+
+    [record] = run_incidents(
+        FakeAgent(clock), driver, _config(tmp_path, 1), monotonic=clock.monotonic, sleep=clock.advance
+    )
+
+    assert record.recovery_error is None
+    assert record.recovery_oracle is not None and record.recovery_oracle.success
+    assert [sample.success for sample in record.recovery_oracle_samples] == [False, False, False, True]
+    assert record.recovery_oracle_samples[-1].seconds == pytest.approx(4 * 5 + 3 * 2)
+
+
+def test_residue_that_outlasts_the_settle_budget_still_fails_recovery(tmp_path: Path) -> None:
+    clock = FakeClock()
+    driver = _SettlingDriver(clock, settle_samples=10_000)
+
+    [record] = run_incidents(
+        FakeAgent(clock),
+        driver,
+        replace(_config(tmp_path, 2), recovery_settle_seconds=60),
+        monotonic=clock.monotonic,
+        sleep=clock.advance,
+    )
+
+    assert "recovery residue" in (record.recovery_error or "")
+    assert not any(sample.success for sample in record.recovery_oracle_samples)
+    assert record.recovery_oracle_samples[-1].seconds >= 60
 
 
 def test_failed_injection_stops_before_another_fault_can_be_applied(tmp_path: Path) -> None:

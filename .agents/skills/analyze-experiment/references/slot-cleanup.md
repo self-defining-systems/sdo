@@ -81,6 +81,11 @@ stops after the row), or `no_incident`. A running reflection is waited for, neve
 before this field could skip recovery after a failed closure and leave injected objects (for
 example a ValidatingWebhookConfiguration) in the next row.
 
+After recovery, the recovery oracle is sampled until it passes or a 300 s settle budget ends (the
+admission stabilization rule); `recovery_oracle_samples` lists each sample's seconds and success.
+"recovery residue" means the last sample still failed at the budget. Earlier rows took one sample,
+so traffic that lagged a just-recovered app could be reported as residue.
+
 ## Credential fault followed by immutable seed restoration
 
 **Signature:** official fault recovery passes, but restoring the old seed makes database clients fail.
