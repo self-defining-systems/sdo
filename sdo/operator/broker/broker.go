@@ -425,9 +425,6 @@ func (b *Broker) AcceptedCommit(ctx context.Context, incidentID string, phase Ph
 // RequiresControllerRollout includes lifecycle changes to learned programs while
 // keeping ordinary playbook prose edits inert.
 func (b *Broker) RequiresControllerRollout(ctx context.Context, before, after string, paths []string) (bool, error) {
-	if b.codePath == "shell" {
-		return false, nil
-	}
 	if layout.RequiresControllerRollout(paths) {
 		return true, nil
 	}

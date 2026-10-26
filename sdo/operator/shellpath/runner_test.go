@@ -179,3 +179,16 @@ func TestDiscoveryRejectsEscapingPaths(t *testing.T) {
 		t.Fatal("symlink accepted")
 	}
 }
+
+func TestShellStabilityStartsAfterLastScriptCompleted(t *testing.T) {
+	start := time.Unix(100, 0)
+	state := NewState([]Script{{Path: "slow.sh"}, {Path: "fast.sh"}})
+	state.Record(Result{Script: "slow.sh", ExitCode: 0, At: start.Add(30 * time.Second)})
+	state.Record(Result{Script: "fast.sh", ExitCode: 0, At: start.Add(10 * time.Second)})
+	if state.Healthy(start.Add(25 * time.Second)) {
+		t.Fatal("health predates completion of the last script")
+	}
+	if !state.Healthy(start.Add(45 * time.Second)) {
+		t.Fatal("completed clear batch did not establish stability")
+	}
+}

@@ -802,7 +802,9 @@ Shell memory uses the existing five artifact classes and the existing broker.
 Only health scripts may be authored by the judge; responders draft incident
 scripts and playbook notes/scripts in proposal checkouts and publish in reflection.
 Shell catalogs read exact accepted Git blobs and carry file paths and text to the
-agent. `outcome.code_path` records explicit selection/overrides. The runner report
+agent. Their typed `code_path` tag permits those shell paths at task encoding;
+the Go path retains its logical-memory boundary. Hygiene rejects a catalog over
+the existing 512 KiB worker snapshot budget before publication. `outcome.code_path` records explicit selection/overrides. The runner report
 carries `accepted_commit`, `activated_at`, `at`, per-script results and health;
 the native ledger records `closure_phase_timestamps.shell_runner_activated` after
 accepted reflection activation, without a Go controller rollout receipt.

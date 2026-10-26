@@ -147,6 +147,11 @@ func (s *State) Record(r Result) {
 		s.clearSince = time.Time{}
 	} else if s.clearSince.IsZero() {
 		s.clearSince = r.At
+		for _, result := range s.results {
+			if result.At.After(s.clearSince) {
+				s.clearSince = result.At
+			}
+		}
 	}
 }
 func (s *State) Results() []Result {

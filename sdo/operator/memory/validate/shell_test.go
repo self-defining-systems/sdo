@@ -73,3 +73,26 @@ func TestShellCheckRejectsSymlinkAndUnknownMode(t *testing.T) {
 		t.Fatal("unknown memory mode accepted")
 	}
 }
+
+func TestShellHygieneRejectsUndispatchableSnapshot(t *testing.T) {
+	root := t.TempDir()
+	write(t, root, ".sdo/goal.md", "available")
+	write(t, root, ".sdo/arch.md", "application")
+	write(t, root, ".sdo/diagnostics/detectors/health/ready/check.sh", "exit 0")
+	if err := os.Chmod(filepath.Join(root, ".sdo/diagnostics/detectors/health/ready/check.sh"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"a", "b", "c"} {
+		write(t, root, ".sdo/playbooks/notes/"+name+".md", strings.Repeat("x", 200000))
+	}
+	diagnostics, err := ShellHygiene(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range diagnostics {
+		if d.Rule == RuleSnapshotBudget {
+			return
+		}
+	}
+	t.Fatalf("undispatchable memory accepted: %v", diagnostics)
+}

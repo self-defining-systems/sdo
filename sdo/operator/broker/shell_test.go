@@ -34,8 +34,8 @@ func TestShellBrokerAcceptsReflectionWithoutCompileAndPreservesOwnership(t *test
 	if receipt.Commit == "" || git(t, root, "rev-parse", "HEAD") != receipt.Commit {
 		t.Fatal("reflection was not accepted")
 	}
-	if required, err := b.RequiresControllerRollout(ctx, proposal.BaseCommit, receipt.Commit, []string{".sdo/diagnostics/detectors/incidents/dns/check.sh"}); err != nil || required {
-		t.Fatalf("shell update requires rebuild: %v %v", required, err)
+	if required, err := b.RequiresControllerRollout(ctx, proposal.BaseCommit, receipt.Commit, []string{".sdo/diagnostics/detectors/incidents/dns/check.sh"}); err != nil || !required {
+		t.Fatalf("memory validation must not choose the activation mechanism: %v %v", required, err)
 	}
 	protected, err := b.CreateProposalForPhase(ctx, "denied", ReflectionPhase)
 	if err != nil {

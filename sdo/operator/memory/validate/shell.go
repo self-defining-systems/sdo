@@ -2,11 +2,13 @@ package validate
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
+	"sdo.dev/operator/memory"
 	"strings"
 	"unicode/utf8"
 
@@ -113,6 +115,12 @@ func ShellHygiene(ctx context.Context, root string) ([]Diagnostic, error) {
 		}
 		return nil
 	})
+	if err == nil && len(diagnostics) == 0 {
+		_, snapshotErr := memory.CandidateShellSnapshot(root, "candidate")
+		if errors.Is(snapshotErr, memory.ErrSnapshotBudget) {
+			add(RuleSnapshotBudget, layout.Dir, snapshotErr.Error())
+		}
+	}
 	sortDiagnostics(diagnostics)
 	return diagnostics, err
 }
@@ -148,10 +156,12 @@ func CheckShell(ctx context.Context, request Request) ([]Diagnostic, error) {
 				continue
 			}
 		}
-		if layout.IsMemoryPath(p) && (request.Actor==Responder || request.Actor==HealthJudge) && !strings.HasSuffix(p,".md") && !strings.HasSuffix(p,".sh") {
- if _,err:=os.Stat(filepath.Join(request.Root,p));err==nil {diagnostics=append(diagnostics,Diagnostic{Rule:"shell.format",Path:p,Message:"shell authors write markdown notes and shell scripts"})}
- }
- if !allowed(request.Actor, request.Phase, kind, id) {
+		if layout.IsMemoryPath(p) && (request.Actor == Responder || request.Actor == HealthJudge) && !strings.HasSuffix(p, ".md") && !strings.HasSuffix(p, ".sh") {
+			if _, err := os.Stat(filepath.Join(request.Root, p)); err == nil {
+				diagnostics = append(diagnostics, Diagnostic{Rule: "shell.format", Path: p, Message: "shell authors write markdown notes and shell scripts"})
+			}
+		}
+		if !allowed(request.Actor, request.Phase, kind, id) {
 			diagnostics = append(diagnostics, Diagnostic{Rule: RuleOwnershipDenied, Path: p, Message: fmt.Sprintf("actor %s may not change %s in %s", request.Actor, kind, request.Phase)})
 		}
 	}
@@ -161,7 +171,9 @@ func CheckShell(ctx context.Context, request Request) ([]Diagnostic, error) {
 
 // ShellHygieneValidator is the compiler-free mechanism bound by shell launchers.
 func ShellHygieneValidator(ctx context.Context, root string, _ []string) error {
- diagnostics,err:=ShellHygiene(ctx,root)
- if err!=nil {return err}
- return Err(diagnostics)
+	diagnostics, err := ShellHygiene(ctx, root)
+	if err != nil {
+		return err
+	}
+	return Err(diagnostics)
 }

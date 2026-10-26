@@ -57,6 +57,12 @@ func CandidateShellSnapshot(root, commit string) (*contracts.OperationalMemorySn
 		if strings.HasPrefix(rel, layout.OutcomesDir+"/") || strings.HasPrefix(rel, layout.CorpusDir+"/") || strings.HasPrefix(rel, layout.RenderedDir+"/") {
 			return nil
 		}
+		relevant := rel == layout.GoalFile || rel == layout.ArchitectureFile ||
+			strings.HasPrefix(rel, layout.DetectorsDir+"/") && strings.HasSuffix(rel, ".sh") ||
+			strings.HasPrefix(rel, layout.PlaybooksDir+"/") && (strings.HasSuffix(rel, ".md") || strings.HasSuffix(rel, ".sh"))
+		if !relevant {
+			return nil
+		}
 		info, err := entry.Info()
 		if err != nil {
 			return err
