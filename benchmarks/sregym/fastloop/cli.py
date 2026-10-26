@@ -224,6 +224,8 @@ def up_preflight(args: argparse.Namespace) -> None:
 
     if args.kind_worker_nodes < 0:
         raise SystemExit("--kind-worker-nodes must not be negative")
+    if getattr(args, "parallel_root", None) is not None and (args.dev_mount is None or args.app == "toy"):
+        raise ValueError("--parallel-root requires an SREGym --dev-mount lane")
     for executable in ("docker", "kind", "kubectl", "go"):
         if shutil.which(executable) is None:
             raise ValueError(f"fastloop preflight: missing {executable}")
@@ -257,6 +259,13 @@ def _up(args: argparse.Namespace) -> int:
     run_dir = args.run_dir.resolve()
     run_dir.mkdir(parents=True, exist_ok=True)
     prior = FastloopEnvironment.load(run_dir) if (run_dir / "fastloop.json").is_file() else None
+    if prior is not None and prior.shared_accepted_id:
+        raise ValueError("shared accepted memory cannot be reseeded by up")
+    parallel_root = args.parallel_root.resolve() if getattr(args, "parallel_root", None) is not None else None
+    if parallel_root is not None:
+        parallel_root.mkdir(parents=True, exist_ok=True)
+    if prior is not None and prior.parallel_root != parallel_root:
+        raise ValueError("--parallel-root must match the root mounted when this lane was created")
     if prior is not None and prior.dev_mount != args.dev_mount:
         raise ValueError(
             "up --dev-mount must match the worktree used to create this environment; "
@@ -274,7 +283,10 @@ def _up(args: argparse.Namespace) -> int:
     if args.dev_mount is not None:
         from benchmarks.sregym.fastloop.dev import prepare_dev_mount
 
-        prepare_dev_mount(args.dev_mount, args.sregym_dir.resolve(), run_dir)
+        if parallel_root is None:
+            prepare_dev_mount(args.dev_mount, args.sregym_dir.resolve(), run_dir)
+        else:
+            prepare_dev_mount(args.dev_mount, args.sregym_dir.resolve(), run_dir, parallel_root)
     seed_commit = prior.seed_commit if prior is not None else None
     if seed_commit is None and (workspace / ".git").exists():
         seed_commit = subprocess.run(
@@ -338,6 +350,7 @@ def _up(args: argparse.Namespace) -> int:
         dev_mount=args.dev_mount,
         images=images,
         worker_env=worker_env,
+        parallel_root=parallel_root,
     )
     worker = SregymWorker(
         worker_argv(placeholder.sregym_dir, private_tmp=private_tmp),
@@ -391,6 +404,10 @@ def _up(args: argparse.Namespace) -> int:
         environment.image_delivery, environment.image_delivery_reason = delivery["path"], delivery["reason"]
         environment.image_delivery_seconds, environment.image_delivery_images = delivery["seconds"], delivery["images"]
     environment.save()
+    if environment.parallel_root is not None:
+        from benchmarks.sregym.fastloop.shared_memory import provision_parallel_volume
+
+        provision_parallel_volume(environment)
     print(
         f"fastloop environment ready: cluster={environment.cluster} namespace={environment.namespace} "
         f"deployed={deployed.get('deployed')} ({float(deployed.get('seconds', 0.0)):.0f}s) -> {environment.path}"
@@ -499,6 +516,8 @@ def _sdo_agent(
         agent_registrations=registrations,
         permissive_responder=getattr(args, "permissive_responder", False),
         responder_namespaces=getattr(args, "responder_namespaces", ()),
+        shared_accepted_id=environment.shared_accepted_id,
+        reuse_existing=bool(environment.shared_accepted_id),
     )
     settings = SdoAgentSettings(
         repository=environment.workspace,
@@ -544,6 +563,11 @@ def _sdo_agent(
 
     def start_native(context: object) -> bool:
         nonlocal fresh_memory_start
+        if environment.shared_accepted_id:
+            from benchmarks.sregym.adapter import inspect_existing, native_install_config
+
+            inspect_existing(native_install_config(runtime_config))
+            return True
         if fresh_memory_start:
             control = control_namespace_for(environment.namespace)
             stop_runtime(control, kubeconfig=str(environment.kubeconfig))
@@ -621,9 +645,15 @@ def _run(args: argparse.Namespace) -> int:
     if environment.dev_mount is not None:
         from benchmarks.sregym.fastloop.dev import prepare_dev_mount
 
-        prepare_dev_mount(
-            environment.dev_mount, None if environment.app == "toy" else environment.sregym_dir, environment.run_dir
+        mount_args = (
+            environment.dev_mount,
+            None if environment.app == "toy" else environment.sregym_dir,
+            environment.run_dir,
         )
+        if environment.parallel_root is None:
+            prepare_dev_mount(*mount_args)
+        else:
+            prepare_dev_mount(*mount_args, environment.parallel_root)
         os.environ["SDO_DEV_MOUNT"] = "1"
         os.environ["SDO_OPERATOR_BIN"] = str(environment.dev_mount / ".fastloop/sdo-operator")
     os.environ["KUBECONFIG"] = str(environment.kubeconfig)
@@ -694,6 +724,8 @@ def _run(args: argparse.Namespace) -> int:
         responder_namespaces=args.responder_namespaces,
         slot_offset=args.slot_offset,
         cleanup_passes=args.cleanup_passes,
+        lane_id=environment.parallel_lane or None,
+        accepted_repository=environment.workspace if environment.shared_accepted_id else None,
     )
     write_loop_manifest(config)
     with _worker(environment) as worker:
@@ -1003,6 +1035,8 @@ def _reset(args: argparse.Namespace) -> int:
     from benchmarks.sregym.fastloop.reset import KubectlResetCluster, RestoreChecks, reset_environment
 
     environment = FastloopEnvironment.load(args.run_dir.resolve())
+    if environment.shared_accepted_id:
+        raise ValueError("shared accepted memory cannot use lane reset")
     if environment.seed_commit is None:
         raise ValueError("reset requires a seed commit captured by fastloop up")
     retarget = getattr(args, "retarget_dev_mount", False)
@@ -1051,6 +1085,27 @@ def _restore_seed(environment: FastloopEnvironment) -> None:
     subprocess.run(["git", "-C", str(environment.workspace), "clean", "-fd"], check=True)
 
 
+def _parallel(args: argparse.Namespace) -> int:
+    from benchmarks.sregym.fastloop.parallel import ParallelPlan, run_parallel
+
+    plan = ParallelPlan.model_validate_json(args.plan.read_text())
+    if args.prepare:
+        from benchmarks.sregym.fastloop.shared_memory import prepare_shared_lanes
+
+        prepare_shared_lanes(plan, args.output.resolve().with_suffix(".attachment.json"))
+    run_parallel(plan, args.output.resolve())
+    return 0
+
+
+def _parallel_attach(args: argparse.Namespace) -> int:
+    from benchmarks.sregym.fastloop.parallel import ParallelPlan
+    from benchmarks.sregym.fastloop.shared_memory import attach_shared_memory
+
+    plan = ParallelPlan.model_validate_json(args.plan.read_text())
+    attach_shared_memory(plan, args.report.resolve())
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="fastloop", description=__doc__, formatter_class=argparse.RawTextHelpFormatter
@@ -1093,6 +1148,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="mount a worktree (default: current worktree) and host-build the Go operator",
     )
     up.add_argument("--no-dev-mount", dest="dev_mount", action="store_const", const=None)
+    up.add_argument(
+        "--parallel-root", type=Path, help="NVMe directory bind-mounted on every node for later shared attachment"
+    )
     up.add_argument("--redeploy", action="store_true", help="redeploy even if the application is healthy")
     up.add_argument(
         "--no-sandbox",
@@ -1213,6 +1271,22 @@ def build_parser() -> argparse.ArgumentParser:
         help="composite problems: seconds SDO waits for another incident while faults remain",
     )
     run.set_defaults(handler=_run)
+
+    parallel = commands.add_parser("parallel", help="run problem/lane pairs concurrently with one accepted memory")
+    parallel.add_argument("--plan", type=Path, required=True, help="ParallelPlan JSON with lanes and encounters")
+    parallel.add_argument(
+        "--prepare", action="store_true", help="prepare native baselines without faults, then attach shared memory"
+    )
+    parallel.add_argument(
+        "--output", type=Path, required=True, help="new external directory for aggregate rows and logs"
+    )
+    parallel.set_defaults(handler=_parallel)
+    attach = commands.add_parser(
+        "parallel-attach", help="bind accepted memory into idle prepared lanes; retains private PVC roots"
+    )
+    attach.add_argument("--plan", type=Path, required=True)
+    attach.add_argument("--report", type=Path, required=True, help="external durable attachment/recovery report")
+    attach.set_defaults(handler=_parallel_attach)
 
     replay = commands.add_parser("replay", help="re-execute one checkpointed stage without a cluster")
     replay.add_argument("--run-dir", type=Path, required=True, help="one fastloop results run directory")

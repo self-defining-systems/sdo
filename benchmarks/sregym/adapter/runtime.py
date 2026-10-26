@@ -68,6 +68,7 @@ class RuntimeConfig:
     max_deployment_attempts: int = 3
     agent_registrations: Path | None = None
     deployed_manifest_paths: tuple[str, ...] = ()
+    shared_accepted_id: str = ""
 
     def __post_init__(self) -> None:
         if type(self.permissive_responder) is not bool:
@@ -154,6 +155,7 @@ def native_install_config(config: RuntimeConfig) -> NativeInstallConfig:
         responder_env=responder_env,
         deployed_manifest_paths=config.deployed_manifest_paths,
         seed_broker_root=Path(os.environ["SDO_SEED_BROKER_ROOT"]) if os.getenv("SDO_SEED_BROKER_ROOT") else None,
+        shared_accepted_id=config.shared_accepted_id,
     )
 
 

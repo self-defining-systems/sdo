@@ -11,10 +11,12 @@ from pathlib import Path
 import yaml
 
 
-def write_kind_config(source: Path, destination: Path, worktree: Path) -> Path:
+def write_kind_config(source: Path, destination: Path, worktree: Path, parallel_root: Path | None = None) -> Path:
     config = yaml.safe_load(source.read_text(encoding="utf-8"))
     for node in config["nodes"]:
         node.setdefault("extraMounts", []).append({"hostPath": str(worktree), "containerPath": "/opt/sdo-dev"})
+        if parallel_root is not None:
+            node["extraMounts"].append({"hostPath": str(parallel_root.resolve()), "containerPath": "/opt/sdo-parallel"})
     config.setdefault("containerdConfigPatches", []).extend(
         [
             '[plugins."io.containerd.grpc.v1.cri".registry]\n  config_path = "/etc/containerd/certs.d"',
@@ -25,7 +27,9 @@ def write_kind_config(source: Path, destination: Path, worktree: Path) -> Path:
     return destination
 
 
-def prepare_dev_mount(worktree: Path, sregym_dir: Path | None, run_dir: Path) -> Path:
+def prepare_dev_mount(
+    worktree: Path, sregym_dir: Path | None, run_dir: Path, parallel_root: Path | None = None
+) -> Path:
     if not (worktree / "sdo" / "operator" / "go.mod").is_file():
         raise ValueError(f"--dev-mount is not an SDO worktree: {worktree}")
     output = worktree / ".fastloop" / "sdo-operator"
@@ -69,7 +73,7 @@ def prepare_dev_mount(worktree: Path, sregym_dir: Path | None, run_dir: Path) ->
     base = (
         sregym_dir / "kind" / ("kind-config-arm.yaml" if "arm" in arch or "aarch" in arch else "kind-config-x86.yaml")
     )
-    return write_kind_config(base, run_dir / "kind-dev.yaml", worktree)
+    return write_kind_config(base, run_dir / "kind-dev.yaml", worktree, parallel_root)
 
 
 def _copy_dev_snapshot(worktree: Path, node: str, target: str) -> None:
