@@ -457,3 +457,15 @@ A supported abort can remove the application namespace. Reset confirms that
 absence and recreates the namespace named by the captured application baseline
 before reconciling its manifests; authorization/read failures never become
 absence. System and SDO control namespaces are refused.
+
+Passing no-fault setup reports are reusable on an unchanged lane. A subsequent
+`eval-dry-run` checks the content-bound receipt in `setup-proof/` before reset
+or deployment. An exact match skips setup and reruns live admission; a miss
+records the changed fingerprint components and performs the full rehearsal.
+The live SDO `run` command also records its decision in `results/<run>/setup-proof.json`
+and skips its deploy request only on the same exact match. Traffic, incident,
+intake and resource/disk admission still apply at injection time. Changed code,
+images, accepted memory, manifests, object UIDs/configuration or proof tools
+invalidate the receipt, including changes made by reset. Unknown identity or
+uncommitted source cannot authorize reuse. This setup receipt does not replace
+the separate whole-learning-loop proof.
