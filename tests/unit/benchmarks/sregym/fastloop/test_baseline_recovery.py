@@ -552,53 +552,6 @@ def test_source_claim_retains_installed_default_only_when_source_omits_class(
     assert result[0].objects[0]["spec"]["storageClassName"] == expected
 
 
-@pytest.mark.parametrize("namespace", ["hotel", "social"])
-@pytest.mark.parametrize("present", [False, True])
-def test_restore_removes_undeclared_service_even_from_sealed_capture(
-    tmp_path: Path, namespace: str, present: bool
-) -> None:
-    current = obj("Service", "current", namespace=namespace, spec={"ports": []})
-    stale = obj(
-        "Service",
-        "obsolete-tracing-alias",
-        namespace=namespace,
-        spec={"type": "ExternalName", "externalName": "collector.observe.svc.cluster.local"},
-    )
-    current["apiVersion"] = stale["apiVersion"] = "v1"
-    root = tmp_path / ".sdo/rendered"
-    root.mkdir(parents=True)
-    payload = json.dumps(current).encode()
-    (root / "current.json").write_bytes(payload)
-    (root / "lock.json").write_text(
-        json.dumps(
-            {
-                "objects": [
-                    {
-                        "ref": {"api_version": "v1", "kind": "Service", "namespace": namespace, "name": "current"},
-                        "file": "current.json",
-                        "sha256": hashlib.sha256(payload).hexdigest(),
-                    }
-                ]
-            }
-        )
-    )
-    state = tmp_path / "state.json"
-    state.write_text("{}")
-    # Captures deliberately discard managedFields; a later restore must not
-    # resurrect an undeclared object even after it has already been deleted.
-    save_application_baseline(state, (ApplicationBaseline(namespace, [current, stale]),), installed=True)
-    baseline = load_application_baseline(state, namespace)
-    selected = accepted_restore_baselines(tmp_path, baseline)[0]
-    cluster = FakeCluster()
-    cluster.add(current)
-    if present:
-        cluster.add(stale)
-    for _ in range(2):
-        reconcile_application(cluster, selected, namespace)
-        assert (namespace, "Service", "obsolete-tracing-alias") not in cluster.objects
-        assert (namespace, "Service", "current") in cluster.objects
-
-
 def test_deployed_faulty_application_service_remains_captured_and_reported() -> None:
     service = obj("Service", "app", spec={"selector": {"app": "healthy"}, "ports": [{"port": 80}]})
     service["metadata"]["managedFields"] = [{"manager": "sdo-deployer", "operation": "Apply"}]

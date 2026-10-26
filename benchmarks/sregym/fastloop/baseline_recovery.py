@@ -386,6 +386,8 @@ def accepted_restore_baselines(
             timeout=5,
         ).stdout.strip()
         installed_source = not changes
+    if installed_source and all(baseline.installed_digest for baseline in baselines):
+        return baselines
     root = workspace / ".sdo/rendered"
     lock_path = root / "lock.json"
     if not lock_path.is_file():
@@ -453,31 +455,18 @@ def accepted_restore_baselines(
                 value = deepcopy(value)
                 value.setdefault("spec", {})["storageClassName"] = installed_spec["storageClassName"]
         selected[key] = value
-    restored = []
-    for baseline in baselines:
-        # Accepted source is authoritative for standalone Service inventory.
-        # A runtime capture can contain aliases installed by shared telemetry;
-        # restoring them must not create unexplained application drift. Keep
-        # installed specs/defaults for declared objects, including fault targets.
-        values = [
-            deepcopy(
-                value
-                if baseline.installed_digest and installed_source
-                else selected.get((value["kind"], baseline.namespace, value["metadata"]["name"]), value)
-            )
-            for value in baseline.objects
-            if value["kind"] != "Service"
-            or (value.get("apiVersion"), "Service", baseline.namespace, value["metadata"]["name"]) in seen
-            or value.get("metadata", {}).get("ownerReferences")
-        ]
-        restored.append(
-            ApplicationBaseline(
-                baseline.namespace,
-                values,
-                _baseline_digest(values) if baseline.installed_digest and installed_source else None,
-            )
+    return tuple(
+        baseline
+        if baseline.installed_digest and installed_source
+        else ApplicationBaseline(
+            baseline.namespace,
+            [
+                deepcopy(selected.get((value["kind"], baseline.namespace, value["metadata"]["name"]), value))
+                for value in baseline.objects
+            ],
         )
-    return tuple(restored)
+        for baseline in baselines
+    )
 
 
 def stalled_replica_sets(objects: list[dict[str, Any]]) -> list[str]:
