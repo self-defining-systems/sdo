@@ -335,14 +335,19 @@ func Resources(c Config, resources ...*metav1.APIResourceList) (Plan, error) {
 	return plan, nil
 }
 
+// programApplyRules grant the verbs of the program plan vocabulary
+// (program.ActionPermissions); TestControllerRoleHoldsEveryProgramActionPermission
+// ties them together. Kinds a program names outside that table are open-ended
+// and authorized by the API server alone.
 func programApplyRules() []rbacv1.PolicyRule {
 	return []rbacv1.PolicyRule{
 		rule("", []string{"configmaps", "services", "pods"}, "get", "patch", "create", "delete"),
 		rule("autoscaling", []string{"horizontalpodautoscalers"}, "get", "patch", "create", "delete"),
 		rule("policy", []string{"poddisruptionbudgets"}, "get", "patch", "create", "delete"),
 		rule("apps", []string{"deployments", "statefulsets"}, "get", "patch", "create", "delete"),
-		rule("apps", []string{"daemonsets"}, "get", "patch"),
-		rule("apps", []string{"replicasets", "controllerrevisions"}, "get", "list"),
+		rule("apps", []string{"daemonsets"}, "get", "patch", "delete"),
+		rule("apps", []string{"replicasets"}, "get", "list", "patch", "delete"),
+		rule("apps", []string{"controllerrevisions"}, "get", "list"),
 		rule("networking.k8s.io", []string{"networkpolicies"}, "get", "patch", "create", "delete"),
 	}
 }
