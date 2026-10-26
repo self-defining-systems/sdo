@@ -1226,6 +1226,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 				return nil
 			}
 			controller.handleAcknowledgmentCompletion(completion)
+			controller.driveQueuedReflections(runCtx, controller.clock())
 			persistControllerState()
 			if err := executeStartupEffects(runCtx, controller, applied.Paused); err != nil {
 				if runCtx.Err() != nil {
@@ -1233,7 +1234,17 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 				}
 				return err
 			}
-			if *exitAfterClosure && completion.err == nil {
+			if *exitAfterClosure && completion.err == nil && !controller.reflectionWorkOpen() {
+				return nil
+			}
+		case completion := <-controller.reflectionResults:
+			if stopTimerForRuntimeEvent(runCtx, timer) {
+				return nil
+			}
+			controller.handleReflectionCompletion(completion)
+			controller.driveQueuedReflections(runCtx, controller.clock())
+			persistControllerState()
+			if *exitAfterClosure && completion.err == nil && !controller.reflectionWorkOpen() {
 				return nil
 			}
 			if *restartAfterClosure && options.NativeBroker == nil && completion.err == nil {
