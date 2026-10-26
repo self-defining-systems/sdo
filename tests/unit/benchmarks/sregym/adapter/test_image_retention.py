@@ -41,6 +41,7 @@ class NodeRuntime:
             output = "Avail\n" + str(1000 + 50 * len(self.removed)) + "\n"
         elif command[:2] == ["crictl", "rmi"]:
             self.removed.append(command[-1])
+            self.images = [row for row in self.images if row["id"] != command[-1]]
         elif command[:2] == ["sh", "-c"]:
             self.state = json.loads(kwargs["input"])
         else:
@@ -87,6 +88,7 @@ def test_repeat_and_partial_delivery_preserve_previous_and_other_roles(monkeypat
         "sdo-controller": ["sha256:current", "sha256:previous"],
         "sdo-responder": ["sha256:r2", "sha256:r1"],
     }
+    assert runtime.removed == ["sha256:old"]
 
 
 def test_first_delivery_preserves_unknown_prior_generation(monkeypatch):
