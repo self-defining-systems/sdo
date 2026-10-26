@@ -101,3 +101,32 @@ func TestObservedRepairOwnersComeFromTheOpenCapture(t *testing.T) {
 		t.Fatalf("pre-image chain replaced: %v", owners)
 	}
 }
+
+// REV14A F1: the rollout creates ReplicaSet search-7f9c after the incident
+// opened, so no open phase observed it and it gets no owner chain. Its write
+// can still be part of any cause's repair, so an unchained Pod/ReplicaSet/Job
+// write moves every cause's clearance boundary: a clearance between the
+// Deployment patch and that write must not verify. On LEARN2B's base it does.
+func TestUnchainedControlledWriteBoundsEveryCause(t *testing.T) {
+	base := time.Date(2026, 10, 26, 15, 18, 0, 0, time.UTC)
+	capture := writeRolloutCapture(t, base.Add(-time.Minute), []corev1.Pod{pod("search-old-1", "search-old")}, nil)
+	for _, test := range []struct {
+		name     string
+		cleared  time.Time
+		verified bool
+	}{
+		{name: "clears after the post-open write", cleared: base.Add(2 * time.Minute), verified: true},
+		{name: "clears between the writes", cleared: base.Add(30 * time.Second)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			outcome := observedRolloutOutcome(base, test.cleared, "search-7f9c")
+			ObservedRepairOwners(outcome, capture)
+			if owners := outcome.GetRepairActions()[1].GetOwners(); len(owners) != 0 {
+				t.Fatalf("post-open ReplicaSet got an owner chain: %v", owners)
+			}
+			if got := len(VerifiedReflectionCauses(outcome)) == 1; got != test.verified {
+				t.Fatalf("verified = %v, want %v: an unchained controlled write must bound every cause's clearance", got, test.verified)
+			}
+		})
+	}
+}
