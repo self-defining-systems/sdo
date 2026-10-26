@@ -188,8 +188,10 @@ func TestHermeticControllerClosureReachesNativeOutcomeBroker(t *testing.T) {
 	if _, err := client.AppsV1().Deployments("app").UpdateStatus(ctx, d, metav1.UpdateOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	if err := controller.Step(ctx, start.Add(2*time.Second), nil); err != nil {
-		t.Fatal(err)
+	for _, at := range []time.Duration{2 * time.Second, 2*time.Second + controller.config.ClosureStabilityWindow} {
+		if err := controller.Step(ctx, start.Add(at), nil); err != nil {
+			t.Fatal(err)
+		}
 	}
 	var closure IncidentClosure
 	select {

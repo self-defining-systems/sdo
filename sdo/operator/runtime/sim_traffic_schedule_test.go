@@ -80,7 +80,7 @@ func runSimRestartOntoFailingTraffic(t *testing.T, seed uint64) {
 	events := []simScheduleEvent{{restart, simRestartFailingTraffic}, {restart + 5, simRestartFailingTraffic}}
 	pendingSeen := 0
 	before := 0
-	for tick := 0; tick < recover+15; tick++ {
+	for tick := 0; tick < recover+15+int(w.controller.config.ClosureStabilityWindow/time.Second); tick++ {
 		w.clock.now = w.clock.now.Add(time.Second)
 		if tick == fail {
 			for i := 0; i < 2; i++ {

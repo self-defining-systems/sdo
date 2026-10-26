@@ -232,7 +232,15 @@ func TestHermeticUnexplainedCleanupRemediation(t *testing.T) {
 			controller.history = []DetectorEvaluation{{DetectorID: "health", Status: DetectorEvaluationClear, EvaluatedAt: time.Now()}}
 			var closed *IncidentClosure
 			controller.OnIncidentClosed = func(closure IncidentClosure) { closed = &closure }
-			controller.maybeCloseIncident(ctx, time.Now(), nil)
+			now := time.Now()
+			controller.maybeCloseIncident(ctx, now, nil)
+			if closed == nil && !denied {
+				// A verified success commits once health holds for the window;
+				// the terminal denial above must not wait for it.
+				later := now.Add(controller.config.ClosureStabilityWindow)
+				controller.history = append(controller.history, DetectorEvaluation{DetectorID: "health", Status: DetectorEvaluationClear, EvaluatedAt: later})
+				controller.maybeCloseIncident(ctx, later, nil)
+			}
 			if closed == nil {
 				t.Fatal("closure waited despite terminal independently checked inventory")
 			}

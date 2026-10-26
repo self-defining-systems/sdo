@@ -69,7 +69,7 @@ func TestIncidentClosureCarriesTheStateDiffAsOfVerificationTime(t *testing.T) {
 	}
 
 	awaitDispatchCompletionQueued(t, controller)
-	for sample := 2; sample < 6; sample++ {
+	for sample := 2; sample < 21; sample++ {
 		if err := controller.Step(context.Background(), time.Unix(int64(sample), 0), nil); err != nil {
 			t.Fatalf("clearing step %d: %v", sample, err)
 		}
@@ -126,7 +126,7 @@ func TestIncidentClosureNeverInventsAStateChangeItNeverSaw(t *testing.T) {
 	executePendingEffect(t, controller)
 	awaitRequest(t, dispatcher.requests)
 	awaitDispatchCompletionQueued(t, controller)
-	for sample := 2; sample < 4; sample++ {
+	for sample := 2; sample < 19; sample++ {
 		if err := controller.Step(context.Background(), time.Unix(int64(sample), 0), nil); err != nil {
 			t.Fatalf("clearing step %d: %v", sample, err)
 		}

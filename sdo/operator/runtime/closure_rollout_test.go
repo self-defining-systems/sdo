@@ -200,6 +200,10 @@ func TestClosureRolloutWaitsBeforePublishingSuccess(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.step(t, 2)
+	if len(f.closed) != 0 {
+		t.Fatal("success published before the closure stability window held")
+	}
+	f.step(t, 2+int(f.c.config.ClosureStabilityWindow/time.Second))
 	if len(f.closed) != 1 || closureOutcome(t, f.closed[0]) != "success" {
 		t.Fatalf("settled rollout did not release closure: %+v", f.closed)
 	}

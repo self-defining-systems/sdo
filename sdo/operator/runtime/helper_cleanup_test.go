@@ -86,7 +86,7 @@ func TestControllerCleansHelpersWhenTheResponderCompletesAndRecordsThemInTheClos
 	if cleaner.calls != 0 {
 		t.Fatalf("helpers must not be cleaned while the responder may still use them")
 	}
-	for step := 2; step < 5 && len(closed) == 0; step++ {
+	for step := 2; step < 25 && len(closed) == 0; step++ {
 		if err := controller.Step(context.Background(), start.Add(time.Duration(step)*interval), nil); err != nil {
 			t.Fatalf("step %d: %v", step, err)
 		}
