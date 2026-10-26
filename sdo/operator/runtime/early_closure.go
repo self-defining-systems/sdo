@@ -136,6 +136,23 @@ func earlyResultSnapshot(l *ResponderLoop, request IncidentRequest, at time.Time
 func (c *Controller) earlyReportPendingLocked() bool {
 	return !c.incidentOpen && c.currentIncidentRequest != nil && c.pendingClosure != nil && c.pendingClosure.VerifiedWhileResponderRunning && c.pendingClosure.Request.IncidentID == c.currentIncidentRequest.IncidentID
 }
+
+// Both active and paused scheduling must retire a finished responder promptly.
+// An unfinished worker retains the report grace; uncertain quiescence retries
+// retain their own deadline even when dispatch has already completed.
+func (c *Controller) earlyReportWakeLocked() time.Time {
+	if !c.earlyReportPendingLocked() {
+		return time.Time{}
+	}
+	if !c.earlyStopRetryAt.IsZero() {
+		return c.earlyStopRetryAt
+	}
+	if c.responderDone {
+		return c.clock()
+	}
+	return c.pendingClosure.VerifiedAt.Add(c.config.ResponderReportGrace)
+}
+
 func (c *Controller) finishEarlyReport(ctx context.Context, now time.Time) {
 	c.mu.Lock()
 	if !c.earlyReportPendingLocked() {

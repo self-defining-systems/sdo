@@ -85,16 +85,7 @@ func (c *Controller) clock() time.Time {
 // closure retries. A pause stops observation, not already-started closure work.
 func (c *Controller) PausedWake() time.Time {
 	c.mu.Lock()
-	var next time.Time
-	if c.earlyReportPendingLocked() {
-		next = c.pendingClosure.VerifiedAt.Add(c.config.ResponderReportGrace)
-		if c.responderDone {
-			next = c.clock()
-		}
-		if !c.earlyStopRetryAt.IsZero() {
-			next = c.earlyStopRetryAt
-		}
-	}
+	next := c.earlyReportWakeLocked()
 	if retry := c.pausedEffectRetryAt; !retry.IsZero() && (next.IsZero() || retry.Before(next)) {
 		next = retry
 	}

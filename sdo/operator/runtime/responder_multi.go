@@ -53,7 +53,7 @@ func (l *ResponderLoop) mitigateSelection(ctx context.Context, request ToolReque
 		response.Error = "response loop budget exhausted"
 		return
 	}
-	if l.menuEntries == nil {
+	if l.menuEntries.empty() {
 		listing := ToolResponse{}
 		l.listMenu(ctx, ToolRequest{Command: "menu"}, &listing)
 		if listing.Error != "" {
@@ -68,7 +68,7 @@ func (l *ResponderLoop) mitigateSelection(ctx context.Context, request ToolReque
 			l.refuseSelection(response, "invalid_selection", "nil option")
 			return
 		}
-		entry, ok := l.menuEntries[selected.OptionId]
+		entry, ok := l.menuEntries.lookup(selected.OptionId)
 		if !ok {
 			l.refuseSelection(response, "invalid_selection", "unknown mitigation option: "+selected.OptionId)
 			return
@@ -117,6 +117,12 @@ func (l *ResponderLoop) mitigateSelection(ctx context.Context, request ToolReque
 		if l.pendingConflict(refs, response) {
 			return
 		}
+		// Preserve reservation ownership diagnostics even when an earlier
+		// pending write has already cleared the program's live diagnosis.
+		if err := l.validateMenuPreconditions(ctx, entry, bindings); err != nil {
+			l.refuseSelection(response, "direct_plan_failed", err.Error())
+			return
+		}
 
 		entry.bindings = bindings
 		entry.plan = &plan
@@ -137,11 +143,8 @@ func (l *ResponderLoop) mitigateSelection(ctx context.Context, request ToolReque
 	}
 	combined := &contracts.MitigationReport{Version: 1, IncidentId: l.Request.IncidentID, SessionId: l.sessionID, RequestId: fmt.Sprintf("batch-%d", len(l.calls)), AttemptId: fmt.Sprintf("batch-%s-%d", l.sessionID, l.batches), AcceptanceEpoch: 1, Status: contracts.MitigationReport_STATUS_SUCCESS, RemainingBatches: uint32(max(0, l.batchLimit()-l.batches)), Rounds: []*contracts.MitigationRoundReport{{RoundIndex: 1, RoundId: fmt.Sprintf("batch-%d", l.batches)}}}
 	for _, item := range prepared {
-		original := l.menuEntries[item.selection.OptionId]
-		l.menuEntries[item.selection.OptionId] = item.entry
 		part := ToolResponse{Command: "mitigate"}
-		l.executeMenuOption(ctx, &contracts.MitigationSelection{OptionId: item.selection.OptionId, RoundLimit: 1}, nil, item.selection.FindingFingerprints, &part, false)
-		l.menuEntries[item.selection.OptionId] = original
+		l.executeMenuEntry(ctx, item.entry, &contracts.MitigationSelection{OptionId: item.selection.OptionId, RoundLimit: 1}, nil, item.selection.FindingFingerprints, &part, false)
 		if part.Report != nil {
 			response.OptionReports = append(response.OptionReports, part.Report)
 			mergeMitigationStatus(combined, part.Report)
