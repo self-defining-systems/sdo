@@ -12,8 +12,8 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
- metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 	"sdo.dev/operator/sdk/sdktest"
 )
@@ -152,11 +152,15 @@ func TestShellRunnerResourcesAreReadOnlyAndNeverGrantSecretReads(t *testing.T) {
 	if err := EnsureReadOnlyRunner(context.Background(), client, config); err != nil {
 		t.Fatal(err)
 	}
-	config.Image="tools:updated"
- if err:=EnsureReadOnlyRunner(context.Background(),client,config);err!=nil {t.Fatal(err)}
- updated,err:=client.CoreV1().Pods(config.ControlNamespace).Get(context.Background(),RunnerName,metav1.GetOptions{})
- if err!=nil || updated.Spec.Containers[0].Image!=config.Image {t.Fatalf("runner update not activated: %v %v",updated,err)}
- for _, action := range client.Actions() {
+	config.Image = "tools:updated"
+	if err := EnsureReadOnlyRunner(context.Background(), client, config); err != nil {
+		t.Fatal(err)
+	}
+	updated, err := client.CoreV1().Pods(config.ControlNamespace).Get(context.Background(), RunnerName, metav1.GetOptions{})
+	if err != nil || updated.Spec.Containers[0].Image != config.Image {
+		t.Fatalf("runner update not activated: %v %v", updated, err)
+	}
+	for _, action := range client.Actions() {
 		if action.GetResource().Resource == "secrets" {
 			t.Fatal("installer read a Secret")
 		}

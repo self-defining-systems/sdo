@@ -4,10 +4,10 @@ import (
 	"fmt"
 	"strings"
 
+	"sdo.dev/operator/broker"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/contracts/wire"
- "sdo.dev/operator/broker"
- "sdo.dev/operator/memory/validate"
+	"sdo.dev/operator/memory/validate"
 )
 
 func parseCodePathSelection(name, overrides string) (*contracts.CodePathConfig, error) {
@@ -74,6 +74,8 @@ func codePathWorkerEnvironment(config *contracts.CodePathConfig, environment map
 func stageOverride(value string) []string { return strings.Split(value, ",") }
 
 func selectMemoryValidator(config *contracts.CodePathConfig, goValidator broker.Validator) broker.Validator {
- if memoryCodePath(config)=="shell" {return validate.ShellHygieneValidator}
- return goValidator
+	if memoryCodePath(config) == "shell" {
+		return validate.ShellHygieneValidator
+	}
+	return goValidator
 }

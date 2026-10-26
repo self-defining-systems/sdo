@@ -24,7 +24,7 @@ import (
 // from the repository edge.
 type RunConfig struct {
 	ShellControllerBinary string
- PrepareShell func(context.Context) error
+	PrepareShell          func(context.Context) error
 
 	Build              Config
 	Controller         *contractsv1alpha1.ControllerConfig
@@ -80,9 +80,11 @@ func runOnce(ctx context.Context, config RunConfig) error {
 	source := config.Controller.GetCodePath().GetOverrides().GetDetectorSource()
 	if source == "shell" || (source == "" && config.Controller.GetCodePath().GetName() == "shell") {
 		if config.PrepareShell != nil {
- if err:=config.PrepareShell(ctx); err!=nil {return err}
- }
- return runShellController(ctx, config)
+			if err := config.PrepareShell(ctx); err != nil {
+				return err
+			}
+		}
+		return runShellController(ctx, config)
 	}
 	if config.ResolveDiagnostics == nil {
 		return errors.New("accepted diagnostics resolver is required")

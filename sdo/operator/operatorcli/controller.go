@@ -146,11 +146,13 @@ func ParseControllerLaunch(args []string) (builder.RunConfig, bool, error) {
 	return builder.RunConfig{
 		Build: builder.Config{ApplicationRoot: *app, OperatorRoot: *operatorRoot}, Controller: launch,
 		PrepareShell: func(ctx context.Context) error {
- repository,err:=openMigrationBroker(launch)
- if err!=nil {return err}
- return refreshControllerHealth(ctx,launch,repository)
- },
- ResolveDiagnostics: func(ctx context.Context, root string) (builder.DiagnosticsProjection, error) {
+			repository, err := openMigrationBroker(launch)
+			if err != nil {
+				return err
+			}
+			return refreshControllerHealth(ctx, launch, repository)
+		},
+		ResolveDiagnostics: func(ctx context.Context, root string) (builder.DiagnosticsProjection, error) {
 			repository, err := openMigrationBroker(launch)
 			if err != nil {
 				return builder.DiagnosticsProjection{}, err

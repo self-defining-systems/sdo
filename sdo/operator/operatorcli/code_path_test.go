@@ -28,10 +28,17 @@ func TestShellHealthRefreshRequiresShellDetector(t *testing.T) {
 	}
 }
 func TestResponseStageFlagUsesOnlyCodePathOverride(t *testing.T) {
-	var cfg *contracts.CodePathConfig
-	addResponseStageOverride(&cfg, stageOverride("agent"))
+	args := append(schemaControllerArgs(".."), "--response-stages", "agent")
+	launch, _, err := ParseControllerLaunch(args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := launch.Controller.GetCodePath()
 	if cfg.GetName() != "go" || len(cfg.GetOverrides().GetResponseStages()) != 1 || cfg.GetOverrides().GetResponseStages()[0] != "agent" {
 		t.Fatal(cfg)
+	}
+	if launch.Controller.ProtoReflect().Descriptor().Fields().ByName("response_stages") != nil {
+		t.Fatal("duplicate stage configuration returned")
 	}
 }
 

@@ -189,19 +189,32 @@ func EnsureReadOnlyRunner(ctx context.Context, client kubernetes.Interface, conf
 			} else if getErr != nil {
 				err = getErr
 			} else if existing.Annotations["sdo.dev/runner-config"] != want.Annotations["sdo.dev/runner-config"] {
-				if existing.Labels["app.kubernetes.io/managed-by"]!="sdo" {return fmt.Errorf("shell runner Pod is not installer-owned")}
- bounded,cancel:=context.WithTimeout(ctx,time.Minute)
- defer cancel()
- policy:=metav1.DeletePropagationForeground
- if err=client.CoreV1().Pods(want.Namespace).Delete(bounded,want.Name,metav1.DeleteOptions{PropagationPolicy:&policy});err!=nil {return err}
- ticker:=time.NewTicker(200*time.Millisecond)
- defer ticker.Stop()
- for {
- _,getErr=client.CoreV1().Pods(want.Namespace).Get(bounded,want.Name,metav1.GetOptions{})
- if apierrors.IsNotFound(getErr) {_,err=client.CoreV1().Pods(want.Namespace).Create(bounded,want,metav1.CreateOptions{});break}
- if getErr!=nil {return getErr}
- select {case <-bounded.Done():return fmt.Errorf("replace shell runner: %w",bounded.Err()); case <-ticker.C:}
- }
+				if existing.Labels["app.kubernetes.io/managed-by"] != "sdo" {
+					return fmt.Errorf("shell runner Pod is not installer-owned")
+				}
+				bounded, cancel := context.WithTimeout(ctx, time.Minute)
+				defer cancel()
+				policy := metav1.DeletePropagationForeground
+				if err = client.CoreV1().Pods(want.Namespace).Delete(bounded, want.Name, metav1.DeleteOptions{PropagationPolicy: &policy}); err != nil {
+					return err
+				}
+				ticker := time.NewTicker(200 * time.Millisecond)
+				defer ticker.Stop()
+				for {
+					_, getErr = client.CoreV1().Pods(want.Namespace).Get(bounded, want.Name, metav1.GetOptions{})
+					if apierrors.IsNotFound(getErr) {
+						_, err = client.CoreV1().Pods(want.Namespace).Create(bounded, want, metav1.CreateOptions{})
+						break
+					}
+					if getErr != nil {
+						return getErr
+					}
+					select {
+					case <-bounded.Done():
+						return fmt.Errorf("replace shell runner: %w", bounded.Err())
+					case <-ticker.C:
+					}
+				}
 			}
 		case *corev1.Service:
 			_, err = client.CoreV1().Services(want.Namespace).Create(ctx, want, metav1.CreateOptions{})

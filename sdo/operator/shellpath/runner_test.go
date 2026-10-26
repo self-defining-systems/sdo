@@ -4,8 +4,10 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -190,5 +192,38 @@ func TestShellStabilityStartsAfterLastScriptCompleted(t *testing.T) {
 	}
 	if !state.Healthy(start.Add(45 * time.Second)) {
 		t.Fatal("completed clear batch did not establish stability")
+	}
+}
+
+func TestShellBashExecutorRetiresBackgroundChildren(t *testing.T) {
+	root := t.TempDir()
+	pidFile := filepath.Join(root, "child.pid")
+	script := "sleep 30 </dev/null >/dev/null 2>&1 &\necho $! > \"$SDO_CHILD_PID\"\n"
+	if err := os.WriteFile(filepath.Join(root, "check.sh"), []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	result := (BashExecutor{Env: append(os.Environ(), "SDO_CHILD_PID="+pidFile)}).Execute(context.Background(), root, Script{Path: "check.sh"})
+	data, err := os.ReadFile(pidFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = syscall.Kill(pid, syscall.SIGKILL) }()
+	if result.Error != "" || result.ExitCode != 0 {
+		t.Fatal(result)
+	}
+	deadline := time.Now().Add(time.Second)
+	for {
+		state, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/stat")
+		if os.IsNotExist(err) || err == nil && strings.Contains(string(state), ") Z ") {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("background detector process survived its script invocation")
+		}
+		time.Sleep(time.Millisecond)
 	}
 }

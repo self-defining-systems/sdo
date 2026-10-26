@@ -57,6 +57,11 @@ func (e BashExecutor) Execute(ctx context.Context, root string, script Script) R
 	cmd.Stdout = tailWriter{capture, false}
 	cmd.Stderr = tailWriter{capture, true}
 	err := cmd.Run()
+	// A successful shell can leave background processes behind. Retire the whole
+	// invocation group on every exit, including success, so sweeps cannot leak work.
+	if cmd.Process != nil {
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	}
 	r.Duration = now().Sub(start)
 	r.At = now().UTC()
 	r.Stdout, r.Stderr, r.Truncated = capture.result()
