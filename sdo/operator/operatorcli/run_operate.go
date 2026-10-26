@@ -10,6 +10,7 @@ import (
 	"k8s.io/client-go/rest"
 	"sdo.dev/operator/artifacts"
 	"sdo.dev/operator/broker"
+	"sdo.dev/operator/builder"
 	"sdo.dev/operator/deployment"
 	"sdo.dev/operator/install"
 	"sdo.dev/operator/lifecycle"
@@ -43,6 +44,10 @@ func RunOperate(ctx context.Context, config OperateConfig) (lifecycle.Result, er
 	if err != nil || proposalSubPath == "." || proposalSubPath == ".." || filepath.IsAbs(proposalSubPath) || len(proposalSubPath) >= 3 && proposalSubPath[:3] == "../" {
 		return lifecycle.Result{}, errors.New("broker proposals must be inside the shared repository mount")
 	}
+	schemaIdentity, err := builder.SchemaIdentity(config.OperatorRoot)
+	if err != nil {
+		return lifecycle.Result{}, fmt.Errorf("cannot bind operate schema identity: %w", err)
+	}
 	registry, err := lifecycleRegistry(config, "")
 	if err != nil {
 		return lifecycle.Result{}, fmt.Errorf("load lifecycle agents: %w", err)
@@ -64,7 +69,7 @@ func RunOperate(ctx context.Context, config OperateConfig) (lifecycle.Result, er
 		ToolchainImage: config.Install.ControllerImage,
 		Client:         client, Namespace: control, Image: config.Install.ValidatorImage,
 		RepositoryPVC: config.Install.RepositoryPVC, RepositoryMountPath: config.RepositoryMount,
-		SchemaIdentity: sdkSchemaIdentity, HealthyBaseline: config.Install.HealthyBaseline,
+		SchemaIdentity: schemaIdentity, HealthyBaseline: config.Install.HealthyBaseline,
 	}
 	ceiling, policyErr := observation.CeilingFromEnvironment()
 	if policyErr != nil {
