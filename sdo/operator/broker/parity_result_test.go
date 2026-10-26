@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sdo.dev/operator/internal/testutil"
 	"testing"
 
 	"google.golang.org/protobuf/encoding/protojson"
@@ -36,7 +37,7 @@ func TestCLIAndBrokerAgreeOnReflectionResultContracts(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			root := copyParityTree(t)
-			runGit(t, root, "init", "-q")
+			testutil.InitGit(t, root)
 			runGit(t, root, "config", "user.name", "Fixture")
 			runGit(t, root, "config", "user.email", "fixture@example.test")
 			runGit(t, root, "add", "-A")

@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"sdo.dev/operator/internal/testutil"
 	"strings"
 	"syscall"
 	"testing"
@@ -287,7 +288,7 @@ func TestSimRV6HealthRefreshCrashSchedules(t *testing.T) {
 			random := rand.New(rand.NewSource(seed))
 			cut := cuts[(seed-1)%int64(len(cuts))]
 			root := filepath.Join(t.TempDir(), "accepted")
-			nativeGit(t, filepath.Dir(root), "clone", "-q", "--shared", baselineRoot, root)
+			testutil.CloneGit(t, baselineRoot, root, "--shared")
 			nativeGit(t, root, "config", "user.name", "Test")
 			nativeGit(t, root, "config", "user.email", "test@example.com")
 			proposals := filepath.Join(t.TempDir(), "proposals")

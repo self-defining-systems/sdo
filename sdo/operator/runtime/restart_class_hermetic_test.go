@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sdo.dev/operator/internal/testutil"
 	"strconv"
 	"strings"
 	"syscall"
@@ -428,7 +429,7 @@ func TestRestartClassHermetic(t *testing.T) {
 				directory = fixture
 			}
 			root := filepath.Join(directory, "accepted")
-			nativeGit(t, filepath.Dir(root), "clone", "-q", baseline, root)
+			testutil.CloneGit(t, baseline, root)
 			nativeGit(t, root, "config", "user.name", "Test")
 			nativeGit(t, root, "config", "user.email", "test@example.com")
 			nativeGit(t, root, "config", "gc.auto", "0")

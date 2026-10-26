@@ -33,6 +33,13 @@ echo "==> validator schema identity"
         -count=1 -timeout=20s
 )
 
+# Fixture Git must not leave detached writers behind TempDir cleanup.
+echo "==> Go git fixture lifetime policy"
+(
+    cd "$PROJECT_ROOT/sdo/operator"
+    go test ./internal/testutil -run '^TestGit(CreationPolicyNegativeControls|FixtureCreationUsesHelper)$' -count=1 -timeout=20s
+)
+
 echo "==> responder command reference"
 uv run python -m sdo.agents.responder.command_reference --check
 

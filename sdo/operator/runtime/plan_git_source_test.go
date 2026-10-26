@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sdo.dev/operator/internal/testutil"
 	"strings"
 	"testing"
 
@@ -28,7 +29,8 @@ func (i fixedSourceImages) BaselineTree(sdk.ObjectRef) string { return i.tree }
 
 func TestRenderedSourceRestoresBuiltImageWithoutFalseDrift(t *testing.T) {
 	repo := t.TempDir()
-	for _, args := range [][]string{{"init"}, {"config", "user.name", "Test"}, {"config", "user.email", "test@example.com"}} {
+	testutil.InitGit(t, repo)
+	for _, args := range [][]string{{"config", "user.name", "Test"}, {"config", "user.email", "test@example.com"}} {
 		if output, err := exec.Command("git", append([]string{"-C", repo}, args...)...).CombinedOutput(); err != nil {
 			t.Fatal(string(output), err)
 		}
@@ -94,8 +96,8 @@ func TestRenderedSourceRestoresBuiltImageWithoutFalseDrift(t *testing.T) {
 
 func TestGitPlanSourceReadsManifestAtAcceptedCommit(t *testing.T) {
 	repo := t.TempDir()
-	// Keep Git housekeeping synchronous so TempDir cleanup cannot race a detached child.
-	for _, args := range [][]string{{"init"}, {"config", "gc.autoDetach", "false"}, {"config", "maintenance.autoDetach", "false"}, {"config", "user.name", "Test"}, {"config", "user.email", "test@example.com"}} {
+	testutil.InitGit(t, repo)
+	for _, args := range [][]string{{"config", "user.name", "Test"}, {"config", "user.email", "test@example.com"}} {
 		if output, err := exec.Command("git", append([]string{"-C", repo}, args...)...).CombinedOutput(); err != nil {
 			t.Fatalf("git %v: %s: %v", args, output, err)
 		}
@@ -127,7 +129,8 @@ func TestGitPlanSourceReadsManifestAtAcceptedCommit(t *testing.T) {
 
 func TestGitPlanSourceUsesOnlyDeployedManifestSet(t *testing.T) {
 	repo := t.TempDir()
-	for _, args := range [][]string{{"init"}, {"config", "user.name", "Test"}, {"config", "user.email", "test@example.com"}} {
+	testutil.InitGit(t, repo)
+	for _, args := range [][]string{{"config", "user.name", "Test"}, {"config", "user.email", "test@example.com"}} {
 		if output, err := exec.Command("git", append([]string{"-C", repo}, args...)...).CombinedOutput(); err != nil {
 			t.Fatalf("git %v: %s: %v", args, output, err)
 		}
@@ -193,7 +196,8 @@ func TestGitPlanSourceSelectsDeployedHotelSeed(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			seed := test.seed
 			repo := t.TempDir()
-			for _, args := range [][]string{{"init"}, {"config", "user.name", "Test"}, {"config", "user.email", "test@example.com"}} {
+			testutil.InitGit(t, repo)
+			for _, args := range [][]string{{"config", "user.name", "Test"}, {"config", "user.email", "test@example.com"}} {
 				if output, err := exec.Command("git", append([]string{"-C", repo}, args...)...).CombinedOutput(); err != nil {
 					t.Fatalf("git %v: %s: %v", args, output, err)
 				}

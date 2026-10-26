@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sdo.dev/operator/internal/testutil"
 	"strings"
 	"testing"
 
@@ -41,7 +42,7 @@ func TestCLIAndBrokerAgreeOnVerifiedCauseReplayCoverage(t *testing.T) {
 	for _, classification := range []string{"success", "failed"} {
 		t.Run(classification, func(t *testing.T) {
 			root := copyParityTree(t)
-			runGit(t, root, "init", "-q")
+			testutil.InitGit(t, root)
 			runGit(t, root, "config", "user.name", "Fixture")
 			runGit(t, root, "config", "user.email", "fixture@example.test")
 			runGit(t, root, "add", "-A")
@@ -135,7 +136,7 @@ func checkUnobservableDetectorLocator(t *testing.T, mode string) {
 		t.Fatal(err)
 	}
 	root := copyParityTree(t)
-	runGit(t, root, "init", "-q")
+	testutil.InitGit(t, root)
 	runGit(t, root, "config", "user.name", "Fixture")
 	runGit(t, root, "config", "user.email", "fixture@example.test")
 	runGit(t, root, "add", "-A")
@@ -259,7 +260,7 @@ func TestCLIAndBrokerRetainHealthyInputForProgramOnlyEdits(t *testing.T) {
 	baseline := t.TempDir()
 	put(t, baseline, "healthy.json", `{"namespace":"demo","services":[{"metadata":{"name":"healthy-only","namespace":"demo"},"spec":{"selector":{"app":"no-pods"},"ports":[{"port":80,"targetPort":8080}]}}]}`, 0644)
 	root := copyParityTree(t)
-	runGit(t, root, "init", "-q")
+	testutil.InitGit(t, root)
 	runGit(t, root, "config", "user.name", "Fixture")
 	runGit(t, root, "config", "user.email", "fixture@example.test")
 	parityProgram(t, root)
