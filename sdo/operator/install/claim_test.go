@@ -238,3 +238,65 @@ func TestSyncClaimBindsPodAndCancellationCleansBoth(t *testing.T) {
 		t.Fatalf("cancel left claim: %v", err)
 	}
 }
+
+func TestRecoveryCannotDeleteConcurrentOwnerBinding(t *testing.T) {
+	cfg := testConfig()
+	ctx := context.Background()
+	expired := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: OperateLockConfigMap, Namespace: cfg.ControlNamespace, UID: "old", ResourceVersion: "1", CreationTimestamp: metav1.NewTime(time.Now().Add(-time.Minute))}, Data: map[string]string{"operation_id": "old"}}
+	client := claimAPI(expired)
+	bound := false
+	client.PrependReactor("delete", "configmaps", func(action ktesting.Action) (bool, kruntime.Object, error) {
+		if bound {
+			return false, nil, nil
+		}
+		bound = true
+		// The original launcher binds after recovery reads the reservation but before
+		// its DELETE arrives. Kubernetes must reject that DELETE's stale version.
+		job := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: OperateJobName("old"), Namespace: cfg.ControlNamespace, UID: "live"}}
+		if err := client.Tracker().Create(batchv1.SchemeGroupVersion.WithResource("jobs"), job, cfg.ControlNamespace); err != nil {
+			t.Fatal(err)
+		}
+		changed := expired.DeepCopy()
+		changed.ResourceVersion = "2"
+		changed.Data["owner_uid"] = "live"
+		if err := client.Tracker().Update(corev1.SchemeGroupVersion.WithResource("configmaps"), changed, cfg.ControlNamespace); err != nil {
+			t.Fatal(err)
+		}
+		return false, nil, nil
+	})
+	if _, err := (Installer{Client: client}).acquireOperateLock(ctx, cfg, "next", metav1.OwnerReference{Kind: "Job", Name: OperateJobName("next")}); err == nil {
+		t.Fatal("recovery stole a concurrently bound live owner's claim")
+	}
+	got, err := client.CoreV1().ConfigMaps(cfg.ControlNamespace).Get(ctx, OperateLockConfigMap, metav1.GetOptions{})
+	if err != nil || got.Data["owner_uid"] != "live" {
+		t.Fatalf("bound claim lost: %v %v", got, err)
+	}
+}
+
+func TestStopRetiresUIDBoundClaimsWithOwners(t *testing.T) {
+	for _, kind := range []string{"Job", "Pod"} {
+		t.Run(kind, func(t *testing.T) {
+			cfg := testConfig()
+			ctx := context.Background()
+			owner := "sync-new"
+			name := RepositorySyncPodName
+			if kind == "Job" {
+				owner = "operate-new"
+				name = OperateJobName(owner)
+			}
+			cm := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: OperateLockConfigMap, Namespace: cfg.ControlNamespace, UID: "claim", ResourceVersion: "1", CreationTimestamp: metav1.Now()}, Data: map[string]string{"operation_id": owner, "owner_kind": kind, "owner_name": name, "owner_uid": "owner"}}
+			client := claimAPI(cm)
+			if kind == "Pod" {
+				_, _ = client.CoreV1().Pods(cfg.ControlNamespace).Create(ctx, &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: name}}, metav1.CreateOptions{})
+			} else {
+				_, _ = client.BatchV1().Jobs(cfg.ControlNamespace).Create(ctx, &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: name}, Spec: batchv1.JobSpec{Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{ServiceAccountName: "sdo-operate"}}}}, metav1.CreateOptions{})
+			}
+			if _, err := Stop(ctx, client, cfg.ControlNamespace); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := client.CoreV1().ConfigMaps(cfg.ControlNamespace).Get(ctx, OperateLockConfigMap, metav1.GetOptions{}); !apierrors.IsNotFound(err) {
+				t.Fatalf("claim survived owner retirement: %v", err)
+			}
+		})
+	}
+}
