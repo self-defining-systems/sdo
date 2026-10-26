@@ -107,9 +107,8 @@ func uniqueRepairID(base string, used map[string]bool) string {
 // plan handle or rollback authority. Controller receipts take precedence over
 // an agent echoing the same action ID.
 func (l *ResponderLoop) ApplicationRepairReceipts(existing []RepairActionReceipt) []RepairActionReceipt {
-	l.mu.Lock()
-	completed := l.applicationRepairsLocked()
-	l.mu.Unlock()
+	var completed []continuationRepair
+	l.locked(func() { completed = l.applicationRepairsLocked() })
 	result := make([]RepairActionReceipt, 0, len(completed)+len(existing))
 	seen := map[string]bool{}
 	for _, repair := range completed {

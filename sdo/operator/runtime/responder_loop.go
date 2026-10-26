@@ -243,9 +243,8 @@ func (l *ResponderLoop) continuationAttempts() int {
 }
 
 func (l *ResponderLoop) observeMutations() (*apihistory.MutationObservation, error) {
-	l.mu.Lock()
-	gate := l.MutationGate
-	l.mu.Unlock()
+	var gate *apihistory.MutationGate
+	l.locked(func() { gate = l.MutationGate })
 	if gate == nil {
 		return nil, nil
 	}
@@ -549,17 +548,20 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 			// The controller may persist continuation state while observing.
 			// A read-only closure check must not hold responder locks while
 			// waiting for that observation to finish.
-			l.mu.Unlock()
-			l.operationMu.Unlock()
-			if request.WaitSeconds < 0 || request.WaitSeconds > 86400 {
-				response = ToolResponse{Command: "verify", Error: "wait seconds must be between 0 and 86400"}
-			} else if request.WaitSeconds > 0 && l.WaitClosure != nil {
-				response = l.WaitClosure(ctx, time.Duration(request.WaitSeconds*float64(time.Second)))
-			} else {
-				response = l.VerifyClosure(ctx)
+			var closure ToolResponse
+			if err := withoutResponderLocks(l, "verify", true, func() {
+				if request.WaitSeconds < 0 || request.WaitSeconds > 86400 {
+					closure = ToolResponse{Command: "verify", Error: "wait seconds must be between 0 and 86400"}
+				} else if request.WaitSeconds > 0 && l.WaitClosure != nil {
+					closure = l.WaitClosure(ctx, time.Duration(request.WaitSeconds*float64(time.Second)))
+				} else {
+					closure = l.VerifyClosure(ctx)
+				}
+			}); err != nil {
+				response = ToolResponse{Command: "verify", Error: err.Error()}
+				break
 			}
-			l.operationMu.Lock()
-			l.mu.Lock()
+			response = closure
 			if request.PreviousFindings != nil {
 				progress := CompareFindingProgress(request.PreviousFindings, response.Findings)
 				response.Progress = &progress

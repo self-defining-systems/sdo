@@ -78,28 +78,30 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 	// Always reobserve after recovery. A recorded attempt is never replayed,
 	// including one interrupted between the write and its completed receipt.
 	if progress.Report != nil {
-		loop.operationMu.Lock()
-		loop.mu.Lock()
-		var selected []selectedPlan
-		for _, attempt := range report.Mitigations {
-			if attempt.GetResult() == "applied_cleared" && attempt.GetProgramRevision() == loop.programRevision(attempt.GetPlaybookId()) {
-				selected = append(selected, selectedPlan{programID: attempt.PlaybookId, revision: attempt.ProgramRevision, bindings: programBindingsState(attempt.Bindings)})
-			}
-		}
-		response := ToolResponse{}
-		loop.verify(ctx, selected, &response)
-		updateStageFindings(state, response)
-		for _, attempt := range report.Mitigations {
-			for _, run := range response.ProgramRuns {
-				if attempt.GetResult() == "applied_cleared" && run.ProgramID == attempt.PlaybookId && run.ProgramRevision == attempt.ProgramRevision && run.Bindings.Equal(programBindingsState(attempt.Bindings)) {
-					fresh := proto.Clone(attempt).(*contracts.StageMitigation)
-					fresh.PostApplyDiagnose = programRunContract(run)
-					clearVerifiedStageTargets(state, fresh, attempt.ClearedFindingFingerprints, response)
+		func() {
+			loop.operationMu.Lock()
+			defer loop.operationMu.Unlock()
+			loop.mu.Lock()
+			defer loop.mu.Unlock()
+			var selected []selectedPlan
+			for _, attempt := range report.Mitigations {
+				if attempt.GetResult() == "applied_cleared" && attempt.GetProgramRevision() == loop.programRevision(attempt.GetPlaybookId()) {
+					selected = append(selected, selectedPlan{programID: attempt.PlaybookId, revision: attempt.ProgramRevision, bindings: programBindingsState(attempt.Bindings)})
 				}
 			}
-		}
-		loop.mu.Unlock()
-		loop.operationMu.Unlock()
+			response := ToolResponse{}
+			loop.verify(ctx, selected, &response)
+			updateStageFindings(state, response)
+			for _, attempt := range report.Mitigations {
+				for _, run := range response.ProgramRuns {
+					if attempt.GetResult() == "applied_cleared" && run.ProgramID == attempt.PlaybookId && run.ProgramRevision == attempt.ProgramRevision && run.Bindings.Equal(programBindingsState(attempt.Bindings)) {
+						fresh := proto.Clone(attempt).(*contracts.StageMitigation)
+						fresh.PostApplyDiagnose = programRunContract(run)
+						clearVerifiedStageTargets(state, fresh, attempt.ClearedFindingFingerprints, response)
+					}
+				}
+			}
+		}()
 		if progress.Complete {
 			return report, save(true)
 		}
@@ -228,7 +230,7 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 		planResponse := ToolResponse{}
 		loop.matchedViews[matchedViewKey(match.PlaybookId, bindings)] = view
 		delete(loop.matchedPlans, matchedViewKey(match.PlaybookId, bindings))
-		if err := unlockedStageStep(loop, "plan", func() {
+		if err := withoutResponderLocks(loop, "plan", true, func() {
 			planResponse = loop.Handle(ctx, ToolRequest{Command: "plan", ProgramID: match.PlaybookId, Bindings: bindings, FindingFingerprints: match.ExplainedFindingFingerprints})
 		}); err != nil {
 			return report, err
@@ -252,7 +254,7 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 		// Apply through the ordinary tool boundary: mutation fences, recorded
 		// writes, immutable receipts and compensation have one owner.
 		var applied ToolResponse
-		if err := unlockedStageStep(loop, "apply", func() {
+		if err := withoutResponderLocks(loop, "apply", true, func() {
 			applied = loop.Handle(ctx, ToolRequest{Command: "apply", PlanIDs: []string{planResponse.PlanID}})
 		}); err != nil {
 			return report, err
@@ -309,7 +311,7 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 	// Use the responder's completion verifier for final field equivalence;
 	// application success alone does not grant reflection learning authority.
 	var applications []RecordedPlanApplication
-	if err := unlockedStageStep(loop, "credit-equivalent-repairs", func() {
+	if err := withoutResponderLocks(loop, "credit-equivalent-repairs", true, func() {
 		loop.CreditEquivalentRepairs(ctx, loop.ApplicationRepairReceipts(state.RepairActions))
 		applications = loop.PlanApplications()
 	}); err != nil {
@@ -594,31 +596,45 @@ func (stage *DeterministicResponseStage) awaitRepairedHealth(ctx context.Context
 	}
 }
 
-// DeterministicStepPanicError reports a panic inside one deterministic-stage
-// step. The step fails with this error; the controller keeps running.
-type DeterministicStepPanicError struct {
+// ResponderStepPanicError reports a panic inside one step that ran with the
+// responder loop locks released. The step fails with this error; the
+// controller keeps running.
+type ResponderStepPanicError struct {
 	Step  string
 	Value any
 	Stack string
 }
 
-func (e *DeterministicStepPanicError) Error() string {
-	return fmt.Sprintf("deterministic stage step %s panicked: %v", e.Step, e.Value)
+func (e *ResponderStepPanicError) Error() string {
+	return fmt.Sprintf("responder step %s panicked: %v", e.Step, e.Value)
 }
 
-// unlockedStageStep runs one step outside the responder loop locks and always
-// reacquires them. Without this, a panic in the step unwinds into Run's
-// deferred unlocks of already released mutexes, an unrecoverable fatal error.
-func unlockedStageStep(loop *ResponderLoop, step string, run func()) (err error) {
+// withoutResponderLocks runs one step with the responder loop mutex released,
+// and operationMu too when operation is set, and always reacquires them. It is
+// the only way to open an unlock window (TestResponderLoopLocksAreDeferredOrHelped):
+// without it, a panic in the step unwinds into the caller's deferred unlocks of
+// already released mutexes, an unrecoverable fatal error.
+func withoutResponderLocks(loop *ResponderLoop, step string, operation bool, run func()) (err error) {
 	loop.mu.Unlock()
-	loop.operationMu.Unlock()
+	if operation {
+		loop.operationMu.Unlock()
+	}
 	defer func() {
-		loop.operationMu.Lock()
+		if operation {
+			loop.operationMu.Lock()
+		}
 		loop.mu.Lock()
 		if r := recover(); r != nil {
-			err = &DeterministicStepPanicError{Step: step, Value: r, Stack: string(debug.Stack())}
+			err = &ResponderStepPanicError{Step: step, Value: r, Stack: string(debug.Stack())}
 		}
 	}()
 	run()
 	return nil
+}
+
+// locked runs fn while holding the responder loop mutex.
+func (l *ResponderLoop) locked(fn func()) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	fn()
 }
