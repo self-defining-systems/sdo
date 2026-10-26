@@ -723,7 +723,7 @@ def _run(args: argparse.Namespace) -> int:
     grader = SregymDiagnosisGrader(environment.sregym_dir, judge_model_id) if grading_mode != "off" else None
     problems = tuple(args.problem or [environment.deploy_problem]) if not stream else tuple(ids[0] for ids in stream)
     from benchmarks.sregym.fastloop.fault_tracker import describe_sregym_problems, stream_faults
-    from benchmarks.sregym.faults.description import validate_suite
+    from benchmarks.sregym.faults.description import check_composites, validate_suite
 
     # Discovery and capability checks must finish before a worker can deploy or launch an agent.
     description_started = time.monotonic()
@@ -733,6 +733,7 @@ def _run(args: argparse.Namespace) -> int:
         if environment.app != "toy"
         else {}
     )
+    check_composites(descriptions)
     capability_mode = stream_config.capability_mode if stream_config else "strict"
     capability_evidence = validate_suite(
         descriptions if args.agent == "sdo" else {},
