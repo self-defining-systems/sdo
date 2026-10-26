@@ -23,6 +23,8 @@ from benchmarks.sregym.fastloop.records import (
     AgentName,
     DiagnosisGrade,
     IncidentRecord,
+    Injected,
+    NotInjected,
     OracleVerdict,
     TokenCounts,
     append_record,
@@ -370,12 +372,23 @@ def _run_one(
     problem_id = "+".join(problem_ids)
     windows: list[InjectionWindow] = []
 
+    injection_attempted = False
+
     def inject() -> InjectionWindow:
-        window = (
-            driver.inject_composite(problem_ids).window  # type: ignore[attr-defined]
-            if len(problem_ids) > 1
-            else driver.inject(first_problem)
-        )
+        nonlocal injection_attempted
+        injection_attempted = True
+        try:
+            window = (
+                driver.inject_composite(problem_ids).window  # type: ignore[attr-defined]
+                if len(problem_ids) > 1
+                else driver.inject(first_problem)
+            )
+        except Exception:
+            # The recorded worker event survives a later validity/oracle failure.
+            event = getattr(driver, "last_injection_window", None)
+            if event is not None:
+                windows.append(event)
+            raise
         windows.append(window)
         return window
 
@@ -392,21 +405,13 @@ def _run_one(
             recovered = cleanup_error is None
         except Exception as recovery_exc:
             cleanup_error = f"invalid injection cleanup failed: {_describe(recovery_exc)}"
-        stamp = now()
-        start = exc.reply.get("started_at")
-        end = exc.reply.get("finished_at")
         return IncidentRecord(
             run_id=config.run_id,
             index=index,
             agent=agent.name,
             problem_id=problem_id,
             model=agent.model,
-            injection_started_at=datetime.fromtimestamp(start, tz=timezone.utc)
-            if isinstance(start, (int, float))
-            else stamp,
-            injection_finished_at=datetime.fromtimestamp(end, tz=timezone.utc)
-            if isinstance(end, (int, float))
-            else stamp,
+            injection=_injection_state(windows, attempted=injection_attempted),
             fault_components=getattr(driver, "last_components", []),
             infra_error=exc.infra_error,
             recovery_error=cleanup_error,
@@ -472,8 +477,7 @@ def _run_one(
             agent=agent.name,
             problem_id=problem_id,
             model=agent.model,
-            injection_started_at=windows[0].started_at,
-            injection_finished_at=windows[0].finished_at,
+            injection=Injected(started_at=windows[0].started_at, finished_at=windows[0].finished_at),
             oracle=oracle,
             diagnosis_grade=diagnosis_grade,
             oracle_finished_at=oracle_finished_at,
@@ -516,8 +520,6 @@ def _run_one(
 
     if outcome is not None and outcome.error:
         errors.append(outcome.error)
-    fallback = windows[0] if windows else InjectionWindow(started_at=now(), finished_at=now())
-    window = outcome.injection if outcome is not None else fallback
     cleanup = getattr(driver, "last_cleanup", None) if windows else None
     delivery, reason = config.image_delivery, config.image_delivery_reason
     if config.delivery_record_path is not None and config.delivery_record_path.is_file():
@@ -534,8 +536,7 @@ def _run_one(
         agent=agent.name,
         problem_id=problem_id,
         model=agent.model,
-        injection_started_at=window.started_at,
-        injection_finished_at=window.finished_at,
+        injection=_injection_state(windows, attempted=injection_attempted),
         fault_components=getattr(driver, "last_components", []),
         infra_error=infra_error,
         oracle=oracle,
@@ -556,6 +557,13 @@ def _run_one(
         **(_outcome_fields(outcome) if outcome is not None else {}),
     )
     return record, recovered and learning_complete
+
+
+def _injection_state(windows: list[InjectionWindow], *, attempted: bool) -> Injected | NotInjected:
+    if windows:
+        event = windows[0]
+        return Injected(started_at=event.started_at, finished_at=event.finished_at)
+    return NotInjected(stage="injection" if attempted else "pre_injection")
 
 
 def _outcome_fields(outcome: AgentOutcome) -> dict[str, Any]:

@@ -595,9 +595,16 @@ jobs:
         with:
           # A mutable PR merge ref can change after a retarget; test this event.
           ref: ${{ github.sha }}
+      - name: Enable the native containerd image store
+        run: |
+          config=/etc/docker/daemon.json
+          if sudo test -f "$config"; then sudo cat "$config"; else echo '{}'; fi > "$RUNNER_TEMP/docker-daemon.json"
+          jq '.features += {"containerd-snapshotter": true}' "$RUNNER_TEMP/docker-daemon.json" | sudo tee "$config"
+          sudo systemctl restart docker
       - uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
         with:
-          # Hosted runners dispose of the builder; avoid redundant post-job removal.
+          # Build into the smoke test's own image store, avoiding tar export/load.
+          driver: docker
           cleanup: false
       - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc # v6.4.3
         with:
@@ -631,8 +638,10 @@ jobs:
           source: .
           files: scripts/sdo-images.hcl
           targets: ${{ steps.image-inputs.outputs.targets }}
-          load: true
+          # Local smoke images need neither transport compression nor a second
+          # archive export. The maintenance workflow owns max-cache publication.
           set: |
+            *.output=type=image,compression=uncompressed
             controller.cache-from=type=gha,scope=sdo-controller
             validator.cache-from=type=gha,scope=sdo-validator
             responder.cache-from=type=gha,scope=sdo-responder
