@@ -193,20 +193,30 @@ func (l *ResponderLoop) executeMenuEntry(ctx context.Context, entry menuEntry, s
 		response.Error = "response loop budget exhausted"
 		return
 	}
+	var followUp *program.Plan
+	followUps := 0
 	for round := uint32(1); round <= rounds; round++ {
 		rr := &contracts.MitigationRoundReport{RoundIndex: round, RoundId: fmt.Sprintf("%s-r%d", attempt, round)}
 		report.Rounds = append(report.Rounds, rr)
-		if consumeRound {
-			l.batches++
-		}
-		// Preserve the ordinary incident counter before a potentially lost reply.
-		_ = l.persistToolState(ctx)
-		plan, err := l.prepareMenuPlan(ctx, entry, parameters, bindings)
-		if bindingErr != nil {
-			err = bindingErr
-		}
-		if err == nil && consumeRound {
-			err = l.validateMenuPreconditions(ctx, entry, bindings)
+		var plan program.Plan
+		var err error
+		if followUp != nil {
+			// A follow-up continues the same selection: no responder batch or
+			// Match precondition, but the ordinary executor, receipts and checks.
+			plan, followUp = *followUp, nil
+		} else {
+			if consumeRound {
+				l.batches++
+			}
+			// Preserve the ordinary incident counter before a potentially lost reply.
+			_ = l.persistToolState(ctx)
+			plan, err = l.prepareMenuPlan(ctx, entry, parameters, bindings)
+			if bindingErr != nil {
+				err = bindingErr
+			}
+			if err == nil && consumeRound {
+				err = l.validateMenuPreconditions(ctx, entry, bindings)
+			}
 		}
 		if err != nil {
 			report.Status = contracts.MitigationReport_STATUS_EXECUTION_ERROR
@@ -343,6 +353,12 @@ func (l *ResponderLoop) executeMenuEntry(ctx context.Context, entry menuEntry, s
 			report.Status = contracts.MitigationReport_STATUS_UNRESOLVED
 			report.FailedPhase = "rollout"
 			report.ReasonCode = "rollout_pending"
+			if next, ok := l.programFollowUp(ctx, entry, bindings, plan, followUps); ok {
+				followUp = &next
+				followUps++
+				rounds++
+				continue
+			}
 			break
 		}
 		report.FailedPhase = "verification"
@@ -362,6 +378,10 @@ func (l *ResponderLoop) executeMenuEntry(ctx context.Context, entry menuEntry, s
 			}
 			break
 		}
+	}
+	if followUps > 0 && len(l.pendingWrites) > 0 {
+		// Earlier rounds' reservations settle once a follow-up unblocked them.
+		l.settlePending(ctx)
 	}
 	report.RemainingBatches = uint32(max(0, min(5, l.MaxBatches)-l.batches))
 	l.menuReports = append(l.menuReports, cloneSelectionReport(report))

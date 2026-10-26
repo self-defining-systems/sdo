@@ -44,8 +44,8 @@ func validateRuntimeAction(action Action) error {
 			return fmt.Errorf("DeletePod requires one named v1 Pod")
 		}
 	case ScaleWorkload:
-		if a.Ref.APIVersion != "apps/v1" || (a.Ref.Kind != "Deployment" && a.Ref.Kind != "StatefulSet") || a.Ref.Name == "" || a.Ref.Namespace == "" {
-			return fmt.Errorf("ScaleWorkload requires a named Deployment or StatefulSet")
+		if a.Ref.APIVersion != "apps/v1" || (a.Ref.Kind != "Deployment" && a.Ref.Kind != "StatefulSet" && a.Ref.Kind != "ReplicaSet") || a.Ref.Name == "" || a.Ref.Namespace == "" {
+			return fmt.Errorf("ScaleWorkload requires a named Deployment, StatefulSet or ReplicaSet")
 		}
 		return a.Replicas.Validate()
 	case Exec:
