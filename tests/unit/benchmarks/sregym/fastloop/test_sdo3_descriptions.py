@@ -86,6 +86,7 @@ MIXED10_COMPOSITES = (
 )
 
 
+@pytest.mark.requires_sregym
 def test_real_sdo3_discovery_accepts_all_seven_sg2_composites():
     from pathlib import Path
 
@@ -108,6 +109,7 @@ def test_adding_fault_indices_to_colocated_does_not_lose_draws():
     assert describe_problem("generated", problem).faults[0].class_name == "WrongBinUsage"
 
 
+@pytest.mark.requires_sregym
 def test_proposed_twelve_incident_suite_repeats_are_inside_current_sdo_scope():
     from pathlib import Path
 
@@ -161,6 +163,7 @@ def test_unsupported_requested_tracking_fails_before_worker_deployment(tmp_path,
         cli.main(arguments)
 
 
+@pytest.mark.requires_sregym
 def test_real_astronomy_discovery_cannot_run_commands_or_call_the_cluster():
     import os
     import subprocess

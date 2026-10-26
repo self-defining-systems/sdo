@@ -43,6 +43,7 @@ if TYPE_CHECKING:
         assert_lane_resources,
     )
     from benchmarks.sregym.adapter.native_operator import (
+        NativeInstallConfig,
         assert_shared_repository,
         execute_operator,
         inspect_existing,
@@ -88,6 +89,7 @@ _EXPORTS: dict[str, str] = {
     "BENCHMARK_IMAGE_ENTRY_POINTS": "image_entrypoints",
     "assert_image_entrypoints": "image_entrypoints",
     "image_entrypoint_script": "image_entrypoints",
+    "NativeInstallConfig": "native_operator",
     "ImageRetentionError": "image_retention",
     "retain_lane_images": "image_retention",
     "Deadline": "eval_guards",
@@ -151,6 +153,7 @@ __all__ = [
     "BENCHMARK_IMAGE_ENTRY_POINTS",
     "assert_image_entrypoints",
     "image_entrypoint_script",
+    "NativeInstallConfig",
     "ImageRetentionError",
     "retain_lane_images",
     "Deadline",

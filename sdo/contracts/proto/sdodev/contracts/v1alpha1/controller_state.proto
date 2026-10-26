@@ -4,7 +4,7 @@ package sdodev.contracts.v1alpha1;
 
 import "buf/validate/validate.proto";
 import "google/protobuf/timestamp.proto";
-import "sdodev/contracts/v1alpha1/memory.proto";
+import "sdodev/contracts/v1alpha1/memory_diagnostic.proto";
 import "sdodev/contracts/v1alpha1/messages.proto";
 import "sdodev/contracts/v1alpha1/outcome.proto";
 import "sdodev/contracts/v1alpha1/worker.proto";
@@ -197,15 +197,6 @@ message ReflectionDecision {
   string decline_reason = 7 [(buf.validate.field).string = {in: ["", "evidence_gap"]}];
   // Controller-owned terminal execution failure; never a model-authored verdict.
   string failure_reason = 8 [(buf.validate.field).string = {in: ["", "timeout"]}];
-}
-
-// ProposalRejection is one broker rejection of an agent proposal, with the
-// typed diagnostics the next attempt receives.
-message ProposalRejection {
-  // 1-based attempt that was rejected.
-  uint32 attempt = 1 [(buf.validate.field).uint32.gte = 1];
-  repeated MemoryDiagnostic diagnostics = 2 [(buf.validate.field).repeated.min_items = 1];
-  google.protobuf.Timestamp rejected_at = 3;
 }
 
 // ProposalRejectionLog is the broker's durable retry state for one proposal

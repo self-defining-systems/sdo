@@ -201,6 +201,7 @@ def test_invalid_injection_is_terminal_infrastructure_without_response_or_learni
     assert summarize(records)[0].incidents == 0
 
 
+@pytest.mark.requires_sregym
 def test_real_v2_worker_addresses_nested_components_and_reports_failed_cleanup(tmp_path):
     from pathlib import Path
 

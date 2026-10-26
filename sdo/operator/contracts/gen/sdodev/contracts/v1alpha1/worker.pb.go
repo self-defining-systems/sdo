@@ -791,7 +791,7 @@ var File_sdodev_contracts_v1alpha1_worker_proto protoreflect.FileDescriptor
 
 const file_sdodev_contracts_v1alpha1_worker_proto_rawDesc = "" +
 	"\n" +
-	"&sdodev/contracts/v1alpha1/worker.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x19google/protobuf/any.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a'sdodev/contracts/v1alpha1/program.proto\x1a&sdodev/contracts/v1alpha1/memory.proto\x1a(sdodev/contracts/v1alpha1/messages.proto\x1a'sdodev/contracts/v1alpha1/outcome.proto\"\xe6\x04\n" +
+	"&sdodev/contracts/v1alpha1/worker.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x19google/protobuf/any.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a'sdodev/contracts/v1alpha1/program.proto\x1a1sdodev/contracts/v1alpha1/memory_diagnostic.proto\x1a(sdodev/contracts/v1alpha1/messages.proto\x1a'sdodev/contracts/v1alpha1/outcome.proto\"\xe6\x04\n" +
 	"\x11AgentRegistration\x12>\n" +
 	"\x0eschema_version\x18\x01 \x01(\tB\x17\xbaH\x14r\x12\n" +
 	"\x10sdo.dev/v1alpha1R\rschemaVersion\x12\"\n" +
@@ -929,7 +929,7 @@ func file_sdodev_contracts_v1alpha1_worker_proto_init() {
 		return
 	}
 	file_sdodev_contracts_v1alpha1_program_proto_init()
-	file_sdodev_contracts_v1alpha1_memory_proto_init()
+	file_sdodev_contracts_v1alpha1_memory_diagnostic_proto_init()
 	file_sdodev_contracts_v1alpha1_messages_proto_init()
 	file_sdodev_contracts_v1alpha1_outcome_proto_init()
 	file_sdodev_contracts_v1alpha1_worker_proto_msgTypes[0].OneofWrappers = []any{
