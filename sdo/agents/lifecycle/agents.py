@@ -20,6 +20,7 @@ from libs.agent_cli.structured import (
     StructuredTurnTimeout,
     run_structured_turn,
 )
+from sdo.agents.code_paths import SKILLS_ROOT, agent_guidance
 from sdo.agents.prompt_templates import named_prompt, render_prompt
 
 if TYPE_CHECKING:
@@ -264,8 +265,10 @@ class CodexLifecycleBackend:
         )
         prompt = render_prompt(
             "health_judge",
-            "health_judge",
+            "health_judge_shell" if agent_guidance() == "shell" else "health_judge",
             part="health_judge.instructions",
+            skills_root=SKILLS_ROOT,
+            source_commit=deployer.source_commit,
             application=repr(application),
             round_index=round_index,
             health_objective=named_prompt("health_judge.health_objective", health_objective),
@@ -446,7 +449,7 @@ def _command_escapes_repository(
         candidate = Path(raw_path)
         if ".." in candidate.parts:
             return True
-        if any(candidate == root or root in candidate.parents for root in skill_directories.values()):
+        if any(candidate == root or root in candidate.parents for root in (SKILLS_ROOT, *skill_directories.values())):
             if raw_path in write_only_paths or not _readonly_skill_access(audited_command, raw_path):
                 return True
             continue

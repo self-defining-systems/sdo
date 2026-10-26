@@ -50,7 +50,7 @@ func (c *Controller) automaticResponsePending(request *contracts.IncidentRequest
 	if request == nil || len(request.PriorStages) != 0 {
 		return false
 	}
-	for _, name := range c.config.ResponseStages {
+	for _, name := range c.codePath.Selection.ResponseStages {
 		if name == "agent" {
 			return false
 		}
@@ -65,7 +65,7 @@ func (c *Controller) automaticResponsePending(request *contracts.IncidentRequest
 func (c *Controller) runResponsePipeline(ctx context.Context, request IncidentRequest) (IncidentResult, []*contracts.StageReport, error) {
 	// This is the exact original dispatch path for baseline experiments, including
 	// its frozen task, result and error semantics.
-	if len(c.config.ResponseStages) == 1 && c.config.ResponseStages[0] == "agent" {
+	if len(c.codePath.Selection.ResponseStages) == 1 && c.codePath.Selection.ResponseStages[0] == "agent" {
 		result, err := c.dispatcher.Dispatch(ctx, request)
 		return result, nil, err
 	}
@@ -87,7 +87,7 @@ func (c *Controller) runResponsePipeline(ctx context.Context, request IncidentRe
 	state := &IncidentState{Request: request, Findings: append([]sdk.Finding(nil), request.Findings...), Coverage: cloneCoverage(request.PlaybookCoverage)}
 	var stages []ResponseStage
 	automaticAvailable, agentConfigured := false, false
-	for _, name := range c.config.ResponseStages {
+	for _, name := range c.codePath.Selection.ResponseStages {
 		switch name {
 		case "deterministic":
 			if source, ok := c.dispatcher.(interface{ DeterministicResponseStage() ResponseStage }); ok {

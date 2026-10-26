@@ -12,10 +12,12 @@ if TYPE_CHECKING:
 class _Inner:
     def __init__(self, events: list[str]) -> None:
         self.events = events
+        self.maintenance_calls: list[tuple[bool, bool]] = []
 
     def set_maintenance(
         self, control_namespace: str, *, paused: bool, generation: str, preserve_baseline: bool = False
     ) -> None:
+        self.maintenance_calls.append((paused, preserve_baseline))
         self.events.append(f"{'pause' if paused else 'resume'}:{generation}")
 
     def inject_after_resume(
@@ -89,3 +91,19 @@ def test_healthy_baseline_cli_flag_is_opt_in_and_reaches_the_runtime_config() ->
     both = parser.parse_args([*base, "--healthy-baseline", "--inject-before-resume"])
     assert type(_cluster_ops(both, "app")).__name__ == "HealthyBaselineCaptureOps"
     assert type(_cluster_ops(both, "app")._inner).__name__ == "InjectBeforeResumeOps"  # type: ignore[attr-defined]
+
+
+def test_injection_pause_preserves_the_preincident_healthy_baseline() -> None:
+    events: list[str] = []
+    inner = _Inner(events)
+    ops = InjectBeforeResumeOps(inner, wait_for_pause=lambda *_: None)  # type: ignore[arg-type]
+
+    def inject() -> None:
+        # The pause must retain the controller's healthy capture before faults land.
+        assert inner.maintenance_calls == [(True, True)]
+        events.append("inject")
+
+    ops.inject_after_resume("ctl", "incident", inject)
+
+    assert inner.maintenance_calls == [(True, True), (False, False)]
+    assert events == ["pause:incident-presim", "inject", "resume:incident"]

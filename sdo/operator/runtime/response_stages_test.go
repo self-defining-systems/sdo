@@ -46,7 +46,7 @@ func TestResponseStageConfigSelectsBaselineAndRejectsAmbiguity(t *testing.T) {
 
 func TestResponseStageAgentOnlyPreservesExactDispatchContract(t *testing.T) {
 	dispatcher := &recordingDispatcher{requests: make(chan IncidentRequest, 1)}
-	controller := &Controller{config: ControllerConfig{ResponseStages: []string{"agent"}}, dispatcher: dispatcher}
+	controller := &Controller{codePath: &CodePath{Selection: CodePathSelection{ResponseStages: []string{"agent"}}}, dispatcher: dispatcher}
 	request := goldenRequest(t)
 	request.PreparedAgentTask = "frozen-original-task"
 	expected := completedResult(request.IncidentID)
@@ -81,7 +81,7 @@ func (d *rejoiningStageDispatcher) Dispatch(_ context.Context, request IncidentR
 }
 func TestResponseStageRejoinKeepsAgentOwnershipAndReflectionEvidence(t *testing.T) {
 	dispatcher := &rejoiningStageDispatcher{}
-	controller := &Controller{config: ControllerConfig{ResponseStages: []string{"deterministic", "agent"}}, dispatcher: dispatcher, responseStagesRunning: true}
+	controller := &Controller{codePath: &CodePath{Selection: CodePathSelection{ResponseStages: []string{"deterministic", "agent"}}}, dispatcher: dispatcher, responseStagesRunning: true}
 	request := goldenRequest(t)
 	request.PreparedAgentTask = "durable-agent-handoff"
 	request.PriorStages = []*contracts.StageReport{{Stage: "deterministic"}}

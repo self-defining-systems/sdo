@@ -105,7 +105,7 @@ func TestResponseStageRejoinRetainsDeterministicApplicationEvidence(t *testing.T
 	request.PreparedAgentTask = "durable-agent-handoff"
 	request.PriorStages = cloneStageReports(state.PriorStages)
 	dispatcher := &rejoiningStageDispatcher{}
-	controller := &Controller{config: ControllerConfig{ResponseStages: []string{"deterministic", "agent"}}, dispatcher: dispatcher}
+	controller := &Controller{codePath: &CodePath{Selection: CodePathSelection{ResponseStages: []string{"deterministic", "agent"}}}, dispatcher: dispatcher}
 	result, _, err := controller.runResponsePipeline(context.Background(), request)
 	if err != nil {
 		t.Fatal(err)

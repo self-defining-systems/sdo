@@ -3,6 +3,7 @@ import datetime
 from buf.validate import validate_pb2 as _validate_pb2
 from google.protobuf import struct_pb2 as _struct_pb2
 from google.protobuf import timestamp_pb2 as _timestamp_pb2
+from sdodev.contracts.v1alpha1 import controller_config_pb2 as _controller_config_pb2
 from google.protobuf import duration_pb2 as _duration_pb2
 from sdodev.contracts.v1alpha1 import common_pb2 as _common_pb2
 from sdodev.contracts.v1alpha1 import program_pb2 as _program_pb2
@@ -242,20 +243,22 @@ class MemoryPlaybook(_message.Message):
     def __init__(self, id: _Optional[str] = ..., markdown: _Optional[str] = ..., scripts: _Optional[_Iterable[_Union[MemoryScript, _Mapping]]] = ...) -> None: ...
 
 class OperationalMemorySnapshot(_message.Message):
-    __slots__ = ("accepted_commit", "goal_markdown", "architecture_markdown", "playbook_index_markdown", "detectors", "playbooks")
+    __slots__ = ("code_path", "accepted_commit", "goal_markdown", "architecture_markdown", "playbook_index_markdown", "detectors", "playbooks")
+    CODE_PATH_FIELD_NUMBER: _ClassVar[int]
     ACCEPTED_COMMIT_FIELD_NUMBER: _ClassVar[int]
     GOAL_MARKDOWN_FIELD_NUMBER: _ClassVar[int]
     ARCHITECTURE_MARKDOWN_FIELD_NUMBER: _ClassVar[int]
     PLAYBOOK_INDEX_MARKDOWN_FIELD_NUMBER: _ClassVar[int]
     DETECTORS_FIELD_NUMBER: _ClassVar[int]
     PLAYBOOKS_FIELD_NUMBER: _ClassVar[int]
+    code_path: _controller_config_pb2.CodePathConfig
     accepted_commit: str
     goal_markdown: str
     architecture_markdown: str
     playbook_index_markdown: str
     detectors: _containers.RepeatedCompositeFieldContainer[MemoryDetector]
     playbooks: _containers.RepeatedCompositeFieldContainer[MemoryPlaybook]
-    def __init__(self, accepted_commit: _Optional[str] = ..., goal_markdown: _Optional[str] = ..., architecture_markdown: _Optional[str] = ..., playbook_index_markdown: _Optional[str] = ..., detectors: _Optional[_Iterable[_Union[MemoryDetector, _Mapping]]] = ..., playbooks: _Optional[_Iterable[_Union[MemoryPlaybook, _Mapping]]] = ...) -> None: ...
+    def __init__(self, code_path: _Optional[_Union[_controller_config_pb2.CodePathConfig, _Mapping]] = ..., accepted_commit: _Optional[str] = ..., goal_markdown: _Optional[str] = ..., architecture_markdown: _Optional[str] = ..., playbook_index_markdown: _Optional[str] = ..., detectors: _Optional[_Iterable[_Union[MemoryDetector, _Mapping]]] = ..., playbooks: _Optional[_Iterable[_Union[MemoryPlaybook, _Mapping]]] = ...) -> None: ...
 
 class ProposedGoSource(_message.Message):
     __slots__ = ("name", "content")

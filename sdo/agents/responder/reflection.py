@@ -20,8 +20,10 @@ from libs.agent_cli.structured import (
     run_structured_turn,
     turn_usage,
 )
+from sdo.agents.code_paths import agent_guidance
 from sdo.agents.memory_diagnostics import render_validation_feedback
 from sdo.agents.prompt_templates import RenderedPrompt, named_prompt, render_prompt
+from sdo.agents.responder.baseline_withholding import withhold_unverifiable_detectors
 from sdo.agents.responder.credentials import SKILLS_ROOT
 from sdo.agents.responder.memory_check import VALIDATION_TIMEOUT_SECONDS, ValidationResult, check_reflection_result
 from sdo.agents.responder.reflection_authoring import SdkGap
@@ -175,6 +177,20 @@ def _logical_learning_request(
     if not closure.request.HasField("memory_snapshot"):
         raise ValueError("logical reflection requires an operational memory snapshot")
     snapshot = closure.request.memory_snapshot
+    if agent_guidance() == "shell":
+        return render_prompt(
+            "responder",
+            "reflection_shell",
+            part="reflection.instructions",
+            skills_root=SKILLS_ROOT,
+            branch_instruction=branch_instruction("reflection"),
+            memory_view_json=named_prompt("reflection.memory", json.dumps(memory_view(snapshot), indent=2)),
+            outcome_commit=outcome_commit,
+            outcome_json=named_prompt(
+                "reflection.outcome", json_format.MessageToJson(outcome, preserving_proto_field_name=True)
+            ),
+            history_section=named_prompt("reflection.history", _history_section(outcome, history, history_directory)),
+        )
     work_section = ""
     if cause_work or unassigned_work:
         work_json = json.dumps(
@@ -288,6 +304,11 @@ class SessionReflector:
                     )
                 return self.backend.fresh(worktree=worktree, prompt=prompt, idempotency_key=idempotency_key)
             if session_mode == "fresh":
+                if agent_guidance() == "shell":
+                    prompt = render_prompt(
+                        "responder", "reflection_shell_fresh", part="reflection.instructions", request=request
+                    )
+                    return self.backend.fresh(worktree=worktree, prompt=prompt, idempotency_key=idempotency_key)
                 if closure is None:
                     raise ValueError("a fresh first reflection attempt requires the verified closure for its brief")
                 # The brief replaces the responder transcript, which a resumed
@@ -425,8 +446,17 @@ class CodexSessionBackend:
             check = self.memory_checker(
                 worktree, decision, min(VALIDATION_TIMEOUT_SECONDS, deadline - time.monotonic())
             )
+            decision, check = withhold_unverifiable_detectors(
+                worktree,
+                decision,
+                check,
+                min(VALIDATION_TIMEOUT_SECONDS, deadline - time.monotonic()),
+                self.memory_checker,
+            )
             if check.exit_code == 0 and not check.timed_out:
-                return ReflectionTurn.from_model_output(payload).with_usage(usage)
+                return ReflectionTurn.from_model_output(
+                    json_format.MessageToDict(decision, preserving_proto_field_name=True)
+                ).with_usage(usage)
             if attempt == 3 or time.monotonic() >= deadline:
                 raise RuntimeError(f"reflection memory check failed before submission: {check.stdout}\n{check.stderr}")
             turn = self._run(

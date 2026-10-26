@@ -34,11 +34,14 @@ import (
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/servicehealth"
 	"sdo.dev/operator/sdk/traffic"
+	"sdo.dev/operator/shellpath"
 	"sdo.dev/operator/toolchain"
 	"sdo.dev/operator/worker_registry"
 )
 
 type RuntimeOptions struct {
+	ShellReportReader shellpath.Reader
+
 	GenericCapture *core.GenericCapture
 	Programs       program.ProgramRegistry
 	Args           []string
@@ -144,6 +147,13 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 
 	flags := flag.NewFlagSet("sdo-controller", flag.ContinueOnError)
 	flags.SetOutput(stderr)
+	codePathName := flags.String("code-path", "go", "programming-model plugin set")
+	codePathOverrides := flags.String("code-path-overrides", "", "optional named code-path seam overrides as JSON")
+	var codePathFlagConfig CodePathConfig
+	flags.Func("response-stages", "ordered response stages; overrides the selected code path", func(value string) error {
+		codePathFlagConfig.Overrides.ResponseStages = strings.Split(value, ",")
+		return nil
+	})
 	namespace := flags.String("namespace", "", "Kubernetes namespace to observe")
 	controlNamespace := flags.String(
 		"control-namespace",
@@ -181,7 +191,6 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			"in job mode and to disabled in local mode; \"off\" disables it",
 	)
 	duration := flags.Duration("duration", 0, "bounded controller duration; zero runs until cancellation")
-	responseStages := flags.String("response-stages", "deterministic,agent", "ordered incident response stages; agent alone preserves baseline")
 	responseTimeout := flags.Duration("response-timeout", 30*time.Minute, "incident responder timeout")
 	verificationTimeout := flags.Duration(
 		"verification-timeout",
@@ -241,6 +250,21 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		return err
 	}
 
+	selectedPathConfig, err := codePathFromFlags(*codePathName, *codePathOverrides)
+	if err != nil {
+		return err
+	}
+	if codePathFlagConfig.Overrides.ResponseStages != nil {
+		selectedPathConfig.Overrides.ResponseStages = codePathFlagConfig.Overrides.ResponseStages
+	}
+	codePathRegistry := NewCodePathRegistry()
+	selectedCodePath, err := codePathRegistry.Resolve(selectedPathConfig)
+	if err != nil {
+		return err
+	}
+	if selectedCodePath.Selection.Coverage == "none" {
+		options.Programs = nil
+	}
 	menuEnabled := os.Getenv("SDO_RESPONDER_MENU")
 	if menuEnabled != "" && menuEnabled != "0" && menuEnabled != "1" {
 		return errors.New("SDO_RESPONDER_MENU must be 0 or 1")
@@ -337,6 +361,21 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		*sourceCommit,
 		*deployedCommit,
 	)
+	if err != nil {
+		return err
+	}
+	shellReader := options.ShellReportReader
+	if selectedCodePath.Selection.DetectorSource == "shell" {
+		if shellReader == nil {
+			shellReader = shellpath.HTTPReader{URL: shellpath.RunnerURL(*controlNamespace)}
+		}
+		codePathRegistry.detectors["shell"] = ShellDetectorSource{Reader: shellReader}
+		selectedCodePath, err = codePathRegistry.Resolve(selectedPathConfig)
+		if err != nil {
+			return err
+		}
+	}
+	detectors, err = selectedCodePath.Detectors.Detectors(ctx, DetectorSourceRequest{RepositoryRoot: resolvedRoot, Namespace: *namespace, CompiledDetectors: detectors})
 	if err != nil {
 		return err
 	}
@@ -480,6 +519,18 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	if jobEnvironment, err = withAgentEnvironment(jobEnvironment, launchConfig); err != nil {
 		return err
 	}
+	if codePathCustomized(selectedPathConfig) {
+		jobEnvironment["SDO_CODE_PATH"] = selectedCodePath.Selection.Name
+		jobEnvironment["SDO_AGENT_GUIDANCE"] = selectedCodePath.Selection.AgentGuidance
+		jobEnvironment["SDO_MEMORY_VALIDATION"] = "go"
+		if selectedCodePath.Selection.MemoryValidation != "go" {
+			jobEnvironment["SDO_MEMORY_VALIDATION"] = "shell"
+		}
+	}
+	if options.NativeBroker != nil {
+		options.NativeBroker.CodePath = selectedPathConfig
+		options.NativeBroker.ShellReader = shellReader
+	}
 	jobEnvironment[ControllerStateEnvironment] = controllerStateLocation(*controlNamespace)
 	if launchConfig != nil {
 		if options.NativeBroker != nil {
@@ -533,6 +584,9 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		var catalog memory.CatalogReader
 		if options.NativeBroker != nil {
 			catalog = memory.OpenCatalogReader(resolvedRoot)
+			if selectedCodePath.Selection.DetectorSource == "shell" {
+				catalog = memory.OpenShellCatalogReader(resolvedRoot)
+			}
 		}
 		apiProxyImage := *responderImage
 		if launchConfig != nil {
@@ -540,6 +594,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		}
 		dispatcher = KubernetesJobDispatcher{
 			AcceptedRepository: resolvedRoot,
+			CoverageProvider:   selectedCodePath.Coverage,
 			APIProxyImage:      apiProxyImage,
 			ToolchainImage:     *toolchainImage,
 			Client:             bootstrapProvider.Client, Namespace: *controlNamespace, Registry: registeredWorkers, AgentID: *responderAgentID,
@@ -674,9 +729,9 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		corpusSessionRoot = options.NativeBroker.SessionRoot
 	}
 	controller, err = NewController(ControllerConfig{
+		CodePath: selectedPathConfig, CodePathRegistry: codePathRegistry,
 		Application: *application, Namespace: *namespace,
-		ResponseStages: strings.Split(*responseStages, ","),
-		SourceCommit:   resolvedSourceCommit, DeployedCommit: resolvedDeployedCommit,
+		SourceCommit: resolvedSourceCommit, DeployedCommit: resolvedDeployedCommit,
 		RepositoryWorktree: resolvedRoot, ResponseTimeout: *responseTimeout,
 		CorpusSessionRoot:      corpusSessionRoot,
 		VerificationTimeout:    *verificationTimeout,
@@ -717,7 +772,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			Client: bootstrapProvider.Client, Namespaces: []string{*namespace, *controlNamespace},
 		}
 	}
-	if launchConfig != nil {
+	if launchConfig != nil && selectedCodePath.Selection.DetectorSource != "shell" {
 		controller.CheckHealth = controllerHealthGuard(controller, resolvedRoot, launchConfig.GetControllerRevision())
 	}
 	controller.CanAct = elector.IsLeader

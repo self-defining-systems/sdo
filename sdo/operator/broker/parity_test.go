@@ -68,9 +68,7 @@ func copyParityTree(t *testing.T) string {
 
 func runGit(t *testing.T, root string, args ...string) {
 	t.Helper()
-	if out, err := exec.Command("git", append([]string{"-C", root}, args...)...).CombinedOutput(); err != nil {
-		t.Fatalf("git %v: %v: %s", args, err, out)
-	}
+	testutil.Git(t, root, args...)
 }
 
 func put(t *testing.T, root, rel, content string, mode os.FileMode) {
@@ -576,7 +574,7 @@ func (p Program) Mitigate(ctx context.Context,v program.ReadView,b program.Bindi
 			t.Parallel()
 			root := copyParityTree(t)
 			put(t, root, "app.txt", "base\n", 0o644)
-			runGit(t, root, "init", "-q")
+			testutil.InitGit(t, root)
 			runGit(t, root, "config", "user.name", "T")
 			runGit(t, root, "config", "user.email", "t@example.com")
 			runGit(t, root, "add", "-A")
@@ -606,9 +604,7 @@ func (p Program) Mitigate(ctx context.Context,v program.ReadView,b program.Bindi
 				t.Fatal(err)
 			}
 			accepted := filepath.Join(t.TempDir(), "accepted")
-			if out, err := exec.Command("git", "clone", "--quiet", "--no-local", root, accepted).CombinedOutput(); err != nil {
-				t.Fatalf("clone accepted: %v %s", err, out)
-			}
+			testutil.CloneGit(t, root, accepted, "--no-local")
 			repository, err := broker.New(accepted, t.TempDir(), broker.JobValidator(subprocessParityJob{binary: binary, operatorRoot: operatorRoot, schema: schema, baseline: baseline}))
 			if err != nil {
 				t.Fatal(err)

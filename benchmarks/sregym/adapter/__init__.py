@@ -27,6 +27,7 @@ if TYPE_CHECKING:
         controller_proof,
         qualified_scenarios,
         setup_lineage,
+        shell_runner_proof,
         wait_for_proof,
     )
     from benchmarks.sregym.adapter.healthy_baseline import HealthyBaselineCaptureOps, kubectl_capture_ops
@@ -103,6 +104,7 @@ _EXPORTS: dict[str, str] = {
     "controller_proof": "eval_guards",
     "qualified_scenarios": "eval_guards",
     "setup_lineage": "eval_guards",
+    "shell_runner_proof": "eval_guards",
     "wait_for_proof": "eval_guards",
     "replay_recorded_repair": "scripted_replay",
     "SCRIPTED_REPLAY_SLOTS": "scripted_replay_catalog",
@@ -166,6 +168,7 @@ __all__ = [
     "controller_proof",
     "qualified_scenarios",
     "setup_lineage",
+    "shell_runner_proof",
     "wait_for_proof",
     "replay_recorded_repair",
     "SCRIPTED_REPLAY_SLOTS",

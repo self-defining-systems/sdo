@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import subprocess
 import time
 from dataclasses import dataclass
@@ -92,6 +93,50 @@ def controller_proof(state: dict[str, Any], required: set[str], not_before: str)
         "incident_work_pending": busy,
         "latest": latest,
     }
+
+
+def shell_runner_proof(evidence: dict[str, Any], not_before: str, now: str) -> dict[str, Any]:
+    """Bind complete clear shell results to live accepted Git inventory, never Go policy."""
+
+    def rejected(reason: str) -> dict[str, Any]:
+        return {"passed": False, "reason": reason, "evidence": evidence}
+
+    try:
+        boundary = datetime.fromisoformat(not_before.replace("Z", "+00:00"))
+        current = datetime.fromisoformat(now.replace("Z", "+00:00"))
+        report = evidence["report"]
+        commit = evidence["accepted_commit"]
+        scripts = evidence["scripts"]
+        if not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", commit) or report["accepted_commit"] != commit:
+            return rejected("shell runner is not observing the live accepted commit")
+        if report["version"] != 1 or report.get("error") or report.get("healthy") is not True:
+            return rejected("shell runner has not established stable health")
+        if (
+            not scripts
+            or len(set(scripts)) != len(scripts)
+            or not any(path.startswith(".sdo/diagnostics/detectors/health/") for path in scripts)
+        ):
+            return rejected("accepted shell policy has no executable health detectors")
+        rows = report["results"]
+        if len(rows) != len(scripts) or {row["script"] for row in rows} != set(scripts):
+            return rejected("shell runner results do not cover every accepted executable detector")
+        activated = datetime.fromisoformat(report["activated_at"].replace("Z", "+00:00"))
+        for stamp in [report["at"], *(row["at"] for row in rows)]:
+            observed = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+            if observed < boundary or observed < activated or (observed - current).total_seconds() > 5:
+                return rejected("shell runner observation is stale or has invalid activation time")
+        if any(
+            type(row["exit_code"]) is not int
+            or row["exit_code"] != 0
+            or row.get("error")
+            or row.get("timed_out")
+            or row.get("fired")
+            for row in rows
+        ):
+            return rejected("accepted shell detectors have nonzero, timed out or errored results")
+    except (KeyError, ValueError, TypeError, AttributeError):
+        return rejected("shell runner evidence is incomplete or malformed")
+    return {"passed": True, "evidence": evidence}
 
 
 def qualified_scenarios(windows: dict[str, Any], required: set[str]) -> bool:

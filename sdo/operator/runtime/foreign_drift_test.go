@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sdo.dev/operator/internal/testutil"
 	"strings"
 	"testing"
 	"time"
@@ -36,7 +37,8 @@ func foreignSource(t *testing.T) (GitPlanSource, string) {
 	if err := os.WriteFile(filepath.Join(repo, "app.yaml"), []byte("apiVersion: v1\nkind: Service\nmetadata:\n  name: api\nspec:\n  selector:\n    app: api\n  ports:\n  - port: 80\n    targetPort: 8080\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	for _, args := range [][]string{{"init"}, {"config", "user.name", "Test"}, {"config", "user.email", "test@example.com"}, {"add", "app.yaml"}, {"commit", "-m", "accepted source"}} {
+	testutil.InitGit(t, repo)
+	for _, args := range [][]string{{"config", "user.name", "Test"}, {"config", "user.email", "test@example.com"}, {"add", "app.yaml"}, {"commit", "-m", "accepted source"}} {
 		if out, err := exec.Command("git", append([]string{"-C", repo}, args...)...).CombinedOutput(); err != nil {
 			t.Fatal(string(out), err)
 		}

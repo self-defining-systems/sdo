@@ -38,6 +38,8 @@ func ParseHostLaunch(args []string) (HostConfig, error) {
 		return HostConfig{}, errors.New("expected host subcommand")
 	}
 	flags := flag.NewFlagSet("sdo-operator host", flag.ContinueOnError)
+	codePathName := flags.String("code-path", os.Getenv("SDO_CODE_PATH"), "programming-model plugin set: go or shell")
+	codePathOverrides := flags.String("code-path-overrides", "", "CodePathOverrides JSON")
 	flags.SetOutput(io.Discard)
 	repository := flags.String("repository", "", "clean accepted Git repository")
 	ceilingJSON := flags.String("observation-ceiling-json", "", "installer-owned observation ceiling JSON")
@@ -162,7 +164,12 @@ func ParseHostLaunch(args []string) (HostConfig, error) {
 			return HostConfig{}, err
 		}
 	}
+	selectedCodePath, err := parseCodePathSelection(*codePathName, *codePathOverrides)
+	if err != nil {
+		return HostConfig{}, err
+	}
 	config := install.Config{
+		CodePath:           selectedCodePath,
 		ResponderMenu:      menuEnabled,
 		ObservationCeiling: ceiling,
 		Namespace:          *namespace, ControlNamespace: *control, Application: *application,

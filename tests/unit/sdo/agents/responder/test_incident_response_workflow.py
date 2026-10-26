@@ -43,8 +43,8 @@ def test_incident_workflow_installs_from_the_shipped_skill_root(tmp_path: Path, 
     assert "warning is informational" in body
     assert "closed-incident mutations are rejected" in body
     assert "still_broken" in body
-    assert "Use only options a tool's help confirms" in body
-    assert "after a usage error, read help instead of guessing" in body
+    assert "Use only help-confirmed options" in body
+    assert "on a usage error, read help, don't guess" in body
     assert "Inspect rollout blockers and old-template Pods before repeating writes" in body
     assert "When an admission control blocks recovery and its backend is gone, restore the backend if you can" in body
     assert "a scoped fail-open or removal that restores availability is acceptable; report it" in body

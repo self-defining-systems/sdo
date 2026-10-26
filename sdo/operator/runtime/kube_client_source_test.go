@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sdo.dev/operator/internal/testutil"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -15,7 +16,7 @@ import (
 
 func TestClientGoSourceBindingBecomesStaleAfterAcceptedRoleRemoval(t *testing.T) {
 	root := t.TempDir()
-	nativeGit(t, root, "init", "-q")
+	testutil.InitGit(t, root)
 	nativeGit(t, root, "config", "user.name", "Test")
 	nativeGit(t, root, "config", "user.email", "test@example.com")
 	write := func(name string) string {
