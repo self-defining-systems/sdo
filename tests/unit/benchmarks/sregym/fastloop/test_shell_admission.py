@@ -192,6 +192,8 @@ def test_public_cli_passes_the_same_code_path_to_runtime_and_admission(tmp_path,
         sregym_dir=tmp_path,
         private_tmp=None,
     )
+    monkeypatch.setenv("SREGYM_BASE_KUBECONFIG", str(environment.kubeconfig))
+    monkeypatch.setenv("KUBECONFIG", str(environment.kubeconfig))
     args = cli.build_parser().parse_args(
         ["run", "--run-dir", str(tmp_path), "--agent", "sdo", "--code-path", code_path]
     )
