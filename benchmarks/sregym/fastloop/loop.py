@@ -3,8 +3,8 @@
 For every incident the agent decides when to inject (the SDO controller first
 reports an all-clear baseline; a raw baseline agent injects at once) and then
 resolves the incident. The loop grades the live cluster with the problem's own
-deterministic oracle, recovers the fault the harness's way, lets the agent
-learn (SDO reflection, measured separately), and appends one record.
+deterministic oracle, persists the grade, lets the agent learn (SDO reflection,
+measured separately), recovers the fault, and appends one record.
 
 There is no conductor or application rebuild or undeploy between incidents.
 """
@@ -26,6 +26,7 @@ from benchmarks.sregym.fastloop.records import (
     OracleVerdict,
     TokenCounts,
     append_record,
+    persist_grade_checkpoint,
     write_records,
 )
 from benchmarks.sregym.faults.description import SuiteCapabilities
@@ -126,6 +127,8 @@ class IncidentAgent(Protocol):
     def resolve(self, index: int, problem_id: str, inject: Callable[[], InjectionWindow]) -> AgentOutcome: ...
 
     def learn(self, outcome: AgentOutcome) -> AgentOutcome: ...
+
+    def prepare_recovery(self, outcome: AgentOutcome | None) -> None: ...
 
     def close(self) -> None: ...
 
@@ -322,6 +325,17 @@ def run_incidents(
     return records
 
 
+def _recover_fault(agent: IncidentAgent, driver: FaultDriver, outcome: AgentOutcome | None) -> float:
+    # All harness recovery paths, including invalid injection and interruption,
+    # pass this fence. Missing SDO pause support fails before a recovery write.
+    if agent.name == "sdo":
+        prepare = getattr(agent, "prepare_recovery", None)
+        if not callable(prepare):
+            raise RuntimeError("eval: SDO recovery requires an incident intake pause capability")
+        prepare(outcome)
+    return driver.recover()
+
+
 def _run_one(
     agent: IncidentAgent,
     driver: FaultDriver,
@@ -358,7 +372,7 @@ def _run_one(
         recovered = False
         recovery_seconds = None
         try:
-            recovery_seconds = driver.recover()
+            recovery_seconds = _recover_fault(agent, driver, outcome)
             recovered = cleanup_error is None
         except Exception as recovery_exc:
             cleanup_error = f"invalid injection cleanup failed: {_describe(recovery_exc)}"
@@ -389,7 +403,7 @@ def _run_one(
     except KeyboardInterrupt:
         if windows:
             try:
-                driver.recover()
+                _recover_fault(agent, driver, outcome)
                 if not driver.oracle().success:
                     logger.error("fault oracle still fails after interrupt recovery for incident %d", index)
             except Exception:
@@ -398,15 +412,6 @@ def _run_one(
     except Exception as exc:
         logger.exception("incident %d failed", index)
         errors.append(_describe(exc))
-
-    learning_complete = outcome is None or not outcome.terminal_error
-    if outcome is not None:
-        try:
-            outcome = agent.learn(outcome)
-        except Exception as exc:
-            logger.exception("learning failed for incident %d", index)
-            errors.append(f"learning failed: {_describe(exc)}")
-            learning_complete = False
 
     oracle: OracleVerdict | None = None
     infra_error: str | None = None
@@ -425,13 +430,13 @@ def _run_one(
             diagnosis_grade = DiagnosisGrade(error=_describe(exc))
     elif windows and grader is not None:
         diagnosis_grade = DiagnosisGrade(skipped=True, skip_reason="no diagnosis text")
+
+    def grade() -> OracleVerdict:
+        # The official aggregate oracle owns collateral/traffic policy. A submitted
+        # problem may itself contribute multiple components; positions are not IDs.
+        return driver.oracle()
+
     if windows:
-
-        def grade() -> OracleVerdict:
-            # The official aggregate oracle owns collateral/traffic policy. A submitted
-            # problem may itself contribute multiple components; positions are not IDs.
-            return driver.oracle()
-
         try:
             oracle = grade()
             raw_infra = oracle.details.get("infra_error")
@@ -444,10 +449,37 @@ def _run_one(
             errors.append(infra_error)
         finally:
             oracle_finished_at = now()
+    if windows:
+        checkpoint = IncidentRecord(
+            run_id=config.run_id,
+            index=index,
+            agent=agent.name,
+            problem_id=problem_id,
+            model=agent.model,
+            injection_started_at=windows[0].started_at,
+            injection_finished_at=windows[0].finished_at,
+            oracle=oracle,
+            diagnosis_grade=diagnosis_grade,
+            oracle_finished_at=oracle_finished_at,
+            infra_error=infra_error,
+            **(_outcome_fields(outcome) if outcome is not None else {}),
+        )
+        persist_grade_checkpoint(config.results_path.with_suffix(".grades") / f"{index:06d}.json", checkpoint)
+
+    learning_complete = outcome is None or not outcome.terminal_error
+    if outcome is not None:
+        try:
+            outcome = agent.learn(outcome)
+        except Exception as exc:
+            logger.exception("learning failed for incident %d", index)
+            errors.append(f"learning failed: {_describe(exc)}")
+            learning_complete = False
+
+    if windows:
         try:
             recovery_seconds = 0.0
             for _ in range(config.cleanup_passes):
-                recovery_seconds += driver.recover()
+                recovery_seconds += _recover_fault(agent, driver, outcome)
                 # Seed cleanup can remove injected workloads; grade the recovered baseline.
                 recovery_oracle = getattr(driver, "recovery_oracle", lambda: None)()
                 if recovery_oracle is None:

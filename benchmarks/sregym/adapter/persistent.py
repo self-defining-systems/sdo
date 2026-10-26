@@ -813,6 +813,42 @@ def pause_controller(ops: ClusterOps, control: str, *, label: str, clock: Clock 
     wait_for_maintenance_ack(ops, control, generation, clock)
 
 
+def pause_for_recovery(
+    ops: ClusterOps,
+    control: str,
+    *,
+    incident_id: str | None = None,
+    clock: Clock | None = None,
+) -> None:
+    """Fence harness mutations behind a terminal incident and acknowledged intake pause."""
+
+    clock = clock or Clock()
+
+    def require_closed() -> None:
+        snapshot = ops.runtime_state(control)
+        if not snapshot or closure_pending(snapshot):
+            raise PersistentControllerError("eval: recovery requires a closed incident and available controller state")
+        terminal = {snapshot.get("last_acknowledged_incident_id")}
+        for failure in snapshot.get("failed_closures", []):
+            closure = failure.get("closure", {})
+            terminal.add(closure.get("request", {}).get("incident_id"))
+        if incident_id is not None and incident_id not in terminal:
+            raise PersistentControllerError(f"eval: recovery incident {incident_id!r} is not durably closed")
+
+    require_closed()
+    generation = f"benchmark-recovery-{uuid.uuid4().hex}-paused"
+    ops.set_maintenance(control, paused=True, generation=generation)
+    wait_for_maintenance_ack(ops, control, generation, clock)
+    if not any(
+        row.get("maintenance_generation") == generation and row.get("controller_maintenance") == "paused"
+        for row in _log_records(ops.controller_logs(control))
+    ):
+        raise PersistentControllerError("eval: recovery requires an acknowledged paused intake")
+    # Admission may have raced the pause request; no recovery write is safe until
+    # the acknowledged pause is followed by a fresh, idle controller snapshot.
+    require_closed()
+
+
 def collect_followup_incident(
     inputs: StageInputs,
     *,

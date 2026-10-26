@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 from benchmarks.sregym.adapter import PersistentState, kubectl
 from benchmarks.sregym.fastloop.baseline_recovery import (
+    NON_APPLICATION_NAMESPACES,
     ApplicationCluster,
     KubectlApplicationCluster,
     accepted_restore_baselines,
@@ -24,6 +25,23 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
+
+
+def ensure_application_namespace(kubeconfig: Path, namespace: str) -> None:
+    """Recover the namespace edge after a supported abort removes the app."""
+    if namespace.endswith("-sdo") or namespace in NON_APPLICATION_NAMESPACES:
+        raise ValueError(f"refusing to restore non-application namespace {namespace!r}")
+    result = kubectl(["get", "namespace", namespace, "-o", "name"], namespace=None, kubeconfig=kubeconfig, check=False)
+    if result.returncode == 0:
+        return
+    if "(NotFound)" not in result.stderr:
+        raise RuntimeError(f"could not inspect application namespace {namespace}: {result.stderr}")
+    kubectl(
+        ["apply", "-f", "-"],
+        namespace=None,
+        kubeconfig=kubeconfig,
+        input_text=json.dumps({"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": namespace}}),
+    )
 
 
 class ResetCluster(Protocol):
@@ -194,6 +212,9 @@ class RestoreChecks:
         from benchmarks.sregym.fastloop.rbac import reset_responder_grants
 
         env = self.environment
+        if load_application_baseline(env.baseline_path, env.namespace) is None:
+            raise ValueError("reset requires an application baseline captured by fastloop up")
+        ensure_application_namespace(env.kubeconfig, env.namespace)
         restore_admission_baseline(env.kubeconfig, env.baseline_path, env.workspace)
         if fresh:
             reset_responder_grants(env.kubeconfig, env.namespace)
@@ -272,6 +293,10 @@ def restore_application(
         time.sleep(min(1, max(0, deadline - time.monotonic())))
     if not health.get("healthy"):
         raise RuntimeError(f"reset left {environment.namespace} unhealthy: {health.get('unready')}")
+    if environment.namespace == "social-network":
+        from benchmarks.sregym.fastloop.social_fixture import restore_social_fixture
+
+        restore_social_fixture(environment.kubeconfig)
     if checks and environment.app != "toy":
         refreshed = worker.request(
             "refresh_baseline_clients", problem_id=environment.deploy_problem, dependencies_only=True, timeout=120
