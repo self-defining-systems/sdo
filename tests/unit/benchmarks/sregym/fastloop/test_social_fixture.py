@@ -228,3 +228,56 @@ def test_complete_warm_fixture_resumes_traffic_without_replacing_stores(monkeypa
     monkeypatch.setattr(social_fixture, "kubectl", command)
     assert social_fixture.restore_social_fixture(tmp_path / "config") is snapshot
     assert calls == [["patch", "job/wrk2-job", "--type=merge", "-p", '{"spec":{"suspend":false}}']]
+
+
+def test_all_fixture_clients_retire_before_waiting_for_any_one(monkeypatch, tmp_path):
+    import json
+    import subprocess
+
+    from benchmarks.sregym.fastloop import social_fixture, transient_cleanup
+
+    calls = []
+
+    def command(args, **kwargs):
+        calls.append(args)
+        value = {}
+        if args[:2] == ["get", "deployments"]:
+            value = {
+                "items": [{"metadata": {"name": name}, "spec": {"replicas": 1}} for name in social_fixture.CLIENTS]
+            }
+        if args[:2] == ["get", "pods"]:
+            selector = args[args.index("-l") + 1]
+            service = selector.split("=", 1)[1]
+            value = {
+                "items": []
+                if service == "wrk2-job"
+                else [
+                    {
+                        "metadata": {
+                            "name": service + "-pod",
+                            "uid": service,
+                            "namespace": "social-network",
+                            "labels": {"service": service},
+                            "ownerReferences": [{"kind": "ReplicaSet", "name": service + "-rs"}],
+                        }
+                    }
+                ]
+            }
+        return subprocess.CompletedProcess(args, 0, json.dumps(value), "")
+
+    def unavailable(config):
+        raise ValueError("fixture absent")
+
+    def stop_after_quiescence(*args, **kwargs):
+        raise RuntimeError("stop after quiescence")
+
+    monkeypatch.setattr(social_fixture, "kubectl", command)
+    monkeypatch.setattr(transient_cleanup, "kubectl", command)
+    monkeypatch.setattr(social_fixture, "check_social_fixture", unavailable)
+    monkeypatch.setattr(social_fixture, "_mongo", stop_after_quiescence)
+    with pytest.raises(RuntimeError, match="stop after quiescence"):
+        social_fixture.restore_social_fixture(tmp_path / "config")
+    deletes = [i for i, args in enumerate(calls) if args[0] == "delete"]
+    waits = [i for i, args in enumerate(calls) if args[0] == "wait" and any("service=" in arg for arg in args)]
+    assert len(deletes) == len(waits) == len(social_fixture.CLIENTS)
+    assert max(deletes) < min(waits), "client teardown must overlap within its shared deadline"

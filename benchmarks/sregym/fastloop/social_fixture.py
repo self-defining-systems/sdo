@@ -280,8 +280,11 @@ def _restore_social_fixture(config: Path) -> TimelineSnapshot:
     kubectl(
         ["scale", *[f"deployment/{name}" for name in CLIENTS], "--replicas=0"], namespace=NAMESPACE, kubeconfig=config
     )
+    retirement = Deadline(time.monotonic() + HELPER_LIFETIME_SECONDS, time.monotonic)
     for name in CLIENTS:
-        retire_pods(config, NAMESPACE, f"service={name}", owner_kind="ReplicaSet", deadline=retirement)
+        retire_pods(config, NAMESPACE, f"service={name}", owner_kind="ReplicaSet", deadline=retirement, wait=False)
+    for name in CLIENTS:
+        wait_deleted(config, NAMESPACE, ["pods", f"--selector=service={name}"], retirement)
     posts = fixture_posts()
     # JSON is sent over stdin, not argv. Convert integer fields to BSON int64:
     # the production C++ readers require those types even for small fixture IDs.

@@ -33,6 +33,7 @@ def retire_pods(
     deadline: Deadline,
     owner_name: str | None = None,
     owner_uid: str | None = None,
+    wait: bool = True,
 ) -> None:
     """Validate the entire selected set before requesting any retirement."""
     key, value = selector.split("=", 1)
@@ -61,7 +62,8 @@ def retire_pods(
             kubeconfig=config,
         )
     # Wait on the whole selector, so a replacement writer cannot evade quiescence.
-    wait_deleted(config, namespace, ["pods", f"--selector={selector}"], deadline)
+    if wait:
+        wait_deleted(config, namespace, ["pods", f"--selector={selector}"], deadline)
 
 
 def retire_harness_workload(config: Path, deadline: Deadline) -> None:
