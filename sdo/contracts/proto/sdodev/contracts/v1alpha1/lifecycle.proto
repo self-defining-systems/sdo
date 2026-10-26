@@ -4,7 +4,7 @@ package sdodev.contracts.v1alpha1;
 
 import "buf/validate/validate.proto";
 import "google/protobuf/any.proto";
-import "sdodev/contracts/v1alpha1/memory.proto";
+import "sdodev/contracts/v1alpha1/memory_diagnostic.proto";
 import "sdodev/contracts/v1alpha1/messages.proto";
 
 option go_package = "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1;contractsv1alpha1";

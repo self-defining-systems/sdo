@@ -9,6 +9,17 @@ from pathlib import Path
 from typing import Any
 
 
+def attach_existing_cluster(worker_infra: Any) -> dict[str, str]:
+    """Attach using the fenced kubeconfig; never invoke a cluster factory."""
+    cluster = os.environ["SREGYM_KIND_CLUSTER_NAME"]
+    kubeconfig = str(Path(os.environ["KUBECONFIG"]).resolve())
+    reusable, reason = worker_infra.existing_cluster_is_reusable(cluster, kubeconfig)
+    if not reusable:
+        raise ValueError(f"eval: refusing cluster recreation in attach-only mode: {reason}")
+    worker_infra.preflight_cluster_requirements(cluster, kubeconfig)
+    return {"cluster": cluster, "kubeconfig": kubeconfig}
+
+
 def main() -> int:
     # The external worker and its dependencies run in SREGym's own environment.
     worker_infra: Any = importlib.import_module("sregym.worker_infra")
@@ -52,6 +63,8 @@ def main() -> int:
             self._problem_factory = isolated_factory
             self._harness_factory_ready = True
         op = request.get("op")
+        if op == "attach_existing":
+            return attach_existing_cluster(worker_infra)
         if op in {"deploy", "clean_start"}:
             remove_injected_objects(Path(os.environ["KUBECONFIG"]))
         if op == "clean_start":

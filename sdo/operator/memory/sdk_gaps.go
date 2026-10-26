@@ -18,6 +18,16 @@ import (
 // no replacement incident evidence. The broker invokes it in its private clone
 // and serializes publication; Put retains its immutable incident contract.
 func (s *JSONStore) AppendSDKGaps(ctx context.Context, id string, gaps []*contracts.SdkGap) (Outcome, error) {
+	return s.appendReflectionAnnotations(ctx, id, gaps, nil)
+}
+
+// AppendReflectionRejections records broker validation decisions without
+// permitting replacement of classification, receipts or verification evidence.
+func (s *JSONStore) AppendReflectionRejections(ctx context.Context, id string, rejections []*contracts.ProposalRejection) (Outcome, error) {
+	return s.appendReflectionAnnotations(ctx, id, nil, rejections)
+}
+
+func (s *JSONStore) appendReflectionAnnotations(ctx context.Context, id string, gaps []*contracts.SdkGap, rejections []*contracts.ProposalRejection) (Outcome, error) {
 	previous, err := s.Get(ctx, id)
 	if err != nil {
 		return Outcome{}, err
@@ -35,6 +45,20 @@ func (s *JSONStore) AppendSDKGaps(ctx context.Context, id string, gaps []*contra
 			next.SdkGaps = append(next.SdkGaps, proto.Clone(gap).(*contracts.SdkGap))
 		}
 	}
+	for _, rejection := range rejections {
+		if rejection == nil {
+			return Outcome{}, fmt.Errorf("nil reflection rejection")
+		}
+		exists := false
+		for _, old := range next.ReflectionRejections {
+			// A guard and a recovered result can observe the same rejection at
+			// different times. Preserve the first durable timestamp.
+			exists = exists || (old.GetAttempt() == rejection.Attempt && proto.Equal(&contracts.ProposalRejection{Diagnostics: old.Diagnostics}, &contracts.ProposalRejection{Diagnostics: rejection.Diagnostics}))
+		}
+		if !exists {
+			next.ReflectionRejections = append(next.ReflectionRejections, proto.Clone(rejection).(*contracts.ProposalRejection))
+		}
+	}
 	sort.SliceStable(next.SdkGaps, func(i, j int) bool {
 		a, _ := wire.MarshalFull(next.SdkGaps[i])
 		b, _ := wire.MarshalFull(next.SdkGaps[j])
@@ -44,7 +68,7 @@ func (s *JSONStore) AppendSDKGaps(ctx context.Context, id string, gaps []*contra
 	if err != nil {
 		return Outcome{}, err
 	}
-	// Preserve unknown historical fields byte-for-value. Only sdk_gaps changes.
+	// Preserve unknown historical fields and all immutable incident evidence.
 	var document, updated map[string]json.RawMessage
 	if err = json.Unmarshal(previous.document, &document); err != nil {
 		return Outcome{}, err
@@ -53,6 +77,7 @@ func (s *JSONStore) AppendSDKGaps(ctx context.Context, id string, gaps []*contra
 		return Outcome{}, err
 	}
 	document["sdk_gaps"] = updated["sdk_gaps"]
+	document["reflection_rejections"] = updated["reflection_rejections"]
 	raw, err := json.Marshal(document)
 	if err != nil {
 		return Outcome{}, err
@@ -99,13 +124,15 @@ func (s *JSONStore) AppendSDKGaps(ctx context.Context, id string, gaps []*contra
 // originalOutcomeRetry accepts replay of immutable evidence after annotation,
 // retaining every appended gap and rejecting a replacement/addition via Put.
 func originalOutcomeRetry(previous, requested *contracts.OutcomeRecord) bool {
-	if previous == nil || requested == nil || len(previous.GetSdkGaps()) == 0 {
+	if previous == nil || requested == nil || (len(previous.GetSdkGaps()) == 0 && len(previous.GetReflectionRejections()) == 0) {
 		return false
 	}
 	old := proto.Clone(previous).(*contracts.OutcomeRecord)
 	next := proto.Clone(requested).(*contracts.OutcomeRecord)
 	old.SdkGaps = nil
 	next.SdkGaps = nil
+	old.ReflectionRejections = nil
+	next.ReflectionRejections = nil
 	if !proto.Equal(old, next) {
 		return false
 	}
@@ -113,6 +140,15 @@ func originalOutcomeRetry(previous, requested *contracts.OutcomeRecord) bool {
 		found := false
 		for _, stored := range previous.SdkGaps {
 			found = found || proto.Equal(gap, stored)
+		}
+		if !found {
+			return false
+		}
+	}
+	for _, rejection := range requested.ReflectionRejections {
+		found := false
+		for _, stored := range previous.ReflectionRejections {
+			found = found || proto.Equal(rejection, stored)
 		}
 		if !found {
 			return false

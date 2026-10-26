@@ -107,3 +107,58 @@ func AcceptedHealthRevision(ctx context.Context, repository string) (HealthRevis
 const HealthRefreshExitCode = 76
 
 var ErrHealthRefreshRequired = errors.New("health unverified: accepted inputs require judge refresh and detector adoption")
+
+var ErrReflectionObjectiveChanged = errors.New("objective changed")
+var ErrReflectionPolicyChanged = errors.New("policy changed")
+
+// CheckReflectionHealth permits source adoption and broker-validated judge
+// refreshes, while retaining the frozen incident's objective and policy authority.
+func CheckReflectionHealth(ctx context.Context, repository, frozen, current string) error {
+	protected := []string{layout.GoalFile, layout.DetectorsDir + "/health", layout.DiagnosticsDir + "/traffic", layout.LibrariesDir, layout.DiagnosticsGoModFile}
+	args := append([]string{"diff", "--name-only", "--no-renames", frozen, current, "--"}, protected...)
+	changes, err := healthGit(ctx, repository, args...)
+	if err != nil {
+		return err
+	}
+	if len(bytes.TrimSpace(changes)) == 0 {
+		return nil
+	}
+	before, err := HealthInputs(ctx, repository, frozen)
+	if err != nil {
+		return err
+	}
+	after, err := HealthInputs(ctx, repository, current)
+	if err != nil {
+		return err
+	}
+	if before.Objective != after.Objective {
+		return ErrReflectionObjectiveChanged
+	}
+	if before.DetectorRevision == after.DetectorRevision {
+		return nil
+	}
+	// A source-driven judge refresh may legitimately replace its health
+	// detectors. Every intervening policy writer must have broker provenance;
+	// a later judge refresh cannot launder an unrelated policy/library edit.
+	data, err := healthGit(ctx, repository, "log", "--first-parent", "--format=%B%x00", frozen+".."+after.Commit, "--", layout.DetectorsDir+"/health", layout.DiagnosticsDir+"/traffic", layout.LibrariesDir, layout.DiagnosticsGoModFile)
+	if err != nil {
+		return err
+	}
+	seen := false
+	for _, entry := range bytes.Split(data, []byte{0}) {
+		if len(bytes.TrimSpace(entry)) == 0 {
+			continue
+		}
+		seen = true
+		message := "\n" + strings.TrimSpace(string(entry)) + "\n"
+		for _, trailer := range []string{"SDO-Actor: health_judge", "SDO-Phase: initial", "SDO-Validation: passed"} {
+			if !strings.Contains(message, "\n"+trailer+"\n") {
+				return ErrReflectionPolicyChanged
+			}
+		}
+	}
+	if !seen {
+		return ErrReflectionPolicyChanged
+	}
+	return nil
+}

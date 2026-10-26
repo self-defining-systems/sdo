@@ -260,6 +260,7 @@ def test_admission_rejects_legacy_harness_traffic_even_without_injection_label(m
         clean_start.assert_clean_baseline(Path("synthetic-kubeconfig"), namespace="hotel-reservation")
 
 
+@pytest.mark.requires_sregym
 def test_real_wrk2_creates_harness_objects_and_grader_reads_the_same_namespace() -> None:
     import os
     import subprocess
