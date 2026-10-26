@@ -9,6 +9,8 @@ import (
 	"strings"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/program"
 )
 
 // acceptedPathsAnnotation records, without values, every configuration path an
@@ -28,6 +30,34 @@ const maxAcceptanceRecordBytes = 32 << 10
 // ErrAcceptanceRecordUnavailable means an object has no acceptance record for
 // its current accepted source, so fields added since acceptance are unknown.
 var ErrAcceptanceRecordUnavailable = errors.New("acceptance record is missing or was taken against other accepted source")
+
+// AcceptanceUnknownError reports a source comparison whose declared fields
+// agree but whose additions are unknown. Detectors and programs see an error,
+// so nothing is learned from it; the controller's own drift handling uses
+// Declared, which compares declared fields only.
+type AcceptanceUnknownError struct {
+	Ref      sdk.ObjectRef
+	Declared program.Diff
+}
+
+func (e *AcceptanceUnknownError) Error() string {
+	return fmt.Sprintf("compare %s/%s with accepted source: %v", e.Ref.Kind, e.Ref.Name, ErrAcceptanceRecordUnavailable)
+}
+
+func (e *AcceptanceUnknownError) Unwrap() error { return ErrAcceptanceRecordUnavailable }
+
+// declaredSourceDiff is the comparison the controller's drift admission,
+// verification and closure need: whether declared fields match accepted
+// source. An unknown acceptance record must not block them (an object faulted
+// before it was ever recorded still closes once restored).
+func declaredSourceDiff(view program.ReadView, ref sdk.ObjectRef) (program.Diff, error) {
+	diff, err := view.DiffAgainstSource(ref)
+	var unknown *AcceptanceUnknownError
+	if errors.As(err, &unknown) {
+		return unknown.Declared, nil
+	}
+	return diff, err
+}
 
 type acceptanceRecord struct {
 	Source string   `json:"source"`

@@ -281,7 +281,7 @@ func (v LiveReadView) DiffAgainstSource(ref sdk.ObjectRef) (program.Diff, error)
 	// current acceptance record that is unknown, never unchanged.
 	added, err := addedSourceFields(observed, source)
 	if err != nil {
-		return program.Diff{}, fmt.Errorf("compare %s/%s with accepted source: %w", ref.Kind, ref.Name, err)
+		return program.Diff{}, &AcceptanceUnknownError{Ref: ref, Declared: program.Diff{Text: text}}
 	}
 	return program.Diff{Changed: len(added) > 0, Text: text}, nil
 }

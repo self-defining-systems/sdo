@@ -114,7 +114,7 @@ func (c DriftClassifier) Classify(ctx context.Context, change ObjectChange, view
 	// Foreign admission is independent of field-manager attribution. Restrict
 	// it to reviewed effect-bearing kinds and suppress controller churn.
 	if foreignDriftCandidate(change) {
-		diff, err := view.DiffAgainstSource(ref)
+		diff, err := declaredSourceDiff(view, ref)
 		if err != nil {
 			return nil, fmt.Errorf("compare %s/%s with accepted source: %w", ref.Kind, ref.Name, err)
 		}
@@ -167,7 +167,7 @@ func (c DriftClassifier) Classify(ctx context.Context, change ObjectChange, view
 		return nil, nil
 	}
 	sort.Strings(paths)
-	diff, err := view.DiffAgainstSource(ref)
+	diff, err := declaredSourceDiff(view, ref)
 	if err != nil {
 		return nil, fmt.Errorf("compare %s/%s with accepted source: %w", ref.Kind, ref.Name, err)
 	}
