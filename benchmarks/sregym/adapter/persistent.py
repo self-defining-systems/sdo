@@ -40,8 +40,9 @@ from benchmarks.sregym.adapter.cluster_resources import kubectl
 from benchmarks.sregym.adapter.eval_guards import (
     INCIDENT_EXECUTION_LABEL,
     STANDBY_LABEL,
-    closure_pending,
     idle_standby_jobs,
+    incident_work_open,
+    terminal_incident_ids,
 )
 from benchmarks.sregym.adapter.fault_gate import (
     BASELINE_TIMEOUT_SECONDS,
@@ -126,6 +127,14 @@ class PersistentControllerError(RuntimeError):
 
 class ClosureFailedError(PersistentControllerError):
     """Raised when the controller gave up committing an incident closure the broker kept rejecting."""
+
+
+class ReflectionDeadlineError(PersistentControllerError):
+    """The controller was read and still owned the closure when the reflection deadline passed."""
+
+
+class ControllerStateUnavailableError(PersistentControllerError):
+    """The controller state could not be read before the deadline, so whether the closure is over is unknown."""
 
 
 class DetectionMissError(PersistentControllerError):
@@ -644,7 +653,7 @@ class KubectlClusterOps:
     def set_maintenance(
         self, control_namespace: str, *, paused: bool, generation: str, preserve_baseline: bool = False
     ) -> None:
-        if paused and closure_pending(self.runtime_state(control_namespace)):
+        if paused and incident_work_open(self.runtime_state(control_namespace)):
             raise PersistentControllerError("eval: cannot pause SDO while incident closure work is pending")
         kubeconfig = os.getenv("KUBECONFIG", "").strip()
         go_set_maintenance(
@@ -1044,7 +1053,7 @@ def pause_controller(ops: ClusterOps, control: str, *, label: str, clock: Clock 
     """Pause the controller and wait for its acknowledgement (used when a composition ends)."""
 
     clock = clock or Clock()
-    if closure_pending(ops.runtime_state(control)):
+    if incident_work_open(ops.runtime_state(control)):
         logger.info("Leaving %s active: incident closure work is pending", control)
         return
     generation = f"{label}-{uuid.uuid4().hex[:8]}-paused"
@@ -1070,27 +1079,6 @@ class FollowupClosureTimeout(PersistentControllerError):
             f"{wait.graded_incident_id!r} closed and stayed open past {wait.bound_seconds:.0f}s"
         )
         self.wait = wait
-
-
-def _terminal_incident_ids(snapshot: dict[str, Any]) -> set[str]:
-    terminal = {snapshot.get("last_acknowledged_incident_id")}
-    for failure in snapshot.get("failed_closures") or []:
-        terminal.add(failure.get("closure", {}).get("request", {}).get("incident_id"))
-    failure = snapshot.get("closure_failure") or {}
-    if snapshot.get("closure_state") == "CLOSURE_STATE_FAILED" and failure.get("permanent") is True:
-        terminal.add(failure.get("incident_id"))
-    return {incident_id for incident_id in terminal if isinstance(incident_id, str)}
-
-
-def _incident_work_open(snapshot: dict[str, Any]) -> bool:
-    """Whether SDO still owns incident work; a closure it permanently failed or retired is over."""
-
-    if not closure_pending(snapshot):
-        return False
-    if snapshot.get("incident_request") or snapshot.get("incident_open"):
-        return True
-    request = (snapshot.get("pending_closure") or {}).get("request") or {}
-    return request.get("incident_id") not in _terminal_incident_ids(snapshot)
 
 
 def _open_incident_id(snapshot: dict[str, Any]) -> str:
@@ -1123,9 +1111,9 @@ def pause_for_recovery(
         if closure_open:
             return
         snapshot = ops.runtime_state(control)
-        if not snapshot or _incident_work_open(snapshot):
+        if not snapshot or incident_work_open(snapshot):
             raise PersistentControllerError("eval: recovery requires a closed incident and available controller state")
-        closed.update(_terminal_incident_ids(snapshot))
+        closed.update(terminal_incident_ids(snapshot))
         if incident_id is not None and incident_id not in closed:
             raise PersistentControllerError(f"eval: recovery incident {incident_id!r} is not durably closed")
 
@@ -1156,9 +1144,9 @@ def _wait_for_followup_closure(
     followups: list[str] = []
     while True:
         snapshot = ops.runtime_state(control)
-        if not snapshot or not _incident_work_open(snapshot):
+        if not snapshot or not incident_work_open(snapshot):
             break
-        closed.update(_terminal_incident_ids(snapshot))
+        closed.update(terminal_incident_ids(snapshot))
         followup = _open_incident_id(snapshot)
         if incident_id not in closed or followup == incident_id:
             break
@@ -1898,16 +1886,37 @@ def _wait_for_reflection_drain(
     """Wait for broker acknowledgment, which follows any required detector rollout."""
 
     deadline = clock.monotonic() + timeout
-    while clock.monotonic() < deadline:
-        state = ops.runtime_state(control)
-        observed = _observe_state(
-            state, incident_id=incident_id, timeout=min(30.0, max(0.001, deadline - clock.monotonic()))
-        )
-        _raise_observation_failure(observed, state)
-        if observed.acknowledged:
-            return state
+    while True:
+        # Only a read that shows SDO still owning the closure makes a passed deadline a reflection deadline.
+        # A failed or empty read, or a failed observation, says nothing; retry within the same budget.
+        error: str | None = None
+        try:
+            state = ops.runtime_state(control)
+        except (RuntimeError, ValueError, KeyError, OSError) as exc:
+            state, error = {}, str(exc) or type(exc).__name__
+        if not state:
+            error = error or "empty controller state"
+        else:
+            try:
+                observed = _observe_state(
+                    state, incident_id=incident_id, timeout=min(30.0, max(0.001, deadline - clock.monotonic()))
+                )
+                _raise_observation_failure(observed, state)
+            except ClosureFailedError:
+                raise
+            except PersistentControllerError as exc:
+                error = f"observation failed: {exc}"
+            else:
+                if observed.acknowledged:
+                    return state
+        if clock.monotonic() >= deadline:
+            break
         clock.sleep(POLL_SECONDS)
-    raise PersistentControllerError(f"incident {incident_id!r} was not reflected and rolled out within {timeout:.0f}s")
+    if not state or not incident_work_open(state):
+        raise ControllerStateUnavailableError(
+            f"incident {incident_id!r}: closure state unknown at the {timeout:.0f}s deadline: {error}"
+        )
+    raise ReflectionDeadlineError(f"incident {incident_id!r} was not reflected and rolled out within {timeout:.0f}s")
 
 
 def _relaunched_after(records: list[dict[str, Any]], incident_id: str) -> bool:
