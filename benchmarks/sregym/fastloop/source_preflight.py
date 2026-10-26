@@ -40,7 +40,7 @@ if TYPE_CHECKING:
     from benchmarks.sregym.fastloop.environment import Images
 
 
-def assert_runtime_images(images: Images, worktree: Path) -> None:
+def assert_runtime_images(images: Images, worktree: Path, *, dev_mount: bool = True) -> None:
     """Reject saved lane images from other code before resetting or injecting."""
     revision = subprocess.run(
         ["git", "-C", str(worktree), "rev-parse", "HEAD"],
@@ -83,6 +83,22 @@ def assert_runtime_images(images: Images, worktree: Path) -> None:
             raise ValueError(
                 f"eval: image {image} source differs from {revision}; rebuild with scripts/build_sdo_images.sh"
             )
+    # Controller and validator remain source-bound above. A retained responder
+    # may be from an older compatible build, but its complete runtime import
+    # closure must load before a worker (and therefore injection) can start.
+    inspected = subprocess.run(
+        ["docker", "image", "inspect", images.responder], check=True, capture_output=True, text=True, timeout=20
+    )
+    labels = json.loads(inspected.stdout)[0].get("Config", {}).get("Labels") or {}
+    if labels.get("org.opencontainers.image.revision") != revision:
+        from benchmarks.sregym.adapter import BENCHMARK_IMAGE_ENTRY_POINTS, assert_image_entrypoints
+
+        assert_image_entrypoints(
+            images.responder,
+            BENCHMARK_IMAGE_ENTRY_POINTS,
+            source_root=worktree if dev_mount else None,
+            run=subprocess.run,
+        )
     try:
         subprocess.run(
             [

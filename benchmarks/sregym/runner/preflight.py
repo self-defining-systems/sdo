@@ -65,6 +65,7 @@ except ModuleNotFoundError:  # Python 3.10
 
 from collections.abc import Callable
 
+from benchmarks.sregym.adapter import BENCHMARK_IMAGE_ENTRY_POINTS, image_entrypoint_script
 from benchmarks.sregym.runner.experiment import ExperimentConfig, load_experiment_config, resolve_config
 from benchmarks.sregym.runner.pipeline import is_pipeline_config, load_pipeline_config, merge_stage_config
 from sdo.agents.provider import MODEL_ENV
@@ -94,9 +95,10 @@ SDO_IMAGE_ENTRY_POINTS = {
     "controller_image": (),
     "responder_image": ("sdo.agents.responder.worker", "libs.agent_cli", "agentshim"),
     "validator_image": (),
+    "benchmark_image": ("sdo.agents.responder.worker", *BENCHMARK_IMAGE_ENTRY_POINTS),
 }
 #: Only the worker image runs agent turns and needs these Python/CLI pins.
-AGENT_IMAGES = ("responder_image",)
+AGENT_IMAGES = ("responder_image", "benchmark_image")
 #: The SDO driver's model when neither ``[agent.sdo_codex].model`` nor ``MODEL_ID`` is set.
 SDO_DRIVER_DEFAULT_MODEL = "gpt-6-luna"
 #: Env overrides some SDO entry points read when they are given no model.
@@ -377,23 +379,13 @@ class SystemHost:
                     codex=None, agentshim=None, import_error="Go operator returned an invalid schema identity"
                 )
             return ImageVersions(codex=None, agentshim=None)
-        codex_out = self._text(["docker", "run", "--rm", "--entrypoint", "codex", ref, "--version"], timeout=120)
-        script = (
-            "import importlib, importlib.metadata as m, json, sys\n"
-            "error = None\n"
-            f"for name in {list(modules)!r}:\n"
-            "    try:\n"
-            "        importlib.import_module(name)\n"
-            "    except Exception as exc:\n"
-            "        error = f'{name}: {type(exc).__name__}: {exc}'\n"
-            "        break\n"
-            "try:\n"
-            "    version = m.version('agentshim')\n"
-            "except m.PackageNotFoundError:\n"
-            "    version = None\n"
-            "print(json.dumps({'agentshim': version, 'import_error': error}))\n"
+        codex_out = self._text(
+            ["docker", "run", "--rm", "--network", "none", "--entrypoint", "codex", ref, "--version"], timeout=120
         )
-        python_out = self._text(["docker", "run", "--rm", "--entrypoint", "python3", ref, "-c", script], timeout=120)
+        script = image_entrypoint_script(modules)
+        python_out = self._text(
+            ["docker", "run", "--rm", "--network", "none", "--entrypoint", "python3", ref, "-c", script], timeout=120
+        )
         if python_out is None and codex_out is None:
             return None
         python = cast("dict[str, Any]", json.loads(python_out.strip().splitlines()[-1])) if python_out else {}
@@ -880,7 +872,8 @@ def _check_sdo_images(ctx: _Context) -> PreflightCheck | None:
             continue
         if key not in SDO_IMAGE_ENTRY_POINTS:
             continue
-        versions = ctx.host.image_versions(ref, SDO_IMAGE_ENTRY_POINTS[key])
+        profile = "benchmark_image" if key == "responder_image" and sdo_configs else key
+        versions = ctx.host.image_versions(ref, SDO_IMAGE_ENTRY_POINTS[profile])
         if versions is None:
             problems.append(f"image {ref} could not be probed")
             continue

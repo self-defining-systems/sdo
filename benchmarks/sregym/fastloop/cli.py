@@ -71,7 +71,9 @@ def _worker(environment: FastloopEnvironment) -> SregymWorker:
     from benchmarks.sregym.fastloop.source_preflight import assert_harness_sources, assert_runtime_images
 
     assert_harness_sources(environment.sregym_dir)
-    assert_runtime_images(environment.images, environment.dev_mount or REPO_ROOT)
+    assert_runtime_images(
+        environment.images, environment.dev_mount or REPO_ROOT, dev_mount=environment.dev_mount is not None
+    )
     if not node_images_match(environment.cluster, environment.images):
         raise ValueError("eval: lane image source differs from the checked local images; redeliver with fastloop up")
     return SregymWorker(
@@ -241,10 +243,17 @@ def up_preflight(args: argparse.Namespace) -> None:
     from benchmarks.sregym.fastloop.source_preflight import assert_harness_sources
 
     assert_harness_sources(getattr(args, "sregym_dir", DEFAULT_SREGYM_DIR))
-    for image in (args.controller_image, args.responder_image, args.validator_image):
+    from benchmarks.sregym.adapter import BENCHMARK_IMAGE_ENTRY_POINTS, assert_image_entrypoints
+
+    for image, modules in (
+        (args.controller_image, ()),
+        (args.responder_image, BENCHMARK_IMAGE_ENTRY_POINTS),
+        (args.validator_image, ()),
+    ):
         if image is None:
             continue
         subprocess.run(["docker", "image", "inspect", image], check=True, capture_output=True, text=True)
+        assert_image_entrypoints(image, modules, source_root=args.dev_mount if modules else None, run=subprocess.run)
 
 
 def _up(args: argparse.Namespace) -> int:
