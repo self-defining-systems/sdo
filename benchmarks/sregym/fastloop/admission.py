@@ -216,18 +216,8 @@ class LaneAdmission:
             with path.open("a") as output:
                 output.write(json.dumps(proof) + "\n")
 
-        def restore() -> None:
-            from benchmarks.sregym.fastloop.baseline_recovery import KubectlApplicationCluster
-            from benchmarks.sregym.fastloop.reset import RestoreChecks, restore_application
-
-            self.check_resources("restore")
-            checks = RestoreChecks(env)
-            checks.prepare(fresh=False)
-            restore_application(env, KubectlApplicationCluster(env.kubeconfig), self.worker, checks=checks)
-            self._identity = workload_identity(env.kubeconfig, env.namespace)
-
         proof = wait_for_proof(
-            sample, restore, record, timeout_seconds=self.timeout_seconds, deadline=deadline, monotonic=time.monotonic
+            sample, record, timeout_seconds=self.timeout_seconds, deadline=deadline, monotonic=time.monotonic
         )
         if self.progress:
             self.progress("stabilization", evidence=str(path))

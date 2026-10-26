@@ -93,7 +93,7 @@ def test_real_setup_ownership_shapes_are_admitted():
         validate_setup_commit("responder", "initial", "passed", [".sdo/rendered/lock.json"])
 
 
-def test_stabilization_restores_once_then_fails_without_injecting():
+def test_stabilization_observes_until_deadline_then_fails_without_injecting():
     from benchmarks.sregym.adapter.eval_guards import StabilizationError, wait_for_proof
 
     class Clock:
@@ -106,18 +106,15 @@ def test_stabilization_restores_once_then_fails_without_injecting():
             self.now += seconds
 
     clock = Clock()
-    restores = []
     samples = []
     with pytest.raises(StabilizationError):
         wait_for_proof(
             lambda: {"passed": False, "reason": "pending"},
-            lambda: restores.append("app-only"),
             samples.append,
             timeout_seconds=5,
             monotonic=clock.monotonic,
             sleep=clock.sleep,
         )
-    assert restores == ["app-only"]
     assert clock.now == 5
     assert samples[-1]["passed"] is False
 
@@ -586,7 +583,7 @@ def test_restore_rejects_sealed_manifest_for_another_object(tmp_path):
         accepted_restore_baselines(tmp_path, (ApplicationBaseline("app", []),))
 
 
-def test_stabilization_rejects_late_success_and_does_not_renew_retry_budget():
+def test_stabilization_rejects_late_success_and_does_not_renew_budget():
     from benchmarks.sregym.adapter.eval_guards import StabilizationError, wait_for_proof
 
     now = [0.0]
@@ -599,7 +596,6 @@ def test_stabilization_rejects_late_success_and_does_not_renew_retry_budget():
     with pytest.raises(StabilizationError):
         wait_for_proof(
             slow_sample,
-            lambda: None,
             records.append,
             timeout_seconds=5,
             monotonic=lambda: now[0],

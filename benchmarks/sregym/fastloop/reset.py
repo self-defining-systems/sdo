@@ -335,8 +335,8 @@ def restore_application(
 ) -> None:
     """Restore only the app, from one captured installed manifest set, once.
 
-    The controller, accepted memory and incident clocks are untouched. This is
-    also the one allowed stabilization retry before any fault is injected.
+    The controller, accepted memory and incident clocks are untouched. Restore
+    runs before admission, which only observes the resulting application.
     """
     require_terminal_reflection(environment)
     baselines = load_application_baseline(environment.baseline_path, environment.namespace)
