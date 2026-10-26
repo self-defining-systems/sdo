@@ -37,9 +37,13 @@ executable learning. A cause is verified when each written target's own primary 
 observed symptom cleared after the last write. On `success` outcomes only, cause
 resources that no opening finding named (for example a traffic-only caller
 Service) are unobserved context and, since LEARN1 (2026-10-26), no longer cause
-an `evidence_gap`. Partial and failed outcomes, like this one, still need a cleared
-finding for every unwritten cause resource, because opening findings omit
-findings that activate after launch. Since LEARN2 (2026-10-26), a repair
+an `evidence_gap`. Since P35R (2026-10-26), on `success` outcomes a written
+target that no opening finding named is covered by its cause when another
+resource of the same cause is the primary resource of an opening finding that
+cleared after the last cause write (a resource named only as related on another
+cause's finding never covers, P35R2); a cause with no such finding is still an `evidence_gap`. Partial
+and failed outcomes, like this one, still need a cleared finding for every
+cause resource, because opening findings omit findings that activate after launch. Since LEARN2 (2026-10-26), a repair
 receipt's `owners` records each written object's controller owner chain as SDO
 observed it: plan pre-images for controller writes, and for `sdo act` writes the
 broker's walk of the incident's open capture (LEARN2B). Worker-reported chains
