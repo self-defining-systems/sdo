@@ -267,6 +267,7 @@ message ReflectionCauseWork {
   uint32 cause_index = 1;
   repeated ObjectRef resources = 2;
   repeated ReflectionWorkItem items = 3;
+  string learning_basis = 4 [(buf.validate.field).string = {in: ["", "observed_transition"]}];
 }
 
 message ReflectionWorkItem {

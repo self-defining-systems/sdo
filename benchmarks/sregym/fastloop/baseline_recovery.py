@@ -258,7 +258,7 @@ def _content(value: dict[str, Any]) -> tuple[Any, ...]:
 
 
 def _sdo_owned_objects(objects: list[dict[str, Any]]) -> set[int]:
-    """Follow installer metadata before capture strips server-assigned fields."""
+    """Follow installer metadata before normalization strips ownership evidence."""
     owned: set[int] = set()
     for index, value in enumerate(objects):
         metadata = value.get("metadata", {})
@@ -287,14 +287,29 @@ def _sdo_owned_objects(objects: list[dict[str, Any]]) -> set[int]:
         owned.update(descendants)
 
 
+@dataclass(frozen=True)
+class _ApplicationOwnership:
+    """One partition for capture, comparison and every app-only restore write."""
+
+    sdo_owned: frozenset[tuple[str, str]]
+
+    @classmethod
+    def from_objects(cls, objects: list[dict[str, Any]]) -> _ApplicationOwnership:
+        return cls(frozenset(_identity(objects[index]) for index in _sdo_owned_objects(objects)))
+
+    def non_sdo_objects(self, objects: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return [value for value in objects if _identity(value) not in self.sdo_owned]
+
+    def application_objects(self, objects: list[dict[str, Any]], namespace: str) -> list[dict[str, Any]]:
+        return [value for value in self.non_sdo_objects(objects) if _managed(value, namespace)]
+
+
 def capture_application_baseline(cluster: ApplicationCluster, namespace: str) -> ApplicationBaseline:
     if not namespace or namespace.endswith("-sdo") or namespace in NON_APPLICATION_NAMESPACES:
         raise ValueError(f"refusing to capture non-application namespace {namespace!r}")
     listed = cluster.list_objects(namespace)
-    excluded = _sdo_owned_objects(listed)
-    objects = [
-        _manifest(value) for index, value in enumerate(listed) if index not in excluded and _managed(value, namespace)
-    ]
+    ownership = _ApplicationOwnership.from_objects(listed)
+    objects = [_manifest(value) for value in ownership.application_objects(listed, namespace)]
     return ApplicationBaseline(namespace=namespace, objects=objects)
 
 
@@ -365,15 +380,19 @@ def reconcile_application(
         raise ValueError(f"refusing to reconcile non-application namespace {namespace!r}")
     from benchmarks.sregym.fastloop.hotel_helpers import retire_helpers, without_helpers
 
-    desired, _ = without_helpers(baseline.objects, namespace)
     listed = cluster.list_objects(namespace)
-    retire_helpers(cluster, namespace, objects=listed)
+    # Live evidence also protects SDO identities present in older snapshots.
+    # Resolve the complete owner graph before filtering Pods or normalizing data.
+    ownership = _ApplicationOwnership.from_objects(baseline.objects + listed)
+    desired, _ = without_helpers(ownership.non_sdo_objects(baseline.objects), namespace)
+    app_listed = ownership.non_sdo_objects(listed)
+    retire_helpers(cluster, namespace, objects=app_listed)
     current_objects, _ = without_helpers(
-        [v for v in listed if v.get("kind") != "Pod" or not v.get("metadata", {}).get("ownerReferences")], namespace
+        [v for v in app_listed if v.get("kind") != "Pod" or not v.get("metadata", {}).get("ownerReferences")], namespace
     )
     cleanup = RecoveryCleanup()
-    expected = {_identity(value): value for value in desired if _managed(value, namespace)}
-    current = {_identity(value): value for value in current_objects if _managed(value, namespace)}
+    expected = {_identity(value): value for value in ownership.application_objects(desired, namespace)}
+    current = {_identity(value): value for value in ownership.application_objects(current_objects, namespace)}
     for kind, name in sorted(current):
         if (kind, name) in expected:
             continue
@@ -547,17 +566,19 @@ def seal_existing_install(path: Path, cluster: ApplicationCluster, namespace: st
     from benchmarks.sregym.fastloop.hotel_helpers import migrate_baseline, retire_helpers
 
     migrate_baseline(path, namespace)
-    retire_helpers(cluster, namespace)
+    listed = cluster.list_objects(namespace)
+    ownership = _ApplicationOwnership.from_objects(listed)
+    retire_helpers(cluster, namespace, objects=ownership.non_sdo_objects(listed))
     baselines = load_application_baseline(path, namespace)
     if not baselines:
         raise ValueError("installed source seal requires the original up capture")
     for baseline in baselines:
-        expected = {_identity(v): _content(v) for v in baseline.objects if _managed(v, baseline.namespace)}
-        actual = {
-            _identity(v): _content(v)
-            for v in cluster.list_objects(baseline.namespace)
-            if _managed(v, baseline.namespace)
+        listed = cluster.list_objects(baseline.namespace)
+        ownership = _ApplicationOwnership.from_objects(baseline.objects + listed)
+        expected = {
+            _identity(v): _content(v) for v in ownership.application_objects(baseline.objects, baseline.namespace)
         }
+        actual = {_identity(v): _content(v) for v in ownership.application_objects(listed, baseline.namespace)}
         if actual != expected:
             raise ValueError("installed source seal differs from the original clean up capture")
     save_application_baseline(path, baselines, installed=True)

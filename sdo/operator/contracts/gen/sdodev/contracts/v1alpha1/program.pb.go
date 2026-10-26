@@ -2325,6 +2325,7 @@ type ReflectionCauseWork struct {
 	CauseIndex    uint32                 `protobuf:"varint,1,opt,name=cause_index,json=causeIndex,proto3" json:"cause_index,omitempty"`
 	Resources     []*ObjectRef           `protobuf:"bytes,2,rep,name=resources,proto3" json:"resources,omitempty"`
 	Items         []*ReflectionWorkItem  `protobuf:"bytes,3,rep,name=items,proto3" json:"items,omitempty"`
+	LearningBasis string                 `protobuf:"bytes,4,opt,name=learning_basis,json=learningBasis,proto3" json:"learning_basis,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2378,6 +2379,13 @@ func (x *ReflectionCauseWork) GetItems() []*ReflectionWorkItem {
 		return x.Items
 	}
 	return nil
+}
+
+func (x *ReflectionCauseWork) GetLearningBasis() string {
+	if x != nil {
+		return x.LearningBasis
+	}
+	return ""
 }
 
 type ReflectionWorkItem struct {
@@ -4218,12 +4226,13 @@ const file_sdodev_contracts_v1alpha1_program_proto_rawDesc = "" +
 	"\asummary\x18\x06 \x01(\tR\asummary\"'\n" +
 	"\fPlanPreImageJ\x04\b\x01\x10\x02J\x04\b\x02\x10\x03R\x03refR\x06object\"(\n" +
 	"\tPlanPatchJ\x04\b\x01\x10\x02J\x04\b\x02\x10\x03R\x03refR\n" +
-	"patch_json\"\xbf\x01\n" +
+	"patch_json\"\x84\x02\n" +
 	"\x13ReflectionCauseWork\x12\x1f\n" +
 	"\vcause_index\x18\x01 \x01(\rR\n" +
 	"causeIndex\x12B\n" +
 	"\tresources\x18\x02 \x03(\v2$.sdodev.contracts.v1alpha1.ObjectRefR\tresources\x12C\n" +
-	"\x05items\x18\x03 \x03(\v2-.sdodev.contracts.v1alpha1.ReflectionWorkItemR\x05items\"\xd7\x05\n" +
+	"\x05items\x18\x03 \x03(\v2-.sdodev.contracts.v1alpha1.ReflectionWorkItemR\x05items\x12C\n" +
+	"\x0elearning_basis\x18\x04 \x01(\tB\x1c\xbaH\x19r\x17R\x00R\x13observed_transitionR\rlearningBasis\"\xd7\x05\n" +
 	"\x12ReflectionWorkItem\x12\x1d\n" +
 	"\n" +
 	"program_id\x18\x01 \x01(\tR\tprogramId\x12>\n" +
