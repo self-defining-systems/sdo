@@ -486,3 +486,15 @@ lane and installed image content on every node, before credentials or worker set
 Use `--learning-loop-report PATH` to reference a dedicated rehearsal's report.
 Changes to code or installed image content require a new proof. Shared hosts may
 pass `--lease NAME` to check their `coord` lease before mutations.
+
+Passing no-fault setup reports are reusable on an unchanged lane. A subsequent
+`eval-dry-run` checks the content-bound receipt in `setup-proof/` before reset
+or deployment. An exact match skips setup and reruns live admission; a miss
+records the changed fingerprint components and performs the full rehearsal.
+The live SDO `run` command also records its decision in `results/<run>/setup-proof.json`
+and skips its deploy request only on the same exact match. Traffic, incident,
+intake and resource/disk admission still apply at injection time. Changed code,
+images, accepted memory, manifests, object UIDs/configuration or proof tools
+invalidate the receipt, including changes made by reset. Unknown identity or
+uncommitted source cannot authorize reuse. This setup receipt does not replace
+the separate whole-learning-loop proof.

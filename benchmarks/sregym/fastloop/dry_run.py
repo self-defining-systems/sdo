@@ -11,19 +11,14 @@ import sys
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-INVARIANTS = (
-    "lane_resources",
-    "restore",
-    "onboarding",
-    "setup_memory",
-    "rbac_equality",
-    "stabilization",
-    "probe_placement",
-    "baseline",
-    "closure_policy",
-)
+from benchmarks.sregym.fastloop.setup_proof import INVARIANTS
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from benchmarks.sregym.fastloop.environment import FastloopEnvironment
 
 
 def code_revision() -> str:
@@ -49,6 +44,8 @@ class DryRunReport:
     setup_seconds: float = 0
     steady_seconds: float = 0
     steady_started: float | None = None
+    fingerprint: dict[str, Any] | None = None
+    setup_proof: dict[str, Any] = field(default_factory=dict)
     fault_injected: bool = False
     live_model_calls: bool = False
     invariants: dict[str, dict[str, Any]] = field(
@@ -176,10 +173,58 @@ def prepare_scripted_credentials(kubeconfig: Path, control: str) -> str:
     return name
 
 
+def assert_active_intake(environment: FastloopEnvironment) -> None:
+    from benchmarks.sregym.adapter import kubectl
+
+    document = json.loads(
+        kubectl(
+            ["get", "configmap/sdo-controller-maintenance", "-o", "json"],
+            namespace=environment.namespace + "-sdo",
+            kubeconfig=environment.kubeconfig,
+        ).stdout
+    )
+    if document.get("data", {}).get("state") != "active":
+        raise ValueError("eval: setup reuse requires active SDO intake")
+
+
+def refresh_reused_proof(
+    environment: FastloopEnvironment,
+    directory: Path,
+    report: DryRunReport,
+    passed: Callable[..., None],
+    timeout: int,
+) -> None:
+    from benchmarks.sregym.adapter import KubectlClusterOps
+    from benchmarks.sregym.fastloop import cli
+    from benchmarks.sregym.fastloop.admission import LaneAdmission
+
+    receipt = json.loads(Path(report.setup_proof["receipt"]).read_text())
+    report.invariants = {
+        name: {**row, "reused_from": report.setup_proof["receipt"]}
+        for name, row in receipt["report"]["invariants"].items()
+    }
+    report.phase = "steady"
+    report.steady_started = time.monotonic()
+    assert_active_intake(environment)
+    with cli._worker(environment) as worker:
+        admission = LaneAdmission(
+            environment,
+            worker,
+            KubectlClusterOps(),
+            directory / "admission",
+            progress=passed,
+            timeout_seconds=max(1, (timeout - 60) / 2),
+        )
+        admission.prove(environment.namespace + "-sdo")
+    passed("stabilization", source="fresh live admission", reused_setup=report.setup_proof["receipt"])
+    report.passed = True
+
+
 def run_lane(run_dir: Path, timeout: int, setup_timeout: int = 900) -> int:
     from benchmarks.sregym.adapter import assert_lane_resources, closure_pending, control_namespace_for, kubectl
     from benchmarks.sregym.fastloop import cli
     from benchmarks.sregym.fastloop.environment import FastloopEnvironment
+    from benchmarks.sregym.fastloop.setup_proof import RECEIPTS, check_reuse, collect_fingerprint, save_receipt
 
     environment = FastloopEnvironment.load(run_dir.resolve())
     directory = environment.run_dir / "eval-dry-run"
@@ -193,16 +238,30 @@ def run_lane(run_dir: Path, timeout: int, setup_timeout: int = 900) -> int:
         report.seconds = time.monotonic() - started
         report.save(report_path)
 
+    os.environ["KUBECONFIG"] = str(environment.kubeconfig)
+    os.environ["SDO_TIME_SCALE"] = "1"
+    if environment.dev_mount:
+        os.environ["SDO_DEV_MOUNT"] = "1"
+        os.environ["SDO_OPERATOR_BIN"] = str(environment.dev_mount / ".fastloop/sdo-operator")
     try:
+        initial, report.setup_proof = check_reuse(environment)
+        report.save(report_path)
+        if report.setup_proof["reused"]:
+            refresh_reused_proof(environment, directory, report, passed, timeout)
+            final = collect_fingerprint(environment)
+            if initial != final:
+                report.passed = False
+                raise ValueError("eval: setup fingerprint changed during fresh admission")
+            report.code_revision = final.code_revision
+            report.fingerprint = asdict(final)
+            report.seconds = time.monotonic() - started
+            report.steady_seconds = report.seconds
+            report.save(report_path)
+            return 0
         resources = assert_lane_resources(environment.kubeconfig, app_namespaces={environment.namespace})
         passed("lane_resources", **resources)
         cli._reset(argparse.Namespace(run_dir=environment.run_dir, dev_mount=None))
         passed("restore", source="accepted installed manifests; independent traffic and stable workloads")
-        os.environ["KUBECONFIG"] = str(environment.kubeconfig)
-        os.environ["SDO_TIME_SCALE"] = "1"
-        if environment.dev_mount:
-            os.environ["SDO_DEV_MOUNT"] = "1"
-            os.environ["SDO_OPERATOR_BIN"] = str(environment.dev_mount / ".fastloop/sdo-operator")
         args = cli.build_parser().parse_args(
             [
                 "run",
@@ -314,12 +373,21 @@ def run_lane(run_dir: Path, timeout: int, setup_timeout: int = 900) -> int:
         import traceback
 
         traceback.print_exc()
+        report.passed = False
         report.invariants["failure"] = {"passed": False, "class": "eval", "reason": str(exc)}
     report.seconds = time.monotonic() - started
     if report.steady_started is not None:
         report.steady_seconds = time.monotonic() - report.steady_started
     else:
         report.setup_seconds = report.seconds
+    if report.passed:
+        try:
+            fingerprint = collect_fingerprint(environment)
+            report.fingerprint = asdict(fingerprint)
+            save_receipt(environment.run_dir / RECEIPTS, fingerprint, asdict(report))
+        except (OSError, ValueError, KeyError, TypeError, TimeoutError, subprocess.SubprocessError) as exc:
+            report.passed = False
+            report.invariants["fingerprint"] = {"passed": False, "class": "eval", "reason": str(exc)}
     report.save(report_path)
     return 0 if report.passed else 1
 
