@@ -12,12 +12,41 @@ import (
 	"testing"
 	"time"
 
+	appsv1 "k8s.io/api/apps/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
 )
+
+// observedDeploymentRollout plays the deployment controller for a client-go
+// fake, which never populates workload status. A completed wait records the
+// observed rollout in the cluster, so the executor and the controller's
+// independent closure check see the same rollout state.
+type observedDeploymentRollout struct{ client kubernetes.Interface }
+
+func (r observedDeploymentRollout) Wait(ctx context.Context, refs []sdk.ObjectRef) error {
+	for _, ref := range refs {
+		if ref.Kind != "Deployment" {
+			continue
+		}
+		deployment, err := r.client.AppsV1().Deployments(ref.Namespace).Get(ctx, ref.Name, metav1.GetOptions{})
+		if err != nil {
+			return err
+		}
+		replicas := int32(1)
+		if deployment.Spec.Replicas != nil {
+			replicas = *deployment.Spec.Replicas
+		}
+		deployment.Status = appsv1.DeploymentStatus{ObservedGeneration: deployment.Generation, Replicas: replicas, UpdatedReplicas: replicas, ReadyReplicas: replicas, AvailableReplicas: replicas}
+		if _, err := r.client.AppsV1().Deployments(ref.Namespace).UpdateStatus(ctx, deployment, metav1.UpdateOptions{}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
 func pipelineTestLoop(t *testing.T, uncovered bool) (*ResponderLoop, *IncidentState) {
 	t.Helper()
@@ -60,7 +89,7 @@ func pipelineTestLoop(t *testing.T, uncovered bool) (*ResponderLoop, *IncidentSt
 	request.Findings = findings
 	request.RepairPolicy = "recorded-actions"
 	request.ResponseDeadline = time.Now().Add(time.Minute)
-	loop := NewResponderLoop(request, registry, provider, []sdk.Detector{detector}, PlanExecutor{Client: TypedPlanClient{Client: client}, Source: pipelineAcceptedSource{client: TypedPlanClient{Client: client}}, Rollouts: &planFakeRollout{}, Verifier: PlanHealthVerifier{Detectors: []sdk.Detector{detector}, Provider: provider}}, 5)
+	loop := NewResponderLoop(request, registry, provider, []sdk.Detector{detector}, PlanExecutor{Client: TypedPlanClient{Client: client}, Source: pipelineAcceptedSource{client: TypedPlanClient{Client: client}}, Rollouts: observedDeploymentRollout{client: client}, Verifier: PlanHealthVerifier{Detectors: []sdk.Detector{detector}, Provider: provider}}, 5)
 	loop.ReadView = func(v sdk.DetectionContext) program.ReadView {
 		return &sdktest.ReplayReadView{Snapshot: v.(sdktest.Snapshot)}
 	}
