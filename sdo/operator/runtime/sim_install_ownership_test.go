@@ -45,6 +45,18 @@ func TestSimInstallerOwnershipStaysOutOfApplicationDrift(t *testing.T) {
 	for _, binding := range plan.AppBindings {
 		add(binding, "rbac.authorization.k8s.io/v1", "RoleBinding")
 	}
+	// Negative control: each app grant must be visible without installer
+	// ownership; names alone cannot explain responder-permissive/read grants.
+	for _, object := range objects {
+		if object.GetNamespace() != cfg.Namespace || (!strings.HasSuffix(object.GetName(), "-responder-permissive") && !strings.HasSuffix(object.GetName(), "-permissive-read")) {
+			continue
+		}
+		stripped := object.DeepCopy()
+		stripped.SetLabels(nil)
+		if findings := NewSourceInventory(cfg.Namespace, strings.Repeat("a", 40), nil).Findings([]*unstructured.Unstructured{stripped}, time.Unix(1, 0)); len(findings) != 1 {
+			t.Fatalf("unlabelled app grant disappeared: %s/%s %+v", object.GetKind(), object.GetName(), findings)
+		}
+	}
 	worker := plan.Job.DeepCopy()
 	worker.Name = "worker-123"
 	worker.UID = types.UID("worker-uid")

@@ -51,7 +51,7 @@ func (s *SourceInventory) SetNamespaceOnboarding(record *contracts.NamespaceOnbo
 		return err
 	}
 	s.NamespaceOnboarding = cloneNamespaceOnboarding(record)
-	s.acknowledged = map[sdk.ObjectRef]bool{}
+	s.environment = map[sdk.ObjectRef]string{}
 	return s.setInstallEnvironment(record)
 }
 
@@ -65,11 +65,11 @@ func (s *SourceInventory) setInstallEnvironment(record *contracts.NamespaceOnboa
 	if err := onboarding.Validate(record, s.Namespace); err != nil {
 		return err
 	}
-	if s.acknowledged == nil {
-		s.acknowledged = map[sdk.ObjectRef]bool{}
+	if s.environment == nil {
+		s.environment = map[sdk.ObjectRef]string{}
 	}
-	for _, ref := range record.Objects {
-		s.acknowledged[objectRefState(ref)] = true
+	for _, observation := range record.EnvironmentObjects {
+		s.environment[objectRefState(observation.Ref)] = observation.Digest
 	}
 	return nil
 }

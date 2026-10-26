@@ -12,6 +12,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/onboarding"
 	"sdo.dev/operator/rendered"
 	"sdo.dev/operator/sdk"
 )
@@ -20,7 +21,7 @@ import (
 // uses informer objects only: no API requests, source rendering or model calls.
 type SourceInventory struct {
 	NamespaceOnboarding *contracts.NamespaceOnboarding
-	acknowledged        map[sdk.ObjectRef]bool
+	environment         map[sdk.ObjectRef]string
 	Namespace           string
 	Revision            string
 	Identity            string
@@ -105,10 +106,10 @@ func (s *SourceInventory) findingsWithOwnership(objects, ownership []*unstructur
 		visited[ref] = true
 		for _, owner := range o.GetOwnerReferences() {
 			parent := sdk.ObjectRef{APIVersion: owner.APIVersion, Kind: owner.Kind, Namespace: o.GetNamespace(), Name: owner.Name}
-			if declared := s.declared[parent]; declared != nil || s.dependencies[parent] || s.acknowledged[parent] {
+			if declared := s.declared[parent]; declared != nil || s.dependencies[parent] {
 				return true
 			}
-			if ancestor := observed[parent]; ancestor != nil && (inventoryOwned(ancestor) || generated(ancestor, visited)) {
+			if ancestor := observed[parent]; ancestor != nil && (inventoryOwned(ancestor) || generated(ancestor, visited) || (ancestor.GetUID() == owner.UID && s.environmentMatches(ancestor))) {
 				return true
 			}
 		}
@@ -132,7 +133,7 @@ func (s *SourceInventory) findingsWithOwnership(objects, ownership []*unstructur
 		}
 		deleting := o.GetDeletionTimestamp() != nil && !o.GetDeletionTimestamp().IsZero()
 		rbacChanged := declared != nil && strings.HasPrefix(o.GetAPIVersion(), "rbac.authorization.k8s.io/") && !reflect.DeepEqual(inventoryRBACProjection(declared), inventoryRBACProjection(o))
-		if declared == nil && !s.dependencies[ref] && s.acknowledged[ref] {
+		if declared == nil && !s.dependencies[ref] && s.environmentMatches(o) {
 			continue
 		}
 		if (declared != nil || s.dependencies[ref]) && !deleting && !rbacChanged {
@@ -302,4 +303,9 @@ func inventorySortedSets(value any) any {
 func stableInventoryObject(object *unstructured.Unstructured) bool {
 	_, ttl, err := unstructured.NestedInt64(object.Object, "spec", "ttlSecondsAfterFinished")
 	return object.GetDeletionTimestamp() == nil && len(object.GetOwnerReferences()) == 0 && !(object.GetKind() == "Job" && (ttl || err != nil))
+}
+
+func (s *SourceInventory) environmentMatches(object *unstructured.Unstructured) bool {
+	digest := s.environment[inventoryRef(object)]
+	return digest != "" && digest == onboarding.EnvironmentDigest(object)
 }
