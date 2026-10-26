@@ -127,6 +127,13 @@ func (c *Controller) adoptOwnership(ctx context.Context, now time.Time, snapshot
 	}
 	pending := make([]candidate, 0)
 	unsettled := false
+	// An object the API server refuses (or that cannot be adopted) leaves
+	// only that object without an acceptance point; the pass continues and
+	// the failure is retried with the adoption backoff.
+	objectFailures := []error{}
+	objectFailed := func(ref sdk.ObjectRef, err error) {
+		objectFailures = append(objectFailures, &ObjectAdoptionError{Ref: ref, Err: err})
+	}
 	for _, source := range objects {
 		ref := sdk.ObjectRef{APIVersion: source.GetAPIVersion(), Kind: source.GetKind(), Namespace: source.GetNamespace(), Name: source.GetName()}
 		// Identity-only declarations have no configuration fields to adopt.
@@ -142,10 +149,12 @@ func (c *Controller) adoptOwnership(ctx context.Context, now time.Time, snapshot
 		}
 		resource, err := resolveAcceptedResource(c.drift.Client, ref)
 		if err != nil {
-			return fmt.Errorf("unsupported accepted manifest %s/%s/%s: %w", ref.Kind, ref.Namespace, ref.Name, err)
+			objectFailed(ref, fmt.Errorf("unsupported accepted manifest %s/%s/%s: %w", ref.Kind, ref.Namespace, ref.Name, err))
+			continue
 		}
 		if resource.namespaced && ref.Namespace != c.config.Namespace {
-			return fmt.Errorf("accepted manifest %s/%s/%s is outside namespace %s", ref.Kind, ref.Namespace, ref.Name, c.config.Namespace)
+			objectFailed(ref, fmt.Errorf("accepted manifest %s/%s/%s is outside namespace %s", ref.Kind, ref.Namespace, ref.Name, c.config.Namespace))
+			continue
 		}
 		// Shared cluster objects (CRDs, StorageClasses, webhooks, ...) are not
 		// the app's to own: another tenant's edit must not become its drift.
@@ -155,11 +164,13 @@ func (c *Controller) adoptOwnership(ctx context.Context, now time.Time, snapshot
 		}
 		live, err := resource.get(actionCtx, ref)
 		if err != nil && !apierrors.IsNotFound(err) {
-			return fmt.Errorf("read live %s/%s for adoption: %w", ref.Kind, ref.Name, err)
+			objectFailed(ref, fmt.Errorf("read live %s/%s for adoption: %w", ref.Kind, ref.Name, err))
+			continue
 		}
 		normalized, err := resource.apply(actionCtx, ref, source, true)
 		if err != nil {
-			return fmt.Errorf("dry run adoption of %s/%s: %w", ref.Kind, ref.Name, err)
+			objectFailed(ref, fmt.Errorf("dry run adoption of %s/%s: %w", ref.Kind, ref.Name, err))
+			continue
 		}
 		declared := flattenDriftPaths(source)
 		if live == nil || declaredFieldDifference(normalized, live, declared) {
@@ -188,7 +199,8 @@ func (c *Controller) adoptOwnership(ctx context.Context, now time.Time, snapshot
 			if !acceptanceSettled(live) {
 				unsettled = true
 			} else if encoded, fits, err := buildAcceptanceRecord(source, normalized, live, recordLost(live, accepted[acceptedObjectKey(ref)])); err != nil {
-				return fmt.Errorf("record accepted paths of %s/%s: %w", ref.Kind, ref.Name, err)
+				objectFailed(ref, fmt.Errorf("record accepted paths of %s/%s: %w", ref.Kind, ref.Name, err))
+				continue
 			} else if fits {
 				record = encoded
 			}
@@ -201,7 +213,8 @@ func (c *Controller) adoptOwnership(ctx context.Context, now time.Time, snapshot
 		}
 		conflicts, managers := adoptionConflicts(live, declared)
 		if live.GetUID() == "" || live.GetResourceVersion() == "" {
-			return fmt.Errorf("live %s/%s lacks UID or resourceVersion for conditional adoption", ref.Kind, ref.Name)
+			objectFailed(ref, fmt.Errorf("live %s/%s lacks UID or resourceVersion for conditional adoption", ref.Kind, ref.Name))
+			continue
 		}
 		conditional := source.DeepCopy()
 		conditional.SetUID(live.GetUID())
@@ -263,7 +276,8 @@ func (c *Controller) adoptOwnership(ctx context.Context, now time.Time, snapshot
 			if apierrors.IsConflict(err) || apierrors.IsNotFound(err) {
 				live, readErr := item.resource.get(actionCtx, item.ref)
 				if readErr != nil && !apierrors.IsNotFound(readErr) {
-					return fmt.Errorf("re-read %s/%s after adoption conflict: %w", item.ref.Kind, item.ref.Name, readErr)
+					objectFailed(item.ref, fmt.Errorf("re-read %s/%s after adoption conflict: %w", item.ref.Kind, item.ref.Name, readErr))
+					continue
 				}
 				if live == nil || declaredFieldDifference(item.normalized, live, flattenDriftPaths(item.source)) {
 					// The informer snapshot may predate the conflicting write.
@@ -279,7 +293,8 @@ func (c *Controller) adoptOwnership(ctx context.Context, now time.Time, snapshot
 					}
 				}
 			}
-			return fmt.Errorf("adopt %s/%s: %w", item.ref.Kind, item.ref.Name, err)
+			objectFailed(item.ref, fmt.Errorf("adopt %s/%s: %w", item.ref.Kind, item.ref.Name, err))
+			continue
 		}
 		if item.record != "" {
 			writeRecord(item)
@@ -302,7 +317,7 @@ func (c *Controller) adoptOwnership(ctx context.Context, now time.Time, snapshot
 		status.AcceptedObjects = append(status.AcceptedObjects, key)
 	}
 	sort.Strings(status.AcceptedObjects)
-	recordErr := errors.Join(recordFailures...)
+	recordErr := errors.Join(append(objectFailures, recordFailures...)...)
 	if recordErr == nil {
 		status.LastError = ""
 		status.Failures = 0
@@ -469,3 +484,15 @@ func (e *AcceptanceRecordError) Error() string {
 }
 
 func (e *AcceptanceRecordError) Unwrap() error { return e.Err }
+
+// ObjectAdoptionError reports one accepted object that a pass could not read,
+// dry-run or adopt. The pass continues with the other objects, so one refused
+// object never leaves the rest without an acceptance record.
+type ObjectAdoptionError struct {
+	Ref sdk.ObjectRef
+	Err error
+}
+
+func (e *ObjectAdoptionError) Error() string { return e.Err.Error() }
+
+func (e *ObjectAdoptionError) Unwrap() error { return e.Err }

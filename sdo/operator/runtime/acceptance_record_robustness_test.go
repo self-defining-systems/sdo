@@ -226,6 +226,64 @@ func TestAdoptionIsolatesAcceptanceRecordFailure(t *testing.T) {
 	}
 }
 
+// One object the API server refuses to adopt (live 52/006 and 52/009: a
+// ServiceAccount dry run answered "unknown") must not leave every other
+// object of every kind without an acceptance record, or each of their
+// source comparisons fails closed.
+func TestAdoptionIsolatesPerObjectAdoptionFailure(t *testing.T) {
+	ctx := context.Background()
+	automount := false
+	account := &corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: "grafana", Namespace: "app", UID: "uid-grafana", ResourceVersion: "1"}, AutomountServiceAccountToken: &automount}
+	fakeClient := fake.NewSimpleClientset(account, settledDeployment("beta"))
+	failing := true
+	fakeClient.PrependReactor("patch", "serviceaccounts", func(ktesting.Action) (bool, kruntime.Object, error) {
+		if failing {
+			return true, nil, errors.New("unknown")
+		}
+		return false, nil, nil
+	})
+	accountSource := &unstructured.Unstructured{Object: map[string]any{"apiVersion": "v1", "kind": "ServiceAccount", "metadata": map[string]any{"name": "grafana", "namespace": "app"}, "automountServiceAccountToken": false}}
+	sources := adoptionSources{accountSource, deploymentSource("beta")}
+	controller, client := fakeAdoptionController(t, fakeClient, sources)
+	grafana := sdk.ObjectRef{APIVersion: "v1", Kind: "ServiceAccount", Namespace: "app", Name: "grafana"}
+	beta := sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "app", Name: "beta"}
+	controller.adoptionNeeded = true
+
+	now := time.Unix(11, 0).UTC()
+	err := controller.adoptOwnership(ctx, now, sdktest.Snapshot{NamespaceName: "app"})
+	var objectErr *ObjectAdoptionError
+	if !errors.As(err, &objectErr) || objectErr.Ref != grafana {
+		t.Fatalf("adoption failure not reported as a typed per-object error: %v", err)
+	}
+	controller.recordAdoptionError(now, err)
+	if !recordedOn(t, client, beta, sources[1]) {
+		t.Fatal("adoption failure on the ServiceAccount left the Deployment unrecorded")
+	}
+	resource, resolveErr := resolveAcceptedResource(client, beta)
+	if resolveErr != nil {
+		t.Fatal(resolveErr)
+	}
+	live, getErr := resource.get(ctx, beta)
+	if getErr != nil {
+		t.Fatal(getErr)
+	}
+	if !acceptanceRecordBound(live, sources[1]) {
+		t.Fatalf("Deployment record not bound to its object: %v", live.GetAnnotations())
+	}
+	if !controller.adoptionNeeded || controller.ownershipAdoption.RetryAt.Sub(now) <= 0 {
+		t.Fatalf("failed object not retried: %+v", controller.ownershipAdoption)
+	}
+
+	failing = false
+	now = controller.ownershipAdoption.RetryAt
+	if err := controller.adoptOwnership(ctx, now, sdktest.Snapshot{NamespaceName: "app"}); err != nil {
+		t.Fatal(err)
+	}
+	if !recordedOn(t, client, grafana, accountSource) || controller.adoptionNeeded || controller.ownershipAdoption.LastError != "" {
+		t.Fatalf("recovered object not adopted: %+v", controller.ownershipAdoption)
+	}
+}
+
 // A declared bare Pod the scheduler cannot place stays unsettled
 // indefinitely. Adoption keeps waiting for it, but with growing spacing.
 func TestAdoptionBacksOffWhileObjectStaysUnsettled(t *testing.T) {
