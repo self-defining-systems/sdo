@@ -27,6 +27,8 @@ from benchmarks.sregym.adapter import (
     job_labels,
     kubectl,
     qualified_scenarios,
+    queued_reflection_count,
+    reflection_attempt_seconds,
     setup_lineage,
     wait_for_proof,
 )
@@ -183,6 +185,7 @@ class LaneAdmission:
         timeout_seconds: float = 300,
         onboarding_timeout_seconds: float = 600,
         prior_closure_timeout_seconds: float = 1800,
+        reflection_attempt_seconds: float = reflection_attempt_seconds(),
         install_config: NativeInstallConfig | None = None,
         synchronize: Callable[[], None] | None = None,
         progress: Callable[..., None] | None = None,
@@ -193,6 +196,7 @@ class LaneAdmission:
         self.timeout_seconds = timeout_seconds
         self.onboarding_timeout_seconds = onboarding_timeout_seconds
         self.prior_closure_timeout_seconds = prior_closure_timeout_seconds
+        self.reflection_attempt_seconds = reflection_attempt_seconds
         self.install_config = install_config
         self.synchronize, self.progress = synchronize, progress
         self.before_proof = before_proof
@@ -333,8 +337,9 @@ class LaneAdmission:
         the latest active worker Job's own deadline plus the closure margin.
         Jobs that start later may extend it only up to twice that original
         budget, so a lane that keeps opening incidents cannot hold admission
-        forever. The wait never aborts or reuses running work; when the budget
-        ends the row is not measured.
+        forever. Each queued reflection adds SDO's worst case for one
+        reflection, which no ceiling cuts. The wait never aborts or reuses
+        running work; when the budget ends the row is not measured.
         """
         started = time.monotonic()
         self.directory.mkdir(parents=True, exist_ok=True)
@@ -351,8 +356,12 @@ class LaneAdmission:
                 state, workers, work_deadline, error = {}, [], None, str(exc)
             if work_deadline is not None:
                 expires = max(expires, work_deadline + POST_CLOSURE_WAIT_SECONDS)
+            # SDO runs queued reflections one at a time, each up to its own worst case.
+            queue_budget = started + queued_reflection_count(state) * self.reflection_attempt_seconds
+            expires = max(expires, queue_budget)
             if ceiling is None:
                 ceiling = started + PRIOR_CLOSURE_CEILING_FACTOR * (expires - started)
+            ceiling = max(ceiling, queue_budget)
             expires = min(expires, ceiling)
             closure_state = state.get("closure_state")
             done = error is None and not incident_work_open(state) and not workers

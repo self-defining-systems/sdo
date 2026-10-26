@@ -570,7 +570,7 @@ def _sdo_agent(
     # memory stream. Retained records identify warm repeats and warm resets.
     fresh_memory_start = environment.namespace not in PersistentState.load(environment.state_path).controllers
     if worker is not None and environment.app != "toy":
-        from benchmarks.sregym.adapter import native_install_config, sync_existing
+        from benchmarks.sregym.adapter import native_install_config, reflection_attempt_seconds, sync_existing
         from benchmarks.sregym.fastloop.admission import EvalAdmissionOps, LaneAdmission
 
         install_config = native_install_config(runtime_config)
@@ -581,6 +581,7 @@ def _sdo_agent(
             results_dir / "admission",
             timeout_seconds=getattr(args, "admission_timeout_seconds", 300),
             onboarding_timeout_seconds=getattr(args, "admission_onboarding_timeout_seconds", 600),
+            reflection_attempt_seconds=reflection_attempt_seconds(args.timeout),
             install_config=install_config,
             synchronize=lambda: sync_existing(install_config),
             progress=getattr(args, "admission_progress", None),

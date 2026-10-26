@@ -160,6 +160,34 @@ def incident_work_open(state: dict[str, Any]) -> bool:
     return incident_id not in terminal_incident_ids(state)
 
 
+#: A queued reflection runs for at most the controller's response timeout: its frozen deadline is
+#: dispatch time + ``--response-timeout`` (registered_reflection.go ReflectionDeadline), 30 min by default (run.go).
+DEFAULT_RESPONSE_TIMEOUT_SECONDS = 1800.0
+#: Transient failures retry with the default closure backoff (2+4+8+16+32+60+60 s, closure_retry.go and
+#: reflection_queue.go) before the reflection is abandoned.
+CLOSURE_RETRY_BACKOFF_SECONDS = 182.0
+#: Commit, cleanup and detector-rollout handoff after the last attempt.
+REFLECTION_CLOSEOUT_SECONDS = 120.0
+
+
+def reflection_attempt_seconds(response_timeout_seconds: float = DEFAULT_RESPONSE_TIMEOUT_SECONDS) -> float:
+    """SDO's worst case to finish or abandon one queued reflection (the FIFO runs one at a time)."""
+    if response_timeout_seconds <= 0:
+        raise ValueError(f"response_timeout_seconds must be positive, got {response_timeout_seconds}")
+    return response_timeout_seconds + CLOSURE_RETRY_BACKOFF_SECONDS + REFLECTION_CLOSEOUT_SECONDS
+
+
+def queued_reflection_ids(state: dict[str, Any]) -> list[str]:
+    """Incidents whose acknowledged closure still has a reflection queued, oldest first."""
+    ids = state.get("queued_reflection_incident_ids") or []
+    return [incident_id for incident_id in ids if isinstance(incident_id, str)]
+
+
+def queued_reflection_count(state: dict[str, Any]) -> int:
+    """Reflections SDO still owes; a queue the controller could not read counts as one."""
+    return len(queued_reflection_ids(state)) + (1 if state.get("queued_reflections_unknown") else 0)
+
+
 def wait_for_proof(
     sample: Callable[[], dict[str, Any]],
     record: Callable[[dict[str, Any]], None],
