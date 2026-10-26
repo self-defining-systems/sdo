@@ -424,8 +424,10 @@ func incidentClosureContract(closure IncidentClosure) (*contracts.IncidentClosur
 		FinalStateChanges:                   stateChangesContract(closure.FinalStateChanges),
 		DetectedAt:                          contractTimestamp(closure.DetectedAt), DispatchedAt: contractTimestamp(closure.DispatchedAt),
 		ResponderCompletedAt: contractTimestamp(closure.ResponderCompletedAt), VerifiedAt: contractTimestamp(closure.VerifiedAt),
-		HealthClearedAt: optionalContractTimestamp(closure.HealthClearedAt),
-		CleanedHelpers:  append([]string(nil), closure.CleanedHelpers...),
+		HealthClearedAt:   optionalContractTimestamp(closure.HealthClearedAt),
+		CleanedHelpers:    append([]string(nil), closure.CleanedHelpers...),
+		UnconfirmedReason: closure.UnconfirmedReason,
+		UnconfirmedDetail: closure.UnconfirmedDetail,
 	}
 	if closure.ClosureStabilityWindow == 0 {
 		message.ClosureStabilityWindow = nil
@@ -606,8 +608,10 @@ func incidentClosureState(message *contracts.IncidentClosure) IncidentClosure {
 		FinalStateChanges:                   stateChangesState(message.GetFinalStateChanges()),
 		DetectedAt:                          controllerTime(message.GetDetectedAt()), DispatchedAt: controllerTime(message.GetDispatchedAt()),
 		ResponderCompletedAt: controllerTime(message.GetResponderCompletedAt()), VerifiedAt: controllerTime(message.GetVerifiedAt()),
-		HealthClearedAt: optionalTimeState(message.HealthClearedAt),
-		CleanedHelpers:  append([]string(nil), message.GetCleanedHelpers()...),
+		HealthClearedAt:   optionalTimeState(message.HealthClearedAt),
+		CleanedHelpers:    append([]string(nil), message.GetCleanedHelpers()...),
+		UnconfirmedReason: message.GetUnconfirmedReason(),
+		UnconfirmedDetail: message.GetUnconfirmedDetail(),
 	}
 	if request := incidentRequestState(message.GetRequest()); request != nil {
 		closure.Request = *request
