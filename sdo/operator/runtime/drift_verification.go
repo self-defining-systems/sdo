@@ -30,7 +30,7 @@ func checkRetainedDrift(ctx context.Context, retained []sdk.Finding, view progra
 		if finding.DetectorID == "drift.unexplained" {
 			events := driftEventsForFindings(nil, []sdk.Finding{finding})
 			var diff program.Diff
-			diff, err = view.DiffAgainstSource(finding.PrimaryResource)
+			diff, err = declaredSourceDiff(view, finding.PrimaryResource)
 			if err == nil {
 				clear = sourceDriftRestored(diff, events)
 			}

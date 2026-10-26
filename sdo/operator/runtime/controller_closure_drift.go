@@ -109,6 +109,6 @@ func (c *Controller) closureSourceRestored(ctx context.Context, snapshot sdk.Det
 			return false, err
 		}
 	}
-	diff, err := c.drift.View(snapshot).DiffAgainstSource(finding.PrimaryResource)
+	diff, err := declaredSourceDiff(c.drift.View(snapshot), finding.PrimaryResource)
 	return err == nil && sourceDriftRestored(diff, events), err
 }

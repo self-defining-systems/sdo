@@ -234,7 +234,7 @@ func planComparableFields(object, declared, owner *unstructured.Unstructured, ch
 		paths[path] = nil
 	}
 	for path := range paths {
-		if path == "metadata.annotations.kubectl.kubernetes.io/last-applied-configuration" || path == "metadata.annotations.sdo.dev/source-tree" {
+		if path == "metadata.annotations.kubectl.kubernetes.io/last-applied-configuration" || path == "metadata.annotations.sdo.dev/source-tree" || path == "metadata.annotations."+acceptedPathsAnnotation {
 			continue
 		}
 		if len(owner.GetManagedFields()) > 0 && !ownsDriftPath(owned, path) && !changed[path] {
