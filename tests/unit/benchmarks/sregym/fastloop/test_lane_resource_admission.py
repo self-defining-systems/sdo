@@ -458,3 +458,44 @@ def test_malformed_execution_identity_fails_closed(lane, monkeypatch):
     control_plane(monkeypatch, [worker_job("sdo-standby-a7e6", standby=True)], [broken])
     with pytest.raises(ValueError, match="invalid incident execution identity"):
         ACTIVE_WORKERS(gate, "control")
+
+
+def closure_record(gate, state):
+    gate.prior_closure_timeout_seconds = 0.01
+    gate.ops = SimpleNamespace(runtime_state=lambda _control: state)
+
+
+def test_admission_after_a_permanently_failed_closure_passes(lane):
+    gate, _ = lane
+    # The controller keeps the failed closure pending until a new incident begins.
+    closure_record(
+        gate,
+        {
+            "closure_state": "CLOSURE_STATE_FAILED",
+            "pending_closure": {"request": {"incident_id": "row-008"}},
+            "closure_failure": {"incident_id": "row-008", "permanent": True},
+        },
+    )
+    assert gate.await_prior_closure("hotel-reservation-sdo")["passed"] is True
+
+
+@pytest.mark.parametrize(
+    "state",
+    [
+        {
+            "closure_state": "CLOSURE_STATE_FAILED",
+            "pending_closure": {"request": {"incident_id": "row-008"}},
+            "closure_failure": {"incident_id": "row-008", "permanent": False},
+        },
+        {"closure_state": "CLOSURE_STATE_PROCESSING", "pending_closure": {"request": {"incident_id": "row-008"}}},
+        {"closure_state": "CLOSURE_STATE_ACKNOWLEDGING", "closure_receipt": {"incident_id": "row-008"}},
+        {"incident_open": True, "last_acknowledged_incident_id": "row-007"},
+    ],
+    ids=["retrying-failure", "processing", "acknowledging", "open-incident"],
+)
+def test_admission_waits_while_a_closure_is_open(lane, state):
+    gate, calls = lane
+    closure_record(gate, state)
+    with pytest.raises(admission.PriorClosureIncompleteError):
+        gate.await_prior_closure("hotel-reservation-sdo")
+    assert "traffic" not in calls
