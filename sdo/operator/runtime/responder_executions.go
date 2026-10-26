@@ -100,16 +100,29 @@ func (i *responderExecutionInventory) ownsPod(pod corev1.Pod) bool {
 func terminalResponderPod(pod corev1.Pod) bool {
 	return pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed
 }
+
+// finished reports a terminal responder Job, whose result a re-dispatch adopts.
+func (i *responderExecutionInventory) finished() bool {
+	for _, job := range i.jobs {
+		if i.names[job.Name] && job.DeletionTimestamp == nil && terminalResponderJob(job) {
+			return true
+		}
+	}
+	return false
+}
+func terminalResponderJob(job batchv1.Job) bool {
+	terminal := job.Status.CompletionTime != nil
+	for _, condition := range job.Status.Conditions {
+		terminal = terminal || condition.Status == corev1.ConditionTrue && (condition.Type == batchv1.JobComplete || condition.Type == batchv1.JobFailed)
+	}
+	return terminal
+}
 func (i *responderExecutionInventory) active() bool {
 	for _, job := range i.jobs {
 		if !i.names[job.Name] {
 			continue
 		}
-		terminal := job.Status.CompletionTime != nil
-		for _, condition := range job.Status.Conditions {
-			terminal = terminal || condition.Status == corev1.ConditionTrue && (condition.Type == batchv1.JobComplete || condition.Type == batchv1.JobFailed)
-		}
-		if job.Status.Active > 0 || job.DeletionTimestamp != nil || !terminal {
+		if job.Status.Active > 0 || job.DeletionTimestamp != nil || !terminalResponderJob(job) {
 			return true
 		}
 	}

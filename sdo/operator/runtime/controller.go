@@ -317,15 +317,17 @@ func (c *Controller) stepPaused(ctx context.Context, now time.Time) error {
 	if err := c.prepareHealthEffects(ctx, now); err != nil {
 		return err
 	}
-	// Ownerless work is bookkeeping, not observation: a pause must not hold it.
-	if err := c.retireExpiredIncident(ctx, now); err != nil {
-		return err
-	}
 	before, err := c.ExportState()
 	if err != nil {
 		return err
 	}
+	// Harvest a queued responder result before retirement can judge its
+	// incident ownerless. Ownerless work is bookkeeping, not observation: a
+	// pause must not hold it.
 	c.processDispatchCompletions(now)
+	if err := c.retireExpiredIncident(ctx, now); err != nil {
+		return err
+	}
 	c.finishEarlyReport(ctx, now)
 	c.processBrokerCompletions()
 	after, err := c.ExportState()
@@ -362,10 +364,12 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 	if err := c.prepareHealthEffects(ctx, now); err != nil {
 		return err
 	}
+	// Harvest a queued responder result before retirement can judge its
+	// incident ownerless.
+	c.processDispatchCompletions(now)
 	if err := c.retireExpiredIncident(ctx, now); err != nil {
 		return err
 	}
-	c.processDispatchCompletions(now)
 	c.finishEarlyReport(ctx, now)
 	c.processBrokerCompletions()
 	c.attachPendingDrift()

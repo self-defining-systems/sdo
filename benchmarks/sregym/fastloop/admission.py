@@ -15,6 +15,7 @@ from benchmarks.sregym.adapter import (
     INCIDENT_EXECUTION_LABEL,
     POST_CLOSURE_WAIT_SECONDS,
     STANDBY_LABEL,
+    ControllerStateUnavailableError,
     Deadline,
     StabilizationError,
     assert_host_disk_headroom,
@@ -143,15 +144,12 @@ class PriorClosureIncompleteError(ValueError):
         self.evidence = evidence
 
 
-class ControllerStateUnavailableError(PriorClosureIncompleteError):
-    """The controller state could not be read at the end of the wait, so whether closure is over is unknown."""
-
-    reason = "controller_state_unavailable"
-
-
 class _IncidentWorkStarted(Exception):
     """SDO opened incident work during stabilization; admission waits for it to close, then restarts the clock."""
 
+
+#: Work first seen sets the prior-closure budget; Jobs seen later may extend it to at most this multiple.
+PRIOR_CLOSURE_CEILING_FACTOR = 2
 
 #: Stabilization restarts after new SDO work at most this often; a lane that keeps opening incidents is not stable.
 MAX_STABILIZATION_RESTARTS = 3
@@ -331,15 +329,18 @@ class LaneAdmission:
         Closed means ``incident_work_open`` is false (no open incident or
         request, and any closure is terminal: acknowledged, permanently
         failed or retired) and no SDO worker Job is still running. The budget
-        is never shorter than the work it waits on: it extends to the latest
-        active worker Job's own deadline plus the closure margin. The wait
-        never aborts or reuses running work; when the budget ends the row is
-        not measured.
+        is never shorter than the work first seen: the first poll extends it to
+        the latest active worker Job's own deadline plus the closure margin.
+        Jobs that start later may extend it only up to twice that original
+        budget, so a lane that keeps opening incidents cannot hold admission
+        forever. The wait never aborts or reuses running work; when the budget
+        ends the row is not measured.
         """
         started = time.monotonic()
         self.directory.mkdir(parents=True, exist_ok=True)
         destination = self.directory / "prior-closure.json"
         expires = started + self.prior_closure_timeout_seconds
+        ceiling: float | None = None
         while True:
             try:
                 state, workers, error = self.ops.runtime_state(control), self._active_workers(control), None
@@ -350,6 +351,9 @@ class LaneAdmission:
                 state, workers, work_deadline, error = {}, [], None, str(exc)
             if work_deadline is not None:
                 expires = max(expires, work_deadline + POST_CLOSURE_WAIT_SECONDS)
+            if ceiling is None:
+                ceiling = started + PRIOR_CLOSURE_CEILING_FACTOR * (expires - started)
+            expires = min(expires, ceiling)
             closure_state = state.get("closure_state")
             done = error is None and not incident_work_open(state) and not workers
             evidence = {

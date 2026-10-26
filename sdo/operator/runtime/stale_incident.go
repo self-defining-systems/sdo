@@ -9,14 +9,21 @@ import (
 	"sdo.dev/operator/runtime/lifecyclecore"
 )
 
-// IncidentWorkActive checks durable work before an expired request is retired.
-// API uncertainty is an error, never evidence that an existing worker is gone.
-func (d KubernetesJobDispatcher) IncidentWorkActive(ctx context.Context, incidentID string) (bool, error) {
+// IncidentWorkHeld checks durable work before an expired request is retired.
+// Live work holds the incident, and so does a finished responder Job whose
+// result the controller has not consumed: re-dispatch adopts that Job and
+// harvests it. API uncertainty is an error, never evidence that a worker is gone.
+func (d KubernetesJobDispatcher) IncidentWorkHeld(ctx context.Context, incidentID string, resultConsumed bool) (bool, error) {
 	inventory, err := d.responderExecutions(ctx, incidentID, 0)
 	if err != nil {
 		return false, err
 	}
-	return inventory.active(), nil
+	return inventory.active() || !resultConsumed && inventory.finished(), nil
+}
+
+// incidentWorkChecker proves whether open incident work still has an owner.
+type incidentWorkChecker interface {
+	IncidentWorkHeld(ctx context.Context, incidentID string, resultConsumed bool) (bool, error)
 }
 
 // ownerLostGrace bounds how long open incident work may outlive its owner past
@@ -36,22 +43,21 @@ type retirement struct {
 // evidence goes through the existing typed failure archive, so a deleted
 // proposal cannot block the next incident's dispatch.
 func (c *Controller) retireExpiredIncident(ctx context.Context, now time.Time) error {
-	checker, checked := c.dispatcher.(interface {
-		IncidentWorkActive(context.Context, string) (bool, error)
-	})
+	checker, checked := c.dispatcher.(incidentWorkChecker)
 	c.mu.Lock()
 	request := cloneIncidentRequest(c.currentIncidentRequest)
+	resultConsumed := c.responderDone
 	retire, eligible := c.incidentRetirementLocked(now, checked)
 	c.mu.Unlock()
 	if !eligible {
 		return nil
 	}
 	if checked {
-		active, err := checker.IncidentWorkActive(ctx, request.IncidentID)
+		held, err := checker.IncidentWorkHeld(ctx, request.IncidentID, resultConsumed)
 		if err != nil {
 			return err
 		}
-		if active {
+		if held {
 			return nil
 		}
 	}
@@ -119,8 +125,9 @@ func (c *Controller) retireExpiredIncident(ctx context.Context, now time.Time) e
 // incidentRetirementLocked leaves claimed closures with their owner, including
 // terminal failures whose original reason and notification must survive. A
 // failed closure from an earlier incident does not claim the current incident.
-// Open work past its bound retires only after the caller proves no live work:
-// a running dispatch needs that proof from the API (workActiveCheckable).
+// Open work past its bound retires only after the caller proves that no work
+// holds it, live or finished but unharvested: a running dispatch needs that
+// proof from the API (workActiveCheckable).
 func (c *Controller) incidentRetirementLocked(now time.Time, workActiveCheckable bool) (retirement, bool) {
 	retire, due, ok := c.incidentRetirementDueLocked(workActiveCheckable)
 	return retire, ok && !now.Before(due)
@@ -159,9 +166,7 @@ func (c *Controller) incidentRetirementDueLocked(workActiveCheckable bool) (reti
 // retirementWakeLocked is the next future retirement bound. A past bound held
 // by live work waits for that work's own completion instead of spinning.
 func (c *Controller) retirementWakeLocked(now time.Time) time.Time {
-	_, checkable := c.dispatcher.(interface {
-		IncidentWorkActive(context.Context, string) (bool, error)
-	})
+	_, checkable := c.dispatcher.(incidentWorkChecker)
 	if _, due, ok := c.incidentRetirementDueLocked(checkable); ok && due.After(now) {
 		return due
 	}
