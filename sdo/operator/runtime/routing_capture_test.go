@@ -375,7 +375,7 @@ func TestHermeticRoutingCaptureCompilesReplayableMitigator(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(controller.routingSweeps.Wait)
+	t.Cleanup(controller.Wait)
 	controller.ConfigureDrift(DriftControllerConfig{View: func(s sdk.DetectionContext) program.ReadView { return LiveReadView{DetectionContext: s, Prober: probe} }})
 	for i := 0; i < 2; i++ {
 		if err := controller.Step(ctx, time.Unix(int64(i), 0), nil); err != nil {

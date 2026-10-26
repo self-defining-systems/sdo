@@ -248,7 +248,7 @@ func runForeignPolicyIncident(t *testing.T) (string, string, GitPlanSource, stri
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(controller.routingSweeps.Wait)
+	t.Cleanup(controller.Wait)
 	controller.ConfigureDrift(DriftControllerConfig{Events: cache, View: func(snapshot sdk.DetectionContext) program.ReadView {
 		return LiveReadView{DetectionContext: snapshot, Source: source, SourceCommit: commit}
 	}, BatchWindow: time.Second})
