@@ -13,6 +13,16 @@ import (
 // outcome. It cannot alter classification, receipts or verification evidence.
 // Repeated delivery is idempotent, including a crash after the Git commit.
 func (b *Broker) RecordSDKGaps(ctx context.Context, id string, gaps []*contracts.SdkGap) (Receipt, error) {
+	return b.recordReflectionAnnotations(ctx, id, gaps, nil)
+}
+
+// RecordReflectionRejections appends named broker validation decisions exactly
+// once. Only the storage edge can materialize the outcome document.
+func (b *Broker) RecordReflectionRejections(ctx context.Context, id string, rejections []*contracts.ProposalRejection) (Receipt, error) {
+	return b.recordReflectionAnnotations(ctx, id, nil, rejections)
+}
+
+func (b *Broker) recordReflectionAnnotations(ctx context.Context, id string, gaps []*contracts.SdkGap, rejections []*contracts.ProposalRejection) (Receipt, error) {
 	var receipt Receipt
 	err := b.locked(func() error {
 		if err := b.requireClean(ctx); err != nil {
@@ -27,7 +37,11 @@ func (b *Broker) RecordSDKGaps(ctx context.Context, id string, gaps []*contracts
 		if err != nil {
 			return err
 		}
-		if _, err = memory.NewJSONStore(stage).AppendSDKGaps(ctx, id, gaps); err != nil {
+		store := memory.NewJSONStore(stage)
+		if _, err = store.AppendSDKGaps(ctx, id, gaps); err != nil {
+			return err
+		}
+		if _, err = store.AppendReflectionRejections(ctx, id, rejections); err != nil {
 			return err
 		}
 		paths, err := validate.ChangedPaths(ctx, stage, base)
@@ -40,13 +54,13 @@ func (b *Broker) RecordSDKGaps(ctx context.Context, id string, gaps []*contracts
 				return findErr
 			}
 			if !ok {
-				return fmt.Errorf("SDK gap outcome has no attributed broker commit")
+				return fmt.Errorf("reflection annotation outcome has no attributed broker commit")
 			}
 			receipt = prior
 			return nil
 		}
 		if len(paths) != 1 || paths[0] != layout.OutcomePath(id) {
-			return fmt.Errorf("SDK gap annotation changed unrelated evidence")
+			return fmt.Errorf("reflection annotation changed unrelated evidence")
 		}
 		receipt, err = b.accept(ctx, stage, id, "controller", OutcomePhase, paths)
 		return err

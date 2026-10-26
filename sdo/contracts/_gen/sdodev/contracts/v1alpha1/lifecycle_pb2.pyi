@@ -1,6 +1,6 @@
 from buf.validate import validate_pb2 as _validate_pb2
 from google.protobuf import any_pb2 as _any_pb2
-from sdodev.contracts.v1alpha1 import memory_pb2 as _memory_pb2
+from sdodev.contracts.v1alpha1 import memory_diagnostic_pb2 as _memory_diagnostic_pb2
 from sdodev.contracts.v1alpha1 import messages_pb2 as _messages_pb2
 from google.protobuf.internal import containers as _containers
 from google.protobuf import descriptor as _descriptor
@@ -117,8 +117,8 @@ class HealthJudgeRequest(_message.Message):
     source_resources: _containers.RepeatedCompositeFieldContainer[SourceResource]
     source_topology_fingerprint: str
     validation_attempt: int
-    previous_diagnostics: _containers.RepeatedCompositeFieldContainer[_memory_pb2.MemoryDiagnostic]
-    def __init__(self, application: _Optional[str] = ..., namespace: _Optional[str] = ..., health_objective: _Optional[str] = ..., accepted_source_commit: _Optional[str] = ..., correction_feedback: _Optional[str] = ..., attempt: _Optional[int] = ..., architecture_summary_markdown: _Optional[str] = ..., source_resources: _Optional[_Iterable[_Union[SourceResource, _Mapping]]] = ..., source_topology_fingerprint: _Optional[str] = ..., validation_attempt: _Optional[int] = ..., previous_diagnostics: _Optional[_Iterable[_Union[_memory_pb2.MemoryDiagnostic, _Mapping]]] = ...) -> None: ...
+    previous_diagnostics: _containers.RepeatedCompositeFieldContainer[_memory_diagnostic_pb2.MemoryDiagnostic]
+    def __init__(self, application: _Optional[str] = ..., namespace: _Optional[str] = ..., health_objective: _Optional[str] = ..., accepted_source_commit: _Optional[str] = ..., correction_feedback: _Optional[str] = ..., attempt: _Optional[int] = ..., architecture_summary_markdown: _Optional[str] = ..., source_resources: _Optional[_Iterable[_Union[SourceResource, _Mapping]]] = ..., source_topology_fingerprint: _Optional[str] = ..., validation_attempt: _Optional[int] = ..., previous_diagnostics: _Optional[_Iterable[_Union[_memory_diagnostic_pb2.MemoryDiagnostic, _Mapping]]] = ...) -> None: ...
 
 class SourceResource(_message.Message):
     __slots__ = ("kind", "name", "namespace", "source", "dependencies")

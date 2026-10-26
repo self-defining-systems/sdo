@@ -135,3 +135,6 @@ archive copy-back and reset. The external attachment report records phases and
 original Jobs. Attachment requires equal initial accepted trees and retains
 private proposal, ledger, capture and session roots. Scripted scheduling, broker
 and lock tests prove plumbing; live runs establish learning and speedup.
+
+For private lane journals and warm-app conversion receipts, see
+[restartable lanes and application conversion](fastloop-sequences.md).
