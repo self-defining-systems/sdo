@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -69,6 +68,18 @@ def _bounded_text(value: Any, limit: int) -> str:
         else:
             high = middle - 1
     return text[:low] + "…"
+
+
+def _failure_line(action: Mapping[str, Any]) -> str:
+    """Say why an action failed: reason, exit code and the first line of its error or output."""
+    reason = _bounded_text(action.get("failure_reason") or "unspecified", 40)
+    code = action.get("exit_code")
+    detail = action.get("error") or next(
+        (line.strip() for line in str(action.get("output") or "").splitlines() if line.strip()),
+        action.get("summary", "see receipt"),
+    )
+    status = f"{reason}, exit {code}" if code not in (None, "") else reason
+    return f"failed: {_bounded_text(detail, 120)} [{status}]"
 
 
 def _warning(action: Mapping[str, Any]) -> dict[str, str] | None:
@@ -148,20 +159,18 @@ def format_mutation_response(
     if not option_reports:
         option_reports = [action["report"] for action in actions if action.get("report")]
     report = {"actions": actions, "option_reports": option_reports, "findings": list(after or []), **progress}
-    # Workers set SDO_SESSION_SCRATCH to their private session work directory.
     # Standalone invocations retain the existing private tool-output directory.
     command = str(actions[-1].get("command", "mitigate")) if actions else "mitigate"
     # Rollback already has a stricter shipped stdout policy than other mutations.
     output_budget = 1500 if command == "rollback" else MAX_MUTATION_OUTPUT_BYTES
-    directory = os.environ.get("SDO_SESSION_SCRATCH")
-    path = tool_output.write_json(report, command=command, root=Path(directory) / "sdo-reports" if directory else None)
+    path = tool_output.write_json(report, command=command, root=tool_output.session_output_root())
     warning = next(
         (action.get("incident_verified") for action in reversed(actions) if action.get("incident_verified")), None
     )
     if len(actions) == 1:
         action = actions[0]
         if action.get("error") or action.get("success") is False or action.get("exit_code"):
-            result = "failed: " + _bounded_text(action.get("error") or action.get("summary", "see receipt"), 80)
+            result = _failure_line(action)
         elif action.get("targeted_healthy"):
             result = "target finding cleared"
         elif action.get("success"):

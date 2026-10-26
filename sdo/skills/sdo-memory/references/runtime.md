@@ -117,7 +117,7 @@ The menu is a convenience over direct commands. It lists accepted Mitigators wit
 
 Plain verification returns the cached controller verdict immediately. Waiting returns on stable independent closure, a new or reactivated finding, or timeout, without running detectors. Fresh detector evaluation remains the detect path. After verified closure, incident_verified adds an informational timestamp and message to every normal result; reads and reports continue. New mutations receive a typed incident_verified rejection receipt.
 
-Mutating commands always store complete per-action results, evidence, program runs, reports and receipts under $SDO_SESSION_SCRATCH/sdo-reports/<incident>/<sequence>-<command>.json. Their compact output states action and incident verdicts separately, compares controller cached finding sets by fingerprint and evidence (fixed/new/unchanged), and prints the file path and generated schema.
+Mutating commands always store complete per-action results, evidence, program runs, reports and receipts under $SDO_SESSION_SCRATCH/sdo-reports/<incident>/<sequence>-<command>.json. Their compact output states action and incident verdicts separately, compares controller cached finding sets by fingerprint and evidence (fixed/new/unchanged), and prints the file path and generated schema. A failed action line names the failure reason, exit code and first error line.
 
 ```json
 {
@@ -158,9 +158,17 @@ drift_events[]
 - Fixed capture: fixed.json; selected open recordings: open@<phase>-recordings.json.
 Select only files actually supplied by the controller. Supported phase values do not promise capture availability.
 
+## Tool reply budget
+
+A reflection tool reply over 8192 bytes is saved whole to a file; the reply names its size and path with a short partial head. Search or extract from that file; the head is not the whole result.
+
 ## authoring_reference
 
-Read shipped authoring references. SDK includes detector source-diff access before playbook selection.
+Read shipped authoring references: a section index, or one section by heading or declaration.
+
+The full topic text is saved once to the file named in the reply; search
+that file instead of re-reading the reference. SDK includes detector
+source-diff access before playbook selection.
 
 ## create_corpus
 
