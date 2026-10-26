@@ -176,6 +176,31 @@ def test_act_accepts_a_cluster_scoped_kind_the_go_table_does_not_know(scratch: P
     assert receipt["target"] == "PersistentVolume/data"
 
 
+@pytest.mark.parametrize("verb", ["patch", "delete"])
+@pytest.mark.parametrize("combined", [False, True])
+@pytest.mark.parametrize(("kind", "namespace"), [("PersistentVolume", ""), ("Widget", "app")])
+def test_act_attributes_unknown_kinds_independent_of_kubectl_case(
+    scratch: Path, tmp_path: Path, verb: str, combined: bool, kind: str, namespace: str
+) -> None:
+    kubectl = tmp_path / "kubectl"
+    kubectl.write_text("#!/bin/sh\nexit 0\n")
+    kubectl.chmod(0o755)
+    reference = "/".join(part for part in (kind, namespace, "data") if part)
+    target = [kind.lower() + "/data"] if combined else [kind.lower(), "data"]
+    scope = ["-n", namespace] if namespace else []
+
+    peer = "/".join(part for part in (kind, namespace, "peer") if part)
+    assert (
+        tools_cli.main(["act", "--resource", reference, "--resource", peer, "--", str(kubectl), *scope, verb, *target])
+        == 0
+    )
+
+    (receipt,) = _recorded(scratch)
+    assert receipt["resources"] == [recorded_actions.resource_ref(reference)]
+    assert receipt["target"] == reference
+    assert receipt["success"] is True
+
+
 def test_act_warns_about_a_kubectl_object_no_resource_covers(
     scratch: Path, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:

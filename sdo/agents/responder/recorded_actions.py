@@ -259,22 +259,24 @@ def _executed_resources(command: Sequence[str], declared: Sequence[dict[str, str
             namespace = token.split("=", 1)[1]
         elif not token.startswith("-"):
             words.append(token)
+    # kubectl kind matching is case-insensitive even for kinds absent from the
+    # alias table; keep the caller's original spelling in the actual receipt.
     targets: set[tuple[str, str]] = set()
     if len(words) > 1:
         arguments = words[1:]
         if "/" in arguments[0]:
             targets = {
-                (canonical_kind(word.split("/", 1)[0]), word.split("/", 1)[1])
+                (canonical_kind(word.split("/", 1)[0]).casefold(), word.split("/", 1)[1])
                 for word in arguments
                 if word.count("/") == 1
             }
         elif len(arguments) > 1 and "," not in arguments[0]:
             names = arguments[1:] if words[0] == "delete" else arguments[1:2]
-            targets = {(canonical_kind(arguments[0]), name) for name in names}
+            targets = {(canonical_kind(arguments[0]).casefold(), name) for name in names}
     return [
         dict(resource)
         for resource in declared
-        if (resource["kind"], resource["name"]) in targets
+        if (resource["kind"].casefold(), resource["name"]) in targets
         and (not resource["namespace"] or resource["namespace"] == namespace)
     ]
 
