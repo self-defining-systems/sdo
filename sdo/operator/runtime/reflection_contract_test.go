@@ -87,6 +87,7 @@ type t1Class struct {
 	positive, negative, credit, gaps int
 	decline                          bool
 	prior                            bool
+	unverified                       bool
 }
 
 func t1Classes() []t1Class {
@@ -97,7 +98,7 @@ func t1Classes() []t1Class {
 			o.RepairActions = nil
 			o.PlanApplications = nil
 			o.ProgramToolCalls = nil
-		}, items: []string{"0/question/binding_not_written/contract-repair"}, model: true},
+		}, items: []string{"0/question/binding_not_written/contract-repair"}, model: true, unverified: true},
 		{name: "different_fields", fixed: program.NoMatch, change: func(o *contracts.OutcomeRecord) {
 			o.PlanApplications[0].FinalEquivalenceVerified = proto.Bool(false)
 			o.RepairActions[0].Kind = "manual"
@@ -113,7 +114,7 @@ func t1Classes() []t1Class {
 			o.PlanApplications = nil
 			o.ProgramToolCalls = nil
 			o.RepairActions = nil
-		}, items: []string{"0/question/uncertain/"}, model: true},
+		}, items: []string{"0/question/uncertain/"}, model: true, unverified: true},
 		{name: "evidence_gap", fixed: program.Unknown, items: []string{"0/question/uncertain/contract-repair", "0/question/evidence_gap/"}, model: true, gaps: 1},
 		{name: "partly_covered", fixed: program.NoMatch, change: func(o *contracts.OutcomeRecord) {
 			o.ConfirmedRootCauses = append(o.ConfirmedRootCauses, &contracts.ConfirmedRootCause{Summary: "another cause", Resources: []*contracts.ObjectRef{t1Ref("other")}})
@@ -245,8 +246,14 @@ func TestT1ScriptedBrokerMatrix(t *testing.T) {
 						t.Logf("rejections=%v skipped=%s", run.ledger.ReflectionRejections, run.ledger.ReflectionSkippedReason)
 						t.Errorf("reflection calls = %d; requires model = %t", run.calls, wantModel)
 					}
-					if c.model && len(run.work) > 0 {
-						t1AssertWork(t, run.work, c)
+					if c.model {
+						if c.unverified {
+							if len(run.work) != 0 || len(run.unassigned) != 1 || run.unassigned[0].GetDisposition() != "question" || run.unassigned[0].GetReason() != "evidence_gap" || len(run.unassigned[0].GetResources()) != 1 || !proto.Equal(run.unassigned[0].Resources[0], t1Ref("api")) {
+								t.Fatalf("unverified cause escaped evidence-gap projection: work=%v unassigned=%v", run.work, run.unassigned)
+							}
+						} else {
+							t1AssertWork(t, run.work, c)
+						}
 					}
 					if run.positive != c.positive || run.negative != c.negative {
 						t.Errorf("published/attempted cases = +%d/-%d; want +%d/-%d", run.positive, run.negative, c.positive, c.negative)
@@ -272,6 +279,7 @@ func TestT1ScriptedBrokerMatrix(t *testing.T) {
 type t1Run struct {
 	calls, positive, negative int
 	work                      []*contracts.ReflectionCauseWork
+	unassigned                []*contracts.ReflectionWorkItem
 	outcome                   *contracts.OutcomeRecord
 	ledger                    *contracts.BrokerLedger
 }
@@ -328,6 +336,16 @@ func t1RunBroker(t *testing.T, c t1Class, reject bool) t1Run {
 	o.SourceCommit = base
 	if c.change != nil {
 		c.change(o)
+	}
+	// Successful closure alone is not per-cause proof. These synthetic
+	// controller observations explicitly bind each claimed repair to a fresh
+	// clearance; rows without a mutation receipt must still remain unassigned.
+	for index, cause := range o.ConfirmedRootCauses {
+		detector := fmt.Sprintf("t1-health-%d", index)
+		for _, ref := range cause.Resources {
+			o.Findings = append(o.Findings, &contracts.Finding{DetectorId: detector, RuleId: "available", Status: "active", Severity: "warn", Summary: "service unavailable", Evidence: "synthetic controller observation before repair", PrimaryResource: proto.Clone(ref).(*contracts.ObjectRef), Fingerprint: detector})
+		}
+		o.FinalHealthDetectorState = append(o.FinalHealthDetectorState, &contracts.DetectorEvaluation{DetectorId: detector, Status: "clear", EvaluatedAt: timestamppb.New(time.Unix(102, 0))})
 	}
 	run := t1Run{}
 	capture := ""
@@ -445,6 +463,7 @@ func t1RunBroker(t *testing.T, c t1Class, reject bool) t1Run {
 			t.Errorf("prior accepted repair missing from reflection history: %v", request.PriorOutcomes)
 		}
 		run.work = request.CauseWork
+		run.unassigned = request.UnassignedWork
 		if request.ValidationAttempt > 1 && len(request.PreviousDiagnostics) == 0 {
 			t.Error("retry lost typed rejection")
 		}
