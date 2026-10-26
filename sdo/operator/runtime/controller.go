@@ -69,7 +69,10 @@ type dispatchCompletion struct {
 }
 
 type Controller struct {
-	config                      ControllerConfig
+	config ControllerConfig
+	// closureRecheckIdentity/Since bound an incomplete closure-time recheck.
+	closureRecheckIdentity      string
+	closureRecheckSince         time.Time
 	startedAt                   time.Time
 	scheduler                   *Scheduler
 	detectors                   map[string]sdk.Detector

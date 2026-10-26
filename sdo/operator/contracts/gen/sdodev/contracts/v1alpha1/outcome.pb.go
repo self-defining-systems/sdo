@@ -597,7 +597,7 @@ var File_sdodev_contracts_v1alpha1_outcome_proto protoreflect.FileDescriptor
 
 const file_sdodev_contracts_v1alpha1_outcome_proto_rawDesc = "" +
 	"\n" +
-	"'sdodev/contracts/v1alpha1/outcome.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a(sdodev/contracts/v1alpha1/messages.proto\x1a&sdodev/contracts/v1alpha1/common.proto\x1a1sdodev/contracts/v1alpha1/memory_diagnostic.proto\x1a'sdodev/contracts/v1alpha1/program.proto\"\xf3\x14\n" +
+	"'sdodev/contracts/v1alpha1/outcome.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a(sdodev/contracts/v1alpha1/messages.proto\x1a&sdodev/contracts/v1alpha1/common.proto\x1a1sdodev/contracts/v1alpha1/memory_diagnostic.proto\x1a'sdodev/contracts/v1alpha1/program.proto\"\x80\x15\n" +
 	"\rOutcomeRecord\x12.\n" +
 	"\x0eschema_version\x18\x01 \x01(\x05B\a\xbaH\x04\x1a\x02\b\x01R\rschemaVersion\x12,\n" +
 	"\vincident_id\x18\x02 \x01(\tB\v\xbaH\br\x06\x10\x012\x02\\SR\n" +
@@ -613,8 +613,8 @@ const file_sdodev_contracts_v1alpha1_outcome_proto_rawDesc = "" +
 	" \x03(\tB\x1e\xbaH\x1b\x92\x01\x18\"\x16r\x142\x12^[a-z][a-z0-9_-]*$R\x11rejectedPlaybooks\x12K\n" +
 	"\x11applied_playbooks\x18\v \x03(\tB\x1e\xbaH\x1b\x92\x01\x18\"\x16r\x142\x12^[a-z][a-z0-9_-]*$R\x10appliedPlaybooks\x12a\n" +
 	"\x15confirmed_root_causes\x18\f \x03(\v2-.sdodev.contracts.v1alpha1.ConfirmedRootCauseR\x13confirmedRootCauses\x12l\n" +
-	"\x1bfinal_health_detector_state\x18\r \x03(\v2-.sdodev.contracts.v1alpha1.DetectorEvaluationR\x18finalHealthDetectorState\x12V\n" +
-	"\x0eclassification\x18\x0e \x01(\tB.\xbaH+r)R\asuccessR\x16cleared_without_actionR\x06failedR\x0eclassification\x12(\n" +
+	"\x1bfinal_health_detector_state\x18\r \x03(\v2-.sdodev.contracts.v1alpha1.DetectorEvaluationR\x18finalHealthDetectorState\x12c\n" +
+	"\x0eclassification\x18\x0e \x01(\tB;\xbaH8r6R\asuccessR\x16cleared_without_actionR\x06failedR\vunconfirmedR\x0eclassification\x12(\n" +
 	"\rrepair_commit\x18\x0f \x01(\tH\x00R\frepairCommit\x88\x01\x01\x12U\n" +
 	"\x0erepair_actions\x18\x10 \x03(\v2..sdodev.contracts.v1alpha1.RepairActionReceiptR\rrepairActions\x12(\n" +
 	"\rmemory_commit\x18\x11 \x01(\tH\x01R\fmemoryCommit\x88\x01\x01\x12+\n" +
