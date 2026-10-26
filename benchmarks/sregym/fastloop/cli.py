@@ -764,6 +764,10 @@ def _run(args: argparse.Namespace) -> int:
         deployed = time.monotonic()
         described = deployed
         baseline = load_application_baseline(environment.baseline_path, environment.namespace)
+        if baseline is not None:
+            from benchmarks.sregym.fastloop.recovery_closure import complete_recovery_baselines
+
+            baseline = complete_recovery_baselines(environment.workspace, baseline)
         if baseline is None and args.require_full_cleanup:
             raise ValueError("full cleanup requires an application baseline")
         if baseline is None:

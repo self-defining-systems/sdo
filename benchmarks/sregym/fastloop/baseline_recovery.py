@@ -331,7 +331,9 @@ def reconcile_application(
     for kind, name in sorted(current):
         if (kind, name) in expected:
             continue
-        if kind == "PersistentVolumeClaim":
+        # A legacy snapshot did not record namespace identity/RBAC. Its absence
+        # cannot authorize deleting default or externally provisioned grants.
+        if kind in {"PersistentVolumeClaim", "ServiceAccount", "Role", "RoleBinding"}:
             continue
         cluster.delete(namespace, kind, name)
         cleanup.deleted_counts[kind] = cleanup.deleted_counts.get(kind, 0) + 1

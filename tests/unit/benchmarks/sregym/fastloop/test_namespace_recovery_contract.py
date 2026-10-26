@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from pathlib import Path
 
 import pytest
 
@@ -18,7 +19,9 @@ from tests.unit.benchmarks.sregym.fastloop.test_baseline_recovery import FakeClu
         ("social-network", ["social-reader"]),
     ],
 )
-def test_namespace_recovery_capture_contains_referenced_nondefault_service_accounts(namespace, accounts):
+def test_namespace_recovery_capture_contains_referenced_nondefault_service_accounts(
+    namespace: str, accounts: list[str]
+) -> None:
     # AST3's sealed-baseline reproducer: all four account names come from real
     # pod-template references, not recovery configuration.
     cluster = FakeCluster()
@@ -46,9 +49,7 @@ def test_namespace_recovery_capture_contains_referenced_nondefault_service_accou
     assert order.index("ServiceAccount") < order.index("Deployment")
 
 
-def test_ast3_sealed_baseline_recovers_all_referenced_accounts_and_grants():
-    from pathlib import Path
-
+def test_ast3_sealed_baseline_recovers_all_referenced_accounts_and_grants() -> None:
     from benchmarks.sregym.fastloop.baseline_recovery import load_application_baseline
     from benchmarks.sregym.fastloop.recovery_closure import complete_recovery_baselines, missing_prerequisites
 
@@ -73,7 +74,7 @@ def test_ast3_sealed_baseline_recovers_all_referenced_accounts_and_grants():
 
 
 @pytest.mark.parametrize("namespace", ["hotel-reservation", "social-network", "astronomy-shop"])
-def test_reference_closure_follows_env_volumes_rbac_and_stateful_claims(namespace):
+def test_reference_closure_follows_env_volumes_rbac_and_stateful_claims(namespace: str) -> None:
     from benchmarks.sregym.fastloop.recovery_closure import prerequisites
 
     deployment = obj(
@@ -133,7 +134,9 @@ def test_reference_closure_follows_env_volumes_rbac_and_stateful_claims(namespac
     }
 
 
-def test_missing_prerequisites_rejects_before_controller_or_namespace_writes(tmp_path, monkeypatch):
+def test_missing_prerequisites_rejects_before_controller_or_namespace_writes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     import subprocess
     from types import SimpleNamespace
 
@@ -180,7 +183,7 @@ def test_missing_prerequisites_rejects_before_controller_or_namespace_writes(tmp
     assert calls == [["get", "namespace", "hotel", "-o", "name"]]
 
 
-def test_secret_manifest_payload_is_never_opened_during_closure(tmp_path):
+def test_secret_manifest_payload_is_never_opened_during_closure(tmp_path: Path) -> None:
     import json
 
     from benchmarks.sregym.fastloop.baseline_recovery import ApplicationBaseline
@@ -207,7 +210,9 @@ def test_secret_manifest_payload_is_never_opened_during_closure(tmp_path):
 
 
 @pytest.mark.parametrize("kind", ["Role", "RoleBinding", "ServiceAccount"])
-def test_recovery_restores_top_level_identity_and_rbac_fields(kind, monkeypatch, tmp_path):
+def test_recovery_restores_top_level_identity_and_rbac_fields(
+    kind: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     import json
     from types import SimpleNamespace
 
@@ -231,7 +236,7 @@ def test_recovery_restores_top_level_identity_and_rbac_fields(kind, monkeypatch,
         if args[0] == "get":
             return SimpleNamespace(stdout=json.dumps(live))
         assert args[0] == "patch"
-        for operation in json.loads(__import__("pathlib").Path(args[4]).read_text()):
+        for operation in json.loads(Path(args[4]).read_text()):
             if operation["op"] == "add":
                 live[operation["path"].removeprefix("/")] = operation["value"]
         return SimpleNamespace(stdout="")
@@ -242,7 +247,7 @@ def test_recovery_restores_top_level_identity_and_rbac_fields(kind, monkeypatch,
 
 
 @pytest.mark.parametrize("damage", ["digest", "identity", "escape"])
-def test_legacy_prerequisites_require_contained_identity_bound_manifest_bytes(tmp_path, damage):
+def test_legacy_prerequisites_require_contained_identity_bound_manifest_bytes(tmp_path: Path, damage: str) -> None:
     import hashlib
     import json
 
@@ -266,7 +271,9 @@ def test_legacy_prerequisites_require_contained_identity_bound_manifest_bytes(tm
         complete_recovery_baselines(tmp_path, (ApplicationBaseline("hotel", [workload]),))
 
 
-def test_reset_cli_checks_prerequisites_before_building_or_starting_a_worker(tmp_path, monkeypatch):
+def test_reset_cli_checks_prerequisites_before_building_or_starting_a_worker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from types import SimpleNamespace
 
     from benchmarks.sregym.fastloop import cli, reset
@@ -289,3 +296,15 @@ def test_reset_cli_checks_prerequisites_before_building_or_starting_a_worker(tmp
     args = cli.build_parser().parse_args(["reset", "--run-dir", str(tmp_path)])
     with pytest.raises(ValueError, match="hotel/Secret/credential"):
         args.handler(args)
+
+
+@pytest.mark.parametrize("kind", ["ServiceAccount", "Role", "RoleBinding"])
+def test_legacy_capture_cannot_delete_unrecorded_namespace_prerequisites(kind: str) -> None:
+    from benchmarks.sregym.fastloop.baseline_recovery import ApplicationBaseline
+
+    cluster = FakeCluster()
+    cluster.add(obj(kind, "default" if kind == "ServiceAccount" else "reader"))
+    original = deepcopy(cluster.objects)
+    reconcile_application(cluster, ApplicationBaseline("hotel", []), "hotel")
+    assert cluster.objects == original
+    assert cluster.touched == []
