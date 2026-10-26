@@ -15,6 +15,8 @@ Accepted source and developer changes express intent. Operational memory is fall
 6. Undo only proven wrong or harmful changes; retain useful repairs. Clean up temporary investigation resources; label helper Pods or Jobs `sdo.dev/responder-helper=true`, never application workloads.
 7. Fix `still_broken`; keep `already_done`. The controller independently checks the result. Merge accepted peer learning on memory conflicts.
 
+When a typed action fails, read the named failing stage and fix its inputs from source before falling back to raw commands.
+
 Prioritize current user-facing failures; defer harmless cleanup. Report unfinished work only with a blocker or exhausted options.
 
 Use checkout-relative paths and scratch outside memory. Read complete output files, never prefixes. Let blocking operations finish in one call instead of polling across model turns. Static files belong in static_context, not live cause evidence.

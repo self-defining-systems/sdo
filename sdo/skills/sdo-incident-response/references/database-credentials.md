@@ -22,3 +22,12 @@ SDO's independent verification; include a dependent Deployment restart when the
 repair requires reconnection. Learn executable diagnosis and mitigation from the
 recorded open catalog, then replay to NoMatch. Replay preserves references and
 projects catalog membership and roles; it does not prove live authentication.
+
+Catalog authentication is separate from the password for creating a user.
+Set `target.auth` to the source-declared authentication database and username/password
+references when the server requires authentication; `password` alone does not
+authenticate the catalog read. A nil `target.auth` uses local unauthenticated
+access only. Failures identify the safe stage (container lookup, credential
+reference, exec transport, client binary, authentication, catalog read or parse).
+Raw server messages and credential values are excluded. A catalog-read rejection
+with no authentication configured may require authentication references.
