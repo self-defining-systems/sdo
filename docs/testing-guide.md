@@ -56,6 +56,14 @@ are in `tests/unit/sdo/agents/responder/test_command_reference.py`; they include
 missing/stale-reference negative control. The responder image's cached model-tool
 layer installs `jq` and runs a JSON extraction smoke check during the build.
 
+The benchmark responder image inventory is checked by
+`scripts/check_responder_image.py` (newline-separated paths on stdin). This script
+owns the recording-module allowlist shared by CI and
+`tests/unit/sdo/operator/test_dockerfile_benchmark_scope.py`. The focused tests also
+inspect all recording-module imports, including conditional imports, and reject
+unapproved fastloop dependencies before building an image. Run them with
+`uv run --extra test pytest -q -p no:tach tests/unit/sdo/operator/test_dockerfile_benchmark_scope.py`.
+
 SDK/validator identities are computed from installed Go sources; no pin regeneration is needed after SDK changes, and `check_errors.sh` checks source binding and a real two-branch merge.
 
 The proto gate runs `buf lint` and checks that committed Go/Python code matches
