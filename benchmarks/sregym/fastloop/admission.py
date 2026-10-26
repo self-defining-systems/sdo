@@ -15,6 +15,7 @@ from benchmarks.sregym.adapter import (
     assert_host_disk_headroom,
     assert_lane_resources,
     assert_stable_workloads,
+    closure_pending,
     controller_proof,
     kubectl,
     qualified_scenarios,
@@ -56,25 +57,38 @@ def workload_identity(kubeconfig: Path, namespace: str) -> dict[str, Any]:
         desired = spec.get("replicas", 1)
         if row["kind"] == "DaemonSet":
             desired = status.get("desiredNumberScheduled", 0)
-            complete = (
-                status.get("updatedNumberScheduled") == desired
-                and status.get("currentNumberScheduled") == desired
-                and status.get("numberReady") == desired
+            updated, current, ready = (
+                status.get("updatedNumberScheduled"),
+                status.get("currentNumberScheduled"),
+                status.get("numberReady", 0),
             )
         else:
-            complete = (
-                status.get("updatedReplicas") == desired
-                and status.get("replicas") == desired
-                and status.get("readyReplicas") == desired
+            updated, current, ready = (
+                status.get("updatedReplicas"),
+                status.get("replicas"),
+                status.get("readyReplicas", 0),
             )
-            if row["kind"] == "StatefulSet":
-                complete = complete and status.get("currentRevision") == status.get("updateRevision")
+        observed, generation = status.get("observedGeneration", -1), metadata.get("generation", 0)
+        label = f"{row['kind']}/{metadata['name']}"
+        # A rollout is a template change still in progress; an unchanged
+        # template whose pods lost readiness (crash, eviction, responder
+        # restart) is a different cause and is named as such.
         if (
-            not complete
-            or status.get("observedGeneration", -1) < metadata.get("generation", 0)
-            or len(selected) != desired
+            observed < generation
+            or updated != desired
+            or current != desired
+            or (row["kind"] == "StatefulSet" and status.get("currentRevision") != status.get("updateRevision"))
         ):
-            raise ValueError(f"restore invariant: rollout not complete: {row['kind']}/{metadata['name']}")
+            raise ValueError(
+                f"restore invariant: rollout not complete: {label} "
+                f"(generation {generation} observed {observed}; updated {updated}/{desired}; current {current})"
+            )
+        if ready != desired or len(selected) != desired:
+            pods = ", ".join(
+                f"{pod['metadata'].get('name', pod['metadata'].get('uid'))} {pod.get('status', {}).get('phase')}"
+                for pod in selected
+            )
+            raise ValueError(f"restore invariant: workload not Ready: {label} (ready {ready}/{desired}; pods: {pods})")
         if desired == 0:
             raise ValueError(f"restore invariant: installed workload scaled to zero: {row['kind']}/{metadata['name']}")
         if not selected or any(
@@ -100,6 +114,16 @@ def workload_identity(kubeconfig: Path, namespace: str) -> dict[str, Any]:
     if not workloads:
         raise ValueError("restore invariant: no installed application workloads")
     return workloads
+
+
+def active_incident(state: dict[str, Any]) -> str | None:
+    """Name controller incident work, so a workload refusal shows SDO acted before injection."""
+    if not closure_pending(state):
+        return None
+    request = state.get("incident_request")
+    incident = request.get("incident_id") if isinstance(request, dict) else None
+    keys = ", ".join(key for key in ("incident_open", "incident_request", "pending_closure") if state.get(key))
+    return f"{incident or 'unidentified'} ({keys})"
 
 
 class LaneAdmission:
@@ -187,11 +211,20 @@ class LaneAdmission:
         self._sequence += 1
         path = self.directory / f"stabilization-{self._sequence:03d}.jsonl"
 
+        def stable_workloads() -> None:
+            try:
+                assert_stable_workloads(self._identity or {}, workload_identity(env.kubeconfig, env.namespace))
+            except ValueError as exc:
+                incident = active_incident(self.ops.runtime_state(control))
+                if incident is None:
+                    raise
+                raise ValueError(f"{exc}; SDO incident work active before injection: {incident}") from exc
+
         def sample() -> dict[str, Any]:
             assert_clean_baseline(env.kubeconfig, namespace=env.namespace)
             if self.progress:
                 self.progress("probe_placement", namespace="sregym")
-            assert_stable_workloads(self._identity or {}, workload_identity(env.kubeconfig, env.namespace))
+            stable_workloads()
             proof = controller_proof(self.ops.runtime_state(control), self.required_detectors, boundary)
             try:
                 windows = self._windows(control)
@@ -208,7 +241,7 @@ class LaneAdmission:
                 )
                 proof["independent_traffic"] = traffic
                 proof["passed"] = traffic.get("success") is True
-                assert_stable_workloads(self._identity or {}, workload_identity(env.kubeconfig, env.namespace))
+                stable_workloads()
             proof["required_scenarios"] = sorted(self.required_scenarios)
             return proof
 
