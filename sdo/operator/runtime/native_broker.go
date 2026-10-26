@@ -376,7 +376,8 @@ func (n NativeIncidentBroker) reflectLocked(ctx context.Context, ledger *contrac
 }
 
 // QueuedReflections lists acknowledged incidents whose queued reflection has
-// not finished, oldest first. Ledger writes are atomic renames, so this reads
+// not finished or whose accepted detector change awaits its controller
+// rollout, oldest first. Ledger writes are atomic renames, so this reads
 // without the broker lock that a running reflection holds.
 func (n NativeIncidentBroker) QueuedReflections() ([]string, error) {
 	entries, err := os.ReadDir(n.LedgerRoot)
@@ -400,7 +401,7 @@ func (n NativeIncidentBroker) QueuedReflections() ([]string, error) {
 		if err != nil {
 			return nil, fmt.Errorf("broker ledger %s: %w", entry.Name(), err)
 		}
-		if ledger.ReflectionQueued && !ledger.ReflectionProcessed && ledger.Acknowledged {
+		if ledger.ReflectionQueued && ledger.Acknowledged && (!ledger.ReflectionProcessed || reflectionRolloutPending(ledger)) {
 			queued = append(queued, ledger)
 		}
 	}
@@ -440,6 +441,21 @@ func (n NativeIncidentBroker) ProcessQueuedReflection(ctx context.Context, incid
 		}
 		return n.saveLedger(ledger)
 	})
+}
+
+// QueuedReflectionRolloutPending reports whether an incident's queued
+// reflection accepted a detector change that no restarted controller has
+// recorded yet. Like QueuedReflections, it reads without the broker lock.
+func (n NativeIncidentBroker) QueuedReflectionRolloutPending(incidentID string) (bool, error) {
+	ledger, err := n.readLedger(incidentID)
+	if err != nil {
+		return false, err
+	}
+	return ledger.ReflectionQueued && reflectionRolloutPending(ledger), nil
+}
+
+func reflectionRolloutPending(ledger *contracts.BrokerLedger) bool {
+	return ledger.RolloutExpectation != nil && !successfulRollout(rolloutReceiptsState(ledger.RolloutReceipts))
 }
 
 // AbandonQueuedReflection ends a queued reflection whose retries are spent.
@@ -644,7 +660,9 @@ func (n NativeIncidentBroker) PruneIncidentSessions(now time.Time) error {
 			if ledger.IncidentId == "" || filepath.Base(n.ledgerPath(ledger.IncidentId)) != entry.Name() {
 				return fmt.Errorf("session retention ledger %s has mismatched identity", entry.Name())
 			}
-			if ledger.Acknowledged && ledger.AcknowledgedAt != nil && !now.Before(ledger.AcknowledgedAt.AsTime().Add(retention)) {
+			// A queued reflection still resumes the session it would delete.
+			queued := ledger.ReflectionQueued && !ledger.ReflectionProcessed
+			if ledger.Acknowledged && !queued && ledger.AcknowledgedAt != nil && !now.Before(ledger.AcknowledgedAt.AsTime().Add(retention)) {
 				if err := memory.RemoveIncidentSession(n.SessionRoot, ledger.IncidentId); err != nil {
 					return fmt.Errorf("prune session for %s: %w", ledger.IncidentId, err)
 				}

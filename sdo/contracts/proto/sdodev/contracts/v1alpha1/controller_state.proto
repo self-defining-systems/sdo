@@ -189,9 +189,13 @@ message ControllerState {
   string accepted_source_drift_revision = 39;
   NamespaceOnboarding namespace_onboarding = 40;
   // Incidents whose failed-attempt reflection is queued or running after its
-  // closure was acknowledged, oldest first. The broker ledger is the source of
+  // closure was acknowledged, or whose accepted detector change still awaits
+  // its controller rollout, oldest first. The broker ledger is the source of
   // truth; this projection lets observers treat it as open work.
   repeated string queued_reflection_incident_ids = 41;
+  // The broker ledger could not be read, so the queue above is unknown and
+  // observers must treat reflection work as open.
+  bool queued_reflections_unknown = 42;
   reserved 32, 33, 34;
   reserved "drift_investigation", "drift_admission", "program_sweep_cursors";
 }

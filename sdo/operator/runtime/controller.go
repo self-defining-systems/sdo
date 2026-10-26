@@ -333,7 +333,9 @@ func (c *Controller) stepPaused(ctx context.Context, now time.Time) error {
 	}
 	c.finishEarlyReport(ctx, now)
 	c.processBrokerCompletions()
-	c.driveQueuedReflections(ctx, now)
+	if err := c.driveQueuedReflections(ctx, now); err != nil {
+		return err
+	}
 	after, err := c.ExportState()
 	if err != nil {
 		return err
@@ -376,7 +378,9 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 	}
 	c.finishEarlyReport(ctx, now)
 	c.processBrokerCompletions()
-	c.driveQueuedReflections(ctx, now)
+	if err := c.driveQueuedReflections(ctx, now); err != nil {
+		return err
+	}
 	c.attachPendingDrift()
 	c.mu.Lock()
 	reconcileReady := !c.incidentOpen && (c.broker == nil || !c.closureBlocksNextLocked())
@@ -1659,7 +1663,7 @@ func (c *Controller) ExportState() (*contracts.ControllerState, error) {
 		DispatchState:       dispatchState,
 		IncidentFindingKeys: append([]string(nil), c.incidentFindingKeys...), ClosureState: c.closureState,
 		ClosureReceipt: closureReceiptContract(c.closureReceipt), ClosureFailure: closureFailureContract(c.closureFailure), FailedClosures: cloneFailedClosures(c.failedClosures),
-		LastAcknowledgedIncidentId: c.lastAcknowledgedIncidentID, QueuedReflectionIncidentIds: append([]string(nil), c.reflections.queued...),
+		LastAcknowledgedIncidentId: c.lastAcknowledgedIncidentID, QueuedReflectionIncidentIds: append([]string(nil), c.reflections.queued...), QueuedReflectionsUnknown: c.reflections.unknown,
 		EvaluationIteration: int32(c.evaluationIteration), DetectorTimeline: timeline, IncidentView: view,
 		NamespaceOnboarding: cloneNamespaceOnboarding(c.namespaceOnboarding),
 		AcceptedSourceDrift: driftEventsContract(c.acceptedSourceDrift), AcceptedSourceDriftRevision: c.acceptedSourceDriftRevision,

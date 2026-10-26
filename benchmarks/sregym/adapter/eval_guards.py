@@ -135,10 +135,17 @@ def incident_work_open(state: dict[str, Any]) -> bool:
     An open incident or request is work. A pending closure or a non-idle
     closure state is work unless its incident's closure is terminal
     (acknowledged, permanently failed or retired). A failed attempt's
-    reflection queued or running after its acknowledgment is work, so the next
-    problem starts only after every queued reflection commits.
+    reflection queued or running after its acknowledgment is work, and so is
+    its accepted detector change until the restarted controller records the
+    rollout, so the next problem starts only on the controller that learned. A
+    queue the controller could not read is unknown, which counts as work.
     """
-    if state.get("incident_request") or state.get("incident_open") or state.get("queued_reflection_incident_ids"):
+    if (
+        state.get("incident_request")
+        or state.get("incident_open")
+        or state.get("queued_reflection_incident_ids")
+        or state.get("queued_reflections_unknown")
+    ):
         return True
     closure_state = state.get("closure_state")
     pending = state.get("pending_closure")

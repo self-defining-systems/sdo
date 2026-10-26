@@ -1168,8 +1168,11 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 				return nil
 			}
 			controller.handleAcknowledgmentCompletion(completion)
-			controller.driveQueuedReflections(runCtx, controller.clock())
+			driveErr := controller.driveQueuedReflections(runCtx, controller.clock())
 			persistControllerState()
+			if driveErr != nil {
+				return driveErr
+			}
 			if err := executeStartupEffects(runCtx, controller, applied.Paused); err != nil {
 				if runCtx.Err() != nil {
 					return nil
@@ -1179,20 +1182,23 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			if *exitAfterClosure && completion.err == nil && !controller.reflectionWorkOpen() {
 				return nil
 			}
+			if *restartAfterClosure && options.NativeBroker == nil && completion.err == nil {
+				if err := encoder.Encode(map[string]any{"controller_closure_restart": controller.LastAcknowledgedIncidentID()}); err != nil {
+					fmt.Fprintln(stderr, err)
+				}
+				return nil
+			}
 		case completion := <-controller.reflectionResults:
 			if stopTimerForRuntimeEvent(runCtx, timer) {
 				return nil
 			}
 			controller.handleReflectionCompletion(completion)
-			controller.driveQueuedReflections(runCtx, controller.clock())
+			driveErr := controller.driveQueuedReflections(runCtx, controller.clock())
 			persistControllerState()
-			if *exitAfterClosure && completion.err == nil && !controller.reflectionWorkOpen() {
-				return nil
+			if driveErr != nil {
+				return driveErr
 			}
-			if *restartAfterClosure && options.NativeBroker == nil && completion.err == nil {
-				if err := encoder.Encode(map[string]any{"controller_closure_restart": controller.LastAcknowledgedIncidentID()}); err != nil {
-					fmt.Fprintln(stderr, err)
-				}
+			if *exitAfterClosure && completion.err == nil && !controller.reflectionWorkOpen() {
 				return nil
 			}
 		case renewErr := <-renewalErrors:

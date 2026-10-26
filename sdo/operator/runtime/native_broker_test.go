@@ -211,6 +211,21 @@ func TestNativeBrokerRecoversCommittedPhasesAndRequiresReflection(t *testing.T) 
 	if err != nil || ledger.AcknowledgedAt == nil {
 		t.Fatalf("acknowledgment timestamp not durable: %+v %v", ledger, err)
 	}
+	// A queued reflection resumes this session, so it outlives retention.
+	ledger.ReflectionQueued, ledger.ReflectionProcessed = true, false
+	if err := native.saveLedger(ledger); err != nil {
+		t.Fatal(err)
+	}
+	if err := native.PruneIncidentSessions(ledger.AcknowledgedAt.AsTime().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(sessions, ".sdo-runtime", "sessions", entries[0].Name())); err != nil {
+		t.Fatalf("session pruned while its reflection is queued: %v", err)
+	}
+	ledger.ReflectionQueued, ledger.ReflectionProcessed = false, true
+	if err := native.saveLedger(ledger); err != nil {
+		t.Fatal(err)
+	}
 	if err := native.PruneIncidentSessions(ledger.AcknowledgedAt.AsTime().Add(59 * time.Minute)); err != nil {
 		t.Fatal(err)
 	}

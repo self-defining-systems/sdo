@@ -781,11 +781,15 @@ type ControllerState struct {
 	AcceptedSourceDriftRevision string               `protobuf:"bytes,39,opt,name=accepted_source_drift_revision,json=acceptedSourceDriftRevision,proto3" json:"accepted_source_drift_revision,omitempty"`
 	NamespaceOnboarding         *NamespaceOnboarding `protobuf:"bytes,40,opt,name=namespace_onboarding,json=namespaceOnboarding,proto3" json:"namespace_onboarding,omitempty"`
 	// Incidents whose failed-attempt reflection is queued or running after its
-	// closure was acknowledged, oldest first. The broker ledger is the source of
+	// closure was acknowledged, or whose accepted detector change still awaits
+	// its controller rollout, oldest first. The broker ledger is the source of
 	// truth; this projection lets observers treat it as open work.
 	QueuedReflectionIncidentIds []string `protobuf:"bytes,41,rep,name=queued_reflection_incident_ids,json=queuedReflectionIncidentIds,proto3" json:"queued_reflection_incident_ids,omitempty"`
-	unknownFields               protoimpl.UnknownFields
-	sizeCache                   protoimpl.SizeCache
+	// The broker ledger could not be read, so the queue above is unknown and
+	// observers must treat reflection work as open.
+	QueuedReflectionsUnknown bool `protobuf:"varint,42,opt,name=queued_reflections_unknown,json=queuedReflectionsUnknown,proto3" json:"queued_reflections_unknown,omitempty"`
+	unknownFields            protoimpl.UnknownFields
+	sizeCache                protoimpl.SizeCache
 }
 
 func (x *ControllerState) Reset() {
@@ -1047,6 +1051,13 @@ func (x *ControllerState) GetQueuedReflectionIncidentIds() []string {
 		return x.QueuedReflectionIncidentIds
 	}
 	return nil
+}
+
+func (x *ControllerState) GetQueuedReflectionsUnknown() bool {
+	if x != nil {
+		return x.QueuedReflectionsUnknown
+	}
+	return false
 }
 
 // ReflectionDecision is the learning decision the broker recorded for an
@@ -1786,7 +1797,7 @@ const file_sdodev_contracts_v1alpha1_controller_state_proto_rawDesc = "" +
 	"\tpermanent\x18\b \x01(\bR\tpermanent\x12\x16\n" +
 	"\x06action\x18\t \x01(\tR\x06action\x12Q\n" +
 	"\x06reason\x18\n" +
-	" \x01(\x0e2/.sdodev.contracts.v1alpha1.ClosureFailureReasonB\b\xbaH\x05\x82\x01\x02\x10\x01R\x06reason\"\xc5 \n" +
+	" \x01(\x0e2/.sdodev.contracts.v1alpha1.ClosureFailureReasonB\b\xbaH\x05\x82\x01\x02\x10\x01R\x06reason\"\x83!\n" +
 	"\x0fControllerState\x122\n" +
 	"\aversion\x18\x01 \x01(\tB\x18\xbaH\x15r\x13\n" +
 	"\x11sdo.controller/v1R\aversion\x12s\n" +
@@ -1822,7 +1833,8 @@ const file_sdodev_contracts_v1alpha1_controller_state_proto_rawDesc = "" +
 	"\x15accepted_source_drift\x18& \x03(\v2%.sdodev.contracts.v1alpha1.DriftEventR\x13acceptedSourceDrift\x12C\n" +
 	"\x1eaccepted_source_drift_revision\x18' \x01(\tR\x1bacceptedSourceDriftRevision\x12a\n" +
 	"\x14namespace_onboarding\x18( \x01(\v2..sdodev.contracts.v1alpha1.NamespaceOnboardingR\x13namespaceOnboarding\x12C\n" +
-	"\x1equeued_reflection_incident_ids\x18) \x03(\tR\x1bqueuedReflectionIncidentIds\x1aa\n" +
+	"\x1equeued_reflection_incident_ids\x18) \x03(\tR\x1bqueuedReflectionIncidentIds\x12<\n" +
+	"\x1aqueued_reflections_unknown\x18* \x01(\bR\x18queuedReflectionsUnknown\x1aa\n" +
 	"\x17SchedulerDeadlinesEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x120\n" +
 	"\x05value\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\x05value:\x028\x01\x1ai\n" +
