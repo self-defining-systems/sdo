@@ -136,11 +136,12 @@ class LaneAdmission:
         directory: Path,
         *,
         timeout_seconds: float = 300,
+        onboarding_timeout_seconds: float = 600,
         code_path: str = "go",
         install_config: NativeInstallConfig | None = None,
         synchronize: Callable[[], None] | None = None,
         progress: Callable[..., None] | None = None,
-        before_proof: Callable[[str, set[str]], None] | None = None,
+        before_proof: Callable[[str, dict[str, Any]], None] | None = None,
     ) -> None:
         if code_path not in {"go", "shell"}:
             raise ValueError(f"eval: unsupported admission code path {code_path!r}")
@@ -148,6 +149,7 @@ class LaneAdmission:
         self.environment, self.worker, self.ops = environment, worker, ops
         self.directory = directory
         self.timeout_seconds = timeout_seconds
+        self.onboarding_timeout_seconds = onboarding_timeout_seconds
         self.install_config = install_config
         self.synchronize, self.progress = synchronize, progress
         self.before_proof = before_proof
@@ -221,6 +223,58 @@ class LaneAdmission:
             ).stdout
         )
 
+    def _onboarding(self, control: str) -> dict[str, dict[str, Any] | None]:
+        """Read the controller's pending and completed onboarding records."""
+        records: dict[str, dict[str, Any] | None] = {}
+        for key, name in (("complete", "sdo-namespace-onboarding"), ("pending", "sdo-namespace-onboarding-pending")):
+            output = kubectl(
+                ["get", f"configmap/{name}", "-o", "json", "--ignore-not-found=true"],
+                namespace=control,
+                kubeconfig=self.environment.kubeconfig,
+            ).stdout
+            records[key] = json.loads(json.loads(output)["data"]["onboarding.json"]) if output.strip() else None
+        return records
+
+    def await_onboarding(self, control: str) -> dict[str, Any]:
+        """Wait, on a separate recorded budget, until the lane's SDO onboarding has finished.
+
+        A fresh seed runs install-existing and the first health refresh after
+        resume. The controller publishes the completed onboarding record only
+        after that refresh and its clear first evaluation, so the record proves
+        the controller is observing; only then may the stabilization clock start.
+        """
+        started = time.monotonic()
+        self.directory.mkdir(parents=True, exist_ok=True)
+        destination = self.directory / "onboarding.json"
+        while True:
+            try:
+                records, error = self._onboarding(control), None
+            except (RuntimeError, ValueError, KeyError) as exc:
+                records, error = {"complete": None, "pending": None}, str(exc)
+            record = records["complete"] or {}
+            done = bool(record.get("acceptedCommit") and record.get("objects"))
+            evidence = {
+                "passed": done,
+                "accepted_commit": record.get("acceptedCommit"),
+                "pending": records["pending"] is not None,
+                "last_error": error,
+                "seconds": round(time.monotonic() - started, 3),
+                "budget_seconds": self.onboarding_timeout_seconds,
+            }
+            if done or time.monotonic() - started >= self.onboarding_timeout_seconds:
+                break
+            time.sleep(min(2, max(0, started + self.onboarding_timeout_seconds - time.monotonic())))
+        destination.write_text(json.dumps(evidence, indent=2) + "\n")
+        if not done:
+            raise ValueError(
+                f"eval: SDO onboarding did not finish within {self.onboarding_timeout_seconds:g}s "
+                f"(completed record: {bool(record)}, pending record: {evidence['pending']}, "
+                f"last error: {error}); no injection"
+            )
+        if self.progress:
+            self.progress("onboarding", accepted_commit=evidence["accepted_commit"], evidence=str(destination))
+        return evidence
+
     def check_resources(self, stage: str) -> None:
         self.directory.mkdir(parents=True, exist_ok=True)
         try:
@@ -240,8 +294,11 @@ class LaneAdmission:
 
         self.check_resources("entry")
         self._policy()
+        # Onboarding has its own budget: the stabilization clock below must never
+        # contain install-existing or the first health refresh of a fresh seed.
+        onboarding = self.await_onboarding(control) if self.code_path == "go" else {}
         if self.before_proof is not None:
-            self.before_proof(control, set(self.required_detectors))
+            self.before_proof(control, onboarding)
         deadline = Deadline(time.monotonic() + self.timeout_seconds, time.monotonic)
         env = self.environment
         self.directory.mkdir(parents=True, exist_ok=True)
