@@ -34,9 +34,12 @@ Its `reflection_eligibility.causes` contains only verified repaired cause groups
 with indices into the full outcome. Unverified causes are represented separately
 as typed `unassigned` questions with `reason=evidence_gap`; they do not authorize
 executable learning. A cause is verified when each written target's own primary finding and each
-observed symptom cleared after the last write. Cause resources that no opening
-finding named (for example a traffic-only caller Service) are unobserved context
-and, since LEARN1 (2026-10-26), no longer cause an `evidence_gap`. The worker
+observed symptom cleared after the last write. On `success` outcomes only, cause
+resources that no opening finding named (for example a traffic-only caller
+Service) are unobserved context and, since LEARN1 (2026-10-26), no longer cause
+an `evidence_gap`. Partial and failed outcomes, like this one, still need a cleared
+finding for every unwritten cause resource, because opening findings omit
+findings that activate after launch. The worker
 receives compact cause indices and only those causes, verified receipts and typed
 applications/diagnoses and scoped cold-verification evidence. Opaque tool transcripts and unattributed playbook/drift
 claims are omitted from that learning view. No global recovery, positive fixed
