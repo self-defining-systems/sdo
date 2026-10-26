@@ -47,9 +47,12 @@ func (l *ResponderLoop) programFollowUp(ctx context.Context, entry menuEntry, bi
 		return program.Plan{}, false
 	}
 	deadline := l.deadline()
-	l.mu.Unlock()
-	next, err := runBoundedMitigator(ctx, mitigator, view, cloneProgramBindings(bindings), deadline)
-	l.mu.Lock()
+	var next program.Plan
+	if stepErr := withoutResponderLocks(l, "follow-up mitigator", false, func() {
+		next, err = runBoundedMitigator(ctx, mitigator, view, cloneProgramBindings(bindings), deadline)
+	}); stepErr != nil {
+		err = stepErr
+	}
 	if err != nil || samePlanActions(next, last) {
 		// An empty or repeated plan means the program has nothing more to do.
 		return program.Plan{}, false
