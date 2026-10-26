@@ -22,7 +22,7 @@ from typing import Any
 
 from .faults import PlanError, _finding_evidence, _object_ref, fired_detectors, state_changes
 from .responder import STATUS_COMMAND, STATUS_POLL_SECONDS, _verification
-from .turn import Turn, utc_now
+from .turn import MAX_STRUCTURED_OUTPUT_CHARS, Turn, utc_now
 
 PROGRAM_FAULT = "service_target_port"
 PROGRAM_ID = "service-targetport-mismatch"
@@ -33,7 +33,11 @@ CAPTURE_DIR = Path(os.environ.get("SDO_CAPTURED_CORPUS_DIR", "/sdo/session/corpu
 
 
 def _tool(turn: Turn, *args: str) -> dict[str, Any]:
-    code, output = turn.run(" ".join(["sdo", *(shlex.quote(arg) for arg in args), "--json"]), timeout=240)
+    code, output = turn.run(
+        " ".join(["sdo", *(shlex.quote(arg) for arg in args), "--json"]),
+        timeout=240,
+        max_output_chars=MAX_STRUCTURED_OUTPUT_CHARS,
+    )
     first = output.splitlines()[0] if output else ""
     try:
         response = json.loads(first)
