@@ -27,7 +27,8 @@ def api_server(rules: list[dict]):
     """A kubectl stand-in whose SubjectAccessReview answers come from Role rules."""
 
     def run(args, *, namespace, kubeconfig, input_text):
-        assert args[:2] == ["create", "-f"] and namespace is None
+        assert args[:2] == ["create", "-f"]
+        assert namespace is None
         spec = json.loads(input_text)["spec"]
         assert spec["user"] == "system:serviceaccount:app-sdo:sdo-responder"
         attrs = spec["resourceAttributes"]
@@ -104,14 +105,16 @@ def test_withheld_kinds_are_listed_apart_from_gaps(tmp_path):
             [
                 {
                     "draws": [
-                        "FaultDraw(key='rotation', app='astronomy_shop', params=(), footprints=(Footprint(kind='Secret', name='s', field=None),))"
+                        "FaultDraw(key='rotation', app='astronomy_shop', params=(), "
+                        "footprints=(Footprint(kind='Secret', name='s', field=None),))"
                     ]
                 }
             ]
         )
     )
     rows = check.check(check.fault_objects(path), asks([]))
-    assert [(row.kind, row.status) for row in rows] == [("Secret", "withheld")] and check.gaps(rows) == []
+    assert [(row.kind, row.status) for row in rows] == [("Secret", "withheld")]
+    assert check.gaps(rows) == []
 
 
 def test_cluster_scoped_kinds_are_asked_without_a_namespace(tmp_path):
@@ -124,7 +127,8 @@ def test_cluster_scoped_kinds_are_asked_without_a_namespace(tmp_path):
     allowed = check.subject_access_review(Path("/dev/null"), control_namespace="app-sdo", run=run)
     check.check(check.fault_objects(plan_file(tmp_path)), allowed)
     webhook = [a for a in seen if a["resource"] == "mutatingwebhookconfigurations"]
-    assert webhook and all("namespace" not in a for a in webhook)
+    assert webhook
+    assert all("namespace" not in a for a in webhook)
 
 
 def test_fault_kind_without_a_grant_decision_is_refused():

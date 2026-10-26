@@ -117,8 +117,10 @@ def fault_objects(plan: Path) -> list[FaultObject]:
             head = _DRAW.search(draw)
             if head is None:
                 raise ValueError(f"eval: unreadable fault draw in {plan}")
-            for footprint in _FOOTPRINT.finditer(draw):
-                objects.append(FaultObject(head["key"], head["app"], footprint["kind"], footprint["name"]))
+            objects.extend(
+                FaultObject(head["key"], head["app"], footprint["kind"], footprint["name"])
+                for footprint in _FOOTPRINT.finditer(draw)
+            )
     return objects
 
 
@@ -149,9 +151,9 @@ def render(rows: list[Row]) -> str:
     for row in rows:
         faults = ", ".join(row.faults)
         reason = f" ({row.reason})" if row.reason else ""
-        lines.append(
-            f"{row.kind}{'/' + row.name if row.name else ''} | {row.namespace or 'cluster'} | {','.join(row.denied_verbs) or '-'} | {row.status}{reason} | {faults}"
-        )
+        kind = f"{row.kind}/{row.name}" if row.name else row.kind
+        denied = ",".join(row.denied_verbs) or "-"
+        lines.append(f"{kind} | {row.namespace or 'cluster'} | {denied} | {row.status}{reason} | {faults}")
     return "\n".join(lines)
 
 
