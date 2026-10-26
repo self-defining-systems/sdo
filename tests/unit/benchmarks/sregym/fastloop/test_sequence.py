@@ -203,3 +203,32 @@ def test_native_ledger_must_belong_to_the_row_incident(plan: SequencePlan) -> No
 
     with pytest.raises(RuntimeError, match="acknowledged"):
         run_sequence(plan, execute=execute)
+
+
+def test_busy_host_waits_before_starting_the_guarded_native_runner(plan: SequencePlan, monkeypatch) -> None:
+    from benchmarks.sregym.fastloop import sequence
+    from benchmarks.sregym.fastloop.cli import build_parser
+
+    loads = iter([(41.0, 0, 0), (10.0, 0, 0)])
+    sleeps = []
+    commands = []
+    monkeypatch.setattr(sequence.os, "getloadavg", lambda: next(loads))
+    monkeypatch.setattr("time.sleep", sleeps.append)
+
+    def run(command, **_kwargs):
+        commands.append(command)
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(sequence.subprocess, "run", run)
+    results = plan.environment_dir / "results" / "phase4-51-000" / "incidents.jsonl"
+    sequence.execute_row(plan, 0, results)
+    assert sleeps, "busy-host admission must wait before starting a row"
+    command = commands[-1]
+    boundary = command.index("--")
+    assert command[boundary + 1] == "benchmarks.sregym.fastloop"
+    parsed = build_parser().parse_args(command[boundary + 2 :])
+    assert parsed.require_fault_tracking
+    assert parsed.require_full_cleanup
+    assert parsed.cleanup_passes == 2
+    assert parsed.provider == "codex"
+    assert parsed.model == "gpt-6-luna"

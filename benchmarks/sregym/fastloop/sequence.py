@@ -12,6 +12,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, Self
@@ -131,6 +132,12 @@ def execute_row(plan: SequencePlan, index: int, results: Path) -> None:
     ]
     directory = plan.journal_dir / f"{index:03d}"
     _save(directory / "command.json", command)
+    # Keep transient load admission from turning an unstarted row into an
+    # uncertain interruption. Lease loss still stops immediately.
+    subprocess.run([plan.coord, "check", environment.cluster, "--lease", plan.lease], check=True)
+    while os.getloadavg()[0] >= 40:
+        subprocess.run([plan.coord, "check", environment.cluster, "--lease", plan.lease], check=True)
+        time.sleep(15)
     subprocess.run([plan.coord, "gate", "--lease", plan.lease], check=True)
     subprocess.run([plan.coord, "check", environment.cluster, "--lease", plan.lease], check=True)
     with (directory / "stdout.log").open("a") as out, (directory / "stderr.log").open("a") as error:
