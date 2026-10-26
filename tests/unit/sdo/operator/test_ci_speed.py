@@ -187,7 +187,14 @@ def test_image_jobs_use_the_compilation_owners_schema_identity() -> None:
     assert images["env"]["SDO_VALIDATOR_SCHEMA_IDENTITY"] == "${{ needs.prepare-go.outputs.schema_identity }}"
     assert set(images["strategy"]["matrix"]["family"]) == {"controller", "validator", "responder", "benchmark"}
     partitions = [row["operator"] for row in jobs["controller"]["strategy"]["matrix"]["include"] if "operator" in row]
-    assert sorted(partitions) == ["acceptance", "acceptance-second", "broker", "compiler", "compiler-replay", "remaining"]
+    assert sorted(partitions) == [
+        "acceptance",
+        "acceptance-second",
+        "broker",
+        "compiler",
+        "compiler-replay",
+        "remaining",
+    ]
 
 
 @pytest.mark.parametrize("mode", ["normal", "race"])
