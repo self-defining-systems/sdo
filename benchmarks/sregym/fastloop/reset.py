@@ -272,6 +272,10 @@ def restore_application(
         time.sleep(min(1, max(0, deadline - time.monotonic())))
     if not health.get("healthy"):
         raise RuntimeError(f"reset left {environment.namespace} unhealthy: {health.get('unready')}")
+    if environment.namespace == "social-network":
+        from benchmarks.sregym.fastloop.social_fixture import restore_social_fixture
+
+        restore_social_fixture(environment.kubeconfig)
     if checks and environment.app != "toy":
         refreshed = worker.request(
             "refresh_baseline_clients", problem_id=environment.deploy_problem, dependencies_only=True, timeout=120
