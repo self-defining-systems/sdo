@@ -1,6 +1,6 @@
 ---
 name: sdo-incident-response
-description: Resolve incidents with coverage, evidence and independent verification.
+description: Resolve incidents.
 ---
 
 # Incident response
@@ -16,5 +16,7 @@ Accepted source and developer changes express intent. Operational memory is fall
 7. Fix `still_broken`; keep `already_done`. The controller independently checks the result. Merge accepted peer learning on memory conflicts.
 
 Prioritize user-facing failures. Report unfinished work only with a blocker or exhausted options.
+
+Refs: printed JSON or Kind/[namespace/]name.
 
 Use relative paths; keep scratch outside memory. Read complete output files. Operations finish in one call instead of polling across model turns. Static files belong in static_context, not live cause evidence.

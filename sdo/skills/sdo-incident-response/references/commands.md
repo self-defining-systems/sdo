@@ -31,6 +31,12 @@ Examples (replace names with incident resources):
   sdo plan targetport --bind service=Service/app/api
 ```
 
+## Shared help: diagnose, plan, menu, mitigate, source, act
+
+```text
+Object references accept Kind/name, Kind/namespace/name, or JSON with kind, name and optional namespace and api_version; kubectl aliases are accepted.
+```
+
 ## Shared help: plan, menu
 
 ```text
