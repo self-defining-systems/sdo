@@ -69,14 +69,15 @@ func TestExpiredIncidentWorkStatusIsConservative(t *testing.T) {
 		name     string
 		job      *batchv1.Job
 		active   bool
+		finished bool
 		apiError bool
 	}{
 		{name: "absent"},
 		{name: "pending", job: &batchv1.Job{}, active: true},
 		{name: "running", job: &batchv1.Job{Status: batchv1.JobStatus{Active: 1}}, active: true},
 		{name: "deleting", job: &batchv1.Job{ObjectMeta: metav1.ObjectMeta{DeletionTimestamp: &metav1.Time{Time: time.Now()}}}, active: true},
-		{name: "complete", job: &batchv1.Job{Status: batchv1.JobStatus{Conditions: []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: corev1.ConditionTrue}}}}},
-		{name: "failed", job: &batchv1.Job{Status: batchv1.JobStatus{Conditions: []batchv1.JobCondition{{Type: batchv1.JobFailed, Status: corev1.ConditionTrue}}}}},
+		{name: "complete", job: &batchv1.Job{Status: batchv1.JobStatus{Conditions: []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: corev1.ConditionTrue}}}}, finished: true},
+		{name: "failed", job: &batchv1.Job{Status: batchv1.JobStatus{Conditions: []batchv1.JobCondition{{Type: batchv1.JobFailed, Status: corev1.ConditionTrue}}}}, finished: true},
 		{name: "api-uncertain", apiError: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -91,9 +92,12 @@ func TestExpiredIncidentWorkStatusIsConservative(t *testing.T) {
 			if tc.apiError {
 				client.PrependReactor("get", "jobs", func(ktesting.Action) (bool, kruntime.Object, error) { return true, nil, errors.New("API unavailable") })
 			}
-			active, err := (KubernetesJobDispatcher{Client: client, Namespace: "control"}).IncidentWorkActive(context.Background(), "stale")
-			if active != tc.active || (err != nil) != tc.apiError {
-				t.Fatalf("active=%v err=%v", active, err)
+			// A finished Job holds its incident only until its result is consumed.
+			for _, consumed := range []bool{true, false} {
+				held, err := (KubernetesJobDispatcher{Client: client, Namespace: "control"}).IncidentWorkHeld(context.Background(), "stale", consumed)
+				if want := tc.active || tc.finished && !consumed; held != want || (err != nil) != tc.apiError {
+					t.Fatalf("consumed=%v held=%v err=%v", consumed, held, err)
+				}
 			}
 		})
 	}
@@ -105,7 +109,7 @@ type liveIncidentDispatcher struct {
 	err    error
 }
 
-func (d liveIncidentDispatcher) IncidentWorkActive(context.Context, string) (bool, error) {
+func (d liveIncidentDispatcher) IncidentWorkHeld(context.Context, string, bool) (bool, error) {
 	return d.active, d.err
 }
 
@@ -197,7 +201,7 @@ func TestExpiredIncidentFailureArchiveSurvivesRestart(t *testing.T) {
 
 func TestExpiredIncidentKeepsOrphanWorkerPod(t *testing.T) {
 	client := fake.NewSimpleClientset(&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "orphan", Namespace: "control", Labels: map[string]string{"sdo.dev/incident": IncidentJobName("stale")}}, Status: corev1.PodStatus{Phase: corev1.PodRunning}})
-	active, err := (KubernetesJobDispatcher{Client: client, Namespace: "control"}).IncidentWorkActive(context.Background(), "stale")
+	active, err := (KubernetesJobDispatcher{Client: client, Namespace: "control"}).IncidentWorkHeld(context.Background(), "stale", true)
 	if err != nil || !active {
 		t.Fatalf("orphan worker treated as absent: active=%v err=%v", active, err)
 	}
@@ -435,12 +439,12 @@ func TestRWSBoundStandbyCountsAsLiveWork(t *testing.T) {
 	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "worker", Namespace: "control", OwnerReferences: []metav1.OwnerReference{{Kind: "Job", Name: job.Name}}}, Status: corev1.PodStatus{Phase: corev1.PodRunning}}
 	client := fake.NewSimpleClientset(job, pod)
 	d := KubernetesJobDispatcher{Client: client, Namespace: "control", RepositoryMountPath: root}
-	active, err := d.IncidentWorkActive(context.Background(), "stale")
+	active, err := d.IncidentWorkHeld(context.Background(), "stale", true)
 	if err != nil || !active {
 		t.Fatalf("bound worker invisible: %v %v", active, err)
 	}
 	client.BatchV1().Jobs("control").Delete(context.Background(), job.Name, metav1.DeleteOptions{})
-	active, err = d.IncidentWorkActive(context.Background(), "stale")
+	active, err = d.IncidentWorkHeld(context.Background(), "stale", true)
 	if err != nil || !active {
 		t.Fatalf("orphan bound pod invisible: %v %v", active, err)
 	}
@@ -608,5 +612,98 @@ func TestOwnerlessRetirementKeepsLiveOrUncertainWork(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// finishedJobDispatcher answers the work check from a real Kubernetes Job
+// inventory, so retirement sees exactly what a restarted controller would.
+type finishedJobDispatcher struct {
+	*recordingDispatcher
+	work KubernetesJobDispatcher
+}
+
+func (d finishedJobDispatcher) IncidentWorkHeld(ctx context.Context, incidentID string, resultConsumed bool) (bool, error) {
+	return d.work.IncidentWorkHeld(ctx, incidentID, resultConsumed)
+}
+
+func completedResponderJob(incidentID string, at time.Time) *batchv1.Job {
+	return &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{Name: IncidentJobName(incidentID), Namespace: "control"},
+		Status: batchv1.JobStatus{CompletionTime: &metav1.Time{Time: at}, Succeeded: 1,
+			Conditions: []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: corev1.ConditionTrue}}},
+	}
+}
+
+// awaitHarvest waits until the dispatch goroutine has queued its result.
+func awaitHarvest(t *testing.T, controller *Controller) {
+	t.Helper()
+	for deadline := time.Now().Add(5 * time.Second); len(controller.results) == 0; time.Sleep(time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("dispatch result never queued")
+		}
+	}
+}
+
+// A responder Job that finished before its deadline owns its incident until its
+// result is harvested, on every path: a restart past the OWNER_LOST bound, and
+// a live controller whose step sees the queued result after the bound.
+func TestFinishedResponderJobIsHarvestedBeforeRetirement(t *testing.T) {
+	for _, restart := range []bool{true, false} {
+		t.Run(fmt.Sprintf("restart=%v", restart), func(t *testing.T) {
+			ctx := context.Background()
+			start := time.Unix(1000, 0)
+			config := testControllerConfig()
+			config.FiringThreshold = 1
+			detectors := []sdk.Detector{controllerDetector("fault", time.Hour, stateFinding("fault"))}
+			client := fake.NewSimpleClientset()
+			dispatcher := finishedJobDispatcher{recordingDispatcher: &recordingDispatcher{requests: make(chan IncidentRequest, 2)}, work: KubernetesJobDispatcher{Client: client, Namespace: "control"}}
+			first, err := NewController(config, detectors, staticProvider{snapshot: sdktest.Snapshot{}}, dispatcher, start)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := first.Step(ctx, start, nil); err != nil {
+				t.Fatal(err)
+			}
+			executePendingEffect(t, first)
+			id := awaitRequest(t, dispatcher.requests).IncidentID
+			state := exportState(t, first)
+			deadline := state.GetIncidentRequest().GetResponseDeadline().AsTime()
+			if _, err := client.BatchV1().Jobs("control").Create(ctx, completedResponderJob(id, deadline.Add(-30*time.Second)), metav1.CreateOptions{}); err != nil {
+				t.Fatal(err)
+			}
+			now := deadline.Add(ownerLostGrace + time.Minute)
+			controller := first
+			if restart {
+				controller, err = NewController(config, detectors, staticProvider{snapshot: sdktest.Snapshot{}}, dispatcher, now)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := controller.RestoreState(state); err != nil {
+					t.Fatal(err)
+				}
+				// Startup order in Run: retirement, then the restored dispatch
+				// effect re-attaches to the finished Job.
+				if err := controller.retireExpiredIncident(ctx, now); err != nil {
+					t.Fatal(err)
+				}
+				if err := executePendingEffects(ctx, controller); err != nil {
+					t.Fatal(err)
+				}
+				if request := awaitRequest(t, dispatcher.requests); request.IncidentID != id {
+					t.Fatalf("restart dispatched %q, want the finished incident %q", request.IncidentID, id)
+				}
+			}
+			awaitHarvest(t, controller)
+			if err := controller.Step(ctx, now, nil); err != nil {
+				t.Fatal(err)
+			}
+			got := exportState(t, controller)
+			if len(got.GetFailedClosures()) != 0 {
+				t.Fatalf("finished responder retired before its result was harvested: %v", got.GetFailedClosures()[0].GetFailure())
+			}
+			if got.GetIncidentRequest().GetIncidentId() != id || !got.GetResponderDone() {
+				t.Fatalf("finished responder result not harvested: %v", got)
+			}
+		})
 	}
 }
