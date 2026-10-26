@@ -654,10 +654,14 @@ def _run(args: argparse.Namespace) -> int:
             raise SystemExit(
                 "--time-scale below 1 is for scripted-agent runs only; live LLM runs must use --time-scale 1"
             )
+    from benchmarks.sregym.fastloop.learning_loop import require_proof, scripted_agents
+
+    if args.agent == "sdo" and not scripted_agents(args, environment):
+        require_proof(environment, getattr(args, "learning_loop_report", None))
     if args.agent == "sdo":
         from benchmarks.sregym.adapter import control_namespace_for
 
-        secret = "sdo-agent-credentials"
+        secret = getattr(args, "credentials_secret", "sdo-agent-credentials")
         checked = kubectl(
             ["get", "secret", secret],
             namespace=control_namespace_for(environment.namespace),
@@ -809,15 +813,19 @@ def _run(args: argparse.Namespace) -> int:
             _reset_failed_incident(environment, worker)
 
         if args.agent == "sdo":
+            agent = _sdo_agent(
+                args,
+                environment,
+                results_dir,
+                composite=registered_composites,
+                stream_faults=faults_by_incident,
+                worker=worker,
+            )
+            wrapper = getattr(args, "agent_wrapper", None)
+            if wrapper is not None:
+                agent = wrapper(agent)
             records = run_incidents(
-                _sdo_agent(
-                    args,
-                    environment,
-                    results_dir,
-                    composite=registered_composites,
-                    stream_faults=faults_by_incident,
-                    worker=worker,
-                ),
+                agent,
                 driver,
                 config,
                 grader=grader,
@@ -1073,7 +1081,7 @@ def _reset(args: argparse.Namespace) -> int:
 
         prepare_dev_mount(mount, None if environment.app == "toy" else environment.sregym_dir, environment.run_dir)
     saved_toy = None
-    if environment.app == "toy":
+    if environment.app == "toy" and getattr(args, "restart_toy", True):
         from benchmarks.sregym.fastloop.toy_reset import ToyControllerTemplate
 
         saved_toy = ToyControllerTemplate.capture(environment)
@@ -1090,7 +1098,7 @@ def _reset(args: argparse.Namespace) -> int:
         environment.dev_mount = mount
         environment.dev_mount_snapshot = True
         environment.save()
-    if environment.app == "toy":
+    if environment.app == "toy" and getattr(args, "restart_toy", True):
         if saved_toy is not None:
             saved_toy.restart(environment)
         else:
@@ -1192,6 +1200,16 @@ def build_parser() -> argparse.ArgumentParser:
     dry_run.add_argument("--setup-timeout", type=setup_budget, default=900)
     dry_run.set_defaults(handler=lambda args: execute(args.run_dir, args.timeout, args.setup_timeout))
 
+    from benchmarks.sregym.fastloop.learning_loop import execute as execute_learning_loop
+
+    proof = commands.add_parser(
+        "learning-loop-proof", help="bounded scripted first/reflection/repeat proof on a real lane"
+    )
+    proof.add_argument("--run-dir", type=Path, required=True)
+    proof.add_argument("--timeout", type=budget, default=300)
+    proof.add_argument("--lease", help="shared coord lease; checked before lane mutations")
+    proof.set_defaults(handler=lambda args: execute_learning_loop(args.run_dir, args.timeout, args.lease))
+
     reset = commands.add_parser("reset", help="restore a warm cluster to its application and controller baseline")
     reset.add_argument("--run-dir", type=Path, required=True)
     reset.add_argument(
@@ -1206,6 +1224,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     run = commands.add_parser("run", help="loop incidents against the warm environment")
     run.add_argument("--run-dir", type=Path, required=True)
+    run.add_argument("--learning-loop-report", type=Path, help="passing real-lane proof for this commit and image set")
     run.add_argument("--agent", choices=("sdo", "codex"), required=True)
     run.add_argument("--no-checkpoints", action="store_true", help="skip optional offline replay checkpoint export")
     run.add_argument("--agent-registrations", type=Path, help="SDO worker registration directory")

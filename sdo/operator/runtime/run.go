@@ -451,10 +451,10 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		if *proberURL == "" {
 			identity = servicehealth.ProberIdentity{Namespace: *controlNamespace, Labels: proberPodLabels()}
 		}
-		reachabilityObserver = NewServiceReachabilityObserver(ServiceReachabilityConfig{
+		reachabilityObserver = NewServiceReachabilityObserver(scaleReachabilityTiming(ServiceReachabilityConfig{
 			Prober: HTTPProberClient{BaseURL: proberAddress}, Snapshots: kubernetesCache, Identity: identity,
 			Notify: func() { kubernetesCache.Notify(servicehealth.ReachabilityWatch) },
-		})
+		}, timeScale))
 		defer reachabilityObserver.Stop()
 	}
 	var snapshotProvider SnapshotProvider = kubernetesCache

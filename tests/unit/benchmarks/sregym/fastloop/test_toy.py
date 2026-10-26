@@ -164,7 +164,18 @@ def test_sweep_stream_models_an_unowned_service_without_changing_controller():
 
 
 @pytest.mark.parametrize(
-    "change", ["none", "namespace", "objective", "topology", "missing-detector", "changed-detector"]
+    "change",
+    [
+        "none",
+        "proof",
+        "namespace",
+        "objective",
+        "topology",
+        "missing-detector",
+        "changed-detector",
+        "source-policy",
+        "changed-policy",
+    ],
 )
 def test_toy_scripted_health_refresh_needs_no_rehearsal_slot(tmp_path, monkeypatch, change):
     import shutil
@@ -178,19 +189,20 @@ def test_toy_scripted_health_refresh_needs_no_rehearsal_slot(tmp_path, monkeypat
     seed = ROOT / "apps/toy/seed/.sdo"
     shutil.copytree(seed, tmp_path / ".sdo")
     body = (seed / "goal.md").read_text().split("---\n", 2)[2].strip()
+    namespace = "sdo-proof-0123456789" if change == "proof" else "sdo-toy"
     resources = []
     for path in sorted((ROOT / "apps/toy/kubernetes").glob("*.yaml")):
         resources.extend(
             SourceResource(
                 kind=obj["kind"],
-                namespace=obj["metadata"].get("namespace", "sdo-toy"),
+                namespace=obj["metadata"].get("namespace", namespace),
                 name=obj["metadata"]["name"],
                 source=f"kubernetes/{path.name}",
             )
             for obj in yaml.safe_load_all(path.read_text())
         )
     request = HealthJudgeRequest(
-        namespace="other" if change == "namespace" else "sdo-toy",
+        namespace="other" if change == "namespace" else namespace,
         health_objective="changed" if change == "objective" else body,
         accepted_source_commit="a" * 40,
         source_resources=resources,
@@ -204,7 +216,22 @@ def test_toy_scripted_health_refresh_needs_no_rehearsal_slot(tmp_path, monkeypat
         detector.unlink()
     if change == "changed-detector":
         detector.write_text("package toy\n")
-    if change == "none":
+    if change in {"source-policy", "changed-policy"}:
+        policy = {
+            "apiVersion": "v1",
+            "kind": "ConfigMap",
+            "metadata": {"name": "verification-policy", "namespace": namespace},
+            "data": {"verification": "changed" if change == "changed-policy" else "independent-health"},
+        }
+        (tmp_path / "kubernetes").mkdir()
+        (tmp_path / "kubernetes/verification-policy.yaml").write_text(yaml.safe_dump(policy))
+        request.source_resources.add(
+            kind="ConfigMap",
+            namespace=namespace,
+            name="verification-policy",
+            source="kubernetes/verification-policy.yaml",
+        )
+    if change in {"none", "proof", "source-policy"}:
         result = scripted_worker.scripted_health_judge(request, tmp_path)
         assert result.authored
         assert "toy-endpoints" in result.detector_ids
@@ -213,3 +240,41 @@ def test_toy_scripted_health_refresh_needs_no_rehearsal_slot(tmp_path, monkeypat
     else:
         with pytest.raises(ValueError, match="scripted toy health refresh"):
             scripted_worker.scripted_health_judge(request, tmp_path)
+
+
+def test_ready_baseline_retains_verified_install_identity_after_health_refresh():
+    from benchmarks.sregym.fastloop.toy import baseline_ready
+
+    state = {
+        "evaluation_iteration": 2,
+        "history": [{"detector_id": "health", "status": "clear"}],
+        "ownership_adoption": {"source_commit": "health-refresh"},
+        "namespace_onboarding": {"accepted_commit": "installed", "objects": [{"name": "frontend"}]},
+    }
+    assert baseline_ready(state, "installed")
+    assert not baseline_ready(state, "unrelated")
+    state["namespace_onboarding"]["objects"] = []
+    assert not baseline_ready(state, "installed")
+
+
+@pytest.mark.parametrize("missing", [False, True])
+def test_toy_source_uses_a_common_installed_manifest_digest(monkeypatch, missing):
+    import json
+    from types import SimpleNamespace
+
+    from benchmarks.sregym.fastloop import toy
+
+    reference = "registry/toy@sha256:" + "a" * 64
+
+    def run(argv, **kwargs):
+        if argv[0] == "kind":
+            return SimpleNamespace(stdout="node-a\nnode-b\n")
+        digests = [] if missing and argv[2] == "node-b" else [reference]
+        return SimpleNamespace(stdout=json.dumps({"status": {"repoDigests": digests}}))
+
+    monkeypatch.setattr(toy.subprocess, "run", run)
+    if missing:
+        with pytest.raises(ValueError, match="immutable.*image"):
+            toy.immutable_image_reference("lane", "toy:mutable")
+    else:
+        assert toy.immutable_image_reference("lane", "toy:mutable") == reference

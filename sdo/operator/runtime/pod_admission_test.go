@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -21,6 +22,12 @@ import (
 )
 
 func TestPodAdmissionBlocksVerificationUntilAPIRecovers(t *testing.T) {
+	for _, scale := range []float64{1, 0.1} {
+		t.Run(fmt.Sprint(scale), func(t *testing.T) { testPodAdmissionRecovery(t, scale) })
+	}
+}
+
+func testPodAdmissionRecovery(t *testing.T, scale float64) {
 	client := fake.NewSimpleClientset(&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "app", Name: "ready-api"}, Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "api", Image: "example/api:1"}}}, Status: corev1.PodStatus{Phase: corev1.PodRunning, Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}}})
 	var probeErr error = apierrors.NewInternalError(errors.New("admission TLS certificate invalid"))
 	calls := 0
@@ -29,7 +36,8 @@ func TestPodAdmissionBlocksVerificationUntilAPIRecovers(t *testing.T) {
 		return true, action.(ktesting.CreateAction).GetObject(), probeErr
 	})
 	detector := workloadhealth.NewPodAdmissionDetector(sdk.DetectorSpec{ID: "pod-admission", OriginatingCommit: "synthetic-test", Class: sdk.DetectorClassHealth, Owner: sdk.DetectorOwnerHealthJudge, Batching: sdk.BatchingPolicy{Severity: sdk.SeverityCritical}, Interval: time.Second, Persistence: sdk.PersistencePolicy{Firing: 1, Clearing: 1}, Watches: []sdk.WatchKind{{APIVersion: "v1", Kind: "Pod"}}})
-	cache, err := NewKubernetesCache(KubernetesCacheConfig{Namespace: "app", Client: client}, []sdk.Detector{detector})
+	detectors := scaleDetectors([]sdk.Detector{detector}, scale)
+	cache, err := NewKubernetesCache(KubernetesCacheConfig{Namespace: "app", Client: client}, detectors)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,7 +53,7 @@ func TestPodAdmissionBlocksVerificationUntilAPIRecovers(t *testing.T) {
 	provider := ReadSnapshotProvider{Base: base, View: func(snapshot sdk.DetectionContext) program.ReadView {
 		return program.ReadFrom(metricsContext{DetectionContext: snapshot, ScopedObservationSource: scopedSource(snapshot)})
 	}}
-	loop := NewResponderLoop(IncidentRequest{IncidentID: "incident", Namespace: "app"}, nil, provider, []sdk.Detector{detector}, PlanExecutor{}, 1)
+	loop := NewResponderLoop(IncidentRequest{IncidentID: "incident", Namespace: "app"}, nil, provider, detectors, PlanExecutor{}, 1)
 	loop.ReadView = program.ReadFrom
 	for _, command := range []string{"status", "verify"} {
 		result := loop.Handle(ctx, ToolRequest{Command: command})

@@ -123,6 +123,35 @@ is a replay evidence gap; never substitute an agent-authored corpus healthy stat
 or the repaired fixed state. A session-authored positive replay case can still
 omit incident captures when its controller healthy reference is retained.
 
+## Model-free learning-loop preflight
+
+`learning-loop-proof/report.json` has schema `sdo.learning-loop-proof/v1`. Its
+`code_revision`, `lane` and `images` (role → node → installed content digest) bind
+it to the next live launch. `passed` requires all six `stages` (`injection`,
+`closure`, `grade`, `publication`, `recovery`, `repeat`), nonempty evidence, no model
+calls and at most 300 total seconds. Dirty code cannot produce reusable admission.
+Stages reference existing native strict receipts, immutable closure-grade
+checkpoints and ordinary incident rows. `validator-events.jsonl` preserves real
+Kubernetes watch objects, including terminal/deleted validator Jobs, before broker
+cleanup. Publication requires the known executable playbook, acknowledged broker
+commit and successful validator Job bound to its candidate tree, with one repository
+PVC volume mounted read-only at both candidate and healthy-baseline paths. The repeat
+must record a verified application of that published playbook; health alone is
+insufficient. This is scripted plumbing evidence, never evidence of model learning.
+
+The proof's environment is under `learning-loop-proof/environment/fastloop.json`.
+Its deterministic `sdo-proof-*` application namespace and separate control namespace,
+PVC and source checkout preserve the operational application's accepted repository
+and pending ledger. `environment/isolation.json` records both identities. A stopped
+lane is required when preparing its development source mount. Toy reset removes
+injected objects only from the toy namespace and does not restore unrelated cluster
+admission objects. The report remains at the original lane environment's path, so
+ordinary live admission consumes it without changing its operational workspace.
+
+The proof rejects controller/validator source-label or installed-content mismatches
+in setup before fixture preparation. Validator logs are streamed on Job creation
+into `learning-loop-proof/validator-logs/<job-uid>.log`, including bootstrap
+validators, so broker Job deletion does not erase compiler/setup failures.
 ## Concurrent shared-memory lanes
 
 `fastloop parallel` joins ordinary per-lane rows into output `incidents.jsonl`
@@ -146,3 +175,7 @@ archive copy-back and reset. The external attachment report records phases and
 original Jobs. Attachment requires equal initial accepted trees and retains
 private proposal, ledger, capture and session roots. Scripted scheduling, broker
 and lock tests prove plumbing; live runs establish learning and speedup.
+
+Warm rehearsal retries synchronize the private accepted PVC before using the
+ordinary repository-preserving reset. This retains broker-validated health setup;
+application restoration, traffic checks and fresh native readiness still run.

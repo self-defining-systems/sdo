@@ -108,3 +108,9 @@ def test_validator_inherits_the_immutable_compiler_and_cache_layers():
         assert f"COPY --from=go-deps {source} {source}" in stage
     assert "ENV GOCACHEPROG=/usr/local/bin/sdo-go-cache" in stage
     assert "RUN test -x /usr/local/go/bin/go" in stage
+
+
+def test_image_build_worker_budget_fits_live_shared_host():
+    text = "\n".join(_lines("Dockerfile.runtime"))
+    stage = text.split("FROM go-modules AS go-deps\n", 1)[1].split("\nFROM ", 1)[0]
+    assert 'ENV GOMAXPROCS=4 GOFLAGS="-p=4"' in stage

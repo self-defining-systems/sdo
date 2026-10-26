@@ -174,6 +174,9 @@ def test_time_scale_shortens_persistent_controller_polls(monkeypatch: pytest.Mon
 def test_run_checks_sdo_credentials_before_worker_setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from benchmarks.sregym.fastloop import cli
 
+    # Proof admission has its own fail-closed tests; isolate this downstream contract.
+    monkeypatch.setattr("benchmarks.sregym.fastloop.learning_loop.require_proof", lambda *_args: None)
+
     FastloopEnvironment(
         run_dir=tmp_path,
         cluster="kind-test",
@@ -382,6 +385,9 @@ def test_playbook_experiment_streams_defer_diagnosis_grading() -> None:
 
 def test_mf_stream_launches_with_both_component_probes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from benchmarks.sregym.fastloop import cli
+
+    # Proof admission has its own fail-closed tests; isolate this downstream contract.
+    monkeypatch.setattr("benchmarks.sregym.fastloop.learning_loop.require_proof", lambda *_args: None)
 
     root = Path(__file__).resolve().parents[5]
     stream = root / "tests" / "fixtures" / "sregym" / "fastloop" / "pbprog_smoke.json"
@@ -686,6 +692,9 @@ def test_normal_live_and_reduced_scripted_scales_pass_preflight(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, agent: str, app: str, scale: str, scripted: bool
 ) -> None:
     from benchmarks.sregym.fastloop import cli
+
+    # Proof admission has its own fail-closed tests; isolate this downstream contract.
+    monkeypatch.setattr("benchmarks.sregym.fastloop.learning_loop.require_proof", lambda *_args: None)
 
     FastloopEnvironment(
         run_dir=tmp_path,

@@ -696,6 +696,12 @@ omitting or duplicating names. Image runners consume the preparation job's
 source-bound schema identity, avoiding a separate Go cache transfer and toolchain
 installation just to print it.
 
+The real-lane gate for live fastloop first/repeat work is
+`uv run python -m benchmarks.sregym.fastloop learning-loop-proof --run-dir <warm-lane>`.
+It reuses the scripted registrations and ordinary loop, including a real isolated
+validator Job, and must finish within five minutes. See the
+[fastloop proof instructions](../benchmarks/sregym/experiments/fastloop/README.md#required-learning-loop-proof-before-live-firstrepeat-runs)
+for report identity, stage receipts and rehearsal workspace requirements.
 ## Recorded Kubernetes client generation
 
 `scripts/gen_kube_read_clients.sh` derives the read-only built-in interfaces from

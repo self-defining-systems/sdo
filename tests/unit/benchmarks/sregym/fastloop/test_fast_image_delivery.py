@@ -83,6 +83,8 @@ def test_legacy_live_launcher_requires_explicit_opt_out(monkeypatch):
 
 
 def test_run_repeats_fallback_warning_before_starting_workers(monkeypatch, tmp_path, capsys):
+    # Proof admission is tested separately from image-delivery diagnostics.
+    monkeypatch.setattr("benchmarks.sregym.fastloop.learning_loop.require_proof", lambda *_args: None)
     from benchmarks.sregym.fastloop.environment import FastloopEnvironment
 
     lane = FastloopEnvironment(

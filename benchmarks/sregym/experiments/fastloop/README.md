@@ -458,6 +458,35 @@ absence and recreates the namespace named by the captured application baseline
 before reconciling its manifests; authorization/read failures never become
 absence. System and SDO control namespaces are refused.
 
+### Required learning-loop proof before live first/repeat runs
+
+On an idle warm lane, run the scripted whole-loop proof before live SDO work:
+
+```bash
+uv run python -m benchmarks.sregym.fastloop learning-loop-proof --run-dir "$SDO_FASTLOOP_RUN"
+```
+
+This command prepares a separate toy namespace, control namespace, repository PVC
+and source workspace on the existing lane, then runs two target-port encounters with
+scripted registrations, without a model or diagnosis judge. It uses the ordinary
+fastloop injection, native closure, immutable closure-grade checkpoint, reflection,
+isolated validator, broker publication, paused recovery and repeat paths. It stops
+the scripted runtime when finished. The operational application, accepted memory
+and pending incident ledger are preserved. The lane runtime must be stopped while
+its development source mount is prepared. Only the tiny existing toy image is built;
+role images are reused. The proof mounts the exact worktree running the command.
+
+The single report is `learning-loop-proof/report.json`; stage evidence references
+strict receipts, frozen grades, validator watch events and final incident rows.
+The total command budget is 300 seconds, including reset and runtime shutdown.
+A failed stage leaves `passed: false`, its name and Kubernetes evidence. A green
+scripted proof establishes plumbing, not model learning or benchmark performance.
+Live `fastloop run --agent sdo` requires a passing report for its exact clean commit,
+lane and installed image content on every node, before credentials or worker setup.
+Use `--learning-loop-report PATH` to reference a dedicated rehearsal's report.
+Changes to code or installed image content require a new proof. Shared hosts may
+pass `--lease NAME` to check their `coord` lease before mutations.
+
 ## Parallel lanes with shared accepted memory
 
 Use separate warm kind lanes for the same source application. Create each with
@@ -517,6 +546,9 @@ commit ancestry across each encounter. Exact native request/outcome/reflection
 commits remain in strict receipts. This runner has hermetic scheduling and broker
 proofs; measure actual speedup and learning with a live pair before making either
 claim.
+
+### Reusing no-fault setup
+
 Passing no-fault setup reports are reusable on an unchanged lane. A subsequent
 `eval-dry-run` checks the content-bound receipt in `setup-proof/` before reset
 or deployment. An exact match skips setup and reruns live admission; a miss

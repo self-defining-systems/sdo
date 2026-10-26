@@ -78,15 +78,23 @@ def phase_deadline(document: dict[str, Any], started: float, setup_timeout: int,
     return float(steady_started) + steady_timeout if steady_started is not None else started + setup_timeout
 
 
-def execute(run_dir: Path, timeout: int, setup_timeout: int = 900) -> int:
-    directory = run_dir.resolve() / "eval-dry-run"
+def execute(
+    run_dir: Path,
+    timeout: int,
+    setup_timeout: int = 900,
+    *,
+    worker_module: str = __name__,
+    directory_name: str = "eval-dry-run",
+    extra_arguments: list[str] | None = None,
+) -> int:
+    directory = run_dir.resolve() / directory_name
     directory.mkdir(parents=True, exist_ok=True)
     report_path = directory / "report.json"
     DryRunReport(str(run_dir)).save(report_path)
     command = [
         sys.executable,
         "-m",
-        __name__,
+        worker_module,
         "--run-dir",
         str(run_dir),
         "--timeout",
@@ -94,6 +102,7 @@ def execute(run_dir: Path, timeout: int, setup_timeout: int = 900) -> int:
         "--setup-timeout",
         str(setup_timeout),
     ]
+    command.extend(extra_arguments or [])
     started = time.monotonic()
     with (directory / "worker.log").open("w") as log:
         child = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
@@ -110,7 +119,10 @@ def execute(run_dir: Path, timeout: int, setup_timeout: int = 900) -> int:
                 phase = "setup" if document.get("steady_started") is None else "steady-state"
                 document.update(
                     passed=False,
-                    error=f"eval: {phase} exceeded its {setup_timeout if phase == 'setup' else timeout}s budget",
+                    error=(
+                        f"eval: {document.get('stage', phase)} exceeded its "
+                        f"{setup_timeout if phase == 'setup' else timeout}s budget"
+                    ),
                 )
                 report_path.write_text(json.dumps(document, indent=2) + "\n")
                 break
@@ -119,6 +131,7 @@ def execute(run_dir: Path, timeout: int, setup_timeout: int = 900) -> int:
             except subprocess.TimeoutExpired:
                 pass
     document = json.loads(report_path.read_text())
+    document["passed"] = document.get("passed") is True and child.returncode == 0
     document["seconds"] = time.monotonic() - started
     if document.get("steady_started") is not None:
         document["steady_seconds"] = time.monotonic() - document["steady_started"]

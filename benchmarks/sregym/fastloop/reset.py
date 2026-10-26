@@ -215,7 +215,8 @@ class RestoreChecks:
         if load_application_baseline(env.baseline_path, env.namespace) is None:
             raise ValueError("reset requires an application baseline captured by fastloop up")
         ensure_application_namespace(env.kubeconfig, env.namespace)
-        restore_admission_baseline(env.kubeconfig, env.baseline_path, env.workspace)
+        if env.app != "toy":
+            restore_admission_baseline(env.kubeconfig, env.baseline_path, env.workspace)
         if fresh:
             reset_responder_grants(env.kubeconfig, env.namespace)
 

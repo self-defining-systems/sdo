@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/servicehealth"
 	"sdo.dev/operator/sdk/traffic"
 )
 
@@ -62,6 +63,26 @@ func (d timedDetector) TrafficWorkloads() []string {
 		return consumer.TrafficWorkloads()
 	}
 	return nil
+}
+
+// Timing wrappers must preserve the observation requirements of the detector.
+func (d timedDetector) ConsumesPodAdmission() bool {
+	return sdk.ConsumesPodAdmission([]sdk.Detector{d.Detector})
+}
+
+func (d timedDetector) ConsumesServiceReachability() bool {
+	return ConsumesServiceReachability([]sdk.Detector{d.Detector})
+}
+
+// Observation cadence follows the same explicit development clock as detector
+// scheduling. Dial deadlines and the independent sample count stay intact.
+func scaleReachabilityTiming(config ServiceReachabilityConfig, scale float64) ServiceReachabilityConfig {
+	interval := config.Interval
+	if interval <= 0 {
+		interval = servicehealth.DefaultReachabilityInterval
+	}
+	config.Interval = scaledDuration(interval, scale)
+	return config
 }
 
 func scaleDetectors(detectors []sdk.Detector, scale float64) []sdk.Detector {
