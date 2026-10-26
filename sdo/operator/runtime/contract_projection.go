@@ -67,6 +67,23 @@ func driftEventsContract(events []sdk.DriftEvent) []*contracts.DriftEvent {
 	return result
 }
 
+func resourceOwnersContract(owners []ResourceOwners) []*contracts.ResourceOwners {
+	var result []*contracts.ResourceOwners
+	for _, owner := range owners {
+		resource := objectRefsContract([]sdk.ObjectRef{owner.Resource})
+		result = append(result, &contracts.ResourceOwners{Resource: resource[0], OwnerChain: objectRefsContract(owner.OwnerChain)})
+	}
+	return result
+}
+
+func resourceOwnersState(owners []*contracts.ResourceOwners) []ResourceOwners {
+	var result []ResourceOwners
+	for _, owner := range owners {
+		result = append(result, ResourceOwners{Resource: objectRefState(owner.GetResource()), OwnerChain: objectRefsState(owner.GetOwnerChain())})
+	}
+	return result
+}
+
 func objectRefsState(refs []*contracts.ObjectRef) []sdk.ObjectRef {
 	result := make([]sdk.ObjectRef, 0, len(refs))
 	for _, ref := range refs {
@@ -300,6 +317,7 @@ func incidentResultContract(result IncidentResult) (*contracts.IncidentResult, e
 			ActionId: action.ActionID, Kind: action.Kind, Target: action.Target, Resources: objectRefsContract(action.Resources),
 			Summary: action.Summary, Details: action.Details, StartedAt: optionalTimestamp(action.StartedAt),
 			CompletedAt: optionalTimestamp(action.CompletedAt), Success: action.Success, Reversible: action.Reversible, FailureReason: action.FailureReason,
+			Owners: resourceOwnersContract(action.Owners),
 		})
 	}
 	for _, evidence := range result.VerificationEvidence {
@@ -384,6 +402,7 @@ func incidentResultState(message *contracts.IncidentResult) IncidentResult {
 			ActionID: action.GetActionId(), Kind: action.GetKind(), Target: action.GetTarget(), Resources: objectRefsState(action.GetResources()),
 			Summary: action.GetSummary(), Details: action.GetDetails(), StartedAt: controllerTime(action.GetStartedAt()),
 			CompletedAt: controllerTime(action.GetCompletedAt()), Success: action.GetSuccess(), Reversible: action.GetReversible(), FailureReason: action.GetFailureReason(),
+			Owners: resourceOwnersState(action.GetOwners()),
 		})
 	}
 	for _, evidence := range message.GetVerificationEvidence() {
