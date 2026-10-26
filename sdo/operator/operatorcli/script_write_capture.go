@@ -106,7 +106,7 @@ func (r *scriptRecorder) finishWrite(path string, e apihistory.Event, raw []byte
 		}
 		if e.Name == "" && e.Verb == "post" && e.Status >= 200 && e.Status < 300 {
 			object := &unstructured.Unstructured{}
-			if json.Unmarshal(raw, object) == nil && object.GetName() != "" {
+			if json.Unmarshal(raw, object) == nil && object.GetName() != "" && !strings.EqualFold(object.GetKind(), "Secret") {
 				c.After = object
 				c.Ref = sdk.ObjectRef{APIVersion: object.GetAPIVersion(), Kind: object.GetKind(), Namespace: object.GetNamespace(), Name: object.GetName()}
 			}

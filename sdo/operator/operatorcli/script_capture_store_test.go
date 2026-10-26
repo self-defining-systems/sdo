@@ -184,3 +184,27 @@ func TestScriptCapturesEachWriteBeforeImage(t *testing.T) {
 		t.Fatalf("not every write has its immediate preimage: %+v", images)
 	}
 }
+
+func TestSecretShapedResponsesNeverEnterReceiptsWhenImageStorageFails(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"apiVersion":"v1","kind":"Secret","metadata":{"name":"synthetic","namespace":"app"},"data":{"value":"secret-shaped-canary"}}`)
+	}))
+	defer upstream.Close()
+	u, _ := url.Parse(upstream.URL)
+	recorder := newScriptRecorder(context.Background(), u, http.DefaultTransport)
+	recorder.persistImage = func(context.Context, string, program.ScriptObjectCapture) (string, error) {
+		return "", fmt.Errorf("unavailable")
+	}
+	event := apihistory.Event{RequestID: "bad-response", Phase: "start", Verb: "patch", Version: "v1", Resource: "configmaps", Namespace: "app", Name: "synthetic"}
+	recorder.Record(event, nil)
+	event.Phase = "end"
+	event.Status = 200
+	recorder.Record(event, []byte(`{"apiVersion":"v1","kind":"Secret","metadata":{"name":"synthetic","namespace":"app"},"data":{"value":"secret-shaped-canary"}}`))
+	result := program.ScriptExecutionResult{}
+	recorder.settle(&result)
+	raw, _ := json.Marshal(result)
+	if bytes.Contains(raw, []byte("secret-shaped-canary")) {
+		t.Fatal("Secret response escaped through fallback receipt")
+	}
+}

@@ -217,6 +217,9 @@ func (r *scriptRecorder) readQuery(path, query string) (*unstructured.Unstructur
 	if err = object.UnmarshalJSON(raw); err != nil {
 		return nil, err
 	}
+	if strings.EqualFold(object.GetKind(), "Secret") {
+		return nil, fmt.Errorf("Secret responses cannot enter captures")
+	}
 	return object, nil
 }
 func (r *scriptRecorder) settle(out *program.ScriptExecutionResult) {
