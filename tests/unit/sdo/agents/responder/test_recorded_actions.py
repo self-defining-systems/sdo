@@ -172,8 +172,33 @@ def test_act_accepts_a_cluster_scoped_kind_the_go_table_does_not_know(scratch: P
     assert tools_cli.main(["act", "--resource", "PersistentVolume/data", "--", "true"]) == 0
 
     (receipt,) = _recorded(scratch)
-    assert receipt["resources"] == [{"api_version": "", "kind": "persistentvolume", "namespace": "", "name": "data"}]
-    assert receipt["target"] == "persistentvolume/data"
+    assert receipt["resources"] == [{"api_version": "", "kind": "PersistentVolume", "namespace": "", "name": "data"}]
+    assert receipt["target"] == "PersistentVolume/data"
+
+
+@pytest.mark.parametrize("verb", ["patch", "delete"])
+@pytest.mark.parametrize("combined", [False, True])
+@pytest.mark.parametrize(("kind", "namespace"), [("PersistentVolume", ""), ("Widget", "app")])
+def test_act_attributes_unknown_kinds_independent_of_kubectl_case(
+    scratch: Path, tmp_path: Path, verb: str, combined: bool, kind: str, namespace: str
+) -> None:
+    kubectl = tmp_path / "kubectl"
+    kubectl.write_text("#!/bin/sh\nexit 0\n")
+    kubectl.chmod(0o755)
+    reference = "/".join(part for part in (kind, namespace, "data") if part)
+    target = [kind.lower() + "/data"] if combined else [kind.lower(), "data"]
+    scope = ["-n", namespace] if namespace else []
+
+    peer = "/".join(part for part in (kind, namespace, "peer") if part)
+    assert (
+        tools_cli.main(["act", "--resource", reference, "--resource", peer, "--", str(kubectl), *scope, verb, *target])
+        == 0
+    )
+
+    (receipt,) = _recorded(scratch)
+    assert receipt["resources"] == [recorded_actions.resource_ref(reference)]
+    assert receipt["target"] == reference
+    assert receipt["success"] is True
 
 
 def test_act_warns_about_a_kubectl_object_no_resource_covers(
@@ -303,8 +328,8 @@ def test_reflection_shell_commands_withhold_sensitive_sdo_act_lines(tmp_path: Pa
             "Role/app/reader",
             {"api_version": "rbac.authorization.k8s.io/v1", "kind": "Role", "namespace": "app", "name": "reader"},
         ),
-        ("PersistentVolume/data", {"api_version": "", "kind": "persistentvolume", "namespace": "", "name": "data"}),
-        ("Node/worker-1", {"api_version": "", "kind": "node", "namespace": "", "name": "worker-1"}),
+        ("PersistentVolume/data", {"api_version": "", "kind": "PersistentVolume", "namespace": "", "name": "data"}),
+        ("Node/worker-1", {"api_version": "", "kind": "Node", "namespace": "", "name": "worker-1"}),
         (
             "deployments.apps/app/api",
             {"api_version": "apps/v1", "kind": "Deployment", "namespace": "app", "name": "api"},
@@ -838,3 +863,19 @@ def test_cluster_reference_cli_keeps_kind_version_and_scope() -> None:
             "namespace": "",
             "name": "app-cleanup",
         }
+
+
+@pytest.mark.parametrize(
+    "reference",
+    [
+        "Deployment/app/worker",
+        '{"kind":"Deployment","namespace":"app","name":"worker"}',
+        '{"api_version":"apps/v1","kind":"deploy","namespace":"app","name":"worker"}',
+    ],
+)
+def test_act_accepts_printed_object_reference_forms(scratch: Path, reference: str) -> None:
+    assert tools_cli.main(["act", "--resource", reference, "--", "true"]) == 0
+    (receipt,) = _recorded(scratch)
+    assert receipt["resources"] == [
+        {"api_version": "apps/v1", "kind": "Deployment", "namespace": "app", "name": "worker"}
+    ]
