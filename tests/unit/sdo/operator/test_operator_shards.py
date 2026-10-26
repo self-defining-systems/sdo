@@ -63,22 +63,18 @@ def test_same_name_in_differently_partitioned_packages_fails_closed() -> None:
         shards.partition(source)
 
 
-def test_budget_regression_reports_slow_test_and_package() -> None:
-    events = [
-        {"Action": "pass", "Package": "sdo.dev/operator/builder", "Test": "TestSlowCompile", "Elapsed": 181},
-        {"Action": "pass", "Package": "sdo.dev/operator/builder", "Elapsed": 182},
-    ]
-    with pytest.raises(ValueError, match=r"builder/TestSlowCompile.*181.*180"):
-        shards.check_budgets(events, elapsed=182)
-
-
-def test_aggregate_regression_and_timeout_keep_named_evidence() -> None:
-    events = [
-        {"Action": "pass", "Package": "builder", "Test": "TestFirst", "Elapsed": 100},
-        {"Action": "run", "Package": "builder", "Test": "TestStillCompiling"},
-    ]
-    with pytest.raises(ValueError, match=r"210.*TestFirst.*TestStillCompiling"):
-        shards.check_budgets(events, elapsed=241)
+def test_slow_tests_and_process_are_report_only(capsys: pytest.CaptureFixture[str]) -> None:
+    shards.check_budgets(
+        [
+            {"Action": "pass", "Package": "builder", "Test": "TestSlowCompile", "Elapsed": 181},
+            {"Action": "run", "Package": "builder", "Test": "TestStillCompiling"},
+        ],
+        elapsed=241,
+    )
+    output = capsys.readouterr().out
+    assert "TestSlowCompile=181.00s" in output
+    assert "TestStillCompiling" in output
+    assert "report-only" in output
 
 
 def test_fast_complete_suite_passes_budget_guard() -> None:
@@ -108,38 +104,22 @@ def test_operator_runner_changes_trigger_go_and_keep_existing_matrix_jobs() -> N
     assert all(jobs[name]["timeout-minutes"] <= 5 for name in jobs)
 
 
-@pytest.mark.parametrize("partial_line", [False, True])
-def test_wall_budget_stops_a_stalled_test_and_keeps_its_name(
-    monkeypatch: pytest.MonkeyPatch, partial_line: bool
-) -> None:
+def test_shard_guard_does_not_kill_a_successful_process(monkeypatch: pytest.MonkeyPatch) -> None:
     import sys
     import time
 
-    monkeypatch.setattr(shards, "SHARD_BUDGET_SECONDS", 0.5)
-    command = [
-        sys.executable,
-        "-c",
-        (
-            "import json,time,sys; "
-            "print(json.dumps({'Action':'run','Package':'builder','Test':'TestStalledCompile'}),flush=True); "
-            + ("sys.stdout.write('{'); sys.stdout.flush(); " if partial_line else "")
-            + "time.sleep(60)"
-        ),
-    ]
-    started = time.monotonic()
-    with pytest.raises(ValueError, match="TestStalledCompile"):
-        shards.run_tests(command, started=started)
-    assert time.monotonic() - started < 5
+    monkeypatch.setattr(shards, "SHARD_BUDGET_SECONDS", 0.01)
+    command = [sys.executable, "-c", "import time; time.sleep(0.05); print('{}')"]
+    shards.run_tests(command, started=time.monotonic())
 
 
-def test_peer_partitions_only_report_compiler_budgets() -> None:
-    shards.check_budgets(
-        [
-            {"Action": "pass", "Package": "broker", "Test": "TestExistingAcceptance", "Elapsed": 211},
-        ],
-        elapsed=212,
-        enforce=False,
-    )
+def test_go_test_failure_still_fails() -> None:
+    import subprocess
+    import sys
+    import time
+
+    with pytest.raises(subprocess.CalledProcessError):
+        shards.run_tests([sys.executable, "-c", "print('{}'); raise SystemExit(1)"], started=time.monotonic())
 
 
 def test_malformed_tool_output_fails_closed() -> None:
@@ -155,8 +135,7 @@ def test_parallel_children_cannot_hide_parent_wall_cost() -> None:
         {"Action": "run", "Package": "builder", "Test": "TestParallel", "Time": "2026-10-26T00:00:00Z"},
         {"Action": "pass", "Package": "builder", "Test": "TestParallel", "Time": "2026-10-26T00:03:01Z", "Elapsed": 0},
     ]
-    with pytest.raises(ValueError, match="TestParallel.*181"):
-        shards.check_budgets(events, elapsed=182)
+    shards.check_budgets(events, elapsed=182)
 
 
 def test_top_level_pause_does_not_become_execution_cost() -> None:

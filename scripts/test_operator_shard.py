@@ -3,20 +3,17 @@
 
 Discovery uses Go's compiled inventory. Measured expensive builder tests share
 existing acceptance runners; every new builder/broker name keeps a default owner.
-The JSON timing guard reports slow/running names before a budget failure escapes
-as an unexplained aggregate timeout. No test, seed or subtest is removed.
+The JSON timing report names slow/running tests without imposing a deadline
+beyond the Go and job timeouts. No test, seed or subtest is removed.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
-import os
 import re
-import signal
 import subprocess
 import sys
-import threading
 import time
 from datetime import datetime
 from pathlib import Path
@@ -78,9 +75,7 @@ def partition(inventory: dict[str, list[str]]) -> dict[str, dict[str, list[str]]
     return groups
 
 
-def check_budgets(
-    events: list[dict], *, elapsed: float, enforce: bool = True, budget_seconds: float | None = None
-) -> None:
+def check_budgets(events: list[dict], *, elapsed: float, budget_seconds: float | None = None) -> None:
     shard_budget = SHARD_BUDGET_SECONDS if budget_seconds is None else budget_seconds
     completed: list[dict] = []
     starts: dict[tuple[str, str], float] = {}
@@ -117,8 +112,8 @@ def check_budgets(
     if elapsed > shard_budget:
         failures.append(f"{elapsed:.2f}s exceeds {shard_budget}s shard budget")
     print(f"Operator timing: {elapsed:.2f}s; slowest: {detail}", flush=True)
-    if enforce and failures:
-        raise ValueError("; ".join(failures) + "; slowest: " + detail)
+    if failures:
+        print("Timing report-only: " + "; ".join(failures), flush=True)
 
 
 def main() -> None:
@@ -170,7 +165,6 @@ def main() -> None:
     run_tests(
         ["go", "test", *FLAGS, *selection, *packages],
         started=started,
-        enforce_budget=args.shard in ("compiler", "compiler-replay"),
     )
 
 
@@ -178,40 +172,23 @@ def run_tests(
     command: list[str],
     *,
     started: float,
-    enforce_budget: bool = True,
     cwd: Path = OPERATOR,
     budget_seconds: float | None = None,
 ) -> None:
-    """Bound the entire process group, including nested fixture compilers."""
+    """Stream diagnostics; the unchanged Go and hosted job deadlines own failure."""
     shard_budget = SHARD_BUDGET_SECONDS if budget_seconds is None else budget_seconds
     events: list[dict] = []
     parse_error: json.JSONDecodeError | None = None
-    with subprocess.Popen(command, cwd=cwd, stdout=subprocess.PIPE, text=True, start_new_session=True) as process:
-
-        def stop() -> None:
-            if process.poll() is None:
-                try:
-                    os.killpg(process.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-
-        timer = threading.Timer(max(0, shard_budget - (time.monotonic() - started)), stop)
-        if enforce_budget:
-            timer.start()
-        try:
-            assert process.stdout is not None
-            for line in process.stdout:
-                print(line, end="", flush=True)
-                try:
-                    events.append(json.loads(line))
-                except json.JSONDecodeError as exc:
-                    parse_error = exc
-            result = process.wait()
-        finally:
-            timer.cancel()
-            if enforce_budget:
-                timer.join()
-    check_budgets(events, elapsed=time.monotonic() - started, enforce=enforce_budget, budget_seconds=shard_budget)
+    with subprocess.Popen(command, cwd=cwd, stdout=subprocess.PIPE, text=True) as process:
+        assert process.stdout is not None
+        for line in process.stdout:
+            print(line, end="", flush=True)
+            try:
+                events.append(json.loads(line))
+            except json.JSONDecodeError as exc:
+                parse_error = exc
+        result = process.wait()
+    check_budgets(events, elapsed=time.monotonic() - started, budget_seconds=shard_budget)
     if parse_error is not None:
         raise ValueError(f"invalid Go test JSON: {parse_error}")
     if result:

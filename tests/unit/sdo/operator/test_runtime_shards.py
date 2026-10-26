@@ -173,8 +173,8 @@ def test_measured_corrections_retain_exact_coverage() -> None:
     assert sorted(name for members in planned.values() for name in members) == sorted(names)
 
 
-def test_runtime_guard_reserves_thirty_percent_of_hosted_job(monkeypatch: pytest.MonkeyPatch) -> None:
-    # Exercise the actual runtime wrapper's budget handoff to its process watchdog.
+def test_runtime_report_uses_seventy_percent_of_hosted_job(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Exercise the actual runtime wrapper's report threshold.
     sys.path.insert(0, str(ROOT / "scripts"))
     import test_operator_shard
 

@@ -82,8 +82,8 @@ RUNNER_GROUPS = {
     "recovery": ("recovery",),
 }
 COST_FILE = Path(__file__).with_name("runtime_test_costs.json")
-# Use 70% of the unchanged five-minute controller job: reserve the remaining
-# 90 seconds for checkout, toolchain/cache setup and linking on hosted runners.
+# Report when work exceeds 70% of the unchanged five-minute controller job.
+# The Go and job deadlines alone enforce failure.
 SHARD_BUDGET_SECONDS = 5 * 60 * 70 // 100
 # Hosted costs drive all measured placements; no local-only overrides.
 PLACEMENTS: dict[str, str] = {}
@@ -123,7 +123,7 @@ def balanced_partition(names: list[str], patterns: dict[str, str], costs: dict[s
 
 
 def run_tests(command: list[str], *, started: float) -> None:
-    # Both runners use one process-group watchdog and JSON diagnostic path.
+    # Both runners use the same report-only JSON timing diagnostics.
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     from test_operator_shard import run_tests as run_go_tests
 

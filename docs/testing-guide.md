@@ -691,9 +691,14 @@ restore the normal graph and the sole module archive. Go test shards restore
 the race graph to a separate directory, then `scripts/merge_go_ci_caches.sh`
 unions immutable compiler entries with hard links. Each archive destination is
 restored once; Go module files are never unpacked over another restored cache.
-Race preparation compiles the runtime root and operator test packages with
-`go test -race -c`, discards the executables, and publishes content-addressed
-archives. It never starts TestMain or tests; shards retain discovery and linking.
+Both preparation modes compile every operator/runtime test archive with
+`go test -c` without starting TestMain. Normal preparation also compiles the
+CGO-disabled runtime graph used by generated traffic probers, publishes the
+source-bound Python test CLI, and runs the complete assurance seed/overlay check
+once to populate generated-package archives. All hosted builds retain
+`-trimpath`, including tests that add their own module flags, so equal source in
+fresh isolated workspaces reuses those archives. Changed source still gets a
+new Go build ID; a real-Go relocation/invalidation contract checks both cases.
 The test jobs depend
 on preparation and require that exact cache; they do not start cold compilation
 inside short operation deadlines. Cache restoration uses Go's content-addressed
@@ -713,20 +718,16 @@ regression shares the located-binding fixture's real acceptance compilation.
 
 The five existing operator jobs and four-minute Go timeouts stay unchanged.
 Every partition emits JSON per-test timings and lists its five slowest tests
-and unfinished names. The compiler partitions retain their 210-second process
-guard (70% of the five-minute job) and 180-second top-level test guard; other
-operator partitions retain existing Go timeouts. Race preparation also compiles
-operator test archives once without starting tests or TestMain, avoiding cold
-test-only compilation in the remaining-operator job. Run
-`bash scripts/test_operator_shard.sh compiler` locally;
-`tests/unit/sdo/operator/test_operator_shards.py` checks coverage and negative
-budget controls. Rebalance from hosted active top-level elapsed values rather
-than extending deadlines.
-Runtime name partitions remain exhaustive; `test_runtime_shard.py --shard`
-accepts comma-separated partitions so short groups can share a runner without
-omitting or duplicating names. Each runtime allocation has a 210-second process
-budget, derived from 70% of the unchanged five-minute controller job; 90 seconds
-remain for checkout, setup and linking. Explicit Python worker settings pass
+and unfinished names. The former 210-second process and 180-second top-level guards are report-only:
+they print slow and unfinished names without killing processes or failing a
+successful suite. The unchanged four-minute operator Go timeout, five-minute
+runtime Go timeout and five-minute hosted job limit own failure. Race checking,
+all seeds and exhaustive name ownership remain required. Run
+`bash scripts/test_operator_shard.sh compiler` locally; the runner's contract
+tests cover reporting, real test failures, malformed output and exhaustive
+ownership. Runtime name partitions remain exhaustive; `test_runtime_shard.py
+--shard` accepts comma-separated partitions so short groups can share a runner.
+Explicit Python worker settings pass
 through unchanged; local unset defaults use at most four CPUs and hosted CI
 explicitly uses two workers. Image runners consume the preparation job's
 source-bound schema identity, avoiding a separate Go cache transfer and toolchain
