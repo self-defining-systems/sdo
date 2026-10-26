@@ -56,12 +56,27 @@ _RESOURCE_NAMES = (
 )
 
 
+class ApplicationNamespaceAbsent(LookupError):
+    """A captured namespace no longer exists (e.g. a fault's recovery deleted it)."""
+
+    def __init__(self, namespace: str) -> None:
+        super().__init__(
+            f"namespace {namespace!r} from the application baseline is absent "
+            "(a fault's recovery may have deleted it); baseline restore recreates it"
+        )
+        self.namespace = namespace
+
+
 class ApplicationCluster(Protocol):
-    def list_objects(self, namespace: str) -> list[dict[str, Any]]: ...
+    def list_objects(self, namespace: str) -> list[dict[str, Any]]:
+        """Raise ``ApplicationNamespaceAbsent`` when the namespace does not exist."""
+        ...
 
     def delete(self, namespace: str, kind: str, name: str) -> None: ...
 
     def apply(self, namespace: str, value: dict[str, Any]) -> None: ...
+
+    def create_namespace(self, namespace: str) -> None: ...
 
 
 class KubectlApplicationCluster:
@@ -74,7 +89,25 @@ class KubectlApplicationCluster:
             namespace=namespace,
             kubeconfig=self.kubeconfig,
         ).stdout
-        return json.loads(output)["items"]
+        items = json.loads(output)["items"]
+        # Listing a missing namespace succeeds with no items; tell it apart.
+        if not items and not self._namespace_exists(namespace):
+            raise ApplicationNamespaceAbsent(namespace)
+        return items
+
+    def _namespace_exists(self, namespace: str) -> bool:
+        return bool(
+            kubectl(
+                ["get", "namespace", namespace, "-o", "name", "--ignore-not-found=true"],
+                namespace=None,
+                kubeconfig=self.kubeconfig,
+            ).stdout.strip()
+        )
+
+    def create_namespace(self, namespace: str) -> None:
+        from benchmarks.sregym.fastloop.reset import ensure_application_namespace
+
+        ensure_application_namespace(self.kubeconfig, namespace)
 
     def delete(self, namespace: str, kind: str, name: str) -> None:
         kubectl(
@@ -172,6 +205,8 @@ class RecoveryCleanup:
     # Re-created with a new identity although the accepted source does not declare
     # them: SDO's install-time inventory cannot explain these (P43).
     undeclared_recreated: list[str] = field(default_factory=list)
+    # The captured namespace was gone at restore time and was recreated first.
+    recreated_namespace: bool = False
 
 
 def _harness_owned(value: dict[str, Any]) -> bool:
@@ -432,7 +467,14 @@ def reconcile_application(
         raise ValueError(f"refusing to reconcile non-application namespace {namespace!r}")
     from benchmarks.sregym.fastloop.hotel_helpers import retire_helpers, without_helpers
 
-    listed = cluster.list_objects(namespace)
+    cleanup = RecoveryCleanup()
+    try:
+        listed = cluster.list_objects(namespace)
+    except ApplicationNamespaceAbsent:
+        # Every namespaced write needs its namespace; recreate it before the first.
+        cluster.create_namespace(namespace)
+        cleanup.recreated_namespace = True
+        listed = []
     # Live evidence also protects SDO identities present in older snapshots.
     # Resolve the complete owner graph before filtering Pods or normalizing data.
     ownership = _ApplicationOwnership.from_objects(baseline.objects + listed)
@@ -442,7 +484,6 @@ def reconcile_application(
     current_objects, _ = without_helpers(
         [v for v in app_listed if v.get("kind") != "Pod" or not v.get("metadata", {}).get("ownerReferences")], namespace
     )
-    cleanup = RecoveryCleanup()
     expected = {_identity(value): value for value in ownership.application_objects(desired, namespace)}
     current = {_identity(value): value for value in ownership.application_objects(current_objects, namespace)}
     known = declared or frozenset()
@@ -525,6 +566,7 @@ def reconcile_and_record(
             "namespace": baseline.namespace,
             "declared_source_checked": declared is not None,
             "deleted_counts": cleanup.deleted_counts,
+            "recreated_namespace": cleanup.recreated_namespace,
             "reapplied": [value.to_dict() for value in cleanup.reapplied],
             "warnings": warnings,
         }
