@@ -82,5 +82,15 @@ func incidentResultFromAgent(result *contracts.AgentResult, task *contracts.Agen
 	if err := wire.Validate(typed); err != nil {
 		return IncidentResult{}, err
 	}
-	return incidentResultState(typed), nil
+	return incidentResultState(withoutResponderOwners(typed)), nil
+}
+
+// withoutResponderOwners drops owner chains from worker-reported repair
+// receipts. Cause attribution follows only owner references SDO observed
+// itself (plan pre-images, the incident capture), never the agent's shell.
+func withoutResponderOwners(result *contracts.IncidentResult) *contracts.IncidentResult {
+	for _, action := range result.GetRepairActions() {
+		action.Owners = nil
+	}
+	return result
 }

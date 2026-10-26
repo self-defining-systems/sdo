@@ -40,12 +40,14 @@ Service) are unobserved context and, since LEARN1 (2026-10-26), no longer cause
 an `evidence_gap`. Partial and failed outcomes, like this one, still need a cleared
 finding for every unwritten cause resource, because opening findings omit
 findings that activate after launch. Since LEARN2 (2026-10-26), a repair
-receipt's `owners` records each written Pod/ReplicaSet/Job's controller owner
-chain, read before the write (`sdo act` kubectl reads, controller pre-images).
+receipt's `owners` records each written object's controller owner chain as SDO
+observed it: plan pre-images for controller writes, and for `sdo act` writes the
+broker's walk of the incident's open capture (LEARN2B). Worker-reported chains
+are dropped at ingest, so the agent cannot claim ownership.
 A write whose chain reaches a cause resource (e.g. scaling a Deployment's old
 ReplicaSet) is that cause's work, not an `unassigned` `unbound_write`, and the
 cause's findings must clear after it. Receipts without `owners` (older runs, or
-a failed read) keep such writes unassigned; names never bind. The worker
+an object the capture never observed) keep such writes unassigned; names never bind. The worker
 receives compact cause indices and only those causes, verified receipts and typed
 applications/diagnoses and scoped cold-verification evidence. Opaque tool transcripts and unattributed playbook/drift
 claims are omitted from that learning view. No global recovery, positive fixed
