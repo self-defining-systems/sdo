@@ -24,8 +24,6 @@ def test_partitions_include_tests_fuzz_seeds_and_examples() -> None:
     names = [
         "TestAdmission",
         "TestHermeticFastloopRealGoGate",
-        "TestHermeticBringupPersistsPendingAndRestarts",
-        "TestHermeticSharedMemoryControllers",
         "TestReflectionDirectFilesCLIAndBroker",
         "TestReflectionLearnedProgramCLIAndBroker",
         "TestReflectionMongoAuthUpgradesReadmeThroughCLIAndBroker",
@@ -79,8 +77,6 @@ def test_every_matrix_shard_is_aggregated_and_script_changes_trigger_go() -> Non
 def test_schedule_shard_runs_all_seeds_with_a_five_minute_race_budget(monkeypatch: pytest.MonkeyPatch) -> None:
     names = [
         "TestAdmission",
-        "TestHermeticBringupPersistsPendingAndRestarts",
-        "TestHermeticSharedMemoryControllers",
         "TestRendered",
         "TestSimIncidentStream",
         "TestSimSchedule",
@@ -124,17 +120,3 @@ def test_compiling_reflection_contracts_have_independent_budgets() -> None:
     assert assigned["reflection-mongo"] == mongo
     assert assigned["reflection-programs"] == programs
     assert assigned["contracts"] == ["TestAdmission"]
-
-
-def test_hermetic_contracts_and_shared_memory_have_independent_budgets() -> None:
-    names = [
-        "TestHermeticFastloopRealGoGate",
-        "TestHermeticBringupPersistsPendingAndRestarts",
-        "TestHermeticSharedMemoryControllers",
-        "TestRenderedLockImageInputScope",
-    ]
-    assigned = shards.partition(names, shards.PATTERNS)
-    assert assigned["contracts"] == [names[0]]
-    assert assigned["hermetic"] == [names[1]]
-    assert assigned["shared-memory"] == [names[2]]
-    assert assigned["rendered"] == [names[3]]

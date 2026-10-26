@@ -29,11 +29,9 @@ PATTERNS = {
         r"|Fuzz[A-M]|Example(?:[A-M_]|$))"
     ),
     "rendered": (
-        r"^(Test(?!Hermetic|SimRenderedLockSchedule$)(?:[H-P]|Rendered|SimRendered)"
+        r"^(Test(?!(?:HermeticFastloopRealGoGate|SimRenderedLockSchedule)$)(?:[H-P]|Rendered|SimRendered)"
         r"|Fuzz(?!SimIncidentSchedule$)[N-Z]|Example[N-Z])"
     ),
-    "hermetic": r"^TestHermetic(?!FastloopRealGoGate$|SharedMemoryControllers$)",
-    "shared-memory": r"^TestHermeticSharedMemoryControllers$",
     "simulation": r"^TestSim[A-M]",
     "schedules": r"^(TestSimSchedule|TestSimRenderedLockSchedule$|FuzzSimIncidentSchedule$)",
     "corpus": r"^TestRejectedRepeatCorpusFallsBackToReflectionWorker$",
