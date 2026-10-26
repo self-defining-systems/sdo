@@ -582,9 +582,13 @@ runner setup within the five-minute job deadline. It kills the entire process
 group on a regression and reports the slowest and still-running test names.
 For parents with parallel children, timing uses JSON lifecycle timestamps minus
 any top-level pause, because Go's parent `Elapsed` excludes parallel-child waits.
-The restart sweep and broker matrix overlap independent scenario waits under
+The restart sweep, shared-memory modes, broker matrix and trust-property worlds
+overlap independent scenario waits under
 the existing two-test concurrency cap; all repositories and process state stay
-owned by their scenario.
+owned by their scenario. The trust property precomputes the same seed-186 choices
+and arrival permutations, then retains every prefix invariant. Two measured
+placement corrections use that recovered capacity without reshuffling already
+validated runners.
 
 Update the cost profile from complete `go test -json` runs, then inspect every
 runner's resulting duration. `tests/unit/sdo/operator/test_runtime_shards.py`

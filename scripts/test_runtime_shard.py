@@ -82,6 +82,14 @@ RUNNER_GROUPS = {
     "recovery": ("recovery",),
 }
 COST_FILE = Path(__file__).with_name("runtime_test_costs.json")
+# The first complete sweep exposed active-wall skew within these allocations.
+# Shared-memory modes and trust-property worlds now overlap their independent
+# waits; move two measured peers into that recovered capacity, without changing
+# unrelated allocations or their completed coverage.
+PLACEMENTS = {
+    "TestReflectionSettledRepeatStillResumesResponder": "recovery",
+    "TestHermeticLearnAcceptRepeatKeepsControllerIterating": "reflection-programs",
+}
 
 
 def balanced_partition(names: list[str], patterns: dict[str, str], costs: dict[str, float]) -> dict[str, list[str]]:
@@ -108,6 +116,12 @@ def balanced_partition(names: list[str], patterns: dict[str, str], costs: dict[s
         runner = min(totals, key=lambda runner: (totals[runner], runner))
         groups[runner].append(name)
         totals[runner] += costs[name]
+    for name, target in PLACEMENTS.items():
+        for members in groups.values():
+            if name in members:
+                members.remove(name)
+                groups[target].append(name)
+                break
     return {shard: sorted(members) for shard, members in groups.items()}
 
 

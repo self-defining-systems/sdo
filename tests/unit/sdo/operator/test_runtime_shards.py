@@ -163,3 +163,11 @@ def test_cost_profile_rejects_invalid_or_unmeasured_values() -> None:
     for cost in [0, -1, float("nan"), float("inf")]:
         with pytest.raises(ValueError, match="cost"):
             shards.balanced_partition(["TestAdmission"], shards.PATTERNS, {"TestAdmission": cost})
+
+
+def test_measured_corrections_retain_exact_coverage() -> None:
+    names = [*shards.PLACEMENTS, "TestAdmission", "TestRendered", "TestState"]
+    planned = shards.balanced_partition(names, shards.PATTERNS, dict.fromkeys(shards.PLACEMENTS, 20.0))
+    for name, target in shards.PLACEMENTS.items():
+        assert planned[target].count(name) == 1
+    assert sorted(name for members in planned.values() for name in members) == sorted(names)
