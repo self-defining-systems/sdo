@@ -668,6 +668,40 @@ def test_a_controller_this_pipeline_did_not_install_is_replaced(tmp_path: Path) 
     assert lifecycle_calls == ["s0"]
 
 
+@pytest.mark.parametrize("setting", ["credentials_secret", "agent_registrations", "permissive_responder", "model"])
+def test_a_controller_installed_with_other_runtime_settings_is_replaced(tmp_path: Path, setting: str) -> None:
+    """A scripted dry-run controller must never serve a later live stage with the same topology."""
+
+    ops = FakeOps()
+    lifecycle_calls: list[str] = []
+    _run(tmp_path, ops, "s0", lifecycle_calls)
+    ops.reflectable.add("incident-1")
+    inputs = _inputs(tmp_path, "s1")
+    value = {
+        "credentials_secret": "live-credentials",
+        "agent_registrations": tmp_path / "registrations",
+        "permissive_responder": True,
+        "model": "gpt-other",
+    }[setting]
+    inputs = replace(inputs, runtime_config=replace(inputs.runtime_config, **{setting: value}))
+
+    def lifecycle() -> bool:
+        lifecycle_calls.append("s1")
+        return True
+
+    result = run_persistent_stage(inputs, ops=ops, run_lifecycle=lifecycle, inject=lambda: None, clock=_clock(ops))
+
+    order = [event[:2] for event in ops.events]
+    assert order.index(("receipt", "incident-1")) < order.index(("delete", "hotel-sdo"))
+    assert lifecycle_calls == ["s0", "s1"]
+    assert ops.installs == 2
+    assert result["persistent_controller"]["installed_this_stage"] is True
+    record = PersistentState.load(inputs.state_path).controllers["hotel"]
+    assert runtime_config_from_payload(record.runtime_config) == replace(
+        inputs.runtime_config, persistent=True, wait_for_completion=False
+    )
+
+
 def test_changed_topology_drains_memory_then_reinstalls(tmp_path: Path) -> None:
     ops = FakeOps()
     lifecycle_calls: list[str] = []
@@ -795,6 +829,25 @@ def test_fail_soft_reset_restarts_controller_without_losing_drift_verdicts(tmp_p
     baseline = ApplicationBaseline("hotel", [{"kind": "Deployment", "metadata": {"name": "app"}}])
     environment.baseline_path.write_text(json.dumps({"fastloop_application": {"namespaces": [baseline.__dict__]}}))
 
+    # A reset cannot discard the just-verified incident's outstanding learning.
+    with pytest.raises(RuntimeError, match="durable terminal reflection"):
+        reset_environment(environment, ResetCluster(ops), HealthyWorker(), preserve_repository=True)
+    assert "hotel-sdo" in ops.pods
+    ops.reflectable.add("incident-1")
+    state = PersistentState.load(environment.state_path)
+    record = state.controllers["hotel"]
+    drained = drain_pending_incident(
+        record,
+        ops=ops,
+        repository=tmp_path / "s0" / "application_workspace",
+        drained_by="test-before-reset",
+        clock=_clock(ops),
+    )
+    assert not drained.HasField("failure")
+    assert ops.runtime_state("hotel-sdo")["last_acknowledged_incident_id"] == "incident-1"
+    # This is the same finalization boundary used by SdoFastloopAgent.learn.
+    record.pending = None
+    state.save(environment.state_path)
     reset_environment(environment, ResetCluster(ops), HealthyWorker(), preserve_repository=True)
     calls: list[str] = []
     resolution = run_persistent_stage(

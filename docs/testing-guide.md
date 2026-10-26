@@ -44,6 +44,9 @@ uv run pytest tests/ --cov=sdo
 architecture checks, and benchmark Go compilation. It also checks proto drift
 when Buf is installed. The AST checks always run with Tach's pytest impact
 plugin disabled; this gate installs the `test` extra through `uv run --extra test`.
+The architecture gate also resolves every tracked `from benchmarks.sregym.adapter import ...`
+statement through the real facade, with a missing-export negative control. This catches
+missing lazy exports before worker startup; test doubles must stay scoped to their owning module.
 To run just those checks:
 
 ```bash
@@ -775,3 +778,13 @@ GitHub Actions expression contexts are checked locally by
 actionlint1.7.7 with external shell/Python linters disabled; Ruff and the existing
 shell gates retain those responsibilities. This catches invalid job-level
 contexts before GitHub rejects the workflow without creating a check run.
+
+
+The no-fault rehearsal also runs `sdo-observation-check` in the installed controller Pod before
+accepting or reusing setup proof. It exercises production `DatabaseUsers` reads for discovered
+MongoDB containers without models, mutation or Secret reads. Each workload returns a safe named
+failure stage; namespace/selector discovery failures fail setup. Registry-rewritten images retain
+Mongo identification through declared container names and listener ports. Source-declared auth
+references can override a database target for a read-only reproduction with
+`go -C sdo/operator/runtime run ./cmd/sdo-observation-check --namespace NS --kubeconfig PATH --target JSON`.
+The target's `auth` references authenticate the catalog read separately from any create-user password.

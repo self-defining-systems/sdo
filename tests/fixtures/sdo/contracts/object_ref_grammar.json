@@ -168,13 +168,13 @@
   "input": "Node/worker-1",
   "go": {
    "api_version": "",
-   "kind": "node",
+   "kind": "Node",
    "namespace": "",
    "name": "worker-1"
   },
   "python": {
    "api_version": "",
-   "kind": "node",
+   "kind": "Node",
    "namespace": "",
    "name": "worker-1"
   }
@@ -183,13 +183,13 @@
   "input": "Widget/ns/a_b.c-d",
   "go": {
    "api_version": "",
-   "kind": "widget",
+   "kind": "Widget",
    "namespace": "ns",
    "name": "a_b.c-d"
   },
   "python": {
    "api_version": "",
-   "kind": "widget",
+   "kind": "Widget",
    "namespace": "ns",
    "name": "a_b.c-d"
   }
@@ -335,12 +335,12 @@
   "python": null
  },
  {
-  "input": "Pod/é",
+  "input": "Pod/\u00e9",
   "go": null,
   "python": null
  },
  {
-  "input": "Pod/١",
+  "input": "Pod/\u0661",
   "go": null,
   "python": null
  },
@@ -357,7 +357,12 @@
    "namespace": "",
    "name": "x"
   },
-  "python": null
+  "python": {
+   "api_version": "v1",
+   "kind": "Pod",
+   "namespace": "",
+   "name": "x"
+  }
  },
  {
   "input": "Pod/x\n",
@@ -367,7 +372,12 @@
    "namespace": "",
    "name": "x"
   },
-  "python": null
+  "python": {
+   "api_version": "v1",
+   "kind": "Pod",
+   "namespace": "",
+   "name": "x"
+  }
  },
  {
   "input": "v1@Pod/x",
@@ -377,27 +387,42 @@
    "namespace": "",
    "name": "x"
   },
-  "python": null
+  "python": {
+   "api_version": "v1",
+   "kind": "Pod",
+   "namespace": "",
+   "name": "x"
+  }
  },
  {
   "input": "example.dev/v2@Widget/ns/w",
   "go": {
    "api_version": "example.dev/v2",
-   "kind": "widget",
+   "kind": "Widget",
    "namespace": "ns",
    "name": "w"
   },
-  "python": null
+  "python": {
+   "api_version": "example.dev/v2",
+   "kind": "Widget",
+   "namespace": "ns",
+   "name": "w"
+  }
  },
  {
-  "input": "Pod/x ",
+  "input": "Pod/x\u2028",
   "go": {
    "api_version": "v1",
    "kind": "Pod",
    "namespace": "",
    "name": "x"
   },
-  "python": null
+  "python": {
+   "api_version": "v1",
+   "kind": "Pod",
+   "namespace": "",
+   "name": "x"
+  }
  },
  {
   "input": "@Pod/x",
@@ -407,6 +432,176 @@
    "namespace": "",
    "name": "x"
   },
+  "python": {
+   "api_version": "",
+   "kind": "Pod",
+   "namespace": "",
+   "name": "x"
+  }
+ },
+ {
+  "input": "{\"api_version\":\"apps/v1\",\"kind\":\"Deployment\",\"namespace\":\"app\",\"name\":\"worker\"}",
+  "go": {
+   "api_version": "apps/v1",
+   "kind": "Deployment",
+   "namespace": "app",
+   "name": "worker"
+  },
+  "python": {
+   "api_version": "apps/v1",
+   "kind": "Deployment",
+   "namespace": "app",
+   "name": "worker"
+  }
+ },
+ {
+  "input": "{\"kind\":\"deploy\",\"namespace\":\"app\",\"name\":\"worker\"}",
+  "go": {
+   "api_version": "apps/v1",
+   "kind": "Deployment",
+   "namespace": "app",
+   "name": "worker"
+  },
+  "python": {
+   "api_version": "apps/v1",
+   "kind": "Deployment",
+   "namespace": "app",
+   "name": "worker"
+  }
+ },
+ {
+  "input": "{\"kind\":\"Deployment\",\"name\":\"worker\"}",
+  "go": {
+   "api_version": "apps/v1",
+   "kind": "Deployment",
+   "namespace": "",
+   "name": "worker"
+  },
+  "python": {
+   "api_version": "apps/v1",
+   "kind": "Deployment",
+   "namespace": "",
+   "name": "worker"
+  }
+ },
+ {
+  "input": "{\"kind\":\"Deployment\",\"namespace\":\"\",\"name\":\"worker\",\"api_version\":\"apps/v1\"}",
+  "go": {
+   "api_version": "apps/v1",
+   "kind": "Deployment",
+   "namespace": "",
+   "name": "worker"
+  },
+  "python": {
+   "api_version": "apps/v1",
+   "kind": "Deployment",
+   "namespace": "",
+   "name": "worker"
+  }
+ },
+ {
+  "input": "{\"apiVersion\":\"apps/v1\",\"kind\":\"Deployment\",\"namespace\":\"app\",\"name\":\"worker\"}",
+  "go": {
+   "api_version": "apps/v1",
+   "kind": "Deployment",
+   "namespace": "app",
+   "name": "worker"
+  },
+  "python": {
+   "api_version": "apps/v1",
+   "kind": "Deployment",
+   "namespace": "app",
+   "name": "worker"
+  }
+ },
+ {
+  "input": "{\"api_version\":\"example.dev/v2\",\"kind\":\"Widget\",\"name\":\"worker\"}",
+  "go": {
+   "api_version": "example.dev/v2",
+   "kind": "Widget",
+   "namespace": "",
+   "name": "worker"
+  },
+  "python": {
+   "api_version": "example.dev/v2",
+   "kind": "Widget",
+   "namespace": "",
+   "name": "worker"
+  }
+ },
+ {
+  "input": "{\"kind\":\"Deployment\"}",
+  "go": null,
+  "python": null
+ },
+ {
+  "input": "{\"name\":\"worker\"}",
+  "go": null,
+  "python": null
+ },
+ {
+  "input": "{}",
+  "go": null,
+  "python": null
+ },
+ {
+  "input": "null",
+  "go": null,
+  "python": null
+ },
+ {
+  "input": "[]",
+  "go": null,
+  "python": null
+ },
+ {
+  "input": "[\"Pod/a\",\"Pod/b\"]",
+  "go": null,
+  "python": null
+ },
+ {
+  "input": "{\"kind\":\"Pod\",\"name\":\"a\",\"name\":\"b\"}",
+  "go": null,
+  "python": null
+ },
+ {
+  "input": "{\"kind\":\"Pod\",\"name\":7}",
+  "go": null,
+  "python": null
+ },
+ {
+  "input": "{\"kind\":\"Pod\",\"name\":\"worker\",\"namespace\":null}",
+  "go": null,
+  "python": null
+ },
+ {
+  "input": "{\"kind\":\"Pod\",\"name\":\"worker\",\"names\":[\"peer\"]}",
+  "go": null,
+  "python": null
+ },
+ {
+  "input": "{\"kind\":\"Pod\",\"name\":\"worker/peer\"}",
+  "go": null,
+  "python": null
+ },
+ {
+  "input": "{\"kind\":\"Pod\",\"name\":\"worker\",\"api_version\":\"v1\",\"apiVersion\":\"v2\"}",
+  "go": null,
+  "python": null
+ },
+ {
+  "input": "{\"kind\":\"Pod\",\"name\":\"worker\"} {\"kind\":\"Pod\",\"name\":\"peer\"}",
+  "go": null,
+  "python": null
+ },
+ {
+  "input": "{\"kind\":\"Pod\",\"name\":\"worker\",\"api_version\":\"bad/version/extra\"}",
+  "go": null,
+  "python": null
+ },
+ {
+  "input": "{\"kind\":\"Pod\",\"name\":\"worker\",\"namespace\":\"app,peer\"}",
+  "go": null,
   "python": null
  }
 ]

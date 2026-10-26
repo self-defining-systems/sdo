@@ -108,3 +108,25 @@ before reporting L6 continuity.
 
 For infrastructure validity, mixed-app slot dispatch and full-cleanup gates, read
 [slot cleanup evidence](slot-cleanup.md).
+
+## Lane image delivery and retention
+
+`image_delivery.jsonl` records `success` for the delivery, its pre-delivery
+`disk` measurement, and `retention.nodes.<node>`. Each node receipt lists
+`removed` images (`id`, `references`, `size_bytes`) and measured
+`free_before_bytes`, `free_after_bytes`, `freed_bytes`; the retention root sums
+measured freed bytes. Image sizes share layers and must not be summed as actual
+reclaimed storage. Filesystem deltas can include concurrent host activity, and
+containerd GC may free storage later. A cleanup failure retains partial receipts
+and `error`; an unavailable post-error measurement is `null`, not zero.
+
+Node-local history (`/var/lib/sdo-image-retention.json`) protects current and
+previous image identities per exact SDO build repository, including separate
+role deliveries and repeated deliveries. The first delivery preserves all
+pre-existing identities as its unknown prior generation; the next changed
+identity establishes the normal two-generation window. Containers (including
+exited containers) and images with any foreign alias are protected. App and
+third-party deliveries do not rotate SDO history. Cleanup never prunes the host
+Docker store, build cache, or registry storage. The configurable
+`LaneResourcePolicy.host_disk_floor_bytes` (100 GiB default; delivery CLI
+`--min-free-gib`) rejects low disk before either registry delivery or fallback.

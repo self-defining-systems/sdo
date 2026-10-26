@@ -93,6 +93,15 @@ teardown, then restore the app and check for foreign applications before health/
 admission and injection. App-only reset does not retire foreign namespaces.
 Never bypass the foreign-application guard with an added namespace allowlist.
 
+Before any post-incident maintenance, reset or app-only restore, require the
+native reflection drain to finish durably. An interrupted drain is a held lane,
+including when its saved evidence is loaded after a runner restart; file
+existence is not success. The outer runner must apply this gate to every arm.
+Fastloop reset and restore also reject a controller record with a pending
+incident, before touching the controller, repository or application. Preserve
+the original grade and worker evidence when learning fails; an unacknowledged
+reflection proposal is not accepted memory for a repeat.
+
 Namespace recovery prerequisite failures are **eval** blockers before injection.
 `eval: namespace recovery cannot restore prerequisites:` names every unavailable
 reference as `[namespace/]Kind/name`. Capture now includes ServiceAccounts and

@@ -57,11 +57,20 @@ func (r *ToolRequest) UnmarshalJSON(data []byte) error {
 			if f == nil {
 				return fmt.Errorf("%s.%s: unknown field", field.message.ProtoReflect().Descriptor().Name(), name)
 			}
-			if err := menuValidateShape(f, value, string(field.message.ProtoReflect().Descriptor().Name())+"."+name); err != nil {
+			converted, err := menuNormalizeReferences(f, value, string(field.message.ProtoReflect().Descriptor().Name())+"."+name)
+			if err != nil {
+				return err
+			}
+			object[name] = converted
+			if err := menuValidateShape(f, converted, string(field.message.ProtoReflect().Descriptor().Name())+"."+name); err != nil {
 				return err
 			}
 		}
-		if protojson.Unmarshal(field.raw, field.message) != nil {
+		normalized, err := json.Marshal(object)
+		if err != nil {
+			return err
+		}
+		if protojson.Unmarshal(normalized, field.message) != nil {
 			return errors.New("invalid generated tool contract")
 		}
 		switch value := field.message.(type) {
