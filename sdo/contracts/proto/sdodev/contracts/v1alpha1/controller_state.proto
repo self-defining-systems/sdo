@@ -317,5 +317,9 @@ message OwnershipAdoptionStatus {
   // across source commits. A later record loss on one of them is re-stamped
   // without absorbing other managers' undeclared fields.
   repeated string accepted_objects = 9;
+  // Declared objects this pass left alone because adoption cannot handle
+  // their kind ("apiVersion/kind/namespace/name: reason"). They stay in the
+  // source inventory; they carry no acceptance record.
+  repeated string unadopted_objects = 10;
 }
 

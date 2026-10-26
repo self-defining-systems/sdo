@@ -284,6 +284,41 @@ func TestAdoptionIsolatesPerObjectAdoptionFailure(t *testing.T) {
 	}
 }
 
+// Roles and bindings are never patched by adoption: the API server demands
+// escalate or bind for them, which the controller does not hold. They stay
+// inventory-only with a visible reason, and the pass neither fails nor leaves
+// other objects without a record.
+func TestAdoptionLeavesRBACKindsToInventoryWithVisibleReason(t *testing.T) {
+	ctx := context.Background()
+	fakeClient := fake.NewSimpleClientset(settledDeployment("beta"))
+	patched := false
+	fakeClient.PrependReactor("patch", "*", func(action ktesting.Action) (bool, kruntime.Object, error) {
+		if action.GetResource().Resource == "roles" || action.GetResource().Resource == "rolebindings" {
+			patched = true
+		}
+		return false, nil, nil
+	})
+	role := &unstructured.Unstructured{Object: map[string]any{"apiVersion": "rbac.authorization.k8s.io/v1", "kind": "Role", "metadata": map[string]any{"name": "reader", "namespace": "app"}, "rules": []any{map[string]any{"apiGroups": []any{""}, "resources": []any{"pods"}, "verbs": []any{"get"}}}}}
+	sources := adoptionSources{role, deploymentSource("beta")}
+	controller, client := fakeAdoptionController(t, fakeClient, sources)
+	beta := sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "app", Name: "beta"}
+	controller.adoptionNeeded = true
+
+	if err := controller.adoptOwnership(ctx, time.Unix(11, 0).UTC(), sdktest.Snapshot{NamespaceName: "app"}); err != nil {
+		t.Fatalf("an RBAC declaration failed the adoption pass: %v", err)
+	}
+	if patched {
+		t.Fatal("adoption patched an RBAC object")
+	}
+	if !recordedOn(t, client, beta, sources[1]) {
+		t.Fatal("Deployment left unrecorded")
+	}
+	status := controller.ownershipAdoption
+	if len(status.UnadoptedObjects) != 1 || !strings.HasPrefix(status.UnadoptedObjects[0], "rbac.authorization.k8s.io/v1/Role/app/reader: ") || status.LastError != "" {
+		t.Fatalf("RBAC exclusion not visible: %+v", status)
+	}
+}
+
 // A declared bare Pod the scheduler cannot place stays unsettled
 // indefinitely. Adoption keeps waiting for it, but with growing spacing.
 func TestAdoptionBacksOffWhileObjectStaysUnsettled(t *testing.T) {
