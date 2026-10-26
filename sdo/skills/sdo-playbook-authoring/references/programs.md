@@ -13,6 +13,10 @@ Accepted Mitigators and raw one-action plans appear in the responder menu.
 Declare object/value parameters; group related actions. PlanExecutor retains controller RBAC and checks.
 Per-action results, provenance and errors guide the responder across five incident rounds.
 Intermediate reports grant neither independent outcomes nor trust credit.
+Mitigate may run again: when its rollout stays pending, the runtime re-plans on fresh observations and
+applies the next plan until the program returns the same plan again (at most three follow-ups). Write a repair
+that depends on what its write causes as one Mitigate over current state, e.g. also retiring an old-template
+ReplicaSet once new pods are Unschedulable beside it. Prose in the README never runs.
 
 A program directory contains diagnose.go, optional mitigate.go, Go tests and a README with responder ownership,
 fault class and originating incident. Preserve accepted provenance and add its logical ID to the playbook index.
@@ -67,8 +71,8 @@ Named constants such as a scale amount are defaulted parameters. An emergency li
 parameter the responder supplies and justifies; a permanent intended-state change requires a source repair.
 
 `DeletePod{Ref}` deletes one named Pod with UID/version preconditions and verifies absence or a replacement
-UID. It never recreates a Pod during undo. `ScaleWorkload{Ref, Replicas}` accepts a Deployment or StatefulSet,
-resolves a nonnegative integer replica count, and directly verifies `spec.replicas`. Partial failures undo
+UID. It never recreates a Pod during undo. `ScaleWorkload{Ref, Replicas}` accepts a Deployment, StatefulSet or
+ReplicaSet, resolves a nonnegative integer replica count, and directly verifies `spec.replicas`. Partial failures undo
 reversible fields from captured pre-images; irreversible effects remain disclosed.
 
 `Exec{Pod, Container, Command: []program.Value{...}}` derives every command argument through values. The
