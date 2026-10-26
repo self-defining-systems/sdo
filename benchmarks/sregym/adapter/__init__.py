@@ -36,6 +36,7 @@ if TYPE_CHECKING:
         assert_lane_resources,
     )
     from benchmarks.sregym.adapter.native_operator import (
+        assert_shared_repository,
         execute_operator,
         inspect_existing,
         install_existing,
@@ -108,6 +109,7 @@ _EXPORTS: dict[str, str] = {
     "ControllerInstallError": "runtime",
     "execute_operator": "native_operator",
     "inspect_existing": "native_operator",
+    "assert_shared_repository": "native_operator",
     "kubectl": "cluster_resources",
     "REJECTED_RECEIPT_FILENAME": "persistent",
     "STRICT_RECEIPT_FILENAME": "persistent",
@@ -178,6 +180,7 @@ __all__ = [
     "ControllerInstallError",
     "execute_operator",
     "inspect_existing",
+    "assert_shared_repository",
     "kubectl",
     "collect_followup_incident",
     "drain_pending_incident",

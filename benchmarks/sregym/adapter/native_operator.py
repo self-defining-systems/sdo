@@ -64,8 +64,11 @@ class NativeInstallConfig:
     responder_env: tuple[str, ...] = ()
     deployed_manifest_paths: tuple[str, ...] = ()
     seed_broker_root: Path | None = None
+    shared_accepted_id: str = ""
 
     def __post_init__(self) -> None:
+        if self.shared_accepted_id and not re.fullmatch(r"[0-9a-f]{32}", self.shared_accepted_id):
+            raise ValueError("shared accepted identity must be a 128-bit hexadecimal ID")
         if type(self.permissive_responder) is not bool:
             raise TypeError("permissive_responder must be a boolean")
         if self.responder_namespaces and not self.permissive_responder:
@@ -282,6 +285,9 @@ def _run(command: str, args: list[str], *, timeout: int) -> dict[str, Any]:
 
 
 def sync_existing(config: NativeInstallConfig) -> None:
+    if config.shared_accepted_id:
+        assert_shared_repository(config)
+        return
     args = [
         "--repository",
         str(config.repository),
@@ -297,6 +303,34 @@ def sync_existing(config: NativeInstallConfig) -> None:
     output = execute_operator("sync-existing", args, timeout=600)
     if output.strip():
         raise NativeOperatorError("Go sync-existing returned unexpected stdout")
+
+
+def assert_shared_repository(config: NativeInstallConfig) -> None:
+    """Prove the controller and host share identity before bypassing archive transport."""
+    identity = config.repository / ".git" / "sdo-shared-id"
+    if not config.shared_accepted_id or identity.read_text().strip() != config.shared_accepted_id:
+        raise NativeOperatorError("shared accepted repository host identity differs")
+    pods = _kubectl_json(config, "get", "pods", "--selector", "job-name=sdo-controller-run").get("items", [])
+    active = [pod for pod in pods if pod.get("status", {}).get("phase") == "Running"]
+    if len(active) != 1:
+        raise NativeOperatorError("shared identity requires one running controller")
+    args = ["kubectl"]
+    if config.kubeconfig:
+        args.extend(["--kubeconfig", str(config.kubeconfig)])
+    args.extend(
+        [
+            "-n",
+            config.control_namespace,
+            "exec",
+            active[0]["metadata"]["name"],
+            "--",
+            "cat",
+            "/workspace/application/.git/sdo-shared-id",
+        ]
+    )
+    observed = subprocess.run(args, text=True, capture_output=True, check=False, timeout=15)
+    if observed.returncode or observed.stdout.strip() != config.shared_accepted_id:
+        raise NativeOperatorError("controller shared accepted repository identity differs")
 
 
 def set_maintenance(
@@ -339,7 +373,10 @@ def read_incident_evidence(
     if config.kubeconfig is not None:
         args.extend(("--kubeconfig", str(config.kubeconfig)))
     if sync_repository:
-        args.extend(("--repository", str(config.repository)))
+        if config.shared_accepted_id:
+            assert_shared_repository(config)
+        else:
+            args.extend(("--repository", str(config.repository)))
     value = _run("incident-evidence", args, timeout=120)
     ledger = value.get("ledger")
     if (
@@ -453,6 +490,10 @@ def _record_launch(config: NativeInstallConfig) -> None:
 
 
 def install_existing(config: NativeInstallConfig) -> NativeInstallReceipt:
+    if config.shared_accepted_id:
+        raise NativeOperatorError(
+            "shared accepted memory requires its prepared running controller; seeding is forbidden"
+        )
     _record_launch(config)
     args = config.common_args()
     if config.seed_broker_root is not None:

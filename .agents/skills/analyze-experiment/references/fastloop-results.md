@@ -122,3 +122,27 @@ per-file, bundle and content-digest checks. A missing historical healthy referen
 is a replay evidence gap; never substitute an agent-authored corpus healthy state
 or the repaired fixed state. A session-authored positive replay case can still
 omit incident captures when its controller healthy reference is retained.
+
+## Concurrent shared-memory lanes
+
+`fastloop parallel` joins ordinary per-lane rows into output `incidents.jsonl`
+and CSV. `parallel_plan.json` records encounter order; `parallel_result.json`
+reports requested/completed counts and every lane error. Completed peer evidence
+survives a lane failure. Aggregate `index` follows input order; `lane_id` names
+the private controller/cluster. Original rows and immutable grade checkpoints
+retain lane-local indices. Never double-count copies. Missing encounters and
+duplicate incident identities fail the aggregate.
+
+`memory_before_commit`, `memory_after_commit` and `memory_ancestry` bound an
+encounter's accepted state. Ancestry includes every intervening peer publication
+in Git ancestry order. Bounds precede admission and follow closure grading,
+reflection drain and fenced recovery; they describe observed state, not causal
+learning credit. Join native receipt request/outcome/reflection commits for exact
+incident inputs. A commit rewind is an eval error.
+
+Lanes overlap but each lane stays sequential, preserving grade-at-closure and
+paused recovery. Oracle values never enter memory. Shared mode rejects seeding,
+archive copy-back and reset. The external attachment report records phases and
+original Jobs. Attachment requires equal initial accepted trees and retains
+private proposal, ledger, capture and session roots. Scripted scheduling, broker
+and lock tests prove plumbing; live runs establish learning and speedup.
