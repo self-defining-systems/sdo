@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"time"
 
 	"sdo.dev/operator/sdk/program"
@@ -19,17 +20,19 @@ const (
 	DefaultPendingApplicationStall = DefaultMitigationRolloutTimeout
 )
 
-func (l *ResponderLoop) programFollowUp(ctx context.Context, entry menuEntry, bindings program.Bindings, last program.Plan, used int) (program.Plan, bool) {
-	if used >= MaxProgramFollowUps || entry.action != nil || entry.removal != nil || entry.programID == "" || l.Programs == nil {
-		return program.Plan{}, false
+// programFollowUp returns the next plan, or false when the program has nothing
+// new to do. A plan repeating any earlier round (A/B/A included) stops the loop.
+func (l *ResponderLoop) programFollowUp(ctx context.Context, entry menuEntry, bindings program.Bindings, earlier []program.Plan) (program.Plan, bool, error) {
+	if len(earlier) == 0 || len(earlier) > MaxProgramFollowUps || entry.action != nil || entry.removal != nil || entry.programID == "" || l.Programs == nil {
+		return program.Plan{}, false, nil
 	}
 	mitigator, ok := l.Programs.Mitigator(entry.programID)
 	if !ok {
-		return program.Plan{}, false
+		return program.Plan{}, false, nil
 	}
-	refs, err := l.menuPlanWriteRefs(last)
+	refs, err := l.menuPlanWriteRefs(earlier[len(earlier)-1])
 	if err != nil {
-		return program.Plan{}, false
+		return program.Plan{}, false, nil
 	}
 	// Give the rollout one bounded chance to show its effect. A rollout that
 	// completes here settles through the ordinary pending verification.
@@ -40,21 +43,29 @@ func (l *ResponderLoop) programFollowUp(ctx context.Context, entry menuEntry, bi
 		executor.RolloutTimeout = DefaultProgramFollowUpSettle
 	}
 	if _, err := executor.waitForRollouts(ctx, l.Request, refs); err == nil {
-		return program.Plan{}, false
+		return program.Plan{}, false, nil
 	}
 	view, err := l.snapshotView(ctx)
 	if err != nil {
-		return program.Plan{}, false
+		return program.Plan{}, false, nil
 	}
 	deadline := l.deadline()
 	l.mu.Unlock()
 	next, err := runBoundedMitigator(ctx, mitigator, view, cloneProgramBindings(bindings), deadline)
 	l.mu.Lock()
-	if err != nil || samePlanActions(next, last) {
-		// An empty or repeated plan means the program has nothing more to do.
-		return program.Plan{}, false
+	if errors.Is(err, errEmptyMitigationPlan) {
+		return program.Plan{}, false, nil
 	}
-	return next, true
+	if err != nil {
+		l.addFailureSignal("mitigator_failure:" + entry.programID)
+		return program.Plan{}, false, err
+	}
+	for _, plan := range earlier {
+		if samePlanActions(next, plan) {
+			return program.Plan{}, false, nil
+		}
+	}
+	return next, true, nil
 }
 
 func samePlanActions(a, b program.Plan) bool {

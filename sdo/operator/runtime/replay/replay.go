@@ -145,6 +145,9 @@ func Check(ctx context.Context, p program.Diagnoser, m program.Mitigator, detect
 	if err = plan.Validate(); err != nil {
 		return fail(err)
 	}
+	if err = program.CheckReplicaSetScales(plan, c.Corpus.Open, bindings); err != nil {
+		return fail(err)
+	}
 	if containsScript(plan) {
 		return observedScriptTransition(ctx, p, c, plan, source, r)
 	}
