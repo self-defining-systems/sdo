@@ -320,7 +320,7 @@ func (e PlanExecutor) generalStep(ctx context.Context, incident IncidentRequest,
 			return r, fmt.Errorf("object lifecycle transport unavailable")
 		}
 	}
-	r.PreImages = []PlanPreImage{{Ref: ref, Object: before.DeepCopy()}}
+	r.PreImages = []PlanPreImage{newPlanPreImage(ref, before)}
 	r.Patches = []PlanPatch{patch}
 	if dry {
 		return r, nil

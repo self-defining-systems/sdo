@@ -155,7 +155,7 @@ func (e PlanExecutor) applyObjectPlan(ctx context.Context, incident IncidentRequ
 		current[ref] = object.DeepCopy()
 		originals[ref] = object.DeepCopy()
 		refs = append(refs, ref)
-		result.PreImages = append(result.PreImages, PlanPreImage{Ref: ref, Object: object.DeepCopy()})
+		result.PreImages = append(result.PreImages, newPlanPreImage(ref, object))
 	}
 	for index, action := range plan.Actions {
 		e.report = &result.ActionReports[index]

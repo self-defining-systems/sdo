@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -119,4 +120,70 @@ func equivalentRepairOutcome(t *testing.T, loop *ResponderLoop) *contracts.Outco
 	}
 	settleTestOutcome(o)
 	return o
+}
+
+// A create has a typed absent pre-image; final equivalence compares the live
+// object with the created object instead of dereferencing a missing one.
+func TestFinalPlanEquivalenceComparesCreatedObjects(t *testing.T) {
+	ref := sdk.ObjectRef{APIVersion: "v1", Kind: "ConfigMap", Namespace: "app", Name: "missing"}
+	accepted := planObject(ref, map[string]any{})
+	delete(accepted.Object, "spec")
+	accepted.Object["data"] = map[string]any{"key": "safe"}
+	plans := map[string]program.Plan{
+		"create-from-source": {Actions: []program.Action{program.CreateFromSource{Ref: ref, Reason: "restore accepted missing object"}}},
+		"general-create-then-patch": {Actions: []program.Action{
+			program.ApplyObject{Ref: ref, Mode: "create", Object: map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "missing", "namespace": "app"}, "data": map[string]any{"key": "safe"}}},
+			program.PatchObject{Ref: ref, Type: "merge", Patch: []byte(`{"data":{"second":"yes"}}`)},
+		}},
+	}
+	for name, plan := range plans {
+		t.Run(name, func(t *testing.T) {
+			client := &lifecycleTestClient{planFakeClient: &planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{}}}
+			e := PlanExecutor{Client: client, Source: lifecycleTestSource{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: accepted}}, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{true}}
+			result, err := e.Apply(context.Background(), IncidentRequest{SourceCommit: "accepted", RepairPolicy: "recorded-actions", Namespace: "app"}, plan, false)
+			if err != nil || !result.VerificationPassed || client.creates != 1 {
+				t.Fatalf("create: %v", err)
+			}
+			if !result.PreImages[0].Absent || result.PreImages[0].Object != nil {
+				t.Fatalf("create pre-image is not typed absent: %+v", result.PreImages[0])
+			}
+			get := func(ref sdk.ObjectRef) *unstructured.Unstructured { return client.objects[ref].DeepCopy() }
+			if !finalPlanFieldsMatch(result, get) {
+				t.Fatal("created object did not match its plan")
+			}
+			client.objects[ref].Object["data"] = map[string]any{"key": "changed"}
+			if finalPlanFieldsMatch(result, get) {
+				t.Fatal("a different final object earned equivalence")
+			}
+			delete(client.objects, ref)
+			if finalPlanFieldsMatch(result, get) {
+				t.Fatal("a missing final object earned equivalence")
+			}
+		})
+	}
+	unknown := PlanApplicationResult{PreImages: []PlanPreImage{{Ref: ref}}}
+	if finalPlanFieldsMatch(unknown, func(sdk.ObjectRef) *unstructured.Unstructured { return accepted }) {
+		t.Fatal("an unknown pre-image earned equivalence")
+	}
+}
+
+// A panicking deterministic-stage step fails with a typed error and leaves the
+// loop locks held for Run's deferred unlocks instead of killing the process.
+func TestDeterministicStagePanicFailsOnlyThatStep(t *testing.T) {
+	loop := &ResponderLoop{}
+	loop.operationMu.Lock()
+	loop.mu.Lock()
+	err := unlockedStageStep(loop, "credit-equivalent-repairs", func() {
+		var missing *unstructured.Unstructured
+		_ = missing.Object
+	})
+	var stepPanic *DeterministicStepPanicError
+	if !errors.As(err, &stepPanic) || stepPanic.Step != "credit-equivalent-repairs" {
+		t.Fatalf("step panic was not typed: %v", err)
+	}
+	if loop.mu.TryLock() || loop.operationMu.TryLock() {
+		t.Fatal("step did not reacquire the loop locks")
+	}
+	loop.mu.Unlock()
+	loop.operationMu.Unlock()
 }

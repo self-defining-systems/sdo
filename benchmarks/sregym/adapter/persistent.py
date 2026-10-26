@@ -808,11 +808,11 @@ def run_persistent_stage(
             except ClosureFailedError as exc:
                 # The controller continues with later incidents after a permanent closure failure,
                 # so this stage's fault must not wait on it. The failure stays on the previous stage's record.
-                drained = _record_failed_closure(record.pending, str(exc), clock.monotonic() - drain_started)
+                drained = record_failed_closure(record.pending, str(exc), clock.monotonic() - drain_started)
         else:
             # The recorded controller is unavailable. Reject its undrained evidence explicitly
             # before replacing it, so the loss cannot block all subsequent problems.
-            drained = _record_failed_closure(record.pending, _lost_controller_message(record, pod), 0.0)
+            drained = record_failed_closure(record.pending, _lost_controller_message(record, pod), 0.0)
         drain_seconds = drained.waited_seconds
         if drained.HasField("failure"):
             logger.warning("previous incident %s: %s", drained.incident_id, drained.failure.message)
@@ -1097,7 +1097,21 @@ def _terminal_incident_ids(snapshot: dict[str, Any]) -> set[str]:
     terminal = {snapshot.get("last_acknowledged_incident_id")}
     for failure in snapshot.get("failed_closures") or []:
         terminal.add(failure.get("closure", {}).get("request", {}).get("incident_id"))
+    failure = snapshot.get("closure_failure") or {}
+    if snapshot.get("closure_state") == "CLOSURE_STATE_FAILED" and failure.get("permanent") is True:
+        terminal.add(failure.get("incident_id"))
     return {incident_id for incident_id in terminal if isinstance(incident_id, str)}
+
+
+def _incident_work_open(snapshot: dict[str, Any]) -> bool:
+    """Whether SDO still owns incident work; a closure it permanently failed or retired is over."""
+
+    if not closure_pending(snapshot):
+        return False
+    if snapshot.get("incident_request") or snapshot.get("incident_open"):
+        return True
+    request = (snapshot.get("pending_closure") or {}).get("request") or {}
+    return request.get("incident_id") not in _terminal_incident_ids(snapshot)
 
 
 def _open_incident_id(snapshot: dict[str, Any]) -> str:
@@ -1113,19 +1127,24 @@ def pause_for_recovery(
     incident_id: str | None = None,
     clock: Clock | None = None,
     followup_wait_seconds: float = POST_CLOSURE_WAIT_SECONDS,
+    closure_open: bool = False,
 ) -> FollowupClosureWait | None:
     """Fence harness mutations behind a terminal incident and acknowledged intake pause.
 
     An incident that opened after the graded incident closed is SDO's work in progress, not a
     harness error: recovery waits a bounded time for SDO to close it and reports that wait.
+    ``closure_open`` is for a row past its reflection deadline: intake is still paused, but the
+    still-running closure is left to SDO, so the injected fault does not outlive the row.
     """
 
     clock = clock or Clock()
     closed: set[str] = set()
 
     def require_closed() -> None:
+        if closure_open:
+            return
         snapshot = ops.runtime_state(control)
-        if not snapshot or closure_pending(snapshot):
+        if not snapshot or _incident_work_open(snapshot):
             raise PersistentControllerError("eval: recovery requires a closed incident and available controller state")
         closed.update(_terminal_incident_ids(snapshot))
         if incident_id is not None and incident_id not in closed:
@@ -1158,7 +1177,7 @@ def _wait_for_followup_closure(
     followups: list[str] = []
     while True:
         snapshot = ops.runtime_state(control)
-        if not snapshot or not closure_pending(snapshot):
+        if not snapshot or not _incident_work_open(snapshot):
             break
         closed.update(_terminal_incident_ids(snapshot))
         followup = _open_incident_id(snapshot)
@@ -1396,7 +1415,7 @@ def _collect_settled_receipt(
                     logger.warning("could not retain rendered closeout logs: %s", type(exc).__name__)
 
 
-def _record_failed_closure(pending: PendingIncident, message: str, waited_seconds: float) -> ReceiptDrainResult:
+def record_failed_closure(pending: PendingIncident, message: str, waited_seconds: float) -> ReceiptDrainResult:
     """Record an incident whose closure the controller gave up on as that incident's rejected receipt."""
 
     failure = ReceiptFailure(
@@ -1541,7 +1560,7 @@ def teardown(state_path: Path, *, ops: ClusterOps, clock: Clock | None = None) -
         try:
             if record.pending is not None:
                 if pod is None or pod.uid != record.controller_pod_uid:
-                    drained = _record_failed_closure(record.pending, _lost_controller_message(record, pod), 0.0)
+                    drained = record_failed_closure(record.pending, _lost_controller_message(record, pod), 0.0)
                 else:
                     drained = drain_pending_incident(
                         record,

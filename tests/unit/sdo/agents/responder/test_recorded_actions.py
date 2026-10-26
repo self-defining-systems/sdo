@@ -879,3 +879,77 @@ def test_act_accepts_printed_object_reference_forms(scratch: Path, reference: st
     assert receipt["resources"] == [
         {"api_version": "apps/v1", "kind": "Deployment", "namespace": "app", "name": "worker"}
     ]
+
+
+def _argv_recorder(directory: Path, log: Path) -> Path:
+    """A kubectl that records its argv and rejects flags kubectl does not define, as cobra does."""
+    return _stub(
+        directory,
+        f'printf "%s\\n" "$@" > {log}\n'
+        'for a; do [ "$a" = -- ] && break\n'
+        '  case "$a" in --json|--summary|--summary=*|--irreversible) '
+        'echo "error: unknown flag: $a" >&2; echo "See \'kubectl --help\' for usage." >&2; exit 1;; esac\n'
+        "done",
+    )
+
+
+@pytest.mark.parametrize("separator", [["--"], []])
+def test_sdo_options_trailing_a_kubectl_command_belong_to_sdo(
+    scratch: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str], separator: list[str]
+) -> None:
+    # LE P4 (11 failed acts): the responder appended SDO's --json after the kubectl command.
+    log = tmp_path / "argv"
+    kubectl = _argv_recorder(tmp_path / "bin", log)
+    code = tools_cli.main(
+        [
+            "act", "--resource", "Deployment/app/rate", *separator,
+            str(kubectl), "-n", "app", "set", "image", "deployment/rate", "rate=img",
+            "--json", "--summary", "restore rate image", "--irreversible",
+        ]
+    )  # fmt: skip
+
+    assert code == 0
+    assert log.read_text().split() == ["-n", "app", "set", "image", "deployment/rate", "rate=img"]
+    assert json.loads(capsys.readouterr().out)["command"] == "act"
+    (receipt,) = _recorded(scratch)
+    assert receipt["summary"] == "restore rate image"
+    assert receipt["reversible"] is False
+
+
+def test_kubectl_keeps_every_flag_it_defines_and_its_own_wrapped_command(scratch: Path, tmp_path: Path) -> None:
+    log = tmp_path / "argv"
+    kubectl = _argv_recorder(tmp_path / "bin", log)
+    argv = ["-n", "app", "exec", "db-0", "--", "mongosh", "--json", "--summary=x"]
+    assert tools_cli.main(["act", "--resource", "Pod/app/db-0", "--", str(kubectl), *argv]) == 0
+    assert log.read_text().split() == argv
+
+    argv = ["-n", "app", "create", "role", "reader", "--verb=get", "--resource=pods"]
+    assert tools_cli.main(["act", "--resource", "Role/app/reader", "--", str(kubectl), *argv]) == 0
+    assert log.read_text().split() == argv
+
+
+def test_other_wrapped_programs_receive_their_arguments_verbatim(
+    scratch: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert tools_cli.main(["act", "--resource", "Deployment/app/api", "--", "echo", "patched", "--json"]) == 0
+    (receipt,) = _recorded(scratch)
+    assert "$ echo patched --json" in str(receipt["details"])
+
+
+@pytest.mark.parametrize("full_json", [False, True])
+def test_a_wrapped_usage_error_says_how_to_call_act_in_one_line(
+    scratch: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str], full_json: bool
+) -> None:
+    kubectl = _stub(
+        tmp_path / "bin",
+        "echo 'error: unknown flag: --wait' >&2; echo \"See 'kubectl patch --help' for usage.\" >&2; exit 1",
+    )
+    argv = ["act", "--resource", "Service/app/api", "--", str(kubectl), "patch", "svc", "api", "--wait=true"]
+    assert tools_cli.main(["--json", *argv] if full_json else argv) == 1
+
+    out = capsys.readouterr().out
+    hint = json.loads(out)["hint"] if full_json else next(line for line in out.splitlines() if "sdo act" in line)
+    assert "\n" not in hint
+    assert "kubectl" in hint
+    assert "sdo act --resource" in hint
+    assert " -- " in hint
