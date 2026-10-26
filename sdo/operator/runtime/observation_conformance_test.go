@@ -41,3 +41,26 @@ func TestObservationConformanceCoversEachMatchingDatabaseWorkload(t *testing.T) 
 		t.Fatal("probe returned private upstream message")
 	}
 }
+
+func TestObservationConformanceFindsHotelDatabaseBehindRegistryRewrite(t *testing.T) {
+	pods := []corev1.Pod{{ObjectMeta: metav1.ObjectMeta{Name: "mongodb-geo-abc", Namespace: "hotel"}, Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "hotel-reserv-geo-mongo", Image: "registry.example:5000/apps/source-8abcdef@sha256:abc", Ports: []corev1.ContainerPort{{ContainerPort: 27017}}}}}}}
+	client := &conformanceCatalog{}
+	report := CheckObservationConformance(context.Background(), client, pods, nil)
+	if !report.Passed || len(report.Observations) != 1 {
+		t.Fatalf("hotel database was silently undiscovered: %+v", report)
+	}
+}
+
+func TestObservationConformanceRejectsEmptyInventoryAndSelectorMismatch(t *testing.T) {
+	if report := CheckObservationConformance(context.Background(), &conformanceCatalog{}, nil, nil); report.Passed || len(report.Observations) != 1 || report.Observations[0].FailureStage != "workload-discovery" {
+		t.Fatalf("empty inventory passed: %+v", report)
+	}
+	pods := []corev1.Pod{{ObjectMeta: metav1.ObjectMeta{Name: "mongodb-geo", Namespace: "hotel", Labels: map[string]string{"app": "mongodb-geo"}}, Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "mongo", Image: "mongo:4.4.6"}}}}}
+	if _, err := SelectObservationPods(pods, "io.kompose.service=mongodb-geo"); err == nil {
+		t.Fatal("selector mismatch passed despite application database")
+	}
+	frontend := []corev1.Pod{{ObjectMeta: metav1.ObjectMeta{Name: "frontend", Namespace: "toy"}, Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "app", Image: "example/frontend:v1"}}}}}
+	if report := CheckObservationConformance(context.Background(), &conformanceCatalog{}, frontend, nil); !report.Passed || len(report.Observations) != 0 {
+		t.Fatalf("known non-database application rejected: %+v", report)
+	}
+}

@@ -13,6 +13,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from benchmarks.sregym.fastloop.observation_conformance import check_observations
 from benchmarks.sregym.fastloop.setup_proof import INVARIANTS
 
 if TYPE_CHECKING:
@@ -203,6 +204,7 @@ def refresh_reused_proof(
             timeout_seconds=max(1, (timeout - 60) / 2),
         )
         admission.prove(environment.namespace + "-sdo")
+    passed("observation_conformance", **check_observations(environment, directory))
     passed("stabilization", source="fresh live admission", reused_setup=report.setup_proof["receipt"])
     report.passed = True
 
@@ -332,6 +334,7 @@ def run_lane(run_dir: Path, timeout: int, setup_timeout: int = 900) -> int:
                     if value.get("passed") is not True:
                         raise ValueError(f"eval: {name} did not pass")
                     passed(name, evidence=str(path))
+                passed("observation_conformance", **check_observations(environment, directory))
                 passed("stabilization", evidence=str(directory / "admission"))
                 passed("probe_placement", namespace="sregym")
                 passed("baseline", source="real healthy snapshot capture before the no-fault callback")

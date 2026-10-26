@@ -134,6 +134,7 @@ RUN mkdir sdo/operator/runtime/cachewarm \
     && rm -rf sdo/operator/runtime/cachewarm
 RUN cd sdo/operator && go build -buildvcs=false -ldflags="-s -w" -o /usr/local/bin/sdo-go-cache ./cmd/sdo-go-cache
 RUN cd sdo/operator && go build -buildvcs=false -ldflags="-s -w" -o /usr/local/bin/sdo-operator ./cmd/sdo-operator
+RUN cd sdo/operator/runtime && go build -buildvcs=false -ldflags="-s -w" -o /usr/local/bin/sdo-observation-check ./cmd/sdo-observation-check
 # Cache entries added on top of go-deps, so the worker image copies only these.
 RUN mkdir /go/build-cache-delta \
     && cd /go/build-cache \
@@ -143,6 +144,7 @@ RUN mkdir /go/build-cache-delta \
 
 FROM runtime-base AS runtime-sources
 COPY --from=go-runtime /usr/local/bin/sdo-operator /usr/local/bin/sdo-operator
+COPY --from=go-runtime /usr/local/bin/sdo-observation-check /usr/local/bin/sdo-observation-check
 COPY --from=go-runtime /opt/sdo/sdo/operator /opt/sdo/sdo/operator
 
 FROM runtime-sources AS controller

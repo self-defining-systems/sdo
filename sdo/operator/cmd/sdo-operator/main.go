@@ -16,13 +16,6 @@ import (
 var sourceHash string
 
 func main() {
-	if len(os.Args) > 1 && os.Args[1] == "observation-check" {
-		if err := operatorcli.RunObservationCheck(context.Background(), os.Args[2:], os.Stdout); err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
-		}
-		return
-	}
 	if len(os.Args) == 2 && os.Args[1] == "script-runner" {
 		if err := operatorcli.RunScriptRunner(context.Background()); err != nil {
 			fmt.Fprintln(os.Stderr, err)

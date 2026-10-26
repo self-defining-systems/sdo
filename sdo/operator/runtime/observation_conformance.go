@@ -3,12 +3,14 @@ package runtime
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path"
 	"sort"
 	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 )
@@ -41,9 +43,17 @@ func DatabaseObservationTargets(pods []corev1.Pod) []program.DatabaseTarget {
 			continue
 		}
 		for _, container := range pod.Spec.Containers {
-			image := strings.Split(strings.Split(container.Image, "@")[0], ":")[0]
+			image := strings.Split(container.Image, "@")[0]
+			if colon := strings.LastIndex(image, ":"); colon > strings.LastIndex(image, "/") {
+				image = image[:colon]
+			}
 			name := path.Base(image)
 			mongo := name == "mongo" || name == "mongodb"
+			// Accepted image delivery may rewrite the repository to a content ID.
+			// A declared Mongo container name and Mongo listener survive that rewrite.
+			for _, port := range container.Ports {
+				mongo = mongo || port.ContainerPort == 27017 && (strings.Contains(strings.ToLower(container.Name), "mongo") || strings.HasPrefix(pod.Name, "mongodb-"))
+			}
 			if len(container.Command) > 0 {
 				mongo = mongo || path.Base(container.Command[0]) == "mongod"
 			}
@@ -75,6 +85,9 @@ func DatabaseObservationTargets(pods []corev1.Pod) []program.DatabaseTarget {
 func CheckObservationConformance(ctx context.Context, client DatabaseObservationClient, pods []corev1.Pod, overrides []program.DatabaseTarget) ObservationConformance {
 	report := ObservationConformance{Passed: true, Observations: []ObservationCheck{}}
 	targets := DatabaseObservationTargets(pods)
+	if len(pods) == 0 && len(overrides) == 0 {
+		return ObservationConformance{Passed: false, Observations: []ObservationCheck{{Primitive: "DatabaseUsers", FailureStage: "workload-discovery", Error: "application Pod inventory is empty; check namespace and selector"}}}
+	}
 	for _, override := range overrides {
 		matched := false
 		for i, target := range targets {
@@ -121,4 +134,26 @@ func CheckObservationConformance(ctx context.Context, client DatabaseObservation
 		report.Observations = append(report.Observations, row)
 	}
 	return report
+}
+
+// SelectObservationPods keeps full-application discovery independent of a
+// caller's selector, so a mistyped selector cannot turn a database probe green.
+func SelectObservationPods(pods []corev1.Pod, selector string) ([]corev1.Pod, error) {
+	if selector == "" {
+		return pods, nil
+	}
+	parsed, err := labels.Parse(selector)
+	if err != nil {
+		return nil, fmt.Errorf("database workload-discovery: invalid selector")
+	}
+	var selected []corev1.Pod
+	for _, pod := range pods {
+		if parsed.Matches(labels.Set(pod.Labels)) {
+			selected = append(selected, pod)
+		}
+	}
+	if len(selected) == 0 || len(DatabaseObservationTargets(pods)) > 0 && len(DatabaseObservationTargets(selected)) == 0 {
+		return nil, fmt.Errorf("database workload-discovery: selector matched no database workload; inspect application Pod labels")
+	}
+	return selected, nil
 }

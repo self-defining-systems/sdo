@@ -1,4 +1,4 @@
-package operatorcli
+package runtime
 
 import (
 	"context"
@@ -10,14 +10,15 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
-	runtime "sdo.dev/operator/runtime"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
 	"sdo.dev/operator/sdk/program"
 )
 
 // RunObservationCheck performs production typed reads only: no mutations,
 // model calls, database command output or Secret reads.
 func RunObservationCheck(ctx context.Context, args []string, out io.Writer) error {
-	flags := flag.NewFlagSet("sdo-operator observation-check", flag.ContinueOnError)
+	flags := flag.NewFlagSet("sdo-observation-check", flag.ContinueOnError)
 	flags.SetOutput(out)
 	namespace := flags.String("namespace", "", "application namespace")
 	kubeconfig := flags.String("kubeconfig", "", "Kubernetes configuration (in-cluster by default)")
@@ -29,7 +30,7 @@ func RunObservationCheck(ctx context.Context, args []string, out io.Writer) erro
 	if *namespace == "" || flags.NArg() != 0 {
 		return errors.New("observation-check requires --namespace and no positional arguments")
 	}
-	config, err := hostKubernetesConfig(*kubeconfig)
+	config, err := observationKubernetesConfig(*kubeconfig)
 	if err != nil {
 		return errors.New("observation-check: Kubernetes configuration unavailable")
 	}
@@ -40,9 +41,15 @@ func RunObservationCheck(ctx context.Context, args []string, out io.Writer) erro
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	pods, err := client.CoreV1().Pods(*namespace).List(ctx, metav1.ListOptions{LabelSelector: *selector})
+	pods, err := client.CoreV1().Pods(*namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return errors.New("observation-check: Pod inventory unavailable; check namespace and RBAC")
+	}
+	selected, err := SelectObservationPods(pods.Items, *selector)
+	if err != nil {
+		report := ObservationConformance{Passed: false, Observations: []ObservationCheck{{Primitive: "DatabaseUsers", FailureStage: "workload-discovery", Error: err.Error()}}}
+		_ = json.NewEncoder(out).Encode(report)
+		return err
 	}
 	var overrides []program.DatabaseTarget
 	if *targetJSON != "" {
@@ -52,7 +59,7 @@ func RunObservationCheck(ctx context.Context, args []string, out io.Writer) erro
 		}
 		overrides = append(overrides, target)
 	}
-	report := runtime.CheckObservationConformance(ctx, runtime.TypedPlanClient{Client: client, ExecConfig: config}, pods.Items, overrides)
+	report := CheckObservationConformance(ctx, TypedPlanClient{Client: client, ExecConfig: config}, selected, overrides)
 	if err := json.NewEncoder(out).Encode(report); err != nil {
 		return err
 	}
@@ -60,4 +67,11 @@ func RunObservationCheck(ctx context.Context, args []string, out io.Writer) erro
 		return errors.New("observation-check failed; see named primitive, target and failure_stage")
 	}
 	return nil
+}
+
+func observationKubernetesConfig(path string) (*rest.Config, error) {
+	if path == "" {
+		return rest.InClusterConfig()
+	}
+	return clientcmd.BuildConfigFromFlags("", path)
 }
