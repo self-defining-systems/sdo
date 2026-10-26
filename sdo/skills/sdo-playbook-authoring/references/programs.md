@@ -7,12 +7,11 @@ Keep names, ports and images in bindings or observed state, never in the learned
 Detectors detect continuously; playbook Diagnose runs only while handling their findings, using one finding-bound assignment. Read additional objects through ReadView by name or relation.
 Detectors call `ctx.DiffAgainstSource(ref)` before selection, then bind playbooks through findings.
 `Changed` covers field drift; `SourceAbsent` confirms absence. Unavailable evidence errors.
-Both contexts share cached, recorded comparisons.
+Both contexts share recorded comparisons.
 
 Accepted Mitigators become selectable options in the responder menu, a convenience over direct commands.
 Declare object and typed value parameters and group related actions into one plan. Raw registered actions
-also appear as generic one-action plans. The ordinary PlanExecutor runs them with the controller's existing
-RBAC and always-on checks; the menu adds no ledger, fence, quiescence or provenance precondition.
+also appear as generic one-action plans. The ordinary PlanExecutor uses existing controller RBAC and checks.
 The responder receives per-action results, provenance and errors and can choose another repair. Up to five rounds share the incident allowance. Intermediate
 reports are not independent outcomes or program trust credit.
 
