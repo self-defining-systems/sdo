@@ -569,6 +569,7 @@ def _run_one(
         recovery_finished_at=recovery_finished_at,
         fault_recovery_seconds=recovery_seconds,
         post_closure_waits=post_closure_waits,
+        recovery_trigger=getattr(agent, "last_recovery_trigger", None) if windows else None,
         cleanup_deleted_counts=cleanup.deleted_counts if cleanup is not None else {},
         cleanup_restored=cleanup.restored if cleanup is not None else [],
         cleanup_skipped_reason=cleanup.skipped_reason if cleanup is not None else None,

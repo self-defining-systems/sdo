@@ -327,6 +327,10 @@ class ScriptedAgent:
     def prepare_recovery(self, outcome: AgentOutcome | None) -> PostClosureWait | None:
         return self._inner.prepare_recovery(outcome)
 
+    @property
+    def last_recovery_trigger(self) -> str | None:
+        return getattr(self._inner, "last_recovery_trigger", None)
+
     def close(self) -> None:
         try:
             self._settle()
