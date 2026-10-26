@@ -558,34 +558,40 @@ after completion; the next launch replaces a stale record. The printed
 
 ### Runtime CI shards
 
-The controller matrix runs the runtime module in ten test-name partitions:
+The controller matrix keeps eight runtime runners and ten logical partitions:
 `reflection`, `reflection-mongo`, `reflection-programs`, `contracts`, `rendered`,
-`simulation`, `schedules`, `corpus`, `recovery`, and `remaining`. The two reflection
-compile/replay groups have separate budgets so repeated real CLI builds cannot
-consume the general contracts job's entire deadline. Run a partition locally
+`simulation`, `schedules`, `corpus`, `recovery`, and `remaining`. Run a partition
 with `python3 scripts/test_runtime_shard.py --shard reflection` from the repository
-root. Each shard first discovers the compiled tests across `./...`, including
-examples and fuzz seed tests, then requires every eligible name to match exactly
-one pattern in `scripts/test_runtime_shard.py`. Missing/overlapping patterns fail
-CI before execution. Replay, chaos, and explorer tests retain their dedicated jobs.
-All nested scenarios and simulation seeds run unchanged, with race instrumentation,
-`-parallel=2`, and a five-minute package timeout. Rendered-lock schedules and
-incident-schedule fuzz seeds share the `schedules` partition with their seeded
-schedule sweep so they do not crowd the rendered-source partition. The
-`controller` matrix remains a dependency of the stable `Required PR CI` aggregate.
+root. Names are historical labels: measured expensive tests are assigned by cost,
+so a reflection test can run in the rendered partition.
 
-For per-test timing, the shard runner emits `go test -json` events. To profile the
-unsharded suite with the same exclusions:
+The runner discovers compiled tests across every module package, including
+examples and fuzz seeds, and checks exhaustive alphabetical ownership before
+balancing. `scripts/runtime_test_costs.json` stores measured top-level costs;
+longest tests are assigned first to the least-loaded existing runner, with stable
+name tie-breaking. Unmeasured tests retain their alphabetical owner and a small
+planning estimate. The paired `reflection,corpus` and `simulation,remaining`
+partitions are balanced as one runner each. Matrix changes must preserve that
+mapping; the focused tests verify all eight allocations without adding a job.
+Replay, chaos and explorer tests keep their dedicated jobs.
 
-```bash
-(cd sdo/operator/runtime && go test -race -count=1 -json -parallel=2 \
-  -skip '^TestReplay|^TestChaos|^TestExhaustive|^TestExplorer' ./...) > runtime-timing.json
-```
+Race instrumentation, `-parallel=2`, every nested scenario and seed, and the
+five-minute Go package timeout remain unchanged. A shared JSON watchdog bounds
+runtime test execution and discovery/linking to 180 seconds, leaving room for
+runner setup within the five-minute job deadline. It kills the entire process
+group on a regression and reports the slowest and still-running test names.
+For parents with parallel children, timing uses JSON lifecycle timestamps minus
+any top-level pause, because Go's parent `Elapsed` excludes parallel-child waits.
+The restart sweep and broker matrix overlap independent scenario waits under
+the existing two-test concurrency cap; all repositories and process state stay
+owned by their scenario.
 
-Rebalance the name patterns using top-level `pass` event `Elapsed` values. Keep the
-matrix shard values in sync; `tests/unit/sdo/operator/test_runtime_shards.py` checks
-that contract. New test names are discovered automatically and must still pass the
-exactly-once guard.
+Update the cost profile from complete `go test -json` runs, then inspect every
+runner's resulting duration. `tests/unit/sdo/operator/test_runtime_shards.py`
+checks deterministic assignment, unchanged coverage, matrix ownership and invalid
+cost rejection. New slow tests fail the named budget guard rather than silently
+consuming the whole hosted timeout.
+
 ### Fast image delivery
 
 Use `uv run python -m benchmarks.sregym.fastloop preflight` before image builds.

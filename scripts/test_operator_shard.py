@@ -18,6 +18,7 @@ import subprocess
 import sys
 import threading
 import time
+from datetime import datetime
 from pathlib import Path
 
 OPERATOR = Path(__file__).resolve().parents[1] / "sdo/operator"
@@ -67,10 +68,31 @@ def partition(inventory: dict[str, list[str]]) -> dict[str, dict[str, list[str]]
     return groups
 
 
-def check_budgets(events: list[dict], *, elapsed: float, enforce: bool = True) -> None:
-    completed = [
-        e for e in events if e.get("Action") in ("pass", "fail", "skip") and e.get("Test") and "/" not in e["Test"]
-    ]
+def check_budgets(
+    events: list[dict], *, elapsed: float, enforce: bool = True, budget_seconds: float | None = None
+) -> None:
+    shard_budget = SHARD_BUDGET_SECONDS if budget_seconds is None else budget_seconds
+    completed: list[dict] = []
+    starts: dict[tuple[str, str], float] = {}
+    paused: dict[tuple[str, str], float] = {}
+    pause_seconds: dict[tuple[str, str], float] = {}
+    for event in events:
+        if not event.get("Test") or "/" in event["Test"]:
+            continue
+        key = (event["Package"], event["Test"])
+        at = datetime.fromisoformat(event["Time"].replace("Z", "+00:00")).timestamp() if event.get("Time") else None
+        action = event.get("Action")
+        if action == "run" and at is not None:
+            starts[key] = at
+        elif action == "pause" and at is not None:
+            paused[key] = at
+        elif action == "cont" and at is not None and key in paused:
+            pause_seconds[key] = pause_seconds.get(key, 0) + at - paused.pop(key)
+        elif action in ("pass", "fail", "skip"):
+            measured = dict(event)
+            if at is not None and key in starts:
+                measured["Elapsed"] = max(event.get("Elapsed", 0), at - starts[key] - pause_seconds.get(key, 0))
+            completed.append(measured)
     slow = sorted(completed, key=lambda e: -e.get("Elapsed", 0))[:5]
     running = {(e["Package"], e["Test"]) for e in events if e.get("Action") == "run" and "/" not in e["Test"]}
     running -= {(e["Package"], e["Test"]) for e in completed}
@@ -82,8 +104,8 @@ def check_budgets(events: list[dict], *, elapsed: float, enforce: bool = True) -
         for e in completed
         if e.get("Elapsed", 0) > TEST_BUDGET_SECONDS
     ]
-    if elapsed > SHARD_BUDGET_SECONDS:
-        failures.append(f"{elapsed:.2f}s exceeds {SHARD_BUDGET_SECONDS}s shard budget")
+    if elapsed > shard_budget:
+        failures.append(f"{elapsed:.2f}s exceeds {shard_budget}s shard budget")
     print(f"Operator timing: {elapsed:.2f}s; slowest: {detail}", flush=True)
     if enforce and failures:
         raise ValueError("; ".join(failures) + "; slowest: " + detail)
@@ -128,11 +150,19 @@ def main() -> None:
     )
 
 
-def run_tests(command: list[str], *, started: float, enforce_budget: bool = True) -> None:
+def run_tests(
+    command: list[str],
+    *,
+    started: float,
+    enforce_budget: bool = True,
+    cwd: Path = OPERATOR,
+    budget_seconds: float | None = None,
+) -> None:
     """Bound the entire process group, including nested fixture compilers."""
+    shard_budget = SHARD_BUDGET_SECONDS if budget_seconds is None else budget_seconds
     events: list[dict] = []
     parse_error: json.JSONDecodeError | None = None
-    with subprocess.Popen(command, cwd=OPERATOR, stdout=subprocess.PIPE, text=True, start_new_session=True) as process:
+    with subprocess.Popen(command, cwd=cwd, stdout=subprocess.PIPE, text=True, start_new_session=True) as process:
 
         def stop() -> None:
             if process.poll() is None:
@@ -141,7 +171,7 @@ def run_tests(command: list[str], *, started: float, enforce_budget: bool = True
                 except ProcessLookupError:
                     pass
 
-        timer = threading.Timer(max(0, SHARD_BUDGET_SECONDS - (time.monotonic() - started)), stop)
+        timer = threading.Timer(max(0, shard_budget - (time.monotonic() - started)), stop)
         if enforce_budget:
             timer.start()
         try:
@@ -157,7 +187,7 @@ def run_tests(command: list[str], *, started: float, enforce_budget: bool = True
             timer.cancel()
             if enforce_budget:
                 timer.join()
-    check_budgets(events, elapsed=time.monotonic() - started, enforce=enforce_budget)
+    check_budgets(events, elapsed=time.monotonic() - started, enforce=enforce_budget, budget_seconds=shard_budget)
     if parse_error is not None:
         raise ValueError(f"invalid Go test JSON: {parse_error}")
     if result:

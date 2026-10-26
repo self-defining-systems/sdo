@@ -69,9 +69,13 @@ def test_every_matrix_shard_is_aggregated_and_script_changes_trigger_go() -> Non
     partitions = [part for row in runtime for part in row["shard"].split(",")]
     assert set(partitions) == shards.PATTERNS.keys()
     assert len(partitions) == len(shards.PATTERNS)
+    assert {tuple(row["shard"].split(",")) for row in runtime} == set(shards.RUNNER_GROUPS.values())
+    assert len(runtime) == 8
+    assert "scripts/runtime_test_costs.json" in yaml.safe_load(jobs["changes"]["steps"][1]["with"]["filters"])["go"]
     assert "controller" in jobs["required-pr-ci"]["needs"]
     filters = yaml.safe_load(jobs["changes"]["steps"][1]["with"]["filters"])
     assert "scripts/test_runtime_shard.py" in filters["go"]
+    assert "scripts/test_operator_shard.py" in filters["go"]
 
 
 def test_schedule_shard_runs_all_seeds_with_a_five_minute_race_budget(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -96,6 +100,7 @@ def test_schedule_shard_runs_all_seeds_with_a_five_minute_race_budget(monkeypatc
         return subprocess.CompletedProcess(command, 0, stdout=output)
 
     monkeypatch.setattr(shards.subprocess, "run", run)
+    monkeypatch.setattr(shards, "run_tests", lambda command, **kwargs: calls.append(command))
     monkeypatch.setattr(sys, "argv", ["test_runtime_shard.py", "--shard", "schedules"])
     shards.main()
     command = calls[-1]
@@ -103,7 +108,9 @@ def test_schedule_shard_runs_all_seeds_with_a_five_minute_race_budget(monkeypatc
     assert "-parallel=2" in command
     assert "-timeout=5m" in command
     selection = command[command.index("-run") + 1]
-    assert {name for name in names if re.fullmatch(selection, name)} == {"TestSimSchedule", "FuzzSimIncidentSchedule"}
+    costs = json.loads(shards.COST_FILE.read_text())["costs"]
+    expected = shards.balanced_partition(names, shards.PATTERNS, costs)["schedules"]
+    assert {name for name in names if re.fullmatch(selection, name)} == set(expected)
 
 
 def test_compiling_reflection_contracts_have_independent_budgets() -> None:
@@ -120,3 +127,39 @@ def test_compiling_reflection_contracts_have_independent_budgets() -> None:
     assert assigned["reflection-mongo"] == mongo
     assert assigned["reflection-programs"] == programs
     assert assigned["contracts"] == ["TestAdmission"]
+
+
+def test_balanced_runtime_plan_preserves_every_compiled_name_once() -> None:
+    names = [
+        "TestReflectionDirectFilesCLIAndBroker",
+        "TestRejectedRepeatCorpusFallsBackToReflectionWorker",
+        "TestReflectionMongoAuthUpgradesReadmeThroughCLIAndBroker",
+        "TestReflectionLearnedProgramCLIAndBroker",
+        "TestRestartClassHermetic",
+        "TestHermeticSharedMemoryControllers",
+        "TestSimSchedule",
+        "TestAdmission",
+        "TestRendered",
+        "TestSimIncidentStream",
+        "TestState",
+        "FuzzSimIncidentSchedule",
+    ]
+    costs = {name: float(20 + i) for i, name in enumerate(names)}
+    planned = shards.balanced_partition(names, shards.PATTERNS, costs)
+    assert sorted(name for members in planned.values() for name in members) == sorted(names)
+    assert planned == shards.balanced_partition(list(reversed(names)), shards.PATTERNS, costs)
+    assert set(planned) == set(shards.PATTERNS)
+
+
+def test_measured_costs_rebalance_heavy_alphabetical_groups() -> None:
+    names = ["TestRenderOne", "TestRenderTwo", "TestRenderThree", "TestAdmission", "TestState"]
+    costs = dict.fromkeys(names[:3], 50.0)
+    planned = shards.balanced_partition(names, shards.PATTERNS, costs)
+    owners = [group for group, members in planned.items() for name in names[:3] if name in members]
+    assert len(set(owners)) == 3
+
+
+def test_cost_profile_rejects_invalid_or_unmeasured_values() -> None:
+    for cost in [0, -1, float("nan"), float("inf")]:
+        with pytest.raises(ValueError, match="cost"):
+            shards.balanced_partition(["TestAdmission"], shards.PATTERNS, {"TestAdmission": cost})

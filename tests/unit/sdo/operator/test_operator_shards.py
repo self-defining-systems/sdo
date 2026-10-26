@@ -145,3 +145,22 @@ def test_malformed_tool_output_fails_closed() -> None:
 
     with pytest.raises(ValueError, match="invalid Go test JSON"):
         shards.run_tests([sys.executable, "-c", "print('{')"], started=time.monotonic())
+
+
+def test_parallel_children_cannot_hide_parent_wall_cost() -> None:
+    events = [
+        {"Action": "run", "Package": "builder", "Test": "TestParallel", "Time": "2026-10-26T00:00:00Z"},
+        {"Action": "pass", "Package": "builder", "Test": "TestParallel", "Time": "2026-10-26T00:03:01Z", "Elapsed": 0},
+    ]
+    with pytest.raises(ValueError, match="TestParallel.*181"):
+        shards.check_budgets(events, elapsed=182)
+
+
+def test_top_level_pause_does_not_become_execution_cost() -> None:
+    events = [
+        {"Action": "run", "Package": "builder", "Test": "TestParallel", "Time": "2026-10-26T00:00:00Z"},
+        {"Action": "pause", "Package": "builder", "Test": "TestParallel", "Time": "2026-10-26T00:00:00Z"},
+        {"Action": "cont", "Package": "builder", "Test": "TestParallel", "Time": "2026-10-26T00:03:00Z"},
+        {"Action": "pass", "Package": "builder", "Test": "TestParallel", "Time": "2026-10-26T00:03:01Z", "Elapsed": 1},
+    ]
+    shards.check_budgets(events, elapsed=182)

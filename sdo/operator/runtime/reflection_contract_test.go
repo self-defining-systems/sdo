@@ -235,6 +235,8 @@ func TestT1ClassificationMatrix(t *testing.T) {
 func TestT1ScriptedBrokerMatrix(t *testing.T) {
 	for _, c := range t1Classes() {
 		t.Run(c.name, func(t *testing.T) {
+			// Each row owns its repositories, captures and worker state.
+			t.Parallel()
 			for _, reject := range []bool{false, true} {
 				t.Run(fmt.Sprintf("reject=%t", reject), func(t *testing.T) {
 					run := t1RunBroker(t, c, reject)
