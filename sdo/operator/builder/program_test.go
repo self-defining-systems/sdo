@@ -26,7 +26,7 @@ func buildProgramFixture(t *testing.T, root string) (*Workspace, error) {
 
 func TestBuildWorkspaceRegistersProgramAndSharedLibrary(t *testing.T) {
 	testutil.OfflineGo(t, "..")
-	t.Setenv("GOFLAGS", "-mod=mod -p=2")
+	t.Setenv("GOFLAGS", os.Getenv("GOFLAGS")+" -mod=mod -p=2")
 	root := programFixture(t)
 	w, err := buildProgramFixture(t, root)
 	if err != nil {

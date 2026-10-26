@@ -73,8 +73,10 @@ func (workspace *Workspace) ValidateAndBuild(ctx context.Context) (string, error
 	return workspace.validate(ctx, false)
 }
 
-// Check is ValidateAndBuild plus a package build and go vet beforehand: the
-// full detector acceptance gate.
+// Check builds every package, vets it, and runs all tests including replay:
+// the full detector acceptance gate. The initial package build already links
+// the controller, so Check does not link a second controller artifact. The
+// explicit CGO-disabled prober build still checks its portable launch target.
 // A rejected stage is reported as a *StageError.
 func (workspace *Workspace) Check(ctx context.Context) error {
 	if workspace != nil && workspace.compileOnly {
@@ -101,7 +103,9 @@ func (workspace *Workspace) validate(ctx context.Context, vet bool) (string, err
 	} else {
 		stages = append(stages, []string{"test", "./..."})
 	}
-	stages = append(stages, []string{"build", "-buildvcs=false", "-o", binary, "./cmd/controller"})
+	if !vet {
+		stages = append(stages, []string{"build", "-buildvcs=false", "-o", binary, "./cmd/controller"})
+	}
 	for _, args := range stages {
 		started := time.Now()
 		err := workspace.runGo(ctx, args...)

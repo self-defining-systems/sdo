@@ -21,8 +21,9 @@ const detectorCorpusObservation = "detector.corpus-observation"
 var goTestDuration = regexp.MustCompile(`(?m)(?:\t(?:[0-9]+\.[0-9]+s|\(cached\))| \([0-9]+\.[0-9]+s\))$`)
 
 // goLocation matches a compiler or vet position inside a detector workspace,
-// whose layout mirrors the diagnostics directory.
-var goLocation = regexp.MustCompile(`(?m)^(?:vet: )?(?:\./)?((?:detectors|traffic)/[^\s:]+\.go):(\d+)(?::\d+)?: (.+)$`)
+// whose layout mirrors the diagnostics directory. With -trimpath, cached vet
+// output can retain a relative or absolute path to an earlier isolated build.
+var goLocation = regexp.MustCompile(`(?m)^(?:vet: )?(?:\./)?(?:(?:[^\r\n:]*/)?sdo-operator-build-[^/\s:]+/)?((?:detectors|traffic)/[^\s:]+\.go):(\d+)(?::\d+)?: (.+)$`)
 
 // compile builds the detectors against the SDK in an isolated workspace, then
 // vets and tests them. It executes detector code: the broker invokes it in

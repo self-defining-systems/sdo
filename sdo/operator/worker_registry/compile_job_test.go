@@ -2,10 +2,10 @@ package worker_registry_test
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -23,6 +23,19 @@ import (
 // Resolve the actual production Job's compiler mounts and run the real learned
 // program test/replay builder with those files. No cluster, image or model.
 func TestIncidentJobCompilerMountsRunLearnedProgramTestsAndReplay(t *testing.T) {
+	// Resolve the installed toolchain before disabling module/toolchain lookup.
+	// A relocated, trimpath-built binary cannot infer it from debug metadata.
+	goEnv, err := exec.Command("go", "env", "-json", "GOROOT", "GOMODCACHE").CombinedOutput()
+	if err != nil {
+		t.Fatalf("resolve installed Go toolchain: %v: %s", err, goEnv)
+	}
+	var installed struct {
+		GOROOT     string
+		GOMODCACHE string
+	}
+	if err := json.Unmarshal(goEnv, &installed); err != nil {
+		t.Fatal(err)
+	}
 	testutil.OfflineGo(t, "..")
 	operator, err := filepath.Abs("..")
 	if err != nil {
@@ -78,17 +91,13 @@ func TestIncidentJobCompilerMountsRunLearnedProgramTestsAndReplay(t *testing.T) 
 	if err := os.MkdirAll(filepath.Dir(compiler), 0700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink(runtime.GOROOT(), compiler); err != nil {
+	if err := os.Symlink(installed.GOROOT, compiler); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.MkdirAll(filepath.Join(cache, "pkg"), 0700); err != nil {
 		t.Fatal(err)
 	}
-	modcache, err := exec.Command("go", "env", "GOMODCACHE").Output()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(strings.TrimSpace(string(modcache)), filepath.Join(cache, "pkg/mod")); err != nil {
+	if err := os.Symlink(installed.GOMODCACHE, filepath.Join(cache, "pkg/mod")); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", filepath.Join(compiler, "bin")+string(os.PathListSeparator)+os.Getenv("PATH"))
