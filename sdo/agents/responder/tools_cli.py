@@ -242,7 +242,9 @@ def _parser() -> argparse.ArgumentParser:
     ).add_argument("ref", metavar="Kind/namespace/name")
     act = commands.add_parser(
         "act",
-        help="record a live mutation; show progress and a complete JSON report",
+        help=(
+            "record one command invocation; outer shell chains run separately; show progress and a complete JSON report"
+        ),
         description=(
             "Run one live mutation and record its repair receipt (target, resources, timing, outcome and "
             "command line). The command's exit code is returned. Do not hand-write receipts."

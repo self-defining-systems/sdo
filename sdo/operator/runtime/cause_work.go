@@ -287,13 +287,35 @@ func (n NativeIncidentBroker) prepareCauseWork(ctx context.Context, outcome *con
 	origins := map[string]string{}
 	fixed := fixedCaptureVerdicts(ctx, outcome, n.Programs, capture, origins)
 	work := classifyCauseWork(outcome, fixed)
-	for _, cause := range validate.VerifiedReflectionCauses(outcome) {
+	verified := validate.VerifiedReflectionCauses(outcome)
+	var evidenceGaps []*contracts.ReflectionWorkItem
+	if outcome.GetClassification() == "success" {
+		// Aggregate recovery cannot authorize executable drafting. Surface missing
+		// bound repair evidence before the worker spends time authoring candidates.
+		allowed := map[uint32]bool{}
+		var indices []uint32
+		for _, cause := range verified {
+			if cause.GetLearningBasis() == "" {
+				allowed[cause.GetCauseIndex()] = true
+				indices = append(indices, cause.GetCauseIndex())
+			}
+		}
+		selected := work[:0]
+		for _, cause := range work {
+			if allowed[cause.GetCauseIndex()] {
+				selected = append(selected, cause)
+			}
+		}
+		work = selected
+		evidenceGaps = unverifiedCauseWork(outcome, indices)
+	}
+	for _, cause := range verified {
 		if cause.GetLearningBasis() == "observed_transition" {
 			cause.Items = []*contracts.ReflectionWorkItem{{Disposition: "question", Reason: "unbound_write", Resources: cause.Resources, Question: "No opening detector observed this recorded configuration repair. Propose diagnosis, mitigation and detector coverage from its captured before/after transition; do not claim independent application recovery."}}
 			work = append(work, cause)
 		}
 	}
-	unassigned := unassignedReflectionQuestions(outcome, fixed)
+	unassigned := append(unassignedReflectionQuestions(outcome, fixed), evidenceGaps...)
 	allItems := append([]*contracts.ReflectionWorkItem{}, unassigned...)
 	for _, cause := range work {
 		allItems = append(allItems, cause.Items...)

@@ -31,6 +31,9 @@ func TestNativeLaunchRequiresProposalOnlyMountAndBuildsBroker(t *testing.T) {
 	if native.Repository == nil || native.Deriver == nil || native.ResponderBackend != "codex" {
 		t.Fatalf("incomplete native broker: %+v", native)
 	}
+	if deriver, ok := native.Deriver.(ProtoOutcomeDeriver); !ok || deriver.SessionRoot != config.GetRepositoryMountPath() {
+		t.Fatal("production outcome derivation must retain the protected incident API history")
+	}
 }
 
 func TestNativeReflectionSharesIncidentSessionWithResponder(t *testing.T) {
