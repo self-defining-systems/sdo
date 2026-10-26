@@ -1,6 +1,12 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, Any
+
 import pytest
+
+if TYPE_CHECKING:
+    import subprocess
+    from pathlib import Path
 
 from benchmarks.sregym.fastloop.social_fixture import TimelineSnapshot, fixture_posts, parse_post_ids
 
@@ -43,15 +49,15 @@ def test_mongo_shell_ids_are_normalized_without_precision_loss() -> None:
         parse_post_ids("ERR unknown command")
 
 
-def test_fixture_failure_keeps_writers_stopped(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+def test_fixture_failure_keeps_writers_stopped(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     import json
     import subprocess
 
     from benchmarks.sregym.fastloop import social_fixture
 
-    calls = []
+    calls: list[list[str]] = []
 
-    def command(args, **kwargs):
+    def command(args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
         calls.append(args)
         if args[:2] == ["get", "deployments"]:
             value = {
