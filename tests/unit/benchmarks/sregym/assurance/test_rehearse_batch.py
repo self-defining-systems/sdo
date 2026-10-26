@@ -109,7 +109,7 @@ def test_one_failing_stage_does_not_hide_the_others(tmp_path: Path) -> None:
     }
 
     port = rows["p-port"]
-    assert [s.status for s in port.stages] == ["pass", "pass", "fail"]
+    assert [s.status for s in port.stages] == ["pass", "pass", "pass", "fail"]
     assert port.failure is not None
     assert port.failure.error_class == "no-detection"
     assert port.stage_reached == "vehicle"
@@ -233,3 +233,18 @@ def test_clusters_must_be_positive(tmp_path: Path) -> None:
 
 def test_a_check_round_trips_through_the_gate_summary() -> None:
     assert batch._check({"name": "n", "ok": False, "detail": "d"}) == Check("n", False, "d")
+
+
+def test_responder_write_gaps_are_their_own_error_class(tmp_path: Path) -> None:
+    problems = batch.load_problems(*_plan(tmp_path))
+    rows = {r.problem.problem_id: r for r in batch.build_rows(problems, {}, {}, responder_gaps={"Service": "patch"})}
+    assert [s.error_class for s in rows["p-port"].findings] == [batch.RESPONDER_GAP_CLASS]
+    assert "Service (denied patch)" in rows["p-port"].failure.detail
+    assert not [s for s in rows["p-hook"].findings if s.error_class == batch.RESPONDER_GAP_CLASS]
+
+
+def test_a_checkout_without_the_responder_write_check_skips_that_stage_and_says_so(tmp_path: Path) -> None:
+    problems = batch.load_problems(*_plan(tmp_path))
+    rows = batch.build_rows(problems, {}, {}, responder_error="responder-write check not in this checkout")
+    stage = next(s for s in rows[0].stages if s.name == "responder-write")
+    assert (stage.status, stage.error_class) == ("skip", "")

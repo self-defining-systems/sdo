@@ -22,6 +22,7 @@ Vehicles are spread over ``--clusters`` private toy kind clusters (default 4) th
 from __future__ import annotations
 
 import argparse
+import importlib
 import json
 import re
 import sys
@@ -89,7 +90,8 @@ KIND_RESOURCE: dict[str, str] = {
 }
 #: Kinds a repair removes (the others are patched in place).
 DELETE_KINDS = frozenset({"NetworkPolicy", "MutatingWebhookConfiguration", "ValidatingWebhookConfiguration"})
-STAGES = ("catalog", "rbac", "vehicle")
+STAGES = ("catalog", "rbac", "responder-write", "vehicle")
+RESPONDER_GAP_CLASS = "responder-write-gap"
 COVERAGE_CLASS = "no-toy-vehicle"
 
 #: First matching rule names the error class of a failed check; the check name and its detail are searched.
@@ -278,12 +280,27 @@ def probe_rbac(
     return missing
 
 
+def probe_responder_write(draws: Path, kubeconfig: str, control_namespace: str) -> dict[str, str]:
+    """Kinds some fault touches that the installed responder cannot write, as ``{kind: denied verbs}``.
+
+    Uses the fast loop's class check (SubjectAccessReview as ``sdo-responder``); an empty result means the class
+    is covered. Raises ``ImportError`` when the check is not in this checkout.
+    """
+
+    module = importlib.import_module("benchmarks.sregym.fastloop.responder_write_check")
+    allowed = module.subject_access_review(Path(kubeconfig), control_namespace=control_namespace)
+    rows = module.check(module.fault_objects(draws), allowed)
+    return {row.kind: ",".join(row.denied_verbs) for row in module.gaps(rows)}
+
+
 def build_rows(
     problems: Sequence[Problem],
     vehicles: dict[str, Stage],
     rbac_missing: dict[str, list[str]],
     *,
     rbac_error: str = "",
+    responder_gaps: dict[str, str] | None = None,
+    responder_error: str = "",
 ) -> list[Row]:
     """Combine the shared probe and vehicle results into one row per problem; no stage stops the others."""
 
@@ -304,6 +321,16 @@ def build_rows(
             row.stages.append(Stage("rbac", "fail", "rbac-missing-verb", f"sdo-controller lacks {detail}"))
         else:
             row.stages.append(Stage("rbac", "pass"))
+        gaps = {k: v for k, v in (responder_gaps or {}).items() if k in problem.kinds}
+        if responder_error:
+            row.stages.append(Stage("responder-write", "skip", detail=responder_error[:300]))
+        elif gaps:
+            detail = "; ".join(f"{kind} (denied {verbs})" for kind, verbs in sorted(gaps.items()))
+            row.stages.append(
+                Stage("responder-write", "fail", RESPONDER_GAP_CLASS, f"sdo-responder cannot write {detail}")
+            )
+        else:
+            row.stages.append(Stage("responder-write", "pass"))
         if problem.vehicles:
             outcomes = [vehicles[v] for v in problem.vehicles if v in vehicles]
             chosen = next((s for s in outcomes if s.status == "fail"), outcomes[0] if outcomes else None)
@@ -394,6 +421,7 @@ class Batch:
     problems: list[Problem]
     image_tag: str = "fastloop"
     clusters: int = DEFAULT_CLUSTERS
+    draws: Path = DEFAULT_DRAWS
     make_gate: Callable[[str, Path, tuple[Scenario, ...]], Gate] | None = None
     clock: Callable[[], float] = time.monotonic
 
@@ -455,7 +483,26 @@ class Batch:
                 )
             except Exception as exc:  # the batch reports every stage it could not run
                 rbac_error = f"rbac probe failed: {type(exc).__name__}: {exc}"
-        rows = build_rows(self.problems, vehicles, rbac_missing, rbac_error=rbac_error)
+        responder_gaps: dict[str, str] = {}
+        responder_error = rbac_error
+        if not responder_error:
+            try:
+                environment = gates[0][0].load_environment(gates[0][0].run_dir)
+                responder_gaps = probe_responder_write(
+                    self.draws, str(environment.kubeconfig), f"{environment.namespace}-sdo"
+                )
+            except ImportError as exc:
+                responder_error = f"responder-write check not in this checkout (needs #449): {exc}"
+            except Exception as exc:  # the batch reports every stage it could not run
+                responder_error = f"responder-write probe failed: {type(exc).__name__}: {exc}"
+        rows = build_rows(
+            self.problems,
+            vehicles,
+            rbac_missing,
+            rbac_error=rbac_error,
+            responder_gaps=responder_gaps,
+            responder_error=responder_error,
+        )
         seconds = round(self.clock() - t0, 1)
         classes = group_by_class(rows)
         failing = sum(1 for r in rows if any(s.error_class != COVERAGE_CLASS for s in r.findings))
@@ -474,6 +521,7 @@ class Batch:
             "clean": sum(1 for r in rows if not r.findings),
             "failing": failing,
             "coverage_gaps": gaps,
+            "responder_write_note": responder_error if responder_error != rbac_error else "",
             "classes": classes,
             "rows": [r.as_dict() for r in rows],
         }
@@ -552,6 +600,7 @@ def main(argv: list[str] | None = None) -> int:
         load_problems(args.plan, args.draws),
         image_tag=args.image_tag,
         clusters=args.clusters,
+        draws=args.draws,
     )
     if args.dry_run:
         print(dry_run(batch))
