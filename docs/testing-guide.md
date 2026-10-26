@@ -24,7 +24,8 @@ live-shaped view, `FromView` from compact snapshot JSON, `Recapture` to edit an
 existing capture. Each goes through `CaptureSnapshot`, so a test sees exactly the
 fields production keeps. `capturefixture.Raw(t, reason, data)` is the named
 opt-out for forged, empty or malformed input. `go test ./internal/capturefixture`
-(part of `check_errors.sh`) rejects hand-built captures in operator tests.
+(part of `check_errors.sh`) rejects hand-built captures in operator tests and
+committed corpus captures carrying fields the projection would drop or add.
 
 ## Git-backed Go fixtures
 
