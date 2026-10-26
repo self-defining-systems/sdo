@@ -16,6 +16,25 @@ if TYPE_CHECKING:
 APPLICATION_NAMESPACES = frozenset({"hotel-reservation", "social-network", "astronomy-shop"})
 
 
+def quiesce_native_controller(kubeconfig: Path, namespace: str) -> None:
+    """Use the native pause/closure fence before replacing an idle installation."""
+    from benchmarks.sregym.adapter import KubectlClusterOps, pause_for_recovery
+    from benchmarks.sregym.adapter.eval_guards import closure_pending
+
+    if namespace not in {control_namespace_for(app) for app in APPLICATION_NAMESPACES}:
+        raise ValueError("eval: quiesce requires an application control namespace")
+    ops = KubectlClusterOps()
+    if closure_pending(ops.runtime_state(namespace)):
+        raise RuntimeError("eval: app retirement refuses unfinished native closure or reflection")
+    jobs = json.loads(kubectl(["get", "jobs", "-o", "json"], namespace=namespace, kubeconfig=kubeconfig).stdout)[
+        "items"
+    ]
+    if any(row.get("status", {}).get("active") and row["metadata"]["name"] != "sdo-controller-run" for row in jobs):
+        raise RuntimeError("eval: app retirement refuses active native workers; finish their closure first")
+    if any(row["metadata"]["name"] == "sdo-controller-run" and row.get("status", {}).get("active") for row in jobs):
+        pause_for_recovery(ops, namespace)
+
+
 @dataclass(frozen=True)
 class RetirementRequest:
     cluster: str
@@ -99,19 +118,7 @@ class KubectlRetirementOps:
         return {row["metadata"]["name"] for row in json.loads(result.stdout)["items"]}
 
     def quiesce(self, namespace: str) -> None:
-        from benchmarks.sregym.adapter import KubectlClusterOps, pause_for_recovery
-        from benchmarks.sregym.adapter.eval_guards import closure_pending
-
-        ops = KubectlClusterOps()
-        if closure_pending(ops.runtime_state(namespace)):
-            raise RuntimeError("eval: app retirement refuses unfinished native closure or reflection")
-        jobs = json.loads(
-            kubectl(["get", "jobs", "-o", "json"], namespace=namespace, kubeconfig=self.kubeconfig).stdout
-        )["items"]
-        if any(row.get("status", {}).get("active") and row["metadata"]["name"] != "sdo-controller-run" for row in jobs):
-            raise RuntimeError("eval: app retirement refuses active native workers; finish their closure first")
-        if any(row["metadata"]["name"] == "sdo-controller-run" and row.get("status", {}).get("active") for row in jobs):
-            pause_for_recovery(ops, namespace)
+        quiesce_native_controller(self.kubeconfig, namespace)
 
     def delete_namespace(self, namespace: str) -> None:
         if namespace not in self.request.namespaces:

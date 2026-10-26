@@ -144,6 +144,40 @@ def test_real_namespace_adapter_rejects_out_of_set_before_any_io(tmp_path, monke
         ops.delete_namespace("kube-system")
 
 
+@pytest.mark.parametrize("pending", [True, False])
+def test_native_quiesce_retains_pending_work_and_pauses_idle_controller(tmp_path, monkeypatch, pending):
+    import json
+    from types import SimpleNamespace
+
+    from benchmarks.sregym import adapter
+    from benchmarks.sregym.fastloop import app_retirement
+
+    fake = SimpleNamespace(
+        runtime_state=lambda _namespace: {"pending_closure": {"incident": "active"}} if pending else {}
+    )
+    pauses = []
+    monkeypatch.setattr(adapter, "KubectlClusterOps", lambda: fake)
+    monkeypatch.setattr(adapter, "pause_for_recovery", lambda ops, namespace: pauses.append((ops, namespace)))
+    monkeypatch.setattr(
+        app_retirement,
+        "kubectl",
+        lambda *_a, **_k: SimpleNamespace(
+            stdout=json.dumps(
+                {
+                    "items": [{"metadata": {"name": "sdo-controller-run"}, "status": {"active": 1}}],
+                }
+            )
+        ),
+    )
+    if pending:
+        with pytest.raises(RuntimeError, match="unfinished native"):
+            app_retirement.quiesce_native_controller(tmp_path / "config", "hotel-reservation-sdo")
+        assert pauses == []
+    else:
+        app_retirement.quiesce_native_controller(tmp_path / "config", "hotel-reservation-sdo")
+        assert pauses == [(fake, "hotel-reservation-sdo")]
+
+
 def test_attach_only_never_falls_back_to_cluster_creation(tmp_path: Path, monkeypatch):
     from types import SimpleNamespace
 
