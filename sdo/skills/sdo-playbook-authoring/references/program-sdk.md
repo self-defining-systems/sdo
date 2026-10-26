@@ -126,6 +126,9 @@ func BindFinding(spec ProgramSpec, finding sdk.Finding) (Bindings, error)
 func (b Bindings) Clone() Bindings
 
 func (b Bindings) Equal(other Bindings) bool
+    Equal compares object bindings through the shared citation parser and scalar
+    values through their JSON representation. Omitted known API versions are
+    equivalent to their defaults; namespace and explicit versions remain exact.
 
 func (b Bindings) Parameter(spec ProgramSpec, name string) (any, error)
     Parameter resolves one declared value, including a validated default.
