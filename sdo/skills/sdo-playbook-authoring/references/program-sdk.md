@@ -44,6 +44,13 @@ func FieldValue(object map[string]any, path string) (any, error)
     FieldValue resolves numeric indexes, unique [name=NAME] list identities and
     bracketed ConfigMap keys. It does not invent missing intermediate objects.
 
+func Kubernetes(view ReadView) (*kubeclient.ReadClient, error)
+    Kubernetes constructs client-go-shaped read clients for this observation
+    view. Build it once per Diagnose/mitigation or detector invocation.
+    All calls use KubernetesRead, including its cycle cache, failure checking
+    and phase replay. Built-in fields retain Kubernetes types; Dynamic and
+    RESTMapper cover CRDs.
+
 func ProjectPatch(object map[string]any, a PatchObject) (map[string]any, error)
     ProjectPatch is the shared atomic projection used by production and replay.
     Errors leave the input untouched. The API server still validates its schema.

@@ -334,7 +334,7 @@ func allowedProgramImport(path, module string) bool {
 	if strings.HasPrefix(path, module+"/lib/") || path == "sdo.dev/operator/sdk" || strings.HasPrefix(path, "sdo.dev/operator/sdk/") || strings.HasPrefix(path, "k8s.io/api/") {
 		return true
 	}
-	if map[string]bool{"k8s.io/apimachinery/pkg/apis/meta/v1": true, "k8s.io/apimachinery/pkg/util/intstr": true, "k8s.io/apimachinery/pkg/labels": true, "k8s.io/apimachinery/pkg/api/resource": true, "k8s.io/apimachinery/pkg/types": true, "k8s.io/apimachinery/pkg/selection": true, "k8s.io/apimachinery/pkg/util/sets": true}[path] {
+	if map[string]bool{"k8s.io/apimachinery/pkg/apis/meta/v1": true, "k8s.io/apimachinery/pkg/util/intstr": true, "k8s.io/apimachinery/pkg/labels": true, "k8s.io/apimachinery/pkg/api/resource": true, "k8s.io/apimachinery/pkg/types": true, "k8s.io/apimachinery/pkg/runtime/schema": true, "k8s.io/apimachinery/pkg/selection": true, "k8s.io/apimachinery/pkg/util/sets": true}[path] {
 		return true
 	}
 	return map[string]bool{"bytes": true, "context": true, "encoding/json": true, "errors": true, "fmt": true, "io": true, "math": true, "math/rand/v2": true, "reflect": true, "regexp": true, "sort": true, "strconv": true, "strings": true, "testing": true, "time": true, "unicode": true, "unicode/utf8": true}[path]

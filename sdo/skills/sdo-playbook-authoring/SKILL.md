@@ -36,4 +36,6 @@ Before returning memory edits, run the complete memory check and resolve every d
 
 Read [validator rules](references/rules.md) when a diagnostic names a playbook, script or corpus rule.
 
+For API reads, use the [recorded Kubernetes client](references/kubernetes-client.md) with upstream client-go conventions.
+
 For object, command, HTTP, Job or subresource repairs, read the [general action vocabulary](references/general-actions.md).

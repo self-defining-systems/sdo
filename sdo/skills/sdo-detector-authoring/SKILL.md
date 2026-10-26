@@ -29,6 +29,7 @@ Read [validator rules](references/rules.md) before changing a manifest or when a
 
 Use `program.ReadFrom(ctx)` for the shared detector/Diagnose surface; read the
 [generated program SDK](../sdo-playbook-authoring/references/program-sdk.md) before using it.
+Use the [recorded Kubernetes client](../sdo-playbook-authoring/references/kubernetes-client.md) for typed or dynamic API reads.
 It adds logs, TCP/HTTP probes, source/baseline diffs, `QueryMetrics(metrics.Query)`, alerts and traffic to objects.
 The runtime caches identical reads per snapshot and records actual results and failures for offline replay.
 Logs are capped at 64 KiB / 5 s; probes at 5 s. Read failures are errors/Unknown, never clearance;

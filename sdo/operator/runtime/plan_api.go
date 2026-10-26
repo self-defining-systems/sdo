@@ -39,25 +39,26 @@ func (c TypedPlanClient) KubernetesRequest(ctx context.Context, r program.Kubern
 	var client *http.Client
 	var base *url.URL
 	var err error
-	if c.ExecConfig != nil {
-		config := rest.CopyConfig(c.ExecConfig)
-		client, err = rest.HTTPClientFor(config)
+	// Prefer the process-wide client transport; ExecConfig also exists for
+	// remotecommand and must not cause a new wrapper/client for each API read.
+	if c.Client != nil {
+		if transport, ok := c.Client.Discovery().RESTClient().(*rest.RESTClient); ok && transport != nil && transport.Client != nil {
+			client = transport.Client
+			base = transport.Verb(r.Method).AbsPath(r.Path).URL()
+		}
+	}
+	if client == nil && c.ExecConfig != nil {
+		client, err = rest.HTTPClientFor(c.ExecConfig)
 		if err != nil {
 			return nil, ErrKubernetesAPITransportUnavailable
 		}
-		base, err = url.Parse(config.Host)
+		base, err = url.Parse(c.ExecConfig.Host)
 		if err != nil {
 			return nil, fmt.Errorf("%w: invalid API host", ErrKubernetesAPITransportUnavailable)
 		}
 		base.Path += r.Path
-	} else if c.Client != nil {
-		transport, ok := c.Client.Discovery().RESTClient().(*rest.RESTClient)
-		if !ok || transport == nil || transport.Client == nil {
-			return nil, ErrKubernetesAPITransportUnavailable
-		}
-		client = transport.Client
-		base = transport.Verb(r.Method).AbsPath(r.Path).URL()
-	} else {
+	}
+	if client == nil {
 		return nil, ErrKubernetesAPITransportUnavailable
 	}
 	// Reuse the supplied client's authenticated transport, with bounded bodies
@@ -96,6 +97,9 @@ func (c TypedPlanClient) KubernetesRequest(ctx context.Context, r program.Kubern
 	}
 	if len(raw) == 0 {
 		return json.RawMessage("null"), nil
+	}
+	if strings.HasSuffix(r.Path, "/log") || r.Query["watch"] == "true" {
+		return json.Marshal(string(raw))
 	}
 	if !json.Valid(raw) {
 		return nil, fmt.Errorf("Kubernetes API response is not JSON")

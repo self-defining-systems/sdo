@@ -3,6 +3,7 @@ package program
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 func (v snapshotReadView) Observe(o ExternalOperation) (int32, error) {
@@ -33,6 +34,11 @@ func ValidateKubernetesRead(r KubernetesRequest) error {
 	}
 	if r.Method != "GET" && r.Method != "HEAD" {
 		return fmt.Errorf("read view requires GET or HEAD")
+	}
+	for _, part := range strings.Split(r.Path, "/") {
+		if part == "exec" || part == "attach" || part == "portforward" {
+			return fmt.Errorf("connection subresources require a recorded action")
+		}
 	}
 	return nil
 }
