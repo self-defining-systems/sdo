@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 
 	"sdo.dev/operator/sdk"
@@ -60,6 +61,17 @@ var supportedWatches = map[string]struct{}{
 	metrics.Watch.APIVersion + "/" + metrics.Watch.Kind: {},
 }
 
+// SupportedWatches lists, sorted, the "apiVersion/Kind" resources a detector
+// may watch.
+func SupportedWatches() []string {
+	keys := make([]string, 0, len(supportedWatches))
+	for key := range supportedWatches {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
 func validateDetectorSpec(spec sdk.DetectorSpec) error {
 	if spec.Interval <= 0 {
 		return fmt.Errorf("interval must be greater than zero")
@@ -103,7 +115,7 @@ func validateDetectorSpec(spec sdk.DetectorSpec) error {
 		}
 		resourceKey := watch.APIVersion + "/" + watch.Kind
 		if _, ok := supportedWatches[resourceKey]; !ok {
-			return fmt.Errorf("watch %d uses unsupported resource %q", index, resourceKey)
+			return fmt.Errorf("watch %d uses unsupported resource %q; the controller watches only %s", index, resourceKey, strings.Join(SupportedWatches(), ", "))
 		}
 		key := resourceKey + "/" + watch.Namespace
 		if _, ok := seenWatches[key]; ok {
