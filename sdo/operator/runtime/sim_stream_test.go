@@ -315,6 +315,11 @@ func (w *simWorld) onClosed(closure IncidentClosure) {
 	w.mu.Lock()
 	w.closed = append(w.closed, closure)
 	w.mu.Unlock()
+	// A verified success teaches memory only after health held for the window.
+	if len(closure.FinalDetectorStates) > 0 && closure.DispatchError == "" && closure.HealthClearedAt != nil &&
+		(closure.ClosureStabilityWindow <= 0 || closure.VerifiedAt.Sub(*closure.HealthClearedAt) < closure.ClosureStabilityWindow) {
+		w.violate("incident %s committed success %s after health cleared, before its %s stability window", closure.Request.IncidentID, closure.VerifiedAt.Sub(*closure.HealthClearedAt), closure.ClosureStabilityWindow)
+	}
 	if faulty := w.faulty(); len(faulty) > 0 && len(closure.FinalDetectorStates) > 0 {
 		w.violate("incident %s closed verified while %v still faulty", closure.Request.IncidentID, faulty)
 	}
