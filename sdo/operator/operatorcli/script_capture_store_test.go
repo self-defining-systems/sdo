@@ -112,34 +112,75 @@ func TestScriptCapturesEveryObjectBeyondInlineImageBudget(t *testing.T) {
 	}
 }
 
-func TestScriptSecretPreimagesStayCompleteInPrivateChunks(t *testing.T) {
+func TestScriptSecretDataNeverReadOrPersisted(t *testing.T) {
 	ctx := context.Background()
-	client := fake.NewSimpleClientset()
-	store := scriptCaptureStore{maps: client.CoreV1().ConfigMaps("app"), namespace: "app", application: "sdo-script-secret", jobUID: "job"}
+	reads := 0
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reads++
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"apiVersion":"v1","kind":"Secret","metadata":{"name":"synthetic","namespace":"app"},"data":{"password":"c3ludGhldGljLWNhbmFyeQ=="}}`))
+		fmt.Fprint(w, `{"apiVersion":"v1","kind":"Secret","metadata":{"name":"synthetic","namespace":"app"},"data":{"password":"secret-canary"}}`)
 	}))
 	defer upstream.Close()
 	target, _ := url.Parse(upstream.URL)
 	recorder := newScriptRecorder(ctx, target, http.DefaultTransport)
-	recorder.persistImage = store.save
-	recorder.Record(apihistory.Event{Phase: "start", Verb: "patch", Version: "v1", Resource: "secrets", Namespace: "app", Name: "synthetic"}, nil)
+	var persisted []byte
+	recorder.persistImage = func(_ context.Context, _ string, c program.ScriptObjectCapture) (string, error) {
+		raw, _ := json.Marshal(c)
+		persisted = append(persisted, raw...)
+		return "private-ref", nil
+	}
+	event := apihistory.Event{RequestID: "secret-write", Phase: "start", Verb: "patch", Version: "v1", Resource: "secrets", Namespace: "app", Name: "synthetic"}
+	recorder.Record(event, nil)
+	event.Phase = "end"
+	event.Status = 200
+	recorder.Record(event, []byte(`{"apiVersion":"v1","kind":"Secret","metadata":{"name":"synthetic","namespace":"app"},"data":{"password":"secret-canary"}}`))
 	result := program.ScriptExecutionResult{}
 	recorder.settle(&result)
-	if len(result.Objects) != 1 || result.Objects[0].Before != nil || result.Objects[0].ImagesRef == "" || len(result.CaptureGaps) != 0 {
-		t.Fatalf("private Secret preimage unavailable: %+v", result)
+	public, _ := json.Marshal(result)
+	if reads != 0 || len(persisted) != 0 || bytes.Contains(public, []byte("secret-canary")) {
+		t.Fatalf("Secret crossed capture boundary: reads=%d images=%s result=%s", reads, persisted, public)
 	}
-	name := strings.TrimPrefix(result.Objects[0].ImagesRef, "ConfigMap/app/")
-	chunk, err := client.CoreV1().ConfigMaps("app").Get(ctx, name+"-before-0", metav1.GetOptions{})
-	if err != nil {
-		t.Fatal(err)
+	if len(result.Receipts) != 1 {
+		t.Fatal("metadata receipt missing")
 	}
-	if !bytes.Contains(chunk.BinaryData["image"], []byte("c3ludGhldGljLWNhbmFyeQ==")) {
-		t.Fatal("private preimage lost synthetic Secret bytes")
+}
+
+func TestScriptCapturesEachWriteBeforeImage(t *testing.T) {
+	value := "one"
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"settings","namespace":"app","uid":"uid","resourceVersion":%q},"data":{"value":%q}}`, value, value)
+	}))
+	defer upstream.Close()
+	target, _ := url.Parse(upstream.URL)
+	recorder := newScriptRecorder(context.Background(), target, http.DefaultTransport)
+	images := map[string][]string{}
+	recorder.persistImage = func(_ context.Context, key string, c program.ScriptObjectCapture) (string, error) {
+		if c.Before != nil {
+			v, _, _ := unstructured.NestedString(c.Before.Object, "data", "value")
+			images[key] = append(images[key], v)
+		}
+		return key, nil
 	}
-	public, _ := json.Marshal(result.Objects)
-	if bytes.Contains(public, []byte("c3ludGhldGljLWNhbmFyeQ==")) {
-		t.Fatal("Secret bytes escaped private object storage")
+	for _, id := range []string{"write-one", "write-two"} {
+		e := apihistory.Event{RequestID: id, Phase: "start", Verb: "patch", Version: "v1", Resource: "configmaps", Namespace: "app", Name: "settings"}
+		recorder.Record(e, nil)
+		if value == "one" {
+			value = "two"
+		} else {
+			value = "three"
+		}
+		e.Phase = "end"
+		e.Status = 200
+		recorder.Record(e, nil)
+	}
+	distinct := map[string]bool{}
+	for _, values := range images {
+		for _, v := range values {
+			distinct[v] = true
+		}
+	}
+	if !distinct["one"] || !distinct["two"] {
+		t.Fatalf("not every write has its immediate preimage: %+v", images)
 	}
 }
