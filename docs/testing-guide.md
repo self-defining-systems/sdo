@@ -236,6 +236,8 @@ Raw runs and logs stay outside Git at
 `results/toy-cluster-evidence/`; see the
 [validation report](validation/toy-cluster/README.md#integrated-architecture-recheck).
 
+Harness rehearsal gate: `uv run python -m benchmarks.sregym.assurance.rehearse_harness --code-root <freeze> --lane <id>` runs four scripted toy scenarios (baseline, controller restart inside the injection pause, source repair with judge refresh, program-delete RBAC) in under 15 minutes and writes a pass/fail summary JSON; see [scripted rehearsals](../.agents/skills/analyze-experiment/references/scripted-rehearsals.md#harness-rehearsal-gate).
+
 The cold **60-second target remains unmet**. Image transfer/unpacking and initial
 controller setup dominate; the toy app itself deploys in about three seconds.
 The node preparation script amortizes archive transfer. The first learning
