@@ -249,6 +249,9 @@ func BuildWorkspace(ctx context.Context, config Config) (_ *Workspace, err error
 	if err := generateMetricsTest(directory); err != nil {
 		return nil, err
 	}
+	if err := generateControllerStartTest(directory); err != nil {
+		return nil, err
+	}
 	if config.HealthyBaseline != "" {
 		if err := generateHealthyBaselineTest(config.HealthyBaseline, directory); err != nil {
 			return nil, err

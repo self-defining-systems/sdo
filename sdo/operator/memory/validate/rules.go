@@ -82,4 +82,7 @@ const (
 	RuleDetectorVet             = "detector.vet"
 	RuleDetectorTest            = "detector.test"
 	RuleDetectorHealthyBaseline = "detector.healthy-baseline"
+	// RuleDetectorControllerStart rejects detectors the controller would
+	// refuse at start; it runs the controller's own startup validation.
+	RuleDetectorControllerStart = "detector.controller-start"
 )
