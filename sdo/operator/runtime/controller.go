@@ -137,6 +137,7 @@ type Controller struct {
 	responderDone           bool
 	responderLoop           *ResponderLoop
 	responderCancel         context.CancelFunc
+	finishedHoldWake        time.Time
 	earlyStopRetryAt        time.Time
 	pausedEffectRetryAt     time.Time
 	closureStableSince      time.Time

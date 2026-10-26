@@ -9,21 +9,38 @@ import (
 	"sdo.dev/operator/runtime/lifecyclecore"
 )
 
-// IncidentWorkHeld checks durable work before an expired request is retired.
-// Live work holds the incident, and so does a finished responder Job whose
-// result the controller has not consumed: re-dispatch adopts that Job and
-// harvests it. API uncertainty is an error, never evidence that a worker is gone.
-func (d KubernetesJobDispatcher) IncidentWorkHeld(ctx context.Context, incidentID string, resultConsumed bool) (bool, error) {
+// IncidentWork is the durable evidence of who owns open incident work.
+type IncidentWork struct {
+	// Active reports a live, pending, or terminating responder worker.
+	Active bool
+	// FinishedAt is when the newest terminal responder Job (the current
+	// attempt) finished, or zero when none survives.
+	FinishedAt time.Time
+}
+
+// IncidentWork reads durable work before an expired request is retired. API
+// uncertainty is an error, never evidence that a worker is gone.
+func (d KubernetesJobDispatcher) IncidentWork(ctx context.Context, incidentID string) (IncidentWork, error) {
 	inventory, err := d.responderExecutions(ctx, incidentID, 0)
 	if err != nil {
-		return false, err
+		return IncidentWork{}, err
 	}
-	return inventory.active() || !resultConsumed && inventory.finished(), nil
+	return IncidentWork{Active: inventory.active(), FinishedAt: inventory.finishedAt()}, nil
 }
 
 // incidentWorkChecker proves whether open incident work still has an owner.
 type incidentWorkChecker interface {
-	IncidentWorkHeld(ctx context.Context, incidentID string, resultConsumed bool) (bool, error)
+	IncidentWork(ctx context.Context, incidentID string) (IncidentWork, error)
+}
+
+// finishedHoldUntil bounds how long a finished responder Job whose result is
+// unconsumed holds its incident: re-dispatch adopts that Job and harvests its
+// result within the verification bound, or the result is lost.
+func (c *Controller) finishedHoldUntil(work IncidentWork) time.Time {
+	if work.FinishedAt.IsZero() {
+		return time.Time{}
+	}
+	return work.FinishedAt.Add(c.config.VerificationTimeout + ownerLostGrace)
 }
 
 // ownerLostGrace bounds how long open incident work may outlive its owner past
@@ -52,13 +69,23 @@ func (c *Controller) retireExpiredIncident(ctx context.Context, now time.Time) e
 	if !eligible {
 		return nil
 	}
+	reason := retire.reason
 	if checked {
-		held, err := checker.IncidentWorkHeld(ctx, request.IncidentID, resultConsumed)
+		work, err := checker.IncidentWork(ctx, request.IncidentID)
 		if err != nil {
 			return err
 		}
-		if held {
+		if work.Active {
 			return nil
+		}
+		if until := c.finishedHoldUntil(work); !resultConsumed && !until.IsZero() {
+			if now.Before(until) {
+				c.mu.Lock()
+				c.finishedHoldWake = until
+				c.mu.Unlock()
+				return nil
+			}
+			reason = "responder Job finished but its result was not harvested within the verification bound"
 		}
 	}
 	usage, err := c.responderUsage(request.IncidentID)
@@ -77,7 +104,7 @@ func (c *Controller) retireExpiredIncident(ctx context.Context, now time.Time) e
 	closure := IncidentClosure{
 		Request: *request, Result: cloneIncidentResult(c.currentIncidentResult),
 		ObservationGeneration: request.ObservationGeneration,
-		DispatchError:         retire.reason,
+		DispatchError:         reason,
 		DetectedAt:            c.incidentDetectedAt, DispatchedAt: c.incidentDispatchedAt,
 		ResponderCompletedAt: completedAt, VerifiedAt: now, DetectorTimeline: cloneTimeline(c.timeline),
 	}
@@ -164,11 +191,18 @@ func (c *Controller) incidentRetirementDueLocked(workActiveCheckable bool) (reti
 }
 
 // retirementWakeLocked is the next future retirement bound. A past bound held
-// by live work waits for that work's own completion instead of spinning.
+// by live work waits for that work's own completion instead of spinning; one
+// held by a finished Job wakes when that hold ends.
 func (c *Controller) retirementWakeLocked(now time.Time) time.Time {
 	_, checkable := c.dispatcher.(incidentWorkChecker)
-	if _, due, ok := c.incidentRetirementDueLocked(checkable); ok && due.After(now) {
+	_, due, ok := c.incidentRetirementDueLocked(checkable)
+	switch {
+	case !ok:
+		return time.Time{}
+	case due.After(now):
 		return due
+	case c.finishedHoldWake.After(now):
+		return c.finishedHoldWake
 	}
 	return time.Time{}
 }
@@ -179,6 +213,7 @@ func (c *Controller) clearIncidentLocked() {
 	c.earlyLastMutationAt = time.Time{}
 	c.responderLoop = nil
 	c.responderCancel = nil
+	c.finishedHoldWake = time.Time{}
 	c.earlyStopRetryAt = time.Time{}
 	c.incidentOpen = false
 	c.responderDone = false

@@ -124,8 +124,10 @@ Executable cause bindings also require an opening primary-resource finding,
 at least one successful timed repair in the cause, and fresh independent clearance
 for every cause resource after the latest cause mutation. Unwritten symptoms need
 opening and recovered observations, not a mutation receipt. Related resources
-on an opening finding count as symptom observations; written targets still
-require a primary-resource finding. Program bindings must
+on an opening finding count as symptom observations; a written target that an
+opening finding names must clear its own primary-resource finding. On a `success`
+outcome, a written target no opening finding names is covered by another cleared
+finding whose primary resource is in the same cause (a related-only match never covers). Program bindings must
 cover mutation targets; symptoms can be read through the replay snapshot. Aggregate success does not prove every reported cause;
 ambiguous same-resource cause groups abstain. Failed outcomes additionally require
 controller eligibility. Outcome `detector_history` retains post-response incident
