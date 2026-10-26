@@ -10,10 +10,10 @@ import sys
 from typing import TYPE_CHECKING
 
 import pytest
-from mcp.server.fastmcp import FastMCP
 from agentshim.testing import installed_mcp_servers
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
+from mcp.server.fastmcp import FastMCP
 
 from sdo.agents.responder.reflection import ClaudeSessionBackend, CodexSessionBackend
 from tests.structured_turns import ScriptedAgent, reply
