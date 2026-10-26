@@ -274,7 +274,8 @@ def test_incident_row_records_namespace_drift_and_inherited_confounds(tmp_path: 
     record = run_incidents(FakeAgent(clock), Driver(clock), _config(tmp_path, 1), monotonic=clock.monotonic)[0]
     saved = load_records(tmp_path / "incidents.jsonl")[0]
 
-    assert record.error is None and record.recovery_error is None
+    assert record.error is None
+    assert record.recovery_error is None
     assert record.eval_notes == saved.eval_notes == [drift]
     assert record.confounds == saved.confounds == [drift]
 
