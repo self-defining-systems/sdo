@@ -89,8 +89,5 @@ func (c *Controller) closureSourceRestored(ctx context.Context, snapshot sdk.Det
 		}
 	}
 	diff, err := c.drift.View(snapshot).DiffAgainstSource(finding.PrimaryResource)
-	if diff.SourceAbsent {
-		return err == nil && !diff.Changed, err
-	}
-	return err == nil && (driftFieldsRestored(diff, events) || (!diff.Changed && diff.Text == "")), err
+	return err == nil && sourceDriftRestored(diff, events), err
 }

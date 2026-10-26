@@ -216,9 +216,9 @@ def test_worker_injection_guard_is_unconditional_and_precedes_inject(monkeypatch
         worker_bridge,
         "importlib",
         SimpleNamespace(
-            import_module=lambda name: module
-            if name.endswith(".worker")
-            else SimpleNamespace(probe_pod_manifest=lambda *args: {})
+            import_module=lambda name: (
+                module if name.endswith(".worker") else SimpleNamespace(probe_pod_manifest=lambda *args: {})
+            )
         ),
     )
 
@@ -286,9 +286,9 @@ def test_worker_deploy_uses_absent_profile_without_changing_problem_identity(mon
         worker_bridge,
         "importlib",
         SimpleNamespace(
-            import_module=lambda name: module
-            if name.endswith(".worker")
-            else SimpleNamespace(probe_pod_manifest=lambda *args: {})
+            import_module=lambda name: (
+                module if name.endswith(".worker") else SimpleNamespace(probe_pod_manifest=lambda *args: {})
+            )
         ),
     )
     monkeypatch.setattr(clean_start, "remove_injected_objects", lambda *args: None)

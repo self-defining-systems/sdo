@@ -317,6 +317,7 @@ func Resources(c Config, resources ...*metav1.APIResourceList) (Plan, error) {
 		plan.Job.Spec.Template.Annotations[PermissiveResponderAnnotation] = string(settings)
 	}
 
+	labelInstallPlan(c, &plan)
 	fingerprintJob := plan.Job.DeepCopy()
 	fingerprintJob.Annotations = nil
 	encoded, err := json.Marshal(fingerprintJob)
