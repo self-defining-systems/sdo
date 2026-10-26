@@ -229,3 +229,44 @@ def test_recovery_pause_acknowledges_closed_incident_before_return() -> None:
     pause_for_recovery(ops, "hotel-sdo", incident_id="incident-1")
     assert ops.events == [("paused", "hotel-sdo")]
     assert json.loads(ops.logs["hotel-sdo"][-1])["controller_maintenance"] == "paused"
+
+
+def test_persistent_conductor_cleanup_waits_for_the_same_recovery_fence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from benchmarks.sregym.adapter import driver
+
+    monkeypatch.setenv("SREGYM_DEFER_CLEANUP", "1")
+    monkeypatch.setattr(driver, "_application_repository", lambda: tmp_path)
+    monkeypatch.setattr(driver, "_run_persistent", lambda *_: {"namespace": "hotel", "incident_id": "incident-1"})
+
+    def blocked(*_args: object) -> None:
+        raise RuntimeError("incident is still open")
+
+    monkeypatch.setattr(driver, "_quiesce_persistent_cleanup", blocked, raising=False)
+    monkeypatch.setattr(driver, "signal_cleanup", lambda *_: pytest.fail("cleanup before terminal pause"))
+    assert driver._main_persistent(driver._parse_args([]), "http://conductor") == 1
+
+
+def test_persistent_cleanup_drains_before_pausing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from types import SimpleNamespace
+
+    from benchmarks.sregym.adapter import driver
+
+    events = []
+    record = SimpleNamespace(
+        pending=SimpleNamespace(incident_id="incident-1", repository=tmp_path), control_namespace="hotel-sdo"
+    )
+    state = SimpleNamespace(controllers={"hotel": record}, save=lambda *_: events.append("saved"))
+    monkeypatch.setenv(driver.PERSISTENT_STATE_ENV, str(tmp_path / "state.json"))
+    monkeypatch.setattr(driver.PersistentState, "load", lambda *_: state)
+    monkeypatch.setattr(driver, "_cluster_ops", lambda *_: object())
+    monkeypatch.setattr(driver, "drain_pending_incident", lambda *_args, **_kwargs: events.append("drained"))
+
+    def pause(*_args: object, **_kwargs: object) -> None:
+        assert record.pending is None
+        events.append("paused")
+
+    monkeypatch.setattr(driver, "pause_for_recovery", pause)
+    driver._quiesce_persistent_cleanup(driver._parse_args([]), {"namespace": "hotel", "incident_id": "incident-1"})
+    assert events == ["drained", "saved", "paused"]

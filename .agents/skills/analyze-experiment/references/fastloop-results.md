@@ -36,7 +36,8 @@ request maintenance pause, observe its exact paused-generation acknowledgment,
 and recheck that no incident raced admission. Missing state, missing pause support,
 unclosed incidents or failed acknowledgment stop recovery before any harness write.
 Normal cleanup, invalid-injection cleanup, interruption and repeated cleanup passes
-all use this fence. Intake remains paused through recovery verification; the next
+all use this fence. The persistent conductor driver also drains terminal bookkeeping
+and establishes the same fence before signaling application teardown. Intake remains paused through recovery verification; the next
 stage resumes it only through the existing baseline/injection gate. A blocked
 recovery is an eval failure, not an SDO repair or a repeat encounter.
 

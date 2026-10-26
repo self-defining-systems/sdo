@@ -52,8 +52,11 @@ from benchmarks.sregym.adapter.persistent import (
     PERSISTENT_STATE_ENV,
     ClusterOps,
     KubectlClusterOps,
+    PersistentState,
     StageInputs,
     control_namespace_for,
+    drain_pending_incident,
+    pause_for_recovery,
     persist_resolution,
     run_persistent_stage,
 )
@@ -1165,6 +1168,31 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
+def _quiesce_persistent_cleanup(args: argparse.Namespace, resolution: dict[str, Any]) -> None:
+    """Keep conductor teardown behind terminal bookkeeping and paused incident intake."""
+
+    namespace = str(resolution["namespace"])
+    incident_id = str(resolution["incident_id"])
+    state_path = Path(os.environ[PERSISTENT_STATE_ENV])
+    state = PersistentState.load(state_path)
+    record = state.controllers.get(namespace)
+    if record is None:
+        raise RuntimeError("eval: cannot clean up an unrecorded persistent controller")
+    ops = _cluster_ops(args, namespace)
+    if record.pending is not None:
+        if record.pending.incident_id != incident_id:
+            raise RuntimeError("eval: cleanup incident differs from the pending closure")
+        drain_pending_incident(
+            record,
+            ops=ops,
+            repository=record.pending.repository,
+            drained_by="conductor-before-cleanup",
+        )
+        record.pending = None
+        state.save(state_path)
+    pause_for_recovery(ops, record.control_namespace, incident_id=incident_id)
+
+
 def _main_persistent(args: argparse.Namespace, api_base: str) -> int:
     """Report resolution at verified health; the strict receipt follows the reflection drain."""
 
@@ -1181,6 +1209,11 @@ def _main_persistent(args: argparse.Namespace, api_base: str) -> int:
     receipt_dir = _receipt_directory(args.logs_dir, _application_repository())
     persist_resolution(resolution, receipt_dir)
     print(f"SDO_RUN_TELEMETRY={json.dumps(resolution, sort_keys=True, default=str)}")
+    try:
+        _quiesce_persistent_cleanup(args, resolution)
+    except Exception:
+        logger.exception("persistent benchmark cleanup blocked before terminal intake pause")
+        return 1
     signal_cleanup(api_base)
     return 0
 

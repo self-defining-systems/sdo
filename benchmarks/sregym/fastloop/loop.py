@@ -329,7 +329,10 @@ def _recover_fault(agent: IncidentAgent, driver: FaultDriver, outcome: AgentOutc
     # All harness recovery paths, including invalid injection and interruption,
     # pass this fence. Missing SDO pause support fails before a recovery write.
     if agent.name == "sdo":
-        agent.prepare_recovery(outcome)
+        prepare = getattr(agent, "prepare_recovery", None)
+        if not callable(prepare):
+            raise RuntimeError("eval: SDO recovery requires an incident intake pause capability")
+        prepare(outcome)
     return driver.recover()
 
 
