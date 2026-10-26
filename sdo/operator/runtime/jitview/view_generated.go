@@ -46,12 +46,12 @@ func (v *View) Deployments() (r0 []p3.Deployment) {
 	}
 	return
 }
-func (v *View) DiffAgainstBaseline(a0 p4.ObjectRef) (r0 p2.Diff, r1 error) {
+func (v *View) DiffAgainstBaseline(a0 p4.ObjectRef) (r0 p4.SourceDiff, r1 error) {
 	err := v.call("DiffAgainstBaseline", []any{a0}, []any{&r0})
 	r1 = err
 	return
 }
-func (v *View) DiffAgainstSource(a0 p4.ObjectRef) (r0 p2.Diff, r1 error) {
+func (v *View) DiffAgainstSource(a0 p4.ObjectRef) (r0 p4.SourceDiff, r1 error) {
 	err := v.call("DiffAgainstSource", []any{a0}, []any{&r0})
 	r1 = err
 	return

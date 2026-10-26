@@ -317,10 +317,15 @@ def test_app_namespace_container_growth_is_detected_with_component_identity(snap
         admit()
 
 
-@pytest.mark.parametrize("used_percent", [90, 97, 98])
-def test_host_disk_watermark_rejects_with_mount_and_action(used_percent):
-    with pytest.raises(ValueError, match=r"eval:.*disk.*mount /mnt/data.*used.*free space"):
-        lanes.evaluate_host_disk(mount="/mnt/data", total_bytes=1000 * Gi, free_bytes=(100 - used_percent) * 10 * Gi)
+@pytest.mark.parametrize(
+    ("total", "free"), [(3779302981632, 376174182400), (4000 * Gi, 100 * Gi), (10000 * Gi, 352 * Gi)]
+)
+def test_host_disk_absolute_floor_admits_large_volume_headroom(total, free):
+    evidence = lanes.evaluate_host_disk(mount="/mnt/data", total_bytes=total, free_bytes=free)
+    assert evidence["passed"]
+    assert evidence["rule"] == "absolute-free-bytes"
+    assert evidence["floor_bytes"] == 100 * Gi
+    assert "min_free_percent" not in evidence
 
 
 def test_host_disk_byte_floor_protects_small_filesystems():
@@ -344,7 +349,7 @@ def test_invalid_disk_measurement_fails_closed(total, free):
 
 
 @pytest.mark.parametrize(
-    "kwargs", [{"host_disk_floor_bytes": 0}, {"host_disk_min_free_percent": 0}, {"host_disk_min_free_percent": 100}]
+    "kwargs", [{"host_disk_floor_bytes": 0}, {"host_disk_floor_bytes": -1}, {"host_disk_floor_bytes": True}]
 )
 def test_invalid_disk_policy_fails_at_construction(kwargs):
     with pytest.raises((TypeError, ValueError)):
