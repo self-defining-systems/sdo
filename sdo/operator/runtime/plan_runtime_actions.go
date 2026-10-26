@@ -190,12 +190,15 @@ func (e PlanExecutor) applyRuntimePlan(ctx context.Context, incident IncidentReq
 		switch a := a.(type) {
 		case program.DeletePod:
 			deleteErr := e.Client.(planPodDeleter).Delete(ctx, ref, items[i].uid, items[i].rv)
-			if apierrors.IsConflict(deleteErr) || apierrors.IsForbidden(deleteErr) || apierrors.IsUnauthorized(deleteErr) {
-				return result, fmt.Errorf("pod deletion refused: identity changed or controller RBAC denied")
+			if apierrors.IsForbidden(deleteErr) || apierrors.IsUnauthorized(deleteErr) {
+				return result, fmt.Errorf("pod deletion refused: controller RBAC denied delete on pods: %w", deleteErr)
+			}
+			if apierrors.IsConflict(deleteErr) {
+				return result, fmt.Errorf("pod deletion refused: identity changed")
 			}
 
 			live, getErr := e.Client.Get(ctx, ref)
-			confirmed := apierrors.IsNotFound(getErr) || (getErr == nil && live != nil && live.GetUID() != "" && live.GetUID() != items[i].uid)
+			confirmed := apierrors.IsNotFound(getErr) || (getErr == nil && live != nil && live.GetUID() != "" && (live.GetUID() != items[i].uid || live.GetDeletionTimestamp() != nil))
 			if !confirmed {
 				result.ActionReports[i].Status = "unknown"
 				return result, fmt.Errorf("pod deletion unverified: original UID remains or observation unavailable")

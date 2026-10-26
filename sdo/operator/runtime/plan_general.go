@@ -232,7 +232,7 @@ func (e PlanExecutor) generalStep(ctx context.Context, incident IncidentRequest,
 				if effect.AfterKnown && effect.After == nil && effect.Before != nil {
 					patch.Operation = "delete"
 				}
-				if a.Method == "DELETE" && (!effect.AfterKnown || effect.After != nil) {
+				if a.Method == "DELETE" && (!effect.AfterKnown || (effect.After != nil && !terminatingPod(a.Ref, effect.After))) {
 					r.ActionReports[0].Status = "unknown"
 					r.ActionReports[0].FailureReason = "delete_not_confirmed"
 					return r, fmt.Errorf("delete_not_confirmed: API accepted DELETE but absence is unconfirmed")
@@ -542,4 +542,15 @@ func (e PlanExecutor) preflightGeneral(ctx context.Context, incident IncidentReq
 		preview.project(step)
 	}
 	return steps, nil
+}
+
+// terminatingPod reports a Pod whose deletion the API server has accepted: it
+// stays readable with a deletion timestamp until its containers stop, so
+// absence cannot be required of a graceful delete.
+func terminatingPod(ref sdk.ObjectRef, object map[string]any) bool {
+	if ref.APIVersion != "v1" || ref.Kind != "Pod" {
+		return false
+	}
+	stamp, found, _ := unstructured.NestedString(object, "metadata", "deletionTimestamp")
+	return found && stamp != ""
 }

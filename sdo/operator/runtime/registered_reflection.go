@@ -285,6 +285,8 @@ func (w RegisteredReflectionWorker) Reflect(ctx context.Context, closure Inciden
 	return w.withUsage(decision, workspace.IncidentID)
 }
 
+// withUsage totals every logged turn of the incident: each resumed reflection turn, retry and
+// correction appends one record, and the cost of the logical reflection is all of them.
 func (w RegisteredReflectionWorker) withUsage(decision ReflectionDecision, incidentID string) (ReflectionDecision, error) {
 	if w.UsageLogPath != nil {
 		data, err := os.ReadFile(w.UsageLogPath(incidentID))
@@ -297,7 +299,7 @@ func (w RegisteredReflectionWorker) withUsage(decision ReflectionDecision, incid
 					Usage *UsageMetrics `json:"usage"`
 				}
 				if json.Unmarshal(line, &record) == nil && record.Usage != nil {
-					decision.Usage = record.Usage
+					decision.Usage = memory.AddUsage(decision.Usage, record.Usage)
 				}
 			}
 		} else if !errors.Is(err, os.ErrNotExist) {
