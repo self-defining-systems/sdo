@@ -34,6 +34,7 @@ from benchmarks.sregym.adapter.fault_gate import (
     inject_fault_after_controller_baseline,
     request_fault_injection,
 )
+from benchmarks.sregym.adapter.grading import ClosureGrader, ClosureGradingMonitor
 from benchmarks.sregym.adapter.healthy_baseline import capture_snapshots, kubectl_capture_ops, publish_snapshots
 from benchmarks.sregym.adapter.native_operator import (
     NativeHostConfig,
@@ -44,14 +45,18 @@ from benchmarks.sregym.adapter.native_operator import (
     inspect_existing,
     install_existing,
     launch_host,
+    read_incident_evidence,
     sync_existing,
 )
 from benchmarks.sregym.adapter.persistent import (
     PERSISTENT_STATE_ENV,
     ClusterOps,
     KubectlClusterOps,
+    PersistentState,
     StageInputs,
     control_namespace_for,
+    drain_pending_incident,
+    pause_for_recovery,
     persist_resolution,
     run_persistent_stage,
 )
@@ -182,12 +187,12 @@ def _submit_recorded_result(
     *,
     current_stage: Callable[[str], str | None] = get_current_stage_sync,
     submitter: Callable[..., dict[str, Any]] = submit_solution,
-) -> None:
+) -> dict[str, Any]:
     """Publish the responder-authored result when it omitted benchmark transport."""
 
     stage = current_stage(api_base)
     if stage in TERMINAL_STAGES:
-        return
+        return {"done": {"status": stage}}
     if stage not in READY_STAGES:
         raise RuntimeError(f"cannot publish SDO result while SREGym is at stage {stage!r}")
 
@@ -211,13 +216,55 @@ def _submit_recorded_result(
         for item in repair_actions
         if isinstance(item, dict) and str(item.get("summary", "")).strip()
     )
+    responses: dict[str, Any] = {}
     if stage == "diagnosis":
         if not diagnosis:
             raise RuntimeError("SDO result has no confirmed root cause to submit")
-        submitter(diagnosis, phase="diagnosis", api_base=api_base)
+        responses["diagnosis"] = submitter(diagnosis, phase="diagnosis", api_base=api_base)
     if not mitigation:
         raise RuntimeError("SDO result has no successful repair action to submit")
-    submitter(mitigation, phase="mitigation", api_base=api_base)
+    responses["mitigation"] = submitter(mitigation, phase="mitigation", api_base=api_base)
+    return responses
+
+
+def _closure_grading_monitor(native: NativeInstallConfig, api_base: str, directory: Path) -> ClosureGradingMonitor:
+    def state() -> dict[str, Any]:
+        completed = kubectl(
+            ["--request-timeout=10s", "get", "configmap/sdo-controller-state", "-o", "json"],
+            namespace=native.control_namespace,
+            kubeconfig=native.kubeconfig,
+            check=False,
+        )
+        if completed.returncode != 0:
+            details = completed.stderr or completed.stdout
+            if "NotFound" in details or "not found" in details:
+                return {}
+            raise RuntimeError(f"cannot observe closure for grading: {details[-2048:]}")
+        document = json.loads(completed.stdout)
+        return json.loads(document.get("data", {}).get("runtime-state.json", "{}"))
+
+    def identities(snapshot: dict[str, Any]) -> list[str]:
+        closures = [snapshot.get("pending_closure")]
+        failures = snapshot.get("failed_closures", [])
+        if isinstance(failures, list):
+            closures.extend(item.get("closure") for item in failures if isinstance(item, dict))
+        values = [snapshot.get("last_acknowledged_incident_id")]
+        for closure in closures:
+            request = closure.get("request") if isinstance(closure, dict) else None
+            if isinstance(request, dict):
+                values.insert(0, request.get("incident_id"))
+        return [value for value in values if isinstance(value, str) and value]
+
+    known = set(identities(state()))
+
+    def read() -> dict[str, Any] | None:
+        for incident_id in identities(state()):
+            if incident_id not in known:
+                return read_incident_evidence(native, incident_id)["ledger"]
+        return None
+
+    grader = ClosureGrader(directory, api_base, submit=_submit_recorded_result)
+    return ClosureGradingMonitor(grader, read=read)
 
 
 def _receipt_directory(logs_dir: str | None, repository: Path) -> Path:
@@ -977,25 +1024,31 @@ def _run_persistent(args: argparse.Namespace, api_base: str, started: float) -> 
         max_deployment_attempts=args.max_deployment_attempts,
         agent_registrations=Path(args.agent_registrations).resolve() if args.agent_registrations else None,
     )
-    resolution = run_persistent_stage(
-        StageInputs(
-            stage_label=_stage_label(args.logs_dir),
-            application=application,
-            namespace=namespace,
-            lifecycle_fingerprint=_lifecycle_fingerprint(lifecycle_context),
-            runtime_config=config,
-            receipt_dir=receipt_dir,
-            state_path=Path(raw_state_path),
-            kubeconfig=trusted_kubeconfig,
-            verification_timeout_seconds=float(args.timeout_sec + 300),
-            detection_timeout_seconds=(
-                float(args.detection_timeout_sec) if args.detection_timeout_sec is not None else None
-            ),
-        ),
-        ops=_cluster_ops(args, namespace),
-        run_lifecycle=lifecycle,
-        inject=lambda: request_fault_injection(api_base),
+    monitor = (
+        _closure_grading_monitor(native_install_config(config), api_base, receipt_dir)
+        if api_base
+        else contextlib.nullcontext()
     )
+    with monitor:
+        resolution = run_persistent_stage(
+            StageInputs(
+                stage_label=_stage_label(args.logs_dir),
+                application=application,
+                namespace=namespace,
+                lifecycle_fingerprint=_lifecycle_fingerprint(lifecycle_context),
+                runtime_config=config,
+                receipt_dir=receipt_dir,
+                state_path=Path(raw_state_path),
+                kubeconfig=trusted_kubeconfig,
+                verification_timeout_seconds=float(args.timeout_sec + 300),
+                detection_timeout_seconds=(
+                    float(args.detection_timeout_sec) if args.detection_timeout_sec is not None else None
+                ),
+            ),
+            ops=_cluster_ops(args, namespace),
+            run_lifecycle=lifecycle,
+            inject=lambda: request_fault_injection(api_base),
+        )
     resolution["driver_phase_timings_seconds"]["conductor_wait"] = conductor_ready - started
     return resolution
 
@@ -1034,40 +1087,42 @@ def _run(args: argparse.Namespace) -> dict[str, Any]:
     )
     if gate is not None:
         gate.start()
-    host_receipt = _launch_native_lifecycle(
-        args,
-        repository=repository,
-        namespace=namespace,
-        application=application,
-        health_objective=health_objective,
-        api_base=api_base,
-        persistent=False,
-    )
-    runtime_ready = time.monotonic()
-    if gate is not None:
-        try:
-            gate.join()
-        except InvalidInjectionError:
-            _remove_sdo_jobs_before_benchmark_grading({}, control_namespace)
-            raise
     native = _native_install_for_run(args, repository, namespace, application, api_base)
-    if native.kubeconfig is None:
-        raise RuntimeError("native benchmark evidence requires an absolute trusted kubeconfig")
-    incident_id = _acknowledged_incident_id(control_namespace, native.kubeconfig)
-    sync_existing(native)
-    receipt = collect_native_receipt(native, incident_id)
-    receipt["native_host_receipt"] = host_receipt
-    artifact_dir = _receipt_directory(args.logs_dir, repository).resolve()
-    receipt["runtime_artifacts"] = {"directory": str(export_runtime_artifacts(native, artifact_dir))}
-    receipt["fault_injection_deferred"] = fault_deferred
-    if gate is not None:
-        receipt["fault_gate_timings_seconds"] = gate.timings
-    receipt["driver_phase_timings_seconds"] = {
-        "conductor_wait": conductor_ready - started,
-        "native_lifecycle_and_controller": runtime_ready - conductor_ready,
-        "driver_total_before_submission": runtime_ready - started,
-    }
-    return receipt
+    directory = _receipt_directory(args.logs_dir, repository)
+    with _closure_grading_monitor(native, api_base, directory):
+        host_receipt = _launch_native_lifecycle(
+            args,
+            repository=repository,
+            namespace=namespace,
+            application=application,
+            health_objective=health_objective,
+            api_base=api_base,
+            persistent=False,
+        )
+        runtime_ready = time.monotonic()
+        if gate is not None:
+            try:
+                gate.join()
+            except InvalidInjectionError:
+                _remove_sdo_jobs_before_benchmark_grading({}, control_namespace)
+                raise
+        if native.kubeconfig is None:
+            raise RuntimeError("native benchmark evidence requires an absolute trusted kubeconfig")
+        incident_id = _acknowledged_incident_id(control_namespace, native.kubeconfig)
+        sync_existing(native)
+        receipt = collect_native_receipt(native, incident_id)
+        receipt["native_host_receipt"] = host_receipt
+        artifact_dir = _receipt_directory(args.logs_dir, repository).resolve()
+        receipt["runtime_artifacts"] = {"directory": str(export_runtime_artifacts(native, artifact_dir))}
+        receipt["fault_injection_deferred"] = fault_deferred
+        if gate is not None:
+            receipt["fault_gate_timings_seconds"] = gate.timings
+        receipt["driver_phase_timings_seconds"] = {
+            "conductor_wait": conductor_ready - started,
+            "native_lifecycle_and_controller": runtime_ready - conductor_ready,
+            "driver_total_before_submission": runtime_ready - started,
+        }
+        return receipt
 
 
 def _finish_invalid_injection(args: argparse.Namespace, api_base: str, exc: InvalidInjectionError) -> int:
@@ -1105,19 +1160,37 @@ def main(argv: list[str] | None = None) -> int:
         logger.exception("production SDO incident lifecycle failed")
         return 1
     receipt_dir = _receipt_directory(args.logs_dir, _application_repository())
-    # Persist the SDO-authoritative recovery before optional benchmark transport
-    # so a scoring failure cannot erase evidence of a completed incident.
+    # Keep terminal SDO evidence separate from the immutable closure grading checkpoint.
     persist_production_receipt(receipt, receipt_dir)
     _remove_sdo_jobs_before_benchmark_grading(receipt, str(receipt["namespace"]))
-    submission_started = time.monotonic()
-    _submit_recorded_result(receipt, api_base)
-    receipt.setdefault("driver_phase_timings_seconds", {})["benchmark_submission"] = (
-        time.monotonic() - submission_started
-    )
-    persist_production_receipt(receipt, receipt_dir)
     print(f"SDO_RUN_TELEMETRY={json.dumps(receipt, sort_keys=True)}")
     signal_cleanup(api_base)
     return 0
+
+
+def _quiesce_persistent_cleanup(args: argparse.Namespace, resolution: dict[str, Any]) -> None:
+    """Keep conductor teardown behind terminal bookkeeping and paused incident intake."""
+
+    namespace = str(resolution["namespace"])
+    incident_id = str(resolution["incident_id"])
+    state_path = Path(os.environ[PERSISTENT_STATE_ENV])
+    state = PersistentState.load(state_path)
+    record = state.controllers.get(namespace)
+    if record is None:
+        raise RuntimeError("eval: cannot clean up an unrecorded persistent controller")
+    ops = _cluster_ops(args, namespace)
+    if record.pending is not None:
+        if record.pending.incident_id != incident_id:
+            raise RuntimeError("eval: cleanup incident differs from the pending closure")
+        drain_pending_incident(
+            record,
+            ops=ops,
+            repository=record.pending.repository,
+            drained_by="conductor-before-cleanup",
+        )
+        record.pending = None
+        state.save(state_path)
+    pause_for_recovery(ops, record.control_namespace, incident_id=incident_id)
 
 
 def _main_persistent(args: argparse.Namespace, api_base: str) -> int:
@@ -1135,11 +1208,12 @@ def _main_persistent(args: argparse.Namespace, api_base: str) -> int:
         return 1
     receipt_dir = _receipt_directory(args.logs_dir, _application_repository())
     persist_resolution(resolution, receipt_dir)
-    submission_started = time.monotonic()
-    _submit_recorded_result(resolution, api_base)
-    resolution["driver_phase_timings_seconds"]["benchmark_submission"] = time.monotonic() - submission_started
-    persist_resolution(resolution, receipt_dir)
     print(f"SDO_RUN_TELEMETRY={json.dumps(resolution, sort_keys=True, default=str)}")
+    try:
+        _quiesce_persistent_cleanup(args, resolution)
+    except Exception:
+        logger.exception("persistent benchmark cleanup blocked before terminal intake pause")
+        return 1
     signal_cleanup(api_base)
     return 0
 

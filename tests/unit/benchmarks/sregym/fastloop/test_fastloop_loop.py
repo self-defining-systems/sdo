@@ -94,6 +94,9 @@ class FakeAgent:
             sdo_resolution=self.resolution,
         )
 
+    def prepare_recovery(self, outcome: AgentOutcome | None) -> None:
+        """This scripted agent has no background incident intake."""
+
     def close(self) -> None:
         self.events.append("close")
 
@@ -103,7 +106,7 @@ def _config(tmp_path: Path, count: int, problems: tuple[str, ...] = ("p1",)) -> 
 
 
 @pytest.mark.parametrize(("oracle_success", "recover_fails"), [(False, False), (False, True), (True, False)])
-def test_learning_precedes_oracle_grade_and_cleanup_without_feedback(
+def test_grade_precedes_learning_and_cleanup_without_feedback(
     tmp_path: Path, oracle_success: bool, recover_fails: bool
 ) -> None:
     from dataclasses import asdict
@@ -123,7 +126,7 @@ def test_learning_precedes_oracle_grade_and_cleanup_without_feedback(
 
     class Agent(FakeAgent):
         def learn(self, outcome: AgentOutcome) -> AgentOutcome:
-            assert events == [], "learning must precede grading and cleanup"
+            assert events == ["grade", "oracle"], "grading must finish before learning; cleanup must wait"
             assert canary not in json.dumps(asdict(outcome), default=str)
             events.append("learn")
             return super().learn(outcome)
@@ -142,7 +145,7 @@ def test_learning_precedes_oracle_grade_and_cleanup_without_feedback(
         grader=Grader(),
         diagnosis_grading="inline",
     )
-    assert events[0] == "learn"
+    assert events[:3] == ["grade", "oracle", "learn"]
     assert "learn:incident-0" in agent.events
 
 
@@ -701,3 +704,70 @@ def test_incident_row_rereads_delivery_after_source_deployment(tmp_path, failed)
     persisted = load_records(config.results_path)
     assert records[0].image_delivery == persisted[0].image_delivery == "kind-load-fallback"
     assert records[0].image_delivery_reason == "mid-run registry failure"
+
+
+def test_grade_is_persisted_before_failed_reflection_and_never_changed(tmp_path: Path) -> None:
+    clock = FakeClock()
+    config = _config(tmp_path, 1)
+    saved = {}
+
+    class Agent(FakeAgent):
+        def learn(self, outcome: AgentOutcome) -> AgentOutcome:
+            grade_path = config.results_path.with_suffix(".grades") / "000000.json"
+            saved.update(json.loads(grade_path.read_text()))
+            assert saved["oracle"]["success"] is True
+            assert saved["graded_at"] == (T0 + timedelta(seconds=70)).isoformat().replace("+00:00", "Z")
+            assert saved["closure_to_grade_seconds"] == 5
+            assert saved["reflection_seconds"] is None
+            raise RuntimeError("reflection failed after grade")
+
+    records = run_incidents(
+        Agent(clock),
+        FakeDriver(clock),
+        config,
+        monotonic=clock.monotonic,
+        now=lambda: T0 + timedelta(seconds=70),
+    )
+    assert saved, "grading evidence must be durable before reflection"
+    assert records[0].oracle.success is True
+    assert "reflection failed" in records[0].error
+    assert json.loads((tmp_path / "incidents.grades/000000.json").read_text()) == saved
+
+
+def test_recovery_cannot_open_incidents_while_sdo_intake_is_live(tmp_path: Path) -> None:
+    clock = FakeClock()
+    state = {"closed": False, "intake_live": True}
+    unsolicited = []
+
+    class Agent(FakeAgent):
+        def learn(self, outcome: AgentOutcome) -> AgentOutcome:
+            learned = super().learn(outcome)
+            state["closed"] = True
+            return learned
+
+        def prepare_recovery(self, outcome: AgentOutcome | None) -> None:
+            assert state["closed"], "recovery must wait for terminal closure"
+            state["intake_live"] = False
+
+    class Driver(FakeDriver):
+        def recover(self) -> float:
+            if state["intake_live"]:
+                unsolicited.append("cleanup opened an unsolicited incident")
+            assert state["closed"]
+            return super().recover()
+
+    records = run_incidents(Agent(clock), Driver(clock), _config(tmp_path, 1), monotonic=clock.monotonic)
+    assert not unsolicited
+    assert records[0].recovery_error is None
+
+
+def test_sdo_without_recovery_pause_cannot_mutate_the_cluster(tmp_path: Path) -> None:
+    clock = FakeClock()
+    driver = FakeDriver(clock)
+
+    class Agent(FakeAgent):
+        prepare_recovery = None
+
+    records = run_incidents(Agent(clock), driver, _config(tmp_path, 1), monotonic=clock.monotonic)
+    assert "recover" not in driver.events
+    assert records[0].recovery_error is not None
