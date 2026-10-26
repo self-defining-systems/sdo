@@ -235,3 +235,27 @@ func TestAdoptionRecordsPreexistingPDBDifferenceOnce(t *testing.T) {
 		t.Fatalf("pre-existing PDB difference was not recorded once: %+v", state.DriftEvents)
 	}
 }
+
+// Adoption claims no field ownership of shared cluster objects outside the
+// app's own RBAC grants, and declaring one does not block the namespace.
+func TestAdoptionLeavesSharedClusterObjectsUnowned(t *testing.T) {
+	storageClass := &unstructured.Unstructured{Object: map[string]any{"apiVersion": "storage.k8s.io/v1", "kind": "StorageClass", "metadata": map[string]any{"name": "fast"}, "provisioner": "example.com/disk"}}
+	pvc := adoptionObject("v1", "PersistentVolumeClaim", "data", map[string]any{"accessModes": []any{"ReadWriteOnce"}})
+	live := map[string]map[string]any{
+		"/apis/storage.k8s.io/v1/storageclasses/fast":        seededLive(storageClass),
+		"/api/v1/namespaces/app/persistentvolumeclaims/data": seededLive(pvc),
+	}
+	controller, api := genericAdoptionController(t, []*unstructured.Unstructured{storageClass, pvc}, live)
+	if err := controller.StepEvents(context.Background(), time.Unix(10, 0).UTC(), nil); err != nil {
+		t.Fatal(err)
+	}
+	status := exportState(t, controller).OwnershipAdoption
+	if status.LastError != "" || status.AdoptedObjects != 1 || api.applies != 1 {
+		t.Fatalf("adoption status=%+v applies=%d", status, api.applies)
+	}
+	for _, request := range api.requests {
+		if strings.Contains(request, "/storageclasses/") {
+			t.Fatalf("adoption touched a shared cluster object: %v", api.requests)
+		}
+	}
+}
