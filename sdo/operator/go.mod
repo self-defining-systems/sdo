@@ -6,6 +6,7 @@ require (
 	github.com/distribution/reference v0.6.0
 	github.com/moby/patternmatcher v0.6.0
 	google.golang.org/protobuf v1.36.12
+	k8s.io/metrics v0.30.3
 	sdo.dev/operator/contracts v0.0.0
 )
 

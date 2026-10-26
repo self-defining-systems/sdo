@@ -6,6 +6,7 @@ require (
 	github.com/evanphx/json-patch v4.12.0+incompatible
 	k8s.io/api v0.30.3
 	k8s.io/apimachinery v0.30.3
+	k8s.io/metrics v0.30.3
 )
 
 require (
