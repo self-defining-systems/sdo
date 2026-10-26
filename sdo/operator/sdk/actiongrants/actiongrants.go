@@ -1,4 +1,7 @@
-package program
+// Package actiongrants states the Kubernetes RBAC each program plan action
+// needs. It is kept out of package program so the authoring SDK reference
+// stays about what programs write; the installer and its ratchet read it.
+package actiongrants
 
 // Permission is one Kubernetes RBAC need of a plan action: the verbs the
 // controller performs on a resource, in the incident namespace.
@@ -54,7 +57,7 @@ func workloadKinds(verbs ...string) []Permission {
 
 const openEnded = "the program names any kind; the API server's RBAC is the only authority"
 
-// ActionPermissions has one entry for every Action type in this package. The
+// ActionPermissions has one entry for every Action type in package program. The
 // installer derives the controller Role from it, and a test fails when a new
 // action type has no entry, so a vocabulary addition cannot ship ungranted.
 var ActionPermissions = map[string]ActionPermission{

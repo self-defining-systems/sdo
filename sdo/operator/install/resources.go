@@ -336,7 +336,7 @@ func Resources(c Config, resources ...*metav1.APIResourceList) (Plan, error) {
 }
 
 // programApplyRules grant the verbs of the program plan vocabulary
-// (program.ActionPermissions); TestControllerRoleHoldsEveryProgramActionPermission
+// (actiongrants.ActionPermissions); TestControllerRoleHoldsEveryProgramActionPermission
 // ties them together. Kinds a program names outside that table are open-ended
 // and authorized by the API server alone.
 func programApplyRules() []rbacv1.PolicyRule {

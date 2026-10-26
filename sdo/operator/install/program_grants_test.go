@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	rbacv1 "k8s.io/api/rbac/v1"
-	"sdo.dev/operator/sdk/program"
+	"sdo.dev/operator/sdk/actiongrants"
 )
 
 func ruleGrants(rules []rbacv1.PolicyRule, group, resource, verb string) bool {
@@ -26,7 +26,7 @@ func ruleGrants(rules []rbacv1.PolicyRule, group, resource, verb string) bool {
 }
 
 // A program plan is denied at run time when the controller Role lacks a verb
-// its action performs. program.ActionPermissions is the vocabulary's own
+// its action performs. actiongrants.ActionPermissions is the vocabulary's own
 // statement of those verbs, so the Role of both install layouts must hold all
 // of them and no action may be added without an entry.
 func TestControllerRoleHoldsEveryProgramActionPermission(t *testing.T) {
@@ -47,7 +47,7 @@ func TestControllerRoleHoldsEveryProgramActionPermission(t *testing.T) {
 		if len(controller) == 0 {
 			t.Fatalf("%s: no controller Role in the application namespace", name)
 		}
-		for action, entry := range program.ActionPermissions {
+		for action, entry := range actiongrants.ActionPermissions {
 			for _, need := range entry.Needs {
 				for _, verb := range need.Verbs {
 					if !ruleGrants(controller, need.Group, need.Resource, verb) {
