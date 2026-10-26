@@ -225,6 +225,11 @@ def up_preflight(args: argparse.Namespace) -> None:
     import shutil
     import warnings
 
+    if getattr(args, "reuse_cluster_only", False):
+        if args.dev_mount is not None:
+            raise ValueError("attach-only up requires --no-dev-mount; existing node mounts cannot be changed")
+        if not os.environ.get("KUBECONFIG") or not Path(os.environ["KUBECONFIG"]).is_file():
+            raise ValueError("attach-only up requires the existing lane KUBECONFIG")
     if args.kind_worker_nodes < 0:
         raise SystemExit("--kind-worker-nodes must not be negative")
     if getattr(args, "parallel_root", None) is not None and (args.dev_mount is None or args.app == "toy"):
@@ -342,7 +347,11 @@ def _up(args: argparse.Namespace) -> int:
     placeholder = FastloopEnvironment(
         run_dir=run_dir,
         cluster=worker_env["SREGYM_KIND_CLUSTER_NAME"],
-        kubeconfig=run_dir / "kubeconfigs" / f"worker_{args.worker_id}.kubeconfig",
+        kubeconfig=(
+            Path(os.environ["KUBECONFIG"]).resolve()
+            if args.reuse_cluster_only
+            else run_dir / "kubeconfigs" / f"worker_{args.worker_id}.kubeconfig"
+        ),
         namespace="",
         application="",
         workspace=workspace,
@@ -368,7 +377,10 @@ def _up(args: argparse.Namespace) -> int:
     )
     with worker:
         cluster = worker.request(
-            "cluster", worker_id=args.worker_id, log_dir=str(run_dir), timeout=CLUSTER_OP_TIMEOUT_SECONDS
+            "attach_existing" if args.reuse_cluster_only else "cluster",
+            worker_id=args.worker_id,
+            log_dir=str(run_dir),
+            timeout=CLUSTER_OP_TIMEOUT_SECONDS,
         )
         deployed = worker.request(
             "deploy",
@@ -1117,6 +1129,80 @@ def _restore_seed(environment: FastloopEnvironment) -> None:
     subprocess.run(["git", "-C", str(environment.workspace), "clean", "-fd"], check=True)
 
 
+def _retire_app(args: argparse.Namespace) -> int:
+    from benchmarks.sregym.fastloop.app_retirement import (
+        KubectlRetirementOps,
+        RetirementRequest,
+        retire_application,
+    )
+    from benchmarks.sregym.fastloop.lane_guard import LaneGuard
+
+    environment = FastloopEnvironment.load(args.run_dir.resolve())
+    request = RetirementRequest(
+        cluster=environment.cluster,
+        namespace=environment.namespace,
+        next_namespace=args.next_namespace,
+        lease=args.lease,
+        coord=args.coord,
+    )
+    if args.run_dir.resolve() == args.next_run_dir.resolve():
+        raise ValueError("app retirement requires a new run directory for the next memory lineage")
+    ops = KubectlRetirementOps(request, environment.kubeconfig)
+    ops.check_lease()
+    LaneGuard(environment.cluster, environment.kubeconfig, args.lease, args.coord).install()
+    prefix, separator, worker_id = environment.cluster.rpartition("-")
+    if not separator or not worker_id.isdigit():
+        raise ValueError("app retirement requires a kind lane name ending in its worker ID")
+    command = [
+        "up",
+        "--run-dir",
+        str(args.next_run_dir),
+        "--seed",
+        str(args.seed),
+        "--problem",
+        args.next_problem,
+        "--cluster-prefix",
+        prefix + "-",
+        "--worker-id",
+        worker_id,
+        "--sregym-dir",
+        str(args.sregym_dir),
+        "--no-dev-mount",
+        "--reuse-cluster-only",
+    ]
+    for role in ("controller", "responder", "validator"):
+        command.extend([f"--{role}-image", getattr(args, f"{role}_image")])
+    up_args = build_parser().parse_args(command)
+    # Check source/image/host prerequisites before retiring the old application.
+    up_preflight(up_args)
+    args.next_run_dir.mkdir(parents=True, exist_ok=True)
+    (args.next_run_dir / "app-retirement-started.json").write_text(
+        json.dumps(
+            {
+                "cluster": request.cluster,
+                "lease": request.lease,
+                "retired_namespaces": sorted(request.namespaces),
+                "next_namespace": request.next_namespace,
+                "cluster_recreated": False,
+            },
+            indent=2,
+        )
+        + "\n"
+    )
+
+    def deploy_next() -> None:
+        _up(up_args)
+        next_environment = FastloopEnvironment.load(args.next_run_dir.resolve())
+        if next_environment.cluster != environment.cluster or next_environment.namespace != args.next_namespace:
+            raise ValueError("eval: next application deployment differs from the requested warm lane")
+
+    receipt = retire_application(request, ops, deploy_next=deploy_next)
+    args.next_run_dir.mkdir(parents=True, exist_ok=True)
+    (args.next_run_dir / "app-retirement.json").write_text(json.dumps(receipt, indent=2) + "\n")
+    print(json.dumps(receipt))
+    return 0
+
+
 def _parallel(args: argparse.Namespace) -> int:
     from benchmarks.sregym.fastloop.parallel import ParallelPlan, run_parallel
 
@@ -1185,6 +1271,11 @@ def build_parser() -> argparse.ArgumentParser:
     up.add_argument("--problem", default=DEFAULT_PROBLEM, help="problem whose application is deployed")
     up.add_argument("--cluster-prefix", default="fastloop-w")
     up.add_argument("--worker-id", type=int, default=0)
+    up.add_argument(
+        "--reuse-cluster-only",
+        action="store_true",
+        help="attach with KUBECONFIG or refuse; never create or recreate a kind cluster",
+    )
     up.add_argument("--cpu-limit", default="3", help="docker --cpus per kind node, as the benchmark workers use")
     up.add_argument(
         "--kind-worker-nodes",
@@ -1216,6 +1307,19 @@ def build_parser() -> argparse.ArgumentParser:
         help="run the SREGym worker without a private /tmp (unsafe next to other SREGym runs)",
     )
     up.set_defaults(handler=_up)
+
+    retire = commands.add_parser("retire-app", help="retire one app and deploy the next on its existing kind lane")
+    retire.add_argument("--run-dir", type=Path, required=True)
+    retire.add_argument("--next-run-dir", type=Path, required=True)
+    retire.add_argument("--next-namespace", required=True)
+    retire.add_argument("--next-problem", required=True)
+    retire.add_argument("--seed", type=Path, required=True)
+    retire.add_argument("--lease", required=True)
+    retire.add_argument("--coord", default="/mnt/data/shli/coord/coord")
+    retire.add_argument("--sregym-dir", type=Path, default=DEFAULT_SREGYM_DIR)
+    for role in ("controller", "responder", "validator"):
+        retire.add_argument(f"--{role}-image", required=True)
+    retire.set_defaults(handler=_retire_app)
 
     from benchmarks.sregym.fastloop.dry_run import budget, execute, setup_budget
 
