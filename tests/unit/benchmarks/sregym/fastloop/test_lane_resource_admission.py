@@ -35,6 +35,8 @@ def lane(tmp_path, monkeypatch):
     gate = admission.LaneAdmission(
         environment, SimpleNamespace(request=request), SimpleNamespace(runtime_state=state), tmp_path / "admission"
     )
+    complete = {"complete": {"acceptedCommit": "a" * 40, "objects": [{}]}, "pending": None}
+    monkeypatch.setattr(admission.LaneAdmission, "_onboarding", lambda self, control: complete)
     monkeypatch.setattr(rbac, "verify_rbac", lambda *args: {"passed": True})
     monkeypatch.setattr(hotel_helpers, "admit_install", lambda *args: {"passed": True, "profile": "ABSENT"})
     monkeypatch.setattr(admission, "workload_identity", lambda *args: {"Deployment/app": {"generation": 1}})
@@ -275,3 +277,53 @@ def test_workload_refusal_names_the_sdo_incident_active_before_injection(lane, m
     with pytest.raises(ValueError, match="workload not Ready: Deployment/currency") as refused:
         gate.prove("astronomy-shop-sdo")
     assert "SDO incident work active before injection: astronomy-1793" in str(refused.value)
+
+
+def first_adoption(gate, monkeypatch, finishes_at: float) -> list[float]:
+    """Model a fresh seed: install-existing and the first health refresh run until ``finishes_at``."""
+    now = [0.0]
+    monkeypatch.setattr(admission.time, "monotonic", lambda: now[0])
+    monkeypatch.setattr(admission.time, "sleep", lambda seconds: now.__setitem__(0, now[0] + seconds))
+    monkeypatch.setattr(admission, "assert_lane_resources", lambda *args, **kwargs: {"passed": True})
+    state = gate.ops.runtime_state
+
+    def runtime(control):
+        return state(control) if now[0] >= finishes_at else {"history": []}
+
+    def onboarding(control):
+        if now[0] < finishes_at:
+            return {"complete": None, "pending": {"acceptedCommit": "a" * 40}}
+        return {"complete": {"acceptedCommit": "b" * 40, "objects": [{"kind": "Deployment"}]}, "pending": None}
+
+    monkeypatch.setattr(gate.ops, "runtime_state", runtime)
+    monkeypatch.setattr(gate, "_onboarding", onboarding)
+    return now
+
+
+def test_stabilization_clock_starts_only_after_first_adoption_onboarding(lane, monkeypatch):
+    gate, _ = lane
+    now = first_adoption(gate, monkeypatch, finishes_at=290)
+
+    def request(op, **kwargs):
+        assert kwargs["timeout"] == pytest.approx(300), "onboarding consumed the stabilization window"
+        return {"success": True}
+
+    gate.worker.request = request
+    assert gate.prove("hotel-reservation-sdo")["passed"] is True
+    evidence = json.loads((gate.directory / "onboarding.json").read_text())
+    assert evidence["passed"] is True
+    assert evidence["accepted_commit"] == "b" * 40
+    assert 290 <= evidence["seconds"] < 300
+    assert now[0] >= 290
+
+
+def test_unfinished_onboarding_fails_on_its_own_budget_without_sampling_health(lane, monkeypatch):
+    gate, calls = lane
+    gate.onboarding_timeout_seconds = 120
+    first_adoption(gate, monkeypatch, finishes_at=10_000)
+    with pytest.raises(ValueError, match=r"onboarding did not finish within 120s"):
+        gate.prove("hotel-reservation-sdo")
+    assert "traffic" not in calls
+    evidence = json.loads((gate.directory / "onboarding.json").read_text())
+    assert evidence["passed"] is False
+    assert evidence["pending"] is True

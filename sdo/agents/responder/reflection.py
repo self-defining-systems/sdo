@@ -160,6 +160,30 @@ class ResponderSessionUnavailable(RuntimeError):
 #: benchmark comparing SDO against a stock agent declares the same effort.
 INCIDENT_REASONING_EFFORT = "medium"
 
+#: Absolute Unix time of the controller's frozen reflection task deadline. The
+#: worker binds it from the task; the Job and any claimed standby end no earlier.
+REFLECTION_DEADLINE_ENV = "SDO_REFLECTION_DEADLINE"
+#: The agent stops this long before that deadline so its typed result is published first.
+REFLECTION_RESULT_MARGIN_SECONDS = 120.0
+#: Budget without a bound deadline: the controller's default 30-minute task deadline.
+DEFAULT_REFLECTION_SECONDS = 1800.0 - REFLECTION_RESULT_MARGIN_SECONDS
+
+
+class ReflectionDeadlineExceeded(RuntimeError):
+    """The reflection used its whole budget before the agent returned a valid result."""
+
+
+def reflection_budget_seconds() -> float:
+    """Seconds the reflection agent may use, ending before the frozen task deadline."""
+    raw = os.environ.get(REFLECTION_DEADLINE_ENV)
+    if not raw:
+        return DEFAULT_REFLECTION_SECONDS
+    budget = float(raw) - time.time() - REFLECTION_RESULT_MARGIN_SECONDS
+    if not budget > 0:
+        raise ReflectionDeadlineExceeded("reflection task deadline leaves no agent budget")
+    return budget
+
+
 _GENERALIZING_GUIDANCE = ("generalize", "generalize-spec")
 
 
@@ -376,7 +400,7 @@ class CodexSessionBackend:
         *,
         model: str | None = None,
         reasoning_effort: str = INCIDENT_REASONING_EFFORT,
-        timeout_seconds: int = 900,
+        timeout_seconds: float | None = None,
         executor: CommandExecutor | None = None,
         memory_checker: Callable[[Path, ReflectionResult, float], ValidationResult] = check_reflection_result,
     ) -> None:
@@ -415,13 +439,22 @@ class CodexSessionBackend:
         idempotency_key: str,
         session_id: str | None,
     ) -> ReflectionTurn:
-        deadline = time.monotonic() + self.timeout_seconds
+        budget = reflection_budget_seconds() if self.timeout_seconds is None else self.timeout_seconds
+        deadline = time.monotonic() + budget
+
+        def remaining() -> float:
+            left = deadline - time.monotonic()
+            if left <= 0:
+                raise ReflectionDeadlineExceeded(f"reflection exceeded its {budget:g}s budget")
+            return left
+
         turn = self._run(
             worktree=worktree,
             prompt=render_prompt(
                 "responder", "turn_01", part="reflection.instructions", idempotency_key=idempotency_key, prompt=prompt
             ),
             session_id=session_id,
+            timeout_seconds=budget,
         )
         usage: dict[str, int | float] = {}
         for attempt in range(4):
@@ -434,7 +467,7 @@ class CodexSessionBackend:
                     worktree=worktree,
                     prompt=branch_correction("reflection"),
                     session_id=turn.session_id,
-                    timeout_seconds=max(0, deadline - time.monotonic()),
+                    timeout_seconds=remaining(),
                 )
                 for name, value in turn_usage(turn).items():
                     usage[name] = usage.get(name, 0) + value
@@ -443,9 +476,7 @@ class CodexSessionBackend:
             # view must not discard deprecated payloads or reject a decision
             # before the shared Go diagnostics can drive an in-session correction.
             decision = json_format.ParseDict(payload, ReflectionResult())
-            check = self.memory_checker(
-                worktree, decision, min(VALIDATION_TIMEOUT_SECONDS, deadline - time.monotonic())
-            )
+            check = self.memory_checker(worktree, decision, min(VALIDATION_TIMEOUT_SECONDS, remaining()))
             decision, check = withhold_unverifiable_detectors(
                 worktree,
                 decision,
@@ -463,13 +494,11 @@ class CodexSessionBackend:
                 worktree=worktree,
                 prompt=memory_check_correction(check, idempotency_key),
                 session_id=turn.session_id,
-                timeout_seconds=max(0, deadline - time.monotonic()),
+                timeout_seconds=remaining(),
             )
         raise AssertionError("unreachable reflection validation state")
 
-    def _run(
-        self, *, worktree: Path, prompt: str, session_id: str | None, timeout_seconds: float | None = None
-    ) -> StructuredTurn:
+    def _run(self, *, worktree: Path, prompt: str, session_id: str | None, timeout_seconds: float) -> StructuredTurn:
         if os.environ.get("SDO_API_HISTORY_DIR"):
             prompt += render_prompt("responder", "run_01", part="reflection.instructions")
         try:
@@ -480,7 +509,7 @@ class CodexSessionBackend:
                 access="danger-full-access",
                 model=self.model,
                 reasoning_effort=self.reasoning_effort,
-                timeout_seconds=self.timeout_seconds if timeout_seconds is None else timeout_seconds,
+                timeout_seconds=timeout_seconds,
                 resume_session_id=session_id,
                 executor=self.executor,
                 **session_turn_options(self.provider, worktree),

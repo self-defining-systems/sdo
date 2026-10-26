@@ -8,13 +8,16 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, cast
 
+from libs.agent_cli.structured import StructuredTurnTimeout
 from sdo.agents.provider import resolve_agent
 from sdo.agents.responder.credentials import prepare_claude_home, prepare_codex_home, skills_for_role
 from sdo.agents.responder.job import KubernetesResultPublisher
 from sdo.agents.responder.reflection import (
+    REFLECTION_DEADLINE_ENV,
     REFLECTION_GUIDANCE_MODES,
     ClaudeSessionBackend,
     CodexSessionBackend,
+    ReflectionDeadlineExceeded,
     ReflectionGuidance,
     ReflectionSessionMode,
     ReflectionTurn,
@@ -42,6 +45,7 @@ AGENT_ID = "sdo-reflector"
 TASK_TYPE = "outcome-reflection-direct-v1"
 DEFAULT_TASK_PATH = Path("/sdo/request/agent-task.json")
 _SESSION_TOKEN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}\Z")
+RESULT_BUDGET_BYTES = 700 << 10
 
 
 class ResultPublisher(Protocol):
@@ -124,11 +128,13 @@ def run_reflection_task(
         "SDO_INCIDENT_ID": outcome.incident_id,
         "SDO_CAPTURED_CORPUS_DIR": os.environ.get("SDO_CAPTURED_CORPUS_DIR", "/sdo/session/corpus"),
     }
+    if task.HasField("deadline"):
+        environment[REFLECTION_DEADLINE_ENV] = repr(task.deadline.ToNanoseconds() / 1e9)
     previous = {key: os.environ.get(key) for key in environment}
     selected = reflector or _default_reflector(cast("ReflectionGuidance", guidance))
     try:
         os.environ.update(environment)
-        turn = selected.resume(
+        turn: ReflectionTurn | None = selected.resume(
             session_id=prior_session or "",
             incident_id=outcome.incident_id,
             worktree=Path(task.workspace.checkout_path),
@@ -142,28 +148,47 @@ def run_reflection_task(
             cause_work=list(request.cause_work),
             unassigned_work=list(request.unassigned_work),
         )
+        failure: tuple[str, str] | None = None
+    except (OSError, ValueError, RuntimeError) as exc:
+        # A failed turn is a typed outcome for the controller, not a failed Job.
+        turn, failure = None, (_failure_reason(exc), str(exc))
     finally:
         for key, value in previous.items():
             if value is None:
                 os.environ.pop(key, None)
             else:
                 os.environ[key] = value
-    typed_result = turn.to_result()
     result = AgentResult(
         schema_version=SCHEMA_VERSION,
         task_id=task.task_id,
         status="completed",
         proposal_id=task.workspace.proposal_id,
     )
-    result.response.Pack(typed_result)
-    payload = to_canonical_json(result)
-    if len(payload.encode("utf-8")) > 700 << 10:
-        raise ValueError(
-            "reflection result exceeds the worker transport budget; "
-            "use corpus references and reduce proposal source size"
-        )
-    publisher.publish_payload(result_name, "agent-result.json", payload)
+    if turn is not None:
+        result.response.Pack(turn.to_result())
+        if len(to_canonical_json(result).encode("utf-8")) > RESULT_BUDGET_BYTES:
+            failure = (
+                "result_too_large",
+                "reflection result exceeds the worker transport budget; "
+                "use corpus references and reduce proposal source size",
+            )
+    if failure is not None:
+        result.ClearField("response")
+        result.status = "failed"
+        result.failure_reason, summary = failure
+        result.error_summary = summary[:4096] or result.failure_reason
+        print(f"reflection failed ({result.failure_reason}): {summary}", file=sys.stderr)
+    publisher.publish_payload(result_name, "agent-result.json", to_canonical_json(result))
     return result
+
+
+def _failure_reason(exc: BaseException) -> str:
+    cause: BaseException | None = exc
+    while cause is not None:
+        if isinstance(cause, (StructuredTurnTimeout, ReflectionDeadlineExceeded)):
+            return "agent_timeout"
+        cause = cause.__cause__ or cause.__context__
+    return "agent_failed"
 
 
 def main() -> int:
