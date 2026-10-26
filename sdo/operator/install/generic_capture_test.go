@@ -18,7 +18,7 @@ func TestDiscoveryCaptureGrantsCoverNewKindsWithoutSecretReads(t *testing.T) {
 				for _, resource := range rule.Resources {
 					seen[resource] = true
 					for _, verb := range rule.Verbs {
-						if verb != "get" && verb != "list" {
+						if verb != "get" && verb != "list" && verb != "watch" {
 							t.Fatalf("capture granted mutation: %+v", rule)
 						}
 					}

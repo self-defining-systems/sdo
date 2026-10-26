@@ -2,6 +2,7 @@ package install
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -93,8 +94,15 @@ func TestObservationInstallNarrowReinstall(t *testing.T) {
 			t.Errorf("revoked RoleBinding retained: %s", binding.Name)
 		}
 	}
-	if len(clusterRoles.Items) != 0 || len(clusterBindings.Items) != 0 {
-		t.Error("revoked cluster observation authority retained")
+	for _, role := range clusterRoles.Items {
+		if !strings.Contains(role.Name, "-object-capture") {
+			t.Errorf("revoked cluster observation authority retained: %s", role.Name)
+		}
+	}
+	for _, binding := range clusterBindings.Items {
+		if !strings.Contains(binding.Name, "-object-capture") {
+			t.Errorf("revoked cluster observation binding retained: %s", binding.Name)
+		}
 	}
 	for _, binding := range current.ObservationBindings {
 		got, err := client.RbacV1().RoleBindings(binding.Namespace).Get(ctx, binding.Name, metav1.GetOptions{})

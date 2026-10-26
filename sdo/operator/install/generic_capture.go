@@ -15,8 +15,14 @@ func captureGrantName(control string) string { return control + "-object-capture
 // capture reader still bounds collection to app and incident-touched scopes.
 // Kubernetes RBAC has no subtraction, so Secrets cannot use a wildcard grant.
 func addCaptureGrants(c Config, p *Plan, resources []*metav1.APIResourceList) error {
+	// The controller's informers list and watch these cluster-wide whatever
+	// discovery returns; without the grant they never sync and it is blind.
 	var rules []rbacv1.PolicyRule
 	seen := map[string]bool{}
+	for _, resource := range []string{"rolebindings", "clusterroles", "clusterrolebindings"} {
+		seen["rbac.authorization.k8s.io/"+resource] = true
+		rules = append(rules, rule("rbac.authorization.k8s.io", []string{resource}, "get", "list", "watch"))
+	}
 	for _, list := range resources {
 		gv, err := schema.ParseGroupVersion(list.GroupVersion)
 		if err != nil {
