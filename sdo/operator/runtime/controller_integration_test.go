@@ -85,7 +85,7 @@ func TestControllerIntegrationInformerPersistenceAndRestart(t *testing.T) {
 		&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "renamed-settings", Namespace: "demo"}},
 	)
 	detector := missingConfigMapDetector{}
-	cache, err := NewKubernetesCache(KubernetesCacheConfig{
+	cache, err := newCacheForTest(t, KubernetesCacheConfig{
 		Namespace: "demo", Client: client, StateConfigMapName: "sdo-controller-state",
 	}, []sdk.Detector{detector})
 	if err != nil {

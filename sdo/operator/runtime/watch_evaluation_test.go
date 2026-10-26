@@ -73,7 +73,7 @@ var (
 )
 
 func TestKubernetesCacheRetainsObjectPreimageForDrift(t *testing.T) {
-	informerCache, err := NewKubernetesCache(KubernetesCacheConfig{Namespace: "demo", Client: fake.NewSimpleClientset(), TrackDrift: true}, nil)
+	informerCache, err := newCacheForTest(t, KubernetesCacheConfig{Namespace: "demo", Client: fake.NewSimpleClientset(), TrackDrift: true}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +91,7 @@ func TestKubernetesCacheRetainsObjectPreimageForDrift(t *testing.T) {
 }
 
 func TestKubernetesCacheRetainsListedObjectBeforeFirstEdit(t *testing.T) {
-	informerCache, err := NewKubernetesCache(KubernetesCacheConfig{Namespace: "demo", Client: fake.NewSimpleClientset(), TrackDrift: true}, nil)
+	informerCache, err := newCacheForTest(t, KubernetesCacheConfig{Namespace: "demo", Client: fake.NewSimpleClientset(), TrackDrift: true}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,7 +111,7 @@ func TestKubernetesCacheDeliversConfigMapDeleteQueuedBehindPodBacklog(t *testing
 	client := fake.NewSimpleClientset(&corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{Name: "mongo-geo-script", Namespace: "demo"},
 	})
-	informerCache, err := NewKubernetesCache(KubernetesCacheConfig{
+	informerCache, err := newCacheForTest(t, KubernetesCacheConfig{
 		Namespace: "demo", Client: client, StateConfigMapName: "sdo-controller-state",
 	}, []sdk.Detector{configMapPresenceDetector{spec: healthSpec(podWatch, configMapWatch), configMap: "mongo-geo-script"}})
 	if err != nil {
@@ -159,7 +159,7 @@ func TestKubernetesCacheDeliversConfigMapDeleteQueuedBehindPodBacklog(t *testing
 }
 
 func TestKubernetesCacheRoutesDeleteTombstones(t *testing.T) {
-	informerCache, err := NewKubernetesCache(KubernetesCacheConfig{
+	informerCache, err := newCacheForTest(t, KubernetesCacheConfig{
 		Namespace: "demo", Client: fake.NewSimpleClientset(), StateConfigMapName: "sdo-controller-state",
 	}, []sdk.Detector{configMapPresenceDetector{spec: incidentSpec(configMapWatch), configMap: "settings"}})
 	if err != nil {
@@ -201,7 +201,7 @@ func TestControllerEvaluatesConfigMapWatcherAfterDeleteBehindPodBacklog(t *testi
 	health := configMapPresenceDetector{spec: healthSpec(podWatch, configMapWatch), configMap: "mongo-geo-script"}
 	incident := configMapPresenceDetector{spec: incidentSpec(deploymentWatch, configMapWatch), configMap: "mongo-geo-script"}
 	detectors := []sdk.Detector{health, incident}
-	informerCache, err := NewKubernetesCache(KubernetesCacheConfig{
+	informerCache, err := newCacheForTest(t, KubernetesCacheConfig{
 		Namespace: "demo", Client: client, StateConfigMapName: "sdo-controller-state",
 	}, detectors)
 	if err != nil {

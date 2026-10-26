@@ -104,7 +104,7 @@ func TestControllerInformersHaveListWatchGrantsInBothLayouts(t *testing.T) {
 	for _, list := range lists {
 		discovery = append(discovery, list)
 	}
-	cache, err := NewKubernetesCache(KubernetesCacheConfig{Namespace: "app", Client: fake.NewSimpleClientset(), TrackDrift: true},
+	cache, err := newCacheForTest(t, KubernetesCacheConfig{Namespace: "app", Client: fake.NewSimpleClientset(), TrackDrift: true},
 		[]sdk.Detector{scheduledDetector{spec: sdk.DetectorSpec{ID: "all", Interval: time.Second, Watches: watches}}})
 	if err != nil {
 		t.Fatal(err)

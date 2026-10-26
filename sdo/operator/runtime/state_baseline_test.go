@@ -78,7 +78,7 @@ func hotelObjects() []k8sruntime.Object {
 
 func startedTracker(t *testing.T, client *fake.Clientset) *StateTracker {
 	t.Helper()
-	tracker := NewStateTracker(StateTrackerConfig{Client: client, Namespace: hotel, Settle: time.Minute})
+	tracker := newTrackerForTest(t, StateTrackerConfig{Client: client, Namespace: hotel, Settle: time.Minute})
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	t.Cleanup(tracker.Stop)
@@ -292,7 +292,7 @@ func TestStateChangesStayFastAndBounded(t *testing.T) {
 // stopped with the start context.
 func TestStateTrackerKeepsObservingAfterItsStartContextEnds(t *testing.T) {
 	client := fake.NewSimpleClientset(hotelObjects()...)
-	tracker := NewStateTracker(StateTrackerConfig{Client: client, Namespace: hotel})
+	tracker := newTrackerForTest(t, StateTrackerConfig{Client: client, Namespace: hotel})
 	startCtx, cancelStart := context.WithTimeout(context.Background(), 30*time.Second)
 	if err := tracker.Start(startCtx); err != nil {
 		t.Fatal(err)
@@ -318,7 +318,7 @@ func TestStateTrackerKeepsObservingAfterItsStartContextEnds(t *testing.T) {
 // Stop still ends observation when the start context lives on.
 func TestStateTrackerStopEndsObservation(t *testing.T) {
 	client := fake.NewSimpleClientset(hotelObjects()...)
-	tracker := NewStateTracker(StateTrackerConfig{Client: client, Namespace: hotel})
+	tracker := newTrackerForTest(t, StateTrackerConfig{Client: client, Namespace: hotel})
 	if err := tracker.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}
