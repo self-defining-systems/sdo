@@ -76,7 +76,10 @@ An explicit absolute storage path can be supplied for offline inspection.
 This collector, like the memory guard, assumes a local kind Docker daemon.
 
 Defaults reject **90% or more used** (strictly more than 10% must be free),
-before OpenSearch high/flood watermarks, and reject fewer than **100 GiB free**.
+and reject fewer than **100 GiB free**. The harness-owned astronomy OpenSearch
+uses absolute watermarks (flood 20gb, high 30gb, low 40gb) far below that floor,
+so an admitted lane never starts with read-only indices; a harness test ties
+them to `host_disk_floor_bytes`.
 Both conditions must pass; the byte floor protects small filesystems even at
 a low utilization percentage. Policy fields are `host_disk_min_free_percent`
 and `host_disk_floor_bytes`. Missing storage/mount evidence rejects admission.
