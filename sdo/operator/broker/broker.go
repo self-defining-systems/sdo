@@ -186,7 +186,7 @@ func (b *Broker) CreateProposalForPhase(ctx context.Context, incidentID string, 
 			return err
 		}
 		checkout := filepath.Join(parent, "checkout")
-		if _, err := runGit(ctx, "", "clone", "--no-local", "--no-hardlinks", "--quiet", "--no-checkout", b.target, checkout); err != nil {
+		if err := cloneGit(ctx, b.target, checkout, "--no-checkout"); err != nil {
 			return err
 		}
 		if _, err := runGit(ctx, checkout, "checkout", "--quiet", "--detach", base); err != nil {
@@ -536,7 +536,7 @@ func (b *Broker) privateClone(ctx context.Context) (string, func(), error) {
 	}
 	cleanup := func() { os.RemoveAll(dir) }
 	stage := filepath.Join(dir, "checkout")
-	if _, err := runGit(ctx, "", "clone", "--no-local", "--no-hardlinks", "--quiet", b.target, stage); err != nil {
+	if err := cloneGit(ctx, b.target, stage); err != nil {
 		cleanup()
 		return "", nil, err
 	}
@@ -658,7 +658,10 @@ func runGit(ctx context.Context, cwd string, args ...string) ([]byte, error) {
 }
 
 func runGitEnv(ctx context.Context, cwd string, env []string, args ...string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, "git", args...)
+	// Waiting for Git alone does not wait for its detached auto-maintenance.
+	// Keep housekeeping inside this command's context and process lifetime.
+	commandArgs := append([]string{"-c", "gc.autoDetach=false", "-c", "maintenance.autoDetach=false"}, args...)
+	cmd := exec.CommandContext(ctx, "git", commandArgs...)
 	if cwd != "" {
 		cmd.Dir = cwd
 	}
@@ -668,6 +671,16 @@ func runGitEnv(ctx context.Context, cwd string, env []string, args ...string) ([
 		return nil, fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
 	}
 	return out, nil
+}
+
+// cloneGit also persists the lifetime policy for commands run later by workers;
+// repository-local configuration is not inherited from the accepted source.
+func cloneGit(ctx context.Context, source, destination string, options ...string) error {
+	args := []string{"clone", "--no-local", "--no-hardlinks", "--quiet",
+		"--config", "gc.autoDetach=false", "--config", "maintenance.autoDetach=false"}
+	args = append(args, options...)
+	_, err := runGit(ctx, "", append(args, source, destination)...)
+	return err
 }
 
 func gitText(ctx context.Context, cwd string, args ...string) (string, error) {

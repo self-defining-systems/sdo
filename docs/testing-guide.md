@@ -23,7 +23,9 @@ Broker and runtime tests initialize temporary repositories with
 The helper disables automatic GC/maintenance and detachment in repository-local
 configuration, which also protects production Git calls and linked worktrees.
 `testutil.Git` runs commands synchronously with a bounded context; callers cannot
-start a command without waiting. Keep goroutines using a repository joined before
+start a command without waiting. The production broker also keeps automatic
+maintenance in the foreground for its Git commands and persists this policy in
+its independent proposal/staging clones; Git clone does not copy local config. Keep goroutines using a repository joined before
 test cleanup.
 
 `internal/testutil.TestGitFixtureCreationUsesHelper` checks Go AST command calls
