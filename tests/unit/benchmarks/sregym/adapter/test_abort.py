@@ -179,7 +179,7 @@ def test_abort_preserves_active_worker_and_pending_incident(tmp_path, monkeypatc
     monkeypatch.setattr(
         native_operator,
         "stop_runtime",
-        lambda *args, **kwargs: (deleted.append("runtime") or {"removed": [], "leftovers": []}),
+        lambda *args, **kwargs: deleted.append("runtime") or {"removed": [], "leftovers": []},
     )
 
     def invoke(argv, **kwargs):
