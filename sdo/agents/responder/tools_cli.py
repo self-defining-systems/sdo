@@ -192,6 +192,8 @@ def _parser() -> argparse.ArgumentParser:
             + WORKING_PROGRAM_HELP
         ),
         epilog=(
+            "Advertised option IDs remain valid for this session across filtered menu calls. "
+            "Learned program preconditions are rechecked against live state before any batch writes.\n\n"
             "Parameters accept ordinary JSON objects, arrays, numbers and booleans, as well as strings. "
             "sdo menu exports recursive parameters[].schema for every option, plus selection_schema and "
             "selection_set_schema; nested properties, required fields and oneOf choices describe accepted shapes. "
@@ -204,7 +206,7 @@ def _parser() -> argparse.ArgumentParser:
             "never put credential values in arguments, evidence or memory. Direct Secret keys are unavailable."
         ),
     )
-    mitigate.add_argument("option", nargs="?", help="option ID or unambiguous program ID from the current menu")
+    mitigate.add_argument("option", nargs="?", help="advertised option ID or unambiguous program ID")
     mitigate.add_argument(
         "--finding",
         action=_OptionFinding,
@@ -401,6 +403,10 @@ def _option_selection(args: argparse.Namespace, parameters: dict[str, str]) -> d
         options = [option for option in menu.get("options", []) if args.option == option.get("program_id")]
     if len(options) == 1 and options[0].get("disabled_reason"):
         raise ValueError(str(options[0]["disabled_reason"]))
+    if not options:
+        # Listings are views. Only the controller's session catalog can resolve
+        # an earlier explicit binding, or authoritatively refuse an unknown ID.
+        options = [{"option_id": args.option}]
     if len(options) != 1:
         raise ValueError("mitigation option unavailable or ambiguous")
     option = options[0]

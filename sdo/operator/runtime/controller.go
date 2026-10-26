@@ -838,10 +838,7 @@ func (c *Controller) NextWake() time.Time {
 		earlyDeadline = c.closureStableSince.Add(c.config.ClosureStabilityWindow)
 	}
 	if c.earlyReportPendingLocked() {
-		earlyDeadline = c.pendingClosure.VerifiedAt.Add(c.config.ResponderReportGrace)
-		if !c.earlyStopRetryAt.IsZero() {
-			earlyDeadline = c.earlyStopRetryAt
-		}
+		earlyDeadline = c.earlyReportWakeLocked()
 	}
 	c.mu.Unlock()
 	if !earlyDeadline.IsZero() && (next.IsZero() || earlyDeadline.Before(next)) {
