@@ -37,3 +37,20 @@ func TestReflectionMemoryConflictStopsAfterThreeAttemptsAcrossRestart(t *testing
 		t.Fatal("terminal diagnostic lost")
 	}
 }
+
+func TestReflectionMemoryConflictAlsoBoundsInvalidCorrections(t *testing.T) {
+	state := &contracts.BrokerLedger{IncidentId: "loser", OutcomeCommit: "outcome", ReflectionMaxRetries: 5}
+	for attempt := 1; attempt <= 3; attempt++ {
+		state.ReflectionPhase = contracts.ReflectionPhase_REFLECTION_PHASE_PUBLISH
+		_, effects := StepReflection(state, ReflectionEvent{Kind: ReflectionDrive})
+		diagnostic := &contracts.MemoryDiagnostic{Rule: "synthetic.invalid-correction", Message: "invalid correction"}
+		if attempt == 1 {
+			diagnostic.Rule = "memory.conflict"
+			diagnostic.MemoryConflict = &contracts.MemoryConflict{AcceptedCommit: "peer"}
+		}
+		state, _ = StepReflection(state, ReflectionEvent{Kind: ReflectionRejected, EffectID: effects[0].ID, Diagnostics: []*contracts.MemoryDiagnostic{diagnostic}})
+		if state.GetReflectionRejected() != (attempt == 3) {
+			t.Fatalf("attempt %d terminal=%v", attempt, state.GetReflectionRejected())
+		}
+	}
+}

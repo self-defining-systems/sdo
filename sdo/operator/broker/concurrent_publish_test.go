@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -120,6 +121,10 @@ func TestConcurrentMemoryConflictAndResolvedResubmit(t *testing.T) {
 	if !typed || len(diagnostics) == 0 || diagnostics[0].Rule != "memory.conflict" {
 		t.Fatalf("expected typed MemoryConflict, got %v", err)
 	}
+	detail := diagnostics[0].GetMemoryConflict()
+	if detail == nil || detail.GetBaseCommit() != pb.BaseCommit || detail.GetAcceptedCommit() != first.Commit || !slices.Contains(detail.GetConflictingPaths(), ".sdo/playbooks/base/README.md") || len(detail.GetAcceptedChanges()) != 1 || detail.GetAcceptedChanges()[0].GetIncidentId() != "lane-a" {
+		t.Fatalf("incomplete typed conflict: %v", detail)
+	}
 	if !strings.Contains(diagnostics[0].Message, first.Commit) || !strings.Contains(diagnostics[0].Message, "lane-a") {
 		t.Fatalf("conflict omitted accepted provenance: %v", diagnostics)
 	}
@@ -158,6 +163,9 @@ func TestConcurrentMemoryCleanReplayStillRequiresValidation(t *testing.T) {
 	ds, typed := RejectionDiagnostics(err)
 	if !typed || len(ds) == 0 || ds[0].Rule != "memory.conflict" {
 		t.Fatalf("merged validation failure lost conflict type: %v", err)
+	}
+	if got := ds[0].GetMemoryConflict().GetValidatorErrors(); len(got) != 1 || got[0].GetRule() != "synthetic.merged-tree" {
+		t.Fatalf("typed validator errors lost: %v", got)
 	}
 	if !strings.Contains(err.Error(), "synthetic.merged-tree") {
 		t.Fatalf("validator errors lost: %v", err)
@@ -201,5 +209,68 @@ func TestConcurrentMemorySeparateBrokerRootsNeverLoseAcceptedCommits(t *testing.
 	}
 	if got := git(t, root, "log", "-2", "--format=%s"); !strings.Contains(got, "lane-a") || !strings.Contains(got, "lane-b") {
 		t.Fatalf("lost accepted commit: %s", got)
+	}
+}
+
+func TestConcurrentMemoryReplayPreservesSourceProjectionAndFileChanges(t *testing.T) {
+	ctx := context.Background()
+	root, a, b := sharedReflectionFixture(t)
+	for name, body := range map[string]string{"remove.txt": "obsolete\n", "executable.sh": "#!/bin/sh\nexit 0\n"} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(body), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	git(t, root, "add", ".")
+	git(t, root, "commit", "-qm", "source fixture")
+	pa, err := a.CreateProposal(ctx, "source-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pb, err := b.CreateProposal(ctx, "source-b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pa.Path, "peer.txt"), []byte("accepted peer"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(pb.Path, "remove.txt")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(filepath.Join(pb.Path, "executable.sh"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	binary := []byte{0, 1, 2, 0, 255}
+	if err := os.WriteFile(filepath.Join(pb.Path, "new.bin"), binary, 0644); err != nil {
+		t.Fatal(err)
+	}
+	// An invalid working playbook remains isolated even when the source diff
+	// must replay onto a newer accepted head.
+	if err := os.WriteFile(filepath.Join(pb.Path, ".sdo/playbooks/base/diagnose.go"), []byte("invalid working program"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.Publish(ctx, "source-a", Responder, ProposalPhase); err != nil {
+		t.Fatal(err)
+	}
+	receipt, err := b.Publish(ctx, "source-b", Responder, ProposalPhase)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(receipt.ChangedPaths) != 3 {
+		t.Fatalf("source attribution leaked peer/draft changes: %v", receipt.ChangedPaths)
+	}
+	if _, err := os.Stat(filepath.Join(root, "remove.txt")); !os.IsNotExist(err) {
+		t.Fatal("source deletion lost")
+	}
+	if info, err := os.Stat(filepath.Join(root, "executable.sh")); err != nil || info.Mode()&0111 == 0 {
+		t.Fatal("executable mode lost")
+	}
+	if data, err := os.ReadFile(filepath.Join(root, "new.bin")); err != nil || string(data) != string(binary) {
+		t.Fatal("binary/untracked source lost")
+	}
+	if _, err := os.Stat(filepath.Join(root, ".sdo/playbooks/base/diagnose.go")); !os.IsNotExist(err) {
+		t.Fatal("unvalidated draft reached accepted memory")
+	}
+	if got := git(t, root, "show", "HEAD:peer.txt"); got != "accepted peer" {
+		t.Fatal("source replay lost accepted peer")
 	}
 }

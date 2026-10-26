@@ -686,3 +686,20 @@ accepts comma-separated partitions so short groups can share a runner without
 omitting or duplicating names. Image runners consume the preparation job's
 source-bound schema identity, avoiding a separate Go cache transfer and toolchain
 installation just to print it.
+
+### Concurrent shared memory
+
+`TestHermeticSharedMemoryControllers` runs two real controllers with distinct
+workspace/ledger roots against one accepted Git checkout. Scripted resumed
+reflection workers overlap; independent Go compilation checks both disjoint
+playbook updates and a same-playbook conflict corrected with preserved peer intent.
+The catalog and broker tests bind snapshots to proposal commits and check merged
+validation failures, accepted incident provenance and concurrent publication:
+
+```bash
+(cd sdo/operator && go test -race ./broker ./memory -run 'TestConcurrentMemory|TestCatalogSnapshotAt')
+(cd sdo/operator/runtime && go test -race . ./lifecyclecore -run 'TestHermeticSharedMemoryControllers|TestReflectionMemoryConflict')
+```
+
+This is a hermetic plumbing proof, with no cluster or model. Cross-cluster shared
+storage and live parallel-lane runner proof are separate benchmark work.

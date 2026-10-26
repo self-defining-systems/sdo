@@ -112,5 +112,10 @@ conflict or merged-tree validation failure returns `MemoryDiagnostic` rule
 paths), and `validator_errors`. No candidate commit is accepted on rejection.
 The durable reflection rejection ledger retains this structure through restart
 and resumes the same provider session in a fresh checkout of current accepted
-memory. Three conflict rejections terminate visibly; ordinary validation retries
-retain their existing separate cap. Both incidents' intent must survive correction.
+memory. After a memory conflict, three total publication/correction attempts terminate
+visibly; ordinary validation retries without conflicts retain their existing cap. Both incidents' intent must survive correction.
+Catalog task reads bind to the prepared proposal commit through `SnapshotAt`,
+projecting immutable Git objects while other controllers publish newer heads.
+The shared accepted checkout requires a filesystem honoring the common Git lock;
+proposal, session/corpus and ledger roots remain lane private. Live lane mounts
+and remote shared-storage provisioning remain benchmark runner work.
