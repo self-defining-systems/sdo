@@ -664,6 +664,76 @@ func TestAFailedResponderJobIsATerminalDispatchFailure(t *testing.T) {
 	}
 }
 
+// A failed responder Job leaves no attempt to verify: its outcome is failed
+// whatever health does next. Waiting out the verification timeout only held
+// the still-firing findings back from the next responder (lane 51 row 006:
+// 300 s). The incident closes at once, unverified, and the findings that are
+// still firing open the next incident within seconds. As on row 006, the
+// finding that fires after the failed attempt is new (pending -> init stuck).
+func TestAFailedResponderJobClosesAtOnceAndTheNextAttemptFollows(t *testing.T) {
+	interval := time.Second
+	samples := []sdk.Finding{stateFinding("health"), stateFinding("health")}
+	for range 12 {
+		stuck := stateFinding("health")
+		stuck.RuleID, stuck.Fingerprint = "init-stuck", "init-stuck"
+		samples = append(samples, stuck)
+	}
+	health := controllerDetector("health", interval, samples...)
+	health.spec.Class = sdk.DetectorClassHealth
+	health.spec.Owner = sdk.DetectorOwnerHealthJudge
+	health.spec.Persistence = sdk.PersistencePolicy{Firing: 2, Clearing: 2}
+	health.spec.Batching = sdk.BatchingPolicy{Severity: sdk.SeverityCritical}
+	health.spec.OriginatingCommit = "health-objective"
+	for index := range health.samples {
+		health.samples[index][0].Severity = sdk.SeverityCritical
+	}
+	dispatcher := &failedJobDispatcher{}
+	config := testControllerConfig()
+	config.VerificationTimeout = 5 * time.Minute
+	controller, err := NewController(config, []sdk.Detector{health}, staticProvider{snapshot: sdktest.Snapshot{}}, dispatcher, time.Unix(0, 0))
+	if err != nil {
+		t.Fatalf("new controller: %v", err)
+	}
+	closed := make(chan IncidentClosure, 2)
+	controller.OnIncidentClosed = func(closure IncidentClosure) { closed <- closure }
+	for sample := 0; sample < 2; sample++ {
+		if err := controller.Step(context.Background(), time.Unix(int64(sample), 0), nil); err != nil {
+			t.Fatalf("firing step: %v", err)
+		}
+	}
+	executePendingEffect(t, controller)
+	awaitDispatchCompletionQueued(t, controller)
+	var closure IncidentClosure
+	for second := int64(2); second < 10 && closure.Request.IncidentID == ""; second++ {
+		if err := controller.Step(context.Background(), time.Unix(second, 0), nil); err != nil {
+			t.Fatalf("step %d: %v", second, err)
+		}
+		select {
+		case closure = <-closed:
+		default:
+		}
+	}
+	if closure.Request.IncidentID == "" {
+		t.Fatalf("a failed responder Job waited for the %s verification timeout", config.VerificationTimeout)
+	}
+	if closure.VerifiedAt.Sub(closure.ResponderCompletedAt) > 2*time.Second {
+		t.Fatalf("failed Job closed %s after it ended", closure.VerifiedAt.Sub(closure.ResponderCompletedAt))
+	}
+	if len(closure.FinalDetectorStates) != 0 || closure.HealthClearedAt != nil || !strings.Contains(closure.DispatchError, "failed") {
+		t.Fatalf("failed Job closure must stay unverified and record the failure: %#v", closure)
+	}
+	followed := false
+	for second := closure.VerifiedAt.Unix() + 1; second < closure.VerifiedAt.Unix()+6 && !followed; second++ {
+		if err := controller.Step(context.Background(), time.Unix(second, 0), nil); err != nil {
+			t.Fatalf("follow-up step: %v", err)
+		}
+		_, followed = controller.PendingDispatchEffect()
+	}
+	if !followed {
+		t.Fatalf("still-firing findings did not open the next attempt within 5 s: %#v", exportState(t, controller))
+	}
+}
+
 func controllerDetector(id string, interval time.Duration, samples ...sdk.Finding) *sequenceDetector {
 	sequences := make([][]sdk.Finding, 0, len(samples))
 	for _, finding := range samples {
