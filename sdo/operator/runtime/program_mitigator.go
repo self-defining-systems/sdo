@@ -31,14 +31,15 @@ var mitigationSlots = make(chan struct{}, 4)
 func (l *ResponderLoop) runMitigator(ctx context.Context, id string, p program.Mitigator, view program.ReadView, bindings program.Bindings) (plan program.Plan, err error) {
 	deadline := l.deadline()
 	bindings = cloneProgramBindings(bindings)
-	l.mu.Unlock()
-	defer func() {
-		l.mu.Lock()
-		if err != nil {
-			l.addFailureSignal("mitigator_failure:" + id)
-		}
-	}()
-	return runBoundedMitigator(ctx, p, view, bindings, deadline)
+	if stepErr := withoutResponderLocks(l, "mitigator "+id, false, func() {
+		plan, err = runBoundedMitigator(ctx, p, view, bindings, deadline)
+	}); stepErr != nil {
+		err = stepErr
+	}
+	if err != nil {
+		l.addFailureSignal("mitigator_failure:" + id)
+	}
+	return plan, err
 }
 func runBoundedMitigator(ctx context.Context, p program.Mitigator, view program.ReadView, bindings program.Bindings, deadline time.Duration) (program.Plan, error) {
 	ctx, cancel := context.WithTimeout(ctx, deadline)
