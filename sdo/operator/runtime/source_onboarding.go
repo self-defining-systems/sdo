@@ -51,9 +51,25 @@ func (s *SourceInventory) SetNamespaceOnboarding(record *contracts.NamespaceOnbo
 		return err
 	}
 	s.NamespaceOnboarding = cloneNamespaceOnboarding(record)
-	s.acknowledged = map[sdk.ObjectRef]bool{}
-	for _, ref := range record.Objects {
-		s.acknowledged[objectRefState(ref)] = true
+	s.environment = map[sdk.ObjectRef]string{}
+	return s.setInstallEnvironment(record)
+}
+
+// The installer freezes pre-existing identities before monitoring starts. Their
+// presence is environmental inventory, independently of later health authority.
+// This never suppresses declared source obligations or health detectors.
+func (s *SourceInventory) setInstallEnvironment(record *contracts.NamespaceOnboarding) error {
+	if record == nil {
+		return nil
+	}
+	if err := onboarding.Validate(record, s.Namespace); err != nil {
+		return err
+	}
+	if s.environment == nil {
+		s.environment = map[sdk.ObjectRef]string{}
+	}
+	for _, observation := range record.EnvironmentObjects {
+		s.environment[objectRefState(observation.Ref)] = observation.Digest
 	}
 	return nil
 }
@@ -104,6 +120,8 @@ func (c *Controller) AttachPendingOnboarding(ctx context.Context, client kuberne
 			c.onboardingReachability.invalid = true
 		}
 	}
+	c.installEnvironment = cloneNamespaceOnboarding(record)
+	c.sourceInventory = nil
 	c.pendingOnboarding = record
 	return nil
 }

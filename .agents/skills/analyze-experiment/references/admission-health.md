@@ -81,3 +81,18 @@ these checks; failure cannot fall back to a passing cached health verdict.
 Inherited setup invariants name `reused_from`; fresh admission evidence is
 written under the current `admission/` directory. The whole-learning-loop
 report remains an independent gate and is never satisfied by a setup receipt.
+
+## Install environment observations and restored drift
+
+`NamespaceOnboarding.environment_objects` stores typed resource references and
+`sha256:` digests of the captured UID, configuration and ownership, excluding
+status and API bookkeeping. These create-once installer observations persist
+across failed healthy onboarding and restart; they grant no healthy or learning
+authority. Name-only legacy records cannot exempt a new incarnation. Changes to
+UID, rules or owner references make the object visible to inventory again.
+
+A complete accepted/live comparison treats an admitted leaf absent on both
+sides as restored, including removed selector keys and install-only metadata.
+Missing aggregate leaves with present descendants, absent objects and unavailable
+source evidence do not establish restoration. Status and independent closure
+share this comparison; historical fingerprints alone cannot hold restored drift.

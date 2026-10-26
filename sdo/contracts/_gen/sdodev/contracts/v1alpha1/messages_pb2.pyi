@@ -338,16 +338,26 @@ class OperationalArtifactProposal(_message.Message):
     def __init__(self, detectors: _Optional[_Iterable[_Union[ProposedDetector, _Mapping]]] = ..., playbooks: _Optional[_Iterable[_Union[ProposedPlaybook, _Mapping]]] = ..., traffic_generators: _Optional[_Iterable[_Union[ProposedTrafficGenerator, _Mapping]]] = ..., traffic_workloads: _Optional[_Iterable[_Union[_traffic_pb2.TrafficWorkload, _Mapping]]] = ..., delete_detector_ids: _Optional[_Iterable[str]] = ..., delete_playbook_ids: _Optional[_Iterable[str]] = ...) -> None: ...
 
 class NamespaceOnboarding(_message.Message):
-    __slots__ = ("namespace", "accepted_commit", "established_at", "objects")
+    __slots__ = ("namespace", "accepted_commit", "established_at", "objects", "environment_objects")
     NAMESPACE_FIELD_NUMBER: _ClassVar[int]
     ACCEPTED_COMMIT_FIELD_NUMBER: _ClassVar[int]
     ESTABLISHED_AT_FIELD_NUMBER: _ClassVar[int]
     OBJECTS_FIELD_NUMBER: _ClassVar[int]
+    ENVIRONMENT_OBJECTS_FIELD_NUMBER: _ClassVar[int]
     namespace: str
     accepted_commit: str
     established_at: _timestamp_pb2.Timestamp
     objects: _containers.RepeatedCompositeFieldContainer[_common_pb2.ObjectRef]
-    def __init__(self, namespace: _Optional[str] = ..., accepted_commit: _Optional[str] = ..., established_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., objects: _Optional[_Iterable[_Union[_common_pb2.ObjectRef, _Mapping]]] = ...) -> None: ...
+    environment_objects: _containers.RepeatedCompositeFieldContainer[InstallEnvironmentObject]
+    def __init__(self, namespace: _Optional[str] = ..., accepted_commit: _Optional[str] = ..., established_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., objects: _Optional[_Iterable[_Union[_common_pb2.ObjectRef, _Mapping]]] = ..., environment_objects: _Optional[_Iterable[_Union[InstallEnvironmentObject, _Mapping]]] = ...) -> None: ...
+
+class InstallEnvironmentObject(_message.Message):
+    __slots__ = ("ref", "digest")
+    REF_FIELD_NUMBER: _ClassVar[int]
+    DIGEST_FIELD_NUMBER: _ClassVar[int]
+    ref: _common_pb2.ObjectRef
+    digest: str
+    def __init__(self, ref: _Optional[_Union[_common_pb2.ObjectRef, _Mapping]] = ..., digest: _Optional[str] = ...) -> None: ...
 
 class IncidentRequest(_message.Message):
     __slots__ = ("schema_version", "application", "namespace", "incident_id", "findings", "detector_history", "surfaced_playbooks", "relevant_outcomes", "source_commit", "deployed_commit", "repository_worktree", "repository_base_commit", "response_deadline", "cancellation_token", "repair_policy", "state_changes", "memory_snapshot", "initial_program_runs", "max_response_loops", "drift_events", "prepared_agent_task", "observation_generation", "playbook_coverage", "namespace_onboarding")

@@ -79,6 +79,7 @@ type Controller struct {
 	drift                       *DriftControllerConfig
 	driftEvents                 []sdk.DriftEvent
 	sourceInventory             *SourceInventory
+	installEnvironment          *contracts.NamespaceOnboarding
 	pendingOnboarding           *contracts.NamespaceOnboarding
 	onboardingReachability      *onboardingReachabilityState
 	onboardingClient            kubernetes.Interface

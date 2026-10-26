@@ -4,7 +4,9 @@ package onboarding
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"time"
@@ -18,6 +20,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/kubernetes/scheme"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 )
 
@@ -47,7 +50,48 @@ func Validate(record *contracts.NamespaceOnboarding, namespace string) error {
 			return fmt.Errorf("invalid onboarding identity %v", ref)
 		}
 	}
+	identities := map[string]bool{}
+	for _, ref := range record.Objects {
+		identities[identity(ref.ApiVersion, ref.Kind, ref.Namespace, ref.Name)] = true
+	}
+	observed := map[string]bool{}
+	for _, observation := range record.EnvironmentObjects {
+		ref := observation.GetRef()
+		key := identity(ref.GetApiVersion(), ref.GetKind(), ref.GetNamespace(), ref.GetName())
+		digest := observation.GetDigest()
+		if ref == nil || !identities[key] || observed[key] || len(digest) != 71 || digest[:7] != "sha256:" {
+			return fmt.Errorf("invalid install environment observation for %v", ref)
+		}
+		if _, err := hex.DecodeString(digest[7:]); err != nil {
+			return fmt.Errorf("invalid install environment digest for %v", ref)
+		}
+		observed[key] = true
+	}
 	return nil
+}
+
+// EnvironmentDigest binds an observation to its incarnation, configuration and
+// ownership. API bookkeeping and status updates do not change that observation.
+func EnvironmentDigest(object *unstructured.Unstructured) string {
+	copy := object.DeepCopy()
+	// Normalize typed API zero values identically at capture and informer
+	// boundaries; omitted fields must not differ from their API encodings.
+	if typed, err := scheme.Scheme.New(object.GroupVersionKind()); err == nil {
+		if err := runtime.DefaultUnstructuredConverter.FromUnstructured(object.Object, typed); err == nil {
+			if normalized, err := runtime.DefaultUnstructuredConverter.ToUnstructured(typed); err == nil {
+				copy.Object = normalized
+			}
+		}
+	}
+	delete(copy.Object, "status")
+	metadata, _, _ := unstructured.NestedMap(copy.Object, "metadata")
+	for _, key := range []string{"resourceVersion", "generation", "creationTimestamp", "managedFields", "selfLink"} {
+		delete(metadata, key)
+	}
+	_ = unstructured.SetNestedMap(copy.Object, metadata, "metadata")
+	encoded, _ := json.Marshal(copy.Object)
+	sum := sha256.Sum256(encoded)
+	return fmt.Sprintf("sha256:%x", sum)
 }
 func Load(ctx context.Context, client kubernetes.Interface, control, namespace string) (*contracts.NamespaceOnboarding, error) {
 	return load(ctx, client, control, ConfigMapName, namespace)
@@ -109,10 +153,16 @@ func capture(ctx context.Context, client kubernetes.Interface, namespace, commit
 		if declared[key] || (o.GetNamespace() != namespace && !relevant[key]) || o.GetLabels()["app.kubernetes.io/managed-by"] == "sdo" {
 			continue
 		}
-		record.Objects = append(record.Objects, &contracts.ObjectRef{ApiVersion: o.GetAPIVersion(), Kind: o.GetKind(), Namespace: o.GetNamespace(), Name: o.GetName()})
+		ref := &contracts.ObjectRef{ApiVersion: o.GetAPIVersion(), Kind: o.GetKind(), Namespace: o.GetNamespace(), Name: o.GetName()}
+		record.Objects = append(record.Objects, ref)
+		record.EnvironmentObjects = append(record.EnvironmentObjects, &contracts.InstallEnvironmentObject{Ref: ref, Digest: EnvironmentDigest(o)})
 	}
 	sort.Slice(record.Objects, func(i, j int) bool {
 		a, b := record.Objects[i], record.Objects[j]
+		return identity(a.ApiVersion, a.Kind, a.Namespace, a.Name) < identity(b.ApiVersion, b.Kind, b.Namespace, b.Name)
+	})
+	sort.Slice(record.EnvironmentObjects, func(i, j int) bool {
+		a, b := record.EnvironmentObjects[i].Ref, record.EnvironmentObjects[j].Ref
 		return identity(a.ApiVersion, a.Kind, a.Namespace, a.Name) < identity(b.ApiVersion, b.Kind, b.Namespace, b.Name)
 	})
 	if err := Validate(record, namespace); err != nil {
