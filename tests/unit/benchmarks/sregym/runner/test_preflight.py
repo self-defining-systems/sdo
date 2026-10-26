@@ -519,9 +519,6 @@ def test_checked_in_luna_comparisons_satisfy_policy_and_parity(
 
 
 def test_the_committed_stock_codex_pin_matches_the_image_pin(committed_sregym_registry: str) -> None:
-    path = REPO_ROOT / "third_party" / "sregym" / "agents.yaml"
-    if not path.is_file():
-        pytest.skip("requires the optional external SREGym registry fixture")
     agents = yaml.safe_load(committed_sregym_registry)
     codex = next(entry for entry in agents["agents"] if entry["name"] == "codex")
 
