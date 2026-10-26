@@ -36,12 +36,19 @@ func Evaluate(data []byte, build bool) *c.NativeReceiptResult {
 	return result
 }
 
+// resolution labels how the incident closed. Only sdo_mitigated and
+// cleared_without_sdo_action belong to a valid receipt; the SDO-owned labels of
+// rejected closures keep analysis rows from counting them as external recovery.
 func resolution(classification string) string {
 	switch classification {
 	case "success":
 		return "sdo_mitigated"
 	case "cleared_without_action":
 		return "cleared_without_sdo_action"
+	case "unconfirmed":
+		return "sdo_unconfirmed"
+	case "failed":
+		return "sdo_failed"
 	default:
 		return "external_recovery"
 	}
