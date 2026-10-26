@@ -19,6 +19,7 @@ from benchmarks.sregym.fastloop.baseline_recovery import (
     load_application_baseline,
     reconcile_application,
     save_application_baseline,
+    seal_existing_install,
 )
 
 
@@ -550,3 +551,208 @@ def test_source_claim_retains_installed_default_only_when_source_omits_class(
     )
     result = accepted_restore_baselines(tmp_path, (ApplicationBaseline("hotel-reservation", [captured]),))
     assert result[0].objects[0]["spec"]["storageClassName"] == expected
+
+
+@pytest.mark.parametrize("ownership", ["label", "ownership-label", "manager", "owner"])
+def test_capture_excludes_sdo_ownership_but_keeps_plain_app_rbac(ownership: str) -> None:
+    # Hand-written fixture: names intentionally do not identify the installer.
+    application = {
+        "apiVersion": "rbac.authorization.k8s.io/v1",
+        "kind": "RoleBinding",
+        "metadata": {"name": "sdo-looking-app-binding", "namespace": "hotel"},
+        "subjects": [],
+        "roleRef": {"kind": "Role", "name": "app"},
+    }
+    installed = {
+        "apiVersion": "rbac.authorization.k8s.io/v1",
+        "kind": "RoleBinding",
+        "metadata": {"name": "ordinary-binding", "namespace": "hotel"},
+        "subjects": [],
+        "roleRef": {"kind": "Role", "name": "control"},
+    }
+    controller = {
+        "apiVersion": "v1",
+        "kind": "ConfigMap",
+        "metadata": {
+            "name": "control-index",
+            "namespace": "hotel",
+            "uid": "owner-uid",
+            "labels": {"app.kubernetes.io/managed-by": "sdo"},
+        },
+    }
+    if ownership == "label":
+        installed["metadata"]["labels"] = {"app.kubernetes.io/managed-by": "sdo"}
+    elif ownership == "ownership-label":
+        installed["metadata"]["labels"] = {"sdo.dev/responder-read-owner": "control"}
+    elif ownership == "manager":
+        installed["metadata"]["managedFields"] = [{"manager": "sdo-operator", "operation": "Update"}]
+    else:
+        installed["metadata"]["ownerReferences"] = [{"uid": "owner-uid", "kind": "ConfigMap", "name": "control-index"}]
+    cluster = FakeCluster()
+    for value in (application, installed, controller):
+        cluster.add(value)
+    assert capture_application_baseline(cluster, "hotel").objects == [application]
+
+
+def test_capture_keeps_app_rbac_with_repair_field_ownership() -> None:
+    cluster = FakeCluster()
+    app = obj("RoleBinding", "application")
+    app["metadata"]["managedFields"] = [{"manager": "sdo-deployer", "operation": "Apply"}]
+    cluster.add(app)
+    expected = deepcopy(app)
+    expected["metadata"].pop("managedFields")
+    assert capture_application_baseline(cluster, "hotel").objects == [expected]
+
+
+@pytest.mark.parametrize(
+    "kind",
+    [
+        "Deployment",
+        "DaemonSet",
+        "StatefulSet",
+        "Service",
+        "ConfigMap",
+        "Job",
+        "CronJob",
+        "Pod",
+        "NetworkPolicy",
+        "PersistentVolumeClaim",
+        "ServiceAccount",
+        "Role",
+        "RoleBinding",
+    ],
+)
+@pytest.mark.parametrize("ownership", ["label", "ownership-label", "manager"])
+@pytest.mark.parametrize("created_after_capture", [False, True])
+def test_application_restore_leaves_sdo_objects_and_descendants_untouched(
+    kind: str, ownership: str, created_after_capture: bool
+) -> None:
+    cluster = FakeCluster()
+    app = obj("Service", "application", spec={"ports": [{"port": 80}]})
+    cluster.add(app)
+    baseline = capture_application_baseline(cluster, "hotel")
+    root = obj(kind, "controller-state", spec={"synthetic": "owned"})
+    root["metadata"]["uid"] = "controller-uid"
+    if ownership == "label":
+        root["metadata"]["labels"] = {"app.kubernetes.io/managed-by": "sdo"}
+    elif ownership == "ownership-label":
+        root["metadata"]["labels"] = {"sdo.dev/observation-owner": "controller"}
+    else:
+        root["metadata"]["managedFields"] = [{"manager": "sdo-operator", "operation": "Update"}]
+    child = obj("Job", "worker", spec={"synthetic": "child"})
+    child["metadata"].update(uid="worker-uid", ownerReferences=[{"uid": "controller-uid", "kind": kind}])
+    descendant = obj("ConfigMap", "worker-state", data={"state": "owned"})
+    descendant["metadata"]["ownerReferences"] = [{"uid": "worker-uid", "kind": "Job"}]
+    pod = obj("Pod", "worker-pod", spec={})
+    pod["metadata"]["ownerReferences"] = [{"uid": "worker-uid", "kind": "Job"}]
+    # Reverse graph order ensures ownership propagation reaches a fixed point.
+    for value in (descendant, pod, child, root):
+        cluster.add(value)
+    if not created_after_capture:
+        baseline = capture_application_baseline(cluster, "hotel")
+    assert baseline.objects == [app]
+    before = deepcopy(cluster.objects)
+
+    cleanup = reconcile_application(cluster, baseline, "hotel")
+
+    assert cluster.touched == []
+    assert cluster.objects == before
+    assert cleanup.deleted_counts == {}
+    assert cleanup.restored == []
+
+
+def test_legacy_baseline_cannot_restore_over_live_sdo_ownership() -> None:
+    cluster = FakeCluster()
+    owned = obj("ConfigMap", "controller-state", data={"state": "current"})
+    owned["metadata"]["managedFields"] = [{"manager": "sdo-operator", "operation": "Update"}]
+    cluster.add(owned)
+    stale = obj("ConfigMap", "controller-state", data={"state": "stale"})
+    baseline = ApplicationBaseline("hotel", [stale])
+
+    cleanup = reconcile_application(cluster, baseline, "hotel")
+
+    assert cluster.touched == []
+    assert cleanup.restored == []
+    assert cluster.objects[("hotel", "ConfigMap", "controller-state")] == owned
+
+
+def test_installed_seal_compares_only_application_ownership(tmp_path: Path) -> None:
+    cluster = FakeCluster()
+    cluster.add(obj("Service", "application", spec={"ports": [{"port": 80}]}))
+    baseline = capture_application_baseline(cluster, "hotel")
+    path = tmp_path / "baseline.json"
+    path.write_text("{}")
+    save_application_baseline(path, (baseline,))
+    owned = obj("ConfigMap", "controller-state", data={"state": "current"})
+    owned["metadata"]["labels"] = {"app.kubernetes.io/managed-by": "sdo"}
+    cluster.add(owned)
+
+    seal_existing_install(path, cluster, "hotel")
+
+    loaded = load_application_baseline(path, "hotel")
+    assert loaded is not None
+    assert loaded[0].installed_digest
+    assert loaded[0].objects == baseline.objects
+    assert cluster.touched == []
+
+
+@pytest.mark.parametrize("kind", ["ConfigMap", "Service", "Job", "Deployment", "NetworkPolicy"])
+def test_application_extras_are_deleted_beside_sdo_owned_objects(kind: str) -> None:
+    cluster = FakeCluster()
+    baseline = capture_application_baseline(cluster, "hotel")
+    owned = obj(kind, "controller-state")
+    owned["metadata"].update(uid="controller-uid", labels={"app.kubernetes.io/managed-by": "sdo"})
+    extra = obj(kind, "application-extra")
+    # A stale or unrelated owner UID is not proof of SDO ownership.
+    extra["metadata"]["ownerReferences"] = [{"kind": kind, "uid": "unrelated-uid"}]
+    cluster.add(owned)
+    cluster.add(extra)
+
+    cleanup = reconcile_application(cluster, baseline, "hotel")
+
+    assert cluster.touched == [("hotel", kind, "application-extra")]
+    assert cleanup.deleted_counts == {kind: 1}
+    assert cluster.objects == {("hotel", kind, "controller-state"): owned}
+
+
+@pytest.mark.parametrize("operation", ["restore", "seal"])
+def test_application_helper_migration_leaves_sdo_owned_deployments_untouched(operation: str, tmp_path: Path) -> None:
+    namespace = "hotel-reservation"
+    cluster = FakeCluster()
+    owned = obj(
+        "Deployment",
+        "mongodb-geo",
+        namespace,
+        spec={
+            "template": {
+                "spec": {
+                    "volumes": [{"name": "failure-script", "configMap": {"name": "failure-admin-geo"}}],
+                    "containers": [
+                        {
+                            "name": "hotel-reserv-geo-mongo",
+                            "volumeMounts": [
+                                {"name": "failure-script", "mountPath": "/scripts"},
+                            ],
+                        }
+                    ],
+                }
+            },
+        },
+    )
+    owned["metadata"]["labels"] = {"app.kubernetes.io/managed-by": "sdo"}
+    cluster.add(owned)
+    baseline = capture_application_baseline(cluster, namespace)
+    assert baseline.objects == []
+
+    if operation == "restore":
+        cleanup = reconcile_application(cluster, baseline, namespace)
+        assert cleanup.restored == []
+        assert cleanup.deleted_counts == {}
+    else:
+        path = tmp_path / "baseline.json"
+        path.write_text("{}")
+        save_application_baseline(path, (baseline,))
+        seal_existing_install(path, cluster, namespace)
+
+    assert cluster.touched == []
+    assert cluster.objects[(namespace, "Deployment", "mongodb-geo")] == owned

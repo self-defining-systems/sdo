@@ -27,6 +27,7 @@ INVARIANTS = (
     "probe_placement",
     "baseline",
     "closure_policy",
+    "observation_conformance",
 )
 # Inventory configuration, not observations such as Events/EndpointSlices.
 RESOURCES = (

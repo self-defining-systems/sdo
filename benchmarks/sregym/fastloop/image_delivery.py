@@ -192,9 +192,17 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Deliver through a lane registry, with a recorded automatic fallback")
     parser.add_argument("--cluster", required=True)
     parser.add_argument("--run-dir", type=Path, required=True)
+    parser.add_argument("--min-free-gib", type=int, default=100)
     parser.add_argument("images", nargs="+")
     args = parser.parse_args()
-    load_images(args.cluster, args.images, record_path=args.run_dir / "image_delivery.jsonl")
+    from benchmarks.sregym.adapter import LaneResourcePolicy
+
+    load_images(
+        args.cluster,
+        args.images,
+        record_path=args.run_dir / "image_delivery.jsonl",
+        resource_policy=LaneResourcePolicy(host_disk_floor_bytes=args.min_free_gib * 1024**3),
+    )
     return 0
 
 

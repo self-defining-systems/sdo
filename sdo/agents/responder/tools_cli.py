@@ -38,6 +38,11 @@ CLI_EXAMPLES = (
 )
 ACT_EXAMPLE = "sdo act --resource Deployment/app/api -- kubectl -n app set image deployment/api api=img:1.2"
 
+OBJECT_REFERENCE_HELP = (
+    "Object references accept Kind/name, Kind/namespace/name, or JSON with kind, name and optional "
+    "namespace and api_version; kubectl aliases are accepted."
+)
+
 MUTATION_COMMANDS = frozenset({"act", "apply", "mitigate", "rollback"})
 
 # Key response paths are part of the CLI help contract, shared with the generated
@@ -288,6 +293,8 @@ def _parser() -> argparse.ArgumentParser:
             "informational warning; reads/reports keep their normal results, and new mutations are rejected."
         )
     for name, command in commands.choices.items():
+        if name in {"source", "act", "diagnose", "plan", "menu", "mitigate"}:
+            command.epilog = (command.epilog or "") + "\n\n" + OBJECT_REFERENCE_HELP
         command.epilog = (command.epilog or "") + "\n\n" + response_fields_help(name)
         command.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
     return parser

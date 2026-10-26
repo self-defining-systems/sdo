@@ -22,7 +22,7 @@ FUNCTIONS
 
 func CanonicalObjectKind(raw string) string
     CanonicalObjectKind accepts kubectl aliases and group-qualified kinds.
-    Unknown kinds remain usable without inventing an API version.
+    Unknown kind spelling is preserved, without inventing an API version.
 
 func ClearingHorizon(detector Detector, view DetectionContext) time.Duration
     ClearingHorizon is how long after a condition resolves a fresh evaluation
@@ -274,6 +274,7 @@ func ObjectRefFrom(kind string, apiVersion string, object metav1.Object) ObjectR
 func ParseObjectRef(raw string) (ObjectRef, error)
     ParseObjectRef is the single grammar for agent object citations. Bare
     and namespaced refs, kubectl aliases and legacy namespace/Kind/name are
+    accepted; JSON objects with kind/name and optional namespace/api_version are
     accepted; compound refs produce a typed rejection. An optional apiVersion@
     prefix preserves explicit versions when formatting a typed ref.
 

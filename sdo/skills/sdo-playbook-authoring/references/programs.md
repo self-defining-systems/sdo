@@ -58,6 +58,7 @@ Secret-typed references fail before lookup; no Secret-derived resolved value bel
 Observed values remain bound to their program invocation when several plans share one apply batch.
 
 Use `bindings.Objects[name]` for resource identities and `bindings.Values[name]` for scalar inputs.
+`Bindings.Equal` uses the shared object citation parser: known kind aliases and omitted default API versions compare equally; names, namespaces, explicit versions and scalar values must agree.
 Declare value parameters in `ProgramSpec.Params` with `ValueKind` (`StringValue`, `IntValue`, `QuantityValue`,
 `DurationValue`, or `BoolValue`) and an optional `Default`. Keep object `Kind` empty for a value parameter.
 `ValidateBindings` rejects wrong types, unknown names, duplicate declarations, and mixed object/value kinds.
