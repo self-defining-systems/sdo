@@ -31,7 +31,7 @@ func TestReflectionDirectFilesCLIAndBroker(t *testing.T) {
 		t.Fatal(err)
 	}
 	binary := filepath.Join(t.TempDir(), "sdo-operator")
-	build := exec.Command("go", "build", "-p", "8", "-o", binary, "./cmd/sdo-operator")
+	build := exec.Command("go", "build", "-o", binary, "./cmd/sdo-operator")
 	build.Dir = operatorRoot
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build CLI: %v: %s", err, out)
@@ -405,7 +405,7 @@ func TestReflectionLearnedProgramCLIAndBroker(t *testing.T) {
 		t.Fatal(err)
 	}
 	binary := filepath.Join(t.TempDir(), "sdo-operator")
-	build := exec.Command("go", "build", "-p", "8", "-o", binary, "./cmd/sdo-operator")
+	build := exec.Command("go", "build", "-o", binary, "./cmd/sdo-operator")
 	build.Dir = operatorRoot
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build CLI: %v: %s", err, out)

@@ -24,6 +24,8 @@ from tests.structured_turns import reply
 from tests.unit.sdo.agents.responder.test_reflection_outcomes import _outcome
 from tests.unit.sdo.agents.responder.test_reflection_worker import _closure
 
+pytestmark = pytest.mark.go_integration
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 

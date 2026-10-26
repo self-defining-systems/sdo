@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"google.golang.org/protobuf/types/known/anypb"
-	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
@@ -51,7 +50,9 @@ func TestKubernetesExecutorRunsRegisteredReflectionInPrivateCheckout(t *testing.
 	t.Setenv("SDO_DEV_MOUNT", "1")
 	client := fake.NewSimpleClientset()
 	task := reflectionTestTask(t)
+	jobCreated := make(chan struct{}, 1)
 	executor := KubernetesExecutor{
+		OnPhase:        notifyTestJobCreated(jobCreated),
 		ToolchainImage: "controller:compiler", Client: client, Namespace: "demo", Registry: reflectionTestRegistry(t), ServiceAccount: "sdo-worker",
 		RepositoryPVC: "repo", RepositoryMountPath: "/workspace", RepositoryPVCSubPath: "tenant", PollInterval: time.Millisecond,
 		SessionPVCSubPath:     "tenant/.sdo-runtime/sessions/incident-hash",
@@ -62,20 +63,24 @@ func TestKubernetesExecutorRunsRegisteredReflectionInPrivateCheckout(t *testing.
 	}
 	results := make(chan *contracts.AgentResult, 1)
 	errs := make(chan error, 1)
-	go func() { result, err := executor.Execute(context.Background(), task); results <- result; errs <- err }()
+	ctx, cancel := context.WithCancel(context.Background())
+	finished := make(chan struct{})
+	t.Cleanup(func() { cancel(); <-finished })
+	go func() {
+		defer close(finished)
+		result, err := executor.Execute(ctx, task)
+		results <- result
+		errs <- err
+	}()
 	jobName := JobName(task.TaskId)
-	var job *batchv1.Job
-	deadline := time.Now().Add(time.Second)
-	for time.Now().Before(deadline) {
-		found, err := client.BatchV1().Jobs("demo").Get(context.Background(), jobName, metav1.GetOptions{})
-		if err == nil {
-			job = found
-			break
-		}
-		time.Sleep(time.Millisecond)
+	select {
+	case <-jobCreated:
+	case err := <-errs:
+		t.Fatalf("executor stopped before Job creation: %v", err)
 	}
-	if job == nil {
-		t.Fatal("agent Job was not created")
+	job, err := client.BatchV1().Jobs("demo").Get(ctx, jobName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
 	}
 	if len(job.Spec.Template.Spec.InitContainers) != 1 || job.Spec.Template.Spec.InitContainers[0].Image != "controller:compiler" {
 		t.Fatal("reflection job missing controller compiler")
@@ -331,17 +336,22 @@ func TestKubernetesExecutorStagesRequestsAboveConfigMapBudgetOnRepositoryVolume(
 	mount := t.TempDir()
 	client := fake.NewSimpleClientset()
 	task := largeReflectionTask(t, mount+"/proposals/reflection-big", 2<<20)
-	executor := KubernetesExecutor{Client: client, Namespace: "demo", Registry: reflectionTestRegistry(t), RepositoryPVC: "repo", RepositoryMountPath: mount, RepositoryPVCSubPath: "tenant", PollInterval: time.Millisecond}
+	jobCreated := make(chan struct{}, 1)
+	executor := KubernetesExecutor{OnPhase: notifyTestJobCreated(jobCreated), Client: client, Namespace: "demo", Registry: reflectionTestRegistry(t), RepositoryPVC: "repo", RepositoryMountPath: mount, RepositoryPVCSubPath: "tenant", PollInterval: time.Millisecond}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { _, err := executor.Execute(ctx, task); done <- err }()
+	finished := make(chan struct{})
+	t.Cleanup(func() { cancel(); <-finished })
+	go func() { defer close(finished); _, err := executor.Execute(ctx, task); done <- err }()
 	jobName := JobName(task.TaskId)
-	var job *batchv1.Job
-	for deadline := time.Now().Add(2 * time.Second); time.Now().Before(deadline) && job == nil; time.Sleep(time.Millisecond) {
-		job, _ = client.BatchV1().Jobs("demo").Get(ctx, jobName, metav1.GetOptions{})
+	select {
+	case <-jobCreated:
+	case err := <-done:
+		t.Fatalf("executor stopped before Job creation: %v", err)
 	}
-	if job == nil {
-		t.Fatal("agent Job was not created")
+	job, err := client.BatchV1().Jobs("demo").Get(ctx, jobName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
 	}
 	if maps, _ := client.CoreV1().ConfigMaps("demo").List(ctx, metav1.ListOptions{}); len(maps.Items) != 0 {
 		t.Fatalf("an oversized request must not use a ConfigMap: %d created", len(maps.Items))
@@ -398,5 +408,14 @@ func TestKubernetesExecutorReportsUnwritableRequestStaging(t *testing.T) {
 	var staging *RequestStagingError
 	if _, err := executor.Execute(context.Background(), task); !errors.As(err, &staging) {
 		t.Fatalf("want RequestStagingError, got %v", err)
+	}
+}
+
+func notifyTestJobCreated(created chan<- struct{}) func(context.Context, string) error {
+	return func(_ context.Context, phase string) error {
+		if phase == "reflection_job_created" {
+			created <- struct{}{}
+		}
+		return nil
 	}
 }

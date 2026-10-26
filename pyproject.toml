@@ -93,6 +93,7 @@ asyncio_mode = "auto"
 testpaths = ["tests"]
 norecursedirs = ["apps", ".venv", "venv", "build", "dist", ".hypothesis"]
 markers = [
+    "go_integration: real Go compilation and external-process contracts; run in the warm hermetic shard",
     "live_agents: opt-in test that invokes live Codex and Claude Code CLI sessions",
 ]
 python_files = ["test_*.py"]

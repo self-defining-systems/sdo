@@ -62,8 +62,11 @@ def partition(names: list[str], patterns: dict[str, str]) -> dict[str, list[str]
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--shard", choices=PATTERNS, required=True)
+    parser.add_argument("--shard", required=True, help="comma-separated runtime partitions")
     args = parser.parse_args()
+    selected = args.shard.split(",")
+    if len(selected) != len(set(selected)) or set(selected) - PATTERNS.keys():
+        parser.error("select distinct known runtime partitions: " + ",".join(PATTERNS))
     discovery = subprocess.run(
         ["go", "test", "-race", "-list", ".", "-json", "./..."],
         cwd=RUNTIME,
@@ -86,7 +89,7 @@ def main() -> None:
     for shard, members in groups.items():
         print(f"{shard}: {len(members)} test names", flush=True)
     # Anchoring whole top-level names retains all nested scenarios and fuzz seeds.
-    selection = "^(" + "|".join(re.escape(name) for name in groups[args.shard]) + ")$"
+    selection = "^(" + "|".join(re.escape(name) for shard in selected for name in groups[shard]) + ")$"
     subprocess.run(
         ["go", "test", "-race", "-parallel=2", "-count=1", "-timeout=5m", "-json", "-run", selection, "./..."],
         cwd=RUNTIME,

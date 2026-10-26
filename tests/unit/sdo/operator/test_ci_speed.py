@@ -149,3 +149,38 @@ def test_required_ci_rejects_any_applicable_unsuccessful_job(result: str, accept
         check=False,
     )
     assert (completed.returncode == 0) is accepted
+
+
+def test_ci_bounds_nested_go_builds_and_routes_compiling_contracts() -> None:
+    configuration = workflow()
+    assert configuration["env"]["GOFLAGS"] == "-p=2"
+    assert configuration["env"]["GOMAXPROCS"] == "2"
+    jobs = configuration["jobs"]
+    assert all(0 < job.get("timeout-minutes", 0) <= 5 for job in jobs.values())
+    assert "go-integration" in jobs["required-pr-ci"]["needs"]
+    steps = jobs["go-integration"]["steps"]
+    assert any("scripts/test_go_integration.sh" in step.get("run", "") for step in steps)
+    python_runs = [row["run"] for row in jobs["python"]["strategy"]["matrix"]["include"]]
+    assert any("not go_integration" in run for run in python_runs)
+    assert len(python_runs) == 2  # check_errors already owns types and architecture.
+
+
+def test_go_shards_restore_the_completed_preparation_cache() -> None:
+    jobs = workflow()["jobs"]
+    warm = jobs["prepare-go"]
+    assert warm["timeout-minutes"] == 5
+    assert any("scripts/prepare_go_ci.sh" in step.get("run", "") for step in warm["steps"])
+    for name in ("python", "controller", "go-integration", "replay", "chaos"):
+        assert "prepare-go" in jobs[name]["needs"]
+        caches = [step for step in jobs[name]["steps"] if step.get("uses", "").startswith("actions/cache")]
+        assert any("ci-prepared" in step["with"]["key"] for step in caches), name
+
+
+def test_image_jobs_use_the_compilation_owners_schema_identity() -> None:
+    jobs = workflow()["jobs"]
+    images = jobs["images"]
+    assert "prepare-go" in images["needs"]
+    assert images["env"]["SDO_VALIDATOR_SCHEMA_IDENTITY"] == "${{ needs.prepare-go.outputs.schema_identity }}"
+    assert set(images["strategy"]["matrix"]["family"]) == {"controller", "validator", "responder", "benchmark"}
+    partitions = [row["operator"] for row in jobs["controller"]["strategy"]["matrix"]["include"] if "operator" in row]
+    assert sorted(partitions) == ["acceptance", "acceptance-second", "broker", "compiler", "remaining"]

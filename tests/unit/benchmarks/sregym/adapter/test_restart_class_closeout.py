@@ -13,6 +13,8 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from benchmarks.sregym.adapter.persistent import _collect_settled_receipt
 from benchmarks.sregym.protocol.native_receipt import native_production_receipt
 from tests.unit.benchmarks.sregym.adapter.test_persistent import FakeOps, _clock, _config
@@ -32,6 +34,7 @@ def source_lock_matches_repository(repository: Path) -> bool:
     return result.returncode == 0
 
 
+@pytest.mark.go_integration
 def test_restart_class_ack_to_publication_uses_broker_owned_lock(tmp_path: Path) -> None:
     fixture = tmp_path / "native"
     fixture.mkdir()
