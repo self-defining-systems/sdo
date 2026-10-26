@@ -24,8 +24,8 @@ from typing import TYPE_CHECKING, Any
 from benchmarks.sregym.adapter import (
     REJECTED_RECEIPT_FILENAME,
     STRICT_RECEIPT_FILENAME,
-    ClosureFailedError,
     Clock,
+    ClosureFailedError,
     ClusterOps,
     FollowupClosureTimeout,
     PersistentControllerError,
