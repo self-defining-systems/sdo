@@ -89,3 +89,24 @@ def test_scripted_credentials_creation_failure_requires_exact_existence(monkeypa
     monkeypatch.setattr(adapter, "kubectl", api)
     with pytest.raises(RuntimeError, match="create denied"):
         dry_run.prepare_scripted_credentials(tmp_path / "kubeconfig", "application-sdo")
+
+
+def test_reused_admission_receives_full_steady_budget(monkeypatch, tmp_path):
+    import json
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+
+    from benchmarks.sregym.fastloop import admission, cli
+
+    receipt = tmp_path / "receipt.json"
+    receipt.write_text(json.dumps({"report": {"invariants": {}}}))
+    report = dry_run.DryRunReport("synthetic")
+    report.setup_proof = {"receipt": str(receipt)}
+    monkeypatch.setattr(dry_run, "assert_active_intake", lambda env: None)
+    monkeypatch.setattr(cli, "_worker", lambda env: nullcontext(object()))
+
+    def prove(gate, control):
+        assert gate.timeout_seconds == 300
+
+    monkeypatch.setattr(admission.LaneAdmission, "prove", prove)
+    dry_run.refresh_reused_proof(SimpleNamespace(namespace="app"), tmp_path, report, lambda *a, **kw: None, 300)

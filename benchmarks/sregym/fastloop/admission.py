@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 import yaml
 
 from benchmarks.sregym.adapter import (
+    Deadline,
     assert_host_disk_headroom,
     assert_lane_resources,
     assert_stable_workloads,
@@ -172,6 +173,7 @@ class LaneAdmission:
         self._policy()
         if self.before_proof is not None:
             self.before_proof(control, set(self.required_detectors))
+        deadline = Deadline(time.monotonic() + self.timeout_seconds, time.monotonic)
         env = self.environment
         self.directory.mkdir(parents=True, exist_ok=True)
         rbac = verify_rbac(env.kubeconfig, env.namespace)
@@ -200,7 +202,7 @@ class LaneAdmission:
                     "baseline_oracle",
                     problem_id=env.deploy_problem,
                     verify_traffic=True,
-                    timeout=min(60, self.timeout_seconds),
+                    timeout=deadline.remaining(),
                 )
                 proof["independent_traffic"] = traffic
                 proof["passed"] = traffic.get("success") is True
@@ -222,7 +224,9 @@ class LaneAdmission:
             restore_application(env, KubectlApplicationCluster(env.kubeconfig), self.worker, checks=checks)
             self._identity = workload_identity(env.kubeconfig, env.namespace)
 
-        proof = wait_for_proof(sample, restore, record, timeout_seconds=self.timeout_seconds)
+        proof = wait_for_proof(
+            sample, restore, record, timeout_seconds=self.timeout_seconds, deadline=deadline, monotonic=time.monotonic
+        )
         if self.progress:
             self.progress("stabilization", evidence=str(path))
         if fresh:
@@ -239,6 +243,7 @@ class LaneAdmission:
         helper_evidence = admit_install(env.kubeconfig, env.namespace)
         (self.directory / "hotel-script-profile.json").write_text(json.dumps(helper_evidence, indent=2) + "\n")
         self.check_resources("injection")
+        deadline.remaining()
         return proof
 
 
