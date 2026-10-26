@@ -20,8 +20,10 @@ class ClosureUnconfirmedReason(int, metaclass=_enum_type_wrapper.EnumTypeWrapper
     __slots__ = ()
     CLOSURE_UNCONFIRMED_REASON_UNSPECIFIED: _ClassVar[ClosureUnconfirmedReason]
     CLOSURE_UNCONFIRMED_REASON_OBSERVATION_INCOMPLETE: _ClassVar[ClosureUnconfirmedReason]
+    CLOSURE_UNCONFIRMED_REASON_OBSERVER_UNAVAILABLE: _ClassVar[ClosureUnconfirmedReason]
 CLOSURE_UNCONFIRMED_REASON_UNSPECIFIED: ClosureUnconfirmedReason
 CLOSURE_UNCONFIRMED_REASON_OBSERVATION_INCOMPLETE: ClosureUnconfirmedReason
+CLOSURE_UNCONFIRMED_REASON_OBSERVER_UNAVAILABLE: ClosureUnconfirmedReason
 
 class Finding(_message.Message):
     __slots__ = ("detector_id", "rule_id", "status", "severity", "summary", "evidence", "primary_resource", "related_resources", "playbook_ids", "parameter_bindings", "fingerprint", "metadata")

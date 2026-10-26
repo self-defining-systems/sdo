@@ -48,6 +48,8 @@ type ClosureUnconfirmedReason int32
 const (
 	ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_UNSPECIFIED            ClosureUnconfirmedReason = 0
 	ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_OBSERVATION_INCOMPLETE ClosureUnconfirmedReason = 1
+	// An observer stayed unavailable (timeout, API 5xx, unsynced) until the bound.
+	ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_OBSERVER_UNAVAILABLE ClosureUnconfirmedReason = 2
 )
 
 // Enum value maps for ClosureUnconfirmedReason.
@@ -55,10 +57,12 @@ var (
 	ClosureUnconfirmedReason_name = map[int32]string{
 		0: "CLOSURE_UNCONFIRMED_REASON_UNSPECIFIED",
 		1: "CLOSURE_UNCONFIRMED_REASON_OBSERVATION_INCOMPLETE",
+		2: "CLOSURE_UNCONFIRMED_REASON_OBSERVER_UNAVAILABLE",
 	}
 	ClosureUnconfirmedReason_value = map[string]int32{
 		"CLOSURE_UNCONFIRMED_REASON_UNSPECIFIED":            0,
 		"CLOSURE_UNCONFIRMED_REASON_OBSERVATION_INCOMPLETE": 1,
+		"CLOSURE_UNCONFIRMED_REASON_OBSERVER_UNAVAILABLE":   2,
 	}
 )
 
@@ -4040,10 +4044,11 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	"\x1ccleared_finding_fingerprints\x18\t \x03(\tR\x1aclearedFindingFingerprints\x12D\n" +
 	"\x1eremaining_finding_fingerprints\x18\n" +
 	" \x03(\tR\x1cremainingFindingFingerprints\x12\x14\n" +
-	"\x05error\x18\v \x01(\tR\x05error*}\n" +
+	"\x05error\x18\v \x01(\tR\x05error*\xb2\x01\n" +
 	"\x18ClosureUnconfirmedReason\x12*\n" +
 	"&CLOSURE_UNCONFIRMED_REASON_UNSPECIFIED\x10\x00\x125\n" +
-	"1CLOSURE_UNCONFIRMED_REASON_OBSERVATION_INCOMPLETE\x10\x01B\x80\x02\n" +
+	"1CLOSURE_UNCONFIRMED_REASON_OBSERVATION_INCOMPLETE\x10\x01\x123\n" +
+	"/CLOSURE_UNCONFIRMED_REASON_OBSERVER_UNAVAILABLE\x10\x02B\x80\x02\n" +
 	"\x1dcom.sdodev.contracts.v1alpha1B\rMessagesProtoP\x01ZJsdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1;contractsv1alpha1\xa2\x02\x03SCX\xaa\x02\x19Sdodev.Contracts.V1alpha1\xca\x02\x19Sdodev\\Contracts\\V1alpha1\xe2\x02%Sdodev\\Contracts\\V1alpha1\\GPBMetadata\xea\x02\x1bSdodev::Contracts::V1alpha1b\x06proto3"
 
 var (

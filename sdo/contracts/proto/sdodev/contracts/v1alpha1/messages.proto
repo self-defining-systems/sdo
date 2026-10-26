@@ -510,6 +510,8 @@ message IncidentClosure {
 enum ClosureUnconfirmedReason {
   CLOSURE_UNCONFIRMED_REASON_UNSPECIFIED = 0;
   CLOSURE_UNCONFIRMED_REASON_OBSERVATION_INCOMPLETE = 1;
+  // An observer stayed unavailable (timeout, API 5xx, unsynced) until the bound.
+  CLOSURE_UNCONFIRMED_REASON_OBSERVER_UNAVAILABLE = 2;
 }
 
 // Controller-owned evidence from one response stage. Finding credit describes
