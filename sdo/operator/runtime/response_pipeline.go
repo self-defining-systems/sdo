@@ -69,6 +69,16 @@ func (c *Controller) runResponsePipeline(ctx context.Context, request IncidentRe
 		result, err := c.dispatcher.Dispatch(ctx, request)
 		return result, nil, err
 	}
+	// A durable agent handoff transfers ownership for the rest of this incident.
+	// Transport rejoin and controller continuations must collect that worker's
+	// result, never reclassify its repairs as an automatic-only completion.
+	if request.PreparedAgentTask != "" && len(request.PriorStages) > 0 {
+		c.mu.Lock()
+		c.responseStagesRunning = false
+		c.mu.Unlock()
+		result, err := c.dispatcher.Dispatch(ctx, request)
+		return result, cloneStageReports(request.PriorStages), err
+	}
 	state := &IncidentState{Request: request, Findings: append([]sdk.Finding(nil), request.Findings...), Coverage: cloneCoverage(request.PlaybookCoverage)}
 	var stages []ResponseStage
 	automaticAvailable, agentConfigured := false, false

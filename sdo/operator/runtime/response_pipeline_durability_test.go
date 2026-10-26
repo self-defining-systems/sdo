@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -12,6 +13,9 @@ import (
 	k8sruntime "k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/runtime/internal/lifecycleio"
+	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/sdktest"
 )
 
@@ -86,5 +90,96 @@ func TestResponseStageHandoffTaskIsDurableBeforeJobCreation(t *testing.T) {
 				t.Fatal("no stage handoff worker")
 			}
 		})
+	}
+}
+
+// Pause a real scheduler operation, rather than relying on random goroutine
+// timing, while the dispatch goroutine tries to persist its stage handoff.
+type stageHandoffDetector struct {
+	sdk.Detector
+	armed   atomic.Bool
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (d *stageHandoffDetector) Spec() sdk.DetectorSpec {
+	if d.armed.CompareAndSwap(true, false) {
+		close(d.entered)
+		<-d.release
+	}
+	return d.Detector.Spec()
+}
+
+func TestResponseStageHandoffAlongsideStepEvents(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	client := fake.NewSimpleClientset()
+	config := testControllerConfig()
+	config.FiringThreshold = 1
+	detector := &stageHandoffDetector{Detector: controllerDetector("fault", time.Second, stateFinding("fault")), entered: make(chan struct{}), release: make(chan struct{})}
+	start := time.Unix(0, 0)
+	// A wider inventory lets the race check observe snapshot/selection overlap.
+	detectors := []sdk.Detector{detector}
+	for i := 0; i < 256; i++ {
+		detectors = append(detectors, controllerDetector(fmt.Sprintf("quiet-%d", i), time.Second, sdk.Finding{}))
+	}
+	controller, err := NewController(config, detectors, staticProvider{snapshot: sdktest.Snapshot{}}, &recordingDispatcher{requests: make(chan IncidentRequest, 1)}, start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	controller.now = func() time.Time { return start }
+	if err := controller.AttachStateStore(ctx, lifecycleio.NewConfigMapStateStore(client, "demo", durabilityStateName)); err != nil {
+		t.Fatal(err)
+	}
+	if err := controller.StepEvents(ctx, start, nil); err != nil {
+		t.Fatal(err)
+	}
+	controller.mu.Lock()
+	request := *cloneIncidentRequest(controller.currentIncidentRequest)
+	controller.mu.Unlock()
+	request.PriorStages = []*contracts.StageReport{{Stage: "deterministic"}}
+	detector.armed.Store(true)
+	observed := make(chan error, 1)
+	go func() { observed <- controller.StepEvents(ctx, start.Add(time.Second), nil) }()
+	select {
+	case <-detector.entered:
+	case <-ctx.Done():
+		t.Fatal("controller did not enter scheduler selection")
+	}
+	handedOff := make(chan error, 1)
+	started := make(chan struct{})
+	go func() {
+		close(started)
+		_, err := controller.prepareResponseStageHandoff(ctx, request)
+		handedOff <- err
+	}()
+	// Release selection independently of handoff completion. Waiting for the
+	// snapshot before releasing would create a happens-before edge and hide
+	// the actual read/write race from the race detector.
+	go func() {
+		<-started
+		time.Sleep(time.Millisecond)
+		close(detector.release)
+	}()
+	for _, completed := range []chan error{observed, handedOff} {
+		select {
+		case err := <-completed:
+			if err != nil {
+				t.Error(err)
+			}
+		case <-ctx.Done():
+			t.Fatal("observation/handoff did not finish")
+		}
+	}
+	state, err := durableState(client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.GetIncidentRequest().GetPriorStages()) != 1 {
+		t.Fatal("handoff evidence was not persisted")
+	}
+	deadline := state.SchedulerDeadlines["fault"]
+	if deadline == nil || !deadline.AsTime().Equal(start.Add(2*time.Second)) {
+		t.Fatalf("handoff persisted a partial scheduler transition: %v", deadline)
 	}
 }
