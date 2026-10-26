@@ -1,0 +1,150 @@
+package runtime
+
+import (
+	"context"
+	"testing"
+	"time"
+
+	"google.golang.org/protobuf/proto"
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/memory/validate"
+	"sdo.dev/operator/sdk"
+)
+
+// The incident detector that supplied opening coverage need not be one of the
+// health detectors installed in the responder loop. Its opening finding is not
+// a fresh post-write observation.
+func TestDeterministicResponseStageUsesPostApplyEvidenceForOpeningIncidentFinding(t *testing.T) {
+	loop, state := pipelineTestLoop(t, true)
+	for i := range state.Request.Findings {
+		if state.Request.Findings[i].PrimaryResource.Kind == "Service" {
+			state.Request.Findings[i].Fingerprint = FindingFingerprint(state.Request.Findings[i])
+			state.Request.Findings[i].DetectorID = "incident.port"
+		}
+	}
+	state.Findings = append([]sdk.Finding(nil), state.Request.Findings...)
+	loop.Request = state.Request
+	report, err := (&DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return loop }}).Run(context.Background(), state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	attempt := report.Mitigations[0]
+	if attempt.PostApplyDiagnose.GetVerdict().GetResult() != contracts.Verdict_RESULT_NO_MATCH || !attempt.ApplyReceipt.GetVerificationPassed() {
+		t.Fatalf("fixture did not repair: %v", attempt)
+	}
+	if attempt.Result != "applied_cleared" || len(attempt.RemainingFindingFingerprints) != 0 || len(state.Findings) != 1 {
+		t.Fatalf("stale opening finding survived post-apply proof: report=%v findings=%v", report, state.Findings)
+	}
+}
+
+type pipelineIdentitylessDetector struct{ pipelineDetector }
+
+func (d pipelineIdentitylessDetector) Detect(ctx context.Context, view sdk.DetectionContext) ([]sdk.Finding, error) {
+	findings, err := d.pipelineDetector.Detect(ctx, view)
+	for i := range findings {
+		findings[i].DetectorID = ""
+	}
+	return findings, err
+}
+
+func TestDeterministicResponseStageHandoffRetainsObservedDetectorIdentity(t *testing.T) {
+	loop, state := pipelineTestLoop(t, true)
+	loop.Detectors = []sdk.Detector{pipelineIdentitylessDetector{}}
+	report, err := (&DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return loop }}).Run(context.Background(), state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state.PriorStages = []*contracts.StageReport{report}
+	dispatcher := &recordingDispatcher{requests: make(chan IncidentRequest, 1)}
+	if _, err := (AgentResponseStage{Dispatcher: dispatcher}).Run(context.Background(), state); err != nil {
+		t.Fatal(err)
+	}
+	request := <-dispatcher.requests
+	if len(request.Findings) != 1 || request.Findings[0].DetectorID != loop.Detectors[0].Spec().ID {
+		t.Fatalf("handoff lost observed detector identity: %+v", request.Findings)
+	}
+	if _, err := incidentRequestContract(request); err != nil {
+		t.Fatalf("handoff rejects its own observation: %v", err)
+	}
+}
+
+func TestDeterministicResponseStageReflectionReceivesVerifiedRepairCauses(t *testing.T) {
+	loop, state := pipelineTestLoop(t, false)
+	started := time.Now().UTC()
+	if err := RunResponseStages(context.Background(), state, []ResponseStage{&DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return loop }}}); err != nil {
+		t.Fatal(err)
+	}
+	result, err := responsePipelineResult(state, started, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	closed := IncidentClosure{Request: state.Request, Result: &result, VerifiedAt: time.Now().UTC(), FinalDetectorStates: []DetectorEvaluation{{DetectorID: loop.Detectors[0].Spec().ID, Status: DetectorEvaluationClear, EvaluatedAt: time.Now().UTC()}}}
+	closed.Request.PriorStages = cloneStageReports(state.PriorStages)
+	derived, err := (ProtoOutcomeDeriver{}).Derive(context.Background(), closed, "", "test", "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(derived.Record.ConfirmedRootCauses) != 2 || len(validate.VerifiedReflectionCauses(derived.Record)) != 2 {
+		t.Fatalf("verified deterministic repairs lost before reflection: %v", derived.Record)
+	}
+	// A failed peer must not hide a repaired cause, and the controller's stage
+	// evidence must work without responder-only plan/apply tool calls.
+	failed := proto.Clone(derived.Record).(*contracts.OutcomeRecord)
+	failed.Classification = "failed"
+	if got := partialRepairCauses(failed); len(got) != 2 {
+		t.Fatalf("stage repairs missing partial reflection proof: %v", got)
+	}
+}
+
+func TestResponseStageRejoinRetainsDeterministicApplicationEvidence(t *testing.T) {
+	loop, state := pipelineTestLoop(t, false)
+	if err := RunResponseStages(context.Background(), state, []ResponseStage{&DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return loop }}}); err != nil {
+		t.Fatal(err)
+	}
+	request := state.Request
+	request.PreparedAgentTask = "durable-agent-handoff"
+	request.PriorStages = cloneStageReports(state.PriorStages)
+	dispatcher := &rejoiningStageDispatcher{}
+	controller := &Controller{config: ControllerConfig{ResponseStages: []string{"deterministic", "agent"}}, dispatcher: dispatcher}
+	result, _, err := controller.runResponsePipeline(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.PlanApplications) != 2 || len(result.ConfirmedRootCauses) != 2 || len(result.RepairActions) != 2 || dispatcher.automatic != 0 || result.ResponderSessionID != "resumed-session" {
+		t.Fatalf("stage evidence lost on durable rejoin: %+v", result)
+	}
+}
+
+type pipelineLaggingHealthDetector struct{ remaining int }
+
+func (d *pipelineLaggingHealthDetector) Spec() sdk.DetectorSpec {
+	spec := (pipelineDetector{}).Spec()
+	spec.ID = "traffic-lag"
+	spec.Playbooks = nil
+	return spec
+}
+func (d *pipelineLaggingHealthDetector) Detect(ctx context.Context, view sdk.DetectionContext) ([]sdk.Finding, error) {
+	findings, err := (pipelineDetector{}).Detect(ctx, view)
+	if err != nil || len(findings) != 0 {
+		return nil, err
+	}
+	if d.remaining == 0 {
+		return nil, nil
+	}
+	if d.remaining > 0 {
+		d.remaining--
+	}
+	return []sdk.Finding{{RuleID: "lagging-sample", Status: sdk.FindingActive, Severity: sdk.SeverityCritical, PrimaryResource: sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}, Summary: "traffic sample is still clearing", Evidence: "previous traffic window still contains errors"}}, nil
+}
+
+func TestDeterministicResponseStageWaitsForPostRolloutHealthObservation(t *testing.T) {
+	loop, state := pipelineTestLoop(t, false)
+	loop.Detectors = append(loop.Detectors, &pipelineLaggingHealthDetector{remaining: 2})
+	calls := 0
+	if err := RunResponseStages(context.Background(), state, []ResponseStage{&DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return loop }}, clearingResponseStage{"agent", &calls}}); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 0 || len(state.Findings) != 0 {
+		t.Fatalf("handed off while repaired workloads' health sample was clearing: calls=%d stages=%v", calls, state.PriorStages)
+	}
+}
