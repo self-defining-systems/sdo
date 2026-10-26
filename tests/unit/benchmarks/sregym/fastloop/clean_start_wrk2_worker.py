@@ -76,6 +76,9 @@ def main() -> None:
             assert setting in shell
         assert job["metadata"]["name"] == "wrk2-job"
         assert job["spec"]["template"]["spec"]["volumes"][0]["configMap"]["name"] == configmap.metadata.name
+        manager.start(suspended=True)
+        suspended_job = api.created[-1][1]
+        assert suspended_job["spec"]["suspend"] is True
         manager.retrievelog()
         assert api.log_namespaces == ["sregym", "sregym"]
         assert any(args[:2] == ["delete", "pods"] and namespace == "hotel-reservation" for args, namespace in commands)

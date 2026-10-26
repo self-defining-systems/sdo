@@ -11,18 +11,40 @@ from __future__ import annotations
 
 import json
 import re
+import time
 import uuid
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from benchmarks.sregym.adapter import kubectl
+from benchmarks.sregym.adapter import Deadline, kubectl
+from benchmarks.sregym.fastloop.transient_cleanup import retire_pods, wait_deleted
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
     from pathlib import Path
 
 NAMESPACE = "social-network"
 CLIENTS = ("compose-post-service", "post-storage-service", "user-timeline-service", "home-timeline-service")
 REDIS_STORES = ("user-timeline-redis", "home-timeline-redis")
+HELPER_LIFETIME_SECONDS = 120
+_helpers: ContextVar[list[str] | None] = ContextVar("social_fixture_helpers", default=None)
+
+
+@contextmanager
+def helper_cleanup(config: Path) -> Iterator[None]:
+    """Batch helper retirement, then prove actual absence before returning."""
+    if _helpers.get() is not None:
+        yield
+        return
+    helpers: list[str] = []
+    token = _helpers.set(helpers)
+    try:
+        yield
+    finally:
+        _helpers.reset(token)
+        wait_deleted(config, "sregym", helpers, Deadline(time.monotonic() + HELPER_LIFETIME_SECONDS, time.monotonic))
 
 
 @dataclass(frozen=True)
@@ -84,6 +106,11 @@ def _exec(config: Path, deployment: str, args: list[str], stdin: str | None = No
 
 
 def _mongo(config: Path, script: str, stdin: str | None = None) -> str:
+    with helper_cleanup(config):
+        return _mongo_client(config, script, stdin)
+
+
+def _mongo_client(config: Path, script: str, stdin: str | None = None) -> str:
     """Keep the fixture client outside the storage container's memory budget."""
     from benchmarks.sregym.fastloop.clean_start import HARNESS_NAMESPACE
 
@@ -105,14 +132,14 @@ def _mongo(config: Path, script: str, stdin: str | None = None) -> str:
         "metadata": {"name": name, "namespace": HARNESS_NAMESPACE},
         "spec": {
             "restartPolicy": "Never",
-            "activeDeadlineSeconds": 120,
+            "activeDeadlineSeconds": HELPER_LIFETIME_SECONDS,
             "automountServiceAccountToken": False,
             "containers": [
                 {
                     "name": "client",
                     "image": images[0],
                     "imagePullPolicy": "IfNotPresent",
-                    "command": ["sleep", "120"],
+                    "command": ["sleep", str(HELPER_LIFETIME_SECONDS)],
                     "resources": {
                         "requests": {"cpu": "25m", "memory": "64Mi"},
                         "limits": {"cpu": "500m", "memory": "128Mi"},
@@ -136,8 +163,11 @@ def _mongo(config: Path, script: str, stdin: str | None = None) -> str:
             input_text=stdin,
         ).stdout
     finally:
+        helpers = _helpers.get()
+        assert helpers is not None
+        helpers.append(f"pod/{name}")
         kubectl(
-            ["delete", f"pod/{name}", "--ignore-not-found=true", "--grace-period=0", "--wait=true", "--timeout=30s"],
+            ["delete", f"pod/{name}", "--ignore-not-found=true", "--grace-period=0", "--wait=false"],
             namespace=HARNESS_NAMESPACE,
             kubeconfig=config,
         )
@@ -171,6 +201,11 @@ def _read_mongo_ids(config: Path, *, timelines: bool) -> frozenset[str]:
 
 
 def check_social_fixture(config: Path) -> TimelineSnapshot:
+    with helper_cleanup(config):
+        return _check_social_fixture(config)
+
+
+def _check_social_fixture(config: Path) -> TimelineSnapshot:
     """Read every timeline ID before posts, preserving exact 64-bit identifiers.
 
     The app publishes posts before references, so concurrent successful writes
@@ -192,7 +227,34 @@ def check_social_fixture(config: Path) -> TimelineSnapshot:
     return snapshot
 
 
+def canonical_fixture_complete(snapshot: TimelineSnapshot) -> bool:
+    snapshot.require_coherent()
+    expected = frozenset(str(row["post_id"]) for row in fixture_posts())
+    return all(
+        expected <= ids
+        for ids in (snapshot.stored_posts, snapshot.mongo_refs, snapshot.user_redis_refs, snapshot.home_redis_refs)
+    )
+
+
 def restore_social_fixture(config: Path) -> TimelineSnapshot:
+    with helper_cleanup(config):
+        snapshot: TimelineSnapshot | None = None
+        try:
+            snapshot = check_social_fixture(config)
+            reusable = canonical_fixture_complete(snapshot)
+        except (ValueError, RuntimeError):
+            reusable = False
+        if reusable and snapshot is not None:
+            kubectl(
+                ["patch", "job/wrk2-job", "--type=merge", "-p", '{"spec":{"suspend":false}}'],
+                namespace="sregym",
+                kubeconfig=config,
+            )
+            return snapshot
+        return _restore_social_fixture(config)
+
+
+def _restore_social_fixture(config: Path) -> TimelineSnapshot:
     """Replace all posts and timelines together, with writers held until PASS.
 
     Failed restoration deliberately leaves writers stopped: retrying the
@@ -211,20 +273,18 @@ def restore_social_fixture(config: Path) -> TimelineSnapshot:
         namespace=HARNESS_NAMESPACE,
         kubeconfig=config,
     )
-    kubectl(
-        ["wait", "--for=delete", "pods", "--selector=job-name=wrk2-job", "--timeout=60s"],
-        namespace=HARNESS_NAMESPACE,
-        kubeconfig=config,
+    retirement = Deadline(time.monotonic() + HELPER_LIFETIME_SECONDS, time.monotonic)
+    retire_pods(
+        config, HARNESS_NAMESPACE, "job-name=wrk2-job", owner_kind="Job", owner_name="wrk2-job", deadline=retirement
     )
     kubectl(
         ["scale", *[f"deployment/{name}" for name in CLIENTS], "--replicas=0"], namespace=NAMESPACE, kubeconfig=config
     )
+    retirement = Deadline(time.monotonic() + HELPER_LIFETIME_SECONDS, time.monotonic)
     for name in CLIENTS:
-        kubectl(
-            ["wait", "--for=delete", "pods", f"--selector=service={name}", "--timeout=60s"],
-            namespace=NAMESPACE,
-            kubeconfig=config,
-        )
+        retire_pods(config, NAMESPACE, f"service={name}", owner_kind="ReplicaSet", deadline=retirement, wait=False)
+    for name in CLIENTS:
+        wait_deleted(config, NAMESPACE, ["pods", f"--selector=service={name}"], retirement)
     posts = fixture_posts()
     # JSON is sent over stdin, not argv. Convert integer fields to BSON int64:
     # the production C++ readers require those types even for small fixture IDs.
