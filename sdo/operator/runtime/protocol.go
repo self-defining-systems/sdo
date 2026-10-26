@@ -220,5 +220,9 @@ type IncidentClosure struct {
 	HealthClearedAt *time.Time
 	// CleanedHelpers are the responder helper objects the controller
 	// deleted after the responder completed, as Kind/namespace/name.
-	CleanedHelpers []string
+	CleanedHelpers []string // UnconfirmedReason is set when the closure-time recheck never saw a
+	// complete observation window within its bound: the closure commits as
+	// unverified (final states moved to partial) instead of being superseded.
+	UnconfirmedReason contracts.ClosureUnconfirmedReason
+	UnconfirmedDetail string
 }

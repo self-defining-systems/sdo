@@ -27,7 +27,7 @@ message OutcomeRecord {
   repeated string applied_playbooks = 11 [(buf.validate.field).repeated.items.string.pattern = "^[a-z][a-z0-9_-]*$"];
   repeated ConfirmedRootCause confirmed_root_causes = 12;
   repeated DetectorEvaluation final_health_detector_state = 13;
-  string classification = 14 [(buf.validate.field).string = {in: ["success", "cleared_without_action", "failed"]}];
+  string classification = 14 [(buf.validate.field).string = {in: ["success", "cleared_without_action", "failed", "unconfirmed"]}];
   optional string repair_commit = 15;
   repeated RepairActionReceipt repair_actions = 16;
   optional string memory_commit = 17;

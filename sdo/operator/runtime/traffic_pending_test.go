@@ -94,7 +94,7 @@ func TestPendingObservationCannotConfirmSubmitGate(t *testing.T) {
 	}
 }
 
-func TestClosureRevalidationRejectsPendingTraffic(t *testing.T) {
+func TestClosureRevalidationReportsPendingTrafficAsIncomplete(t *testing.T) {
 	now := time.Unix(100, 0).UTC()
 	detector := trafficDetector("traffic-health", "health")
 	c, err := NewController(testControllerConfig(), []sdk.Detector{detector}, staticProvider{snapshot: sdktest.Snapshot{}}, &recordingDispatcher{requests: make(chan IncidentRequest, 1)}, now)
@@ -102,8 +102,9 @@ func TestClosureRevalidationRejectsPendingTraffic(t *testing.T) {
 		t.Fatal(err)
 	}
 	closure := IncidentClosure{FinalDetectorStates: []DetectorEvaluation{{DetectorID: detector.Spec().ID, Status: DetectorEvaluationClear}}}
-	if err := c.revalidateClosure(context.Background(), sdktest.Snapshot{Traffic: map[string]traffic.Window{"health": {}}}, closure); err == nil || !strings.Contains(err.Error(), "unconfirmed") {
-		t.Fatalf("closure must reject unconfirmed traffic explicitly: %v", err)
+	recheck := c.revalidateClosure(context.Background(), sdktest.Snapshot{Traffic: map[string]traffic.Window{"health": {}}}, closure)
+	if recheck.Verdict != closureRecheckIncomplete || !strings.Contains(recheck.Reason, "unconfirmed") || recheck.Bound <= 0 {
+		t.Fatalf("pending traffic is incomplete, never confirmed or contradicted: %+v", recheck)
 	}
 }
 

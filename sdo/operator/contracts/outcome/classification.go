@@ -9,4 +9,7 @@ const (
 	Success              = "success"
 	ClearedWithoutAction = "cleared_without_action"
 	Failed               = "failed"
+	// Unconfirmed is a verified repair whose closure-time recheck never saw a
+	// complete observation window. It is neither success nor failure evidence.
+	Unconfirmed = "unconfirmed"
 )

@@ -19,6 +19,14 @@ func TestDerivedClassificationsHaveSharedReceiptAndLearningRules(t *testing.T) {
 			c.Result.RepairActions = nil
 		}, ""},
 		{"failed", "failed", func(c *contractsv1alpha1.IncidentClosure) { c.Result.Status = "failed" }, "repair"},
+		{"recheck_window_incomplete", "unconfirmed", func(c *contractsv1alpha1.IncidentClosure) {
+			c.PartialDetectorStates, c.FinalDetectorStates = c.FinalDetectorStates, nil
+			c.UnconfirmedReason = contractsv1alpha1.ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_OBSERVATION_INCOMPLETE
+		}, "repair"},
+		{"unconfirmed_failed_responder_still_fails", "failed", func(c *contractsv1alpha1.IncidentClosure) {
+			c.Result.Status = "failed"
+			c.UnconfirmedReason = contractsv1alpha1.ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_OBSERVATION_INCOMPLETE
+		}, "repair"},
 		{"cancelled_with_repair", "success", func(c *contractsv1alpha1.IncidentClosure) { c.Result.Status = "cancelled" }, "repair"},
 		{"cancelled_without_action", "cleared_without_action", func(c *contractsv1alpha1.IncidentClosure) {
 			c.Result.Status = "cancelled"

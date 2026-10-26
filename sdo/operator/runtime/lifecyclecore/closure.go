@@ -28,6 +28,10 @@ const (
 	AgentTimeout
 	Superseded
 	ResponseExpired
+	// Unconfirmed ends a closure-time recheck whose observation window never
+	// completed within its bound. The verified closure stays pending and commits
+	// unverified with a typed reason; it is never retired as superseded.
+	Unconfirmed
 )
 
 type RetryPolicy struct {
@@ -113,6 +117,16 @@ func Step(state *contracts.ControllerState, event Event) (*contracts.ControllerS
 		return next, nil
 	}
 	if event.Kind == ResponseExpired && phase != contracts.ClosureState_CLOSURE_STATE_PENDING && phase != contracts.ClosureState_CLOSURE_STATE_PROCESSING {
+		return next, nil
+	}
+	if event.Kind == Unconfirmed {
+		if pending == nil || phase != contracts.ClosureState_CLOSURE_STATE_PENDING || len(pending.GetFinalDetectorStates()) == 0 {
+			return next, nil
+		}
+		pending.PartialDetectorStates = append(pending.PartialDetectorStates, pending.FinalDetectorStates...)
+		pending.FinalDetectorStates = nil
+		pending.UnconfirmedReason = contracts.ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_OBSERVATION_INCOMPLETE
+		pending.UnconfirmedDetail = event.Error
 		return next, nil
 	}
 	if event.Kind == Superseded || event.Kind == ResponseExpired {
