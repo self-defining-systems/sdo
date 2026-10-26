@@ -135,3 +135,21 @@ archive copy-back and reset. The external attachment report records phases and
 original Jobs. Attachment requires equal initial accepted trees and retains
 private proposal, ledger, capture and session roots. Scripted scheduling, broker
 and lock tests prove plumbing; live runs establish learning and speedup.
+
+## Restartable private-memory sequences
+
+`python -m benchmarks.sregym.fastloop.sequence --plan PLAN` runs adjacent first
+and exact-repeat pairs through the ordinary guarded fastloop CLI. Each lane owns
+one accepted history; cross-lane transfer is absent. `sequence.json` freezes the
+code SHA, lane, environment and row order. Per-row `manifest.json` records the
+initial seed and accepted commit; `finished.json` adds the observed final commit,
+ancestry, native incident/result/receipt identity and independent oracle verdict.
+These bounds describe observed memory, not causal attribution. Continue to use
+the native request and broker receipt for exact incident inputs.
+
+On restart, completed rows are skipped. A terminal native result written before
+the journal commit is adopted after checking recovery and acknowledged learning.
+An incomplete row holds the lane for native recovery and is never reinjected.
+`complete.json` means all rows passed the advance gate, not that every repair
+passed its official oracle. `program_trust_threshold: 3` records experiment intent
+only: automatic trust gating is retired and the value grants no authority.
