@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/distribution/reference"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -173,8 +174,14 @@ func liveImage(spec corev1.PodSpec, name string, init bool) string {
 }
 
 // agreedDigest returns the pulled digest only when every current Pod running
-// the applied image reports the same one; a mixed rollout is not evidence.
+// the applied image has reported the same one from the applied image's
+// repository. A mixed rollout, a Pod that has not pulled yet, or a digest
+// recorded under another repository (a mirror) is not evidence.
 func agreedDigest(pods []corev1.Pod, name string, init bool, applied string) (string, bool) {
+	source, err := reference.ParseNormalizedNamed(applied)
+	if err != nil {
+		return "", false
+	}
 	digest := ""
 	for _, pod := range pods {
 		if pod.DeletionTimestamp != nil || liveImage(pod.Spec, name, init) != applied {
@@ -184,18 +191,23 @@ func agreedDigest(pods []corev1.Pod, name string, init bool, applied string) (st
 		if init {
 			statuses = pod.Status.InitContainerStatuses
 		}
+		reported := false
 		for _, status := range statuses {
-			if status.Name != name || status.ImageID == "" {
+			if status.Name != name {
 				continue
 			}
 			id := status.ImageID
 			if _, rest, found := strings.Cut(id, "://"); found {
 				id = rest
 			}
-			if !pulledDigest.MatchString(id) || (digest != "" && digest != id) {
+			pulled, err := reference.ParseNormalizedNamed(id)
+			if err != nil || !pulledDigest.MatchString(id) || pulled.Name() != source.Name() || (digest != "" && digest != id) {
 				return "", false
 			}
-			digest = id
+			digest, reported = id, true
+		}
+		if !reported {
+			return "", false
 		}
 	}
 	return digest, digest != ""
