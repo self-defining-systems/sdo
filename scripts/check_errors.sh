@@ -7,6 +7,7 @@
 #   go    — every Go main under benchmarks/ compiles (scripts/check_go_mains.sh)
 #   schema — validator fingerprint and CLI binding contract tests
 #   parity — fast Go/Python/proto contract parity (scripts/check_contracts_fast.sh)
+#   refs   — generated skill references and the read-only Kubernetes client facade
 
 set -e
 
@@ -50,6 +51,18 @@ echo "==> Go capture fixture policy"
 
 echo "==> responder command reference"
 uv run python -m sdo.agents.responder.command_reference --check
+
+# Generated skill references: the root sdk package test only runs when that
+# package changes, so an sdk/program-only edit can leave program-sdk.md stale.
+echo "==> generated skill references"
+bash "$SCRIPT_DIR/gen_skill_references.sh" --check
+(
+    cd "$PROJECT_ROOT/sdo/operator"
+    go test ./memory/validate -run '^TestMemoryLayoutReference$' -count=1 -timeout=20s
+)
+
+echo "==> generated read-only Kubernetes client facade"
+bash "$SCRIPT_DIR/gen_kube_read_clients.sh" --check
 
 echo "==> ruff"
 if [ "$1" == "--fix" ]; then
