@@ -11,8 +11,8 @@ import pytest
 from benchmarks.sregym.adapter import ControllerInstallError, RuntimeConfig
 from benchmarks.sregym.adapter.driver import DeployedLifecycle, DeployedLifecycleContext
 from benchmarks.sregym.adapter.persistent import (
-    REJECTED_RECEIPT_FILENAME,
     CONTROLLER_LOGS_SUBDIR,
+    REJECTED_RECEIPT_FILENAME,
     Clock,
     ControllerPod,
     PersistentState,
