@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"testing"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -51,17 +52,17 @@ func addedFieldsLive() *unstructured.Unstructured {
 }
 
 // acceptAddedFieldsLive records the acceptance point the way adoption does:
-// the stamp lists every undeclared path the accepted object carried.
+// the record lists every path the accepted object carried.
 func acceptAddedFieldsLive(live *unstructured.Unstructured) {
-	apply := addedFieldsSource()
-	if err := stampAcceptedPaths(apply, live, live); err != nil {
-		panic(err)
+	record, fits, err := buildAcceptanceRecord(addedFieldsSource(), live, live)
+	if err != nil || !fits {
+		panic(fmt.Sprintf("acceptance record: %v %v", fits, err))
 	}
 	annotations := live.GetAnnotations()
 	if annotations == nil {
 		annotations = map[string]string{}
 	}
-	annotations[acceptedPathsAnnotation] = apply.GetAnnotations()[acceptedPathsAnnotation]
+	annotations[acceptedPathsAnnotation] = record
 	live.SetAnnotations(annotations)
 }
 

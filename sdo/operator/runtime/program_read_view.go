@@ -224,8 +224,9 @@ func (v LiveReadView) DiffAgainstSource(ref sdk.ObjectRef) (program.Diff, error)
 			}
 		}
 		after, _ := json.Marshal(actual)
-		changed := string(before) != string(after) || len(addedSourceFields(observed, comparableFields(source.Object))) > 0
-		return program.Diff{Changed: changed, Text: fmt.Sprintf("accepted: %s\nobserved: %s", before, after)}, nil
+		// Objects outside the application namespace are never accepted by
+		// adoption, so they carry no record and only declared fields compare.
+		return program.Diff{Changed: string(before) != string(after), Text: fmt.Sprintf("accepted: %s\nobserved: %s", before, after)}, nil
 	}
 	if observed == nil {
 		if v.Client != nil {
@@ -272,8 +273,17 @@ func (v LiveReadView) DiffAgainstSource(ref sdk.ObjectRef) (program.Diff, error)
 	if err != nil {
 		return program.Diff{}, err
 	}
-	changed := string(normalizedBefore) != string(normalizedAfter) || len(addedSourceFields(observed, accepted)) > 0
-	return program.Diff{Changed: changed, Text: fmt.Sprintf("accepted: %s\nobserved: %s", before, after)}, nil
+	text := fmt.Sprintf("accepted: %s\nobserved: %s", before, after)
+	if string(normalizedBefore) != string(normalizedAfter) {
+		return program.Diff{Changed: true, Text: text}, nil
+	}
+	// Declared fields agree; fields added since acceptance decide. Without a
+	// current acceptance record that is unknown, never unchanged.
+	added, err := addedSourceFields(observed, source)
+	if err != nil {
+		return program.Diff{}, fmt.Errorf("compare %s/%s with accepted source: %w", ref.Kind, ref.Name, err)
+	}
+	return program.Diff{Changed: len(added) > 0, Text: text}, nil
 }
 
 func dryRunAcceptedSource(ctx context.Context, client kubernetes.Interface, ref sdk.ObjectRef, source *unstructured.Unstructured) (*unstructured.Unstructured, error) {
@@ -281,12 +291,27 @@ func dryRunAcceptedSource(ctx context.Context, client kubernetes.Interface, ref 
 }
 
 func applyAcceptedSource(ctx context.Context, client kubernetes.Interface, ref sdk.ObjectRef, source *unstructured.Unstructured, dryRun bool) (*unstructured.Unstructured, error) {
+	return applyAs(ctx, client, ref, source, dryRun, "sdo-deployer")
+}
+
+// applyAcceptanceRecord writes only the acceptance record, under its own field
+// manager, so later deployer applies that omit it leave it in place.
+func applyAcceptanceRecord(ctx context.Context, client kubernetes.Interface, ref sdk.ObjectRef, record string) error {
+	metadata := map[string]any{"name": ref.Name, "annotations": map[string]any{acceptedPathsAnnotation: record}}
+	if ref.Namespace != "" {
+		metadata["namespace"] = ref.Namespace
+	}
+	_, err := applyAs(ctx, client, ref, &unstructured.Unstructured{Object: map[string]any{"apiVersion": ref.APIVersion, "kind": ref.Kind, "metadata": metadata}}, false, acceptanceFieldManager)
+	return err
+}
+
+func applyAs(ctx context.Context, client kubernetes.Interface, ref sdk.ObjectRef, source *unstructured.Unstructured, dryRun bool, manager string) (*unstructured.Unstructured, error) {
 	patch, err := json.Marshal(source.Object)
 	if err != nil {
 		return nil, err
 	}
 	force := true
-	options := metav1.PatchOptions{FieldManager: "sdo-deployer", Force: &force}
+	options := metav1.PatchOptions{FieldManager: manager, Force: &force}
 	if dryRun {
 		options.DryRun = []string{metav1.DryRunAll}
 	}
