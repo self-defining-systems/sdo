@@ -384,7 +384,7 @@ class BrokerLedger(_message.Message):
     def __init__(self, incident_id: _Optional[str] = ..., closure: _Optional[_Union[_messages_pb2.IncidentClosure, _Mapping]] = ..., proposal_commit: _Optional[str] = ..., outcome_document: _Optional[_Union[_outcome_pb2.OutcomeRecord, _Mapping]] = ..., requires_reflection: _Optional[bool] = ..., outcome_commit: _Optional[str] = ..., reflection_processed: _Optional[bool] = ..., reflection_decision: _Optional[_Union[ReflectionDecision, _Mapping]] = ..., reflection_commit: _Optional[str] = ..., rollout_expectation: _Optional[_Union[ControllerRolloutExpectation, _Mapping]] = ..., rollout_receipts: _Optional[_Iterable[_Union[ControllerRolloutReceipt, _Mapping]]] = ..., receipt: _Optional[_Union[ClosureReceipt, _Mapping]] = ..., acknowledged: _Optional[bool] = ..., acknowledged_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., reflection_rejections: _Optional[_Iterable[_Union[_memory_diagnostic_pb2.ProposalRejection, _Mapping]]] = ..., reflection_rejected: _Optional[bool] = ..., reflection_skipped_reason: _Optional[str] = ..., closure_phase_timestamps: _Optional[_Mapping[str, _timestamp_pb2.Timestamp]] = ..., reflection_phase: _Optional[_Union[ReflectionPhase, str]] = ..., reflection_workspace: _Optional[_Union[_worker_pb2.ProposalWorkspace, _Mapping]] = ..., reflection_paths: _Optional[_Iterable[str]] = ..., reflection_results: _Optional[_Iterable[_Union[ReflectionDecision, _Mapping]]] = ..., reflection_max_retries: _Optional[int] = ..., reflection_dispatch_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., reflection_evidence_gap_count: _Optional[int] = ...) -> None: ...
 
 class OwnershipAdoptionStatus(_message.Message):
-    __slots__ = ("source_commit", "adopted_objects", "conflicts_taken_over", "from_managers", "last_error", "skipped_reason", "retry_at", "failures")
+    __slots__ = ("source_commit", "adopted_objects", "conflicts_taken_over", "from_managers", "last_error", "skipped_reason", "retry_at", "failures", "accepted_objects")
     SOURCE_COMMIT_FIELD_NUMBER: _ClassVar[int]
     ADOPTED_OBJECTS_FIELD_NUMBER: _ClassVar[int]
     CONFLICTS_TAKEN_OVER_FIELD_NUMBER: _ClassVar[int]
@@ -393,6 +393,7 @@ class OwnershipAdoptionStatus(_message.Message):
     SKIPPED_REASON_FIELD_NUMBER: _ClassVar[int]
     RETRY_AT_FIELD_NUMBER: _ClassVar[int]
     FAILURES_FIELD_NUMBER: _ClassVar[int]
+    ACCEPTED_OBJECTS_FIELD_NUMBER: _ClassVar[int]
     source_commit: str
     adopted_objects: int
     conflicts_taken_over: int
@@ -401,4 +402,5 @@ class OwnershipAdoptionStatus(_message.Message):
     skipped_reason: str
     retry_at: _timestamp_pb2.Timestamp
     failures: int
-    def __init__(self, source_commit: _Optional[str] = ..., adopted_objects: _Optional[int] = ..., conflicts_taken_over: _Optional[int] = ..., from_managers: _Optional[_Iterable[str]] = ..., last_error: _Optional[str] = ..., skipped_reason: _Optional[str] = ..., retry_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., failures: _Optional[int] = ...) -> None: ...
+    accepted_objects: _containers.RepeatedScalarFieldContainer[str]
+    def __init__(self, source_commit: _Optional[str] = ..., adopted_objects: _Optional[int] = ..., conflicts_taken_over: _Optional[int] = ..., from_managers: _Optional[_Iterable[str]] = ..., last_error: _Optional[str] = ..., skipped_reason: _Optional[str] = ..., retry_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., failures: _Optional[int] = ..., accepted_objects: _Optional[_Iterable[str]] = ...) -> None: ...
