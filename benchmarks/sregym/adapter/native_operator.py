@@ -413,16 +413,8 @@ def collect_native_receipt(
     config: NativeInstallConfig, incident_id: str, *, sync_repository: bool = False
 ) -> dict[str, Any]:
     evidence = read_incident_evidence(config, incident_id, sync_repository=sync_repository)
-    job_name = evidence["responder_job_name"]
-    job = _kubectl_json(config, "get", f"job/{job_name}")
-    job_metadata = job.get("metadata")
-    job_status = job.get("status")
-    if not isinstance(job_metadata, dict) or not isinstance(job_status, dict):
-        raise NativeOperatorError("responder Job has no metadata or status")
-    job_uid = job_metadata.get("uid")
-    if not isinstance(job_uid, str) or not job_uid or job_status.get("succeeded") != 1:
-        raise NativeOperatorError("responder Job is not durably successful")
-    responder_job_evidence = [{"incident_id": incident_id, "job_name": job_name, "job_uid": job_uid, "succeeded": True}]
+    # Early closure intentionally retires responder Jobs. The frozen request,
+    # lifecycle timestamps, result and acknowledged broker decision outlive them.
     controller_job = _kubectl_json(config, "get", "job/sdo-controller-run")
     controller_metadata = controller_job.get("metadata")
     controller_job_uid = controller_metadata.get("uid") if isinstance(controller_metadata, dict) else None
@@ -456,7 +448,7 @@ def collect_native_receipt(
         responder_image=config.responder_image,
         validator_image=config.validator_image,
         controller_pod_uid=controller_uid,
-        responder_job_evidence=responder_job_evidence,
+        responder_job_evidence=[],
     )
 
 
