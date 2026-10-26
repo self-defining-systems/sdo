@@ -300,3 +300,13 @@ func TestStopRetiresUIDBoundClaimsWithOwners(t *testing.T) {
 		})
 	}
 }
+
+func TestScopedStopUsesNamedClaimRead(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	client.PrependReactor("list", "configmaps", func(action ktesting.Action) (bool, kruntime.Object, error) {
+		return true, nil, errors.New("scoped stop must not inventory unrelated ConfigMaps")
+	})
+	if _, err := Stop(context.Background(), client, "demo"); err != nil {
+		t.Fatal(err)
+	}
+}

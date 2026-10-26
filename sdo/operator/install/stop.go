@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	corev1 "k8s.io/api/core/v1"
 	"slices"
 	"strings"
 	"time"
@@ -169,11 +170,23 @@ func Stop(ctx context.Context, client kubernetes.Interface, namespace string) (S
 		}
 	}
 	// Recover abandoned reservations through the supported stop path.
-	maps, err := client.CoreV1().ConfigMaps(namespace).List(ctx, metav1.ListOptions{})
-	if err != nil {
-		return result, fmt.Errorf("inventory PVC claims: %w", err)
+	var claims []corev1.ConfigMap
+	if namespace != "" {
+		claim, err := client.CoreV1().ConfigMaps(namespace).Get(ctx, OperateLockConfigMap, metav1.GetOptions{})
+		if err != nil && !apierrors.IsNotFound(err) {
+			return result, fmt.Errorf("inspect PVC claim: %w", err)
+		}
+		if err == nil {
+			claims = append(claims, *claim)
+		}
+	} else {
+		maps, err := client.CoreV1().ConfigMaps(namespace).List(ctx, metav1.ListOptions{})
+		if err != nil {
+			return result, fmt.Errorf("inventory PVC claims: %w", err)
+		}
+		claims = maps.Items
 	}
-	for _, claim := range maps.Items {
+	for _, claim := range claims {
 		if claim.Name != OperateLockConfigMap {
 			continue
 		}

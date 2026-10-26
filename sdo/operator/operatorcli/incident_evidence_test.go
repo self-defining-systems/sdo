@@ -88,14 +88,16 @@ func TestIncidentEvidenceUsesRunningControllerPodWithoutCreatingSyncPod(t *testi
 	}
 
 	oldClient := fake.NewSimpleClientset()
- // Report readiness on the real tracked Pod, including actual deletion.
- oldClient.PrependReactor("get", "pods", func(action ktesting.Action) (bool, runtime.Object, error) {
-  object, err := oldClient.Tracker().Get(corev1.SchemeGroupVersion.WithResource("pods"), "sdo", install.RepositorySyncPodName)
-  if err != nil { return true, nil, err }
-  pod := object.(*corev1.Pod).DeepCopy()
-  pod.Status.Conditions = []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}
-  return true, pod, nil
- })
+	// Report readiness on the real tracked Pod, including actual deletion.
+	oldClient.PrependReactor("get", "pods", func(action ktesting.Action) (bool, runtime.Object, error) {
+		object, err := oldClient.Tracker().Get(corev1.SchemeGroupVersion.WithResource("pods"), "sdo", install.RepositorySyncPodName)
+		if err != nil {
+			return true, nil, err
+		}
+		pod := object.(*corev1.Pod).DeepCopy()
+		pod.Status.Conditions = []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}
+		return true, pod, nil
+	})
 	old := install.Installer{Client: oldClient}
 	beforeStarted := time.Now()
 	if err := old.WithSyncPod(context.Background(), install.SyncConfig{ControlNamespace: "sdo", RepositoryPVC: "repo", ControllerImage: "controller:test"}, func(ctx context.Context, cfg install.Config) error {
