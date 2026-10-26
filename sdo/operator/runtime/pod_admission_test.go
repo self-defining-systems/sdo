@@ -3,7 +3,7 @@ package runtime
 import (
 	"context"
 	"errors"
- "fmt"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -22,9 +22,9 @@ import (
 )
 
 func TestPodAdmissionBlocksVerificationUntilAPIRecovers(t *testing.T) {
-    for _, scale := range []float64{1, 0.1} {
-        t.Run(fmt.Sprint(scale), func(t *testing.T) { testPodAdmissionRecovery(t, scale) })
-    }
+	for _, scale := range []float64{1, 0.1} {
+		t.Run(fmt.Sprint(scale), func(t *testing.T) { testPodAdmissionRecovery(t, scale) })
+	}
 }
 
 func testPodAdmissionRecovery(t *testing.T, scale float64) {
@@ -37,7 +37,7 @@ func testPodAdmissionRecovery(t *testing.T, scale float64) {
 	})
 	detector := workloadhealth.NewPodAdmissionDetector(sdk.DetectorSpec{ID: "pod-admission", OriginatingCommit: "synthetic-test", Class: sdk.DetectorClassHealth, Owner: sdk.DetectorOwnerHealthJudge, Batching: sdk.BatchingPolicy{Severity: sdk.SeverityCritical}, Interval: time.Second, Persistence: sdk.PersistencePolicy{Firing: 1, Clearing: 1}, Watches: []sdk.WatchKind{{APIVersion: "v1", Kind: "Pod"}}})
 	detectors := scaleDetectors([]sdk.Detector{detector}, scale)
- cache, err := NewKubernetesCache(KubernetesCacheConfig{Namespace: "app", Client: client}, detectors)
+	cache, err := NewKubernetesCache(KubernetesCacheConfig{Namespace: "app", Client: client}, detectors)
 	if err != nil {
 		t.Fatal(err)
 	}
