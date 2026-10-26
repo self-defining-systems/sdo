@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import subprocess
 import time
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -21,6 +22,20 @@ HEALTH_SETUP_PATHS = (
 
 class StabilizationError(RuntimeError):
     """The app never established independent and controller traffic proof."""
+
+
+@dataclass(frozen=True)
+class Deadline:
+    """Child operations consume the same monotonic budget, never renew it."""
+
+    expires_at: float
+    monotonic: Callable[[], float] = time.monotonic
+
+    def remaining(self) -> float:
+        remaining = self.expires_at - self.monotonic()
+        if remaining <= 0:
+            raise StabilizationError("eval: admission deadline exhausted; no injection")
+        return remaining
 
 
 def validate_setup_commit(actor: str, phase: str, validation: str, paths: list[str]) -> None:
@@ -110,19 +125,25 @@ def wait_for_proof(
     timeout_seconds: float = 300,
     monotonic: Callable[[], float] = time.monotonic,
     sleep: Callable[[float], None] = time.sleep,
+    deadline: Deadline | None = None,
 ) -> dict[str, Any]:
     if timeout_seconds <= 0 or timeout_seconds > 300:
         raise ValueError("stabilization budget must be in (0, 300] seconds")
     started = monotonic()
+    budget = deadline or Deadline(started + timeout_seconds, monotonic)
+    retry_at = started + budget.remaining() / 2
     for attempt in range(2):
-        deadline = monotonic() + timeout_seconds
-        while monotonic() < deadline:
+        attempt_end = retry_at if attempt == 0 else budget.expires_at
+        while monotonic() < attempt_end:
             proof = sample()
+            if monotonic() >= budget.expires_at:
+                proof.update(passed=False, reason="eval: admission deadline exhausted; no injection")
             proof.update(attempt=attempt + 1, seconds=monotonic() - started)
             record(proof)
             if proof.get("passed") is True:
                 return proof
-            sleep(min(2, max(0, deadline - monotonic())))
+            sleep(min(2, max(0, attempt_end - monotonic())))
         if attempt == 0:
+            budget.remaining()
             restore()
     raise StabilizationError("eval: traffic proof failed after one app-only restore and retry; no injection")
