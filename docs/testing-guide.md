@@ -773,3 +773,13 @@ GitHub Actions expression contexts are checked locally by
 actionlint1.7.7 with external shell/Python linters disabled; Ruff and the existing
 shell gates retain those responsibilities. This catches invalid job-level
 contexts before GitHub rejects the workflow without creating a check run.
+
+
+The no-fault rehearsal also runs `sdo-observation-check` in the installed controller Pod before
+accepting or reusing setup proof. It exercises production `DatabaseUsers` reads for discovered
+MongoDB containers without models, mutation or Secret reads. Each workload returns a safe named
+failure stage; namespace/selector discovery failures fail setup. Registry-rewritten images retain
+Mongo identification through declared container names and listener ports. Source-declared auth
+references can override a database target for a read-only reproduction with
+`go -C sdo/operator/runtime run ./cmd/sdo-observation-check --namespace NS --kubeconfig PATH --target JSON`.
+The target's `auth` references authenticate the catalog read separately from any create-user password.
