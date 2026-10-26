@@ -147,3 +147,8 @@ lane is required when preparing its development source mount. Toy reset removes
 injected objects only from the toy namespace and does not restore unrelated cluster
 admission objects. The report remains at the original lane environment's path, so
 ordinary live admission consumes it without changing its operational workspace.
+
+The proof rejects controller/validator source-label or installed-content mismatches
+in setup before fixture preparation. Validator logs are streamed on Job creation
+into `learning-loop-proof/validator-logs/<job-uid>.log`, including bootstrap
+validators, so broker Job deletion does not erase compiler/setup failures.

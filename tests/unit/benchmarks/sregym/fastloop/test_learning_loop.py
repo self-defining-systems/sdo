@@ -228,3 +228,70 @@ def test_proof_namespace_is_separate_and_stable_for_the_lane_environment(tmp_pat
     assert namespace_for(tmp_path).startswith("sdo-proof-")
     assert namespace_for(tmp_path) == namespace_for(tmp_path / ".")
     assert namespace_for(tmp_path) != namespace_for(tmp_path / "other")
+
+
+def test_proof_rejects_stale_images_before_fixture_mutations(tmp_path, monkeypatch):
+    import json
+    from benchmarks.sregym.fastloop import cli, learning_loop, learning_loop_fixture, source_preflight
+    from benchmarks.sregym.fastloop.environment import FastloopEnvironment
+
+    environment = FastloopEnvironment(
+        run_dir=tmp_path,
+        cluster="lane-53",
+        kubeconfig=tmp_path / "kubeconfig",
+        namespace="hotel",
+        application="hotel",
+        workspace=tmp_path / "workspace",
+        sregym_dir=tmp_path / "sregym",
+        private_tmp=None,
+    )
+    environment.save()
+    monkeypatch.setattr(cli, "up_preflight", lambda _: None)
+    monkeypatch.setattr(learning_loop, "image_identity", lambda _: {})
+    monkeypatch.setattr(
+        source_preflight,
+        "assert_runtime_images",
+        lambda *_: (_ for _ in ()).throw(ValueError("eval: stale controller image source differs from head")),
+    )
+    monkeypatch.setattr(learning_loop_fixture, "prepare", lambda *_: pytest.fail("mutated stale lane"))
+    assert learning_loop.run_lane(tmp_path, 300) == 1
+    report = json.loads((tmp_path / learning_loop.REPORT).read_text())
+    assert report["stage"] == "setup"
+    assert "stale controller image" in report["error"]
+
+
+def test_validator_watch_captures_logs_when_job_is_added(tmp_path, monkeypatch):
+    import json
+    import subprocess
+    import sys
+    import time
+    from benchmarks.sregym.fastloop.learning_loop_watch import ValidatorWatch
+
+    job = validator_job()
+    job["kind"] = "Job"
+    job["metadata"]["uid"] = "unique"
+    watch = ValidatorWatch(tmp_path / "kubeconfig", "control", tmp_path / "events.jsonl")
+    watch.command = [
+        sys.executable,
+        "-c",
+        "import time; print(" + repr(json.dumps({"type": "ADDED", "object": job})) + ", flush=True); time.sleep(10)",
+    ]
+    real_popen = subprocess.Popen
+    calls = []
+
+    def popen(argv, **kwargs):
+        if "logs" in argv:
+            calls.append(argv)
+            argv = [sys.executable, "-c", "print('compiler missing: actionable setup failure', flush=True)"]
+        return real_popen(argv, **kwargs)
+
+    monkeypatch.setattr(subprocess, "Popen", popen)
+    with watch:
+        deadline = time.monotonic() + 2
+        log = tmp_path / "validator-logs/unique.log"
+        while not log.exists() or "compiler missing" not in log.read_text():
+            assert time.monotonic() < deadline
+            time.sleep(0.01)
+    assert len(calls) == 1
+    assert "job/validator-1" in calls[0]
+    assert "--follow" in calls[0]

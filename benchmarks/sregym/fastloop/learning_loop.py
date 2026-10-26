@@ -380,6 +380,11 @@ def run_lane(run_dir: Path, timeout: int, lease: str | None = None) -> int:
     signal.signal(signal.SIGTERM, deadline)
     try:
         cli.up_preflight(cli.build_parser().parse_args(["preflight", "--dev-mount", str(cli.REPO_ROOT)]))
+        from benchmarks.sregym.fastloop.source_preflight import assert_runtime_images
+
+        assert_runtime_images(environment.images, cli.REPO_ROOT)
+        if not cli.node_images_match(environment.cluster, environment.images):
+            raise ValueError("eval: lane image source differs from checked local images; redeliver with fastloop up")
         report.images = image_identity(environment)
         report.save(path)
         os.environ["KUBECONFIG"] = str(environment.kubeconfig)
