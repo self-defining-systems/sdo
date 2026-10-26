@@ -4,14 +4,34 @@ import (
 	"bytes"
 	"encoding/json"
 	"maps"
+
+	"sdo.dev/operator/sdk"
 )
 
 func (b Bindings) Clone() Bindings {
 	return Bindings{Objects: maps.Clone(b.Objects), Values: maps.Clone(b.Values)}
 }
+
+// Equal compares object bindings through the shared citation parser and scalar
+// values through their JSON representation. Omitted known API versions are
+// equivalent to their defaults; namespace and explicit versions remain exact.
 func (b Bindings) Equal(other Bindings) bool {
-	if !maps.Equal(b.Objects, other.Objects) {
+	// Object identity must not depend on whether a binding came from typed
+	// controller state, a recorded JSON object, or an agent citation. Use the
+	// citation parser on both sides to infer only its known default versions.
+	if len(b.Objects) != len(other.Objects) {
 		return false
+	}
+	for name, ref := range b.Objects {
+		otherRef, exists := other.Objects[name]
+		if !exists {
+			return false
+		}
+		left, leftErr := canonicalBindingObject(ref)
+		right, rightErr := canonicalBindingObject(otherRef)
+		if leftErr != nil || rightErr != nil || left != right {
+			return false
+		}
 	}
 	if len(b.Values) == 0 && len(other.Values) == 0 {
 		return true
@@ -45,4 +65,12 @@ func (b *Bindings) UnmarshalJSON(raw []byte) error {
 	}
 	*b = Bindings{Objects: objects}
 	return nil
+}
+
+func canonicalBindingObject(ref sdk.ObjectRef) (sdk.ObjectRef, error) {
+	raw, err := json.Marshal(ref)
+	if err != nil {
+		return sdk.ObjectRef{}, err
+	}
+	return sdk.ParseObjectRef(string(raw))
 }

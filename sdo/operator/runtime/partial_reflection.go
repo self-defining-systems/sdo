@@ -263,6 +263,16 @@ func partialReflectionOutcome(outcome *contracts.OutcomeRecord) *contracts.Outco
 			allowed[reflectionResource(ref)] = true
 		}
 	}
+	undetectedActions := map[string]bool{}
+	for _, cause := range validate.VerifiedReflectionCauses(outcome) {
+		if cause.GetLearningBasis() == "observed_transition" {
+			for _, ref := range cause.Resources {
+				allowed[reflectionResource(ref)] = true
+			}
+			offset := int(cause.CauseIndex) - len(outcome.GetConfirmedRootCauses())
+			undetectedActions[outcome.UndetectedCauses[offset].GetRepairActionId()] = true
+		}
+	}
 	onlyAllowed := func(refs []*contracts.ObjectRef) bool {
 		if len(refs) == 0 {
 			return false
@@ -277,7 +287,7 @@ func partialReflectionOutcome(outcome *contracts.OutcomeRecord) *contracts.Outco
 	proof, applications := partialRepairProof(outcome)
 	current.RepairActions = nil
 	for _, action := range outcome.GetRepairActions() {
-		if (partialActionVerified(outcome, action, proof, applications)) && onlyAllowed(action.GetResources()) {
+		if (partialActionVerified(outcome, action, proof, applications) || undetectedActions[action.GetActionId()]) && onlyAllowed(action.GetResources()) {
 			current.RepairActions = append(current.RepairActions, proto.Clone(action).(*contracts.RepairActionReceipt))
 		}
 	}
@@ -333,6 +343,12 @@ func partialReflectionOutcome(outcome *contracts.OutcomeRecord) *contracts.Outco
 	current.SurfacedPlaybooks, current.InspectedPlaybooks, current.ConfirmedPlaybooks, current.RejectedPlaybooks, current.AppliedPlaybooks = nil, nil, nil, nil, nil
 	current.ReflectionEligibility = partialReflectionEligibility(outcome.GetReflectionEligibility(), indices, true)
 	current.ReflectionEligibility.Unassigned = unverifiedCauseWork(outcome, indices)
+	for _, cause := range validate.VerifiedReflectionCauses(current) {
+		if cause.GetLearningBasis() == "observed_transition" {
+			cause.Items = []*contracts.ReflectionWorkItem{{Disposition: "question", Reason: "unbound_write", Resources: cause.Resources, Question: "Learn diagnosis, mitigation and new detector coverage for this captured undetected repair; application recovery is not independently proven."}}
+			current.ReflectionEligibility.Causes = append(current.ReflectionEligibility.Causes, cause)
+		}
+	}
 	return current
 }
 

@@ -112,8 +112,12 @@ func TestDatabasePlanCapturesOpenCatalogWithoutCredentials(t *testing.T) {
 	if err != nil || !result.VerificationPassed {
 		t.Fatalf("repair failed: %v", err)
 	}
-	if len(calls) != 1 || calls[0].Method != "DatabaseUsers" || calls[0].Phase != "" || string(calls[0].Result) != "[]" {
-		t.Fatalf("pre-repair catalog was not captured for reflection: %+v", calls)
+	if len(calls) != 2 || calls[0].Method != "DatabaseUsers" || calls[0].Phase != "" || string(calls[0].Result) != "[]" {
+		t.Fatalf("measured catalog transition was not captured for reflection: %+v", calls)
+	}
+	var after []program.DatabaseUser
+	if calls[1].Method != "DatabaseUsers" || calls[1].Phase != "fixed" || json.Unmarshal(calls[1].Result, &after) != nil || len(after) != 1 || after[0].Name != a.User || len(after[0].Roles) != 1 {
+		t.Fatalf("fixed catalog lacks measured user transition: %+v", calls[1])
 	}
 }
 
