@@ -100,6 +100,7 @@ func (i *responderExecutionInventory) ownsPod(pod corev1.Pod) bool {
 func terminalResponderPod(pod corev1.Pod) bool {
 	return pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed
 }
+
 // finished reports a terminal responder Job, whose result a re-dispatch adopts.
 func (i *responderExecutionInventory) finished() bool {
 	for _, job := range i.jobs {
