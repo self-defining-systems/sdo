@@ -106,5 +106,7 @@ func TestProgramDetectorCorpusChecksEveryLocatedBinding(t *testing.T) {
 	if err := complete.Check(context.Background()); err != nil {
 		t.Fatalf("complete locator evidence rejected: %v", err)
 	}
-
+	t.Run("AcceptanceCheckDoesNotRelinkLaunchArtifacts", func(t *testing.T) {
+		assertAcceptanceDoesNotRelinkLaunchArtifacts(t, complete)
+	})
 }

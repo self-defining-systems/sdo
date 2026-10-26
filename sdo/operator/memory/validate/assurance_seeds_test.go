@@ -8,6 +8,7 @@ import (
 	"sort"
 	"testing"
 
+	"sdo.dev/operator/builder"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/layout"
 )
@@ -88,9 +89,14 @@ func TestAssuranceSeedsPassHealthJudgeCheck(t *testing.T) {
 			copyTree(t, judged, root)
 			before := snapshotTree(t, root)
 
+			var stages []builder.StageTiming
 			diagnostics, err := Check(context.Background(), Request{
 				Root: root, Base: "HEAD", Actor: HealthJudge, Phase: InitialPhase, OperatorRoot: operatorRoot,
+				StageTimings: &stages,
 			}, CompileCandidate)
+			for _, stage := range stages {
+				t.Logf("seed compiler stage %s: %s", stage.Stage, stage.Duration)
+			}
 			if err != nil {
 				t.Fatalf("health judge check: %v", err)
 			}
