@@ -1,9 +1,9 @@
 package runtime
 
 import (
+	"encoding/json"
 	"fmt"
 
-	"encoding/json"
 	"k8s.io/apimachinery/pkg/util/validation"
 	metricsv1beta1 "k8s.io/metrics/pkg/apis/metrics/v1beta1"
 	"sdo.dev/operator/sdk"

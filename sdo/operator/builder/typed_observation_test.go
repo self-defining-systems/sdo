@@ -29,12 +29,13 @@ func TestTypedObservationProgramCompilesAndRejectsStaleEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	source := strings.Replace(string(data), `"sdo.dev/operator/sdk/program"`, `"sdo.dev/operator/sdk/program"`+"\n"+`"sdo.dev/operator/sdk"`+"\n"+`corev1 "k8s.io/api/core/v1"`, 1)
+	source := strings.Replace(string(data), `"sdo.dev/operator/sdk/program"`, `"sdo.dev/operator/sdk/program"`+"\n"+`"sdo.dev/operator/sdk"`+"\n"+`corev1 "k8s.io/api/core/v1"`+"\n"+`metricsv1beta1 "k8s.io/metrics/pkg/apis/metrics/v1beta1"`, 1)
 	source = strings.Replace(source, `if !found {`, `if !found {
   podRef:=sdk.ObjectRefFrom("Pod","v1",&pod)
   logs,err:=v.LogsWithOptions(podRef,corev1.PodLogOptions{Container:pod.Spec.Containers[0].Name,Previous:true})
   if err!=nil{return program.Verdict{},err}
-  samples,err:=v.PodUsage(podRef)
+  var samples *metricsv1beta1.PodMetrics
+  samples,err=v.PodUsage(podRef)
   if err!=nil{return program.Verdict{},err}
   if logs==""||len(samples.Containers)==0||samples.Timestamp.IsZero(){return program.Verdict{Result:program.Unknown},nil}
  `, 1)
