@@ -16,8 +16,6 @@ func (e KubernetesExecutor) configureStandby(job *batchv1.Job, launch *contracts
 	agent.Command = []string{"/usr/local/bin/sdo-operator", "standby", "--command-json", string(command)}
 	agent.VolumeMounts = append(agent.VolumeMounts, corev1.VolumeMount{Name: "repository", MountPath: "/sdo/standby/ready", SubPath: path.Join(e.standbySubPath, "ready")})
 	agent.WorkingDir = "/sdo/proposal"
-	agent.VolumeMounts = append(agent.VolumeMounts, corev1.VolumeMount{Name: "repository", MountPath: "/sdo/session/late-findings", SubPath: path.Join(e.standbySubPath, "session/late-findings"), ReadOnly: true})
-	agent.VolumeMounts = append(agent.VolumeMounts, corev1.VolumeMount{Name: "repository", MountPath: "/sdo/late-findings", SubPath: path.Join(e.standbySubPath, "session/late-findings"), ReadOnly: true})
 	for i := range pod.InitContainers {
 		sidecar := &pod.InitContainers[i]
 		if sidecar.Name != "kube-api-history" {

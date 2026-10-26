@@ -55,11 +55,10 @@ func TestKubernetesExecutorRunsRegisteredReflectionInPrivateCheckout(t *testing.
 		OnPhase:        notifyTestJobCreated(jobCreated),
 		ToolchainImage: "controller:compiler", Client: client, Namespace: "demo", Registry: reflectionTestRegistry(t), ServiceAccount: "sdo-worker",
 		RepositoryPVC: "repo", RepositoryMountPath: "/workspace", RepositoryPVCSubPath: "tenant", PollInterval: time.Millisecond,
-		SessionPVCSubPath:     "tenant/.sdo-runtime/sessions/incident-hash",
-		CredentialsSecret:     "agent-provider-credentials",
-		HealthyBaseline:       true,
-		LateFindingsConfigMap: "sdo-late-incident",
-		Environment:           map[string]string{"SDO_ACTOR": "human", "SDO_PHASE": "initial", "SDO_BASE_COMMIT": "forged", "SDO_CAPTURED_CORPUS_DIR": "forged-capture", "SDO_HEALTHY_BASELINE": "forged-baseline"},
+		SessionPVCSubPath: "tenant/.sdo-runtime/sessions/incident-hash",
+		CredentialsSecret: "agent-provider-credentials",
+		HealthyBaseline:   true,
+		Environment:       map[string]string{"SDO_ACTOR": "human", "SDO_PHASE": "initial", "SDO_BASE_COMMIT": "forged", "SDO_CAPTURED_CORPUS_DIR": "forged-capture", "SDO_HEALTHY_BASELINE": "forged-baseline"},
 	}
 	results := make(chan *contracts.AgentResult, 1)
 	errs := make(chan error, 1)
@@ -124,9 +123,6 @@ func TestKubernetesExecutorRunsRegisteredReflectionInPrivateCheckout(t *testing.
 				t.Fatalf("session mount is not a narrow writable incident subPath: %#v", mount)
 			}
 		}
-		if mount.Name == "late-findings" && (mount.MountPath != "/sdo/late-findings" || !mount.ReadOnly) {
-			t.Fatalf("late findings projection is writable or misplaced: %#v", mount)
-		}
 		if mount.MountPath == "/workspace" || mount.SubPath == "tenant/application" {
 			t.Fatalf("worker can access accepted repository: %#v", mount)
 		}
@@ -161,9 +157,6 @@ func TestKubernetesExecutorRunsRegisteredReflectionInPrivateCheckout(t *testing.
 		t.Fatalf("worker received an unexpected Secret: %#v", container.EnvFrom)
 	}
 	for _, volume := range job.Spec.Template.Spec.Volumes {
-		if volume.Name == "late-findings" && (volume.ConfigMap == nil || volume.ConfigMap.Name != "sdo-late-incident") {
-			t.Fatalf("late findings volume is not a ConfigMap projection: %#v", volume)
-		}
 		if volume.Secret != nil && volume.Secret.SecretName != "agent-provider-credentials" {
 			t.Fatalf("worker mounted broker-only Secret %q", volume.Secret.SecretName)
 		}

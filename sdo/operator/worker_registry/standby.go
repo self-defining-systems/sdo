@@ -461,9 +461,6 @@ func (e KubernetesExecutor) publishWarmTask(ctx context.Context, task *contracts
 	environment["SDO_NAMESPACE"] = e.Namespace
 	environment["SDO_WORKSPACE_ALIAS"] = "/sdo/proposal"
 	environment["SDO_STARTUP_TIMING_PATH"] = "/sdo/session/startup-workers/" + b.JobName + "/startup-worker.json"
-	if err := e.projectWarmLateFindings(ctx); err != nil {
-		return unpublished(err)
-	}
 	if err := writeStandbyJSON(filepath.Join(b.Directory, "control/environment.json"), environment); err != nil {
 		return unpublished(err)
 	}
