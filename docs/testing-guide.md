@@ -677,7 +677,10 @@ modules use Go 1.26.8. Explicit fixture compiler parallelism must not override
 
 `prepare-go` builds normal and race archives on two independent runners per
 pushed event commit, publishing a cache for each mode. Normal-only consumers
-restore the normal graph; Go test shards restore both. Preparation never links or
+restore the normal graph and the sole module archive. Go test shards restore
+the race graph to a separate directory, then `scripts/merge_go_ci_caches.sh`
+unions immutable compiler entries with hard links. Each archive destination is
+restored once; Go module files are never unpacked over another restored cache. Preparation never links or
 starts test binaries; each test shard owns those steps. This avoids serially
 linking every test package before any shard can start. The test jobs depend
 on preparation and require that exact cache; they do not start cold compilation

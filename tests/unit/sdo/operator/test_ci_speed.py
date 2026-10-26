@@ -213,12 +213,13 @@ def test_normal_and_race_preparation_are_independent_bounded_jobs() -> None:
     jobs = workflow()["jobs"]
     preparation = jobs["prepare-go"]
     assert preparation["strategy"]["matrix"]["mode"] == ["normal", "race"]
-    cache = next(step for step in preparation["steps"] if step.get("uses", "").startswith("actions/cache"))
-    assert "${{ matrix.mode }}" in cache["with"]["key"]
+    caches = [step for step in preparation["steps"] if step.get("uses", "").startswith("actions/cache")]
+    assert {step["if"] for step in caches} == {"matrix.mode == 'normal'", "matrix.mode == 'race'"}
+    assert sum("~/go/pkg/mod" in step["with"]["path"] for step in caches) == 1
     for name in ("controller", "replay", "chaos"):
         keys = [step["with"]["key"] for step in jobs[name]["steps"] if step.get("uses", "").startswith("actions/cache")]
-        assert any("ci-prepared-normal-" in key for key in keys)
-        assert any("ci-prepared-race-" in key for key in keys)
+        assert any("ci-prepared-v2-normal-" in key for key in keys)
+        assert any("ci-prepared-v2-race-" in key for key in keys)
 
 
 def test_image_builder_refuses_dirty_source_before_docker(tmp_path: Path) -> None:
@@ -238,3 +239,31 @@ def test_image_builder_refuses_dirty_source_before_docker(tmp_path: Path) -> Non
     assert result.returncode == 1
     assert "image source has uncommitted changes" in result.stderr
     assert "unexpected-docker" not in result.stderr
+
+
+def test_downstream_cache_archives_never_unpack_into_the_same_path() -> None:
+    for name in ("python", "controller", "go-integration", "replay", "chaos"):
+        steps = workflow()["jobs"][name]["steps"]
+        restored = [
+            line.strip()
+            for step in steps
+            if step.get("uses", "").startswith("actions/cache")
+            for line in step["with"]["path"].splitlines()
+            if line.strip()
+        ]
+        assert len(restored) == len(set(restored)), (name, restored)
+        assert restored.count("~/go/pkg/mod") == 1
+
+
+def test_compiler_cache_union_preserves_existing_and_adds_race_entries(tmp_path: Path) -> None:
+    normal, race = tmp_path / "normal", tmp_path / "race"
+    for directory in (normal, race):
+        (directory / "hash").mkdir(parents=True)
+        (directory / "hash/shared-a").write_bytes(b"immutable shared archive")
+        (directory / "hash/shared-a").chmod(0o444)
+    (race / "hash/race-only-a").write_bytes(b"race archive")
+    existing_inode = (normal / "hash/shared-a").stat().st_ino
+    subprocess.run(["bash", str(ROOT / "scripts/merge_go_ci_caches.sh"), str(normal), str(race)], check=True)
+    assert (normal / "hash/shared-a").stat().st_ino == existing_inode
+    assert (normal / "hash/race-only-a").read_bytes() == b"race archive"
+    assert (normal / "hash/race-only-a").stat().st_ino == (race / "hash/race-only-a").stat().st_ino
