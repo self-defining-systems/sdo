@@ -54,14 +54,19 @@ func ReflectionLearningDiagnostics(root string, outcome *contracts.OutcomeRecord
 		return nil, err
 	}
 	linked := map[string]bool{}
+	var incidentDetectors []string
 	for _, d := range detectors {
 		for _, id := range d.Manifest.PossiblePlaybooks {
 			linked[id] = true
+		}
+		if d.Class == layout.ClassIncident {
+			incidentDetectors = append(incidentDetectors, d.Manifest.ID)
 		}
 	}
 	var ds []Diagnostic
 	for _, cause := range causes {
 		hasProgram, hasDetector := false, false
+		var programs []string
 		for _, spec := range specs {
 			if spec.Mitigator == "" {
 				continue
@@ -76,15 +81,40 @@ func ReflectionLearningDiagnostics(root string, outcome *contracts.OutcomeRecord
 				}
 				hasProgram = true
 				hasDetector = hasDetector || linked[spec.ID]
+				if !slices.Contains(programs, spec.ID) {
+					programs = append(programs, spec.ID)
+				}
 			}
 		}
 		if !hasProgram {
 			ds = append(ds, Diagnostic{Rule: RuleReflectionProgramRequired, Message: fmt.Sprintf("verified cause %d requires a diagnose program, mitigation program, README and a recorded-observation replay fixture, or a typed SDK gap naming these cause resources", cause.GetCauseIndex())})
 		} else if !hasDetector {
-			ds = append(ds, Diagnostic{Rule: RuleReflectionDetectorRequired, Message: fmt.Sprintf("verified cause %d requires a detector referencing its executable playbook; detectors may reference several playbooks", cause.GetCauseIndex())})
+			ds = append(ds, detectorRequired(cause, programs, incidentDetectors))
 		}
 	}
 	return ds, nil
+}
+
+// detectorRequired names what to link and where. Reflection may edit only
+// responder-owned incident detectors; a cause observed solely by health-owned
+// or built-in detectors (drift.unexplained) still needs an incident detector.
+func detectorRequired(cause *contracts.ReflectionCauseWork, programs, incidentDetectors []string) Diagnostic {
+	resources := make([]string, 0, len(cause.GetResources()))
+	for _, r := range cause.GetResources() {
+		resources = append(resources, fmt.Sprintf("%s %s/%s", r.GetKind(), r.GetNamespace(), r.GetName()))
+	}
+	existing := "none yet"
+	if len(incidentDetectors) > 0 {
+		existing = strings.Join(incidentDetectors, ", ")
+	}
+	return Diagnostic{
+		Rule: RuleReflectionDetectorRequired,
+		Path: layout.DetectorDir(layout.ClassIncident, ""),
+		Message: fmt.Sprintf("verified cause %d (%s) has executable program %s, but no detector lists it in possiblePlaybooks",
+			cause.GetCauseIndex(), strings.Join(resources, ", "), strings.Join(programs, ", ")),
+		Hint: fmt.Sprintf("list the program in possiblePlaybooks of a responder-owned incident detector that observes these resources (existing: %s) or add a new incident detector; "+
+			"health-owned detectors and built-in detectors such as drift.unexplained do not count, because reflection cannot edit them", existing),
+	}
 }
 
 // Only repaired targets need parameters. Symptom resources remain in the cause
