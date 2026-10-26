@@ -18,14 +18,14 @@ if ! command -v uv >/dev/null 2>&1; then
     exit 1
 fi
 
-# Compile/vet alone cannot detect stale validator schema pins. Run the two
-# source-bound contract tests before the broader gates. Bound test execution
-# with -timeout; cold module downloads and compilation need their own time.
+# Bind controller and validator to the same source identity and exercise an
+# SDK branch merge without generated pin edits before the broader gates.
+# Bound test execution with -timeout; cold module downloads and compilation need their own time.
 echo "==> validator schema identity"
 (
     cd "$PROJECT_ROOT/sdo/operator"
     go test ./builder ./operatorcli \
-        -run '^(TestSchemaIdentityMatchesCommittedSDK|TestParseValidateLaunchRequiresBoundSchema)$' \
+        -run '^(TestSchemaIdentity.*|TestSDKBranchesMergeWithoutIdentityPins|TestControllerSchemaIdentityFailsClosed|TestParseValidateLaunchRequiresBoundSchema)$' \
         -count=1 -timeout=20s
 )
 
