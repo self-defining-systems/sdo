@@ -160,7 +160,7 @@ func TestProgramFollowUpRetiresOldReplicaSetAfterDeadlockedRollout(t *testing.T)
 }
 
 func TestStalledProgramApplicationReleasesLockToResponder(t *testing.T) {
-	loop, _, option := rollLoop(t, rollProgram{})
+	loop, cluster, option := rollLoop(t, rollProgram{})
 	loop.PendingStallTimeout = time.Millisecond
 	first := loop.Handle(context.Background(), ToolRequest{Command: "mitigate", Selection: &contracts.MitigationSelection{OptionId: option, RoundLimit: 1}})
 	if first.RolloutPending == nil {
@@ -175,4 +175,46 @@ func TestStalledProgramApplicationReleasesLockToResponder(t *testing.T) {
 	if report.Report.GetReasonCode() != "rollout_stalled" || report.Report.GetStatus() == contracts.MitigationReport_STATUS_SUCCESS {
 		t.Fatalf("stalled application lacks its typed reason: %+v", report.Report)
 	}
+	// The responder wrote the released target, so a later completion is not the program's.
+	rollRetireOld(cluster)
+	late := loop.Handle(context.Background(), ToolRequest{Command: "report", ReportQuery: &contracts.MitigationReportQuery{AttemptId: first.Report.GetAttemptId()}})
+	if late.Report.GetStatus() == contracts.MitigationReport_STATUS_SUCCESS {
+		t.Fatalf("program received credit for a rollout the responder's later write may have finished: %+v", late.Report)
+	}
+}
+
+func TestSlowHealthyRolloutAfterStallReleaseKeepsProgramSuccess(t *testing.T) {
+	loop, cluster, option := rollLoop(t, rollProgram{})
+	loop.PendingStallTimeout = time.Millisecond
+	first := loop.Handle(context.Background(), ToolRequest{Command: "mitigate", Selection: &contracts.MitigationSelection{OptionId: option, RoundLimit: 1}})
+	if first.RolloutPending == nil {
+		t.Fatalf("setup: expected a slow rollout: %+v", first.Report)
+	}
+	time.Sleep(5 * time.Millisecond)
+	stalled := loop.Handle(context.Background(), ToolRequest{Command: "report", ReportQuery: &contracts.MitigationReportQuery{AttemptId: first.Report.GetAttemptId()}})
+	if stalled.Report.GetReasonCode() != "rollout_stalled" {
+		t.Fatalf("setup: expected the lock release: %+v", stalled.Report)
+	}
+	_, release, ok := acquireClosureGuard(loop)
+	release()
+	if !ok {
+		t.Fatal("released application still blocks the responder's closure check")
+	}
+	rollRetireOld(cluster) // the old pod finally terminates; nobody else wrote the target
+	settled := loop.Handle(context.Background(), ToolRequest{Command: "report", ReportQuery: &contracts.MitigationReportQuery{AttemptId: first.Report.GetAttemptId()}})
+	if settled.Report.GetStatus() != contracts.MitigationReport_STATUS_SUCCESS || settled.Report.GetReasonCode() != "" {
+		t.Fatalf("slow healthy rollout lost the program's success: %+v", settled.Report)
+	}
+	for _, application := range loop.applicationsLog {
+		if application.ID == first.ApplicationID && (application.Error != "" || application.Pending || !application.Result.VerificationCompleted || !application.Result.VerificationPassed) {
+			t.Fatalf("learning receipt still records a stall: %+v", application)
+		}
+	}
+	if len(loop.pendingWrites) != 0 {
+		t.Fatal("settled reservation remained")
+	}
+}
+
+func rollRetireOld(cluster *rollCluster) {
+	cluster.objects[rollOldRS].Object["spec"].(map[string]any)["replicas"] = int64(0)
 }

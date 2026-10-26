@@ -200,6 +200,10 @@ type pendingMitigation struct {
 	Bindings            program.Bindings
 	FindingFingerprints []string
 	ReservedAt          time.Time
+	// Released reservations no longer hold their writes but are still observed;
+	// Superseded ones saw a later overlapping write and earn no late credit.
+	Released   bool
+	Superseded bool
 }
 
 func (l *ResponderLoop) reservePending(application string, plan program.Plan, attempt, programID string, bindings program.Bindings, fingerprints []string) {
@@ -241,6 +245,14 @@ func (l *ResponderLoop) settlePending(ctx context.Context) {
 			l.updatePendingReport(application, pending.AttemptID, false, "verification_unavailable")
 			continue // Restart cannot recreate process-local verification authority.
 		}
+		if pending.Superseded {
+			// A later write to the released target may have finished this rollout.
+			result.VerificationCompleted = true
+			result.VerificationPassed = false
+			l.applications[application] = result
+			l.updatePendingReport(application, pending.AttemptID, false, "rollout_stalled")
+			continue
+		}
 		result.RolloutPending = nil
 		result.VerificationCompleted = true
 		verifier := scopedMitigationVerifier(executor.Verifier, result.Plan, l.mitigationIncident([]selectedPlan{{programID: pending.ProgramID, bindings: pending.Bindings, targetFingerprints: pending.FindingFingerprints}}).Findings)
@@ -279,9 +291,14 @@ func (l *ResponderLoop) settlePending(ctx context.Context) {
 }
 
 // A pending application that does not converge within its bound releases its
-// writes to the responder. Its writes stay applied and remain unverified; the
-// typed reason tells the responder to finish the repair itself.
+// writes to the responder with typed reason rollout_stalled. Its writes stay
+// applied and unverified, and observation continues: a rollout that completes
+// later settles through the ordinary verification, so a slow healthy rollout
+// keeps its success.
 func (l *ResponderLoop) releaseStalledPending(application string, pending pendingMitigation) {
+	if pending.Released {
+		return
+	}
 	if pending.ReservedAt.IsZero() {
 		// Restored reservations start their bound at restore time.
 		pending.ReservedAt = time.Now().UTC()
@@ -295,19 +312,17 @@ func (l *ResponderLoop) releaseStalledPending(application string, pending pendin
 	if time.Since(pending.ReservedAt) < bound {
 		return
 	}
-	delete(l.pendingWrites, application)
+	pending.Released = true
+	l.pendingWrites[application] = pending
 	const reason = "rollout_stalled"
 	if result, ok := l.applications[application]; ok {
 		result.RolloutPending = nil
-		result.VerificationCompleted = true
-		result.VerificationPassed = false
 		l.applications[application] = result
 		for i := range l.applicationsLog {
 			if l.applicationsLog[i].ID == application {
 				l.applicationsLog[i].Result = result
 				l.applicationsLog[i].Pending = planApplicationPending(result)
 				l.applicationsLog[i].Error = reason + ": rollout did not converge within " + bound.String() + "; writes remain applied and unverified"
-				l.applicationsLog[i].CompletedAt = time.Now().UTC()
 			}
 		}
 	}
@@ -319,9 +334,29 @@ func (l *ResponderLoop) releaseStalledPending(application string, pending pendin
 	}
 }
 
+// heldPendingWrites counts reservations that still hold their writes.
+func (l *ResponderLoop) heldPendingWrites() int {
+	held := 0
+	for _, pending := range l.pendingWrites {
+		if !pending.Released {
+			held++
+		}
+	}
+	return held
+}
+
 func (l *ResponderLoop) pendingConflict(refs []sdk.ObjectRef, response *ToolResponse) bool {
 	for _, ref := range refs {
 		for application, pending := range l.pendingWrites {
+			if pending.Released {
+				for _, target := range pending.Refs {
+					if ref.Kind == "*" || target.Kind == "*" || writeObjectKey(ref) == writeObjectKey(target) {
+						pending.Superseded = true
+						l.pendingWrites[application] = pending
+					}
+				}
+				continue
+			}
 			if len(pending.Refs) == 0 {
 				l.refuseSelection(response, "pending_write_conflict", "pending application "+application+" has unknown write scope")
 				return true
@@ -503,7 +538,7 @@ func (l *ResponderLoop) RefreshPendingMitigations(ctx context.Context) bool {
 	if err := l.persistToolState(ctx); err != nil {
 		return true
 	}
-	return len(l.pendingWrites) > 0 || l.pendingApplicationResultsLocked()
+	return l.heldPendingWrites() > 0 || l.pendingApplicationResultsLocked()
 }
 
 func planApplicationPending(result PlanApplicationResult) bool {
@@ -533,5 +568,5 @@ func (l *ResponderLoop) hasPendingMitigationsLocked() bool {
 		defer cancel()
 		l.settlePending(ctx)
 	}
-	return len(l.pendingWrites) > 0 || l.pendingApplicationResultsLocked()
+	return l.heldPendingWrites() > 0 || l.pendingApplicationResultsLocked()
 }
