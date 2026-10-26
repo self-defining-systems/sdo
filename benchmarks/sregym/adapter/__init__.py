@@ -87,6 +87,7 @@ if TYPE_CHECKING:
     )
     from benchmarks.sregym.adapter.scripted_replay import replay_recorded_repair
     from benchmarks.sregym.adapter.scripted_replay_catalog import SCRIPTED_REPLAY_SLOTS
+    from benchmarks.sregym.adapter.scripted_worker import scripted_judge_seed
 
 _EXPORTS: dict[str, str] = {
     "BENCHMARK_IMAGE_ENTRY_POINTS": "image_entrypoints",
@@ -110,6 +111,7 @@ _EXPORTS: dict[str, str] = {
     "wait_for_proof": "eval_guards",
     "replay_recorded_repair": "scripted_replay",
     "SCRIPTED_REPLAY_SLOTS": "scripted_replay_catalog",
+    "scripted_judge_seed": "scripted_worker",
     "prepare_oracle_observability": "oracle_observability",
     "route_astronomy_traces": "oracle_observability",
     "bind_state": "processes",
@@ -176,6 +178,7 @@ __all__ = [
     "wait_for_proof",
     "replay_recorded_repair",
     "SCRIPTED_REPLAY_SLOTS",
+    "scripted_judge_seed",
     "prepare_oracle_observability",
     "route_astronomy_traces",
     "bind_state",

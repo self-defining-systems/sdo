@@ -173,11 +173,15 @@ def test_dry_run_fails_on_responder_image_before_any_lane_mutation(monkeypatch, 
     from benchmarks.sregym import adapter
     from benchmarks.sregym.fastloop import environment, setup_proof
 
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
     lane = SimpleNamespace(
         run_dir=tmp_path,
         cluster="lane",
         kubeconfig=tmp_path / "kubeconfig",
         dev_mount=None,
+        workspace=workspace,
+        seed_commit=_seed(workspace),
         images=SimpleNamespace(responder="sdo-sregym-responder:prod"),
     )
     monkeypatch.setattr(environment.FastloopEnvironment, "load", classmethod(lambda cls, path: lane))
@@ -197,3 +201,86 @@ def test_dry_run_fails_on_responder_image_before_any_lane_mutation(monkeypatch, 
 
 def _missing_scripted_worker(ref, modules, **kwargs):
     raise ValueError(f"eval: image {ref} entrypoint smoke failed: {modules[0]}: ModuleNotFoundError")
+
+
+def _seed(workspace, *, lock=True):
+    """Commit an adopted-seed fixture; ``lock=False`` is a fresh, un-onboarded seed."""
+    import json
+    import subprocess
+
+    sdo = workspace / ".sdo"
+    (sdo / "rendered").mkdir(parents=True)
+    (sdo / "goal.md").write_text("---\nschema_version: 1\nowner: human\n---\n# Health objective\n\nhealthy\n")
+    for name in ("health-objective", "service-endpoints", "service-reachability", "workload-health"):
+        path = sdo / "diagnostics/detectors/health" / name / "manifest.yaml"
+        path.parent.mkdir(parents=True)
+        path.write_text(f"id: {name}\nclass: health\nowner: health_judge\n")
+    if lock:
+        ref = {"kind": "Deployment", "namespace": "app", "name": "web"}
+        (sdo / "rendered/lock.json").write_text(
+            json.dumps({"manifest_paths": ["kubernetes"], "objects": [{"ref": ref}]})
+        )
+    git = ["git", "-C", str(workspace), "-c", "user.name=t", "-c", "user.email=t@t"]
+    subprocess.run([*git, "init", "-q"], check=True)
+    subprocess.run([*git, "add", "-A"], check=True)
+    subprocess.run([*git, "commit", "-qm", "seed"], check=True)
+    return subprocess.run([*git, "rev-parse", "HEAD"], check=True, text=True, capture_output=True).stdout.strip()
+
+
+def test_scripted_preflight_rejects_seed_without_rendered_lock(tmp_path):
+    commit = _seed(tmp_path, lock=False)
+    with pytest.raises(ValueError, match="rendered lock") as error:
+        dry_run.assert_seed_supports_scripted_judge(tmp_path, commit)
+    message = str(error.value)
+    assert commit[:12] in message
+    assert "production admission" in message
+    assert "setup-proof.json" in message
+
+
+def test_scripted_preflight_reads_the_seed_commit_not_the_working_tree(tmp_path):
+    commit = _seed(tmp_path, lock=False)
+    (tmp_path / ".sdo/rendered/lock.json").write_text('{"manifest_paths": ["k"], "objects": [{"ref": {}}]}')
+    with pytest.raises(ValueError, match="rendered lock"):
+        dry_run.assert_seed_supports_scripted_judge(tmp_path, commit)
+
+
+def test_scripted_preflight_accepts_an_onboarded_seed(tmp_path):
+    commit = _seed(tmp_path)
+    evidence = dry_run.assert_seed_supports_scripted_judge(tmp_path, commit)
+    assert evidence["seed_commit"] == commit
+    assert "workload-health" in evidence["detector_ids"]
+    assert evidence["seconds"] < 30
+
+
+def test_dry_run_fails_on_unonboarded_seed_before_any_lane_mutation(monkeypatch, tmp_path):
+    import json
+    from types import SimpleNamespace
+
+    from benchmarks.sregym import adapter
+    from benchmarks.sregym.fastloop import environment, setup_proof
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    commit = _seed(workspace, lock=False)
+    lane = SimpleNamespace(
+        run_dir=tmp_path,
+        cluster="lane",
+        kubeconfig=tmp_path / "kubeconfig",
+        dev_mount=None,
+        workspace=workspace,
+        seed_commit=commit,
+        images=SimpleNamespace(responder="sdo-sregym-responder:scripted"),
+    )
+    monkeypatch.setattr(environment.FastloopEnvironment, "load", classmethod(lambda cls, path: lane))
+
+    def reached(*args, **kwargs):
+        raise AssertionError("dry run touched the lane before checking its seed")
+
+    monkeypatch.setattr(setup_proof, "check_reuse", lambda env: (None, {"reused": False}))
+    monkeypatch.setattr(adapter, "assert_image_entrypoints", reached)
+    monkeypatch.setattr(adapter, "assert_lane_resources", reached)
+    assert dry_run.run_lane(tmp_path, 300, 900) == 1
+    report = json.loads((tmp_path / "eval-dry-run" / "report.json").read_text())
+    assert report["passed"] is False
+    assert "setup-proof.json" in report["invariants"]["failure"]["reason"]
+    assert report["seconds"] < 60

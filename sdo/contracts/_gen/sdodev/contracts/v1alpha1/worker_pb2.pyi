@@ -88,20 +88,22 @@ class AgentTask(_message.Message):
     def __init__(self, schema_version: _Optional[str] = ..., task_id: _Optional[str] = ..., agent_id: _Optional[str] = ..., task_type: _Optional[str] = ..., request: _Optional[_Union[_any_pb2.Any, _Mapping]] = ..., workspace: _Optional[_Union[ProposalWorkspace, _Mapping]] = ..., deadline: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ...) -> None: ...
 
 class AgentResult(_message.Message):
-    __slots__ = ("schema_version", "task_id", "status", "response", "proposal_id", "error_summary")
+    __slots__ = ("schema_version", "task_id", "status", "response", "proposal_id", "error_summary", "failure_reason")
     SCHEMA_VERSION_FIELD_NUMBER: _ClassVar[int]
     TASK_ID_FIELD_NUMBER: _ClassVar[int]
     STATUS_FIELD_NUMBER: _ClassVar[int]
     RESPONSE_FIELD_NUMBER: _ClassVar[int]
     PROPOSAL_ID_FIELD_NUMBER: _ClassVar[int]
     ERROR_SUMMARY_FIELD_NUMBER: _ClassVar[int]
+    FAILURE_REASON_FIELD_NUMBER: _ClassVar[int]
     schema_version: str
     task_id: str
     status: str
     response: _any_pb2.Any
     proposal_id: str
     error_summary: str
-    def __init__(self, schema_version: _Optional[str] = ..., task_id: _Optional[str] = ..., status: _Optional[str] = ..., response: _Optional[_Union[_any_pb2.Any, _Mapping]] = ..., proposal_id: _Optional[str] = ..., error_summary: _Optional[str] = ...) -> None: ...
+    failure_reason: str
+    def __init__(self, schema_version: _Optional[str] = ..., task_id: _Optional[str] = ..., status: _Optional[str] = ..., response: _Optional[_Union[_any_pb2.Any, _Mapping]] = ..., proposal_id: _Optional[str] = ..., error_summary: _Optional[str] = ..., failure_reason: _Optional[str] = ...) -> None: ...
 
 class ReflectionRequest(_message.Message):
     __slots__ = ("closure", "proposal_commit", "outcome_commit", "memory_snapshot", "session_mode", "guidance", "outcome", "prior_outcomes", "validation_attempt", "previous_diagnostics", "cause_work", "unassigned_work")

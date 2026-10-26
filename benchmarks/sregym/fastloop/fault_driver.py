@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 from benchmarks.sregym.fastloop.baseline_recovery import ApplicationBaseline, RecoveryCleanup, reconcile_application
 from benchmarks.sregym.fastloop.loop import InjectionWindow
-from benchmarks.sregym.fastloop.records import OracleVerdict
+from benchmarks.sregym.fastloop.records import EvalNote, OracleVerdict
 from benchmarks.sregym.protocol.injection import FaultComponent, InvalidInjectionError, check_injection
 
 if TYPE_CHECKING:
@@ -56,6 +56,10 @@ def _utc(epoch: object) -> datetime:
 
 def _window(reply: dict[str, Any]) -> InjectionWindow:
     return InjectionWindow(started_at=_utc(reply.get("started_at")), finished_at=_utc(reply.get("finished_at")))
+
+
+def _notes(reply: dict[str, Any], key: str) -> list[EvalNote]:
+    return [EvalNote.model_validate(note) for note in reply.get(key) or []]
 
 
 @dataclass(frozen=True)
@@ -138,13 +142,18 @@ class SregymFaultDriver:
         self._sleep = sleep
         self._before_inject = before_inject
         self.last_injection_window: InjectionWindow | None = None
+        #: Eval notes from the last full recovery, and those the last injection inherited.
+        self.last_eval_notes: list[EvalNote] = []
+        self.last_confounds: list[EvalNote] = []
 
     def inject(self, problem_id: str) -> InjectionWindow:
         self.last_injection_window = None
+        self.last_confounds = []
         if self._before_inject is not None:
             self._before_inject(problem_id)
         reply = self._worker.request("inject", problem_id=problem_id, timeout=WORKER_OP_TIMEOUT_SECONDS)
         self.last_injection_window = _window(reply)
+        self.last_confounds = _notes(reply, "confounds")
         self.last_components = [FaultComponent.model_validate(item) for item in reply.get("components", [])]
         check_injection(reply)
         self._check_faulty_oracle()
@@ -157,6 +166,7 @@ class SregymFaultDriver:
         """
 
         self.last_injection_window = None
+        self.last_confounds = []
         problems = list(problem_ids)
         if not problems or not all(isinstance(problem, str) and problem for problem in problems):
             raise ValueError("a composite fault needs at least one non-empty problem id")
@@ -170,6 +180,8 @@ class SregymFaultDriver:
                     "inject", problem_id=problem_id, compose=position > 0, timeout=WORKER_OP_TIMEOUT_SECONDS
                 )
                 current_window = _window(reply)
+                if position == 0:
+                    self.last_confounds = _notes(reply, "confounds")
                 self.last_injection_window = InjectionWindow(
                     started_at=self.last_injection_window.started_at
                     if self.last_injection_window
@@ -283,7 +295,9 @@ class SregymFaultDriver:
         self._seed_recovery_verified = False
         self.last_cleanup = RecoveryCleanup()
         self.last_full_cleanup_verified = False
+        self.last_eval_notes = []
         reply = self._worker.request("recover", mode="full", timeout=WORKER_OP_TIMEOUT_SECONDS)
+        self.last_eval_notes = _notes(reply, "eval_notes")
         if self._require_full_cleanup and reply.get("protocol_version") != 2:
             raise FastloopFaultError("full cleanup requires protocol v2 recovery")
         _check_recovery(reply)

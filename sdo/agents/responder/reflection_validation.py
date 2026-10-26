@@ -11,7 +11,7 @@ import os
 import signal
 import tempfile
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from mcp.server.fastmcp import FastMCP
 
@@ -44,6 +44,17 @@ VALIDATION_ENVIRONMENT = (
 VALIDATION_TOOL_TIMEOUT_SECONDS = VALIDATION_TIMEOUT_SECONDS + 30
 
 
+class _TextToolServer(FastMCP):
+    """Return each tool result once, as text.
+
+    A resumed reflection carries every result for the rest of the session;
+    FastMCP's structured copy would repeat each one.
+    """
+
+    def add_tool(self, fn: Any, *args: Any, structured_output: bool | None = None, **kwargs: Any) -> None:
+        super().add_tool(fn, *args, structured_output=False, **kwargs)
+
+
 def validation_server(root: Path, *, timeout_seconds: float = VALIDATION_TIMEOUT_SECONDS) -> FastMCP:
     if (
         isinstance(timeout_seconds, bool)
@@ -54,7 +65,7 @@ def validation_server(root: Path, *, timeout_seconds: float = VALIDATION_TIMEOUT
     checkout = root.resolve(strict=True)
     if not checkout.is_dir():
         raise ValueError("validation root must be a checkout directory")
-    server = FastMCP("sdo_reflection")
+    server = _TextToolServer("sdo_reflection")
     install_authoring_tools(server, checkout)
     install_evidence_tools(server)
 
