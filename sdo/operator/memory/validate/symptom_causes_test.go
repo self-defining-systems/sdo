@@ -48,8 +48,7 @@ func TestVerifiedCauseAllowsObservedRecoveredSymptomWithoutWrite(t *testing.T) {
 			o.DetectorHistory[1].Status = "firing"
 			o.DetectorHistory[1].Fingerprints = []string{"service"}
 		},
-		"no repair":        func(o *contracts.OutcomeRecord) { o.RepairActions = nil },
-		"unobserved write": func(o *contracts.OutcomeRecord) { o.Findings = o.Findings[1:] },
+		"no repair": func(o *contracts.OutcomeRecord) { o.RepairActions = nil },
 		"written target only related": func(o *contracts.OutcomeRecord) {
 			o.Findings[0].PrimaryResource = &contracts.ObjectRef{Kind: "Deployment", Namespace: "app", Name: "other"}
 			o.Findings[0].RelatedResources = []*contracts.ObjectRef{deployment}
@@ -95,10 +94,6 @@ func TestVerifiedCauseTreatsFindinglessSymptomAsContext(t *testing.T) {
 		},
 		"frontend observed as related but never cleared": func(o *contracts.OutcomeRecord) {
 			o.Findings = append(o.Findings, &contracts.Finding{DetectorId: "traffic-health", Status: "active", Fingerprint: "traffic", PrimaryResource: &contracts.ObjectRef{Kind: "Service", Namespace: "hotel", Name: "gateway"}, RelatedResources: []*contracts.ObjectRef{frontend}})
-		},
-		"written target without a finding": func(o *contracts.OutcomeRecord) { o.Findings = o.Findings[1:] },
-		"only the finding-less symptom written": func(o *contracts.OutcomeRecord) {
-			o.RepairActions[0].Resources = []*contracts.ObjectRef{frontend}
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -175,5 +170,113 @@ func TestCombinedWriteBindsToEachIndependentlyClearedCause(t *testing.T) {
 	outcome.DetectorHistory[1].Fingerprints = []string{"search"}
 	if got := VerifiedReflectionCauses(outcome); len(got) != 1 || got[0].GetCauseIndex() != 0 {
 		t.Fatalf("only the cause whose own finding cleared may bind: %v", got)
+	}
+}
+
+// A written target no opening finding named is covered by its cause when
+// another finding of that cause cleared after the cause's last write (P35).
+func TestVerifiedCauseCoversFindinglessWrittenTargetByItsCause(t *testing.T) {
+	at := time.Unix(100, 0)
+	write := func(offset time.Duration, refs ...*contracts.ObjectRef) *contracts.RepairActionReceipt {
+		return &contracts.RepairActionReceipt{Success: true, Resources: refs, StartedAt: timestamppb.New(at.Add(offset)), CompletedAt: timestamppb.New(at.Add(offset + time.Second))}
+	}
+	clear := func(detector string, offset time.Duration) *contracts.DetectorEvaluation {
+		return &contracts.DetectorEvaluation{DetectorId: detector, Status: "clear", EvaluatedAt: timestamppb.New(at.Add(offset))}
+	}
+
+	// h4/50/002: cause 0 writes Deployment/media-service, whose only finding is
+	// traffic on its Service; cause 1 writes Deployment/user-service, which no
+	// finding of its own cause observed.
+	media := &contracts.ObjectRef{ApiVersion: "apps/v1", Kind: "Deployment", Namespace: "social", Name: "media-service"}
+	mediaService := &contracts.ObjectRef{ApiVersion: "v1", Kind: "Service", Namespace: "social", Name: "media-service"}
+	user := &contracts.ObjectRef{ApiVersion: "apps/v1", Kind: "Deployment", Namespace: "social", Name: "user-service"}
+	compose := &contracts.ObjectRef{ApiVersion: "v1", Kind: "Service", Namespace: "social", Name: "compose-post-service"}
+	h4 := &contracts.OutcomeRecord{
+		Classification:           "success",
+		ConfirmedRootCauses:      []*contracts.ConfirmedRootCause{{Resources: []*contracts.ObjectRef{media, mediaService}}, {Resources: []*contracts.ObjectRef{user}}},
+		Findings:                 []*contracts.Finding{{DetectorId: "traffic-links", Status: "active", Fingerprint: "media-link", PrimaryResource: mediaService, RelatedResources: []*contracts.ObjectRef{compose}}},
+		RepairActions:            []*contracts.RepairActionReceipt{{Resources: []*contracts.ObjectRef{media}, StartedAt: timestamppb.New(at), CompletedAt: timestamppb.New(at)}, write(3*time.Second, media), write(37*time.Second, user)},
+		FinalHealthDetectorState: []*contracts.DetectorEvaluation{clear("traffic-links", 156*time.Second)},
+	}
+	// Cause 1 stays an evidence gap: the cleared finding belongs to cause 0.
+	if got := VerifiedReflectionCauses(h4); len(got) != 1 || got[0].GetCauseIndex() != 0 {
+		t.Fatalf("h4: want only cause 0 covered by its cleared Service finding: %v", got)
+	}
+	// Listing cause 0's related-only resource in cause 1 does not make cause
+	// 0's finding cover cause 1: only a finding whose primary resource is in
+	// the cause covers its finding-less written target.
+	related := proto.Clone(h4).(*contracts.OutcomeRecord)
+	related.ConfirmedRootCauses[1].Resources = append(related.ConfirmedRootCauses[1].Resources, compose)
+	if got := VerifiedReflectionCauses(related); len(got) != 1 || got[0].GetCauseIndex() != 0 {
+		t.Fatalf("h4: a related-only resource of another cause's finding covered cause 1: %v", got)
+	}
+
+	// h8/54/004: one combined act wrote the ConfigMap (observed) plus
+	// Deployment/search and the webhook (no finding); the cause's other
+	// findings cleared after that write.
+	configMap := &contracts.ObjectRef{ApiVersion: "v1", Kind: "ConfigMap", Namespace: "hotel", Name: "mongo-geo-script"}
+	geo := &contracts.ObjectRef{ApiVersion: "apps/v1", Kind: "Deployment", Namespace: "hotel", Name: "mongodb-geo"}
+	search := &contracts.ObjectRef{ApiVersion: "apps/v1", Kind: "Deployment", Namespace: "hotel", Name: "search"}
+	geoService := &contracts.ObjectRef{ApiVersion: "v1", Kind: "Service", Namespace: "hotel", Name: "mongodb-geo"}
+	webhook := &contracts.ObjectRef{ApiVersion: "admissionregistration.k8s.io/v1", Kind: "ValidatingWebhookConfiguration", Name: "pod-policy.validation.k8s.io"}
+	h8 := &contracts.OutcomeRecord{
+		Classification:      "success",
+		ConfirmedRootCauses: []*contracts.ConfirmedRootCause{{Resources: []*contracts.ObjectRef{configMap, geo, search, geoService, webhook}}},
+		Findings: []*contracts.Finding{
+			{DetectorId: "health-objective", Status: "active", Fingerprint: "geo-unavailable", PrimaryResource: geo},
+			{DetectorId: "health-objective", Status: "active", Fingerprint: "configmap-missing", PrimaryResource: configMap},
+			{DetectorId: "service-endpoints", Status: "active", Fingerprint: "geo-endpoints", PrimaryResource: geoService},
+			{DetectorId: "pod-admission", Status: "active", Fingerprint: "admission", PrimaryResource: &contracts.ObjectRef{ApiVersion: "v1", Kind: "Namespace", Name: "hotel"}},
+		},
+		RepairActions: []*contracts.RepairActionReceipt{write(0, configMap, search, webhook)},
+		FinalHealthDetectorState: []*contracts.DetectorEvaluation{
+			clear("health-objective", 90*time.Second), clear("service-endpoints", 90*time.Second), clear("pod-admission", 90*time.Second),
+		},
+	}
+	if got := VerifiedReflectionCauses(h8); len(got) != 1 || len(got[0].GetResources()) != 5 {
+		t.Fatalf("h8: finding-less written targets vetoed the covered cause: %v", got)
+	}
+
+	for name, tc := range map[string]struct {
+		outcome *contracts.OutcomeRecord
+		change  func(*contracts.OutcomeRecord)
+	}{
+		// The Service finding cleared before the last write to media-service.
+		"cause finding cleared before the last write": {h4, func(o *contracts.OutcomeRecord) {
+			o.RepairActions = append(o.RepairActions, write(200*time.Second, media))
+		}},
+		// The written target has no finding, and the only observed resource
+		// of its cause is related-only on a finding whose primary is elsewhere.
+		"written finding-less target with only a related-only observation": {h4, func(o *contracts.OutcomeRecord) {
+			o.ConfirmedRootCauses = []*contracts.ConfirmedRootCause{{Resources: []*contracts.ObjectRef{user, compose}}}
+			o.RepairActions = []*contracts.RepairActionReceipt{write(37*time.Second, user)}
+		}},
+		"cause finding still firing": {h8, func(o *contracts.OutcomeRecord) {
+			o.FinalHealthDetectorState[1] = &contracts.DetectorEvaluation{DetectorId: "service-endpoints", Status: "firing", Fingerprints: []string{"geo-endpoints"}, EvaluatedAt: timestamppb.New(at.Add(90 * time.Second))}
+		}},
+		"no finding in the cause at all": {h8, func(o *contracts.OutcomeRecord) {
+			o.ConfirmedRootCauses[0].Resources = []*contracts.ObjectRef{search, webhook}
+		}},
+		"written observed target still needs its own primary finding": {h8, func(o *contracts.OutcomeRecord) {
+			o.Findings[1].PrimaryResource = geo
+			o.Findings[1].RelatedResources = []*contracts.ObjectRef{configMap}
+		}},
+		"without global health closure": {h8, func(o *contracts.OutcomeRecord) {
+			o.Classification = "partial"
+			o.ReflectionEligibility = &contracts.ReflectionEligibility{Version: 1, Causes: []*contracts.ReflectionCauseWork{{CauseIndex: 0}}}
+		}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			o := proto.Clone(tc.outcome).(*contracts.OutcomeRecord)
+			tc.change(o)
+			for _, cause := range o.GetConfirmedRootCauses() {
+				if RepairedCauseObserved(o, cause.GetResources()) {
+					t.Fatalf("unproven cause observed as repaired: %v", cause.GetResources())
+				}
+			}
+			if got := VerifiedReflectionCauses(o); len(got) != 0 {
+				t.Fatalf("unproven cause authorized: %v", got)
+			}
+		})
 	}
 }

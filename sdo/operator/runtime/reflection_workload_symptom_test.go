@@ -121,6 +121,10 @@ func TestReflectionLearnsDeploymentRepairWithUnwrittenServiceSymptoms(t *testing
 	// A caller Service whose symptom only traffic health saw: no finding names
 	// it, so it is unobserved context and must not veto the learned repair.
 	outcome.ConfirmedRootCauses[0].Resources = append(outcome.ConfirmedRootCauses[0].Resources, &contracts.ObjectRef{ApiVersion: "v1", Kind: "Service", Namespace: "demo", Name: "frontend"})
+	// The h4/50/002 shape: no opening finding named the written recommendation
+	// Deployment. Its cause's Service finding cleared after the write, which
+	// covers it.
+	outcome.Findings = outcome.Findings[1:]
 	if _, err := repository.RecordOutcome(ctx, incidentID, outcome); err != nil {
 		t.Fatal(err)
 	}
