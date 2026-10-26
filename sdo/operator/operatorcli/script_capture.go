@@ -167,17 +167,6 @@ func (r *scriptRecorder) retain(path string, before, after *unstructured.Unstruc
 		return
 	}
 	ref := sdk.ObjectRef{APIVersion: object.GetAPIVersion(), Kind: object.GetKind(), Namespace: object.GetNamespace(), Name: object.GetName()}
-	if ref.Kind == "Secret" {
-		r.gap("Secret data omitted; undo unavailable")
-		sanitize := func(o *unstructured.Unstructured) *unstructured.Unstructured {
-			if o == nil {
-				return nil
-			}
-			return &unstructured.Unstructured{Object: map[string]any{"apiVersion": o.GetAPIVersion(), "kind": o.GetKind(), "metadata": map[string]any{"name": o.GetName(), "namespace": o.GetNamespace(), "uid": string(o.GetUID()), "resourceVersion": o.GetResourceVersion()}}}
-		}
-		before = sanitize(before)
-		after = sanitize(after)
-	}
 	capture := r.objects[path]
 	if capture == nil {
 		capture = &program.ScriptObjectCapture{Ref: ref}

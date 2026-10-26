@@ -111,3 +111,35 @@ func TestScriptCapturesEveryObjectBeyondInlineImageBudget(t *testing.T) {
 		t.Fatalf("private request receipts lost: %d", receipts)
 	}
 }
+
+func TestScriptSecretPreimagesStayCompleteInPrivateChunks(t *testing.T) {
+	ctx := context.Background()
+	client := fake.NewSimpleClientset()
+	store := scriptCaptureStore{maps: client.CoreV1().ConfigMaps("app"), namespace: "app", application: "sdo-script-secret", jobUID: "job"}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"apiVersion":"v1","kind":"Secret","metadata":{"name":"synthetic","namespace":"app"},"data":{"password":"c3ludGhldGljLWNhbmFyeQ=="}}`))
+	}))
+	defer upstream.Close()
+	target, _ := url.Parse(upstream.URL)
+	recorder := newScriptRecorder(ctx, target, http.DefaultTransport)
+	recorder.persistImage = store.save
+	recorder.Record(apihistory.Event{Phase: "start", Verb: "patch", Version: "v1", Resource: "secrets", Namespace: "app", Name: "synthetic"}, nil)
+	result := program.ScriptExecutionResult{}
+	recorder.settle(&result)
+	if len(result.Objects) != 1 || result.Objects[0].Before != nil || result.Objects[0].ImagesRef == "" || len(result.CaptureGaps) != 0 {
+		t.Fatalf("private Secret preimage unavailable: %+v", result)
+	}
+	name := strings.TrimPrefix(result.Objects[0].ImagesRef, "ConfigMap/app/")
+	chunk, err := client.CoreV1().ConfigMaps("app").Get(ctx, name+"-before-0", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(chunk.BinaryData["image"], []byte("c3ludGhldGljLWNhbmFyeQ==")) {
+		t.Fatal("private preimage lost synthetic Secret bytes")
+	}
+	public, _ := json.Marshal(result.Objects)
+	if bytes.Contains(public, []byte("c3ludGhldGljLWNhbmFyeQ==")) {
+		t.Fatal("Secret bytes escaped private object storage")
+	}
+}
