@@ -65,8 +65,9 @@ def test_every_matrix_shard_is_aggregated_and_script_changes_trigger_go() -> Non
     jobs = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())["jobs"]
     matrix = jobs["controller"]["strategy"]["matrix"]["include"]
     runtime = [row for row in matrix if row["module"].startswith("runtime")]
-    assert {row["shard"] for row in runtime} == shards.PATTERNS.keys()
-    assert len(runtime) == len(shards.PATTERNS)
+    partitions = [part for row in runtime for part in row["shard"].split(",")]
+    assert set(partitions) == shards.PATTERNS.keys()
+    assert len(partitions) == len(shards.PATTERNS)
     assert "controller" in jobs["required-pr-ci"]["needs"]
     filters = yaml.safe_load(jobs["changes"]["steps"][1]["with"]["filters"])
     assert "scripts/test_runtime_shard.py" in filters["go"]

@@ -617,6 +617,17 @@ and can be shared across source revisions. To check an existing binary, run
 
 `TestHermeticBringupMaintenanceGenerationDuringOnboarding` repeats that same native bring-up with a known pause/resume mid-window. It retains the original install identities, starts a new sampling budget, and finalizes at simulated61s (three new probe rounds); wall time remains below two minutes. `TestRunOnboardingMaintenanceGenerationPreservesSamples` exercises the actual runtime loop and real prober HTTP boundary: ACTIVE generation-only updates retain samples, while true pause/resume resets both traffic and reachability. Post-resume authority requires fresh samples and retains prior successful ports/configuration contradictions. Supported reset removes owned maintenance state so the next install starts ACTIVE with no inherited generation.
 
+### Go-backed Python contracts
+
+Tests marked `go_integration` execute real Go builds, generated controllers, or
+restart processes. Required CI runs them through
+`bash scripts/test_go_integration.sh`, which warms the normal operator/runtime
+build graph before entering short external-process deadlines. The ordinary
+Python lane uses `bash scripts/test_python.sh -m "not go_integration"`;
+unfiltered `pytest tests` still executes both groups. Add the marker to future
+contracts that compile Go. Compiler parallelism is bounded for parent and nested
+builds with `GOFLAGS=-p=2` and `GOMAXPROCS=2` on hosted runners.
+
 ### Validator cache and local startup measurement
 
 Validator Pods read the compiler, module cache and warmed SDK cache from immutable
@@ -641,3 +652,27 @@ old init-container copy plus fixture validation against direct image-backed
 validation under the same two-CPU limit. It reports image bytes and wall time;
 it excludes image delivery and Kubernetes scheduling. Images must already exist;
 the measurement never pulls images or prunes shared caches.
+
+The PR image gate builds each affected image on a separate runner.
+All selected images still receive the same smoke, preflight and answer-key checks.
+Large intermediate-layer cache uploads run in `warm-ci-caches.yml` nightly or by
+manual dispatch; they are maintenance rather than a required merge gate. The
+small Go modules share two runners through `scripts/test_go_foundation.sh`;
+SDK/core continue to run under Go 1.24.5, while the contracts and benchmark wire
+modules use Go 1.26.8. Explicit fixture compiler parallelism must not override
+`GOFLAGS`, so nested builds inherit the same runner memory bound.
+
+`prepare-go` compiles normal and race dependency graphs once per pushed event
+commit, then publishes a shared Go compiler/module cache. The test jobs depend
+on preparation and require that exact cache; they do not start cold compilation
+inside short operation deadlines. Cache restoration uses Go's content-addressed
+compiler entries, while executable identity remains source-bound by
+`operator_test_binary.py`.
+
+The operator gate partitions the expensive CLI/broker acceptance matrix from
+other broker tests and remaining packages through `test_operator_shard.sh`.
+Runtime name partitions remain exhaustive; `test_runtime_shard.py --shard`
+accepts comma-separated partitions so short groups can share a runner without
+omitting or duplicating names. Image runners consume the preparation job's
+source-bound schema identity, avoiding a separate Go cache transfer and toolchain
+installation just to print it.

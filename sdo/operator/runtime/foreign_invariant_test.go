@@ -103,7 +103,7 @@ func compileForeignInvariant(t *testing.T) compiledForeignInvariant {
 		t.Fatal(err)
 	}
 	binary := filepath.Join(root, "diagnose")
-	cmd := exec.Command("go", "build", "-p", "8", "-mod=mod", "-o", binary, ".")
+	cmd := exec.Command("go", "build", "-mod=mod", "-o", binary, ".")
 	cmd.Dir = root
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("compile scripted learned invariant: %v: %s", err, output)
