@@ -126,3 +126,30 @@ never evidence of a complete replay history. These receipts still need fresh
 independent finding clearance through the unchanged verified-cause gate.
 Opaque external commands continue to require recorded-action or RunScript
 receipts. The script replay basis remains `observed-transition`.
+
+LRN observation conformance adds `OutcomeRecord.undetected_causes` (field51), each with one resource,
+original successful `repair_action_id`, open/fixed configuration digests and observation times. These
+are controller-captured same-UID transitions on repaired resources that no opening finding/cause
+named. They grant reflection an `observed_transition` learning basis for diagnosis, mitigation and
+new detector coverage; they do not establish independent application recovery, root-cause truth or
+program success credit. Authored corpus configuration must match both captured digests. Failure,
+stale/unchanged state, identity replacement and missing captures confer no authority. Normal
+finding-cleared causes retain their existing proof. Mixed `updated` results carry scoped `sdk_gaps`
+for peers in the same outcome; a peer gap never excuses learnable work. No benchmark verdict is used.
+
+No-fault setup and setup-proof reuse run `sdo-observation-check` in the controller Pod under its
+installed identity. `observation-conformance.json` names each primitive, reference-only target,
+passed status and safe failure stage. DatabaseUsers is the first supported conformance family.
+Empty inventories and mismatched selectors fail `workload-discovery`; an empty observation list
+passes only when the full nonempty application inventory has no matching database workload.
+
+Conformance fills explicit `target.auth` from declared root env references or one unambiguous
+literal bootstrap username/password pair in a ConfigMap mounted by that container. It uses
+executor-private ConfigMap reads and returns references only. It never reads Secret objects,
+evaluates scripts or changes the typed action's nil-auth semantics. The report makes the actual
+source references visible so missing authentication cannot masquerade as a missing SDK feature.
+
+Successful typed EnsureDatabaseUser actions record the measured opening catalog and direct
+readback as a `DatabaseUsers` primitive with `phase=fixed` through the same protected recorder.
+The action receipt retains reference-bearing inputs/status; a safe `recording_error` makes an
+unavailable fixed capture visible. Fixed catalogs never replace the immutable opening catalog.

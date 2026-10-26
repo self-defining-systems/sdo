@@ -58,7 +58,11 @@ func menuActionParameters(action protoreflect.FieldDescriptor) []MenuParameter {
 		}
 		rules, _ := proto.GetExtension(f.Options(), validate.E_Field).(*validate.FieldRules)
 		required := rules.GetRequired() || rules.GetString().GetMinLen() > 0 || rules.GetRepeated().GetMinItems() > 0
-		params = append(params, MenuParameter{Name: string(f.Name()), Kind: kind, Required: required, Repeated: f.IsList(), Schema: menuInputSchema(f), Example: examples[string(f.Name())]})
+		schema := menuInputSchema(f)
+		if action.Message().Name() == "EnsureDatabaseUser" && f.Name() == "target" {
+			schema.Description = "Database Pod/container and catalog; target.auth authenticates catalog reads separately from the create-user password. Failures name the safe execution stage; correct source-declared references before retrying."
+		}
+		params = append(params, MenuParameter{Name: string(f.Name()), Kind: kind, Required: required, Repeated: f.IsList(), Schema: schema, Example: examples[string(f.Name())]})
 	}
 	return params
 }
