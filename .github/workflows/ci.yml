@@ -54,6 +54,7 @@ jobs:
         with:
           filters: |
             python:
+              - '.python-version'
               - '**/*.py'
               - '**/*.toml'
               - 'uv.lock'
