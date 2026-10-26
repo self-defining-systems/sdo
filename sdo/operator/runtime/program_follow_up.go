@@ -50,9 +50,12 @@ func (l *ResponderLoop) programFollowUp(ctx context.Context, entry menuEntry, bi
 		return program.Plan{}, false, nil
 	}
 	deadline := l.deadline()
-	l.mu.Unlock()
-	next, err := runBoundedMitigator(ctx, mitigator, view, cloneProgramBindings(bindings), deadline)
-	l.mu.Lock()
+	var next program.Plan
+	if stepErr := withoutResponderLocks(l, "follow-up mitigator", false, func() {
+		next, err = runBoundedMitigator(ctx, mitigator, view, cloneProgramBindings(bindings), deadline)
+	}); stepErr != nil {
+		err = stepErr
+	}
 	if errors.Is(err, errEmptyMitigationPlan) {
 		return program.Plan{}, false, nil
 	}
