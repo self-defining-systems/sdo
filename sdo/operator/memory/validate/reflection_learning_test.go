@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -130,4 +131,38 @@ func addSyntheticFindingRepairProof(outcome *contracts.OutcomeRecord) {
 		}
 	}
 	outcome.FinalHealthDetectorState = []*contracts.DetectorEvaluation{{DetectorId: "fixture", Status: "clear", EvaluatedAt: timestamppb.New(at.Add(2 * time.Second))}}
+}
+
+// A detector-required rejection must say what to link and where: the matched
+// program, the cause resources, the responder-owned incident detectors that may
+// list it, and that health-owned and built-in detectors cannot supply the link.
+func TestReflectionDetectorRequiredNamesProgramResourcesAndLinkableDetectors(t *testing.T) {
+	root := t.TempDir()
+	copyTree(t, "../../../../tests/fixtures/sdo/playbook_program_app/.sdo", filepath.Join(root, ".sdo"))
+	detectors, err := layout.ReadDetectors(filepath.Join(root, layout.DiagnosticsDir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, detector := range detectors {
+		detector.Manifest.PossiblePlaybooks = slices.DeleteFunc(detector.Manifest.PossiblePlaybooks, func(id string) bool { return id == "service-targetport-mismatch" })
+		if err := layout.WriteDetector(root, detector); err != nil {
+			t.Fatal(err)
+		}
+	}
+	outcome := &contracts.OutcomeRecord{IncidentId: "first", Classification: "success", ConfirmedRootCauses: []*contracts.ConfirmedRootCause{{Resources: []*contracts.ObjectRef{{Kind: "Service", Namespace: "demo", Name: "front"}}}}}
+	addSyntheticFindingRepairProof(outcome)
+	decision := &contracts.ReflectionDecision{LearningDecision: "updated", PlaybookIds: []string{"service-targetport-mismatch"}}
+	ds, err := ReflectionLearningDiagnostics(root, outcome, decision)
+	if err != nil || len(ds) != 1 || ds[0].Rule != RuleReflectionDetectorRequired {
+		t.Fatalf("missing detector escaped: %v %v", ds, err)
+	}
+	text := ds[0].String()
+	for _, want := range []string{"service-targetport-mismatch", "Service demo/front", "possiblePlaybooks", "missing-configmap", "routing-relations", "new incident detector", "health", "drift.unexplained"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("detector-required diagnostic lacks %q: %s", want, text)
+		}
+	}
+	if ds[0].Hint == "" || ds[0].Path != layout.DetectorsDir+"/incidents" {
+		t.Errorf("detector-required diagnostic needs a hint and the incident detector path: %+v", ds[0])
+	}
 }
