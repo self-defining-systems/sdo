@@ -227,3 +227,25 @@ func TestShellBashExecutorRetiresBackgroundChildren(t *testing.T) {
 		time.Sleep(time.Millisecond)
 	}
 }
+
+func TestShellDiscoveredScriptUsesAcceptedBytes(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, DetectorDirectory, "health/ready/check.sh")
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("echo accepted\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	scripts, err := Discover(root)
+	if err != nil || len(scripts) != 1 {
+		t.Fatalf("%v %v", scripts, err)
+	}
+	if err := os.WriteFile(path, []byte("echo changed\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	result := (BashExecutor{}).Execute(context.Background(), root, scripts[0])
+	if result.Error != "" || strings.TrimSpace(result.Stdout) != "accepted" {
+		t.Fatalf("accepted script bytes changed during execution: %+v", result)
+	}
+}

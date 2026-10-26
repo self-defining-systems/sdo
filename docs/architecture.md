@@ -761,7 +761,7 @@ paths retain broker commit authority and the artifact ownership matrix above.
 The shell path intentionally drops the requirement that detectors are deterministic
 Go. The Go path remains the production default and retains its validation and
 rollout behavior. Select shell with `--code-path=shell` on host, operate or
-controller, or with the typed launch value `code_path: {name: shell}`. Optional
+controller (also `install-existing` and `memory adopt-existing`), or with the typed launch value `code_path: {name: shell}`. Optional
 `overrides` choose named implementations per seam. `--response-stages` writes
 `overrides.response_stages`; response-stage execution belongs to PIPE.
 
@@ -791,7 +791,8 @@ same runner against accepted scripts before starting the fixed shell controller.
 The runner watches application resources with a trailing two-second debounce and
 sweeps every 30 seconds. Each script has a 20-second process-group timeout, a
 combined 16 KiB stdout/stderr tail, and at most four processes run concurrently.
-Two consecutive nonzero results fire; clear results and execution errors reset
+Main script bytes are frozen from the accepted archive at discovery, so scratch
+filesystem changes cannot replace later invocations. Two consecutive nonzero results fire; clear results and execution errors reset
 the streak. Timeout/crash errors are retained as detector evidence and cannot fire
 or establish health. A stable adapter emits one typed finding per fired script,
 including the script path, output tails and accepted-commit attribution. Existing

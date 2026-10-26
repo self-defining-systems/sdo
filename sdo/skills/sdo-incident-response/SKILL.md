@@ -18,3 +18,5 @@ Accepted source and developer changes express intent. Operational memory is fall
 Prioritize current user-facing failures; defer harmless cleanup. Report unfinished work only with a blocker or exhausted options.
 
 Use checkout-relative paths and scratch outside memory. Read complete output files, never prefixes. Let blocking operations finish in one call instead of polling across model turns. Static files belong in static_context, not live cause evidence.
+
+When shell guidance is selected, use fired-script evidence and accepted notes/scripts. Repair with normal tools and independent verification. Reflection may freely improve Markdown notes and shell scripts; Go program and coverage structures are not required.

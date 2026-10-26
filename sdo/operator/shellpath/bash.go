@@ -36,7 +36,18 @@ func (e BashExecutor) Execute(ctx context.Context, root string, script Script) R
 	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	capture := &tailCapture{}
-	cmd := exec.CommandContext(runCtx, "bash", filepath.Join(root, filepath.FromSlash(script.Path)))
+	source := script.source
+	if source == nil {
+		var err error
+		source, err = os.ReadFile(filepath.Join(root, filepath.FromSlash(script.Path)))
+		if err != nil {
+			r.Error = "detector source unavailable"
+			return r
+		}
+	}
+	// Discovery freezes the accepted main script in memory. Writable /tmp files
+	// cannot change which authored bytes a later invocation executes.
+	cmd := exec.CommandContext(runCtx, "bash", "-c", string(source), filepath.Join(root, filepath.FromSlash(script.Path)))
 	cmd.Dir = root
 	cmd.Env = e.Env
 	if cmd.Env == nil {

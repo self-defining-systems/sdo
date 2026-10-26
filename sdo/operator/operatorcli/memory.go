@@ -24,8 +24,9 @@ import (
 const MemoryUsage = `usage: sdo-operator memory <command> [flags]
 
 commands:
-  adopt-existing --root DIR [--operator-root DIR]
-        Explicitly compile and adopt supplied memory as an unvalidated base.
+  adopt-existing --root DIR [--operator-root DIR] [--code-path go|shell]
+        Explicitly adopt supplied memory as an unvalidated base. Go compiles it;
+        shell uses text/size/credential hygiene. SDO_CODE_PATH supplies the default.
         Records SDO-Origin: adopted-existing; later edits require the broker.
   import prepare --root DIR --worktree-root DIR --id ID
         Create a broker proposal for operator-authored memory. Edit only the

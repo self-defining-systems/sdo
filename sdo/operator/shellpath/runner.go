@@ -26,8 +26,9 @@ const (
 )
 
 type Script struct {
-	Path  string `json:"path"`
-	Class string `json:"class"`
+	Path   string `json:"path"`
+	Class  string `json:"class"`
+	source []byte
 }
 type Result struct {
 	Script              string        `json:"script"`
@@ -91,7 +92,11 @@ func Discover(root string) ([]Script, error) {
 		if len(parts) < 3 || !layout.ValidDetectorID(parts[1]) || (parts[0] != "health" && parts[0] != "incidents") || !strings.HasSuffix(rel, ".sh") {
 			return fmt.Errorf("executable detector must be a health or incidents shell script: %s", rel)
 		}
-		scripts = append(scripts, Script{Path: filepath.ToSlash(filepath.Join(DetectorDirectory, rel)), Class: parts[0]})
+		source, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		scripts = append(scripts, Script{Path: filepath.ToSlash(filepath.Join(DetectorDirectory, rel)), Class: parts[0], source: source})
 		return nil
 	})
 	sort.Slice(scripts, func(i, j int) bool { return scripts[i].Path < scripts[j].Path })

@@ -14,6 +14,7 @@ import (
 	"sdo.dev/operator/builder"
 	"sdo.dev/operator/install"
 	"sdo.dev/operator/memory"
+	"sdo.dev/operator/memory/validate"
 )
 
 // InstallExistingConfig installs an already accepted source tree without
@@ -202,6 +203,12 @@ func prepareInstallExistingRepository(ctx context.Context, launch InstallExistin
 	if !launch.AdoptExistingMemory {
 		return acceptedHead(ctx, launch.Repository)
 	}
+	if memoryCodePath(launch.Install.CodePath) == "shell" {
+		if err := validate.ShellHygieneValidator(ctx, launch.Repository, nil); err != nil {
+			return "", err
+		}
+		return memory.MarkAdoptedExisting(ctx, launch.Repository)
+	}
 	diagnostics, err := memory.CandidateDiagnostics(launch.Repository)
 	if err != nil {
 		return "", err
@@ -219,6 +226,7 @@ func prepareInstallExistingRepository(ctx context.Context, launch InstallExistin
 
 func memoryAdoptExisting(ctx context.Context, args []string, getenv func(string) string, out io.Writer) error {
 	flags := flag.NewFlagSet("memory adopt-existing", flag.ContinueOnError)
+	codePathName := flags.String("code-path", getenv("SDO_CODE_PATH"), "programming-model plugin set: go or shell")
 	root := flags.String("root", ".", "seed repository with existing memory")
 	operator := flags.String("operator-root", operatorRootDefault(getenv), "operator sources")
 	positional, err := parseFlags(flags, args)
@@ -232,7 +240,11 @@ func memoryAdoptExisting(ctx context.Context, args []string, getenv func(string)
 	if err != nil {
 		return err
 	}
-	commit, err := prepareInstallExistingRepository(ctx, InstallExistingConfig{Repository: absolute, OperatorRoot: *operator, AdoptExistingMemory: true})
+	selectedCodePath, err := parseCodePathSelection(*codePathName, "")
+	if err != nil {
+		return err
+	}
+	commit, err := prepareInstallExistingRepository(ctx, InstallExistingConfig{Repository: absolute, OperatorRoot: *operator, AdoptExistingMemory: true, Install: install.Config{CodePath: selectedCodePath}})
 	if err != nil {
 		return err
 	}

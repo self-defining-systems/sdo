@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/install"
+	"strings"
 	"testing"
 )
 
@@ -61,5 +63,28 @@ func TestShellInstallExistingForwardsTypedSelection(t *testing.T) {
 	}
 	if calls != 0 {
 		t.Fatal("shell launch ran Go validation")
+	}
+}
+
+func TestShellAdoptionUsesHygieneWithoutGoWorkspace(t *testing.T) {
+	root := t.TempDir()
+	gitIn(t, root, "init", "-q")
+	gitIn(t, root, "config", "user.name", "T")
+	gitIn(t, root, "config", "user.email", "t@example.com")
+	gitIn(t, root, "commit", "--allow-empty", "-qm", "source")
+	path := filepath.Join(root, ".sdo/diagnostics/detectors/health/ready/check.sh")
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("exit 0\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	launch := InstallExistingConfig{Repository: root, OperatorRoot: "/not-a-Go-workspace", AdoptExistingMemory: true, Install: install.Config{CodePath: &contracts.CodePathConfig{Name: "shell"}}}
+	commit, err := prepareInstallExistingRepository(context.Background(), launch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(gitIn(t, root, "show", "-s", "--format=%B", commit), "SDO-Validation: skipped") {
+		t.Fatal("adoption invented validation provenance")
 	}
 }
