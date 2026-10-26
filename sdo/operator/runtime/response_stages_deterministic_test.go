@@ -254,12 +254,14 @@ func TestDeterministicResponseStageRejoinDoesNotRepeatWrites(t *testing.T) {
 	if err := fresh.restoreToolSnapshot(durable); err != nil {
 		t.Fatal(err)
 	}
-	replay := &IncidentState{Request: state.Request, Findings: append([]sdk.Finding(nil), state.Request.Findings...), Coverage: state.Coverage}
+	opening := state.Request
+	opening.PlaybookCoverage, opening.InitialProgramRuns = nil, nil
+	replay := &IncidentState{Request: opening, Findings: append([]sdk.Finding(nil), state.Request.Findings...)}
 	second, err := (&DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return fresh }}).Run(context.Background(), replay)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(fresh.PlanApplications()) != 0 || !proto.Equal(first, second) || len(replay.Findings) != 1 {
+	if len(fresh.PlanApplications()) != 0 || !proto.Equal(first, second) || len(replay.Findings) != 1 || !proto.Equal(state.Coverage, replay.Coverage) || len(replay.Request.InitialProgramRuns) != len(state.Request.InitialProgramRuns) {
 		t.Fatalf("rejoin repeated/lost stage: first=%v second=%v applications=%v", first, second, fresh.PlanApplications())
 	}
 }

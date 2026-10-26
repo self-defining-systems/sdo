@@ -80,19 +80,23 @@ func cloneStageReports(reports []*contracts.StageReport) []*contracts.StageRepor
 // continuation semantics. Earlier actions arrive before its first model turn.
 type AgentResponseStage struct {
 	Dispatcher Dispatcher
-	OnStart    func(*IncidentState)
+	Prepare    func(context.Context, IncidentRequest) (IncidentRequest, error)
 }
 
 func (AgentResponseStage) Name() string { return "agent" }
 func (stage AgentResponseStage) Run(ctx context.Context, state *IncidentState) (*contracts.StageReport, error) {
-	if stage.OnStart != nil {
-		stage.OnStart(state)
-	}
 	request := *cloneIncidentRequest(&state.Request)
 	if len(state.PriorStages) > 0 {
 		request.PriorStages = cloneStageReports(state.PriorStages)
 		request.Findings = append([]sdk.Finding(nil), state.Findings...)
 		request.PreparedAgentTask = ""
+	}
+	if stage.Prepare != nil {
+		var err error
+		request, err = stage.Prepare(ctx, request)
+		if err != nil {
+			return &contracts.StageReport{Stage: stage.Name()}, err
+		}
 	}
 	result, err := stage.Dispatcher.Dispatch(ctx, request)
 	state.Result = &result

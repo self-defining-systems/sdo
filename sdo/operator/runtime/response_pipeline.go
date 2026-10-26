@@ -31,7 +31,35 @@ func responseStageNames(names []string) ([]string, error) {
 }
 
 func (d KubernetesJobDispatcher) DeterministicResponseStage() ResponseStage {
-	return &DeterministicResponseStage{NewLoop: d.LoopFactory, Restore: d.restoreToolState}
+	if d.LoopFactory == nil {
+		return nil
+	}
+	return &DeterministicResponseStage{NewLoop: d.LoopFactory, Restore: func(ctx context.Context, request IncidentRequest, loop *ResponderLoop) error {
+		trust, err := d.programTrust(ctx, request)
+		if err != nil {
+			return err
+		}
+		loop.Trust = trust
+		return d.restoreToolState(ctx, request, loop)
+	}}
+}
+
+// Before automatic execution only the incident intent is durable. Freezing a
+// worker task here could overwrite its external payload at the later handoff.
+func (c *Controller) automaticResponsePending(request *contracts.IncidentRequest) bool {
+	if request == nil || len(request.PriorStages) != 0 {
+		return false
+	}
+	for _, name := range c.config.ResponseStages {
+		if name == "agent" {
+			return false
+		}
+		if name == "deterministic" {
+			source, ok := c.dispatcher.(interface{ DeterministicResponseStage() ResponseStage })
+			return ok && source.DeterministicResponseStage() != nil
+		}
+	}
+	return false
 }
 
 func (c *Controller) runResponsePipeline(ctx context.Context, request IncidentRequest) (IncidentResult, []*contracts.StageReport, error) {
@@ -43,26 +71,37 @@ func (c *Controller) runResponsePipeline(ctx context.Context, request IncidentRe
 	}
 	state := &IncidentState{Request: request, Findings: append([]sdk.Finding(nil), request.Findings...), Coverage: cloneCoverage(request.PlaybookCoverage)}
 	var stages []ResponseStage
+	automaticAvailable, agentConfigured := false, false
 	for _, name := range c.config.ResponseStages {
 		switch name {
 		case "deterministic":
-			stage := ResponseStage(&DeterministicResponseStage{})
 			if source, ok := c.dispatcher.(interface{ DeterministicResponseStage() ResponseStage }); ok {
-				stage = source.DeterministicResponseStage()
-			}
-			stages = append(stages, stage)
-		case "agent":
-			stages = append(stages, AgentResponseStage{Dispatcher: c.dispatcher, OnStart: func(current *IncidentState) {
-				c.mu.Lock()
-				defer c.mu.Unlock()
-				if c.currentIncidentRequest != nil && c.currentIncidentRequest.IncidentID == request.IncidentID {
-					c.currentIncidentRequest.PriorStages = cloneStageReports(current.PriorStages)
-					c.currentIncidentRequest.PlaybookCoverage = cloneCoverage(current.Coverage)
-					c.currentIncidentRequest.InitialProgramRuns = append([]ProgramRun(nil), current.Request.InitialProgramRuns...)
-					c.responseStagesRunning = false
+				if stage := source.DeterministicResponseStage(); stage != nil {
+					stages = append(stages, stage)
+					automaticAvailable = true
 				}
+			}
+		case "agent":
+			agentConfigured = true
+			stages = append(stages, AgentResponseStage{Dispatcher: c.dispatcher, Prepare: func(ctx context.Context, request IncidentRequest) (IncidentRequest, error) {
+				c.mu.Lock()
+				if c.currentIncidentRequest != nil && c.currentIncidentRequest.IncidentID == state.Request.IncidentID {
+					c.currentIncidentRequest.PlaybookCoverage = cloneCoverage(state.Coverage)
+					c.currentIncidentRequest.InitialProgramRuns = append([]ProgramRun(nil), state.Request.InitialProgramRuns...)
+				}
+				c.mu.Unlock()
+				return c.prepareResponseStageHandoff(ctx, request)
 			}})
 		}
+	}
+	// A transport without an automatic stage preserves its original frozen
+	// request and all original early-closure behavior.
+	if !automaticAvailable && agentConfigured {
+		c.mu.Lock()
+		c.responseStagesRunning = false
+		c.mu.Unlock()
+		result, err := c.dispatcher.Dispatch(ctx, request)
+		return result, nil, err
 	}
 	started := time.Now().UTC()
 	err := RunResponseStages(ctx, state, stages)
@@ -214,4 +253,35 @@ func mergeStageCause(causes []ConfirmedRootCause, cause ConfirmedRootCause) []Co
 		i = 0
 	}
 	return append(causes, cause)
+}
+
+// The task including prior stages is frozen in the controller's durable state
+// before the dispatcher can create a worker. State saves share one CAS writer.
+func (c *Controller) prepareResponseStageHandoff(ctx context.Context, request IncidentRequest) (IncidentRequest, error) {
+	prepared := request
+	if preparer, ok := c.dispatcher.(interface {
+		PrepareDispatch(context.Context, IncidentRequest) (IncidentRequest, error)
+	}); ok {
+		var err error
+		prepared, err = preparer.PrepareDispatch(ctx, request)
+		if err != nil {
+			return IncidentRequest{}, fmt.Errorf("prepare stage handoff: %w", err)
+		}
+	}
+	c.mu.Lock()
+	if c.currentIncidentRequest == nil || c.currentIncidentRequest.IncidentID != request.IncidentID {
+		c.mu.Unlock()
+		return IncidentRequest{}, ErrStateConflict
+	}
+	c.currentIncidentRequest.PriorStages = cloneStageReports(request.PriorStages)
+	c.currentIncidentRequest.PreparedAgentTask = prepared.PreparedAgentTask
+	c.currentIncidentRequest.MaxResponseLoops = prepared.MaxResponseLoops
+	c.mu.Unlock()
+	if err := c.PersistState(ctx); err != nil {
+		return IncidentRequest{}, fmt.Errorf("persist stage handoff: %w", err)
+	}
+	c.mu.Lock()
+	c.responseStagesRunning = false
+	c.mu.Unlock()
+	return prepared, nil
 }

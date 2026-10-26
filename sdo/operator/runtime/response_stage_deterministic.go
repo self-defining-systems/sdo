@@ -25,8 +25,10 @@ type DeterministicResponseStage struct {
 }
 
 type responseStageProgress struct {
-	Report   *contracts.StageReport
-	Complete bool
+	Report             *contracts.StageReport
+	Coverage           *contracts.PlaybookCoverage
+	InitialProgramRuns []ProgramRun
+	Complete           bool
 }
 
 func (*DeterministicResponseStage) Name() string { return "deterministic" }
@@ -53,10 +55,14 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 	progress := loop.stageProgress[stage.Name()]
 	if progress.Report != nil {
 		report = proto.Clone(progress.Report).(*contracts.StageReport)
+		state.Coverage = cloneCoverage(progress.Coverage)
+		state.Request.PlaybookCoverage = cloneCoverage(progress.Coverage)
+		state.Request.InitialProgramRuns = append([]ProgramRun(nil), progress.InitialProgramRuns...)
+		loop.Request = state.Request
 	}
 	save := func(complete bool) error {
 		report.RemainingFindingFingerprints = findingFingerprints(state.Findings)
-		loop.stageProgress[stage.Name()] = responseStageProgress{Report: report, Complete: complete}
+		loop.stageProgress[stage.Name()] = responseStageProgress{Report: report, Coverage: cloneCoverage(state.Coverage), InitialProgramRuns: append([]ProgramRun(nil), state.Request.InitialProgramRuns...), Complete: complete}
 		return loop.persistToolState(ctx)
 	}
 	// Always reobserve after recovery. A recorded attempt is never replayed,
@@ -72,7 +78,7 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 	if state.Coverage == nil {
 		state.Request.InitialProgramRuns = loop.InitialDiagnose(ctx)
 		fillProgramRevisions(ctx, state.Request.InitialProgramRuns, state.Request.RepositoryWorktree, state.Request.SourceCommit)
-		state.Coverage = buildPlaybookCoverage(state.Findings, state.Request.InitialProgramRuns, loop.lastDiagnosisView, nil)
+		state.Coverage = buildPlaybookCoverage(state.Findings, state.Request.InitialProgramRuns, loop.lastDiagnosisView, loop.Trust)
 		state.Request.PlaybookCoverage = cloneCoverage(state.Coverage)
 		loop.Request = state.Request
 	}
@@ -362,32 +368,48 @@ func recordedPlanContract(application RecordedPlanApplication) (*contracts.PlanA
 
 // Protobuf receipts contain oneofs; encoding/json cannot reconstruct them.
 // This type owns that storage edge so all checkpoints use ProtoJSON.
+type encodedResponseStageProgress struct {
+	Report             json.RawMessage
+	Coverage           json.RawMessage
+	InitialProgramRuns []ProgramRun
+	Complete           bool
+}
+
 func (progress responseStageProgress) MarshalJSON() ([]byte, error) {
-	var report json.RawMessage
+	encoded := encodedResponseStageProgress{InitialProgramRuns: progress.InitialProgramRuns, Complete: progress.Complete}
 	if progress.Report != nil {
 		raw, err := protojson.Marshal(progress.Report)
 		if err != nil {
 			return nil, err
 		}
-		report = raw
+		encoded.Report = raw
 	}
-	return json.Marshal(struct {
-		Report   json.RawMessage
-		Complete bool
-	}{report, progress.Complete})
+	if progress.Coverage != nil {
+		raw, err := protojson.Marshal(progress.Coverage)
+		if err != nil {
+			return nil, err
+		}
+		encoded.Coverage = raw
+	}
+	return json.Marshal(encoded)
 }
 func (progress *responseStageProgress) UnmarshalJSON(raw []byte) error {
-	var encoded struct {
-		Report   json.RawMessage
-		Complete bool
-	}
+	var encoded encodedResponseStageProgress
 	if err := json.Unmarshal(raw, &encoded); err != nil {
 		return err
 	}
-	progress.Complete = encoded.Complete
+	*progress = responseStageProgress{Complete: encoded.Complete, InitialProgramRuns: encoded.InitialProgramRuns}
 	if len(encoded.Report) > 0 && string(encoded.Report) != "null" {
 		progress.Report = &contracts.StageReport{}
-		return protojson.Unmarshal(encoded.Report, progress.Report)
+		if err := protojson.Unmarshal(encoded.Report, progress.Report); err != nil {
+			return err
+		}
+	}
+	if len(encoded.Coverage) > 0 && string(encoded.Coverage) != "null" {
+		progress.Coverage = &contracts.PlaybookCoverage{}
+		if err := protojson.Unmarshal(encoded.Coverage, progress.Coverage); err != nil {
+			return err
+		}
 	}
 	return nil
 }

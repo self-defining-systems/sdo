@@ -108,6 +108,7 @@ type Controller struct {
 	// restarted controller confirms again from fresh evaluations.
 	gateClears    map[string]*gateClear
 	gateProbes    map[string]time.Time
+	persistenceMu sync.Mutex
 	stateStore    StateStore
 	stateRevision string
 	// stagedTaskIncident is the incident whose prepared task the last saved state references on the repository volume.
@@ -1785,6 +1786,8 @@ func (c *Controller) AttachStateStore(ctx context.Context, store StateStore) err
 }
 
 func (c *Controller) PersistState(ctx context.Context) error {
+	c.persistenceMu.Lock()
+	defer c.persistenceMu.Unlock()
 	if c.stateStore == nil {
 		return nil
 	}
@@ -1799,7 +1802,7 @@ func (c *Controller) PersistState(ctx context.Context) error {
 	}
 	if preparer, ok := c.dispatcher.(interface {
 		PrepareDispatch(context.Context, IncidentRequest) (IncidentRequest, error)
-	}); ok && state.DispatchState == contracts.DispatchState_DISPATCH_STATE_PENDING && state.IncidentRequest != nil && state.IncidentRequest.PreparedAgentTask == "" {
+	}); ok && state.DispatchState == contracts.DispatchState_DISPATCH_STATE_PENDING && state.IncidentRequest != nil && state.IncidentRequest.PreparedAgentTask == "" && !c.automaticResponsePending(state.IncidentRequest) {
 		prepared, err := preparer.PrepareDispatch(actionCtx, *incidentRequestState(state.IncidentRequest))
 		if err != nil {
 			return fmt.Errorf("prepare responder dispatch: %w", err)
