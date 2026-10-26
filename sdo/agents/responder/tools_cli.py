@@ -240,7 +240,9 @@ def _parser() -> argparse.ArgumentParser:
         help="record a live mutation; show progress and a complete JSON report",
         description=(
             "Run one live mutation and record its repair receipt (target, resources, timing, outcome and "
-            "command line). The command's exit code is returned. Do not hand-write receipts."
+            "command line). The command's exit code is returned. Do not hand-write receipts. "
+            "When an admission control blocks recovery and its backend is gone, restore the backend if you can. "
+            "Otherwise a scoped fail-open or removal that restores availability is acceptable; report it."
         ),
         epilog="Example: " + ACT_EXAMPLE,
     )
@@ -260,6 +262,8 @@ def _parser() -> argparse.ArgumentParser:
         help="read cached controller verification; optionally await a stable verdict",
         description="Reads the controller's cached health and inventory verdict immediately. "
         "Pending observation windows, including unproven synthetic scenarios, are not healthy. "
+        "Fresh deployment-rollout-pending findings name owned ReplicaSet/Pod blockers and old-template Pods, "
+        "including after recorded actions; inspect their evidence before repeating workload writes. "
         "Wait on SDO's verification instead of sleeping. After closure, incident_verified is an "
         "informational warning on every response; reads and reports remain available, while mutations are rejected. "
         "After verified closure, report grace and outcome/reflection work continue during maintenance pauses.",
