@@ -125,7 +125,7 @@ Program commands use the current checkout, including shared libraries and new pl
 
 - `--bind`: named program parameter; repeat for each binding
 
-Key JSON fields: `menu.options[].{option_id, program_id, program_revision, disabled_reason, parameters}, unexplained_removal_blockers[]`.
+Key JSON fields: `menu.options[].{option_id, program_id, program_revision, disabled_reason, parameters}, selection_schema, selection_set_schema, unexplained_removal_blockers[]`.
 
 ## apply
 
@@ -145,7 +145,7 @@ apply several independent options in one call; overlapping options refused; show
 sdo mitigate [-h] [--finding FINGERPRINT] [--rounds ROUNDS] [--selection FILE] [--selection-set FILE] [--option ID] [--param NAME=VALUE] [option]
 ```
 
-Apply several independent options in one call; overlapping object write sets are refused before writes. Use repeated --option ID followed by that option's --param NAME=VALUE, or --selection-set FILE with version 1 and options [{option_id, bindings, parameters, finding_fingerprints}]. Each option has its own receipt; one call uses one round. Pending rollout returns its application ID and read-only tools remain available. A single option also accepts --NAME VALUE parameters. Uses the ordinary executor and controller RBAC; up to five rounds per incident. A script fix is a first-class learnable mitigation with relation-derived Values, within incident budgets. Program commands use the current checkout, including shared libraries and new playbook IDs. Edits compile on demand; fix compile errors in place and retry. Revision receipts use working-tree:<source digest> for unpublished code.
+Apply several independent options in one call; overlapping object write sets are refused before writes. Use repeated --option ID followed by that option's --param NAME=VALUE, or --selection-set FILE with version 1 and options [{option_id, bindings, parameters, finding_fingerprints}]. Parameters accept ordinary JSON objects, arrays, numbers and booleans, as well as strings. sdo menu exports recursive parameters[].schema for every option, plus selection_schema and selection_set_schema; nested properties, required fields and oneOf choices describe accepted shapes. parameters[].example supplies typed synthetic inputs; replace names/values using incident evidence. CLI --param NAME=VALUE accepts JSON text for structured values. Each option has its own receipt; one call uses one round. Pending rollout returns its application ID and read-only tools remain available. A single option also accepts --NAME VALUE parameters. Uses the ordinary executor and controller RBAC; up to five rounds per incident. A script fix is a first-class learnable mitigation with relation-derived Values, within incident budgets. Program commands use the current checkout, including shared libraries and new playbook IDs. Edits compile on demand; fix compile errors in place and retry. Revision receipts use working-tree:<source digest> for unpublished code.
 
 - `option`: option ID or unambiguous program ID from the current menu
 - `--finding`: target finding fingerprint; repeat for each intended finding

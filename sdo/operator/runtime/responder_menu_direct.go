@@ -32,6 +32,10 @@ func (l *ResponderLoop) listMenu(ctx context.Context, request ToolRequest, respo
 		return
 	}
 	l.openDirectMenuSession(response)
+	response.SelectionSchema = menuMessageSchema((&contracts.MitigationSelection{}).ProtoReflect().Descriptor())
+	response.SelectionSetSchema = menuMessageSchema((&contracts.MitigationSelectionSet{}).ProtoReflect().Descriptor())
+	optionSchema := response.SelectionSetSchema.Properties["options"].Items
+	optionSchema.Properties["parameters"].AdditionalProperties = &MenuSchema{AnyOf: []*MenuSchema{{Type: "string"}, {Type: "number"}, {Type: "boolean"}, {Type: "object", AdditionalProperties: true}, {Type: "array", Items: &MenuSchema{}}}, Description: "Shapes are published per option in parameters[].schema."}
 	entries := rawMenuActions()
 	if capabilities, ok := l.Executor.Client.(interface{ unavailableMenuActions() map[string]bool }); ok {
 		for action, unavailable := range capabilities.unavailableMenuActions() {
