@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, cast
 
-from sdo.agents.code_paths import agent_guidance
+from sdo.agents.code_paths import agent_guidance, skills_for_role
 from sdo.agents.lifecycle import (
     ClaudeLifecycleBackend,
     CodexLifecycleBackend,
@@ -19,7 +19,6 @@ from sdo.agents.lifecycle import (
 from sdo.agents.memory_diagnostics import render_validation_feedback
 from sdo.agents.provider import resolve_agent
 from sdo.agents.responder import KubernetesResultPublisher, prepare_claude_home, prepare_codex_home
-from sdo.agents.responder.credentials import skills_for_role
 from sdo.contracts import (
     SCHEMA_VERSION,
     AgentResult,
