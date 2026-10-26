@@ -6,6 +6,7 @@
 #   types — pyright (scripts/type_check.sh)
 #   go    — every Go main under benchmarks/ compiles (scripts/check_go_mains.sh)
 #   schema — validator fingerprint and CLI binding contract tests
+#   parity — fast Go/Python/proto contract parity (scripts/check_contracts_fast.sh)
 
 set -e
 
@@ -82,6 +83,9 @@ if command -v buf >/dev/null 2>&1; then
 else
     echo "==> proto contracts: skipped (buf not installed; enforced by the proto CI job)"
 fi
+
+# Cross-language parity (Go constants, Python models, protos) in seconds.
+"$SCRIPT_DIR/check_contracts_fast.sh"
 
 # Functional Go core: dependency/API lint plus structural purity checks.
 "$SCRIPT_DIR/check_go_core.sh"

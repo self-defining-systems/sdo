@@ -82,6 +82,15 @@ To run just those checks:
 uv run --extra test python -m pytest -q -p no:tach tests/unit/test_architecture.py
 ```
 
+`check_errors.sh` also calls `scripts/check_contracts_fast.sh` (about 5 s warm,
+15 s cold). It runs the cross-language parity tests that used to fail only in
+hosted CI: every test in the three small Go contract modules, the runtime tests
+named `*MatchProto`, `*MapsToProto`, `Proto*`, `TrafficProto*`, `*ClosedEnums`
+or `*MatchesGenerated*`, and `tests/unit/sdo/contracts`. Name a new parity test
+to fit one of these patterns, or put it in one of these places, so the local
+gate picks it up. For example, adding an outcome classification to the proto
+without listing its Go constant fails `TestClassificationsMatchProto` here.
+
 The responder command guide is generated from the production CLI definitions and
 checked in seconds by `scripts/check_errors.sh`. After changing the command surface,
 run `uv run python -m sdo.agents.responder.command_reference` and commit the updated
