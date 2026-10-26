@@ -564,6 +564,8 @@ def test_deployed_faulty_application_service_remains_captured_and_reported() -> 
     assert capture_application_baseline(cluster, "hotel").objects[0]["spec"]["selector"] == {"app": "wrong"}
     reconcile_application(cluster, baseline, "hotel")
     assert cluster.touched == [("hotel", "Service", "app")]
+
+
 @pytest.mark.parametrize("ownership", ["label", "ownership-label", "manager", "owner"])
 def test_capture_excludes_sdo_ownership_but_keeps_plain_app_rbac(ownership: str) -> None:
     # Hand-written fixture: names intentionally do not identify the installer.
