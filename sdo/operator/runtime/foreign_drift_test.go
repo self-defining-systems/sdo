@@ -130,6 +130,10 @@ func TestForeignReadViewDiffAndSourceFailures(t *testing.T) {
 		t.Fatalf("foreign read tried Kubernetes writes/dry run: %+v", client.Actions())
 	}
 	view.DetectionContext = sdktest.Snapshot{NamespaceName: "app"}
+	if _, err := view.DiffAgainstSource(ref); err == nil {
+		t.Fatal("uncaptured foreign object interpreted as absence")
+	}
+	view.DetectionContext = confirmedAbsentSnapshot{Snapshot: sdktest.Snapshot{NamespaceName: "app"}, Ref: ref}
 	if diff, err := view.DiffAgainstSource(ref); err != nil || diff.Changed || !diff.SourceAbsent {
 		t.Fatalf("removed foreign object=%+v error=%v", diff, err)
 	}
@@ -288,7 +292,7 @@ func runForeignPolicyIncident(t *testing.T) (string, string, GitPlanSource, stri
 	awaitDispatchCompletionQueued(t, controller)
 	fixed := provider.snapshot.(sdktest.Snapshot)
 	fixed.NetworkPolicyList = []networkingv1.NetworkPolicy{*peer}
-	provider.snapshot = fixed
+	provider.snapshot = confirmedAbsentSnapshot{Snapshot: fixed, Ref: sdk.ObjectRef{APIVersion: "networking.k8s.io/v1", Kind: "NetworkPolicy", Namespace: "app", Name: policy.Name}}
 	cache.eventHandler(watch).OnDelete(policy)
 	if err := controller.StepEvents(context.Background(), start.Add(3*time.Second), cache.TakeEvents()); err != nil {
 		t.Fatal(err)

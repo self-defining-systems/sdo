@@ -412,14 +412,14 @@ func (e PlanExecutor) waitForField(ctx context.Context, w program.WaitFor) error
 }
 
 func planPatchFields(p PlanPatch) []string {
-	if p.Authorization != "general" {
+	if p.Authorization != "general" && p.Authorization != "accepted-source" {
 		return []string{"spec", "data", "binaryData"}
 	}
 	keys := map[string]bool{}
 	for _, o := range []*unstructured.Unstructured{p.Before, p.After} {
 		if o != nil {
 			for k := range o.Object {
-				if k != "apiVersion" && k != "kind" {
+				if k != "apiVersion" && k != "kind" && k != "status" {
 					keys[k] = true
 				}
 			}
@@ -430,6 +430,34 @@ func planPatchFields(p PlanPatch) []string {
 		out = append(out, k)
 	}
 	return out
+}
+
+// planConfigurationField excludes API-owned metadata from repair ownership.
+// Readback versions remain on the full images for identity/concurrency guards.
+func planConfigurationField(object *unstructured.Unstructured, field string) (any, bool) {
+	value, exists := object.Object[field]
+	if field != "metadata" {
+		return value, exists
+	}
+	metadata, ok := value.(map[string]any)
+	if !ok {
+		return value, exists
+	}
+	configuration := map[string]any{}
+	for key, value := range metadata {
+		if !serverOwnedPlanMetadata(key) {
+			configuration[key] = value
+		}
+	}
+	return configuration, exists
+}
+
+func serverOwnedPlanMetadata(key string) bool {
+	switch key {
+	case "name", "namespace", "uid", "resourceVersion", "generation", "creationTimestamp", "deletionTimestamp", "deletionGracePeriodSeconds", "managedFields", "selfLink":
+		return true
+	}
+	return false
 }
 
 // previewPlanClient projects earlier steps during whole-batch preflight. It
