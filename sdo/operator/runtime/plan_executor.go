@@ -55,9 +55,22 @@ type PlanPatch struct {
 	After               *unstructured.Unstructured
 }
 
+// PlanPreImage is an object's state before a plan. Absent marks an object
+// confirmed missing (a create), and then Object is nil. A nil Object without
+// Absent is unknown state. Build pre-images with newPlanPreImage.
 type PlanPreImage struct {
 	Ref    sdk.ObjectRef              `json:"ref"`
-	Object *unstructured.Unstructured `json:"object"`
+	Object *unstructured.Unstructured `json:"object,omitempty"`
+	Absent bool                       `json:"absent,omitempty"`
+}
+
+// newPlanPreImage copies a read object, or records a confirmed absence when
+// the plan creates the object.
+func newPlanPreImage(ref sdk.ObjectRef, object *unstructured.Unstructured) PlanPreImage {
+	if object == nil {
+		return PlanPreImage{Ref: ref, Absent: true}
+	}
+	return PlanPreImage{Ref: ref, Object: object.DeepCopy()}
 }
 
 // PlanApplicationResult contains the PlanApplication fields, generated patches,
@@ -228,7 +241,7 @@ func (e PlanExecutor) applyOnce(ctx context.Context, incident IncidentRequest, p
 			return result, fmt.Errorf("pre-image does not match %s/%s", ref.Kind, ref.Name)
 		}
 
-		result.PreImages = append(result.PreImages, PlanPreImage{Ref: ref, Object: object.DeepCopy()})
+		result.PreImages = append(result.PreImages, newPlanPreImage(ref, object))
 		current[ref] = object.DeepCopy()
 		originals[ref] = object.DeepCopy()
 		refs = append(refs, ref)
