@@ -216,6 +216,16 @@ func memoryCheck(ctx context.Context, args []string, getenv func(string) string,
 		}
 	}
 
+	// Mirror the broker: authored memory whitespace is normalized in place.
+	if base != "" {
+		paths, err := validate.ChangedPaths(ctx, absolute, base)
+		if err != nil {
+			return exitInfra, err
+		}
+		if _, err := validate.NormalizeAuthoredWhitespace(absolute, paths); err != nil {
+			return exitInfra, err
+		}
+	}
 	var replayNotes []sdktest.MitigationReplayResult
 	var ceiling sdk.ObservationScope
 	appNamespace := ""

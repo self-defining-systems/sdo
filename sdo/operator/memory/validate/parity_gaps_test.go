@@ -74,3 +74,19 @@ func TestCheckReportsLifecycleGates(t *testing.T) {
 		}
 	}
 }
+
+// App manifests carry data the agent did not author; whitespace inside them
+// (an embedded script in an accepted ConfigMap) is bytes to keep as-is.
+func TestWhitespaceRuleCoversOnlyAuthoredMemory(t *testing.T) {
+	script := "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: mongo-geo-script\ndata:\n  init.sh: |\n    mongo --eval 'db.x.insert({})'   \n    \n"
+	root := goodTree(t)
+	commit(t, root, "base")
+	write(t, root, "kubernetes/geo/mongo-geo-script-configmap.yaml", script)
+	ds, err := Check(context.Background(), Request{Root: root, Base: "HEAD", Actor: Responder, Phase: ProposalPhase}, func(context.Context, Request) ([]Diagnostic, error) { return nil, nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ds) != 0 {
+		t.Fatalf("accepted app bytes were judged: %+v", ds)
+	}
+}

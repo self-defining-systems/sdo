@@ -21,6 +21,8 @@ if TYPE_CHECKING:
 
     from benchmarks.sregym.fastloop.environment import FastloopEnvironment
 
+SCRIPTED_REGISTRATIONS = Path(__file__).resolve().parents[1] / "adapter/scripted_registrations"
+
 
 def code_revision() -> str:
     root = Path(__file__).resolve().parents[3]
@@ -47,6 +49,7 @@ class DryRunReport:
     steady_started: float | None = None
     fingerprint: dict[str, Any] | None = None
     setup_proof: dict[str, Any] = field(default_factory=dict)
+    responder_image: dict[str, Any] = field(default_factory=dict)
     fault_injected: bool = False
     live_model_calls: bool = False
     invariants: dict[str, dict[str, Any]] = field(
@@ -128,6 +131,51 @@ def execute(run_dir: Path, timeout: int, setup_timeout: int = 900) -> int:
     report_path.write_text(json.dumps(document, indent=2) + "\n")
     print(json.dumps(document, indent=2))
     return 0 if document.get("passed") is True else 1
+
+
+def registration_modules(registrations: Path) -> list[str]:
+    """Python modules the registered Jobs run inside the lane's responder image."""
+    modules: set[str] = set()
+    for path in sorted(registrations.glob("*.json")):
+        job = json.loads(path.read_text())["kubernetes_job"]
+        if job["image"] != "${RESPONDER_IMAGE}":
+            continue
+        command = job["command"]
+        if "-m" not in command:
+            raise ValueError(f"eval: registration {path} does not name a Python module to preflight")
+        modules.add(command[command.index("-m") + 1])
+    if not modules:
+        raise ValueError(f"eval: no responder-image registrations under {registrations}")
+    return sorted(modules)
+
+
+def assert_responder_runs_registrations(
+    image: str,
+    registrations: Path,
+    *,
+    source_root: Path | None = None,
+    run: Callable[..., Any] = subprocess.run,
+) -> dict[str, Any]:
+    """Fail in seconds when the responder image cannot import the registered workers.
+
+    Production responder images omit the scripted worker; without this check every
+    controller-launched Job fails on import and setup burns its whole budget.
+    """
+    from benchmarks.sregym.adapter import assert_image_entrypoints
+
+    modules = registration_modules(registrations)
+    started = time.monotonic()
+    try:
+        assert_image_entrypoints(image, modules, source_root=source_root, run=run)
+    except ValueError as exc:
+        tag = image.rpartition(":")[2] if ":" in image.rpartition("/")[2] else "latest"
+        raise ValueError(
+            f"eval: responder image {image} cannot run the scripted registrations ({exc}). "
+            "Production responder images omit the scripted worker; build the scripted variant from the same "
+            f"commit (SDO_SCRIPTED_WORKER=1 SDO_IMAGES=benchmark SDO_IMAGE_TAG={tag}-scripted "
+            "bash scripts/build_sdo_images.sh) and point the lane's responder image at it"
+        ) from exc
+    return {"image": image, "modules": modules, "seconds": round(time.monotonic() - started, 3)}
 
 
 class NoFaultReady(Exception):
@@ -247,6 +295,12 @@ def run_lane(run_dir: Path, timeout: int, setup_timeout: int = 900) -> int:
             report.steady_seconds = report.seconds
             report.save(report_path)
             return 0
+        # A reused receipt already bound these image digests; a fresh install must
+        # not spend its setup budget on Jobs that cannot import their worker.
+        report.responder_image = assert_responder_runs_registrations(
+            environment.images.responder, SCRIPTED_REGISTRATIONS, source_root=environment.dev_mount
+        )
+        report.save(report_path)
         resources = assert_lane_resources(environment.kubeconfig, app_namespaces={environment.namespace})
         passed("lane_resources", **resources)
         cli._reset(argparse.Namespace(run_dir=environment.run_dir, dev_mount=None))
@@ -259,7 +313,7 @@ def run_lane(run_dir: Path, timeout: int, setup_timeout: int = 900) -> int:
                 "--agent",
                 "sdo",
                 "--agent-registrations",
-                str(cli.REPO_ROOT / "benchmarks/sregym/adapter/scripted_registrations"),
+                str(SCRIPTED_REGISTRATIONS),
                 "--diagnosis-grading",
                 "off",
                 "--healthy-baseline",
