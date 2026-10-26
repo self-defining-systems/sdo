@@ -461,6 +461,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	if err != nil {
 		return fmt.Errorf("create Kubernetes informer cache: %w", err)
 	}
+	defer kubernetesCache.Stop()
 	trafficWorkloads := TrafficWorkloadNames(detectors)
 	var proberAPI ProberAPI
 	var proberAddress func(context.Context, bool) (string, error)
