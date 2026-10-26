@@ -13,6 +13,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/util/retry"
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/core"
@@ -421,13 +422,14 @@ const maxRestoreAttempts = 5
 // a version conflict from an unrelated writer is retried with the fresh version
 // while a changed owned field still fails.
 func (e PlanExecutor) restoreAction(ctx context.Context, patch PlanPatch) error {
-	var err error
-	for attempt := 0; attempt < maxRestoreAttempts; attempt++ {
-		if err = e.restoreActionOnce(ctx, patch); !apierrors.IsConflict(err) {
+	backoff := retry.DefaultRetry
+	backoff.Steps = maxRestoreAttempts
+	return retry.RetryOnConflict(backoff, func() error {
+		if err := ctx.Err(); err != nil {
 			return err
 		}
-	}
-	return err
+		return e.restoreActionOnce(ctx, patch)
+	})
 }
 
 func (e PlanExecutor) restoreActionOnce(ctx context.Context, patch PlanPatch) error {
@@ -439,6 +441,9 @@ func (e PlanExecutor) restoreActionOnce(ctx context.Context, patch PlanPatch) er
 
 	if current.GetUID() != patch.Before.GetUID() {
 		return fmt.Errorf("rollback conflict: %s/%s was recreated", patch.Ref.Kind, patch.Ref.Name)
+	}
+	if patch.Authorization == "recorded-api" && !sameUndoConfiguration(current, patch.After) {
+		return fmt.Errorf("rollback conflict: object changed after recorded API write")
 	}
 	restored := current.DeepCopy()
 	for _, field := range planPatchFields(patch) {

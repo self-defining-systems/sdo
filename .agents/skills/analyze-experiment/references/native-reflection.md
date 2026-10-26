@@ -141,3 +141,17 @@ another submission. The terminal strict receipt and accepted outcome remain
 separate evidence; neither depends on a benchmark grade. A closure without a
 responder result sends nothing. Grade files live outside the operational repository
 and are never inputs to responders or reflection.
+
+
+### Recorded client write receipts
+
+Script/API-proxy `ScriptAPIReceipt` now includes optional `request_id`, `objects`
+(`ScriptObjectCapture` entries with per-request `images_ref`), and `undo_unavailable`.
+The existing private chunked ConfigMap capture store retains an immutable immediate
+before-image for each write request, alongside the script's original aggregate
+before/settled-after images. Paths suffixed with `#request=<id>` identify these
+private capture keys; collection members add `#object=<name>`. They are storage
+identities, not API paths. Secret bodies/preimages are never retained, including
+private storage; metadata receipts explicitly disclose unavailable undo. Exec and
+in-container effects have metadata receipts and no object undo. Do not treat
+server-side dry-run status `validated` as an applied repair.

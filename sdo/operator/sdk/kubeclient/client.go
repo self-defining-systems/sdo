@@ -47,8 +47,10 @@ func NewReadClient(read ReadFunc) (*ReadClient, error) {
 	if read == nil {
 		return nil, fmt.Errorf("Kubernetes observation reader required")
 	}
+	return newReadClient(&http.Client{Transport: readTransport{read}, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }})
+}
+func newReadClient(httpClient *http.Client) (*ReadClient, error) {
 	config := &rest.Config{Host: "https://recorded.invalid", QPS: 50, Burst: 100, Timeout: 5 * time.Second}
-	httpClient := &http.Client{Transport: readTransport{read}, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	builtin, err := kubernetes.NewForConfigAndClient(config, httpClient)
 	if err != nil {
 		return nil, err

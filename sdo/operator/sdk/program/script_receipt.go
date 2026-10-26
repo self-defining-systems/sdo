@@ -7,13 +7,16 @@ import (
 )
 
 type ScriptAPIReceipt struct {
-	Subresource string    `json:"subresource,omitempty"`
-	Method      string    `json:"method"`
-	Path        string    `json:"path"`
-	Status      int       `json:"status"`
-	StartedAt   time.Time `json:"started_at"`
-	CompletedAt time.Time `json:"completed_at"`
-	Omission    string    `json:"omission,omitempty"`
+	RequestID       string                `json:"request_id,omitempty"`
+	Objects         []ScriptObjectCapture `json:"objects,omitempty"`
+	UndoUnavailable string                `json:"undo_unavailable,omitempty"`
+	Subresource     string                `json:"subresource,omitempty"`
+	Method          string                `json:"method"`
+	Path            string                `json:"path"`
+	Status          int                   `json:"status"`
+	StartedAt       time.Time             `json:"started_at"`
+	CompletedAt     time.Time             `json:"completed_at"`
+	Omission        string                `json:"omission,omitempty"`
 }
 
 type ScriptObjectCapture struct {

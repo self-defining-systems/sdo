@@ -34,6 +34,13 @@ func New(upstream *url.URL, readTransport, writeTransport http.RoundTripper, rec
 // NewWithMutationGate keeps the incident fence below all worker API callers,
 // including raw kubectl and GET-based exec/attach upgrades.
 func NewWithMutationGate(upstream *url.URL, readTransport, writeTransport http.RoundTripper, recorder Recorder, gate *apihistory.MutationGate) http.Handler {
+	return NewWithPolicy(upstream, readTransport, writeTransport, recorder, gate, "")
+}
+
+// NewWithPolicy fences Secret reads and control writes beneath all API callers.
+// The control namespace comes from the controller, never from worker input.
+func NewWithPolicy(upstream *url.URL, readTransport, writeTransport http.RoundTripper, recorder Recorder, gate *apihistory.MutationGate, controlNamespace string) http.Handler {
+	writes := make(chan struct{}, 1)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// The transport can still be probing the request body for EOF when an
 		// upstream response arrives. HTTP/1's default response flush drains and
@@ -42,6 +49,22 @@ func NewWithMutationGate(upstream *url.URL, readTransport, writeTransport http.R
 		// not expose this optional control.
 		_ = http.NewResponseController(w).EnableFullDuplex()
 		e := requestEvent(r)
+		mutation := mutating(r.Method) || e.Subresource == "exec" || e.Subresource == "attach" || e.Subresource == "portforward"
+		if e.Group == "" && e.Resource == "secrets" && !mutation || controlNamespace != "" && e.Namespace == controlNamespace && mutation || controlNamespace != "" && e.Group == "" && e.Resource == "namespaces" && e.Name == controlNamespace && mutation {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusForbidden)
+			_ = json.NewEncoder(w).Encode(map[string]any{"apiVersion": "v1", "kind": "Status", "status": "Failure", "reason": "Forbidden", "message": "Secret reads and SDO control edits are unavailable", "code": 403})
+			return
+		}
+		// Serialize the before-image/dispatch/after-image interval across all writers.
+		if mutation {
+			select {
+			case writes <- struct{}{}:
+				defer func() { <-writes }()
+			case <-r.Context().Done():
+				return
+			}
+		}
 		var uncertain atomic.Bool
 		if gate != nil && (mutating(r.Method) || e.Subresource == "exec" || e.Subresource == "attach" || e.Subresource == "portforward") {
 			lease, err := gate.Begin()
@@ -111,6 +134,8 @@ func NewWithMutationGate(upstream *url.URL, readTransport, writeTransport http.R
 			}
 			mode := "json"
 			switch {
+			case e.Group == "" && e.Resource == "secrets":
+				mode = "metadata"
 			case !supportedRepresentation(res.Header):
 				mode = "metadata"
 			case e.Verb == "watch":
@@ -215,6 +240,13 @@ func requestEvent(r *http.Request) apihistory.Event {
 	values := r.URL.Query()["dryRun"]
 	e.DryRun = mutating(r.Method) && len(values) == 1 && values[0] == "All" &&
 		(e.Subresource == "" || e.Subresource == "status" || e.Subresource == "scale" || e.Subresource == "finalize")
+	capture := url.Values{}
+	for _, key := range []string{"labelSelector", "fieldSelector"} {
+		if v := r.URL.Query().Get(key); v != "" {
+			capture.Set(key, v)
+		}
+	}
+	e.CaptureQuery = capture.Encode()
 	e.Partial = r.URL.Query().Get("labelSelector") != "" || r.URL.Query().Get("fieldSelector") != "" || r.URL.Query().Get("continue") != "" || r.URL.Query().Get("limit") != ""
 	return e
 }

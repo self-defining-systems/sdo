@@ -57,6 +57,12 @@ func Kubernetes(view ReadView, sourceBindings ...Bindings) (*kubeclient.ReadClie
     accepted source. Omit them for observations of intentionally source-absent
     objects and derived resources.
 
+func KubernetesForExecution(view ReadView, executor KubernetesExecutor, sourceBindings ...Bindings) (*kubeclient.ExecutionClient, error)
+    KubernetesForExecution exposes upstream mutations through the owning
+    executor, preserving its recording, before-images and undo. It never
+    executes a write during construction and never substitutes predicted
+    mutation responses.
+
 func ProjectPatch(object map[string]any, a PatchObject) (map[string]any, error)
     ProjectPatch is the shared atomic projection used by production and replay.
     Errors leave the input untouched. The API server still validates its schema.
@@ -333,6 +339,12 @@ type KubernetesEffect struct {
     rejects missing images instead of inventing a subresource or admission
     effect.
 
+type KubernetesExecutor interface {
+	KubernetesRequest(context.Context, KubernetesRequest) (json.RawMessage, error)
+}
+    KubernetesExecutor is provided only during admitted execution. ReadView does
+    not implement it: planning and detectors cannot acquire mutation authority.
+
 type KubernetesRequest struct {
 	Ref         sdk.ObjectRef
 	Method      string            `json:"method"`
@@ -523,13 +535,16 @@ type ScaleWorkload struct {
     parameter.
 
 type ScriptAPIReceipt struct {
-	Subresource string    `json:"subresource,omitempty"`
-	Method      string    `json:"method"`
-	Path        string    `json:"path"`
-	Status      int       `json:"status"`
-	StartedAt   time.Time `json:"started_at"`
-	CompletedAt time.Time `json:"completed_at"`
-	Omission    string    `json:"omission,omitempty"`
+	RequestID       string                `json:"request_id,omitempty"`
+	Objects         []ScriptObjectCapture `json:"objects,omitempty"`
+	UndoUnavailable string                `json:"undo_unavailable,omitempty"`
+	Subresource     string                `json:"subresource,omitempty"`
+	Method          string                `json:"method"`
+	Path            string                `json:"path"`
+	Status          int                   `json:"status"`
+	StartedAt       time.Time             `json:"started_at"`
+	CompletedAt     time.Time             `json:"completed_at"`
+	Omission        string                `json:"omission,omitempty"`
 }
 
 type ScriptExecutionResult struct {

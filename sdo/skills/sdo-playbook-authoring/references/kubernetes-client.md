@@ -36,3 +36,21 @@ and phase replay. Keep observation streams finite. Missing recordings never
 become an empty list or a healthy response. Secret endpoints and mutation
 methods are unavailable to this read client; write intent remains an executor
 plan. Exec effects require explicit undo rather than object restoration.
+
+
+## Execution capability
+
+`program.KubernetesForExecution(view, executor)` exposes the full pinned upstream
+clientset and dynamic client through an admitted `KubernetesExecutor`. It supports
+Create/Update/Patch/Delete, scale subresources and server-side apply; apply defaults
+to field manager `sdo`. Results come from the actual API. The read view alone does
+not grant this capability: current `Mitigate` methods still produce durable Plans.
+The Go host's `PlanExecutor.NewKubernetesExecution` collects the existing effect
+receipts and measured images; `Result` returns a detached application receipt.
+
+Named API configuration patches with complete images support conditional undo.
+An intervening configuration change refuses undo; conflict retries reread current
+versions. Deletes, connection upgrades and opaque external effects remain disclosed
+as irreversible. Proxy receipts add a per-request object-image reference and an
+explicit undo-unavailable reason for exec and Secret operations. Secret data is
+never read into capture storage. Use existing recorded Command actions for exec.

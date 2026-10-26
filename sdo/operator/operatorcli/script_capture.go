@@ -24,6 +24,7 @@ type scriptRecorder struct {
 	persistReceipt func(context.Context, program.ScriptAPIReceipt) error
 	persistImage   func(context.Context, string, program.ScriptObjectCapture) (string, error)
 	checkpoint     func([]program.ScriptObjectCapture, []program.ScriptAPIReceipt) error
+	pending        map[string][]program.ScriptObjectCapture
 	written        map[string]bool
 	ctx            context.Context
 	upstream       *url.URL
@@ -36,7 +37,7 @@ type scriptRecorder struct {
 }
 
 func newScriptRecorder(ctx context.Context, u *url.URL, t http.RoundTripper) *scriptRecorder {
-	return &scriptRecorder{ctx: ctx, upstream: u, transport: t, objects: map[string]*program.ScriptObjectCapture{}, written: map[string]bool{}}
+	return &scriptRecorder{ctx: ctx, upstream: u, transport: t, objects: map[string]*program.ScriptObjectCapture{}, written: map[string]bool{}, pending: map[string][]program.ScriptObjectCapture{}}
 }
 func (r *scriptRecorder) Gap() {
 	r.mu.Lock()
@@ -76,33 +77,22 @@ func (r *scriptRecorder) Record(e apihistory.Event, raw []byte) {
 	if path == "" {
 		return
 	}
-	write := e.Verb != "get" && e.Verb != "list" && e.Verb != "watch" || e.Subresource == "exec" || e.Subresource == "attach"
-	if e.Phase == "start" && write {
-		if e.Name != "" {
-			r.preimage(path, e)
-		} else if e.Verb == "deletecollection" {
-			object, err := r.read(path)
-			if err != nil || object == nil {
-				r.gap("collection preimages unavailable")
-			} else {
-				items, _, _ := unstructured.NestedSlice(object.Object, "items")
-				for _, item := range items {
-					m, ok := item.(map[string]any)
-					if !ok {
-						continue
-					}
-					obj := &unstructured.Unstructured{Object: m}
-					copy := e
-					copy.Name = obj.GetName()
-					r.retain(scriptEventPath(copy), obj, nil)
-				}
-			}
-		}
+	write := scriptMutation(e)
+	if e.Phase == "start" && write && !e.DryRun {
+		r.beginWrite(path, e)
 	}
 	if e.Phase != "end" {
 		return
 	}
-	receipt := program.ScriptAPIReceipt{Method: e.Verb, Path: path, Subresource: e.Subresource, Status: e.Status, StartedAt: e.Started, CompletedAt: e.Finished, Omission: e.Omission}
+	receipt := program.ScriptAPIReceipt{RequestID: e.RequestID, Method: e.Verb, Path: path, Subresource: e.Subresource, Status: e.Status, StartedAt: e.Started, CompletedAt: e.Finished, Omission: e.Omission}
+	if write && !e.DryRun {
+		r.finishWrite(path, e, raw, &receipt)
+	}
+	if secretCapturePath(path) {
+		raw = nil
+		receipt.Omission = "secret_data_not_recorded"
+		receipt.UndoUnavailable = "Secret data is never read or recorded"
+	}
 	if r.persistReceipt != nil {
 		if err := r.persistReceipt(r.ctx, receipt); err != nil {
 			r.gap("private API receipt storage unavailable")
@@ -121,7 +111,7 @@ func (r *scriptRecorder) Record(e apihistory.Event, raw []byte) {
 		if object.UnmarshalJSON(raw) == nil && object.GetName() != "" && object.GetKind() != "Status" {
 			if e.Name == "" {
 				path += "/" + url.PathEscape(object.GetName())
-				if write && e.Verb == "create" {
+				if write && e.Verb == "post" {
 					r.written[path] = true
 					if r.objects[path] == nil {
 						r.objects[path] = &program.ScriptObjectCapture{BeforeAbsent: true}
@@ -134,31 +124,17 @@ func (r *scriptRecorder) Record(e apihistory.Event, raw []byte) {
 	}
 	if write && (e.Status >= 200 && e.Status < 300 || e.Status == 101) {
 		for target, capture := range r.objects {
-			if target == path || e.Verb == "deletecollection" && strings.HasPrefix(target, path+"/") {
+			if target == path || e.Verb == "delete" && e.Name == "" && strings.HasPrefix(target, path+"/") {
 				capture.Written = true
 			}
 		}
 	}
 
 }
-func (r *scriptRecorder) preimage(path string, e apihistory.Event) {
-	if r.written[path] {
-		return
-	}
-	r.written[path] = true
-	object, err := r.read(path)
-	if err != nil {
-		r.gap("first-write preimage unavailable: " + path)
-		r.objects[path] = &program.ScriptObjectCapture{}
-		return
-	}
-	if object == nil {
-		r.objects[path] = &program.ScriptObjectCapture{BeforeAbsent: true}
-		return
-	}
-	r.retain(path, object, nil)
-}
 func (r *scriptRecorder) retain(path string, before, after *unstructured.Unstructured) {
+	if secretCapturePath(path) || before != nil && strings.EqualFold(before.GetKind(), "Secret") || after != nil && strings.EqualFold(after.GetKind(), "Secret") {
+		return
+	}
 	object := after
 	if object == nil {
 		object = before
@@ -206,11 +182,17 @@ func (r *scriptRecorder) retain(path string, before, after *unstructured.Unstruc
 	r.objects[path] = &candidate
 }
 func (r *scriptRecorder) read(path string) (*unstructured.Unstructured, error) {
+	return r.readQuery(path, "")
+}
+func (r *scriptRecorder) readQuery(path, query string) (*unstructured.Unstructured, error) {
+	if secretCapturePath(path) {
+		return nil, fmt.Errorf("Secret data is never read or recorded")
+	}
 	ctx, cancel := context.WithTimeout(r.ctx, 2*time.Second)
 	defer cancel()
 	target := *r.upstream
 	target.Path = strings.TrimSuffix(target.Path, "/") + path
-	target.RawQuery = ""
+	target.RawQuery = query
 	req, err := http.NewRequestWithContext(ctx, "GET", target.String(), nil)
 	if err != nil {
 		return nil, err
@@ -234,6 +216,9 @@ func (r *scriptRecorder) read(path string) (*unstructured.Unstructured, error) {
 	object := &unstructured.Unstructured{}
 	if err = object.UnmarshalJSON(raw); err != nil {
 		return nil, err
+	}
+	if strings.EqualFold(object.GetKind(), "Secret") {
+		return nil, fmt.Errorf("Secret responses cannot enter captures")
 	}
 	return object, nil
 }

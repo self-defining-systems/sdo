@@ -96,7 +96,7 @@ func RunScriptRunner(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	handler := kubeproxy.New(upstream, reads, writes, recorder)
+	handler := kubeproxy.NewWithPolicy(upstream, reads, writes, recorder, nil, os.Getenv("SDO_SCRIPT_CONTROL_NAMESPACE"))
 	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requestCtx, stop := context.WithCancel(r.Context())
 		defer stop()

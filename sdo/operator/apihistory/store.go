@@ -43,6 +43,9 @@ func (l Limits) defaults() Limits {
 }
 
 type Event struct {
+	// CaptureQuery is an ephemeral selector scope for synchronous before-images.
+	// It is never persisted in event history.
+	CaptureQuery    string    `json:"-"`
 	Sequence        uint64    `json:"sequence"`
 	Epoch           uint64    `json:"epoch"`
 	RequestID       string    `json:"request_id,omitempty"`

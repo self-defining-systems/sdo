@@ -85,7 +85,7 @@ evaluate a bound program
 sdo diagnose [-h] [--bind NAME=Kind/namespace/name] [program_id]
 ```
 
-Program commands use the current checkout, including shared libraries and new playbook IDs. Edits compile on demand; fix compile errors in place and retry. Revision receipts use working-tree:<source digest> for unpublished code. Reusable API reads use program.Kubernetes(view) with upstream client-go options; reads are recorded for replay.
+Program commands use the current checkout, including shared libraries and new playbook IDs. Edits compile on demand; fix compile errors in place and retry. Revision receipts use working-tree:<source digest> for unpublished code. Reusable API reads use program.Kubernetes(view) with upstream client-go options; reads are recorded for replay; API write receipts capture object before-images.
 
 - `--bind`: named program parameter; repeat for each binding
 
@@ -107,7 +107,7 @@ SetField updates a schema-checked field by index or unique name, optionally from
 CreateFromSource restores a named missing object from accepted source.
 ReconcileFromSource restores declared configuration, including source-named cluster objects, while preserving undeclared fields.
 DeleteObject irreversibly removes an allowed named source-absent object and never auto-recreates it.
-Program commands use the current checkout, including shared libraries and new playbook IDs. Edits compile on demand; fix compile errors in place and retry. Revision receipts use working-tree:<source digest> for unpublished code. Reusable API reads use program.Kubernetes(view) with upstream client-go options; reads are recorded for replay.
+Program commands use the current checkout, including shared libraries and new playbook IDs. Edits compile on demand; fix compile errors in place and retry. Revision receipts use working-tree:<source digest> for unpublished code. Reusable API reads use program.Kubernetes(view) with upstream client-go options; reads are recorded for replay; API write receipts capture object before-images.
 
 - `--finding`: target finding fingerprint; repeat for each intended finding
 - `--bind`: named program parameter; repeat for each binding
@@ -122,7 +122,7 @@ list controller mitigation options
 sdo menu [-h] [--bind NAME=Kind/namespace/name] [program_id]
 ```
 
-Program commands use the current checkout, including shared libraries and new playbook IDs. Edits compile on demand; fix compile errors in place and retry. Revision receipts use working-tree:<source digest> for unpublished code. Reusable API reads use program.Kubernetes(view) with upstream client-go options; reads are recorded for replay.
+Program commands use the current checkout, including shared libraries and new playbook IDs. Edits compile on demand; fix compile errors in place and retry. Revision receipts use working-tree:<source digest> for unpublished code. Reusable API reads use program.Kubernetes(view) with upstream client-go options; reads are recorded for replay; API write receipts capture object before-images.
 
 - `--bind`: named program parameter; repeat for each binding
 
@@ -146,7 +146,7 @@ apply several independent options in one call; overlapping options refused; show
 sdo mitigate [-h] [--finding FINGERPRINT] [--rounds ROUNDS] [--selection FILE] [--selection-set FILE] [--option ID] [--param NAME=VALUE] [option]
 ```
 
-Apply several independent options in one call; overlapping object write sets are refused before writes. Use repeated --option ID followed by that option's --param NAME=VALUE, or --selection-set FILE with version 1 and options [{option_id, bindings, parameters, finding_fingerprints}]. Each option has its own receipt; one call uses one round. Pending rollout returns its application ID and read-only tools remain available. A single option also accepts --NAME VALUE parameters. Uses the ordinary executor and controller RBAC; up to five rounds per incident. A script fix is a first-class learnable mitigation with relation-derived Values, within incident budgets. Program commands use the current checkout, including shared libraries and new playbook IDs. Edits compile on demand; fix compile errors in place and retry. Revision receipts use working-tree:<source digest> for unpublished code. Reusable API reads use program.Kubernetes(view) with upstream client-go options; reads are recorded for replay.
+Apply several independent options in one call; overlapping object write sets are refused before writes. Use repeated --option ID followed by that option's --param NAME=VALUE, or --selection-set FILE with version 1 and options [{option_id, bindings, parameters, finding_fingerprints}]. Each option has its own receipt; one call uses one round. Pending rollout returns its application ID and read-only tools remain available. A single option also accepts --NAME VALUE parameters. Uses the ordinary executor and controller RBAC; up to five rounds per incident. A script fix is a first-class learnable mitigation with relation-derived Values, within incident budgets. Program commands use the current checkout, including shared libraries and new playbook IDs. Edits compile on demand; fix compile errors in place and retry. Revision receipts use working-tree:<source digest> for unpublished code. Reusable API reads use program.Kubernetes(view) with upstream client-go options; reads are recorded for replay; API write receipts capture object before-images.
 
 - `option`: option ID or unambiguous program ID from the current menu
 - `--finding`: target finding fingerprint; repeat for each intended finding

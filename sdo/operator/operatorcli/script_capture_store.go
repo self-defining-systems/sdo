@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -24,6 +25,9 @@ type scriptCaptureStore struct {
 const scriptImageChunkBytes = 384 << 10
 
 func (s scriptCaptureStore) save(ctx context.Context, path string, capture program.ScriptObjectCapture) (string, error) {
+	if secretCapturePath(path) || strings.EqualFold(capture.Ref.Kind, "Secret") || capture.Before != nil && strings.EqualFold(capture.Before.GetKind(), "Secret") || capture.After != nil && strings.EqualFold(capture.After.GetKind(), "Secret") {
+		return "", fmt.Errorf("Secret images must not enter capture storage")
+	}
 	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(path)))[:16]
 	name := s.application + "-object-" + digest
 	labels := map[string]string{"app.kubernetes.io/managed-by": "sdo", "sdo.dev/script-capture": s.application}
