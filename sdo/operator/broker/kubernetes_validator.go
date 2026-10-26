@@ -109,10 +109,7 @@ func (k KubernetesValidationJobClient) Validate(ctx context.Context, request Val
 	if k.PollInterval <= 0 {
 		k.PollInterval = time.Second
 	}
-	if k.Timeout <= 0 {
-		k.Timeout = 10 * time.Minute
-	}
-	validationCtx, cancel := context.WithTimeout(ctx, k.Timeout)
+	validationCtx, cancel := context.WithTimeout(ctx, k.validationTimeout())
 	defer cancel()
 	random := make([]byte, 8)
 	if _, err := rand.Read(random); err != nil {
@@ -420,6 +417,13 @@ func (k KubernetesValidationJobClient) cleanup(name string) {
 	}
 }
 
+func (k KubernetesValidationJobClient) validationTimeout() time.Duration {
+	if k.Timeout > 0 {
+		return k.Timeout
+	}
+	return 10 * time.Minute
+}
+
 func (k KubernetesValidationJobClient) canaryJob(jobName string, denied bool) *batchv1.Job {
 	labels := map[string]string{"sdo.dev/validator-canary": "allow"}
 	mode := "allow"
@@ -428,7 +432,15 @@ func (k KubernetesValidationJobClient) canaryJob(jobName string, denied bool) *b
 		labels["sdo.dev/validator-isolation"] = validatorIsolationPolicy
 		mode = "deny"
 	}
-	job := k.baseJob(jobName, labels, 30)
+	// Network attempts are bounded by the canary binary. The Job lifetime also
+	// includes scheduling, sandbox startup and terminal-status reconciliation;
+	// it must not preempt the enclosing validation's configurable budget.
+	timeout := k.validationTimeout()
+	deadline := int64(timeout / time.Second)
+	if timeout%time.Second != 0 {
+		deadline++
+	}
+	job := k.baseJob(jobName, labels, deadline)
 	job.Spec.Template.Spec.Containers = []corev1.Container{{Name: "network-canary", Image: k.Image, ImagePullPolicy: corev1.PullIfNotPresent, Command: []string{"/usr/local/bin/sdo-operator", "network-canary", mode}, TerminationMessagePath: "/dev/termination-log", TerminationMessagePolicy: corev1.TerminationMessageReadFile, SecurityContext: restrictedContainer(), Resources: corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("10m"), corev1.ResourceMemory: resource.MustParse("32Mi")}, Limits: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("100m"), corev1.ResourceMemory: resource.MustParse("64Mi")}}}}
 	return job
 }

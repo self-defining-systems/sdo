@@ -265,6 +265,7 @@ message IncidentRequest {
   string observation_generation = 26;
   PlaybookCoverage playbook_coverage = 27;
   NamespaceOnboarding namespace_onboarding = 28;
+  repeated StageReport prior_stages = 29;
 }
 
 message RootCauseEvidence {
@@ -413,7 +414,7 @@ message IncidentResult {
   int32 response_loops_used = 19;
   bool response_loop_exhausted = 20;
   repeated string program_failure_signals = 21;
-  string resolution_path = 22 [(buf.validate.field).string = {in: ["", "responder"]}];
+  string resolution_path = 22 [(buf.validate.field).string = {in: ["", "responder", "deterministic"]}];
   reserved 23;
   reserved 24;
   reserved 25;
@@ -498,4 +499,28 @@ message IncidentClosure {
   repeated DetectorEvaluation partial_detector_states = 21;
   bool verified_while_responder_running = 22;
   google.protobuf.Duration closure_stability_window = 23;
+}
+
+// Controller-owned evidence from one response stage. Finding credit describes
+// a fresh scoped observation; independent controller verification owns closure.
+message StageReport {
+  string stage = 1 [(buf.validate.field).string.min_len = 1];
+  repeated StageMitigation mitigations = 2;
+  repeated string remaining_finding_fingerprints = 3;
+  string error = 4;
+  repeated string cleared_finding_fingerprints = 5;
+}
+
+message StageMitigation {
+  string playbook_id = 1 [(buf.validate.field).string.min_len = 1];
+  string program_revision = 2;
+  repeated Binding bindings = 3;
+  string plan_id = 4;
+  PlanApplication apply_receipt = 5;
+  string result = 6 [(buf.validate.field).string = {in: ["applied_cleared", "applied_still_matching", "rollout_failed", "rollout_pending_at_handoff", "apply_error", "skipped"]}];
+  string skip_reason = 7 [(buf.validate.field).string = {in: ["", "multiple_entry_points", "no_mitigation", "unbound_parameter", "diagnose_no_longer_matches", "diagnose_unavailable", "unexplained_coverage", "already_attempted", "repair_policy"]}];
+  ProgramRun post_apply_diagnose = 8;
+  repeated string cleared_finding_fingerprints = 9;
+  repeated string remaining_finding_fingerprints = 10;
+  string error = 11;
 }

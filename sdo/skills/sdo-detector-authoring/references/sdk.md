@@ -24,6 +24,11 @@ func CanonicalObjectKind(raw string) string
     CanonicalObjectKind accepts kubectl aliases and group-qualified kinds.
     Unknown kind spelling is preserved, without inventing an API version.
 
+func ClearingHorizon(detector Detector, view DetectionContext) time.Duration
+    ClearingHorizon is how long after a condition resolves a fresh evaluation
+    of the detector may still report it: its rolling window plus the evaluations
+    its clearing policy needs at its own cadence.
+
 func ConsumesPodAdmission(detectors []Detector) bool
     ConsumesPodAdmission enables the bounded API observation only for bundles
     containing a detector that explicitly requests it.
@@ -35,7 +40,8 @@ func DecodeTypedObjects(target any, objects []unstructured.Unstructured) error
 func FindObject(objects []unstructured.Unstructured, ref ObjectRef) (*unstructured.Unstructured, error)
 func FormatObjectRef(ref ObjectRef) (string, error)
     FormatObjectRef returns canonical text. Non-default API versions are
-    retained explicitly, so parsing the formatted value preserves every
+    retained explicitly. JSON is used when slash text would select legacy
+    namespace/kind ordering, so parsing the formatted value preserves every
     ObjectRef field.
 
 func ObservationTime(ctx DetectionContext) time.Time
@@ -430,6 +436,14 @@ type WatchKind struct {
 	Kind       string
 	Namespace  string
 }
+
+type WindowedDetector interface {
+	EvaluationWindow(DetectionContext) time.Duration
+}
+    WindowedDetector is implemented by detectors that judge a rolling window of
+    past observations, so a condition that has just resolved can keep reporting
+    until the window rolls over. EvaluationWindow bounds that lag for the
+    current view; zero means the detector has no such window.
 
 ```
 

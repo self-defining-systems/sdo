@@ -7,8 +7,9 @@ from pathlib import Path
 import pytest
 
 
+@pytest.mark.parametrize("jobs", [4, 8])
 @pytest.mark.parametrize("failure", ["none", "first_runtime", "second_runtime", "reflection", "python"])
-def test_hermetic_driver_propagates_each_shard_failure(tmp_path: Path, failure: str) -> None:
+def test_hermetic_driver_propagates_each_shard_failure(tmp_path: Path, failure: str, jobs: int) -> None:
     root = Path(__file__).resolve().parents[3]
     commands = tmp_path / "bin"
     commands.mkdir()
@@ -16,7 +17,7 @@ def test_hermetic_driver_propagates_each_shard_failure(tmp_path: Path, failure: 
     go = commands / "go"
     go.write_text(
         "#!/bin/bash\n"
-        'printf "go %s\\n" "$*" >> "$LG_DRIVER_LOG"\n'
+        'printf "go workers=%s %s\\n" "$GOMAXPROCS" "$*" >> "$LG_DRIVER_LOG"\n'
         'case "$*" in\n'
         "  *TestReflectionMongoAuth*) shard=reflection ;;\n"
         "  *TestHermeticBringup*) shard=first_runtime ;;\n"
@@ -36,6 +37,7 @@ def test_hermetic_driver_propagates_each_shard_failure(tmp_path: Path, failure: 
         "PATH": str(commands) + os.pathsep + os.environ["PATH"],
         "LG_DRIVER_LOG": str(log),
         "LG_DRIVER_FAILURE": failure,
+        "SDO_HERMETIC_JOBS": str(jobs),
     }
     result = subprocess.run(
         ["bash", str(root / "scripts/test_fastloop_hermetic.sh")],
@@ -54,3 +56,11 @@ def test_hermetic_driver_propagates_each_shard_failure(tmp_path: Path, failure: 
     assert "uv" in lines
     assert any("TestLearnedOriginCredit" in line for line in lines)
     assert any("TestHermeticControllerClosureReachesNativeOutcomeBroker" in line for line in lines)
+
+    for marker, expected in (
+        ("TestReflectionMongoAuth", jobs // 2),
+        ("TestHermeticBringup", jobs // 2 - 1),
+        ("TestLearnedOriginCredit", jobs // 2),
+    ):
+        command = next(line for line in lines if marker in line)
+        assert f"workers={expected} " in command, command

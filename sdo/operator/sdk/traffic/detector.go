@@ -56,6 +56,31 @@ func (d sloDetector) Spec() sdk.DetectorSpec { return d.spec }
 
 func (d sloDetector) TrafficWorkloads() []string { return []string{d.workload} }
 
+// EvaluationWindow bounds how long a repaired scenario can keep violating its
+// SLO: pre-repair samples age out after MaxAge, and the window needs MinSamples
+// fresh samples, plus one arrival at the scenario's share of the workload rate.
+func (d sloDetector) EvaluationWindow(ctx sdk.DetectionContext) time.Duration {
+	window, ok := WindowFrom(ctx, d.workload)
+	if !ok {
+		return 0
+	}
+	total := 0
+	for _, scenario := range window.Workload.Scenarios {
+		total += scenario.Weight
+	}
+	var longest time.Duration
+	for _, scenario := range window.Workload.Scenarios {
+		slo := window.Workload.ScenarioSLO(scenario.ID)
+		var arrival time.Duration
+		if window.Workload.RatePerSecond > 0 && scenario.Weight > 0 {
+			arrival = time.Duration(float64(time.Second) * float64(total) / (float64(scenario.Weight) * window.Workload.RatePerSecond))
+		}
+		horizon := max(slo.MaxAge.Duration(), time.Duration(slo.MinSamples)*arrival) + arrival
+		longest = max(longest, horizon)
+	}
+	return longest
+}
+
 // Confirmed implements the observation confirmation contract. Every scenario
 // must have succeeded since observation began and have enough usable samples
 // for its current SLO window. Unproven scenarios never manufacture findings.

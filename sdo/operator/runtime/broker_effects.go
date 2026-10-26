@@ -416,6 +416,8 @@ func (c *Controller) handleClosureCompletion(completion closureCompletion) {
 	if completion.err != nil {
 		event.Kind = lifecyclecore.Rejected
 		event.Error = completion.err.Error()
+		var terminal interface{ NonRetryable() bool }
+		event.NonRetryable = errors.As(completion.err, &terminal) && terminal.NonRetryable()
 		if errors.Is(completion.err, context.DeadlineExceeded) {
 			event.Kind = lifecyclecore.AgentTimeout
 		}

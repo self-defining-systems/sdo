@@ -57,6 +57,13 @@ func (d timedDetector) ConfirmationReason(view sdk.DetectionContext) string {
 	return detectorConfirmationReason(d.Detector, view)
 }
 
+func (d timedDetector) EvaluationWindow(view sdk.DetectionContext) time.Duration {
+	if windowed, ok := d.Detector.(sdk.WindowedDetector); ok {
+		return windowed.EvaluationWindow(view)
+	}
+	return 0
+}
+
 func (d timedDetector) TrafficWorkloads() []string {
 	if consumer, ok := d.Detector.(traffic.Consumer); ok {
 		return consumer.TrafficWorkloads()

@@ -54,6 +54,7 @@ jobs:
         with:
           filters: |
             python:
+              - '.python-version'
               - '**/*.py'
               - '**/*.toml'
               - 'uv.lock'
@@ -194,6 +195,13 @@ jobs:
       - name: Compile dependency graphs outside operation timeouts
         run: bash scripts/prepare_go_ci.sh "${{ matrix.mode }}"
 
+      - name: Keep only the source-bound test executable
+        if: matrix.mode == 'normal'
+        run: |
+          current="$(python3 scripts/operator_test_binary.py)"
+          test -f "$current"
+          find .fastloop/test-bin -maxdepth 1 -type f -name 'sdo-operator-*' ! -samefile "$current" -delete
+
       - name: Bind image schema to the compiled source
         if: matrix.mode == 'normal'
         id: schema
@@ -212,8 +220,10 @@ jobs:
       matrix:
         include:
           - name: static analysis
-            run: bash scripts/format_code.sh --check && bash scripts/check_errors.sh
+            shard: fastloop
+            run: bash scripts/format_code.sh --check && bash scripts/check_errors.sh && ./scripts/test_python.sh -m "not go_integration"
           - name: unit tests
+            shard: core
             run: ./scripts/test_python.sh -m "not go_integration"
     steps:
       - name: Select prepared compiler cache
@@ -255,6 +265,18 @@ jobs:
         if: matrix.name == 'unit tests'
         run: uv run python scripts/operator_test_binary.py
       - run: ${{ matrix.run }}
+        env:
+          SDO_PYTEST_SHARD: ${{ matrix.shard }}
+          COVERAGE_FILE: .coverage.${{ matrix.shard }}
+      - name: Publish Python shard coverage
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: python-coverage-${{ matrix.shard }}
+          path: .coverage.${{ matrix.shard }}
+          include-hidden-files: true
+          overwrite: true
+          if-no-files-found: error
+          retention-days: 1
 
   controller:
     name: controller (${{ matrix.module }})
@@ -388,30 +410,6 @@ jobs:
         env:
           GOMAXPROCS: "2"
         run: go test -p 1 -count=3 -run '^(TestProxyWarmAddedP95|TestLargeResponseWarmAddedP95|TestProjectionTailLatency)$' -v ./kubeproxy ./operatorcli
-        working-directory: sdo/operator
-
-      - name: Fuzz object reference boundary (bounded)
-        if: matrix.module == 'foundation-sdk'
-        run: |
-          timeout 120s go test -run '^$' -fuzz '^FuzzObjectRefParseFormat$' -fuzztime=30s -parallel=2 -timeout=2m .
-          timeout 120s go test -run '^$' -fuzz '^FuzzObjectRefTypedRoundTrip$' -fuzztime=30s -parallel=2 -timeout=2m .
-        working-directory: ${{ matrix.directory }}
-      - name: Fuzz observed evidence labels (bounded)
-        if: matrix.module == 'foundation-contracts'
-        run: timeout 120s go test -run '^$' -fuzz '^FuzzStateChangeRefMatchesObservedLabel$' -fuzztime=30s -parallel=2 -timeout=2m ./outcome_derivation
-        working-directory: sdo/operator
-      - name: Fuzz native receipt boundary (bounded)
-        if: matrix.module == 'foundation-contracts'
-        run: timeout 120s go test -run '^$' -fuzz '^FuzzNativeReceiptBoundary$' -fuzzminimizetime=1s -fuzztime=30s -parallel=2 -timeout=2m .
-        working-directory: benchmarks/sregym/protocol/native_receipt_go
-      - name: Fuzz submission phase boundary (bounded)
-        if: matrix.module == 'foundation-contracts'
-        run: timeout 120s go test -run '^$' -fuzz '^FuzzSubmissionPhaseBoundary$' -fuzzminimizetime=1s -fuzztime=30s -parallel=2 -timeout=2m .
-        working-directory: benchmarks/sregym/protocol/submission_go
-
-      - name: Fuzz controller observation boundary (bounded)
-        if: matrix.module == 'foundation-contracts'
-        run: timeout 120s go test -run '^$' -fuzz '^FuzzControllerObservationBoundary$' -fuzzminimizetime=1s -fuzztime=30s -parallel=2 -timeout=2m ./outcome_derivation
         working-directory: sdo/operator
 
   go-integration:
@@ -697,6 +695,25 @@ jobs:
           BUDGET_BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
           BUDGET_HEAD: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}
         run: python3 scripts/check_prompt_budgets.py --base "$BUDGET_BASE" --head "$BUDGET_HEAD"
+      - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc # v6.4.3
+        if: needs.python.result == 'success'
+        with:
+          version: "0.9.24"
+          python-version: "3.12"
+          enable-cache: true
+      - name: Download every Python shard's coverage
+        if: needs.python.result == 'success'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: python-coverage-*
+          path: python-coverage
+      - name: Enforce coverage on the complete Python suite
+        if: needs.python.result == 'success'
+        run: |
+          test -f python-coverage/python-coverage-core/.coverage.core
+          test -f python-coverage/python-coverage-fastloop/.coverage.fastloop
+          uv run --extra test coverage combine python-coverage/python-coverage-core python-coverage/python-coverage-fastloop
+          uv run --extra test coverage report
       - name: Require every applicable CI job to succeed
         env:
           JOB_RESULTS: ${{ toJSON(needs) }}

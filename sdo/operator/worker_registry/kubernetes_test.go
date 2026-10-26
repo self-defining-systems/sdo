@@ -353,8 +353,14 @@ func TestKubernetesExecutorStagesRequestsAboveConfigMapBudgetOnRepositoryVolume(
 	if err != nil {
 		t.Fatal(err)
 	}
-	if maps, _ := client.CoreV1().ConfigMaps("demo").List(ctx, metav1.ListOptions{}); len(maps.Items) != 0 {
-		t.Fatalf("an oversized request must not use a ConfigMap: %d created", len(maps.Items))
+	maps, err := client.CoreV1().ConfigMaps("demo").List(ctx, metav1.ListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Only the small dispatch receipt may use a ConfigMap. Request bytes must
+	// stay on the repository volume, regardless of control-plane bookkeeping.
+	if len(maps.Items) != 1 || maps.Items[0].Name != jobName+"-execution" || len(maps.Items[0].Data) != 0 || len(maps.Items[0].BinaryData) != 0 {
+		t.Fatalf("an oversized request must not use a ConfigMap: %+v", maps.Items)
 	}
 	var request *corev1.VolumeMount
 	for _, mount := range job.Spec.Template.Spec.Containers[0].VolumeMounts {

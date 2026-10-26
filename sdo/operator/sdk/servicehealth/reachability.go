@@ -216,6 +216,24 @@ func (d reachabilityDetector) Spec() sdk.DetectorSpec { return d.spec }
 
 func (d reachabilityDetector) ConsumesServiceReachability() bool { return true }
 
+// EvaluationWindow is one more dial and its timeout: a single successful dial
+// ends a run of consecutive failures.
+func (d reachabilityDetector) EvaluationWindow(ctx sdk.DetectionContext) time.Duration {
+	w, ok := ReachabilityFrom(ctx)
+	if !ok {
+		return 0
+	}
+	interval := w.Interval
+	if interval <= 0 {
+		interval = DefaultReachabilityInterval
+	}
+	timeout := w.Timeout
+	if timeout <= 0 {
+		timeout = DefaultReachabilityTimeout
+	}
+	return interval + timeout
+}
+
 // Confirmed distinguishes an empty verdict from a window still collecting
 // samples. An unavailable observer remains an error through Detect.
 func (d reachabilityDetector) Confirmed(ctx sdk.DetectionContext) bool {

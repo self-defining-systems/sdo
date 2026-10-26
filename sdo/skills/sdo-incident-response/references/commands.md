@@ -25,6 +25,8 @@ Mutation files contain these generated top-level arrays:
 ## General help
 
 ```text
+prior_stages holds earlier stages’ actions and results; build on them, don't repeat verified repairs. Full incident facts keep apply receipts and post-apply diagnoses.
+
 Examples (replace names with incident resources):
   sdo source Deployment/app/api
   sdo diagnose targetport --bind service=Service/app/api
@@ -146,7 +148,7 @@ Complete report fields (`details_file`): `actions[].{application_id, targeted_he
 
 ## mitigate
 
-apply several independent options in one call; overlapping options refused; show progress and full JSON
+apply independent options in one call; overlaps refused; shows progress and full JSON
 
 ```text
 sdo mitigate [-h] [--finding FINGERPRINT] [--rounds ROUNDS] [--selection FILE] [--selection-set FILE] [--option ID] [--param NAME=VALUE] [option]
@@ -196,7 +198,7 @@ Key JSON fields: `source (accepted Kubernetes object)`.
 
 ## act
 
-record one command invocation; outer shell chains run separately; show progress and a complete JSON report
+record one command; outer shell chains run separately; shows progress and a complete JSON report
 
 ```text
 sdo act [-h] --resource Kind/namespace/name [--summary SUMMARY] [--irreversible] ...
