@@ -49,7 +49,11 @@ BLIND_RESUME_LINE = "resume observation of namespace"
 BLIND_RESUME_CAUSE = "context deadline exceeded"
 HEALTH_DETECTORS = ".sdo/diagnostics/detectors/health"
 #: Writes a learned program's plan may emit that the installed controller must be allowed to perform.
-PROGRAM_WRITE_PROBES: tuple[tuple[str, str], ...] = (("delete", "replicasets.apps"), ("delete", "pods"))
+PROGRAM_WRITE_PROBES: tuple[tuple[str, str], ...] = (
+    ("delete", "replicasets.apps"),
+    ("patch", "replicasets.apps"),
+    ("delete", "pods"),
+)
 
 
 @dataclass(frozen=True)

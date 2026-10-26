@@ -227,6 +227,7 @@ def test_rbac_check_denies_what_the_controller_cannot_delete(tmp_path: Path) -> 
 
     assert {check.name: check.ok for check in checks} == {
         "controller can delete replicasets.apps": False,
+        "controller can patch replicasets.apps": False,
         "controller can delete pods": True,
     }
     assert all("system:serviceaccount:app-sdo:sdo-controller" in argv for argv in seen)
