@@ -64,7 +64,7 @@ Plan application JSON patch `Authorization` describes value provenance in GS1. S
 
 
 Plan applications now expose `action_reports`: each report names its action index, status (`prepared`,
-`applied`, `refused`, or `unknown`), and value provenance. Source values retain `source_commit`, reference and
+`applied`, `refused`, or `unknown`), an optional `observed: terminating` for an applied Pod delete whose Pod was still readable, and value provenance. Source values retain `source_commit`, reference and
 field path; observed values retain the invocation snapshot's `resource_version`, reference and path; scalar
 parameters retain their declaration name. Reports contain no resolved value. Exec reports only `exit_code`,
 never stdout/stderr; a refusal or unknown outcome is not verification evidence. DeletePod records an
