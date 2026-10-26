@@ -441,6 +441,7 @@ def preflight(
 
 def _execute(argv: Sequence[str], *, cwd: Path, timeout: float, log: Path) -> tuple[int, str]:
     env = {**os.environ, "SDO_TIME_SCALE": TIME_SCALE}
+    env.setdefault("SDO_TOY_BASELINE_WAIT", "600")
     log.parent.mkdir(parents=True, exist_ok=True)
     with log.open("a", encoding="utf-8") as handle:
         handle.write(f"$ {' '.join(argv)}\n")
