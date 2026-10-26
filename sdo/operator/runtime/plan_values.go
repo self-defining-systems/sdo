@@ -12,6 +12,7 @@ import (
 )
 
 type PlanActionReport struct {
+	Script           *ScriptExecutionResult    `json:"script,omitempty"`
 	FailureReason    string                    `json:"failure_reason,omitempty"`
 	ActionIndex      int                       `json:"action_index"`
 	Status           string                    `json:"status"`
@@ -160,6 +161,16 @@ func actionUsesSourceValue(action program.Action) bool {
 
 func planActionValues(action program.Action) []program.Value {
 	switch a := action.(type) {
+	case program.RunScript:
+		values := make([]program.Value, 0, len(a.Env))
+		for _, value := range a.Env {
+			values = append(values, value)
+		}
+		return values
+	case *program.RunScript:
+		if a != nil {
+			return planActionValues(*a)
+		}
 	case program.SetField:
 		return []program.Value{a.Value}
 	case program.ScaleWorkload:

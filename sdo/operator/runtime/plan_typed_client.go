@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
@@ -23,6 +24,8 @@ import (
 
 // TypedPlanClient limits plan mutations to the application kinds the SDK reads.
 type TypedPlanClient struct {
+	ScriptImage        string
+	ScriptPollInterval time.Duration
 	Client             kubernetes.Interface
 	ExecConfig         *rest.Config
 	ProtectedNamespace string

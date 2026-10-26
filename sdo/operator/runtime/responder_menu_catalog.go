@@ -45,6 +45,14 @@ func menuActionParameters(action protoreflect.FieldDescriptor) []MenuParameter {
 		if f.Message() != nil {
 			kind = string(f.Message().Name())
 		}
+		if f.IsMap() {
+			kind = "map[" + f.MapKey().Kind().String() + "]"
+			if f.MapValue().Message() != nil {
+				kind += string(f.MapValue().Message().Name())
+			} else {
+				kind += f.MapValue().Kind().String()
+			}
+		}
 		rules, _ := proto.GetExtension(f.Options(), validate.E_Field).(*validate.FieldRules)
 		required := rules.GetRequired() || rules.GetString().GetMinLen() > 0 || rules.GetRepeated().GetMinItems() > 0
 		params = append(params, MenuParameter{Name: string(f.Name()), Kind: kind, Required: required, Repeated: f.IsList()})
@@ -98,6 +106,20 @@ func menuRawPlan(field protoreflect.FieldDescriptor, parameters map[string]strin
 }
 
 func menuActionParameter(field protoreflect.FieldDescriptor, raw string, inputs *program.ValueInputs) (any, error) {
+	if field.IsMap() && field.MapValue().Message() != nil && field.MapValue().Message().Name() == "PlanValue" {
+		var env map[string]any
+		if err := json.Unmarshal([]byte(raw), &env); err != nil {
+			return nil, fmt.Errorf("expected a JSON map of Values")
+		}
+		for name, value := range env {
+			converted, err := menuRawValue(value, string(field.Name())+"_"+name, inputs)
+			if err != nil {
+				return nil, err
+			}
+			env[name] = converted
+		}
+		return env, nil
+	}
 	if field.Message() != nil && field.Message().Name() == "ObjectRef" {
 		ref, err := sdk.ParseObjectRef(raw)
 		if err != nil {

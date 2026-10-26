@@ -5,7 +5,7 @@ variable "SDO_WORKER_TARGET" { default = "sregym-responder" }
 variable "SDO_VALIDATOR_SCHEMA_IDENTITY" { default = "unknown" }
 
 group "default" {
-  targets = ["controller", "validator", "responder", "benchmark"]
+  targets = ["controller", "validator", "responder", "benchmark", "script-tools"]
 }
 
 target "controller" {
@@ -43,4 +43,11 @@ target "scripted-runtime" {
  context = "."
  dockerfile = "sdo/operator/Dockerfile.runtime"
  target = "scripted-runtime"
+}
+
+target "script-tools" {
+  context = "."
+  dockerfile = "sdo/operator/Dockerfile.runtime"
+  target = "script-tools"
+  tags = ["sdo-script-tools:${SDO_IMAGE_TAG}"]
 }

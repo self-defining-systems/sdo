@@ -66,6 +66,16 @@ func generalActionProto(action program.Action) (*contracts.Action, error) {
 		return nil, err
 	}
 	switch a := generalAction(action).(type) {
+	case program.RunScript:
+		env := map[string]*contracts.PlanValue{}
+		for name, value := range a.Env {
+			converted, err := planValueProto(value)
+			if err != nil {
+				return nil, err
+			}
+			env[name] = converted
+		}
+		return &contracts.Action{Kind: &contracts.Action_RunScript{RunScript: &contracts.RunScript{Script: a.Script, Env: env, Timeout: durationpb.New(a.Timeout), Reason: a.Reason}}}, nil
 	case program.PatchObject:
 		out := &contracts.PatchObject{Ref: planRefProto(a.Ref), Type: a.Type, PatchJson: a.Patch, Reason: a.Reason}
 		for _, edit := range a.Edits {
@@ -104,6 +114,13 @@ func generalActionProto(action program.Action) (*contracts.Action, error) {
 }
 func generalActionState(action *contracts.Action) (program.Action, error) {
 	switch kind := action.GetKind().(type) {
+	case *contracts.Action_RunScript:
+		a := kind.RunScript
+		env := map[string]program.Value{}
+		for name, value := range a.GetEnv() {
+			env[name] = planValueState(value)
+		}
+		return program.RunScript{Script: a.GetScript(), Env: env, Timeout: a.GetTimeout().AsDuration(), Reason: a.GetReason()}, nil
 	case *contracts.Action_PatchObject:
 		a := kind.PatchObject
 		out := program.PatchObject{Ref: objectRefState(a.GetRef()), Type: a.GetType(), Patch: a.GetPatchJson(), Reason: a.GetReason()}

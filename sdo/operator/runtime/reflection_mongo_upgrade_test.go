@@ -32,6 +32,9 @@ func TestReflectionMongoAuthUpgradesReadmeThroughCLIAndBroker(t *testing.T) {
 func TestReflectionHotelMongoAuthUpgradesReadmeThroughCLIAndBroker(t *testing.T) {
 	testReflectionMongoAuthUpgrade(t, "hotel_mongo_auth_upgrade")
 }
+func TestReflectionHotelRunScriptUpgradesReadmeThroughCLIAndBroker(t *testing.T) {
+	testReflectionMongoAuthUpgrade(t, "hotel_run_script_upgrade")
+}
 func testReflectionMongoAuthUpgrade(t *testing.T, fixtureName string) {
 	ctx := context.Background()
 	const incidentID = "mongo-auth-upgrade"
@@ -128,11 +131,14 @@ func testReflectionMongoAuthUpgrade(t *testing.T, fixtureName string) {
 		t.Fatal(err)
 	}
 	podName := "mongo-app"
-	if fixtureName == "hotel_mongo_auth_upgrade" {
+	if fixtureName == "hotel_mongo_auth_upgrade" || fixtureName == "hotel_run_script_upgrade" {
 		podName = "mongodb-geo"
 	}
 	ref := &contracts.ObjectRef{ApiVersion: "v1", Kind: "Pod", Namespace: "demo", Name: podName}
 	opened := time.Now().Add(-time.Minute)
+	if fixtureName == "hotel_run_script_upgrade" {
+		opened = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	}
 	mutation := opened.Add(20 * time.Second)
 	verified := mutation.Add(10 * time.Second)
 	fingerprint := "mongo-authentication/mongo-authentication/demo/Pod/" + podName
@@ -214,7 +220,7 @@ func testReflectionMongoAuthUpgrade(t *testing.T, fixtureName string) {
 			t.Fatalf("catalog replay diagnostics differ: CLI %v broker %v", report.Diagnostics, failure.Diagnostics)
 		}
 		expectedRules := []string{validate.RuleProgramRepeatReachable}
-		if fixtureName == "hotel_mongo_auth_upgrade" {
+		if fixtureName == "hotel_mongo_auth_upgrade" || fixtureName == "hotel_run_script_upgrade" {
 			expectedRules = append(expectedRules, "detector.test")
 		}
 		gotRules := make([]string, 0, len(report.Diagnostics))
@@ -229,7 +235,36 @@ func testReflectionMongoAuthUpgrade(t *testing.T, fixtureName string) {
 		if err := os.WriteFile(recordingsPath, recorded, 0644); err != nil {
 			return nil, err
 		}
+		if fixtureName == "hotel_run_script_upgrade" {
+			labelsPath := filepath.Join(checkout, ".sdo/corpus/mongo-auth/labels.json")
+			originalLabels, err := os.ReadFile(labelsPath)
+			if err != nil {
+				return nil, err
+			}
+			invalid := bytes.ReplaceAll(originalLabels, []byte("manual-mongo-user"), []byte("unrelated-or-unsuccessful-receipt"))
+			if err = os.WriteFile(labelsPath, invalid, 0644); err != nil {
+				return nil, err
+			}
+			rejected, exit := runReflectionMemoryCheck(t, binary, checkout, proposal.BaseCommit, operatorRoot)
+			_, publishErr := repository.PublishReflection(ctx, incidentID, publication)
+			var originFailure *validate.Failure
+			if exit != 1 || !errors.As(publishErr, &originFailure) || len(rejected.Diagnostics) != 1 || rejected.Diagnostics[0].Rule != validate.RuleProgramMitigationRepair {
+				t.Fatalf("unlinked script accepted: CLI=%d %v broker=%v", exit, rejected.Diagnostics, publishErr)
+			}
+			if err = os.WriteFile(labelsPath, originalLabels, 0644); err != nil {
+				return nil, err
+			}
+		}
 		report, code = runReflectionMemoryCheck(t, binary, checkout, proposal.BaseCommit, operatorRoot)
+		if fixtureName == "hotel_run_script_upgrade" && code == 0 {
+			observed := false
+			for _, note := range report.MitigationReplayNotes {
+				observed = observed || note.Status == contracts.MitigationReplayNote_STATUS_OBSERVED_TRANSITION
+			}
+			if !observed {
+				t.Fatal("script learning lost its observed-transition evidence basis")
+			}
+		}
 		if code != 0 {
 			t.Fatalf("Mongo executable upgrade failed: CLI %d %v", code, report.Diagnostics)
 		}

@@ -23,6 +23,7 @@ func (l *ResponderLoop) CreditEquivalentRepairs(ctx context.Context, repairs []R
 	for index := range l.applicationsLog {
 		if l.applicationsLog[index].Result.Applied {
 			l.applicationsLog[index].Result.FinalEquivalenceVerified = nil
+			l.applicationsLog[index].Result.FinalVerificationBasis = ""
 		}
 	}
 	if l.Executor.Client == nil || len(repairs) == 0 {
@@ -52,13 +53,19 @@ func (l *ResponderLoop) CreditEquivalentRepairs(ctx context.Context, repairs []R
 	for index := range l.applicationsLog {
 		app := &l.applicationsLog[index]
 		if app.Result.Applied {
+			if hasAppliedScript(app.Result.Plan.Actions) {
+				if l.finalScriptApplication(ctx, *app, view) {
+					app.Result.FinalVerificationBasis = "observed-transition"
+				}
+				continue
+			}
 			exact := finalPlanFieldsMatch(app.Result, getFinal)
 			app.Result.FinalEquivalenceVerified = &exact
 		}
 	}
 	seen := map[string]bool{}
 	for _, application := range l.applicationsLog {
-		if !application.Result.Applied || !application.Result.VerificationPassed || (application.Result.FinalEquivalenceVerified == nil || !*application.Result.FinalEquivalenceVerified) {
+		if !application.Result.Applied || !application.Result.VerificationPassed || ((application.Result.FinalEquivalenceVerified == nil || !*application.Result.FinalEquivalenceVerified) && application.Result.FinalVerificationBasis != "observed-transition") {
 			continue
 		}
 		for _, call := range l.calls {

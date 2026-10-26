@@ -43,6 +43,38 @@ The controller captures the application namespace's detection view at detection 
 original values. Previously accepted immutable corpus cases are not rewritten.
 Captures omit Kubernetes write metadata and sensitive environment values. Reflection builds fixtures from the incident snapshot, recorded actions and available primitive observations; controller capture files and digests are optional. Each independently verified cause requires a diagnose program, mitigation program, handling README and detector coverage, or a typed SDK gap naming its resources. The shared Go validator rejects missing coverage with correction diagnostics. Accepted cases remain immutable. Programs compile and must execute mitigation to clear diagnosis in replay; accepted manifests are explicit fixture inputs for source-based repairs. A broker-validated new program receives one origin credit tied to its independently verified cause and bound replay fixture; its first recurrence exposes that verified origin count to the responder with the matching program.
 
+
+RunScript is a first-class learnable mitigation alongside typed actions. Mitigate
+returns inline bash and relation-derived Values resolved into process environment.
+A fixed tool image executes an application-local Job with `backoffLimit: 0` under
+`sdo-script`; its namespace repair grants include Secret reads and it inherits
+explicit controller cluster grants. The installer accepts `--script-image` for the
+slim `script-tools` build target; existing installations reuse the cached trusted
+controller image. Script execution defaults to 60 seconds, bounded by five minutes
+and the remaining incident budget, including a short evidence-publication reserve.
+Scripts and each retained output stream are bounded at 64 KiB.
+
+An application-local private ConfigMap reserves the application before Job creation
+and records the Job UID. A restart joins that Job or recovers its result; an
+uncertain missing/replaced Job never permits another invocation. The native runner
+routes kubectl through the existing Kubernetes proxy, checkpoints first-write
+preimages before forwarding and records settled postimages, receipts and explicit
+capture gaps. Object images use private chunked ConfigMaps so a large object or repair batch
+cannot exhaust the bounded result envelope. Raw output/preimages stay at that runtime storage edge; durable
+outcomes retain references, digest, exit code and input provenance. Arbitrary
+external effects remain opaque. Undo is explicit only; script undo from captured
+preimages is follow-up work.
+
+Script corpus labels link the authored SHA-256 digest to the original successful
+timed repair receipt. The memory gate accepts `observed-transition`: open Diagnose
+must Match, fixed Diagnose must return NoMatch and bindings/inputs must validate.
+It never supplies fixed captures to the action simulator or claims the rewritten
+script ran. Live reuse goes through the ordinary apply→Diagnose and targeted
+finding-clearance loop, while global health continues to own closure. Final
+settlement records `final_verification_basis: observed-transition` after a fresh
+bound diagnosis and scoped health sample; it never claims exact typed-effect
+equivalence for a script.
+
 | Package | Responsibility |
 |---|---|
 | `sdo/agents/{deployer,health_judge,responder}/` | Built-in agent sessions, prompts, local provider adapters, worker entry points, and typed task/result contracts; reflection and the judge author final files in their private checkouts |
@@ -54,6 +86,7 @@ Captures omit Kubernetes write metadata and sensitive environment values. Reflec
 | `sdo/operator/rendered/` | Production deployment renderer, selected-manifest reader and durable rendered-lock storage edge; no benchmark dependencies. |
 | `sdo/operator/broker/`, `memory/` (including `memory/layout` and `memory/validate`), `outcome_derivation/` | Go commit authority (including source-only repair projection, working playbook carry into reflection and append-only reflection SDK-gap annotations), logical snapshots and explicit generic-health preparation, the single operational-memory validator, outcome store with physical JSON adapter, controller-derived three-class outcomes without diagnosis verification, and read-only controller observations |
 | `sdo/operator/{sdk,core,runtime,builder,install}/` | Detector and program SDK with canonical object-ref text parsing, deterministic execution, drift feed to responders, namespace-scoped verified plans, controller state and its typed projection, builder/supervisor, Kubernetes installation, and controller-only named write grants derived from accepted cluster source |
+| `sdo/operator/runtime/{plan_script.go,script_job.go}`, `operatorcli/script_{runner,capture}.go` | App-local RunScript Jobs, durable application/Job identity, existing Kubernetes proxy recording with private first-write preimages and settled postimages; selected scope remains separate from measured writes |
 | `benchmarks/sregym/` | First-party benchmark adapter, Go receipt checker and submission guard, versioned fault descriptions, suite capability preflight, runner, experiments, and analysis |
 | `third_party/sregym/` | External benchmark harness Git submodule |
 
@@ -607,6 +640,7 @@ Only the broker publishes derived incident outcomes.
 | `.sdo/corpus/` | Responder or Go verified-repeat materialization; human operator in `import` | New cases through reflection or human import broker | Captures keep provisioned bytes/digests. Hand-written import cases require `operator.json` (`schema_version: 1`, `origin: operator`, description), positive labels, and separate `accepted.json` source; production `runtime/replay` must close every imported program loop. Accepted cases remain immutable. |
 | `.sdo/lib/` | Responder; human in `import` | Responder drafts during incidents and publishes through validated reflection; human in `import` | Authored import surface, shared-library usage and executable validation remain mandatory. |
 | `.sdo/playbooks/` | Health judge creates only its named objective; responder or human import authors incident playbooks | Responder drafts during incidents and publishes through validated reflection; human in `import` | Human import excludes `health-objective`; the same front matter, semantic, compile/vet/test and secret rules apply. Human/import commit trailers plus `SDO-Origin: operator` record authorship, without an outcome or learning credit. |
+| Private script application ConfigMap and Job | Controller and native script runner | The original application reservation/Job only | Durable application ID plus Job UID; no retries or replacement of uncertain execution. API receipts, raw output and pre/postimages remain outside operational memory; outcome reports retain references and selected scope separately from measured writes. |
 | Private standby inbox and binding journal | Controller | One assigned worker reads its own task; only its readiness leaf is writable | Runtime transport only; accepted state and other incident directories are never mounted. |
 | Image-bound compiler seed / private toolchain emptyDir | Trusted controller-image init container | Read-only worker consumers | Ephemeral build dependency; outside operational memory, with no candidate or provider credentials in the init container. |
 | Validator compiler and Go cache | Pinned validator image build | Read-only image seed; private scratch delta through `sdo-go-cache` | No per-Pod compiler/module/cache copy; module downloads remain disabled and cache hits never write image state. |
@@ -641,6 +675,7 @@ Source inventory drift compares top-level non-secret informer objects against a 
 | `sdo/operator/worker_registry/`, `lifecycle/`, `deployment/`, `artifacts/`, `onboarding/` | Production Go interfaces and implementation. |
 | `sdo/operator/broker/`, `memory/` (including `layout/` and `validate/`), `outcome_derivation/`, `install/` | Production Go authority, append-only reflection SDK-gap annotation, physical storage, deterministic verified-repeat corpus materialization and explicit generic-health preparation, the single operational-memory validator including human/operator imports with mandatory production offline replay, three-class outcome derivation without evidence-reference checks, read-only controller observation, and installer/runtime shutdown that preserves accepted storage. |
 | `sdo/operator/sdk/`, `core/`, `runtime/`, `builder/`, `contracts/` | Production Go detector/program SDK with canonical object-ref parsing, deterministic controller, typed plan execution and rollback, verified repair trust, and generated contracts. |
+| `sdo/operator/runtime/{plan_script.go,script_job.go}`, `operatorcli/script_{runner,capture}.go` | Production app-local script Job execution and private capture, reusing the existing Kubernetes proxy; no benchmark dependencies. |
 | `sdo/operator/runtime/replay/`, `builder/replay.go`, `cmd/sdo-replay/` | Transport-neutral offline tooling; real production plan semantics against isolated client-go fakes, without cluster credentials or benchmark imports. |
 | `sdo/operator/apihistory/`, `kubeproxy/`, `operatorcli/evidence.go` | Production runtime observation storage, Kubernetes forwarding edge and offline read-only queries; no benchmark dependencies, replay or coverage authority. |
 | `sdo/skills/` | Production authoring guidance installed in worker homes; generated SDK references and validator rule citations. |
