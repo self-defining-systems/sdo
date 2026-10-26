@@ -75,6 +75,7 @@ jobs:
               - 'scripts/test_runtime_shard.py'
               - 'scripts/runtime_test_costs.json'
               - 'scripts/test_operator_shard.py'
+              - 'scripts/operator_test_costs.json'
               - 'scripts/test_operator_shard.sh'
               - 'sdo/contracts/proto/**'
               - 'sdo/contracts/_gen/**'

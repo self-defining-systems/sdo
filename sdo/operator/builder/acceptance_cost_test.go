@@ -24,11 +24,8 @@ func acceptanceFixture(t testing.TB) *Workspace {
 
 // Acceptance compiles every package, vets and executes its tests/replay. Only
 // the launch path needs a retained controller artifact after those gates.
-func TestAcceptanceCheckDoesNotRelinkLaunchArtifacts(t *testing.T) {
-	workspace := acceptanceFixture(t)
-	if err := workspace.Check(context.Background()); err != nil {
-		t.Fatal(err)
-	}
+func assertAcceptanceDoesNotRelinkLaunchArtifacts(t *testing.T, workspace *Workspace) {
+	t.Helper()
 	for _, name := range []string{"sdo-controller"} {
 		if _, err := os.Stat(filepath.Join(workspace.Directory, name)); !os.IsNotExist(err) {
 			t.Fatalf("acceptance unnecessarily emitted launch artifact %s: %v", name, err)

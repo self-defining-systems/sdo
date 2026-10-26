@@ -23,32 +23,41 @@ from pathlib import Path
 
 OPERATOR = Path(__file__).resolve().parents[1] / "sdo/operator"
 PREFIX = "sdo.dev/operator/"
-PACKAGES = ("builder", "broker", "memory/validate")
+PACKAGES = ("builder", "broker", "memory/validate", "operatorcli", "worker_registry")
 SHARDS = ("acceptance", "acceptance-second", "broker", "compiler", "compiler-replay", "remaining")
 FLAGS = ("-race", "-parallel=2", "-count=1", "-timeout=4m", "-json")
-# Cap-2 profiles move ~50s/30s out of compiler; hosted job timings place
-# them on broker, acceptance-second and the existing foundation-contracts job.
-# The first acceptance job is already near its budget and keeps no extra work.
+# Hosted costs include parent active wall time, so parallel acceptance children
+# cannot make an expensive test look cheap. Keep measured moves explicit: the
+# Go package scheduler overlaps independent packages within these allocations.
+COST_FILE = Path(__file__).with_name("operator_test_costs.json")
+PROFILE = json.loads(COST_FILE.read_text())
+MOVED_TESTS = PROFILE["placements"]
 MOVED_BUILDER_TESTS = {
-    "TestProgramDetectorCorpusChecksEveryLocatedBinding": "broker",
-    "TestOperatorCorpusRequiresProductionClosedLoop": "acceptance-second",
-    "TestProgramSaveReplayDoesNotRequireRenameInvariance": "compiler-replay",
-    "TestTypedObservationProgramCompilesAndRejectsStaleEvidence": "compiler-replay",
+    name.removeprefix(PREFIX + "builder/"): shard
+    for name, shard in MOVED_TESTS.items()
+    if name.startswith(PREFIX + "builder/")
 }
 TEST_BUDGET_SECONDS = 180
-SHARD_BUDGET_SECONDS = 210
+SHARD_BUDGET_SECONDS = 5 * 60 * 70 // 100
 
 
 def partition(inventory: dict[str, list[str]]) -> dict[str, dict[str, list[str]]]:
     missing = MOVED_BUILDER_TESTS.keys() - set(inventory.get(PREFIX + "builder", []))
     if missing:
         raise ValueError(f"missing measured builder tests (update partition after a rename): {sorted(missing)}")
-    groups: dict[str, dict[str, list[str]]] = {shard: {} for shard in SHARDS if shard != "remaining"}
+    missing_moves = MOVED_TESTS.keys() - {
+        package + "/" + name for package, names in inventory.items() for name in names
+    }
+    if missing_moves:
+        raise ValueError(f"missing measured operator tests (update partition after a rename): {sorted(missing_moves)}")
+    if set(MOVED_TESTS.values()) - set(SHARDS):
+        raise ValueError("measured operator placement targets an unknown shard")
+    groups: dict[str, dict[str, list[str]]] = {shard: {} for shard in SHARDS}
     name_owners: dict[str, str] = {}
     for package, names in inventory.items():
         for name in names:
             if package == PREFIX + "builder":
-                shard = MOVED_BUILDER_TESTS.get(name, "compiler")
+                shard = "compiler"
             elif package == PREFIX + "broker":
                 shard = {
                     "TestCLIAndBrokerAgreeOnAcceptance": "acceptance",
@@ -57,13 +66,14 @@ def partition(inventory: dict[str, list[str]]) -> dict[str, dict[str, list[str]]
             elif package == PREFIX + "memory/validate":
                 shard = "compiler"
             else:
-                raise ValueError(f"unexpected compiled package: {package}")
+                shard = "remaining"
+            shard = MOVED_TESTS.get(package + "/" + name, shard)
             # A union -run regex is safe only when duplicate names share an owner.
             if name in name_owners and name_owners[name] != shard:
                 raise ValueError(f"{name} in different shards across packages")
             name_owners[name] = shard
             groups[shard].setdefault(package, []).append(name)
-    if not all(groups.values()):
+    if not all(groups[shard] for shard in SHARDS if shard != "remaining"):
         raise ValueError("every operator name partition must contain tests")
     return groups
 
@@ -116,33 +126,47 @@ def main() -> None:
     parser.add_argument("shard", choices=SHARDS)
     args = parser.parse_args()
     started = time.monotonic()
+    discovery = subprocess.run(
+        ["go", "test", "-race", "-list", ".", "-json", *("./" + p for p in PACKAGES)],
+        cwd=OPERATOR,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    inventory: dict[str, list[str]] = {}
+    for line in discovery.stdout.splitlines():
+        event = json.loads(line)
+        name = event.get("Output", "").strip()
+        if event.get("Action") == "output" and re.fullmatch(r"(?:Test|Fuzz|Example)\w*", name):
+            inventory.setdefault(event["Package"], []).append(name)
+    if set(inventory) != {PREFIX + p for p in PACKAGES}:
+        raise ValueError("compiled discovery must contain every partitioned operator package")
+    groups = partition(inventory)
+    print(f"Coverage guard: {sum(map(len, inventory.values()))} compiled names assigned exactly once", flush=True)
+    members = groups[args.shard]
+    packages = sorted(members)
+    names = [name for tests in members.values() for name in tests]
     if args.shard == "remaining":
         listed = subprocess.run(["go", "list", "./..."], cwd=OPERATOR, text=True, capture_output=True, check=True)
-        packages = [p for p in listed.stdout.splitlines() if p not in {PREFIX + p for p in PACKAGES}]
-        if not packages:
-            raise ValueError("no remaining operator packages discovered")
-        selection: list[str] = []
-    else:
-        discovery = subprocess.run(
-            ["go", "test", "-race", "-list", ".", "-json", *("./" + p for p in PACKAGES)],
+        unpartitioned = [p for p in listed.stdout.splitlines() if p not in {PREFIX + p for p in PACKAGES}]
+        extra = subprocess.run(
+            ["go", "test", "-race", "-list", ".", "-json", *unpartitioned],
             cwd=OPERATOR,
             text=True,
             capture_output=True,
             check=True,
         )
-        inventory: dict[str, list[str]] = {}
-        for line in discovery.stdout.splitlines():
+        for line in extra.stdout.splitlines():
             event = json.loads(line)
             name = event.get("Output", "").strip()
             if event.get("Action") == "output" and re.fullmatch(r"(?:Test|Fuzz|Example)\w*", name):
                 inventory.setdefault(event["Package"], []).append(name)
-        if set(inventory) != {PREFIX + p for p in PACKAGES}:
-            raise ValueError("compiled discovery must contain builder, broker and memory/validate tests")
-        groups = partition(inventory)
-        print(f"Coverage guard: {sum(map(len, inventory.values()))} compiled names assigned exactly once", flush=True)
-        members = groups[args.shard]
-        packages = sorted(members)
-        selection = ["-run", "^(" + "|".join(re.escape(n) for names in members.values() for n in names) + ")$"]
+        # Repeat the ownership check with the full inventory before selecting a
+        # union regex, so a same-named moved test cannot leak into another job.
+        members = partition(inventory)[args.shard]
+        packages = sorted(set(members) | set(unpartitioned))
+        names = [name for tests in members.values() for name in tests]
+    selection = ["-run", "^(" + "|".join(re.escape(n) for n in sorted(set(names))) + ")$"]
     run_tests(
         ["go", "test", *FLAGS, *selection, *packages],
         started=started,

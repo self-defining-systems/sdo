@@ -29,6 +29,8 @@ def inventory() -> dict[str, list[str]]:
             "TestNewBrokerBehavior",
         ],
         "sdo.dev/operator/memory/validate": ["TestAssuranceSeedsPassHealthJudgeCheck"],
+        "sdo.dev/operator/operatorcli": ["TestAdoptionCompilesAsIsAndLaterValidationStillRejects"],
+        "sdo.dev/operator/worker_registry": ["TestKubernetesExecutorRejectsRequestOverStagedBudgetNamingTheComponent"],
     }
 
 
@@ -102,6 +104,7 @@ def test_operator_runner_changes_trigger_go_and_keep_existing_matrix_jobs() -> N
     filters = yaml.safe_load(jobs["changes"]["steps"][1]["with"]["filters"])
     assert "scripts/test_operator_shard.py" in filters["go"]
     assert "scripts/test_operator_shard.sh" in filters["go"]
+    assert "scripts/operator_test_costs.json" in filters["go"]
     assert all(jobs[name]["timeout-minutes"] <= 5 for name in jobs)
 
 
@@ -164,3 +167,45 @@ def test_top_level_pause_does_not_become_execution_cost() -> None:
         {"Action": "pass", "Package": "builder", "Test": "TestParallel", "Time": "2026-10-26T00:03:01Z", "Elapsed": 1},
     ]
     shards.check_budgets(events, elapsed=182)
+
+
+def test_hosted_expensive_nonbuilder_work_shares_existing_runners() -> None:
+    source = inventory()
+    source[shards.PREFIX + "operatorcli"] = [
+        "TestAdoptionCompilesAsIsAndLaterValidationStillRejects",
+        "TestNewCLIBehavior",
+    ]
+    source[shards.PREFIX + "worker_registry"] = [
+        "TestKubernetesExecutorRejectsRequestOverStagedBudgetNamingTheComponent",
+        "FuzzWorker",
+    ]
+    groups = shards.partition(source)
+    assert groups["compiler-replay"][shards.PREFIX + "operatorcli"] == [
+        "TestAdoptionCompilesAsIsAndLaterValidationStillRejects",
+    ]
+    assert groups["compiler"][shards.PREFIX + "worker_registry"] == [
+        "TestKubernetesExecutorRejectsRequestOverStagedBudgetNamingTheComponent",
+    ]
+    assert groups["remaining"][shards.PREFIX + "operatorcli"] == ["TestNewCLIBehavior"]
+    assert groups["remaining"][shards.PREFIX + "worker_registry"] == ["FuzzWorker"]
+
+
+@pytest.mark.parametrize("package", ["operatorcli", "worker_registry"])
+def test_removed_or_renamed_nonbuilder_cost_anchor_fails_closed(package: str) -> None:
+    source = inventory()
+    source[shards.PREFIX + package].clear()
+    with pytest.raises(ValueError, match="missing measured operator"):
+        shards.partition(source)
+
+
+def test_hosted_profiles_keep_provenance_and_positive_costs() -> None:
+    import json
+    import math
+
+    for filename in ("operator_test_costs.json", "runtime_test_costs.json"):
+        profile = json.loads((ROOT / "scripts" / filename).read_text())
+        assert isinstance(profile["source_run"], int)
+        assert profile["source_run"] > 0
+        assert len(profile["source_head"]) == 40
+        assert all(math.isfinite(cost) and cost > 0 for cost in profile["costs"].values())
+        assert profile.get("placements", {}).keys() <= profile["costs"].keys()

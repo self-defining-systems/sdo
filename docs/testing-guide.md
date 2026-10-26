@@ -577,7 +577,7 @@ Replay, chaos and explorer tests keep their dedicated jobs.
 
 Race instrumentation, `-parallel=2`, every nested scenario and seed, and the
 five-minute Go package timeout remain unchanged. A shared JSON watchdog bounds
-runtime test execution and discovery/linking to 180 seconds, leaving room for
+runtime test execution and discovery/linking to 210 seconds (70% of the job), leaving room for
 runner setup within the five-minute job deadline. It kills the entire process
 group on a regression and reports the slowest and still-running test names.
 For parents with parallel children, timing uses JSON lifecycle timestamps minus
@@ -690,32 +690,37 @@ pushed event commit, publishing a cache for each mode. Normal-only consumers
 restore the normal graph and the sole module archive. Go test shards restore
 the race graph to a separate directory, then `scripts/merge_go_ci_caches.sh`
 unions immutable compiler entries with hard links. Each archive destination is
-restored once; Go module files are never unpacked over another restored cache. Race preparation additionally compiles the runtime root test package once with
-`go test -race -c`, discards that executable, and publishes its content-addressed
-archives. It never starts TestMain or tests. This avoids repeating the same large
-test-package compilation in eight runners; shards retain discovery and linking. This avoids serially
-linking every test package before any shard can start. The test jobs depend
+restored once; Go module files are never unpacked over another restored cache.
+Race preparation compiles the runtime root and operator test packages with
+`go test -race -c`, discards the executables, and publishes content-addressed
+archives. It never starts TestMain or tests; shards retain discovery and linking.
+The test jobs depend
 on preparation and require that exact cache; they do not start cold compilation
 inside short operation deadlines. Cache restoration uses Go's content-addressed
 compiler entries, while executable identity remains source-bound by
 `operator_test_binary.py`.
 
-The operator gate partitions the expensive CLI/broker acceptance matrix from
-other broker tests and remaining packages through `test_operator_shard.sh`.
-The operator runner discovers compiled builder, broker and validator test names,
-including examples and fuzz seeds, and assigns each exactly once. Four measured
-builder compile/replay tests share the existing broker, second acceptance and
-foundation-contracts runners; new builder
-names default to `compiler`, new broker names to `broker`. Renamed cost anchors
-and conflicting cross-package names fail closed. The five existing operator jobs
-and their four-minute Go timeouts stay unchanged. Every partition emits JSON
-per-test timings and lists its five slowest tests and any unfinished names. The
-`compiler` and `compiler-replay` partitions additionally stop the entire process
-group above a 210-second aggregate budget (including discovery/linking), and fail
-above a 180-second top-level test. Other partitions retain their existing Go
-timeouts and receive the named timing report without a new performance limit. Run `bash scripts/test_operator_shard.sh compiler` locally;
+The operator gate discovers builder, broker, validator, CLI and worker-registry
+names (including examples and fuzz seeds), assigning each exactly once through
+`scripts/test_operator_shard.py`. `scripts/operator_test_costs.json` records
+hosted run provenance, active top-level timings and explicit measured moves;
+new names retain their package default. Remaining packages are discovered too,
+with the same exhaustive ownership guard. Runtime allocations use the hosted
+costs in `scripts/runtime_test_costs.json` for longest-first balancing. Both
+profiles currently derive from hosted run40276560613; active parent time
+includes parallel subtests and excludes top-level pauses. The redundant-link
+regression shares the located-binding fixture's real acceptance compilation.
+
+The five existing operator jobs and four-minute Go timeouts stay unchanged.
+Every partition emits JSON per-test timings and lists its five slowest tests
+and unfinished names. The compiler partitions retain their 210-second process
+guard (70% of the five-minute job) and 180-second top-level test guard; other
+operator partitions retain existing Go timeouts. Race preparation also compiles
+operator test archives once without starting tests or TestMain, avoiding cold
+test-only compilation in the remaining-operator job. Run
+`bash scripts/test_operator_shard.sh compiler` locally;
 `tests/unit/sdo/operator/test_operator_shards.py` checks coverage and negative
-budget controls. Rebalance using top-level `pass` event `Elapsed` values rather
+budget controls. Rebalance from hosted active top-level elapsed values rather
 than extending deadlines.
 Runtime name partitions remain exhaustive; `test_runtime_shard.py --shard`
 accepts comma-separated partitions so short groups can share a runner without

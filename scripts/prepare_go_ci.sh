@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Prepare shared archives without linking or starting every test binary.
+# Prepare shared archives without starting tests or TestMain.
 set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export GOMAXPROCS="${GOMAXPROCS:-2}"
@@ -25,4 +25,8 @@ if [[ "$mode" == race ]]; then
   runtime_test_build="$(mktemp -d)"
   trap 'rm -rf "$runtime_test_build"' EXIT
   (cd "$root/sdo/operator/runtime" && go test -race -c -o "$runtime_test_build/runtime.test" .)
+  # The remaining-operator job previously spent ~67s compiling test-only
+  # dependencies before its first test. Publish these archives once too.
+  mkdir "$runtime_test_build/operator"
+  (cd "$root/sdo/operator" && go test -race -c -o "$runtime_test_build/operator/" ./...)
 fi

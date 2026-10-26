@@ -85,14 +85,8 @@ COST_FILE = Path(__file__).with_name("runtime_test_costs.json")
 # Use 70% of the unchanged five-minute controller job: reserve the remaining
 # 90 seconds for checkout, toolchain/cache setup and linking on hosted runners.
 SHARD_BUDGET_SECONDS = 5 * 60 * 70 // 100
-# The first complete sweep exposed active-wall skew within these allocations.
-# Shared-memory modes and trust-property worlds now overlap their independent
-# waits; move two measured peers into that recovered capacity, without changing
-# unrelated allocations or their completed coverage.
-PLACEMENTS = {
-    "TestReflectionSettledRepeatStillResumesResponder": "recovery",
-    "TestHermeticLearnAcceptRepeatKeepsControllerIterating": "reflection-programs",
-}
+# Hosted costs drive all measured placements; no local-only overrides.
+PLACEMENTS: dict[str, str] = {}
 
 
 def balanced_partition(names: list[str], patterns: dict[str, str], costs: dict[str, float]) -> dict[str, list[str]]:

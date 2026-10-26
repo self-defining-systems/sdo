@@ -216,10 +216,10 @@ def test_preparation_compiles_shared_race_test_archive_without_running_tests(tmp
     for module in ("sdo/operator", "sdo/operator/runtime"):
         commands = [shlex.split(args) for directory, args in invocations if directory == str(ROOT / module)]
         expected = [["build", *(["-race"] if mode == "race" else []), "./..."]]
-        if mode == "race" and module.endswith("/runtime"):
+        if mode == "race":
             assert len(commands) == 2
             assert commands[1][:4] == ["test", "-race", "-c", "-o"]
-            assert commands[1][-1] == "."
+            assert commands[1][-1] == ("." if module.endswith("/runtime") else "./...")
             assert "-run" not in commands[1]
             assert commands[:1] == expected
         else:
