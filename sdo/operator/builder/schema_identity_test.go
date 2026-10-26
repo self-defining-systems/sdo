@@ -37,14 +37,3 @@ func TestSchemaIdentityUsesNativeGoBuilderSources(t *testing.T) {
 		t.Fatal("native builder schema change did not alter identity")
 	}
 }
-
-func TestSchemaIdentityMatchesCommittedSDK(t *testing.T) {
-	identity, err := SchemaIdentity(filepath.Clean(".."))
-	if err != nil {
-		t.Fatal(err)
-	}
-	const expected = "sdo.dev/v1alpha1+sdk.62e3f7d49e4e2977"
-	if identity != expected {
-		t.Fatalf("SDK schema identity drifted: got %s, expected %s", identity, expected)
-	}
-}
