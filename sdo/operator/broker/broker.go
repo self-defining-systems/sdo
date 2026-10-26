@@ -14,6 +14,7 @@ import (
 	"reflect"
 	"strings"
 	"syscall"
+	"unicode"
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory"
@@ -161,8 +162,8 @@ func (b *Broker) CreateProposal(ctx context.Context, incidentID string) (Proposa
 // phase. Reflection starts from the accepted outcome commit with the responder's
 // isolated working playbook changes carried forward for validation.
 func (b *Broker) CreateProposalForPhase(ctx context.Context, incidentID string, phase Phase) (Proposal, error) {
-	if strings.TrimSpace(incidentID) == "" {
-		return Proposal{}, errors.New("incident ID is required")
+	if err := checkIncidentID(incidentID); err != nil {
+		return Proposal{}, err
 	}
 	if phase != ProposalPhase && phase != ReflectionPhase && phase != InitialPhase && phase != ImportPhase {
 		return Proposal{}, fmt.Errorf("invalid proposal phase %q", phase)
@@ -466,8 +467,8 @@ func (b *Broker) DiagnosticsFingerprint(ctx context.Context, commit string) (str
 // ReleaseProposal removes a proposal checkout after acknowledgement or a
 // superseded incident. Accepted commits remain in the operational repository.
 func (b *Broker) ReleaseProposal(incidentID string, phase Phase) error {
-	if strings.TrimSpace(incidentID) == "" {
-		return errors.New("incident ID is required")
+	if err := checkIncidentID(incidentID); err != nil {
+		return err
 	}
 	return b.locked(func() error { return os.RemoveAll(b.proposalRoot(incidentID, phase)) })
 }
@@ -475,6 +476,9 @@ func (b *Broker) ReleaseProposal(incidentID string, phase Phase) error {
 // RecordOutcome writes an authoritative immutable outcome in a private broker
 // clone and commits it. Agents cannot supply an outcome through Publish.
 func (b *Broker) RecordOutcome(ctx context.Context, incidentID string, record *contracts.OutcomeRecord) (Receipt, error) {
+	if err := checkIncidentID(incidentID); err != nil {
+		return Receipt{}, err
+	}
 	var receipt Receipt
 	err := b.locked(func() error {
 		if err := b.requireClean(ctx); err != nil {
@@ -589,7 +593,25 @@ func (b *Broker) locked(fn func() error) error {
 	return fn()
 }
 
+// checkIncidentID rejects IDs that are empty or contain a control or line
+// separator character. Accepted commits carry the ID in a trailer block that
+// other code matches line by line, so a line break would forge trailers.
+func checkIncidentID(incidentID string) error {
+	if strings.TrimSpace(incidentID) == "" {
+		return errors.New("incident ID is required")
+	}
+	for _, r := range incidentID {
+		if unicode.IsControl(r) || r == '\u2028' || r == '\u2029' {
+			return fmt.Errorf("incident ID %q contains a control or line separator character", incidentID)
+		}
+	}
+	return nil
+}
+
 func (b *Broker) accept(ctx context.Context, stage, incidentID string, actor Actor, phase Phase, paths []string) (Receipt, error) {
+	if err := checkIncidentID(incidentID); err != nil {
+		return Receipt{}, err
+	}
 	if err := addIgnoredOperationalMemory(ctx, stage, nil); err != nil {
 		return Receipt{}, err
 	}

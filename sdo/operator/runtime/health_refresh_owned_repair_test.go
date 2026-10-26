@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -185,7 +186,7 @@ func TestHealthRefreshAcknowledgesOnlyOwnCommittedRepair(t *testing.T) {
 // ExecuteClosureEffect re-runs the closure and health detectors on the live
 // cluster before any outcome is committed, so a bad cluster commits no success.
 func TestHealthRefreshReplaysClosureAfterOwnProposalCommit(t *testing.T) {
-	for _, change := range []string{"none", "refresh-detectors", "refresh-detectors-health-bad", "source", "objective", "policy", "other-incident"} {
+	for _, change := range []string{"none", "refresh-detectors", "refresh-detectors-health-bad", "source", "objective", "policy", "other-incident", "forged-judge-lib", "forged-judge-mixed", "upkeep-lib", "reflection-playbook"} {
 		t.Run(change, func(t *testing.T) {
 			ctx := context.Background()
 			root, _, repository, _, coordinator := tracingFixture(t)
@@ -215,7 +216,7 @@ func TestHealthRefreshReplaysClosureAfterOwnProposalCommit(t *testing.T) {
 					t.Fatal(err)
 				}
 			} else {
-				if strings.HasPrefix(change, "refresh-detectors") {
+				if strings.HasPrefix(change, "refresh-detectors") || strings.HasPrefix(change, "forged-") || change == "upkeep-lib" || change == "reflection-playbook" {
 					tracingWrite(t, workspace.Worktree, "deploy/tracing.yaml", "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: collector\nspec: {}\n")
 				} else {
 					tracingWrite(t, workspace.Worktree, "README.md", "accepted source restoration annotation")
@@ -231,7 +232,7 @@ func TestHealthRefreshReplaysClosureAfterOwnProposalCommit(t *testing.T) {
 			interrupted = false
 			current := tracingRefresh(t, root, coordinator)
 			switch change {
-			case "refresh-detectors", "refresh-detectors-health-bad":
+			case "refresh-detectors", "refresh-detectors-health-bad", "forged-judge-lib", "forged-judge-mixed", "upkeep-lib", "reflection-playbook":
 				if current.DetectorRevision == old.DetectorRevision {
 					t.Fatal("fixture: the judge refresh must rewrite the health detectors")
 				}
@@ -245,6 +246,40 @@ func TestHealthRefreshReplaysClosureAfterOwnProposalCommit(t *testing.T) {
 			if change == "source" || change == "objective" || change == "policy" {
 				nativeGit(t, root, "add", ".")
 				nativeGit(t, root, "commit", "-qm", "unrelated accepted change")
+				current = tracingRefresh(t, root, coordinator)
+			}
+			// Commits after the judge refresh, by whoever can write the branch.
+			// Trailers are plain text, so a forged judge trailer proves nothing
+			// about which paths the commit touched.
+			judgeTrailers := "\n\nSDO-Incident: forged\nSDO-Actor: health_judge\nSDO-Phase: initial\nSDO-Validation: passed"
+			later := map[string]struct {
+				message string
+				write   func()
+			}{
+				"forged-judge-lib": {"forged judge commit" + judgeTrailers, func() {
+					tracingWrite(t, root, ".sdo/lib/forged/lib.go", "package forged\n")
+				}},
+				"forged-judge-mixed": {"forged judge commit" + judgeTrailers, func() {
+					detector := strings.Fields(nativeGit(t, root, "ls-files", ".sdo/diagnostics/detectors/health"))[0]
+					body, err := os.ReadFile(filepath.Join(root, detector))
+					if err != nil {
+						t.Fatal(err)
+					}
+					tracingWrite(t, root, detector, string(body)+"\n")
+					tracingWrite(t, root, ".sdo/playbooks/forged/diagnose.go", "package forged\n")
+				}},
+				"upkeep-lib": {"upkeep bump\n\nSDO-Actor: upkeep\nSDO-Phase: initial\nSDO-Validation: passed", func() {
+					tracingWrite(t, root, ".sdo/lib/upkeep/lib.go", "package upkeep\n")
+				}},
+				// Playbooks feed neither the source nor the detector revision.
+				"reflection-playbook": {"reflection\n\nSDO-Incident: other\nSDO-Actor: responder\nSDO-Phase: reflection\nSDO-Validation: passed", func() {
+					tracingWrite(t, root, ".sdo/playbooks/learned/diagnose.go", "package learned\n")
+				}},
+			}
+			if commit, ok := later[change]; ok {
+				commit.write()
+				nativeGit(t, root, "add", ".")
+				nativeGit(t, root, "commit", "-qm", commit.message)
 				current = tracingRefresh(t, root, coordinator)
 			}
 			now := time.Now().UTC()
@@ -279,7 +314,8 @@ func TestHealthRefreshReplaysClosureAfterOwnProposalCommit(t *testing.T) {
 			}
 			rv6Guard(c, root, current.Commit)
 			err = c.CheckHealth(ctx)
-			if change == "source" || change == "objective" || change == "policy" || change == "other-incident" {
+			switch change {
+			case "source", "objective", "policy", "other-incident", "forged-judge-lib", "forged-judge-mixed", "upkeep-lib":
 				if !errors.Is(err, ErrStaleHealthInvestigation) {
 					t.Fatalf("unrelated change allowed across own proposal: %v", err)
 				}
@@ -302,13 +338,24 @@ func TestHealthRefreshReplaysClosureAfterOwnProposalCommit(t *testing.T) {
 				t.Fatal(err)
 			}
 			if change == "refresh-detectors-health-bad" {
-				// Fresh evidence after adoption contradicts the closure: no success.
+				// Fresh evidence after adoption contradicts the closure. The
+				// retirement is synchronous, so assert the retired end state
+				// instead of "nothing happened yet": a closure that was handed to
+				// the broker would still be processing here.
+				if _, ok := c.PendingClosureEffect(); ok {
+					t.Fatal("closure still has a broker effect although health is bad after adoption")
+				}
+				if c.closureState != contracts.ClosureState_CLOSURE_STATE_FAILED || c.closureFailure == nil {
+					t.Fatalf("closure not retired although health is bad after adoption: state %v failure %+v", c.closureState, c.closureFailure)
+				}
+				select {
+				case result := <-c.closureResults:
+					t.Fatalf("closure reached the broker although health is bad after adoption: %+v", result)
+				case <-time.After(200 * time.Millisecond):
+				}
 				c.processBrokerCompletions()
 				if c.closureReceipt != nil || nativeGit(t, root, "rev-parse", "HEAD") != head {
 					t.Fatalf("closure credited although health is bad after adoption: %+v", c.closureReceipt)
-				}
-				if c.closureState == contracts.ClosureState_CLOSURE_STATE_COMMITTED {
-					t.Fatalf("closure committed although health is bad after adoption: %v", c.closureState)
 				}
 				ledger, err := native.readLedger(closure.Request.IncidentID)
 				if err != nil || ledger.OutcomeCommit != "" {
