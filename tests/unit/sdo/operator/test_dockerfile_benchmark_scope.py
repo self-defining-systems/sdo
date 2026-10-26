@@ -39,6 +39,7 @@ ALLOWED_FASTLOOP_FILES = {
     "benchmarks/sregym/fastloop/model_recording.py",
     "benchmarks/sregym/fastloop/file_edits.py",
     "benchmarks/sregym/fastloop/recording_worker.py",
+    "benchmarks/sregym/fastloop/checkpoint_limits.py",
 }
 SCRIPTED_REPLAY_FILES = {
     "benchmarks/sregym/adapter/scripted_worker.py",
@@ -136,7 +137,7 @@ def test_controller_and_plain_responder_stages_copy_no_benchmarks_code() -> None
 def test_controller_image_is_separate_from_python_agent_runtime() -> None:
     text = RUNTIME_DOCKERFILE.read_text(encoding="utf-8")
     go_stage, controller = text.split("FROM runtime-sources AS controller", 1)
-    controller = controller.split("FROM runtime-sources AS validator", 1)[0]
+    controller = controller.split("\nFROM ", 1)[0]
     assert "COPY --from=kubectl" in go_stage.split("AS runtime-base", 1)[1]
     assert "python3" not in controller
     assert "npm " not in controller

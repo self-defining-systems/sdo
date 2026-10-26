@@ -1,0 +1,45 @@
+name: Warm CI image caches
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 3 * * *'
+permissions:
+  contents: read
+concurrency:
+  group: warm-ci-caches-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  images:
+    name: Publish shared image build layers
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GOMAXPROCS: '2'
+      GOFLAGS: '-p=2'
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version: '1.26.8'
+          cache-dependency-path: sdo/operator/go.sum
+      - uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+      - name: Bind validator schema to this checkout
+        run: |
+          identity="$(cd sdo/operator && go run ./cmd/sdo-operator schema-identity)"
+          echo "SDO_VALIDATOR_SCHEMA_IDENTITY=${identity}" >> "${GITHUB_ENV}"
+      - uses: docker/bake-action@3acf805d94d93a86cce4ca44798a76464a75b88c # v6.9.0
+        with:
+          source: .
+          files: scripts/sdo-images.hcl
+          targets: controller,validator,responder,benchmark
+          # PRs build and smoke all affected images; only this maintenance job
+          # exports the large intermediate-layer caches.
+          set: |
+            controller.cache-from=type=gha,scope=sdo-controller
+            controller.cache-to=type=gha,scope=sdo-controller,mode=max
+            validator.cache-from=type=gha,scope=sdo-validator
+            validator.cache-to=type=gha,scope=sdo-validator,mode=max
+            responder.cache-from=type=gha,scope=sdo-responder
+            responder.cache-to=type=gha,scope=sdo-responder,mode=max
+            benchmark.cache-from=type=gha,scope=sdo-benchmark
+            benchmark.cache-to=type=gha,scope=sdo-benchmark,mode=max

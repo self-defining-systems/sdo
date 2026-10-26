@@ -3,10 +3,14 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
+
+	jsonpatch "github.com/evanphx/json-patch"
 	"strings"
 	"testing"
 	"time"
@@ -65,6 +69,63 @@ func (productionMenuHealth) Detect(_ context.Context, view sdk.DetectionContext)
 	return []sdk.Finding{{DetectorID: "production-menu-health", RuleID: "routing", Status: sdk.FindingActive, Severity: sdk.SeverityCritical, PrimaryResource: menuService, Summary: "synthetic route is unhealthy", Evidence: "independent route port check", Playbooks: []string{"base"}, ParameterBindings: map[string]sdk.ObjectRef{"service": menuService}}}, nil
 }
 
+// The watch cache's causal write barrier relies on API resource versions.
+func productionMenuClient(service *corev1.Service) *productionMenuAPI {
+	client := fake.NewSimpleClientset(service)
+	// client-go's tracker does not advance resourceVersion on patches. Reusing
+	// the pre-write version lets AwaitWrites certify an older cached snapshot.
+	client.PrependReactor("patch", "services", func(action ktesting.Action) (bool, kruntime.Object, error) {
+		patch := action.(ktesting.PatchAction)
+		if patch.GetPatchType() != types.MergePatchType {
+			return false, nil, nil
+		}
+		current, err := client.Tracker().Get(patch.GetResource(), patch.GetNamespace(), patch.GetName())
+		if err != nil {
+			return true, nil, err
+		}
+		data, err := json.Marshal(current)
+		if err != nil {
+			return true, nil, err
+		}
+		data, err = jsonpatch.MergePatch(data, patch.GetPatch())
+		if err != nil {
+			return true, nil, err
+		}
+		next := new(corev1.Service)
+		if err := json.Unmarshal(data, next); err != nil {
+			return true, nil, err
+		}
+		version, err := strconv.ParseUint(current.(*corev1.Service).ResourceVersion, 10, 64)
+		if err != nil {
+			return true, nil, err
+		}
+		next.ResourceVersion = strconv.FormatUint(version+1, 10)
+		if err := client.Tracker().Update(patch.GetResource(), next, patch.GetNamespace()); err != nil {
+			return true, nil, err
+		}
+		return true, next.DeepCopy(), nil
+	})
+	return &productionMenuAPI{client}
+}
+
+func TestProductionMenuFixtureAdvancesServiceWriteVersions(t *testing.T) {
+	ctx := context.Background()
+	service := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: menuService.Name, Namespace: "app", ResourceVersion: "1"}, Spec: corev1.ServiceSpec{Ports: []corev1.ServicePort{{Port: 80, TargetPort: intstr.FromInt(9999)}}}}
+	client := productionMenuClient(service)
+	previous := service.ResourceVersion
+	for _, port := range []int{7777, 8080} {
+		patch := []byte(fmt.Sprintf(`{"spec":{"ports":[{"port":80,"targetPort":%d}]}}`, port))
+		updated, err := client.CoreV1().Services("app").Patch(ctx, menuService.Name, types.MergePatchType, patch, metav1.PatchOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !resourceVersionAtLeast(updated.ResourceVersion, previous) || updated.ResourceVersion == previous {
+			t.Fatalf("fixture write did not publish a new causal version: before=%q after=%q", previous, updated.ResourceVersion)
+		}
+		previous = updated.ResourceVersion
+	}
+}
+
 // Starts RunWithOptions with its real job dispatcher and LoopFactory,
 // the ordinary executor and broker; only the Kubernetes API is synthetic.
 func TestProductionResponderMenuScriptedFactoryStrictReceipt(t *testing.T) {
@@ -102,13 +163,13 @@ func testProductionResponderMenuFactory(t *testing.T, enabled bool) {
 		}
 		return ReflectionDecision{LearningDecision: "sdk_gap", NoChangeReason: "synthetic menu transport fixture", SDKGaps: gaps}, nil
 	})}
-	service := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: menuService.Name, Namespace: "app", UID: types.UID("fixture-uid"), ResourceVersion: "service-1"}, Spec: corev1.ServiceSpec{Selector: map[string]string{"app": "backend"}, Ports: []corev1.ServicePort{{Port: 80, TargetPort: intstr.FromInt(9999)}}}}
+	service := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: menuService.Name, Namespace: "app", UID: types.UID("fixture-uid"), ResourceVersion: "1"}, Spec: corev1.ServiceSpec{Selector: map[string]string{"app": "backend"}, Ports: []corev1.ServicePort{{Port: 80, TargetPort: intstr.FromInt(9999)}}}}
 	bad, good := productionMenuProgram{"try-wrong-port", 7777}, productionMenuProgram{"restore-route", 8080}
 	registry, err := program.NewRegistry([]program.Diagnoser{bad, good}, []program.Mitigator{bad, good})
 	if err != nil {
 		t.Fatal(err)
 	}
-	client := fake.NewSimpleClientset(service)
+	client := productionMenuClient(service)
 	// client-go's object tracker omits list resource versions. Supply an opaque
 	// direct-API version in this synthetic transport; never use this in production.
 	client.PrependReactor("list", "*", func(action ktesting.Action) (bool, kruntime.Object, error) {
@@ -160,7 +221,7 @@ func testProductionResponderMenuFactory(t *testing.T, enabled bool) {
 	case <-ctx.Done():
 		t.Fatalf("no production responder job: %s", logs)
 	}
-	job := awaitJob(t, client, jobName)
+	job := awaitJob(t, client.Clientset, jobName)
 	if !enabled {
 		if containsEnvironment(job.Spec.Template.Spec.Containers[0].Env, "SDO_MITIGATION_SESSION", "1") {
 			t.Fatal("menu enabled without explicit launch input")
@@ -209,7 +270,13 @@ func testProductionResponderMenuFactory(t *testing.T, enabled bool) {
 	cmd.Env = append(os.Environ(), "PYTHONPATH="+root, "SDO_TOOLS_DIR="+filepath.Join(sessionDir, "tools"), "CODEX_HOME="+filepath.Join(sessionDir, "codex"), "SDO_SESSION_SCRATCH="+filepath.Join(sessionDir, "scratch"), "SDO_MITIGATION_SESSION=1")
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Fatalf("factory scripted worker: %v\n%s\n%s", err, output, logs)
+		live, readErr := client.CoreV1().Services("app").Get(ctx, menuService.Name, metav1.GetOptions{})
+		for _, action := range client.Actions() {
+			if patch, ok := action.(ktesting.PatchAction); ok && patch.GetResource().Resource == "services" {
+				t.Logf("Service write: %s", patch.GetPatch())
+			}
+		}
+		t.Fatalf("factory scripted worker: %v; live Service=%+v read error=%v\n%s\n%s", err, live, readErr, output, logs)
 	}
 	var scripted struct {
 		SessionID string `json:"session_id"`
