@@ -38,6 +38,8 @@ commands:
         Publish through the broker and its isolated Kubernetes validator.
   check [--root .] [--json] [--decision FILE]
         Run structural, semantic, ownership, build, vet, and detector tests.
+        SDO_CODE_PATH=shell selects text/size/credential hygiene and ownership
+        without Go compilation or replay; broker launch policy is authoritative.
         SDO_ACTOR, SDO_PHASE, and SDO_BASE_COMMIT are required. Operator sources
         default to $SDO_OPERATOR_ROOT or /opt/sdo/sdo/operator. Optional recorded
         healthy snapshots come from SDO_HEALTHY_BASELINE. Publication context is
@@ -221,6 +223,7 @@ func memoryCheck(ctx context.Context, args []string, getenv func(string) string,
 		appNamespace = publication.ApplicationNamespace
 	}
 	diagnostics, err := validate.Check(ctx, validate.Request{
+		CodePath:           memoryValidationCodePath(getenv),
 		ObservationCeiling: ceiling, ApplicationNamespace: appNamespace,
 		MitigationReplayNotes: &replayNotes,
 		Root:                  absolute, Base: base, CaptureDirectory: getenv("SDO_CAPTURED_CORPUS_DIR"), IncidentID: getenv(memoryIncidentEnv), Actor: validate.Actor(actor), Phase: validate.Phase(phase), Publication: publication, Decision: decision,
@@ -372,4 +375,15 @@ func memoryOutcomes(ctx context.Context, args []string, stdout io.Writer) error 
 		fmt.Fprintf(stdout, "%s\t%s\n", record.GetIncidentId(), record.GetClassification())
 	}
 	return nil
+}
+
+func memoryValidationCodePath(getenv func(string) string) string {
+	mode := getenv("SDO_MEMORY_VALIDATION")
+	if mode == "" {
+		return getenv("SDO_CODE_PATH")
+	}
+	if mode == "hygiene" {
+		return "shell"
+	}
+	return mode
 }

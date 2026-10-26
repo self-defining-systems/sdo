@@ -76,7 +76,7 @@ func RunOperate(ctx context.Context, config OperateConfig) (lifecycle.Result, er
 		return lifecycle.Result{}, policyErr
 	}
 
-	repository, err := broker.New(config.ApplicationRoot, config.WorktreeRoot, broker.JobValidator(validation), broker.ObservationPolicy{Ceiling: ceiling, ApplicationNamespace: config.Lifecycle.Namespace})
+	repository, err := broker.New(config.ApplicationRoot, config.WorktreeRoot, selectMemoryValidator(config.Install.CodePath,broker.JobValidator(validation)), broker.ObservationPolicy{CodePath: memoryCodePath(config.Install.CodePath), Ceiling: ceiling, ApplicationNamespace: config.Lifecycle.Namespace})
 	if err != nil {
 		return lifecycle.Result{}, fmt.Errorf("open accepted repository broker: %w", err)
 	}
@@ -108,6 +108,7 @@ func RunOperate(ctx context.Context, config OperateConfig) (lifecycle.Result, er
 		CredentialsSecret: config.Install.CredentialsSecret,
 		Environment:       agentEnvironment,
 	}
+	workers.Environment = codePathWorkerEnvironment(config.Install.CodePath, workers.Environment)
 	if config.Install.MetricsURL != "" {
 		workers.Environment[memoryMetricsEnv] = "1"
 	}
@@ -115,11 +116,15 @@ func RunOperate(ctx context.Context, config OperateConfig) (lifecycle.Result, er
 		Strategy: lifecycle.KubernetesInstallStrategy{Installer: install.Installer{Client: client}},
 		Config:   config.Install, AcceptedRepository: config.ApplicationRoot, Prepared: true,
 	}
+	var healthProbe deployment.HealthProbe
+	if runner, enabled := install.ShellRunnerConfig(config.Install); enabled {
+		healthProbe = deployment.ShellDetectorProbe{Client: client, Config: runner}
+	}
 	coordinator := lifecycle.Coordinator{
 		Broker: repository, Bootstrap: artifacts.BootstrapStore{}, Registry: registry,
 		Workers: workers, Readiness: readiness,
 		Verifier: deployment.IndependentHealthVerifier{
-			AcceptedRoot: config.ApplicationRoot, OperatorRoot: config.OperatorRoot, Readiness: readiness,
+			AcceptedRoot: config.ApplicationRoot, OperatorRoot: config.OperatorRoot, Readiness: readiness, Probe: healthProbe,
 		}, Installer: installer,
 	}
 	return coordinator.Run(ctx, config.Lifecycle)

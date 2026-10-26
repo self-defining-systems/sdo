@@ -10,12 +10,20 @@ import (
 	"sdo.dev/operator/builder"
 	"sdo.dev/operator/install"
 	"sdo.dev/operator/operatorcli"
+	"sdo.dev/operator/shellpath"
 )
 
 // sourceHash is set by source-bound test builds; ordinary builds leave it empty.
 var sourceHash string
 
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "shell-detector-runner" {
+		if err := shellpath.RunInCluster(context.Background()); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
 	if len(os.Args) == 2 && os.Args[1] == "script-runner" {
 		if err := operatorcli.RunScriptRunner(context.Background()); err != nil {
 			fmt.Fprintln(os.Stderr, err)

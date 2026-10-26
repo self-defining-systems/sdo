@@ -1189,6 +1189,7 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 		return
 	}
 	early := !c.responderDone
+	requiresStability := early || c.codePath != nil && c.codePath.Selection.DetectorSource == "shell"
 	if early && (c.dispatchState != contracts.DispatchState_DISPATCH_STATE_RUNNING || c.incidentDispatchedAt.IsZero()) {
 		c.mu.Unlock()
 		return
@@ -1266,7 +1267,7 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 		}
 	}
 	c.cacheVerificationLocked(verification)
-	if early {
+	if requiresStability {
 		if !safe || guard != nil && guard.Pending {
 			c.closureStableSince = time.Time{}
 			c.mu.Unlock()
@@ -1274,19 +1275,21 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 		}
 		if !verified {
 			c.closureStableSince = time.Time{}
-		}
-		if !verified {
-			c.mu.Unlock()
-			return
-		}
-		if c.closureStableSince.IsZero() {
-			c.closureStableSince = now
-		}
-		if now.Before(c.closureStableSince.Add(c.config.ClosureStabilityWindow)) {
-			c.mu.Unlock()
-			return
+			if early {
+				c.mu.Unlock()
+				return
+			}
+		} else {
+			if c.closureStableSince.IsZero() {
+				c.closureStableSince = now
+			}
+			if now.Before(c.closureStableSince.Add(c.config.ClosureStabilityWindow)) {
+				c.mu.Unlock()
+				return
+			}
 		}
 	}
+
 	if healthVerified && c.terminalInventoryBlockerLocked(verification) {
 		terminalFailure = true
 		slog.Info("incident_terminal_blocker", "incident_id", c.currentIncidentRequest.IncidentID, "reason", "unchanged_non_transient_findings", "findings", len(verification.Findings))
@@ -1377,7 +1380,7 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 		logIncidentVerified(c.currentIncidentRequest.IncidentID, healthClearedAt, c.responderCompletedAt, verifiedAt)
 	}
 	windowUsed := time.Duration(0)
-	if early {
+	if requiresStability {
 		windowUsed = c.config.ClosureStabilityWindow
 	}
 	closure := IncidentClosure{

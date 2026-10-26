@@ -40,22 +40,30 @@ func (e *CodePathConfigError) Error() string {
 
 // DetectorSource supplies detector adapters; scheduling, findings and closure stay shared.
 type DetectorSource interface {
-	Detectors(context.Context, string, string, []sdk.Detector) ([]sdk.Detector, error)
+	Detectors(ctx context.Context, request DetectorSourceRequest) ([]sdk.Detector, error)
 }
-type CoverageProvider interface {
-	Coverage([]sdk.Finding, []ProgramRun, sdk.DetectionContext, map[string]ProgramTrust) *contracts.PlaybookCoverage
+type DetectorSourceRequest struct {
+	RepositoryRoot    string
+	Namespace         string
+	CompiledDetectors []sdk.Detector
 }
 
-// MemoryValidation receives the existing isolated Go check at the I/O edge.
+type CoverageProvider interface {
+	Coverage(findings []sdk.Finding, runs []ProgramRun, snapshot sdk.DetectionContext, statistics map[string]ProgramTrust) *contracts.PlaybookCoverage
+}
+
+// MemoryValidation owns a mechanism whose dependencies are bound at construction.
 type MemoryValidation interface {
-	Validate(context.Context, string, []string, func(context.Context, string, []string) error) error
+	Validate(ctx context.Context, root string, paths []string) error
 }
 
 // PublishActivation selects the activation mechanism after broker acceptance.
 type PublishActivation interface {
-	Activate(context.Context, string, func(context.Context, string) error, func(context.Context, string) error) error
+	Activate(ctx context.Context, commit string) error
 }
-type AgentGuidance interface{ Variant(string) (string, error) }
+type AgentGuidance interface {
+	Variant(role string) (string, error)
+}
 
 type CodePath struct {
 	Selection  CodePathSelection
@@ -75,15 +83,28 @@ type CodePathRegistry struct {
 	stages     map[string]bool
 }
 
+// CodePathDependencies bind each mechanism once, when its plugin is constructed.
+// Additional plugins own their own dependencies and keep the same seam interface.
+type CodePathDependencies struct {
+	ValidateGo         func(context.Context, string, []string) error
+	RebuildController  func(context.Context, string) error
+	PullAcceptedCommit func(context.Context, string) error
+}
+
 func NewCodePathRegistry() *CodePathRegistry {
+	return NewCodePathRegistryWithDependencies(CodePathDependencies{})
+}
+func NewCodePathRegistryWithDependencies(bindings CodePathDependencies) *CodePathRegistry {
+
 	return &CodePathRegistry{
 		paths: map[string]CodePathSelection{
-			"go": {Name: "go", DetectorSource: "go", Coverage: "diagnose", ResponseStages: []string{"deterministic", "agent"}, MemoryValidation: "go", Activation: "rollout", AgentGuidance: "go"},
+			"go":    {Name: "go", DetectorSource: "go", Coverage: "diagnose", ResponseStages: []string{"deterministic", "agent"}, MemoryValidation: "go", Activation: "rollout", AgentGuidance: "go"},
+			"shell": {Name: "shell", DetectorSource: "shell", Coverage: "none", ResponseStages: []string{"agent"}, MemoryValidation: "hygiene", Activation: "pull", AgentGuidance: "shell"},
 		},
-		detectors:  map[string]DetectorSource{"go": compiledCodePathDetectors{}},
+		detectors:  map[string]DetectorSource{"go": compiledCodePathDetectors{}, "shell": ShellDetectorSource{}},
 		coverage:   map[string]CoverageProvider{"diagnose": goCodePathCoverage{}, "none": noCodePathCoverage{}},
-		memory:     map[string]MemoryValidation{"go": goCodePathValidation{}},
-		activation: map[string]PublishActivation{"rollout": codePathActivation(false), "pull": codePathActivation(true)},
+		memory:     map[string]MemoryValidation{"go": goCodePathValidation{check: bindings.ValidateGo}, "hygiene": shellCodePathValidation{}},
+		activation: map[string]PublishActivation{"rollout": configuredCodePathActivation{name: "rollout", activate: bindings.RebuildController}, "pull": configuredCodePathActivation{name: "pull", activate: bindings.PullAcceptedCommit}},
 		guidance:   map[string]AgentGuidance{"go": codePathGuidance("go"), "shell": codePathGuidance("shell")},
 		stages:     map[string]bool{"deterministic": true, "agent": true},
 	}
@@ -186,8 +207,8 @@ func (r *CodePathRegistry) Resolve(config CodePathConfig) (*CodePath, error) {
 
 type compiledCodePathDetectors struct{}
 
-func (compiledCodePathDetectors) Detectors(_ context.Context, _, _ string, compiled []sdk.Detector) ([]sdk.Detector, error) {
-	return compiled, nil
+func (compiledCodePathDetectors) Detectors(_ context.Context, request DetectorSourceRequest) ([]sdk.Detector, error) {
+	return request.CompiledDetectors, nil
 }
 
 type goCodePathCoverage struct{}
@@ -202,26 +223,27 @@ func (noCodePathCoverage) Coverage([]sdk.Finding, []ProgramRun, sdk.DetectionCon
 	return &contracts.PlaybookCoverage{}
 }
 
-type goCodePathValidation struct{}
-
-func (goCodePathValidation) Validate(ctx context.Context, root string, paths []string, check func(context.Context, string, []string) error) error {
-	if check == nil {
-		return fmt.Errorf("Go memory validation is not configured")
-	}
-	return check(ctx, root, paths)
+type goCodePathValidation struct {
+	check func(context.Context, string, []string) error
 }
 
-type codePathActivation bool
+func (v goCodePathValidation) Validate(ctx context.Context, root string, paths []string) error {
+	if v.check == nil {
+		return fmt.Errorf("Go memory validation is not configured")
+	}
+	return v.check(ctx, root, paths)
+}
 
-func (pull codePathActivation) Activate(ctx context.Context, commit string, rebuild, refresh func(context.Context, string) error) error {
-	action := rebuild
-	if pull {
-		action = refresh
+type configuredCodePathActivation struct {
+	name     string
+	activate func(context.Context, string) error
+}
+
+func (a configuredCodePathActivation) Activate(ctx context.Context, commit string) error {
+	if a.activate == nil {
+		return fmt.Errorf("%s activation is not configured", a.name)
 	}
-	if action == nil {
-		return fmt.Errorf("code path activation is not configured")
-	}
-	return action(ctx, commit)
+	return a.activate(ctx, commit)
 }
 
 type codePathGuidance string

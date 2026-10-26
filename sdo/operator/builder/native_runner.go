@@ -23,6 +23,9 @@ import (
 // protobuf launch contract. Storage projections and cache publication come
 // from the repository edge.
 type RunConfig struct {
+	ShellControllerBinary string
+ PrepareShell func(context.Context) error
+
 	Build              Config
 	Controller         *contractsv1alpha1.ControllerConfig
 	ResolveDiagnostics func(context.Context, string) (DiagnosticsProjection, error)
@@ -73,6 +76,13 @@ func runWithHealthRefresh(ctx context.Context, config RunConfig, run func(contex
 func runOnce(ctx context.Context, config RunConfig) error {
 	if config.Controller == nil {
 		return errors.New("controller config is required")
+	}
+	source := config.Controller.GetCodePath().GetOverrides().GetDetectorSource()
+	if source == "shell" || (source == "" && config.Controller.GetCodePath().GetName() == "shell") {
+		if config.PrepareShell != nil {
+ if err:=config.PrepareShell(ctx); err!=nil {return err}
+ }
+ return runShellController(ctx, config)
 	}
 	if config.ResolveDiagnostics == nil {
 		return errors.New("accepted diagnostics resolver is required")
@@ -193,4 +203,31 @@ func controllerConfigJSON(config RunConfig, prober string, built provenance) ([]
 	// identity remains separate evidence for image/rendered-lock comparisons.
 	launch.SourceCommit = built.Revision
 	return wire.Marshal(launch)
+}
+
+// runShellController starts the image-bound controller directly. Accepted shell
+// scripts are activated by the runner and never enter the Go builder.
+func runShellController(ctx context.Context, config RunConfig) error {
+	directory, err := os.MkdirTemp("", "sdo-shell-controller-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(directory)
+	data, err := wire.Marshal(config.Controller)
+	if err != nil {
+		return err
+	}
+	path := filepath.Join(directory, "controller-config.json")
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		return err
+	}
+	binary := config.ShellControllerBinary
+	if binary == "" {
+		binary = "/usr/local/bin/sdo-shell-controller"
+	}
+	command := exec.CommandContext(ctx, binary, "--config", path)
+	command.Stdin = os.Stdin
+	command.Stdout = os.Stdout
+	command.Stderr = os.Stderr
+	return command.Run()
 }

@@ -511,6 +511,7 @@ def _sdo_agent(
         agent_provider=args.provider,
         reflection_session=args.reflection_session,
         reflection_guidance=args.reflection_guidance,
+        code_path=getattr(args, "code_path", "go"),
         late_findings=args.late_findings,
         healthy_baseline=args.healthy_baseline,
         controller_namespace=control_namespace_for(environment.namespace),
@@ -1254,6 +1255,7 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--diagnosis-grading", choices=("off", "deferred", "inline"), default=None)
     run.add_argument("--judge-model-id", default=None, help="SREGym JUDGE_MODEL_ID for diagnosis grading")
     run.add_argument("--reflection-session", choices=("resume", "fresh"), default="resume")
+    run.add_argument("--code-path", choices=("go", "shell"), default="go")
     run.add_argument("--reflection-guidance", choices=("baseline", "generalize", "generalize-spec"), default="baseline")
     run.add_argument("--late-findings", choices=("off", "pull"), default="off")
     run.add_argument(

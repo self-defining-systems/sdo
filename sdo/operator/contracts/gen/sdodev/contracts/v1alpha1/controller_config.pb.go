@@ -133,7 +133,9 @@ type ControllerConfig struct {
 	// Pre-start one idle responder; false forces the ordinary cold Job path.
 	ResponderStandby *bool `protobuf:"varint,78,opt,name=responder_standby,json=responderStandby,proto3,oneof" json:"responder_standby,omitempty"`
 	// Fixed tool image for application-local RunScript Jobs.
-	ScriptImage   string `protobuf:"bytes,79,opt,name=script_image,json=scriptImage,proto3" json:"script_image,omitempty"`
+	ScriptImage string `protobuf:"bytes,79,opt,name=script_image,json=scriptImage,proto3" json:"script_image,omitempty"`
+	// Named programming-model plugin set. An omitted value preserves Go.
+	CodePath      *CodePathConfig `protobuf:"bytes,100,opt,name=code_path,json=codePath,proto3" json:"code_path,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -604,11 +606,155 @@ func (x *ControllerConfig) GetScriptImage() string {
 	return ""
 }
 
+func (x *ControllerConfig) GetCodePath() *CodePathConfig {
+	if x != nil {
+		return x.CodePath
+	}
+	return nil
+}
+
+// Code paths compose implementations at independently named runtime seams.
+type CodePathConfig struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	Overrides     *CodePathOverrides     `protobuf:"bytes,2,opt,name=overrides,proto3" json:"overrides,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CodePathConfig) Reset() {
+	*x = CodePathConfig{}
+	mi := &file_sdodev_contracts_v1alpha1_controller_config_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CodePathConfig) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CodePathConfig) ProtoMessage() {}
+
+func (x *CodePathConfig) ProtoReflect() protoreflect.Message {
+	mi := &file_sdodev_contracts_v1alpha1_controller_config_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CodePathConfig.ProtoReflect.Descriptor instead.
+func (*CodePathConfig) Descriptor() ([]byte, []int) {
+	return file_sdodev_contracts_v1alpha1_controller_config_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *CodePathConfig) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *CodePathConfig) GetOverrides() *CodePathOverrides {
+	if x != nil {
+		return x.Overrides
+	}
+	return nil
+}
+
+type CodePathOverrides struct {
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	DetectorSource   string                 `protobuf:"bytes,1,opt,name=detector_source,json=detectorSource,proto3" json:"detector_source,omitempty"`
+	Coverage         string                 `protobuf:"bytes,2,opt,name=coverage,proto3" json:"coverage,omitempty"`
+	ResponseStages   []string               `protobuf:"bytes,3,rep,name=response_stages,json=responseStages,proto3" json:"response_stages,omitempty"`
+	MemoryValidation string                 `protobuf:"bytes,4,opt,name=memory_validation,json=memoryValidation,proto3" json:"memory_validation,omitempty"`
+	Activation       string                 `protobuf:"bytes,5,opt,name=activation,proto3" json:"activation,omitempty"`
+	AgentGuidance    string                 `protobuf:"bytes,6,opt,name=agent_guidance,json=agentGuidance,proto3" json:"agent_guidance,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
+func (x *CodePathOverrides) Reset() {
+	*x = CodePathOverrides{}
+	mi := &file_sdodev_contracts_v1alpha1_controller_config_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CodePathOverrides) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CodePathOverrides) ProtoMessage() {}
+
+func (x *CodePathOverrides) ProtoReflect() protoreflect.Message {
+	mi := &file_sdodev_contracts_v1alpha1_controller_config_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CodePathOverrides.ProtoReflect.Descriptor instead.
+func (*CodePathOverrides) Descriptor() ([]byte, []int) {
+	return file_sdodev_contracts_v1alpha1_controller_config_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *CodePathOverrides) GetDetectorSource() string {
+	if x != nil {
+		return x.DetectorSource
+	}
+	return ""
+}
+
+func (x *CodePathOverrides) GetCoverage() string {
+	if x != nil {
+		return x.Coverage
+	}
+	return ""
+}
+
+func (x *CodePathOverrides) GetResponseStages() []string {
+	if x != nil {
+		return x.ResponseStages
+	}
+	return nil
+}
+
+func (x *CodePathOverrides) GetMemoryValidation() string {
+	if x != nil {
+		return x.MemoryValidation
+	}
+	return ""
+}
+
+func (x *CodePathOverrides) GetActivation() string {
+	if x != nil {
+		return x.Activation
+	}
+	return ""
+}
+
+func (x *CodePathOverrides) GetAgentGuidance() string {
+	if x != nil {
+		return x.AgentGuidance
+	}
+	return ""
+}
+
 var File_sdodev_contracts_v1alpha1_controller_config_proto protoreflect.FileDescriptor
 
 const file_sdodev_contracts_v1alpha1_controller_config_proto_rawDesc = "" +
 	"\n" +
-	"1sdodev/contracts/v1alpha1/controller_config.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x1egoogle/protobuf/duration.proto\"\xb4\x1d\n" +
+	"1sdodev/contracts/v1alpha1/controller_config.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x1egoogle/protobuf/duration.proto\"\xfc\x1d\n" +
 	"\x10ControllerConfig\x12%\n" +
 	"\tnamespace\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\tnamespace\x12+\n" +
 	"\x11control_namespace\x18\x02 \x01(\tR\x10controlNamespace\x12\"\n" +
@@ -680,11 +826,24 @@ const file_sdodev_contracts_v1alpha1_controller_config_proto_rawDesc = "" +
 	"\x18closure_stability_window\x18L \x01(\v2\x19.google.protobuf.DurationR\x16closureStabilityWindow\x12O\n" +
 	"\x16responder_report_grace\x18M \x01(\v2\x19.google.protobuf.DurationR\x14responderReportGrace\x120\n" +
 	"\x11responder_standby\x18N \x01(\bH\x03R\x10responderStandby\x88\x01\x01\x12!\n" +
-	"\fscript_image\x18O \x01(\tR\vscriptImageB\x14\n" +
+	"\fscript_image\x18O \x01(\tR\vscriptImage\x12F\n" +
+	"\tcode_path\x18d \x01(\v2).sdodev.contracts.v1alpha1.CodePathConfigR\bcodePathB\x14\n" +
 	"\x12_synthetic_trafficB\x1a\n" +
 	"\x18_clean_responder_helpersB\x11\n" +
 	"\x0f_state_baselineB\x14\n" +
-	"\x12_responder_standbyJ\x04\b\x10\x10\x11J\x04\b\x12\x10\x13J\x04\b\x17\x10\x18J\x04\b\x18\x10\x19J\x04\b9\x10:J\x04\b:\x10;J\x04\b;\x10<J\x04\b<\x10=J\x04\b=\x10>J\x04\bC\x10DJ\x04\bD\x10EJ\x04\b@\x10AJ\x04\bA\x10BJ\x04\bE\x10FJ\x04\bH\x10IJ\x04\bI\x10JJ\x04\bJ\x10KR\x06brokerR\vbroker_argsR\x0emax_follow_upsR\x12follow_up_cooldownR\x14drift_sweep_intervalR\x1adrift_investigation_windowR'drift_investigation_dispatches_per_hourR#drift_investigation_tokens_per_hourR\x19drift_dispatches_per_hourR\x15drift_tokens_per_hourR\x14program_min_durationR\x17plan_safety_policy_jsonR\x19plan_safety_policy_sha256R\x17plan_source_policy_jsonB\x88\x02\n" +
+	"\x12_responder_standbyJ\x04\b\x10\x10\x11J\x04\b\x12\x10\x13J\x04\b\x17\x10\x18J\x04\b\x18\x10\x19J\x04\b9\x10:J\x04\b:\x10;J\x04\b;\x10<J\x04\b<\x10=J\x04\b=\x10>J\x04\bC\x10DJ\x04\bD\x10EJ\x04\b@\x10AJ\x04\bA\x10BJ\x04\bE\x10FJ\x04\bH\x10IJ\x04\bI\x10JJ\x04\bJ\x10KR\x06brokerR\vbroker_argsR\x0emax_follow_upsR\x12follow_up_cooldownR\x14drift_sweep_intervalR\x1adrift_investigation_windowR'drift_investigation_dispatches_per_hourR#drift_investigation_tokens_per_hourR\x19drift_dispatches_per_hourR\x15drift_tokens_per_hourR\x14program_min_durationR\x17plan_safety_policy_jsonR\x19plan_safety_policy_sha256R\x17plan_source_policy_json\"p\n" +
+	"\x0eCodePathConfig\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12J\n" +
+	"\toverrides\x18\x02 \x01(\v2,.sdodev.contracts.v1alpha1.CodePathOverridesR\toverrides\"\xf5\x01\n" +
+	"\x11CodePathOverrides\x12'\n" +
+	"\x0fdetector_source\x18\x01 \x01(\tR\x0edetectorSource\x12\x1a\n" +
+	"\bcoverage\x18\x02 \x01(\tR\bcoverage\x12'\n" +
+	"\x0fresponse_stages\x18\x03 \x03(\tR\x0eresponseStages\x12+\n" +
+	"\x11memory_validation\x18\x04 \x01(\tR\x10memoryValidation\x12\x1e\n" +
+	"\n" +
+	"activation\x18\x05 \x01(\tR\n" +
+	"activation\x12%\n" +
+	"\x0eagent_guidance\x18\x06 \x01(\tR\ragentGuidanceB\x88\x02\n" +
 	"\x1dcom.sdodev.contracts.v1alpha1B\x15ControllerConfigProtoP\x01ZJsdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1;contractsv1alpha1\xa2\x02\x03SCX\xaa\x02\x19Sdodev.Contracts.V1alpha1\xca\x02\x19Sdodev\\Contracts\\V1alpha1\xe2\x02%Sdodev\\Contracts\\V1alpha1\\GPBMetadata\xea\x02\x1bSdodev::Contracts::V1alpha1b\x06proto3"
 
 var (
@@ -699,28 +858,32 @@ func file_sdodev_contracts_v1alpha1_controller_config_proto_rawDescGZIP() []byte
 	return file_sdodev_contracts_v1alpha1_controller_config_proto_rawDescData
 }
 
-var file_sdodev_contracts_v1alpha1_controller_config_proto_msgTypes = make([]protoimpl.MessageInfo, 1)
+var file_sdodev_contracts_v1alpha1_controller_config_proto_msgTypes = make([]protoimpl.MessageInfo, 3)
 var file_sdodev_contracts_v1alpha1_controller_config_proto_goTypes = []any{
 	(*ControllerConfig)(nil),    // 0: sdodev.contracts.v1alpha1.ControllerConfig
-	(*durationpb.Duration)(nil), // 1: google.protobuf.Duration
+	(*CodePathConfig)(nil),      // 1: sdodev.contracts.v1alpha1.CodePathConfig
+	(*CodePathOverrides)(nil),   // 2: sdodev.contracts.v1alpha1.CodePathOverrides
+	(*durationpb.Duration)(nil), // 3: google.protobuf.Duration
 }
 var file_sdodev_contracts_v1alpha1_controller_config_proto_depIdxs = []int32{
-	1,  // 0: sdodev.contracts.v1alpha1.ControllerConfig.duration:type_name -> google.protobuf.Duration
-	1,  // 1: sdodev.contracts.v1alpha1.ControllerConfig.response_timeout:type_name -> google.protobuf.Duration
-	1,  // 2: sdodev.contracts.v1alpha1.ControllerConfig.verification_timeout:type_name -> google.protobuf.Duration
-	1,  // 3: sdodev.contracts.v1alpha1.ControllerConfig.lease_duration:type_name -> google.protobuf.Duration
-	1,  // 4: sdodev.contracts.v1alpha1.ControllerConfig.maintenance_poll_interval:type_name -> google.protobuf.Duration
-	1,  // 5: sdodev.contracts.v1alpha1.ControllerConfig.resume_sync_timeout:type_name -> google.protobuf.Duration
-	1,  // 6: sdodev.contracts.v1alpha1.ControllerConfig.synthetic_traffic_warmup:type_name -> google.protobuf.Duration
-	1,  // 7: sdodev.contracts.v1alpha1.ControllerConfig.diagnosis_deadline:type_name -> google.protobuf.Duration
-	1,  // 8: sdodev.contracts.v1alpha1.ControllerConfig.drift_batch_window:type_name -> google.protobuf.Duration
-	1,  // 9: sdodev.contracts.v1alpha1.ControllerConfig.closure_stability_window:type_name -> google.protobuf.Duration
-	1,  // 10: sdodev.contracts.v1alpha1.ControllerConfig.responder_report_grace:type_name -> google.protobuf.Duration
-	11, // [11:11] is the sub-list for method output_type
-	11, // [11:11] is the sub-list for method input_type
-	11, // [11:11] is the sub-list for extension type_name
-	11, // [11:11] is the sub-list for extension extendee
-	0,  // [0:11] is the sub-list for field type_name
+	3,  // 0: sdodev.contracts.v1alpha1.ControllerConfig.duration:type_name -> google.protobuf.Duration
+	3,  // 1: sdodev.contracts.v1alpha1.ControllerConfig.response_timeout:type_name -> google.protobuf.Duration
+	3,  // 2: sdodev.contracts.v1alpha1.ControllerConfig.verification_timeout:type_name -> google.protobuf.Duration
+	3,  // 3: sdodev.contracts.v1alpha1.ControllerConfig.lease_duration:type_name -> google.protobuf.Duration
+	3,  // 4: sdodev.contracts.v1alpha1.ControllerConfig.maintenance_poll_interval:type_name -> google.protobuf.Duration
+	3,  // 5: sdodev.contracts.v1alpha1.ControllerConfig.resume_sync_timeout:type_name -> google.protobuf.Duration
+	3,  // 6: sdodev.contracts.v1alpha1.ControllerConfig.synthetic_traffic_warmup:type_name -> google.protobuf.Duration
+	3,  // 7: sdodev.contracts.v1alpha1.ControllerConfig.diagnosis_deadline:type_name -> google.protobuf.Duration
+	3,  // 8: sdodev.contracts.v1alpha1.ControllerConfig.drift_batch_window:type_name -> google.protobuf.Duration
+	3,  // 9: sdodev.contracts.v1alpha1.ControllerConfig.closure_stability_window:type_name -> google.protobuf.Duration
+	3,  // 10: sdodev.contracts.v1alpha1.ControllerConfig.responder_report_grace:type_name -> google.protobuf.Duration
+	1,  // 11: sdodev.contracts.v1alpha1.ControllerConfig.code_path:type_name -> sdodev.contracts.v1alpha1.CodePathConfig
+	2,  // 12: sdodev.contracts.v1alpha1.CodePathConfig.overrides:type_name -> sdodev.contracts.v1alpha1.CodePathOverrides
+	13, // [13:13] is the sub-list for method output_type
+	13, // [13:13] is the sub-list for method input_type
+	13, // [13:13] is the sub-list for extension type_name
+	13, // [13:13] is the sub-list for extension extendee
+	0,  // [0:13] is the sub-list for field type_name
 }
 
 func init() { file_sdodev_contracts_v1alpha1_controller_config_proto_init() }
@@ -735,7 +898,7 @@ func file_sdodev_contracts_v1alpha1_controller_config_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_sdodev_contracts_v1alpha1_controller_config_proto_rawDesc), len(file_sdodev_contracts_v1alpha1_controller_config_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   1,
+			NumMessages:   3,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

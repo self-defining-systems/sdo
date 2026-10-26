@@ -37,6 +37,8 @@ const (
 )
 
 type Config struct {
+	CodePath *contracts.CodePathConfig
+
 	ResponderMenu                                   bool
 	ObservationCeiling                              sdk.ObservationScope
 	Namespace, ControlNamespace, Application        string
@@ -398,6 +400,18 @@ func controllerJob(c Config) *batchv1.Job {
 	provider := c.AgentProvider
 	if provider == "" {
 		provider = "codex"
+	}
+	if c.CodePath != nil {
+		if c.CodePath.GetName() != "" {
+			args = append(args, "--code-path", c.CodePath.GetName())
+		}
+		if c.CodePath.GetOverrides() != nil {
+			data, err := wire.Marshal(c.CodePath.GetOverrides())
+			if err != nil {
+				panic(err)
+			}
+			args = append(args, "--code-path-overrides", string(data))
+		}
 	}
 	if c.ScriptImage != "" {
 		args = append(args, "--script-image", c.ScriptImage)

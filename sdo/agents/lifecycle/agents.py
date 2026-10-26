@@ -20,6 +20,7 @@ from libs.agent_cli.structured import (
     StructuredTurnTimeout,
     run_structured_turn,
 )
+from sdo.agents.code_paths import SKILLS_ROOT, agent_guidance
 from sdo.agents.prompt_templates import named_prompt, render_prompt
 
 if TYPE_CHECKING:
@@ -264,8 +265,10 @@ class CodexLifecycleBackend:
         )
         prompt = render_prompt(
             "health_judge",
-            "health_judge",
+            "health_judge_shell" if agent_guidance() == "shell" else "health_judge",
             part="health_judge.instructions",
+            skills_root=SKILLS_ROOT,
+            source_commit=deployer.source_commit,
             application=repr(application),
             round_index=round_index,
             health_objective=named_prompt("health_judge.health_objective", health_objective),

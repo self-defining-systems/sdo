@@ -143,4 +143,21 @@ message ControllerConfig {
   optional bool responder_standby = 78;
   // Fixed tool image for application-local RunScript Jobs.
   string script_image = 79;
+  // Named programming-model plugin set. An omitted value preserves Go.
+  CodePathConfig code_path = 100;
+}
+
+// Code paths compose implementations at independently named runtime seams.
+message CodePathConfig {
+  string name = 1;
+  CodePathOverrides overrides = 2;
+}
+
+message CodePathOverrides {
+  string detector_source = 1;
+  string coverage = 2;
+  repeated string response_stages = 3;
+  string memory_validation = 4;
+  string activation = 5;
+  string agent_guidance = 6;
 }

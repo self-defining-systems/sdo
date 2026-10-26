@@ -164,7 +164,7 @@ func (w RegisteredReflectionWorker) Reflect(ctx context.Context, closure Inciden
 			if err != nil {
 				return ReflectionDecision{}, err
 			}
-			if bytes.Contains(currentWire, []byte(layout.PhysicalPathMarker)) {
+			if snapshot.GetCodePath().GetName() != "shell" && bytes.Contains(currentWire, []byte(layout.PhysicalPathMarker)) {
 				return ReflectionDecision{}, errors.New("physical operational memory path in outcome evidence")
 			}
 			for _, priorOutcome := range history {
@@ -172,7 +172,7 @@ func (w RegisteredReflectionWorker) Reflect(ctx context.Context, closure Inciden
 				if err != nil {
 					return ReflectionDecision{}, err
 				}
-				if bytes.Contains(priorWire, []byte(layout.PhysicalPathMarker)) {
+				if snapshot.GetCodePath().GetName() != "shell" && bytes.Contains(priorWire, []byte(layout.PhysicalPathMarker)) {
 					return ReflectionDecision{}, errors.New("physical operational memory path in prior outcome evidence")
 				}
 			}
@@ -183,7 +183,7 @@ func (w RegisteredReflectionWorker) Reflect(ctx context.Context, closure Inciden
 			if err != nil {
 				return ReflectionDecision{}, err
 			}
-			if bytes.Contains(requestWire, []byte(layout.PhysicalPathMarker)) {
+			if snapshot.GetCodePath().GetName() != "shell" && bytes.Contains(requestWire, []byte(layout.PhysicalPathMarker)) {
 				return ReflectionDecision{}, errors.New("physical operational memory path leaked into reflection task")
 			}
 		}

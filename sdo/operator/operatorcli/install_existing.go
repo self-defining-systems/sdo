@@ -42,7 +42,9 @@ func ParseInstallExistingLaunch(args []string) (InstallExistingConfig, error) {
 	}
 	flags := flag.NewFlagSet("sdo-operator install-existing", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
-	adopt := flags.Bool("adopt-existing-memory", false, "explicitly adopt supplied memory unvalidated as the accepted base")
+	codePathName := flags.String("code-path", "", "programming-model plugin set: go or shell")
+ codePathOverrides := flags.String("code-path-overrides", "", "CodePathOverrides JSON")
+ adopt := flags.Bool("adopt-existing-memory", false, "explicitly adopt supplied memory unvalidated as the accepted base")
 	operatorRoot := flags.String("operator-root", "/opt/sdo/sdo/operator", "operator sources used to compile adopted memory")
 	repository := flags.String("repository", "", "clean accepted Git repository")
 	namespace := flags.String("namespace", "", "application namespace")
@@ -123,7 +125,10 @@ func ParseInstallExistingLaunch(args []string) (InstallExistingConfig, error) {
 	if menu != "" && menu != "0" && menu != "1" {
 		return InstallExistingConfig{}, errors.New("SDO_RESPONDER_MENU must be 0 or 1")
 	}
-	config := install.Config{
+	selectedCodePath,err:=parseCodePathSelection(*codePathName,*codePathOverrides)
+ if err!=nil {return InstallExistingConfig{},err}
+ config := install.Config{
+ CodePath:selectedCodePath,
 		Namespace: *namespace, ControlNamespace: *controlNamespace, Application: *application,
 		ScriptImage: *scriptImage, ControllerImage: *controllerImage, ResponderImage: *responderImage, ValidatorImage: *validatorImage,
 		RepositoryPVC: *repositoryPVC, CredentialsSecret: *credentialsSecret, Model: *model,

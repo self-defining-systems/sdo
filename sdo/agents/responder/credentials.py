@@ -8,7 +8,7 @@ from pathlib import Path
 from types import MappingProxyType
 
 #: The skills shipped with SDO: ``sdo/skills`` in the repository and in the agent image.
-SKILLS_ROOT = Path(__file__).resolve().parents[2] / "skills"
+from sdo.agents.code_paths import SKILLS_ROOT, agent_guidance
 
 #: The skills each agent worker installs into its CLI home. The registration
 #: manifests (``sdo/agents/registrations``) are protobuf ``AgentRegistration``
@@ -21,6 +21,12 @@ AGENT_SKILLS = MappingProxyType(
         "deployer": ("sdo-memory",),
     }
 )
+
+
+def skills_for_role(role: str) -> tuple[str, ...]:
+    if agent_guidance() == "shell" and role != "deployer":
+        return ("sdo-shell-authoring",)
+    return AGENT_SKILLS[role]
 
 
 def install_skills(destination: Path, skills: tuple[str, ...], *, skills_root: Path = SKILLS_ROOT) -> None:

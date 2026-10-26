@@ -28,6 +28,9 @@ func nativeBrokerFromLaunch(_ context.Context, config *contracts.ControllerConfi
 	if config == nil {
 		return nil, nil, errors.New("native broker requires typed controller config")
 	}
+	if _, err := codePathFromContract(config.GetCodePath()); err != nil {
+		return nil, nil, err
+	}
 	if config.GetBrokerMode() != "native" || config.GetWorkerMountMode() != "proposal-only" {
 		return nil, nil, errors.New("native broker requires proposal-only worker mounts")
 	}
@@ -66,7 +69,15 @@ func nativeBrokerFromLaunch(_ context.Context, config *contracts.ControllerConfi
 		return nil, nil, policyErr
 	}
 
-	repository, err := broker.New(config.GetAppRoot(), config.GetBrokerWorktreeRoot(), broker.JobValidator(job), broker.ObservationPolicy{Ceiling: ceiling, ApplicationNamespace: config.GetNamespace()})
+	selectedCodePath, err := NewCodePathRegistryWithDependencies(CodePathDependencies{ValidateGo: broker.JobValidator(job)}).Resolve(codePathConfigFromContract(config.GetCodePath()))
+	if err != nil {
+		return nil, nil, err
+	}
+	memoryCodePath := "go"
+	if selectedCodePath.Selection.MemoryValidation != "go" {
+		memoryCodePath = "shell"
+	}
+	repository, err := broker.New(config.GetAppRoot(), config.GetBrokerWorktreeRoot(), selectedCodePath.Memory.Validate, broker.ObservationPolicy{CodePath: memoryCodePath, Ceiling: ceiling, ApplicationNamespace: config.GetNamespace()})
 	if err != nil {
 		return nil, nil, fmt.Errorf("native repository broker: %w", err)
 	}
@@ -76,7 +87,8 @@ func nativeBrokerFromLaunch(_ context.Context, config *contracts.ControllerConfi
 	}
 	return &NativeIncidentBroker{
 		Repository: repository, LedgerRoot: ledgerRoot,
-		Deriver: ProtoOutcomeDeriver{}, ResponderBackend: config.GetResponderBackend(), ResponderModel: config.GetResponderModel(),
+		CodePath: codePathConfigFromContract(config.GetCodePath()),
+		Deriver:  ProtoOutcomeDeriver{}, ResponderBackend: config.GetResponderBackend(), ResponderModel: config.GetResponderModel(),
 		ForceReflection: config.GetForceReflection(), PhaseLog: os.Stdout,
 		LateFindingsVerifier: latefindings.Store{Client: client, Namespace: controlNamespace},
 		SessionRoot:          config.GetRepositoryMountPath(), SessionRetention: DefaultSessionRetention,
@@ -132,13 +144,21 @@ func attachNativeReflector(native *NativeIncidentBroker, config *contracts.Contr
 		}
 		return executor, nil
 	}
+	catalog := memory.OpenCatalogReader(config.GetAppRoot())
+	selected, err := codePathFromContract(config.GetCodePath())
+	if err != nil {
+		return err
+	}
+	if selected.Selection.DetectorSource == "shell" {
+		catalog = memory.OpenShellCatalogReader(config.GetAppRoot())
+	}
 	native.Reflector = RegisteredReflectionWorker{
 		TaskStore: &lifecycleio.TaskStore{Root: filepath.Join(native.LedgerRoot, "reflection-tasks")},
 		Executor:  freshExecutor,
 		AgentID:   reflectorID, TaskType: reflectionTask, Outcomes: memory.NewJSONStore(config.GetAppRoot()), Timeout: timeout,
 		SessionMode:       config.GetReflectionSession(),
 		Guidance:          config.GetReflectionGuidance(),
-		Catalog:           memory.OpenCatalogReader(config.GetAppRoot()),
+		Catalog:           catalog,
 		CorpusSessionRoot: config.GetRepositoryMountPath(),
 		SessionExecutor: func(incidentID string) (ReflectionTaskExecutor, error) {
 			return sessionExecutor(incidentID, true)
@@ -157,7 +177,23 @@ func attachNativeReflector(native *NativeIncidentBroker, config *contracts.Contr
 // when SDO_AGENT_PROVIDER is absent, so a configured provider must always travel
 // with the Job. An unconfigured provider adds nothing; an unknown one is an error.
 func AgentWorkerEnvironment(config *contracts.ControllerConfig) (map[string]string, error) {
-	return worker_registry.AgentEnvironment(config.GetResponderBackend(), config.GetResponderModel())
+	environment, err := worker_registry.AgentEnvironment(config.GetResponderBackend(), config.GetResponderModel())
+	if err != nil {
+		return nil, err
+	}
+	selected, err := codePathFromContract(config.GetCodePath())
+	if err != nil {
+		return nil, err
+	}
+	if config.GetCodePath() != nil {
+		environment["SDO_CODE_PATH"] = selected.Selection.Name
+		environment["SDO_AGENT_GUIDANCE"] = selected.Selection.AgentGuidance
+		environment["SDO_MEMORY_VALIDATION"] = "go"
+		if selected.Selection.MemoryValidation != "go" {
+			environment["SDO_MEMORY_VALIDATION"] = "shell"
+		}
+	}
+	return environment, nil
 }
 
 // withAgentEnvironment makes the launch config authoritative for provider and

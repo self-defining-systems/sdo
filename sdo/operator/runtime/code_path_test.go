@@ -70,34 +70,46 @@ func TestCodePathCompositionAndOverrides(t *testing.T) {
 }
 
 func TestCodePathGoDelegatesExistingEdges(t *testing.T) {
-	path, err := NewCodePathRegistry().Resolve(CodePathConfig{})
+	validationCalled, activationCalled := false, false
+	path, err := NewCodePathRegistryWithDependencies(CodePathDependencies{
+		ValidateGo: func(_ context.Context, root string, paths []string) error {
+			validationCalled = true
+			if root != "root" || !reflect.DeepEqual(paths, []string{"a"}) {
+				t.Fatal("validation arguments changed")
+			}
+			return nil
+		},
+		RebuildController: func(_ context.Context, commit string) error {
+			activationCalled = true
+			if commit != "commit" {
+				t.Fatal("commit changed")
+			}
+			return nil
+		},
+	}).Resolve(CodePathConfig{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	called := false
-	validate := func(_ context.Context, root string, paths []string) error {
-		called = true
-		if root != "root" || !reflect.DeepEqual(paths, []string{"a"}) {
-			t.Fatal("validation arguments changed")
-		}
-		return nil
-	}
-	if err := path.Memory.Validate(context.Background(), "root", []string{"a"}, validate); err != nil || !called {
+	if err := path.Memory.Validate(context.Background(), "root", []string{"a"}); err != nil || !validationCalled {
 		t.Fatalf("validation not delegated: %v", err)
 	}
-	called = false
-	if err := path.Activation.Activate(context.Background(), "commit", func(_ context.Context, commit string) error {
-		called = true
-		if commit != "commit" {
-			t.Fatal("commit changed")
-		}
-		return nil
-	}, nil); err != nil || !called {
+	if err := path.Activation.Activate(context.Background(), "commit"); err != nil || !activationCalled {
 		t.Fatalf("rollout not delegated: %v", err)
 	}
 	detectors := []sdk.Detector{controllerDetector("health", time.Second, sdk.Finding{})}
-	got, err := path.Detectors.Detectors(context.Background(), "root", "app", detectors)
+	got, err := path.Detectors.Detectors(context.Background(), DetectorSourceRequest{RepositoryRoot: "root", Namespace: "app", CompiledDetectors: detectors})
 	if err != nil || len(got) != 1 || got[0] != detectors[0] {
 		t.Fatalf("compiled detector path changed: %v %v", got, err)
+	}
+}
+
+func TestCodePathShellSelection(t *testing.T) {
+	path, err := NewCodePathRegistry().Resolve(CodePathConfig{Name: "shell"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := CodePathSelection{Name: "shell", DetectorSource: "shell", Coverage: "none", ResponseStages: []string{"agent"}, MemoryValidation: "hygiene", Activation: "pull", AgentGuidance: "shell"}
+	if !reflect.DeepEqual(path.Selection, want) {
+		t.Fatalf("shell selection: %#v", path.Selection)
 	}
 }

@@ -81,5 +81,5 @@ func openMigrationBroker(config *contracts.ControllerConfig) (lifecycle.Proposal
 		return nil, policyErr
 	}
 
-	return broker.New(config.GetAppRoot(), config.GetBrokerWorktreeRoot(), broker.JobValidator(job), broker.ObservationPolicy{Ceiling: ceiling, ApplicationNamespace: config.GetNamespace()})
+	return broker.New(config.GetAppRoot(), config.GetBrokerWorktreeRoot(), selectMemoryValidator(config.GetCodePath(),broker.JobValidator(job)), broker.ObservationPolicy{CodePath:memoryCodePath(config.GetCodePath()),Ceiling: ceiling, ApplicationNamespace: config.GetNamespace()})
 }

@@ -68,6 +68,8 @@ func controllerConfigToArgs(config *contractsv1alpha1.ControllerConfig) []string
 		}
 	}
 
+	str("--code-path", config.GetCodePath().GetName())
+	args = append(args, codePathOverrideArgs(config.GetCodePath())...)
 	str("--namespace", config.GetNamespace())
 	str("--control-namespace", config.GetControlNamespace())
 	str("--app-root", config.GetAppRoot())

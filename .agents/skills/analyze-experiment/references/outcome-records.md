@@ -114,3 +114,19 @@ Failed closures retain fresh post-response detector observations in typed closur
 Early closure groups synthesized opening findings by repaired primary resource. When a final report arrives during report grace, its cause owns the resource and retains the independent opening evidence/detector links from the synthesized cause. Missing-report, returned-report and late-closure outcomes use the same independent repair validator; synthesized duplicates must not remove reflection eligibility. Overlapping model-authored claims remain subject to the ordinary ambiguous-ownership rejection.
 
 Working program tools retain `program_revision=working-tree:<digest>` in program runs, menu options and recorded tool responses. The digest uses the same source/import-closure calculation as accepted program revisions, excluding Markdown and test-only files. The prefix explicitly distinguishes unpublished checkout code. `program_revisions` in plan/apply/mitigate responses binds each program to that executed revision; prepared plans keep their own revision through later edits. Outcome enrichment preserves working revisions rather than replacing them with accepted-source hashes. Treat these as separate revisions for trust; successful execution does not publish memory. The broker projects source-only repairs and carries working playbook/shared-library diffs into reflection for the usual memory check and independent validation.
+
+
+## Shell code path
+
+An explicit `code_path` object records the selected programming model and optional
+seam overrides; absent means the default Go path. `name: shell` uses ordinary
+versioned `.sdo/outcomes/<sha256(incident_id)>.json` outcome documents and the same
+controller closure evidence. A fired-script finding carries its path and bounded
+stdout/stderr evidence, plus accepted-commit/activation metadata. Empty playbook
+coverage is intentional; shell learning has no Go compile/replay or program schema.
+
+Accepted scripts live under `.sdo/diagnostics/detectors/{health,incidents}/<id>/`;
+notes and scripts live under `.sdo/playbooks/<id>/`. Ownership remains judge health,
+responder incident/playbooks, and controller outcomes. Check reflection paths and
+accepted commits to identify learned files. Do not infer Go-program credit from
+shell notes. Script timeouts/crashes are detector errors, never repaired faults.

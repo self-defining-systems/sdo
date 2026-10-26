@@ -85,3 +85,13 @@ and independently verified outcomes when assessing failed or undone mitigations.
 
 
 Reachability configuration identity ignores Service UID/resourceVersion, allocated ClusterIP/ClusterIPs, IP-family defaults, NodePort and health-check NodePort, plus Pod/endpoint incarnation addresses. It retains namespace/Service name and ports (name, number, protocol, targetPort), selector, headless routing, other Service policy fields, deduplicated selected container configuration and labels, referenced ConfigMap contents and selecting network-policy specs. NodePort values are ignored even when explicit: TCP observations use Service DNS and Service port; source-input authorization separately binds authored changes. ServiceUID remains capture provenance only. A recreated equivalent Service keeps its never-served observations without rewriting the immutable reference; a later successful dial restores the ordinary three-failure/20-second gate. Pre-change opaque configuration hashes cannot be safely migrated from the reference alone and remain fail-closed; use a fresh verified install boundary for those records.
+
+
+For `code_path.name: shell`, reflection activation uses the existing runner instead
+of a controller rebuild. Read `closure_phase_timestamps.shell_runner_activated`
+against `reflection_commit`; no `rollout_expectation` is required. The runner's
+read-only results report includes its accepted commit, activation time, and each
+script's exit code, duration (Go duration nanoseconds), stdout/stderr tails, time,
+error and fired streak. Two nonzero runs fire; errors reset the streak and block
+health. Controller closure still owns recovery and its stability evidence. Keep
+activation latency separate from script execution and responder runtime.

@@ -11,6 +11,7 @@ import (
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/lifecycle"
 	"sdo.dev/operator/memory"
+ "sdo.dev/operator/shellpath"
 	"sdo.dev/operator/worker_registry"
 )
 
@@ -47,7 +48,10 @@ func refreshControllerHealthOnce(ctx context.Context, config *contracts.Controll
 	if err != nil {
 		return err
 	}
-	if !revision.NeedsRefresh {
+	shellNeedsRefresh,err:=shellHealthRefreshNeeded(ctx,config)
+ if err!=nil {return err}
+ revision.NeedsRefresh = revision.NeedsRefresh || shellNeedsRefresh
+ if !revision.NeedsRefresh {
 		return nil
 	}
 	var registry *worker_registry.Registry
@@ -71,7 +75,8 @@ func refreshControllerHealthOnce(ctx context.Context, config *contracts.Controll
 	if err != nil {
 		return err
 	}
-	environment["CODEX_HOME"], environment["CLAUDE_CONFIG_DIR"] = "/tmp/codex", "/tmp/claude"
+	environment = codePathWorkerEnvironment(config.GetCodePath(),environment)
+ environment["CODEX_HOME"], environment["CLAUDE_CONFIG_DIR"] = "/tmp/codex", "/tmp/claude"
 	namespace := config.GetControlNamespace()
 	if namespace == "" {
 		namespace = config.GetNamespace()
@@ -91,4 +96,15 @@ func refreshControllerHealthOnce(ctx context.Context, config *contracts.Controll
 		return fmt.Errorf("health unverified: source, objective or detectors advanced during refresh")
 	}
 	return nil
+}
+
+// A Go seed cannot satisfy shell onboarding merely by retaining Go provenance.
+func shellHealthRefreshNeeded(ctx context.Context, config *contracts.ControllerConfig) (bool,error) {
+ if err:=ctx.Err();err!=nil {return false,err}
+ source:=config.GetCodePath().GetOverrides().GetDetectorSource()
+ if source!="shell" && !(source=="" && config.GetCodePath().GetName()=="shell") {return false,nil}
+ scripts,err:=shellpath.Discover(config.GetAppRoot())
+ if err!=nil {return false,err}
+ for _,script:=range scripts {if script.Class=="health" {return false,nil}}
+ return true,nil
 }

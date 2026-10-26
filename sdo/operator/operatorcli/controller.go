@@ -34,6 +34,10 @@ func ParseControllerLaunch(args []string) (builder.RunConfig, bool, error) {
 	}
 	flags := flag.NewFlagSet("sdo-operator controller", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
+	var responseStageOverrides []string
+	flags.Func("response-stages", "ordered response stages; overrides the selected code path", func(value string) error { responseStageOverrides = stageOverride(value); return nil })
+	codePath := flags.String("code-path", "", "programming-model plugin set: go or shell")
+	codePathOverrides := flags.String("code-path-overrides", "", "CodePathOverrides JSON")
 	app := flags.String("app", "", "accepted application checkout")
 	operatorRoot := flags.String("operator-root", "/opt/sdo/sdo/operator", "installed Go operator modules")
 	namespace := flags.String("namespace", "", "application namespace")
@@ -111,7 +115,13 @@ func ParseControllerLaunch(args []string) (builder.RunConfig, bool, error) {
 	if *application == "" {
 		*application = filepath.Base(*app)
 	}
+	selectedCodePath, err := parseCodePathSelection(*codePath, *codePathOverrides)
+	if err != nil {
+		return builder.RunConfig{}, false, err
+	}
+	addResponseStageOverride(&selectedCodePath, responseStageOverrides)
 	launch := &contracts.ControllerConfig{
+		CodePath:         selectedCodePath,
 		ResponderStandby: standby,
 		Namespace:        *namespace, ControlNamespace: *controlNamespace, AppRoot: *app, Application: *application,
 		SourceCommit: *sourceCommit, DeployedCommit: *deployedCommit,
@@ -135,7 +145,12 @@ func ParseControllerLaunch(args []string) (builder.RunConfig, bool, error) {
 	}
 	return builder.RunConfig{
 		Build: builder.Config{ApplicationRoot: *app, OperatorRoot: *operatorRoot}, Controller: launch,
-		ResolveDiagnostics: func(ctx context.Context, root string) (builder.DiagnosticsProjection, error) {
+		PrepareShell: func(ctx context.Context) error {
+ repository,err:=openMigrationBroker(launch)
+ if err!=nil {return err}
+ return refreshControllerHealth(ctx,launch,repository)
+ },
+ ResolveDiagnostics: func(ctx context.Context, root string) (builder.DiagnosticsProjection, error) {
 			repository, err := openMigrationBroker(launch)
 			if err != nil {
 				return builder.DiagnosticsProjection{}, err
