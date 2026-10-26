@@ -103,11 +103,14 @@ func TestReflectionEveryClosedResponderIncident(t *testing.T) {
 					}), nil
 				},
 			}
-			receipt, err := native.ProcessClosure(ctx, closure)
+			receipt, err := closeAndReflect(t, ctx, native, closure)
 			if err != nil {
 				t.Fatal(err)
 			}
 			again, err := native.ProcessClosure(ctx, closure)
+			if err == nil {
+				err = native.ProcessQueuedReflection(ctx, scenario)
+			}
 			if err != nil || again != receipt || calls != 1 {
 				t.Fatalf("reflection calls=%d receipt=%v err=%v", calls, again, err)
 			}
@@ -125,7 +128,7 @@ func TestReflectionEveryClosedResponderIncident(t *testing.T) {
 	}
 }
 
-func TestReflectionFailedClosureRestartBeforeDispatch(t *testing.T) {
+func TestReflectionFailedClosureRestartReplaysQueuedReflection(t *testing.T) {
 	ctx := context.Background()
 	root := nativeRepository(t)
 	proposals, ledgers := filepath.Join(t.TempDir(), "proposals"), t.TempDir()
@@ -142,32 +145,52 @@ func TestReflectionFailedClosureRestartBeforeDispatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	closure := socialRepeatClosure(workspace)
-	if _, err := first.ProcessClosure(ctx, closure); err == nil {
-		t.Fatal("closure acknowledged before required reflection dispatch")
+	// A failed attempt's closure is acknowledged on its outcome commit; its
+	// reflection is queued, not run, so the follow-up need not wait for it.
+	receipt, err := first.ProcessClosure(ctx, closure)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if receipt.OutcomeCommit == "" || receipt.ReflectionCommit != "" {
+		t.Fatalf("failed closure receipt must bind only the outcome commit: %+v", receipt)
+	}
+	if err := first.AcknowledgeClosure(ctx, receipt); err != nil {
+		t.Fatal(err)
+	}
+	// The process dies while the queued reflection runs (no worker here).
+	if err := first.ProcessQueuedReflection(ctx, workspace.IncidentID); err == nil {
+		t.Fatal("reflection without a worker must fail and stay queued")
 	}
 	ledger, err := first.readLedger(workspace.IncidentID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ledger.OutcomeCommit == "" || ledger.Receipt != nil || !ledger.RequiresReflection {
-		t.Fatalf("missing durable pre-dispatch closure: %v", ledger)
+	if !ledger.Acknowledged || !ledger.ReflectionQueued || ledger.ReflectionProcessed || !ledger.RequiresReflection {
+		t.Fatalf("missing durable queued reflection: %v", ledger)
 	}
 	restarted := makeBroker()
+	queued, err := restarted.QueuedReflections()
+	if err != nil || len(queued) != 1 || queued[0] != workspace.IncidentID {
+		t.Fatalf("restart lost queued reflection: %v %v", queued, err)
+	}
 	calls := 0
-	restarted.Reflector = ReflectionWorkerFunc(func(_ context.Context, c IncidentClosure, _ IncidentWorkspace, o *contracts.OutcomeRecord, _, _ string, feedback ReflectionFeedback) (ReflectionDecision, error) {
+	restarted.Reflector = ReflectionWorkerFunc(func(_ context.Context, c IncidentClosure, _ IncidentWorkspace, o *contracts.OutcomeRecord, _, outcomeCommit string, feedback ReflectionFeedback) (ReflectionDecision, error) {
 		calls++
-		if c.Result.ResponderSessionID != closure.Result.ResponderSessionID || feedback.DispatchAt.IsZero() || o.Classification != "failed" {
+		if c.Result.ResponderSessionID != closure.Result.ResponderSessionID || feedback.DispatchAt.IsZero() || o.Classification != "failed" || outcomeCommit != receipt.OutcomeCommit {
 			t.Fatal("restart lost closure/session/dispatch evidence")
 		}
 		return ReflectionDecision{LearningDecision: "no_change", NoChangeReason: "per-cause proof unavailable"}, nil
 	})
-	receipt, err := restarted.ProcessClosure(ctx, closure)
-	if err != nil {
-		t.Fatal(err)
+	for range 2 {
+		if err := restarted.ProcessQueuedReflection(ctx, workspace.IncidentID); err != nil {
+			t.Fatal(err)
+		}
 	}
-	again, err := restarted.ProcessClosure(ctx, closure)
-	if err != nil || again != receipt || calls != 1 {
-		t.Fatalf("restart reflection calls=%d err=%v", calls, err)
+	if calls != 1 {
+		t.Fatalf("restart reflection calls=%d", calls)
+	}
+	if queued, err := restarted.QueuedReflections(); err != nil || len(queued) != 0 {
+		t.Fatalf("finished reflection still queued: %v %v", queued, err)
 	}
 }
 
@@ -237,7 +260,7 @@ func TestReflectionUnverifiedRepairCannotPublishReadmeOnlyLearning(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	receipt, err := native.ProcessClosure(ctx, socialRepeatClosure(workspace))
+	receipt, err := closeAndReflect(t, ctx, native, socialRepeatClosure(workspace))
 	if err != nil {
 		t.Fatal(err)
 	}

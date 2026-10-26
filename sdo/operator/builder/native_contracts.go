@@ -205,6 +205,26 @@ func TestIncidentDetectorsStayQuietOnHealthyBaseline(t *testing.T) {
 }
 `
 
+// controllerStartTest runs the exact validation the controller applies to its
+// detectors at start, so memory the broker accepts always loads.
+const controllerStartTest = `package generated
+
+import (
+    "testing"
+    "sdo.dev/operator/core"
+)
+
+func TestDetectorsLoadInController(t *testing.T) {
+    if err := core.ValidateDetectors(All()); err != nil {
+        t.Fatal("detector.controller-start: the controller would refuse to start: " + err.Error())
+    }
+}
+`
+
+func generateControllerStartTest(root string) error {
+	return os.WriteFile(filepath.Join(root, "generated", "controller_start_test.go"), []byte(controllerStartTest), 0o644)
+}
+
 const metricsContractTest = `package generated
 
 import (

@@ -73,7 +73,7 @@ func (s *run) compile(ctx context.Context) error {
 		rule = RuleDetectorTest
 	}
 	mitigationFailure := false
-	for _, rule := range []string{RuleProgramMitigationRepair, RuleProgramMitigationReplay, RuleProgramRepeatReachable, detectorCorpusObservation, RuleDetectorHealthyBaseline} {
+	for _, rule := range []string{RuleProgramMitigationRepair, RuleProgramMitigationReplay, RuleProgramRepeatReachable, detectorCorpusObservation, RuleDetectorHealthyBaseline, RuleDetectorControllerStart} {
 		if strings.Contains(stage.Output, rule) {
 			messages := map[string]bool{}
 			for _, line := range strings.Split(stage.Output, "\n") {
@@ -100,6 +100,10 @@ func (s *run) compile(ctx context.Context) error {
 			if rule == RuleDetectorHealthyBaseline {
 				path = layout.DiagnosticsDir
 				hint = "incident detectors must stay quiet on the controller pre-incident healthy state; missing observations require controller baseline capture, never post-repair or agent-authored substitutions"
+			}
+			if rule == RuleDetectorControllerStart {
+				path = layout.DiagnosticsDir
+				hint = "accepted detectors must load in the controller: declare only watches the controller supports and read other objects through them, or report the missing watch as an SDK gap"
 			}
 			if rule == detectorCorpusObservation {
 				rule = RuleDetectorTest

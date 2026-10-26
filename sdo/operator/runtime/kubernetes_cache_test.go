@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -10,9 +11,11 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes/fake"
 	ktesting "k8s.io/client-go/testing"
 
+	"sdo.dev/operator/core"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/metrics"
 	"sdo.dev/operator/sdk/servicehealth"
@@ -268,4 +271,21 @@ func TestKubernetesCacheResyncObservesRecreatedNamespaceAfterStop(t *testing.T) 
 		t.Fatalf("create later pod: %v", err)
 	}
 	awaitWatchEvent(t, cache, sdk.WatchKind{APIVersion: "v1", Kind: "Pod", Namespace: "demo"})
+}
+
+// Every watch the controller accepts at start must have an informer, so an
+// accepted detector both loads and is notified of changes.
+func TestEverySupportedWatchHasAnInformer(t *testing.T) {
+	factory := informers.NewSharedInformerFactory(fake.NewSimpleClientset(), 0)
+	for _, key := range core.SupportedWatches() {
+		kind := key[strings.LastIndex(key, "/")+1:]
+		if strings.HasPrefix(key, "sdo.dev/") || (sdk.ObservationTarget{Kind: kind}).Cluster() {
+			// Synthetic traffic, reachability and metrics arrive without an
+			// informer; cluster-scoped kinds are read outside the namespace cache.
+			continue
+		}
+		if _, err := informerFor(factory, key); err != nil {
+			t.Errorf("supported watch %s: %v", key, err)
+		}
+	}
 }
