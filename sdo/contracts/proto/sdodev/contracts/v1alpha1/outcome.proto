@@ -53,6 +53,8 @@ message OutcomeRecord {
   string reflection_skip_reason = 37 [(buf.validate.field).string = {in: ["", "no_session"]}];
   // Broker-only append after reflection; incident evidence remains immutable.
   repeated SdkGap sdk_gaps = 50;
+  // Controller-observed repairs with no opening finding; not health/root-cause proof.
+  repeated UndetectedCause undetected_causes = 51;
 }
 
 message OutcomeTimestamps {
@@ -70,4 +72,16 @@ message SdkGap {
   string scratch_script = 4 [(buf.validate.field).string.min_len = 1];
   // Confirmed-cause resources this exception applies to; never excuses peers.
   repeated ObjectRef resources = 5;
+}
+
+// A measured configuration transition linked to its original successful receipt.
+// Digests exclude status and volatile metadata; raw object/credential bytes stay
+// in the protected capture. Reflection validates executable coverage on the case.
+message UndetectedCause {
+  ObjectRef resource = 1 [(buf.validate.field).required = true];
+  string repair_action_id = 2 [(buf.validate.field).string.min_len = 1];
+  string open_digest = 3 [(buf.validate.field).string.pattern = "^[a-f0-9]{64}$"];
+  string fixed_digest = 4 [(buf.validate.field).string.pattern = "^[a-f0-9]{64}$"];
+  google.protobuf.Timestamp open_observed_at = 5 [(buf.validate.field).required = true];
+  google.protobuf.Timestamp fixed_observed_at = 6 [(buf.validate.field).required = true];
 }

@@ -542,3 +542,52 @@ def test_reflection_exposes_verified_onboarding_separately_from_findings(tmp_pat
         assert "installer-script" in prompt
         assert "Acknowledged at verified onboarding" in prompt
         assert "content unverified" in prompt
+
+
+def test_reflection_preserves_mixed_learning_and_offers_undetected_repairs(tmp_path: Path) -> None:
+    from sdo.agents.responder.reflection import ReflectionTurn
+
+    turn = ReflectionTurn.from_model_output(
+        {
+            "summary": "Learned routing; catalog observation is unavailable",
+            "learning_decision": "updated",
+            "proposed_artifact_ids": ["service-targetport-mismatch"],
+            "sdk_gaps": [
+                {
+                    "fault_class": "database-user",
+                    "primitive": "DatabaseUsers",
+                    "reason": "authentication reference missing",
+                    "scratch_script": "scratch/catalog",
+                    "resources": [{"kind": "Deployment", "namespace": "demo", "name": "geo"}],
+                }
+            ],
+        }
+    )
+    result = turn.to_result()
+    assert result.learning_decision == "updated"
+    assert list(result.proposed_artifact_ids) == ["service-targetport-mismatch"]
+    assert result.sdk_gaps[0].resources[0].name == "geo"
+    backend = _CapturingBackend()
+    outcome = _outcome()
+    transition = outcome.undetected_causes.add(
+        resource={"kind": "Service", "namespace": "demo", "name": "front"},
+        repair_action_id="recorded-patch",
+        open_digest="a" * 64,
+        fixed_digest="b" * 64,
+    )
+    transition.open_observed_at.FromSeconds(100)
+    transition.fixed_observed_at.FromSeconds(103)
+    SessionReflector(backend).resume(
+        session_id="session-1",
+        incident_id=outcome.incident_id,
+        worktree=tmp_path,
+        outcome=outcome,
+        history=[],
+        outcome_commit="accepted-outcome",
+        closure=_fresh_closure(tmp_path),
+    )
+    prompt = str(backend.calls[0]["prompt"])
+    current = json.loads(prompt.split("Current outcome:\n", 1)[1].split("\n\nOutcome history", 1)[0])
+    assert current["undetected_causes"][0]["repair_action_id"] == "recorded-patch"
+    assert "Return updated with scoped peer gaps" in prompt
+    assert "listed undetected transitions" in prompt

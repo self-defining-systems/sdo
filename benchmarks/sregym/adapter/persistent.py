@@ -249,6 +249,16 @@ def runtime_config_payload(config: RuntimeConfig) -> dict[str, Any]:
     return {key: str(value) if isinstance(value, Path) else value for key, value in payload.items()}
 
 
+#: Host-side paths and per-call install modes that do not change what the running controller does.
+_NON_CONTROLLER_SETTINGS = frozenset({"repository", "artifacts_dir", "wait_for_completion", "reuse_existing"})
+
+
+def controller_settings(payload: dict[str, Any]) -> dict[str, Any]:
+    """The recorded settings a running controller was installed with, normalized as saved state."""
+
+    return {key: value for key, value in json.loads(json.dumps(payload)).items() if key not in _NON_CONTROLLER_SETTINGS}
+
+
 def runtime_config_from_payload(payload: dict[str, Any]) -> RuntimeConfig:
     values = dict(payload)
     for name in ("deployed_manifest_paths", "responder_namespaces"):
@@ -579,17 +589,16 @@ def run_persistent_stage(
         # Publish the drained receipt now, so a pipeline stopped during this
         # stage keeps the previous stage's strict receipt and token evidence.
         _publish_drained_receipts(inputs.state_path)
-    reusable = (
+    # A controller serves this stage only if it was installed for the same topology
+    # and the same controller settings (workers, credentials, model, responder scope).
+    same_controller = (
         record is not None
-        and pod is not None
-        and pod.uid == record.controller_pod_uid
         and record.lifecycle_fingerprint == inputs.lifecycle_fingerprint
+        and controller_settings(record.runtime_config) == controller_settings(runtime_config_payload(config))
     )
+    reusable = same_controller and pod is not None and record is not None and pod.uid == record.controller_pod_uid
     restart_after_reset = (
-        record is not None
-        and record.controller_pod_uid == ""
-        and record.lifecycle_fingerprint == inputs.lifecycle_fingerprint
-        and ops.namespace_exists(control)
+        same_controller and record is not None and record.controller_pod_uid == "" and ops.namespace_exists(control)
     )
     shared_adoption = bool(config.shared_accepted_id and not reusable and not restart_after_reset)
     lifecycle_started = clock.monotonic()
