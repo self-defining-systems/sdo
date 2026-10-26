@@ -42,6 +42,27 @@ func TestRegisteredReflectionWorkerExportsTurnUsage(t *testing.T) {
 	}
 }
 
+func TestRegisteredReflectionWorkerSumsEveryTurnUsage(t *testing.T) {
+	logPath := filepath.Join(t.TempDir(), "reflection-usage.jsonl")
+	lines := `{"usage":{"input_tokens":100,"cache_read_input_tokens":60,"cached_input_tokens":60,"output_tokens":10,"llm_calls":1,"model_requests":4}}` + "\n" +
+		"\n" +
+		`{"usage":{"input_tokens":200,"cache_read_input_tokens":150,"cached_input_tokens":150,"output_tokens":20,"llm_calls":1,"model_requests":5}}` + "\n" +
+		`not json` + "\n" +
+		`{"usage":{"input_tokens":50,"cache_read_input_tokens":10,"cached_input_tokens":10,"output_tokens":5,"llm_calls":1,"model_requests":3}}` + "\n"
+	if err := os.WriteFile(logPath, []byte(lines), 0600); err != nil {
+		t.Fatal(err)
+	}
+	worker := RegisteredReflectionWorker{UsageLogPath: func(string) string { return logPath }}
+	decision, err := worker.withUsage(ReflectionDecision{}, "current")
+	if err != nil {
+		t.Fatal(err)
+	}
+	usage := decision.Usage
+	if usage == nil || usage.InputTokens != 350 || usage.OutputTokens != 35 || usage.GetCacheReadInputTokens() != 220 || usage.GetModelRequests() != 12 || usage.LlmCalls != 3 {
+		t.Fatalf("reflection usage must sum every turn (3 turns): %+v", usage)
+	}
+}
+
 func TestRegisteredReflectionWorkerReturnsTypedFailure(t *testing.T) {
 	root := nativeRepository(t)
 	base := nativeGit(t, root, "rev-parse", "HEAD")
