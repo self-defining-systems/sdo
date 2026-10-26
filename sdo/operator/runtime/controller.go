@@ -1314,6 +1314,7 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 		}
 	}
 	c.cacheVerificationLocked(verification)
+	requiresStability := early
 	if early {
 		if !safe || guard != nil && guard.Pending {
 			c.closureStableSince = time.Time{}
@@ -1439,7 +1440,7 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 		logIncidentVerified(c.currentIncidentRequest.IncidentID, healthClearedAt, c.responderCompletedAt, verifiedAt)
 	}
 	windowUsed := time.Duration(0)
-	if early {
+	if requiresStability {
 		windowUsed = c.config.ClosureStabilityWindow
 	}
 	closure := IncidentClosure{
