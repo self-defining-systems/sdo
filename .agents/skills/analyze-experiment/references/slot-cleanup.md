@@ -61,6 +61,16 @@ or infrastructure outcome. Aggregate-only faults remain supported; missing
 per-fault probe timing does not bypass the cleanup gate. DT1's shared detached
 launcher owns supervision and its process run record; dispatch adds no launcher.
 
+## App-namespace drift after recovery (`eval_notes`, `confounds`)
+
+The worker deletes exactly what the injection window created; only an injection object it cannot
+remove fails recovery. Any other kind+name difference from the pre-injection inventory of the app
+namespace (a responder's NetworkPolicy, a ConfigMap an accepted repair added, a deleted Service) is a
+values-free `eval_notes` entry (`app_namespace_inventory_drift`, `not_in_baseline`,
+`missing_from_baseline`) on that row and a `confounds` entry on the next row. Neither blocks the lane.
+Treat a row with `confounds` as starting from a changed app; check whether the drift is SDO's
+accepted repair before calling it a harness leftover.
+
 ## Credential fault followed by immutable seed restoration
 
 **Signature:** official fault recovery passes, but restoring the old seed makes database clients fail.
