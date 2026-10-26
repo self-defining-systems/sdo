@@ -582,6 +582,7 @@ def _sdo_agent(
             results_dir / "admission",
             code_path=runtime_config.code_path,
             timeout_seconds=getattr(args, "admission_timeout_seconds", 300),
+            onboarding_timeout_seconds=getattr(args, "admission_onboarding_timeout_seconds", 600),
             install_config=install_config,
             synchronize=lambda: sync_existing(install_config),
             progress=getattr(args, "admission_progress", None),
