@@ -64,6 +64,15 @@ def test_fixture_failure_keeps_writers_stopped(monkeypatch: pytest.MonkeyPatch, 
                 "items": [{"metadata": {"name": name}, "spec": {"replicas": 1}} for name in social_fixture.CLIENTS]
             }
             return subprocess.CompletedProcess(args, 0, json.dumps(value), "")
+        if args[:2] == ["get", "deployment/post-storage-mongodb"]:
+            value = {
+                "spec": {
+                    "template": {
+                        "spec": {"containers": [{"name": "post-storage-mongodb", "image": "mongo:fixture-test"}]}
+                    }
+                }
+            }
+            return subprocess.CompletedProcess(args, 0, json.dumps(value), "")
         if args[0] == "exec":
             raise RuntimeError("seed write failed")
         return subprocess.CompletedProcess(args, 0, "", "")
@@ -82,3 +91,51 @@ def test_a_dangling_reference_in_any_store_fails(store: str) -> None:
     values[store] = frozenset({"1", "2"})
     with pytest.raises(ValueError, match="1 missing"):
         TimelineSnapshot(**values).require_coherent()
+
+
+def test_mongo_fixture_client_cannot_consume_storage_container_memory(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import json
+    import subprocess
+
+    from benchmarks.sregym.fastloop import social_fixture
+
+    calls: list[tuple[list[str], dict[str, Any]]] = []
+
+    def command(args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        calls.append((args, kwargs))
+        if args[:2] == ["get", "deployment/post-storage-mongodb"]:
+            return subprocess.CompletedProcess(
+                args,
+                0,
+                json.dumps(
+                    {
+                        "spec": {
+                            "template": {
+                                "spec": {
+                                    "containers": [{"name": "post-storage-mongodb", "image": "mongo:fixture-test"}]
+                                }
+                            }
+                        }
+                    }
+                ),
+                "",
+            )
+        if args[0] == "exec":
+            assert not any(arg == "deployment/post-storage-mongodb" for arg in args), (
+                "fixture client must not run in storage container"
+            )
+            assert kwargs["namespace"] == "sregym"
+            assert "--nodb" in args
+            return subprocess.CompletedProcess(args, 0, "CONTROL_OK\n", "")
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    monkeypatch.setattr(social_fixture, "kubectl", command)
+    assert social_fixture._mongo(tmp_path / "config", 'print("CONTROL_OK")').strip() == "CONTROL_OK"
+    pods = [json.loads(kwargs["input_text"]) for args, kwargs in calls if args[:2] == ["apply", "-f"]]
+    assert len(pods) == 1
+    container = pods[0]["spec"]["containers"][0]
+    assert container["image"] == "mongo:fixture-test"
+    assert container["resources"]["limits"]["memory"] == "128Mi"
+    assert any(args[0] == "delete" for args, _ in calls)

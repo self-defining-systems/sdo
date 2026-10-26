@@ -449,3 +449,7 @@ seeding leaves writers stopped; another supported reset repeats the whole
 fixture. This is benchmark setup only, never incident repair. The checker in
 `benchmarks/sregym/fastloop/social_fixture.py` rejects empty fixtures, dangling
 references and malformed int64 output; HTTP admission still runs independently.
+Mongo fixture clients run in temporary, deadline-bounded Pods in the harness
+namespace using the deployed Mongo image; they never share the database's
+memory limit. They have no service-account token and are removed on completion
+or failure. The application resource limits remain unchanged.

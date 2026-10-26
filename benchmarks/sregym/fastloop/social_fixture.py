@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import re
+import uuid
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -82,10 +83,64 @@ def _exec(config: Path, deployment: str, args: list[str], stdin: str | None = No
     ).stdout
 
 
-def _mongo(config: Path, script: str) -> str:
-    # The shell lives in the declared Mongo image; no package installation or
-    # external connection is needed. Scripts contain fixture data, never auth.
-    return _exec(config, "post-storage-mongodb", ["mongo", "--quiet", "--norc", "--eval", script])
+def _mongo(config: Path, script: str, stdin: str | None = None) -> str:
+    """Keep the fixture client outside the storage container's memory budget."""
+    from benchmarks.sregym.fastloop.clean_start import HARNESS_NAMESPACE
+
+    deployment = json.loads(
+        kubectl(
+            ["get", "deployment/post-storage-mongodb", "-o", "json"],
+            namespace=NAMESPACE,
+            kubeconfig=config,
+        ).stdout
+    )
+    containers = deployment["spec"]["template"]["spec"]["containers"]
+    images = [value["image"] for value in containers if value["name"] == "post-storage-mongodb"]
+    if len(images) != 1:
+        raise ValueError("eval: social fixture requires one source-declared Mongo container")
+    name = "social-fixture-client-" + uuid.uuid4().hex[:12]
+    pod = {
+        "apiVersion": "v1",
+        "kind": "Pod",
+        "metadata": {"name": name, "namespace": HARNESS_NAMESPACE},
+        "spec": {
+            "restartPolicy": "Never",
+            "activeDeadlineSeconds": 120,
+            "automountServiceAccountToken": False,
+            "containers": [
+                {
+                    "name": "client",
+                    "image": images[0],
+                    "imagePullPolicy": "IfNotPresent",
+                    "command": ["sleep", "120"],
+                    "resources": {
+                        "requests": {"cpu": "25m", "memory": "64Mi"},
+                        "limits": {"cpu": "500m", "memory": "128Mi"},
+                    },
+                }
+            ],
+        },
+    }
+    kubectl(["apply", "-f", "-"], namespace=HARNESS_NAMESPACE, kubeconfig=config, input_text=json.dumps(pod))
+    try:
+        kubectl(
+            ["wait", "--for=condition=Ready", f"pod/{name}", "--timeout=60s"],
+            namespace=HARNESS_NAMESPACE,
+            kubeconfig=config,
+        )
+        connection = 'var db=new Mongo("post-storage-mongodb.social-network.svc.cluster.local:27017").getDB("test");\n'
+        return kubectl(
+            ["exec", "-i", f"pod/{name}", "--", "mongo", "--nodb", "--quiet", "--norc", "--eval", connection + script],
+            namespace=HARNESS_NAMESPACE,
+            kubeconfig=config,
+            input_text=stdin,
+        ).stdout
+    finally:
+        kubectl(
+            ["delete", f"pod/{name}", "--ignore-not-found=true", "--grace-period=0", "--wait=true", "--timeout=30s"],
+            namespace=HARNESS_NAMESPACE,
+            kubeconfig=config,
+        )
 
 
 def parse_post_ids(output: str) -> frozenset[str]:
@@ -104,7 +159,7 @@ def parse_post_ids(output: str) -> frozenset[str]:
 def _read_mongo_ids(config: Path, *, timelines: bool) -> frozenset[str]:
     if timelines:
         script = (
-            'var c=new Mongo("user-timeline-mongodb:27017").getDB("user-timeline")'
+            'var c=new Mongo("user-timeline-mongodb.social-network.svc.cluster.local:27017").getDB("user-timeline")'
             '.getCollection("user-timeline"); c.find({}, {posts:1}).forEach(function(d){'
             "(d.posts||[]).forEach(function(p){print(p.post_id.toString());});});"
         )
@@ -175,7 +230,8 @@ def restore_social_fixture(config: Path) -> TimelineSnapshot:
     # the production C++ readers require those types even for small fixture IDs.
     script = """var posts=JSON.parse(cat("/dev/stdin"));
 var p=db.getSiblingDB("post").post;
-var t=new Mongo("user-timeline-mongodb:27017").getDB("user-timeline").getCollection("user-timeline");
+var t=new Mongo("user-timeline-mongodb.social-network.svc.cluster.local:27017")
+  .getDB("user-timeline").getCollection("user-timeline");
 p.drop(); t.drop(); var users={};
 posts.forEach(function(post){
   var user=post.creator.user_id;
@@ -188,7 +244,7 @@ posts.forEach(function(post){
 assert.eq(p.insertMany(posts).insertedIds.length, posts.length);
 assert.eq(t.insertMany(Object.keys(users).map(function(k){return users[k];})).insertedIds.length, 962);
 print("SOCIAL_FIXTURE_SEEDED");"""
-    _exec(config, "post-storage-mongodb", ["mongo", "--quiet", "--norc", "--eval", script], json.dumps(posts))
+    _mongo(config, script, json.dumps(posts))
     # Each post mentions its author, so the same ten references are valid in the
     # home feed as well as the user feed. Every cache is replaced, never merged.
     script = (
