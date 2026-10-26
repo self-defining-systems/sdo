@@ -33,8 +33,11 @@ func TestObservationNarrowingPreservesPermissiveGrants(t *testing.T) {
 	if len(combined.ObservationClusterBindings) != 2 {
 		t.Fatal("observation lifecycle must retain controller and script bindings")
 	}
-	scriptBinding := combined.ObservationClusterBindings[1]
-	if scriptBinding.RoleRef.Name != combined.ObservationClusterRoles[0].Name || len(scriptBinding.Subjects) != 1 || scriptBinding.Subjects[0].Name != "sdo-script" || scriptBinding.Subjects[0].Namespace != cfg.Namespace {
+	scriptFound := false
+	for _, b := range combined.ObservationClusterBindings {
+		scriptFound = scriptFound || (b.RoleRef.Name == combined.ObservationClusterRoles[0].Name && len(b.Subjects) == 1 && b.Subjects[0].Name == "sdo-script" && b.Subjects[0].Namespace == cfg.Namespace)
+	}
+	if !scriptFound {
 		t.Fatal("script lost its inherited observation permission")
 	}
 	if !reflect.DeepEqual(combined.AppRoles, permissive.AppRoles) || !reflect.DeepEqual(combined.AppBindings, permissive.AppBindings) || !reflect.DeepEqual(combined.ClusterRoles, permissive.ClusterRoles) || !reflect.DeepEqual(combined.ClusterBindings, permissive.ClusterBindings) {
