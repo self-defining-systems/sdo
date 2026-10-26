@@ -51,6 +51,7 @@ type ToolRequest struct {
 }
 
 type ToolResponse struct {
+	ProgramRevisions           map[string]string              `json:"program_revisions,omitempty"`
 	OptionReports              []*contracts.MitigationReport  `json:"-"`
 	UnexplainedRemovalBlockers []UnexplainedRemovalBlocker    `json:"unexplained_removal_blockers,omitempty"`
 	BeforeFindings             []sdk.Finding                  `json:"before_findings"`
@@ -120,6 +121,8 @@ type RecordedPlanApplication struct {
 
 type selectedPlan struct {
 	targetFingerprints []string
+	revision           string
+	diagnoser          program.Diagnoser
 	id                 string
 	programID          string
 	bindings           program.Bindings
@@ -128,56 +131,60 @@ type selectedPlan struct {
 
 // ResponderLoop holds one incident's tool state while its responder Job runs.
 type ResponderLoop struct {
-	pendingWrites     map[string]pendingMitigation
-	MutationGate      *apihistory.MutationGate
-	Now               func() time.Time
-	CachedFindings    func() ToolResponse
-	IncidentStatus    func() *apihistory.IncidentVerified
-	WaitClosure       func(context.Context, time.Duration) ToolResponse
-	ExternalReceipts  func() ([]RepairActionReceipt, bool, string, error)
-	gateError         error
-	closureReceipts   []RepairActionReceipt
-	continuation      responderContinuation
-	MenuConfig        *ResponderMenuConfig
-	menu              *contracts.MitigationMenu
-	menuEntries       map[string]menuEntry
-	menuSession       *contracts.MitigationSession
-	menuReports       []*contracts.MitigationReport
-	menuExecutions    map[string][]MenuRoundExecution
-	menuRepairs       []RepairActionReceipt
-	VerifyClosure     func(context.Context) ToolResponse
-	VerifyResult      func(context.Context, IncidentResult) ToolResponse
-	CurrentEvidence   func() *IncidentRequest
-	Request           IncidentRequest
-	Programs          program.ProgramRegistry
-	Provider          SnapshotProvider
-	Detectors         []sdk.Detector
-	Executor          PlanExecutor
-	ReadView          func(sdk.DetectionContext) program.ReadView
-	DiagnosisDeadline time.Duration
-	MaxBatches        int
-	Trust             map[string]ProgramTrust
-	CorpusSessionRoot string
-	capturePhase      string
-	timing            toolTiming
-	preApplyCaptured  bool
-	saveToolState     func(context.Context, []byte) error
-	operationMu       sync.Mutex
-	mu                sync.Mutex
-	sessionID         string
-	plans             map[string]selectedPlan
-	applications      map[string]PlanApplicationResult
-	applicationsLog   []RecordedPlanApplication
-	completedRepairs  []continuationRepair
-	failureSignals    []string
-	calls             []ToolCall
-	runs              []ProgramRun
-	matchedViews      map[string]program.ReadView
-	matchedPlans      map[string]PlanApplicationResult
-	matchedPlanErrors map[string]error
-	lastDiagnosisView program.ReadView
-	findings          []sdk.Finding
-	batches           int
+	// WorkingProgramRoot is set by the production loop factory to the mounted
+	// proposal checkout. Embedders with an in-memory registry may leave it empty.
+	WorkingProgramRoot string
+	workingPrograms    []*workingProgram
+	pendingWrites      map[string]pendingMitigation
+	MutationGate       *apihistory.MutationGate
+	Now                func() time.Time
+	CachedFindings     func() ToolResponse
+	IncidentStatus     func() *apihistory.IncidentVerified
+	WaitClosure        func(context.Context, time.Duration) ToolResponse
+	ExternalReceipts   func() ([]RepairActionReceipt, bool, string, error)
+	gateError          error
+	closureReceipts    []RepairActionReceipt
+	continuation       responderContinuation
+	MenuConfig         *ResponderMenuConfig
+	menu               *contracts.MitigationMenu
+	menuEntries        map[string]menuEntry
+	menuSession        *contracts.MitigationSession
+	menuReports        []*contracts.MitigationReport
+	menuExecutions     map[string][]MenuRoundExecution
+	menuRepairs        []RepairActionReceipt
+	VerifyClosure      func(context.Context) ToolResponse
+	VerifyResult       func(context.Context, IncidentResult) ToolResponse
+	CurrentEvidence    func() *IncidentRequest
+	Request            IncidentRequest
+	Programs           program.ProgramRegistry
+	Provider           SnapshotProvider
+	Detectors          []sdk.Detector
+	Executor           PlanExecutor
+	ReadView           func(sdk.DetectionContext) program.ReadView
+	DiagnosisDeadline  time.Duration
+	MaxBatches         int
+	Trust              map[string]ProgramTrust
+	CorpusSessionRoot  string
+	capturePhase       string
+	timing             toolTiming
+	preApplyCaptured   bool
+	saveToolState      func(context.Context, []byte) error
+	operationMu        sync.Mutex
+	mu                 sync.Mutex
+	sessionID          string
+	plans              map[string]selectedPlan
+	applications       map[string]PlanApplicationResult
+	applicationsLog    []RecordedPlanApplication
+	completedRepairs   []continuationRepair
+	failureSignals     []string
+	calls              []ToolCall
+	runs               []ProgramRun
+	matchedViews       map[string]program.ReadView
+	matchedPlans       map[string]PlanApplicationResult
+	matchedPlanErrors  map[string]error
+	lastDiagnosisView  program.ReadView
+	findings           []sdk.Finding
+	batches            int
 }
 
 func NewResponderLoop(request IncidentRequest, programs program.ProgramRegistry, provider SnapshotProvider, detectors []sdk.Detector, executor PlanExecutor, maxBatches int) *ResponderLoop {
@@ -315,6 +322,15 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 				}
 			}
 		}
+		if request.Command == "apply" {
+			response.ProgramRevisions = map[string]string{}
+			for _, plan := range applied {
+				response.ProgramRevisions[plan.programID] = plan.revision
+			}
+		}
+		if request.ProgramID != "" && (request.Command == "plan" || request.Command == "diagnose") && response.Error == "" {
+			response.ProgramRevisions = map[string]string{request.ProgramID: l.programRevision(request.ProgramID)}
+		}
 		responseJSON := recordedToolResponseJSON(response, applied)
 		l.calls = append(l.calls, ToolCall{Command: request.Command, At: time.Now().UTC(), RequestJSON: string(requestJSON), ResponseJSON: string(responseJSON), Error: response.Error, Summary: response.Summary})
 		persistStarted := time.Now()
@@ -352,6 +368,26 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 			response.Error = "incident_verified"
 			response.FailureReason = "incident_verified"
 			response.Receipt = &contracts.RepairActionReceipt{FailureReason: "incident_verified", ActionId: "sdo-rejected-" + l.sessionID, Kind: request.Command, Summary: "incident is closed", StartedAt: contractTimestamp(started.UTC()), CompletedAt: contractTimestamp(time.Now().UTC())}
+			return response
+		}
+	}
+	switch request.Command {
+	case "menu", "plan", "diagnose":
+		if err := l.loadWorkingPrograms(ctx, request.ProgramID); err != nil {
+			response.Error = err.Error()
+			return response
+		}
+		if request.Command == "diagnose" && request.ProgramID == "" {
+			if registry, ok := l.Programs.(*workingProgramRegistry); ok {
+				for _, message := range registry.failures {
+					response.Error = message
+					return response
+				}
+			}
+		}
+	case "mitigate":
+		if err := l.loadSelectedWorkingPrograms(ctx, request); err != nil {
+			response.Error = err.Error()
 			return response
 		}
 	}
@@ -403,7 +439,7 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 			started := time.Now()
 			verdict := program.RunDiagnose(ctx, p, view, request.Bindings, l.deadline())
 			_, canMitigate := l.Programs.Mitigator(request.ProgramID)
-			run := ProgramRun{CanMitigate: &canMitigate, ProgramID: request.ProgramID, Bindings: request.Bindings, Verdict: verdict, Duration: time.Since(started)}
+			run := ProgramRun{ProgramRevision: l.programRevision(request.ProgramID), CanMitigate: &canMitigate, ProgramID: request.ProgramID, Bindings: request.Bindings, Verdict: verdict, Duration: time.Since(started)}
 			response.ProgramRuns = []ProgramRun{run}
 			l.runs = append(l.runs, run)
 		}
@@ -507,12 +543,13 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 // writer's definition; everything bulky is reduced to a count.
 type truncatedToolResponse struct {
 	ToolResponse
-	VerificationSummary *VerificationSummary `json:"verification_summary,omitempty"`
-	Truncated           bool                 `json:"truncated"`
-	FindingsCount       int                  `json:"findings_count"`
-	ProgramRunsCount    int                  `json:"program_runs_count"`
-	DetectorStatesCount int                  `json:"detector_states_count"`
-	PatchesCount        int                  `json:"patches_count"`
+	VerificationSummary   *VerificationSummary `json:"verification_summary,omitempty"`
+	Truncated             bool                 `json:"truncated"`
+	FindingsCount         int                  `json:"findings_count"`
+	ProgramRunsCount      int                  `json:"program_runs_count"`
+	ProgramRevisionsCount int                  `json:"program_revisions_count"`
+	DetectorStatesCount   int                  `json:"detector_states_count"`
+	PatchesCount          int                  `json:"patches_count"`
 }
 
 // recordedToolResponseJSON caps the stored response. An apply record keeps every
@@ -527,7 +564,7 @@ func recordedToolResponseJSON(response ToolResponse, applied []selectedPlan) []b
 	}
 	record := truncatedToolResponse{
 		ToolResponse: ToolResponse{Command: response.Command, Summary: boundedToolText(response.Summary), Error: boundedToolText(response.Error), PlanID: response.PlanID, ApplicationID: response.ApplicationID, LoopsUsed: response.LoopsUsed, LoopsAllowed: response.LoopsAllowed, Healthy: response.Healthy, TargetedHealthy: response.TargetedHealthy, Unresolved: response.Unresolved, RolloutPending: compactRolloutPending(response.RolloutPending)},
-		Truncated:    true, FindingsCount: len(response.Findings), ProgramRunsCount: len(response.ProgramRuns), DetectorStatesCount: len(response.DetectorStates), PatchesCount: len(response.Patches),
+		Truncated:    true, ProgramRevisionsCount: len(response.ProgramRevisions), FindingsCount: len(response.Findings), ProgramRunsCount: len(response.ProgramRuns), DetectorStatesCount: len(response.DetectorStates), PatchesCount: len(response.Patches),
 	}
 	if response.Command == "verify" {
 		record.VerificationSummary = compactVerification(response)
@@ -634,6 +671,7 @@ func (l *ResponderLoop) diagnose(ctx context.Context, findings []sdk.Finding) []
 		return nil
 	}
 	runs := SelectProgramCandidates(ctx, l.Programs, view, findings, l.deadline())
+	l.stampProgramRuns(runs)
 	l.rememberMatchedViews(ctx, runs, view)
 	l.lastDiagnosisView = view
 	l.runs = append(l.runs, runs...)
@@ -674,6 +712,7 @@ func (l *ResponderLoop) refresh(ctx context.Context) ([]sdk.Finding, []ProgramRu
 	states = append(states, driftStates...)
 	l.findings = findings
 	runs := SelectProgramCandidates(ctx, l.Programs, view, findings, l.deadline())
+	l.stampProgramRuns(runs)
 	l.rememberMatchedViews(ctx, runs, view)
 	l.lastDiagnosisView = view
 	l.runs = append(l.runs, runs...)
@@ -783,7 +822,8 @@ func (l *ResponderLoop) plan(ctx context.Context, request ToolRequest, response 
 		return
 	}
 	id := fmt.Sprintf("plan-%s-%d", l.sessionID, len(l.plans)+1)
-	l.plans[id] = selectedPlan{targetFingerprints: append([]string(nil), request.FindingFingerprints...), id: id, programID: request.ProgramID, bindings: cloneProgramBindings(request.Bindings), plan: plan}
+	diagnoser, _ := l.Programs.Diagnoser(request.ProgramID)
+	l.plans[id] = selectedPlan{revision: l.programRevision(request.ProgramID), diagnoser: diagnoser, targetFingerprints: append([]string(nil), request.FindingFingerprints...), id: id, programID: request.ProgramID, bindings: cloneProgramBindings(request.Bindings), plan: plan}
 	response.PlanID, response.Patches = id, preview.Patches
 	response.Summary = fmt.Sprintf("%s: %d dry-run patches", id, len(preview.Patches))
 }
@@ -877,8 +917,8 @@ func (l *ResponderLoop) apply(ctx context.Context, request ToolRequest, response
 			// Program trust counts an unverified application against the program's
 			// current revision, durably, even if the responder is restarted.
 			failedRuns := make([]ProgramRun, 0, len(programIDs))
-			for _, programID := range programIDs {
-				failedRuns = append(failedRuns, ProgramRun{ProgramID: programID})
+			for _, plan := range selected {
+				failedRuns = append(failedRuns, ProgramRun{ProgramID: plan.programID, ProgramRevision: plan.revision})
 			}
 			fillProgramRevisions(ctx, failedRuns, l.Request.RepositoryWorktree, l.Request.SourceCommit)
 			for _, run := range failedRuns {
@@ -927,13 +967,16 @@ func (l *ResponderLoop) verify(ctx context.Context, applied []selectedPlan, resp
 		if l.Programs == nil {
 			break
 		}
-		p, ok := l.Programs.Diagnoser(plan.programID)
+		p, ok := plan.diagnoser, plan.diagnoser != nil
+		if !ok {
+			p, ok = l.Programs.Diagnoser(plan.programID)
+		}
 		if !ok {
 			continue
 		}
 		started := time.Now()
 		verdict := program.RunDiagnose(ctx, p, view, plan.bindings, l.deadline())
-		run := ProgramRun{ProgramID: plan.programID, Bindings: plan.bindings, Verdict: verdict, Duration: time.Since(started)}
+		run := ProgramRun{ProgramRevision: plan.revision, ProgramID: plan.programID, Bindings: plan.bindings, Verdict: verdict, Duration: time.Since(started)}
 		response.ProgramRuns = append(response.ProgramRuns, run)
 		l.runs = append(l.runs, run)
 		if verdict.Result == program.Match {
@@ -991,6 +1034,7 @@ func (l *ResponderLoop) verify(ctx context.Context, applied []selectedPlan, resp
 	response.Findings, response.DetectorStates = append([]sdk.Finding(nil), findings...), states
 	if len(findings) > 0 {
 		runs := SelectProgramCandidates(ctx, l.Programs, view, findings, l.deadline())
+		l.stampProgramRuns(runs)
 		response.ProgramRuns = append(response.ProgramRuns, runs...)
 		l.runs = append(l.runs, runs...)
 	}
