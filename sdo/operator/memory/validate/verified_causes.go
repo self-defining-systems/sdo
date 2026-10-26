@@ -10,7 +10,8 @@ import (
 // VerifiedReflectionCauses selects controller evidence, never aggregate success
 // or the responder's cause claim. A cause needs a recorded mutation and fresh
 // clearance of its opening findings, including symptoms that recovered without
-// being written. Every written resource remains bound to an opening finding.
+// being written. Every written resource remains bound to an opening finding:
+// its own, or on a success outcome a cleared finding of the same cause.
 // Partial outcomes must additionally carry controller eligibility for the cause.
 func VerifiedReflectionCauses(outcome *contracts.OutcomeRecord) []*contracts.ReflectionCauseWork {
 	owners := map[[3]string]int{}
@@ -57,8 +58,11 @@ func VerifiedReflectionCauses(outcome *contracts.OutcomeRecord) []*contracts.Ref
 // Written targets need primary findings; symptoms may be related observations.
 // On a success outcome, a symptom no opening finding observed is unobserved
 // context, not failed proof; a symptom that was observed must still clear.
-// Opening findings omit findings that activate after launch, so without
-// global health closure every symptom needs its own cleared finding.
+// A written target no opening finding observed is covered by its cause when
+// another resource of the same cause has an opening finding that cleared
+// after the last cause write. Opening findings omit findings that activate
+// after launch, so without global health closure every resource needs its
+// own cleared finding.
 // Callers still enforce ownership, trusted action provenance and eligibility.
 func RepairedCauseObserved(outcome *contracts.OutcomeRecord, resources []*contracts.ObjectRef) bool {
 	repaired, after, valid := causeRepairs(outcome, resources)
@@ -68,14 +72,26 @@ func RepairedCauseObserved(outcome *contracts.OutcomeRecord, resources []*contra
 	healthClosed := outcome.GetClassification() == "success"
 	for _, resource := range resources {
 		primary := slices.ContainsFunc(repaired, func(ref *contracts.ObjectRef) bool { return equalCauseResource(ref, resource) })
-		if !primary && healthClosed && !openingObserved(outcome, resource) {
-			continue
+		if healthClosed && !openingObserved(outcome, resource) {
+			if !primary || causeFindingCleared(outcome, resources, repaired, after) {
+				continue
+			}
+			return false
 		}
 		if !clearedOpenFinding(outcome, resource, after, primary) {
 			return false
 		}
 	}
 	return true
+}
+
+// causeFindingCleared reports whether any cause resource an opening finding
+// observed cleared after the last cause write.
+func causeFindingCleared(outcome *contracts.OutcomeRecord, resources, repaired []*contracts.ObjectRef, after time.Time) bool {
+	return slices.ContainsFunc(resources, func(resource *contracts.ObjectRef) bool {
+		primary := slices.ContainsFunc(repaired, func(ref *contracts.ObjectRef) bool { return equalCauseResource(ref, resource) })
+		return openingObserved(outcome, resource) && clearedOpenFinding(outcome, resource, after, primary)
+	})
 }
 
 // openingObserved reports whether any opening finding named the resource as
