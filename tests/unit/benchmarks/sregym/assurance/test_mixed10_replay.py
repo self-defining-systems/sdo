@@ -249,6 +249,26 @@ def test_failed_mutation_never_claims_completion(tmp_path: Path) -> None:
     assert not result["confirmed_root_causes"]
 
 
+def test_failed_replay_retains_complete_command_traceback(tmp_path: Path) -> None:
+    traceback = "Traceback (most recent call last):\n" + "  caller frame\n" * 100 + "OSError: synthetic final cause"
+
+    class FailedTools(Tools):
+        def __call__(self, command: str, *, timeout: float = 300) -> tuple[int, str]:
+            if shlex.split(command)[:2] == ["sdo", "act"]:
+                return 1, traceback
+            return super().__call__(command, timeout=timeout)
+
+    result = replay(FailedTools(), 2, {"incident_id": "test", "namespace": "social-network"}, tmp_path)
+    assert result["status"] == "failed"
+    assert traceback in result["repair_changes"][-1]
+    from google.protobuf import json_format
+
+    from sdo.contracts import IncidentResult
+
+    response = json_format.ParseDict(result, IncidentResult())
+    assert traceback in response.repair_changes[-1]
+
+
 def test_wrong_namespace_rejected_before_any_command(tmp_path: Path) -> None:
     tools = Tools()
     with pytest.raises(ValueError, match="namespace"):
