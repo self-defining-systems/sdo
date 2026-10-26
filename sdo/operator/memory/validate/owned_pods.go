@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 
+	"google.golang.org/protobuf/proto"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/sdk"
@@ -68,7 +70,19 @@ func replacedOwnedPod(opens []sdktest.Snapshot, fixed sdktest.Snapshot, ref *con
 // ownedByCauseResource follows controller owner references only; a non-
 // controlling owner or a name match without the observed chain is not owned.
 func ownedByCauseResource(open sdktest.Snapshot, object *unstructured.Unstructured, pod *contracts.ObjectRef, cause []*contracts.ObjectRef) bool {
-	for depth := 0; object != nil && depth < maxOwnerDepth; depth++ {
+	return slices.ContainsFunc(observedOwnerChain(open, object), func(owner *contracts.ObjectRef) bool {
+		return slices.ContainsFunc(cause, func(other *contracts.ObjectRef) bool {
+			return other != pod && other.GetKind() != "Pod" && equalCauseResource(other, owner)
+		})
+	})
+}
+
+// observedOwnerChain is the object's controller owner chain in one snapshot,
+// nearest owner first. Each hop's owner comes from the previous object's
+// controller reference; the chain stops where an owner is not observed.
+func observedOwnerChain(open sdktest.Snapshot, object *unstructured.Unstructured) []*contracts.ObjectRef {
+	var chain []*contracts.ObjectRef
+	for object != nil && len(chain) < maxOwnerDepth {
 		var owner *contracts.ObjectRef
 		for _, reference := range object.GetOwnerReferences() {
 			if reference.Controller != nil && *reference.Controller {
@@ -76,16 +90,45 @@ func ownedByCauseResource(open sdktest.Snapshot, object *unstructured.Unstructur
 			}
 		}
 		if owner == nil {
-			return false
+			break
 		}
-		for _, other := range cause {
-			if other != pod && other.GetKind() != "Pod" && equalCauseResource(other, owner) {
-				return true
-			}
-		}
+		chain = append(chain, owner)
 		object = snapshotObject(open, owner.GetKind(), owner.GetNamespace(), owner.GetName())
 	}
-	return false
+	return chain
+}
+
+// ObservedRepairOwners records, for each written resource that has no owner
+// chain yet, the controller owner chain SDO observed in the incident's open
+// capture (latest open phase first). Responder-supplied chains never reach
+// the outcome: result ingest drops them. Chains the controller recorded from
+// plan pre-images stay. A resource absent from every open phase gets no
+// chain, so its write stays unattributed.
+func ObservedRepairOwners(outcome *contracts.OutcomeRecord, capture string) {
+	if capture == "" || len(outcome.GetRepairActions()) == 0 {
+		return
+	}
+	var opens []sdktest.Snapshot
+	for _, phase := range []string{"open@pre-apply", "open@settle", "open@detect"} {
+		var s sdktest.Snapshot
+		raw, err := os.ReadFile(filepath.Join(capture, phase+".json"))
+		if err == nil && json.Unmarshal(raw, &s) == nil && !s.ObservedAt().IsZero() {
+			opens = append(opens, s)
+		}
+	}
+	for _, action := range outcome.GetRepairActions() {
+		for _, written := range action.GetResources() {
+			if slices.ContainsFunc(action.GetOwners(), func(owners *contracts.ResourceOwners) bool { return equalCauseResource(owners.GetResource(), written) }) {
+				continue
+			}
+			for _, open := range opens {
+				if chain := observedOwnerChain(open, snapshotObject(open, written.GetKind(), written.GetNamespace(), written.GetName())); len(chain) > 0 {
+					action.Owners = append(action.Owners, &contracts.ResourceOwners{Resource: proto.Clone(written).(*contracts.ObjectRef), OwnerChain: chain})
+					break
+				}
+			}
+		}
+	}
 }
 
 func snapshotObject(snapshot sdktest.Snapshot, kind, namespace, name string) *unstructured.Unstructured {
