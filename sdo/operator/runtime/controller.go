@@ -32,7 +32,9 @@ type Dispatcher interface {
 }
 
 type ControllerConfig struct {
-	ResponseStages         []string
+	CodePath         CodePathConfig
+	CodePathRegistry *CodePathRegistry
+
 	Application            string
 	Namespace              string
 	SourceCommit           string
@@ -70,6 +72,7 @@ type dispatchCompletion struct {
 
 type Controller struct {
 	config                      ControllerConfig
+	codePath                    *CodePath
 	startedAt                   time.Time
 	scheduler                   *Scheduler
 	detectors                   map[string]sdk.Detector
@@ -212,6 +215,14 @@ func NewController(
 	dispatcher Dispatcher,
 	start time.Time,
 ) (*Controller, error) {
+	registry := config.CodePathRegistry
+	if registry == nil {
+		registry = NewCodePathRegistry()
+	}
+	resolvedPath, err := registry.Resolve(config.CodePath)
+	if err != nil {
+		return nil, err
+	}
 	if provider == nil {
 		return nil, fmt.Errorf("snapshot provider is required")
 	}
@@ -251,11 +262,6 @@ func NewController(
 	if config.RepairPolicy != "commit" && config.RepairPolicy != "recorded-actions" {
 		return nil, fmt.Errorf("unsupported repair policy %q", config.RepairPolicy)
 	}
-	stageNames, err := responseStageNames(config.ResponseStages)
-	if err != nil {
-		return nil, err
-	}
-	config.ResponseStages = stageNames
 	closureRetry, err := config.ClosureRetry.withDefaults()
 	if err != nil {
 		return nil, err
@@ -286,7 +292,7 @@ func NewController(
 	}
 	sort.Strings(healthDetectorIDs)
 	return &Controller{
-		config: config, startedAt: start, scheduler: NewScheduler(detectors, start, config.Namespace), detectors: byID,
+		config: config, codePath: resolvedPath, startedAt: start, scheduler: NewScheduler(detectors, start, config.Namespace), detectors: byID,
 		tracker:    tracker,
 		gateClears: make(map[string]*gateClear), gateProbes: make(map[string]time.Time),
 		batcher: NewDebouncedBatcher(config.BatchDebounce), provider: provider, dispatcher: dispatcher,
@@ -1188,6 +1194,7 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 		return
 	}
 	early := !c.responderDone
+	requiresStability := early || c.codePath != nil && c.codePath.Selection.DetectorSource == "shell"
 	if early && c.responseStagesRunning {
 		c.mu.Unlock()
 		return
@@ -1288,7 +1295,7 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 		}
 	}
 	c.cacheVerificationLocked(verification)
-	if early {
+	if requiresStability {
 		if !safe || guard != nil && guard.Pending {
 			c.closureStableSince = time.Time{}
 			c.mu.Unlock()
@@ -1296,19 +1303,21 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 		}
 		if !verified {
 			c.closureStableSince = time.Time{}
-		}
-		if !verified {
-			c.mu.Unlock()
-			return
-		}
-		if c.closureStableSince.IsZero() {
-			c.closureStableSince = now
-		}
-		if now.Before(c.closureStableSince.Add(c.config.ClosureStabilityWindow)) {
-			c.mu.Unlock()
-			return
+			if early {
+				c.mu.Unlock()
+				return
+			}
+		} else {
+			if c.closureStableSince.IsZero() {
+				c.closureStableSince = now
+			}
+			if now.Before(c.closureStableSince.Add(c.config.ClosureStabilityWindow)) {
+				c.mu.Unlock()
+				return
+			}
 		}
 	}
+
 	if healthVerified && c.terminalInventoryBlockerLocked(verification) {
 		terminalFailure = true
 		slog.Info("incident_terminal_blocker", "incident_id", c.currentIncidentRequest.IncidentID, "reason", "unchanged_non_transient_findings", "findings", len(verification.Findings))
@@ -1399,7 +1408,7 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 		logIncidentVerified(c.currentIncidentRequest.IncidentID, healthClearedAt, c.responderCompletedAt, verifiedAt)
 	}
 	windowUsed := time.Duration(0)
-	if early {
+	if requiresStability {
 		windowUsed = c.config.ClosureStabilityWindow
 	}
 	closure := IncidentClosure{

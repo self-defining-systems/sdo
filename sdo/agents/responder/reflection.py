@@ -20,6 +20,7 @@ from libs.agent_cli.structured import (
     run_structured_turn,
     turn_usage,
 )
+from sdo.agents.code_paths import agent_guidance
 from sdo.agents.memory_diagnostics import render_validation_feedback
 from sdo.agents.prompt_templates import RenderedPrompt, named_prompt, render_prompt
 from sdo.agents.responder.credentials import SKILLS_ROOT
@@ -175,6 +176,20 @@ def _logical_learning_request(
     if not closure.request.HasField("memory_snapshot"):
         raise ValueError("logical reflection requires an operational memory snapshot")
     snapshot = closure.request.memory_snapshot
+    if agent_guidance() == "shell":
+        return render_prompt(
+            "responder",
+            "reflection_shell",
+            part="reflection.instructions",
+            skills_root=SKILLS_ROOT,
+            branch_instruction=branch_instruction("reflection"),
+            memory_view_json=named_prompt("reflection.memory", json.dumps(memory_view(snapshot), indent=2)),
+            outcome_commit=outcome_commit,
+            outcome_json=named_prompt(
+                "reflection.outcome", json_format.MessageToJson(outcome, preserving_proto_field_name=True)
+            ),
+            history_section=named_prompt("reflection.history", _history_section(outcome, history, history_directory)),
+        )
     work_section = ""
     if cause_work or unassigned_work:
         work_json = json.dumps(
@@ -288,6 +303,11 @@ class SessionReflector:
                     )
                 return self.backend.fresh(worktree=worktree, prompt=prompt, idempotency_key=idempotency_key)
             if session_mode == "fresh":
+                if agent_guidance() == "shell":
+                    prompt = render_prompt(
+                        "responder", "reflection_shell_fresh", part="reflection.instructions", request=request
+                    )
+                    return self.backend.fresh(worktree=worktree, prompt=prompt, idempotency_key=idempotency_key)
                 if closure is None:
                     raise ValueError("a fresh first reflection attempt requires the verified closure for its brief")
                 # The brief replaces the responder transcript, which a resumed

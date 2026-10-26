@@ -47,6 +47,9 @@ func SnapshotAt(ctx context.Context, reader CatalogReader, commit string) (*cont
 var fullCommitPattern = regexp.MustCompile(`^(?:[0-9a-f]{40}|[0-9a-f]{64})$`)
 
 func (s *JSONStore) SnapshotAt(ctx context.Context, commit string) (*contracts.OperationalMemorySnapshot, error) {
+	return s.snapshotAt(ctx, commit, CandidateSnapshot)
+}
+func (s *JSONStore) snapshotAt(ctx context.Context, commit string, candidate func(string, string) (*contracts.OperationalMemorySnapshot, error)) (*contracts.OperationalMemorySnapshot, error) {
 	if s == nil || s.root == "" {
 		return nil, errors.New("accepted repository is required")
 	}
@@ -106,7 +109,7 @@ func (s *JSONStore) SnapshotAt(ctx context.Context, commit string) (*contracts.O
 	if err := s.exportCatalogBlobs(ctx, root, selected); err != nil {
 		return nil, err
 	}
-	return CandidateSnapshot(root, commit)
+	return candidate(root, commit)
 }
 
 // catalogBlob names one immutable Git object and its validated relative path.

@@ -37,6 +37,8 @@ const (
 )
 
 type Config struct {
+	CodePath *contracts.CodePathConfig
+
 	ResponderMenu                                   bool
 	ObservationCeiling                              sdk.ObservationScope
 	Namespace, ControlNamespace, Application        string
@@ -401,6 +403,7 @@ func controllerJob(c Config) *batchv1.Job {
 	if provider == "" {
 		provider = "codex"
 	}
+	args = append(args, codePathArgs(c)...)
 	if c.ScriptImage != "" {
 		args = append(args, "--script-image", c.ScriptImage)
 	}

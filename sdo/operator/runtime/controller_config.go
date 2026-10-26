@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"strconv"
-	"strings"
 
 	"google.golang.org/protobuf/types/known/durationpb"
 
@@ -69,6 +68,8 @@ func controllerConfigToArgs(config *contractsv1alpha1.ControllerConfig) []string
 		}
 	}
 
+	str("--code-path", config.GetCodePath().GetName())
+	args = append(args, codePathOverrideArgs(config.GetCodePath())...)
 	str("--namespace", config.GetNamespace())
 	str("--control-namespace", config.GetControlNamespace())
 	str("--app-root", config.GetAppRoot())
@@ -77,7 +78,6 @@ func controllerConfigToArgs(config *contractsv1alpha1.ControllerConfig) []string
 	str("--deployed-commit", config.GetDeployedCommit())
 	repeated("--deployed-manifest-path", config.GetDeployedManifestPaths())
 
-	str("--response-stages", strings.Join(config.GetResponseStages(), ","))
 	str("--dispatcher-mode", config.GetDispatcherMode())
 	str("--responder-image", config.GetResponderImage())
 	optBool("--responder-standby", config.ResponderStandby)
