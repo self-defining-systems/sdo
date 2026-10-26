@@ -183,22 +183,31 @@ def test_admission_uses_the_requested_installer_configuration(lane, monkeypatch)
     assert seen == [requested]
 
 
-@pytest.mark.parametrize("waiting_for", ["controller", "traffic", "reflection", "independent_traffic"])
-def test_admission_waits_without_restarting_the_healthy_application(lane, monkeypatch, waiting_for):
+def observe_only(gate, monkeypatch) -> list[float]:
+    """Give admission a fake clock and fail if it ever restores the application."""
     from functools import partial
 
     from benchmarks.sregym.fastloop import baseline_recovery, reset
 
-    gate, calls = lane
     gate.timeout_seconds = 10
     now = [0.0]
+
+    def sleep(seconds: float) -> None:
+        now[0] += seconds
+
     monkeypatch.setattr(admission.time, "monotonic", lambda: now[0])
-    sleep = lambda seconds: now.__setitem__(0, now[0] + seconds)
     monkeypatch.setattr(admission, "wait_for_proof", partial(admission.wait_for_proof, sleep=sleep))
     monkeypatch.setattr(admission, "assert_lane_resources", lambda *args, **kwargs: {"passed": True})
     monkeypatch.setattr(reset, "RestoreChecks", lambda *args: SimpleNamespace(prepare=lambda **kwargs: None))
     monkeypatch.setattr(baseline_recovery, "KubectlApplicationCluster", lambda *args: None)
     monkeypatch.setattr(reset, "restore_application", lambda *args, **kwargs: pytest.fail("admission restarted app"))
+    return now
+
+
+@pytest.mark.parametrize("waiting_for", ["controller", "traffic", "reflection", "independent_traffic"])
+def test_admission_waits_without_restarting_the_healthy_application(lane, monkeypatch, waiting_for):
+    gate, calls = lane
+    now = observe_only(gate, monkeypatch)
     state = gate.ops.runtime_state
     windows = gate._windows
 
@@ -229,20 +238,9 @@ def test_admission_waits_without_restarting_the_healthy_application(lane, monkey
 
 def test_admission_never_injects_while_reflection_remains_pending(lane, monkeypatch):
     from benchmarks.sregym.adapter.eval_guards import StabilizationError
-    from functools import partial
-
-    from benchmarks.sregym.fastloop import baseline_recovery, reset
 
     gate, calls = lane
-    gate.timeout_seconds = 10
-    now = [0.0]
-    monkeypatch.setattr(admission.time, "monotonic", lambda: now[0])
-    sleep = lambda seconds: now.__setitem__(0, now[0] + seconds)
-    monkeypatch.setattr(admission, "wait_for_proof", partial(admission.wait_for_proof, sleep=sleep))
-    monkeypatch.setattr(admission, "assert_lane_resources", lambda *args, **kwargs: {"passed": True})
-    monkeypatch.setattr(reset, "RestoreChecks", lambda *args: SimpleNamespace(prepare=lambda **kwargs: None))
-    monkeypatch.setattr(baseline_recovery, "KubectlApplicationCluster", lambda *args: None)
-    monkeypatch.setattr(reset, "restore_application", lambda *args, **kwargs: pytest.fail("admission restarted app"))
+    now = observe_only(gate, monkeypatch)
     state = gate.ops.runtime_state
     monkeypatch.setattr(gate.ops, "runtime_state", lambda control: dict(state(control), pending_closure={"id": "busy"}))
     inner = SimpleNamespace(
