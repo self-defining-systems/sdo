@@ -11,6 +11,7 @@ import (
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/lifecycle"
 	"sdo.dev/operator/memory"
+	"sdo.dev/operator/toolchain"
 	"sdo.dev/operator/worker_registry"
 )
 
@@ -76,10 +77,14 @@ func refreshControllerHealthOnce(ctx context.Context, config *contracts.Controll
 	if namespace == "" {
 		namespace = config.GetNamespace()
 	}
-	coordinator := lifecycle.Coordinator{Broker: repository, Bootstrap: artifacts.BootstrapStore{}, Registry: registry, Workers: worker_registry.KubernetesExecutor{
+	workers := worker_registry.KubernetesExecutor{
 		ToolchainImage: config.GetToolchainImage(),
-		Client: client, Namespace: namespace, Registry: registry, ServiceAccount: "sdo-responder", RepositoryPVC: config.GetRepositoryPvc(), RepositoryMountPath: config.GetRepositoryMountPath(), RepositoryPVCSubPath: config.GetRepositoryPvcSubpath(), CredentialsSecret: config.GetResponderCredentialsSecret(), HealthyBaseline: config.GetHealthyBaseline(), Environment: environment,
-	}}
+		Client:         client, Namespace: namespace, Registry: registry, ServiceAccount: "sdo-responder", RepositoryPVC: config.GetRepositoryPvc(), RepositoryMountPath: config.GetRepositoryMountPath(), RepositoryPVCSubPath: config.GetRepositoryPvcSubpath(), CredentialsSecret: config.GetResponderCredentialsSecret(), HealthyBaseline: config.GetHealthyBaseline(), Environment: environment,
+	}
+	if err := prepareHealthRefreshToolchain(ctx, &workers); err != nil {
+		return err
+	}
+	coordinator := lifecycle.Coordinator{Broker: repository, Bootstrap: artifacts.BootstrapStore{}, Registry: registry, Workers: workers}
 	if _, err := coordinator.RefreshHealth(ctx, lifecycle.Config{Application: config.GetApplication(), Namespace: config.GetNamespace()}, revision); err != nil {
 		return err
 	}
@@ -90,5 +95,18 @@ func refreshControllerHealthOnce(ctx context.Context, config *contracts.Controll
 	if accepted.NeedsRefresh {
 		return fmt.Errorf("health unverified: source, objective or detectors advanced during refresh")
 	}
+	return nil
+}
+
+// Refresh and controller startup share one immutable seed. Preparing it before
+// the judge replaces its private copy and makes the later startup seed a no-op.
+func prepareHealthRefreshToolchain(ctx context.Context, workers *worker_registry.KubernetesExecutor) error {
+	if workers.ToolchainImage == "" {
+		return nil
+	}
+	if err := toolchain.Seed(ctx, workers.RepositoryMountPath, workers.ToolchainImage); err != nil {
+		return fmt.Errorf("prepare health refresh toolchain: %w", err)
+	}
+	workers.SharedToolchain = true
 	return nil
 }

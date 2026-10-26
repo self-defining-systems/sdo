@@ -49,6 +49,37 @@ func TestIncidentJobUsesControllerSeedWithoutCopy(t *testing.T) {
 	}
 }
 
+func TestSeededHealthJudgeJobUsesSharedCompilerWithoutCopy(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	request, _ := anypb.New(&contracts.HealthJudgeRequest{})
+	task := &contracts.AgentTask{TaskId: "incident", Request: request, Workspace: &contracts.ProposalWorkspace{CheckoutPath: "/workspace/proposal"}}
+	e := KubernetesExecutor{Client: client, Namespace: "control", RepositoryPVC: "repo", RepositoryPVCSubPath: "tenant", ToolchainImage: "controller:compiler", SharedToolchain: true, SessionPVCSubPath: "tenant/session"}
+	if err := e.ensureJob(context.Background(), task, &contracts.KubernetesJobLaunch{Image: "worker", Command: []string{"python3", "-m", "worker"}}, "incident", requestSource{ConfigMap: "request"}, "result", "tenant/proposal"); err != nil {
+		t.Fatal(err)
+	}
+	job, err := client.BatchV1().Jobs("control").Get(context.Background(), "incident", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, init := range job.Spec.Template.Spec.InitContainers {
+		if init.Name == "prepare-toolchain" {
+			t.Fatal("incident still copies the toolchain")
+		}
+	}
+	mounts := map[string]bool{}
+	for _, m := range job.Spec.Template.Spec.Containers[0].VolumeMounts {
+		if m.MountPath == "/usr/local/go" || m.MountPath == "/go" {
+			if m.Name != "repository" || !m.ReadOnly {
+				t.Fatalf("compiler authority: %+v", m)
+			}
+			mounts[m.MountPath] = true
+		}
+	}
+	if len(mounts) != 2 {
+		t.Fatalf("missing offline compiler/cache: %+v", mounts)
+	}
+}
+
 func TestResponderStartupRecordContainsEveryMeasuredBoundary(t *testing.T) {
 	now := metav1.NewTime(time.Date(2026, 10, 25, 1, 0, 0, 0, time.UTC))
 	always := corev1.ContainerRestartPolicyAlways

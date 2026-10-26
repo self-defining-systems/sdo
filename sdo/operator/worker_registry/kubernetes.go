@@ -94,6 +94,8 @@ type KubernetesExecutor struct {
 	LateFindingsConfigMap  string
 	Environment            map[string]string
 	PollInterval           time.Duration
+	// SharedToolchain requires a completed controller-image-bound seed.
+	SharedToolchain bool
 }
 
 type JobFailedError struct{ JobName string }
@@ -574,7 +576,7 @@ func (e KubernetesExecutor) ensureJob(ctx context.Context, task *contracts.Agent
 	if e.standbyMode {
 		e.configureStandby(job, launch)
 	}
-	if task.GetRequest().MessageIs(&contracts.IncidentRequest{}) {
+	if e.SharedToolchain || task.GetRequest().MessageIs(&contracts.IncidentRequest{}) {
 		toolchain.ApplyShared(&job.Spec.Template.Spec, e.ToolchainImage, e.RepositoryPVCSubPath)
 	} else {
 		toolchain.Apply(&job.Spec.Template.Spec, e.ToolchainImage)

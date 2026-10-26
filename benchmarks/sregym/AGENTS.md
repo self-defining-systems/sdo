@@ -8,7 +8,7 @@ All first-party SREGym integration code lives here. This package may depend on p
 - `protocol/` — benchmark conductor, HTTP, MCP submission, and strict-receipt evidence contracts
 - `runner/` — experiment and pipeline configuration plus harness process orchestration
 - `experiments/` — a few example configs (`sdo_example.toml`, `codex_baseline_example.toml`; copy and edit for your own runs) plus the assurance catalog and seeds (`assurance/composites.toml`, `assurance/seeds/`) that code reads at runtime. Incident-stream configs are generated with `uv run python -m benchmarks.sregym.runner.incident_stream --out-dir <dir>`, not checked in
-- `analysis/` — benchmark result summarization
+- [`analysis/`](analysis/README.md) — offline benchmark result and phase analysis commands
 - `registry.yaml` — agent registry consumed by the benchmark runner
 - `run.py` — benchmark experiment entry point
 
