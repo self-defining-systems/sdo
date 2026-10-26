@@ -198,7 +198,7 @@ Key JSON fields: `source (accepted Kubernetes object)`.
 
 ## act
 
-record a live mutation; show progress and a complete JSON report
+record one command invocation; outer shell chains run separately; show progress and a complete JSON report
 
 ```text
 sdo act [-h] --resource Kind/namespace/name [--summary SUMMARY] [--irreversible] ...

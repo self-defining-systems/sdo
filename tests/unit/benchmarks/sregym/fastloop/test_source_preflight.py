@@ -94,10 +94,78 @@ def test_worker_rejects_image_preflight_before_process_creation(tmp_path, monkey
     )
     monkeypatch.setattr(source_preflight, "assert_harness_sources", lambda _: None)
 
-    def reject(*_):
+    def reject(*_, **__):
         raise ValueError("eval: stale image source")
 
     monkeypatch.setattr(source_preflight, "assert_runtime_images", reject)
     monkeypatch.setattr(cli, "SregymWorker", lambda *a, **kw: pytest.fail("worker created before image preflight"))
     with pytest.raises(ValueError, match="stale image source"):
         cli._worker(environment)
+
+
+@pytest.mark.parametrize("current", [False, True])
+def test_retained_responder_requires_current_source_or_real_entrypoint_smoke(tmp_path, monkeypatch, current):
+    from benchmarks.sregym import adapter
+    from benchmarks.sregym.fastloop import source_preflight
+    from benchmarks.sregym.fastloop.environment import Images
+
+    def run(argv, **kwargs):
+        if argv[0] == "git":
+            return subprocess.CompletedProcess(argv, 0, "current" if "rev-parse" in argv else "")
+        if argv[:3] == ["docker", "image", "inspect"]:
+            revision = "old" if argv[3] == "responder:retained" and not current else "current"
+            return subprocess.CompletedProcess(
+                argv, 0, json.dumps([{"Config": {"Labels": {"org.opencontainers.image.revision": revision}}}])
+            )
+        return subprocess.CompletedProcess(argv, 0, "go version fixture")
+
+    called = []
+
+    def smoke(ref, role, **kwargs):
+        called.append((ref, role))
+        raise ValueError(f"eval: image {ref} entrypoint smoke failed: ModuleNotFoundError: checkpoint_limits")
+
+    monkeypatch.setattr(source_preflight.subprocess, "run", run)
+    monkeypatch.setattr(adapter, "assert_image_entrypoints", smoke)
+    images = Images(controller="controller:current", responder="responder:retained", validator="validator:current")
+    if current:
+        source_preflight.assert_runtime_images(images, tmp_path)
+        assert not called
+    else:
+        with pytest.raises(ValueError, match="responder:retained.*checkpoint_limits"):
+            source_preflight.assert_runtime_images(images, tmp_path)
+        assert called == [("responder:retained", adapter.BENCHMARK_IMAGE_ENTRY_POINTS)]
+
+
+def test_explicit_fastloop_preflight_checks_every_reused_image(tmp_path, monkeypatch):
+    import shutil
+    from types import SimpleNamespace
+
+    from benchmarks.sregym import adapter
+    from benchmarks.sregym.fastloop import cli, source_preflight
+
+    (tmp_path / "sdo/operator").mkdir(parents=True)
+    (tmp_path / "sdo/operator/go.mod").touch()
+    monkeypatch.setattr(shutil, "which", lambda _: "/fixture/tool")
+    monkeypatch.setattr(cli, "check_host_capacity", lambda _: None)
+    monkeypatch.setattr(source_preflight, "assert_harness_sources", lambda _: None)
+    monkeypatch.setattr(cli.subprocess, "run", lambda argv, **kwargs: subprocess.CompletedProcess(argv, 0, ""))
+    smoked = []
+    monkeypatch.setattr(
+        adapter, "assert_image_entrypoints", lambda ref, modules, **kwargs: smoked.append((ref, modules))
+    )
+    cli.up_preflight(
+        SimpleNamespace(
+            kind_worker_nodes=1,
+            dev_mount=tmp_path,
+            sregym_dir=tmp_path,
+            controller_image="controller:reused",
+            responder_image="benchmark:reused",
+            validator_image="validator:reused",
+        )
+    )
+    assert smoked == [
+        ("controller:reused", ()),
+        ("benchmark:reused", adapter.BENCHMARK_IMAGE_ENTRY_POINTS),
+        ("validator:reused", ()),
+    ]
