@@ -10,11 +10,13 @@ import (
 	"testing"
 	"time"
 
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/rest"
 
 	"sdo.dev/operator/deployment"
@@ -485,5 +487,58 @@ func TestSourceDiffFailsClosedWithoutAcceptanceRecord(t *testing.T) {
 	snapshot.ServiceList = []corev1.Service{api.service}
 	if result, err := (LiveReadView{DetectionContext: snapshot, Source: planFakeSource{source: source.object}, SourceCommit: "accepted"}).DiffAgainstSource(ref); err != nil || !result.Changed {
 		t.Fatalf("declared difference hidden by a missing record: %+v %v", result, err)
+	}
+}
+
+// Controllers write some fields after SDO applies an object (a rollout's
+// observed spec, a scheduled Pod's node). The record waits until the object
+// has settled, so those writes never count as additions.
+func TestAdoptionRecordsAcceptanceOnlyOnceSettled(t *testing.T) {
+	ctx := context.Background()
+	one := int32(1)
+	labelsOf := map[string]string{"app": "search"}
+	live := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: "search", Namespace: "app", Generation: 2, UID: "search-uid", ResourceVersion: "1"},
+		Spec:       appsv1.DeploymentSpec{Replicas: &one, Selector: &metav1.LabelSelector{MatchLabels: labelsOf}, Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: labelsOf}, Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "search", Image: "search:1"}}}}},
+		Status:     appsv1.DeploymentStatus{ObservedGeneration: 1},
+	}
+	client := fake.NewSimpleClientset(live)
+	source := adoptionSource{object: &unstructured.Unstructured{Object: map[string]any{"apiVersion": "apps/v1", "kind": "Deployment", "metadata": map[string]any{"name": "search", "namespace": "app"}, "spec": map[string]any{"replicas": int64(1), "template": map[string]any{"spec": map[string]any{"containers": []any{map[string]any{"name": "search", "image": "search:1"}}}}}}}}
+	config := testControllerConfig()
+	config.Namespace, config.SourceCommit = "app", "accepted"
+	controller, err := NewController(config, nil, fastloopObjects{client: client}, &recordingDispatcher{requests: make(chan IncidentRequest, 1)}, time.Unix(10, 0).UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	controller.ConfigureDrift(DriftControllerConfig{Source: source, Client: client, View: func(snapshot sdk.DetectionContext) program.ReadView {
+		return LiveReadView{DetectionContext: snapshot, Source: planFakeSource{source: source.object}, SourceCommit: "accepted", Client: client}
+	}})
+	recorded := func() bool {
+		t.Helper()
+		object, err := getAdoptionObject(ctx, client, sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "app", Name: "search"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return acceptanceRecordCurrent(object, source.object)
+	}
+	if err := controller.adoptOwnership(ctx, time.Unix(11, 0).UTC(), sdktest.Snapshot{NamespaceName: "app"}); err != nil {
+		t.Fatal(err)
+	}
+	if recorded() || !controller.adoptionNeeded {
+		t.Fatal("acceptance recorded before the rollout controller observed the spec")
+	}
+	settled, err := client.AppsV1().Deployments("app").Get(ctx, "search", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	settled.Status.ObservedGeneration = settled.Generation
+	if _, err := client.AppsV1().Deployments("app").UpdateStatus(ctx, settled, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := controller.adoptOwnership(ctx, time.Unix(17, 0).UTC(), sdktest.Snapshot{NamespaceName: "app"}); err != nil {
+		t.Fatal(err)
+	}
+	if !recorded() || controller.adoptionNeeded {
+		t.Fatal("settled object was not recorded")
 	}
 }

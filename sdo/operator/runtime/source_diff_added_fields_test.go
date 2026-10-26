@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"testing"
 
@@ -83,6 +84,23 @@ func addedFieldsContainers(object *unstructured.Unstructured) []any {
 // agree, so the acceptance evidence has to survive capture.
 func diffEveryView(t *testing.T, live *unstructured.Unstructured) map[string]bool {
 	t.Helper()
+	results := map[string]bool{}
+	for name, result := range diffEveryViewResults(t, live) {
+		if result.err != nil {
+			t.Fatalf("%s: %v", name, result.err)
+		}
+		results[name] = result.changed
+	}
+	return results
+}
+
+type viewResult struct {
+	changed bool
+	err     error
+}
+
+func diffEveryViewResults(t *testing.T, live *unstructured.Unstructured) map[string]viewResult {
+	t.Helper()
 	ref := addedFieldsRef()
 	// Read the object back as the API server serves it.
 	var typed appsv1.Deployment
@@ -109,7 +127,7 @@ func diffEveryView(t *testing.T, live *unstructured.Unstructured) map[string]boo
 	if err := json.Unmarshal(encoded, &stored); err != nil {
 		t.Fatal(err)
 	}
-	results := map[string]bool{}
+	results := map[string]viewResult{}
 	for _, name := range []string{"snapshot", "apply-dry-run", "replayed-capture"} {
 		view := LiveReadView{DetectionContext: snapshot, Source: planFakeSource{source: addedFieldsSource()}, SourceCommit: "accepted"}
 		switch name {
@@ -123,10 +141,7 @@ func diffEveryView(t *testing.T, live *unstructured.Unstructured) map[string]boo
 			view.DetectionContext = stored
 		}
 		diff, err := view.DiffAgainstSource(ref)
-		if err != nil {
-			t.Fatalf("%s: %v", name, err)
-		}
-		results[name] = diff.Changed
+		results[name] = viewResult{changed: diff.Changed, err: err}
 	}
 	return results
 }
@@ -148,6 +163,7 @@ func TestSourceDiffChangedForFieldsAddedAfterAcceptance(t *testing.T) {
 		"label": func(live *unstructured.Unstructured) {
 			live.SetLabels(map[string]string{"app": "search", "tier": "canary"})
 		},
+		"custom finalizer": func(live *unstructured.Unstructured) { live.SetFinalizers([]string{"example.com/hold"}) },
 		"pod template field": func(live *unstructured.Unstructured) {
 			_ = unstructured.SetNestedStringMap(live.Object, map[string]string{"disk": "ssd"}, "spec", "template", "spec", "nodeSelector")
 		},
@@ -192,6 +208,9 @@ func TestSourceDiffUnchangedForServerDefaultsAndBookkeeping(t *testing.T) {
 		"declared field rewritten to its accepted value": func(live *unstructured.Unstructured) {
 			_ = unstructured.SetNestedField(live.Object, int64(1), "spec", "replicas")
 		},
+		"kubernetes finalizer": func(live *unstructured.Unstructured) {
+			live.SetFinalizers([]string{"service.kubernetes.io/load-balancer-cleanup"})
+		},
 		"status written by a controller": func(live *unstructured.Unstructured) {
 			_ = unstructured.SetNestedField(live.Object, int64(1), "status", "readyReplicas")
 		},
@@ -209,48 +228,90 @@ func TestSourceDiffUnchangedForServerDefaultsAndBookkeeping(t *testing.T) {
 	}
 }
 
-// Without an acceptance record there is no acceptance point, so nothing
-// counts as added (the comparison of declared fields still applies).
-func TestSourceDiffWithoutAcceptanceRecordReportsNoAddition(t *testing.T) {
+// Without an acceptance record the additions are unknown: every view fails
+// closed instead of reporting the object unchanged.
+func TestSourceDiffWithoutAcceptanceRecordFailsClosed(t *testing.T) {
 	live := addedFieldsLive()
 	annotations := live.GetAnnotations()
 	delete(annotations, acceptedPathsAnnotation)
 	live.SetAnnotations(annotations)
 	setHostPort(live)
-	for view, changed := range diffEveryView(t, live) {
-		if changed {
-			t.Errorf("%s: addition reported without an acceptance point", view)
+	for view, result := range diffEveryViewResults(t, live) {
+		if !errors.Is(result.err, ErrAcceptanceRecordUnavailable) {
+			t.Errorf("%s: missing acceptance record compared as known: %v", view, result.err)
 		}
 	}
 }
 
-// Detection, repair and closure agree: accepted-source reconciliation removes
-// the added field, and the same comparison then reports the object restored.
+// Detection, repair and closure agree: every addition Changed reports is
+// removed by accepted-source reconciliation, and the same comparison then
+// reports the object restored. Map additions (labels, selectors) included.
 func TestReconcileFromSourceClearsAddedFieldDrift(t *testing.T) {
-	ref := addedFieldsRef()
-	live := addedFieldsLive()
-	containers := addedFieldsContainers(live)
-	containers[0].(map[string]any)["ports"].([]any)[0].(map[string]any)["hostPort"] = int64(8080)
-	_ = unstructured.SetNestedSlice(live.Object, containers, "spec", "template", "spec", "containers")
-	client := &planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: live}}
-	diff := func() bool {
-		t.Helper()
-		snapshot := sdktest.Snapshot{NamespaceName: ref.Namespace, Objects: []unstructured.Unstructured{*client.objects[ref].DeepCopy()}}
-		result, err := (LiveReadView{DetectionContext: snapshot, Source: planFakeSource{source: addedFieldsSource()}, SourceCommit: "accepted"}).DiffAgainstSource(ref)
+	cases := map[string]func(*unstructured.Unstructured){
+		"container hostPort": setHostPort,
+		"annotation":         func(live *unstructured.Unstructured) { addAnnotation(live, "example.com/maintenance", "true") },
+		"label": func(live *unstructured.Unstructured) {
+			live.SetLabels(map[string]string{"app": "search", "tier": "canary"})
+		},
+		"node selector": func(live *unstructured.Unstructured) {
+			_ = unstructured.SetNestedStringMap(live.Object, map[string]string{"disk": "ssd"}, "spec", "template", "spec", "nodeSelector")
+		},
+		"pod template label": func(live *unstructured.Unstructured) {
+			_ = unstructured.SetNestedStringMap(live.Object, map[string]string{"canary": "true"}, "spec", "template", "metadata", "labels")
+		},
+	}
+	for name, inject := range cases {
+		t.Run(name, func(t *testing.T) {
+			ref := addedFieldsRef()
+			live := addedFieldsLive()
+			inject(live)
+			client := &planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: live}}
+			diff := func() bool {
+				t.Helper()
+				snapshot := sdktest.Snapshot{NamespaceName: ref.Namespace, Objects: []unstructured.Unstructured{*client.objects[ref].DeepCopy()}}
+				result, err := (LiveReadView{DetectionContext: snapshot, Source: planFakeSource{source: addedFieldsSource()}, SourceCommit: "accepted"}).DiffAgainstSource(ref)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return result.Changed
+			}
+			if !diff() {
+				t.Fatal("injected addition not reported as source drift")
+			}
+			executor := PlanExecutor{Client: client, Source: planFakeSource{source: addedFieldsSource()}, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{passed: true}}
+			result, err := executor.Apply(context.Background(), IncidentRequest{SourceCommit: "accepted", RepairPolicy: "recorded-actions"}, program.Plan{Actions: []program.Action{program.ReconcileFromSource{Ref: ref}}}, false)
+			if err != nil || !result.Applied {
+				t.Fatalf("reconcile: %+v %v", result, err)
+			}
+			if diff() {
+				t.Fatalf("reconciled object still reported as drift: %v %v", client.objects[ref].Object["metadata"], client.objects[ref].Object["spec"])
+			}
+			if _, ok := readAcceptanceRecord(client.objects[ref]); !ok {
+				t.Fatal("reconciliation removed the acceptance record")
+			}
+		})
+	}
+}
+
+// withAcceptance returns object's annotations plus the acceptance record that
+// adoption would take against source over the object as it is now.
+func withAcceptance(t testing.TB, object any, source *unstructured.Unstructured) map[string]string {
+	t.Helper()
+	live, ok := object.(*unstructured.Unstructured)
+	if !ok {
+		content, err := kruntime.DefaultUnstructuredConverter.ToUnstructured(object)
 		if err != nil {
 			t.Fatal(err)
 		}
-		return result.Changed
+		live = &unstructured.Unstructured{Object: content}
 	}
-	if !diff() {
-		t.Fatal("injected hostPort not reported as source drift")
+	record, fits, err := buildAcceptanceRecord(source, live, live)
+	if err != nil || !fits {
+		t.Fatalf("acceptance record: %v %v", fits, err)
 	}
-	executor := PlanExecutor{Client: client, Source: planFakeSource{source: addedFieldsSource()}, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{passed: true}}
-	result, err := executor.Apply(context.Background(), IncidentRequest{SourceCommit: "accepted", RepairPolicy: "recorded-actions"}, program.Plan{Actions: []program.Action{program.ReconcileFromSource{Ref: ref}}}, false)
-	if err != nil || !result.Applied {
-		t.Fatalf("reconcile: %+v %v", result, err)
+	annotations := map[string]string{acceptedPathsAnnotation: record}
+	for key, value := range live.GetAnnotations() {
+		annotations[key] = value
 	}
-	if diff() {
-		t.Fatalf("reconciled object still reported as drift: %v", client.objects[ref].Object["spec"])
-	}
+	return annotations
 }

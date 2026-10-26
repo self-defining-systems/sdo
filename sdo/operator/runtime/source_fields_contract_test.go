@@ -55,6 +55,7 @@ func TestSourceDiffPreservesIndependentCompletionAndDetectsMissingController(t *
 	source := planObject(ref, map[string]any{"replicas": int64(1)})
 	live := source.DeepCopy()
 	live.SetAnnotations(map[string]string{"another-controller.example/completed": "true"})
+	live.SetAnnotations(withAcceptance(t, live, source))
 	snapshot := sdktest.Snapshot{NamespaceName: "app", Objects: []unstructured.Unstructured{*live}}
 	view := LiveReadView{DetectionContext: snapshot, Source: planFakeSource{source: source}, SourceCommit: "accepted"}
 	if diff, err := view.DiffAgainstSource(ref); err != nil || diff.Changed {

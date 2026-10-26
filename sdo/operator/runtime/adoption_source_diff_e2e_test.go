@@ -96,9 +96,10 @@ func (unschedulable) Detect(_ context.Context, view sdk.DetectionContext) ([]sdk
 
 // TestHermeticAdoptedHostPortRepairLearnsAndReplays runs the whole learning
 // loop for an application adopted with install-existing (tag images, never
-// deployed by SDO): adoption evidence, the controller's rendered lock, the
-// first encounter's DiffAgainstSource recordings, reflection's replay gate,
-// and a repeat that applies the learned plan with no responder.
+// deployed by SDO): adoption evidence, the controller's rendered lock, a deploy
+// between acceptance and the fault, the first encounter's DiffAgainstSource
+// recordings, reflection's replay gate, and a repeat that applies the learned
+// plan with no responder.
 func TestHermeticAdoptedHostPortRepairLearnsAndReplays(t *testing.T) {
 	ctx := context.Background()
 	repo := nativeRepository(t)
@@ -169,6 +170,24 @@ func TestHermeticAdoptedHostPortRepairLearnsAndReplays(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	ref := sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "app", Name: "search"}
+
+	// A deploy between acceptance and the fault: the deployer applies the
+	// rendered accepted source, which never carries the acceptance record.
+	rendered, err := source.AcceptedManifest(ctx, locked, ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := applyAcceptedSource(ctx, client, ref, rendered, false); err != nil {
+		t.Fatalf("deploy: %v", err)
+	}
+	adopted, err = client.AppsV1().Deployments("app").Get(ctx, "search", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record, ok := adopted.Annotations[acceptedPathsAnnotation]; !ok || record == "" {
+		t.Fatal("deploy lost the acceptance record")
+	}
 	live = adopted.DeepCopy()
 
 	// First encounter: ServicePortConflict injects a hostPort; the Pod pends.
@@ -196,7 +215,6 @@ func TestHermeticAdoptedHostPortRepairLearnsAndReplays(t *testing.T) {
 		}
 		return captured
 	}
-	ref := sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "app", Name: "search"}
 	open := capture()
 	diff, err := (LiveReadView{DetectionContext: open, Source: source, SourceCommit: locked, Client: client}).DiffAgainstSource(ref)
 	if err != nil {
