@@ -54,7 +54,6 @@ class LaneResourcePolicy:
     default_container_budget_bytes: int = 8 * _GIB
     jaeger_budget_bytes: int = 2 * _GIB
     host_disk_floor_bytes: int = 100 * _GIB
-    host_disk_min_free_percent: int = 10
     max_sample_age_seconds: int = 60
     # Exact namespace/pod/container or namespace/container overrides.
     component_budgets: Mapping[str, int] = field(default_factory=dict)
@@ -66,12 +65,9 @@ class LaneResourcePolicy:
             "default_container_budget_bytes",
             "jaeger_budget_bytes",
             "host_disk_floor_bytes",
-            "host_disk_min_free_percent",
             "max_sample_age_seconds",
         ):
             _positive(getattr(self, name), name)
-        if self.host_disk_min_free_percent >= 100:
-            raise ValueError("host_disk_min_free_percent must be less than 100")
         if not isinstance(self.component_budgets, Mapping):
             raise TypeError("component_budgets must be a mapping")
         if not isinstance(self.infrastructure_namespaces, (set, frozenset)):
@@ -240,17 +236,16 @@ def assert_host_headroom(*, policy: LaneResourcePolicy | None = None) -> dict[st
 def evaluate_host_disk(
     *, mount: str, total_bytes: int, free_bytes: int, policy: LaneResourcePolicy | None = None
 ) -> dict[str, Any]:
-    """Reject full filesystems before OpenSearch high/flood watermarks interfere."""
+    """Require absolute run-growth headroom, independent of volume capacity."""
     policy = policy or LaneResourcePolicy()
     _positive(total_bytes, "disk total_bytes")
     if type(free_bytes) is not int or not 0 <= free_bytes <= total_bytes:
         raise ValueError(f"eval: host disk mount {mount} free-byte measurement unavailable")
     used_percent = 100 * (total_bytes - free_bytes) / total_bytes
-    if free_bytes * 100 <= total_bytes * policy.host_disk_min_free_percent or free_bytes < policy.host_disk_floor_bytes:
+    if free_bytes < policy.host_disk_floor_bytes:
         raise ValueError(
             f"eval: host disk mount {mount} {used_percent:.1f}% used, {free_bytes} bytes free; "
-            f"require usage <{100 - policy.host_disk_min_free_percent}% and "
-            f">={policy.host_disk_floor_bytes} bytes free; free space on this mount before lane setup/injection"
+            f"require >={policy.host_disk_floor_bytes} bytes free; free space on this mount before lane setup/injection"
         )
     return {
         "passed": True,
@@ -258,7 +253,7 @@ def evaluate_host_disk(
         "total_bytes": total_bytes,
         "free_bytes": free_bytes,
         "used_percent": used_percent,
-        "min_free_percent": policy.host_disk_min_free_percent,
+        "rule": "absolute-free-bytes",
         "floor_bytes": policy.host_disk_floor_bytes,
     }
 
