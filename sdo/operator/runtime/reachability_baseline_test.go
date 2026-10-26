@@ -152,6 +152,11 @@ func TestStartupReachabilityBaselineMeasuresPublishesAndLoads(t *testing.T) {
 	changed := reachabilityApp(9600)
 	changed.ServiceList[0].Spec.Ports[0].TargetPort = intstr.FromInt32(8888)
 	snapshots.set(changed)
+	// The observer is stopped above. Obtain a complete fresh failure run for
+	// the changed Service; Git publication can outlive the old sample window.
+	for i := 0; i < observer.config.Failures; i++ {
+		observer.Cycle(ctx)
+	}
 	snapshot, err = provider.Snapshot(ctx)
 	if err != nil {
 		t.Fatal(err)

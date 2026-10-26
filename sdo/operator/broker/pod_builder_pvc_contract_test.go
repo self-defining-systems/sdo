@@ -9,7 +9,6 @@ import (
 	"go/token"
 	"io/fs"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 )
@@ -65,10 +64,14 @@ func duplicatePVCClaims(file *ast.File, positions *token.FileSet) ([]string, int
 }
 
 func TestNativePodBuildersDeclareEachPVCOnce(t *testing.T) {
-	_, here, _, _ := runtime.Caller(0)
-	root := filepath.Dir(filepath.Dir(here))
+	// Debug filenames are module-relative under -trimpath; go test's package
+	// working directory locates the checked-in source independently of them.
+	root, err := filepath.Abs("..")
+	if err != nil {
+		t.Fatal(err)
+	}
 	builders := 0
-	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
+	err = filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}

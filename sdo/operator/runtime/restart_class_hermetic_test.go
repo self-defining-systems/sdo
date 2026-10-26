@@ -398,7 +398,7 @@ func restartClassBoundary(t *testing.T, ctx context.Context, world restartClassW
 func TestRestartClassHermetic(t *testing.T) {
 	started := time.Now()
 	ctx, cancel := context.WithTimeout(context.Background(), 270*time.Second)
-	defer cancel()
+	t.Cleanup(cancel)
 	// One immutable seed amortizes accepted health publication across schedules.
 	baseline, _, _, _, coordinator := tracingFixture(t)
 	tracingRefresh(t, baseline, coordinator)
@@ -407,6 +407,9 @@ func TestRestartClassHermetic(t *testing.T) {
 			t.Fatal("restart sweep exceeded 270-second budget")
 		}
 		t.Run(fmt.Sprintf("seed=%d/%s", index+1, cut), func(t *testing.T) {
+			// Each schedule clones the immutable seed and owns all process/state paths.
+			// Respect go test -parallel while overlapping independent Git/process waits.
+			t.Parallel()
 			seed := uint64(index + 1)
 			if raw := os.Getenv("SDO_CHAOS_SEED"); raw != "" {
 				parsed, err := strconv.ParseUint(raw, 10, 64)
@@ -453,7 +456,7 @@ func TestRestartClassHermetic(t *testing.T) {
 			restartClassBoundary(t, ctx, restartClassTracingWorld(), cut, directory, root, old.Commit)
 		})
 	}
-	t.Logf("default restart sweep wall=%s", time.Since(started))
+	t.Cleanup(func() { t.Logf("default restart sweep wall=%s", time.Since(started)) })
 }
 
 func TestRestartClassRefusesChangedObservationBeforeCommit(t *testing.T) {
