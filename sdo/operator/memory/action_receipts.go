@@ -49,6 +49,9 @@ func IncidentActionReceipts(repositoryMount, incidentID string) ([]*contracts.Re
 		if err := wire.Unmarshal(entry.Receipt, receipt); err != nil {
 			return nil, true, "", err
 		}
+		// The journal is agent-writable: owner chains come only from SDO's
+		// own observations, never this file.
+		receipt.Owners = nil
 		if states[receipt.ActionId] == "" {
 			order = append(order, receipt.ActionId)
 		}

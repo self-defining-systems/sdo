@@ -953,3 +953,16 @@ def test_a_wrapped_usage_error_says_how_to_call_act_in_one_line(
     assert "kubectl" in hint
     assert "sdo act --resource" in hint
     assert " -- " in hint
+
+
+def test_act_on_a_controlled_object_runs_only_the_write(scratch: Path, tmp_path: Path) -> None:
+    # REV12 F1: owner chains come from SDO's own capture, so `sdo act` reads nothing before
+    # the write and its receipt carries no agent-side ownership claim.
+    calls = tmp_path / "calls"
+    kubectl = _stub(tmp_path / "bin", f'printf "%s\\n" "$*" >> {calls}')
+    rs = ["act", "--resource", "ReplicaSet/hotel-reservation/geo-67f6d98b75", "--", str(kubectl)]
+    assert tools_cli.main([*rs, "-n", "hotel-reservation", "scale", "rs", "geo-67f6d98b75", "--replicas=0"]) == 0
+
+    assert calls.read_text().splitlines() == ["-n hotel-reservation scale rs geo-67f6d98b75 --replicas=0"]
+    (scaled,) = _recorded(scratch)
+    assert "owners" not in scaled
