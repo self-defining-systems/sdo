@@ -58,8 +58,8 @@ func TestRWS2EarlyClosureStopsBoundWarmJob(t *testing.T) {
 	if !rws2DeletedJob(client, name) {
 		t.Fatal("actual bound standby never received termination")
 	}
-	active, err := dispatcher.IncidentWorkHeld(context.Background(), "incident", true)
-	if err != nil || active {
+	work, err := dispatcher.IncidentWork(context.Background(), "incident")
+	if active := work.Active; err != nil || active {
 		t.Fatalf("terminated bound worker remains active: %v %v", active, err)
 	}
 }

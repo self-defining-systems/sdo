@@ -65,6 +65,7 @@ func TestExpiredIncidentWithoutLiveWorkIsArchivedBeforeFreshDispatch(t *testing.
 }
 
 func TestExpiredIncidentWorkStatusIsConservative(t *testing.T) {
+	finished := time.Unix(5000, 0).UTC()
 	for _, tc := range []struct {
 		name     string
 		job      *batchv1.Job
@@ -76,8 +77,8 @@ func TestExpiredIncidentWorkStatusIsConservative(t *testing.T) {
 		{name: "pending", job: &batchv1.Job{}, active: true},
 		{name: "running", job: &batchv1.Job{Status: batchv1.JobStatus{Active: 1}}, active: true},
 		{name: "deleting", job: &batchv1.Job{ObjectMeta: metav1.ObjectMeta{DeletionTimestamp: &metav1.Time{Time: time.Now()}}}, active: true},
-		{name: "complete", job: &batchv1.Job{Status: batchv1.JobStatus{Conditions: []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: corev1.ConditionTrue}}}}, finished: true},
-		{name: "failed", job: &batchv1.Job{Status: batchv1.JobStatus{Conditions: []batchv1.JobCondition{{Type: batchv1.JobFailed, Status: corev1.ConditionTrue}}}}, finished: true},
+		{name: "complete", job: &batchv1.Job{Status: batchv1.JobStatus{CompletionTime: &metav1.Time{Time: finished}, Conditions: []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: corev1.ConditionTrue}}}}, finished: true},
+		{name: "failed", job: &batchv1.Job{Status: batchv1.JobStatus{Conditions: []batchv1.JobCondition{{Type: batchv1.JobFailed, Status: corev1.ConditionTrue, LastTransitionTime: metav1.Time{Time: finished}}}}}, finished: true},
 		{name: "api-uncertain", apiError: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -92,12 +93,9 @@ func TestExpiredIncidentWorkStatusIsConservative(t *testing.T) {
 			if tc.apiError {
 				client.PrependReactor("get", "jobs", func(ktesting.Action) (bool, kruntime.Object, error) { return true, nil, errors.New("API unavailable") })
 			}
-			// A finished Job holds its incident only until its result is consumed.
-			for _, consumed := range []bool{true, false} {
-				held, err := (KubernetesJobDispatcher{Client: client, Namespace: "control"}).IncidentWorkHeld(context.Background(), "stale", consumed)
-				if want := tc.active || tc.finished && !consumed; held != want || (err != nil) != tc.apiError {
-					t.Fatalf("consumed=%v held=%v err=%v", consumed, held, err)
-				}
+			work, err := (KubernetesJobDispatcher{Client: client, Namespace: "control"}).IncidentWork(context.Background(), "stale")
+			if work.Active != tc.active || work.FinishedAt.Equal(finished) != tc.finished || (err != nil) != tc.apiError {
+				t.Fatalf("work=%+v err=%v", work, err)
 			}
 		})
 	}
@@ -109,8 +107,8 @@ type liveIncidentDispatcher struct {
 	err    error
 }
 
-func (d liveIncidentDispatcher) IncidentWorkHeld(context.Context, string, bool) (bool, error) {
-	return d.active, d.err
+func (d liveIncidentDispatcher) IncidentWork(context.Context, string) (IncidentWork, error) {
+	return IncidentWork{Active: d.active}, d.err
 }
 
 func TestExpiredIncidentRetainsLiveWorkAndUncertainBindings(t *testing.T) {
@@ -201,7 +199,8 @@ func TestExpiredIncidentFailureArchiveSurvivesRestart(t *testing.T) {
 
 func TestExpiredIncidentKeepsOrphanWorkerPod(t *testing.T) {
 	client := fake.NewSimpleClientset(&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "orphan", Namespace: "control", Labels: map[string]string{"sdo.dev/incident": IncidentJobName("stale")}}, Status: corev1.PodStatus{Phase: corev1.PodRunning}})
-	active, err := (KubernetesJobDispatcher{Client: client, Namespace: "control"}).IncidentWorkHeld(context.Background(), "stale", true)
+	work, err := (KubernetesJobDispatcher{Client: client, Namespace: "control"}).IncidentWork(context.Background(), "stale")
+	active := work.Active
 	if err != nil || !active {
 		t.Fatalf("orphan worker treated as absent: active=%v err=%v", active, err)
 	}
@@ -439,12 +438,14 @@ func TestRWSBoundStandbyCountsAsLiveWork(t *testing.T) {
 	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "worker", Namespace: "control", OwnerReferences: []metav1.OwnerReference{{Kind: "Job", Name: job.Name}}}, Status: corev1.PodStatus{Phase: corev1.PodRunning}}
 	client := fake.NewSimpleClientset(job, pod)
 	d := KubernetesJobDispatcher{Client: client, Namespace: "control", RepositoryMountPath: root}
-	active, err := d.IncidentWorkHeld(context.Background(), "stale", true)
+	work, err := d.IncidentWork(context.Background(), "stale")
+	active := work.Active
 	if err != nil || !active {
 		t.Fatalf("bound worker invisible: %v %v", active, err)
 	}
 	client.BatchV1().Jobs("control").Delete(context.Background(), job.Name, metav1.DeleteOptions{})
-	active, err = d.IncidentWorkHeld(context.Background(), "stale", true)
+	work, err = d.IncidentWork(context.Background(), "stale")
+	active = work.Active
 	if err != nil || !active {
 		t.Fatalf("orphan bound pod invisible: %v %v", active, err)
 	}
@@ -622,8 +623,8 @@ type finishedJobDispatcher struct {
 	work KubernetesJobDispatcher
 }
 
-func (d finishedJobDispatcher) IncidentWorkHeld(ctx context.Context, incidentID string, resultConsumed bool) (bool, error) {
-	return d.work.IncidentWorkHeld(ctx, incidentID, resultConsumed)
+func (d finishedJobDispatcher) IncidentWork(ctx context.Context, incidentID string) (IncidentWork, error) {
+	return d.work.IncidentWork(ctx, incidentID)
 }
 
 func completedResponderJob(incidentID string, at time.Time) *batchv1.Job {
@@ -671,13 +672,16 @@ func TestFinishedResponderJobIsHarvestedBeforeRetirement(t *testing.T) {
 			if _, err := client.BatchV1().Jobs("control").Create(ctx, completedResponderJob(id, deadline.Add(-30*time.Second)), metav1.CreateOptions{}); err != nil {
 				t.Fatal(err)
 			}
-			now := deadline.Add(ownerLostGrace + time.Minute)
+			// Past the running dispatch's OWNER_LOST bound, within the finished
+			// Job's verification hold.
+			now := deadline.Add(ownerLostGrace + 15*time.Second)
 			controller := first
 			if restart {
 				controller, err = NewController(config, detectors, staticProvider{snapshot: sdktest.Snapshot{}}, dispatcher, now)
 				if err != nil {
 					t.Fatal(err)
 				}
+				controller.now = func() time.Time { return now }
 				if err := controller.RestoreState(state); err != nil {
 					t.Fatal(err)
 				}
@@ -703,6 +707,68 @@ func TestFinishedResponderJobIsHarvestedBeforeRetirement(t *testing.T) {
 			}
 			if got.GetIncidentRequest().GetIncidentId() != id || !got.GetResponderDone() {
 				t.Fatalf("finished responder result not harvested: %v", got)
+			}
+		})
+	}
+}
+
+// A finished Job holds its unconsumed incident only for the current attempt and
+// only within the verification bound after that Job finished. Past it, the
+// incident retires as a typed OWNER_LOST failure on both shapes: (a) an earlier
+// attempt's Job whose result the responder loop already used, with the next
+// attempt never launched, and (b) a completed Job whose result never appeared
+// while its dispatch keeps polling.
+func TestFinishedResponderJobHoldIsBoundedByVerification(t *testing.T) {
+	for _, shape := range []string{"consumed-earlier-attempt", "missing-result"} {
+		t.Run(shape, func(t *testing.T) {
+			ctx := context.Background()
+			start := time.Unix(1000, 0)
+			config := testControllerConfig()
+			config.FiringThreshold = 1
+			client := fake.NewSimpleClientset()
+			dispatcher := finishedJobDispatcher{recordingDispatcher: &recordingDispatcher{requests: make(chan IncidentRequest, 2)}, work: KubernetesJobDispatcher{Client: client, Namespace: "control"}}
+			controller, err := NewController(config, []sdk.Detector{controllerDetector("fault", time.Hour, stateFinding("fault"))}, staticProvider{snapshot: sdktest.Snapshot{}}, dispatcher, start)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := controller.Step(ctx, start, nil); err != nil {
+				t.Fatal(err)
+			}
+			executePendingEffect(t, controller)
+			id := awaitRequest(t, dispatcher.requests).IncidentID
+			deadline := exportState(t, controller).GetIncidentRequest().GetResponseDeadline().AsTime()
+			finished := deadline.Add(-30 * time.Second)
+			if shape == "consumed-earlier-attempt" {
+				finished = start.Add(time.Second)
+			}
+			if _, err := client.BatchV1().Jobs("control").Create(ctx, completedResponderJob(id, finished), metav1.CreateOptions{}); err != nil {
+				t.Fatal(err)
+			}
+			until := finished.Add(controller.config.VerificationTimeout + ownerLostGrace)
+			if until.Before(deadline.Add(ownerLostGrace)) {
+				until = deadline.Add(ownerLostGrace)
+			}
+			if err := controller.retireExpiredIncident(ctx, until.Add(-time.Second)); err != nil {
+				t.Fatal(err)
+			}
+			if got := exportState(t, controller); !got.GetIncidentOpen() || len(got.GetFailedClosures()) != 0 {
+				t.Fatalf("finished Job did not hold within its bound: %v", got)
+			}
+			controller.mu.Lock()
+			wake := controller.retirementWakeLocked(until.Add(-time.Second))
+			controller.mu.Unlock()
+			if wake.IsZero() || wake.After(until) {
+				t.Fatalf("held incident wakes at %v, want by %v", wake, until)
+			}
+			if err := controller.retireExpiredIncident(ctx, until); err != nil {
+				t.Fatal(err)
+			}
+			got := exportState(t, controller)
+			if got.GetIncidentOpen() || len(got.GetFailedClosures()) != 1 {
+				t.Fatalf("finished Job held past its bound: %v", got)
+			}
+			if failure := got.GetFailedClosures()[0].GetFailure(); failure.GetIncidentId() != id || failure.GetReason() != contracts.ClosureFailureReason_CLOSURE_FAILURE_REASON_OWNER_LOST || !strings.Contains(failure.GetLastError(), "result was not harvested") {
+				t.Fatalf("untyped retirement: %v", failure)
 			}
 		})
 	}
