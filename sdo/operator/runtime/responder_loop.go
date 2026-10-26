@@ -222,6 +222,40 @@ func NewResponderLoop(request IncidentRequest, programs program.ProgramRegistry,
 	return loop
 }
 
+// initializeDispatch may run after LoopFactory has published this loop to the
+// controller. It follows the same operation/state lock order as tools/restore.
+func (l *ResponderLoop) initializeDispatch(trust map[string]ProgramTrust, maxBatches int, runs []ProgramRun) {
+	l.operationMu.Lock()
+	defer l.operationMu.Unlock()
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.Trust = trust
+	if maxBatches > 0 {
+		l.MaxBatches = maxBatches
+	}
+	l.runs = append([]ProgramRun(nil), runs...)
+}
+
+func (l *ResponderLoop) continuationAttempts() int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.continuation.Attempts
+}
+
+func (l *ResponderLoop) observeMutations() (*apihistory.MutationObservation, error) {
+	l.mu.Lock()
+	gate := l.MutationGate
+	l.mu.Unlock()
+	if gate == nil {
+		return nil, nil
+	}
+	observation, err := gate.TryObserve()
+	if err == nil && observation == nil {
+		err = errors.New("responder mutation observation is unavailable")
+	}
+	return observation, err
+}
+
 func (l *ResponderLoop) ToolCalls() []ToolCall {
 	l.mu.Lock()
 	defer l.mu.Unlock()

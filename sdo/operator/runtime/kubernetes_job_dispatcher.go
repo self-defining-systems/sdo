@@ -111,11 +111,7 @@ func (d KubernetesJobDispatcher) PrepareDispatch(ctx context.Context, request In
 			if err != nil {
 				return IncidentRequest{}, err
 			}
-			loop.Trust = trust
-			request.InitialProgramRuns = loop.InitialDiagnose(ctx)
-			fillProgramRevisions(ctx, request.InitialProgramRuns, request.RepositoryWorktree, request.SourceCommit)
-			request.PlaybookCoverage = buildPlaybookCoverage(request.Findings, request.InitialProgramRuns, loop.lastDiagnosisView, trust)
-			request.MaxResponseLoops = loop.MaxBatches
+			request = loop.prepareDispatch(ctx, request, trust)
 		}
 	}
 	if request.PlaybookCoverage == nil {
@@ -138,6 +134,23 @@ func (d KubernetesJobDispatcher) PrepareDispatch(ctx context.Context, request In
 	}
 	request.PreparedAgentTask = string(payload)
 	return request, nil
+}
+
+// prepareDispatch snapshots diagnosis and its coverage together; the factory
+// may already have exposed this loop to the controller's observation goroutine.
+func (l *ResponderLoop) prepareDispatch(ctx context.Context, request IncidentRequest, trust map[string]ProgramTrust) IncidentRequest {
+	l.operationMu.Lock()
+	defer l.operationMu.Unlock()
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.Trust = trust
+	l.capturePhase = "open@detect"
+	defer func() { l.capturePhase = "" }()
+	request.InitialProgramRuns = l.diagnose(ctx, l.findings)
+	fillProgramRevisions(ctx, request.InitialProgramRuns, request.RepositoryWorktree, request.SourceCommit)
+	request.PlaybookCoverage = buildPlaybookCoverage(request.Findings, request.InitialProgramRuns, l.lastDiagnosisView, trust)
+	request.MaxResponseLoops = l.MaxBatches
+	return request
 }
 
 func (d KubernetesJobDispatcher) Dispatch(ctx context.Context, request IncidentRequest) (IncidentResult, error) {
@@ -196,11 +209,7 @@ func (d KubernetesJobDispatcher) dispatch(ctx context.Context, request IncidentR
 			if err != nil {
 				return IncidentResult{}, err
 			}
-			loop.Trust = trust
-			if request.MaxResponseLoops > 0 {
-				loop.MaxBatches = request.MaxResponseLoops
-			}
-			loop.runs = append([]ProgramRun(nil), request.InitialProgramRuns...)
+			loop.initializeDispatch(trust, request.MaxResponseLoops, request.InitialProgramRuns)
 			if err := d.restoreToolState(ctx, request, loop); err != nil {
 				return IncidentResult{}, fmt.Errorf("restore responder tool state: %w", err)
 			}
@@ -329,9 +338,7 @@ func (d KubernetesJobDispatcher) dispatch(ctx context.Context, request IncidentR
 		}
 		result.RepairActions = append(result.RepairActions, loop.MenuRepairActions()...)
 		result.ProgramFailureSignals = loop.FailureSignals()
-		loop.mu.Lock()
-		attempts := loop.continuation.Attempts
-		loop.mu.Unlock()
+		attempts := loop.continuationAttempts()
 		result.ResponseLoopsUsed = attempts
 		result.ResolutionPath = "responder"
 		result.ResponseLoopExhausted = result.ResponseLoopExhausted || (loop.Exhausted() && result.Status != IncidentCompleted)
