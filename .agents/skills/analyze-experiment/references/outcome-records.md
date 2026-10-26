@@ -114,3 +114,15 @@ Failed closures retain fresh post-response detector observations in typed closur
 Early closure groups synthesized opening findings by repaired primary resource. When a final report arrives during report grace, its cause owns the resource and retains the independent opening evidence/detector links from the synthesized cause. Missing-report, returned-report and late-closure outcomes use the same independent repair validator; synthesized duplicates must not remove reflection eligibility. Overlapping model-authored claims remain subject to the ordinary ambiguous-ownership rejection.
 
 Working program tools retain `program_revision=working-tree:<digest>` in program runs, menu options and recorded tool responses. The digest uses the same source/import-closure calculation as accepted program revisions, excluding Markdown and test-only files. The prefix explicitly distinguishes unpublished checkout code. `program_revisions` in plan/apply/mitigate responses binds each program to that executed revision; prepared plans keep their own revision through later edits. Outcome enrichment preserves working revisions rather than replacing them with accepted-source hashes. Treat these as separate revisions for trust; successful execution does not publish memory. The broker projects source-only repairs and carries working playbook/shared-library diffs into reflection for the usual memory check and independent validation.
+
+Controller-observed API repair receipts use `kind=kubernetes-api` and stable
+`sdo-api-<digest>` IDs. They recover writes made outside the recorded-action
+wrapper from paired incident-bound proxy observations. Object responses must
+match the exact resource identity; deletes require a later direct GET returning
+404. Dry runs, streams/exec, failed or partial requests, dropped/stale histories
+and writes outside the incident window do not supply receipts. A stopped writer
+may leave an open manifest: complete durable request pairs are positive facts,
+never evidence of a complete replay history. These receipts still need fresh
+independent finding clearance through the unchanged verified-cause gate.
+Opaque external commands continue to require recorded-action or RunScript
+receipts. The script replay basis remains `observed-transition`.

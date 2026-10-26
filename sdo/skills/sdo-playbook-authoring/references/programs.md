@@ -173,7 +173,12 @@ script and each output stream retain at most 64 KiB.
 For opaque scripts, label `script_origins` in the corpus case with the script
 SHA-256 digest mapped to its original successful repair receipt ID. The
 controller adds timed `RepairReceipt` observations to protected recordings before
-reflection. Open Diagnose must Match and fixed Diagnose must NoMatch with valid
+reflection. Receipts may come from recorded commands, typed/RunScript execution,
+or controller-observed Kubernetes API writes. API receipts identify only the
+observed resource and invocation; they do not assert recovery or execution of
+rewritten script bytes. Check the independently verified cause work and its
+bound receipts before drafting executables; retain missing evidence as a gap.
+Open Diagnose must Match and fixed Diagnose must NoMatch with valid
 bindings. The replay report uses `observed-transition`: it does not execute bash,
 claim exact external-effect simulation, or assert the rewritten script ran.
 The live apply→Diagnose check verifies that version; global health owns closure.
