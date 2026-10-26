@@ -562,7 +562,7 @@ def test_prompt_marks_known_program_capabilities(can_mitigate: bool | None) -> N
     else:
         assert view["capability"] == "unknown"
     assert "diagnosis-only match supplies evidence, not a repair" in _workflow()
-    assert "Success and failure counts are information, never permission gates" in _workflow()
+    assert "Success/failure counts inform; never permission gates" in _workflow()
     assert "Discover capabilities and argument shapes" in _workflow()
     assert "--bind" not in prompt.split("Incident request:", 1)[0]
     assert "--bind" in json.loads(prompt.split("Incident request:\n", 1)[1])["incident_tools"]["commands"]["plan"]
@@ -692,7 +692,7 @@ def test_app_drift_defaults_to_verified_accepted_source_restoration() -> None:
     assert "drift_events" in prompt
     assert "Restore namespace drift to accepted source" in _workflow()
     assert "unless live evidence establishes an intended difference" in _workflow()
-    assert "uncertainty alone does not block restoration" in _workflow()
+    assert "uncertainty alone doesn't block it" in _workflow()
     assert "Explain benign drift with live evidence" in _workflow()
 
 
