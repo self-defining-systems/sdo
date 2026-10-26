@@ -38,9 +38,11 @@ installing a fresh rehearsal controller. The adapter passes this trusted host
 path as `install-existing --seed-broker-root`; Go validates the bounded named
 image evidence against accepted history and restores only `source-evidence/`
 after resetting the PVC. Proposals, incident receipts and other private state
-are not imported. A Git-only seed can start with a current lock but loses its
-image authority after the first source repair. Do not infer that authority from
-rendered locks or healthy live Pods.
+are not imported. Without a seed ledger, `install-existing` captures the adopted
+application's image identities itself: only containers whose live template
+applies the accepted source image, and for tag images only one pulled digest
+agreed by every current Pod. Anything else stays an explicit lock gap. Never
+infer that authority from rendered locks or from Pods after installation.
 
 The experiment lead must first refresh the social seed (JG1, lane 53) and astronomy
 seed (PO1, lane 52). Each fastloop environment must have a green full detector
