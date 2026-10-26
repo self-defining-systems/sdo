@@ -178,11 +178,6 @@ def _parser() -> argparse.ArgumentParser:
             "Apply several independent options in one call; overlapping object write sets are refused before writes. "
             "Use repeated --option ID followed by that option's --param NAME=VALUE, or --selection-set FILE "
             "with version 1 and options [{option_id, bindings, parameters, finding_fingerprints}]. "
-            "Parameters accept ordinary JSON objects, arrays, numbers and booleans, as well as strings. "
-            "sdo menu exports recursive parameters[].schema for every option, plus selection_schema and "
-            "selection_set_schema; nested properties, required fields and oneOf choices describe accepted shapes. "
-            "parameters[].example supplies typed synthetic inputs; replace names/values using incident evidence. "
-            "CLI --param NAME=VALUE accepts JSON text for structured values. "
             "Each option has its own receipt; one call uses one round. Pending rollout returns its application ID "
             "and read-only tools remain available. A single option also accepts --NAME VALUE parameters. "
             "Uses the ordinary executor and controller RBAC; up to five rounds per incident. "
@@ -191,6 +186,11 @@ def _parser() -> argparse.ArgumentParser:
             + WORKING_PROGRAM_HELP
         ),
         epilog=(
+            "Parameters accept ordinary JSON objects, arrays, numbers and booleans, as well as strings. "
+            "sdo menu exports recursive parameters[].schema for every option, plus selection_schema and "
+            "selection_set_schema; nested properties, required fields and oneOf choices describe accepted shapes. "
+            "parameters[].example supplies typed synthetic inputs; replace names/values using incident evidence. "
+            "CLI --param NAME=VALUE accepts JSON text for structured values. "
             "EnsureDatabaseUser repairs a MongoDB user in one call. Its password and target.auth "
             "username/password take exactly one credential reference: {env: NAME} or "
             "{config_map: {name: CONFIGMAP, key: KEY, assignment: optional_NAME}} in the target Pod namespace. "
