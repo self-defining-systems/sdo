@@ -39,9 +39,7 @@ func (hostPortConflict) Diagnose(_ context.Context, v program.ReadView, b progra
 	if err != nil {
 		return program.Verdict{}, err
 	}
-	// Apply normalization keeps fields another manager added, so compare the
-	// declared field on the complete accepted and observed sides.
-	if hostPorts(diff.Text, "accepted: ") == hostPorts(diff.Text, "observed: ") {
+	if !diff.Changed {
 		return program.Verdict{Result: program.NoMatch}, nil
 	}
 	for _, deployment := range v.Deployments() {
@@ -72,32 +70,6 @@ func (p hostPortConflict) Mitigate(ctx context.Context, v program.ReadView, b pr
 		return program.Plan{}, err
 	}
 	return program.Plan{Actions: []program.Action{program.ReconcileFromSource{Ref: b.Objects["deployment"]}}}, nil
-}
-
-func hostPorts(text, side string) string {
-	for _, line := range strings.Split(text, "\n") {
-		if !strings.HasPrefix(line, side) {
-			continue
-		}
-		var object struct {
-			Spec struct {
-				Template struct {
-					Spec corev1.PodSpec `json:"spec"`
-				} `json:"template"`
-			} `json:"spec"`
-		}
-		if json.Unmarshal([]byte(strings.TrimPrefix(line, side)), &object) != nil {
-			return "unreadable"
-		}
-		var ports []string
-		for _, container := range object.Spec.Template.Spec.Containers {
-			for _, port := range container.Ports {
-				ports = append(ports, fmt.Sprintf("%s/%d", container.Name, port.HostPort))
-			}
-		}
-		return strings.Join(ports, ",")
-	}
-	return "absent"
 }
 
 // unschedulable is the health detector for this fixture: any Pending Pod.
@@ -146,7 +118,7 @@ func TestHermeticAdoptedHostPortRepairLearnsAndReplays(t *testing.T) {
 	one := int32(1)
 	labelsOf := map[string]string{"app": "search"}
 	live := &appsv1.Deployment{
-		ObjectMeta: metav1.ObjectMeta{Name: "search", Namespace: "app", Generation: 1},
+		ObjectMeta: metav1.ObjectMeta{Name: "search", Namespace: "app", Generation: 1, UID: "search-uid", ResourceVersion: "1"},
 		Spec:       appsv1.DeploymentSpec{Replicas: &one, Selector: &metav1.LabelSelector{MatchLabels: labelsOf}, Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: labelsOf}, Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "hotel-reserv-search", Image: "example/hotelreservation:latest", Ports: []corev1.ContainerPort{{ContainerPort: 8082, Protocol: corev1.ProtocolTCP}}}}}}},
 		Status:     appsv1.DeploymentStatus{ObservedGeneration: 1, Replicas: 1, UpdatedReplicas: 1, ReadyReplicas: 1, AvailableReplicas: 1},
 	}
@@ -179,6 +151,26 @@ func TestHermeticAdoptedHostPortRepairLearnsAndReplays(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// Ownership adoption: the controller takes the declared fields and records
+	// what the accepted object looked like, the point additions count from.
+	controllerConfig := testControllerConfig()
+	controllerConfig.Namespace, controllerConfig.SourceCommit = "app", locked
+	controller, err := NewController(controllerConfig, nil, fastloopObjects{client: client}, &recordingDispatcher{requests: make(chan IncidentRequest, 1)}, time.Unix(10, 0).UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	controller.ConfigureDrift(DriftControllerConfig{Source: source, Client: client, View: func(snapshot sdk.DetectionContext) program.ReadView {
+		return LiveReadView{DetectionContext: snapshot, Source: source, SourceCommit: locked, Client: client}
+	}})
+	if err := controller.adoptOwnership(ctx, time.Unix(11, 0).UTC(), sdktest.Snapshot{NamespaceName: "app"}); err != nil {
+		t.Fatalf("ownership adoption: %v", err)
+	}
+	adopted, err := client.AppsV1().Deployments("app").Get(ctx, "search", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	live = adopted.DeepCopy()
+
 	// First encounter: ServicePortConflict injects a hostPort; the Pod pends.
 	faulted := live.DeepCopy()
 	faulted.Spec.Template.Spec.Containers[0].Ports[0].HostPort = 9100
@@ -210,8 +202,8 @@ func TestHermeticAdoptedHostPortRepairLearnsAndReplays(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first encounter cannot compare adopted Deployment with accepted source: %v", err)
 	}
-	if hostPorts(diff.Text, "accepted: ") == hostPorts(diff.Text, "observed: ") {
-		t.Fatalf("hostPort drift not visible in accepted-source diff: %+v", diff)
+	if !diff.Changed {
+		t.Fatalf("added hostPort not reported as accepted-source drift: %+v", diff)
 	}
 
 	// The responder's manual repair returns the live object to source.

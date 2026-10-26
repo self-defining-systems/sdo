@@ -372,6 +372,7 @@ func removeRevisionStamp(metadata map[string]any) {
 		return
 	}
 	delete(annotations, "sdo.dev/source-tree")
+	delete(annotations, acceptedPathsAnnotation)
 	delete(annotations, "kubectl.kubernetes.io/last-applied-configuration")
 	if len(annotations) == 0 {
 		delete(metadata, "annotations")

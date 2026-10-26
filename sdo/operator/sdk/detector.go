@@ -229,9 +229,10 @@ func ConfigMapReferencesForDeployment(deployment appsv1.Deployment) []ConfigMapR
 type SourceDiff struct {
 	// SourceAbsent is true only after a successful accepted-source lookup finds no object.
 	SourceAbsent bool `json:"source_absent,omitempty"`
-	// Changed reports declared fields that differ and fields another manager
-	// added after acceptance that source does not declare. Server defaults
-	// and kubernetes.io/k8s.io bookkeeping metadata are not changes.
+	// Changed reports declared fields that differ and fields that source does
+	// not declare and that were absent when SDO accepted (applied or adopted)
+	// the object. Server defaults, fields present at acceptance and
+	// kubernetes.io/k8s.io bookkeeping metadata are not changes.
 	Changed bool   `json:"changed"`
 	Text    string `json:"text,omitempty"`
 }

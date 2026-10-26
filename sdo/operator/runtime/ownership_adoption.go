@@ -147,7 +147,8 @@ func (c *Controller) adoptOwnership(ctx context.Context, now time.Time, snapshot
 				break
 			}
 		}
-		if allOwned {
+		_, stamped := acceptedPaths(live)
+		if allOwned && stamped {
 			continue
 		}
 		conflicts, managers := adoptionConflicts(live, declared)
@@ -157,6 +158,9 @@ func (c *Controller) adoptOwnership(ctx context.Context, now time.Time, snapshot
 		conditional := source.DeepCopy()
 		conditional.SetUID(live.GetUID())
 		conditional.SetResourceVersion(live.GetResourceVersion())
+		if err := stampAcceptedPaths(conditional, normalized, live); err != nil {
+			return fmt.Errorf("record accepted paths of %s/%s: %w", ref.Kind, ref.Name, err)
+		}
 		pending = append(pending, candidate{ref: ref, source: conditional, normalized: normalized, conflicts: conflicts, managers: managers})
 	}
 	persistDifferences := func(changes []ObjectChange, view program.ReadView) error {

@@ -78,6 +78,9 @@ func (a *adoptionServiceAPI) ServeHTTP(writer http.ResponseWriter, request *http
 	}
 	result := *a.service.DeepCopy()
 	result.Spec.Ports[0].TargetPort = applied.Spec.Ports[0].TargetPort
+	if len(applied.Annotations) > 0 {
+		result.Annotations = applied.Annotations
+	}
 	if request.URL.Query().Get("dryRun") == "" {
 		a.patches++
 		result.ResourceVersion = fmt.Sprint(a.patches + 1)

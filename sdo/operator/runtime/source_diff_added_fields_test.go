@@ -2,11 +2,10 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
-	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	kruntime "k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
@@ -14,12 +13,6 @@ import (
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
-)
-
-var (
-	addedFieldsCreated  = metav1.NewTime(time.Date(2026, 10, 26, 10, 0, 0, 0, time.UTC))
-	addedFieldsAccepted = metav1.NewTime(time.Date(2026, 10, 26, 11, 0, 0, 0, time.UTC))
-	addedFieldsDrifted  = metav1.NewTime(time.Date(2026, 10, 26, 12, 0, 0, 0, time.UTC))
 )
 
 func addedFieldsRef() sdk.ObjectRef {
@@ -53,20 +46,29 @@ func addedFieldsLive() *unstructured.Unstructured {
 	container["ports"].([]any)[0].(map[string]any)["protocol"] = "TCP"
 	_ = unstructured.SetNestedSlice(live.Object, containers, "spec", "template", "spec", "containers")
 	_ = unstructured.SetNestedField(live.Object, int64(1), "status", "replicas")
-	live.SetManagedFields([]metav1.ManagedFieldsEntry{
-		addedFieldsEntry("sdo-deployer", metav1.ManagedFieldsOperationApply, "", addedFieldsAccepted,
-			`{"f:metadata":{"f:labels":{"f:app":{}}},"f:spec":{"f:replicas":{},"f:template":{"f:spec":{"f:containers":{"k:{\"name\":\"search\"}":{".":{},"f:image":{},"f:name":{},"f:ports":{"k:{\"containerPort\":8080,\"protocol\":\"TCP\"}":{".":{},"f:containerPort":{}}}}}}}}}`),
-		addedFieldsEntry("kube-controller-manager", metav1.ManagedFieldsOperationUpdate, "status", addedFieldsDrifted, `{"f:status":{"f:replicas":{}}}`),
-	})
+	acceptAddedFieldsLive(live)
 	return live
 }
 
-func addedFieldsEntry(manager string, operation metav1.ManagedFieldsOperationType, subresource string, at metav1.Time, fields string) metav1.ManagedFieldsEntry {
-	return metav1.ManagedFieldsEntry{Manager: manager, Operation: operation, Subresource: subresource, APIVersion: "apps/v1", Time: &at, FieldsType: "FieldsV1", FieldsV1: &metav1.FieldsV1{Raw: []byte(fields)}}
+// acceptAddedFieldsLive records the acceptance point the way adoption does:
+// the stamp lists every undeclared path the accepted object carried.
+func acceptAddedFieldsLive(live *unstructured.Unstructured) {
+	apply := addedFieldsSource()
+	if err := stampAcceptedPaths(apply, live, live); err != nil {
+		panic(err)
+	}
+	annotations := live.GetAnnotations()
+	if annotations == nil {
+		annotations = map[string]string{}
+	}
+	annotations[acceptedPathsAnnotation] = apply.GetAnnotations()[acceptedPathsAnnotation]
+	live.SetAnnotations(annotations)
 }
 
-func addManagedEntry(object *unstructured.Unstructured, entry metav1.ManagedFieldsEntry) {
-	object.SetManagedFields(append(object.GetManagedFields(), entry))
+func addAnnotation(live *unstructured.Unstructured, key, value string) {
+	annotations := live.GetAnnotations()
+	annotations[key] = value
+	live.SetAnnotations(annotations)
 }
 
 func addedFieldsContainers(object *unstructured.Unstructured) []any {
@@ -74,9 +76,11 @@ func addedFieldsContainers(object *unstructured.Unstructured) []any {
 	return containers
 }
 
-// diffBothNormalizations compares without a client and with a server-side
-// apply dry-run that, like the API server, keeps every other manager's fields.
-func diffBothNormalizations(t *testing.T, live *unstructured.Unstructured) map[string]bool {
+// diffEveryView compares without a client, with a server-side apply dry-run
+// that (like the API server) keeps fields it does not declare, and offline on
+// the corpus capture of the same object, as replay does. Live and replay must
+// agree, so the acceptance evidence has to survive capture.
+func diffEveryView(t *testing.T, live *unstructured.Unstructured) map[string]bool {
 	t.Helper()
 	ref := addedFieldsRef()
 	// Read the object back as the API server serves it.
@@ -92,15 +96,30 @@ func diffBothNormalizations(t *testing.T, live *unstructured.Unstructured) map[s
 	live.SetAPIVersion(ref.APIVersion)
 	live.SetKind(ref.Kind)
 	snapshot := sdktest.Snapshot{NamespaceName: ref.Namespace, Objects: []unstructured.Unstructured{*live}}
+	captured, err := sdktest.CaptureSnapshot(snapshot, ref.Namespace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(captured)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stored sdktest.Snapshot
+	if err := json.Unmarshal(encoded, &stored); err != nil {
+		t.Fatal(err)
+	}
 	results := map[string]bool{}
-	for _, name := range []string{"snapshot", "apply-dry-run"} {
+	for _, name := range []string{"snapshot", "apply-dry-run", "replayed-capture"} {
 		view := LiveReadView{DetectionContext: snapshot, Source: planFakeSource{source: addedFieldsSource()}, SourceCommit: "accepted"}
-		if name == "apply-dry-run" {
+		switch name {
+		case "apply-dry-run":
 			client := fake.NewSimpleClientset()
 			client.PrependReactor("patch", "deployments", func(ktesting.Action) (bool, kruntime.Object, error) {
 				return true, typed.DeepCopy(), nil
 			})
 			view.Client = client
+		case "replayed-capture":
+			view.DetectionContext = stored
 		}
 		diff, err := view.DiffAgainstSource(ref)
 		if err != nil {
@@ -111,44 +130,40 @@ func diffBothNormalizations(t *testing.T, live *unstructured.Unstructured) map[s
 	return results
 }
 
+func setHostPort(live *unstructured.Unstructured) {
+	containers := addedFieldsContainers(live)
+	containers[0].(map[string]any)["ports"].([]any)[0].(map[string]any)["hostPort"] = int64(8080)
+	_ = unstructured.SetNestedSlice(live.Object, containers, "spec", "template", "spec", "containers")
+}
+
 func TestSourceDiffChangedForFieldsAddedAfterAcceptance(t *testing.T) {
 	cases := map[string]func(*unstructured.Unstructured){
-		"container hostPort": func(live *unstructured.Unstructured) {
-			containers := addedFieldsContainers(live)
-			containers[0].(map[string]any)["ports"].([]any)[0].(map[string]any)["hostPort"] = int64(8080)
-			_ = unstructured.SetNestedSlice(live.Object, containers, "spec", "template", "spec", "containers")
-			addManagedEntry(live, addedFieldsEntry("kubectl-patch", metav1.ManagedFieldsOperationUpdate, "", addedFieldsDrifted,
-				`{"f:spec":{"f:template":{"f:spec":{"f:containers":{"k:{\"name\":\"search\"}":{"f:ports":{"k:{\"containerPort\":8080,\"protocol\":\"TCP\"}":{"f:hostPort":{}}}}}}}}}`))
-		},
+		"container hostPort": setHostPort,
 		"sidecar container": func(live *unstructured.Unstructured) {
 			containers := append(addedFieldsContainers(live), map[string]any{"name": "proxy", "image": "proxy:1", "terminationMessagePath": "/dev/termination-log"})
 			_ = unstructured.SetNestedSlice(live.Object, containers, "spec", "template", "spec", "containers")
-			addManagedEntry(live, addedFieldsEntry("kubectl-patch", metav1.ManagedFieldsOperationUpdate, "", addedFieldsDrifted,
-				`{"f:spec":{"f:template":{"f:spec":{"f:containers":{"k:{\"name\":\"proxy\"}":{".":{},"f:image":{},"f:name":{},"f:terminationMessagePath":{}}}}}}}`))
 		},
-		"annotation": func(live *unstructured.Unstructured) {
-			live.SetAnnotations(map[string]string{"example.com/maintenance": "true"})
-			addManagedEntry(live, addedFieldsEntry("kubectl-annotate", metav1.ManagedFieldsOperationUpdate, "", addedFieldsDrifted,
-				`{"f:metadata":{"f:annotations":{".":{},"f:example.com/maintenance":{}}}}`))
-		},
+		"annotation": func(live *unstructured.Unstructured) { addAnnotation(live, "example.com/maintenance", "true") },
 		"label": func(live *unstructured.Unstructured) {
 			live.SetLabels(map[string]string{"app": "search", "tier": "canary"})
-			addManagedEntry(live, addedFieldsEntry("kubectl-label", metav1.ManagedFieldsOperationUpdate, "", addedFieldsDrifted,
-				`{"f:metadata":{"f:labels":{"f:tier":{}}}}`))
 		},
 		"pod template field": func(live *unstructured.Unstructured) {
 			_ = unstructured.SetNestedStringMap(live.Object, map[string]string{"disk": "ssd"}, "spec", "template", "spec", "nodeSelector")
-			addManagedEntry(live, addedFieldsEntry("chaos", metav1.ManagedFieldsOperationApply, "", addedFieldsDrifted,
-				`{"f:spec":{"f:template":{"f:spec":{"f:nodeSelector":{"f:disk":{}}}}}}`))
+		},
+		// A later acceptance (a source repair re-applied by SDO) keeps an
+		// earlier addition visible instead of absorbing it.
+		"addition survives re-acceptance": func(live *unstructured.Unstructured) {
+			setHostPort(live)
+			acceptAddedFieldsLive(live)
 		},
 	}
 	for name, inject := range cases {
 		t.Run(name, func(t *testing.T) {
 			live := addedFieldsLive()
 			inject(live)
-			for normalization, changed := range diffBothNormalizations(t, live) {
+			for view, changed := range diffEveryView(t, live) {
 				if !changed {
-					t.Errorf("%s: added field drift reported unchanged", normalization)
+					t.Errorf("%s: added field drift reported unchanged", view)
 				}
 			}
 		})
@@ -158,35 +173,53 @@ func TestSourceDiffChangedForFieldsAddedAfterAcceptance(t *testing.T) {
 func TestSourceDiffUnchangedForServerDefaultsAndBookkeeping(t *testing.T) {
 	cases := map[string]func(*unstructured.Unstructured){
 		"applied defaults": func(*unstructured.Unstructured) {},
-		// Adopted objects: the original creator's Update owns server defaults,
-		// written before SDO accepted the object.
-		"adopted creator defaults": func(live *unstructured.Unstructured) {
-			addManagedEntry(live, addedFieldsEntry("kubectl-create", metav1.ManagedFieldsOperationUpdate, "", addedFieldsCreated,
-				`{"f:spec":{"f:progressDeadlineSeconds":{},"f:template":{"f:spec":{"f:dnsPolicy":{},"f:containers":{"k:{\"name\":\"search\"}":{"f:imagePullPolicy":{},"f:terminationMessagePath":{},"f:ports":{"k:{\"containerPort\":8080,\"protocol\":\"TCP\"}":{"f:protocol":{}}}}}}}}}`))
+		// Adopted objects: whatever the creator wrote before SDO accepted
+		// the object is part of the acceptance record, however often that
+		// creator writes again afterwards.
+		"adopted creator fields": func(live *unstructured.Unstructured) {
+			annotations := live.GetAnnotations()
+			delete(annotations, acceptedPathsAnnotation)
+			live.SetAnnotations(annotations)
+			_ = unstructured.SetNestedField(live.Object, int64(30), "spec", "template", "spec", "terminationGracePeriodSeconds")
+			addAnnotation(live, "meta.helm.sh/release-name", "search")
+			acceptAddedFieldsLive(live)
 		},
 		"kubernetes bookkeeping annotations": func(live *unstructured.Unstructured) {
-			live.SetAnnotations(map[string]string{"deployment.kubernetes.io/revision": "3"})
+			addAnnotation(live, "deployment.kubernetes.io/revision", "3")
 			_ = unstructured.SetNestedStringMap(live.Object, map[string]string{"kubectl.kubernetes.io/restartedAt": "2026-10-26T12:00:00Z"}, "spec", "template", "metadata", "annotations")
-			addManagedEntry(live, addedFieldsEntry("kube-controller-manager", metav1.ManagedFieldsOperationUpdate, "", addedFieldsDrifted,
-				`{"f:metadata":{"f:annotations":{".":{},"f:deployment.kubernetes.io/revision":{}}}}`))
-			addManagedEntry(live, addedFieldsEntry("kubectl-rollout", metav1.ManagedFieldsOperationUpdate, "", addedFieldsDrifted,
-				`{"f:spec":{"f:template":{"f:metadata":{"f:annotations":{".":{},"f:kubectl.kubernetes.io/restartedAt":{}}}}}}`))
 		},
-		"foreign write to an accepted field it restored": func(live *unstructured.Unstructured) {
-			addManagedEntry(live, addedFieldsEntry("kubectl-patch", metav1.ManagedFieldsOperationUpdate, "", addedFieldsDrifted,
-				`{"f:spec":{"f:replicas":{}}}`))
+		"declared field rewritten to its accepted value": func(live *unstructured.Unstructured) {
+			_ = unstructured.SetNestedField(live.Object, int64(1), "spec", "replicas")
+		},
+		"status written by a controller": func(live *unstructured.Unstructured) {
+			_ = unstructured.SetNestedField(live.Object, int64(1), "status", "readyReplicas")
 		},
 	}
 	for name, prepare := range cases {
 		t.Run(name, func(t *testing.T) {
 			live := addedFieldsLive()
 			prepare(live)
-			for normalization, changed := range diffBothNormalizations(t, live) {
+			for view, changed := range diffEveryView(t, live) {
 				if changed {
-					t.Errorf("%s: unchanged object reported as drift", normalization)
+					t.Errorf("%s: unchanged object reported as drift", view)
 				}
 			}
 		})
+	}
+}
+
+// Without an acceptance record there is no acceptance point, so nothing
+// counts as added (the comparison of declared fields still applies).
+func TestSourceDiffWithoutAcceptanceRecordReportsNoAddition(t *testing.T) {
+	live := addedFieldsLive()
+	annotations := live.GetAnnotations()
+	delete(annotations, acceptedPathsAnnotation)
+	live.SetAnnotations(annotations)
+	setHostPort(live)
+	for view, changed := range diffEveryView(t, live) {
+		if changed {
+			t.Errorf("%s: addition reported without an acceptance point", view)
+		}
 	}
 }
 
@@ -198,8 +231,6 @@ func TestReconcileFromSourceClearsAddedFieldDrift(t *testing.T) {
 	containers := addedFieldsContainers(live)
 	containers[0].(map[string]any)["ports"].([]any)[0].(map[string]any)["hostPort"] = int64(8080)
 	_ = unstructured.SetNestedSlice(live.Object, containers, "spec", "template", "spec", "containers")
-	addManagedEntry(live, addedFieldsEntry("kubectl-patch", metav1.ManagedFieldsOperationUpdate, "", addedFieldsDrifted,
-		`{"f:spec":{"f:template":{"f:spec":{"f:containers":{"k:{\"name\":\"search\"}":{"f:ports":{"k:{\"containerPort\":8080,\"protocol\":\"TCP\"}":{"f:hostPort":{}}}}}}}}}`))
 	client := &planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: live}}
 	diff := func() bool {
 		t.Helper()

@@ -1,51 +1,86 @@
 package runtime
 
 import (
+	"encoding/json"
 	"sort"
 	"strings"
 
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
-// addedSourceFields returns observed configuration paths that accepted source
-// does not declare and that another field manager wrote after the deployer's
-// latest accepted Apply. Apply normalization keeps such fields, so they need
-// their own check. Server defaults are either unowned (objects SDO applied) or
-// owned by a writer that predates acceptance (adopted objects), so write order
-// separates defaulting from added drift without a second server request.
-// Without a deployer Apply there is no acceptance point and nothing is added.
-func addedSourceFields(observed *unstructured.Unstructured, accepted map[string]any) []string {
-	if observed == nil {
-		return nil
+// acceptedPathsAnnotation records, without values, the configuration paths an
+// object had beyond accepted source when SDO last applied or adopted it. It
+// travels with the object into informer snapshots and corpus captures, so live
+// and replayed DiffAgainstSource report the same additions.
+const acceptedPathsAnnotation = "sdo.dev/accepted-paths"
+
+// stampAcceptedPaths records on apply, the object SDO is about to write, the
+// undeclared paths of applied, the server's dry-run result of that write.
+// Server defaults and fields present at first acceptance are thereby part of
+// the accepted object. Paths that were already additions under an earlier
+// acceptance stay additions: re-acceptance must not absorb drift that accepted
+// source never declared.
+func stampAcceptedPaths(apply, applied, live *unstructured.Unstructured) error {
+	declared := flattenDriftObject(apply)
+	added := map[string]bool{}
+	for _, path := range addedSourceFields(live, comparableFields(apply.Object)) {
+		added[path] = true
 	}
-	var acceptedAt *metav1.Time
-	for _, entry := range observed.GetManagedFields() {
-		if entry.Manager == "sdo-deployer" && entry.Operation == metav1.ManagedFieldsOperationApply && entry.Subresource == "" && entry.Time != nil {
-			if acceptedAt == nil || entry.Time.After(acceptedAt.Time) {
-				acceptedAt = entry.Time
-			}
+	paths := []string{}
+	for path, value := range flattenDriftObject(applied) {
+		if value != nil && !added[path] && !reservedMetadataPath(path) && !declaredPath(declared, path) {
+			paths = append(paths, path)
 		}
 	}
-	if acceptedAt == nil {
+	sort.Strings(paths)
+	encoded, err := json.Marshal(paths)
+	if err != nil {
+		return err
+	}
+	annotations := apply.GetAnnotations()
+	if annotations == nil {
+		annotations = map[string]string{}
+	}
+	annotations[acceptedPathsAnnotation] = string(encoded)
+	apply.SetAnnotations(annotations)
+	return nil
+}
+
+func acceptedPaths(object *unstructured.Unstructured) (map[string]bool, bool) {
+	if object == nil {
+		return nil, false
+	}
+	encoded, ok := object.GetAnnotations()[acceptedPathsAnnotation]
+	if !ok {
+		return nil, false
+	}
+	var paths []string
+	if json.Unmarshal([]byte(encoded), &paths) != nil {
+		return nil, false
+	}
+	result := make(map[string]bool, len(paths))
+	for _, path := range paths {
+		result[path] = true
+	}
+	return result, true
+}
+
+// addedSourceFields returns observed configuration paths that were absent when
+// SDO accepted the object and that accepted source does not declare. Apply
+// normalization keeps such fields, so they need their own check. Without an
+// acceptance record there is no acceptance point and nothing is added.
+func addedSourceFields(observed *unstructured.Unstructured, accepted map[string]any) []string {
+	present, ok := acceptedPaths(observed)
+	if !ok {
 		return nil
 	}
 	declared := flattenDriftObject(&unstructured.Unstructured{Object: accepted})
-	present := flattenDriftObject(observed)
-	added := map[string]bool{}
-	for _, entry := range observed.GetManagedFields() {
-		if entry.Manager == "sdo-deployer" || entry.Subresource != "" || entry.Time == nil || !entry.Time.After(acceptedAt.Time) {
-			continue
+	paths := []string{}
+	for path, value := range flattenDriftObject(observed) {
+		// Typed reads serialize unset fields as null; null is absence.
+		if value != nil && !present[path] && !reservedMetadataPath(path) && !declaredPath(declared, path) {
+			paths = append(paths, path)
 		}
-		for path := range ownedDriftPathsForEntry(observed, entry) {
-			if !reservedMetadataPath(path) && observedLeafUnder(present, path) && !declaredPath(declared, path) {
-				added[path] = true
-			}
-		}
-	}
-	paths := make([]string, 0, len(added))
-	for path := range added {
-		paths = append(paths, path)
 	}
 	sort.Strings(paths)
 	return paths
