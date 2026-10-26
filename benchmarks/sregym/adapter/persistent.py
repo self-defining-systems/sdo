@@ -582,6 +582,7 @@ def run_persistent_stage(
         and record.lifecycle_fingerprint == inputs.lifecycle_fingerprint
         and ops.namespace_exists(control)
     )
+    shared_adoption = bool(config.shared_accepted_id and not reusable and not restart_after_reset)
     lifecycle_started = clock.monotonic()
     if reusable or restart_after_reset:
         lifecycle_reused, lifecycle_revalidation_skipped = True, True
@@ -591,14 +592,23 @@ def run_persistent_stage(
                 f"cannot replace the controller of {inputs.namespace!r}: incident {record.pending.incident_id!r} "
                 "has not been drained into operational memory"
             )
-        if ops.namespace_exists(control):
-            # Never adopt a controller this pipeline did not install and validate.
-            ops.delete_controller(control)
-        state.controllers.pop(inputs.namespace, None)
-        state.save(inputs.state_path)
-        lifecycle_reused, lifecycle_revalidation_skipped = run_lifecycle(), False
+        if config.shared_accepted_id:
+            # Shared attachment has already prepared this exact accepted mount.
+            # A lost host registry must never trigger a seed or destroy a peer's
+            # live repository. Rebuild it only after native identity inspection.
+            pod = ops.controller_pod(control)
+            if pod is None or not ops.install(replace(config, reuse_existing=True)):
+                raise PersistentControllerError("shared memory requires its prepared running controller")
+            lifecycle_reused, lifecycle_revalidation_skipped = True, True
+        else:
+            if ops.namespace_exists(control):
+                # Never adopt a controller this pipeline did not install and validate.
+                ops.delete_controller(control)
+            state.controllers.pop(inputs.namespace, None)
+            state.save(inputs.state_path)
+            lifecycle_reused, lifecycle_revalidation_skipped = run_lifecycle(), False
     lifecycle_ready = clock.monotonic()
-    install_inspected = False
+    install_inspected = shared_adoption
     if not reusable:
         if restart_after_reset:
             # Reset deletes the Job while retaining the accepted repository.
@@ -712,7 +722,7 @@ def run_persistent_stage(
             "control_namespace": control,
             "controller_pod_uid": pod.uid,
             "controller_pod_name": pod.name,
-            "installed_this_stage": not reusable,
+            "installed_this_stage": not (reusable or shared_adoption),
             "installed_by_stage": record.installed_by_stage,
             "lifecycle_revalidation_skipped": lifecycle_revalidation_skipped,
             "maintenance_generation": generation,

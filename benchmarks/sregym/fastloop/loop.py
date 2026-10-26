@@ -154,6 +154,8 @@ class LoopConfig:
     permissive_responder: bool = False
     responder_namespaces: tuple[str, ...] = ()
     cleanup_passes: int = 1
+    lane_id: str | None = None
+    accepted_repository: Path | None = None
 
     def __post_init__(self) -> None:
         if type(self.cleanup_passes) is not int or not 1 <= self.cleanup_passes <= 2:
@@ -236,6 +238,11 @@ def run_incidents(
             ids = (
                 config.stream[local_index] if config.stream else (config.problems[local_index % len(config.problems)],)
             )
+            before_commit = None
+            if config.accepted_repository is not None:
+                from benchmarks.sregym.fastloop.parallel_memory import memory_head
+
+                before_commit = memory_head(config.accepted_repository)
             record, recovered = _run_one(
                 agent,
                 driver,
@@ -263,6 +270,15 @@ def run_incidents(
                     record.error = f"{record.error}; reset failed: {_describe(exc)}"
                     baseline_ready = False
             record.capability_mode = config.capability_evidence.mode
+            if config.accepted_repository is not None and before_commit is not None:
+                from benchmarks.sregym.fastloop.parallel_memory import memory_ancestry, memory_head
+
+                record.lane_id = config.lane_id
+                record.memory_before_commit = before_commit
+                record.memory_after_commit = memory_head(config.accepted_repository)
+                record.memory_ancestry = memory_ancestry(
+                    config.accepted_repository, before_commit, record.memory_after_commit
+                )
             record.fault_capabilities = [f for f in config.capability_evidence.faults if f.problem_id in ids]
             append_record(config.results_path, record)
             records.append(record)

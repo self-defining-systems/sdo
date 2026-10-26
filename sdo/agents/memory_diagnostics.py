@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING
+
+from google.protobuf import json_format
 
 from sdo.agents.prompt_templates import render_prompt
 
@@ -39,6 +42,15 @@ def render_validation_feedback(validation_attempt: int, diagnostics: Iterable[Me
         if row.hint:
             text += render_prompt(
                 "lifecycle", "render_validation_feedback_03", part="validation.instructions", hint=row.hint
+            )
+        if row.HasField("memory_conflict"):
+            text += render_prompt(
+                "lifecycle",
+                "memory_conflict",
+                part="validation.instructions",
+                conflict_json=json.dumps(
+                    json_format.MessageToDict(row.memory_conflict, preserving_proto_field_name=True), indent=2
+                ),
             )
         lines.append(text)
     return "\n".join(lines) + "\n"

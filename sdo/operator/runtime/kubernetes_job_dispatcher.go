@@ -124,7 +124,7 @@ func (d KubernetesJobDispatcher) PrepareDispatch(ctx context.Context, request In
 		return IncidentRequest{}, errors.New("native responder requires logical operational memory")
 	}
 	if d.Catalog != nil {
-		snapshot, err := d.Catalog.Snapshot(ctx)
+		snapshot, err := memory.SnapshotAt(ctx, d.Catalog, request.RepositoryBaseCommit)
 		if err != nil {
 			return IncidentRequest{}, fmt.Errorf("read logical operational memory: %w", err)
 		}
