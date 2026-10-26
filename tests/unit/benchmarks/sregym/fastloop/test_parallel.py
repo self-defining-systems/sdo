@@ -19,8 +19,11 @@ def record(problem, lane, index=0):
         agent="sdo",
         problem_id=problem,
         model="scripted",
-        injection_started_at=datetime.now(timezone.utc),
-        injection_finished_at=datetime.now(timezone.utc),
+        injection={
+            "state": "injected",
+            "started_at": datetime.now(timezone.utc),
+            "finished_at": datetime.now(timezone.utc),
+        },
         incident_id=f"{lane}-{index}",
     )
 

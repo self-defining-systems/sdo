@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 from benchmarks.sregym.adapter import PersistentState, kubectl
 from benchmarks.sregym.fastloop.baseline_recovery import (
     NON_APPLICATION_NAMESPACES,
+    WORKLOAD_KINDS,
     ApplicationCluster,
     KubectlApplicationCluster,
     accepted_restore_baselines,
@@ -207,6 +208,50 @@ class RestoreChecks:
     environment: FastloopEnvironment
     identity: dict[str, Any] | None = None
 
+    def validate(self) -> None:
+        """Reject incomplete recovery before controller or namespace mutations."""
+        from benchmarks.sregym.fastloop.recovery_closure import complete_recovery_baselines, missing_prerequisites
+
+        env = self.environment
+        baselines = load_application_baseline(env.baseline_path, env.namespace)
+        if baselines is None:
+            raise ValueError("reset requires an application baseline captured by fastloop up")
+        baselines = complete_recovery_baselines(
+            env.workspace, accepted_restore_baselines(env.workspace, baselines, seed_commit=env.seed_commit)
+        )
+        absent = set()
+        for baseline in baselines:
+            result = kubectl(
+                ["get", "namespace", baseline.namespace, "-o", "name"],
+                namespace=None,
+                kubeconfig=env.kubeconfig,
+                check=False,
+            )
+            if result.returncode:
+                if "(NotFound)" not in result.stderr:
+                    raise RuntimeError(f"could not inspect application namespace {baseline.namespace}: {result.stderr}")
+                absent.add(baseline.namespace)
+        unsupported = []
+        for ref in missing_prerequisites(baselines):
+            # A namespaced object omitted by the baseline cannot be recreated.
+            # Existing external objects only need a name projection; never read
+            # or archive Secret payloads, and never create cluster-scoped objects.
+            if ref.namespace in absent or ref.kind in WORKLOAD_KINDS:
+                unsupported.append(ref.label())
+                continue
+            result = kubectl(
+                ["get", f"{ref.kind.lower()}/{ref.name}", "-o", "name"],
+                namespace=ref.namespace or None,
+                kubeconfig=env.kubeconfig,
+                check=False,
+            )
+            if result.returncode:
+                if "(NotFound)" not in result.stderr:
+                    raise RuntimeError(f"could not inspect recovery prerequisite {ref.label()}: {result.stderr}")
+                unsupported.append(ref.label())
+        if unsupported:
+            raise ValueError("eval: namespace recovery cannot restore prerequisites: " + ", ".join(unsupported))
+
     def prepare(self, *, fresh: bool) -> None:
         from benchmarks.sregym.fastloop.clean_start import restore_admission_baseline
         from benchmarks.sregym.fastloop.rbac import reset_responder_grants
@@ -214,7 +259,9 @@ class RestoreChecks:
         env = self.environment
         if load_application_baseline(env.baseline_path, env.namespace) is None:
             raise ValueError("reset requires an application baseline captured by fastloop up")
-        ensure_application_namespace(env.kubeconfig, env.namespace)
+        self.validate()
+        for baseline in load_application_baseline(env.baseline_path, env.namespace) or ():
+            ensure_application_namespace(env.kubeconfig, baseline.namespace)
         restore_admission_baseline(env.kubeconfig, env.baseline_path, env.workspace)
         if fresh:
             reset_responder_grants(env.kubeconfig, env.namespace)
@@ -250,6 +297,8 @@ def reset_environment(
         raise ValueError("shared accepted memory cannot use lane reset; retain the prepared controller")
     if not environment.seed_commit:
         raise ValueError("reset requires a seed commit captured by fastloop up")
+    if checks:
+        checks.validate()
     cluster.reset_controller(environment.seed_commit, preserve_repository=preserve_repository)
     if checks:
         checks.prepare(fresh=not preserve_repository)
@@ -281,7 +330,12 @@ def restore_application(
     baselines = load_application_baseline(environment.baseline_path, environment.namespace)
     if baselines is None:
         raise ValueError("reset requires an application baseline captured by fastloop up")
-    baselines = accepted_restore_baselines(environment.workspace, baselines, seed_commit=environment.seed_commit)
+    from benchmarks.sregym.fastloop.recovery_closure import complete_recovery_baselines
+
+    baselines = complete_recovery_baselines(
+        environment.workspace,
+        accepted_restore_baselines(environment.workspace, baselines, seed_commit=environment.seed_commit),
+    )
     worker.request("clean_start", problem_id=environment.deploy_problem, timeout=200)
     for baseline in baselines:
         reconcile_application(cluster, baseline, baseline.namespace)

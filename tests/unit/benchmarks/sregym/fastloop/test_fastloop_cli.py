@@ -25,8 +25,7 @@ def _record(index: int, agent: str) -> IncidentRecord:
         agent=agent,
         problem_id="missing_configmap_hotel_reservation",
         model="gpt-6-luna",
-        injection_started_at=T0,
-        injection_finished_at=T0 + timedelta(seconds=6),
+        injection={"state": "injected", "started_at": T0, "finished_at": T0 + timedelta(seconds=6)},
         detected_at=T0 + timedelta(seconds=9) if agent == "sdo" else None,
         mitigation_applied_at=T0 + timedelta(seconds=45),
         oracle=OracleVerdict(kind="sregym-mitigation-oracle", success=True),
@@ -397,6 +396,48 @@ def test_mf_stream_launches_with_both_component_probes(tmp_path: Path, monkeypat
     )
     monkeypatch.setattr(FastloopEnvironment, "load", lambda _path: environment)
 
+    # A legacy capture must carry its recovered reference closure into every
+    # subsequent driver's cleanup, rather than deleting the restored account.
+    import hashlib
+
+    from benchmarks.sregym.fastloop.baseline_recovery import ApplicationBaseline, save_application_baseline
+
+    workload = {
+        "apiVersion": "apps/v1",
+        "kind": "Deployment",
+        "metadata": {"name": "reservation", "namespace": environment.namespace},
+        "spec": {"template": {"spec": {"serviceAccountName": "reservation-reader"}}},
+    }
+    account = {
+        "apiVersion": "v1",
+        "kind": "ServiceAccount",
+        "metadata": {"name": "reservation-reader", "namespace": environment.namespace},
+    }
+    environment.baseline_path.write_text("{}")
+    save_application_baseline(environment.baseline_path, (ApplicationBaseline(environment.namespace, [workload]),))
+    rendered = environment.workspace / ".sdo/rendered"
+    rendered.mkdir(parents=True)
+    payload = json.dumps(account)
+    (rendered / "account.yaml").write_text(payload)
+    (rendered / "lock.json").write_text(
+        json.dumps(
+            {
+                "objects": [
+                    {
+                        "ref": {
+                            "api_version": "v1",
+                            "kind": "ServiceAccount",
+                            "namespace": environment.namespace,
+                            "name": "reservation-reader",
+                        },
+                        "file": "account.yaml",
+                        "sha256": hashlib.sha256(payload.encode()).hexdigest(),
+                    }
+                ]
+            }
+        )
+    )
+
     class Worker:
         def __enter__(self) -> Worker:
             return self
@@ -416,7 +457,12 @@ def test_mf_stream_launches_with_both_component_probes(tmp_path: Path, monkeypat
 
     monkeypatch.setattr(cli, "_worker", lambda _env: Worker())
     monkeypatch.setattr(cli, "kubectl", lambda *_args, **_kwargs: SimpleNamespace(returncode=0))
-    monkeypatch.setattr(cli, "SregymFaultDriver", lambda *_args, **_kwargs: object())
+
+    def driver(*_args, **kwargs):
+        captured["driver_baseline"] = kwargs["baseline"]
+        return object()
+
+    monkeypatch.setattr(cli, "SregymFaultDriver", driver)
     monkeypatch.setattr(cli, "_sdo_agent", agent)
     monkeypatch.setattr(cli, "run_incidents", lambda *_args, **_kwargs: [])
     from benchmarks.sregym.fastloop.fault_tracker import FaultSpec
@@ -450,6 +496,12 @@ def test_mf_stream_launches_with_both_component_probes(tmp_path: Path, monkeypat
         "mf__hotel_reservation__n2__s1773744812__v_": 2,
         "mf__hotel_reservation__n2__s1085951852__v_": 2,
     }
+
+    assert any(
+        value["kind"] == "ServiceAccount" and value["metadata"]["name"] == "reservation-reader"
+        for baseline in captured["driver_baseline"]
+        for value in baseline.objects
+    )
 
 
 @pytest.mark.parametrize("content", ["[]", "[[]]", '["a", ["a", "a"]]', "[4]"])
