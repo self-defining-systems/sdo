@@ -705,3 +705,10 @@ revision in the existing Bake graph. Missing or stale labels require rebuilding
 through that script and delivering through `fastloop up`; tag names alone do
 not prove provenance. Focused regressions live in
 `tests/unit/benchmarks/sregym/fastloop/test_source_preflight.py` and `test_dev.py`.
+
+
+GitHub Actions expression contexts are checked locally by
+`scripts/check_actions.sh`, called by `scripts/check_errors.sh`. It runs pinned
+actionlint1.7.7 with external shell/Python linters disabled; Ruff and the existing
+shell gates retain those responsibilities. This catches invalid job-level
+contexts before GitHub rejects the workflow without creating a check run.

@@ -267,3 +267,18 @@ def test_compiler_cache_union_preserves_existing_and_adds_race_entries(tmp_path:
     assert (normal / "hash/shared-a").stat().st_ino == existing_inode
     assert (normal / "hash/race-only-a").read_bytes() == b"race archive"
     assert (normal / "hash/race-only-a").stat().st_ino == (race / "hash/race-only-a").stat().st_ino
+
+
+def test_consumers_restore_the_paths_published_by_each_mode_owner() -> None:
+    jobs = workflow()["jobs"]
+    published = {
+        mode: next(
+            step["with"]["path"] for step in jobs["prepare-go"]["steps"] if step.get("if") == f"matrix.mode == '{mode}'"
+        )
+        for mode in ("normal", "race")
+    }
+    for name in ("python", "controller", "go-integration", "replay", "chaos"):
+        for step in jobs[name]["steps"]:
+            if step.get("uses", "").startswith("actions/cache"):
+                mode = "race" if "v2-race-" in step["with"]["key"] else "normal"
+                assert step["with"]["path"].strip() == published[mode].strip(), name

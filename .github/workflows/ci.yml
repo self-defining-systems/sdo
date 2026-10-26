@@ -154,11 +154,11 @@ jobs:
       fail-fast: false
       matrix:
         mode: [normal, race]
-    env:
-      GOCACHE: ${{ runner.temp }}/sdo-go-build-${{ matrix.mode }}
     outputs:
       schema_identity: ${{ steps.schema.outputs.value }}
     steps:
+      - name: Select prepared compiler cache
+        run: echo "GOCACHE=${{ runner.temp }}/sdo-go-build-${{ matrix.mode }}" >> "$GITHUB_ENV"
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           ref: ${{ github.sha }}
@@ -211,6 +211,8 @@ jobs:
           - name: unit tests
             run: ./scripts/test_python.sh -m "not go_integration"
     steps:
+      - name: Select prepared compiler cache
+        run: echo "GOCACHE=${{ runner.temp }}/sdo-go-build-normal" >> "$GITHUB_ENV"
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           # A mutable PR merge ref can change after a retarget; test this event.
@@ -219,7 +221,7 @@ jobs:
         uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
         with:
           path: |
-            ~/.cache/go-build
+            ${{ runner.temp }}/sdo-go-build-normal
             ~/go/pkg/mod
           key: ci-prepared-v2-normal-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
           fail-on-cache-miss: true
@@ -258,8 +260,6 @@ jobs:
     needs: [changes, prepare-go]
     if: needs.changes.outputs.go == 'true'
     runs-on: ubuntu-latest
-    env:
-      GOCACHE: ${{ runner.temp }}/sdo-go-build-normal
     timeout-minutes: 5
     strategy:
       fail-fast: false
@@ -330,6 +330,8 @@ jobs:
             go-version: "1.26.8"
             operator: compiler
     steps:
+      - name: Select prepared compiler cache
+        run: echo "GOCACHE=${{ runner.temp }}/sdo-go-build-normal" >> "$GITHUB_ENV"
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           # A mutable PR merge ref can change after a retarget; test this event.
@@ -414,10 +416,10 @@ jobs:
     needs: [changes, prepare-go]
     if: needs.changes.outputs.python == 'true' || needs.changes.outputs.go == 'true'
     runs-on: ubuntu-latest
-    env:
-      GOCACHE: ${{ runner.temp }}/sdo-go-build-normal
     timeout-minutes: 5
     steps:
+      - name: Select prepared compiler cache
+        run: echo "GOCACHE=${{ runner.temp }}/sdo-go-build-normal" >> "$GITHUB_ENV"
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           ref: ${{ github.sha }}
@@ -484,10 +486,10 @@ jobs:
     needs: [changes, prepare-go]
     if: needs.changes.outputs.go == 'true'
     runs-on: ubuntu-latest
-    env:
-      GOCACHE: ${{ runner.temp }}/sdo-go-build-normal
     timeout-minutes: 5
     steps:
+      - name: Select prepared compiler cache
+        run: echo "GOCACHE=${{ runner.temp }}/sdo-go-build-normal" >> "$GITHUB_ENV"
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           # A mutable PR merge ref can change after a retarget; test this event.
@@ -526,10 +528,10 @@ jobs:
     needs: [changes, prepare-go]
     if: needs.changes.outputs.go == 'true'
     runs-on: ubuntu-latest
-    env:
-      GOCACHE: ${{ runner.temp }}/sdo-go-build-normal
     timeout-minutes: 5
     steps:
+      - name: Select prepared compiler cache
+        run: echo "GOCACHE=${{ runner.temp }}/sdo-go-build-normal" >> "$GITHUB_ENV"
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           # A mutable PR merge ref can change after a retarget; test this event.
