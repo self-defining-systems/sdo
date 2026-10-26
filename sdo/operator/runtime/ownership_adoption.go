@@ -124,6 +124,12 @@ func (c *Controller) adoptOwnership(ctx context.Context, now time.Time, snapshot
 		if resource.namespaced && ref.Namespace != c.config.Namespace {
 			return fmt.Errorf("accepted manifest %s/%s/%s is outside namespace %s", ref.Kind, ref.Namespace, ref.Name, c.config.Namespace)
 		}
+		// Shared cluster objects (CRDs, StorageClasses, webhooks, ...) are not
+		// the app's to own: another tenant's edit must not become its drift.
+		// Only the app's own RBAC grants are adopted at cluster scope.
+		if !resource.namespaced && !inventoryClusterKind(ref.Kind) {
+			continue
+		}
 		live, err := resource.get(actionCtx, ref)
 		if err != nil && !apierrors.IsNotFound(err) {
 			return fmt.Errorf("read live %s/%s for adoption: %w", ref.Kind, ref.Name, err)
