@@ -94,7 +94,11 @@ func refreshControllerHealthOnce(ctx context.Context, config *contracts.Controll
 	if err != nil {
 		return err
 	}
-	if accepted.NeedsRefresh {
+	shellStillMissing, err := shellHealthRefreshNeeded(ctx, config)
+	if err != nil {
+		return err
+	}
+	if accepted.NeedsRefresh || shellStillMissing {
 		return fmt.Errorf("health unverified: source, objective or detectors advanced during refresh")
 	}
 	return nil
