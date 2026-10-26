@@ -81,3 +81,48 @@ func TestSourceReconcilePreservesUndeclaredNestedServerFields(t *testing.T) {
 		t.Fatalf("source reconcile lost server fields or source values: %v", next)
 	}
 }
+
+func TestPlanReceiptIgnoresServerMetadataWithoutRepair(t *testing.T) {
+	for _, authorization := range []string{"accepted-source", "general"} {
+		t.Run(authorization, func(t *testing.T) {
+			client, ref := newServerPlanClient(deploymentWithDrift("broken"))
+			before := client.objects[ref].DeepCopy()
+			after := before.DeepCopy()
+			_ = unstructured.SetNestedField(after.Object, int64(2), "spec", "replicas")
+			client.bump(client.objects[ref])
+			// A readback can capture a newer version even when the repair never landed.
+			after.SetResourceVersion(client.objects[ref].GetResourceVersion())
+			pending := 0
+			result := PlanApplicationResult{
+				Plan: reconcilePlan(ref), PendingAction: &pending,
+				Patches: []PlanPatch{{Authorization: authorization, Ref: ref, Before: before, After: after}},
+			}
+			reconciled, err := (PlanExecutor{Client: client}).Reconcile(context.Background(), result)
+			if err != nil || reconciled.Applied || len(reconciled.ActionsApplied) != 0 {
+				t.Fatalf("server metadata counted as repair: %+v %v", reconciled, err)
+			}
+		})
+	}
+}
+
+func TestSourceMetadataRollbackPreservesServerUpdates(t *testing.T) {
+	client, ref := newServerPlanClient(deploymentWithDrift("broken"))
+	client.objects[ref].SetLabels(map[string]string{"app": "broken"})
+	source := deploymentWithDrift("good")
+	source.SetLabels(map[string]string{"app": "accepted"})
+	executor := PlanExecutor{Client: client, Source: planFakeSource{source: source}, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{passed: true}}
+	result, err := executor.Apply(context.Background(), IncidentRequest{SourceCommit: "accepted", RepairPolicy: "recorded-actions"}, reconcilePlan(ref), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.bump(client.objects[ref])
+	annotations := client.objects[ref].GetAnnotations()
+	annotations["external.example/completed"] = "true"
+	client.objects[ref].SetAnnotations(annotations)
+	if err := executor.rollback(context.Background(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if client.objects[ref].GetLabels()["app"] != "broken" || client.objects[ref].GetAnnotations()["external.example/completed"] != "true" {
+		t.Fatalf("rollback lost configuration or external metadata: %v", client.objects[ref])
+	}
+}

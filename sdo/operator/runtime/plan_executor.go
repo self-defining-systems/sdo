@@ -442,8 +442,8 @@ func (e PlanExecutor) restoreActionOnce(ctx context.Context, patch PlanPatch) er
 	}
 	restored := current.DeepCopy()
 	for _, field := range planPatchFields(patch) {
-		before, bok := patch.Before.Object[field]
-		after, aok := patch.After.Object[field]
+		before, bok := planConfigurationField(patch.Before, field)
+		after, aok := planConfigurationField(patch.After, field)
 		live, lok := current.Object[field]
 		value, exists, err := restorePlanFields(before, bok, after, aok, live, lok)
 		if err != nil {
@@ -483,7 +483,9 @@ func (e PlanExecutor) restoreActionOnce(ctx context.Context, patch PlanPatch) er
 			return fmt.Errorf("compensation observation unknown: UID changed")
 		}
 		for _, field := range planPatchFields(patch) {
-			if !planValuesEqual(observed.Object[field], restored.Object[field]) {
+			observedValue, _ := planConfigurationField(observed, field)
+			restoredValue, _ := planConfigurationField(restored, field)
+			if !planValuesEqual(observedValue, restoredValue) {
 				return fmt.Errorf("compensation observation unknown: restored fields differ")
 			}
 		}
@@ -738,8 +740,7 @@ func sourceFields(current, source *unstructured.Unstructured, ref sdk.ObjectRef)
 		case "metadata":
 			metadata, _ := value.(map[string]any)
 			for key, declared := range metadata {
-				switch key {
-				case "name", "namespace", "uid", "resourceVersion", "generation", "creationTimestamp", "deletionTimestamp", "managedFields":
+				if serverOwnedPlanMetadata(key) {
 					continue
 				}
 				currentMetadata, _ := current.Object["metadata"].(map[string]any)

@@ -432,6 +432,34 @@ func planPatchFields(p PlanPatch) []string {
 	return out
 }
 
+// planConfigurationField excludes API-owned metadata from repair ownership.
+// Readback versions remain on the full images for identity/concurrency guards.
+func planConfigurationField(object *unstructured.Unstructured, field string) (any, bool) {
+	value, exists := object.Object[field]
+	if field != "metadata" {
+		return value, exists
+	}
+	metadata, ok := value.(map[string]any)
+	if !ok {
+		return value, exists
+	}
+	configuration := map[string]any{}
+	for key, value := range metadata {
+		if !serverOwnedPlanMetadata(key) {
+			configuration[key] = value
+		}
+	}
+	return configuration, exists
+}
+
+func serverOwnedPlanMetadata(key string) bool {
+	switch key {
+	case "name", "namespace", "uid", "resourceVersion", "generation", "creationTimestamp", "deletionTimestamp", "deletionGracePeriodSeconds", "managedFields", "selfLink":
+		return true
+	}
+	return false
+}
+
 // previewPlanClient projects earlier steps during whole-batch preflight. It
 // never writes to the real API; later actions can reference newly created data.
 type previewPlanClient struct {
