@@ -2,8 +2,6 @@ package runtime
 
 import (
 	"context"
-	"encoding/json"
-	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -14,6 +12,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sdo.dev/operator/broker"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/internal/capturefixture"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/sdk/sdktest"
 )
@@ -50,16 +49,7 @@ func TestClosureLearnsWorkloadRepairWhoseCauseNamesItsReplacedPod(t *testing.T) 
 			DeploymentList: []appsv1.Deployment{{ObjectMeta: metav1.ObjectMeta{Name: "search", Namespace: "app"}}},
 			ReplicaSetList: []appsv1.ReplicaSet{{ObjectMeta: metav1.ObjectMeta{Name: set, Namespace: "app", OwnerReferences: owner("Deployment", "search")}}},
 			PodList:        []corev1.Pod{{ObjectMeta: metav1.ObjectMeta{Name: pod, Namespace: "app", OwnerReferences: owner("ReplicaSet", set)}}}}
-		raw, err := json.Marshal(snapshot)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := os.MkdirAll(capture, 0o700); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(capture, phase+".json"), raw, 0o600); err != nil {
-			t.Fatal(err)
-		}
+		capturefixture.WriteBoundary(t, filepath.Join(capture, phase+".json"), snapshot, "app")
 	}
 	deployment := &contracts.ObjectRef{ApiVersion: "apps/v1", Kind: "Deployment", Namespace: "app", Name: "search"}
 	replaced := &contracts.ObjectRef{ApiVersion: "v1", Kind: "Pod", Namespace: "app", Name: "search-old-abcde"}

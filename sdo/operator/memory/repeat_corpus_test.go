@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"sdo.dev/operator/internal/capturefixture"
 	"sdo.dev/operator/sdk/program"
 )
 
@@ -13,8 +14,8 @@ func TestRepeatCorpusCopiesEvidenceWithoutChangingProgram(t *testing.T) {
 	for _, phase := range []string{"detect", "pre-apply"} {
 		t.Run(phase, func(t *testing.T) {
 			root, captures := t.TempDir(), t.TempDir()
-			before := []byte(`{"namespace":"app","services":[{"metadata":{"namespace":"app","name":"target"}}]}`)
-			fixed := []byte(`{"namespace":"app","services":[{"metadata":{"namespace":"app","name":"target"}},{"metadata":{"namespace":"app","name":"peer"}}]}`)
+			before := capturefixture.FromView(t, `{"namespace":"app","services":[{"metadata":{"namespace":"app","name":"target"}}]}`)
+			fixed := capturefixture.FromView(t, `{"namespace":"app","services":[{"metadata":{"namespace":"app","name":"target"}},{"metadata":{"namespace":"app","name":"peer"}}]}`)
 			for name, data := range map[string][]byte{"open@" + phase + ".json": before, "fixed.json": fixed, "open@" + phase + "-recordings.json": []byte("[]\n")} {
 				if err := os.WriteFile(filepath.Join(captures, name), data, 0644); err != nil {
 					t.Fatal(err)

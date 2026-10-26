@@ -40,6 +40,13 @@ echo "==> Go git fixture lifetime policy"
     go test ./internal/testutil -run '^TestGit(CreationPolicyNegativeControls|FixtureCreationUsesHelper)$' -count=1 -timeout=20s
 )
 
+# Capture fixtures must come from the real CaptureSnapshot projection.
+echo "==> Go capture fixture policy"
+(
+    cd "$PROJECT_ROOT/sdo/operator"
+    go test ./internal/capturefixture -count=1 -timeout=20s
+)
+
 echo "==> responder command reference"
 uv run python -m sdo.agents.responder.command_reference --check
 
