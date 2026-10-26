@@ -12,7 +12,7 @@ import (
 
 // An accepted app ConfigMap may embed a script with trailing whitespace. The
 // repair, its outcome and the reflection that follows must all publish with
-// those bytes untouched, while authored memory text keeps the whitespace rule.
+// those bytes untouched, while authored memory whitespace is normalized.
 func TestIncidentClosesAndReflectsOverAppDataWhitespace(t *testing.T) {
 	ctx := context.Background()
 	target := repository(t)
@@ -56,16 +56,19 @@ func TestIncidentClosesAndReflectsOverAppDataWhitespace(t *testing.T) {
 		t.Fatal(err)
 	}
 	decision := &contracts.ReflectionDecision{LearningDecision: "updated", PlaybookIds: []string{"geo-script"}}
-	if err := os.WriteFile(filepath.Join(book, "README.md"), []byte(strings.Replace(readme, "Repair", "Repair \n", 1)), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(book, "README.md"), []byte(strings.ReplaceAll(readme, "\n", " \t\n")+"\n\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := b.PublishReflection(ctx, "inc-ws", decision); err == nil || !strings.Contains(err.Error(), "diff.whitespace") {
-		t.Fatalf("authored memory whitespace was not rejected: %v", err)
+	receipt, err := b.PublishReflection(ctx, "inc-ws", decision)
+	if err != nil {
+		t.Fatalf("reflection over authored whitespace rejected: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(book, "README.md"), []byte(readme), 0o644); err != nil {
-		t.Fatal(err)
+	published, err := runGit(ctx, target, "show", receipt.Commit+":.sdo/playbooks/geo-script/README.md")
+	if err != nil || string(published) != readme {
+		t.Fatalf("authored whitespace was not normalized: %q %v", published, err)
 	}
-	if _, err := b.PublishReflection(ctx, "inc-ws", decision); err != nil {
-		t.Fatalf("reflection over app whitespace rejected: %v", err)
+	app, err := runGit(ctx, target, "show", receipt.Commit+":"+filepath.ToSlash(manifest))
+	if err != nil || string(app) != script {
+		t.Fatalf("app bytes changed: %q %v", app, err)
 	}
 }

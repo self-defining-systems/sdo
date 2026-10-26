@@ -211,8 +211,11 @@ func TestReject(t *testing.T){t.Fatal("sentinel detector failure")}
 			}
 		}, []string{validate.RuleSnapshotProjection}, false},
 
-		{"trailing whitespace", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
+		{"trailing whitespace normalized", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
 			replaceParityText(t, r, ".sdo/playbooks/base/README.md", "Repair", "Repair \n")
+		}, nil, false},
+		{"space before tab indent", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
+			replaceParityText(t, r, ".sdo/playbooks/base/README.md", "Repair", " \tRepair")
 		}, []string{validate.RuleWhitespace}, false},
 		{"aggregate snapshot budget", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
 			for _, id := range []string{"large-a", "large-b", "large-c"} {
