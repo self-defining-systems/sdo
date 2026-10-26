@@ -140,3 +140,15 @@ def test_machine_validator_stage_logs_are_scoped_and_keep_retries(tmp_path, pref
     data = load_evidence(tmp_path, "hotel-17", controller_log=path)
     assert data["stage_timings"][0]["seconds"] == 2.5
     assert data["stage_timings"][0]["job"] == "sdo-validator-x"
+
+
+def test_warm_repeat_does_not_attribute_historical_validator_pods():
+    data = evidence()
+    data["audit"] = []  # Warm repeats have no install invocation clock.
+    data["pods"] += [
+        {"metadata": {"name": "sdo-validator-historical", "creationTimestamp": "2026-10-26T00:01:00Z"}},
+        {"metadata": {"name": "sdo-validator-current", "creationTimestamp": "2026-10-26T00:14:00Z"}},
+    ]
+    names = [row.name for row in build_timeline(data)]
+    assert not any("historical" in name for name in names)
+    assert "validator_schedule/sdo-validator-current" in names

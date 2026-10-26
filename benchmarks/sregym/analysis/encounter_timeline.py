@@ -234,10 +234,7 @@ def build_timeline(data: dict[str, Any]) -> list[Phase]:
                     state = container.get("state", {})
                     responder_start = stamp((state.get("terminated") or state.get("running") or {}).get("startedAt"))
 
-    def stage_in_scope(stage: dict[str, Any]) -> bool:
-        if not stage.get("recorded_at"):
-            return True
-        at = stamp(stage["recorded_at"])
+    def evidence_in_scope(at: float | None) -> bool:
         if at is None:
             return False
         setup_start = stamp(admission.get("install_invoked_at"))
@@ -245,6 +242,9 @@ def build_timeline(data: dict[str, Any]) -> list[Phase]:
             return True
         ack = clock("closure_ack")
         return dispatch is not None and at >= dispatch and (ack is None or at <= ack)
+
+    def stage_in_scope(stage: dict[str, Any]) -> bool:
+        return not stage.get("recorded_at") or evidence_in_scope(stamp(stage["recorded_at"]))
 
     adapter_row = data.get("row", {})
     rows = [
@@ -338,8 +338,7 @@ def build_timeline(data: dict[str, Any]) -> list[Phase]:
         if not name.startswith("sdo-validator-"):
             continue
         created = stamp(metadata.get("creationTimestamp"))
-        setup_start = stamp(admission.get("install_invoked_at"))
-        if created is not None and setup_start is not None and created < setup_start:
+        if not evidence_in_scope(created):
             continue
         scheduled = next(
             (
