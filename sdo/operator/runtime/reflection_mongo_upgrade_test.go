@@ -40,7 +40,7 @@ func testReflectionMongoAuthUpgrade(t *testing.T, fixtureName string) {
 		t.Fatal(err)
 	}
 	binary := filepath.Join(t.TempDir(), "sdo-operator")
-	build := exec.Command("go", "build", "-p", "8", "-o", binary, "./cmd/sdo-operator")
+	build := exec.Command("go", "build", "-o", binary, "./cmd/sdo-operator")
 	build.Dir = operatorRoot
 	if output, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build CLI: %v: %s", err, output)
@@ -249,7 +249,7 @@ func testReflectionMongoAuthUpgrade(t *testing.T, fixtureName string) {
 		if fixtureName == "hotel_mongo_auth_upgrade" {
 			// Publication's repeat-reachability check is followed by the full
 			// runtime loop: linked detector must also clear after real actions.
-			replayCommand := exec.Command("go", "run", "-p", "8", "./cmd/sdo-replay", "-sdo", filepath.Join(target, ".sdo"), "-operator", operatorRoot, "-fixtures", filepath.Join(target, ".sdo/corpus"), "-matrix=false")
+			replayCommand := exec.Command("go", "run", "./cmd/sdo-replay", "-sdo", filepath.Join(target, ".sdo"), "-operator", operatorRoot, "-fixtures", filepath.Join(target, ".sdo/corpus"), "-matrix=false")
 			replayCommand.Dir = operatorRoot
 			output, err := replayCommand.Output()
 			if err != nil {

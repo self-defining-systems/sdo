@@ -100,8 +100,16 @@ const (
 // and the broker pipeline, including the validation Job's actual runner body.
 // Any caller-only diagnostic or omitted layer changes these verdicts/rules.
 func TestCLIAndBrokerAgreeOnAcceptance(t *testing.T) {
+	testCLIAndBrokerAgreeOnAcceptance(t, 0)
+}
+
+func TestCLIAndBrokerAgreeOnAcceptanceSecondShard(t *testing.T) {
+	testCLIAndBrokerAgreeOnAcceptance(t, 1)
+}
+
+func testCLIAndBrokerAgreeOnAcceptance(t *testing.T, shard int) {
 	binary := filepath.Join(t.TempDir(), "sdo-operator")
-	build := exec.Command("go", "build", "-p", "8", "-o", binary, "../cmd/sdo-operator")
+	build := exec.Command("go", "build", "-o", binary, "../cmd/sdo-operator")
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build CLI: %v: %s", err, out)
 	}
@@ -558,7 +566,10 @@ func (p Program) Mitigate(ctx context.Context,v program.ReadView,b program.Bindi
 			put(t, r, ".sdo/playbooks/base/README.md", "---\nschema_version: 1\nowner: responder\nfault_class: base\noriginating_incident: initial\n---\nRepair <RESOURCE_NAME>. Run fix.sh.\nAdditional guidance.\n", 0644)
 		}, nil, false},
 	}...)
-	for _, test := range cases {
+	for index, test := range cases {
+		if index%2 != shard {
+			continue
+		}
 		t.Run(test.name, func(t *testing.T) {
 			// Each verdict owns its repositories and captures; only the compiled
 			// CLI and read-only healthy baseline are shared. CI caps -parallel=2.

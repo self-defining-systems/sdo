@@ -18,7 +18,7 @@ import (
 
 func TestCLIAndBrokerAgreeOnReflectionResultContracts(t *testing.T) {
 	binary := filepath.Join(t.TempDir(), "sdo-operator")
-	if out, err := exec.Command("go", "build", "-p", "8", "-o", binary, "../cmd/sdo-operator").CombinedOutput(); err != nil {
+	if out, err := exec.Command("go", "build", "-o", binary, "../cmd/sdo-operator").CombinedOutput(); err != nil {
 		t.Fatalf("build CLI: %v: %s", err, out)
 	}
 	gap := &contracts.SdkGap{FaultClass: "catalog", Primitive: "catalog read", Reason: "unavailable", ScratchScript: "inspect catalog"}

@@ -132,7 +132,7 @@ func TestMalformedJudgeDetectorCLIAndBrokerDiagnosticParity(t *testing.T) {
 	path := ".sdo/diagnostics/detectors/health/health-objective/detector.go"
 	writeJudgeFile(t, proposal.Path, path, "package objective\nfunc Broken( {\n")
 	binary := filepath.Join(t.TempDir(), "sdo-operator")
-	build := exec.CommandContext(ctx, "go", "build", "-p", "8", "-o", binary, "../cmd/sdo-operator")
+	build := exec.CommandContext(ctx, "go", "build", "-o", binary, "../cmd/sdo-operator")
 	if output, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build: %v: %s", err, output)
 	}

@@ -330,6 +330,7 @@ def test_old_ready_pods_do_not_prove_current_workload_rollout(monkeypatch, statu
         admission.workload_identity(Path("unused"), "any-app")
 
 
+@pytest.mark.go_integration
 def test_fresh_guard_accepts_actual_broker_health_bootstrap_and_rendered_commit(tmp_path):
     import shutil
     import subprocess
