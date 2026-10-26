@@ -31,6 +31,12 @@ func Check(ctx context.Context, request Request, compile CompileRunner) ([]Diagn
 	if request.Base == "" || request.Actor == "" || request.Phase == "" {
 		return nil, errors.New("memory check requires base, actor, and phase (SDO_BASE_COMMIT, SDO_ACTOR, SDO_PHASE)")
 	}
+	if request.CodePath == "shell" {
+		return CheckShell(ctx, request)
+	}
+	if request.CodePath != "" && request.CodePath != "go" {
+		return nil, fmt.Errorf("unknown memory code path %q", request.CodePath)
+	}
 	if compile == nil {
 		return nil, errors.New("memory check requires a compile runner")
 	}

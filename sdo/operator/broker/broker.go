@@ -77,6 +77,8 @@ type SourceEvidence struct {
 }
 
 type Broker struct {
+	codePath string
+
 	// MetricsDetectors installs the optional generic metrics detectors when
 	// the health judge's initial memory is accepted. Set it only where a
 	// metrics source is configured.
@@ -140,6 +142,10 @@ func New(target, workspaceRoot string, validator Validator, policy ...Observatio
 		if err := policy[0].Ceiling.Validate(); err != nil {
 			return nil, err
 		}
+		if policy[0].CodePath != "" && policy[0].CodePath != "go" && policy[0].CodePath != "shell" {
+			return nil, fmt.Errorf("unsupported broker code path %q", policy[0].CodePath)
+		}
+		b.codePath = policy[0].CodePath
 		b.observationCeiling = policy[0].Ceiling
 		b.observationCeiling.Targets = append([]sdk.ObservationTarget(nil), policy[0].Ceiling.Targets...)
 		b.applicationNamespace = policy[0].ApplicationNamespace
@@ -345,7 +351,7 @@ func (b *Broker) publish(ctx context.Context, incidentID string, actor Actor, ph
 				return err
 			}
 		}
-		if b.validator == nil {
+		if b.validator == nil && b.codePath != "shell" {
 			return errors.New("proposal validation is not configured")
 		}
 		stage, cleanup, err := b.privateClone(ctx)
@@ -793,6 +799,10 @@ func within(root, path string) bool {
 
 // ObservationPolicy is supplied only by the trusted installer host.
 type ObservationPolicy struct {
+
+	// CodePath is trusted launch policy; shell selects hygiene instead of Go compilation.
+	CodePath string
+
 	Ceiling              sdk.ObservationScope
 	ApplicationNamespace string
 }

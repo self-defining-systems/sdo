@@ -60,7 +60,7 @@ func encodeIncidentAgentTask(request IncidentRequest, registry *worker_registry.
 	if err != nil {
 		return nil, nil, fmt.Errorf("encode agent task: %w", err)
 	}
-	if len(snapshots) == 1 && bytes.Contains(payload, []byte(layout.PhysicalPathMarker)) {
+	if len(snapshots) == 1 && snapshots[0].GetCodePath().GetName() != "shell" && bytes.Contains(payload, []byte(layout.PhysicalPathMarker)) {
 		return nil, nil, fmt.Errorf("physical operational memory path leaked into native incident task")
 	}
 	return task, payload, nil

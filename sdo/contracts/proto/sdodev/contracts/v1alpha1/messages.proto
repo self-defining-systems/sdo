@@ -20,6 +20,7 @@ package sdodev.contracts.v1alpha1;
 import "buf/validate/validate.proto";
 import "google/protobuf/struct.proto";
 import "google/protobuf/timestamp.proto";
+import "sdodev/contracts/v1alpha1/controller_config.proto";
 import "google/protobuf/duration.proto";
 import "sdodev/contracts/v1alpha1/common.proto";
 import "sdodev/contracts/v1alpha1/program.proto";
@@ -157,6 +158,9 @@ message MemoryPlaybook {
 }
 
 message OperationalMemorySnapshot {
+  // Shell snapshots intentionally retain literal notes, scripts and their file paths.
+  CodePathConfig code_path = 100;
+
   string accepted_commit = 1;
   string goal_markdown = 2;
   string architecture_markdown = 3;

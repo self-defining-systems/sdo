@@ -51,7 +51,10 @@ def test_trusted_seed_broker_root_requires_an_absolute_host_path(tmp_path: Path)
         replace(_install(tmp_path), seed_broker_root=tmp_path.relative_to(tmp_path.anchor))
 
 
-def test_install_existing_invokes_go_cli_and_parses_receipt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("code_path", ["go", "shell"])
+def test_install_existing_invokes_go_cli_and_parses_receipt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, code_path: str
+) -> None:
     calls: list[list[str]] = []
     monkeypatch.setenv("SDO_OPERATOR_BIN", "/tmp/sdo-operator")
 
@@ -68,6 +71,7 @@ def test_install_existing_invokes_go_cli_and_parses_receipt(tmp_path: Path, monk
     receipt = install_existing(
         replace(
             _install(tmp_path),
+            code_path=code_path,
             healthy_baseline=True,
             permissive_responder=True,
             responder_namespaces=("policy-system",),
@@ -77,6 +81,10 @@ def test_install_existing_invokes_go_cli_and_parses_receipt(tmp_path: Path, monk
         )
     )
 
+    if code_path == "shell":
+        assert calls[0][calls[0].index("--code-path") + 1] == "shell"
+    else:
+        assert "--code-path" not in calls[0]
     assert receipt.reused
     assert receipt.accepted_commit == "a" * 40
     assert calls[0][0:2] == ["/tmp/sdo-operator", "install-existing"]

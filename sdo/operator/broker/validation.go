@@ -23,7 +23,13 @@ func (b *Broker) checkCandidate(ctx context.Context, root, base string, actor Ac
 			return nil, err
 		}
 	}
-	return validate.Check(ctx, validate.Request{ObservationCeiling: b.observationCeiling, ApplicationNamespace: b.applicationNamespace, Root: root, Base: base, Actor: actor, Phase: phase, Publication: publication, Decision: decision, MetricsDetectors: b.MetricsDetectors}, compile)
+	request := validate.Request{CodePath: b.codePath, ObservationCeiling: b.observationCeiling, ApplicationNamespace: b.applicationNamespace, Root: root, Base: base, Actor: actor, Phase: phase, Publication: publication, Decision: decision, MetricsDetectors: b.MetricsDetectors}
+	diagnostics, err := validate.Check(ctx, request, compile)
+	if err != nil || len(diagnostics) > 0 || b.codePath != "shell" || compile == nil {
+		return diagnostics, err
+	}
+	// The shell plugin owns its mechanism; the broker independently retains the grant table.
+	return compile(ctx, request)
 }
 
 // PublishReflection binds the returned worker decision independently of any

@@ -17,6 +17,7 @@ import (
 	"k8s.io/client-go/util/retry"
 	"sdo.dev/operator/devmount"
 	"sdo.dev/operator/memory/observation"
+	"sdo.dev/operator/shellpath"
 )
 
 const PreparedCommitAnnotation = "sdo.dev/prepared-commit"
@@ -68,7 +69,13 @@ func (i Installer) Prepare(ctx context.Context, cfg Config, seed RepositorySeede
 	if err := seed(ctx, cfg); err != nil {
 		return fmt.Errorf("seed initial accepted repository: %w", err)
 	}
-	return i.markPreparedCommit(ctx, cfg)
+	if err := i.markPreparedCommit(ctx, cfg); err != nil {
+		return err
+	}
+	if runner, enabled := ShellRunnerConfig(cfg); enabled {
+		return shellpath.EnsureReadOnlyRunner(ctx, i.Client, runner)
+	}
+	return nil
 }
 
 func (i Installer) markPreparedCommit(ctx context.Context, cfg Config) error {
@@ -118,6 +125,7 @@ func OperateJob(cfg Config, healthObjective, operationID string, maxAttempts int
 		"--reflection-session", reflectionSession(cfg),
 		"--reflection-guidance", reflectionGuidance(cfg),
 	}
+	args = append(args, codePathArgs(cfg)...)
 	if cfg.ForceReflection {
 		args = append(args, "--force-reflection")
 	}

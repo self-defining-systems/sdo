@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, cast
 
 from sdo.agents.provider import resolve_agent
-from sdo.agents.responder.credentials import AGENT_SKILLS, prepare_claude_home, prepare_codex_home
+from sdo.agents.responder.credentials import prepare_claude_home, prepare_codex_home, skills_for_role
 from sdo.agents.responder.job import KubernetesResultPublisher
 from sdo.agents.responder.reflection import (
     REFLECTION_GUIDANCE_MODES,
@@ -173,8 +173,8 @@ def main() -> int:
         print("SDO_NAMESPACE and SDO_RESULT_CONFIGMAP are required", file=sys.stderr)
         return 2
     try:
-        prepare_codex_home(skills=AGENT_SKILLS["reflector"])
-        prepare_claude_home(skills=AGENT_SKILLS["reflector"])
+        prepare_codex_home(skills=skills_for_role("reflector"))
+        prepare_claude_home(skills=skills_for_role("reflector"))
         run_reflection_task(
             Path(os.environ.get("SDO_TASK_PATH", str(DEFAULT_TASK_PATH))),
             result_name,

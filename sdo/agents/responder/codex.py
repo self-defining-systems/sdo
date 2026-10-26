@@ -9,6 +9,7 @@ from google.protobuf import json_format
 
 from libs.agent_cli.structured import AGENT_PROVIDERS, StructuredTurnError, run_structured_turn, turn_usage
 from libs.agent_cli.usage_checkpoint import UsageCheckpoint
+from sdo.agents.code_paths import agent_guidance
 from sdo.agents.prompt_templates import RenderedPrompt, named_prompt, render_prompt
 from sdo.agents.provider import MODEL_ENV, resolve_agent
 from sdo.agents.responder import recorded_actions
@@ -234,7 +235,7 @@ def _responder_prompt(request: IncidentRequest, *, incident_data: str) -> Render
         raise ValueError("incident responder requires a logical memory snapshot")
     prompt = render_prompt(
         "responder",
-        "incident_response_instructions",
+        "incident_shell" if agent_guidance() == "shell" else "incident_response_instructions",
         part="responder.instructions",
         incident_id=request.incident_id,
         skills_root=SKILLS_ROOT,

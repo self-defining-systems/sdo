@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from sdo.agents.code_paths import SKILLS_ROOT
 from sdo.agents.health_judge import worker as judge_worker
 from sdo.agents.health_judge.worker import _validate_judge_draft, run_judge_task
 from sdo.agents.lifecycle.agents import CodexLifecycleBackend, HealthJudgeDraft
@@ -139,7 +140,12 @@ def test_judge_authors_final_files_in_writable_session(
         target = tmp_path / ".sdo/diagnostics/detectors/health/health-objective"
         target.mkdir(parents=True)
         (target / "detector.go").write_text("package objective\n// authored bytes\n")
-        return reply("codex", output, session_id="judge-1", commands=["sdo-operator memory check"])
+        return reply(
+            "codex",
+            output,
+            session_id="judge-1",
+            commands=[f"cat {SKILLS_ROOT}/sdo-shell-authoring/SKILL.md", "sdo-operator memory check"],
+        )
 
     agent = ScriptedAgent(respond)
     monkeypatch.setenv("SDO_AGENT_PROVIDER", "codex")
