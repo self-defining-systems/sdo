@@ -284,13 +284,8 @@ func (l *ResponderLoop) invalidateProgramPlans(id string) {
 	}
 	// Menu option IDs remain stable for unchanged bindings, but their parameter
 	// descriptions must be rebuilt from the current Spec before use.
-	for key, entry := range l.menuEntries {
-		if entry.programID == id {
-			if p, ok := l.Programs.Diagnoser(id); ok {
-				entry.spec = p.Spec()
-				l.menuEntries[key] = entry
-			}
-		}
+	if p, ok := l.Programs.Diagnoser(id); ok {
+		l.menuEntries.refreshProgram(id, p.Spec())
 	}
 }
 func (l *ResponderLoop) shortProgramError(id string, err error) error {
@@ -364,7 +359,7 @@ func (l *ResponderLoop) loadSelectedWorkingPrograms(ctx context.Context, request
 		}
 	}
 	for _, option := range options {
-		if entry, ok := l.menuEntries[option]; ok && entry.action == nil && entry.plan == nil {
+		if entry, ok := l.menuEntries.lookup(option); ok && entry.action == nil && entry.plan == nil {
 			ids[entry.programID] = true
 		}
 	}

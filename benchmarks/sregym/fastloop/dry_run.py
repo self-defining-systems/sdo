@@ -201,7 +201,7 @@ def refresh_reused_proof(
             KubectlClusterOps(),
             directory / "admission",
             progress=passed,
-            timeout_seconds=max(1, (timeout - 60) / 2),
+            timeout_seconds=timeout,
         )
         admission.prove(environment.namespace + "-sdo")
     passed("observation_conformance", **check_observations(environment, directory))
@@ -269,7 +269,7 @@ def run_lane(run_dir: Path, timeout: int, setup_timeout: int = 900) -> int:
             ]
         )
         # Setup is separately bounded; only steady proof consumes five minutes.
-        args.admission_timeout_seconds = max(1, (timeout - 60) / 2)
+        args.admission_timeout_seconds = timeout
         args.admission_progress = passed
         control = control_namespace_for(environment.namespace)
         args.credentials_secret = prepare_scripted_credentials(environment.kubeconfig, control)

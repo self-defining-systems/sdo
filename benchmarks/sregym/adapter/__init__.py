@@ -21,6 +21,7 @@ if TYPE_CHECKING:
         publish_agent_registrations,
     )
     from benchmarks.sregym.adapter.eval_guards import (
+        Deadline,
         assert_stable_workloads,
         closure_pending,
         controller_proof,
@@ -78,6 +79,7 @@ if TYPE_CHECKING:
     from benchmarks.sregym.adapter.scripted_replay_catalog import SCRIPTED_REPLAY_SLOTS
 
 _EXPORTS: dict[str, str] = {
+    "Deadline": "eval_guards",
     "LaneResourcePolicy": "lane_resources",
     "assert_host_disk_headroom": "lane_resources",
     "assert_host_headroom": "lane_resources",
@@ -135,6 +137,7 @@ _EXPORTS: dict[str, str] = {
 }
 
 __all__ = [
+    "Deadline",
     "LaneResourcePolicy",
     "assert_host_disk_headroom",
     "assert_host_headroom",
