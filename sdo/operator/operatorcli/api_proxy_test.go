@@ -14,7 +14,7 @@ import (
 	"sdo.dev/operator/kubeproxy"
 )
 
-func TestHermeticAPIProxyPodIdentityFreshWritesAndOfflineReflection(t *testing.T) {
+func TestHermeticAPIProxyPodIdentityWritesNotRetriedAndOfflineReflection(t *testing.T) {
 	var calls atomic.Int32
 	var readConnection atomic.Value
 	readConnection.Store("")
@@ -24,8 +24,11 @@ func TestHermeticAPIProxyPodIdentityFreshWritesAndOfflineReflection(t *testing.T
 		}
 		if r.Method == "POST" {
 			calls.Add(1)
-			if r.RemoteAddr == readConnection.Load().(string) {
-				t.Error("write reused a connection and can be retried")
+			if r.RemoteAddr != readConnection.Load().(string) {
+				t.Error("write did not reuse the incident connection")
+			}
+			if r.Header.Get("Idempotency-Key") != "" || r.Header.Get("X-Idempotency-Key") != "" {
+				t.Error("write retained retry-authorizing headers")
 			}
 			c, _, _ := w.(http.Hijacker).Hijack()
 			c.Close()
