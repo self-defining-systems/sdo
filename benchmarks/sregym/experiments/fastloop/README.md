@@ -433,7 +433,11 @@ uv run python -m benchmarks.sregym.fastloop eval-dry-run --run-dir "$SDO_FASTLOO
 Before touching the lane, the command imports every scripted registration's worker
 module inside the lane's responder image (no network, seconds) and fails with the
 build command for the `-scripted` variant when the image is a production build; the
-result is `responder_image` in the report. It then restores the app, installs and
+result is `responder_image` in the report. It also reads the seed commit's `.sdo` (read-only) through the
+scripted health judge's own seed loader and refuses a fresh, un-onboarded seed
+(no accepted `rendered/lock.json` or full judge-owned health bundle): run the first
+live row's production admission proof (`setup-proof.json`) instead. The result is
+`seed` in the report. It then restores the app, installs and
 onboards SDO with scripted registrations,
 checks fresh-memory setup lineage and exact responder RBAC against the real installer,
 requires fresh controller traffic clearance and qualified native prober scenarios,

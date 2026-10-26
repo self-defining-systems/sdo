@@ -50,6 +50,7 @@ class DryRunReport:
     fingerprint: dict[str, Any] | None = None
     setup_proof: dict[str, Any] = field(default_factory=dict)
     responder_image: dict[str, Any] = field(default_factory=dict)
+    seed: dict[str, Any] = field(default_factory=dict)
     fault_injected: bool = False
     live_model_calls: bool = False
     invariants: dict[str, dict[str, Any]] = field(
@@ -178,6 +179,53 @@ def assert_responder_runs_registrations(
     return {"image": image, "modules": modules, "seconds": round(time.monotonic() - started, 3)}
 
 
+def assert_seed_supports_scripted_judge(workspace: Path, seed_commit: str | None) -> dict[str, Any]:
+    """Fail in seconds when the seed lacks what the scripted health judge reads.
+
+    The scripted judge only retains an accepted bundle (rendered lock, goal and
+    judge-owned detectors). A fresh, un-onboarded seed needs a real judge, so
+    the rehearsal would otherwise burn its whole setup budget. Reads the seed
+    commit the reset restores, never the lane.
+    """
+    import io
+    import tarfile
+    import tempfile
+
+    from benchmarks.sregym.adapter import scripted_judge_seed
+
+    started = time.monotonic()
+    label = seed_commit[:12] if seed_commit else f"{workspace} working tree"
+    try:
+        with tempfile.TemporaryDirectory(prefix="sdo-dry-run-seed-") as temporary:
+            checkout = Path(temporary)
+            if seed_commit:
+                archive = subprocess.run(
+                    ["git", "-C", str(workspace), "archive", "--format=tar", seed_commit, "--", ".sdo"],
+                    capture_output=True,
+                    timeout=30,
+                )
+                if archive.returncode:
+                    raise ValueError(f"seed has no accepted .sdo ({archive.stderr.decode().strip()})")
+                with tarfile.open(fileobj=io.BytesIO(archive.stdout)) as tar:
+                    tar.extractall(checkout, filter="data")
+            else:
+                checkout = workspace
+            seed = scripted_judge_seed(checkout)
+    except ValueError as exc:
+        raise ValueError(
+            f"eval: seed {label} cannot pass the scripted no-fault rehearsal: {exc}. "
+            "The scripted health judge only retains an accepted bundle; a fresh, un-onboarded seed needs the "
+            "real judge. Skip eval-dry-run for this seed and let the first live row run the production admission "
+            "proof (results/<run>/setup-proof.json)"
+        ) from exc
+    return {
+        "seed_commit": seed_commit,
+        "toy": seed.toy,
+        "detector_ids": list(seed.detector_ids),
+        "seconds": round(time.monotonic() - started, 3),
+    }
+
+
 class NoFaultReady(Exception):
     """The real pre-injection callback was reached; there is deliberately no fault."""
 
@@ -295,8 +343,11 @@ def run_lane(run_dir: Path, timeout: int, setup_timeout: int = 900) -> int:
             report.steady_seconds = report.seconds
             report.save(report_path)
             return 0
-        # A reused receipt already bound these image digests; a fresh install must
-        # not spend its setup budget on Jobs that cannot import their worker.
+        # A reused receipt already bound these image digests and accepted memory; a
+        # fresh install must not spend its setup budget on Jobs that cannot import
+        # their worker or a seed the scripted judge cannot retain.
+        report.seed = assert_seed_supports_scripted_judge(environment.workspace, environment.seed_commit)
+        report.save(report_path)
         report.responder_image = assert_responder_runs_registrations(
             environment.images.responder, SCRIPTED_REGISTRATIONS, source_root=environment.dev_mount
         )
