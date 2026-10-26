@@ -69,8 +69,12 @@ func simForward(t *testing.T, recorder Recorder, method, path string, status, ch
 		if string(requestBody) != "DP1_SYNTHETIC_REQUEST_CANARY" || r.Method != method || r.URL.RequestURI() != path {
 			t.Errorf("request changed: %s %s %q", r.Method, r.URL.RequestURI(), requestBody)
 		}
-		if r.Header.Get("Idempotency-Key") != "synthetic" {
-			t.Error("idempotency header lost")
+		wantKey := "synthetic"
+		if mutating(method) {
+			wantKey = ""
+		}
+		if r.Header.Get("Idempotency-Key") != wantKey {
+			t.Error("unsafe idempotency header forwarding")
 		}
 		if entered != nil {
 			close(entered)

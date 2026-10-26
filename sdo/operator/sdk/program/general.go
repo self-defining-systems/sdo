@@ -106,6 +106,12 @@ func (r KubernetesRequest) Validate() error {
 	if !strings.HasPrefix(r.Path, "/") || err != nil || u.IsAbs() || u.Host != "" || u.RawQuery != "" || u.Fragment != "" || path.Clean(r.Path) != r.Path || strings.ContainsAny(r.Path, "%\\") || strings.Contains(r.Path, "//") {
 		return fmt.Errorf("Kubernetes request requires a canonical API path")
 	}
+	// Discovery is part of the read API, including CRD discovery.
+	if r.Method == "GET" || r.Method == "HEAD" {
+		if r.Path == "/api" || r.Path == "/apis" || r.Path == "/version" || r.Path == "/openapi/v2" || r.Path == "/openapi/v3" || r.Path == "/api/v1" || strings.HasPrefix(r.Path, "/apis/") && len(strings.Split(strings.TrimPrefix(r.Path, "/"), "/")) <= 3 {
+			return nil
+		}
+	}
 	parts := strings.Split(strings.TrimPrefix(r.Path, "/"), "/")
 	index := 2
 	if len(parts) < 3 {
