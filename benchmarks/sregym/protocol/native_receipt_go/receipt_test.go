@@ -182,3 +182,20 @@ func TestReceiptAcceptsVerifiedSuccessWithoutDiagnosisEvidence(t *testing.T) {
 		t.Fatal(got.GetFailure())
 	}
 }
+
+// Every current classification has its own resolution label: a rejected
+// unconfirmed or failed closure is SDO's own repair attempt, never recorded as
+// an external recovery in analysis rows.
+func TestEveryOutcomeClassificationHasItsOwnResolution(t *testing.T) {
+	seen := map[string]string{}
+	for _, classification := range wire.StringIn(&c.OutcomeRecord{}, "classification") {
+		label := resolution(classification)
+		if label == "external_recovery" || seen[label] != "" {
+			t.Fatalf("classification %s resolves to %q (also %q)", classification, label, seen[label])
+		}
+		seen[label] = classification
+	}
+	if seen["sdo_unconfirmed"] != "unconfirmed" {
+		t.Fatalf("unconfirmed has no label of its own: %v", seen)
+	}
+}

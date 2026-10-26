@@ -237,9 +237,14 @@ func (l *ResponderLoop) loadWorkingProgram(ctx context.Context, registry *workin
 	// Compilation has its own short budget, independent of diagnosis timeouts.
 	buildCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	started := time.Now()
-	l.mu.Unlock()
-	workspace, binary, buildErr := builder.BuildWorkingProgram(buildCtx, builder.Config{ApplicationRoot: l.WorkingProgramRoot, OperatorRoot: operator, ProgramModule: module}, id)
-	l.mu.Lock()
+	var workspace *builder.Workspace
+	var binary string
+	var buildErr error
+	if err := withoutResponderLocks(l, "compile "+id, false, func() {
+		workspace, binary, buildErr = builder.BuildWorkingProgram(buildCtx, builder.Config{ApplicationRoot: l.WorkingProgramRoot, OperatorRoot: operator, ProgramModule: module}, id)
+	}); err != nil {
+		buildErr = err
+	}
 	cancel()
 	slog.Info("responder_program_compile", "program_id", id, "compile_ms", time.Since(started).Milliseconds(), "success", buildErr == nil)
 	if buildErr != nil {

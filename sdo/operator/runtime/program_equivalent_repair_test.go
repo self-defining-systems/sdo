@@ -173,11 +173,11 @@ func TestDeterministicStagePanicFailsOnlyThatStep(t *testing.T) {
 	loop := &ResponderLoop{}
 	loop.operationMu.Lock()
 	loop.mu.Lock()
-	err := unlockedStageStep(loop, "credit-equivalent-repairs", func() {
+	err := withoutResponderLocks(loop, "credit-equivalent-repairs", true, func() {
 		var missing *unstructured.Unstructured
 		_ = missing.Object
 	})
-	var stepPanic *DeterministicStepPanicError
+	var stepPanic *ResponderStepPanicError
 	if !errors.As(err, &stepPanic) || stepPanic.Step != "credit-equivalent-repairs" {
 		t.Fatalf("step panic was not typed: %v", err)
 	}
