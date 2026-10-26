@@ -40,7 +40,8 @@ Missing inputs are errors; the caller supplies the accepted base and authoring r
   contract defines its fields and the distinction between a decision file and the session result envelope.
   Return the same decision and IDs; no_change and sdk_gap require a reason and no diff. Enforced by:
   `reflection.decision`.
-- Keep changed lines free of trailing whitespace and keep logical snapshots within the aggregate budget.
+- SDO strips trailing whitespace from changed `.sdo/` text; never indent with a space before a tab, and keep logical
+  snapshots within the aggregate budget.
   Supply valid detector sources so the snapshot can be projected. Enforced by: `diff.whitespace`,
   `memory.snapshot-budget`, `memory.snapshot`.
 - Generic service-endpoint, service-reachability and traffic health detectors come from Go policy. Do not author or overwrite them;

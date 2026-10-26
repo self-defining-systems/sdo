@@ -22,11 +22,14 @@ func TestSharedSeedIsAtomicAndReusable(t *testing.T) {
 	if err := seedFrom(context.Background(), root, "image@sha256:one", compiler, "/missing-cache"); err == nil {
 		t.Fatal("missing cache accepted")
 	}
-	if _, err := os.Stat(filepath.Join(root, SharedSubPath("image@sha256:one"))); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(root, SharedSubPath("image@sha256:one"))); !os.IsNotExist(err) || Seeded(root, "image@sha256:one") {
 		t.Fatal("partial seed published")
 	}
 	if err := seedFrom(context.Background(), root, "image@sha256:one", compiler, cache); err != nil {
 		t.Fatal(err)
+	}
+	if !Seeded(root, "image@sha256:one") || Seeded(root, "image@sha256:two") || Seeded("", "image@sha256:one") {
+		t.Fatal("Seeded disagrees with seed publication")
 	}
 	if err := seedFrom(context.Background(), root, "image@sha256:one", "/absent", "/absent"); err != nil {
 		t.Fatal("seed copied again", err)

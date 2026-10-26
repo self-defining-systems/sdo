@@ -430,7 +430,11 @@ Before live slots on a prepared lane, run:
 uv run python -m benchmarks.sregym.fastloop eval-dry-run --run-dir "$SDO_FASTLOOP_RUN"
 ```
 
-The command restores the app, installs and onboards SDO with scripted registrations,
+Before touching the lane, the command imports every scripted registration's worker
+module inside the lane's responder image (no network, seconds) and fails with the
+build command for the `-scripted` variant when the image is a production build; the
+result is `responder_image` in the report. It then restores the app, installs and
+onboards SDO with scripted registrations,
 checks fresh-memory setup lineage and exact responder RBAC against the real installer,
 requires fresh controller traffic clearance and qualified native prober scenarios,
 checks benchmark probe placement, and captures the healthy baseline. Its final

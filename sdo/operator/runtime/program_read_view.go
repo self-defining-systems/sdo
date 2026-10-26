@@ -15,10 +15,8 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	kruntime "k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 
@@ -278,54 +276,11 @@ func dryRunAcceptedSource(ctx context.Context, client kubernetes.Interface, ref 
 }
 
 func applyAcceptedSource(ctx context.Context, client kubernetes.Interface, ref sdk.ObjectRef, source *unstructured.Unstructured, dryRun bool) (*unstructured.Unstructured, error) {
-	patch, err := json.Marshal(source.Object)
+	resource, err := resolveAcceptedResource(client, ref)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("source diff does not support %s/%s: %w", ref.APIVersion, ref.Kind, err)
 	}
-	force := true
-	options := metav1.PatchOptions{FieldManager: "sdo-deployer", Force: &force}
-	if dryRun {
-		options.DryRun = []string{metav1.DryRunAll}
-	}
-	var object any
-	switch ref.APIVersion + "/" + ref.Kind {
-	case "v1/ServiceAccount":
-		object, err = client.CoreV1().ServiceAccounts(ref.Namespace).Patch(ctx, ref.Name, types.ApplyPatchType, patch, options)
-	case "rbac.authorization.k8s.io/v1/ClusterRole":
-		object, err = client.RbacV1().ClusterRoles().Patch(ctx, ref.Name, types.ApplyPatchType, patch, options)
-	case "rbac.authorization.k8s.io/v1/ClusterRoleBinding":
-		object, err = client.RbacV1().ClusterRoleBindings().Patch(ctx, ref.Name, types.ApplyPatchType, patch, options)
-	case "rbac.authorization.k8s.io/v1/Role":
-		object, err = client.RbacV1().Roles(ref.Namespace).Patch(ctx, ref.Name, types.ApplyPatchType, patch, options)
-	case "rbac.authorization.k8s.io/v1/RoleBinding":
-		object, err = client.RbacV1().RoleBindings(ref.Namespace).Patch(ctx, ref.Name, types.ApplyPatchType, patch, options)
-	case "v1/Service":
-		object, err = client.CoreV1().Services(ref.Namespace).Patch(ctx, ref.Name, types.ApplyPatchType, patch, options)
-	case "v1/ConfigMap":
-		object, err = client.CoreV1().ConfigMaps(ref.Namespace).Patch(ctx, ref.Name, types.ApplyPatchType, patch, options)
-	case "v1/Pod":
-		object, err = client.CoreV1().Pods(ref.Namespace).Patch(ctx, ref.Name, types.ApplyPatchType, patch, options)
-	case "apps/v1/Deployment":
-		object, err = client.AppsV1().Deployments(ref.Namespace).Patch(ctx, ref.Name, types.ApplyPatchType, patch, options)
-	case "apps/v1/ReplicaSet":
-		object, err = client.AppsV1().ReplicaSets(ref.Namespace).Patch(ctx, ref.Name, types.ApplyPatchType, patch, options)
-	case "v1/Endpoints":
-		object, err = client.CoreV1().Endpoints(ref.Namespace).Patch(ctx, ref.Name, types.ApplyPatchType, patch, options)
-	case "discovery.k8s.io/v1/EndpointSlice":
-		object, err = client.DiscoveryV1().EndpointSlices(ref.Namespace).Patch(ctx, ref.Name, types.ApplyPatchType, patch, options)
-	case "networking.k8s.io/v1/NetworkPolicy":
-		object, err = client.NetworkingV1().NetworkPolicies(ref.Namespace).Patch(ctx, ref.Name, types.ApplyPatchType, patch, options)
-	default:
-		return nil, fmt.Errorf("source diff does not support %s/%s", ref.APIVersion, ref.Kind)
-	}
-	if err != nil {
-		return nil, err
-	}
-	content, err := kruntime.DefaultUnstructuredConverter.ToUnstructured(object)
-	if err != nil {
-		return nil, err
-	}
-	return &unstructured.Unstructured{Object: content}, nil
+	return resource.apply(ctx, ref, source, dryRun)
 }
 
 func comparableFields(object map[string]any) map[string]any {
