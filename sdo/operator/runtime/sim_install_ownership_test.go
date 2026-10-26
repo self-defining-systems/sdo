@@ -18,6 +18,7 @@ import (
 // ownership contract. Application extras must remain visible throughout.
 func TestSimInstallerOwnershipStaysOutOfApplicationDrift(t *testing.T) {
 	cfg := install.Config{Namespace: "app", ControlNamespace: "app-sdo", Application: "app", Model: "gpt-fixture", TimeoutSeconds: 60, ControllerImage: "controller:fixture", ResponderImage: "responder:fixture", ValidatorImage: "validator:fixture", RepositoryPVC: "repository", CredentialsSecret: "fixture", AcceptedCommit: strings.Repeat("a", 40), NativeCommand: []string{"/usr/local/bin/sdo-operator"}, BuildKitImage: "moby/buildkit@sha256:" + strings.Repeat("a", 64), RegistryPushSecret: "registry-push", RegistryPushDockerConfig: []byte("{}")}
+	cfg.PermissiveResponder = true
 	plan, err := install.Resources(cfg, &metav1.APIResourceList{GroupVersion: "v1", APIResources: []metav1.APIResource{{Name: "services", Kind: "Service", Namespaced: true, Verbs: []string{"get", "list"}}}})
 	if err != nil {
 		t.Fatal(err)
@@ -37,6 +38,12 @@ func TestSimInstallerOwnershipStaysOutOfApplicationDrift(t *testing.T) {
 	}
 	for _, binding := range plan.ClusterBindings {
 		add(binding, "rbac.authorization.k8s.io/v1", "ClusterRoleBinding")
+	}
+	for _, role := range plan.AppRoles {
+		add(role, "rbac.authorization.k8s.io/v1", "Role")
+	}
+	for _, binding := range plan.AppBindings {
+		add(binding, "rbac.authorization.k8s.io/v1", "RoleBinding")
 	}
 	worker := plan.Job.DeepCopy()
 	worker.Name = "worker-123"

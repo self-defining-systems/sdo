@@ -186,6 +186,8 @@ func addPermissiveReadBindings(c Config, p *Plan, namespaces []string) {
 			Subjects:   []rbacv1.Subject{{Kind: "ServiceAccount", Name: "sdo-responder", Namespace: c.controlNamespace()}},
 		})
 	}
+	// Discovery can extend the plan after Resources applied its ownership labels.
+	labelInstallObjects(c.Namespace, p.AppBindings...)
 	slices.SortFunc(p.AppBindings, func(a, b *rbacv1.RoleBinding) int {
 		return strings.Compare(a.Namespace+"/"+a.Name, b.Namespace+"/"+b.Name)
 	})

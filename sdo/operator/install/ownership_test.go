@@ -5,7 +5,9 @@ import (
 	"reflect"
 	"testing"
 
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	fakediscovery "k8s.io/client-go/discovery/fake"
 	"k8s.io/client-go/kubernetes/fake"
 )
 
@@ -110,5 +112,29 @@ func TestInstallReconcileAddsOwnershipToLegacyCaptureGrants(t *testing.T) {
 			t.Fatal(err)
 		}
 		assertInstallOwnership(t, got, cfg.Namespace)
+	}
+}
+
+func TestDiscoveredPermissiveReadGrantsCarryInstallOwnership(t *testing.T) {
+	cfg := testConfig()
+	cfg.PermissiveResponder = true
+	client := fake.NewSimpleClientset(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "other-app"}})
+	client.Discovery().(*fakediscovery.FakeDiscovery).Resources = discoveryFixture()
+	plan, err := (Installer{Client: client}).resources(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, binding := range plan.AppBindings {
+		assertInstallOwnership(t, binding, cfg.Namespace)
+		if binding.Namespace == "other-app" {
+			found = true
+			if binding.Labels[permissiveReadOwnerLabel] != cfg.controlNamespace() {
+				t.Fatal("read grant lost revocation owner")
+			}
+		}
+	}
+	if !found {
+		t.Fatal("discovered namespace read grant was not exercised")
 	}
 }
