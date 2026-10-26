@@ -731,7 +731,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	controller, err = NewController(ControllerConfig{
 		CodePath: selectedPathConfig, CodePathRegistry: codePathRegistry,
 		Application: *application, Namespace: *namespace,
-		SourceCommit: resolvedSourceCommit, DeployedCommit: resolvedDeployedCommit,
+		SourceCommit:   resolvedSourceCommit, DeployedCommit: resolvedDeployedCommit,
 		RepositoryWorktree: resolvedRoot, ResponseTimeout: *responseTimeout,
 		CorpusSessionRoot:      corpusSessionRoot,
 		VerificationTimeout:    *verificationTimeout,

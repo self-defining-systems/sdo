@@ -113,3 +113,17 @@ func TestCodePathShellSelection(t *testing.T) {
 		t.Fatalf("shell selection: %#v", path.Selection)
 	}
 }
+
+func TestCodePathGoStagesMatchPipelineDefault(t *testing.T) {
+	pipelineDefault, err := responseStageNames(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	selected, err := NewCodePathRegistry().Resolve(CodePathConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(pipelineDefault, selected.Selection.ResponseStages) {
+		t.Fatalf("Go stages %v differ from PIPE default %v", selected.Selection.ResponseStages, pipelineDefault)
+	}
+}

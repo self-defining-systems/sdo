@@ -25,6 +25,8 @@ Mutation files contain these generated top-level arrays:
 ## General help
 
 ```text
+Earlier stages’ actions and results are in prior_stages. Build on them; do not repeat verified repairs. The complete incident facts retain apply receipts and post-apply diagnoses.
+
 Examples (replace names with incident resources):
   sdo source Deployment/app/api
   sdo diagnose targetport --bind service=Service/app/api
