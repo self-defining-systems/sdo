@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -176,15 +177,22 @@ func TestHealthRefreshAcknowledgesOnlyOwnCommittedRepair(t *testing.T) {
 // it derives the outcome. Health adoption of that repair may interrupt the
 // effect between the two; the replay must finish the same incident, and only
 // that repair may be adopted this way.
+//
+// STALE2B: adopting that repair makes the judge refresh rewrite the health
+// detectors (the repair renames a workload). Judge commits that follow the
+// incident's own proposal do not stale it; any other policy writer does.
+// Health freshness never comes from this guard: the replayed
+// ExecuteClosureEffect re-runs the closure and health detectors on the live
+// cluster before any outcome is committed, so a bad cluster commits no success.
 func TestHealthRefreshReplaysClosureAfterOwnProposalCommit(t *testing.T) {
-	for _, change := range []string{"none", "source", "objective"} {
+	for _, change := range []string{"none", "refresh-detectors", "refresh-detectors-health-bad", "source", "objective", "policy", "other-incident"} {
 		t.Run(change, func(t *testing.T) {
 			ctx := context.Background()
 			root, _, repository, _, coordinator := tracingFixture(t)
 			old := tracingRefresh(t, root, coordinator)
 			interrupted := true
 			native := NativeIncidentBroker{Repository: repository, LedgerRoot: filepath.Join(t.TempDir(), "ledger"), ResponderBackend: "test", ResponderModel: "test", Deriver: OutcomeDeriverFunc(func(_ context.Context, c IncidentClosure, _, _, _ string) (DerivedOutcome, error) {
-				if interrupted {
+				if interrupted && c.Request.IncidentID == "own-proposal" {
 					return DerivedOutcome{}, errors.New("controller exited for health refresh")
 				}
 				return testDerivedOutcome(c.Request.IncidentID, "success", true), nil
@@ -195,24 +203,46 @@ func TestHealthRefreshReplaysClosureAfterOwnProposalCommit(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			tracingWrite(t, workspace.Worktree, "README.md", "accepted source restoration annotation")
 			closure := nativeClosure(workspace)
-			if _, err := native.ProcessClosure(ctx, closure); err == nil {
-				t.Fatal("fixture did not interrupt the closure effect")
+			if change == "other-incident" {
+				// Only another incident's repair is accepted; this one never proposed.
+				other, err := native.PrepareIncident(ctx, "other-incident")
+				if err != nil {
+					t.Fatal(err)
+				}
+				tracingWrite(t, other.Worktree, "README.md", "another incident's repair")
+				if _, err := native.ProcessClosure(ctx, nativeClosure(other)); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				if strings.HasPrefix(change, "refresh-detectors") {
+					tracingWrite(t, workspace.Worktree, "deploy/tracing.yaml", "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: collector\nspec: {}\n")
+				} else {
+					tracingWrite(t, workspace.Worktree, "README.md", "accepted source restoration annotation")
+				}
+				if _, err := native.ProcessClosure(ctx, closure); err == nil {
+					t.Fatal("fixture did not interrupt the closure effect")
+				}
+				ledger, err := native.readLedger(closure.Request.IncidentID)
+				if err != nil || ledger.ProposalCommit == "" || ledger.OutcomeCommit != "" {
+					t.Fatalf("fixture must stop between proposal and outcome: %+v %v", ledger, err)
+				}
 			}
 			interrupted = false
-			ledger, err := native.readLedger(closure.Request.IncidentID)
-			if err != nil || ledger.ProposalCommit == "" || ledger.OutcomeCommit != "" {
-				t.Fatalf("fixture must stop between proposal and outcome: %+v %v", ledger, err)
-			}
 			current := tracingRefresh(t, root, coordinator)
 			switch change {
+			case "refresh-detectors", "refresh-detectors-health-bad":
+				if current.DetectorRevision == old.DetectorRevision {
+					t.Fatal("fixture: the judge refresh must rewrite the health detectors")
+				}
 			case "source":
 				tracingWrite(t, root, "README.md", "unrelated later source")
 			case "objective":
 				tracingWrite(t, root, ".sdo/goal.md", "---\nschema_version: 1\nowner: human\n---\n# Health objective\nNew objective.\n")
+			case "policy":
+				tracingWrite(t, root, ".sdo/lib/changed.txt", "policy input changed outside the judge")
 			}
-			if change != "none" {
+			if change == "source" || change == "objective" || change == "policy" {
 				nativeGit(t, root, "add", ".")
 				nativeGit(t, root, "commit", "-qm", "unrelated accepted change")
 				current = tracingRefresh(t, root, coordinator)
@@ -220,7 +250,11 @@ func TestHealthRefreshReplaysClosureAfterOwnProposalCommit(t *testing.T) {
 			now := time.Now().UTC()
 			cfg := testControllerConfig()
 			cfg.SourceCommit = current.Commit
-			c, err := NewController(cfg, []sdk.Detector{controllerDetector("health", time.Second, sdk.Finding{})}, staticProvider{}, &recordingDispatcher{}, now)
+			finding := sdk.Finding{}
+			if change == "refresh-detectors-health-bad" {
+				finding = stateFinding("health")
+			}
+			c, err := NewController(cfg, []sdk.Detector{controllerDetector("health", time.Second, finding)}, staticProvider{}, &recordingDispatcher{}, now)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -230,7 +264,7 @@ func TestHealthRefreshReplaysClosureAfterOwnProposalCommit(t *testing.T) {
 				t.Fatal(err)
 			}
 			state := exportState(t, c)
-			c, err = NewController(cfg, []sdk.Detector{controllerDetector("health", time.Second, sdk.Finding{})}, staticProvider{}, &recordingDispatcher{}, now)
+			c, err = NewController(cfg, []sdk.Detector{controllerDetector("health", time.Second, finding)}, staticProvider{}, &recordingDispatcher{}, now)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -245,7 +279,7 @@ func TestHealthRefreshReplaysClosureAfterOwnProposalCommit(t *testing.T) {
 			}
 			rv6Guard(c, root, current.Commit)
 			err = c.CheckHealth(ctx)
-			if change != "none" {
+			if change == "source" || change == "objective" || change == "policy" || change == "other-incident" {
 				if !errors.Is(err, ErrStaleHealthInvestigation) {
 					t.Fatalf("unrelated change allowed across own proposal: %v", err)
 				}
@@ -258,9 +292,29 @@ func TestHealthRefreshReplaysClosureAfterOwnProposalCommit(t *testing.T) {
 			if !ok {
 				t.Fatal("interrupted closure has no replayable broker effect")
 			}
+			ledger, err := native.readLedger(closure.Request.IncidentID)
+			if err != nil {
+				t.Fatal(err)
+			}
 			proposal := ledger.ProposalCommit
+			head := nativeGit(t, root, "rev-parse", "HEAD")
 			if err := c.ExecuteClosureEffect(ctx, replay); err != nil {
 				t.Fatal(err)
+			}
+			if change == "refresh-detectors-health-bad" {
+				// Fresh evidence after adoption contradicts the closure: no success.
+				c.processBrokerCompletions()
+				if c.closureReceipt != nil || nativeGit(t, root, "rev-parse", "HEAD") != head {
+					t.Fatalf("closure credited although health is bad after adoption: %+v", c.closureReceipt)
+				}
+				if c.closureState == contracts.ClosureState_CLOSURE_STATE_COMMITTED {
+					t.Fatalf("closure committed although health is bad after adoption: %v", c.closureState)
+				}
+				ledger, err := native.readLedger(closure.Request.IncidentID)
+				if err != nil || ledger.OutcomeCommit != "" {
+					t.Fatalf("outcome committed although health is bad after adoption: %+v %v", ledger, err)
+				}
+				return
 			}
 			awaitBrokerResult(t, c.closureResults)
 			c.processBrokerCompletions()

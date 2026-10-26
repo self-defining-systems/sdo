@@ -111,6 +111,23 @@ var ErrHealthRefreshRequired = errors.New("health unverified: accepted inputs re
 var ErrReflectionObjectiveChanged = errors.New("objective changed")
 var ErrReflectionPolicyChanged = errors.New("policy changed")
 
+// CheckRepairAdoption permits the health policy to differ from the revision a
+// verified repair was committed on only through broker-validated judge
+// refreshes that follow that repair. The repair must be an ancestor of current,
+// so the refreshes are bound to it by lineage, not by timing. Anything else that
+// rewrote policy, or an objective change, returns the Reflection policy and
+// objective errors.
+func CheckRepairAdoption(ctx context.Context, repository, repair, current string) error {
+	if _, err := healthGit(ctx, repository, "merge-base", "--is-ancestor", repair, current); err != nil {
+		var exit *exec.ExitError
+		if errors.As(err, &exit) && exit.ExitCode() == 1 {
+			return ErrReflectionPolicyChanged
+		}
+		return err
+	}
+	return CheckReflectionHealth(ctx, repository, repair, current)
+}
+
 // CheckReflectionHealth permits source adoption and broker-validated judge
 // refreshes, while retaining the frozen incident's objective and policy authority.
 func CheckReflectionHealth(ctx context.Context, repository, frozen, current string) error {
