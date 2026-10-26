@@ -294,3 +294,62 @@ func TestIncidentDispatchSnapshotPinsBaseAfterPeerPublication(t *testing.T) {
 		t.Fatal("dispatch snapshot advanced to peer publication")
 	}
 }
+
+func TestNativeSharedMemoryConflictsTerminateWithLastDiagnostic(t *testing.T) {
+	ctx := context.Background()
+	var h *rejectionHarness
+	var peer *broker.Broker
+	var accepted broker.Receipt
+	h = newRejectionHarness(t, "conflict-loser", func(call int, w IncidentWorkspace) (ReflectionDecision, error) {
+		decision, err := writeGoodPlaybook(w)
+		if err != nil {
+			return decision, err
+		}
+		id := fmt.Sprintf("peer-%d", call)
+		if _, err := peer.RecordOutcome(ctx, id, &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: id, Classification: "success"}); err != nil {
+			return decision, err
+		}
+		proposal, err := peer.CreateProposalForPhase(ctx, id, broker.ReflectionPhase)
+		if err != nil {
+			return decision, err
+		}
+		body := fmt.Sprintf("---\nschema_version: 1\nowner: responder\nfault_class: base\noriginating_incident: synthetic\n---\nPeer learning for <RESOURCE_NAME> revision %d\n", call)
+		if err := os.WriteFile(filepath.Join(proposal.Path, ".sdo/playbooks/base/README.md"), []byte(body), 0644); err != nil {
+			return decision, err
+		}
+		accepted, err = peer.PublishReflection(ctx, id, &contracts.ReflectionDecision{LearningDecision: "updated", PlaybookIds: []string{"base"}})
+		return decision, err
+	})
+	var err error
+	peer, err = broker.New(h.target, t.TempDir(), func(context.Context, string, []string) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipt, err := h.native.ProcessClosure(ctx, h.closure)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ledger, err := h.native.readLedger("conflict-loser")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(h.calls) != 3 || !ledger.GetReflectionRejected() || !ledger.GetReflectionProcessed() || receipt.ReflectionCommit != "" {
+		t.Fatalf("conflict did not fail visibly at bound: %v", ledger)
+	}
+	last := ledger.GetReflectionRejections()[2].GetDiagnostics()[0].GetMemoryConflict()
+	if last.GetAcceptedCommit() != accepted.Commit || last.GetAcceptedChanges()[0].GetIncidentId() != "peer-3" {
+		t.Fatalf("terminal conflict diagnostic lost: %v", last)
+	}
+	if nativeGit(t, h.target, "rev-parse", "HEAD") != accepted.Commit {
+		t.Fatal("rejected learning reached accepted state")
+	}
+	// Receipt replay cannot resume a terminal losing reflection after restart.
+	restored := h.native
+	restored.Reflector = ReflectionWorkerFunc(func(context.Context, IncidentClosure, IncidentWorkspace, *contracts.OutcomeRecord, string, string, ReflectionFeedback) (ReflectionDecision, error) {
+		return ReflectionDecision{}, fmt.Errorf("terminal reflection redispatched")
+	})
+	again, err := restored.ProcessClosure(ctx, h.closure)
+	if err != nil || again != receipt {
+		t.Fatalf("terminal conflict not durable across restart: %v", err)
+	}
+}

@@ -44,6 +44,11 @@ func TestCatalogSnapshotAtRetainsProposalCommitAfterPeerPublication(t *testing.T
 	if err := os.WriteFile(goal, append(data, []byte("\nPeer accepted goal\n")...), 0644); err != nil {
 		t.Fatal(err)
 	}
+	// A peer changes checkout conversion policy as well as memory. Historical
+	// catalog bytes must not use attributes from the newer mutable checkout.
+	if err := os.WriteFile(filepath.Join(root, ".gitattributes"), []byte("*.md text eol=crlf\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
 	catalogGit(t, root, "add", ".")
 	catalogGit(t, root, "commit", "-qm", "peer memory publication")
 	after := catalogGit(t, root, "rev-parse", "HEAD")
