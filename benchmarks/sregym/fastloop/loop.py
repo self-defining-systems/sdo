@@ -405,9 +405,13 @@ def _settled_recovery_oracle(
     # The sample cap also bounds a clock that sleep does not advance.
     cap = math.ceil(config.recovery_settle_seconds / config.recovery_settle_poll_seconds) + 1
     for attempt in range(1, cap + 1):
-        verdict = independent() if callable(independent) else None
-        if verdict is None:
+        sample = independent() if callable(independent) else None
+        if sample is None:
             verdict = grade()
+        elif isinstance(sample, OracleVerdict):
+            verdict = sample
+        else:
+            raise TypeError(f"recovery_oracle returned {type(sample).__name__}, not an OracleVerdict")
         elapsed = monotonic() - started
         samples.append(RecoveryOracleSample(seconds=round(elapsed, 3), success=verdict.success))
         remaining = config.recovery_settle_seconds - elapsed
