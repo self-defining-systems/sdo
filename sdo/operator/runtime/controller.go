@@ -1183,15 +1183,21 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 	var guard *apihistory.MutationObservation
 	release := func() {}
 	safe := true
+	var closureGuard *responderClosureGuard
 	if early {
-		guard, release, safe = acquireClosureGuard(loop)
-	} else if loop != nil && loop.MutationGate != nil {
+		closureGuard, release, safe = acquireClosureGuard(loop)
+		if safe {
+			guard = closureGuard.observation
+		}
+	} else if loop != nil {
 		var err error
-		guard, err = loop.MutationGate.TryObserve()
-		if err != nil || guard == nil {
+		guard, err = loop.observeMutations()
+		if err != nil {
 			return
 		}
-		release = func() { guard.Close() }
+		if guard != nil {
+			release = func() { guard.Close() }
+		}
 	}
 	defer release()
 	if snapshot == nil {
@@ -1394,7 +1400,7 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 	}
 	if early {
 		closure.ResponderCompletedAt = verifiedAt
-		closure.Result = earlyResultSnapshot(loop, *c.currentIncidentRequest, verifiedAt)
+		closure.Result = closureGuard.resultSnapshot(*c.currentIncidentRequest, verifiedAt)
 	}
 	if verified {
 		c.retainSourceInventoryAcceptancesLocked(c.currentIncidentResult)
