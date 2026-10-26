@@ -37,7 +37,12 @@ from google.protobuf import json_format
 from pydantic import BaseModel, ConfigDict, Field
 
 from benchmarks.sregym.adapter.cluster_resources import kubectl
-from benchmarks.sregym.adapter.eval_guards import closure_pending
+from benchmarks.sregym.adapter.eval_guards import (
+    INCIDENT_EXECUTION_LABEL,
+    STANDBY_LABEL,
+    closure_pending,
+    idle_standby_jobs,
+)
 from benchmarks.sregym.adapter.fault_gate import (
     BASELINE_TIMEOUT_SECONDS,
     RESUMED_BASELINE_TIMEOUT_SECONDS,
@@ -438,45 +443,19 @@ class KubectlClusterOps:
                     (directory / f"{name}.log-error").write_text(logs.stderr)
 
             idle_uids: set[str] = set()
-            if any(labels(row).get("sdo.dev/standby") == "true" for row in jobs):
+            if any(labels(row).get(STANDBY_LABEL) == "true" for row in jobs):
                 records = json.loads(
                     kubectl(
-                        ["get", "configmaps", "-l", "sdo.dev/incident-execution", "-o", "json"],
+                        ["get", "configmaps", "-l", INCIDENT_EXECUTION_LABEL, "-o", "json"],
                         namespace=target.control_namespace,
                         kubeconfig=config,
                     ).stdout
                 )["items"]
-                claimed: set[str] = set()
-                for record in records:
-                    # The immutable identity is published before a warm inbox can
-                    # release its task (worker_registry.ensureIncidentExecution).
-                    identity = json.loads(record["data"]["execution.json"])
-                    if (
-                        record["metadata"]["labels"].get("sdo.dev/incident-execution") != "1"
-                        or not isinstance(identity, dict)
-                        or identity.get("version") != 1
-                        or not all(
-                            isinstance(identity.get(key), str) and identity[key]
-                            for key in (
-                                "job_name",
-                                "task_id",
-                                "incident_id",
-                                "request_sha256",
-                            )
-                        )
-                        or record["metadata"].get("annotations", {}).get("sdo.dev/incident-id")
-                        != identity["incident_id"]
-                    ):
-                        raise PersistentControllerError("eval: invalid incident execution identity; cleanup blocked")
-                    claimed.add(identity["job_name"])
-                idle_uids = {
-                    row["metadata"]["uid"]
-                    for row in jobs
-                    if labels(row).get("sdo.dev/standby") == "true"
-                    and row["metadata"]["name"] not in claimed
-                    and not labels(row).get("sdo.dev/validator-isolation")
-                    and not labels(row).get("sdo.dev/validator-canary")
-                }
+                try:
+                    idle = idle_standby_jobs(jobs, records)
+                except ValueError as exc:
+                    raise PersistentControllerError(f"{exc}; cleanup blocked") from exc
+                idle_uids = {row["metadata"]["uid"] for row in jobs if row["metadata"]["name"] in idle}
 
             active = [
                 f"job/{row['metadata']['name']}"

@@ -8,6 +8,9 @@ import pytest
 
 from benchmarks.sregym.fastloop import admission, cli, hotel_helpers, rbac
 
+# The lane fixture stubs worker listing; standby tests exercise the real one.
+ACTIVE_WORKERS = admission.LaneAdmission._active_workers
+
 
 @pytest.fixture
 def lane(tmp_path, monkeypatch):
@@ -393,3 +396,65 @@ def test_stuck_previous_reflection_is_a_typed_not_measured_row(lane, monkeypatch
     assert evidence["active_workers"] == ["sdo-reflect-row-004"]
     assert evidence["closure_state"] == "CLOSURE_STATE_COMMITTED"
     assert evidence["budget_seconds"] == 600
+
+
+def worker_job(name, *, standby=False, finished=False):
+    labels = {"app.kubernetes.io/name": "sdo-worker", **({"sdo.dev/standby": "true"} if standby else {})}
+    conditions = [{"type": "Complete", "status": "True"}] if finished else []
+    return {
+        "metadata": {"name": name},
+        "spec": {"template": {"metadata": {"labels": labels}}},
+        "status": {"conditions": conditions},
+    }
+
+
+def execution(job_name):
+    identity = {"version": 1, "incident_id": "i-1", "task_id": "i-1", "job_name": job_name, "request_sha256": "a" * 64}
+    return {
+        "metadata": {
+            "name": "sdo-exec-" + "a" * 52,
+            "labels": {"sdo.dev/incident-execution": "1"},
+            "annotations": {"sdo.dev/incident-id": "i-1"},
+        },
+        "data": {"execution.json": json.dumps(identity)},
+    }
+
+
+def control_plane(monkeypatch, jobs, executions):
+    def kubectl(args, **kwargs):
+        items = jobs if args[1] == "jobs" else executions
+        return SimpleNamespace(stdout=json.dumps({"items": items}))
+
+    monkeypatch.setattr(admission, "kubectl", kubectl)
+
+
+def test_unclaimed_responder_standby_is_not_active_work(lane, monkeypatch):
+    gate, _ = lane
+    control_plane(monkeypatch, [worker_job("sdo-standby-a7e6", standby=True)], [])
+    assert ACTIVE_WORKERS(gate, "control") == []
+
+
+def test_claimed_responder_standby_is_active_work(lane, monkeypatch):
+    gate, _ = lane
+    control_plane(monkeypatch, [worker_job("sdo-standby-a7e6", standby=True)], [execution("sdo-standby-a7e6")])
+    assert ACTIVE_WORKERS(gate, "control") == ["sdo-standby-a7e6"]
+
+
+def test_running_reflection_job_is_active_work_beside_an_idle_standby(lane, monkeypatch):
+    gate, _ = lane
+    jobs = [
+        worker_job("sdo-standby-a7e6", standby=True),
+        worker_job("sdo-reflect-row-004"),
+        worker_job("sdo-task-done", finished=True),
+    ]
+    control_plane(monkeypatch, jobs, [])
+    assert ACTIVE_WORKERS(gate, "control") == ["sdo-reflect-row-004"]
+
+
+def test_malformed_execution_identity_fails_closed(lane, monkeypatch):
+    gate, _ = lane
+    broken = execution("sdo-standby-a7e6")
+    broken["data"]["execution.json"] = json.dumps({"version": 1})
+    control_plane(monkeypatch, [worker_job("sdo-standby-a7e6", standby=True)], [broken])
+    with pytest.raises(ValueError, match="invalid incident execution identity"):
+        ACTIVE_WORKERS(gate, "control")
