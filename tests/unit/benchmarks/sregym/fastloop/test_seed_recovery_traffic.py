@@ -100,7 +100,7 @@ def test_hotel_client_refresh_is_scoped_and_reports_bounded_rollout(monkeypatch,
     assert "deployment/mongodb" not in command
     assert "secret" not in command
     assert "delete" not in command
-    runner.wait_for_rollouts.assert_called_once_with("hotel-reservation", timeout_s=90)
+    runner.wait_for_rollouts.assert_called_once_with("hotel-reservation", timeout_s=45)
 
 
 def test_unknown_application_cannot_claim_a_client_refresh():
