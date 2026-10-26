@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import json
 import os
@@ -19,7 +20,7 @@ from benchmarks.sregym.fastloop.model_recording import RecordingExecutor
 from benchmarks.sregym.fastloop.replay import CheckpointStore
 from benchmarks.sregym.fastloop.replay_worker import replay_live_worker
 from sdo.agents.responder import CodexSessionBackend, SessionReflector, run_reflection_task
-from sdo.contracts import AgentTask, ReflectionRequest, to_canonical_json
+from sdo.contracts import AgentResult, AgentTask, ReflectionRequest, parse_json, to_canonical_json
 from tests.structured_turns import reply
 from tests.unit.sdo.agents.responder.test_reflection_outcomes import _outcome
 from tests.unit.sdo.agents.responder.test_reflection_worker import _closure
@@ -44,6 +45,7 @@ def reflection_recording(
     classification: str = "success",
     verified_service: bool = False,
     check_prompt: Callable[[str], None] | None = None,
+    tool_result_lines: list[str] | None = None,
 ) -> tuple[CheckpointStore, Path]:
     source = tmp_path / "source"
     shutil.copytree(ROOT / "tests/fixtures/sdo/missing_configmap_app", source)
@@ -151,7 +153,8 @@ func main() {
             path = source / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(data)
-        return next(runs)
+        run = next(runs)
+        return dataclasses.replace(run, stdout=[*(tool_result_lines or []), *run.stdout])
 
     executor = RecordingExecutor(model_dir, request_json=wire, record=True, live=FakeExecutor(author))
 
@@ -235,6 +238,30 @@ def test_recorded_reflection_frontmatter_reaches_real_broker(
     assert subprocess.check_output(["git", "-C", str(source), "status", "--porcelain"]) == before
 
 
+def test_recorded_reflection_over_the_old_model_io_limit_replays_to_acceptance(tmp_path: Path) -> None:
+    # Lane 52 lost a solved row when one reflection turn's tool results crossed 4 MiB.
+    result_line = json.dumps(
+        {
+            "type": "item.completed",
+            "item": {
+                "id": "item_0",
+                "type": "mcp_tool_call",
+                "server": "sdo_reflection",
+                "tool": "authoring_reference",
+                "arguments": {"topic": "sdk"},
+                "result": {"content": [{"type": "text", "text": "x" * (80 << 10)}]},
+                "status": "completed",
+            },
+        }
+    )
+    lines = [result_line + "\n"] * 64
+    assert sum(map(len, lines)) > 4 << 20
+    store, source = reflection_recording(tmp_path, [frontmatter_output()], tool_result_lines=lines)
+    result = replay_live_worker(store, 0, "reflection", source=source, live_on_cache_miss=False)
+    assert result["status"] == "completed"
+    assert result["proposals"][0]["status"] == "accepted"
+
+
 def test_recorded_reflection_corrects_within_one_dispatch(tmp_path: Path) -> None:
     store, source = reflection_recording(
         tmp_path,
@@ -248,13 +275,16 @@ def test_recorded_reflection_corrects_within_one_dispatch(tmp_path: Path) -> Non
 
 
 def test_recorded_reflection_withholds_persistently_rejected_result(tmp_path: Path) -> None:
-    with pytest.raises(RuntimeError, match="text.physical-path"):
-        reflection_recording(
-            tmp_path,
-            [frontmatter_output()] * 4,
-            files=readme_files(physical=True),
-        )
-    assert not (tmp_path / "results/run" / "checkpoints/000_reflection.json").exists()
+    store, _ = reflection_recording(
+        tmp_path,
+        [frontmatter_output()] * 4,
+        files=readme_files(physical=True),
+    )
+    # Only the typed failure is recorded; the rejected memory never leaves the worker.
+    result = parse_json(store.load(0, "reflection").result, AgentResult())
+    assert (result.status, result.failure_reason) == ("failed", "agent_failed")
+    assert "text.physical-path" in result.error_summary
+    assert not result.HasField("response")
 
 
 @pytest.mark.parametrize("classification", ["success", "failed"])

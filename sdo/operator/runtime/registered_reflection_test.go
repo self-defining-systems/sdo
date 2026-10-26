@@ -51,8 +51,22 @@ func TestRegisteredReflectionWorkerReturnsTypedFailure(t *testing.T) {
 	})
 	workspace := IncidentWorkspace{IncidentID: "current", Worktree: root, BaseCommit: base}
 	decision, err := worker.Reflect(context.Background(), nativeClosure(workspace), workspace, &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: "current", Classification: "success"}, "repair", "outcome", ReflectionFeedback{})
-	if err != nil || decision.LearningDecision != "failed" || decision.Error != "watch namespace is not a proto field" {
+	if err != nil || decision.LearningDecision != "failed" || decision.FailureReason != "agent_failed" || decision.Error != "watch namespace is not a proto field" {
 		t.Fatalf("typed failure lost: %+v, %v", decision, err)
+	}
+}
+
+func TestRegisteredReflectionWorkerKeepsWorkerFailureReason(t *testing.T) {
+	root := nativeRepository(t)
+	base := nativeGit(t, root, "rev-parse", "HEAD")
+	worker := RegisteredReflectionWorker{TaskType: reflectionTaskType(t), AgentID: "reflector", Outcomes: memory.NewJSONStore(t.TempDir()), Timeout: time.Minute, SessionMode: "fresh"}
+	worker.Executor = reflectionTaskExecutorFunc(func(_ context.Context, task *contracts.AgentTask) (*contracts.AgentResult, error) {
+		return &contracts.AgentResult{SchemaVersion: task.SchemaVersion, TaskId: task.TaskId, ProposalId: task.Workspace.ProposalId, Status: "failed", FailureReason: "agent_timeout", ErrorSummary: "codex reflection failed: agent turn timed out after 451s"}, nil
+	})
+	workspace := IncidentWorkspace{IncidentID: "current", Worktree: root, BaseCommit: base}
+	decision, err := worker.Reflect(context.Background(), nativeClosure(workspace), workspace, &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: "current", Classification: "success"}, "repair", "outcome", ReflectionFeedback{})
+	if err != nil || decision.LearningDecision != "failed" || decision.FailureReason != "agent_timeout" {
+		t.Fatalf("worker failure reason lost: %+v, %v", decision, err)
 	}
 }
 
