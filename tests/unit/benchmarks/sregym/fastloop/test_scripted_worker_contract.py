@@ -14,6 +14,8 @@ import pytest
 from benchmarks.sregym.adapter import scripted_worker
 from sdo.contracts import IncidentClosure
 
+pytestmark = pytest.mark.go_integration
+
 ROOT = Path(__file__).resolve().parents[5]
 OPERATOR = ROOT / "sdo/operator"
 APP_FIXTURE = ROOT / "tests/fixtures/sdo/playbook_program_app"
