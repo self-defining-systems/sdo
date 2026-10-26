@@ -25,6 +25,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 	"sdo.dev/operator/broker"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/internal/capturefixture"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/validate"
 	"sdo.dev/operator/sdk"
@@ -145,7 +146,7 @@ func (d t1Diagnoser) Diagnose(_ context.Context, v program.ReadView, b program.B
 func t1Captures(t *testing.T, dir string, c t1Class) {
 	t.Helper()
 	for _, file := range []string{"open@detect.json", "fixed.json"} {
-		t1Write(t, dir, file, []byte(`{"namespace":"app"}`))
+		t1Write(t, dir, file, capturefixture.FromView(t, `{"namespace":"app"}`))
 	}
 	calls := []sdktest.PrimitiveCall{}
 	for _, name := range []string{"api", "peer", "other"} {
@@ -320,7 +321,7 @@ func t1RunBroker(t *testing.T, c t1Class, reject bool) t1Run {
 	if err := json.Unmarshal(raw, &label); err != nil {
 		t.Fatal(err)
 	}
-	snapshot := []byte(`{"namespace":"app"}`)
+	snapshot := capturefixture.FromView(t, `{"namespace":"app"}`)
 	digest := fmt.Sprintf("%x", sha256.Sum256(snapshot))
 	label["provenance"] = map[string]string{"incident_id": "seed", "open_at": "detect", "open_sha256": digest, "fixed_sha256": digest}
 	t1Write(t, root, ".sdo/corpus/seed/labels.json", t1JSON(t, label))

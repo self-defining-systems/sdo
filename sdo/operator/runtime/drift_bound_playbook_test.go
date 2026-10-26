@@ -17,6 +17,7 @@ import (
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 	clienttesting "k8s.io/client-go/testing"
 	"sdo.dev/operator/core"
+	"sdo.dev/operator/internal/capturefixture"
 	"sdo.dev/operator/memory/layout"
 	"sdo.dev/operator/memory/validate"
 	"sdo.dev/operator/sdk"
@@ -114,10 +115,13 @@ func TestHermeticSourceAbsentDriftSelectsLearnedPlaybook(t *testing.T) {
 	if err := layout.WriteDetector(root, layout.Detector{Class: layout.ClassIncident, Manifest: manifest, Files: []layout.File{{Name: "detector.go", Content: read("../sdk/program/testdata/driftbound/detector.go")}}}); err != nil {
 		t.Fatal(err)
 	}
-	openRaw, _ := json.Marshal(open)
-	fixedRaw, _ := json.Marshal(fixed)
+	openRaw := capturefixture.Boundary(t, open, "app")
+	fixedRaw := capturefixture.Boundary(t, fixed, "app")
 	labels := map[string]any{"root_cause_program_ids": []string{p.Spec().ID}, "bindings": program.Bindings{Objects: program.ObjectBindings{"binding": ref}}, "provenance": sdktest.CorpusProvenance{IncidentID: "binding-origin", OpenSHA256: fmt.Sprintf("%x", sha256.Sum256(openRaw)), FixedSHA256: fmt.Sprintf("%x", sha256.Sum256(fixedRaw))}}
-	for name, value := range map[string]any{"open.json": open, "fixed.json": fixed, "healthy.json": fixed, "recordings.json": recordings, "labels.json": labels} {
+	for name, raw := range map[string][]byte{"open.json": openRaw, "fixed.json": fixedRaw, "healthy.json": fixedRaw} {
+		write(".sdo/corpus/binding-origin/"+name, raw)
+	}
+	for name, value := range map[string]any{"recordings.json": recordings, "labels.json": labels} {
 		raw, err := json.Marshal(value)
 		if err != nil {
 			t.Fatal(err)

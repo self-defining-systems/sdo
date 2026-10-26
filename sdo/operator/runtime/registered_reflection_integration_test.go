@@ -19,6 +19,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 	"sdo.dev/operator/broker"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/internal/capturefixture"
 	"sdo.dev/operator/internal/testutil"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/validate"
@@ -460,24 +461,18 @@ func TestReflectionLearnedProgramCLIAndBroker(t *testing.T) {
 					}
 				}
 				if scenario == "undetected_repair" && destination != "open@detect-recordings.json" {
-					var snapshot sdktest.Snapshot
-					if err := json.Unmarshal(data, &snapshot); err != nil {
-						t.Fatal(err)
-					}
 					observed := time.Unix(0, 0).UTC()
 					if destination == "fixed.json" {
 						observed = time.Unix(3, 0).UTC()
 					}
-					snapshot.ObservedAtTime = &observed
-					for i := range snapshot.ServiceList {
-						if snapshot.ServiceList[i].Name == "front" {
-							snapshot.ServiceList[i].UID = "same-front-object"
+					data = capturefixture.Recapture(t, data, func(snapshot *sdktest.Snapshot) {
+						snapshot.ObservedAtTime = &observed
+						for i := range snapshot.ServiceList {
+							if snapshot.ServiceList[i].Name == "front" {
+								snapshot.ServiceList[i].UID = "same-front-object"
+							}
 						}
-					}
-					data, err = json.Marshal(snapshot)
-					if err != nil {
-						t.Fatal(err)
-					}
+					})
 				}
 				if err := os.WriteFile(filepath.Join(capture, destination), data, 0644); err != nil {
 					t.Fatal(err)

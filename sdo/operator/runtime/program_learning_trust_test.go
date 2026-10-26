@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/internal/capturefixture"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/sdk/program"
 )
@@ -21,8 +22,8 @@ func learningTrustRepository(t *testing.T) (string, string) {
 	files := map[string]string{
 		".sdo/playbooks/service-targetport-mismatch/diagnose.go": "package targetport\n",
 		".sdo/playbooks/service-targetport-mismatch/mitigate.go": "package targetport\n",
-		".sdo/corpus/learning/open.json":                         `{"namespace":"app","services":[{"metadata":{"namespace":"app","name":"api"},"spec":{"ports":[{"port":80,"targetPort":9999}]}}]}`,
-		".sdo/corpus/learning/fixed.json":                        `{"namespace":"app","services":[{"metadata":{"namespace":"app","name":"api"},"spec":{"ports":[{"port":80,"targetPort":8080}]}}]}`,
+		".sdo/corpus/learning/open.json":                         string(capturefixture.FromView(t, `{"namespace":"app","services":[{"metadata":{"namespace":"app","name":"api"},"spec":{"ports":[{"port":80,"targetPort":9999}]}}]}`)),
+		".sdo/corpus/learning/fixed.json":                        string(capturefixture.FromView(t, `{"namespace":"app","services":[{"metadata":{"namespace":"app","name":"api"},"spec":{"ports":[{"port":80,"targetPort":8080}]}}]}`)),
 	}
 	files[".sdo/corpus/learning/healthy.json"] = files[".sdo/corpus/learning/fixed.json"]
 	files[".sdo/corpus/learning/recordings.json"] = "[]"
