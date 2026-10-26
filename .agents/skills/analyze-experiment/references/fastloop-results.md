@@ -136,4 +136,6 @@ original Jobs. Attachment requires equal initial accepted trees and retains
 private proposal, ledger, capture and session roots. Scripted scheduling, broker
 and lock tests prove plumbing; live runs establish learning and speedup.
 
-Install-time pending namespace inventory also records pre-existing environment identities independently of healthy onboarding. A rejected health window does not turn those identities into unexplained presence drift. Check the immutable pending snapshot and install boundary; source-declared faults, health/reachability checks and objects added after that boundary remain active. This rule does not label, delete or recreate environment objects.
+Install-time pending namespace inventory records pre-existing environment UID/configuration/ownership digests independently of healthy onboarding. A rejected health window preserves only matching captured observations; replacement or changed objects remain unexplained presence drift. Check the immutable pending snapshot and install boundary; source-declared faults, health/reachability checks and objects added after that boundary remain active. This rule does not label, delete or recreate environment objects.
+For private lane journals and warm-app conversion receipts, see
+[restartable lanes and application conversion](fastloop-sequences.md).

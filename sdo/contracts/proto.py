@@ -46,6 +46,7 @@ from sdodev.contracts.v1alpha1 import (
     late_findings_pb2,
     lifecycle_pb2,
     memory_pb2,
+    memory_diagnostic_pb2,
     messages_pb2,
     mitigation_menu_pb2,
     outcome_pb2,
@@ -162,9 +163,9 @@ OutcomeRecord = outcome_pb2.OutcomeRecord
 OutcomeTimestamps = outcome_pb2.OutcomeTimestamps
 
 MitigationReplayNote = memory_pb2.MitigationReplayNote
-MemoryDiagnostic = memory_pb2.MemoryDiagnostic
-MemoryConflict = memory_pb2.MemoryConflict
-AcceptedMemoryChange = memory_pb2.AcceptedMemoryChange
+MemoryDiagnostic = memory_diagnostic_pb2.MemoryDiagnostic
+MemoryConflict = memory_diagnostic_pb2.MemoryConflict
+AcceptedMemoryChange = memory_diagnostic_pb2.AcceptedMemoryChange
 MemoryCheckReport = memory_pb2.MemoryCheckReport
 MemoryArtifact = memory_pb2.MemoryArtifact
 MemoryListing = memory_pb2.MemoryListing

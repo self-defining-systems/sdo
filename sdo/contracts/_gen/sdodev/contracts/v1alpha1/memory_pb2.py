@@ -23,10 +23,11 @@ _sym_db = _symbol_database.Default()
 
 
 from buf.validate import validate_pb2 as buf_dot_validate_dot_validate__pb2
+from sdodev.contracts.v1alpha1 import memory_diagnostic_pb2 as sdodev_dot_contracts_dot_v1alpha1_dot_memory__diagnostic__pb2
 from sdodev.contracts.v1alpha1 import outcome_pb2 as sdodev_dot_contracts_dot_v1alpha1_dot_outcome__pb2
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n&sdodev/contracts/v1alpha1/memory.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1b\x62uf/validate/validate.proto\x1a\'sdodev/contracts/v1alpha1/outcome.proto\"\xeb\x01\n\x10MemoryDiagnostic\x12\x1b\n\x04rule\x18\x01 \x01(\tB\x07\xbaH\x04r\x02\x10\x01R\x04rule\x12\x12\n\x04path\x18\x02 \x01(\tR\x04path\x12\x1b\n\x04line\x18\x03 \x01(\x05\x42\x07\xbaH\x04\x1a\x02(\x00R\x04line\x12!\n\x07message\x18\x04 \x01(\tB\x07\xbaH\x04r\x02\x10\x01R\x07message\x12\x12\n\x04hint\x18\x05 \x01(\tR\x04hint\x12R\n\x0fmemory_conflict\x18\x06 \x01(\x0b\x32).sdodev.contracts.v1alpha1.MemoryConflictR\x0ememoryConflict\"\xbb\x02\n\x0eMemoryConflict\x12\x1f\n\x0b\x62\x61se_commit\x18\x01 \x01(\tR\nbaseCommit\x12\'\n\x0f\x61\x63\x63\x65pted_commit\x18\x02 \x01(\tR\x0e\x61\x63\x63\x65ptedCommit\x12+\n\x11\x63onflicting_paths\x18\x03 \x03(\tR\x10\x63onflictingPaths\x12Z\n\x10\x61\x63\x63\x65pted_changes\x18\x04 \x03(\x0b\x32/.sdodev.contracts.v1alpha1.AcceptedMemoryChangeR\x0f\x61\x63\x63\x65ptedChanges\x12V\n\x10validator_errors\x18\x05 \x03(\x0b\x32+.sdodev.contracts.v1alpha1.MemoryDiagnosticR\x0fvalidatorErrors\"e\n\x14\x41\x63\x63\x65ptedMemoryChange\x12\x16\n\x06\x63ommit\x18\x01 \x01(\tR\x06\x63ommit\x12\x1f\n\x0bincident_id\x18\x02 \x01(\tR\nincidentId\x12\x14\n\x05paths\x18\x03 \x03(\tR\x05paths\"\xb7\x02\n\x14MitigationReplayNote\x12\x1d\n\nprogram_id\x18\x01 \x01(\tR\tprogramId\x12\x17\n\x07\x63\x61se_id\x18\x02 \x01(\tR\x06\x63\x61seId\x12N\n\x06status\x18\x03 \x01(\x0e\x32\x36.sdodev.contracts.v1alpha1.MitigationReplayNote.StatusR\x06status\x12\x18\n\x07\x65\x66\x66\x65\x63ts\x18\x04 \x03(\tR\x07\x65\x66\x66\x65\x63ts\"}\n\x06Status\x12\x16\n\x12STATUS_UNSPECIFIED\x10\x00\x12\x13\n\x0fSTATUS_REPLAYED\x10\x01\x12&\n\"STATUS_SKIPPED_UNREPLAYABLE_EFFECT\x10\x02\x12\x1e\n\x1aSTATUS_OBSERVED_TRANSITION\x10\x03\"\x9f\x02\n\x11MemoryCheckReport\x12M\n\x0b\x64iagnostics\x18\x01 \x03(\x0b\x32+.sdodev.contracts.v1alpha1.MemoryDiagnosticR\x0b\x64iagnostics\x12\x12\n\x04root\x18\x02 \x01(\tR\x04root\x12\x14\n\x05\x61\x63tor\x18\x03 \x01(\tR\x05\x61\x63tor\x12\x14\n\x05phase\x18\x04 \x01(\tR\x05phase\x12\x12\n\x04\x62\x61se\x18\x05 \x01(\tR\x04\x62\x61se\x12g\n\x17mitigation_replay_notes\x18\x06 \x03(\x0b\x32/.sdodev.contracts.v1alpha1.MitigationReplayNoteR\x15mitigationReplayNotes\"\x81\x01\n\x0eMemoryArtifact\x12\x1b\n\x04kind\x18\x01 \x01(\tB\x07\xbaH\x04r\x02\x10\x01R\x04kind\x12\x0e\n\x02id\x18\x02 \x01(\tR\x02id\x12\x1b\n\x04path\x18\x03 \x01(\tB\x07\xbaH\x04r\x02\x10\x01R\x04path\x12%\n\x0e\x64\x65tector_class\x18\x04 \x01(\tR\rdetectorClass\"X\n\rMemoryListing\x12G\n\tartifacts\x18\x01 \x03(\x0b\x32).sdodev.contracts.v1alpha1.MemoryArtifactR\tartifacts\"V\n\x0eMemoryOutcomes\x12\x44\n\x08outcomes\x18\x01 \x03(\x0b\x32(.sdodev.contracts.v1alpha1.OutcomeRecordR\x08outcomesB\xfe\x01\n\x1d\x63om.sdodev.contracts.v1alpha1B\x0bMemoryProtoP\x01ZJsdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1;contractsv1alpha1\xa2\x02\x03SCX\xaa\x02\x19Sdodev.Contracts.V1alpha1\xca\x02\x19Sdodev\\Contracts\\V1alpha1\xe2\x02%Sdodev\\Contracts\\V1alpha1\\GPBMetadata\xea\x02\x1bSdodev::Contracts::V1alpha1b\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n&sdodev/contracts/v1alpha1/memory.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1b\x62uf/validate/validate.proto\x1a\x31sdodev/contracts/v1alpha1/memory_diagnostic.proto\x1a\'sdodev/contracts/v1alpha1/outcome.proto\"\xb7\x02\n\x14MitigationReplayNote\x12\x1d\n\nprogram_id\x18\x01 \x01(\tR\tprogramId\x12\x17\n\x07\x63\x61se_id\x18\x02 \x01(\tR\x06\x63\x61seId\x12N\n\x06status\x18\x03 \x01(\x0e\x32\x36.sdodev.contracts.v1alpha1.MitigationReplayNote.StatusR\x06status\x12\x18\n\x07\x65\x66\x66\x65\x63ts\x18\x04 \x03(\tR\x07\x65\x66\x66\x65\x63ts\"}\n\x06Status\x12\x16\n\x12STATUS_UNSPECIFIED\x10\x00\x12\x13\n\x0fSTATUS_REPLAYED\x10\x01\x12&\n\"STATUS_SKIPPED_UNREPLAYABLE_EFFECT\x10\x02\x12\x1e\n\x1aSTATUS_OBSERVED_TRANSITION\x10\x03\"\x9f\x02\n\x11MemoryCheckReport\x12M\n\x0b\x64iagnostics\x18\x01 \x03(\x0b\x32+.sdodev.contracts.v1alpha1.MemoryDiagnosticR\x0b\x64iagnostics\x12\x12\n\x04root\x18\x02 \x01(\tR\x04root\x12\x14\n\x05\x61\x63tor\x18\x03 \x01(\tR\x05\x61\x63tor\x12\x14\n\x05phase\x18\x04 \x01(\tR\x05phase\x12\x12\n\x04\x62\x61se\x18\x05 \x01(\tR\x04\x62\x61se\x12g\n\x17mitigation_replay_notes\x18\x06 \x03(\x0b\x32/.sdodev.contracts.v1alpha1.MitigationReplayNoteR\x15mitigationReplayNotes\"\x81\x01\n\x0eMemoryArtifact\x12\x1b\n\x04kind\x18\x01 \x01(\tB\x07\xbaH\x04r\x02\x10\x01R\x04kind\x12\x0e\n\x02id\x18\x02 \x01(\tR\x02id\x12\x1b\n\x04path\x18\x03 \x01(\tB\x07\xbaH\x04r\x02\x10\x01R\x04path\x12%\n\x0e\x64\x65tector_class\x18\x04 \x01(\tR\rdetectorClass\"X\n\rMemoryListing\x12G\n\tartifacts\x18\x01 \x03(\x0b\x32).sdodev.contracts.v1alpha1.MemoryArtifactR\tartifacts\"V\n\x0eMemoryOutcomes\x12\x44\n\x08outcomes\x18\x01 \x03(\x0b\x32(.sdodev.contracts.v1alpha1.OutcomeRecordR\x08outcomesB\xfe\x01\n\x1d\x63om.sdodev.contracts.v1alpha1B\x0bMemoryProtoP\x01ZJsdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1;contractsv1alpha1\xa2\x02\x03SCX\xaa\x02\x19Sdodev.Contracts.V1alpha1\xca\x02\x19Sdodev\\Contracts\\V1alpha1\xe2\x02%Sdodev\\Contracts\\V1alpha1\\GPBMetadata\xea\x02\x1bSdodev::Contracts::V1alpha1b\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -34,32 +35,20 @@ _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'sdodev.contracts.v1alpha1.m
 if not _descriptor._USE_C_DESCRIPTORS:
   _globals['DESCRIPTOR']._loaded_options = None
   _globals['DESCRIPTOR']._serialized_options = b'\n\035com.sdodev.contracts.v1alpha1B\013MemoryProtoP\001ZJsdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1;contractsv1alpha1\242\002\003SCX\252\002\031Sdodev.Contracts.V1alpha1\312\002\031Sdodev\\Contracts\\V1alpha1\342\002%Sdodev\\Contracts\\V1alpha1\\GPBMetadata\352\002\033Sdodev::Contracts::V1alpha1'
-  _globals['_MEMORYDIAGNOSTIC'].fields_by_name['rule']._loaded_options = None
-  _globals['_MEMORYDIAGNOSTIC'].fields_by_name['rule']._serialized_options = b'\272H\004r\002\020\001'
-  _globals['_MEMORYDIAGNOSTIC'].fields_by_name['line']._loaded_options = None
-  _globals['_MEMORYDIAGNOSTIC'].fields_by_name['line']._serialized_options = b'\272H\004\032\002(\000'
-  _globals['_MEMORYDIAGNOSTIC'].fields_by_name['message']._loaded_options = None
-  _globals['_MEMORYDIAGNOSTIC'].fields_by_name['message']._serialized_options = b'\272H\004r\002\020\001'
   _globals['_MEMORYARTIFACT'].fields_by_name['kind']._loaded_options = None
   _globals['_MEMORYARTIFACT'].fields_by_name['kind']._serialized_options = b'\272H\004r\002\020\001'
   _globals['_MEMORYARTIFACT'].fields_by_name['path']._loaded_options = None
   _globals['_MEMORYARTIFACT'].fields_by_name['path']._serialized_options = b'\272H\004r\002\020\001'
-  _globals['_MEMORYDIAGNOSTIC']._serialized_start=140
-  _globals['_MEMORYDIAGNOSTIC']._serialized_end=375
-  _globals['_MEMORYCONFLICT']._serialized_start=378
-  _globals['_MEMORYCONFLICT']._serialized_end=693
-  _globals['_ACCEPTEDMEMORYCHANGE']._serialized_start=695
-  _globals['_ACCEPTEDMEMORYCHANGE']._serialized_end=796
-  _globals['_MITIGATIONREPLAYNOTE']._serialized_start=799
-  _globals['_MITIGATIONREPLAYNOTE']._serialized_end=1110
-  _globals['_MITIGATIONREPLAYNOTE_STATUS']._serialized_start=985
-  _globals['_MITIGATIONREPLAYNOTE_STATUS']._serialized_end=1110
-  _globals['_MEMORYCHECKREPORT']._serialized_start=1113
-  _globals['_MEMORYCHECKREPORT']._serialized_end=1400
-  _globals['_MEMORYARTIFACT']._serialized_start=1403
-  _globals['_MEMORYARTIFACT']._serialized_end=1532
-  _globals['_MEMORYLISTING']._serialized_start=1534
-  _globals['_MEMORYLISTING']._serialized_end=1622
-  _globals['_MEMORYOUTCOMES']._serialized_start=1624
-  _globals['_MEMORYOUTCOMES']._serialized_end=1710
+  _globals['_MITIGATIONREPLAYNOTE']._serialized_start=191
+  _globals['_MITIGATIONREPLAYNOTE']._serialized_end=502
+  _globals['_MITIGATIONREPLAYNOTE_STATUS']._serialized_start=377
+  _globals['_MITIGATIONREPLAYNOTE_STATUS']._serialized_end=502
+  _globals['_MEMORYCHECKREPORT']._serialized_start=505
+  _globals['_MEMORYCHECKREPORT']._serialized_end=792
+  _globals['_MEMORYARTIFACT']._serialized_start=795
+  _globals['_MEMORYARTIFACT']._serialized_end=924
+  _globals['_MEMORYLISTING']._serialized_start=926
+  _globals['_MEMORYLISTING']._serialized_end=1014
+  _globals['_MEMORYOUTCOMES']._serialized_start=1016
+  _globals['_MEMORYOUTCOMES']._serialized_end=1102
 # @@protoc_insertion_point(module_scope)

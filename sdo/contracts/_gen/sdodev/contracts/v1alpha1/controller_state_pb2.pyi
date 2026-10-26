@@ -2,7 +2,7 @@ import datetime
 
 from buf.validate import validate_pb2 as _validate_pb2
 from google.protobuf import timestamp_pb2 as _timestamp_pb2
-from sdodev.contracts.v1alpha1 import memory_pb2 as _memory_pb2
+from sdodev.contracts.v1alpha1 import memory_diagnostic_pb2 as _memory_diagnostic_pb2
 from sdodev.contracts.v1alpha1 import messages_pb2 as _messages_pb2
 from sdodev.contracts.v1alpha1 import outcome_pb2 as _outcome_pb2
 from sdodev.contracts.v1alpha1 import worker_pb2 as _worker_pb2
@@ -284,25 +284,15 @@ class ReflectionDecision(_message.Message):
     failure_reason: str
     def __init__(self, learning_decision: _Optional[str] = ..., no_change_reason: _Optional[str] = ..., playbook_ids: _Optional[_Iterable[str]] = ..., error: _Optional[str] = ..., sdk_gaps: _Optional[_Iterable[_Union[_outcome_pb2.SdkGap, _Mapping]]] = ..., usage: _Optional[_Union[_messages_pb2.UsageMetrics, _Mapping]] = ..., decline_reason: _Optional[str] = ..., failure_reason: _Optional[str] = ...) -> None: ...
 
-class ProposalRejection(_message.Message):
-    __slots__ = ("attempt", "diagnostics", "rejected_at")
-    ATTEMPT_FIELD_NUMBER: _ClassVar[int]
-    DIAGNOSTICS_FIELD_NUMBER: _ClassVar[int]
-    REJECTED_AT_FIELD_NUMBER: _ClassVar[int]
-    attempt: int
-    diagnostics: _containers.RepeatedCompositeFieldContainer[_memory_pb2.MemoryDiagnostic]
-    rejected_at: _timestamp_pb2.Timestamp
-    def __init__(self, attempt: _Optional[int] = ..., diagnostics: _Optional[_Iterable[_Union[_memory_pb2.MemoryDiagnostic, _Mapping]]] = ..., rejected_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ...) -> None: ...
-
 class ProposalRejectionLog(_message.Message):
     __slots__ = ("proposal_id", "rejections", "terminal")
     PROPOSAL_ID_FIELD_NUMBER: _ClassVar[int]
     REJECTIONS_FIELD_NUMBER: _ClassVar[int]
     TERMINAL_FIELD_NUMBER: _ClassVar[int]
     proposal_id: str
-    rejections: _containers.RepeatedCompositeFieldContainer[ProposalRejection]
+    rejections: _containers.RepeatedCompositeFieldContainer[_memory_diagnostic_pb2.ProposalRejection]
     terminal: bool
-    def __init__(self, proposal_id: _Optional[str] = ..., rejections: _Optional[_Iterable[_Union[ProposalRejection, _Mapping]]] = ..., terminal: _Optional[bool] = ...) -> None: ...
+    def __init__(self, proposal_id: _Optional[str] = ..., rejections: _Optional[_Iterable[_Union[_memory_diagnostic_pb2.ProposalRejection, _Mapping]]] = ..., terminal: _Optional[bool] = ...) -> None: ...
 
 class ControllerRolloutExpectation(_message.Message):
     __slots__ = ("incident_id", "reflection_commit", "before_detector_fingerprint", "after_detector_fingerprint")
@@ -380,7 +370,7 @@ class BrokerLedger(_message.Message):
     receipt: ClosureReceipt
     acknowledged: bool
     acknowledged_at: _timestamp_pb2.Timestamp
-    reflection_rejections: _containers.RepeatedCompositeFieldContainer[ProposalRejection]
+    reflection_rejections: _containers.RepeatedCompositeFieldContainer[_memory_diagnostic_pb2.ProposalRejection]
     reflection_rejected: bool
     reflection_skipped_reason: str
     closure_phase_timestamps: _containers.MessageMap[str, _timestamp_pb2.Timestamp]
@@ -391,7 +381,7 @@ class BrokerLedger(_message.Message):
     reflection_max_retries: int
     reflection_dispatch_at: _timestamp_pb2.Timestamp
     reflection_evidence_gap_count: int
-    def __init__(self, incident_id: _Optional[str] = ..., closure: _Optional[_Union[_messages_pb2.IncidentClosure, _Mapping]] = ..., proposal_commit: _Optional[str] = ..., outcome_document: _Optional[_Union[_outcome_pb2.OutcomeRecord, _Mapping]] = ..., requires_reflection: _Optional[bool] = ..., outcome_commit: _Optional[str] = ..., reflection_processed: _Optional[bool] = ..., reflection_decision: _Optional[_Union[ReflectionDecision, _Mapping]] = ..., reflection_commit: _Optional[str] = ..., rollout_expectation: _Optional[_Union[ControllerRolloutExpectation, _Mapping]] = ..., rollout_receipts: _Optional[_Iterable[_Union[ControllerRolloutReceipt, _Mapping]]] = ..., receipt: _Optional[_Union[ClosureReceipt, _Mapping]] = ..., acknowledged: _Optional[bool] = ..., acknowledged_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., reflection_rejections: _Optional[_Iterable[_Union[ProposalRejection, _Mapping]]] = ..., reflection_rejected: _Optional[bool] = ..., reflection_skipped_reason: _Optional[str] = ..., closure_phase_timestamps: _Optional[_Mapping[str, _timestamp_pb2.Timestamp]] = ..., reflection_phase: _Optional[_Union[ReflectionPhase, str]] = ..., reflection_workspace: _Optional[_Union[_worker_pb2.ProposalWorkspace, _Mapping]] = ..., reflection_paths: _Optional[_Iterable[str]] = ..., reflection_results: _Optional[_Iterable[_Union[ReflectionDecision, _Mapping]]] = ..., reflection_max_retries: _Optional[int] = ..., reflection_dispatch_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., reflection_evidence_gap_count: _Optional[int] = ...) -> None: ...
+    def __init__(self, incident_id: _Optional[str] = ..., closure: _Optional[_Union[_messages_pb2.IncidentClosure, _Mapping]] = ..., proposal_commit: _Optional[str] = ..., outcome_document: _Optional[_Union[_outcome_pb2.OutcomeRecord, _Mapping]] = ..., requires_reflection: _Optional[bool] = ..., outcome_commit: _Optional[str] = ..., reflection_processed: _Optional[bool] = ..., reflection_decision: _Optional[_Union[ReflectionDecision, _Mapping]] = ..., reflection_commit: _Optional[str] = ..., rollout_expectation: _Optional[_Union[ControllerRolloutExpectation, _Mapping]] = ..., rollout_receipts: _Optional[_Iterable[_Union[ControllerRolloutReceipt, _Mapping]]] = ..., receipt: _Optional[_Union[ClosureReceipt, _Mapping]] = ..., acknowledged: _Optional[bool] = ..., acknowledged_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., reflection_rejections: _Optional[_Iterable[_Union[_memory_diagnostic_pb2.ProposalRejection, _Mapping]]] = ..., reflection_rejected: _Optional[bool] = ..., reflection_skipped_reason: _Optional[str] = ..., closure_phase_timestamps: _Optional[_Mapping[str, _timestamp_pb2.Timestamp]] = ..., reflection_phase: _Optional[_Union[ReflectionPhase, str]] = ..., reflection_workspace: _Optional[_Union[_worker_pb2.ProposalWorkspace, _Mapping]] = ..., reflection_paths: _Optional[_Iterable[str]] = ..., reflection_results: _Optional[_Iterable[_Union[ReflectionDecision, _Mapping]]] = ..., reflection_max_retries: _Optional[int] = ..., reflection_dispatch_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., reflection_evidence_gap_count: _Optional[int] = ...) -> None: ...
 
 class OwnershipAdoptionStatus(_message.Message):
     __slots__ = ("source_commit", "adopted_objects", "conflicts_taken_over", "from_managers", "last_error", "skipped_reason", "retry_at", "failures")
