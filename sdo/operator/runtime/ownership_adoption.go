@@ -65,6 +65,10 @@ func (c *Controller) recordAdoptionError(now time.Time, err error) {
 	c.ownershipAdoption = status
 }
 
+// acceptanceSettleRetry spaces adoption passes that wait for an object to
+// settle before its acceptance record is taken.
+const acceptanceSettleRetry = 5 * time.Second
+
 func supportsAcceptedSource(ref sdk.ObjectRef) bool {
 	switch ref.APIVersion + "/" + ref.Kind {
 	case "v1/ServiceAccount", "rbac.authorization.k8s.io/v1/ClusterRole", "rbac.authorization.k8s.io/v1/ClusterRoleBinding", "rbac.authorization.k8s.io/v1/Role", "rbac.authorization.k8s.io/v1/RoleBinding", "v1/Service", "v1/ConfigMap", "v1/Pod", "apps/v1/Deployment", "apps/v1/ReplicaSet", "v1/Endpoints", "discovery.k8s.io/v1/EndpointSlice", "networking.k8s.io/v1/NetworkPolicy":
@@ -113,8 +117,10 @@ func (c *Controller) adoptOwnership(ctx context.Context, now time.Time, snapshot
 		normalized *unstructured.Unstructured
 		conflicts  int
 		managers   []string
+		record     string
 	}
 	pending := make([]candidate, 0)
+	unsettled := false
 	for _, source := range objects {
 		ref := sdk.ObjectRef{APIVersion: source.GetAPIVersion(), Kind: source.GetKind(), Namespace: source.GetNamespace(), Name: source.GetName()}
 		if !supportsAcceptedSource(ref) || (ref.Namespace != c.config.Namespace && !inventoryClusterKind(ref.Kind)) {
@@ -147,7 +153,26 @@ func (c *Controller) adoptOwnership(ctx context.Context, now time.Time, snapshot
 				break
 			}
 		}
+		recorded := acceptanceRecordCurrent(live, source)
+		if allOwned && recorded {
+			continue
+		}
+		// The record waits until controllers have caught up with the
+		// object; until then its source comparison fails closed.
+		record := ""
+		if !recorded {
+			if !acceptanceSettled(live) {
+				unsettled = true
+			} else if encoded, fits, err := buildAcceptanceRecord(source, normalized, live); err != nil {
+				return fmt.Errorf("record accepted paths of %s/%s: %w", ref.Kind, ref.Name, err)
+			} else if fits {
+				record = encoded
+			}
+		}
 		if allOwned {
+			if record != "" {
+				pending = append(pending, candidate{ref: ref, normalized: normalized, record: record})
+			}
 			continue
 		}
 		conflicts, managers := adoptionConflicts(live, declared)
@@ -157,7 +182,7 @@ func (c *Controller) adoptOwnership(ctx context.Context, now time.Time, snapshot
 		conditional := source.DeepCopy()
 		conditional.SetUID(live.GetUID())
 		conditional.SetResourceVersion(live.GetResourceVersion())
-		pending = append(pending, candidate{ref: ref, source: conditional, normalized: normalized, conflicts: conflicts, managers: managers})
+		pending = append(pending, candidate{ref: ref, source: conditional, normalized: normalized, conflicts: conflicts, managers: managers, record: record})
 	}
 	persistDifferences := func(changes []ObjectChange, view program.ReadView) error {
 		if len(changes) == 0 {
@@ -195,6 +220,12 @@ func (c *Controller) adoptOwnership(ctx context.Context, now time.Time, snapshot
 		return err
 	}
 	for _, item := range pending {
+		if item.source == nil {
+			if err := applyAcceptanceRecord(actionCtx, c.drift.Client, item.ref, item.record); err != nil {
+				return fmt.Errorf("record acceptance of %s/%s: %w", item.ref.Kind, item.ref.Name, err)
+			}
+			continue
+		}
 		if _, err := applyAcceptedSource(actionCtx, c.drift.Client, item.ref, item.source, false); err != nil {
 			if apierrors.IsConflict(err) || apierrors.IsNotFound(err) {
 				live, readErr := getAdoptionObject(actionCtx, c.drift.Client, item.ref)
@@ -216,6 +247,11 @@ func (c *Controller) adoptOwnership(ctx context.Context, now time.Time, snapshot
 				}
 			}
 			return fmt.Errorf("adopt %s/%s: %w", item.ref.Kind, item.ref.Name, err)
+		}
+		if item.record != "" {
+			if err := applyAcceptanceRecord(actionCtx, c.drift.Client, item.ref, item.record); err != nil {
+				return fmt.Errorf("record acceptance of %s/%s: %w", item.ref.Kind, item.ref.Name, err)
+			}
 		}
 		if record {
 			status.AdoptedObjects++
@@ -239,6 +275,12 @@ func (c *Controller) adoptOwnership(ctx context.Context, now time.Time, snapshot
 	c.mu.Unlock()
 	if renderErr != nil {
 		return fmt.Errorf("render accepted manifests for ownership adoption (partial coverage): %w", renderErr)
+	}
+	if unsettled {
+		c.mu.Lock()
+		c.ownershipAdoption.RetryAt = now.Add(acceptanceSettleRetry)
+		c.mu.Unlock()
+		return nil
 	}
 	c.adoptionNeeded = false
 	return nil

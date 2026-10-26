@@ -562,7 +562,7 @@ spec:
 		t.Fatal(err)
 	}
 	view := LiveReadView{DetectionContext: sdktest.Snapshot{NamespaceName: "app", DeploymentList: []appsv1.Deployment{*live}}, Source: source, SourceCommit: revision}
-	if diff, err := view.DiffAgainstSource(ref); err != nil || diff.Changed {
+	if diff, err := declaredSourceDiff(view, ref); err != nil || diff.Changed {
 		t.Fatalf("deployed mutable references created false drift: %+v %v", diff, err)
 	}
 	for _, init := range []bool{false, true} {
