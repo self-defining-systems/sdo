@@ -144,3 +144,40 @@ def test_onboarding_has_its_own_budget_before_steady_admission(lane, monkeypatch
 
     gate.worker.request = request
     assert gate.prove("hotel-reservation-sdo")["passed"]
+
+
+def test_admission_uses_the_requested_installer_configuration(lane, monkeypatch):
+    from benchmarks.sregym.adapter.native_operator import NativeInstallConfig
+
+    original, calls = lane
+    env = original.environment
+    requested = NativeInstallConfig(
+        repository=env.workspace,
+        namespace=env.namespace,
+        control_namespace=env.namespace + "-sdo",
+        application=env.namespace,
+        controller_image="controller:test",
+        responder_image="responder:test",
+        validator_image="validator:test",
+        repository_pvc="repository",
+        credentials_secret="unused",
+        model="scripted",
+        kubeconfig=env.kubeconfig,
+        permissive_responder=True,
+        responder_namespaces=("policy-system",),
+    )
+    seen = []
+
+    class ReachedRBAC(Exception):
+        pass
+
+    def verify(kubeconfig, namespace, config):
+        seen.append(config)
+        raise ReachedRBAC
+
+    monkeypatch.setattr(rbac, "verify_rbac", verify)
+    monkeypatch.setattr(admission, "assert_lane_resources", lambda *args, **kwargs: {"passed": True})
+    gate = admission.LaneAdmission(env, original.worker, original.ops, original.directory, install_config=requested)
+    with pytest.raises(ReachedRBAC):
+        gate.prove(env.namespace + "-sdo")
+    assert seen == [requested]
