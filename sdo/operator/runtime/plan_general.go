@@ -1,10 +1,12 @@
 package runtime
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	jsonpatch "github.com/evanphx/json-patch"
@@ -184,6 +186,23 @@ func (e PlanExecutor) generalStep(ctx context.Context, incident IncidentRequest,
 		if dry {
 			return r, nil
 		}
+		if a.Query["dryRun"] == "All" && (a.Method == "POST" || a.Method == "PUT" || a.Method == "PATCH" || a.Method == "DELETE") {
+			effect := program.KubernetesEffect{Request: a}
+			effect.Response, err = client.KubernetesRequest(ctx, a)
+			r.ActionReports[0].KubernetesEffect = &effect
+			r.ActionReports[0].Status = "validated"
+			if err != nil {
+				r.ActionReports[0].Status = "refused"
+			}
+			if e.RecordPrimitive != nil {
+				args, _ := json.Marshal([]any{a})
+				value, _ := json.Marshal(effect)
+				if recordErr := e.RecordPrimitive(sdktest.PrimitiveCall{Method: "KubernetesEffect", Arguments: args, Result: value}); recordErr != nil {
+					r.ActionReports[0].RecordingError = "Kubernetes dry-run capture unavailable"
+				}
+			}
+			return r, err
+		}
 		// A lost write response is an irreversible uncertainty, never a retry grant.
 		mutating := a.Method != "GET" && a.Method != "HEAD"
 		if mutating {
@@ -239,6 +258,13 @@ func (e PlanExecutor) generalStep(ctx context.Context, incident IncidentRequest,
 				}
 				if effect.BeforeKnown && effect.Before == nil && effect.After != nil {
 					patch.Operation = "create"
+				}
+				if effect.BeforeKnown && effect.AfterKnown && patch.After != nil && patch.After.GetUID() != "" && restorableAPIRequest(a) {
+					if patch.Before == nil || patch.Before.GetUID() == patch.After.GetUID() {
+						patch.Irreversible = false
+						patch.Structured = true
+						patch.Authorization = "recorded-api"
+					}
 				}
 				if e.RecordPrimitive != nil {
 					args, _ := json.Marshal([]any{a})
@@ -412,7 +438,7 @@ func (e PlanExecutor) waitForField(ctx context.Context, w program.WaitFor) error
 }
 
 func planPatchFields(p PlanPatch) []string {
-	if p.Authorization != "general" && p.Authorization != "accepted-source" {
+	if p.Authorization != "general" && p.Authorization != "accepted-source" && p.Authorization != "recorded-api" {
 		return []string{"spec", "data", "binaryData"}
 	}
 	keys := map[string]bool{}
@@ -542,4 +568,34 @@ func (e PlanExecutor) preflightGeneral(ctx context.Context, incident IncidentReq
 		preview.project(step)
 	}
 	return steps, nil
+}
+
+// Raw API undo is available only for measured object configuration effects.
+// Connection upgrades and arbitrary subresources retain irreversible receipts.
+func restorableAPIRequest(q program.KubernetesRequest) bool {
+	parts := strings.Split(strings.Trim(q.Path, "/"), "/")
+	i := 2
+	if parts[0] == "apis" {
+		i = 3
+	}
+	if len(parts) > i+2 && parts[i] == "namespaces" {
+		i += 2
+	}
+	ordinary := len(parts) == i+2 || q.Method == "POST" && len(parts) == i+1
+	scale := len(parts) == i+3 && parts[i+2] == "scale"
+	return (q.Method == "PATCH" || q.Method == "PUT" || q.Method == "POST") && (ordinary || scale) && !q.CredentialResponse()
+}
+func sameUndoConfiguration(a, b *unstructured.Unstructured) bool {
+	clean := func(o *unstructured.Unstructured) []byte {
+		c := o.DeepCopy()
+		delete(c.Object, "status")
+		if m, ok := c.Object["metadata"].(map[string]any); ok {
+			for _, k := range []string{"resourceVersion", "managedFields", "generation"} {
+				delete(m, k)
+			}
+		}
+		raw, _ := json.Marshal(c.Object)
+		return raw
+	}
+	return bytes.Equal(clean(a), clean(b))
 }

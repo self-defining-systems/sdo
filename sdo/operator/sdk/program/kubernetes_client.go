@@ -2,6 +2,7 @@ package program
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"sdo.dev/operator/sdk"
@@ -17,6 +18,42 @@ import (
 // Optional bindings require each role to remain in accepted source. Omit them
 // for observations of intentionally source-absent objects and derived resources.
 func Kubernetes(view ReadView, sourceBindings ...Bindings) (*kubeclient.ReadClient, error) {
+	read, err := kubernetesAccess(view, sourceBindings...)
+	if err != nil {
+		return nil, err
+	}
+	return kubeclient.NewReadClient(read)
+}
+
+// KubernetesExecutor is provided only during admitted execution. ReadView does
+// not implement it: planning and detectors cannot acquire mutation authority.
+type KubernetesExecutor interface {
+	KubernetesRequest(context.Context, KubernetesRequest) (json.RawMessage, error)
+}
+
+// KubernetesForExecution exposes upstream mutations through the owning executor,
+// preserving its recording, before-images and undo. It never executes a write
+// during construction and never substitutes predicted mutation responses.
+func KubernetesForExecution(view ReadView, executor KubernetesExecutor, sourceBindings ...Bindings) (*kubeclient.ExecutionClient, error) {
+	if executor == nil {
+		return nil, fmt.Errorf("Kubernetes execution capability required")
+	}
+	read, err := kubernetesAccess(view, sourceBindings...)
+	if err != nil {
+		return nil, err
+	}
+	return kubeclient.NewExecutionClient(read, func(ctx context.Context, method, path string, query url.Values, content string, body []byte) ([]byte, error) {
+		q := KubernetesRequest{Method: method, Path: path, ContentType: content, Body: body, Reason: "recorded client-go execution", Query: map[string]string{}}
+		for k, values := range query {
+			if len(values) != 1 {
+				return nil, fmt.Errorf("Kubernetes query %s requires one value", k)
+			}
+			q.Query[k] = values[0]
+		}
+		return executor.KubernetesRequest(ctx, q)
+	})
+}
+func kubernetesAccess(view ReadView, sourceBindings ...Bindings) (kubeclient.ReadFunc, error) {
 	if view == nil {
 		return nil, fmt.Errorf("Kubernetes observation view required")
 	}
@@ -46,7 +83,7 @@ func Kubernetes(view ReadView, sourceBindings ...Bindings) (*kubeclient.ReadClie
 			}
 		}
 	}
-	return kubeclient.NewReadClient(func(ctx context.Context, method, path string, query url.Values) ([]byte, error) {
+	return func(ctx context.Context, method, path string, query url.Values) ([]byte, error) {
 		if err := ctx.Err(); err != nil {
 			return nil, fail(err)
 		}
@@ -61,7 +98,7 @@ func Kubernetes(view ReadView, sourceBindings ...Bindings) (*kubeclient.ReadClie
 			return nil, fail(err)
 		}
 		return view.KubernetesRead(request)
-	})
+	}, nil
 }
 
 // StaleBindingError identifies a source-grounded role that no longer exists.

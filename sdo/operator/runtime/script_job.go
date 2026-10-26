@@ -85,7 +85,7 @@ func (c TypedPlanClient) RunScript(ctx context.Context, r ScriptExecutionRequest
 			return out, fmt.Errorf("script deadline expired before Job creation")
 		}
 		zero := int32(0)
-		env := []corev1.EnvVar{{Name: "SDO_SCRIPT_TEXT", Value: r.Script}, {Name: "SDO_SCRIPT_INDEX", Value: out.JobName}, {Name: "SDO_SCRIPT_NAMESPACE", Value: r.Namespace}}
+		env := []corev1.EnvVar{{Name: "SDO_SCRIPT_CONTROL_NAMESPACE", Value: c.ProtectedNamespace}, {Name: "SDO_SCRIPT_TEXT", Value: r.Script}, {Name: "SDO_SCRIPT_INDEX", Value: out.JobName}, {Name: "SDO_SCRIPT_NAMESPACE", Value: r.Namespace}}
 		keys := make([]string, 0, len(r.Env))
 		for key := range r.Env {
 			keys = append(keys, key)

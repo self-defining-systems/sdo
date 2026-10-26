@@ -1,7 +1,6 @@
 package kubeproxy
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -35,5 +34,25 @@ func TestProxySecretReadsNeverReachUpstream(t *testing.T) {
 	if calls.Load() != 0 {
 		t.Fatal("Secret reads reached upstream")
 	}
-	_ = context.Background()
+
+}
+
+func TestProxyControlEditsReturnTypedForbidden(t *testing.T) {
+	calls := 0
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { calls++; w.Write([]byte(`{}`)) }))
+	defer up.Close()
+	u, _ := url.Parse(up.URL)
+	h := NewWithPolicy(u, http.DefaultTransport, http.DefaultTransport, nil, nil, "control")
+	for _, spec := range []struct{ method, path string }{{"PATCH", "/api/v1/namespaces/control/configmaps/settings"}, {"DELETE", "/api/v1/namespaces/control"}, {"GET", "/api/v1/namespaces/control/pods/api/exec"}} {
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, httptest.NewRequest(spec.method, spec.path, nil))
+		var status metav1.Status
+		json.Unmarshal(w.Body.Bytes(), &status)
+		if !apierrors.IsForbidden(&apierrors.StatusError{ErrStatus: status}) {
+			t.Fatalf("control edit allowed: %d %s", w.Code, w.Body.String())
+		}
+	}
+	if calls != 0 {
+		t.Fatal("control edit reached upstream")
+	}
 }

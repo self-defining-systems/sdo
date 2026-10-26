@@ -38,8 +38,9 @@ func (e KubernetesExecutor) addAPIHistory(job *batchv1.Job, task *contracts.Agen
 	always := corev1.ContainerRestartPolicyAlways
 	sidecar := corev1.Container{
 		Name: "kube-api-history", Image: image,
-		Command:         []string{"/usr/local/bin/sdo-operator", "api-proxy", "--incident", typed.GetIncidentId(), "--directory", "/sdo/history"},
+		Command:         []string{"/usr/local/bin/sdo-operator", "api-proxy", "--incident", typed.GetIncidentId(), "--directory", "/sdo/history", "--capture-namespace", typed.GetNamespace(), "--control-namespace", job.Namespace},
 		RestartPolicy:   &always,
+		Env:             []corev1.EnvVar{{Name: "SDO_PROXY_POD_UID", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.uid"}}}},
 		StartupProbe:    &corev1.Probe{ProbeHandler: corev1.ProbeHandler{Exec: &corev1.ExecAction{Command: []string{"/usr/local/bin/sdo-operator", "api-proxy", "ready"}}}, PeriodSeconds: 1, TimeoutSeconds: 2, FailureThreshold: 60},
 		VolumeMounts:    []corev1.VolumeMount{{Name: "repository", MountPath: "/sdo/history", SubPath: sub}, {Name: "repository", MountPath: "/sdo/history.generation", SubPath: sub + ".generation"}},
 		SecurityContext: agent.SecurityContext.DeepCopy(),
