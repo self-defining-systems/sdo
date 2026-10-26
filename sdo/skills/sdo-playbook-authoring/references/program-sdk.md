@@ -10,6 +10,10 @@ package program // import "sdo.dev/operator/sdk/program"
 
 CONSTANTS
 
+const DefaultScriptTimeout = time.Minute
+const MaxScriptBytes = 64 << 10
+const MaxScriptOutputBytes = 64 << 10
+const MaxScriptTimeout = 5 * time.Minute
 const MongoDB = "mongodb"
 
 FUNCTIONS
@@ -43,6 +47,15 @@ func FieldValue(object map[string]any, path string) (any, error)
 func ProjectPatch(object map[string]any, a PatchObject) (map[string]any, error)
     ProjectPatch is the shared atomic projection used by production and replay.
     Errors leave the input untouched. The API server still validates its schema.
+
+func ScriptDigest(script string) string
+    ScriptDigest identifies the authored bytes; it does not claim the rewritten
+    program was executed by its historical origin receipt.
+
+func ScriptEnvText(value any) (string, error)
+    ScriptEnvText converts a scalar input into process environment text.
+    It never evaluates shell syntax, joins arguments, or serializes an object as
+    shell code.
 
 func ValidateBindings(spec ProgramSpec, b Bindings) error
 func ValidateGeneralRef(ref sdk.ObjectRef) error
@@ -202,12 +215,8 @@ type Diagnoser interface {
 	Diagnose(context.Context, ReadView, Bindings) (Verdict, error)
 }
 
-type Diff struct {
-	// SourceAbsent is true only after a successful accepted-source lookup finds no object.
-	SourceAbsent bool   `json:"source_absent,omitempty"`
-	Changed      bool   `json:"changed"`
-	Text         string `json:"text,omitempty"`
-}
+type Diff = sdk.SourceDiff
+    Diff is the shared accepted-source or baseline comparison result.
 
 type EnsureDatabaseUser struct {
 	Target   DatabaseTarget
@@ -477,12 +486,84 @@ type RunJob struct {
     RunJob creates a named Job or Pod and waits for its actual completion.
     Replay requires a recorded completion for this exact manifest.
 
+type RunScript struct {
+	Script  string
+	Env     map[string]Value
+	Timeout time.Duration
+	Reason  string
+}
+    RunScript is a first-class learnable mitigation. Application facts are
+    relation-derived Values injected as environment, never interpolated into
+    code. The executor runs bash in an app-local Job and records the observed
+    transition. Typed actions remain optional upgrades; opaque effects are never
+    simulated.
+
+func (a RunScript) Validate() error
+
 type ScaleWorkload struct {
 	Ref      sdk.ObjectRef
 	Replicas Value
 }
     ScaleWorkload restores replicas from accepted source, observations or a
     parameter.
+
+type ScriptAPIReceipt struct {
+	Subresource string    `json:"subresource,omitempty"`
+	Method      string    `json:"method"`
+	Path        string    `json:"path"`
+	Status      int       `json:"status"`
+	StartedAt   time.Time `json:"started_at"`
+	CompletedAt time.Time `json:"completed_at"`
+	Omission    string    `json:"omission,omitempty"`
+}
+
+type ScriptExecutionResult struct {
+	TargetFindings []string `json:"target_findings,omitempty"`
+	// Scope is the selected repair scope, not a claim of observed object writes.
+	Scope           []sdk.ObjectRef            `json:"scope,omitempty"`
+	ResultRef       string                     `json:"result_ref,omitempty"`
+	StdoutBytes     int                        `json:"stdout_bytes,omitempty"`
+	StderrBytes     int                        `json:"stderr_bytes,omitempty"`
+	Inputs          map[string]ValueProvenance `json:"inputs,omitempty"`
+	ApplicationID   string                     `json:"application_id"`
+	JobName         string                     `json:"job_name"`
+	JobUID          string                     `json:"job_uid"`
+	ScriptDigest    string                     `json:"script_digest"`
+	ExitCode        *int32                     `json:"exit_code,omitempty"`
+	Stdout          string                     `json:"stdout,omitempty"`
+	Stderr          string                     `json:"stderr,omitempty"`
+	StdoutTruncated bool                       `json:"stdout_truncated,omitempty"`
+	StderrTruncated bool                       `json:"stderr_truncated,omitempty"`
+	TimedOut        bool                       `json:"timed_out,omitempty"`
+	Receipts        []ScriptAPIReceipt         `json:"receipts,omitempty"`
+	Objects         []ScriptObjectCapture      `json:"objects,omitempty"`
+	CaptureGaps     []string                   `json:"capture_gaps,omitempty"`
+}
+    ScriptExecutionResult retains measured evidence, never invented effect
+    replies. Kubernetes preimages permit future explicit undo; arbitrary
+    external effects are irreversible and must never trigger automatic
+    compensation.
+
+type ScriptObjectCapture struct {
+	BeforeAbsent bool                       `json:"before_absent,omitempty"`
+	AfterAbsent  bool                       `json:"after_absent,omitempty"`
+	ImagesRef    string                     `json:"images_ref,omitempty"`
+	Written      bool                       `json:"written,omitempty"`
+	Ref          sdk.ObjectRef              `json:"ref"`
+	Before       *unstructured.Unstructured `json:"before,omitempty"`
+	After        *unstructured.Unstructured `json:"after,omitempty"`
+}
+
+type ScriptOriginReceipt struct {
+	ID          string          `json:"id"`
+	IncidentID  string          `json:"incident_id"`
+	Success     bool            `json:"success"`
+	StartedAt   time.Time       `json:"started_at"`
+	CompletedAt time.Time       `json:"completed_at"`
+	Resources   []sdk.ObjectRef `json:"resources,omitempty"`
+}
+    ScriptOriginReceipt is protected historical evidence. A parameterized script
+    links to its origin; that receipt does not assert the rewritten bytes ran.
 
 type SetField struct {
 	Ref    sdk.ObjectRef

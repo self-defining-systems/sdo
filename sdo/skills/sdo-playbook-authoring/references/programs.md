@@ -5,13 +5,14 @@ mitigation returns typed actions. Import shared SDK helpers (`sdk/observe`, `sdk
 Keep names, ports and images in bindings or observed state, never in the learned predicate.
 
 Detectors detect continuously; playbook Diagnose runs only while handling their findings, using one finding-bound assignment. Read additional objects through ReadView by name or relation.
+Detectors call `ctx.DiffAgainstSource(ref)` before selection, then bind playbooks through findings.
+`Changed` covers field drift; `SourceAbsent` confirms absence. Unavailable evidence errors.
+Both contexts share recorded comparisons.
 
 Accepted Mitigators become selectable options in the responder menu, a convenience over direct commands.
 Declare object and typed value parameters and group related actions into one plan. Raw registered actions
-also appear as generic one-action plans. The ordinary PlanExecutor runs them with the controller's existing
-RBAC and always-on checks; the menu adds no ledger, fence, quiescence or provenance precondition.
-The same responder session receives what ran, per-action results, value provenance and errors and may
-choose another option or repair directly. Up to five rounds share the incident allowance. Intermediate
+also appear as generic one-action plans. The ordinary PlanExecutor uses existing controller RBAC and checks.
+The responder receives per-action results, provenance and errors and can choose another repair. Up to five rounds share the incident allowance. Intermediate
 reports are not independent outcomes or program trust credit.
 
 A program directory contains diagnose.go, optional mitigate.go, Go tests and a README with responder ownership,
@@ -160,3 +161,20 @@ Include `RestartRollout` for a dependent bound Deployment when recovery also nee
 Independent live health verification remains required.
 
 General object edits, replayable commands/HTTP, and one-off scripts use the [general action vocabulary](general-actions.md).
+
+
+Keep RunScript bash inline in Mitigate;
+application inputs are relation-derived `program.Value` entries in Env, resolved
+at apply time and injected as process environment. Typed actions remain optional.
+Scripts default to 60 seconds, bounded by five minutes and the incident budget;
+script and each output stream retain at most 64 KiB.
+
+For opaque scripts, label `script_origins` in the corpus case with the script
+SHA-256 digest mapped to its original successful repair receipt ID. The
+controller adds timed `RepairReceipt` observations to protected recordings before
+reflection. Open Diagnose must Match and fixed Diagnose must NoMatch with valid
+bindings. The replay report uses `observed-transition`: it does not execute bash,
+claim exact external-effect simulation, or assert the rewritten script ran.
+The live apply→Diagnose check verifies that version; global health owns closure.
+Preimages and API receipts are retained, with explicit gaps for opaque effects;
+undo remains an explicit responder decision.

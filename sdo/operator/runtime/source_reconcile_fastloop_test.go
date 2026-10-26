@@ -271,16 +271,15 @@ func TestHermeticSourceReconcileLearningExposesVerifiedCounters(t *testing.T) {
 func writeSourceImageDetector(t *testing.T, root string) {
 	t.Helper()
 	source := `package sourceimagefault
-import("context";"time"; metav1 "k8s.io/apimachinery/pkg/apis/meta/v1";"k8s.io/apimachinery/pkg/labels";"sdo.dev/operator/sdk";"sdo.dev/operator/sdk/program")
+import("context";"time"; metav1 "k8s.io/apimachinery/pkg/apis/meta/v1";"k8s.io/apimachinery/pkg/labels";"sdo.dev/operator/sdk" )
 type Detector struct{}
 func New()sdk.Detector{return Detector{}}
 func (Detector) Spec()sdk.DetectorSpec{return sdk.DetectorSpec{ID:"source-image",Class:sdk.DetectorClassIncident,Owner:sdk.DetectorOwnerResponder,Watches:[]sdk.WatchKind{{APIVersion:"apps/v1",Kind:"Deployment"},{APIVersion:"v1",Kind:"Pod"}},Interval:time.Second,Persistence:sdk.PersistencePolicy{Firing:1,Clearing:1},Batching:sdk.BatchingPolicy{Severity:sdk.SeverityWarning,Debounce:100*time.Millisecond},Playbooks:[]string{"image-pull-failure"},OriginatingIncident:"image-origin",OriginatingCommit:"fixture"}}
 func (Detector) Detect(_ context.Context,s sdk.DetectionContext)([]sdk.Finding,error){
  var findings []sdk.Finding
- view:=program.ReadFrom(s)
  for _,d:=range s.Deployments(){
   ref:=sdk.ObjectRefFrom("Deployment","apps/v1",&d)
-  diff,err:=view.DiffAgainstSource(ref);if err!=nil{return nil,err};if !diff.Changed || d.Spec.Selector==nil{continue}
+  diff,err:=s.DiffAgainstSource(ref);if err!=nil{return nil,err};if !diff.Changed || d.Spec.Selector==nil{continue}
   selector,err:=metav1.LabelSelectorAsSelector(d.Spec.Selector);if err!=nil{return nil,err}
   failing:=false
   for _,pod:=range s.Pods(){if pod.Namespace!=d.Namespace || !selector.Matches(labels.Set(pod.Labels)){continue};for _,status:=range pod.Status.ContainerStatuses{w:=status.State.Waiting;if w!=nil && (w.Reason=="ErrImagePull" || w.Reason=="ImagePullBackOff"){failing=true}}}

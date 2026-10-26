@@ -336,6 +336,10 @@ def test_undetected_fault_is_graded_recovered_and_next_incident_runs(tmp_path: P
             if self.incidents == 0:
                 inject()
                 self.incidents += 1
+                # A successful idle snapshot is distinct from an unavailable API.
+                self.states[control_namespace] = {
+                    "history": [{"detector_id": "health", "status": "clear", "evaluated_at": INJECTED.isoformat()}]
+                }
                 return {"controller_baseline_wait": 1.5}
             return super().inject_after_resume(control_namespace, generation, inject)
 

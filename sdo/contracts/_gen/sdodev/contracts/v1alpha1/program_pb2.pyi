@@ -89,7 +89,7 @@ class Plan(_message.Message):
     def __init__(self, actions: _Optional[_Iterable[_Union[Action, _Mapping]]] = ..., rationale: _Optional[str] = ...) -> None: ...
 
 class Action(_message.Message):
-    __slots__ = ("reconcile_from_source", "rollback", "set_field", "restart_rollout", "create_from_source", "delete_object", "delete_pod", "scale_workload", "exec", "remove_service_port", "ensure_database_user", "patch_object", "apply_object", "kubernetes_request", "wait_for", "ensure_exec", "ensure_http", "run_job")
+    __slots__ = ("reconcile_from_source", "rollback", "set_field", "restart_rollout", "create_from_source", "delete_object", "delete_pod", "scale_workload", "exec", "remove_service_port", "ensure_database_user", "patch_object", "apply_object", "kubernetes_request", "wait_for", "ensure_exec", "ensure_http", "run_job", "run_script")
     RECONCILE_FROM_SOURCE_FIELD_NUMBER: _ClassVar[int]
     ROLLBACK_FIELD_NUMBER: _ClassVar[int]
     SET_FIELD_FIELD_NUMBER: _ClassVar[int]
@@ -108,6 +108,7 @@ class Action(_message.Message):
     ENSURE_EXEC_FIELD_NUMBER: _ClassVar[int]
     ENSURE_HTTP_FIELD_NUMBER: _ClassVar[int]
     RUN_JOB_FIELD_NUMBER: _ClassVar[int]
+    RUN_SCRIPT_FIELD_NUMBER: _ClassVar[int]
     reconcile_from_source: ReconcileFromSource
     rollback: Rollback
     set_field: SetField
@@ -126,7 +127,8 @@ class Action(_message.Message):
     ensure_exec: EnsureExec
     ensure_http: EnsureHttp
     run_job: RunJob
-    def __init__(self, reconcile_from_source: _Optional[_Union[ReconcileFromSource, _Mapping]] = ..., rollback: _Optional[_Union[Rollback, _Mapping]] = ..., set_field: _Optional[_Union[SetField, _Mapping]] = ..., restart_rollout: _Optional[_Union[RestartRollout, _Mapping]] = ..., create_from_source: _Optional[_Union[CreateFromSource, _Mapping]] = ..., delete_object: _Optional[_Union[DeleteObject, _Mapping]] = ..., delete_pod: _Optional[_Union[DeletePod, _Mapping]] = ..., scale_workload: _Optional[_Union[ScaleWorkload, _Mapping]] = ..., exec: _Optional[_Union[Exec, _Mapping]] = ..., remove_service_port: _Optional[_Union[RemoveServicePort, _Mapping]] = ..., ensure_database_user: _Optional[_Union[EnsureDatabaseUser, _Mapping]] = ..., patch_object: _Optional[_Union[PatchObject, _Mapping]] = ..., apply_object: _Optional[_Union[ApplyObject, _Mapping]] = ..., kubernetes_request: _Optional[_Union[KubernetesRequest, _Mapping]] = ..., wait_for: _Optional[_Union[WaitFor, _Mapping]] = ..., ensure_exec: _Optional[_Union[EnsureExec, _Mapping]] = ..., ensure_http: _Optional[_Union[EnsureHttp, _Mapping]] = ..., run_job: _Optional[_Union[RunJob, _Mapping]] = ...) -> None: ...
+    run_script: RunScript
+    def __init__(self, reconcile_from_source: _Optional[_Union[ReconcileFromSource, _Mapping]] = ..., rollback: _Optional[_Union[Rollback, _Mapping]] = ..., set_field: _Optional[_Union[SetField, _Mapping]] = ..., restart_rollout: _Optional[_Union[RestartRollout, _Mapping]] = ..., create_from_source: _Optional[_Union[CreateFromSource, _Mapping]] = ..., delete_object: _Optional[_Union[DeleteObject, _Mapping]] = ..., delete_pod: _Optional[_Union[DeletePod, _Mapping]] = ..., scale_workload: _Optional[_Union[ScaleWorkload, _Mapping]] = ..., exec: _Optional[_Union[Exec, _Mapping]] = ..., remove_service_port: _Optional[_Union[RemoveServicePort, _Mapping]] = ..., ensure_database_user: _Optional[_Union[EnsureDatabaseUser, _Mapping]] = ..., patch_object: _Optional[_Union[PatchObject, _Mapping]] = ..., apply_object: _Optional[_Union[ApplyObject, _Mapping]] = ..., kubernetes_request: _Optional[_Union[KubernetesRequest, _Mapping]] = ..., wait_for: _Optional[_Union[WaitFor, _Mapping]] = ..., ensure_exec: _Optional[_Union[EnsureExec, _Mapping]] = ..., ensure_http: _Optional[_Union[EnsureHttp, _Mapping]] = ..., run_job: _Optional[_Union[RunJob, _Mapping]] = ..., run_script: _Optional[_Union[RunScript, _Mapping]] = ...) -> None: ...
 
 class CreateFromSource(_message.Message):
     __slots__ = ("ref", "reason")
@@ -227,7 +229,7 @@ class ValueProvenance(_message.Message):
     def __init__(self, origin: _Optional[str] = ..., ref: _Optional[_Union[_common_pb2.ObjectRef, _Mapping]] = ..., path: _Optional[str] = ..., source_commit: _Optional[str] = ..., resource_version: _Optional[str] = ..., parameter: _Optional[str] = ...) -> None: ...
 
 class ActionReport(_message.Message):
-    __slots__ = ("action_index", "status", "values", "exit_code", "external_effect_json", "kubernetes_effect_json", "recording_error", "job_status_json", "failure_reason")
+    __slots__ = ("action_index", "status", "values", "exit_code", "external_effect_json", "kubernetes_effect_json", "recording_error", "job_status_json", "script_result_json", "failure_reason")
     ACTION_INDEX_FIELD_NUMBER: _ClassVar[int]
     STATUS_FIELD_NUMBER: _ClassVar[int]
     VALUES_FIELD_NUMBER: _ClassVar[int]
@@ -236,6 +238,7 @@ class ActionReport(_message.Message):
     KUBERNETES_EFFECT_JSON_FIELD_NUMBER: _ClassVar[int]
     RECORDING_ERROR_FIELD_NUMBER: _ClassVar[int]
     JOB_STATUS_JSON_FIELD_NUMBER: _ClassVar[int]
+    SCRIPT_RESULT_JSON_FIELD_NUMBER: _ClassVar[int]
     FAILURE_REASON_FIELD_NUMBER: _ClassVar[int]
     action_index: int
     status: str
@@ -245,8 +248,9 @@ class ActionReport(_message.Message):
     kubernetes_effect_json: bytes
     recording_error: str
     job_status_json: bytes
+    script_result_json: bytes
     failure_reason: str
-    def __init__(self, action_index: _Optional[int] = ..., status: _Optional[str] = ..., values: _Optional[_Iterable[_Union[ValueProvenance, _Mapping]]] = ..., exit_code: _Optional[int] = ..., external_effect_json: _Optional[bytes] = ..., kubernetes_effect_json: _Optional[bytes] = ..., recording_error: _Optional[str] = ..., job_status_json: _Optional[bytes] = ..., failure_reason: _Optional[str] = ...) -> None: ...
+    def __init__(self, action_index: _Optional[int] = ..., status: _Optional[str] = ..., values: _Optional[_Iterable[_Union[ValueProvenance, _Mapping]]] = ..., exit_code: _Optional[int] = ..., external_effect_json: _Optional[bytes] = ..., kubernetes_effect_json: _Optional[bytes] = ..., recording_error: _Optional[str] = ..., job_status_json: _Optional[bytes] = ..., script_result_json: _Optional[bytes] = ..., failure_reason: _Optional[str] = ...) -> None: ...
 
 class DeletePod(_message.Message):
     __slots__ = ("ref",)
@@ -321,7 +325,7 @@ class RolloutBlocker(_message.Message):
     def __init__(self, ref: _Optional[_Union[_common_pb2.ObjectRef, _Mapping]] = ..., reason: _Optional[str] = ..., warning_events: _Optional[_Iterable[str]] = ...) -> None: ...
 
 class PlanApplication(_message.Message):
-    __slots__ = ("plan", "applied", "dry_run", "verification", "application_id", "program_ids", "error", "duration", "rolled_back", "rollback_error", "actions_applied", "started_at", "completed_at", "verification_completed", "verification_passed", "final_equivalence_verified", "object_effects", "action_reports", "rollout_pending")
+    __slots__ = ("plan", "applied", "dry_run", "verification", "application_id", "program_ids", "error", "duration", "rolled_back", "rollback_error", "actions_applied", "started_at", "completed_at", "verification_completed", "verification_passed", "final_equivalence_verified", "object_effects", "action_reports", "rollout_pending", "final_verification_basis")
     PLAN_FIELD_NUMBER: _ClassVar[int]
     APPLIED_FIELD_NUMBER: _ClassVar[int]
     DRY_RUN_FIELD_NUMBER: _ClassVar[int]
@@ -341,6 +345,7 @@ class PlanApplication(_message.Message):
     OBJECT_EFFECTS_FIELD_NUMBER: _ClassVar[int]
     ACTION_REPORTS_FIELD_NUMBER: _ClassVar[int]
     ROLLOUT_PENDING_FIELD_NUMBER: _ClassVar[int]
+    FINAL_VERIFICATION_BASIS_FIELD_NUMBER: _ClassVar[int]
     plan: Plan
     applied: bool
     dry_run: bool
@@ -360,7 +365,8 @@ class PlanApplication(_message.Message):
     object_effects: _containers.RepeatedCompositeFieldContainer[PlanObjectEffect]
     action_reports: _containers.RepeatedCompositeFieldContainer[ActionReport]
     rollout_pending: RolloutPending
-    def __init__(self, plan: _Optional[_Union[Plan, _Mapping]] = ..., applied: _Optional[bool] = ..., dry_run: _Optional[bool] = ..., verification: _Optional[_Union[Verdict, _Mapping]] = ..., application_id: _Optional[str] = ..., program_ids: _Optional[_Iterable[str]] = ..., error: _Optional[str] = ..., duration: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ..., rolled_back: _Optional[bool] = ..., rollback_error: _Optional[str] = ..., actions_applied: _Optional[_Iterable[_Union[Action, _Mapping]]] = ..., started_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., completed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., verification_completed: _Optional[bool] = ..., verification_passed: _Optional[bool] = ..., final_equivalence_verified: _Optional[bool] = ..., object_effects: _Optional[_Iterable[_Union[PlanObjectEffect, _Mapping]]] = ..., action_reports: _Optional[_Iterable[_Union[ActionReport, _Mapping]]] = ..., rollout_pending: _Optional[_Union[RolloutPending, _Mapping]] = ...) -> None: ...
+    final_verification_basis: str
+    def __init__(self, plan: _Optional[_Union[Plan, _Mapping]] = ..., applied: _Optional[bool] = ..., dry_run: _Optional[bool] = ..., verification: _Optional[_Union[Verdict, _Mapping]] = ..., application_id: _Optional[str] = ..., program_ids: _Optional[_Iterable[str]] = ..., error: _Optional[str] = ..., duration: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ..., rolled_back: _Optional[bool] = ..., rollback_error: _Optional[str] = ..., actions_applied: _Optional[_Iterable[_Union[Action, _Mapping]]] = ..., started_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., completed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., verification_completed: _Optional[bool] = ..., verification_passed: _Optional[bool] = ..., final_equivalence_verified: _Optional[bool] = ..., object_effects: _Optional[_Iterable[_Union[PlanObjectEffect, _Mapping]]] = ..., action_reports: _Optional[_Iterable[_Union[ActionReport, _Mapping]]] = ..., rollout_pending: _Optional[_Union[RolloutPending, _Mapping]] = ..., final_verification_basis: _Optional[str] = ...) -> None: ...
 
 class ProgramToolCall(_message.Message):
     __slots__ = ("command", "at", "request_json", "response_json", "error", "summary")
@@ -696,3 +702,22 @@ class RunJob(_message.Message):
     object: ApplyObject
     completion: WaitFor
     def __init__(self, object: _Optional[_Union[ApplyObject, _Mapping]] = ..., completion: _Optional[_Union[WaitFor, _Mapping]] = ...) -> None: ...
+
+class RunScript(_message.Message):
+    __slots__ = ("script", "env", "timeout", "reason")
+    class EnvEntry(_message.Message):
+        __slots__ = ("key", "value")
+        KEY_FIELD_NUMBER: _ClassVar[int]
+        VALUE_FIELD_NUMBER: _ClassVar[int]
+        key: str
+        value: PlanValue
+        def __init__(self, key: _Optional[str] = ..., value: _Optional[_Union[PlanValue, _Mapping]] = ...) -> None: ...
+    SCRIPT_FIELD_NUMBER: _ClassVar[int]
+    ENV_FIELD_NUMBER: _ClassVar[int]
+    TIMEOUT_FIELD_NUMBER: _ClassVar[int]
+    REASON_FIELD_NUMBER: _ClassVar[int]
+    script: str
+    env: _containers.MessageMap[str, PlanValue]
+    timeout: _duration_pb2.Duration
+    reason: str
+    def __init__(self, script: _Optional[str] = ..., env: _Optional[_Mapping[str, PlanValue]] = ..., timeout: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ..., reason: _Optional[str] = ...) -> None: ...

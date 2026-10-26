@@ -56,6 +56,16 @@ are in `tests/unit/sdo/agents/responder/test_command_reference.py`; they include
 missing/stale-reference negative control. The responder image's cached model-tool
 layer installs `jq` and runs a JSON extraction smoke check during the build.
 
+The benchmark responder image inventory is checked by
+`scripts/check_responder_image.py` (newline-separated paths on stdin). This script
+owns the recording-module allowlist shared by CI and
+`tests/unit/sdo/operator/test_dockerfile_benchmark_scope.py`. The focused tests also
+inspect all recording-module imports, including conditional imports, and reject
+unapproved fastloop dependencies before building an image. Run them with
+`uv run --extra test pytest -q -p no:tach tests/unit/sdo/operator/test_dockerfile_benchmark_scope.py`.
+
+SDK/validator identities are computed from installed Go sources; no pin regeneration is needed after SDK changes, and `check_errors.sh` checks source binding and a real two-branch merge.
+
 The proto gate runs `buf lint` and checks that committed Go/Python code matches
 regenerated output. The v1alpha1 schema may evolve freely, including breaking
 changes; compatibility with main is not a gate. Reserve deleted field numbers
@@ -548,8 +558,11 @@ after completion; the next launch replaces a stale record. The printed
 
 ### Runtime CI shards
 
-The controller matrix runs the runtime module in eight test-name partitions:
-`reflection`, `contracts`, `rendered`, `simulation`, `schedules`, `corpus`, `recovery`, and `remaining`. Run a partition locally
+The controller matrix runs the runtime module in ten test-name partitions:
+`reflection`, `reflection-mongo`, `reflection-programs`, `contracts`, `rendered`,
+`simulation`, `schedules`, `corpus`, `recovery`, and `remaining`. The two reflection
+compile/replay groups have separate budgets so repeated real CLI builds cannot
+consume the general contracts job's entire deadline. Run a partition locally
 with `python3 scripts/test_runtime_shard.py --shard reflection` from the repository
 root. Each shard first discovers the compiled tests across `./...`, including
 examples and fuzz seed tests, then requires every eligible name to match exactly
@@ -617,6 +630,17 @@ and can be shared across source revisions. To check an existing binary, run
 
 `TestHermeticBringupMaintenanceGenerationDuringOnboarding` repeats that same native bring-up with a known pause/resume mid-window. It retains the original install identities, starts a new sampling budget, and finalizes at simulated61s (three new probe rounds); wall time remains below two minutes. `TestRunOnboardingMaintenanceGenerationPreservesSamples` exercises the actual runtime loop and real prober HTTP boundary: ACTIVE generation-only updates retain samples, while true pause/resume resets both traffic and reachability. Post-resume authority requires fresh samples and retains prior successful ports/configuration contradictions. Supported reset removes owned maintenance state so the next install starts ACTIVE with no inherited generation.
 
+### Go-backed Python contracts
+
+Tests marked `go_integration` execute real Go builds, generated controllers, or
+restart processes. Required CI runs them through
+`bash scripts/test_go_integration.sh`, which warms the normal operator/runtime
+build graph before entering short external-process deadlines. The ordinary
+Python lane uses `bash scripts/test_python.sh -m "not go_integration"`;
+unfiltered `pytest tests` still executes both groups. Add the marker to future
+contracts that compile Go. Compiler parallelism is bounded for parent and nested
+builds with `GOFLAGS=-p=2` and `GOMAXPROCS=2` on hosted runners.
+
 ### Validator cache and local startup measurement
 
 Validator Pods read the compiler, module cache and warmed SDK cache from immutable
@@ -641,3 +665,50 @@ old init-container copy plus fixture validation against direct image-backed
 validation under the same two-CPU limit. It reports image bytes and wall time;
 it excludes image delivery and Kubernetes scheduling. Images must already exist;
 the measurement never pulls images or prunes shared caches.
+
+The PR image gate builds each affected image on a separate runner.
+All selected images still receive the same smoke, preflight and answer-key checks.
+Large intermediate-layer cache uploads run in `warm-ci-caches.yml` nightly or by
+manual dispatch; they are maintenance rather than a required merge gate. The
+small Go modules share two runners through `scripts/test_go_foundation.sh`;
+SDK/core continue to run under Go 1.24.5, while the contracts and benchmark wire
+modules use Go 1.26.8. Explicit fixture compiler parallelism must not override
+`GOFLAGS`, so nested builds inherit the same runner memory bound.
+
+`prepare-go` builds normal and race archives on two independent runners per
+pushed event commit, publishing a cache for each mode. Normal-only consumers
+restore the normal graph and the sole module archive. Go test shards restore
+the race graph to a separate directory, then `scripts/merge_go_ci_caches.sh`
+unions immutable compiler entries with hard links. Each archive destination is
+restored once; Go module files are never unpacked over another restored cache. Preparation never links or
+starts test binaries; each test shard owns those steps. This avoids serially
+linking every test package before any shard can start. The test jobs depend
+on preparation and require that exact cache; they do not start cold compilation
+inside short operation deadlines. Cache restoration uses Go's content-addressed
+compiler entries, while executable identity remains source-bound by
+`operator_test_binary.py`.
+
+The operator gate partitions the expensive CLI/broker acceptance matrix from
+other broker tests and remaining packages through `test_operator_shard.sh`.
+Runtime name partitions remain exhaustive; `test_runtime_shard.py --shard`
+accepts comma-separated partitions so short groups can share a runner without
+omitting or duplicating names. Image runners consume the preparation job's
+source-bound schema identity, avoiding a separate Go cache transfer and toolchain
+installation just to print it.
+
+
+Fastloop checks saved controller and validator image source revisions against
+the code under test before starting its SREGym worker, verifies lane image
+content against local images, and runs the validator's Go toolchain as nonroot
+in a read-only offline container. `scripts/build_sdo_images.sh` records the source
+revision in the existing Bake graph. Missing or stale labels require rebuilding
+through that script and delivering through `fastloop up`; tag names alone do
+not prove provenance. Focused regressions live in
+`tests/unit/benchmarks/sregym/fastloop/test_source_preflight.py` and `test_dev.py`.
+
+
+GitHub Actions expression contexts are checked locally by
+`scripts/check_actions.sh`, called by `scripts/check_errors.sh`. It runs pinned
+actionlint1.7.7 with external shell/Python linters disabled; Ruff and the existing
+shell gates retain those responsibilities. This catches invalid job-level
+contexts before GitHub rejects the workflow without creating a check run.

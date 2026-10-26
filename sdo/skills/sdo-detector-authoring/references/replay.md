@@ -62,6 +62,10 @@ func ProjectCapturedObject(raw []byte) ([]byte, error)
     Discovery callers exclude Secrets entirely; this also protects recorded
     JSON.
 
+func ScriptOrigin(script program.RunScript, c CorpusCase) (program.ScriptOriginReceipt, error)
+    ScriptOrigin checks linkage against controller-recorded successful receipts.
+    It never matches opaque shell commands against typed external effects.
+
 func ValidateCorpusProvenance(dir string) error
     ValidateCorpusProvenance checks that persisted case snapshots still match
     their recorded controller capture, or an explicitly labeled NoMatch case.
@@ -70,6 +74,7 @@ func ValidateCorpusProvenance(dir string) error
 TYPES
 
 type CorpusCase struct {
+	ScriptOrigins          map[string]string `json:"script_origins,omitempty"`
 	Open                   Snapshot
 	Fixed                  Snapshot
 	Healthy                Snapshot
@@ -118,6 +123,7 @@ type MitigationReplayStatus string
 
 const (
 	MitigationReplayPassed                    MitigationReplayStatus = "replayed"
+	MitigationReplayObservedTransition        MitigationReplayStatus = "observed-transition"
 	MitigationReplaySkippedUnreplayableEffect MitigationReplayStatus = "skipped_unreplayable_effect"
 )
 type PrimitiveCall struct {
@@ -299,6 +305,9 @@ func (s Snapshot) ConfigMaps() []corev1.ConfigMap
 func (s Snapshot) DatabaseUsers(t program.DatabaseTarget) ([]program.DatabaseUser, error)
 
 func (s Snapshot) Deployments() []appsv1.Deployment
+
+func (s Snapshot) DiffAgainstSource(ref sdk.ObjectRef) (sdk.SourceDiff, error)
+    DiffAgainstSource replays only observations recorded on this exact snapshot.
 
 func (s Snapshot) EndpointSlices() []discoveryv1.EndpointSlice
 

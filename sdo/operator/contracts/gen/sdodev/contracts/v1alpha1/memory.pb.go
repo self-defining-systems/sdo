@@ -32,6 +32,7 @@ const (
 	MitigationReplayNote_STATUS_UNSPECIFIED                 MitigationReplayNote_Status = 0
 	MitigationReplayNote_STATUS_REPLAYED                    MitigationReplayNote_Status = 1
 	MitigationReplayNote_STATUS_SKIPPED_UNREPLAYABLE_EFFECT MitigationReplayNote_Status = 2
+	MitigationReplayNote_STATUS_OBSERVED_TRANSITION         MitigationReplayNote_Status = 3
 )
 
 // Enum value maps for MitigationReplayNote_Status.
@@ -40,11 +41,13 @@ var (
 		0: "STATUS_UNSPECIFIED",
 		1: "STATUS_REPLAYED",
 		2: "STATUS_SKIPPED_UNREPLAYABLE_EFFECT",
+		3: "STATUS_OBSERVED_TRANSITION",
 	}
 	MitigationReplayNote_Status_value = map[string]int32{
 		"STATUS_UNSPECIFIED":                 0,
 		"STATUS_REPLAYED":                    1,
 		"STATUS_SKIPPED_UNREPLAYABLE_EFFECT": 2,
+		"STATUS_OBSERVED_TRANSITION":         3,
 	}
 )
 
@@ -477,17 +480,18 @@ const file_sdodev_contracts_v1alpha1_memory_proto_rawDesc = "" +
 	"\x04path\x18\x02 \x01(\tR\x04path\x12\x1b\n" +
 	"\x04line\x18\x03 \x01(\x05B\a\xbaH\x04\x1a\x02(\x00R\x04line\x12!\n" +
 	"\amessage\x18\x04 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\amessage\x12\x12\n" +
-	"\x04hint\x18\x05 \x01(\tR\x04hint\"\x97\x02\n" +
+	"\x04hint\x18\x05 \x01(\tR\x04hint\"\xb7\x02\n" +
 	"\x14MitigationReplayNote\x12\x1d\n" +
 	"\n" +
 	"program_id\x18\x01 \x01(\tR\tprogramId\x12\x17\n" +
 	"\acase_id\x18\x02 \x01(\tR\x06caseId\x12N\n" +
 	"\x06status\x18\x03 \x01(\x0e26.sdodev.contracts.v1alpha1.MitigationReplayNote.StatusR\x06status\x12\x18\n" +
-	"\aeffects\x18\x04 \x03(\tR\aeffects\"]\n" +
+	"\aeffects\x18\x04 \x03(\tR\aeffects\"}\n" +
 	"\x06Status\x12\x16\n" +
 	"\x12STATUS_UNSPECIFIED\x10\x00\x12\x13\n" +
 	"\x0fSTATUS_REPLAYED\x10\x01\x12&\n" +
-	"\"STATUS_SKIPPED_UNREPLAYABLE_EFFECT\x10\x02\"\x9f\x02\n" +
+	"\"STATUS_SKIPPED_UNREPLAYABLE_EFFECT\x10\x02\x12\x1e\n" +
+	"\x1aSTATUS_OBSERVED_TRANSITION\x10\x03\"\x9f\x02\n" +
 	"\x11MemoryCheckReport\x12M\n" +
 	"\vdiagnostics\x18\x01 \x03(\v2+.sdodev.contracts.v1alpha1.MemoryDiagnosticR\vdiagnostics\x12\x12\n" +
 	"\x04root\x18\x02 \x01(\tR\x04root\x12\x14\n" +

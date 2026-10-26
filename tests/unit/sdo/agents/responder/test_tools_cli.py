@@ -583,3 +583,37 @@ def test_mitigate_preserves_actionable_program_compile_error(monkeypatch, capsys
     )
     assert tools_cli.main(["--json", "mitigate", "broken"]) == 1
     assert message in capsys.readouterr().err
+
+
+def test_selection_set_accepts_structured_parameters(tmp_path):
+    path = tmp_path / "selection.json"
+    parameters = {
+        "target": {
+            "engine": "mongodb",
+            "pod": {"api_version": "v1", "kind": "Pod", "namespace": "app", "name": "db"},
+            "container": "mongo",
+            "database": "app",
+        },
+        "roles": [{"database": "app", "name": "readWrite"}],
+        "password": {"config_map": {"name": "bootstrap", "key": "init.sh", "assignment": "PASSWORD"}},
+        "allow_empty": False,
+        "port": 80,
+    }
+    path.write_text(
+        json.dumps({"version": 1, "options": [{"option_id": "EnsureDatabaseUser", "parameters": parameters}]})
+    )
+    result = tools_cli._selection_set(path)["options"][0]["parameters"]
+    for name, value in parameters.items():
+        assert json.loads(result[name]) == value
+
+
+def test_selection_set_reports_field_shape_without_echoing_values(tmp_path):
+    path = tmp_path / "selection.json"
+    path.write_text(
+        json.dumps({"version": 1, "options": [{"option_id": "EnsureDatabaseUser", "parameters": ["PRIVATE_CANARY"]}]})
+    )
+    with pytest.raises(ValueError, match="expected object") as error:
+        tools_cli._selection_set(path)
+    assert "options[0].parameters" in str(error.value)
+    assert "object" in str(error.value)
+    assert "PRIVATE_CANARY" not in str(error.value)

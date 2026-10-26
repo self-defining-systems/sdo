@@ -25,7 +25,7 @@ func TestInstallerNativeJobPreservesBrokerAndMountModeInChildConfig(t *testing.T
 	if len(container.Command) != 1 || container.Command[0] != "/usr/local/bin/sdo-operator" {
 		t.Fatalf("native command=%v", container.Command)
 	}
-	launch, supervise, err := operatorcli.ParseControllerLaunch(container.Args)
+	launch, supervise, err := operatorcli.ParseControllerLaunch(append(container.Args, "--operator-root", ".."))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,7 +172,7 @@ func TestHealthyBaselineIsForwardedAcrossOperateAndControllerJobs(t *testing.T) 
 	if !contains(plan.Job.Spec.Template.Spec.Containers[0].Args, "--healthy-baseline") {
 		t.Fatal("controller Job lost healthy baseline setting")
 	}
-	controllerLaunch, _, err := operatorcli.ParseControllerLaunch(plan.Job.Spec.Template.Spec.Containers[0].Args)
+	controllerLaunch, _, err := operatorcli.ParseControllerLaunch(append(plan.Job.Spec.Template.Spec.Containers[0].Args, "--operator-root", ".."))
 	if err != nil || !controllerLaunch.Controller.GetHealthyBaseline() {
 		t.Fatalf("controller child lost healthy baseline: %+v, %v", controllerLaunch.Controller, err)
 	}
@@ -215,7 +215,7 @@ func TestMetricsURLIsForwardedAcrossOperateAndControllerJobsOnlyWhenSet(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	controllerLaunch, _, err := operatorcli.ParseControllerLaunch(plan.Job.Spec.Template.Spec.Containers[0].Args)
+	controllerLaunch, _, err := operatorcli.ParseControllerLaunch(append(plan.Job.Spec.Template.Spec.Containers[0].Args, "--operator-root", ".."))
 	if err != nil || controllerLaunch.Controller.GetMetricsUrl() != cfg.MetricsURL {
 		t.Fatalf("controller child lost the metrics URL: %+v, %v", controllerLaunch.Controller, err)
 	}

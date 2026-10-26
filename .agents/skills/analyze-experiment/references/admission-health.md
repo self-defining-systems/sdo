@@ -18,8 +18,8 @@ measurements and budgets (default 8GiB; observer and app all-in-one Jaeger
 2GiB), host available memory, and `host_disk` evidence for the filesystem
 backing local Docker kind-node storage. The disk object names `mount`,
 `storage_path`, `total_bytes`, `free_bytes`, `used_percent`,
-`min_free_percent` and `floor_bytes`; default admission rejects at 90% used or
-below 100GiB free. Checks run before and after stabilization; the dry run
+`floor_bytes`; default admission requires at least100GiB free, with used
+percentage informational. Checks run before and after stabilization; the dry run
 reports the same `lane_resources` invariant. Resource rejection is an eval
 infrastructure failure, never evidence of agent or incident mitigation.
 Only the benchmark observer is capped by SREGym: app growth is detected,
@@ -47,3 +47,5 @@ implementations remain untouched. Unknown shapes/ownership fail closed. Compare
 these migration receipts when adopting a warm lane; never recapture live fault
 state to manufacture a clean seal. Old helper-assisted repairs are eval evidence,
 not learned SDK repairs.
+
+Host disk admission uses an absolute free-byte floor (default100GiB) on the Docker storage mount. The receipt names `rule: absolute-free-bytes`, the measured free bytes and floor; used percent is informational. A large volume with hundreds of GiB free must not fail solely on percentage. For historical comparisons retain the previous percent-and-byte rule and its rejection as eval evidence.

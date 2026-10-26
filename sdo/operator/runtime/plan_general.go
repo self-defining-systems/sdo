@@ -84,7 +84,7 @@ func (e PlanExecutor) applyGeneralPlan(ctx context.Context, incident IncidentReq
 	complete := false
 	defer func() {
 		result.Duration = time.Since(start)
-		if err != nil && result.Applied && !complete {
+		if err != nil && result.Applied && !complete && !hasAppliedScript(result.ActionsApplied) {
 			recovery, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 			defer cancel()
 			if rollbackErr := e.rollback(recovery, &result); rollbackErr != nil {
@@ -123,6 +123,7 @@ func (e PlanExecutor) applyGeneralPlan(ctx context.Context, incident IncidentReq
 	}
 	var refs []sdk.ObjectRef
 	for i, a := range plan.Actions {
+		e.scriptActionIndex = i
 		step, stepErr := e.generalStep(ctx, incident, generalAction(a), false)
 		result.Patches = append(result.Patches, step.Patches...)
 		result.PreImages = append(result.PreImages, step.PreImages...)
@@ -158,6 +159,9 @@ func (e PlanExecutor) generalStep(ctx context.Context, incident IncidentRequest,
 	r.ActionReports = newPlanReports(r.Plan)
 	if !isGeneralAction(action) {
 		return e.Apply(ctx, incident, r.Plan, dry)
+	}
+	if script, ok := action.(program.RunScript); ok {
+		return e.scriptStep(ctx, incident, script, dry)
 	}
 	if isExternalAction(action) {
 		return e.externalStep(ctx, action, dry)
@@ -408,14 +412,14 @@ func (e PlanExecutor) waitForField(ctx context.Context, w program.WaitFor) error
 }
 
 func planPatchFields(p PlanPatch) []string {
-	if p.Authorization != "general" {
+	if p.Authorization != "general" && p.Authorization != "accepted-source" {
 		return []string{"spec", "data", "binaryData"}
 	}
 	keys := map[string]bool{}
 	for _, o := range []*unstructured.Unstructured{p.Before, p.After} {
 		if o != nil {
 			for k := range o.Object {
-				if k != "apiVersion" && k != "kind" {
+				if k != "apiVersion" && k != "kind" && k != "status" {
 					keys[k] = true
 				}
 			}
@@ -426,6 +430,34 @@ func planPatchFields(p PlanPatch) []string {
 		out = append(out, k)
 	}
 	return out
+}
+
+// planConfigurationField excludes API-owned metadata from repair ownership.
+// Readback versions remain on the full images for identity/concurrency guards.
+func planConfigurationField(object *unstructured.Unstructured, field string) (any, bool) {
+	value, exists := object.Object[field]
+	if field != "metadata" {
+		return value, exists
+	}
+	metadata, ok := value.(map[string]any)
+	if !ok {
+		return value, exists
+	}
+	configuration := map[string]any{}
+	for key, value := range metadata {
+		if !serverOwnedPlanMetadata(key) {
+			configuration[key] = value
+		}
+	}
+	return configuration, exists
+}
+
+func serverOwnedPlanMetadata(key string) bool {
+	switch key {
+	case "name", "namespace", "uid", "resourceVersion", "generation", "creationTimestamp", "deletionTimestamp", "deletionGracePeriodSeconds", "managedFields", "selfLink":
+		return true
+	}
+	return false
 }
 
 // previewPlanClient projects earlier steps during whole-batch preflight. It
@@ -474,6 +506,15 @@ func (e PlanExecutor) preflightGeneral(ctx context.Context, incident IncidentReq
 	for _, original := range plan.Actions {
 		a := generalAction(original)
 		switch a.(type) {
+		case program.RunScript:
+			if ready, ok := e.Client.(interface{ ScriptReady() error }); ok {
+				if err := ready.ScriptReady(); err != nil {
+					return nil, err
+				}
+			}
+			if _, ok := e.Client.(PlanScriptClient); !ok {
+				return nil, fmt.Errorf("script Job transport unavailable")
+			}
 		case program.ApplyObject, program.DeleteObject, program.RunJob:
 			if _, ok := e.Client.(PlanLifecycleClient); !ok {
 				return nil, fmt.Errorf("object lifecycle transport unavailable")

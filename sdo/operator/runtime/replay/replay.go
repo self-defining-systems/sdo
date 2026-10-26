@@ -40,6 +40,7 @@ type DetectorResult struct {
 	Bindings []program.ObjectBindings `json:"bindings,omitempty"`
 }
 type Result struct {
+	ReplayBasis            string                      `json:"replay_basis,omitempty"`
 	ProgramID              string                      `json:"program_id"`
 	CaseID                 string                      `json:"case_id"`
 	Status                 string                      `json:"status"`
@@ -144,6 +145,9 @@ func Check(ctx context.Context, p program.Diagnoser, m program.Mitigator, detect
 	if err = plan.Validate(); err != nil {
 		return fail(err)
 	}
+	if containsScript(plan) {
+		return observedScriptTransition(ctx, p, c, plan, source, r)
+	}
 	client, err := newCluster(c.Corpus.Open)
 	if err != nil {
 		return fail(err)
@@ -241,7 +245,7 @@ func bindingsFor(spec program.ProgramSpec, b program.Bindings) program.Bindings 
 	}
 	return out
 }
-func detect(ctx context.Context, ds []sdk.Detector, s sdktest.Snapshot) []DetectorResult {
+func detect(ctx context.Context, ds []sdk.Detector, s sdk.DetectionContext) []DetectorResult {
 	out := []DetectorResult{}
 	for _, d := range ds {
 		r := DetectorResult{ID: d.Spec().ID, Class: d.Spec().Class}
@@ -302,7 +306,7 @@ func (v *postVerifier) Verify(ctx context.Context) (bool, error) {
 	view.catalog = v.cluster
 	view.external = v.cluster
 	v.result.Post = program.RunDiagnose(ctx, v.p, view, v.bindings, 5*time.Second)
-	v.result.Detectors["post"] = detect(ctx, v.detectors, s)
+	v.result.Detectors["post"] = detect(ctx, v.detectors, view)
 	clear := v.result.Post.Result == program.NoMatch
 	for _, d := range v.result.Detectors["post"] {
 		clear = clear && d.Active == 0 && d.Error == ""

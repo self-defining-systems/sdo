@@ -25,15 +25,8 @@ func stageExistingNamespace(ctx context.Context, client kubernetes.Interface, la
 	if err != nil || record != nil {
 		return err
 	}
-	var paths []string
-	for i, arg := range launch.Install.ExtraControllerArgs {
-		if strings.HasPrefix(arg, "--deployed-manifest-path=") {
-			paths = append(paths, strings.TrimPrefix(arg, "--deployed-manifest-path="))
-		}
-		if arg == "--deployed-manifest-path" && i+1 < len(launch.Install.ExtraControllerArgs) {
-			paths = append(paths, launch.Install.ExtraControllerArgs[i+1])
-		}
-	}
+	paths := existingSourcePaths(launch)
+
 	source := rendered.Source{Repository: launch.Repository, ManifestPaths: paths}
 	objects, err := source.RawManifests(ctx, commit, launch.Install.Namespace)
 	if err != nil {
@@ -49,8 +42,37 @@ func stageExistingNamespace(ctx context.Context, client kubernetes.Interface, la
 	return onboarding.Stage(ctx, client, control, launch.Install.Namespace, commit, objects, time.Now())
 }
 
+func existingSourcePaths(launch InstallExistingConfig) []string {
+	var paths []string
+	for i, arg := range launch.Install.ExtraControllerArgs {
+		if strings.HasPrefix(arg, "--deployed-manifest-path=") {
+			paths = append(paths, strings.TrimPrefix(arg, "--deployed-manifest-path="))
+		}
+		if arg == "--deployed-manifest-path" && i+1 < len(launch.Install.ExtraControllerArgs) {
+			paths = append(paths, launch.Install.ExtraControllerArgs[i+1])
+		}
+	}
+	return paths
+}
+
 func existingNamespaceOnboardingHook(client kubernetes.Interface, launch InstallExistingConfig, commit string) func(context.Context, install.Config) error {
-	return func(ctx context.Context, _ install.Config) error {
+	return func(ctx context.Context, config install.Config) error {
+		// Refresh source authority on every installation, even when onboarding
+		// evidence already exists. Never retain names removed from source.
+		if paths := existingSourcePaths(launch); len(paths) > 0 {
+			source := rendered.Source{Repository: launch.Repository, ManifestPaths: paths}
+			objects, err := source.RawManifests(ctx, commit, config.Namespace)
+			if err != nil {
+				return fmt.Errorf("accepted source grants: %w", err)
+			}
+			control := config.ControlNamespace
+			if control == "" {
+				control = config.Namespace
+			}
+			if err := install.ReconcileAcceptedSourceGrants(ctx, client, config.Namespace, control, objects); err != nil {
+				return fmt.Errorf("accepted source grants: %w", err)
+			}
+		}
 		if err := stageExistingNamespace(ctx, client, launch, commit); err != nil {
 			// Missing install evidence grants no acknowledgement; monitoring proceeds.
 			fmt.Fprintln(os.Stderr, "namespace onboarding not staged:", err)

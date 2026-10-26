@@ -82,6 +82,8 @@ func encodePersistedActions(actions []program.Action) ([]persistedAction, error)
 			kind = "ensure_exec"
 		case program.EnsureHTTP, *program.EnsureHTTP:
 			kind = "ensure_http"
+		case program.RunScript, *program.RunScript:
+			kind = "run_script"
 		case program.RunJob, *program.RunJob:
 			kind = "run_job"
 
@@ -142,6 +144,8 @@ func decodePersistedActions(encoded []persistedAction) ([]program.Action, error)
 			action = &program.EnsureExec{}
 		case "ensure_http":
 			action = &program.EnsureHTTP{}
+		case "run_script":
+			action = &program.RunScript{}
 		case "run_job":
 			action = &program.RunJob{}
 
@@ -188,6 +192,8 @@ func decodePersistedActions(encoded []persistedAction) ([]program.Action, error)
 		case *program.EnsureExec:
 			decoded = append(decoded, *value)
 		case *program.EnsureHTTP:
+			decoded = append(decoded, *value)
+		case *program.RunScript:
 			decoded = append(decoded, *value)
 		case *program.RunJob:
 			decoded = append(decoded, *value)

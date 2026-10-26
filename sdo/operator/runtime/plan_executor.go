@@ -77,6 +77,7 @@ type PlanApplicationResult struct {
 	VerificationCompleted    bool
 	RolloutPending           *contracts.RolloutPending
 	FinalEquivalenceVerified *bool
+	FinalVerificationBasis   string
 	ActionsApplied           []program.Action
 	Patches                  []PlanPatch
 	Duration                 time.Duration
@@ -86,6 +87,9 @@ type PlanApplicationResult struct {
 }
 
 type PlanExecutor struct {
+	// ApplicationID is durable across restart and selects one script Job.
+	ApplicationID     string
+	scriptActionIndex int
 	// PollRollouts returns pending after one observation instead of waiting.
 	PollRollouts bool
 	DeleteObject func(context.Context, sdk.ObjectRef, types.UID, string) error
@@ -209,7 +213,7 @@ func (e PlanExecutor) applyOnce(ctx context.Context, incident IncidentRequest, p
 		if err := validatePlanRef(ref); err != nil {
 			return result, err
 		}
-		if incident.Namespace != "" && ref.Namespace != incident.Namespace && !genericIncidentRef(incident, action, ref) {
+		if incident.Namespace != "" && ref.Namespace != incident.Namespace && !genericIncidentRef(incident, action, ref) && !e.acceptedClusterReconcile(ctx, incident, action, ref) {
 			return result, fmt.Errorf("plan object %s/%s is outside incident namespace %q", ref.Namespace, ref.Name, incident.Namespace)
 		}
 		if _, exists := current[ref]; exists {
@@ -438,8 +442,8 @@ func (e PlanExecutor) restoreActionOnce(ctx context.Context, patch PlanPatch) er
 	}
 	restored := current.DeepCopy()
 	for _, field := range planPatchFields(patch) {
-		before, bok := patch.Before.Object[field]
-		after, aok := patch.After.Object[field]
+		before, bok := planConfigurationField(patch.Before, field)
+		after, aok := planConfigurationField(patch.After, field)
 		live, lok := current.Object[field]
 		value, exists, err := restorePlanFields(before, bok, after, aok, live, lok)
 		if err != nil {
@@ -479,7 +483,9 @@ func (e PlanExecutor) restoreActionOnce(ctx context.Context, patch PlanPatch) er
 			return fmt.Errorf("compensation observation unknown: UID changed")
 		}
 		for _, field := range planPatchFields(patch) {
-			if !planValuesEqual(observed.Object[field], restored.Object[field]) {
+			observedValue, _ := planConfigurationField(observed, field)
+			restoredValue, _ := planConfigurationField(restored, field)
+			if !planValuesEqual(observedValue, restoredValue) {
 				return fmt.Errorf("compensation observation unknown: restored fields differ")
 			}
 		}
@@ -620,7 +626,7 @@ func (e PlanExecutor) prepareAction(ctx context.Context, incident IncidentReques
 		if e.Source == nil || incident.SourceCommit == "" {
 			return nil, errors.New("accepted source is required for reconcile")
 		}
-		source, err := e.Source.AcceptedManifest(ctx, incident.SourceCommit, a.Ref)
+		source, err := acceptedIncidentManifest(ctx, e.Source, incident.SourceCommit, incident.Namespace, a.Ref)
 		if err != nil {
 			return nil, err
 		}
@@ -724,12 +730,47 @@ func sourceFields(current, source *unstructured.Unstructured, ref sdk.ObjectRef)
 	if source == nil || !samePlanRef(source, ref) {
 		return nil, fmt.Errorf("source object does not match %s/%s", ref.Kind, ref.Name)
 	}
-	for _, field := range []string{"spec", "data", "binaryData"} {
-		if value, ok := source.Object[field]; ok {
-			current.Object[field] = runtime.DeepCopyJSONValue(value)
+	// Source configuration is open-ended (RBAC, admission, custom resources).
+	// Identity/status stay API-owned; source metadata keys merge so an
+	// independent controller's completion annotations survive reconciliation.
+	for field, value := range source.Object {
+		switch field {
+		case "apiVersion", "kind", "status":
+			continue
+		case "metadata":
+			metadata, _ := value.(map[string]any)
+			for key, declared := range metadata {
+				if serverOwnedPlanMetadata(key) {
+					continue
+				}
+				currentMetadata, _ := current.Object["metadata"].(map[string]any)
+				if currentMetadata == nil {
+					currentMetadata = map[string]any{}
+					current.Object["metadata"] = currentMetadata
+				}
+				currentMetadata[key] = restoreDeclaredValue(currentMetadata[key], declared)
+			}
+		default:
+			current.Object[field] = restoreDeclaredValue(current.Object[field], value)
 		}
 	}
 	return current, nil
+}
+
+// Maps restore their declared keys; lists/scalars restore their entire declared
+// value. Unspecified server defaults and other controllers' map entries survive.
+func restoreDeclaredValue(current, declared any) any {
+	if source, ok := declared.(map[string]any); ok {
+		result, _ := current.(map[string]any)
+		if result == nil {
+			result = map[string]any{}
+		}
+		for key, value := range source {
+			result[key] = restoreDeclaredValue(result[key], value)
+		}
+		return result
+	}
+	return runtime.DeepCopyJSONValue(declared)
 }
 
 func planActionRef(action program.Action) (sdk.ObjectRef, error) {

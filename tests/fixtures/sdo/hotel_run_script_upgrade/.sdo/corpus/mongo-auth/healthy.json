@@ -1,0 +1,146 @@
+{
+  "namespace": "demo",
+  "pods": [
+    {
+      "metadata": {
+        "namespace": "demo",
+        "name": "mongodb-geo"
+      },
+      "spec": {
+        "containers": [
+          {
+            "name": "mongo",
+            "image": "mongo:synthetic",
+            "volumeMounts": [
+              {
+                "name": "mongo-init",
+                "mountPath": "/docker-entrypoint-initdb.d",
+                "readOnly": true
+              }
+            ]
+          }
+        ],
+        "volumes": [
+          {
+            "name": "mongo-init",
+            "configMap": {
+              "name": "mongo-geo-script",
+              "items": [
+                {
+                  "key": "k8s-geo-mongo.sh",
+                  "path": "init.sh"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "configMaps": [
+    {
+      "metadata": {
+        "namespace": "demo",
+        "name": "mongo-geo-script",
+        "annotations": {
+          "example.test/database": "geo-db",
+          "example.test/user": "admin",
+          "example.test/auth-database": "admin",
+          "example.test/root-user-assignment": "ROOT_USER",
+          "example.test/root-password-assignment": "ROOT_PWD"
+        }
+      },
+      "data": {
+        "k8s-geo-mongo.sh": ""
+      }
+    }
+  ],
+  "deployments": [
+    {
+      "metadata": {
+        "namespace": "demo",
+        "name": "geo",
+        "uid": "geo-deployment",
+        "resourceVersion": "1"
+      },
+      "spec": {
+        "replicas": 1,
+        "selector": {
+          "matchLabels": {
+            "app": "geo"
+          }
+        },
+        "template": {
+          "metadata": {
+            "labels": {
+              "app": "geo"
+            }
+          },
+          "spec": {
+            "containers": [
+              {
+                "name": "geo",
+                "image": "geo:synthetic"
+              }
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "readings": [
+    {
+      "method": "DatabaseUsers",
+      "arguments": [
+        {
+          "engine": "mongodb",
+          "pod": {
+            "api_version": "v1",
+            "kind": "Pod",
+            "namespace": "demo",
+            "name": "mongodb-geo"
+          },
+          "container": "mongo",
+          "database": "geo-db",
+          "auth": {
+            "database": "admin",
+            "username": {
+              "config_map": {
+                "name": "mongo-geo-script",
+                "key": "k8s-geo-mongo.sh",
+                "assignment": "ROOT_USER"
+              }
+            },
+            "password": {
+              "config_map": {
+                "name": "mongo-geo-script",
+                "key": "k8s-geo-mongo.sh",
+                "assignment": "ROOT_PWD"
+              }
+            }
+          }
+        }
+      ],
+      "result": [
+        {
+          "name": "root",
+          "roles": [
+            {
+              "database": "admin",
+              "name": "root"
+            }
+          ]
+        },
+        {
+          "name": "admin",
+          "roles": [
+            {
+              "database": "geo-db",
+              "name": "readWrite"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

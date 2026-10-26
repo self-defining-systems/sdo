@@ -20,16 +20,14 @@ import (
 	"sdo.dev/operator/toolchain"
 )
 
-const sdkSchemaIdentity = "sdo.dev/v1alpha1+sdk.4b06effd1dc677ff"
-
 type repeatable []string
 
 func (r *repeatable) String() string         { return strings.Join(*r, ",") }
 func (r *repeatable) Set(value string) error { *r = append(*r, value); return nil }
 
 // ParseControllerLaunch rejects native/legacy split-brain before any build or
-// Kubernetes effect. It is pure so installer Job arguments can be contract
-// tested against the same parser shipped in the controller image.
+// Kubernetes effect. It binds installer arguments to the installed source
+// identity used by the validator image.
 func ParseControllerLaunch(args []string) (builder.RunConfig, bool, error) {
 	if len(args) == 0 || args[0] != "controller" {
 		return builder.RunConfig{}, false, errors.New("expected controller subcommand")
@@ -43,6 +41,7 @@ func ParseControllerLaunch(args []string) (builder.RunConfig, bool, error) {
 	application := flags.String("application", "", "application identity")
 	responderImage := flags.String("responder-image", "", "registered responder image")
 	toolchainImage := flags.String("toolchain-image", "", "trusted controller image supplying Go to workers and validators (required)")
+	scriptImage := flags.String("script-image", "", "fixed tool image for app-local RunScript Jobs")
 	proberImage := flags.String("prober-image", "", "traffic prober image")
 	repositoryPVC := flags.String("repository-pvc", "", "repository PVC")
 	repositoryMount := flags.String("repository-mount-path", "", "repository PVC mount")
@@ -52,7 +51,7 @@ func ParseControllerLaunch(args []string) (builder.RunConfig, bool, error) {
 	validatorImage := flags.String("validator-image", "", "isolated validator image")
 	model := flags.String("model", "", "responder model")
 	backend := flags.String("responder-backend", "codex", "responder backend")
-	schemaIdentity := flags.String("schema-identity", sdkSchemaIdentity, "accepted SDK schema identity")
+	schemaIdentity := flags.String("schema-identity", "", "expected SDK schema identity (defaults to installed sources)")
 	brokerMode := flags.String("broker-mode", "", "broker mode")
 	workerMountMode := flags.String("worker-mount-mode", "", "worker mount mode")
 	registrations := flags.String("agent-registration-directory", "", "agent registration directory")
@@ -95,12 +94,20 @@ func ParseControllerLaunch(args []string) (builder.RunConfig, bool, error) {
 	}
 
 	if *app == "" || !filepath.IsAbs(*app) || *operatorRoot == "" || *namespace == "" || *responderImage == "" || *repositoryPVC == "" || *repositoryMount == "" ||
-		*credentialsSecret == "" || *worktreeRoot == "" || *validatorImage == "" || *model == "" || *backend == "" || *schemaIdentity == "" || *responseTimeout <= 0 || *verificationTimeout <= 0 {
+		*credentialsSecret == "" || *worktreeRoot == "" || *validatorImage == "" || *model == "" || *backend == "" || *responseTimeout <= 0 || *verificationTimeout <= 0 {
 		return builder.RunConfig{}, false, errors.New("native launch requires application, namespace, images, repository, credentials, validator, schema, and responder identity")
 	}
 	if !filepath.IsAbs(*repositoryMount) || !filepath.IsAbs(*worktreeRoot) {
 		return builder.RunConfig{}, false, errors.New("repository mount and proposal root must be absolute")
 	}
+	actualSchema, err := builder.SchemaIdentity(*operatorRoot)
+	if err != nil {
+		return builder.RunConfig{}, false, fmt.Errorf("cannot bind controller schema identity: %w", err)
+	}
+	if *schemaIdentity != "" && *schemaIdentity != actualSchema {
+		return builder.RunConfig{}, false, fmt.Errorf("controller schema identity mismatch: installed %q, expected %q", actualSchema, *schemaIdentity)
+	}
+	*schemaIdentity = actualSchema
 	if *application == "" {
 		*application = filepath.Base(*app)
 	}
@@ -116,7 +123,7 @@ func ParseControllerLaunch(args []string) (builder.RunConfig, bool, error) {
 		ResponseTimeout: durationpb.New(*responseTimeout), VerificationTimeout: durationpb.New(*verificationTimeout),
 		RepairPolicy: *repairPolicy, MaxResponseLoops: int32(*maxResponseLoops), DiagnosisDeadline: durationpb.New(*diagnosisDeadline), LeaseName: "sdo-controller", RestartAfterClosure: *supervise,
 		ExitAfterClosure: *exitAfterClosure,
-		ToolchainImage:   *toolchainImage, ProberImage: *proberImage, AgentRegistrationDirectory: *registrations, ResponderAgentId: *responderID,
+		ScriptImage:      *scriptImage, ToolchainImage: *toolchainImage, ProberImage: *proberImage, AgentRegistrationDirectory: *registrations, ResponderAgentId: *responderID,
 		BrokerMode: *brokerMode, WorkerMountMode: *workerMountMode, ValidatorImage: *validatorImage,
 		SchemaIdentity: *schemaIdentity, ResponderBackend: *backend, ResponderModel: *model, ReflectionSession: *reflectionSession, ReflectionGuidance: *reflectionGuidance, ForceReflection: *forceReflection, HealthyBaseline: *healthyBaseline, MetricsUrl: *metricsURL,
 	}

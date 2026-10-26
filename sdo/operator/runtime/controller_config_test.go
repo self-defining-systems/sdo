@@ -39,6 +39,7 @@ func fullControllerConfig() *contractsv1alpha1.ControllerConfig {
 		Dispatcher:                 "/usr/local/bin/responder",
 		DispatcherMode:             "job",
 		ResponderImage:             "registry/responder:latest",
+		ScriptImage:                "registry/script-tools:slim",
 		AgentRegistrationDirectory: "/etc/sdo/agents",
 		ResponderAgentId:           "custom-responder",
 		RepositoryPvc:              "app-repo",
@@ -178,6 +179,7 @@ func TestControllerConfigExpandsValues(t *testing.T) {
 		"--metrics-url":        "http://prometheus:9090",
 		"--toolchain-image":    "registry/controller:compiler",
 		"--metrics-token-file": "/var/run/secrets/metrics/token",
+		"--script-image":       "registry/script-tools:slim",
 	}
 	for flag, want := range wantValue {
 		if got := pairs[flag]; got != want {

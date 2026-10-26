@@ -19,6 +19,7 @@ func TestGeneralActionContractAndPersistenceRoundTrip(t *testing.T) {
 	object := map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "flags", "namespace": "app"}, "data": map[string]any{"large": large}}
 	jobref := sdk.ObjectRef{APIVersion: "batch/v1", Kind: "Job", Namespace: "app", Name: "once"}
 	actions := []program.Action{
+		program.RunScript{Script: `kubectl exec "$POD" -- bash -s`, Env: map[string]program.Value{"POD": program.FromObserved(pod, "metadata.name")}, Timeout: time.Minute},
 		program.PatchObject{Ref: ref, Type: "merge", Patch: json.RawMessage(`{"data":{"x":"y"}}`)},
 		program.PatchObject{Ref: ref, Edits: []program.ListEdit{{Path: "/spec/items", Match: map[string]any{"name": "one"}, Op: "replace", Value: map[string]any{"large": large}}}},
 		program.ApplyObject{Ref: ref, Object: object},

@@ -12,6 +12,7 @@ import (
 )
 
 type PlanActionReport struct {
+	Script           *ScriptExecutionResult    `json:"script,omitempty"`
 	FailureReason    string                    `json:"failure_reason,omitempty"`
 	ActionIndex      int                       `json:"action_index"`
 	Status           string                    `json:"status"`
@@ -52,14 +53,14 @@ func (e PlanExecutor) valueInputs(ctx context.Context, incident IncidentRequest)
 		if err := program.FromSource(ref, "metadata.name").Validate(); err != nil {
 			return nil, err
 		}
-		if incident.Namespace != "" && ref.Namespace != incident.Namespace {
+		if incident.Namespace != "" && ref.Namespace != incident.Namespace && ref.Namespace != "" {
 			return nil, fmt.Errorf("value source is outside incident namespace")
 		}
 		if e.Source == nil {
 			return nil, fmt.Errorf("accepted source is required")
 		}
 
-		object, err := e.Source.AcceptedManifest(ctx, incident.SourceCommit, ref)
+		object, err := acceptedIncidentManifest(ctx, e.Source, incident.SourceCommit, incident.Namespace, ref)
 		if err != nil || object == nil || !samePlanRef(object, ref) {
 			return nil, fmt.Errorf("accepted value object unavailable")
 		}
@@ -160,6 +161,16 @@ func actionUsesSourceValue(action program.Action) bool {
 
 func planActionValues(action program.Action) []program.Value {
 	switch a := action.(type) {
+	case program.RunScript:
+		values := make([]program.Value, 0, len(a.Env))
+		for _, value := range a.Env {
+			values = append(values, value)
+		}
+		return values
+	case *program.RunScript:
+		if a != nil {
+			return planActionValues(*a)
+		}
 	case program.SetField:
 		return []program.Value{a.Value}
 	case program.ScaleWorkload:

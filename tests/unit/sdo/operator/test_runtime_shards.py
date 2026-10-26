@@ -26,6 +26,7 @@ def test_partitions_include_tests_fuzz_seeds_and_examples() -> None:
         "TestHermeticFastloopRealGoGate",
         "TestReflectionDirectFilesCLIAndBroker",
         "TestReflectionLearnedProgramCLIAndBroker",
+        "TestReflectionMongoAuthUpgradesReadmeThroughCLIAndBroker",
         "TestRegisteredReflectionWorker",
         "TestRenderedLockImageInputScope",
         "TestSimRenderedLockSchedule",
@@ -65,8 +66,9 @@ def test_every_matrix_shard_is_aggregated_and_script_changes_trigger_go() -> Non
     jobs = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())["jobs"]
     matrix = jobs["controller"]["strategy"]["matrix"]["include"]
     runtime = [row for row in matrix if row["module"].startswith("runtime")]
-    assert {row["shard"] for row in runtime} == shards.PATTERNS.keys()
-    assert len(runtime) == len(shards.PATTERNS)
+    partitions = [part for row in runtime for part in row["shard"].split(",")]
+    assert set(partitions) == shards.PATTERNS.keys()
+    assert len(partitions) == len(shards.PATTERNS)
     assert "controller" in jobs["required-pr-ci"]["needs"]
     filters = yaml.safe_load(jobs["changes"]["steps"][1]["with"]["filters"])
     assert "scripts/test_runtime_shard.py" in filters["go"]
@@ -80,6 +82,8 @@ def test_schedule_shard_runs_all_seeds_with_a_five_minute_race_budget(monkeypatc
         "TestSimSchedule",
         "TestReflectionDirectFilesCLIAndBroker",
         "TestRejectedRepeatCorpusFallsBackToReflectionWorker",
+        "TestReflectionMongoAuthUpgradesReadmeThroughCLIAndBroker",
+        "TestReflectionLearnedProgramCLIAndBroker",
         "TestRestart",
         "TestState",
         "FuzzSimIncidentSchedule",
@@ -100,3 +104,19 @@ def test_schedule_shard_runs_all_seeds_with_a_five_minute_race_budget(monkeypatc
     assert "-timeout=5m" in command
     selection = command[command.index("-run") + 1]
     assert {name for name in names if re.fullmatch(selection, name)} == {"TestSimSchedule", "FuzzSimIncidentSchedule"}
+
+
+def test_compiling_reflection_contracts_have_independent_budgets() -> None:
+    mongo = [
+        "TestReflectionMongoAuthUpgradesReadmeThroughCLIAndBroker",
+        "TestReflectionHotelMongoAuthUpgradesReadmeThroughCLIAndBroker",
+    ]
+    programs = [
+        "TestReflectionHotelRunScriptUpgradesReadmeThroughCLIAndBroker",
+        "TestReflectionLearnedProgramCLIAndBroker",
+        "TestReflectionLearnsDeploymentRepairWithUnwrittenServiceSymptoms",
+    ]
+    assigned = shards.partition([*mongo, *programs, "TestAdmission"], shards.PATTERNS)
+    assert assigned["reflection-mongo"] == mongo
+    assert assigned["reflection-programs"] == programs
+    assert assigned["contracts"] == ["TestAdmission"]

@@ -100,6 +100,27 @@ func (b *catalogOutput) Write(p []byte) (int, error) {
 	return b.Buffer.Write(p)
 }
 
+// DatabaseTargetError contains only target identity and observed container names.
+// It is safe to return across the credential-error sanitization boundary.
+type DatabaseTargetError struct {
+	Container  string
+	Containers []string
+}
+
+func (e *DatabaseTargetError) Error() string {
+	return fmt.Sprintf("container %s not found; containers: %v", e.Container, e.Containers)
+}
+
+func validateDatabaseContainer(object *unstructured.Unstructured, container string) error {
+	names, _, _ := unstructuredContainers(object.Object)
+	for _, name := range names {
+		if name == container {
+			return nil
+		}
+	}
+	return &DatabaseTargetError{Container: container, Containers: names}
+}
+
 func (c TypedPlanClient) mongo(ctx context.Context, t program.DatabaseTarget) ([]byte, error) {
 	if err := t.Validate(); err != nil {
 		return nil, err
@@ -111,13 +132,8 @@ func (c TypedPlanClient) mongo(ctx context.Context, t program.DatabaseTarget) ([
 	if err != nil || object == nil || object.GetUID() == "" {
 		return nil, fmt.Errorf("database Pod unavailable")
 	}
-	containers, _, _ := unstructuredContainers(object.Object)
-	found := false
-	for _, name := range containers {
-		found = found || name == t.Container
-	}
-	if !found {
-		return nil, fmt.Errorf("database container unavailable")
+	if err := validateDatabaseContainer(object, t.Container); err != nil {
+		return nil, err
 	}
 	shell := t.Shell
 	if shell == "" {
@@ -178,13 +194,8 @@ func (c TypedPlanClient) EnsureDatabaseUser(ctx context.Context, a program.Ensur
 	if err != nil || before == nil || before.GetUID() == "" {
 		return fmt.Errorf("database Pod unavailable")
 	}
-	names, _, _ := unstructuredContainers(before.Object)
-	found := false
-	for _, name := range names {
-		found = found || name == t.Container
-	}
-	if !found {
-		return fmt.Errorf("database container unavailable")
+	if err := validateDatabaseContainer(before, t.Container); err != nil {
+		return err
 	}
 	shell := t.Shell
 	if shell == "" {

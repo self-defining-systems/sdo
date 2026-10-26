@@ -32,6 +32,10 @@ func (l *ResponderLoop) listMenu(ctx context.Context, request ToolRequest, respo
 		return
 	}
 	l.openDirectMenuSession(response)
+	response.SelectionSchema = menuMessageSchema((&contracts.MitigationSelection{}).ProtoReflect().Descriptor())
+	response.SelectionSetSchema = menuMessageSchema((&contracts.MitigationSelectionSet{}).ProtoReflect().Descriptor())
+	optionSchema := response.SelectionSetSchema.Properties["options"].Items
+	optionSchema.Properties["parameters"].AdditionalProperties = &MenuSchema{AnyOf: []*MenuSchema{{Type: "string"}, {Type: "number"}, {Type: "boolean"}, {Type: "object", AdditionalProperties: true}, {Type: "array", Items: &MenuSchema{}}}, Description: "Shapes are published per option in parameters[].schema."}
 	entries := rawMenuActions()
 	if capabilities, ok := l.Executor.Client.(interface{ unavailableMenuActions() map[string]bool }); ok {
 		for action, unavailable := range capabilities.unavailableMenuActions() {
@@ -213,6 +217,7 @@ func (l *ResponderLoop) executeMenuOption(ctx context.Context, selection *contra
 			}
 		}
 		executor := l.Executor
+		executor.ApplicationID = applicationID
 		executor.PollRollouts = true
 		if entry.removal != nil {
 			targetFingerprints = []string{entry.removal.FindingFingerprint}
@@ -277,7 +282,13 @@ func (l *ResponderLoop) executeMenuOption(ctx context.Context, selection *contra
 			}
 			rr.Actions = append(rr.Actions, receipt)
 			if receipt.State == contracts.MitigationActionReceipt_STATE_APPLIED {
-				l.menuRepairs = append(l.menuRepairs, RepairActionReceipt{ActionID: receipt.ActionId, Kind: "mitigation-menu", Target: patch.Ref.Kind + "/" + patch.Ref.Name, Resources: []sdk.ObjectRef{patch.Ref}, Summary: "responder executed SDK plan action", Details: fmt.Sprintf("attempt %s round %d action %d via ordinary PlanExecutor", attempt, round, index+1), Success: !result.RolledBack, StartedAt: started, CompletedAt: completed})
+				resources := []sdk.ObjectRef{patch.Ref}
+				if index < len(result.ActionReports) {
+					if scriptRefs := scriptRepairResources(result.ActionReports[index]); len(scriptRefs) > 0 {
+						resources = scriptRefs
+					}
+				}
+				l.menuRepairs = append(l.menuRepairs, RepairActionReceipt{ActionID: receipt.ActionId, Kind: "mitigation-menu", Target: patch.Ref.Kind + "/" + patch.Ref.Name, Resources: resources, Summary: "responder executed SDK plan action", Details: fmt.Sprintf("attempt %s round %d action %d via ordinary PlanExecutor", attempt, round, index+1), Success: !result.RolledBack, StartedAt: started, CompletedAt: completed})
 			}
 		}
 		l.observeMitigationHealth(result, response)
@@ -307,6 +318,9 @@ func (l *ResponderLoop) executeMenuOption(ctx context.Context, selection *contra
 			application.Error = applyErr.Error()
 		}
 		l.applicationsLog = append(l.applicationsLog, application)
+		if hasAppliedScript(plan.Actions) && entry.action == nil {
+			l.recordScriptInvocation(application, entry.programID, bindings, targetVerdict)
+		}
 		if result.Applied {
 			l.applications[applicationID] = result
 		}

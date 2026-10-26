@@ -6,7 +6,7 @@ import (
 )
 
 func TestInstallerNativeArgumentsProduceAtomicTypedBrokerLaunch(t *testing.T) {
-	args := []string{"controller", "--toolchain-image", "controller:compiler", "--app", "/workspace/application", "--namespace", "demo", "--application", "demo", "--responder-image", "responder:test", "--prober-image", "controller:test", "--repository-pvc", "repository", "--repository-mount-path", "/workspace", "--credentials-secret", "credentials", "--worktree-root", "/workspace/worktrees", "--response-timeout", "60s", "--verification-timeout", "120s", "--repair-policy", "recorded-actions", "--validator-image", "validator:test", "--model", "model", "--reflection-session", "resume", "--reflection-guidance", "generalize-spec", "--force-reflection", "--healthy-baseline", "--max-response-loops", "3", "--deployed-manifest-path", "kubernetes", "--supervise", "--broker-mode=native", "--worker-mount-mode=proposal-only"}
+	args := []string{"controller", "--operator-root", "..", "--toolchain-image", "controller:compiler", "--app", "/workspace/application", "--namespace", "demo", "--application", "demo", "--responder-image", "responder:test", "--prober-image", "controller:test", "--repository-pvc", "repository", "--repository-mount-path", "/workspace", "--credentials-secret", "credentials", "--worktree-root", "/workspace/worktrees", "--response-timeout", "60s", "--verification-timeout", "120s", "--repair-policy", "recorded-actions", "--validator-image", "validator:test", "--model", "model", "--reflection-session", "resume", "--reflection-guidance", "generalize-spec", "--force-reflection", "--healthy-baseline", "--max-response-loops", "3", "--deployed-manifest-path", "kubernetes", "--supervise", "--broker-mode=native", "--worker-mount-mode=proposal-only"}
 	config, supervise, err := ParseControllerLaunch(args)
 	if err != nil {
 		t.Fatal(err)
@@ -32,7 +32,7 @@ func TestInstallerNativeArgumentsProduceAtomicTypedBrokerLaunch(t *testing.T) {
 }
 
 func TestBoundedNativeControllerLaunch(t *testing.T) {
-	args := []string{"controller", "--toolchain-image", "controller:compiler", "--app", "/workspace/application", "--namespace", "demo", "--responder-image", "responder:test", "--repository-pvc", "repository", "--repository-mount-path", "/workspace", "--credentials-secret", "credentials", "--worktree-root", "/workspace/worktrees", "--validator-image", "validator:test", "--model", "model", "--broker-mode=native", "--worker-mount-mode=proposal-only", "--duration", "30s", "--exit-after-closure", "--repair-policy", "recorded-actions"}
+	args := []string{"controller", "--operator-root", "..", "--toolchain-image", "controller:compiler", "--app", "/workspace/application", "--namespace", "demo", "--responder-image", "responder:test", "--repository-pvc", "repository", "--repository-mount-path", "/workspace", "--credentials-secret", "credentials", "--worktree-root", "/workspace/worktrees", "--validator-image", "validator:test", "--model", "model", "--broker-mode=native", "--worker-mount-mode=proposal-only", "--duration", "30s", "--exit-after-closure", "--repair-policy", "recorded-actions"}
 	config, supervise, err := ParseControllerLaunch(args)
 	if err == nil && config.Controller.GetReflectionSession() != "resume" {
 		t.Fatalf("default reflection mode: %q", config.Controller.GetReflectionSession())
@@ -52,7 +52,7 @@ func TestBoundedNativeControllerLaunch(t *testing.T) {
 }
 
 func TestControllerLaunchRequiresDedicatedToolchainImage(t *testing.T) {
-	args := []string{"controller", "--app", "/workspace/application", "--namespace", "demo", "--responder-image", "responder:slim", "--prober-image", "traffic-only:test", "--repository-pvc", "repository", "--repository-mount-path", "/workspace", "--credentials-secret", "credentials", "--worktree-root", "/workspace/worktrees", "--validator-image", "validator:slim", "--model", "model", "--broker-mode=native", "--worker-mount-mode=proposal-only"}
+	args := []string{"controller", "--operator-root", "..", "--app", "/workspace/application", "--namespace", "demo", "--responder-image", "responder:slim", "--prober-image", "traffic-only:test", "--repository-pvc", "repository", "--repository-mount-path", "/workspace", "--credentials-secret", "credentials", "--worktree-root", "/workspace/worktrees", "--validator-image", "validator:slim", "--model", "model", "--broker-mode=native", "--worker-mount-mode=proposal-only"}
 	if _, _, err := ParseControllerLaunch(args); err == nil || !strings.Contains(err.Error(), "--toolchain-image") {
 		t.Fatalf("missing toolchain must fail before building or launching: %v", err)
 	}
@@ -68,12 +68,25 @@ func TestControllerLaunchRequiresDedicatedToolchainImage(t *testing.T) {
 }
 
 func TestMemoryMigrationRejectsMissingCompilerBeforeCredentials(t *testing.T) {
-	config, _, err := ParseControllerLaunch([]string{"controller", "--toolchain-image", "controller:test", "--app", "/workspace/app", "--namespace", "app", "--responder-image", "responder:slim", "--repository-pvc", "repo", "--repository-mount-path", "/workspace", "--credentials-secret", "credentials", "--worktree-root", "/workspace/worktrees", "--validator-image", "validator:slim", "--model", "model", "--broker-mode=native", "--worker-mount-mode=proposal-only"})
+	config, _, err := ParseControllerLaunch([]string{"controller", "--operator-root", "..", "--toolchain-image", "controller:test", "--app", "/workspace/app", "--namespace", "app", "--responder-image", "responder:slim", "--repository-pvc", "repo", "--repository-mount-path", "/workspace", "--credentials-secret", "credentials", "--worktree-root", "/workspace/worktrees", "--validator-image", "validator:slim", "--model", "model", "--broker-mode=native", "--worker-mount-mode=proposal-only"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	config.Controller.ToolchainImage = ""
 	if _, err := openMigrationBroker(config.Controller); err == nil || !strings.Contains(err.Error(), "--toolchain-image") {
 		t.Fatalf("missing compiler reached migration: %v", err)
+	}
+}
+
+func TestScriptImageSurvivesTypedControllerLaunch(t *testing.T) {
+	args := append(schemaControllerArgs(".."), "--script-image", "script-tools:slim")
+	config, _, err := ParseControllerLaunch(args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	message := config.Controller.ProtoReflect()
+	field := message.Descriptor().Fields().ByName("script_image")
+	if field == nil || message.Get(field).String() != "script-tools:slim" {
+		t.Fatal("script image lost at typed controller boundary")
 	}
 }

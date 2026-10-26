@@ -158,7 +158,7 @@ Select only files actually supplied by the controller. Supported phase values do
 
 ## authoring_reference
 
-Read the references shipped with this worker, without guessed installation paths.
+Read shipped authoring references. SDK includes detector source-diff access before playbook selection.
 
 ## create_corpus
 

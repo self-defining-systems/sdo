@@ -31,7 +31,7 @@ func (workspace *Workspace) MitigationReplayResults() ([]sdktest.MitigationRepla
 		return nil, fmt.Errorf("decode mitigation replay notes: %w", err)
 	}
 	for _, note := range results {
-		if note.ProgramID == "" || note.CaseID == "" || note.Status != sdktest.MitigationReplayPassed && note.Status != sdktest.MitigationReplaySkippedUnreplayableEffect {
+		if note.ProgramID == "" || note.CaseID == "" || note.Status != sdktest.MitigationReplayPassed && note.Status != sdktest.MitigationReplaySkippedUnreplayableEffect && note.Status != sdktest.MitigationReplayObservedTransition {
 			return nil, fmt.Errorf("invalid mitigation replay note: %+v", note)
 		}
 	}

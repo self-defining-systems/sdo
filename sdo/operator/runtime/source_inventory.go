@@ -119,7 +119,7 @@ func (s *SourceInventory) findingsWithOwnership(objects, ownership []*unstructur
 			continue
 		}
 		ref := inventoryRef(o)
-		if ref.Namespace != s.Namespace && !relevant[ref] {
+		if ref.Namespace != s.Namespace && !relevant[ref] && s.declared[ref] == nil {
 			continue
 		}
 		if o.GetKind() == "ConfigMap" && o.GetName() == "kube-root-ca.crt" || o.GetKind() == "ServiceAccount" && o.GetName() == "default" {
@@ -145,6 +145,7 @@ func (s *SourceInventory) findingsWithOwnership(objects, ownership []*unstructur
 		}
 		if rbacChanged {
 			source = "RBAC differs from accepted source"
+			fields = scopedDriftFields(ObjectChange{Old: declared, New: o})
 		}
 		event := sdk.DriftEvent{Ref: ref, Source: source, Manager: "unknown", ObservedAt: now.UTC(), Classification: sdk.DriftUnexplained, Fields: fields}
 		encoded, _ := json.Marshal(event)
