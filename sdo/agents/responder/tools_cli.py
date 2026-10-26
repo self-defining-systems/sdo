@@ -27,7 +27,8 @@ PLAN_ACTIONS = (
 WORKING_PROGRAM_HELP = (
     "Program commands use the current checkout, including shared libraries and new playbook IDs. "
     "Edits compile on demand; fix compile errors in place and retry. "
-    "Revision receipts use working-tree:<source digest> for unpublished code."
+    "Revision receipts use working-tree:<source digest> for unpublished code. "
+    "Reusable API reads use program.Kubernetes(view) with upstream client-go options; reads are recorded for replay."
 )
 
 CLI_EXAMPLES = (

@@ -214,7 +214,7 @@ func acceptedHead(ctx context.Context, repository string) (string, error) {
 	return strings.TrimSpace(string(commit)), nil
 }
 
-func hostKubernetesClient(path string) (kubernetes.Interface, error) {
+func hostKubernetesConfig(path string) (*rest.Config, error) {
 	rules := clientcmd.NewDefaultClientConfigLoadingRules()
 	if path != "" {
 		rules.ExplicitPath = path
@@ -227,6 +227,14 @@ func hostKubernetesClient(path string) (kubernetes.Interface, error) {
 		return nil, fmt.Errorf("load Kubernetes credentials: %w", err)
 	}
 	config.QPS, config.Burst = 50, 100
+	return config, nil
+}
+
+func hostKubernetesClient(path string) (kubernetes.Interface, error) {
+	config, err := hostKubernetesConfig(path)
+	if err != nil {
+		return nil, err
+	}
 	return kubernetes.NewForConfig(config)
 }
 
