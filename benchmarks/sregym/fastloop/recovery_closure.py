@@ -147,6 +147,9 @@ def complete_recovery_baselines(
         for value in b.objects
         if (pod := pod_spec(value)) is not None
     }
+    # A declared default account may carry image-pull references or other
+    # configuration even though the namespace creates its empty default.
+    wanted.update(accounts)
     rows = {}
     for row in json.loads(lock.read_text())["objects"]:
         ref = row.get("ref", {})

@@ -341,3 +341,39 @@ def test_recovery_reads_only_the_reference_closure_from_an_inherited_lock(tmp_pa
         ("Pod", "app"),
         ("ServiceAccount", "reader"),
     ]
+
+
+def test_legacy_default_account_configuration_contributes_transitive_dependencies(tmp_path: Path) -> None:
+    import hashlib
+    import json
+
+    from benchmarks.sregym.fastloop.baseline_recovery import ApplicationBaseline
+    from benchmarks.sregym.fastloop.recovery_closure import complete_recovery_baselines, missing_prerequisites
+
+    root = tmp_path / ".sdo/rendered"
+    root.mkdir(parents=True)
+    value = obj("ServiceAccount", "default", imagePullSecrets=[{"name": "registry"}])
+    payload = json.dumps(value)
+    (root / "default.yaml").write_text(payload)
+    (root / "lock.json").write_text(
+        json.dumps(
+            {
+                "objects": [
+                    {
+                        "ref": {
+                            "api_version": value["apiVersion"],
+                            "kind": "ServiceAccount",
+                            "namespace": "hotel",
+                            "name": "default",
+                        },
+                        "file": "default.yaml",
+                        "sha256": hashlib.sha256(payload.encode()).hexdigest(),
+                    }
+                ]
+            }
+        )
+    )
+    baselines = (ApplicationBaseline("hotel", [obj("Pod", "app", spec={"containers": []})]),)
+    completed = complete_recovery_baselines(tmp_path, baselines)
+    assert value in completed[0].objects
+    assert [ref.label() for ref in missing_prerequisites(completed)] == ["hotel/Secret/registry"]
