@@ -453,3 +453,7 @@ Mongo fixture clients run in temporary, deadline-bounded Pods in the harness
 namespace using the deployed Mongo image; they never share the database's
 memory limit. They have no service-account token and are removed on completion
 or failure. The application resource limits remain unchanged.
+A supported abort can remove the application namespace. Reset confirms that
+absence and recreates the namespace named by the captured application baseline
+before reconciling its manifests; authorization/read failures never become
+absence. System and SDO control namespaces are refused.
