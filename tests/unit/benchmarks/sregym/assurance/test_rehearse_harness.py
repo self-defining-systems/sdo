@@ -11,7 +11,7 @@ from typing import Any
 import pytest
 
 from benchmarks.sregym.assurance import rehearse_harness as gate
-from benchmarks.sregym.assurance.pause_restart import PauseRestartError, RestartControllerInPauseOps
+from benchmarks.sregym.fastloop.pause_restart import PauseRestartError, RestartControllerInPauseOps
 
 REPO_ROOT = Path(__file__).resolve().parents[5]
 
@@ -88,7 +88,10 @@ def test_restart_happens_after_the_pause_begins_and_before_the_fault(tmp_path: P
     pods = [SimpleNamespace(name="c-1", uid="u1"), SimpleNamespace(name="c-2", uid="u2")]
     evidence = tmp_path / "out" / "restart.jsonl"
     ops = RestartControllerInPauseOps(
-        _Inner(events, pods), evidence, kubectl_runner=_kubectl(events), sleep=lambda _s: None  # type: ignore[arg-type]
+        _Inner(events, pods),
+        evidence,
+        kubectl_runner=_kubectl(events),
+        sleep=lambda _s: None,  # type: ignore[arg-type]
     )
 
     ops.inject_after_resume("ctl", "g1", lambda: events.append("inject"))
@@ -101,7 +104,10 @@ def test_restart_happens_after_the_pause_begins_and_before_the_fault(tmp_path: P
 def test_restart_fails_loudly_without_a_pod_or_a_replacement(tmp_path: Path) -> None:
     events: list[str] = []
     missing = RestartControllerInPauseOps(
-        _Inner(events, [None]), tmp_path / "e.jsonl", kubectl_runner=_kubectl(events), sleep=lambda _s: None  # type: ignore[arg-type]
+        _Inner(events, [None]),
+        tmp_path / "e.jsonl",
+        kubectl_runner=_kubectl(events),
+        sleep=lambda _s: None,  # type: ignore[arg-type]
     )
     with pytest.raises(PauseRestartError, match="no controller Pod"):
         missing.inject_after_resume("ctl", "g", lambda: events.append("inject"))
@@ -143,7 +149,9 @@ def test_restart_check_fails_when_no_restart_was_recorded_or_the_resume_hung(tmp
     ctx = _ctx(tmp_path, "p51-restart-in-pause")
     assert not gate.check_restart_in_pause(ctx)[0].ok
 
-    (ctx.results / "restart-in-pause.jsonl").write_text(json.dumps({"old_uid": "a", "new_uid": "b"}) + "\n", encoding="utf-8")
+    (ctx.results / "restart-in-pause.jsonl").write_text(
+        json.dumps({"old_uid": "a", "new_uid": "b"}) + "\n", encoding="utf-8"
+    )
     assert all(check.ok for check in gate.check_restart_in_pause(ctx))
 
     logs = ctx.results / "incident" / "controller_logs"
@@ -201,7 +209,9 @@ def test_source_repair_check_needs_a_health_detector_rewrite_between_proposal_an
 
 def test_source_repair_check_fails_without_a_source_proposal(tmp_path: Path) -> None:
     ctx = _ctx(tmp_path, "p52-source-repair-refresh")
-    (ctx.results / gate.STRICT_RECEIPT).write_text(json.dumps({"incident_id": "i1", "outcome_commit": "abc"}), encoding="utf-8")
+    (ctx.results / gate.STRICT_RECEIPT).write_text(
+        json.dumps({"incident_id": "i1", "outcome_commit": "abc"}), encoding="utf-8"
+    )
     assert not all(check.ok for check in gate.check_source_repair_refresh(ctx))
 
 
@@ -250,9 +260,13 @@ def test_gate_brings_the_lane_up_once_resets_each_scenario_and_writes_the_summar
 
     summary = runner.run()
 
-    verbs = [argv[0] if argv[0] == "kubectl" else argv[argv.index("benchmarks.sregym.fastloop") + 1] for argv in commands]
-    assert verbs[:2] == ["up", "reset"] and verbs.count("up") == 1
-    assert summary["passed"] and summary["scenarios"][0]["covers"] == ["P53"]
+    verbs = [
+        argv[0] if argv[0] == "kubectl" else argv[argv.index("benchmarks.sregym.fastloop") + 1] for argv in commands
+    ]
+    assert verbs[:2] == ["up", "reset"]
+    assert verbs.count("up") == 1
+    assert summary["passed"]
+    assert summary["scenarios"][0]["covers"] == ("P53",)
     assert json.loads((runner.run_dir / gate.SUMMARY_FILENAME).read_text(encoding="utf-8"))["passed"] is True
 
     (runner.run_dir / "fastloop.json").write_text("{}", encoding="utf-8")
@@ -266,14 +280,16 @@ def test_gate_fails_when_the_lane_cannot_come_up_or_a_scenario_check_fails(tmp_p
     down = _fake_gate(tmp_path, commands, fail="up")
     down.run_dir.mkdir()
     summary = down.run()
-    assert not summary["passed"] and summary["scenarios"][0]["status"] == "error"
+    assert not summary["passed"]
+    assert summary["scenarios"][0]["status"] == "error"
     assert len(commands) == 1  # no scenario runs on a lane that did not come up
 
     denied = _fake_gate(tmp_path / "second", commands, fail="can-i")
     denied.run_dir.mkdir(parents=True)
     (denied.run_dir / "fastloop.json").write_text("{}", encoding="utf-8")
     result = denied.run()
-    assert not result["passed"] and result["scenarios"][0]["status"] == "fail"
+    assert not result["passed"]
+    assert result["scenarios"][0]["status"] == "fail"
 
 
 def test_gate_fails_when_it_exceeds_its_budget(tmp_path: Path) -> None:
@@ -284,7 +300,8 @@ def test_gate_fails_when_it_exceeds_its_budget(tmp_path: Path) -> None:
 
     summary = runner.run()
 
-    assert not summary["within_budget"] and not summary["passed"]
+    assert not summary["within_budget"]
+    assert not summary["passed"]
 
 
 def test_dry_run_lists_every_command_without_touching_a_cluster(tmp_path: Path) -> None:
@@ -292,3 +309,27 @@ def test_dry_run_lists_every_command_without_touching_a_cluster(tmp_path: Path) 
     assert text.count(" reset ") == len(gate.SCENARIOS)
     assert "--restart-controller-in-injection-pause" in text
     assert "covers P53" in text
+
+
+def test_fastloop_run_wraps_the_cluster_only_when_asked_to_restart_in_the_pause(tmp_path: Path) -> None:
+    from benchmarks.sregym.fastloop.cli import _cluster_ops, build_parser
+
+    parser = build_parser()
+    base = ["run", "--run-dir", "x", "--agent", "sdo", "--healthy-baseline"]
+    off = parser.parse_args(base)
+    on = parser.parse_args([*base, "--restart-controller-in-injection-pause", str(tmp_path / "e.jsonl")])
+
+    assert off.restart_controller_in_injection_pause is None
+    assert type(_cluster_ops(off, "app")).__name__ == "HealthyBaselineCaptureOps"
+    wrapped = _cluster_ops(on, "app")
+    assert type(wrapped).__name__ == "RestartControllerInPauseOps"
+    assert type(wrapped._inner).__name__ == "HealthyBaselineCaptureOps"  # type: ignore[attr-defined]
+
+
+def test_up_names_the_freeze_images_and_preflight_names_missing_ones(tmp_path: Path) -> None:
+    up = gate.up_arguments(tmp_path / "freeze", tmp_path / "run", "3", "le-h96")
+    assert up[up.index("--controller-image") + 1] == "sdo-controller:le-h96"
+    assert up[up.index("--responder-image") + 1] == "sdo-sregym-responder:le-h96"
+    assert up[up.index("--validator-image") + 1] == "sdo-detector-validator:le-h96"
+    problems = gate.preflight(REPO_ROOT, load=1.0, free_gib=500, absent_images=["sdo-controller:le-h96"])
+    assert any("missing images" in item and "SDO_SCRIPTED_WORKER=1" in item for item in problems)

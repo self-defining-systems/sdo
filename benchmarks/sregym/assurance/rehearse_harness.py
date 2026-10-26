@@ -138,8 +138,12 @@ def check_incidents(ctx: Context) -> list[Check]:
         failure = record.error or record.infra_error
         checks.append(Check(f"{label}: no error", not failure, str(failure or "")[:300]))
         checks.append(Check(f"{label}: detected", record.detected_at is not None, "no detector opened the incident"))
-        checks.append(Check(f"{label}: oracle", bool(record.oracle and record.oracle.success), str(record.oracle)[:200]))
-        checks.append(Check(f"{label}: sdo mitigated", record.sdo_resolution == "sdo_mitigated", str(record.sdo_resolution)))
+        checks.append(
+            Check(f"{label}: oracle", bool(record.oracle and record.oracle.success), str(record.oracle)[:200])
+        )
+        checks.append(
+            Check(f"{label}: sdo mitigated", record.sdo_resolution == "sdo_mitigated", str(record.sdo_resolution))
+        )
     return checks
 
 
@@ -174,7 +178,9 @@ def check_native_receipt(ctx: Context) -> list[Check]:
             )
         )
         if outcome:
-            checks.append(Check(f"{label}: outcome commit accepted", _is_ancestor(ctx.workspace, str(outcome)), str(outcome)))
+            checks.append(
+                Check(f"{label}: outcome commit accepted", _is_ancestor(ctx.workspace, str(outcome)), str(outcome))
+            )
     return checks
 
 
@@ -214,7 +220,11 @@ def check_restart_in_pause(ctx: Context) -> list[Check]:
     """P51: the controller Pod really was replaced inside the pause, and its resume did not hang."""
 
     evidence = ctx.results / "restart-in-pause.jsonl"
-    rows = [json.loads(line) for line in evidence.read_text(encoding="utf-8").splitlines() if line.strip()] if evidence.is_file() else []
+    rows = (
+        [json.loads(line) for line in evidence.read_text(encoding="utf-8").splitlines() if line.strip()]
+        if evidence.is_file()
+        else []
+    )
     replaced = [row for row in rows if row.get("old_uid") and row.get("new_uid") and row["old_uid"] != row["new_uid"]]
     checks = [
         Check(
@@ -226,9 +236,12 @@ def check_restart_in_pause(ctx: Context) -> list[Check]:
     blind: list[str] = []
     for log in ctx.results.rglob("*"):
         if log.is_file() and log.parent.name == "controller_logs":
-            for line in log.read_text(encoding="utf-8", errors="replace").splitlines():
-                if BLIND_RESUME_LINE in line and BLIND_RESUME_CAUSE in line:
-                    blind.append(f"{log.name}: {line.strip()[:160]}")
+            lines = log.read_text(encoding="utf-8", errors="replace").splitlines()
+            blind.extend(
+                f"{log.name}: {line.strip()[:160]}"
+                for line in lines
+                if BLIND_RESUME_LINE in line and BLIND_RESUME_CAUSE in line
+            )
     checks.append(Check("no-blind-resume", not blind, "; ".join(blind[:2])))
     return checks
 
@@ -241,7 +254,19 @@ def check_program_write_rbac(ctx: Context) -> list[Check]:
     checks = []
     for verb, resource in PROGRAM_WRITE_PROBES:
         code, output = ctx.command(
-            ["kubectl", "--kubeconfig", ctx.kubeconfig, "auth", "can-i", verb, resource, "-n", ctx.namespace, "--as", subject]
+            [
+                "kubectl",
+                "--kubeconfig",
+                ctx.kubeconfig,
+                "auth",
+                "can-i",
+                verb,
+                resource,
+                "-n",
+                ctx.namespace,
+                "--as",
+                subject,
+            ]
         )
         allowed = output.strip().splitlines()[-1:] == ["yes"] if code == 0 else False
         checks.append(Check(f"controller can {verb} {resource}", allowed, output.strip()[:200]))
@@ -298,7 +323,24 @@ def fastloop(*args: str) -> list[str]:
     return ["uv", "run", "python", "-m", "benchmarks.sregym.fastloop", *args]
 
 
-def up_arguments(code_root: Path, run_dir: Path, lane: str) -> list[str]:
+IMAGE_ROLES = ("controller", "responder", "validator")
+IMAGE_NAMES = {
+    "controller": "sdo-controller",
+    "responder": "sdo-sregym-responder",
+    "validator": "sdo-detector-validator",
+}
+
+
+def image_refs(tag: str) -> dict[str, str]:
+    return {role: f"{IMAGE_NAMES[role]}:{tag}" for role in IMAGE_ROLES}
+
+
+def build_command(tag: str) -> str:
+    return f"SDO_IMAGE_TAG={tag} SDO_SCRIPTED_WORKER=1 bash scripts/build_sdo_images.sh"
+
+
+def up_arguments(code_root: Path, run_dir: Path, lane: str, image_tag: str = "fastloop") -> list[str]:
+    images = [arg for role, ref in image_refs(image_tag).items() for arg in (f"--{role}-image", ref)]
     return fastloop(
         "up",
         "--app",
@@ -311,6 +353,7 @@ def up_arguments(code_root: Path, run_dir: Path, lane: str) -> list[str]:
         "0",
         "--dev-mount",
         str(code_root),
+        *images,
     )
 
 
@@ -318,7 +361,10 @@ def run_arguments(code_root: Path, run_dir: Path, scenario: Scenario, run_id: st
     assert scenario.stream is not None
     flags = list(scenario.run_flags)
     if "--restart-controller-in-injection-pause" in flags:
-        flags.insert(flags.index("--restart-controller-in-injection-pause") + 1, str(run_dir / "results" / run_id / "restart-in-pause.jsonl"))
+        flags.insert(
+            flags.index("--restart-controller-in-injection-pause") + 1,
+            str(run_dir / "results" / run_id / "restart-in-pause.jsonl"),
+        )
     return fastloop(
         "run",
         "--run-dir",
@@ -348,13 +394,30 @@ def reset_arguments(code_root: Path, run_dir: Path) -> list[str]:
     return fastloop("reset", "--run-dir", str(run_dir))
 
 
-def preflight(code_root: Path, *, load: float | None = None, free_gib: float | None = None) -> list[str]:
+def missing_images(tag: str) -> list[str]:
+    """Scripted-worker image refs Docker does not have (read-only inspect)."""
+
+    return [
+        ref
+        for ref in image_refs(tag).values()
+        if subprocess.run(["docker", "image", "inspect", ref], capture_output=True, check=False).returncode
+    ]
+
+
+def preflight(
+    code_root: Path, *, load: float | None = None, free_gib: float | None = None, absent_images: list[str] | None = None
+) -> list[str]:
     """Reasons the gate must not start (empty when it may)."""
 
     problems = []
-    for relative in ("benchmarks/sregym/fastloop/cli.py", str(FIXTURES / "baseline.json")):
-        if not (code_root / relative).is_file():
-            problems.append(f"{code_root} is not a harness checkout (missing {relative})")
+    if absent_images:
+        problems.append(f"missing images {absent_images}; build them from the freeze: {build_command('<tag>')}")
+    required = ("benchmarks/sregym/fastloop/cli.py", str(FIXTURES / "baseline.json"))
+    problems.extend(
+        f"{code_root} is not a harness checkout (missing {relative})"
+        for relative in required
+        if not (code_root / relative).is_file()
+    )
     load = os.getloadavg()[0] if load is None else load
     if load >= LOAD_LIMIT:
         problems.append(f"host load {load:.0f} >= {LOAD_LIMIT:.0f}; wait")
@@ -372,11 +435,18 @@ def _execute(argv: Sequence[str], *, cwd: Path, timeout: float, log: Path) -> tu
         handle.flush()
         try:
             completed = subprocess.run(
-                list(argv), cwd=cwd, env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=timeout, check=False
+                list(argv),
+                cwd=cwd,
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                timeout=timeout,
+                check=False,
             )
         except subprocess.TimeoutExpired as exc:
-            output = (exc.stdout or "") if isinstance(exc.stdout, str) else ""
-            handle.write(output + f"\n[timed out after {timeout:.0f}s]\n")
+            output = str(exc.stdout) if isinstance(exc.stdout, str) else ""
+            handle.write(f"{output}\n[timed out after {timeout:.0f}s]\n")
             return 124, output
         handle.write(completed.stdout)
         return completed.returncode, completed.stdout
@@ -396,6 +466,7 @@ class Gate:
     clock: Callable[[], float] = time.monotonic
     execute: Callable[..., tuple[int, str]] = _execute
     load_environment: Callable[[Path], Any] = _load_environment
+    image_tag: str = "fastloop"
     scenarios: tuple[Scenario, ...] = SCENARIOS
 
     def log(self) -> Path:
@@ -410,7 +481,9 @@ class Gate:
         results: list[ScenarioResult] = []
         setup_error = ""
         if not (self.run_dir / "fastloop.json").is_file():
-            code, output = self._step(up_arguments(self.code_root, self.run_dir, self.lane), UP_BUDGET_SECONDS)
+            code, output = self._step(
+                up_arguments(self.code_root, self.run_dir, self.lane, self.image_tag), UP_BUDGET_SECONDS
+            )
             if code:
                 setup_error = f"fastloop up failed (exit {code}): {output[-400:]}"
         for scenario in self.scenarios:
@@ -445,9 +518,11 @@ class Gate:
                 result.status, result.detail = "error", f"reset failed (exit {code}): {output[-300:]}"
                 return result
             if scenario.stream is not None:
-                code, output = self._step(run_arguments(self.code_root, self.run_dir, scenario, run_id), scenario.budget_seconds)
+                code, output = self._step(
+                    run_arguments(self.code_root, self.run_dir, scenario, run_id), scenario.budget_seconds
+                )
                 if code:
-                    # A failed stream still leaves records; run the checks so the summary names the first broken contract.
+                    # A failed stream still leaves records; the checks name the first broken contract.
                     result.detail = f"fastloop run exit {code}: {output[-300:]}"
             environment = self.load_environment(self.run_dir)
             ctx = Context(
@@ -475,7 +550,9 @@ class Gate:
 
 
 def _head(code_root: Path) -> str:
-    completed = subprocess.run(["git", "-C", str(code_root), "rev-parse", "HEAD"], capture_output=True, text=True, check=False)
+    completed = subprocess.run(
+        ["git", "-C", str(code_root), "rev-parse", "HEAD"], capture_output=True, text=True, check=False
+    )
     return completed.stdout.strip() or "unknown"
 
 
@@ -486,23 +563,37 @@ def format_summary(summary: dict[str, Any]) -> str:
     ]
     for scenario in summary["scenarios"]:
         covers = ",".join(scenario["covers"])
-        lines.append(f"  {'PASS' if scenario['passed'] else 'FAIL'} {scenario['name']} [{covers}] {scenario['seconds']}s {scenario['detail'][:120]}")
+        lines.append(
+            f"  {'PASS' if scenario['passed'] else 'FAIL'} {scenario['name']} [{covers}] "
+            f"{scenario['seconds']}s {scenario['detail'][:120]}"
+        )
         lines.extend(f"      failed: {c['name']}: {c['detail'][:160]}" for c in scenario["checks"] if not c["ok"])
     return "\n".join(lines)
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="rehearse-harness", description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
-    parser.add_argument("--code-root", type=Path, required=True, help="the harness freeze worktree under test (mounted into the lane)")
-    parser.add_argument("--lane", required=True, help="rehearsal lane id; names the private cluster reh<lane>-toy and its run dir")
-    parser.add_argument("--run-dir", type=Path, default=None, help="default: /mnt/data/shli/sdo-exp/mixed10/LE/REH/lane<lane>")
-    parser.add_argument("--dry-run", action="store_true", help="print the commands without touching Docker or a cluster")
+    parser = argparse.ArgumentParser(
+        prog="rehearse-harness", description=__doc__, formatter_class=argparse.RawTextHelpFormatter
+    )
+    parser.add_argument(
+        "--code-root", type=Path, required=True, help="the harness freeze worktree under test (mounted into the lane)"
+    )
+    parser.add_argument(
+        "--lane", required=True, help="rehearsal lane id; names the private cluster reh<lane>-toy and its run dir"
+    )
+    parser.add_argument(
+        "--run-dir", type=Path, default=None, help="default: /mnt/data/shli/sdo-exp/mixed10/LE/REH/lane<lane>"
+    )
+    parser.add_argument("--image-tag", default="fastloop", help="tag of the freeze's scripted-worker images")
+    parser.add_argument(
+        "--dry-run", action="store_true", help="print the commands without touching Docker or a cluster"
+    )
     parser.add_argument("--teardown", action="store_true", help="remove the controller and private cluster afterwards")
     return parser
 
 
-def dry_run(code_root: Path, run_dir: Path, lane: str) -> str:
-    lines = [" ".join(up_arguments(code_root, run_dir, lane))]
+def dry_run(code_root: Path, run_dir: Path, lane: str, image_tag: str = "fastloop") -> str:
+    lines = [" ".join(up_arguments(code_root, run_dir, lane, image_tag))]
     for scenario in SCENARIOS:
         lines.append(" ".join(reset_arguments(code_root, run_dir)))
         if scenario.stream is not None:
@@ -516,14 +607,14 @@ def main(argv: list[str] | None = None) -> int:
     code_root = args.code_root.resolve()
     run_dir = (args.run_dir or Path(f"/mnt/data/shli/sdo-exp/mixed10/LE/REH/lane{args.lane}")).resolve()
     if args.dry_run:
-        print(dry_run(code_root, run_dir, args.lane))
+        print(dry_run(code_root, run_dir, args.lane, args.image_tag))
         return 0
-    problems = preflight(code_root)
+    problems = preflight(code_root, absent_images=missing_images(args.image_tag))
     if problems:
         print("rehearse-harness refused to start:\n  " + "\n  ".join(problems), file=sys.stderr)
         return 2
     run_dir.mkdir(parents=True, exist_ok=True)
-    gate = Gate(code_root, args.lane, run_dir)
+    gate = Gate(code_root, args.lane, run_dir, image_tag=args.image_tag)
     summary = gate.run()
     print(format_summary(summary))
     print(f"summary: {run_dir / SUMMARY_FILENAME}")

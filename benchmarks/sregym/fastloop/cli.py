@@ -470,7 +470,7 @@ def _cluster_ops(args: argparse.Namespace, namespace: str, *, ops: ClusterOps | 
         selected = kubectl_capture_ops(selected, namespace=namespace, kubectl_runner=kubectl)  # type: ignore[assignment]
     restart_evidence = getattr(args, "restart_controller_in_injection_pause", None)
     if restart_evidence is not None:
-        from benchmarks.sregym.assurance.pause_restart import RestartControllerInPauseOps
+        from benchmarks.sregym.fastloop.pause_restart import RestartControllerInPauseOps
 
         selected = RestartControllerInPauseOps(selected, restart_evidence)  # type: ignore[assignment]
     return selected
