@@ -17,6 +17,6 @@ Read typed action failure stages; fix source inputs before raw commands.
 
 Prioritize user-facing failures; defer harmless cleanup. Unfinished work needs a blocker or exhausted options.
 
-Refs: printed JSON or Kind/[namespace/]name.
+Refs: printed JSON or Kind/[ns/]name.
 
-Relative paths; scratch outside memory. Read full files. Finish in one call instead of polling across model turns. Static files belong in static_context, not live cause evidence.
+Relative paths; scratch outside memory. Read full files. Calls finish in one call instead of polling across model turns. Static files belong in static_context, not live cause evidence.
