@@ -297,6 +297,48 @@ func (d reachabilityDetector) Confirmed(ctx sdk.DetectionContext) bool {
 	return true
 }
 
+// ReachabilityCatchingUp returns the targets whose Service gained its ready
+// backend so recently that fewer than Failures dials follow the transition,
+// none of them failed. Confirmed counts only dials made after the Service's
+// readySince, so a repair that replaces the only ready pod leaves the window
+// incomplete until that many dials follow; dialing these targets early fills
+// it with the same proof. A failed dial ends the catch-up: failure runs keep
+// the normal interval.
+func ReachabilityCatchingUp(ctx sdk.DetectionContext, w ReachabilityWindow) []ReachabilityTarget {
+	count := w.Failures
+	if count < 2 {
+		count = DefaultReachabilityFailures
+	}
+	observed := make(map[ReachabilityTarget][]DialSample, len(w.Targets))
+	for _, o := range w.Targets {
+		observed[o.Target] = o.Samples
+	}
+	services := map[string]corev1.Service{}
+	for _, service := range ctx.Services() {
+		services[service.Name] = service
+	}
+	targets, _ := ReachabilityTargets(ctx)
+	pending := make([]ReachabilityTarget, 0)
+	for _, target := range targets {
+		since := readySince(readySelectedPods(ctx, services[target.Service]))
+		if since.IsZero() {
+			continue
+		}
+		after, failed := 0, false
+		for _, sample := range observed[target] {
+			if sample.At.Before(since) {
+				continue
+			}
+			after++
+			failed = failed || !sample.OK
+		}
+		if !failed && after < count {
+			pending = append(pending, target)
+		}
+	}
+	return pending
+}
+
 type failingPort struct {
 	port     corev1.ServicePort
 	run      []DialSample
