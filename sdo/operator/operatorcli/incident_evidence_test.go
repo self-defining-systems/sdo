@@ -18,10 +18,8 @@ import (
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/kubernetes/fake"
 	ktesting "k8s.io/client-go/testing"
 )
@@ -104,16 +102,14 @@ func TestIncidentEvidenceUsesRunningControllerPodWithoutCreatingSyncPod(t *testi
 	}
 
 	oldClient := fake.NewSimpleClientset()
-	created := false
-	oldClient.PrependReactor("create", "pods", func(action ktesting.Action) (bool, runtime.Object, error) {
-		created = true
-		return false, nil, nil
-	})
+	// Report readiness on the real tracked Pod, including actual deletion.
 	oldClient.PrependReactor("get", "pods", func(action ktesting.Action) (bool, runtime.Object, error) {
-		if !created {
-			return true, nil, apierrors.NewNotFound(schema.GroupResource{Resource: "pods"}, install.RepositorySyncPodName)
+		object, err := oldClient.Tracker().Get(corev1.SchemeGroupVersion.WithResource("pods"), "sdo", install.RepositorySyncPodName)
+		if err != nil {
+			return true, nil, err
 		}
-		pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: install.RepositorySyncPodName, Namespace: "sdo"}, Status: corev1.PodStatus{Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}}}
+		pod := object.(*corev1.Pod).DeepCopy()
+		pod.Status.Conditions = []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}
 		return true, pod, nil
 	})
 	old := install.Installer{Client: oldClient}
