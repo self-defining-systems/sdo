@@ -29,7 +29,7 @@ import time
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from benchmarks.sregym.adapter import assert_host_disk_headroom, assert_host_headroom, kubectl
 from benchmarks.sregym.fastloop.baseline_recovery import (
@@ -578,6 +578,28 @@ def _sdo_agent(
     return SdoPersistentAgent(settings, **agent_arguments)
 
 
+def deploy_with_setup_proof(
+    environment: FastloopEnvironment, worker: SregymWorker, results_dir: Path
+) -> dict[str, Any]:
+    """Reuse only the deploy/warm-up evidence; per-injection admission still runs."""
+    from benchmarks.sregym.fastloop.setup_proof import check_reuse
+
+    _, decision = check_reuse(environment)
+    results_dir.mkdir(parents=True, exist_ok=True)
+    (results_dir / "setup-proof.json").write_text(json.dumps(decision, indent=2) + "\n")
+    if decision["reused"]:
+        logger.info("Setup proof reused %s; injection admission remains required", decision["receipt"])
+    else:
+        logger.info("Full setup required: %s", ", ".join(decision["changed"]))
+        worker.request(
+            "deploy",
+            problem_id=environment.deploy_problem,
+            baseline_path=str(environment.baseline_path),
+            timeout=DEPLOY_OP_TIMEOUT_SECONDS,
+        )
+    return decision
+
+
 def _run(args: argparse.Namespace) -> int:
     run_started = time.monotonic()
     if args.sweep_service and (args.stream is None or args.agent != "sdo"):
@@ -698,12 +720,7 @@ def _run(args: argparse.Namespace) -> int:
     write_loop_manifest(config)
     with _worker(environment) as worker:
         worker_ready = time.monotonic()
-        worker.request(
-            "deploy",
-            problem_id=environment.deploy_problem,
-            baseline_path=str(environment.baseline_path),
-            timeout=DEPLOY_OP_TIMEOUT_SECONDS,
-        )
+        deploy_with_setup_proof(environment, worker, results_dir)
         deployed = time.monotonic()
         described = deployed
         baseline = load_application_baseline(environment.baseline_path, environment.namespace)

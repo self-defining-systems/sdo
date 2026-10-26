@@ -17,6 +17,17 @@ if TYPE_CHECKING:
 
 SCHEMA = "sdo.setup-proof/v1"
 RECEIPTS = "setup-proof"
+INVARIANTS = (
+    "lane_resources",
+    "restore",
+    "onboarding",
+    "setup_memory",
+    "rbac_equality",
+    "stabilization",
+    "probe_placement",
+    "baseline",
+    "closure_policy",
+)
 # Inventory configuration, not observations such as Events/EndpointSlices.
 RESOURCES = (
     "deployments,statefulsets,daemonsets,replicasets,pods,services,configmaps,"
@@ -60,7 +71,7 @@ def object_identities(objects: list[dict[str, Any]]) -> dict[str, str]:
             raise ValueError(f"eval: incomplete or duplicate live identity: {key}")
         stable = {key: value for key, value in obj.items() if key not in {"metadata", "status"}}
         stable["metadata"] = {
-            key: metadata[key]
+            key: json.loads(json.dumps(metadata[key]))
             for key in (
                 "name",
                 "namespace",
@@ -80,7 +91,8 @@ def object_identities(objects: list[dict[str, Any]]) -> dict[str, str]:
             # A restart changes the process that established the proof.
             stable["containers"] = [
                 {key: row.get(key) for key in ("name", "imageID", "containerID", "restartCount")}
-                for row in obj.get("status", {}).get("containerStatuses", [])
+                for group in ("containerStatuses", "initContainerStatuses", "ephemeralContainerStatuses")
+                for row in obj.get("status", {}).get(group, [])
             ]
         result[key] = digest(stable)
     return dict(sorted(result.items()))
@@ -151,6 +163,8 @@ def collect_fingerprint(
     installed = runtime.get("accepted_source_drift_revision")
     if not installed:
         raise ValueError("eval: installed accepted-memory commit is unavailable")
+    if installed != accepted:
+        raise ValueError("eval: installed accepted-memory commit differs from accepted workspace")
     paths = [environment.baseline_path, environment.workspace / ".sdo/rendered/lock.json"]
     lock = environment.workspace / ".sdo/rendered/lock.json"
     selections = json.loads(lock.read_text()).get("manifest_paths", []) if lock.is_file() else ["kubernetes"]
@@ -191,17 +205,28 @@ def collect_fingerprint(
     )
 
 
-def save_receipt(directory: Path, fingerprint: SetupFingerprint, report: dict[str, Any]) -> Path:
+def validate_report(report: dict[str, Any], fingerprint: SetupFingerprint) -> None:
     if fingerprint.code_revision.endswith("-dirty"):
         raise ValueError("eval: setup receipt requires committed code")
-    if (
-        report.get("passed") is not True
-        or report.get("fault_injected") is not False
-        or report.get("live_model_calls") is not False
-        or not report.get("invariants")
-        or any(row.get("passed") is not True for row in report["invariants"].values())
-    ):
+    expected = {"passed": True, "fault_injected": False, "live_model_calls": False}
+    if any(report.get(key) is not value for key, value in expected.items()):
         raise ValueError("eval: only a passing no-fault proof can be saved")
+    if report.get("code_revision") != fingerprint.code_revision or report.get("lane") != fingerprint.lane:
+        raise ValueError("eval: setup report identity differs from fingerprint")
+    invariants = report.get("invariants", {})
+    if (
+        not isinstance(invariants, dict)
+        or any(
+            not isinstance(invariants.get(name), dict) or invariants[name].get("passed") is not True
+            for name in INVARIANTS
+        )
+        or any(not isinstance(row, dict) or row.get("passed") is not True for row in invariants.values())
+    ):
+        raise ValueError("eval: setup report lacks passing invariants")
+
+
+def save_receipt(directory: Path, fingerprint: SetupFingerprint, report: dict[str, Any]) -> Path:
+    validate_report(report, fingerprint)
     document = {"schema_version": SCHEMA, "fingerprint": asdict(fingerprint), "report": report}
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / (digest(document) + ".json")
@@ -221,15 +246,7 @@ def reuse_decision(directory: Path, fingerprint: SetupFingerprint) -> dict[str, 
         document = json.loads(path.read_text())
         if path.stem != digest(document) or document["schema_version"] != SCHEMA:
             raise ValueError("invalid receipt content")
-        report = document["report"]
-        if (
-            report["passed"] is not True
-            or report["fault_injected"] is not False
-            or report["live_model_calls"] is not False
-            or not report["invariants"]
-            or any(row.get("passed") is not True for row in report["invariants"].values())
-        ):
-            raise ValueError("receipt is not a passing no-fault proof")
+        validate_report(document["report"], SetupFingerprint(**document["fingerprint"]))
         expected = document["fingerprint"]
         changed = sorted(key for key, value in asdict(fingerprint).items() if expected.get(key) != value)
         if fingerprint.code_revision.endswith("-dirty"):
@@ -237,3 +254,21 @@ def reuse_decision(directory: Path, fingerprint: SetupFingerprint) -> dict[str, 
         return {"reused": not changed, "receipt": str(path), "changed": changed}
     except (OSError, ValueError, KeyError, TypeError) as exc:
         return {"reused": False, "receipt": None, "changed": [f"passing_receipt_unavailable: {exc}"]}
+
+
+def check_reuse(environment: FastloopEnvironment) -> tuple[SetupFingerprint | None, dict[str, Any]]:
+    """Unavailable evidence runs the full setup; it never grants a skip."""
+    directory = environment.run_dir / RECEIPTS
+    if not (directory / "latest.json").is_file():
+        return None, {"reused": False, "receipt": None, "changed": ["no_passing_receipt"]}
+    try:
+        fingerprint = collect_fingerprint(environment)
+        decision = reuse_decision(directory, fingerprint)
+        decision["message"] = (
+            f"reused {decision['receipt']}"
+            if decision["reused"]
+            else "full setup required: " + ", ".join(decision["changed"])
+        )
+        return fingerprint, decision
+    except (OSError, ValueError, KeyError, TypeError, TimeoutError, subprocess.SubprocessError) as exc:
+        return None, {"reused": False, "receipt": None, "changed": [f"fingerprint_unavailable: {exc}"]}

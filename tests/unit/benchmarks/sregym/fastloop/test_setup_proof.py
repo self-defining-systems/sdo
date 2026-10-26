@@ -28,7 +28,9 @@ def save(tmp_path, fingerprint):
         "passed": True,
         "fault_injected": False,
         "live_model_calls": False,
-        "invariants": {"traffic": {"passed": True}},
+        "code_revision": fingerprint.code_revision,
+        "lane": fingerprint.lane,
+        "invariants": {name: {"passed": True} for name in proof.INVARIANTS},
     }
     return proof.save_receipt(tmp_path, fingerprint, report)
 
@@ -43,7 +45,7 @@ def test_same_fingerprint_reuses_original_passing_receipt(tmp_path, fingerprint)
 
 
 @pytest.mark.parametrize(
-    "field,value",
+    ("field", "value"),
     [
         ("code_revision", "c" * 40),
         ("images", {"controller": {"node": "sha256:" + "2" * 64}}),
@@ -109,3 +111,196 @@ def test_status_and_resource_version_churn_preserve_identity():
     assert proof.object_identities([obj]) == before
     obj["spec"]["ports"][0]["port"] = 81
     assert proof.object_identities([obj]) != before
+
+
+def test_deploy_is_skipped_only_with_matching_proof(tmp_path, fingerprint, monkeypatch):
+    from types import SimpleNamespace
+
+    from benchmarks.sregym.fastloop import cli
+
+    environment = SimpleNamespace(run_dir=tmp_path)
+    calls = []
+    worker = SimpleNamespace(request=lambda *args, **kwargs: calls.append(args[0]))
+    save(tmp_path / proof.RECEIPTS, fingerprint)
+    monkeypatch.setattr(proof, "collect_fingerprint", lambda env: fingerprint)
+    decision = cli.deploy_with_setup_proof(environment, worker, tmp_path / "results")
+    assert not calls
+    assert decision["reused"] is True
+    assert str(tmp_path / proof.RECEIPTS) in decision["receipt"]
+    monkeypatch.setattr(proof, "collect_fingerprint", lambda env: replace(fingerprint, app_manifests="changed"))
+    environment.deploy_problem = "fixture"
+    environment.baseline_path = tmp_path / "baseline.json"
+    decision = cli.deploy_with_setup_proof(environment, worker, tmp_path / "next")
+    assert calls == ["deploy"]
+    assert decision["changed"] == ["app_manifests"]
+    assert json.loads((tmp_path / "next/setup-proof.json").read_text()) == decision
+
+
+def test_dry_run_reuse_does_not_reset_or_redeploy_and_refreshes_health(tmp_path, fingerprint, monkeypatch):
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+
+    from benchmarks.sregym import adapter
+    from benchmarks.sregym.fastloop import admission, cli, dry_run
+    from benchmarks.sregym.fastloop.environment import FastloopEnvironment
+
+    environment = SimpleNamespace(run_dir=tmp_path, cluster="fixture", namespace="app", kubeconfig=tmp_path / "kube")
+    report = dry_run.DryRunReport("fixture", code_revision=fingerprint.code_revision)
+    report.passed = True
+    for row in report.invariants.values():
+        row["passed"] = True
+    from dataclasses import asdict
+
+    original = proof.save_receipt(tmp_path / proof.RECEIPTS, fingerprint, asdict(report))
+    monkeypatch.setattr(FastloopEnvironment, "load", lambda path: environment)
+    monkeypatch.setattr(proof, "collect_fingerprint", lambda env: fingerprint)
+    monkeypatch.setattr(cli, "_reset", lambda *args: pytest.fail("reset on reuse"))
+    monkeypatch.setattr(cli, "_sdo_agent", lambda *args, **kwargs: pytest.fail("deploy on reuse"))
+    monkeypatch.setattr(cli, "_worker", lambda *args: nullcontext(object()))
+    calls = []
+    monkeypatch.setattr(admission.LaneAdmission, "prove", lambda *args, **kwargs: calls.append("live-admission"))
+    monkeypatch.setattr(adapter, "KubectlClusterOps", lambda: object())
+    monkeypatch.setattr(dry_run, "assert_active_intake", lambda env: calls.append("intake"))
+    assert dry_run.run_lane(tmp_path, 300) == 0
+    result = json.loads((tmp_path / "eval-dry-run/report.json").read_text())
+    assert result["setup_proof"]["receipt"] == str(original)
+    assert result["setup_proof"]["reused"] is True
+    assert result["fingerprint"]["live_objects"] == fingerprint.live_objects
+    assert calls == ["intake", "live-admission"]
+
+
+def test_dry_run_reuse_rejects_drift_during_live_checks(tmp_path, fingerprint, monkeypatch):
+    # The proof is bound on both sides of the fresh checks, not only on entry.
+    from contextlib import nullcontext
+    from dataclasses import asdict
+    from types import SimpleNamespace
+
+    from benchmarks.sregym import adapter
+    from benchmarks.sregym.fastloop import admission, cli, dry_run
+    from benchmarks.sregym.fastloop.environment import FastloopEnvironment
+
+    environment = SimpleNamespace(run_dir=tmp_path, cluster="fixture", namespace="app", kubeconfig=tmp_path / "kube")
+    report = dry_run.DryRunReport("fixture", code_revision=fingerprint.code_revision)
+    report.passed = True
+    for row in report.invariants.values():
+        row["passed"] = True
+    proof.save_receipt(tmp_path / proof.RECEIPTS, fingerprint, asdict(report))
+    observations = iter([fingerprint, replace(fingerprint, live_objects={"app/Service/web": "drift"})])
+    monkeypatch.setattr(FastloopEnvironment, "load", lambda path: environment)
+    monkeypatch.setattr(proof, "collect_fingerprint", lambda env: next(observations))
+    monkeypatch.setattr(cli, "_worker", lambda *args: nullcontext(object()))
+    monkeypatch.setattr(admission.LaneAdmission, "prove", lambda *args, **kwargs: None)
+    monkeypatch.setattr(adapter, "KubectlClusterOps", lambda: object())
+    monkeypatch.setattr(dry_run, "assert_active_intake", lambda env: None)
+    assert dry_run.run_lane(tmp_path, 300) == 1
+    result = json.loads((tmp_path / "eval-dry-run/report.json").read_text())
+    assert result["passed"] is False
+    assert "changed during" in result["invariants"]["failure"]["reason"]
+
+
+def test_collector_uses_bounded_gets_and_recorded_node_digests(tmp_path):
+    from types import SimpleNamespace
+
+    from benchmarks.sregym.fastloop.environment import Images
+
+    workspace = tmp_path / "repo"
+    (workspace / "kubernetes").mkdir(parents=True)
+    (workspace / "kubernetes/app.yaml").write_text("kind: Service\n")
+    baseline = tmp_path / "baseline.json"
+    baseline.write_text("{}")
+    images = Images()
+    node = {
+        "apiVersion": "v1",
+        "kind": "Node",
+        "metadata": {"name": "node", "uid": "node-uid"},
+        "status": {
+            "images": [
+                {"names": [f"docker.io/library/{name}", f"{name.split(':')[0]}@sha256:{'1' * 64}"]}
+                for name in images.model_dump().values()
+            ]
+        },
+    }
+    service = {
+        "apiVersion": "v1",
+        "kind": "Service",
+        "metadata": {"name": "web", "namespace": "app", "uid": "web-uid"},
+        "spec": {"ports": [{"port": 80}]},
+    }
+    state = {
+        "apiVersion": "v1",
+        "kind": "ConfigMap",
+        "metadata": {"name": "sdo-controller-state", "namespace": "app-sdo", "uid": "state-uid"},
+        "data": {"runtime-state.json": json.dumps({"accepted_source_drift_revision": "b" * 40})},
+    }
+    calls = []
+
+    def run(command, **kwargs):
+        calls.append((command, kwargs))
+        if command[0] == "git":
+            if "describe" in command:
+                stdout = "a" * 40
+            elif "rev-parse" in command:
+                stdout = "b" * 40
+            else:
+                stdout = ""
+        else:
+            assert command[0] == "kubectl"
+            assert "get" in command
+            assert "secrets" not in " ".join(command)
+            if proof.CLUSTER_RESOURCES in command:
+                objects = [node]
+            else:
+                objects = [service] if command[command.index("-n") + 1] == "app" else [state]
+            stdout = json.dumps({"items": objects})
+        return SimpleNamespace(stdout=stdout)
+
+    environment = SimpleNamespace(
+        cluster="fixture",
+        namespace="app",
+        workspace=workspace,
+        kubeconfig=tmp_path / "kube",
+        baseline_path=baseline,
+        images=images,
+        dev_mount=None,
+    )
+    started = time.monotonic()
+    measured = proof.collect_fingerprint(environment, run=run)
+    assert time.monotonic() - started < 15
+    assert measured.accepted_memory_commit == "b" * 40
+    assert measured.installed_memory_commit == "b" * 40
+    assert len(measured.images) == 3
+    assert "app/Service/web" in measured.live_objects
+    assert all(0 < kwargs["timeout"] <= 15 for _, kwargs in calls)
+    assert sum(command[0] == "kubectl" for command, _ in calls) == 3
+
+
+def test_live_intake_must_be_active_on_reuse(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from benchmarks.sregym import adapter
+    from benchmarks.sregym.fastloop.dry_run import assert_active_intake
+
+    monkeypatch.setattr(
+        adapter, "kubectl", lambda *args, **kwargs: SimpleNamespace(stdout=json.dumps({"data": {"state": "paused"}}))
+    )
+    with pytest.raises(ValueError, match="active SDO intake"):
+        assert_active_intake(SimpleNamespace(namespace="app", kubeconfig=tmp_path / "kube"))
+
+
+def test_unknown_image_digest_never_grants_reuse():
+    with pytest.raises(ValueError, match="digest"):
+        proof.image_identity([{"metadata": {"name": "node"}, "status": {"images": []}}], {"controller": "mutable:tag"})
+
+
+def test_missing_evidence_runs_normal_deployment(tmp_path, fingerprint, monkeypatch):
+    from types import SimpleNamespace
+
+    save(tmp_path / proof.RECEIPTS, fingerprint)
+
+    def unavailable(_):
+        raise TimeoutError("fixture deadline")
+
+    monkeypatch.setattr(proof, "collect_fingerprint", unavailable)
+    _, decision = proof.check_reuse(SimpleNamespace(run_dir=tmp_path))
+    assert decision["reused"] is False
+    assert "deadline" in decision["changed"][0]
