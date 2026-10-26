@@ -82,6 +82,10 @@ enum ClosureFailureReason {
   // The closure recheck was denied its observation scope (RBAC, undeclared or
   // unsupported dependency). A misconfiguration, never a contradicted repair.
   CLOSURE_FAILURE_REASON_OBSERVER_DENIED = 5;
+  // The incident's work lost its owner: no live responder execution remains
+  // and no closure began within the response or verification bound plus a
+  // grace (for example, the controller restarted after its responder ended).
+  CLOSURE_FAILURE_REASON_OWNER_LOST = 6;
 }
 
 // FailedIncidentClosure preserves terminal evidence independently of the next
