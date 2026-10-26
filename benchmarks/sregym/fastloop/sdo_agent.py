@@ -259,7 +259,6 @@ class SdoPersistentAgent:
         self._lifecycle_inputs = lifecycle_inputs
         self._run_lifecycle = run_lifecycle
         self._clock = clock or Clock()
-        self._reflection_deadline: float | None = None
         self.last_recovery_trigger: RecoveryTrigger | None = None
 
     @property
@@ -280,6 +279,7 @@ class SdoPersistentAgent:
             verification_timeout_seconds=settings.verification_timeout_seconds,
             detection_timeout_seconds=settings.detection_timeout_seconds,
             lifecycle_installs_controller=True,
+            reflection_wait_seconds=settings.reflection_wait_seconds,
         )
 
     def resolve(self, index: int, problem_id: str, inject: Callable[[], InjectionWindow]) -> AgentOutcome:
@@ -354,7 +354,6 @@ class SdoPersistentAgent:
         ):
             raise RuntimeError(f"incident {outcome.incident_id!r} is not pending on the persistent controller")
         started = self._clock.monotonic()
-        self._reflection_deadline = started + settings.reflection_wait_seconds
         reflection_observed_at = self._clock.now()
         error: str | None = None
         try:
@@ -364,7 +363,6 @@ class SdoPersistentAgent:
                 repository=settings.repository,
                 drained_by=f"fastloop-learn-{outcome.incident_id}",
                 clock=self._clock,
-                timeout_seconds=settings.reflection_wait_seconds,
             )
             if drained.HasField("failure"):
                 error = f"strict receipt rejected: {drained.failure.message}"
@@ -480,13 +478,14 @@ class SdoPersistentAgent:
         return _post_closure_wait(wait) if wait is not None else None
 
     def _settle_pending_closure(self, record: ControllerRecord) -> RecoveryTrigger:
-        """Wait out a closure learning left pending; a terminal failure becomes its rejected receipt."""
+        """Wait out a closure learning left pending, until the incident's one reflection deadline.
+
+        A terminal failure becomes its rejected receipt.
+        """
 
         pending = record.pending
         assert pending is not None
-        now = self._clock.monotonic()
-        deadline = self._reflection_deadline or now + self._settings.reflection_wait_seconds
-        started = now
+        started = self._clock.monotonic()
         try:
             drain_pending_incident(
                 record,
@@ -494,7 +493,6 @@ class SdoPersistentAgent:
                 repository=self._settings.repository,
                 drained_by=f"fastloop-recovery-{pending.incident_id}",
                 clock=self._clock,
-                timeout_seconds=max(0.001, deadline - now),
             )
         except ClosureFailedError as exc:
             record_failed_closure(pending, str(exc), self._clock.monotonic() - started)

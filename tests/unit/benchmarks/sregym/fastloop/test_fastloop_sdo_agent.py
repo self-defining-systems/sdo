@@ -15,8 +15,12 @@ from benchmarks.sregym.adapter.persistent import (
     REJECTED_RECEIPT_FILENAME,
     Clock,
     ControllerPod,
+    ControllerJobFailedError,
+    PersistentControllerError,
     PersistentState,
+    ReflectionDeadlineError,
     control_namespace_for,
+    drain_pending_incident,
 )
 from benchmarks.sregym.fastloop.loop import InjectionWindow, LoopConfig, run_incidents
 from benchmarks.sregym.fastloop.records import OracleVerdict, load_records
@@ -144,6 +148,9 @@ class FakeOps:
     def controller_pod(self, control_namespace: str) -> ControllerPod | None:
         return self.pods.get(control_namespace)
 
+    def controller_job_failure(self, control_namespace: str) -> str | None:
+        return None
+
     def namespace_exists(self, namespace: str) -> bool:
         return namespace in self.pods
 
@@ -260,6 +267,8 @@ def _agent(
     lifecycle_calls: list[str],
     *,
     detection_timeout_seconds: float | None = None,
+    reflection_wait_seconds: float = 3600.0,
+    clock: Clock | None = None,
 ) -> SdoPersistentAgent:
     repository = tmp_path / "application_workspace"
     repository.mkdir(exist_ok=True)
@@ -285,6 +294,7 @@ def _agent(
         results_dir=tmp_path / "incidents",
         verification_timeout_seconds=600,
         detection_timeout_seconds=detection_timeout_seconds,
+        reflection_wait_seconds=reflection_wait_seconds,
     )
     context = DeployedLifecycleContext(health_objective="objective", active_resources=[])
 
@@ -299,7 +309,7 @@ def _agent(
         ops=ops,
         lifecycle_inputs=lambda: DeployedLifecycle(context=context, fingerprint="topology-1"),
         run_lifecycle=run_lifecycle,
-        clock=_clock(),
+        clock=clock or _clock(),
     )
 
 
@@ -823,3 +833,63 @@ def test_an_unreadable_state_at_the_deadline_fails_typed_without_recovering(tmp_
     assert driver.events == ["inject"], "recovery mutated the app while the closure state was unknown"
     assert "closure state unknown" in (record.recovery_error or "")
     assert record.recovery_trigger != "reflection_deadline"
+
+
+def _wall_clock() -> Clock:
+    """A fake clock whose wall time advances with its monotonic time, as a real one does."""
+
+    now = [0.0]
+
+    def sleep(seconds: float) -> None:
+        now[0] += seconds
+
+    return Clock(monotonic=lambda: now[0], sleep=sleep, now=lambda: INJECTED + timedelta(seconds=now[0]))
+
+
+class _NeverReflectsOps(FakeOps):
+    #: The terminal condition of the controller Job, once it has one.
+    job_failure: str | None = None
+
+    def _reflect(self, control_namespace: str, incident_id: str) -> None:
+        """Reflection never finishes."""
+
+    def controller_job_failure(self, control_namespace: str) -> str | None:
+        return self.job_failure
+
+
+def test_one_reflection_deadline_spans_every_drain_of_an_incident(tmp_path: Path) -> None:
+    ops, clock = _NeverReflectsOps(), _wall_clock()
+    outcome = _agent(tmp_path, ops, [], reflection_wait_seconds=30, clock=clock).resolve(0, "p", _inject)
+    state = PersistentState.load(tmp_path / "sdo_persistent_controller.json")
+    record = state.controllers["hotel-reservation"]
+    # A drain other than learn() (the composite loop's, or admission's) spends the incident's budget.
+    with pytest.raises(ReflectionDeadlineError):
+        drain_pending_incident(record, ops=ops, repository=tmp_path, drained_by="composite-000", clock=clock)
+    # A restarted driver settles the same persisted closure before recovery.
+    restarted = _agent(tmp_path, ops, [], reflection_wait_seconds=30, clock=clock)
+    started = clock.monotonic()
+
+    restarted.prepare_recovery(outcome)
+
+    assert restarted.last_recovery_trigger == "reflection_deadline"
+    assert clock.monotonic() - started < 30, "recovery waited a second reflection budget"
+
+
+def test_a_failed_controller_job_ends_the_closure_wait_as_a_typed_failure(tmp_path: Path) -> None:
+    ops, clock = _NeverReflectsOps(), _wall_clock()
+    agent = _agent(tmp_path, ops, [], clock=clock)
+    outcome = agent.resolve(0, "p", _inject)
+    ops.job_failure = "BackoffLimitExceeded: Job has reached the specified backoff limit"
+    started = clock.monotonic()
+
+    with pytest.raises(ControllerJobFailedError, match="BackoffLimitExceeded"):
+        agent.learn(outcome)
+    # The recovery fence still refuses to mutate the app while the dead controller's state shows the incident open.
+    with pytest.raises(PersistentControllerError, match="closed incident"):
+        agent.prepare_recovery(outcome)
+
+    assert clock.monotonic() - started < 60, "the drain waited out the deadline on a controller that cannot ACK"
+    assert agent.last_recovery_trigger == "closure_failed"
+    rejected = json.loads((Path(str(outcome.artifacts_dir)) / REJECTED_RECEIPT_FILENAME).read_text())
+    assert "BackoffLimitExceeded" in json.dumps(rejected)
+    assert PersistentState.load(tmp_path / "sdo_persistent_controller.json").controllers["hotel-reservation"].pending is None
