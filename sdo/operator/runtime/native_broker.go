@@ -263,6 +263,7 @@ func (n NativeIncidentBroker) ProcessClosure(ctx context.Context, closure Incide
 			if n.SessionRoot != "" {
 				capture, captureErr := memory.IncidentCorpusDir(n.SessionRoot, id)
 				if captureErr == nil {
+					validate.DropReplacedOwnedPods(ledger.OutcomeDocument, capture)
 					ledger.OutcomeDocument.UndetectedCauses = validate.CaptureUndetectedCauses(ledger.OutcomeDocument, capture)
 				}
 			}
