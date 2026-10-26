@@ -230,3 +230,29 @@ def test_real_v2_worker_addresses_nested_components_and_reports_failed_cleanup(t
         with pytest.raises(FastloopFaultError, match="full recovery failed") as error:
             driver.recover()
         assert "synthetic cleanup failure" not in str(error.value)
+
+
+@pytest.mark.requires_sregym
+def test_real_v2_worker_removes_cluster_objects_the_injection_created(tmp_path):
+    """LEAK2: a fault's leftover namespace made the next row's admission reject the lane."""
+    from pathlib import Path
+
+    from benchmarks.sregym.fastloop.worker_client import SregymWorker
+
+    root = Path(__file__).resolve().parents[5]
+    command = [
+        "uv",
+        "run",
+        "--directory",
+        str(root / "third_party/sregym"),
+        "python",
+        str(root / "tests/fixtures/sregym/sdo3/worker.py"),
+    ]
+    with SregymWorker(command, env={}, log_path=tmp_path / "worker.log") as worker:
+        before = worker.request("inventory")["objects"]
+        driver = SregymFaultDriver(worker, namespace="hotel-reservation")
+        driver.inject("installs-controller")
+        assert "Namespace/ingress-nginx" in worker.request("inventory")["objects"]
+        assert driver.recover() >= 0
+        assert worker.request("inventory")["objects"] == before
+        driver.inject("single")
