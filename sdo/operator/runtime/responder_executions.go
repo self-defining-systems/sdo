@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -101,14 +102,30 @@ func terminalResponderPod(pod corev1.Pod) bool {
 	return pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed
 }
 
-// finished reports a terminal responder Job, whose result a re-dispatch adopts.
-func (i *responderExecutionInventory) finished() bool {
+// finishedAt is when the newest terminal responder Job finished. That Job is
+// the current attempt, whose result a re-dispatch adopts; an older one's result
+// was already consumed or superseded. A terminal Job without a recorded finish
+// time counts from its creation, so its hold stays bounded.
+func (i *responderExecutionInventory) finishedAt() time.Time {
+	var newest time.Time
 	for _, job := range i.jobs {
-		if i.names[job.Name] && job.DeletionTimestamp == nil && terminalResponderJob(job) {
-			return true
+		if !i.names[job.Name] || job.DeletionTimestamp != nil || !terminalResponderJob(job) {
+			continue
+		}
+		at := job.CreationTimestamp.Time
+		if job.Status.CompletionTime != nil {
+			at = job.Status.CompletionTime.Time
+		}
+		for _, condition := range job.Status.Conditions {
+			if condition.Status == corev1.ConditionTrue && condition.Type == batchv1.JobFailed && condition.LastTransitionTime.After(at) {
+				at = condition.LastTransitionTime.Time
+			}
+		}
+		if at.After(newest) {
+			newest = at
 		}
 	}
-	return false
+	return newest
 }
 func terminalResponderJob(job batchv1.Job) bool {
 	terminal := job.Status.CompletionTime != nil
