@@ -3,7 +3,8 @@
 `worker.py` resolves the pinned harness's problem metadata offline. `description.py`
 validates tracking separately from production repair capability. The recipes in
 `probe_catalog.py` are implemented by `fastloop/fault_tracker.py` and
-`fastloop/object_probes.py`.
+`fastloop/object_probes.py`. Runtime decisions live in `fastloop/runtime_probes.py`;
+`fastloop/runtime_observation.py` is their shared, fixed read-only transport.
 
 Before allocating a lane for a plan, run:
 
@@ -25,9 +26,24 @@ observe the relevant flag only; admission probes observe the affected workload's
 replica recovery. These are benchmark observations, never production learning or
 repair instructions. Neither oracle verdicts nor Secret data are inputs.
 
-Some faults affect state outside Kubernetes objects (database users, Kafka
-progress, Valkey runtime tuning, socket sysctls, served TLS certificates, resolved
-credential freshness). They stay unsupported until an independent, read-only
-observation for that state is implemented. Readiness alone does not establish
-repair for these faults. The Phase 4 seed42 fixture and its offline regression
-make the complete selection and every remaining unsupported class explicit.
+Runtime probes observe state outside Kubernetes objects through bounded reads:
+current Pod socket sysctls, Valkey memory/cgroup headroom, Kafka consumer offsets
+and output-topic progress, dependent app GET handlers, a served public TLS
+certificate, and fresh authenticated Mongo app-collection queries. Readiness is
+only a prerequisite, never the repair evidence for these faults. Errors stay
+unresolved; upstream command output/errors are not persisted in timelines.
+
+Mongo geo/rate queries derive the development login only in memory from the
+exact SDO → harness → nested-app Git pins and `cmd/{geo,rate}/db.go`. The program
+travels over private stdin, with no login literals in Python, fixtures, arguments
+or reports. There is no root or Secret/config/env lookup.
+They open a fresh process and read the actual app collection, bypassing the hotel
+services' caches. Other Mongo targets remain unsupported. Auth/stale-credential
+HTTP probes call the dependent app's real read path, and TLS reads the certificate
+presented by the ingress with hostname and validity checks; no Secret is read.
+A valid repair with a different app login can conservatively stay unresolved.
+
+The Phase 4 seed42 fixture and offline regression cover all 50 selected problems
+(170 faults, 57 classes). A future class or unsupported variant still fails plan
+admission. These independent observations remain benchmark timing evidence, not
+production learning, repair instructions, or official grader proof.
