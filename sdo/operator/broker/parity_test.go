@@ -161,8 +161,11 @@ func testCLIAndBrokerAgreeOnAcceptance(t *testing.T, shard int) {
 			put(t, r, ".sdo/diagnostics/detectors/incidents/dns/detector.go", parityDetector(t, "dns"), 0o644)
 		}, nil, false},
 		{"detector watches a resource the controller cannot load", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
-			watchDetector(t, r, "batch", "v1", "CronJob")
+			watchDetector(t, r, "policy", "v1", "PodDisruptionBudget")
 		}, []string{validate.RuleDetectorControllerStart}, false},
+		{"detector watches PersistentVolumeClaims", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
+			watchDetector(t, r, "", "v1", "PersistentVolumeClaim")
+		}, nil, false},
 		{"detector names a missing playbook", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
 			put(t, r, ".sdo/diagnostics/detectors/incidents/dns/manifest.yaml", strings.Replace(incidentManifest, "%s", "ghost", 1), 0o644)
 			put(t, r, ".sdo/diagnostics/detectors/incidents/dns/detector.go", parityDetector(t, "dns"), 0o644)
