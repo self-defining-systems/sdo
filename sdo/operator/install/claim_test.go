@@ -331,3 +331,30 @@ func TestSyncActivationRetriesStatusConflict(t *testing.T) {
 		t.Fatalf("status update interrupted activation instead of retrying: %v", err)
 	}
 }
+
+func TestSyncPodRetiresWithoutDefaultTerminationGrace(t *testing.T) {
+	cfg := testConfig()
+	client := claimAPI()
+	ctx := context.Background()
+	client.PrependReactor("create", "pods", func(action ktesting.Action) (bool, kruntime.Object, error) {
+		pod := action.(ktesting.CreateAction).GetObject().(*corev1.Pod)
+		if pod.Spec.TerminationGracePeriodSeconds == nil || *pod.Spec.TerminationGracePeriodSeconds != 0 {
+			t.Error("temporary sync Pod inherited a shutdown grace despite having no shutdown work")
+		}
+		pod.Status.Conditions = []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}
+		return false, nil, nil
+	})
+	client.PrependReactor("delete", "pods", func(action ktesting.Action) (bool, kruntime.Object, error) {
+		opts := action.(ktesting.DeleteAction).GetDeleteOptions()
+		if opts.GracePeriodSeconds == nil || *opts.GracePeriodSeconds != 0 {
+			t.Error("sync cleanup did not request immediate termination")
+		}
+		return false, nil, nil
+	})
+	if err := (Installer{Client: client, PollInterval: time.Millisecond}).WithSyncPod(ctx, SyncConfig{ControlNamespace: cfg.ControlNamespace, RepositoryPVC: cfg.RepositoryPVC, ControllerImage: cfg.ControllerImage}, func(context.Context, Config) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.CoreV1().ConfigMaps(cfg.ControlNamespace).Get(ctx, OperateLockConfigMap, metav1.GetOptions{}); !apierrors.IsNotFound(err) {
+		t.Fatalf("terminated sync Pod retained claim: %v", err)
+	}
+}

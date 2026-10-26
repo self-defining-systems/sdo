@@ -20,6 +20,15 @@ func ownerDeleteOptions(meta metav1.ObjectMeta) metav1.DeleteOptions {
 	return metav1.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &meta.UID, ResourceVersion: &meta.ResourceVersion}}
 }
 
+// Sync Pods only host completed archive/inspection callbacks and have no
+// shutdown handler. A grace period merely consumes the caller's cleanup budget.
+func syncPodDeleteOptions(meta metav1.ObjectMeta) metav1.DeleteOptions {
+	options := ownerDeleteOptions(meta)
+	zero := int64(0)
+	options.GracePeriodSeconds = &zero
+	return options
+}
+
 func claimOwner(claim *corev1.ConfigMap) (string, string) {
 	if kind := claim.Data["owner_kind"]; kind != "" {
 		return kind, claim.Data["owner_name"]
@@ -130,7 +139,7 @@ func (i Installer) startClaimedSyncPod(ctx context.Context, cfg Config, reservat
 		return err
 	}
 	if err := i.bindOperateLock(ctx, cfg, reservation, "Pod", created.ObjectMeta); err != nil {
-		_ = i.Client.CoreV1().Pods(cfg.controlNamespace()).Delete(context.Background(), created.Name, ownerDeleteOptions(created.ObjectMeta))
+		_ = i.Client.CoreV1().Pods(cfg.controlNamespace()).Delete(context.Background(), created.Name, syncPodDeleteOptions(created.ObjectMeta))
 		return err
 	}
 	err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
@@ -152,7 +161,7 @@ func (i Installer) startClaimedSyncPod(ctx context.Context, cfg Config, reservat
 		return err
 	})
 	if err != nil {
-		_ = i.Client.CoreV1().Pods(cfg.controlNamespace()).Delete(context.Background(), created.Name, ownerDeleteOptions(created.ObjectMeta))
+		_ = i.Client.CoreV1().Pods(cfg.controlNamespace()).Delete(context.Background(), created.Name, syncPodDeleteOptions(created.ObjectMeta))
 	}
 	return err
 }
@@ -181,7 +190,11 @@ func (i Installer) releaseOperateReservation(ctx context.Context, cfg Config, re
 // A cancelled transport cannot delete a replacement launcher's Pod or release
 // the PVC while the original Pod still has it mounted.
 func (i Installer) finishClaimedSyncPod(cfg Config, reservation *corev1.ConfigMap) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	timeout := i.SyncTimeout
+	if timeout <= 0 || timeout > 90*time.Second {
+		timeout = 90 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	maps := i.Client.CoreV1().ConfigMaps(cfg.controlNamespace())
 	current, err := maps.Get(ctx, OperateLockConfigMap, metav1.GetOptions{})
@@ -201,7 +214,7 @@ func (i Installer) finishClaimedSyncPod(cfg Config, reservation *corev1.ConfigMa
 			return err
 		}
 		if err == nil && string(pod.UID) == current.Data["owner_uid"] {
-			if err := pods.Delete(ctx, pod.Name, ownerDeleteOptions(pod.ObjectMeta)); err != nil && !apierrors.IsNotFound(err) {
+			if err := pods.Delete(ctx, pod.Name, syncPodDeleteOptions(pod.ObjectMeta)); err != nil && !apierrors.IsNotFound(err) {
 				return err
 			}
 			for {
