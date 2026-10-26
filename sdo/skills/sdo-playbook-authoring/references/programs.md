@@ -14,9 +14,12 @@ Declare object/value parameters; group related actions. PlanExecutor retains con
 Per-action results, provenance and errors guide the responder across five incident rounds.
 Intermediate reports grant neither independent outcomes nor trust credit.
 Mitigate may run again: when its rollout stays pending, the runtime re-plans on fresh observations and
-applies the next plan until the program returns the same plan again (at most three follow-ups). Write a repair
+applies the next plan until it repeats an earlier plan (at most three follow-ups). Write a repair
 that depends on what its write causes as one Mitigate over current state, e.g. also retiring an old-template
-ReplicaSet once new pods are Unschedulable beside it. Prose in the README never runs.
+ReplicaSet once new pods are Unschedulable beside it. Select that ReplicaSet by its controller ownerReference to
+a bound Deployment and an older `deployment.kubernetes.io/revision`, never by name; any other ReplicaSet scale is
+refused as `replicaset_scale_refused`. Once a stalled rollout is released, a later responder write ends the
+program's credit for it. Prose in the README never runs.
 
 A program directory contains diagnose.go, optional mitigate.go, Go tests and a README with responder ownership,
 fault class and originating incident. Preserve accepted provenance and add its logical ID to the playbook index.
@@ -72,7 +75,7 @@ parameter the responder supplies and justifies; a permanent intended-state chang
 
 `DeletePod{Ref}` deletes one named Pod with UID/version preconditions and verifies absence or a replacement
 UID. It never recreates a Pod during undo. `ScaleWorkload{Ref, Replicas}` accepts a Deployment, StatefulSet or
-ReplicaSet, resolves a nonnegative integer replica count, and directly verifies `spec.replicas`. Partial failures undo
+old-revision ReplicaSet of a bound Deployment, resolves a nonnegative integer replica count, and directly verifies `spec.replicas`. Partial failures undo
 reversible fields from captured pre-images; irreversible effects remain disclosed.
 
 `Exec{Pod, Container, Command: []program.Value{...}}` derives every command argument through values. The
