@@ -148,8 +148,18 @@ def prepare_scripted_credentials(kubeconfig: Path, control: str) -> str:
     )
     name = "sdo-scripted-credentials"
     result = kubectl(["create", "secret", "generic", name], namespace=control, kubeconfig=kubeconfig, check=False)
-    if result.returncode and "AlreadyExists" not in result.stderr:
-        raise RuntimeError(f"eval: scripted credential mount creation failed: {result.stderr}")
+    if result.returncode:
+        # kubectl's create-secret path does not consistently retain API reason
+        # names in stderr. Confirm the exact reserved name using metadata only;
+        # never read credential values or infer existence from English errors.
+        existing = kubectl(
+            ["get", "secret", name, "-o", "name", "--ignore-not-found=true"],
+            namespace=control,
+            kubeconfig=kubeconfig,
+            check=False,
+        )
+        if existing.returncode or existing.stdout.strip() != f"secret/{name}":
+            raise RuntimeError(f"eval: scripted credential mount creation failed: {result.stderr}")
     return name
 
 
