@@ -285,6 +285,16 @@ class RestoreChecks:
         )
 
 
+def require_terminal_reflection(environment: FastloopEnvironment) -> None:
+    """Reject recovery until the native learning edge has finalized the incident."""
+    record = PersistentState.load(environment.state_path).controllers.get(environment.namespace)
+    if record is not None and record.pending is not None:
+        raise RuntimeError(
+            f"eval: recovery requires durable terminal reflection for incident {record.pending.incident_id!r}; "
+            "leave the application and controller state intact"
+        )
+
+
 def reset_environment(
     environment: FastloopEnvironment,
     cluster: ResetCluster,
@@ -293,6 +303,7 @@ def reset_environment(
     preserve_repository: bool = False,
     checks: RestoreChecks | None = None,
 ) -> None:
+    require_terminal_reflection(environment)
     if environment.shared_accepted_id:
         raise ValueError("shared accepted memory cannot use lane reset; retain the prepared controller")
     if not environment.seed_commit:
@@ -327,6 +338,7 @@ def restore_application(
     The controller, accepted memory and incident clocks are untouched. This is
     also the one allowed stabilization retry before any fault is injected.
     """
+    require_terminal_reflection(environment)
     baselines = load_application_baseline(environment.baseline_path, environment.namespace)
     if baselines is None:
         raise ValueError("reset requires an application baseline captured by fastloop up")

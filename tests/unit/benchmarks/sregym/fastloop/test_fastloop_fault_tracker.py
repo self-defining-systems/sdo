@@ -228,7 +228,19 @@ def test_all_playbook_stream_ids_resolve_to_registered_fault_probes_without_a_cl
             faults = stream_faults(ids, catalog=catalog)
             assert faults
             if all(fault.tracking_supported for fault in faults):
-                assert len(probes_for(faults, _reader({}))) == len(faults)
+                # Field probes capture a healthy API reference before injection.
+                def baseline_reader(kind, name):
+                    if kind == "deployment":
+                        return {
+                            **_deployment(1),
+                            "spec": {
+                                "replicas": 1,
+                                "template": {"spec": {"containers": [{"name": "app", "image": "good"}]}},
+                            },
+                        }
+                    return None
+
+                assert len(probes_for(faults, baseline_reader)) == len(faults)
             else:
                 with pytest.raises(ValueError, match="tracking unsupported"):
                     probes_for(faults, _reader({}))

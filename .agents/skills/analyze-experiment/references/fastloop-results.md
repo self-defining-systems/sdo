@@ -4,36 +4,7 @@
 
 Fastloop runs write `results/<run-id>/incidents.jsonl` and `incidents.csv`, one row per attempted stream entry. `problem_id` joins explicitly composed IDs with `+`. Use `oracle.success`, `recovery_oracle.success`, and `error` together: a failed incident oracle or failed post-recovery oracle is a failed incident. `injection_started_at`, `detected_at`, `responder_started_at`, `responder_finished_at`, `mitigation_applied_at`, `oracle_finished_at`, `reflection_started_at`, `reflection_finished_at`, `rebuild_done_at`, and `recovery_finished_at` are timestamp columns; `responder_tokens`, `drift_tokens`, and `reflection_tokens` are separate objects in JSONL and JSON strings in CSV. New `run_metadata.json` declares `token_accounting_version: responder-drift/v2`: `drift_tokens` is legacy zero and merged reasoning is charged once to `responder_tokens`. Older rows retain recorded investigator costs; the historical reader sums completed investigations between injection start and resolution end. `diagnosis_grade` is separate from the deterministic oracle: when enabled, it contains SREGym's diagnosis-judge success, accuracy, D1/D2/D3 details, judge tokens, latency, and any judge error. Explicit composites receive one whole-set diagnosis grade. Deferred grades are merged into both result files at run end and never gate the next injection; inline grades run before the reflection drain and recovery. With deferred grading, fastloop time-to-mitigation is `injection_to_mitigation_seconds` directly; inline grading occurs after responder resolution and before recovery, so it is excluded from that metric too. Reflection timestamps are the harness-observed drain interval; newer native broker ledgers separately expose closure phase instants. Do not mix these fastloop rows into pipeline stage cost calculations without accounting for that different timing scope.
 
-Fastloop incident schema `sdo.fastloop-incident/v2` requires a discriminated `injection`
-object: `{state: injected, started_at, finished_at}` from the worker injection event
-(the same request/reply captured in the audit), or `{state: not_injected, stage}`.
-Stages: `pre_injection` (setup/baseline/RBAC stopped before the callback)
-or `injection` (callback attempted without a returned worker event).
-`not_injected` means no event is available, including remote timeouts with uncertain
-writes. Never infer occurrence from local clocks.
-Invalid injection with a recorded event remains `injected` and `infra_error=injection_invalid`;
-validity and occurrence are separate facts. Composite event times span the first
-recorded component start through the last recorded component finish, including
-partial failures. Top-level `injection_started_at` and `injection_finished_at` are
-derived columns only; both are null for `not_injected`, as are injection latencies.
-Summaries count non-injected rows as infrastructure outcomes, exclude them from
-incident success/latency denominators, and retain their error and wall time.
-Sequence analysis excludes non-injected and unverified legacy rows. Historical
-v1 timestamps, including microsecond pairs from setup failures, are not evidence:
-reconcile against the worker audit before upgrading. The v2 loader rejects legacy rows.
-
-Fastloop freezes the incident oracle and any inline diagnosis grade in
-`incidents.grades/<six-digit-index>.json` beside `incidents.jsonl`, before collecting the
-terminal learning receipt. Each checkpoint has the ordinary incident-record
-schema but no completed reflection/recovery fields. Use it when a slow or failed
-reflection has delayed the final row; do not count it as a terminal strict receipt.
-The final row and checkpoint expose `graded_at` (alias of `oracle_finished_at`),
-`closure_to_grade_seconds` (`graded_at - resolved_at`) and
-`responder_runtime_seconds` (`responder_finished_at - responder_started_at`);
-missing endpoints yield null. Deferred diagnosis grades arrive later in the final
-rows and are not retroactively inserted into the immutable oracle checkpoint.
-Oracle failure still reaches reflection using the original `AgentOutcome`, with
-no grade feedback. Cleanup and the next injection retain the learning gate.
+For injection occurrence, grade checkpoints and per-fault probe semantics, read [fault tracking evidence](fault-tracking.md).
 
 
 New native broker ledgers expose `closure_phase_timestamps` as UTC instants and `reflection_skipped_reason`; fastloop rows expose `closure_phase_seconds`, the elapsed seconds since each preceding observed closure phase. Missing phases mean that path did not execute or that the run predates instrumentation. The immutable outcome document is committed before reflection, so join later phases from the broker ledger using the incident ID and outcome commit.
@@ -164,3 +135,5 @@ archive copy-back and reset. The external attachment report records phases and
 original Jobs. Attachment requires equal initial accepted trees and retains
 private proposal, ledger, capture and session roots. Scripted scheduling, broker
 and lock tests prove plumbing; live runs establish learning and speedup.
+
+Install-time pending namespace inventory also records pre-existing environment identities independently of healthy onboarding. A rejected health window does not turn those identities into unexplained presence drift. Check the immutable pending snapshot and install boundary; source-declared faults, health/reachability checks and objects added after that boundary remain active. This rule does not label, delete or recreate environment objects.

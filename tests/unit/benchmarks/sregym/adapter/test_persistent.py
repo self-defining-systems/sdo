@@ -829,6 +829,25 @@ def test_fail_soft_reset_restarts_controller_without_losing_drift_verdicts(tmp_p
     baseline = ApplicationBaseline("hotel", [{"kind": "Deployment", "metadata": {"name": "app"}}])
     environment.baseline_path.write_text(json.dumps({"fastloop_application": {"namespaces": [baseline.__dict__]}}))
 
+    # A reset cannot discard the just-verified incident's outstanding learning.
+    with pytest.raises(RuntimeError, match="durable terminal reflection"):
+        reset_environment(environment, ResetCluster(ops), HealthyWorker(), preserve_repository=True)
+    assert "hotel-sdo" in ops.pods
+    ops.reflectable.add("incident-1")
+    state = PersistentState.load(environment.state_path)
+    record = state.controllers["hotel"]
+    drained = drain_pending_incident(
+        record,
+        ops=ops,
+        repository=tmp_path / "s0" / "application_workspace",
+        drained_by="test-before-reset",
+        clock=_clock(ops),
+    )
+    assert not drained.HasField("failure")
+    assert ops.runtime_state("hotel-sdo")["last_acknowledged_incident_id"] == "incident-1"
+    # This is the same finalization boundary used by SdoFastloopAgent.learn.
+    record.pending = None
+    state.save(environment.state_path)
     reset_environment(environment, ResetCluster(ops), HealthyWorker(), preserve_repository=True)
     calls: list[str] = []
     resolution = run_persistent_stage(

@@ -552,6 +552,20 @@ def test_source_claim_retains_installed_default_only_when_source_omits_class(
     assert result[0].objects[0]["spec"]["storageClassName"] == expected
 
 
+def test_deployed_faulty_application_service_remains_captured_and_reported() -> None:
+    service = obj("Service", "app", spec={"selector": {"app": "healthy"}, "ports": [{"port": 80}]})
+    service["metadata"]["managedFields"] = [{"manager": "sdo-deployer", "operation": "Apply"}]
+    cluster = FakeCluster()
+    cluster.add(service)
+    baseline = capture_application_baseline(cluster, "hotel")
+    faulty = deepcopy(service)
+    faulty["spec"]["selector"] = {"app": "wrong"}
+    cluster.add(faulty)
+    assert capture_application_baseline(cluster, "hotel").objects[0]["spec"]["selector"] == {"app": "wrong"}
+    reconcile_application(cluster, baseline, "hotel")
+    assert cluster.touched == [("hotel", "Service", "app")]
+
+
 @pytest.mark.parametrize("ownership", ["label", "ownership-label", "manager", "owner"])
 def test_capture_excludes_sdo_ownership_but_keeps_plain_app_rbac(ownership: str) -> None:
     # Hand-written fixture: names intentionally do not identify the installer.

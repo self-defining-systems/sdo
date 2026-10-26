@@ -45,8 +45,12 @@ func (c *Controller) prepareSourceInventory(ctx context.Context) error {
 	index.EvidenceGaps = append(index.EvidenceGaps, inventory.EvidenceGaps...)
 	c.mu.Lock()
 	acknowledgement := cloneNamespaceOnboarding(c.namespaceOnboarding)
+	environment := cloneNamespaceOnboarding(c.installEnvironment)
 	c.mu.Unlock()
 	if err := index.SetNamespaceOnboarding(acknowledgement); err != nil {
+		return err
+	}
+	if err := index.setInstallEnvironment(environment); err != nil {
 		return err
 	}
 	c.mu.Lock()

@@ -14,9 +14,9 @@ if TYPE_CHECKING:
 
 from pydantic import BaseModel, ConfigDict, model_validator
 
-PROBE_KINDS = frozenset(
-    {"target_port", "incorrect_image", "readiness", "wrong_selector", "network_policy", "configmap", "resource_request"}
-)
+from benchmarks.sregym.faults.probe_catalog import CLASS_KINDS
+
+PROBE_KINDS = frozenset(CLASS_KINDS.values())
 CapabilityMode = Literal["strict", "permissive"]
 
 
@@ -49,6 +49,7 @@ class FaultSpec:
     class_name: str = ""
     fault_key: str = ""
     parameters: dict[str, Any] = field(default_factory=lambda: dict[str, Any]())
+    targets: tuple[str, ...] = ()
     tracking_supported: bool = True
     tracking_reason: str | None = None
     # These name both the repair authority and the controller snapshot needed.
@@ -57,12 +58,22 @@ class FaultSpec:
     def __post_init__(self) -> None:
         if not self.kind or not self.component:
             raise ValueError("fault kind and component must be non-empty")
+        if self.targets and (
+            any(not isinstance(target, str) or not target for target in self.targets)
+            or len(set(self.targets)) != len(self.targets)
+            or self.component != ",".join(self.targets)
+        ):
+            raise ValueError("targets must be distinct non-empty names matching component")
         if self.declared_index < 0:
             raise ValueError("declared_index must be non-negative")
         if self.tracking_supported and self.kind not in PROBE_KINDS:
             raise ValueError(f"no probe for fault kind {self.kind!r}")
         if not self.tracking_supported and not self.tracking_reason:
             raise ValueError("unsupported tracking needs a reason")
+
+    @property
+    def target_components(self) -> tuple[str, ...]:
+        return self.targets or (self.component,)
 
     @property
     def name(self) -> str:
@@ -145,9 +156,13 @@ def validate_suite(
                 errors.append(
                     f"{problem_id}/{fault.class_name}: unsupported repair/snapshot scope {', '.join(sorted(missing))}"
                 )
-        if require_tracking and not description.tracking_supported:
+        if require_tracking and (
+            not description.tracking_supported or any(f.kind not in PROBE_KINDS for f in description.faults)
+        ):
             unsupported = [
-                fault.class_name or fault.kind for fault in description.faults if not fault.tracking_supported
+                fault.class_name or fault.kind
+                for fault in description.faults
+                if not fault.tracking_supported or fault.kind not in PROBE_KINDS
             ]
             errors.append(
                 f"{problem_id}: per-fault tracking unsupported for "

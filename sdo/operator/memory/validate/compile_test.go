@@ -1,7 +1,9 @@
 package validate
 
 import (
+	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -21,6 +23,25 @@ func compileRequest(root string) Request {
 }
 
 const detectorSource = ".sdo/diagnostics/detectors/incidents/missing-configmap/detector.go"
+
+func TestCompileCachedVetLocationsSurviveWorkspaceRelocation(t *testing.T) {
+	t.Setenv("GOFLAGS", os.Getenv("GOFLAGS")+" -trimpath")
+	var first []Diagnostic
+	for attempt := 0; attempt < 2; attempt++ {
+		root := compileTree(t)
+		edit(t, root, detectorSource, "return Detector{}", `_ = fmt.Sprintf("%d", "not a number")
+	return Detector{}`)
+		diagnostics := diagnose(t, compileRequest(root))
+		if len(diagnostics) != 1 || diagnostics[0].Rule != RuleDetectorVet || diagnostics[0].Path != detectorSource || diagnostics[0].Line == 0 {
+			t.Fatalf("attempt %d: unlocated vet diagnostic: %+v", attempt, diagnostics)
+		}
+		if attempt == 0 {
+			first = diagnostics
+		} else if !reflect.DeepEqual(first, diagnostics) {
+			t.Fatalf("same source in isolated workspaces changed diagnostics: first %+v, second %+v", first, diagnostics)
+		}
+	}
+}
 
 func TestCompileAcceptsDetectorsThatBuildVetAndPass(t *testing.T) {
 	if got := diagnose(t, compileRequest(compileTree(t))); len(got) != 0 {
