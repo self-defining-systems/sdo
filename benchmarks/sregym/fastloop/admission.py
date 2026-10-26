@@ -15,6 +15,7 @@ from benchmarks.sregym.adapter import (
     INCIDENT_EXECUTION_LABEL,
     POST_CLOSURE_WAIT_SECONDS,
     STANDBY_LABEL,
+    ControllerStateUnavailableError,
     Deadline,
     StabilizationError,
     assert_host_disk_headroom,
@@ -141,12 +142,6 @@ class PriorClosureIncompleteError(ValueError):
     def __init__(self, message: str, evidence: dict[str, Any]) -> None:
         super().__init__(message)
         self.evidence = evidence
-
-
-class ControllerStateUnavailableError(PriorClosureIncompleteError):
-    """The controller state could not be read at the end of the wait, so whether closure is over is unknown."""
-
-    reason = "controller_state_unavailable"
 
 
 class _IncidentWorkStarted(Exception):

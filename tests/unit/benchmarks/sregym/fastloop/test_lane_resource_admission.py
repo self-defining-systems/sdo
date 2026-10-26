@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from benchmarks.sregym.adapter import persistent
 from benchmarks.sregym.fastloop import admission, cli, hotel_helpers, rbac
 
 # The lane fixture stubs worker listing; standby tests exercise the real one.
@@ -545,6 +546,8 @@ def test_an_unreadable_controller_state_is_typed_not_a_closure_timeout(lane):
     with pytest.raises(admission.ControllerStateUnavailableError) as info:
         gate.await_prior_closure("hotel-reservation-sdo")
     assert info.value.reason == "controller_state_unavailable"
+    # One type for "state unreadable", shared with the recovery drain.
+    assert admission.ControllerStateUnavailableError is persistent.ControllerStateUnavailableError
 
 
 def test_an_incident_loop_cannot_extend_the_prior_closure_wait_forever(lane, monkeypatch):

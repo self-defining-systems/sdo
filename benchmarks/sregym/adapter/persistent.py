@@ -134,7 +134,17 @@ class ReflectionDeadlineError(PersistentControllerError):
 
 
 class ControllerStateUnavailableError(PersistentControllerError):
-    """The controller state could not be read before the deadline, so whether the closure is over is unknown."""
+    """The controller state could not be read before a deadline, so whether closure is over is unknown.
+
+    Raised by the recovery drain and by admission's prior-closure wait; either
+    way the row is not measured. ``evidence`` carries the last observation.
+    """
+
+    reason = "controller_state_unavailable"
+
+    def __init__(self, message: str, evidence: dict[str, Any] | None = None) -> None:
+        super().__init__(message)
+        self.evidence = evidence or {}
 
 
 class DetectionMissError(PersistentControllerError):
