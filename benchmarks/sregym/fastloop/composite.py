@@ -212,6 +212,9 @@ class TrackedAgent:
     def learn(self, outcome: AgentOutcome) -> AgentOutcome:
         return self._inner.learn(outcome)
 
+    def prepare_recovery(self, outcome: AgentOutcome | None) -> None:
+        self._inner.prepare_recovery(outcome)
+
     def close(self) -> None:
         self._inner.close()
 
