@@ -121,4 +121,3 @@ another submission. The terminal strict receipt and accepted outcome remain
 separate evidence; neither depends on a benchmark grade. A closure without a
 responder result sends nothing. Grade files live outside the operational repository
 and are never inputs to responders or reflection.
-

@@ -184,3 +184,12 @@ def test_native_monitor_uses_correlated_ledger_and_skips_previous_incident(
         assert submitted.wait(2)
         closed.set()
     assert json.loads((tmp_path / "sdo_incident_grade.json").read_text())["incident_id"] == "incident-1"
+
+
+def test_uncorrelated_closure_cannot_reach_benchmark_transport(tmp_path: Path) -> None:
+    evidence = ledger()
+    evidence["closure"]["request"]["incident_id"] = "other-incident"
+    grader = ClosureGrader(tmp_path, "http://conductor", submit=lambda *_: pytest.fail("uncorrelated result"))
+    with pytest.raises(ValueError, match="incident-correlated"):
+        grader.observe(evidence)
+    assert not grader.path.exists()
