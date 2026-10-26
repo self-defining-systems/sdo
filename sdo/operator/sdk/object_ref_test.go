@@ -45,8 +45,34 @@ func TestObjectRefJSONPassesRawAgentTextToGo(t *testing.T) {
 	}
 }
 
+func TestObjectRefJSONUnknownKindsInKnownKindNamespaces(t *testing.T) {
+	for alias, kind := range objectKinds {
+		for _, namespace := range []string{alias, kind, alias + ".example"} {
+			for _, version := range []string{"", "example.dev/v2"} {
+				ref := ObjectRef{Kind: "Widget", Namespace: namespace, Name: "worker", APIVersion: version}
+				raw, err := json.Marshal(ref)
+				if err != nil {
+					t.Fatal(err)
+				}
+				parsed, err := ParseObjectRef(string(raw))
+				if err != nil || parsed != ref {
+					t.Fatalf("JSON reference %s: %+v, %v; want %+v", raw, parsed, err, ref)
+				}
+				text, err := FormatObjectRef(parsed)
+				if err != nil {
+					t.Fatalf("format accepted JSON reference %s: %v", raw, err)
+				}
+				again, err := ParseObjectRef(text)
+				if err != nil || again != ref {
+					t.Fatalf("round trip %s -> %q: %+v, %v; want %+v", raw, text, again, err, ref)
+				}
+			}
+		}
+	}
+}
+
 func FuzzObjectRefParseFormat(f *testing.F) {
-	for _, seed := range []string{"Deployment/api", "deploy/shop/api", "shop/deployments.apps/api", "Service/a; Service/b", "Service//api", "example.dev/v2@Widget/shop/example", `{"api_version":"apps/v1","kind":"Deployment","namespace":"app","name":"worker"}`, `{"kind":"Pod","name":"worker","name":"peer"}`, "\xff\x00"} {
+	for _, seed := range []string{"Pod/0/0", "Deployment/api", "deploy/shop/api", "shop/deployments.apps/api", "Service/a; Service/b", "Service//api", "example.dev/v2@Widget/shop/example", `{"api_version":"apps/v1","kind":"Deployment","namespace":"app","name":"worker"}`, `{"kind":"Pod","name":"worker","name":"peer"}`, "\xff\x00"} {
 		f.Add(seed)
 	}
 	f.Fuzz(func(t *testing.T, raw string) {
