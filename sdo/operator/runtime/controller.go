@@ -871,7 +871,7 @@ func (c *Controller) NextWake() time.Time {
 	verificationDeadline := c.responderCompletedAt.Add(c.config.VerificationTimeout)
 	verificationPending := c.incidentOpen && c.responderDone
 	earlyDeadline := time.Time{}
-	if c.incidentOpen && !c.responderDone && !c.closureStableSince.IsZero() {
+	if c.incidentOpen && !c.closureStableSince.IsZero() {
 		earlyDeadline = c.closureStableSince.Add(c.config.ClosureStabilityWindow)
 	}
 	if c.earlyReportPendingLocked() {
@@ -1284,10 +1284,14 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 	}
 	driftClear, driftFindings := c.verifyClosureDriftWithResult(ctx, now, snapshot, nil, rolloutRefs...)
 	c.mu.Lock()
-	if early && safe && guard != nil && c.closureMutationRevision != guard.Revision {
+	// Any observed responder write restarts the stability window, including
+	// the last writes before the responder finished.
+	if safe && guard != nil && c.closureMutationRevision != guard.Revision {
 		c.closureMutationRevision = guard.Revision
 		c.closureStableSince = time.Time{}
-		c.earlyLastMutationAt = now
+		if early {
+			c.earlyLastMutationAt = now
+		}
 	}
 	finalStates, healthVerified := c.finalVerificationStates()
 	if early && healthVerified && !c.earlyLastMutationAt.IsZero() {
@@ -1357,6 +1361,20 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 				return
 			}
 		}
+	} else if verified && !terminalFailure {
+		// A success outcome teaches memory, so it commits only after health has
+		// held for the window. Fast health proof still reports the early clear
+		// time; a relapse resets the window and takes the unverified path below.
+		requiresStability = true
+		if c.closureStableSince.IsZero() {
+			c.closureStableSince = now
+		}
+		if now.Before(c.closureStableSince.Add(c.config.ClosureStabilityWindow)) {
+			c.mu.Unlock()
+			return
+		}
+	} else {
+		c.closureStableSince = time.Time{}
 	}
 
 	if healthVerified && c.terminalInventoryBlockerLocked(verification) {
