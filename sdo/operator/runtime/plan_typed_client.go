@@ -41,6 +41,16 @@ func (c TypedPlanClient) Get(ctx context.Context, ref sdk.ObjectRef) (*unstructu
 	var object any
 	var err error
 	switch ref.APIVersion + "/" + ref.Kind {
+	case "v1/ServiceAccount":
+		object, err = c.Client.CoreV1().ServiceAccounts(ref.Namespace).Get(ctx, ref.Name, metav1.GetOptions{})
+	case "rbac.authorization.k8s.io/v1/ClusterRole":
+		object, err = c.Client.RbacV1().ClusterRoles().Get(ctx, ref.Name, metav1.GetOptions{})
+	case "rbac.authorization.k8s.io/v1/ClusterRoleBinding":
+		object, err = c.Client.RbacV1().ClusterRoleBindings().Get(ctx, ref.Name, metav1.GetOptions{})
+	case "rbac.authorization.k8s.io/v1/Role":
+		object, err = c.Client.RbacV1().Roles(ref.Namespace).Get(ctx, ref.Name, metav1.GetOptions{})
+	case "rbac.authorization.k8s.io/v1/RoleBinding":
+		object, err = c.Client.RbacV1().RoleBindings(ref.Namespace).Get(ctx, ref.Name, metav1.GetOptions{})
 	case "v1/Pod":
 		object, err = c.Client.CoreV1().Pods(ref.Namespace).Get(ctx, ref.Name, metav1.GetOptions{})
 	case "apps/v1/StatefulSet":
@@ -84,6 +94,21 @@ func (c TypedPlanClient) Patch(ctx context.Context, ref sdk.ObjectRef, kind type
 		return fmt.Errorf("Kubernetes plan client is required")
 	}
 	switch ref.APIVersion + "/" + ref.Kind {
+	case "v1/ServiceAccount":
+		_, err := c.Client.CoreV1().ServiceAccounts(ref.Namespace).Patch(ctx, ref.Name, kind, patch, metav1.PatchOptions{})
+		return err
+	case "rbac.authorization.k8s.io/v1/ClusterRole":
+		_, err := c.Client.RbacV1().ClusterRoles().Patch(ctx, ref.Name, kind, patch, metav1.PatchOptions{})
+		return err
+	case "rbac.authorization.k8s.io/v1/ClusterRoleBinding":
+		_, err := c.Client.RbacV1().ClusterRoleBindings().Patch(ctx, ref.Name, kind, patch, metav1.PatchOptions{})
+		return err
+	case "rbac.authorization.k8s.io/v1/Role":
+		_, err := c.Client.RbacV1().Roles(ref.Namespace).Patch(ctx, ref.Name, kind, patch, metav1.PatchOptions{})
+		return err
+	case "rbac.authorization.k8s.io/v1/RoleBinding":
+		_, err := c.Client.RbacV1().RoleBindings(ref.Namespace).Patch(ctx, ref.Name, kind, patch, metav1.PatchOptions{})
+		return err
 	case "apps/v1/StatefulSet":
 		_, err := c.Client.AppsV1().StatefulSets(ref.Namespace).Patch(ctx, ref.Name, kind, patch, metav1.PatchOptions{})
 		return err

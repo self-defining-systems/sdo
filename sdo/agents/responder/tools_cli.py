@@ -19,6 +19,8 @@ PLAN_ACTIONS = (
     "SetField updates a schema-checked field by index or unique name, optionally from accepted source; "
     "ConfigMap JSON/YAML entries preserve unrelated keys.\n"
     "CreateFromSource restores a named missing object from accepted source.\n"
+    "ReconcileFromSource restores declared configuration, including source-named cluster objects, "
+    "while preserving undeclared fields.\n"
     "DeleteObject irreversibly removes an allowed named source-absent object and never auto-recreates it."
 )
 
@@ -46,7 +48,7 @@ RESPONSE_FIELDS = {
     "diagnose": "program_runs[].{program_id, program_revision, verdict, can_mitigate}, program_revisions",
     "plan": "plan_id, patches[], program_runs[], program_revisions",
     "menu": "menu.options[].{option_id, program_id, program_revision, disabled_reason, parameters}, "
-    "unexplained_removal_blockers[]",
+    "selection_schema, selection_set_schema, unexplained_removal_blockers[]",
     "source": "source (accepted Kubernetes object)",
     "verify": "healthy, unresolved, findings[], detector_states[], drift_events[]",
     "report": "report.{status, attempt_id, rounds}, session",
@@ -186,6 +188,11 @@ def _parser() -> argparse.ArgumentParser:
             + WORKING_PROGRAM_HELP
         ),
         epilog=(
+            "Parameters accept ordinary JSON objects, arrays, numbers and booleans, as well as strings. "
+            "sdo menu exports recursive parameters[].schema for every option, plus selection_schema and "
+            "selection_set_schema; nested properties, required fields and oneOf choices describe accepted shapes. "
+            "parameters[].example supplies typed synthetic inputs; replace names/values using incident evidence. "
+            "CLI --param NAME=VALUE accepts JSON text for structured values. "
             "EnsureDatabaseUser repairs a MongoDB user in one call. Its password and target.auth "
             "username/password take exactly one credential reference: {env: NAME} or "
             "{config_map: {name: CONFIGMAP, key: KEY, assignment: optional_NAME}} in the target Pod namespace. "
@@ -409,13 +416,23 @@ def _option_selection(args: argparse.Namespace, parameters: dict[str, str]) -> d
 def _selection_set(path: Path) -> dict[str, object]:
     from google.protobuf.json_format import ParseError
 
+    from sdo.agents.responder.selection_inputs import normalize_selection_set, validate_message_shape
     from sdo.contracts import MitigationSelectionSet, parse_json, to_canonical_json, validate
 
     try:
-        selection = parse_json(path.read_text(encoding="utf-8"), MitigationSelectionSet())
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, ValueError) as exc:
+        raise ValueError("selection_set: expected readable JSON object") from exc
+    value = normalize_selection_set(value)
+    validate_message_shape(value, MitigationSelectionSet(), "selection_set")
+    try:
+        selection = parse_json(json.dumps(value), MitigationSelectionSet())
+    except (ValueError, ParseError) as exc:
+        raise ValueError("selection_set: expected declared field shapes; see sdo menu schemas") from exc
+    try:
         validate(selection)
-    except (OSError, UnicodeError, ValueError, ParseError) as exc:
-        raise ValueError("invalid version 1 mitigation selection set") from exc
+    except ValueError as exc:
+        raise ValueError(f"selection_set: {exc}") from exc
     return json.loads(to_canonical_json(selection))
 
 
@@ -423,16 +440,27 @@ def _selection(path: Path) -> dict[str, object]:
     # Keep help and all existing tools independent of protobuf startup costs.
     from google.protobuf.json_format import ParseError
 
+    from sdo.agents.responder.selection_inputs import validate_message_shape
     from sdo.contracts import MitigationSelection, parse_json, to_canonical_json, validate
 
     try:
-        selection = parse_json(path.read_text(encoding="utf-8"), MitigationSelection())
-        validate(selection)
-    except (OSError, UnicodeError, ValueError, ParseError) as exc:
-        # Parser/validation errors may contain agent-supplied opaque values.
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, ValueError) as exc:
+        raise ValueError("selection: expected readable JSON object") from exc
+    try:
+        validate_message_shape(value, MitigationSelection(), "selection")
+    except ValueError as exc:
+        raise ValueError(f"invalid mitigation selection: {exc}") from exc
+    try:
+        selection = parse_json(json.dumps(value), MitigationSelection())
+    except (ValueError, ParseError) as exc:
         raise ValueError(
-            "invalid mitigation selection; supply a complete version 1 selection within the incident round allowance"
+            "invalid mitigation selection: expected declared field shapes; see sdo menu selection_schema"
         ) from exc
+    try:
+        validate(selection)
+    except ValueError as exc:
+        raise ValueError(f"invalid mitigation selection: {exc}") from exc
     return json.loads(to_canonical_json(selection))
 
 

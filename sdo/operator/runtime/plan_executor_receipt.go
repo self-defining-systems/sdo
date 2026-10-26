@@ -33,8 +33,8 @@ func (e PlanExecutor) Reconcile(ctx context.Context, result PlanApplicationResul
 		}
 		before, after := true, true
 		for _, field := range planPatchFields(patch) {
-			b, bok := patch.Before.Object[field]
-			a, aok := patch.After.Object[field]
+			b, bok := planConfigurationField(patch.Before, field)
+			a, aok := planConfigurationField(patch.After, field)
 			v, vok := live.Object[field]
 			before = before && planFieldsMatch(b, bok, a, aok, v, vok, true)
 			after = after && planFieldsMatch(b, bok, a, aok, v, vok, false)
@@ -47,8 +47,8 @@ func (e PlanExecutor) Reconcile(ctx context.Context, result PlanApplicationResul
 	// is the write plus whatever the server made of it, so no after-image is compared.
 	landed := false
 	for _, field := range planPatchFields(patch) {
-		b, bok := patch.Before.Object[field]
-		a, aok := patch.After.Object[field]
+		b, bok := planConfigurationField(patch.Before, field)
+		a, aok := planConfigurationField(patch.After, field)
 		v, vok := live.Object[field]
 		landed = landed || !planFieldsMatch(b, bok, a, aok, v, vok, true)
 	}

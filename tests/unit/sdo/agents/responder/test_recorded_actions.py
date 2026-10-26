@@ -828,3 +828,13 @@ def test_verified_incident_act_returns_rejection_receipt_without_running(tmp_pat
     assert action["receipt"]["failure_reason"] == "incident_verified"
     assert action["receipt"]["success"] is False
     assert action["incident_verified"] == warning
+
+
+def test_cluster_reference_cli_keeps_kind_version_and_scope() -> None:
+    for kind in ("ClusterRole", "ClusterRoleBinding"):
+        assert recorded_actions.resource_ref(f"{kind}/app-cleanup") == {
+            "api_version": "rbac.authorization.k8s.io/v1",
+            "kind": kind,
+            "namespace": "",
+            "name": "app-cleanup",
+        }
