@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -112,6 +113,23 @@ def test_ci_reuses_existing_python_runners_and_combines_every_coverage_file() ->
     assert "--fail-under=0" not in report["run"]
 
 
+def test_ci_combines_exactly_the_uploaded_coverage_artifacts() -> None:
+    jobs = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())["jobs"]
+    upload = next(
+        step for step in jobs["python"]["steps"] if step.get("uses", "").startswith("actions/upload-artifact@")
+    )
+    steps = jobs["required-pr-ci"]["steps"]
+    download = next(step for step in steps if step.get("uses", "").startswith("actions/download-artifact@"))
+    expected = {
+        str(Path(download["with"]["path"]) / upload["with"]["name"].replace("${{ matrix.shard }}", row["shard"]))
+        for row in jobs["python"]["strategy"]["matrix"]["include"]
+    }
+    commands = [shlex.split(line) for step in steps for line in step.get("run", "").splitlines()]
+    combine = next(command for command in commands if "coverage" in command and "combine" in command)
+    consumed = set(combine[combine.index("combine") + 1 :])
+    assert consumed == expected, f"Coverage combine inputs {consumed} differ from uploaded artifacts {expected}"
+
+
 @pytest.mark.parametrize("missing", ["core", "fastloop"])
 def test_combined_coverage_requires_both_shards(tmp_path: Path, missing: str) -> None:
     jobs = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())["jobs"]
@@ -138,7 +156,14 @@ def test_real_coverage_combines_disjoint_shards_before_applying_threshold(tmp_pa
     env = dict(os.environ)
     env.pop("COVERAGE_FILE", None)
     env.pop("COVERAGE_PROCESS_START", None)
-    for shard, function in (("core", "first"), ("fastloop", "second")):
+    jobs = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())["jobs"]
+    upload = next(
+        step for step in jobs["python"]["steps"] if step.get("uses", "").startswith("actions/upload-artifact@")
+    )
+    steps = jobs["required-pr-ci"]["steps"]
+    download = next(step for step in steps if step.get("uses", "").startswith("actions/download-artifact@"))
+    for row, function in zip(jobs["python"]["strategy"]["matrix"]["include"], ("first", "second"), strict=True):
+        shard = row["shard"]
         script = tmp_path / f"{shard}.py"
         script.write_text(f"import subject\nsubject.{function}()\n")
         subprocess.run(
@@ -155,5 +180,11 @@ def test_real_coverage_combines_disjoint_shards_before_applying_threshold(tmp_pa
             check=False,
         )
         assert partial.returncode != 0
-    subprocess.run([sys.executable, "-m", "coverage", "combine"], cwd=tmp_path, env=env, check=True)
-    subprocess.run([sys.executable, "-m", "coverage", "report"], cwd=tmp_path, env=env, check=True)
+        artifact_dir = (
+            tmp_path / download["with"]["path"] / upload["with"]["name"].replace("${{ matrix.shard }}", shard)
+        )
+        artifact_dir.mkdir(parents=True)
+        coverage_file = upload["with"]["path"].replace("${{ matrix.shard }}", shard)
+        (tmp_path / f".coverage.{shard}").rename(artifact_dir / coverage_file)
+    step = next(step for step in steps if "coverage combine" in step.get("run", ""))
+    subprocess.run(["bash", "-e", "-c", step["run"]], cwd=tmp_path, env=env, check=True)

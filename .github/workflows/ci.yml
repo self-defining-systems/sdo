@@ -736,7 +736,7 @@ jobs:
         run: |
           test -f python-coverage/python-coverage-core/.coverage.core
           test -f python-coverage/python-coverage-fastloop/.coverage.fastloop
-          uv run --extra test coverage combine python-coverage/python-coverage-core python-coverage/python-coverage-benchmarks
+          uv run --extra test coverage combine python-coverage/python-coverage-core python-coverage/python-coverage-fastloop
           uv run --extra test coverage report
       - name: Require every applicable CI job to succeed
         env:
