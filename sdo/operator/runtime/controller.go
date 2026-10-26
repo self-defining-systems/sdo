@@ -177,6 +177,7 @@ type Controller struct {
 	acknowledgmentResults      chan acknowledgmentCompletion
 	reflectionResults          chan reflectionCompletion
 	reflections                reflectionQueueState
+	busy                       busyWindow
 
 	// Baseline, when set, records healthy configuration and attaches the
 	// diff against it to each new incident request.
@@ -1715,6 +1716,7 @@ func (c *Controller) ExportState() (*contracts.ControllerState, error) {
 		NamespaceOnboarding: cloneNamespaceOnboarding(c.namespaceOnboarding),
 		AcceptedSourceDrift: driftEventsContract(c.acceptedSourceDrift), AcceptedSourceDriftRevision: c.acceptedSourceDriftRevision,
 		DriftEvents: driftEventsContract(c.driftEvents), OwnershipAdoption: adoptionContract(c.ownershipAdoption),
+		BusyUntil: optionalBusyUntil(c.busyUntilLocked(c.clock())),
 	}
 	if c.currentIncidentRequest != nil {
 		message.IncidentRequest, err = incidentRequestContract(*c.currentIncidentRequest)
