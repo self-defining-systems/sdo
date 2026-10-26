@@ -27,6 +27,9 @@ if TYPE_CHECKING:
 
 SCHEMA_VERSION = "sdo.fastloop-incident/v2"
 AgentName = Literal["sdo", "codex"]
+#: What let harness fault recovery run once the row was over: SDO's natural closure, a closure SDO
+#: permanently failed or retired, the reflection deadline with SDO still working, or no SDO incident.
+RecoveryTrigger = Literal["natural_closure", "closure_failed", "reflection_deadline", "no_incident"]
 #: ``composition`` grades a composite fault: it passes only when every fault's own oracle passes.
 OracleKind = Literal["sregym-mitigation-oracle", "health-check", "composition"]
 
@@ -137,6 +140,14 @@ class EvalNote(BaseModel):
     error: str = ""
 
 
+class RecoveryOracleSample(BaseModel):
+    """One recovery-oracle sample taken while the app settled after harness recovery."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    seconds: float = Field(ge=0)
+    success: bool
+
+
 class PostClosureWait(BaseModel):
     """Recovery waited for SDO to close incidents that opened after the graded incident closed."""
 
@@ -182,6 +193,8 @@ class IncidentRecord(_PersistedModel):
     recovery_finished_at: AwareDatetime | None = None
     oracle: OracleVerdict | None = None
     recovery_oracle: OracleVerdict | None = None
+    #: Every recovery-oracle sample until the app settled; only the last decides residue.
+    recovery_oracle_samples: list[RecoveryOracleSample] = Field(default_factory=list)
     diagnosis_grade: DiagnosisGrade | None = None
     diagnosis: str = ""
     mitigation: str = ""
@@ -218,6 +231,7 @@ class IncidentRecord(_PersistedModel):
     fault_recovery_seconds: float | None = None
     #: One entry per recovery pass that had to wait for a follow-up incident to close.
     post_closure_waits: list[PostClosureWait] = Field(default_factory=list)
+    recovery_trigger: RecoveryTrigger | None = None
     cleanup_deleted_counts: dict[str, int] = Field(default_factory=dict)
     cleanup_restored: list[str] = Field(default_factory=list)
     #: v2 full recovery, application reconciliation and healthy rollouts all completed.
