@@ -670,7 +670,8 @@ def test_transient_traffic_loss_after_recovery_settles_and_is_not_residue(tmp_pa
     )
 
     assert record.recovery_error is None
-    assert record.recovery_oracle is not None and record.recovery_oracle.success
+    assert record.recovery_oracle is not None
+    assert record.recovery_oracle.success
     assert [sample.success for sample in record.recovery_oracle_samples] == [False, False, False, True]
     assert record.recovery_oracle_samples[-1].seconds == pytest.approx(4 * 5 + 3 * 2)
 
