@@ -22,7 +22,13 @@ func TestUndetectedRepairRequiresMeasuredObjectTransition(t *testing.T) {
 	capture := t.TempDir()
 	write := func(phase string, port int32, observed time.Time) {
 		t.Helper()
-		snapshot := sdktest.Snapshot{NamespaceName: "demo", ObservedAtTime: &observed, ServiceList: []corev1.Service{{ObjectMeta: metav1.ObjectMeta{Name: "front", Namespace: "demo", UID: "stable"}, Spec: corev1.ServiceSpec{Ports: []corev1.ServicePort{{Port: 80, TargetPort: intstr.FromInt32(port)}}}}}}
+		view := sdktest.Snapshot{NamespaceName: "demo", ObservedAtTime: &observed, ServiceList: []corev1.Service{{TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Service"}, ObjectMeta: metav1.ObjectMeta{Name: "front", Namespace: "demo", UID: "stable"}, Spec: corev1.ServiceSpec{Ports: []corev1.ServicePort{{Port: 80, TargetPort: intstr.FromInt32(port)}}}}}}
+		// Production boundaries are written by CaptureSnapshot; a hand-built
+		// snapshot can carry fields the capture projection drops.
+		snapshot, err := sdktest.CaptureSnapshot(view, "demo")
+		if err != nil {
+			t.Fatal(err)
+		}
 		raw, _ := json.Marshal(snapshot)
 		if err := os.WriteFile(filepath.Join(capture, phase+".json"), raw, 0600); err != nil {
 			t.Fatal(err)
