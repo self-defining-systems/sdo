@@ -30,7 +30,8 @@ Read [validator rules](references/rules.md) before changing a manifest or when a
 Use `program.ReadFrom(ctx)` for the shared detector/Diagnose surface; read the
 [generated program SDK](../sdo-playbook-authoring/references/program-sdk.md) before using it.
 Use the [recorded Kubernetes client](../sdo-playbook-authoring/references/kubernetes-client.md) for typed or dynamic API reads.
-Detectors can call `ctx.DiffAgainstSource(ref)` before playbook selection; `SourceAbsent` requires a successful source lookup.
+Detectors can call `ctx.DiffAgainstSource(ref)` directly, before playbook selection.
+`Changed` covers field drift and source-absent objects; `SourceAbsent` requires a successful accepted-source lookup.
 Bind playbooks through findings. The shared view adds `LogsWithOptions` (previous instances), `PodUsage`/`NodeUsage`, probes, baseline diffs, metric queries, alerts and traffic.
 The runtime caches identical reads per snapshot and records actual results and failures for offline replay.
 Logs are capped at 64 KiB / 5 s; probes at 5 s. Read failures are errors/Unknown, never clearance;
