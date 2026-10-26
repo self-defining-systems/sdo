@@ -37,6 +37,7 @@ if TYPE_CHECKING:
         assert_lane_resources,
     )
     from benchmarks.sregym.adapter.native_operator import (
+        NativeInstallConfig,
         assert_shared_repository,
         execute_operator,
         inspect_existing,
@@ -79,6 +80,7 @@ if TYPE_CHECKING:
     from benchmarks.sregym.adapter.scripted_replay_catalog import SCRIPTED_REPLAY_SLOTS
 
 _EXPORTS: dict[str, str] = {
+    "NativeInstallConfig": "native_operator",
     "Deadline": "eval_guards",
     "LaneResourcePolicy": "lane_resources",
     "assert_host_disk_headroom": "lane_resources",
@@ -137,6 +139,7 @@ _EXPORTS: dict[str, str] = {
 }
 
 __all__ = [
+    "NativeInstallConfig",
     "Deadline",
     "LaneResourcePolicy",
     "assert_host_disk_headroom",
