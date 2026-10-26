@@ -11,12 +11,13 @@ from typing import TYPE_CHECKING, Any, Protocol
 from benchmarks.sregym.adapter import PersistentState, kubectl
 from benchmarks.sregym.fastloop.baseline_recovery import (
     NON_APPLICATION_NAMESPACES,
+    RESTORE_RECEIPTS,
     WORKLOAD_KINDS,
     ApplicationCluster,
     KubectlApplicationCluster,
     accepted_restore_baselines,
     load_application_baseline,
-    reconcile_application,
+    reconcile_and_record,
 )
 
 if TYPE_CHECKING:
@@ -349,8 +350,7 @@ def restore_application(
         accepted_restore_baselines(environment.workspace, baselines, seed_commit=environment.seed_commit),
     )
     worker.request("clean_start", problem_id=environment.deploy_problem, timeout=200)
-    for baseline in baselines:
-        reconcile_application(cluster, baseline, baseline.namespace)
+    reconcile_and_record(cluster, baselines, environment.workspace, environment.run_dir / RESTORE_RECEIPTS)
     deadline = time.monotonic() + 60
     if checks:
         checks.settle()

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
 import subprocess
 from copy import deepcopy
@@ -13,6 +14,9 @@ from tempfile import TemporaryDirectory
 from typing import Any, Protocol
 
 from benchmarks.sregym.adapter import kubectl
+
+logger = logging.getLogger(__name__)
+RESTORE_RECEIPTS = "restore-receipts.jsonl"
 
 APPLICATION_BASELINE_KEY = "fastloop_application"
 NON_APPLICATION_NAMESPACES = frozenset(
@@ -137,11 +141,37 @@ class ApplicationBaseline:
             raise ValueError("installed baseline digest differs from its sealed manifest set")
 
 
+@dataclass(frozen=True)
+class ReappliedObject:
+    """One restore write; ``recreated`` means the object gets a new identity (UID)."""
+
+    kind: str
+    namespace: str
+    name: str
+    recreated: bool
+    harness_owned: bool
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "kind": self.kind,
+            "namespace": self.namespace,
+            "name": self.name,
+            "recreated": self.recreated,
+            "harness_owned": self.harness_owned,
+        }
+
+
 @dataclass
 class RecoveryCleanup:
     deleted_counts: dict[str, int] = field(default_factory=dict)
     restored: list[str] = field(default_factory=list)
     skipped_reason: str | None = None
+    reapplied: list[ReappliedObject] = field(default_factory=list)
+    # Captured harness redirects that are absent and left absent (e.g. SDO removed them).
+    harness_absent: list[str] = field(default_factory=list)
+    # Re-created with a new identity although the accepted source does not declare
+    # them: SDO's install-time inventory cannot explain these (P43).
+    undeclared_recreated: list[str] = field(default_factory=list)
 
 
 def _harness_owned(value: dict[str, Any]) -> bool:
@@ -152,6 +182,20 @@ def _harness_owned(value: dict[str, Any]) -> bool:
     if metadata.get("labels", {}).get("job") == "workload":
         return True
     return any(owner.get("name", "").startswith("wrk2-") for owner in metadata.get("ownerReferences", []))
+
+
+def _harness_redirect(value: dict[str, Any]) -> bool:
+    """A DNS alias into a harness infrastructure namespace (e.g. a tracing collector).
+
+    The harness creates these after deploying the app. SDO's install inventory
+    explains them only by their install-time identity, so restore must never mint
+    a new one, and never delete one the harness added.
+    """
+    spec = value.get("spec", {})
+    if value.get("kind") != "Service" or spec.get("type") != "ExternalName":
+        return False
+    labels = str(spec.get("externalName", "")).rstrip(".").split(".")
+    return len(labels) >= 3 and labels[2] == "svc" and labels[1] in NON_APPLICATION_NAMESPACES
 
 
 def _managed(value: dict[str, Any], namespace: str) -> bool:
@@ -374,8 +418,16 @@ def load_application_baseline(path: Path, namespace: str) -> tuple[ApplicationBa
 
 
 def reconcile_application(
-    cluster: ApplicationCluster, baseline: ApplicationBaseline, namespace: str
+    cluster: ApplicationCluster,
+    baseline: ApplicationBaseline,
+    namespace: str,
+    *,
+    declared: frozenset[tuple[str, str]] | None = None,
 ) -> RecoveryCleanup:
+    """Restore the captured app objects; ``declared`` holds accepted-source (kind, name).
+
+    Without ``declared`` (no accepted lock) the undeclared re-creation check is skipped.
+    """
     if baseline.namespace != namespace or namespace.endswith("-sdo") or namespace in NON_APPLICATION_NAMESPACES:
         raise ValueError(f"refusing to reconcile non-application namespace {namespace!r}")
     from benchmarks.sregym.fastloop.hotel_helpers import retire_helpers, without_helpers
@@ -393,8 +445,10 @@ def reconcile_application(
     cleanup = RecoveryCleanup()
     expected = {_identity(value): value for value in ownership.application_objects(desired, namespace)}
     current = {_identity(value): value for value in ownership.application_objects(current_objects, namespace)}
+    known = declared or frozenset()
+    redirects = {key for key, value in (*expected.items(), *current.items()) if _harness_redirect(value)}
     for kind, name in sorted(current):
-        if (kind, name) in expected:
+        if (kind, name) in expected or (kind, name) in redirects:
             continue
         # A legacy snapshot did not record namespace identity/RBAC. Its absence
         # cannot authorize deleting default or externally provisioned grants.
@@ -414,10 +468,70 @@ def reconcile_application(
     }
     for (kind, name), value in sorted(expected.items(), key=lambda item: (priorities.get(item[0][0], 2), item[0])):
         present = current.get((kind, name))
+        if present is None and (kind, name) in redirects and (kind, name) not in known:
+            cleanup.harness_absent.append(f"{kind}/{name}")
+            continue
         if present is None or _content(present) != _content(value):
             cluster.apply(namespace, value)
             cleanup.restored.append(f"{kind}/{name}")
+            cleanup.reapplied.append(
+                ReappliedObject(
+                    kind, namespace, name, present is None, (kind, name) in redirects or _harness_owned(value)
+                )
+            )
+            if present is None and declared is not None and (kind, name) not in declared:
+                cleanup.undeclared_recreated.append(f"{kind}/{name}")
     return cleanup
+
+
+def declared_source_identities(workspace: Path) -> dict[str, frozenset[tuple[str, str]]] | None:
+    """(kind, name) per namespace from the accepted rendered lock; None without a lock."""
+    lock_path = workspace / ".sdo/rendered/lock.json"
+    if not lock_path.is_file():
+        return None
+    declared: dict[str, set[tuple[str, str]]] = {}
+    for row in json.loads(lock_path.read_text(encoding="utf-8")).get("objects", []):
+        reference = row.get("ref", {})
+        if reference.get("kind") and reference.get("name"):
+            declared.setdefault(reference.get("namespace", ""), set()).add((reference["kind"], reference["name"]))
+    return {namespace: frozenset(identities) for namespace, identities in declared.items()}
+
+
+def reconcile_and_record(
+    cluster: ApplicationCluster,
+    baselines: tuple[ApplicationBaseline, ...],
+    workspace: Path,
+    receipts: Path,
+) -> list[RecoveryCleanup]:
+    """Restore each namespace and append one evidence line naming every write.
+
+    Undeclared re-creations and absent harness redirects are typed warnings only;
+    admission still decides from the restored application.
+    """
+    from datetime import UTC, datetime
+
+    lock = declared_source_identities(workspace)
+    cleanups = []
+    for baseline in baselines:
+        declared = None if lock is None else lock.get(baseline.namespace, frozenset()) | lock.get("", frozenset())
+        cleanup = reconcile_application(cluster, baseline, baseline.namespace, declared=declared)
+        warnings = [
+            {"type": "restore_recreated_undeclared_object", "object": value} for value in cleanup.undeclared_recreated
+        ] + [{"type": "harness_redirect_left_absent", "object": value} for value in cleanup.harness_absent]
+        for warning in warnings:
+            logger.warning("eval restore %s: %s/%s", warning["type"], baseline.namespace, warning["object"])
+        receipt = {
+            "at": datetime.now(UTC).isoformat(),
+            "namespace": baseline.namespace,
+            "declared_source_checked": declared is not None,
+            "deleted_counts": cleanup.deleted_counts,
+            "reapplied": [value.to_dict() for value in cleanup.reapplied],
+            "warnings": warnings,
+        }
+        with receipts.open("a", encoding="utf-8") as stream:
+            stream.write(json.dumps(receipt, sort_keys=True) + "\n")
+        cleanups.append(cleanup)
+    return cleanups
 
 
 def accepted_restore_baselines(
