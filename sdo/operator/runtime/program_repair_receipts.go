@@ -88,7 +88,38 @@ func ProgramRepairReceipts(applications []RecordedPlanApplication, existing []Re
 			Summary: summary, Details: details,
 			StartedAt: application.StartedAt, CompletedAt: application.CompletedAt,
 			Success: !application.RolledBack && application.RollbackError == "", Reversible: !hasAppliedScript(actions) && len(application.Result.PreImages) >= len(refs),
+			Owners: preImageOwners(application.Result.PreImages, refs),
 		})
+	}
+	return result
+}
+
+// preImageOwners records each written resource's controller owner chain from
+// the objects read before the write. A chain extends only through owners
+// whose own pre-image is present; it is never completed from names.
+func preImageOwners(preImages []PlanPreImage, refs []sdk.ObjectRef) []ResourceOwners {
+	controller := func(ref sdk.ObjectRef) (sdk.ObjectRef, bool) {
+		for _, image := range preImages {
+			if image.Object == nil || image.Ref.Kind != ref.Kind || image.Ref.Namespace != ref.Namespace || image.Ref.Name != ref.Name {
+				continue
+			}
+			for _, owner := range image.Object.GetOwnerReferences() {
+				if owner.Controller != nil && *owner.Controller && owner.Kind != "" && owner.Name != "" {
+					return sdk.ObjectRef{APIVersion: owner.APIVersion, Kind: owner.Kind, Namespace: ref.Namespace, Name: owner.Name}, true
+				}
+			}
+		}
+		return sdk.ObjectRef{}, false
+	}
+	var result []ResourceOwners
+	for _, ref := range refs {
+		var chain []sdk.ObjectRef
+		for next, ok := controller(ref); ok && len(chain) < 4; next, ok = controller(next) {
+			chain = append(chain, next)
+		}
+		if len(chain) > 0 {
+			result = append(result, ResourceOwners{Resource: ref, OwnerChain: chain})
+		}
 	}
 	return result
 }
@@ -114,7 +145,7 @@ func (l *ResponderLoop) ApplicationRepairReceipts(existing []RepairActionReceipt
 	seen := map[string]bool{}
 	for _, repair := range completed {
 		receipt := repair.Receipt
-		result = append(result, RepairActionReceipt{ActionID: receipt.ActionID, Kind: receipt.Kind, Target: receipt.Target, Resources: append([]sdk.ObjectRef(nil), receipt.Resources...), Summary: receipt.Summary, Details: receipt.Details, StartedAt: receipt.StartedAt, CompletedAt: receipt.CompletedAt, Success: receipt.Success, Reversible: receipt.Reversible, FailureReason: receipt.FailureReason})
+		result = append(result, RepairActionReceipt{ActionID: receipt.ActionID, Kind: receipt.Kind, Target: receipt.Target, Resources: append([]sdk.ObjectRef(nil), receipt.Resources...), Summary: receipt.Summary, Details: receipt.Details, StartedAt: receipt.StartedAt, CompletedAt: receipt.CompletedAt, Success: receipt.Success, Reversible: receipt.Reversible, FailureReason: receipt.FailureReason, Owners: append([]ResourceOwners(nil), receipt.Owners...)})
 		seen[receipt.ActionID] = true
 	}
 	for _, receipt := range existing {

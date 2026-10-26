@@ -139,6 +139,15 @@ type RepairActionReceipt struct {
 	CompletedAt time.Time
 	Success     bool
 	Reversible  bool
+	// Owners are written resources' controller owner chains read at write
+	// time; cause attribution follows them instead of generated names.
+	Owners []ResourceOwners
+}
+
+// ResourceOwners is one written resource's owner chain, nearest owner first.
+type ResourceOwners struct {
+	Resource   sdk.ObjectRef
+	OwnerChain []sdk.ObjectRef
 }
 
 type IncidentResult struct {
