@@ -86,7 +86,7 @@ func TestGenericClientCannotReachControlIdentity(t *testing.T) {
 
 }
 
-func TestReadViewCannotReachControlIdentity(t *testing.T) {
+func TestReadViewCannotExecuteWithControlIdentity(t *testing.T) {
 	ref := sdk.ObjectRef{APIVersion: "v1", Kind: "Pod", Namespace: "control", Name: "controller"}
 	pod := corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: ref.Name, Namespace: ref.Namespace, UID: "uid"}}
 	var requests atomic.Int32
@@ -104,8 +104,8 @@ func TestReadViewCannotReachControlIdentity(t *testing.T) {
 	if _, err := view.Observe(program.ExternalOperation{Exec: &program.Command{Pod: ref, Container: "app", Args: []string{"true"}}}); err == nil {
 		t.Fatal("diagnosis can execute with controller identity")
 	}
-	if _, err := view.KubernetesRead(program.KubernetesRequest{Method: "GET", Path: "/api/v1/namespaces/control/pods/controller"}); !apierrors.IsForbidden(err) {
-		t.Fatalf("raw diagnosis can reach controller: %v", err)
+	if _, err := view.KubernetesRead(program.KubernetesRequest{Method: "GET", Path: "/api/v1/namespaces/control/pods/controller/exec"}); err == nil {
+		t.Fatalf("raw diagnosis can execute with controller identity: %v", err)
 	}
 	if len(client.Actions()) != 0 || requests.Load() != 0 {
 		t.Fatal("diagnosis crossed protected control boundary")

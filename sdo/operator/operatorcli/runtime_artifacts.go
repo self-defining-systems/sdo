@@ -8,8 +8,8 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"k8s.io/client-go/kubernetes"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -54,7 +54,15 @@ func ParseRuntimeArtifactsLaunch(args []string) (RuntimeArtifactsConfig, error) 
 }
 
 func RunRuntimeArtifacts(ctx context.Context, cfg RuntimeArtifactsConfig) (RuntimeArtifactsResult, error) {
-	client, err := hostKubernetesClient(cfg.Kubeconfig)
+	config, err := hostKubernetesConfig(cfg.Kubeconfig)
+	if err != nil {
+		return RuntimeArtifactsResult{}, err
+	}
+	client, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		return RuntimeArtifactsResult{}, err
+	}
+	execute, err := newPodExecutor(config, client)
 	if err != nil {
 		return RuntimeArtifactsResult{}, err
 	}
@@ -66,24 +74,23 @@ func RunRuntimeArtifacts(ctx context.Context, cfg RuntimeArtifactsConfig) (Runti
 	err = installer.WithSyncPod(ctx, cfg.Sync, func(ctx context.Context, _ install.Config) error {
 		// Archive only evidence files; extraction applies the same allowlist.
 
-		command := exec.CommandContext(ctx, "kubectl", "--namespace", cfg.Sync.ControlNamespace, "exec", install.RepositorySyncPodName, "--", "sh", "-c", runtimeArtifactsArchiveScript, "sh", "/workspace/.sdo-runtime")
-		if cfg.Kubeconfig != "" {
-			command.Env = append(os.Environ(), "KUBECONFIG="+cfg.Kubeconfig)
-		}
-		pipe, err := command.StdoutPipe()
-		if err != nil {
-			return err
-		}
+		streamCtx, stop := context.WithCancel(ctx)
+		defer stop()
+		reader, writer := io.Pipe()
+		defer reader.Close()
 		var stderr bytes.Buffer
-		command.Stderr = &stderr
-		if err := command.Start(); err != nil {
-			return err
-		}
-		copyErr := extractRuntimeArtifacts(pipe, destination)
+		done := make(chan error, 1)
+		go func() {
+			err := execute(streamCtx, cfg.Sync.ControlNamespace, install.RepositorySyncPodName, []string{"sh", "-c", runtimeArtifactsArchiveScript, "sh", "/workspace/.sdo-runtime"}, writer, &stderr)
+			_ = writer.CloseWithError(err)
+			done <- err
+		}()
+		copyErr := extractRuntimeArtifacts(reader, destination)
 		if copyErr != nil {
-			_ = command.Process.Kill()
+			stop()
+			_ = reader.CloseWithError(copyErr)
 		}
-		waitErr := command.Wait()
+		waitErr := <-done
 		if copyErr != nil {
 			return copyErr
 		}

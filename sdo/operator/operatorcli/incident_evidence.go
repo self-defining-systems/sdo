@@ -1,14 +1,13 @@
 package operatorcli
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
-	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -59,14 +58,22 @@ func ParseIncidentEvidenceLaunch(args []string) (IncidentEvidenceConfig, error) 
 }
 
 func RunIncidentEvidence(ctx context.Context, cfg IncidentEvidenceConfig) (IncidentEvidenceResult, error) {
-	client, err := hostKubernetesClient(cfg.Kubeconfig)
+	config, err := hostKubernetesConfig(cfg.Kubeconfig)
 	if err != nil {
 		return IncidentEvidenceResult{}, err
 	}
-	return runIncidentEvidence(ctx, client, cfg)
+	client, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		return IncidentEvidenceResult{}, err
+	}
+	execute, err := newPodExecutor(config, client)
+	if err != nil {
+		return IncidentEvidenceResult{}, err
+	}
+	return runIncidentEvidence(ctx, client, cfg, execute)
 }
 
-func runIncidentEvidence(ctx context.Context, client kubernetes.Interface, cfg IncidentEvidenceConfig) (IncidentEvidenceResult, error) {
+func runIncidentEvidence(ctx context.Context, client kubernetes.Interface, cfg IncidentEvidenceConfig, execute podExecutor) (IncidentEvidenceResult, error) {
 	path, err := broker.NativeLedgerPath(broker.DefaultNativeWorktreeRoot, cfg.IncidentID)
 	if err != nil {
 		return IncidentEvidenceResult{}, err
@@ -107,19 +114,11 @@ func runIncidentEvidence(ctx context.Context, client kubernetes.Interface, cfg I
 				return fmt.Errorf("synchronize accepted repository: %w", err)
 			}
 		}
-		command := exec.CommandContext(ctx, "kubectl", "--namespace", cfg.Sync.ControlNamespace, "exec", podName, "--", "cat", path)
-		if cfg.Kubeconfig != "" {
-			command.Env = append(os.Environ(), "KUBECONFIG="+cfg.Kubeconfig)
+		var output, stderr bytes.Buffer
+		if err := execute(ctx, cfg.Sync.ControlNamespace, podName, []string{"cat", path}, &output, &stderr); err != nil {
+			return fmt.Errorf("read native incident ledger: %w: %s", err, strings.TrimSpace(stderr.String()))
 		}
-		output, readErr := command.Output()
-		if readErr != nil {
-			var exit *exec.ExitError
-			if errors.As(readErr, &exit) {
-				return fmt.Errorf("read native incident ledger: %w: %s", readErr, strings.TrimSpace(string(exit.Stderr)))
-			}
-			return fmt.Errorf("read native incident ledger: %w", readErr)
-		}
-		data = output
+		data = output.Bytes()
 		return nil
 	}
 	if podName == install.RepositorySyncPodName {
@@ -134,7 +133,9 @@ func runIncidentEvidence(ctx context.Context, client kubernetes.Interface, cfg I
 	if err != nil {
 		return IncidentEvidenceResult{}, err
 	}
-	jobName,err:=worker_registry.IncidentResponderJobName(ctx,client,cfg.Sync.ControlNamespace,cfg.IncidentID)
- if err!=nil{return IncidentEvidenceResult{},err}
- return IncidentEvidenceResult{IncidentID: cfg.IncidentID, ResponderJobName: jobName, Ledger: ledger}, nil
+	jobName, err := worker_registry.IncidentResponderJobName(ctx, client, cfg.Sync.ControlNamespace, cfg.IncidentID)
+	if err != nil {
+		return IncidentEvidenceResult{}, err
+	}
+	return IncidentEvidenceResult{IncidentID: cfg.IncidentID, ResponderJobName: jobName, Ledger: ledger}, nil
 }
