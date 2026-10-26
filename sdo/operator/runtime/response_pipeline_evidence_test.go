@@ -236,3 +236,57 @@ func TestDeterministicResponseStageRejoinReobservesRetainedIncidentFinding(t *te
 		t.Fatalf("rejoin resurrected stale repaired finding or repeated a write: findings=%v applications=%v", replay.Findings, fresh.PlanApplications())
 	}
 }
+
+// Replay the escaped SDO evidence failures across complete-checkpoint restarts
+// and delayed health observations. The real executor repairs both client-go
+// objects; recovery has immutable receipts but no restored write authority.
+func TestSimScheduleDeterministicPipelineEvidence(t *testing.T) {
+	for _, schedule := range []struct {
+		name                string
+		restarts, healthLag int
+	}{
+		{"direct", 0, 0}, {"late-health", 0, 2}, {"restart", 1, 0}, {"late-health-two-restarts", 2, 2},
+	} {
+		t.Run(schedule.name, func(t *testing.T) {
+			loop, state := pipelineTestLoop(t, false)
+			for i := range state.Request.Findings {
+				state.Request.Findings[i].Fingerprint = FindingFingerprint(state.Request.Findings[i])
+				state.Request.Findings[i].DetectorID = "incident.mechanism"
+			}
+			state.Findings = append([]sdk.Finding(nil), state.Request.Findings...)
+			loop.Request = state.Request
+			loop.Detectors = []sdk.Detector{pipelineIdentitylessDetector{}, &pipelineLaggingHealthDetector{remaining: schedule.healthLag}}
+			var durable []byte
+			save := func(_ context.Context, payload []byte) error { durable = append([]byte(nil), payload...); return nil }
+			loop.saveToolState = save
+			for tick := 0; tick <= schedule.restarts; tick++ {
+				if tick > 0 {
+					fresh := NewResponderLoop(state.Request, loop.Programs, loop.Provider, loop.Detectors, loop.Executor, 5)
+					fresh.ReadView, fresh.saveToolState = loop.ReadView, save
+					if err := fresh.restoreToolSnapshot(durable); err != nil {
+						t.Fatal(err)
+					}
+					loop = fresh
+					state = &IncidentState{Request: state.Request, Findings: append([]sdk.Finding(nil), state.Request.Findings...)}
+				}
+				calls := 0
+				if err := RunResponseStages(context.Background(), state, []ResponseStage{&DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return loop }, ObservationInterval: time.Nanosecond}, clearingResponseStage{"agent", &calls}}); err != nil {
+					t.Fatal(err)
+				}
+				if calls != 0 || len(state.Findings) != 0 || len(state.PriorStages) != 1 {
+					t.Fatalf("tick=%d lost automatic repair progress: calls=%d stages=%v findings=%v", tick, calls, state.PriorStages, state.Findings)
+				}
+				if tick > 0 && len(loop.PlanApplications()) != 0 {
+					t.Fatalf("tick=%d replayed a completed mutation", tick)
+				}
+				result, err := responsePipelineResult(state, time.Now().Add(-time.Second), time.Now())
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(result.ConfirmedRootCauses) != 2 || len(result.PlanApplications) != 2 || len(result.RepairActions) != 2 {
+					t.Fatalf("tick=%d lost immutable repair evidence: %+v", tick, result)
+				}
+			}
+		})
+	}
+}
