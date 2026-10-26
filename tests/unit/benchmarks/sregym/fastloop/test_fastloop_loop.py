@@ -103,7 +103,7 @@ def _config(tmp_path: Path, count: int, problems: tuple[str, ...] = ("p1",)) -> 
 
 
 @pytest.mark.parametrize(("oracle_success", "recover_fails"), [(False, False), (False, True), (True, False)])
-def test_learning_precedes_oracle_grade_and_cleanup_without_feedback(
+def test_grade_precedes_learning_and_cleanup_without_feedback(
     tmp_path: Path, oracle_success: bool, recover_fails: bool
 ) -> None:
     from dataclasses import asdict
@@ -123,7 +123,7 @@ def test_learning_precedes_oracle_grade_and_cleanup_without_feedback(
 
     class Agent(FakeAgent):
         def learn(self, outcome: AgentOutcome) -> AgentOutcome:
-            assert events == [], "learning must precede grading and cleanup"
+            assert events == ["grade", "oracle"], "grading must finish before learning; cleanup must wait"
             assert canary not in json.dumps(asdict(outcome), default=str)
             events.append("learn")
             return super().learn(outcome)
@@ -142,7 +142,7 @@ def test_learning_precedes_oracle_grade_and_cleanup_without_feedback(
         grader=Grader(),
         diagnosis_grading="inline",
     )
-    assert events[0] == "learn"
+    assert events[:3] == ["grade", "oracle", "learn"]
     assert "learn:incident-0" in agent.events
 
 
@@ -701,3 +701,31 @@ def test_incident_row_rereads_delivery_after_source_deployment(tmp_path, failed)
     persisted = load_records(config.results_path)
     assert records[0].image_delivery == persisted[0].image_delivery == "kind-load-fallback"
     assert records[0].image_delivery_reason == "mid-run registry failure"
+
+
+def test_grade_is_persisted_before_failed_reflection_and_never_changed(tmp_path: Path) -> None:
+    clock = FakeClock()
+    config = _config(tmp_path, 1)
+    saved = {}
+
+    class Agent(FakeAgent):
+        def learn(self, outcome: AgentOutcome) -> AgentOutcome:
+            grade_path = config.results_path.with_suffix(".grades") / "000000.json"
+            saved.update(json.loads(grade_path.read_text()))
+            assert saved["oracle"]["success"] is True
+            assert saved["graded_at"] == (T0 + timedelta(seconds=70)).isoformat().replace("+00:00", "Z")
+            assert saved["closure_to_grade_seconds"] == 5
+            assert saved["reflection_seconds"] is None
+            raise RuntimeError("reflection failed after grade")
+
+    records = run_incidents(
+        Agent(clock),
+        FakeDriver(clock),
+        config,
+        monotonic=clock.monotonic,
+        now=lambda: T0 + timedelta(seconds=70),
+    )
+    assert saved, "grading evidence must be durable before reflection"
+    assert records[0].oracle.success is True
+    assert "reflection failed" in records[0].error
+    assert json.loads((tmp_path / "incidents.grades/000000.json").read_text()) == saved

@@ -79,7 +79,7 @@ separate measurements; neither authorizes production learning.
 
 ## RL1 learning content and isolation
 
-Verified full and partial causes require executable diagnosis and mitigation, a handling README, and detector coverage. Go reports reflection.program-required or reflection.detector-required and retries incomplete results; README-only updated is a failed attempt. The only exception is a typed SDK gap naming the cause resources and reason. Controller capture gaps are telemetry, not a learning gate: fixtures may be authored from recorded actions and existing session observations. Publication compiles programs and executes mitigation to prove Match becomes NoMatch. Capture digest matching and rename/peer generalization are no longer save-time prerequisites. Broker-validated new programs receive one origin trust credit from their verified cause/bound fixture. Benchmark learning is invoked before grading, oracle evaluation and cleanup; none of those verdicts supply verification or enter production outcomes or reflection requests.
+Verified full and partial causes require executable diagnosis and mitigation, a handling README, and detector coverage. Go reports reflection.program-required or reflection.detector-required and retries incomplete results; README-only updated is a failed attempt. The only exception is a typed SDK gap naming the cause resources and reason. Controller capture gaps are telemetry, not a learning gate: fixtures may be authored from recorded actions and existing session observations. Publication compiles programs and executes mitigation to prove Match becomes NoMatch. Capture digest matching and rename/peer generalization are no longer save-time prerequisites. Broker-validated new programs receive one origin trust credit from their verified cause/bound fixture. Benchmark grading may finish while reflection is running. Grading evidence stays outside production inputs and memory; reflection receives only the original SDO outcome, and cleanup still waits for its drain. No grader or oracle verdict supplies production verification.
 
 
 ### Expired incident retirement between encounters
@@ -99,3 +99,26 @@ incident does not claim the current incident.
 Learning-origin Git reads use the durable accepted repository, not a retired
 proposal checkout. Missing optional origin evidence logs Git stderr and earns
 no extra credit, while responder dispatch remains available.
+
+## Closure grading evidence
+
+The conductor-backed adapter observes the correlated native ledger while lifecycle
+and strict-receipt collection continue. A closure with a responder result owns one
+submission attempt, independent of reflection success. `sdo_incident_grade.json`
+(schema `sdo.sregym-incident-grade/v1`) stores the frozen `closure`, `incident_id`,
+`submission_started_at`, `status`, raw submission responses in `grade`,
+`graded_at`, `closure_to_grade_seconds` (from closure `verified_at`), and
+`responder_runtime_seconds` (`dispatched_at` to `responder_completed_at`). Missing
+timestamps leave durations absent. `graded_at` is observed grading completion.
+The conductor API exposes acknowledgments and terminal status, not oracle verdicts;
+join actual diagnosis/mitigation success from the harness result CSV by incident/run.
+A grading callback that returns an original-worker verdict preserves that verdict.
+
+The adapter persists its submission claim before network I/O. `submitting` after
+restart or `failed` with an error is ambiguous/failed transport, never success;
+it is not automatically retried. Reflection cannot replace this file or initiate
+another submission. The terminal strict receipt and accepted outcome remain
+separate evidence; neither depends on a benchmark grade. A closure without a
+responder result sends nothing. Grade files live outside the operational repository
+and are never inputs to responders or reflection.
+

@@ -80,3 +80,107 @@ def test_submission_failure_is_recorded_without_retrying_ambiguous_post(tmp_path
     grade = json.loads((tmp_path / "sdo_incident_grade.json").read_text())
     assert grade["status"] == "failed"
     assert "disconnected" in grade["error"]
+
+
+def test_closure_monitor_grades_while_lifecycle_waits_for_reflection(tmp_path: Path) -> None:
+    from threading import Event
+
+    from benchmarks.sregym.adapter.grading import ClosureGradingMonitor
+
+    submitted = Event()
+    terminal = Event()
+
+    def submit(_result: dict, _api: str) -> dict:
+        assert not terminal.is_set()
+        submitted.set()
+        return {"done": {"status": "done"}}
+
+    grader = ClosureGrader(tmp_path, "http://conductor", submit=submit)
+    with ClosureGradingMonitor(grader, read=lambda: ledger(), poll_seconds=0.01):
+        assert submitted.wait(2), "submission must not wait for reflection/receipt"
+        terminal.set()
+    assert json.loads(grader.path.read_text())["status"] == "graded"
+
+
+def test_monitor_final_sample_catches_fast_closure(tmp_path: Path) -> None:
+    from threading import Event
+
+    from benchmarks.sregym.adapter.grading import ClosureGradingMonitor
+
+    sampled = Event()
+    closed = Event()
+    calls = []
+
+    def read() -> dict | None:
+        sampled.set()
+        return ledger() if closed.is_set() else None
+
+    grader = ClosureGrader(tmp_path, "http://conductor", submit=lambda *_: calls.append(1) or {})
+    with ClosureGradingMonitor(grader, read=read, poll_seconds=30):
+        assert sampled.wait(2)
+        closed.set()
+    assert calls == [1]
+
+
+@pytest.mark.parametrize("reflection_failed", [False, True])
+def test_native_monitor_uses_correlated_ledger_and_skips_previous_incident(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reflection_failed: bool
+) -> None:
+    import subprocess
+    from threading import Event
+
+    from benchmarks.sregym.adapter import driver
+    from benchmarks.sregym.adapter.native_operator import NativeInstallConfig
+
+    closed = Event()
+    submitted = Event()
+    snapshots = iter(
+        [
+            {"last_acknowledged_incident_id": "previous"},
+            {
+                **(
+                    {"failed_closures": [{"closure": {"request": {"incident_id": "incident-1"}}}]}
+                    if reflection_failed
+                    else {"pending_closure": {"request": {"incident_id": "incident-1"}}}
+                ),
+                "last_acknowledged_incident_id": "previous",
+            },
+        ]
+    )
+    latest = {}
+
+    def kubectl(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess:
+        nonlocal latest
+        latest = next(snapshots, latest)
+        return subprocess.CompletedProcess([], 0, json.dumps({"data": {"runtime-state.json": json.dumps(latest)}}))
+
+    def evidence(_config: object, incident_id: str) -> dict:
+        assert incident_id == "incident-1"
+        assert not closed.is_set(), "reflection has not finished"
+        return {"ledger": ledger()}
+
+    def submit(_receipt: dict, _base: str) -> dict:
+        assert not closed.is_set()
+        submitted.set()
+        return {"mitigation": {"success": True}}
+
+    monkeypatch.setattr(driver, "kubectl", kubectl)
+    monkeypatch.setattr(driver, "read_incident_evidence", evidence)
+    monkeypatch.setattr(driver, "_submit_recorded_result", submit)
+    native = NativeInstallConfig(
+        repository=tmp_path,
+        namespace="hotel",
+        control_namespace="hotel-sdo",
+        application="hotel",
+        controller_image="controller:test",
+        responder_image="responder:test",
+        validator_image="validator:test",
+        repository_pvc="repo",
+        credentials_secret="credentials",
+        model="test",
+        kubeconfig=tmp_path / "config",
+    )
+    with driver._closure_grading_monitor(native, "http://conductor", tmp_path):
+        assert submitted.wait(2)
+        closed.set()
+    assert json.loads((tmp_path / "sdo_incident_grade.json").read_text())["incident_id"] == "incident-1"

@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import fcntl
 import json
 import logging
+import threading
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
@@ -37,6 +39,12 @@ class ClosureGrader:
         self.now = now
 
     def observe(self, ledger: dict[str, Any]) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        with self.path.with_suffix(".lock").open("a", encoding="utf-8") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            self._observe(ledger)
+
+    def _observe(self, ledger: dict[str, Any]) -> None:
         closure = ledger.get("closure")
         if not isinstance(closure, dict) or not isinstance(closure.get("result"), dict):
             return
@@ -85,3 +93,60 @@ def _timestamp(value: object) -> datetime | None:
     if not isinstance(value, str) or not value or value.startswith("0001-"):
         return None
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
+class ClosureGradingMonitor:
+    """Poll native closure while the caller independently collects terminal evidence."""
+
+    def __init__(
+        self,
+        grader: ClosureGrader,
+        *,
+        read: Callable[[], dict[str, Any] | None],
+        poll_seconds: float = 1.0,
+    ) -> None:
+        if poll_seconds <= 0:
+            raise ValueError("grading poll interval must be positive")
+        self.grader = grader
+        self.read = read
+        self.poll_seconds = poll_seconds
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._run, name="sdo-closure-grading", daemon=True)
+        self.error: Exception | None = None
+
+    def __enter__(self) -> ClosureGradingMonitor:
+        self._thread.start()
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        self._stop.set()
+        self._thread.join()
+        if self.error is not None:
+            raise RuntimeError("benchmark closure grading monitor failed") from self.error
+
+    def _run(self) -> None:
+        while True:
+            stopping = self._stop.is_set()
+            try:
+                evidence = self.read()
+            except (OSError, RuntimeError) as exc:
+                # Controller/ledger may not exist until lifecycle installation finishes.
+                logger.debug("native closure not yet available: %s", exc)
+                if stopping:
+                    self.error = exc
+                    return
+            except Exception as exc:
+                self.error = exc
+                return
+            else:
+                try:
+                    if evidence is not None:
+                        self.grader.observe(evidence)
+                except Exception as exc:
+                    self.error = exc
+                    return
+                if self.grader.path.exists():
+                    return
+            if stopping:
+                return
+            self._stop.wait(self.poll_seconds)
