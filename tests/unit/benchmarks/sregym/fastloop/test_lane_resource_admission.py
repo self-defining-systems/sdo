@@ -253,3 +253,25 @@ def test_admission_never_injects_while_reflection_remains_pending(lane, monkeypa
     assert calls == []
     records = [json.loads(line) for line in (gate.directory / "stabilization-001.jsonl").read_text().splitlines()]
     assert all(row["incident_work_pending"] and not row["passed"] for row in records)
+
+
+def test_workload_refusal_names_the_sdo_incident_active_before_injection(lane, monkeypatch):
+    gate, _calls = lane
+    observe_only(gate, monkeypatch)
+    state = gate.ops.runtime_state
+    monkeypatch.setattr(
+        gate.ops,
+        "runtime_state",
+        lambda control: dict(state(control), incident_open=True, incident_request={"incident_id": "astronomy-1793"}),
+    )
+    identities = iter([{"Deployment/currency": {"pods": ["old"]}}])
+
+    def identity(*_args):
+        for row in identities:
+            return row
+        raise ValueError("restore invariant: workload not Ready: Deployment/currency (ready 0/1)")
+
+    monkeypatch.setattr(admission, "workload_identity", identity)
+    with pytest.raises(ValueError, match="workload not Ready: Deployment/currency") as refused:
+        gate.prove("astronomy-shop-sdo")
+    assert "SDO incident work active before injection: astronomy-1793" in str(refused.value)

@@ -602,3 +602,29 @@ def test_stabilization_rejects_late_success_and_does_not_renew_budget():
             sleep=lambda seconds: None,
         )
     assert not records[-1]["passed"]
+
+
+def test_replaced_pod_under_unchanged_template_is_named_as_readiness_loss_not_rollout(monkeypatch):
+    """Lane 52: a responder replaced the only pod; the ReplicaSet and template never changed."""
+    from benchmarks.sregym.fastloop import admission
+
+    workload = {
+        "kind": "Deployment",
+        "metadata": {"name": "currency", "generation": 1},
+        "spec": {"replicas": 1, "selector": {"matchLabels": {"app": "currency"}}},
+        "status": {"observedGeneration": 1, "replicas": 1, "updatedReplicas": 1},
+    }
+    pod = {
+        "kind": "Pod",
+        "metadata": {"uid": "new", "name": "currency-z4xmb", "labels": {"app": "currency"}},
+        "status": {"phase": "Pending", "conditions": [{"type": "Ready", "status": "False"}]},
+    }
+    monkeypatch.setattr(
+        admission, "kubectl", lambda *a, **kw: SimpleNamespace(stdout=json.dumps({"items": [workload, pod]}))
+    )
+    with pytest.raises(ValueError, match="workload not Ready: Deployment/currency") as refused:
+        admission.workload_identity(Path("unused"), "any-app")
+    message = str(refused.value)
+    assert "rollout not complete" not in message
+    assert "ready 0/1" in message
+    assert "currency-z4xmb Pending" in message
