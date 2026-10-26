@@ -572,6 +572,8 @@ def _run_one(
         cleanup_deleted_counts=cleanup.deleted_counts if cleanup is not None else {},
         cleanup_restored=cleanup.restored if cleanup is not None else [],
         cleanup_skipped_reason=cleanup.skipped_reason if cleanup is not None else None,
+        eval_notes=getattr(driver, "last_eval_notes", []) if windows else [],
+        confounds=getattr(driver, "last_confounds", []) if windows else [],
         full_cleanup_verified=getattr(driver, "last_full_cleanup_verified", False) and recovery_error is None,
         cleanup_passes_verified=cleanup_passes_verified,
         incident_wall_seconds=monotonic() - started,

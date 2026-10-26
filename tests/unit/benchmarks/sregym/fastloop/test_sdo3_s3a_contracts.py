@@ -9,6 +9,7 @@ import pytest
 
 from benchmarks.sregym.adapter.fault_gate import FaultGateError, request_fault_injection
 from benchmarks.sregym.fastloop.fault_driver import FastloopFaultError, SregymFaultDriver
+from benchmarks.sregym.fastloop.records import EvalNote
 
 
 class Worker:
@@ -260,7 +261,10 @@ def test_real_v2_worker_removes_cluster_objects_the_injection_created(tmp_path):
 
 @pytest.mark.requires_sregym
 def test_real_v2_worker_returns_the_app_namespace_to_its_pre_injection_inventory(tmp_path):
-    """LEAK3: an HPA the fault ensured on recovery stayed in the app namespace for the next row."""
+    """LEAK3: an HPA the fault ensured on recovery stayed in the app namespace for the next row.
+
+    LEAK3B: other drift (a responder's repair) labels this row and the next; it never blocks the lane.
+    """
     from pathlib import Path
 
     from benchmarks.sregym.fastloop.worker_client import SregymWorker
@@ -281,12 +285,14 @@ def test_real_v2_worker_returns_the_app_namespace_to_its_pre_injection_inventory
         assert "HorizontalPodAutoscaler/hotel-reservation/frontend-capacity" in worker.request("inventory")["objects"]
         assert driver.recover() >= 0
         assert worker.request("inventory")["objects"] == before
-        # Anything else left in the namespace fails recovery loudly and blocks the next row.
+        # Anything else left in the namespace (here a NetworkPolicy) is labelled, never deleted or blocking.
+        policy = "NetworkPolicy/hotel-reservation/deny-all"
         driver.inject("leaves-policy")
-        with pytest.raises(FastloopFaultError, match="full recovery failed"):
-            driver.recover()
-        with pytest.raises(Exception, match="recovery failed"):
-            driver.inject("single")
-        worker.request("remove-policy")
         assert driver.recover() >= 0
+        note = EvalNote(kind="app_namespace_inventory_drift", not_in_baseline=[policy])
+        assert driver.last_eval_notes == [note]
+        assert policy in worker.request("inventory")["objects"]
         driver.inject("single")
+        assert driver.last_confounds == [note]
+        assert driver.recover() >= 0
+        assert driver.last_eval_notes == []
