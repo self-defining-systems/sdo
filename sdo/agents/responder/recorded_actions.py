@@ -358,6 +358,7 @@ def _receipt(
     finished: datetime,
     code: int | None,
     output: str,
+    owners: Sequence[dict[str, Any]] = (),
 ) -> dict[str, Any]:
     try:
         for argument in command:
@@ -407,6 +408,8 @@ def _receipt(
             else ""
         ),
     }
+    if owners:
+        receipt["owners"] = [dict(owner) for owner in owners]
     # Protobuf loads only when an action is recorded, so `sdo --help` and the other commands stay fast.
     from google.protobuf import json_format
 
@@ -424,10 +427,8 @@ def _append(path: Path, state: str, receipt: dict[str, Any]) -> None:
         stream.write(json.dumps({"state": state, "receipt": receipt}, sort_keys=True) + "\n")
 
 
-def _confirm_deleted(command: Sequence[str], resources: Sequence[dict[str, str]]) -> str:
-    """A successful command does not prove every declared resource disappeared."""
-    if not resources:
-        return "delete_not_confirmed"
+def _kubectl_context(command: Sequence[str]) -> list[str]:
+    """The kubectl connection and namespace flags of *command*, for follow-up reads."""
     context: list[str] = []
     flags = {"-n", "--namespace", "--context", "--kubeconfig", "--server", "--cluster", "--user", "--as", "--as-group"}
     args = iter(command[1:])
@@ -436,6 +437,68 @@ def _confirm_deleted(command: Sequence[str], resources: Sequence[dict[str, str]]
             context.extend((arg, next(args, "")))
         elif arg.split("=", 1)[0] in flags:
             context.append(arg)
+    return context
+
+
+#: Kinds that Kubernetes controllers create and own; only their writes need an owner chain.
+_CONTROLLED_KINDS = {"Pod", "ReplicaSet", "Job"}
+_OWNER_HOPS = 4
+
+
+def _owner_chains(command: Sequence[str], resources: Sequence[dict[str, str]]) -> list[dict[str, Any]]:
+    """Read each controlled resource's controller owner chain before the write.
+
+    Cause attribution follows these recorded ownerReferences, never names. Any failed or slow
+    read records no chain for that resource, so its write stays unattributed.
+    """
+    if Path(command[0]).name != "kubectl":
+        return []
+    context = _kubectl_context(command)
+    deadline = time.monotonic() + 5
+    result: list[dict[str, Any]] = []
+    for resource in _executed_resources(command, resources):
+        chain: list[dict[str, str]] = []
+        current = dict(resource)
+        while current["kind"] in _CONTROLLED_KINDS and len(chain) < _OWNER_HOPS:
+            argv = [command[0], *context, "get", current["kind"], current["name"], "-o", "json", "--request-timeout=5s"]
+            if current["namespace"]:
+                argv.extend(("--namespace", current["namespace"]))
+            try:
+                observed = subprocess.run(
+                    argv, capture_output=True, text=True, timeout=max(0.01, deadline - time.monotonic()), check=False
+                )
+                references = json.loads(observed.stdout).get("metadata", {}).get("ownerReferences", [])
+            except (OSError, subprocess.TimeoutExpired, ValueError, AttributeError):
+                break
+            if observed.returncode:
+                break
+            owner = next(
+                (
+                    ref
+                    for ref in references
+                    if isinstance(ref, dict) and ref.get("controller") is True and ref.get("kind") and ref.get("name")
+                ),
+                None,
+            )
+            if owner is None:
+                break
+            current = {
+                "api_version": str(owner.get("apiVersion", "")),
+                "kind": str(owner["kind"]),
+                "namespace": resource["namespace"],
+                "name": str(owner["name"]),
+            }
+            chain.append(current)
+        if chain:
+            result.append({"resource": dict(resource), "owner_chain": chain})
+    return result
+
+
+def _confirm_deleted(command: Sequence[str], resources: Sequence[dict[str, str]]) -> str:
+    """A successful command does not prove every declared resource disappeared."""
+    if not resources:
+        return "delete_not_confirmed"
+    context = _kubectl_context(command)
     deadline = time.monotonic() + 5
     for resource in resources:
         if resource["kind"].lower() == "secret":
@@ -541,6 +604,7 @@ def _run_and_record(
     path = actions_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     action_id = f"sdo-act-{uuid.uuid4()}"
+    owners = _owner_chains(command, resources)
     started = datetime.now(UTC)
 
     def receipt(code: int | None, output: str, finished: datetime) -> dict[str, Any]:
@@ -554,6 +618,7 @@ def _run_and_record(
             finished=finished,
             code=code,
             output=output,
+            owners=owners,
         )
 
     _append(path, _STARTED, receipt(None, "", started))

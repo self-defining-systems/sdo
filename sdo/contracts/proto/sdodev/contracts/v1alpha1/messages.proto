@@ -387,6 +387,17 @@ message RepairActionReceipt {
   bool success = 9;
   bool reversible = 10;
   string failure_reason = 11 [(buf.validate.field).string = {in: ["", "authorization_denied", "execution_failed", "delete_not_confirmed", "outcome_unknown", "incident_verified"]}];
+  // Controller ownerReference chains of written resources, read from the
+  // live object before the write. Cause attribution follows these chains,
+  // never generated names.
+  repeated ResourceOwners owners = 12;
+}
+
+// ResourceOwners is one written resource's controller owner chain, nearest
+// owner first (for example Pod -> ReplicaSet -> Deployment).
+message ResourceOwners {
+  ObjectRef resource = 1 [(buf.validate.field).required = true];
+  repeated ObjectRef owner_chain = 2 [(buf.validate.field).repeated.min_items = 1];
 }
 
 // IncidentResult is what the responder returns. The CEL enforces unique
