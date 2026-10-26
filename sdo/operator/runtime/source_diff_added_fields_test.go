@@ -297,21 +297,25 @@ func TestReconcileFromSourceClearsAddedFieldDrift(t *testing.T) {
 // adoption would take against source over the object as it is now.
 func withAcceptance(t testing.TB, object any, source *unstructured.Unstructured) map[string]string {
 	t.Helper()
+	annotations, err := acceptanceAnnotations(object, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return annotations
+}
+
+func acceptanceAnnotations(object any, source *unstructured.Unstructured) (map[string]string, error) {
 	live, ok := object.(*unstructured.Unstructured)
 	if !ok {
 		content, err := kruntime.DefaultUnstructuredConverter.ToUnstructured(object)
 		if err != nil {
-			t.Fatal(err)
+			return nil, err
 		}
 		live = &unstructured.Unstructured{Object: content}
 	}
-	record, fits, err := buildAcceptanceRecord(source, live, live)
-	if err != nil || !fits {
-		t.Fatalf("acceptance record: %v %v", fits, err)
+	live = live.DeepCopy()
+	if err := RecordAcceptance(live, source); err != nil {
+		return nil, err
 	}
-	annotations := map[string]string{acceptedPathsAnnotation: record}
-	for key, value := range live.GetAnnotations() {
-		annotations[key] = value
-	}
-	return annotations
+	return live.GetAnnotations(), nil
 }

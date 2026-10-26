@@ -83,7 +83,14 @@ func TestHermeticAcceptedSourceAfterMemoryCommit(t *testing.T) {
 }
 
 func testAcceptedSourceAfterMemoryCommit(t *testing.T, withTree bool) {
-	source, tracker, _, deployed, service := acceptedSourceDeployment(t, withTree)
+	source, tracker, deployedCommit, deployed, service := acceptedSourceDeployment(t, withTree)
+	// Adoption recorded acceptance at the deployed commit; a memory-only
+	// commit leaves accepted source, and so the record, current.
+	accepted, err := source.AcceptedManifest(context.Background(), deployedCommit, sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "app", Name: "consul"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	deployed.Annotations = withAcceptance(t, deployed, accepted)
 	if err := os.MkdirAll(filepath.Join(source.Repository, ".sdo"), 0755); err != nil {
 		t.Fatal(err)
 	}

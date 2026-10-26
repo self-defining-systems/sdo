@@ -253,3 +253,22 @@ func removeAddedFields(next, observed, source *unstructured.Unstructured) {
 		}
 	}
 }
+
+// RecordAcceptance sets on object the acceptance record that adoption would
+// take against source over the object as it is now.
+func RecordAcceptance(object, source *unstructured.Unstructured) error {
+	record, fits, err := buildAcceptanceRecord(source, object, object)
+	if err != nil {
+		return err
+	}
+	if !fits {
+		return fmt.Errorf("acceptance record of %s/%s exceeds %d bytes", object.GetKind(), object.GetName(), maxAcceptanceRecordBytes)
+	}
+	annotations := object.GetAnnotations()
+	if annotations == nil {
+		annotations = map[string]string{}
+	}
+	annotations[acceptedPathsAnnotation] = record
+	object.SetAnnotations(annotations)
+	return nil
+}
