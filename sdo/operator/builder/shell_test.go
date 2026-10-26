@@ -19,7 +19,7 @@ func TestShellBuilderLaunchesTypedControllerWithoutGoProjection(t *testing.T) {
 	}
 	t.Setenv("SDO_CONFIG_CAPTURE", capture)
 	prepared := false
-	cfg := RunConfig{Controller: &contracts.ControllerConfig{AppRoot: directory, CodePath: &contracts.CodePathConfig{Name: "shell"}}, ShellControllerBinary: launcher,
+	cfg := RunConfig{Controller: &contracts.ControllerConfig{AppRoot: directory, Namespace: "app", DispatcherMode: "job", RepairPolicy: "recorded-actions", CodePath: &contracts.CodePathConfig{Name: "shell"}}, ShellControllerBinary: launcher,
 		PrepareShell: func(context.Context) error { prepared = true; return nil },
 		ResolveDiagnostics: func(context.Context, string) (DiagnosticsProjection, error) {
 			t.Fatal("shell launcher compiled Go memory")
