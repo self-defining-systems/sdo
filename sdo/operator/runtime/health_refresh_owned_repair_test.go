@@ -302,13 +302,24 @@ func TestHealthRefreshReplaysClosureAfterOwnProposalCommit(t *testing.T) {
 				t.Fatal(err)
 			}
 			if change == "refresh-detectors-health-bad" {
-				// Fresh evidence after adoption contradicts the closure: no success.
+				// Fresh evidence after adoption contradicts the closure. The
+				// retirement is synchronous, so assert the retired end state
+				// instead of "nothing happened yet": a closure that was handed to
+				// the broker would still be processing here.
+				if _, ok := c.PendingClosureEffect(); ok {
+					t.Fatal("closure still has a broker effect although health is bad after adoption")
+				}
+				if c.closureState != contracts.ClosureState_CLOSURE_STATE_FAILED || c.closureFailure == nil {
+					t.Fatalf("closure not retired although health is bad after adoption: state %v failure %+v", c.closureState, c.closureFailure)
+				}
+				select {
+				case result := <-c.closureResults:
+					t.Fatalf("closure reached the broker although health is bad after adoption: %+v", result)
+				case <-time.After(200 * time.Millisecond):
+				}
 				c.processBrokerCompletions()
 				if c.closureReceipt != nil || nativeGit(t, root, "rev-parse", "HEAD") != head {
 					t.Fatalf("closure credited although health is bad after adoption: %+v", c.closureReceipt)
-				}
-				if c.closureState == contracts.ClosureState_CLOSURE_STATE_COMMITTED {
-					t.Fatalf("closure committed although health is bad after adoption: %v", c.closureState)
 				}
 				ledger, err := native.readLedger(closure.Request.IncidentID)
 				if err != nil || ledger.OutcomeCommit != "" {
