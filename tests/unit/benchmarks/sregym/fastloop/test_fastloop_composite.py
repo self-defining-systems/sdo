@@ -350,7 +350,14 @@ def test_failed_composite_resets_only_after_verified_harness_recovery(
         state.save(tmp_path / "state.json")
         resets.append("reset")
 
-    config = LoopConfig("composite-reset", (PROBLEM, "single"), 2, tmp_path / "rows.jsonl", continue_on_error=True)
+    config = LoopConfig(
+        "composite-reset",
+        (PROBLEM, "single"),
+        2,
+        tmp_path / "rows.jsonl",
+        continue_on_error=True,
+        recovery_settle_seconds=1,
+    )
     with caplog.at_level("INFO"):
         rows = run_incidents(agent, Driver(), config, on_failed_incident=reset_failed)
 

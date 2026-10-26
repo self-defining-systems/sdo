@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import time
 from concurrent.futures import Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field, replace
@@ -27,6 +28,7 @@ from benchmarks.sregym.fastloop.records import (
     NotInjected,
     OracleVerdict,
     PostClosureWait,
+    RecoveryOracleSample,
     TokenCounts,
     append_record,
     persist_grade_checkpoint,
@@ -167,8 +169,15 @@ class LoopConfig:
     cleanup_passes: int = 1
     lane_id: str | None = None
     accepted_repository: Path | None = None
+    #: Admission's stabilization rule: sample until the app passes, within this budget.
+    recovery_settle_seconds: float = 300.0
+    recovery_settle_poll_seconds: float = 2.0
 
     def __post_init__(self) -> None:
+        if not 0 < self.recovery_settle_seconds <= 300:
+            raise ValueError("recovery_settle_seconds must be in (0, 300]")
+        if self.recovery_settle_poll_seconds <= 0:
+            raise ValueError("recovery_settle_poll_seconds must be positive")
         if type(self.cleanup_passes) is not int or not 1 <= self.cleanup_passes <= 2:
             raise ValueError("cleanup_passes must be 1 or 2")
         if not isinstance(self.slot_offset, int) or self.slot_offset < 0:
@@ -218,6 +227,7 @@ def run_incidents(
     on_failed_incident: Callable[[], None] | None = None,
     monotonic: Callable[[], float] = time.monotonic,
     now: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
+    sleep: Callable[[float], None] = time.sleep,
 ) -> list[IncidentRecord]:
     """Run ``config.incidents`` incidents, cycling through ``config.problems``."""
 
@@ -262,6 +272,7 @@ def run_incidents(
                 ids,
                 monotonic=monotonic,
                 now=now,
+                sleep=sleep,
                 grader=grader if diagnosis_grading == "inline" else None,
             )
             baseline_ready = recovered or (record.recovery_oracle is not None and record.recovery_oracle.success)
@@ -375,6 +386,37 @@ def _recover_fault(
     return driver.recover()
 
 
+def _settled_recovery_oracle(
+    driver: FaultDriver,
+    grade: Callable[[], OracleVerdict],
+    config: LoopConfig,
+    samples: list[RecoveryOracleSample],
+    *,
+    monotonic: Callable[[], float],
+    sleep: Callable[[float], None],
+) -> OracleVerdict:
+    """Sample the recovered baseline until it passes or the settle budget ends (admission's rule).
+
+    Traffic can lag a just-recovered app; residue is a verdict that still fails at the budget.
+    """
+
+    independent = getattr(driver, "recovery_oracle", None)
+    started = monotonic()
+    # The sample cap also bounds a clock that sleep does not advance.
+    cap = math.ceil(config.recovery_settle_seconds / config.recovery_settle_poll_seconds) + 1
+    for attempt in range(1, cap + 1):
+        verdict = independent() if callable(independent) else None
+        if verdict is None:
+            verdict = grade()
+        elapsed = monotonic() - started
+        samples.append(RecoveryOracleSample(seconds=round(elapsed, 3), success=verdict.success))
+        remaining = config.recovery_settle_seconds - elapsed
+        if verdict.success or remaining <= 0 or attempt == cap:
+            return verdict
+        sleep(min(config.recovery_settle_poll_seconds, remaining))
+    raise AssertionError("the settle loop returns on its last sample")
+
+
 def _run_one(
     agent: IncidentAgent,
     driver: FaultDriver,
@@ -384,6 +426,7 @@ def _run_one(
     *,
     monotonic: Callable[[], float],
     now: Callable[[], datetime],
+    sleep: Callable[[float], None] = time.sleep,
     grader: DiagnosisGrader | None = None,
 ) -> tuple[IncidentRecord, bool]:
     if not problem_ids:
@@ -458,6 +501,7 @@ def _run_one(
     oracle: OracleVerdict | None = None
     infra_error: str | None = None
     recovery_oracle: OracleVerdict | None = None
+    recovery_oracle_samples: list[RecoveryOracleSample] = []
     oracle_finished_at: datetime | None = None
     recovery_finished_at: datetime | None = None
     recovery_seconds: float | None = None
@@ -523,9 +567,9 @@ def _run_one(
             for _ in range(config.cleanup_passes):
                 recovery_seconds += _recover_fault(agent, driver, outcome, post_closure_waits)
                 # Seed cleanup can remove injected workloads; grade the recovered baseline.
-                recovery_oracle = getattr(driver, "recovery_oracle", lambda: None)()
-                if recovery_oracle is None:
-                    recovery_oracle = grade()
+                recovery_oracle = _settled_recovery_oracle(
+                    driver, grade, config, recovery_oracle_samples, monotonic=monotonic, sleep=sleep
+                )
                 if not recovery_oracle.success:
                     raise RuntimeError("recovery residue: the fault oracle still fails after harness recovery")
                 full_cleanup = getattr(driver, "last_full_cleanup_verified", False)
@@ -563,6 +607,7 @@ def _run_one(
         infra_error=infra_error,
         oracle=oracle,
         recovery_oracle=recovery_oracle,
+        recovery_oracle_samples=recovery_oracle_samples,
         recovery_error=recovery_error,
         diagnosis_grade=diagnosis_grade,
         oracle_finished_at=oracle_finished_at,
