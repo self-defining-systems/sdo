@@ -134,7 +134,7 @@ func TestGS1AutomaticRepairDefaultsAndOptOuts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	controller, _, err := ParseControllerLaunch(plan.Job.Spec.Template.Spec.Containers[0].Args)
+	controller, _, err := ParseControllerLaunch(append(plan.Job.Spec.Template.Spec.Containers[0].Args, "--operator-root", ".."))
 	if err != nil || controller.Controller.GetRepairPolicy() != "commit" {
 		t.Fatalf("opt-out lost: %+v %v", controller, err)
 	}
@@ -151,7 +151,7 @@ func TestInstallExistingColdStandbySwitchReachesTypedController(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	controller, _, err := ParseControllerLaunch(plan.Job.Spec.Template.Spec.Containers[0].Args)
+	controller, _, err := ParseControllerLaunch(append(plan.Job.Spec.Template.Spec.Containers[0].Args, "--operator-root", ".."))
 	if err != nil {
 		t.Fatal(err)
 	}
