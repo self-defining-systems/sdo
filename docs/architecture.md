@@ -737,3 +737,18 @@ The legacy controller checkpoint is recognized by its exact name,
 prevents restored controller state from resurrecting old onboarding authority. Fresh installs discard old maintenance generations and use the existing ACTIVE default when no maintenance record exists. Legacy maintenance records require the exact valid closed data shape; newly written records carry SDO ownership labels.
 
 The native installer and controller accept `--responder-standby=false` to force cold responder Jobs. The optional typed controller launch field `responder_standby` carries that choice. Standby admission requires enough remaining Job lifetime for the frozen response budget plus one minute; aging idle slots are replaced. Incident liveness and receipt export resolve durable execution identities, including bound standby Jobs. Initial startup clocks remain immutable; `startup/attempts/<job>/startup-controller.json` and `startup-workers/<job>/startup-worker.json` retain typed attempt evidence.
+
+### Composable code paths
+
+`runtime.CodePathConfig` selects a named set of implementations, with optional
+per-seam overrides. The zero value selects `go`. `CodePathRegistry` resolves
+and validates detector source, coverage provider, response-stage names, memory
+validation, activation after publication, and agent guidance before use. Unknown
+names, duplicate stages and deterministic response without coverage return
+`CodePathConfigError` naming the invalid seam. PIPE owns response-stage execution;
+the registry selects stages and does not implement another stage runner.
+
+The Go plugins retain compiled SDK detectors, diagnose-based coverage, isolated
+memory validation, controller rollout and the existing role guidance. The
+registry is transport-neutral and belongs to the production runtime scope. All
+paths retain broker commit authority and the artifact ownership matrix above.

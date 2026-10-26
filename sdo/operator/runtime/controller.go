@@ -32,6 +32,9 @@ type Dispatcher interface {
 }
 
 type ControllerConfig struct {
+	CodePath         CodePathConfig
+	CodePathRegistry *CodePathRegistry
+
 	Application            string
 	Namespace              string
 	SourceCommit           string
@@ -68,6 +71,7 @@ type dispatchCompletion struct {
 
 type Controller struct {
 	config                      ControllerConfig
+	codePath                    *CodePath
 	startedAt                   time.Time
 	scheduler                   *Scheduler
 	detectors                   map[string]sdk.Detector
@@ -207,6 +211,14 @@ func NewController(
 	dispatcher Dispatcher,
 	start time.Time,
 ) (*Controller, error) {
+	registry := config.CodePathRegistry
+	if registry == nil {
+		registry = NewCodePathRegistry()
+	}
+	resolvedPath, err := registry.Resolve(config.CodePath)
+	if err != nil {
+		return nil, err
+	}
 	if provider == nil {
 		return nil, fmt.Errorf("snapshot provider is required")
 	}
@@ -276,7 +288,7 @@ func NewController(
 	}
 	sort.Strings(healthDetectorIDs)
 	return &Controller{
-		config: config, startedAt: start, scheduler: NewScheduler(detectors, start, config.Namespace), detectors: byID,
+		config: config, codePath: resolvedPath, startedAt: start, scheduler: NewScheduler(detectors, start, config.Namespace), detectors: byID,
 		tracker:    tracker,
 		gateClears: make(map[string]*gateClear), gateProbes: make(map[string]time.Time),
 		batcher: NewDebouncedBatcher(config.BatchDebounce), provider: provider, dispatcher: dispatcher,
