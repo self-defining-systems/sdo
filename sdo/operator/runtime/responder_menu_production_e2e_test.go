@@ -363,7 +363,10 @@ rollout=Rollout.create(Path(os.environ["CODEX_HOME"]),cwd=str(Path.cwd()))
 recovery.checkpoint(rollout.session_id)
 turn=Turn("responder",175,Path.cwd(),rollout,EventStream(io.StringIO()))
 def select(program):
- code,text=turn.run(shlex.join([sys.executable,"-m","sdo.agents.responder.tools_cli","--json","menu"]))
+ # Filter the real menu before the scripted turn's bounded stdout capture.
+ command=shlex.join([sys.executable,"-m","sdo.agents.responder.tools_cli","--json","menu"])
+ selector="import json,sys; m=json.load(sys.stdin)['menu']; print(json.dumps({'menu':{'options':[o for o in m['options'] if o.get('program_id')==sys.argv[1]]}}))"
+ code,text=turn.run(command+" | "+shlex.join([sys.executable,"-c",selector,program]))
  assert code==0,text
  menu=json.loads(text.splitlines()[0])["menu"]
  option=next(o["option_id"] for o in menu["options"] if o.get("program_id")==program)
