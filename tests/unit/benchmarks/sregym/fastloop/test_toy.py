@@ -229,3 +229,26 @@ def test_ready_baseline_retains_verified_install_identity_after_health_refresh()
     assert not baseline_ready(state, "unrelated")
     state["namespace_onboarding"]["objects"] = []
     assert not baseline_ready(state, "installed")
+
+
+@pytest.mark.parametrize("missing", [False, True])
+def test_toy_source_uses_a_common_installed_manifest_digest(monkeypatch, missing):
+    import json
+    from types import SimpleNamespace
+
+    from benchmarks.sregym.fastloop import toy
+
+    reference = "registry/toy@sha256:" + "a" * 64
+
+    def run(argv, **kwargs):
+        if argv[0] == "kind":
+            return SimpleNamespace(stdout="node-a\nnode-b\n")
+        digests = [] if missing and argv[2] == "node-b" else [reference]
+        return SimpleNamespace(stdout=json.dumps({"status": {"repoDigests": digests}}))
+
+    monkeypatch.setattr(toy.subprocess, "run", run)
+    if missing:
+        with pytest.raises(ValueError, match="immutable.*image"):
+            toy.immutable_image_reference("lane", "toy:mutable")
+    else:
+        assert toy.immutable_image_reference("lane", "toy:mutable") == reference

@@ -64,6 +64,15 @@ func (d timedDetector) TrafficWorkloads() []string {
 	return nil
 }
 
+// Timing wrappers must preserve the observation requirements of the detector.
+func (d timedDetector) ConsumesPodAdmission() bool {
+    return sdk.ConsumesPodAdmission([]sdk.Detector{d.Detector})
+}
+
+func (d timedDetector) ConsumesServiceReachability() bool {
+    return ConsumesServiceReachability([]sdk.Detector{d.Detector})
+}
+
 func scaleDetectors(detectors []sdk.Detector, scale float64) []sdk.Detector {
 	if scale == 1 {
 		return detectors

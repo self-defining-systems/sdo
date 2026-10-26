@@ -204,6 +204,31 @@ def build_image(run_dir: Path, image: str) -> None:
     )
 
 
+def immutable_image_reference(cluster: str, image: str) -> str:
+    """Use delivered manifest identity in accepted source, never a mutable tag."""
+    nodes = subprocess.run(
+        ["kind", "get", "nodes", "--name", cluster], check=True, capture_output=True, text=True, timeout=10
+    ).stdout.splitlines()
+    common: set[str] | None = None
+    for node in nodes:
+        inspected = subprocess.run(
+            ["docker", "exec", node, "crictl", "inspecti", image],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        digests = {
+            ref
+            for ref in json.loads(inspected.stdout)["status"].get("repoDigests", [])
+            if "@sha256:" in ref and len(ref.rsplit("@sha256:", 1)[1]) == 64
+        }
+        common = digests if common is None else common & digests
+    if not common:
+        raise ValueError(f"toy immutable deployment image unavailable on every node: {image}")
+    return sorted(common)[0]
+
+
 def prepare_application(
     run_dir: Path,
     cluster: str,
@@ -221,6 +246,7 @@ def prepare_application(
         save_application_baseline,
     )
 
+    image = immutable_image_reference(cluster, image)
     workspace = run_dir / "application_workspace"
     workspace.mkdir()
     shutil.copytree(APP / "kubernetes", workspace / "kubernetes")

@@ -261,7 +261,8 @@ def test_proof_rejects_stale_images_before_fixture_mutations(tmp_path, monkeypat
     assert "stale controller image" in report["error"]
 
 
-def test_validator_watch_captures_logs_when_job_is_added(tmp_path, monkeypatch):
+@pytest.mark.parametrize("starting", [False, True])
+def test_validator_watch_captures_logs_when_job_is_added(tmp_path, monkeypatch, starting):
     import json
     import subprocess
     import sys
@@ -284,7 +285,15 @@ def test_validator_watch_captures_logs_when_job_is_added(tmp_path, monkeypatch):
     def popen(argv, **kwargs):
         if "logs" in argv:
             calls.append(argv)
-            argv = [sys.executable, "-c", "print('compiler missing: actionable setup failure', flush=True)"]
+            argv = [
+                sys.executable,
+                "-c",
+                (
+                    "print('ContainerCreating'); raise SystemExit(1)"
+                    if starting and len(calls) == 1
+                    else "print('compiler missing: actionable setup failure', flush=True)"
+                ),
+            ]
         return real_popen(argv, **kwargs)
 
     monkeypatch.setattr(subprocess, "Popen", popen)
@@ -294,6 +303,6 @@ def test_validator_watch_captures_logs_when_job_is_added(tmp_path, monkeypatch):
         while not log.exists() or "compiler missing" not in log.read_text():
             assert time.monotonic() < deadline
             time.sleep(0.01)
-    assert len(calls) == 1
+    assert len(calls) == (2 if starting else 1)
     assert "job/validator-1" in calls[0]
     assert "--follow" in calls[0]
