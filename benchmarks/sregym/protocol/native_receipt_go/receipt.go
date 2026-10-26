@@ -204,14 +204,24 @@ func validate(r *c.NativeProductionReceipt) error {
 		}
 	}
 	jobs := r.GetResponderJobEvidence()
-	if len(jobs) != 1 || jobs[0].GetIncidentId() != id || !jobs[0].GetSucceeded() {
-		return errors.New("native receipt requires one correlated successful responder Job")
-	}
-	if err := nonempty(jobs[0].GetJobUid(), "responder Job UID"); err != nil {
-		return err
-	}
-	if err := nonempty(jobs[0].GetJobName(), "responder Job name"); err != nil {
-		return err
+	if len(jobs) == 0 {
+		// A controller may intentionally retire the Job after an early report.
+		// Validate its durable lifecycle, frozen request/result and broker ACK,
+		// rather than inventing a successful Kubernetes Job.
+		dispatched, completed := closure.GetDispatchedAt(), closure.GetResponderCompletedAt()
+		if dispatched == nil || dispatched.CheckValid() != nil || completed == nil || completed.CheckValid() != nil || completed.AsTime().Before(dispatched.AsTime()) || response.GetStatus() != "completed" {
+			return errors.New("native receipt lacks durable responder dispatch and completion")
+		}
+	} else {
+		if len(jobs) != 1 || jobs[0].GetIncidentId() != id || !jobs[0].GetSucceeded() {
+			return errors.New("native receipt requires one correlated successful responder Job")
+		}
+		if err := nonempty(jobs[0].GetJobUid(), "responder Job UID"); err != nil {
+			return err
+		}
+		if err := nonempty(jobs[0].GetJobName(), "responder Job name"); err != nil {
+			return err
+		}
 	}
 	if r.GetOutcomeCommit() != l.GetOutcomeCommit() || r.GetReflectionCommit() != l.GetReflectionCommit() || r.GetProposalCommit() != l.GetProposalCommit() {
 		return errors.New("native flat commit summary disagrees with ledger")

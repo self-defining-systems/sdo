@@ -465,10 +465,14 @@ Mongo fixture clients run in temporary, deadline-bounded Pods in the harness
 namespace using the deployed Mongo image; they never share the database's
 memory limit. They have no service-account token and are removed on completion
 or failure. The application resource limits remain unchanged.
-A supported abort can remove the application namespace. Reset confirms that
-absence and recreates the namespace named by the captured application baseline
-before reconciling its manifests; authorization/read failures never become
-absence. System and SDO control namespaces are refused.
+A supported abort stops SDO and benchmark transport, preserves the application
+namespace, and saves the pre-abort native state beside the original state as
+`*.abort-evidence.json`. Preserved applications are not reported as abort
+leftovers; surviving SDO/transport resources still fail quiescence. Deliberate
+application teardown must explicitly select `preserve_applications=False`.
+Reset also handles namespaces absent after an older abort: it recreates only
+the namespace named by the captured application baseline. Authorization/read
+failures never become absence; system and SDO control namespaces are refused.
 
 ## Parallel lanes with shared accepted memory
 
