@@ -149,7 +149,7 @@ type ResponderLoop struct {
 	continuation       responderContinuation
 	MenuConfig         *ResponderMenuConfig
 	menu               *contracts.MitigationMenu
-	menuEntries        map[string]menuEntry
+	menuEntries        menuCatalog
 	menuSession        *contracts.MitigationSession
 	menuReports        []*contracts.MitigationReport
 	menuExecutions     map[string][]MenuRoundExecution

@@ -500,3 +500,53 @@ def test_required_component_fault_cannot_be_masked_by_another_fault(valkey_succe
         with pytest.raises(InvalidInjectionError) as error:
             driver.inject("composite")
         assert "required component fault_1:ValkeyMemoryDisruption" in error.value.details["reason"]
+
+
+def test_invalid_injection_retains_worker_event_and_next_attempt_clears_it() -> None:
+    from benchmarks.sregym.protocol.injection import InvalidInjectionError
+
+    class InvalidWorker(FakeWorker):
+        unavailable = False
+
+        def request(self, op, **args):
+            if self.unavailable:
+                raise RuntimeError("worker unavailable")
+            return super().request(op, **args) | {"protocol_version": 2, "injection": {"valid": False, "details": {}}}
+
+    worker = InvalidWorker()
+    driver = _driver(worker)
+    with pytest.raises(InvalidInjectionError):
+        driver.inject("toy")
+    assert driver.last_injection_window is not None
+    assert driver.last_injection_window.started_at == datetime.fromtimestamp(1790000000.0, tz=timezone.utc)
+    worker.unavailable = True
+    with pytest.raises(RuntimeError, match="worker unavailable"):
+        driver.inject("next-toy")
+    assert driver.last_injection_window is None
+
+
+def test_partial_composite_failure_keeps_full_recorded_injection_span() -> None:
+    from benchmarks.sregym.protocol.injection import InvalidInjectionError
+
+    class PartialWorker(FakeWorker):
+        count = 0
+
+        def request(self, op, **args):
+            assert op == "inject"
+            position = self.count
+            self.count += 1
+            return {
+                "protocol_version": 2,
+                "injection": {"valid": position == 0, "details": {}},
+                "started_at": 1790000000.0 + position * 10,
+                "finished_at": 1790000005.0 + position * 10,
+                "fault": position,
+                "faults": [position],
+            }
+
+    driver = _driver(PartialWorker())
+    with pytest.raises(InvalidInjectionError):
+        driver.inject_composite(("toy-one", "toy-two"))
+    assert driver.last_injection_window is not None
+    assert driver.last_injection_window.started_at == datetime.fromtimestamp(1790000000.0, tz=timezone.utc)
+    assert driver.last_injection_window.finished_at == datetime.fromtimestamp(1790000015.0, tz=timezone.utc)

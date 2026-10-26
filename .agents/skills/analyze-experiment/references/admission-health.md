@@ -18,8 +18,8 @@ measurements and budgets (default 8GiB; observer and app all-in-one Jaeger
 2GiB), host available memory, and `host_disk` evidence for the filesystem
 backing local Docker kind-node storage. The disk object names `mount`,
 `storage_path`, `total_bytes`, `free_bytes`, `used_percent`,
-`min_free_percent` and `floor_bytes`; default admission rejects at 90% used or
-below 100GiB free. Checks run before and after stabilization; the dry run
+`floor_bytes`; default admission requires at least100GiB free, with used
+percentage informational. Checks run before and after stabilization; the dry run
 reports the same `lane_resources` invariant. Resource rejection is an eval
 infrastructure failure, never evidence of agent or incident mitigation.
 Only the benchmark observer is capped by SREGym: app growth is detected,
@@ -28,6 +28,25 @@ and application workload documents are preserved from accepted source.
 New prepared-lane captures seal `fastloop_application.namespaces[].objects` with `installed_digest`. This installed set takes precedence over an inherited seed lock while source is unchanged; accepted source repairs restore from the current lock. Digest mismatches reject loading. Dry-run receipts include `code_revision` and per-stage resource, restoration, RBAC, setup and traffic results.
 
 Dry-run timing separates one-time setup (`setup_seconds`, at most900s) from steady admission (`steady_seconds`, at most300s). Native onboarding plus the first complete detector observation ends setup; every existing health, traffic, lineage, placement and closure check remains mandatory during steady proof.
+
+Hotel script isolation (`hotel-script-free/v1`): generic first-party fastloop hotel
+apps use the harness's public `FailureScripts.ABSENT` profile. Before every worker
+injection (including compositions), a read-only guard rejects the two
+`failure-admin-{geo,rate}` ConfigMaps, known helper script keys in any ConfigMap,
+and helper volume/ConfigMap references in workload templates or Pods. SDO lane
+admission records `admission/hotel-script-profile.json` with profile, passed, and
+objects_checked. A failed check invalidates admission; it grants no learning credit.
+
+Warm capture migration retains the existing `fastloop_application` format and
+records additive `hotel_helper_migrations` entries in the baseline document:
+contract, source_path, source_sha256 (entire pre-migration file), namespace,
+before_digest, after_digest, and removed identities. Original installed seals
+must validate first. Only the two known helper ConfigMaps and the exact harness
+Mongo Deployment mounts are removed; source, memory, grants, data and fault/oracle
+implementations remain untouched. Unknown shapes/ownership fail closed. Compare
+these migration receipts when adopting a warm lane; never recapture live fault
+state to manufacture a clean seal. Old helper-assisted repairs are eval evidence,
+not learned SDK repairs.
 
 Host disk admission uses an absolute free-byte floor (default100GiB) on the Docker storage mount. The receipt names `rule: absolute-free-bytes`, the measured free bytes and floor; used percent is informational. A large volume with hundreds of GiB free must not fail solely on percentage. For historical comparisons retain the previous percent-and-byte rule and its rejection as eval evidence.
 

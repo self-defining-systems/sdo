@@ -95,3 +95,6 @@ script's exit code, duration (Go duration nanoseconds), stdout/stderr tails, tim
 error and fired streak. Two nonzero runs fire; errors reset the streak and block
 health. Controller closure still owns recovery and its stability evidence. Keep
 activation latency separate from script execution and responder runtime.
+### Receipts after responder retirement
+
+The controller may retire a responder Job after an early report. Post-reflection receipt collection uses the broker ledger's frozen incident request, correlated result, durable dispatch/completion timestamps, independently verified closure, and accepted acknowledgment. A live responder Job is not a receipt prerequisite. An empty `responder_job_evidence` means no Kubernetes success claim is made; the Go checker requires valid ordered lifecycle timestamps and a completed correlated result instead. Historical receipts with Job evidence retain their original validation.

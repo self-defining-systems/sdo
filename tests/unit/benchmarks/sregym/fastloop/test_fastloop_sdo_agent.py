@@ -75,8 +75,7 @@ def test_fastloop_record_persists_program_match_and_skip_evidence(tmp_path: Path
         agent="sdo",
         problem_id="p",
         model="test",
-        injection_started_at=INJECTED,
-        injection_finished_at=INJECTED,
+        injection={"state": "injected", "started_at": INJECTED, "finished_at": INJECTED},
         **_outcome_fields(learned),
     )
     path = tmp_path / "incidents.jsonl"

@@ -57,8 +57,11 @@ class FakeEnvironment:
             problem_id=problem_id,
             agent="sdo",
             model="fake",
-            injection_started_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
-            injection_finished_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            injection={
+                "state": "injected",
+                "started_at": datetime(2026, 1, 1, tzinfo=timezone.utc),
+                "finished_at": datetime(2026, 1, 1, tzinfo=timezone.utc),
+            },
             recovery_oracle=OracleVerdict(kind="sregym-mitigation-oracle", success=index != self.fail_at),
             full_cleanup_verified=index != self.missing_cleanup_at,
         )
