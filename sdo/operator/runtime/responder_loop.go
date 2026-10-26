@@ -908,7 +908,7 @@ func (l *ResponderLoop) apply(ctx context.Context, request ToolRequest, response
 	}
 
 	refs, refErr := l.menuPlanWriteRefs(batch)
-	if len(l.pendingWrites) > 0 && refErr != nil {
+	if l.heldPendingWrites() > 0 && refErr != nil {
 		l.refuseSelection(response, "write_set_unknown", refErr.Error())
 		return
 	}
