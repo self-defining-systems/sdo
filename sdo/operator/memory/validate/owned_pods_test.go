@@ -94,9 +94,9 @@ func TestReplacedOwnedPodDoesNotBlockVerifiedWorkloadRepair(t *testing.T) {
 		Classification:      "success",
 		ConfirmedRootCauses: []*contracts.ConfirmedRootCause{{Resources: []*contracts.ObjectRef{deployment, replaced}}},
 		// The Pod's own opening finding is never re-evaluated: its identity is gone.
-		Findings: []*contracts.Finding{{DetectorId: "workload", Status: "active", Fingerprint: "search", PrimaryResource: deployment}, podFinding(replaced)},
-		RepairActions:       []*contracts.RepairActionReceipt{{Success: true, Resources: []*contracts.ObjectRef{deployment}, StartedAt: timestamppb.New(at.Add(time.Second)), CompletedAt: timestamppb.New(at.Add(2 * time.Second))}},
-		DetectorHistory:     []*contracts.DetectorEvaluation{{DetectorId: "workload", Status: "clear", EvaluatedAt: timestamppb.New(at.Add(3 * time.Second))}},
+		Findings:        []*contracts.Finding{{DetectorId: "workload", Status: "active", Fingerprint: "search", PrimaryResource: deployment}, podFinding(replaced)},
+		RepairActions:   []*contracts.RepairActionReceipt{{Success: true, Resources: []*contracts.ObjectRef{deployment}, StartedAt: timestamppb.New(at.Add(time.Second)), CompletedAt: timestamppb.New(at.Add(2 * time.Second))}},
+		DetectorHistory: []*contracts.DetectorEvaluation{{DetectorId: "workload", Status: "clear", EvaluatedAt: timestamppb.New(at.Add(3 * time.Second))}},
 	}
 	rollout := writeRolloutCapture(t, at, []corev1.Pod{pod("search-old-abcde", "search-old")}, []corev1.Pod{pod("search-new-fghij", "search-new")})
 
