@@ -84,3 +84,22 @@ func TestApplyMountsLiveBenchmarkModulesWithoutAnswerKeys(t *testing.T) {
 		}
 	}
 }
+
+func TestApplyWorkerMountsToyFixtureWithoutFaultCatalog(t *testing.T) {
+	pod := &corev1.PodSpec{Containers: []corev1.Container{{Name: "scripted"}}}
+	ApplyWorker(pod)
+	for _, target := range []string{"/opt/sdo/apps/toy/seed", "/opt/sdo/apps/toy/kubernetes"} {
+		found := false
+		for _, mount := range pod.Containers[0].VolumeMounts {
+			if mount.MountPath == "/opt/sdo/apps" || mount.MountPath == "/opt/sdo/apps/toy" {
+				t.Fatal("toy fault catalog exposed")
+			}
+			if mount.MountPath == target && mount.ReadOnly {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("scripted fixture missing read-only mount %s", target)
+		}
+	}
+}

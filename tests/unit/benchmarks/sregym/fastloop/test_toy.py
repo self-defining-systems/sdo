@@ -164,7 +164,7 @@ def test_sweep_stream_models_an_unowned_service_without_changing_controller():
 
 
 @pytest.mark.parametrize(
-    "change", ["none", "namespace", "objective", "topology", "missing-detector", "changed-detector"]
+    "change", ["none", "proof", "namespace", "objective", "topology", "missing-detector", "changed-detector"]
 )
 def test_toy_scripted_health_refresh_needs_no_rehearsal_slot(tmp_path, monkeypatch, change):
     import shutil
@@ -178,19 +178,20 @@ def test_toy_scripted_health_refresh_needs_no_rehearsal_slot(tmp_path, monkeypat
     seed = ROOT / "apps/toy/seed/.sdo"
     shutil.copytree(seed, tmp_path / ".sdo")
     body = (seed / "goal.md").read_text().split("---\n", 2)[2].strip()
+    namespace = "sdo-proof-0123456789" if change == "proof" else "sdo-toy"
     resources = []
     for path in sorted((ROOT / "apps/toy/kubernetes").glob("*.yaml")):
         resources.extend(
             SourceResource(
                 kind=obj["kind"],
-                namespace=obj["metadata"].get("namespace", "sdo-toy"),
+                namespace=obj["metadata"].get("namespace", namespace),
                 name=obj["metadata"]["name"],
                 source=f"kubernetes/{path.name}",
             )
             for obj in yaml.safe_load_all(path.read_text())
         )
     request = HealthJudgeRequest(
-        namespace="other" if change == "namespace" else "sdo-toy",
+        namespace="other" if change == "namespace" else namespace,
         health_objective="changed" if change == "objective" else body,
         accepted_source_commit="a" * 40,
         source_resources=resources,
@@ -204,7 +205,7 @@ def test_toy_scripted_health_refresh_needs_no_rehearsal_slot(tmp_path, monkeypat
         detector.unlink()
     if change == "changed-detector":
         detector.write_text("package toy\n")
-    if change == "none":
+    if change in {"none", "proof"}:
         result = scripted_worker.scripted_health_judge(request, tmp_path)
         assert result.authored
         assert "toy-endpoints" in result.detector_ids

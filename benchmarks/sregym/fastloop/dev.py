@@ -86,6 +86,8 @@ def _copy_dev_snapshot(worktree: Path, node: str, target: str) -> None:
         "libs",
         "examples",
         "benchmarks",
+        "apps/toy/seed",
+        "apps/toy/kubernetes",
         ".fastloop/sdo-operator",
     ]
     producer = subprocess.Popen(command, stdout=subprocess.PIPE)

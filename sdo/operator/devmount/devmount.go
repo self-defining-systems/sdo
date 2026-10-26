@@ -27,6 +27,14 @@ var benchmarkFiles = []string{
 	"benchmarks/sregym/fastloop/file_edits.py", "benchmarks/sregym/fastloop/recording_worker.py",
 }
 
+// workerDirectories expose only reusable scripted fixtures, never fault catalogs.
+var workerDirectories = []struct{ source, target string }{
+	{"benchmarks/sregym/fastloop/scripted_program", "/opt/sdo-scripted/targetport"},
+	{"benchmarks/sregym/fastloop/scripted_networkpolicy_program", "/opt/sdo-scripted/networkpolicy"},
+	{"apps/toy/seed", "/opt/sdo/apps/toy/seed"},
+	{"apps/toy/kubernetes", "/opt/sdo/apps/toy/kubernetes"},
+}
+
 // Apply gives every container the same read-only source and operator binary.
 func Apply(pod *corev1.PodSpec) {
 	directory, file := corev1.HostPathDirectory, corev1.HostPathFile
@@ -80,8 +88,8 @@ func ApplyWorker(pod *corev1.PodSpec) {
 	for index, path := range benchmarkFiles {
 		pod.Volumes = append(pod.Volumes, corev1.Volume{Name: fmt.Sprintf("dev-bench-%d", index), VolumeSource: corev1.VolumeSource{HostPath: &corev1.HostPathVolumeSource{Path: NodePath + "/" + path, Type: &file}}})
 	}
-	for index, name := range []string{"scripted_program", "scripted_networkpolicy_program"} {
-		pod.Volumes = append(pod.Volumes, corev1.Volume{Name: fmt.Sprintf("dev-script-%d", index), VolumeSource: corev1.VolumeSource{HostPath: &corev1.HostPathVolumeSource{Path: NodePath + "/benchmarks/sregym/fastloop/" + name, Type: &directory}}})
+	for index, directoryMount := range workerDirectories {
+		pod.Volumes = append(pod.Volumes, corev1.Volume{Name: fmt.Sprintf("dev-script-%d", index), VolumeSource: corev1.VolumeSource{HostPath: &corev1.HostPathVolumeSource{Path: NodePath + "/" + directoryMount.source, Type: &directory}}})
 	}
 
 	for index := range pod.Containers {
@@ -96,8 +104,8 @@ func mountWorker(container *corev1.Container) {
 	for index, path := range benchmarkFiles {
 		container.VolumeMounts = append(container.VolumeMounts, corev1.VolumeMount{Name: fmt.Sprintf("dev-bench-%d", index), MountPath: "/opt/sdo/" + path, ReadOnly: true})
 	}
-	for index, name := range []string{"targetport", "networkpolicy"} {
-		container.VolumeMounts = append(container.VolumeMounts, corev1.VolumeMount{Name: fmt.Sprintf("dev-script-%d", index), MountPath: "/opt/sdo-scripted/" + name, ReadOnly: true})
+	for index, directoryMount := range workerDirectories {
+		container.VolumeMounts = append(container.VolumeMounts, corev1.VolumeMount{Name: fmt.Sprintf("dev-script-%d", index), MountPath: directoryMount.target, ReadOnly: true})
 	}
 
 }

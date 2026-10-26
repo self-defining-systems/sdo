@@ -717,14 +717,16 @@ def _scripted_toy_health_judge(request: HealthJudgeRequest, checkout: Path) -> H
         if (accepted / name).read_bytes() != (seed / name).read_bytes():
             raise ValueError("scripted toy health refresh requires the unchanged toy seed")
     objective = (seed / "goal.md").read_text().split("---\n", 2)[2].strip()
-    if request.namespace != "sdo-toy" or request.health_objective.strip() != objective:
+    if (
+        request.namespace != "sdo-toy" and not re.fullmatch(r"sdo-proof-[0-9a-f]{10}", request.namespace)
+    ) or request.health_objective.strip() != objective:
         raise ValueError("scripted toy health refresh cannot change the namespace or objective")
     expected = set()
     for path in sorted((seed.parents[1] / "kubernetes").glob("*.yaml")):
         for obj in yaml.safe_load_all(path.read_text()):
-            expected.add((obj["kind"], obj["metadata"].get("namespace", "sdo-toy"), obj["metadata"]["name"]))
+            expected.add((obj["kind"], obj["metadata"].get("namespace", request.namespace), obj["metadata"]["name"]))
     actual = {
-        (row.kind, "sdo-toy" if row.namespace in ("", "default") else row.namespace, row.name)
+        (row.kind, request.namespace if row.namespace in ("", "default") else row.namespace, row.name)
         for row in request.source_resources
         if row.source.startswith("kubernetes/")
     }
