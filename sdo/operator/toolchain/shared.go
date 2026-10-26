@@ -58,6 +58,16 @@ func seedFrom(ctx context.Context, repositoryMount, image, compiler, cache strin
 	return nil
 }
 
+// Seeded reports whether Seed completed for image on this repository mount.
+// Publication is an atomic rename, so an existing directory is complete.
+func Seeded(repositoryMount, image string) bool {
+	if repositoryMount == "" || image == "" {
+		return false
+	}
+	info, err := os.Lstat(filepath.Join(repositoryMount, SharedSubPath(image)))
+	return err == nil && info.IsDir()
+}
+
 // ApplyShared has no init container or per-incident copy. Seed must have
 // completed at controller startup. Build outputs remain private scratch files.
 func ApplyShared(pod *corev1.PodSpec, image, pvcSubPath string) {

@@ -8,6 +8,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"log/slog"
 	"os"
+	"path"
 	"path/filepath"
 	"testing"
 	"time"
@@ -16,6 +17,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/toolchain"
 )
 
 func TestIncidentJobUsesControllerSeedWithoutCopy(t *testing.T) {
@@ -46,6 +48,53 @@ func TestIncidentJobUsesControllerSeedWithoutCopy(t *testing.T) {
 	}
 	if len(mounts) != 2 {
 		t.Fatalf("missing offline compiler/cache: %+v", mounts)
+	}
+}
+
+// A reflection Job is on the next row's critical path. Once the controller has
+// published the seed, it mounts the seed instead of copying the toolchain.
+// A process without a completed seed keeps the private copy.
+func TestNonIncidentJobMountsCompletedSeedAndCopiesOnlyWithoutOne(t *testing.T) {
+	repository := t.TempDir()
+	request, _ := anypb.New(&contracts.ReflectionRequest{})
+	task := &contracts.AgentTask{TaskId: "reflection", Request: request, Workspace: &contracts.ProposalWorkspace{CheckoutPath: "/workspace/proposal"}}
+	compiler := func() string {
+		client := fake.NewSimpleClientset()
+		e := KubernetesExecutor{Client: client, Namespace: "control", RepositoryPVC: "repo", RepositoryMountPath: repository, RepositoryPVCSubPath: "tenant", ToolchainImage: "controller:compiler"}
+		if err := e.ensureJob(context.Background(), task, &contracts.KubernetesJobLaunch{Image: "worker", Command: []string{"python3", "-m", "worker"}}, "reflection", requestSource{ConfigMap: "request"}, "result", "tenant/proposal"); err != nil {
+			t.Fatal(err)
+		}
+		job, err := client.BatchV1().Jobs("control").Get(context.Background(), "reflection", metav1.GetOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		copied := false
+		for _, init := range job.Spec.Template.Spec.InitContainers {
+			copied = copied || init.Name == "prepare-toolchain"
+		}
+		for _, m := range job.Spec.Template.Spec.Containers[0].VolumeMounts {
+			if m.MountPath != "/usr/local/go" {
+				continue
+			}
+			switch {
+			case copied && m.Name == "sdo-toolchain" && m.ReadOnly:
+				return "copy"
+			case !copied && m.Name == "repository" && m.ReadOnly && m.SubPath == path.Join("tenant", toolchain.SharedSubPath("controller:compiler"), "go"):
+				return "seed"
+			}
+			t.Fatalf("compiler authority: copied=%v %+v", copied, m)
+		}
+		t.Fatal("Job has no offline compiler")
+		return ""
+	}
+	if got := compiler(); got != "copy" {
+		t.Fatalf("without a completed seed the Job must copy, got %s", got)
+	}
+	if err := os.MkdirAll(filepath.Join(repository, toolchain.SharedSubPath("controller:compiler")), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if got := compiler(); got != "seed" {
+		t.Fatalf("with a completed seed the Job must mount it, got %s", got)
 	}
 }
 
