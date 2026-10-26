@@ -186,7 +186,8 @@ def test_abort_preserves_active_worker_and_pending_incident(tmp_path, monkeypatc
 
     monkeypatch.setattr(persistent, "kubectl", invoke)
     errors = persistent.abort(path, ops=persistent.KubectlClusterOps())
-    assert errors and "active incident work" in str(errors)
+    assert errors
+    assert "active incident work" in str(errors)
     assert deleted == []
     state = persistent.PersistentState.load(path)
     assert state.controllers["demo"].pending.incident_id == "i1"
