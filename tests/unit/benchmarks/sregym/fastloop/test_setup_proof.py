@@ -174,6 +174,7 @@ def test_dry_run_reuse_does_not_reset_or_redeploy_and_refreshes_health(tmp_path,
     monkeypatch.setattr(cli, "_worker", lambda *args: nullcontext(object()))
     calls = []
     monkeypatch.setenv("KUBECONFIG", "other-lane")
+    monkeypatch.setenv("SDO_TIME_SCALE", "previous-scale")
 
     def live_admission(*args, **kwargs):
         assert os.environ["KUBECONFIG"] == str(environment.kubeconfig)
@@ -208,6 +209,8 @@ def test_dry_run_reuse_rejects_drift_during_live_checks(tmp_path, fingerprint, m
     for row in report.invariants.values():
         row["passed"] = True
     proof.save_receipt(tmp_path / proof.RECEIPTS, fingerprint, asdict(report))
+    monkeypatch.setenv("KUBECONFIG", "other-lane")
+    monkeypatch.setenv("SDO_TIME_SCALE", "previous-scale")
     observations = iter([fingerprint, replace(fingerprint, live_objects={"app/Service/web": "drift"})])
     monkeypatch.setattr(FastloopEnvironment, "load", lambda path: environment)
     monkeypatch.setattr(proof, "collect_fingerprint", lambda env: next(observations))
@@ -299,6 +302,12 @@ def test_collector_uses_bounded_gets_and_recorded_node_digests(tmp_path):
         baseline_path=baseline,
         images=images,
         dev_mount=None,
+        application="fixture",
+        app="sregym",
+        deploy_problem="fixture-problem",
+        seed_commit="b" * 40,
+        worker_env={},
+        dev_mount_snapshot=False,
     )
     started = time.monotonic()
     measured = proof.collect_fingerprint(environment, run=run)
@@ -309,6 +318,10 @@ def test_collector_uses_bounded_gets_and_recorded_node_digests(tmp_path):
     assert "app/Service/web" in measured.live_objects
     assert all(0 < kwargs["timeout"] <= 15 for _, kwargs in calls)
     assert sum(command[0] == "kubectl" for command, _ in calls) == 4
+    assert measured.tools["lane-configuration"]
+    environment.worker_env["SREGYM_PREINSTALL"] = "true"
+    changed = proof.collect_fingerprint(environment, run=run)
+    assert measured.tools["lane-configuration"] != changed.tools["lane-configuration"]
 
 
 def test_live_intake_must_be_active_on_reuse(tmp_path, monkeypatch):

@@ -45,7 +45,7 @@ The fingerprint binds the clean code revision, each configured role's image
 digests on every node, app/control Pod image and process identities, accepted
 workspace and installed accepted-memory commits, installed baseline/selected
 manifest bytes, app/control object UIDs and configuration, cluster authority,
-and proof source/operator hashes. Collection uses three GET inventories plus one read-only Git HEAD read
+and proof source/operator hashes, including deployment configuration. Collection uses three GET inventories plus one read-only Git HEAD read
 through the installed controller Pod, sharing a 15-second deadline; no Secret
 values or Docker inspection are read. The persisted drift-inventory revision is
 a content hash and is never interpreted as the accepted Git commit.

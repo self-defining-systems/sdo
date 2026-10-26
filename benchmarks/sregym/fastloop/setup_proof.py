@@ -228,6 +228,17 @@ def collect_fingerprint(
         for path in sorted(directory.rglob("*"))
         if path.suffix in {".py", ".go"}
     }
+    tools["lane-configuration"] = digest(
+        {
+            "namespace": environment.namespace,
+            "application": environment.application,
+            "app": environment.app,
+            "deploy_problem": environment.deploy_problem,
+            "seed_commit": environment.seed_commit,
+            "worker_env": environment.worker_env,
+            "dev_mount_snapshot": environment.dev_mount_snapshot,
+        }
+    )
     if environment.dev_mount:
         mounted_revision = execute(
             [
