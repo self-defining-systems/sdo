@@ -13,7 +13,6 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from benchmarks.sregym.adapter.image_entrypoints import assert_image_entrypoints
 from benchmarks.sregym.fastloop.observation_conformance import check_observations
 from benchmarks.sregym.fastloop.setup_proof import INVARIANTS
 
@@ -162,6 +161,8 @@ def assert_responder_runs_registrations(
     Production responder images omit the scripted worker; without this check every
     controller-launched Job fails on import and setup burns its whole budget.
     """
+    from benchmarks.sregym.adapter import assert_image_entrypoints
+
     modules = registration_modules(registrations)
     started = time.monotonic()
     try:
