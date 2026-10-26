@@ -704,6 +704,22 @@ client-go's pinned Go AST. Run it after updating the SDK's client-go dependency;
 `TestReadClientMatchesPinnedKubernetesAPI` runs this check alongside recording,
 selector/pagination, discovery and CRD tests. Source-bound reads and compiled
 playbook failure propagation are covered by the runtime client tests.
+### Concurrent shared memory
+
+`TestHermeticSharedMemoryControllers` runs two real controllers with distinct
+workspace/ledger roots against one accepted Git checkout. Scripted resumed
+reflection workers overlap; independent Go compilation checks both disjoint
+playbook updates and a same-playbook conflict corrected with preserved peer intent.
+The catalog and broker tests bind snapshots to proposal commits and check merged
+validation failures, accepted incident provenance and concurrent publication:
+
+```bash
+(cd sdo/operator && go test -race ./broker ./memory -run 'TestConcurrentMemory|TestCatalogSnapshotAt')
+(cd sdo/operator/runtime && go test -race . ./lifecyclecore -run 'TestHermeticSharedMemoryControllers|TestReflectionMemoryConflict')
+```
+
+This is a hermetic plumbing proof, with no cluster or model. Cross-cluster shared
+storage and live parallel-lane runner proof are separate benchmark work.
 
 Fastloop checks saved controller and validator image source revisions against
 the code under test before starting its SREGym worker, verifies lane image
