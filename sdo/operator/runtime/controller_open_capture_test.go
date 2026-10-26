@@ -73,7 +73,7 @@ func openCaptureController(t *testing.T, root string, view func(sdk.DetectionCon
 		t.Fatal(err)
 	}
 	controller.ConfigureDrift(DriftControllerConfig{View: view})
-	t.Cleanup(controller.routingSweeps.Wait)
+	t.Cleanup(controller.Wait)
 	return controller, dispatcher
 }
 

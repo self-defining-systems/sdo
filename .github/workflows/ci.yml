@@ -284,6 +284,12 @@ jobs:
     if: needs.changes.outputs.go == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    env:
+      # prepare_go_ci.sh downloads every module graph into the restored cache.
+      # Tests and generated fixture builds use only that cache; a missing
+      # module fails here instead of flaking on a network read.
+      GOPROXY: "off"
+      GOSUMDB: "off"
     strategy:
       fail-fast: false
       matrix:

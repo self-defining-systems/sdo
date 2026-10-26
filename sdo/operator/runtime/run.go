@@ -748,6 +748,9 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	if err != nil {
 		return err
 	}
+	// Registered before the run context's cancel, so it runs after it: the
+	// caller may remove the repository mount once this function returns.
+	defer controller.Wait()
 	controller.ConfigureDrift(DriftControllerConfig{Inventory: true, Events: kubernetesCache, Source: planSource, Client: bootstrapProvider.Client, BatchWindow: *driftBatchWindow,
 		View: func(snapshot sdk.DetectionContext) program.ReadView {
 			if cycle, ok := snapshot.(*CycleReadView); ok {

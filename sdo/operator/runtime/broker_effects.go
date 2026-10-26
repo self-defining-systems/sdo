@@ -66,11 +66,11 @@ func (c *Controller) ExecuteWorkspaceEffect(ctx context.Context, effect Workspac
 	broker := c.broker
 	c.dispatchState = contracts.DispatchState_DISPATCH_STATE_WORKSPACE_RUNNING
 	c.mu.Unlock()
-	go func() {
+	c.goBackground(func() {
 		defer cancel()
 		workspace, prepareErr := broker.PrepareIncident(actionCtx, effect.IncidentID)
 		c.workspaceResults <- workspaceCompletion{workspace: workspace, err: prepareErr}
-	}()
+	})
 	return nil
 }
 
@@ -218,7 +218,7 @@ func (c *Controller) ExecuteClosureEffect(ctx context.Context, effect ClosureEff
 	}
 	c.mu.Unlock()
 	slog.Info("closure_handoff", "incident_id", effect.Closure.Request.IncidentID, "verified_to_handoff_ms", c.clock().Sub(effect.Closure.VerifiedAt).Milliseconds())
-	go func() {
+	c.goBackground(func() {
 		defer cancel()
 		var receipt ClosureReceipt
 		var processErr error
@@ -228,7 +228,7 @@ func (c *Controller) ExecuteClosureEffect(ctx context.Context, effect ClosureEff
 			receipt, processErr = broker.ProcessClosure(actionCtx, effect.Closure)
 		}
 		c.closureResults <- closureCompletion{effectID: effect.Identity, receipt: receipt, err: processErr}
-	}()
+	})
 	return nil
 }
 
@@ -431,11 +431,11 @@ func (c *Controller) ExecuteClosureAcknowledgmentEffect(
 		return fmt.Errorf("closure acknowledgment changed before execution: %v", stepErr)
 	}
 	c.mu.Unlock()
-	go func() {
+	c.goBackground(func() {
 		defer cancel()
 		ackErr := broker.AcknowledgeClosure(actionCtx, effect.Receipt)
 		c.acknowledgmentResults <- acknowledgmentCompletion{effectID: effect.Identity, err: ackErr}
-	}()
+	})
 	return nil
 }
 

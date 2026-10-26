@@ -73,3 +73,21 @@ func TestBatcherUsesPerDetectorDebounceAndDrainsOnlyReadyFindings(t *testing.T) 
 		t.Fatalf("slow detector deadline was not retained: %v %v", deadline, ok)
 	}
 }
+
+func TestBatcherIsSafeForConcurrentUse(t *testing.T) {
+	batcher := NewDebouncedBatcher(time.Second)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < 200; i++ {
+			batcher.Snapshot()
+			batcher.Deadline()
+		}
+	}()
+	now := time.Unix(0, 0)
+	for i := 0; i < 200; i++ {
+		batcher.AddAt(stateFinding(string(rune('a'+i%26))), now)
+		batcher.DrainReady(now.Add(time.Hour))
+	}
+	<-done
+}

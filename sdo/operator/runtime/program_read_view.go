@@ -222,6 +222,8 @@ func (v LiveReadView) DiffAgainstSource(ref sdk.ObjectRef) (program.Diff, error)
 			}
 		}
 		after, _ := json.Marshal(actual)
+		// Objects outside the application namespace are never accepted by
+		// adoption, so they carry no record and only declared fields compare.
 		return program.Diff{Changed: string(before) != string(after), Text: fmt.Sprintf("accepted: %s\nobserved: %s", before, after)}, nil
 	}
 	if observed == nil {
@@ -248,8 +250,9 @@ func (v LiveReadView) DiffAgainstSource(ref sdk.ObjectRef) (program.Diff, error)
 		left = comparableFields(normalized.Object)
 		right = actual
 	}
-	// Apply normalization answers whether reconciliation changes live state. It
-	// may retain externally owned fields and cannot represent accepted source.
+	// Apply normalization answers whether reconciliation changes declared
+	// fields. It retains externally owned fields, so fields written after
+	// acceptance that source does not declare are checked separately.
 	// Keep the two complete, source-grounded sides even when Changed is false,
 	// so callers can compare individual fields (including source absence).
 	normalizedBefore, err := json.Marshal(left)
@@ -268,7 +271,17 @@ func (v LiveReadView) DiffAgainstSource(ref sdk.ObjectRef) (program.Diff, error)
 	if err != nil {
 		return program.Diff{}, err
 	}
-	return program.Diff{Changed: string(normalizedBefore) != string(normalizedAfter), Text: fmt.Sprintf("accepted: %s\nobserved: %s", before, after)}, nil
+	text := fmt.Sprintf("accepted: %s\nobserved: %s", before, after)
+	if string(normalizedBefore) != string(normalizedAfter) {
+		return program.Diff{Changed: true, Text: text}, nil
+	}
+	// Declared fields agree; fields added since acceptance decide. Without a
+	// current acceptance record that is unknown, never unchanged.
+	added, err := addedSourceFields(observed, source)
+	if err != nil {
+		return program.Diff{}, &AcceptanceUnknownError{Ref: ref, Declared: program.Diff{Text: text}}
+	}
+	return program.Diff{Changed: len(added) > 0, Text: text}, nil
 }
 
 func dryRunAcceptedSource(ctx context.Context, client kubernetes.Interface, ref sdk.ObjectRef, source *unstructured.Unstructured) (*unstructured.Unstructured, error) {
@@ -324,6 +337,7 @@ func removeRevisionStamp(metadata map[string]any) {
 		return
 	}
 	delete(annotations, "sdo.dev/source-tree")
+	delete(annotations, acceptedPathsAnnotation)
 	delete(annotations, "kubectl.kubernetes.io/last-applied-configuration")
 	if len(annotations) == 0 {
 		delete(metadata, "annotations")

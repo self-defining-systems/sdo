@@ -37,6 +37,8 @@ def lane(tmp_path, monkeypatch):
     )
     complete = {"complete": {"acceptedCommit": "a" * 40, "objects": [{}]}, "pending": None}
     monkeypatch.setattr(admission.LaneAdmission, "_onboarding", lambda self, control: complete)
+    # No SDO worker Job from a previous row is still running.
+    monkeypatch.setattr(admission.LaneAdmission, "_active_workers", lambda self, control: [])
     monkeypatch.setattr(rbac, "verify_rbac", lambda *args: {"passed": True})
     monkeypatch.setattr(hotel_helpers, "admit_install", lambda *args: {"passed": True, "profile": "ABSENT"})
     monkeypatch.setattr(admission, "workload_identity", lambda *args: {"Deployment/app": {"generation": 1}})
@@ -198,6 +200,7 @@ def observe_only(gate, monkeypatch) -> list[float]:
         now[0] += seconds
 
     monkeypatch.setattr(admission.time, "monotonic", lambda: now[0])
+    monkeypatch.setattr(admission.time, "sleep", sleep)
     monkeypatch.setattr(admission, "wait_for_proof", partial(admission.wait_for_proof, sleep=sleep))
     monkeypatch.setattr(admission, "assert_lane_resources", lambda *args, **kwargs: {"passed": True})
     monkeypatch.setattr(reset, "RestoreChecks", lambda *args: SimpleNamespace(prepare=lambda **kwargs: None))
@@ -239,37 +242,43 @@ def test_admission_waits_without_restarting_the_healthy_application(lane, monkey
 
 
 def test_admission_never_injects_while_reflection_remains_pending(lane, monkeypatch):
-    from benchmarks.sregym.adapter.eval_guards import StabilizationError
-
     gate, calls = lane
     now = observe_only(gate, monkeypatch)
+    gate.prior_closure_timeout_seconds = 30
     state = gate.ops.runtime_state
     monkeypatch.setattr(gate.ops, "runtime_state", lambda control: dict(state(control), pending_closure={"id": "busy"}))
     inner = SimpleNamespace(
         set_maintenance=lambda *args, **kwargs: None,
         inject_after_resume=lambda *args: pytest.fail("injected during reflection"),
     )
-    with pytest.raises(StabilizationError):
+    with pytest.raises(admission.PriorClosureIncompleteError):
         admission.EvalAdmissionOps(inner, gate).inject_after_resume("hotel-reservation-sdo", "g1", lambda: None)
-    assert now[0] == 10
+    assert now[0] == 30
     assert calls == []
-    records = [json.loads(line) for line in (gate.directory / "stabilization-001.jsonl").read_text().splitlines()]
-    assert all(row["incident_work_pending"] and not row["passed"] for row in records)
+    assert not (gate.directory / "stabilization-001.jsonl").exists(), "the stabilization clock started"
+    assert json.loads((gate.directory / "prior-closure.json").read_text())["passed"] is False
 
 
 def test_workload_refusal_names_the_sdo_incident_active_before_injection(lane, monkeypatch):
     gate, _calls = lane
     observe_only(gate, monkeypatch)
     state = gate.ops.runtime_state
+    # SDO opens the incident after admission captured the workload identity.
+    opened = []
     monkeypatch.setattr(
         gate.ops,
         "runtime_state",
-        lambda control: dict(state(control), incident_open=True, incident_request={"incident_id": "astronomy-1793"}),
+        lambda control: (
+            dict(state(control), incident_open=True, incident_request={"incident_id": "astronomy-1793"})
+            if opened
+            else state(control)
+        ),
     )
     identities = iter([{"Deployment/currency": {"pods": ["old"]}}])
 
     def identity(*_args):
         for row in identities:
+            opened.append(True)
             return row
         raise ValueError("restore invariant: workload not Ready: Deployment/currency (ready 0/1)")
 
@@ -327,3 +336,60 @@ def test_unfinished_onboarding_fails_on_its_own_budget_without_sampling_health(l
     evidence = json.loads((gate.directory / "onboarding.json").read_text())
     assert evidence["passed"] is False
     assert evidence["pending"] is True
+
+
+def previous_reflection(gate, monkeypatch, *, finishes_at: float):
+    """A lane whose previous incident is still reflecting until *finishes_at*."""
+    now = [0.0]
+    monkeypatch.setattr(admission.time, "monotonic", lambda: now[0])
+    monkeypatch.setattr(admission.time, "sleep", lambda seconds: now.__setitem__(0, now[0] + seconds))
+    monkeypatch.setattr(admission, "assert_lane_resources", lambda *args, **kwargs: {"passed": True})
+    healthy = gate.ops.runtime_state
+
+    def state(control):
+        if now[0] < finishes_at:
+            return {"closure_state": "CLOSURE_STATE_COMMITTED", "last_acknowledged_incident_id": "row-003"}
+        return {**healthy(control), "last_acknowledged_incident_id": "row-004"}
+
+    def workers(control):
+        return ["sdo-reflect-row-004"] if now[0] < finishes_at else []
+
+    gate.ops = SimpleNamespace(runtime_state=state)
+    monkeypatch.setattr(gate, "_active_workers", workers)
+    return now
+
+
+def test_admission_waits_for_the_previous_reflection_before_the_stabilization_clock(lane, monkeypatch):
+    gate, _ = lane
+    now = previous_reflection(gate, monkeypatch, finishes_at=420)
+
+    def request(op, **kwargs):
+        assert now[0] >= 420, "health was sampled while the previous reflection was running"
+        assert kwargs["timeout"] == pytest.approx(300), "the previous reflection consumed the stabilization window"
+        return {"success": True}
+
+    gate.worker.request = request
+    assert gate.prove("hotel-reservation-sdo")["passed"] is True
+    evidence = json.loads((gate.directory / "prior-closure.json").read_text())
+    assert evidence["passed"] is True
+    assert evidence["last_acknowledged_incident_id"] == "row-004"
+    assert evidence["active_workers"] == []
+    assert 420 <= evidence["seconds"] < 430
+    assert "accepted_before" in evidence
+
+
+def test_stuck_previous_reflection_is_a_typed_not_measured_row(lane, monkeypatch):
+    gate, calls = lane
+    gate.prior_closure_timeout_seconds = 600
+    previous_reflection(gate, monkeypatch, finishes_at=10_000)
+    with pytest.raises(
+        admission.PriorClosureIncompleteError, match=r"previous incident closure did not finish"
+    ) as info:
+        gate.prove("hotel-reservation-sdo")
+    assert info.value.reason == "prior_closure_incomplete"
+    assert "traffic" not in calls
+    evidence = json.loads((gate.directory / "prior-closure.json").read_text())
+    assert evidence["passed"] is False
+    assert evidence["active_workers"] == ["sdo-reflect-row-004"]
+    assert evidence["closure_state"] == "CLOSURE_STATE_COMMITTED"
+    assert evidence["budget_seconds"] == 600
