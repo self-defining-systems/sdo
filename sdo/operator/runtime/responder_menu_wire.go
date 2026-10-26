@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"google.golang.org/protobuf/reflect/protoreflect"
 
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
@@ -13,6 +15,11 @@ import (
 // The outer tool envelope retains the established JSON spelling; generated
 // inner contracts use strict ProtoJSON (including string uint64 epochs).
 func (r *ToolRequest) UnmarshalJSON(data []byte) error {
+	normalized, err := menuNormalizeInput(data)
+	if err != nil {
+		return err
+	}
+	data = normalized
 	type plain ToolRequest
 	envelope := struct {
 		*plain
@@ -38,7 +45,23 @@ func (r *ToolRequest) UnmarshalJSON(data []byte) error {
 		if len(field.raw) == 0 {
 			continue
 		}
-		if string(field.raw) == "null" || protojson.Unmarshal(field.raw, field.message) != nil {
+		var object map[string]any
+		if err := json.Unmarshal(field.raw, &object); err != nil || object == nil {
+			return errors.New("tool contract: expected object")
+		}
+		for name, value := range object {
+			f := field.message.ProtoReflect().Descriptor().Fields().ByName(protoreflect.Name(name))
+			if f == nil {
+				f = field.message.ProtoReflect().Descriptor().Fields().ByJSONName(name)
+			}
+			if f == nil {
+				return fmt.Errorf("%s.%s: unknown field", field.message.ProtoReflect().Descriptor().Name(), name)
+			}
+			if err := menuValidateShape(f, value, string(field.message.ProtoReflect().Descriptor().Name())+"."+name); err != nil {
+				return err
+			}
+		}
+		if protojson.Unmarshal(field.raw, field.message) != nil {
 			return errors.New("invalid generated tool contract")
 		}
 		switch value := field.message.(type) {
