@@ -13,6 +13,7 @@ import (
 	"google.golang.org/protobuf/proto"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory"
+	"sdo.dev/operator/memory/validate"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
@@ -286,6 +287,12 @@ func (n NativeIncidentBroker) prepareCauseWork(ctx context.Context, outcome *con
 	origins := map[string]string{}
 	fixed := fixedCaptureVerdicts(ctx, outcome, n.Programs, capture, origins)
 	work := classifyCauseWork(outcome, fixed)
+	for _, cause := range validate.VerifiedReflectionCauses(outcome) {
+		if cause.GetLearningBasis() == "observed_transition" {
+			cause.Items = []*contracts.ReflectionWorkItem{{Disposition: "question", Reason: "unbound_write", Resources: cause.Resources, Question: "No opening detector observed this recorded configuration repair. Propose diagnosis, mitigation and detector coverage from its captured before/after transition; do not claim independent application recovery."}}
+			work = append(work, cause)
+		}
+	}
 	unassigned := unassignedReflectionQuestions(outcome, fixed)
 	allItems := append([]*contracts.ReflectionWorkItem{}, unassigned...)
 	for _, cause := range work {
@@ -331,6 +338,11 @@ func settledProgramCases(eligibility *contracts.ReflectionEligibility) (map[stri
 
 func unassignedReflectionQuestions(outcome *contracts.OutcomeRecord, fixed map[string]program.Result) []*contracts.ReflectionWorkItem {
 	grouped := func(ref sdk.ObjectRef) bool {
+		for _, cause := range outcome.GetUndetectedCauses() {
+			if sameResource(ref, objectRefState(cause.GetResource())) {
+				return true
+			}
+		}
 		for _, cause := range outcome.GetConfirmedRootCauses() {
 			for _, resource := range cause.GetResources() {
 				if sameResource(ref, objectRefState(resource)) {
