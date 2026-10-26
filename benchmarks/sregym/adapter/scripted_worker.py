@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -709,18 +710,100 @@ class ScriptedReflector:
         )
 
 
-def _scripted_toy_health_judge(request: HealthJudgeRequest, checkout: Path) -> HealthJudgeResult:
-    """Retain the exact hand-authored toy policy after checking its source shape."""
-    seed = Path(__file__).resolve().parents[3] / "apps/toy/seed/.sdo"
+TOY_SEED = Path(__file__).resolve().parents[3] / "apps/toy/seed/.sdo"
+REQUIRED_HEALTH_DETECTORS = frozenset(
+    {"health-objective", "service-endpoints", "service-reachability", "workload-health"}
+)
+
+
+@dataclass(frozen=True)
+class ScriptedJudgeSeed:
+    """Everything the scripted health judge reads from the accepted checkout."""
+
+    toy: bool
+    objective: str
+    lock: dict[str, Any] = field(default_factory=dict)
+    detector_ids: tuple[str, ...] = ()
+
+
+def _read_seed(path: Path, what: str) -> str:
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise ValueError(f"scripted health refresh requires {what} ({path.name}: {exc.strerror})") from exc
+
+
+def _judge_owned_ids(accepted: Path, toy: bool = False) -> tuple[str, ...]:
+    label = "scripted toy health refresh" if toy else "scripted health refresh"
+    ids = []
+    for path in sorted((accepted / "diagnostics/detectors/health").glob("*/manifest.yaml")):
+        manifest = yaml.safe_load(path.read_text(encoding="utf-8"))
+        if (
+            not isinstance(manifest, dict)
+            or manifest.get("class") != "health"
+            or manifest.get("owner") != "health_judge"
+        ):
+            raise ValueError(f"{label} requires judge-owned health detectors")
+        ids.append(manifest["id"])
+    return tuple(ids)
+
+
+def scripted_judge_seed(checkout: Path) -> ScriptedJudgeSeed:
+    """Load the accepted-seed prerequisites of the scripted health judge.
+
+    The judge only retains an already accepted bundle, so a fresh seed without
+    a rendered lock or full judge-owned bundle cannot pass the scripted
+    rehearsal. The eval dry run calls this before touching a lane.
+    """
     accepted = checkout / ".sdo"
-    for name in ("goal.md", "lifecycle-provenance.yaml"):
-        if (accepted / name).read_bytes() != (seed / name).read_bytes():
-            raise ValueError("scripted toy health refresh requires the unchanged toy seed")
-    objective = (seed / "goal.md").read_text().split("---\n", 2)[2].strip()
+    if (accepted / "diagnostics/detectors/health/toy-endpoints").is_dir():
+        for name in ("goal.md", "lifecycle-provenance.yaml"):
+            if not (accepted / name).is_file() or (accepted / name).read_bytes() != (TOY_SEED / name).read_bytes():
+                raise ValueError("scripted toy health refresh requires the unchanged toy seed")
+        health = Path("diagnostics/detectors/health")
+        for path in (TOY_SEED / health).rglob("*"):
+            if path.is_file():
+                current = accepted / path.relative_to(TOY_SEED)
+                if not current.is_file() or current.read_bytes() != path.read_bytes():
+                    raise ValueError("scripted toy health refresh requires the complete unchanged toy detector")
+        objective = (TOY_SEED / "goal.md").read_text().split("---\n", 2)[2].strip()
+        return ScriptedJudgeSeed(toy=True, objective=objective)
+    parts = _read_seed(accepted / "goal.md", "an accepted goal document").split("---\n", 2)
+    if len(parts) != 3 or parts[0]:
+        raise ValueError("scripted health refresh requires an accepted goal document")
+    # Match memory.HealthInputs: the request carries the human objective, not
+    # the document header or its human-ownership metadata.
+    goal = parts[2].strip().removeprefix("# Health objective\n").strip()
+    text = _read_seed(accepted / "rendered/lock.json", "an accepted rendered lock")
+    try:
+        lock = json.loads(text)
+    except ValueError as exc:
+        raise ValueError("scripted health refresh requires an accepted rendered lock (invalid JSON)") from exc
+    paths = lock.get("manifest_paths") if isinstance(lock, dict) else None
+    if not isinstance(paths, list) or not paths or not all(isinstance(path, str) and path for path in paths):
+        raise ValueError("scripted health refresh needs accepted manifest selection")
+    objects = lock.get("objects")
+    if not isinstance(objects, list) or not objects:
+        raise ValueError("scripted health refresh needs accepted rendered objects")
+    ids = _judge_owned_ids(accepted)
+    missing = sorted(REQUIRED_HEALTH_DETECTORS.difference(ids))
+    if missing:
+        raise ValueError(
+            f"scripted health refresh cannot weaken the accepted full bundle (missing {', '.join(missing)})"
+        )
+    return ScriptedJudgeSeed(toy=False, objective=goal, lock=lock, detector_ids=ids)
+
+
+def _scripted_toy_health_judge(
+    request: HealthJudgeRequest, checkout: Path, seed: ScriptedJudgeSeed
+) -> HealthJudgeResult:
+    """Retain the exact hand-authored toy policy after checking its source shape."""
+    accepted = checkout / ".sdo"
+    objective = seed.objective
     if request.namespace != "sdo-toy" or request.health_objective.strip() != objective:
         raise ValueError("scripted toy health refresh cannot change the namespace or objective")
     expected = set()
-    for path in sorted((seed.parents[1] / "kubernetes").glob("*.yaml")):
+    for path in sorted((TOY_SEED.parents[1] / "kubernetes").glob("*.yaml")):
         for obj in yaml.safe_load_all(path.read_text()):
             expected.add((obj["kind"], obj["metadata"].get("namespace", "sdo-toy"), obj["metadata"]["name"]))
     actual = {
@@ -731,24 +814,14 @@ def _scripted_toy_health_judge(request: HealthJudgeRequest, checkout: Path) -> H
     if not expected or actual != expected:
         raise ValueError("scripted toy health refresh cannot change the deployed topology")
     health = Path("diagnostics/detectors/health")
-    for path in (seed / health).rglob("*"):
-        if path.is_file():
-            current = accepted / path.relative_to(seed)
-            if not current.is_file() or current.read_bytes() != path.read_bytes():
-                raise ValueError("scripted toy health refresh requires the complete unchanged toy detector")
     # Native judge publication requires an explicit objective detector. Reuse
     # the toy's exact readiness policy; Go adds and validates generic detectors.
     objective_detector = accepted / health / "health-objective"
     objective_detector.mkdir(exist_ok=True)
     for name in ("manifest.yaml", "detector.go"):
-        content = (seed / health / "toy-endpoints" / name).read_text()
+        content = (TOY_SEED / health / "toy-endpoints" / name).read_text()
         (objective_detector / name).write_text(content.replace("toy-endpoints", "health-objective"))
-    ids = []
-    for path in sorted((accepted / health).glob("*/manifest.yaml")):
-        manifest = yaml.safe_load(path.read_text())
-        if manifest.get("class") != "health" or manifest.get("owner") != "health_judge":
-            raise ValueError("scripted toy health refresh requires judge-owned health detectors")
-        ids.append(manifest["id"])
+    ids = list(_judge_owned_ids(accepted, toy=True))
     return HealthJudgeResult(
         authored=True,
         summary="Authored the exact toy readiness objective and retained its accepted detector",
@@ -765,27 +838,20 @@ def scripted_health_judge(request: HealthJudgeRequest, checkout: Path) -> Health
     complete unchanged detector bundle. New topology/objectives require a judge
     outside this explicitly scripted rehearsal.
     """
-    if (checkout / ".sdo/diagnostics/detectors/health/toy-endpoints").is_dir():
-        return _scripted_toy_health_judge(request, checkout)
+    seed = scripted_judge_seed(checkout)
+    if seed.toy:
+        return _scripted_toy_health_judge(request, checkout, seed)
     if "SDO_SCRIPTED_REPLAY_SLOT" in os.environ:
         from benchmarks.sregym.adapter.scripted_replay_catalog import SCRIPTED_REPLAY_SLOTS
 
         slot = int(os.environ["SDO_SCRIPTED_REPLAY_SLOT"])
         if request.namespace != SCRIPTED_REPLAY_SLOTS[slot].namespace:
             raise ValueError("scripted health refresh namespace differs from rehearsal")
-    goal_document = (checkout / ".sdo/goal.md").read_text(encoding="utf-8")
-    parts = goal_document.split("---\n", 2)
-    if len(parts) != 3 or parts[0]:
-        raise ValueError("scripted health refresh requires an accepted goal document")
-    # Match memory.HealthInputs: the request carries the human objective, not
-    # the document header or its human-ownership metadata.
-    goal = parts[2].strip().removeprefix("# Health objective\n").strip()
+    goal = seed.objective
     if request.health_objective.strip() != goal:
         raise ValueError("scripted health refresh cannot change the objective")
-    lock = json.loads((checkout / ".sdo/rendered/lock.json").read_text(encoding="utf-8"))
-    paths = lock.get("manifest_paths")
-    if not isinstance(paths, list) or not paths or not all(isinstance(path, str) and path for path in paths):
-        raise ValueError("scripted health refresh needs accepted manifest selection")
+    lock = seed.lock
+    paths = lock["manifest_paths"]
     cluster_kinds = {
         "Namespace",
         "ClusterRole",
@@ -811,21 +877,12 @@ def scripted_health_judge(request: HealthJudgeRequest, checkout: Path) -> Health
     }
     if not expected or current != expected:
         raise ValueError("scripted health refresh cannot change the deployed topology")
-    ids = []
-    for path in sorted((checkout / ".sdo/diagnostics/detectors/health").glob("*/manifest.yaml")):
-        manifest = yaml.safe_load(path.read_text(encoding="utf-8"))
-        if manifest.get("class") != "health" or manifest.get("owner") != "health_judge":
-            raise ValueError("scripted health refresh requires judge-owned health detectors")
-        ids.append(manifest["id"])
-    required = {"health-objective", "service-endpoints", "service-reachability", "workload-health"}
-    if not required.issubset(ids):
-        raise ValueError("scripted health refresh cannot weaken the accepted full bundle")
     return HealthJudgeResult(
         authored=True,
         summary="Retained complete accepted generic health bundle for unchanged deployed topology",
         agent_session_id="scripted-health-" + request.accepted_source_commit[:12],
         objective_digest=hashlib.sha256(goal.encode()).hexdigest(),
-        detector_ids=ids,
+        detector_ids=list(seed.detector_ids),
     )
 
 
