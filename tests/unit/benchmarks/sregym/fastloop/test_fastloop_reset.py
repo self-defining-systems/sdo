@@ -212,8 +212,9 @@ def test_failed_learning_keeps_program_for_third_incident(tmp_path: Path, monkey
                     "status": {"conditions": [{"type": "Ready", "status": "True"}]},
                 }
             )
-        return SimpleNamespace(stdout=json.dumps({"items": objects}))
+        return SimpleNamespace(stdout=json.dumps({"items": objects}), returncode=0, stderr="")
 
+    monkeypatch.setattr(reset, "kubectl", api)
     monkeypatch.setattr(admission, "kubectl", api)
     monkeypatch.setattr(baseline_recovery, "kubectl", api)
     monkeypatch.setattr(clean_start, "kubectl", api)
@@ -249,6 +250,9 @@ def test_failed_learning_keeps_program_for_third_incident(tmp_path: Path, monkey
             if outcome.incident_id == "incident-1":
                 raise RuntimeError("learning failed")
             return outcome
+
+        def prepare_recovery(self, outcome: AgentOutcome | None) -> None:
+            """This scripted agent has no background controller."""
 
         def close(self) -> None:
             pass

@@ -28,6 +28,7 @@ from benchmarks.sregym.adapter import (
     PersistentState,
     StageInputs,
     drain_pending_incident,
+    pause_for_recovery,
     run_persistent_stage,
 )
 from benchmarks.sregym.fastloop.loop import AgentOutcome, InjectionWindow
@@ -430,6 +431,21 @@ class SdoPersistentAgent:
             document = json.loads(rejected.read_text(encoding="utf-8")).get("receipt")
             return document if isinstance(document, dict) else {}
         return {}
+
+    def prepare_recovery(self, outcome: AgentOutcome | None) -> None:
+        """Leave incident intake paused throughout harness recovery and its baseline check."""
+
+        settings = self._settings
+        state = PersistentState.load(settings.state_path)
+        record = state.controllers.get(settings.namespace)
+        if record is None or record.pending is not None:
+            raise RuntimeError("eval: recovery requires a recorded controller with no pending incident closure")
+        pause_for_recovery(
+            self._ops,
+            record.control_namespace,
+            incident_id=outcome.incident_id if outcome is not None else None,
+            clock=self._clock,
+        )
 
     def close(self) -> None:
         """The controller keeps running for the next loop; ``fastloop down`` stops it."""
