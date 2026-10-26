@@ -185,9 +185,13 @@ Native runtime-artifact export includes only the typed, exact session-level file
 Controller startup, dispatch and session-open files live in the session's `startup/` directory, mounted read-only to the responder. Worker/daemon timing files stay at the session root. Native mode and claim/session clocks therefore cannot be rewritten by the responder. The exporter retains root-level exact legacy timing filenames as well as these three exact protected paths.
 
 Warm recording workers normalize their local checkout alias to the canonical task checkout only for the model-I/O replay cache digest. The live request remains unchanged. Offline replay continues normalizing its temporary checkout to that same canonical task path; a warm encounter therefore replays without a live cache miss.
-Early verified closure emits `incident_closed` at the controller's independent
-verification time with `verified_while_responder_running=true` and
-`closure_stability_window_seconds` (default 15). A new or reactivated finding,
+Every verified success commits only after health holds for the stability
+window, so its `incident_closed` record carries
+`closure_stability_window_seconds` (default 15); it is 0 when a closure
+skipped the window, such as most failures. A non-zero window
+therefore does not mean early closure: `verified_while_responder_running=true`
+alone marks it. Early verified closure emits `incident_closed` at the
+controller's independent verification time. A new or reactivated finding,
 observed mutation, pending receipt or unknown write outcome prevents that stable
 pass. The response Job has a separate report grace (default 30 seconds); its
 actual completion may follow `verified_at`. Outcome mitigation and completion
