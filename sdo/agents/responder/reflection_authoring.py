@@ -56,6 +56,7 @@ def authoring_reference(topic: ReferenceTopic = "programs") -> str:
     if topic == "sdk":
         paths = [
             SKILLS_ROOT / "sdo-playbook-authoring/references/program-sdk.md",
+            SKILLS_ROOT / "sdo-playbook-authoring/references/kubernetes-client.md",
             SKILLS_ROOT / "sdo-detector-authoring/references/sdk.md",
         ]
     elif topic == "rules":
