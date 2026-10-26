@@ -7,10 +7,27 @@ from types import SimpleNamespace
 from sregym.conductor.problems.base import Problem
 from sregym.conductor.problems.colocated_composite import ColocatedComposite
 from sregym.conductor.problems.composition.spec import FaultDraw, Footprint, Tier
+from sregym.fastloop.created_objects import ClusterObject
 from sregym.fastloop.worker import FastloopWorker, serve
 from sregym.utils.decorators import mark_fault_injected
 
 EVENTS = []
+
+
+class Inventory:
+    """In-memory cluster-scoped objects; a lane starts with only its app namespace."""
+
+    def __init__(self):
+        self.objects = {ClusterObject("Namespace", "hotel-reservation")}
+
+    def list_objects(self):
+        return frozenset(self.objects)
+
+    def delete(self, obj):
+        self.objects.discard(obj)
+
+
+INVENTORY = Inventory()
 
 
 class Fault(Problem):
@@ -28,6 +45,9 @@ class Fault(Problem):
 
     def inject_fault(self):
         EVENTS.append(["inject", self.name])
+        if self.name == "installs-controller":
+            # Like IngressMisroute: a controller in its own namespace that recover_fault leaves.
+            INVENTORY.objects |= {ClusterObject("Namespace", "ingress-nginx"), ClusterObject("IngressClass", "nginx")}
 
     def injection_failure(self):
         return {"synthetic_invalid": True} if self.invalid else None
@@ -59,6 +79,8 @@ class Worker(FastloopWorker):
     def handle(self, request):
         if request["op"] == "events":
             return {"events": EVENTS.copy()}
+        if request["op"] == "inventory":
+            return {"objects": sorted(str(obj) for obj in INVENTORY.list_objects())}
         return super().handle(request)
 
 
@@ -71,6 +93,7 @@ if __name__ == "__main__":
                 deployer=lambda *args: None,
                 health_probe=lambda ns: {"healthy": True},
                 cluster_factory=lambda *args: ("fake", "fake"),
+                cluster_inventory=INVENTORY,
             ),
             sys.stdin,
             replies,
