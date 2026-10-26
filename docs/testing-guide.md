@@ -14,6 +14,8 @@ SDO spans Python agents, Go operator modules, generated detector workspaces, and
 - `sdo/operator/sdk/skill_reference_test.go`, `sdo/operator/memory/validate/skills_test.go` — skill drift: generated `sdk.md`, rule citations, and examples (`bash scripts/gen_skill_references.sh` regenerates the reference).
 - `sdo/operator/{broker,memory,install,lifecycle}/*_test.go` — accepted state and lifecycle ownership.
 
+For a fresh checkout or worktree, run `uv run python scripts/init_test_prereqs.py` once to initialize SREGym and every nested application/chart at the recorded SHA.
+
 ## Core commands
 
 ```bash
