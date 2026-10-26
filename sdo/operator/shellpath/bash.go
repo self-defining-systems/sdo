@@ -1,6 +1,7 @@
 package shellpath
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"os"
@@ -47,7 +48,9 @@ func (e BashExecutor) Execute(ctx context.Context, root string, script Script) R
 	}
 	// Discovery freezes the accepted main script in memory. Writable /tmp files
 	// cannot change which authored bytes a later invocation executes.
-	cmd := exec.CommandContext(runCtx, "bash", "-c", string(source), filepath.Join(root, filepath.FromSlash(script.Path)))
+	cmd := exec.CommandContext(runCtx, "bash", "-s")
+	cmd.Args[0] = filepath.Join(root, filepath.FromSlash(script.Path))
+	cmd.Stdin = bytes.NewReader(source)
 	cmd.Dir = root
 	cmd.Env = e.Env
 	if cmd.Env == nil {
