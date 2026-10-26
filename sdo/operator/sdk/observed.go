@@ -45,5 +45,11 @@ func detectObserved(ctx context.Context, detector Detector, view DetectionContex
 			return nil, fmt.Errorf("observation dependency undeclared: %s/%s/%s", w.APIVersion, w.Kind, w.Namespace)
 		}
 	}
-	return detector.Detect(ctx, view)
+	findings, err := detector.Detect(ctx, view)
+	for i := range findings {
+		if findings[i].DetectorID == "" {
+			findings[i].DetectorID = detector.Spec().ID
+		}
+	}
+	return findings, err
 }

@@ -95,6 +95,8 @@ func (d KubernetesJobDispatcher) PrepareDispatch(ctx context.Context, request In
 				request.InitialProgramRuns = append(request.InitialProgramRuns, programRunState(run))
 			}
 			request.PlaybookCoverage = cloneCoverage(typed.GetPlaybookCoverage())
+			request.PriorStages = cloneStageReports(typed.GetPriorStages())
+			request.Findings = findingsState(typed.GetFindings())
 			request.MaxResponseLoops = int(typed.GetMaxResponseLoops())
 			request.PreparedAgentTask = payload
 			return request, nil

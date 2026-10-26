@@ -327,3 +327,26 @@ func TestSteadyDetectorRequiresTrafficProofBeforeClear(t *testing.T) {
 		})
 	}
 }
+
+// A resolved scenario stops reporting once its pre-repair samples leave the
+// window, so the declared evaluation window must cover the oldest sample age.
+func TestDetectorEvaluationWindowCoversPreRepairSamples(t *testing.T) {
+	outage := observed(descriptor("search"),
+		failed(3*time.Second, 503, "outage"), failed(2*time.Second, 503, "outage"), failed(time.Second, 503, "outage"), failed(0, 503, "outage"))
+	workload := healthWorkload(t)
+	snapshot := hotelSnapshot(window(workload, outage, healthy("login"), healthy("reserve")))
+	if findings := detect(t, snapshot); len(findings) == 0 {
+		t.Fatal("positive control: the outage window must fire")
+	}
+	horizon := traffic.NewDetector(detectorSpec(), "health").(sdk.WindowedDetector).EvaluationWindow(snapshot)
+	if horizon < traffic.DefaultMaxAge {
+		t.Fatalf("window %s is shorter than the %s sample age", horizon, traffic.DefaultMaxAge)
+	}
+	later := window(workload, outage, healthy("login"), healthy("reserve"))
+	aged := later[workload.Name]
+	aged.ObservedAt = observedAt.Add(horizon)
+	later[workload.Name] = aged
+	if findings := detect(t, hotelSnapshot(later)); len(findings) != 0 {
+		t.Fatalf("pre-repair samples still reported %s after the outage: %v", horizon, findings)
+	}
+}

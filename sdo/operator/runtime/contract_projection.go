@@ -201,6 +201,7 @@ func incidentRequestContract(request IncidentRequest) (*contracts.IncidentReques
 		MaxResponseLoops: int32(request.MaxResponseLoops),
 		DriftEvents:      driftEventsContract(request.DriftEvents), PreparedAgentTask: request.PreparedAgentTask,
 		PlaybookCoverage:    cloneCoverage(request.PlaybookCoverage),
+		PriorStages:         cloneStageReports(request.PriorStages),
 		NamespaceOnboarding: cloneNamespaceOnboarding(request.NamespaceOnboarding),
 	}
 	for _, run := range request.InitialProgramRuns {
@@ -517,6 +518,7 @@ func incidentRequestState(message *contracts.IncidentRequest) *IncidentRequest {
 	result := &IncidentRequest{
 		ObservationGeneration: message.GetObservationGeneration(),
 		NamespaceOnboarding:   cloneNamespaceOnboarding(message.GetNamespaceOnboarding()),
+		PriorStages:           cloneStageReports(message.GetPriorStages()),
 		SchemaVersion:         message.GetSchemaVersion(), Application: message.GetApplication(), Namespace: message.GetNamespace(),
 		IncidentID: message.GetIncidentId(), Findings: findingsState(message.GetFindings()),
 		DetectorHistory:   evaluationsState(message.GetDetectorHistory()),

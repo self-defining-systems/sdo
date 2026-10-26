@@ -3,6 +3,7 @@ package runtime
 import (
 	"fmt"
 	"sort"
+	"sync"
 	"time"
 
 	"sdo.dev/operator/sdk"
@@ -13,7 +14,11 @@ type scheduleEntry struct {
 	nextRun  time.Time
 }
 
+// Scheduler owns its complete mutable schedule. Selection, acceleration,
+// snapshot and restore share one lock so asynchronous durable handoffs cannot
+// read a transition concurrently with the controller loop.
 type Scheduler struct {
+	mu        sync.RWMutex
 	namespace string
 	entries   map[string]*scheduleEntry
 }
@@ -40,6 +45,8 @@ func (s *Scheduler) Select(now time.Time, event *sdk.WatchKind) []sdk.Detector {
 // SelectEvents returns every detector that is due at now or watches any of the
 // coalesced events, and advances each selected detector's next interval run.
 func (s *Scheduler) SelectEvents(now time.Time, events []sdk.WatchKind) []sdk.Detector {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	selected := make([]sdk.Detector, 0)
 	for _, entry := range s.entries {
 		due := !now.Before(entry.nextRun)
@@ -63,6 +70,8 @@ func (s *Scheduler) SelectEvents(now time.Time, events []sdk.WatchKind) []sdk.De
 
 // Expedite moves a detector's next run earlier, never later.
 func (s *Scheduler) Expedite(detectorID string, at time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	entry, ok := s.entries[detectorID]
 	if !ok || !at.Before(entry.nextRun) {
 		return
@@ -72,12 +81,18 @@ func (s *Scheduler) Expedite(detectorID string, at time.Time) {
 
 // ExpediteAll makes every detector due at or before at.
 func (s *Scheduler) ExpediteAll(at time.Time) {
-	for id := range s.entries {
-		s.Expedite(id, at)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, entry := range s.entries {
+		if at.Before(entry.nextRun) {
+			entry.nextRun = at
+		}
 	}
 }
 
 func (s *Scheduler) NextRun() time.Time {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	var next time.Time
 	for _, entry := range s.entries {
 		if next.IsZero() || entry.nextRun.Before(next) {
@@ -88,6 +103,8 @@ func (s *Scheduler) NextRun() time.Time {
 }
 
 func (s *Scheduler) Deadlines() map[string]time.Time {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	result := make(map[string]time.Time, len(s.entries))
 	for id, entry := range s.entries {
 		result[id] = entry.nextRun
@@ -96,6 +113,8 @@ func (s *Scheduler) Deadlines() map[string]time.Time {
 }
 
 func (s *Scheduler) RestoreDeadlines(deadlines map[string]time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	for id, deadline := range deadlines {
 		entry, ok := s.entries[id]
 		if !ok {

@@ -32,6 +32,7 @@ type Dispatcher interface {
 }
 
 type ControllerConfig struct {
+	ResponseStages         []string
 	Application            string
 	Namespace              string
 	SourceCommit           string
@@ -61,9 +62,10 @@ type ControllerConfig struct {
 }
 
 type dispatchCompletion struct {
-	incidentID string
-	result     IncidentResult
-	err        error
+	priorStages []*contracts.StageReport
+	incidentID  string
+	result      IncidentResult
+	err         error
 }
 
 type Controller struct {
@@ -75,6 +77,7 @@ type Controller struct {
 	batcher                     *Batcher
 	provider                    SnapshotProvider
 	dispatcher                  Dispatcher
+	responseStagesRunning       bool
 	history                     []DetectorEvaluation
 	drift                       *DriftControllerConfig
 	driftEvents                 []sdk.DriftEvent
@@ -106,6 +109,7 @@ type Controller struct {
 	// restarted controller confirms again from fresh evaluations.
 	gateClears    map[string]*gateClear
 	gateProbes    map[string]time.Time
+	persistenceMu sync.Mutex
 	stateStore    StateStore
 	stateRevision string
 	// stagedTaskIncident is the incident whose prepared task the last saved state references on the repository volume.
@@ -247,6 +251,11 @@ func NewController(
 	if config.RepairPolicy != "commit" && config.RepairPolicy != "recorded-actions" {
 		return nil, fmt.Errorf("unsupported repair policy %q", config.RepairPolicy)
 	}
+	stageNames, err := responseStageNames(config.ResponseStages)
+	if err != nil {
+		return nil, err
+	}
+	config.ResponseStages = stageNames
 	closureRetry, err := config.ClosureRetry.withDefaults()
 	if err != nil {
 		return nil, err
@@ -1062,6 +1071,10 @@ func (c *Controller) handleDispatchCompletion(completion dispatchCompletion, obs
 		)
 		return
 	}
+	c.responseStagesRunning = false
+	if len(completion.priorStages) > 0 {
+		c.currentIncidentRequest.PriorStages = cloneStageReports(completion.priorStages)
+	}
 	if c.earlyReportPendingLocked() {
 		if completion.err == nil {
 			snapshot := *c.pendingClosure.Result
@@ -1175,6 +1188,10 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 		return
 	}
 	early := !c.responderDone
+	if early && c.responseStagesRunning {
+		c.mu.Unlock()
+		return
+	}
 	if early && (c.dispatchState != contracts.DispatchState_DISPATCH_STATE_RUNNING || c.incidentDispatchedAt.IsZero()) {
 		c.mu.Unlock()
 		return
@@ -1402,6 +1419,15 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 	if early {
 		closure.ResponderCompletedAt = verifiedAt
 		closure.Result = closureGuard.resultSnapshot(*c.currentIncidentRequest, verifiedAt)
+		if len(closure.Request.PriorStages) > 0 {
+			merged, mergeErr := responsePipelineResult(&IncidentState{Request: closure.Request, PriorStages: closure.Request.PriorStages, Result: closure.Result}, closure.DispatchedAt, verifiedAt)
+			if mergeErr != nil {
+				c.mu.Unlock()
+				c.reportBrokerError("stage closure evidence", mergeErr)
+				return
+			}
+			closure.Result = &merged
+		}
 	}
 	if verified {
 		c.retainSourceInventoryAcceptancesLocked(c.currentIncidentResult)
@@ -1777,6 +1803,8 @@ func (c *Controller) AttachStateStore(ctx context.Context, store StateStore) err
 }
 
 func (c *Controller) PersistState(ctx context.Context) error {
+	c.persistenceMu.Lock()
+	defer c.persistenceMu.Unlock()
 	if c.stateStore == nil {
 		return nil
 	}
@@ -1791,7 +1819,7 @@ func (c *Controller) PersistState(ctx context.Context) error {
 	}
 	if preparer, ok := c.dispatcher.(interface {
 		PrepareDispatch(context.Context, IncidentRequest) (IncidentRequest, error)
-	}); ok && state.DispatchState == contracts.DispatchState_DISPATCH_STATE_PENDING && state.IncidentRequest != nil && state.IncidentRequest.PreparedAgentTask == "" {
+	}); ok && state.DispatchState == contracts.DispatchState_DISPATCH_STATE_PENDING && state.IncidentRequest != nil && state.IncidentRequest.PreparedAgentTask == "" && !c.automaticResponsePending(state.IncidentRequest) {
 		prepared, err := preparer.PrepareDispatch(actionCtx, *incidentRequestState(state.IncidentRequest))
 		if err != nil {
 			return fmt.Errorf("prepare responder dispatch: %w", err)
