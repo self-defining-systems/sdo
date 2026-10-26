@@ -175,3 +175,12 @@ message. Status text and collections are bounded; missing Pod API evidence is
 reported without replacing the proven Job failure. These are Kubernetes status
 observations, not Pod logs or Secret reads. Frozen-deadline expiry retains its
 separate typed timeout path and existing reflection decision semantics.
+
+A dispatched worker that disappears without a durable result fails with typed,
+non-retryable `JobVanishedError` and diagnostic `worker Job vanished`, including
+Job and task identities. The executor retains a request-digest-bound immutable
+`<job>-execution` ConfigMap after successful dispatch, separate from request
+preparation. Recovery uses that receipt to reject re-creation after restart;
+API read failures remain uncertainty, not disappearance. A completed result
+still follows the existing deadline and worker-quiescence checks after Job TTL.
+Existing executions without dispatch receipts retain deadline-based recovery.

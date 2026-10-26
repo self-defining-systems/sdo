@@ -19,6 +19,21 @@ import (
 )
 
 func TestReflectionFailedJobStopsClosureRetriesWithEvidence(t *testing.T) {
+	testReflectionTerminalJob(t, false)
+}
+
+func TestReflectionVanishedJobStopsClosureRetriesWithEvidence(t *testing.T) {
+	testReflectionTerminalJob(t, true)
+}
+
+func testReflectionTerminalJob(t *testing.T, vanished bool) {
+	t.Helper()
+	logEvidence := []string{"OOMKilled", "exit_code=137"}
+	diagnostics := []string{"BackoffLimitExceeded", "failed-worker", "OOMKilled", "137", "memory limit exceeded"}
+	if vanished {
+		diagnostics = []string{"worker Job vanished"}
+		logEvidence = diagnostics
+	}
 	root := nativeRepository(t)
 	repo, err := broker.New(root, filepath.Join(t.TempDir(), "proposals"), nil)
 	if err != nil {
@@ -45,6 +60,9 @@ func TestReflectionFailedJobStopsClosureRetriesWithEvidence(t *testing.T) {
 		if err != nil {
 			return err
 		}
+		if vanished {
+			return client.BatchV1().Jobs("demo").Delete(ctx, jobs.Items[0].Name, metav1.DeleteOptions{})
+		}
 		job := jobs.Items[0].DeepCopy()
 		job.UID = "failed-job"
 		job.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobFailed, Status: corev1.ConditionTrue, Reason: "BackoffLimitExceeded", Message: "worker failed"}}
@@ -65,12 +83,12 @@ func TestReflectionFailedJobStopsClosureRetriesWithEvidence(t *testing.T) {
 	if !ok || !failure.Permanent || failure.Attempts != 1 || failure.Reason != contracts.ClosureFailureReason_CLOSURE_FAILURE_REASON_BROKER_ERROR {
 		t.Fatalf("terminal Job consumed closure retry budget: %+v", failure)
 	}
-	for _, want := range []string{"BackoffLimitExceeded", "failed-worker", "OOMKilled", "137", "memory limit exceeded"} {
+	for _, want := range diagnostics {
 		if !strings.Contains(failure.LastError, want) {
 			t.Errorf("closure diagnostic missing %q: %+v", want, failure)
 		}
 	}
-	if len(logged) != 2 || !strings.Contains(logged[0], "OOMKilled") || !strings.Contains(logged[1], "exit_code=137") {
+	if len(logged) != 2 || !strings.Contains(logged[0], logEvidence[0]) || !strings.Contains(logged[1], logEvidence[len(logEvidence)-1]) {
 		t.Fatalf("controller log lost terminal evidence: %v", logged)
 	}
 	now = now.Add(time.Hour)
@@ -78,6 +96,9 @@ func TestReflectionFailedJobStopsClosureRetriesWithEvidence(t *testing.T) {
 		t.Fatal("terminal Job re-observed on retry")
 	}
 	state := exportState(t, controller)
+	if state.GetClosureState() == contracts.ClosureState_CLOSURE_STATE_PENDING {
+		t.Fatal("terminal worker left closure pending")
+	}
 	restored := newClosureRetryController(t, ClosureRetryPolicy{}, native, &now)
 	if err := restored.RestoreState(state); err != nil {
 		t.Fatal(err)
@@ -85,7 +106,7 @@ func TestReflectionFailedJobStopsClosureRetriesWithEvidence(t *testing.T) {
 	if _, ok := restored.PendingClosureEffect(); ok {
 		t.Fatal("restart retried terminal worker")
 	}
-	if len(state.FailedClosures) != 1 || !strings.Contains(state.FailedClosures[0].GetFailure().GetLastError(), "OOMKilled") {
+	if len(state.FailedClosures) != 1 || !strings.Contains(state.FailedClosures[0].GetFailure().GetLastError(), diagnostics[0]) {
 		t.Fatalf("archived diagnostics lost: %v", state.FailedClosures)
 	}
 	creates := 0
