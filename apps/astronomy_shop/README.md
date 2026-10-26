@@ -32,6 +32,13 @@ The nodes each have a three-core quota while Envoy sees 64 online CPUs. This
 can affect worker sizing and scheduling; no causal GC claim is made without a
 controlled comparison. The traffic configuration matches the pinned harness.
 
+The app collector receives application telemetry without mounting the node root
+filesystem: the hostMetrics preset is disabled. Node instrumentation belongs to
+the infrastructure observer. In nested Kubernetes, the propagated root mount
+imports a large mount tree and stalls cgroup discovery before collector health
+startup. Go parallelism is explicitly two workers; all memory targets and
+Kubernetes resource limits stay unchanged.
+
 The renderer also retains the collector Prometheus reader on port 8888 and
 removes OpenSearch's unsupported Performance Analyzer port 9600; HTTP and
 transport remain on 9200/9300. Images, application flags and detectors stay pinned.

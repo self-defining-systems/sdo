@@ -571,14 +571,18 @@ func TestKubernetesValidatorUsesFrozenControllerBaselineWithoutLegacyOptIn(t *te
 	}
 	found := false
 	for _, mount := range validated.Spec.Template.Spec.Containers[0].VolumeMounts {
-		if mount.Name == "healthy-baseline" {
+		if mount.MountPath == "/sdo/healthy-baseline" {
 			found = true
-			if !mount.ReadOnly || mount.SubPath != "tenant/.sdo-runtime/sessions/fixture/corpus/healthy" {
+			if mount.Name != "application" || !mount.ReadOnly || mount.SubPath != "tenant/.sdo-runtime/sessions/fixture/corpus/healthy" {
 				t.Fatalf("wrong baseline projection: %+v", mount)
 			}
 		}
 	}
 	if !found {
 		t.Fatal("frozen controller baseline not mounted")
+	}
+	candidate := validated.Spec.Template.Spec.Containers[0].VolumeMounts[0]
+	if candidate.Name != "application" || !candidate.ReadOnly || !strings.HasPrefix(candidate.SubPath, "tenant/") || candidate.MountPath != "/workspace" || candidate.SubPath == "tenant/.sdo-runtime/sessions/fixture/corpus/healthy" {
+		t.Fatalf("baseline override changed the candidate projection: %+v", candidate)
 	}
 }
