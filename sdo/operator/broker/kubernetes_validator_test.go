@@ -179,6 +179,83 @@ func TestKubernetesValidatorCanaryUsesGoOperator(t *testing.T) {
 	}
 }
 
+// Canary process execution has its own bounded network attempts. Its Job must
+// allow the enclosing validation budget for scheduling and status reconciliation.
+func TestKubernetesValidatorCanaryJobCannotExpireBeforeValidationBudget(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		timeout time.Duration
+		budget  time.Duration
+	}{
+		{"default", 0, 10 * time.Minute},
+		{"negative-default", -time.Second, 10 * time.Minute},
+		{"custom", 2 * time.Minute, 2 * time.Minute},
+		{"fractional", 45*time.Second + time.Nanosecond, 45*time.Second + time.Nanosecond},
+		{"subsecond", time.Nanosecond, time.Nanosecond},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			launcher := KubernetesValidationJobClient{Timeout: tc.timeout}
+			for _, denied := range []bool{false, true} {
+				job := launcher.canaryJob("sdo-validator-canary", denied)
+				if job.Spec.ActiveDeadlineSeconds == nil {
+					t.Fatal("canary Job must remain bounded after its owner exits")
+				}
+				lifetime := time.Duration(*job.Spec.ActiveDeadlineSeconds) * time.Second
+				if lifetime < tc.budget || lifetime-tc.budget >= time.Second {
+					t.Fatalf("canary Job lifetime %v preempts validation budget %v or exceeds its rounding allowance", lifetime, tc.budget)
+				}
+			}
+		})
+	}
+}
+
+// Replay the lane-50 failure class with virtual cluster time: the probe exits
+// at 16s but the Job controller observes terminal Pod status only at 45s.
+func TestSimScheduleValidatorCanaryTerminalStatusLag(t *testing.T) {
+	root := repository(t)
+	client := fake.NewSimpleClientset()
+	var jobs []string
+	reads := map[string]int{}
+	client.PrependReactor("create", "jobs", func(action ktesting.Action) (bool, runtime.Object, error) {
+		jobs = append(jobs, action.(ktesting.CreateAction).GetObject().(*batchv1.Job).Name)
+		return false, nil, nil
+	})
+	client.PrependReactor("get", "jobs", func(action ktesting.Action) (bool, runtime.Object, error) {
+		name := action.(ktesting.GetAction).GetName()
+		object, err := client.Tracker().Get(batchv1.SchemeGroupVersion.WithResource("jobs"), "sdo", name)
+		if err != nil {
+			return true, nil, err
+		}
+		job := object.(*batchv1.Job).DeepCopy()
+		reads[name]++
+		isCanary := job.Spec.Template.Labels["sdo.dev/validator-canary"] != ""
+		if isCanary && reads[name] < 3 {
+			job.Status.Active = 1
+			return true, job, nil
+		}
+		completed := metav1.NewTime(time.Unix(45, 0))
+		if isCanary && *job.Spec.ActiveDeadlineSeconds <= 45 {
+			job.Status.Failed = 1
+			job.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobFailed, Status: corev1.ConditionTrue, Reason: "DeadlineExceeded"}}
+		} else {
+			job.Status.Succeeded = 1
+			job.Status.CompletionTime = &completed
+		}
+		return true, job, nil
+	})
+	proof := &IsolationProof{}
+	launcher := KubernetesValidationJobClient{
+		Client: client, Namespace: "sdo", Image: "validator:test", RepositoryPVC: "repository", RepositoryMountPath: filepath.Dir(root),
+		SchemaIdentity: "schema", PollInterval: time.Millisecond, IsolationProof: proof,
+	}
+	if err := JobValidator(launcher)(context.Background(), root, []string{"app.txt"}); err != nil {
+		t.Fatalf("successful canary rejected during delayed Job reconciliation: %v", err)
+	}
+	if len(jobs) != 3 || reads[jobs[0]] != 3 || reads[jobs[1]] != 3 || !proof.valid("validator:test", time.Minute, time.Now()) {
+		t.Fatalf("both terminal canary proofs must precede validator execution: jobs=%v reads=%v", jobs, reads)
+	}
+}
+
 func TestKubernetesValidatorProjectsHealthyBaselineOnlyForIncidentGate(t *testing.T) {
 	launcher := KubernetesValidationJobClient{RepositoryPVC: "repository", HealthyBaseline: true}
 	job := launcher.validationJob("sdo-validator-test", "worktrees/candidate", strings.Repeat("a", 40), true)
