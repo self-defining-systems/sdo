@@ -1021,6 +1021,39 @@ func (n NativeIncidentBroker) committedRepairHealthReceipt(ctx context.Context, 
 	return recovered, err
 }
 
+// ownAcceptedProposal authenticates the source repair this closure published
+// before its outcome commit: the frozen verified closure and the broker's
+// accepted proposal commit for the incident must both match, and no outcome
+// may be committed yet (later states have their own proofs). Like
+// committedOutcomeClosure it reads the atomically replaced ledger without the
+// effect lock.
+func (n NativeIncidentBroker) ownAcceptedProposal(ctx context.Context, closure IncidentClosure) (string, error) {
+	id := closure.Request.IncidentID
+	if n.Repository == nil || id == "" || len(closure.FinalDetectorStates) == 0 {
+		return "", ErrStaleHealthInvestigation
+	}
+	ledger, err := n.readLedger(id)
+	if err != nil {
+		return "", err
+	}
+	projected, err := incidentClosureContract(closure)
+	if err != nil {
+		return "", err
+	}
+	if ledger.OutcomeCommit != "" || !proto.Equal(ledger.Closure, projected) {
+		return "", ErrStaleHealthInvestigation
+	}
+	// Git acceptance can survive a crash before its ledger marker is saved.
+	accepted, ok, err := n.Repository.AcceptedCommit(ctx, id, broker.ProposalPhase)
+	if err != nil {
+		return "", err
+	}
+	if !ok || (ledger.ProposalCommit != "" && ledger.ProposalCommit != accepted.Commit) {
+		return "", ErrStaleHealthInvestigation
+	}
+	return accepted.Commit, nil
+}
+
 // committedOutcomeClosure authenticates a historical outcome before allowing
 // restart to resume reflection/receipt work. Exact frozen evidence and the
 // broker's accepted Git commit are both required; no receipt is needed yet.

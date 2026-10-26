@@ -112,12 +112,25 @@ type committedRepairHealthBroker interface {
 	committedRepairHealthReceipt(context.Context, IncidentClosure, *ClosureReceipt) (ClosureReceipt, error)
 }
 
+// ownProposalHealthBroker authenticates the repair a closure effect published
+// before it derived the outcome. Adopting that repair can interrupt the effect
+// between the two commits; the replay still belongs to the same investigation.
+type ownProposalHealthBroker interface {
+	ownAcceptedProposal(context.Context, IncidentClosure) (string, error)
+}
+
 func checkCommittedRepairHealth(ctx context.Context, root, compiled string, closure IncidentClosure, receipt *ClosureReceipt, broker IncidentBroker) error {
 	proof, ok := broker.(committedRepairHealthBroker)
 	if !ok {
 		return ErrStaleHealthInvestigation
 	}
+	repairCommit := ""
 	existing, err := proof.committedRepairHealthReceipt(ctx, closure, receipt)
+	if err == nil {
+		repairCommit = existing.ProposalCommit
+	} else if proposal, ok := broker.(ownProposalHealthBroker); ok && receipt == nil && errors.Is(err, ErrStaleHealthInvestigation) {
+		repairCommit, err = proposal.ownAcceptedProposal(ctx, closure)
+	}
 	if err != nil {
 		return err
 	}
@@ -129,7 +142,7 @@ func checkCommittedRepairHealth(ctx context.Context, root, compiled string, clos
 	if err != nil {
 		return err
 	}
-	repair, err := memory.HealthInputs(ctx, root, existing.ProposalCommit)
+	repair, err := memory.HealthInputs(ctx, root, repairCommit)
 	if err != nil {
 		return err
 	}
