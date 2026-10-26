@@ -42,6 +42,9 @@ uv run pytest tests/ --cov=sdo
 architecture checks, and benchmark Go compilation. It also checks proto drift
 when Buf is installed. The AST checks always run with Tach's pytest impact
 plugin disabled; this gate installs the `test` extra through `uv run --extra test`.
+The architecture gate also resolves every tracked `from benchmarks.sregym.adapter import ...`
+statement through the real facade, with a missing-export negative control. This catches
+missing lazy exports before worker startup; test doubles must stay scoped to their owning module.
 To run just those checks:
 
 ```bash
