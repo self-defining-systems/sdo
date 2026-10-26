@@ -59,8 +59,11 @@ func declaredSourceDiff(view program.ReadView, ref sdk.ObjectRef) (program.Diff,
 	return diff, err
 }
 
+// An acceptance record belongs to one object instance (its UID): copied onto
+// a recreated object it is not that object's acceptance point.
 type acceptanceRecord struct {
 	Source string   `json:"source"`
+	UID    string   `json:"uid"`
 	Paths  []string `json:"paths"`
 }
 
@@ -91,24 +94,48 @@ func readAcceptanceRecord(object *unstructured.Unstructured) (acceptanceRecord, 
 	return record, true
 }
 
-// acceptanceRecordCurrent reports whether observed carries a record taken
-// against source.
-func acceptanceRecordCurrent(observed, source *unstructured.Unstructured) bool {
+// currentAcceptanceRecord returns observed's record when it was taken on this
+// object instance against source.
+func currentAcceptanceRecord(observed, source *unstructured.Unstructured) (acceptanceRecord, bool) {
 	record, ok := readAcceptanceRecord(observed)
-	return ok && record.Source == acceptedSourceShape(source)
+	if !ok || record.UID != string(observed.GetUID()) || record.Source != acceptedSourceShape(source) {
+		return acceptanceRecord{}, false
+	}
+	return record, true
+}
+
+// acceptanceRecordCurrent reports whether observed carries a record taken on
+// it against source.
+func acceptanceRecordCurrent(observed, source *unstructured.Unstructured) bool {
+	_, ok := currentAcceptanceRecord(observed, source)
+	return ok
 }
 
 // buildAcceptanceRecord records every path of applied, the server's dry-run
 // result of accepting source over live. Server defaults and fields present at
 // first acceptance thereby become part of the accepted object. Paths that were
 // additions under live's earlier record stay additions: re-acceptance must not
-// absorb drift that accepted source never declared. ok is false when the record
-// would exceed the size limit.
-func buildAcceptanceRecord(source, applied, live *unstructured.Unstructured) (string, bool, error) {
+// absorb drift that accepted source never declared.
+//
+// reaccepted marks an object SDO accepted before whose record was lost (the
+// object was recreated, or the record stripped): what changed meanwhile is
+// unknown. Its undeclared fields that another writer owns then stay additions;
+// only declared fields, the deployer's fields and unowned server defaults are
+// accepted. ok is false when the record would exceed the size limit.
+func buildAcceptanceRecord(source, applied, live *unstructured.Unstructured, reaccepted bool) (string, bool, error) {
 	carried := map[string]bool{}
 	if previous, ok := readAcceptanceRecord(live); ok {
 		for _, path := range additionsAgainst(live, previous, source) {
 			carried[path] = true
+		}
+	}
+	if reaccepted {
+		declared := flattenDriftObject(source)
+		owned := ownedByOtherWriters(live)
+		for path := range flattenDriftObject(applied) {
+			if ownsDriftPath(owned, path) && !declaredPath(declared, path) {
+				carried[path] = true
+			}
 		}
 	}
 	paths := []string{}
@@ -118,7 +145,7 @@ func buildAcceptanceRecord(source, applied, live *unstructured.Unstructured) (st
 		}
 	}
 	sort.Strings(paths)
-	encoded, err := json.Marshal(acceptanceRecord{Source: acceptedSourceShape(source), Paths: paths})
+	encoded, err := json.Marshal(acceptanceRecord{Source: acceptedSourceShape(source), UID: string(live.GetUID()), Paths: paths})
 	if err != nil {
 		return "", false, err
 	}
@@ -135,11 +162,27 @@ func addedSourceFields(observed, source *unstructured.Unstructured) ([]string, e
 	if len(flattenDriftObject(source)) == 0 {
 		return nil, nil
 	}
-	record, ok := readAcceptanceRecord(observed)
-	if !ok || record.Source != acceptedSourceShape(source) {
+	record, ok := currentAcceptanceRecord(observed, source)
+	if !ok {
 		return nil, ErrAcceptanceRecordUnavailable
 	}
 	return additionsAgainst(observed, record, source), nil
+}
+
+// ownedByOtherWriters returns the paths that field managers other than SDO's
+// deployer and acceptance record own.
+func ownedByOtherWriters(object *unstructured.Unstructured) map[string]bool {
+	owned := map[string]bool{}
+	for _, entry := range object.GetManagedFields() {
+		if entry.Manager == "sdo-deployer" || entry.Manager == acceptanceFieldManager || entry.FieldsV1 == nil {
+			continue
+		}
+		var fields map[string]any
+		if json.Unmarshal(entry.FieldsV1.Raw, &fields) == nil {
+			walkOwnedFields(fields, object.Object, "", owned)
+		}
+	}
+	return owned
 }
 
 func additionsAgainst(observed *unstructured.Unstructured, record acceptanceRecord, source *unstructured.Unstructured) []string {
@@ -287,7 +330,7 @@ func removeAddedFields(next, observed, source *unstructured.Unstructured) {
 // RecordAcceptance sets on object the acceptance record that adoption would
 // take against source over the object as it is now.
 func RecordAcceptance(object, source *unstructured.Unstructured) error {
-	record, fits, err := buildAcceptanceRecord(source, object, object)
+	record, fits, err := buildAcceptanceRecord(source, object, object, false)
 	if err != nil {
 		return err
 	}

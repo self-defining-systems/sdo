@@ -105,8 +105,11 @@ type Controller struct {
 	// join them before removing the capture directory.
 	routingSweeps     sync.WaitGroup
 	ownershipAdoption OwnershipAdoptionStatus
-	adoptionNeeded    bool
-	results           chan dispatchCompletion
+	// acceptanceSettleWaits counts consecutive adoption passes that waited
+	// for an object to settle; it spaces the next pass.
+	acceptanceSettleWaits int
+	adoptionNeeded        bool
+	results               chan dispatchCompletion
 	// gateClears and gateProbes hold the submit gate's confirmation of active
 	// findings (GateConfirmationPolicy); they are never persisted, so a
 	// restarted controller confirms again from fresh evaluations.

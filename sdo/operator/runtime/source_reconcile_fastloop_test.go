@@ -65,6 +65,8 @@ func TestHermeticSourceReconcileLearningExposesVerifiedCounters(t *testing.T) {
 		t.Fatal(err)
 	}
 	deployment.Spec.Selector = &metav1.LabelSelector{MatchLabels: map[string]string{"app": "api"}}
+	// The acceptance record binds to the object's UID, which replay keeps.
+	deployment.UID = "api-uid"
 	if _, err := client.AppsV1().Deployments("app").Update(ctx, deployment, metav1.UpdateOptions{}); err != nil {
 		t.Fatal(err)
 	}
