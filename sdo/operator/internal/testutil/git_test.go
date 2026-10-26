@@ -7,6 +7,12 @@ import (
 )
 
 func TestGitRepositoriesDisableBackgroundMaintenance(t *testing.T) {
+	// Repository-local policy must win even on hosts that enable aggressive GC.
+	global := filepath.Join(t.TempDir(), "global.config")
+	if err := os.WriteFile(global, []byte("[gc]\n auto = 1\n autoDetach = true\n[maintenance]\n auto = true\n autoDetach = true\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GIT_CONFIG_GLOBAL", global)
 	original := t.TempDir()
 	InitGit(t, original)
 	Git(t, original, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "--allow-empty", "-qm", "base")

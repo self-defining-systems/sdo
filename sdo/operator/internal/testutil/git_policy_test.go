@@ -23,7 +23,47 @@ func gitCreation(file *ast.File) []token.Pos {
 		}
 		return ""
 	}
-	creation := func(s string) bool { return s == "init" || s == "clone" }
+	var flatten func([]ast.Expr) []ast.Expr
+	flatten = func(args []ast.Expr) []ast.Expr {
+		var result []ast.Expr
+		for _, arg := range args {
+			switch value := arg.(type) {
+			case *ast.CompositeLit:
+				result = append(result, value.Elts...)
+				continue
+			case *ast.CallExpr:
+				if fn, ok := value.Fun.(*ast.Ident); ok && fn.Name == "append" {
+					result = append(result, flatten(value.Args)...)
+					continue
+				}
+			}
+			result = append(result, arg)
+		}
+		return result
+	}
+	creation := func(args []ast.Expr) bool {
+		args = flatten(args)
+		if len(args) > 0 && literal(args[0]) == "git" {
+			args = args[1:]
+		}
+		for len(args) > 0 {
+			first := literal(args[0])
+			switch first {
+			case "-C", "-c", "--git-dir", "--work-tree", "--namespace", "--config-env":
+				if len(args) < 2 {
+					return false
+				}
+				args = args[2:]
+			default:
+				if strings.HasPrefix(first, "-") {
+					args = args[1:]
+					continue
+				}
+				return first == "init" || first == "clone"
+			}
+		}
+		return false
+	}
 	ast.Inspect(file, func(node ast.Node) bool {
 		switch value := node.(type) {
 		case *ast.CompositeLit:
@@ -50,8 +90,7 @@ func gitCreation(file *ast.File) []token.Pos {
 				if len(row.Elts) == 0 {
 					continue
 				}
-				first := literal(row.Elts[0])
-				if creation(first) || (first == "git" && len(row.Elts) > 1 && creation(literal(row.Elts[1]))) {
+				if creation(row.Elts) {
 					found = append(found, row.Pos())
 				}
 			}
@@ -63,19 +102,23 @@ func gitCreation(file *ast.File) []token.Pos {
 			case *ast.SelectorExpr:
 				name = fn.Sel.Name
 			}
-			gitCall := name == "git" || name == "runGit" || name == "nativeGit" || name == "Git"
-			if name == "Command" || name == "CommandContext" {
-				for _, arg := range value.Args {
-					gitCall = gitCall || literal(arg) == "git"
+			var args []ast.Expr
+			switch name {
+			case "git", "runGit", "nativeGit", "Git":
+				if len(value.Args) > 2 {
+					args = value.Args[2:]
+				}
+			case "Command", "CommandContext":
+				offset := 0
+				if name == "CommandContext" {
+					offset = 1
+				}
+				if len(value.Args) > offset && literal(value.Args[offset]) == "git" {
+					args = value.Args[offset+1:]
 				}
 			}
-			if gitCall {
-				for _, arg := range value.Args {
-					if creation(literal(arg)) {
-						found = append(found, value.Pos())
-						break
-					}
-				}
+			if creation(args) {
+				found = append(found, value.Pos())
 			}
 		}
 		return true
@@ -89,6 +132,8 @@ func TestGitCreationPolicyNegativeControls(t *testing.T) {
 		`package p; func f(){ exec.Command("git", "clone", a, b) }`,
 		`package p; var commands = [][]string{{"init"}, {"config", "user.name", "Test"}}`,
 		`package p; var commands = [][]string{{"git", "init", "-q", root}}`,
+		`package p; var commands = [][]string{{"git", "-C", root, "init", "-q"}}`,
+		`package p; func f(){ exec.Command("git", append([]string{"-C", root}, "init")...) }`,
 	} {
 		file, err := parser.ParseFile(token.NewFileSet(), "negative.go", source, 0)
 		if err != nil {
@@ -98,12 +143,19 @@ func TestGitCreationPolicyNegativeControls(t *testing.T) {
 			t.Errorf("unsafe fixture passed: %s", source)
 		}
 	}
-	file, err := parser.ParseFile(token.NewFileSet(), "safe.go", `package p; func f(){ testutil.InitGit(t, root) }; var names = []string{"none", "init"}`, 0)
+	file, err := parser.ParseFile(token.NewFileSet(), "safe.go", `package p; func f(){ testutil.InitGit(t, root); git(t, root, "show", "HEAD:init") }; var names = []string{"none", "init"}`, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(gitCreation(file)) != 0 {
 		t.Fatal("safe fixture rejected")
+	}
+	file, err = parser.ParseFile(token.NewFileSet(), "filename.go", `package p; func f(){ nativeGit(t, root, "add", "init"); exec.Command("git", "show", "HEAD", "--", "init") }`, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(gitCreation(file)) != 0 {
+		t.Fatal("filename init mistaken for a subcommand")
 	}
 }
 
