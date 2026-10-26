@@ -53,8 +53,12 @@ uv run python -m sdo.agents.responder.command_reference --check
 echo "==> ruff"
 if [ "$1" == "--fix" ]; then
     uv run python -m ruff check --fix .
+    uv run python -m ruff format .
 else
     uv run python -m ruff check .
+    # Same check as hosted CI: a branch that needs formatting fails here, so
+    # format_code.sh never rewrites files the branch did not touch.
+    uv run python -m ruff format --check .
 fi
 
 echo "==> tach (module boundaries)"
