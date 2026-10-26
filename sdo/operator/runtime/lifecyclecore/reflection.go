@@ -211,6 +211,18 @@ func StepReflection(state *contracts.BrokerLedger, event ReflectionEvent) (*cont
 		}
 		next.ReflectionRejections = append(next.ReflectionRejections, rejection)
 		next.ReflectionRejected = uint32(len(next.ReflectionRejections)) > next.ReflectionMaxRetries
+		// Memory conflicts get at most three publication attempts. Count the
+		// durable typed rejections so restart and other retries cannot reset it.
+		conflicts := 0
+		for _, rejected := range next.ReflectionRejections {
+			for _, diagnostic := range rejected.GetDiagnostics() {
+				if diagnostic.GetMemoryConflict() != nil {
+					conflicts++
+					break
+				}
+			}
+		}
+		next.ReflectionRejected = next.ReflectionRejected || conflicts >= 3
 		next.ReflectionPhase = contracts.ReflectionPhase_REFLECTION_PHASE_RESET
 	case ReflectionReset:
 		if kind != ResetReflection {

@@ -18,6 +18,25 @@ message MemoryDiagnostic {
   int32 line = 3 [(buf.validate.field).int32.gte = 0];
   string message = 4 [(buf.validate.field).string.min_len = 1];
   string hint = 5;
+  MemoryConflict memory_conflict = 6;
+
+}
+
+// A rejected replay onto a newer accepted memory head. No candidate bytes were
+// published. Reflection resumes against accepted_commit and resolves both intents.
+message MemoryConflict {
+  string base_commit = 1;
+  string accepted_commit = 2;
+  repeated string conflicting_paths = 3;
+  repeated AcceptedMemoryChange accepted_changes = 4;
+  repeated MemoryDiagnostic validator_errors = 5;
+}
+
+// Accepted publications that changed the relevant paths since base_commit.
+message AcceptedMemoryChange {
+  string commit = 1;
+  string incident_id = 2;
+  repeated string paths = 3;
 }
 
 // Informational mitigation policy result, never a trust credit.

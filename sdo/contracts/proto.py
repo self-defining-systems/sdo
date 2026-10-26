@@ -162,6 +162,8 @@ OutcomeTimestamps = outcome_pb2.OutcomeTimestamps
 
 MitigationReplayNote = memory_pb2.MitigationReplayNote
 MemoryDiagnostic = memory_pb2.MemoryDiagnostic
+MemoryConflict = memory_pb2.MemoryConflict
+AcceptedMemoryChange = memory_pb2.AcceptedMemoryChange
 MemoryCheckReport = memory_pb2.MemoryCheckReport
 MemoryArtifact = memory_pb2.MemoryArtifact
 MemoryListing = memory_pb2.MemoryListing
@@ -320,6 +322,8 @@ __all__ = [
     "MemoryArtifact",
     "MemoryCheckReport",
     "MemoryDiagnostic",
+    "MemoryConflict",
+    "AcceptedMemoryChange",
     "MitigationReplayNote",
     "MemoryListing",
     "MemoryOutcomes",

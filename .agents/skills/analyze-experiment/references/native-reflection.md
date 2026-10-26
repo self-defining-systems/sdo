@@ -99,3 +99,18 @@ incident does not claim the current incident.
 Learning-origin Git reads use the durable accepted repository, not a retired
 proposal checkout. Missing optional origin evidence logs Git stderr and earns
 no extra credit, while responder dispatch remains available.
+
+### Concurrent shared memory
+
+Publication is serialized by a lock in the accepted repository's Git common
+directory, shared by brokers with different proposal roots. Stale proposals
+three-way replay onto the current accepted head; the complete shared check and
+independent compilation validate the merged tree before publication. A text
+conflict or merged-tree validation failure returns `MemoryDiagnostic` rule
+`memory.conflict` with typed `memory_conflict`: original `base_commit`, current
+`accepted_commit`, `conflicting_paths`, `accepted_changes` (commit, incident ID,
+paths), and `validator_errors`. No candidate commit is accepted on rejection.
+The durable reflection rejection ledger retains this structure through restart
+and resumes the same provider session in a fresh checkout of current accepted
+memory. Three conflict rejections terminate visibly; ordinary validation retries
+retain their existing separate cap. Both incidents' intent must survive correction.
