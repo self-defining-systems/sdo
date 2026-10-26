@@ -1277,7 +1277,11 @@ def abort(state_path: Path, *, ops: AbortClusterOps) -> list[str]:
         errors = [f"host helper cleanup failed: {exc}"]
     state_path = state_path.resolve()
     state = PersistentState.load(state_path)
-    state.save(state_path.with_name(state_path.name + ".abort-evidence.json"))
+    try:
+        with state_path.with_name(state_path.name + ".abort-evidence.json").open("x", encoding="utf-8") as evidence:
+            evidence.write(state.model_dump_json(indent=2) + "\n")
+    except FileExistsError:
+        pass  # A retry must retain the original pending-incident evidence.
     targets = dict(state.cleanup_targets)
     for namespace, record in state.controllers.items():
         targets[namespace] = CleanupTarget(

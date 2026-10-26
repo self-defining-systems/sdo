@@ -59,6 +59,8 @@ def test_abort_never_drains_and_records_aborted_incident(tmp_path):
     assert state.controllers == {}
     assert state.aborted_incidents[0].incident_id == "i1"
     assert persistent.abort(path, ops=ops) == []
+    archived = persistent.PersistentState.load(path.with_name(path.name + ".abort-evidence.json"))
+    assert archived.controllers["demo"].pending.incident_id == "i1"
 
 
 def test_abort_stops_transport_and_preserves_app_namespace(monkeypatch: Any) -> None:
