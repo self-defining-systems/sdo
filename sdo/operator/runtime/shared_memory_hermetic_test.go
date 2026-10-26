@@ -10,11 +10,13 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
 	"sdo.dev/operator/broker"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/contracts/wire"
 	"sdo.dev/operator/memory"
+	"sdo.dev/operator/memory/layout"
 	"sdo.dev/operator/memory/validate"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/sdktest"
@@ -342,9 +344,7 @@ func TestNativeSharedMemoryConflictsTerminateWithLastDiagnostic(t *testing.T) {
 	if last.GetAcceptedCommit() != accepted.Commit || last.GetAcceptedChanges()[0].GetIncidentId() != "peer-3" {
 		t.Fatalf("terminal conflict diagnostic lost: %v", last)
 	}
-	if nativeGit(t, h.target, "rev-parse", "HEAD") != accepted.Commit {
-		t.Fatal("rejected learning reached accepted state")
-	}
+	requireOnlyRejectionEvidenceSince(t, h.target, accepted.Commit, "conflict-loser", ledger.GetReflectionRejections())
 	// Receipt replay cannot resume a terminal losing reflection after restart.
 	restored := h.native
 	restored.Reflector = ReflectionWorkerFunc(func(context.Context, IncidentClosure, IncidentWorkspace, *contracts.OutcomeRecord, string, string, ReflectionFeedback) (ReflectionDecision, error) {
@@ -353,5 +353,44 @@ func TestNativeSharedMemoryConflictsTerminateWithLastDiagnostic(t *testing.T) {
 	again, err := restored.ProcessClosure(ctx, h.closure)
 	if err != nil || again != receipt {
 		t.Fatalf("terminal conflict not durable across restart: %v", err)
+	}
+}
+
+// requireOnlyRejectionEvidenceSince asserts that rejected learning never reaches
+// accepted state: after the winning publication, only the controller's outcome
+// annotation recording the loser's rejections may advance the branch.
+func requireOnlyRejectionEvidenceSince(t *testing.T, repo, accepted, incident string, rejections []*contracts.ProposalRejection) {
+	t.Helper()
+	if status := nativeGit(t, repo, "status", "--porcelain"); status != "" {
+		t.Fatalf("rejected learning left the accepted worktree dirty: %s", status)
+	}
+	if changed := nativeGit(t, repo, "diff", "--name-only", accepted, "HEAD"); changed != "" && changed != layout.OutcomePath(incident) {
+		t.Fatalf("rejected learning reached accepted state: %s", changed)
+	}
+	format := "--format=%(trailers:key=SDO-Incident,valueonly,separator=)|%(trailers:key=SDO-Actor,valueonly,separator=)|%(trailers:key=SDO-Phase,valueonly,separator=)"
+	if commits := nativeGit(t, repo, "log", format, accepted+"..HEAD"); commits != "" {
+		for _, commit := range strings.Split(commits, "\n") {
+			if commit != incident+"|controller|"+string(broker.OutcomePhase) {
+				t.Fatalf("rejected learning reached accepted state: %s", commit)
+			}
+		}
+	}
+	for _, commit := range strings.Split(nativeGit(t, repo, "log", format, "HEAD"), "\n") {
+		if commit == incident+"|responder|"+string(broker.ReflectionPhase) {
+			t.Fatalf("rejected learning reached accepted history: %s", commit)
+		}
+	}
+	stored, err := memory.NewJSONStore(repo).Get(context.Background(), incident)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recorded := stored.Record.GetReflectionRejections()
+	if len(recorded) != len(rejections) {
+		t.Fatalf("rejection evidence = %d entries, want %d", len(recorded), len(rejections))
+	}
+	for i := range rejections {
+		if !proto.Equal(recorded[i], rejections[i]) {
+			t.Fatalf("rejection evidence %d = %v, want %v", i, recorded[i], rejections[i])
+		}
 	}
 }

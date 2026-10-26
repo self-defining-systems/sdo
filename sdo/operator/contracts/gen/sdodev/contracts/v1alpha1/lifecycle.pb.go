@@ -803,7 +803,7 @@ var File_sdodev_contracts_v1alpha1_lifecycle_proto protoreflect.FileDescriptor
 
 const file_sdodev_contracts_v1alpha1_lifecycle_proto_rawDesc = "" +
 	"\n" +
-	")sdodev/contracts/v1alpha1/lifecycle.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x19google/protobuf/any.proto\x1a&sdodev/contracts/v1alpha1/memory.proto\x1a(sdodev/contracts/v1alpha1/messages.proto\"\xf4\x01\n" +
+	")sdodev/contracts/v1alpha1/lifecycle.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x19google/protobuf/any.proto\x1a1sdodev/contracts/v1alpha1/memory_diagnostic.proto\x1a(sdodev/contracts/v1alpha1/messages.proto\"\xf4\x01\n" +
 	"\x17SourceDeploymentRequest\x12 \n" +
 	"\vapplication\x18\x01 \x01(\tR\vapplication\x12\x1c\n" +
 	"\tnamespace\x18\x02 \x01(\tR\tnamespace\x12)\n" +
@@ -918,7 +918,7 @@ func file_sdodev_contracts_v1alpha1_lifecycle_proto_init() {
 	if File_sdodev_contracts_v1alpha1_lifecycle_proto != nil {
 		return
 	}
-	file_sdodev_contracts_v1alpha1_memory_proto_init()
+	file_sdodev_contracts_v1alpha1_memory_diagnostic_proto_init()
 	file_sdodev_contracts_v1alpha1_messages_proto_init()
 	type x struct{}
 	out := protoimpl.TypeBuilder{

@@ -72,13 +72,16 @@ func (d ReflectionDriver) Execute(ctx context.Context, effect lifecyclecore.Refl
 		event.Kind = lifecyclecore.ReflectionReviewed
 	case lifecyclecore.PublishReflection:
 		publishCtx := ctx
+		if revision := effect.Closure.GetRequest().GetSourceCommit(); revision != "" {
+			publishCtx = broker.WithReflectionHealth(publishCtx, revision)
+		}
 		if d.SessionRoot != "" {
 			var captureDir string
 			captureDir, err = memory.IncidentCorpusDir(d.SessionRoot, id)
 			if err != nil {
 				break
 			}
-			publishCtx = validate.WithCaptureSource(ctx, captureDir, id)
+			publishCtx = validate.WithCaptureSource(publishCtx, captureDir, id)
 		}
 		var accepted broker.Receipt
 		accepted, err = d.Repository.PublishReflection(publishCtx, id, effect.Decision)

@@ -431,10 +431,18 @@ tracked application inputs outside operational memory, the human objective and
 health detector revision. Memory-only outcomes, playbooks and rendered locks do
 not trigger judge work. The runtime refuses stale evaluation, dispatch, plan
 writes and closure, and requests a builder relaunch for adoption. A refresh failure
-leaves health unverified. An investigation or frozen closure that predates a
+leaves health unverified. An investigation or unaccepted frozen closure that predates a
 source, objective or health detector change is durably archived as a visible
 failure after adoption, allowing
 fresh evaluation without publishing or acknowledging its obsolete success.
+An exact historical closure with a broker-accepted outcome retains unfinished
+reflection and ACK ownership across source adoption and authenticated judge
+refreshes. Its supplied receipt must match the persisted receipt, and publication
+still passes current-head broker merge and shared memory validation. Objective
+or unrelated policy advances retain the stale-closure rule and append a named
+`reflection.objective-changed` / `reflection.policy-changed` rejection to the
+accepted outcome before retirement. A later judge refresh cannot authorize an
+intervening unrelated policy or library change.
 
 The model-free tracing regression and seeded restart schedule run with:
 
