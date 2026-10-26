@@ -119,7 +119,6 @@ def closure_pending(state: dict[str, Any]) -> bool:
 
 def wait_for_proof(
     sample: Callable[[], dict[str, Any]],
-    restore: Callable[[], None],
     record: Callable[[dict[str, Any]], None],
     *,
     timeout_seconds: float = 300,
@@ -127,23 +126,24 @@ def wait_for_proof(
     sleep: Callable[[float], None] = time.sleep,
     deadline: Deadline | None = None,
 ) -> dict[str, Any]:
+    """Observe admission without mutating the application or renewing its budget.
+
+    Missing controller observations, unqualified traffic and pending reflection
+    are not evidence that the application needs restoration. Recovery belongs
+    to the explicit reset before admission; restarting here can create the very
+    incident whose completion admission must await.
+    """
     if timeout_seconds <= 0 or timeout_seconds > 300:
         raise ValueError("stabilization budget must be in (0, 300] seconds")
     started = monotonic()
     budget = deadline or Deadline(started + timeout_seconds, monotonic)
-    retry_at = started + budget.remaining() / 2
-    for attempt in range(2):
-        attempt_end = retry_at if attempt == 0 else budget.expires_at
-        while monotonic() < attempt_end:
-            proof = sample()
-            if monotonic() >= budget.expires_at:
-                proof.update(passed=False, reason="eval: admission deadline exhausted; no injection")
-            proof.update(attempt=attempt + 1, seconds=monotonic() - started)
-            record(proof)
-            if proof.get("passed") is True:
-                return proof
-            sleep(min(2, max(0, attempt_end - monotonic())))
-        if attempt == 0:
-            budget.remaining()
-            restore()
-    raise StabilizationError("eval: traffic proof failed after one app-only restore and retry; no injection")
+    while monotonic() < budget.expires_at:
+        proof = sample()
+        if monotonic() >= budget.expires_at:
+            proof.update(passed=False, reason="eval: admission deadline exhausted; no injection")
+        proof.update(attempt=1, seconds=monotonic() - started)
+        record(proof)
+        if proof.get("passed") is True:
+            return proof
+        sleep(min(2, max(0, budget.expires_at - monotonic())))
+    raise StabilizationError("eval: admission proof did not settle before deadline; no injection")
