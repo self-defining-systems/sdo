@@ -423,9 +423,12 @@ func (s ScopedSnapshot) ValidatingWebhookConfigurations() ([]admissionv1.Validat
 
 type SourceDiff struct {
 	// SourceAbsent is true only after a successful accepted-source lookup finds no object.
-	SourceAbsent bool   `json:"source_absent,omitempty"`
-	Changed      bool   `json:"changed"`
-	Text         string `json:"text,omitempty"`
+	SourceAbsent bool `json:"source_absent,omitempty"`
+	// Changed reports declared fields that differ and fields another manager
+	// added after acceptance that source does not declare. Server defaults
+	// and kubernetes.io/k8s.io bookkeeping metadata are not changes.
+	Changed bool   `json:"changed"`
+	Text    string `json:"text,omitempty"`
 }
     SourceDiff is the read-only comparison with the accepted source for one
     resource. Missing source or observation evidence is an error, never a clean
