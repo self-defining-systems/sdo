@@ -279,6 +279,7 @@ jobs:
             directory: sdo/operator/contracts
             go-version: "1.26.8"
             foundation: contracts
+            operator: compiler-replay
           - module: runtime-reflection-corpus
             directory: sdo/operator/runtime
             go-version: "1.26.8"

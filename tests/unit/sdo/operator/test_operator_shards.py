@@ -89,20 +89,26 @@ def test_fast_complete_suite_passes_budget_guard() -> None:
     )
 
 
-def test_operator_runner_changes_trigger_go_and_keep_five_existing_jobs() -> None:
+def test_operator_runner_changes_trigger_go_and_keep_existing_matrix_jobs() -> None:
     import yaml
 
     jobs = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())["jobs"]
     matrix = jobs["controller"]["strategy"]["matrix"]["include"]
     selected = [row["operator"] for row in matrix if "operator" in row]
     assert sorted(selected) == sorted(shards.SHARDS)
+    replay = next(row for row in matrix if row.get("operator") == "compiler-replay")
+    assert replay["module"] == "foundation-contracts"
+    assert len([row for row in matrix if row["module"].startswith("operator")]) == 5
     filters = yaml.safe_load(jobs["changes"]["steps"][1]["with"]["filters"])
     assert "scripts/test_operator_shard.py" in filters["go"]
     assert "scripts/test_operator_shard.sh" in filters["go"]
     assert all(jobs[name]["timeout-minutes"] <= 5 for name in jobs)
 
 
-def test_wall_budget_stops_a_stalled_test_and_keeps_its_name(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("partial_line", [False, True])
+def test_wall_budget_stops_a_stalled_test_and_keeps_its_name(
+    monkeypatch: pytest.MonkeyPatch, partial_line: bool
+) -> None:
     import sys
     import time
 
@@ -111,12 +117,31 @@ def test_wall_budget_stops_a_stalled_test_and_keeps_its_name(monkeypatch: pytest
         sys.executable,
         "-c",
         (
-            "import json,time; "
+            "import json,time,sys; "
             "print(json.dumps({'Action':'run','Package':'builder','Test':'TestStalledCompile'}),flush=True); "
-            "time.sleep(60)"
+            + ("sys.stdout.write('{'); sys.stdout.flush(); " if partial_line else "")
+            + "time.sleep(60)"
         ),
     ]
     started = time.monotonic()
     with pytest.raises(ValueError, match="TestStalledCompile"):
         shards.run_tests(command, started=started)
     assert time.monotonic() - started < 5
+
+
+def test_peer_partitions_only_report_compiler_budgets() -> None:
+    shards.check_budgets(
+        [
+            {"Action": "pass", "Package": "broker", "Test": "TestExistingAcceptance", "Elapsed": 211},
+        ],
+        elapsed=212,
+        enforce=False,
+    )
+
+
+def test_malformed_tool_output_fails_closed() -> None:
+    import sys
+    import time
+
+    with pytest.raises(ValueError, match="invalid Go test JSON"):
+        shards.run_tests([sys.executable, "-c", "print('{')"], started=time.monotonic())
