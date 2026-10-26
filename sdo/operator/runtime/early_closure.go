@@ -11,6 +11,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sdo.dev/operator/apihistory"
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/worker_registry"
@@ -348,10 +349,18 @@ func (c *Controller) cacheVerificationLocked(response ToolResponse) {
 	}
 	c.verificationChanged = make(chan struct{})
 }
+
+// pendingClosureVerifiedLocked reports a closure frozen at verification. An
+// unconfirmed recheck keeps that verification; it only withholds final health.
+func (c *Controller) pendingClosureVerifiedLocked(id string) bool {
+	return c.pendingClosure != nil && c.pendingClosure.Request.IncidentID == id &&
+		(len(c.pendingClosure.FinalDetectorStates) > 0 || c.pendingClosure.UnconfirmedReason != contracts.ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_UNSPECIFIED)
+}
+
 func (c *Controller) incidentVerificationWarning(id string) *apihistory.IncidentVerified {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.pendingClosure != nil && c.pendingClosure.Request.IncidentID == id && len(c.pendingClosure.FinalDetectorStates) > 0 {
+	if c.pendingClosureVerifiedLocked(id) {
 		return apihistory.VerificationWarning(c.pendingClosure.VerifiedAt)
 	}
 	return nil
@@ -396,7 +405,7 @@ func (c *Controller) cachedResponderVerification(ctx context.Context, id string,
 		changed := c.verificationChanged
 		ready := response.IncidentVerified != nil || c.findingGeneration != generation
 		// A normally completed incident is already stably closed by its old path.
-		if c.pendingClosure != nil && c.pendingClosure.Request.IncidentID == id && len(c.pendingClosure.FinalDetectorStates) > 0 {
+		if c.pendingClosureVerifiedLocked(id) {
 			response.IncidentVerified = apihistory.VerificationWarning(c.pendingClosure.VerifiedAt)
 			ready = true
 		}

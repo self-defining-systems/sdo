@@ -165,6 +165,9 @@ func TestClosureRecheckIncompleteAtBoundCommitsUnconfirmed(t *testing.T) {
 		!strings.Contains(controller.pendingClosure.UnconfirmedDetail, "health is unconfirmed") {
 		t.Fatalf("bound expiry must mark the closure unconfirmed: %+v", controller.pendingClosure)
 	}
+	if controller.incidentVerificationWarning(controller.pendingClosure.Request.IncidentID) == nil {
+		t.Fatal("an unconfirmed closure still reports the incident as verified to the responder")
+	}
 
 	executeRecheck(t, controller)
 	awaitBrokerResult(t, controller.closureResults)
