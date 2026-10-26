@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sdo.dev/operator/internal/testutil"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -123,7 +124,8 @@ spec:
 	if err := os.WriteFile(filepath.Join(repo, "app.yaml"), []byte(manifest), 0600); err != nil {
 		t.Fatal(err)
 	}
-	for _, args := range [][]string{{"init"}, {"config", "user.name", "Test"}, {"config", "user.email", "test@example.com"}, {"add", "."}, {"commit", "-qm", "synthetic source"}} {
+	testutil.InitGit(t, repo)
+	for _, args := range [][]string{{"config", "user.name", "Test"}, {"config", "user.email", "test@example.com"}, {"add", "."}, {"commit", "-qm", "synthetic source"}} {
 		nativeGit(t, repo, args...)
 	}
 	revision := nativeGit(t, repo, "rev-parse", "HEAD")

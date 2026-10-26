@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sdo.dev/operator/internal/testutil"
 	"strings"
 	"testing"
 
@@ -16,7 +17,8 @@ import (
 func rv4PinnedSnapshot(t *testing.T) (*Broker, rendered.Source, string, rendered.Snapshot) {
 	t.Helper()
 	root := t.TempDir()
-	for _, args := range [][]string{{"init"}, {"config", "user.name", "Test"}, {"config", "user.email", "test@example.com"}} {
+	testutil.InitGit(t, root)
+	for _, args := range [][]string{{"config", "user.name", "Test"}, {"config", "user.email", "test@example.com"}} {
 		if _, err := runGit(context.Background(), root, args...); err != nil {
 			t.Fatal(err)
 		}

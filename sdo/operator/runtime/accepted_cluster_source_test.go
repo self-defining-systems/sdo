@@ -7,6 +7,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"os"
 	"path/filepath"
+	"sdo.dev/operator/internal/testutil"
 	"strings"
 	"testing"
 	"time"
@@ -23,7 +24,7 @@ import (
 func TestAcceptedClusterSourceCanBeInspectedAndReconciled(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
-	nativeGit(t, root, "init", "-q")
+	testutil.InitGit(t, root)
 	nativeGit(t, root, "config", "user.name", "Test")
 	nativeGit(t, root, "config", "user.email", "test@example.invalid")
 	manifest := `apiVersion: rbac.authorization.k8s.io/v1

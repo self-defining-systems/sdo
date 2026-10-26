@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sdo.dev/operator/internal/testutil"
 	"testing"
 
 	"sdo.dev/operator/rendered"
@@ -13,7 +14,8 @@ import (
 
 func TestRenderedLockRejectsAgentEditsAndStaleRender(t *testing.T) {
 	root := t.TempDir()
-	for _, args := range [][]string{{"init"}, {"config", "user.name", "Test"}, {"config", "user.email", "test@example.com"}} {
+	testutil.InitGit(t, root)
+	for _, args := range [][]string{{"config", "user.name", "Test"}, {"config", "user.email", "test@example.com"}} {
 		if _, err := runGit(context.Background(), root, args...); err != nil {
 			t.Fatal(err)
 		}

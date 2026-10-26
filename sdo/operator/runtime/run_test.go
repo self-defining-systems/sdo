@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sdo.dev/operator/internal/testutil"
 	"strings"
 	"testing"
 	"time"
@@ -17,8 +18,8 @@ import (
 
 func TestResolveRepositoryCommitsUsesRealGitHead(t *testing.T) {
 	repository := t.TempDir()
+	testutil.InitGit(t, repository)
 	commands := [][]string{
-		{"git", "init", "-q", repository},
 		{"git", "-C", repository, "config", "user.name", "test"},
 		{"git", "-C", repository, "config", "user.email", "test@example.com"},
 	}
@@ -200,7 +201,11 @@ func TestAttachFiringTelemetryDefaultsByDispatcherMode(t *testing.T) {
 	}
 }
 
-func TestResponderStandbyColdOnlyConfiguration(t *testing.T){
- if standbyEnabled(map[string]string{"SDO_RESPONDER_STANDBY":"0"}){t.Fatal("cold-only configuration still provisions standby")}
- if !standbyEnabled(nil){t.Fatal("default standby disabled")}
+func TestResponderStandbyColdOnlyConfiguration(t *testing.T) {
+	if standbyEnabled(map[string]string{"SDO_RESPONDER_STANDBY": "0"}) {
+		t.Fatal("cold-only configuration still provisions standby")
+	}
+	if !standbyEnabled(nil) {
+		t.Fatal("default standby disabled")
+	}
 }
