@@ -23,6 +23,7 @@ from libs.agent_cli.structured import (
 from sdo.agents.code_paths import agent_guidance
 from sdo.agents.memory_diagnostics import render_validation_feedback
 from sdo.agents.prompt_templates import RenderedPrompt, named_prompt, render_prompt
+from sdo.agents.responder.baseline_withholding import withhold_unverifiable_detectors
 from sdo.agents.responder.credentials import SKILLS_ROOT
 from sdo.agents.responder.memory_check import VALIDATION_TIMEOUT_SECONDS, ValidationResult, check_reflection_result
 from sdo.agents.responder.reflection_authoring import SdkGap
@@ -445,8 +446,17 @@ class CodexSessionBackend:
             check = self.memory_checker(
                 worktree, decision, min(VALIDATION_TIMEOUT_SECONDS, deadline - time.monotonic())
             )
+            decision, check = withhold_unverifiable_detectors(
+                worktree,
+                decision,
+                check,
+                min(VALIDATION_TIMEOUT_SECONDS, deadline - time.monotonic()),
+                self.memory_checker,
+            )
             if check.exit_code == 0 and not check.timed_out:
-                return ReflectionTurn.from_model_output(payload).with_usage(usage)
+                return ReflectionTurn.from_model_output(
+                    json_format.MessageToDict(decision, preserving_proto_field_name=True)
+                ).with_usage(usage)
             if attempt == 3 or time.monotonic() >= deadline:
                 raise RuntimeError(f"reflection memory check failed before submission: {check.stdout}\n{check.stderr}")
             turn = self._run(
