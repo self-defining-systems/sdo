@@ -115,9 +115,38 @@ CLASS_KINDS = {
 }
 BASELINE_FIELDS["misconfig_app_hotel_res"] = (_CONTAINER + "image",)
 
+RUNTIME_PROBE_KINDS = frozenset(
+    {
+        "ephemeral_port_range_hotel_reservation",
+        "valkey_memory_disruption",
+        "valkey_auth_disruption",
+        "secret_rotation_stale_env_credentials_astronomy_shop",
+        "kafka_queue_problems",
+        "kafka_poison_pill_hol_block",
+        "expired_tls_hotel_reservation",
+        "storage_user_unregistered",
+        "revoke_auth_mongodb",
+    }
+)
+CLASS_KINDS.update(
+    {
+        "EphemeralPortRangeHotelReservation": "ephemeral_port_range_hotel_reservation",
+        "ValkeyMemoryDisruption": "valkey_memory_disruption",
+        "ValkeyAuthDisruption": "valkey_auth_disruption",
+        "SecretRotationStaleEnvCredentialsAstronomyShop": "secret_rotation_stale_env_credentials_astronomy_shop",
+        "KafkaQueueProblems": "kafka_queue_problems",
+        "KafkaPoisonPillHOLBlock": "kafka_poison_pill_hol_block",
+        "ExpiredTlsHotelReservation": "expired_tls_hotel_reservation",
+        "MongoDBUserUnregistered": "storage_user_unregistered",
+        "MongoDBRevokeAuth": "revoke_auth_mongodb",
+    }
+)
+
 # Public problem attributes needed to name observable API objects. Never inspect
 # injection backups, diagnosis text, oracle objects or credential values.
 PROBE_ATTRIBUTES = {
+    "ExpiredTlsHotelReservation": {"ingress_name": "ingress_name"},
+    "EphemeralPortRangeHotelReservation": {"sysctl_scope": "sysctl_scope"},
     "IngressMisroute": {"ingress_name": "ingress_name", "path": "path", "correct_service": "correct_service"},
     "HPAMissingEffectiveCPURequest": {"hpa_name": "HPA_NAME"},
     "DevShmExhaustionHotelReservation": {"scratch_mib": "scratch_mib"},
@@ -131,39 +160,7 @@ PROBE_ATTRIBUTES = {
     },
 }
 
-UNSUPPORTED_REASONS = {
-    "MongoDBUserUnregistered": (
-        "database user catalog is not visible in Kubernetes objects;"
-        " add a read-only usersInfo observation without credential output"
-    ),
-    "MongoDBRevokeAuth": (
-        "database roles are not visible in Kubernetes objects;"
-        " add a read-only usersInfo roles observation without credential output"
-    ),
-    "KafkaQueueProblems": (
-        "disabled feature flag cannot prove broker backlog drained; add read-only broker/consumer progress observations"
-    ),
-    "KafkaPoisonPillHOLBlock": (
-        "Pod readiness cannot prove consumer head-of-line progress; add read-only consumer offset/lag observations"
-    ),
-    "ValkeyMemoryDisruption": (
-        "runtime memory/eviction settings are not visible in Kubernetes objects;"
-        " add read-only CONFIG GET/INFO observations"
-    ),
-    "ValkeyAuthDisruption": (
-        "Pod readiness cannot prove application authentication;"
-        " add a private read-only authentication handshake without credential output"
-    ),
-    "SecretRotationStaleEnvCredentialsAstronomyShop": (
-        "Pod/Secret metadata cannot prove resolved credential freshness;"
-        " add a private authentication handshake, never read Secret data"
-    ),
-    "EphemeralPortRangeHotelReservation": (
-        "process/network-namespace sysctls are not visible in Kubernetes objects;"
-        " add a read-only in-container sysctl/connection observation"
-    ),
-    "ExpiredTlsHotelReservation": (
-        "Ingress metadata cannot prove served certificate validity;"
-        " add a public TLS handshake observer, never read Secret data"
-    ),
+UNSUPPORTED_REASONS: dict[str, str] = {
+    "MongoDBUserUnregistered": "Mongo auth probe needs a source-grounded geo/rate target",
+    "MongoDBRevokeAuth": "Mongo auth probe needs a source-grounded geo/rate target",
 }

@@ -42,3 +42,14 @@ probes measure the blocked workload's current replica recovery. These observatio
 are independent of official verdicts and must never be described as grader proof.
 Use `fastloop check-plan --plan <plan-or-stream.json>` to reject any unprobed
 selection offline; permissive repair capabilities do not relax this tracking gate.
+
+Runtime probes use a shared fixed read-only observation transport. Their evidence
+is current Pod sysctls, Valkey memory headroom without an active flood, Kafka
+consumer lag/output progress, dependent app GET results, fresh authenticated Mongo
+collection reads, or the public ingress certificate's hostname/dates. Mongo uses
+a hotel login derived in memory from the exact pinned app source (geo/rate only),
+sent over private stdin and omitted from argv/results/reports, bypassing caches;
+a changed login may conservatively remain unresolved. No Secret is read and raw
+command payloads/errors never enter timelines. Unsupported targets/variants and
+missing observations remain unresolved/rejected. Plan admission proves coverage
+exists, not that a live probe can reach its endpoint or that SDO repaired a fault.
