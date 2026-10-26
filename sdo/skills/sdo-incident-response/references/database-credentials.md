@@ -20,7 +20,7 @@ existing metadata-only RBAC and require a separate security review.
 A successful catalog write is action evidence. Check application recovery through
 SDO's independent verification; include a dependent Deployment restart when the
 repair requires reconnection. Learn executable diagnosis and mitigation from the
-recorded open catalog, then replay to NoMatch. Replay preserves references and
+recorded open catalog and measured fixed-phase readback, then replay to NoMatch. Replay preserves references and
 projects catalog membership and roles; it does not prove live authentication.
 
 Catalog authentication is separate from the password for creating a user.

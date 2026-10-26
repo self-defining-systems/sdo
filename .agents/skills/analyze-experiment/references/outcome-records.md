@@ -136,3 +136,8 @@ literal bootstrap username/password pair in a ConfigMap mounted by that containe
 executor-private ConfigMap reads and returns references only. It never reads Secret objects,
 evaluates scripts or changes the typed action's nil-auth semantics. The report makes the actual
 source references visible so missing authentication cannot masquerade as a missing SDK feature.
+
+Successful typed EnsureDatabaseUser actions record the measured opening catalog and direct
+readback as a `DatabaseUsers` primitive with `phase=fixed` through the same protected recorder.
+The action receipt retains reference-bearing inputs/status; a safe `recording_error` makes an
+unavailable fixed capture visible. Fixed catalogs never replace the immutable opening catalog.

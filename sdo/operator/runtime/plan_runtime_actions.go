@@ -235,6 +235,13 @@ func (e PlanExecutor) applyRuntimePlan(ctx context.Context, incident IncidentReq
 				result.ActionReports[i].Status = "unknown"
 				return result, databaseSafeError(readErr, "database user change unverified")
 			}
+			if e.RecordPrimitive != nil {
+				arguments, _ := json.Marshal([]any{a.Target})
+				observed, _ := json.Marshal(actual)
+				if recordErr := e.RecordPrimitive(sdktest.PrimitiveCall{Method: "DatabaseUsers", Arguments: arguments, Result: observed, Phase: "fixed"}); recordErr != nil {
+					result.ActionReports[i].RecordingError = "fixed database catalog capture unavailable"
+				}
+			}
 			result.ActionReports[i].Status = "applied"
 			continue
 		case program.Exec:
