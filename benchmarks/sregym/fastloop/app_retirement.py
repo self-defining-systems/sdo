@@ -18,12 +18,12 @@ APPLICATION_NAMESPACES = frozenset({"hotel-reservation", "social-network", "astr
 
 def quiesce_native_controller(kubeconfig: Path, namespace: str) -> None:
     """Use the native pause/closure fence before replacing an idle installation."""
-    from benchmarks.sregym.adapter import KubectlClusterOps, closure_pending, pause_for_recovery
+    from benchmarks.sregym.adapter import KubectlClusterOps, incident_work_open, pause_for_recovery
 
     if namespace not in {control_namespace_for(app) for app in APPLICATION_NAMESPACES}:
         raise ValueError("eval: quiesce requires an application control namespace")
     ops = KubectlClusterOps()
-    if closure_pending(ops.runtime_state(namespace)):
+    if incident_work_open(ops.runtime_state(namespace)):
         raise RuntimeError("eval: app retirement refuses unfinished native closure or reflection")
     jobs = json.loads(kubectl(["get", "jobs", "-o", "json"], namespace=namespace, kubeconfig=kubeconfig).stdout)[
         "items"
