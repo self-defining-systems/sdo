@@ -55,7 +55,7 @@ func TestAdoptionSeederGivesTagImageWorkloadsTrustedLockEvidence(t *testing.T) {
 	}
 	git("init", "-q")
 	manifest := ""
-	for _, name := range []string{"geo", "mongodb-geo", "rolling", "drifted"} {
+	for _, name := range []string{"geo", "mongodb-geo", "rolling", "drifted", "mirrored", "pending"} {
 		manifest += "---\napiVersion: apps/v1\nkind: Deployment\nmetadata: {name: " + name + "}\nspec:\n  selector: {matchLabels: {app: " + name + "}}\n  template:\n    metadata: {labels: {app: " + name + "}}\n    spec:\n      containers:\n      - {name: " + name + ", image: example/" + name + ":latest}\n"
 	}
 	if err := os.WriteFile(filepath.Join(repo, "app.yaml"), []byte(manifest), 0600); err != nil {
@@ -81,6 +81,14 @@ func TestAdoptionSeederGivesTagImageWorkloadsTrustedLockEvidence(t *testing.T) {
 		// The live template no longer applies the accepted source image.
 		adoptedDeployment("drifted", "example/drifted:v2"),
 		adoptedPod("drifted-1", "drifted", "example/drifted:v2", digest("drifted", "e")),
+		// The runtime names the content under another repository (a mirror);
+		// pinning that digest would point nodes at a registry the source never named.
+		adoptedDeployment("mirrored", "example/mirrored:latest"),
+		adoptedPod("mirrored-1", "mirrored", "example/mirrored:latest", "registry.local/mirror/mirrored@sha256:"+strings.Repeat("f", 64)),
+		// One Pod on the tag has not pulled yet; it may resolve the tag differently.
+		adoptedDeployment("pending", "example/pending:latest"),
+		adoptedPod("pending-1", "pending", "example/pending:latest", digest("pending", "1")),
+		adoptedPod("pending-2", "pending", "example/pending:latest", ""),
 	)
 
 	bin, output := t.TempDir(), filepath.Join(t.TempDir(), "ledger.tar")
@@ -130,7 +138,7 @@ func TestAdoptionSeederGivesTagImageWorkloadsTrustedLockEvidence(t *testing.T) {
 	// Mirror the controller's lock reconciler: named evidence supplies the
 	// applied image and the pulled digest separately.
 	applied, digests, gaps := namedImages{}, namedImages{}, map[sdk.ObjectRef]string{}
-	for _, name := range []string{"geo", "mongodb-geo", "rolling", "drifted"} {
+	for _, name := range []string{"geo", "mongodb-geo", "rolling", "drifted", "mirrored", "pending"} {
 		ref := sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "app", Name: name}
 		found := false
 		for _, proof := range proofs {
@@ -173,7 +181,7 @@ func TestAdoptionSeederGivesTagImageWorkloadsTrustedLockEvidence(t *testing.T) {
 			t.Fatalf("lock must keep the applied tag so live comparison stays exact, got %v", image)
 		}
 	}
-	for _, name := range []string{"rolling", "drifted"} {
+	for _, name := range []string{"rolling", "drifted", "mirrored", "pending"} {
 		if errors[name] == "" {
 			t.Fatalf("ambiguous or drifted %s must stay an explicit gap", name)
 		}
