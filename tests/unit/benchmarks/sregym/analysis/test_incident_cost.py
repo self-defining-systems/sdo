@@ -1036,3 +1036,23 @@ def test_mutation_floor_ignores_incomplete_or_malformed_command_items(tmp_path: 
     rollout.write_text(json.dumps(record) + "\n", encoding="utf-8")
     assert first_mutation_at([rollout], after=1790510410.0) is None
     assert last_mutation_done_at([rollout], after=1790510410.0, before=1790510470.0) is None
+
+
+def test_stage_reflection_total_includes_every_logged_turn_of_its_incident(tmp_path: Path) -> None:
+    import hashlib
+
+    incident = "incident-9"
+    run = tmp_path / "run"
+    log = (
+        run / "sdo_runtime" / "sessions" / hashlib.sha256(incident.encode()).hexdigest()[:32] / "reflection-usage.jsonl"
+    )
+    log.parent.mkdir(parents=True)
+    turns = [_usage(100, 10), _usage(200, 20), _usage(50, 5)]
+    log.write_text("".join(json.dumps({"session_id": "s", "usage": turn}) + "\n" for turn in turns), encoding="utf-8")
+    from benchmarks.sregym.analysis.incident_cost import logged_reflection_cost
+
+    receipt = {"reflection_usage": turns[-1]}
+    usage = _reflection_usage(receipt, [], None, logged_reflection_cost(run, incident))
+    assert (usage.input_tokens, usage.output_tokens) == (350, 35)
+    # A receipt that already totals the turns is kept.
+    assert _reflection_usage({"reflection_usage": _usage(350, 35)}, [], None, None).input_tokens == 350

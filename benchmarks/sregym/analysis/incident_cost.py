@@ -838,8 +838,56 @@ def rollout_turn_usages(rollouts: list[Path]) -> list[TokenUsage]:
     return turns
 
 
+@dataclass(frozen=True)
+class LoggedReflectionCost:
+    """Every reflection turn of one incident: summed usage, turn count and provider session IDs."""
+
+    usage: TokenUsage
+    turns: int
+    session_ids: tuple[str, ...]
+    cost_usd: float | None
+
+
+def incident_session_dirname(incident_id: str) -> str:
+    return hashlib.sha256(incident_id.encode()).hexdigest()[:32]
+
+
+def logged_reflection_cost(run_dir: Path, incident_id: str) -> LoggedReflectionCost | None:
+    """Sum the incident's own reflection usage log under *run_dir*; ``None`` when it was not exported."""
+
+    name = f"sdo_runtime/sessions/{incident_session_dirname(incident_id)}/reflection-usage.jsonl"
+    # Several exports of one run (stage-end snapshots) hold prefixes of the same append-only log.
+    logs = sorted(run_dir.rglob(name), key=lambda path: path.stat().st_size)
+    if not logs:
+        return None
+    log = logs[-1]
+    usage = TokenUsage()
+    turns = 0
+    sessions: list[str] = []
+    cost: float | None = 0.0
+    for line in log.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        record = json.loads(line)
+        turns += 1
+        usage = usage + TokenUsage.from_mapping(record.get("usage"))
+        session = record.get("session_id")
+        if isinstance(session, str) and session and session not in sessions:
+            sessions.append(session)
+        turn_cost = record.get("cost_usd")
+        cost = cost + float(turn_cost) if cost is not None and isinstance(turn_cost, (int, float)) else None
+    return LoggedReflectionCost(usage, turns, tuple(sessions), None if cost is None else round(cost, 9))
+
+
+def _raw_total(usage: TokenUsage) -> int:
+    return usage.input_tokens + usage.output_tokens
+
+
 def _reflection_usage(
-    receipt: dict[str, Any], responder_rollouts: list[Path], own_rollouts: list[Path] | None = None
+    receipt: dict[str, Any],
+    responder_rollouts: list[Path],
+    own_rollouts: list[Path] | None = None,
+    logged: LoggedReflectionCost | None = None,
 ) -> TokenUsage:
     """The reflection's own tokens, from rollouts where they were exported.
 
@@ -849,13 +897,17 @@ def _reflection_usage(
     Reflection turns in sessions of their own (fresh mode, fresh retries) are
     read from those sessions' rollouts (*own_rollouts*), which also carry the
     reasoning and request counts older receipts lack. Without rollouts, the
-    receipt's ``reflection_usage`` is used.
+    receipt's ``reflection_usage`` is used, unless the incident's own usage log
+    (*logged*) totals more: receipts written before the outcome record summed
+    every reflection turn kept only the last.
     """
 
     ledger = receipt.get("native_ledger")
     decision = ledger.get("reflection_decision") if isinstance(ledger, dict) else None
     native_usage = decision.get("usage") if isinstance(decision, dict) else None
     recorded = TokenUsage.from_mapping(receipt.get("reflection_usage") or native_usage)
+    if logged is not None and _raw_total(logged.usage) > _raw_total(recorded):
+        recorded = logged.usage
     own = [turn for turn in rollout_turn_usages(own_rollouts or []) if turn.input_tokens]
     if receipt.get("reflection_session_mode") == "resume":
         shared = rollout_turn_usages(responder_rollouts)
@@ -1084,7 +1136,12 @@ def load_sdo_pipeline(pipeline_dir: Path) -> list[SdoStage]:
                     verdict=verdict,
                     incident_resolution_seconds=_float(receipt.get("incident_resolution_seconds")),
                     responder=_responder_usage(receipt, own_responder_rollouts),
-                    reflection=_reflection_usage(receipt, own_responder_rollouts, reflection_rollouts),
+                    reflection=_reflection_usage(
+                        receipt,
+                        own_responder_rollouts,
+                        reflection_rollouts,
+                        logged_reflection_cost(results, scoped_incident) if scoped_incident else None,
+                    ),
                     reflection_attempts=receipt.get("reflection_attempts"),
                     reflection_skipped_reason=receipt.get("reflection_skipped_reason"),
                     reflection_evidence_gap_count=_evidence_gap_metrics(receipt)[0],
