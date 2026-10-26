@@ -55,6 +55,8 @@ func VerifiedReflectionCauses(outcome *contracts.OutcomeRecord) []*contracts.Ref
 // aggregate classification or eligibility projection: a timed mutation and
 // opening findings for every target/symptom cleared after the last cause write.
 // Written targets need primary findings; symptoms may be related observations.
+// A symptom no opening finding observed is unobserved context, not failed
+// proof; a symptom that was observed must still clear.
 // Callers still enforce ownership, trusted action provenance and eligibility.
 func RepairedCauseObserved(outcome *contracts.OutcomeRecord, resources []*contracts.ObjectRef) bool {
 	repaired, after, valid := causeRepairs(outcome, resources)
@@ -63,11 +65,22 @@ func RepairedCauseObserved(outcome *contracts.OutcomeRecord, resources []*contra
 	}
 	for _, resource := range resources {
 		primary := slices.ContainsFunc(repaired, func(ref *contracts.ObjectRef) bool { return equalCauseResource(ref, resource) })
+		if !primary && !openingObserved(outcome, resource) {
+			continue
+		}
 		if !clearedOpenFinding(outcome, resource, after, primary) {
 			return false
 		}
 	}
 	return true
+}
+
+// openingObserved reports whether any opening finding named the resource as
+// its primary or related object.
+func openingObserved(outcome *contracts.OutcomeRecord, resource *contracts.ObjectRef) bool {
+	return slices.ContainsFunc(outcome.GetFindings(), func(f *contracts.Finding) bool {
+		return f.GetStatus() == "active" && (equalCauseResource(f.GetPrimaryResource(), resource) || slices.ContainsFunc(f.GetRelatedResources(), func(ref *contracts.ObjectRef) bool { return equalCauseResource(ref, resource) }))
+	})
 }
 
 func equalCauseResource(a, b *contracts.ObjectRef) bool {

@@ -82,6 +82,10 @@ func TestSameNameRecreatedOwnedPodDoesNotBlockVerifiedWorkloadRepair(t *testing.
 	}
 }
 
+func podFinding(ref *contracts.ObjectRef) *contracts.Finding {
+	return &contracts.Finding{DetectorId: "pod-scheduling", Status: "active", Fingerprint: ref.GetName(), PrimaryResource: ref}
+}
+
 func TestReplacedOwnedPodDoesNotBlockVerifiedWorkloadRepair(t *testing.T) {
 	at := time.Unix(100, 0)
 	deployment := &contracts.ObjectRef{ApiVersion: "apps/v1", Kind: "Deployment", Namespace: "app", Name: "search"}
@@ -89,14 +93,15 @@ func TestReplacedOwnedPodDoesNotBlockVerifiedWorkloadRepair(t *testing.T) {
 	outcome := &contracts.OutcomeRecord{
 		Classification:      "success",
 		ConfirmedRootCauses: []*contracts.ConfirmedRootCause{{Resources: []*contracts.ObjectRef{deployment, replaced}}},
-		Findings:            []*contracts.Finding{{DetectorId: "workload", Status: "active", Fingerprint: "search", PrimaryResource: deployment}},
+		// The Pod's own opening finding is never re-evaluated: its identity is gone.
+		Findings: []*contracts.Finding{{DetectorId: "workload", Status: "active", Fingerprint: "search", PrimaryResource: deployment}, podFinding(replaced)},
 		RepairActions:       []*contracts.RepairActionReceipt{{Success: true, Resources: []*contracts.ObjectRef{deployment}, StartedAt: timestamppb.New(at.Add(time.Second)), CompletedAt: timestamppb.New(at.Add(2 * time.Second))}},
 		DetectorHistory:     []*contracts.DetectorEvaluation{{DetectorId: "workload", Status: "clear", EvaluatedAt: timestamppb.New(at.Add(3 * time.Second))}},
 	}
 	rollout := writeRolloutCapture(t, at, []corev1.Pod{pod("search-old-abcde", "search-old")}, []corev1.Pod{pod("search-new-fghij", "search-new")})
 
 	if causes := VerifiedReflectionCauses(outcome); len(causes) != 0 {
-		t.Fatalf("the replaced Pod has no finding of its own and must not verify unaided: %v", causes)
+		t.Fatalf("the replaced Pod's uncleared finding must not verify unaided: %v", causes)
 	}
 	got := proto.Clone(outcome).(*contracts.OutcomeRecord)
 	DropReplacedOwnedPods(got, rollout)
@@ -136,6 +141,7 @@ func TestReplacedOwnedPodDoesNotBlockVerifiedWorkloadRepair(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			o := proto.Clone(outcome).(*contracts.OutcomeRecord)
 			o.ConfirmedRootCauses[0].Resources = []*contracts.ObjectRef{deployment, tc.resource}
+			o.Findings = []*contracts.Finding{o.Findings[0], podFinding(tc.resource)}
 			if tc.change != nil {
 				tc.change(o)
 			}
