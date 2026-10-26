@@ -1,0 +1,50 @@
+name: Nightly fuzz
+
+# Coverage-guided campaigns compile instrumented packages and run for their
+# whole budget, so they stay out of PR CI; every PR still replays each target's
+# seed corpus through plain `go test`. One job per module keeps a single
+# instrumented compile per job and each job under the 5-minute fuzz cap.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 4 * * *'
+permissions:
+  contents: read
+env:
+  GOMAXPROCS: '2'
+  GOFLAGS: '-p=2 -trimpath'
+jobs:
+  fuzz:
+    name: fuzz (${{ matrix.directory }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - module: sdo/operator/sdk
+            directory: sdo/operator/sdk
+            targets: FuzzObjectRefParseFormat FuzzObjectRefTypedRoundTrip
+          - module: sdo/operator
+            directory: sdo/operator/outcome_derivation
+            targets: FuzzControllerObservationBoundary
+          - module: benchmarks/sregym/protocol/native_receipt_go
+            directory: benchmarks/sregym/protocol/native_receipt_go
+            targets: FuzzNativeReceiptBoundary
+          - module: benchmarks/sregym/protocol/submission_go
+            directory: benchmarks/sregym/protocol/submission_go
+            targets: FuzzSubmissionPhaseBoundary
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version: '1.26.8'
+          cache-dependency-path: ${{ matrix.module }}/go.sum
+      - name: Run bounded fuzz campaigns
+        working-directory: ${{ matrix.directory }}
+        env:
+          TARGETS: ${{ matrix.targets }}
+        run: |
+          for target in $TARGETS; do
+            timeout 120s go test -run '^$' -fuzz "^${target}\$" -fuzzminimizetime=1s -fuzztime=30s -parallel=2 -timeout=2m .
+          done

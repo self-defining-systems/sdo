@@ -371,22 +371,22 @@ Native receipt decisions have a hermetic Go suite in
 `benchmarks/sregym/protocol/native_receipt_go`. Its fixtures are hand-authored
 generated messages. Run `go test -run '^$' -fuzz '^FuzzNativeReceiptBoundary$'
 -fuzzminimizetime=1s -fuzztime=30s -parallel=2 -timeout=2m .` there to attack malformed wire values,
-round-trip acceptance, and rejection followed by a valid incident. The existing
-controller CI matrix includes this module and the bounded fuzz run. Python
+round-trip acceptance, and rejection followed by a valid incident. PR CI replays
+its seeds; the nightly fuzz workflow runs the bounded campaign. Python
 receipt tests exercise the real checker; transport-error tests mock subprocesses.
 Submission phase tests live in `protocol/submission_go` (benchmark module) and
 `tests/unit/benchmarks/sregym/adapter/test_submission.py`. The Go fuzz target
 `FuzzSubmissionPhaseBoundary` checks that a POST requires matching observed phase,
 that completion polls never post, and that malformed facts yield typed failures.
-Run it with `-fuzztime=30s -fuzzminimizetime=1s -parallel=2 -timeout=2m`; the existing
-controller CI matrix runs the same bounded target. Image scope tests verify
+Run it with `-fuzztime=30s -fuzzminimizetime=1s -parallel=2 -timeout=2m`; the nightly
+fuzz workflow runs the same bounded target. Image scope tests verify
 separate Go compilation and binary-only copying into the benchmark worker.
 Read-only controller observations are tested in `outcome_derivation` and
 `operatorcli/controller_observation_test.go`. `FuzzControllerObservationBoundary`
 checks malformed snapshots, closed lifecycle enums, incident correlation and a
 rejected snapshot followed by a good one. Run it with `-fuzztime=30s
--fuzzminimizetime=1s -parallel=2 -timeout=2m`; the operator CI leg runs the bounded
-target. Fake controller bookkeeping stays outside the generated snapshot shape.
+-fuzzminimizetime=1s -parallel=2 -timeout=2m`; the nightly fuzz workflow runs the
+bounded target. Fake controller bookkeeping stays outside the generated snapshot shape.
 
 Uncontrolled text boundaries are fuzzed where the text is hand-written or model
 written. `memory.FuzzLegacyOutcomeStream` (retired `outcomes.jsonl`) and
@@ -816,7 +816,11 @@ coverage threshold on the complete suite. Shards suppress their partial reports
 rather than applying the global coverage threshold to a partial suite. Local
 full-suite runs continue to enforce coverage directly.
 
-The SDK/core compatibility suite remains on Go 1.24.5. The two bounded SDK fuzz
-campaigns run on the shorter operator acceptance-second runner with Go 1.26.8,
-reusing its prepared compiler graph; campaign duration and seed coverage stay
-unchanged. No hosted or Go timeout is raised and no runner is added.
+The SDK/core compatibility suite remains on Go 1.24.5. PR CI never runs
+coverage-guided fuzzing: an instrumented compile (~90 s) plus the campaigns does
+not fit beside a test partition in a 5-minute job. Every PR replays each fuzz
+target's seed corpus through plain `go test`, and
+`.github/workflows/nightly-fuzz.yml` runs the bounded campaigns (30 s per target,
+one job per module). `tests/unit/sdo/operator/test_ci_speed.py` rejects a `-fuzz`
+flag in `ci.yml` and checks that every nightly target still exists, since Go passes
+a missing target silently.
