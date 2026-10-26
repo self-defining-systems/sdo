@@ -51,6 +51,8 @@ type ToolRequest struct {
 }
 
 type ToolResponse struct {
+	SelectionSchema            *MenuSchema                    `json:"selection_schema,omitempty"`
+	SelectionSetSchema         *MenuSchema                    `json:"selection_set_schema,omitempty"`
 	ProgramRevisions           map[string]string              `json:"program_revisions,omitempty"`
 	OptionReports              []*contracts.MitigationReport  `json:"-"`
 	UnexplainedRemovalBlockers []UnexplainedRemovalBlocker    `json:"unexplained_removal_blockers,omitempty"`

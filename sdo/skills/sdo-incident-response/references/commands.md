@@ -125,7 +125,7 @@ Program commands use the current checkout, including shared libraries and new pl
 
 - `--bind`: named program parameter; repeat for each binding
 
-Key JSON fields: `menu.options[].{option_id, program_id, program_revision, disabled_reason, parameters}, unexplained_removal_blockers[]`.
+Key JSON fields: `menu.options[].{option_id, program_id, program_revision, disabled_reason, parameters}, selection_schema, selection_set_schema, unexplained_removal_blockers[]`.
 
 ## apply
 
@@ -154,7 +154,7 @@ Apply several independent options in one call; overlapping object write sets are
 - `--option`: independent option ID; repeat, with per-option --param arguments
 
 ```text
-EnsureDatabaseUser repairs a MongoDB user in one call. Its password and target.auth username/password take exactly one credential reference: {env: NAME} or {config_map: {name: CONFIGMAP, key: KEY, assignment: optional_NAME}} in the target Pod namespace. Assignment selects one literal NAME=value line. The executor resolves values privately; never put credential values in arguments, evidence or memory. Direct Secret keys are unavailable.
+Parameters accept ordinary JSON objects, arrays, numbers and booleans, as well as strings. sdo menu exports recursive parameters[].schema for every option, plus selection_schema and selection_set_schema; nested properties, required fields and oneOf choices describe accepted shapes. parameters[].example supplies typed synthetic inputs; replace names/values using incident evidence. CLI --param NAME=VALUE accepts JSON text for structured values. EnsureDatabaseUser repairs a MongoDB user in one call. Its password and target.auth username/password take exactly one credential reference: {env: NAME} or {config_map: {name: CONFIGMAP, key: KEY, assignment: optional_NAME}} in the target Pod namespace. Assignment selects one literal NAME=value line. The executor resolves values privately; never put credential values in arguments, evidence or memory. Direct Secret keys are unavailable.
 ```
 
 Complete report fields (`details_file`): `actions[].{application_id, targeted_healthy, mitigation_health, rollout_pending, program_revisions}, option_reports[]`.

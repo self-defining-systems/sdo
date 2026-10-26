@@ -121,6 +121,10 @@ func (c TypedPlanClient) resolveCredential(ctx context.Context, namespace string
 }
 
 func databaseSafeError(err error, fallback string) error {
+	var target *DatabaseTargetError
+	if errors.As(err, &target) {
+		return target
+	}
 	var ref *CredentialReferenceError
 	if errors.As(err, &ref) {
 		return ref

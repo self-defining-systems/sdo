@@ -168,10 +168,32 @@ func TestDatabaseConfigMapOneCallNeverEmitsCredentialArtifacts(t *testing.T) {
 		return os.WriteFile(filepath.Join(root, "tool-state.json"), payload, 0600)
 	}
 	loop.Handle(ctx, ToolRequest{Command: "menu"})
-	target, _ := json.Marshal(a.Target)
-	password, _ := json.Marshal(a.Password)
-	roles, _ := json.Marshal(a.Roles)
-	response := loop.Handle(ctx, ToolRequest{Command: "mitigate", Selection: &contracts.MitigationSelection{OptionId: "EnsureDatabaseUser", RoundLimit: 1}, Parameters: map[string]string{"target": string(target), "user": a.User, "roles": string(roles), "password": string(password)}})
+	call := func(target program.DatabaseTarget) ToolResponse {
+		t.Helper()
+		payload, marshalErr := json.Marshal(map[string]any{"command": "mitigate", "selection": map[string]any{"option_id": "EnsureDatabaseUser", "round_limit": 1}, "parameters": map[string]any{"target": target, "user": a.User, "roles": a.Roles, "password": a.Password}})
+		if marshalErr != nil {
+			t.Fatal(marshalErr)
+		}
+		var request ToolRequest
+		if err := json.Unmarshal(payload, &request); err != nil {
+			t.Fatal(err)
+		}
+		return loop.Handle(ctx, request)
+	}
+	wrong := a.Target
+	wrong.Container = "wrong-mongo"
+	refused := call(wrong)
+	refusedJSON, _ := json.Marshal(refused)
+	if !strings.Contains(string(refusedJSON), "container wrong-mongo not found; containers: [mongo]") {
+		t.Fatalf("wrong target lost actionable safe diagnostic: %s", refusedJSON)
+	}
+	mu.Lock()
+	wrongReads, wrongWrites := refsRead, mutations
+	mu.Unlock()
+	if wrongReads != 0 || wrongWrites != 0 || len(loop.MenuRepairActions()) != 0 {
+		t.Fatal("wrong container reached credentials or writes")
+	}
+	response := call(a.Target)
 	if response.Error != "" || response.Report == nil || response.Report.Status != contracts.MitigationReport_STATUS_SUCCESS {
 		t.Fatalf("one-call typed repair failed: %s %+v", response.Error, response.Report)
 	}

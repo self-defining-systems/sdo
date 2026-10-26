@@ -164,5 +164,5 @@ def test_logical_program_id_refuses_failed_parameter_binding(monkeypatch, capsys
 
     monkeypatch.setattr(tools_cli, "_exchange", exchange)
     assert tools_cli.main(["mitigate", "same", "--param", "config=ConfigMap/app/flags"]) == 1
-    assert "bound mitigation menu unavailable" in capsys.readouterr().err
+    assert "required workload binding missing" in capsys.readouterr().err
     assert len(seen) == 2
