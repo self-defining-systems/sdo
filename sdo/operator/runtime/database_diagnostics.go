@@ -44,7 +44,18 @@ type DatabaseOperationError struct {
 }
 
 func (e *DatabaseOperationError) Error() string {
-	return fmt.Sprintf("database %s: %s", e.Step, e.Reason)
+	step, reason := e.Step, e.Reason
+	switch step {
+	case DatabaseContainerLookup, DatabaseExecTransport, DatabaseClientBinary, DatabaseAuthentication, DatabaseCatalogRead, DatabaseCatalogParse, DatabaseMutation:
+	default:
+		step = "operation"
+	}
+	switch reason {
+	case DatabaseUnavailable, databaseForbidden, databaseTimeout, databaseNotFound, databaseClientFailed, databaseRejected, databaseIdentityChanged, databaseInvalidProjection:
+	default:
+		reason = DatabaseUnavailable
+	}
+	return fmt.Sprintf("database %s: %s", step, reason)
 }
 func databaseOperationFailure(step DatabaseOperationStep, err error) error {
 	reason := DatabaseUnavailable

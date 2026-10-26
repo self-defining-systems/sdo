@@ -20,3 +20,11 @@ func TestDatabaseSafeErrorRetainsNamedFailureStep(t *testing.T) {
 		t.Fatal("untrusted upstream message escaped")
 	}
 }
+
+func TestDatabaseDiagnosticsRejectUnrecognizedMessageValues(t *testing.T) {
+	const canary = "SYNTHETIC_PRIVATE_MESSAGE"
+	err := databaseSafeError(&DatabaseOperationError{Step: DatabaseOperationStep(canary), Reason: DatabaseFailureReason(canary)}, "unavailable")
+	if strings.Contains(err.Error(), canary) {
+		t.Fatal("diagnostic accepted unrecognized upstream message values")
+	}
+}

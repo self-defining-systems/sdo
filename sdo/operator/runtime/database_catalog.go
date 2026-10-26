@@ -78,7 +78,7 @@ func mongoScriptWithCredentials(t program.DatabaseTarget, a *program.EnsureDatab
 	}
 	script += "stage=61;var catalog=db.getSiblingDB(" + q(t.Database) + ");"
 	if a == nil {
-		script += `var result=catalog.runCommand({usersInfo:1,showCredentials:false,showPrivileges:false});if(result.ok!==1){throw new Error("catalog");} print(JSON.stringify(result.users.map(function(u){return {name:u.user,roles:u.roles.map(function(r){return {database:r.db,name:r.role};})};})));`
+		script += `var result=catalog.runCommand({usersInfo:1,showCredentials:false,showPrivileges:false});if(result.ok!==1){quit(result.code===13 || result.code===18 ? 60 : 61);} print(JSON.stringify(result.users.map(function(u){return {name:u.user,roles:u.roles.map(function(r){return {database:r.db,name:r.role};})};})));`
 	} else {
 		roles := make([]map[string]string, 0, len(a.Roles))
 		for _, r := range a.Roles {
