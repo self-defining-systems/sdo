@@ -79,7 +79,10 @@ def test_required_ci_still_accounts_for_every_job() -> None:
         ("responder benchmark", {"sdo-responder", "sdo-sregym-responder"}),
     ],
 )
-def test_selected_images_are_built_and_smoked(tmp_path: Path, images: str, expected: set[str]) -> None:
+def test_selected_images_are_built_and_smoked(
+    tmp_path: Path, image_build_source: Path, images: str, expected: set[str]
+) -> None:
+    source = image_build_source
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     calls = tmp_path / "calls"
@@ -91,7 +94,7 @@ def test_selected_images_are_built_and_smoked(tmp_path: Path, images: str, expec
         command.write_text(f"#!/bin/sh\n{body}\n")
         command.chmod(0o755)
     result = subprocess.run(
-        ["bash", str(ROOT / "scripts/build_sdo_images.sh")],
+        ["bash", str(source / "scripts/build_sdo_images.sh")],
         env={
             **os.environ,
             "PATH": f"{bin_dir}:{os.environ['PATH']}",
@@ -180,7 +183,105 @@ def test_image_jobs_use_the_compilation_owners_schema_identity() -> None:
     jobs = workflow()["jobs"]
     images = jobs["images"]
     assert "prepare-go" in images["needs"]
+    assert images["env"]["SDO_SOURCE_REVISION"] == "${{ github.sha }}"
     assert images["env"]["SDO_VALIDATOR_SCHEMA_IDENTITY"] == "${{ needs.prepare-go.outputs.schema_identity }}"
     assert set(images["strategy"]["matrix"]["family"]) == {"controller", "validator", "responder", "benchmark"}
     partitions = [row["operator"] for row in jobs["controller"]["strategy"]["matrix"]["include"] if "operator" in row]
     assert sorted(partitions) == ["acceptance", "acceptance-second", "broker", "compiler", "remaining"]
+
+
+@pytest.mark.parametrize("mode", ["normal", "race"])
+def test_preparation_warms_build_graphs_without_linking_or_running_tests(tmp_path: Path, mode: str) -> None:
+    """Preparation shares archives; each shard owns its test binary and execution."""
+    command = tmp_path / "go"
+    command.write_text('#!/bin/sh\nprintf "%s:%s\\n" "$PWD" "$*" >> "$SDO_TEST_CALLS"\n')
+    command.chmod(0o755)
+    calls = tmp_path / "calls"
+    result = subprocess.run(
+        ["bash", str(ROOT / "scripts/prepare_go_ci.sh"), mode],
+        env={**os.environ, "PATH": f"{tmp_path}:{os.environ['PATH']}", "SDO_TEST_CALLS": str(calls)},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    invocations = [line.split(":", 1) for line in calls.read_text().splitlines()]
+    for module in ("sdo/operator", "sdo/operator/runtime"):
+        commands = [shlex.split(args) for directory, args in invocations if directory == str(ROOT / module)]
+        assert commands == [["build", *(["-race"] if mode == "race" else []), "./..."]]
+    assert all(shlex.split(args)[0] == "build" for _, args in invocations)
+
+
+def test_normal_and_race_preparation_are_independent_bounded_jobs() -> None:
+    jobs = workflow()["jobs"]
+    preparation = jobs["prepare-go"]
+    assert preparation["strategy"]["matrix"]["mode"] == ["normal", "race"]
+    caches = [step for step in preparation["steps"] if step.get("uses", "").startswith("actions/cache")]
+    assert {step["if"] for step in caches} == {"matrix.mode == 'normal'", "matrix.mode == 'race'"}
+    assert sum("~/go/pkg/mod" in step["with"]["path"] for step in caches) == 1
+    for name in ("controller", "replay", "chaos"):
+        keys = [step["with"]["key"] for step in jobs[name]["steps"] if step.get("uses", "").startswith("actions/cache")]
+        assert any("ci-prepared-v3-normal-" in key for key in keys)
+        assert any("ci-prepared-v3-race-" in key for key in keys)
+
+
+def test_image_builder_refuses_dirty_source_before_docker(tmp_path: Path) -> None:
+    command = tmp_path / "git"
+    command.write_text('#!/bin/sh\nprintf "?? sdo/operator/uncommitted.go\\n"\n')
+    command.chmod(0o755)
+    docker = tmp_path / "docker"
+    docker.write_text("#!/bin/sh\necho unexpected-docker >&2\nexit 99\n")
+    docker.chmod(0o755)
+    result = subprocess.run(
+        ["bash", str(ROOT / "scripts/build_sdo_images.sh")],
+        env={**os.environ, "PATH": f"{tmp_path}:{os.environ['PATH']}"},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 1
+    assert "image source has uncommitted changes" in result.stderr
+    assert "unexpected-docker" not in result.stderr
+
+
+def test_downstream_cache_archives_never_unpack_into_the_same_path() -> None:
+    for name in ("python", "controller", "go-integration", "replay", "chaos"):
+        steps = workflow()["jobs"][name]["steps"]
+        restored = [
+            line.strip()
+            for step in steps
+            if step.get("uses", "").startswith("actions/cache")
+            for line in step["with"]["path"].splitlines()
+            if line.strip()
+        ]
+        assert len(restored) == len(set(restored)), (name, restored)
+        assert restored.count("~/go/pkg/mod") == 1
+
+
+def test_compiler_cache_union_preserves_existing_and_adds_race_entries(tmp_path: Path) -> None:
+    normal, race = tmp_path / "normal", tmp_path / "race"
+    for directory in (normal, race):
+        (directory / "hash").mkdir(parents=True)
+        (directory / "hash/shared-a").write_bytes(b"immutable shared archive")
+        (directory / "hash/shared-a").chmod(0o444)
+    (race / "hash/race-only-a").write_bytes(b"race archive")
+    existing_inode = (normal / "hash/shared-a").stat().st_ino
+    subprocess.run(["bash", str(ROOT / "scripts/merge_go_ci_caches.sh"), str(normal), str(race)], check=True)
+    assert (normal / "hash/shared-a").stat().st_ino == existing_inode
+    assert (normal / "hash/race-only-a").read_bytes() == b"race archive"
+    assert (normal / "hash/race-only-a").stat().st_ino == (race / "hash/race-only-a").stat().st_ino
+
+
+def test_consumers_restore_the_paths_published_by_each_mode_owner() -> None:
+    jobs = workflow()["jobs"]
+    published = {
+        mode: next(
+            step["with"]["path"] for step in jobs["prepare-go"]["steps"] if step.get("if") == f"matrix.mode == '{mode}'"
+        )
+        for mode in ("normal", "race")
+    }
+    for name in ("python", "controller", "go-integration", "replay", "chaos"):
+        for step in jobs[name]["steps"]:
+            if step.get("uses", "").startswith("actions/cache"):
+                mode = "race" if "v3-race-" in step["with"]["key"] else "normal"
+                assert step["with"]["path"].strip() == published[mode].strip(), name

@@ -190,3 +190,31 @@ def test_astronomy_memory_rule_covers_every_container_and_preserves_requests() -
                 assert c["resources"]["limits"].get("cpu") == prior["resources"].get("limits", {}).get("cpu")
     assert seen == set(measurements)
     assert len(seen) == 37
+
+
+def test_astronomy_collector_parallelism_is_explicit_without_more_resources() -> None:
+    """A host's advertised cores must not multiply collector GC workers."""
+    objects = list(yaml.safe_load_all((APP / "kubernetes/astronomy-shop.yaml").read_text()))
+    collector = next(o for o in objects if o["kind"] == "DaemonSet" and o["metadata"]["name"] == "otel-collector-agent")
+    container = collector["spec"]["template"]["spec"]["containers"][0]
+    env = {item["name"]: item.get("value") for item in container["env"]}
+    assert env.get("GOMAXPROCS") == "2"
+    assert env["GOMEMLIMIT"] == "160MiB"
+    assert container["resources"]["limits"] == {"memory": "448Mi"}
+    values = yaml.safe_load((APP / "values.yaml").read_text())
+    assert {item["name"]: item["value"] for item in values["opentelemetry-collector"]["extraEnvs"]}["GOMAXPROCS"] == "2"
+
+
+def test_app_collector_does_not_replicate_the_node_mount_tree() -> None:
+    """Host-wide instrumentation belongs to the infrastructure collector."""
+    objects = list(yaml.safe_load_all((APP / "kubernetes/astronomy-shop.yaml").read_text()))
+    daemon = next(o for o in objects if o["kind"] == "DaemonSet" and o["metadata"]["name"] == "otel-collector-agent")
+    pod = daemon["spec"]["template"]["spec"]
+    assert not any(v.get("hostPath", {}).get("path") == "/" for v in pod["volumes"])
+    assert not any(m.get("mountPropagation") == "HostToContainer" for c in pod["containers"] for m in c["volumeMounts"])
+    config = next(o for o in objects if o["kind"] == "ConfigMap" and o["metadata"]["name"] == "otel-collector-agent")
+    metrics = yaml.safe_load(config["data"]["relay"])["service"]["pipelines"]["metrics"]
+    assert "hostmetrics" not in metrics["receivers"]
+    assert "otlp" in metrics["receivers"]
+    values = yaml.safe_load((APP / "values.yaml").read_text())
+    assert values["opentelemetry-collector"]["presets"]["hostMetrics"]["enabled"] is False
