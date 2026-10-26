@@ -4,11 +4,10 @@ from __future__ import annotations
 
 import json
 import subprocess
-from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-from benchmarks.sregym.adapter import kubectl
+from benchmarks.sregym.adapter import NativeInstallConfig, kubectl
 
 
 def canonical_rules(rules: list[dict[str, Any]]) -> list[str]:
@@ -17,55 +16,96 @@ def canonical_rules(rules: list[dict[str, Any]]) -> list[str]:
     )
 
 
-def require_rbac_equality(expected: dict[str, Any], listing: list[dict[str, Any]], namespace: str) -> dict[str, Any]:
-    control = namespace + "-sdo"
-    roles = {
-        (row["metadata"]["namespace"], row["metadata"]["name"]): row
-        for key in ("ControlRoles", "AppRoles")
-        for row in expected[key]
-        if row["metadata"]["name"] == "sdo-responder"
-    }
-    bindings = {}
-    for row in listing:
-        if row["kind"] not in {"RoleBinding", "ClusterRoleBinding"}:
-            continue
-        if not any(
+def require_rbac_equality(
+    expected: dict[str, Any], listing: list[dict[str, Any]], namespace: str, control_namespace: str | None = None
+) -> dict[str, Any]:
+    control = control_namespace or namespace + "-sdo"
+
+    def bound(row: dict[str, Any]) -> bool:
+        return any(
             subject.get("kind") == "ServiceAccount"
             and subject.get("name") == "sdo-responder"
             and subject.get("namespace", row["metadata"].get("namespace")) == control
             for subject in row.get("subjects", [])
-        ):
-            continue
-        metadata = row["metadata"]
-        key = (metadata.get("namespace", ""), metadata["name"])
-        ref = row["roleRef"]
-        if key not in roles or ref != {
-            "apiGroup": "rbac.authorization.k8s.io",
-            "kind": "Role",
-            "name": "sdo-responder",
-        }:
-            raise ValueError(f"eval: responder RBAC differs from installer: unexpected grant {key}")
-        bindings[key] = row
-    if set(bindings) != set(roles):
-        raise ValueError("eval: responder RBAC differs from installer: missing binding")
-    actual = {
-        (row["metadata"].get("namespace"), row["metadata"]["name"]): row for row in listing if row["kind"] == "Role"
+        )
+
+    def identity(row: dict[str, Any], kind: str) -> tuple[str, str, str]:
+        return kind, row["metadata"].get("namespace", ""), row["metadata"]["name"]
+
+    def binding_content(row: dict[str, Any]) -> tuple[Any, list[str]]:
+        subjects = sorted(
+            json.dumps({key: value for key, value in subject.items() if value}, sort_keys=True)
+            for subject in row.get("subjects", [])
+        )
+        return row["roleRef"], subjects
+
+    bindings = {}
+    roles = {}
+    for key, kind in (
+        ("ControlBindings", "RoleBinding"),
+        ("AppBindings", "RoleBinding"),
+        ("ClusterBindings", "ClusterRoleBinding"),
+        ("ObservationBindings", "RoleBinding"),
+        ("ObservationClusterBindings", "ClusterRoleBinding"),
+    ):
+        bindings.update({identity(row, kind): row for row in expected.get(key, []) or [] if bound(row)})
+    for key, kind in (
+        ("ControlRoles", "Role"),
+        ("AppRoles", "Role"),
+        ("ClusterRoles", "ClusterRole"),
+        ("ObservationRoles", "Role"),
+        ("ObservationClusterRoles", "ClusterRole"),
+    ):
+        roles.update({identity(row, kind): row for row in expected.get(key, []) or []})
+    actual_bindings = {
+        identity(row, row["kind"]): row
+        for row in listing
+        if row["kind"] in {"RoleBinding", "ClusterRoleBinding"} and bound(row)
     }
-    for key, role in roles.items():
-        if key not in actual or canonical_rules(actual[key].get("rules", [])) != canonical_rules(role.get("rules", [])):
-            raise ValueError(f"eval: responder RBAC differs from installer: rules for {key}")
+    for key, row in actual_bindings.items():
+        if key not in bindings or binding_content(row) != binding_content(bindings[key]):
+            raise ValueError(f"eval: responder RBAC differs from installer: unexpected grant {key}")
+    if actual_bindings.keys() != bindings.keys():
+        raise ValueError("eval: responder RBAC differs from installer: missing binding")
+    actual_roles = {identity(row, row["kind"]): row for row in listing if row["kind"] in {"Role", "ClusterRole"}}
+    selected = set()
+    for key, binding in bindings.items():
+        ref = binding["roleRef"]
+        role_key = (ref["kind"], key[1] if ref["kind"] == "Role" else "", ref["name"])
+        if (
+            role_key not in roles
+            or role_key not in actual_roles
+            or canonical_rules(actual_roles[role_key].get("rules", []))
+            != canonical_rules(roles[role_key].get("rules", []))
+        ):
+            raise ValueError(f"eval: responder RBAC differs from installer: rules for {role_key}")
+        selected.add(role_key)
     return {
         "passed": True,
         "scope": "exact responder roles and all bound grants",
-        "roles": [list(key) for key in roles],
+        "roles": [[ns, name] for _, ns, name in sorted(selected)],
     }
 
 
-@lru_cache(maxsize=8)
-def installer_rbac(namespace: str) -> dict[str, Any]:
+def installer_rbac(namespace: str, config: NativeInstallConfig | None = None) -> dict[str, Any]:
     root = Path(__file__).resolve().parents[3]
+    if config is None:
+        config = NativeInstallConfig(
+            repository=root,
+            namespace=namespace,
+            control_namespace=namespace + "-sdo",
+            application="eval-dry-run",
+            controller_image="controller:test",
+            responder_image="responder:test",
+            validator_image="validator:test",
+            repository_pvc="sdo-application-repository",
+            credentials_secret="unused",
+            model="scripted",
+        )
+    if config.namespace != namespace:
+        raise ValueError("RBAC installer configuration namespace differs from admission namespace")
     result = subprocess.run(
-        ["go", "run", str(Path(__file__).with_name("rbac_go") / "main.go"), namespace],
+        ["go", "run", str(Path(__file__).with_name("rbac_go") / "main.go"), "install-existing", *config.common_args()],
         cwd=root / "sdo/operator",
         capture_output=True,
         text=True,
@@ -75,15 +115,19 @@ def installer_rbac(namespace: str) -> dict[str, Any]:
     return json.loads(result.stdout)
 
 
-def verify_rbac(kubeconfig: Path, namespace: str) -> dict[str, Any]:
+def verify_rbac(kubeconfig: Path, namespace: str, config: NativeInstallConfig | None = None) -> dict[str, Any]:
+    if config is not None and config.kubeconfig != kubeconfig:
+        raise ValueError("RBAC installer configuration kubeconfig differs from admission kubeconfig")
     listing = []
-    for resources, scope in (("roles,rolebindings", ["--all-namespaces"]), ("clusterrolebindings", [])):
+    for resources, scope in (("roles,rolebindings", ["--all-namespaces"]), ("clusterroles,clusterrolebindings", [])):
         listing.extend(
             json.loads(kubectl(["get", resources, *scope, "-o", "json"], namespace=None, kubeconfig=kubeconfig).stdout)[
                 "items"
             ]
         )
-    return require_rbac_equality(installer_rbac(namespace), listing, namespace)
+    return require_rbac_equality(
+        installer_rbac(namespace, config), listing, namespace, config.control_namespace if config is not None else None
+    )
 
 
 def reset_responder_grants(kubeconfig: Path, namespace: str) -> None:
