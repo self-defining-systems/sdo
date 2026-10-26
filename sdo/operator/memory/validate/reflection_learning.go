@@ -71,7 +71,7 @@ func ReflectionLearningDiagnostics(root string, outcome *contracts.OutcomeRecord
 				if err != nil {
 					return nil, err
 				}
-				if !slices.Contains(c.RootCauseProgramIDs, spec.ID) || !bindingsCoverRepairs(outcome, c.Bindings.Objects, cause.GetResources()) {
+				if !slices.Contains(c.RootCauseProgramIDs, spec.ID) || (!bindingsCoverRepairs(outcome, c.Bindings.Objects, cause.GetResources()) || !UndetectedCaseMatches(outcome, c, cause)) {
 					continue
 				}
 				hasProgram = true

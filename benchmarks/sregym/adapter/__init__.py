@@ -30,6 +30,7 @@ if TYPE_CHECKING:
         wait_for_proof,
     )
     from benchmarks.sregym.adapter.healthy_baseline import HealthyBaselineCaptureOps, kubectl_capture_ops
+    from benchmarks.sregym.adapter.image_retention import ImageRetentionError, retain_lane_images
     from benchmarks.sregym.adapter.lane_resources import (
         LaneResourcePolicy,
         assert_host_disk_headroom,
@@ -81,6 +82,8 @@ if TYPE_CHECKING:
 
 _EXPORTS: dict[str, str] = {
     "NativeInstallConfig": "native_operator",
+    "ImageRetentionError": "image_retention",
+    "retain_lane_images": "image_retention",
     "Deadline": "eval_guards",
     "LaneResourcePolicy": "lane_resources",
     "assert_host_disk_headroom": "lane_resources",
@@ -140,6 +143,8 @@ _EXPORTS: dict[str, str] = {
 
 __all__ = [
     "NativeInstallConfig",
+    "ImageRetentionError",
+    "retain_lane_images",
     "Deadline",
     "LaneResourcePolicy",
     "assert_host_disk_headroom",

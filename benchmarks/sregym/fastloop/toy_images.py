@@ -2,16 +2,49 @@
 
 from __future__ import annotations
 
+import fcntl
+import hashlib
 import platform
 import subprocess
 import tempfile
 import time
 from pathlib import Path
+from typing import Any
 
+from benchmarks.sregym.adapter import (
+    ImageRetentionError,
+    LaneResourcePolicy,
+    assert_host_disk_headroom,
+    retain_lane_images,
+)
 from benchmarks.sregym.fastloop.image_delivery import registry_delivery, save_delivery, warn_fallback
 
 
-def load_images(cluster: str, images: list[str], *, record_path: Path | None = None) -> dict[str, dict[str, str]]:
+def load_images(
+    cluster: str,
+    images: list[str],
+    *,
+    record_path: Path | None = None,
+    resource_policy: LaneResourcePolicy | None = None,
+) -> dict[str, dict[str, str]]:
+    # A host-local lane lock covers delivery and history rotation across run dirs.
+    key = hashlib.sha256(cluster.encode()).hexdigest()
+    with (Path("/tmp") / f"sdo-image-delivery-{key}.lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        try:
+            disk = assert_host_disk_headroom(policy=resource_policy)
+        except ValueError as exc:
+            raise ValueError(f"eval: image-delivery disk floor: {exc}") from exc
+        return _deliver_images(cluster, images, record_path=record_path, disk=disk)
+
+
+def _deliver_images(
+    cluster: str,
+    images: list[str],
+    *,
+    record_path: Path | None,
+    disk: dict[str, Any],
+) -> dict[str, dict[str, str]]:
     started = time.monotonic()
     reason = ""
     path = "registry"
@@ -32,26 +65,42 @@ def load_images(cluster: str, images: list[str], *, record_path: Path | None = N
         fallback_started = time.monotonic()
         try:
             _load_archive_images(cluster, images)
-        finally:
+        except BaseException:
             seconds = time.monotonic() - fallback_started
             warn_fallback(reason, images, seconds)
             if record_path is not None:
                 save_delivery(
                     record_path,
-                    {"path": path, "reason": reason, "seconds": seconds, "images": images, "cluster": cluster},
+                    {
+                        "path": path,
+                        "reason": reason,
+                        "seconds": seconds,
+                        "images": images,
+                        "cluster": cluster,
+                        "success": False,
+                        "disk": disk,
+                    },
                 )
-        return evidence
+            raise
+        warn_fallback(reason, images, time.monotonic() - fallback_started)
+    record = {
+        "path": path,
+        "reason": reason,
+        "seconds": time.monotonic() - started,
+        "images": images,
+        "cluster": cluster,
+        "success": True,
+        "disk": disk,
+    }
+    try:
+        record["retention"] = retain_lane_images(cluster, images)
+    except (subprocess.SubprocessError, RuntimeError, ValueError, KeyError, OSError, TypeError) as exc:
+        record["retention"] = {"error": str(exc), **(exc.evidence if isinstance(exc, ImageRetentionError) else {})}
+        if record_path is not None:
+            save_delivery(record_path, record)
+        raise RuntimeError(f"eval: image retention failed after delivery to {cluster}: {exc}") from exc
     if record_path is not None:
-        save_delivery(
-            record_path,
-            {
-                "path": path,
-                "reason": reason,
-                "seconds": time.monotonic() - started,
-                "images": images,
-                "cluster": cluster,
-            },
-        )
+        save_delivery(record_path, record)
     return evidence
 
 

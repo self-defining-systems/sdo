@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -45,7 +46,7 @@ func TestObjectRefJSONPassesRawAgentTextToGo(t *testing.T) {
 }
 
 func FuzzObjectRefParseFormat(f *testing.F) {
-	for _, seed := range []string{"Deployment/api", "deploy/shop/api", "shop/deployments.apps/api", "Service/a; Service/b", "Service//api", "example.dev/v2@Widget/shop/example", "\xff\x00"} {
+	for _, seed := range []string{"Deployment/api", "deploy/shop/api", "shop/deployments.apps/api", "Service/a; Service/b", "Service//api", "example.dev/v2@Widget/shop/example", `{"api_version":"apps/v1","kind":"Deployment","namespace":"app","name":"worker"}`, `{"kind":"Pod","name":"worker","name":"peer"}`, "\xff\x00"} {
 		f.Add(seed)
 	}
 	f.Fuzz(func(t *testing.T, raw string) {
@@ -127,5 +128,21 @@ func TestClusterRBACReferencesKeepTheirKindVersionAndScope(t *testing.T) {
 		if err != nil || ref.Kind != kind || ref.APIVersion != "rbac.authorization.k8s.io/v1" || ref.Namespace != "" {
 			t.Fatalf("cluster RBAC reference: %+v %v", ref, err)
 		}
+	}
+}
+
+func TestObjectRefErrorOffersCallerExample(t *testing.T) {
+	for _, raw := range []string{`Deployment/app/worker,peer`, `{"kind":"Deployment","namespace":"app","name":"worker","names":["peer"]}`} {
+		_, err := ParseObjectRef(raw)
+		if err == nil || !strings.Contains(err.Error(), "Kind/name") || !strings.Contains(err.Error(), "kind") || !strings.Contains(err.Error(), "Deployment/app/worker") {
+			t.Fatalf("reference %q needs accepted forms and a caller-derived example: %v", raw, err)
+		}
+	}
+}
+
+func TestObjectRefErrorsDoNotEchoUnrelatedFields(t *testing.T) {
+	_, err := ParseObjectRef(`{"kind":"Deployment","namespace":"app","name":"worker","unexpected":"PRIVATE_CANARY"}`)
+	if err == nil || strings.Contains(err.Error(), "PRIVATE_CANARY") || !strings.Contains(err.Error(), "Deployment/app/worker") {
+		t.Fatalf("unsafe or unhelpful error: %v", err)
 	}
 }

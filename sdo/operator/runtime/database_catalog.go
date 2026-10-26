@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -16,7 +15,6 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/remotecommand"
 	spdytransport "k8s.io/client-go/transport/spdy"
-	utilexec "k8s.io/client-go/util/exec"
 	"sdo.dev/operator/sdk/program"
 )
 
@@ -74,21 +72,21 @@ func mongoScript(t program.DatabaseTarget, a *program.EnsureDatabaseUser) string
 
 func mongoScriptWithCredentials(t program.DatabaseTarget, a *program.EnsureDatabaseUser, env func(program.CredentialRef) string) string {
 	q := func(v any) string { b, _ := json.Marshal(v); return string(b) }
-	script := `try { function credential(n,c){var v=(typeof process!=="undefined" && process.env)?process.env[n]:_getEnv(n);if(typeof v!=="string" || v.length===0){quit(c);}return v;}`
+	script := `try { var stage=61; function credential(n,c){var v=(typeof process!=="undefined" && process.env)?process.env[n]:_getEnv(n);if(typeof v!=="string" || v.length===0){quit(c);}return v;}`
 	if t.Auth != nil {
-		script += "var authDB=db.getSiblingDB(" + q(t.Auth.Database) + ");if(!authDB.auth(" + env(t.Auth.Username) + "," + env(t.Auth.Password) + ")){throw new Error('auth');}"
+		script += "stage=60;var authDB=db.getSiblingDB(" + q(t.Auth.Database) + ");if(!authDB.auth(" + env(t.Auth.Username) + "," + env(t.Auth.Password) + ")){throw new Error('auth');}"
 	}
-	script += "var catalog=db.getSiblingDB(" + q(t.Database) + ");"
+	script += "stage=61;var catalog=db.getSiblingDB(" + q(t.Database) + ");"
 	if a == nil {
-		script += `var result=catalog.runCommand({usersInfo:1,showCredentials:false,showPrivileges:false});if(result.ok!==1){throw new Error("catalog");} print(JSON.stringify(result.users.map(function(u){return {name:u.user,roles:u.roles.map(function(r){return {database:r.db,name:r.role};})};})));`
+		script += `var result=catalog.runCommand({usersInfo:1,showCredentials:false,showPrivileges:false});if(result.ok!==1){quit(result.code===13 || result.code===18 ? 60 : 61);} print(JSON.stringify(result.users.map(function(u){return {name:u.user,roles:u.roles.map(function(r){return {database:r.db,name:r.role};})};})));`
 	} else {
 		roles := make([]map[string]string, 0, len(a.Roles))
 		for _, r := range a.Roles {
 			roles = append(roles, map[string]string{"db": r.Database, "role": r.Name})
 		}
-		script += "var name=" + q(a.User) + ",roles=" + q(roles) + ";if(catalog.getUser(name)===null){catalog.createUser({user:name,pwd:" + env(a.Password) + ",roles:roles});}else{catalog.updateUser(name,{roles:roles});}"
+		script += "stage=62;var name=" + q(a.User) + ",roles=" + q(roles) + ";if(catalog.getUser(name)===null){catalog.createUser({user:name,pwd:" + env(a.Password) + ",roles:roles});}else{catalog.updateUser(name,{roles:roles});}"
 	}
-	return script + `} catch(e) { quit(41); }` + "\n"
+	return script + `} catch(e) { quit(stage); }` + "\n"
 }
 
 type catalogOutput struct{ bytes.Buffer }
@@ -126,11 +124,11 @@ func (c TypedPlanClient) mongo(ctx context.Context, t program.DatabaseTarget) ([
 		return nil, err
 	}
 	if c.Client == nil || c.ExecConfig == nil || c.Client.CoreV1().RESTClient() == nil {
-		return nil, fmt.Errorf("database exec transport unavailable")
+		return nil, databaseOperationFailure(DatabaseExecTransport, nil)
 	}
 	object, err := c.Get(ctx, t.Pod)
 	if err != nil || object == nil || object.GetUID() == "" {
-		return nil, fmt.Errorf("database Pod unavailable")
+		return nil, databaseOperationFailure(DatabaseContainerLookup, err)
 	}
 	if err := validateDatabaseContainer(object, t.Container); err != nil {
 		return nil, err
@@ -148,27 +146,21 @@ func (c TypedPlanClient) mongo(ctx context.Context, t program.DatabaseTarget) ([
 	config := rest.CopyConfig(c.ExecConfig)
 	transport, upgrader, err := spdytransport.RoundTripperFor(config)
 	if err != nil {
-		return nil, fmt.Errorf("database exec transport unavailable")
+		return nil, databaseOperationFailure(DatabaseExecTransport, nil)
 	}
 	executor, err := remotecommand.NewSPDYExecutorRejectRedirects(transport, upgrader, "POST", request.URL())
 	if err != nil {
-		return nil, fmt.Errorf("database exec transport unavailable")
+		return nil, databaseOperationFailure(DatabaseExecTransport, nil)
 	}
 	output := &catalogOutput{}
 	var stdout io.Writer = output
 	err = executor.StreamWithContext(ctx, remotecommand.StreamOptions{Stdin: strings.NewReader(input), Stdout: stdout})
 	if err != nil {
-		var exited utilexec.ExitError
-		if errors.As(err, &exited) {
-			if refErr := databaseCredentialExit(t, nil, int32(exited.ExitStatus())); refErr != nil {
-				return nil, refErr
-			}
-		}
-		return nil, fmt.Errorf("database operation failed or outcome unknown")
+		return nil, databaseStreamFailure(ctx, t, err)
 	}
 	current, readErr := c.Get(ctx, t.Pod)
 	if readErr != nil || current == nil || current.GetUID() != object.GetUID() {
-		return nil, fmt.Errorf("database operation Pod identity changed")
+		return nil, &DatabaseOperationError{Step: DatabaseContainerLookup, Reason: databaseIdentityChanged}
 	}
 	return output.Bytes(), nil
 }
@@ -181,9 +173,13 @@ func (c TypedPlanClient) DatabaseUsers(ctx context.Context, t program.DatabaseTa
 	d := json.NewDecoder(bytes.NewReader(raw))
 	d.DisallowUnknownFields()
 	if err = d.Decode(&users); err != nil || d.Decode(new(any)) != io.EOF {
-		return nil, fmt.Errorf("database catalog returned invalid nonsecret projection")
+		return nil, &DatabaseOperationError{Step: DatabaseCatalogParse, Reason: databaseInvalidProjection}
 	}
-	return program.NormalizeDatabaseUsers(users)
+	normalized, err := program.NormalizeDatabaseUsers(users)
+	if err != nil {
+		return nil, &DatabaseOperationError{Step: DatabaseCatalogParse, Reason: databaseInvalidProjection}
+	}
+	return normalized, nil
 }
 func (c TypedPlanClient) EnsureDatabaseUser(ctx context.Context, a program.EnsureDatabaseUser) error {
 	if err := a.Validate(); err != nil {
@@ -192,7 +188,7 @@ func (c TypedPlanClient) EnsureDatabaseUser(ctx context.Context, a program.Ensur
 	t := a.Target
 	before, err := c.Get(ctx, t.Pod)
 	if err != nil || before == nil || before.GetUID() == "" {
-		return fmt.Errorf("database Pod unavailable")
+		return databaseOperationFailure(DatabaseContainerLookup, err)
 	}
 	if err := validateDatabaseContainer(before, t.Container); err != nil {
 		return err
@@ -208,17 +204,15 @@ func (c TypedPlanClient) EnsureDatabaseUser(ctx context.Context, a program.Ensur
 	// This command is executor-local: only the reference-bearing action is recorded.
 	command := program.Command{Pod: t.Pod, Container: t.Container, Args: mongoCommandArgs(shell, databaseCredentialRefs(t, &a)...), Stdin: input}
 	code, err := c.runCommand(ctx, command)
-	if err == nil {
-		if refErr := databaseCredentialExit(t, &a, code); refErr != nil {
-			return refErr
-		}
+	if err != nil {
+		return databaseOperationFailure(DatabaseExecTransport, err)
 	}
-	if err != nil || code != 0 {
-		return fmt.Errorf("database operation failed or outcome unknown")
+	if code != 0 {
+		return databaseProcessFailure(t, &a, code)
 	}
 	after, err := c.Get(ctx, t.Pod)
 	if err != nil || after == nil || after.GetUID() != before.GetUID() {
-		return fmt.Errorf("database operation Pod identity changed")
+		return &DatabaseOperationError{Step: DatabaseContainerLookup, Reason: databaseIdentityChanged}
 	}
 	return nil
 }

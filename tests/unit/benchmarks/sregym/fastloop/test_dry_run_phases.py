@@ -96,6 +96,7 @@ def test_reused_admission_receives_full_steady_budget(monkeypatch, tmp_path):
     from contextlib import nullcontext
     from types import SimpleNamespace
 
+    from benchmarks.sregym import adapter
     from benchmarks.sregym.fastloop import admission, cli
 
     receipt = tmp_path / "receipt.json"
@@ -109,4 +110,16 @@ def test_reused_admission_receives_full_steady_budget(monkeypatch, tmp_path):
         assert gate.timeout_seconds == 300
 
     monkeypatch.setattr(admission.LaneAdmission, "prove", prove)
-    dry_run.refresh_reused_proof(SimpleNamespace(namespace="app"), tmp_path, report, lambda *a, **kw: None, 300)
+    probes = []
+
+    def probe(args, **kwargs):
+        probes.append((args, kwargs))
+        return SimpleNamespace(returncode=0, stdout='{"passed":true,"observations":[]}', stderr="")
+
+    monkeypatch.setattr(adapter, "kubectl", probe)
+    environment = SimpleNamespace(namespace="app", kubeconfig=tmp_path / "kubeconfig")
+    dry_run.refresh_reused_proof(environment, tmp_path, report, lambda *a, **kw: None, 300)
+    assert len(probes) == 1
+    assert probes[0][0][-3:] == ["/usr/local/bin/sdo-observation-check", "--namespace", "app"]
+    assert probes[0][1]["namespace"] == "app-sdo"
+    assert probes[0][1]["kubeconfig"] == environment.kubeconfig
