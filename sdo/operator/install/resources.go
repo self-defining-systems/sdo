@@ -342,6 +342,9 @@ func Resources(c Config, resources ...*metav1.APIResourceList) (Plan, error) {
 func programApplyRules() []rbacv1.PolicyRule {
 	return []rbacv1.PolicyRule{
 		rule("", []string{"configmaps", "services", "pods"}, "get", "patch", "create", "delete"),
+		// The exec transport of Exec, EnsureExec, EnsureHTTP and EnsureDatabaseUser
+		// runs as the controller's in-cluster identity.
+		rule("", []string{"pods/exec"}, "get", "create"),
 		rule("autoscaling", []string{"horizontalpodautoscalers"}, "get", "patch", "create", "delete"),
 		rule("policy", []string{"poddisruptionbudgets"}, "get", "patch", "create", "delete"),
 		rule("apps", []string{"deployments", "statefulsets"}, "get", "patch", "create", "delete"),

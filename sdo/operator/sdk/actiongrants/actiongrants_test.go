@@ -30,8 +30,11 @@ func TestEveryActionTypeDeclaresItsPermissions(t *testing.T) {
 				t.Errorf("%s: action type %s has no ActionPermissions entry", file, match[1])
 				continue
 			}
-			if len(entry.Needs) == 0 && entry.OpenEnded == "" && entry.Elsewhere == "" {
-				t.Errorf("%s declares nothing", match[1])
+			if (len(entry.Needs) == 0) == (entry.OpenEnded == "") {
+				t.Errorf("%s must declare Needs or OpenEnded, not both and not neither", match[1])
+			}
+			if entry.Identity == "" {
+				t.Errorf("%s names no ServiceAccount that performs it", match[1])
 			}
 		}
 	}
