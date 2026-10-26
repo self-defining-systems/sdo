@@ -147,3 +147,21 @@ def test_warm_recording_replays_with_canonical_checkout_identity(tmp_path: Path,
     assert replay.run(_request("inspect /tmp/replay"), Sink()).stdout == "recorded\n"
     assert fake.requests[0].argv[-1] == "inspect /sdo/proposal"
     assert len(fake.requests) == 1
+
+
+def test_reflection_turn_over_four_mib_records_each_line_once_and_replays(tmp_path: Path) -> None:
+    # A resumed reflection that reads large tool results emits megabytes of JSONL in one turn.
+    line = '{"type":"item.completed","item":{"type":"mcp_tool_call","result":"' + "x" * (160 << 10) + '"}}\n'
+    output = [line] * 32 + ['{"type":"turn.completed"}\n']
+    fake = FakeExecutor(FakeRun(stdout=output, stderr=["notice\n"]))
+    streamed = Sink()
+
+    result = RecordingExecutor(tmp_path, request_json="{}", live=fake, record=True).run(_request("reflect"), streamed)
+
+    (recorded,) = tmp_path.glob("*/*.json")
+    assert sum(map(len, output)) > 4 << 20
+    assert recorded.stat().st_size < sum(map(len, output)) * 1.1
+    replayed = Sink()
+    assert RecordingExecutor(tmp_path, request_json="{}", live=None).run(_request("reflect"), replayed) == result
+    assert replayed.stdout_lines == streamed.stdout_lines == output
+    assert replayed.stderr_lines == ["notice\n"]
