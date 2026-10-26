@@ -25,9 +25,8 @@ type Recorder interface {
 	Gap()
 }
 
-// New forwards the original request and response bytes. writeTransport must use
-// fresh connections: net/http can retry a reused connection with idempotency
-// headers even for POST. The production adapter disables keepalives for writes.
+// New forwards request and response bytes through the incident connection pool.
+// Mutation requests cannot opt into transport retries using idempotency headers.
 func New(upstream *url.URL, readTransport, writeTransport http.RoundTripper, recorder Recorder) http.Handler {
 	return NewWithMutationGate(upstream, readTransport, writeTransport, recorder, nil)
 }
@@ -92,6 +91,10 @@ func NewWithMutationGate(upstream *url.URL, readTransport, writeTransport http.R
 			director(req)
 			req.Host = upstream.Host
 			req.GetBody = nil
+			if mutating(req.Method) {
+				req.Header.Del("Idempotency-Key")
+				req.Header.Del("X-Idempotency-Key")
+			}
 			req.Header.Del("Authorization") // upstream wrapper supplies the Pod service-account token
 		}
 		proxy.ModifyResponse = func(res *http.Response) error {

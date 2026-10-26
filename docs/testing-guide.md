@@ -702,6 +702,14 @@ It reuses the scripted registrations and ordinary loop, including a real isolate
 validator Job, and must finish within five minutes. See the
 [fastloop proof instructions](../benchmarks/sregym/experiments/fastloop/README.md#required-learning-loop-proof-before-live-firstrepeat-runs)
 for report identity, stage receipts and rehearsal workspace requirements.
+## Recorded Kubernetes client generation
+
+`scripts/gen_kube_read_clients.sh` derives the read-only built-in interfaces from
+client-go's pinned Go AST. Run it after updating the SDK's client-go dependency;
+`--check` reports drift without writing files. The SDK's
+`TestReadClientMatchesPinnedKubernetesAPI` runs this check alongside recording,
+selector/pagination, discovery and CRD tests. Source-bound reads and compiled
+playbook failure propagation are covered by the runtime client tests.
 ### Concurrent shared memory
 
 `TestHermeticSharedMemoryControllers` runs two real controllers with distinct
