@@ -22,7 +22,7 @@ from sdo.agents.responder.reflection_evidence import install_evidence_tools
 from sdo.agents.responder.tool_output import bound_reply
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Awaitable, Callable, Sequence
 
     from mcp.types import ContentBlock
 
@@ -71,7 +71,13 @@ class _TextToolServer(FastMCP):
         return result if bounded == text else [TextContent(type="text", text=bounded)]
 
 
-def validation_server(root: Path, *, timeout_seconds: float = VALIDATION_TIMEOUT_SECONDS) -> FastMCP:
+def validation_server(
+    root: Path,
+    *,
+    timeout_seconds: float = VALIDATION_TIMEOUT_SECONDS,
+    expire: Callable[[float], Awaitable[object]] = asyncio.sleep,
+) -> FastMCP:
+    """Serve the reflection tools; ``expire(timeout_seconds)`` returns when a check times out."""
     if (
         isinstance(timeout_seconds, bool)
         or not math.isfinite(timeout_seconds)
@@ -138,23 +144,34 @@ def validation_server(root: Path, *, timeout_seconds: float = VALIDATION_TIMEOUT
         except OSError as exc:
             return ValidationResult(2, False, "", f"cannot start memory check: {exc}")
         communication = asyncio.create_task(process.communicate())
-        try:
-            stdout, stderr = await asyncio.wait_for(asyncio.shield(communication), timeout_seconds)
-        except (TimeoutError, asyncio.CancelledError) as exc:
+
+        async def stop() -> tuple[bytes, bytes]:
             # Go builds/tests may have children holding the pipes. Terminate the
             # whole validation process group and reap it, including on tool cancellation.
             with contextlib.suppress(ProcessLookupError):
                 os.killpg(process.pid, signal.SIGKILL)
-            stdout, stderr = await communication
-            if isinstance(exc, asyncio.CancelledError):
-                raise
+            return await communication
+
+        deadline = asyncio.ensure_future(expire(timeout_seconds))
+        try:
+            await asyncio.wait((communication, deadline), return_when=asyncio.FIRST_COMPLETED)
+        except asyncio.CancelledError:
+            await stop()
+            raise
+        finally:
+            deadline.cancel()
+        if communication.done():
+            stdout, stderr = communication.result()
             return ValidationResult(
-                2,
-                True,
-                validation_output(stdout),
-                f"memory check timed out after {timeout_seconds:g}s\n{validation_output(stderr)}",
+                process.returncode or 0, False, validation_output(stdout), validation_output(stderr)
             )
-        return ValidationResult(process.returncode or 0, False, validation_output(stdout), validation_output(stderr))
+        stdout, stderr = await stop()
+        return ValidationResult(
+            2,
+            True,
+            validation_output(stdout),
+            f"memory check timed out after {timeout_seconds:g}s\n{validation_output(stderr)}",
+        )
 
     return server
 
