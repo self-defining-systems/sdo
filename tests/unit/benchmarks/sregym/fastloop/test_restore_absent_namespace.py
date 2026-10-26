@@ -3,7 +3,9 @@
 Fixture shape from lane 53 (h9.3): the baseline captured a fault-infrastructure
 namespace (``policy-system``) that held only the API-generated default
 ServiceAccount; the admission fault's recovery deleted the namespace, and the
-restore then applied into it and failed with ``namespaces not found``.
+restore then applied into it and failed with ``namespaces not found``. Restore
+recreates any absent captured namespace before its first write, the same rule
+the reset path already applies.
 """
 
 from __future__ import annotations
@@ -11,9 +13,8 @@ from __future__ import annotations
 import json
 from copy import deepcopy
 from dataclasses import dataclass, field
-from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
@@ -22,10 +23,11 @@ from benchmarks.sregym.fastloop.baseline_recovery import (
     ApplicationNamespaceAbsent,
     KubectlApplicationCluster,
     reconcile_application,
-    save_application_baseline,
-    seal_existing_install,
 )
 from benchmarks.sregym.fastloop.fault_driver import SregymFaultDriver
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def obj(kind: str, name: str, namespace: str, **fields: Any) -> dict[str, Any]:
@@ -60,15 +62,17 @@ class ApiServer:
         self.namespaces.add(namespace)
 
 
-def test_absent_namespace_holding_only_generated_defaults_is_left_absent() -> None:
+def test_lane53_defaults_only_namespace_deleted_by_fault_cleanup_is_recreated_then_restored() -> None:
     cluster = ApiServer({"social-network"})
     baseline = ApplicationBaseline("policy-system", [obj("ServiceAccount", "default", "policy-system")])
 
     cleanup = reconcile_application(cluster, baseline, "policy-system")
 
-    assert cluster.events == []
-    assert cleanup.absent_namespace == "left_absent"
-    assert cleanup.restored == []
+    assert cluster.events == [
+        ("create_namespace", "policy-system"),
+        ("apply", "policy-system", "ServiceAccount", "default"),
+    ]
+    assert cleanup.recreated_namespace
 
 
 def test_absent_namespace_with_application_objects_is_recreated_before_any_write() -> None:
@@ -90,7 +94,7 @@ def test_absent_namespace_with_application_objects_is_recreated_before_any_write
         ("ConfigMap", "media-config"),
         ("Service", "media"),
     }
-    assert cleanup.absent_namespace == "recreated"
+    assert cleanup.recreated_namespace
     assert all(item.recreated for item in cleanup.reapplied)
 
 
@@ -128,7 +132,8 @@ def test_fault_driver_recovery_survives_a_fault_deleted_infrastructure_namespace
     driver.recover()
 
     assert driver.last_full_cleanup_verified
-    assert "policy-system" not in cluster.namespaces
+    assert "policy-system" in cluster.namespaces
+    assert ("social-network", "ConfigMap", "nginx") in cluster.objects
 
 
 def test_kubectl_listing_of_a_missing_namespace_raises_typed_absence(monkeypatch: Any, tmp_path: Path) -> None:
@@ -154,21 +159,3 @@ def test_kubectl_listing_of_an_empty_existing_namespace_returns_no_objects(monke
     monkeypatch.setattr("benchmarks.sregym.fastloop.baseline_recovery.kubectl", api)
 
     assert KubectlApplicationCluster(tmp_path / "kubeconfig").list_objects("hotel") == []
-
-
-def test_seal_accepts_a_captured_defaults_only_namespace_that_is_gone(tmp_path: Path) -> None:
-    app = obj("ConfigMap", "nginx", "social-network", data={"a": "b"})
-    cluster = ApiServer({"social-network"})
-    cluster.objects[("social-network", "ConfigMap", "nginx")] = deepcopy(app)
-    path = tmp_path / "cluster_baseline_state.json"
-    path.write_text(json.dumps({"namespaces": []}), encoding="utf-8")
-    save_application_baseline(
-        path,
-        (
-            ApplicationBaseline("policy-system", [obj("ServiceAccount", "default", "policy-system")]),
-            ApplicationBaseline("social-network", [app]),
-        ),
-        installed=True,
-    )
-
-    seal_existing_install(path, cluster, "social-network")

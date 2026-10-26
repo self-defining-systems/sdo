@@ -11,7 +11,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Any, Literal, Protocol
+from typing import Any, Protocol
 
 from benchmarks.sregym.adapter import kubectl
 
@@ -50,8 +50,6 @@ WORKLOAD_KINDS = frozenset(
         "RoleBinding",
     }
 )
-# Objects the API server creates in every namespace; never application content.
-GENERATED_DEFAULTS = frozenset({("ServiceAccount", "default")})
 _RESOURCE_NAMES = (
     "deployments,daemonsets,statefulsets,services,configmaps,jobs,cronjobs,pods,networkpolicies,"
     "persistentvolumeclaims,serviceaccounts,roles,rolebindings"
@@ -63,8 +61,8 @@ class ApplicationNamespaceAbsent(LookupError):
 
     def __init__(self, namespace: str) -> None:
         super().__init__(
-            f"namespace {namespace!r} from the application baseline is absent; "
-            "restore recreates it only when it held application objects"
+            f"namespace {namespace!r} from the application baseline is absent "
+            "(a fault's recovery may have deleted it); baseline restore recreates it"
         )
         self.namespace = namespace
 
@@ -107,7 +105,9 @@ class KubectlApplicationCluster:
         )
 
     def create_namespace(self, namespace: str) -> None:
-        kubectl(["create", "namespace", namespace], namespace=None, kubeconfig=self.kubeconfig)
+        from benchmarks.sregym.fastloop.reset import ensure_application_namespace
+
+        ensure_application_namespace(self.kubeconfig, namespace)
 
     def delete(self, namespace: str, kind: str, name: str) -> None:
         kubectl(
@@ -205,9 +205,8 @@ class RecoveryCleanup:
     # Re-created with a new identity although the accepted source does not declare
     # them: SDO's install-time inventory cannot explain these (P43).
     undeclared_recreated: list[str] = field(default_factory=list)
-    # The namespace was gone at restore time: "recreated" before restoring its
-    # application objects, or "left_absent" when it held only generated defaults.
-    absent_namespace: Literal["recreated", "left_absent"] | None = None
+    # The captured namespace was gone at restore time and was recreated first.
+    recreated_namespace: bool = False
 
 
 def _harness_owned(value: dict[str, Any]) -> bool:
@@ -472,12 +471,9 @@ def reconcile_application(
     try:
         listed = cluster.list_objects(namespace)
     except ApplicationNamespaceAbsent:
-        if not restorable_objects(baseline):
-            cleanup.absent_namespace = "left_absent"
-            return cleanup
-        # Every namespaced write needs its namespace; create it before the first.
+        # Every namespaced write needs its namespace; recreate it before the first.
         cluster.create_namespace(namespace)
-        cleanup.absent_namespace = "recreated"
+        cleanup.recreated_namespace = True
         listed = []
     # Live evidence also protects SDO identities present in older snapshots.
     # Resolve the complete owner graph before filtering Pods or normalizing data.
@@ -529,16 +525,6 @@ def reconcile_application(
     return cleanup
 
 
-def restorable_objects(baseline: ApplicationBaseline) -> list[dict[str, Any]]:
-    """Captured application objects other than the API server's generated defaults."""
-    ownership = _ApplicationOwnership.from_objects(baseline.objects)
-    return [
-        value
-        for value in ownership.application_objects(baseline.objects, baseline.namespace)
-        if _identity(value) not in GENERATED_DEFAULTS
-    ]
-
-
 def declared_source_identities(workspace: Path) -> dict[str, frozenset[tuple[str, str]]] | None:
     """(kind, name) per namespace from the accepted rendered lock; None without a lock."""
     lock_path = workspace / ".sdo/rendered/lock.json"
@@ -580,7 +566,7 @@ def reconcile_and_record(
             "namespace": baseline.namespace,
             "declared_source_checked": declared is not None,
             "deleted_counts": cleanup.deleted_counts,
-            "absent_namespace": cleanup.absent_namespace,
+            "recreated_namespace": cleanup.recreated_namespace,
             "reapplied": [value.to_dict() for value in cleanup.reapplied],
             "warnings": warnings,
         }
@@ -743,12 +729,7 @@ def seal_existing_install(path: Path, cluster: ApplicationCluster, namespace: st
     if not baselines:
         raise ValueError("installed source seal requires the original up capture")
     for baseline in baselines:
-        try:
-            listed = cluster.list_objects(baseline.namespace)
-        except ApplicationNamespaceAbsent:
-            if restorable_objects(baseline):
-                raise
-            continue
+        listed = cluster.list_objects(baseline.namespace)
         ownership = _ApplicationOwnership.from_objects(baseline.objects + listed)
         expected = {
             _identity(v): _content(v) for v in ownership.application_objects(baseline.objects, baseline.namespace)
