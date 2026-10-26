@@ -771,3 +771,76 @@ def test_sdo_without_recovery_pause_cannot_mutate_the_cluster(tmp_path: Path) ->
     records = run_incidents(Agent(clock), driver, _config(tmp_path, 1), monotonic=clock.monotonic)
     assert "recover" not in driver.events
     assert records[0].recovery_error is not None
+
+
+def test_pre_injection_rbac_failure_never_synthesizes_an_injection(tmp_path: Path) -> None:
+    class SetupFailure(FakeAgent):
+        def resolve(self, index, problem_id, inject):
+            raise AssertionError("Responder effective RBAC differs from reviewed post-install reference")
+
+    clock = FakeClock()
+    driver = FakeDriver(clock)
+    records = run_incidents(SetupFailure(clock), driver, _config(tmp_path, 1), monotonic=clock.monotonic)
+    row = json.loads((tmp_path / "incidents.jsonl").read_text())
+    assert driver.events == []
+    assert row["injection"] == {"state": "not_injected", "stage": "pre_injection"}
+    assert row["injection_started_at"] is None
+    assert row["injection_finished_at"] is None
+    assert records[0].injection_to_resolution_seconds is None
+    assert "RBAC" in row["error"]
+
+
+def test_agent_outcome_cannot_replace_the_worker_injection_event(tmp_path: Path) -> None:
+    from dataclasses import replace
+
+    class WrongClock(FakeAgent):
+        def resolve(self, index, problem_id, inject):
+            outcome = super().resolve(index, problem_id, inject)
+            return replace(
+                outcome,
+                injection=InjectionWindow(started_at=T0 + timedelta(days=1), finished_at=T0 + timedelta(days=1)),
+            )
+
+    clock = FakeClock()
+    record = run_incidents(WrongClock(clock), FakeDriver(clock), _config(tmp_path, 1), monotonic=clock.monotonic)[0]
+    assert record.injection_started_at == T0
+    assert record.injection_finished_at == T0 + timedelta(seconds=5)
+
+
+@pytest.mark.parametrize("with_event", [False, True])
+def test_injection_failure_keeps_only_recorded_worker_event(tmp_path: Path, with_event: bool) -> None:
+    from benchmarks.sregym.protocol.injection import InvalidInjectionError
+
+    class FailsInjection(FakeDriver):
+        last_injection_window = None
+
+        def inject(self, problem_id):
+            if with_event:
+                self.last_injection_window = super().inject(problem_id)
+            raise InvalidInjectionError({"reason": "synthetic injection failure"})
+
+    clock = FakeClock()
+    record = run_incidents(FakeAgent(clock), FailsInjection(clock), _config(tmp_path, 1), monotonic=clock.monotonic)[0]
+    assert record.infra_error == "injection_invalid"
+    if with_event:
+        assert record.injection.state == "injected"
+        assert record.injection_started_at == T0
+        assert record.injection_finished_at == T0 + timedelta(seconds=5)
+    else:
+        assert record.injection.model_dump() == {"state": "not_injected", "stage": "injection"}
+        assert record.injection_started_at is None
+
+
+def test_pre_injection_error_never_reuses_the_previous_incidents_event(tmp_path: Path) -> None:
+    from benchmarks.sregym.protocol.injection import InvalidInjectionError
+
+    class SetupFailure(FakeAgent):
+        def resolve(self, index, problem_id, inject):
+            raise InvalidInjectionError({"reason": "setup failed before injection"})
+
+    clock = FakeClock()
+    driver = FakeDriver(clock)
+    driver.last_injection_window = InjectionWindow(started_at=T0, finished_at=T0)
+    record = run_incidents(SetupFailure(clock), driver, _config(tmp_path, 1), monotonic=clock.monotonic)[0]
+    assert record.injection.model_dump() == {"state": "not_injected", "stage": "pre_injection"}
+    assert record.injection_started_at is None
