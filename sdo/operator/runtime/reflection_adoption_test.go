@@ -31,12 +31,16 @@ func TestReflectionAdoptionAfterHealthRefreshAndRestart(t *testing.T) {
 			defer cancel()
 			root, _, repository, _, coordinator := tracingFixture(t)
 			old := tracingRefresh(t, root, coordinator)
-			native := NativeIncidentBroker{Repository: repository, LedgerRoot: t.TempDir(), Deriver: ProtoOutcomeDeriver{}, ResponderBackend: "test", ResponderModel: "test"}
+			native := NativeIncidentBroker{Repository: repository, LedgerRoot: t.TempDir(), ResponderBackend: "test", ResponderModel: "test", Deriver: OutcomeDeriverFunc(func(_ context.Context, c IncidentClosure, _, _, _ string) (DerivedOutcome, error) {
+				return testDerivedOutcome(c.Request.IncidentID, "success", true), nil
+			})}
 			workspace, err := native.PrepareIncident(ctx, "reflection-adoption")
 			if err != nil {
 				t.Fatal(err)
 			}
-			closure := socialRepeatClosure(workspace)
+			closure := nativeClosure(workspace)
+			closure.Request.RepairPolicy = "recorded-actions"
+			closure.Result.ResponderSessionID = "reflection-adoption-session"
 			client := fake.NewSimpleClientset()
 			registry := testIncidentRegistry(t, "reflector:test")
 			agent, err := registry.AgentFor(&contracts.ReflectionRequest{})
@@ -133,7 +137,10 @@ func TestReflectionAdoptionAfterHealthRefreshAndRestart(t *testing.T) {
 			if err := wire.Unmarshal([]byte(request.Data[worker_registry.TaskDataKey]), task); err != nil {
 				t.Fatal(err)
 			}
-			response, err := anypb.New(&contracts.ReflectionResult{LearningDecision: "no_change", NoChangeReason: "synthetic incident lacks independently verified repair evidence"})
+			if _, err := writeGoodPlaybook(IncidentWorkspace{Worktree: task.Workspace.CheckoutPath}); err != nil {
+				t.Fatal(err)
+			}
+			response, err := anypb.New(&contracts.ReflectionResult{LearningDecision: "updated", ProposedArtifactIds: []string{"base"}})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -172,8 +179,11 @@ func TestReflectionAdoptionAfterHealthRefreshAndRestart(t *testing.T) {
 				t.Fatal(ctx.Err())
 			}
 			ledger, err := native.readLedger(workspace.IncidentID)
-			if err != nil || !ledger.ReflectionProcessed || len(ledger.ReflectionResults) != 1 || ledger.AcknowledgedAt == nil {
+			if err != nil || !ledger.ReflectionProcessed || ledger.ReflectionCommit == "" || len(ledger.ReflectionResults) != 1 || ledger.AcknowledgedAt == nil {
 				t.Fatalf("reflection not adopted/ACKed once: %v %v", ledger, err)
+			}
+			if accepted := nativeGit(t, root, "show", "HEAD:.sdo/playbooks/base/README.md"); !strings.Contains(accepted, "Repair <RESOURCE_NAME> carefully") {
+				t.Fatal("completed Job's typed proposal was not published")
 			}
 			before := nativeGit(t, root, "rev-parse", "HEAD")
 			if _, err := native.ProcessClosure(ctx, closure); err != nil {
