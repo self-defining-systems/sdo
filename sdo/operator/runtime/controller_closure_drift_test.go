@@ -260,9 +260,43 @@ func TestClosureDriftUsesSourceFieldsWhenReconcileIsNoop(t *testing.T) {
 		t.Fatal(err)
 	}
 	diff.Changed = false
+	for _, finding := range f.c.currentIncidentRequest.Findings {
+		if finding.DetectorID != "drift.unexplained" {
+			continue
+		}
+		retained, _ := checkRetainedDrift(context.Background(), []sdk.Finding{finding}, driftReadView{diff: diff})
+		if len(retained) != 1 {
+			t.Fatal("status accepted apply normalization while admitted source fields differ")
+		}
+	}
 	f.c.drift.View = func(sdk.DetectionContext) program.ReadView { return driftReadView{diff: diff} }
 	f.step(t, 1)
 	if len(f.closed) != 0 {
 		t.Fatal("apply normalization hid an admitted live/source mismatch")
+	}
+}
+
+// SDO social live regression: a removed extra selector key is absent on both
+// sides of a complete source diff. Historical drift must clear like status.
+func TestClosureDriftRemovedExtraFieldsAgreeWithStatus(t *testing.T) {
+	for _, field := range []string{"spec.selector.injected", "metadata.labels.installer", "metadata.annotations.installer"} {
+		t.Run(field, func(t *testing.T) {
+			event := sdk.DriftEvent{Ref: sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "reservation"}, Fields: []sdk.DriftField{{Path: field, New: "injected"}}}
+			finding := sdk.Finding{DetectorID: "drift.unexplained", Status: sdk.FindingActive, Fingerprint: field, PrimaryResource: event.Ref, Metadata: map[string]any{"drift_event": event}}
+			source := `{"spec":{"selector":{"app":"reservation"}}}`
+			diff := program.Diff{Text: "accepted: " + source + "\nobserved: " + source}
+			if !driftFieldsRestored(diff, []sdk.DriftEvent{event}) {
+				t.Fatal("restored absent field retained historical drift")
+			}
+			c := &Controller{drift: &DriftControllerConfig{View: func(sdk.DetectionContext) program.ReadView { return driftReadView{diff: diff} }}}
+			clear, err := c.closureSourceRestored(context.Background(), sdktest.Snapshot{}, finding, []sdk.DriftEvent{event})
+			if err != nil || !clear {
+				t.Fatalf("controller verifier disagrees with clear source status: clear=%v err=%v", clear, err)
+			}
+			retained, _ := checkRetainedDrift(context.Background(), []sdk.Finding{finding}, driftReadView{diff: diff})
+			if len(retained) != 0 {
+				t.Fatalf("status retains restored fields: %+v", retained)
+			}
+		})
 	}
 }

@@ -3,7 +3,7 @@ package runtime
 import (
 	"context"
 	"encoding/json"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"fmt"
 	"reflect"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
@@ -32,7 +32,7 @@ func checkRetainedDrift(ctx context.Context, retained []sdk.Finding, view progra
 			var diff program.Diff
 			diff, err = view.DiffAgainstSource(finding.PrimaryResource)
 			if err == nil {
-				clear = !diff.Changed || driftFieldsRestored(diff, events)
+				clear = sourceDriftRestored(diff, events)
 			}
 		}
 
@@ -64,10 +64,10 @@ func driftDiffValues(diff program.Diff) (map[string]any, map[string]any, bool) {
 		return nil, nil, false
 	}
 	var accepted, observed map[string]any
-	if json.Unmarshal([]byte(parts[0]), &accepted) != nil || json.Unmarshal([]byte(parts[1]), &observed) != nil {
+	if json.Unmarshal([]byte(parts[0]), &accepted) != nil || json.Unmarshal([]byte(parts[1]), &observed) != nil || accepted == nil || observed == nil {
 		return nil, nil, false
 	}
-	return flattenDriftObject(&unstructured.Unstructured{Object: accepted}), flattenDriftObject(&unstructured.Unstructured{Object: observed}), true
+	return driftComparisonValues(accepted), driftComparisonValues(observed), true
 }
 func driftFieldsRestored(diff program.Diff, events []sdk.DriftEvent) bool {
 	accepted, observed, ok := driftDiffValues(diff)
@@ -77,12 +77,43 @@ func driftFieldsRestored(diff program.Diff, events []sdk.DriftEvent) bool {
 	for _, field := range events[0].Fields {
 		left, leftExists := accepted[field.Path]
 		right, rightExists := observed[field.Path]
-		if !leftExists && !rightExists {
-			return false
-		}
+		// Equal absence is restoration when both complete objects are known.
 		if leftExists != rightExists || !reflect.DeepEqual(left, right) {
 			return false
 		}
 	}
 	return true
+}
+
+// Status and independent closure share the same complete source comparison.
+// Apply-normalized Changed alone cannot prove that admitted fields recovered.
+func sourceDriftRestored(diff program.Diff, events []sdk.DriftEvent) bool {
+	if diff.SourceAbsent {
+		return !diff.Changed
+	}
+	return driftFieldsRestored(diff, events) || (!diff.Changed && diff.Text == "")
+}
+
+// Preserve containers as well as leaves so an aggregate is compared as an
+// actual value, while genuine absence remains distinct from an absent object.
+func driftComparisonValues(object map[string]any) map[string]any {
+	values := map[string]any{}
+	var walk func(string, any)
+	walk = func(path string, value any) {
+		values[path] = value
+		switch value := value.(type) {
+		case map[string]any:
+			for key, child := range value {
+				walk(path+"."+key, child)
+			}
+		case []any:
+			for index, child := range value {
+				walk(fmt.Sprintf("%s[%d]", path, index), child)
+			}
+		}
+	}
+	for key, value := range comparableFields(object) {
+		walk(key, value)
+	}
+	return values
 }
