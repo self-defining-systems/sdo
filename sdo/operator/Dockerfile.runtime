@@ -28,7 +28,7 @@ RUN mkdir /deps \
 
 FROM go-modules AS go-deps
 # Bound shared-host build parallelism, including nested compiler jobs.
-ENV GOMAXPROCS=8 GOFLAGS="-p=8"
+ENV GOMAXPROCS=4 GOFLAGS="-p=4"
 COPY --from=go-dep-list /deps /deps
 RUN for dir in sdo/operator/sdk sdo/operator/core sdo/operator/runtime sdo/operator; do \
       (cd "$dir" && go build $(cat "/deps/$(echo "$dir" | tr / _).txt")); \
