@@ -25,8 +25,10 @@ type InstallExistingConfig struct {
 	OperatorRoot        string
 	Kubeconfig          string
 	SeedBrokerRoot      string
-	Duration            time.Duration
-	Install             install.Config
+	// DeployedManifestPaths scopes adoption evidence to the accepted deployment.
+	DeployedManifestPaths []string
+	Duration              time.Duration
+	Install               install.Config
 }
 
 type InstallExistingResult struct {
@@ -170,7 +172,7 @@ func ParseInstallExistingLaunch(args []string) (InstallExistingConfig, error) {
 	if *exitAfterClosure {
 		config.ExtraControllerArgs = append(config.ExtraControllerArgs, "--exit-after-closure")
 	}
-	return InstallExistingConfig{AdoptExistingMemory: *adopt, OperatorRoot: *operatorRoot, Repository: *repository, Kubeconfig: *kubeconfig, SeedBrokerRoot: *seedBrokerRoot, Duration: *duration, Install: config}, nil
+	return InstallExistingConfig{AdoptExistingMemory: *adopt, OperatorRoot: *operatorRoot, Repository: *repository, Kubeconfig: *kubeconfig, SeedBrokerRoot: *seedBrokerRoot, DeployedManifestPaths: deployedManifestPaths, Duration: *duration, Install: config}, nil
 }
 
 func RunInstallExisting(ctx context.Context, launch InstallExistingConfig) (InstallExistingResult, error) {
@@ -186,7 +188,7 @@ func RunInstallExisting(ctx context.Context, launch InstallExistingConfig) (Inst
 	config.AcceptedCommit = commit
 	installer := install.Installer{
 		Client:         client,
-		SeedRepository: install.KubectlTarSeederWithBrokerEvidence(launch.Repository, commit, launch.Kubeconfig, launch.SeedBrokerRoot),
+		SeedRepository: install.KubectlTarAdoptionSeeder(launch.Repository, commit, launch.Kubeconfig, launch.SeedBrokerRoot, &install.AdoptionCapture{Client: client, ManifestPaths: launch.DeployedManifestPaths}),
 		SyncRepository: install.KubectlTarSynchronizerWithKubeconfig(launch.Repository, launch.Kubeconfig),
 	}
 	installer.BeforeControllerStart = existingNamespaceOnboardingHook(client, launch, commit)
