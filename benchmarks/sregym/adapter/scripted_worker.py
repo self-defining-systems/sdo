@@ -401,15 +401,7 @@ def scripted_responder(request: IncidentRequest) -> IncidentResult:
         if not path.exists():
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(
-                json.dumps(
-                    {
-                        "apiVersion": "v1",
-                        "kind": "ConfigMap",
-                        "metadata": {"name": "verification-policy", "namespace": request.namespace},
-                        "data": {"verification": "independent-health"},
-                    }
-                )
-                + "\n",
+                json.dumps(_verification_policy(request.namespace)) + "\n",
                 encoding="utf-8",
             )
             action_start = _now()
@@ -709,6 +701,15 @@ class ScriptedReflector:
         )
 
 
+def _verification_policy(namespace: str) -> dict[str, Any]:
+    return {
+        "apiVersion": "v1",
+        "kind": "ConfigMap",
+        "metadata": {"name": "verification-policy", "namespace": namespace},
+        "data": {"verification": "independent-health"},
+    }
+
+
 def _scripted_toy_health_judge(request: HealthJudgeRequest, checkout: Path) -> HealthJudgeResult:
     """Retain the exact hand-authored toy policy after checking its source shape."""
     seed = Path(__file__).resolve().parents[3] / "apps/toy/seed/.sdo"
@@ -725,6 +726,11 @@ def _scripted_toy_health_judge(request: HealthJudgeRequest, checkout: Path) -> H
     for path in sorted((seed.parents[1] / "kubernetes").glob("*.yaml")):
         for obj in yaml.safe_load_all(path.read_text()):
             expected.add((obj["kind"], obj["metadata"].get("namespace", request.namespace), obj["metadata"]["name"]))
+    policy = checkout / "kubernetes/verification-policy.yaml"
+    if policy.exists():
+        if yaml.safe_load(policy.read_text()) != _verification_policy(request.namespace):
+            raise ValueError("scripted toy health refresh requires the unchanged verification policy")
+        expected.add(("ConfigMap", request.namespace, "verification-policy"))
     actual = {
         (row.kind, request.namespace if row.namespace in ("", "default") else row.namespace, row.name)
         for row in request.source_resources

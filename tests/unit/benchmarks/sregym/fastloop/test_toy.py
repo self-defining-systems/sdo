@@ -164,7 +164,18 @@ def test_sweep_stream_models_an_unowned_service_without_changing_controller():
 
 
 @pytest.mark.parametrize(
-    "change", ["none", "proof", "namespace", "objective", "topology", "missing-detector", "changed-detector"]
+    "change",
+    [
+        "none",
+        "proof",
+        "namespace",
+        "objective",
+        "topology",
+        "missing-detector",
+        "changed-detector",
+        "source-policy",
+        "changed-policy",
+    ],
 )
 def test_toy_scripted_health_refresh_needs_no_rehearsal_slot(tmp_path, monkeypatch, change):
     import shutil
@@ -205,7 +216,22 @@ def test_toy_scripted_health_refresh_needs_no_rehearsal_slot(tmp_path, monkeypat
         detector.unlink()
     if change == "changed-detector":
         detector.write_text("package toy\n")
-    if change in {"none", "proof"}:
+    if change in {"source-policy", "changed-policy"}:
+        policy = {
+            "apiVersion": "v1",
+            "kind": "ConfigMap",
+            "metadata": {"name": "verification-policy", "namespace": namespace},
+            "data": {"verification": "changed" if change == "changed-policy" else "independent-health"},
+        }
+        (tmp_path / "kubernetes").mkdir()
+        (tmp_path / "kubernetes/verification-policy.yaml").write_text(yaml.safe_dump(policy))
+        request.source_resources.add(
+            kind="ConfigMap",
+            namespace=namespace,
+            name="verification-policy",
+            source="kubernetes/verification-policy.yaml",
+        )
+    if change in {"none", "proof", "source-policy"}:
         result = scripted_worker.scripted_health_judge(request, tmp_path)
         assert result.authored
         assert "toy-endpoints" in result.detector_ids
