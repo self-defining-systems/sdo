@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os/exec"
 	"path/filepath"
+	"sdo.dev/operator/shellpath"
 	"strings"
 	"time"
 
@@ -272,6 +273,11 @@ func (i Installer) install(ctx context.Context, cfg Config, prepared bool) (resu
 			return Result{}, fmt.Errorf("seed accepted repository: %w", err)
 		}
 		if err := i.markPreparedCommit(ctx, cfg); err != nil {
+			return Result{}, err
+		}
+	}
+	if runner, enabled := ShellRunnerConfig(cfg); enabled && !prepared {
+		if err := shellpath.EnsureReadOnlyRunner(ctx, i.Client, runner); err != nil {
 			return Result{}, err
 		}
 	}

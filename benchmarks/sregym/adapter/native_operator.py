@@ -51,6 +51,7 @@ class NativeInstallConfig:
     reflection_session: str = "resume"
     reflection_guidance: str = "baseline"
     force_reflection: bool = False
+    code_path: str = "go"
 
     max_response_loops: int = 10
     response_timeout_seconds: int = 1800
@@ -101,6 +102,8 @@ class NativeInstallConfig:
             raise ValueError("late_findings must be off or pull")
         if self.reflection_session not in ("fresh", "resume"):
             raise ValueError("reflection_session must be fresh or resume")
+        if self.code_path not in ("go", "shell"):
+            raise ValueError("code_path must be go or shell")
         if self.reflection_guidance not in ("baseline", "generalize", "generalize-spec"):
             raise ValueError("reflection_guidance must be baseline, generalize, or generalize-spec")
         if self.max_response_loops <= 0:
@@ -494,6 +497,8 @@ def install_existing(config: NativeInstallConfig) -> NativeInstallReceipt:
     args.extend(("--late-findings", config.late_findings))
     args.extend(("--reflection-session", config.reflection_session))
     args.extend(("--reflection-guidance", config.reflection_guidance))
+    if config.code_path != "go":
+        args.extend(("--code-path", config.code_path))
     if config.force_reflection:
         args.append("--force-reflection")
     for path in config.deployed_manifest_paths:
@@ -552,6 +557,8 @@ def launch_host(config: NativeHostConfig) -> dict[str, Any]:
     args.extend(("--late-findings", config.install.late_findings))
     args.extend(("--reflection-session", config.install.reflection_session))
     args.extend(("--reflection-guidance", config.install.reflection_guidance))
+    if config.install.code_path != "go":
+        args.extend(("--code-path", config.install.code_path))
     if config.install.force_reflection:
         args.append("--force-reflection")
 

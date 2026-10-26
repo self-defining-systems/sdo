@@ -641,3 +641,27 @@ def test_program_metrics_exports_incident_open_coverage() -> None:
         "unexplained_finding_fingerprints": ["three"],
     }
     assert _program_metrics({"playbook_coverage": coverage})["playbook_coverage"] == coverage
+
+
+def test_recovery_reports_a_followup_incident_that_outlives_the_bounded_wait(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from benchmarks.sregym.fastloop.loop import RecoveryWaitTimeout
+
+    ops, calls = FakeOps(), []
+    agent = _agent(tmp_path, ops, calls)
+    outcome = agent.learn(agent.resolve(0, "p", _inject))
+    followup = {
+        "last_acknowledged_incident_id": outcome.incident_id,
+        "incident_open": True,
+        "incident_request": {"incident_id": "incident-late"},
+    }
+    monkeypatch.setattr(ops, "runtime_state", lambda _control: followup)
+
+    with pytest.raises(RecoveryWaitTimeout, match="incident-late") as raised:
+        agent.prepare_recovery(outcome)
+
+    assert raised.value.wait.graded_incident_id == outcome.incident_id
+    assert raised.value.wait.followup_incident_ids == ["incident-late"]
+    assert raised.value.wait.closed is False
+    assert raised.value.wait.waited_seconds == raised.value.wait.bound_seconds == 600.0

@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sdo.dev/operator/internal/testutil"
 	"strings"
 	"sync"
 	"testing"
@@ -70,6 +71,7 @@ func collectLines(reader io.Reader, into *lockedLines) {
 func gitRepository(t *testing.T) string {
 	t.Helper()
 	repository := t.TempDir()
+	testutil.InitGit(t, repository)
 	// Production snapshots load observation policy only from accepted architecture.
 	// Keep these run fixtures on that contract, even without foreign observations.
 	if err := os.MkdirAll(filepath.Join(repository, ".sdo"), 0700); err != nil {
@@ -79,7 +81,6 @@ func gitRepository(t *testing.T) string {
 		t.Fatal(err)
 	}
 	for _, command := range [][]string{
-		{"git", "init", "-q", repository},
 		{"git", "-C", repository, "config", "user.name", "test"},
 		{"git", "-C", repository, "config", "user.email", "test@example.com"},
 		{"git", "-C", repository, "add", ".sdo/arch.md"},

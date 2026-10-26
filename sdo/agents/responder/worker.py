@@ -15,7 +15,7 @@ from google.protobuf import json_format
 
 from libs.agent_cli.startup import mark_startup
 from sdo.agents.responder.codex import ResponderExecutionError, execute_incident
-from sdo.agents.responder.credentials import AGENT_SKILLS, prepare_claude_home, prepare_codex_home
+from sdo.agents.responder.credentials import prepare_claude_home, prepare_codex_home, skills_for_role
 from sdo.agents.responder.job import KubernetesResultPublisher, write_application_kubeconfig
 from sdo.agents.responder.standby import await_standby_claim
 from sdo.contracts import (
@@ -141,8 +141,8 @@ def main() -> int:
         print("SDO_NAMESPACE and SDO_RESULT_CONFIGMAP are required", file=sys.stderr)
         return 2
     try:
-        prepare_codex_home(skills=AGENT_SKILLS["responder"])
-        prepare_claude_home(skills=AGENT_SKILLS["responder"])
+        prepare_codex_home(skills=skills_for_role("responder"))
+        prepare_claude_home(skills=skills_for_role("responder"))
         run_worker_task(
             Path(os.environ.get("SDO_TASK_PATH", str(DEFAULT_TASK_PATH))),
             result_name,

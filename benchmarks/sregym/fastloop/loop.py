@@ -26,6 +26,7 @@ from benchmarks.sregym.fastloop.records import (
     Injected,
     NotInjected,
     OracleVerdict,
+    PostClosureWait,
     TokenCounts,
     append_record,
     persist_grade_checkpoint,
@@ -39,6 +40,14 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+
+class RecoveryWaitTimeout(RuntimeError):
+    """A follow-up incident outlived recovery's bounded wait; the row stops with the wait recorded."""
+
+    def __init__(self, wait: PostClosureWait, message: str) -> None:
+        super().__init__(message)
+        self.wait = wait
 
 
 @dataclass(frozen=True)
@@ -130,7 +139,7 @@ class IncidentAgent(Protocol):
 
     def learn(self, outcome: AgentOutcome) -> AgentOutcome: ...
 
-    def prepare_recovery(self, outcome: AgentOutcome | None) -> None: ...
+    def prepare_recovery(self, outcome: AgentOutcome | None) -> PostClosureWait | None: ...
 
     def close(self) -> None: ...
 
@@ -343,14 +352,26 @@ def run_incidents(
     return records
 
 
-def _recover_fault(agent: IncidentAgent, driver: FaultDriver, outcome: AgentOutcome | None) -> float:
+def _recover_fault(
+    agent: IncidentAgent,
+    driver: FaultDriver,
+    outcome: AgentOutcome | None,
+    waits: list[PostClosureWait] | None = None,
+) -> float:
     # All harness recovery paths, including invalid injection and interruption,
     # pass this fence. Missing SDO pause support fails before a recovery write.
     if agent.name == "sdo":
         prepare = getattr(agent, "prepare_recovery", None)
         if not callable(prepare):
             raise RuntimeError("eval: SDO recovery requires an incident intake pause capability")
-        prepare(outcome)
+        try:
+            wait = prepare(outcome)
+        except RecoveryWaitTimeout as exc:
+            if waits is not None:
+                waits.append(exc.wait)
+            raise
+        if isinstance(wait, PostClosureWait) and waits is not None:
+            waits.append(wait)
     return driver.recover()
 
 
@@ -441,6 +462,7 @@ def _run_one(
     recovery_finished_at: datetime | None = None
     recovery_seconds: float | None = None
     cleanup_passes_verified = 0
+    post_closure_waits: list[PostClosureWait] = []
     recovery_error: str | None = None
     recovered = bool(windows)
     diagnosis_grade: DiagnosisGrade | None = None
@@ -499,7 +521,7 @@ def _run_one(
         try:
             recovery_seconds = 0.0
             for _ in range(config.cleanup_passes):
-                recovery_seconds += _recover_fault(agent, driver, outcome)
+                recovery_seconds += _recover_fault(agent, driver, outcome, post_closure_waits)
                 # Seed cleanup can remove injected workloads; grade the recovered baseline.
                 recovery_oracle = getattr(driver, "recovery_oracle", lambda: None)()
                 if recovery_oracle is None:
@@ -546,6 +568,7 @@ def _run_one(
         oracle_finished_at=oracle_finished_at,
         recovery_finished_at=recovery_finished_at,
         fault_recovery_seconds=recovery_seconds,
+        post_closure_waits=post_closure_waits,
         cleanup_deleted_counts=cleanup.deleted_counts if cleanup is not None else {},
         cleanup_restored=cleanup.restored if cleanup is not None else [],
         cleanup_skipped_reason=cleanup.skipped_reason if cleanup is not None else None,

@@ -9,8 +9,20 @@ from typing import TYPE_CHECKING
 import pytest
 
 from benchmarks.sregym.fastloop.baseline_recovery import RecoveryCleanup
-from benchmarks.sregym.fastloop.loop import AgentOutcome, InjectionWindow, LoopConfig, run_incidents
-from benchmarks.sregym.fastloop.records import DiagnosisGrade, OracleVerdict, TokenCounts, load_records
+from benchmarks.sregym.fastloop.loop import (
+    AgentOutcome,
+    InjectionWindow,
+    LoopConfig,
+    RecoveryWaitTimeout,
+    run_incidents,
+)
+from benchmarks.sregym.fastloop.records import (
+    DiagnosisGrade,
+    OracleVerdict,
+    PostClosureWait,
+    TokenCounts,
+    load_records,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -248,6 +260,47 @@ def test_incident_row_records_recovery_cleanup(tmp_path: Path) -> None:
 
     assert record.cleanup_deleted_counts == saved.cleanup_deleted_counts == {"Job": 1}
     assert record.cleanup_restored == saved.cleanup_restored == ["Deployment/mongodb-geo"]
+
+
+def _followup_wait(*, closed: bool) -> PostClosureWait:
+    return PostClosureWait(
+        graded_incident_id="incident-0",
+        followup_incident_ids=["incident-late"],
+        waited_seconds=42.0 if closed else 600.0,
+        bound_seconds=600.0,
+        closed=closed,
+    )
+
+
+def test_incident_row_records_the_wait_for_a_followup_incident(tmp_path: Path) -> None:
+    clock = FakeClock()
+
+    class Agent(FakeAgent):
+        def prepare_recovery(self, outcome: AgentOutcome | None) -> PostClosureWait | None:
+            return _followup_wait(closed=True)
+
+    records = run_incidents(Agent(clock), FakeDriver(clock), _config(tmp_path, 2), monotonic=clock.monotonic)
+
+    assert len(records) == 2
+    assert records[0].recovery_error is None
+    assert records[0].post_closure_waits == [_followup_wait(closed=True)]
+    assert load_records(tmp_path / "incidents.jsonl")[0].post_closure_waits == records[0].post_closure_waits
+
+
+def test_a_followup_incident_that_outlives_the_wait_stops_the_row(tmp_path: Path) -> None:
+    clock = FakeClock()
+    driver = FakeDriver(clock)
+
+    class Agent(FakeAgent):
+        def prepare_recovery(self, outcome: AgentOutcome | None) -> PostClosureWait | None:
+            raise RecoveryWaitTimeout(_followup_wait(closed=False), "incident-late stayed open")
+
+    records = run_incidents(Agent(clock), driver, _config(tmp_path, 2), monotonic=clock.monotonic)
+
+    assert len(records) == 1
+    assert records[0].recovery_error == "fault recovery failed: RecoveryWaitTimeout: incident-late stayed open"
+    assert records[0].post_closure_waits == [_followup_wait(closed=False)]
+    assert "recover" not in driver.events
 
 
 def test_the_run_record_says_when_sdo_did_not_mitigate_the_incident(tmp_path: Path) -> None:

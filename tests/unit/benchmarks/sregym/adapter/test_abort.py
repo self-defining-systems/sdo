@@ -1,7 +1,10 @@
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+
+import pytest
 
 from benchmarks.sregym.adapter import persistent
 
@@ -10,6 +13,10 @@ class AbortOps:
     def __init__(self, leftovers=()):
         self.remaining = list(leftovers)
         self.stopped = []
+        self.retired = []
+
+    def protect_incident_work(self, target, directory):
+        pass
 
     def stop_runtime(self, target):
         self.stopped.append(target.control_namespace)
@@ -19,6 +26,10 @@ class AbortOps:
 
     def abort_leftovers(self, target):
         return self.remaining
+
+    def retire_controller_state(self, target, archive_dir):
+        self.retired.append(target.control_namespace)
+        return []
 
     def runtime_state(self, *_):
         raise AssertionError("abort must never drain or inspect controller state")
@@ -131,3 +142,302 @@ def test_abort_attempts_every_target_after_one_stop_fails(tmp_path):
     ops.stop_runtime = stop
     assert any("forbidden" in error for error in persistent.abort(path, ops=ops))
     assert seen == ["/first", "/second"]
+
+
+@pytest.mark.parametrize("work", ["running", "queued", "orphan", "sidecar", "unknown"])
+def test_abort_preserves_active_worker_and_pending_incident(tmp_path, monkeypatch, work):
+    import json
+
+    from benchmarks.sregym.adapter import native_operator
+
+    path = tmp_path / "state.json"
+    seed_state(path)
+    job = {
+        "kind": "Job",
+        "metadata": {"name": "reflection", "uid": "job-uid"},
+        "spec": {"template": {"metadata": {"labels": {"app.kubernetes.io/name": "sdo-worker"}}}},
+        "status": {"active": 1, "conditions": []},
+    }
+    pod = {
+        "kind": "Pod",
+        "metadata": {
+            "name": "reflection-pod",
+            "labels": {"app.kubernetes.io/name": "sdo-worker"},
+            "ownerReferences": [{"kind": "Job", "uid": "job-uid"}],
+        },
+        "status": {"phase": "Running", "containerStatuses": [{"name": "agent", "ready": True}]},
+    }
+    if work == "sidecar":
+        job["status"] = {"conditions": [{"type": "Complete", "status": "True"}]}
+    if work == "unknown":
+        pod["status"] = {}
+    jobs = [] if work == "orphan" else [job]
+    pods = [] if work == "queued" else [pod]
+    if work == "queued":
+        job["status"] = {"active": 0}
+    deleted = []
+    monkeypatch.setattr(
+        native_operator,
+        "stop_runtime",
+        lambda *args, **kwargs: (deleted.append("runtime") or {"removed": [], "leftovers": []}),
+    )
+
+    def invoke(argv, **kwargs):
+        if argv[0] == "get":
+            return SimpleNamespace(stdout=json.dumps({"items": jobs + pods}), returncode=0, stderr="")
+        if argv[0] == "logs":
+            return SimpleNamespace(stdout="reflection still working\n", returncode=0, stderr="")
+        deleted.append(argv)
+        return SimpleNamespace(stdout="", returncode=0, stderr="")
+
+    monkeypatch.setattr(persistent, "kubectl", invoke)
+    errors = persistent.abort(path, ops=persistent.KubectlClusterOps())
+    assert errors
+    assert "active incident work" in str(errors)
+    assert deleted == []
+    state = persistent.PersistentState.load(path)
+    assert state.controllers["demo"].pending.incident_id == "i1"
+    assert state.aborted_incidents == []
+    evidence = path.parent / (path.name + ".abort-workers") / "demo-sdo"
+    inventory = json.loads((evidence / "workloads.json").read_text())
+    assert inventory["jobs"] == [{"metadata": row["metadata"], "status": row["status"]} for row in jobs]
+    assert inventory["pods"] == [{"metadata": row["metadata"], "status": row["status"]} for row in pods]
+    if pods:
+        assert (evidence / "reflection-pod.log").read_text() == "reflection still working\n"
+
+
+def test_abort_preserves_lane_when_worker_inventory_is_unavailable(tmp_path, monkeypatch):
+    from benchmarks.sregym.adapter import native_operator
+
+    path = tmp_path / "state.json"
+    seed_state(path)
+
+    def unavailable(*args, **kwargs):
+        raise RuntimeError("worker inventory unavailable")
+
+    monkeypatch.setattr(persistent, "kubectl", unavailable)
+    monkeypatch.setattr(
+        native_operator, "stop_runtime", lambda *args, **kwargs: pytest.fail("deleted without inventory")
+    )
+    errors = persistent.abort(path, ops=persistent.KubectlClusterOps(preserve_applications=False))
+    assert "worker inventory unavailable" in str(errors)
+    assert persistent.PersistentState.load(path).controllers["demo"].pending.incident_id == "i1"
+
+
+@pytest.mark.parametrize("terminal", ["Complete", "Failed"])
+def test_abort_captures_terminal_worker_before_deletion(tmp_path, monkeypatch, terminal):
+    import json
+
+    from benchmarks.sregym.adapter import native_operator
+
+    path = tmp_path / "state.json"
+    seed_state(path)
+    evidence = path.parent / (path.name + ".abort-workers") / "demo-sdo"
+    job = {
+        "kind": "Job",
+        "metadata": {"name": "reflection", "uid": "worker"},
+        "spec": {"template": {"metadata": {"labels": {"app.kubernetes.io/name": "sdo-worker"}}}},
+        "status": {"conditions": [{"type": terminal, "status": "True"}]},
+    }
+    pod = {
+        "kind": "Pod",
+        "metadata": {"name": "reflection-pod", "ownerReferences": [{"kind": "Job", "uid": "worker"}]},
+        "status": {"phase": "Succeeded" if terminal == "Complete" else "Failed"},
+    }
+    removed = []
+
+    def stop(*args, **kwargs):
+        if not kwargs.get("inspect"):
+            assert json.loads((evidence / "workloads.json").read_text())["jobs"][0]["status"] == job["status"]
+            assert (evidence / "reflection-pod.log").read_text() == "terminal reflection\n"
+            removed.append("runtime")
+        return {"removed": [], "leftovers": []}
+
+    def invoke(argv, **kwargs):
+        if argv[:2] == ["get", "jobs,pods"]:
+            return SimpleNamespace(stdout=json.dumps({"items": [job, pod]}), returncode=0, stderr="")
+        if argv[0] == "logs":
+            return SimpleNamespace(stdout="terminal reflection\n", returncode=0, stderr="")
+        return SimpleNamespace(stdout="", returncode=0, stderr="")
+
+    monkeypatch.setattr(native_operator, "stop_runtime", stop)
+    monkeypatch.setattr(persistent, "kubectl", invoke)
+    assert persistent.abort(path, ops=persistent.KubectlClusterOps()) == []
+    assert removed == ["runtime"]
+
+
+@pytest.mark.parametrize(
+    "claim",
+    [
+        "idle",
+        "claimed",
+        "during-stop",
+        "malformed",
+        "unavailable",
+        "orphan",
+        "stuck-job",
+        "stuck-pod",
+        "idle-during-stop",
+        "claimed-during-stop",
+        "stuck-dispatcher",
+    ],
+)
+def test_abort_only_retires_proven_idle_standby(tmp_path, monkeypatch, claim):
+    from benchmarks.sregym.adapter import native_operator
+
+    path = tmp_path / "state.json"
+    seed_state(path)
+    # Deliberately unrelated names: SDO labels, not name prefixes, establish roles.
+    job = {
+        "kind": "Job",
+        "metadata": {"name": "warm-slot", "uid": "slot-uid"},
+        "spec": {
+            "template": {
+                "metadata": {
+                    "labels": {
+                        "app.kubernetes.io/name": "sdo-worker",
+                        "sdo.dev/standby": "true",
+                    }
+                }
+            }
+        },
+        "status": {"active": 1},
+    }
+    pod = {
+        "kind": "Pod",
+        "metadata": {
+            "name": "warm-pod",
+            "uid": "pod-uid",
+            "labels": {
+                "app.kubernetes.io/name": "sdo-worker",
+                "sdo.dev/standby": "true",
+            },
+            "ownerReferences": [{"kind": "Job", "uid": "slot-uid"}],
+        },
+        "status": {"phase": "Running"},
+    }
+    controller = {
+        "kind": "Job",
+        "metadata": {"name": "dispatcher", "uid": "dispatcher-uid"},
+        "spec": {"template": {"metadata": {"labels": {"app.kubernetes.io/name": "sdo-controller"}}}},
+    }
+    items = [job, pod, controller]
+    if claim in {"idle-during-stop", "claimed-during-stop"}:
+        items = [controller]
+    if claim == "orphan":
+        items.remove(job)
+    assigned = claim == "claimed"
+    calls = []
+
+    def invoke(argv, **kwargs):
+        nonlocal assigned
+        calls.append(argv)
+        if argv == ["get", "configmaps", "-o", "json"]:
+            assert stopped, "checkpoint inventory before the lane was quiet"
+            return SimpleNamespace(stdout=json.dumps({"items": []}), returncode=0, stderr="")
+        if argv[:2] == ["get", "configmaps"]:
+            assert "sdo.dev/incident-execution" in argv
+            if claim == "unavailable":
+                raise RuntimeError("claim inventory unavailable")
+            records = []
+            if assigned or claim == "malformed":
+                records = [
+                    {
+                        "metadata": {
+                            "labels": {"sdo.dev/incident-execution": "1"},
+                            "annotations": {"sdo.dev/incident-id": "i1"},
+                        },
+                        "data": {
+                            "execution.json": "invalid"
+                            if claim == "malformed"
+                            else json.dumps(
+                                {
+                                    "version": 1,
+                                    "incident_id": "i1",
+                                    "task_id": "i1",
+                                    "job_name": "warm-slot",
+                                    "job_uid": "slot-uid",
+                                    "request_sha256": "a" * 64,
+                                }
+                            )
+                        },
+                    }
+                ]
+            return SimpleNamespace(stdout=json.dumps({"items": records}), returncode=0, stderr="")
+        if argv[:2] == ["get", "jobs,pods"]:
+            return SimpleNamespace(stdout=json.dumps({"items": items}), returncode=0, stderr="")
+        if argv[0] == "delete":
+            assert "--force" not in argv
+            assert "--grace-period=0" not in argv
+            assert "--cascade=foreground" in argv
+            assert "--wait=true" in argv
+            evidence = path.parent / (path.name + ".abort-workers") / "demo-sdo" / "workloads.json"
+            assert evidence.is_file()
+            if "job/dispatcher" in argv:
+                if claim != "stuck-dispatcher":
+                    items.remove(controller)
+                if claim in {"idle-during-stop", "claimed-during-stop"}:
+                    items.extend([job, pod])
+                if claim in {"during-stop", "claimed-during-stop"}:
+                    assigned = True  # Work published while graceful dispatcher shutdown was in flight.
+            elif "job/warm-slot" in argv:
+                assert not assigned
+                if claim != "stuck-job":
+                    items.remove(job)
+                if claim not in {"stuck-job", "stuck-pod"}:
+                    items.remove(pod)
+        return SimpleNamespace(stdout="", returncode=0, stderr="")
+
+    stopped = []
+
+    def stop(*args, **kwargs):
+        # Production stop uses zero grace, so standby must already be gone.
+        assert job not in items
+        assert pod not in items
+        stopped.append(True)
+        return {"removed": [], "leftovers": []}
+
+    monkeypatch.setattr(persistent, "kubectl", invoke)
+    monkeypatch.setattr(native_operator, "stop_runtime", stop)
+    errors = persistent.abort(path, ops=persistent.KubectlClusterOps())
+    if claim in {"idle", "idle-during-stop"}:
+        assert errors == []
+        assert stopped
+        assert persistent.PersistentState.load(path).controllers == {}
+    else:
+        assert errors
+        assert not stopped
+        if claim not in {"stuck-job", "stuck-pod"}:
+            assert not any("job/warm-slot" in argv for argv in calls if argv[0] == "delete")
+        if claim in {"claimed", "malformed", "unavailable", "orphan"}:
+            assert not any(argv[0] == "delete" for argv in calls)
+        assert persistent.PersistentState.load(path).controllers["demo"].pending.incident_id == "i1"
+
+
+@pytest.mark.parametrize("role", ["responder", "reflection", "validator"])
+def test_standby_name_never_exempts_claimed_worker(tmp_path, monkeypatch, role):
+    job = {
+        "kind": "Job",
+        "metadata": {"name": "sdo-standby-misleading", "uid": "worker"},
+        "spec": {
+            "template": {
+                "metadata": {
+                    "labels": {
+                        "app.kubernetes.io/name": "sdo-worker" if role != "validator" else "validator",
+                        **({"sdo.dev/validator-isolation": "true"} if role == "validator" else {}),
+                    }
+                }
+            }
+        },
+        "status": {"active": 1},
+    }
+
+    def invoke(argv, **kwargs):
+        assert argv[0] == "get"
+        return SimpleNamespace(stdout=json.dumps({"items": [job]}), returncode=0)
+
+    monkeypatch.setattr(persistent, "kubectl", invoke)
+    with pytest.raises(persistent.PersistentControllerError, match="active incident work"):
+        persistent.KubectlClusterOps().protect_incident_work(
+            persistent.CleanupTarget(namespace="demo", control_namespace="demo-sdo"), tmp_path / "evidence"
+        )

@@ -50,7 +50,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from benchmarks.sregym.fastloop.loop import InjectionWindow
-    from benchmarks.sregym.fastloop.records import AgentName
+    from benchmarks.sregym.fastloop.records import AgentName, PostClosureWait
 
 logger = logging.getLogger(__name__)
 
@@ -212,8 +212,8 @@ class TrackedAgent:
     def learn(self, outcome: AgentOutcome) -> AgentOutcome:
         return self._inner.learn(outcome)
 
-    def prepare_recovery(self, outcome: AgentOutcome | None) -> None:
-        self._inner.prepare_recovery(outcome)
+    def prepare_recovery(self, outcome: AgentOutcome | None) -> PostClosureWait | None:
+        return self._inner.prepare_recovery(outcome)
 
     def close(self) -> None:
         self._inner.close()

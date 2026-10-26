@@ -77,6 +77,8 @@ type SourceEvidence struct {
 }
 
 type Broker struct {
+	codePath string
+
 	// MetricsDetectors installs the optional generic metrics detectors when
 	// the health judge's initial memory is accepted. Set it only where a
 	// metrics source is configured.
@@ -140,6 +142,10 @@ func New(target, workspaceRoot string, validator Validator, policy ...Observatio
 		if err := policy[0].Ceiling.Validate(); err != nil {
 			return nil, err
 		}
+		if policy[0].CodePath != "" && policy[0].CodePath != "go" && policy[0].CodePath != "shell" {
+			return nil, fmt.Errorf("unsupported broker code path %q", policy[0].CodePath)
+		}
+		b.codePath = policy[0].CodePath
 		b.observationCeiling = policy[0].Ceiling
 		b.observationCeiling.Targets = append([]sdk.ObservationTarget(nil), policy[0].Ceiling.Targets...)
 		b.applicationNamespace = policy[0].ApplicationNamespace
@@ -186,7 +192,7 @@ func (b *Broker) CreateProposalForPhase(ctx context.Context, incidentID string, 
 			return err
 		}
 		checkout := filepath.Join(parent, "checkout")
-		if _, err := runGit(ctx, "", "clone", "--no-local", "--no-hardlinks", "--quiet", "--no-checkout", b.target, checkout); err != nil {
+		if err := cloneGit(ctx, b.target, checkout, "--no-checkout"); err != nil {
 			return err
 		}
 		if _, err := runGit(ctx, checkout, "checkout", "--quiet", "--detach", base); err != nil {
@@ -345,7 +351,7 @@ func (b *Broker) publish(ctx context.Context, incidentID string, actor Actor, ph
 				return err
 			}
 		}
-		if b.validator == nil {
+		if b.validator == nil && b.codePath != "shell" {
 			return errors.New("proposal validation is not configured")
 		}
 		stage, cleanup, err := b.privateClone(ctx)
@@ -536,7 +542,7 @@ func (b *Broker) privateClone(ctx context.Context) (string, func(), error) {
 	}
 	cleanup := func() { os.RemoveAll(dir) }
 	stage := filepath.Join(dir, "checkout")
-	if _, err := runGit(ctx, "", "clone", "--no-local", "--no-hardlinks", "--quiet", b.target, stage); err != nil {
+	if err := cloneGit(ctx, b.target, stage); err != nil {
 		cleanup()
 		return "", nil, err
 	}
@@ -658,7 +664,10 @@ func runGit(ctx context.Context, cwd string, args ...string) ([]byte, error) {
 }
 
 func runGitEnv(ctx context.Context, cwd string, env []string, args ...string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, "git", args...)
+	// Waiting for Git alone does not wait for its detached auto-maintenance.
+	// Keep housekeeping inside this command's context and process lifetime.
+	commandArgs := append([]string{"-c", "gc.autoDetach=false", "-c", "maintenance.autoDetach=false"}, args...)
+	cmd := exec.CommandContext(ctx, "git", commandArgs...)
 	if cwd != "" {
 		cmd.Dir = cwd
 	}
@@ -668,6 +677,16 @@ func runGitEnv(ctx context.Context, cwd string, env []string, args ...string) ([
 		return nil, fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
 	}
 	return out, nil
+}
+
+// cloneGit also persists the lifetime policy for commands run later by workers;
+// repository-local configuration is not inherited from the accepted source.
+func cloneGit(ctx context.Context, source, destination string, options ...string) error {
+	args := []string{"clone", "--no-local", "--no-hardlinks", "--quiet",
+		"--config", "gc.autoDetach=false", "--config", "maintenance.autoDetach=false"}
+	args = append(args, options...)
+	_, err := runGit(ctx, "", append(args, source, destination)...)
+	return err
 }
 
 func gitText(ctx context.Context, cwd string, args ...string) (string, error) {
@@ -793,6 +812,10 @@ func within(root, path string) bool {
 
 // ObservationPolicy is supplied only by the trusted installer host.
 type ObservationPolicy struct {
+
+	// CodePath is trusted launch policy; shell selects hygiene instead of Go compilation.
+	CodePath string
+
 	Ceiling              sdk.ObservationScope
 	ApplicationNamespace string
 }

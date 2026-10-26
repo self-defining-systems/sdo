@@ -3,6 +3,7 @@ syntax = "proto3";
 package sdodev.contracts.v1alpha1;
 
 import "buf/validate/validate.proto";
+import "sdodev/contracts/v1alpha1/controller_config.proto";
 import "google/protobuf/timestamp.proto";
 import "sdodev/contracts/v1alpha1/messages.proto";
 import "sdodev/contracts/v1alpha1/common.proto";
@@ -14,6 +15,9 @@ option go_package = "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1;co
 // Independently verified, durable incident evidence. This is the logical
 // contract; the memory adapter alone chooses its repository representation.
 message OutcomeRecord {
+  // Explicit nondefault programming model, including per-seam overrides.
+  CodePathConfig code_path = 100;
+
   int32 schema_version = 1 [(buf.validate.field).int32.const = 1];
   string incident_id = 2 [(buf.validate.field).string = {min_len: 1, pattern: "\\S"}];
   string source_commit = 3;

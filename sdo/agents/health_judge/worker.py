@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, cast
 
+from sdo.agents.code_paths import agent_guidance, skills_for_role
 from sdo.agents.lifecycle import (
     ClaudeLifecycleBackend,
     CodexLifecycleBackend,
@@ -178,8 +179,12 @@ def main() -> int:
         print("SDO_NAMESPACE and SDO_RESULT_CONFIGMAP are required", file=sys.stderr)
         return 2
     try:
-        prepare_codex_home()
-        prepare_claude_home()
+        if agent_guidance() == "shell":
+            prepare_codex_home(skills=skills_for_role("health-judge"))
+            prepare_claude_home(skills=skills_for_role("health-judge"))
+        else:
+            prepare_codex_home()
+            prepare_claude_home()
         run_judge_task(
             Path(os.environ.get("SDO_TASK_PATH", str(DEFAULT_TASK_PATH))),
             result_name,

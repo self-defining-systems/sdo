@@ -48,6 +48,9 @@ def test_sigkill_launcher_leaves_no_registered_helpers(tmp_path, cut):
     objects = {f"{phase}-job" for phase in phases[: phases.index(cut) + 1]}
 
     class Cluster:
+        def protect_incident_work(self, target, directory):
+            pass
+
         def stop_runtime(self, target):
             objects.clear()
 
@@ -56,6 +59,9 @@ def test_sigkill_launcher_leaves_no_registered_helpers(tmp_path, cut):
 
         def abort_leftovers(self, target):
             return sorted(objects)
+
+        def retire_controller_state(self, target, archive_dir):
+            return []
 
     child = subprocess.Popen(
         [

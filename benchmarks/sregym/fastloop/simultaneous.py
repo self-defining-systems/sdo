@@ -40,7 +40,9 @@ class InjectBeforeResumeOps:
         self, control_namespace: str, generation: str, inject: Callable[[], None]
     ) -> dict[str, float]:
         paused_generation = f"{generation}-presim"
-        self._inner.set_maintenance(control_namespace, paused=True, generation=paused_generation)
+        self._inner.set_maintenance(
+            control_namespace, paused=True, generation=paused_generation, preserve_baseline=True
+        )
         self._wait_for_pause(self._inner, control_namespace, paused_generation)
         inject()
         self._inner.set_maintenance(control_namespace, paused=False, generation=generation)

@@ -25,6 +25,7 @@ import (
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/validate"
 	"sdo.dev/operator/sdk/program"
+	"sdo.dev/operator/shellpath"
 )
 
 // DerivedOutcome is produced from controller facts, not from a worker claim.
@@ -83,6 +84,9 @@ func (f ReflectionWorkerFunc) Reflect(ctx context.Context, closure IncidentClosu
 // safe to select when a full OutcomeDeriver and ReflectionWorker are configured;
 // no partial closure can be acknowledged.
 type NativeIncidentBroker struct {
+	CodePath    CodePathConfig
+	ShellReader shellpath.Reader
+
 	Now                  func() time.Time
 	Repository           *broker.Broker
 	LedgerRoot           string
@@ -259,6 +263,7 @@ func (n NativeIncidentBroker) ProcessClosure(ctx context.Context, closure Incide
 				return errors.New("outcome deriver returned an invalid typed record")
 			}
 			ledger.OutcomeDocument = proto.Clone(derived.Record).(*contracts.OutcomeRecord)
+			ledger.OutcomeDocument.CodePath = codePathContract(n.CodePath)
 			ledger.RequiresReflection = derived.RequiresReflection
 			if n.SessionRoot != "" {
 				capture, captureErr := memory.IncidentCorpusDir(n.SessionRoot, id)
@@ -371,6 +376,21 @@ func (n NativeIncidentBroker) processReflection(ctx context.Context, ledger *con
 	}
 	driver := lifecycleio.ReflectionDriver{Repository: n.Repository, SessionRoot: n.SessionRoot, Now: n.clock, Phase: func(phase string) error { return n.recordPhase(ledger, phase) }, Reflect: func(ctx context.Context, effect lifecyclecore.ReflectionEffect) (*contracts.ReflectionDecision, error) {
 		workspace := IncidentWorkspace{IncidentID: effect.IncidentID, Worktree: effect.Workspace.GetCheckoutPath(), BaseCommit: effect.Workspace.GetBaseCommit()}
+		selected, err := NewCodePathRegistry().Resolve(n.CodePath)
+		if err != nil {
+			return nil, err
+		}
+		if selected.Selection.MemoryValidation != "go" {
+			if n.Reflector == nil {
+				return nil, errors.New("shell learning requires a registered reflection worker")
+			}
+			decision, err := n.Reflector.Reflect(ctx, incidentClosureState(effect.Closure), workspace, effect.Outcome, effect.ProposalCommit, effect.OutcomeCommit, ReflectionFeedback{Attempt: effect.Attempt, Diagnostics: effect.Diagnostics, DispatchAt: controllerTime(effect.DispatchAt)})
+			if err != nil {
+				return nil, err
+			}
+			return logicalReflectionDecision(decision), nil
+		}
+
 		if effect.Outcome.GetClassification() != outcomeclass.Success {
 			effect.Outcome = partialReflectionOutcome(effect.Outcome)
 			trimPartialReflectionClosure(effect.Closure, effect.Outcome)
@@ -437,11 +457,7 @@ func (n NativeIncidentBroker) processReflection(ctx context.Context, ledger *con
 				return nil, err
 			}
 		}
-		result := &contracts.ReflectionDecision{DeclineReason: decision.DeclineReason, LearningDecision: decision.LearningDecision, NoChangeReason: decision.NoChangeReason, Error: decision.Error, FailureReason: decision.FailureReason, SdkGaps: decision.SDKGaps, PlaybookIds: decision.PlaybookIDs}
-		if decision.Usage != nil {
-			result.Usage = proto.Clone(decision.Usage).(*contracts.UsageMetrics)
-		}
-		return result, nil
+		return logicalReflectionDecision(decision), nil
 	}}
 	for {
 		_, effects := lifecyclecore.StepReflection(ledger, lifecyclecore.ReflectionEvent{Kind: lifecyclecore.ReflectionDrive})
@@ -542,6 +558,37 @@ func (n NativeIncidentBroker) PruneIncidentSessions(now time.Time) error {
 }
 
 func (n NativeIncidentBroker) setRolloutExpectation(ctx context.Context, ledger *contracts.BrokerLedger, paths []string) error {
+	if ledger.ReflectionCommit == "" {
+		return nil
+	}
+	selected, err := NewCodePathRegistryWithDependencies(CodePathDependencies{
+		RebuildController: func(ctx context.Context, _ string) error { return n.prepareControllerRollout(ctx, ledger, paths) },
+		PullAcceptedCommit: func(ctx context.Context, commit string) error {
+			if ledger.ClosurePhaseTimestamps["shell_runner_activated"] != nil {
+				return nil
+			}
+			if n.ShellReader == nil {
+				return errors.New("shell runner activation reader is required")
+			}
+			bounded, cancel := context.WithTimeout(ctx, 2*time.Minute)
+			defer cancel()
+			at, err := shellpath.AwaitActivation(bounded, n.ShellReader, commit)
+			if err != nil {
+				return err
+			}
+			if ledger.ClosurePhaseTimestamps == nil {
+				ledger.ClosurePhaseTimestamps = map[string]*timestamppb.Timestamp{}
+			}
+			ledger.ClosurePhaseTimestamps["shell_runner_activated"] = timestamppb.New(at)
+			return n.saveLedger(ledger)
+		},
+	}).Resolve(n.CodePath)
+	if err != nil {
+		return err
+	}
+	return selected.Activation.Activate(ctx, ledger.ReflectionCommit)
+}
+func (n NativeIncidentBroker) prepareControllerRollout(ctx context.Context, ledger *contracts.BrokerLedger, paths []string) error {
 	required, err := n.Repository.RequiresControllerRollout(ctx, ledger.OutcomeCommit, ledger.ReflectionCommit, paths)
 	if err != nil {
 		return err
@@ -922,4 +969,12 @@ func (n NativeIncidentBroker) checkHistoricalClosureHealth(ctx context.Context, 
 		return ErrStaleHealthInvestigation
 	}
 	return nil
+}
+
+func logicalReflectionDecision(decision ReflectionDecision) *contracts.ReflectionDecision {
+	result := &contracts.ReflectionDecision{DeclineReason: decision.DeclineReason, LearningDecision: decision.LearningDecision, NoChangeReason: decision.NoChangeReason, Error: decision.Error, FailureReason: decision.FailureReason, SdkGaps: decision.SDKGaps, PlaybookIds: decision.PlaybookIDs}
+	if decision.Usage != nil {
+		result.Usage = proto.Clone(decision.Usage).(*contracts.UsageMetrics)
+	}
+	return result
 }

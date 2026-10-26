@@ -181,3 +181,97 @@ def test_admission_uses_the_requested_installer_configuration(lane, monkeypatch)
     with pytest.raises(ReachedRBAC):
         gate.prove(env.namespace + "-sdo")
     assert seen == [requested]
+
+
+def observe_only(gate, monkeypatch) -> list[float]:
+    """Give admission a fake clock and fail if it ever restores the application."""
+    from functools import partial
+
+    from benchmarks.sregym.fastloop import baseline_recovery, reset
+
+    gate.timeout_seconds = 10
+    now = [0.0]
+
+    def sleep(seconds: float) -> None:
+        now[0] += seconds
+
+    monkeypatch.setattr(admission.time, "monotonic", lambda: now[0])
+    monkeypatch.setattr(admission, "wait_for_proof", partial(admission.wait_for_proof, sleep=sleep))
+    monkeypatch.setattr(admission, "assert_lane_resources", lambda *args, **kwargs: {"passed": True})
+    monkeypatch.setattr(reset, "RestoreChecks", lambda *args: SimpleNamespace(prepare=lambda **kwargs: None))
+    monkeypatch.setattr(baseline_recovery, "KubectlApplicationCluster", lambda *args: None)
+    monkeypatch.setattr(reset, "restore_application", lambda *args, **kwargs: pytest.fail("admission restarted app"))
+    return now
+
+
+@pytest.mark.parametrize("waiting_for", ["controller", "traffic", "reflection", "independent_traffic"])
+def test_admission_waits_without_restarting_the_healthy_application(lane, monkeypatch, waiting_for):
+    gate, calls = lane
+    now = observe_only(gate, monkeypatch)
+    state = gate.ops.runtime_state
+    windows = gate._windows
+
+    def runtime(control):
+        value = state(control)
+        if now[0] < 6:
+            if waiting_for == "controller":
+                value["history"] = []
+            if waiting_for == "reflection":
+                value["pending_closure"] = {"incident_id": "previous", "reflection": "running"}
+        return value
+
+    def traffic(*args, **kwargs):
+        assert args == ("baseline_oracle",), "admission must only observe application traffic"
+        calls.append("traffic")
+        return {"success": waiting_for != "independent_traffic" or now[0] >= 6}
+
+    monkeypatch.setattr(gate.ops, "runtime_state", runtime)
+    monkeypatch.setattr(gate.worker, "request", traffic)
+    monkeypatch.setattr(
+        gate, "_windows", lambda control: {} if waiting_for == "traffic" and now[0] < 6 else windows(control)
+    )
+    proof = gate.prove("hotel-reservation-sdo")
+    assert proof["passed"] is True
+    assert 6 <= now[0] < 10
+    assert proof["incident_work_pending"] is False
+
+
+def test_admission_never_injects_while_reflection_remains_pending(lane, monkeypatch):
+    from benchmarks.sregym.adapter.eval_guards import StabilizationError
+
+    gate, calls = lane
+    now = observe_only(gate, monkeypatch)
+    state = gate.ops.runtime_state
+    monkeypatch.setattr(gate.ops, "runtime_state", lambda control: dict(state(control), pending_closure={"id": "busy"}))
+    inner = SimpleNamespace(
+        set_maintenance=lambda *args, **kwargs: None,
+        inject_after_resume=lambda *args: pytest.fail("injected during reflection"),
+    )
+    with pytest.raises(StabilizationError):
+        admission.EvalAdmissionOps(inner, gate).inject_after_resume("hotel-reservation-sdo", "g1", lambda: None)
+    assert now[0] == 10
+    assert calls == []
+    records = [json.loads(line) for line in (gate.directory / "stabilization-001.jsonl").read_text().splitlines()]
+    assert all(row["incident_work_pending"] and not row["passed"] for row in records)
+
+
+def test_workload_refusal_names_the_sdo_incident_active_before_injection(lane, monkeypatch):
+    gate, _calls = lane
+    observe_only(gate, monkeypatch)
+    state = gate.ops.runtime_state
+    monkeypatch.setattr(
+        gate.ops,
+        "runtime_state",
+        lambda control: dict(state(control), incident_open=True, incident_request={"incident_id": "astronomy-1793"}),
+    )
+    identities = iter([{"Deployment/currency": {"pods": ["old"]}}])
+
+    def identity(*_args):
+        for row in identities:
+            return row
+        raise ValueError("restore invariant: workload not Ready: Deployment/currency (ready 0/1)")
+
+    monkeypatch.setattr(admission, "workload_identity", identity)
+    with pytest.raises(ValueError, match="workload not Ready: Deployment/currency") as refused:
+        gate.prove("astronomy-shop-sdo")
+    assert "SDO incident work active before injection: astronomy-1793" in str(refused.value)

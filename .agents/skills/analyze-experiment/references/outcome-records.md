@@ -115,6 +115,22 @@ Early closure groups synthesized opening findings by repaired primary resource. 
 
 Working program tools retain `program_revision=working-tree:<digest>` in program runs, menu options and recorded tool responses. The digest uses the same source/import-closure calculation as accepted program revisions, excluding Markdown and test-only files. The prefix explicitly distinguishes unpublished checkout code. `program_revisions` in plan/apply/mitigate responses binds each program to that executed revision; prepared plans keep their own revision through later edits. Outcome enrichment preserves working revisions rather than replacing them with accepted-source hashes. Treat these as separate revisions for trust; successful execution does not publish memory. The broker projects source-only repairs and carries working playbook/shared-library diffs into reflection for the usual memory check and independent validation.
 
+
+## Shell code path
+
+An explicit `code_path` object records the selected programming model and optional
+seam overrides; absent means the default Go path. `name: shell` uses ordinary
+versioned `.sdo/outcomes/<sha256(incident_id)>.json` outcome documents and the same
+controller closure evidence. A fired-script finding carries its path and bounded
+stdout/stderr evidence, plus accepted-commit/activation metadata. Empty playbook
+coverage is intentional; shell learning has no Go compile/replay or program schema.
+
+Accepted scripts live under `.sdo/diagnostics/detectors/{health,incidents}/<id>/`;
+notes and scripts live under `.sdo/playbooks/<id>/`. Ownership remains judge health,
+responder incident/playbooks, and controller outcomes. Check reflection paths and
+accepted commits to identify learned files. Do not infer Go-program credit from
+shell notes. Script timeouts/crashes are detector errors, never repaired faults.
+
 Controller-observed API repair receipts use `kind=kubernetes-api` and stable
 `sdo-api-<digest>` IDs. They recover writes made outside the recorded-action
 wrapper from paired incident-bound proxy observations. Object responses must
@@ -153,6 +169,15 @@ Successful typed EnsureDatabaseUser actions record the measured opening catalog 
 readback as a `DatabaseUsers` primitive with `phase=fixed` through the same protected recorder.
 The action receipt retains reference-bearing inputs/status; a safe `recording_error` makes an
 unavailable fixed capture visible. Fixed catalogs never replace the immutable opening catalog.
+
+Shell pre-injection admission records `code_path: shell` and `shell_runner` in
+`admission/stabilization-*.jsonl`. Its evidence binds the complete executable
+Git inventory to the runner's accepted commit, activation time, fresh zero-exit
+results and stable `healthy` signal. Fresh clear `shell.detectors` controller
+observations and no incident work remain required, followed by the independent
+benchmark traffic oracle. Shell has no Go prober/scenario-window requirement;
+Go admission retains both. Missing, stale, errored or incomplete shell evidence
+blocks injection, including a nonzero script before its second firing run.
 
 Successful global closure also filters the controller's executable cause-work list
 through the shared independent repair gate. Unverified claimed causes retain

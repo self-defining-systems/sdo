@@ -16,6 +16,24 @@ SDO spans Python agents, Go operator modules, generated detector workspaces, and
 
 For a fresh checkout or worktree, run `uv run python scripts/init_test_prereqs.py` once to initialize SREGym and every nested application/chart at the recorded SHA.
 
+## Git-backed Go fixtures
+
+Broker and runtime tests initialize temporary repositories with
+`internal/testutil.InitGit(t, root)` and clone them with `CloneGit(t, source, destination, options...)`.
+The helper disables automatic GC/maintenance and detachment in repository-local
+configuration, which also protects production Git calls and linked worktrees.
+`testutil.Git` runs commands synchronously with a bounded context; callers cannot
+start a command without waiting. The production broker also keeps automatic
+maintenance in the foreground for its Git commands and persists this policy in
+its independent proposal/staging clones; Git clone does not copy local config. Keep goroutines using a repository joined before
+test cleanup.
+
+`internal/testutil.TestGitFixtureCreationUsesHelper` checks Go AST command calls
+and argument vectors for direct init/clone bypasses in broker/runtime tests.
+Its negative controls run alongside it in `scripts/check_errors.sh`, so an unsafe
+new fixture fails the static gate. Run the whole helper suite with
+`go -C sdo/operator test -race ./internal/testutil`.
+
 ## Core commands
 
 ```bash

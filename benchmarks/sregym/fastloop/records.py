@@ -124,6 +124,18 @@ class NotInjected(BaseModel):
 InjectionState = Annotated[Injected | NotInjected, Field(discriminator="state")]
 
 
+class PostClosureWait(BaseModel):
+    """Recovery waited for SDO to close incidents that opened after the graded incident closed."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    graded_incident_id: str
+    followup_incident_ids: list[str] = Field(min_length=1)
+    waited_seconds: float = Field(ge=0)
+    bound_seconds: float = Field(gt=0)
+    #: False when the bound expired first; recovery then stops the row.
+    closed: bool
+
+
 class IncidentRecord(_PersistedModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -191,6 +203,8 @@ class IncidentRecord(_PersistedModel):
     #: Waiting for the previous incident's reflection before this one could start (part of the wall time).
     previous_reflection_drain_seconds: float | None = None
     fault_recovery_seconds: float | None = None
+    #: One entry per recovery pass that had to wait for a follow-up incident to close.
+    post_closure_waits: list[PostClosureWait] = Field(default_factory=list)
     cleanup_deleted_counts: dict[str, int] = Field(default_factory=dict)
     cleanup_restored: list[str] = Field(default_factory=list)
     #: v2 full recovery, application reconciliation and healthy rollouts all completed.

@@ -8,7 +8,6 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 	"log"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sdo.dev/operator/memory/validate"
 	"strings"
@@ -23,12 +22,7 @@ import (
 
 func git(t *testing.T, dir string, args ...string) string {
 	t.Helper()
-	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("git %v: %v: %s", args, err, out)
-	}
-	return strings.TrimSpace(string(out))
+	return testutil.Git(t, dir, args...)
 }
 
 func repository(t *testing.T) string {
@@ -37,7 +31,7 @@ func repository(t *testing.T) string {
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	git(t, root, "init", "-q")
+	testutil.InitGit(t, root)
 	git(t, root, "config", "user.name", "Test")
 	git(t, root, "config", "user.email", "test@example.com")
 	if err := os.WriteFile(filepath.Join(root, "app.txt"), []byte("base\n"), 0o644); err != nil {
