@@ -95,9 +95,9 @@ func ReflectionLearningDiagnostics(root string, outcome *contracts.OutcomeRecord
 	return ds, nil
 }
 
-// detectorRequired names what to link and where. Reflection may edit only
-// responder-owned incident detectors; a cause observed solely by health-owned
-// or built-in detectors (drift.unexplained) still needs an incident detector.
+// detectorRequired names what to link and where. The check accepts any
+// detector that lists the program; reflection can edit only responder-owned
+// incident detectors, so that is where a new link goes.
 func detectorRequired(cause *contracts.ReflectionCauseWork, programs, incidentDetectors []string) Diagnostic {
 	resources := make([]string, 0, len(cause.GetResources()))
 	for _, r := range cause.GetResources() {
@@ -113,7 +113,7 @@ func detectorRequired(cause *contracts.ReflectionCauseWork, programs, incidentDe
 		Message: fmt.Sprintf("verified cause %d (%s) has executable program %s, but no detector lists it in possiblePlaybooks",
 			cause.GetCauseIndex(), strings.Join(resources, ", "), strings.Join(programs, ", ")),
 		Hint: fmt.Sprintf("list the program in possiblePlaybooks of a responder-owned incident detector that observes these resources (existing: %s) or add a new incident detector; "+
-			"health-owned detectors and built-in detectors such as drift.unexplained do not count, because reflection cannot edit them", existing),
+			"reflection cannot edit health-owned or built-in detectors such as drift.unexplained, so they cannot newly link a program", existing),
 	}
 }
 
