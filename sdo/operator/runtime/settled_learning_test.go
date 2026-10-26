@@ -279,6 +279,9 @@ func TestSettlementUsesMatchedRevisionInsteadOfALaterRun(t *testing.T) {
 	}
 	o := verifiedRepeat(t)
 	o.IncidentId = "changed-program"
+	o.RepairActions[0].Resources = []*contracts.ObjectRef{repeatService}
+	o.Findings = []*contracts.Finding{{DetectorId: "service-port", RuleId: "targetport", Severity: "warn", Summary: "wrong target port", Evidence: "synthetic controller-observed target port mismatch", Status: "active", PrimaryResource: repeatService}}
+	o.FinalHealthDetectorState = []*contracts.DetectorEvaluation{{DetectorId: "service-port", Status: "clear", EvaluatedAt: timestamppb.New(time.Unix(1_700_000_101, 0))}}
 	o.ProgramRuns[0].ProgramRevision = "previous-program-revision"
 	o.ProgramRuns[1].ProgramId = repeatProgram
 	o.ProgramRuns[1].ProgramRevision = revision

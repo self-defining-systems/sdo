@@ -115,6 +115,18 @@ Early closure groups synthesized opening findings by repaired primary resource. 
 
 Working program tools retain `program_revision=working-tree:<digest>` in program runs, menu options and recorded tool responses. The digest uses the same source/import-closure calculation as accepted program revisions, excluding Markdown and test-only files. The prefix explicitly distinguishes unpublished checkout code. `program_revisions` in plan/apply/mitigate responses binds each program to that executed revision; prepared plans keep their own revision through later edits. Outcome enrichment preserves working revisions rather than replacing them with accepted-source hashes. Treat these as separate revisions for trust; successful execution does not publish memory. The broker projects source-only repairs and carries working playbook/shared-library diffs into reflection for the usual memory check and independent validation.
 
+Controller-observed API repair receipts use `kind=kubernetes-api` and stable
+`sdo-api-<digest>` IDs. They recover writes made outside the recorded-action
+wrapper from paired incident-bound proxy observations. Object responses must
+match the exact resource identity; deletes require a later direct GET returning
+404. Dry runs, streams/exec, failed or partial requests, dropped/stale histories
+and writes outside the incident window do not supply receipts. A stopped writer
+may leave an open manifest: complete durable request pairs are positive facts,
+never evidence of a complete replay history. These receipts still need fresh
+independent finding clearance through the unchanged verified-cause gate.
+Opaque external commands continue to require recorded-action or RunScript
+receipts. The script replay basis remains `observed-transition`.
+
 LRN observation conformance adds `OutcomeRecord.undetected_causes` (field51), each with one resource,
 original successful `repair_action_id`, open/fixed configuration digests and observation times. These
 are controller-captured same-UID transitions on repaired resources that no opening finding/cause
@@ -141,3 +153,9 @@ Successful typed EnsureDatabaseUser actions record the measured opening catalog 
 readback as a `DatabaseUsers` primitive with `phase=fixed` through the same protected recorder.
 The action receipt retains reference-bearing inputs/status; a safe `recording_error` makes an
 unavailable fixed capture visible. Fixed catalogs never replace the immutable opening catalog.
+
+Successful global closure also filters the controller's executable cause-work list
+through the shared independent repair gate. Unverified claimed causes retain
+their original resources as unassigned `question/evidence_gap` items before
+reflection authors candidates; aggregate recovery never makes them executable
+drafting obligations. Failed-outcome projection keeps its existing handling.
