@@ -18,6 +18,10 @@ if ! command -v uv >/dev/null 2>&1; then
     exit 1
 fi
 
+# Validate workflow expressions before pushing a commit that cannot start CI.
+echo "==> GitHub Actions workflows"
+bash "$SCRIPT_DIR/check_actions.sh"
+
 # Bind controller and validator to the same source identity and exercise an
 # SDK branch merge without generated pin edits before the broader gates.
 # Bound test execution with -timeout; cold module downloads and compilation need their own time.

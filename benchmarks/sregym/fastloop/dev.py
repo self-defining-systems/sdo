@@ -121,4 +121,21 @@ def retarget_dev_mount(cluster: str, worktree: Path) -> None:
     for node in nodes:
         subprocess.run(["docker", "exec", node, "mkdir", "-p", target], check=True, timeout=10)
         _copy_dev_snapshot(worktree, node, target)
-        subprocess.run(["docker", "exec", node, "mount", "--bind", target, "/opt/sdo-dev"], check=True, timeout=10)
+
+        def identity(path: str, node: str = node) -> str:
+            return subprocess.run(
+                ["docker", "exec", node, "stat", "-c", "%d:%i", path],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            ).stdout.strip()
+
+        # Isolate propagation before covering the original host bind, then keep
+        # the resulting mount private. Repeated reset must not stack mounts.
+        subprocess.run(["docker", "exec", node, "mount", "--make-private", "/opt/sdo-dev"], check=True, timeout=10)
+        if identity(target) != identity("/opt/sdo-dev"):
+            subprocess.run(["docker", "exec", node, "mount", "--bind", target, "/opt/sdo-dev"], check=True, timeout=10)
+        subprocess.run(["docker", "exec", node, "mount", "--make-private", "/opt/sdo-dev"], check=True, timeout=10)
+        if identity(target) != identity("/opt/sdo-dev"):
+            raise ValueError(f"eval: dev mount identity differs after retarget on {node}")

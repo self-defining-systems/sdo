@@ -85,9 +85,17 @@ def test_retarget_copies_into_node_storage_before_covering_old_host_mount(tmp_pa
 
     calls = []
 
+    identities = {}
+
     def run(args, **kwargs):
         calls.append(args)
-        return subprocess.CompletedProcess(args, 0, stdout="lane-control-plane\nlane-worker\n", stderr="")
+        if args[0] == "kind":
+            return subprocess.CompletedProcess(args, 0, stdout="lane-control-plane\nlane-worker\n")
+        node = args[2]
+        if "--bind" in args:
+            identities[node] = "source"
+        value = identities.get(node, "old") if args[-1] == "/opt/sdo-dev" else "source"
+        return subprocess.CompletedProcess(args, 0, stdout=value + "\n", stderr="")
 
     monkeypatch.setattr(subprocess, "run", run)
     monkeypatch.setattr(
@@ -103,3 +111,42 @@ def test_retarget_copies_into_node_storage_before_covering_old_host_mount(tmp_pa
         assert next(i for i, call in enumerate(calls) if call[:3] == ["snapshot", str(tmp_path), node]) < calls.index(
             mount
         )
+
+
+@pytest.mark.parametrize("stale_readback", [False, True])
+def test_retarget_is_private_idempotent_and_checks_identity(tmp_path, monkeypatch, stale_readback):
+    mounted = "old"
+    source = "new"
+    binds = []
+    private = []
+    copies = []
+
+    def run(args, **kwargs):
+        nonlocal mounted
+        if args[0] == "kind":
+            return subprocess.CompletedProcess(args, 0, stdout="lane-worker\n")
+        assert args[:3] == ["docker", "exec", "lane-worker"]
+        operation = args[3:]
+        if operation[:2] == ["stat", "-c"]:
+            identity = mounted if operation[-1] == "/opt/sdo-dev" else source
+            return subprocess.CompletedProcess(args, 0, stdout=identity + "\n")
+        if operation[:2] == ["mount", "--bind"]:
+            binds.append(operation)
+            if not stale_readback:
+                mounted = source
+        if operation[:2] == ["mount", "--make-private"]:
+            private.append(operation[-1])
+        return subprocess.CompletedProcess(args, 0)
+
+    monkeypatch.setattr(dev.subprocess, "run", run)
+    monkeypatch.setattr(dev, "_copy_dev_snapshot", lambda *args: copies.append(args))
+    if stale_readback:
+        with pytest.raises(ValueError, match="identity"):
+            dev.retarget_dev_mount("lane", tmp_path)
+    else:
+        dev.retarget_dev_mount("lane", tmp_path)
+        dev.retarget_dev_mount("lane", tmp_path)
+        assert len(binds) == 1
+        assert len(copies) == 2
+        assert len(private) >= 2
+        assert set(private) == {"/opt/sdo-dev"}
