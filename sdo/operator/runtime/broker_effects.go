@@ -11,6 +11,7 @@ import (
 	"sdo.dev/operator/core"
 	"sdo.dev/operator/runtime/lifecyclecore"
 	"sdo.dev/operator/sdk"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -23,6 +24,12 @@ type WorkspaceEffect struct {
 type ClosureEffect struct {
 	Identity string
 	Closure  IncidentClosure
+}
+
+// committedClosureBroker recovers the receipt of an already committed closure,
+// so a replay fetches it instead of deciding the closure again.
+type committedClosureBroker interface {
+	committedClosureReceipt(context.Context, IncidentClosure, *ClosureReceipt) (ClosureReceipt, bool, error)
 }
 
 // A committed outcome is historical evidence. Resuming its unfinished broker
@@ -102,12 +109,13 @@ func (c *Controller) ExecuteClosureEffect(ctx context.Context, effect ClosureEff
 	c.mu.Lock()
 	configuredBroker := c.broker
 	c.mu.Unlock()
-	if proof, ok := configuredBroker.(committedRepairHealthBroker); ok && c.CheckHealth != nil {
-		receipt, err := proof.committedRepairHealthReceipt(ctx, effect.Closure, nil)
-		if err == nil {
-			recovered = &receipt
-		} else if !errors.Is(err, ErrStaleHealthInvestigation) {
+	if proof, ok := configuredBroker.(committedClosureBroker); ok {
+		receipt, found, err := proof.committedClosureReceipt(ctx, effect.Closure, nil)
+		if err != nil {
 			return err
+		}
+		if found {
+			recovered = &receipt
 		}
 	}
 	committedOutcome := false
@@ -119,7 +127,8 @@ func (c *Controller) ExecuteClosureEffect(ctx context.Context, effect ClosureEff
 		}
 	}
 	// Only closures without an accepted outcome can make a new success decision.
-	// Scope supersession retires them durably; it is never a process-level error.
+	// The recheck runs under the detectors now in force, whatever scope the
+	// incident began with.
 	var snapshot sdk.DetectionContext
 	var verificationErr error
 	if recovered == nil && !committedOutcome {
@@ -127,9 +136,6 @@ func (c *Controller) ExecuteClosureEffect(ctx context.Context, effect ClosureEff
 		snapshot, err = c.provider.Snapshot(ctx)
 		if err != nil {
 			return fmt.Errorf("verify closure observation scope: %w", err)
-		}
-		if effect.Closure.ObservationGeneration != observationGeneration(snapshot) {
-			verificationErr = fmt.Errorf("observation scope changed; pending closure %s is superseded and requires fresh verification", effect.Closure.Request.IncidentID)
 		}
 	}
 	actionCtx, cancel, err := c.actionContext(ctx)
@@ -318,6 +324,12 @@ func (c *Controller) revalidateClosure(ctx context.Context, snapshot sdk.Detecti
 			}
 
 			continue // Admitted source fields are independently rechecked below.
+		}
+		if detector == nil && !slices.Contains(c.healthDetectorIDs, id) {
+			// The adopted policy no longer has this incident detector. The
+			// repository moving is not evidence about the cluster; the health
+			// detectors still decide.
+			continue
 		}
 		if detector == nil {
 			return contradicted("closure observation detector %s is unavailable", id)

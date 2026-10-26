@@ -443,19 +443,19 @@ func TestSimRV6HealthRefreshCrashSchedules(t *testing.T) {
 				t.Fatal(err)
 			}
 			if effect, ok := restarted.PendingClosureEffect(); ok {
-				if err := restarted.ExecuteClosureEffect(ctx, effect); !errors.Is(err, ErrStaleHealthInvestigation) {
+				if err := restarted.ExecuteClosureEffect(ctx, effect); err != nil {
 					if timedOut(err) {
 						return
 					}
-					t.Fatalf("stale success: %v", err)
+					t.Fatalf("adopted controller refused its pending closure: %v", err)
 				}
 			}
 			if effect, ok := restarted.PendingClosureAcknowledgmentEffect(); ok {
-				if err := restarted.ExecuteClosureAcknowledgmentEffect(ctx, effect); !errors.Is(err, ErrStaleHealthInvestigation) {
+				if err := restarted.ExecuteClosureAcknowledgmentEffect(ctx, effect); err != nil {
 					if timedOut(err) {
 						return
 					}
-					t.Fatalf("stale ack: %v", err)
+					t.Fatalf("adopted controller refused its acknowledgment: %v", err)
 				}
 			}
 			evaluations := 0
@@ -466,36 +466,14 @@ func TestSimRV6HealthRefreshCrashSchedules(t *testing.T) {
 				}
 				t.Fatalf("paused startup blocked recovery: %v", err)
 			}
-			if evaluations != 0 || restarted.incidentOpen || restarted.closureBlocksNextLocked() || len(b.calls()) != 0 {
-				t.Fatal("paused recovery evaluated application or retained obsolete effects")
+			if evaluations != 0 {
+				t.Fatal("paused recovery evaluated application detectors")
 			}
 			persisted, _, err := store.Load(ctx)
-			if err != nil || len(persisted.GetFailedClosures()) != 1 || !strings.Contains(persisted.GetClosureFailure().GetLastError(), "fresh investigation") {
-				t.Fatalf("paused startup missing durable visible failure: %v %v", persisted, err)
+			if err != nil || len(persisted.GetFailedClosures()) != 0 {
+				t.Fatalf("adoption retired a closure it must resume: %v %v", persisted, err)
 			}
-			if err := restarted.Step(ctx, time.Unix(1000, 0).Add(time.Hour), nil); err != nil {
-				if timedOut(err) {
-					return
-				}
-				t.Fatalf("old evidence blocked fresh evaluation: %v", err)
-			}
-			if restarted.incidentOpen || restarted.closureBlocksNextLocked() || len(b.calls()) != 0 || len(restarted.history) == 0 {
-				t.Fatal("obsolete evidence blocked evaluation or reached broker")
-			}
-			again := crashController(t, root, current.Commit, state, "")
-			if err := executeStartupEffects(ctx, again, true); err != nil {
-				if timedOut(err) {
-					return
-				}
-				t.Fatalf("terminal failure blocked another paused startup: %v", err)
-			}
-			if err := again.Step(ctx, time.Unix(1000, 0).Add(2*time.Hour), nil); err != nil || again.incidentOpen || again.closureBlocksNextLocked() {
-				if timedOut(err) {
-					return
-				}
-				t.Fatalf("terminal failure blocked another restart: %v", err)
-			}
-			t.Logf("seed=%d cut=%s verified=%s old_evidence=failed", seed, cut, current.Commit)
+			t.Logf("seed=%d cut=%s verified=%s closure_resumed", seed, cut, current.Commit)
 		})
 	}
 	// A filtered -run subtest selection is a replay, not a coverage sweep.

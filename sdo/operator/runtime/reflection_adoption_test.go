@@ -164,7 +164,7 @@ func TestReflectionAdoptionAfterHealthRefreshAndRestart(t *testing.T) {
 			}
 			rv6Guard(restored, root, current.Commit)
 			// Startup precedes result availability. It must retain an owner for the Job.
-			if err := restored.prepareHealthEffects(ctx, now); err != nil {
+			if err := restored.requireAdoptedHealth(ctx); err != nil {
 				t.Fatal(err)
 			}
 			if restored.closureState == contracts.ClosureState_CLOSURE_STATE_FAILED {
