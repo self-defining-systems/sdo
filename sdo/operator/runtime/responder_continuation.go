@@ -49,9 +49,8 @@ func (d KubernetesJobDispatcher) continueResponder(ctx context.Context, executor
 		if err := ctx.Err(); err != nil {
 			return IncidentResult{}, err
 		}
-		loop.mu.Lock()
-		state := loop.continuation
-		loop.mu.Unlock()
+		var state responderContinuation
+		loop.locked(func() { state = loop.continuation })
 		if state.Done && state.Result != nil {
 			return incidentResultState(state.Result), nil
 		}
@@ -303,20 +302,22 @@ type responderFeedback struct {
 
 func (l *ResponderLoop) continuationRepairs(result IncidentResult) []continuationRepair {
 	repairs := make([]continuationRepair, 0)
-	l.mu.Lock()
-	previousFeedback := l.continuation.Feedback
-	completed := l.applicationRepairsLocked()
+	var previousFeedback string
+	var completed []continuationRepair
 	menuActions := map[string]MenuRoundExecution{}
-	for _, executions := range l.menuExecutions {
-		for _, execution := range executions {
-			for _, receipt := range l.menuRepairs {
-				if execution.ApplicationID != "" && strings.HasPrefix(receipt.ActionID, execution.ApplicationID+"-a") {
-					menuActions[receipt.ActionID] = execution
+	l.locked(func() {
+		previousFeedback = l.continuation.Feedback
+		completed = l.applicationRepairsLocked()
+		for _, executions := range l.menuExecutions {
+			for _, execution := range executions {
+				for _, receipt := range l.menuRepairs {
+					if execution.ApplicationID != "" && strings.HasPrefix(receipt.ActionID, execution.ApplicationID+"-a") {
+						menuActions[receipt.ActionID] = execution
+					}
 				}
 			}
 		}
-	}
-	l.mu.Unlock()
+	})
 	var previous responderFeedback
 	if previousFeedback != "" {
 		_ = json.Unmarshal([]byte(previousFeedback), &previous)

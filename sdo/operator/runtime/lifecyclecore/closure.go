@@ -36,6 +36,9 @@ const (
 	// scope. It fails terminally with a typed reason; the repair is not
 	// contradicted, so it is never recorded as superseded.
 	ObserverDenied
+	// OwnerLost ends an incident whose work no longer has a live owner (no
+	// responder execution, no closure begun) past its durable bound.
+	OwnerLost
 )
 
 type RetryPolicy struct {
@@ -122,7 +125,7 @@ func Step(state *contracts.ControllerState, event Event) (*contracts.ControllerS
 		})
 		return next, nil
 	}
-	if event.Kind == ResponseExpired && phase != contracts.ClosureState_CLOSURE_STATE_PENDING && phase != contracts.ClosureState_CLOSURE_STATE_PROCESSING {
+	if (event.Kind == ResponseExpired || event.Kind == OwnerLost) && phase != contracts.ClosureState_CLOSURE_STATE_PENDING && phase != contracts.ClosureState_CLOSURE_STATE_PROCESSING {
 		return next, nil
 	}
 	if event.Kind == Unconfirmed {
@@ -136,7 +139,7 @@ func Step(state *contracts.ControllerState, event Event) (*contracts.ControllerS
 		pending.UnconfirmedDetail = event.Error
 		return next, nil
 	}
-	if event.Kind == Superseded || event.Kind == ResponseExpired || event.Kind == ObserverDenied {
+	if event.Kind == Superseded || event.Kind == ResponseExpired || event.Kind == ObserverDenied || event.Kind == OwnerLost {
 		if pending == nil || phase == contracts.ClosureState_CLOSURE_STATE_FAILED {
 			return next, nil
 		}
@@ -144,6 +147,10 @@ func Step(state *contracts.ControllerState, event Event) (*contracts.ControllerS
 		if event.Kind == ResponseExpired {
 			failure.Reason = contracts.ClosureFailureReason_CLOSURE_FAILURE_REASON_AGENT_TIMEOUT
 			failure.Action = "expired incident without live work archived; detect a fresh incident"
+		}
+		if event.Kind == OwnerLost {
+			failure.Reason = contracts.ClosureFailureReason_CLOSURE_FAILURE_REASON_OWNER_LOST
+			failure.Action = "incident work without a live owner archived as failed; detect a fresh incident"
 		}
 		if event.Kind == ObserverDenied {
 			failure.Reason = contracts.ClosureFailureReason_CLOSURE_FAILURE_REASON_OBSERVER_DENIED
