@@ -3,6 +3,12 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 tag="${SDO_IMAGE_TAG:-v0.1.0}"
+# Provenance must describe the bytes Bake consumes, including untracked sources.
+source_changes="$(git -C "${repo_root}" status --porcelain --untracked-files=normal -- sdo/operator scripts/build_sdo_images.sh scripts/sdo-images.hcl)"
+if [[ -n "${source_changes}" ]]; then
+  echo "image source has uncommitted changes; commit before building source-bound images" >&2
+  exit 1
+fi
 export SDO_SOURCE_REVISION="$(git -C "${repo_root}" rev-parse HEAD)"
 # CI builds only changed targets through Bake, then uses these same smoke gates.
 read -r -a selected <<<"${SDO_IMAGES:-controller validator responder benchmark script-tools}"

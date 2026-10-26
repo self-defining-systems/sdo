@@ -50,12 +50,23 @@ def assert_runtime_images(images: Images, worktree: Path) -> None:
         timeout=10,
     ).stdout.strip()
     dirty = subprocess.run(
-        ["git", "-C", str(worktree), "diff", "--quiet", "HEAD", "--", "sdo/operator", "scripts/sdo-images.hcl"],
+        [
+            "git",
+            "-C",
+            str(worktree),
+            "status",
+            "--porcelain",
+            "--untracked-files=normal",
+            "--",
+            "sdo/operator",
+            "scripts/build_sdo_images.sh",
+            "scripts/sdo-images.hcl",
+        ],
         capture_output=True,
         text=True,
         timeout=10,
     )
-    if dirty.returncode:
+    if dirty.returncode or dirty.stdout.strip():
         raise ValueError(
             "eval: image source has uncommitted changes; commit and rebuild with scripts/build_sdo_images.sh"
         )

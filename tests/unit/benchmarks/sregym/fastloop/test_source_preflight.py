@@ -38,7 +38,7 @@ def test_initialized_harness_with_missing_nested_chart_is_rejected(tmp_path):
         assert_harness_sources(tmp_path)
 
 
-@pytest.mark.parametrize("failure", ["controller", "validator", "missing-label", "toolchain", None])
+@pytest.mark.parametrize("failure", ["controller", "validator", "missing-label", "toolchain", "dirty", None])
 def test_runtime_images_require_current_source_and_working_validator(tmp_path, monkeypatch, failure):
     from benchmarks.sregym.fastloop import source_preflight
     from benchmarks.sregym.fastloop.environment import Images
@@ -48,7 +48,10 @@ def test_runtime_images_require_current_source_and_working_validator(tmp_path, m
     def run(args, **kwargs):
         calls.append(args)
         if args[0] == "git":
-            return subprocess.CompletedProcess(args, 0, stdout="current\n")
+            output = "?? sdo/operator/new.go" if failure == "dirty" else ""
+            if "rev-parse" in args:
+                output = "current\n"
+            return subprocess.CompletedProcess(args, 0, stdout=output)
         if args[:3] == ["docker", "image", "inspect"]:
             role = "controller" if "controller" in args[3] else "validator"
             revision = "old" if failure == role else "current"
@@ -80,8 +83,14 @@ def test_worker_rejects_image_preflight_before_process_creation(tmp_path, monkey
     from benchmarks.sregym.fastloop.environment import FastloopEnvironment
 
     environment = FastloopEnvironment(
-        run_dir=tmp_path, cluster="lane", kubeconfig=tmp_path / "config", namespace="app",
-        application="app", workspace=tmp_path, sregym_dir=tmp_path, private_tmp=None,
+        run_dir=tmp_path,
+        cluster="lane",
+        kubeconfig=tmp_path / "config",
+        namespace="app",
+        application="app",
+        workspace=tmp_path,
+        sregym_dir=tmp_path,
+        private_tmp=None,
     )
     monkeypatch.setattr(source_preflight, "assert_harness_sources", lambda _: None)
 
