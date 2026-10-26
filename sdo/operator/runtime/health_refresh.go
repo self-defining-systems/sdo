@@ -8,6 +8,7 @@ import (
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory"
+	"sdo.dev/operator/memory/validate"
 	"sdo.dev/operator/runtime/lifecyclecore"
 )
 
@@ -157,7 +158,7 @@ func checkCommittedRepairHealth(ctx context.Context, root, compiled string, clos
 	// any other policy writer still does. This guard is not the health
 	// evidence: the replayed ExecuteClosureEffect revalidates the closure and
 	// health detectors on the live cluster before any outcome is committed.
-	if err := memory.CheckRepairAdoption(ctx, root, repairCommit, compiled); err != nil {
+	if err := validate.CheckRepairAdoption(ctx, root, repairCommit, compiled); err != nil {
 		if errors.Is(err, memory.ErrReflectionPolicyChanged) || errors.Is(err, memory.ErrReflectionObjectiveChanged) {
 			return ErrStaleHealthInvestigation
 		}
