@@ -468,6 +468,11 @@ def _cluster_ops(args: argparse.Namespace, namespace: str, *, ops: ClusterOps | 
         selected = InjectBeforeResumeOps(selected)  # type: ignore[assignment]
     if args.healthy_baseline:
         selected = kubectl_capture_ops(selected, namespace=namespace, kubectl_runner=kubectl)  # type: ignore[assignment]
+    restart_evidence = getattr(args, "restart_controller_in_injection_pause", None)
+    if restart_evidence is not None:
+        from benchmarks.sregym.assurance.pause_restart import RestartControllerInPauseOps
+
+        selected = RestartControllerInPauseOps(selected, restart_evidence)  # type: ignore[assignment]
     return selected
 
 
@@ -1411,6 +1416,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--inject-before-resume",
         action="store_true",
         help="composite SDO runs: inject every fault while the controller is paused, then resume it (simultaneous)",
+    )
+    run.add_argument(
+        "--restart-controller-in-injection-pause",
+        type=Path,
+        default=None,
+        metavar="EVIDENCE_JSONL",
+        help="scripted-agent gate: delete the controller Pod inside every injection pause and record it here",
     )
     run.add_argument("--reasoning-effort", default=None, help="Codex baseline reasoning effort (default: Codex's)")
     run.add_argument("--timeout", type=int, default=3600, help="per-incident agent timeout in seconds")
