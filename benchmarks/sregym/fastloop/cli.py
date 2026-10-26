@@ -602,6 +602,10 @@ def _run(args: argparse.Namespace) -> int:
             raise SystemExit(
                 "--time-scale below 1 is for scripted-agent runs only; live LLM runs must use --time-scale 1"
             )
+    from benchmarks.sregym.fastloop.learning_loop import require_proof, scripted_agents
+
+    if args.agent == "sdo" and not scripted_agents(args, environment):
+        require_proof(environment, getattr(args, "learning_loop_report", None))
     if args.agent == "sdo":
         from benchmarks.sregym.adapter import control_namespace_for
 
@@ -1123,6 +1127,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     run = commands.add_parser("run", help="loop incidents against the warm environment")
     run.add_argument("--run-dir", type=Path, required=True)
+    run.add_argument("--learning-loop-report", type=Path, help="passing real-lane proof for this commit and image set")
     run.add_argument("--agent", choices=("sdo", "codex"), required=True)
     run.add_argument("--no-checkpoints", action="store_true", help="skip optional offline replay checkpoint export")
     run.add_argument("--agent-registrations", type=Path, help="SDO worker registration directory")
