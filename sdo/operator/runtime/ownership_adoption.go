@@ -107,6 +107,10 @@ func (c *Controller) adoptOwnership(ctx context.Context, now time.Time, snapshot
 	if status.SourceCommit != c.config.SourceCommit {
 		status = OwnershipAdoptionStatus{SourceCommit: c.config.SourceCommit, AcceptedObjects: status.AcceptedObjects}
 	}
+	// A retry pass follows a failed one. Objects it already adopted and
+	// recorded are not dry-run again: one permanently refused object would
+	// otherwise cost a sweep of every accepted object per retry.
+	retrying := status.Failures > 0
 	accepted := map[string]bool{}
 	for _, key := range status.AcceptedObjects {
 		accepted[key] = true
@@ -115,7 +119,11 @@ func (c *Controller) adoptOwnership(ctx context.Context, now time.Time, snapshot
 	for _, manager := range status.FromManagers {
 		managerSet[manager] = true
 	}
-	changes := make([]ObjectChange, 0)
+	type adoptionChange struct {
+		ref    sdk.ObjectRef
+		change ObjectChange
+	}
+	changes := make([]adoptionChange, 0)
 	type candidate struct {
 		ref        sdk.ObjectRef
 		resource   acceptedResource
@@ -167,6 +175,10 @@ func (c *Controller) adoptOwnership(ctx context.Context, now time.Time, snapshot
 			objectFailed(ref, fmt.Errorf("read live %s/%s for adoption: %w", ref.Kind, ref.Name, err))
 			continue
 		}
+		if retrying && live != nil && adoptedAndRecorded(live, source) {
+			accepted[acceptedObjectKey(ref)] = true
+			continue
+		}
 		normalized, err := resource.apply(actionCtx, ref, source, true)
 		if err != nil {
 			objectFailed(ref, fmt.Errorf("dry run adoption of %s/%s: %w", ref.Kind, ref.Name, err))
@@ -174,7 +186,7 @@ func (c *Controller) adoptOwnership(ctx context.Context, now time.Time, snapshot
 		}
 		declared := flattenDriftPaths(source)
 		if live == nil || declaredFieldDifference(normalized, live, declared) {
-			changes = append(changes, ObjectChange{Old: normalized, New: live, Adoption: true})
+			changes = append(changes, adoptionChange{ref: ref, change: ObjectChange{Old: normalized, New: live, Adoption: true}})
 			continue
 		}
 		owned := ownedDriftPaths(live, "sdo-deployer")
@@ -221,21 +233,27 @@ func (c *Controller) adoptOwnership(ctx context.Context, now time.Time, snapshot
 		conditional.SetResourceVersion(live.GetResourceVersion())
 		pending = append(pending, candidate{ref: ref, resource: resource, source: conditional, normalized: normalized, conflicts: conflicts, managers: managers, record: record})
 	}
-	persistDifferences := func(changes []ObjectChange, view program.ReadView) error {
-		if len(changes) == 0 {
-			return nil
-		}
+	// Classifying or persisting one object's pre-adoption difference fails
+	// only that object: classification re-runs its source comparison, which
+	// can fail like the scan's dry run.
+	persistFailures := []error{}
+	persistDifferences := func(changes []adoptionChange, view program.ReadView) {
 		classifier := DriftClassifier{}
 		events := make([]sdk.DriftEvent, 0, len(changes))
-		for _, change := range changes {
-			event, err := classifier.Classify(actionCtx, change, view, now)
+		for _, item := range changes {
+			event, err := classifier.Classify(actionCtx, item.change, view, now)
 			if err != nil {
-				return fmt.Errorf("classify pre-adoption difference: %w", err)
+				objectFailed(item.ref, fmt.Errorf("classify pre-adoption difference: %w", err))
+				continue
 			}
 			if event == nil {
-				return fmt.Errorf("pre-adoption difference was not classified")
+				objectFailed(item.ref, fmt.Errorf("pre-adoption difference was not classified"))
+				continue
 			}
 			events = append(events, *event)
+		}
+		if len(events) == 0 {
+			return
 		}
 		for _, event := range events {
 			c.mu.Lock()
@@ -249,13 +267,10 @@ func (c *Controller) adoptOwnership(ctx context.Context, now time.Time, snapshot
 			}
 		}
 		if err := c.PersistState(actionCtx); err != nil {
-			return fmt.Errorf("persist pre-adoption drift: %w", err)
+			persistFailures = append(persistFailures, fmt.Errorf("persist pre-adoption drift: %w", err))
 		}
-		return nil
 	}
-	if err := persistDifferences(changes, c.drift.View(snapshot)); err != nil {
-		return err
-	}
+	persistDifferences(changes, c.drift.View(snapshot))
 	// A failed record write leaves only that object without an acceptance
 	// point (its comparison fails closed); the pass continues and the
 	// failure is retried with the adoption backoff.
@@ -285,12 +300,11 @@ func (c *Controller) adoptOwnership(ctx context.Context, now time.Time, snapshot
 					// admission, without attempting another write.
 					expected, marshalErr := json.Marshal(comparableFields(item.normalized.Object))
 					if marshalErr != nil {
-						return marshalErr
+						objectFailed(item.ref, fmt.Errorf("encode accepted projection of %s/%s: %w", item.ref.Kind, item.ref.Name, marshalErr))
+						continue
 					}
 					view := adoptionConflictView{ReadView: c.drift.View(snapshot), ref: item.ref, diff: program.Diff{Changed: true, Text: "accepted: " + string(expected)}}
-					if classifyErr := persistDifferences([]ObjectChange{{Old: item.normalized, New: live, Adoption: true}}, view); classifyErr != nil {
-						return classifyErr
-					}
+					persistDifferences([]adoptionChange{{ref: item.ref, change: ObjectChange{Old: item.normalized, New: live, Adoption: true}}}, view)
 				}
 			}
 			objectFailed(item.ref, fmt.Errorf("adopt %s/%s: %w", item.ref.Kind, item.ref.Name, err))
@@ -317,7 +331,7 @@ func (c *Controller) adoptOwnership(ctx context.Context, now time.Time, snapshot
 		status.AcceptedObjects = append(status.AcceptedObjects, key)
 	}
 	sort.Strings(status.AcceptedObjects)
-	recordErr := errors.Join(append(objectFailures, recordFailures...)...)
+	recordErr := errors.Join(append(append(objectFailures, recordFailures...), persistFailures...)...)
 	if recordErr == nil {
 		status.LastError = ""
 		status.Failures = 0
@@ -347,6 +361,22 @@ func (c *Controller) adoptOwnership(ctx context.Context, now time.Time, snapshot
 	c.acceptanceSettleWaits = 0
 	c.adoptionNeeded = false
 	return nil
+}
+
+// adoptedAndRecorded reports whether live already has every declared field
+// owned by the deployer and a current acceptance record bound to its UID:
+// adoption has nothing left to do for it.
+func adoptedAndRecorded(live, source *unstructured.Unstructured) bool {
+	if !acceptanceRecordBound(live, source) {
+		return false
+	}
+	owned := ownedDriftPaths(live, "sdo-deployer")
+	for path := range flattenDriftPaths(source) {
+		if !ownsDriftPath(owned, path) {
+			return false
+		}
+	}
+	return true
 }
 
 // recordLost reports whether live, which needs a new record, lost the one
