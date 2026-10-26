@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import tempfile
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -219,6 +220,9 @@ def rendered_cases() -> dict[str, str]:
         # of the checkout that runs the production builders.
         patch.setattr(codex, "SKILLS_ROOT", Path("/opt/sdo/skills"))
         patch.setattr(reflection, "SKILLS_ROOT", Path("/opt/sdo/skills"))
+        # Prompt size caps count temporary-path characters; the golden root is
+        # a fixed input rather than whatever TMPDIR the runner happens to use.
+        patch.setattr(tempfile, "tempdir", "/tmp")
         for name in ("SDO_RESPONDER_EXTRA_INSTRUCTIONS", "SDO_LATE_FINDINGS", "SDO_API_HISTORY_DIR"):
             patch.delenv(name, raising=False)
         for name, request in {
