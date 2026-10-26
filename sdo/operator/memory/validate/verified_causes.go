@@ -55,17 +55,20 @@ func VerifiedReflectionCauses(outcome *contracts.OutcomeRecord) []*contracts.Ref
 // aggregate classification or eligibility projection: a timed mutation and
 // opening findings for every target/symptom cleared after the last cause write.
 // Written targets need primary findings; symptoms may be related observations.
-// A symptom no opening finding observed is unobserved context, not failed
-// proof; a symptom that was observed must still clear.
+// On a success outcome, a symptom no opening finding observed is unobserved
+// context, not failed proof; a symptom that was observed must still clear.
+// Opening findings omit findings that activate after launch, so without
+// global health closure every symptom needs its own cleared finding.
 // Callers still enforce ownership, trusted action provenance and eligibility.
 func RepairedCauseObserved(outcome *contracts.OutcomeRecord, resources []*contracts.ObjectRef) bool {
 	repaired, after, valid := causeRepairs(outcome, resources)
 	if !valid || len(repaired) == 0 {
 		return false
 	}
+	healthClosed := outcome.GetClassification() == "success"
 	for _, resource := range resources {
 		primary := slices.ContainsFunc(repaired, func(ref *contracts.ObjectRef) bool { return equalCauseResource(ref, resource) })
-		if !primary && !openingObserved(outcome, resource) {
+		if !primary && healthClosed && !openingObserved(outcome, resource) {
 			continue
 		}
 		if !clearedOpenFinding(outcome, resource, after, primary) {

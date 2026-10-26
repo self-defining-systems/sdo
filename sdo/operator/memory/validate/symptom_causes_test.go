@@ -109,6 +109,22 @@ func TestVerifiedCauseTreatsFindinglessSymptomAsContext(t *testing.T) {
 			}
 		})
 	}
+	// Opening findings omit findings that activate after launch. Without
+	// global health closure, an unnamed cause resource may still be broken.
+	for _, classification := range []string{"partial", "failed"} {
+		t.Run(classification+" outcome with post-launch symptom", func(t *testing.T) {
+			o := proto.Clone(outcome).(*contracts.OutcomeRecord)
+			o.Classification = classification
+			o.ReflectionEligibility = &contracts.ReflectionEligibility{Version: 1, Causes: []*contracts.ReflectionCauseWork{{CauseIndex: 0}}}
+			o.FinalHealthDetectorState = []*contracts.DetectorEvaluation{{DetectorId: "traffic-health", Status: "firing", Fingerprints: []string{"frontend"}, EvaluatedAt: timestamppb.New(at.Add(3 * time.Second))}}
+			if RepairedCauseObserved(o, o.GetConfirmedRootCauses()[0].GetResources()) {
+				t.Fatal("unobserved resource treated as context without global health closure")
+			}
+			if got := VerifiedReflectionCauses(o); len(got) != 0 {
+				t.Fatalf("unproven cause authorized: %v", got)
+			}
+		})
+	}
 }
 
 func TestReflectionProgramBindsRepairTargetWithoutSymptomParameter(t *testing.T) {

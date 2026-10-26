@@ -26,12 +26,9 @@ func TestPartialReflectionRetainsRecoveredUnwrittenSymptoms(t *testing.T) {
 	if len(projected.ConfirmedRootCauses) != 1 || len(projected.ConfirmedRootCauses[0].Resources) != 2 || len(projected.RepairActions) != 1 || projected.Classification != "failed" {
 		t.Fatalf("partial learning projection lost symptoms or upgraded closure: %v", projected)
 	}
-	unobserved := proto.Clone(outcome).(*contracts.OutcomeRecord)
-	unobserved.Findings = unobserved.Findings[:2]
-	if got := partialRepairCauses(unobserved); len(got) != 1 || got[0] != 0 {
-		t.Fatalf("Service no finding observed vetoed verified Deployment repair: %v", got)
-	}
 	for name, mutate := range map[string]func(*contracts.OutcomeRecord){
+		// Without health closure, a later-activating finding may still name it.
+		"no symptom open":  func(o *contracts.OutcomeRecord) { o.Findings = o.Findings[:2] },
 		"no symptom fixed": func(o *contracts.OutcomeRecord) { o.DetectorHistory = o.DetectorHistory[:1] },
 		"symptom still broken": func(o *contracts.OutcomeRecord) {
 			o.DetectorHistory[1].Status = "firing"
