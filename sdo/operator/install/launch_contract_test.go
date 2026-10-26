@@ -67,7 +67,7 @@ func TestInstallerOperateOptionalArgumentsRoundTripToController(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	controller, supervise, err := operatorcli.ParseControllerLaunch(plan.Job.Spec.Template.Spec.Containers[0].Args)
+	controller, supervise, err := operatorcli.ParseControllerLaunch(append(plan.Job.Spec.Template.Spec.Containers[0].Args, "--operator-root", ".."))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +85,7 @@ func TestInstallerControllerOptionalArgumentsRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	launch, supervise, err := operatorcli.ParseControllerLaunch(plan.Job.Spec.Template.Spec.Containers[0].Args)
+	launch, supervise, err := operatorcli.ParseControllerLaunch(append(plan.Job.Spec.Template.Spec.Containers[0].Args, "--operator-root", ".."))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,7 +158,7 @@ func TestInstallerOperateLateFindingsOffAddsNoResponderSetting(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		controller, _, err := operatorcli.ParseControllerLaunch(plan.Job.Spec.Template.Spec.Containers[0].Args)
+		controller, _, err := operatorcli.ParseControllerLaunch(append(plan.Job.Spec.Template.Spec.Containers[0].Args, "--operator-root", ".."))
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -16,14 +16,18 @@ func TestParseValidateLaunchRequiresBoundSchema(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	launch, err := ParseValidateLaunch([]string{"validate", "--app", "/workspace", "--operator-root", root, "--expect-schema", sdkSchemaIdentity})
+	identity, err := builder.SchemaIdentity(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	launch, err := ParseValidateLaunch([]string{"validate", "--app", "/workspace", "--operator-root", root, "--expect-schema", identity})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if launch.ApplicationRoot != "/workspace" || launch.OperatorRoot != root {
 		t.Fatalf("unexpected validator launch: %+v", launch)
 	}
-	baseline, err := ParseValidateLaunch([]string{"validate", "--app", "/workspace", "--operator-root", root, "--expect-schema", sdkSchemaIdentity, "--healthy-baseline", "/sdo/healthy-baseline"})
+	baseline, err := ParseValidateLaunch([]string{"validate", "--app", "/workspace", "--operator-root", root, "--expect-schema", identity, "--healthy-baseline", "/sdo/healthy-baseline"})
 	if err != nil || baseline.HealthyBaseline != "/sdo/healthy-baseline" {
 		t.Fatalf("healthy baseline gate was lost: %+v, %v", baseline, err)
 	}
