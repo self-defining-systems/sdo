@@ -579,3 +579,57 @@ def test_recovery_never_mutates_while_native_reflection_is_pending(tmp_path: Pat
     state.save(environment.state_path)
     invoke(environment, cluster, worker)
     assert worker.calls == ["clean_start", "health", "baseline_oracle"]
+
+
+def test_restore_receipt_names_each_reapplied_object_and_warns_on_undeclared_recreation(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    import hashlib
+
+    from benchmarks.sregym.fastloop.baseline_recovery import RESTORE_RECEIPTS, save_application_baseline
+
+    environment = FastloopEnvironment(
+        run_dir=tmp_path,
+        cluster="fake",
+        kubeconfig=tmp_path / "kubeconfig",
+        namespace="hotel",
+        application="hotel",
+        workspace=tmp_path / "workspace",
+        sregym_dir=tmp_path / "sregym",
+        private_tmp=None,
+    )
+    alias = {
+        "kind": "Service",
+        "metadata": {"name": "jaeger-agent", "namespace": "hotel"},
+        "spec": {"type": "ExternalName", "externalName": "otel-collector.observe.svc.cluster.local"},
+    }
+    extra = {"kind": "ConfigMap", "metadata": {"name": "extra", "namespace": "hotel"}, "data": {"a": "b"}}
+    app = {
+        "apiVersion": "apps/v1",
+        "kind": "Deployment",
+        "metadata": {"name": "app", "namespace": "hotel"},
+        "spec": {"replicas": 1},
+    }
+    environment.baseline_path.write_text("{}")
+    save_application_baseline(environment.baseline_path, (ApplicationBaseline("hotel", [app, alias, extra]),))
+    lock = environment.workspace / ".sdo/rendered/lock.json"
+    lock.parent.mkdir(parents=True)
+    manifest = json.dumps(app).encode()
+    (lock.parent / "app.yaml").write_bytes(manifest)
+    reference = {"api_version": "apps/v1", "kind": "Deployment", "namespace": "hotel", "name": "app"}
+    row = {"ref": reference, "file": "app.yaml", "sha256": hashlib.sha256(manifest).hexdigest()}
+    lock.write_text(json.dumps({"objects": [row]}))
+    cluster = FakeCluster()  # only Deployment/app (replicas 0): the alias and ConfigMap are absent
+
+    reset.restore_application(environment, cluster, FakeWorker())
+
+    receipts = [json.loads(line) for line in (tmp_path / RESTORE_RECEIPTS).read_text().splitlines()]
+    assert receipts[0]["reapplied"] == [
+        {"kind": "ConfigMap", "namespace": "hotel", "name": "extra", "recreated": True, "harness_owned": False},
+        {"kind": "Deployment", "namespace": "hotel", "name": "app", "recreated": False, "harness_owned": False},
+    ]
+    assert receipts[0]["warnings"] == [
+        {"type": "restore_recreated_undeclared_object", "object": "ConfigMap/extra"},
+        {"type": "harness_redirect_left_absent", "object": "Service/jaeger-agent"},
+    ]
+    assert "restore_recreated_undeclared_object" in caplog.text
