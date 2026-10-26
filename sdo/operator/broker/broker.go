@@ -147,7 +147,8 @@ func (b *Broker) CreateProposal(ctx context.Context, incidentID string) (Proposa
 }
 
 // CreateProposalForPhase starts a fresh isolated checkout for each lifecycle
-// phase. Reflection therefore starts from the accepted outcome commit.
+// phase. Reflection starts from the accepted outcome commit with the responder's
+// isolated working playbook changes carried forward for validation.
 func (b *Broker) CreateProposalForPhase(ctx context.Context, incidentID string, phase Phase) (Proposal, error) {
 	if strings.TrimSpace(incidentID) == "" {
 		return Proposal{}, errors.New("incident ID is required")
@@ -188,6 +189,11 @@ func (b *Broker) CreateProposalForPhase(ctx context.Context, incidentID string, 
 		}
 		if _, err := runGit(ctx, checkout, "remote", "remove", "origin"); err != nil {
 			return err
+		}
+		if phase == ReflectionPhase {
+			if err := b.carryWorkingPrograms(ctx, incidentID, checkout); err != nil {
+				return err
+			}
 		}
 		proposal = Proposal{IncidentID: incidentID, Path: checkout, BaseCommit: base}
 		if err := validate.WritePublicationContext(ctx, checkout, validate.PublicationContext{BaseCommit: base, IncidentID: incidentID, ObservationCeiling: b.observationCeiling, ApplicationNamespace: b.applicationNamespace}); err != nil {
@@ -263,6 +269,27 @@ func (b *Broker) publish(ctx context.Context, incidentID string, actor Actor, ph
 		if err != nil {
 			return err
 		}
+		candidateRoot := proposal.Path
+		if actor == Responder && phase == ProposalPhase {
+			paths = SourceRepairPaths(paths)
+			if len(paths) == 0 {
+				receipt = Receipt{IncidentID: incidentID, Phase: phase}
+				return nil
+			}
+			// Validate the exact source-only submission in a private tree. Working
+			// programs are never included in a source publication or its compile check.
+			sourceStage, cleanup, err := b.privateClone(ctx)
+			if err != nil {
+				return err
+			}
+			defer cleanup()
+			for _, path := range paths {
+				if err := copyChange(proposal.Path, sourceStage, path); err != nil {
+					return err
+				}
+			}
+			candidateRoot = sourceStage
+		}
 		publication := &validate.PublicationContext{BaseCommit: proposal.BaseCommit, IncidentID: incidentID, VerifiedSourceTree: expectedSourceTree}
 		if phase == ReflectionPhase && decision == nil {
 			decision, err = validate.LoadCheckedReflectionDecision(ctx, proposal.Path, "")
@@ -272,7 +299,7 @@ func (b *Broker) publish(ctx context.Context, incidentID string, actor Actor, ph
 		}
 		// Validate before copying so invalid filesystem shapes also receive the
 		// shared diagnostics. Recheck the frozen private clone with the real runner.
-		preflight, err := b.checkCandidate(ctx, proposal.Path, proposal.BaseCommit, actor, phase, paths, func(context.Context, string, []string) error { return nil }, publication, decision)
+		preflight, err := b.checkCandidate(ctx, candidateRoot, proposal.BaseCommit, actor, phase, paths, func(context.Context, string, []string) error { return nil }, publication, decision)
 		if err != nil {
 			return err
 		}
@@ -284,7 +311,7 @@ func (b *Broker) publish(ctx context.Context, incidentID string, actor Actor, ph
 			return nil
 		}
 		if expectedSourceTree != "" {
-			actualTree, err := ProposalTreeDigest(ctx, proposal.Path)
+			actualTree, err := ProposalTreeDigest(ctx, candidateRoot)
 			if err != nil {
 				return err
 			}
@@ -304,7 +331,7 @@ func (b *Broker) publish(ctx context.Context, incidentID string, actor Actor, ph
 		}
 		defer cleanup()
 		for _, path := range paths {
-			if err := copyChange(proposal.Path, stage, path); err != nil {
+			if err := copyChange(candidateRoot, stage, path); err != nil {
 				return err
 			}
 		}

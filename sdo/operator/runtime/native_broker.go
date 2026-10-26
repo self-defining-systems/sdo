@@ -234,7 +234,7 @@ func (n NativeIncidentBroker) ProcessClosure(ctx context.Context, closure Incide
 				}
 				// An unverified (timed-out) closure never publishes its repair.
 				verified := len(closure.FinalDetectorStates) > 0
-				if len(changed) > 0 && verified {
+				if len(broker.SourceRepairPaths(changed)) > 0 && verified {
 					accepted, err := n.Repository.Publish(ctx, id, broker.Responder, broker.ProposalPhase)
 					if err != nil {
 						return err

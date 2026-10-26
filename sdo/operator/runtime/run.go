@@ -553,6 +553,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 
 					Rollouts: KubernetesPlanRollouts{Client: bootstrapProvider.Client}, Verifier: PlanHealthVerifier{Detectors: detectors, Provider: snapshotProvider, Timeout: *verificationTimeout, PollInterval: scaledDuration(time.Second, timeScale)}, Observer: kubernetesCache,
 				}, *maxResponseLoops)
+				loop.WorkingProgramRoot = request.RepositoryWorktree
 				if menuEnabled != "0" {
 					loop.MenuConfig = productionResponderMenu()
 					loop.MenuConfig.Unexplained = func(ctx context.Context) (UnexplainedRemovalAssessment, error) {

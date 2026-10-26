@@ -151,6 +151,14 @@ func (l *ResponderLoop) mitigateSelection(ctx context.Context, request ToolReque
 		}
 		response.MenuExecution = append(response.MenuExecution, part.MenuExecution...)
 		response.ProgramRuns = append(response.ProgramRuns, part.ProgramRuns...)
+		if len(part.ProgramRevisions) > 0 {
+			if response.ProgramRevisions == nil {
+				response.ProgramRevisions = map[string]string{}
+			}
+			for id, revision := range part.ProgramRevisions {
+				response.ProgramRevisions[id] = revision
+			}
+		}
 		if part.ApplicationID != "" {
 			response.ApplicationID = part.ApplicationID
 		}
@@ -181,6 +189,8 @@ func (l *ResponderLoop) mitigateSelection(ctx context.Context, request ToolReque
 func writeObjectKey(ref sdk.ObjectRef) string { return ref.Kind + "/" + ref.Namespace + "/" + ref.Name }
 
 type pendingMitigation struct {
+	ProgramRevision     string
+	diagnoser           program.Diagnoser
 	Refs                []sdk.ObjectRef
 	AttemptID           string
 	ProgramID           string
@@ -197,7 +207,13 @@ func (l *ResponderLoop) reservePending(application string, plan program.Plan, at
 		refs = planCaptureRefs(plan)
 	}
 	sort.Slice(refs, func(i, j int) bool { return writeObjectKey(refs[i]) < writeObjectKey(refs[j]) })
-	l.pendingWrites[application] = pendingMitigation{Refs: refs, AttemptID: attempt, ProgramID: programID, Bindings: cloneProgramBindings(bindings), FindingFingerprints: append([]string(nil), fingerprints...)}
+	var diagnoser program.Diagnoser
+	revision := ""
+	if programID != "" && l.Programs != nil {
+		diagnoser, _ = l.Programs.Diagnoser(programID)
+		revision = l.programRevision(programID)
+	}
+	l.pendingWrites[application] = pendingMitigation{diagnoser: diagnoser, ProgramRevision: revision, Refs: refs, AttemptID: attempt, ProgramID: programID, Bindings: cloneProgramBindings(bindings), FindingFingerprints: append([]string(nil), fingerprints...)}
 }
 
 // Reservations are observation state, never restored write or rollback authority.
@@ -230,12 +246,16 @@ func (l *ResponderLoop) settlePending(ctx context.Context) {
 			result.VerificationPassed, _ = executor.Verifier.Verify(ctx)
 		}
 		if l.Programs != nil {
-			if diagnoser, ok := l.Programs.Diagnoser(pending.ProgramID); ok {
+			diagnoser, ok := pending.diagnoser, pending.diagnoser != nil
+			if !ok && (pending.ProgramRevision == "" || pending.ProgramRevision == l.programRevision(pending.ProgramID)) {
+				diagnoser, ok = l.Programs.Diagnoser(pending.ProgramID)
+			}
+			if ok {
 				view, err := l.snapshotView(ctx)
 				result.VerificationPassed = result.VerificationPassed && err == nil
 				if err == nil {
 					verdict := program.RunDiagnose(ctx, diagnoser, view, pending.Bindings, l.deadline())
-					l.runs = append(l.runs, ProgramRun{ProgramID: pending.ProgramID, Bindings: cloneProgramBindings(pending.Bindings), Verdict: verdict})
+					l.runs = append(l.runs, ProgramRun{ProgramRevision: pending.ProgramRevision, ProgramID: pending.ProgramID, Bindings: cloneProgramBindings(pending.Bindings), Verdict: verdict})
 					result.VerificationPassed = result.VerificationPassed && verdict.Result == program.NoMatch
 				}
 			}

@@ -22,6 +22,9 @@ type Config struct {
 	DiagnosticsRoot string
 	OperatorRoot    string
 	HealthyBaseline string
+	// ProgramModule pins JIT imports to the accepted diagnostics module name.
+	// It never compiles checkout detector code.
+	ProgramModule string
 	// CompileOnly is reserved for an explicit, unvalidated adoption build.
 	CompileOnly bool
 }
