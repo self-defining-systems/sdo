@@ -947,6 +947,14 @@ func ValidateDetector(detector sdk.Detector) error
     ValidateDetector checks one detector's metrics configuration. Detectors that
     consume no metrics are valid.
 
+func ValidateNodeUsage(ref sdk.ObjectRef, sample *metricsv1beta1.NodeMetrics) error
+    ValidateNodeUsage rejects incomplete observations, including recorded
+    evidence.
+
+func ValidatePodUsage(ref sdk.ObjectRef, sample *metricsv1beta1.PodMetrics) error
+    ValidatePodUsage rejects incomplete observations, including recorded
+    evidence.
+
 func ValidateQueries(queries []Query) error
     ValidateQueries checks a set of queries for one controller: each valid,
     IDs unique, and the count bounded.
@@ -1114,6 +1122,18 @@ type ThresholdRule struct {
 }
     ThresholdRule fires a finding for every series of Query whose reduced value
     violates Threshold.
+
+type UsageSource interface {
+	PodUsage(sdk.ObjectRef) (*metricsv1beta1.PodMetrics, error)
+	NodeUsage(sdk.ObjectRef) (*metricsv1beta1.NodeMetrics, error)
+}
+
+type UsageUnavailableError struct {
+	Reason string `json:"reason"`
+}
+    UsageUnavailableError means metrics could not be observed, never zero usage.
+
+func (e *UsageUnavailableError) Error() string
 
 type Validator interface {
 	Validate() error

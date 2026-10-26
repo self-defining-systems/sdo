@@ -15,6 +15,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 
+	metricsv1beta1 "k8s.io/metrics/pkg/apis/metrics/v1beta1"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 )
@@ -183,7 +184,7 @@ func renameCorpusCase(c CorpusCase) (CorpusCase, error) {
 func renameBindings(bindings program.Bindings, namespace string, m *renameMapping) program.Bindings {
 	renamed := program.Bindings{Objects: make(program.ObjectBindings, len(bindings.Objects))}
 	for key, ref := range bindings.Objects {
-		if ref.Namespace == namespace || ref.Namespace == "" && !(sdk.ObservationTarget{Kind: ref.Kind}).Cluster() {
+		if ref.Namespace == namespace || ref.Namespace == "" && ref.Kind != "Node" && !(sdk.ObservationTarget{Kind: ref.Kind}).Cluster() {
 			ref.Name = m.value(ref.Name)
 		}
 		renamed.Objects[key] = ref
@@ -220,7 +221,7 @@ func renameSelector(selector *metav1.LabelSelector, m *renameMapping) {
 }
 
 func renameObjectRef(ref *corev1.ObjectReference, namespace string, m *renameMapping) {
-	if ref != nil && (ref.Namespace == namespace || ref.Namespace == "" && !(sdk.ObservationTarget{Kind: ref.Kind}).Cluster()) {
+	if ref != nil && (ref.Namespace == namespace || ref.Namespace == "" && ref.Kind != "Node" && !(sdk.ObservationTarget{Kind: ref.Kind}).Cluster()) {
 		ref.Name = m.value(ref.Name)
 	}
 }
@@ -584,25 +585,56 @@ func renameRecordings(calls []PrimitiveCall, namespace string, m *renameMapping)
 		if err := json.Unmarshal(args[0], &ref); err != nil {
 			return nil, fmt.Errorf("recording %d %s reference: %w", index, call.Method, err)
 		}
-		if ref.Namespace == namespace || ref.Namespace == "" && !(sdk.ObservationTarget{Kind: ref.Kind}).Cluster() {
+		if ref.Namespace == namespace || ref.Namespace == "" && ref.Kind != "Node" && !(sdk.ObservationTarget{Kind: ref.Kind}).Cluster() {
 			ref.Name = m.value(ref.Name)
 		}
 		args[0], _ = json.Marshal(ref)
 		switch call.Method {
-		case "Logs":
-			if len(args) != 3 {
-				return nil, fmt.Errorf("recording %d Logs needs reference, container and duration", index)
+		case "Logs", "LogsWithOptions":
+			expected := 3
+			if call.Method == "LogsWithOptions" {
+				expected = 2
 			}
-			var container, logs string
-			if err := json.Unmarshal(args[1], &container); err != nil {
-				return nil, fmt.Errorf("recording %d Logs container: %w", index, err)
+			if len(args) != expected {
+				return nil, fmt.Errorf("recording %d %s has invalid arguments", index, call.Method)
 			}
-			args[1], _ = json.Marshal(m.exact(container))
+			if call.Method == "Logs" {
+				var container string
+				if err := json.Unmarshal(args[1], &container); err != nil {
+					return nil, err
+				}
+				args[1], _ = json.Marshal(m.exact(container))
+			} else {
+				var options corev1.PodLogOptions
+				if err := json.Unmarshal(args[1], &options); err != nil {
+					return nil, err
+				}
+				options.Container = m.exact(options.Container)
+				args[1], _ = json.Marshal(options)
+			}
 			if len(call.Result) > 0 && string(call.Result) != "null" {
+				var logs string
 				if err := json.Unmarshal(call.Result, &logs); err != nil {
-					return nil, fmt.Errorf("recording %d Logs result: %w", index, err)
+					return nil, err
 				}
 				renamed[index].Result, _ = json.Marshal(m.text(logs))
+			}
+		case "PodUsage", "NodeUsage":
+			if len(args) != 1 {
+				return nil, fmt.Errorf("recording %d %s needs one reference", index, call.Method)
+			}
+			if len(call.Result) > 0 && string(call.Result) != "null" && call.Method == "PodUsage" {
+				var sample metricsv1beta1.PodMetrics
+				if err := json.Unmarshal(call.Result, &sample); err != nil {
+					return nil, err
+				}
+				if sample.Namespace == namespace {
+					sample.Name = m.value(sample.Name)
+				}
+				for i := range sample.Containers {
+					sample.Containers[i].Name = m.exact(sample.Containers[i].Name)
+				}
+				renamed[index].Result, _ = json.Marshal(sample)
 			}
 		case "ProbeTCP":
 			if len(args) != 2 {

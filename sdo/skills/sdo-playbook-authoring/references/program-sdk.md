@@ -33,6 +33,10 @@ func ApplySetFieldAction(current map[string]any, a SetField, value any) error
     owns resolution and provenance; this helper owns field and document schema
     checks.
 
+func BoundedLogOptions(options corev1.PodLogOptions) (corev1.PodLogOptions, error)
+    BoundedLogOptions copies upstream options and enforces finite reads of at
+    most 64 KiB.
+
 func CheckReads(view ReadView) (sdk.DetectionContext, func() error)
     CheckReads gives one evaluation its own failure tracking. A failed read
     cannot be ignored to turn Unknown into clearance.
@@ -443,6 +447,8 @@ type ReadView interface {
 	traffic.Source
 	servicehealth.ReachabilitySource
 	Logs(pod sdk.ObjectRef, container string, since time.Duration) (string, error)
+	LogsWithOptions(pod sdk.ObjectRef, options corev1.PodLogOptions) (string, error)
+	metrics.UsageSource
 	ProbeTCP(to sdk.ObjectRef, port int32) (ProbeResult, error)
 	ProbeHTTP(to sdk.ObjectRef, req HTTPProbe) (ProbeResult, error)
 	DiffAgainstSource(ref sdk.ObjectRef) (Diff, error)
