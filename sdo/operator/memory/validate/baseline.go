@@ -56,15 +56,15 @@ func selectCompileBaseline(ctx context.Context, request Request) (Request, error
 		}
 		request.HealthyBaseline = filepath.Join(capture, "healthy")
 		if capture == "" {
-			return Request{}, &Failure{Diagnostics: []Diagnostic{healthyCaptureDiagnostic("controller pre-incident healthy capture is unavailable")}}
+			return Request{}, &Failure{Diagnostics: []Diagnostic{healthyCaptureDiagnostic("controller healthy capture is unavailable")}}
 		}
 		if _, err := os.Stat(filepath.Join(request.HealthyBaseline, "healthy.json")); err != nil {
-			return Request{}, &Failure{Diagnostics: []Diagnostic{healthyCaptureDiagnostic("controller pre-incident healthy capture is unavailable")}}
+			return Request{}, &Failure{Diagnostics: []Diagnostic{healthyCaptureDiagnostic("controller healthy capture is unavailable")}}
 		}
 	}
 	return request, nil
 }
 
 func healthyCaptureDiagnostic(message string) Diagnostic {
-	return Diagnostic{Rule: RuleDetectorHealthyBaseline, Message: message, Hint: "record a clear controller evaluation and its observations before opening the incident; agent-authored healthy.json and post-repair state cannot supply this reference"}
+	return Diagnostic{Rule: RuleDetectorHealthyBaseline, Message: message, Hint: "the controller records this sample before the incident, or at a closure it verified healthy; agent-authored healthy.json cannot supply it"}
 }

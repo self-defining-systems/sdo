@@ -7,12 +7,12 @@ import (
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 )
 
-// VerifiedReflectionCauses selects controller evidence, never aggregate success
-// or the responder's cause claim. A cause needs a recorded mutation and fresh
-// clearance of its opening findings, including symptoms that recovered without
-// being written. Every written resource remains bound to an opening finding:
-// its own, or on a success outcome a cleared finding of the same cause.
-// Partial outcomes must additionally carry controller eligibility for the cause.
+// VerifiedReflectionCauses selects the causes whose repair steps may be saved.
+// On a closure verified healthy (success) a cause needs only a recorded
+// successful repair touching its resources. On any other outcome a cause needs
+// a recorded mutation and fresh clearance of its opening findings, including
+// symptoms that recovered without being written, plus controller eligibility
+// and exclusive ownership of its resources.
 func VerifiedReflectionCauses(outcome *contracts.OutcomeRecord) []*contracts.ReflectionCauseWork {
 	owners := map[[3]string]int{}
 	for _, cause := range outcome.GetConfirmedRootCauses() {
@@ -35,9 +35,17 @@ func VerifiedReflectionCauses(outcome *contracts.OutcomeRecord) []*contracts.Ref
 				work.Items = candidate.GetItems()
 			}
 		}
-		verified := eligible && RepairedCauseObserved(outcome, cause.GetResources())
-		for _, resource := range cause.GetResources() {
-			verified = verified && owners[[3]string{resource.GetKind(), resource.GetNamespace(), resource.GetName()}] == 1
+		var verified bool
+		if outcome.GetClassification() == "success" {
+			// Closure verified healthy is the whole precondition: the recorded
+			// repair steps are saved, and the repeat's act-verify loop checks
+			// them again. No per-cause clearance or ownership proof is needed.
+			verified = eligible && repairRecorded(outcome, cause.GetResources())
+		} else {
+			verified = eligible && RepairedCauseObserved(outcome, cause.GetResources())
+			for _, resource := range cause.GetResources() {
+				verified = verified && owners[[3]string{resource.GetKind(), resource.GetNamespace(), resource.GetName()}] == 1
+			}
 		}
 		if verified {
 			result = append(result, work)
@@ -217,4 +225,11 @@ func clearedOpenFinding(outcome *contracts.OutcomeRecord, resource *contracts.Ob
 		}
 	}
 	return false
+}
+
+// repairRecorded reports a valid, timed, successful repair action that wrote a
+// cause resource or an object a cause resource controls.
+func repairRecorded(outcome *contracts.OutcomeRecord, resources []*contracts.ObjectRef) bool {
+	repaired, after, valid := causeRepairs(outcome, resources)
+	return valid && (len(repaired) > 0 || !after.IsZero())
 }

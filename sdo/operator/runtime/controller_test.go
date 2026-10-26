@@ -66,6 +66,13 @@ func TestControllerCapturesOpenAndVerifiedSnapshots(t *testing.T) {
 	if err != nil || !strings.Contains(string(fixed), "fixed") {
 		t.Fatalf("fixed: %s, %v", fixed, err)
 	}
+	// No pre-incident capture existed: the verified closure supplies the
+	// healthy sample, so incident detectors are checked against a state the
+	// controller itself verified healthy.
+	healthy, err := os.ReadFile(filepath.Join(dir, "healthy", "healthy.json"))
+	if err != nil || string(healthy) != string(fixed) {
+		t.Fatalf("closure healthy sample: %s, %v", healthy, err)
+	}
 }
 
 type sequenceDetector struct {
