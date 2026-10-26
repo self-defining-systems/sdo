@@ -97,6 +97,7 @@ def compact_mutation_envelope(text: str, path: Path, action: Mapping[str, Any]) 
         "command": action.get("command", "mitigate"),
         "incident_verified": _warning(action),
         **{key: _bounded_text(action[key], 80) for key in ("error", "failure_reason") if action.get(key)},
+        **({"hint": _bounded_text(action["hint"], 200)} if action.get("hint") else {}),
     }
 
 
@@ -178,6 +179,8 @@ def format_mutation_response(
         else:
             result = _bounded_text(action.get("summary", "completed; see report"), 80)
         lines = [f"This action: {result}."]
+        if action.get("hint"):
+            lines.append(f"Fix: {_bounded_text(action['hint'], 200)}")
     else:
         failed = sum(bool(action.get("error") or action.get("success") is False) for action in actions)
         lines = [f"Actions: {len(actions) - failed} completed; {failed} failed (see individual receipts)."]
