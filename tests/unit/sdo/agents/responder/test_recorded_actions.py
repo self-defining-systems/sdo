@@ -879,3 +879,52 @@ def test_act_accepts_printed_object_reference_forms(scratch: Path, reference: st
     assert receipt["resources"] == [
         {"api_version": "apps/v1", "kind": "Deployment", "namespace": "app", "name": "worker"}
     ]
+
+
+_OWNER_STUB = """
+case "$*" in
+  *"get Pod geo-84fbc958c7-5krwl"*)
+    echo '{"metadata":{"ownerReferences":[{"apiVersion":"apps/v1","kind":"ReplicaSet","name":"geo-84fbc958c7","controller":true}]}}' ;;
+  *"get ReplicaSet geo-84fbc958c7"*)
+    echo '{"metadata":{"ownerReferences":[{"apiVersion":"apps/v1","kind":"Deployment","name":"geo","controller":true}]}}' ;;
+  *"get ReplicaSet geo-67f6d98b75"*) exit 1 ;;
+esac
+exit 0
+"""
+
+
+def test_act_records_the_controller_owner_chain_read_before_the_write(scratch: Path, tmp_path: Path) -> None:
+    kubectl = _stub(tmp_path / "bin", _OWNER_STUB)
+    pod = ["act", "--resource", "Pod/hotel-reservation/geo-84fbc958c7-5krwl", "--", str(kubectl)]
+    assert tools_cli.main([*pod, "-n", "hotel-reservation", "delete", "pod", "geo-84fbc958c7-5krwl"]) == 0
+    service = ["act", "--resource", "Service/hotel-reservation/geo", "--", str(kubectl)]
+    assert tools_cli.main([*service, "-n", "hotel-reservation", "patch", "svc", "geo", "-p", "{}"]) == 0
+    rs = ["act", "--resource", "ReplicaSet/hotel-reservation/geo-67f6d98b75", "--", str(kubectl)]
+    assert tools_cli.main([*rs, "-n", "hotel-reservation", "scale", "rs", "geo-67f6d98b75", "--replicas=0"]) == 0
+
+    deleted, patched, scaled = _recorded(scratch)
+    assert deleted["owners"] == [
+        {
+            "resource": {
+                "api_version": "v1",
+                "kind": "Pod",
+                "namespace": "hotel-reservation",
+                "name": "geo-84fbc958c7-5krwl",
+            },
+            "owner_chain": [
+                {
+                    "api_version": "apps/v1",
+                    "kind": "ReplicaSet",
+                    "namespace": "hotel-reservation",
+                    "name": "geo-84fbc958c7",
+                },
+                {"api_version": "apps/v1", "kind": "Deployment", "namespace": "hotel-reservation", "name": "geo"},
+            ],
+        }
+    ]
+    # Uncontrolled kinds are never read; a failed read records no chain (no name inference).
+    assert "owners" not in patched
+    assert "owners" not in scaled
+    result = evolve(_bare_result(), incident_id="incident-1")
+    recorded_actions.merge_into(result)
+    assert [ref.name for ref in result.repair_actions[0].owners[0].owner_chain] == ["geo-84fbc958c7", "geo"]
