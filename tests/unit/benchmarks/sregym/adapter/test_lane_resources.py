@@ -182,8 +182,9 @@ def test_shell_uses_only_bounded_get_queries(snapshot, monkeypatch, tmp_path):
         calls.append(command)
         assert command[:3] == ["kubectl", "--kubeconfig", str(tmp_path / "kubeconfig")]
         assert command[3] == "get"
-        assert kwargs["timeout"] <= 5
-        assert "--request-timeout=4s" in command
+        assert 0 < kwargs["timeout"] <= 15
+        request_timeout = float(command[-1].removeprefix("--request-timeout=").removesuffix("s"))
+        assert request_timeout == pytest.approx(kwargs["timeout"])
         return subprocess.CompletedProcess(command, 0, json.dumps(responses[command[4]]), "")
 
     monkeypatch.setattr(lanes.subprocess, "run", run)
@@ -194,11 +195,86 @@ def test_shell_uses_only_bounded_get_queries(snapshot, monkeypatch, tmp_path):
     assert "secrets" not in " ".join(" ".join(row) for row in calls)
 
 
-def test_shell_propagates_unavailable_measurements(snapshot, monkeypatch, tmp_path):
-    def unavailable(*args, **kwargs):
-        raise subprocess.TimeoutExpired(args[0], 5)
+@pytest.mark.parametrize("failure", ["timeout", "server", "json"])
+def test_inventory_retries_transient_read_with_remaining_budget(snapshot, monkeypatch, tmp_path, caplog, failure):
+    clock = [0.0]
+    calls = []
+    sleeps = []
+    responses = {
+        "namespaces": snapshot["namespaces"],
+        "nodes": snapshot["nodes"],
+        "--raw": snapshot["summary"],
+        "pods": snapshot["pods"],
+    }
+    monkeypatch.setattr(lanes.time, "monotonic", lambda: clock[0])
+
+    def sleep(seconds):
+        sleeps.append(seconds)
+        clock[0] += seconds
+
+    def run(command, **kwargs):
+        calls.append((command, kwargs["timeout"]))
+        clock[0] += 1
+        if len(calls) == 1:
+            if failure == "timeout":
+                raise subprocess.TimeoutExpired(command, kwargs["timeout"], stderr=b"kubelet temporarily busy")
+            if failure == "server":
+                raise subprocess.CalledProcessError(1, command, stderr="kubelet temporarily busy")
+            return subprocess.CompletedProcess(command, 0, "not JSON", "kubelet temporarily busy")
+        return subprocess.CompletedProcess(command, 0, json.dumps(responses[command[4]]), "")
+
+    monkeypatch.setattr(lanes.time, "sleep", sleep)
+    monkeypatch.setattr(lanes.subprocess, "run", run)
+    monkeypatch.setattr(lanes, "host_available_memory", lambda: 32 * Gi)
+    result = lanes.assert_lane_resources(tmp_path / "kubeconfig", app_namespaces={"hotel-reservation"}, now=NOW)
+    assert result["passed"]
+    assert len(calls) == 5
+    assert calls[0][1] == 15
+    assert calls[1][1] < 14
+    assert sleeps
+    assert all(0 < value <= 1 for value in sleeps)
+    assert "kubelet temporarily busy" in caplog.text
+
+
+def test_inventory_exhaustion_preserves_stderr_and_whole_budget(monkeypatch, tmp_path):
+    clock = [0.0]
+    calls = []
+    monkeypatch.setattr(lanes.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(lanes.time, "sleep", lambda seconds: clock.__setitem__(0, clock[0] + seconds))
+
+    def unavailable(command, **kwargs):
+        remaining = 15 - clock[0]
+        assert 0 < kwargs["timeout"] <= remaining
+        calls.append(command)
+        clock[0] += min(2, kwargs["timeout"])
+        raise subprocess.CalledProcessError(1, command, stderr=f"upstream failure {len(calls)}")
 
     monkeypatch.setattr(lanes.subprocess, "run", unavailable)
+    with pytest.raises(ValueError, match=r"eval:.*unavailable") as error:
+        lanes.assert_lane_resources(tmp_path / "kubeconfig", app_namespaces={"hotel-reservation"}, now=NOW)
+    assert clock[0] == pytest.approx(15)
+    assert len(calls) > 1
+    assert "upstream failure 1" in str(error.value)
+    assert f"upstream failure {len(calls)}" in str(error.value)
+
+
+def test_inventory_rejects_success_returned_after_deadline(snapshot, monkeypatch, tmp_path):
+    clock = [0.0]
+    monkeypatch.setattr(lanes.time, "monotonic", lambda: clock[0])
+
+    responses = {
+        "namespaces": snapshot["namespaces"],
+        "nodes": snapshot["nodes"],
+        "--raw": snapshot["summary"],
+        "pods": snapshot["pods"],
+    }
+
+    def late(command, **kwargs):
+        if command[4] == "pods":
+            clock[0] = 16
+        return subprocess.CompletedProcess(command, 0, json.dumps(responses[command[4]]), "")
+
+    monkeypatch.setattr(lanes.subprocess, "run", late)
     with pytest.raises(ValueError, match=r"eval:.*unavailable"):
         lanes.assert_lane_resources(tmp_path / "kubeconfig", app_namespaces={"hotel-reservation"}, now=NOW)
 
@@ -362,7 +438,7 @@ def test_disk_collection_checks_the_filesystem_backing_kind_storage(monkeypatch,
     def docker(command, **kwargs):
         inspected.append(command)
         assert command == ["docker", "info", "--format", "{{.DockerRootDir}}"]
-        assert kwargs["timeout"] <= 5
+        assert 0 < kwargs["timeout"] <= 15
         return subprocess.CompletedProcess(command, 0, str(tmp_path) + "\n", "")
 
     def usage(path):
@@ -397,7 +473,7 @@ def test_collection_checks_current_lifetimes_after_memory_sample(snapshot, monke
 
     def run(command, **kwargs):
         nonlocal summary_read
-        assert kwargs["timeout"] <= 5
+        assert 0 < kwargs["timeout"] <= 15
         if "namespaces" in command:
             document = snapshot["namespaces"]
         elif "nodes" in command:

@@ -61,6 +61,7 @@ For per-cause learning, reflection skips and retired incidents, read [native ref
 For setup costs and interrupted responder accounting, read [phase-bound usage evidence](references/setup-usage.md).
 Before validating benchmark verdicts or costs, read [receipts and benchmark results](references/benchmark-results.md).
 For fastloop timing, trust and learned findings, read [fastloop results](references/fastloop-results.md).
+For injection identity, grade checkpoints and per-fault timings, read [fault tracking evidence](references/fault-tracking.md).
 For scripted repair gates, read [scripted rehearsal evidence](references/scripted-rehearsals.md).
 Before judging mixed-app slot validity or recovery, read [slot cleanup evidence](references/slot-cleanup.md).
 For fresh-memory installs and legacy onboarding references, read [fresh memory control state](references/fresh-memory.md).

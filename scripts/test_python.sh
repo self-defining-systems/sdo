@@ -10,8 +10,15 @@ PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 echo "Running Python tests..."
 cd "$PROJECT_ROOT"
 
-# Parallelize across cores with pytest-xdist; pytest-cov combines the per-worker
+# Bound shared-host parallelism; pytest-cov combines the per-worker
 # coverage so the fail_under gate still sees the whole suite. Override with
 # SDO_PYTEST_WORKERS (e.g. 0 to run in-process for a targeted local run).
-WORKERS="${SDO_PYTEST_WORKERS:-auto}"
+if [[ -v SDO_PYTEST_WORKERS ]]; then
+    WORKERS="$SDO_PYTEST_WORKERS"
+else
+    WORKERS="$(nproc)"
+    if (( WORKERS > 4 )); then
+        WORKERS=4
+    fi
+fi
 uv run --extra test pytest -n "$WORKERS" --cov --cov-report=term-missing "$@" tests

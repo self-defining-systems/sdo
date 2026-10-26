@@ -156,7 +156,7 @@ def test_required_ci_rejects_any_applicable_unsuccessful_job(result: str, accept
 
 def test_ci_bounds_nested_go_builds_and_routes_compiling_contracts() -> None:
     configuration = workflow()
-    assert configuration["env"]["GOFLAGS"] == "-p=2"
+    assert "-p=2" in shlex.split(configuration["env"]["GOFLAGS"])
     assert configuration["env"]["GOMAXPROCS"] == "2"
     jobs = configuration["jobs"]
     assert all(0 < job.get("timeout-minutes", 0) <= 5 for job in jobs.values())
@@ -187,15 +187,25 @@ def test_image_jobs_use_the_compilation_owners_schema_identity() -> None:
     assert images["env"]["SDO_VALIDATOR_SCHEMA_IDENTITY"] == "${{ needs.prepare-go.outputs.schema_identity }}"
     assert set(images["strategy"]["matrix"]["family"]) == {"controller", "validator", "responder", "benchmark"}
     partitions = [row["operator"] for row in jobs["controller"]["strategy"]["matrix"]["include"] if "operator" in row]
-    assert sorted(partitions) == ["acceptance", "acceptance-second", "broker", "compiler", "remaining"]
+    assert sorted(partitions) == [
+        "acceptance",
+        "acceptance-second",
+        "broker",
+        "compiler",
+        "compiler-replay",
+        "remaining",
+    ]
 
 
 @pytest.mark.parametrize("mode", ["normal", "race"])
-def test_preparation_warms_build_graphs_without_linking_or_running_tests(tmp_path: Path, mode: str) -> None:
+def test_preparation_compiles_shared_race_test_archive_without_running_tests(tmp_path: Path, mode: str) -> None:
     """Preparation shares archives; each shard owns its test binary and execution."""
     command = tmp_path / "go"
     command.write_text('#!/bin/sh\nprintf "%s:%s\\n" "$PWD" "$*" >> "$SDO_TEST_CALLS"\n')
     command.chmod(0o755)
+    python = tmp_path / "python3"
+    python.write_text("#!/bin/sh\nexit 0\n")
+    python.chmod(0o755)
     calls = tmp_path / "calls"
     result = subprocess.run(
         ["bash", str(ROOT / "scripts/prepare_go_ci.sh"), mode],
@@ -208,8 +218,21 @@ def test_preparation_warms_build_graphs_without_linking_or_running_tests(tmp_pat
     invocations = [line.split(":", 1) for line in calls.read_text().splitlines()]
     for module in ("sdo/operator", "sdo/operator/runtime"):
         commands = [shlex.split(args) for directory, args in invocations if directory == str(ROOT / module)]
-        assert commands == [["build", *(["-race"] if mode == "race" else []), "./..."]]
-    assert all(shlex.split(args)[0] == "build" for _, args in invocations)
+        expected = [["build", *(["-race"] if mode == "race" else []), "./..."]]
+        if mode == "race":
+            assert len(commands) == 2
+            assert commands[1][:4] == ["test", "-race", "-c", "-o"]
+            assert commands[1][-1] == "./..."
+            assert "-run" not in commands[1]
+            assert commands[:1] == expected
+        else:
+            assert commands[:1] == expected
+            assert commands[1][:3] == ["test", "-c", "-o"]
+            assert commands[1][-1] == "./..."
+            if module.endswith("/runtime"):
+                assert commands[2] == ["build", "./..."]
+            else:
+                assert commands[-1][-1] == "./memory/validate"
 
 
 def test_normal_and_race_preparation_are_independent_bounded_jobs() -> None:
@@ -221,8 +244,8 @@ def test_normal_and_race_preparation_are_independent_bounded_jobs() -> None:
     assert sum("~/go/pkg/mod" in step["with"]["path"] for step in caches) == 1
     for name in ("controller", "replay", "chaos"):
         keys = [step["with"]["key"] for step in jobs[name]["steps"] if step.get("uses", "").startswith("actions/cache")]
-        assert any("ci-prepared-v3-normal-" in key for key in keys)
-        assert any("ci-prepared-v3-race-" in key for key in keys)
+        assert any("ci-prepared-v4-normal-" in key for key in keys)
+        assert any("ci-prepared-v4-race-" in key for key in keys)
 
 
 def test_image_builder_refuses_dirty_source_before_docker(tmp_path: Path) -> None:
@@ -283,7 +306,7 @@ def test_consumers_restore_the_paths_published_by_each_mode_owner() -> None:
     for name in ("python", "controller", "go-integration", "replay", "chaos"):
         for step in jobs[name]["steps"]:
             if step.get("uses", "").startswith("actions/cache"):
-                mode = "race" if "v3-race-" in step["with"]["key"] else "normal"
+                mode = "race" if "v4-race-" in step["with"]["key"] else "normal"
                 assert step["with"]["path"].strip() == published[mode].strip(), name
 
 
@@ -311,3 +334,40 @@ def test_bake_overrides_do_not_replace_an_earlier_cache_source() -> None:
     )
     keys = [line.split("=", 1)[0] for line in bake["with"]["set"].splitlines() if line.strip()]
     assert len(keys) == len(set(keys)), "repeated Bake --set assignments replace earlier cache sources"
+
+
+def test_prepared_builds_include_the_portable_prober_and_source_stable_inputs() -> None:
+    jobs = workflow()
+    assert "-trimpath" in shlex.split(jobs["env"]["GOFLAGS"])
+    prepare = (ROOT / "scripts/prepare_go_ci.sh").read_text()
+    assert "CGO_ENABLED=0" in prepare
+    assert "TestAssuranceSeedsPassHealthJudgeCheck" in prepare
+    assert "operator_test_binary.py" in prepare
+    for name in ("prepare-go", "python", "go-integration"):
+        normal = [
+            step
+            for step in jobs["jobs"][name]["steps"]
+            if step.get("uses", "").startswith("actions/cache") and "normal-" in step["with"]["key"]
+        ]
+        assert normal
+        assert all(".fastloop/test-bin" in step["with"]["path"] for step in normal)
+
+
+@pytest.mark.go_integration
+def test_generated_packages_share_only_equal_source_archives(tmp_path: Path) -> None:
+    """The actual Go cache must survive workspace relocation and reject edits."""
+    import json
+
+    env = {**os.environ, "GOFLAGS": workflow()["env"]["GOFLAGS"]}
+    exports = []
+    for name in ("first", "second"):
+        module = tmp_path / name
+        module.mkdir()
+        (module / "go.mod").write_text("module fixture.test/seed\n\ngo 1.26.0\n")
+        (module / "seed.go").write_text("package seed\nconst Value = 1\n")
+        output = subprocess.check_output(["go", "list", "-export", "-json", "."], cwd=module, env=env, text=True)
+        exports.append(json.loads(output)["Export"])
+    assert exports[0] == exports[1], "equal seed source was recompiled after workspace relocation"
+    (module / "seed.go").write_text("package seed\nconst Value = 2\n")
+    changed = subprocess.check_output(["go", "list", "-export", "-json", "."], cwd=module, env=env, text=True)
+    assert json.loads(changed)["Export"] != exports[0], "changed seed reused a stale compiler archive"
