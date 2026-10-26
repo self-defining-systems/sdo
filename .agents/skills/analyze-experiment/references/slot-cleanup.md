@@ -82,3 +82,12 @@ and home Redis reference against post storage before resuming the original
 traffic. Treat fixture restoration as **eval setup**, never a responder repair or
 learning outcome. A contract failure invalidates admission even if sampled HTTP
 passes; the checker rejects empty fixtures and preserves exact int64 IDs.
+
+Namespace recovery prerequisite failures are **eval** blockers before injection.
+`eval: namespace recovery cannot restore prerequisites:` names every unavailable
+reference as `[namespace/]Kind/name`. Capture now includes ServiceAccounts and
+namespace RBAC; legacy omissions may be filled from hash-verified accepted
+rendered manifests without replacing sealed installed workload specs. Secret
+payloads and unowned cluster resources are never restored. A named missing
+Secret after namespace loss is unsupported recovery, not an SDO mitigation
+failure or a health timeout; uninjected encounter metrics remain unknown.
