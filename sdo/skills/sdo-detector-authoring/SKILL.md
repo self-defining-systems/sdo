@@ -31,8 +31,9 @@ Use `program.ReadFrom(ctx)` for the shared detector/Diagnose surface; read the
 [generated program SDK](../sdo-playbook-authoring/references/program-sdk.md) before using it.
 Detectors can call `ctx.DiffAgainstSource(ref)` directly, before any playbook is selected.
 `Changed` covers field drift and source-absent objects; `SourceAbsent` requires a successful accepted-source lookup.
-Bind learned playbooks through the detector's findings. The shared view also adds logs, TCP/HTTP probes,
-baseline diffs, `QueryMetrics(metrics.Query)`, alerts and traffic to objects.
+Bind learned playbooks through the detector's findings. The shared view also adds `LogsWithOptions`
+(including previous instances), `PodUsage`/`NodeUsage`, TCP/HTTP probes, baseline diffs,
+`QueryMetrics(metrics.Query)`, alerts and traffic to objects.
 The runtime caches identical reads per snapshot and records actual results and failures for offline replay.
 Logs are capped at 64 KiB / 5 s; probes at 5 s. Read failures are errors/Unknown, never clearance;
 a successful probe with `Success:false` is an observed failure. Keep always-on reads cheap and use Diagnose for depth.
