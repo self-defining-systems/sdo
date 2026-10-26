@@ -53,7 +53,7 @@ Runtime-state observations and maintenance generations are deliberately omitted
 from configuration hashes. A recreated object or changed configuration after
 reset invalidates reuse even when its name is unchanged.
 
-Reuse skips the dry run's reset/deploy/onboarding and the live runner's deploy
+Reuse skips the dry run's reset/deploy/onboarding and the live SDO runner's deploy
 request. Admission still checks exact RBAC, clean baseline placement, fresh
 controller detector clearance/no incident work, qualified probe scenarios,
 independent traffic, stable workloads and lane memory/disk floors. The reused

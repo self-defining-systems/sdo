@@ -462,7 +462,7 @@ Passing no-fault setup reports are reusable on an unchanged lane. A subsequent
 `eval-dry-run` checks the content-bound receipt in `setup-proof/` before reset
 or deployment. An exact match skips setup and reruns live admission; a miss
 records the changed fingerprint components and performs the full rehearsal.
-The live `run` command also records its decision in `results/<run>/setup-proof.json`
+The live SDO `run` command also records its decision in `results/<run>/setup-proof.json`
 and skips its deploy request only on the same exact match. Traffic, incident,
 intake and resource/disk admission still apply at injection time. Changed code,
 images, accepted memory, manifests, object UIDs/configuration or proof tools

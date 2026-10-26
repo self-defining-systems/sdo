@@ -1,6 +1,7 @@
 """Setup reuse is exact-state-bound; live health is never cached."""
 
 import json
+import os
 import time
 from dataclasses import replace
 
@@ -156,7 +157,9 @@ def test_dry_run_reuse_does_not_reset_or_redeploy_and_refreshes_health(tmp_path,
     from benchmarks.sregym.fastloop import admission, cli, dry_run
     from benchmarks.sregym.fastloop.environment import FastloopEnvironment
 
-    environment = SimpleNamespace(run_dir=tmp_path, cluster="fixture", namespace="app", kubeconfig=tmp_path / "kube")
+    environment = SimpleNamespace(
+        run_dir=tmp_path, cluster="fixture", namespace="app", kubeconfig=tmp_path / "kube", dev_mount=None
+    )
     report = dry_run.DryRunReport("fixture", code_revision=fingerprint.code_revision)
     report.passed = True
     for row in report.invariants.values():
@@ -170,7 +173,13 @@ def test_dry_run_reuse_does_not_reset_or_redeploy_and_refreshes_health(tmp_path,
     monkeypatch.setattr(cli, "_sdo_agent", lambda *args, **kwargs: pytest.fail("deploy on reuse"))
     monkeypatch.setattr(cli, "_worker", lambda *args: nullcontext(object()))
     calls = []
-    monkeypatch.setattr(admission.LaneAdmission, "prove", lambda *args, **kwargs: calls.append("live-admission"))
+    monkeypatch.setenv("KUBECONFIG", "other-lane")
+
+    def live_admission(*args, **kwargs):
+        assert os.environ["KUBECONFIG"] == str(environment.kubeconfig)
+        calls.append("live-admission")
+
+    monkeypatch.setattr(admission.LaneAdmission, "prove", live_admission)
     monkeypatch.setattr(adapter, "KubectlClusterOps", lambda: object())
     monkeypatch.setattr(dry_run, "assert_active_intake", lambda env: calls.append("intake"))
     assert dry_run.run_lane(tmp_path, 300) == 0
@@ -191,7 +200,9 @@ def test_dry_run_reuse_rejects_drift_during_live_checks(tmp_path, fingerprint, m
     from benchmarks.sregym.fastloop import admission, cli, dry_run
     from benchmarks.sregym.fastloop.environment import FastloopEnvironment
 
-    environment = SimpleNamespace(run_dir=tmp_path, cluster="fixture", namespace="app", kubeconfig=tmp_path / "kube")
+    environment = SimpleNamespace(
+        run_dir=tmp_path, cluster="fixture", namespace="app", kubeconfig=tmp_path / "kube", dev_mount=None
+    )
     report = dry_run.DryRunReport("fixture", code_revision=fingerprint.code_revision)
     report.passed = True
     for row in report.invariants.values():
@@ -310,7 +321,7 @@ def test_live_intake_must_be_active_on_reuse(tmp_path, monkeypatch):
         adapter, "kubectl", lambda *args, **kwargs: SimpleNamespace(stdout=json.dumps({"data": {"state": "paused"}}))
     )
     with pytest.raises(ValueError, match="active SDO intake"):
-        assert_active_intake(SimpleNamespace(namespace="app", kubeconfig=tmp_path / "kube"))
+        assert_active_intake(SimpleNamespace(namespace="app", kubeconfig=tmp_path / "kube", dev_mount=None))
 
 
 def test_unknown_image_digest_never_grants_reuse():
@@ -345,3 +356,18 @@ def test_partial_report_cannot_certify_setup(tmp_path, fingerprint, missing):
     del report.invariants[missing]
     with pytest.raises(ValueError, match="invariants"):
         proof.save_receipt(tmp_path, fingerprint, asdict(report))
+
+
+def test_deployment_reuse_requires_the_callers_live_admission(tmp_path, fingerprint, monkeypatch):
+    from types import SimpleNamespace
+
+    from benchmarks.sregym.fastloop import cli
+
+    save(tmp_path / proof.RECEIPTS, fingerprint)
+    monkeypatch.setattr(proof, "collect_fingerprint", lambda env: pytest.fail("non-SDO proof reuse"))
+    calls = []
+    environment = SimpleNamespace(run_dir=tmp_path, deploy_problem="fixture", baseline_path=tmp_path / "baseline")
+    worker = SimpleNamespace(request=lambda *args, **kwargs: calls.append(args[0]))
+    decision = cli.deploy_with_setup_proof(environment, worker, tmp_path / "result", allow_reuse=False)
+    assert decision["reused"] is False
+    assert calls == ["deploy"]

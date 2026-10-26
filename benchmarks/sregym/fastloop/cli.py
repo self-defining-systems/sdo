@@ -579,12 +579,15 @@ def _sdo_agent(
 
 
 def deploy_with_setup_proof(
-    environment: FastloopEnvironment, worker: SregymWorker, results_dir: Path
+    environment: FastloopEnvironment, worker: SregymWorker, results_dir: Path, *, allow_reuse: bool = True
 ) -> dict[str, Any]:
     """Reuse only the deploy/warm-up evidence; per-injection admission still runs."""
     from benchmarks.sregym.fastloop.setup_proof import check_reuse
 
-    _, decision = check_reuse(environment)
+    if allow_reuse:
+        _, decision = check_reuse(environment)
+    else:
+        decision = {"reused": False, "receipt": None, "changed": ["setup_reuse_requires_sdo_admission"]}
     results_dir.mkdir(parents=True, exist_ok=True)
     (results_dir / "setup-proof.json").write_text(json.dumps(decision, indent=2) + "\n")
     if decision["reused"]:
@@ -720,7 +723,9 @@ def _run(args: argparse.Namespace) -> int:
     write_loop_manifest(config)
     with _worker(environment) as worker:
         worker_ready = time.monotonic()
-        deploy_with_setup_proof(environment, worker, results_dir)
+        deploy_with_setup_proof(
+            environment, worker, results_dir, allow_reuse=args.agent == "sdo" and environment.app != "toy"
+        )
         deployed = time.monotonic()
         described = deployed
         baseline = load_application_baseline(environment.baseline_path, environment.namespace)

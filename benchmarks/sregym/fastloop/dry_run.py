@@ -225,6 +225,11 @@ def run_lane(run_dir: Path, timeout: int, setup_timeout: int = 900) -> int:
         report.seconds = time.monotonic() - started
         report.save(report_path)
 
+    os.environ["KUBECONFIG"] = str(environment.kubeconfig)
+    os.environ["SDO_TIME_SCALE"] = "1"
+    if environment.dev_mount:
+        os.environ["SDO_DEV_MOUNT"] = "1"
+        os.environ["SDO_OPERATOR_BIN"] = str(environment.dev_mount / ".fastloop/sdo-operator")
     try:
         initial, report.setup_proof = check_reuse(environment)
         report.save(report_path)
@@ -244,11 +249,6 @@ def run_lane(run_dir: Path, timeout: int, setup_timeout: int = 900) -> int:
         passed("lane_resources", **resources)
         cli._reset(argparse.Namespace(run_dir=environment.run_dir, dev_mount=None))
         passed("restore", source="accepted installed manifests; independent traffic and stable workloads")
-        os.environ["KUBECONFIG"] = str(environment.kubeconfig)
-        os.environ["SDO_TIME_SCALE"] = "1"
-        if environment.dev_mount:
-            os.environ["SDO_DEV_MOUNT"] = "1"
-            os.environ["SDO_OPERATOR_BIN"] = str(environment.dev_mount / ".fastloop/sdo-operator")
         args = cli.build_parser().parse_args(
             [
                 "run",
