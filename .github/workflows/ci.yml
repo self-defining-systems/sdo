@@ -73,6 +73,8 @@ jobs:
               - 'sdo/skills/**'
               - 'scripts/gen_skill_references.sh'
               - 'scripts/test_runtime_shard.py'
+              - 'scripts/test_operator_shard.py'
+              - 'scripts/test_operator_shard.sh'
               - 'sdo/contracts/proto/**'
               - 'sdo/contracts/_gen/**'
               - 'buf*.yaml'

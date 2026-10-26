@@ -690,6 +690,18 @@ compiler entries, while executable identity remains source-bound by
 
 The operator gate partitions the expensive CLI/broker acceptance matrix from
 other broker tests and remaining packages through `test_operator_shard.sh`.
+The operator runner discovers compiled builder, broker and validator test names,
+including examples and fuzz seeds, and assigns each exactly once. Four measured
+builder compile/replay tests share the existing acceptance runners; new builder
+names default to `compiler`, new broker names to `broker`. Renamed cost anchors
+and conflicting cross-package names fail closed. The five existing operator jobs
+and their four-minute Go timeouts stay unchanged. Every partition emits JSON
+per-test timings, lists its five slowest tests and any unfinished names, and fails
+above a 180-second top-level test or 210-second aggregate shard budget (including
+discovery/linking). Run `bash scripts/test_operator_shard.sh compiler` locally;
+`tests/unit/sdo/operator/test_operator_shards.py` checks coverage and negative
+budget controls. Rebalance using top-level `pass` event `Elapsed` values rather
+than extending deadlines.
 Runtime name partitions remain exhaustive; `test_runtime_shard.py --shard`
 accepts comma-separated partitions so short groups can share a runner without
 omitting or duplicating names. Image runners consume the preparation job's
