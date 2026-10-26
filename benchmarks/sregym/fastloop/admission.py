@@ -6,7 +6,7 @@ import ipaddress
 import json
 import subprocess
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
 
 import yaml
@@ -27,6 +27,8 @@ from benchmarks.sregym.adapter import (
     setup_lineage,
     wait_for_proof,
 )
+from benchmarks.sregym.adapter.eval_guards import StabilizationError
+from benchmarks.sregym.adapter.persistent import POST_CLOSURE_WAIT_SECONDS
 from benchmarks.sregym.fastloop.clean_start import assert_clean_baseline
 
 if TYPE_CHECKING:
@@ -139,6 +141,30 @@ class PriorClosureIncompleteError(ValueError):
     def __init__(self, message: str, evidence: dict[str, Any]) -> None:
         super().__init__(message)
         self.evidence = evidence
+
+
+class ControllerStateUnavailableError(PriorClosureIncompleteError):
+    """The controller state could not be read at the end of the wait, so whether closure is over is unknown."""
+
+    reason = "controller_state_unavailable"
+
+
+class _IncidentWorkStarted(Exception):
+    """SDO opened incident work during stabilization; admission waits for it to close, then restarts the clock."""
+
+
+#: Stabilization restarts after new SDO work at most this often; a lane that keeps opening incidents is not stable.
+MAX_STABILIZATION_RESTARTS = 3
+
+
+def _job_deadline(job: dict[str, Any], now: datetime) -> datetime | None:
+    """When a worker Job's own ``activeDeadlineSeconds`` ends it; ``None`` when it has no deadline."""
+    seconds = job.get("spec", {}).get("activeDeadlineSeconds")
+    if not isinstance(seconds, int):
+        return None
+    started = job.get("status", {}).get("startTime")
+    start = datetime.fromisoformat(started.replace("Z", "+00:00")) if isinstance(started, str) else now
+    return start + timedelta(seconds=seconds)
 
 
 def _accepted_head(workspace: Path) -> str | None:
@@ -262,6 +288,17 @@ class LaneAdmission:
         The controller's warm responder standby runs until an incident claims
         it, so an unclaimed standby is idle capacity, not work.
         """
+        return sorted(job["metadata"]["name"] for job in self._active_jobs(control))
+
+    def _work_deadline(self, control: str) -> float | None:
+        """Monotonic time by which every active SDO worker Job has hit its own deadline (durable Job spec)."""
+        now = datetime.now(timezone.utc)
+        deadlines = [deadline for job in self._active_jobs(control) if (deadline := _job_deadline(job, now))]
+        if not deadlines:
+            return None
+        return time.monotonic() + (max(deadlines) - now).total_seconds()
+
+    def _active_jobs(self, control: str) -> list[dict[str, Any]]:
         listing = json.loads(
             kubectl(["get", "jobs", "-o", "json"], namespace=control, kubeconfig=self.environment.kubeconfig).stdout
         )["items"]
@@ -284,7 +321,7 @@ class LaneAdmission:
                 ).stdout
             )["items"]
             idle = idle_standby_jobs(jobs, executions)
-        return sorted(job["metadata"]["name"] for job in jobs if job["metadata"]["name"] not in idle)
+        return [job for job in jobs if job["metadata"]["name"] not in idle]
 
     def await_prior_closure(self, control: str) -> dict[str, Any]:
         """Wait, on a separate recorded budget, until every previous incident on the lane has closed naturally.
@@ -293,18 +330,26 @@ class LaneAdmission:
         accepted, and its admission clock must not contain that reflection.
         Closed means ``incident_work_open`` is false (no open incident or
         request, and any closure is terminal: acknowledged, permanently
-        failed or retired) and no SDO worker Job is still running. The wait never
-        aborts or reuses running work; when the budget ends the row is not
-        measured.
+        failed or retired) and no SDO worker Job is still running. The budget
+        is never shorter than the work it waits on: it extends to the latest
+        active worker Job's own deadline plus the closure margin. The wait
+        never aborts or reuses running work; when the budget ends the row is
+        not measured.
         """
         started = time.monotonic()
         self.directory.mkdir(parents=True, exist_ok=True)
         destination = self.directory / "prior-closure.json"
+        expires = started + self.prior_closure_timeout_seconds
         while True:
             try:
                 state, workers, error = self.ops.runtime_state(control), self._active_workers(control), None
+                work_deadline = self._work_deadline(control) if workers else None
+                if not state:
+                    error = "empty controller state"
             except (RuntimeError, ValueError, KeyError) as exc:
-                state, workers, error = {}, [], str(exc)
+                state, workers, work_deadline, error = {}, [], None, str(exc)
+            if work_deadline is not None:
+                expires = max(expires, work_deadline + POST_CLOSURE_WAIT_SECONDS)
             closure_state = state.get("closure_state")
             done = error is None and not incident_work_open(state) and not workers
             evidence = {
@@ -315,17 +360,18 @@ class LaneAdmission:
                 "active_workers": workers,
                 "last_error": error,
                 "seconds": round(time.monotonic() - started, 3),
-                "budget_seconds": self.prior_closure_timeout_seconds,
+                "budget_seconds": round(expires - started, 3),
             }
-            if done or time.monotonic() - started >= self.prior_closure_timeout_seconds:
+            if done or time.monotonic() >= expires:
                 break
-            time.sleep(min(2, max(0, started + self.prior_closure_timeout_seconds - time.monotonic())))
+            time.sleep(min(2, max(0, expires - time.monotonic())))
         # Recorded after the wait, so a repeat names the memory its predecessor's reflection accepted.
         evidence["accepted_before"] = _accepted_head(self.environment.workspace)
         destination.write_text(json.dumps(evidence, indent=2) + "\n")
         if not done:
-            raise PriorClosureIncompleteError(
-                f"eval: previous incident closure did not finish within {self.prior_closure_timeout_seconds:g}s "
+            failure = ControllerStateUnavailableError if error is not None else PriorClosureIncompleteError
+            raise failure(
+                f"eval: previous incident closure did not finish within {evidence['budget_seconds']:g}s "
                 f"(closure state: {closure_state}, incident work: {evidence['incident_work']}, "
                 f"active workers: {workers}, last error: {error}); row not measured, no injection",
                 evidence,
@@ -349,8 +395,6 @@ class LaneAdmission:
             self.progress("lane_resources", evidence=str(destination))
 
     def prove(self, control: str, *, fresh: bool = False) -> dict[str, Any]:
-        from benchmarks.sregym.fastloop.rbac import verify_rbac
-
         self.check_resources("entry")
         self._policy()
         # Onboarding has its own budget: the stabilization clock below must never
@@ -361,6 +405,24 @@ class LaneAdmission:
         self.await_prior_closure(control)
         if self.before_proof is not None:
             self.before_proof(control, onboarding)
+        for _ in range(MAX_STABILIZATION_RESTARTS):
+            try:
+                return self._stabilize(control, fresh=fresh)
+            except _IncidentWorkStarted:
+                # Work SDO opened during stabilization gets the closure wait's derived budget,
+                # never the fixed stabilization budget; the stabilization clock then restarts.
+                self.await_prior_closure(control)
+        try:
+            return self._stabilize(control, fresh=fresh)
+        except _IncidentWorkStarted as exc:
+            raise StabilizationError(
+                f"eval: SDO opened incident work during each of {MAX_STABILIZATION_RESTARTS + 1} stabilization "
+                f"windows ({exc}); no injection"
+            ) from exc
+
+    def _stabilize(self, control: str, *, fresh: bool) -> dict[str, Any]:
+        from benchmarks.sregym.fastloop.rbac import verify_rbac
+
         deadline = Deadline(time.monotonic() + self.timeout_seconds, time.monotonic)
         env = self.environment
         self.directory.mkdir(parents=True, exist_ok=True)
@@ -387,7 +449,12 @@ class LaneAdmission:
             if self.progress:
                 self.progress("probe_placement", namespace="sregym")
             stable_workloads()
-            proof = controller_proof(self.ops.runtime_state(control), self.required_detectors, boundary)
+            state = self.ops.runtime_state(control)
+            proof = controller_proof(state, self.required_detectors, boundary)
+            if proof["incident_work_pending"]:
+                proof.update(required_scenarios=sorted(self.required_scenarios), suspended="incident_work_started")
+                record(proof)
+                raise _IncidentWorkStarted(active_incident(state) or "incident work")
             try:
                 windows = self._windows(control)
                 proof["qualified_scenarios"] = qualified_scenarios(windows, self.required_scenarios)

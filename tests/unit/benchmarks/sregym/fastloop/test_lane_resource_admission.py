@@ -42,6 +42,7 @@ def lane(tmp_path, monkeypatch):
     monkeypatch.setattr(admission.LaneAdmission, "_onboarding", lambda self, control: complete)
     # No SDO worker Job from a previous row is still running.
     monkeypatch.setattr(admission.LaneAdmission, "_active_workers", lambda self, control: [])
+    monkeypatch.setattr(admission.LaneAdmission, "_work_deadline", lambda self, control: None)
     monkeypatch.setattr(rbac, "verify_rbac", lambda *args: {"passed": True})
     monkeypatch.setattr(hotel_helpers, "admit_install", lambda *args: {"passed": True, "profile": "ABSENT"})
     monkeypatch.setattr(admission, "workload_identity", lambda *args: {"Deployment/app": {"generation": 1}})
@@ -499,3 +500,48 @@ def test_admission_waits_while_a_closure_is_open(lane, state):
     with pytest.raises(admission.PriorClosureIncompleteError):
         gate.await_prior_closure("hotel-reservation-sdo")
     assert "traffic" not in calls
+
+
+def test_new_work_during_stabilization_waits_on_its_own_job_deadline_then_restarts(lane, monkeypatch):
+    """P41: a reflection that starts during stabilization outlives the fixed 300 s stabilization budget."""
+    gate, calls = lane
+    now = observe_only(gate, monkeypatch)
+    healthy = gate.ops.runtime_state
+    reads, opened = [0], []  # the reflection opens at the first stabilization sample and runs 450 s
+    gate.prior_closure_timeout_seconds = 30
+
+    def running():
+        return bool(opened) and now[0] < opened[0] + 450
+
+    def state(control):
+        reads[0] += 1
+        if reads[0] == 2:
+            opened.append(now[0])
+        value = healthy(control)
+        if running():
+            value.update(incident_open=True, incident_request={"incident_id": "onboarding-incident"})
+        return value
+
+    monkeypatch.setattr(gate.ops, "runtime_state", state)
+    monkeypatch.setattr(gate, "_active_workers", lambda control: ["sdo-reflection-new"] if running() else [])
+    # The Job's own activeDeadlineSeconds (1800 s) is far longer than either fixed budget.
+    monkeypatch.setattr(gate, "_work_deadline", lambda control: opened[0] + 1800 if running() else None)
+
+    proof = gate.prove("hotel-reservation-sdo")
+
+    assert proof["passed"] is True
+    assert now[0] >= opened[0] + 450, "injection was admitted while the new reflection was running"
+    suspended = [json.loads(line) for line in (gate.directory / "stabilization-001.jsonl").read_text().splitlines()]
+    assert suspended[-1]["suspended"] == "incident_work_started"
+    assert (gate.directory / "stabilization-002.jsonl").is_file(), "the stabilization clock did not restart"
+    evidence = json.loads((gate.directory / "prior-closure.json").read_text())
+    assert evidence["passed"] is True
+    assert evidence["budget_seconds"] >= 1800
+
+
+def test_an_unreadable_controller_state_is_typed_not_a_closure_timeout(lane):
+    gate, _ = lane
+    closure_record(gate, {})
+    with pytest.raises(admission.ControllerStateUnavailableError) as info:
+        gate.await_prior_closure("hotel-reservation-sdo")
+    assert info.value.reason == "controller_state_unavailable"
