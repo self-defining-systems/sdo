@@ -241,6 +241,10 @@ func TestTrafficRestartMidIncidentCanVerifyRecovery(t *testing.T) {
 	var closure IncidentClosure
 	restored.OnIncidentClosed = func(closed IncidentClosure) { closure = closed }
 	step(restored, 14)
+	if !restored.IncidentOpen() {
+		t.Fatal("recovered incident committed success before the stability window held")
+	}
+	step(restored, 14+int(restored.config.ClosureStabilityWindow/time.Second))
 	verified := exchangeSelfCheck(t, &server, `{"command":"verify"}`)
 	if !verified.Healthy || restored.IncidentOpen() || closure.Request.IncidentID != request.IncidentID || len(closure.FinalDetectorStates) != 1 || closure.FinalDetectorStates[0].Status != DetectorEvaluationClear {
 		t.Fatalf("restart could not verify/close recovered incident: verified=%+v closure=%+v", verified, closure)

@@ -181,6 +181,7 @@ func TestRepairedDriftRecursWithoutProgramAfterRestart(t *testing.T) {
 	first := awaitRequest(t, requests)
 	awaitDispatchCompletionQueued(t, c)
 	stepScenario(t, c, cache, start.Add(3*time.Second))
+	stepScenario(t, c, cache, start.Add(3*time.Second+c.config.ClosureStabilityWindow))
 	acknowledgeScenario(t, c)
 	state := exportState(t, c)
 	if err := c.RestoreState(state); err != nil {
