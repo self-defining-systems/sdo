@@ -82,8 +82,19 @@ func decodeAcceptedObject(raw []byte, ref sdk.ObjectRef) (*unstructured.Unstruct
 	return result, nil
 }
 
+// bodyOf returns the response body of an accepted-source request. A refusal
+// is read through Result.Error, which decodes the server's Status; Raw would
+// replace every non-text error body with the message "unknown".
+func bodyOf(ctx context.Context, request *rest.Request) ([]byte, error) {
+	result := request.Do(ctx)
+	if err := result.Error(); err != nil {
+		return nil, err
+	}
+	return result.Raw()
+}
+
 func (r acceptedResource) get(ctx context.Context, ref sdk.ObjectRef) (*unstructured.Unstructured, error) {
-	raw, err := r.client.Get().AbsPath(r.path).Do(ctx).Raw()
+	raw, err := bodyOf(ctx, r.client.Get().AbsPath(r.path))
 	if err != nil {
 		return nil, err
 	}
@@ -114,7 +125,7 @@ func (r acceptedResource) applyAs(ctx context.Context, ref sdk.ObjectRef, source
 	if dryRun {
 		request = request.Param("dryRun", metav1.DryRunAll)
 	}
-	raw, err := request.Do(ctx).Raw()
+	raw, err := bodyOf(ctx, request)
 	if err != nil {
 		return nil, err
 	}

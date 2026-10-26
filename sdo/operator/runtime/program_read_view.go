@@ -95,7 +95,7 @@ func (v LiveReadView) logs(ref sdk.ObjectRef, options corev1.PodLogOptions) (str
 	if err != nil {
 		return "", err
 	}
-	data, err := client.CoreV1().Pods(ref.Namespace).GetLogs(ref.Name, &bounded).DoRaw(ctx)
+	data, err := bodyOf(ctx, client.CoreV1().Pods(ref.Namespace).GetLogs(ref.Name, &bounded))
 	if err != nil {
 		return "", fmt.Errorf("read logs of pod %s/%s: %w", ref.Namespace, ref.Name, err)
 	}
