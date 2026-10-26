@@ -184,3 +184,23 @@ def test_image_jobs_use_the_compilation_owners_schema_identity() -> None:
     assert set(images["strategy"]["matrix"]["family"]) == {"controller", "validator", "responder", "benchmark"}
     partitions = [row["operator"] for row in jobs["controller"]["strategy"]["matrix"]["include"] if "operator" in row]
     assert sorted(partitions) == ["acceptance", "acceptance-second", "broker", "compiler", "remaining"]
+
+
+def test_preparation_warms_build_graphs_without_linking_or_running_tests(tmp_path: Path) -> None:
+    """Preparation shares archives; each shard owns its test binary and execution."""
+    command = tmp_path / "go"
+    command.write_text('#!/bin/sh\nprintf "%s:%s\\n" "$PWD" "$*" >> "$SDO_TEST_CALLS"\n')
+    command.chmod(0o755)
+    calls = tmp_path / "calls"
+    result = subprocess.run(
+        ["bash", str(ROOT / "scripts/prepare_go_ci.sh")],
+        env={**os.environ, "PATH": f"{tmp_path}:{os.environ['PATH']}", "SDO_TEST_CALLS": str(calls)},
+        capture_output=True, text=True, check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    invocations = [line.split(":", 1) for line in calls.read_text().splitlines()]
+    for module in ("sdo/operator", "sdo/operator/runtime"):
+        commands = [shlex.split(args) for directory, args in invocations if directory == str(ROOT / module)]
+        assert ["build", "./..."] in commands
+        assert ["build", "-race", "./..."] in commands
+    assert all(shlex.split(args)[0] == "build" for _, args in invocations)
