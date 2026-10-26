@@ -17,14 +17,7 @@ if TYPE_CHECKING:
 @dataclass
 class Cluster:
     namespaces: set[str] = field(
-        default_factory=lambda: {
-            "hotel-reservation",
-            "hotel-reservation-sdo",
-            "kube-system",
-            "default",
-            "sregym",
-            "unrelated",
-        }
+        default_factory=lambda: {"hotel-reservation", "hotel-reservation-sdo", "kube-system", "default", "sregym"}
     )
     writes: list[str] = field(default_factory=list)
     owns_lease: bool = True
@@ -50,10 +43,45 @@ class Cluster:
         assert not set(namespaces) & self.namespaces
 
     def verify_next(self, namespace):
+        from datetime import datetime, timezone
+
+        from benchmarks.sregym.adapter.lane_resources import evaluate_lane_resources
+
         assert namespace == "social-network"
         assert namespace in self.namespaces
         assert not {"hotel-reservation", "hotel-reservation-sdo"} & self.namespaces
-        return {"passed": True, "namespace": namespace}
+        now = datetime(2026, 10, 26, tzinfo=timezone.utc)
+        return evaluate_lane_resources(
+            namespaces={
+                "items": [
+                    {"metadata": {"name": name, "creationTimestamp": now.isoformat()}} for name in self.namespaces
+                ]
+            },
+            pods={
+                "items": [
+                    {
+                        "metadata": {"name": "app", "namespace": namespace, "uid": "app-uid"},
+                        "spec": {"containers": [{"name": "app", "image": "social:source"}]},
+                        "status": {"containerStatuses": [{"name": "app", "state": {"running": {}}}]},
+                    }
+                ]
+            },
+            summaries=[
+                {
+                    "pods": [
+                        {
+                            "podRef": {"name": "app", "namespace": namespace, "uid": "app-uid"},
+                            "containers": [
+                                {"name": "app", "memory": {"time": now.isoformat(), "workingSetBytes": 64 * 1024**2}}
+                            ],
+                        }
+                    ]
+                }
+            ],
+            app_namespaces={namespace},
+            host_available_bytes=32 * 1024**3,
+            now=now,
+        )
 
 
 def request():
@@ -77,8 +105,10 @@ def test_retirement_waits_then_deploys_and_validates_next_app():
 
 def test_retirement_never_touches_any_namespace_outside_the_app_set():
     cluster = Cluster()
+    cluster.namespaces.add("unrelated")
     protected = cluster.namespaces - {"hotel-reservation", "hotel-reservation-sdo"}
-    retire_application(request(), cluster, deploy_next=lambda: cluster.namespaces.add("social-network"))
+    with pytest.raises(ValueError, match="foreign app namespace unrelated"):
+        retire_application(request(), cluster, deploy_next=lambda: cluster.namespaces.add("social-network"))
     assert protected <= cluster.namespaces
     assert not set(cluster.writes) & protected
 
