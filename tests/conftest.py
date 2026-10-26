@@ -20,6 +20,35 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
 
 
+@pytest.fixture
+def image_build_source(tmp_path: Path) -> Path:
+    """Real committed inputs independent of edits in the developer checkout."""
+    repository = Path(__file__).resolve().parents[1]
+    source = tmp_path / "image-source"
+    (source / "scripts").mkdir(parents=True)
+    (source / "sdo/operator").mkdir(parents=True)
+    (source / "sdo/operator/go.mod").write_text("module fixture\n")
+    for filename in ("build_sdo_images.sh", "sdo-images.hcl"):
+        shutil.copy2(repository / "scripts" / filename, source / "scripts" / filename)
+    for args in (
+        ["init", "-q"],
+        ["add", "."],
+        [
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@example.com",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "-qm",
+            "image inputs",
+        ],
+    ):
+        subprocess.run(["git", "-C", str(source), *args], check=True, capture_output=True, text=True)
+    return source
+
+
 @pytest.fixture(scope="session")
 def operator_binary() -> Path:
     repository = Path(__file__).resolve().parents[1]

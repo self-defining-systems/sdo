@@ -6,7 +6,6 @@ import fnmatch
 import os
 import re
 import shlex
-import shutil
 import subprocess
 from pathlib import Path
 
@@ -80,31 +79,10 @@ def test_required_ci_still_accounts_for_every_job() -> None:
         ("responder benchmark", {"sdo-responder", "sdo-sregym-responder"}),
     ],
 )
-def test_selected_images_are_built_and_smoked(tmp_path: Path, images: str, expected: set[str]) -> None:
-    # The builder's clean-source contract belongs to its own fixture checkout;
-    # selecting images must not depend on whether a developer is editing SDO.
-    source = tmp_path / "source"
-    (source / "scripts").mkdir(parents=True)
-    (source / "sdo/operator").mkdir(parents=True)
-    (source / "sdo/operator/go.mod").write_text("module fixture\n")
-    for filename in ("build_sdo_images.sh", "sdo-images.hcl"):
-        shutil.copy2(ROOT / "scripts" / filename, source / "scripts" / filename)
-    for args in (
-        ["init", "-q"],
-        ["add", "."],
-        [
-            "-c",
-            "user.name=Fixture",
-            "-c",
-            "user.email=fixture@example.com",
-            "-c",
-            "commit.gpgsign=false",
-            "commit",
-            "-qm",
-            "image inputs",
-        ],
-    ):
-        subprocess.run(["git", "-C", str(source), *args], check=True, capture_output=True, text=True)
+def test_selected_images_are_built_and_smoked(
+    tmp_path: Path, image_build_source: Path, images: str, expected: set[str]
+) -> None:
+    source = image_build_source
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     calls = tmp_path / "calls"
