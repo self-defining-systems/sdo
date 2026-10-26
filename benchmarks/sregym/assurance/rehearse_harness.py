@@ -480,6 +480,7 @@ class Gate:
     load_environment: Callable[[Path], Any] = _load_environment
     image_tag: str = "fastloop"
     scenarios: tuple[Scenario, ...] = SCENARIOS
+    up_budget: float = UP_BUDGET_SECONDS
 
     def log(self) -> Path:
         return self.run_dir / "rehearse-harness.log"
@@ -494,7 +495,7 @@ class Gate:
         setup_error = ""
         if not (self.run_dir / "fastloop.json").is_file():
             code, output = self._step(
-                up_arguments(self.code_root, self.run_dir, self.lane, self.image_tag), UP_BUDGET_SECONDS
+                up_arguments(self.code_root, self.run_dir, self.lane, self.image_tag), self.up_budget
             )
             if code:
                 setup_error = f"fastloop up failed (exit {code}): {output[-400:]}"

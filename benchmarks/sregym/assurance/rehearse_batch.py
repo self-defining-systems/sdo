@@ -56,6 +56,8 @@ DEFAULT_CLUSTERS = 4
 VEHICLE_BUDGET_SECONDS = 240
 #: Wall-clock ceiling for the full set at the default cluster count.
 BUDGET_SECONDS = 1800
+#: Parallel cold cluster starts share the host, so each gets far more than the serial gate's budget.
+UP_BUDGET_SECONDS = 900
 
 #: Toy fault each SREGym fault class reduces to (``apps/toy/faults.py`` kinds); classes absent here have no toy analog.
 TOY_VEHICLE: dict[str, str] = {
@@ -334,7 +336,7 @@ def group_by_class(rows: Sequence[Row]) -> list[dict[str, Any]]:
             grouped[stage.error_class].append((row, stage))
     classes = []
     for error_class, found in grouped.items():
-        members = [row for row, _ in found]
+        members = list({id(row): row for row, _ in found}.values())
         first = found[0][1]
         classes.append(
             {
@@ -404,7 +406,9 @@ class Batch:
     def _gate(self, lane: str, run_dir: Path, scenarios: tuple[Scenario, ...]) -> Gate:
         if self.make_gate is not None:
             return self.make_gate(lane, run_dir, scenarios)
-        return Gate(self.code_root, lane, run_dir, image_tag=self.image_tag, scenarios=scenarios)
+        return Gate(
+            self.code_root, lane, run_dir, image_tag=self.image_tag, scenarios=scenarios, up_budget=UP_BUDGET_SECONDS
+        )
 
     def lanes(self) -> list[tuple[str, Path, tuple[Scenario, ...]]]:
         """Vehicle scenarios dealt round-robin to the clusters (lane 0 always exists for the RBAC probe)."""

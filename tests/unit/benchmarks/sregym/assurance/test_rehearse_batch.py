@@ -216,6 +216,9 @@ def test_a_cluster_that_will_not_start_fails_every_problem_at_rbac_without_raisi
 
     summary = batch.Batch(tmp_path / "code", "t", tmp_path / "out", problems, make_gate=make).run()
     assert {c["error_class"] for c in summary["classes"] if c["kind"] == "failure"} == {"cluster-up-failed", "plan-gap"}
+    # a problem that fails the same class at two stages is one problem in that class
+    up = next(c for c in summary["classes"] if c["error_class"] == "cluster-up-failed")
+    assert up["count"] == len(set(up["problems"])) == len(up["problems"])
 
 
 def asdict_result(scenario: Scenario, status: str, detail: str) -> dict[str, Any]:
