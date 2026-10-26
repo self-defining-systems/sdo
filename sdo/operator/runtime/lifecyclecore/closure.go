@@ -45,6 +45,7 @@ type Event struct {
 	Error               string
 	Policy              RetryPolicy
 	ArchivedIncidentIDs []string
+	NonRetryable        bool
 }
 
 type EffectKind uint8
@@ -217,7 +218,7 @@ func reject(next *contracts.ControllerState, event Event, reason contracts.Closu
 	failure.Reason = reason
 	next.ClosureFailure = failure
 	next.ClosureState = contracts.ClosureState_CLOSURE_STATE_PENDING
-	if failure.Attempts < failure.MaxAttempts {
+	if !event.NonRetryable && failure.Attempts < failure.MaxAttempts {
 		delay := event.Policy.InitialBackoff
 		for attempt := int32(1); attempt < failure.Attempts; attempt++ {
 			if delay >= event.Policy.MaxBackoff/2 {
@@ -231,7 +232,9 @@ func reject(next *contracts.ControllerState, event Event, reason contracts.Closu
 	}
 	failure.NextAttemptAt = nil
 	failure.Permanent = true
-	failure.Reason = contracts.ClosureFailureReason_CLOSURE_FAILURE_REASON_RETRY_EXHAUSTED
+	if !event.NonRetryable {
+		failure.Reason = contracts.ClosureFailureReason_CLOSURE_FAILURE_REASON_RETRY_EXHAUSTED
+	}
 	failure.Action = "closure evidence is archived per incident; inspect the broker ledger and failed-closure ConfigMap; later incidents continue"
 	next.ClosureState = contracts.ClosureState_CLOSURE_STATE_FAILED
 	next.FailedClosures = append(next.FailedClosures, &contracts.FailedIncidentClosure{Closure: proto.Clone(next.PendingClosure).(*contracts.IncidentClosure), Failure: proto.Clone(failure).(*contracts.ClosureFailure)})
