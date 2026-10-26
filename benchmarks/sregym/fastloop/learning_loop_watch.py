@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import subprocess
 import threading
-from typing import TYPE_CHECKING, IO, Any
+from typing import IO, TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from pathlib import Path

@@ -232,6 +232,7 @@ def test_proof_namespace_is_separate_and_stable_for_the_lane_environment(tmp_pat
 
 def test_proof_rejects_stale_images_before_fixture_mutations(tmp_path, monkeypatch):
     import json
+
     from benchmarks.sregym.fastloop import cli, learning_loop, learning_loop_fixture, source_preflight
     from benchmarks.sregym.fastloop.environment import FastloopEnvironment
 
@@ -265,6 +266,7 @@ def test_validator_watch_captures_logs_when_job_is_added(tmp_path, monkeypatch):
     import subprocess
     import sys
     import time
+
     from benchmarks.sregym.fastloop.learning_loop_watch import ValidatorWatch
 
     job = validator_job()
