@@ -59,8 +59,8 @@ func VerifiedReflectionCauses(outcome *contracts.OutcomeRecord) []*contracts.Ref
 // On a success outcome, a symptom no opening finding observed is unobserved
 // context, not failed proof; a symptom that was observed must still clear.
 // A written target no opening finding observed is covered by its cause when
-// another resource of the same cause has an opening finding that cleared
-// after the last cause write. Opening findings omit findings that activate
+// another resource of the same cause is the primary resource of an opening
+// finding that cleared after the last cause write. Opening findings omit findings that activate
 // after launch, so without global health closure every resource needs its
 // own cleared finding.
 // Callers still enforce ownership, trusted action provenance and eligibility.
@@ -73,7 +73,7 @@ func RepairedCauseObserved(outcome *contracts.OutcomeRecord, resources []*contra
 	for _, resource := range resources {
 		primary := slices.ContainsFunc(repaired, func(ref *contracts.ObjectRef) bool { return equalCauseResource(ref, resource) })
 		if healthClosed && !openingObserved(outcome, resource) {
-			if !primary || causeFindingCleared(outcome, resources, repaired, after) {
+			if !primary || causeFindingCleared(outcome, resources, after) {
 				continue
 			}
 			return false
@@ -85,12 +85,15 @@ func RepairedCauseObserved(outcome *contracts.OutcomeRecord, resources []*contra
 	return true
 }
 
-// causeFindingCleared reports whether any cause resource an opening finding
-// observed cleared after the last cause write.
-func causeFindingCleared(outcome *contracts.OutcomeRecord, resources, repaired []*contracts.ObjectRef, after time.Time) bool {
+// causeFindingCleared reports whether an opening finding whose primary
+// resource is in the cause cleared after the last cause write. A finding that
+// names a cause resource only as related belongs to another cause and never
+// covers this one.
+func causeFindingCleared(outcome *contracts.OutcomeRecord, resources []*contracts.ObjectRef, after time.Time) bool {
 	return slices.ContainsFunc(resources, func(resource *contracts.ObjectRef) bool {
-		primary := slices.ContainsFunc(repaired, func(ref *contracts.ObjectRef) bool { return equalCauseResource(ref, resource) })
-		return openingObserved(outcome, resource) && clearedOpenFinding(outcome, resource, after, primary)
+		return slices.ContainsFunc(outcome.GetFindings(), func(f *contracts.Finding) bool {
+			return f.GetStatus() == "active" && equalCauseResource(f.GetPrimaryResource(), resource)
+		}) && clearedOpenFinding(outcome, resource, after, true)
 	})
 }
 
