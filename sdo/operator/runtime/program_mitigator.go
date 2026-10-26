@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -23,6 +24,8 @@ import (
 // executions for the lifetime of the process, including calls that timed out.
 // Timed-out calls retain their slot until they actually return. No mutable loop
 // state is passed to them and subsequent work fails closed when slots are spent.
+var errEmptyMitigationPlan = errors.New("program returned an empty plan")
+
 var mitigationSlots = make(chan struct{}, 4)
 
 // runMitigator is called with mu held; authored code always runs without it.
@@ -92,7 +95,7 @@ func runBoundedMitigator(ctx context.Context, p program.Mitigator, view program.
 			err = plan.Validate()
 		}
 		if err == nil && len(plan.Actions) == 0 {
-			err = fmt.Errorf("program returned an empty plan")
+			err = errEmptyMitigationPlan
 		}
 		if err == nil {
 			// Reject unsupported actions and detach the returned values from authored memory.
@@ -106,6 +109,9 @@ func runBoundedMitigator(ctx context.Context, p program.Mitigator, view program.
 		}
 		if err == nil {
 			plan, err = bindMitigationValues(plan, p.Spec(), bindings, isolated)
+		}
+		if err == nil {
+			err = program.CheckReplicaSetScales(plan, isolated, bindings)
 		}
 		results <- outcome{plan: plan, err: err}
 	}()

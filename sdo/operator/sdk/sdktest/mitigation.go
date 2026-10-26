@@ -42,6 +42,9 @@ func CheckMitigation(p program.Diagnoser, m program.Mitigator, c CorpusCase) (Mi
 	if err := plan.Validate(); err != nil {
 		return result, fmt.Errorf("program.mitigation-unreplayable: invalid plan: %w", err)
 	}
+	if err := program.CheckReplicaSetScales(plan, c.Open, c.Bindings); err != nil {
+		return result, fmt.Errorf("program.mitigation-unreplayable: %w", err)
+	}
 	scripted := false
 	for _, action := range plan.Actions {
 		var script program.RunScript

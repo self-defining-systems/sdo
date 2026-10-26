@@ -199,6 +199,11 @@ type pendingMitigation struct {
 	ProgramID           string
 	Bindings            program.Bindings
 	FindingFingerprints []string
+	ReservedAt          time.Time
+	// Released reservations no longer hold their writes but are still observed;
+	// Superseded ones saw a later write and earn no late credit.
+	Released   bool
+	Superseded bool
 }
 
 func (l *ResponderLoop) reservePending(application string, plan program.Plan, attempt, programID string, bindings program.Bindings, fingerprints []string) {
@@ -216,7 +221,7 @@ func (l *ResponderLoop) reservePending(application string, plan program.Plan, at
 		diagnoser, _ = l.Programs.Diagnoser(programID)
 		revision = l.programRevision(programID)
 	}
-	l.pendingWrites[application] = pendingMitigation{diagnoser: diagnoser, ProgramRevision: revision, Refs: refs, AttemptID: attempt, ProgramID: programID, Bindings: cloneProgramBindings(bindings), FindingFingerprints: append([]string(nil), fingerprints...)}
+	l.pendingWrites[application] = pendingMitigation{diagnoser: diagnoser, ProgramRevision: revision, Refs: refs, AttemptID: attempt, ProgramID: programID, Bindings: cloneProgramBindings(bindings), FindingFingerprints: append([]string(nil), fingerprints...), ReservedAt: time.Now().UTC()}
 }
 
 // Reservations are observation state, never restored write or rollback authority.
@@ -231,6 +236,7 @@ func (l *ResponderLoop) settlePending(ctx context.Context) {
 			continue
 		}
 		if _, err := executor.waitForRollouts(ctx, l.Request, pending.Refs); err != nil {
+			l.releaseStalledPending(application, pending)
 			continue
 		}
 		delete(l.pendingWrites, application)
@@ -238,6 +244,14 @@ func (l *ResponderLoop) settlePending(ctx context.Context) {
 		if !hasResult {
 			l.updatePendingReport(application, pending.AttemptID, false, "verification_unavailable")
 			continue // Restart cannot recreate process-local verification authority.
+		}
+		if pending.Superseded {
+			// A write after the release may have finished this rollout.
+			result.VerificationCompleted = true
+			result.VerificationPassed = false
+			l.applications[application] = result
+			l.updatePendingReport(application, pending.AttemptID, false, "rollout_stalled")
+			continue
 		}
 		result.RolloutPending = nil
 		result.VerificationCompleted = true
@@ -276,9 +290,75 @@ func (l *ResponderLoop) settlePending(ctx context.Context) {
 	}
 }
 
+// A pending application that does not converge within its bound releases its
+// writes to the responder with typed reason rollout_stalled. Its writes stay
+// applied and unverified, and observation continues: a rollout that completes
+// later settles through the ordinary verification, so a slow healthy rollout
+// keeps its success.
+func (l *ResponderLoop) releaseStalledPending(application string, pending pendingMitigation) {
+	if pending.Released {
+		return
+	}
+	if pending.ReservedAt.IsZero() {
+		// Restored reservations start their bound at restore time.
+		pending.ReservedAt = time.Now().UTC()
+		l.pendingWrites[application] = pending
+		return
+	}
+	bound := l.PendingStallTimeout
+	if bound <= 0 {
+		bound = DefaultPendingApplicationStall
+	}
+	if time.Since(pending.ReservedAt) < bound {
+		return
+	}
+	pending.Released = true
+	l.pendingWrites[application] = pending
+	const reason = "rollout_stalled"
+	if result, ok := l.applications[application]; ok {
+		result.RolloutPending = nil
+		l.applications[application] = result
+		for i := range l.applicationsLog {
+			if l.applicationsLog[i].ID == application {
+				l.applicationsLog[i].Result = result
+				l.applicationsLog[i].Pending = planApplicationPending(result)
+				l.applicationsLog[i].Error = reason + ": rollout did not converge within " + bound.String() + "; writes remain applied and unverified"
+			}
+		}
+	}
+	l.updatePendingReport(application, pending.AttemptID, false, reason)
+	for _, report := range l.menuReports {
+		if report.AttemptId == pending.AttemptID {
+			report.FailedPhase = "rollout"
+		}
+	}
+}
+
+// heldPendingWrites counts reservations that still hold their writes.
+func (l *ResponderLoop) heldPendingWrites() int {
+	held := 0
+	for _, pending := range l.pendingWrites {
+		if !pending.Released {
+			held++
+		}
+	}
+	return held
+}
+
 func (l *ResponderLoop) pendingConflict(refs []sdk.ObjectRef, response *ToolResponse) bool {
+	return l.pendingConflictExcept(refs, response, "")
+}
+
+// A held reservation refuses overlapping writes. A released one is superseded
+// by any later write that is not refused: the write may be what let its
+// rollout finish (an owned ReplicaSet or Pod, a claim, a node), so the stalled
+// application earns no late credit. Reservations of attempt itself are skipped.
+func (l *ResponderLoop) pendingConflictExcept(refs []sdk.ObjectRef, response *ToolResponse, attempt string) bool {
 	for _, ref := range refs {
 		for application, pending := range l.pendingWrites {
+			if pending.Released || (attempt != "" && pending.AttemptID == attempt) {
+				continue
+			}
 			if len(pending.Refs) == 0 {
 				l.refuseSelection(response, "pending_write_conflict", "pending application "+application+" has unknown write scope")
 				return true
@@ -289,6 +369,12 @@ func (l *ResponderLoop) pendingConflict(refs []sdk.ObjectRef, response *ToolResp
 					return true
 				}
 			}
+		}
+	}
+	for application, pending := range l.pendingWrites {
+		if pending.Released && (attempt == "" || pending.AttemptID != attempt) {
+			pending.Superseded = true
+			l.pendingWrites[application] = pending
 		}
 	}
 	return false
@@ -460,7 +546,7 @@ func (l *ResponderLoop) RefreshPendingMitigations(ctx context.Context) bool {
 	if err := l.persistToolState(ctx); err != nil {
 		return true
 	}
-	return len(l.pendingWrites) > 0 || l.pendingApplicationResultsLocked()
+	return l.heldPendingWrites() > 0 || l.pendingApplicationResultsLocked()
 }
 
 func planApplicationPending(result PlanApplicationResult) bool {
@@ -490,5 +576,5 @@ func (l *ResponderLoop) hasPendingMitigationsLocked() bool {
 		defer cancel()
 		l.settlePending(ctx)
 	}
-	return len(l.pendingWrites) > 0 || l.pendingApplicationResultsLocked()
+	return l.heldPendingWrites() > 0 || l.pendingApplicationResultsLocked()
 }

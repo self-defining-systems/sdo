@@ -196,9 +196,10 @@ def _parser() -> argparse.ArgumentParser:
             "Apply several independent options in one call; overlapping object write sets are refused before writes. "
             "Use repeated --option ID followed by that option's --param NAME=VALUE, or --selection-set FILE "
             "with version 1 and options [{option_id, bindings, parameters, finding_fingerprints}]. "
-            "Each option has its own receipt; one call uses one round. Pending rollout returns its application ID "
-            "and read-only tools remain available. A single option also accepts --NAME VALUE parameters. "
-            "Uses the ordinary executor and controller RBAC; up to five rounds per incident. "
+            "Each option has its own receipt; one call uses one round. Pending rollout returns its application ID; "
+            "reads stay open; past its bound it frees its writes as rollout_stalled. "
+            "A single option also accepts --NAME VALUE parameters. "
+            "Ordinary executor and controller RBAC; five rounds per incident. "
             "A script fix is a first-class learnable mitigation with relation-derived Values, within incident budgets."
             + " "
             + WORKING_PROGRAM_HELP

@@ -166,29 +166,33 @@ type ResponderLoop struct {
 	Executor           PlanExecutor
 	ReadView           func(sdk.DetectionContext) program.ReadView
 	DiagnosisDeadline  time.Duration
-	MaxBatches         int
-	Trust              map[string]ProgramTrust
-	CorpusSessionRoot  string
-	capturePhase       string
-	timing             toolTiming
-	preApplyCaptured   bool
-	saveToolState      func(context.Context, []byte) error
-	operationMu        sync.Mutex
-	mu                 sync.Mutex
-	sessionID          string
-	plans              map[string]selectedPlan
-	applications       map[string]PlanApplicationResult
-	applicationsLog    []RecordedPlanApplication
-	completedRepairs   []continuationRepair
-	failureSignals     []string
-	calls              []ToolCall
-	runs               []ProgramRun
-	matchedViews       map[string]program.ReadView
-	matchedPlans       map[string]PlanApplicationResult
-	matchedPlanErrors  map[string]error
-	lastDiagnosisView  program.ReadView
-	findings           []sdk.Finding
-	batches            int
+	// ProgramFollowUpSettle bounds each wait before a program follow-up plan;
+	// PendingStallTimeout bounds how long a pending application holds its writes.
+	ProgramFollowUpSettle time.Duration
+	PendingStallTimeout   time.Duration
+	MaxBatches            int
+	Trust                 map[string]ProgramTrust
+	CorpusSessionRoot     string
+	capturePhase          string
+	timing                toolTiming
+	preApplyCaptured      bool
+	saveToolState         func(context.Context, []byte) error
+	operationMu           sync.Mutex
+	mu                    sync.Mutex
+	sessionID             string
+	plans                 map[string]selectedPlan
+	applications          map[string]PlanApplicationResult
+	applicationsLog       []RecordedPlanApplication
+	completedRepairs      []continuationRepair
+	failureSignals        []string
+	calls                 []ToolCall
+	runs                  []ProgramRun
+	matchedViews          map[string]program.ReadView
+	matchedPlans          map[string]PlanApplicationResult
+	matchedPlanErrors     map[string]error
+	lastDiagnosisView     program.ReadView
+	findings              []sdk.Finding
+	batches               int
 }
 
 func NewResponderLoop(request IncidentRequest, programs program.ProgramRegistry, provider SnapshotProvider, detectors []sdk.Detector, executor PlanExecutor, maxBatches int) *ResponderLoop {
@@ -906,7 +910,7 @@ func (l *ResponderLoop) apply(ctx context.Context, request ToolRequest, response
 	}
 
 	refs, refErr := l.menuPlanWriteRefs(batch)
-	if len(l.pendingWrites) > 0 && refErr != nil {
+	if l.heldPendingWrites() > 0 && refErr != nil {
 		l.refuseSelection(response, "write_set_unknown", refErr.Error())
 		return
 	}

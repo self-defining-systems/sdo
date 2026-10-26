@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"k8s.io/apimachinery/pkg/types"
 	"sort"
@@ -193,25 +194,47 @@ func (l *ResponderLoop) executeMenuEntry(ctx context.Context, entry menuEntry, s
 		response.Error = "response loop budget exhausted"
 		return
 	}
+	var followUp *program.Plan
+	var planned []program.Plan
 	for round := uint32(1); round <= rounds; round++ {
 		rr := &contracts.MitigationRoundReport{RoundIndex: round, RoundId: fmt.Sprintf("%s-r%d", attempt, round)}
 		report.Rounds = append(report.Rounds, rr)
-		if consumeRound {
-			l.batches++
-		}
-		// Preserve the ordinary incident counter before a potentially lost reply.
-		_ = l.persistToolState(ctx)
-		plan, err := l.prepareMenuPlan(ctx, entry, parameters, bindings)
-		if bindingErr != nil {
-			err = bindingErr
-		}
-		if err == nil && consumeRound {
-			err = l.validateMenuPreconditions(ctx, entry, bindings)
+		var plan program.Plan
+		var err error
+		reason := "direct_plan_failed"
+		if followUp != nil {
+			// A follow-up continues the same selection: no responder batch or
+			// Match precondition, but the ordinary executor, receipts, checks
+			// and other applications' held reservations.
+			plan, followUp = *followUp, nil
+			refs, refErr := l.menuPlanWriteRefs(plan)
+			var conflict ToolResponse
+			if refErr != nil && l.heldPendingWrites() > 0 {
+				err, reason = refErr, "write_set_unknown"
+			} else if l.pendingConflictExcept(refs, &conflict, attempt) {
+				err, reason = errors.New(conflict.Error), "pending_write_conflict"
+			}
+		} else {
+			if consumeRound {
+				l.batches++
+			}
+			// Preserve the ordinary incident counter before a potentially lost reply.
+			_ = l.persistToolState(ctx)
+			plan, err = l.prepareMenuPlan(ctx, entry, parameters, bindings)
+			if bindingErr != nil {
+				err = bindingErr
+			}
+			if err == nil && consumeRound {
+				err = l.validateMenuPreconditions(ctx, entry, bindings)
+			}
 		}
 		if err != nil {
 			report.Status = contracts.MitigationReport_STATUS_EXECUTION_ERROR
 			report.FailedPhase = "planning"
-			report.ReasonCode = "direct_plan_failed"
+			report.ReasonCode = reason
+			if errors.Is(err, program.ErrReplicaSetScaleRefused) {
+				report.ReasonCode = "replicaset_scale_refused"
+			}
 			rr.Verification = verdictContract(program.Verdict{Result: program.Unknown})
 			response.MenuExecution = append(response.MenuExecution, MenuRoundExecution{OptionID: selection.OptionId, ProgramID: entry.programID, RoundIndex: round, Error: boundedToolText(err.Error())})
 			break
@@ -224,6 +247,7 @@ func (l *ResponderLoop) executeMenuEntry(ctx context.Context, entry menuEntry, s
 				description.Plan.Actions = append(description.Plan.Actions, converted)
 			}
 		}
+		planned = append(planned, plan)
 		executor := l.Executor
 		executor.ApplicationID = applicationID
 		executor.PollRollouts = true
@@ -343,6 +367,15 @@ func (l *ResponderLoop) executeMenuEntry(ctx context.Context, entry menuEntry, s
 			report.Status = contracts.MitigationReport_STATUS_UNRESOLVED
 			report.FailedPhase = "rollout"
 			report.ReasonCode = "rollout_pending"
+			next, ok, followErr := l.programFollowUp(ctx, entry, bindings, planned)
+			if ok {
+				followUp = &next
+				rounds++
+				continue
+			}
+			if followErr != nil {
+				response.MenuExecution = append(response.MenuExecution, MenuRoundExecution{OptionID: selection.OptionId, ProgramID: entry.programID, RoundIndex: round + 1, Error: boundedToolText("follow-up: " + followErr.Error())})
+			}
 			break
 		}
 		report.FailedPhase = "verification"
@@ -362,6 +395,10 @@ func (l *ResponderLoop) executeMenuEntry(ctx context.Context, entry menuEntry, s
 			}
 			break
 		}
+	}
+	if len(planned) > 1 && len(l.pendingWrites) > 0 {
+		// Earlier rounds' reservations settle once a follow-up unblocked them.
+		l.settlePending(ctx)
 	}
 	report.RemainingBatches = uint32(max(0, min(5, l.MaxBatches)-l.batches))
 	l.menuReports = append(l.menuReports, cloneSelectionReport(report))

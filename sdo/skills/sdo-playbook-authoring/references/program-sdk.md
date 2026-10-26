@@ -523,7 +523,8 @@ type ScaleWorkload struct {
 	Replicas Value
 }
     ScaleWorkload restores replicas from accepted source, observations or a
-    parameter.
+    parameter. A ReplicaSet target has kubectl-scale parity, e.g. retiring an
+    old-template ReplicaSet whose pods block a Deployment rollout.
 
 type ScriptAPIReceipt struct {
 	Subresource string    `json:"subresource,omitempty"`
