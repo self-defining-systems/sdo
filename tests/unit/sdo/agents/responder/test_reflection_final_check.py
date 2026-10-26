@@ -290,22 +290,43 @@ def test_final_check_timeout_kills_the_validator_process_group(
     from sdo.agents.responder.memory_check import check_reflection_result
     from sdo.contracts import ReflectionResult
 
-    marker = tmp_path / "child-survived"
-    child = f"import time; from pathlib import Path; time.sleep(0.4); Path({str(marker)!r}).touch()"
+    started = tmp_path / "validator-started"
     executable = tmp_path / "sdo-operator"
     executable.write_text(
-        f"#!{sys.executable}\nimport subprocess, sys, time\n"
-        f"subprocess.Popen([sys.executable, '-c', {child!r}])\n"
-        "print('validation started', flush=True)\ntime.sleep(10)\n"
+        f"""#!{sys.executable}
+import os, subprocess, sys, time
+child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(600)"])
+print("validation started", flush=True)
+with open({str(started)!r} + ".tmp", "w") as handle:
+    handle.write(str(child.pid))
+os.replace({str(started)!r} + ".tmp", {str(started)!r})
+time.sleep(600)
+"""
     )
     executable.chmod(0o755)
     monkeypatch.setenv("PATH", f"{tmp_path}{os.pathsep}{os.environ['PATH']}")
-    result = check_reflection_result(tmp_path, ReflectionResult(), 0.1)
+
+    def expire_once_started(process: subprocess.Popen[bytes], seconds: float) -> tuple[bytes, bytes]:
+        # The deadline fires only after the validator has output and a child.
+        while not started.exists() and process.poll() is None:
+            time.sleep(0.01)
+        raise subprocess.TimeoutExpired(process.args, seconds)
+
+    result = check_reflection_result(tmp_path, ReflectionResult(), 0.1, communicate=expire_once_started)
     assert result.exit_code != 0
     assert result.timed_out
     assert "validation started" in result.stdout
-    time.sleep(0.5)
-    assert not marker.exists()
+    assert "timed out after 0.1s" in result.stderr
+    child = Path("/proc") / started.read_text()
+    deadline = time.monotonic() + 60  # Bounds only a failure: a killed child is already exiting.
+    while True:
+        try:
+            if (child / "stat").read_text().split(") ")[-1][0] == "Z":
+                break
+        except FileNotFoundError:
+            break
+        assert time.monotonic() < deadline, "validator child survived the process-group kill"
+        time.sleep(0.01)
 
 
 @pytest.fixture

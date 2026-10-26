@@ -7,6 +7,7 @@ import os
 import signal
 import subprocess
 import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -32,7 +33,17 @@ def validation_output(raw: bytes) -> str:
     return f"{text[:half]}\n[... {len(text) - _MAX_OUTPUT_CHARS} characters omitted ...]\n{text[-half:]}"
 
 
-def check_reflection_result(root: Path, decision: ReflectionResult, timeout_seconds: float) -> ValidationResult:
+def communicate_within(process: subprocess.Popen[bytes], timeout_seconds: float) -> tuple[bytes, bytes]:
+    """Collect output, raising subprocess.TimeoutExpired once the deadline passes."""
+    return process.communicate(timeout=timeout_seconds)
+
+
+def check_reflection_result(
+    root: Path,
+    decision: ReflectionResult,
+    timeout_seconds: float,
+    communicate: Callable[[subprocess.Popen[bytes], float], tuple[bytes, bytes]] = communicate_within,
+) -> ValidationResult:
     """Check the exact returned decision and final files, independently of model tool use."""
     if timeout_seconds <= 0:
         return ValidationResult(2, True, "", "reflection deadline expired before memory check")
@@ -50,7 +61,7 @@ def check_reflection_result(root: Path, decision: ReflectionResult, timeout_seco
         except OSError as exc:
             return ValidationResult(2, False, "", f"cannot start memory check: {exc}")
         try:
-            stdout, stderr = process.communicate(timeout=timeout_seconds)
+            stdout, stderr = communicate(process, timeout_seconds)
         except subprocess.TimeoutExpired:
             with contextlib.suppress(ProcessLookupError):
                 os.killpg(process.pid, signal.SIGKILL)
