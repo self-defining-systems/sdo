@@ -264,3 +264,28 @@ def test_legacy_prerequisites_require_contained_identity_bound_manifest_bytes(tm
         ValueError, match={"digest": "digest differs", "identity": "identity differs", "escape": "escapes"}[damage]
     ):
         complete_recovery_baselines(tmp_path, (ApplicationBaseline("hotel", [workload]),))
+
+
+def test_reset_cli_checks_prerequisites_before_building_or_starting_a_worker(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from benchmarks.sregym.fastloop import cli, reset
+
+    environment = SimpleNamespace(
+        shared_accepted_id=None,
+        seed_commit="seed",
+        dev_mount=None,
+        app="sregym",
+        namespace="hotel",
+        kubeconfig=tmp_path / "kubeconfig",
+    )
+    monkeypatch.setattr(cli.FastloopEnvironment, "load", lambda _: environment)
+
+    def reject(_):
+        raise ValueError("eval: namespace recovery cannot restore prerequisites: hotel/Secret/credential")
+
+    monkeypatch.setattr(reset.RestoreChecks, "validate", reject)
+    monkeypatch.setattr(cli, "_worker", lambda _: pytest.fail("worker started before rejection"))
+    args = cli.build_parser().parse_args(["reset", "--run-dir", str(tmp_path)])
+    with pytest.raises(ValueError, match="hotel/Secret/credential"):
+        args.handler(args)

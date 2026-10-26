@@ -1067,6 +1067,7 @@ def _reset(args: argparse.Namespace) -> int:
     retarget = getattr(args, "retarget_dev_mount", False)
     if args.dev_mount is not None and environment.dev_mount != args.dev_mount.resolve() and not retarget:
         raise ValueError("reset --dev-mount must match the worktree mounted by up")
+    RestoreChecks(environment).validate()
     mount = args.dev_mount.resolve() if retarget and args.dev_mount else environment.dev_mount
     if mount is not None:
         from benchmarks.sregym.fastloop.dev import prepare_dev_mount
