@@ -109,6 +109,9 @@ def test_cli_records_permissive_gaps_before_worker_launch(tmp_path, monkeypatch,
     from types import SimpleNamespace
 
     from benchmarks.sregym.fastloop import cli
+
+    # This test exercises the downstream contract after proof admission.
+    monkeypatch.setattr("benchmarks.sregym.fastloop.learning_loop.require_proof", lambda *_args: None)
     from benchmarks.sregym.fastloop.environment import FastloopEnvironment
 
     environment = FastloopEnvironment(
