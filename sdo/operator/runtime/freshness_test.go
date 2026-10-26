@@ -178,7 +178,7 @@ func TestClosureHandoffRechecksDetectorState(t *testing.T) {
 func TestClosureHandoffRechecksSourceFieldsAfterVerification(t *testing.T) {
 	f := newClosureDriftFixture(t, true, true, "app")
 	f.restoreSource(t)
-	f.step(t, 1)
+	f.settle(t, 1)
 	if len(f.closed) != 1 || closureOutcome(t, f.closed[0]) != "success" {
 		t.Fatal("fixture needs verified image and source repair")
 	}
