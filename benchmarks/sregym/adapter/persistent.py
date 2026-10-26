@@ -1962,7 +1962,9 @@ def _wait_for_reflection_drain(
         else:
             try:
                 observed = _observe_state(
-                    state, incident_id=incident_id, timeout=min(30.0, max(OBSERVATION_FLOOR_SECONDS, deadline - clock.monotonic()))
+                    state,
+                    incident_id=incident_id,
+                    timeout=min(30.0, max(OBSERVATION_FLOOR_SECONDS, deadline - clock.monotonic())),
                 )
                 _raise_observation_failure(observed, state)
             except ClosureFailedError:

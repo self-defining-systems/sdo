@@ -892,4 +892,7 @@ def test_a_failed_controller_job_ends_the_closure_wait_as_a_typed_failure(tmp_pa
     assert agent.last_recovery_trigger == "closure_failed"
     rejected = json.loads((Path(str(outcome.artifacts_dir)) / REJECTED_RECEIPT_FILENAME).read_text())
     assert "BackoffLimitExceeded" in json.dumps(rejected)
-    assert PersistentState.load(tmp_path / "sdo_persistent_controller.json").controllers["hotel-reservation"].pending is None
+    assert (
+        PersistentState.load(tmp_path / "sdo_persistent_controller.json").controllers["hotel-reservation"].pending
+        is None
+    )
