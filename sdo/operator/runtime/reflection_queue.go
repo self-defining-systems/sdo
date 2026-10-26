@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"time"
@@ -27,6 +28,7 @@ type reflectionQueueState struct {
 	rescan   bool
 	retryAt  time.Time
 	attempts map[string]int
+	lastErr  map[string]string
 }
 
 // driveQueuedReflections runs at most one queued reflection at a time, oldest
@@ -65,7 +67,7 @@ func (c *Controller) driveQueuedReflections(ctx context.Context, now time.Time) 
 	if state.attempts == nil {
 		state.attempts = map[string]int{}
 	}
-	attempts := state.attempts[id]
+	attempts, lastErr := state.attempts[id], state.lastErr[id]
 	limit := max(1, c.config.ClosureRetry.MaxAttempts)
 	c.mu.Unlock()
 	actionCtx, cancel, err := c.actionContext(ctx)
@@ -79,7 +81,7 @@ func (c *Controller) driveQueuedReflections(ctx context.Context, now time.Time) 
 		defer cancel()
 		var err error
 		if attempts >= limit {
-			err = queue.AbandonQueuedReflection(actionCtx, id, fmt.Sprintf("queued reflection failed %d times", attempts))
+			err = queue.AbandonQueuedReflection(actionCtx, id, fmt.Sprintf("queued reflection failed %d times: %s", attempts, lastErr))
 		} else {
 			err = queue.ProcessQueuedReflection(actionCtx, id)
 		}
@@ -93,12 +95,27 @@ func (c *Controller) handleReflectionCompletion(completion reflectionCompletion)
 	state.running, state.rescan = "", true
 	if completion.err == nil {
 		delete(state.attempts, completion.incidentID)
+		delete(state.lastErr, completion.incidentID)
 		state.retryAt = time.Time{}
 		state.queued = slices.DeleteFunc(state.queued, func(id string) bool { return id == completion.incidentID })
 		c.mu.Unlock()
 		return
 	}
+	if state.lastErr == nil {
+		state.lastErr = map[string]string{}
+	}
 	state.attempts[completion.incidentID]++
+	state.lastErr[completion.incidentID] = completion.err.Error()
+	// A typed terminal worker failure is never retried: the next pass records
+	// the reflection as abandoned with this evidence.
+	var terminal interface{ NonRetryable() bool }
+	if errors.As(completion.err, &terminal) && terminal.NonRetryable() {
+		state.attempts[completion.incidentID] = max(1, c.config.ClosureRetry.MaxAttempts)
+		state.retryAt = time.Time{}
+		c.mu.Unlock()
+		c.reportBrokerError("process queued reflection "+completion.incidentID, completion.err)
+		return
+	}
 	delay := c.config.ClosureRetry.InitialBackoff << min(state.attempts[completion.incidentID]-1, 16)
 	if c.config.ClosureRetry.MaxBackoff > 0 {
 		delay = min(delay, c.config.ClosureRetry.MaxBackoff)
