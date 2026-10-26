@@ -33,6 +33,13 @@ type OwnershipAdoptionStatus struct {
 	SkippedReason      string    `json:"skipped_reason,omitempty"`
 	RetryAt            time.Time `json:"retry_at,omitempty"`
 	Failures           int       `json:"failures,omitempty"`
+	// AcceptedObjects lists the objects SDO has recorded as accepted, kept
+	// across source commits (see acceptedObjectKey).
+	AcceptedObjects []string `json:"accepted_objects,omitempty"`
+}
+
+func acceptedObjectKey(ref sdk.ObjectRef) string {
+	return ref.APIVersion + "/" + ref.Kind + "/" + ref.Namespace + "/" + ref.Name
 }
 
 func (c *Controller) recordAdoptionError(now time.Time, err error) {
@@ -40,7 +47,7 @@ func (c *Controller) recordAdoptionError(now time.Time, err error) {
 	defer c.mu.Unlock()
 	status := c.ownershipAdoption
 	if status.SourceCommit != c.config.SourceCommit {
-		status = OwnershipAdoptionStatus{SourceCommit: c.config.SourceCommit}
+		status = OwnershipAdoptionStatus{SourceCommit: c.config.SourceCommit, AcceptedObjects: status.AcceptedObjects}
 	}
 	if errors.Is(err, deployment.ErrManifestSelectionUnavailable) {
 		status.SkippedReason = err.Error()
@@ -63,8 +70,14 @@ func (c *Controller) recordAdoptionError(now time.Time, err error) {
 }
 
 // acceptanceSettleRetry spaces adoption passes that wait for an object to
-// settle before its acceptance record is taken.
-const acceptanceSettleRetry = 5 * time.Second
+// settle before its acceptance record is taken. The spacing doubles while
+// the wait continues, up to acceptanceSettleRetryMax: an object may never
+// settle (a declared bare Pod the scheduler cannot place), and every pass
+// dry-runs all accepted objects.
+const (
+	acceptanceSettleRetry    = 5 * time.Second
+	acceptanceSettleRetryMax = 2 * time.Minute
+)
 
 func (c *Controller) adoptOwnership(ctx context.Context, now time.Time, snapshot sdk.DetectionContext) error {
 	if c.CanAct != nil && !c.CanAct() {
@@ -92,7 +105,11 @@ func (c *Controller) adoptOwnership(ctx context.Context, now time.Time, snapshot
 	status.FromManagers = append([]string(nil), status.FromManagers...)
 	record := status.SourceCommit != c.config.SourceCommit || status.AdoptedObjects == 0
 	if status.SourceCommit != c.config.SourceCommit {
-		status = OwnershipAdoptionStatus{SourceCommit: c.config.SourceCommit}
+		status = OwnershipAdoptionStatus{SourceCommit: c.config.SourceCommit, AcceptedObjects: status.AcceptedObjects}
+	}
+	accepted := map[string]bool{}
+	for _, key := range status.AcceptedObjects {
+		accepted[key] = true
 	}
 	managerSet := map[string]bool{}
 	for _, manager := range status.FromManagers {
@@ -157,7 +174,10 @@ func (c *Controller) adoptOwnership(ctx context.Context, now time.Time, snapshot
 				break
 			}
 		}
-		recorded := acceptanceRecordCurrent(live, source)
+		if acceptanceRecordCurrent(live, source) {
+			accepted[acceptedObjectKey(ref)] = true
+		}
+		recorded := acceptanceRecordBound(live, source)
 		if allOwned && recorded {
 			continue
 		}
@@ -167,7 +187,7 @@ func (c *Controller) adoptOwnership(ctx context.Context, now time.Time, snapshot
 		if !recorded {
 			if !acceptanceSettled(live) {
 				unsettled = true
-			} else if encoded, fits, err := buildAcceptanceRecord(source, normalized, live); err != nil {
+			} else if encoded, fits, err := buildAcceptanceRecord(source, normalized, live, recordLost(live, accepted[acceptedObjectKey(ref)])); err != nil {
 				return fmt.Errorf("record accepted paths of %s/%s: %w", ref.Kind, ref.Name, err)
 			} else if fits {
 				record = encoded
@@ -223,11 +243,20 @@ func (c *Controller) adoptOwnership(ctx context.Context, now time.Time, snapshot
 	if err := persistDifferences(changes, c.drift.View(snapshot)); err != nil {
 		return err
 	}
+	// A failed record write leaves only that object without an acceptance
+	// point (its comparison fails closed); the pass continues and the
+	// failure is retried with the adoption backoff.
+	recordFailures := []error{}
+	writeRecord := func(item candidate) {
+		if err := item.resource.recordAcceptance(actionCtx, item.ref, item.record); err != nil {
+			recordFailures = append(recordFailures, &AcceptanceRecordError{Ref: item.ref, Err: err})
+			return
+		}
+		accepted[acceptedObjectKey(item.ref)] = true
+	}
 	for _, item := range pending {
 		if item.source == nil {
-			if err := item.resource.recordAcceptance(actionCtx, item.ref, item.record); err != nil {
-				return fmt.Errorf("record acceptance of %s/%s: %w", item.ref.Kind, item.ref.Name, err)
-			}
+			writeRecord(item)
 			continue
 		}
 		if _, err := item.resource.apply(actionCtx, item.ref, item.source, false); err != nil {
@@ -253,9 +282,7 @@ func (c *Controller) adoptOwnership(ctx context.Context, now time.Time, snapshot
 			return fmt.Errorf("adopt %s/%s: %w", item.ref.Kind, item.ref.Name, err)
 		}
 		if item.record != "" {
-			if err := item.resource.recordAcceptance(actionCtx, item.ref, item.record); err != nil {
-				return fmt.Errorf("record acceptance of %s/%s: %w", item.ref.Kind, item.ref.Name, err)
-			}
+			writeRecord(item)
 		}
 		if record {
 			status.AdoptedObjects++
@@ -270,24 +297,53 @@ func (c *Controller) adoptOwnership(ctx context.Context, now time.Time, snapshot
 		status.FromManagers = append(status.FromManagers, manager)
 	}
 	sort.Strings(status.FromManagers)
-	status.LastError = ""
+	status.AcceptedObjects = status.AcceptedObjects[:0]
+	for key := range accepted {
+		status.AcceptedObjects = append(status.AcceptedObjects, key)
+	}
+	sort.Strings(status.AcceptedObjects)
+	recordErr := errors.Join(recordFailures...)
+	if recordErr == nil {
+		status.LastError = ""
+		status.Failures = 0
+	}
 	status.SkippedReason = ""
 	status.RetryAt = time.Time{}
-	status.Failures = 0
 	c.mu.Lock()
 	c.ownershipAdoption = status
 	c.mu.Unlock()
 	if renderErr != nil {
-		return fmt.Errorf("render accepted manifests for ownership adoption (partial coverage): %w", renderErr)
+		return errors.Join(fmt.Errorf("render accepted manifests for ownership adoption (partial coverage): %w", renderErr), recordErr)
+	}
+	if recordErr != nil {
+		return recordErr
 	}
 	if unsettled {
+		delay := acceptanceSettleRetry
+		for step := 0; step < c.acceptanceSettleWaits && delay < acceptanceSettleRetryMax; step++ {
+			delay *= 2
+		}
+		c.acceptanceSettleWaits++
 		c.mu.Lock()
-		c.ownershipAdoption.RetryAt = now.Add(acceptanceSettleRetry)
+		c.ownershipAdoption.RetryAt = now.Add(min(delay, acceptanceSettleRetryMax))
 		c.mu.Unlock()
 		return nil
 	}
+	c.acceptanceSettleWaits = 0
 	c.adoptionNeeded = false
 	return nil
+}
+
+// recordLost reports whether live, which needs a new record, lost the one
+// SDO took earlier: it carries a record taken on another object instance, or
+// it carries none although SDO accepted it before. A record of this instance
+// (taken against older source, or before UID binding) is not lost: its
+// additions carry forward.
+func recordLost(live *unstructured.Unstructured, acceptedBefore bool) bool {
+	if record, ok := readAcceptanceRecord(live); ok {
+		return record.UID != "" && record.UID != string(live.GetUID())
+	}
+	return acceptedBefore
 }
 
 func declaredFieldDifference(expected, observed *unstructured.Unstructured, declared map[string]bool) bool {
@@ -400,3 +456,16 @@ func (v adoptionConflictView) ValidatingWebhookConfiguration(name string) (*admi
 	result, err := sdk.ScopedSource(v.ReadView).ValidatingWebhookConfiguration(name)
 	return result, err
 }
+
+// AcceptanceRecordError reports one object whose acceptance record could not
+// be written.
+type AcceptanceRecordError struct {
+	Ref sdk.ObjectRef
+	Err error
+}
+
+func (e *AcceptanceRecordError) Error() string {
+	return fmt.Sprintf("record acceptance of %s/%s: %v", e.Ref.Kind, e.Ref.Name, e.Err)
+}
+
+func (e *AcceptanceRecordError) Unwrap() error { return e.Err }

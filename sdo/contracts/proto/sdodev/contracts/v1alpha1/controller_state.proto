@@ -297,5 +297,9 @@ message OwnershipAdoptionStatus {
   string skipped_reason = 6;
   google.protobuf.Timestamp retry_at = 7;
   int32 failures = 8;
+  // Objects SDO has recorded as accepted ("apiVersion/kind/namespace/name"),
+  // across source commits. A later record loss on one of them is re-stamped
+  // without absorbing other managers' undeclared fields.
+  repeated string accepted_objects = 9;
 }
 

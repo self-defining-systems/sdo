@@ -55,7 +55,7 @@ func addedFieldsLive() *unstructured.Unstructured {
 // acceptAddedFieldsLive records the acceptance point the way adoption does:
 // the record lists every path the accepted object carried.
 func acceptAddedFieldsLive(live *unstructured.Unstructured) {
-	record, fits, err := buildAcceptanceRecord(addedFieldsSource(), live, live)
+	record, fits, err := buildAcceptanceRecord(addedFieldsSource(), live, live, false)
 	if err != nil || !fits {
 		panic(fmt.Sprintf("acceptance record: %v %v", fits, err))
 	}

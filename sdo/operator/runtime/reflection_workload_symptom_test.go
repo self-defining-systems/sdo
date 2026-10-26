@@ -110,10 +110,17 @@ func TestReflectionLearnsDeploymentRepairWithUnwrittenServiceSymptoms(t *testing
 		service := &contracts.ObjectRef{ApiVersion: "v1", Kind: "Service", Namespace: "demo", Name: name}
 		outcome.ConfirmedRootCauses = append(outcome.ConfirmedRootCauses, &contracts.ConfirmedRootCause{Summary: "Workload listener conflict; Service endpoints recovered after manual Deployment patch", Resources: []*contracts.ObjectRef{deployment, service}, ExplainedDetectors: []string{detector, "service-endpoints"}})
 		outcome.Findings = append(outcome.Findings, &contracts.Finding{DetectorId: detector, RuleId: detector, Fingerprint: detector + "/" + name, Status: "active", Severity: "warn", Summary: "Observed workload symptom", Evidence: "Synthetic opening observation", PrimaryResource: deployment}, &contracts.Finding{DetectorId: "service-endpoints", RuleId: "no-endpoints", Fingerprint: "endpoints/" + name, Status: "active", Severity: "warn", Summary: "Observed workload symptom", Evidence: "Synthetic opening observation", PrimaryResource: service})
-		outcome.RepairActions = append(outcome.RepairActions, &contracts.RepairActionReceipt{ActionId: "sdo-act-manual-" + name, Kind: "patch", Target: "Deployment/" + name, Details: "Synthetic controller-recorded Deployment patch", Success: true, Resources: []*contracts.ObjectRef{deployment}, StartedAt: timestamppb.New(mutation.Add(-time.Second)), CompletedAt: timestamppb.New(mutation), Summary: "Patched only the Deployment; observed Service recovery"})
+		// One combined responder action patched both Deployments.
+		if len(outcome.RepairActions) == 0 {
+			outcome.RepairActions = append(outcome.RepairActions, &contracts.RepairActionReceipt{ActionId: "sdo-act-manual-combined", Kind: "patch", Target: "Deployment/recommendation", Details: "Synthetic controller-recorded Deployment patches", Success: true, StartedAt: timestamppb.New(mutation.Add(-time.Second)), CompletedAt: timestamppb.New(mutation), Summary: "Patched only the Deployments; observed Service recovery"})
+		}
+		outcome.RepairActions[0].Resources = append(outcome.RepairActions[0].Resources, deployment)
 		outcome.DetectorHistory = append(outcome.DetectorHistory, &contracts.DetectorEvaluation{DetectorId: detector, Status: "clear", EvaluatedAt: timestamppb.New(verified)})
 	}
 	outcome.DetectorHistory = append(outcome.DetectorHistory, &contracts.DetectorEvaluation{DetectorId: "service-endpoints", Status: "clear", EvaluatedAt: timestamppb.New(verified)})
+	// A caller Service whose symptom only traffic health saw: no finding names
+	// it, so it is unobserved context and must not veto the learned repair.
+	outcome.ConfirmedRootCauses[0].Resources = append(outcome.ConfirmedRootCauses[0].Resources, &contracts.ObjectRef{ApiVersion: "v1", Kind: "Service", Namespace: "demo", Name: "frontend"})
 	if _, err := repository.RecordOutcome(ctx, incidentID, outcome); err != nil {
 		t.Fatal(err)
 	}
@@ -129,7 +136,7 @@ func TestReflectionLearnsDeploymentRepairWithUnwrittenServiceSymptoms(t *testing
 		if err := task.Request.UnmarshalTo(request); err != nil {
 			return nil, err
 		}
-		if len(request.Outcome.ConfirmedRootCauses) != 2 || len(request.Outcome.RepairActions) != 2 {
+		if len(request.Outcome.ConfirmedRootCauses) != 2 || len(request.Outcome.RepairActions) != 1 || len(request.Outcome.RepairActions[0].Resources) != 2 {
 			t.Fatalf("lost composite hand repair: %v", request.Outcome)
 		}
 		for _, a := range request.Outcome.RepairActions {
