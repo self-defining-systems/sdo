@@ -130,3 +130,9 @@ installed identity. `observation-conformance.json` names each primitive, referen
 passed status and safe failure stage. DatabaseUsers is the first supported conformance family.
 Empty inventories and mismatched selectors fail `workload-discovery`; an empty observation list
 passes only when the full nonempty application inventory has no matching database workload.
+
+Conformance fills explicit `target.auth` from declared root env references or one unambiguous
+literal bootstrap username/password pair in a ConfigMap mounted by that container. It uses
+executor-private ConfigMap reads and returns references only. It never reads Secret objects,
+evaluates scripts or changes the typed action's nil-auth semantics. The report makes the actual
+source references visible so missing authentication cannot masquerade as a missing SDK feature.

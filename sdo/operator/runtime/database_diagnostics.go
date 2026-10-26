@@ -34,6 +34,7 @@ const (
 	databaseRejected          DatabaseFailureReason = "rejected"
 	databaseIdentityChanged   DatabaseFailureReason = "Pod identity changed"
 	databaseInvalidProjection DatabaseFailureReason = "invalid nonsecret projection"
+	databaseAmbiguousAuth     DatabaseFailureReason = "ambiguous source references; provide explicit target.auth"
 )
 
 // DatabaseOperationError deliberately has no wrapped upstream error: API bodies,
@@ -51,7 +52,7 @@ func (e *DatabaseOperationError) Error() string {
 		step = "operation"
 	}
 	switch reason {
-	case DatabaseUnavailable, databaseForbidden, databaseTimeout, databaseNotFound, databaseClientFailed, databaseRejected, databaseIdentityChanged, databaseInvalidProjection:
+	case DatabaseUnavailable, databaseForbidden, databaseTimeout, databaseNotFound, databaseClientFailed, databaseRejected, databaseIdentityChanged, databaseInvalidProjection, databaseAmbiguousAuth:
 	default:
 		reason = DatabaseUnavailable
 	}

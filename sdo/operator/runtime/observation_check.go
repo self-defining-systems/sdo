@@ -23,7 +23,7 @@ func RunObservationCheck(ctx context.Context, args []string, out io.Writer) erro
 	namespace := flags.String("namespace", "", "application namespace")
 	kubeconfig := flags.String("kubeconfig", "", "Kubernetes configuration (in-cluster by default)")
 	selector := flags.String("selector", "", "optional workload label selector")
-	targetJSON := flags.String("target", "", "optional reference-only DatabaseTarget JSON; includes auth separately from create-user password")
+	targetJSON := flags.String("target", "", "explicit reference-only DatabaseTarget override; default auth uses root env or unambiguous literal bootstrap refs from mounted ConfigMaps")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -59,7 +59,34 @@ func RunObservationCheck(ctx context.Context, args []string, out io.Writer) erro
 		}
 		overrides = append(overrides, target)
 	}
-	report := CheckObservationConformance(ctx, TypedPlanClient{Client: client, ExecConfig: config}, selected, overrides)
+	catalog := TypedPlanClient{Client: client, ExecConfig: config}
+	configured := DatabaseObservationTargets(selected)
+	for i, target := range configured {
+		explicit := false
+		for _, override := range overrides {
+			if override.Pod == target.Pod && override.Container == target.Container {
+				configured[i] = override
+				explicit = true
+				break
+			}
+		}
+		if explicit {
+			continue
+		}
+		for _, pod := range selected {
+			if pod.Namespace == target.Pod.Namespace && pod.Name == target.Pod.Name {
+				discovered, err := DiscoverDatabaseObservationAuth(ctx, catalog, pod, target)
+				if err != nil {
+					report := ObservationConformance{Passed: false, Observations: []ObservationCheck{{Primitive: "DatabaseUsers", Target: target, FailureStage: "credential-reference", Error: databaseSafeError(err, "database authentication reference discovery unavailable").Error()}}}
+					_ = json.NewEncoder(out).Encode(report)
+					return errors.New("observation-check: source authentication references unavailable")
+				}
+				configured[i] = discovered
+			}
+		}
+	}
+	configured = append(configured, overrides...)
+	report := CheckObservationConformance(ctx, catalog, selected, configured)
 	if err := json.NewEncoder(out).Encode(report); err != nil {
 		return err
 	}

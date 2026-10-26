@@ -2,11 +2,14 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	kubefake "k8s.io/client-go/kubernetes/fake"
 	"sdo.dev/operator/sdk/program"
 )
 
@@ -62,5 +65,26 @@ func TestObservationConformanceRejectsEmptyInventoryAndSelectorMismatch(t *testi
 	frontend := []corev1.Pod{{ObjectMeta: metav1.ObjectMeta{Name: "frontend", Namespace: "toy"}, Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "app", Image: "example/frontend:v1"}}}}}
 	if report := CheckObservationConformance(context.Background(), &conformanceCatalog{}, frontend, nil); !report.Passed || len(report.Observations) != 0 {
 		t.Fatalf("known non-database application rejected: %+v", report)
+	}
+}
+
+func TestDatabaseObservationAuthDiscoveryUsesMountedSourceReferences(t *testing.T) {
+	pod := corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "mongodb-geo", Namespace: "hotel"}, Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "hotel-reserv-geo-mongo", Image: "mongo:4.4.6", VolumeMounts: []corev1.VolumeMount{{Name: "bootstrap", MountPath: "/init"}}}}, Volumes: []corev1.Volume{{Name: "bootstrap", VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: "mongo-geo-script"}}}}}}}
+	const canary = "SYNTHETIC_CREDENTIAL_NEVER_EMIT"
+	cm := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "mongo-geo-script", Namespace: "hotel"}, Data: map[string]string{"bootstrap.sh": "ROOT_USER='root'\nROOT_PWD='" + canary + "'\nADMIN_USER='app'\nADMIN_PWD='" + canary + "'\n"}}
+	client := TypedPlanClient{Client: kubefake.NewSimpleClientset(cm)}
+	target := DatabaseObservationTargets([]corev1.Pod{pod})[0]
+	discovered, err := DiscoverDatabaseObservationAuth(context.Background(), client, pod, target)
+	if err != nil || discovered.Auth == nil || discovered.Auth.Password.ConfigMap.Assignment != "ROOT_PWD" || discovered.Auth.Username.ConfigMap.Name != "mongo-geo-script" {
+		t.Fatalf("mounted authentication source unavailable: %v %v", discovered, err)
+	}
+	raw, _ := json.Marshal(discovered)
+	if strings.Contains(string(raw), canary) {
+		t.Fatal("credential value escaped reference discovery")
+	}
+	for _, action := range client.Client.(*kubefake.Clientset).Actions() {
+		if action.GetResource().Resource != "configmaps" || action.GetVerb() != "get" {
+			t.Fatalf("unexpected operation: %v", action)
+		}
 	}
 }
