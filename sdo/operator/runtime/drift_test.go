@@ -105,6 +105,9 @@ func TestControllerOpensUnexplainedIncidentAfterBatchWindow(t *testing.T) {
 		t.Fatal(err)
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if serveTestDiscovery(writer, request) {
+			return
+		}
 		if request.Method != http.MethodPatch || request.URL.Query().Get("dryRun") != metav1.DryRunAll {
 			t.Errorf("unexpected source normalization request: %s %s", request.Method, request.URL)
 		}

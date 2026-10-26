@@ -11,10 +11,14 @@ import (
 	"testing"
 	"time"
 
+	policyv1 "k8s.io/api/policy/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	kruntime "k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/rest"
 
 	"sdo.dev/operator/sdk"
@@ -32,7 +36,7 @@ func (s multiAdoptionSource) AcceptedManifests(context.Context, string, string) 
 	return result, nil
 }
 
-// genericAdoptionAPI serves discovery for core/v1 and policy/v1 plus GET and
+// genericAdoptionAPI serves test discovery plus GET and
 // server-side apply for stored objects of any kind, keyed by request path.
 type genericAdoptionAPI struct {
 	mu       sync.Mutex
@@ -46,16 +50,7 @@ func (a *genericAdoptionAPI) ServeHTTP(writer http.ResponseWriter, request *http
 	defer a.mu.Unlock()
 	a.requests = append(a.requests, request.Method+" "+request.URL.Path)
 	writer.Header().Set("Content-Type", "application/json")
-	switch request.URL.Path {
-	case "/api/v1":
-		_ = json.NewEncoder(writer).Encode(&metav1.APIResourceList{GroupVersion: "v1", APIResources: []metav1.APIResource{
-			{Name: "persistentvolumeclaims", Kind: "PersistentVolumeClaim", Namespaced: true},
-			{Name: "persistentvolumeclaims/status", Kind: "PersistentVolumeClaim", Namespaced: true},
-			{Name: "secrets", Kind: "Secret", Namespaced: true},
-		}})
-		return
-	case "/apis/policy/v1":
-		_ = json.NewEncoder(writer).Encode(&metav1.APIResourceList{GroupVersion: "policy/v1", APIResources: []metav1.APIResource{{Name: "poddisruptionbudgets", Kind: "PodDisruptionBudget", Namespaced: true}}})
+	if serveTestDiscovery(writer, request) {
 		return
 	}
 	stored, ok := a.objects[request.URL.Path]
@@ -171,12 +166,72 @@ func TestControllerAdoptionRejectsNamespacedObjectOutsideNamespace(t *testing.T)
 	}
 }
 
-// serveCoreDiscovery answers core/v1 discovery for single-purpose API fakes.
-func serveCoreDiscovery(writer http.ResponseWriter, request *http.Request) bool {
-	if request.URL.Path != "/api/v1" {
-		return false
+func (s multiAdoptionSource) AcceptedManifest(_ context.Context, _ string, ref sdk.ObjectRef) (*unstructured.Unstructured, error) {
+	for _, object := range s.objects {
+		if object.GetKind() == ref.Kind && object.GetName() == ref.Name {
+			return object.DeepCopy(), nil
+		}
 	}
-	writer.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(writer).Encode(&metav1.APIResourceList{GroupVersion: "v1", APIResources: []metav1.APIResource{{Name: "services", Kind: "Service", Namespaced: true}}})
-	return true
+	return nil, nil
+}
+
+func (s multiAdoptionSource) Revision(context.Context, sdk.ObjectRef, string) (*unstructured.Unstructured, error) {
+	return nil, nil
+}
+
+func driftPDB(minAvailable int32, manager string, operation metav1.ManagedFieldsOperationType) *policyv1.PodDisruptionBudget {
+	value := intstr.FromInt32(minAvailable)
+	return &policyv1.PodDisruptionBudget{
+		TypeMeta:   metav1.TypeMeta{APIVersion: "policy/v1", Kind: "PodDisruptionBudget"},
+		ObjectMeta: metav1.ObjectMeta{Name: "opensearch-pdb", Namespace: "app", UID: "pdb", ResourceVersion: "1", ManagedFields: []metav1.ManagedFieldsEntry{{Manager: manager, Operation: operation, FieldsType: "FieldsV1", FieldsV1: &metav1.FieldsV1{Raw: []byte(`{"f:spec":{"f:minAvailable":{}}}`)}}}},
+		Spec:       policyv1.PodDisruptionBudgetSpec{MinAvailable: &value},
+	}
+}
+
+var acceptedPDB = adoptionObject("policy/v1", "PodDisruptionBudget", "opensearch-pdb", map[string]any{"minAvailable": float64(1)})
+
+// A declared field of an adopted kind beyond the old typed set is compared
+// with accepted source, so its change is unexplained drift.
+func TestDriftClassifierComparesAdoptedPDBWithSource(t *testing.T) {
+	old := driftPDB(1, "sdo-deployer", metav1.ManagedFieldsOperationApply)
+	next := driftPDB(0, "kubectl-patch", metav1.ManagedFieldsOperationUpdate)
+	next.ManagedFields = append(old.ManagedFields, next.ManagedFields...)
+	client := bridgeFake(t, fake.NewSimpleClientset(next.DeepCopy()))
+	view := LiveReadView{DetectionContext: sdktest.Snapshot{NamespaceName: "app", PDBList: []policyv1.PodDisruptionBudget{*next}}, Client: client, Source: multiAdoptionSource{objects: []*unstructured.Unstructured{acceptedPDB}}, SourceCommit: "accepted"}
+	diff, err := view.DiffAgainstSource(sdk.ObjectRef{APIVersion: "policy/v1", Kind: "PodDisruptionBudget", Namespace: "app", Name: "opensearch-pdb"})
+	if err != nil || !diff.Changed {
+		t.Fatalf("PDB source diff = %+v, %v", diff, err)
+	}
+	event, err := (DriftClassifier{}).Classify(context.Background(), objectChange(t, old, next, "policy/v1", "PodDisruptionBudget"), view, time.Unix(10, 0))
+	if err != nil || event == nil || event.Classification != sdk.DriftUnexplained || event.Fields[0].Path != "spec.minAvailable" {
+		t.Fatalf("declared PDB change was not unexplained drift: %+v, %v", event, err)
+	}
+}
+
+// A PDB that already differs from source at adoption is recorded once for
+// investigation; adoption does not fail on every iteration.
+func TestAdoptionRecordsPreexistingPDBDifferenceOnce(t *testing.T) {
+	live := driftPDB(0, "kubectl-client-side-apply", metav1.ManagedFieldsOperationUpdate)
+	content, err := kruntime.DefaultUnstructuredConverter.ToUnstructured(live)
+	if err != nil {
+		t.Fatal(err)
+	}
+	controller, api := genericAdoptionController(t, []*unstructured.Unstructured{acceptedPDB}, map[string]map[string]any{"/apis/policy/v1/namespaces/app/poddisruptionbudgets/opensearch-pdb": content})
+	client := controller.drift.Client
+	controller.drift.View = func(sdk.DetectionContext) program.ReadView {
+		return LiveReadView{DetectionContext: sdktest.Snapshot{NamespaceName: "app", PDBList: []policyv1.PodDisruptionBudget{*live}}, Client: client, Source: multiAdoptionSource{objects: []*unstructured.Unstructured{acceptedPDB}}, SourceCommit: "accepted"}
+	}
+	start := time.Unix(10, 0).UTC()
+	for step := 0; step < 3; step++ {
+		if err := controller.StepEvents(context.Background(), start.Add(time.Duration(step)*time.Minute), nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	state := exportState(t, controller)
+	if state.OwnershipAdoption.LastError != "" || state.OwnershipAdoption.Failures != 0 || api.applies != 0 {
+		t.Fatalf("pre-existing PDB difference broke adoption: %+v applies=%d", state.OwnershipAdoption, api.applies)
+	}
+	if len(state.DriftEvents) != 1 || state.DriftEvents[0].Classification != string(sdk.DriftUnexplained) {
+		t.Fatalf("pre-existing PDB difference was not recorded once: %+v", state.DriftEvents)
+	}
 }
