@@ -69,6 +69,7 @@ class Fault(Problem):
             # It "ensures" the HPA exists on recovery, after the worker could not yet remove it.
             INVENTORY.objects.add(HPA)
         if self.name == "leaves-policy":
+            # Stands in for a responder's repair, which the worker labels but never removes.
             INVENTORY.objects.add(POLICY)
         self.repaired = True
 
@@ -94,9 +95,6 @@ class Worker(FastloopWorker):
             return {"events": EVENTS.copy()}
         if request["op"] == "inventory":
             return {"objects": sorted(str(obj) for obj in INVENTORY.list_objects(frozenset({"hotel-reservation"})))}
-        if request["op"] == "remove-policy":
-            INVENTORY.objects.discard(POLICY)
-            return {}
         return super().handle(request)
 
 

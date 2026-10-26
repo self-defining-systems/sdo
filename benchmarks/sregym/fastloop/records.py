@@ -124,6 +124,19 @@ class NotInjected(BaseModel):
 InjectionState = Annotated[Injected | NotInjected, Field(discriminator="state")]
 
 
+class EvalNote(BaseModel):
+    """A values-free harness note: after full recovery the app namespace differs, by kind and name,
+    from its pre-injection inventory (a responder's repair, say). It labels the row, never blocks it."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    label: Literal["eval"] = "eval"
+    kind: Literal["app_namespace_inventory_drift", "app_namespace_inventory_unavailable"]
+    not_in_baseline: list[str] = Field(default_factory=list)
+    missing_from_baseline: list[str] = Field(default_factory=list)
+    #: Exception type only, for ``app_namespace_inventory_unavailable``.
+    error: str = ""
+
+
 class PostClosureWait(BaseModel):
     """Recovery waited for SDO to close incidents that opened after the graded incident closed."""
 
@@ -211,6 +224,10 @@ class IncidentRecord(_PersistedModel):
     full_cleanup_verified: bool = False
     cleanup_passes_verified: int = Field(default=0, ge=0, le=2)
     cleanup_skipped_reason: str | None = None
+    #: Drift this row's recovery left in the app namespace; the next row inherits it as ``confounds``.
+    eval_notes: list[EvalNote] = Field(default_factory=list)
+    #: Drift an earlier row left behind, so this row did not start from the pristine app.
+    confounds: list[EvalNote] = Field(default_factory=list)
     #: Wall time from the start of this incident to the loop being ready for the next one.
     incident_wall_seconds: float | None = None
     incident_id: str | None = None
