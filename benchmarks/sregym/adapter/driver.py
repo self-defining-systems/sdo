@@ -1157,8 +1157,7 @@ def main(argv: list[str] | None = None) -> int:
         logger.exception("production SDO incident lifecycle failed")
         return 1
     receipt_dir = _receipt_directory(args.logs_dir, _application_repository())
-    # Persist the SDO-authoritative recovery before optional benchmark transport
-    # so a scoring failure cannot erase evidence of a completed incident.
+    # Keep terminal SDO evidence separate from the immutable closure grading checkpoint.
     persist_production_receipt(receipt, receipt_dir)
     _remove_sdo_jobs_before_benchmark_grading(receipt, str(receipt["namespace"]))
     print(f"SDO_RUN_TELEMETRY={json.dumps(receipt, sort_keys=True)}")
