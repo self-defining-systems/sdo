@@ -7,11 +7,14 @@ import os
 import signal
 import subprocess
 import tempfile
-from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from sdo.contracts import ReflectionResult, to_canonical_json
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 VALIDATION_TIMEOUT_SECONDS = 300
 _MAX_OUTPUT_CHARS = 24_000

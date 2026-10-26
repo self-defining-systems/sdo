@@ -296,7 +296,8 @@ def test_final_check_timeout_kills_the_validator_process_group(
         f"""#!{sys.executable}
 import os, subprocess, sys, time
 # The child does not hold the output pipes, so a surviving child fails the wait below, not communicate().
-child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(600)"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+quiet = {{"stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}}
+child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(600)"], **quiet)
 print("validation started", flush=True)
 with open({str(started)!r} + ".tmp", "w") as handle:
     handle.write(str(child.pid))
