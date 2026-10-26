@@ -14,6 +14,7 @@ from sdo.agents.responder.credentials import SKILLS_ROOT
 from sdo.agents.responder.mutation_output import command_report_schema
 from sdo.agents.responder.reflection_authoring import OpenPhase
 from sdo.agents.responder.reflection_validation import validation_server
+from sdo.agents.responder.tool_output import MAX_TOOL_REPLY_BYTES
 from sdo.agents.responder.tools_cli import verification_help
 from sdo.contracts import ReflectionResult, model_output_schema
 
@@ -54,7 +55,8 @@ async def render_contract() -> str:
         "Mutating commands always store complete per-action results, evidence, program runs, reports and receipts "
         "under $SDO_SESSION_SCRATCH/sdo-reports/<incident>/<sequence>-<command>.json. Their compact output "
         "states action and incident verdicts separately, compares controller cached finding sets by fingerprint "
-        "and evidence (fixed/new/unchanged), and prints the file path and generated schema.\n\n"
+        "and evidence (fixed/new/unchanged), and prints the file path and generated schema. A failed action "
+        "line names the failure reason, exit code and first error line.\n\n"
         f"```json\n{json.dumps(command_report_schema(), indent=2)}\n```\n\n" + verification_help(),
         "## Supported open phase selections\n\n"
         + "\n".join(
@@ -64,6 +66,10 @@ async def render_contract() -> str:
         + "\n- Fixed capture: fixed.json; selected open recordings: open@<phase>-recordings.json.\n"
         "Select only files actually supplied by the controller. "
         "Supported phase values do not promise capture availability.",
+        "## Tool reply budget\n\n"
+        f"A reflection tool reply over {MAX_TOOL_REPLY_BYTES} bytes is saved whole to a file; the reply names "
+        "its size and path with a short partial head. Search or extract from that file; the head is not "
+        "the whole result.",
     ]
     with tempfile.TemporaryDirectory() as directory:
         tools = await validation_server(Path(directory)).list_tools()

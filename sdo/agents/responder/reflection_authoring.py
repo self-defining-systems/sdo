@@ -15,7 +15,9 @@ from typing import TYPE_CHECKING, Literal, get_args
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from sdo.agents.responder import tool_output
 from sdo.agents.responder.credentials import SKILLS_ROOT
+from sdo.agents.responder.tool_output import MAX_TOOL_REPLY_BYTES
 
 if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
@@ -51,8 +53,36 @@ class SessionObservations(BaseModel):
     accepted_json: str | None = None
 
 
-def authoring_reference(topic: ReferenceTopic = "programs") -> str:
-    """Read shipped authoring references. SDK includes detector source-diff access before playbook selection."""
+_SECTION_START = re.compile(r"^(?:#{1,3} |type |func |package )")
+
+
+def authoring_reference(topic: ReferenceTopic = "programs", section: str = "") -> str:
+    """Read shipped authoring references: a section index, or one section by heading or declaration.
+
+    The full topic text is saved once to the file named in the reply; search
+    that file instead of re-reading the reference. SDK includes detector
+    source-diff access before playbook selection.
+    """
+    text = _reference_text(topic)
+    path = _reference_file(topic, text)
+    blocks = _sections(text)
+    header = f"Reference topic {topic}: {len(text.encode('utf-8'))} bytes.\nFull text: {path}\n"
+    if not section.strip():
+        return header + "Sections:\n" + _index(blocks)
+    wanted = section.strip().lower()
+    matches = [block for block in blocks if wanted in block[0].lower()]
+    if not matches:
+        return header + f"No section matches {section!r}; search the full text or pick from:\n" + _index(blocks)
+    reply = header
+    for shown, block in enumerate(matches):
+        part = "\n".join(block) + "\n\n"
+        if len((reply + part).encode("utf-8")) > MAX_TOOL_REPLY_BYTES - 200:
+            return reply + f"{len(matches) - shown} more matching sections are in the full text."
+        reply += part
+    return reply
+
+
+def _reference_text(topic: ReferenceTopic) -> str:
     if topic == "sdk":
         paths = [
             SKILLS_ROOT / "sdo-playbook-authoring/references/program-sdk.md",
@@ -82,6 +112,45 @@ def authoring_reference(topic: ReferenceTopic = "programs") -> str:
             )
         )
     return "\n\n".join(f"## {path.name}\n{path.read_text()}" for path in paths)
+
+
+def _reference_file(topic: ReferenceTopic, text: str) -> Path:
+    """Write each reference version once per session so repeated reads reuse one file."""
+    digest = hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
+    path = tool_output.output_directory(root=tool_output.session_output_root()) / f"reference-{topic}-{digest}.md"
+    if not path.exists():
+        temporary = path.with_suffix(f".{os.getpid()}.tmp")
+        temporary.write_text(text)
+        temporary.replace(path)
+    return path
+
+
+def _sections(text: str) -> list[list[str]]:
+    blocks: list[list[str]] = []
+    for line in text.splitlines():
+        if _SECTION_START.match(line) or not blocks:
+            blocks.append([line])
+        else:
+            blocks[-1].append(line)
+    return blocks
+
+
+def _index(blocks: list[list[str]]) -> str:
+    """Headings in full, Go declarations by name, grouped under their file."""
+    lines: list[str] = []
+    names: list[str] = []
+    for block in blocks:
+        title = block[0]
+        if title.startswith("#"):
+            if names:
+                lines.append("  " + ", ".join(names))
+                names = []
+            lines.append(title)
+        elif declared := re.match(r"(?:type|func|package) \w+", title):
+            names.append(declared.group())
+    if names:
+        lines.append("  " + ", ".join(names))
+    return "\n".join(lines)
 
 
 def prepare_corpus(
