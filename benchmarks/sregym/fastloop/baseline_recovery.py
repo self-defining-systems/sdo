@@ -41,10 +41,14 @@ WORKLOAD_KINDS = frozenset(
         "Pod",
         "NetworkPolicy",
         "PersistentVolumeClaim",
+        "ServiceAccount",
+        "Role",
+        "RoleBinding",
     }
 )
 _RESOURCE_NAMES = (
-    "deployments,daemonsets,statefulsets,services,configmaps,jobs,cronjobs,pods,networkpolicies,persistentvolumeclaims"
+    "deployments,daemonsets,statefulsets,services,configmaps,jobs,cronjobs,pods,networkpolicies,"
+    "persistentvolumeclaims,serviceaccounts,roles,rolebindings"
 )
 
 
@@ -90,7 +94,7 @@ class KubectlApplicationCluster:
             patch = [
                 {"op": "test", "path": "/metadata/resourceVersion", "value": current["metadata"]["resourceVersion"]}
             ]
-            for key in ("spec", "data", "binaryData"):
+            for key in RESTORED_FIELDS:
                 if key in value:
                     patch.append({"op": "add", "path": f"/{key}", "value": value[key]})
                 elif key in current:
@@ -231,9 +235,13 @@ def _identity(value: dict[str, Any]) -> tuple[str, str]:
     return value["kind"], value["metadata"]["name"]
 
 
-def _content(value: dict[str, Any]) -> tuple[Any, Any, Any]:
+RESTORED_FIELDS = ("spec", "data", "binaryData", "immutable", "rules", "roleRef", "subjects",
+                   "automountServiceAccountToken", "imagePullSecrets")
+
+
+def _content(value: dict[str, Any]) -> tuple[Any, ...]:
     value = _manifest(value)
-    return value.get("spec"), value.get("data"), value.get("binaryData")
+    return tuple(value.get(key) for key in RESTORED_FIELDS)
 
 
 def capture_application_baseline(cluster: ApplicationCluster, namespace: str) -> ApplicationBaseline:
@@ -318,7 +326,10 @@ def reconcile_application(
             continue
         cluster.delete(namespace, kind, name)
         cleanup.deleted_counts[kind] = cleanup.deleted_counts.get(kind, 0) + 1
-    for (kind, name), value in sorted(expected.items()):
+    # Namespace prerequisites precede controllers so their first Pods can start.
+    priorities = {"ServiceAccount": 0, "ConfigMap": 0, "Role": 0, "RoleBinding": 1,
+                  "Service": 1, "PersistentVolumeClaim": 1, "NetworkPolicy": 1}
+    for (kind, name), value in sorted(expected.items(), key=lambda item: (priorities.get(item[0][0], 2), item[0])):
         present = current.get((kind, name))
         if present is None or _content(present) != _content(value):
             cluster.apply(namespace, value)
