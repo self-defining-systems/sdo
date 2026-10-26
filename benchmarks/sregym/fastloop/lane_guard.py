@@ -135,7 +135,7 @@ def main() -> None:
         parser.error("a module is required after --")
     LaneGuard(args.cluster, args.kubeconfig, args.lease, args.coord).install()
     sys.argv = module_args
-    runpy.run_module(module_args[0], run_name="__main__")
+    runpy.run_module(module_args[0], run_name="__main__", alter_sys=True)
 
 
 if __name__ == "__main__":
