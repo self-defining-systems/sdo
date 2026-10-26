@@ -29,17 +29,17 @@ func RunnerResources(c RunnerConfig) ([]kruntime.Object, error) {
 	yes, no := true, false
 	user := int64(65532)
 	labels := map[string]string{"app.kubernetes.io/managed-by": "sdo", "sdo.dev/component": RunnerName}
-	account := &corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: RunnerName, Namespace: c.ControlNamespace,Labels:labels}}
+	account := &corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: RunnerName, Namespace: c.ControlNamespace, Labels: labels}}
 	rule := func(group string, resources ...string) rbacv1.PolicyRule {
 		return rbacv1.PolicyRule{APIGroups: []string{group}, Resources: resources, Verbs: []string{"get", "list", "watch"}}
 	}
-	role := &rbacv1.Role{ObjectMeta: metav1.ObjectMeta{Name: RunnerName, Namespace: c.Namespace, Labels:labels}, Rules: []rbacv1.PolicyRule{
+	role := &rbacv1.Role{ObjectMeta: metav1.ObjectMeta{Name: RunnerName, Namespace: c.Namespace, Labels: labels}, Rules: []rbacv1.PolicyRule{
 		rule("", "pods", "pods/log", "services", "endpoints", "events", "configmaps", "persistentvolumeclaims", "serviceaccounts", "resourcequotas", "limitranges"),
 		rule("apps", "deployments", "statefulsets", "daemonsets", "replicasets", "controllerrevisions"),
 		rule("batch", "jobs", "cronjobs"), rule("networking.k8s.io", "networkpolicies", "ingresses"), rule("discovery.k8s.io", "endpointslices"),
 		rule("autoscaling", "horizontalpodautoscalers"), rule("policy", "poddisruptionbudgets"), rule("rbac.authorization.k8s.io", "roles", "rolebindings"), rule("metrics.k8s.io", "pods"),
 	}}
-	binding := &rbacv1.RoleBinding{ObjectMeta: metav1.ObjectMeta{Name: RunnerName, Namespace: c.Namespace, Labels:labels}, Subjects: []rbacv1.Subject{{Kind: "ServiceAccount", Name: RunnerName, Namespace: c.ControlNamespace,Labels:labels}}, RoleRef: rbacv1.RoleRef{APIGroup: "rbac.authorization.k8s.io", Kind: "Role", Name: RunnerName}}
+	binding := &rbacv1.RoleBinding{ObjectMeta: metav1.ObjectMeta{Name: RunnerName, Namespace: c.Namespace, Labels: labels}, Subjects: []rbacv1.Subject{{Kind: "ServiceAccount", Name: RunnerName, Namespace: c.ControlNamespace}}, RoleRef: rbacv1.RoleRef{APIGroup: "rbac.authorization.k8s.io", Kind: "Role", Name: RunnerName}}
 	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: RunnerName, Namespace: c.ControlNamespace, Labels: labels}, Spec: corev1.PodSpec{
 		ServiceAccountName: RunnerName, RestartPolicy: corev1.RestartPolicyAlways,
 		SecurityContext: &corev1.PodSecurityContext{RunAsNonRoot: &yes, RunAsUser: &user, FSGroup: &user, SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault}},
