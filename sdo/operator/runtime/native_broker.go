@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -309,35 +310,22 @@ func (n NativeIncidentBroker) ProcessClosure(ctx context.Context, closure Incide
 		}
 
 		// The persisted decision prevents a restart from changing learning policy.
-		if ledger.RequiresReflection && !ledger.ReflectionProcessed {
-			reflectionPaths, err := n.processReflection(ctx, ledger)
-			if err != nil {
+		// A failed attempt's reflection is queued behind the acknowledgment so
+		// the incident's follow-up starts from the outcome commit at once.
+		if ledger.RequiresReflection && !ledger.ReflectionProcessed && ledger.OutcomeDocument.GetClassification() != outcomeclass.Success {
+			if !ledger.ReflectionQueued {
+				ledger.ReflectionQueued = true
+				ledger.ReflectionQueuedAt = contractTimestamp(n.clock())
+				if err := n.recordPhase(ledger, "reflection_queued"); err != nil {
+					return err
+				}
+			}
+		} else if ledger.RequiresReflection && !ledger.ReflectionProcessed {
+			if err := n.reflectLocked(ctx, ledger); err != nil {
 				return err
 			}
-			if err := n.setRolloutExpectation(ctx, ledger, reflectionPaths); err != nil {
-				return err
-			}
-			ledger.ReflectionProcessed = true
 			// Persist this marker together with its receipt below. A checkpoint
 			// declaring processing complete without a receipt cannot authorize ACK.
-		}
-		// Reflection follows the original outcome commit. Append its typed
-		// SDK gaps through the broker without changing incident evidence or the
-		// original commit used to identify the reflection task across restarts.
-		var gaps []*contracts.SdkGap
-		for _, decision := range ledger.GetReflectionResults() {
-			gaps = append(gaps, decision.GetSdkGaps()...)
-		}
-		gaps = append(gaps, ledger.GetReflectionDecision().GetSdkGaps()...)
-		if len(gaps) > 0 {
-			if _, err := n.Repository.RecordSDKGaps(ctx, id, gaps); err != nil {
-				return fmt.Errorf("record reflection SDK gaps: %w", err)
-			}
-		}
-		if len(ledger.ReflectionRejections) > 0 {
-			if _, err := n.Repository.RecordReflectionRejections(ctx, id, ledger.ReflectionRejections); err != nil {
-				return fmt.Errorf("record reflection rejections: %w", err)
-			}
 		}
 		if ledger.OutcomeCommit == "" {
 			return errors.New("closure has no authoritative outcome commit")
@@ -353,6 +341,144 @@ func (n NativeIncidentBroker) ProcessClosure(ctx context.Context, closure Incide
 		return n.saveLedger(ledger)
 	})
 	return receipt, err
+}
+
+// reflectLocked runs reflection and records its typed SDK gaps and rejections
+// through the broker. Reflection follows the original outcome commit; these
+// appends never change incident evidence or the commit that identifies the
+// reflection task across restarts. Callers hold the broker lock.
+func (n NativeIncidentBroker) reflectLocked(ctx context.Context, ledger *contracts.BrokerLedger) error {
+	id := ledger.IncidentId
+	reflectionPaths, err := n.processReflection(ctx, ledger)
+	if err != nil {
+		return err
+	}
+	if err := n.setRolloutExpectation(ctx, ledger, reflectionPaths); err != nil {
+		return err
+	}
+	ledger.ReflectionProcessed = true
+	var gaps []*contracts.SdkGap
+	for _, decision := range ledger.GetReflectionResults() {
+		gaps = append(gaps, decision.GetSdkGaps()...)
+	}
+	gaps = append(gaps, ledger.GetReflectionDecision().GetSdkGaps()...)
+	if len(gaps) > 0 {
+		if _, err := n.Repository.RecordSDKGaps(ctx, id, gaps); err != nil {
+			return fmt.Errorf("record reflection SDK gaps: %w", err)
+		}
+	}
+	if len(ledger.ReflectionRejections) > 0 {
+		if _, err := n.Repository.RecordReflectionRejections(ctx, id, ledger.ReflectionRejections); err != nil {
+			return fmt.Errorf("record reflection rejections: %w", err)
+		}
+	}
+	return nil
+}
+
+// QueuedReflections lists acknowledged incidents whose queued reflection has
+// not finished or whose accepted detector change awaits its controller
+// rollout, oldest first. Ledger writes are atomic renames, so this reads
+// without the broker lock that a running reflection holds.
+func (n NativeIncidentBroker) QueuedReflections() ([]string, error) {
+	entries, err := os.ReadDir(n.LedgerRoot)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var queued []*contracts.BrokerLedger
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
+			continue
+		}
+		path := filepath.Join(n.LedgerRoot, entry.Name())
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return nil, err
+		}
+		ledger, err := parseLedger(path, data)
+		if err != nil {
+			return nil, fmt.Errorf("broker ledger %s: %w", entry.Name(), err)
+		}
+		if ledger.ReflectionQueued && ledger.Acknowledged && (!ledger.ReflectionProcessed || reflectionRolloutPending(ledger)) {
+			queued = append(queued, ledger)
+		}
+	}
+	slices.SortFunc(queued, func(a, b *contracts.BrokerLedger) int {
+		if c := a.GetReflectionQueuedAt().AsTime().Compare(b.GetReflectionQueuedAt().AsTime()); c != 0 {
+			return c
+		}
+		return strings.Compare(a.IncidentId, b.IncidentId)
+	})
+	ids := make([]string, len(queued))
+	for i, ledger := range queued {
+		ids[i] = ledger.IncidentId
+	}
+	return ids, nil
+}
+
+// ProcessQueuedReflection runs one acknowledged incident's queued reflection
+// under the broker lock, so memory publication stays serialized with every
+// closure. It is idempotent: a finished or unqueued ledger is a no-op.
+func (n NativeIncidentBroker) ProcessQueuedReflection(ctx context.Context, incidentID string) error {
+	return n.withLock(func() error {
+		ledger, err := n.readLedger(incidentID)
+		if err != nil {
+			return err
+		}
+		if !ledger.ReflectionQueued || ledger.ReflectionProcessed || !ledger.Acknowledged {
+			return nil
+		}
+		if err := n.reflectLocked(ctx, ledger); err != nil {
+			return err
+		}
+		if err := n.Repository.ReleaseProposal(incidentID, broker.ReflectionPhase); err != nil {
+			return err
+		}
+		if err := n.recordPhase(ledger, "reflection_committed"); err != nil {
+			return err
+		}
+		return n.saveLedger(ledger)
+	})
+}
+
+// QueuedReflectionRolloutPending reports whether an incident's queued
+// reflection accepted a detector change that no restarted controller has
+// recorded yet. Like QueuedReflections, it reads without the broker lock.
+func (n NativeIncidentBroker) QueuedReflectionRolloutPending(incidentID string) (bool, error) {
+	ledger, err := n.readLedger(incidentID)
+	if err != nil {
+		return false, err
+	}
+	return ledger.ReflectionQueued && reflectionRolloutPending(ledger), nil
+}
+
+func reflectionRolloutPending(ledger *contracts.BrokerLedger) bool {
+	return ledger.RolloutExpectation != nil && !successfulRollout(rolloutReceiptsState(ledger.RolloutReceipts))
+}
+
+// AbandonQueuedReflection ends a queued reflection whose retries are spent.
+// The outcome commit stands; the ledger records why no reflection followed.
+func (n NativeIncidentBroker) AbandonQueuedReflection(_ context.Context, incidentID, reason string) error {
+	return n.withLock(func() error {
+		ledger, err := n.readLedger(incidentID)
+		if err != nil {
+			return err
+		}
+		if !ledger.ReflectionQueued || ledger.ReflectionProcessed {
+			return nil
+		}
+		ledger.ReflectionProcessed = true
+		ledger.ReflectionSkippedReason = "queued_reflection_abandoned: " + reason
+		if err := n.Repository.ReleaseProposal(incidentID, broker.ReflectionPhase); err != nil {
+			return err
+		}
+		if err := n.recordPhase(ledger, "reflection_abandoned"); err != nil {
+			return err
+		}
+		return n.saveLedger(ledger)
+	})
 }
 
 // processReflection is a driver: durable pure transitions choose every effect,
@@ -481,8 +607,10 @@ func (n NativeIncidentBroker) AcknowledgeClosure(_ context.Context, receipt Clos
 		if err := n.Repository.ReleaseProposal(receipt.IncidentID, broker.ProposalPhase); err != nil {
 			return err
 		}
-		if err := n.Repository.ReleaseProposal(receipt.IncidentID, broker.ReflectionPhase); err != nil {
-			return err
+		if !ledger.ReflectionQueued || ledger.ReflectionProcessed {
+			if err := n.Repository.ReleaseProposal(receipt.IncidentID, broker.ReflectionPhase); err != nil {
+				return err
+			}
 		}
 		if err := n.recordPhase(ledger, "closure_ack"); err != nil {
 			return err
@@ -532,7 +660,9 @@ func (n NativeIncidentBroker) PruneIncidentSessions(now time.Time) error {
 			if ledger.IncidentId == "" || filepath.Base(n.ledgerPath(ledger.IncidentId)) != entry.Name() {
 				return fmt.Errorf("session retention ledger %s has mismatched identity", entry.Name())
 			}
-			if ledger.Acknowledged && ledger.AcknowledgedAt != nil && !now.Before(ledger.AcknowledgedAt.AsTime().Add(retention)) {
+			// A queued reflection still resumes the session it would delete.
+			queued := ledger.ReflectionQueued && !ledger.ReflectionProcessed
+			if ledger.Acknowledged && !queued && ledger.AcknowledgedAt != nil && !now.Before(ledger.AcknowledgedAt.AsTime().Add(retention)) {
 				if err := memory.RemoveIncidentSession(n.SessionRoot, ledger.IncidentId); err != nil {
 					return fmt.Errorf("prune session for %s: %w", ledger.IncidentId, err)
 				}
@@ -655,7 +785,7 @@ func (n NativeIncidentBroker) PendingControllerRollouts() ([]ControllerRolloutHa
 			if ledger.RolloutExpectation == nil || ledger.Receipt == nil || successfulRollout(rolloutReceiptsState(ledger.RolloutReceipts)) {
 				continue
 			}
-			if ledger.RolloutExpectation.IncidentId != ledger.IncidentId || ledger.RolloutExpectation.ReflectionCommit != ledger.Receipt.ReflectionCommit || ledger.Receipt.OutcomeCommit == "" || ledger.Receipt.AckToken == "" {
+			if ledger.RolloutExpectation.IncidentId != ledger.IncidentId || ledger.RolloutExpectation.ReflectionCommit != ledger.ReflectionCommit || ledger.Receipt.OutcomeCommit == "" || ledger.Receipt.AckToken == "" {
 				return fmt.Errorf("broker ledger %s has incomplete rollout handoff", entry.Name())
 			}
 			handoffs = append(handoffs, ControllerRolloutHandoff{Expectation: *rolloutExpectationState(ledger.RolloutExpectation), Receipt: *closureReceiptState(ledger.Receipt)})

@@ -168,6 +168,8 @@ type Controller struct {
 	workspaceResults           chan workspaceCompletion
 	closureResults             chan closureCompletion
 	acknowledgmentResults      chan acknowledgmentCompletion
+	reflectionResults          chan reflectionCompletion
+	reflections                reflectionQueueState
 
 	// Baseline, when set, records healthy configuration and attaches the
 	// diff against it to each new incident request.
@@ -298,7 +300,8 @@ func NewController(
 		detectorSpecs:    detectorSpecs,
 		workspaceResults: make(chan workspaceCompletion, 1), closureResults: make(chan closureCompletion, 1),
 		acknowledgmentResults: make(chan acknowledgmentCompletion, 1),
-		dispatchJitter:        rand.Float64,
+		reflectionResults:     make(chan reflectionCompletion, 1), reflections: reflectionQueueState{rescan: true},
+		dispatchJitter: rand.Float64,
 	}, nil
 }
 
@@ -331,6 +334,9 @@ func (c *Controller) stepPaused(ctx context.Context, now time.Time) error {
 	}
 	c.finishEarlyReport(ctx, now)
 	c.processBrokerCompletions()
+	if err := c.driveQueuedReflections(ctx, now); err != nil {
+		return err
+	}
 	after, err := c.ExportState()
 	if err != nil {
 		return err
@@ -373,6 +379,9 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 	}
 	c.finishEarlyReport(ctx, now)
 	c.processBrokerCompletions()
+	if err := c.driveQueuedReflections(ctx, now); err != nil {
+		return err
+	}
 	c.attachPendingDrift()
 	c.mu.Lock()
 	reconcileReady := !c.incidentOpen && (c.broker == nil || !c.closureBlocksNextLocked())
@@ -1655,8 +1664,8 @@ func (c *Controller) ExportState() (*contracts.ControllerState, error) {
 		DispatchState:       dispatchState,
 		IncidentFindingKeys: append([]string(nil), c.incidentFindingKeys...), ClosureState: c.closureState,
 		ClosureReceipt: closureReceiptContract(c.closureReceipt), ClosureFailure: closureFailureContract(c.closureFailure), FailedClosures: cloneFailedClosures(c.failedClosures),
-		LastAcknowledgedIncidentId: c.lastAcknowledgedIncidentID,
-		EvaluationIteration:        int32(c.evaluationIteration), DetectorTimeline: timeline, IncidentView: view,
+		LastAcknowledgedIncidentId: c.lastAcknowledgedIncidentID, QueuedReflectionIncidentIds: append([]string(nil), c.reflections.queued...), QueuedReflectionsUnknown: c.reflections.unknown,
+		EvaluationIteration: int32(c.evaluationIteration), DetectorTimeline: timeline, IncidentView: view,
 		NamespaceOnboarding: cloneNamespaceOnboarding(c.namespaceOnboarding),
 		AcceptedSourceDrift: driftEventsContract(c.acceptedSourceDrift), AcceptedSourceDriftRevision: c.acceptedSourceDriftRevision,
 		DriftEvents: driftEventsContract(c.driftEvents), OwnershipAdoption: adoptionContract(c.ownershipAdoption),
