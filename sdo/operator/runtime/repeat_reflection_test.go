@@ -3,11 +3,13 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"google.golang.org/protobuf/types/known/timestamppb"
 	"os"
 	"path/filepath"
 
 	"strings"
 	"testing"
+	"time"
 
 	"sdo.dev/operator/broker"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
@@ -108,6 +110,8 @@ func testHermeticRepeatBroker(t *testing.T, rejectFirst, boundSession bool) {
 	ref := &contracts.ObjectRef{ApiVersion: "v1", Kind: "Service", Namespace: "demo", Name: "front"}
 	bound := program.Bindings{Objects: program.ObjectBindings{"service": objectRefState(ref)}}
 	outcome.RepairActions[0].Resources = []*contracts.ObjectRef{ref}
+	outcome.Findings = []*contracts.Finding{{DetectorId: "service-port", RuleId: "targetport", Severity: "warn", Summary: "wrong target port", Evidence: "synthetic controller-observed target port mismatch", Status: "active", PrimaryResource: ref}}
+	outcome.FinalHealthDetectorState = []*contracts.DetectorEvaluation{{DetectorId: "service-port", Status: "clear", EvaluatedAt: timestamppb.New(time.Unix(1_700_000_101, 0))}}
 	outcome.ProgramRuns[0].Bindings[0].Object = ref
 	for _, run := range outcome.ProgramRuns {
 		run.ProgramRevision = revision

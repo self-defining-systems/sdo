@@ -9,15 +9,14 @@ Detectors call `ctx.DiffAgainstSource(ref)` before selection, then bind playbook
 `Changed` covers field drift; `SourceAbsent` confirms absence. Unavailable evidence errors.
 Both contexts share recorded comparisons.
 
-Accepted Mitigators become selectable options in the responder menu, a convenience over direct commands.
-Declare object and typed value parameters and group related actions into one plan. Raw registered actions
-also appear as generic one-action plans. The ordinary PlanExecutor uses existing controller RBAC and checks.
-The responder receives per-action results, provenance and errors and can choose another repair. Up to five rounds share the incident allowance. Intermediate
-reports are not independent outcomes or program trust credit.
+Accepted Mitigators and raw one-action plans appear in the responder menu.
+Declare object/value parameters; group related actions. PlanExecutor retains controller RBAC and checks.
+Per-action results, provenance and errors guide the responder across five incident rounds.
+Intermediate reports grant neither independent outcomes nor trust credit.
 
 A program directory contains diagnose.go, optional mitigate.go, Go tests and a README with responder ownership,
 fault class and originating incident. Preserve accepted provenance and add its logical ID to the playbook index.
-The worker's authoring reference tool supplies the current worked routing example alongside this guide.
+The authoring reference tool supplies the routing example.
 
 ## Evidence and replay fixtures
 
@@ -99,7 +98,7 @@ with the confirmed-cause resources and a concrete reason. Missing controller cap
 
 ## Go-owned per-cause work
 
-The supplied work list preserves the responder's confirmed resource groups. Covered repairs and their corpus cases are already settled; address only typed questions. Unwritten bindings, unproven plan equivalence, and writes without a matched binding earn no credit. Unassigned observations remain ungrouped questions. Do not infer merge/split decisions.
+The supplied work list preserves the responder's confirmed resource groups. Covered repairs and their corpus cases are already settled; address only typed questions. Unwritten bindings, unproven plan equivalence, and writes without a matched binding earn no credit. Unassigned observations and unverified causes stay questions. Never infer grouping.
 
 A program that still matches the verified fixed capture has a definite false match. Go seeds that exact capture as negative evidence and preserves it through edits; the failing NoMatch replay is the question to resolve. The [generated replay API](../../sdo-detector-authoring/references/replay.md) defines CapturedFixedNoMatchPhase for this observed negative evidence. It is never a positive incident-open phase, a synthetic positive case or a trust credit.
 
@@ -109,7 +108,7 @@ be reported with a typed SDK gap naming its cause resources, primitive, reason a
 
 Automatic plans require no source-policy file, reviewed-fixture digest, content predicate or credential-delta approval. Explicit FromSource selectors and CreateFromSource read accepted manifests at the incident commit; other repairs may use observed or declared parameter values. DeleteObject does not require source absence. Legacy field actions retain their declared scope checks. The [general action vocabulary](general-actions.md) covers arbitrary nonsecret resources and subresources through Kubernetes RBAC.
 
-Compilation and repair replay remain mandatory. Direct observation and independent post-apply verification still judge the executed plan. A partially failed write batch compensates its reversible writes; deletes and exec are explicitly irreversible and are never auto-recreated or replayed. UID, conditional-write, lifecycle exclusivity and rollback conflict checks remain correctness constraints.
+A partially failed write batch compensates its reversible writes; deletes and exec are explicitly irreversible and are never auto-recreated or replayed. UID, conditional-write, lifecycle exclusivity and rollback conflict checks remain correctness constraints.
 
 At incident open, Go sends all matching diagnoses and unexplained findings to the responder. The agent selects mitigations and decides rollback. Verified program counters are information only; failed verification retains completed writes.
 
@@ -173,11 +172,9 @@ script and each output stream retain at most 64 KiB.
 For opaque scripts, label `script_origins` in the corpus case with the script
 SHA-256 digest mapped to its original successful repair receipt ID. The
 controller adds timed `RepairReceipt` observations to protected recordings before
-reflection. Receipts may come from recorded commands, typed/RunScript execution,
-or controller-observed Kubernetes API writes. API receipts identify only the
-observed resource and invocation; they do not assert recovery or execution of
-rewritten script bytes. Check the independently verified cause work and its
-bound receipts before drafting executables; retain missing evidence as a gap.
+reflection. Recorded commands, typed/RunScript actions and observed API writes
+supply receipts. Check independently verified cause work and bound receipts
+before drafting executables; retain missing evidence as a gap.
 Open Diagnose must Match and fixed Diagnose must NoMatch with valid
 bindings. The replay report uses `observed-transition`: it does not execute bash,
 claim exact external-effect simulation, or assert the rewritten script ran.

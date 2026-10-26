@@ -153,3 +153,9 @@ Successful typed EnsureDatabaseUser actions record the measured opening catalog 
 readback as a `DatabaseUsers` primitive with `phase=fixed` through the same protected recorder.
 The action receipt retains reference-bearing inputs/status; a safe `recording_error` makes an
 unavailable fixed capture visible. Fixed catalogs never replace the immutable opening catalog.
+
+Successful global closure also filters the controller's executable cause-work list
+through the shared independent repair gate. Unverified claimed causes retain
+their original resources as unassigned `question/evidence_gap` items before
+reflection authors candidates; aggregate recovery never makes them executable
+drafting obligations. Failed-outcome projection keeps its existing handling.

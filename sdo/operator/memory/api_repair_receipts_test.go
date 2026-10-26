@@ -54,7 +54,7 @@ func TestIncidentAPIRepairReceiptsRetainUnwrappedMutations(t *testing.T) {
 }
 
 func TestIncidentAPIRepairReceiptsRejectUnprovenOrUnrelatedWrites(t *testing.T) {
-	for _, name := range []string{"failure", "dry-run", "partial", "missing-start", "wrong-start", "duplicate", "wrong-body", "missing-body", "exec", "read-only", "secret", "out-of-window", "unconfirmed-delete", "stale-generation", "dropped", "wrong-incident"} {
+	for _, name := range []string{"failure", "dry-run", "partial", "missing-start", "wrong-start", "duplicate", "wrong-body", "missing-body", "wrong-group", "wrong-version", "wrong-namespace", "missing-rv", "exec", "read-only", "secret", "out-of-window", "unconfirmed-delete", "stale-generation", "dropped", "wrong-incident"} {
 		t.Run(name, func(t *testing.T) {
 			root := t.TempDir()
 			const id = "negative"
@@ -75,6 +75,12 @@ func TestIncidentAPIRepairReceiptsRejectUnprovenOrUnrelatedWrites(t *testing.T) 
 				start.DryRun = true
 			case "partial":
 				start.Partial = true
+			case "wrong-group":
+				start.Group = "other.example.test"
+			case "wrong-version":
+				start.Version = "v2"
+			case "wrong-namespace":
+				start.Namespace = "other"
 			case "exec":
 				start.Subresource = "exec"
 				start.Verb = "post"
@@ -104,6 +110,8 @@ func TestIncidentAPIRepairReceiptsRejectUnprovenOrUnrelatedWrites(t *testing.T) 
 				body = `{"apiVersion":"apps/v1","kind":"Deployment","metadata":{"name":"other","namespace":"app","resourceVersion":"2"}}`
 			case "missing-body":
 				body = ""
+			case "missing-rv":
+				body = `{"apiVersion":"apps/v1","kind":"Deployment","metadata":{"name":"web","namespace":"app"}}`
 			}
 			store.Record(end, []byte(body))
 			if name == "duplicate" {
