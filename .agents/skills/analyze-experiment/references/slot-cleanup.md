@@ -75,3 +75,10 @@ identify numeric component indices and known lifecycle statuses (`error` or `tim
 exception text is excluded because it may contain credential material. Investigate by Secret name/key
 names and sanitized phase status only; never inspect Secret data or credentials.
 
+
+Social-network supported reset rebuilds the post and timeline fixture together
+with writers stopped. `fastloop/social_fixture.py` checks every Mongo, user Redis
+and home Redis reference against post storage before resuming the original
+traffic. Treat fixture restoration as **eval setup**, never a responder repair or
+learning outcome. A contract failure invalidates admission even if sampled HTTP
+passes; the checker rejects empty fixtures and preserves exact int64 IDs.

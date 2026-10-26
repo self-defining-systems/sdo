@@ -282,5 +282,8 @@ class CodexBaselineAgent:
 
         return outcome
 
+    def prepare_recovery(self, outcome: AgentOutcome | None) -> None:
+        """The baseline has no long-running incident intake."""
+
     def close(self) -> None:
         """The stub belongs to the caller."""
