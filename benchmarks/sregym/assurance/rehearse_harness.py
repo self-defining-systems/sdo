@@ -361,6 +361,14 @@ def up_arguments(code_root: Path, run_dir: Path, lane: str, image_tag: str = "fa
     )
 
 
+def scenario_stream(code_root: Path, scenario: Scenario) -> Path:
+    """The scenario's stream: a fixture name under :data:`FIXTURES`, or an absolute path a caller generated."""
+
+    assert scenario.stream is not None
+    stream = Path(scenario.stream)
+    return stream if stream.is_absolute() else code_root / FIXTURES / stream
+
+
 def run_arguments(code_root: Path, run_dir: Path, scenario: Scenario, run_id: str) -> list[str]:
     assert scenario.stream is not None
     flags = list(scenario.run_flags)
@@ -376,7 +384,7 @@ def run_arguments(code_root: Path, run_dir: Path, scenario: Scenario, run_id: st
         "--agent",
         "sdo",
         "--stream",
-        str(code_root / FIXTURES / scenario.stream),
+        str(scenario_stream(code_root, scenario)),
         "--run-id",
         run_id,
         "--reflection-session",
