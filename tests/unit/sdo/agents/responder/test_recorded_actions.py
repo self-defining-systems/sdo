@@ -881,56 +881,17 @@ def test_act_accepts_printed_object_reference_forms(scratch: Path, reference: st
     ]
 
 
-def _owned_by(kind: str, name: str) -> str:
-    reference = {"apiVersion": "apps/v1", "kind": kind, "name": name, "controller": True}
-    return shlex.quote(json.dumps({"metadata": {"ownerReferences": [reference]}}))
-
-
-_OWNER_STUB = f"""
-case "$*" in
-  *"get Pod geo-84fbc958c7-5krwl"*) echo {_owned_by("ReplicaSet", "geo-84fbc958c7")} ;;
-  *"get ReplicaSet geo-84fbc958c7"*) echo {_owned_by("Deployment", "geo")} ;;
-  *"get ReplicaSet geo-67f6d98b75"*) exit 1 ;;
-esac
-exit 0
-"""
-
-
-def test_act_records_the_controller_owner_chain_read_before_the_write(scratch: Path, tmp_path: Path) -> None:
-    kubectl = _stub(tmp_path / "bin", _OWNER_STUB)
-    pod = ["act", "--resource", "Pod/hotel-reservation/geo-84fbc958c7-5krwl", "--", str(kubectl)]
-    assert tools_cli.main([*pod, "-n", "hotel-reservation", "delete", "pod", "geo-84fbc958c7-5krwl"]) == 0
-    service = ["act", "--resource", "Service/hotel-reservation/geo", "--", str(kubectl)]
-    assert tools_cli.main([*service, "-n", "hotel-reservation", "patch", "svc", "geo", "-p", "{}"]) == 0
+def test_act_on_a_controlled_object_runs_only_the_write(scratch: Path, tmp_path: Path) -> None:
+    # REV12 F1: owner chains come from SDO's own capture, so `sdo act` reads nothing before
+    # the write and its receipt carries no agent-side ownership claim.
+    calls = tmp_path / "calls"
+    kubectl = _stub(tmp_path / "bin", f'printf "%s\\n" "$*" >> {calls}')
     rs = ["act", "--resource", "ReplicaSet/hotel-reservation/geo-67f6d98b75", "--", str(kubectl)]
     assert tools_cli.main([*rs, "-n", "hotel-reservation", "scale", "rs", "geo-67f6d98b75", "--replicas=0"]) == 0
 
-    deleted, patched, scaled = _recorded(scratch)
-    assert deleted["owners"] == [
-        {
-            "resource": {
-                "api_version": "v1",
-                "kind": "Pod",
-                "namespace": "hotel-reservation",
-                "name": "geo-84fbc958c7-5krwl",
-            },
-            "owner_chain": [
-                {
-                    "api_version": "apps/v1",
-                    "kind": "ReplicaSet",
-                    "namespace": "hotel-reservation",
-                    "name": "geo-84fbc958c7",
-                },
-                {"api_version": "apps/v1", "kind": "Deployment", "namespace": "hotel-reservation", "name": "geo"},
-            ],
-        }
-    ]
-    # Uncontrolled kinds are never read; a failed read records no chain (no name inference).
-    assert "owners" not in patched
+    assert calls.read_text().splitlines() == ["-n hotel-reservation scale rs geo-67f6d98b75 --replicas=0"]
+    (scaled,) = _recorded(scratch)
     assert "owners" not in scaled
-    result = evolve(_bare_result(), incident_id="incident-1")
-    recorded_actions.merge_into(result)
-    assert [ref.name for ref in result.repair_actions[0].owners[0].owner_chain] == ["geo-84fbc958c7", "geo"]
 
 
 def _argv_recorder(directory: Path, log: Path) -> Path:
