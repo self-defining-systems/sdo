@@ -643,3 +643,89 @@ def test_permissive_suite_preflight_preserves_missing_capabilities_in_manifest(
     )
     assert manifest["fault_capabilities"][0]["mode"] == "permissive"
     assert manifest["fault_capabilities"][0]["faults"][0]["missing_capabilities"] == ["unreviewed:Unknown"]
+
+
+@pytest.mark.parametrize("has_dependency", [False, True])
+def test_reused_benchmark_image_imports_real_entrypoint_transitively(tmp_path, fake_host, sregym_dir, has_dependency):
+    import sys
+
+    from benchmarks.sregym.runner.preflight import check_images
+
+    image = tmp_path / "image"
+
+    def module(name, content=""):
+        path = image.joinpath(*name.split(".")).with_suffix(".py")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        parent = path.parent
+        while parent != image:
+            (parent / "__init__.py").touch()
+            parent = parent.parent
+        path.write_text(content)
+
+    for name in (
+        "sdo.agents.responder.worker",
+        "libs.agent_cli",
+        "agentshim",
+        "benchmarks.sregym.adapter.submission",
+        "benchmarks.sregym.adapter.submission_relay",
+    ):
+        module(name)
+    module("benchmarks.sregym.fastloop.recording_worker", "from .checkpoint_limits import MAX_TASK_BYTES\n")
+    if has_dependency:
+        module("benchmarks.sregym.fastloop.checkpoint_limits", "MAX_TASK_BYTES = 1024\n")
+
+    def docker(argv, **kwargs):
+        entrypoint = argv[argv.index("--entrypoint") + 1]
+        if entrypoint == "codex":
+            return subprocess.CompletedProcess(argv, 0, f"codex-cli {CODEX_PIN}\n", "")
+        assert entrypoint == "python3"
+        # Run the exact generated smoke code against an isolated fake image
+        # filesystem. Missing transitive imports are real Python failures.
+        script = f"import sys; sys.path.insert(0, {str(image)!r})\n" + argv[-1]
+        return subprocess.run([sys.executable, "-I", "-c", script], cwd=image, **kwargs)
+
+    fake_host.image_versions = SystemHost(run=docker).image_versions
+    ref = "fixture-benchmark:reused"
+    report = check_images({"benchmark_image": ref}, project_root=REPO_ROOT, sregym_dir=sregym_dir, host=fake_host)
+    if has_dependency:
+        assert report.ok, report.failures
+    else:
+        assert not report.ok
+        check = _check(report, "sdo-images")
+        assert ref in check.detail
+        assert "checkpoint_limits" in check.detail
+
+
+def test_devmount_smoke_uses_current_entrypoint_over_retained_image(tmp_path):
+    import sys
+
+    from benchmarks.sregym.adapter import assert_image_entrypoints
+
+    image = tmp_path / "image"
+    source = tmp_path / "source"
+    relative = Path("benchmarks/sregym/fastloop/recording_worker.py")
+    for root in (image, source):
+        target = root / relative
+        target.parent.mkdir(parents=True)
+        for parent in (target.parent, target.parent.parent, target.parent.parent.parent):
+            (parent / "__init__.py").touch()
+    (image / relative).write_text("# Older entrypoint had no new dependency.\n")
+    (source / relative).write_text("from .checkpoint_limits import MAX_TASK_BYTES\n")
+
+    def run(argv, **kwargs):
+        if argv[0] == "go":
+            return subprocess.CompletedProcess(
+                argv, 0, json.dumps([{"source": str(relative), "target": "/opt/sdo/" + str(relative)}]), ""
+            )
+        for index, arg in enumerate(argv):
+            if arg == "--mount":
+                fields = dict(part.split("=", 1) for part in argv[index + 1].split(",") if "=" in part)
+                target = image / fields["target"].removeprefix("/opt/sdo/")
+                target.write_text(Path(fields["source"]).read_text())
+        script = f"import sys; sys.path.insert(0, {str(image)!r})\n" + argv[-1]
+        return subprocess.run([sys.executable, "-I", "-c", script], **kwargs)
+
+    with pytest.raises(ValueError, match="retained:old.*checkpoint_limits"):
+        assert_image_entrypoints(
+            "retained:old", ("benchmarks.sregym.fastloop.recording_worker",), source_root=source, run=run
+        )
