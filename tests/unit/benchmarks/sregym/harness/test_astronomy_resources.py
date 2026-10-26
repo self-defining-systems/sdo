@@ -8,12 +8,17 @@ from pathlib import Path
 import pytest
 import yaml
 
+from benchmarks.sregym.adapter.lane_resources import LaneResourcePolicy
+
 ROOT = Path(__file__).resolve().parents[5]
 APPLICATIONS = ROOT / "third_party/sregym/SREGym-applications"
 OVERRIDES = ROOT / "third_party/sregym/sregym/service/metadata/astronomy-shop-resources.yaml"
 CHART = APPLICATIONS / "astronomy-shop/charts/opentelemetry-demo"
 DEPENDENCIES = ROOT / "tests/fixtures/benchmarks/astronomy-chart-dependencies"
 MINIMUM_PROXY_MEMORY_MIB = 192
+GIB = 1024**3
+# OpenSearch must stay writable on a busy shared host that still passes lane admission.
+WATERMARK_FLOOR_MARGIN_BYTES = 50 * GIB
 # Independent floors from LH's accepted 9/9 no-fault baseline (decision 287).
 PROVEN_LIMITS_MIB = {
     "accounting": 384,
@@ -62,6 +67,24 @@ def test_astronomy_proxy_override_preserves_proven_memory_floor() -> None:
         "Astronomy frontend-proxy needs the proven 192Mi memory floor; "
         "the old 65Mi chart default OOMs during the no-fault rehearsal"
     )
+
+
+def assert_watermarks_below_admission_floor(search_config: str) -> None:
+    settings = yaml.safe_load(search_config)
+    watermarks = {
+        key: settings[f"cluster.routing.allocation.disk.watermark.{key}"] for key in ("low", "high", "flood_stage")
+    }
+    assert all(value.endswith("gb") for value in watermarks.values()), "watermarks must be absolute free space"
+    parsed = {key: int(value.removesuffix("gb")) * GIB for key, value in watermarks.items()}
+    floor = LaneResourcePolicy().host_disk_floor_bytes
+    assert parsed["flood_stage"] < parsed["high"] < parsed["low"], parsed
+    # The read-only block releases only above `high`; even `low` must sit far below the admission floor.
+    assert parsed["low"] + WATERMARK_FLOOR_MARGIN_BYTES <= floor, (watermarks, floor)
+
+
+def test_astronomy_opensearch_watermarks_sit_far_below_admission_floor() -> None:
+    values = yaml.safe_load(OVERRIDES.read_text())
+    assert_watermarks_below_admission_floor(values["opensearch"]["config"]["opensearch.yml"])
 
 
 @pytest.mark.skipif(
@@ -131,11 +154,4 @@ def test_astronomy_rendered_proxy_preserves_proven_memory_floor(tmp_path: Path) 
     search_config = next(
         item["data"]["opensearch.yml"] for item in configurations if "opensearch.yml" in item.get("data", {})
     )
-    settings = yaml.safe_load(search_config)
-    assert {
-        key: settings[f"cluster.routing.allocation.disk.watermark.{key}"] for key in ("low", "high", "flood_stage")
-    } == {
-        "low": "130gb",
-        "high": "115gb",
-        "flood_stage": "100gb",
-    }
+    assert_watermarks_below_admission_floor(search_config)
