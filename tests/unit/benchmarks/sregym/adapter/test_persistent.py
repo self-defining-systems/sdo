@@ -1669,17 +1669,27 @@ def test_a_controller_job_past_its_backoff_limit_is_terminal() -> None:
 
 def test_reflection_deadline_covers_the_queued_reflections_ahead_of_the_closure(tmp_path: Path) -> None:
     """A closure behind N queued reflections waits for them under the same per-incident deadline."""
-    from benchmarks.sregym.adapter.persistent import reflection_deadline
+    from benchmarks.sregym.adapter.persistent import VerifiedIncident, reflection_deadline
 
     now = datetime(2026, 10, 26, tzinfo=timezone.utc)
     clock = Clock(now=lambda: now)
     inputs = replace(_inputs(tmp_path, "s0"), reflection_wait_seconds=3600.0, reflection_attempt_seconds=2102.0)
 
-    idle = FakeOps(states={"hotel-sdo": {}})
-    assert reflection_deadline(idle, "hotel-sdo", inputs, clock) == now + timedelta(seconds=3600)
+    assert reflection_deadline(inputs, VerifiedIncident("a", None), clock) == now + timedelta(seconds=3600)
+    behind_two = VerifiedIncident("a", None, queued_reflections=2)
+    assert reflection_deadline(inputs, behind_two, clock) == now + timedelta(seconds=3600 + 2 * 2102)
 
-    queued = FakeOps(states={"hotel-sdo": {"queued_reflection_incident_ids": ["a", "b"]}})
-    assert reflection_deadline(queued, "hotel-sdo", inputs, clock) == now + timedelta(seconds=3600 + 2 * 2102)
 
-    unknown = FakeOps(states={"hotel-sdo": {"queued_reflections_unknown": True}})
-    assert reflection_deadline(unknown, "hotel-sdo", inputs, clock) == now + timedelta(seconds=3600 + 2102)
+def test_verified_incident_records_the_reflection_queue_it_waits_behind() -> None:
+    from benchmarks.sregym.adapter.persistent import _wait_for_verified_incident
+
+    state = {
+        "last_acknowledged_incident_id": "",
+        "queued_reflection_incident_ids": ["old-1", "old-2"],
+        "queued_reflections_unknown": True,
+        "pending_closure": {"request": {"incident_id": "incident-1"}},
+    }
+    ops = FakeOps(states={"hotel-sdo": state}, logs={"hotel-sdo": []}, reflectable={"incident-1"})
+    verified = _wait_for_verified_incident(ops, "hotel-sdo", set(), 30.0, Clock(sleep=lambda _s: None))
+    assert verified.incident_id == "incident-1"
+    assert verified.queued_reflections == 3

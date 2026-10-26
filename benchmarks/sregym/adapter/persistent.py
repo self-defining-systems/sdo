@@ -289,6 +289,8 @@ class ControllerPod:
 class VerifiedIncident:
     incident_id: str
     closure: dict[str, Any] | None
+    #: Reflections SDO still owed ahead of this closure in the state that showed it verified.
+    queued_reflections: int = 0
 
 
 def runtime_config_payload(config: RuntimeConfig) -> dict[str, Any]:
@@ -1044,7 +1046,7 @@ def run_persistent_stage(
         receipt_dir=inputs.receipt_dir,
         repository=config.repository,
         verified_at=_timestamp(closure.get("verified_at")),
-        reflection_deadline_at=reflection_deadline(ops, control, inputs, clock),
+        reflection_deadline_at=reflection_deadline(inputs, verified, clock),
         stage_receipt={
             key: value
             for key, value in resolution.items()
@@ -1291,7 +1293,7 @@ def collect_followup_incident(
         receipt_dir=inputs.receipt_dir,
         repository=config.repository,
         verified_at=_timestamp(closure.get("verified_at")),
-        reflection_deadline_at=reflection_deadline(ops, control, inputs, clock),
+        reflection_deadline_at=reflection_deadline(inputs, verified, clock),
         stage_receipt={
             **base,
             # Setup and gate costs were paid once, by the first incident.
@@ -1476,19 +1478,15 @@ def _lost_controller_message(record: ControllerRecord, pod: ControllerPod | None
     )
 
 
-def reflection_deadline(ops: ClusterOps, control: str, inputs: StageInputs, clock: Clock) -> datetime:
+def reflection_deadline(inputs: StageInputs, verified: VerifiedIncident, clock: Clock) -> datetime:
     """The incident's one reflection deadline: its budget plus SDO's worst case for each reflection queued ahead.
 
     A closure waits behind the queue's FIFO (one reflection at a time under the broker lock), so a fixed
     budget from verification would expire while SDO is still legitimately working through earlier failed
-    attempts. An unreadable state counts no reflection; the drain's own reads report it.
+    attempts.
     """
 
-    try:
-        ahead = queued_reflection_count(ops.runtime_state(control))
-    except (RuntimeError, ValueError, KeyError, OSError):
-        ahead = 0
-    seconds = inputs.reflection_wait_seconds + ahead * inputs.reflection_attempt_seconds
+    seconds = inputs.reflection_wait_seconds + verified.queued_reflections * inputs.reflection_attempt_seconds
     return clock.now() + timedelta(seconds=seconds)
 
 
@@ -1927,7 +1925,11 @@ def _wait_for_verified_incident(
                 if observed.HasField("verified_closure")
                 else None
             )
-            return VerifiedIncident(incident_id=observed.verified_incident_id, closure=closure)
+            return VerifiedIncident(
+                incident_id=observed.verified_incident_id,
+                closure=closure,
+                queued_reflections=queued_reflection_count(state),
+            )
         _raise_observation_failure(observed, state)
         clock.sleep(POLL_SECONDS)
     raise PersistentControllerError(
