@@ -38,6 +38,7 @@ CAPABILITIES = {
     "NetworkPolicyBlock": ("application-networkpolicies",),
     "DuplicatePVCMounts": ("application-pvcs", "application-workloads"),
     "MongoDBUserUnregistered": ("application-pod-exec",),
+    "MongoDBRevokeAuth": ("application-pod-exec",),
     "PSARestrictedBlocksRecreation": ("Namespace-labels/PSA",),
     "NamespaceMemoryLimit": ("ResourceQuota",),
     "AdmissionWebhookTLSMismatch": ("Webhook-configuration", "foreign-namespace"),
@@ -82,6 +83,16 @@ def describe_problem(problem_id: str, problem: Any) -> ProblemDescription:
             class_name == "ServiceDNSResolutionFailure"
             and getattr(part, "dns_failure_layer", None) != "network_policy_block_dns"
         ):
+            supported = False
+        if (
+            class_name == "EphemeralPortRangeHotelReservation"
+            and getattr(part, "sysctl_scope", None) != "frontend_only"
+        ):
+            supported = False
+        if class_name in {"MongoDBUserUnregistered", "MongoDBRevokeAuth"} and component not in {
+            "mongodb-geo",
+            "mongodb-rate",
+        }:
             supported = False
         params: dict[str, Any] = (
             dict(draw.param_dict())
