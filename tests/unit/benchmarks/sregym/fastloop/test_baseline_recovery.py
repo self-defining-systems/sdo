@@ -770,3 +770,86 @@ def test_application_helper_migration_leaves_sdo_owned_deployments_untouched(ope
 
     assert cluster.touched == []
     assert cluster.objects[(namespace, "Deployment", "mongodb-geo")] == owned
+
+
+def redirect(name: str, namespace: str = "social-network", target: str = "otel-collector.observe") -> dict[str, Any]:
+    return {
+        "apiVersion": "v1",
+        "kind": "Service",
+        "metadata": {"name": name, "namespace": namespace, "labels": {"app": name}},
+        "spec": {"type": "ExternalName", "externalName": f"{target}.svc.cluster.local", "selector": {"app": name}},
+    }
+
+
+def test_harness_redirect_removed_by_sdo_stays_removed_across_restores() -> None:
+    """Fixture of the delete-then-restore loop: re-creating would mint a new identity."""
+    cluster = FakeCluster()
+    cluster.add(obj("Deployment", "compose-post", namespace="social-network", spec={"replicas": 1}))
+    for name in ("jaeger", "jaeger-agent", "jaeger-collector"):
+        cluster.add(redirect(name))
+    baseline = capture_application_baseline(cluster, "social-network")
+    cluster.delete("social-network", "Service", "jaeger-agent")
+    cluster.touched.clear()
+
+    for _ in range(2):
+        cleanup = reconcile_application(cluster, baseline, "social-network")
+        assert ("social-network", "Service", "jaeger-agent") not in cluster.objects
+        assert cluster.touched == []
+        assert cleanup.restored == []
+        assert cleanup.harness_absent == ["Service/jaeger-agent"]
+
+
+def test_source_declared_harness_redirect_is_recreated() -> None:
+    cluster = FakeCluster()
+    cluster.add(redirect("jaeger", namespace="hotel"))
+    baseline = capture_application_baseline(cluster, "hotel")
+    cluster.delete("hotel", "Service", "jaeger")
+
+    cleanup = reconcile_application(cluster, baseline, "hotel", declared=frozenset({("Service", "jaeger")}))
+
+    assert cluster.objects[("hotel", "Service", "jaeger")]["spec"]["type"] == "ExternalName"
+    assert [entry.to_dict() for entry in cleanup.reapplied] == [
+        {"kind": "Service", "namespace": "hotel", "name": "jaeger", "recreated": True, "harness_owned": True}
+    ]
+    assert cleanup.undeclared_recreated == []
+
+
+def test_changed_harness_redirect_is_patched_and_extra_redirect_is_kept() -> None:
+    cluster = FakeCluster()
+    cluster.add(redirect("jaeger", namespace="hotel"))
+    baseline = capture_application_baseline(cluster, "hotel")
+    cluster.objects[("hotel", "Service", "jaeger")]["spec"]["externalName"] = "elsewhere.example"
+    cluster.add(redirect("jaeger-query", namespace="hotel"))
+
+    cleanup = reconcile_application(cluster, baseline, "hotel")
+
+    assert cluster.objects[("hotel", "Service", "jaeger")]["spec"] == baseline.objects[0]["spec"]
+    assert ("hotel", "Service", "jaeger-query") in cluster.objects
+    assert cleanup.deleted_counts == {}
+    assert [(e.name, e.recreated, e.harness_owned) for e in cleanup.reapplied] == [("jaeger", False, True)]
+
+
+def test_application_redirect_to_an_application_namespace_is_an_ordinary_object() -> None:
+    cluster = FakeCluster()
+    cluster.add(redirect("search", namespace="hotel", target="search.hotel"))
+    baseline = capture_application_baseline(cluster, "hotel")
+    cluster.delete("hotel", "Service", "search")
+
+    cleanup = reconcile_application(cluster, baseline, "hotel")
+
+    assert ("hotel", "Service", "search") in cluster.objects
+    assert cleanup.harness_absent == []
+    assert [(e.name, e.recreated, e.harness_owned) for e in cleanup.reapplied] == [("search", True, False)]
+
+
+def test_recreated_object_outside_accepted_source_is_reported_as_unexplained() -> None:
+    cluster = FakeCluster()
+    cluster.add(obj("Deployment", "geo", spec={"replicas": 1}))
+    cluster.add(obj("ConfigMap", "runtime-extra", data={"a": "b"}))
+    baseline = capture_application_baseline(cluster, "hotel")
+    cluster.delete("hotel", "Deployment", "geo")
+    cluster.delete("hotel", "ConfigMap", "runtime-extra")
+
+    cleanup = reconcile_application(cluster, baseline, "hotel", declared=frozenset({("Deployment", "geo")}))
+
+    assert cleanup.undeclared_recreated == ["ConfigMap/runtime-extra"]
