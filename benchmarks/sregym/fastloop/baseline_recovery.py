@@ -235,8 +235,17 @@ def _identity(value: dict[str, Any]) -> tuple[str, str]:
     return value["kind"], value["metadata"]["name"]
 
 
-RESTORED_FIELDS = ("spec", "data", "binaryData", "immutable", "rules", "roleRef", "subjects",
-                   "automountServiceAccountToken", "imagePullSecrets")
+RESTORED_FIELDS = (
+    "spec",
+    "data",
+    "binaryData",
+    "immutable",
+    "rules",
+    "roleRef",
+    "subjects",
+    "automountServiceAccountToken",
+    "imagePullSecrets",
+)
 
 
 def _content(value: dict[str, Any]) -> tuple[Any, ...]:
@@ -327,8 +336,15 @@ def reconcile_application(
         cluster.delete(namespace, kind, name)
         cleanup.deleted_counts[kind] = cleanup.deleted_counts.get(kind, 0) + 1
     # Namespace prerequisites precede controllers so their first Pods can start.
-    priorities = {"ServiceAccount": 0, "ConfigMap": 0, "Role": 0, "RoleBinding": 1,
-                  "Service": 1, "PersistentVolumeClaim": 1, "NetworkPolicy": 1}
+    priorities = {
+        "ServiceAccount": 0,
+        "ConfigMap": 0,
+        "Role": 0,
+        "RoleBinding": 1,
+        "Service": 1,
+        "PersistentVolumeClaim": 1,
+        "NetworkPolicy": 1,
+    }
     for (kind, name), value in sorted(expected.items(), key=lambda item: (priorities.get(item[0][0], 2), item[0])):
         present = current.get((kind, name))
         if present is None or _content(present) != _content(value):
