@@ -179,6 +179,8 @@ def _parser() -> argparse.ArgumentParser:
         help="apply several independent options in one call; overlapping options refused; show progress and full JSON",
         description=(
             "Apply several independent options in one call; overlapping object write sets are refused before writes. "
+            "Advertised option IDs remain valid for this session across filtered menu calls. "
+            "Learned program preconditions are rechecked against live state before any batch writes. "
             "Use repeated --option ID followed by that option's --param NAME=VALUE, or --selection-set FILE "
             "with version 1 and options [{option_id, bindings, parameters, finding_fingerprints}]. "
             "Each option has its own receipt; one call uses one round. Pending rollout returns its application ID "

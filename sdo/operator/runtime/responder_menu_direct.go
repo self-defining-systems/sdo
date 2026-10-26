@@ -139,7 +139,7 @@ func (l *ResponderLoop) listMenu(ctx context.Context, request ToolRequest, respo
 	}
 	menu.MenuId = "menu-" + menuDigest(menu)
 	l.menu = menu
-	l.menuEntries = entries
+	l.menuEntries.advertise(entries)
 	response.Menu = proto.Clone(menu).(*contracts.MitigationMenu)
 	response.Summary = fmt.Sprintf("%d mitigation options; apply several independent options in one call; overlapping object write sets are refused before writes", len(menu.Options))
 }
@@ -159,11 +159,16 @@ func (l *ResponderLoop) executeMenuOption(ctx context.Context, selection *contra
 		response.Error = "mitigate requires an option"
 		return
 	}
-	entry, ok := l.menuEntries[selection.OptionId]
+	entry, ok := l.menuEntries.lookup(selection.OptionId)
 	if !ok {
 		response.Error = "unknown mitigation option"
 		return
 	}
+	l.executeMenuEntry(ctx, entry, selection, parameters, targetFingerprints, response, consumeRound)
+}
+
+// Prepared batch entries are local execution state, never catalog mutations.
+func (l *ResponderLoop) executeMenuEntry(ctx context.Context, entry menuEntry, selection *contracts.MitigationSelection, parameters map[string]string, targetFingerprints []string, response *ToolResponse, consumeRound bool) {
 	if entry.action == nil && entry.plan == nil {
 		if response.ProgramRevisions == nil {
 			response.ProgramRevisions = map[string]string{}
@@ -403,6 +408,14 @@ func (l *ResponderLoop) prepareMenuPlan(ctx context.Context, entry menuEntry, pa
 			if viewErr != nil {
 				err = viewErr
 			} else {
+				diagnoser, found := l.Programs.Diagnoser(entry.programID)
+				if !found {
+					return plan, fmt.Errorf("diagnoser %s is unavailable", entry.programID)
+				}
+				verdict := program.RunDiagnose(ctx, diagnoser, view, bindings, l.deadline())
+				if verdict.Result != program.Match {
+					return plan, fmt.Errorf("program %s no longer matches live state: %s", entry.programID, verdict.Result)
+				}
 				plan, err = l.runMitigator(ctx, entry.programID, mitigator, view, bindings)
 			}
 		}
