@@ -73,6 +73,7 @@ func (p menuSimProgram) Mitigate(_ context.Context, _ program.ReadView, b progra
 }
 
 func TestSimResponderMenuSeededSchedules(t *testing.T) {
+	t.Parallel()
 	// Fixed seeds and a finite tick budget keep this sweep below two minutes.
 	for _, seed := range []uint64{7, 81} {
 		for _, schedule := range []string{"alternate", "five-fail-next", "restart-between", "restart-mid-option", "health-flip"} {
