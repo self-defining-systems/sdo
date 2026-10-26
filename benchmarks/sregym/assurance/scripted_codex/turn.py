@@ -22,6 +22,18 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 MAX_OUTPUT_CHARS = 20_000
+# Structured tools include recursive parameter/selection schemas, rather than
+# just display text. Callers opt into this budget; neither budget permits cuts.
+MAX_STRUCTURED_OUTPUT_CHARS = 1 << 20
+
+
+class OutputLimitExceeded(ValueError):
+    """A command result exceeded its capture contract; no prefix is returned."""
+
+    def __init__(self, actual: int, limit: int) -> None:
+        self.actual = actual
+        self.limit = limit
+        super().__init__(f"command output exceeds MAX_OUTPUT_CHARS: {actual} characters > {limit}")
 
 
 def utc_now() -> str:
@@ -55,9 +67,13 @@ class Turn:
         self.rollout.token_count(usage)
         return usage
 
-    def run(self, command: str, *, timeout: float = 300.0) -> tuple[int, str]:
+    def run(self, command: str, *, timeout: float = 300.0, max_output_chars: int = MAX_OUTPUT_CHARS) -> tuple[int, str]:
         """Run ``command`` with ``/bin/sh -c`` in the turn's working directory."""
 
+        if isinstance(max_output_chars, bool) or not isinstance(max_output_chars, int):
+            raise TypeError("max_output_chars must be an integer")
+        if max_output_chars <= 0:
+            raise ValueError("max_output_chars must be positive")
         self._model_response()
         call_id = f"call_{self.requests}"
         self.rollout.function_call(call_id, command)
@@ -76,11 +92,14 @@ class Turn:
         except subprocess.TimeoutExpired as exc:
             code = 124
             output = f"{exc.stdout or ''}{exc.stderr or ''}\ncommand timed out after {timeout:.0f}s"
-        if len(output) > MAX_OUTPUT_CHARS:
-            output = output[:MAX_OUTPUT_CHARS] + "\n[... output truncated ...]"
+        overflow = OutputLimitExceeded(len(output), max_output_chars) if len(output) > max_output_chars else None
+        if overflow is not None:
+            code, output = 125, str(overflow)
         self.commands.append(CommandRecord(command=command, exit_code=code, seconds=time.monotonic() - started))
         self.rollout.function_call_output(call_id, output, code)
         self.stream.command_completed(item, command, output, code)
+        if overflow is not None:
+            raise overflow
         return code, output
 
     def finish(self, text: str) -> None:
