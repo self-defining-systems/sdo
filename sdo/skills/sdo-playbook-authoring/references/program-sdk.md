@@ -16,6 +16,13 @@ const MaxScriptOutputBytes = 64 << 10
 const MaxScriptTimeout = 5 * time.Minute
 const MongoDB = "mongodb"
 
+VARIABLES
+
+var ErrReplicaSetScaleRefused = errors.New("replicaset_scale_refused")
+    ErrReplicaSetScaleRefused marks a program plan that scales a ReplicaSet it
+    may not retire.
+
+
 FUNCTIONS
 
 func ApplyRemoveServicePort(object map[string]any, a RemoveServicePort) error
@@ -40,6 +47,13 @@ func BoundedLogOptions(options corev1.PodLogOptions) (corev1.PodLogOptions, erro
 func CheckReads(view ReadView) (sdk.DetectionContext, func() error)
     CheckReads gives one evaluation its own failure tracking. A failed read
     cannot be ignored to turn Unknown into clearance.
+
+func CheckReplicaSetScales(plan Plan, view ReplicaSetOwnerView, bindings Bindings) error
+    CheckReplicaSetScales allows a program to scale a ReplicaSet only when the
+    observed ReplicaSet is controlled by a Deployment the program is bound to
+    and is not that Deployment's current revision. Retiring an old revision
+    is the only repair a program needs on a ReplicaSet; anything else risks an
+    outage.
 
 func ExpandedSetField(f SetField) bool
     ExpandedSetField reports whether an action uses the structured vocabulary.
@@ -478,6 +492,13 @@ type RemoveServicePort struct {
     TCP). The last port is protected unless AllowEmpty is explicitly set;
     Kubernetes schema validation still applies. Conditional writes preserve
     concurrent edits.
+
+type ReplicaSetOwnerView interface {
+	Deployments() []appsv1.Deployment
+	ReplicaSets() []appsv1.ReplicaSet
+}
+    ReplicaSetOwnerView is the observation a ReplicaSet scale is checked
+    against.
 
 type RestartRollout struct {
 	Ref    sdk.ObjectRef
