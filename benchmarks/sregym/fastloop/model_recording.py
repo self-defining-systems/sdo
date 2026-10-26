@@ -15,7 +15,8 @@ if TYPE_CHECKING:
 
     from agentshim import CommandExecutor, CommandHandle, CommandRequest, CommandStreamSink
 
-MAX_MODEL_IO_BYTES = 4 << 20
+# One turn's complete Codex JSONL, which carries every tool result the turn read.
+MAX_MODEL_IO_BYTES = 64 << 20
 
 
 class ModelCacheMiss(RuntimeError):
@@ -91,12 +92,14 @@ class RecordingExecutor:
             if changed:
                 self.prompt_changes.append({"recorded": payload["prompt_digest"], "current": prompt_digest})
             sink.started(_ReplayHandle())
+            streams: dict[str, list[str]] = {"stdout": [], "stderr": []}
             for stream, line in payload["events"]:
+                streams[stream].append(line)
                 if stream == "stdout":
                     sink.stdout(line)
                 else:
                     sink.stderr(line)
-            return CommandResult(payload["returncode"], payload["stdout"], payload["stderr"])
+            return CommandResult(payload["returncode"], "".join(streams["stdout"]), "".join(streams["stderr"]))
         if self.live is None or not (self.record or self.live_on_miss):
             raise ModelCacheMiss(f"model cache miss for request {self.request_digest} prompt {prompt_digest}")
         events: list[tuple[str, str]] = []
@@ -114,14 +117,13 @@ class RecordingExecutor:
                 sink.stderr(line)
 
         result = self.live.run(request, Tee())
+        # The streamed lines are the turn's whole output; replay joins them, so store them once.
         payload = {
             "turn_index": turn_index,
             "request_digest": self.request_digest,
             "prompt_digest": prompt_digest,
             "events": events,
             "returncode": result.returncode,
-            "stdout": result.stdout,
-            "stderr": result.stderr,
         }
         wire = json.dumps(payload, separators=(",", ":")).encode()
         if len(wire) > MAX_MODEL_IO_BYTES:
