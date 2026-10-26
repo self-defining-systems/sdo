@@ -19,11 +19,13 @@ import (
 // MenuParameter describes input, never authority. Raw actions derive their
 // fields from the same generated registry used by plan serialization.
 type MenuParameter struct {
-	Name     string `json:"name"`
-	Kind     string `json:"kind"`
-	Required bool   `json:"required"`
-	Repeated bool   `json:"repeated,omitempty"`
-	Default  any    `json:"default,omitempty"`
+	Example  any         `json:"example,omitempty"`
+	Name     string      `json:"name"`
+	Kind     string      `json:"kind"`
+	Required bool        `json:"required"`
+	Repeated bool        `json:"repeated,omitempty"`
+	Default  any         `json:"default,omitempty"`
+	Schema   *MenuSchema `json:"schema"`
 }
 
 func rawMenuActions() map[string]menuEntry {
@@ -38,6 +40,7 @@ func rawMenuActions() map[string]menuEntry {
 
 func menuActionParameters(action protoreflect.FieldDescriptor) []MenuParameter {
 	fields := action.Message().Fields()
+	examples := menuActionExamples()[string(action.Message().Name())]
 	params := make([]MenuParameter, 0, fields.Len())
 	for i := 0; i < fields.Len(); i++ {
 		f := fields.Get(i)
@@ -55,7 +58,7 @@ func menuActionParameters(action protoreflect.FieldDescriptor) []MenuParameter {
 		}
 		rules, _ := proto.GetExtension(f.Options(), validate.E_Field).(*validate.FieldRules)
 		required := rules.GetRequired() || rules.GetString().GetMinLen() > 0 || rules.GetRepeated().GetMinItems() > 0
-		params = append(params, MenuParameter{Name: string(f.Name()), Kind: kind, Required: required, Repeated: f.IsList()})
+		params = append(params, MenuParameter{Name: string(f.Name()), Kind: kind, Required: required, Repeated: f.IsList(), Schema: menuInputSchema(f), Example: examples[string(f.Name())]})
 	}
 	return params
 }
@@ -67,7 +70,17 @@ func menuProgramParameters(spec program.ProgramSpec) []MenuParameter {
 		if p.ValueKind != "" {
 			kind = string(p.ValueKind)
 		}
-		params = append(params, MenuParameter{Name: p.Name, Kind: kind, Required: p.Required, Default: p.Default})
+		schema := &MenuSchema{Type: "string"}
+		if p.ValueKind == "" {
+			schema.Description = "Kind/namespace/name"
+		}
+		if p.ValueKind == program.IntValue {
+			schema.Type = "integer"
+		}
+		if p.ValueKind == program.BoolValue {
+			schema.Type = "boolean"
+		}
+		params = append(params, MenuParameter{Name: p.Name, Kind: kind, Required: p.Required, Default: p.Default, Schema: schema})
 	}
 	return params
 }
@@ -79,13 +92,19 @@ func menuRawPlan(field protoreflect.FieldDescriptor, parameters map[string]strin
 	for name, raw := range parameters {
 		f := field.Message().Fields().ByName(protoreflect.Name(name))
 		if f == nil {
+			f = field.Message().Fields().ByJSONName(name)
+		}
+		if f == nil {
 			return program.Plan{}, fmt.Errorf("unknown parameter %q", name)
 		}
 		value, err := menuActionParameter(f, raw, inputs)
 		if err != nil {
 			return program.Plan{}, fmt.Errorf("parameter %s: %w", name, err)
 		}
-		values[name] = value
+		if err := menuValidateShape(f, value, name); err != nil {
+			return program.Plan{}, err
+		}
+		values[string(f.Name())] = value
 	}
 	body, err := json.Marshal(map[string]any{string(field.Name()): values})
 	if err != nil {
@@ -93,14 +112,19 @@ func menuRawPlan(field protoreflect.FieldDescriptor, parameters map[string]strin
 	}
 	envelope := &contracts.Action{}
 	if err := protojson.Unmarshal(body, envelope); err != nil {
-		return program.Plan{}, fmt.Errorf("invalid action parameters: %w", err)
+		return program.Plan{}, fmt.Errorf("invalid action parameters: expected the published field schema")
 	}
 	if err := wire.Validate(envelope); err != nil {
 		return program.Plan{}, err
 	}
 	action := planActionState(envelope)
 	if action == nil {
-		return program.Plan{}, fmt.Errorf("registered action has no executor adapter")
+		if general, err := generalActionState(envelope); err == nil {
+			if err := (program.Plan{Actions: []program.Action{general}}).Validate(); err != nil {
+				return program.Plan{}, fmt.Errorf("%s parameters: %w", field.Message().Name(), err)
+			}
+		}
+		return program.Plan{}, fmt.Errorf("invalid %s parameters; expected published schema and example", field.Message().Name())
 	}
 	return program.Plan{Actions: []program.Action{action}}, nil
 }
@@ -121,6 +145,10 @@ func menuActionParameter(field protoreflect.FieldDescriptor, raw string, inputs 
 		return env, nil
 	}
 	if field.Message() != nil && field.Message().Name() == "ObjectRef" {
+		var object map[string]any
+		if json.Unmarshal([]byte(raw), &object) == nil && object != nil {
+			return object, nil
+		}
 		ref, err := sdk.ParseObjectRef(raw)
 		if err != nil {
 			return nil, err
@@ -149,6 +177,13 @@ func menuActionParameter(field protoreflect.FieldDescriptor, raw string, inputs 
 		}
 		return menuRawValue(value, string(field.Name()), inputs)
 	}
+	if field.Message() != nil && field.Message().FullName() == "google.protobuf.Duration" {
+		var value string
+		if json.Unmarshal([]byte(raw), &value) == nil {
+			return value, nil
+		}
+		return raw, nil
+	}
 	if field.Kind() == protoreflect.BytesKind && !field.IsList() {
 		return base64.StdEncoding.EncodeToString([]byte(raw)), nil
 	}
@@ -157,7 +192,7 @@ func menuActionParameter(field protoreflect.FieldDescriptor, raw string, inputs 
 	}
 	var value any
 	if err := json.Unmarshal([]byte(raw), &value); err != nil {
-		return nil, fmt.Errorf("expected %s JSON", field.Kind())
+		return nil, fmt.Errorf("expected %s JSON (%s)", menuInputSchema(field).Type, field.Kind())
 	}
 	return value, nil
 }
@@ -222,7 +257,11 @@ func menuBindProgram(entry menuEntry, parameters map[string]string) (program.Bin
 func menuRawValue(value any, name string, inputs *program.ValueInputs) (any, error) {
 	if descriptor, ok := value.(map[string]any); ok {
 		for _, origin := range []string{"source", "observed"} {
-			if field, ok := descriptor[origin].(map[string]any); ok {
+			if candidate, exists := descriptor[origin]; exists {
+				field, ok := candidate.(map[string]any)
+				if !ok {
+					return nil, fmt.Errorf("%s.%s: expected object", name, origin)
+				}
 				if text, ok := field["ref"].(string); ok {
 					ref, err := sdk.ParseObjectRef(text)
 					if err != nil {

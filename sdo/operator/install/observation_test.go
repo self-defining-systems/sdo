@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func TestObservationPlanGrantsOnlyControllerReads(t *testing.T) {
+func TestObservationPlanPreservesControllerAndInheritedScriptReads(t *testing.T) {
 	for _, split := range []bool{false, true} {
 		c := testConfig()
 		if !split {
@@ -45,10 +45,25 @@ func TestObservationPlanGrantsOnlyControllerReads(t *testing.T) {
 				t.Fatalf("cluster observation was not name-scoped: %+v", r)
 			}
 		}
+		controllerBindings, scriptBindings := 0, 0
 		for _, b := range plan.ObservationClusterBindings {
-			if len(b.Subjects) != 2 || b.Subjects[0].Name != "sdo-controller" || b.Subjects[1].Name != "sdo-operate" {
-				t.Fatal("responder granted webhook observation")
+			if len(b.Subjects) == 1 && b.Subjects[0].Name == "sdo-script" && b.Subjects[0].Namespace == c.Namespace {
+				scriptBindings++
+			} else if len(b.Subjects) == 2 && b.Subjects[0].Name == "sdo-controller" && b.Subjects[1].Name == "sdo-operate" && b.Subjects[0].Namespace == c.controlNamespace() && b.Subjects[1].Namespace == c.controlNamespace() {
+				controllerBindings++
+			} else {
+				t.Fatalf("unexpected webhook observation identity: %+v", b.Subjects)
 			}
+			found := false
+			for _, role := range plan.ObservationClusterRoles {
+				found = found || b.RoleRef.Name == role.Name
+			}
+			if !found {
+				t.Fatal("observation binding escaped the named read-only roles")
+			}
+		}
+		if controllerBindings != len(plan.ObservationClusterRoles) || scriptBindings != controllerBindings {
+			t.Fatal("missing controller or inherited script observation binding")
 		}
 		for _, env := range plan.Job.Spec.Template.Spec.Containers[0].Env {
 			if env.Name == observation.CeilingEnvironment {

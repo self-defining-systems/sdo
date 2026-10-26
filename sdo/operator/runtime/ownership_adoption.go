@@ -67,7 +67,7 @@ func (c *Controller) recordAdoptionError(now time.Time, err error) {
 
 func supportsAcceptedSource(ref sdk.ObjectRef) bool {
 	switch ref.APIVersion + "/" + ref.Kind {
-	case "v1/Service", "v1/ConfigMap", "v1/Pod", "apps/v1/Deployment", "apps/v1/ReplicaSet", "v1/Endpoints", "discovery.k8s.io/v1/EndpointSlice", "networking.k8s.io/v1/NetworkPolicy":
+	case "v1/ServiceAccount", "rbac.authorization.k8s.io/v1/ClusterRole", "rbac.authorization.k8s.io/v1/ClusterRoleBinding", "rbac.authorization.k8s.io/v1/Role", "rbac.authorization.k8s.io/v1/RoleBinding", "v1/Service", "v1/ConfigMap", "v1/Pod", "apps/v1/Deployment", "apps/v1/ReplicaSet", "v1/Endpoints", "discovery.k8s.io/v1/EndpointSlice", "networking.k8s.io/v1/NetworkPolicy":
 		return true
 	default:
 		return false
@@ -117,8 +117,14 @@ func (c *Controller) adoptOwnership(ctx context.Context, now time.Time, snapshot
 	pending := make([]candidate, 0)
 	for _, source := range objects {
 		ref := sdk.ObjectRef{APIVersion: source.GetAPIVersion(), Kind: source.GetKind(), Namespace: source.GetNamespace(), Name: source.GetName()}
-		if !supportsAcceptedSource(ref) || ref.Namespace != c.config.Namespace {
+		if !supportsAcceptedSource(ref) || (ref.Namespace != c.config.Namespace && !inventoryClusterKind(ref.Kind)) {
 			return fmt.Errorf("unsupported accepted manifest %s/%s/%s", ref.Kind, ref.Namespace, ref.Name)
+		}
+		// Identity-only declarations have no configuration fields to adopt.
+		// Presence remains an inventory/source obligation without requiring an
+		// otherwise unnecessary API write (for example a bare ServiceAccount).
+		if len(flattenDriftPaths(source)) == 0 {
+			continue
 		}
 		live, err := getAdoptionObject(actionCtx, c.drift.Client, ref)
 		if err != nil && !apierrors.IsNotFound(err) {
@@ -280,6 +286,16 @@ func getAdoptionObject(ctx context.Context, client kubernetes.Interface, ref sdk
 	var object any
 	var err error
 	switch ref.APIVersion + "/" + ref.Kind {
+	case "v1/ServiceAccount":
+		object, err = client.CoreV1().ServiceAccounts(ref.Namespace).Get(ctx, ref.Name, metav1.GetOptions{})
+	case "rbac.authorization.k8s.io/v1/ClusterRole":
+		object, err = client.RbacV1().ClusterRoles().Get(ctx, ref.Name, metav1.GetOptions{})
+	case "rbac.authorization.k8s.io/v1/ClusterRoleBinding":
+		object, err = client.RbacV1().ClusterRoleBindings().Get(ctx, ref.Name, metav1.GetOptions{})
+	case "rbac.authorization.k8s.io/v1/Role":
+		object, err = client.RbacV1().Roles(ref.Namespace).Get(ctx, ref.Name, metav1.GetOptions{})
+	case "rbac.authorization.k8s.io/v1/RoleBinding":
+		object, err = client.RbacV1().RoleBindings(ref.Namespace).Get(ctx, ref.Name, metav1.GetOptions{})
 	case "v1/Service":
 		object, err = client.CoreV1().Services(ref.Namespace).Get(ctx, ref.Name, metav1.GetOptions{})
 	case "v1/ConfigMap":

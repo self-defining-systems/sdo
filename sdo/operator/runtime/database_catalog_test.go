@@ -176,6 +176,7 @@ func TestDatabaseCatalogBatchProjectsEarlierUsers(t *testing.T) {
 	pod := c.objects[oldRef].DeepCopy()
 	pod.SetName(ref.Name)
 	pod.SetNamespace(ref.Namespace)
+	_ = unstructured.SetNestedSlice(pod.Object, []any{map[string]any{"name": "mongo"}}, "spec", "containers")
 	db := &databaseFake{planFakeClient: &planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: pod}}}
 	e.Client = db
 	b := a

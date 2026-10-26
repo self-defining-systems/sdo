@@ -53,8 +53,8 @@ func (e PlanExecutor) verifyStructuredWrites(ctx context.Context, result PlanApp
 			return fmt.Errorf("structured write observation unknown: UID changed or absent")
 		}
 		for _, field := range planPatchFields(patch) {
-			b, bok := patch.Before.Object[field]
-			a, aok := patch.After.Object[field]
+			b, bok := planConfigurationField(patch.Before, field)
+			a, aok := planConfigurationField(patch.After, field)
 			v, vok := live.Object[field]
 			if !planFieldsMatch(b, bok, a, aok, v, vok, false) {
 				return fmt.Errorf("structured write observation unknown: intended field value not observed")
