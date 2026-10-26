@@ -53,7 +53,7 @@ type adoptionServiceAPI struct {
 }
 
 func (a *adoptionServiceAPI) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
-	if serveCoreDiscovery(writer, request) {
+	if serveTestDiscovery(writer, request) {
 		return
 	}
 	writer.Header().Set("Content-Type", "application/json")

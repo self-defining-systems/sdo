@@ -153,6 +153,7 @@ func TestHermeticAdoptedHostPortRepairLearnsAndReplays(t *testing.T) {
 	pulled := "docker.io/example/hotelreservation@sha256:" + strings.Repeat("a", 64)
 	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "search-1", Namespace: "app", Labels: labelsOf}, Spec: live.Spec.Template.Spec, Status: corev1.PodStatus{Phase: corev1.PodRunning, ContainerStatuses: []corev1.ContainerStatus{{Name: "hotel-reserv-search", Image: "example/hotelreservation:latest", ImageID: pulled, Ready: true}}}}
 	client := fake.NewSimpleClientset(live, pod)
+	sourceClient := bridgeFake(t, client)
 
 	// install-existing: capture adoption evidence into the broker ledger.
 	evidence, ok, err := (install.AdoptionCapture{Client: client, ManifestPaths: paths}).Evidence(ctx, repo, base, "app")
@@ -206,7 +207,7 @@ func TestHermeticAdoptedHostPortRepairLearnsAndReplays(t *testing.T) {
 	}
 	ref := sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "app", Name: "search"}
 	open := capture()
-	diff, err := (LiveReadView{DetectionContext: open, Source: source, SourceCommit: locked, Client: client}).DiffAgainstSource(ref)
+	diff, err := (LiveReadView{DetectionContext: open, Source: source, SourceCommit: locked, Client: sourceClient}).DiffAgainstSource(ref)
 	if err != nil {
 		t.Fatalf("first encounter cannot compare adopted Deployment with accepted source: %v", err)
 	}
@@ -225,7 +226,7 @@ func TestHermeticAdoptedHostPortRepairLearnsAndReplays(t *testing.T) {
 	p := hostPortConflict{}
 	corpus := sdktest.CorpusCase{Open: open, Fixed: fixed, Healthy: fixed, Bindings: program.Bindings{Objects: program.ObjectBindings{"deployment": ref}}}
 	for phase, snapshot := range map[string]sdktest.Snapshot{"open": open, "fixed": fixed} {
-		recorder := &sdktest.RecordingReadView{ReadView: LiveReadView{DetectionContext: snapshot, Source: source, SourceCommit: locked, Client: client}}
+		recorder := &sdktest.RecordingReadView{ReadView: LiveReadView{DetectionContext: snapshot, Source: source, SourceCommit: locked, Client: sourceClient}}
 		if _, err := recorder.DiffAgainstSource(ref); err != nil {
 			t.Fatal(err)
 		}
@@ -243,7 +244,7 @@ func TestHermeticAdoptedHostPortRepairLearnsAndReplays(t *testing.T) {
 		t.Fatal(err)
 	}
 	repeat := capture()
-	view := LiveReadView{DetectionContext: repeat, Source: source, SourceCommit: locked, Client: client}
+	view := LiveReadView{DetectionContext: repeat, Source: source, SourceCommit: locked, Client: sourceClient}
 	bindings := program.Bindings{Objects: program.ObjectBindings{"deployment": ref}}
 	plan, err := p.Mitigate(ctx, view, bindings)
 	if err != nil || len(plan.Actions) != 1 {
@@ -258,7 +259,7 @@ func TestHermeticAdoptedHostPortRepairLearnsAndReplays(t *testing.T) {
 	if err != nil || after.Spec.Template.Spec.Containers[0].Ports[0].HostPort != 0 || after.Spec.Template.Spec.Containers[0].Image != "example/hotelreservation:latest" {
 		t.Fatalf("repeat did not restore accepted source: %+v %v", after, err)
 	}
-	verdict, err := p.Diagnose(ctx, LiveReadView{DetectionContext: capture(), Source: source, SourceCommit: locked, Client: client}, bindings)
+	verdict, err := p.Diagnose(ctx, LiveReadView{DetectionContext: capture(), Source: source, SourceCommit: locked, Client: sourceClient}, bindings)
 	if err != nil || verdict.Result != program.NoMatch {
 		t.Fatalf("source contradiction remains after the repeat: %+v %v", verdict, err)
 	}
