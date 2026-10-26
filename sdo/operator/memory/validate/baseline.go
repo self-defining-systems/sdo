@@ -56,10 +56,10 @@ func selectCompileBaseline(ctx context.Context, request Request) (Request, error
 		}
 		request.HealthyBaseline = filepath.Join(capture, "healthy")
 		if capture == "" {
-			return Request{}, &Failure{Diagnostics: []Diagnostic{healthyCaptureDiagnostic("controller healthy capture is unavailable")}}
+			return Request{}, &Failure{Diagnostics: []Diagnostic{healthyCaptureDiagnostic("controller pre-incident healthy capture is unavailable")}}
 		}
 		if _, err := os.Stat(filepath.Join(request.HealthyBaseline, "healthy.json")); err != nil {
-			return Request{}, &Failure{Diagnostics: []Diagnostic{healthyCaptureDiagnostic("controller healthy capture is unavailable")}}
+			return Request{}, &Failure{Diagnostics: []Diagnostic{healthyCaptureDiagnostic("controller pre-incident healthy capture is unavailable")}}
 		}
 	}
 	return request, nil
