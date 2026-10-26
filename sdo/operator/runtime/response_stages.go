@@ -26,6 +26,7 @@ type IncidentState struct {
 	UnexplainedFindings []sdk.Finding
 	Result              *IncidentResult
 	RepairActions       []RepairActionReceipt
+	ProgramToolCalls    []ToolCall
 }
 
 // RunResponseStages stops when no findings remain. Every attempted stage has a

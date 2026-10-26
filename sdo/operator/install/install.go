@@ -2,6 +2,7 @@ package install
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os/exec"
@@ -15,6 +16,7 @@ import (
 	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 )
 
@@ -348,14 +350,27 @@ func (i Installer) ensureBase(ctx context.Context, cfg Config, p Plan) error {
 			return fmt.Errorf("ensure controller namespace: %w", err)
 		}
 	}
-	if _, err := i.Client.CoreV1().PersistentVolumeClaims(p.PVC.Namespace).Create(ctx, p.PVC, metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
-		return fmt.Errorf("create repository PVC: %w", err)
+	labelPatch, err := json.Marshal(map[string]any{"metadata": map[string]any{"labels": map[string]string{"app.kubernetes.io/managed-by": "sdo", ApplicationNamespaceLabel: cfg.Namespace}}})
+	if err != nil {
+		return err
+	}
+	_, err = i.Client.CoreV1().PersistentVolumeClaims(p.PVC.Namespace).Create(ctx, p.PVC, metav1.CreateOptions{})
+	if apierrors.IsAlreadyExists(err) {
+		_, err = i.Client.CoreV1().PersistentVolumeClaims(p.PVC.Namespace).Patch(ctx, p.PVC.Name, types.MergePatchType, labelPatch, metav1.PatchOptions{})
+	}
+	if err != nil {
+		return fmt.Errorf("ensure repository PVC ownership: %w", err)
 	}
 	for _, sa := range p.ServiceAccounts {
-		if _, err := i.Client.CoreV1().ServiceAccounts(sa.Namespace).Create(ctx, sa, metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
-			return fmt.Errorf("create ServiceAccount %s: %w", sa.Name, err)
+		_, err := i.Client.CoreV1().ServiceAccounts(sa.Namespace).Create(ctx, sa, metav1.CreateOptions{})
+		if apierrors.IsAlreadyExists(err) {
+			_, err = i.Client.CoreV1().ServiceAccounts(sa.Namespace).Patch(ctx, sa.Name, types.MergePatchType, labelPatch, metav1.PatchOptions{})
+		}
+		if err != nil {
+			return fmt.Errorf("ensure ServiceAccount %s ownership: %w", sa.Name, err)
 		}
 	}
+
 	if err := i.ensurePermissiveNamespaces(ctx, cfg); err != nil {
 		return err
 	}
@@ -399,7 +414,7 @@ func (i Installer) ensureBase(ctx context.Context, cfg Config, p Plan) error {
 	if err := i.ensurePermissiveClusterGrants(ctx, p); err != nil {
 		return err
 	}
-	_, err := i.Client.CoreV1().Secrets(cfg.controlNamespace()).Get(ctx, cfg.CredentialsSecret, metav1.GetOptions{})
+	_, err = i.Client.CoreV1().Secrets(cfg.controlNamespace()).Get(ctx, cfg.CredentialsSecret, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
 		if len(cfg.Credentials) == 0 {
 			return fmt.Errorf("credentials Secret %q is missing and no credentials were supplied", cfg.CredentialsSecret)

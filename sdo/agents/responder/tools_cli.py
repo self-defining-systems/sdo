@@ -128,9 +128,9 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="sdo",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="Earlier stages’ actions and results are in prior_stages. "
-        "Build on them; do not repeat verified repairs. "
-        "The complete incident facts retain apply receipts and post-apply diagnoses.\n\n"
+        epilog="prior_stages holds earlier stages’ actions and results; "
+        "build on them, don't repeat verified repairs. "
+        "Full incident facts keep apply receipts and post-apply diagnoses.\n\n"
         "Examples (replace names with incident resources):\n  " + "\n  ".join(CLI_EXAMPLES),
     )
     commands = parser.add_subparsers(dest="command", required=True)
@@ -184,7 +184,7 @@ def _parser() -> argparse.ArgumentParser:
     commands.add_parser("apply", help="apply a previously planned repair").add_argument("plan_ids", nargs="+")
     mitigate = commands.add_parser(
         "mitigate",
-        help="apply several independent options in one call; overlapping options refused; show progress and full JSON",
+        help="apply independent options in one call; overlaps refused; shows progress and full JSON",
         description=(
             "Apply several independent options in one call; overlapping object write sets are refused before writes. "
             "Use repeated --option ID followed by that option's --param NAME=VALUE, or --selection-set FILE "
@@ -245,10 +245,12 @@ def _parser() -> argparse.ArgumentParser:
     ).add_argument("ref", metavar="Kind/namespace/name")
     act = commands.add_parser(
         "act",
-        help="record a live mutation; show progress and a complete JSON report",
+        help=("record one command; outer shell chains run separately; shows progress and a complete JSON report"),
         description=(
             "Run one live mutation and record its repair receipt (target, resources, timing, outcome and "
-            "command line). The command's exit code is returned. Do not hand-write receipts."
+            "command line). The command's exit code is returned. Do not hand-write receipts. "
+            "When an admission control blocks recovery and its backend is gone, restore the backend if you can. "
+            "Otherwise a scoped fail-open or removal that restores availability is acceptable; report it."
         ),
         epilog="Example: " + ACT_EXAMPLE,
     )
@@ -268,6 +270,8 @@ def _parser() -> argparse.ArgumentParser:
         help="read cached controller verification; optionally await a stable verdict",
         description="Reads the controller's cached health and inventory verdict immediately. "
         "Pending observation windows, including unproven synthetic scenarios, are not healthy. "
+        "Fresh deployment-rollout-pending findings name owned ReplicaSet/Pod blockers and old-template Pods, "
+        "including after recorded actions; inspect their evidence before repeating workload writes. "
         "Wait on SDO's verification instead of sleeping. After closure, incident_verified is an "
         "informational warning on every response; reads and reports remain available, while mutations are rejected. "
         "After verified closure, report grace and outcome/reflection work continue during maintenance pauses.",

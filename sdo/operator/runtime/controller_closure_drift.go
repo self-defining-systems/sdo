@@ -16,14 +16,35 @@ import (
 func (c *Controller) verifyClosureDrift(ctx context.Context, now time.Time, snapshot sdk.DetectionContext) (bool, []sdk.Finding) {
 	return c.verifyClosureDriftWithResult(ctx, now, snapshot, nil)
 }
-func (c *Controller) verifyClosureDriftWithResult(ctx context.Context, now time.Time, snapshot sdk.DetectionContext, result *IncidentResult) (bool, []sdk.Finding) {
+func (c *Controller) verifyClosureDriftWithResult(ctx context.Context, now time.Time, snapshot sdk.DetectionContext, result *IncidentResult, rolloutRefs ...sdk.ObjectRef) (bool, []sdk.Finding) {
 	c.mu.Lock()
 	findings := append([]sdk.Finding(nil), c.currentIncidentRequest.Findings...)
 	if result == nil {
 		result = c.currentIncidentResult
 	}
+	namespace := c.currentIncidentRequest.Namespace
+	for _, finding := range findings {
+		rolloutRefs = append(rolloutRefs, finding.PrimaryResource)
+		rolloutRefs = append(rolloutRefs, finding.RelatedResources...)
+	}
+	for _, state := range c.tracker.Snapshot() {
+		if state.Active {
+			rolloutRefs = append(rolloutRefs, state.Finding.PrimaryResource)
+			rolloutRefs = append(rolloutRefs, state.Finding.RelatedResources...)
+		}
+	}
+	if result != nil {
+		for _, action := range result.RepairActions {
+			rolloutRefs = append(rolloutRefs, action.Resources...)
+		}
+	}
 	clear, unresolvedFindings := c.verifySourceInventoryLocked(result)
 	c.mu.Unlock()
+	rollouts := closureRolloutFindings(snapshot, namespace, rolloutRefs)
+	if len(rollouts) > 0 {
+		clear = false
+		unresolvedFindings = append(unresolvedFindings, rollouts...)
+	}
 	active := map[string][]sdk.Finding{}
 	errors := map[string]error{}
 	for _, finding := range findings {
@@ -89,8 +110,5 @@ func (c *Controller) closureSourceRestored(ctx context.Context, snapshot sdk.Det
 		}
 	}
 	diff, err := c.drift.View(snapshot).DiffAgainstSource(finding.PrimaryResource)
-	if diff.SourceAbsent {
-		return err == nil && !diff.Changed, err
-	}
-	return err == nil && (driftFieldsRestored(diff, events) || (!diff.Changed && diff.Text == "")), err
+	return err == nil && sourceDriftRestored(diff, events), err
 }

@@ -85,6 +85,7 @@ type Controller struct {
 	drift                       *DriftControllerConfig
 	driftEvents                 []sdk.DriftEvent
 	sourceInventory             *SourceInventory
+	installEnvironment          *contracts.NamespaceOnboarding
 	pendingOnboarding           *contracts.NamespaceOnboarding
 	onboardingReachability      *onboardingReachabilityState
 	onboardingClient            kubernetes.Interface
@@ -1207,15 +1208,21 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 	var guard *apihistory.MutationObservation
 	release := func() {}
 	safe := true
+	var closureGuard *responderClosureGuard
 	if early {
-		guard, release, safe = acquireClosureGuard(loop)
-	} else if loop != nil && loop.MutationGate != nil {
+		closureGuard, release, safe = acquireClosureGuard(loop)
+		if safe {
+			guard = closureGuard.observation
+		}
+	} else if loop != nil {
 		var err error
-		guard, err = loop.MutationGate.TryObserve()
-		if err != nil || guard == nil {
+		guard, err = loop.observeMutations()
+		if err != nil {
 			return
 		}
-		release = func() { guard.Close() }
+		if guard != nil {
+			release = func() { guard.Close() }
+		}
 	}
 	defer release()
 	if snapshot == nil {
@@ -1228,7 +1235,20 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 		}
 	}
 	generation := observationGeneration(snapshot)
-	driftClear, driftFindings := c.verifyClosureDrift(ctx, now, snapshot)
+	var rolloutRefs []sdk.ObjectRef
+	if early && safe && loop != nil {
+		// acquireClosureGuard holds the responder locks and loads controller-owned
+		// external action receipts, including writes before the final worker report.
+		c.mu.Lock()
+		request := cloneIncidentRequest(c.currentIncidentRequest)
+		c.mu.Unlock()
+		if request != nil {
+			for _, action := range closureGuard.resultSnapshot(*request, now).RepairActions {
+				rolloutRefs = append(rolloutRefs, action.Resources...)
+			}
+		}
+	}
+	driftClear, driftFindings := c.verifyClosureDriftWithResult(ctx, now, snapshot, nil, rolloutRefs...)
 	c.mu.Lock()
 	if early && safe && guard != nil && c.closureMutationRevision != guard.Revision {
 		c.closureMutationRevision = guard.Revision
@@ -1407,7 +1427,7 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 	}
 	if early {
 		closure.ResponderCompletedAt = verifiedAt
-		closure.Result = earlyResultSnapshot(loop, *c.currentIncidentRequest, verifiedAt)
+		closure.Result = closureGuard.resultSnapshot(*c.currentIncidentRequest, verifiedAt)
 		if len(closure.Request.PriorStages) > 0 {
 			merged, mergeErr := responsePipelineResult(&IncidentState{Request: closure.Request, PriorStages: closure.Request.PriorStages, Result: closure.Result}, closure.DispatchedAt, verifiedAt)
 			if mergeErr != nil {

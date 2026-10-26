@@ -662,9 +662,6 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 					result := incidentResultState(&contractsv1alpha1.IncidentResult{RepairActions: rows})
 					return result.RepairActions, pending, revision, nil
 				}
-				controller.mu.Lock()
-				controller.responderLoop = loop
-				controller.mu.Unlock()
 				loop.VerifyResult = func(ctx context.Context, result IncidentResult) ToolResponse {
 					if controller == nil {
 						return ToolResponse{Command: "verify", Error: "controller verification is unavailable"}
@@ -687,6 +684,9 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 					return LiveReadView{DetectionContext: snapshot, Context: ctx, Client: bootstrapProvider.Client, DatabaseExecConfig: planExecConfig, ProtectedNamespace: protectedNamespace, Prober: primitiveProber,
 						Source: planSource, SourceCommit: request.SourceCommit, Baseline: request.StateChanges, BaselineSource: stateTracker}
 				}
+				controller.mu.Lock()
+				controller.responderLoop = loop
+				controller.mu.Unlock()
 				return loop
 			},
 		}

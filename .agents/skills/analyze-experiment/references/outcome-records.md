@@ -130,6 +130,19 @@ notes and scripts live under `.sdo/playbooks/<id>/`. Ownership remains judge hea
 responder incident/playbooks, and controller outcomes. Check reflection paths and
 accepted commits to identify learned files. Do not infer Go-program credit from
 shell notes. Script timeouts/crashes are detector errors, never repaired faults.
+
+Controller-observed API repair receipts use `kind=kubernetes-api` and stable
+`sdo-api-<digest>` IDs. They recover writes made outside the recorded-action
+wrapper from paired incident-bound proxy observations. Object responses must
+match the exact resource identity; deletes require a later direct GET returning
+404. Dry runs, streams/exec, failed or partial requests, dropped/stale histories
+and writes outside the incident window do not supply receipts. A stopped writer
+may leave an open manifest: complete durable request pairs are positive facts,
+never evidence of a complete replay history. These receipts still need fresh
+independent finding clearance through the unchanged verified-cause gate.
+Opaque external commands continue to require recorded-action or RunScript
+receipts. The script replay basis remains `observed-transition`.
+
 LRN observation conformance adds `OutcomeRecord.undetected_causes` (field51), each with one resource,
 original successful `repair_action_id`, open/fixed configuration digests and observation times. These
 are controller-captured same-UID transitions on repaired resources that no opening finding/cause
@@ -165,3 +178,9 @@ observations and no incident work remain required, followed by the independent
 benchmark traffic oracle. Shell has no Go prober/scenario-window requirement;
 Go admission retains both. Missing, stale, errored or incomplete shell evidence
 blocks injection, including a nonzero script before its second firing run.
+
+Successful global closure also filters the controller's executable cause-work list
+through the shared independent repair gate. Unverified claimed causes retain
+their original resources as unassigned `question/evidence_gap` items before
+reflection authors candidates; aggregate recovery never makes them executable
+drafting obligations. Failed-outcome projection keeps its existing handling.

@@ -25,7 +25,7 @@ Mutation files contain these generated top-level arrays:
 ## General help
 
 ```text
-Earlier stages’ actions and results are in prior_stages. Build on them; do not repeat verified repairs. The complete incident facts retain apply receipts and post-apply diagnoses.
+prior_stages holds earlier stages’ actions and results; build on them, don't repeat verified repairs. Full incident facts keep apply receipts and post-apply diagnoses.
 
 Examples (replace names with incident resources):
   sdo source Deployment/app/api
@@ -148,7 +148,7 @@ Complete report fields (`details_file`): `actions[].{application_id, targeted_he
 
 ## mitigate
 
-apply several independent options in one call; overlapping options refused; show progress and full JSON
+apply independent options in one call; overlaps refused; shows progress and full JSON
 
 ```text
 sdo mitigate [-h] [--finding FINGERPRINT] [--rounds ROUNDS] [--selection FILE] [--selection-set FILE] [--option ID] [--param NAME=VALUE] [option]
@@ -198,13 +198,13 @@ Key JSON fields: `source (accepted Kubernetes object)`.
 
 ## act
 
-record a live mutation; show progress and a complete JSON report
+record one command; outer shell chains run separately; shows progress and a complete JSON report
 
 ```text
 sdo act [-h] --resource Kind/namespace/name [--summary SUMMARY] [--irreversible] ...
 ```
 
-Run one live mutation and record its repair receipt (target, resources, timing, outcome and command line). The command's exit code is returned. Do not hand-write receipts.
+Run one live mutation and record its repair receipt (target, resources, timing, outcome and command line). The command's exit code is returned. Do not hand-write receipts. When an admission control blocks recovery and its backend is gone, restore the backend if you can. Otherwise a scoped fail-open or removal that restores availability is acceptable; report it.
 
 - `--resource`: object the command mutates (Kind/name when cluster-scoped); repeat for each one
 - `--summary`: one line describing the repair
@@ -225,7 +225,7 @@ read cached controller verification; optionally await a stable verdict
 sdo verify [-h] [--wait SECONDS]
 ```
 
-Reads the controller's cached health and inventory verdict immediately. Pending observation windows, including unproven synthetic scenarios, are not healthy. Wait on SDO's verification instead of sleeping. After closure, incident_verified is an informational warning on every response; reads and reports remain available, while mutations are rejected. After verified closure, report grace and outcome/reflection work continue during maintenance pauses.
+Reads the controller's cached health and inventory verdict immediately. Pending observation windows, including unproven synthetic scenarios, are not healthy. Fresh deployment-rollout-pending findings name owned ReplicaSet/Pod blockers and old-template Pods, including after recorded actions; inspect their evidence before repeating workload writes. Wait on SDO's verification instead of sleeping. After closure, incident_verified is an informational warning on every response; reads and reports remain available, while mutations are rejected. After verified closure, report grace and outcome/reflection work continue during maintenance pauses.
 
 - `--wait`: wait for stable verification, a new/reactivated finding, or this timeout (0: cached and instant)
 

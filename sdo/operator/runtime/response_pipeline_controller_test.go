@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"sdo.dev/operator/memory/validate"
 	"sdo.dev/operator/sdk"
 )
 
@@ -76,6 +77,12 @@ func TestHermeticResponsePipelineClearsTwoFaultsThroughControllerClosure(t *test
 		derived, err := (ProtoOutcomeDeriver{}).Derive(context.Background(), closure, "", "test", "test")
 		if err != nil {
 			t.Fatal(err)
+		}
+		if got := validate.VerifiedReflectionCauses(derived.Record); len(got) != 2 {
+			t.Fatalf("real controller closure lost independently verified deterministic causes: %v", got)
+		}
+		if got := partialRepairCauses(derived.Record); len(got) != 2 {
+			t.Fatalf("deterministic applications lost scoped reflection evidence: %v", got)
 		}
 		if derived.Record.Classification != "success" || len(derived.Record.PriorStages) != 1 || derived.Record.ResolutionPath != "deterministic" || len(typed.GetRequest().GetPlaybookCoverage().GetMatches()) != 2 {
 			t.Fatalf("typed outcome lost pipeline evidence: %v", derived.Record)

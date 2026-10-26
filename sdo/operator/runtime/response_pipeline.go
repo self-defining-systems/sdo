@@ -77,7 +77,12 @@ func (c *Controller) runResponsePipeline(ctx context.Context, request IncidentRe
 		c.responseStagesRunning = false
 		c.mu.Unlock()
 		result, err := c.dispatcher.Dispatch(ctx, request)
-		return result, cloneStageReports(request.PriorStages), err
+		state := &IncidentState{Request: request, PriorStages: cloneStageReports(request.PriorStages), Result: &result}
+		merged, encodeErr := responsePipelineResult(state, result.Timing.StartedAt, result.Timing.CompletedAt)
+		if err == nil {
+			err = encodeErr
+		}
+		return merged, cloneStageReports(request.PriorStages), err
 	}
 	state := &IncidentState{Request: request, Findings: append([]sdk.Finding(nil), request.Findings...), Coverage: cloneCoverage(request.PlaybookCoverage)}
 	var stages []ResponseStage
@@ -134,6 +139,7 @@ func (c *Controller) runResponsePipeline(ctx context.Context, request IncidentRe
 func responsePipelineResult(state *IncidentState, started, completed time.Time) (IncidentResult, error) {
 	result := IncidentResult{SchemaVersion: ProtocolSchemaVersion, IncidentID: state.Request.IncidentID, Status: IncidentCompleted, Timing: TimingMetrics{StartedAt: started, CompletedAt: completed}, ResolutionPath: "deterministic", UnresolvedFindings: append([]sdk.Finding(nil), state.Findings...)}
 	result.ProgramRuns = append([]ProgramRun(nil), state.Request.InitialProgramRuns...)
+	result.ProgramToolCalls = append([]ToolCall(nil), state.ProgramToolCalls...)
 	seenApplication := map[string]bool{}
 	seenCause := map[string]bool{}
 	for _, report := range state.PriorStages {
@@ -225,6 +231,17 @@ func responsePipelineResult(state *IncidentState, started, completed time.Time) 
 		}
 		for _, run := range prior.ProgramRuns {
 			result.ProgramRuns = append(result.ProgramRuns, programRunState(run))
+		}
+		seenCalls := map[ToolCall]bool{}
+		for _, call := range result.ProgramToolCalls {
+			seenCalls[call] = true
+		}
+		for _, call := range prior.ProgramToolCalls {
+			recorded := toolCallState(call)
+			if !seenCalls[recorded] {
+				result.ProgramToolCalls = append(result.ProgramToolCalls, recorded)
+				seenCalls[recorded] = true
+			}
 		}
 	}
 	return result, nil

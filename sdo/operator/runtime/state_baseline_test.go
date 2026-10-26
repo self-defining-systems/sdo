@@ -125,6 +125,10 @@ func field(change *StateChange, name string) *StateFieldChange {
 func TestStateChangesShowOnlyWhatChangedSinceTheHealthyBaseline(t *testing.T) {
 	ctx := context.Background()
 	client := fake.NewSimpleClientset(hotelObjects()...)
+	// Deployment provenance must not exempt an application Service from drift.
+	deployed, _ := client.CoreV1().Services(hotel).Get(ctx, "frontend", metav1.GetOptions{})
+	deployed.ManagedFields = []metav1.ManagedFieldsEntry{{Manager: "sdo-deployer", Operation: metav1.ManagedFieldsOperationApply}}
+	_, _ = client.CoreV1().Services(hotel).Update(ctx, deployed, metav1.UpdateOptions{})
 	tracker := startedTracker(t, client)
 	start := time.Date(2026, 9, 27, 10, 0, 0, 0, time.UTC)
 	tracker.Observe(start, true)

@@ -88,7 +88,7 @@ func nativeBrokerFromLaunch(_ context.Context, config *contracts.ControllerConfi
 	return &NativeIncidentBroker{
 		Repository: repository, LedgerRoot: ledgerRoot,
 		CodePath: codePathConfigFromContract(config.GetCodePath()),
-		Deriver:  ProtoOutcomeDeriver{}, ResponderBackend: config.GetResponderBackend(), ResponderModel: config.GetResponderModel(),
+		Deriver:  ProtoOutcomeDeriver{SessionRoot: config.GetRepositoryMountPath()}, ResponderBackend: config.GetResponderBackend(), ResponderModel: config.GetResponderModel(),
 		ForceReflection: config.GetForceReflection(), PhaseLog: os.Stdout,
 		LateFindingsVerifier: latefindings.Store{Client: client, Namespace: controlNamespace},
 		SessionRoot:          config.GetRepositoryMountPath(), SessionRetention: DefaultSessionRetention,

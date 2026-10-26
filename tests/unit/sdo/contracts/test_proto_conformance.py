@@ -82,3 +82,15 @@ def test_detector_status_validation_includes_unconfirmed_pending() -> None:
     field = contract_proto.DetectorEvaluation.DESCRIPTOR.fields_by_name["status"]
     permitted = getattr(field.GetOptions().Extensions[validate_pb2.field].string, "in")
     assert set(permitted) == {"firing", "clear", "error", "pending"}
+
+
+def test_install_environment_observations_round_trip_as_typed_contracts() -> None:
+    observation = contract_proto.InstallEnvironmentObject(
+        ref=contract_proto.ObjectRef(api_version="v1", kind="ConfigMap", namespace="app", name="environment"),
+        digest="sha256:" + "a" * 64,
+    )
+    record = contract_proto.NamespaceOnboarding(environment_objects=[observation])
+    encoded = to_canonical_json(record)
+    decoded = parse_json(encoded, contract_proto.NamespaceOnboarding())
+    assert decoded.environment_objects[0] == observation
+    assert not decoded.HasField("established_at")

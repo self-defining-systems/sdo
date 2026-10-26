@@ -16,12 +16,18 @@ import (
 
 const DefaultStageRolloutTimeout = 30 * time.Second
 
+// DefaultStageObservationCeiling bounds the post-repair wait for remaining
+// health findings, whatever their detectors' clearing horizons.
+const DefaultStageObservationCeiling = 60 * time.Second
+
 // DeterministicResponseStage uses the same plan/apply and immutable receipt
 // boundary as the responder, operating only on accepted registry programs.
 type DeterministicResponseStage struct {
-	NewLoop        func(IncidentRequest) *ResponderLoop
-	Restore        func(context.Context, IncidentRequest, *ResponderLoop) error
-	RolloutTimeout time.Duration
+	NewLoop             func(IncidentRequest) *ResponderLoop
+	Restore             func(context.Context, IncidentRequest, *ResponderLoop) error
+	RolloutTimeout      time.Duration
+	ObservationInterval time.Duration
+	ObservationCeiling  time.Duration
 }
 
 type responseStageProgress struct {
@@ -43,7 +49,10 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 		return report, nil
 	}
 	defer loop.CloseWorkingPrograms()
-	defer func() { state.RepairActions = loop.ApplicationRepairReceipts(state.RepairActions) }()
+	defer func() {
+		state.RepairActions = loop.ApplicationRepairReceipts(state.RepairActions)
+		state.ProgramToolCalls = loop.ToolCalls()
+	}()
 	if stage.Restore != nil {
 		if err := stage.Restore(ctx, state.Request, loop); err != nil {
 			return report, err
@@ -68,11 +77,30 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 	// Always reobserve after recovery. A recorded attempt is never replayed,
 	// including one interrupted between the write and its completed receipt.
 	if progress.Report != nil {
+		loop.operationMu.Lock()
+		loop.mu.Lock()
+		var selected []selectedPlan
+		for _, attempt := range report.Mitigations {
+			if attempt.GetResult() == "applied_cleared" && attempt.GetProgramRevision() == loop.programRevision(attempt.GetPlaybookId()) {
+				selected = append(selected, selectedPlan{programID: attempt.PlaybookId, revision: attempt.ProgramRevision, bindings: programBindingsState(attempt.Bindings)})
+			}
+		}
 		response := ToolResponse{}
-		loop.verify(ctx, nil, &response)
+		loop.verify(ctx, selected, &response)
 		updateStageFindings(state, response)
+		for _, attempt := range report.Mitigations {
+			for _, run := range response.ProgramRuns {
+				if attempt.GetResult() == "applied_cleared" && run.ProgramID == attempt.PlaybookId && run.ProgramRevision == attempt.ProgramRevision && run.Bindings.Equal(programBindingsState(attempt.Bindings)) {
+					fresh := proto.Clone(attempt).(*contracts.StageMitigation)
+					fresh.PostApplyDiagnose = programRunContract(run)
+					clearVerifiedStageTargets(state, fresh, attempt.ClearedFindingFingerprints, response)
+				}
+			}
+		}
+		loop.mu.Unlock()
+		loop.operationMu.Unlock()
 		if progress.Complete {
-			return report, nil
+			return report, save(true)
 		}
 	}
 	if state.Coverage == nil {
@@ -199,7 +227,11 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 		planResponse := ToolResponse{}
 		loop.matchedViews[matchedViewKey(match.PlaybookId, bindings)] = view
 		delete(loop.matchedPlans, matchedViewKey(match.PlaybookId, bindings))
-		loop.plan(ctx, ToolRequest{ProgramID: match.PlaybookId, Bindings: bindings, FindingFingerprints: match.ExplainedFindingFingerprints}, &planResponse)
+		loop.mu.Unlock()
+		loop.operationMu.Unlock()
+		planResponse = loop.Handle(ctx, ToolRequest{Command: "plan", ProgramID: match.PlaybookId, Bindings: bindings, FindingFingerprints: match.ExplainedFindingFingerprints})
+		loop.operationMu.Lock()
+		loop.mu.Lock()
 		if planResponse.Error != "" {
 			attempt.Result = "apply_error"
 			attempt.Error = planResponse.Error
@@ -245,6 +277,10 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 				break
 			}
 		}
+		// Scoped executor verification and the bound post-write diagnosis are
+		// newer evidence than a retained opening incident finding. An incident
+		// detector may not be installed in this loop's health-only registry.
+		clearVerifiedStageTargets(state, attempt, match.ExplainedFindingFingerprints, applied)
 		recordStageFindingProgress(attempt, match.ExplainedFindingFingerprints, state.Findings)
 		switch {
 		case attempt.ApplyReceipt.GetRolloutPending() != nil:
@@ -260,6 +296,31 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 		}
 		if err := save(false); err != nil {
 			return report, err
+		}
+	}
+	// Once all opening faults have verified repairs, let the remaining health
+	// detectors' own windows roll over before handoff.
+	stage.awaitRepairedHealth(ctx, loop, state, report)
+	if err := ctx.Err(); err != nil {
+		return report, err
+	}
+	// Use the responder's completion verifier for final field equivalence;
+	// application success alone does not grant reflection learning authority.
+	loop.mu.Unlock()
+	loop.operationMu.Unlock()
+	loop.CreditEquivalentRepairs(ctx, loop.ApplicationRepairReceipts(state.RepairActions))
+	applications := loop.PlanApplications()
+	loop.operationMu.Lock()
+	loop.mu.Lock()
+	for _, attempt := range report.Mitigations {
+		for _, application := range applications {
+			if application.ID == attempt.GetApplyReceipt().GetApplicationId() {
+				receipt, err := recordedPlanContract(application)
+				if err != nil {
+					return report, err
+				}
+				attempt.ApplyReceipt = receipt
+			}
 		}
 	}
 	if err := save(true); err != nil {
@@ -426,6 +487,106 @@ func recordStageFindingProgress(attempt *contracts.StageMitigation, covered []st
 			attempt.RemainingFindingFingerprints = append(attempt.RemainingFindingFingerprints, fp)
 		} else {
 			attempt.ClearedFindingFingerprints = append(attempt.ClearedFindingFingerprints, fp)
+		}
+	}
+}
+
+// Only a completed, independently verified application may discharge its exact
+// authored coverage. A fresh detector still reporting that fingerprint wins.
+func clearVerifiedStageTargets(state *IncidentState, attempt *contracts.StageMitigation, covered []string, observed ToolResponse) {
+	receipt := attempt.GetApplyReceipt()
+	if !receipt.GetApplied() || receipt.GetDryRun() || receipt.GetRolledBack() || receipt.GetRolloutPending() != nil || receipt.GetError() != "" || receipt.GetRollbackError() != "" || !receipt.GetVerificationCompleted() || !receipt.GetVerificationPassed() || attempt.GetError() != "" || attempt.GetPostApplyDiagnose().GetError() != "" || attempt.GetPostApplyDiagnose().GetProgramId() != attempt.GetPlaybookId() || attempt.GetPostApplyDiagnose().GetProgramRevision() != attempt.GetProgramRevision() || !programBindingsState(attempt.GetBindings()).Equal(programBindingsState(attempt.GetPostApplyDiagnose().GetBindings())) || attempt.GetPostApplyDiagnose().GetVerdict().GetResult() != contracts.Verdict_RESULT_NO_MATCH {
+		return
+	}
+	clear := map[string]bool{}
+	for _, fp := range covered {
+		clear[fp] = true
+	}
+	for _, finding := range observed.Findings {
+		delete(clear, FindingFingerprint(finding))
+	}
+	findings := make([]sdk.Finding, 0, len(state.Findings))
+	for _, finding := range state.Findings {
+		if !clear[FindingFingerprint(finding)] {
+			findings = append(findings, finding)
+		}
+	}
+	state.Findings = findings
+	state.refreshUnexplained()
+}
+
+// Only new health observations after complete repairs may consume this wait.
+// Original unresolved findings, skipped/failed repairs and incident findings
+// require responder investigation immediately. The wait follows each remaining
+// detector's clearing horizon (rolling window and cadence), bounded by the
+// declared ceiling. Waiting never grants closure.
+func (stage *DeterministicResponseStage) awaitRepairedHealth(ctx context.Context, loop *ResponderLoop, state *IncidentState, report *contracts.StageReport) {
+	if len(state.Findings) == 0 || len(report.Mitigations) == 0 {
+		return
+	}
+	for _, attempt := range report.Mitigations {
+		if attempt.GetResult() != "applied_cleared" {
+			return
+		}
+	}
+	opening := map[string]bool{}
+	for _, finding := range state.Request.Findings {
+		opening[FindingFingerprint(finding)] = true
+	}
+	health := map[string]bool{}
+	for _, detector := range loop.Detectors {
+		health[detector.Spec().ID] = detector.Spec().Class == sdk.DetectorClassHealth
+	}
+	eligible := func() bool {
+		for _, finding := range state.Findings {
+			if opening[FindingFingerprint(finding)] || !health[finding.DetectorID] {
+				return false
+			}
+		}
+		return len(state.Findings) > 0
+	}
+	if !eligible() {
+		return
+	}
+	view, err := loop.snapshotView(ctx)
+	if err != nil {
+		return
+	}
+	horizons := map[string]time.Duration{}
+	for _, detector := range loop.Detectors {
+		horizons[detector.Spec().ID] = sdk.ClearingHorizon(detector, view)
+	}
+	ceiling := stage.ObservationCeiling
+	if ceiling <= 0 || ceiling > DefaultStageObservationCeiling {
+		ceiling = DefaultStageObservationCeiling
+	}
+	interval := stage.ObservationInterval
+	if interval <= 0 {
+		interval = 250 * time.Millisecond
+	}
+	started := time.Now()
+	observe, cancel := context.WithTimeout(ctx, ceiling)
+	defer cancel()
+	for eligible() {
+		var horizon time.Duration
+		for _, finding := range state.Findings {
+			horizon = max(horizon, horizons[finding.DetectorID])
+		}
+		if time.Since(started) >= horizon {
+			return
+		}
+		timer := time.NewTimer(interval)
+		select {
+		case <-observe.Done():
+			timer.Stop()
+			return
+		case <-timer.C:
+		}
+		response := ToolResponse{}
+		loop.verify(observe, nil, &response)
+		updateStageFindings(state, response)
+		if response.Error != "" {
+			return
 		}
 	}
 }

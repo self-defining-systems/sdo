@@ -48,6 +48,12 @@ func TestNativeBrokerReflectsOnlyVerifiedPartialRepair(t *testing.T) {
 			if scenario == "cold" {
 				o = coldPartialRepairOutcome(t)
 			}
+			if classification == "success" {
+				// Only the api cause has independent opening/clearance evidence.
+				// Aggregate success must not authorize the second claimed repair.
+				o.Findings = []*contracts.Finding{{DetectorId: "api-health", RuleId: "available", Status: "active", Severity: "warn", Summary: "service unavailable", Evidence: "synthetic controller observation before repair", PrimaryResource: t1Ref("api"), Fingerprint: "api-health"}}
+				o.FinalHealthDetectorState = []*contracts.DetectorEvaluation{{DetectorId: "api-health", Status: "clear", EvaluatedAt: timestamppb.New(time.Unix(102, 0))}}
+			}
 			original := proto.Clone(o)
 			native := NativeIncidentBroker{Repository: repository, LedgerRoot: t.TempDir(), ResponderBackend: "test", ResponderModel: "test", ForceReflection: true,
 				Deriver: OutcomeDeriverFunc(func(context.Context, IncidentClosure, string, string, string) (DerivedOutcome, error) {
@@ -90,8 +96,11 @@ func TestNativeBrokerReflectsOnlyVerifiedPartialRepair(t *testing.T) {
 				if classification == "failed" {
 					want = 1
 				}
-				if len(request.Outcome.ConfirmedRootCauses) != want || len(request.Outcome.RepairActions) != want || len(request.Closure.Result.ConfirmedRootCauses) != want || len(request.Closure.Result.RepairActions) != want || len(request.CauseWork) != want {
+				if len(request.Outcome.ConfirmedRootCauses) != want || len(request.Outcome.RepairActions) != want || len(request.Closure.Result.ConfirmedRootCauses) != want || len(request.Closure.Result.RepairActions) != want || len(request.CauseWork) != 1 {
 					t.Fatalf("reflection leaked unverified repair or changed full success: %v", request)
+				}
+				if request.CauseWork[0].GetCauseIndex() != 0 || len(request.CauseWork[0].GetResources()) != 1 || request.CauseWork[0].Resources[0].Name != "api" || len(request.UnassignedWork) != 1 || request.UnassignedWork[0].GetReason() != "evidence_gap" || len(request.UnassignedWork[0].GetResources()) != 1 || request.UnassignedWork[0].Resources[0].Name != "unverified" {
+					t.Fatalf("verified drafting work or original-resource evidence gap lost: %v", request)
 				}
 				if request.Outcome.Classification != classification {
 					t.Fatal("reflection upgraded aggregate classification")

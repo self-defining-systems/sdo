@@ -44,7 +44,15 @@ func (f fastloopObjects) Snapshot(ctx context.Context) (sdk.DetectionContext, er
 	if err != nil {
 		return nil, err
 	}
-	return sdktest.Snapshot{NamespaceName: "app", ServiceList: services.Items, PodList: pods.Items, DeploymentList: deployments.Items}, nil
+	sets, err := f.client.AppsV1().ReplicaSets("app").List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, err
+	}
+	events, err := f.client.CoreV1().Events("app").List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, err
+	}
+	return sdktest.Snapshot{NamespaceName: "app", ServiceList: services.Items, PodList: pods.Items, DeploymentList: deployments.Items, ReplicaSetList: sets.Items, EventList: events.Items}, nil
 }
 
 type fastloopDetector struct{}

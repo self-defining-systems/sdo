@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/sdktest"
 )
 
 func TestCodePathDefaultGolden(t *testing.T) {
@@ -125,5 +126,36 @@ func TestCodePathGoStagesMatchPipelineDefault(t *testing.T) {
 	}
 	if !reflect.DeepEqual(pipelineDefault, selected.Selection.ResponseStages) {
 		t.Fatalf("Go stages %v differ from PIPE default %v", selected.Selection.ResponseStages, pipelineDefault)
+	}
+}
+
+func TestCodePathDispatchRetainsSelectedCoverageWithLiveLoop(t *testing.T) {
+	for _, name := range []string{"go", "shell"} {
+		t.Run(name, func(t *testing.T) {
+			selected, err := NewCodePathRegistry().Resolve(CodePathConfig{Name: name})
+			if err != nil {
+				t.Fatal(err)
+			}
+			request := goldenRequest(t)
+			request.Findings[0].Fingerprint = "unexplained"
+			dispatcher := KubernetesJobDispatcher{
+				Registry: testIncidentRegistry(t, "responder:test"), AgentID: testIncidentAgentID(t),
+				CoverageProvider: selected.Coverage,
+				LoopFactory: func(request IncidentRequest) *ResponderLoop {
+					return NewResponderLoop(request, nil, staticProvider{snapshot: sdktest.Snapshot{}}, nil, PlanExecutor{}, 5)
+				},
+			}
+			prepared, err := dispatcher.PrepareDispatch(context.Background(), request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := 1
+			if name == "shell" {
+				want = 0
+			}
+			if prepared.PlaybookCoverage == nil || len(prepared.PlaybookCoverage.UnexplainedFindingFingerprints) != want {
+				t.Fatalf("%s dispatch lost selected coverage: %+v", name, prepared.PlaybookCoverage)
+			}
+		})
 	}
 }
