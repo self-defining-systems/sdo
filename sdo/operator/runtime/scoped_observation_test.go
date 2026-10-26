@@ -547,7 +547,7 @@ func TestScopedWebhookDefaultsChangedThenRestored(t *testing.T) {
 				t.Fatal("unreadable foreign webhook established closure")
 			}
 			current = snapshot(10)
-			f.step(t, 3)
+			f.settle(t, 3)
 			if len(f.closed) != 1 || closureOutcome(t, f.closed[0]) != "success" {
 				t.Fatal("restored foreign webhook did not independently verify")
 			}

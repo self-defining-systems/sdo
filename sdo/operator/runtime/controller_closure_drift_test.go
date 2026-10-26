@@ -112,6 +112,14 @@ func (f *closureDriftFixture) step(t *testing.T, seconds int) {
 		t.Fatal(err)
 	}
 }
+// settle steps at seconds and again once the closure stability window has
+// held, when a verified success may commit.
+func (f *closureDriftFixture) settle(t *testing.T, seconds int) {
+	t.Helper()
+	f.step(t, seconds)
+	f.step(t, seconds+int(f.c.config.ClosureStabilityWindow/time.Second))
+}
+
 func (f *closureDriftFixture) restoreSource(t *testing.T) {
 	t.Helper()
 	service, err := f.client.CoreV1().Services("app").Get(context.Background(), "reservation", metav1.GetOptions{})
@@ -157,6 +165,8 @@ func TestClosureAdmittedDriftContracts(t *testing.T) {
 					t.Fatalf("image repair closed with unresolved targetPort drift: %s", closureOutcome(t, f.closed[0]))
 				}
 				f.step(t, 6)
+			} else {
+				f.settle(t, 1)
 			}
 			if len(f.closed) != 1 {
 				t.Fatalf("closures=%d", len(f.closed))
@@ -188,7 +198,7 @@ func TestClosureDriftResolvedByRestoringSource(t *testing.T) {
 		t.Fatal("closed before source restoration")
 	}
 	f.restoreSource(t)
-	f.step(t, 2)
+	f.settle(t, 2)
 	if len(f.closed) != 1 || closureOutcome(t, f.closed[0]) != "success" {
 		t.Fatalf("source restoration did not verify: %+v", f.closed)
 	}
@@ -242,7 +252,7 @@ func TestClosureDriftRestoredFieldsIgnoreUnadmittedChanges(t *testing.T) {
 	if _, err := f.client.CoreV1().Services("app").Update(context.Background(), service, metav1.UpdateOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	f.step(t, 1)
+	f.settle(t, 1)
 	if len(f.closed) != 1 || closureOutcome(t, f.closed[0]) != "success" {
 		t.Fatalf("unadmitted changes blocked restored source fields: %+v", f.closed)
 	}

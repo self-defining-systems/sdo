@@ -141,6 +141,12 @@ func testHermeticResponderThreeFaultContinuation(t *testing.T, mitigate bool) {
 	controller.responderCompletedAt = now.Add(-time.Second)
 	controller.history = []DetectorEvaluation{{DetectorID: "availability", Status: DetectorEvaluationClear, EvaluatedAt: now}}
 	controller.maybeCloseIncident(ctx, now, nil)
+	if !controller.IncidentOpen() {
+		t.Fatal("repaired incident committed success before the stability window held")
+	}
+	later := now.Add(controller.config.ClosureStabilityWindow)
+	controller.history = append(controller.history, DetectorEvaluation{DetectorID: "availability", Status: DetectorEvaluationClear, EvaluatedAt: later})
+	controller.maybeCloseIncident(ctx, later, nil)
 	if controller.IncidentOpen() {
 		t.Fatal("repaired incident did not close")
 	}

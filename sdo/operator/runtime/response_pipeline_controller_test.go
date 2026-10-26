@@ -57,7 +57,7 @@ func TestHermeticResponsePipelineClearsTwoFaultsThroughControllerClosure(t *test
 		t.Fatal(err)
 	}
 	awaitDispatchCompletionQueued(t, controller)
-	for i := 3; i < 8; i++ {
+	for i := 3; i < 23; i++ {
 		if err := controller.Step(context.Background(), start.Add(time.Duration(i)*time.Second), nil); err != nil {
 			t.Fatal(err)
 		}

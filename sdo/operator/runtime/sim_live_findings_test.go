@@ -106,7 +106,9 @@ func runSimForeignPodDuringUnrelatedIncident(t *testing.T, seed uint64) {
 	remove := create + 15 + w.rng.IntN(5)
 	events := []simScheduleEvent{{create, simForeignPodCreate}, {create + 3, simPause}, {remove - 2, simResume}, {remove, simForeignPodDelete}}
 	seen := false
-	for tick := 0; tick < remove+30; tick++ {
+	// Closure follows removal within a few ticks plus the success soak.
+	settle := 3 + int(w.controller.config.ClosureStabilityWindow/time.Second)
+	for tick := 0; tick < remove+settle+27; tick++ {
 		w.clock.now = w.clock.now.Add(time.Second)
 		if tick == 1 {
 			w.setPort(simServiceName(0), 9999)
@@ -139,7 +141,7 @@ func runSimForeignPodDuringUnrelatedIncident(t *testing.T, seed uint64) {
 				seen = true
 			}
 		}
-		if tick >= remove+3 && (len(w.closed) != 1 || !w.idle()) {
+		if tick >= remove+settle && (len(w.closed) != 1 || !w.idle()) {
 			t.Fatalf("removed foreign Pod stranded unrelated closure: closures=%d open=%v", len(w.closed), w.controller.IncidentOpen())
 		}
 	}

@@ -200,6 +200,7 @@ func TestLatentAllHealthClearClosureRequiresRemovalOrRecordedAcceptance(t *testi
 				c.currentIncidentResult.DriftEvents[0].InvestigationReason = saved
 			}
 			step(3)
+			step(3 + int(c.config.ClosureStabilityWindow/time.Second))
 			if len(closed) != 1 || len(closed[0].FinalDetectorStates) != 1 {
 				t.Fatalf("resolved latent work did not verify: %+v", closed)
 			}

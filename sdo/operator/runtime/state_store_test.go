@@ -466,8 +466,10 @@ func TestFindingArrivingDuringIncidentIsDeferredAndRestartRecoverable(t *testing
 	case <-time.After(time.Second):
 		t.Fatal("timed out waiting for primary responder completion")
 	}
-	if err := controller.Step(ctx, start.Add(time.Second), nil); err != nil {
-		t.Fatalf("dispatch buffered secondary fault after primary completion: %v", err)
+	for _, at := range []time.Duration{time.Second, time.Second + controller.config.ClosureStabilityWindow} {
+		if err := controller.Step(ctx, start.Add(at), nil); err != nil {
+			t.Fatalf("dispatch buffered secondary fault after primary completion: %v", err)
+		}
 	}
 	deferredEffect, ok := controller.PendingDispatchEffect()
 	if !ok || len(deferredEffect.Request.Findings) != 1 || deferredEffect.Request.Findings[0].Fingerprint != "secondary-fault" {
