@@ -59,8 +59,10 @@ func TestRV10bRestoredClosureAfterSameGenerationDenial(t *testing.T) {
 			if err := first.SetIncidentBroker(&recordingIncidentBroker{}); err != nil {
 				t.Fatal(err)
 			}
-			if err := first.Step(ctx, start.Add(time.Second), nil); err != nil {
-				t.Fatal(err)
+			for _, at := range []time.Duration{time.Second, time.Second + first.config.ClosureStabilityWindow} {
+				if err := first.Step(ctx, start.Add(at), nil); err != nil {
+					t.Fatal(err)
+				}
 			}
 			state := exportState(t, first)
 			if state.PendingClosure == nil || len(state.PendingClosure.FinalDetectorStates) == 0 {

@@ -177,6 +177,9 @@ func TestControllerIntegrationInformerPersistenceAndRestart(t *testing.T) {
 	if err := restored.Step(ctx, start.Add(3200*time.Millisecond), nil); err != nil {
 		t.Fatalf("second clear: %v", err)
 	}
+	if err := restored.Step(ctx, start.Add(3200*time.Millisecond+restored.config.ClosureStabilityWindow), nil); err != nil {
+		t.Fatalf("stability window: %v", err)
+	}
 	if restored.IncidentOpen() {
 		t.Fatal("restored incident did not close after two healthy samples")
 	}

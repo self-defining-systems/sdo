@@ -330,6 +330,9 @@ func TestControllerWaitsForFreshClearSamplesInsteadOfRedispatch(t *testing.T) {
 	}
 	c.history = append(c.history, DetectorEvaluation{DetectorID: "health-objective", EvaluatedAt: now.Add(time.Second), Status: DetectorEvaluationClear})
 	c.maybeCloseIncident(context.Background(), now.Add(time.Second), snapshot)
+	settled := now.Add(time.Second + c.config.ClosureStabilityWindow)
+	c.history = append(c.history, DetectorEvaluation{DetectorID: "health-objective", EvaluatedAt: settled, Status: DetectorEvaluationClear})
+	c.maybeCloseIncident(context.Background(), settled, snapshot)
 	if c.IncidentOpen() {
 		t.Fatal("fresh clear sample did not allow verified closure")
 	}
