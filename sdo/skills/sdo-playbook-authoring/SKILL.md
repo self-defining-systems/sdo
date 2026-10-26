@@ -16,7 +16,7 @@ Read the [memory principles](../sdo-memory/SKILL.md#memory-principles) for evide
 2. For deterministic programs, read [program authoring](references/programs.md) before editing and the
    [generated program SDK](references/program-sdk.md) before choosing API types. The
    [authoring_reference](../sdo-memory/references/runtime.md#authoring_reference) tool retrieves these same
-   shipped references without searching installation directories.
+   shipped references as a section index or one section, with a file to search.
 3. For each independently verified cause, submit a diagnose program, mitigation program, a README explaining
    how to handle the fault, and detector coverage. A detector may surface multiple playbooks;
    `DetectionContext.DiffAgainstSource` observes field drift and source absence before playbook selection.

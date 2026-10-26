@@ -11,6 +11,8 @@ from pathlib import Path
 from typing import Any
 
 MAX_OUTPUT_CHARS = 3000
+# Shared byte budget for every agent-facing MCP tool reply.
+MAX_TOOL_REPLY_BYTES = 8192
 OUTPUT_ROOT = Path("/tmp/sdo")
 
 
@@ -23,14 +25,17 @@ def write_json(
     document: dict[str, Any], *, command: str, incident_id: str | None = None, root: Path | None = None
 ) -> Path:
     """Allocate a process-safe sequence in the incident's private output directory."""
-    identity = incident_id or os.environ.get("SDO_INCIDENT_ID") or "standalone"
-    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,199}", identity):
-        identity = hashlib.sha256(identity.encode()).hexdigest()
-    if not re.fullmatch(r"[a-z][a-z-]*", command):
-        raise ValueError("invalid output command")
     encoded = json.dumps(document, ensure_ascii=False, separators=(",", ":"))
-    directory = (root or OUTPUT_ROOT) / identity
-    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    return write_text(encoded, command=command, suffix="json", incident_id=incident_id, root=root)
+
+
+def write_text(
+    text: str, *, command: str, suffix: str = "txt", incident_id: str | None = None, root: Path | None = None
+) -> Path:
+    """Write one complete tool reply under the next private sequence number."""
+    if not re.fullmatch(r"[a-z][a-z-]*", command) or not re.fullmatch(r"[a-z]+", suffix):
+        raise ValueError("invalid output command")
+    directory = output_directory(incident_id=incident_id, root=root)
     with (directory / ".sequence").open("a+", encoding="utf-8") as sequence:
         fcntl.flock(sequence, fcntl.LOCK_EX)
         sequence.seek(0)
@@ -39,11 +44,48 @@ def write_json(
         sequence.truncate()
         sequence.write(str(number))
         sequence.flush()
-        path = directory / f"{number:04d}-{command}.json"
+        path = directory / f"{number:04d}-{command}.{suffix}"
         descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         with os.fdopen(descriptor, "w", encoding="utf-8") as output:
-            output.write(encoded)
+            output.write(text)
     return path
+
+
+def output_directory(*, incident_id: str | None = None, root: Path | None = None) -> Path:
+    """Return the incident's private output directory, creating it when absent."""
+    identity = incident_id or os.environ.get("SDO_INCIDENT_ID") or "standalone"
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,199}", identity):
+        identity = hashlib.sha256(identity.encode()).hexdigest()
+    directory = (root or OUTPUT_ROOT) / identity
+    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    return directory
+
+
+def session_output_root() -> Path | None:
+    """Workers set SDO_SESSION_SCRATCH to their private session work directory."""
+    directory = os.environ.get("SDO_SESSION_SCRATCH")
+    return Path(directory) / "sdo-reports" if directory else None
+
+
+def bound_reply(text: str, *, tool: str, budget: int = MAX_TOOL_REPLY_BYTES) -> str:
+    """Keep an agent-facing reply within budget; a larger reply is written to a file the agent can search.
+
+    The session resends every reply on each later model request, so the
+    printed part names the size and the file instead of a truncated copy.
+    """
+    if len(text.encode("utf-8")) <= budget:
+        return text
+    name = re.sub(r"[^a-z]+", "-", tool.lower()).strip("-") or "tool"
+    path = write_text(text, command=name, root=session_output_root())
+    lines = text.splitlines()
+    notice = (
+        f"{tool} reply: {len(text.encode('utf-8'))} bytes, {len(lines)} lines; over the {budget}-byte "
+        "reply budget, so it is saved whole to a file. Search or extract what you need from that file; "
+        "the head below is partial.\n"
+        f"Full reply: {path}\nHead:\n"
+    )
+    head = text.encode("utf-8")[: min(1024, budget // 2)].decode("utf-8", errors="ignore")
+    return notice + head + "\n…"
 
 
 def summarize_response(response: dict[str, Any], details_file: str) -> dict[str, Any]:
