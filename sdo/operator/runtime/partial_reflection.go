@@ -8,6 +8,7 @@ import (
 
 	"google.golang.org/protobuf/proto"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/memory/validate"
 	"sdo.dev/operator/sdk"
 )
 
@@ -139,7 +140,13 @@ func verifiedPartialAction(action *contracts.RepairActionReceipt, proof map[sdk.
 func partialRepairCauses(outcome *contracts.OutcomeRecord) []uint32 {
 	proof, applications := partialRepairProof(outcome)
 	repaired := map[sdk.ObjectRef]bool{}
+	written := map[sdk.ObjectRef]bool{}
 	for _, action := range outcome.GetRepairActions() {
+		if action.GetSuccess() {
+			for _, ref := range action.GetResources() {
+				written[reflectionResource(ref)] = true
+			}
+		}
 		if partialActionVerified(outcome, action, proof, applications) {
 			for _, ref := range action.GetResources() {
 				repaired[reflectionResource(ref)] = true
@@ -160,10 +167,14 @@ func partialRepairCauses(outcome *contracts.OutcomeRecord) []uint32 {
 	}
 	var indices []uint32
 	for index, cause := range outcome.GetConfirmedRootCauses() {
-		verified := len(cause.GetResources()) > 0
+		verified, hasRepair := len(cause.GetResources()) > 0, false
+		observed := validate.RepairedCauseObserved(outcome, cause.GetResources())
 		for _, ref := range cause.GetResources() {
-			verified = verified && repaired[reflectionResource(ref)] && len(owners[reflectionResource(ref)]) == 1
+			resource := reflectionResource(ref)
+			hasRepair = hasRepair || repaired[resource]
+			verified = verified && len(owners[resource]) == 1 && (repaired[resource] || (!written[resource] && observed))
 		}
+		verified = verified && hasRepair
 		if verified {
 			indices = append(indices, uint32(index))
 		}

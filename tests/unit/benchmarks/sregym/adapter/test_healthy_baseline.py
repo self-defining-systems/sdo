@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -12,6 +13,9 @@ from benchmarks.sregym.adapter.healthy_baseline import (
     publish_snapshots,
     snapshot_document,
 )
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def _item(kind: str, name: str, **extra: object) -> dict[str, object]:
@@ -188,3 +192,67 @@ def test_ops_wrapper_does_not_inject_when_capture_fails() -> None:
     with pytest.raises(HealthyBaselineCaptureError):
         ops.inject_after_resume("ctl", "g1", lambda: events.append("inject"))
     assert "inject" not in events
+
+
+@pytest.mark.parametrize("count", [0, 17])
+def test_publish_rejects_invalid_snapshot_count_before_remote_exec(count: int) -> None:
+    kubectl = _Kubectl()
+    snapshots = {f"healthy-{index}.json": {} for index in range(count)}
+    with pytest.raises(HealthyBaselineCaptureError, match="1-16"):
+        publish_snapshots(snapshots, control_namespace="ctl", kubectl_runner=kubectl)
+    assert kubectl.calls == []
+
+
+def test_publish_rejects_oversized_aggregate_before_remote_exec() -> None:
+    kubectl = _Kubectl()
+    snapshots = {f"healthy-{index}.json": {"padding": "x" * (3 << 20)} for index in range(3)}
+    with pytest.raises(HealthyBaselineCaptureError, match="8 MiB"):
+        publish_snapshots(snapshots, control_namespace="ctl", kubectl_runner=kubectl)
+    assert kubectl.calls == []
+
+
+@pytest.mark.parametrize("extra", [0, 1])
+def test_publish_preserves_exact_transport_byte_boundary(extra: int) -> None:
+    kubectl = _Kubectl()
+    snapshots = {"healthy-0.json": {"padding": ""}}
+    overhead = len(json.dumps(snapshots).encode("utf-8"))
+    snapshots["healthy-0.json"]["padding"] = "x" * ((8 << 20) - overhead + extra)
+    if extra:
+        with pytest.raises(HealthyBaselineCaptureError, match="8 MiB"):
+            publish_snapshots(snapshots, control_namespace="ctl", kubectl_runner=kubectl)
+        assert kubectl.calls == []
+    else:
+        publish_snapshots(snapshots, control_namespace="ctl", kubectl_runner=kubectl)
+        assert json.loads(kubectl.calls[0][2] or "") == snapshots
+
+
+def test_publish_applies_limit_to_serialized_unicode_bytes() -> None:
+    kubectl = _Kubectl()
+    snapshots = {"healthy-0.json": {"padding": "\U0001f680" * (1 << 20)}}
+    with pytest.raises(HealthyBaselineCaptureError, match="8 MiB"):
+        publish_snapshots(snapshots, control_namespace="ctl", kubectl_runner=kubectl)
+    assert kubectl.calls == []
+
+
+@pytest.mark.parametrize("case", ["empty", "count", "bytes"])
+def test_publish_admission_agrees_with_real_native_writer(operator_binary: Path, case: str) -> None:
+    snapshots = (
+        {"healthy-0.json": {"padding": "x" * (8 << 20)}}
+        if case == "bytes"
+        else {f"healthy-{index}.json": {} for index in range(17 if case == "count" else 0)}
+    )
+    # These inputs must fail before the native writer opens its fixed volume.
+    native = subprocess.run(
+        [str(operator_binary), "baseline-write"],
+        input=json.dumps(snapshots),
+        text=True,
+        capture_output=True,
+        timeout=10,
+        check=False,
+    )
+    assert native.returncode != 0
+    kubectl = _Kubectl()
+    with pytest.raises(HealthyBaselineCaptureError) as failure:
+        publish_snapshots(snapshots, control_namespace="ctl", kubectl_runner=kubectl)
+    assert native.stderr.strip() in str(failure.value)
+    assert kubectl.calls == []

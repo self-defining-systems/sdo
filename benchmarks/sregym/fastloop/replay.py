@@ -14,14 +14,12 @@ from typing import Any
 
 from google.protobuf.json_format import ParseError
 
+from benchmarks.sregym.fastloop.checkpoint_limits import MAX_BROKER_BYTES, MAX_RESULT_BYTES, MAX_TASK_BYTES
 from benchmarks.sregym.fastloop.file_edits import FileEdit, decode_file_edits, encode_file_edits
 from sdo.contracts import AgentResult, AgentTask, parse_json
 
 STAGES = frozenset({"responder", "reflection", "broker"})
-MAX_TASK_BYTES = 1 << 20
-MAX_RESULT_BYTES = 1 << 20
 MAX_CAPTURE_BYTES = 4 << 20
-MAX_BROKER_BYTES = 1 << 20
 MAX_CAPTURE_BUNDLE_BYTES = 32 << 20
 _DIGEST = re.compile(r"[0-9a-f]{64}\Z")
 _CAPTURE_NAME = re.compile(r"(?:[A-Za-z0-9][A-Za-z0-9@_.-]{0,127}|healthy/(?:healthy\.json|reference))\Z")
@@ -96,7 +94,9 @@ class CheckpointStore:
     def load(self, incident: int, stage: str) -> StageCheckpoint:
         directory = self._directory(incident, stage)
         try:
-            manifest = json.loads((directory / "checkpoint.json").read_bytes())
+            manifest_wire = (directory / "checkpoint.json").read_bytes()
+            _bounded(manifest_wire, MAX_BROKER_BYTES, "broker validation result")
+            manifest = json.loads(manifest_wire)
             if manifest.get("version") != 1 or not isinstance(manifest.get("captures"), dict):
                 raise CheckpointError("unsupported checkpoint manifest")
             request = (directory / "request.json").read_text(encoding="utf-8")
@@ -214,6 +214,7 @@ def capture_checkpoints(
             continue
         wire = data.get("agent-task.json")
         if isinstance(wire, str) and _could_belong_to_incident(wire, incident_id):
+            _bounded(wire.encode(), MAX_TASK_BYTES, "dispatch request")
             try:
                 task = parse_json(wire, AgentTask())
             except ParseError as exc:
@@ -234,6 +235,7 @@ def capture_checkpoints(
             task_id = envelope.get("task_id", envelope.get("taskId"))
             if task_id is not None and task_id not in requests:
                 continue
+            _bounded(wire.encode(), MAX_RESULT_BYTES, "worker result checkpoint limit")
             try:
                 result = parse_json(wire, AgentResult())
             except ParseError as exc:
@@ -406,6 +408,9 @@ def replay_broker_result(checkpoint: StageCheckpoint, *, source: Path, operator_
     """Validate a newly re-executed worker result with the real Go broker."""
     if checkpoint.result is None:
         raise CheckpointError("broker replay requires a recorded worker result")
+    _bounded(checkpoint.request.encode(), MAX_TASK_BYTES, "dispatch request")
+    _bounded(checkpoint.result.encode(), MAX_RESULT_BYTES, "worker result checkpoint limit")
+    _validate_envelopes(checkpoint.request, checkpoint.result)
     program = Path(__file__).with_name("replay_go") / "main.go"
     with tempfile.TemporaryDirectory(prefix="sdo-fastloop-replay-") as temporary:
         directory = Path(temporary)

@@ -171,7 +171,12 @@ def test_invalid_configuration_fails_at_construction(kwargs):
 
 def test_shell_uses_only_bounded_get_queries(snapshot, monkeypatch, tmp_path):
     calls = []
-    responses = [snapshot["namespaces"], snapshot["pods"], snapshot["nodes"], snapshot["summary"]]
+    responses = {
+        "namespaces": snapshot["namespaces"],
+        "pods": snapshot["pods"],
+        "nodes": snapshot["nodes"],
+        "--raw": snapshot["summary"],
+    }
 
     def run(command, **kwargs):
         calls.append(command)
@@ -179,7 +184,7 @@ def test_shell_uses_only_bounded_get_queries(snapshot, monkeypatch, tmp_path):
         assert command[3] == "get"
         assert kwargs["timeout"] <= 5
         assert "--request-timeout=4s" in command
-        return subprocess.CompletedProcess(command, 0, json.dumps(responses.pop(0)), "")
+        return subprocess.CompletedProcess(command, 0, json.dumps(responses[command[4]]), "")
 
     monkeypatch.setattr(lanes.subprocess, "run", run)
     monkeypatch.setattr(lanes, "host_available_memory", lambda: 32 * Gi)
@@ -372,3 +377,53 @@ def test_disk_collection_fails_closed_without_a_docker_storage_path(monkeypatch)
     monkeypatch.setattr(lanes.subprocess, "run", lambda *args, **kwargs: subprocess.CompletedProcess(args, 0, "", ""))
     with pytest.raises(ValueError, match="eval:.*kind.*storage.*unavailable"):
         lanes.assert_host_disk_headroom()
+
+
+@pytest.mark.parametrize("terminal_phase", ["Succeeded", "Failed", "Running"])
+def test_collection_checks_current_lifetimes_after_memory_sample(snapshot, monkeypatch, tmp_path, terminal_phase):
+    from copy import deepcopy
+
+    summary_read = False
+    canary = {
+        "metadata": {"namespace": "hotel-reservation-sdo", "name": "validator-canary", "uid": "canary-uid"},
+        "spec": {"containers": [{"name": "network-canary", "image": "registry/canary:fixed"}]},
+        "status": {"phase": "Running", "containerStatuses": [{"name": "network-canary", "state": {"running": {}}}]},
+    }
+
+    def run(command, **kwargs):
+        nonlocal summary_read
+        assert kwargs["timeout"] <= 5
+        if "namespaces" in command:
+            document = snapshot["namespaces"]
+        elif "nodes" in command:
+            document = snapshot["nodes"]
+        elif "--raw" in command:
+            summary_read = True
+            document = snapshot["summary"]
+        elif "pods" in command:
+            document = deepcopy(snapshot["pods"])
+            current = deepcopy(canary)
+            if summary_read:
+                current["status"]["phase"] = terminal_phase
+                if terminal_phase != "Running":
+                    current["status"]["containerStatuses"][0]["state"] = {"terminated": {"exitCode": 0}}
+            document["items"].append(current)
+        else:
+            raise AssertionError(command)
+        return subprocess.CompletedProcess(command, 0, json.dumps(document), "")
+
+    monkeypatch.setattr(lanes.subprocess, "run", run)
+    monkeypatch.setattr(lanes, "host_available_memory", lambda: 32 * Gi)
+    if terminal_phase == "Running":
+        with pytest.raises(ValueError, match="validator-canary/network-canary memory measurement unavailable"):
+            lanes.assert_lane_resources(tmp_path / "kubeconfig", app_namespaces={"hotel-reservation"}, now=NOW)
+    else:
+        evidence = lanes.assert_lane_resources(tmp_path / "kubeconfig", app_namespaces={"hotel-reservation"}, now=NOW)
+        assert evidence["passed"]
+        assert evidence["containers"] == [
+            {
+                "component": "observe/jaeger-agent-abc/jaeger-agent",
+                "working_set_bytes": 256 * 1024**2,
+                "budget_bytes": 2 * Gi,
+            }
+        ]
