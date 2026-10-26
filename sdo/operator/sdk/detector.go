@@ -17,6 +17,30 @@ type Detector interface {
 	Detect(context.Context, DetectionContext) ([]Finding, error)
 }
 
+// WindowedDetector is implemented by detectors that judge a rolling window of
+// past observations, so a condition that has just resolved can keep reporting
+// until the window rolls over. EvaluationWindow bounds that lag for the
+// current view; zero means the detector has no such window.
+type WindowedDetector interface {
+	EvaluationWindow(DetectionContext) time.Duration
+}
+
+// ClearingHorizon is how long after a condition resolves a fresh evaluation of
+// the detector may still report it: its rolling window plus the evaluations its
+// clearing policy needs at its own cadence.
+func ClearingHorizon(detector Detector, view DetectionContext) time.Duration {
+	spec := detector.Spec()
+	clearing := spec.Persistence.Clearing
+	if clearing < 1 {
+		clearing = 1
+	}
+	horizon := time.Duration(clearing) * spec.Interval
+	if windowed, ok := detector.(WindowedDetector); ok {
+		horizon += windowed.EvaluationWindow(view)
+	}
+	return horizon
+}
+
 type DetectorSpec struct {
 	ID          string
 	Class       DetectorClass

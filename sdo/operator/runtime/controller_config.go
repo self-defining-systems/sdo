@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 
 	"google.golang.org/protobuf/types/known/durationpb"
 
@@ -76,6 +77,7 @@ func controllerConfigToArgs(config *contractsv1alpha1.ControllerConfig) []string
 	str("--deployed-commit", config.GetDeployedCommit())
 	repeated("--deployed-manifest-path", config.GetDeployedManifestPaths())
 
+	str("--response-stages", strings.Join(config.GetResponseStages(), ","))
 	str("--dispatcher-mode", config.GetDispatcherMode())
 	str("--responder-image", config.GetResponderImage())
 	optBool("--responder-standby", config.ResponderStandby)
