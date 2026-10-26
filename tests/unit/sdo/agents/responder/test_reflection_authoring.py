@@ -4,10 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from pathlib import Path
+from pathlib import Path
 
 import pytest
 
@@ -18,6 +15,7 @@ from sdo.agents.responder.reflection_authoring import (
     prepare_corpus,
     prepare_session_corpus,
 )
+from sdo.agents.responder.tool_output import MAX_TOOL_REPLY_BYTES
 
 
 def test_session_fixture_does_not_require_controller_open_or_fixed_captures(tmp_path: Path) -> None:
@@ -37,18 +35,46 @@ def test_session_fixture_does_not_require_controller_open_or_fixed_captures(tmp_
     assert (case / "recordings.json").read_text() == "[]"
 
 
-def test_program_reference_uses_shipped_sdk_and_worked_example() -> None:
-    reference = authoring_reference("programs")
+def _full_reference(reply: str) -> str:
+    (line,) = [line for line in reply.splitlines() if line.startswith("Full text: ")]
+    return Path(line.removeprefix("Full text: ")).read_text()
+
+
+def test_program_reference_uses_shipped_sdk_and_worked_example(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("SDO_SESSION_SCRATCH", str(tmp_path))
+    reference = _full_reference(authoring_reference("programs"))
     assert "Direct program authoring" in reference
     assert "func" in reference
     assert "program.ReadView" in reference
     assert "ProbeTCP" in reference
-    sdk_reference = authoring_reference("sdk")
+    sdk_reference = _full_reference(authoring_reference("sdk"))
     assert "# Recorded Kubernetes reads" in sdk_reference
     assert "RESTMapper" in sdk_reference
     assert "type ReadView interface" in sdk_reference
     assert "type DetectionContext interface" in sdk_reference
     assert "DiffAgainstSource(ref ObjectRef) (SourceDiff, error)" in sdk_reference
+
+
+@pytest.mark.parametrize("topic", ["programs", "sdk", "rules"])
+def test_reference_reply_is_an_index_with_a_greppable_full_text(tmp_path: Path, monkeypatch, topic) -> None:
+    # Lane 52: a 76 KB reply was truncated, so reflection re-called the tool 7x to search it.
+    monkeypatch.setenv("SDO_SESSION_SCRATCH", str(tmp_path))
+    reply = authoring_reference(topic)
+    assert len(reply.encode()) <= MAX_TOOL_REPLY_BYTES
+    assert "Sections:" in reply
+    assert _full_reference(reply).startswith("## ")
+    assert authoring_reference(topic) == reply
+
+
+def test_reference_section_returns_only_the_requested_declaration(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("SDO_SESSION_SCRATCH", str(tmp_path))
+    reply = authoring_reference("sdk", section="type ReadView interface")
+    assert "type ReadView interface" in reply
+    assert "type DetectionContext interface" not in reply
+    assert len(reply.encode()) <= MAX_TOOL_REPLY_BYTES
+    missing = authoring_reference("sdk", section="no such section anywhere")
+    assert "No section matches" in missing
+    assert "Full text: " in missing
 
 
 @pytest.mark.parametrize("phase", ["detect", "pre-apply"])

@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
+import pathlib
 import sys
 from typing import TYPE_CHECKING
 
 import pytest
+from mcp.server.fastmcp import FastMCP
 from agentshim.testing import installed_mcp_servers
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
@@ -50,8 +53,8 @@ async def _call(root: Path, *, timeout: float = 2) -> dict[str, object]:
             await session.initialize()
             result = await session.call_tool("check_memory", {"decision_path": "decision.json"})
             assert not result.isError, result
-            assert result.structuredContent is not None
-            return result.structuredContent
+            (block,) = result.content
+            return json.loads(block.text)
 
 
 @pytest.mark.asyncio
@@ -191,4 +194,44 @@ assert result == {"summary": "covered", "learning_decision": "no_change",
             "no_change_reason": "already covered",
         },
     )
-    assert result[1]["exit_code"] == 0
+    (block,) = result
+    assert json.loads(block.text)["exit_code"] == 0
+
+
+@pytest.mark.asyncio
+async def test_reflection_tools_return_one_copy_of_each_result(tmp_path: Path) -> None:
+    # A resumed session carries every tool result; a second structured copy doubles it.
+    from sdo.agents.responder.reflection_validation import validation_server
+
+    server = validation_server(tmp_path)
+    assert {tool.name: tool.outputSchema for tool in await server.list_tools()} == {
+        tool.name: None for tool in await server.list_tools()
+    }
+    result = await server.call_tool("authoring_reference", {"topic": "sdk"})
+    assert not isinstance(result, tuple)
+    (block,) = result
+    assert "program-sdk.md" in block.text
+
+
+@pytest.mark.asyncio
+async def test_every_reflection_tool_reply_stays_within_the_shared_budget(tmp_path: Path, monkeypatch) -> None:
+    # Every reply is resent on each later reflection request, so oversized replies go to a file.
+    from sdo.agents.responder.reflection_validation import validation_server
+    from sdo.agents.responder.tool_output import MAX_TOOL_REPLY_BYTES
+
+    monkeypatch.setenv("SDO_SESSION_SCRATCH", str(tmp_path / "scratch"))
+    server = validation_server(tmp_path)
+    full = "\n".join(f"line {index} " + "x" * 80 for index in range(400))
+
+    def big_evidence() -> str:
+        """Synthetic oversized reply."""
+        return full
+
+    server.add_tool(big_evidence)
+    (block,) = await server.call_tool("big_evidence", {})
+    assert len(block.text.encode()) <= MAX_TOOL_REPLY_BYTES
+    (path,) = [line.removeprefix("Full reply: ") for line in block.text.splitlines() if line.startswith("Full reply: ")]
+    assert pathlib.Path(path).read_text() == full
+    assert "line 399" not in block.text
+    # The bound sits on the server's single dispatch path, so no registered tool can bypass it.
+    assert type(server).call_tool is not FastMCP.call_tool

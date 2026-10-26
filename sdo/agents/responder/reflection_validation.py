@@ -11,13 +11,20 @@ import os
 import signal
 import tempfile
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from mcp.server.fastmcp import FastMCP
+from mcp.types import TextContent
 
 from sdo.agents.responder.memory_check import VALIDATION_TIMEOUT_SECONDS, ValidationResult, validation_output
 from sdo.agents.responder.reflection_authoring import SdkGap, install_authoring_tools
 from sdo.agents.responder.reflection_evidence import install_evidence_tools
+from sdo.agents.responder.tool_output import bound_reply
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from mcp.types import ContentBlock
 
 # Codex forwards only a small default environment to MCP servers. Carry the
 # worker-pinned ownership and offline toolchain settings explicitly.
@@ -44,6 +51,26 @@ VALIDATION_ENVIRONMENT = (
 VALIDATION_TOOL_TIMEOUT_SECONDS = VALIDATION_TIMEOUT_SECONDS + 30
 
 
+class _TextToolServer(FastMCP):
+    """Return each tool result once, as text within the shared reply budget.
+
+    A resumed reflection carries every result for the rest of the session;
+    FastMCP's structured copy would repeat each one, and an oversized reply
+    is saved to a file the agent can search instead.
+    """
+
+    def add_tool(self, fn: Any, *args: Any, structured_output: bool | None = None, **kwargs: Any) -> None:
+        super().add_tool(fn, *args, structured_output=False, **kwargs)
+
+    async def call_tool(self, name: str, arguments: dict[str, Any]) -> Sequence[ContentBlock] | dict[str, Any]:
+        result = await super().call_tool(name, arguments)
+        if isinstance(result, dict) or not all(isinstance(block, TextContent) for block in result):
+            return result
+        text = "\n".join(block.text for block in result if isinstance(block, TextContent))
+        bounded = bound_reply(text, tool=name)
+        return result if bounded == text else [TextContent(type="text", text=bounded)]
+
+
 def validation_server(root: Path, *, timeout_seconds: float = VALIDATION_TIMEOUT_SECONDS) -> FastMCP:
     if (
         isinstance(timeout_seconds, bool)
@@ -54,7 +81,7 @@ def validation_server(root: Path, *, timeout_seconds: float = VALIDATION_TIMEOUT
     checkout = root.resolve(strict=True)
     if not checkout.is_dir():
         raise ValueError("validation root must be a checkout directory")
-    server = FastMCP("sdo_reflection")
+    server = _TextToolServer("sdo_reflection")
     install_authoring_tools(server, checkout)
     install_evidence_tools(server)
 

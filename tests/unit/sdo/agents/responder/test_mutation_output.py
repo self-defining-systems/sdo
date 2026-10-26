@@ -294,3 +294,25 @@ def test_rec_schema_growth_cannot_bypass_hard_output_limit(tmp_path, monkeypatch
     originals = list((tmp_path / "sdo-reports").glob("*/*-" + command + ".json"))
     assert len(originals) == 1
     assert json.loads(originals[0].read_text())["actions"] == [action]
+
+
+def test_failed_act_line_says_why_it_failed(tmp_path, monkeypatch, capsys):
+    # BASE1 C: a failed act printed only its summary, so the agent opened the report to learn why.
+    from sdo.agents.responder import tools_cli
+
+    monkeypatch.setenv("SDO_SESSION_SCRATCH", str(tmp_path))
+    action = {
+        "command": "act",
+        "summary": "scale checkout",
+        "success": False,
+        "failure_reason": "execution_failed",
+        "exit_code": 1,
+        "output": "\nerror: unknown flag: --json\nSee 'kubectl scale --help' for usage.\n",
+    }
+    tools_cli._print_response(action, full_json=False)
+    first = capsys.readouterr().out.splitlines()[0]
+    assert "execution_failed" in first
+    assert "exit 1" in first
+    assert "error: unknown flag: --json" in first
+    assert "kubectl scale --help" not in first
+    assert len(first) <= 200
