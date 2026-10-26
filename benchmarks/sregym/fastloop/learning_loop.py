@@ -308,6 +308,47 @@ def check_lease(environment: FastloopEnvironment, lease: str | None) -> None:
         subprocess.run(["coord", "gate", "--lease", lease], check=True, timeout=10)
 
 
+def reset_rehearsal(environment: FastloopEnvironment) -> None:
+    """Retain broker-validated setup on a warm private rehearsal PVC."""
+    import argparse
+
+    from benchmarks.sregym import adapter
+    from benchmarks.sregym.fastloop import cli
+
+    control = adapter.control_namespace_for(environment.namespace)
+    existing = adapter.kubectl(
+        ["get", "pvc", "sdo-application-repository", "-o", "name"],
+        namespace=control,
+        kubeconfig=environment.kubeconfig,
+        check=False,
+    )
+    if existing.returncode:
+        if "(NotFound)" not in existing.stderr:
+            raise RuntimeError(f"learning-loop: inspect rehearsal repository PVC: {existing.stderr}")
+        cli._reset(argparse.Namespace(run_dir=environment.run_dir, dev_mount=None, restart_toy=False))
+        return
+    adapter.sync_existing(
+        adapter.native_install_config(
+            adapter.RuntimeConfig(
+                repository=environment.workspace.resolve(),
+                namespace=environment.namespace,
+                controller_namespace=control,
+                application=environment.application,
+                controller_image=environment.images.controller,
+                responder_image=environment.images.responder,
+                validator_image=environment.images.validator,
+                repository_pvc="sdo-application-repository",
+                credentials_secret="sdo-agent-credentials",
+                model="gpt-6-luna",
+                timeout_seconds=120,
+                persistent=True,
+            )
+        )
+    )
+    with cli._worker(environment) as worker:
+        cli._reset_failed_incident(environment, worker)
+
+
 def execute(run_dir: Path, timeout: int, lease: str | None = None) -> int:
     """Reuse the dry-run process supervisor, with one total five-minute budget."""
     from benchmarks.sregym.fastloop import dry_run
@@ -358,7 +399,6 @@ def execute(run_dir: Path, timeout: int, lease: str | None = None) -> int:
 
 
 def run_lane(run_dir: Path, timeout: int, lease: str | None = None) -> int:
-    import argparse
     import os
     import signal
 
@@ -401,7 +441,7 @@ def run_lane(run_dir: Path, timeout: int, lease: str | None = None) -> int:
         os.environ["SDO_DEV_MOUNT"] = "1"
         os.environ["SDO_OPERATOR_BIN"] = str(cli.REPO_ROOT / ".fastloop/sdo-operator")
         check_lease(environment, lease)
-        cli._reset(argparse.Namespace(run_dir=environment.run_dir, dev_mount=None, restart_toy=False))
+        reset_rehearsal(environment)
         args = cli.build_parser().parse_args(
             [
                 "run",

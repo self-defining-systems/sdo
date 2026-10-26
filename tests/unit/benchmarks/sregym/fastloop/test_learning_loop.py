@@ -306,3 +306,48 @@ def test_validator_watch_captures_logs_when_job_is_added(tmp_path, monkeypatch, 
     assert len(calls) == (2 if starting else 1)
     assert "job/validator-1" in calls[0]
     assert "--follow" in calls[0]
+
+
+@pytest.mark.parametrize("warm", [False, True])
+def test_rehearsal_reset_retains_broker_accepted_setup(tmp_path, monkeypatch, warm):
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+
+    from benchmarks.sregym import adapter
+    from benchmarks.sregym.fastloop import cli, learning_loop
+
+    environment = SimpleNamespace(
+        namespace="proof",
+        kubeconfig=tmp_path / "config",
+        workspace=tmp_path,
+        run_dir=tmp_path,
+        application="toy",
+        images=SimpleNamespace(controller="controller", responder="responder", validator="validator"),
+    )
+    monkeypatch.setenv("KUBECONFIG", str(tmp_path / "config"))
+    accepted = tmp_path / "accepted-health"
+    calls = []
+    monkeypatch.setattr(
+        adapter,
+        "kubectl",
+        lambda *a, **kw: SimpleNamespace(
+            returncode=0 if warm else 1, stdout="pvc", stderr="" if warm else "(NotFound)"
+        ),
+    )
+
+    def sync(config):
+        assert config.control_namespace == "proof-sdo"
+        accepted.write_text("Go-validated setup")
+        calls.append("sync")
+
+    monkeypatch.setattr(adapter, "sync_existing", sync)
+    monkeypatch.setattr(cli, "_worker", lambda _: nullcontext("worker"))
+
+    def preserve(env, worker):
+        assert accepted.read_text() == "Go-validated setup"
+        calls.append("warm")
+
+    monkeypatch.setattr(cli, "_reset_failed_incident", preserve)
+    monkeypatch.setattr(cli, "_reset", lambda _: calls.append("seed"))
+    learning_loop.reset_rehearsal(environment)
+    assert calls == (["sync", "warm"] if warm else ["seed"])

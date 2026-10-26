@@ -175,3 +175,7 @@ archive copy-back and reset. The external attachment report records phases and
 original Jobs. Attachment requires equal initial accepted trees and retains
 private proposal, ledger, capture and session roots. Scripted scheduling, broker
 and lock tests prove plumbing; live runs establish learning and speedup.
+
+Warm rehearsal retries synchronize the private accepted PVC before using the
+ordinary repository-preserving reset. This retains broker-validated health setup;
+application restoration, traffic checks and fresh native readiness still run.
