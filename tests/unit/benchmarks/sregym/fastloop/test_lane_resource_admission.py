@@ -545,3 +545,30 @@ def test_an_unreadable_controller_state_is_typed_not_a_closure_timeout(lane):
     with pytest.raises(admission.ControllerStateUnavailableError) as info:
         gate.await_prior_closure("hotel-reservation-sdo")
     assert info.value.reason == "controller_state_unavailable"
+
+
+def test_an_incident_loop_cannot_extend_the_prior_closure_wait_forever(lane, monkeypatch):
+    """F3: a lane that keeps opening incidents and Jobs hits a fixed ceiling and fails typed."""
+    gate, _ = lane
+    now = observe_only(gate, monkeypatch)
+    gate.prior_closure_timeout_seconds = 30
+
+    def sleep(seconds: float) -> None:
+        now[0] += seconds
+        assert now[0] < 100_000, "prior-closure wait never ends under an incident loop"
+
+    monkeypatch.setattr(admission.time, "sleep", sleep)
+    gate.ops = SimpleNamespace(
+        runtime_state=lambda _control: {"incident_open": True, "incident_request": {"incident_id": f"loop-{now[0]}"}}
+    )
+    # Every poll sees a fresh Job whose own deadline is 1800 s away.
+    monkeypatch.setattr(gate, "_active_workers", lambda control: [f"sdo-worker-{now[0]}"])
+    monkeypatch.setattr(gate, "_work_deadline", lambda control: now[0] + 1800)
+
+    with pytest.raises(admission.PriorClosureIncompleteError) as info:
+        gate.await_prior_closure("hotel-reservation-sdo")
+
+    first_seen = 1800 + admission.POST_CLOSURE_WAIT_SECONDS
+    assert info.value.reason == "prior_closure_incomplete"
+    assert info.value.evidence["budget_seconds"] == 2 * first_seen
+    assert now[0] <= 2 * first_seen
