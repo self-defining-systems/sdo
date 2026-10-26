@@ -402,18 +402,7 @@ func controllerJob(c Config) *batchv1.Job {
 	if provider == "" {
 		provider = "codex"
 	}
-	if c.CodePath != nil {
-		if c.CodePath.GetName() != "" {
-			args = append(args, "--code-path", c.CodePath.GetName())
-		}
-		if c.CodePath.GetOverrides() != nil {
-			data, err := wire.Marshal(c.CodePath.GetOverrides())
-			if err != nil {
-				panic(err)
-			}
-			args = append(args, "--code-path-overrides", string(data))
-		}
-	}
+	args = append(args, codePathArgs(c)...)
 	if c.ScriptImage != "" {
 		args = append(args, "--script-image", c.ScriptImage)
 	}

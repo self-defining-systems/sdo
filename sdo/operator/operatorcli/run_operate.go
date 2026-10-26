@@ -118,7 +118,7 @@ func RunOperate(ctx context.Context, config OperateConfig) (lifecycle.Result, er
 	}
 	var healthProbe deployment.HealthProbe
 	if runner, enabled := install.ShellRunnerConfig(config.Install); enabled {
-		healthProbe = deployment.ShellDetectorProbe{Client: client, Config: runner}
+		healthProbe = deployment.ShellDetectorProbe{Config: runner}
 	}
 	coordinator := lifecycle.Coordinator{
 		Broker: repository, Bootstrap: artifacts.BootstrapStore{}, Registry: registry,

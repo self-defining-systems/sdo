@@ -7,14 +7,12 @@ import (
 	"strings"
 	"time"
 
-	"k8s.io/client-go/kubernetes"
 	"sdo.dev/operator/shellpath"
 )
 
 // ShellDetectorProbe uses the same immutable accepted scripts and read-only
 // runner as steady-state monitoring. Source readiness remains independently checked.
 type ShellDetectorProbe struct {
-	Client kubernetes.Interface
 	Config shellpath.RunnerConfig
 	Reader shellpath.Reader
 	Limit  time.Duration
@@ -23,13 +21,6 @@ type ShellDetectorProbe struct {
 func (p ShellDetectorProbe) Evaluate(ctx context.Context, root, _, namespace string) (string, error) {
 	if namespace != p.Config.Namespace || root != p.Config.AcceptedRoot {
 		return "", fmt.Errorf("shell health probe repository or namespace differs from runner")
-	}
-	if p.Client != nil {
-		if err := shellpath.EnsureReadOnlyRunner(ctx, p.Client, p.Config); err != nil {
-			return "", err
-		}
-	} else if p.Reader == nil {
-		return "", fmt.Errorf("shell health probe requires a runner client")
 	}
 	output, err := exec.CommandContext(ctx, "git", "-C", root, "rev-parse", "HEAD").Output()
 	if err != nil {
