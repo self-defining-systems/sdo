@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 import time
 import uuid
@@ -37,6 +38,12 @@ CLI_EXAMPLES = (
     "sdo plan targetport --bind service=Service/app/api",
 )
 ACT_EXAMPLE = "sdo act --resource Deployment/app/api -- kubectl -n app set image deployment/api api=img:1.2"
+ACT_USAGE = "sdo act --resource Kind/namespace/name [--summary TEXT] [--irreversible] [--json] -- COMMAND ARGS"
+# SDO's own act options that kubectl never defines, mapped to whether each takes a value.
+# A kubectl command may carry them in any position before its own --; kubectl keeps every
+# flag it defines (--resource included) and other programs receive their arguments verbatim.
+SDO_ACT_FLAGS = {"--json": False, "--irreversible": False, "--summary": True}
+_USAGE_ERROR = re.compile(r"unknown (?:shorthand )?flag|unknown command|for usage\.")
 
 OBJECT_REFERENCE_HELP = (
     "Object references accept Kind/name, Kind/namespace/name, or JSON with kind, name and optional "
@@ -58,7 +65,7 @@ RESPONSE_FIELDS = {
     "source": "source (accepted Kubernetes object)",
     "verify": "healthy, unresolved, findings[], detector_states[], drift_events[]",
     "report": "report.{status, attempt_id, rounds}, session",
-    "act": "actions[].{success, exit_code, receipt, output, failure_reason}",
+    "act": "actions[].{success, exit_code, receipt, output, failure_reason, hint}",
     "apply": "actions[].{application_id, targeted_healthy, mitigation_health, program_runs, program_revisions, report}",
     "mitigate": (
         "actions[].{application_id, targeted_healthy, mitigation_health, rollout_pending, program_revisions}, "
@@ -250,7 +257,10 @@ def _parser() -> argparse.ArgumentParser:
             "Run one live mutation and record its repair receipt (target, resources, timing, outcome and "
             "command line). The command's exit code is returned. Do not hand-write receipts. "
             "When an admission control blocks recovery and its backend is gone, restore the backend if you can. "
-            "Otherwise a scoped fail-open or removal that restores availability is acceptable; report it."
+            "Otherwise a scoped fail-open or removal that restores availability is acceptable; report it. "
+            "SDO options go before --; the command after it runs verbatim, except that a kubectl command "
+            "may also carry SDO's --json, --summary and --irreversible, which kubectl never defines. "
+            "A rejected command line returns a one-line hint with the correct form."
         ),
         epilog="Example: " + ACT_EXAMPLE,
     )
@@ -517,9 +527,43 @@ class _PendingMutationConflict(ValueError):
     pass
 
 
+def _act_command(args: argparse.Namespace) -> list[str]:
+    """Return the wrapped command, moving SDO's own options out of a kubectl command into *args*."""
+    command = args.act_command[1:] if args.act_command[:1] == ["--"] else list(args.act_command)
+    if not command or Path(command[0]).name != "kubectl":
+        return command
+    kept = command[:1]
+    tokens = iter(command[1:])
+    for token in tokens:
+        if token == "--":
+            kept.extend(["--", *tokens])
+            break
+        name, has_value, value = token.partition("=")
+        if name not in SDO_ACT_FLAGS or has_value and not SDO_ACT_FLAGS[name]:
+            kept.append(token)
+        elif not SDO_ACT_FLAGS[name]:
+            setattr(args, name.removeprefix("--"), True)
+        else:
+            value = value if has_value else next(tokens, None)
+            if value is None or args.summary not in (None, value):
+                raise ValueError(f"{name} takes one value; usage: {ACT_USAGE}")
+            args.summary = value
+    return kept
+
+
+def _usage_hint(command: list[str], output: str) -> str | None:
+    """One line that says how to call act when the wrapped program rejected its arguments."""
+    if not _USAGE_ERROR.search(output):
+        return None
+    program = Path(command[0]).name
+    return (
+        f"{program} rejected its arguments; SDO options go before --, the command after it runs verbatim: {ACT_USAGE}"
+    )
+
+
 def _act(args: argparse.Namespace) -> int:
-    command = args.act_command[1:] if args.act_command[:1] == ["--"] else args.act_command
     try:
+        command = _act_command(args)
         if not command:
             raise ValueError("a command is required after --")
         response: dict[str, Any] = {}
@@ -552,6 +596,9 @@ def _act(args: argparse.Namespace) -> int:
                 "receipt": receipt,
                 "output": output,
             }
+            hint = None if code == 0 else _usage_hint(command, output)
+            if hint:
+                response["hint"] = hint
             if os.environ.get("SDO_RESPONDER_SESSION") == "1":
                 verified = _exchange(
                     {"command": "verify", "previous_findings": before},
