@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"google.golang.org/protobuf/reflect/protoreflect"
+
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 )
@@ -106,6 +108,19 @@ func TestToolRejectsDuplicateReferenceComponents(t *testing.T) {
 		var request ToolRequest
 		if err := json.Unmarshal([]byte(raw), &request); err == nil {
 			t.Fatalf("ambiguous reference crossed tool boundary: %s", raw)
+		}
+	}
+}
+
+func TestNestedJSONTextRejectsDuplicateObjectComponents(t *testing.T) {
+	for _, tc := range []struct{ action, field, raw string }{
+		{"EnsureDatabaseUser", "target", `{"engine":"mongodb","pod":{"kind":"Pod","namespace":"app","name":"worker","name":"peer"},"container":"db","database":"app"}`},
+		{"SetField", "value", `{"source":{"ref":{"kind":"Service","namespace":"app","name":"backend","name":"peer"},"path":"spec.ports[0].targetPort"}}`},
+	} {
+		field := rawMenuActions()[tc.action].action.Message().Fields().ByName(protoreflect.Name(tc.field))
+		_, err := menuActionParameter(field, tc.raw, &program.ValueInputs{})
+		if err == nil || !strings.Contains(err.Error(), "duplicate field") || !strings.Contains(err.Error(), "Kind/name") {
+			t.Fatalf("%s.%s erased an ambiguous nested reference: %v", tc.action, tc.field, err)
 		}
 	}
 }

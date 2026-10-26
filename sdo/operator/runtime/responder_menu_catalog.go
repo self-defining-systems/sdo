@@ -130,6 +130,13 @@ func menuRawPlan(field protoreflect.FieldDescriptor, parameters map[string]strin
 }
 
 func menuActionParameter(field protoreflect.FieldDescriptor, raw string, inputs *program.ValueInputs) (any, error) {
+	// JSON text can arrive inside a string parameter. Check it before decoding
+	// into maps, which would silently discard duplicate nested target fields.
+	if (field.Message() != nil || field.IsMap() || field.IsList()) && json.Valid([]byte(raw)) {
+		if err := menuRejectDuplicateFields([]byte(raw)); err != nil {
+			return nil, err
+		}
+	}
 	if field.IsMap() && field.MapValue().Message() != nil && field.MapValue().Message().Name() == "PlanValue" {
 		var env map[string]any
 		if err := json.Unmarshal([]byte(raw), &env); err != nil {
