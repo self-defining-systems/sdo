@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
 import time
 from dataclasses import dataclass
@@ -147,3 +148,49 @@ def wait_for_proof(
             return proof
         sleep(min(2, max(0, budget.expires_at - monotonic())))
     raise StabilizationError("eval: admission proof did not settle before deadline; no injection")
+
+
+#: Label the controller puts on its warm responder standby Job template.
+STANDBY_LABEL = "sdo.dev/standby"
+#: Label of the immutable identity ConfigMap the controller publishes before a
+#: warm inbox releases its task (worker_registry.ensureIncidentExecution).
+INCIDENT_EXECUTION_LABEL = "sdo.dev/incident-execution"
+
+
+def job_labels(job: dict[str, Any]) -> dict[str, str]:
+    """Job and Pod-template labels of a Job listing row."""
+    return {
+        **job.get("spec", {}).get("template", {}).get("metadata", {}).get("labels", {}),
+        **job["metadata"].get("labels", {}),
+    }
+
+
+def idle_standby_jobs(jobs: list[dict[str, Any]], executions: list[dict[str, Any]]) -> set[str]:
+    """Name warm standby Jobs no incident has claimed; a claimed standby is responder work.
+
+    *executions* are the ConfigMaps labeled ``INCIDENT_EXECUTION_LABEL``. A
+    malformed identity raises ``ValueError`` so callers fail closed.
+    """
+    claimed: set[str] = set()
+    for record in executions:
+        identity = json.loads(record.get("data", {}).get("execution.json", "null"))
+        if (
+            record["metadata"].get("labels", {}).get(INCIDENT_EXECUTION_LABEL) != "1"
+            or not isinstance(identity, dict)
+            or identity.get("version") != 1
+            or not all(
+                isinstance(identity.get(key), str) and identity[key]
+                for key in ("job_name", "task_id", "incident_id", "request_sha256")
+            )
+            or record["metadata"].get("annotations", {}).get("sdo.dev/incident-id") != identity["incident_id"]
+        ):
+            raise ValueError(f"eval: invalid incident execution identity {record['metadata'].get('name')}")
+        claimed.add(identity["job_name"])
+    return {
+        job["metadata"]["name"]
+        for job in jobs
+        if job_labels(job).get(STANDBY_LABEL) == "true"
+        and job["metadata"]["name"] not in claimed
+        and not job_labels(job).get("sdo.dev/validator-isolation")
+        and not job_labels(job).get("sdo.dev/validator-canary")
+    }

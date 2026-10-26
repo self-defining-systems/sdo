@@ -12,12 +12,16 @@ from typing import TYPE_CHECKING, Any
 import yaml
 
 from benchmarks.sregym.adapter import (
+    INCIDENT_EXECUTION_LABEL,
+    STANDBY_LABEL,
     Deadline,
     assert_host_disk_headroom,
     assert_lane_resources,
     assert_stable_workloads,
     closure_pending,
     controller_proof,
+    idle_standby_jobs,
+    job_labels,
     kubectl,
     qualified_scenarios,
     setup_lineage,
@@ -257,20 +261,34 @@ class LaneAdmission:
         return evidence
 
     def _active_workers(self, control: str) -> list[str]:
-        """Name SDO worker Jobs (responder, reflection) that have not finished."""
+        """Name SDO worker Jobs (responder, reflection) that have not finished.
+
+        The controller's warm responder standby runs until an incident claims
+        it, so an unclaimed standby is idle capacity, not work.
+        """
         listing = json.loads(
             kubectl(["get", "jobs", "-o", "json"], namespace=control, kubeconfig=self.environment.kubeconfig).stdout
         )["items"]
-        active = []
-        for job in listing:
-            labels = job.get("spec", {}).get("template", {}).get("metadata", {}).get("labels", {})
-            finished = any(
+        jobs = [
+            job
+            for job in listing
+            if job_labels(job).get("app.kubernetes.io/name") == "sdo-worker"
+            and not any(
                 row.get("type") in {"Complete", "Failed"} and row.get("status") == "True"
                 for row in job.get("status", {}).get("conditions") or []
             )
-            if labels.get("app.kubernetes.io/name") == "sdo-worker" and not finished:
-                active.append(job["metadata"]["name"])
-        return sorted(active)
+        ]
+        idle: set[str] = set()
+        if any(job_labels(job).get(STANDBY_LABEL) == "true" for job in jobs):
+            executions = json.loads(
+                kubectl(
+                    ["get", "configmaps", "-l", INCIDENT_EXECUTION_LABEL, "-o", "json"],
+                    namespace=control,
+                    kubeconfig=self.environment.kubeconfig,
+                ).stdout
+            )["items"]
+            idle = idle_standby_jobs(jobs, executions)
+        return sorted(job["metadata"]["name"] for job in jobs if job["metadata"]["name"] not in idle)
 
     def await_prior_closure(self, control: str) -> dict[str, Any]:
         """Wait, on a separate recorded budget, until every previous incident on the lane has closed naturally.
