@@ -589,7 +589,20 @@ func (b *Broker) accept(ctx context.Context, stage, incidentID string, actor Act
 	return Receipt{IncidentID: incidentID, Phase: phase, Commit: commit, ChangedPaths: paths}, nil
 }
 
+// AcceptedCommitAt authenticates an exact historical broker commit still in
+// accepted ancestry. Later outcome annotations cannot replace its identity.
+func (b *Broker) AcceptedCommitAt(ctx context.Context, incidentID string, phase Phase, commit string) (Receipt, bool, error) {
+	if commit == "" {
+		return Receipt{}, false, errors.New("accepted commit identity is required")
+	}
+	return b.findAcceptedAt(ctx, incidentID, phase, commit)
+}
+
 func (b *Broker) findAccepted(ctx context.Context, incidentID string, phase Phase) (Receipt, bool, error) {
+	return b.findAcceptedAt(ctx, incidentID, phase, "")
+}
+
+func (b *Broker) findAcceptedAt(ctx context.Context, incidentID string, phase Phase, expected string) (Receipt, bool, error) {
 	data, err := runGit(ctx, b.target, "log", "--format=%H%x1f%B%x1e")
 	if err != nil {
 		return Receipt{}, false, err
@@ -597,6 +610,9 @@ func (b *Broker) findAccepted(ctx context.Context, incidentID string, phase Phas
 	for _, item := range strings.Split(string(data), "\x1e") {
 		parts := strings.SplitN(item, "\x1f", 2)
 		if len(parts) != 2 {
+			continue
+		}
+		if expected != "" && strings.TrimSpace(parts[0]) != expected {
 			continue
 		}
 		message := "\n" + parts[1] + "\n"

@@ -326,6 +326,11 @@ func (n NativeIncidentBroker) ProcessClosure(ctx context.Context, closure Incide
 				return fmt.Errorf("record reflection SDK gaps: %w", err)
 			}
 		}
+		if len(ledger.ReflectionRejections) > 0 {
+			if _, err := n.Repository.RecordReflectionRejections(ctx, id, ledger.ReflectionRejections); err != nil {
+				return fmt.Errorf("record reflection rejections: %w", err)
+			}
+		}
 		if ledger.OutcomeCommit == "" {
 			return errors.New("closure has no authoritative outcome commit")
 		}
@@ -835,30 +840,29 @@ func (n NativeIncidentBroker) committedRepairHealthReceipt(ctx context.Context, 
 // restart to resume reflection/receipt work. Exact frozen evidence and the
 // broker's accepted Git commit are both required; no receipt is needed yet.
 func (n NativeIncidentBroker) committedOutcomeClosure(ctx context.Context, closure IncidentClosure) (bool, error) {
-	committed := false
-	err := n.withLock(func() error {
-		if n.Repository == nil || closure.Request.IncidentID == "" {
-			return nil
-		}
-		ledger, err := n.readLedger(closure.Request.IncidentID)
-		if err != nil {
-			return err
-		}
-		projected, err := incidentClosureContract(closure)
-		if err != nil {
-			return err
-		}
-		if ledger.OutcomeDocument == nil || ledger.OutcomeDocument.GetIncidentId() != closure.Request.IncidentID || !proto.Equal(ledger.Closure, projected) {
-			return nil
-		}
-		accepted, ok, err := n.Repository.AcceptedCommit(ctx, closure.Request.IncidentID, broker.OutcomePhase)
-		if err != nil {
-			return err
-		}
-		// Git acceptance can survive a crash before its ledger marker is saved.
-		// ProcessClosure idempotently recovers that same commit before reflection.
-		committed = ok && (ledger.OutcomeCommit == "" || accepted.Commit == ledger.OutcomeCommit)
-		return nil
-	})
-	return committed, err
+	if n.Repository == nil || closure.Request.IncidentID == "" {
+		return false, nil
+	}
+	// Ledger writes use fsync + atomic rename. Read the immutable accepted
+	// outcome checkpoint without the effect lock: reflection may still own that
+	// lock while its Job runs, and health checks must not wait for the worker.
+	ledger, err := n.readLedger(closure.Request.IncidentID)
+	if err != nil {
+		return false, err
+	}
+	projected, err := incidentClosureContract(closure)
+	if err != nil {
+		return false, err
+	}
+	if ledger.OutcomeDocument == nil || ledger.OutcomeDocument.GetIncidentId() != closure.Request.IncidentID || !proto.Equal(ledger.Closure, projected) {
+		return false, nil
+	}
+	if ledger.OutcomeCommit != "" {
+		_, accepted, err := n.Repository.AcceptedCommitAt(ctx, closure.Request.IncidentID, broker.OutcomePhase, ledger.OutcomeCommit)
+		return accepted, err
+	}
+	// Git acceptance can survive a crash before its ledger marker is saved.
+	// ProcessClosure recovers that same commit before resuming reflection.
+	_, accepted, err := n.Repository.AcceptedCommit(ctx, closure.Request.IncidentID, broker.OutcomePhase)
+	return accepted, err
 }

@@ -56,6 +56,20 @@ func controllerHealthGuard(c *Controller, root, compiled string) func(context.Co
 		receipt := cloneClosureReceipt(c.closureReceipt)
 		broker := c.broker
 		c.mu.Unlock()
+		// The accepted outcome freezes incident evidence before reflection starts.
+		// Health adoption may invalidate a live investigation, but cannot revoke
+		// ownership of its historical reflection, publication or acknowledgment.
+		if pending != nil && phase != contracts.ClosureState_CLOSURE_STATE_FAILED && (request == nil || request.IncidentID == pending.Request.IncidentID) {
+			if proof, ok := broker.(committedOutcomeClosureBroker); ok {
+				accepted, err := proof.committedOutcomeClosure(ctx, *pending)
+				if err != nil {
+					return err
+				}
+				if accepted {
+					return nil
+				}
+			}
+		}
 		committed := phase == contracts.ClosureState_CLOSURE_STATE_COMMITTED && receipt != nil
 		replay := receipt == nil && (phase == contracts.ClosureState_CLOSURE_STATE_PENDING || phase == contracts.ClosureState_CLOSURE_STATE_PROCESSING)
 		if pending != nil && (committed || replay) && (request == nil || request.IncidentID == pending.Request.IncidentID) {

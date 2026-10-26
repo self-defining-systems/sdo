@@ -6,6 +6,7 @@ import "buf/validate/validate.proto";
 import "google/protobuf/timestamp.proto";
 import "sdodev/contracts/v1alpha1/messages.proto";
 import "sdodev/contracts/v1alpha1/common.proto";
+import "sdodev/contracts/v1alpha1/memory_diagnostic.proto";
 import "sdodev/contracts/v1alpha1/program.proto";
 
 option go_package = "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1;contractsv1alpha1";
@@ -53,6 +54,8 @@ message OutcomeRecord {
   string reflection_skip_reason = 37 [(buf.validate.field).string = {in: ["", "no_session"]}];
   // Broker-only append after reflection; incident evidence remains immutable.
   repeated SdkGap sdk_gaps = 50;
+  // Broker-only append: named rejections retain the original incident evidence.
+  repeated ProposalRejection reflection_rejections = 52;
 }
 
 message OutcomeTimestamps {

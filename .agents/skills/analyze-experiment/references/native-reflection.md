@@ -141,3 +141,18 @@ another submission. The terminal strict receipt and accepted outcome remain
 separate evidence; neither depends on a benchmark grade. A closure without a
 responder result sends nothing. Grade files live outside the operational repository
 and are never inputs to responders or reflection.
+
+Accepted outcomes preserve reflection ownership across controller restart and
+adoption of new source, objective or health detectors. The health guard first
+requires the running policy to match accepted inputs, then authenticates the
+exact frozen closure against its historical broker-accepted outcome. Resuming
+that closure performs reflection/publication/ACK bookkeeping; it does not make
+another incident health decision. Publication still three-way merges onto the
+current accepted head and runs the complete shared memory check.
+
+`OutcomeRecord.reflection_rejections` is broker-appended typed `ProposalRejection`
+history, including stable diagnostic rules such as `memory.conflict`, current
+accepted commit and conflicting paths. It never changes incident classification
+or verification. The ledger retains the original outcome/task identity even
+when an annotation advances accepted HEAD. Duplicate results/annotations do not
+publish another reflection or repeat a rejection entry.
