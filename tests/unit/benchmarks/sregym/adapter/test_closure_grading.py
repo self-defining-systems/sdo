@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    from benchmarks.sregym.adapter.persistent import Clock
+    from tests.unit.benchmarks.sregym.adapter.test_persistent import FakeOps
 
 import pytest
 
@@ -219,6 +222,82 @@ def test_recovery_pause_requires_ack_then_rechecks_for_racing_incident() -> None
     with pytest.raises(PersistentControllerError, match="recovery.*closed"):
         pause_for_recovery(ops, "hotel-sdo", incident_id="incident-1")
     assert ops.events == [("paused", "hotel-sdo")]
+
+
+def _followup_ops(open_polls: int | None) -> FakeOps:
+    """Controller whose incident-2 opened after graded incident-1 closed; it closes after ``open_polls`` reads."""
+    from tests.unit.benchmarks.sregym.adapter.test_persistent import FakeOps
+
+    reads = [0]
+
+    class FollowupOps(FakeOps):
+        def runtime_state(self, control_namespace: str) -> dict[str, Any]:
+            reads[0] += 1
+            if open_polls is None or reads[0] <= open_polls:
+                return {
+                    "last_acknowledged_incident_id": "incident-1",
+                    "incident_open": True,
+                    "incident_request": {"incident_id": "incident-2"},
+                }
+            return {"last_acknowledged_incident_id": "incident-2"}
+
+    return FollowupOps(logs={"hotel-sdo": []})
+
+
+def _fake_clock() -> tuple[list[float], Clock]:
+    from benchmarks.sregym.adapter.persistent import Clock
+
+    elapsed = [0.0]
+    return elapsed, Clock(
+        monotonic=lambda: elapsed[0], sleep=lambda seconds: elapsed.__setitem__(0, elapsed[0] + seconds)
+    )
+
+
+def test_recovery_waits_for_an_incident_opened_after_the_graded_closure() -> None:
+    from benchmarks.sregym.adapter.persistent import FollowupClosureWait, pause_for_recovery
+
+    elapsed, clock = _fake_clock()
+    ops = _followup_ops(open_polls=3)
+
+    wait = pause_for_recovery(ops, "hotel-sdo", incident_id="incident-1", clock=clock)
+
+    assert wait == FollowupClosureWait(
+        graded_incident_id="incident-1",
+        followup_incident_ids=("incident-2",),
+        waited_seconds=3.0,
+        bound_seconds=600.0,
+        closed=True,
+    )
+    assert ops.events == [("paused", "hotel-sdo")]
+
+
+def test_recovery_stops_when_the_followup_incident_outlives_the_bound() -> None:
+    from benchmarks.sregym.adapter.persistent import (
+        POST_CLOSURE_WAIT_SECONDS,
+        FollowupClosureTimeout,
+        pause_for_recovery,
+    )
+
+    assert 0 < POST_CLOSURE_WAIT_SECONDS <= 600
+    elapsed, clock = _fake_clock()
+    ops = _followup_ops(open_polls=None)
+
+    with pytest.raises(FollowupClosureTimeout, match="incident-2.*incident-1") as raised:
+        pause_for_recovery(ops, "hotel-sdo", incident_id="incident-1", clock=clock)
+
+    assert raised.value.wait.followup_incident_ids == ("incident-2",)
+    assert raised.value.wait.closed is False
+    assert raised.value.wait.waited_seconds == elapsed[0] == POST_CLOSURE_WAIT_SECONDS
+    assert not ops.events
+
+
+def test_recovery_without_a_graded_incident_does_not_wait_for_open_incidents() -> None:
+    from benchmarks.sregym.adapter.persistent import PersistentControllerError, pause_for_recovery
+
+    elapsed, clock = _fake_clock()
+    with pytest.raises(PersistentControllerError, match="recovery.*closed"):
+        pause_for_recovery(_followup_ops(open_polls=None), "hotel-sdo", clock=clock)
+    assert elapsed[0] == 0
 
 
 def test_recovery_pause_acknowledges_closed_incident_before_return() -> None:
