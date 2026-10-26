@@ -458,6 +458,65 @@ absence and recreates the namespace named by the captured application baseline
 before reconciling its manifests; authorization/read failures never become
 absence. System and SDO control namespaces are refused.
 
+## Parallel lanes with shared accepted memory
+
+Use separate warm kind lanes for the same source application. Create each with
+`up --parallel-root <local-directory>` as well as the ordinary `--dev-mount`, seed,
+images, worker ID and problem flags. The local directory must use a filesystem
+supporting `flock` (for example ext4/XFS on NVMe). Fastloop mounts it on every node
+and preprovisions a lane-private `hostPath` repository PVC. An already provisioned
+PVC or a lane created without that node mount must be recreated when idle;
+attachment refuses to replace its storage. Keep experiment outputs outside the
+source repository.
+
+A plan is JSON, with absolute paths:
+
+```json
+{
+  "run_id": "two-problem-proof",
+  "accepted_repository": "/local/parallel/accepted",
+  "lanes": {"left": "/runs/left", "right": "/runs/right"},
+  "encounters": [
+    {"problem": "missing_configmap_hotel_reservation", "lane": "left"},
+    {"problem": "k8s_target_port_user_hotel_reservation", "lane": "right"}
+  ],
+  "timeout_seconds": 3600
+}
+```
+
+Run `uv run python -m benchmarks.sregym.fastloop parallel --plan <plan.json>
+--output <new-results-directory> --prepare`. Preparation invokes the ordinary
+native baseline/admission path without injecting a fault, syncs each still-private
+accepted checkout, and clones the first lane as `parallel/accepted` if absent.
+All initial accepted trees must agree; differing learning must first be reconciled
+through the broker. Existing accepted memory is never replaced. An accepted seed
+with initialized health memory avoids independently authoring different initial
+health policies in the two preparation stages.
+
+Preparation pauses every controller through the recovery fence, stops all writers,
+binds only their accepted `application` directory, and recreates the same native
+Jobs. Proposal, session, capture, ledger and build roots remain private. Application
+identity receives a lane suffix, making incident ID namespaces distinct. The
+restricted controller group receives write access to the accepted checkout; Git
+trust is scoped to its accepted mount. The external attachment report preserves
+original Jobs and the last phase for recovery after an interrupted attachment.
+Already attached lanes use `parallel` without `--prepare`; `parallel-attach`
+performs only attachment for prepared idle lanes.
+
+Each lane executes in its own subprocess, with explicit kubeconfig and capped
+host build parallelism. Faults assigned to a lane stay ordered. All lane preflights
+complete before any injection; each encounter uses the existing grade-at-closure,
+strict-receipt, reflection-drain and paused-recovery paths. Seeding, archive
+copy-back and `reset` are rejected after attachment. A lost host registry is
+rebuilt only by inspecting the prepared running controller. A lost controller
+requires explicit recovery; the runner cannot silently recreate its repository.
+
+Output contains joined JSONL/CSV rows, the plan, per-lane logs/streams and a result
+report that preserves every peer failure. Shared rows record the lane and accepted
+commit ancestry across each encounter. Exact native request/outcome/reflection
+commits remain in strict receipts. This runner has hermetic scheduling and broker
+proofs; measure actual speedup and learning with a live pair before making either
+claim.
 Passing no-fault setup reports are reusable on an unchanged lane. A subsequent
 `eval-dry-run` checks the content-bound receipt in `setup-proof/` before reset
 or deployment. An exact match skips setup and reruns live admission; a miss

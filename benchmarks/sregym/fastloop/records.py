@@ -87,6 +87,7 @@ class DiagnosisGrade(BaseModel):
     judge_tokens: TokenCounts = Field(default_factory=TokenCounts)
     latency_seconds: float = Field(default=0.0, ge=0)
     error: str | None = None
+
     skipped: bool = False
     skip_reason: str | None = None
 
@@ -181,6 +182,12 @@ class IncidentRecord(_PersistedModel):
     tool_commands: dict[str, int] = Field(default_factory=dict)
     response_loops_used: int | None = None
     error: str | None = None
+
+    #: Benchmark-only shared-memory provenance; ancestors include peer publications.
+    lane_id: str | None = None
+    memory_before_commit: str | None = None
+    memory_after_commit: str | None = None
+    memory_ancestry: list[str] = Field(default_factory=list)
 
     @computed_field  # type: ignore[prop-decorator]
     @property
