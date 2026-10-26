@@ -149,6 +149,72 @@ func TestDeterministicResponseStageWaitsForPostRolloutHealthObservation(t *testi
 	}
 }
 
+// pipelineWindowedHealthDetector is a traffic-like health signal judged over a
+// declared rolling window: after the repairs it keeps reporting for lag, then
+// clears (a negative lag never clears).
+type pipelineWindowedHealthDetector struct {
+	window, lag time.Duration
+	repairedAt  time.Time
+}
+
+func (d *pipelineWindowedHealthDetector) Spec() sdk.DetectorSpec {
+	spec := (pipelineDetector{}).Spec()
+	spec.ID = "traffic-window"
+	spec.Playbooks = nil
+	return spec
+}
+func (d *pipelineWindowedHealthDetector) EvaluationWindow(sdk.DetectionContext) time.Duration {
+	return d.window
+}
+func (d *pipelineWindowedHealthDetector) Detect(ctx context.Context, view sdk.DetectionContext) ([]sdk.Finding, error) {
+	findings, err := (pipelineDetector{}).Detect(ctx, view)
+	if err != nil || len(findings) != 0 {
+		return nil, err
+	}
+	if d.repairedAt.IsZero() {
+		d.repairedAt = time.Now()
+	}
+	if d.lag >= 0 && time.Since(d.repairedAt) >= d.lag {
+		return nil, nil
+	}
+	return []sdk.Finding{{RuleID: "window-errors", Status: sdk.FindingActive, Severity: sdk.SeverityCritical, PrimaryResource: sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}, Summary: "traffic window still holds pre-repair errors", Evidence: "rolling window contains pre-repair samples"}}, nil
+}
+
+// Live slot 17: both plans cleared, but the traffic window cleared about one
+// second after a fixed post-apply wait, so a responder started for nothing.
+// The wait follows the detector's declared window, not the rollout budget.
+func TestDeterministicResponseStageWaitFollowsDetectorWindow(t *testing.T) {
+	loop, state := pipelineTestLoop(t, false)
+	const fixedWait = 100 * time.Millisecond
+	loop.Detectors = append(loop.Detectors, &pipelineWindowedHealthDetector{window: 2 * time.Second, lag: fixedWait + 150*time.Millisecond})
+	calls := 0
+	stage := &DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return loop }, RolloutTimeout: fixedWait, ObservationInterval: 10 * time.Millisecond}
+	if err := RunResponseStages(context.Background(), state, []ResponseStage{stage, clearingResponseStage{"agent", &calls}}); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 0 || len(state.Findings) != 0 {
+		t.Fatalf("handed off before the remaining detector's window rolled over: calls=%d stages=%v", calls, state.PriorStages)
+	}
+}
+
+func TestDeterministicResponseStageWaitStopsAtCeiling(t *testing.T) {
+	loop, state := pipelineTestLoop(t, false)
+	loop.Detectors = append(loop.Detectors, &pipelineWindowedHealthDetector{window: time.Hour, lag: -1})
+	calls := 0
+	const ceiling = 200 * time.Millisecond
+	stage := &DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return loop }, ObservationInterval: 10 * time.Millisecond, ObservationCeiling: ceiling}
+	started := time.Now()
+	if err := RunResponseStages(context.Background(), state, []ResponseStage{stage, clearingResponseStage{"agent", &calls}}); err != nil {
+		t.Fatal(err)
+	}
+	if elapsed := time.Since(started); elapsed > ceiling+2*time.Second {
+		t.Fatalf("waited %s, beyond the %s ceiling", elapsed, ceiling)
+	}
+	if calls != 1 || len(state.PriorStages[0].RemainingFindingFingerprints) != 1 {
+		t.Fatalf("a never-clearing signal must reach the responder with its finding: calls=%d stages=%v", calls, state.PriorStages)
+	}
+}
+
 func TestDeterministicResponseStageCannotClearWithoutIndependentProof(t *testing.T) {
 	finding := sdk.Finding{DetectorID: "incident", Fingerprint: "covered", Status: sdk.FindingActive}
 	makeAttempt := func() *contracts.StageMitigation {

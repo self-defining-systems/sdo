@@ -16,6 +16,10 @@ import (
 
 const DefaultStageRolloutTimeout = 30 * time.Second
 
+// DefaultStageObservationCeiling bounds the post-repair wait for remaining
+// health findings, whatever their detectors' clearing horizons.
+const DefaultStageObservationCeiling = 60 * time.Second
+
 // DeterministicResponseStage uses the same plan/apply and immutable receipt
 // boundary as the responder, operating only on accepted registry programs.
 type DeterministicResponseStage struct {
@@ -23,6 +27,7 @@ type DeterministicResponseStage struct {
 	Restore             func(context.Context, IncidentRequest, *ResponderLoop) error
 	RolloutTimeout      time.Duration
 	ObservationInterval time.Duration
+	ObservationCeiling  time.Duration
 }
 
 type responseStageProgress struct {
@@ -293,9 +298,9 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 			return report, err
 		}
 	}
-	// Once all opening faults have verified repairs, allow the health sample
-	// to catch up within the same bounded observation budget before handoff.
-	stage.awaitRepairedHealth(ctx, loop, state, report, budget)
+	// Once all opening faults have verified repairs, let the remaining health
+	// detectors' own windows roll over before handoff.
+	stage.awaitRepairedHealth(ctx, loop, state, report)
 	if err := ctx.Err(); err != nil {
 		return report, err
 	}
@@ -512,8 +517,10 @@ func clearVerifiedStageTargets(state *IncidentState, attempt *contracts.StageMit
 
 // Only new health observations after complete repairs may consume this wait.
 // Original unresolved findings, skipped/failed repairs and incident findings
-// require responder investigation immediately. Waiting never grants closure.
-func (stage *DeterministicResponseStage) awaitRepairedHealth(ctx context.Context, loop *ResponderLoop, state *IncidentState, report *contracts.StageReport, budget time.Duration) {
+// require responder investigation immediately. The wait follows each remaining
+// detector's clearing horizon (rolling window and cadence), bounded by the
+// declared ceiling. Waiting never grants closure.
+func (stage *DeterministicResponseStage) awaitRepairedHealth(ctx context.Context, loop *ResponderLoop, state *IncidentState, report *contracts.StageReport) {
 	if len(state.Findings) == 0 || len(report.Mitigations) == 0 {
 		return
 	}
@@ -541,13 +548,33 @@ func (stage *DeterministicResponseStage) awaitRepairedHealth(ctx context.Context
 	if !eligible() {
 		return
 	}
+	view, err := loop.snapshotView(ctx)
+	if err != nil {
+		return
+	}
+	horizons := map[string]time.Duration{}
+	for _, detector := range loop.Detectors {
+		horizons[detector.Spec().ID] = sdk.ClearingHorizon(detector, view)
+	}
+	ceiling := stage.ObservationCeiling
+	if ceiling <= 0 || ceiling > DefaultStageObservationCeiling {
+		ceiling = DefaultStageObservationCeiling
+	}
 	interval := stage.ObservationInterval
 	if interval <= 0 {
 		interval = 250 * time.Millisecond
 	}
-	observe, cancel := context.WithTimeout(ctx, budget)
+	started := time.Now()
+	observe, cancel := context.WithTimeout(ctx, ceiling)
 	defer cancel()
 	for eligible() {
+		var horizon time.Duration
+		for _, finding := range state.Findings {
+			horizon = max(horizon, horizons[finding.DetectorID])
+		}
+		if time.Since(started) >= horizon {
+			return
+		}
 		timer := time.NewTimer(interval)
 		select {
 		case <-observe.Done():
