@@ -393,14 +393,16 @@ class PlanPatch(_message.Message):
     def __init__(self) -> None: ...
 
 class ReflectionCauseWork(_message.Message):
-    __slots__ = ("cause_index", "resources", "items")
+    __slots__ = ("cause_index", "resources", "items", "learning_basis")
     CAUSE_INDEX_FIELD_NUMBER: _ClassVar[int]
     RESOURCES_FIELD_NUMBER: _ClassVar[int]
     ITEMS_FIELD_NUMBER: _ClassVar[int]
+    LEARNING_BASIS_FIELD_NUMBER: _ClassVar[int]
     cause_index: int
     resources: _containers.RepeatedCompositeFieldContainer[_common_pb2.ObjectRef]
     items: _containers.RepeatedCompositeFieldContainer[ReflectionWorkItem]
-    def __init__(self, cause_index: _Optional[int] = ..., resources: _Optional[_Iterable[_Union[_common_pb2.ObjectRef, _Mapping]]] = ..., items: _Optional[_Iterable[_Union[ReflectionWorkItem, _Mapping]]] = ...) -> None: ...
+    learning_basis: str
+    def __init__(self, cause_index: _Optional[int] = ..., resources: _Optional[_Iterable[_Union[_common_pb2.ObjectRef, _Mapping]]] = ..., items: _Optional[_Iterable[_Union[ReflectionWorkItem, _Mapping]]] = ..., learning_basis: _Optional[str] = ...) -> None: ...
 
 class ReflectionWorkItem(_message.Message):
     __slots__ = ("program_id", "bindings", "disposition", "question", "reason", "resources", "evidence_phase", "program_revision", "capture_open_phase", "evaluation")

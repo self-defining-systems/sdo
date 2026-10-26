@@ -28,6 +28,9 @@ Read the [memory principles](../sdo-memory/SKILL.md#memory-principles) for evide
 5. Validate compilation and mitigation-clears-diagnosis replay, then return the same decision and changed
    logical IDs. A README-only update fails for a verified repair. The only exception is a typed SDK gap
    naming the cause resources, missing primitive and concrete reason; it cannot excuse other causes.
+   Return `updated` with changed playbook IDs and scoped `sdk_gaps` when only some causes are learnable.
+   Controller-listed `undetected_causes` permit new detector coverage for measured repair transitions;
+   bind the replay case to their captured open/fixed configuration without claiming independent health proof.
 
 Mitigation returns to accepted or observed state;
 intended-state changes are source repairs. An emergency literal is a declared parameter the responder fills

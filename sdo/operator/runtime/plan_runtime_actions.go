@@ -105,6 +105,9 @@ func (e PlanExecutor) applyRuntimePlan(ctx context.Context, incident IncidentReq
 		case program.DeletePod, program.Exec, program.EnsureDatabaseUser:
 			object, getErr := e.Client.Get(ctx, ref)
 			if getErr != nil || object == nil || !samePlanRef(object, ref) || object.GetUID() == "" || object.GetResourceVersion() == "" {
+				if _, database := a.(program.EnsureDatabaseUser); database {
+					return result, databaseOperationFailure(DatabaseContainerLookup, getErr)
+				}
 				return result, fmt.Errorf("runtime action requires current named Pod identity")
 			}
 			items[i].uid = object.GetUID()
@@ -231,6 +234,13 @@ func (e PlanExecutor) applyRuntimePlan(ctx context.Context, incident IncidentReq
 			if readErr != nil || normalizeErr != nil || !planValuesEqual(actual, items[i].users) {
 				result.ActionReports[i].Status = "unknown"
 				return result, databaseSafeError(readErr, "database user change unverified")
+			}
+			if e.RecordPrimitive != nil {
+				arguments, _ := json.Marshal([]any{a.Target})
+				observed, _ := json.Marshal(actual)
+				if recordErr := e.RecordPrimitive(sdktest.PrimitiveCall{Method: "DatabaseUsers", Arguments: arguments, Result: observed, Phase: "fixed"}); recordErr != nil {
+					result.ActionReports[i].RecordingError = "fixed database catalog capture unavailable"
+				}
 			}
 			result.ActionReports[i].Status = "applied"
 			continue
