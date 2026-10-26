@@ -76,7 +76,7 @@ def test_structured_budget_also_refuses_oversize(tmp_path: Path) -> None:
     document = tmp_path / "large.json"
     document.write_text(json.dumps({"evidence": "x" * MAX_STRUCTURED_OUTPUT_CHARS}))
     command = shlex.join(
-        [sys.executable, "-c", f"from typing import TYPE_CHECKING; print(Path({str(document)!r}).read_text())"]
+        [sys.executable, "-c", f"from pathlib import Path; print(Path({str(document)!r}).read_text())"]
     )
     with pytest.raises(OutputLimitExceeded) as failure:
         turn.run(command, max_output_chars=MAX_STRUCTURED_OUTPUT_CHARS)
