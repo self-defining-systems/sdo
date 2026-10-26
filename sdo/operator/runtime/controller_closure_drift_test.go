@@ -279,21 +279,51 @@ func TestClosureDriftUsesSourceFieldsWhenReconcileIsNoop(t *testing.T) {
 // SDO social live regression: a removed extra selector key is absent on both
 // sides of a complete source diff. Historical drift must clear like status.
 func TestClosureDriftRemovedExtraFieldsAgreeWithStatus(t *testing.T) {
-	for _, field := range []string{"spec.selector.injected", "metadata.labels.installer", "metadata.annotations.installer"} {
-		t.Run(field, func(t *testing.T) {
-			event := sdk.DriftEvent{Ref: sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "reservation"}, Fields: []sdk.DriftField{{Path: field, New: "injected"}}}
-			finding := sdk.Finding{DetectorID: "drift.unexplained", Status: sdk.FindingActive, Fingerprint: field, PrimaryResource: event.Ref, Metadata: map[string]any{"drift_event": event}}
-			source := `{"spec":{"selector":{"app":"reservation"}}}`
-			diff := program.Diff{Text: "accepted: " + source + "\nobserved: " + source}
-			if !driftFieldsRestored(diff, []sdk.DriftEvent{event}) {
-				t.Fatal("restored absent field retained historical drift")
+	for _, test := range []struct{ kind, path string }{
+		{"Service", "spec.selector.injected"},
+		{"ConfigMap", "metadata.labels.installer"},
+		{"ConfigMap", "metadata.annotations.installer"},
+		{"ConfigMap", "data.mongod.conf"},
+	} {
+		t.Run(test.kind+"/"+test.path, func(t *testing.T) {
+			snapshot := sdktest.Snapshot{NamespaceName: "app"}
+			metadata := metav1.ObjectMeta{Name: "restored", Namespace: "app"}
+			var object any
+			if test.kind == "Service" {
+				service := corev1.Service{ObjectMeta: metadata, Spec: corev1.ServiceSpec{Selector: map[string]string{"app": "backend"}}}
+				snapshot.ServiceList = []corev1.Service{service}
+				object = &service
+			} else {
+				config := corev1.ConfigMap{ObjectMeta: metadata, Data: map[string]string{"mongod.conf": "restored configuration"}}
+				snapshot.ConfigMapList = []corev1.ConfigMap{config}
+				object = &config
 			}
-			c := &Controller{drift: &DriftControllerConfig{View: func(sdk.DetectionContext) program.ReadView { return driftReadView{diff: diff} }}}
-			clear, err := c.closureSourceRestored(context.Background(), sdktest.Snapshot{}, finding, []sdk.DriftEvent{event})
+			encoded, err := kruntime.DefaultUnstructuredConverter.ToUnstructured(object)
+			if err != nil {
+				t.Fatal(err)
+			}
+			source := &unstructured.Unstructured{Object: encoded}
+			source.SetAPIVersion("v1")
+			source.SetKind(test.kind)
+			event := sdk.DriftEvent{Ref: sdk.ObjectRef{APIVersion: "v1", Kind: test.kind, Namespace: "app", Name: "restored"}, Fields: []sdk.DriftField{{Path: test.path, New: "injected"}}}
+			finding := sdk.Finding{DetectorID: "drift.unexplained", Status: sdk.FindingActive, Fingerprint: test.path, PrimaryResource: event.Ref, Metadata: map[string]any{"drift_event": event}}
+			viewFor := func(snapshot sdk.DetectionContext) program.ReadView {
+				return LiveReadView{DetectionContext: snapshot, Source: planFakeSource{source: source}, SourceCommit: "accepted"}
+			}
+			view := viewFor(snapshot)
+			diff, err := view.DiffAgainstSource(event.Ref)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !driftFieldsRestored(diff, []sdk.DriftEvent{event}) {
+				t.Fatal("restored field retained historical drift")
+			}
+			c := &Controller{drift: &DriftControllerConfig{View: viewFor}}
+			clear, err := c.closureSourceRestored(context.Background(), snapshot, finding, []sdk.DriftEvent{event})
 			if err != nil || !clear {
 				t.Fatalf("controller verifier disagrees with clear source status: clear=%v err=%v", clear, err)
 			}
-			retained, _ := checkRetainedDrift(context.Background(), []sdk.Finding{finding}, driftReadView{diff: diff})
+			retained, _ := checkRetainedDrift(context.Background(), []sdk.Finding{finding}, view)
 			if len(retained) != 0 {
 				t.Fatalf("status retains restored fields: %+v", retained)
 			}
