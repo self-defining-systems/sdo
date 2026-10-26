@@ -62,6 +62,10 @@ Fastloop invalid injections carry `infra_error=injection_invalid` and
 Summaries exclude them from incident denominators and expose
 `infrastructure_outcomes` separately. `recovery_error` stops the stream even with
 continue-on-error: no baseline repair or reset can erase failed full recovery.
+Before recovery, an incident SDO opened after the graded one closed gets a
+bounded wait (10 min) to close; each wait is in `post_closure_waits`
+(follow-up incident IDs, seconds, `closed`). A wait that times out stops the
+row with `RecoveryWaitTimeout` in `recovery_error`.
 The driver requests protocol v2 full cleanup before restoring its owned baseline.
 
 ## Ordered mixed-app dispatch

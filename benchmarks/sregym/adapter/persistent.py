@@ -95,6 +95,9 @@ CONTROLLER_JOB_NAME = "sdo-controller-run"
 STATE_REVISION_ANNOTATION = "sdo.dev/state-revision"
 STATE_DATA_KEY = "runtime-state.json"
 MAINTENANCE_ACK_TIMEOUT_SECONDS = 600.0
+#: Recovery waits this long for SDO to close an incident that opened after the graded one closed.
+#: Live P4 responder runtime p90 was 442 s (18 rows, 2026-10-26); the rest is closure margin, capped at 10 min.
+POST_CLOSURE_WAIT_SECONDS = 600.0
 DRAIN_TIMEOUT_SECONDS = 3600.0
 # After the reflection drain returns, the controller's asynchronous close-out may
 # still be settling the two volatile signals the strict receipt samples: the
@@ -1070,28 +1073,65 @@ def pause_controller(ops: ClusterOps, control: str, *, label: str, clock: Clock 
     wait_for_maintenance_ack(ops, control, generation, clock)
 
 
+@dataclass(frozen=True)
+class FollowupClosureWait:
+    """Recovery's wait for SDO to close incidents that opened after the graded incident closed."""
+
+    graded_incident_id: str
+    followup_incident_ids: tuple[str, ...]
+    waited_seconds: float
+    bound_seconds: float
+    closed: bool
+
+
+class FollowupClosureTimeout(PersistentControllerError):
+    def __init__(self, wait: FollowupClosureWait) -> None:
+        super().__init__(
+            f"eval: follow-up incident(s) {', '.join(wait.followup_incident_ids)} opened after "
+            f"{wait.graded_incident_id!r} closed and stayed open past {wait.bound_seconds:.0f}s"
+        )
+        self.wait = wait
+
+
+def _terminal_incident_ids(snapshot: dict[str, Any]) -> set[str]:
+    terminal = {snapshot.get("last_acknowledged_incident_id")}
+    for failure in snapshot.get("failed_closures") or []:
+        terminal.add(failure.get("closure", {}).get("request", {}).get("incident_id"))
+    return {incident_id for incident_id in terminal if isinstance(incident_id, str)}
+
+
+def _open_incident_id(snapshot: dict[str, Any]) -> str:
+    request = snapshot.get("incident_request") or (snapshot.get("pending_closure") or {}).get("request")
+    incident_id = request.get("incident_id") if isinstance(request, dict) else None
+    return incident_id if isinstance(incident_id, str) and incident_id else "unidentified"
+
+
 def pause_for_recovery(
     ops: ClusterOps,
     control: str,
     *,
     incident_id: str | None = None,
     clock: Clock | None = None,
-) -> None:
-    """Fence harness mutations behind a terminal incident and acknowledged intake pause."""
+    followup_wait_seconds: float = POST_CLOSURE_WAIT_SECONDS,
+) -> FollowupClosureWait | None:
+    """Fence harness mutations behind a terminal incident and acknowledged intake pause.
+
+    An incident that opened after the graded incident closed is SDO's work in progress, not a
+    harness error: recovery waits a bounded time for SDO to close it and reports that wait.
+    """
 
     clock = clock or Clock()
+    closed: set[str] = set()
 
     def require_closed() -> None:
         snapshot = ops.runtime_state(control)
         if not snapshot or closure_pending(snapshot):
             raise PersistentControllerError("eval: recovery requires a closed incident and available controller state")
-        terminal = {snapshot.get("last_acknowledged_incident_id")}
-        for failure in snapshot.get("failed_closures", []):
-            closure = failure.get("closure", {})
-            terminal.add(closure.get("request", {}).get("incident_id"))
-        if incident_id is not None and incident_id not in terminal:
+        closed.update(_terminal_incident_ids(snapshot))
+        if incident_id is not None and incident_id not in closed:
             raise PersistentControllerError(f"eval: recovery incident {incident_id!r} is not durably closed")
 
+    wait = _wait_for_followup_closure(ops, control, incident_id, closed, followup_wait_seconds, clock)
     require_closed()
     generation = f"benchmark-recovery-{uuid.uuid4().hex}-paused"
     ops.set_maintenance(control, paused=True, generation=generation)
@@ -1104,6 +1144,37 @@ def pause_for_recovery(
     # Admission may have raced the pause request; no recovery write is safe until
     # the acknowledged pause is followed by a fresh, idle controller snapshot.
     require_closed()
+    return wait
+
+
+def _wait_for_followup_closure(
+    ops: ClusterOps, control: str, incident_id: str | None, closed: set[str], bound: float, clock: Clock
+) -> FollowupClosureWait | None:
+    """Wait while the graded incident is closed and a later incident is still open."""
+
+    if incident_id is None:
+        return None
+    started = clock.monotonic()
+    followups: list[str] = []
+    while True:
+        snapshot = ops.runtime_state(control)
+        if not snapshot or not closure_pending(snapshot):
+            break
+        closed.update(_terminal_incident_ids(snapshot))
+        followup = _open_incident_id(snapshot)
+        if incident_id not in closed or followup == incident_id:
+            break
+        if followup not in followups:
+            followups.append(followup)
+        waited = clock.monotonic() - started
+        if waited >= bound:
+            raise FollowupClosureTimeout(FollowupClosureWait(incident_id, tuple(followups), waited, bound, False))
+        clock.sleep(POLL_SECONDS)
+    if not followups:
+        return None
+    waited = clock.monotonic() - started
+    logger.info("recovery waited %.1fs for follow-up incident(s) %s to close", waited, ", ".join(followups))
+    return FollowupClosureWait(incident_id, tuple(followups), waited, bound, True)
 
 
 def collect_followup_incident(
