@@ -290,3 +290,21 @@ def test_container_tag_normalization_matches_delivered_names(monkeypatch):
     monkeypatch.setattr(retention.subprocess, "run", runtime.run)
     retention.retain_node_images("lane-worker", ["sdo-controller:current"])
     assert runtime.removed == []
+
+
+def test_foreign_alias_added_during_cleanup_is_protected(monkeypatch):
+    runtime = NodeRuntime()
+    original = runtime.run
+    reads = 0
+
+    def run(argv, **kwargs):
+        nonlocal reads
+        if argv[-4:] == ["crictl", "images", "-o", "json"]:
+            reads += 1
+            if reads == 2:
+                runtime.images[2]["repoTags"].append("someone/backup:old")
+        return original(argv, **kwargs)
+
+    monkeypatch.setattr(retention.subprocess, "run", run)
+    retention.retain_node_images("lane-worker", ["sdo-controller:current"])
+    assert runtime.removed == []

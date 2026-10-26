@@ -108,6 +108,13 @@ def _free(node: str) -> int:
     return int(_run(node, ["df", "-B1", "--output=avail", "/var/lib/containerd"]).splitlines()[-1].strip())
 
 
+def _images(node: str) -> list[NodeImage]:
+    images = [NodeImage.parse(row) for row in json.loads(_run(node, ["crictl", "images", "-o", "json"]))["images"]]
+    if len({image.identity for image in images}) != len(images):
+        raise ValueError("eval: image retention inventory has duplicate image identity")
+    return images
+
+
 def retain_node_images(node: str, delivered: list[str]) -> dict[str, Any]:
     """Commit delivered identities, then remove old unused exclusively owned IDs.
 
@@ -117,9 +124,7 @@ def retain_node_images(node: str, delivered: list[str]) -> dict[str, Any]:
     repositories = {repo for ref in delivered if (repo := owned_repository(ref))}
     if not repositories:
         return {"removed": [], "freed_bytes": 0}
-    images = [NodeImage.parse(row) for row in json.loads(_run(node, ["crictl", "images", "-o", "json"]))["images"]]
-    if len({image.identity for image in images}) != len(images):
-        raise ValueError("eval: image retention inventory has duplicate image identity")
+    images = _images(node)
     try:
         history = json.loads(_run(node, ["cat", _STATE]))
     except subprocess.CalledProcessError as exc:
@@ -173,14 +178,22 @@ def retain_node_images(node: str, delivered: list[str]) -> dict[str, Any]:
     evidence: dict[str, Any] = {"removed": [], "freed_bytes": 0, "free_before_bytes": before}
     try:
         for image in candidates:
-            # Re-read immediately before removal; exited containers also retain images.
+            # Re-read aliases and all containers immediately before each removal.
+            fresh_images = _images(node)
+            fresh = next((row for row in fresh_images if row.identity == image.identity), None)
+            if (
+                fresh is None
+                or not fresh.references
+                or not all(_alias_repository(ref) in history for ref in fresh.references)
+            ):
+                continue
             if image.identity in _used(
-                images, json.loads(_run(node, ["crictl", "ps", "-a", "-o", "json"]))["containers"]
+                fresh_images, json.loads(_run(node, ["crictl", "ps", "-a", "-o", "json"]))["containers"]
             ):
                 continue
             _run(node, ["crictl", "rmi", image.identity])
             evidence["removed"].append(
-                {"id": image.identity, "references": list(image.references), "size_bytes": image.size_bytes}
+                {"id": fresh.identity, "references": list(fresh.references), "size_bytes": fresh.size_bytes}
             )
         evidence["free_after_bytes"] = _free(node)
         evidence["freed_bytes"] = max(0, evidence["free_after_bytes"] - before)
