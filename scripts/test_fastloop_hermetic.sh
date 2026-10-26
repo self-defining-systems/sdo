@@ -35,7 +35,7 @@ export GOMAXPROCS="$hermetic_jobs" GOFLAGS="${GOFLAGS:-} -p=$hermetic_jobs"
 (
     export GOMAXPROCS="$reflection_jobs" GOFLAGS="${GOFLAGS:-} -p=$reflection_jobs"
     cd "$root/sdo/operator/runtime"
-    go test -run '^(TestHermeticSharedMemoryControllers|TestReflectionHotelRunScriptUpgradesReadmeThroughCLIAndBroker|TestReflectionMongoAuthUpgradesReadmeThroughCLIAndBroker|TestReflectionLearnsDeploymentRepairWithUnwrittenServiceSymptoms)$' -count=1 -timeout=5m .
+    go test -run '^(TestHermeticSharedMemoryControllers|TestReflectionHotelRunScriptUpgradesReadmeThroughCLIAndBroker|TestReflectionMongoAuthUpgradesReadmeThroughCLIAndBroker|TestReflectionLearnsDeploymentRepairWithUnwrittenServiceSymptoms|TestFirstEncounterNamingReplacedPodPublishesWorkloadPlaybook)$' -count=1 -timeout=5m .
 ) &
 reflection_pid=$!
 runtime_status=0
