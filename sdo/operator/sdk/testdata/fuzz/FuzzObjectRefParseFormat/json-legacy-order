@@ -1,0 +1,2 @@
+go test fuzz v1
+string("{\"kind\":\"0\",\"namespace\":\"po\",\"name\":\"0\"}")

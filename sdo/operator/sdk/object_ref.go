@@ -236,7 +236,8 @@ func ParseObjectRef(raw string) (ObjectRef, error) {
 }
 
 // FormatObjectRef returns canonical text. Non-default API versions are retained
-// explicitly, so parsing the formatted value preserves every ObjectRef field.
+// explicitly. JSON is used when slash text would select legacy namespace/kind
+// ordering, so parsing the formatted value preserves every ObjectRef field.
 func FormatObjectRef(ref ObjectRef) (string, error) {
 	text := ref.Kind + "/" + ref.Name
 	if ref.Namespace != "" {
@@ -249,10 +250,20 @@ func FormatObjectRef(ref ObjectRef) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if parsed != ref {
+	if parsed == ref {
+		return text, nil
+	}
+	// JSON has named components, so a namespace that is also a known kind
+	// cannot change the identity of an unknown kind during parsing.
+	encoded, err := json.Marshal(ref)
+	if err != nil {
+		return "", err
+	}
+	parsed, err = ParseObjectRef(string(encoded))
+	if err != nil || parsed != ref {
 		return "", &ObjectRefError{Code: ObjectRefMalformed, Input: text}
 	}
-	return text, nil
+	return string(encoded), nil
 }
 
 // UnmarshalJSON keeps the SDK's comparable value projection of the protobuf

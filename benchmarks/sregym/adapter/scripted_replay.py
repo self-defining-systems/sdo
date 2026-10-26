@@ -41,7 +41,7 @@ ROLLOUT_SECONDS = 600
 def _run(run: Runner, argv: list[str], *, timeout: float = 240) -> str:
     code, output = run(shlex.join(argv), timeout=timeout)
     if code:
-        raise PlanError(f"{shlex.join(argv[:3])} failed ({code}): {output[:400]}")
+        raise PlanError(f"{shlex.join(argv[:3])} failed ({code}): {output}")
     return output
 
 

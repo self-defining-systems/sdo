@@ -40,7 +40,8 @@ func DecodeTypedObjects(target any, objects []unstructured.Unstructured) error
 func FindObject(objects []unstructured.Unstructured, ref ObjectRef) (*unstructured.Unstructured, error)
 func FormatObjectRef(ref ObjectRef) (string, error)
     FormatObjectRef returns canonical text. Non-default API versions are
-    retained explicitly, so parsing the formatted value preserves every
+    retained explicitly. JSON is used when slash text would select legacy
+    namespace/kind ordering, so parsing the formatted value preserves every
     ObjectRef field.
 
 func ObservationTime(ctx DetectionContext) time.Time

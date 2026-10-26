@@ -244,7 +244,7 @@ class Application:
                     item["spec"]["template"]["spec"]["containers"][0]["image"] = (
                         "yinfangchen/hotelreservation@sha256:" + "a" * 64
                     )
-                self.objects[kind, name] = item
+                self.apply(NAMESPACE, item)
         self.baseline = deepcopy(self.objects)
 
     def list_objects(self, _namespace: str) -> list[dict[str, Any]]:
@@ -254,7 +254,10 @@ class Application:
         ]
 
     def apply(self, _namespace: str, item: dict[str, Any]) -> None:
-        self.objects[item["kind"], item["metadata"]["name"]] = deepcopy(item)
+        stored = deepcopy(item)
+        stored.pop("status", None)
+        stored["metadata"].pop("generation", None)
+        self.objects[stored["kind"], stored["metadata"]["name"]] = stored
 
     def delete(self, _namespace: str, kind: str, name: str) -> None:
         self.objects.pop((kind, name), None)
@@ -296,6 +299,20 @@ class Application:
             for name, service in zip(COMPONENTS, services, strict=True)
         ]
         return {"namespace": NAMESPACE, "services": services, "pods": pods}
+
+
+def test_fake_application_recovers_after_interrupted_responder() -> None:
+    """Restoring a captured live object must not retain server-owned status."""
+    from benchmarks.sregym.fastloop.baseline_recovery import reconcile_application
+
+    app = Application(FIXTURE_SEED)
+    baseline = ApplicationBaseline(NAMESPACE, app.list_objects(NAMESPACE))
+    app.objects["Deployment", "search"]["spec"]["template"]["spec"]["containers"][0]["image"] = "missing:tag"
+    app.objects["Service", "geo"]["spec"]["ports"][0]["targetPort"] = 9999
+    assert not app.healthy()
+    cleanup = reconcile_application(app, baseline, NAMESPACE)
+    assert set(cleanup.restored) == {"Deployment/search", "Service/geo"}
+    assert app.healthy()
 
 
 class Worker:
@@ -364,6 +381,7 @@ class Controller(FakeOps):
         self.registrations: list[Path | None] = []
         self.sweep: Path | None = None
         self.sweep_result: dict[str, Any] | None = None
+        self.reflection_lock = threading.Lock()
 
     def install(self, config: Any) -> bool:
         self.registrations.append(config.agent_registrations)
@@ -445,43 +463,70 @@ class Controller(FakeOps):
         return super().export_runtime_artifacts(config, directory)
 
     def _finish_reflection(self, control: str, incident: str) -> None:
-        if incident == "incident-1":
-            turn = scripted_worker.ScriptedReflector().resume(
-                worktree=self.app.workspace,
-                incident_id=incident,
-                closure=SimpleNamespace(request=SimpleNamespace(namespace=NAMESPACE, drift_events=[])),
-            )
-            assert turn.playbook_ids == [scripted_worker.PROGRAM_ID]
-            directory = self.app.workspace / ".sdo/playbooks" / scripted_worker.PROGRAM_ID
-            corpus = next((self.app.workspace / ".sdo/corpus").iterdir())
-            labels = json.loads((corpus / "labels.json").read_text())
-            assert labels["provenance"]["open_at"] == "detect"
-            assert (
-                labels["provenance"]["open_sha256"] == hashlib.sha256((corpus / "open.json").read_bytes()).hexdigest()
-            )
-            assert (
-                labels["provenance"]["fixed_sha256"] == hashlib.sha256((corpus / "fixed.json").read_bytes()).hexdigest()
-            )
-            assert (corpus / "recordings.json").read_bytes() == (
-                self.capture / "open@detect-recordings.json"
-            ).read_bytes()
-            subprocess.run(["git", "add", ".sdo/playbooks", ".sdo/corpus"], cwd=self.app.workspace, check=True)
-            subprocess.run(
-                ["git", "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "reflection"],
-                cwd=self.app.workspace,
-                check=True,
-            )
-            self.sweep = self.capture.parent / "sweep"
-            source = self.sweep / "programsrc"
-            source.mkdir(parents=True)
-            for name in ("diagnose.go", "mitigate.go"):
-                shutil.copyfile(directory / name, source / name)
-            (self.sweep / "go.mod").write_text(
-                "module hermetic\n\ngo 1.24\n\nrequire sdo.dev/operator/sdk v0.0.0\n"
-                f"replace sdo.dev/operator/sdk => {ROOT / 'sdo/operator/sdk'}\n"
-            )
-            (self.sweep / "main.go").write_text(SWEEP_MAIN)
-        super()._finish_reflection(control, incident)
+        # Telemetry and receipt polling share this fake. Only one observer may
+        # materialize/compile the learned program and acknowledge the closure.
+        with self.reflection_lock:
+            closure = self.states[control].get("pending_closure")
+            if not closure or closure["request"]["incident_id"] != incident:
+                return
+            if incident == "incident-1":
+                turn = scripted_worker.ScriptedReflector().resume(
+                    worktree=self.app.workspace,
+                    incident_id=incident,
+                    closure=SimpleNamespace(request=SimpleNamespace(namespace=NAMESPACE, drift_events=[])),
+                )
+                assert turn.playbook_ids == [scripted_worker.PROGRAM_ID]
+                directory = self.app.workspace / ".sdo/playbooks" / scripted_worker.PROGRAM_ID
+                corpus = next((self.app.workspace / ".sdo/corpus").iterdir())
+                labels = json.loads((corpus / "labels.json").read_text())
+                assert labels["provenance"]["open_at"] == "detect"
+                assert (
+                    labels["provenance"]["open_sha256"]
+                    == hashlib.sha256((corpus / "open.json").read_bytes()).hexdigest()
+                )
+                assert (
+                    labels["provenance"]["fixed_sha256"]
+                    == hashlib.sha256((corpus / "fixed.json").read_bytes()).hexdigest()
+                )
+                assert (corpus / "recordings.json").read_bytes() == (
+                    self.capture / "open@detect-recordings.json"
+                ).read_bytes()
+                subprocess.run(["git", "add", ".sdo/playbooks", ".sdo/corpus"], cwd=self.app.workspace, check=True)
+                subprocess.run(
+                    [
+                        "git",
+                        "-c",
+                        "user.name=Test",
+                        "-c",
+                        "user.email=test@example.invalid",
+                        "commit",
+                        "-qm",
+                        "reflection",
+                    ],
+                    cwd=self.app.workspace,
+                    check=True,
+                )
+                self.sweep = self.capture.parent / "sweep"
+                source = self.sweep / "programsrc"
+                source.mkdir(parents=True)
+                for name in ("diagnose.go", "mitigate.go"):
+                    shutil.copyfile(directory / name, source / name)
+                (self.sweep / "go.mod").write_text(
+                    "module hermetic\n\ngo 1.24\n\nrequire sdo.dev/operator/sdk v0.0.0\n"
+                    f"replace sdo.dev/operator/sdk => {ROOT / 'sdo/operator/sdk'}\n"
+                )
+                (self.sweep / "main.go").write_text(SWEEP_MAIN)
+                # Compilation belongs to preparation, like the real builder. Keep
+                # host compiler scheduling outside the recurrence response window.
+                subprocess.run(
+                    ["go", "build", "-mod=mod", "-o", "diagnose", "."],
+                    cwd=self.sweep,
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                    timeout=180,
+                )
+            super()._finish_reflection(control, incident)
 
     def tool(self, *args: str) -> dict[str, Any]:
         self.commands.append(args[0])
@@ -495,12 +540,12 @@ class Controller(FakeOps):
                 assert self.sweep is not None
                 snapshot = self.capture / "open@detect.json"
                 completed = subprocess.run(
-                    ["go", "run", "-mod=mod", ".", str(snapshot)],
+                    [str(self.sweep / "diagnose"), str(snapshot)],
                     cwd=self.sweep,
                     check=False,
                     capture_output=True,
                     text=True,
-                    timeout=90,
+                    timeout=10,
                 )
                 assert completed.returncode == 0, completed.stderr
                 self.sweep_result = json.loads(completed.stdout)
@@ -602,6 +647,20 @@ class Controller(FakeOps):
         ]
 
 
+def test_fake_controller_finishes_each_reflection_once() -> None:
+    """The telemetry sampler and receipt poller may observe the same closure."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    controller = Controller(Application(FIXTURE_SEED), FIXTURE_SEED)
+    control, incident = "hotel-reservation-sdo", "incident-2"
+    controller.states[control] = {"pending_closure": {"request": {"incident_id": incident}}}
+    controller.logs[control] = []
+    with ThreadPoolExecutor(max_workers=2) as readers:
+        list(readers.map(lambda _: controller._finish_reflection(control, incident), range(2)))
+    assert controller.events == [("reflected", incident)]
+    assert controller.states[control] == {"last_acknowledged_incident_id": incident}
+
+
 def test_scripted_fastloop_reuses_reflected_target_port_program(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, control_api: SimpleNamespace
 ) -> None:
@@ -621,6 +680,16 @@ def test_scripted_fastloop_reuses_reflected_target_port_program(
         cwd=workspace,
         check=True,
     )
+    # Reproduce a loaded-host compiler stall deterministically. Diagnosis must
+    # execute the learned binary, never compile on the incident's hot path.
+    run = subprocess.run
+
+    def loaded_host_run(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        if argv[0] == "go" and controller.incidents == 2 and kwargs.get("cwd") == controller.sweep:
+            raise subprocess.TimeoutExpired(argv, 90, stderr="injected compiler stall")
+        return run(argv, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", loaded_host_run)
     app = Application(workspace)
     worker = Worker(app)
     controller = Controller(app, tmp_path / "capture")

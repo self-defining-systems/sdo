@@ -232,7 +232,7 @@ def test_preparation_compiles_shared_race_test_archive_without_running_tests(tmp
             if module.endswith("/runtime"):
                 assert commands[2] == ["build", "./..."]
             else:
-                assert commands[-1][-1] == "./memory/validate"
+                assert all(args[0] != "test" or "-c" in args for args in commands)
 
 
 def test_normal_and_race_preparation_are_independent_bounded_jobs() -> None:
@@ -341,7 +341,7 @@ def test_prepared_builds_include_the_portable_prober_and_source_stable_inputs() 
     assert "-trimpath" in shlex.split(jobs["env"]["GOFLAGS"])
     prepare = (ROOT / "scripts/prepare_go_ci.sh").read_text()
     assert "CGO_ENABLED=0" in prepare
-    assert "TestAssuranceSeedsPassHealthJudgeCheck" in prepare
+    assert "TestAssuranceSeedsPassHealthJudgeCheck" not in prepare
     assert "operator_test_binary.py" in prepare
     for name in ("prepare-go", "python", "go-integration"):
         normal = [
@@ -371,3 +371,75 @@ def test_generated_packages_share_only_equal_source_archives(tmp_path: Path) -> 
     (module / "seed.go").write_text("package seed\nconst Value = 2\n")
     changed = subprocess.check_output(["go", "list", "-export", "-json", "."], cwd=module, env=env, text=True)
     assert json.loads(changed)["Export"] != exports[0], "changed seed reused a stale compiler archive"
+
+
+def test_preparation_publishes_only_the_verified_current_test_executable(tmp_path: Path) -> None:
+    step = next(
+        step
+        for step in workflow()["jobs"]["prepare-go"]["steps"]
+        if step.get("name") == "Keep only the source-bound test executable"
+    )
+    assert step["if"] == "matrix.mode == 'normal'"
+    cache = tmp_path / ".fastloop/test-bin"
+    cache.mkdir(parents=True)
+    current = cache / "sdo-operator-current"
+    current.write_text("current")
+    (cache / "sdo-operator-stale").write_text("obsolete large executable")
+    setup = cache / "setup"
+    setup.write_text("bootstrap fixture")
+    command = tmp_path / "python3"
+    command.write_text(f"#!/bin/sh\nprintf '%s\\n' '{current}'\n")
+    command.chmod(0o755)
+    subprocess.run(
+        ["bash", "-e", "-c", step["run"]],
+        cwd=tmp_path,
+        env={**os.environ, "PATH": f"{tmp_path}:{os.environ['PATH']}"},
+        check=True,
+    )
+    assert current.read_text() == "current"
+    assert setup.read_text() == "bootstrap fixture"
+    assert not (cache / "sdo-operator-stale").exists()
+
+
+# Coverage-guided fuzzing compiles instrumented packages (~90 s) and then runs
+# for its whole budget, so it never fits beside a test partition in a 5-minute
+# PR job. PR CI replays every fuzz target's seed corpus through plain `go test`;
+# the nightly workflow owns the campaigns.
+FUZZ_FLAG = re.compile(r"(?<![\w-])-fuzz(?:\s|=)")
+FUZZ_TIME = re.compile(r"-fuzztime[= ](\d+)s")
+NIGHTLY_FUZZ_TARGETS = {
+    "sdo/operator/sdk": {"FuzzObjectRefParseFormat", "FuzzObjectRefTypedRoundTrip"},
+    "sdo/operator/outcome_derivation": {"FuzzControllerObservationBoundary"},
+    "benchmarks/sregym/protocol/native_receipt_go": {"FuzzNativeReceiptBoundary"},
+    "benchmarks/sregym/protocol/submission_go": {"FuzzSubmissionPhaseBoundary"},
+}
+
+
+def nightly_fuzz() -> dict:
+    return yaml.safe_load((ROOT / ".github/workflows/nightly-fuzz.yml").read_text())
+
+
+def test_pr_ci_replays_fuzz_seeds_without_coverage_guided_campaigns() -> None:
+    runs = [step.get("run", "") for job in workflow()["jobs"].values() for step in job.get("steps", [])]
+    assert not [run for run in runs if FUZZ_FLAG.search(run)]
+    foundation = (ROOT / "scripts/test_go_foundation.sh").read_text()
+    for directory in NIGHTLY_FUZZ_TARGETS:
+        # Seeds run in the foundation modules or the exhaustive operator partitions.
+        assert directory in foundation or directory.startswith("sdo/operator/")
+
+
+def test_nightly_fuzz_campaigns_cover_each_target_within_one_job_budget() -> None:
+    configuration = nightly_fuzz()
+    assert "schedule" in configuration[True]  # YAML 1.1 reads the bare `on` key as True.
+    (job,) = configuration["jobs"].values()
+    assert 0 < job["timeout-minutes"] <= 5
+    rows = job["strategy"]["matrix"]["include"]
+    assert {row["directory"]: set(row["targets"].split()) for row in rows} == NIGHTLY_FUZZ_TARGETS
+    run = next(step["run"] for step in job["steps"] if FUZZ_FLAG.search(step.get("run", "")))
+    per_target = int(FUZZ_TIME.search(run).group(1))
+    # One instrumented compile (~90 s) plus every campaign stays under 4 minutes.
+    assert all(90 + per_target * len(row["targets"].split()) <= 240 for row in rows)
+    # A missing target passes silently ("no fuzz tests to fuzz"), so pin each name.
+    for directory, targets in NIGHTLY_FUZZ_TARGETS.items():
+        sources = "".join(path.read_text() for path in (ROOT / directory).glob("*_test.go"))
+        assert all(f"func {target}(" in sources for target in targets)
