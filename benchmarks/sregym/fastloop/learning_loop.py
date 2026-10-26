@@ -335,7 +335,7 @@ def execute(run_dir: Path, timeout: int, lease: str | None = None) -> int:
         os.environ["KUBECONFIG"] = str(environment.kubeconfig)
         if environment.dev_mount:
             os.environ["SDO_OPERATOR_BIN"] = str(environment.dev_mount / ".fastloop/sdo-operator")
-        path = environment.run_dir / REPORT
+        path = run_dir.resolve() / REPORT
         report = json.loads(path.read_text())
         try:
             snapshot = kubectl(
