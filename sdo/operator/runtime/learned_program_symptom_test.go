@@ -19,7 +19,8 @@ func TestLearnedOriginCreditIncludesObservedUnwrittenSymptoms(t *testing.T) {
 	origin := &contracts.OutcomeRecord{IncidentId: "learning", Classification: "success", ConfirmedRootCauses: []*contracts.ConfirmedRootCause{{Resources: []*contracts.ObjectRef{target, symptom}}}, RepairActions: []*contracts.RepairActionReceipt{{Success: true, Resources: []*contracts.ObjectRef{target}, StartedAt: timestamppb.New(at), CompletedAt: timestamppb.New(at.Add(time.Second))}}, Findings: []*contracts.Finding{{DetectorId: "health", Status: "active", PrimaryResource: target, Fingerprint: "target"}, {DetectorId: "health", Status: "active", PrimaryResource: symptom, Fingerprint: "symptom"}}, DetectorHistory: []*contracts.DetectorEvaluation{{DetectorId: "health", Status: "clear", EvaluatedAt: timestamppb.New(at.Add(2 * time.Second))}}}
 	for name, mutate := range map[string]func(*contracts.OutcomeRecord){
 		"recovered symptom":       func(*contracts.OutcomeRecord) {},
-		"missing symptom opening": func(o *contracts.OutcomeRecord) { o.Findings = o.Findings[:1] },
+		// No opening finding observed the symptom: it is context, not failed proof.
+		"unobserved symptom": func(o *contracts.OutcomeRecord) { o.Findings = o.Findings[:1] },
 		"stale clearance":         func(o *contracts.OutcomeRecord) { o.DetectorHistory[0].EvaluatedAt = timestamppb.New(at) },
 		"symptom was also written": func(o *contracts.OutcomeRecord) {
 			o.RepairActions[0].Resources = append(o.RepairActions[0].Resources, symptom)
@@ -31,7 +32,7 @@ func TestLearnedOriginCreditIncludesObservedUnwrittenSymptoms(t *testing.T) {
 			dispatcher := KubernetesJobDispatcher{Outcomes: priorOutcomeReader{outcomes: []memory.Outcome{{IncidentID: "learning", Record: record}}}}
 			stats, err := dispatcher.programTrust(context.Background(), IncidentRequest{RepositoryWorktree: root, SourceCommit: commit})
 			want := 0
-			if name == "recovered symptom" {
+			if name == "recovered symptom" || name == "unobserved symptom" {
 				want = 1
 			}
 			if err != nil || stats["service-targetport-mismatch"].VerifiedSuccesses != want {
