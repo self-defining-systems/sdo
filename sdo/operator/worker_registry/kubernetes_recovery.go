@@ -39,7 +39,7 @@ func (e KubernetesExecutor) RecoverCompleted(ctx context.Context, task *contract
 	}
 	resultMap, err := e.Client.CoreV1().ConfigMaps(e.Namespace).Get(ctx, name+"-result", metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
-		return nil, false, nil
+		return nil, false, e.recoverMissingResult(ctx, task, name)
 	}
 	if err != nil {
 		return nil, false, fmt.Errorf("read durable agent result: %w", err)
@@ -82,7 +82,7 @@ func (e KubernetesExecutor) RecoverCompleted(ctx context.Context, task *contract
 	completedAt := time.Now()
 	if err == nil {
 		if jobFailed(job) {
-			failure := taskJobFailure(task, job)
+			failure := e.taskJobFailure(ctx, task, job)
 			if result.GetStatus() != "completed" || errors.Is(failure, context.DeadlineExceeded) {
 				return nil, false, failure
 			}
@@ -141,7 +141,7 @@ func (e KubernetesExecutor) taskJobName(ctx context.Context, task *contracts.Age
 	maps := e.Client.CoreV1().ConfigMaps(e.Namespace)
 	// Prefer the content-addressed execution even if legacy evidence is later
 	// archived independently. Conflicting requests use this identity.
-	for _, suffix := range []string{"-request", "-result"} {
+	for _, suffix := range []string{"-request", "-result", "-execution"} {
 		if _, err := maps.Get(ctx, boundName+suffix, metav1.GetOptions{}); err == nil {
 			return boundName, nil
 		} else if !apierrors.IsNotFound(err) {
