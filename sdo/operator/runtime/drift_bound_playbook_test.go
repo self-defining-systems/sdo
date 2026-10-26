@@ -27,7 +27,7 @@ import (
 
 func TestHermeticSourceAbsentDriftSelectsLearnedPlaybook(t *testing.T) {
 	ctx := context.Background()
-	source, commit := lifecycleTestSource{}, "accepted"
+	source, commit := foreignSource(t)
 	ref := sdk.ObjectRef{APIVersion: "rbac.authorization.k8s.io/v1", Kind: "ClusterRoleBinding", Name: "toy-binding"}
 	object := unstructured.Unstructured{Object: map[string]any{"apiVersion": ref.APIVersion, "kind": ref.Kind, "metadata": map[string]any{"name": ref.Name}, "roleRef": map[string]any{"apiGroup": "rbac.authorization.k8s.io", "kind": "ClusterRole", "name": "toy-role"}}}
 	open := sdktest.Snapshot{NamespaceName: "app", ObjectSnapshotVersion: 1, Objects: []unstructured.Unstructured{object}}

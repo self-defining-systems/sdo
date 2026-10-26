@@ -23,6 +23,10 @@ reads remain detector errors/Unknown even when agent code ignores accessor error
 Frozen snapshot telemetry is reusable. Only actual Open/Healthy observations are
 used for those phases. Post-plan observations are still unavailable unless the
 checker can independently derive them; Fixed recordings never prove a repair.
+Detectors can call `DetectionContext.DiffAgainstSource` before playbook selection.
+After a plan, source comparisons and detector reads use the executed fake API;
+only its 404 proves deletion. An omitted captured object remains unavailable.
+Pre-execution recorded comparisons may establish phase-bound absence.
 
 ## Operator imports
 
