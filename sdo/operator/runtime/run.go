@@ -64,6 +64,11 @@ type RuntimeOptions struct {
 	StateBaselineStartTimeout time.Duration
 	// NativeBroker supplies the Go-owned closure path in tests and embedded runs.
 	NativeBroker *NativeIncidentBroker
+	// InformerSync bounds informer sync retries; the zero value selects the defaults.
+	InformerSync InformerSyncPolicy
+	// TerminationLogPath receives the typed record of a terminal informer sync
+	// failure; empty means DefaultTerminationLogPath.
+	TerminationLogPath string
 	// Dispatcher, when set, replaces the Kubernetes Job dispatcher so tests
 	// can observe what the controller dispatches without a worker cluster.
 	Dispatcher Dispatcher
@@ -93,10 +98,6 @@ func RunWithPrograms(detectors []sdk.Detector, programs program.ProgramRegistry)
 	}
 }
 
-// startupSyncTimeout bounds the first informer sync so a kind the controller
-// cannot list fails the start with its name instead of hanging silently.
-const startupSyncTimeout = 5 * time.Minute
-
 func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options RuntimeOptions) (runErr error) {
 	// The typed launch path fills options.Client itself; that is still a
 	// production client and must receive the metadata transport below.
@@ -114,6 +115,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		stderr = os.Stderr
 	}
 	defer func() {
+		reportControllerError(runErr, stdout, options.TerminationLogPath)
 		if errors.Is(runErr, ErrControllerRolloutRestartRequired) {
 			_ = json.NewEncoder(stdout).Encode(map[string]any{"controller_rollout_restart": true})
 			runErr = nil
@@ -989,6 +991,18 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			return reconciler.Reconcile(ctx, revision, *namespace)
 		}
 	}
+	syncPolicy := options.InformerSync
+	if err := syncPolicy.Validate(); err != nil {
+		return err
+	}
+	syncRetried := func(phase string) func(int, error) {
+		return func(attempt int, err error) {
+			record := map[string]any{"informer_sync_retry": phase, "attempt": attempt, "error": err.Error()}
+			if encodeErr := encoder.Encode(record); encodeErr != nil {
+				fmt.Fprintln(stderr, encodeErr)
+			}
+		}
+	}
 	// observeApplication is the one path that brings observation of the
 	// application up: informers, state baseline, synthetic traffic and
 	// reachability. Startup and every resume from a pause go through it, so a
@@ -1022,9 +1036,9 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		return err
 	}
 	if !desired.Paused {
-		startSyncCtx, cancelStartSync := context.WithTimeout(runCtx, startupSyncTimeout)
-		err := observeApplication(startSyncCtx, false)
-		cancelStartSync()
+		err := syncPolicy.Do(runCtx, 0, func(syncCtx context.Context) error {
+			return observeApplication(syncCtx, false)
+		}, syncRetried("startup"))
 		if err != nil {
 			if runCtx.Err() != nil {
 				return nil
@@ -1068,17 +1082,16 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	resume := func() error {
 		wasPaused := applied.Paused
 		preserved := wasPaused && applied.PreserveBaseline
-		syncCtx, cancelSync := context.WithTimeout(runCtx, *resumeSyncTimeout)
-		defer cancelSync()
 		// Informers keep running through a generation-only acknowledgement and
 		// through a baseline-preserving pause of a process that was already
 		// observing; a controller launched inside that pause has none running.
 		var syncErr error
-		if wasPaused {
-			syncErr = observeApplication(syncCtx, preserved)
-		} else {
-			syncErr = kubernetesCache.ObserveRunning(runCtx, syncCtx)
-		}
+		syncErr = syncPolicy.Do(runCtx, *resumeSyncTimeout, func(syncCtx context.Context) error {
+			if wasPaused {
+				return observeApplication(syncCtx, preserved)
+			}
+			return kubernetesCache.ObserveRunning(runCtx, syncCtx)
+		}, syncRetried("resume"))
 		if syncErr != nil {
 			if runCtx.Err() != nil {
 				return nil
