@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -29,7 +30,7 @@ func TestEvidenceReadOnlyHistoryShowAndStateCuts(t *testing.T) {
 		}
 		return ""
 	}
-	for _, args := range [][]string{{"history"}, {"show", "--event", "1"}, {"state", "ConfigMap/app/settings", "--at", "before-first-mutation"}, {"state", "ConfigMap/app/settings", "--at", "after-fix"}} {
+	for _, args := range [][]string{{"history"}, {"show", "--event", "1"}, {"state", "ConfigMap/app/settings", "--at", "before-first-mutation"}, {"state", `{"kind":"ConfigMap","namespace":"app","name":"settings"}`, "--at", "before-first-mutation"}, {"state", "ConfigMap/app/settings", "--at", "after-fix"}} {
 		var out bytes.Buffer
 		if err := RunEvidence(args, env, &out); err != nil {
 			t.Fatal(err)
@@ -88,5 +89,18 @@ func TestEvidenceStateDoesNotInferAbsenceFromPartialListsOrCrossingWrite(t *test
 	result = stateAt(h, dir, "Pod/app/api", "after-fix")
 	if !result.ObservedAt.IsZero() {
 		t.Fatal("crossing request counted as after recovery")
+	}
+}
+
+func TestEvidenceReferenceFormsKeepGroupRestriction(t *testing.T) {
+	for _, reference := range []string{
+		"Deployment.foreign.invalid/app/worker",
+		`{"kind":"Deployment.foreign.invalid","namespace":"app","name":"worker"}`,
+		`{"api_version":"foreign.invalid/v1","kind":"Deployment","namespace":"app","name":"worker"}`,
+	} {
+		result := stateAt(apihistory.History{}, t.TempDir(), reference, "2026-01-01T00:00:00Z")
+		if !strings.Contains(result.Reason, "unsupported or ambiguous API group/resource") {
+			t.Fatalf("group restriction erased for %q: %+v", reference, result)
+		}
 	}
 }

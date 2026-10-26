@@ -105,3 +105,29 @@ func TestMissingProofAndFixedVerdictRemainQuestions(t *testing.T) {
 		})
 	}
 }
+
+func TestCauseWorkCreditsCanonicalRepairBindings(t *testing.T) {
+	forms := []string{
+		`"Service/default/reservation"`, `"svc/default/reservation"`,
+		`"default/services/reservation"`, `"v1@Service/default/reservation"`,
+		`{"kind":"Service","namespace":"default","name":"reservation"}`,
+		`{"kind":"svc","namespace":"default","name":"reservation"}`,
+		`{"api_version":"v1","kind":"Service","namespace":"default","name":"reservation"}`,
+		`{"apiVersion":"v1","kind":"Service","namespace":"default","name":"reservation"}`,
+	}
+	for _, plan := range forms {
+		for _, recorded := range forms {
+			t.Run(plan+"/"+recorded, func(t *testing.T) {
+				outcome := verifiedRepeat(t)
+				outcome.RepairActions[0].Resources = []*contracts.ObjectRef{repeatService}
+				outcome.ProgramToolCalls[0].RequestJson = `{"command":"plan","program_id":"` + repeatProgram + `","bindings":{"objects":{"service":` + plan + `}}}`
+				outcome.ProgramToolCalls[1].ResponseJson = `{"command":"apply","application_id":"` + repeatApplication + `","program_runs":[{"program_id":"` + repeatProgram + `","program_revision":"` + repeatRevision + `","bindings":{"objects":{"service":` + recorded + `}},"verdict":{"result":"NoMatch"}}]}`
+				key := matchedViewKey(repeatProgram, program.Bindings{Objects: program.ObjectBindings{"service": objectRefState(repeatService)}})
+				work := classifyCauseWork(outcome, map[string]program.Result{key: program.NoMatch})
+				if len(work) != 1 || len(work[0].Items) != 1 || work[0].Items[0].Disposition != "covered" {
+					t.Fatalf("equivalent repair lost credit: %v", work)
+				}
+			})
+		}
+	}
+}
