@@ -105,3 +105,26 @@ def test_host_disk_floor_precedes_lane_setup(monkeypatch, tmp_path):
     monkeypatch.setattr(cli.subprocess, "run", lambda *args, **kwargs: pytest.fail("setup before disk gate"))
     with pytest.raises(ValueError, match=r"disk mount /mnt/data"):
         cli.check_host_capacity(SimpleNamespace(run_dir=tmp_path))
+
+
+def test_oracle_uses_remaining_admission_budget_instead_of_shorter_poll_timeout(lane, monkeypatch):
+    gate, _ = lane
+    monkeypatch.setattr(admission, "assert_lane_resources", lambda *args, **kwargs: {"passed": True})
+    now = [0.0]
+    monkeypatch.setattr(admission.time, "monotonic", lambda: now[0])
+
+    def request(op, **kwargs):
+        assert op == "baseline_oracle"
+        assert kwargs["timeout"] == pytest.approx(280)
+        now[0] += 200
+        return {"success": True}
+
+    def windows(_control):
+        now[0] += 20
+        return {
+            "windows": {"health": {"scenarios": [{"scenario": {"id": "frontend"}, "qualified": True, "samples": [{}]}]}}
+        }
+
+    gate.worker.request = request
+    monkeypatch.setattr(gate, "_windows", windows)
+    assert gate.prove("hotel-reservation-sdo")["passed"] is True

@@ -20,6 +20,7 @@ from benchmarks.sregym.adapter import (
     setup_lineage,
     wait_for_proof,
 )
+from benchmarks.sregym.adapter.eval_guards import Deadline
 from benchmarks.sregym.fastloop.clean_start import assert_clean_baseline
 
 if TYPE_CHECKING:
@@ -168,6 +169,7 @@ class LaneAdmission:
     def prove(self, control: str, *, fresh: bool = False) -> dict[str, Any]:
         from benchmarks.sregym.fastloop.rbac import verify_rbac
 
+        deadline = Deadline(time.monotonic() + self.timeout_seconds, time.monotonic)
         self.check_resources("entry")
         self._policy()
         if self.before_proof is not None:
@@ -200,7 +202,7 @@ class LaneAdmission:
                     "baseline_oracle",
                     problem_id=env.deploy_problem,
                     verify_traffic=True,
-                    timeout=min(60, self.timeout_seconds),
+                    timeout=deadline.remaining(),
                 )
                 proof["independent_traffic"] = traffic
                 proof["passed"] = traffic.get("success") is True
@@ -222,7 +224,9 @@ class LaneAdmission:
             restore_application(env, KubectlApplicationCluster(env.kubeconfig), self.worker, checks=checks)
             self._identity = workload_identity(env.kubeconfig, env.namespace)
 
-        proof = wait_for_proof(sample, restore, record, timeout_seconds=self.timeout_seconds)
+        proof = wait_for_proof(
+            sample, restore, record, timeout_seconds=self.timeout_seconds, deadline=deadline, monotonic=time.monotonic
+        )
         if self.progress:
             self.progress("stabilization", evidence=str(path))
         if fresh:
@@ -235,6 +239,7 @@ class LaneAdmission:
             if self.progress:
                 self.progress("setup_memory", evidence=str(destination))
         self.check_resources("injection")
+        deadline.remaining()
         return proof
 
 
