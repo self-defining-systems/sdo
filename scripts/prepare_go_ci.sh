@@ -32,3 +32,14 @@ if [[ "$mode" == normal ]]; then
   python3 "$root/scripts/operator_test_binary.py"
   (cd "$root/sdo/operator" && go build -o "$root/.fastloop/test-bin/setup" "$root/tests/unit/benchmarks/sregym/fastloop/fixtures/setup.go")
 fi
+if [[ "$mode" == normal ]]; then
+  # The controller jobs run with GOPROXY=off. Generated fixture workspaces run
+  # `go mod tidy`/`-mod=mod`, which also needs transitive modules' go.mod files
+  # outside the build graph; `all` covers them (as testutil.OfflineGo does).
+  # Every module the controller jobs test (operator and benchmark protocol
+  # modules), so a new module is covered without editing this.
+  git -C "$root" ls-files 'sdo/operator/go.mod' 'sdo/operator/**/go.mod' 'benchmarks/sregym/protocol/**/go.mod' | grep -v /testdata/ |
+    while read -r manifest; do
+      (cd "$root/$(dirname "$manifest")" && go mod download all)
+    done
+fi

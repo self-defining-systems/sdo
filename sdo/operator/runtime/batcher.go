@@ -3,12 +3,16 @@ package runtime
 import (
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"sdo.dev/operator/sdk"
 )
 
+// Batcher is safe for concurrent use: the run loop mutates it while response
+// goroutines export controller state.
 type Batcher struct {
+	mu              sync.Mutex
 	findings        map[string]sdk.Finding
 	deadlines       map[string]time.Time
 	defaultDebounce time.Duration
@@ -36,6 +40,8 @@ func (b *Batcher) Add(finding sdk.Finding) {
 }
 
 func (b *Batcher) AddAt(finding sdk.Finding, now time.Time) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	fingerprint := FindingFingerprint(finding)
 	finding.Fingerprint = fingerprint
 	key := FindingStateKey(finding.DetectorID, fingerprint)
@@ -54,6 +60,8 @@ func (b *Batcher) AddAt(finding sdk.Finding, now time.Time) {
 }
 
 func (b *Batcher) AddAtWithDebounce(finding sdk.Finding, now time.Time, debounce time.Duration) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	fingerprint := FindingFingerprint(finding)
 	finding.Fingerprint = fingerprint
 	key := FindingStateKey(finding.DetectorID, fingerprint)
@@ -69,14 +77,20 @@ func (b *Batcher) AddAtWithDebounce(finding sdk.Finding, now time.Time, debounce
 }
 
 func (b *Batcher) Ready(now time.Time) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	return len(b.findings) > 0 && (b.deadline.IsZero() || !now.Before(b.deadline))
 }
 
 func (b *Batcher) Deadline() (time.Time, bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	return b.deadline, len(b.findings) > 0
 }
 
 func (b *Batcher) Snapshot() BatcherState {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	findings := make([]sdk.Finding, 0, len(b.findings))
 	for _, finding := range b.findings {
 		findings = append(findings, finding)
@@ -90,6 +104,8 @@ func (b *Batcher) Snapshot() BatcherState {
 }
 
 func (b *Batcher) Restore(state BatcherState) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	b.findings = make(map[string]sdk.Finding, len(state.Findings))
 	b.deadlines = make(map[string]time.Time, len(state.Findings))
 	for _, finding := range state.Findings {
@@ -105,6 +121,8 @@ func (b *Batcher) Restore(state BatcherState) {
 }
 
 func (b *Batcher) Drain() []sdk.Finding {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	result := make([]sdk.Finding, 0, len(b.findings))
 	for _, finding := range b.findings {
 		result = append(result, finding)
@@ -117,6 +135,8 @@ func (b *Batcher) Drain() []sdk.Finding {
 }
 
 func (b *Batcher) DrainReady(now time.Time) []sdk.Finding {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	result := make([]sdk.Finding, 0)
 	for key, finding := range b.findings {
 		deadline := b.deadlines[key]
@@ -135,6 +155,8 @@ func (b *Batcher) DrainReady(now time.Time) []sdk.Finding {
 // DrainDetectorPrefix removes and returns pending findings whose detector ID
 // starts with prefix, ignoring their debounce deadlines.
 func (b *Batcher) DrainDetectorPrefix(prefix string) []sdk.Finding {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	result := make([]sdk.Finding, 0)
 	for key, finding := range b.findings {
 		if !strings.HasPrefix(finding.DetectorID, prefix) {
@@ -153,6 +175,8 @@ func (b *Batcher) DrainDetectorPrefix(prefix string) []sdk.Finding {
 // their debounce deadline. FindingChanges uses the same detector-qualified
 // keys, so identical fingerprints from independent detectors remain isolated.
 func (b *Batcher) RemoveKeys(keys []string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	for _, key := range keys {
 		delete(b.findings, key)
 		delete(b.deadlines, key)
@@ -160,6 +184,7 @@ func (b *Batcher) RemoveKeys(keys []string) {
 	b.recomputeDeadline()
 }
 
+// recomputeDeadline requires b.mu.
 func (b *Batcher) recomputeDeadline() {
 	b.deadline = time.Time{}
 	first := true

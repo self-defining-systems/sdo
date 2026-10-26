@@ -101,9 +101,10 @@ type Controller struct {
 	healthyMemoryBaselineAt time.Time
 	healthyMemoryReference  string
 	healthyMemoryCandidates map[time.Time]string
-	// routingSweeps tracks background open@detect routing sweeps so tests can
-	// join them before removing the capture directory.
-	routingSweeps     sync.WaitGroup
+	// background tracks every goroutine an effect starts (responder dispatch,
+	// broker workspace/closure/acknowledgment, open@detect routing sweeps).
+	// They write under the session root until they return; Wait joins them.
+	background        sync.WaitGroup
 	ownershipAdoption OwnershipAdoptionStatus
 	// acceptanceSettleWaits counts consecutive adoption passes that waited
 	// for an object to settle; it spaces the next pass.
@@ -791,13 +792,11 @@ func (c *Controller) captureOpenDetect(ctx context.Context, snapshot sdk.Detecti
 		return
 	}
 	view := c.drift.View(snapshot)
-	c.routingSweeps.Add(1)
-	go func() {
-		defer c.routingSweeps.Done()
+	c.goBackground(func() {
 		if err := captureRoutingEvidence(ctx, c.config.CorpusSessionRoot, request.IncidentID, "open@detect", request.Findings, view); err != nil {
 			report(fmt.Errorf("capture incident routing evidence: %w", err))
 		}
-	}()
+	})
 }
 
 func hasNonDriftFinding(findings []sdk.Finding) bool {
@@ -826,6 +825,23 @@ func severityAtLeast(actual sdk.FindingSeverity, threshold sdk.FindingSeverity) 
 		sdk.SeverityInfo: 1, sdk.SeverityWarning: 2, sdk.SeverityCritical: 3, sdk.SeverityLatent: 3,
 	}
 	return rank[actual] >= rank[threshold]
+}
+
+// goBackground runs work on a goroutine that Wait joins. Every goroutine an
+// effect starts goes through here, so no write outlives the caller.
+func (c *Controller) goBackground(work func()) {
+	c.background.Add(1)
+	go func() {
+		defer c.background.Done()
+		work()
+	}()
+}
+
+// Wait joins the controller's background goroutines. Their contexts derive
+// from the caller's, so cancel that first; they write under the session root
+// until they return.
+func (c *Controller) Wait() {
+	c.background.Wait()
 }
 
 func (c *Controller) NextWake() time.Time {

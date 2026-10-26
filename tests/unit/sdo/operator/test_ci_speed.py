@@ -179,6 +179,37 @@ def test_go_shards_restore_the_completed_preparation_cache() -> None:
         assert any("ci-prepared" in step["with"]["key"] for step in caches), name
 
 
+def test_go_test_jobs_never_download_modules(tmp_path: Path) -> None:
+    """Controller jobs run offline on the module graph that preparation caches."""
+    controller = workflow()["jobs"]["controller"]
+    assert controller["env"]["GOPROXY"] == "off"
+    command = tmp_path / "go"
+    command.write_text('#!/bin/sh\nprintf "%s:%s\\n" "$PWD" "$*" >> "$SDO_TEST_CALLS"\n')
+    command.chmod(0o755)
+    (tmp_path / "python3").write_text("#!/bin/sh\nexit 0\n")
+    (tmp_path / "python3").chmod(0o755)
+    calls = tmp_path / "calls"
+    subprocess.run(
+        ["bash", str(ROOT / "scripts/prepare_go_ci.sh"), "normal"],
+        env={**os.environ, "PATH": f"{tmp_path}:{os.environ['PATH']}", "SDO_TEST_CALLS": str(calls)},
+        check=True,
+    )
+    downloaded = {
+        directory
+        for directory, args in (line.split(":", 1) for line in calls.read_text().splitlines())
+        if args == "mod download all"
+    }
+    modules = {str(ROOT / "sdo/operator" / name) for name in ("sdk", "core", "runtime", "contracts")} | {
+        str(ROOT / "sdo/operator")
+    }
+    tested = {str(ROOT / item["directory"]) for item in controller["strategy"]["matrix"]["include"]}
+    foundation = (ROOT / "scripts/test_go_foundation.sh").read_text()
+    tested |= {str(ROOT / module) for module in re.findall(r"\b(benchmarks/\S+_go)\b", foundation)}
+    modules |= {str(ROOT / "benchmarks/sregym/protocol" / name) for name in ("native_receipt_go", "submission_go")}
+    assert tested <= modules
+    assert downloaded == modules
+
+
 def test_image_jobs_use_the_compilation_owners_schema_identity() -> None:
     jobs = workflow()["jobs"]
     images = jobs["images"]

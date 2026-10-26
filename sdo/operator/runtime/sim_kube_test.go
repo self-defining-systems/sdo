@@ -73,6 +73,9 @@ func sweepSimSeeds(t *testing.T, body func(t *testing.T, seed uint64)) {
 // simulations whose single run is expensive.
 func sweepSimSeedsN(t *testing.T, defaultRuns int, body func(t *testing.T, seed uint64)) {
 	t.Helper()
+	// Sweeps are bounded by wall time, not work; running them in parallel with
+	// each other keeps a shard from paying every sweep's budget back to back.
+	t.Parallel()
 	deadline := time.Now().Add(simWallBudget)
 	ran := 0
 	seeds := simSeeds(t, defaultRuns)

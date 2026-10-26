@@ -65,11 +65,11 @@ func (c *Controller) ExecuteDispatchEffect(ctx context.Context, effect DispatchE
 		Worktree: effect.Request.RepositoryWorktree, BaseCommit: effect.Request.RepositoryBaseCommit,
 	})
 	c.mu.Unlock()
-	go func() {
+	c.goBackground(func() {
 		defer cancel()
 		result, reports, dispatchErr := c.runResponsePipeline(actionCtx, effect.Request)
 		c.results <- dispatchCompletion{incidentID: effect.Request.IncidentID, result: result, priorStages: reports, err: dispatchErr}
-	}()
+	})
 	return nil
 }
 

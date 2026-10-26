@@ -296,7 +296,7 @@ func (w *simWorld) startController() {
 		w.t.Fatal(err)
 	}
 	w.controller = controller
-	w.t.Cleanup(controller.routingSweeps.Wait)
+	w.t.Cleanup(controller.Wait)
 }
 
 // restart replaces the controller with a fresh process over the same state.
