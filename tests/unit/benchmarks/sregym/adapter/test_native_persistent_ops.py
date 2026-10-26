@@ -214,5 +214,12 @@ def test_graceful_teardown_stops_benchmark_transport_after_go_runtime(tmp_path, 
     monkeypatch.setattr(ops, "controller_pod", lambda *_: None)
     monkeypatch.setattr(ops, "stop_runtime", lambda target: events.append(("go-stop", target.kubeconfig)))
     monkeypatch.setattr(ops, "stop_transport", lambda target: events.append(("benchmark-stop", target.kubeconfig)))
+    monkeypatch.setattr(
+        ops, "retire_controller_state", lambda target, _archive: events.append(("retire-state", target.kubeconfig))
+    )
     assert persistent.teardown(path, ops=ops) == []
-    assert events == [("go-stop", "/recorded/lane"), ("benchmark-stop", "/recorded/lane")]
+    assert events == [
+        ("go-stop", "/recorded/lane"),
+        ("benchmark-stop", "/recorded/lane"),
+        ("retire-state", "/recorded/lane"),
+    ]

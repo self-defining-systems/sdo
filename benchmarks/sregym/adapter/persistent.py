@@ -90,6 +90,10 @@ REJECTED_RECEIPT_FILENAME = "sdo_rejected_production_receipt.json"
 CONTROLLER_LOGS_SUBDIR = Path(RUNTIME_ARTIFACTS_DIRNAME) / "controller_logs"
 POLL_SECONDS = 1.0
 CONTROLLER_JOB_NAME = "sdo-controller-run"
+# The runtime storage edge's checkpoint identity (lifecycleio.StateRevisionAnnotation
+# and StateDataKey): its CAS annotation plus typed data key, never its name.
+STATE_REVISION_ANNOTATION = "sdo.dev/state-revision"
+STATE_DATA_KEY = "runtime-state.json"
 MAINTENANCE_ACK_TIMEOUT_SECONDS = 600.0
 DRAIN_TIMEOUT_SECONDS = 3600.0
 # After the reflection drain returns, the controller's asynchronous close-out may
@@ -543,6 +547,39 @@ class KubectlClusterOps:
                 for row in remaining
             ):
                 raise PersistentControllerError("eval: idle standby deletion incomplete; cleanup blocked")
+
+    def retire_controller_state(self, target: CleanupTarget, archive_dir: Path) -> list[str]:
+        """Archive, then delete, the stopped controller's checkpoint of open incident and closure work.
+
+        Onboarding authority, maintenance and the accepted repository survive; a
+        later install starts from accepted memory, not an incident it did not open.
+        """
+        config = Path(target.kubeconfig) if target.kubeconfig else None
+
+        def checkpoints() -> list[dict[str, Any]]:
+            listing = kubectl(
+                ["get", "configmaps", "-o", "json"], namespace=target.control_namespace, kubeconfig=config
+            )
+            return [
+                item
+                for item in json.loads(listing.stdout or "{}").get("items", [])
+                if STATE_REVISION_ANNOTATION in (item.get("metadata", {}).get("annotations") or {})
+                and STATE_DATA_KEY in (item.get("data") or {})
+            ]
+
+        retired = []
+        for item in checkpoints():
+            name = item["metadata"]["name"]
+            _write_json(item, archive_dir / f"{name}.json")
+            kubectl(
+                ["delete", "configmap", name, "--ignore-not-found=true", "--wait=true"],
+                namespace=target.control_namespace,
+                kubeconfig=config,
+            )
+            retired.append(name)
+        if survivors := [item["metadata"]["name"] for item in checkpoints()]:
+            raise PersistentControllerError(f"controller state survived teardown: {survivors}")
+        return retired
 
     def stop_transport(self, target: CleanupTarget) -> None:
         config = Path(target.kubeconfig) if target.kubeconfig else None
@@ -1458,6 +1495,9 @@ def teardown(state_path: Path, *, ops: ClusterOps, clock: Clock | None = None) -
                     )
                     ops.stop_runtime(target)
                     ops.stop_transport(target)
+                    ops.retire_controller_state(
+                        target, state_path.parent / f"{state_path.name}.teardown-state" / record.control_namespace
+                    )
                 else:
                     ops.delete_controller(record.control_namespace)
             except (PersistentControllerError, NativeOperatorError, OSError, ValueError, RuntimeError) as exc:
@@ -1519,6 +1559,10 @@ def abort(state_path: Path, *, ops: AbortClusterOps) -> list[str]:
             leftovers = ops.abort_leftovers(target)
             errors.extend(f"{namespace}: leftover {name}" for name in leftovers)
             if not leftovers:
+                # Only a quiet lane can drop its checkpoint; live work keeps its evidence.
+                ops.retire_controller_state(
+                    target, state_path.parent / f"{state_path.name}.abort-state" / target.control_namespace
+                )
                 state.controllers.pop(namespace, None)
         except (RuntimeError, OSError, ValueError, subprocess.SubprocessError) as exc:
             errors.append(f"{namespace}: could not verify quiet lane: {exc}")
@@ -1531,6 +1575,7 @@ class AbortClusterOps(Protocol):
     def stop_runtime(self, target: CleanupTarget) -> None: ...
     def abort_workload(self, target: CleanupTarget) -> None: ...
     def abort_leftovers(self, target: CleanupTarget) -> list[str]: ...
+    def retire_controller_state(self, target: CleanupTarget, archive_dir: Path) -> list[str]: ...
 
 
 def _publish_drained_receipts(state_path: Path) -> None:
