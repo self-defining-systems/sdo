@@ -15,19 +15,24 @@ EVENTS = []
 
 
 class Inventory:
-    """In-memory cluster-scoped objects; a lane starts with only its app namespace."""
+    """In-memory objects; a lane starts with its app namespace and one Deployment in it."""
 
     def __init__(self):
-        self.objects = {ClusterObject("Namespace", "hotel-reservation")}
+        self.objects = {
+            ClusterObject("Namespace", "hotel-reservation"),
+            ClusterObject("Deployment", "frontend", "hotel-reservation"),
+        }
 
-    def list_objects(self):
-        return frozenset(self.objects)
+    def list_objects(self, namespaces=frozenset()):
+        return frozenset(obj for obj in self.objects if not obj.namespace or obj.namespace in namespaces)
 
     def delete(self, obj):
         self.objects.discard(obj)
 
 
 INVENTORY = Inventory()
+HPA = ClusterObject("HorizontalPodAutoscaler", "frontend-capacity", "hotel-reservation")
+POLICY = ClusterObject("NetworkPolicy", "deny-all", "hotel-reservation")
 
 
 class Fault(Problem):
@@ -48,6 +53,9 @@ class Fault(Problem):
         if self.name == "installs-controller":
             # Like IngressMisroute: a controller in its own namespace that recover_fault leaves.
             INVENTORY.objects |= {ClusterObject("Namespace", "ingress-nginx"), ClusterObject("IngressClass", "nginx")}
+        if self.name == "ensures-hpa":
+            # Like HPAMissingEffectiveCPURequest: an HPA the baseline lacked.
+            INVENTORY.objects.add(HPA)
 
     def injection_failure(self):
         return {"synthetic_invalid": True} if self.invalid else None
@@ -57,6 +65,12 @@ class Fault(Problem):
         EVENTS.append(["recover", self.name])
         if self.broken_cleanup:
             raise RuntimeError("synthetic cleanup failure")
+        if self.name == "ensures-hpa":
+            # It "ensures" the HPA exists on recovery, after the worker could not yet remove it.
+            INVENTORY.objects.add(HPA)
+        if self.name == "leaves-policy":
+            # Stands in for a responder's repair, which the worker labels but never removes.
+            INVENTORY.objects.add(POLICY)
         self.repaired = True
 
 
@@ -80,7 +94,7 @@ class Worker(FastloopWorker):
         if request["op"] == "events":
             return {"events": EVENTS.copy()}
         if request["op"] == "inventory":
-            return {"objects": sorted(str(obj) for obj in INVENTORY.list_objects())}
+            return {"objects": sorted(str(obj) for obj in INVENTORY.list_objects(frozenset({"hotel-reservation"})))}
         return super().handle(request)
 
 
