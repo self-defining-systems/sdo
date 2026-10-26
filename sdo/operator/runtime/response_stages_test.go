@@ -67,3 +67,26 @@ func TestResponseStageMergesOverlappingFindingCausesWithoutLosingResources(t *te
 		t.Fatalf("lost or multiply owned stage cause: %+v", causes)
 	}
 }
+
+type rejoiningStageDispatcher struct{ automatic, agent int }
+
+func (d *rejoiningStageDispatcher) DeterministicResponseStage() ResponseStage {
+	return clearingResponseStage{name: "deterministic", calls: &d.automatic}
+}
+func (d *rejoiningStageDispatcher) Dispatch(_ context.Context, request IncidentRequest) (IncidentResult, error) {
+	d.agent++
+	result := completedResult(request.IncidentID)
+	result.ResponderSessionID = "resumed-session"
+	return result, nil
+}
+func TestResponseStageRejoinKeepsAgentOwnershipAndReflectionEvidence(t *testing.T) {
+	dispatcher := &rejoiningStageDispatcher{}
+	controller := &Controller{codePath: &CodePath{Selection: CodePathSelection{ResponseStages: []string{"deterministic", "agent"}}}, dispatcher: dispatcher, responseStagesRunning: true}
+	request := goldenRequest(t)
+	request.PreparedAgentTask = "durable-agent-handoff"
+	request.PriorStages = []*contracts.StageReport{{Stage: "deterministic"}}
+	result, reports, err := controller.runResponsePipeline(context.Background(), request)
+	if err != nil || dispatcher.automatic != 0 || dispatcher.agent != 1 || result.ResponderSessionID != "resumed-session" || result.ResolutionPath == "deterministic" || len(reports) != 1 || controller.responseStagesRunning {
+		t.Fatalf("agent handoff lost ownership/evidence: automatic=%d agent=%d result=%+v reports=%v running=%t err=%v", dispatcher.automatic, dispatcher.agent, result, reports, controller.responseStagesRunning, err)
+	}
+}
