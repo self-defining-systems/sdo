@@ -23,10 +23,22 @@ func (c *Controller) resetEarlyStability() {
 	c.closureStableSince = time.Time{}
 	c.mu.Unlock()
 }
-func acquireClosureGuard(l *ResponderLoop) (*apihistory.MutationObservation, func(), bool) {
+
+// responderClosureGuard owns the loop locks until release. Controller result
+// projections must use this guard, never copy fields from a live loop directly.
+type responderClosureGuard struct {
+	observation *apihistory.MutationObservation
+	loop        *ResponderLoop
+}
+
+func (g *responderClosureGuard) resultSnapshot(request IncidentRequest, at time.Time) *IncidentResult {
+	return earlyResultSnapshotLocked(g.loop, request, at)
+}
+
+func acquireClosureGuard(l *ResponderLoop) (*responderClosureGuard, func(), bool) {
 	noop := func() {}
 	if l == nil {
-		return nil, noop, true
+		return &responderClosureGuard{}, noop, true
 	}
 	if !l.operationMu.TryLock() {
 		return nil, noop, false
@@ -79,7 +91,7 @@ func acquireClosureGuard(l *ResponderLoop) (*apihistory.MutationObservation, fun
 			guard.Revision += "/" + revision
 		}
 	}
-	return guard, func() {
+	return &responderClosureGuard{observation: guard, loop: l}, func() {
 		if guard != nil {
 			guard.Close()
 		}
@@ -91,6 +103,16 @@ func acquireClosureGuard(l *ResponderLoop) (*apihistory.MutationObservation, fun
 // opening detector finding on a successfully repaired resource supplies a cause;
 // the independent final detector states still decide whether it earns credit.
 func earlyResultSnapshot(l *ResponderLoop, request IncidentRequest, at time.Time) *IncidentResult {
+	if l != nil {
+		l.mu.Lock()
+		defer l.mu.Unlock()
+	}
+	return earlyResultSnapshotLocked(l, request, at)
+}
+
+// earlyResultSnapshotLocked is shared by the synchronized snapshot entry point
+// and the closure guard, which already owns mu for its entire observation.
+func earlyResultSnapshotLocked(l *ResponderLoop, request IncidentRequest, at time.Time) *IncidentResult {
 	result := &IncidentResult{SchemaVersion: ProtocolSchemaVersion, IncidentID: request.IncidentID, Status: IncidentCompleted, Timing: TimingMetrics{StartedAt: at, CompletedAt: at}, ResolutionPath: "responder"}
 	if l == nil {
 		return result
@@ -183,9 +205,7 @@ func (c *Controller) finishEarlyReport(ctx context.Context, now time.Time) {
 		StopResponder(context.Context, string, int) error
 	}); ok {
 		if loop != nil {
-			loop.mu.Lock()
-			attempts = max(attempts, loop.continuation.Attempts)
-			loop.mu.Unlock()
+			attempts = max(attempts, loop.continuationAttempts())
 		}
 		if err := stopper.StopResponder(ctx, id, attempts); err != nil {
 			c.mu.Lock()
