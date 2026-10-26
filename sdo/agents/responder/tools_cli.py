@@ -128,9 +128,9 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="sdo",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="Earlier stages’ actions and results are in prior_stages. "
-        "Build on them; do not repeat verified repairs. "
-        "The complete incident facts retain apply receipts and post-apply diagnoses.\n\n"
+        epilog="prior_stages holds earlier stages’ actions and results; "
+        "build on them, don't repeat verified repairs. "
+        "Full incident facts keep apply receipts and post-apply diagnoses.\n\n"
         "Examples (replace names with incident resources):\n  " + "\n  ".join(CLI_EXAMPLES),
     )
     commands = parser.add_subparsers(dest="command", required=True)
@@ -184,7 +184,7 @@ def _parser() -> argparse.ArgumentParser:
     commands.add_parser("apply", help="apply a previously planned repair").add_argument("plan_ids", nargs="+")
     mitigate = commands.add_parser(
         "mitigate",
-        help="apply several independent options in one call; overlapping options refused; show progress and full JSON",
+        help="apply independent options in one call; overlaps refused; shows progress and full JSON",
         description=(
             "Apply several independent options in one call; overlapping object write sets are refused before writes. "
             "Use repeated --option ID followed by that option's --param NAME=VALUE, or --selection-set FILE "
@@ -245,9 +245,7 @@ def _parser() -> argparse.ArgumentParser:
     ).add_argument("ref", metavar="Kind/namespace/name")
     act = commands.add_parser(
         "act",
-        help=(
-            "record one command invocation; outer shell chains run separately; show progress and a complete JSON report"
-        ),
+        help=("record one command; outer shell chains run separately; shows progress and a complete JSON report"),
         description=(
             "Run one live mutation and record its repair receipt (target, resources, timing, outcome and "
             "command line). The command's exit code is returned. Do not hand-write receipts. "
