@@ -60,21 +60,55 @@ func TestReadClientHidesMutationMethods(t *testing.T) {
 	_ = client.AppsV1().Deployments("app").GetScale
 }
 
-func TestDiscoveryMapperCachesCustomKinds(t *testing.T){
- calls:=0
- client,err:=kubeclient.NewReadClient(func(_ context.Context,_ string,path string,_ url.Values)([]byte,error){
-  calls++
-  switch path{
-  case "/api":return []byte(`{"kind":"APIVersions","apiVersion":"v1","versions":["v1"]}`),nil
-  case "/api/v1":return []byte(`{"kind":"APIResourceList","groupVersion":"v1","resources":[]}`),nil
-  case "/apis":return []byte(`{"kind":"APIGroupList","apiVersion":"v1","groups":[{"name":"example.test","versions":[{"groupVersion":"example.test/v1","version":"v1"}],"preferredVersion":{"groupVersion":"example.test/v1","version":"v1"}}]}`),nil
-  case "/apis/example.test/v1":return []byte(`{"kind":"APIResourceList","groupVersion":"example.test/v1","resources":[{"name":"widgets","singularName":"widget","namespaced":true,"kind":"Widget","verbs":["get","list","watch"]}]}`),nil
-  default:return nil,fmt.Errorf("unexpected discovery %s",path)
-  }
- });if err!=nil{t.Fatal(err)}
- first,err:=client.RESTMapper().RESTMapping(schema.GroupKind{Group:"example.test",Kind:"Widget"},"v1")
- if err!=nil||first.Resource.Resource!="widgets"{t.Fatalf("mapping: %v %v",first,err)}
- captured:=calls
- if _,err:=client.RESTMapper().RESTMapping(schema.GroupKind{Group:"example.test",Kind:"Widget"},"v1");err!=nil{t.Fatal(err)}
- if calls!=captured{t.Fatalf("discovery was not cached: %d -> %d",captured,calls)}
+func TestDiscoveryMapperCachesCustomKinds(t *testing.T) {
+	calls := 0
+	client, err := kubeclient.NewReadClient(func(_ context.Context, _ string, path string, _ url.Values) ([]byte, error) {
+		calls++
+		switch path {
+		case "/api":
+			return []byte(`{"kind":"APIVersions","apiVersion":"v1","versions":["v1"]}`), nil
+		case "/api/v1":
+			return []byte(`{"kind":"APIResourceList","groupVersion":"v1","resources":[]}`), nil
+		case "/apis":
+			return []byte(`{"kind":"APIGroupList","apiVersion":"v1","groups":[{"name":"example.test","versions":[{"groupVersion":"example.test/v1","version":"v1"}],"preferredVersion":{"groupVersion":"example.test/v1","version":"v1"}}]}`), nil
+		case "/apis/example.test/v1":
+			return []byte(`{"kind":"APIResourceList","groupVersion":"example.test/v1","resources":[{"name":"widgets","singularName":"widget","namespaced":true,"kind":"Widget","verbs":["get","list","watch"]}]}`), nil
+		default:
+			return nil, fmt.Errorf("unexpected discovery %s", path)
+		}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := client.RESTMapper().RESTMapping(schema.GroupKind{Group: "example.test", Kind: "Widget"}, "v1")
+	if err != nil || first.Resource.Resource != "widgets" {
+		t.Fatalf("mapping: %v %v", first, err)
+	}
+	captured := calls
+	if _, err := client.RESTMapper().RESTMapping(schema.GroupKind{Group: "example.test", Kind: "Widget"}, "v1"); err != nil {
+		t.Fatal(err)
+	}
+	if calls != captured {
+		t.Fatalf("discovery was not cached: %d -> %d", captured, calls)
+	}
+}
+
+func TestResourceMetricsKeepUpstreamQuantities(t *testing.T) {
+	client, err := kubeclient.NewReadClient(func(_ context.Context, _ string, path string, _ url.Values) ([]byte, error) {
+		if path != "/apis/metrics.k8s.io/v1beta1/namespaces/app/pods/api" {
+			return nil, fmt.Errorf("wrong metrics path %s", path)
+		}
+		return []byte(`{"apiVersion":"metrics.k8s.io/v1beta1","kind":"PodMetrics","metadata":{"name":"api","namespace":"app"},"containers":[{"name":"api","usage":{"cpu":"250m","memory":"32Mi"}}]}`), nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	metrics, err := client.Metrics().MetricsV1beta1().PodMetricses("app").Get(context.Background(), "api", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cpu := metrics.Containers[0].Usage.Cpu()
+	if cpu.MilliValue() != 250 {
+		t.Fatalf("upstream quantity changed: %v", cpu)
+	}
 }

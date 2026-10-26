@@ -24,6 +24,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/restmapper"
+	metricsclient "k8s.io/metrics/pkg/client/clientset/versioned"
 )
 
 // ReadFunc is implemented by the existing recorded ReadView, including replay.
@@ -33,6 +34,7 @@ type ReadFunc func(context.Context, string, string, url.Values) ([]byte, error)
 // ReadClient has client-go's group/resource shape with mutation methods omitted.
 // Every request still crosses the read-only transport, including request builders.
 type ReadClient struct {
+	metrics   metricsclient.Interface
 	builtin   kubernetes.Interface
 	dynamic   dynamic.Interface
 	discovery discovery.CachedDiscoveryInterface
@@ -59,9 +61,16 @@ func NewReadClient(read ReadFunc) (*ReadClient, error) {
 	if err != nil {
 		return nil, err
 	}
+	metrics, err := metricsclient.NewForConfigAndClient(config, httpClient)
+	if err != nil {
+		return nil, err
+	}
 	cached := discoverycache.NewMemCacheClient(disc)
-	return &ReadClient{builtin: builtin, dynamic: dyn, discovery: cached, mapper: restmapper.NewDeferredDiscoveryRESTMapper(cached)}, nil
+	return &ReadClient{metrics: metrics, builtin: builtin, dynamic: dyn, discovery: cached, mapper: restmapper.NewDeferredDiscoveryRESTMapper(cached)}, nil
 }
+
+// Metrics exposes upstream metrics.k8s.io clients and resource.Quantity values.
+func (c *ReadClient) Metrics() metricsclient.Interface { return c.metrics }
 
 // RESTMapper caches API discovery and resolves built-in kinds and CRDs alike.
 func (c *ReadClient) RESTMapper() meta.RESTMapper { return c.mapper }

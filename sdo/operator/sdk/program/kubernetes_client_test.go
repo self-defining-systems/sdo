@@ -3,6 +3,8 @@ package program_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"sdo.dev/operator/sdk"
 	"testing"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -54,5 +56,25 @@ func TestKubernetesDiscoveryReadsAndSecretBoundary(t *testing.T) {
 		if err := program.ValidateKubernetesRead(program.KubernetesRequest{Method: "GET", Path: path}); err == nil {
 			t.Errorf("unsafe read %s accepted", path)
 		}
+	}
+}
+
+type boundClientFixture struct {
+	clientReadFixture
+	absent bool
+}
+
+func (v boundClientFixture) DiffAgainstSource(sdk.ObjectRef) (program.Diff, error) {
+	return program.Diff{SourceAbsent: v.absent}, nil
+}
+func TestKubernetesClientRejectsDisappearedSourceRole(t *testing.T) {
+	bindings := program.Bindings{Objects: program.ObjectBindings{"workload": {APIVersion: "apps/v1", Kind: "Deployment", Namespace: "app", Name: "api"}}}
+	if _, err := program.Kubernetes(boundClientFixture{}, bindings); err != nil {
+		t.Fatal(err)
+	}
+	_, err := program.Kubernetes(boundClientFixture{absent: true}, bindings)
+	var stale *program.StaleBindingError
+	if !errors.As(err, &stale) || stale.Role != "workload" {
+		t.Fatalf("removed source role was not stale: %v", err)
 	}
 }

@@ -19,8 +19,6 @@ A program directory contains diagnose.go, optional mitigate.go, Go tests and a R
 fault class and originating incident. Preserve accepted provenance and add its logical ID to the playbook index.
 The worker's authoring reference tool supplies the current worked routing example alongside this guide.
 
-For typed lists, selectors, pagination and CRDs, use the [recorded Kubernetes client](kubernetes-client.md).
-
 ## Evidence and replay fixtures
 
 Learn from recorded responder actions and live observations already present in the incident session.

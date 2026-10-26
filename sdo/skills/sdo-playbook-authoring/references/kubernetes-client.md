@@ -1,6 +1,9 @@
 # Recorded Kubernetes reads
 
 Construct `client, err := program.Kubernetes(view)` once per program invocation.
+Pass `bindings` as the optional second argument for source-grounded roles;
+`StaleBindingError` identifies a role removed from accepted source. Omit that
+argument for intentionally source-absent or derived objects.
 A detector uses `program.Kubernetes(program.ReadFrom(ctx))`. Handle construction
 and read failures as errors/Unknown, including missing offline observations.
 
@@ -23,7 +26,7 @@ server's consistency semantics. Derive labels and names from bound roles and
 observed relations. Read concrete typed fields so compilation checks API changes.
 
 All pinned built-in groups expose their Get/List/Watch methods and read
-subresources, with upstream signatures. Pod `GetLogs` accepts `PodLogOptions`.
+subresources, with upstream signatures. Pod `GetLogs` accepts `PodLogOptions`; `Metrics()` returns upstream metrics clients and quantities.
 `Dynamic().Resource(schema.GroupVersionResource{...}).Namespace(ns)` reads any
 kind, including CRDs. `RESTMapper().RESTMapping` resolves API discovery once and
 caches it for this invocation. No handwritten kind inventory is required.
