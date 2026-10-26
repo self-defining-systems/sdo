@@ -81,13 +81,17 @@ func (c *Controller) clock() time.Time {
 	return time.Now().UTC()
 }
 
-// PausedWake includes report grace and worker termination retries as well as
-// closure retries. A pause stops observation, not already-started closure work.
+// PausedWake includes report grace, worker termination retries, ownerless
+// incident retirement and closure retries. A pause stops observation, not
+// already-started closure work.
 func (c *Controller) PausedWake() time.Time {
 	c.mu.Lock()
 	next := c.earlyReportWakeLocked()
 	if retry := c.pausedEffectRetryAt; !retry.IsZero() && (next.IsZero() || retry.Before(next)) {
 		next = retry
+	}
+	if retire := c.retirementWakeLocked(c.clock()); !retire.IsZero() && (next.IsZero() || retire.Before(next)) {
+		next = retire
 	}
 	c.mu.Unlock()
 	return c.closureRetryWake(next)

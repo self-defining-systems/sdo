@@ -327,6 +327,10 @@ func (c *Controller) stepPaused(ctx context.Context, now time.Time) error {
 	if err := c.prepareHealthEffects(ctx, now); err != nil {
 		return err
 	}
+	// Ownerless work is bookkeeping, not observation: a pause must not hold it.
+	if err := c.retireExpiredIncident(ctx, now); err != nil {
+		return err
+	}
 	before, err := c.ExportState()
 	if err != nil {
 		return err
@@ -869,7 +873,11 @@ func (c *Controller) NextWake() time.Time {
 	if c.earlyReportPendingLocked() {
 		earlyDeadline = c.earlyReportWakeLocked()
 	}
+	retireDeadline := c.retirementWakeLocked(c.clock())
 	c.mu.Unlock()
+	if !retireDeadline.IsZero() && (next.IsZero() || retireDeadline.Before(next)) {
+		next = retireDeadline
+	}
 	if !earlyDeadline.IsZero() && (next.IsZero() || earlyDeadline.Before(next)) {
 		next = earlyDeadline
 	}
