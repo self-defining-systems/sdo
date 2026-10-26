@@ -126,7 +126,7 @@ def collect_fingerprint(
     run: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
     monotonic: Callable[[], float] = time.monotonic,
 ) -> SetupFingerprint:
-    """Only local files and GETs; all subprocesses share a 15-second budget."""
+    """Local files, GETs and one read-only PVC HEAD read share a 15-second budget."""
     deadline = monotonic() + 15
 
     def execute(command: list[str]) -> str:
@@ -140,6 +140,8 @@ def collect_fingerprint(
         ["git", "-C", str(root), "describe", "--always", "--abbrev=40", "--dirty", "--match=__eval_no_tag__"]
     )
     if revision.endswith("-dirty"):
+        raise ValueError("eval: setup reuse requires committed code")
+    if execute(["git", "-C", str(root), "status", "--porcelain", "--untracked-files=normal"]):
         raise ValueError("eval: setup reuse requires committed code")
     accepted = execute(["git", "-C", str(environment.workspace), "rev-parse", "HEAD"])
     if execute(["git", "-C", str(environment.workspace), "status", "--porcelain", "--untracked-files=all"]):
@@ -159,10 +161,48 @@ def collect_fingerprint(
     ]
     if len(states) != 1:
         raise ValueError("eval: installed controller state is unavailable")
-    runtime = json.loads(states[0]["data"]["runtime-state.json"])
-    installed = runtime.get("accepted_source_drift_revision")
-    if not installed:
-        raise ValueError("eval: installed accepted-memory commit is unavailable")
+    # The persisted drift revision is an inventory content hash, not Git HEAD.
+    # Read the actual accepted repository through its current owning Pod.
+    controllers = [
+        obj
+        for obj in objects
+        if obj["kind"] == "Pod"
+        and obj["metadata"].get("namespace") == environment.namespace + "-sdo"
+        and not obj["metadata"].get("deletionTimestamp")
+        and any(
+            owner.get("kind") == "Job" and owner.get("name") == "sdo-controller-run"
+            for owner in obj["metadata"].get("ownerReferences", [])
+        )
+    ]
+    if len(controllers) != 1:
+        raise ValueError("eval: installed controller Pod identity is unavailable")
+    controller = controllers[0]
+    containers = [row for row in controller["spec"]["containers"] if row["name"] == "controller"]
+    if len(containers) != 1:
+        raise ValueError("eval: installed controller container is unavailable")
+    arguments = containers[0].get("args", [])
+    if "--app" not in arguments or arguments.index("--app") + 1 >= len(arguments):
+        raise ValueError("eval: installed accepted repository path is unavailable")
+    repository = arguments[arguments.index("--app") + 1]
+    if not repository.startswith("/"):
+        raise ValueError("eval: installed accepted repository path must be absolute")
+    installed = execute(
+        [
+            *base[:-1],
+            "exec",
+            "pod/" + controller["metadata"]["name"],
+            "-n",
+            environment.namespace + "-sdo",
+            "-c",
+            "controller",
+            "--",
+            "git",
+            "-C",
+            repository,
+            "rev-parse",
+            "HEAD",
+        ]
+    )
     if installed != accepted:
         raise ValueError("eval: installed accepted-memory commit differs from accepted workspace")
     paths = [environment.baseline_path, environment.workspace / ".sdo/rendered/lock.json"]
@@ -189,6 +229,30 @@ def collect_fingerprint(
         if path.suffix in {".py", ".go"}
     }
     if environment.dev_mount:
+        mounted_revision = execute(
+            [
+                "git",
+                "-C",
+                str(environment.dev_mount),
+                "describe",
+                "--always",
+                "--abbrev=40",
+                "--dirty",
+                "--match=__eval_no_tag__",
+            ]
+        )
+        if mounted_revision.endswith("-dirty") or execute(
+            [
+                "git",
+                "-C",
+                str(environment.dev_mount),
+                "status",
+                "--porcelain",
+                "--untracked-files=normal",
+            ]
+        ):
+            raise ValueError("eval: mounted code must be committed before setup reuse")
+        tools["mounted-code-revision"] = mounted_revision
         binary = environment.dev_mount / ".fastloop/sdo-operator"
         tools["installed-operator"] = hashlib.sha256(binary.read_bytes()).hexdigest()
     if monotonic() > deadline:

@@ -113,7 +113,19 @@ def test_status_and_resource_version_churn_preserve_identity():
     assert proof.object_identities([obj]) != before
 
 
-def test_deploy_is_skipped_only_with_matching_proof(tmp_path, fingerprint, monkeypatch):
+@pytest.mark.parametrize(
+    ("component", "changed"),
+    [
+        ("code_revision", "c" * 40),
+        ("images", {"controller": {"node": "sha256:" + "2" * 64}}),
+        ("accepted_memory_commit", "c" * 40),
+        ("installed_memory_commit", "c" * 40),
+        ("app_manifests", "changed"),
+        ("live_objects", {"app/Service/web": "drift"}),
+        ("tools", {"dry_run.py": "changed"}),
+    ],
+)
+def test_deploy_is_skipped_only_with_matching_proof(tmp_path, fingerprint, monkeypatch, component, changed):
     from types import SimpleNamespace
 
     from benchmarks.sregym.fastloop import cli
@@ -127,12 +139,12 @@ def test_deploy_is_skipped_only_with_matching_proof(tmp_path, fingerprint, monke
     assert not calls
     assert decision["reused"] is True
     assert str(tmp_path / proof.RECEIPTS) in decision["receipt"]
-    monkeypatch.setattr(proof, "collect_fingerprint", lambda env: replace(fingerprint, app_manifests="changed"))
+    monkeypatch.setattr(proof, "collect_fingerprint", lambda env: replace(fingerprint, **{component: changed}))
     environment.deploy_problem = "fixture"
     environment.baseline_path = tmp_path / "baseline.json"
     decision = cli.deploy_with_setup_proof(environment, worker, tmp_path / "next")
     assert calls == ["deploy"]
-    assert decision["changed"] == ["app_manifests"]
+    assert decision["changed"] == [component]
     assert json.loads((tmp_path / "next/setup-proof.json").read_text()) == decision
 
 
@@ -230,7 +242,18 @@ def test_collector_uses_bounded_gets_and_recorded_node_digests(tmp_path):
         "apiVersion": "v1",
         "kind": "ConfigMap",
         "metadata": {"name": "sdo-controller-state", "namespace": "app-sdo", "uid": "state-uid"},
-        "data": {"runtime-state.json": json.dumps({"accepted_source_drift_revision": "b" * 40})},
+        "data": {"runtime-state.json": json.dumps({"accepted_source_drift_revision": "inventory-content-hash"})},
+    }
+    controller = {
+        "apiVersion": "v1",
+        "kind": "Pod",
+        "metadata": {
+            "name": "controller-1",
+            "namespace": "app-sdo",
+            "uid": "controller-uid",
+            "ownerReferences": [{"kind": "Job", "name": "sdo-controller-run"}],
+        },
+        "spec": {"containers": [{"name": "controller", "args": ["controller", "--app", "/workspace/application"]}]},
     }
     calls = []
 
@@ -243,6 +266,9 @@ def test_collector_uses_bounded_gets_and_recorded_node_digests(tmp_path):
                 stdout = "b" * 40
             else:
                 stdout = ""
+        elif "exec" in command:
+            assert command[command.index("--") + 1 :] == ["git", "-C", "/workspace/application", "rev-parse", "HEAD"]
+            stdout = "b" * 40
         else:
             assert command[0] == "kubectl"
             assert "get" in command
@@ -250,7 +276,7 @@ def test_collector_uses_bounded_gets_and_recorded_node_digests(tmp_path):
             if proof.CLUSTER_RESOURCES in command:
                 objects = [node]
             else:
-                objects = [service] if command[command.index("-n") + 1] == "app" else [state]
+                objects = [service] if command[command.index("-n") + 1] == "app" else [state, controller]
             stdout = json.dumps({"items": objects})
         return SimpleNamespace(stdout=stdout)
 
@@ -271,7 +297,7 @@ def test_collector_uses_bounded_gets_and_recorded_node_digests(tmp_path):
     assert len(measured.images) == 3
     assert "app/Service/web" in measured.live_objects
     assert all(0 < kwargs["timeout"] <= 15 for _, kwargs in calls)
-    assert sum(command[0] == "kubectl" for command, _ in calls) == 3
+    assert sum(command[0] == "kubectl" for command, _ in calls) == 4
 
 
 def test_live_intake_must_be_active_on_reuse(tmp_path, monkeypatch):
@@ -304,3 +330,18 @@ def test_missing_evidence_runs_normal_deployment(tmp_path, fingerprint, monkeypa
     _, decision = proof.check_reuse(SimpleNamespace(run_dir=tmp_path))
     assert decision["reused"] is False
     assert "deadline" in decision["changed"][0]
+
+
+@pytest.mark.parametrize("missing", proof.INVARIANTS)
+def test_partial_report_cannot_certify_setup(tmp_path, fingerprint, missing):
+    from dataclasses import asdict
+
+    from benchmarks.sregym.fastloop.dry_run import DryRunReport
+
+    report = DryRunReport(fingerprint.lane, code_revision=fingerprint.code_revision)
+    report.passed = True
+    for row in report.invariants.values():
+        row["passed"] = True
+    del report.invariants[missing]
+    with pytest.raises(ValueError, match="invariants"):
+        proof.save_receipt(tmp_path, fingerprint, asdict(report))
