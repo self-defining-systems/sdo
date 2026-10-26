@@ -6,6 +6,7 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/dynamicpb"
 	"strings"
+	"unicode/utf8"
 
 	"buf.build/gen/go/bufbuild/protovalidate/protocolbuffers/go/buf/validate"
 	"google.golang.org/protobuf/proto"
@@ -257,6 +258,12 @@ func menuValidateSingular(field protoreflect.FieldDescriptor, value any, path st
 	}
 	if !valid {
 		return fmt.Errorf("%s: expected %s", path, expected)
+	}
+	if text, ok := value.(string); ok && field.Kind() == protoreflect.StringKind {
+		rules, _ := proto.GetExtension(field.Options(), validate.E_Field).(*validate.FieldRules)
+		if uint64(utf8.RuneCountInString(text)) < rules.GetString().GetMinLen() {
+			return fmt.Errorf("%s: expected string with at least %d characters", path, rules.GetString().GetMinLen())
+		}
 	}
 	// Let the generated scalar codec check ranges, base64 and enum spelling,
 	// then return our value-free field path rather than its raw-input diagnostic.
