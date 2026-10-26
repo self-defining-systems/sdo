@@ -23,7 +23,8 @@ func (c TypedPlanClient) KubernetesRequest(ctx context.Context, r program.Kubern
 	if err := r.Validate(); err != nil {
 		return nil, err
 	}
-	if err := c.checkPlanNamespace(r.Ref.Namespace); err != nil {
+	observation := program.ValidateKubernetesRead(r) == nil
+	if err := c.checkPlanNamespace(r.Ref.Namespace); !observation && err != nil {
 		return nil, err
 	}
 	parts := strings.Split(strings.TrimPrefix(r.Path, "/"), "/")
@@ -32,7 +33,7 @@ func (c TypedPlanClient) KubernetesRequest(ctx context.Context, r program.Kubern
 		index = 3
 	}
 	if len(parts) > index+1 && parts[index] == "namespaces" {
-		if err := c.checkPlanNamespace(parts[index+1]); err != nil {
+		if err := c.checkPlanNamespace(parts[index+1]); !observation && err != nil {
 			return nil, err
 		}
 	}

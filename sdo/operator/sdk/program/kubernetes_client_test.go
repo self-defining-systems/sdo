@@ -78,3 +78,11 @@ func TestKubernetesClientRejectsDisappearedSourceRole(t *testing.T) {
 		t.Fatalf("removed source role was not stale: %v", err)
 	}
 }
+
+func TestReadClientDoesNotFilterResourceNames(t *testing.T) {
+	for _, path := range []string{"/api/v1/namespaces/app/configmaps/exec", "/api/v1/namespaces/app/pods/attach", "/apis/example.test/v1/namespaces/app/widgets/portforward"} {
+		if err := program.ValidateKubernetesRead(program.KubernetesRequest{Method: "GET", Path: path}); err != nil {
+			t.Errorf("resource name filtered: %s: %v", path, err)
+		}
+	}
+}

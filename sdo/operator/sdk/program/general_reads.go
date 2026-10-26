@@ -35,8 +35,20 @@ func ValidateKubernetesRead(r KubernetesRequest) error {
 	if r.Method != "GET" && r.Method != "HEAD" {
 		return fmt.Errorf("read view requires GET or HEAD")
 	}
-	for _, part := range strings.Split(r.Path, "/") {
-		if part == "exec" || part == "attach" || part == "portforward" {
+	parts := strings.Split(strings.TrimPrefix(r.Path, "/"), "/")
+	index := 2
+	if parts[0] == "apis" {
+		index = 3
+	}
+	if len(parts) > index && parts[index] == "watch" {
+		index++
+	}
+	if len(parts) > index+2 && parts[index] == "namespaces" {
+		index += 2
+	}
+	if len(parts) > index+2 && parts[index] == "pods" {
+		switch parts[index+2] {
+		case "exec", "attach", "portforward":
 			return fmt.Errorf("connection subresources require a recorded action")
 		}
 	}

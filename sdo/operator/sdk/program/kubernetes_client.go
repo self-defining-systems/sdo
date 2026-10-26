@@ -20,6 +20,12 @@ func Kubernetes(view ReadView, sourceBindings ...Bindings) (*kubeclient.ReadClie
 	if view == nil {
 		return nil, fmt.Errorf("Kubernetes observation view required")
 	}
+	fail := func(err error) error {
+		if checked, ok := view.(*checkedReadView); ok {
+			checked.check(err)
+		}
+		return err
+	}
 	if len(sourceBindings) > 1 {
 		return nil, fmt.Errorf("one source binding set is required")
 	}
@@ -36,23 +42,23 @@ func Kubernetes(view ReadView, sourceBindings ...Bindings) (*kubeclient.ReadClie
 				return nil, fmt.Errorf("source binding %s unavailable: %w", role, err)
 			}
 			if diff.SourceAbsent {
-				return nil, &StaleBindingError{Role: role, Resource: ref}
+				return nil, fail(&StaleBindingError{Role: role, Resource: ref})
 			}
 		}
 	}
 	return kubeclient.NewReadClient(func(ctx context.Context, method, path string, query url.Values) ([]byte, error) {
 		if err := ctx.Err(); err != nil {
-			return nil, err
+			return nil, fail(err)
 		}
 		request := KubernetesRequest{Method: method, Path: path, Query: map[string]string{}}
 		for name, values := range query {
 			if len(values) != 1 {
-				return nil, fmt.Errorf("Kubernetes read query %s requires one value", name)
+				return nil, fail(fmt.Errorf("Kubernetes read query %s requires one value", name))
 			}
 			request.Query[name] = values[0]
 		}
 		if err := ValidateKubernetesRead(request); err != nil {
-			return nil, err
+			return nil, fail(err)
 		}
 		return view.KubernetesRead(request)
 	})

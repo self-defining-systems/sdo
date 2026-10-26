@@ -59,22 +59,33 @@ func TestClientGoDetectorAndDiagnoseShareCycle(t *testing.T) {
 }
 
 // A successful typed API call cannot hide an ignored failure from the judge.
-type ignoredClientRead struct{}
+type ignoredClientRead struct{ secret bool }
 
 func (ignoredClientRead) Spec() program.ProgramSpec {
 	return program.ProgramSpec{ID: "ignored-client-error"}
 }
-func (ignoredClientRead) Diagnose(ctx context.Context, v program.ReadView, _ program.Bindings) (program.Verdict, error) {
+func (p ignoredClientRead) Diagnose(ctx context.Context, v program.ReadView, _ program.Bindings) (program.Verdict, error) {
 	client, err := program.Kubernetes(v)
 	if err != nil {
 		return program.Verdict{}, err
 	}
-	_, _ = client.CoreV1().Pods("app").Get(ctx, "missing", metav1.GetOptions{})
+	if p.secret {
+		_, _ = client.CoreV1().Secrets("app").Get(ctx, "private", metav1.GetOptions{})
+	} else {
+		_, _ = client.CoreV1().Pods("app").Get(ctx, "missing", metav1.GetOptions{})
+	}
 	return program.Verdict{Result: program.NoMatch}, nil
 }
 func TestIgnoredClientGoReadFailureRemainsUnknown(t *testing.T) {
 	got := program.RunDiagnose(context.Background(), ignoredClientRead{}, program.ReadFrom(sdktest.Snapshot{NamespaceName: "app"}), program.Bindings{}, time.Second)
 	if got.Result != program.Unknown {
 		t.Fatalf("ignored client failure cleared: %+v", got)
+	}
+}
+
+func TestIgnoredClientGoSecretFailureRemainsUnknown(t *testing.T) {
+	got := program.RunDiagnose(context.Background(), ignoredClientRead{secret: true}, program.ReadFrom(sdktest.Snapshot{NamespaceName: "app"}), program.Bindings{}, time.Second)
+	if got.Result != program.Unknown {
+		t.Fatalf("ignored Secret failure cleared: %+v", got)
 	}
 }
