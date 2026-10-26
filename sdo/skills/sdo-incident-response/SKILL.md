@@ -1,6 +1,6 @@
 ---
 name: sdo-incident-response
-description: Resolve incidents with evidence and independent verification.
+description: Resolve incidents.
 ---
 
 # Incident response
@@ -15,8 +15,10 @@ Accepted source and developer changes express intent. Operational memory is fall
 6. Undo proven harmful changes; retain useful repairs. Clean up temporary investigation resources; label helper Pods or Jobs `sdo.dev/responder-helper=true`, never application workloads.
 7. Fix `still_broken`; keep `already_done`. The controller independently checks the result. Merge accepted peer learning on memory conflicts.
 
-Read a typed action's failure stage and fix source inputs before raw commands.
+Read typed action failure stages; fix source inputs before raw commands.
 
 Prioritize current user-facing failures; defer harmless cleanup. Report unfinished work only with a blocker or exhausted options.
+
+Refs: printed JSON or Kind/[namespace/]name.
 
 Use relative paths and scratch outside memory. Read full output files. Let blocking operations finish in one call instead of polling across model turns. Static files belong in static_context, not live cause evidence.

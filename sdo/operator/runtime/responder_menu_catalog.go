@@ -76,7 +76,7 @@ func menuProgramParameters(spec program.ProgramSpec) []MenuParameter {
 		}
 		schema := &MenuSchema{Type: "string"}
 		if p.ValueKind == "" {
-			schema.Description = "Kind/namespace/name"
+			schema = menuReferenceSchema()
 		}
 		if p.ValueKind == program.IntValue {
 			schema.Type = "integer"
@@ -134,6 +134,13 @@ func menuRawPlan(field protoreflect.FieldDescriptor, parameters map[string]strin
 }
 
 func menuActionParameter(field protoreflect.FieldDescriptor, raw string, inputs *program.ValueInputs) (any, error) {
+	// JSON text can arrive inside a string parameter. Check it before decoding
+	// into maps, which would silently discard duplicate nested target fields.
+	if (field.Message() != nil || field.IsMap() || field.IsList()) && json.Valid([]byte(raw)) {
+		if err := menuRejectDuplicateFields([]byte(raw)); err != nil {
+			return nil, err
+		}
+	}
 	if field.IsMap() && field.MapValue().Message() != nil && field.MapValue().Message().Name() == "PlanValue" {
 		var env map[string]any
 		if err := json.Unmarshal([]byte(raw), &env); err != nil {
@@ -149,10 +156,6 @@ func menuActionParameter(field protoreflect.FieldDescriptor, raw string, inputs 
 		return env, nil
 	}
 	if field.Message() != nil && field.Message().Name() == "ObjectRef" {
-		var object map[string]any
-		if json.Unmarshal([]byte(raw), &object) == nil && object != nil {
-			return object, nil
-		}
 		ref, err := sdk.ParseObjectRef(raw)
 		if err != nil {
 			return nil, err
@@ -198,7 +201,7 @@ func menuActionParameter(field protoreflect.FieldDescriptor, raw string, inputs 
 	if err := json.Unmarshal([]byte(raw), &value); err != nil {
 		return nil, fmt.Errorf("expected %s JSON (%s)", menuInputSchema(field).Type, field.Kind())
 	}
-	return value, nil
+	return menuNormalizeReferences(field, value, string(field.Name()))
 }
 
 func menuScalarParameter(spec program.ParamSpec, raw string) (any, error) {
@@ -266,13 +269,11 @@ func menuRawValue(value any, name string, inputs *program.ValueInputs) (any, err
 				if !ok {
 					return nil, fmt.Errorf("%s.%s: expected object", name, origin)
 				}
-				if text, ok := field["ref"].(string); ok {
-					ref, err := sdk.ParseObjectRef(text)
-					if err != nil {
-						return nil, err
-					}
-					field["ref"] = map[string]any{"api_version": ref.APIVersion, "kind": ref.Kind, "namespace": ref.Namespace, "name": ref.Name}
+				ref, err := menuParseReference(field["ref"])
+				if err != nil {
+					return nil, fmt.Errorf("%s.%s.ref: %w", name, origin, err)
 				}
+				field["ref"] = ref
 				return descriptor, nil
 			}
 		}
@@ -298,4 +299,80 @@ func menuRawValue(value any, name string, inputs *program.ValueInputs) (any, err
 	}
 	inputs.Bindings.Values[name] = value
 	return map[string]any{"parameter": name}, nil
+}
+
+// Recursively normalize every descriptor-owned ObjectRef, including refs nested
+// in database targets, jobs, commands and source/observed value descriptors.
+func menuNormalizeReferences(field protoreflect.FieldDescriptor, value any, path string) (any, error) {
+	if field.IsMap() {
+		if object, ok := value.(map[string]any); ok {
+			for key, item := range object {
+				converted, err := menuNormalizeReferenceValue(field.MapValue(), item, path+"."+key)
+				if err != nil {
+					return nil, err
+				}
+				object[key] = converted
+			}
+		}
+		return value, nil
+	}
+	if field.IsList() {
+		if items, ok := value.([]any); ok {
+			for i, item := range items {
+				converted, err := menuNormalizeReferenceValue(field, item, fmt.Sprintf("%s[%d]", path, i))
+				if err != nil {
+					return nil, err
+				}
+				items[i] = converted
+			}
+		}
+		return value, nil
+	}
+	return menuNormalizeReferenceValue(field, value, path)
+}
+
+func menuNormalizeReferenceValue(field protoreflect.FieldDescriptor, value any, path string) (any, error) {
+	if field.Message() == nil {
+		return value, nil
+	}
+	if field.Message().Name() == "ObjectRef" {
+		converted, err := menuParseReference(value)
+		if err != nil {
+			return nil, fmt.Errorf("%s: expected object reference: %w", path, err)
+		}
+		return converted, nil
+	}
+	if object, ok := value.(map[string]any); ok {
+		for name, item := range object {
+			nested := field.Message().Fields().ByName(protoreflect.Name(name))
+			if nested == nil {
+				nested = field.Message().Fields().ByJSONName(name)
+			}
+			if nested == nil {
+				continue
+			}
+			converted, err := menuNormalizeReferences(nested, item, path+"."+name)
+			if err != nil {
+				return nil, err
+			}
+			object[name] = converted
+		}
+	}
+	return value, nil
+}
+
+func menuParseReference(value any) (map[string]any, error) {
+	raw, ok := value.(string)
+	if !ok {
+		encoded, err := json.Marshal(value)
+		if err != nil {
+			return nil, err
+		}
+		raw = string(encoded)
+	}
+	ref, err := sdk.ParseObjectRef(raw)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"api_version": ref.APIVersion, "kind": ref.Kind, "namespace": ref.Namespace, "name": ref.Name}, nil
 }
