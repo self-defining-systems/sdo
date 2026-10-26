@@ -46,6 +46,7 @@ def test_registry_failure_is_automatic_and_recorded(monkeypatch, tmp_path, capsy
     monkeypatch.setattr(
         toy_images, "registry_delivery", lambda *a: (_ for _ in ()).throw(RuntimeError("registry offline"))
     )
+    monkeypatch.setattr(toy_images, "assert_host_disk_headroom", lambda **kw: {"passed": True})
     (tmp_path / "fastloop.json").write_text("{}")
     loaded = []
     monkeypatch.setattr(toy_images, "_load_archive_images", lambda *a: loaded.append(a))
@@ -66,6 +67,7 @@ def test_successful_registry_never_exports_an_archive(monkeypatch, tmp_path):
 
     from benchmarks.sregym.fastloop import toy_images
 
+    monkeypatch.setattr(toy_images, "assert_host_disk_headroom", lambda **kw: {"passed": True})
     monkeypatch.setattr(toy_images, "registry_delivery", lambda *a: {"node": {"image:v1": "sha256:one"}})
     monkeypatch.setattr(toy_images, "_load_archive_images", lambda *a: pytest.fail("archive on success"))
     toy_images.load_images("img1-test", ["image:v1"], record_path=tmp_path / "delivery.jsonl")
