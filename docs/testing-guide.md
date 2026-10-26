@@ -672,8 +672,9 @@ SDK/core continue to run under Go 1.24.5, while the contracts and benchmark wire
 modules use Go 1.26.8. Explicit fixture compiler parallelism must not override
 `GOFLAGS`, so nested builds inherit the same runner memory bound.
 
-`prepare-go` builds normal and race archives once per pushed event commit,
-then publishes a shared Go compiler/module cache. Preparation never links or
+`prepare-go` builds normal and race archives on two independent runners per
+pushed event commit, publishing a cache for each mode. Normal-only consumers
+restore the normal graph; Go test shards restore both. Preparation never links or
 starts test binaries; each test shard owns those steps. This avoids serially
 linking every test package before any shard can start. The test jobs depend
 on preparation and require that exact cache; they do not start cold compilation

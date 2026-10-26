@@ -67,7 +67,28 @@ def test_runtime_images_require_current_source_and_working_validator(tmp_path, m
         source_preflight.assert_runtime_images(Images(), tmp_path)
         probes = [args for args in calls if args[:2] == ["docker", "run"]]
         assert len(probes) == 1
-        assert "--network" in probes[0] and "none" in probes[0]
+        assert "--network" in probes[0]
+        assert "none" in probes[0]
         assert "--read-only" in probes[0]
         assert "65532:65532" in probes[0]
-        assert "go" in probes[0] and "version" in probes[0]
+        assert "go" in probes[0]
+        assert "version" in probes[0]
+
+
+def test_worker_rejects_image_preflight_before_process_creation(tmp_path, monkeypatch):
+    from benchmarks.sregym.fastloop import cli, source_preflight
+    from benchmarks.sregym.fastloop.environment import FastloopEnvironment
+
+    environment = FastloopEnvironment(
+        run_dir=tmp_path, cluster="lane", kubeconfig=tmp_path / "config", namespace="app",
+        application="app", workspace=tmp_path, sregym_dir=tmp_path, private_tmp=None,
+    )
+    monkeypatch.setattr(source_preflight, "assert_harness_sources", lambda _: None)
+
+    def reject(*_):
+        raise ValueError("eval: stale image source")
+
+    monkeypatch.setattr(source_preflight, "assert_runtime_images", reject)
+    monkeypatch.setattr(cli, "SregymWorker", lambda *a, **kw: pytest.fail("worker created before image preflight"))
+    with pytest.raises(ValueError, match="stale image source"):
+        cli._worker(environment)

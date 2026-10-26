@@ -122,7 +122,7 @@ def retarget_dev_mount(cluster: str, worktree: Path) -> None:
         subprocess.run(["docker", "exec", node, "mkdir", "-p", target], check=True, timeout=10)
         _copy_dev_snapshot(worktree, node, target)
 
-        def identity(path: str) -> str:
+        def identity(path: str, node: str = node) -> str:
             return subprocess.run(
                 ["docker", "exec", node, "stat", "-c", "%d:%i", path],
                 check=True,

@@ -186,14 +186,15 @@ def test_image_jobs_use_the_compilation_owners_schema_identity() -> None:
     assert sorted(partitions) == ["acceptance", "acceptance-second", "broker", "compiler", "remaining"]
 
 
-def test_preparation_warms_build_graphs_without_linking_or_running_tests(tmp_path: Path) -> None:
+@pytest.mark.parametrize("mode", ["normal", "race"])
+def test_preparation_warms_build_graphs_without_linking_or_running_tests(tmp_path: Path, mode: str) -> None:
     """Preparation shares archives; each shard owns its test binary and execution."""
     command = tmp_path / "go"
     command.write_text('#!/bin/sh\nprintf "%s:%s\\n" "$PWD" "$*" >> "$SDO_TEST_CALLS"\n')
     command.chmod(0o755)
     calls = tmp_path / "calls"
     result = subprocess.run(
-        ["bash", str(ROOT / "scripts/prepare_go_ci.sh")],
+        ["bash", str(ROOT / "scripts/prepare_go_ci.sh"), mode],
         env={**os.environ, "PATH": f"{tmp_path}:{os.environ['PATH']}", "SDO_TEST_CALLS": str(calls)},
         capture_output=True,
         text=True,
@@ -203,6 +204,17 @@ def test_preparation_warms_build_graphs_without_linking_or_running_tests(tmp_pat
     invocations = [line.split(":", 1) for line in calls.read_text().splitlines()]
     for module in ("sdo/operator", "sdo/operator/runtime"):
         commands = [shlex.split(args) for directory, args in invocations if directory == str(ROOT / module)]
-        assert ["build", "./..."] in commands
-        assert ["build", "-race", "./..."] in commands
+        assert commands == [["build", *(["-race"] if mode == "race" else []), "./..."]]
     assert all(shlex.split(args)[0] == "build" for _, args in invocations)
+
+
+def test_normal_and_race_preparation_are_independent_bounded_jobs() -> None:
+    jobs = workflow()["jobs"]
+    preparation = jobs["prepare-go"]
+    assert preparation["strategy"]["matrix"]["mode"] == ["normal", "race"]
+    cache = next(step for step in preparation["steps"] if step.get("uses", "").startswith("actions/cache"))
+    assert "${{ matrix.mode }}" in cache["with"]["key"]
+    for name in ("controller", "replay", "chaos"):
+        keys = [step["with"]["key"] for step in jobs[name]["steps"] if step.get("uses", "").startswith("actions/cache")]
+        assert any("ci-prepared-normal-" in key for key in keys)
+        assert any("ci-prepared-race-" in key for key in keys)
