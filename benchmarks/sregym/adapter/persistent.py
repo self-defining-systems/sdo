@@ -360,66 +360,189 @@ class KubectlClusterOps:
         )["items"]
 
         def worker(metadata: dict[str, Any]) -> bool:
-            return metadata.get("labels", {}).get("app.kubernetes.io/name") == "sdo-worker"
-
-        jobs = [
-            row
-            for row in listing
-            if row["kind"] == "Job"
-            and (worker(row["metadata"]) or worker(row.get("spec", {}).get("template", {}).get("metadata", {})))
-        ]
-        job_uids = {row["metadata"]["uid"] for row in jobs}
-        pods = [
-            row
-            for row in listing
-            if row["kind"] == "Pod"
-            and (
-                worker(row["metadata"])
-                or any(owner.get("uid") in job_uids for owner in row["metadata"].get("ownerReferences", []))
+            labels = metadata.get("labels", {})
+            return (
+                labels.get("app.kubernetes.io/name") == "sdo-worker"
+                or bool(labels.get("sdo.dev/validator-isolation"))
+                or bool(labels.get("sdo.dev/validator-canary"))
             )
-        ]
-        directory.mkdir(parents=True, exist_ok=True)
-        # Keep conditions and container states, without persisting environment values.
-        inventory = {
-            key: [{"metadata": row["metadata"], "status": row.get("status", {})} for row in rows]
-            for key, rows in (("jobs", jobs), ("pods", pods))
-        }
-        (directory / "workloads.json").write_text(json.dumps(inventory, indent=2) + "\n")
-        for pod in pods:
-            name = pod["metadata"]["name"]
-            logs = kubectl(
+
+        def labels(row: dict[str, Any]) -> dict[str, str]:
+            return {
+                **row.get("spec", {}).get("template", {}).get("metadata", {}).get("labels", {}),
+                **row["metadata"].get("labels", {}),
+            }
+
+        def remove(resources: list[str]) -> None:
+            kubectl(
                 [
-                    "logs",
-                    f"pod/{name}",
-                    "--all-containers=true",
-                    "--prefix=true",
-                    "--tail=2000",
-                    "--limit-bytes=1048576",
+                    "delete",
+                    *resources,
+                    "--ignore-not-found=true",
+                    "--cascade=foreground",
+                    "--wait=true",
+                    "--timeout=60s",
                 ],
                 namespace=target.control_namespace,
                 kubeconfig=config,
-                check=False,
             )
-            (directory / f"{name}.log").write_text(logs.stdout)
-            if logs.returncode:
-                (directory / f"{name}.log-error").write_text(logs.stderr)
-        active = [
-            f"job/{row['metadata']['name']}"
-            for row in jobs
-            if not any(
-                condition.get("type") in {"Complete", "Failed"} and condition.get("status") == "True"
-                for condition in row.get("status", {}).get("conditions", [])
+
+        def inspect_workers(listing: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], set[str]]:
+            jobs = [
+                row
+                for row in listing
+                if row["kind"] == "Job"
+                and (worker(row["metadata"]) or worker(row.get("spec", {}).get("template", {}).get("metadata", {})))
+            ]
+            job_uids = {row["metadata"]["uid"] for row in jobs}
+            pods = [
+                row
+                for row in listing
+                if row["kind"] == "Pod"
+                and (
+                    worker(row["metadata"])
+                    or any(owner.get("uid") in job_uids for owner in row["metadata"].get("ownerReferences", []))
+                )
+            ]
+            directory.mkdir(parents=True, exist_ok=True)
+            # Keep conditions and container states, without persisting environment values.
+            inventory = {
+                key: [{"metadata": row["metadata"], "status": row.get("status", {})} for row in rows]
+                for key, rows in (("jobs", jobs), ("pods", pods))
+            }
+            (directory / "workloads.json").write_text(json.dumps(inventory, indent=2) + "\n")
+            for pod in pods:
+                name = pod["metadata"]["name"]
+                logs = kubectl(
+                    [
+                        "logs",
+                        f"pod/{name}",
+                        "--all-containers=true",
+                        "--prefix=true",
+                        "--tail=2000",
+                        "--limit-bytes=1048576",
+                    ],
+                    namespace=target.control_namespace,
+                    kubeconfig=config,
+                    check=False,
+                )
+                (directory / f"{name}.log").write_text(logs.stdout)
+                if logs.returncode:
+                    (directory / f"{name}.log-error").write_text(logs.stderr)
+
+            idle_uids: set[str] = set()
+            if any(labels(row).get("sdo.dev/standby") == "true" for row in jobs):
+                records = json.loads(
+                    kubectl(
+                        ["get", "configmaps", "-l", "sdo.dev/incident-execution", "-o", "json"],
+                        namespace=target.control_namespace,
+                        kubeconfig=config,
+                    ).stdout
+                )["items"]
+                claimed: set[str] = set()
+                for record in records:
+                    # The immutable identity is published before a warm inbox can
+                    # release its task (worker_registry.ensureIncidentExecution).
+                    identity = json.loads(record["data"]["execution.json"])
+                    if (
+                        record["metadata"]["labels"].get("sdo.dev/incident-execution") != "1"
+                        or not isinstance(identity, dict)
+                        or identity.get("version") != 1
+                        or not all(
+                            isinstance(identity.get(key), str) and identity[key]
+                            for key in (
+                                "job_name",
+                                "task_id",
+                                "incident_id",
+                                "request_sha256",
+                            )
+                        )
+                        or record["metadata"].get("annotations", {}).get("sdo.dev/incident-id")
+                        != identity["incident_id"]
+                    ):
+                        raise PersistentControllerError("eval: invalid incident execution identity; cleanup blocked")
+                    claimed.add(identity["job_name"])
+                idle_uids = {
+                    row["metadata"]["uid"]
+                    for row in jobs
+                    if labels(row).get("sdo.dev/standby") == "true"
+                    and row["metadata"]["name"] not in claimed
+                    and not labels(row).get("sdo.dev/validator-isolation")
+                    and not labels(row).get("sdo.dev/validator-canary")
+                }
+
+            active = [
+                f"job/{row['metadata']['name']}"
+                for row in jobs
+                if row["metadata"]["uid"] not in idle_uids
+                and not any(
+                    condition.get("type") in {"Complete", "Failed"} and condition.get("status") == "True"
+                    for condition in row.get("status", {}).get("conditions", [])
+                )
+            ]
+            active.extend(
+                f"pod/{row['metadata']['name']}"
+                for row in pods
+                if row.get("status", {}).get("phase") not in {"Succeeded", "Failed"}
+                and not any(owner.get("uid") in idle_uids for owner in row["metadata"].get("ownerReferences", []))
             )
+            if active:
+                raise PersistentControllerError(
+                    f"eval: cleanup preserves active incident work: {active}; evidence: {directory}"
+                )
+            return jobs, idle_uids
+
+        # Protect existing work before shutdown, which can cancel validator tasks.
+        jobs, idle_uids = inspect_workers(listing)
+        dispatchers = [
+            row for row in listing if labels(row).get("app.kubernetes.io/name") in {"sdo-controller", "sdo-operate"}
         ]
-        active.extend(
-            f"pod/{row['metadata']['name']}"
-            for row in pods
-            if row.get("status", {}).get("phase") not in {"Succeeded", "Failed"}
+        dispatcher_uids = {row["metadata"]["uid"] for row in dispatchers if row["kind"] == "Job"}
+        dispatchers.extend(
+            row
+            for row in listing
+            if row["kind"] == "Pod"
+            and row not in dispatchers
+            and any(owner.get("uid") in dispatcher_uids for owner in row["metadata"].get("ownerReferences", []))
         )
-        if active:
-            raise PersistentControllerError(
-                f"eval: cleanup preserves active incident work: {active}; evidence: {directory}"
-            )
+        if dispatchers:
+            for kind in ("Job", "Pod"):
+                resources = [f"{kind.lower()}/{row['metadata']['name']}" for row in dispatchers if row["kind"] == kind]
+                if resources:
+                    remove(resources)
+            listing = json.loads(
+                kubectl(
+                    ["get", "jobs,pods", "-o", "json"], namespace=target.control_namespace, kubeconfig=config
+                ).stdout
+            )["items"]
+            if any(
+                labels(row).get("app.kubernetes.io/name") in {"sdo-controller", "sdo-operate"}
+                or row["metadata"].get("uid") in {item["metadata"].get("uid") for item in dispatchers}
+                for row in listing
+            ):
+                raise PersistentControllerError("eval: cleanup could not quiesce standby dispatchers")
+
+            # Claims or workers published during shutdown remain protected.
+            jobs, idle_uids = inspect_workers(listing)
+
+        idle = [f"job/{row['metadata']['name']}" for row in jobs if row["metadata"]["uid"] in idle_uids]
+        if idle:
+            # Go stop uses zero grace. Retire idle slots normally, including
+            # their sidecars, and prove them gone before entering that path.
+            remove(idle)
+            remaining = json.loads(
+                kubectl(
+                    ["get", "jobs,pods", "-o", "json"],
+                    namespace=target.control_namespace,
+                    kubeconfig=config,
+                ).stdout
+            )["items"]
+            if any(
+                row["metadata"].get("uid") in idle_uids
+                or any(owner.get("uid") in idle_uids for owner in row["metadata"].get("ownerReferences", []))
+                for row in remaining
+            ):
+                raise PersistentControllerError("eval: idle standby deletion incomplete; cleanup blocked")
 
     def stop_transport(self, target: CleanupTarget) -> None:
         config = Path(target.kubeconfig) if target.kubeconfig else None
