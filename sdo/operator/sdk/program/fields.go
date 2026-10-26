@@ -98,6 +98,8 @@ func fieldSchema(api, kind, path string) (reflect.Type, error) {
 		root = appsv1.StatefulSet{}
 	case "apps/v1/Deployment":
 		root = appsv1.Deployment{}
+	case "apps/v1/ReplicaSet":
+		root = appsv1.ReplicaSet{}
 	case "networking.k8s.io/v1/NetworkPolicy":
 		root = networkingv1.NetworkPolicy{}
 	case "autoscaling/v2/HorizontalPodAutoscaler":

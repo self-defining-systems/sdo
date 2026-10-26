@@ -259,6 +259,8 @@ type DeletePod struct{ Ref sdk.ObjectRef }
 func (DeletePod) action() {}
 
 // ScaleWorkload restores replicas from accepted source, observations or a parameter.
+// A ReplicaSet target has kubectl-scale parity, e.g. retiring an old-template
+// ReplicaSet whose pods block a Deployment rollout.
 type ScaleWorkload struct {
 	Ref      sdk.ObjectRef
 	Replicas Value
