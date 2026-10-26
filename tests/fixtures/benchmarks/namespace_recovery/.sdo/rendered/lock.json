@@ -1,0 +1,64 @@
+{
+  "objects": [
+    {
+      "ref": {
+        "api_version": "v1",
+        "kind": "ServiceAccount",
+        "namespace": "astronomy-shop",
+        "name": "jaeger"
+      },
+      "file": "21a42cb6bc93a06f7098ef7f771e162f7cadb4c4e356035137544b26c4318241.yaml",
+      "sha256": "6ffddc5b13bec3e7d6a9b2e8ab799332b921e9c224f31575923a3f0d4b52b463"
+    },
+    {
+      "ref": {
+        "api_version": "v1",
+        "kind": "ServiceAccount",
+        "namespace": "astronomy-shop",
+        "name": "grafana"
+      },
+      "file": "36c84463091e1c65b5d4d98b0c96dcb36c8276f4fb7ecd86bf00d3fab7715468.yaml",
+      "sha256": "267c7ca61744e1438d2a426dbaa8f82eec5ff4245e16c4b5e8b7c8d38521749b"
+    },
+    {
+      "ref": {
+        "api_version": "rbac.authorization.k8s.io/v1",
+        "kind": "Role",
+        "namespace": "astronomy-shop",
+        "name": "grafana"
+      },
+      "file": "444dd23ab65083ac0c3a98b47ad6f2d4350b0a412be295a24afa99844cbef2aa.yaml",
+      "sha256": "083bb6011785e37435d748e61ca928abda729114793d00947dcf8b66dab0d824"
+    },
+    {
+      "ref": {
+        "api_version": "v1",
+        "kind": "ServiceAccount",
+        "namespace": "astronomy-shop",
+        "name": "astronomy-shop"
+      },
+      "file": "5b2a1cebb1350876d635315e8ceecadcbb1f621cdc1824962324b07b51373265.yaml",
+      "sha256": "3f09cb90cd82ea28fd858059939c9e54777a80eaf0035fbf0d9d26905d8a2936"
+    },
+    {
+      "ref": {
+        "api_version": "rbac.authorization.k8s.io/v1",
+        "kind": "RoleBinding",
+        "namespace": "astronomy-shop",
+        "name": "grafana"
+      },
+      "file": "b0421e8ff33ebd745cfa993becd4007eaf0b6b056477922d3903c7ccf693d1b7.yaml",
+      "sha256": "65d34b2a5c70b797acd3d39db1c7275c5d0d11fba264ba3b31a12645f1991c2b"
+    },
+    {
+      "ref": {
+        "api_version": "v1",
+        "kind": "ServiceAccount",
+        "namespace": "astronomy-shop",
+        "name": "otel-collector"
+      },
+      "file": "d3cb43f44952fd2edd0dc38c2fd3198465039f45ed0c11cc11b23fcc6d26eef9.yaml",
+      "sha256": "a129b22cbd9bc36176c1b136154e95a1f9b599c043cf33f73b829c1fa2d75201"
+    }
+  ]
+}
