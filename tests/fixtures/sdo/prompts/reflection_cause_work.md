@@ -75,7 +75,8 @@ Current outcome:
   "drift_events": [],
   "resolution_path": "",
   "reflection_skip_reason": "",
-  "sdk_gaps": []
+  "sdk_gaps": [],
+  "reflection_rejections": []
 }
 
 Outcome history (prior incidents, compact): none

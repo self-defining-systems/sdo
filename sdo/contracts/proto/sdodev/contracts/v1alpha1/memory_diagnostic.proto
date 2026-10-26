@@ -1,3 +1,5 @@
+// Leaf diagnostics shared by worker feedback, controller ledgers and accepted
+// outcome annotations, avoiding imports back into the outcome/task graph.
 syntax = "proto3";
 
 package sdodev.contracts.v1alpha1;

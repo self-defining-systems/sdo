@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -73,6 +75,22 @@ func TestReflectionAdoptionAfterHealthRefreshAndRestart(t *testing.T) {
 			store := lifecycleio.NewConfigMapStateStore(client, "demo", "controller-state")
 			if _, err := store.Save(ctx, exportState(t, initial), ""); err != nil {
 				t.Fatal(err)
+			}
+			if err := initial.SetIncidentBroker(native); err != nil {
+				t.Fatal(err)
+			}
+			rv6Guard(initial, root, old.Commit)
+			// Health checks must not take the effect lock held by the live Job.
+			guarded := make(chan error, 1)
+			goUntilCleanup(t, stopFirst, func() { guarded <- initial.CheckHealth(ctx) })
+			select {
+			case err := <-guarded:
+				if err != nil {
+					t.Fatal(err)
+				}
+			case <-time.After(time.Second):
+				stopFirst()
+				t.Fatal("health ownership check blocked behind running reflection")
 			}
 			stopFirst()
 			if err := <-done; !errors.Is(err, context.Canceled) {
@@ -200,16 +218,11 @@ func TestReflectionAdoptionConflictIsRecordedInOutcome(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	field := got.Record.ProtoReflect().Descriptor().Fields().ByName("reflection_rejections")
-	if field == nil {
-		t.Fatal("named reflection rejections are absent from accepted outcome")
+	rejections := got.Record.GetReflectionRejections()
+	if len(rejections) != 3 {
+		t.Fatalf("outcome lost conflict history: %d", len(rejections))
 	}
-	rejections := got.Record.ProtoReflect().Get(field).List()
-	if rejections.Len() != 3 {
-		t.Fatalf("outcome lost conflict history: %d", rejections.Len())
-	}
-	for i := 0; i < rejections.Len(); i++ {
-		rejection := rejections.Get(i).Message().Interface().(*contracts.ProposalRejection)
+	for _, rejection := range rejections {
 		if len(rejection.Diagnostics) != 1 || rejection.Diagnostics[0].Rule != "memory.conflict" || rejection.Diagnostics[0].GetMemoryConflict().GetAcceptedCommit() == "" {
 			t.Fatalf("unnamed rejection: %v", rejection)
 		}
@@ -220,5 +233,92 @@ func TestReflectionAdoptionConflictIsRecordedInOutcome(t *testing.T) {
 	}
 	if head != nativeGit(t, h.target, "rev-parse", "HEAD") {
 		t.Fatal("duplicate rejection completion republished outcome")
+	}
+}
+
+func TestReflectionAdoptionValidatesAndPublishesAtCurrentHeadOnce(t *testing.T) {
+	var acceptedHead string
+	validations := 0
+	h := newRejectionHarnessValidator(t, "adoption-current-head", nil, func(_ context.Context, stage string, paths []string) error {
+		for _, path := range paths {
+			if strings.HasPrefix(path, ".sdo/playbooks/") {
+				validations++
+				if head := nativeGit(t, stage, "rev-parse", "HEAD"); head != acceptedHead {
+					return fmt.Errorf("validated against %s, expected current head %s", head, acceptedHead)
+				}
+				data, err := os.ReadFile(filepath.Join(stage, "peer.txt"))
+				if err != nil || string(data) != "accepted peer intent\n" {
+					return fmt.Errorf("accepted peer intent missing from validation: %q %v", data, err)
+				}
+			}
+		}
+		return nil
+	})
+	h.setReflector(func(_ int, w IncidentWorkspace) (ReflectionDecision, error) {
+		// The proposal is already frozen when another accepted writer advances.
+		tracingWrite(t, h.target, "peer.txt", "accepted peer intent\n")
+		nativeGit(t, h.target, "add", ".")
+		nativeGit(t, h.target, "commit", "-qm", "synthetic accepted peer advance")
+		acceptedHead = nativeGit(t, h.target, "rev-parse", "HEAD")
+		return writeGoodPlaybook(w)
+	})
+	receipt, err := h.native.ProcessClosure(context.Background(), h.closure)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if receipt.ReflectionCommit == "" || validations != 1 || len(h.calls) != 1 {
+		t.Fatalf("reflection was not validated/published exactly once: %+v validations=%d calls=%d", receipt, validations, len(h.calls))
+	}
+	if parent := nativeGit(t, h.target, "rev-parse", receipt.ReflectionCommit+"^"); parent != acceptedHead {
+		t.Fatalf("publication parent = %s, expected %s", parent, acceptedHead)
+	}
+	if again, err := h.native.ProcessClosure(context.Background(), h.closure); err != nil || again != receipt {
+		t.Fatalf("duplicate result changed receipt: %+v %v", again, err)
+	}
+	if validations != 1 || len(h.calls) != 1 || nativeGit(t, h.target, "rev-parse", "HEAD") != receipt.ReflectionCommit {
+		t.Fatal("duplicate completion revalidated or republished")
+	}
+}
+
+func TestReflectionAdoptionRejectsChangedObjectiveOrPolicyOnce(t *testing.T) {
+	for _, change := range []string{"objective", "policy"} {
+		t.Run(change, func(t *testing.T) {
+			h := newRejectionHarness(t, "adoption-"+change, nil)
+			h.setReflector(func(_ int, w IncidentWorkspace) (ReflectionDecision, error) {
+				if change == "objective" {
+					tracingWrite(t, h.target, ".sdo/goal.md", "---\nschema_version: 1\nowner: human\n---\n# Health objective\nDifferent objective.\n")
+				} else {
+					tracingWrite(t, h.target, ".sdo/lib/new-policy.txt", "new policy input\n")
+				}
+				nativeGit(t, h.target, "add", ".")
+				nativeGit(t, h.target, "commit", "-qm", "synthetic accepted "+change+" change")
+				return writeGoodPlaybook(w)
+			})
+			receipt, err := h.native.ProcessClosure(context.Background(), h.closure)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if receipt.ReflectionCommit != "" || len(h.calls) != 1 {
+				t.Fatalf("changed %s published or retried historical reflection: %+v calls=%d", change, receipt, len(h.calls))
+			}
+			got, err := memory.OpenReader(h.target).Get(context.Background(), h.workspace.IncidentID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			rejections := got.Record.GetReflectionRejections()
+			if len(rejections) != 1 || len(rejections[0].Diagnostics) != 1 || rejections[0].Diagnostics[0].Rule != "reflection."+change+"-changed" || rejections[0].Diagnostics[0].Message != change+" changed" {
+				t.Fatalf("missing named rejection: %v", rejections)
+			}
+			if accepted := nativeGit(t, h.target, "show", "HEAD:.sdo/playbooks/base/README.md"); strings.Contains(accepted, "Repair <RESOURCE_NAME> carefully") {
+				t.Fatal("rejected reflection reached accepted memory")
+			}
+			head := nativeGit(t, h.target, "rev-parse", "HEAD")
+			if _, err := h.native.ProcessClosure(context.Background(), h.closure); err != nil {
+				t.Fatal(err)
+			}
+			if nativeGit(t, h.target, "rev-parse", "HEAD") != head || len(h.calls) != 1 {
+				t.Fatal("duplicate result repeated historical rejection")
+			}
+		})
 	}
 }

@@ -267,6 +267,21 @@ func (b *Broker) publish(ctx context.Context, incidentID string, actor Actor, ph
 		if err != nil {
 			return err
 		}
+		if phase == ReflectionPhase {
+			frozen, _ := ctx.Value(reflectionHealthKey{}).(string)
+			if frozen == "" {
+				frozen = proposal.BaseCommit
+			}
+			if frozen != current {
+				diagnostics, err := b.reflectionHealthDiagnostics(ctx, frozen, current)
+				if err != nil {
+					return err
+				}
+				if len(diagnostics) > 0 {
+					return validate.Err([]validate.Diagnostic{{Rule: diagnostics[0].Rule, Message: diagnostics[0].Message}})
+				}
+			}
+		}
 		if current != proposal.BaseCommit && expectedSourceTree != "" {
 			return errors.New("verified source proposal base is stale; redeploy from accepted state")
 		}

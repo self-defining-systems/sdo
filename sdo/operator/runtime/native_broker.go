@@ -309,9 +309,8 @@ func (n NativeIncidentBroker) ProcessClosure(ctx context.Context, closure Incide
 				return err
 			}
 			ledger.ReflectionProcessed = true
-			if err := n.saveLedger(ledger); err != nil {
-				return err
-			}
+			// Persist this marker together with its receipt below. A checkpoint
+			// declaring processing complete without a receipt cannot authorize ACK.
 		}
 		// Reflection follows the original outcome commit. Append its typed
 		// SDK gaps through the broker without changing incident evidence or the
@@ -839,7 +838,7 @@ func (n NativeIncidentBroker) committedRepairHealthReceipt(ctx context.Context, 
 // committedOutcomeClosure authenticates a historical outcome before allowing
 // restart to resume reflection/receipt work. Exact frozen evidence and the
 // broker's accepted Git commit are both required; no receipt is needed yet.
-func (n NativeIncidentBroker) committedOutcomeClosure(ctx context.Context, closure IncidentClosure) (bool, error) {
+func (n NativeIncidentBroker) committedOutcomeClosure(ctx context.Context, closure IncidentClosure, receipt *ClosureReceipt) (bool, error) {
 	if n.Repository == nil || closure.Request.IncidentID == "" {
 		return false, nil
 	}
@@ -857,12 +856,62 @@ func (n NativeIncidentBroker) committedOutcomeClosure(ctx context.Context, closu
 	if ledger.OutcomeDocument == nil || ledger.OutcomeDocument.GetIncidentId() != closure.Request.IncidentID || !proto.Equal(ledger.Closure, projected) {
 		return false, nil
 	}
+	if receipt != nil && (ledger.Receipt == nil || !proto.Equal(ledger.Receipt, closureReceiptContract(receipt))) {
+		return false, nil
+	}
+	if ledger.ReflectionProcessed && ledger.Receipt == nil {
+		return false, nil
+	}
+	accepted := false
 	if ledger.OutcomeCommit != "" {
-		_, accepted, err := n.Repository.AcceptedCommitAt(ctx, closure.Request.IncidentID, broker.OutcomePhase, ledger.OutcomeCommit)
+		_, accepted, err = n.Repository.AcceptedCommitAt(ctx, closure.Request.IncidentID, broker.OutcomePhase, ledger.OutcomeCommit)
+	} else {
+		// Git acceptance can survive a crash before its ledger marker is saved.
+		_, accepted, err = n.Repository.AcceptedCommit(ctx, closure.Request.IncidentID, broker.OutcomePhase)
+	}
+	if err != nil || !accepted {
 		return accepted, err
 	}
-	// Git acceptance can survive a crash before its ledger marker is saved.
-	// ProcessClosure recovers that same commit before resuming reflection.
-	_, accepted, err := n.Repository.AcceptedCommit(ctx, closure.Request.IncidentID, broker.OutcomePhase)
-	return accepted, err
+	return true, nil
+}
+
+func (n NativeIncidentBroker) checkHistoricalClosureHealth(ctx context.Context, closure IncidentClosure) error {
+	ledger, err := n.readLedger(closure.Request.IncidentID)
+	if err != nil {
+		return err
+	}
+	verifiedRevision := closure.Request.SourceCommit
+	if ledger.ReflectionCommit != "" {
+		_, accepted, err := n.Repository.AcceptedCommitAt(ctx, closure.Request.IncidentID, broker.ReflectionPhase, ledger.ReflectionCommit)
+		if err != nil {
+			return err
+		}
+		if accepted {
+			// Its own validated library publication cannot invalidate its ACK.
+			// Later objective/policy advances still compare against that commit.
+			verifiedRevision = ledger.ReflectionCommit
+		}
+	}
+	diagnostics, err := n.Repository.ReflectionHealthDiagnostics(ctx, verifiedRevision)
+	if err != nil {
+		return err
+	}
+	if len(diagnostics) > 0 {
+		// Record the rejection before the controller durably retires ownership,
+		// including when leadership is lost before the worker finishes.
+		attempt, _ := lifecyclecore.ReflectionFeedback(ledger)
+		rejection := &contracts.ProposalRejection{Attempt: attempt, Diagnostics: diagnostics, RejectedAt: contractTimestamp(n.clock())}
+		for _, prior := range ledger.GetReflectionRejections() {
+			if len(prior.Diagnostics) == 1 && proto.Equal(prior.Diagnostics[0], diagnostics[0]) {
+				rejection = prior
+				break
+			}
+		}
+		_, err = n.Repository.RecordReflectionRejections(ctx, closure.Request.IncidentID, []*contracts.ProposalRejection{rejection})
+		if err != nil {
+			return err
+		}
+		return ErrStaleHealthInvestigation
+	}
+	return nil
 }

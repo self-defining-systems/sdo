@@ -51,7 +51,9 @@ func (s *JSONStore) appendReflectionAnnotations(ctx context.Context, id string, 
 		}
 		exists := false
 		for _, old := range next.ReflectionRejections {
-			exists = exists || proto.Equal(old, rejection)
+			// A guard and a recovered result can observe the same rejection at
+			// different times. Preserve the first durable timestamp.
+			exists = exists || (old.GetAttempt() == rejection.Attempt && proto.Equal(&contracts.ProposalRejection{Diagnostics: old.Diagnostics}, &contracts.ProposalRejection{Diagnostics: rejection.Diagnostics}))
 		}
 		if !exists {
 			next.ReflectionRejections = append(next.ReflectionRejections, proto.Clone(rejection).(*contracts.ProposalRejection))

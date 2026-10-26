@@ -57,15 +57,20 @@ func controllerHealthGuard(c *Controller, root, compiled string) func(context.Co
 		broker := c.broker
 		c.mu.Unlock()
 		// The accepted outcome freezes incident evidence before reflection starts.
-		// Health adoption may invalidate a live investigation, but cannot revoke
-		// ownership of its historical reflection, publication or acknowledgment.
-		if pending != nil && phase != contracts.ClosureState_CLOSURE_STATE_FAILED && (request == nil || request.IncidentID == pending.Request.IncidentID) {
+		// Source adoption and authenticated judge refreshes preserve historical
+		// ownership; objective/policy changes are recorded before retirement.
+		historicalReplay := receipt == nil && (phase == contracts.ClosureState_CLOSURE_STATE_PENDING || phase == contracts.ClosureState_CLOSURE_STATE_PROCESSING)
+		historicalAck := receipt != nil && (phase == contracts.ClosureState_CLOSURE_STATE_COMMITTED || phase == contracts.ClosureState_CLOSURE_STATE_ACKNOWLEDGING)
+		if pending != nil && (historicalReplay || historicalAck) && (request == nil || request.IncidentID == pending.Request.IncidentID) {
 			if proof, ok := broker.(committedOutcomeClosureBroker); ok {
-				accepted, err := proof.committedOutcomeClosure(ctx, *pending)
+				accepted, err := proof.committedOutcomeClosure(ctx, *pending, receipt)
 				if err != nil {
 					return err
 				}
 				if accepted {
+					if health, ok := broker.(historicalClosureHealthBroker); ok {
+						return health.checkHistoricalClosureHealth(ctx, *pending)
+					}
 					return nil
 				}
 			}
@@ -99,6 +104,10 @@ func controllerHealthGuard(c *Controller, root, compiled string) func(context.Co
 // A restart may precede persistence of the controller receipt, so a frozen
 // closure may replay the idempotent broker effect using its existing receipt.
 // This never authorizes an investigation or new publication using stale policy.
+type historicalClosureHealthBroker interface {
+	checkHistoricalClosureHealth(context.Context, IncidentClosure) error
+}
+
 type committedRepairHealthBroker interface {
 	committedRepairHealthReceipt(context.Context, IncidentClosure, *ClosureReceipt) (ClosureReceipt, error)
 }

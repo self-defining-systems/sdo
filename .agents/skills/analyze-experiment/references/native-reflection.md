@@ -143,12 +143,16 @@ responder result sends nothing. Grade files live outside the operational reposit
 and are never inputs to responders or reflection.
 
 Accepted outcomes preserve reflection ownership across controller restart and
-adoption of new source, objective or health detectors. The health guard first
+adoption of new source or broker-validated health-refresh detectors. The health guard first
 requires the running policy to match accepted inputs, then authenticates the
 exact frozen closure against its historical broker-accepted outcome. Resuming
 that closure performs reflection/publication/ACK bookkeeping; it does not make
 another incident health decision. Publication still three-way merges onto the
-current accepted head and runs the complete shared memory check.
+current accepted head and runs the complete shared memory check. Objective
+changes and unrelated policy changes remain stale: `reflection.objective-changed`
+(`objective changed`) or `reflection.policy-changed` (`policy changed`) is
+recorded in field 52 before ownership is retired. The broker independently
+rechecks that boundary under its publication lock and never retries such results.
 
 `OutcomeRecord.reflection_rejections` is broker-appended typed `ProposalRejection`
 history, including stable diagnostic rules such as `memory.conflict`, current
