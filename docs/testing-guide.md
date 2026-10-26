@@ -719,7 +719,11 @@ budget controls. Rebalance using top-level `pass` event `Elapsed` values rather
 than extending deadlines.
 Runtime name partitions remain exhaustive; `test_runtime_shard.py --shard`
 accepts comma-separated partitions so short groups can share a runner without
-omitting or duplicating names. Image runners consume the preparation job's
+omitting or duplicating names. Each runtime allocation has a 210-second process
+budget, derived from 70% of the unchanged five-minute controller job; 90 seconds
+remain for checkout, setup and linking. Explicit Python worker settings pass
+through unchanged; local unset defaults use at most four CPUs and hosted CI
+explicitly uses two workers. Image runners consume the preparation job's
 source-bound schema identity, avoiding a separate Go cache transfer and toolchain
 installation just to print it.
 
