@@ -92,8 +92,8 @@ func RunAPIProxy(ctx context.Context, args []string) error {
 	return err
 }
 
-// apiProxyTransports keeps authentication at the Kubernetes edge and makes
-// automatic retries of writes impossible by never reusing their connections.
+// apiProxyTransports shares one authenticated connection pool for an incident.
+// The proxy strips retry-authorizing headers and replay bodies on writes.
 func apiProxyTransports(config *rest.Config) (http.RoundTripper, http.RoundTripper, error) {
 	tlsConfig, err := rest.TLSConfigFor(config)
 	if err != nil {
@@ -104,11 +104,5 @@ func apiProxyTransports(config *rest.Config) (http.RoundTripper, http.RoundTripp
 	if err != nil {
 		return nil, nil, err
 	}
-	writeBase := base.Clone()
-	writeBase.DisableKeepAlives = true
-	writes, err := rest.HTTPWrappersForConfig(config, writeBase)
-	if err != nil {
-		return nil, nil, err
-	}
-	return reads, writes, nil
+	return reads, reads, nil
 }
