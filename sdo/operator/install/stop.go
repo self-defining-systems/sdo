@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	corev1 "k8s.io/api/core/v1"
 	"slices"
 	"strings"
 	"time"
@@ -15,7 +16,8 @@ import (
 )
 
 // StopResult describes runtime objects only. Stop never deletes repository PVCs,
-// ConfigMaps, Secrets, namespaces, or accepted Git state.
+// durable ConfigMaps, Secrets, namespaces, or accepted Git state. Orphan PVC
+// reservations are ephemeral and are released after their owners stop.
 type StopResult struct {
 	Removed   []string `json:"removed"`
 	Leftovers []string `json:"leftovers"`
@@ -166,6 +168,39 @@ func Stop(ctx context.Context, client kubernetes.Interface, namespace string) (S
 			case <-time.After(100 * time.Millisecond):
 			}
 		}
+	}
+	// Recover abandoned reservations through the supported stop path.
+	var claims []corev1.ConfigMap
+	if namespace != "" {
+		claim, err := client.CoreV1().ConfigMaps(namespace).Get(ctx, OperateLockConfigMap, metav1.GetOptions{})
+		if err != nil && !apierrors.IsNotFound(err) {
+			return result, fmt.Errorf("inspect PVC claim: %w", err)
+		}
+		if err == nil {
+			claims = append(claims, *claim)
+		}
+	} else {
+		maps, err := client.CoreV1().ConfigMaps(namespace).List(ctx, metav1.ListOptions{})
+		if err != nil {
+			return result, fmt.Errorf("inventory PVC claims: %w", err)
+		}
+		claims = maps.Items
+	}
+	for _, claim := range claims {
+		if claim.Name != OperateLockConfigMap {
+			continue
+		}
+		live, err := (Installer{Client: client}).claimOwnerLive(ctx, claim.Namespace, &claim)
+		if err != nil {
+			return result, err
+		}
+		if live {
+			return result, fmt.Errorf("PVC claim %s/%s still has an active owner or creation window", claim.Namespace, claim.Name)
+		}
+		if err := client.CoreV1().ConfigMaps(claim.Namespace).Delete(ctx, claim.Name, ownerDeleteOptions(claim.ObjectMeta)); err != nil && !apierrors.IsNotFound(err) {
+			return result, err
+		}
+		result.Removed = append(result.Removed, "configmap/"+claim.Namespace+"/"+claim.Name)
 	}
 	result.Leftovers = []string{}
 	slices.Sort(result.Removed)

@@ -137,6 +137,18 @@ are outside this reset. Older run directories without an application snapshot
 use fault-only recovery and mark `cleanup_skipped_reason` in each incident row.
 `cleanup_deleted_counts` and `cleanup_restored` show what was reset.
 
+Namespace recovery captures ServiceAccounts, Roles and RoleBindings alongside
+workload, ConfigMap, Service and PVC specs. It follows pod-template references
+(including init containers, projected volumes and environment references),
+StatefulSet services and claims, and RBAC references. Missing legacy capture
+prerequisites may come from contained, hash-verified accepted rendered manifests;
+captured installed specs retain precedence. Prerequisites are applied before
+workloads. Before any reset writes, unavailable prerequisites are rejected by
+namespace/kind/name. Secret contents and unowned cluster-scoped resources are
+never restored; only name projections establish whether external dependencies
+already exist. Recreating a namespace that requires an unavailable Secret needs
+its owning deployment workflow before fastloop reset can proceed.
+
 Seed restoration requires the harness's `seed-compatible/v1` recovery contract,
 including when `--require-full-cleanup` is omitted. One `SregymFaultDriver.recover()`
 call resets external fault state through the harness, restores every captured

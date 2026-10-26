@@ -88,6 +88,16 @@ For bound PVCs, a rendered source manifest may omit the admission-defaulted
 installed capture when source omits it. An explicit source class (including the
 empty string) remains authoritative. Replacing the complete source spec without
 this merge rejects an otherwise healthy bound claim as an immutable-field change.
-On a reused lane, check for foreign applications after the supported restore has
-retired prior applications, and before health/traffic admission and injection.
+On a reused lane, explicitly retire released prior applications through supported
+teardown, then restore the app and check for foreign applications before health/traffic
+admission and injection. App-only reset does not retire foreign namespaces.
 Never bypass the foreign-application guard with an added namespace allowlist.
+
+Namespace recovery prerequisite failures are **eval** blockers before injection.
+`eval: namespace recovery cannot restore prerequisites:` names every unavailable
+reference as `[namespace/]Kind/name`. Capture now includes ServiceAccounts and
+namespace RBAC; legacy omissions may be filled from hash-verified accepted
+rendered manifests without replacing sealed installed workload specs. Secret
+payloads and unowned cluster resources are never restored. A named missing
+Secret after namespace loss is unsupported recovery, not an SDO mitigation
+failure or a health timeout; uninjected encounter metrics remain unknown.

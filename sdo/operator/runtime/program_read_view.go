@@ -10,7 +10,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net"
 	"time"
 
@@ -94,14 +93,13 @@ func (v LiveReadView) logs(ref sdk.ObjectRef, options corev1.PodLogOptions) (str
 	}
 	ctx, cancel := context.WithTimeout(v.context(), 5*time.Second)
 	defer cancel()
-	stream, err := v.Client.CoreV1().Pods(ref.Namespace).GetLogs(ref.Name, &bounded).Stream(ctx)
-	if err != nil {
-		return "", fmt.Errorf("read logs of pod %s/%s: %w", ref.Namespace, ref.Name, err)
-	}
-	defer stream.Close()
-	data, err := io.ReadAll(io.LimitReader(stream, *bounded.LimitBytes+1))
+	client, err := program.Kubernetes(v)
 	if err != nil {
 		return "", err
+	}
+	data, err := client.CoreV1().Pods(ref.Namespace).GetLogs(ref.Name, &bounded).DoRaw(ctx)
+	if err != nil {
+		return "", fmt.Errorf("read logs of pod %s/%s: %w", ref.Namespace, ref.Name, err)
 	}
 	if int64(len(data)) > *bounded.LimitBytes {
 		return "", errors.New("logs exceed byte limit")

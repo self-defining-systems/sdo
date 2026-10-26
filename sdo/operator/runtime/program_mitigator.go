@@ -82,7 +82,11 @@ func runBoundedMitigator(ctx context.Context, p program.Mitigator, view program.
 			snapshot.PDBList = extended.PodDisruptionBudgets()
 		}
 		isolated = mitigationReadView{Snapshot: snapshot, ctx: ctx, live: view}
-		plan, err := p.Mitigate(ctx, isolated, bindings)
+		observed, readFailure := program.CheckReads(isolated)
+		plan, err := p.Mitigate(ctx, program.ReadFrom(observed), bindings)
+		if readErr := readFailure(); readErr != nil {
+			err = readErr
+		}
 		if err == nil {
 			err = plan.Validate()
 		}

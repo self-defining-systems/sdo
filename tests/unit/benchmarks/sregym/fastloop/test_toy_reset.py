@@ -97,6 +97,7 @@ def test_reset_without_registry_discards_prior_runtime_state_before_install(tmp_
 
     monkeypatch.setattr(cli, "_worker", lambda _env: nullcontext(object()))
     monkeypatch.setattr(cli, "_restore_seed", lambda _env: None)
+    monkeypatch.setattr(reset.RestoreChecks, "validate", lambda checks: checks.environment == environment)
     monkeypatch.setattr(reset, "reset_environment", reset_environment)
     monkeypatch.setattr(toy_reset, "command", command)
     monkeypatch.setattr(toy, "install_controller", install)

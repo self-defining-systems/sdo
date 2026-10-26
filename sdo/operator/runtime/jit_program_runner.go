@@ -63,7 +63,9 @@ func ServeWorkingProgram(registry program.ProgramRegistry) {
 		reply(specs, nil)
 		return
 	}
-	view := &jitview.View{Input: decoder, Output: encoder}
+	rawView := &jitview.View{Input: decoder, Output: encoder}
+	observed, readFailure := program.CheckReads(rawView)
+	view := program.ReadFrom(observed)
 	ctx := context.Background()
 	if !request.Deadline.IsZero() {
 		var cancel context.CancelFunc
@@ -78,6 +80,9 @@ func ServeWorkingProgram(registry program.ProgramRegistry) {
 			return
 		}
 		verdict, err := p.Diagnose(ctx, view, program.Bindings(request.Bindings))
+		if readErr := readFailure(); readErr != nil {
+			err = readErr
+		}
 		reply(verdict, err)
 	case "mitigate":
 		p, ok := registry.Mitigator(request.ProgramID)
@@ -86,6 +91,9 @@ func ServeWorkingProgram(registry program.ProgramRegistry) {
 			return
 		}
 		plan, err := p.Mitigate(ctx, view, program.Bindings(request.Bindings))
+		if readErr := readFailure(); readErr != nil {
+			err = readErr
+		}
 		reply(PlanApplicationResult{Plan: plan}, err)
 	default:
 		reply(nil, fmt.Errorf("unknown working program operation"))

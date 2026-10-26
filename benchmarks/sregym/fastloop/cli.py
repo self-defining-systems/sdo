@@ -764,6 +764,10 @@ def _run(args: argparse.Namespace) -> int:
         deployed = time.monotonic()
         described = deployed
         baseline = load_application_baseline(environment.baseline_path, environment.namespace)
+        if baseline is not None:
+            from benchmarks.sregym.fastloop.recovery_closure import complete_recovery_baselines
+
+            baseline = complete_recovery_baselines(environment.workspace, baseline)
         if baseline is None and args.require_full_cleanup:
             raise ValueError("full cleanup requires an application baseline")
         if baseline is None:
@@ -1067,6 +1071,7 @@ def _reset(args: argparse.Namespace) -> int:
     retarget = getattr(args, "retarget_dev_mount", False)
     if args.dev_mount is not None and environment.dev_mount != args.dev_mount.resolve() and not retarget:
         raise ValueError("reset --dev-mount must match the worktree mounted by up")
+    RestoreChecks(environment).validate()
     mount = args.dev_mount.resolve() if retarget and args.dev_mount else environment.dev_mount
     if mount is not None:
         from benchmarks.sregym.fastloop.dev import prepare_dev_mount
