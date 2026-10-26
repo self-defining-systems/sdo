@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ipaddress
 import json
+import subprocess
 import time
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
@@ -126,6 +127,27 @@ def active_incident(state: dict[str, Any]) -> str | None:
     return f"{incident or 'unidentified'} ({keys})"
 
 
+#: Closure states in which no incident is being closed, reflected or acknowledged.
+IDLE_CLOSURE_STATES = {None, 0, "", "CLOSURE_STATE_UNSPECIFIED"}
+
+
+class PriorClosureIncompleteError(ValueError):
+    """A previous incident on the lane had not closed naturally; the row is not measured."""
+
+    reason = "prior_closure_incomplete"
+
+    def __init__(self, message: str, evidence: dict[str, Any]) -> None:
+        super().__init__(message)
+        self.evidence = evidence
+
+
+def _accepted_head(workspace: Path) -> str | None:
+    completed = subprocess.run(
+        ["git", "-C", str(workspace), "rev-parse", "HEAD"], capture_output=True, text=True, check=False
+    )
+    return completed.stdout.strip() or None if completed.returncode == 0 else None
+
+
 class LaneAdmission:
     def __init__(
         self,
@@ -136,6 +158,7 @@ class LaneAdmission:
         *,
         timeout_seconds: float = 300,
         onboarding_timeout_seconds: float = 600,
+        prior_closure_timeout_seconds: float = 1800,
         install_config: NativeInstallConfig | None = None,
         synchronize: Callable[[], None] | None = None,
         progress: Callable[..., None] | None = None,
@@ -145,6 +168,7 @@ class LaneAdmission:
         self.directory = directory
         self.timeout_seconds = timeout_seconds
         self.onboarding_timeout_seconds = onboarding_timeout_seconds
+        self.prior_closure_timeout_seconds = prior_closure_timeout_seconds
         self.install_config = install_config
         self.synchronize, self.progress = synchronize, progress
         self.before_proof = before_proof
@@ -232,6 +256,75 @@ class LaneAdmission:
             self.progress("onboarding", accepted_commit=evidence["accepted_commit"], evidence=str(destination))
         return evidence
 
+    def _active_workers(self, control: str) -> list[str]:
+        """Name SDO worker Jobs (responder, reflection) that have not finished."""
+        listing = json.loads(
+            kubectl(["get", "jobs", "-o", "json"], namespace=control, kubeconfig=self.environment.kubeconfig).stdout
+        )["items"]
+        active = []
+        for job in listing:
+            labels = job.get("spec", {}).get("template", {}).get("metadata", {}).get("labels", {})
+            finished = any(
+                row.get("type") in {"Complete", "Failed"} and row.get("status") == "True"
+                for row in job.get("status", {}).get("conditions") or []
+            )
+            if labels.get("app.kubernetes.io/name") == "sdo-worker" and not finished:
+                active.append(job["metadata"]["name"])
+        return sorted(active)
+
+    def await_prior_closure(self, control: str) -> dict[str, Any]:
+        """Wait, on a separate recorded budget, until every previous incident on the lane has closed naturally.
+
+        A repeat must start on the memory the previous row's reflection
+        accepted, and its admission clock must not contain that reflection.
+        Closed means the controller holds no open incident, request or
+        pending closure, its closure state is idle (reflection committed and
+        acknowledged), and no SDO worker Job is still running. The wait never
+        aborts or reuses running work; when the budget ends the row is not
+        measured.
+        """
+        started = time.monotonic()
+        self.directory.mkdir(parents=True, exist_ok=True)
+        destination = self.directory / "prior-closure.json"
+        while True:
+            try:
+                state, workers, error = self.ops.runtime_state(control), self._active_workers(control), None
+            except (RuntimeError, ValueError, KeyError) as exc:
+                state, workers, error = {}, [], str(exc)
+            closure_state = state.get("closure_state")
+            done = (
+                error is None
+                and not closure_pending(state)
+                and closure_state in IDLE_CLOSURE_STATES
+                and not workers
+            )
+            evidence = {
+                "passed": done,
+                "closure_state": closure_state,
+                "incident_work": active_incident(state),
+                "last_acknowledged_incident_id": state.get("last_acknowledged_incident_id") or None,
+                "active_workers": workers,
+                "last_error": error,
+                "seconds": round(time.monotonic() - started, 3),
+                "budget_seconds": self.prior_closure_timeout_seconds,
+            }
+            if done or time.monotonic() - started >= self.prior_closure_timeout_seconds:
+                break
+            time.sleep(min(2, max(0, started + self.prior_closure_timeout_seconds - time.monotonic())))
+        # Recorded after the wait, so a repeat names the memory its predecessor's reflection accepted.
+        evidence["accepted_before"] = _accepted_head(self.environment.workspace)
+        destination.write_text(json.dumps(evidence, indent=2) + "\n")
+        if not done:
+            raise PriorClosureIncompleteError(
+                f"eval: previous incident closure did not finish within {self.prior_closure_timeout_seconds:g}s "
+                f"(closure state: {closure_state}, incident work: {evidence['incident_work']}, "
+                f"active workers: {workers}, last error: {error}); row not measured, no injection",
+                evidence,
+            )
+        if self.progress:
+            self.progress("prior_closure", evidence=str(destination))
+        return evidence
+
     def check_resources(self, stage: str) -> None:
         self.directory.mkdir(parents=True, exist_ok=True)
         try:
@@ -254,6 +347,9 @@ class LaneAdmission:
         # Onboarding has its own budget: the stabilization clock below must never
         # contain install-existing or the first health refresh of a fresh seed.
         onboarding = self.await_onboarding(control)
+        # A previous row's closure and reflection have their own budget too: a
+        # repeat starts only on the memory that reflection accepted.
+        self.await_prior_closure(control)
         if self.before_proof is not None:
             self.before_proof(control, onboarding)
         deadline = Deadline(time.monotonic() + self.timeout_seconds, time.monotonic)
