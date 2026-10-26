@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -1169,7 +1170,11 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 				}
 				continue
 			}
-			if err := controller.StepEvents(runCtx, time.Now().UTC(), kubernetesCache.TakeEvents()); err != nil {
+			events := kubernetesCache.TakeEvents()
+			if reachabilityObserver != nil && slices.ContainsFunc(events, func(event sdk.WatchKind) bool { return event.APIVersion == "v1" && event.Kind == "Pod" }) {
+				reachabilityObserver.Wake()
+			}
+			if err := controller.StepEvents(runCtx, time.Now().UTC(), events); err != nil {
 				if runCtx.Err() != nil {
 					return nil
 				}

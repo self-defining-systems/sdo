@@ -622,6 +622,15 @@ type ReachabilityTarget struct {
     ReachabilityTarget is one TCP port of one Service, dialed through cluster
     DNS.
 
+func ReachabilityCatchingUp(ctx sdk.DetectionContext, w ReachabilityWindow) []ReachabilityTarget
+    ReachabilityCatchingUp returns the targets whose Service gained its ready
+    backend so recently that fewer than Failures dials follow the transition,
+    none of them failed. Confirmed counts only dials made after the Service's
+    readySince, so a repair that replaces the only ready pod leaves the window
+    incomplete until that many dials follow; dialing these targets early fills
+    it with the same proof. A failed dial ends the catch-up: failure runs keep
+    the normal interval.
+
 func ReachabilityTargets(ctx sdk.DetectionContext) ([]ReachabilityTarget, int)
     ReachabilityTargets derives the dial targets from a namespace snapshot:
     every TCP port of every eligible Service, sorted by Service and port,
