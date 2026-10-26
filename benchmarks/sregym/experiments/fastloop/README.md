@@ -457,3 +457,30 @@ A supported abort can remove the application namespace. Reset confirms that
 absence and recreates the namespace named by the captured application baseline
 before reconciling its manifests; authorization/read failures never become
 absence. System and SDO control namespaces are refused.
+
+### Required learning-loop proof before live first/repeat runs
+
+On an idle warm lane, run the scripted whole-loop proof before live SDO work:
+
+```bash
+uv run python -m benchmarks.sregym.fastloop learning-loop-proof --run-dir "$SDO_FASTLOOP_RUN"
+```
+
+This command resets to the lane's seed and runs two target-port encounters with
+scripted registrations, without a model or diagnosis judge. It uses the ordinary
+fastloop injection, native closure, immutable closure-grade checkpoint, reflection,
+isolated validator, broker publication, paused recovery and repeat paths. It stops
+the scripted runtime when finished. Use a dedicated rehearsal workspace with the
+same lane images; preserve any live operational memory before selecting its seed.
+A development lane must mount the same worktree that runs the command.
+
+The single report is `learning-loop-proof/report.json`; stage evidence references
+strict receipts, frozen grades, validator watch events and final incident rows.
+The total command budget is 300 seconds, including reset and runtime shutdown.
+A failed stage leaves `passed: false`, its name and Kubernetes evidence. A green
+scripted proof establishes plumbing, not model learning or benchmark performance.
+Live `fastloop run --agent sdo` requires a passing report for its exact clean commit,
+lane and installed image content on every node, before credentials or worker setup.
+Use `--learning-loop-report PATH` to reference a dedicated rehearsal's report.
+Changes to code or installed image content require a new proof. Shared hosts may
+pass `--lease NAME` to check their `coord` lease before mutations.

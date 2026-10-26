@@ -609,7 +609,7 @@ def _run(args: argparse.Namespace) -> int:
     if args.agent == "sdo":
         from benchmarks.sregym.adapter import control_namespace_for
 
-        secret = "sdo-agent-credentials"
+        secret = getattr(args, "credentials_secret", "sdo-agent-credentials")
         checked = kubectl(
             ["get", "secret", secret],
             namespace=control_namespace_for(environment.namespace),
@@ -756,15 +756,19 @@ def _run(args: argparse.Namespace) -> int:
             _reset_failed_incident(environment, worker)
 
         if args.agent == "sdo":
+            agent = _sdo_agent(
+                args,
+                environment,
+                results_dir,
+                composite=registered_composites,
+                stream_faults=faults_by_incident,
+                worker=worker,
+            )
+            wrapper = getattr(args, "agent_wrapper", None)
+            if wrapper is not None:
+                agent = wrapper(agent)
             records = run_incidents(
-                _sdo_agent(
-                    args,
-                    environment,
-                    results_dir,
-                    composite=registered_composites,
-                    stream_faults=faults_by_incident,
-                    worker=worker,
-                ),
+                agent,
                 driver,
                 config,
                 grader=grader,
@@ -1112,6 +1116,16 @@ def build_parser() -> argparse.ArgumentParser:
     dry_run.add_argument("--timeout", type=budget, default=300)
     dry_run.add_argument("--setup-timeout", type=setup_budget, default=900)
     dry_run.set_defaults(handler=lambda args: execute(args.run_dir, args.timeout, args.setup_timeout))
+
+    from benchmarks.sregym.fastloop.learning_loop import execute as execute_learning_loop
+
+    proof = commands.add_parser(
+        "learning-loop-proof", help="bounded scripted first/reflection/repeat proof on a real lane"
+    )
+    proof.add_argument("--run-dir", type=Path, required=True)
+    proof.add_argument("--timeout", type=budget, default=300)
+    proof.add_argument("--lease", help="shared coord lease; checked before lane mutations")
+    proof.set_defaults(handler=lambda args: execute_learning_loop(args.run_dir, args.timeout, args.lease))
 
     reset = commands.add_parser("reset", help="restore a warm cluster to its application and controller baseline")
     reset.add_argument("--run-dir", type=Path, required=True)

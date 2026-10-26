@@ -122,3 +122,19 @@ per-file, bundle and content-digest checks. A missing historical healthy referen
 is a replay evidence gap; never substitute an agent-authored corpus healthy state
 or the repaired fixed state. A session-authored positive replay case can still
 omit incident captures when its controller healthy reference is retained.
+
+## Model-free learning-loop preflight
+
+`learning-loop-proof/report.json` has schema `sdo.learning-loop-proof/v1`. Its
+`code_revision`, `lane` and `images` (role → node → installed content digest) bind
+it to the next live launch. `passed` requires all six `stages` (`injection`,
+`closure`, `grade`, `publication`, `recovery`, `repeat`), nonempty evidence, no model
+calls and at most 300 total seconds. Dirty code cannot produce reusable admission.
+Stages reference existing native strict receipts, immutable closure-grade
+checkpoints and ordinary incident rows. `validator-events.jsonl` preserves real
+Kubernetes watch objects, including terminal/deleted validator Jobs, before broker
+cleanup. Publication requires the known executable playbook, acknowledged broker
+commit and successful validator Job bound to its candidate tree, with one repository
+PVC volume mounted read-only at both candidate and healthy-baseline paths. The repeat
+must record a verified application of that published playbook; health alone is
+insufficient. This is scripted plumbing evidence, never evidence of model learning.

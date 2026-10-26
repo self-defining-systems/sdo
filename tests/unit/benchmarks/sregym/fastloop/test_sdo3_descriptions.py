@@ -123,6 +123,9 @@ def test_unsupported_requested_tracking_fails_before_worker_deployment(tmp_path,
     from benchmarks.sregym.fastloop import cli
     from benchmarks.sregym.fastloop.environment import FastloopEnvironment
 
+    # Isolate capability admission after the independently tested whole-loop gate.
+    monkeypatch.setattr("benchmarks.sregym.fastloop.learning_loop.require_proof", lambda *_args: None)
+
     environment = FastloopEnvironment(
         run_dir=tmp_path,
         cluster="test",

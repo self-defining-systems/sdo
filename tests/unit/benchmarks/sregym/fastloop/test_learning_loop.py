@@ -75,3 +75,88 @@ def test_live_run_refuses_missing_proof_before_credentials_or_cluster_writes(tmp
     monkeypatch.setattr(cli, "kubectl", unexpected)
     with pytest.raises(ValueError, match="learning-loop-proof --run-dir"):
         cli.main(["run", "--run-dir", str(tmp_path), "--agent", "sdo"])
+
+
+def validator_job():
+    return {
+        "metadata": {"name": "validator-1"},
+        "status": {"succeeded": 1},
+        "spec": {
+            "template": {
+                "spec": {
+                    "volumes": [{"name": "application", "persistentVolumeClaim": {"claimName": "repo"}}],
+                    "containers": [
+                        {
+                            "name": "validator",
+                            "env": [{"name": "SDO_CANDIDATE_TREE", "value": "tree"}],
+                            "volumeMounts": [
+                                {"name": "application", "mountPath": path, "readOnly": True}
+                                for path in ("/workspace", "/sdo/healthy-baseline")
+                            ],
+                        }
+                    ],
+                }
+            }
+        },
+    }
+
+
+def test_real_validator_proof_requires_single_pvc_and_bound_candidate():
+    from benchmarks.sregym.fastloop.learning_loop import validator_jobs
+
+    job = validator_job()
+    assert validator_jobs({"items": [job]}, repository_pvc="repo", candidate_tree="tree") == ["validator-1"]
+    assert validator_jobs({"items": [job]}, repository_pvc="repo", candidate_tree="old") == []
+    job["spec"]["template"]["spec"]["volumes"].append(
+        {"name": "healthy-baseline", "persistentVolumeClaim": {"claimName": "repo"}}
+    )
+    assert validator_jobs({"items": [job]}, repository_pvc="repo", candidate_tree="tree") == []
+
+
+@pytest.mark.parametrize("defect", ["not_started", "no_baseline", "writable", "wrong_pvc"])
+def test_validator_success_cannot_hide_mount_or_execution_defects(defect):
+    from benchmarks.sregym.fastloop.learning_loop import validator_jobs
+
+    job = validator_job()
+    spec = job["spec"]["template"]["spec"]
+    if defect == "not_started":
+        job["status"] = {"active": 1}
+    elif defect == "no_baseline":
+        spec["containers"][0]["volumeMounts"].pop()
+    elif defect == "writable":
+        spec["containers"][0]["volumeMounts"][0]["readOnly"] = False
+    else:
+        spec["volumes"][0]["persistentVolumeClaim"]["claimName"] = "other"
+    assert validator_jobs({"items": [job]}, repository_pvc="repo", candidate_tree="tree") == []
+
+
+def test_dirty_code_cannot_reuse_a_proof_with_the_same_dirty_label():
+    report = passing_report()
+    report["code_revision"] = "abc-dirty"
+    with pytest.raises(ValueError, match="committed code"):
+        validate_report(report, revision="abc-dirty", lane="lane-53", images=report["images"])
+
+
+def test_validator_watch_retains_terminal_evidence_after_job_deletion(tmp_path):
+    import json
+    import sys
+    import time
+
+    from benchmarks.sregym.fastloop.learning_loop_watch import ValidatorWatch
+
+    job = validator_job()
+    job["kind"] = "Job"
+    job["metadata"]["uid"] = "unique"
+    event = {"type": "DELETED", "object": job}
+    watch = ValidatorWatch(tmp_path / "kubeconfig", "control", tmp_path / "events.jsonl")
+    watch.command = [
+        sys.executable,
+        "-c",
+        "import time; print(" + repr(json.dumps(event, indent=2)) + ", flush=True); time.sleep(10)",
+    ]
+    with watch:
+        deadline = time.monotonic() + 3
+        while not watch.path.exists() or not watch.path.read_text().strip():
+            assert time.monotonic() < deadline
+            time.sleep(0.01)
+        assert watch.jobs()["items"] == [job]
