@@ -20,9 +20,6 @@ func (snapshotReadView) ProbeTCP(sdk.ObjectRef, int32) (ProbeResult, error) {
 func (snapshotReadView) ProbeHTTP(sdk.ObjectRef, HTTPProbe) (ProbeResult, error) {
 	return ProbeResult{}, fmt.Errorf("HTTP probe unavailable in detector context")
 }
-func (snapshotReadView) DiffAgainstSource(sdk.ObjectRef) (Diff, error) {
-	return Diff{}, fmt.Errorf("source diff unavailable in detector context")
-}
 func (snapshotReadView) DiffAgainstBaseline(sdk.ObjectRef) (Diff, error) {
 	return Diff{}, fmt.Errorf("baseline diff unavailable in detector context")
 }
