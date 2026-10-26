@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import sys
 from typing import TYPE_CHECKING
@@ -50,8 +51,8 @@ async def _call(root: Path, *, timeout: float = 2) -> dict[str, object]:
             await session.initialize()
             result = await session.call_tool("check_memory", {"decision_path": "decision.json"})
             assert not result.isError, result
-            assert result.structuredContent is not None
-            return result.structuredContent
+            (block,) = result.content
+            return json.loads(block.text)
 
 
 @pytest.mark.asyncio
@@ -191,4 +192,20 @@ assert result == {"summary": "covered", "learning_decision": "no_change",
             "no_change_reason": "already covered",
         },
     )
-    assert result[1]["exit_code"] == 0
+    (block,) = result
+    assert json.loads(block.text)["exit_code"] == 0
+
+
+@pytest.mark.asyncio
+async def test_reflection_tools_return_one_copy_of_each_result(tmp_path: Path) -> None:
+    # A resumed session carries every tool result; a second structured copy doubles it.
+    from sdo.agents.responder.reflection_validation import validation_server
+
+    server = validation_server(tmp_path)
+    assert {tool.name: tool.outputSchema for tool in await server.list_tools()} == {
+        tool.name: None for tool in await server.list_tools()
+    }
+    result = await server.call_tool("authoring_reference", {"topic": "sdk"})
+    assert not isinstance(result, tuple)
+    (block,) = result
+    assert block.text.startswith("## program-sdk.md")

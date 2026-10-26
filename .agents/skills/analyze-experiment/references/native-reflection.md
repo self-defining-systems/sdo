@@ -63,6 +63,11 @@ Reflection execution uses its frozen task deadline for both the wait context and
 Kubernetes Job `activeDeadlineSeconds`. A Pending worker is bounded too. Expiry
 records a terminal `ReflectionDecision` with `learning_decision=failed` and
 `failure_reason=timeout`, then cleans the proposal; it is not a validation retry.
+The agent's own budget ends 120 s before that deadline. A worker whose turn
+fails publishes `AgentResult` `status=failed` with a typed `failure_reason`
+(`agent_timeout`, `agent_failed` or `result_too_large`) and `error_summary`,
+recorded as `learning_decision=failed`; a failed reflection Job without such a
+result is a worker crash, not an agent failure.
 Restart retains the original task/deadline and cannot create another Job once
 that deadline expires. Leadership cancellation before expiry remains retryable.
 Completed result recovery precedes execution: after Job TTL deletion, the frozen
