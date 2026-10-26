@@ -36,8 +36,8 @@ func (l *ResponderLoop) checkDeletionReceipts(ctx context.Context, receipts []Re
 				reason = "delete_not_confirmed"
 				break
 			}
-			_, err := l.Executor.Client.Get(ctx, ref)
-			if apierrors.IsNotFound(err) {
+			live, err := l.Executor.Client.Get(ctx, ref)
+			if apierrors.IsNotFound(err) || (err == nil && live != nil && terminatingPod(ref, live.Object)) {
 				continue
 			}
 			reason = "delete_not_confirmed"
