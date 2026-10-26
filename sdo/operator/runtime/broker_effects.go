@@ -546,6 +546,16 @@ acknowledgments:
 		case completion := <-c.acknowledgmentResults:
 			c.handleAcknowledgmentCompletion(completion)
 		default:
+			goto reflections
+		}
+	}
+
+reflections:
+	for {
+		select {
+		case completion := <-c.reflectionResults:
+			c.handleReflectionCompletion(completion)
+		default:
 			return
 		}
 	}
@@ -648,6 +658,7 @@ func (c *Controller) handleAcknowledgmentCompletion(completion acknowledgmentCom
 		c.reportBrokerError("acknowledge incident closure", completion.err)
 		return
 	}
+	c.reflections.rescan = true
 	c.emitLifecycleLocked(&contracts.LifecycleEvent{Event: PhaseAcknowledged, RecordedAt: contractTimestamp(c.clock()), IncidentId: receipt.IncidentID, OutcomeCommit: receipt.OutcomeCommit})
 	if pending != nil {
 		c.batcher.RemoveKeys(findingKeys(pending.Request.Findings))
