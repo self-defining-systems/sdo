@@ -38,7 +38,8 @@ func TestUnconfirmedClosureCommitsOutcomeWithoutFailureLearning(t *testing.T) {
 	closure.PartialDetectorStates, closure.FinalDetectorStates = closure.FinalDetectorStates, nil
 	closure.UnconfirmedReason = contracts.ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_OBSERVATION_INCOMPLETE
 	closure.UnconfirmedDetail = "closure observation detector health is unconfirmed: observation window is incomplete"
-	receipt, err := native.ProcessClosure(ctx, closure)
+	// Unconfirmed is non-success: its reflection runs queued behind the ACK.
+	receipt, err := closeAndReflect(t, ctx, native, closure)
 	if err != nil {
 		t.Fatal(err)
 	}

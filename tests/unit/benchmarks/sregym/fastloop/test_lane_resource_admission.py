@@ -494,8 +494,10 @@ def test_admission_after_a_permanently_failed_closure_passes(lane):
         {"incident_open": True, "last_acknowledged_incident_id": "row-007"},
         # A failed attempt's acknowledged closure whose reflection is queued.
         {"last_acknowledged_incident_id": "row-008", "queued_reflection_incident_ids": ["row-008"]},
+        # The controller could not read its reflection queue.
+        {"last_acknowledged_incident_id": "row-008", "queued_reflections_unknown": True},
     ],
-    ids=["retrying-failure", "processing", "acknowledging", "open-incident", "queued-reflection"],
+    ids=["retrying-failure", "processing", "acknowledging", "open-incident", "queued-reflection", "reflection-queue-unknown"],
 )
 def test_admission_waits_while_a_closure_is_open(lane, state):
     gate, calls = lane

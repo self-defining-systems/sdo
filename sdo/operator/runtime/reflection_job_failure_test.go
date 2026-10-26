@@ -94,7 +94,9 @@ func testReflectionTerminalJob(t *testing.T, vanished bool) {
 	// The queued reflection meets the terminal Job once; the next pass records
 	// it as abandoned with the Job's evidence instead of creating another Job.
 	for range 2 {
-		controller.driveQueuedReflections(context.Background(), now)
+		if err := controller.driveQueuedReflections(context.Background(), now); err != nil {
+			t.Fatal(err)
+		}
 		awaitBrokerResult(t, controller.reflectionResults)
 		controller.processBrokerCompletions()
 	}
