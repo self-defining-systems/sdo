@@ -7,7 +7,7 @@ description: Learn or refine reusable playbooks and deterministic Go programs fr
 
 A playbook captures a verified failure mechanism and repair for reuse on different resources.
 Accepted Mitigators become responder menu options, a convenience over direct commands through the ordinary
-executor. Bind required roles from triggering detector findings; Diagnose reads additional objects through ReadView by name or relation.
+executor. Bind required roles from findings; Diagnose reads objects by relation, `LogsWithOptions` (previous instances), and `PodUsage`/`NodeUsage` through ReadView.
 Declare object and value parameters, group actions that must run together, and supply specific
 failure context for the report returned to the same responder session.
 Read the [memory principles](../sdo-memory/SKILL.md#memory-principles) for evidence, reuse, generalization and retirement; that skill also defines ownership and logical IDs.

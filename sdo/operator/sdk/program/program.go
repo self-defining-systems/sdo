@@ -147,6 +147,8 @@ type ReadView interface {
 	traffic.Source
 	servicehealth.ReachabilitySource
 	Logs(pod sdk.ObjectRef, container string, since time.Duration) (string, error)
+	LogsWithOptions(pod sdk.ObjectRef, container string, options LogOptions) (string, error)
+	metrics.UsageSource
 	ProbeTCP(to sdk.ObjectRef, port int32) (ProbeResult, error)
 	ProbeHTTP(to sdk.ObjectRef, req HTTPProbe) (ProbeResult, error)
 	DiffAgainstSource(ref sdk.ObjectRef) (Diff, error)

@@ -355,6 +355,19 @@ type ListEdit struct {
     Op is remove, replace, or insert (immediately before the matched element).
     Use ordinary JSON patch's /- path to append, including to an empty list.
 
+type LogOptions struct {
+	Previous      bool
+	SinceTime     time.Time
+	SinceDuration time.Duration
+	TailLines     *int64
+	Timestamps    bool
+	LimitBytes    int64
+}
+    LogOptions selects one container instance; zero LimitBytes uses the 64 KiB
+    cap.
+
+func (o LogOptions) Validate() error
+
 type Mitigator interface {
 	Spec() ProgramSpec
 	Mitigate(context.Context, ReadView, Bindings) (Plan, error)
@@ -436,6 +449,8 @@ type ReadView interface {
 	traffic.Source
 	servicehealth.ReachabilitySource
 	Logs(pod sdk.ObjectRef, container string, since time.Duration) (string, error)
+	LogsWithOptions(pod sdk.ObjectRef, container string, options LogOptions) (string, error)
+	metrics.UsageSource
 	ProbeTCP(to sdk.ObjectRef, port int32) (ProbeResult, error)
 	ProbeHTTP(to sdk.ObjectRef, req HTTPProbe) (ProbeResult, error)
 	DiffAgainstSource(ref sdk.ObjectRef) (Diff, error)

@@ -143,3 +143,13 @@ pre-repair DatabaseUsers catalog, so reflection need not invent an observation a
 Within one immutable capture boundary, the first observation of each Pod/container/database catalog
 wins (including unavailable reads); later calls cannot overwrite it with restored state or establish
 an unobserved authentication configuration. Fixed-phase reads remain separate. No Secret data is read.
+
+## Typed logs and resource usage
+
+`LogsWithOptions` recordings bind Pod, container and the complete `program.LogOptions`
+(previous instance, exclusive since time/duration, tail, timestamps and byte cap).
+`PodUsage`/`NodeUsage` bind the explicit resource and preserve metrics.k8s.io CPU/memory
+quantities, container identity, sample timestamp and window. They use the existing
+PrimitiveCall shape and phase rules. Missing metrics-server, malformed samples and
+unrecorded usage remain unavailable errors, including offline replay; never infer
+zero usage or borrow a fixed-phase sample to explain opening state.

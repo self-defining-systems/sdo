@@ -29,7 +29,7 @@ Read [validator rules](references/rules.md) before changing a manifest or when a
 
 Use `program.ReadFrom(ctx)` for the shared detector/Diagnose surface; read the
 [generated program SDK](../sdo-playbook-authoring/references/program-sdk.md) before using it.
-It adds logs, TCP/HTTP probes, source/baseline diffs, `QueryMetrics(metrics.Query)`, alerts and traffic to objects.
+It adds `LogsWithOptions` (including previous instances), `PodUsage`/`NodeUsage`, probes, source/baseline diffs, metric queries, alerts and traffic.
 The runtime caches identical reads per snapshot and records actual results and failures for offline replay.
 Logs are capped at 64 KiB / 5 s; probes at 5 s. Read failures are errors/Unknown, never clearance;
 a successful probe with `Success:false` is an observed failure. Keep always-on reads cheap and use Diagnose for depth.

@@ -1115,6 +1115,26 @@ type ThresholdRule struct {
     ThresholdRule fires a finding for every series of Query whose reduced value
     violates Threshold.
 
+type Usage struct {
+	Resource  sdk.ObjectRef     `json:"resource"`
+	Container string            `json:"container,omitempty"`
+	CPU       resource.Quantity `json:"cpu"`
+	Memory    resource.Quantity `json:"memory"`
+	Timestamp time.Time         `json:"timestamp"`
+	Window    time.Duration     `json:"window"`
+}
+    Usage is a metrics.k8s.io sample; an empty Container identifies a Node.
+
+type UsageSource interface {
+	PodUsage(sdk.ObjectRef) ([]Usage, error)
+	NodeUsage(sdk.ObjectRef) (Usage, error)
+}
+
+type UsageUnavailableError struct{ Reason string }
+    UsageUnavailableError means metrics could not be observed, never zero usage.
+
+func (e *UsageUnavailableError) Error() string
+
 type Validator interface {
 	Validate() error
 }

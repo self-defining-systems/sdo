@@ -93,6 +93,11 @@ func (v *View) Logs(a0 p4.ObjectRef, a1 string, a2 p8.Duration) (r0 string, r1 e
 	r1 = err
 	return
 }
+func (v *View) LogsWithOptions(a0 p4.ObjectRef, a1 string, a2 p2.LogOptions) (r0 string, r1 error) {
+	err := v.call("LogsWithOptions", []any{a0, a1, a2}, []any{&r0})
+	r1 = err
+	return
+}
 func (v *View) MetricResult(a0 string) (r0 p0.Result, r1 bool) {
 	err := v.call("MetricResult", []any{a0}, []any{&r0, &r1})
 	if err != nil {
@@ -122,6 +127,11 @@ func (v *View) NetworkPolicies() (r0 []p10.NetworkPolicy) {
 	if err != nil {
 		panic(err)
 	}
+	return
+}
+func (v *View) NodeUsage(a0 p4.ObjectRef) (r0 p0.Usage, r1 error) {
+	err := v.call("NodeUsage", []any{a0}, []any{&r0})
+	r1 = err
 	return
 }
 func (v *View) Object(a0 p4.ObjectRef) (r0 *p11.Unstructured, r1 error) {
@@ -167,6 +177,11 @@ func (v *View) PodDisruptionBudgets() (r0 []p12.PodDisruptionBudget) {
 	if err != nil {
 		panic(err)
 	}
+	return
+}
+func (v *View) PodUsage(a0 p4.ObjectRef) (r0 []p0.Usage, r1 error) {
+	err := v.call("PodUsage", []any{a0}, []any{&r0})
+	r1 = err
 	return
 }
 func (v *View) Pods() (r0 []p1.Pod) {
