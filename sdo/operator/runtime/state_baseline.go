@@ -118,8 +118,9 @@ type StateTracker struct {
 	scopedBaselined map[string]bool
 	config          StateTrackerConfig
 
-	mu         sync.Mutex
-	cancel     context.CancelFunc
+	mu sync.Mutex
+	// stop cancels the live informers and returns once their goroutines have exited.
+	stop       func()
 	informers  map[string]cache.SharedIndexInformer
 	unobserved []string
 	baseline   *stateSnapshot
@@ -144,6 +145,14 @@ func (t *StateTracker) Start(ctx context.Context) error {
 	t.Stop()
 	runCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	factory := informers.NewSharedInformerFactoryWithOptions(t.config.Client, 0, informers.WithNamespace(t.config.Namespace))
+	var secretRuns sync.WaitGroup
+	// Every exit path, including a failed sync, ends with the informer
+	// goroutines gone: a leaked reflector keeps reading process-wide state.
+	stop := func() {
+		cancel()
+		factory.Shutdown()
+		secretRuns.Wait()
+	}
 	started := map[string]cache.SharedIndexInformer{}
 	unobserved := []string{}
 	for _, kind := range trackedKinds {
@@ -158,7 +167,11 @@ func (t *StateTracker) Start(ctx context.Context) error {
 			}
 			informer := t.secretMetadataInformer(runCtx)
 			started[kind.kind] = informer
-			go informer.Run(runCtx.Done())
+			secretRuns.Add(1)
+			go func() {
+				defer secretRuns.Done()
+				informer.Run(runCtx.Done())
+			}()
 			continue
 		}
 		if err := kind.probe(ctx, t.config.Client, t.config.Namespace); err != nil {
@@ -173,13 +186,21 @@ func (t *StateTracker) Start(ctx context.Context) error {
 		syncs = append(syncs, informer.HasSynced)
 	}
 	if !cache.WaitForCacheSync(ctx.Done(), syncs...) {
-		cancel()
+		stop()
 		return fmt.Errorf("sync state tracker informers: %w", ctx.Err())
 	}
 	t.mu.Lock()
-	t.cancel, t.informers, t.unobserved = cancel, started, unobserved
+	t.stop, t.informers, t.unobserved = stop, started, unobserved
 	t.mu.Unlock()
 	return nil
+}
+
+// Running reports whether the tracker's informers are observing, so a
+// caller can start it exactly when it is not, whatever pause history led here.
+func (t *StateTracker) Running() bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.informers != nil
 }
 
 // UnobservedKinds are the kinds the last Start could not read.
@@ -189,14 +210,16 @@ func (t *StateTracker) UnobservedKinds() []string {
 	return append([]string(nil), t.unobserved...)
 }
 
-// Stop ends observation; the baseline is kept until Reset.
+// Stop ends observation and waits for the informers to exit; the baseline is
+// kept until Reset.
 func (t *StateTracker) Stop() {
 	t.mu.Lock()
-	defer t.mu.Unlock()
-	if t.cancel != nil {
-		t.cancel()
+	stop := t.stop
+	t.stop, t.informers = nil, nil
+	t.mu.Unlock()
+	if stop != nil {
+		stop()
 	}
-	t.cancel, t.informers = nil, nil
 }
 
 // Reset forgets the baseline, for example when a maintenance window may have
