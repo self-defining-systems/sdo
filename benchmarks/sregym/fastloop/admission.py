@@ -18,9 +18,9 @@ from benchmarks.sregym.adapter import (
     assert_host_disk_headroom,
     assert_lane_resources,
     assert_stable_workloads,
-    closure_pending,
     controller_proof,
     idle_standby_jobs,
+    incident_work_open,
     job_labels,
     kubectl,
     qualified_scenarios,
@@ -123,16 +123,12 @@ def workload_identity(kubeconfig: Path, namespace: str) -> dict[str, Any]:
 
 def active_incident(state: dict[str, Any]) -> str | None:
     """Name controller incident work, so a workload refusal shows SDO acted before injection."""
-    if not closure_pending(state):
+    if not incident_work_open(state):
         return None
     request = state.get("incident_request")
     incident = request.get("incident_id") if isinstance(request, dict) else None
     keys = ", ".join(key for key in ("incident_open", "incident_request", "pending_closure") if state.get(key))
     return f"{incident or 'unidentified'} ({keys})"
-
-
-#: Closure states in which no incident is being closed, reflected or acknowledged.
-IDLE_CLOSURE_STATES = {None, 0, "", "CLOSURE_STATE_UNSPECIFIED"}
 
 
 class PriorClosureIncompleteError(ValueError):
@@ -295,9 +291,9 @@ class LaneAdmission:
 
         A repeat must start on the memory the previous row's reflection
         accepted, and its admission clock must not contain that reflection.
-        Closed means the controller holds no open incident, request or
-        pending closure, its closure state is idle (reflection committed and
-        acknowledged), and no SDO worker Job is still running. The wait never
+        Closed means ``incident_work_open`` is false (no open incident or
+        request, and any closure is terminal: acknowledged, permanently
+        failed or retired) and no SDO worker Job is still running. The wait never
         aborts or reuses running work; when the budget ends the row is not
         measured.
         """
@@ -310,7 +306,7 @@ class LaneAdmission:
             except (RuntimeError, ValueError, KeyError) as exc:
                 state, workers, error = {}, [], str(exc)
             closure_state = state.get("closure_state")
-            done = error is None and not closure_pending(state) and closure_state in IDLE_CLOSURE_STATES and not workers
+            done = error is None and not incident_work_open(state) and not workers
             evidence = {
                 "passed": done,
                 "closure_state": closure_state,
