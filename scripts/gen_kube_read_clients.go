@@ -53,8 +53,8 @@ func render(n ast.Node, s source) string {
 	return out
 }
 func main() {
-	if len(os.Args) != 2 {
-		panic("client-go module directory required")
+	if len(os.Args) < 2 || len(os.Args) > 3 {
+		panic("client-go module directory and optional --check required")
 	}
 	groups, _ := filepath.Glob(filepath.Join(os.Args[1], "kubernetes/typed/*/*/*_client.go"))
 	var body strings.Builder
@@ -193,7 +193,19 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	if err = os.WriteFile("sdo/operator/sdk/kubeclient/builtins_generated.go", formatted, 0644); err != nil {
+	target := "sdo/operator/sdk/kubeclient/builtins_generated.go"
+	if len(os.Args) == 3 {
+		if os.Args[2] != "--check" {
+			panic("unknown generator option")
+		}
+		old, err := os.ReadFile(target)
+		if err != nil || !bytes.Equal(old, formatted) {
+			fmt.Fprintln(os.Stderr, "read client facade is stale: run bash scripts/gen_kube_read_clients.sh")
+			os.Exit(1)
+		}
+		return
+	}
+	if err = os.WriteFile(target, formatted, 0644); err != nil {
 		panic(err)
 	}
 }

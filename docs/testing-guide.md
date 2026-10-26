@@ -686,3 +686,12 @@ accepts comma-separated partitions so short groups can share a runner without
 omitting or duplicating names. Image runners consume the preparation job's
 source-bound schema identity, avoiding a separate Go cache transfer and toolchain
 installation just to print it.
+
+## Recorded Kubernetes client generation
+
+`scripts/gen_kube_read_clients.sh` derives the read-only built-in interfaces from
+client-go's pinned Go AST. Run it after updating the SDK's client-go dependency;
+`--check` reports drift without writing files. The SDK's
+`TestReadClientMatchesPinnedKubernetesAPI` runs this check alongside recording,
+selector/pagination, discovery and CRD tests. Source-bound reads and compiled
+playbook failure propagation are covered by the runtime client tests.

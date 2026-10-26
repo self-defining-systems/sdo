@@ -56,4 +56,13 @@ func(Program)Diagnose(ctx context.Context,v program.ReadView,b program.Bindings)
 	if broken.Error == "" {
 		t.Fatalf("stale typed API field compiled: %+v", broken)
 	}
+	// Local client validation errors must also survive the compiled process boundary.
+	ignored := strings.Replace(source, "service,err:=client", `_,_=client.CoreV1().Secrets(ref.Namespace).Get(ctx,"private",metav1.GetOptions{})
+ service,err:=client`, 1)
+	write("service-targetport-mismatch", "diagnose.go", ignored)
+	refused := loop.Handle(context.Background(), ToolRequest{Command: "diagnose", ProgramID: "service-targetport-mismatch", Bindings: bindings})
+	if refused.Error != "" || len(refused.ProgramRuns) != 1 || refused.ProgramRuns[0].Verdict.Result != program.Unknown {
+		t.Fatalf("compiled program ignored local client failure: %+v", refused)
+	}
+
 }

@@ -3,12 +3,14 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
 )
@@ -87,5 +89,25 @@ func TestIgnoredClientGoSecretFailureRemainsUnknown(t *testing.T) {
 	got := program.RunDiagnose(context.Background(), ignoredClientRead{secret: true}, program.ReadFrom(sdktest.Snapshot{NamespaceName: "app"}), program.Bindings{}, time.Second)
 	if got.Result != program.Unknown {
 		t.Fatalf("ignored Secret failure cleared: %+v", got)
+	}
+}
+
+type ignoredClientMitigator struct{}
+
+func (ignoredClientMitigator) Spec() program.ProgramSpec {
+	return program.ProgramSpec{ID: "ignored-client-mitigation"}
+}
+func (ignoredClientMitigator) Mitigate(ctx context.Context, v program.ReadView, _ program.Bindings) (program.Plan, error) {
+	client, err := program.Kubernetes(v)
+	if err != nil {
+		return program.Plan{}, err
+	}
+	_, _ = client.CoreV1().Secrets("app").Get(ctx, "private", metav1.GetOptions{})
+	return program.Plan{Actions: []program.Action{program.DeleteObject{Ref: sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}, Reason: "synthetic regression"}}}, nil
+}
+func TestIgnoredClientGoReadCannotAuthorizeMitigation(t *testing.T) {
+	_, err := runBoundedMitigator(context.Background(), ignoredClientMitigator{}, program.ReadFrom(sdktest.Snapshot{NamespaceName: "app"}), program.Bindings{}, time.Second)
+	if err == nil || !strings.Contains(err.Error(), "Secret") {
+		t.Fatalf("ignored client read did not refuse the mitigation for its failed observation: %v", err)
 	}
 }
