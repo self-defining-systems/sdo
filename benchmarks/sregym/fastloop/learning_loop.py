@@ -312,7 +312,7 @@ def execute(run_dir: Path, timeout: int, lease: str | None = None) -> int:
     """Reuse the dry-run process supervisor, with one total five-minute budget."""
     from benchmarks.sregym.fastloop import dry_run
 
-    return dry_run.execute(
+    result = dry_run.execute(
         run_dir,
         timeout,
         timeout,
@@ -320,6 +320,38 @@ def execute(run_dir: Path, timeout: int, lease: str | None = None) -> int:
         directory_name="learning-loop-proof",
         extra_arguments=["--lease", lease] if lease else [],
     )
+    if result:
+        # SIGKILL may have cut off the worker's finally block. The supervisor
+        # owns the same supported stop path and records evidence before stopping.
+        import os
+
+        from benchmarks.sregym.adapter import control_namespace_for, kubectl, stop_runtime
+        from benchmarks.sregym.fastloop.environment import FastloopEnvironment
+
+        environment = FastloopEnvironment.load(run_dir.resolve())
+        os.environ["KUBECONFIG"] = str(environment.kubeconfig)
+        if environment.dev_mount:
+            os.environ["SDO_OPERATOR_BIN"] = str(environment.dev_mount / ".fastloop/sdo-operator")
+        path = environment.run_dir / REPORT
+        report = json.loads(path.read_text())
+        try:
+            snapshot = kubectl(
+                ["get", "jobs,pods,events", "-o", "json"],
+                namespace=control_namespace_for(environment.namespace),
+                kubeconfig=environment.kubeconfig,
+            )
+            snapshot_path = path.parent / "supervisor-failure-kubernetes.json"
+            snapshot_path.write_text(snapshot.stdout)
+            report["failure_evidence"] = str(snapshot_path)
+            check_lease(environment, lease)
+            report["supervisor_stop"] = stop_runtime(
+                control_namespace_for(environment.namespace), kubeconfig=str(environment.kubeconfig)
+            )
+        except Exception as exc:
+            report["supervisor_stop_error"] = str(exc)
+        report["passed"] = False
+        path.write_text(json.dumps(report, indent=2) + "\n")
+    return result
 
 
 def run_lane(run_dir: Path, timeout: int, lease: str | None = None) -> int:

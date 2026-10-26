@@ -160,3 +160,27 @@ def test_validator_watch_retains_terminal_evidence_after_job_deletion(tmp_path):
             assert time.monotonic() < deadline
             time.sleep(0.01)
         assert watch.jobs()["items"] == [job]
+
+
+def test_supervisor_rejects_a_green_report_from_a_failed_worker(tmp_path, monkeypatch):
+    import json
+    import subprocess
+    import sys
+
+    from benchmarks.sregym.fastloop import dry_run
+
+    real_popen = subprocess.Popen
+    report = tmp_path / "eval-dry-run/report.json"
+    script = (
+        "import json; from pathlib import Path; "
+        f"Path({str(report)!r}).write_text(json.dumps({{'passed': True}})); raise SystemExit(1)"
+    )
+    monkeypatch.setattr(
+        dry_run.subprocess,
+        "Popen",
+        lambda argv, **kwargs: real_popen(
+            [sys.executable, "-c", script] if argv[0] == sys.executable else argv, **kwargs
+        ),
+    )
+    assert dry_run.execute(tmp_path, 5, 5) == 1
+    assert json.loads(report.read_text())["passed"] is False

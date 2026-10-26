@@ -134,6 +134,7 @@ def execute(
             except subprocess.TimeoutExpired:
                 pass
     document = json.loads(report_path.read_text())
+    document["passed"] = document.get("passed") is True and child.returncode == 0
     document["seconds"] = time.monotonic() - started
     if document.get("steady_started") is not None:
         document["steady_seconds"] = time.monotonic() - document["steady_started"]
