@@ -39,7 +39,13 @@ resources that no opening finding named (for example a traffic-only caller
 Service) are unobserved context and, since LEARN1 (2026-10-26), no longer cause
 an `evidence_gap`. Partial and failed outcomes, like this one, still need a cleared
 finding for every unwritten cause resource, because opening findings omit
-findings that activate after launch. The worker
+findings that activate after launch. Since LEARN2 (2026-10-26), a repair
+receipt's `owners` records each written Pod/ReplicaSet/Job's controller owner
+chain, read before the write (`sdo act` kubectl reads, controller pre-images).
+A write whose chain reaches a cause resource (e.g. scaling a Deployment's old
+ReplicaSet) is that cause's work, not an `unassigned` `unbound_write`, and the
+cause's findings must clear after it. Receipts without `owners` (older runs, or
+a failed read) keep such writes unassigned; names never bind. The worker
 receives compact cause indices and only those causes, verified receipts and typed
 applications/diagnoses and scoped cold-verification evidence. Opaque tool transcripts and unattributed playbook/drift
 claims are omitted from that learning view. No global recovery, positive fixed

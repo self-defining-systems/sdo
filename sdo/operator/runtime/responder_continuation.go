@@ -279,6 +279,8 @@ type continuationReceipt struct {
 	CompletedAt   time.Time       `json:"completed_at"`
 	Success       bool            `json:"success"`
 	Reversible    bool            `json:"reversible"`
+	// Owners reach the outcome for cause attribution, not the responder.
+	Owners []ResourceOwners `json:"-"`
 }
 type continuationRepair struct {
 	Kind          string              `json:"kind"`
@@ -395,7 +397,7 @@ func (l *ResponderLoop) applicationRepairsLocked() []continuationRepair {
 }
 
 func feedbackReceipt(receipt RepairActionReceipt) continuationReceipt {
-	return continuationReceipt{ActionID: receipt.ActionID, Kind: receipt.Kind, Target: receipt.Target, Resources: receipt.Resources, Summary: receipt.Summary, Details: receipt.Details, StartedAt: receipt.StartedAt, CompletedAt: receipt.CompletedAt, Success: receipt.Success, Reversible: receipt.Reversible, FailureReason: receipt.FailureReason}
+	return continuationReceipt{ActionID: receipt.ActionID, Kind: receipt.Kind, Target: receipt.Target, Resources: receipt.Resources, Summary: receipt.Summary, Details: receipt.Details, StartedAt: receipt.StartedAt, CompletedAt: receipt.CompletedAt, Success: receipt.Success, Reversible: receipt.Reversible, FailureReason: receipt.FailureReason, Owners: receipt.Owners}
 }
 
 func continuationFeedback(attempt int, verification ToolResponse, repairs ...continuationRepair) ([]byte, error) {

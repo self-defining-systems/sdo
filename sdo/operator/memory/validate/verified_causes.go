@@ -99,6 +99,16 @@ func causeRepairs(outcome *contracts.OutcomeRecord, resources []*contracts.Objec
 		if !action.GetSuccess() {
 			continue
 		}
+		if len(OwnedCauseWrites(action, resources)) > 0 {
+			// A write to an object a cause resource controls is part of that
+			// cause's repair: its findings must clear after this write too.
+			if action.GetStartedAt() == nil || !action.GetStartedAt().IsValid() || action.GetCompletedAt() == nil || !action.GetCompletedAt().IsValid() || action.GetCompletedAt().AsTime().Before(action.GetStartedAt().AsTime()) {
+				return nil, time.Time{}, false
+			}
+			if action.GetCompletedAt().AsTime().After(after) {
+				after = action.GetCompletedAt().AsTime()
+			}
+		}
 		for _, resource := range resources {
 			if !slices.ContainsFunc(action.GetResources(), func(ref *contracts.ObjectRef) bool { return equalCauseResource(ref, resource) }) {
 				continue
@@ -115,6 +125,27 @@ func causeRepairs(outcome *contracts.OutcomeRecord, resources []*contracts.Objec
 		}
 	}
 	return repaired, after, true
+}
+
+// OwnedCauseWrites returns the action's written resources that are not cause
+// resources themselves but whose recorded controller owner chain (read from
+// the live object at write time) reaches one. Names never establish ownership.
+func OwnedCauseWrites(action *contracts.RepairActionReceipt, resources []*contracts.ObjectRef) []*contracts.ObjectRef {
+	var owned []*contracts.ObjectRef
+	for _, written := range action.GetResources() {
+		if slices.ContainsFunc(resources, func(ref *contracts.ObjectRef) bool { return equalCauseResource(ref, written) }) {
+			continue
+		}
+		for _, owners := range action.GetOwners() {
+			if equalCauseResource(owners.GetResource(), written) && slices.ContainsFunc(owners.GetOwnerChain(), func(owner *contracts.ObjectRef) bool {
+				return slices.ContainsFunc(resources, func(ref *contracts.ObjectRef) bool { return equalCauseResource(ref, owner) })
+			}) {
+				owned = append(owned, written)
+				break
+			}
+		}
+	}
+	return owned
 }
 
 func clearedOpenFinding(outcome *contracts.OutcomeRecord, resource *contracts.ObjectRef, after time.Time, primaryOnly bool) bool {

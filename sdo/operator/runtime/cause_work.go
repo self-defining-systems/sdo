@@ -174,6 +174,19 @@ func classifyCauseWork(outcome *contracts.OutcomeRecord, fixed map[string]progra
 				work.Items = append(work.Items, &contracts.ReflectionWorkItem{Resources: []*contracts.ObjectRef{proto.Clone(resource).(*contracts.ObjectRef)}, Disposition: "question", Reason: "unbound_write", Question: "A repaired object in this confirmed cause had no matched program binding. What reusable relation is supported?"})
 			}
 		}
+		for _, action := range outcome.GetRepairActions() {
+			if !action.GetSuccess() {
+				continue
+			}
+			for _, resource := range validate.OwnedCauseWrites(action, cause.GetResources()) {
+				ref := objectRefState(resource)
+				ref.APIVersion = ""
+				if !seenWrites[ref] {
+					seenWrites[ref] = true
+					work.Items = append(work.Items, &contracts.ReflectionWorkItem{Resources: []*contracts.ObjectRef{proto.Clone(resource).(*contracts.ObjectRef)}, Disposition: "question", Reason: "unbound_write", Question: "This cause's repair also wrote an object a cause resource controls (owner reference at write time). Learn the write through its relation to that owner, never its generated name."})
+				}
+			}
+		}
 		if len(work.Items) == 0 {
 			work.Items = append(work.Items, &contracts.ReflectionWorkItem{Disposition: "question", Reason: "uncertain", Question: "No exact existing-program case settles this confirmed cause. Evaluate the captured evidence."})
 		}
@@ -401,13 +414,21 @@ func unassignedReflectionQuestions(outcome *contracts.OutcomeRecord, fixed map[s
 		}
 		items = append(items, item)
 	}
+	ownedByCause := func(action *contracts.RepairActionReceipt, resource *contracts.ObjectRef) bool {
+		for _, cause := range outcome.GetConfirmedRootCauses() {
+			if slices.ContainsFunc(validate.OwnedCauseWrites(action, cause.GetResources()), func(ref *contracts.ObjectRef) bool { return proto.Equal(ref, resource) }) {
+				return true
+			}
+		}
+		return false
+	}
 	seenWrites := map[sdk.ObjectRef]bool{}
 	for _, action := range outcome.GetRepairActions() {
 		if action.GetSuccess() {
 			for _, resource := range action.GetResources() {
 				ref := objectRefState(resource)
 				ref.APIVersion = ""
-				if !grouped(ref) && !seenWrites[ref] {
+				if !grouped(ref) && !ownedByCause(action, resource) && !seenWrites[ref] {
 					seenWrites[ref] = true
 					items = append(items, &contracts.ReflectionWorkItem{Resources: []*contracts.ObjectRef{proto.Clone(resource).(*contracts.ObjectRef)}, Disposition: "question", Reason: "unbound_write", Question: "A repaired resource is outside confirmed cause groups. Review the write without inventing a cause or granting credit."})
 				}
