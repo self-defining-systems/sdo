@@ -409,12 +409,12 @@ func runSimPausedClosurePublishesOutcomeAndReflection(t *testing.T, seed uint64)
 		if !ok {
 			t.Fatal("interrupted closure disappeared")
 		}
-		if ok, err := native.committedOutcomeClosure(ctx, frozen); err != nil || !ok {
+		if ok, err := native.committedOutcomeClosure(ctx, frozen, nil); err != nil || !ok {
 			t.Fatalf("accepted outcome not authenticated: %v", err)
 		}
 		changed := *cloneIncidentClosure(&frozen)
 		changed.DispatchError = "different frozen evidence"
-		if ok, err := native.committedOutcomeClosure(ctx, changed); err != nil || ok {
+		if ok, err := native.committedOutcomeClosure(ctx, changed, nil); err != nil || ok {
 			t.Fatalf("different closure authenticated against accepted outcome: %v", err)
 		}
 		w.applyScheduleEvent(simScheduleEvent{kind: simRestartChangedScope})

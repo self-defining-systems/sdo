@@ -8,12 +8,13 @@ import (
 	"time"
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/memory"
 	"sdo.dev/operator/sdk"
 )
 
 // RH3: the broker has already independently verified and committed a repair.
-// A no-op health refresh must permit its durable ACK after restart, while an
-// unrelated source/policy change or an uncommitted investigation remains stale.
+// Source and authenticated health refresh advances permit its durable ACK.
+// Objective/policy changes and unauthenticated closure state remain stale.
 func TestHealthRefreshAcknowledgesOnlyOwnCommittedRepair(t *testing.T) {
 	for _, change := range []string{"none", "source", "objective", "policy", "receipt", "processing", "receipt-not-persisted", "ledger-incomplete"} {
 		t.Run(change, func(t *testing.T) {
@@ -118,9 +119,18 @@ func TestHealthRefreshAcknowledgesOnlyOwnCommittedRepair(t *testing.T) {
 				t.Fatal("fixture lost original evidence")
 			}
 			err = c.CheckHealth(ctx)
-			if change != "none" && change != "receipt-not-persisted" {
+			if change != "none" && change != "source" && change != "receipt-not-persisted" {
 				if !errors.Is(err, ErrStaleHealthInvestigation) {
 					t.Fatalf("unrelated/stale change allowed: %v", err)
+				}
+				if change == "objective" || change == "policy" {
+					if again := c.CheckHealth(ctx); !errors.Is(again, ErrStaleHealthInvestigation) {
+						t.Fatalf("repeated stale health check changed its decision: %v", again)
+					}
+					got, readErr := memory.OpenReader(root).Get(ctx, closure.Request.IncidentID)
+					if readErr != nil || len(got.Record.GetReflectionRejections()) != 1 || got.Record.ReflectionRejections[0].Diagnostics[0].Message != change+" changed" {
+						t.Fatalf("stale reflection lost named outcome rejection: %+v %v", got.Record, readErr)
+					}
 				}
 				return
 			}
