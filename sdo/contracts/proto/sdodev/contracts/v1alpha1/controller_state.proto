@@ -188,6 +188,14 @@ message ControllerState {
   repeated DriftEvent accepted_source_drift = 38;
   string accepted_source_drift_revision = 39;
   NamespaceOnboarding namespace_onboarding = 40;
+  // Incidents whose failed-attempt reflection is queued or running after its
+  // closure was acknowledged, or whose accepted detector change still awaits
+  // its controller rollout, oldest first. The broker ledger is the source of
+  // truth; this projection lets observers treat it as open work.
+  repeated string queued_reflection_incident_ids = 41;
+  // The broker ledger could not be read, so the queue above is unknown and
+  // observers must treat reflection work as open.
+  bool queued_reflections_unknown = 42;
   reserved 32, 33, 34;
   reserved "drift_investigation", "drift_admission", "program_sweep_cursors";
 }
@@ -289,6 +297,10 @@ message BrokerLedger {
   google.protobuf.Timestamp reflection_dispatch_at = 26;
   // Distinct resource/phase observations absent from protected recordings.
   optional uint32 reflection_evidence_gap_count = 27;
+  // A failed attempt's reflection is queued behind its acknowledgment so the
+  // incident's follow-up does not wait for it. Replayed after restart.
+  bool reflection_queued = 28;
+  google.protobuf.Timestamp reflection_queued_at = 29;
 }
 
 // Source field ownership adoption survives controller restarts.

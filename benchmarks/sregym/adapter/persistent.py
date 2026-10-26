@@ -136,7 +136,11 @@ class ControllerJobFailedError(ClosureFailedError):
 
 
 class ReflectionDeadlineError(PersistentControllerError):
-    """The controller was read and still owned the closure when the reflection deadline passed."""
+    """The controller was read and still owned the closure when the acknowledgment deadline passed.
+
+    For a successful closure this covers its reflection and detector rollout;
+    a non-success closure's queued reflection runs after the acknowledgment.
+    """
 
 
 class ControllerStateUnavailableError(PersistentControllerError):
@@ -1942,9 +1946,13 @@ def controller_job_failure(job: dict[str, Any]) -> str | None:
 def _wait_for_reflection_drain(
     ops: ClusterOps, control: str, incident_id: str, deadline_at: datetime, clock: Clock
 ) -> dict[str, Any]:
-    """Wait for broker acknowledgment, which follows any required detector rollout.
+    """Wait for broker acknowledgment, until the incident's reflection deadline.
 
-    Stops early, typed, when the controller Job is terminal: no owner is left to acknowledge.
+    A successful closure's reflection and detector rollout precede its
+    acknowledgment. A non-success closure is acknowledged on its outcome commit;
+    its queued reflection and any detector rollout follow, and the next
+    problem's admission waits for them through ``incident_work_open``. Stops early,
+    typed, when the controller Job is terminal: no owner is left to acknowledge.
     """
 
     timeout = max(0.0, (deadline_at - clock.now()).total_seconds())
@@ -1962,7 +1970,9 @@ def _wait_for_reflection_drain(
         else:
             try:
                 observed = _observe_state(
-                    state, incident_id=incident_id, timeout=min(30.0, max(OBSERVATION_FLOOR_SECONDS, deadline - clock.monotonic()))
+                    state,
+                    incident_id=incident_id,
+                    timeout=min(30.0, max(OBSERVATION_FLOOR_SECONDS, deadline - clock.monotonic())),
                 )
                 _raise_observation_failure(observed, state)
             except ClosureFailedError:

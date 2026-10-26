@@ -97,11 +97,11 @@ func TestReflectionFailedJobRecoversCheckpointOrRecordsNoSession(t *testing.T) {
 					return reflectionTaskExecutorFunc(reflectionNoChangeResult), nil
 				},
 			}
-			receipt, err := n.ProcessClosure(ctx, closure)
+			receipt, err := closeAndReflect(t, ctx, n, closure)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := n.ProcessClosure(ctx, closure); err != nil {
+			if _, err := closeAndReflect(t, ctx, n, closure); err != nil {
 				t.Fatal(err)
 			}
 			ledger, err := n.readLedger(request.IncidentID)

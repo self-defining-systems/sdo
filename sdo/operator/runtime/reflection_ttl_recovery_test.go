@@ -63,7 +63,7 @@ func TestReflectionCompletedResultSurvivesJobTTLAndBrokerRestart(t *testing.T) {
 					return ReflectionDecision{}, errors.New("controller stopped after completed result")
 				})
 				done := make(chan error, 1)
-				goUntilCleanup(t, cancel, func() { _, err := native.ProcessClosure(ctx, closure); done <- err })
+				goUntilCleanup(t, cancel, func() { _, err := closeAndReflect(t, ctx, native, closure); done <- err })
 				select {
 				case <-created:
 				case err := <-done:
@@ -123,7 +123,7 @@ func TestReflectionCompletedResultSurvivesJobTTLAndBrokerRestart(t *testing.T) {
 					t.Fatal(err)
 				}
 				native = NativeIncidentBroker{Repository: repo, LedgerRoot: ledgers, Deriver: ProtoOutcomeDeriver{}, ResponderBackend: "test", ResponderModel: "test", Reflector: worker}
-				if _, err := native.ProcessClosure(ctx, closure); err != nil {
+				if _, err := closeAndReflect(t, ctx, native, closure); err != nil {
 					t.Fatal(err)
 				}
 				ledger, err := native.readLedger(workspace.IncidentID)

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 
 	"sdo.dev/operator/sdk"
@@ -41,15 +42,26 @@ func ValidateDetectors(detectors []sdk.Detector) error {
 var supportedWatches = map[string]struct{}{
 	"admissionregistration.k8s.io/v1/MutatingWebhookConfiguration":   {},
 	"admissionregistration.k8s.io/v1/ValidatingWebhookConfiguration": {},
+	"apps/v1/DaemonSet":                  {},
 	"apps/v1/Deployment":                 {},
 	"apps/v1/ReplicaSet":                 {},
+	"apps/v1/StatefulSet":                {},
+	"batch/v1/CronJob":                   {},
+	"batch/v1/Job":                       {},
 	"discovery.k8s.io/v1/EndpointSlice":  {},
 	"networking.k8s.io/v1/NetworkPolicy": {},
-	"v1/ConfigMap":                       {},
-	"v1/Endpoints":                       {},
-	"v1/Event":                           {},
-	"v1/Pod":                             {},
-	"v1/Service":                         {},
+	// Source-drift inventory kinds; learned drift playbooks pair with them.
+	"rbac.authorization.k8s.io/v1/ClusterRole":        {},
+	"rbac.authorization.k8s.io/v1/ClusterRoleBinding": {},
+	"rbac.authorization.k8s.io/v1/Role":               {},
+	"rbac.authorization.k8s.io/v1/RoleBinding":        {},
+	"v1/ConfigMap":             {},
+	"v1/Endpoints":             {},
+	"v1/Event":                 {},
+	"v1/PersistentVolumeClaim": {},
+	"v1/Pod":                   {},
+	"v1/Service":               {},
+	"v1/ServiceAccount":        {},
 	// Emitted by the controller runtime's synthetic-traffic prober rather
 	// than by a Kubernetes informer.
 	traffic.Watch.APIVersion + "/" + traffic.Watch.Kind: {},
@@ -58,6 +70,17 @@ var supportedWatches = map[string]struct{}{
 	// Declared by metrics detectors, which run on their interval; no
 	// informer backs it.
 	metrics.Watch.APIVersion + "/" + metrics.Watch.Kind: {},
+}
+
+// SupportedWatches lists, sorted, the "apiVersion/Kind" resources a detector
+// may watch.
+func SupportedWatches() []string {
+	keys := make([]string, 0, len(supportedWatches))
+	for key := range supportedWatches {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 func validateDetectorSpec(spec sdk.DetectorSpec) error {
@@ -103,7 +126,7 @@ func validateDetectorSpec(spec sdk.DetectorSpec) error {
 		}
 		resourceKey := watch.APIVersion + "/" + watch.Kind
 		if _, ok := supportedWatches[resourceKey]; !ok {
-			return fmt.Errorf("watch %d uses unsupported resource %q", index, resourceKey)
+			return fmt.Errorf("watch %d uses unsupported resource %q; the controller watches only %s", index, resourceKey, strings.Join(SupportedWatches(), ", "))
 		}
 		key := resourceKey + "/" + watch.Namespace
 		if _, ok := seenWatches[key]; ok {

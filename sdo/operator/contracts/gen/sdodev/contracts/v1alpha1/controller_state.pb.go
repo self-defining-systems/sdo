@@ -780,8 +780,16 @@ type ControllerState struct {
 	AcceptedSourceDrift         []*DriftEvent        `protobuf:"bytes,38,rep,name=accepted_source_drift,json=acceptedSourceDrift,proto3" json:"accepted_source_drift,omitempty"`
 	AcceptedSourceDriftRevision string               `protobuf:"bytes,39,opt,name=accepted_source_drift_revision,json=acceptedSourceDriftRevision,proto3" json:"accepted_source_drift_revision,omitempty"`
 	NamespaceOnboarding         *NamespaceOnboarding `protobuf:"bytes,40,opt,name=namespace_onboarding,json=namespaceOnboarding,proto3" json:"namespace_onboarding,omitempty"`
-	unknownFields               protoimpl.UnknownFields
-	sizeCache                   protoimpl.SizeCache
+	// Incidents whose failed-attempt reflection is queued or running after its
+	// closure was acknowledged, or whose accepted detector change still awaits
+	// its controller rollout, oldest first. The broker ledger is the source of
+	// truth; this projection lets observers treat it as open work.
+	QueuedReflectionIncidentIds []string `protobuf:"bytes,41,rep,name=queued_reflection_incident_ids,json=queuedReflectionIncidentIds,proto3" json:"queued_reflection_incident_ids,omitempty"`
+	// The broker ledger could not be read, so the queue above is unknown and
+	// observers must treat reflection work as open.
+	QueuedReflectionsUnknown bool `protobuf:"varint,42,opt,name=queued_reflections_unknown,json=queuedReflectionsUnknown,proto3" json:"queued_reflections_unknown,omitempty"`
+	unknownFields            protoimpl.UnknownFields
+	sizeCache                protoimpl.SizeCache
 }
 
 func (x *ControllerState) Reset() {
@@ -1036,6 +1044,20 @@ func (x *ControllerState) GetNamespaceOnboarding() *NamespaceOnboarding {
 		return x.NamespaceOnboarding
 	}
 	return nil
+}
+
+func (x *ControllerState) GetQueuedReflectionIncidentIds() []string {
+	if x != nil {
+		return x.QueuedReflectionIncidentIds
+	}
+	return nil
+}
+
+func (x *ControllerState) GetQueuedReflectionsUnknown() bool {
+	if x != nil {
+		return x.QueuedReflectionsUnknown
+	}
+	return false
 }
 
 // ReflectionDecision is the learning decision the broker recorded for an
@@ -1394,8 +1416,12 @@ type BrokerLedger struct {
 	ReflectionDispatchAt *timestamppb.Timestamp `protobuf:"bytes,26,opt,name=reflection_dispatch_at,json=reflectionDispatchAt,proto3" json:"reflection_dispatch_at,omitempty"`
 	// Distinct resource/phase observations absent from protected recordings.
 	ReflectionEvidenceGapCount *uint32 `protobuf:"varint,27,opt,name=reflection_evidence_gap_count,json=reflectionEvidenceGapCount,proto3,oneof" json:"reflection_evidence_gap_count,omitempty"`
-	unknownFields              protoimpl.UnknownFields
-	sizeCache                  protoimpl.SizeCache
+	// A failed attempt's reflection is queued behind its acknowledgment so the
+	// incident's follow-up does not wait for it. Replayed after restart.
+	ReflectionQueued   bool                   `protobuf:"varint,28,opt,name=reflection_queued,json=reflectionQueued,proto3" json:"reflection_queued,omitempty"`
+	ReflectionQueuedAt *timestamppb.Timestamp `protobuf:"bytes,29,opt,name=reflection_queued_at,json=reflectionQueuedAt,proto3" json:"reflection_queued_at,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *BrokerLedger) Reset() {
@@ -1603,6 +1629,20 @@ func (x *BrokerLedger) GetReflectionEvidenceGapCount() uint32 {
 	return 0
 }
 
+func (x *BrokerLedger) GetReflectionQueued() bool {
+	if x != nil {
+		return x.ReflectionQueued
+	}
+	return false
+}
+
+func (x *BrokerLedger) GetReflectionQueuedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.ReflectionQueuedAt
+	}
+	return nil
+}
+
 // Source field ownership adoption survives controller restarts.
 type OwnershipAdoptionStatus struct {
 	state              protoimpl.MessageState `protogen:"open.v1"`
@@ -1768,7 +1808,7 @@ const file_sdodev_contracts_v1alpha1_controller_state_proto_rawDesc = "" +
 	"\tpermanent\x18\b \x01(\bR\tpermanent\x12\x16\n" +
 	"\x06action\x18\t \x01(\tR\x06action\x12Q\n" +
 	"\x06reason\x18\n" +
-	" \x01(\x0e2/.sdodev.contracts.v1alpha1.ClosureFailureReasonB\b\xbaH\x05\x82\x01\x02\x10\x01R\x06reason\"\x80 \n" +
+	" \x01(\x0e2/.sdodev.contracts.v1alpha1.ClosureFailureReasonB\b\xbaH\x05\x82\x01\x02\x10\x01R\x06reason\"\x83!\n" +
 	"\x0fControllerState\x122\n" +
 	"\aversion\x18\x01 \x01(\tB\x18\xbaH\x15r\x13\n" +
 	"\x11sdo.controller/v1R\aversion\x12s\n" +
@@ -1803,7 +1843,9 @@ const file_sdodev_contracts_v1alpha1_controller_state_proto_rawDesc = "" +
 	"\x10selection_ledger\x18% \x01(\v2*.sdodev.contracts.v1alpha1.SelectionLedgerR\x0fselectionLedger\x12Y\n" +
 	"\x15accepted_source_drift\x18& \x03(\v2%.sdodev.contracts.v1alpha1.DriftEventR\x13acceptedSourceDrift\x12C\n" +
 	"\x1eaccepted_source_drift_revision\x18' \x01(\tR\x1bacceptedSourceDriftRevision\x12a\n" +
-	"\x14namespace_onboarding\x18( \x01(\v2..sdodev.contracts.v1alpha1.NamespaceOnboardingR\x13namespaceOnboarding\x1aa\n" +
+	"\x14namespace_onboarding\x18( \x01(\v2..sdodev.contracts.v1alpha1.NamespaceOnboardingR\x13namespaceOnboarding\x12C\n" +
+	"\x1equeued_reflection_incident_ids\x18) \x03(\tR\x1bqueuedReflectionIncidentIds\x12<\n" +
+	"\x1aqueued_reflections_unknown\x18* \x01(\bR\x18queuedReflectionsUnknown\x1aa\n" +
 	"\x17SchedulerDeadlinesEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x120\n" +
 	"\x05value\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\x05value:\x028\x01\x1ai\n" +
@@ -1847,7 +1889,7 @@ const file_sdodev_contracts_v1alpha1_controller_state_proto_rawDesc = "" +
 	"\x1dobserved_detector_fingerprint\x18\x04 \x01(\tR\x1bobservedDetectorFingerprint\x12\x18\n" +
 	"\asuccess\x18\x05 \x01(\bR\asuccess\x12;\n" +
 	"\vverified_at\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
-	"verifiedAt\"\xf6\x10\n" +
+	"verifiedAt\"\xf1\x11\n" +
 	"\fBrokerLedger\x12\x1f\n" +
 	"\vincident_id\x18\x01 \x01(\tR\n" +
 	"incidentId\x12D\n" +
@@ -1875,7 +1917,9 @@ const file_sdodev_contracts_v1alpha1_controller_state_proto_rawDesc = "" +
 	"\x12reflection_results\x18\x18 \x03(\v2-.sdodev.contracts.v1alpha1.ReflectionDecisionR\x11reflectionResults\x124\n" +
 	"\x16reflection_max_retries\x18\x19 \x01(\rR\x14reflectionMaxRetries\x12P\n" +
 	"\x16reflection_dispatch_at\x18\x1a \x01(\v2\x1a.google.protobuf.TimestampR\x14reflectionDispatchAt\x12F\n" +
-	"\x1dreflection_evidence_gap_count\x18\x1b \x01(\rH\x00R\x1areflectionEvidenceGapCount\x88\x01\x01\x1ae\n" +
+	"\x1dreflection_evidence_gap_count\x18\x1b \x01(\rH\x00R\x1areflectionEvidenceGapCount\x88\x01\x01\x12+\n" +
+	"\x11reflection_queued\x18\x1c \x01(\bR\x10reflectionQueued\x12L\n" +
+	"\x14reflection_queued_at\x18\x1d \x01(\v2\x1a.google.protobuf.TimestampR\x12reflectionQueuedAt\x1ae\n" +
 	"\x1bClosurePhaseTimestampsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x120\n" +
 	"\x05value\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\x05value:\x028\x01:\xf1\x01\xbaH\xed\x01\x1a\xea\x01\n" +
@@ -2035,17 +2079,18 @@ var file_sdodev_contracts_v1alpha1_controller_state_proto_depIdxs = []int32{
 	36, // 51: sdodev.contracts.v1alpha1.BrokerLedger.reflection_workspace:type_name -> sdodev.contracts.v1alpha1.ProposalWorkspace
 	10, // 52: sdodev.contracts.v1alpha1.BrokerLedger.reflection_results:type_name -> sdodev.contracts.v1alpha1.ReflectionDecision
 	22, // 53: sdodev.contracts.v1alpha1.BrokerLedger.reflection_dispatch_at:type_name -> google.protobuf.Timestamp
-	22, // 54: sdodev.contracts.v1alpha1.OwnershipAdoptionStatus.retry_at:type_name -> google.protobuf.Timestamp
-	22, // 55: sdodev.contracts.v1alpha1.BatcherState.DeadlinesEntry.value:type_name -> google.protobuf.Timestamp
-	22, // 56: sdodev.contracts.v1alpha1.ControllerState.SchedulerDeadlinesEntry.value:type_name -> google.protobuf.Timestamp
-	4,  // 57: sdodev.contracts.v1alpha1.ControllerState.FindingStatesEntry.value:type_name -> sdodev.contracts.v1alpha1.FindingState
-	22, // 58: sdodev.contracts.v1alpha1.ControllerState.DetectorClearSinceEntry.value:type_name -> google.protobuf.Timestamp
-	22, // 59: sdodev.contracts.v1alpha1.BrokerLedger.ClosurePhaseTimestampsEntry.value:type_name -> google.protobuf.Timestamp
-	60, // [60:60] is the sub-list for method output_type
-	60, // [60:60] is the sub-list for method input_type
-	60, // [60:60] is the sub-list for extension type_name
-	60, // [60:60] is the sub-list for extension extendee
-	0,  // [0:60] is the sub-list for field type_name
+	22, // 54: sdodev.contracts.v1alpha1.BrokerLedger.reflection_queued_at:type_name -> google.protobuf.Timestamp
+	22, // 55: sdodev.contracts.v1alpha1.OwnershipAdoptionStatus.retry_at:type_name -> google.protobuf.Timestamp
+	22, // 56: sdodev.contracts.v1alpha1.BatcherState.DeadlinesEntry.value:type_name -> google.protobuf.Timestamp
+	22, // 57: sdodev.contracts.v1alpha1.ControllerState.SchedulerDeadlinesEntry.value:type_name -> google.protobuf.Timestamp
+	4,  // 58: sdodev.contracts.v1alpha1.ControllerState.FindingStatesEntry.value:type_name -> sdodev.contracts.v1alpha1.FindingState
+	22, // 59: sdodev.contracts.v1alpha1.ControllerState.DetectorClearSinceEntry.value:type_name -> google.protobuf.Timestamp
+	22, // 60: sdodev.contracts.v1alpha1.BrokerLedger.ClosurePhaseTimestampsEntry.value:type_name -> google.protobuf.Timestamp
+	61, // [61:61] is the sub-list for method output_type
+	61, // [61:61] is the sub-list for method input_type
+	61, // [61:61] is the sub-list for extension type_name
+	61, // [61:61] is the sub-list for extension extendee
+	0,  // [0:61] is the sub-list for field type_name
 }
 
 func init() { file_sdodev_contracts_v1alpha1_controller_state_proto_init() }
