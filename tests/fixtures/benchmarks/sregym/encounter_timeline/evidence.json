@@ -1,0 +1,25 @@
+{
+  "incident_id": "hotel-17",
+  "lifecycle": [
+    {"incident_id":"other", "event":"incident_opened", "recorded_at":"2026-10-26T00:00:01Z"},
+    {"incident_id":"hotel-17", "event":"incident_opened", "recorded_at":"2026-10-26T00:05:03Z"},
+    {"incident_id":"hotel-17", "event":"responder_completed", "recorded_at":"2026-10-26T00:06:30Z"},
+    {"incident_id":"hotel-17", "event":"incident_closed", "recorded_at":"2026-10-26T00:06:25Z", "health_cleared_at":"2026-10-26T00:06:10Z"}
+  ],
+  "audit": [
+    {"event":"fresh_native_admission_verified", "install_invoked_at":"2026-10-26T00:00:00Z", "quiet_finished_at":"2026-10-26T00:04:30Z"},
+    {"event":"injection_window", "started_at":"2026-10-26T00:04:40Z", "finished_at":"2026-10-26T00:05:00Z"},
+    {"event":"pre_injection_baseline", "finished_at":"2026-10-26T00:04:30Z"}
+  ],
+  "ledger": {
+    "incident_id":"hotel-17",
+    "closure_phase_timestamps": {
+      "closure_start":"2026-10-26T00:06:31Z", "broker_commit":"2026-10-26T00:06:32Z",
+      "reflection_dispatch":"2026-10-26T00:06:33Z", "worker_result_written":"2026-10-26T00:13:33Z",
+      "validator_job_created":"2026-10-26T00:14:00Z", "validator_job_finished":"2026-10-26T00:15:00Z"
+    }
+  },
+  "pods": [
+    {"metadata":{"name":"worker", "creationTimestamp":"2026-10-26T00:05:03Z", "labels":{"job-name":"responder-17"}}, "status":{"conditions":[{"type":"PodScheduled","status":"True","lastTransitionTime":"2026-10-26T00:05:04Z"}], "containerStatuses":[{"name":"agent","state":{"terminated":{"startedAt":"2026-10-26T00:05:08Z","finishedAt":"2026-10-26T00:06:30Z"}}}]}}
+  ]
+}
