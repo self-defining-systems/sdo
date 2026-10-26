@@ -57,7 +57,7 @@ func TestControllerCapturesOpenAndVerifiedSnapshots(t *testing.T) {
 	}
 	provider.snapshot = sdktest.Snapshot{NamespaceName: "demo", PodList: []corev1.Pod{{ObjectMeta: metav1.ObjectMeta{Name: "fixed", Namespace: "demo"}}}}
 	awaitDispatchCompletionQueued(t, controller)
-	for i := 2; i < 4; i++ {
+	for i := 2; i < 19; i++ {
 		if err := controller.Step(context.Background(), time.Unix(int64(i), 0), nil); err != nil {
 			t.Fatal(err)
 		}
@@ -493,7 +493,7 @@ func TestResponderCompletionDoesNotCloseIncidentUntilAllHealthFindingsClear(t *t
 		t.Fatalf("closure emitted before health verification: %#v", closure)
 	default:
 	}
-	for sample := 4; sample < 6; sample++ {
+	for sample := 4; sample < 21; sample++ {
 		if err := controller.Step(context.Background(), time.Unix(int64(sample), 0), nil); err != nil {
 			t.Fatalf("health clear step: %v", err)
 		}

@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 
 def ensure_application_namespace(kubeconfig: Path, namespace: str) -> None:
-    """Recover the namespace edge after a supported abort removes the app."""
+    """Recreate a captured app namespace that an abort or a fault's recovery removed."""
     if namespace.endswith("-sdo") or namespace in NON_APPLICATION_NAMESPACES:
         raise ValueError(f"refusing to restore non-application namespace {namespace!r}")
     result = kubectl(["get", "namespace", namespace, "-o", "name"], namespace=None, kubeconfig=kubeconfig, check=False)
@@ -52,6 +52,8 @@ class ResetCluster(Protocol):
     def delete(self, namespace: str, kind: str, name: str) -> None: ...
 
     def apply(self, namespace: str, value: dict[str, Any]) -> None: ...
+
+    def create_namespace(self, namespace: str) -> None: ...
 
     def reset_controller(self, seed_commit: str, *, preserve_repository: bool = False) -> None: ...
 

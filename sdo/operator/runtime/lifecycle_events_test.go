@@ -163,8 +163,8 @@ func TestLifecycleStreamEmitsEveryTransitionOnce(t *testing.T) {
 	executePendingEffect(t, controller)
 	request := awaitRequest(t, dispatcher.requests)
 	awaitDispatchCompletionQueued(t, controller)
-	for second := int64(2); second <= 5; second++ {
-		step(second) // health clears, verification succeeds, closure is cut
+	for second := int64(2); second <= 20; second++ {
+		step(second) // health clears, holds for the stability window, closure is cut
 	}
 	select {
 	case <-closed:

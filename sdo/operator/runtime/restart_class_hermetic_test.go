@@ -80,7 +80,7 @@ func restartClassIncident(t *testing.T, ctx context.Context, world restartClassW
 	if err := c.AttachStateStore(ctx, crashStateStore{path: path}); err != nil {
 		t.Fatal(err)
 	}
-	for tick := 0; tick < 12; tick++ {
+	for tick := 0; tick < 30; tick++ {
 		now = start.Add(time.Duration(tick) * time.Second)
 		if err := c.Step(ctx, now, nil); err != nil {
 			t.Fatal(err)
@@ -108,7 +108,7 @@ func restartClassIncident(t *testing.T, ctx context.Context, world restartClassW
 			return c
 		}
 	}
-	t.Fatal("scripted incident did not reach a durable closure within 12 steps")
+	t.Fatal("scripted incident did not reach a durable closure within 30 steps")
 	return nil
 }
 

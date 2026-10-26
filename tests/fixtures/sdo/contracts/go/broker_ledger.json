@@ -1,6 +1,7 @@
 {
   "acknowledged": true,
   "closure": {
+    "closure_stability_window": "15s",
     "detected_at": "1970-01-01T00:00:01Z",
     "detector_timeline": [
       {
@@ -18,20 +19,20 @@
     "final_detector_states": [
       {
         "detector_id": "cause",
-        "evaluated_at": "1970-01-01T00:00:03Z",
+        "evaluated_at": "1970-01-01T00:00:18Z",
         "status": "clear"
       }
     ],
     "final_state_changes": {
       "baseline_at": "1970-01-01T00:00:00Z",
-      "observed_at": "1970-01-01T00:00:03Z"
+      "observed_at": "1970-01-01T00:00:18Z"
     },
     "health_cleared_at": "1970-01-01T00:00:02Z",
     "incident_detector_fired_before_dispatch": true,
     "incident_detector_states": [
       {
         "detector_id": "cause",
-        "evaluated_at": "1970-01-01T00:00:03Z",
+        "evaluated_at": "1970-01-01T00:00:18Z",
         "status": "clear"
       }
     ],
@@ -151,7 +152,7 @@
         }
       ]
     },
-    "verified_at": "1970-01-01T00:00:03Z"
+    "verified_at": "1970-01-01T00:00:18Z"
   },
   "incident_id": "demo-1000000000",
   "outcome_commit": "def",

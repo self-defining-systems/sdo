@@ -323,8 +323,12 @@ func TestGateConfirmationLeavesClosureHysteresisUnchanged(t *testing.T) {
 		t.Fatal("closure must still wait for the detector's own second clear evaluation")
 	}
 	h.advance(fixedAt.Add(31*time.Second), nil)
+	if !h.controller.IncidentOpen() {
+		t.Fatal("a success must hold for the closure stability window before it commits")
+	}
+	h.advance(fixedAt.Add(31*time.Second+h.controller.config.ClosureStabilityWindow), nil)
 	if h.controller.IncidentOpen() {
-		t.Fatal("the scheduled evaluation 30 s after the fix confirms closure")
+		t.Fatal("the scheduled evaluation 30 s after the fix confirms closure once the stability window holds")
 	}
 }
 

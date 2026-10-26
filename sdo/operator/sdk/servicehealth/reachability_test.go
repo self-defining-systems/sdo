@@ -372,3 +372,44 @@ func shift(sampled []servicehealth.DialSample, by time.Duration) []servicehealth
 	}
 	return sampled
 }
+
+// TestReachabilityCatchingUpNamesTargetsWhoseWindowRestartedOnReadiness covers
+// the dial schedule's input: a replaced ready pod restarts the clearing
+// window, which needs Failures successful dials after the transition.
+func TestReachabilityCatchingUpNamesTargetsWhoseWindowRestartedOnReadiness(t *testing.T) {
+	geo := servicehealth.ReachabilityTarget{Service: "geo", Port: 8083, PortName: "grpc"}
+	snapshot := geoSnapshot(intstr.FromInt32(8083), true)
+	readyAgain := observedAt.Add(-15 * time.Second)
+	snapshot.PodList[0].Status.Conditions[0].LastTransitionTime = metav1.NewTime(readyAgain)
+	detector := servicehealth.NewReachabilityDetector(reachabilitySpec()).(interface {
+		Confirmed(sdk.DetectionContext) bool
+	})
+	for name, test := range map[string]struct {
+		sampled []servicehealth.DialSample
+		pending bool
+	}{
+		"two dials after Ready":             {samples("", true, true, true, true), true},
+		"three dials after Ready":           {shift(samples("", true, true, true), 0), false},
+		"a failed dial after Ready":         {samples(servicehealth.DialRefused, true, true, true, false), false},
+		"no dial yet after Ready":           {shift(samples("", true, true), -20*time.Second), true},
+		"only older dials, one failed then": {shift(samples(servicehealth.DialRefused, false), -20*time.Second), true},
+	} {
+		if name == "three dials after Ready" {
+			for index := range test.sampled {
+				test.sampled[index].At = readyAgain.Add(time.Duration(index+1) * time.Second)
+			}
+		}
+		view := reachabilitySnapshot{Snapshot: snapshot, window: window(geoTarget(test.sampled))}
+		got := servicehealth.ReachabilityCatchingUp(view, *view.window)
+		if test.pending != (len(got) == 1 && got[0] == geo) || len(got) > 1 {
+			t.Errorf("%s: catching up %v, want pending=%v", name, got, test.pending)
+		}
+		if test.pending && detector.Confirmed(view) {
+			t.Errorf("%s: a target still catching up must leave the window unconfirmed", name)
+		}
+	}
+	unready := reachabilitySnapshot{Snapshot: geoSnapshot(intstr.FromInt32(8083), false), window: window(geoTarget(nil))}
+	if got := servicehealth.ReachabilityCatchingUp(unready, *unready.window); len(got) != 0 {
+		t.Fatalf("a Service without a ready backend has no window to fill, got %v", got)
+	}
+}

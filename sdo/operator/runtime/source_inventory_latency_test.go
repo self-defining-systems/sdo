@@ -86,7 +86,7 @@ func TestSourceInventorySymptomaticClosureTimingParity(t *testing.T) {
 		executePendingEffect(t, c)
 		awaitRequest(t, dispatcher.requests)
 		awaitDispatchCompletionQueued(t, c)
-		for i := 2; i < 5; i++ {
+		for i := 2; i < 20; i++ {
 			if err := c.Step(context.Background(), start.Add(time.Duration(i)*time.Second), nil); err != nil {
 				t.Fatal(err)
 			}
