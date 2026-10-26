@@ -9,6 +9,7 @@ uses exec, Secrets, or an agent/model. Missing measurements reject admission.
 from __future__ import annotations
 
 import json
+import logging
 import re
 import shutil
 import subprocess
@@ -322,23 +323,44 @@ def assert_lane_resources(
     deadline = time.monotonic() + 15
 
     def get(args: list[str]) -> dict[str, Any]:
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            raise ValueError("eval: lane memory inventory unavailable: read budget exhausted")
-        try:
-            result = subprocess.run(
-                ["kubectl", "--kubeconfig", str(kubeconfig), "get", *args, "--request-timeout=4s"],
-                capture_output=True,
-                text=True,
-                check=True,
-                timeout=min(5, remaining),
-            )
-            document = json.loads(result.stdout)
-            if not isinstance(document, dict):
-                raise ValueError("expected JSON object")
-            return document
-        except (OSError, subprocess.SubprocessError, ValueError) as exc:
-            raise ValueError(f"eval: lane memory inventory unavailable ({' '.join(args)})") from exc
+        errors: list[str] = []
+        last_error: Exception | None = None
+        backoff = 0.1
+        while (remaining := deadline - time.monotonic()) > 0:
+            stderr: str | bytes | None = None
+            try:
+                result = subprocess.run(
+                    ["kubectl", "--kubeconfig", str(kubeconfig), "get", *args, f"--request-timeout={remaining:.9f}s"],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                    timeout=remaining,
+                )
+                stderr = result.stderr
+                document = json.loads(result.stdout)
+                if not isinstance(document, dict):
+                    raise ValueError("expected JSON object")
+                if time.monotonic() >= deadline:
+                    raise TimeoutError("inventory response arrived after overall read deadline")
+                return document
+            except (OSError, subprocess.SubprocessError, ValueError) as exc:
+                last_error = exc
+                stderr = getattr(exc, "stderr", None) or stderr
+                if isinstance(stderr, bytes):
+                    stderr = stderr.decode("utf-8", errors="replace")
+                detail = f"{type(exc).__name__}: {exc}"
+                if stderr:
+                    detail += f"; stderr: {stderr}"
+                errors.append(detail)
+                logging.getLogger(__name__).warning(
+                    "eval: lane inventory read failed (%s), attempt %s: %s", " ".join(args), len(errors), detail
+                )
+                remaining = deadline - time.monotonic()
+                if remaining > 0:
+                    time.sleep(min(backoff, remaining))
+                    backoff = min(backoff * 2, 1.0)
+        details = "; ".join(errors) or "read budget exhausted before query"
+        raise ValueError(f"eval: lane memory inventory unavailable ({' '.join(args)}): {details}") from last_error
 
     try:
         namespaces = get(["namespaces", "-o", "json"])
