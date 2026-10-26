@@ -141,6 +141,9 @@ func TestForeignNetworkPolicyInvariantNearMisses(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			view := LiveReadView{DetectionContext: policyWorkloadSnapshot(tc.policies...), Source: source, SourceCommit: commit}
+			if len(tc.policies) == 0 {
+				view.DetectionContext = confirmedAbsentSnapshot{Snapshot: policyWorkloadSnapshot(), Ref: sdk.ObjectRef{APIVersion: "networking.k8s.io/v1", Kind: "NetworkPolicy", Namespace: "app", Name: "deny"}}
+			}
 			verdict, err := learned.Diagnose(context.Background(), view, program.Bindings{Objects: program.ObjectBindings{"policy": {APIVersion: "networking.k8s.io/v1", Kind: "NetworkPolicy", Namespace: "app", Name: "deny"}}})
 			if err != nil || verdict.Result != tc.want {
 				t.Fatalf("verdict=%+v error=%v", verdict, err)

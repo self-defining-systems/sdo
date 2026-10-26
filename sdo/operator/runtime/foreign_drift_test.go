@@ -288,7 +288,7 @@ func runForeignPolicyIncident(t *testing.T) (string, string, GitPlanSource, stri
 	awaitDispatchCompletionQueued(t, controller)
 	fixed := provider.snapshot.(sdktest.Snapshot)
 	fixed.NetworkPolicyList = []networkingv1.NetworkPolicy{*peer}
-	provider.snapshot = fixed
+	provider.snapshot = confirmedAbsentSnapshot{Snapshot: fixed, Ref: sdk.ObjectRef{APIVersion: "networking.k8s.io/v1", Kind: "NetworkPolicy", Namespace: "app", Name: policy.Name}}
 	cache.eventHandler(watch).OnDelete(policy)
 	if err := controller.StepEvents(context.Background(), start.Add(3*time.Second), cache.TakeEvents()); err != nil {
 		t.Fatal(err)

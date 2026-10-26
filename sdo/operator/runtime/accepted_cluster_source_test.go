@@ -54,6 +54,7 @@ rules:
 		t.Fatalf("source RBAC drift: %+v %v", diff, err)
 	}
 
+	assertClusterSourceStatusVerify(t, ref, view, false)
 	// Source-absent RBAC objects use the application lock too, without a foreign
 	// webhook ObservationTarget. Both status and verification consume this diff.
 	for _, kind := range []string{"ClusterRole", "ClusterRoleBinding"} {
@@ -64,14 +65,17 @@ rules:
 		if d, e := oldView.DiffAgainstSource(oldRef); e != nil || !d.Changed || !d.SourceAbsent {
 			t.Fatalf("present old %s: %+v %v", kind, d, e)
 		}
+		assertClusterSourceStatusVerify(t, oldRef, oldView, false)
 		oldView.DetectionContext = clusterEvidenceSnapshot{Snapshot: sdktest.Snapshot{NamespaceName: "app"}, err: apierrors.NewNotFound(schema.GroupResource{Group: "rbac.authorization.k8s.io", Resource: "clusterroles"}, oldRef.Name)}
 		if d, e := oldView.DiffAgainstSource(oldRef); e != nil || d.Changed || !d.SourceAbsent {
 			t.Fatalf("confirmed absent old %s: %+v %v", kind, d, e)
 		}
+		assertClusterSourceStatusVerify(t, oldRef, oldView, true)
 		oldView.DetectionContext = clusterEvidenceSnapshot{Snapshot: sdktest.Snapshot{NamespaceName: "app"}, err: sdk.ErrObjectNotCaptured}
 		if d, e := oldView.DiffAgainstSource(oldRef); e == nil {
 			t.Fatalf("uncaptured old %s became healthy: %+v", kind, d)
 		}
+		assertClusterSourceStatusVerify(t, oldRef, oldView, false)
 	}
 	loop := NewResponderLoop(IncidentRequest{Namespace: "app", SourceCommit: commit}, nil, nil, nil, PlanExecutor{Source: source}, 1)
 	if response := loop.Handle(ctx, ToolRequest{Command: "source", Ref: &ref}); response.Error != "" || response.Source == nil {
@@ -149,4 +153,36 @@ func TestAcceptedClusterSourceMissingObservationIsNotAbsence(t *testing.T) {
 			}
 		})
 	}
+}
+
+func assertClusterSourceStatusVerify(t *testing.T, ref sdk.ObjectRef, view LiveReadView, healthy bool) {
+	t.Helper()
+	finding := unexplainedFinding()
+	finding.PrimaryResource = ref
+	finding.Metadata = map[string]any{"drift_event": sdk.DriftEvent{Ref: ref, Classification: sdk.DriftUnexplained}}
+	loop := NewResponderLoop(IncidentRequest{IncidentID: "cluster-source-parity", Namespace: "app", SourceCommit: view.SourceCommit, Findings: []sdk.Finding{finding}}, nil, staticProvider{snapshot: view.DetectionContext}, []sdk.Detector{controllerDetector("health", time.Second, sdk.Finding{})}, PlanExecutor{Source: view.Source}, 1)
+	loop.ReadView = func(snapshot sdk.DetectionContext) program.ReadView {
+		copy := view
+		copy.DetectionContext = snapshot
+		return copy
+	}
+	for _, command := range []string{"status", "verify"} {
+		response := loop.Handle(context.Background(), ToolRequest{Command: command})
+		if response.Healthy != healthy {
+			t.Fatalf("%s disagrees with source evidence for %+v: %+v", command, ref, response)
+		}
+	}
+}
+
+// Explicit deletion evidence, unlike an object omitted from an incomplete capture.
+type confirmedAbsentSnapshot struct {
+	sdktest.Snapshot
+	Ref sdk.ObjectRef
+}
+
+func (s confirmedAbsentSnapshot) Object(ref sdk.ObjectRef) (*unstructured.Unstructured, error) {
+	if ref == s.Ref {
+		return nil, apierrors.NewNotFound(schema.GroupResource{Resource: ref.Kind}, ref.Name)
+	}
+	return s.Snapshot.Object(ref)
 }
