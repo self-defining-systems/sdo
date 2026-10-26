@@ -27,7 +27,7 @@ class FakeAPI:
     def create_namespaced_config_map(self, *, namespace: str, body: object) -> None:
         self.created.append((namespace, body))
 
-    def create_namespaced_job(self, *, namespace: str, body: dict) -> SimpleNamespace:
+    def create_namespaced_job(self, *, namespace: str, body: dict, **_kwargs: object) -> SimpleNamespace:
         self.created.append((namespace, body))
         return SimpleNamespace(metadata=SimpleNamespace(name=body["metadata"]["name"]))
 
