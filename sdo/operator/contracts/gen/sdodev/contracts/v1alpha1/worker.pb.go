@@ -692,10 +692,11 @@ func (x *ReflectionRequest) GetUnassignedWork() []*ReflectionWorkItem {
 }
 
 type ReflectionResult struct {
-	state            protoimpl.MessageState `protogen:"open.v1"`
-	Summary          string                 `protobuf:"bytes,1,opt,name=summary,proto3" json:"summary,omitempty"`
-	LearningDecision string                 `protobuf:"bytes,2,opt,name=learning_decision,json=learningDecision,proto3" json:"learning_decision,omitempty"`
-	NoChangeReason   string                 `protobuf:"bytes,3,opt,name=no_change_reason,json=noChangeReason,proto3" json:"no_change_reason,omitempty"`
+	state   protoimpl.MessageState `protogen:"open.v1"`
+	Summary string                 `protobuf:"bytes,1,opt,name=summary,proto3" json:"summary,omitempty"`
+	// updated may publish learnable causes alongside resource-scoped sdk_gaps.
+	LearningDecision string `protobuf:"bytes,2,opt,name=learning_decision,json=learningDecision,proto3" json:"learning_decision,omitempty"`
+	NoChangeReason   string `protobuf:"bytes,3,opt,name=no_change_reason,json=noChangeReason,proto3" json:"no_change_reason,omitempty"`
 	// Logical playbook IDs affected by the checkout diff; never physical paths.
 	ProposedArtifactIds []string `protobuf:"bytes,4,rep,name=proposed_artifact_ids,json=proposedArtifactIds,proto3" json:"proposed_artifact_ids,omitempty"`
 	// Deprecated: Marked as deprecated in sdodev/contracts/v1alpha1/worker.proto.

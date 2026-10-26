@@ -42,6 +42,12 @@ func VerifiedReflectionCauses(outcome *contracts.OutcomeRecord) []*contracts.Ref
 			result = append(result, work)
 		}
 	}
+
+	for index, cause := range outcome.GetUndetectedCauses() {
+		if undetectedCauseValid(outcome, cause) {
+			result = append(result, &contracts.ReflectionCauseWork{CauseIndex: uint32(len(outcome.GetConfirmedRootCauses()) + index), Resources: []*contracts.ObjectRef{cause.GetResource()}, LearningBasis: "observed_transition"})
+		}
+	}
 	return result
 }
 

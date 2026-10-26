@@ -115,6 +115,7 @@ message ReflectionResult {
     expression: "this.learning_decision == 'updated' || this.no_change_reason != ''"
   };
   string summary = 1;
+  // updated may publish learnable causes alongside resource-scoped sdk_gaps.
   string learning_decision = 2 [(buf.validate.field).string = {in: ["updated", "no_change", "sdk_gap"]}];
   string no_change_reason = 3;
   // Logical playbook IDs affected by the checkout diff; never physical paths.

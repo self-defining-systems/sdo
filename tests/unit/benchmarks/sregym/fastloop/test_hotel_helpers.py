@@ -213,9 +213,13 @@ def test_worker_injection_guard_is_unconditional_and_precedes_inject(monkeypatch
     )
     monkeypatch.setenv("KUBECONFIG", "synthetic-kubeconfig")
     monkeypatch.setattr(
-        worker_bridge.importlib,
-        "import_module",
-        lambda name: module if name.endswith(".worker") else SimpleNamespace(probe_pod_manifest=lambda *args: {}),
+        worker_bridge,
+        "importlib",
+        SimpleNamespace(
+            import_module=lambda name: module
+            if name.endswith(".worker")
+            else SimpleNamespace(probe_pod_manifest=lambda *args: {})
+        ),
     )
 
     def guard(*args: Any) -> None:
@@ -279,9 +283,13 @@ def test_worker_deploy_uses_absent_profile_without_changing_problem_identity(mon
     module = SimpleNamespace(FastloopWorker=Worker, main=lambda: worker.handle(request))
     monkeypatch.setenv("KUBECONFIG", "synthetic-kubeconfig")
     monkeypatch.setattr(
-        worker_bridge.importlib,
-        "import_module",
-        lambda name: module if name.endswith(".worker") else SimpleNamespace(probe_pod_manifest=lambda *args: {}),
+        worker_bridge,
+        "importlib",
+        SimpleNamespace(
+            import_module=lambda name: module
+            if name.endswith(".worker")
+            else SimpleNamespace(probe_pod_manifest=lambda *args: {})
+        ),
     )
     monkeypatch.setattr(clean_start, "remove_injected_objects", lambda *args: None)
     monkeypatch.setattr(clean_start, "prepare_harness_traffic", lambda *args: False)
