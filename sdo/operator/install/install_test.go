@@ -15,7 +15,9 @@ import (
 	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	kruntime "k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
+	ktesting "k8s.io/client-go/testing"
 )
 
 func testConfig() Config {
@@ -255,7 +257,7 @@ func TestPrepareSeedsInitialCheckoutWithoutStartingController(t *testing.T) {
 	client := fake.NewSimpleClientset(&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: cfg.CredentialsSecret, Namespace: cfg.ControlNamespace}})
 	seeded := false
 	i := Installer{Client: client, PollInterval: time.Millisecond}
-	go markSyncPodReady(client, cfg.ControlNamespace)
+	readySyncPodOnActivation(client, cfg.ControlNamespace)
 	err := i.Prepare(context.Background(), cfg, func(ctx context.Context, got Config) error {
 		seeded = true
 		if got.AcceptedCommit != cfg.AcceptedCommit {
@@ -466,7 +468,7 @@ func TestBuilderIdentityAndRegistryCredentialsStaySeparate(t *testing.T) {
 	}
 	client := fake.NewSimpleClientset(&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: cfg.CredentialsSecret, Namespace: cfg.ControlNamespace}})
 	i := Installer{Client: client, PollInterval: time.Millisecond}
-	go markSyncPodReady(client, cfg.ControlNamespace)
+	readySyncPodOnActivation(client, cfg.ControlNamespace)
 	if err := i.Prepare(context.Background(), cfg, func(context.Context, Config) error { return nil }); err != nil {
 		t.Fatal(err)
 	}
@@ -532,17 +534,7 @@ func TestSyncExistingRepositoryUsesTemporaryPodWithoutReplacingController(t *tes
 		}
 		return nil
 	}}
-	go func() {
-		for {
-			pod, err := client.CoreV1().Pods(cfg.ControlNamespace).Get(context.Background(), RepositorySyncPodName, metav1.GetOptions{})
-			if err == nil {
-				pod.Status.Conditions = []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}
-				_, _ = client.CoreV1().Pods(cfg.ControlNamespace).UpdateStatus(context.Background(), pod, metav1.UpdateOptions{})
-				return
-			}
-			time.Sleep(time.Millisecond)
-		}
-	}()
+	readySyncPodOnActivation(client, cfg.ControlNamespace)
 	if err := installer.SyncExistingRepository(context.Background(), SyncConfig{ControlNamespace: cfg.ControlNamespace, RepositoryPVC: cfg.RepositoryPVC, ControllerImage: cfg.ControllerImage}); err != nil {
 		t.Fatal(err)
 	}
@@ -563,17 +555,7 @@ func TestWithSyncPodCleansUpAfterReadFailure(t *testing.T) {
 	cfg := testConfig()
 	client := fake.NewSimpleClientset()
 	installer := Installer{Client: client, PollInterval: time.Millisecond, SyncTimeout: time.Second}
-	go func() {
-		for {
-			pod, err := client.CoreV1().Pods(cfg.ControlNamespace).Get(context.Background(), RepositorySyncPodName, metav1.GetOptions{})
-			if err == nil {
-				pod.Status.Conditions = []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}
-				_, _ = client.CoreV1().Pods(cfg.ControlNamespace).UpdateStatus(context.Background(), pod, metav1.UpdateOptions{})
-				return
-			}
-			time.Sleep(time.Millisecond)
-		}
-	}()
+	readySyncPodOnActivation(client, cfg.ControlNamespace)
 	want := errors.New("read failed")
 	err := installer.WithSyncPod(context.Background(), SyncConfig{ControlNamespace: cfg.ControlNamespace, RepositoryPVC: cfg.RepositoryPVC, ControllerImage: cfg.ControllerImage}, func(context.Context, Config) error { return want })
 	if !errors.Is(err, want) {
@@ -665,17 +647,7 @@ func TestFreshInstallSeedsBeforeStartingJob(t *testing.T) {
 		}
 		return nil
 	}}
-	go func() {
-		for {
-			pod, err := client.CoreV1().Pods(cfg.ControlNamespace).Get(context.Background(), RepositorySyncPodName, metav1.GetOptions{})
-			if err == nil {
-				pod.Status.Conditions = []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}
-				_, _ = client.CoreV1().Pods(cfg.ControlNamespace).UpdateStatus(context.Background(), pod, metav1.UpdateOptions{})
-				return
-			}
-			time.Sleep(time.Millisecond)
-		}
-	}()
+	readySyncPodOnActivation(client, cfg.ControlNamespace)
 	result, err := i.Install(context.Background(), cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -705,22 +677,86 @@ func TestReplacementStopsOldControllerBeforeReseedingPVC(t *testing.T) {
 		}
 		return nil
 	}}
-	go markSyncPodReady(client, cfg.ControlNamespace)
+	readySyncPodOnActivation(client, cfg.ControlNamespace)
 	if _, err := i.Install(context.Background(), cfg); err != nil {
 		t.Fatal(err)
 	}
 }
 
-func markSyncPodReady(client *fake.Clientset, namespace string) {
-	for {
-		pod, err := client.CoreV1().Pods(namespace).Get(context.Background(), RepositorySyncPodName, metav1.GetOptions{})
-		if err == nil {
-			pod.Status.Conditions = []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}
-			_, _ = client.CoreV1().Pods(namespace).UpdateStatus(context.Background(), pod, metav1.UpdateOptions{})
-			return
-		}
-		time.Sleep(time.Millisecond)
+// The fake must not report readiness before activation releases the scheduling
+// gate: a concurrent status write can otherwise be lost by the fake tracker.
+func TestSyncPodReadinessFollowsActivation(t *testing.T) {
+	cfg := testConfig()
+	ctx := context.Background()
+	pod := syncPod(cfg)
+	pod.Spec.SchedulingGates = []corev1.PodSchedulingGate{{Name: "sdo.dev/pvc-claim"}}
+	client := fake.NewSimpleClientset(pod)
+	readySyncPodOnActivation(client, cfg.ControlNamespace)
+	current, err := client.CoreV1().Pods(cfg.ControlNamespace).Get(ctx, pod.Name, metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
 	}
+	if podReady(current.Status.Conditions) {
+		t.Fatal("fake made a gated sync Pod ready before activation")
+	}
+	current.Spec.SchedulingGates = nil
+	if _, err := client.CoreV1().Pods(cfg.ControlNamespace).Update(ctx, current, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	current, err = client.CoreV1().Pods(cfg.ControlNamespace).Get(ctx, pod.Name, metav1.GetOptions{})
+	if err != nil || !podReady(current.Status.Conditions) {
+		t.Fatalf("activated sync Pod is not ready: %v %+v", err, current)
+	}
+}
+
+func TestSyncPodReadinessIgnoresUnrelatedUpdates(t *testing.T) {
+	cfg := testConfig()
+	for _, tc := range []struct {
+		name, namespace, podName string
+		gated, statusUpdate      bool
+	}{
+		{name: "other-namespace", namespace: "other", podName: RepositorySyncPodName},
+		{name: "other-pod", namespace: cfg.ControlNamespace, podName: "unrelated"},
+		{name: "still-gated", namespace: cfg.ControlNamespace, podName: RepositorySyncPodName, gated: true},
+		{name: "status-only", namespace: cfg.ControlNamespace, podName: RepositorySyncPodName, statusUpdate: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: tc.namespace, Name: tc.podName}}
+			if tc.gated {
+				pod.Spec.SchedulingGates = []corev1.PodSchedulingGate{{Name: "sdo.dev/pvc-claim"}}
+			}
+			client := fake.NewSimpleClientset(pod)
+			readySyncPodOnActivation(client, cfg.ControlNamespace)
+			pods := client.CoreV1().Pods(tc.namespace)
+			var updated *corev1.Pod
+			var err error
+			if tc.statusUpdate {
+				updated, err = pods.UpdateStatus(context.Background(), pod, metav1.UpdateOptions{})
+			} else {
+				updated, err = pods.Update(context.Background(), pod, metav1.UpdateOptions{})
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if podReady(updated.Status.Conditions) {
+				t.Fatal("fake granted readiness to an update unrelated to sync activation")
+			}
+		})
+	}
+}
+
+// readySyncPodOnActivation models scheduling only after the claim gate is
+// removed. React synchronously to activation so the fake tracker cannot lose a
+// goroutine's status write to an older activation snapshot. Do not call client
+// methods from a reactor: client-go holds its fake lock while invoking it.
+func readySyncPodOnActivation(client *fake.Clientset, namespace string) {
+	client.PrependReactor("update", "pods", func(action ktesting.Action) (bool, kruntime.Object, error) {
+		pod := action.(ktesting.UpdateAction).GetObject().(*corev1.Pod)
+		if action.GetSubresource() == "" && action.GetNamespace() == namespace && pod.Name == RepositorySyncPodName && len(pod.Spec.SchedulingGates) == 0 {
+			pod.Status.Conditions = []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}
+		}
+		return false, nil, nil
+	})
 }
 
 func contains(values []string, want string) bool {
