@@ -431,8 +431,8 @@ def test_client_side_failures_also_produce_compact_output_and_complete_json(monk
     text = capsys.readouterr().out
     details = Path(text.split("Full JSON: ", 1)[1].splitlines()[0])
     try:
-        assert json.loads(details.read_text())["actions"][0]["error"] == "current mitigation menu unavailable"
-        assert "current mitigation menu unavailable" in text
+        assert json.loads(details.read_text())["actions"][0]["error"] == "menu read failed"
+        assert "menu read failed" in text
     finally:
         details.unlink()
 
@@ -556,3 +556,30 @@ def test_mitigation_help_preserves_database_reference_details(capsys: pytest.Cap
     assert "config_map" in help_text
     assert "assignment" in help_text
     assert "complete findings/evidence" in help_text
+
+
+@pytest.mark.parametrize("command", ["diagnose", "plan", "mitigate"])
+def test_program_help_explains_current_checkout_and_revision(command, capsys):
+    with pytest.raises(SystemExit) as stopped:
+        tools_cli.main([command, "--help"])
+    assert stopped.value.code == 0
+    output = " ".join(capsys.readouterr().out.split())
+    assert "current checkout" in output
+    assert "compile" in output
+    assert "working-tree:" in output
+
+
+def test_mitigate_preserves_actionable_program_compile_error(monkeypatch, capsys):
+    message = "playbook broken compile failed: undefined: Missing; fix checkout source and retry"
+    monkeypatch.setattr(
+        tools_cli,
+        "_exchange",
+        lambda *_: {
+            "menu": {
+                "round_limit": 5,
+                "options": [{"option_id": "program-broken", "program_id": "broken", "disabled_reason": message}],
+            }
+        },
+    )
+    assert tools_cli.main(["--json", "mitigate", "broken"]) == 1
+    assert message in capsys.readouterr().err

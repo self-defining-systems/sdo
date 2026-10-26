@@ -24,6 +24,12 @@ PLAN_ACTIONS = (
     "DeleteObject irreversibly removes an allowed named source-absent object and never auto-recreates it."
 )
 
+WORKING_PROGRAM_HELP = (
+    "Program commands use the current checkout, including shared libraries and new playbook IDs. "
+    "Edits compile on demand; fix compile errors in place and retry. "
+    "Revision receipts use working-tree:<source digest> for unpublished code."
+)
+
 CLI_EXAMPLES = (
     "sdo source Deployment/app/api",
     "sdo diagnose targetport --bind service=Service/app/api",
@@ -39,15 +45,19 @@ RESPONSE_FIELDS = {
     "status": "healthy, findings[], detector_states[], drift_events[], program_runs[]",
     "detect": "healthy, findings[], detector_states[]",
     "check": "healthy, findings[], detector_states[], detection (fresh detect response)",
-    "diagnose": "program_runs[].{program_id, verdict, can_mitigate}",
-    "plan": "plan_id, patches[], program_runs[]",
-    "menu": "menu.options[].{option_id, program_id, parameters}, unexplained_removal_blockers[]",
+    "diagnose": "program_runs[].{program_id, program_revision, verdict, can_mitigate}, program_revisions",
+    "plan": "plan_id, patches[], program_runs[], program_revisions",
+    "menu": "menu.options[].{option_id, program_id, program_revision, disabled_reason, parameters}, "
+    "unexplained_removal_blockers[]",
     "source": "source (accepted Kubernetes object)",
     "verify": "healthy, unresolved, findings[], detector_states[], drift_events[]",
     "report": "report.{status, attempt_id, rounds}, session",
     "act": "actions[].{success, exit_code, receipt, output, failure_reason}",
-    "apply": "actions[].{application_id, targeted_healthy, mitigation_health, program_runs, report}",
-    "mitigate": "actions[].{application_id, targeted_healthy, mitigation_health, rollout_pending}, option_reports[]",
+    "apply": "actions[].{application_id, targeted_healthy, mitigation_health, program_runs, program_revisions, report}",
+    "mitigate": (
+        "actions[].{application_id, targeted_healthy, mitigation_health, rollout_pending, program_revisions}, "
+        "option_reports[]"
+    ),
     "rollback": "actions[].{application_id, summary, error}",
 }
 
@@ -142,7 +152,7 @@ def _parser() -> argparse.ArgumentParser:
                 "plan": "plan a bound program repair",
                 "menu": "list controller mitigation options",
             }[name],
-            description=PLAN_ACTIONS if name == "plan" else None,
+            description=(PLAN_ACTIONS + "\n" + WORKING_PROGRAM_HELP) if name == "plan" else WORKING_PROGRAM_HELP,
             epilog="Example: " + CLI_EXAMPLES[1 if name == "diagnose" else 2],
         )
         command.add_argument("program_id", nargs=None if name == "plan" else "?")
@@ -172,7 +182,7 @@ def _parser() -> argparse.ArgumentParser:
             "with version 1 and options [{option_id, bindings, parameters, finding_fingerprints}]. "
             "Each option has its own receipt; one call uses one round. Pending rollout returns its application ID "
             "and read-only tools remain available. A single option also accepts --NAME VALUE parameters. "
-            "Uses the ordinary executor and controller RBAC; up to five rounds per incident."
+            "Uses the ordinary executor and controller RBAC; up to five rounds per incident. " + WORKING_PROGRAM_HELP
         ),
         epilog=(
             "EnsureDatabaseUser repairs a MongoDB user in one call. Its password and target.auth "
@@ -363,7 +373,7 @@ def _option_selection(args: argparse.Namespace, parameters: dict[str, str]) -> d
     response = _exchange({"command": "menu"}, Path(os.environ.get("SDO_TOOLS_DIR", "/sdo/session/tools")))
     menu = response.get("menu")
     if response.get("error") or not isinstance(menu, dict):
-        raise ValueError("current mitigation menu unavailable")
+        raise ValueError(str(response.get("error") or "current mitigation menu unavailable"))
     exact = [option for option in menu.get("options", []) if args.option == option.get("option_id")]
     options = exact or [option for option in menu.get("options", []) if args.option == option.get("program_id")]
     if not exact and len(options) > 1 and parameters:
@@ -375,9 +385,11 @@ def _option_selection(args: argparse.Namespace, parameters: dict[str, str]) -> d
         )
         menu = response.get("menu")
         if response.get("error") or not isinstance(menu, dict):
-            raise ValueError("bound mitigation menu unavailable")
+            raise ValueError(str(response.get("error") or "bound mitigation menu unavailable"))
         options = [option for option in menu.get("options", []) if args.option == option.get("program_id")]
-    if len(options) != 1 or options[0].get("disabled_reason"):
+    if len(options) == 1 and options[0].get("disabled_reason"):
+        raise ValueError(str(options[0]["disabled_reason"]))
+    if len(options) != 1:
         raise ValueError("mitigation option unavailable or ambiguous")
     option = options[0]
     limit = int(menu.get("remaining_batches", menu.get("round_limit", 0)))

@@ -11,12 +11,13 @@ import (
 )
 
 type menuEntry struct {
-	removal   *UnexplainedRemoval
-	spec      program.ProgramSpec
-	action    protoreflect.FieldDescriptor
-	programID string
-	bindings  program.Bindings
-	plan      *program.Plan
+	compileError string
+	removal      *UnexplainedRemoval
+	spec         program.ProgramSpec
+	action       protoreflect.FieldDescriptor
+	programID    string
+	bindings     program.Bindings
+	plan         *program.Plan
 }
 
 func menuDigest(value any) string {
