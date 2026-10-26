@@ -448,3 +448,8 @@ func (s DetectionSnapshot) Object(ref sdk.ObjectRef) (*unstructured.Unstructured
 	}
 	return sdk.FindObject(sdk.TypedObjects(s), ref)
 }
+
+// DiffAgainstSource requires the runtime's accepted-source read view.
+func (s DetectionSnapshot) DiffAgainstSource(ref sdk.ObjectRef) (sdk.SourceDiff, error) {
+	return sdk.SourceDiff{}, fmt.Errorf("accepted source diff unavailable for %s/%s", ref.Kind, ref.Name)
+}

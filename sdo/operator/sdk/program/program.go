@@ -167,12 +167,8 @@ type HTTPProbe struct {
 	Headers map[string]string `json:"headers,omitempty"`
 }
 
-type Diff struct {
-	// SourceAbsent is true only after a successful accepted-source lookup finds no object.
-	SourceAbsent bool   `json:"source_absent,omitempty"`
-	Changed      bool   `json:"changed"`
-	Text         string `json:"text,omitempty"`
-}
+// Diff is the shared accepted-source or baseline comparison result.
+type Diff = sdk.SourceDiff
 
 type Result string
 
