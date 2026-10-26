@@ -449,7 +449,7 @@ def _command_escapes_repository(
         candidate = Path(raw_path)
         if ".." in candidate.parts:
             return True
-        if any(candidate == root or root in candidate.parents for root in skill_directories.values()):
+        if any(candidate == root or root in candidate.parents for root in (SKILLS_ROOT, *skill_directories.values())):
             if raw_path in write_only_paths or not _readonly_skill_access(audited_command, raw_path):
                 return True
             continue

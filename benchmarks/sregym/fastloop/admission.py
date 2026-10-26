@@ -19,6 +19,7 @@ from benchmarks.sregym.adapter import (
     kubectl,
     qualified_scenarios,
     setup_lineage,
+    shell_runner_proof,
     wait_for_proof,
 )
 from benchmarks.sregym.fastloop.clean_start import assert_clean_baseline
@@ -111,10 +112,14 @@ class LaneAdmission:
         directory: Path,
         *,
         timeout_seconds: float = 300,
+        code_path: str = "go",
         synchronize: Callable[[], None] | None = None,
         progress: Callable[..., None] | None = None,
         before_proof: Callable[[str, set[str]], None] | None = None,
     ) -> None:
+        if code_path not in {"go", "shell"}:
+            raise ValueError(f"eval: unsupported admission code path {code_path!r}")
+        self.code_path = code_path
         self.environment, self.worker, self.ops = environment, worker, ops
         self.directory = directory
         self.timeout_seconds = timeout_seconds
@@ -126,6 +131,10 @@ class LaneAdmission:
         self._sequence = 0
 
     def _policy(self) -> None:
+        if self.code_path == "shell":
+            self.required_detectors = {"shell.detectors"}
+            self.required_scenarios = set()
+            return
         root = self.environment.workspace / ".sdo/diagnostics"
         self.required_detectors.update(path.parent.name for path in (root / "detectors/health").glob("*/manifest.yaml"))
         self.required_scenarios = set()
@@ -144,6 +153,40 @@ class LaneAdmission:
         address = ipaddress.ip_address(pod["status"]["podIP"])
         host = f"[{address}]" if address.version == 6 else str(address)
         code = f"import urllib.request; print(urllib.request.urlopen('http://{host}:8080/v1/windows',timeout=5).read().decode())"
+        return json.loads(
+            kubectl(
+                ["exec", "job/sdo-controller-run", "-c", "controller", "--", "python3", "-c", code],
+                namespace=control,
+                kubeconfig=env.kubeconfig,
+            ).stdout
+        )
+
+    def _shell_results(self, control: str) -> dict[str, Any]:
+        """Read runner health and executable policy from the controller's accepted HEAD."""
+        env = self.environment
+        job = json.loads(
+            kubectl(
+                ["get", "job/sdo-controller-run", "-o", "json"], namespace=control, kubeconfig=env.kubeconfig
+            ).stdout
+        )
+        containers = job["spec"]["template"]["spec"]["containers"]
+        controller = next(row for row in containers if row["name"] == "controller")
+        args = controller["args"]
+        repository = args[args.index("--app") + 1]
+        if not repository.startswith("/"):
+            raise ValueError("eval: installed accepted repository path must be absolute")
+        code = (
+            "import json, subprocess, urllib.request; "
+            f"root={repository!r}; "
+            "git=lambda *args: subprocess.check_output(['git','-C',root,*args]); "
+            "head=git('rev-parse','HEAD').decode().strip(); "
+            "entries=git('ls-tree','-r','-z',head,'--','.sdo/diagnostics/detectors').split(bytes([0])); "
+            "scripts=[entry.split(bytes([9]),1)[1].decode() for entry in entries "
+            "if entry.startswith(b'100755 blob ') and entry.endswith(b'.sh')]; "
+            "report=json.load(urllib.request.urlopen('http://sdo-shell-detectors:8080/results',timeout=5)); "
+            "assert git('rev-parse','HEAD').decode().strip()==head, 'accepted HEAD changed during shell observation'; "
+            "print(json.dumps({'accepted_commit':head,'scripts':scripts,'report':report}))"
+        )
         return json.loads(
             kubectl(
                 ["exec", "job/sdo-controller-run", "-c", "controller", "--", "python3", "-c", code],
@@ -191,12 +234,23 @@ class LaneAdmission:
                 self.progress("probe_placement", namespace="sregym")
             assert_stable_workloads(self._identity or {}, workload_identity(env.kubeconfig, env.namespace))
             proof = controller_proof(self.ops.runtime_state(control), self.required_detectors, boundary)
-            try:
-                windows = self._windows(control)
-                proof["qualified_scenarios"] = qualified_scenarios(windows, self.required_scenarios)
-            except (RuntimeError, ValueError, KeyError) as exc:
-                proof.update(qualified_scenarios=False, prober_error=str(exc))
-            proof["passed"] = proof["passed"] and proof["qualified_scenarios"]
+            proof["code_path"] = self.code_path
+            if self.code_path == "shell":
+                try:
+                    runner = shell_runner_proof(
+                        self._shell_results(control), boundary, datetime.now(timezone.utc).isoformat()
+                    )
+                except (RuntimeError, ValueError, KeyError, IndexError, StopIteration) as exc:
+                    runner = {"passed": False, "reason": str(exc)}
+                proof["shell_runner"] = runner
+                proof["passed"] = proof["passed"] and runner["passed"]
+            else:
+                try:
+                    windows = self._windows(control)
+                    proof["qualified_scenarios"] = qualified_scenarios(windows, self.required_scenarios)
+                except (RuntimeError, ValueError, KeyError) as exc:
+                    proof.update(qualified_scenarios=False, prober_error=str(exc))
+                proof["passed"] = proof["passed"] and proof["qualified_scenarios"]
             if proof["passed"]:
                 traffic = self.worker.request(
                     "baseline_oracle",

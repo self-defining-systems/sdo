@@ -558,6 +558,7 @@ def _sdo_agent(
             worker,
             ops,
             results_dir / "admission",
+            code_path=runtime_config.code_path,
             timeout_seconds=getattr(args, "admission_timeout_seconds", 300),
             synchronize=lambda: sync_existing(native_install_config(runtime_config)),
             progress=getattr(args, "admission_progress", None),

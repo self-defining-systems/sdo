@@ -156,3 +156,12 @@ Successful typed EnsureDatabaseUser actions record the measured opening catalog 
 readback as a `DatabaseUsers` primitive with `phase=fixed` through the same protected recorder.
 The action receipt retains reference-bearing inputs/status; a safe `recording_error` makes an
 unavailable fixed capture visible. Fixed catalogs never replace the immutable opening catalog.
+
+Shell pre-injection admission records `code_path: shell` and `shell_runner` in
+`admission/stabilization-*.jsonl`. Its evidence binds the complete executable
+Git inventory to the runner's accepted commit, activation time, fresh zero-exit
+results and stable `healthy` signal. Fresh clear `shell.detectors` controller
+observations and no incident work remain required, followed by the independent
+benchmark traffic oracle. Shell has no Go prober/scenario-window requirement;
+Go admission retains both. Missing, stale, errored or incomplete shell evidence
+blocks injection, including a nonzero script before its second firing run.
