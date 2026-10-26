@@ -18,8 +18,7 @@ APPLICATION_NAMESPACES = frozenset({"hotel-reservation", "social-network", "astr
 
 def quiesce_native_controller(kubeconfig: Path, namespace: str) -> None:
     """Use the native pause/closure fence before replacing an idle installation."""
-    from benchmarks.sregym.adapter import KubectlClusterOps, pause_for_recovery
-    from benchmarks.sregym.adapter.eval_guards import closure_pending
+    from benchmarks.sregym.adapter import KubectlClusterOps, closure_pending, pause_for_recovery
 
     if namespace not in {control_namespace_for(app) for app in APPLICATION_NAMESPACES}:
         raise ValueError("eval: quiesce requires an application control namespace")
@@ -112,6 +111,23 @@ class KubectlRetirementOps:
 
     def check_lease(self) -> None:
         subprocess.run([self.request.coord, "check", self.request.cluster, "--lease", self.request.lease], check=True)
+        self.assert_target_cluster()
+
+    def assert_target_cluster(self) -> None:
+        expected = set(
+            subprocess.check_output(
+                ["kind", "get", "nodes", "--name", self.request.cluster],
+                text=True,
+                timeout=10,
+            ).split()
+        )
+        observed = set(
+            kubectl(
+                ["get", "nodes", "-o", "jsonpath={.items[*].metadata.name}"], namespace=None, kubeconfig=self.kubeconfig
+            ).stdout.split()
+        )
+        if not expected or observed != expected:
+            raise ValueError("eval: app retirement kubeconfig does not target the leased kind cluster")
 
     def namespace_names(self) -> set[str]:
         result = kubectl(["get", "namespaces", "-o", "json"], namespace=None, kubeconfig=self.kubeconfig)

@@ -144,6 +144,24 @@ def test_real_namespace_adapter_rejects_out_of_set_before_any_io(tmp_path, monke
         ops.delete_namespace("kube-system")
 
 
+@pytest.mark.parametrize("actual_lane", ["luna-pilot-53", "luna-pilot-50"])
+def test_retirement_binds_the_kubeconfig_to_the_leased_cluster(tmp_path, monkeypatch, actual_lane):
+    from types import SimpleNamespace
+
+    from benchmarks.sregym.fastloop import app_retirement
+
+    monkeypatch.setattr(app_retirement.subprocess, "check_output", lambda *_a, **_k: "luna-pilot-53-control-plane\n")
+    monkeypatch.setattr(
+        app_retirement, "kubectl", lambda *_a, **_k: SimpleNamespace(stdout=actual_lane + "-control-plane")
+    )
+    ops = app_retirement.KubectlRetirementOps(request(), tmp_path / "config")
+    if actual_lane == "luna-pilot-53":
+        ops.assert_target_cluster()
+    else:
+        with pytest.raises(ValueError, match="does not target the leased"):
+            ops.assert_target_cluster()
+
+
 @pytest.mark.parametrize("pending", [True, False])
 def test_native_quiesce_retains_pending_work_and_pauses_idle_controller(tmp_path, monkeypatch, pending):
     import json
