@@ -48,7 +48,7 @@ func TestControllerCapturesHealthyRefusedPortsBeforeIncident(t *testing.T) {
 	if request == nil {
 		t.Fatalf("incident did not open: history=%+v samples=%d", c.history, detector.calls)
 	}
-	c.routingSweeps.Wait()
+	c.Wait()
 	dir, err := memory.IncidentCorpusDir(root, request.IncidentID)
 	if err != nil {
 		t.Fatal(err)
@@ -115,7 +115,7 @@ func TestReplayReferencePromotesTheSameSettledCandidateAsStateChanges(t *testing
 	if err := c.EvaluateAll(ctx, start.Add(63*time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	c.routingSweeps.Wait()
+	c.Wait()
 	if c.currentIncidentRequest == nil {
 		t.Fatal("incident did not open")
 	}

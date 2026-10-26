@@ -163,7 +163,7 @@ func TestUnexplainedTargetPortOpensLatentIncidentWithDriftCorpus(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(c.routingSweeps.Wait)
+	t.Cleanup(c.Wait)
 	c.ConfigureDrift(DriftControllerConfig{Events: cache, BatchWindow: time.Second, View: func(snapshot sdk.DetectionContext) program.ReadView {
 		return driftReadView{ReplayReadView: &sdktest.ReplayReadView{Snapshot: snapshot.(sdktest.Snapshot)}, diff: program.Diff{Changed: true}}
 	}})
