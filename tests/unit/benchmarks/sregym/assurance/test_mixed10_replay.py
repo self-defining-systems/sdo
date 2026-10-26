@@ -357,7 +357,7 @@ else:
     finally:
         stop.set()
         thread.join(timeout=5)
-    assert result.status == "completed", result
+    assert result.status == "completed", json_format.MessageToJson(result)
     expected = 2 if slot == 3 else 9
     assert len(result.repair_actions) == expected
     assert all(action.success for action in result.repair_actions)
