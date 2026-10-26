@@ -175,7 +175,16 @@ func (v LiveReadView) DiffAgainstSource(ref sdk.ObjectRef) (program.Diff, error)
 	ctx, cancel := context.WithTimeout(v.context(), DefaultDiagnosisDeadline)
 	defer cancel()
 	var source *unstructured.Unstructured
-	if ref.Namespace != v.Namespace() {
+	acceptedCluster := false
+	if ref.Namespace == "" && !(sdk.ObservationTarget{Kind: ref.Kind}).Cluster() {
+		if _, ok := v.Source.(interface {
+			AcceptedApplicationManifest(context.Context, string, string, sdk.ObjectRef) (*unstructured.Unstructured, error)
+		}); ok {
+			source, err = acceptedIncidentManifest(ctx, v.Source, v.SourceCommit, v.Namespace(), ref)
+			acceptedCluster = true
+		}
+	}
+	if !acceptedCluster && ref.Namespace != v.Namespace() {
 		reader, ok := v.Source.(interface {
 			AcceptedScopedManifest(context.Context, string, string, sdk.ObjectRef) (*unstructured.Unstructured, error)
 		})
@@ -183,7 +192,7 @@ func (v LiveReadView) DiffAgainstSource(ref sdk.ObjectRef) (program.Diff, error)
 			return program.Diff{}, errors.New("qualified accepted source unavailable")
 		}
 		source, err = reader.AcceptedScopedManifest(ctx, v.SourceCommit, v.Namespace(), ref)
-	} else {
+	} else if !acceptedCluster {
 		source, err = v.Source.AcceptedManifest(ctx, v.SourceCommit, ref)
 	}
 	if errors.Is(err, ErrAcceptedManifestAbsent) {
@@ -202,7 +211,7 @@ func (v LiveReadView) DiffAgainstSource(ref sdk.ObjectRef) (program.Diff, error)
 	if source == nil || !samePlanRef(source, ref) {
 		return program.Diff{}, fmt.Errorf("accepted manifest does not match %s/%s", ref.Kind, ref.Name)
 	}
-	if ref.Namespace != v.Namespace() {
+	if !acceptedCluster && ref.Namespace != v.Namespace() {
 		projected, projectErr := sdk.ProjectObservationObject(source)
 		if projectErr != nil {
 			return program.Diff{}, projectErr
@@ -282,6 +291,16 @@ func applyAcceptedSource(ctx context.Context, client kubernetes.Interface, ref s
 	}
 	var object any
 	switch ref.APIVersion + "/" + ref.Kind {
+	case "v1/ServiceAccount":
+		object, err = client.CoreV1().ServiceAccounts(ref.Namespace).Patch(ctx, ref.Name, types.ApplyPatchType, patch, options)
+	case "rbac.authorization.k8s.io/v1/ClusterRole":
+		object, err = client.RbacV1().ClusterRoles().Patch(ctx, ref.Name, types.ApplyPatchType, patch, options)
+	case "rbac.authorization.k8s.io/v1/ClusterRoleBinding":
+		object, err = client.RbacV1().ClusterRoleBindings().Patch(ctx, ref.Name, types.ApplyPatchType, patch, options)
+	case "rbac.authorization.k8s.io/v1/Role":
+		object, err = client.RbacV1().Roles(ref.Namespace).Patch(ctx, ref.Name, types.ApplyPatchType, patch, options)
+	case "rbac.authorization.k8s.io/v1/RoleBinding":
+		object, err = client.RbacV1().RoleBindings(ref.Namespace).Patch(ctx, ref.Name, types.ApplyPatchType, patch, options)
 	case "v1/Service":
 		object, err = client.CoreV1().Services(ref.Namespace).Patch(ctx, ref.Name, types.ApplyPatchType, patch, options)
 	case "v1/ConfigMap":
@@ -327,8 +346,8 @@ func comparableFields(object map[string]any) map[string]any {
 		}
 	}
 	result := map[string]any{}
-	for _, key := range []string{"spec", "data", "binaryData", "webhooks", "subsets", "rules", "roleRef", "subjects", "aggregationRule"} {
-		if value, ok := object[key]; ok {
+	for key, value := range object {
+		if key != "apiVersion" && key != "kind" && key != "metadata" && key != "status" {
 			result[key] = value
 		}
 	}
@@ -435,7 +454,7 @@ func (v LiveReadView) Object(ref sdk.ObjectRef) (*unstructured.Unstructured, err
 }
 func (v LiveReadView) snapshotObject(ref sdk.ObjectRef) (*unstructured.Unstructured, error) {
 	object, err := v.Object(ref)
-	if errors.Is(err, sdk.ErrObjectNotCaptured) || apierrors.IsNotFound(err) {
+	if apierrors.IsNotFound(err) {
 		return nil, fmt.Errorf("%w: %v", errSnapshotObjectAbsent, err)
 	}
 	return object, err
@@ -532,6 +551,12 @@ func (v LiveReadView) scopedObject(ref sdk.ObjectRef) (*unstructured.Unstructure
 
 // ScopedRefAllowed binds drift admission to the snapshot's exact observed targets.
 func (v LiveReadView) ScopedRefAllowed(ref sdk.ObjectRef) bool {
+	if ref.Namespace == "" && v.Source != nil {
+		_, err := acceptedIncidentManifest(v.context(), v.Source, v.SourceCommit, v.Namespace(), ref)
+		if err == nil {
+			return true
+		}
+	}
 	_, err := v.scopedObject(ref)
 	return err == nil || errors.Is(err, errSnapshotObjectAbsent)
 }
