@@ -292,6 +292,9 @@ type Plan struct {
 
 func (p Plan) Validate() error {
 	for _, action := range p.Actions {
+		if err := validateScriptAction(action); err != nil {
+			return err
+		}
 		if err := validateGeneralAction(action); err != nil {
 			return err
 		}

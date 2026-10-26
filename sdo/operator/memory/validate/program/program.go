@@ -441,11 +441,12 @@ func TestProgramCorpus(t *testing.T){
   for _,message:=range r.Errors {if strings.Contains(message,"program.repeat-unreachable:"){t.Fatal(message)}}
   t.Fatalf("program.mitigation-not-repaired: mitigation must clear diagnosis: status=%%s errors=%%v faulted=%%s post=%%s",r.Status,r.Errors,r.Faulted.Result,r.Post.Result)
  }
- notes=append(notes,sdktest.MitigationReplayResult{ProgramID:%q,CaseID:%q,Status:sdktest.MitigationReplayPassed})
+ notes=append(notes,ReplayNote(%q,%q,r))
  })
 `, item.ID+"/"+id, id, item.ID, item.ID, id)
 		}
 	}
 	test.WriteString("}\n")
+	test.WriteString(scriptReplayNoteHelper)
 	return test.String()
 }

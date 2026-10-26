@@ -26,6 +26,7 @@ message MitigationReplayNote {
     STATUS_UNSPECIFIED = 0;
     STATUS_REPLAYED = 1;
     STATUS_SKIPPED_UNREPLAYABLE_EFFECT = 2;
+    STATUS_OBSERVED_TRANSITION = 3;
   }
   string program_id = 1;
   string case_id = 2;

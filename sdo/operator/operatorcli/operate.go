@@ -45,6 +45,7 @@ func ParseOperateLaunch(args []string) (OperateConfig, error) {
 	maxAttempts := flags.Int("max-attempts", 3, "maximum deployment attempts")
 	controllerImage := flags.String("controller-image", "", "controller image")
 	responderImage := flags.String("responder-image", "", "agent worker image")
+	scriptImage := flags.String("script-image", "", "fixed slim RunScript tool image")
 	validatorImage := flags.String("validator-image", "", "isolated validator image")
 	buildkitImage := flags.String("buildkit-image", "", "isolated source image builder")
 	registryPushSecret := flags.String("registry-push-secret", "", "image registry credentials Secret")
@@ -166,7 +167,7 @@ func ParseOperateLaunch(args []string) (OperateConfig, error) {
 			ObservationCeiling: ceiling,
 			Namespace:          *namespace, ControlNamespace: control, Application: *application,
 			ControllerImage: *controllerImage, ResponderImage: *responderImage,
-			ValidatorImage: *validatorImage, RepositoryPVC: *repositoryPVC,
+			ScriptImage: *scriptImage, ValidatorImage: *validatorImage, RepositoryPVC: *repositoryPVC,
 			CredentialsSecret: *credentialsSecret, Model: *model, AgentProvider: *provider,
 			RegistryInsecure: *registryInsecure, RegistryHost: *registryHost, ResponderEnv: responderEnv, HealthyBaseline: *healthyBaseline, MetricsURL: *metricsURL, PermissiveResponder: *permissiveResponder, ResponderNamespaces: responderNamespaces,
 			ControllerDurationSeconds: int(controllerDuration.Seconds()), ExitAfterClosure: *exitAfterClosure, WaitForCompletion: *controllerDuration > 0 || *exitAfterClosure,

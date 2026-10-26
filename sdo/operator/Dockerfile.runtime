@@ -43,7 +43,7 @@ FROM debian:bookworm-slim@sha256:7ff6ba31527b9e336162fa061746c366c4b2032f4d2cff2
 # The identical OS/tool layer is shared by every shipped role. Go and build
 # dependencies stay in build stages; controller and validator share compiler layers.
 RUN apt-get update \
-    && apt-get install --yes --no-install-recommends ca-certificates git python3 python3-pip \
+    && apt-get install --yes --no-install-recommends ca-certificates git python3 python3-pip bash curl jq tar \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=kubectl /bin/kubectl /usr/local/bin/kubectl
 ENV PATH="/usr/local/go/bin:${PATH}" \
@@ -212,3 +212,13 @@ RUN printf '#!/bin/sh\nexec python3 -m sdo.agents.responder.tools_cli "$@"\n' > 
     && chmod 755 /usr/local/bin/sdo
 RUN /usr/local/bin/sdo-operator memory help | grep -q 'memory check'
 CMD ["python3", "-m", "sdo.agents.responder.worker"]
+
+# Fixed slim tools for RunScript; no model CLI, compiler, module cache or sources.
+FROM debian:bookworm-slim@sha256:7ff6ba31527b9e336162fa061746c366c4b2032f4d2cff2078bea43f78efe3f8 AS script-tools-base
+RUN apt-get update \
+    && apt-get install --yes --no-install-recommends ca-certificates bash curl jq tar \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=kubectl /bin/kubectl /usr/local/bin/kubectl
+FROM script-tools-base AS script-tools
+COPY --from=go-runtime /usr/local/bin/sdo-operator /usr/local/bin/sdo-operator
+CMD ["/usr/local/bin/sdo-operator", "script-runner"]
