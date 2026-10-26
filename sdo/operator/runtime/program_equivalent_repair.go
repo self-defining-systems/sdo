@@ -155,13 +155,32 @@ func finalPlanFieldsMatch(preview PlanApplicationResult, getFinal func(sdk.Objec
 		return false
 	}
 	for _, preImage := range preview.PreImages {
-		before, err := json.Marshal(preImage.Object.Object)
+		// A created object has no pre-image: compare the final object with the
+		// object the plan created, starting from an empty baseline.
+		baseline := preImage.Object
+		var start *unstructured.Unstructured
+		switch {
+		case preImage.Absent:
+			baseline = &unstructured.Unstructured{Object: map[string]any{}}
+			for _, patch := range preview.Patches {
+				if patch.Ref == preImage.Ref && patch.Operation == "create" && patch.After != nil {
+					start = patch.After
+					break
+				}
+			}
+		case preImage.Object != nil:
+			start = preImage.Object
+		}
+		if start == nil {
+			return false
+		}
+		before, err := json.Marshal(start.Object)
 		if err != nil {
 			return false
 		}
 		expected := before
 		for _, patch := range preview.Patches {
-			if patch.Ref == preImage.Ref {
+			if patch.Ref == preImage.Ref && patch.Operation != "create" {
 				expected, err = jsonpatch.MergePatch(expected, patch.Patch)
 				if err != nil {
 					return false
@@ -176,7 +195,7 @@ func finalPlanFieldsMatch(preview PlanApplicationResult, getFinal func(sdk.Objec
 		if current == nil || !samePlanRef(current, preImage.Ref) {
 			return false
 		}
-		owner := preImage.Object
+		owner := baseline
 		if len(owner.GetManagedFields()) == 0 {
 			owner = current
 		}
@@ -184,7 +203,7 @@ func finalPlanFieldsMatch(preview PlanApplicationResult, getFinal func(sdk.Objec
 		// Include explicit plan changes even when SSA ownership moved away from
 		// the deployer; otherwise a verified repair can never earn exact credit.
 		changed := map[string]bool{}
-		beforeFields, afterFields := flattenDriftObject(preImage.Object), flattenDriftObject(want)
+		beforeFields, afterFields := flattenDriftObject(baseline), flattenDriftObject(want)
 		reconcileSource, explicitWrite := false, false
 		for _, action := range preview.Plan.Actions {
 			ref, err := planActionRef(action)
@@ -214,7 +233,7 @@ func finalPlanFieldsMatch(preview PlanApplicationResult, getFinal func(sdk.Objec
 			}
 		}
 		expectedFields := planComparableFields(want, want, owner, changed)
-		if reflect.DeepEqual(planComparableFields(preImage.Object, want, owner, changed), expectedFields) ||
+		if reflect.DeepEqual(planComparableFields(baseline, want, owner, changed), expectedFields) ||
 			!reflect.DeepEqual(planComparableFields(current, want, owner, changed), expectedFields) {
 			return false
 		}

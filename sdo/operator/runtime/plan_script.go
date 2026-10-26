@@ -119,8 +119,8 @@ func (e PlanExecutor) scriptStep(ctx context.Context, incident IncidentRequest, 
 		r.Patches = []PlanPatch{{Ref: sdk.ObjectRef{APIVersion: "batch/v1", Kind: "Job", Namespace: incident.Namespace, Name: run.JobName}, Operation: "run-script", Irreversible: true}}
 	}
 	for _, object := range run.Objects {
-		if object.Before != nil {
-			r.PreImages = append(r.PreImages, PlanPreImage{Ref: object.Ref, Object: object.Before})
+		if object.Before != nil || object.BeforeAbsent {
+			r.PreImages = append(r.PreImages, newPlanPreImage(object.Ref, object.Before))
 		}
 	}
 	if e.RecordPrimitive != nil && run.JobName != "" {

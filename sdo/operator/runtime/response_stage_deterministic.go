@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"google.golang.org/protobuf/encoding/protojson"
+	"runtime/debug"
 	"sort"
 	"time"
 
@@ -227,11 +228,11 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 		planResponse := ToolResponse{}
 		loop.matchedViews[matchedViewKey(match.PlaybookId, bindings)] = view
 		delete(loop.matchedPlans, matchedViewKey(match.PlaybookId, bindings))
-		loop.mu.Unlock()
-		loop.operationMu.Unlock()
-		planResponse = loop.Handle(ctx, ToolRequest{Command: "plan", ProgramID: match.PlaybookId, Bindings: bindings, FindingFingerprints: match.ExplainedFindingFingerprints})
-		loop.operationMu.Lock()
-		loop.mu.Lock()
+		if err := unlockedStageStep(loop, "plan", func() {
+			planResponse = loop.Handle(ctx, ToolRequest{Command: "plan", ProgramID: match.PlaybookId, Bindings: bindings, FindingFingerprints: match.ExplainedFindingFingerprints})
+		}); err != nil {
+			return report, err
+		}
 		if planResponse.Error != "" {
 			attempt.Result = "apply_error"
 			attempt.Error = planResponse.Error
@@ -250,11 +251,12 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 		}
 		// Apply through the ordinary tool boundary: mutation fences, recorded
 		// writes, immutable receipts and compensation have one owner.
-		loop.mu.Unlock()
-		loop.operationMu.Unlock()
-		applied := loop.Handle(ctx, ToolRequest{Command: "apply", PlanIDs: []string{planResponse.PlanID}})
-		loop.operationMu.Lock()
-		loop.mu.Lock()
+		var applied ToolResponse
+		if err := unlockedStageStep(loop, "apply", func() {
+			applied = loop.Handle(ctx, ToolRequest{Command: "apply", PlanIDs: []string{planResponse.PlanID}})
+		}); err != nil {
+			return report, err
+		}
 		attempt.Error = applied.Error
 		for _, application := range loop.applicationsLog {
 			if len(application.PlanIDs) != 1 || application.PlanIDs[0] != planResponse.PlanID {
@@ -306,12 +308,13 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 	}
 	// Use the responder's completion verifier for final field equivalence;
 	// application success alone does not grant reflection learning authority.
-	loop.mu.Unlock()
-	loop.operationMu.Unlock()
-	loop.CreditEquivalentRepairs(ctx, loop.ApplicationRepairReceipts(state.RepairActions))
-	applications := loop.PlanApplications()
-	loop.operationMu.Lock()
-	loop.mu.Lock()
+	var applications []RecordedPlanApplication
+	if err := unlockedStageStep(loop, "credit-equivalent-repairs", func() {
+		loop.CreditEquivalentRepairs(ctx, loop.ApplicationRepairReceipts(state.RepairActions))
+		applications = loop.PlanApplications()
+	}); err != nil {
+		return report, err
+	}
 	for _, attempt := range report.Mitigations {
 		for _, application := range applications {
 			if application.ID == attempt.GetApplyReceipt().GetApplicationId() {
@@ -589,4 +592,33 @@ func (stage *DeterministicResponseStage) awaitRepairedHealth(ctx context.Context
 			return
 		}
 	}
+}
+
+// DeterministicStepPanicError reports a panic inside one deterministic-stage
+// step. The step fails with this error; the controller keeps running.
+type DeterministicStepPanicError struct {
+	Step  string
+	Value any
+	Stack string
+}
+
+func (e *DeterministicStepPanicError) Error() string {
+	return fmt.Sprintf("deterministic stage step %s panicked: %v", e.Step, e.Value)
+}
+
+// unlockedStageStep runs one step outside the responder loop locks and always
+// reacquires them. Without this, a panic in the step unwinds into Run's
+// deferred unlocks of already released mutexes, an unrecoverable fatal error.
+func unlockedStageStep(loop *ResponderLoop, step string, run func()) (err error) {
+	loop.mu.Unlock()
+	loop.operationMu.Unlock()
+	defer func() {
+		loop.operationMu.Lock()
+		loop.mu.Lock()
+		if r := recover(); r != nil {
+			err = &DeterministicStepPanicError{Step: step, Value: r, Stack: string(debug.Stack())}
+		}
+	}()
+	run()
+	return nil
 }

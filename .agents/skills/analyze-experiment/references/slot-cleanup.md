@@ -71,6 +71,21 @@ values-free `eval_notes` entry (`app_namespace_inventory_drift`, `not_in_baselin
 Treat a row with `confounds` as starting from a changed app; check whether the drift is SDO's
 accepted repair before calling it a harness leftover.
 
+## Recovery after any closure outcome (`recovery_trigger`)
+
+Fault recovery runs once the row is over, whatever happened to SDO's closure. `recovery_trigger`
+names the path: `natural_closure` (reflection acknowledged), `closure_failed` (SDO permanently
+failed or retired the closure; the rejected receipt holds the reason), `reflection_deadline` (SDO
+was still reflecting at the deadline; intake was paused, the closure left to SDO, and the lane
+stops after the row), or `no_incident`. A running reflection is waited for, never aborted. Rows
+before this field could skip recovery after a failed closure and leave injected objects (for
+example a ValidatingWebhookConfiguration) in the next row.
+
+After recovery, the recovery oracle is sampled until it passes or a 300 s settle budget ends (the
+admission stabilization rule); `recovery_oracle_samples` lists each sample's seconds and success.
+"recovery residue" means the last sample still failed at the budget. Earlier rows took one sample,
+so traffic that lagged a just-recovered app could be reported as residue.
+
 ## Credential fault followed by immutable seed restoration
 
 **Signature:** official fault recovery passes, but restoring the old seed makes database clients fail.

@@ -15,6 +15,7 @@ verifies, and the loop grades the cluster with the problem's own oracle.
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -24,16 +25,19 @@ from benchmarks.sregym.adapter import (
     REJECTED_RECEIPT_FILENAME,
     STRICT_RECEIPT_FILENAME,
     Clock,
+    ClosureFailedError,
     ClusterOps,
     FollowupClosureTimeout,
+    PersistentControllerError,
     PersistentState,
     StageInputs,
     drain_pending_incident,
     pause_for_recovery,
+    record_failed_closure,
     run_persistent_stage,
 )
 from benchmarks.sregym.fastloop.loop import AgentOutcome, InjectionWindow, RecoveryWaitTimeout
-from benchmarks.sregym.fastloop.records import AgentName, PostClosureWait, TokenCounts
+from benchmarks.sregym.fastloop.records import AgentName, PostClosureWait, RecoveryTrigger, TokenCounts
 from benchmarks.sregym.fastloop.replay import CheckpointStore, capture_checkpoints
 from benchmarks.sregym.protocol import receipt_resolution
 
@@ -41,11 +45,15 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from benchmarks.sregym.adapter import (
+        ControllerRecord,
         DeployedLifecycle,
         DeployedLifecycleContext,
         FollowupClosureWait,
         RuntimeConfig,
     )
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -251,6 +259,8 @@ class SdoPersistentAgent:
         self._lifecycle_inputs = lifecycle_inputs
         self._run_lifecycle = run_lifecycle
         self._clock = clock or Clock()
+        self._reflection_deadline: float | None = None
+        self.last_recovery_trigger: RecoveryTrigger | None = None
 
     @property
     def model(self) -> str:
@@ -344,6 +354,7 @@ class SdoPersistentAgent:
         ):
             raise RuntimeError(f"incident {outcome.incident_id!r} is not pending on the persistent controller")
         started = self._clock.monotonic()
+        self._reflection_deadline = started + settings.reflection_wait_seconds
         reflection_observed_at = self._clock.now()
         error: str | None = None
         try:
@@ -439,23 +450,62 @@ class SdoPersistentAgent:
         return {}
 
     def prepare_recovery(self, outcome: AgentOutcome | None) -> PostClosureWait | None:
-        """Leave incident intake paused throughout harness recovery and its baseline check."""
+        """Leave incident intake paused throughout harness recovery and its baseline check.
+
+        Recovery runs once the row is over, whichever way SDO's closure ended: a closure still
+        pending here is waited for until the reflection deadline, never aborted. The path that let
+        recovery run is ``last_recovery_trigger``.
+        """
 
         settings = self._settings
         state = PersistentState.load(settings.state_path)
         record = state.controllers.get(settings.namespace)
-        if record is None or record.pending is not None:
-            raise RuntimeError("eval: recovery requires a recorded controller with no pending incident closure")
+        if record is None:
+            raise RuntimeError("eval: recovery requires a recorded controller")
+        trigger: RecoveryTrigger = "natural_closure" if outcome is not None and outcome.incident_id else "no_incident"
+        if record.pending is not None:
+            trigger = self._settle_pending_closure(record)
+            state.save(settings.state_path)
+        self.last_recovery_trigger = trigger
         try:
             wait = pause_for_recovery(
                 self._ops,
                 record.control_namespace,
-                incident_id=outcome.incident_id if outcome is not None else None,
+                incident_id=outcome.incident_id if outcome is not None and trigger != "reflection_deadline" else None,
                 clock=self._clock,
+                closure_open=trigger == "reflection_deadline",
             )
         except FollowupClosureTimeout as exc:
             raise RecoveryWaitTimeout(_post_closure_wait(exc.wait), str(exc)) from exc
         return _post_closure_wait(wait) if wait is not None else None
+
+    def _settle_pending_closure(self, record: ControllerRecord) -> RecoveryTrigger:
+        """Wait out a closure learning left pending; a terminal failure becomes its rejected receipt."""
+
+        pending = record.pending
+        assert pending is not None
+        now = self._clock.monotonic()
+        deadline = self._reflection_deadline or now + self._settings.reflection_wait_seconds
+        started = now
+        try:
+            drain_pending_incident(
+                record,
+                ops=self._ops,
+                repository=self._settings.repository,
+                drained_by=f"fastloop-recovery-{pending.incident_id}",
+                clock=self._clock,
+                timeout_seconds=max(0.001, deadline - now),
+            )
+        except ClosureFailedError as exc:
+            record_failed_closure(pending, str(exc), self._clock.monotonic() - started)
+            record.pending = None
+            return "closure_failed"
+        except PersistentControllerError as exc:
+            # SDO is still working past the deadline: the closure stays pending for SDO to finish.
+            logger.warning("recovering incident %s past its reflection deadline: %s", pending.incident_id, exc)
+            return "reflection_deadline"
+        record.pending = None
+        return "natural_closure"
 
     def close(self) -> None:
         """The controller keeps running for the next loop; ``fastloop down`` stops it."""
