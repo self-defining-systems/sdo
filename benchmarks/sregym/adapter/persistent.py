@@ -1450,6 +1450,9 @@ def drain_pending_incident(
     # The native Go broker releases abandoned proposals and acknowledged
     # incident worktrees; the benchmark must not mutate its workspace.
     del drained_state
+    # The stage-end export ran before reflection; re-export so the reflection rollout,
+    # usage and checkpoints are complete. The Go export overwrites files in place.
+    runtime_artifacts = ops.export_runtime_artifacts(config, pending.receipt_dir)
     receipt: dict[str, Any] = {}
     try:
         receipt = _collect_settled_receipt(ops, config, pending.incident_id, pending.receipt_dir, clock)
@@ -1476,6 +1479,7 @@ def drain_pending_incident(
             "waited_seconds": waited,
             "phase_seconds": phases,
             "phase_timestamps": phase_timestamps,
+            "runtime_artifacts": runtime_artifacts,
         }
         validate_production_receipt(receipt, allow_test_lifecycle=config.allow_test_lifecycle)
     except ProductionReceiptValidationError as exc:

@@ -74,7 +74,8 @@ controller RBAC and returns an exit code with no stdout/stderr; commands can rea
 ## Corpus evidence
 
 - Each verified cause needs diagnose and mitigation programs, a README, and detector coverage; one detector may
-  surface several playbooks. Only a typed SDK gap naming the cause resources can excuse missing coverage.
+  surface several playbooks. Coverage comes from a responder-owned incident detector; health-owned and built-in
+  detectors do not count. Only a typed SDK gap naming the cause resources can excuse missing coverage.
   Enforced by: `reflection.program-required`, `reflection.detector-required`.
 - Build replay fixtures from recorded session observations. Controller capture files and snapshot digests are
   optional. Mitigation must execute and clear diagnosis; skipped effects fail replay. Enforced by: `program.mitigation-not-repaired`.
