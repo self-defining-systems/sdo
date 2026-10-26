@@ -1,6 +1,7 @@
 #!/bin/bash
-# Regenerate the detector and replay references from the Go SDK. --check fails
-# when either committed reference is stale; SDK tests run it automatically.
+# Regenerate the detector, replay and program SDK references from the Go SDK.
+# --check fails and names every stale committed reference; scripts/check_errors.sh
+# and the root sdk package tests run it.
 set -euo pipefail
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
@@ -52,6 +53,7 @@ HEADER
 
 expected="$(mktemp)"
 trap 'rm -f "$expected"' EXIT
+stale=()
 for reference in sdk.md replay.md program-sdk.md; do
     if [ "$reference" = "program-sdk.md" ]; then
         REFERENCE_DIR="$PROJECT_ROOT/sdo/skills/sdo-playbook-authoring/references"
@@ -59,10 +61,13 @@ for reference in sdk.md replay.md program-sdk.md; do
     if [ "${1:-}" = "--check" ]; then
         render "$reference" > "$expected"
         if ! diff -u "$REFERENCE_DIR/$reference" "$expected"; then
-            echo "$reference is stale: run scripts/gen_skill_references.sh and commit the result" >&2
-            exit 1
+            stale+=("${REFERENCE_DIR#"$PROJECT_ROOT/"}/$reference")
         fi
     else
         render "$reference" > "$REFERENCE_DIR/$reference"
     fi
 done
+if [ "${#stale[@]}" -gt 0 ]; then
+    echo "stale generated skill references: ${stale[*]}; run scripts/gen_skill_references.sh and commit the result" >&2
+    exit 1
+fi

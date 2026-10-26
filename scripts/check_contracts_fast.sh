@@ -7,7 +7,7 @@
 # editing this script:
 #   - every test in the small Go contract modules
 #   - runtime tests named *MatchProto, *MapsToProto, Proto*, TrafficProto*,
-#     *ClosedEnums or *MatchesGenerated*
+#     *ClosedEnums, *MatchesGenerated* or GoContractFixtures (golden JSON)
 #   - every Python test under tests/unit/sdo/contracts
 set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -23,7 +23,7 @@ echo "==> contract parity: runtime proto mirrors"
 (
     cd "$root/sdo/operator/runtime"
     go test . -count=1 -timeout=60s \
-        -run '^Test([A-Za-z0-9]*(MatchProto|MapsToProto|ClosedEnums)|(Traffic)?Proto[A-Z][A-Za-z0-9]*|[A-Za-z0-9]*MatchesGenerated[A-Za-z0-9]*)$'
+        -run '^Test([A-Za-z0-9]*(MatchProto|MapsToProto|ClosedEnums)|(Traffic)?Proto[A-Z][A-Za-z0-9]*|[A-Za-z0-9]*MatchesGenerated[A-Za-z0-9]*|GoContractFixtures)$'
 )
 
 echo "==> contract parity: Python contracts"
