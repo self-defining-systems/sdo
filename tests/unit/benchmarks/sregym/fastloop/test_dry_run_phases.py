@@ -142,7 +142,7 @@ def _probe_without(missing):
 
 def test_scripted_preflight_rejects_production_responder_image():
     run, calls = _probe_without("benchmarks.sregym.adapter.scripted_worker")
-    with pytest.raises(ValueError) as error:
+    with pytest.raises(ValueError, match="cannot run the scripted registrations") as error:
         dry_run.assert_responder_runs_registrations(
             "sdo-sregym-responder:le-p4-h7", dry_run.SCRIPTED_REGISTRATIONS, run=run
         )
@@ -152,7 +152,8 @@ def test_scripted_preflight_rejects_production_responder_image():
     assert "SDO_SCRIPTED_WORKER=1" in message
     assert "SDO_IMAGE_TAG=le-p4-h7-scripted" in message
     assert len(calls) == 1
-    assert "--network" in calls[0] and "none" in calls[0]
+    network = calls[0].index("--network")
+    assert calls[0][network + 1] == "none"
 
 
 def test_scripted_preflight_covers_every_registered_worker_module():
@@ -180,7 +181,7 @@ def test_dry_run_fails_on_responder_image_before_any_lane_mutation(monkeypatch, 
         images=SimpleNamespace(responder="sdo-sregym-responder:prod"),
     )
     monkeypatch.setattr(environment.FastloopEnvironment, "load", classmethod(lambda cls, path: lane))
-    monkeypatch.setattr(dry_run, "assert_image_entrypoints", _missing_scripted_worker)
+    monkeypatch.setattr(adapter, "assert_image_entrypoints", _missing_scripted_worker)
 
     def reached(*args, **kwargs):
         raise AssertionError("dry run touched the lane before checking its responder image")
