@@ -82,7 +82,7 @@ func (e KubernetesExecutor) RecoverCompleted(ctx context.Context, task *contract
 	completedAt := time.Now()
 	if err == nil {
 		if jobFailed(job) {
-			failure := taskJobFailure(task, job)
+			failure := e.taskJobFailure(ctx, task, job)
 			if result.GetStatus() != "completed" || errors.Is(failure, context.DeadlineExceeded) {
 				return nil, false, failure
 			}
