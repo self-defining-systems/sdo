@@ -49,6 +49,7 @@ class RuntimeConfig:
     reflection_session: str = "resume"
     reflection_guidance: str = "baseline"
     force_reflection: bool = False
+    code_path: str = "go"
 
     late_findings: str = "off"
     max_response_loops: int = 10
@@ -97,6 +98,8 @@ class RuntimeConfig:
             raise ValueError("agent_provider must be codex or claude")
         if self.reflection_session not in ("fresh", "resume"):
             raise ValueError("reflection_session must be fresh or resume")
+        if self.code_path not in ("go", "shell"):
+            raise ValueError("code_path must be go or shell")
         if self.reflection_guidance not in ("baseline", "generalize", "generalize-spec"):
             raise ValueError("invalid reflection_guidance")
         if self.late_findings not in ("off", "pull"):
@@ -146,6 +149,7 @@ def native_install_config(config: RuntimeConfig) -> NativeInstallConfig:
         reflection_session=config.reflection_session,
         reflection_guidance=config.reflection_guidance,
         force_reflection=config.force_reflection,
+        code_path=config.code_path,
         healthy_baseline=config.healthy_baseline,
         permissive_responder=config.permissive_responder,
         responder_namespaces=config.responder_namespaces,

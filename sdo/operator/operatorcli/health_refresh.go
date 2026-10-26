@@ -11,6 +11,7 @@ import (
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/lifecycle"
 	"sdo.dev/operator/memory"
+	"sdo.dev/operator/shellpath"
 	"sdo.dev/operator/worker_registry"
 )
 
@@ -47,6 +48,11 @@ func refreshControllerHealthOnce(ctx context.Context, config *contracts.Controll
 	if err != nil {
 		return err
 	}
+	shellNeedsRefresh, err := shellHealthRefreshNeeded(ctx, config)
+	if err != nil {
+		return err
+	}
+	revision.NeedsRefresh = revision.NeedsRefresh || shellNeedsRefresh
 	if !revision.NeedsRefresh {
 		return nil
 	}
@@ -71,6 +77,7 @@ func refreshControllerHealthOnce(ctx context.Context, config *contracts.Controll
 	if err != nil {
 		return err
 	}
+	environment = codePathWorkerEnvironment(config.GetCodePath(), environment)
 	environment["CODEX_HOME"], environment["CLAUDE_CONFIG_DIR"] = "/tmp/codex", "/tmp/claude"
 	namespace := config.GetControlNamespace()
 	if namespace == "" {
@@ -78,7 +85,7 @@ func refreshControllerHealthOnce(ctx context.Context, config *contracts.Controll
 	}
 	coordinator := lifecycle.Coordinator{Broker: repository, Bootstrap: artifacts.BootstrapStore{}, Registry: registry, Workers: worker_registry.KubernetesExecutor{
 		ToolchainImage: config.GetToolchainImage(),
-		Client: client, Namespace: namespace, Registry: registry, ServiceAccount: "sdo-responder", RepositoryPVC: config.GetRepositoryPvc(), RepositoryMountPath: config.GetRepositoryMountPath(), RepositoryPVCSubPath: config.GetRepositoryPvcSubpath(), CredentialsSecret: config.GetResponderCredentialsSecret(), HealthyBaseline: config.GetHealthyBaseline(), Environment: environment,
+		Client:         client, Namespace: namespace, Registry: registry, ServiceAccount: "sdo-responder", RepositoryPVC: config.GetRepositoryPvc(), RepositoryMountPath: config.GetRepositoryMountPath(), RepositoryPVCSubPath: config.GetRepositoryPvcSubpath(), CredentialsSecret: config.GetResponderCredentialsSecret(), HealthyBaseline: config.GetHealthyBaseline(), Environment: environment,
 	}}
 	if _, err := coordinator.RefreshHealth(ctx, lifecycle.Config{Application: config.GetApplication(), Namespace: config.GetNamespace()}, revision); err != nil {
 		return err
@@ -87,8 +94,33 @@ func refreshControllerHealthOnce(ctx context.Context, config *contracts.Controll
 	if err != nil {
 		return err
 	}
-	if accepted.NeedsRefresh {
+	shellStillMissing, err := shellHealthRefreshNeeded(ctx, config)
+	if err != nil {
+		return err
+	}
+	if accepted.NeedsRefresh || shellStillMissing {
 		return fmt.Errorf("health unverified: source, objective or detectors advanced during refresh")
 	}
 	return nil
+}
+
+// A Go seed cannot satisfy shell onboarding merely by retaining Go provenance.
+func shellHealthRefreshNeeded(ctx context.Context, config *contracts.ControllerConfig) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	source := config.GetCodePath().GetOverrides().GetDetectorSource()
+	if source != "shell" && !(source == "" && config.GetCodePath().GetName() == "shell") {
+		return false, nil
+	}
+	scripts, err := shellpath.Discover(config.GetAppRoot())
+	if err != nil {
+		return false, err
+	}
+	for _, script := range scripts {
+		if script.Class == "health" {
+			return false, nil
+		}
+	}
+	return true, nil
 }

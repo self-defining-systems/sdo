@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -34,6 +35,8 @@ func ParseOperateLaunch(args []string) (OperateConfig, error) {
 		return OperateConfig{}, errors.New("expected operate subcommand")
 	}
 	flags := flag.NewFlagSet("sdo-operator operate", flag.ContinueOnError)
+	codePathName := flags.String("code-path", os.Getenv("SDO_CODE_PATH"), "programming-model plugin set: go or shell")
+	codePathOverrides := flags.String("code-path-overrides", "", "CodePathOverrides JSON")
 	flags.SetOutput(io.Discard)
 	app := flags.String("app", "", "accepted application checkout")
 	operatorRoot := flags.String("operator-root", "/opt/sdo/sdo/operator", "installed operator modules")
@@ -155,6 +158,10 @@ func ParseOperateLaunch(args []string) (OperateConfig, error) {
 	if err != nil {
 		return OperateConfig{}, err
 	}
+	selectedCodePath, err := parseCodePathSelection(*codePathName, *codePathOverrides)
+	if err != nil {
+		return OperateConfig{}, err
+	}
 	config := OperateConfig{
 		Lifecycle: lifecycle.Config{
 			OperationID: *operationID, Application: *application, Namespace: *namespace,
@@ -163,6 +170,7 @@ func ParseOperateLaunch(args []string) (OperateConfig, error) {
 			MaxAttempts:  *maxAttempts,
 		},
 		Install: install.Config{
+			CodePath:           selectedCodePath,
 			ResponderMenu:      menuEnabled,
 			ObservationCeiling: ceiling,
 			Namespace:          *namespace, ControlNamespace: control, Application: *application,

@@ -55,7 +55,7 @@ func (c *Controller) ExecuteDispatchEffect(ctx context.Context, effect DispatchE
 		return err
 	}
 	c.responderCancel = cancel
-	c.responseStagesRunning = !(len(c.config.ResponseStages) == 1 && c.config.ResponseStages[0] == "agent")
+	c.responseStagesRunning = !(len(c.codePath.Selection.ResponseStages) == 1 && c.codePath.Selection.ResponseStages[0] == "agent")
 	c.dispatchState = contracts.DispatchState_DISPATCH_STATE_RUNNING
 	if c.incidentDispatchedAt.IsZero() {
 		c.incidentDispatchedAt = c.incidentDetectedAt

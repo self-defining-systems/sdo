@@ -67,6 +67,9 @@ const (
 
 // Request describes one validation run.
 type Request struct {
+	// CodePath is trusted caller configuration, never read from candidate artifacts.
+	CodePath string
+
 	// ObservationCeiling is caller-owned installer policy, never loaded from candidate memory.
 	ObservationCeiling   sdk.ObservationScope
 	ApplicationNamespace string

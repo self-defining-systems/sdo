@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -55,11 +54,7 @@ func TestNativeBrokerRejectsUnverifiedLatePullBeforeLedger(t *testing.T) {
 
 func nativeGit(t *testing.T, dir string, args ...string) string {
 	t.Helper()
-	out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput()
-	if err != nil {
-		t.Fatalf("git %v: %v: %s", args, err, out)
-	}
-	return strings.TrimSpace(string(out))
+	return testutil.Git(t, dir, args...)
 }
 
 func nativeRepository(t *testing.T) string {
@@ -68,7 +63,7 @@ func nativeRepository(t *testing.T) string {
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	nativeGit(t, root, "init", "-q")
+	testutil.InitGit(t, root)
 	nativeGit(t, root, "config", "user.name", "Test")
 	nativeGit(t, root, "config", "user.email", "test@example.com")
 	if err := os.WriteFile(filepath.Join(root, "app.txt"), []byte("base\n"), 0o644); err != nil {

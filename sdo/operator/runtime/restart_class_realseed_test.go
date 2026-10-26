@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sdo.dev/operator/internal/testutil"
 	"strconv"
 	"strings"
 	"testing"
@@ -45,13 +46,12 @@ func TestRealSeedHermeticReplay(t *testing.T) {
 				t.Setenv(realSeedSlotEnv, strconv.Itoa(slot))
 				directory := t.TempDir()
 				root := filepath.Join(directory, "accepted")
-				nativeGit(t, directory, "clone", "-q", "--no-hardlinks", seed, root)
+				testutil.CloneGit(t, seed, root, "--no-hardlinks")
 				if commit := os.Getenv(realSeedCommitEnv); commit != "" {
 					nativeGit(t, root, "checkout", "-q", commit)
 				}
 				nativeGit(t, root, "config", "user.name", "Test")
 				nativeGit(t, root, "config", "user.email", "test@example.com")
-				nativeGit(t, root, "config", "gc.auto", "0")
 				revision, err := memory.AcceptedHealthRevision(ctx, root)
 				if err != nil || revision.NeedsRefresh {
 					t.Fatalf("seed health is not accepted: %+v %v", revision, err)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import subprocess
 import time
 from dataclasses import dataclass
@@ -94,6 +95,50 @@ def controller_proof(state: dict[str, Any], required: set[str], not_before: str)
     }
 
 
+def shell_runner_proof(evidence: dict[str, Any], not_before: str, now: str) -> dict[str, Any]:
+    """Bind complete clear shell results to live accepted Git inventory, never Go policy."""
+
+    def rejected(reason: str) -> dict[str, Any]:
+        return {"passed": False, "reason": reason, "evidence": evidence}
+
+    try:
+        boundary = datetime.fromisoformat(not_before.replace("Z", "+00:00"))
+        current = datetime.fromisoformat(now.replace("Z", "+00:00"))
+        report = evidence["report"]
+        commit = evidence["accepted_commit"]
+        scripts = evidence["scripts"]
+        if not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", commit) or report["accepted_commit"] != commit:
+            return rejected("shell runner is not observing the live accepted commit")
+        if report["version"] != 1 or report.get("error") or report.get("healthy") is not True:
+            return rejected("shell runner has not established stable health")
+        if (
+            not scripts
+            or len(set(scripts)) != len(scripts)
+            or not any(path.startswith(".sdo/diagnostics/detectors/health/") for path in scripts)
+        ):
+            return rejected("accepted shell policy has no executable health detectors")
+        rows = report["results"]
+        if len(rows) != len(scripts) or {row["script"] for row in rows} != set(scripts):
+            return rejected("shell runner results do not cover every accepted executable detector")
+        activated = datetime.fromisoformat(report["activated_at"].replace("Z", "+00:00"))
+        for stamp in [report["at"], *(row["at"] for row in rows)]:
+            observed = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+            if observed < boundary or observed < activated or (observed - current).total_seconds() > 5:
+                return rejected("shell runner observation is stale or has invalid activation time")
+        if any(
+            type(row["exit_code"]) is not int
+            or row["exit_code"] != 0
+            or row.get("error")
+            or row.get("timed_out")
+            or row.get("fired")
+            for row in rows
+        ):
+            return rejected("accepted shell detectors have nonzero, timed out or errored results")
+    except (KeyError, ValueError, TypeError, AttributeError):
+        return rejected("shell runner evidence is incomplete or malformed")
+    return {"passed": True, "evidence": evidence}
+
+
 def qualified_scenarios(windows: dict[str, Any], required: set[str]) -> bool:
     observed = {
         row.get("scenario", {}).get("id"): row
@@ -119,7 +164,6 @@ def closure_pending(state: dict[str, Any]) -> bool:
 
 def wait_for_proof(
     sample: Callable[[], dict[str, Any]],
-    restore: Callable[[], None],
     record: Callable[[dict[str, Any]], None],
     *,
     timeout_seconds: float = 300,
@@ -127,23 +171,24 @@ def wait_for_proof(
     sleep: Callable[[float], None] = time.sleep,
     deadline: Deadline | None = None,
 ) -> dict[str, Any]:
+    """Observe admission without mutating the application or renewing its budget.
+
+    Missing controller observations, unqualified traffic and pending reflection
+    are not evidence that the application needs restoration. Recovery belongs
+    to the explicit reset before admission; restarting here can create the very
+    incident whose completion admission must await.
+    """
     if timeout_seconds <= 0 or timeout_seconds > 300:
         raise ValueError("stabilization budget must be in (0, 300] seconds")
     started = monotonic()
     budget = deadline or Deadline(started + timeout_seconds, monotonic)
-    retry_at = started + budget.remaining() / 2
-    for attempt in range(2):
-        attempt_end = retry_at if attempt == 0 else budget.expires_at
-        while monotonic() < attempt_end:
-            proof = sample()
-            if monotonic() >= budget.expires_at:
-                proof.update(passed=False, reason="eval: admission deadline exhausted; no injection")
-            proof.update(attempt=attempt + 1, seconds=monotonic() - started)
-            record(proof)
-            if proof.get("passed") is True:
-                return proof
-            sleep(min(2, max(0, attempt_end - monotonic())))
-        if attempt == 0:
-            budget.remaining()
-            restore()
-    raise StabilizationError("eval: traffic proof failed after one app-only restore and retry; no injection")
+    while monotonic() < budget.expires_at:
+        proof = sample()
+        if monotonic() >= budget.expires_at:
+            proof.update(passed=False, reason="eval: admission deadline exhausted; no injection")
+        proof.update(attempt=1, seconds=monotonic() - started)
+        record(proof)
+        if proof.get("passed") is True:
+            return proof
+        sleep(min(2, max(0, budget.expires_at - monotonic())))
+    raise StabilizationError("eval: admission proof did not settle before deadline; no injection")

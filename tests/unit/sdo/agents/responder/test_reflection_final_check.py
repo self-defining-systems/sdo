@@ -305,10 +305,9 @@ def test_final_check_timeout_kills_the_validator_process_group(
     assert not marker.exists()
 
 
-def test_repeat_chain_is_corrected_in_the_same_reflection_session(
-    accepted_reflection: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The real compiler's finding-binding rejection reaches the live correction loop."""
+@pytest.fixture
+def learned_reflection(accepted_reflection: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A real executable proposal with controller captures and a verified repair."""
     import shutil
 
     root = accepted_reflection
@@ -357,7 +356,7 @@ def test_repeat_chain_is_corrected_in_the_same_reflection_session(
         "fixed_sha256": hashlib.sha256((corpus / "fixed.json").read_bytes()).hexdigest(),
     }
     (corpus / "labels.json").write_text(json.dumps(label))
-    capture = root.parent / "repeat-chain-capture"
+    capture = root.with_suffix(".capture")
     (capture / "healthy").mkdir(parents=True)
     (capture / "healthy/healthy.json").write_text(json.dumps(fixed))
     for target, source in {
@@ -367,6 +366,12 @@ def test_repeat_chain_is_corrected_in_the_same_reflection_session(
     }.items():
         (capture / target).write_bytes((corpus / source).read_bytes())
     monkeypatch.setenv("SDO_CAPTURED_CORPUS_DIR", str(capture))
+    return root
+
+
+def test_repeat_chain_is_corrected_in_the_same_reflection_session(learned_reflection: Path) -> None:
+    """The real compiler's finding-binding rejection reaches the live correction loop."""
+    root = learned_reflection
     path = root / ".sdo/diagnostics/detectors/incidents/routing-relations/detector.go"
     valid = path.read_text()
     calls = 0
@@ -404,3 +409,91 @@ def test_repeat_chain_is_corrected_in_the_same_reflection_session(
     assert result.learning_decision == "updated"
     assert "program.repeat-unreachable" in agent.prompts[1]
     assert "service-targetport-mismatch" in agent.prompts[1]
+
+
+@pytest.mark.parametrize("backend_type", [CodexSessionBackend, ClaudeSessionBackend])
+@pytest.mark.parametrize("accepted_detector", [False, True])
+@pytest.mark.parametrize("proposal_state", ["untracked", "staged", "committed"])
+def test_missing_healthy_capture_submits_typed_gap_without_reprompt(
+    learned_reflection: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    backend_type: type[CodexSessionBackend],
+    accepted_detector: bool,
+    proposal_state: str,
+) -> None:
+    import shutil
+
+    root = learned_reflection
+    shutil.rmtree(Path(os.environ["SDO_CAPTURED_CORPUS_DIR"]) / "healthy")
+    if not accepted_detector:
+        # Build the same accepted memory without a previously learned detector.
+        subprocess.run(["git", "rm", "-rf", ".sdo/diagnostics/detectors/incidents/cache"], cwd=root, check=True)
+        subprocess.run(["git", "commit", "-qm", "accepted health-only memory"], cwd=root, check=True)
+        base = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
+        monkeypatch.setenv("SDO_BASE_COMMIT", base)
+    if proposal_state != "untracked":
+        subprocess.run(["git", "add", "-f", ".sdo"], cwd=root, check=True)
+        if proposal_state == "committed":
+            subprocess.run(["git", "commit", "-qm", "candidate memory"], cwd=root, check=True)
+    provider = backend_type.provider
+    agent = ScriptedAgent(
+        lambda _: reply(
+            provider,
+            {
+                "summary": "learned routing repair",
+                "learning_decision": "updated",
+                "proposed_artifact_ids": ["service-targetport-mismatch"],
+            },
+            session_id="reflection-session",
+            branch="reflection",
+        )
+    )
+    from sdo.agents.responder.memory_check import check_reflection_result
+
+    result = backend_type(executor=agent.executor).fresh(
+        worktree=root, prompt="reflect", idempotency_key="baseline-missing"
+    )
+    assert len(agent.requests) == 1
+    assert result.learning_decision == "sdk_gap"
+    assert result.sdk_gaps[-1].primitive == "controller.healthy_baseline"
+    assert result.sdk_gaps[-1].reason == "detector withheld: no healthy baseline"
+    assert result.sdk_gaps[-1].resources[0].name == "front"
+    assert not (root / ".sdo/diagnostics/detectors/incidents/routing-relations/detector.go").exists()
+    assert (root / ".sdo/diagnostics/detectors/incidents/cache/detector.go").exists() == accepted_detector
+    assert not result.playbook_ids
+    assert not (root / ".sdo/playbooks/service-targetport-mismatch/mitigate.go").exists()
+    checked = check_reflection_result(root, result.to_result(), 120)
+    assert checked.exit_code == 0, checked.stdout + checked.stderr
+
+
+def test_withheld_proposal_still_requires_a_passing_final_check(learned_reflection: Path) -> None:
+    import shutil
+
+    from sdo.agents.responder.memory_check import check_reflection_result
+
+    root = learned_reflection
+    shutil.rmtree(Path(os.environ["SDO_CAPTURED_CORPUS_DIR"]) / "healthy")
+
+    def check(root, decision, timeout):
+        if decision.learning_decision == "sdk_gap":
+            # The real validator must still reject the final checkout.
+            (root / ".sdo/notes.txt").write_text("not an owned artifact\n")
+        return check_reflection_result(root, decision, timeout)
+
+    agent = ScriptedAgent(
+        lambda _: reply(
+            "codex",
+            {
+                "summary": "learned",
+                "learning_decision": "updated",
+                "proposed_artifact_ids": ["service-targetport-mismatch"],
+            },
+            session_id="reflection-session",
+            branch="reflection",
+        )
+    )
+    with pytest.raises(RuntimeError, match="layout.unknown-path"):
+        CodexSessionBackend(executor=agent.executor, memory_checker=check).fresh(
+            worktree=root, prompt="reflect", idempotency_key="failed-fallback"
+        )
+    assert len(agent.requests) == 4

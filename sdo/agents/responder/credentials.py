@@ -5,22 +5,15 @@ from __future__ import annotations
 import os
 import shutil
 from pathlib import Path
-from types import MappingProxyType
 
 #: The skills shipped with SDO: ``sdo/skills`` in the repository and in the agent image.
-SKILLS_ROOT = Path(__file__).resolve().parents[2] / "skills"
+from sdo.agents.code_paths import AGENT_SKILLS as AGENT_SKILLS
+from sdo.agents.code_paths import SKILLS_ROOT as SKILLS_ROOT
+from sdo.agents.code_paths import skills_for_role as skills_for_role
 
 #: The skills each agent worker installs into its CLI home. The registration
 #: manifests (``sdo/agents/registrations``) are protobuf ``AgentRegistration``
 #: messages with no skills field, so the list is a per-worker constant here.
-AGENT_SKILLS = MappingProxyType(
-    {
-        "responder": ("sdo-memory", "sdo-incident-response"),
-        "reflector": ("sdo-memory", "sdo-detector-authoring", "sdo-playbook-authoring"),
-        "health-judge": ("sdo-memory", "sdo-detector-authoring", "sdo-playbook-authoring"),
-        "deployer": ("sdo-memory",),
-    }
-)
 
 
 def install_skills(destination: Path, skills: tuple[str, ...], *, skills_root: Path = SKILLS_ROOT) -> None:

@@ -28,6 +28,8 @@ const (
 // KubernetesJobDispatcher adapts the incident protocol to the shared,
 // implementation-neutral worker Job transport.
 type KubernetesJobDispatcher struct {
+	CoverageProvider CoverageProvider
+
 	Standby *worker_registry.StandbyPool
 	// AcceptedRepository is the durable broker-owned checkout used for trust.
 	// Proposal checkouts belong to individual incidents and may be retired.
@@ -105,17 +107,21 @@ func (d KubernetesJobDispatcher) PrepareDispatch(ctx context.Context, request In
 			return IncidentRequest{}, fmt.Errorf("get existing agent request ConfigMap: %w", err)
 		}
 	}
+	coverage := d.CoverageProvider
+	if coverage == nil {
+		coverage = goCodePathCoverage{}
+	}
 	if d.LoopFactory != nil {
 		if loop := d.LoopFactory(request); loop != nil {
 			trust, err := d.programTrust(ctx, request)
 			if err != nil {
 				return IncidentRequest{}, err
 			}
-			request = loop.prepareDispatch(ctx, request, trust)
+			request = loop.prepareDispatch(ctx, request, trust, coverage)
 		}
 	}
 	if request.PlaybookCoverage == nil {
-		request.PlaybookCoverage = buildPlaybookCoverage(request.Findings, nil, nil, nil)
+		request.PlaybookCoverage = coverage.Coverage(request.Findings, nil, nil, nil)
 	}
 	var snapshots []*contracts.OperationalMemorySnapshot
 	if d.RequireMemorySnapshot && d.Catalog == nil {
@@ -138,7 +144,7 @@ func (d KubernetesJobDispatcher) PrepareDispatch(ctx context.Context, request In
 
 // prepareDispatch snapshots diagnosis and its coverage together; the factory
 // may already have exposed this loop to the controller's observation goroutine.
-func (l *ResponderLoop) prepareDispatch(ctx context.Context, request IncidentRequest, trust map[string]ProgramTrust) IncidentRequest {
+func (l *ResponderLoop) prepareDispatch(ctx context.Context, request IncidentRequest, trust map[string]ProgramTrust, coverage CoverageProvider) IncidentRequest {
 	l.operationMu.Lock()
 	defer l.operationMu.Unlock()
 	l.mu.Lock()
@@ -148,7 +154,7 @@ func (l *ResponderLoop) prepareDispatch(ctx context.Context, request IncidentReq
 	defer func() { l.capturePhase = "" }()
 	request.InitialProgramRuns = l.diagnose(ctx, l.findings)
 	fillProgramRevisions(ctx, request.InitialProgramRuns, request.RepositoryWorktree, request.SourceCommit)
-	request.PlaybookCoverage = buildPlaybookCoverage(request.Findings, request.InitialProgramRuns, l.lastDiagnosisView, trust)
+	request.PlaybookCoverage = coverage.Coverage(request.Findings, request.InitialProgramRuns, l.lastDiagnosisView, trust)
 	request.MaxResponseLoops = l.MaxBatches
 	return request
 }

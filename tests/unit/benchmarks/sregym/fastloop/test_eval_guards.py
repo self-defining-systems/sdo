@@ -93,7 +93,7 @@ def test_real_setup_ownership_shapes_are_admitted():
         validate_setup_commit("responder", "initial", "passed", [".sdo/rendered/lock.json"])
 
 
-def test_stabilization_restores_once_then_fails_without_injecting():
+def test_stabilization_observes_until_deadline_then_fails_without_injecting():
     from benchmarks.sregym.adapter.eval_guards import StabilizationError, wait_for_proof
 
     class Clock:
@@ -106,18 +106,15 @@ def test_stabilization_restores_once_then_fails_without_injecting():
             self.now += seconds
 
     clock = Clock()
-    restores = []
     samples = []
     with pytest.raises(StabilizationError):
         wait_for_proof(
             lambda: {"passed": False, "reason": "pending"},
-            lambda: restores.append("app-only"),
             samples.append,
             timeout_seconds=5,
             monotonic=clock.monotonic,
             sleep=clock.sleep,
         )
-    assert restores == ["app-only"]
     assert clock.now == 5
     assert samples[-1]["passed"] is False
 
@@ -586,7 +583,7 @@ def test_restore_rejects_sealed_manifest_for_another_object(tmp_path):
         accepted_restore_baselines(tmp_path, (ApplicationBaseline("app", []),))
 
 
-def test_stabilization_rejects_late_success_and_does_not_renew_retry_budget():
+def test_stabilization_rejects_late_success_and_does_not_renew_budget():
     from benchmarks.sregym.adapter.eval_guards import StabilizationError, wait_for_proof
 
     now = [0.0]
@@ -599,10 +596,35 @@ def test_stabilization_rejects_late_success_and_does_not_renew_retry_budget():
     with pytest.raises(StabilizationError):
         wait_for_proof(
             slow_sample,
-            lambda: None,
             records.append,
             timeout_seconds=5,
             monotonic=lambda: now[0],
             sleep=lambda seconds: None,
         )
     assert not records[-1]["passed"]
+
+
+def test_replaced_pod_under_unchanged_template_is_named_as_readiness_loss_not_rollout(monkeypatch):
+    """Lane 52: a responder replaced the only pod; the ReplicaSet and template never changed."""
+    from benchmarks.sregym.fastloop import admission
+
+    workload = {
+        "kind": "Deployment",
+        "metadata": {"name": "currency", "generation": 1},
+        "spec": {"replicas": 1, "selector": {"matchLabels": {"app": "currency"}}},
+        "status": {"observedGeneration": 1, "replicas": 1, "updatedReplicas": 1},
+    }
+    pod = {
+        "kind": "Pod",
+        "metadata": {"uid": "new", "name": "currency-z4xmb", "labels": {"app": "currency"}},
+        "status": {"phase": "Pending", "conditions": [{"type": "Ready", "status": "False"}]},
+    }
+    monkeypatch.setattr(
+        admission, "kubectl", lambda *a, **kw: SimpleNamespace(stdout=json.dumps({"items": [workload, pod]}))
+    )
+    with pytest.raises(ValueError, match="workload not Ready: Deployment/currency") as refused:
+        admission.workload_identity(Path("unused"), "any-app")
+    message = str(refused.value)
+    assert "rollout not complete" not in message
+    assert "ready 0/1" in message
+    assert "currency-z4xmb Pending" in message

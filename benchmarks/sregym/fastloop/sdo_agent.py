@@ -25,21 +25,27 @@ from benchmarks.sregym.adapter import (
     STRICT_RECEIPT_FILENAME,
     Clock,
     ClusterOps,
+    FollowupClosureTimeout,
     PersistentState,
     StageInputs,
     drain_pending_incident,
     pause_for_recovery,
     run_persistent_stage,
 )
-from benchmarks.sregym.fastloop.loop import AgentOutcome, InjectionWindow
-from benchmarks.sregym.fastloop.records import AgentName, TokenCounts
+from benchmarks.sregym.fastloop.loop import AgentOutcome, InjectionWindow, RecoveryWaitTimeout
+from benchmarks.sregym.fastloop.records import AgentName, PostClosureWait, TokenCounts
 from benchmarks.sregym.fastloop.replay import CheckpointStore, capture_checkpoints
 from benchmarks.sregym.protocol import receipt_resolution
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from benchmarks.sregym.adapter import DeployedLifecycle, DeployedLifecycleContext, RuntimeConfig
+    from benchmarks.sregym.adapter import (
+        DeployedLifecycle,
+        DeployedLifecycleContext,
+        FollowupClosureWait,
+        RuntimeConfig,
+    )
 
 
 @dataclass(frozen=True)
@@ -432,7 +438,7 @@ class SdoPersistentAgent:
             return document if isinstance(document, dict) else {}
         return {}
 
-    def prepare_recovery(self, outcome: AgentOutcome | None) -> None:
+    def prepare_recovery(self, outcome: AgentOutcome | None) -> PostClosureWait | None:
         """Leave incident intake paused throughout harness recovery and its baseline check."""
 
         settings = self._settings
@@ -440,12 +446,16 @@ class SdoPersistentAgent:
         record = state.controllers.get(settings.namespace)
         if record is None or record.pending is not None:
             raise RuntimeError("eval: recovery requires a recorded controller with no pending incident closure")
-        pause_for_recovery(
-            self._ops,
-            record.control_namespace,
-            incident_id=outcome.incident_id if outcome is not None else None,
-            clock=self._clock,
-        )
+        try:
+            wait = pause_for_recovery(
+                self._ops,
+                record.control_namespace,
+                incident_id=outcome.incident_id if outcome is not None else None,
+                clock=self._clock,
+            )
+        except FollowupClosureTimeout as exc:
+            raise RecoveryWaitTimeout(_post_closure_wait(exc.wait), str(exc)) from exc
+        return _post_closure_wait(wait) if wait is not None else None
 
     def close(self) -> None:
         """The controller keeps running for the next loop; ``fastloop down`` stops it."""
@@ -466,3 +476,13 @@ class SdoPersistentAgent:
         if not isinstance(items, list):
             raise RuntimeError("worker ConfigMap listing omitted items")
         capture_checkpoints(CheckpointStore(self._settings.results_dir), index, incident_id, receipt_dir, items)
+
+
+def _post_closure_wait(wait: FollowupClosureWait) -> PostClosureWait:
+    return PostClosureWait(
+        graded_incident_id=wait.graded_incident_id,
+        followup_incident_ids=list(wait.followup_incident_ids),
+        waited_seconds=round(wait.waited_seconds, 3),
+        bound_seconds=wait.bound_seconds,
+        closed=wait.closed,
+    )

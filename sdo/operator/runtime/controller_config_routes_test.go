@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"google.golang.org/protobuf/reflect/protoreflect"
-	"google.golang.org/protobuf/types/known/durationpb"
 
 	contractsv1alpha1 "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 )
@@ -20,7 +19,20 @@ func setField(config *contractsv1alpha1.ControllerConfig, field protoreflect.Fie
 		list := message.Mutable(field).List()
 		list.Append(protoreflect.ValueOfString("x=y"))
 	case field.Message() != nil:
-		message.Set(field, protoreflect.ValueOfMessage((&durationpb.Duration{Seconds: 7}).ProtoReflect()))
+		nested := message.Mutable(field).Message()
+		// Construct the descriptor's actual message type, including future
+		// structured config fields, instead of inserting a Duration into it.
+		for i := 0; i < nested.Descriptor().Fields().Len(); i++ {
+			child := nested.Descriptor().Fields().Get(i)
+			if child.Kind() == protoreflect.StringKind && !child.IsList() {
+				nested.Set(child, protoreflect.ValueOfString("value"))
+				break
+			}
+			if child.Kind() == protoreflect.Int64Kind {
+				nested.Set(child, protoreflect.ValueOfInt64(7))
+				break
+			}
+		}
 	case field.Kind() == protoreflect.StringKind:
 		message.Set(field, protoreflect.ValueOfString("value"))
 	case field.Kind() == protoreflect.BoolKind:

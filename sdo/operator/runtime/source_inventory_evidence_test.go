@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sdo.dev/operator/internal/testutil"
 	"strings"
 	"testing"
 	"time"
@@ -27,7 +28,7 @@ import (
 func gappedInventorySource(t *testing.T) (GitPlanSource, string, []*unstructured.Unstructured, []k8sruntime.Object) {
 	t.Helper()
 	repo := t.TempDir()
-	nativeGit(t, repo, "init", "-q")
+	testutil.InitGit(t, repo)
 	nativeGit(t, repo, "config", "user.email", "fixture@example.test")
 	nativeGit(t, repo, "config", "user.name", "Fixture")
 	declared, live := hotelInventory()

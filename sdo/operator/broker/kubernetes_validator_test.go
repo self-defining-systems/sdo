@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sdo.dev/operator/internal/testutil"
 	"strings"
 	"testing"
 	"time"
@@ -100,7 +101,8 @@ func TestKubernetesValidatorLogsToolchainStageTimings(t *testing.T) {
 func TestKubernetesValidatorTreeCheckUsesScratchWithReadOnlyCandidate(t *testing.T) {
 	repository := t.TempDir()
 	scratch := t.TempDir()
-	for _, args := range [][]string{{"init", "-q", repository}, {"-C", repository, "config", "user.email", "test@example.invalid"}} {
+	testutil.InitGit(t, repository)
+	for _, args := range [][]string{{"-C", repository, "config", "user.email", "test@example.invalid"}} {
 		if output, err := exec.Command("git", args...).CombinedOutput(); err != nil {
 			t.Fatalf("git setup %v: %v: %s", args, err, output)
 		}

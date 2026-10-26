@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os/exec"
+	"sdo.dev/operator/internal/testutil"
 	"strings"
 	"testing"
 
@@ -15,7 +16,7 @@ func TestOperatorImportContract(t *testing.T) {
 	for _, name := range []string{"valid", "missing operator corpus", "claims capture", "health detector", "responder import", "validator rejects"} {
 		t.Run(name, func(t *testing.T) {
 			root := copyParityTree(t)
-			runGit(t, root, "init", "-q")
+			testutil.InitGit(t, root)
 			runGit(t, root, "config", "user.name", "T")
 			runGit(t, root, "config", "user.email", "t@example.com")
 			runGit(t, root, "add", "-A")

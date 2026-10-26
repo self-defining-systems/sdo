@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sdo.dev/operator/internal/testutil"
 	"strings"
 	"testing"
 
@@ -15,7 +16,7 @@ import (
 
 func TestAcceptedCorpusUsesAcceptedBaseCommit(t *testing.T) {
 	root := copyParityTree(t)
-	runGit(t, root, "init", "-q")
+	testutil.InitGit(t, root)
 	runGit(t, root, "config", "user.name", "T")
 	runGit(t, root, "config", "user.email", "t@example.com")
 	parityAcceptedProgram(t, root)
@@ -47,7 +48,7 @@ func TestSessionFixtureRequiresAnIndependentHealthyReference(t *testing.T) {
 	for _, name := range []string{"missing directory", "absent directory", "file instead of directory", "missing incident", "empty provisioned context", "healthy reference only"} {
 		t.Run(name, func(t *testing.T) {
 			root := copyParityTree(t)
-			runGit(t, root, "init", "-q")
+			testutil.InitGit(t, root)
 			runGit(t, root, "config", "user.name", "T")
 			runGit(t, root, "config", "user.email", "t@example.com")
 			runGit(t, root, "add", "-A")

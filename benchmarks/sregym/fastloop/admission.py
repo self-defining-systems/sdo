@@ -15,10 +15,12 @@ from benchmarks.sregym.adapter import (
     assert_host_disk_headroom,
     assert_lane_resources,
     assert_stable_workloads,
+    closure_pending,
     controller_proof,
     kubectl,
     qualified_scenarios,
     setup_lineage,
+    shell_runner_proof,
     wait_for_proof,
 )
 from benchmarks.sregym.fastloop.clean_start import assert_clean_baseline
@@ -56,25 +58,38 @@ def workload_identity(kubeconfig: Path, namespace: str) -> dict[str, Any]:
         desired = spec.get("replicas", 1)
         if row["kind"] == "DaemonSet":
             desired = status.get("desiredNumberScheduled", 0)
-            complete = (
-                status.get("updatedNumberScheduled") == desired
-                and status.get("currentNumberScheduled") == desired
-                and status.get("numberReady") == desired
+            updated, current, ready = (
+                status.get("updatedNumberScheduled"),
+                status.get("currentNumberScheduled"),
+                status.get("numberReady", 0),
             )
         else:
-            complete = (
-                status.get("updatedReplicas") == desired
-                and status.get("replicas") == desired
-                and status.get("readyReplicas") == desired
+            updated, current, ready = (
+                status.get("updatedReplicas"),
+                status.get("replicas"),
+                status.get("readyReplicas", 0),
             )
-            if row["kind"] == "StatefulSet":
-                complete = complete and status.get("currentRevision") == status.get("updateRevision")
+        observed, generation = status.get("observedGeneration", -1), metadata.get("generation", 0)
+        label = f"{row['kind']}/{metadata['name']}"
+        # A rollout is a template change still in progress; an unchanged
+        # template whose pods lost readiness (crash, eviction, responder
+        # restart) is a different cause and is named as such.
         if (
-            not complete
-            or status.get("observedGeneration", -1) < metadata.get("generation", 0)
-            or len(selected) != desired
+            observed < generation
+            or updated != desired
+            or current != desired
+            or (row["kind"] == "StatefulSet" and status.get("currentRevision") != status.get("updateRevision"))
         ):
-            raise ValueError(f"restore invariant: rollout not complete: {row['kind']}/{metadata['name']}")
+            raise ValueError(
+                f"restore invariant: rollout not complete: {label} "
+                f"(generation {generation} observed {observed}; updated {updated}/{desired}; current {current})"
+            )
+        if ready != desired or len(selected) != desired:
+            pods = ", ".join(
+                f"{pod['metadata'].get('name', pod['metadata'].get('uid'))} {pod.get('status', {}).get('phase')}"
+                for pod in selected
+            )
+            raise ValueError(f"restore invariant: workload not Ready: {label} (ready {ready}/{desired}; pods: {pods})")
         if desired == 0:
             raise ValueError(f"restore invariant: installed workload scaled to zero: {row['kind']}/{metadata['name']}")
         if not selected or any(
@@ -102,6 +117,16 @@ def workload_identity(kubeconfig: Path, namespace: str) -> dict[str, Any]:
     return workloads
 
 
+def active_incident(state: dict[str, Any]) -> str | None:
+    """Name controller incident work, so a workload refusal shows SDO acted before injection."""
+    if not closure_pending(state):
+        return None
+    request = state.get("incident_request")
+    incident = request.get("incident_id") if isinstance(request, dict) else None
+    keys = ", ".join(key for key in ("incident_open", "incident_request", "pending_closure") if state.get(key))
+    return f"{incident or 'unidentified'} ({keys})"
+
+
 class LaneAdmission:
     def __init__(
         self,
@@ -111,11 +136,15 @@ class LaneAdmission:
         directory: Path,
         *,
         timeout_seconds: float = 300,
+        code_path: str = "go",
         install_config: NativeInstallConfig | None = None,
         synchronize: Callable[[], None] | None = None,
         progress: Callable[..., None] | None = None,
         before_proof: Callable[[str, set[str]], None] | None = None,
     ) -> None:
+        if code_path not in {"go", "shell"}:
+            raise ValueError(f"eval: unsupported admission code path {code_path!r}")
+        self.code_path = code_path
         self.environment, self.worker, self.ops = environment, worker, ops
         self.directory = directory
         self.timeout_seconds = timeout_seconds
@@ -128,6 +157,10 @@ class LaneAdmission:
         self._sequence = 0
 
     def _policy(self) -> None:
+        if self.code_path == "shell":
+            self.required_detectors = {"shell.detectors"}
+            self.required_scenarios = set()
+            return
         root = self.environment.workspace / ".sdo/diagnostics"
         self.required_detectors.update(path.parent.name for path in (root / "detectors/health").glob("*/manifest.yaml"))
         self.required_scenarios = set()
@@ -146,6 +179,40 @@ class LaneAdmission:
         address = ipaddress.ip_address(pod["status"]["podIP"])
         host = f"[{address}]" if address.version == 6 else str(address)
         code = f"import urllib.request; print(urllib.request.urlopen('http://{host}:8080/v1/windows',timeout=5).read().decode())"
+        return json.loads(
+            kubectl(
+                ["exec", "job/sdo-controller-run", "-c", "controller", "--", "python3", "-c", code],
+                namespace=control,
+                kubeconfig=env.kubeconfig,
+            ).stdout
+        )
+
+    def _shell_results(self, control: str) -> dict[str, Any]:
+        """Read runner health and executable policy from the controller's accepted HEAD."""
+        env = self.environment
+        job = json.loads(
+            kubectl(
+                ["get", "job/sdo-controller-run", "-o", "json"], namespace=control, kubeconfig=env.kubeconfig
+            ).stdout
+        )
+        containers = job["spec"]["template"]["spec"]["containers"]
+        controller = next(row for row in containers if row["name"] == "controller")
+        args = controller["args"]
+        repository = args[args.index("--app") + 1]
+        if not repository.startswith("/"):
+            raise ValueError("eval: installed accepted repository path must be absolute")
+        code = (
+            "import json, subprocess, urllib.request; "
+            f"root={repository!r}; "
+            "git=lambda *args: subprocess.check_output(['git','-C',root,*args]); "
+            "head=git('rev-parse','HEAD').decode().strip(); "
+            "entries=git('ls-tree','-r','-z',head,'--','.sdo/diagnostics/detectors').split(bytes([0])); "
+            "scripts=[entry.split(bytes([9]),1)[1].decode() for entry in entries "
+            "if entry.startswith(b'100755 blob ') and entry.endswith(b'.sh')]; "
+            "report=json.load(urllib.request.urlopen('http://sdo-shell-detectors:8080/results',timeout=5)); "
+            "assert git('rev-parse','HEAD').decode().strip()==head, 'accepted HEAD changed during shell observation'; "
+            "print(json.dumps({'accepted_commit':head,'scripts':scripts,'report':report}))"
+        )
         return json.loads(
             kubectl(
                 ["exec", "job/sdo-controller-run", "-c", "controller", "--", "python3", "-c", code],
@@ -187,18 +254,38 @@ class LaneAdmission:
         self._sequence += 1
         path = self.directory / f"stabilization-{self._sequence:03d}.jsonl"
 
+        def stable_workloads() -> None:
+            try:
+                assert_stable_workloads(self._identity or {}, workload_identity(env.kubeconfig, env.namespace))
+            except ValueError as exc:
+                incident = active_incident(self.ops.runtime_state(control))
+                if incident is None:
+                    raise
+                raise ValueError(f"{exc}; SDO incident work active before injection: {incident}") from exc
+
         def sample() -> dict[str, Any]:
             assert_clean_baseline(env.kubeconfig, namespace=env.namespace)
             if self.progress:
                 self.progress("probe_placement", namespace="sregym")
-            assert_stable_workloads(self._identity or {}, workload_identity(env.kubeconfig, env.namespace))
+            stable_workloads()
             proof = controller_proof(self.ops.runtime_state(control), self.required_detectors, boundary)
-            try:
-                windows = self._windows(control)
-                proof["qualified_scenarios"] = qualified_scenarios(windows, self.required_scenarios)
-            except (RuntimeError, ValueError, KeyError) as exc:
-                proof.update(qualified_scenarios=False, prober_error=str(exc))
-            proof["passed"] = proof["passed"] and proof["qualified_scenarios"]
+            proof["code_path"] = self.code_path
+            if self.code_path == "shell":
+                try:
+                    runner = shell_runner_proof(
+                        self._shell_results(control), boundary, datetime.now(timezone.utc).isoformat()
+                    )
+                except (RuntimeError, ValueError, KeyError, IndexError, StopIteration) as exc:
+                    runner = {"passed": False, "reason": str(exc)}
+                proof["shell_runner"] = runner
+                proof["passed"] = proof["passed"] and runner["passed"]
+            else:
+                try:
+                    windows = self._windows(control)
+                    proof["qualified_scenarios"] = qualified_scenarios(windows, self.required_scenarios)
+                except (RuntimeError, ValueError, KeyError) as exc:
+                    proof.update(qualified_scenarios=False, prober_error=str(exc))
+                proof["passed"] = proof["passed"] and proof["qualified_scenarios"]
             if proof["passed"]:
                 traffic = self.worker.request(
                     "baseline_oracle",
@@ -208,7 +295,7 @@ class LaneAdmission:
                 )
                 proof["independent_traffic"] = traffic
                 proof["passed"] = traffic.get("success") is True
-                assert_stable_workloads(self._identity or {}, workload_identity(env.kubeconfig, env.namespace))
+                stable_workloads()
             proof["required_scenarios"] = sorted(self.required_scenarios)
             return proof
 
@@ -216,18 +303,8 @@ class LaneAdmission:
             with path.open("a") as output:
                 output.write(json.dumps(proof) + "\n")
 
-        def restore() -> None:
-            from benchmarks.sregym.fastloop.baseline_recovery import KubectlApplicationCluster
-            from benchmarks.sregym.fastloop.reset import RestoreChecks, restore_application
-
-            self.check_resources("restore")
-            checks = RestoreChecks(env)
-            checks.prepare(fresh=False)
-            restore_application(env, KubectlApplicationCluster(env.kubeconfig), self.worker, checks=checks)
-            self._identity = workload_identity(env.kubeconfig, env.namespace)
-
         proof = wait_for_proof(
-            sample, restore, record, timeout_seconds=self.timeout_seconds, deadline=deadline, monotonic=time.monotonic
+            sample, record, timeout_seconds=self.timeout_seconds, deadline=deadline, monotonic=time.monotonic
         )
         if self.progress:
             self.progress("stabilization", evidence=str(path))

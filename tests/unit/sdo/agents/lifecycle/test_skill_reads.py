@@ -8,6 +8,7 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
+from sdo.agents.code_paths import SKILLS_ROOT
 from sdo.agents.lifecycle.agents import _command_escapes_repository
 
 REPOSITORY = Path("/work/app")
@@ -97,3 +98,28 @@ def test_skill_allowance_does_not_widen_other_read_or_write_access(command: str)
 )
 def test_other_paths_stay_outside_the_repository(command: str) -> None:
     assert _command_escapes_repository(command, REPOSITORY)
+
+
+@pytest.mark.parametrize(
+    "relative", ["sdo-shell-authoring/SKILL.md", "sdo-memory/SKILL.md", "sdo-detector-authoring/references/sdk.md"]
+)
+def test_shipped_skill_prompt_paths_are_readable_with_a_private_turn_home(relative: str) -> None:
+    assert not _command_escapes_repository(
+        f"cat {SKILLS_ROOT / relative}",
+        REPOSITORY,
+        skill_directories={"CODEX_HOME": Path("/sdo/codex-homes/turn-owned/skills")},
+    )
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "cat {root}/../code_paths.py",
+        "cat {root}-other/auth.json",
+        "sed -i x {root}/sdo-shell-authoring/SKILL.md",
+        "echo changed > {root}/sdo-shell-authoring/SKILL.md",
+        "find {root} -exec cat /work/verdict.json ;",
+    ],
+)
+def test_shipped_skill_root_remains_read_only_and_narrow(command: str) -> None:
+    assert _command_escapes_repository(command.format(root=SKILLS_ROOT), REPOSITORY, skill_directories={})

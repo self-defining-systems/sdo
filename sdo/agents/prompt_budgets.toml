@@ -210,3 +210,7 @@ reason = "Measured production rendering 1264 Unicode characters across three-fau
 [tool_stdout.verify]
 max_chars = 1400
 reason = "Measured production rendering 1125 Unicode characters across three-fault and 100-finding fixtures; 10 percent plus 128 characters of path/identity headroom."
+
+[skills.sdo-shell-authoring]
+max_chars = 1750
+reason = "Measured shell authoring guidance 1465 characters; bounded general principles and ownership guidance."
