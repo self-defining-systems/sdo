@@ -187,6 +187,36 @@ func (c *KubernetesCache) Start(ctx context.Context) {
 	c.factory.Start(running.Done())
 }
 
+// Observe brings observation up to date after a maintenance interval that
+// stopped it: a fresh generation is listed, and a cache never started is
+// started. It waits for the initial list.
+func (c *KubernetesCache) Observe(start, ctx context.Context) error {
+	return c.observe(start, ctx, false)
+}
+
+// ObserveRunning is Observe for an interval that left the informers running,
+// so their stores are still current. It only waits when they really are
+// running: a cache that was never started (the controller launched inside a
+// baseline-preserving pause) must be started, since informers that were never
+// started never sync.
+func (c *KubernetesCache) ObserveRunning(start, ctx context.Context) error {
+	return c.observe(start, ctx, true)
+}
+
+func (c *KubernetesCache) observe(start, ctx context.Context, keepRunning bool) error {
+	c.informerMu.RLock()
+	running, used := c.cancel != nil, c.parent != nil
+	c.informerMu.RUnlock()
+	switch {
+	case keepRunning && running:
+		return c.WaitForSync(ctx)
+	case used:
+		return c.Resync(ctx)
+	}
+	c.Start(start)
+	return c.WaitForSync(ctx)
+}
+
 // Stop ends observation, for example while the application is intentionally
 // absent, without discarding pending watch events.
 func (c *KubernetesCache) Stop() {

@@ -73,3 +73,64 @@ func TestInformerResourcesCoverEveryInformer(t *testing.T) {
 		}
 	}
 }
+
+// A controller launched inside a baseline-preserving pause never starts its
+// informers. Resume must start them rather than wait for a sync that cannot
+// happen (h9.4 lane 50 row 005: resume timed out every minute, forever).
+func TestKubernetesCacheObserveRunningStartsACacheThatWasNeverStarted(t *testing.T) {
+	cache, err := NewKubernetesCache(KubernetesCacheConfig{Namespace: "demo", Client: fake.NewSimpleClientset(), TrackDrift: true}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	defer cache.Stop()
+	if err := cache.ObserveRunning(ctx, ctx); err != nil {
+		t.Fatalf("resume of a never-started cache: %v", err)
+	}
+}
+
+func TestKubernetesCacheObserveRunningKeepsRunningInformers(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	cache, err := NewKubernetesCache(KubernetesCacheConfig{Namespace: "demo", Client: client, TrackDrift: true}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	cache.Start(ctx)
+	defer cache.Stop()
+	if err := cache.WaitForSync(ctx); err != nil {
+		t.Fatal(err)
+	}
+	before := len(client.Actions())
+	if err := cache.ObserveRunning(ctx, ctx); err != nil {
+		t.Fatal(err)
+	}
+	if after := len(client.Actions()); after != before {
+		t.Fatalf("a preserved interval relisted: %d -> %d API calls", before, after)
+	}
+}
+
+func TestKubernetesCacheObserveRelistsAfterStop(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	cache, err := NewKubernetesCache(KubernetesCacheConfig{Namespace: "demo", Client: client, TrackDrift: true}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	cache.Start(ctx)
+	if err := cache.WaitForSync(ctx); err != nil {
+		t.Fatal(err)
+	}
+	cache.Stop()
+	before := len(client.Actions())
+	if err := cache.Observe(ctx, ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer cache.Stop()
+	if len(client.Actions()) == before {
+		t.Fatal("a stopped cache was not relisted")
+	}
+}

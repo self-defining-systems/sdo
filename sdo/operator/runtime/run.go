@@ -878,7 +878,6 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	// applied is the mode the controller currently operates under. It lags
 	// desired only while a resume is waiting for a fresh application cache.
 	applied := desired
-	cacheStarted := false
 	if err := encoder.Encode(desired.Record()); err != nil {
 		fmt.Fprintln(stderr, err)
 	}
@@ -999,7 +998,6 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	}
 	if !desired.Paused {
 		kubernetesCache.Start(runCtx)
-		cacheStarted = true
 		startSyncCtx, cancelStartSync := context.WithTimeout(runCtx, startupSyncTimeout)
 		err := kubernetesCache.WaitForSync(startSyncCtx)
 		cancelStartSync()
@@ -1052,20 +1050,13 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		preserved := wasPaused && applied.PreserveBaseline
 		syncCtx, cancelSync := context.WithTimeout(runCtx, *resumeSyncTimeout)
 		defer cancelSync()
+		// Informers keep running through a generation-only acknowledgement and
+		// through a baseline-preserving pause, so their stores stay current.
 		var syncErr error
-		if !wasPaused {
-			// A generation-only acknowledgement does not interrupt observation.
-			syncErr = kubernetesCache.WaitForSync(syncCtx)
-		} else if preserved {
-			// Observation continued while evaluation was paused. Keep watch
-			// changes and the healthy baseline for the first resumed step.
-			syncErr = kubernetesCache.WaitForSync(syncCtx)
-		} else if cacheStarted {
-			syncErr = kubernetesCache.Resync(syncCtx)
+		if !wasPaused || preserved {
+			syncErr = kubernetesCache.ObserveRunning(runCtx, syncCtx)
 		} else {
-			kubernetesCache.Start(runCtx)
-			cacheStarted = true
-			syncErr = kubernetesCache.WaitForSync(syncCtx)
+			syncErr = kubernetesCache.Observe(runCtx, syncCtx)
 		}
 		if syncErr != nil {
 			if runCtx.Err() != nil {
