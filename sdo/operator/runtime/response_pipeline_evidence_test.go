@@ -88,7 +88,7 @@ func TestDeterministicResponseStageReflectionReceivesVerifiedRepairCauses(t *tes
 		t.Fatalf("verified deterministic repairs lost before reflection: %v", derived.Record)
 	}
 	// A failed peer must not hide a repaired cause, and the controller's stage
-	// evidence must work without responder-only plan/apply tool calls.
+	// evidence must retain real plan/apply calls without a responder session.
 	failed := proto.Clone(derived.Record).(*contracts.OutcomeRecord)
 	failed.Classification = "failed"
 	if got := partialRepairCauses(failed); len(got) != 2 {
@@ -146,5 +146,93 @@ func TestDeterministicResponseStageWaitsForPostRolloutHealthObservation(t *testi
 	}
 	if calls != 0 || len(state.Findings) != 0 {
 		t.Fatalf("handed off while repaired workloads' health sample was clearing: calls=%d stages=%v", calls, state.PriorStages)
+	}
+}
+
+func TestDeterministicResponseStageCannotClearWithoutIndependentProof(t *testing.T) {
+	finding := sdk.Finding{DetectorID: "incident", Fingerprint: "covered", Status: sdk.FindingActive}
+	makeAttempt := func() *contracts.StageMitigation {
+		return &contracts.StageMitigation{PlaybookId: "repair", ProgramRevision: "revision", ApplyReceipt: &contracts.PlanApplication{Applied: true, VerificationCompleted: true, VerificationPassed: true}, PostApplyDiagnose: &contracts.ProgramRun{ProgramId: "repair", ProgramRevision: "revision", Verdict: &contracts.Verdict{Result: contracts.Verdict_RESULT_NO_MATCH}}}
+	}
+	cases := map[string]func(*contracts.StageMitigation, *ToolResponse){
+		"not-applied":     func(a *contracts.StageMitigation, _ *ToolResponse) { a.ApplyReceipt.Applied = false },
+		"dry-run":         func(a *contracts.StageMitigation, _ *ToolResponse) { a.ApplyReceipt.DryRun = true },
+		"rolled-back":     func(a *contracts.StageMitigation, _ *ToolResponse) { a.ApplyReceipt.RolledBack = true },
+		"unverified":      func(a *contracts.StageMitigation, _ *ToolResponse) { a.ApplyReceipt.VerificationPassed = false },
+		"not-observed":    func(a *contracts.StageMitigation, _ *ToolResponse) { a.ApplyReceipt.VerificationCompleted = false },
+		"rollback-error":  func(a *contracts.StageMitigation, _ *ToolResponse) { a.ApplyReceipt.RollbackError = "unconfirmed" },
+		"wrong-program":   func(a *contracts.StageMitigation, _ *ToolResponse) { a.PostApplyDiagnose.ProgramId = "peer" },
+		"wrong-revision":  func(a *contracts.StageMitigation, _ *ToolResponse) { a.PostApplyDiagnose.ProgramRevision = "peer" },
+		"diagnosis-error": func(a *contracts.StageMitigation, _ *ToolResponse) { a.PostApplyDiagnose.Error = "unavailable" },
+		"pending-rollout": func(a *contracts.StageMitigation, _ *ToolResponse) {
+			a.ApplyReceipt.RolloutPending = &contracts.RolloutPending{}
+		},
+		"apply-error":       func(a *contracts.StageMitigation, _ *ToolResponse) { a.ApplyReceipt.Error = "unconfirmed" },
+		"observation-error": func(a *contracts.StageMitigation, _ *ToolResponse) { a.Error = "unavailable" },
+		"still-match": func(a *contracts.StageMitigation, _ *ToolResponse) {
+			a.PostApplyDiagnose.Verdict.Result = contracts.Verdict_RESULT_MATCH
+		},
+		"unknown": func(a *contracts.StageMitigation, _ *ToolResponse) {
+			a.PostApplyDiagnose.Verdict.Result = contracts.Verdict_RESULT_UNKNOWN
+		},
+		"fresh-firing": func(_ *contracts.StageMitigation, r *ToolResponse) { r.Findings = []sdk.Finding{finding} },
+	}
+	state := &IncidentState{Findings: []sdk.Finding{finding}}
+	clearVerifiedStageTargets(state, makeAttempt(), []string{"covered"}, ToolResponse{})
+	if len(state.Findings) != 0 {
+		t.Fatal("positive control did not clear a verified finding")
+	}
+	for name, change := range cases {
+		t.Run(name, func(t *testing.T) {
+			attempt, response := makeAttempt(), ToolResponse{}
+			change(attempt, &response)
+			state := &IncidentState{Findings: []sdk.Finding{finding}}
+			clearVerifiedStageTargets(state, attempt, []string{"covered"}, response)
+			if len(state.Findings) != 1 {
+				t.Fatalf("%s erased an unverified finding", name)
+			}
+		})
+	}
+}
+
+func TestDeterministicResponseStageObservationBudgetPreservesUnresolvedHealth(t *testing.T) {
+	loop, state := pipelineTestLoop(t, false)
+	loop.Detectors = append(loop.Detectors, &pipelineLaggingHealthDetector{remaining: -1})
+	calls := 0
+	stage := &DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return loop }, RolloutTimeout: time.Millisecond, ObservationInterval: time.Millisecond}
+	if err := RunResponseStages(context.Background(), state, []ResponseStage{stage, clearingResponseStage{"agent", &calls}}); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 || len(state.PriorStages[0].RemainingFindingFingerprints) != 1 {
+		t.Fatalf("observation timeout lost unresolved health: calls=%d stages=%v", calls, state.PriorStages)
+	}
+}
+
+func TestDeterministicResponseStageRejoinReobservesRetainedIncidentFinding(t *testing.T) {
+	loop, state := pipelineTestLoop(t, true)
+	for i := range state.Request.Findings {
+		if state.Request.Findings[i].PrimaryResource.Kind == "Service" {
+			state.Request.Findings[i].Fingerprint = FindingFingerprint(state.Request.Findings[i])
+			state.Request.Findings[i].DetectorID = "incident.port"
+		}
+	}
+	state.Findings = append([]sdk.Finding(nil), state.Request.Findings...)
+	loop.Request = state.Request
+	var durable []byte
+	loop.saveToolState = func(_ context.Context, payload []byte) error { durable = append([]byte(nil), payload...); return nil }
+	if _, err := (&DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return loop }}).Run(context.Background(), state); err != nil {
+		t.Fatal(err)
+	}
+	fresh := NewResponderLoop(loop.Request, loop.Programs, loop.Provider, loop.Detectors, loop.Executor, 5)
+	fresh.ReadView = loop.ReadView
+	if err := fresh.restoreToolSnapshot(durable); err != nil {
+		t.Fatal(err)
+	}
+	replay := &IncidentState{Request: state.Request, Findings: append([]sdk.Finding(nil), state.Request.Findings...), Coverage: state.Coverage}
+	if _, err := (&DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return fresh }}).Run(context.Background(), replay); err != nil {
+		t.Fatal(err)
+	}
+	if len(replay.Findings) != 1 || len(fresh.PlanApplications()) != 0 {
+		t.Fatalf("rejoin resurrected stale repaired finding or repeated a write: findings=%v applications=%v", replay.Findings, fresh.PlanApplications())
 	}
 }

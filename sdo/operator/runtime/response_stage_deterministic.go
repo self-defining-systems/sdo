@@ -72,11 +72,30 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 	// Always reobserve after recovery. A recorded attempt is never replayed,
 	// including one interrupted between the write and its completed receipt.
 	if progress.Report != nil {
+		loop.operationMu.Lock()
+		loop.mu.Lock()
+		var selected []selectedPlan
+		for _, attempt := range report.Mitigations {
+			if attempt.GetResult() == "applied_cleared" && attempt.GetProgramRevision() == loop.programRevision(attempt.GetPlaybookId()) {
+				selected = append(selected, selectedPlan{programID: attempt.PlaybookId, revision: attempt.ProgramRevision, bindings: programBindingsState(attempt.Bindings)})
+			}
+		}
 		response := ToolResponse{}
-		loop.verify(ctx, nil, &response)
+		loop.verify(ctx, selected, &response)
 		updateStageFindings(state, response)
+		for _, attempt := range report.Mitigations {
+			for _, run := range response.ProgramRuns {
+				if attempt.GetResult() == "applied_cleared" && run.ProgramID == attempt.PlaybookId && run.ProgramRevision == attempt.ProgramRevision && run.Bindings.Equal(programBindingsState(attempt.Bindings)) {
+					fresh := proto.Clone(attempt).(*contracts.StageMitigation)
+					fresh.PostApplyDiagnose = programRunContract(run)
+					clearVerifiedStageTargets(state, fresh, attempt.ClearedFindingFingerprints, response)
+				}
+			}
+		}
+		loop.mu.Unlock()
+		loop.operationMu.Unlock()
 		if progress.Complete {
-			return report, nil
+			return report, save(true)
 		}
 	}
 	if state.Coverage == nil {
@@ -471,7 +490,7 @@ func recordStageFindingProgress(attempt *contracts.StageMitigation, covered []st
 // authored coverage. A fresh detector still reporting that fingerprint wins.
 func clearVerifiedStageTargets(state *IncidentState, attempt *contracts.StageMitigation, covered []string, observed ToolResponse) {
 	receipt := attempt.GetApplyReceipt()
-	if !receipt.GetApplied() || receipt.GetDryRun() || receipt.GetRolledBack() || receipt.GetRolloutPending() != nil || receipt.GetError() != "" || !receipt.GetVerificationCompleted() || !receipt.GetVerificationPassed() || attempt.GetError() != "" || attempt.GetPostApplyDiagnose().GetVerdict().GetResult() != contracts.Verdict_RESULT_NO_MATCH {
+	if !receipt.GetApplied() || receipt.GetDryRun() || receipt.GetRolledBack() || receipt.GetRolloutPending() != nil || receipt.GetError() != "" || receipt.GetRollbackError() != "" || !receipt.GetVerificationCompleted() || !receipt.GetVerificationPassed() || attempt.GetError() != "" || attempt.GetPostApplyDiagnose().GetError() != "" || attempt.GetPostApplyDiagnose().GetProgramId() != attempt.GetPlaybookId() || attempt.GetPostApplyDiagnose().GetProgramRevision() != attempt.GetProgramRevision() || !programBindingsState(attempt.GetBindings()).Equal(programBindingsState(attempt.GetPostApplyDiagnose().GetBindings())) || attempt.GetPostApplyDiagnose().GetVerdict().GetResult() != contracts.Verdict_RESULT_NO_MATCH {
 		return
 	}
 	clear := map[string]bool{}
