@@ -257,7 +257,7 @@ func TestControllerRecordsActivationBatchingAndClearingWithDispatchRelation(t *t
 	executePendingEffect(t, controller)
 	request := awaitRequest(t, dispatcher.requests)
 	awaitDispatchCompletionQueued(t, controller)
-	for second := 2; second < 6; second++ {
+	for second := 2; second < 21; second++ {
 		step(t, controller, second)
 	}
 
