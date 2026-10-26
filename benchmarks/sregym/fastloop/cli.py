@@ -1022,7 +1022,7 @@ def _reset(args: argparse.Namespace) -> int:
 
         prepare_dev_mount(mount, None if environment.app == "toy" else environment.sregym_dir, environment.run_dir)
     saved_toy = None
-    if environment.app == "toy":
+    if environment.app == "toy" and getattr(args, "restart_toy", True):
         from benchmarks.sregym.fastloop.toy_reset import ToyControllerTemplate
 
         saved_toy = ToyControllerTemplate.capture(environment)
@@ -1039,7 +1039,7 @@ def _reset(args: argparse.Namespace) -> int:
         environment.dev_mount = mount
         environment.dev_mount_snapshot = True
         environment.save()
-    if environment.app == "toy":
+    if environment.app == "toy" and getattr(args, "restart_toy", True):
         if saved_toy is not None:
             saved_toy.restart(environment)
         else:

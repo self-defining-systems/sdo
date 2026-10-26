@@ -41,7 +41,7 @@ class ToyWorker:
         if op == "clean_start":
             from benchmarks.sregym.fastloop.clean_start import remove_injected_objects
 
-            remove_injected_objects(env.kubeconfig)
+            remove_injected_objects(env.kubeconfig, only_namespace=env.namespace)
             return {"success": True}
         if op == "deploy":
             return {"deployed": False, "seconds": 0}
@@ -93,11 +93,6 @@ def cluster_name(args: Any) -> str:
 
 
 def up(args: Any) -> int:
-    from benchmarks.sregym.fastloop.baseline_recovery import (
-        KubectlApplicationCluster,
-        capture_application_baseline,
-        save_application_baseline,
-    )
     from benchmarks.sregym.fastloop.dev import prepare_dev_mount
     from benchmarks.sregym.fastloop.toy_cni import CALICO_IMAGES, install_calico
 
@@ -143,17 +138,7 @@ def up(args: Any) -> int:
     if cluster in clusters:
         raise ValueError(f"{cluster} already exists without this run directory; refusing to adopt it")
     config = prepare_dev_mount(worktree, None, run_dir)
-    build = run_dir / "image"
-    build.mkdir(exist_ok=True)
-    subprocess.run(
-        ["go", "build", "-buildvcs=false", "-trimpath", "-o", str(build / "toy"), str(APP / "main.go")],
-        check=True,
-        env={**os.environ, "CGO_ENABLED": "0", "GOMAXPROCS": "2", "GOFLAGS": "-p=2"},
-    )
-    shutil.copy(APP / "Dockerfile", build / "Dockerfile")
-    subprocess.run(
-        ["docker", "build", "--load", "--network=none", "--provenance=false", "-t", image, str(build)], check=True
-    )
+    build_image(run_dir, image)
     kubeconfig = run_dir / "kubeconfig"
     create_start = time.monotonic()
     subprocess.run(
@@ -186,6 +171,56 @@ def up(args: Any) -> int:
     images_loaded = time.monotonic()
     install_calico(kubeconfig, run_dir / "calico.yaml")
     loaded = time.monotonic()
+    env = prepare_application(run_dir, cluster, kubeconfig, worktree, images, image)
+    deployed = time.monotonic()
+    config = install_controller(env)
+    record_controller(env, config)
+    timing = {
+        "prepare": create_start - started,
+        "cluster_create": created - create_start,
+        "image_load": images_loaded - created,
+        "cni": loaded - images_loaded,
+        "application": deployed - loaded,
+        "controller": time.monotonic() - deployed,
+        "up_total": time.monotonic() - started,
+    }
+    (run_dir / "toy_timings.json").write_text(json.dumps(timing, indent=2) + "\n")
+    print(json.dumps(timing))
+    return 0
+
+
+def build_image(run_dir: Path, image: str) -> None:
+    """Build only the existing tiny, credential-free toy image."""
+    build = run_dir / "image"
+    build.mkdir(exist_ok=True)
+    subprocess.run(
+        ["go", "build", "-buildvcs=false", "-trimpath", "-o", str(build / "toy"), str(APP / "main.go")],
+        check=True,
+        env={**os.environ, "CGO_ENABLED": "0", "GOMAXPROCS": "2", "GOFLAGS": "-p=2"},
+    )
+    shutil.copy(APP / "Dockerfile", build / "Dockerfile")
+    subprocess.run(
+        ["docker", "build", "--load", "--network=none", "--provenance=false", "-t", image, str(build)], check=True
+    )
+
+
+def prepare_application(
+    run_dir: Path,
+    cluster: str,
+    kubeconfig: Path,
+    worktree: Path,
+    images: Images,
+    image: str,
+    *,
+    namespace: str = NAMESPACE,
+) -> FastloopEnvironment:
+    """Install the existing toy fixture on an already prepared real lane."""
+    from benchmarks.sregym.fastloop.baseline_recovery import (
+        KubectlApplicationCluster,
+        capture_application_baseline,
+        save_application_baseline,
+    )
+
     workspace = run_dir / "application_workspace"
     workspace.mkdir()
     shutil.copytree(APP / "kubernetes", workspace / "kubernetes")
@@ -228,15 +263,15 @@ def up(args: Any) -> int:
     seed = subprocess.run(
         ["git", "-C", str(workspace), "rev-parse", "HEAD"], check=True, capture_output=True, text=True
     ).stdout.strip()
-    command(str(kubeconfig), "default", "create", "namespace", NAMESPACE)
-    command(str(kubeconfig), NAMESPACE, "apply", "-f", str(workspace / "kubernetes"))
-    command(str(kubeconfig), NAMESPACE, "rollout", "status", "deployment", "--timeout=60s")
+    command(str(kubeconfig), "default", "create", "namespace", namespace)
+    command(str(kubeconfig), namespace, "apply", "-f", str(workspace / "kubernetes"))
+    command(str(kubeconfig), namespace, "rollout", "status", "deployment", "--timeout=60s")
     env = FastloopEnvironment(
         run_dir=run_dir,
         app="toy",
         cluster=cluster,
         kubeconfig=kubeconfig,
-        namespace=NAMESPACE,
+        namespace=namespace,
         application="toy",
         workspace=workspace,
         sregym_dir=ROOT / "third_party/sregym",
@@ -254,26 +289,12 @@ def up(args: Any) -> int:
     env.image_delivery_seconds, env.image_delivery_images = delivery["seconds"], delivery["images"]
     env.baseline_path.write_text("{}\n", encoding="utf-8")
     save_application_baseline(
-        env.baseline_path, (capture_application_baseline(KubectlApplicationCluster(kubeconfig), NAMESPACE),)
+        env.baseline_path, (capture_application_baseline(KubectlApplicationCluster(kubeconfig), namespace),)
     )
-    command(str(kubeconfig), "default", "create", "namespace", NAMESPACE + "-sdo")
-    command(str(kubeconfig), NAMESPACE + "-sdo", "create", "secret", "generic", "sdo-agent-credentials")
+    command(str(kubeconfig), "default", "create", "namespace", namespace + "-sdo")
+    command(str(kubeconfig), namespace + "-sdo", "create", "secret", "generic", "sdo-agent-credentials")
     env.save()
-    deployed = time.monotonic()
-    config = install_controller(env)
-    record_controller(env, config)
-    timing = {
-        "prepare": create_start - started,
-        "cluster_create": created - create_start,
-        "image_load": images_loaded - created,
-        "cni": loaded - images_loaded,
-        "application": deployed - loaded,
-        "controller": time.monotonic() - deployed,
-        "up_total": time.monotonic() - started,
-    }
-    (run_dir / "toy_timings.json").write_text(json.dumps(timing, indent=2) + "\n")
-    print(json.dumps(timing))
-    return 0
+    return env
 
 
 def install_controller(environment: FastloopEnvironment, config: Any = None) -> Any:

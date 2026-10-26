@@ -328,7 +328,10 @@ def execute(run_dir: Path, timeout: int, lease: str | None = None) -> int:
         from benchmarks.sregym.adapter import control_namespace_for, kubectl, stop_runtime
         from benchmarks.sregym.fastloop.environment import FastloopEnvironment
 
-        environment = FastloopEnvironment.load(run_dir.resolve())
+        fixture = run_dir.resolve() / "learning-loop-proof/environment"
+        if not (fixture / "fastloop.json").is_file():
+            return result
+        environment = FastloopEnvironment.load(fixture)
         os.environ["KUBECONFIG"] = str(environment.kubeconfig)
         if environment.dev_mount:
             os.environ["SDO_OPERATOR_BIN"] = str(environment.dev_mount / ".fastloop/sdo-operator")
@@ -369,6 +372,7 @@ def run_lane(run_dir: Path, timeout: int, lease: str | None = None) -> int:
     report = ProofReport(environment.cluster, code_revision(), {})
     report.save(path)
     started = time.monotonic()
+    isolated = False
 
     def deadline(_signum: int, _frame: Any) -> None:
         raise TimeoutError(f"learning-loop: {report.stage} exceeded {timeout}s total budget")
@@ -384,12 +388,19 @@ def run_lane(run_dir: Path, timeout: int, lease: str | None = None) -> int:
             os.environ["SDO_DEV_MOUNT"] = "1"
             os.environ["SDO_OPERATOR_BIN"] = str(environment.dev_mount / ".fastloop/sdo-operator")
         check_lease(environment, lease)
-        cli._reset(argparse.Namespace(run_dir=environment.run_dir, dev_mount=None))
+        from benchmarks.sregym.fastloop.learning_loop_fixture import prepare
+
+        environment = prepare(environment, cli.REPO_ROOT)
+        isolated = True
+        os.environ["SDO_DEV_MOUNT"] = "1"
+        os.environ["SDO_OPERATOR_BIN"] = str(cli.REPO_ROOT / ".fastloop/sdo-operator")
+        check_lease(environment, lease)
+        cli._reset(argparse.Namespace(run_dir=environment.run_dir, dev_mount=None, restart_toy=False))
         args = cli.build_parser().parse_args(
             [
                 "run",
                 "--run-dir",
-                str(run_dir),
+                str(environment.run_dir),
                 "--agent",
                 "sdo",
                 "--run-id",
@@ -478,7 +489,11 @@ def run_lane(run_dir: Path, timeout: int, lease: str | None = None) -> int:
         from benchmarks.sregym.adapter import stop_runtime
 
         try:
-            stopped = stop_runtime(control_namespace_for(environment.namespace), kubeconfig=str(environment.kubeconfig))
+            stopped = (
+                stop_runtime(control_namespace_for(environment.namespace), kubeconfig=str(environment.kubeconfig))
+                if isolated
+                else {"removed": [], "leftovers": []}
+            )
             if stopped["leftovers"]:
                 raise ValueError(f"runtime stop left {stopped['leftovers']}")
         except Exception as stop_error:

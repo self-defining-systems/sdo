@@ -184,3 +184,47 @@ def test_supervisor_rejects_a_green_report_from_a_failed_worker(tmp_path, monkey
     )
     assert dry_run.execute(tmp_path, 5, 5) == 1
     assert json.loads(report.read_text())["passed"] is False
+
+
+def test_toy_recovery_never_deletes_other_application_or_cluster_faults(tmp_path, monkeypatch):
+    import json
+    from types import SimpleNamespace
+
+    from benchmarks.sregym.fastloop import clean_start
+
+    own = {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "own", "namespace": "proof"}}
+    other = {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "pending", "namespace": "hotel"}}
+    cluster = {"apiVersion": "rbac.authorization.k8s.io/v1", "kind": "ClusterRole", "metadata": {"name": "pending"}}
+    objects = [own, other, cluster]
+    mutations = []
+    monkeypatch.setattr(clean_start, "_injected_objects", lambda _: list(objects))
+
+    def run(args, **kwargs):
+        mutations.append((args, kwargs["namespace"]))
+        objects.remove(own)
+        return SimpleNamespace(stdout=json.dumps({}))
+
+    monkeypatch.setattr(clean_start, "kubectl", run)
+    clean_start.remove_injected_objects(tmp_path / "kubeconfig", only_namespace="proof")
+    assert objects == [other, cluster]
+    assert mutations == [
+        (
+            [
+                "delete",
+                "configmap/own",
+                "--ignore-not-found=true",
+                "--cascade=foreground",
+                "--wait=true",
+                "--timeout=60s",
+            ],
+            "proof",
+        )
+    ]
+
+
+def test_proof_namespace_is_separate_and_stable_for_the_lane_environment(tmp_path):
+    from benchmarks.sregym.fastloop.learning_loop_fixture import namespace_for
+
+    assert namespace_for(tmp_path).startswith("sdo-proof-")
+    assert namespace_for(tmp_path) == namespace_for(tmp_path / ".")
+    assert namespace_for(tmp_path) != namespace_for(tmp_path / "other")

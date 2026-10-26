@@ -116,12 +116,16 @@ def test_wrk_job_and_payload_are_created_in_harness_namespace_with_service_dns(m
 def test_toy_reset_uses_the_same_injected_object_cleanup(monkeypatch: Any) -> None:
     from benchmarks.sregym.fastloop.toy import ToyWorker
 
-    cleaned: list[Path] = []
+    cleaned: list[tuple[Path, str]] = []
     config = Path("synthetic-kubeconfig")
-    monkeypatch.setattr(clean_start, "remove_injected_objects", cleaned.append)
-    worker = ToyWorker(SimpleNamespace(kubeconfig=config))
+    monkeypatch.setattr(
+        clean_start,
+        "remove_injected_objects",
+        lambda config, *, only_namespace: cleaned.append((config, only_namespace)),
+    )
+    worker = ToyWorker(SimpleNamespace(kubeconfig=config, namespace="proof"))
     assert worker.request("clean_start", problem_id="toy-targetport") == {"success": True}
-    assert cleaned == [config]
+    assert cleaned == [(config, "proof")]
 
 
 def test_existing_oracle_manager_keeps_identity_and_reads_harness_logs(monkeypatch: Any) -> None:

@@ -466,13 +466,15 @@ On an idle warm lane, run the scripted whole-loop proof before live SDO work:
 uv run python -m benchmarks.sregym.fastloop learning-loop-proof --run-dir "$SDO_FASTLOOP_RUN"
 ```
 
-This command resets to the lane's seed and runs two target-port encounters with
+This command prepares a separate toy namespace, control namespace, repository PVC
+and source workspace on the existing lane, then runs two target-port encounters with
 scripted registrations, without a model or diagnosis judge. It uses the ordinary
 fastloop injection, native closure, immutable closure-grade checkpoint, reflection,
 isolated validator, broker publication, paused recovery and repeat paths. It stops
-the scripted runtime when finished. Use a dedicated rehearsal workspace with the
-same lane images; preserve any live operational memory before selecting its seed.
-A development lane must mount the same worktree that runs the command.
+the scripted runtime when finished. The operational application, accepted memory
+and pending incident ledger are preserved. The lane runtime must be stopped while
+its development source mount is prepared. Only the tiny existing toy image is built;
+role images are reused. The proof mounts the exact worktree running the command.
 
 The single report is `learning-loop-proof/report.json`; stage evidence references
 strict receipts, frozen grades, validator watch events and final incident rows.

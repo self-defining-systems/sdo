@@ -120,7 +120,7 @@ def assert_clean_baseline(kubeconfig: Path, *, namespace: str | None = None) -> 
                 raise RuntimeError(f"clean baseline rejected: harness traffic remains in {namespace}: {legacy.strip()}")
 
 
-def remove_injected_objects(kubeconfig: Path) -> None:
+def remove_injected_objects(kubeconfig: Path, *, only_namespace: str | None = None) -> None:
     """Remove only harness-labelled injected objects, including RBAC and finalizers.
 
     Call after full harness recovery, never during partial composite recovery.
@@ -129,6 +129,8 @@ def remove_injected_objects(kubeconfig: Path) -> None:
     for value in _injected_objects(kubeconfig):
         metadata = value["metadata"]
         namespace = metadata.get("namespace")
+        if only_namespace is not None and namespace != only_namespace:
+            continue
         group = value.get("apiVersion", "v1").partition("/")[0] if "/" in value.get("apiVersion", "v1") else ""
         resource = value["kind"].lower() + (f".{group}" if group else "") + "/" + metadata["name"]
         if metadata.get("finalizers") or value["kind"] == "Secret":
@@ -142,7 +144,10 @@ def remove_injected_objects(kubeconfig: Path) -> None:
             namespace=namespace,
             kubeconfig=kubeconfig,
         )
-    assert_clean_baseline(kubeconfig)
+    if only_namespace is None:
+        assert_clean_baseline(kubeconfig)
+    elif any(value.get("metadata", {}).get("namespace") == only_namespace for value in _injected_objects(kubeconfig)):
+        raise RuntimeError(f"clean baseline rejected: injected objects remain in {only_namespace}")
 
 
 def prepare_harness_traffic(app: Any, kubeconfig: Path) -> bool:
