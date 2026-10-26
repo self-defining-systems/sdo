@@ -352,6 +352,75 @@ class KubectlClusterOps:
         for name in result["removed"]:
             logger.info("stopped %s", name)
 
+    def protect_incident_work(self, target: CleanupTarget, directory: Path) -> None:
+        """Capture worker evidence and refuse automatic cleanup of unfinished work."""
+        config = Path(target.kubeconfig) if target.kubeconfig else None
+        listing = json.loads(
+            kubectl(["get", "jobs,pods", "-o", "json"], namespace=target.control_namespace, kubeconfig=config).stdout
+        )["items"]
+
+        def worker(metadata: dict[str, Any]) -> bool:
+            return metadata.get("labels", {}).get("app.kubernetes.io/name") == "sdo-worker"
+
+        jobs = [
+            row
+            for row in listing
+            if row["kind"] == "Job"
+            and (worker(row["metadata"]) or worker(row.get("spec", {}).get("template", {}).get("metadata", {})))
+        ]
+        job_uids = {row["metadata"]["uid"] for row in jobs}
+        pods = [
+            row
+            for row in listing
+            if row["kind"] == "Pod"
+            and (
+                worker(row["metadata"])
+                or any(owner.get("uid") in job_uids for owner in row["metadata"].get("ownerReferences", []))
+            )
+        ]
+        directory.mkdir(parents=True, exist_ok=True)
+        # Keep conditions and container states, without persisting environment values.
+        inventory = {
+            key: [{"metadata": row["metadata"], "status": row.get("status", {})} for row in rows]
+            for key, rows in (("jobs", jobs), ("pods", pods))
+        }
+        (directory / "workloads.json").write_text(json.dumps(inventory, indent=2) + "\n")
+        for pod in pods:
+            name = pod["metadata"]["name"]
+            logs = kubectl(
+                [
+                    "logs",
+                    f"pod/{name}",
+                    "--all-containers=true",
+                    "--prefix=true",
+                    "--tail=2000",
+                    "--limit-bytes=1048576",
+                ],
+                namespace=target.control_namespace,
+                kubeconfig=config,
+                check=False,
+            )
+            (directory / f"{name}.log").write_text(logs.stdout)
+            if logs.returncode:
+                (directory / f"{name}.log-error").write_text(logs.stderr)
+        active = [
+            f"job/{row['metadata']['name']}"
+            for row in jobs
+            if not any(
+                condition.get("type") in {"Complete", "Failed"} and condition.get("status") == "True"
+                for condition in row.get("status", {}).get("conditions", [])
+            )
+        ]
+        active.extend(
+            f"pod/{row['metadata']['name']}"
+            for row in pods
+            if row.get("status", {}).get("phase") not in {"Succeeded", "Failed"}
+        )
+        if active:
+            raise PersistentControllerError(
+                f"eval: cleanup preserves active incident work: {active}; evidence: {directory}"
+            )
+
     def stop_transport(self, target: CleanupTarget) -> None:
         config = Path(target.kubeconfig) if target.kubeconfig else None
         # These resources belong to the benchmark, never to the production stop API.
@@ -1277,7 +1346,7 @@ def teardown(state_path: Path, *, ops: ClusterOps, clock: Clock | None = None) -
 
 
 def abort(state_path: Path, *, ops: AbortClusterOps) -> list[str]:
-    """Force quiescence using recorded identities; never drain or read runtime incident state."""
+    """Clean recorded resources only after capturing and protecting incident workers."""
     from benchmarks.sregym.adapter.processes import terminate_run
 
     try:
@@ -1296,7 +1365,18 @@ def abort(state_path: Path, *, ops: AbortClusterOps) -> list[str]:
         targets[namespace] = CleanupTarget(
             namespace=record.namespace, control_namespace=record.control_namespace, kubeconfig=record.kubeconfig
         )
-        if record.pending is not None:
+    state.cleanup_targets = targets
+    state.save(state_path)
+    for namespace, target in targets.items():
+        try:
+            ops.protect_incident_work(
+                target, state_path.parent / (state_path.name + ".abort-workers") / target.control_namespace
+            )
+        except (RuntimeError, OSError, ValueError, KeyError, subprocess.SubprocessError) as exc:
+            errors.append(f"{namespace}: worker cleanup blocked: {exc}")
+            continue
+        record = state.controllers.get(namespace)
+        if record is not None and record.pending is not None:
             state.aborted_incidents.append(
                 AbortedIncident(
                     incident_id=record.pending.incident_id,
@@ -1306,9 +1386,7 @@ def abort(state_path: Path, *, ops: AbortClusterOps) -> list[str]:
                 )
             )
             record.pending = None
-    state.cleanup_targets = targets
-    state.save(state_path)
-    for namespace, target in targets.items():
+        state.save(state_path)
         for action in (ops.stop_runtime, ops.abort_workload):
             try:
                 action(target)
@@ -1326,6 +1404,7 @@ def abort(state_path: Path, *, ops: AbortClusterOps) -> list[str]:
 
 
 class AbortClusterOps(Protocol):
+    def protect_incident_work(self, target: CleanupTarget, directory: Path) -> None: ...
     def stop_runtime(self, target: CleanupTarget) -> None: ...
     def abort_workload(self, target: CleanupTarget) -> None: ...
     def abort_leftovers(self, target: CleanupTarget) -> list[str]: ...
