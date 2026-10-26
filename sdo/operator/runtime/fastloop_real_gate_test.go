@@ -18,6 +18,7 @@ import (
 
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/anypb"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -571,6 +572,9 @@ func (detector) Detect(context.Context,sdk.DetectionContext)([]sdk.Finding,error
 		t.Fatal(err)
 	}
 	apiDeployment.Spec.Template.Spec.Containers[0].Image = "good:v1"
+	// This manual fixture repair includes the observed deployment-controller
+	// rollout; client-go fake does not populate workload status on its own.
+	apiDeployment.Status = appsv1.DeploymentStatus{Replicas: 1, UpdatedReplicas: 1, AvailableReplicas: 1, ReadyReplicas: 1}
 	if _, err := client.AppsV1().Deployments("app").Update(ctx, apiDeployment, metav1.UpdateOptions{}); err != nil {
 		t.Fatal(err)
 	}

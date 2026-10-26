@@ -19,7 +19,7 @@ type missingConfigMapDetector struct{}
 func (missingConfigMapDetector) Spec() sdk.DetectorSpec {
 	return sdk.DetectorSpec{
 		ID: "missing-configmap", Interval: time.Second,
-		Watches: []sdk.WatchKind{{APIVersion: "apps/v1", Kind: "Deployment"}, {APIVersion: "v1", Kind: "ConfigMap"}},
+		Watches: []sdk.WatchKind{{APIVersion: "apps/v1", Kind: "Deployment"}, {APIVersion: "v1", Kind: "ConfigMap"}, {APIVersion: "apps/v1", Kind: "ReplicaSet"}, {APIVersion: "v1", Kind: "Pod"}},
 	}
 }
 
@@ -55,17 +55,33 @@ func TestControllerIntegrationInformerPersistenceAndRestart(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	required := false
+	one, controllerOwner := int32(1), true
+	deployment := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: "renamed-api", Namespace: "demo", UID: "deployment", Generation: 1},
+		Spec: appsv1.DeploymentSpec{Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "renamed-api"}}, Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": "renamed-api"}}, Spec: corev1.PodSpec{
+			Containers: []corev1.Container{{Name: "app", Image: "synthetic:v1", EnvFrom: []corev1.EnvFromSource{{
+				ConfigMapRef: &corev1.ConfigMapEnvSource{
+					LocalObjectReference: corev1.LocalObjectReference{Name: "renamed-settings"}, Optional: &required,
+				},
+			}}}},
+		}}},
+	}
+	// client-go's fake API has no Deployment controller. Supply the observed
+	// healthy rollout, including real owner-UID links, before testing recovery.
+	deployment.Spec.Replicas = &one
+	deployment.Status = appsv1.DeploymentStatus{ObservedGeneration: 1, Replicas: 1, UpdatedReplicas: 1, ReadyReplicas: 1, AvailableReplicas: 1}
+	set := &appsv1.ReplicaSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "renamed-api-current", Namespace: "demo", UID: "replicaset", Generation: 1, OwnerReferences: []metav1.OwnerReference{{APIVersion: "apps/v1", Kind: "Deployment", Name: deployment.Name, UID: deployment.UID, Controller: &controllerOwner}}},
+		Spec:       appsv1.ReplicaSetSpec{Replicas: &one, Selector: deployment.Spec.Selector.DeepCopy(), Template: *deployment.Spec.Template.DeepCopy()},
+		Status:     appsv1.ReplicaSetStatus{ObservedGeneration: 1, Replicas: 1, ReadyReplicas: 1, AvailableReplicas: 1},
+	}
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "renamed-api-running", Namespace: "demo", UID: "pod", Labels: deployment.Spec.Template.Labels, OwnerReferences: []metav1.OwnerReference{{APIVersion: "apps/v1", Kind: "ReplicaSet", Name: set.Name, UID: set.UID, Controller: &controllerOwner}}},
+		Spec:       *deployment.Spec.Template.Spec.DeepCopy(),
+		Status:     corev1.PodStatus{Phase: corev1.PodRunning, Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}},
+	}
 	client := fake.NewSimpleClientset(
-		&appsv1.Deployment{
-			ObjectMeta: metav1.ObjectMeta{Name: "renamed-api", Namespace: "demo"},
-			Spec: appsv1.DeploymentSpec{Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{
-				Containers: []corev1.Container{{Name: "app", EnvFrom: []corev1.EnvFromSource{{
-					ConfigMapRef: &corev1.ConfigMapEnvSource{
-						LocalObjectReference: corev1.LocalObjectReference{Name: "renamed-settings"}, Optional: &required,
-					},
-				}}}},
-			}}},
-		},
+		deployment, set, pod,
 		&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "renamed-settings", Namespace: "demo"}},
 	)
 	detector := missingConfigMapDetector{}
@@ -78,6 +94,10 @@ func TestControllerIntegrationInformerPersistenceAndRestart(t *testing.T) {
 	cache.Start(ctx)
 	if err := cache.WaitForSync(ctx); err != nil {
 		t.Fatalf("wait for sync: %v", err)
+	}
+	snapshot, err := cache.Snapshot(ctx)
+	if err != nil || len(snapshot.ReplicaSets()) != 1 || len(snapshot.Pods()) != 1 {
+		t.Fatalf("healthy rollout evidence not observed: %v %v", snapshot, err)
 	}
 	drainWatchEvents(cache)
 	start := time.Unix(0, 0)

@@ -1228,7 +1228,20 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 		}
 	}
 	generation := observationGeneration(snapshot)
-	driftClear, driftFindings := c.verifyClosureDrift(ctx, now, snapshot)
+	var rolloutRefs []sdk.ObjectRef
+	if early && safe && loop != nil {
+		// acquireClosureGuard holds the responder locks and loads controller-owned
+		// external action receipts, including writes before the final worker report.
+		c.mu.Lock()
+		request := cloneIncidentRequest(c.currentIncidentRequest)
+		c.mu.Unlock()
+		if request != nil {
+			for _, action := range closureGuard.resultSnapshot(*request, now).RepairActions {
+				rolloutRefs = append(rolloutRefs, action.Resources...)
+			}
+		}
+	}
+	driftClear, driftFindings := c.verifyClosureDriftWithResult(ctx, now, snapshot, nil, rolloutRefs...)
 	c.mu.Lock()
 	if early && safe && guard != nil && c.closureMutationRevision != guard.Revision {
 		c.closureMutationRevision = guard.Revision

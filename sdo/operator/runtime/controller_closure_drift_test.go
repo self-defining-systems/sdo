@@ -98,6 +98,9 @@ func newClosureDriftFixture(t *testing.T, owned, declared bool, namespace string
 	awaitDispatchCompletionQueued(t, f.c)
 	// The responder's image-only repair succeeds; routing is unchanged.
 	frontend.Spec.Template.Spec.Containers[0].Image = "healthy:v1"
+	// The fake API does not run a deployment controller: model the completed
+	// rollout as well as the repaired image before expecting global closure.
+	frontend.Status = appsv1.DeploymentStatus{Replicas: 1, UpdatedReplicas: 1, ReadyReplicas: 1, AvailableReplicas: 1}
 	if _, err := f.client.AppsV1().Deployments("app").Update(context.Background(), frontend, metav1.UpdateOptions{}); err != nil {
 		t.Fatal(err)
 	}

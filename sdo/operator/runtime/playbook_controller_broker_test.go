@@ -4,9 +4,12 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sdo.dev/operator/broker"
@@ -37,6 +40,15 @@ func (d fastloopDispatch) Dispatch(ctx context.Context, request IncidentRequest)
 func TestHermeticControllerClosureReachesNativeOutcomeBroker(t *testing.T) {
 	ctx := context.Background()
 	client := fastloopClient()
+	d, err := client.AppsV1().Deployments("app").Get(ctx, "api", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.UID, d.Generation = "deployment", 1
+	oldTemplate := *d.Spec.Template.DeepCopy()
+	if _, err := client.AppsV1().Deployments("app").Update(ctx, d, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
 	accepted := nativeRepository(t)
 	repository, err := broker.New(accepted, filepath.Join(t.TempDir(), "proposals"), func(context.Context, string, []string) error { return nil })
 	if err != nil {
@@ -89,6 +101,47 @@ func TestHermeticControllerClosureReachesNativeOutcomeBroker(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	// The fake API has no Deployment controller. Model its separate observation
+	// explicitly: source fields are repaired, but admission still blocks new Pods.
+	d, err = client.AppsV1().Deployments("app").Get(ctx, "api", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.Generation = 2
+	d.Status = appsv1.DeploymentStatus{ObservedGeneration: 2, Replicas: 1, ReadyReplicas: 1, AvailableReplicas: 1}
+	if _, err := client.AppsV1().Deployments("app").Update(ctx, d, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	one, owner := int32(1), true
+	old := &appsv1.ReplicaSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "api-old", Namespace: "app", UID: "old-replicaset", OwnerReferences: []metav1.OwnerReference{{Kind: "Deployment", UID: d.UID, Controller: &owner}}},
+		Spec:       appsv1.ReplicaSetSpec{Replicas: &one, Template: oldTemplate},
+	}
+	if _, err := client.AppsV1().ReplicaSets("app").Create(ctx, old, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	pod, err := client.CoreV1().Pods("app").Get(ctx, "api-pod", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pod.UID = "old-pod"
+	pod.OwnerReferences = []metav1.OwnerReference{{Kind: "ReplicaSet", UID: old.UID, Controller: &owner}}
+	pod.Status = corev1.PodStatus{Phase: corev1.PodRunning, Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}}
+	if _, err := client.CoreV1().Pods("app").Update(ctx, pod, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	rs := &appsv1.ReplicaSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "api-current", Namespace: "app", UID: "replicaset", OwnerReferences: []metav1.OwnerReference{{Kind: "Deployment", UID: d.UID, Controller: &owner}}},
+		Spec:       appsv1.ReplicaSetSpec{Replicas: &one, Template: *d.Spec.Template.DeepCopy()},
+		Status:     appsv1.ReplicaSetStatus{Conditions: []appsv1.ReplicaSetCondition{{Type: appsv1.ReplicaSetReplicaFailure, Status: corev1.ConditionTrue, Reason: "FailedCreate", Message: "admission webhook policy.example denied Pod creation"}}},
+	}
+	if _, err := client.AppsV1().ReplicaSets("app").Create(ctx, rs, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	event := &corev1.Event{ObjectMeta: metav1.ObjectMeta{Name: "admission-blocked", Namespace: "app"}, Type: corev1.EventTypeWarning, InvolvedObject: corev1.ObjectReference{Kind: "ReplicaSet", Namespace: "app", Name: rs.Name, UID: rs.UID}, Reason: "FailedCreate", Message: "admission webhook policy.example denied Pod creation on retry"}
+	if _, err := client.CoreV1().Events("app").Create(ctx, event, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
 	result := completedResult(request.IncidentID)
 	result.Timing.StartedAt = start.Add(100 * time.Millisecond)
 	result.Timing.CompletedAt = start.Add(200 * time.Millisecond)
@@ -98,6 +151,44 @@ func TestHermeticControllerClosureReachesNativeOutcomeBroker(t *testing.T) {
 	dispatcher.results <- result
 	awaitDispatchCompletionQueued(t, controller)
 	if err := controller.Step(ctx, start.Add(time.Second), nil); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case closure := <-closed:
+		t.Fatalf("source repair closed before rollout recovery: %+v", closure)
+	default:
+	}
+	verification := controller.responderVerification(ctx, request.IncidentID)
+	if verification.Healthy || len(verification.Findings) != 1 || !strings.Contains(verification.Findings[0].Evidence, "policy.example") || !strings.Contains(verification.Findings[0].Evidence, event.Message) || !strings.Contains(verification.Findings[0].Evidence, "Pod/api-pod still runs old template") {
+		t.Fatalf("pending rollout lost its named admission evidence: %+v", verification)
+	}
+	// Recovery is an independent API observation. Retain the old warning and
+	// ReplicaFailure condition, as Kubernetes can, after the desired Pod is live.
+	if err := client.CoreV1().Pods("app").Delete(ctx, pod.Name, metav1.DeleteOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	pod = &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "api-current-pod", Namespace: "app", UID: "current-pod", Labels: d.Spec.Template.Labels, OwnerReferences: []metav1.OwnerReference{{Kind: "ReplicaSet", UID: rs.UID, Controller: &owner}}},
+		Spec:       *d.Spec.Template.Spec.DeepCopy(),
+		Status:     corev1.PodStatus{Phase: corev1.PodRunning, Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}},
+	}
+	if _, err := client.CoreV1().Pods("app").Create(ctx, pod, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	zero := int32(0)
+	old.Spec.Replicas = &zero
+	if _, err := client.AppsV1().ReplicaSets("app").Update(ctx, old, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	rs.Status.Replicas, rs.Status.ReadyReplicas, rs.Status.AvailableReplicas = 1, 1, 1
+	if _, err := client.AppsV1().ReplicaSets("app").UpdateStatus(ctx, rs, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	d.Status.UpdatedReplicas = 1
+	if _, err := client.AppsV1().Deployments("app").UpdateStatus(ctx, d, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := controller.Step(ctx, start.Add(2*time.Second), nil); err != nil {
 		t.Fatal(err)
 	}
 	var closure IncidentClosure
