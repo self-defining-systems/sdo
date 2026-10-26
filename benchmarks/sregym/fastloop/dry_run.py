@@ -375,43 +375,18 @@ def run_lane(run_dir: Path, timeout: int, setup_timeout: int = 900) -> int:
         )
         # Setup is separately bounded; only steady proof consumes five minutes.
         args.admission_timeout_seconds = timeout
+        args.admission_onboarding_timeout_seconds = max(1, started + setup_timeout - time.monotonic())
         args.admission_progress = passed
         control = control_namespace_for(environment.namespace)
         args.credentials_secret = prepare_scripted_credentials(environment.kubeconfig, control)
 
-        def prepare(control: str, required: set[str]) -> None:
-            last_error = "controller has not evaluated its installed checks"
-            while time.monotonic() < started + setup_timeout:
-                try:
-                    state = json.loads(
-                        kubectl(
-                            ["get", "configmap/sdo-controller-state", "-o", "json"],
-                            namespace=control,
-                            kubeconfig=environment.kubeconfig,
-                        ).stdout
-                    )
-                    runtime = json.loads(state["data"]["runtime-state.json"])
-                    observed = {row.get("detector_id") for row in runtime.get("history") or []}
-                    if required and required.issubset(observed):
-                        value = json.loads(
-                            kubectl(
-                                ["get", "configmap/sdo-namespace-onboarding", "-o", "json"],
-                                namespace=control,
-                                kubeconfig=environment.kubeconfig,
-                            ).stdout
-                        )
-                        record = json.loads(value["data"]["onboarding.json"])
-                        if record.get("acceptedCommit") and record.get("objects"):
-                            passed("onboarding", accepted_commit=record["acceptedCommit"])
-                            report.setup_seconds = time.monotonic() - started
-                            report.steady_started = time.monotonic()
-                            report.phase = "steady"
-                            report.save(report_path)
-                            return
-                except (RuntimeError, ValueError, KeyError) as exc:
-                    last_error = str(exc)
-                time.sleep(min(2, max(0, started + setup_timeout - time.monotonic())))
-            raise TimeoutError(f"eval: onboarding/setup exceeded {setup_timeout}s: {last_error}")
+        def prepare(control: str, onboarding: dict[str, Any]) -> None:
+            # Admission has already waited for (and reported) completed onboarding
+            # on the setup budget; the steady five-minute clock starts here.
+            report.setup_seconds = time.monotonic() - started
+            report.steady_started = time.monotonic()
+            report.phase = "steady"
+            report.save(report_path)
 
         args.admission_before_proof = prepare
         with cli._worker(environment) as worker:
