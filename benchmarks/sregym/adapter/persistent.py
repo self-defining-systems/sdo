@@ -29,7 +29,7 @@ import sys
 import time
 import uuid
 from dataclasses import dataclass, fields, replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, get_args, get_type_hints
 
@@ -95,6 +95,8 @@ STRICT_RECEIPT_FILENAME = "sdo_production_receipt_strict.json"
 REJECTED_RECEIPT_FILENAME = "sdo_rejected_production_receipt.json"
 CONTROLLER_LOGS_SUBDIR = Path(RUNTIME_ARTIFACTS_DIRNAME) / "controller_logs"
 POLL_SECONDS = 1.0
+#: A state read at or past a deadline still gets this long to be observed, so it decides the outcome.
+OBSERVATION_FLOOR_SECONDS = 5.0
 CONTROLLER_JOB_NAME = "sdo-controller-run"
 # The runtime storage edge's checkpoint identity (lifecycleio.StateRevisionAnnotation
 # and StateDataKey): its CAS annotation plus typed data key, never its name.
@@ -127,6 +129,10 @@ class PersistentControllerError(RuntimeError):
 
 class ClosureFailedError(PersistentControllerError):
     """Raised when the controller gave up committing an incident closure the broker kept rejecting."""
+
+
+class ControllerJobFailedError(ClosureFailedError):
+    """The controller Job reached a terminal condition before acknowledging the closure, so no owner can ACK it."""
 
 
 class ReflectionDeadlineError(PersistentControllerError):
@@ -175,6 +181,9 @@ class PendingIncident(BaseModel):
     repository: Path
     verified_at: datetime | None
     stage_receipt: dict[str, Any]
+    #: The one reflection deadline every drain of this incident shares, set when the closure is recorded.
+    #: Absent only on records written before it existed; their first drain sets it.
+    reflection_deadline_at: datetime | None = None
 
 
 class ControllerRecord(BaseModel):
@@ -308,6 +317,10 @@ class ClusterOps(Protocol):
 
     def controller_pod(self, control_namespace: str) -> ControllerPod | None: ...
 
+    def controller_job_failure(self, control_namespace: str) -> str | None:
+        """The controller Job's terminal condition (``reason: message``), or None while it can still run pods."""
+        ...
+
     def namespace_exists(self, namespace: str) -> bool: ...
 
     def delete_controller(self, control_namespace: str) -> None: ...
@@ -369,6 +382,18 @@ class KubectlClusterOps:
             return None
         metadata = running[0].get("metadata", {})
         return ControllerPod(name=str(metadata.get("name", "")), uid=str(metadata.get("uid", "")))
+
+    def controller_job_failure(self, control_namespace: str) -> str | None:
+        completed = kubectl(
+            ["get", "job", CONTROLLER_JOB_NAME, "--ignore-not-found", "--request-timeout=5s", "-o", "json"],
+            namespace=control_namespace,
+            check=False,
+        )
+        if completed.returncode != 0:
+            raise PersistentControllerError(
+                f"cannot inspect the controller Job in {control_namespace!r}: {completed.stderr.strip()}"
+            )
+        return controller_job_failure(json.loads(completed.stdout)) if completed.stdout.strip() else None
 
     def namespace_exists(self, namespace: str) -> bool:
         return kubectl(["get", f"namespace/{namespace}"], namespace=None, check=False).returncode == 0
@@ -739,10 +764,14 @@ class StageInputs:
     #: after injection. None waits the whole verification budget.
     detection_timeout_seconds: float | None = None
     lifecycle_installs_controller: bool = False
+    #: Budget from a verified closure to its reflection's acknowledgment, shared by every drain of the incident.
+    reflection_wait_seconds: float = DRAIN_TIMEOUT_SECONDS
 
     def __post_init__(self) -> None:
         if self.detection_timeout_seconds is not None and self.detection_timeout_seconds <= 0:
             raise ValueError(f"detection_timeout_seconds must be positive, got {self.detection_timeout_seconds}")
+        if self.reflection_wait_seconds <= 0:
+            raise ValueError(f"reflection_wait_seconds must be positive, got {self.reflection_wait_seconds}")
 
 
 @dataclass(frozen=True)
@@ -1004,6 +1033,7 @@ def run_persistent_stage(
         receipt_dir=inputs.receipt_dir,
         repository=config.repository,
         verified_at=_timestamp(closure.get("verified_at")),
+        reflection_deadline_at=clock.now() + timedelta(seconds=inputs.reflection_wait_seconds),
         stage_receipt={
             key: value
             for key, value in resolution.items()
@@ -1232,6 +1262,7 @@ def collect_followup_incident(
         receipt_dir=inputs.receipt_dir,
         repository=config.repository,
         verified_at=_timestamp(closure.get("verified_at")),
+        reflection_deadline_at=clock.now() + timedelta(seconds=inputs.reflection_wait_seconds),
         stage_receipt={
             **base,
             # Setup and gate costs were paid once, by the first incident.
@@ -1423,24 +1454,27 @@ def drain_pending_incident(
     repository: Path,
     drained_by: str,
     clock: Clock | None = None,
-    timeout_seconds: float = DRAIN_TIMEOUT_SECONDS,
 ) -> ReceiptDrainResult:
     """Wait for a verified incident's reflection and rollout, then write its strict receipt.
 
     ``repository`` receives the controller's operational repository, which is
-    the source of truth across problems. Returns the elapsed wait and any typed receipt failure for this incident.
+    the source of truth across problems. Every drain of an incident waits only until the
+    pending record's one reflection deadline, so a drain after a timed-out drain fails at once.
+    Returns the elapsed wait and any typed receipt failure for this incident.
     """
 
     clock = clock or Clock()
     pending = record.pending
     if pending is None:
         return ReceiptDrainResult()
+    if pending.reflection_deadline_at is None:
+        pending.reflection_deadline_at = clock.now() + timedelta(seconds=DRAIN_TIMEOUT_SECONDS)
     started = clock.monotonic()
     phases: dict[str, float] = {}
     phase_timestamps = {"drain_started": clock.now().isoformat()}
     try:
         drained_state = _wait_for_reflection_drain(
-            ops, record.control_namespace, pending.incident_id, timeout_seconds, clock
+            ops, record.control_namespace, pending.incident_id, pending.reflection_deadline_at, clock
         )
     except ClosureFailedError:
         # The controller log holds every broker rejection of the closure.
@@ -1894,11 +1928,26 @@ def wait_for_maintenance_ack(
     raise PersistentControllerError(f"controller in {control!r} did not acknowledge maintenance {generation!r}")
 
 
-def _wait_for_reflection_drain(
-    ops: ClusterOps, control: str, incident_id: str, timeout: float, clock: Clock
-) -> dict[str, Any]:
-    """Wait for broker acknowledgment, which follows any required detector rollout."""
+def controller_job_failure(job: dict[str, Any]) -> str | None:
+    """A Job's terminal condition as ``reason: message``; a Failed or Complete Job never runs another pod."""
 
+    for condition in (job.get("status") or {}).get("conditions") or []:
+        if isinstance(condition, dict) and condition.get("type") in {"Failed", "Complete"}:
+            if condition.get("status") == "True":
+                reason = condition.get("reason") or condition["type"]
+                return f"{reason}: {condition.get('message') or 'no message'}"
+    return None
+
+
+def _wait_for_reflection_drain(
+    ops: ClusterOps, control: str, incident_id: str, deadline_at: datetime, clock: Clock
+) -> dict[str, Any]:
+    """Wait for broker acknowledgment, which follows any required detector rollout.
+
+    Stops early, typed, when the controller Job is terminal: no owner is left to acknowledge.
+    """
+
+    timeout = max(0.0, (deadline_at - clock.now()).total_seconds())
     deadline = clock.monotonic() + timeout
     while True:
         # Only a read that shows SDO still owning the closure makes a passed deadline a reflection deadline.
@@ -1913,7 +1962,7 @@ def _wait_for_reflection_drain(
         else:
             try:
                 observed = _observe_state(
-                    state, incident_id=incident_id, timeout=min(30.0, max(0.001, deadline - clock.monotonic()))
+                    state, incident_id=incident_id, timeout=min(30.0, max(OBSERVATION_FLOOR_SECONDS, deadline - clock.monotonic()))
                 )
                 _raise_observation_failure(observed, state)
             except ClosureFailedError:
@@ -1923,14 +1972,32 @@ def _wait_for_reflection_drain(
             else:
                 if observed.acknowledged:
                     return state
+            _raise_terminal_controller_job(ops, control, incident_id)
         if clock.monotonic() >= deadline:
             break
         clock.sleep(POLL_SECONDS)
     if not state or not incident_work_open(state):
         raise ControllerStateUnavailableError(
-            f"incident {incident_id!r}: closure state unknown at the {timeout:.0f}s deadline: {error}"
+            f"incident {incident_id!r}: closure state unknown at its reflection deadline "
+            f"{deadline_at.isoformat()}: {error}"
         )
-    raise ReflectionDeadlineError(f"incident {incident_id!r} was not reflected and rolled out within {timeout:.0f}s")
+    raise ReflectionDeadlineError(
+        f"incident {incident_id!r} was not reflected and rolled out by its reflection deadline {deadline_at.isoformat()}"
+    )
+
+
+def _raise_terminal_controller_job(ops: ClusterOps, control: str, incident_id: str) -> None:
+    # An unreadable Job says nothing about the closure; the state reads keep deciding.
+    try:
+        failure = ops.controller_job_failure(control)
+    except (PersistentControllerError, RuntimeError, ValueError, OSError) as exc:
+        logger.warning("controller Job in %s unreadable while draining %s: %s", control, incident_id, exc)
+        return
+    if failure is not None:
+        raise ControllerJobFailedError(
+            f"controller Job {CONTROLLER_JOB_NAME!r} in {control!r} is terminal ({failure}) before incident "
+            f"{incident_id!r} was acknowledged; no controller can acknowledge its closure"
+        )
 
 
 def _relaunched_after(records: list[dict[str, Any]], incident_id: str) -> bool:

@@ -87,6 +87,9 @@ class FakeOps:
     def controller_pod(self, control_namespace: str) -> ControllerPod | None:
         return self.pods.get(control_namespace)
 
+    def controller_job_failure(self, control_namespace: str) -> str | None:
+        return None
+
     def namespace_exists(self, namespace: str) -> bool:
         return namespace in self.pods
 
