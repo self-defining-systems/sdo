@@ -124,7 +124,7 @@ func (i Installer) SyncExistingRepository(ctx context.Context, syncConfig SyncCo
 
 // WithSyncPod gives a read-only transport callback temporary access to the
 // repository PVC. The callback owns no Kubernetes resource lifecycle.
-func (i Installer) WithSyncPod(ctx context.Context, syncConfig SyncConfig, action func(context.Context, Config) error) error {
+func (i Installer) WithSyncPod(ctx context.Context, syncConfig SyncConfig, action func(context.Context, Config) error) (resultErr error) {
 	if i.Client == nil || action == nil {
 		return errors.New("Kubernetes client and sync Pod action are required")
 	}
@@ -133,16 +133,14 @@ func (i Installer) WithSyncPod(ctx context.Context, syncConfig SyncConfig, actio
 	}
 	cfg := Config{Namespace: syncConfig.ControlNamespace, ControlNamespace: syncConfig.ControlNamespace, RepositoryPVC: syncConfig.RepositoryPVC, ControllerImage: syncConfig.ControllerImage}
 	owner := fmt.Sprintf("sync-%d", time.Now().UnixNano())
-	if err := i.acquireOperateLock(ctx, cfg, owner); err != nil {
+	reservation, err := i.acquireOperateLock(ctx, cfg, owner, metav1.OwnerReference{Kind: "Pod", Name: RepositorySyncPodName})
+	if err != nil {
 		return err
 	}
-	defer func() { _ = i.releaseOperateLock(context.Background(), cfg, owner) }()
-	if err := i.ensureSyncPod(ctx, syncPod(cfg)); err != nil {
+	defer func() { resultErr = errors.Join(resultErr, i.finishClaimedSyncPod(cfg, reservation)) }()
+	if err := i.startClaimedSyncPod(ctx, cfg, reservation, syncPod(cfg)); err != nil {
 		return err
 	}
-	defer func() {
-		_ = i.Client.CoreV1().Pods(cfg.controlNamespace()).Delete(context.Background(), RepositorySyncPodName, metav1.DeleteOptions{})
-	}()
 	if err := i.waitSync(ctx, cfg.controlNamespace()); err != nil {
 		return err
 	}
@@ -197,7 +195,7 @@ func verifyPreparedCheckout(ctx context.Context, root, acceptedCommit string) er
 	return nil
 }
 
-func (i Installer) install(ctx context.Context, cfg Config, prepared bool) (Result, error) {
+func (i Installer) install(ctx context.Context, cfg Config, prepared bool) (result Result, resultErr error) {
 	if i.Client == nil {
 		return Result{}, errors.New("Kubernetes client is required")
 	}
@@ -256,12 +254,15 @@ func (i Installer) install(ctx context.Context, cfg Config, prepared bool) (Resu
 		}
 	}
 	if !prepared {
-		if err := i.ensureSyncPod(ctx, plan.SyncPod); err != nil {
+		owner := fmt.Sprintf("sync-install-%d", time.Now().UnixNano())
+		reservation, err := i.acquireOperateLock(ctx, cfg, owner, metav1.OwnerReference{Kind: "Pod", Name: RepositorySyncPodName})
+		if err != nil {
 			return Result{}, err
 		}
-		defer func() {
-			_ = i.Client.CoreV1().Pods(control).Delete(context.Background(), RepositorySyncPodName, metav1.DeleteOptions{})
-		}()
+		defer func() { resultErr = errors.Join(resultErr, i.finishClaimedSyncPod(cfg, reservation)) }()
+		if err := i.startClaimedSyncPod(ctx, cfg, reservation, plan.SyncPod); err != nil {
+			return Result{}, err
+		}
 		if err := i.waitSync(ctx, control); err != nil {
 			return Result{}, err
 		}
@@ -280,7 +281,7 @@ func (i Installer) install(ctx context.Context, cfg Config, prepared bool) (Resu
 	if _, err := i.Client.BatchV1().Jobs(control).Create(ctx, plan.Job, metav1.CreateOptions{}); err != nil {
 		return Result{}, fmt.Errorf("start controller Job: %w", err)
 	}
-	result := Result{Fingerprint: plan.Job.Annotations[InstallFingerprintAnnotation]}
+	result = Result{Fingerprint: plan.Job.Annotations[InstallFingerprintAnnotation]}
 	if cfg.WaitForCompletion {
 		if err := i.waitJob(ctx, control, time.Duration(cfg.TimeoutSeconds+300)*time.Second); err != nil {
 			return Result{}, err
@@ -466,28 +467,6 @@ func (i Installer) upsertBinding(ctx context.Context, want *rbacv1.RoleBinding) 
 	}
 	if err != nil {
 		return fmt.Errorf("ensure RoleBinding %s/%s: %w", want.Namespace, want.Name, err)
-	}
-	return nil
-}
-func (i Installer) ensureSyncPod(ctx context.Context, want *corev1.Pod) error {
-	pods := i.Client.CoreV1().Pods(want.Namespace)
-	if err := pods.Delete(ctx, want.Name, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
-		return fmt.Errorf("delete stale repository sync Pod: %w", err)
-	}
-	for {
-		_, err := pods.Get(ctx, want.Name, metav1.GetOptions{})
-		if apierrors.IsNotFound(err) {
-			break
-		}
-		if err != nil {
-			return err
-		}
-		if err := i.pause(ctx); err != nil {
-			return err
-		}
-	}
-	if _, err := pods.Create(ctx, want, metav1.CreateOptions{}); err != nil {
-		return fmt.Errorf("create repository sync Pod: %w", err)
 	}
 	return nil
 }
