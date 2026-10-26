@@ -39,6 +39,7 @@ ALLOWED_FASTLOOP_FILES = {
     "benchmarks/sregym/fastloop/model_recording.py",
     "benchmarks/sregym/fastloop/file_edits.py",
     "benchmarks/sregym/fastloop/recording_worker.py",
+    "benchmarks/sregym/fastloop/checkpoint_limits.py",
 }
 SCRIPTED_REPLAY_FILES = {
     "benchmarks/sregym/adapter/scripted_worker.py",
