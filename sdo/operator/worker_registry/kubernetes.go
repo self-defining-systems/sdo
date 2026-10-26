@@ -621,7 +621,10 @@ func (e KubernetesExecutor) ensureJob(ctx context.Context, task *contracts.Agent
 	if e.standbyMode {
 		e.configureStandby(job, launch)
 	}
-	if task.GetRequest().MessageIs(&contracts.IncidentRequest{}) {
+	// Incident dispatch always runs after the controller seeded the toolchain.
+	// Other Jobs (reflection, health refresh) mount the seed when it exists and
+	// copy only when this process's repository volume has none.
+	if task.GetRequest().MessageIs(&contracts.IncidentRequest{}) || toolchain.Seeded(e.RepositoryMountPath, e.ToolchainImage) {
 		toolchain.ApplyShared(&job.Spec.Template.Spec, e.ToolchainImage, e.RepositoryPVCSubPath)
 	} else {
 		toolchain.Apply(&job.Spec.Template.Spec, e.ToolchainImage)

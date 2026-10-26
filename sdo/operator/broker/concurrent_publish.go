@@ -34,6 +34,11 @@ func (e *MemoryConflict) Error() string {
 }
 func (e *MemoryConflict) Unwrap() error { return e.cause }
 
+// NonRetryable is false even when the cause is a validation failure: a newer
+// accepted head made the merged tree fail, and the proposer can merge both
+// incidents' intent and resubmit.
+func (e *MemoryConflict) NonRetryable() bool { return false }
+
 func (e *MemoryConflict) Diagnostic() *contracts.MemoryDiagnostic {
 	return &contracts.MemoryDiagnostic{Rule: MemoryConflictRule, Message: e.Error(), Hint: "Merge both incidents' intent and preserve the other incident's accepted learning in the current accepted checkout.", MemoryConflict: e.Conflict}
 }

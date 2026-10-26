@@ -148,6 +148,10 @@ func Err(diagnostics []Diagnostic) error {
 	return &Failure{Diagnostics: diagnostics}
 }
 
+// NonRetryable marks deterministic diagnostics: resubmitting the same bytes
+// can only reproduce them, so callers end the attempt instead of retrying.
+func (f *Failure) NonRetryable() bool { return true }
+
 func (f *Failure) Error() string {
 	lines := make([]string, 0, len(f.Diagnostics)+1)
 	lines = append(lines, fmt.Sprintf("%d validation diagnostic(s)", len(f.Diagnostics)))
