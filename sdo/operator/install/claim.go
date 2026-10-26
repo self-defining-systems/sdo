@@ -9,6 +9,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/util/retry"
 	"strings"
 	"time"
 )
@@ -132,8 +133,24 @@ func (i Installer) startClaimedSyncPod(ctx context.Context, cfg Config, reservat
 		_ = i.Client.CoreV1().Pods(cfg.controlNamespace()).Delete(context.Background(), created.Name, ownerDeleteOptions(created.ObjectMeta))
 		return err
 	}
-	created.Spec.SchedulingGates = nil
-	_, err = i.Client.CoreV1().Pods(cfg.controlNamespace()).Update(ctx, created, metav1.UpdateOptions{})
+	err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		current, err := i.Client.CoreV1().Pods(cfg.controlNamespace()).Get(ctx, created.Name, metav1.GetOptions{})
+		if err != nil {
+			return err
+		}
+		if current.UID != created.UID {
+			return errors.New("sync Pod was replaced before activation")
+		}
+		gates := current.Spec.SchedulingGates[:0]
+		for _, gate := range current.Spec.SchedulingGates {
+			if gate.Name != "sdo.dev/pvc-claim" {
+				gates = append(gates, gate)
+			}
+		}
+		current.Spec.SchedulingGates = gates
+		_, err = i.Client.CoreV1().Pods(cfg.controlNamespace()).Update(ctx, current, metav1.UpdateOptions{})
+		return err
+	})
 	if err != nil {
 		_ = i.Client.CoreV1().Pods(cfg.controlNamespace()).Delete(context.Background(), created.Name, ownerDeleteOptions(created.ObjectMeta))
 	}

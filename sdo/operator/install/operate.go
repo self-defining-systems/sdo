@@ -14,6 +14,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/util/retry"
 	"sdo.dev/operator/devmount"
 	"sdo.dev/operator/memory/observation"
 )
@@ -261,9 +262,19 @@ func (i Installer) StartOperate(ctx context.Context, cfg Config, objective, oper
 		_ = i.Client.BatchV1().Jobs(cfg.controlNamespace()).Delete(context.Background(), created.Name, ownerDeleteOptions(created.ObjectMeta))
 		return "", err
 	}
-	suspended = false
-	created.Spec.Suspend = &suspended
-	if _, err := i.Client.BatchV1().Jobs(cfg.controlNamespace()).Update(ctx, created, metav1.UpdateOptions{}); err != nil {
+	if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		current, err := i.Client.BatchV1().Jobs(cfg.controlNamespace()).Get(ctx, created.Name, metav1.GetOptions{})
+		if err != nil {
+			return err
+		}
+		if current.UID != created.UID {
+			return errors.New("operate Job was replaced before activation")
+		}
+		suspended := false
+		current.Spec.Suspend = &suspended
+		_, err = i.Client.BatchV1().Jobs(cfg.controlNamespace()).Update(ctx, current, metav1.UpdateOptions{})
+		return err
+	}); err != nil {
 		return "", fmt.Errorf("activate native operate Job: %w", err)
 	}
 	return job.Name, nil

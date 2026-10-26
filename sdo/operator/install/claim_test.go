@@ -310,3 +310,24 @@ func TestScopedStopUsesNamedClaimRead(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestSyncActivationRetriesStatusConflict(t *testing.T) {
+	cfg := testConfig()
+	client := claimAPI()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	conflicts := 0
+	client.PrependReactor("update", "pods", func(action ktesting.Action) (bool, kruntime.Object, error) {
+		if conflicts == 0 {
+			conflicts++
+			return true, nil, apierrors.NewConflict(corev1.Resource("pods"), RepositorySyncPodName, errors.New("scheduler recorded gated status"))
+		}
+		cancel()
+		return false, nil, nil
+	})
+	installer := Installer{Client: client, PollInterval: time.Millisecond}
+	err := installer.WithSyncPod(ctx, SyncConfig{ControlNamespace: cfg.ControlNamespace, RepositoryPVC: cfg.RepositoryPVC, ControllerImage: cfg.ControllerImage}, func(context.Context, Config) error { return nil })
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("status update interrupted activation instead of retrying: %v", err)
+	}
+}
