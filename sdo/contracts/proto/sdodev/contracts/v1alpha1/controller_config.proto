@@ -143,4 +143,6 @@ message ControllerConfig {
   optional bool responder_standby = 78;
   // Fixed tool image for application-local RunScript Jobs.
   string script_image = 79;
+  // Ordered response stages. Omitted selects deterministic,agent; agent is the baseline.
+  repeated string response_stages = 80 [(buf.validate.field).repeated.items.string = {in: ["deterministic", "agent"]}];
 }

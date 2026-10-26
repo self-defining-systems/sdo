@@ -15,7 +15,8 @@ clock, network access or benchmark data. Measure ages with `sdk.ObservationTime(
 2. Before implementing, read the [generated SDK](references/sdk.md). Keep the detector's manifest and Spec
    identical, including watches, persistence, playbook IDs and accepted provenance.
 3. Derive relationships from observed objects. Use the context namespace for absent resources and emit
-   stable fingerprints and role bindings.
+   stable fingerprints and role bindings. Observed evaluation supplies an omitted `DetectorID` from
+   the emitting detector's `Spec.ID`; an authored identity must still match that detector.
 4. Prove a matching case and near misses with the [generated replay API](references/replay.md).
    The [restart-loop source](assets/restart-loop/detector.go) and
    [tests](assets/restart-loop/detector_test.go) show the current detector interface.

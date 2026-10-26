@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"encoding/json"
+	"google.golang.org/protobuf/proto"
 	"sort"
 	"strings"
 
@@ -204,6 +205,23 @@ func boundPostApplyNoMatch(outcome *contracts.OutcomeRecord, application *contra
 		}
 		if observedRevision != revision {
 			return false
+		}
+	}
+	for _, stage := range outcome.GetPriorStages() {
+		for _, attempt := range stage.GetMitigations() {
+			receipt, run := attempt.GetApplyReceipt(), attempt.GetPostApplyDiagnose()
+			if attempt.GetPlaybookId() != id || attempt.GetProgramRevision() != revision || receipt.GetApplicationId() != application.GetApplicationId() {
+				continue
+			}
+			if attempt.GetResult() != "applied_cleared" || !receipt.GetApplied() || receipt.GetRolledBack() || receipt.GetRolloutPending() != nil || receipt.GetError() != "" {
+				continue
+			}
+			if !proto.Equal(receipt.GetCompletedAt(), application.GetCompletedAt()) || !proto.Equal(receipt.GetPlan(), application.GetPlan()) {
+				continue
+			}
+			if run.GetProgramId() == id && run.GetProgramRevision() == revision && run.GetError() == "" && run.GetVerdict().GetResult() == contracts.Verdict_RESULT_NO_MATCH && programBindingsState(attempt.GetBindings()).Equal(programBindingsState(run.GetBindings())) {
+				return true
+			}
 		}
 	}
 	plans := map[string]ToolRequest{}

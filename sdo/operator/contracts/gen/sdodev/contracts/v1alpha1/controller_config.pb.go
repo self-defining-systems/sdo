@@ -133,9 +133,11 @@ type ControllerConfig struct {
 	// Pre-start one idle responder; false forces the ordinary cold Job path.
 	ResponderStandby *bool `protobuf:"varint,78,opt,name=responder_standby,json=responderStandby,proto3,oneof" json:"responder_standby,omitempty"`
 	// Fixed tool image for application-local RunScript Jobs.
-	ScriptImage   string `protobuf:"bytes,79,opt,name=script_image,json=scriptImage,proto3" json:"script_image,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	ScriptImage string `protobuf:"bytes,79,opt,name=script_image,json=scriptImage,proto3" json:"script_image,omitempty"`
+	// Ordered response stages. Omitted selects deterministic,agent; agent is the baseline.
+	ResponseStages []string `protobuf:"bytes,80,rep,name=response_stages,json=responseStages,proto3" json:"response_stages,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *ControllerConfig) Reset() {
@@ -604,11 +606,18 @@ func (x *ControllerConfig) GetScriptImage() string {
 	return ""
 }
 
+func (x *ControllerConfig) GetResponseStages() []string {
+	if x != nil {
+		return x.ResponseStages
+	}
+	return nil
+}
+
 var File_sdodev_contracts_v1alpha1_controller_config_proto protoreflect.FileDescriptor
 
 const file_sdodev_contracts_v1alpha1_controller_config_proto_rawDesc = "" +
 	"\n" +
-	"1sdodev/contracts/v1alpha1/controller_config.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x1egoogle/protobuf/duration.proto\"\xb4\x1d\n" +
+	"1sdodev/contracts/v1alpha1/controller_config.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x1egoogle/protobuf/duration.proto\"\xff\x1d\n" +
 	"\x10ControllerConfig\x12%\n" +
 	"\tnamespace\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\tnamespace\x12+\n" +
 	"\x11control_namespace\x18\x02 \x01(\tR\x10controlNamespace\x12\"\n" +
@@ -680,7 +689,8 @@ const file_sdodev_contracts_v1alpha1_controller_config_proto_rawDesc = "" +
 	"\x18closure_stability_window\x18L \x01(\v2\x19.google.protobuf.DurationR\x16closureStabilityWindow\x12O\n" +
 	"\x16responder_report_grace\x18M \x01(\v2\x19.google.protobuf.DurationR\x14responderReportGrace\x120\n" +
 	"\x11responder_standby\x18N \x01(\bH\x03R\x10responderStandby\x88\x01\x01\x12!\n" +
-	"\fscript_image\x18O \x01(\tR\vscriptImageB\x14\n" +
+	"\fscript_image\x18O \x01(\tR\vscriptImage\x12I\n" +
+	"\x0fresponse_stages\x18P \x03(\tB \xbaH\x1d\x92\x01\x1a\"\x18r\x16R\rdeterministicR\x05agentR\x0eresponseStagesB\x14\n" +
 	"\x12_synthetic_trafficB\x1a\n" +
 	"\x18_clean_responder_helpersB\x11\n" +
 	"\x0f_state_baselineB\x14\n" +
