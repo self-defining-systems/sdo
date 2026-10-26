@@ -254,7 +254,11 @@ func (w RegisteredReflectionWorker) Reflect(ctx context.Context, closure Inciden
 		return ReflectionDecision{}, errors.New("reflection worker returned a mismatched or incomplete result")
 	}
 	if result.GetStatus() == "failed" && result.GetErrorSummary() != "" {
-		return w.withUsage(ReflectionDecision{LearningDecision: "failed", Error: result.GetErrorSummary()}, workspace.IncidentID)
+		reason := result.GetFailureReason()
+		if reason == "" {
+			reason = "agent_failed"
+		}
+		return w.withUsage(ReflectionDecision{LearningDecision: "failed", FailureReason: reason, Error: result.GetErrorSummary()}, workspace.IncidentID)
 	}
 	if result.GetStatus() != "completed" {
 		return ReflectionDecision{}, errors.New("reflection worker returned a mismatched or incomplete result")
