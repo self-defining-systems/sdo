@@ -96,9 +96,45 @@ type KubernetesExecutor struct {
 	PollInterval           time.Duration
 }
 
-type JobFailedError struct{ JobName string }
+// JobFailedError is terminal for an immutable task execution. Transport retries
+// rejoin that execution; only a new logical task may start another worker.
+type JobFailedError struct {
+	JobName       string
+	Conditions    []JobFailureCondition
+	Containers    []ContainerFailure
+	EvidenceError string
+}
 
-func (err *JobFailedError) Error() string { return fmt.Sprintf("agent Job %q failed", err.JobName) }
+type JobFailureCondition struct {
+	Type    string
+	Status  string
+	Reason  string
+	Message string
+}
+
+type ContainerFailure struct {
+	PodName       string
+	ContainerName string
+	Reason        string
+	ExitCode      int32
+	Message       string
+}
+
+func (err *JobFailedError) NonRetryable() bool { return true }
+
+func (err *JobFailedError) Error() string {
+	parts := []string{fmt.Sprintf("agent Job %q failed", err.JobName)}
+	for _, condition := range err.Conditions {
+		parts = append(parts, fmt.Sprintf("condition %s=%s reason=%q message=%q", condition.Type, condition.Status, condition.Reason, condition.Message))
+	}
+	for _, container := range err.Containers {
+		parts = append(parts, fmt.Sprintf("Pod %q container %q terminated reason=%q exit_code=%d message=%q", container.PodName, container.ContainerName, container.Reason, container.ExitCode, container.Message))
+	}
+	if err.EvidenceError != "" {
+		parts = append(parts, "Pod termination evidence unavailable: "+err.EvidenceError)
+	}
+	return strings.Join(parts, "; ")
+}
 
 // TaskTimeoutError is terminal for this frozen reflection task. Retrying a
 // transport may rejoin work, but must never grant a new execution budget.
@@ -324,7 +360,7 @@ func (e KubernetesExecutor) Execute(ctx context.Context, task *contracts.AgentTa
 			}
 		}
 		if jobErr == nil && jobFailed(job) {
-			return nil, taskJobFailure(task, job)
+			return nil, e.taskJobFailure(ctx, task, job)
 		}
 		resultMap, err := e.Client.CoreV1().ConfigMaps(e.Namespace).Get(ctx, resultName, metav1.GetOptions{})
 		if err == nil {

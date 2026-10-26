@@ -160,3 +160,18 @@ accepted commit and conflicting paths. It never changes incident classification
 or verification. The ledger retains the original outcome/task identity even
 when an annotation advances accepted HEAD. Duplicate results/annotations do not
 publish another reflection or repeat a rejection entry.
+
+### Terminal worker Job failures
+
+A failed worker Job is non-retryable for the frozen execution: transport retries
+rejoin the existing Job, while only broker validation corrections receive new task
+identities. Ordinary terminal Job failure archives a permanent closure failure on
+the first observation (`reason=BROKER_ERROR`, rather than `RETRY_EXHAUSTED`),
+retaining the original incident evidence. Restart does not re-arm it.
+`closure_failure.last_error`, archived failed-closure diagnostics and controller
+errors retain Job condition type/status/reason/message plus Job-UID-owned Pod
+container (including init-container) termination reason, exit code and short
+message. Status text and collections are bounded; missing Pod API evidence is
+reported without replacing the proven Job failure. These are Kubernetes status
+observations, not Pod logs or Secret reads. Frozen-deadline expiry retains its
+separate typed timeout path and existing reflection decision semantics.
