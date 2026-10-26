@@ -324,6 +324,9 @@ class ScriptedAgent:
         self._append(record)
         return learned
 
+    def prepare_recovery(self, outcome: AgentOutcome | None) -> None:
+        self._inner.prepare_recovery(outcome)
+
     def close(self) -> None:
         try:
             self._settle()

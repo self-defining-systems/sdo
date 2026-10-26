@@ -312,3 +312,8 @@ func (s Snapshot) Object(ref sdk.ObjectRef) (*unstructured.Unstructured, error) 
 func (s Snapshot) CaptureObjects(refs []sdk.ObjectRef) ([]unstructured.Unstructured, error) {
 	return append(sdk.TypedObjects(s), s.Objects...), nil
 }
+
+// DiffAgainstSource replays only observations recorded on this exact snapshot.
+func (s Snapshot) DiffAgainstSource(ref sdk.ObjectRef) (sdk.SourceDiff, error) {
+	return (&ReplayReadView{Snapshot: s, Calls: s.Readings}).DiffAgainstSource(ref)
+}

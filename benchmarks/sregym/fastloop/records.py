@@ -202,6 +202,35 @@ class IncidentRecord(_PersistedModel):
     def injection_to_resolution_seconds(self) -> float | None:
         return _seconds(self.injection_started_at, self.resolved_at)
 
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def graded_at(self) -> datetime | None:
+        return self.oracle_finished_at
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def closure_to_grade_seconds(self) -> float | None:
+        return _seconds(self.resolved_at, self.oracle_finished_at)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def responder_runtime_seconds(self) -> float | None:
+        return _seconds(self.responder_started_at, self.responder_finished_at)
+
+
+def persist_grade_checkpoint(path: Path, record: IncidentRecord) -> None:
+    """Publish grading evidence before reflection can fail or delay the final row."""
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent, delete=False) as stream:
+        temporary = stream.name
+        stream.write(record.model_dump_json() + "\n")
+    try:
+        # Link publishes a complete file atomically and never replaces a frozen grade.
+        os.link(temporary, path)
+    finally:
+        os.unlink(temporary)
+
 
 def _csv_row(record: IncidentRecord) -> dict[str, Any]:
     row = record.model_dump(mode="json")

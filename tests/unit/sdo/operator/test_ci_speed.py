@@ -6,6 +6,7 @@ import fnmatch
 import os
 import re
 import shlex
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -80,6 +81,30 @@ def test_required_ci_still_accounts_for_every_job() -> None:
     ],
 )
 def test_selected_images_are_built_and_smoked(tmp_path: Path, images: str, expected: set[str]) -> None:
+    # The builder's clean-source contract belongs to its own fixture checkout;
+    # selecting images must not depend on whether a developer is editing SDO.
+    source = tmp_path / "source"
+    (source / "scripts").mkdir(parents=True)
+    (source / "sdo/operator").mkdir(parents=True)
+    (source / "sdo/operator/go.mod").write_text("module fixture\n")
+    for filename in ("build_sdo_images.sh", "sdo-images.hcl"):
+        shutil.copy2(ROOT / "scripts" / filename, source / "scripts" / filename)
+    for args in (
+        ["init", "-q"],
+        ["add", "."],
+        [
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@example.com",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "-qm",
+            "image inputs",
+        ],
+    ):
+        subprocess.run(["git", "-C", str(source), *args], check=True, capture_output=True, text=True)
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     calls = tmp_path / "calls"
@@ -91,7 +116,7 @@ def test_selected_images_are_built_and_smoked(tmp_path: Path, images: str, expec
         command.write_text(f"#!/bin/sh\n{body}\n")
         command.chmod(0o755)
     result = subprocess.run(
-        ["bash", str(ROOT / "scripts/build_sdo_images.sh")],
+        ["bash", str(source / "scripts/build_sdo_images.sh")],
         env={
             **os.environ,
             "PATH": f"{bin_dir}:{os.environ['PATH']}",
@@ -218,8 +243,8 @@ def test_normal_and_race_preparation_are_independent_bounded_jobs() -> None:
     assert sum("~/go/pkg/mod" in step["with"]["path"] for step in caches) == 1
     for name in ("controller", "replay", "chaos"):
         keys = [step["with"]["key"] for step in jobs[name]["steps"] if step.get("uses", "").startswith("actions/cache")]
-        assert any("ci-prepared-v2-normal-" in key for key in keys)
-        assert any("ci-prepared-v2-race-" in key for key in keys)
+        assert any("ci-prepared-v3-normal-" in key for key in keys)
+        assert any("ci-prepared-v3-race-" in key for key in keys)
 
 
 def test_image_builder_refuses_dirty_source_before_docker(tmp_path: Path) -> None:
@@ -280,5 +305,5 @@ def test_consumers_restore_the_paths_published_by_each_mode_owner() -> None:
     for name in ("python", "controller", "go-integration", "replay", "chaos"):
         for step in jobs[name]["steps"]:
             if step.get("uses", "").startswith("actions/cache"):
-                mode = "race" if "v2-race-" in step["with"]["key"] else "normal"
+                mode = "race" if "v3-race-" in step["with"]["key"] else "normal"
                 assert step["with"]["path"].strip() == published[mode].strip(), name
