@@ -270,6 +270,14 @@ jobs:
             directory: sdo/operator/runtime
             go-version: "1.26.8"
             shard: reflection,corpus
+          - module: runtime-reflection-mongo
+            directory: sdo/operator/runtime
+            go-version: "1.26.8"
+            shard: reflection-mongo
+          - module: runtime-reflection-programs
+            directory: sdo/operator/runtime
+            go-version: "1.26.8"
+            shard: reflection-programs
           - module: runtime-contracts
             directory: sdo/operator/runtime
             go-version: "1.26.8"

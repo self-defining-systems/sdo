@@ -17,8 +17,15 @@ from pathlib import Path
 
 PATTERNS = {
     "reflection": r"^TestReflectionDirectFilesCLIAndBroker$",
+    "reflection-mongo": r"^TestReflection(?:MongoAuth|HotelMongoAuth)UpgradesReadmeThroughCLIAndBroker$",
+    "reflection-programs": (
+        r"^TestReflection(?:HotelRunScriptUpgradesReadmeThroughCLIAndBroker|LearnedProgramCLIAndBroker"
+        r"|LearnsDeploymentRepairWithUnwrittenServiceSymptoms)$"
+    ),
     "contracts": (
-        r"^(Test(?:[A-G]|Reflection(?!DirectFilesCLIAndBroker$)|RegisteredReflection|HermeticFastloopRealGoGate$)"
+        r"^(Test(?:[A-G]|Reflection(?!(?:DirectFilesCLIAndBroker|(?:MongoAuth|HotelMongoAuth|HotelRunScript)"
+        r"UpgradesReadmeThroughCLIAndBroker|LearnedProgramCLIAndBroker|LearnsDeploymentRepairWithUnwrittenServiceSymptoms)$)"
+        r"|RegisteredReflection|HermeticFastloopRealGoGate$)"
         r"|Fuzz[A-M]|Example(?:[A-M_]|$))"
     ),
     "rendered": (
