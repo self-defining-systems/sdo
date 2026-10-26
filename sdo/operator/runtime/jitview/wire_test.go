@@ -3,8 +3,11 @@ package jitview
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"reflect"
+	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/metrics"
 	"sync"
 	"testing"
 
@@ -106,4 +109,21 @@ func TestReadViewConcurrentCallsKeepTheirResponses(t *testing.T) {
 	workers.Wait()
 	_ = requestsW.Close()
 	<-finished
+}
+
+func TestUsageUnavailableSurvivesWorkingProgramBridge(t *testing.T) {
+	source := &sdktest.ReplayReadView{}
+	ref := sdk.ObjectRef{Kind: "Pod", Namespace: "app", Name: "api"}
+	args, _ := json.Marshal(ref)
+	response := read(source, Message{Method: "PodUsage", Arguments: []json.RawMessage{args}})
+	var returned, called bytes.Buffer
+	if err := json.NewEncoder(&returned).Encode(response); err != nil {
+		t.Fatal(err)
+	}
+	proxy := &View{Input: json.NewDecoder(&returned), Output: json.NewEncoder(&called)}
+	_, err := proxy.PodUsage(ref)
+	var unavailable *metrics.UsageUnavailableError
+	if !errors.As(err, &unavailable) {
+		t.Fatalf("working program lost typed unavailable: %T %v", err, err)
+	}
 }
