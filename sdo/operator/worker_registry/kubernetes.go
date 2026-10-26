@@ -298,6 +298,9 @@ func (e KubernetesExecutor) Execute(ctx context.Context, task *contracts.AgentTa
 	} else if err := e.ensureJob(ctx, task, launch, jobName, request, resultName, proposalSubPath); err != nil {
 		return nil, err
 	}
+	if err := e.recordWorkerDispatch(ctx, task, jobName); err != nil {
+		return nil, err
+	}
 	startup := e.startupRecord(task, jobName)
 	if startup != nil {
 		startup.TaskBoundAt = &timing.TaskBoundAt
@@ -352,6 +355,14 @@ func (e KubernetesExecutor) Execute(ctx context.Context, task *contracts.AgentTa
 		job, jobErr := e.Client.BatchV1().Jobs(e.Namespace).Get(ctx, jobName, metav1.GetOptions{})
 		if jobErr != nil && !apierrors.IsNotFound(jobErr) {
 			return nil, fmt.Errorf("get agent Job: %w", jobErr)
+		}
+		if apierrors.IsNotFound(jobErr) {
+			if result, recovered, err := e.RecoverCompleted(ctx, task); err != nil {
+				return nil, err
+			} else if recovered {
+				return result, nil
+			}
+			return nil, &JobVanishedError{TaskID: task.GetTaskId(), JobName: jobName}
 		}
 		if startup != nil && jobErr == nil {
 			pods, err := e.Client.CoreV1().Pods(e.Namespace).List(ctx, metav1.ListOptions{LabelSelector: "batch.kubernetes.io/job-name=" + jobName})
