@@ -24,7 +24,7 @@ export GOMAXPROCS="$hermetic_jobs" GOFLAGS="${GOFLAGS:-} -p=$hermetic_jobs"
 (
     cd "$root/sdo/operator"
     go test -run '^TestResetControlState|^TestParseResetControlState' -count=1 ./onboarding ./operatorcli
-    go test -run '^(TestInstallPlanCarriesOwnershipOnEveryObject|TestInstallReconcileAddsOwnershipToLegacyCaptureGrants|TestDiscoveredPermissiveReadGrantsCarryInstallOwnership)$' -count=1 -timeout=1m ./install
+    go test -run '^(TestInstallPlanCarriesOwnershipOnEveryObject|TestInstallReconcileAddsOwnershipToLegacyCaptureGrants|TestDiscoveredPermissiveReadGrantsCarryInstallOwnership|TestAdoptionSeederGivesTagImageWorkloadsTrustedLockEvidence)$' -count=1 -timeout=1m ./install
 
     go test -run '^TestInstallExisting.*Onboarding|^TestInstallExistingClearAdoption|^TestInstallExistingAdoptedVerifiedSeedOnboarding$' -count=1 -timeout=5m ./operatorcli
 )
@@ -35,7 +35,7 @@ export GOMAXPROCS="$hermetic_jobs" GOFLAGS="${GOFLAGS:-} -p=$hermetic_jobs"
 (
     export GOMAXPROCS="$reflection_jobs" GOFLAGS="${GOFLAGS:-} -p=$reflection_jobs"
     cd "$root/sdo/operator/runtime"
-    go test -run '^(TestHermeticSharedMemoryControllers|TestReflectionHotelRunScriptUpgradesReadmeThroughCLIAndBroker|TestReflectionMongoAuthUpgradesReadmeThroughCLIAndBroker|TestReflectionLearnsDeploymentRepairWithUnwrittenServiceSymptoms|TestFirstEncounterNamingReplacedPodPublishesWorkloadPlaybook)$' -count=1 -timeout=5m .
+    go test -run '^(TestHermeticSharedMemoryControllers|TestReflectionHotelRunScriptUpgradesReadmeThroughCLIAndBroker|TestReflectionMongoAuthUpgradesReadmeThroughCLIAndBroker|TestReflectionLearnsDeploymentRepairWithUnwrittenServiceSymptoms|TestHermeticAdoptedHostPortRepairLearnsAndReplays|TestFirstEncounterNamingReplacedPodPublishesWorkloadPlaybook)$' -count=1 -timeout=5m .
 ) &
 reflection_pid=$!
 runtime_status=0
