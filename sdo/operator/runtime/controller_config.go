@@ -116,6 +116,7 @@ func controllerConfigToArgs(config *contractsv1alpha1.ControllerConfig) []string
 	str("--prober-binary", config.GetProberBinary())
 	str("--toolchain-image", config.GetToolchainImage())
 	str("--prober-image", config.GetProberImage())
+	str("--script-image", config.GetScriptImage())
 	str("--prober-url", config.GetProberUrl())
 	str("--metrics-url", config.GetMetricsUrl())
 	str("--metrics-token-file", config.GetMetricsTokenFile())

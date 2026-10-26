@@ -91,6 +91,9 @@ func ProtoMitigationReplayNotes(notes []sdktest.MitigationReplayResult) []*contr
 		if note.Status == sdktest.MitigationReplaySkippedUnreplayableEffect {
 			status = contracts.MitigationReplayNote_STATUS_SKIPPED_UNREPLAYABLE_EFFECT
 		}
+		if note.Status == sdktest.MitigationReplayObservedTransition {
+			status = contracts.MitigationReplayNote_STATUS_OBSERVED_TRANSITION
+		}
 		result = append(result, &contracts.MitigationReplayNote{ProgramId: note.ProgramID, CaseId: note.CaseID, Status: status, Effects: append([]string(nil), note.Effects...)})
 	}
 	return result

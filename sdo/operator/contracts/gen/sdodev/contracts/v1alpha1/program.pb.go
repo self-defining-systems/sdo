@@ -473,6 +473,7 @@ type Action struct {
 	//	*Action_EnsureExec
 	//	*Action_EnsureHttp
 	//	*Action_RunJob
+	//	*Action_RunScript
 	Kind          isAction_Kind `protobuf_oneof:"kind"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -677,6 +678,15 @@ func (x *Action) GetRunJob() *RunJob {
 	return nil
 }
 
+func (x *Action) GetRunScript() *RunScript {
+	if x != nil {
+		if x, ok := x.Kind.(*Action_RunScript); ok {
+			return x.RunScript
+		}
+	}
+	return nil
+}
+
 type isAction_Kind interface {
 	isAction_Kind()
 }
@@ -753,6 +763,10 @@ type Action_RunJob struct {
 	RunJob *RunJob `protobuf:"bytes,18,opt,name=run_job,json=runJob,proto3,oneof"`
 }
 
+type Action_RunScript struct {
+	RunScript *RunScript `protobuf:"bytes,19,opt,name=run_script,json=runScript,proto3,oneof"`
+}
+
 func (*Action_ReconcileFromSource) isAction_Kind() {}
 
 func (*Action_Rollback) isAction_Kind() {}
@@ -788,6 +802,8 @@ func (*Action_EnsureExec) isAction_Kind() {}
 func (*Action_EnsureHttp) isAction_Kind() {}
 
 func (*Action_RunJob) isAction_Kind() {}
+
+func (*Action_RunScript) isAction_Kind() {}
 
 type CreateFromSource struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -1413,6 +1429,7 @@ type ActionReport struct {
 	KubernetesEffectJson []byte `protobuf:"bytes,6,opt,name=kubernetes_effect_json,json=kubernetesEffectJson,proto3" json:"kubernetes_effect_json,omitempty"`
 	RecordingError       string `protobuf:"bytes,7,opt,name=recording_error,json=recordingError,proto3" json:"recording_error,omitempty"`
 	JobStatusJson        []byte `protobuf:"bytes,8,opt,name=job_status_json,json=jobStatusJson,proto3" json:"job_status_json,omitempty"`
+	ScriptResultJson     []byte `protobuf:"bytes,10,opt,name=script_result_json,json=scriptResultJson,proto3" json:"script_result_json,omitempty"`
 	FailureReason        string `protobuf:"bytes,9,opt,name=failure_reason,json=failureReason,proto3" json:"failure_reason,omitempty"`
 	unknownFields        protoimpl.UnknownFields
 	sizeCache            protoimpl.SizeCache
@@ -1500,6 +1517,13 @@ func (x *ActionReport) GetRecordingError() string {
 func (x *ActionReport) GetJobStatusJson() []byte {
 	if x != nil {
 		return x.JobStatusJson
+	}
+	return nil
+}
+
+func (x *ActionReport) GetScriptResultJson() []byte {
+	if x != nil {
+		return x.ScriptResultJson
 	}
 	return nil
 }
@@ -1963,8 +1987,10 @@ type PlanApplication struct {
 	ObjectEffects            []*PlanObjectEffect `protobuf:"bytes,19,rep,name=object_effects,json=objectEffects,proto3" json:"object_effects,omitempty"`
 	ActionReports            []*ActionReport     `protobuf:"bytes,20,rep,name=action_reports,json=actionReports,proto3" json:"action_reports,omitempty"`
 	RolloutPending           *RolloutPending     `protobuf:"bytes,21,opt,name=rollout_pending,json=rolloutPending,proto3" json:"rollout_pending,omitempty"`
-	unknownFields            protoimpl.UnknownFields
-	sizeCache                protoimpl.SizeCache
+	// Fresh bound diagnosis and targeted health for opaque scripts, never exact effects.
+	FinalVerificationBasis string `protobuf:"bytes,22,opt,name=final_verification_basis,json=finalVerificationBasis,proto3" json:"final_verification_basis,omitempty"`
+	unknownFields          protoimpl.UnknownFields
+	sizeCache              protoimpl.SizeCache
 }
 
 func (x *PlanApplication) Reset() {
@@ -2128,6 +2154,13 @@ func (x *PlanApplication) GetRolloutPending() *RolloutPending {
 		return x.RolloutPending
 	}
 	return nil
+}
+
+func (x *PlanApplication) GetFinalVerificationBasis() string {
+	if x != nil {
+		return x.FinalVerificationBasis
+	}
+	return ""
 }
 
 type ProgramToolCall struct {
@@ -3924,6 +3957,75 @@ func (x *RunJob) GetCompletion() *WaitFor {
 	return nil
 }
 
+// Opaque bash effects use recorded open/fixed diagnosis, never invented effects.
+type RunScript struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Script        string                 `protobuf:"bytes,1,opt,name=script,proto3" json:"script,omitempty"`
+	Env           map[string]*PlanValue  `protobuf:"bytes,2,rep,name=env,proto3" json:"env,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	Timeout       *durationpb.Duration   `protobuf:"bytes,3,opt,name=timeout,proto3" json:"timeout,omitempty"`
+	Reason        string                 `protobuf:"bytes,4,opt,name=reason,proto3" json:"reason,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RunScript) Reset() {
+	*x = RunScript{}
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[50]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RunScript) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RunScript) ProtoMessage() {}
+
+func (x *RunScript) ProtoReflect() protoreflect.Message {
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[50]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RunScript.ProtoReflect.Descriptor instead.
+func (*RunScript) Descriptor() ([]byte, []int) {
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{50}
+}
+
+func (x *RunScript) GetScript() string {
+	if x != nil {
+		return x.Script
+	}
+	return ""
+}
+
+func (x *RunScript) GetEnv() map[string]*PlanValue {
+	if x != nil {
+		return x.Env
+	}
+	return nil
+}
+
+func (x *RunScript) GetTimeout() *durationpb.Duration {
+	if x != nil {
+		return x.Timeout
+	}
+	return nil
+}
+
+func (x *RunScript) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
 var File_sdodev_contracts_v1alpha1_program_proto protoreflect.FileDescriptor
 
 const file_sdodev_contracts_v1alpha1_program_proto_rawDesc = "" +
@@ -3964,7 +4066,7 @@ const file_sdodev_contracts_v1alpha1_program_proto_rawDesc = "" +
 	"\bexpected\x18\x04 \x01(\tR\bexpected\"a\n" +
 	"\x04Plan\x12;\n" +
 	"\aactions\x18\x01 \x03(\v2!.sdodev.contracts.v1alpha1.ActionR\aactions\x12\x1c\n" +
-	"\trationale\x18\x02 \x01(\tR\trationale\"\xa7\v\n" +
+	"\trationale\x18\x02 \x01(\tR\trationale\"\xee\v\n" +
 	"\x06Action\x12d\n" +
 	"\x15reconcile_from_source\x18\x01 \x01(\v2..sdodev.contracts.v1alpha1.ReconcileFromSourceH\x00R\x13reconcileFromSource\x12A\n" +
 	"\brollback\x18\x02 \x01(\v2#.sdodev.contracts.v1alpha1.RollbackH\x00R\brollback\x12B\n" +
@@ -3987,7 +4089,9 @@ const file_sdodev_contracts_v1alpha1_program_proto_rawDesc = "" +
 	"ensureExec\x12H\n" +
 	"\vensure_http\x18\x11 \x01(\v2%.sdodev.contracts.v1alpha1.EnsureHttpH\x00R\n" +
 	"ensureHttp\x12<\n" +
-	"\arun_job\x18\x12 \x01(\v2!.sdodev.contracts.v1alpha1.RunJobH\x00R\x06runJobB\r\n" +
+	"\arun_job\x18\x12 \x01(\v2!.sdodev.contracts.v1alpha1.RunJobH\x00R\x06runJob\x12E\n" +
+	"\n" +
+	"run_script\x18\x13 \x01(\v2$.sdodev.contracts.v1alpha1.RunScriptH\x00R\trunScriptB\r\n" +
 	"\x04kind\x12\x05\xbaH\x02\b\x01\"s\n" +
 	"\x10CreateFromSource\x12>\n" +
 	"\x03ref\x18\x01 \x01(\v2$.sdodev.contracts.v1alpha1.ObjectRefB\x06\xbaH\x03\xc8\x01\x01R\x03ref\x12\x1f\n" +
@@ -4031,7 +4135,7 @@ const file_sdodev_contracts_v1alpha1_program_proto_rawDesc = "" +
 	"\x04path\x18\x03 \x01(\tR\x04path\x12#\n" +
 	"\rsource_commit\x18\x04 \x01(\tR\fsourceCommit\x12)\n" +
 	"\x10resource_version\x18\x05 \x01(\tR\x0fresourceVersion\x12\x1c\n" +
-	"\tparameter\x18\x06 \x01(\tR\tparameter\"\xa1\x04\n" +
+	"\tparameter\x18\x06 \x01(\tR\tparameter\"\xcf\x04\n" +
 	"\fActionReport\x12!\n" +
 	"\faction_index\x18\x01 \x01(\rR\vactionIndex\x12B\n" +
 	"\x06status\x18\x02 \x01(\tB*\xbaH'r%R\bpreparedR\aappliedR\arefusedR\aunknownR\x06status\x12B\n" +
@@ -4040,7 +4144,9 @@ const file_sdodev_contracts_v1alpha1_program_proto_rawDesc = "" +
 	"\x14external_effect_json\x18\x05 \x01(\fR\x12externalEffectJson\x124\n" +
 	"\x16kubernetes_effect_json\x18\x06 \x01(\fR\x14kubernetesEffectJson\x12'\n" +
 	"\x0frecording_error\x18\a \x01(\tR\x0erecordingError\x12&\n" +
-	"\x0fjob_status_json\x18\b \x01(\fR\rjobStatusJson\x12}\n" +
+	"\x0fjob_status_json\x18\b \x01(\fR\rjobStatusJson\x12,\n" +
+	"\x12script_result_json\x18\n" +
+	" \x01(\fR\x10scriptResultJson\x12}\n" +
 	"\x0efailure_reason\x18\t \x01(\tBV\xbaHSrQR\x00R\x14authorization_deniedR\x10execution_failedR\x14delete_not_confirmedR\x0foutcome_unknownR\rfailureReasonB\f\n" +
 	"\n" +
 	"_exit_code\"K\n" +
@@ -4075,7 +4181,7 @@ const file_sdodev_contracts_v1alpha1_program_proto_rawDesc = "" +
 	"\x0eRolloutBlocker\x126\n" +
 	"\x03ref\x18\x01 \x01(\v2$.sdodev.contracts.v1alpha1.ObjectRefR\x03ref\x12\x16\n" +
 	"\x06reason\x18\x02 \x01(\tR\x06reason\x12%\n" +
-	"\x0ewarning_events\x18\x03 \x03(\tR\rwarningEvents\"\xcf\b\n" +
+	"\x0ewarning_events\x18\x03 \x03(\tR\rwarningEvents\"\xa7\t\n" +
 	"\x0fPlanApplication\x12;\n" +
 	"\x04plan\x18\x01 \x01(\v2\x1f.sdodev.contracts.v1alpha1.PlanB\x06\xbaH\x03\xc8\x01\x01R\x04plan\x12\x18\n" +
 	"\aapplied\x18\x02 \x01(\bR\aapplied\x12\x17\n" +
@@ -4099,7 +4205,8 @@ const file_sdodev_contracts_v1alpha1_program_proto_rawDesc = "" +
 	"\x1afinal_equivalence_verified\x18\x12 \x01(\bH\x00R\x18finalEquivalenceVerified\x88\x01\x01\x12R\n" +
 	"\x0eobject_effects\x18\x13 \x03(\v2+.sdodev.contracts.v1alpha1.PlanObjectEffectR\robjectEffects\x12N\n" +
 	"\x0eaction_reports\x18\x14 \x03(\v2'.sdodev.contracts.v1alpha1.ActionReportR\ractionReports\x12R\n" +
-	"\x0frollout_pending\x18\x15 \x01(\v2).sdodev.contracts.v1alpha1.RolloutPendingR\x0erolloutPendingB\x1d\n" +
+	"\x0frollout_pending\x18\x15 \x01(\v2).sdodev.contracts.v1alpha1.RolloutPendingR\x0erolloutPending\x12V\n" +
+	"\x18final_verification_basis\x18\x16 \x01(\tB\x1c\xbaH\x19r\x17R\x00R\x13observed-transitionR\x16finalVerificationBasisB\x1d\n" +
 	"\x1b_final_equivalence_verifiedJ\x04\b\v\x10\fJ\x04\b\r\x10\x0eR\n" +
 	"pre_imagesR\apatches\"\xcf\x01\n" +
 	"\x0fProgramToolCall\x12\x18\n" +
@@ -4269,7 +4376,15 @@ const file_sdodev_contracts_v1alpha1_program_proto_rawDesc = "" +
 	"\x06object\x18\x01 \x01(\v2&.sdodev.contracts.v1alpha1.ApplyObjectB\x06\xbaH\x03\xc8\x01\x01R\x06object\x12J\n" +
 	"\n" +
 	"completion\x18\x02 \x01(\v2\".sdodev.contracts.v1alpha1.WaitForB\x06\xbaH\x03\xc8\x01\x01R\n" +
-	"completionB\xff\x01\n" +
+	"completion\"\x9c\x02\n" +
+	"\tRunScript\x12#\n" +
+	"\x06script\x18\x01 \x01(\tB\v\xbaH\br\x06\x10\x01(\x80\x80\x04R\x06script\x12?\n" +
+	"\x03env\x18\x02 \x03(\v2-.sdodev.contracts.v1alpha1.RunScript.EnvEntryR\x03env\x123\n" +
+	"\atimeout\x18\x03 \x01(\v2\x19.google.protobuf.DurationR\atimeout\x12\x16\n" +
+	"\x06reason\x18\x04 \x01(\tR\x06reason\x1a\\\n" +
+	"\bEnvEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12:\n" +
+	"\x05value\x18\x02 \x01(\v2$.sdodev.contracts.v1alpha1.PlanValueR\x05value:\x028\x01B\xff\x01\n" +
 	"\x1dcom.sdodev.contracts.v1alpha1B\fProgramProtoP\x01ZJsdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1;contractsv1alpha1\xa2\x02\x03SCX\xaa\x02\x19Sdodev.Contracts.V1alpha1\xca\x02\x19Sdodev\\Contracts\\V1alpha1\xe2\x02%Sdodev\\Contracts\\V1alpha1\\GPBMetadata\xea\x02\x1bSdodev::Contracts::V1alpha1b\x06proto3"
 
 var (
@@ -4285,7 +4400,7 @@ func file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP() []byte {
 }
 
 var file_sdodev_contracts_v1alpha1_program_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_sdodev_contracts_v1alpha1_program_proto_msgTypes = make([]protoimpl.MessageInfo, 53)
+var file_sdodev_contracts_v1alpha1_program_proto_msgTypes = make([]protoimpl.MessageInfo, 55)
 var file_sdodev_contracts_v1alpha1_program_proto_goTypes = []any{
 	(Verdict_Result)(0),            // 0: sdodev.contracts.v1alpha1.Verdict.Result
 	(*ProgramSpec)(nil),            // 1: sdodev.contracts.v1alpha1.ProgramSpec
@@ -4338,119 +4453,125 @@ var file_sdodev_contracts_v1alpha1_program_proto_goTypes = []any{
 	(*EnsureExec)(nil),             // 48: sdodev.contracts.v1alpha1.EnsureExec
 	(*EnsureHttp)(nil),             // 49: sdodev.contracts.v1alpha1.EnsureHttp
 	(*RunJob)(nil),                 // 50: sdodev.contracts.v1alpha1.RunJob
-	nil,                            // 51: sdodev.contracts.v1alpha1.KubernetesRequest.QueryEntry
-	nil,                            // 52: sdodev.contracts.v1alpha1.HttpRequest.HeadersEntry
-	nil,                            // 53: sdodev.contracts.v1alpha1.HttpRequest.HeaderEnvEntry
-	(*structpb.Value)(nil),         // 54: google.protobuf.Value
-	(*ObjectRef)(nil),              // 55: sdodev.contracts.v1alpha1.ObjectRef
-	(*structpb.Struct)(nil),        // 56: google.protobuf.Struct
-	(*durationpb.Duration)(nil),    // 57: google.protobuf.Duration
-	(*timestamppb.Timestamp)(nil),  // 58: google.protobuf.Timestamp
+	(*RunScript)(nil),              // 51: sdodev.contracts.v1alpha1.RunScript
+	nil,                            // 52: sdodev.contracts.v1alpha1.KubernetesRequest.QueryEntry
+	nil,                            // 53: sdodev.contracts.v1alpha1.HttpRequest.HeadersEntry
+	nil,                            // 54: sdodev.contracts.v1alpha1.HttpRequest.HeaderEnvEntry
+	nil,                            // 55: sdodev.contracts.v1alpha1.RunScript.EnvEntry
+	(*structpb.Value)(nil),         // 56: google.protobuf.Value
+	(*ObjectRef)(nil),              // 57: sdodev.contracts.v1alpha1.ObjectRef
+	(*structpb.Struct)(nil),        // 58: google.protobuf.Struct
+	(*durationpb.Duration)(nil),    // 59: google.protobuf.Duration
+	(*timestamppb.Timestamp)(nil),  // 60: google.protobuf.Timestamp
 }
 var file_sdodev_contracts_v1alpha1_program_proto_depIdxs = []int32{
-	2,  // 0: sdodev.contracts.v1alpha1.ProgramSpec.params:type_name -> sdodev.contracts.v1alpha1.ParamSpec
-	54, // 1: sdodev.contracts.v1alpha1.ParamSpec.default:type_name -> google.protobuf.Value
-	55, // 2: sdodev.contracts.v1alpha1.Binding.object:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	54, // 3: sdodev.contracts.v1alpha1.Binding.value:type_name -> google.protobuf.Value
-	0,  // 4: sdodev.contracts.v1alpha1.Verdict.result:type_name -> sdodev.contracts.v1alpha1.Verdict.Result
-	5,  // 5: sdodev.contracts.v1alpha1.Verdict.evidence:type_name -> sdodev.contracts.v1alpha1.Evidence
-	55, // 6: sdodev.contracts.v1alpha1.Evidence.resource:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	7,  // 7: sdodev.contracts.v1alpha1.Plan.actions:type_name -> sdodev.contracts.v1alpha1.Action
-	11, // 8: sdodev.contracts.v1alpha1.Action.reconcile_from_source:type_name -> sdodev.contracts.v1alpha1.ReconcileFromSource
-	12, // 9: sdodev.contracts.v1alpha1.Action.rollback:type_name -> sdodev.contracts.v1alpha1.Rollback
-	13, // 10: sdodev.contracts.v1alpha1.Action.set_field:type_name -> sdodev.contracts.v1alpha1.SetField
-	21, // 11: sdodev.contracts.v1alpha1.Action.restart_rollout:type_name -> sdodev.contracts.v1alpha1.RestartRollout
-	8,  // 12: sdodev.contracts.v1alpha1.Action.create_from_source:type_name -> sdodev.contracts.v1alpha1.CreateFromSource
-	9,  // 13: sdodev.contracts.v1alpha1.Action.delete_object:type_name -> sdodev.contracts.v1alpha1.DeleteObject
-	18, // 14: sdodev.contracts.v1alpha1.Action.delete_pod:type_name -> sdodev.contracts.v1alpha1.DeletePod
-	19, // 15: sdodev.contracts.v1alpha1.Action.scale_workload:type_name -> sdodev.contracts.v1alpha1.ScaleWorkload
-	20, // 16: sdodev.contracts.v1alpha1.Action.exec:type_name -> sdodev.contracts.v1alpha1.Exec
-	34, // 17: sdodev.contracts.v1alpha1.Action.remove_service_port:type_name -> sdodev.contracts.v1alpha1.RemoveServicePort
-	40, // 18: sdodev.contracts.v1alpha1.Action.ensure_database_user:type_name -> sdodev.contracts.v1alpha1.EnsureDatabaseUser
-	41, // 19: sdodev.contracts.v1alpha1.Action.patch_object:type_name -> sdodev.contracts.v1alpha1.PatchObject
-	43, // 20: sdodev.contracts.v1alpha1.Action.apply_object:type_name -> sdodev.contracts.v1alpha1.ApplyObject
-	44, // 21: sdodev.contracts.v1alpha1.Action.kubernetes_request:type_name -> sdodev.contracts.v1alpha1.KubernetesRequest
-	45, // 22: sdodev.contracts.v1alpha1.Action.wait_for:type_name -> sdodev.contracts.v1alpha1.WaitFor
-	48, // 23: sdodev.contracts.v1alpha1.Action.ensure_exec:type_name -> sdodev.contracts.v1alpha1.EnsureExec
-	49, // 24: sdodev.contracts.v1alpha1.Action.ensure_http:type_name -> sdodev.contracts.v1alpha1.EnsureHttp
-	50, // 25: sdodev.contracts.v1alpha1.Action.run_job:type_name -> sdodev.contracts.v1alpha1.RunJob
-	55, // 26: sdodev.contracts.v1alpha1.CreateFromSource.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	55, // 27: sdodev.contracts.v1alpha1.DeleteObject.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	55, // 28: sdodev.contracts.v1alpha1.PlanObjectEffect.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	56, // 29: sdodev.contracts.v1alpha1.PlanObjectEffect.deleted_pre_image:type_name -> google.protobuf.Struct
-	55, // 30: sdodev.contracts.v1alpha1.ReconcileFromSource.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	55, // 31: sdodev.contracts.v1alpha1.Rollback.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	55, // 32: sdodev.contracts.v1alpha1.SetField.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	14, // 33: sdodev.contracts.v1alpha1.SetField.value:type_name -> sdodev.contracts.v1alpha1.PlanValue
-	15, // 34: sdodev.contracts.v1alpha1.PlanValue.source:type_name -> sdodev.contracts.v1alpha1.ValueField
-	15, // 35: sdodev.contracts.v1alpha1.PlanValue.observed:type_name -> sdodev.contracts.v1alpha1.ValueField
-	55, // 36: sdodev.contracts.v1alpha1.ValueField.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	55, // 37: sdodev.contracts.v1alpha1.ValueProvenance.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	16, // 38: sdodev.contracts.v1alpha1.ActionReport.values:type_name -> sdodev.contracts.v1alpha1.ValueProvenance
-	55, // 39: sdodev.contracts.v1alpha1.DeletePod.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	55, // 40: sdodev.contracts.v1alpha1.ScaleWorkload.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	14, // 41: sdodev.contracts.v1alpha1.ScaleWorkload.replicas:type_name -> sdodev.contracts.v1alpha1.PlanValue
-	55, // 42: sdodev.contracts.v1alpha1.Exec.pod:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	14, // 43: sdodev.contracts.v1alpha1.Exec.command:type_name -> sdodev.contracts.v1alpha1.PlanValue
-	55, // 44: sdodev.contracts.v1alpha1.RestartRollout.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	3,  // 45: sdodev.contracts.v1alpha1.ProgramRun.bindings:type_name -> sdodev.contracts.v1alpha1.Binding
-	4,  // 46: sdodev.contracts.v1alpha1.ProgramRun.verdict:type_name -> sdodev.contracts.v1alpha1.Verdict
-	57, // 47: sdodev.contracts.v1alpha1.ProgramRun.duration:type_name -> google.protobuf.Duration
-	24, // 48: sdodev.contracts.v1alpha1.RolloutPending.blockers:type_name -> sdodev.contracts.v1alpha1.RolloutBlocker
-	55, // 49: sdodev.contracts.v1alpha1.RolloutBlocker.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	6,  // 50: sdodev.contracts.v1alpha1.PlanApplication.plan:type_name -> sdodev.contracts.v1alpha1.Plan
-	4,  // 51: sdodev.contracts.v1alpha1.PlanApplication.verification:type_name -> sdodev.contracts.v1alpha1.Verdict
-	57, // 52: sdodev.contracts.v1alpha1.PlanApplication.duration:type_name -> google.protobuf.Duration
-	7,  // 53: sdodev.contracts.v1alpha1.PlanApplication.actions_applied:type_name -> sdodev.contracts.v1alpha1.Action
-	58, // 54: sdodev.contracts.v1alpha1.PlanApplication.started_at:type_name -> google.protobuf.Timestamp
-	58, // 55: sdodev.contracts.v1alpha1.PlanApplication.completed_at:type_name -> google.protobuf.Timestamp
-	10, // 56: sdodev.contracts.v1alpha1.PlanApplication.object_effects:type_name -> sdodev.contracts.v1alpha1.PlanObjectEffect
-	17, // 57: sdodev.contracts.v1alpha1.PlanApplication.action_reports:type_name -> sdodev.contracts.v1alpha1.ActionReport
-	23, // 58: sdodev.contracts.v1alpha1.PlanApplication.rollout_pending:type_name -> sdodev.contracts.v1alpha1.RolloutPending
-	58, // 59: sdodev.contracts.v1alpha1.ProgramToolCall.at:type_name -> google.protobuf.Timestamp
-	55, // 60: sdodev.contracts.v1alpha1.ReflectionCauseWork.resources:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	30, // 61: sdodev.contracts.v1alpha1.ReflectionCauseWork.items:type_name -> sdodev.contracts.v1alpha1.ReflectionWorkItem
-	3,  // 62: sdodev.contracts.v1alpha1.ReflectionWorkItem.bindings:type_name -> sdodev.contracts.v1alpha1.Binding
-	55, // 63: sdodev.contracts.v1alpha1.ReflectionWorkItem.resources:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	22, // 64: sdodev.contracts.v1alpha1.ReflectionWorkItem.evaluation:type_name -> sdodev.contracts.v1alpha1.ProgramRun
-	29, // 65: sdodev.contracts.v1alpha1.ReflectionEligibility.causes:type_name -> sdodev.contracts.v1alpha1.ReflectionCauseWork
-	30, // 66: sdodev.contracts.v1alpha1.ReflectionEligibility.unassigned:type_name -> sdodev.contracts.v1alpha1.ReflectionWorkItem
-	33, // 67: sdodev.contracts.v1alpha1.PlaybookCoverage.matches:type_name -> sdodev.contracts.v1alpha1.PlaybookMatch
-	3,  // 68: sdodev.contracts.v1alpha1.PlaybookMatch.bindings:type_name -> sdodev.contracts.v1alpha1.Binding
-	55, // 69: sdodev.contracts.v1alpha1.RemoveServicePort.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	35, // 70: sdodev.contracts.v1alpha1.CredentialRef.config_map:type_name -> sdodev.contracts.v1alpha1.ConfigMapCredentialRef
-	36, // 71: sdodev.contracts.v1alpha1.DatabaseAuth.username:type_name -> sdodev.contracts.v1alpha1.CredentialRef
-	36, // 72: sdodev.contracts.v1alpha1.DatabaseAuth.password:type_name -> sdodev.contracts.v1alpha1.CredentialRef
-	55, // 73: sdodev.contracts.v1alpha1.DatabaseTarget.pod:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	37, // 74: sdodev.contracts.v1alpha1.DatabaseTarget.auth:type_name -> sdodev.contracts.v1alpha1.DatabaseAuth
-	38, // 75: sdodev.contracts.v1alpha1.EnsureDatabaseUser.target:type_name -> sdodev.contracts.v1alpha1.DatabaseTarget
-	39, // 76: sdodev.contracts.v1alpha1.EnsureDatabaseUser.roles:type_name -> sdodev.contracts.v1alpha1.DatabaseRole
-	36, // 77: sdodev.contracts.v1alpha1.EnsureDatabaseUser.password:type_name -> sdodev.contracts.v1alpha1.CredentialRef
-	55, // 78: sdodev.contracts.v1alpha1.PatchObject.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	42, // 79: sdodev.contracts.v1alpha1.PatchObject.edits:type_name -> sdodev.contracts.v1alpha1.ListEdit
-	55, // 80: sdodev.contracts.v1alpha1.ApplyObject.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	55, // 81: sdodev.contracts.v1alpha1.KubernetesRequest.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	51, // 82: sdodev.contracts.v1alpha1.KubernetesRequest.query:type_name -> sdodev.contracts.v1alpha1.KubernetesRequest.QueryEntry
-	55, // 83: sdodev.contracts.v1alpha1.WaitFor.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	57, // 84: sdodev.contracts.v1alpha1.WaitFor.timeout:type_name -> google.protobuf.Duration
-	57, // 85: sdodev.contracts.v1alpha1.WaitFor.interval:type_name -> google.protobuf.Duration
-	55, // 86: sdodev.contracts.v1alpha1.Command.pod:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	55, // 87: sdodev.contracts.v1alpha1.HttpRequest.pod:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	52, // 88: sdodev.contracts.v1alpha1.HttpRequest.headers:type_name -> sdodev.contracts.v1alpha1.HttpRequest.HeadersEntry
-	36, // 89: sdodev.contracts.v1alpha1.HttpRequest.bearer:type_name -> sdodev.contracts.v1alpha1.CredentialRef
-	53, // 90: sdodev.contracts.v1alpha1.HttpRequest.header_env:type_name -> sdodev.contracts.v1alpha1.HttpRequest.HeaderEnvEntry
-	46, // 91: sdodev.contracts.v1alpha1.EnsureExec.observe:type_name -> sdodev.contracts.v1alpha1.Command
-	46, // 92: sdodev.contracts.v1alpha1.EnsureExec.ensure:type_name -> sdodev.contracts.v1alpha1.Command
-	47, // 93: sdodev.contracts.v1alpha1.EnsureHttp.observe:type_name -> sdodev.contracts.v1alpha1.HttpRequest
-	47, // 94: sdodev.contracts.v1alpha1.EnsureHttp.ensure:type_name -> sdodev.contracts.v1alpha1.HttpRequest
-	43, // 95: sdodev.contracts.v1alpha1.RunJob.object:type_name -> sdodev.contracts.v1alpha1.ApplyObject
-	45, // 96: sdodev.contracts.v1alpha1.RunJob.completion:type_name -> sdodev.contracts.v1alpha1.WaitFor
-	36, // 97: sdodev.contracts.v1alpha1.HttpRequest.HeaderEnvEntry.value:type_name -> sdodev.contracts.v1alpha1.CredentialRef
-	98, // [98:98] is the sub-list for method output_type
-	98, // [98:98] is the sub-list for method input_type
-	98, // [98:98] is the sub-list for extension type_name
-	98, // [98:98] is the sub-list for extension extendee
-	0,  // [0:98] is the sub-list for field type_name
+	2,   // 0: sdodev.contracts.v1alpha1.ProgramSpec.params:type_name -> sdodev.contracts.v1alpha1.ParamSpec
+	56,  // 1: sdodev.contracts.v1alpha1.ParamSpec.default:type_name -> google.protobuf.Value
+	57,  // 2: sdodev.contracts.v1alpha1.Binding.object:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	56,  // 3: sdodev.contracts.v1alpha1.Binding.value:type_name -> google.protobuf.Value
+	0,   // 4: sdodev.contracts.v1alpha1.Verdict.result:type_name -> sdodev.contracts.v1alpha1.Verdict.Result
+	5,   // 5: sdodev.contracts.v1alpha1.Verdict.evidence:type_name -> sdodev.contracts.v1alpha1.Evidence
+	57,  // 6: sdodev.contracts.v1alpha1.Evidence.resource:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	7,   // 7: sdodev.contracts.v1alpha1.Plan.actions:type_name -> sdodev.contracts.v1alpha1.Action
+	11,  // 8: sdodev.contracts.v1alpha1.Action.reconcile_from_source:type_name -> sdodev.contracts.v1alpha1.ReconcileFromSource
+	12,  // 9: sdodev.contracts.v1alpha1.Action.rollback:type_name -> sdodev.contracts.v1alpha1.Rollback
+	13,  // 10: sdodev.contracts.v1alpha1.Action.set_field:type_name -> sdodev.contracts.v1alpha1.SetField
+	21,  // 11: sdodev.contracts.v1alpha1.Action.restart_rollout:type_name -> sdodev.contracts.v1alpha1.RestartRollout
+	8,   // 12: sdodev.contracts.v1alpha1.Action.create_from_source:type_name -> sdodev.contracts.v1alpha1.CreateFromSource
+	9,   // 13: sdodev.contracts.v1alpha1.Action.delete_object:type_name -> sdodev.contracts.v1alpha1.DeleteObject
+	18,  // 14: sdodev.contracts.v1alpha1.Action.delete_pod:type_name -> sdodev.contracts.v1alpha1.DeletePod
+	19,  // 15: sdodev.contracts.v1alpha1.Action.scale_workload:type_name -> sdodev.contracts.v1alpha1.ScaleWorkload
+	20,  // 16: sdodev.contracts.v1alpha1.Action.exec:type_name -> sdodev.contracts.v1alpha1.Exec
+	34,  // 17: sdodev.contracts.v1alpha1.Action.remove_service_port:type_name -> sdodev.contracts.v1alpha1.RemoveServicePort
+	40,  // 18: sdodev.contracts.v1alpha1.Action.ensure_database_user:type_name -> sdodev.contracts.v1alpha1.EnsureDatabaseUser
+	41,  // 19: sdodev.contracts.v1alpha1.Action.patch_object:type_name -> sdodev.contracts.v1alpha1.PatchObject
+	43,  // 20: sdodev.contracts.v1alpha1.Action.apply_object:type_name -> sdodev.contracts.v1alpha1.ApplyObject
+	44,  // 21: sdodev.contracts.v1alpha1.Action.kubernetes_request:type_name -> sdodev.contracts.v1alpha1.KubernetesRequest
+	45,  // 22: sdodev.contracts.v1alpha1.Action.wait_for:type_name -> sdodev.contracts.v1alpha1.WaitFor
+	48,  // 23: sdodev.contracts.v1alpha1.Action.ensure_exec:type_name -> sdodev.contracts.v1alpha1.EnsureExec
+	49,  // 24: sdodev.contracts.v1alpha1.Action.ensure_http:type_name -> sdodev.contracts.v1alpha1.EnsureHttp
+	50,  // 25: sdodev.contracts.v1alpha1.Action.run_job:type_name -> sdodev.contracts.v1alpha1.RunJob
+	51,  // 26: sdodev.contracts.v1alpha1.Action.run_script:type_name -> sdodev.contracts.v1alpha1.RunScript
+	57,  // 27: sdodev.contracts.v1alpha1.CreateFromSource.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	57,  // 28: sdodev.contracts.v1alpha1.DeleteObject.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	57,  // 29: sdodev.contracts.v1alpha1.PlanObjectEffect.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	58,  // 30: sdodev.contracts.v1alpha1.PlanObjectEffect.deleted_pre_image:type_name -> google.protobuf.Struct
+	57,  // 31: sdodev.contracts.v1alpha1.ReconcileFromSource.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	57,  // 32: sdodev.contracts.v1alpha1.Rollback.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	57,  // 33: sdodev.contracts.v1alpha1.SetField.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	14,  // 34: sdodev.contracts.v1alpha1.SetField.value:type_name -> sdodev.contracts.v1alpha1.PlanValue
+	15,  // 35: sdodev.contracts.v1alpha1.PlanValue.source:type_name -> sdodev.contracts.v1alpha1.ValueField
+	15,  // 36: sdodev.contracts.v1alpha1.PlanValue.observed:type_name -> sdodev.contracts.v1alpha1.ValueField
+	57,  // 37: sdodev.contracts.v1alpha1.ValueField.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	57,  // 38: sdodev.contracts.v1alpha1.ValueProvenance.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	16,  // 39: sdodev.contracts.v1alpha1.ActionReport.values:type_name -> sdodev.contracts.v1alpha1.ValueProvenance
+	57,  // 40: sdodev.contracts.v1alpha1.DeletePod.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	57,  // 41: sdodev.contracts.v1alpha1.ScaleWorkload.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	14,  // 42: sdodev.contracts.v1alpha1.ScaleWorkload.replicas:type_name -> sdodev.contracts.v1alpha1.PlanValue
+	57,  // 43: sdodev.contracts.v1alpha1.Exec.pod:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	14,  // 44: sdodev.contracts.v1alpha1.Exec.command:type_name -> sdodev.contracts.v1alpha1.PlanValue
+	57,  // 45: sdodev.contracts.v1alpha1.RestartRollout.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	3,   // 46: sdodev.contracts.v1alpha1.ProgramRun.bindings:type_name -> sdodev.contracts.v1alpha1.Binding
+	4,   // 47: sdodev.contracts.v1alpha1.ProgramRun.verdict:type_name -> sdodev.contracts.v1alpha1.Verdict
+	59,  // 48: sdodev.contracts.v1alpha1.ProgramRun.duration:type_name -> google.protobuf.Duration
+	24,  // 49: sdodev.contracts.v1alpha1.RolloutPending.blockers:type_name -> sdodev.contracts.v1alpha1.RolloutBlocker
+	57,  // 50: sdodev.contracts.v1alpha1.RolloutBlocker.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	6,   // 51: sdodev.contracts.v1alpha1.PlanApplication.plan:type_name -> sdodev.contracts.v1alpha1.Plan
+	4,   // 52: sdodev.contracts.v1alpha1.PlanApplication.verification:type_name -> sdodev.contracts.v1alpha1.Verdict
+	59,  // 53: sdodev.contracts.v1alpha1.PlanApplication.duration:type_name -> google.protobuf.Duration
+	7,   // 54: sdodev.contracts.v1alpha1.PlanApplication.actions_applied:type_name -> sdodev.contracts.v1alpha1.Action
+	60,  // 55: sdodev.contracts.v1alpha1.PlanApplication.started_at:type_name -> google.protobuf.Timestamp
+	60,  // 56: sdodev.contracts.v1alpha1.PlanApplication.completed_at:type_name -> google.protobuf.Timestamp
+	10,  // 57: sdodev.contracts.v1alpha1.PlanApplication.object_effects:type_name -> sdodev.contracts.v1alpha1.PlanObjectEffect
+	17,  // 58: sdodev.contracts.v1alpha1.PlanApplication.action_reports:type_name -> sdodev.contracts.v1alpha1.ActionReport
+	23,  // 59: sdodev.contracts.v1alpha1.PlanApplication.rollout_pending:type_name -> sdodev.contracts.v1alpha1.RolloutPending
+	60,  // 60: sdodev.contracts.v1alpha1.ProgramToolCall.at:type_name -> google.protobuf.Timestamp
+	57,  // 61: sdodev.contracts.v1alpha1.ReflectionCauseWork.resources:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	30,  // 62: sdodev.contracts.v1alpha1.ReflectionCauseWork.items:type_name -> sdodev.contracts.v1alpha1.ReflectionWorkItem
+	3,   // 63: sdodev.contracts.v1alpha1.ReflectionWorkItem.bindings:type_name -> sdodev.contracts.v1alpha1.Binding
+	57,  // 64: sdodev.contracts.v1alpha1.ReflectionWorkItem.resources:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	22,  // 65: sdodev.contracts.v1alpha1.ReflectionWorkItem.evaluation:type_name -> sdodev.contracts.v1alpha1.ProgramRun
+	29,  // 66: sdodev.contracts.v1alpha1.ReflectionEligibility.causes:type_name -> sdodev.contracts.v1alpha1.ReflectionCauseWork
+	30,  // 67: sdodev.contracts.v1alpha1.ReflectionEligibility.unassigned:type_name -> sdodev.contracts.v1alpha1.ReflectionWorkItem
+	33,  // 68: sdodev.contracts.v1alpha1.PlaybookCoverage.matches:type_name -> sdodev.contracts.v1alpha1.PlaybookMatch
+	3,   // 69: sdodev.contracts.v1alpha1.PlaybookMatch.bindings:type_name -> sdodev.contracts.v1alpha1.Binding
+	57,  // 70: sdodev.contracts.v1alpha1.RemoveServicePort.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	35,  // 71: sdodev.contracts.v1alpha1.CredentialRef.config_map:type_name -> sdodev.contracts.v1alpha1.ConfigMapCredentialRef
+	36,  // 72: sdodev.contracts.v1alpha1.DatabaseAuth.username:type_name -> sdodev.contracts.v1alpha1.CredentialRef
+	36,  // 73: sdodev.contracts.v1alpha1.DatabaseAuth.password:type_name -> sdodev.contracts.v1alpha1.CredentialRef
+	57,  // 74: sdodev.contracts.v1alpha1.DatabaseTarget.pod:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	37,  // 75: sdodev.contracts.v1alpha1.DatabaseTarget.auth:type_name -> sdodev.contracts.v1alpha1.DatabaseAuth
+	38,  // 76: sdodev.contracts.v1alpha1.EnsureDatabaseUser.target:type_name -> sdodev.contracts.v1alpha1.DatabaseTarget
+	39,  // 77: sdodev.contracts.v1alpha1.EnsureDatabaseUser.roles:type_name -> sdodev.contracts.v1alpha1.DatabaseRole
+	36,  // 78: sdodev.contracts.v1alpha1.EnsureDatabaseUser.password:type_name -> sdodev.contracts.v1alpha1.CredentialRef
+	57,  // 79: sdodev.contracts.v1alpha1.PatchObject.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	42,  // 80: sdodev.contracts.v1alpha1.PatchObject.edits:type_name -> sdodev.contracts.v1alpha1.ListEdit
+	57,  // 81: sdodev.contracts.v1alpha1.ApplyObject.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	57,  // 82: sdodev.contracts.v1alpha1.KubernetesRequest.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	52,  // 83: sdodev.contracts.v1alpha1.KubernetesRequest.query:type_name -> sdodev.contracts.v1alpha1.KubernetesRequest.QueryEntry
+	57,  // 84: sdodev.contracts.v1alpha1.WaitFor.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	59,  // 85: sdodev.contracts.v1alpha1.WaitFor.timeout:type_name -> google.protobuf.Duration
+	59,  // 86: sdodev.contracts.v1alpha1.WaitFor.interval:type_name -> google.protobuf.Duration
+	57,  // 87: sdodev.contracts.v1alpha1.Command.pod:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	57,  // 88: sdodev.contracts.v1alpha1.HttpRequest.pod:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	53,  // 89: sdodev.contracts.v1alpha1.HttpRequest.headers:type_name -> sdodev.contracts.v1alpha1.HttpRequest.HeadersEntry
+	36,  // 90: sdodev.contracts.v1alpha1.HttpRequest.bearer:type_name -> sdodev.contracts.v1alpha1.CredentialRef
+	54,  // 91: sdodev.contracts.v1alpha1.HttpRequest.header_env:type_name -> sdodev.contracts.v1alpha1.HttpRequest.HeaderEnvEntry
+	46,  // 92: sdodev.contracts.v1alpha1.EnsureExec.observe:type_name -> sdodev.contracts.v1alpha1.Command
+	46,  // 93: sdodev.contracts.v1alpha1.EnsureExec.ensure:type_name -> sdodev.contracts.v1alpha1.Command
+	47,  // 94: sdodev.contracts.v1alpha1.EnsureHttp.observe:type_name -> sdodev.contracts.v1alpha1.HttpRequest
+	47,  // 95: sdodev.contracts.v1alpha1.EnsureHttp.ensure:type_name -> sdodev.contracts.v1alpha1.HttpRequest
+	43,  // 96: sdodev.contracts.v1alpha1.RunJob.object:type_name -> sdodev.contracts.v1alpha1.ApplyObject
+	45,  // 97: sdodev.contracts.v1alpha1.RunJob.completion:type_name -> sdodev.contracts.v1alpha1.WaitFor
+	55,  // 98: sdodev.contracts.v1alpha1.RunScript.env:type_name -> sdodev.contracts.v1alpha1.RunScript.EnvEntry
+	59,  // 99: sdodev.contracts.v1alpha1.RunScript.timeout:type_name -> google.protobuf.Duration
+	36,  // 100: sdodev.contracts.v1alpha1.HttpRequest.HeaderEnvEntry.value:type_name -> sdodev.contracts.v1alpha1.CredentialRef
+	14,  // 101: sdodev.contracts.v1alpha1.RunScript.EnvEntry.value:type_name -> sdodev.contracts.v1alpha1.PlanValue
+	102, // [102:102] is the sub-list for method output_type
+	102, // [102:102] is the sub-list for method input_type
+	102, // [102:102] is the sub-list for extension type_name
+	102, // [102:102] is the sub-list for extension extendee
+	0,   // [0:102] is the sub-list for field type_name
 }
 
 func init() { file_sdodev_contracts_v1alpha1_program_proto_init() }
@@ -4478,6 +4599,7 @@ func file_sdodev_contracts_v1alpha1_program_proto_init() {
 		(*Action_EnsureExec)(nil),
 		(*Action_EnsureHttp)(nil),
 		(*Action_RunJob)(nil),
+		(*Action_RunScript)(nil),
 	}
 	file_sdodev_contracts_v1alpha1_program_proto_msgTypes[13].OneofWrappers = []any{
 		(*PlanValue_Source)(nil),
@@ -4498,7 +4620,7 @@ func file_sdodev_contracts_v1alpha1_program_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_sdodev_contracts_v1alpha1_program_proto_rawDesc), len(file_sdodev_contracts_v1alpha1_program_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   53,
+			NumMessages:   55,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

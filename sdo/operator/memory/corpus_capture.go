@@ -40,6 +40,13 @@ func AppendCapturedRecording(repositoryMount, incidentID, phase string, call sdk
 	if err := json.Unmarshal(data, &calls); err != nil {
 		return err
 	}
+	if call.Method == "RepairReceipt" {
+		for _, prior := range calls {
+			if prior.Method == call.Method && string(prior.Result) == string(call.Result) {
+				return nil
+			}
+		}
+	}
 	if call.Method == "DatabaseUsers" {
 		identity, err := databaseCaptureIdentity(call)
 		if err != nil {

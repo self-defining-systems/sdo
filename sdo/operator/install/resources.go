@@ -41,6 +41,7 @@ type Config struct {
 	ObservationCeiling                              sdk.ObservationScope
 	Namespace, ControlNamespace, Application        string
 	ControllerImage, ResponderImage, ValidatorImage string
+	ScriptImage                                     string
 	RepositoryPVC, CredentialsSecret, Model         string
 	AcceptedCommit                                  string
 	RepairPolicy, AgentProvider                     string
@@ -299,6 +300,7 @@ func Resources(c Config, resources ...*metav1.APIResourceList) (Plan, error) {
 		return Plan{}, err
 	}
 	addObservationGrants(&plan, c)
+	addScriptGrants(c, &plan)
 	plan.SyncPod = syncPod(c)
 	plan.Job = controllerJob(c)
 	if c.AcceptedCommit != "" {
@@ -396,6 +398,9 @@ func controllerJob(c Config) *batchv1.Job {
 	provider := c.AgentProvider
 	if provider == "" {
 		provider = "codex"
+	}
+	if c.ScriptImage != "" {
+		args = append(args, "--script-image", c.ScriptImage)
 	}
 	args = append(args, "--broker-mode=native", "--worker-mount-mode=proposal-only", "--validator-image", c.ValidatorImage, "--model", c.Model, "--responder-backend", provider)
 	args = append(args, "--reflection-session", reflectionSession(c))

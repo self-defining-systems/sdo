@@ -1,0 +1,145 @@
+package operatorcli
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strconv"
+	"strings"
+	"testing"
+	"time"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/client-go/kubernetes/fake"
+	"sdo.dev/operator/apihistory"
+	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/program"
+)
+
+func TestScriptCaptureStorePreservesChunkedFirstPreimageAndSettledAbsence(t *testing.T) {
+	ctx := context.Background()
+	client := fake.NewSimpleClientset()
+	maps := client.CoreV1().ConfigMaps("app")
+	store := scriptCaptureStore{maps: maps, namespace: "app", application: "sdo-script-application", jobUID: "original-job"}
+	ref := sdk.ObjectRef{APIVersion: "v1", Kind: "ConfigMap", Namespace: "app", Name: "settings"}
+	image := func(value string) *unstructured.Unstructured {
+		return &unstructured.Unstructured{Object: map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": ref.Name, "namespace": ref.Namespace}, "data": map[string]any{"value": value}}}
+	}
+	original := image(strings.Repeat("界", 300000))
+	capture := program.ScriptObjectCapture{Ref: ref, Before: original, After: image("fixed")}
+	location, err := store.save(ctx, "/api/v1/namespaces/app/configmaps/settings", capture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	capture.Before = image("later write must not replace the first image")
+	capture.After = nil
+	capture.AfterAbsent = true
+	if _, err = store.save(ctx, "/api/v1/namespaces/app/configmaps/settings", capture); err != nil {
+		t.Fatal(err)
+	}
+	name := strings.TrimPrefix(location, "ConfigMap/app/")
+	manifest, err := maps.Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	count, _ := strconv.Atoi(manifest.Data["before_chunks"])
+	if count < 2 || manifest.Data["after_absent"] != "true" || manifest.Data["after_chunks"] != "0" {
+		t.Fatalf("image manifest: %+v", manifest.Data)
+	}
+	var raw []byte
+	for i := 0; i < count; i++ {
+		chunk, err := maps.Get(ctx, fmt.Sprintf("%s-before-%d", name, i), metav1.GetOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw = append(raw, chunk.BinaryData["image"]...)
+	}
+	expected, _ := json.Marshal(original)
+	if !bytes.Equal(raw, expected) {
+		t.Fatal("first preimage or UTF-8 chunk boundaries changed")
+	}
+	store.jobUID = "replacement-job"
+	if _, err = store.save(ctx, "/api/v1/namespaces/app/configmaps/settings", capture); err == nil {
+		t.Fatal("replacement Job overwrote private images")
+	}
+}
+
+func TestScriptCapturesEveryObjectBeyondInlineImageBudget(t *testing.T) {
+	ctx := context.Background()
+	client := fake.NewSimpleClientset()
+	store := scriptCaptureStore{maps: client.CoreV1().ConfigMaps("app"), namespace: "app", application: "sdo-script-many", jobUID: "job"}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":%q,"namespace":"app"},"data":{"value":"settled"}}`, r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:])
+	}))
+	defer upstream.Close()
+	target, _ := url.Parse(upstream.URL)
+	recorder := newScriptRecorder(ctx, target, http.DefaultTransport)
+	recorder.persistImage = store.save
+	recorder.persistReceipt = store.receipt
+	for i := 0; i < 80; i++ {
+		name := fmt.Sprintf("object-%d", i)
+		raw := []byte(fmt.Sprintf(`{"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":%q,"namespace":"app"},"data":{"value":%q}}`, name, strings.Repeat("x", 16<<10)))
+		recorder.Record(apihistory.Event{Phase: "end", Verb: "get", Version: "v1", Resource: "configmaps", Namespace: "app", Name: name, Status: 200, Started: time.Unix(int64(i), 0)}, raw)
+	}
+	result := program.ScriptExecutionResult{}
+	recorder.settle(&result)
+	if len(result.Objects) != 80 || len(result.CaptureGaps) != 0 {
+		t.Fatalf("objects=%d gaps=%v", len(result.Objects), result.CaptureGaps)
+	}
+	for _, object := range result.Objects {
+		if object.ImagesRef == "" || object.Before != nil || object.After != nil {
+			t.Fatal("complete object images must live at the private storage edge")
+		}
+	}
+	manifests, err := client.CoreV1().ConfigMaps("app").List(ctx, metav1.ListOptions{LabelSelector: "sdo.dev/script-capture=sdo-script-many"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipts := 0
+	for _, manifest := range manifests.Items {
+		if manifest.Data["receipt.json"] != "" {
+			receipts++
+		}
+	}
+	if receipts != 80 {
+		t.Fatalf("private request receipts lost: %d", receipts)
+	}
+}
+
+func TestScriptSecretPreimagesStayCompleteInPrivateChunks(t *testing.T) {
+	ctx := context.Background()
+	client := fake.NewSimpleClientset()
+	store := scriptCaptureStore{maps: client.CoreV1().ConfigMaps("app"), namespace: "app", application: "sdo-script-secret", jobUID: "job"}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"apiVersion":"v1","kind":"Secret","metadata":{"name":"synthetic","namespace":"app"},"data":{"password":"c3ludGhldGljLWNhbmFyeQ=="}}`))
+	}))
+	defer upstream.Close()
+	target, _ := url.Parse(upstream.URL)
+	recorder := newScriptRecorder(ctx, target, http.DefaultTransport)
+	recorder.persistImage = store.save
+	recorder.Record(apihistory.Event{Phase: "start", Verb: "patch", Version: "v1", Resource: "secrets", Namespace: "app", Name: "synthetic"}, nil)
+	result := program.ScriptExecutionResult{}
+	recorder.settle(&result)
+	if len(result.Objects) != 1 || result.Objects[0].Before != nil || result.Objects[0].ImagesRef == "" || len(result.CaptureGaps) != 0 {
+		t.Fatalf("private Secret preimage unavailable: %+v", result)
+	}
+	name := strings.TrimPrefix(result.Objects[0].ImagesRef, "ConfigMap/app/")
+	chunk, err := client.CoreV1().ConfigMaps("app").Get(ctx, name+"-before-0", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(chunk.BinaryData["image"], []byte("c3ludGhldGljLWNhbmFyeQ==")) {
+		t.Fatal("private preimage lost synthetic Secret bytes")
+	}
+	public, _ := json.Marshal(result.Objects)
+	if bytes.Contains(public, []byte("c3ludGhldGljLWNhbmFyeQ==")) {
+		t.Fatal("Secret bytes escaped private object storage")
+	}
+}

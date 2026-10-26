@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/program"
 )
 
 // ProgramRepairReceipts records controller-applied mutations independently of
@@ -23,6 +24,23 @@ func ProgramRepairReceipts(applications []RecordedPlanApplication, existing []Re
 			actions = application.Result.ActionsApplied
 		}
 		for index, action := range actions {
+			if _, script := concreteExternalAction(action).(program.RunScript); script && index < len(application.Result.ActionReports) {
+				report := application.Result.ActionReports[index]
+				scoped := scriptRepairResources(report)
+				if report.Status == "applied" && application.Result.Applied {
+					for _, ref := range scoped {
+						if !seen[ref] {
+							seen[ref] = true
+							refs = append(refs, ref)
+						}
+					}
+				}
+				if report.FailureReason != "" {
+					id := uniqueRepairID(fmt.Sprintf("sdo-program-%s-failed-%d", application.ID, index+1), used)
+					result = append(result, RepairActionReceipt{ActionID: id, Kind: "run-script", Resources: scoped, Summary: "script execution failed or outcome unknown", StartedAt: application.StartedAt, CompletedAt: application.CompletedAt, FailureReason: report.FailureReason})
+				}
+				continue
+			}
 			ref, err := planActionRef(action)
 			if err != nil || ref.Kind == "" {
 				continue
@@ -59,11 +77,17 @@ func ProgramRepairReceipts(applications []RecordedPlanApplication, existing []Re
 			continue
 		}
 		id := uniqueRepairID("sdo-program-"+application.ID, used)
+		summary := "applied program plan " + strings.Join(application.ProgramIDs, ", ")
+		details := fmt.Sprintf("controller confirmed %d applied resource effects in %s", len(refs), application.ID)
+		if hasAppliedScript(actions) {
+			summary = "completed opaque script plan " + strings.Join(application.ProgramIDs, ", ")
+			details = fmt.Sprintf("controller recorded script completion for %d selected/touched resources in %s; external effects remain opaque", len(refs), application.ID)
+		}
 		result = append(result, RepairActionReceipt{
 			ActionID: id, Kind: "program-plan", Target: refs[0].Kind + "/" + refs[0].Name, Resources: refs,
-			Summary: "applied program plan " + strings.Join(application.ProgramIDs, ", "), Details: fmt.Sprintf("controller confirmed %d applied resource effects in %s", len(refs), application.ID),
+			Summary: summary, Details: details,
 			StartedAt: application.StartedAt, CompletedAt: application.CompletedAt,
-			Success: !application.RolledBack && application.RollbackError == "", Reversible: len(application.Result.PreImages) >= len(refs),
+			Success: !application.RolledBack && application.RollbackError == "", Reversible: !hasAppliedScript(actions) && len(application.Result.PreImages) >= len(refs),
 		})
 	}
 	return result
