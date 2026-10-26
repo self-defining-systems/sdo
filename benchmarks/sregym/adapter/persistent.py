@@ -130,7 +130,11 @@ class ClosureFailedError(PersistentControllerError):
 
 
 class ReflectionDeadlineError(PersistentControllerError):
-    """The controller was read and still owned the closure when the reflection deadline passed."""
+    """The controller was read and still owned the closure when the acknowledgment deadline passed.
+
+    For a successful closure this covers its reflection and detector rollout;
+    a non-success closure's queued reflection runs after the acknowledgment.
+    """
 
 
 class ControllerStateUnavailableError(PersistentControllerError):
@@ -1897,7 +1901,13 @@ def wait_for_maintenance_ack(
 def _wait_for_reflection_drain(
     ops: ClusterOps, control: str, incident_id: str, timeout: float, clock: Clock
 ) -> dict[str, Any]:
-    """Wait for broker acknowledgment, which follows any required detector rollout."""
+    """Wait for broker acknowledgment.
+
+    A successful closure's reflection and detector rollout precede its
+    acknowledgment. A non-success closure is acknowledged on its outcome commit;
+    its queued reflection and any detector rollout follow, and the next
+    problem's admission waits for them through ``incident_work_open``.
+    """
 
     deadline = clock.monotonic() + timeout
     while True:
