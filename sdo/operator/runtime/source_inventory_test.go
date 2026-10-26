@@ -216,8 +216,8 @@ func TestLatentAllHealthClearClosureRequiresRemovalOrRecordedAcceptance(t *testi
 						t.Fatal("outcome lost explicit acceptance reason")
 					}
 				}
-				if err := c.revalidateClosure(context.Background(), sdktest.Snapshot{NamespaceName: "app"}, closed[0]); err != nil {
-					t.Fatalf("broker rejected the same verified acceptance at handoff: %v", err)
+				if recheck := c.revalidateClosure(context.Background(), sdktest.Snapshot{NamespaceName: "app"}, closed[0]); recheck.Verdict != closureRecheckConfirmed {
+					t.Fatalf("broker rejected the same verified acceptance at handoff: %+v", recheck)
 				}
 				state := exportState(t, c)
 				restored, err := NewController(config, []sdk.Detector{inventoryHealth()}, c.provider, dispatcher, start)

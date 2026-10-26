@@ -167,13 +167,20 @@ func difference(left, right []string) []string {
 	return result
 }
 
-// classify reduces the closure to three outcomes: the responder Job failed or
+// classify reduces the closure to four outcomes: the responder Job failed or
 // health never verified (failed), health cleared with no repair mutation
-// (cleared_without_action), or anything else that cleared (success).
+// (cleared_without_action), a verified repair whose closure recheck window never
+// completed (unconfirmed), or anything else that cleared (success).
 func classify(closure *contractsv1alpha1.IncidentClosure, repairCommit string, healthVerified bool) string {
 	result := closure.GetResult()
 	if closure.GetRequest() == nil || closure.GetDispatchError() != "" || result == nil ||
-		result.GetStatus() == "failed" || !healthVerified {
+		result.GetStatus() == "failed" {
+		return outcomeclass.Failed
+	}
+	if closure.GetUnconfirmedReason() != contractsv1alpha1.ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_UNSPECIFIED {
+		return outcomeclass.Unconfirmed
+	}
+	if !healthVerified {
 		return outcomeclass.Failed
 	}
 	if repairCommit == "" {

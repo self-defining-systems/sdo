@@ -28,6 +28,14 @@ const (
 	AgentTimeout
 	Superseded
 	ResponseExpired
+	// Unconfirmed ends a closure-time recheck whose observation stayed
+	// incomplete or unavailable until its bound. The verified closure stays
+	// pending and commits unverified with a typed reason; never superseded.
+	Unconfirmed
+	// ObserverDenied ends a closure whose recheck was denied its observation
+	// scope. It fails terminally with a typed reason; the repair is not
+	// contradicted, so it is never recorded as superseded.
+	ObserverDenied
 )
 
 type RetryPolicy struct {
@@ -46,6 +54,8 @@ type Event struct {
 	Policy              RetryPolicy
 	ArchivedIncidentIDs []string
 	NonRetryable        bool
+	// UnconfirmedReason is required for Unconfirmed events.
+	UnconfirmedReason contracts.ClosureUnconfirmedReason
 }
 
 type EffectKind uint8
@@ -115,7 +125,18 @@ func Step(state *contracts.ControllerState, event Event) (*contracts.ControllerS
 	if event.Kind == ResponseExpired && phase != contracts.ClosureState_CLOSURE_STATE_PENDING && phase != contracts.ClosureState_CLOSURE_STATE_PROCESSING {
 		return next, nil
 	}
-	if event.Kind == Superseded || event.Kind == ResponseExpired {
+	if event.Kind == Unconfirmed {
+		if pending == nil || phase != contracts.ClosureState_CLOSURE_STATE_PENDING || len(pending.GetFinalDetectorStates()) == 0 ||
+			event.UnconfirmedReason == contracts.ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_UNSPECIFIED {
+			return next, nil
+		}
+		pending.PartialDetectorStates = append(pending.PartialDetectorStates, pending.FinalDetectorStates...)
+		pending.FinalDetectorStates = nil
+		pending.UnconfirmedReason = event.UnconfirmedReason
+		pending.UnconfirmedDetail = event.Error
+		return next, nil
+	}
+	if event.Kind == Superseded || event.Kind == ResponseExpired || event.Kind == ObserverDenied {
 		if pending == nil || phase == contracts.ClosureState_CLOSURE_STATE_FAILED {
 			return next, nil
 		}
@@ -123,6 +144,10 @@ func Step(state *contracts.ControllerState, event Event) (*contracts.ControllerS
 		if event.Kind == ResponseExpired {
 			failure.Reason = contracts.ClosureFailureReason_CLOSURE_FAILURE_REASON_AGENT_TIMEOUT
 			failure.Action = "expired incident without live work archived; detect a fresh incident"
+		}
+		if event.Kind == ObserverDenied {
+			failure.Reason = contracts.ClosureFailureReason_CLOSURE_FAILURE_REASON_OBSERVER_DENIED
+			failure.Action = "closure observation scope denied; fix the controller's read access or the detector's declared dependencies"
 		}
 		next.ClosureFailure = failure
 		next.ClosureReceipt = nil

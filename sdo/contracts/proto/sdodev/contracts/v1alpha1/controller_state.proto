@@ -79,6 +79,9 @@ enum ClosureFailureReason {
   CLOSURE_FAILURE_REASON_INVALID_RECEIPT = 2;
   CLOSURE_FAILURE_REASON_RETRY_EXHAUSTED = 3;
   CLOSURE_FAILURE_REASON_AGENT_TIMEOUT = 4;
+  // The closure recheck was denied its observation scope (RBAC, undeclared or
+  // unsupported dependency). A misconfiguration, never a contradicted repair.
+  CLOSURE_FAILURE_REASON_OBSERVER_DENIED = 5;
 }
 
 // FailedIncidentClosure preserves terminal evidence independently of the next

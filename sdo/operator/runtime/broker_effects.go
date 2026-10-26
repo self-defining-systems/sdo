@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"log/slog"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/core"
@@ -11,6 +12,7 @@ import (
 	"sdo.dev/operator/sdk"
 	"sort"
 	"strings"
+	"time"
 )
 
 type WorkspaceEffect struct {
@@ -133,8 +135,31 @@ func (c *Controller) ExecuteClosureEffect(ctx context.Context, effect ClosureEff
 	if err != nil {
 		return err
 	}
+	unconfirmed, denied := "", ""
+	var unconfirmedReason contracts.ClosureUnconfirmedReason
 	if recovered == nil && !committedOutcome && verificationErr == nil {
-		verificationErr = c.revalidateClosure(actionCtx, snapshot, effect.Closure)
+		recheck := c.revalidateClosure(actionCtx, snapshot, effect.Closure)
+		switch recheck.Verdict {
+		case closureRecheckConfirmed:
+			c.clearClosureRecheckWait()
+		case closureRecheckContradicted:
+			c.clearClosureRecheckWait()
+			verificationErr = errors.New(recheck.Reason)
+		case closureRecheckIncomplete:
+			// "Not yet" is never a contradiction: wait for the window, bounded by
+			// the detectors' own clearing horizons, then commit unconfirmed.
+			if !c.closureRecheckWaitExpired(effect.Identity, recheck.Bound) {
+				cancel()
+				return nil
+			}
+			unconfirmed, unconfirmedReason = recheck.Reason, recheck.Unconfirmed
+		case closureRecheckDenied:
+			c.clearClosureRecheckWait()
+			denied = recheck.Reason
+		default:
+			cancel()
+			return fmt.Errorf("closure recheck returned unknown verdict %d", recheck.Verdict)
+		}
 	}
 	if err := actionCtx.Err(); err != nil {
 		cancel()
@@ -156,10 +181,26 @@ func (c *Controller) ExecuteClosureEffect(ctx context.Context, effect ClosureEff
 		cancel()
 		return err
 	}
-	if verificationErr != nil {
+	if unconfirmed != "" {
+		_, stepErr := c.stepClosureLocked(lifecyclecore.Event{Kind: lifecyclecore.Unconfirmed, At: c.clock(), Error: unconfirmed, UnconfirmedReason: unconfirmedReason})
+		c.mu.Unlock()
+		cancel()
+		c.clearClosureRecheckWait()
+		if stepErr != nil {
+			return stepErr
+		}
+		slog.Warn("closure_unconfirmed", "incident_id", effect.Closure.Request.IncidentID, "reason", unconfirmed)
+		// The next driver pass processes the unverified closure durably.
+		return c.PersistState(ctx)
+	}
+	if verificationErr != nil || denied != "" {
 		// Retirement uses the existing durable archive path. Do not reopen the
 		// responder or reset its original verification deadline on each restart.
-		_, retireErr := c.stepClosureLocked(lifecyclecore.Event{Kind: lifecyclecore.Superseded, At: c.clock(), Error: verificationErr.Error()})
+		event := lifecyclecore.Event{Kind: lifecyclecore.ObserverDenied, At: c.clock(), Error: denied}
+		if verificationErr != nil {
+			event = lifecyclecore.Event{Kind: lifecyclecore.Superseded, At: c.clock(), Error: verificationErr.Error()}
+		}
+		_, retireErr := c.stepClosureLocked(event)
 		failure := cloneClosureFailure(c.closureFailure)
 		c.mu.Unlock()
 		cancel()
@@ -200,11 +241,47 @@ func (c *Controller) ExecuteClosureEffect(ctx context.Context, effect ClosureEff
 	return nil
 }
 
+// closureRecheckVerdict is the only result of the closure-time recheck, so a
+// caller cannot collapse an incomplete observation into a contradiction.
+type closureRecheckVerdict uint8
+
+const (
+	closureRecheckConfirmed closureRecheckVerdict = iota + 1
+	// closureRecheckIncomplete is "not yet" or "unknown": a detector's
+	// observation window is still filling, or its observer is unavailable
+	// (timeout, API 5xx, unsynced). It never retires the closure.
+	closureRecheckIncomplete
+	// closureRecheckDenied means the recheck is denied its observation scope
+	// (RBAC, undeclared or unsupported dependency): a misconfiguration that
+	// fails the closure with a typed reason, never a contradicted repair.
+	closureRecheckDenied
+	// closureRecheckContradicted means the repair did not hold: an active
+	// finding, unexplained inventory, unrestored source fields, or a detector
+	// the adopted policy no longer has.
+	closureRecheckContradicted
+)
+
+type closureRecheck struct {
+	Verdict closureRecheckVerdict
+	Reason  string
+	// Unconfirmed is the typed reason an incomplete recheck commits with at
+	// its bound: an unavailable observer outranks an incomplete window.
+	Unconfirmed contracts.ClosureUnconfirmedReason
+	// Bound is how long an incomplete recheck may wait: the longest clearing
+	// horizon of the incomplete detectors plus two of their cadences.
+	Bound time.Duration
+}
+
 // revalidateClosure checks live dependencies and admitted source fields, rather
 // than treating a matching policy generation as proof of continued recovery.
-func (c *Controller) revalidateClosure(ctx context.Context, snapshot sdk.DetectionContext, closure IncidentClosure) error {
+// Every detector is evaluated, so a contradiction dominates an incomplete peer.
+func (c *Controller) revalidateClosure(ctx context.Context, snapshot sdk.DetectionContext, closure IncidentClosure) closureRecheck {
+	confirmed := closureRecheck{Verdict: closureRecheckConfirmed}
 	if len(closure.FinalDetectorStates) == 0 || closure.DispatchError != "" {
-		return nil // Already unverified; this closure cannot publish success.
+		return confirmed // Already unverified; this closure cannot publish success.
+	}
+	contradicted := func(format string, args ...any) closureRecheck {
+		return closureRecheck{Verdict: closureRecheckContradicted, Reason: fmt.Sprintf(format, args...)}
 	}
 	ids := map[string]bool{}
 	for _, state := range closure.FinalDetectorStates {
@@ -218,6 +295,14 @@ func (c *Controller) revalidateClosure(ctx context.Context, snapshot sdk.Detecti
 		ordered = append(ordered, id)
 	}
 	sort.Strings(ordered)
+	var incomplete []string
+	var bound time.Duration
+	unconfirmed := contracts.ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_OBSERVATION_INCOMPLETE
+	wait := func(detector sdk.Detector, reason string) {
+		incomplete = append(incomplete, reason)
+		bound = max(bound, sdk.ClearingHorizon(detector, snapshot)+2*detector.Spec().Interval)
+	}
+	var denied []string
 	for _, id := range ordered {
 		detector := c.detectors[id]
 		if detector == nil && id == "drift.unexplained" {
@@ -228,20 +313,24 @@ func (c *Controller) revalidateClosure(ctx context.Context, snapshot sdk.Detecti
 				}
 			}
 			if len(retained) == 0 || c.drift == nil || c.drift.View == nil {
-				return fmt.Errorf("closure observation drift %s is unavailable", id)
+				return contradicted("closure observation drift %s is unavailable", id)
 			}
 
 			continue // Admitted source fields are independently rechecked below.
 		}
 		if detector == nil {
-			return fmt.Errorf("closure observation detector %s is unavailable", id)
+			return contradicted("closure observation detector %s is unavailable", id)
 		}
 		findings, err := sdk.DetectObserved(ctx, detector, snapshot)
 		if err != nil {
-			return fmt.Errorf("closure observation detector %s: %w", id, err)
-		}
-		if !detectorConfirmed(detector, snapshot) {
-			return fmt.Errorf("closure observation detector %s is unconfirmed: %s", id, detectorConfirmationReason(detector, snapshot))
+			reason := fmt.Sprintf("closure observation detector %s: %v", id, err)
+			if observerDenied(detector, snapshot, err) {
+				denied = append(denied, reason)
+			} else {
+				wait(detector, reason)
+				unconfirmed = contracts.ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_OBSERVER_UNAVAILABLE
+			}
+			continue
 		}
 		for _, finding := range findings {
 			if finding.DetectorID == "" {
@@ -251,18 +340,21 @@ func (c *Controller) revalidateClosure(ctx context.Context, snapshot sdk.Detecti
 				finding.Playbooks = detector.Spec().Playbooks
 			}
 			if err := core.ValidateFinding(detector.Spec(), finding); err != nil {
-				return fmt.Errorf("closure observation detector %s: %w", id, err)
+				return contradicted("closure observation detector %s: %v", id, err)
 			}
 			if finding.Status == sdk.FindingActive {
-				return fmt.Errorf("closure observation detector %s is active", id)
+				return contradicted("closure observation detector %s is active", id)
 			}
+		}
+		if !detectorConfirmed(detector, snapshot) {
+			wait(detector, fmt.Sprintf("closure observation detector %s is unconfirmed: %s", id, detectorConfirmationReason(detector, snapshot)))
 		}
 	}
 	c.mu.Lock()
 	inventoryClear, _ := c.verifySourceInventoryLocked(closure.Result)
 	c.mu.Unlock()
 	if !inventoryClear {
-		return fmt.Errorf("closure accepted-source inventory remains unexplained")
+		return contradicted("closure accepted-source inventory remains unexplained")
 	}
 	for _, finding := range closure.Request.Findings {
 		if inventoryFinding(finding) || !strings.HasPrefix(finding.DetectorID, "drift.") {
@@ -274,10 +366,67 @@ func (c *Controller) revalidateClosure(ctx context.Context, snapshot sdk.Detecti
 		}
 		restored, err := c.closureSourceRestored(ctx, snapshot, finding, events)
 		if !restored {
-			return fmt.Errorf("closure observation source fields for %s/%s are unverified: %v", finding.PrimaryResource.Kind, finding.PrimaryResource.Name, err)
+			return contradicted("closure observation source fields for %s/%s are unverified: %v", finding.PrimaryResource.Kind, finding.PrimaryResource.Name, err)
 		}
 	}
-	return nil
+	if len(denied) > 0 {
+		return closureRecheck{Verdict: closureRecheckDenied, Reason: strings.Join(denied, "; ")}
+	}
+	if len(incomplete) > 0 {
+		return closureRecheck{Verdict: closureRecheckIncomplete, Reason: strings.Join(incomplete, "; "), Bound: bound, Unconfirmed: unconfirmed}
+	}
+	return confirmed
+}
+
+// observerDenied separates a permanent scope denial from an observer that is
+// only unavailable: RBAC refusals, and watched dependencies that are
+// undeclared, forbidden or unsupported. Everything else is unknown, not denied.
+func observerDenied(detector sdk.Detector, snapshot sdk.DetectionContext, err error) bool {
+	if apierrors.IsForbidden(err) || apierrors.IsUnauthorized(err) {
+		return true
+	}
+	source, scoped := snapshot.(sdk.ScopedObservationSource)
+	for _, watch := range detector.Spec().Watches {
+		cluster := watch.Kind == "MutatingWebhookConfiguration" || watch.Kind == "ValidatingWebhookConfiguration"
+		if !cluster && (watch.Namespace == "" || watch.Namespace == snapshot.Namespace()) {
+			continue
+		}
+		declared := false
+		if scoped {
+			for _, status := range source.ObservationStatuses() {
+				if status.Target.APIVersion != watch.APIVersion || status.Target.Kind != watch.Kind || status.Target.Namespace != watch.Namespace {
+					continue
+				}
+				declared = true
+				if status.State == "forbidden" || status.State == "unsupported" {
+					return true
+				}
+			}
+		}
+		if !declared {
+			return true
+		}
+	}
+	return false
+}
+
+// closureRecheckWaitExpired records when this closure's recheck first saw an
+// incomplete window and reports whether the bound has passed. The wait is
+// process-local: a restart re-observes and waits at most one more bound.
+func (c *Controller) closureRecheckWaitExpired(identity string, bound time.Duration) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	now := c.clock()
+	if c.closureRecheckIdentity != identity || c.closureRecheckSince.IsZero() {
+		c.closureRecheckIdentity, c.closureRecheckSince = identity, now
+	}
+	return now.Sub(c.closureRecheckSince) >= bound
+}
+
+func (c *Controller) clearClosureRecheckWait() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.closureRecheckIdentity, c.closureRecheckSince = "", time.Time{}
 }
 
 func (c *Controller) PendingClosureAcknowledgmentEffect() (ClosureAcknowledgmentEffect, bool) {

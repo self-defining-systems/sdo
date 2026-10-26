@@ -503,6 +503,19 @@ message IncidentClosure {
   repeated DetectorEvaluation partial_detector_states = 21;
   bool verified_while_responder_running = 22;
   google.protobuf.Duration closure_stability_window = 23;
+  // Set when the closure-time recheck never saw a complete observation window
+  // within its bound. Final states moved to partial; the outcome is unverified.
+  ClosureUnconfirmedReason unconfirmed_reason = 24;
+  string unconfirmed_detail = 25;
+}
+
+// ClosureUnconfirmedReason explains why a verified closure was committed
+// unconfirmed instead of superseded. Incomplete is "not yet", never a contradiction.
+enum ClosureUnconfirmedReason {
+  CLOSURE_UNCONFIRMED_REASON_UNSPECIFIED = 0;
+  CLOSURE_UNCONFIRMED_REASON_OBSERVATION_INCOMPLETE = 1;
+  // An observer stayed unavailable (timeout, API 5xx, unsynced) until the bound.
+  CLOSURE_UNCONFIRMED_REASON_OBSERVER_UNAVAILABLE = 2;
 }
 
 // Controller-owned evidence from one response stage. Finding credit describes
