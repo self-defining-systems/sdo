@@ -197,13 +197,7 @@ class FakeOps:
 
     def collect_receipt(self, config: RuntimeConfig, incident_id: str, artifacts_dir: Path) -> dict[str, Any]:
         self.events.append(("receipt", incident_id, str(config.repository)))
-        # The drain exports the controller PVC's cumulative runtime evidence.
-        usage = artifacts_dir / "sdo_runtime" / "usage" / "controller-turns.jsonl"
-        usage.parent.mkdir(parents=True, exist_ok=True)
-        usage.write_text(json.dumps({"cwd": f"/wt/{incident_id}", "duration_seconds": 1.0}) + "\n", encoding="utf-8")
-        rollout = artifacts_dir / "sdo_runtime" / "codex" / "sessions" / f"rollout-{incident_id}.jsonl"
-        rollout.parent.mkdir(parents=True, exist_ok=True)
-        rollout.write_bytes(b'{"type":"session_meta"}\n')
+        # Like collect_production_receipt, reading the ledger exports no runtime evidence.
         receipt = _receipt(incident_id)
         receipt["artifacts_dir"] = str(artifacts_dir)
         receipt["completed"] = incident_id not in self.incomplete
@@ -223,6 +217,15 @@ class FakeOps:
         rollout = artifacts_dir / "sdo_runtime" / "codex" / "sessions" / f"rollout-responder-{self.incidents}.jsonl"
         rollout.parent.mkdir(parents=True, exist_ok=True)
         rollout.write_bytes(b'{"type":"session_meta"}\n')
+        # The export is a snapshot: reflection's rollout and usage exist only once reflection has finished.
+        acknowledged = self.states.get(config.control_namespace, {}).get("last_acknowledged_incident_id")
+        if acknowledged:
+            usage = artifacts_dir / "sdo_runtime" / "usage" / "controller-turns.jsonl"
+            usage.parent.mkdir(parents=True, exist_ok=True)
+            usage.write_text(
+                json.dumps({"cwd": f"/wt/{acknowledged}", "duration_seconds": 1.0}) + "\n", encoding="utf-8"
+            )
+            (rollout.parent / f"rollout-{acknowledged}.jsonl").write_bytes(b'{"type":"session_meta"}\n')
         return {"directory": str(artifacts_dir / "sdo_runtime"), "error": None}
 
     def export_controller_logs(self, control_namespace: str, artifacts_dir: Path) -> None:
@@ -255,6 +258,28 @@ def test_maintenance_ack_timeout_follows_time_scale(monkeypatch: pytest.MonkeyPa
         wait_for_maintenance_ack(NoAck(), "hotel-sdo", "generation", clock)  # type: ignore[arg-type]
 
     assert elapsed[0] == pytest.approx(60.0)
+
+
+def test_drain_exports_runtime_evidence_after_reflection_ends(tmp_path: Path) -> None:
+    # The stage-end export runs before reflection; only a drain-time export holds reflection's rollout.
+    from tests.unit.benchmarks.sregym.adapter.test_closeout_receipt_race import _drained_record
+
+    ops = FakeOps()
+    record = _drained_record(tmp_path, ops)
+    ops.events.clear()
+
+    drain_pending_incident(
+        record, ops=ops, repository=tmp_path / "s0" / "application_workspace", drained_by="test", clock=_clock(ops)
+    )
+
+    order = [event[0] for event in ops.events]
+    assert "stage_evidence" in order
+    assert order.index("reflected") < order.index("stage_evidence")
+    incident_id = record.pending.incident_id
+    sessions = record.pending.receipt_dir / "sdo_runtime" / "codex" / "sessions"
+    assert (sessions / f"rollout-{incident_id}.jsonl").is_file()
+    receipt = json.loads((record.pending.receipt_dir / STRICT_RECEIPT_FILENAME).read_text(encoding="utf-8"))
+    assert receipt["reflection_drain"]["runtime_artifacts"]["error"] is None
 
 
 def test_drain_receipt_reports_ack_and_collection_phases(tmp_path: Path) -> None:
