@@ -11,6 +11,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	utiljson "k8s.io/apimachinery/pkg/util/json"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 
@@ -69,8 +70,10 @@ func resolveAcceptedResource(client kubernetes.Interface, ref sdk.ObjectRef) (ac
 }
 
 func decodeAcceptedObject(raw []byte, ref sdk.ObjectRef) (*unstructured.Unstructured, error) {
+	// The apimachinery decoder keeps integers as int64, as unstructured
+	// accessors (GetGeneration, NestedInt64) require.
 	content := map[string]any{}
-	if err := json.Unmarshal(raw, &content); err != nil {
+	if err := utiljson.Unmarshal(raw, &content); err != nil {
 		return nil, fmt.Errorf("decode %s/%s %s: %w", ref.APIVersion, ref.Kind, ref.Name, err)
 	}
 	result := &unstructured.Unstructured{Object: content}
@@ -88,11 +91,26 @@ func (r acceptedResource) get(ctx context.Context, ref sdk.ObjectRef) (*unstruct
 }
 
 func (r acceptedResource) apply(ctx context.Context, ref sdk.ObjectRef, source *unstructured.Unstructured, dryRun bool) (*unstructured.Unstructured, error) {
+	return r.applyAs(ctx, ref, source, dryRun, "sdo-deployer")
+}
+
+// recordAcceptance writes only the acceptance record, under its own field
+// manager, so later deployer applies that omit it leave it in place.
+func (r acceptedResource) recordAcceptance(ctx context.Context, ref sdk.ObjectRef, record string) error {
+	metadata := map[string]any{"name": ref.Name, "annotations": map[string]any{acceptedPathsAnnotation: record}}
+	if r.namespaced {
+		metadata["namespace"] = ref.Namespace
+	}
+	_, err := r.applyAs(ctx, ref, &unstructured.Unstructured{Object: map[string]any{"apiVersion": ref.APIVersion, "kind": ref.Kind, "metadata": metadata}}, false, acceptanceFieldManager)
+	return err
+}
+
+func (r acceptedResource) applyAs(ctx context.Context, ref sdk.ObjectRef, source *unstructured.Unstructured, dryRun bool, manager string) (*unstructured.Unstructured, error) {
 	patch, err := json.Marshal(source.Object)
 	if err != nil {
 		return nil, err
 	}
-	request := r.client.Patch(types.ApplyPatchType).AbsPath(r.path).Param("fieldManager", "sdo-deployer").Param("force", "true").Body(patch)
+	request := r.client.Patch(types.ApplyPatchType).AbsPath(r.path).Param("fieldManager", manager).Param("force", "true").Body(patch)
 	if dryRun {
 		request = request.Param("dryRun", metav1.DryRunAll)
 	}

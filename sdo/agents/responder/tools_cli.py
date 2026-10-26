@@ -20,7 +20,7 @@ PLAN_ACTIONS = (
     "ConfigMap JSON/YAML entries preserve unrelated keys.\n"
     "CreateFromSource restores a named missing object from accepted source.\n"
     "ReconcileFromSource restores declared configuration, including source-named cluster objects, "
-    "while preserving undeclared fields.\n"
+    "and removes fields added since acceptance; other undeclared fields stay.\n"
     "DeleteObject irreversibly removes an allowed named source-absent object and never auto-recreates it."
 )
 

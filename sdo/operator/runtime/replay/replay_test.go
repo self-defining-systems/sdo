@@ -14,6 +14,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	kruntime "k8s.io/apimachinery/pkg/runtime"
+	operator "sdo.dev/operator/runtime"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
@@ -70,6 +71,21 @@ func (p fixtureProgram) Mitigate(context.Context, program.ReadView, program.Bind
 	}
 	return program.Plan{Actions: []program.Action{a}}, nil
 }
+
+// acceptedAnnotations returns the annotations an adopted object carries: its
+// acceptance record against source.
+func acceptedAnnotations(object any, source *unstructured.Unstructured) map[string]string {
+	content, err := kruntime.DefaultUnstructuredConverter.ToUnstructured(object)
+	if err != nil {
+		panic(err)
+	}
+	live := &unstructured.Unstructured{Object: content}
+	if err := operator.RecordAcceptance(live, source); err != nil {
+		panic(err)
+	}
+	return live.GetAnnotations()
+}
+
 func fixture(mode string) Case {
 	meta := metav1.ObjectMeta{Name: "api", Namespace: "app"}
 	open := sdktest.Snapshot{NamespaceName: "app"}
@@ -77,12 +93,13 @@ func fixture(mode string) Case {
 	source := []*unstructured.Unstructured{}
 	switch mode {
 	case "field":
+		source = append(source, &unstructured.Unstructured{Object: map[string]any{"apiVersion": "v1", "kind": "Service", "metadata": map[string]any{"name": "api", "namespace": "app"}, "spec": map[string]any{"selector": map[string]any{"app": "api", "untouched": "keep"}}}})
 		s := corev1.Service{ObjectMeta: meta, Spec: corev1.ServiceSpec{Selector: map[string]string{"app": "wrong", "untouched": "keep"}}}
+		s.Annotations = acceptedAnnotations(&s, source[0])
 		open.ServiceList = []corev1.Service{s}
 		s = *s.DeepCopy()
 		s.Spec.Selector["app"] = "api"
 		healthy.ServiceList = []corev1.Service{s}
-		source = append(source, &unstructured.Unstructured{Object: map[string]any{"apiVersion": "v1", "kind": "Service", "metadata": map[string]any{"name": "api", "namespace": "app"}, "spec": map[string]any{"selector": map[string]any{"app": "api", "untouched": "keep"}}}})
 	case "create":
 		healthy.ConfigMapList = []corev1.ConfigMap{{ObjectMeta: meta, Data: map[string]string{"setting": "synthetic"}}}
 		source = append(source, &unstructured.Unstructured{Object: map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "api", "namespace": "app"}, "data": map[string]any{"setting": "synthetic"}}})

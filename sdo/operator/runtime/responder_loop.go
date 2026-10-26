@@ -504,7 +504,9 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 				response.Error = err.Error()
 				break
 			}
-			if _, err := view.DiffAgainstSource(*request.Ref); err != nil {
+			// An object without an acceptance record compares as unknown;
+			// accepted source itself is still shown.
+			if _, err := view.DiffAgainstSource(*request.Ref); err != nil && !errors.Is(err, ErrAcceptanceRecordUnavailable) {
 				response.Error = err.Error()
 				break
 			}

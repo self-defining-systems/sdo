@@ -78,6 +78,10 @@ func TestHermeticSourceReconcileLearningExposesVerifiedCounters(t *testing.T) {
 	source.SetKind(ref.Kind)
 	source.Object["spec"].(map[string]any)["template"].(map[string]any)["spec"].(map[string]any)["containers"].([]any)[0].(map[string]any)["image"] = "good:v1"
 	sourceReader := sourceImageManifests{objects: []*unstructured.Unstructured{&source}}
+	deployment.Annotations = withAcceptance(t, deployment, &source)
+	if _, err := client.AppsV1().Deployments("app").Update(ctx, deployment, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
 	provider := fastloopObjects{client: client}
 	before, err := provider.Snapshot(ctx)
 	if err != nil {

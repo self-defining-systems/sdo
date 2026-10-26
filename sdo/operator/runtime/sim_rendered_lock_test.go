@@ -157,7 +157,7 @@ func runSimRenderedLockMutation(t *testing.T, seed uint64, mutation string, pinn
 			lockTree = nativeGit(t, source.Repository, "rev-parse", "HEAD:.sdo/rendered")
 			workload := sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "app", Name: "consul"}
 			view := LiveReadView{DetectionContext: sdktest.Snapshot{NamespaceName: "app", DeploymentList: []appsv1.Deployment{*deployed}}, Source: source, SourceCommit: revision}
-			if diff, err := view.DiffAgainstSource(workload); err != nil || diff.Changed != (mutation != "none") {
+			if diff, err := declaredSourceDiff(view, workload); err != nil || diff.Changed != (mutation != "none") {
 				t.Fatalf("P4 seed=%d mutation=%s: accepted image drift=%+v error=%v", seed, mutation, diff, err)
 			}
 		} else {

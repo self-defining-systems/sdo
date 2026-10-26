@@ -13,6 +13,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
@@ -111,9 +112,17 @@ func compileForeignInvariant(t *testing.T) compiledForeignInvariant {
 	return compiledForeignInvariant{binary: binary}
 }
 
+// policyWorkloadSnapshot serves foreignSource's Service as adoption left it.
 func policyWorkloadSnapshot(policies ...networkingv1.NetworkPolicy) sdktest.Snapshot {
+	service := corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "app"}, Spec: corev1.ServiceSpec{Selector: map[string]string{"app": "api"}, Ports: []corev1.ServicePort{{Port: 80, TargetPort: driftService(8080).Spec.Ports[0].TargetPort}}}}
+	accepted := &unstructured.Unstructured{Object: map[string]any{"apiVersion": "v1", "kind": "Service", "metadata": map[string]any{"name": "api"}, "spec": map[string]any{"selector": map[string]any{"app": "api"}, "ports": []any{map[string]any{"port": int64(80), "targetPort": int64(8080)}}}}}
+	annotations, err := acceptanceAnnotations(&service, accepted)
+	if err != nil {
+		panic(err)
+	}
+	service.Annotations = annotations
 	return sdktest.Snapshot{NamespaceName: "app", NetworkPolicyList: policies,
-		ServiceList: []corev1.Service{{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "app"}, Spec: corev1.ServiceSpec{Selector: map[string]string{"app": "api"}, Ports: []corev1.ServicePort{{Port: 80, TargetPort: driftService(8080).Spec.Ports[0].TargetPort}}}}},
+		ServiceList: []corev1.Service{service},
 		PodList:     []corev1.Pod{{ObjectMeta: metav1.ObjectMeta{Name: "api-pod", Namespace: "app", Labels: map[string]string{"app": "api"}}, Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "api", Ports: []corev1.ContainerPort{{ContainerPort: 8080}}}}}}},
 	}
 }
