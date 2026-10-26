@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"sdo.dev/operator/internal/capturefixture"
 )
 
 func TestBuildWorkspaceCompilesApplicationDetectors(t *testing.T) {
@@ -200,7 +202,7 @@ func TestBuildWorkspaceRunsOptInHealthyBaseline(t *testing.T) {
 	if err := os.MkdirAll(baseline, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(baseline, "healthy.json"), []byte(`{"namespace":"shop","services":[],"pods":[]}`), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(baseline, "healthy.json"), capturefixture.FromView(t, `{"namespace":"shop","services":[],"pods":[]}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	operatorRoot, err := filepath.Abs("..")

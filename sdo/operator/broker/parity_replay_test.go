@@ -3,14 +3,15 @@ package broker_test
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sdo.dev/operator/internal/testutil"
 	"strings"
 	"testing"
+
+	"sdo.dev/operator/internal/capturefixture"
+	"sdo.dev/operator/internal/testutil"
 
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
@@ -162,18 +163,12 @@ func checkUnobservableDetectorLocator(t *testing.T, mode string) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		var snapshot sdktest.Snapshot
-		if err := json.Unmarshal(raw, &snapshot); err != nil {
-			t.Fatal(err)
-		}
-		extra := snapshot.ServiceList[0].DeepCopy()
-		extra.Name = "unlabelled-peer"
-		extra.Spec.Selector = map[string]string{"app": "no-pods"}
-		snapshot.ServiceList = append(snapshot.ServiceList, *extra)
-		raw, err = json.Marshal(snapshot)
-		if err != nil {
-			t.Fatal(err)
-		}
+		raw = capturefixture.Recapture(t, raw, func(snapshot *sdktest.Snapshot) {
+			extra := snapshot.ServiceList[0].DeepCopy()
+			extra.Name = "unlabelled-peer"
+			extra.Spec.Selector = map[string]string{"app": "no-pods"}
+			snapshot.ServiceList = append(snapshot.ServiceList, *extra)
+		})
 		put(t, proposal.Path, ".sdo/corpus/targetport-mismatch/"+phase+".json", string(raw), 0644)
 	}
 	detector := independentParityRoutingDetector(t)
@@ -199,7 +194,7 @@ func checkUnobservableDetectorLocator(t *testing.T, mode string) {
 	put(t, proposal.Path, ".sdo/diagnostics/detectors/incidents/cache/detector.go", detector, 0644)
 	replaceParityText(t, proposal.Path, ".sdo/diagnostics/detectors/incidents/cache/manifest.yaml", "  - base\n", "  - service-targetport-mismatch\n")
 	capture := t.TempDir()
-	put(t, capture, "healthy/healthy.json", `{"namespace":"demo"}`, 0644)
+	put(t, capture, "healthy/healthy.json", string(capturefixture.FromView(t, `{"namespace":"demo"}`)), 0644)
 	decision := &contracts.ReflectionDecision{LearningDecision: "updated", PlaybookIds: []string{"service-targetport-mismatch"}}
 	data, err := protojson.Marshal(&contracts.ReflectionResult{LearningDecision: decision.LearningDecision, ProposedArtifactIds: decision.PlaybookIds})
 	if err != nil {
@@ -258,7 +253,7 @@ func TestCLIAndBrokerRetainHealthyInputForProgramOnlyEdits(t *testing.T) {
 		t.Fatal(err)
 	}
 	baseline := t.TempDir()
-	put(t, baseline, "healthy.json", `{"namespace":"demo","services":[{"metadata":{"name":"healthy-only","namespace":"demo"},"spec":{"selector":{"app":"no-pods"},"ports":[{"port":80,"targetPort":8080}]}}]}`, 0644)
+	put(t, baseline, "healthy.json", string(capturefixture.FromView(t, `{"namespace":"demo","services":[{"metadata":{"name":"healthy-only","namespace":"demo"},"spec":{"selector":{"app":"no-pods"},"ports":[{"port":80,"targetPort":8080}]}}]}`)), 0644)
 	root := copyParityTree(t)
 	testutil.InitGit(t, root)
 	runGit(t, root, "config", "user.name", "Fixture")

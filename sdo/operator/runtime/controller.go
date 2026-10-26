@@ -1270,9 +1270,16 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 	if !scopeCurrent {
 		c.dispatchError = "observation scope changed; incident evidence superseded"
 	}
-	// A terminal dispatch failure already closes as failed once health permits
-	// it. Unresolved drift must not delay it or count as verified recovery.
-	terminalFailure := !scopeCurrent || (healthVerified && c.dispatchError != "")
+	// A terminal dispatch failure closes as failed: once health permits it, or
+	// at once when the responder is done, because a failed Job leaves no
+	// attempt to verify and waiting would only hold still-firing findings back
+	// from the next attempt. Unresolved drift must not delay it or count as
+	// verified recovery.
+	jobFailed := !early && c.dispatchError != ""
+	terminalFailure := !scopeCurrent || jobFailed || (healthVerified && c.dispatchError != "")
+	if jobFailed && !healthVerified {
+		slog.Info("incident_terminal_dispatch_failure", "incident_id", c.currentIncidentRequest.IncidentID, "reason", "responder_job_failed", "active_health_detectors", c.activeHealthDetectors())
+	}
 	verification := c.continuationVerificationLocked(healthVerified, driftClear, driftFindings)
 	if !scopeCurrent {
 		verification.Healthy = false

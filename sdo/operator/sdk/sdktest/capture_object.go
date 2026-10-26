@@ -6,8 +6,9 @@ import (
 	"strings"
 )
 
-// ProjectCapturedObject preserves arbitrary Kubernetes fields while stripping
-// credential payloads, last-applied copies and volatile write metadata.
+// ProjectCapturedObject preserves arbitrary Kubernetes fields, including object
+// identity (metadata.uid), while stripping credential payloads, last-applied
+// copies and volatile write metadata.
 // Discovery callers exclude Secrets entirely; this also protects recorded JSON.
 func ProjectCapturedObject(raw []byte) ([]byte, error) {
 	var object map[string]any
@@ -70,8 +71,9 @@ func redactObjectTree(value any) {
 			}
 		}
 		if meta, ok := v["metadata"].(map[string]any); ok {
+			// metadata.uid stays: consumers distinguish an in-place repair from a
+			// same-name recreation by UID (undetected causes, replaced Pods).
 			delete(meta, "managedFields")
-			delete(meta, "uid")
 			delete(meta, "generation")
 			if annotations, ok := meta["annotations"].(map[string]any); ok {
 				delete(annotations, "kubectl.kubernetes.io/last-applied-configuration")

@@ -16,6 +16,17 @@ SDO spans Python agents, Go operator modules, generated detector workspaces, and
 
 For a fresh checkout or worktree, run `uv run python scripts/init_test_prereqs.py` once to initialize SREGym and every nested application/chart at the recorded SHA.
 
+## Capture boundary fixtures
+
+Tests that write capture boundaries (`open*.json`, `fixed.json`, `healthy.json`)
+build them with `internal/capturefixture`: `Boundary`/`WriteBoundary` from a
+live-shaped view, `FromView` from compact snapshot JSON, `Recapture` to edit an
+existing capture. Each goes through `CaptureSnapshot`, so a test sees exactly the
+fields production keeps. `capturefixture.Raw(t, reason, data)` is the named
+opt-out for forged, empty or malformed input. `go test ./internal/capturefixture`
+(part of `check_errors.sh`) rejects hand-built captures in operator tests and
+committed corpus captures carrying fields the projection would drop or add.
+
 ## Git-backed Go fixtures
 
 Broker and runtime tests initialize temporary repositories with

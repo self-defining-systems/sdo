@@ -41,7 +41,10 @@
     {
       "metadata": {
         "namespace": "demo",
-        "name": "mongo-geo-script"
+        "name": "mongo-geo-script",
+        "annotations": {
+          "sdo.dev/configmap-values-redacted": "true"
+        }
       },
       "data": {
         "k8s-geo-mongo.sh": ""

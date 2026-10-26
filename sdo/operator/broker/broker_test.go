@@ -5,17 +5,19 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"google.golang.org/protobuf/types/known/timestamppb"
 	"log"
 	"os"
 	"path/filepath"
-	"sdo.dev/operator/memory/validate"
 	"strings"
 	"testing"
 	"time"
 
+	"google.golang.org/protobuf/types/known/timestamppb"
+	"sdo.dev/operator/memory/validate"
+
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 
+	"sdo.dev/operator/internal/capturefixture"
 	"sdo.dev/operator/internal/testutil"
 	"sdo.dev/operator/memory"
 )
@@ -236,8 +238,10 @@ func TestNewProgramRequiresExecutableCodeRatherThanCaptureProvenance(t *testing.
 	if err := os.MkdirAll(caseDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	for name, content := range map[string]string{"open.json": "{}", "fixed.json": "{}", "healthy.json": "{}", "recordings.json": "[]", "labels.json": `{"root_cause_program_ids":["fault"]}`} {
-		if err := os.WriteFile(filepath.Join(caseDir, name), []byte(content), 0o644); err != nil {
+	// Validation must reject the case before reading its captures.
+	placeholder := capturefixture.Raw(t, "placeholder capture never read", []byte("{}"))
+	for name, content := range map[string][]byte{"open.json": placeholder, "fixed.json": placeholder, "healthy.json": placeholder, "recordings.json": []byte("[]"), "labels.json": []byte(`{"root_cause_program_ids":["fault"]}`)} {
+		if err := os.WriteFile(filepath.Join(caseDir, name), content, 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}

@@ -5,9 +5,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sdo.dev/operator/internal/testutil"
 	"strings"
 	"testing"
+
+	"sdo.dev/operator/internal/capturefixture"
+	"sdo.dev/operator/internal/testutil"
 
 	"sdo.dev/operator/broker"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
@@ -65,7 +67,7 @@ func TestSessionFixtureRequiresAnIndependentHealthyReference(t *testing.T) {
 			switch name {
 			case "healthy reference only":
 				request.CaptureDirectory = t.TempDir()
-				put(t, request.CaptureDirectory, "healthy/healthy.json", `{"namespace":"demo"}`, 0644)
+				put(t, request.CaptureDirectory, "healthy/healthy.json", string(capturefixture.FromView(t, `{"namespace":"demo"}`)), 0644)
 			case "missing directory":
 				request.CaptureDirectory = ""
 			case "absent directory":

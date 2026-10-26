@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"go/format"
-	"google.golang.org/protobuf/types/known/timestamppb"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -22,10 +21,13 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/protobuf/types/known/timestamppb"
+
 	"google.golang.org/protobuf/encoding/protojson"
 	"sdo.dev/operator/broker"
 	"sdo.dev/operator/builder"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/internal/capturefixture"
 	"sdo.dev/operator/internal/testutil"
 	"sdo.dev/operator/memory/layout"
 	"sdo.dev/operator/memory/validate"
@@ -117,7 +119,7 @@ func testCLIAndBrokerAgreeOnAcceptance(t *testing.T, shard int) {
 	}
 
 	baseline := t.TempDir()
-	put(t, baseline, "healthy.json", `{"namespace":"demo","services":[],"pods":[]}`, 0644)
+	put(t, baseline, "healthy.json", string(capturefixture.FromView(t, `{"namespace":"demo","services":[],"pods":[]}`)), 0644)
 	schema, err := builder.SchemaIdentity(operatorRoot)
 	if err != nil {
 		t.Fatal(err)
@@ -557,7 +559,7 @@ func (p Program) Mitigate(ctx context.Context,v program.ReadView,b program.Bindi
 		}, []string{"program.corpus-immutable"}, false},
 		{"existing program changes accepted snapshot", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
 			parityAcceptedProgram(t, r)
-			put(t, r, ".sdo/corpus/targetport-mismatch/open.json", `{ "namespace": "forged" }`, 0644)
+			put(t, r, ".sdo/corpus/targetport-mismatch/open.json", string(capturefixture.Raw(t, "forged capture", []byte(`{ "namespace": "forged" }`))), 0644)
 		}, []string{"program.corpus-immutable"}, false},
 		{"accepted case needs no current capture", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
 			parityAcceptedProgram(t, r)
@@ -659,7 +661,7 @@ func (p Program) Mitigate(ctx context.Context,v program.ReadView,b program.Bindi
 				capture = t.TempDir()
 			}
 			if test.name != "missing controller healthy capture" {
-				put(t, capture, "healthy/healthy.json", `{"namespace":"demo","services":[],"pods":[]}`, 0644)
+				put(t, capture, "healthy/healthy.json", string(capturefixture.FromView(t, `{"namespace":"demo","services":[],"pods":[]}`)), 0644)
 			}
 			if strings.HasPrefix(test.name, "healthy refused") {
 				// The legacy/caller-authored healthy.json has no Consul ports.
@@ -671,11 +673,7 @@ func (p Program) Mitigate(ctx context.Context,v program.ReadView,b program.Bindi
 						map[string]any{"method": "ProbeTCP", "arguments": []any{map[string]any{"api_version": "v1", "kind": "Service", "namespace": "demo", "name": "consul"}, 8400}, "result": map[string]any{"success": false, "detail": "refused"}},
 					}
 				}
-				raw, err := json.Marshal(snapshot)
-				if err != nil {
-					t.Fatal(err)
-				}
-				put(t, capture, "healthy/healthy.json", string(raw), 0644)
+				put(t, capture, "healthy/healthy.json", string(capturefixture.FromView(t, snapshot)), 0644)
 			}
 			root = proposal.Path
 			decision := &contracts.ReflectionDecision{LearningDecision: "updated"}
