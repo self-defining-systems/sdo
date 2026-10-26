@@ -492,8 +492,10 @@ def test_admission_after_a_permanently_failed_closure_passes(lane):
         {"closure_state": "CLOSURE_STATE_PROCESSING", "pending_closure": {"request": {"incident_id": "row-008"}}},
         {"closure_state": "CLOSURE_STATE_ACKNOWLEDGING", "closure_receipt": {"incident_id": "row-008"}},
         {"incident_open": True, "last_acknowledged_incident_id": "row-007"},
+        # A failed attempt's acknowledged closure whose reflection is queued.
+        {"last_acknowledged_incident_id": "row-008", "queued_reflection_incident_ids": ["row-008"]},
     ],
-    ids=["retrying-failure", "processing", "acknowledging", "open-incident"],
+    ids=["retrying-failure", "processing", "acknowledging", "open-incident", "queued-reflection"],
 )
 def test_admission_waits_while_a_closure_is_open(lane, state):
     gate, calls = lane

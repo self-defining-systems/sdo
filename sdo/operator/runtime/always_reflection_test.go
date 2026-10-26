@@ -260,7 +260,7 @@ func TestReflectionUnverifiedRepairCannotPublishReadmeOnlyLearning(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	receipt, err := native.ProcessClosure(ctx, socialRepeatClosure(workspace))
+	receipt, err := closeAndReflect(t, ctx, native, socialRepeatClosure(workspace))
 	if err != nil {
 		t.Fatal(err)
 	}

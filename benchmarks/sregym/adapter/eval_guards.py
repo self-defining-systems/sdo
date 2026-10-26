@@ -179,9 +179,11 @@ def incident_work_open(state: dict[str, Any]) -> bool:
 
     An open incident or request is work. A pending closure or a non-idle
     closure state is work unless its incident's closure is terminal
-    (acknowledged, permanently failed or retired).
+    (acknowledged, permanently failed or retired). A failed attempt's
+    reflection queued or running after its acknowledgment is work, so the next
+    problem starts only after every queued reflection commits.
     """
-    if state.get("incident_request") or state.get("incident_open"):
+    if state.get("incident_request") or state.get("incident_open") or state.get("queued_reflection_incident_ids"):
         return True
     closure_state = state.get("closure_state")
     pending = state.get("pending_closure")
