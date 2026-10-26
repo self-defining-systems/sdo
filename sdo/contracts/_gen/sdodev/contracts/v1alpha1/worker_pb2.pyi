@@ -4,7 +4,7 @@ from buf.validate import validate_pb2 as _validate_pb2
 from google.protobuf import any_pb2 as _any_pb2
 from google.protobuf import timestamp_pb2 as _timestamp_pb2
 from sdodev.contracts.v1alpha1 import program_pb2 as _program_pb2
-from sdodev.contracts.v1alpha1 import memory_pb2 as _memory_pb2
+from sdodev.contracts.v1alpha1 import memory_diagnostic_pb2 as _memory_diagnostic_pb2
 from sdodev.contracts.v1alpha1 import messages_pb2 as _messages_pb2
 from sdodev.contracts.v1alpha1 import outcome_pb2 as _outcome_pb2
 from google.protobuf.internal import containers as _containers
@@ -126,10 +126,10 @@ class ReflectionRequest(_message.Message):
     outcome: _outcome_pb2.OutcomeRecord
     prior_outcomes: _containers.RepeatedCompositeFieldContainer[_outcome_pb2.OutcomeRecord]
     validation_attempt: int
-    previous_diagnostics: _containers.RepeatedCompositeFieldContainer[_memory_pb2.MemoryDiagnostic]
+    previous_diagnostics: _containers.RepeatedCompositeFieldContainer[_memory_diagnostic_pb2.MemoryDiagnostic]
     cause_work: _containers.RepeatedCompositeFieldContainer[_program_pb2.ReflectionCauseWork]
     unassigned_work: _containers.RepeatedCompositeFieldContainer[_program_pb2.ReflectionWorkItem]
-    def __init__(self, closure: _Optional[_Union[_messages_pb2.IncidentClosure, _Mapping]] = ..., proposal_commit: _Optional[str] = ..., outcome_commit: _Optional[str] = ..., memory_snapshot: _Optional[_Union[_messages_pb2.OperationalMemorySnapshot, _Mapping]] = ..., session_mode: _Optional[str] = ..., guidance: _Optional[str] = ..., outcome: _Optional[_Union[_outcome_pb2.OutcomeRecord, _Mapping]] = ..., prior_outcomes: _Optional[_Iterable[_Union[_outcome_pb2.OutcomeRecord, _Mapping]]] = ..., validation_attempt: _Optional[int] = ..., previous_diagnostics: _Optional[_Iterable[_Union[_memory_pb2.MemoryDiagnostic, _Mapping]]] = ..., cause_work: _Optional[_Iterable[_Union[_program_pb2.ReflectionCauseWork, _Mapping]]] = ..., unassigned_work: _Optional[_Iterable[_Union[_program_pb2.ReflectionWorkItem, _Mapping]]] = ...) -> None: ...
+    def __init__(self, closure: _Optional[_Union[_messages_pb2.IncidentClosure, _Mapping]] = ..., proposal_commit: _Optional[str] = ..., outcome_commit: _Optional[str] = ..., memory_snapshot: _Optional[_Union[_messages_pb2.OperationalMemorySnapshot, _Mapping]] = ..., session_mode: _Optional[str] = ..., guidance: _Optional[str] = ..., outcome: _Optional[_Union[_outcome_pb2.OutcomeRecord, _Mapping]] = ..., prior_outcomes: _Optional[_Iterable[_Union[_outcome_pb2.OutcomeRecord, _Mapping]]] = ..., validation_attempt: _Optional[int] = ..., previous_diagnostics: _Optional[_Iterable[_Union[_memory_diagnostic_pb2.MemoryDiagnostic, _Mapping]]] = ..., cause_work: _Optional[_Iterable[_Union[_program_pb2.ReflectionCauseWork, _Mapping]]] = ..., unassigned_work: _Optional[_Iterable[_Union[_program_pb2.ReflectionWorkItem, _Mapping]]] = ...) -> None: ...
 
 class ReflectionResult(_message.Message):
     __slots__ = ("summary", "learning_decision", "no_change_reason", "proposed_artifact_ids", "artifact_proposal", "sdk_gaps", "decline_reason")

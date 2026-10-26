@@ -6,7 +6,7 @@ import "buf/validate/validate.proto";
 import "google/protobuf/any.proto";
 import "google/protobuf/timestamp.proto";
 import "sdodev/contracts/v1alpha1/program.proto";
-import "sdodev/contracts/v1alpha1/memory.proto";
+import "sdodev/contracts/v1alpha1/memory_diagnostic.proto";
 import "sdodev/contracts/v1alpha1/messages.proto";
 import "sdodev/contracts/v1alpha1/outcome.proto";
 
