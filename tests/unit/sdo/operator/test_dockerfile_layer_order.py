@@ -108,3 +108,19 @@ def test_validator_inherits_the_immutable_compiler_and_cache_layers():
         assert f"COPY --from=go-deps {source} {source}" in stage
     assert "ENV GOCACHEPROG=/usr/local/bin/sdo-go-cache" in stage
     assert "RUN test -x /usr/local/go/bin/go" in stage
+
+
+def test_workers_do_not_wait_for_offline_validator_cache_warming() -> None:
+    stages = {}
+    current = None
+    for line in _lines("Dockerfile.runtime"):
+        if match := re.match(r"FROM (\S+) AS (\S+)", line):
+            current = match[2]
+            stages[current] = (match[1], [])
+        elif current:
+            stages[current][1].append(line)
+    assert stages["go-runtime"][0] == "go-binaries"
+    for name in ("worker-runtime", "scripted-runtime"):
+        copies = [line for line in stages[name][1] if line.startswith("COPY --from=")]
+        assert any(line.startswith("COPY --from=go-binaries /usr/local/bin/sdo-operator ") for line in copies)
+        assert not any(line.startswith("COPY --from=go-runtime ") for line in copies)
