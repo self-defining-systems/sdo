@@ -55,7 +55,12 @@ func TestLiveReadViewDiffsSnapshotAgainstAcceptedManifest(t *testing.T) {
 
 func TestLiveReadViewIgnoresKubernetesDefaultsAbsentFromSource(t *testing.T) {
 	ref := sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}
-	view := LiveReadView{DetectionContext: sdktest.Snapshot{NamespaceName: "app", ServiceList: []corev1.Service{{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "app"}, Spec: corev1.ServiceSpec{ClusterIP: "10.0.0.1", Ports: []corev1.ServicePort{{Port: 80, Protocol: corev1.ProtocolTCP}}}}}}, SourceCommit: "accepted", Source: planFakeSource{source: &unstructured.Unstructured{Object: map[string]any{"apiVersion": "v1", "kind": "Service", "metadata": map[string]any{"namespace": "app", "name": "api"}, "spec": map[string]any{"ports": []any{map[string]any{"port": float64(80)}}}}}}}
+	source := &unstructured.Unstructured{Object: map[string]any{"apiVersion": "v1", "kind": "Service", "metadata": map[string]any{"namespace": "app", "name": "api"}, "spec": map[string]any{"ports": []any{map[string]any{"port": float64(80)}}}}}
+	accepted := func(service corev1.Service) corev1.Service {
+		service.Annotations = withAcceptance(t, &service, source)
+		return service
+	}
+	view := LiveReadView{DetectionContext: sdktest.Snapshot{NamespaceName: "app", ServiceList: []corev1.Service{accepted(corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "app"}, Spec: corev1.ServiceSpec{ClusterIP: "10.0.0.1", Ports: []corev1.ServicePort{{Port: 80, Protocol: corev1.ProtocolTCP}}}})}}, SourceCommit: "accepted", Source: planFakeSource{source: source}}
 	diff, err := view.DiffAgainstSource(ref)
 	if err != nil || diff.Changed {
 		t.Fatalf("Kubernetes defaults are not source drift: %+v %v", diff, err)
@@ -64,6 +69,11 @@ func TestLiveReadViewIgnoresKubernetesDefaultsAbsentFromSource(t *testing.T) {
 
 func TestLiveReadViewNormalizesSourceWithServerSideDryRun(t *testing.T) {
 	ref := sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}
+	source := &unstructured.Unstructured{Object: map[string]any{"apiVersion": "v1", "kind": "Service", "metadata": map[string]any{"namespace": "app", "name": "api"}, "spec": map[string]any{"ports": []any{map[string]any{"port": float64(80)}}}}}
+	accepted := func(service corev1.Service) corev1.Service {
+		service.Annotations = withAcceptance(t, &service, source)
+		return service
+	}
 	called := false
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		if serveTestDiscovery(writer, request) {
@@ -78,7 +88,7 @@ func TestLiveReadViewNormalizesSourceWithServerSideDryRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	view := LiveReadView{DetectionContext: sdktest.Snapshot{NamespaceName: "app", ServiceList: []corev1.Service{{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "app"}, Spec: corev1.ServiceSpec{Ports: []corev1.ServicePort{{Port: 80, Protocol: corev1.ProtocolTCP}}}}}}, Client: client, SourceCommit: "accepted", Source: planFakeSource{source: &unstructured.Unstructured{Object: map[string]any{"apiVersion": "v1", "kind": "Service", "metadata": map[string]any{"namespace": "app", "name": "api"}, "spec": map[string]any{"ports": []any{map[string]any{"port": float64(80)}}}}}}}
+	view := LiveReadView{DetectionContext: sdktest.Snapshot{NamespaceName: "app", ServiceList: []corev1.Service{accepted(corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "app"}, Spec: corev1.ServiceSpec{Ports: []corev1.ServicePort{{Port: 80, Protocol: corev1.ProtocolTCP}}}})}}, Client: client, SourceCommit: "accepted", Source: planFakeSource{source: source}}
 	diff, err := view.DiffAgainstSource(ref)
 	if err != nil || diff.Changed || !called {
 		t.Fatalf("source was not normalized by dry run: %+v, %v, called=%v", diff, err, called)

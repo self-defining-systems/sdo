@@ -64,6 +64,10 @@ func (a *genericAdoptionAPI) ServeHTTP(writer http.ResponseWriter, request *http
 		return
 	}
 	query := request.URL.Query()
+	if request.Method == http.MethodPatch && query.Get("fieldManager") == acceptanceFieldManager && query.Get("dryRun") == "" {
+		a.recordAcceptance(writer, request, stored)
+		return
+	}
 	if request.Method != http.MethodPatch || query.Get("fieldManager") != "sdo-deployer" || query.Get("force") != "true" {
 		writer.WriteHeader(http.StatusBadRequest)
 		return
@@ -81,6 +85,26 @@ func (a *genericAdoptionAPI) ServeHTTP(writer http.ResponseWriter, request *http
 		result.SetManagedFields([]metav1.ManagedFieldsEntry{{Manager: "sdo-deployer", Operation: metav1.ManagedFieldsOperationApply, FieldsType: "FieldsV1", FieldsV1: &metav1.FieldsV1{Raw: []byte(`{"f:spec":{}}`)}}})
 		a.objects[request.URL.Path] = result.Object
 	}
+	_ = json.NewEncoder(writer).Encode(result.Object)
+}
+
+// recordAcceptance applies a metadata-only acceptance record; anything else
+// under that field manager is rejected.
+func (a *genericAdoptionAPI) recordAcceptance(writer http.ResponseWriter, request *http.Request, stored map[string]any) {
+	body, _ := io.ReadAll(request.Body)
+	applied := &unstructured.Unstructured{}
+	if json.Unmarshal(body, &applied.Object) != nil || applied.Object["spec"] != nil || len(applied.GetAnnotations()) != 1 {
+		writer.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	result := (&unstructured.Unstructured{Object: stored}).DeepCopy()
+	annotations := result.GetAnnotations()
+	if annotations == nil {
+		annotations = map[string]string{}
+	}
+	annotations[acceptedPathsAnnotation] = applied.GetAnnotations()[acceptedPathsAnnotation]
+	result.SetAnnotations(annotations)
+	a.objects[request.URL.Path] = result.Object
 	_ = json.NewEncoder(writer).Encode(result.Object)
 }
 

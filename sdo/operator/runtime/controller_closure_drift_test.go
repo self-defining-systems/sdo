@@ -56,16 +56,6 @@ func newClosureDriftFixture(t *testing.T, owned, declared bool, namespace string
 	if !owned {
 		before.ManagedFields = nil
 	}
-	broken := before.DeepCopy()
-	broken.Spec.Ports[0].TargetPort = intstr.FromInt32(9999)
-	frontend := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "frontend", Namespace: "app"}, Spec: appsv1.DeploymentSpec{Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "frontend", Image: "missing:v1"}}}}}}
-	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "reservation-pod", Namespace: namespace}, Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "reservation", Ports: []corev1.ContainerPort{{ContainerPort: 8087}}}}}}
-	f.client = fake.NewSimpleClientset(broken, frontend, pod)
-	var err error
-	f.cache, err = NewKubernetesCache(KubernetesCacheConfig{Namespace: "app", Client: f.client, TrackDrift: true}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
 	object, err := kruntime.DefaultUnstructuredConverter.ToUnstructured(before)
 	if err != nil {
 		t.Fatal(err)
@@ -73,6 +63,16 @@ func newClosureDriftFixture(t *testing.T, owned, declared bool, namespace string
 	f.source = &unstructured.Unstructured{Object: object}
 	f.source.SetAPIVersion("v1")
 	f.source.SetKind("Service")
+	broken := before.DeepCopy()
+	broken.Annotations = withAcceptance(t, f.source, f.source)
+	broken.Spec.Ports[0].TargetPort = intstr.FromInt32(9999)
+	frontend := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "frontend", Namespace: "app"}, Spec: appsv1.DeploymentSpec{Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "frontend", Image: "missing:v1"}}}}}}
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "reservation-pod", Namespace: namespace}, Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "reservation", Ports: []corev1.ContainerPort{{ContainerPort: 8087}}}}}}
+	f.client = fake.NewSimpleClientset(broken, frontend, pod)
+	f.cache, err = NewKubernetesCache(KubernetesCacheConfig{Namespace: "app", Client: f.client, TrackDrift: true}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	config := testControllerConfig()
 	config.Namespace, config.FiringThreshold, config.ClearThreshold = "app", 1, 1
 	config.VerificationTimeout = 5 * time.Second
@@ -308,6 +308,11 @@ func TestClosureDriftRemovedExtraFieldsAgreeWithStatus(t *testing.T) {
 			source := &unstructured.Unstructured{Object: encoded}
 			source.SetAPIVersion("v1")
 			source.SetKind(test.kind)
+			if test.kind == "Service" {
+				snapshot.ServiceList[0].Annotations = withAcceptance(t, source, source)
+			} else {
+				snapshot.ConfigMapList[0].Annotations = withAcceptance(t, source, source)
+			}
 			event := sdk.DriftEvent{Ref: sdk.ObjectRef{APIVersion: "v1", Kind: test.kind, Namespace: "app", Name: "restored"}, Fields: []sdk.DriftField{{Path: test.path, New: "injected"}}}
 			finding := sdk.Finding{DetectorID: "drift.unexplained", Status: sdk.FindingActive, Fingerprint: test.path, PrimaryResource: event.Ref, Metadata: map[string]any{"drift_event": event}}
 			viewFor := func(snapshot sdk.DetectionContext) program.ReadView {

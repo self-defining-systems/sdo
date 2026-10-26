@@ -630,8 +630,12 @@ func (e PlanExecutor) prepareAction(ctx context.Context, incident IncidentReques
 		if err != nil {
 			return nil, err
 		}
-
-		return sourceFields(next, source, a.Ref)
+		next, err = sourceFields(next, source, a.Ref)
+		if err != nil {
+			return nil, err
+		}
+		removeAddedFields(next, current, source)
+		return next, nil
 	case program.Rollback:
 		if e.Source == nil || a.ToRevision == "" {
 			return nil, errors.New("revision source and target revision are required")
