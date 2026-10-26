@@ -163,6 +163,8 @@ def _terminal(plan: SequencePlan, index: int, results: Path) -> dict[str, object
         or not record.recovery_finished_at
         or not record.recovery_oracle
         or not record.recovery_oracle.success
+        or not record.full_cleanup_verified
+        or record.cleanup_passes_verified != 2
         or record.reflection_finished_at is None
         or "learning failed:" in (record.error or "")
     ):
@@ -172,6 +174,7 @@ def _terminal(plan: SequencePlan, index: int, results: Path) -> dict[str, object
     ledger = receipt.get("native_ledger", {})
     if (
         receipt.get("incident_id") != record.incident_id
+        or ledger.get("incident_id") != record.incident_id
         or ledger.get("acknowledged") is not True
         or not ledger.get("outcome_commit")
     ):

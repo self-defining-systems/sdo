@@ -100,6 +100,8 @@ def finish(plan: SequencePlan, index: int, path: Path) -> None:
             oracle=OracleVerdict(kind="composition", success=True),
             recovery_oracle=OracleVerdict(kind="health-check", success=True),
             recovery_finished_at=now,
+            full_cleanup_verified=True,
+            cleanup_passes_verified=2,
             reflection_finished_at=now,
             artifacts_dir=str(artifact),
         ),
@@ -173,6 +175,30 @@ def test_unacknowledged_native_memory_blocks_repeat(plan: SequencePlan) -> None:
         receipt = path.parent / "native/sdo_production_receipt_strict.json"
         value = json.loads(receipt.read_text())
         value["native_ledger"]["acknowledged"] = False
+        receipt.write_text(json.dumps(value))
+
+    with pytest.raises(RuntimeError, match="acknowledged"):
+        run_sequence(plan, execute=execute)
+
+
+@pytest.mark.parametrize("updates", [{"full_cleanup_verified": False}, {"cleanup_passes_verified": 1}])
+def test_partial_cleanup_cannot_advance_the_sequence(plan: SequencePlan, updates: dict) -> None:
+    def execute(p: SequencePlan, index: int, path: Path) -> None:
+        finish(p, index, path)
+        record = json.loads(path.read_text())
+        record.update(updates)
+        path.write_text(json.dumps(record) + "\n")
+
+    with pytest.raises(RuntimeError, match="recovery and learning"):
+        run_sequence(plan, execute=execute)
+
+
+def test_native_ledger_must_belong_to_the_row_incident(plan: SequencePlan) -> None:
+    def execute(p: SequencePlan, index: int, path: Path) -> None:
+        finish(p, index, path)
+        receipt = path.parent / "native/sdo_production_receipt_strict.json"
+        value = json.loads(receipt.read_text())
+        value["native_ledger"]["incident_id"] = "another-incident"
         receipt.write_text(json.dumps(value))
 
     with pytest.raises(RuntimeError, match="acknowledged"):
