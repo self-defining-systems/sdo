@@ -230,9 +230,12 @@ type SourceDiff struct {
 	// SourceAbsent is true only after a successful accepted-source lookup finds no object.
 	SourceAbsent bool `json:"source_absent,omitempty"`
 	// Changed reports declared fields that differ and fields that source does
-	// not declare and that were absent when SDO accepted (applied or adopted)
-	// the object. Server defaults, fields present at acceptance and
-	// kubernetes.io/k8s.io bookkeeping metadata are not changes.
+	// not declare and that were absent when SDO accepted (adopted) the object.
+	// Server defaults, fields present at acceptance and kubernetes.io/k8s.io
+	// bookkeeping are not changes; nor is a new value of an undeclared field
+	// that existed at acceptance. When declared fields agree but the object
+	// has no acceptance record for this source, the diff is an error, not
+	// unchanged. ReconcileFromSource removes the additions it reports.
 	Changed bool   `json:"changed"`
 	Text    string `json:"text,omitempty"`
 }
