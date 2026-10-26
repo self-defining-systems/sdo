@@ -1,8 +1,15 @@
-# Match SREGym AstronomyShop.deploy() at the revision in pins.json.
+# App-scoped telemetry; never propagate the shared node mount tree.
 prometheus:
   enabled: false
 components:
   load-generator:
     envOverrides:
-      - name: LOCUST_BROWSER_TRAFFIC_ENABLED
-        value: "false"
+    - name: LOCUST_BROWSER_TRAFFIC_ENABLED
+      value: 'false'
+opentelemetry-collector:
+  extraEnvs:
+  - name: GOMAXPROCS
+    value: '2'
+  presets:
+    hostMetrics:
+      enabled: false

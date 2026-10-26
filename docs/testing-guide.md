@@ -558,8 +558,11 @@ after completion; the next launch replaces a stale record. The printed
 
 ### Runtime CI shards
 
-The controller matrix runs the runtime module in eight test-name partitions:
-`reflection`, `contracts`, `rendered`, `simulation`, `schedules`, `corpus`, `recovery`, and `remaining`. Run a partition locally
+The controller matrix runs the runtime module in ten test-name partitions:
+`reflection`, `reflection-mongo`, `reflection-programs`, `contracts`, `rendered`,
+`simulation`, `schedules`, `corpus`, `recovery`, and `remaining`. The two reflection
+compile/replay groups have separate budgets so repeated real CLI builds cannot
+consume the general contracts job's entire deadline. Run a partition locally
 with `python3 scripts/test_runtime_shard.py --shard reflection` from the repository
 root. Each shard first discovers the compiled tests across `./...`, including
 examples and fuzz seed tests, then requires every eligible name to match exactly
@@ -672,8 +675,14 @@ SDK/core continue to run under Go 1.24.5, while the contracts and benchmark wire
 modules use Go 1.26.8. Explicit fixture compiler parallelism must not override
 `GOFLAGS`, so nested builds inherit the same runner memory bound.
 
-`prepare-go` compiles normal and race dependency graphs once per pushed event
-commit, then publishes a shared Go compiler/module cache. The test jobs depend
+`prepare-go` builds normal and race archives on two independent runners per
+pushed event commit, publishing a cache for each mode. Normal-only consumers
+restore the normal graph and the sole module archive. Go test shards restore
+the race graph to a separate directory, then `scripts/merge_go_ci_caches.sh`
+unions immutable compiler entries with hard links. Each archive destination is
+restored once; Go module files are never unpacked over another restored cache. Preparation never links or
+starts test binaries; each test shard owns those steps. This avoids serially
+linking every test package before any shard can start. The test jobs depend
 on preparation and require that exact cache; they do not start cold compilation
 inside short operation deadlines. Cache restoration uses Go's content-addressed
 compiler entries, while executable identity remains source-bound by
@@ -703,3 +712,19 @@ validation failures, accepted incident provenance and concurrent publication:
 
 This is a hermetic plumbing proof, with no cluster or model. Cross-cluster shared
 storage and live parallel-lane runner proof are separate benchmark work.
+
+Fastloop checks saved controller and validator image source revisions against
+the code under test before starting its SREGym worker, verifies lane image
+content against local images, and runs the validator's Go toolchain as nonroot
+in a read-only offline container. `scripts/build_sdo_images.sh` records the source
+revision in the existing Bake graph. Missing or stale labels require rebuilding
+through that script and delivering through `fastloop up`; tag names alone do
+not prove provenance. Focused regressions live in
+`tests/unit/benchmarks/sregym/fastloop/test_source_preflight.py` and `test_dev.py`.
+
+
+GitHub Actions expression contexts are checked locally by
+`scripts/check_actions.sh`, called by `scripts/check_errors.sh`. It runs pinned
+actionlint1.7.7 with external shell/Python linters disabled; Ruff and the existing
+shell gates retain those responsibilities. This catches invalid job-level
+contexts before GitHub rejects the workflow without creating a check run.

@@ -148,7 +148,7 @@ func (k KubernetesValidationJobClient) Validate(ctx context.Context, request Val
 		}
 		mounts := job.Spec.Template.Spec.Containers[0].VolumeMounts
 		for i := range mounts {
-			if mounts[i].Name == "healthy-baseline" {
+			if mounts[i].MountPath == "/sdo/healthy-baseline" {
 				mounts[i].SubPath = filepath.ToSlash(filepath.Join(k.RepositoryPVCSubPath, relative))
 			}
 		}
@@ -445,9 +445,6 @@ func (k KubernetesValidationJobClient) validationJob(name, subPath, tree string,
 	command := validatorTreeCheckCommand("/workspace", "/tmp") + `
 /usr/local/bin/sdo-operator validate --app /workspace --expect-schema "$SDO_SCHEMA_IDENTITY"`
 	if useBaseline {
-		job.Spec.Template.Spec.Volumes = append(job.Spec.Template.Spec.Volumes, corev1.Volume{
-			Name: "healthy-baseline", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: k.RepositoryPVC, ReadOnly: true}},
-		})
 		command += " --healthy-baseline /sdo/healthy-baseline"
 	}
 	job.Spec.Template.Spec.Containers = []corev1.Container{{
@@ -464,7 +461,7 @@ func (k KubernetesValidationJobClient) validationJob(name, subPath, tree string,
 	}}
 	if useBaseline {
 		job.Spec.Template.Spec.Containers[0].VolumeMounts = append(job.Spec.Template.Spec.Containers[0].VolumeMounts,
-			corev1.VolumeMount{Name: "healthy-baseline", MountPath: "/sdo/healthy-baseline", SubPath: filepath.ToSlash(filepath.Join(k.RepositoryPVCSubPath, ".sdo-baseline/healthy")), ReadOnly: true})
+			corev1.VolumeMount{Name: "application", MountPath: "/sdo/healthy-baseline", SubPath: filepath.ToSlash(filepath.Join(k.RepositoryPVCSubPath, ".sdo-baseline/healthy")), ReadOnly: true})
 	}
 	if devmount.Enabled() {
 		devmount.Apply(&job.Spec.Template.Spec)
