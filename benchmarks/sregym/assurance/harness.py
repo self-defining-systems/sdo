@@ -56,7 +56,7 @@ if TYPE_CHECKING:
 
     from benchmarks.sregym.assurance.scenarios import IncidentSpec
     from benchmarks.sregym.fastloop.loop import AgentOutcome, IncidentAgent, InjectionWindow
-    from benchmarks.sregym.fastloop.records import AgentName
+    from benchmarks.sregym.fastloop.records import AgentName, PostClosureWait
 
 logger = logging.getLogger(__name__)
 
@@ -324,8 +324,8 @@ class ScriptedAgent:
         self._append(record)
         return learned
 
-    def prepare_recovery(self, outcome: AgentOutcome | None) -> None:
-        self._inner.prepare_recovery(outcome)
+    def prepare_recovery(self, outcome: AgentOutcome | None) -> PostClosureWait | None:
+        return self._inner.prepare_recovery(outcome)
 
     def close(self) -> None:
         try:
