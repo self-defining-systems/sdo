@@ -203,7 +203,7 @@ def prepared_incident_data(request: IncidentRequest) -> Iterator[str]:
         if request.prior_stages:
             summary["prior_stages"] = [
                 {
-                    "stage": report.stage,
+                    "stage": report.stage[:100],
                     "mitigations": [
                         {
                             "playbook_id": attempt.playbook_id[:100],
@@ -214,8 +214,35 @@ def prepared_incident_data(request: IncidentRequest) -> Iterator[str]:
                         for attempt in report.mitigations[:4]
                     ],
                     "mitigations_omitted": max(0, len(report.mitigations) - 4),
-                    "remaining_finding_fingerprints": list(report.remaining_finding_fingerprints[:4]),
+                    "remaining_finding_fingerprints": [
+                        item[:160] for item in report.remaining_finding_fingerprints[:4]
+                    ],
+                    "remaining_findings_omitted": max(0, len(report.remaining_finding_fingerprints) - 4),
                 }
                 for report in request.prior_stages[:2]
             ]
-        yield _render_summary(summary, str(facts))
+        rendered = _render_summary(summary, str(facts))
+        # Keep a visible action/result from each stage alongside current work.
+        # Omitted counts point to complete facts instead of hiding truncation.
+        lists = [
+            (stage, key, omitted)
+            for stage in summary.get("prior_stages", [])
+            for key, omitted in (
+                ("mitigations", "mitigations_omitted"),
+                ("remaining_finding_fingerprints", "remaining_findings_omitted"),
+            )
+        ]
+        lists += [
+            (summary, "findings", "findings_omitted"),
+            (summary["playbook_coverage"], "matches", "matches_omitted"),
+            (summary["playbook_coverage"], "unexplained_finding_fingerprints", "unexplained_findings_omitted"),
+        ]
+        while len(rendered) > MAX_INCIDENT_SUMMARY_CHARS:
+            candidate = next(((owner, key, omitted) for owner, key, omitted in lists if len(owner[key]) > 1), None)
+            if candidate is None:
+                break
+            owner, key, omitted = candidate
+            owner[key].pop()
+            owner[omitted] += 1
+            rendered = _render_summary(summary, str(facts))
+        yield rendered

@@ -634,7 +634,7 @@ Explicit memory adoption is compile-only and does not establish health provenanc
 
 Menu options and parameters are agent tool requests. Sessions and reports are presentation state;
 ordinary incident counters use the existing tools-state CAS document outside `.sdo/`.
-Only the broker publishes derived incident outcomes.
+Only the broker publishes derived incident outcomes. Controller-owned `prior_stages` records retain automatic and agent-stage evidence; agents cannot author their own prior-stage receipts.
 
 | Artifact | May author | May update | Validation rule |
 |---|---|---|---|

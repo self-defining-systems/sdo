@@ -225,3 +225,26 @@ def test_prior_stage_summary_stays_inline_and_full_receipt_stays_in_private_fact
             "full receipt evidence"
         )
         assert len(rendered) <= MAX_INCIDENT_SUMMARY_CHARS
+
+
+def test_many_stage_attempts_cannot_displace_bounded_first_prompt() -> None:
+    from tests.unit.sdo.agents.prompts.cases import incident
+
+    request = incident(100, oversized=True)
+    report = request.prior_stages.add(stage="deterministic", remaining_finding_fingerprints=["f" * 5000] * 20)
+    for index in range(20):
+        report.mitigations.add(
+            playbook_id=f"repair-{index}-" + "p" * 500,
+            program_revision="revision",
+            result="apply_error",
+            error="e" * 5000,
+        )
+    with prepared_incident_data(request) as rendered:
+        assert len(rendered) <= MAX_INCIDENT_SUMMARY_CHARS
+        summary = json.loads(rendered.split("Incident request summary:\n", 1)[1].splitlines()[0])
+        stage = summary["prior_stages"][0]
+        assert stage["mitigations"][0]["result"] == "apply_error"
+        assert len(stage["mitigations"]) + stage["mitigations_omitted"] == 20
+        assert "mitigate" in summary["incident_tools"]["commands"]
+        details = Path(rendered.split("Full incident facts: ", 1)[1].splitlines()[0])
+        assert len(json.loads(details.read_text())["prior_stages"][0]["mitigations"]) == 20
