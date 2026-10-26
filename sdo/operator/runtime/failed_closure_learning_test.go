@@ -145,7 +145,7 @@ func TestFailedClosureReflectionReceivesExactlyVerifiedCauses(t *testing.T) {
 		response, err := anypb.New(&contracts.ReflectionResult{LearningDecision: "sdk_gap", NoChangeReason: "filtered learning view retains two independently verified causes without scripted replay observations", SdkGaps: gaps})
 		return &contracts.AgentResult{SchemaVersion: task.SchemaVersion, TaskId: task.TaskId, ProposalId: task.Workspace.ProposalId, Status: "completed", Response: response}, err
 	})}
-	if _, err := native.ProcessClosure(ctx, closure); err != nil {
+	if _, err := closeAndReflect(t, ctx, native, closure); err != nil {
 		t.Fatal(err)
 	}
 	ledger, err := native.readLedger(closure.Request.IncidentID)
