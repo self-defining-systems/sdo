@@ -296,6 +296,14 @@ jobs:
             directory: sdo/operator
             go-version: "1.26.8"
             operator: acceptance
+          - module: operator-acceptance-second
+            directory: sdo/operator
+            go-version: "1.26.8"
+            operator: acceptance-second
+          - module: operator-compiler
+            directory: sdo/operator
+            go-version: "1.26.8"
+            operator: compiler
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -351,9 +359,9 @@ jobs:
           timeout 120s go test -run '^$' -fuzz '^FuzzObjectRefTypedRoundTrip$' -fuzztime=30s -parallel=2 -timeout=2m .
         working-directory: ${{ matrix.directory }}
       - name: Fuzz observed evidence labels (bounded)
-        if: matrix.module == 'operator'
+        if: matrix.module == 'foundation-contracts'
         run: timeout 120s go test -run '^$' -fuzz '^FuzzStateChangeRefMatchesObservedLabel$' -fuzztime=30s -parallel=2 -timeout=2m ./outcome_derivation
-        working-directory: ${{ matrix.directory }}
+        working-directory: sdo/operator
       - name: Fuzz native receipt boundary (bounded)
         if: matrix.module == 'foundation-contracts'
         run: timeout 120s go test -run '^$' -fuzz '^FuzzNativeReceiptBoundary$' -fuzzminimizetime=1s -fuzztime=30s -parallel=2 -timeout=2m .
@@ -364,9 +372,9 @@ jobs:
         working-directory: benchmarks/sregym/protocol/submission_go
 
       - name: Fuzz controller observation boundary (bounded)
-        if: matrix.module == 'operator'
+        if: matrix.module == 'foundation-contracts'
         run: timeout 120s go test -run '^$' -fuzz '^FuzzControllerObservationBoundary$' -fuzzminimizetime=1s -fuzztime=30s -parallel=2 -timeout=2m ./outcome_derivation
-        working-directory: ${{ matrix.directory }}
+        working-directory: sdo/operator
 
   go-integration:
     name: Go-backed Python contracts
@@ -526,6 +534,9 @@ jobs:
           # A mutable PR merge ref can change after a retarget; test this event.
           ref: ${{ github.sha }}
       - uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+        with:
+          # Hosted runners dispose of the builder; avoid redundant post-job removal.
+          cleanup: false
       - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc # v6.4.3
         with:
           version: "0.9.24"
