@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// The detector-authoring skill's SDK reference is generated from this package.
+// The authoring skills' SDK references are generated from this module.
 // A stale copy teaches agents an API that no longer exists.
 func TestSkillSDKReferenceIsCurrent(t *testing.T) {
 	if _, err := exec.LookPath("bash"); err != nil {
@@ -15,6 +15,6 @@ func TestSkillSDKReferenceIsCurrent(t *testing.T) {
 	script := filepath.Join("..", "..", "..", "scripts", "gen_skill_references.sh")
 	output, err := exec.Command("bash", script, "--check").CombinedOutput()
 	if err != nil {
-		t.Fatalf("sdk.md is stale; run scripts/gen_skill_references.sh:\n%s", output)
+		t.Fatalf("generated skill references are stale (files named below); run scripts/gen_skill_references.sh:\n%s", output)
 	}
 }
