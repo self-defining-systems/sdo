@@ -6,6 +6,7 @@ import (
 	"fmt"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"log/slog"
+	"net"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/core"
 	"sdo.dev/operator/runtime/lifecyclecore"
@@ -380,10 +381,14 @@ func (c *Controller) revalidateClosure(ctx context.Context, snapshot sdk.Detecti
 
 // observerDenied separates a permanent scope denial from an observer that is
 // only unavailable: RBAC refusals, and watched dependencies that are
-// undeclared, forbidden or unsupported. Everything else is unknown, not denied.
+// undeclared, forbidden or unsupported. A timeout, throttle or server error is
+// unavailable whatever the detector watches, so it waits within the bound.
 func observerDenied(detector sdk.Detector, snapshot sdk.DetectionContext, err error) bool {
 	if apierrors.IsForbidden(err) || apierrors.IsUnauthorized(err) {
 		return true
+	}
+	if observerTransient(err) {
+		return false
 	}
 	source, scoped := snapshot.(sdk.ScopedObservationSource)
 	for _, watch := range detector.Spec().Watches {
@@ -408,6 +413,22 @@ func observerDenied(detector sdk.Detector, snapshot sdk.DetectionContext, err er
 		}
 	}
 	return false
+}
+
+// observerTransient reports an error that a later observation can clear.
+func observerTransient(err error) bool {
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		return true
+	}
+	var network net.Error
+	if errors.As(err, &network) && network.Timeout() {
+		return true
+	}
+	if apierrors.IsTimeout(err) || apierrors.IsServerTimeout(err) || apierrors.IsTooManyRequests(err) || apierrors.IsUnexpectedServerError(err) {
+		return true
+	}
+	var status apierrors.APIStatus
+	return errors.As(err, &status) && status.Status().Code >= 500
 }
 
 // closureRecheckWaitExpired records when this closure's recheck first saw an
