@@ -25,7 +25,7 @@ type ClosureEffect struct {
 // A committed outcome is historical evidence. Resuming its unfinished broker
 // bookkeeping cannot authorize a new repair or another outcome classification.
 type committedOutcomeClosureBroker interface {
-	committedOutcomeClosure(context.Context, IncidentClosure) (bool, error)
+	committedOutcomeClosure(context.Context, IncidentClosure, *ClosureReceipt) (bool, error)
 }
 
 type ClosureAcknowledgmentEffect struct {
@@ -110,7 +110,7 @@ func (c *Controller) ExecuteClosureEffect(ctx context.Context, effect ClosureEff
 	committedOutcome := false
 	if proof, ok := configuredBroker.(committedOutcomeClosureBroker); ok {
 		var err error
-		committedOutcome, err = proof.committedOutcomeClosure(ctx, effect.Closure)
+		committedOutcome, err = proof.committedOutcomeClosure(ctx, effect.Closure, nil)
 		if err != nil {
 			return err
 		}

@@ -764,12 +764,13 @@ def test_scripted_fastloop_reuses_reflected_target_port_program(
         "deployed_lifecycle",
         lambda _namespace: DeployedLifecycle(DeployedLifecycleContext("healthy", []), "seed"),
     )
-    monkeypatch.setenv("SREGYM_BASE_KUBECONFIG", str(tmp_path / "unused-kubeconfig"))
+    monkeypatch.setenv("SREGYM_BASE_KUBECONFIG", str(control_api.kubeconfig))
     monkeypatch.setattr(driver, "prepare_benchmark_resources", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(driver, "_publish_agent_registrations", lambda *_args: None)
     monkeypatch.setattr(driver, "inspect_existing", lambda *_args: object())
 
     def install(config: object) -> object:
+        assert config.kubeconfig == control_api.kubeconfig
         assert config.deployed_manifest_paths == ("kubernetes",)
         return SimpleNamespace(reused=False, accepted_commit="a" * 40)
 

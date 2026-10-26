@@ -16,6 +16,8 @@ from tests.reflection_memory import (
     prepare_reflection_memory as prepare_reflection_memory,
 )
 
+pytest_plugins = ("tests.sregym_prerequisites",)
+
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
@@ -111,8 +113,6 @@ def committed_sregym_registry() -> str:
     """The registry at this repository's committed gitlink, independent of worktree HEAD."""
     repository = Path(__file__).resolve().parents[1]
     harness = repository / "third_party/sregym"
-    if not (harness / "agents.yaml").is_file():
-        pytest.skip("requires the optional external SREGym registry fixture")
     link = subprocess.check_output(["git", "ls-tree", "HEAD", "third_party/sregym"], cwd=repository, text=True).split()[
         2
     ]

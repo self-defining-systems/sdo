@@ -110,7 +110,8 @@ Current outcome:
   "resolution_path": "",
   "reflection_skip_reason": "",
   "sdk_gaps": [],
-  "undetected_causes": []
+  "undetected_causes": [],
+  "reflection_rejections": []
 }
 
 Outcome history (prior incidents, bounded summaries; omissions are counted):
