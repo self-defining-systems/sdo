@@ -89,6 +89,10 @@ func addPermissiveGrants(c Config, p *Plan, resources []*metav1.APIResourceList)
 		p.AppRoles = append(p.AppRoles, role(ns, name, rules))
 		p.AppBindings = append(p.AppBindings, binding(ns, name, "sdo-responder", c.controlNamespace()))
 	}
+	// Namespace labels carry Pod Security and similar policy, so a repair can need
+	// to edit them. Reads stay cluster-wide; edits are limited to admitted
+	// namespaces by name (create and delete stay withheld).
+	clusterRules = append(clusterRules, namespaceEditRule(slices.Compact(slices.Clone(namespaces))))
 	clusterRules = append(clusterRules, rule("admissionregistration.k8s.io", []string{"mutatingwebhookconfigurations", "validatingwebhookconfigurations"}, "get", "list", "watch", "create", "update", "patch", "delete"))
 	p.ClusterRoles = append(p.ClusterRoles, &rbacv1.ClusterRole{ObjectMeta: metav1.ObjectMeta{Name: name}, Rules: clusterRules}, &rbacv1.ClusterRole{ObjectMeta: metav1.ObjectMeta{Name: permissiveReadGrantName(c.controlNamespace())}, Rules: readRules})
 	addPermissiveReadBindings(c, p, namespaces)
@@ -100,32 +104,73 @@ func addPermissiveGrants(c Config, p *Plan, resources []*metav1.APIResourceList)
 	return nil
 }
 
-// Discovery cannot authorize unknown APIs or credential, identity, proxy and
-// escalation endpoints. These reviewed names are intentionally concrete.
-func permissiveNamespacedRead(group, resource string) bool {
-	switch group {
-	case "":
-		return slices.Contains([]string{"pods", "pods/log", "services", "endpoints", "events", "configmaps", "persistentvolumeclaims", "resourcequotas", "limitranges", "replicationcontrollers"}, resource)
-	case "apps":
-		return slices.Contains([]string{"deployments", "replicasets", "statefulsets", "daemonsets", "controllerrevisions", "deployments/scale", "replicasets/scale", "statefulsets/scale"}, resource)
-	case "batch":
-		return slices.Contains([]string{"jobs", "cronjobs"}, resource)
-	case "autoscaling":
-		return resource == "horizontalpodautoscalers"
-	case "policy":
-		return resource == "poddisruptionbudgets"
-	case "discovery.k8s.io":
-		return resource == "endpointslices"
-	case "networking.k8s.io":
-		return slices.Contains([]string{"networkpolicies", "ingresses"}, resource)
-	case "events.k8s.io":
-		return resource == "events"
-	case "coordination.k8s.io":
-		return resource == "leases"
-	case "storage.k8s.io":
-		return resource == "csistoragecapacities"
+func namespaceEditRule(names []string) rbacv1.PolicyRule {
+	r := rule("", []string{"namespaces"}, "update", "patch")
+	r.ResourceNames = slices.Clone(names)
+	return r
+}
+
+// permissiveKind is one reviewed namespaced kind. Discovery cannot authorize
+// unknown APIs or credential, identity, proxy and escalation endpoints, so every
+// readable kind is listed here with an explicit write decision: Verbs holds the
+// verbs beyond get/list/watch, ReadOnly the one-line reason it has none.
+type permissiveKind struct {
+	Group, Resource string
+	Verbs           []string
+	ReadOnly        string
+}
+
+var (
+	permissiveWrite = []string{"create", "update", "patch", "delete"}
+	permissiveScale = []string{"update", "patch"}
+)
+
+// kubectl parity in an admitted namespace is the floor: the responder writes
+// every kind it reads unless the entry names why not. A new kind cannot be
+// readable without this decision, and TestPermissiveResponderWritesEveryReadableKindExceptDenyList
+// pins the read-only set.
+var permissiveKinds = []permissiveKind{
+	{Resource: "pods", Verbs: permissiveWrite},
+	{Resource: "pods/log", ReadOnly: "read-only subresource: log stream, nothing to write"},
+	{Resource: "services", Verbs: permissiveWrite},
+	{Resource: "endpoints", Verbs: permissiveWrite}, // selector-less Services have hand-authored Endpoints
+	{Resource: "events", ReadOnly: "audit record of what happened; rewriting it hides evidence"},
+	{Resource: "configmaps", Verbs: permissiveWrite},
+	{Resource: "persistentvolumeclaims", Verbs: permissiveWrite},
+	{Resource: "resourcequotas", Verbs: permissiveWrite},
+	{Resource: "limitranges", Verbs: permissiveWrite},
+	{Resource: "replicationcontrollers", Verbs: permissiveWrite},
+	{Group: "apps", Resource: "deployments", Verbs: permissiveWrite},
+	{Group: "apps", Resource: "replicasets", Verbs: permissiveWrite},
+	{Group: "apps", Resource: "statefulsets", Verbs: permissiveWrite},
+	{Group: "apps", Resource: "daemonsets", Verbs: permissiveWrite},
+	{Group: "apps", Resource: "controllerrevisions", ReadOnly: "controller-managed history of workload revisions"},
+	{Group: "apps", Resource: "deployments/scale", Verbs: permissiveScale},
+	{Group: "apps", Resource: "replicasets/scale", Verbs: permissiveScale},
+	{Group: "apps", Resource: "statefulsets/scale", Verbs: permissiveScale},
+	{Group: "batch", Resource: "jobs", Verbs: permissiveWrite},
+	{Group: "batch", Resource: "cronjobs", Verbs: permissiveWrite},
+	{Group: "autoscaling", Resource: "horizontalpodautoscalers", Verbs: permissiveWrite},
+	{Group: "policy", Resource: "poddisruptionbudgets", Verbs: permissiveWrite},
+	{Group: "discovery.k8s.io", Resource: "endpointslices", Verbs: permissiveWrite}, // custom slices for selector-less Services
+	{Group: "networking.k8s.io", Resource: "networkpolicies", Verbs: permissiveWrite},
+	{Group: "networking.k8s.io", Resource: "ingresses", Verbs: permissiveWrite},
+	{Group: "events.k8s.io", Resource: "events", ReadOnly: "audit record of what happened; rewriting it hides evidence"},
+	{Group: "coordination.k8s.io", Resource: "leases", Verbs: permissiveWrite}, // a stale leader-election lease can block an app
+	{Group: "storage.k8s.io", Resource: "csistoragecapacities", ReadOnly: "published by the CSI driver, not by applications"},
+}
+
+func permissiveLookup(group, resource string) (permissiveKind, bool) {
+	i := slices.IndexFunc(permissiveKinds, func(k permissiveKind) bool { return k.Group == group && k.Resource == resource })
+	if i < 0 {
+		return permissiveKind{}, false
 	}
-	return false
+	return permissiveKinds[i], true
+}
+
+func permissiveNamespacedRead(group, resource string) bool {
+	_, ok := permissiveLookup(group, resource)
+	return ok
 }
 
 func permissiveClusterRead(group, resource string) bool {
@@ -146,26 +191,14 @@ func permissiveResourceVerbs(group, resource string) []string {
 	if group == "" && slices.Contains([]string{"pods/exec", "pods/attach", "pods/portforward"}, resource) {
 		return []string{"get", "create"}
 	}
-	if !permissiveNamespacedRead(group, resource) {
+	kind, ok := permissiveLookup(group, resource)
+	if !ok {
 		return nil
 	}
-	verbs := []string{"get", "list", "watch"}
-	switch group {
-	case "":
-		if slices.Contains([]string{"pods", "services", "configmaps", "persistentvolumeclaims", "replicationcontrollers"}, resource) {
-			return append(verbs, "create", "update", "patch", "delete")
-		}
-	case "apps":
-		if strings.HasSuffix(resource, "/scale") {
-			return []string{"get", "update", "patch"}
-		}
-		if resource != "controllerrevisions" {
-			return append(verbs, "create", "update", "patch", "delete")
-		}
-	case "batch", "autoscaling", "policy", "networking.k8s.io":
-		return append(verbs, "create", "update", "patch", "delete")
+	if strings.HasSuffix(resource, "/scale") {
+		return append([]string{"get"}, kind.Verbs...)
 	}
-	return verbs
+	return append([]string{"get", "list", "watch"}, kind.Verbs...)
 }
 
 // A ClusterRoleBinding containing namespaced reads would also grant the control
