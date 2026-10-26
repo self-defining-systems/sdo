@@ -68,9 +68,12 @@ def _worker(environment: FastloopEnvironment) -> SregymWorker:
         from benchmarks.sregym.fastloop.toy import ToyWorker
 
         return ToyWorker(environment)  # type: ignore[return-value]
-    from benchmarks.sregym.fastloop.source_preflight import assert_harness_sources
+    from benchmarks.sregym.fastloop.source_preflight import assert_harness_sources, assert_runtime_images
 
     assert_harness_sources(environment.sregym_dir)
+    assert_runtime_images(environment.images, environment.dev_mount or REPO_ROOT)
+    if not node_images_match(environment.cluster, environment.images):
+        raise ValueError("eval: lane image source differs from the checked local images; redeliver with fastloop up")
     return SregymWorker(
         worker_argv(environment.sregym_dir, private_tmp=environment.private_tmp),
         env={**environment.worker_process_env(), "PYTHONPATH": str(REPO_ROOT)},
