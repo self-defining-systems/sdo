@@ -28,7 +28,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
-    from benchmarks.sregym.adapter import ClusterOps
+    from benchmarks.sregym.adapter import ClusterOps, NativeInstallConfig
     from benchmarks.sregym.fastloop.environment import FastloopEnvironment
     from benchmarks.sregym.fastloop.worker_client import SregymWorker
 
@@ -113,6 +113,7 @@ class LaneAdmission:
         *,
         timeout_seconds: float = 300,
         code_path: str = "go",
+        install_config: NativeInstallConfig | None = None,
         synchronize: Callable[[], None] | None = None,
         progress: Callable[..., None] | None = None,
         before_proof: Callable[[str, set[str]], None] | None = None,
@@ -123,6 +124,7 @@ class LaneAdmission:
         self.environment, self.worker, self.ops = environment, worker, ops
         self.directory = directory
         self.timeout_seconds = timeout_seconds
+        self.install_config = install_config
         self.synchronize, self.progress = synchronize, progress
         self.before_proof = before_proof
         self.required_detectors = {"workload-health", "service-endpoints", "service-reachability", "traffic-health"}
@@ -219,7 +221,7 @@ class LaneAdmission:
         deadline = Deadline(time.monotonic() + self.timeout_seconds, time.monotonic)
         env = self.environment
         self.directory.mkdir(parents=True, exist_ok=True)
-        rbac = verify_rbac(env.kubeconfig, env.namespace)
+        rbac = verify_rbac(env.kubeconfig, env.namespace, self.install_config)
         (self.directory / "rbac.json").write_text(json.dumps(rbac, indent=2) + "\n")
         boundary = datetime.now(timezone.utc).isoformat()
         if self.progress:

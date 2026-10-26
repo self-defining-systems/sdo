@@ -565,6 +565,7 @@ def _sdo_agent(
         from benchmarks.sregym.adapter import native_install_config, sync_existing
         from benchmarks.sregym.fastloop.admission import EvalAdmissionOps, LaneAdmission
 
+        install_config = native_install_config(runtime_config)
         admission = LaneAdmission(
             environment,
             worker,
@@ -572,7 +573,8 @@ def _sdo_agent(
             results_dir / "admission",
             code_path=runtime_config.code_path,
             timeout_seconds=getattr(args, "admission_timeout_seconds", 300),
-            synchronize=lambda: sync_existing(native_install_config(runtime_config)),
+            install_config=install_config,
+            synchronize=lambda: sync_existing(install_config),
             progress=getattr(args, "admission_progress", None),
             before_proof=getattr(args, "admission_before_proof", None),
         )
