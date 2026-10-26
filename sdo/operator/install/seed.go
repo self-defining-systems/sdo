@@ -30,6 +30,12 @@ func KubectlTarSeederWithKubeconfig(repositoryPath, acceptedCommit, kubeconfig s
 // KubectlTarSeederWithBrokerEvidence also restores an explicitly supplied trusted
 // deployment ledger. The ledger is operator input, never inferred from Git or Pods.
 func KubectlTarSeederWithBrokerEvidence(repositoryPath, acceptedCommit, kubeconfig, brokerRoot string) RepositorySeeder {
+	return KubectlTarAdoptionSeeder(repositoryPath, acceptedCommit, kubeconfig, brokerRoot, nil)
+}
+
+// KubectlTarAdoptionSeeder prefers an operator-supplied ledger. Without one,
+// it captures the adopted application's image identities at this install.
+func KubectlTarAdoptionSeeder(repositoryPath, acceptedCommit, kubeconfig, brokerRoot string, capture *AdoptionCapture) RepositorySeeder {
 	return func(ctx context.Context, cfg Config) error {
 		if cfg.AcceptedCommit != "" && cfg.AcceptedCommit != acceptedCommit {
 			return fmt.Errorf("repository seeder commit differs from installer accepted commit")
@@ -37,6 +43,11 @@ func KubectlTarSeederWithBrokerEvidence(repositoryPath, acceptedCommit, kubeconf
 		evidence, err := seedBrokerArchive(ctx, repositoryPath, acceptedCommit, brokerRoot)
 		if err != nil {
 			return fmt.Errorf("trusted seed deployment evidence: %w", err)
+		}
+		if brokerRoot == "" && capture != nil {
+			if evidence, err = adoptionArchive(ctx, *capture, repositoryPath, acceptedCommit, cfg.Namespace); err != nil {
+				return fmt.Errorf("adopted deployment evidence: %w", err)
+			}
 		}
 		checkout, cleanup, err := prepareAcceptedCheckout(ctx, repositoryPath, acceptedCommit)
 		if err != nil {
