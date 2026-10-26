@@ -357,15 +357,25 @@ benchmark fault setup and contain no benchmark names or oracle logic.
 The installer defaults to its existing namespaced grants. Disposable benchmark
 lanes can explicitly select `--permissive-responder`, with repeatable
 `--responder-namespace policy-system` for fault backends. The Go installer
-uses discovery only to select concrete resources from a reviewed built-in
-allowlist: core pods, services, endpoints and events; apps deployments,
-replicasets, statefulsets and daemonsets; discovery.k8s.io endpointslices; and
-networking.k8s.io networkpolicies. Added namespaced grants allow get/list/watch,
-plus delete on pods so their controller can recreate the same spec. No added
-subresources, logs, proxy, ConfigMaps, ServiceAccounts, Jobs, workload/Service
-writes, or RBAC writes are permitted. Custom API grants have an empty reviewed
-allowlist: discovery never automatically trusts a custom group, resource, kind
-or status endpoint, including in the application namespace.
+uses discovery only to select concrete resources from one reviewed table
+(`permissiveKinds` in `sdo/operator/install/permissive.go`). In each admitted
+namespace the responder writes every kind it reads (kubectl parity is the
+floor), and every entry either names its write verbs or a one-line reason it is
+read-only: `pods/log` (read-only subresource), `events` and `events.k8s.io`
+events (audit record), `controllerrevisions` (controller-managed history) and
+`csistoragecapacities` (published by the CSI driver). A ratchet test requires
+the readable-minus-writable set to equal that list exactly, so a new readable
+kind needs a write decision. Workload `/scale` subresources allow update/patch;
+ResourceQuota, LimitRange, Endpoints, EndpointSlices and Leases are writable.
+Namespace objects can be updated and patched, by name and only for admitted
+namespaces, so a repair can fix labels such as Pod Security; create and delete
+stay withheld. Secrets, ServiceAccounts, RBAC and custom APIs stay excluded:
+discovery never automatically trusts a custom group, resource, kind or status
+endpoint, including in the application namespace. Installed namespaces need
+`install-existing` to re-apply the Role. The eval check
+`benchmarks/sregym/fastloop/responder_write_check.py` asks the API server, with
+a SubjectAccessReview, whether the responder can write each object kind the
+faults of a sequence plan create or mutate, and tables the gaps.
 
 Cluster access to mutating/validating webhook configurations is limited to
 get/list/watch/delete. Deleting a bad webhook remains a repair for the selected
