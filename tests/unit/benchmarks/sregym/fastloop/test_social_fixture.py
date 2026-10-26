@@ -59,6 +59,8 @@ def test_fixture_failure_keeps_writers_stopped(monkeypatch: pytest.MonkeyPatch, 
 
     def command(args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
         calls.append(args)
+        if args[:2] == ["get", "pods"]:
+            return subprocess.CompletedProcess(args, 0, json.dumps({"items": []}), "")
         if args[:2] == ["get", "deployments"]:
             value = {
                 "items": [{"metadata": {"name": name}, "spec": {"replicas": 1}} for name in social_fixture.CLIENTS]
@@ -78,6 +80,9 @@ def test_fixture_failure_keeps_writers_stopped(monkeypatch: pytest.MonkeyPatch, 
         return subprocess.CompletedProcess(args, 0, "", "")
 
     monkeypatch.setattr(social_fixture, "kubectl", command)
+    from benchmarks.sregym.fastloop import transient_cleanup
+
+    monkeypatch.setattr(transient_cleanup, "kubectl", command)
     with pytest.raises(RuntimeError, match="seed write failed"):
         social_fixture.restore_social_fixture(tmp_path / "config")
     assert any("--replicas=0" in args for args in calls)
@@ -132,6 +137,9 @@ def test_mongo_fixture_client_cannot_consume_storage_container_memory(
         return subprocess.CompletedProcess(args, 0, "", "")
 
     monkeypatch.setattr(social_fixture, "kubectl", command)
+    from benchmarks.sregym.fastloop import transient_cleanup
+
+    monkeypatch.setattr(transient_cleanup, "kubectl", command)
     assert social_fixture._mongo(tmp_path / "config", 'print("CONTROL_OK")').strip() == "CONTROL_OK"
     pods = [json.loads(kwargs["input_text"]) for args, kwargs in calls if args[:2] == ["apply", "-f"]]
     assert len(pods) == 1
@@ -139,3 +147,84 @@ def test_mongo_fixture_client_cannot_consume_storage_container_memory(
     assert container["image"] == "mongo:fixture-test"
     assert container["resources"]["limits"]["memory"] == "128Mi"
     assert any(args[0] == "delete" for args, _ in calls)
+
+
+@pytest.mark.parametrize("missing_store", range(4))
+def test_warm_reuse_requires_every_canonical_id_in_every_store(missing_store: int) -> None:
+    from benchmarks.sregym.fastloop.social_fixture import canonical_fixture_complete
+
+    expected = frozenset(str(row["post_id"]) for row in fixture_posts())
+    stores = [expected] * 4
+    assert canonical_fixture_complete(TimelineSnapshot(*stores))
+    stores[missing_store] = expected - {"1"}
+    if missing_store == 0:
+        with pytest.raises(ValueError, match="missing referenced"):
+            canonical_fixture_complete(TimelineSnapshot(*stores))
+    else:
+        assert not canonical_fixture_complete(TimelineSnapshot(*stores))
+
+
+def test_warm_reuse_rejects_dangling_references() -> None:
+    from benchmarks.sregym.fastloop.social_fixture import canonical_fixture_complete
+
+    expected = frozenset(str(row["post_id"]) for row in fixture_posts())
+    with pytest.raises(ValueError, match="missing referenced"):
+        canonical_fixture_complete(TimelineSnapshot(expected, expected | {"-1"}, expected, expected))
+
+
+def test_fixture_helpers_are_drained_together_before_check_returns(monkeypatch, tmp_path):
+    import json
+    import subprocess
+
+    from benchmarks.sregym.fastloop import social_fixture, transient_cleanup
+
+    calls = []
+
+    def command(args, **kwargs):
+        calls.append(args)
+        if args[:2] == ["get", "deployment/post-storage-mongodb"]:
+            return subprocess.CompletedProcess(
+                args,
+                0,
+                json.dumps(
+                    {
+                        "spec": {
+                            "template": {
+                                "spec": {"containers": [{"name": "post-storage-mongodb", "image": "mongo:fixture"}]}
+                            }
+                        }
+                    }
+                ),
+                "",
+            )
+        return subprocess.CompletedProcess(args, 0, "1\n" if args[0] == "exec" else "", "")
+
+    monkeypatch.setattr(social_fixture, "kubectl", command)
+    monkeypatch.setattr(transient_cleanup, "kubectl", command)
+    social_fixture.check_social_fixture(tmp_path / "config")
+    deletes = [args for args in calls if args[0] == "delete"]
+    drains = [args for args in calls if "--for=delete" in args]
+    assert len(deletes) == 2
+    assert all("--wait=false" in args for args in deletes)
+    assert len(drains) == 1
+    assert sum(arg.startswith("pod/social-fixture-client-") for arg in drains[0]) == 2
+    assert calls[-1] == drains[0]
+
+
+def test_complete_warm_fixture_resumes_traffic_without_replacing_stores(monkeypatch, tmp_path):
+    import subprocess
+
+    from benchmarks.sregym.fastloop import social_fixture
+
+    expected = frozenset(str(row["post_id"]) for row in fixture_posts())
+    snapshot = TimelineSnapshot(*(expected for _ in range(4)))
+    calls = []
+    monkeypatch.setattr(social_fixture, "check_social_fixture", lambda config: snapshot)
+
+    def command(args, **kwargs):
+        calls.append(args)
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    monkeypatch.setattr(social_fixture, "kubectl", command)
+    assert social_fixture.restore_social_fixture(tmp_path / "config") is snapshot
+    assert calls == [["patch", "job/wrk2-job", "--type=merge", "-p", '{"spec":{"suspend":false}}']]

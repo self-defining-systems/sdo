@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 import yaml
 
 from benchmarks.sregym.adapter import (
+    Deadline,
     assert_host_disk_headroom,
     assert_lane_resources,
     assert_stable_workloads,
@@ -20,7 +21,6 @@ from benchmarks.sregym.adapter import (
     setup_lineage,
     wait_for_proof,
 )
-from benchmarks.sregym.adapter.eval_guards import Deadline
 from benchmarks.sregym.fastloop.clean_start import assert_clean_baseline
 
 if TYPE_CHECKING:
@@ -169,11 +169,11 @@ class LaneAdmission:
     def prove(self, control: str, *, fresh: bool = False) -> dict[str, Any]:
         from benchmarks.sregym.fastloop.rbac import verify_rbac
 
-        deadline = Deadline(time.monotonic() + self.timeout_seconds, time.monotonic)
         self.check_resources("entry")
         self._policy()
         if self.before_proof is not None:
             self.before_proof(control, set(self.required_detectors))
+        deadline = Deadline(time.monotonic() + self.timeout_seconds, time.monotonic)
         env = self.environment
         self.directory.mkdir(parents=True, exist_ok=True)
         rbac = verify_rbac(env.kubeconfig, env.namespace)

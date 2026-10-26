@@ -145,7 +145,7 @@ def remove_injected_objects(kubeconfig: Path) -> None:
     assert_clean_baseline(kubeconfig)
 
 
-def prepare_harness_traffic(app: Any, kubeconfig: Path) -> bool:
+def prepare_harness_traffic(app: Any, kubeconfig: Path, *, suspended: bool = False) -> bool:
     """Adapt the app's existing wrk manager; its payload and rate settings stay intact."""
     if app.namespace == "astronomy-shop" and callable(getattr(app, "create_workload", None)):
         if hasattr(app, "wrk"):
@@ -205,7 +205,16 @@ def prepare_harness_traffic(app: Any, kubeconfig: Path) -> bool:
         namespace = {"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": HARNESS_NAMESPACE}}
         kubectl(["apply", "-f", "-"], namespace=None, kubeconfig=kubeconfig, input_text=json.dumps(namespace))
         configure_manager()
-        manager.start()
+        if suspended:
+            import time
+
+            from benchmarks.sregym.adapter import Deadline
+            from benchmarks.sregym.fastloop.transient_cleanup import retire_harness_workload
+
+            retire_harness_workload(kubeconfig, Deadline(time.monotonic() + 120, time.monotonic))
+            manager.start(suspended=True)
+        else:
+            manager.start()
         # Wrk2 logs API exceptions rather than raising. Confirm both objects
         # exist before retiring the legacy generator, so startup cannot silently
         # admit a lane whose harness traffic was never created.

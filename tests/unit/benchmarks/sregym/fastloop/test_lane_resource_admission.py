@@ -128,3 +128,18 @@ def test_oracle_uses_remaining_admission_budget_instead_of_shorter_poll_timeout(
     gate.worker.request = request
     monkeypatch.setattr(gate, "_windows", windows)
     assert gate.prove("hotel-reservation-sdo")["passed"] is True
+
+
+def test_onboarding_has_its_own_budget_before_steady_admission(lane, monkeypatch):
+    gate, _ = lane
+    monkeypatch.setattr(admission, "assert_lane_resources", lambda *args, **kwargs: {"passed": True})
+    now = [0.0]
+    monkeypatch.setattr(admission.time, "monotonic", lambda: now[0])
+    gate.before_proof = lambda *args: now.__setitem__(0, now[0] + 345)
+
+    def request(op, **kwargs):
+        assert kwargs["timeout"] == pytest.approx(300)
+        return {"success": True}
+
+    gate.worker.request = request
+    assert gate.prove("hotel-reservation-sdo")["passed"]

@@ -54,7 +54,9 @@ def main() -> int:
             remove_injected_objects(Path(os.environ["KUBECONFIG"]))
         if op == "clean_start":
             problem = self._problem_factory(str(request["problem_id"]))
-            if prepare_harness_traffic(problem.app, Path(os.environ["KUBECONFIG"])):
+            if prepare_harness_traffic(
+                problem.app, Path(os.environ["KUBECONFIG"]), suspended=problem.namespace == "social-network"
+            ):
                 problem.app.start_workload()
             assert_clean_baseline(Path(os.environ["KUBECONFIG"]), namespace=problem.namespace)
             return {"success": True}
