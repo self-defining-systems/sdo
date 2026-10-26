@@ -130,6 +130,10 @@ func TestForeignReadViewDiffAndSourceFailures(t *testing.T) {
 		t.Fatalf("foreign read tried Kubernetes writes/dry run: %+v", client.Actions())
 	}
 	view.DetectionContext = sdktest.Snapshot{NamespaceName: "app"}
+	if _, err := view.DiffAgainstSource(ref); err == nil {
+		t.Fatal("uncaptured foreign object interpreted as absence")
+	}
+	view.DetectionContext = confirmedAbsentSnapshot{Snapshot: sdktest.Snapshot{NamespaceName: "app"}, Ref: ref}
 	if diff, err := view.DiffAgainstSource(ref); err != nil || diff.Changed || !diff.SourceAbsent {
 		t.Fatalf("removed foreign object=%+v error=%v", diff, err)
 	}
