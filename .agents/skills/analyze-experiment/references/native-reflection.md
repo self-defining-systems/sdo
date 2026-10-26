@@ -47,7 +47,10 @@ are dropped at ingest, so the agent cannot claim ownership.
 A write whose chain reaches a cause resource (e.g. scaling a Deployment's old
 ReplicaSet) is that cause's work, not an `unassigned` `unbound_write`, and the
 cause's findings must clear after it. Receipts without `owners` (older runs, or
-an object the capture never observed) keep such writes unassigned; names never bind. The worker
+an object the capture never observed) keep such writes unassigned; names never bind.
+An unchained Pod/ReplicaSet/Job write (e.g. to a ReplicaSet a rollout created after
+open) still bounds every cause's clearance (FIX14A): each cause's findings must
+clear after it. The worker
 receives compact cause indices and only those causes, verified receipts and typed
 applications/diagnoses and scoped cold-verification evidence. Opaque tool transcripts and unattributed playbook/drift
 claims are omitted from that learning view. No global recovery, positive fixed

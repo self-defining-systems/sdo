@@ -47,7 +47,9 @@ func TestOwnedChildWriteBindsToItsOwnerCause(t *testing.T) {
 	}{
 		{name: "owner chain reaches cause", owners: rolloutOwners("home-timeline-service"), cleared: afterChild, owned: 1, verified: true},
 		{name: "cause finding must clear after the child write", owners: rolloutOwners("home-timeline-service"), cleared: betweenWrites, owned: 1},
-		{name: "no recorded owner chain stays unbound", cleared: betweenWrites, verified: true},
+		// An unchained controlled write binds nothing but still bounds clearance.
+		{name: "no recorded owner chain stays unbound", cleared: betweenWrites},
+		{name: "no recorded owner chain still clears after the write", cleared: afterChild, verified: true},
 		{name: "another owner stays unbound", owners: rolloutOwners("user-service"), cleared: betweenWrites, verified: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
