@@ -318,6 +318,9 @@ func (s Snapshot) DatabaseUsers(t program.DatabaseTarget) ([]program.DatabaseUse
 
 func (s Snapshot) Deployments() []appsv1.Deployment
 
+func (s Snapshot) DiffAgainstSource(ref sdk.ObjectRef) (sdk.SourceDiff, error)
+    DiffAgainstSource replays only observations recorded on this exact snapshot.
+
 func (s Snapshot) EndpointSlices() []discoveryv1.EndpointSlice
 
 func (s Snapshot) Endpoints() []corev1.Endpoints

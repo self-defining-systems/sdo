@@ -18,7 +18,8 @@ Read the [memory principles](../sdo-memory/SKILL.md#memory-principles) for evide
    [authoring_reference](../sdo-memory/references/runtime.md#authoring_reference) tool retrieves these same
    shipped references without searching installation directories.
 3. For each independently verified cause, submit a diagnose program, mitigation program, a README explaining
-   how to handle the fault, and detector coverage. A detector may surface multiple playbooks.
+   how to handle the fault, and detector coverage. A detector may surface multiple playbooks;
+   `DetectionContext.DiffAgainstSource` observes field drift and source absence before playbook selection.
    Use the responder's recorded actions and existing session observations to build the replay fixture.
    Controller captures and the evidence tools are optional sources, never prerequisites for learning.
 4. Author final files in the proposal checkout and register every playbook in its index. A fixture labels
