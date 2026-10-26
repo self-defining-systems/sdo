@@ -54,9 +54,41 @@ def test_sequence_uses_recorded_generated_description(tmp_path: Path, capsys) ->
 
     problem = "mf__generated"
     (tmp_path / "composite_000_generated.json").write_text(json.dumps({"problem_id": problem}))
+    (tmp_path / "incidents.jsonl").write_text(
+        json.dumps(
+            {
+                "injection": {
+                    "state": "injected",
+                    "started_at": "2026-10-01T07:00:00Z",
+                    "finished_at": "2026-10-01T07:00:01Z",
+                }
+            }
+        )
+    )
     description = ProblemDescription(
         problem_id=problem, composite=True, faults=(FaultSpec("target_port", "geo"),), injection_order=(0,)
     )
     (tmp_path / "fault_descriptions.json").write_text(json.dumps({problem: description.model_dump(mode="json")}))
     assert main([str(tmp_path)]) == 0
     assert "target_port:geo: learned=no" in capsys.readouterr().out
+
+
+def test_sequence_excludes_not_injected_and_legacy_synthetic_times(tmp_path: Path, capsys) -> None:
+    from benchmarks.sregym.analysis.composite_sequence import main
+
+    (tmp_path / "composite_000_generated.json").write_text(json.dumps({"problem_id": "toy"}))
+    for event, expected in (
+        ({"state": "not_injected", "stage": "pre_injection"}, "not_injected stage=pre_injection"),
+        (None, "injection_unverified"),
+    ):
+        row = {
+            "injection_started_at": "2026-10-26T02:20:51.969907Z",
+            "injection_finished_at": "2026-10-26T02:20:51.969911Z",
+        }
+        if event is not None:
+            row["injection"] = event
+        (tmp_path / "incidents.jsonl").write_text(json.dumps(row))
+        assert main([str(tmp_path)]) == 0
+        output = capsys.readouterr().out
+        assert expected in output
+        assert "learned=" not in output

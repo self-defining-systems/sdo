@@ -285,3 +285,29 @@ def test_consumers_restore_the_paths_published_by_each_mode_owner() -> None:
             if step.get("uses", "").startswith("actions/cache"):
                 mode = "race" if "v3-race-" in step["with"]["key"] else "normal"
                 assert step["with"]["path"].strip() == published[mode].strip(), name
+
+
+def test_hosted_image_builds_use_native_store_without_transport_compression() -> None:
+    steps = workflow()["jobs"]["images"]["steps"]
+    builder = next(step for step in steps if step.get("uses", "").startswith("docker/setup-buildx-action@"))
+    assert builder["with"]["driver"] == "docker"
+    engine = next(step for step in steps if step.get("name") == "Enable the native containerd image store")
+    assert '"containerd-snapshotter": true' in engine["run"]
+    bake = next(step for step in steps if step.get("uses", "").startswith("docker/bake-action@"))
+    assert "*.output=type=image,compression=uncompressed" in bake["with"]["set"]
+    assert "cache-to=" not in bake["with"]["set"]
+    assert not bake["with"].get("load", False)
+
+
+def test_image_assembly_warms_archives_without_linking_test_binaries() -> None:
+    dockerfile = (ROOT / "sdo/operator/Dockerfile.runtime").read_text()
+    assert "go test -run" not in dockerfile
+    assert "go vet ./..." in dockerfile
+
+
+def test_bake_overrides_do_not_replace_an_earlier_cache_source() -> None:
+    bake = next(
+        step for step in workflow()["jobs"]["images"]["steps"] if step.get("uses", "").startswith("docker/bake-action@")
+    )
+    keys = [line.split("=", 1)[0] for line in bake["with"]["set"].splitlines() if line.strip()]
+    assert len(keys) == len(set(keys)), "repeated Bake --set assignments replace earlier cache sources"

@@ -16,6 +16,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from pydantic import TypeAdapter
+
+from benchmarks.sregym.fastloop.records import Injected, InjectionState, NotInjected
 from benchmarks.sregym.faults.description import ProblemDescription
 
 NETWORK_POLICY_PREFIX = "deny-all-"
@@ -75,11 +78,15 @@ def _instant(value: str) -> float:
     return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
 
 
-def _injection_start(directory: Path) -> str | None:
+def _injection_state(directory: Path) -> Injected | NotInjected | None:
     path = directory / "incidents.jsonl"
     if not path.is_file():
         return None
-    return str(json.loads(path.read_text(encoding="utf-8").splitlines()[0]).get("injection_started_at") or "") or None
+    row = json.loads(path.read_text(encoding="utf-8").splitlines()[0])
+    event = row.get("injection")
+    # Legacy timestamp columns are not proof of injection. Reconcile those rows
+    # against the worker audit before using them in a learning curve.
+    return TypeAdapter(InjectionState).validate_python(event) if event is not None else None
 
 
 def main(argv: list[str]) -> int:
@@ -89,7 +96,16 @@ def main(argv: list[str]) -> int:
         if not reports:
             continue
         problem = json.loads(reports[0].read_text(encoding="utf-8"))["problem_id"]
-        firings = load_firings(directory, since=_injection_start(directory))
+        injection = _injection_state(directory)
+        if not isinstance(injection, Injected):
+            status = (
+                f"not_injected stage={injection.stage}"
+                if isinstance(injection, NotInjected)
+                else "injection_unverified"
+            )
+            print(f"{directory.name}\t{problem}\t{status}")
+            continue
+        firings = load_firings(directory, since=injection.started_at.isoformat())
         parts = []
         catalog_path = directory / "fault_descriptions.json"
         if not catalog_path.is_file():

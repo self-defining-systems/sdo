@@ -15,7 +15,7 @@ import os
 import statistics
 import tempfile
 from datetime import datetime  # noqa: TC003 - Pydantic resolves this annotation at runtime.
-from typing import TYPE_CHECKING, Any, Literal, get_args
+from typing import TYPE_CHECKING, Annotated, Any, Literal, get_args
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, computed_field, model_validator
 
@@ -25,7 +25,7 @@ from benchmarks.sregym.protocol.injection import FaultComponent  # noqa: TC001 -
 if TYPE_CHECKING:
     from pathlib import Path
 
-SCHEMA_VERSION = "sdo.fastloop-incident/v1"
+SCHEMA_VERSION = "sdo.fastloop-incident/v2"
 AgentName = Literal["sdo", "codex"]
 #: ``composition`` grades a composite fault: it passes only when every fault's own oracle passes.
 OracleKind = Literal["sregym-mitigation-oracle", "health-check", "composition"]
@@ -98,12 +98,38 @@ def _seconds(start: datetime | None, end: datetime | None) -> float | None:
     return (end - start).total_seconds()
 
 
+class Injected(BaseModel):
+    """The worker's recorded injection event, never an agent or recorder clock."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    state: Literal["injected"] = "injected"
+    started_at: AwareDatetime
+    finished_at: AwareDatetime
+
+    @model_validator(mode="after")
+    def ordered_times(self) -> Injected:
+        if self.finished_at < self.started_at:
+            raise ValueError("injection cannot finish before it starts")
+        return self
+
+
+class NotInjected(BaseModel):
+    """No injection event exists; retain the stage that stopped the attempt."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    state: Literal["not_injected"] = "not_injected"
+    stage: Literal["pre_injection", "injection"]
+
+
+InjectionState = Annotated[Injected | NotInjected, Field(discriminator="state")]
+
+
 class IncidentRecord(_PersistedModel):
     model_config = ConfigDict(extra="forbid")
 
     image_delivery: str = "unknown"
     image_delivery_reason: str = ""
-    schema_version: Literal["sdo.fastloop-incident/v1"] = SCHEMA_VERSION
+    schema_version: Literal["sdo.fastloop-incident/v2"] = SCHEMA_VERSION
     infra_error: str | None = None
     recovery_error: str | None = None
     injection_evidence: dict[str, Any] = Field(default_factory=dict)
@@ -115,8 +141,7 @@ class IncidentRecord(_PersistedModel):
     agent: AgentName
     problem_id: str = Field(min_length=1)
     model: str
-    injection_started_at: AwareDatetime
-    injection_finished_at: AwareDatetime
+    injection: InjectionState
     #: First detector firing (SDO only; the raw baseline has no detector).
     detected_at: AwareDatetime | None = None
     #: Last successful repair action (SDO) or agent exit (baseline).
@@ -188,6 +213,16 @@ class IncidentRecord(_PersistedModel):
     memory_before_commit: str | None = None
     memory_after_commit: str | None = None
     memory_ancestry: list[str] = Field(default_factory=list)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def injection_started_at(self) -> datetime | None:
+        return self.injection.started_at if isinstance(self.injection, Injected) else None
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def injection_finished_at(self) -> datetime | None:
+        return self.injection.finished_at if isinstance(self.injection, Injected) else None
 
     @computed_field  # type: ignore[prop-decorator]
     @property
@@ -323,12 +358,20 @@ def summarize(records: list[IncidentRecord]) -> list[AgentSummary]:
     present = {record.agent for record in records}
     agents: list[AgentName] = [agent for agent in get_args(AgentName) if agent in present]
     for agent in sorted(agents):
-        selected = [record for record in records if record.agent == agent and record.infra_error is None]
+        selected = [
+            record
+            for record in records
+            if record.agent == agent and record.infra_error is None and isinstance(record.injection, Injected)
+        ]
         rows.append(
             AgentSummary(
                 agent=agent,
                 incidents=len(selected),
-                infrastructure_outcomes=sum(1 for record in records if record.agent == agent and record.infra_error),
+                infrastructure_outcomes=sum(
+                    1
+                    for record in records
+                    if record.agent == agent and (record.infra_error or isinstance(record.injection, NotInjected))
+                ),
                 oracle_passed=sum(1 for record in selected if record.oracle is not None and record.oracle.success),
                 errors=sum(1 for record in selected if record.error),
                 warm_path_fired=sum(1 for record in selected if record.warm_path),
