@@ -15,7 +15,10 @@ func RenderManifest(document map[string]any, defaultNamespace, tree string, imag
 		return "", nil, errors.New("Kubernetes resource needs metadata.name")
 	}
 	namespace, _ := metadata["namespace"].(string)
-	if namespace == "" {
+	if ClusterScopedKind(kind) {
+		namespace = ""
+		delete(metadata, "namespace")
+	} else if namespace == "" {
 		namespace = defaultNamespace
 		metadata["namespace"] = namespace
 	}

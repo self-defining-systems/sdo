@@ -457,7 +457,7 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 			response.Error = err.Error()
 			break
 		}
-		if request.Ref.Namespace != l.Request.Namespace {
+		if request.Ref.Namespace != l.Request.Namespace && request.Ref.Namespace != "" {
 			response.Error = "source resource is outside incident namespace"
 			break
 		}
@@ -473,7 +473,7 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 				break
 			}
 		}
-		object, err := l.Executor.Source.AcceptedManifest(ctx, l.Request.SourceCommit, *request.Ref)
+		object, err := acceptedIncidentManifest(ctx, l.Executor.Source, l.Request.SourceCommit, l.Request.Namespace, *request.Ref)
 		if errors.Is(err, ErrAcceptedManifestAbsent) {
 			response.Summary = "resource is absent from accepted source"
 			break

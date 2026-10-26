@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/discovery/fake"
 	"k8s.io/client-go/kubernetes"
 	kubefake "k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/rest"
@@ -42,9 +41,26 @@ func TestGenericObjectFallbackUsesConfiguredAPI(t *testing.T) {
 				ref.APIVersion = "rbac.authorization.k8s.io/v1"
 			}
 			object := urObject(ref)
+			resource := map[string]string{"ServiceAccount": "serviceaccounts", "ClusterRole": "clusterroles", "ClusterRoleBinding": "clusterrolebindings", "Widget": "widgets"}[kind]
+			apiPath := "/apis/" + ref.APIVersion
+			if ref.APIVersion == "v1" {
+				apiPath = "/api/v1"
+			}
+			objectPath := apiPath
+			if ref.Namespace != "" {
+				objectPath += "/namespaces/" + ref.Namespace
+			}
+			objectPath += "/" + resource + "/" + ref.Name
 			deleted := false
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
+				if r.Method == "GET" && r.URL.Path == apiPath {
+					_ = json.NewEncoder(w).Encode(&metav1.APIResourceList{TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "APIResourceList"}, GroupVersion: ref.APIVersion, APIResources: []metav1.APIResource{{Name: resource, Kind: kind, Namespaced: ref.Namespace != "", Verbs: []string{"get", "delete"}}}})
+					return
+				}
+				if r.URL.Path != objectPath {
+					t.Errorf("unexpected API path %s", r.URL.Path)
+				}
 				switch r.Method {
 				case "GET":
 					_ = json.NewEncoder(w).Encode(object.Object)
@@ -60,9 +76,12 @@ func TestGenericObjectFallbackUsesConfiguredAPI(t *testing.T) {
 				}
 			}))
 			defer server.Close()
-			kube := kubefake.NewSimpleClientset()
-			kube.Discovery().(*fake.FakeDiscovery).Resources = []*metav1.APIResourceList{{GroupVersion: ref.APIVersion, APIResources: []metav1.APIResource{{Name: "objects", Kind: kind, Namespaced: ref.Namespace != "", Verbs: []string{"get", "delete"}}}}}
-			client := GenericPlanClient{TypedPlanClient: TypedPlanClient{Client: kube, ExecConfig: &rest.Config{Host: server.URL}}}
+			config := &rest.Config{Host: server.URL}
+			kube, err := kubernetes.NewForConfig(config)
+			if err != nil {
+				t.Fatal(err)
+			}
+			client := GenericPlanClient{TypedPlanClient: TypedPlanClient{Client: kube, ExecConfig: config}}
 			if _, err := client.Get(context.Background(), ref); err != nil {
 				t.Fatalf("generic get unavailable: %v", err)
 			}

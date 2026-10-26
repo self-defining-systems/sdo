@@ -120,3 +120,12 @@ func TestObjectRefGrammarCorpus(t *testing.T) {
 		}
 	}
 }
+
+func TestClusterRBACReferencesKeepTheirKindVersionAndScope(t *testing.T) {
+	for _, kind := range []string{"ClusterRole", "ClusterRoleBinding"} {
+		ref, err := ParseObjectRef(kind + "/app-cleanup")
+		if err != nil || ref.Kind != kind || ref.APIVersion != "rbac.authorization.k8s.io/v1" || ref.Namespace != "" {
+			t.Fatalf("cluster RBAC reference: %+v %v", ref, err)
+		}
+	}
+}

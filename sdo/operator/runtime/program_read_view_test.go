@@ -11,8 +11,10 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/rest"
@@ -119,7 +121,7 @@ func TestLiveReadViewIgnoresDeploymentRevisionStamp(t *testing.T) {
 
 func TestLiveReadViewReportsDeletedAcceptedObject(t *testing.T) {
 	ref := sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}
-	view := LiveReadView{DetectionContext: sdktest.Snapshot{NamespaceName: "app"}, SourceCommit: "accepted", Source: planFakeSource{source: &unstructured.Unstructured{Object: map[string]any{"apiVersion": "v1", "kind": "Service", "metadata": map[string]any{"namespace": "app", "name": "api"}, "spec": map[string]any{"ports": []any{map[string]any{"port": float64(80)}}}}}}}
+	view := LiveReadView{DetectionContext: clusterEvidenceSnapshot{Snapshot: sdktest.Snapshot{NamespaceName: "app"}, err: apierrors.NewNotFound(schema.GroupResource{Resource: "services"}, ref.Name)}, SourceCommit: "accepted", Source: planFakeSource{source: &unstructured.Unstructured{Object: map[string]any{"apiVersion": "v1", "kind": "Service", "metadata": map[string]any{"namespace": "app", "name": "api"}, "spec": map[string]any{"ports": []any{map[string]any{"port": float64(80)}}}}}}}
 	diff, err := view.DiffAgainstSource(ref)
 	if err != nil || !diff.Changed {
 		t.Fatalf("deleted source object was not drift: %+v, %v", diff, err)
