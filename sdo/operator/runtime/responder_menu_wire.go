@@ -141,7 +141,7 @@ func (r truncatedToolResponse) MarshalJSON() ([]byte, error) {
 	if err := json.Unmarshal(encoded, &fields); err != nil {
 		return nil, err
 	}
-	for key, value := range map[string]any{"truncated": r.Truncated, "findings_count": r.FindingsCount, "program_runs_count": r.ProgramRunsCount, "detector_states_count": r.DetectorStatesCount, "patches_count": r.PatchesCount} {
+	for key, value := range map[string]any{"truncated": r.Truncated, "findings_count": r.FindingsCount, "program_runs_count": r.ProgramRunsCount, "program_revisions_count": r.ProgramRevisionsCount, "detector_states_count": r.DetectorStatesCount, "patches_count": r.PatchesCount} {
 		fields[key], err = json.Marshal(value)
 		if err != nil {
 			return nil, err
