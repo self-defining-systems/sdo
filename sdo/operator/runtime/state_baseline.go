@@ -182,6 +182,14 @@ func (t *StateTracker) Start(ctx context.Context) error {
 	return nil
 }
 
+// Running reports whether the tracker's informers are observing, so a
+// caller can start it exactly when it is not, whatever pause history led here.
+func (t *StateTracker) Running() bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.informers != nil
+}
+
 // UnobservedKinds are the kinds the last Start could not read.
 func (t *StateTracker) UnobservedKinds() []string {
 	t.mu.Lock()

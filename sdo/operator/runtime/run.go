@@ -950,9 +950,10 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	// parallel with the traffic warm-up, so the first quiet evaluation
 	// becomes its healthy baseline. The returned wait joins it and logs the
 	// outcome. It never fails operation: without it incidents simply carry
-	// no state changes.
+	// no state changes. A tracker that is already observing, for example
+	// through a baseline-preserving pause, is left alone.
 	startState := func() (wait func()) {
-		if stateTracker == nil {
+		if stateTracker == nil || stateTracker.Running() {
 			return func() {}
 		}
 		started := time.Now()
@@ -988,6 +989,30 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			return reconciler.Reconcile(ctx, revision, *namespace)
 		}
 	}
+	// observeApplication is the one path that brings observation of the
+	// application up: informers, state baseline, synthetic traffic and
+	// reachability. Startup and every resume from a pause go through it, so a
+	// component the unpaused start establishes cannot be missed by a
+	// controller that began life paused or whose pause kept only part of it
+	// running. informersCurrent says the informer stores were kept current
+	// through the interval (a generation acknowledgement or a baseline
+	// preserving pause), and each component starts only if it is not running.
+	observeApplication := func(syncCtx context.Context, informersCurrent bool) error {
+		var err error
+		if informersCurrent {
+			err = kubernetesCache.ObserveRunning(runCtx, syncCtx)
+		} else {
+			err = kubernetesCache.Observe(runCtx, syncCtx)
+		}
+		if err != nil {
+			return err
+		}
+		waitState := startState()
+		startTraffic()
+		startReachability()
+		waitState()
+		return nil
+	}
 	persistControllerState := func() {
 		if err := controller.PersistState(ctx); err != nil {
 			fmt.Fprintf(stderr, "persist controller state: %v\n", err)
@@ -997,9 +1022,8 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		return err
 	}
 	if !desired.Paused {
-		kubernetesCache.Start(runCtx)
 		startSyncCtx, cancelStartSync := context.WithTimeout(runCtx, startupSyncTimeout)
-		err := kubernetesCache.WaitForSync(startSyncCtx)
+		err := observeApplication(startSyncCtx, false)
 		cancelStartSync()
 		if err != nil {
 			if runCtx.Err() != nil {
@@ -1007,10 +1031,6 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			}
 			return fmt.Errorf("sync Kubernetes informer cache: %w", err)
 		}
-		waitState := startState()
-		startTraffic()
-		startReachability()
-		waitState()
 		if launchConfig != nil && options.NativeBroker != nil {
 			if err := acceptStartupReachabilityBaseline(runCtx, controller, resolvedRoot, options.NativeBroker.Repository, launchConfig.GetHealthyBaseline(), reachabilityObserver, snapshotProvider, detectors); err != nil {
 				return err
@@ -1051,12 +1071,13 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		syncCtx, cancelSync := context.WithTimeout(runCtx, *resumeSyncTimeout)
 		defer cancelSync()
 		// Informers keep running through a generation-only acknowledgement and
-		// through a baseline-preserving pause, so their stores stay current.
+		// through a baseline-preserving pause of a process that was already
+		// observing; a controller launched inside that pause has none running.
 		var syncErr error
-		if !wasPaused || preserved {
-			syncErr = kubernetesCache.ObserveRunning(runCtx, syncCtx)
+		if wasPaused {
+			syncErr = observeApplication(syncCtx, preserved)
 		} else {
-			syncErr = kubernetesCache.Observe(runCtx, syncCtx)
+			syncErr = kubernetesCache.ObserveRunning(runCtx, syncCtx)
 		}
 		if syncErr != nil {
 			if runCtx.Err() != nil {
@@ -1066,15 +1087,6 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			// (the old behavior) left the controller blind with no detections,
 			// so fail loudly and let the restart name the kind again.
 			return fmt.Errorf("resume observation of namespace %s: %w", *namespace, syncErr)
-		}
-		waitState := func() {}
-		if wasPaused {
-			if !preserved {
-				waitState = startState()
-			}
-			startTraffic()
-			startReachability()
-			waitState()
 		}
 		if launchConfig != nil && options.NativeBroker != nil {
 			if err := acceptStartupReachabilityBaseline(runCtx, controller, resolvedRoot, options.NativeBroker.Repository, launchConfig.GetHealthyBaseline(), reachabilityObserver, snapshotProvider, detectors); err != nil {
