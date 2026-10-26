@@ -56,6 +56,14 @@ are in `tests/unit/sdo/agents/responder/test_command_reference.py`; they include
 missing/stale-reference negative control. The responder image's cached model-tool
 layer installs `jq` and runs a JSON extraction smoke check during the build.
 
+The benchmark responder image inventory is checked by
+`scripts/check_responder_image.py` (newline-separated paths on stdin). This script
+owns the recording-module allowlist shared by CI and
+`tests/unit/sdo/operator/test_dockerfile_benchmark_scope.py`. The focused tests also
+inspect all recording-module imports, including conditional imports, and reject
+unapproved fastloop dependencies before building an image. Run them with
+`uv run --extra test pytest -q -p no:tach tests/unit/sdo/operator/test_dockerfile_benchmark_scope.py`.
+
 The proto gate runs `buf lint` and checks that committed Go/Python code matches
 regenerated output. The v1alpha1 schema may evolve freely, including breaking
 changes; compatibility with main is not a gate. Reserve deleted field numbers
