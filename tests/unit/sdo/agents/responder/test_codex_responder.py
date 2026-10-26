@@ -143,7 +143,7 @@ def test_responder_cannot_reflect_before_controller_verification(monkeypatch) ->
     prompt = _responder_prompt(request)
 
     assert "Operational memory is read-only" in prompt
-    assert "controller independently checks the result" in _workflow()
+    assert "controller rechecks" in _workflow()
     assert "After recovery, reflect into `.sdo`" not in prompt
 
     assert "SREGym" not in prompt
@@ -330,7 +330,7 @@ def test_every_path_requires_detector_self_check_then_independent_closure(tmp_pa
     assert "sdo detect" not in workflow
     assert "sdo verify" not in workflow
     assert "never claim done without this self-check" in workflow
-    assert "controller independently checks the result" in workflow
+    assert "controller rechecks" in workflow
 
 
 def test_workflow_prefers_finishing_blocking_operations_to_model_polling() -> None:
@@ -562,7 +562,7 @@ def test_prompt_marks_known_program_capabilities(can_mitigate: bool | None) -> N
     else:
         assert view["capability"] == "unknown"
     assert "diagnosis-only match supplies evidence, not a repair" in _workflow()
-    assert "Success and failure counts are information, never permission gates" in _workflow()
+    assert "Success/failure counts inform; never permission gates" in _workflow()
     assert "Discover capabilities and argument shapes" in _workflow()
     assert "--bind" not in prompt.split("Incident request:", 1)[0]
     assert "--bind" in json.loads(prompt.split("Incident request:\n", 1)[1])["incident_tools"]["commands"]["plan"]
@@ -692,7 +692,7 @@ def test_app_drift_defaults_to_verified_accepted_source_restoration() -> None:
     assert "drift_events" in prompt
     assert "Restore namespace drift to accepted source" in _workflow()
     assert "unless live evidence establishes an intended difference" in _workflow()
-    assert "uncertainty alone does not block restoration" in _workflow()
+    assert "uncertainty alone doesn't block it" in _workflow()
     assert "Explain benign drift with live evidence" in _workflow()
 
 
