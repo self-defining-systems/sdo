@@ -137,15 +137,18 @@ class SregymFaultDriver:
         self._monotonic = monotonic
         self._sleep = sleep
         self._before_inject = before_inject
+        self.last_injection_window: InjectionWindow | None = None
 
     def inject(self, problem_id: str) -> InjectionWindow:
+        self.last_injection_window = None
         if self._before_inject is not None:
             self._before_inject(problem_id)
         reply = self._worker.request("inject", problem_id=problem_id, timeout=WORKER_OP_TIMEOUT_SECONDS)
+        self.last_injection_window = _window(reply)
         self.last_components = [FaultComponent.model_validate(item) for item in reply.get("components", [])]
         check_injection(reply)
         self._check_faulty_oracle()
-        return _window(reply)
+        return self.last_injection_window
 
     def inject_composite(self, problem_ids: Sequence[str]) -> CompositeInjection:
         """Inject several problems so their faults are live at once, in the given order.
@@ -153,6 +156,7 @@ class SregymFaultDriver:
         ``recover`` then reverts all of them, and ``recover_fault`` one of them.
         """
 
+        self.last_injection_window = None
         problems = list(problem_ids)
         if not problems or not all(isinstance(problem, str) and problem for problem in problems):
             raise ValueError("a composite fault needs at least one non-empty problem id")
@@ -164,6 +168,13 @@ class SregymFaultDriver:
             try:
                 reply = self._worker.request(
                     "inject", problem_id=problem_id, compose=position > 0, timeout=WORKER_OP_TIMEOUT_SECONDS
+                )
+                current_window = _window(reply)
+                self.last_injection_window = InjectionWindow(
+                    started_at=self.last_injection_window.started_at
+                    if self.last_injection_window
+                    else current_window.started_at,
+                    finished_at=current_window.finished_at,
                 )
                 self.last_components.extend(FaultComponent.model_validate(item) for item in reply.get("components", []))
                 check_injection(reply)

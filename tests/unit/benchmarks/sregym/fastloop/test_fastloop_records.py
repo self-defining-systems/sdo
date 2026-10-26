@@ -30,8 +30,7 @@ def _record(index: int, *, agent: str = "sdo", warm: bool | None = True, passed:
         agent=agent,
         problem_id="missing_configmap_hotel_reservation",
         model="gpt-6-luna",
-        injection_started_at=T0,
-        injection_finished_at=T0 + timedelta(seconds=6),
+        injection={"state": "injected", "started_at": T0, "finished_at": T0 + timedelta(seconds=6)},
         detected_at=T0 + timedelta(seconds=8) if agent == "sdo" else None,
         mitigation_applied_at=T0 + timedelta(seconds=40),
         resolved_at=T0 + timedelta(seconds=70),
@@ -66,7 +65,8 @@ def test_unknown_agent_and_naive_timestamps_are_rejected() -> None:
         IncidentRecord.model_validate(_record(0).model_dump() | {"agent": "claude"})
     with pytest.raises(ValidationError):
         IncidentRecord.model_validate(
-            _record(0).model_dump() | {"injection_started_at": datetime(2026, 9, 27, 12, 0, 0)}
+            _record(0).model_dump()
+            | {"injection": {"state": "injected", "started_at": datetime(2026, 9, 27, 12, 0, 0), "finished_at": T0}}
         )
 
 
@@ -130,3 +130,36 @@ def test_recorded_evidence_gap_count_survives_csv_round_trip(tmp_path: Path) -> 
     assert load_records(path)[0].reflection_evidence_gap_count == 2
     with path.with_suffix(".csv").open() as handle:
         assert next(csv.DictReader(handle))["reflection_evidence_gap_count"] == "2"
+
+
+def test_typed_injection_state_rejects_timestamps_on_not_injected() -> None:
+    row = _record(0).model_dump()
+    row["injection"] = {"state": "not_injected", "stage": "pre_injection", "started_at": T0}
+    with pytest.raises(ValidationError):
+        IncidentRecord.model_validate(row)
+
+
+def test_typed_injected_state_requires_ordered_aware_event_times() -> None:
+    row = _record(0).model_dump()
+    for event in (
+        {"state": "injected"},
+        {"state": "injected", "started_at": T0, "finished_at": T0 - timedelta(seconds=1)},
+    ):
+        with pytest.raises(ValidationError):
+            IncidentRecord.model_validate(row | {"injection": event})
+
+
+def test_not_injected_round_trip_is_excluded_from_incident_statistics(tmp_path: Path) -> None:
+    row = _record(0).model_dump() | {"injection": {"state": "not_injected", "stage": "pre_injection"}}
+    record = IncidentRecord.model_validate(row)
+    path = tmp_path / "incidents.jsonl"
+    append_record(path, record)
+    loaded = load_records(path)[0]
+    assert loaded.injection_started_at is None
+    assert loaded.injection_finished_at is None
+    assert loaded.injection_to_detection_seconds is None
+    assert loaded.injection_to_mitigation_seconds is None
+    assert loaded.injection_to_resolution_seconds is None
+    summary = summarize([loaded])[0]
+    assert summary.incidents == summary.oracle_passed == 0
+    assert summary.infrastructure_outcomes == 1
