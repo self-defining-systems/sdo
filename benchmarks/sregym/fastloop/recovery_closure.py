@@ -135,20 +135,35 @@ def complete_recovery_baselines(
     if not lock.is_file():
         return baselines
     namespaces = {b.namespace for b in baselines}
-    additions: dict[Prerequisite, dict[str, Any]] = {}
+    available = {Prerequisite(b.namespace, v["kind"], v["metadata"]["name"]) for b in baselines for v in b.objects}
+    wanted = {ref for b in baselines for value in b.objects for ref in prerequisites(value, b.namespace)}
+    # Bindings are inverse edges: their subjects identify grants a pod account
+    # needs, including the namespace controller's implicit default account.
+    accounts = {
+        Prerequisite(
+            b.namespace, "ServiceAccount", pod.get("serviceAccountName") or pod.get("serviceAccount") or "default"
+        )
+        for b in baselines
+        for value in b.objects
+        if (pod := pod_spec(value)) is not None
+    }
+    rows = {}
     for row in json.loads(lock.read_text())["objects"]:
         ref = row.get("ref", {})
         kind, namespace = ref.get("kind"), ref.get("namespace")
+        # Secret manifests are excluded before any file access.
         if kind not in WORKLOAD_KINDS or namespace not in namespaces:
             continue
         identity = Prerequisite(namespace, kind, ref["name"])
-        if any(
-            v["kind"] == kind and v["metadata"]["name"] == ref["name"]
-            for b in baselines
-            if b.namespace == namespace
-            for v in b.objects
-        ):
+        if identity in available:
             continue
+        if identity in rows:
+            raise ValueError(f"duplicate recovery prerequisite: {identity.label()}")
+        rows[identity] = row
+
+    def read(identity: Prerequisite) -> dict[str, Any]:
+        row = rows[identity]
+        ref = row["ref"]
         if row.get("error") or not row.get("file") or not row.get("sha256"):
             raise ValueError(f"unbacked recovery prerequisite: {identity.label()}")
         path = (root / row["file"]).resolve()
@@ -161,24 +176,30 @@ def complete_recovery_baselines(
         metadata = value.get("metadata", {})
         if (value.get("apiVersion"), value.get("kind"), metadata.get("namespace"), metadata.get("name")) != (
             ref.get("api_version"),
-            kind,
-            namespace,
-            ref["name"],
+            identity.kind,
+            identity.namespace,
+            identity.name,
         ):
             raise ValueError(f"recovery prerequisite identity differs from accepted lock: {identity.label()}")
-        if identity in additions:
-            raise ValueError(f"duplicate recovery prerequisite: {identity.label()}")
-        additions[identity] = value
-    # Include RBAC grants tied to the referenced accounts, then follow their roles.
-    wanted = {ref for b in baselines for value in b.objects for ref in prerequisites(value, b.namespace)}
+        return value
+
+    bindings = {identity: read(identity) for identity in rows if identity.kind == "RoleBinding"}
     selected: dict[Prerequisite, dict[str, Any]] = {}
     while True:
         previous = len(wanted), len(selected)
-        for identity, value in additions.items():
-            related_binding = identity.kind == "RoleBinding" and bool(prerequisites(value, identity.namespace) & wanted)
-            if identity in wanted or related_binding:
+        for identity, value in bindings.items():
+            subjects = {
+                Prerequisite(subject.get("namespace", identity.namespace), "ServiceAccount", subject["name"])
+                for subject in value.get("subjects", [])
+                if subject.get("kind") == "ServiceAccount"
+            }
+            if subjects & (accounts | wanted):
                 selected[identity] = value
                 wanted.update(prerequisites(value, identity.namespace))
+        for identity in sorted(wanted & rows.keys() - available - selected.keys()):
+            value = read(identity)
+            selected[identity] = value
+            wanted.update(prerequisites(value, identity.namespace))
         if previous == (len(wanted), len(selected)):
             break
     return tuple(

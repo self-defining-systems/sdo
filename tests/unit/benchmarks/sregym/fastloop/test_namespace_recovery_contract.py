@@ -308,3 +308,36 @@ def test_legacy_capture_cannot_delete_unrecorded_namespace_prerequisites(kind: s
     reconcile_application(cluster, ApplicationBaseline("hotel", []), "hotel")
     assert cluster.objects == original
     assert cluster.touched == []
+
+
+@pytest.mark.parametrize("unrelated_kind", ["Deployment", "ConfigMap"])
+def test_recovery_reads_only_the_reference_closure_from_an_inherited_lock(tmp_path: Path, unrelated_kind: str) -> None:
+    import hashlib
+    import json
+
+    from benchmarks.sregym.fastloop.baseline_recovery import ApplicationBaseline
+    from benchmarks.sregym.fastloop.recovery_closure import complete_recovery_baselines
+
+    root = tmp_path / ".sdo/rendered"
+    root.mkdir(parents=True)
+    payload = json.dumps(obj("ServiceAccount", "reader"))
+    (root / "reader.yaml").write_text(payload)
+    rows = [
+        {
+            "ref": {"api_version": "apps/v1", "kind": "ServiceAccount", "namespace": "hotel", "name": "reader"},
+            "file": "reader.yaml",
+            "sha256": hashlib.sha256(payload.encode()).hexdigest(),
+        },
+        {
+            "ref": {"api_version": "v1", "kind": unrelated_kind, "namespace": "hotel", "name": "other-lane"},
+            "file": "unavailable-and-unrelated.yaml",
+            "sha256": "not-needed",
+        },
+    ]
+    (root / "lock.json").write_text(json.dumps({"objects": rows}))
+    baseline = (ApplicationBaseline("hotel", [obj("Pod", "app", spec={"serviceAccountName": "reader"})]),)
+    completed = complete_recovery_baselines(tmp_path, baseline)
+    assert [(v["kind"], v["metadata"]["name"]) for v in completed[0].objects] == [
+        ("Pod", "app"),
+        ("ServiceAccount", "reader"),
+    ]
