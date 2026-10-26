@@ -81,18 +81,24 @@ def test_environment_round_trips_all_paths_through_saved_file(tmp_path: Path) ->
     assert FastloopEnvironment.load(tmp_path) == environment
 
 
+@pytest.mark.parametrize("attach_only", [False, True])
 def test_up_persists_a_dns_application_name_and_loads_legacy_display_names(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, attach_only: bool
 ) -> None:
     from benchmarks.sregym.fastloop import cli
 
     monkeypatch.setattr(cli, "up_preflight", lambda _args: None)
     (tmp_path / "application_workspace").mkdir()
+    fenced_config = tmp_path / "existing.kubeconfig"
+    fenced_config.write_text("existing lane")
+    monkeypatch.setenv("KUBECONFIG", str(fenced_config))
 
     class Worker:
         def __init__(self, *_args: object, **kwargs: Any) -> None:
             # Kubernetes caches KUBECONFIG at import time, before the cluster op.
-            assert kwargs["env"]["KUBECONFIG"] == str(tmp_path / "kubeconfigs/worker_0.kubeconfig")
+            assert kwargs["env"]["KUBECONFIG"] == str(
+                fenced_config if attach_only else tmp_path / "kubeconfigs/worker_0.kubeconfig"
+            )
 
         def __enter__(self) -> Worker:
             return self
@@ -101,8 +107,9 @@ def test_up_persists_a_dns_application_name_and_loads_legacy_display_names(
             pass
 
         def request(self, op: str, **_kwargs: object) -> dict[str, object]:
-            if op == "cluster":
-                return {"kubeconfig": str(tmp_path / "worker.kubeconfig")}
+            if op in {"cluster", "attach_existing"}:
+                assert op == ("attach_existing" if attach_only else "cluster")
+                return {"kubeconfig": str(fenced_config if attach_only else tmp_path / "worker.kubeconfig")}
             if op == "deploy":
                 (tmp_path / "cluster_baseline_state.json").write_text('{"namespaces": ["observe"]}', encoding="utf-8")
                 return {"deployed": True}
@@ -120,7 +127,8 @@ def test_up_persists_a_dns_application_name_and_loads_legacy_display_names(
             return [{"kind": "Deployment", "metadata": {"name": "mongo", "namespace": namespace}, "spec": {}}]
 
     monkeypatch.setattr(cli, "KubectlApplicationCluster", Cluster)
-    assert main(["up", "--no-dev-mount", "--run-dir", str(tmp_path), "--builder", "", "--no-sandbox"]) == 0
+    extra = ["--reuse-cluster-only"] if attach_only else []
+    assert main(["up", "--no-dev-mount", "--run-dir", str(tmp_path), "--builder", "", "--no-sandbox", *extra]) == 0
     assert FastloopEnvironment.load(tmp_path).application == "hotel-reservation"
     baseline = load_application_baseline(tmp_path / "cluster_baseline_state.json", "hotel-reservation")
     assert baseline is not None

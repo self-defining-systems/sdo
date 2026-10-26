@@ -153,3 +153,17 @@ An incomplete row holds the lane for native recovery and is never reinjected.
 `complete.json` means all rows passed the advance gate, not that every repair
 passed its official oracle. `program_trust_threshold: 3` records experiment intent
 only: automatic trust gating is retired and the value grants no authority.
+
+## Warm-lane application retirement
+
+`fastloop retire-app` requires the old environment, a distinct next run directory,
+next namespace/problem/seed/images, and the current lane lease. Its fixed target
+set is the old app namespace plus that app's SDO control namespace. Pending
+native closure/reflection or active worker Jobs block retirement. Every namespace
+delete checks the lease, waits for deletion, and never targets infrastructure or
+unrelated app namespaces. The next app deploys through `up --reuse-cluster-only`
+using the same fenced `KUBECONFIG`; failed reuse admission never falls back to
+kind creation. `app-retirement-started.json` preserves intent; the completed
+`app-retirement.json` (`sdo.fastloop-app-retirement/v1`) records the exact retired
+set and the next app's passing `lane_resources` evidence. Missing completion
+means conversion is incomplete; it grants no injection or learning credit.
