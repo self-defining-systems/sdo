@@ -83,6 +83,16 @@ traffic. Treat fixture restoration as **eval setup**, never a responder repair o
 learning outcome. A contract failure invalidates admission even if sampled HTTP
 passes; the checker rejects empty fixtures and preserves exact int64 IDs.
 
+For bound PVCs, a rendered source manifest may omit the admission-defaulted
+`storageClassName`. Restore must retain that field from the identity-matched
+installed capture when source omits it. An explicit source class (including the
+empty string) remains authoritative. Replacing the complete source spec without
+this merge rejects an otherwise healthy bound claim as an immutable-field change.
+On a reused lane, explicitly retire released prior applications through supported
+teardown, then restore the app and check for foreign applications before health/traffic
+admission and injection. App-only reset does not retire foreign namespaces.
+Never bypass the foreign-application guard with an added namespace allowlist.
+
 Namespace recovery prerequisite failures are **eval** blockers before injection.
 `eval: namespace recovery cannot restore prerequisites:` names every unavailable
 reference as `[namespace/]Kind/name`. Capture now includes ServiceAccounts and

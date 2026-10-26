@@ -111,3 +111,7 @@ stage reports; a missing session from a failed responder does not enable that
 fallback. Attribute learning only from the accepted reflection and independently
 verified cause evidence. The responder's inline view summarizes stages; complete
 receipts remain in its private incident facts and committed outcome.
+
+### Receipts after responder retirement
+
+The controller may retire a responder Job after an early report. Post-reflection receipt collection uses the broker ledger's frozen incident request, correlated result, durable dispatch/completion timestamps, independently verified closure, and accepted acknowledgment. A live responder Job is not a receipt prerequisite. An empty `responder_job_evidence` means no Kubernetes success claim is made; the Go checker requires valid ordered lifecycle timestamps and a completed correlated result instead. Historical receipts with Job evidence retain their original validation.
