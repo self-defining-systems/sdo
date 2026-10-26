@@ -2,9 +2,9 @@
 
 A composite injects several independent faults at once. The conductor's mitigation
 oracle answers only "all fixed"; to say which fault was fixed when, a read-only
-probe per fault is polled while the agent works. Probes only read Kubernetes objects
-(no helper pods), so they never disturb the agent or the controller. The problem's own
-oracle still grades the end state.
+probe per fault is polled while the agent works. Probes read Kubernetes objects
+and fixed runtime observations (no helper pods or repair commands). The problem's
+own oracle still grades the end state.
 
 Resolution of a fault is the start of its final unbroken green run, provided that run
 lasted at least ``stable_seconds``: a fault that is fixed and then broken again by a later
@@ -33,8 +33,19 @@ from benchmarks.sregym.fastloop.object_probes import (
 from benchmarks.sregym.fastloop.object_probes import (
     deployment_available as _deployment_available,
 )
+from benchmarks.sregym.fastloop.object_probes import (
+    flag_disabled as _flag_disabled,
+)
+from benchmarks.sregym.fastloop.runtime_observation import KubectlObservationTransport, ReadOnlyObservation
+from benchmarks.sregym.fastloop.runtime_probes import Observer, runtime_probe
 from benchmarks.sregym.faults.description import FaultSpec, ProblemDescription, describe_sregym_problems
-from benchmarks.sregym.faults.probe_catalog import AVAILABILITY_KINDS, BASELINE_FIELDS, FEATURE_FLAGS, FLAG_FIELDS
+from benchmarks.sregym.faults.probe_catalog import (
+    AVAILABILITY_KINDS,
+    BASELINE_FIELDS,
+    FEATURE_FLAGS,
+    FLAG_FIELDS,
+    RUNTIME_PROBE_KINDS,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
@@ -160,18 +171,6 @@ def _restoration_probe(
     return restored
 
 
-def _flag_disabled(read: Callable[[str, str], dict[str, Any] | None], flag_name: str) -> bool:
-    configmap = read("configmap", "flagd-config")
-    if not configmap:
-        return False
-    raw = (configmap.get("data") or {}).get("demo.flagd.json")
-    if not isinstance(raw, str):
-        return False
-    flag = (json.loads(raw).get("flags") or {}).get(flag_name) or {}
-    # Missing/unknown variants are not evidence of recovery.
-    return flag.get("defaultVariant") == "off"
-
-
 def _dns_egress_open(read: Callable[[str, str], dict[str, Any] | None], component: str) -> bool:
     policy = read("networkpolicy", f"deny-dns-egress-{component}")
     if policy is None:
@@ -260,7 +259,7 @@ def _probe_for(
 
 
 def probes_for(
-    faults: Sequence[FaultSpec], read: Callable[[str, str], dict[str, Any] | None]
+    faults: Sequence[FaultSpec], read: Callable[[str, str], dict[str, Any] | None], *, observe: Observer | None = None
 ) -> dict[str, Callable[[], bool]]:
     probes: dict[str, Callable[[], bool]] = {}
     for fault in faults:
@@ -268,6 +267,12 @@ def probes_for(
             raise ValueError(f"per-fault tracking unsupported: {fault.tracking_reason}")
         if fault.name in probes:
             raise ValueError(f"duplicate probe identity {fault.name}")
+        if fault.kind in RUNTIME_PROBE_KINDS:
+            observer = observe or getattr(read, "observe", None)
+            if observer is None:
+                raise ValueError("runtime fault tracking requires the read-only observation transport")
+            probes[fault.name] = runtime_probe(fault, read, observer)
+            continue
         components = (fault.component,) if fault.kind == "ingress_misroute" else fault.target_components
         target_probes = tuple(_probe_for(fault, read, component) for component in components)
         probes[fault.name] = lambda target_probes=target_probes: all(probe() for probe in target_probes)
@@ -375,6 +380,10 @@ class KubectlReader:
         self._namespace = namespace
         self._kubeconfig = str(kubeconfig) if kubeconfig else None
         self._timeout = timeout
+        self._observations = KubectlObservationTransport(namespace=namespace, kubeconfig=kubeconfig)
+
+    def observe(self, request: ReadOnlyObservation) -> str:
+        return self._observations(request)
 
     def __call__(self, kind: str, name: str) -> dict[str, Any] | None:
         command = ["kubectl"]
