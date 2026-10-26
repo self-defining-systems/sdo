@@ -24,8 +24,11 @@ def part(class_name, target="geo"):
 
 def test_colocated_description_preserves_declared_indices_and_injection_order():
     problem = SimpleNamespace(
-        problems=[part("WrongBinUsage"), part("IncorrectImage", "search")],
-        draws=[SimpleNamespace(key="wrong_bin_usage", param_dict=lambda: {"mode": "bad"}, footprints=()), None],
+        problems=[part("MongoDBUserUnregistered"), part("IncorrectImage", "search")],
+        draws=[
+            SimpleNamespace(key="storage_user_unregistered", param_dict=lambda: {"mode": "bad"}, footprints=()),
+            None,
+        ],
         injection_order=[1, 0],
     )
     described = describe_problem("generated", problem)
@@ -34,10 +37,10 @@ def test_colocated_description_preserves_declared_indices_and_injection_order():
     assert described.injection_order == (1, 0)
     assert described.faults[0].parameters == {"mode": "bad"}
     assert not described.tracking_supported
-    assert described.faults[0].class_name == "WrongBinUsage"
+    assert described.faults[0].class_name == "MongoDBUserUnregistered"
     assert ProblemDescription.model_validate_json(described.model_dump_json()) == described
     validate_suite({"generated": described})  # aggregate oracle remains available
-    with pytest.raises(ValueError, match="tracking.*WrongBinUsage"):
+    with pytest.raises(ValueError, match="tracking.*MongoDBUserUnregistered"):
         validate_suite({"generated": described}, require_tracking=True)
 
 
@@ -92,7 +95,13 @@ def test_real_sdo3_discovery_accepts_all_seven_sg2_composites():
     root = Path(__file__).resolve().parents[5]
     catalog = describe_sregym_problems(MIXED10_COMPOSITES, sregym_dir=root / "third_party/sregym")
     assert set(catalog) == set(MIXED10_COMPOSITES)
-    assert all(len(item.faults) == 2 and item.composite and not item.tracking_supported for item in catalog.values())
+    assert all(len(item.faults) == 2 and item.composite for item in catalog.values())
+    for item in catalog.values():
+        if item.tracking_supported:
+            validate_suite({item.problem_id: item}, require_tracking=True, capability_mode="permissive")
+        else:
+            with pytest.raises(ValueError, match="tracking unsupported"):
+                validate_suite({item.problem_id: item}, require_tracking=True, capability_mode="permissive")
 
 
 def test_adding_fault_indices_to_colocated_does_not_lose_draws():
@@ -140,7 +149,7 @@ def test_unsupported_requested_tracking_fails_before_worker_deployment(tmp_path,
     problem_id = "mf__synthetic"
     monkeypatch.setattr(
         "benchmarks.sregym.fastloop.fault_tracker.describe_sregym_problems",
-        lambda *args, **kwargs: {problem_id: describe_problem(problem_id, part("WrongBinUsage"))},
+        lambda *args, **kwargs: {problem_id: describe_problem(problem_id, part("MongoDBUserUnregistered"))},
     )
     monkeypatch.setattr(cli, "_worker", lambda _: pytest.fail("preflight must finish before deployment"))
     arguments = ["run", "--run-dir", str(tmp_path), "--agent", "sdo", "--require-fault-tracking"]

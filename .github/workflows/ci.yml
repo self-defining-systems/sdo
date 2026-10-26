@@ -20,7 +20,7 @@ concurrency:
 env:
   # Bound parent and nested Go compilers on the two-core hosted runner.
   GOMAXPROCS: "2"
-  GOFLAGS: "-p=2"
+  GOFLAGS: "-p=2 -trimpath"
   SDO_PYTEST_WORKERS: "2"
 
 jobs:
@@ -73,6 +73,10 @@ jobs:
               - 'sdo/skills/**'
               - 'scripts/gen_skill_references.sh'
               - 'scripts/test_runtime_shard.py'
+              - 'scripts/runtime_test_costs.json'
+              - 'scripts/test_operator_shard.py'
+              - 'scripts/operator_test_costs.json'
+              - 'scripts/test_operator_shard.sh'
               - 'sdo/contracts/proto/**'
               - 'sdo/contracts/_gen/**'
               - 'buf*.yaml'
@@ -173,19 +177,20 @@ jobs:
           path: |
             ${{ runner.temp }}/sdo-go-build-normal
             ~/go/pkg/mod
-          key: ci-prepared-v3-normal-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
+            .fastloop/test-bin
+          key: ci-prepared-v4-normal-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
           restore-keys: |
-            ci-prepared-v3-normal-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-
-            ci-prepared-v3-normal-${{ runner.os }}-${{ runner.arch }}-1.26.8-
+            ci-prepared-v4-normal-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-
+            ci-prepared-v4-normal-${{ runner.os }}-${{ runner.arch }}-1.26.8-
       - name: Publish the race compiler cache
         if: matrix.mode == 'race'
         uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
         with:
           path: ${{ runner.temp }}/sdo-go-build-race
-          key: ci-prepared-v3-race-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
+          key: ci-prepared-v4-race-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
           restore-keys: |
-            ci-prepared-v3-race-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-
-            ci-prepared-v3-race-${{ runner.os }}-${{ runner.arch }}-1.26.8-
+            ci-prepared-v4-race-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-
+            ci-prepared-v4-race-${{ runner.os }}-${{ runner.arch }}-1.26.8-
       - name: Compile dependency graphs outside operation timeouts
         run: bash scripts/prepare_go_ci.sh "${{ matrix.mode }}"
 
@@ -223,7 +228,8 @@ jobs:
           path: |
             ${{ runner.temp }}/sdo-go-build-normal
             ~/go/pkg/mod
-          key: ci-prepared-v3-normal-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
+            .fastloop/test-bin
+          key: ci-prepared-v4-normal-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
           fail-on-cache-miss: true
       - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
         if: matrix.name == 'static analysis' || matrix.name == 'architecture' || matrix.name == 'unit tests'
@@ -272,6 +278,7 @@ jobs:
             directory: sdo/operator/contracts
             go-version: "1.26.8"
             foundation: contracts
+            operator: compiler-replay
           - module: runtime-reflection-corpus
             directory: sdo/operator/runtime
             go-version: "1.26.8"
@@ -337,13 +344,14 @@ jobs:
           path: |
             ${{ runner.temp }}/sdo-go-build-normal
             ~/go/pkg/mod
-          key: ci-prepared-v3-normal-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
+            .fastloop/test-bin
+          key: ci-prepared-v4-normal-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
           fail-on-cache-miss: true
       - name: Restore the prepared race build graph
         uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
         with:
           path: ${{ runner.temp }}/sdo-go-build-race
-          key: ci-prepared-v3-race-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
+          key: ci-prepared-v4-race-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
           fail-on-cache-miss: true
       - name: Combine prepared compiler entries without replacing existing files
         run: bash scripts/merge_go_ci_caches.sh '${{ runner.temp }}/sdo-go-build-normal' '${{ runner.temp }}/sdo-go-build-race'
@@ -424,7 +432,8 @@ jobs:
           path: |
             ${{ runner.temp }}/sdo-go-build-normal
             ~/go/pkg/mod
-          key: ci-prepared-v3-normal-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
+            .fastloop/test-bin
+          key: ci-prepared-v4-normal-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
           fail-on-cache-miss: true
       - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
         with:
@@ -495,13 +504,14 @@ jobs:
           path: |
             ${{ runner.temp }}/sdo-go-build-normal
             ~/go/pkg/mod
-          key: ci-prepared-v3-normal-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
+            .fastloop/test-bin
+          key: ci-prepared-v4-normal-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
           fail-on-cache-miss: true
       - name: Restore the prepared race build graph
         uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
         with:
           path: ${{ runner.temp }}/sdo-go-build-race
-          key: ci-prepared-v3-race-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
+          key: ci-prepared-v4-race-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
           fail-on-cache-miss: true
       - name: Combine prepared compiler entries without replacing existing files
         run: bash scripts/merge_go_ci_caches.sh '${{ runner.temp }}/sdo-go-build-normal' '${{ runner.temp }}/sdo-go-build-race'
@@ -537,13 +547,14 @@ jobs:
           path: |
             ${{ runner.temp }}/sdo-go-build-normal
             ~/go/pkg/mod
-          key: ci-prepared-v3-normal-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
+            .fastloop/test-bin
+          key: ci-prepared-v4-normal-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
           fail-on-cache-miss: true
       - name: Restore the prepared race build graph
         uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
         with:
           path: ${{ runner.temp }}/sdo-go-build-race
-          key: ci-prepared-v3-race-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
+          key: ci-prepared-v4-race-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
           fail-on-cache-miss: true
       - name: Combine prepared compiler entries without replacing existing files
         run: bash scripts/merge_go_ci_caches.sh '${{ runner.temp }}/sdo-go-build-normal' '${{ runner.temp }}/sdo-go-build-race'

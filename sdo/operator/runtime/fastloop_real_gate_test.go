@@ -424,7 +424,7 @@ func runHermeticFastloopRealGoGate(t *testing.T, mode fastloopGateMode) {
 	recurrence := mode != fastloopInitial
 	repeatController := mode == fastloopControllerRepeat
 	testutil.OfflineGo(t, "..")
-	t.Setenv("GOFLAGS", "-mod=mod -p=2")
+	t.Setenv("GOFLAGS", os.Getenv("GOFLAGS")+" -mod=mod -p=2")
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
 	defer cancel()
 	client := fastloopClient("good:v1")
