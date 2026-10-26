@@ -238,11 +238,12 @@ type closureRecheckVerdict uint8
 
 const (
 	closureRecheckConfirmed closureRecheckVerdict = iota + 1
-	// closureRecheckIncomplete is "not yet": a detector window is still filling
-	// or its observer could not answer. It never retires the closure.
+	// closureRecheckIncomplete is "not yet": a detector's observation window
+	// is still filling. It never retires the closure.
 	closureRecheckIncomplete
-	// closureRecheckContradicted means health regressed or the repair did not
-	// hold (active finding, unexplained inventory, unrestored source fields).
+	// closureRecheckContradicted means health regressed, the repair did not
+	// hold (active finding, unexplained inventory, unrestored source fields), or
+	// the observation scope is lost (unavailable detector or observer).
 	closureRecheckContradicted
 )
 
@@ -303,8 +304,8 @@ func (c *Controller) revalidateClosure(ctx context.Context, snapshot sdk.Detecti
 		}
 		findings, err := sdk.DetectObserved(ctx, detector, snapshot)
 		if err != nil {
-			wait(detector, fmt.Sprintf("closure observation detector %s: %v", id, err))
-			continue
+			// A denied or unavailable observer is a lost scope, not "not yet".
+			return contradicted("closure observation detector %s: %v", id, err)
 		}
 		for _, finding := range findings {
 			if finding.DetectorID == "" {
