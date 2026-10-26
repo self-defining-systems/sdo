@@ -138,6 +138,8 @@ def test_public_admission_uses_selected_arm_and_keeps_independent_traffic(
     )
     complete = {"complete": {"acceptedCommit": "a" * 40, "objects": [{}]}, "pending": None}
     monkeypatch.setattr(admission.LaneAdmission, "_onboarding", lambda self, control: complete)
+    # No SDO worker Job from a previous row is still running.
+    monkeypatch.setattr(admission.LaneAdmission, "_active_workers", lambda self, control: [])
     monkeypatch.setattr(gate, "check_resources", lambda *args: None)
     monkeypatch.setattr(rbac, "verify_rbac", lambda *args: {"passed": True})
     monkeypatch.setattr(hotel_helpers, "admit_install", lambda *args: {"passed": True})
