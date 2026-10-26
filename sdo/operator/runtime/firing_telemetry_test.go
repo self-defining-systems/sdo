@@ -436,7 +436,7 @@ func TestControllerWithoutASinkStillBuildsTheClosureTimeline(t *testing.T) {
 	executePendingEffect(t, controller)
 	awaitRequest(t, dispatcher.requests)
 	awaitDispatchCompletionQueued(t, controller)
-	for second := 2; second < 5; second++ {
+	for second := 2; second < 20; second++ {
 		step(t, controller, second)
 	}
 	select {

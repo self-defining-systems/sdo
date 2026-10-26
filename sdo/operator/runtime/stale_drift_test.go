@@ -56,6 +56,9 @@ func TestPendingDriftJoinsIncidentBeforeVerifiedClosure(t *testing.T) {
 			// The peer deadline has not expired when verification runs.
 			c.scheduler.ExpediteAll(start.Add(21*time.Second + 50*time.Millisecond))
 			stepScenario(t, c, cache, start.Add(21*time.Second+50*time.Millisecond))
+			settled := start.Add(21*time.Second + 50*time.Millisecond + c.config.ClosureStabilityWindow)
+			c.scheduler.ExpediteAll(settled)
+			stepScenario(t, c, cache, settled)
 			closure, ok := c.PendingIncidentClosure()
 			if !ok || len(closure.FinalDetectorStates) == 0 {
 				t.Fatal("repair did not independently verify")

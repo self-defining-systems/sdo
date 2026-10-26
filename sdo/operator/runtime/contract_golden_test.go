@@ -107,7 +107,7 @@ func goldenIncident(
 		t.Fatalf("step: %v", err)
 	}
 	view := cloneIncidentView(controller.incidentView)
-	for sample := 3; sample < 8; sample++ {
+	for sample := 3; sample < 23; sample++ {
 		if err := controller.Step(context.Background(), time.Unix(int64(sample), 0), nil); err != nil {
 			t.Fatalf("step %d: %v", sample, err)
 		}

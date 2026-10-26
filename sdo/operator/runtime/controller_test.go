@@ -493,7 +493,7 @@ func TestResponderCompletionDoesNotCloseIncidentUntilAllHealthFindingsClear(t *t
 		t.Fatalf("closure emitted before health verification: %#v", closure)
 	default:
 	}
-	for sample := 4; sample < 6; sample++ {
+	for sample := 4; sample < 21; sample++ {
 		if err := controller.Step(context.Background(), time.Unix(int64(sample), 0), nil); err != nil {
 			t.Fatalf("health clear step: %v", err)
 		}

@@ -249,8 +249,10 @@ func TestRV6PausedStartupWorkerLossWaitsForResume(t *testing.T) {
 					case <-ctx.Done():
 						t.Fatal(ctx.Err())
 					}
-					if err := restored.Step(ctx, now.Add(time.Minute), nil); err != nil {
-						t.Fatal(err)
+					for _, at := range []time.Duration{time.Minute, time.Minute + restored.config.ClosureStabilityWindow} {
+						if err := restored.Step(ctx, now.Add(at), nil); err != nil {
+							t.Fatal(err)
+						}
 					}
 					if detector.calls == 0 || restored.incidentOpen || restored.pendingClosure == nil || len(restored.pendingClosure.FinalDetectorStates) != 1 || restored.pendingClosure.FinalDetectorStates[0].Status != DetectorEvaluationClear {
 						t.Fatal("resumed investigation did not reach fresh verification")

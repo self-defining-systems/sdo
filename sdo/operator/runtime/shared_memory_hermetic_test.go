@@ -176,7 +176,7 @@ func TestHermeticSharedMemoryControllers(t *testing.T) {
 				controllers[lane] = c
 				// Exercise actual detection and workspace/dispatch effects, then stop at
 				// the durable closure boundary so both incidents overlap in reflection.
-				for tick := 0; tick < 12; tick++ {
+				for tick := 0; tick < 30; tick++ {
 					now = at.Add(time.Duration(tick) * time.Second)
 					if err := c.Step(ctx, now, nil); err != nil {
 						t.Fatal(err)

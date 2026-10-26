@@ -392,7 +392,7 @@ func TestHermeticRoutingCaptureCompilesReplayableMitigator(t *testing.T) {
 	snapshot.ServiceList[0].Spec.Ports[0].TargetPort = intstr.FromInt32(8080)
 	provider.snapshot = snapshot
 	awaitDispatchCompletionQueued(t, controller)
-	for i := 2; i < 4; i++ {
+	for i := 2; i < 19; i++ {
 		if err := controller.Step(ctx, time.Unix(int64(i), 0), nil); err != nil {
 			t.Fatal(err)
 		}
