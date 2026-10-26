@@ -52,9 +52,9 @@ uv run python -m sdo.agents.responder.command_reference --check
 
 echo "==> ruff"
 if [ "$1" == "--fix" ]; then
-    uv run ruff check --fix .
+    uv run python -m ruff check --fix .
 else
-    uv run ruff check .
+    uv run python -m ruff check .
 fi
 
 echo "==> tach (module boundaries)"
