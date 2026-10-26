@@ -4,7 +4,6 @@ import (
 	"context"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
-	"google.golang.org/protobuf/types/known/timestamppb"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -116,53 +115,6 @@ func TestRWSUnpublishedExpiredClaimFallsBack(t *testing.T) {
 		t.Fatal("cold Job missing", err)
 	}
 }
-func TestRWSReservationHeartbeatSurvivesBeforePublication(t *testing.T) {
-	p, e, task := standbyFixture(t)
-	slot := readyStandby(t, p)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	_, err := p.TryBind(ctx, e, task)
-	if err != nil {
-		t.Fatal(err)
-	}
-	file := filepath.Join(slot.Directory, "control/owner-heartbeat")
-	old := time.Now().Add(-time.Minute)
-	os.Chtimes(file, old, old)
-	time.Sleep(1200 * time.Millisecond)
-	info, _ := os.Stat(file)
-	if time.Since(info.ModTime()) > 2*time.Second {
-		t.Fatal("unpublished reservation lost lease")
-	}
-}
-func TestRWSAgingStandbyReplacedAndCannotClaim(t *testing.T) {
-	for _, ensure := range []bool{false, true} {
-		t.Run(map[bool]string{false: "claim", true: "replenish"}[ensure], func(t *testing.T) {
-			p, e, task := standbyFixture(t)
-			slot := readyStandby(t, p)
-			job, _ := e.Client.BatchV1().Jobs(e.Namespace).Get(context.Background(), slot.JobName, metav1.GetOptions{})
-			job.Status.StartTime = &metav1.Time{Time: time.Now().Add(-24*time.Hour + 10*time.Second)}
-			e.Client.BatchV1().Jobs(e.Namespace).UpdateStatus(context.Background(), job, metav1.UpdateOptions{})
-			task.Deadline = timestamppb.New(time.Now().Add(5 * time.Minute))
-			if ensure {
-				if err := p.Ensure(context.Background()); err != nil {
-					t.Fatal(err)
-				}
-				if p.current.JobName == slot.JobName {
-					t.Fatal("aging idle retained")
-				}
-			} else {
-				bound, err := p.TryBind(context.Background(), e, task)
-				if err != nil {
-					t.Fatal(err)
-				}
-				if bound.WarmBinding != nil {
-					t.Fatal("almost expired Job claimed")
-				}
-			}
-		})
-	}
-}
-
 func TestRWSWarmReceiptIdentityDoesNotRequireRequestConfigMap(t *testing.T) {
 	p, e, task := standbyFixture(t)
 	readyStandby(t, p)

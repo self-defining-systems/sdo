@@ -707,7 +707,6 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		standbyEnvironment["SDO_SESSION_SCRATCH"] = "/sdo/session/scratch"
 		standbyEnvironment["SDO_TOOLS_DIR"] = "/sdo/session/tools"
 		pool := worker_registry.NewStandbyPool(worker_registry.KubernetesExecutor{APIProxyImage: d.APIProxyImage, ToolchainImage: d.ToolchainImage, Client: d.Client, Namespace: d.Namespace, Registry: d.Registry, ServiceAccount: d.ServiceAccount, RepositoryPVC: d.RepositoryPVC, RepositoryMountPath: d.RepositoryMountPath, RepositoryPVCSubPath: d.RepositoryPVCSubPath, CredentialsSecret: d.CredentialsSecret, Environment: standbyEnvironment, CapturedCorpusReadOnly: true}, d.AgentID, *application)
-		pool.ResponseBudget = *responseTimeout
 		standbyCtx, stopStandby := context.WithCancel(renewalCtx)
 		if err := pool.Start(standbyCtx); err != nil {
 			stopStandby()

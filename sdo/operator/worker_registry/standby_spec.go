@@ -16,7 +16,7 @@ func (e KubernetesExecutor) configureStandby(job *batchv1.Job, launch *contracts
 	agent.Command = []string{"/usr/local/bin/sdo-operator", "standby", "--command-json", string(command)}
 	agent.VolumeMounts = append(agent.VolumeMounts, corev1.VolumeMount{Name: "repository", MountPath: "/sdo/standby/ready", SubPath: path.Join(e.standbySubPath, "ready")})
 	agent.WorkingDir = "/sdo/proposal"
- agent.VolumeMounts = append(agent.VolumeMounts, corev1.VolumeMount{Name:"repository",MountPath:"/sdo/session/late-findings",SubPath:path.Join(e.standbySubPath,"session/late-findings"),ReadOnly:true})
+	agent.VolumeMounts = append(agent.VolumeMounts, corev1.VolumeMount{Name: "repository", MountPath: "/sdo/session/late-findings", SubPath: path.Join(e.standbySubPath, "session/late-findings"), ReadOnly: true})
 	agent.VolumeMounts = append(agent.VolumeMounts, corev1.VolumeMount{Name: "repository", MountPath: "/sdo/late-findings", SubPath: path.Join(e.standbySubPath, "session/late-findings"), ReadOnly: true})
 	for i := range pod.InitContainers {
 		sidecar := &pod.InitContainers[i]
@@ -30,8 +30,4 @@ func (e KubernetesExecutor) configureStandby(job *batchv1.Job, launch *contracts
 		sidecar.StartupProbe = &corev1.Probe{ProbeHandler: corev1.ProbeHandler{Exec: &corev1.ExecAction{Command: []string{"/usr/local/bin/sdo-operator", "standby-ready", "/sdo/standby/ready/history"}}}, PeriodSeconds: 1, TimeoutSeconds: 2, FailureThreshold: 60}
 	}
 	job.Spec.Template.Labels["sdo.dev/standby"] = "true"
-	// A lost controller cannot leak idle daemons indefinitely. The filesystem
-	// heartbeat normally expires them after 30s; this also bounds dead nodes.
-	lifetime := int64(24 * 60 * 60)
-	job.Spec.ActiveDeadlineSeconds = &lifetime
 }
