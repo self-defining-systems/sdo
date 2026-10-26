@@ -30,8 +30,15 @@ def image_build_source(tmp_path: Path) -> Path:
     (source / "scripts").mkdir(parents=True)
     (source / "sdo/operator").mkdir(parents=True)
     (source / "sdo/operator/go.mod").write_text("module fixture\n")
-    for filename in ("build_sdo_images.sh", "sdo-images.hcl"):
-        shutil.copy2(repository / "scripts" / filename, source / "scripts" / filename)
+    for path in (
+        "scripts/build_sdo_images.sh",
+        "scripts/sdo-images.hcl",
+        "sdo/operator/Dockerfile.runtime",
+        ".dockerignore",
+        "benchmarks/sregym/fastloop/image_provenance.py",
+    ):
+        (source / path).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(repository / path, source / path)
     for args in (
         ["init", "-q"],
         ["add", "."],

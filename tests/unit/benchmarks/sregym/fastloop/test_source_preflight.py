@@ -39,22 +39,24 @@ def test_initialized_harness_with_missing_nested_chart_is_rejected(tmp_path):
 
 
 @pytest.mark.parametrize("failure", ["controller", "validator", "missing-label", "toolchain", "dirty", None])
-def test_runtime_images_require_current_source_and_working_validator(tmp_path, monkeypatch, failure):
+def test_runtime_images_require_current_source_and_working_validator(image_repo, monkeypatch, failure):
     from benchmarks.sregym.fastloop import source_preflight
     from benchmarks.sregym.fastloop.environment import Images
 
+    old = image_repo.head
+    current = image_repo.commit({"sdo/operator/main.go": "package main\n// current\n"}, "operator change")
+    if failure == "dirty":
+        (image_repo.path / "sdo/operator/new.go").write_text("package main\n")
+    real_run = subprocess.run
     calls = []
 
     def run(args, **kwargs):
         calls.append(args)
         if args[0] == "git":
-            output = "?? sdo/operator/new.go" if failure == "dirty" else ""
-            if "rev-parse" in args:
-                output = "current\n"
-            return subprocess.CompletedProcess(args, 0, stdout=output)
+            return real_run(args, **kwargs)
         if args[:3] == ["docker", "image", "inspect"]:
-            role = "controller" if "controller" in args[3] else "validator"
-            revision = "old" if failure == role else "current"
+            role = next((role for role in ("controller", "validator") if role in args[3]), "responder")
+            revision = old if failure == role else current
             labels = {} if failure == "missing-label" else {"org.opencontainers.image.revision": revision}
             return subprocess.CompletedProcess(args, 0, stdout=json.dumps([{"Config": {"Labels": labels}}]))
         assert args[:2] == ["docker", "run"]
@@ -63,11 +65,12 @@ def test_runtime_images_require_current_source_and_working_validator(tmp_path, m
         return subprocess.CompletedProcess(args, 0, stdout="go version go1.26.8 linux/amd64\n")
 
     monkeypatch.setattr(source_preflight.subprocess, "run", run)
+    images = Images(controller="sdo-controller:x", validator="sdo-detector-validator:x", responder="responder:x")
     if failure:
         with pytest.raises(ValueError, match="eval:.*(source|toolchain)"):
-            source_preflight.assert_runtime_images(Images(), tmp_path)
+            source_preflight.assert_runtime_images(images, image_repo.path)
     else:
-        source_preflight.assert_runtime_images(Images(), tmp_path)
+        source_preflight.assert_runtime_images(images, image_repo.path)
         probes = [args for args in calls if args[:2] == ["docker", "run"]]
         assert len(probes) == 1
         assert "--network" in probes[0]
@@ -104,16 +107,19 @@ def test_worker_rejects_image_preflight_before_process_creation(tmp_path, monkey
 
 
 @pytest.mark.parametrize("current", [False, True])
-def test_retained_responder_requires_current_source_or_real_entrypoint_smoke(tmp_path, monkeypatch, current):
+def test_retained_responder_requires_current_source_or_real_entrypoint_smoke(image_repo, monkeypatch, current):
     from benchmarks.sregym import adapter
     from benchmarks.sregym.fastloop import source_preflight
     from benchmarks.sregym.fastloop.environment import Images
 
+    head = image_repo.head
+    real_run = subprocess.run
+
     def run(argv, **kwargs):
         if argv[0] == "git":
-            return subprocess.CompletedProcess(argv, 0, "current" if "rev-parse" in argv else "")
+            return real_run(argv, **kwargs)
         if argv[:3] == ["docker", "image", "inspect"]:
-            revision = "old" if argv[3] == "responder:retained" and not current else "current"
+            revision = "0" * 40 if argv[3] == "responder:retained" and not current else head
             return subprocess.CompletedProcess(
                 argv, 0, json.dumps([{"Config": {"Labels": {"org.opencontainers.image.revision": revision}}}])
             )
@@ -129,11 +135,11 @@ def test_retained_responder_requires_current_source_or_real_entrypoint_smoke(tmp
     monkeypatch.setattr(adapter, "assert_image_entrypoints", smoke)
     images = Images(controller="controller:current", responder="responder:retained", validator="validator:current")
     if current:
-        source_preflight.assert_runtime_images(images, tmp_path)
+        source_preflight.assert_runtime_images(images, image_repo.path)
         assert not called
     else:
         with pytest.raises(ValueError, match="responder:retained.*checkpoint_limits"):
-            source_preflight.assert_runtime_images(images, tmp_path)
+            source_preflight.assert_runtime_images(images, image_repo.path)
         assert called == [("responder:retained", adapter.BENCHMARK_IMAGE_ENTRY_POINTS)]
 
 
