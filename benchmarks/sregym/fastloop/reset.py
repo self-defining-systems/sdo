@@ -8,7 +8,7 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol
 
-from benchmarks.sregym.adapter import PersistentState, WaitKind, kubectl, wait_for
+from benchmarks.sregym.adapter import PersistentState, WaitKind, kubectl, reset_control_state, wait_for
 from benchmarks.sregym.fastloop.baseline_recovery import (
     NON_APPLICATION_NAMESPACES,
     RESTORE_RECEIPTS,
@@ -139,6 +139,10 @@ class KubectlResetCluster(KubectlApplicationCluster):
             namespace=namespace,
             kubeconfig=self.kubeconfig,
         )
+        # Worker request, result and dispatch ConfigMaps of killed attempts would
+        # make the next controller resume tasks whose Jobs are gone. The Go
+        # worker registry owns their names.
+        reset_control_state(namespace, kubeconfig=str(self.kubeconfig), workers_only=True)
         # Without a trusted controller template there is no safe image/mount
         # for filesystem cleanup. State retirement still applies to this path.
         if cleanup_spec is None:

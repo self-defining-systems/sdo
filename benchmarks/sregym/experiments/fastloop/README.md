@@ -412,6 +412,11 @@ For a private scripted lane (no model calls), set `SDO_TOY_CLUSTER=gs1-toy` for 
 
 ### Fresh memory and namespace control state
 
+Both the fresh-memory reset and the warm `fastloop reset` also delete every SDO worker
+request, result and dispatch ConfigMap in the control namespace (the warm reset runs
+`reset-control-state --workers-only`), because a controller that resumes a task whose
+Job was killed with an earlier attempt otherwise exits or stalls onboarding.
+
 A fresh fastloop state file starts a new memory stream. Before native install,
 fastloop stops the old SDO runtime and runs the production command
 `sdo-operator reset-control-state --control-namespace <app>-sdo --kubeconfig <lane-config>`.

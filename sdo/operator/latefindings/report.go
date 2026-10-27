@@ -51,9 +51,12 @@ type Store struct {
 	Namespace string
 }
 
+// NamePrefix starts every late-findings ConfigMap name.
+const NamePrefix = "sdo-late-"
+
 func ConfigMapName(incidentID string) string {
 	sum := sha256.Sum256([]byte(incidentID))
-	return "sdo-late-" + hex.EncodeToString(sum[:10])
+	return NamePrefix + hex.EncodeToString(sum[:10])
 }
 
 func EmptyReport(incidentID string) *contracts.LateFindingsReport {

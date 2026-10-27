@@ -32,7 +32,7 @@ type incidentExecutionIdentity struct {
 	JobUID     string `json:"job_uid,omitempty"`
 }
 
-func incidentExecutionName(digest string) string { return "sdo-exec-" + digest[:52] }
+func incidentExecutionName(digest string) string { return incidentExecutionPrefix + digest[:52] }
 
 func decodeIncidentExecution(cm *corev1.ConfigMap) (*incidentExecutionIdentity, error) {
 	var identity incidentExecutionIdentity
