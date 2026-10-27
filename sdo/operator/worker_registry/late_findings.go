@@ -3,6 +3,7 @@ package worker_registry
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"time"
@@ -15,7 +16,15 @@ import (
 // projectLateFindings copies the controller-owned report ConfigMap into the
 // session's read-only late-findings directory. Warm and cold workers read the
 // same mount; a pod that predates its incident cannot mount a ConfigMap.
-func (e KubernetesExecutor) projectLateFindings(ctx context.Context, task *contracts.AgentTask) error {
+// A projection error degrades to no late findings for this poll; it never
+// aborts the incident.
+func (e KubernetesExecutor) projectLateFindings(ctx context.Context, task *contracts.AgentTask) {
+	if err := e.writeLateFindings(ctx, task); err != nil {
+		slog.Warn("late_findings_projection_failed", "task_id", task.GetTaskId(), "error", err)
+	}
+}
+
+func (e KubernetesExecutor) writeLateFindings(ctx context.Context, task *contracts.AgentTask) error {
 	if e.LateFindingsConfigMap == "" || e.SessionPVCSubPath == "" || !task.GetRequest().MessageIs(&contracts.IncidentRequest{}) {
 		return nil
 	}
