@@ -14,6 +14,10 @@ import (
 	"sdo.dev/operator/sdk"
 )
 
+// Polling tool calls still give source-owned rollout progress one bounded
+// window for the Deployment controller to publish its replacement.
+const sourceReconcileProgressCeiling = 5 * time.Second
+
 // ProgressSourceRollouts retires only unavailable old templates controlled by
 // the exact reconciled Deployment. Ready capacity, foreign ReplicaSets, paused
 // workloads and a rollout with no replacement remain the controller's to manage.
@@ -163,6 +167,16 @@ func (e PlanExecutor) waitForSourceRollouts(ctx context.Context, incident Incide
 			}
 		}
 		if len(reconciled) > 0 {
+			// The source action owns this short step even for polling callers;
+			// returning at the first observation can precede RS creation and
+			// strand cleanup until another model turn. Never extend a shorter
+			// rollout/stage/incident context.
+			if e.PollRollouts {
+				e.PollRollouts = false
+				if e.RolloutTimeout <= 0 || e.RolloutTimeout > sourceReconcileProgressCeiling {
+					e.RolloutTimeout = sourceReconcileProgressCeiling
+				}
+			}
 			e.Rollouts = sourceRolloutWaiter{sourceProgressRollouts: progress, refs: reconciled, result: result}
 		}
 	}

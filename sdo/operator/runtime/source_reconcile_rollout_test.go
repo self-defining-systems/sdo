@@ -181,3 +181,39 @@ func TestSourceReconcileRolloutSharesDeadline(t *testing.T) {
 		}
 	}
 }
+
+func TestSourceReconcilePollOwnsProgressUntilReplacementAppears(t *testing.T) {
+	deployment, current, stale := reconcileRolloutObjects(t)
+	client := fake.NewSimpleClientset(deployment, current, stale)
+	firstList := true
+	client.PrependReactor("list", "replicasets", func(ktesting.Action) (bool, kruntime.Object, error) {
+		if firstList {
+			firstList = false
+			return true, &appsv1.ReplicaSetList{Items: []appsv1.ReplicaSet{*stale.DeepCopy()}}, nil
+		}
+		return false, nil, nil
+	})
+	client.PrependReactor("patch", "replicasets", func(ktesting.Action) (bool, kruntime.Object, error) {
+		stale.Spec.Replicas = new(int32)
+		if err := client.Tracker().Update(appsv1.SchemeGroupVersion.WithResource("replicasets"), stale, stale.Namespace); err != nil {
+			return true, nil, err
+		}
+		deployment.Status.Replicas = 1
+		if err := client.Tracker().Update(appsv1.SchemeGroupVersion.WithResource("deployments"), deployment, deployment.Namespace); err != nil {
+			return true, nil, err
+		}
+		return true, stale.DeepCopy(), nil
+	})
+	source := addedFieldsSource()
+	live := source.DeepCopy()
+	live.SetUID(deployment.UID)
+	if err := RecordAcceptance(live, source); err != nil {
+		t.Fatal(err)
+	}
+	ref := addedFieldsRef()
+	executor := PlanExecutor{Client: &planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: live}}, Source: planFakeSource{source: source}, Rollouts: KubernetesPlanRollouts{Client: client}, Verifier: planFakeVerifier{passed: true}, PollRollouts: true, RolloutTimeout: 2 * time.Second}
+	result, err := executor.Apply(context.Background(), IncidentRequest{Namespace: ref.Namespace, SourceCommit: "accepted", RepairPolicy: "recorded-actions"}, reconcilePlan(ref), false)
+	if err != nil || !result.VerificationPassed || len(result.ActionReports[0].SourceReconcile.RolloutSteps) != 1 {
+		t.Fatalf("source action abandoned progress before replacement observation: pending=%v error=%v", result.RolloutPending, err)
+	}
+}
