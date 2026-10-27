@@ -64,7 +64,7 @@ func ParseInstallExistingLaunch(args []string) (InstallExistingConfig, error) {
 	reflectionSession := flags.String("reflection-session", "resume", "reflection session mode: fresh or resume")
 	reflectionGuidance := flags.String("reflection-guidance", "baseline", "reflection guidance mode")
 	forceReflection := flags.Bool("force-reflection", false, "always dispatch reflection after verified closure")
-	maxResponseLoops := flags.Int("max-response-loops", 10, "maximum sdo apply batches per incident")
+	maxResponseLoops := flags.Int("max-response-loops", 10, "maximum mitigation rounds the responder agent may use per incident (the automatic stage's one apply does not count)")
 	responseTimeout := flags.Duration("response-timeout", 30*time.Minute, "responder timeout")
 	verificationTimeout := flags.Duration("verification-timeout", 5*time.Minute, "verification timeout")
 	duration := flags.Duration("duration", 0, "bounded controller duration")

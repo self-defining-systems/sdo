@@ -15,17 +15,21 @@ import (
 	"sdo.dev/operator/sdk/program"
 )
 
-const DefaultStageRolloutTimeout = 30 * time.Second
-
-// DefaultStageObservationCeiling bounds the post-repair wait for remaining
-// health findings, whatever their detectors' clearing horizons.
-const DefaultStageObservationCeiling = 60 * time.Second
+// DefaultStageBudget is the one owner of the automatic stage's time: the
+// checks, the single apply with its rollout wait, and the post-repair
+// observation share it. Matches the stage could not apply or verify inside it
+// go to the agent in the stage report (skip reason "stage_budget").
+const DefaultStageBudget = 45 * time.Second
 
 // DeterministicResponseStage uses the same plan/apply and immutable receipt
 // boundary as the responder, operating only on accepted registry programs.
 type DeterministicResponseStage struct {
 	NewLoop             func(IncidentRequest) *ResponderLoop
 	Restore             func(context.Context, IncidentRequest, *ResponderLoop) error
+	// Budget is the stage's total time (DefaultStageBudget when unset).
+	Budget time.Duration
+	// RolloutTimeout and ObservationCeiling can only shorten what the budget
+	// leaves for the rollout wait and the post-repair observation.
 	RolloutTimeout      time.Duration
 	ObservationInterval time.Duration
 	ObservationCeiling  time.Duration
@@ -41,6 +45,12 @@ type responseStageProgress struct {
 func (*DeterministicResponseStage) Name() string { return "deterministic" }
 
 func (stage *DeterministicResponseStage) Run(ctx context.Context, state *IncidentState) (*contracts.StageReport, error) {
+	started := time.Now()
+	budget := stage.Budget
+	if budget <= 0 {
+		budget = DefaultStageBudget
+	}
+	remaining := func() time.Duration { return budget - time.Since(started) }
 	report := &contracts.StageReport{Stage: stage.Name()}
 	if stage.NewLoop == nil {
 		return report, nil
@@ -120,16 +130,12 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 	priorWait, priorTimeout := loop.waitForStageRollouts, loop.Executor.RolloutTimeout
 	defer func() { loop.waitForStageRollouts = priorWait; loop.Executor.RolloutTimeout = priorTimeout }()
 	loop.waitForStageRollouts = true
-	budget := stage.RolloutTimeout
-	if budget <= 0 || budget > DefaultStageRolloutTimeout {
-		budget = DefaultStageRolloutTimeout
-	}
-	loop.Executor.RolloutTimeout = budget
 	matches := stageCandidates(loop, state)
 	attempted := map[string]bool{}
 	for _, attempt := range report.Mitigations {
 		attempted[stageAttemptKey(attempt.PlaybookId, programBindingsState(attempt.Bindings))] = true
 	}
+	var ready []stageReady
 	for _, match := range matches {
 		if len(state.Findings) == 0 {
 			break
@@ -152,6 +158,12 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 			attempt.SkipReason = reason
 			recordStageFindingProgress(attempt, match.ExplainedFindingFingerprints, state.Findings)
 			return save(false)
+		}
+		if remaining() <= 0 {
+			if err := skip("stage_budget"); err != nil {
+				return report, err
+			}
+			continue
 		}
 		if state.Request.RepairPolicy != "recorded-actions" {
 			if err := skip("repair_policy"); err != nil {
@@ -243,68 +255,14 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 			}
 			continue
 		}
-		attempt.PlanId = planResponse.PlanID
-		// Persist intent before mutation. If interrupted, a later attempt hands this
-		// uncertainty to the agent instead of silently repeating a possible write.
-		attempt.Result = "apply_error"
-		attempt.Error = "application interrupted before a completed receipt; inspect current state and recorded actions"
-		if err := save(false); err != nil {
-			return report, err
-		}
-		// Apply through the ordinary tool boundary: mutation fences, recorded
-		// writes, immutable receipts and compensation have one owner.
-		var applied ToolResponse
-		if err := withoutResponderLocks(loop, "apply", true, func() {
-			applied = loop.Handle(ctx, ToolRequest{Command: "apply", PlanIDs: []string{planResponse.PlanID}, stage: true})
-		}); err != nil {
-			return report, err
-		}
-		attempt.Error = applied.Error
-		for _, application := range loop.applicationsLog {
-			if len(application.PlanIDs) != 1 || application.PlanIDs[0] != planResponse.PlanID {
-				continue
-			}
-			receipt, err := recordedPlanContract(application)
-			if err != nil {
-				return report, err
-			}
-			attempt.ApplyReceipt = receipt
-		}
-		// Pending rollouts still get one fresh diagnosis/detector observation.
-		if applied.RolloutPending != nil {
-			loop.verify(ctx, []selectedPlan{loop.plans[planResponse.PlanID]}, &applied)
-		}
-		updateStageFindings(state, applied)
-		for _, run := range applied.ProgramRuns {
-			if run.ProgramID == match.PlaybookId && run.Bindings.Equal(bindings) {
-				attempt.PostApplyDiagnose = programRunContract(run)
-				break
-			}
-		}
-		// Scoped executor verification and the bound post-write diagnosis are
-		// newer evidence than a retained opening incident finding. An incident
-		// detector may not be installed in this loop's health-only registry.
-		clearVerifiedStageTargets(state, attempt, match.ExplainedFindingFingerprints, applied)
-		recordStageFindingProgress(attempt, match.ExplainedFindingFingerprints, state.Findings)
-		switch {
-		case attempt.ApplyReceipt.GetRolloutPending() != nil:
-			attempt.Result = "rollout_pending_at_handoff"
-		case !attempt.ApplyReceipt.GetApplied() || attempt.ApplyReceipt.GetRolledBack() || len(attempt.ApplyReceipt.GetActionsApplied()) < len(attempt.ApplyReceipt.GetPlan().GetActions()):
-			attempt.Result = "apply_error"
-		case applied.Error != "":
-			attempt.Result = "rollout_failed"
-		case attempt.PostApplyDiagnose.GetVerdict().GetResult() == contracts.Verdict_RESULT_NO_MATCH && len(attempt.RemainingFindingFingerprints) == 0:
-			attempt.Result = "applied_cleared"
-		default:
-			attempt.Result = "applied_still_matching"
-		}
-		if err := save(false); err != nil {
-			return report, err
-		}
+		ready = append(ready, stageReady{match: match, attempt: attempt, bindings: bindings, planID: planResponse.PlanID})
+	}
+	if err := stage.applyMatched(ctx, loop, state, ready, remaining, save); err != nil {
+		return report, err
 	}
 	// Once all opening faults have verified repairs, let the remaining health
 	// detectors' own windows roll over before handoff.
-	stage.awaitRepairedHealth(ctx, loop, state, report)
+	stage.awaitRepairedHealth(ctx, loop, state, report, remaining())
 	if err := ctx.Err(); err != nil {
 		return report, err
 	}
@@ -525,8 +483,8 @@ func clearVerifiedStageTargets(state *IncidentState, attempt *contracts.StageMit
 // require responder investigation immediately. The wait follows each remaining
 // detector's clearing horizon (rolling window and cadence), bounded by the
 // declared ceiling. Waiting never grants closure.
-func (stage *DeterministicResponseStage) awaitRepairedHealth(ctx context.Context, loop *ResponderLoop, state *IncidentState, report *contracts.StageReport) {
-	if len(state.Findings) == 0 || len(report.Mitigations) == 0 {
+func (stage *DeterministicResponseStage) awaitRepairedHealth(ctx context.Context, loop *ResponderLoop, state *IncidentState, report *contracts.StageReport, left time.Duration) {
+	if len(state.Findings) == 0 || len(report.Mitigations) == 0 || left <= 0 {
 		return
 	}
 	for _, attempt := range report.Mitigations {
@@ -561,9 +519,9 @@ func (stage *DeterministicResponseStage) awaitRepairedHealth(ctx context.Context
 	for _, detector := range loop.Detectors {
 		horizons[detector.Spec().ID] = sdk.ClearingHorizon(detector, view)
 	}
-	ceiling := stage.ObservationCeiling
-	if ceiling <= 0 || ceiling > DefaultStageObservationCeiling {
-		ceiling = DefaultStageObservationCeiling
+	ceiling := left
+	if stage.ObservationCeiling > 0 && stage.ObservationCeiling < ceiling {
+		ceiling = stage.ObservationCeiling
 	}
 	interval := stage.ObservationInterval
 	if interval <= 0 {
@@ -637,4 +595,123 @@ func (l *ResponderLoop) locked(fn func()) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	fn()
+}
+
+// stageReady is one matched, planned binding waiting for the stage's apply.
+type stageReady struct {
+	match    *contracts.PlaybookMatch
+	attempt  *contracts.StageMitigation
+	bindings program.Bindings
+	planID   string
+}
+
+// applyMatched sends every planned binding through one apply and one rollout
+// wait, bounded by what is left of the stage budget. The application receipt
+// is the whole application; each attempt keeps its own plan, action range,
+// diagnosis and result.
+func (stage *DeterministicResponseStage) applyMatched(ctx context.Context, loop *ResponderLoop, state *IncidentState, ready []stageReady, remaining func() time.Duration, save func(bool) error) error {
+	if len(ready) == 0 {
+		return nil
+	}
+	if remaining() <= 0 {
+		for _, item := range ready {
+			item.attempt.Result, item.attempt.SkipReason = "skipped", "stage_budget"
+			recordStageFindingProgress(item.attempt, item.match.ExplainedFindingFingerprints, state.Findings)
+		}
+		return save(false)
+	}
+	planIDs := make([]string, 0, len(ready))
+	selected := make([]selectedPlan, 0, len(ready))
+	offset := 0
+	for _, item := range ready {
+		plan := loop.plans[item.planID]
+		count := len(plan.plan.Actions)
+		item.attempt.PlanId = item.planID
+		item.attempt.PlanActionStart, item.attempt.PlanActionCount = int32(offset), int32(count)
+		offset += count
+		// Persist intent before mutation. If interrupted, a later attempt hands this
+		// uncertainty to the agent instead of silently repeating a possible write.
+		item.attempt.Result = "apply_error"
+		item.attempt.Error = "application interrupted before a completed receipt; inspect current state and recorded actions"
+		planIDs = append(planIDs, item.planID)
+		selected = append(selected, plan)
+	}
+	if err := save(false); err != nil {
+		return err
+	}
+	loop.Executor.RolloutTimeout = remaining()
+	if stage.RolloutTimeout > 0 && stage.RolloutTimeout < loop.Executor.RolloutTimeout {
+		loop.Executor.RolloutTimeout = stage.RolloutTimeout
+	}
+	// Apply through the ordinary tool boundary: mutation fences, recorded
+	// writes, immutable receipts and compensation have one owner.
+	var applied ToolResponse
+	if err := withoutResponderLocks(loop, "apply", true, func() {
+		applied = loop.Handle(ctx, ToolRequest{Command: "apply", PlanIDs: planIDs, stage: true})
+	}); err != nil {
+		return err
+	}
+	var receipt *contracts.PlanApplication
+	for _, application := range loop.applicationsLog {
+		if len(application.PlanIDs) == len(planIDs) && application.PlanIDs[0] == planIDs[0] {
+			var err error
+			if receipt, err = recordedPlanContract(application); err != nil {
+				return err
+			}
+		}
+	}
+	// Pending rollouts still get one fresh diagnosis/detector observation.
+	if applied.RolloutPending != nil {
+		loop.verify(ctx, selected, &applied)
+	}
+	updateStageFindings(state, applied)
+	for _, item := range ready {
+		attempt := item.attempt
+		attempt.Error = applied.Error
+		attempt.ApplyReceipt = receipt
+		for _, run := range applied.ProgramRuns {
+			if run.ProgramID == item.match.PlaybookId && run.Bindings.Equal(item.bindings) {
+				attempt.PostApplyDiagnose = programRunContract(run)
+				break
+			}
+		}
+		// Scoped executor verification and the bound post-write diagnosis are
+		// newer evidence than a retained opening incident finding. An incident
+		// detector may not be installed in this loop's health-only registry.
+		clearVerifiedStageTargets(state, attempt, item.match.ExplainedFindingFingerprints, applied)
+		recordStageFindingProgress(attempt, item.match.ExplainedFindingFingerprints, state.Findings)
+		switch {
+		case attempt.ApplyReceipt.GetRolloutPending() != nil:
+			attempt.Result = "rollout_pending_at_handoff"
+		case !attempt.ApplyReceipt.GetApplied() || attempt.ApplyReceipt.GetRolledBack() || len(attempt.ApplyReceipt.GetActionsApplied()) < int(attempt.PlanActionStart+attempt.PlanActionCount):
+			attempt.Result = "apply_error"
+		case applied.Error != "":
+			attempt.Result = "rollout_failed"
+		case attempt.PostApplyDiagnose.GetVerdict().GetResult() == contracts.Verdict_RESULT_NO_MATCH && len(attempt.RemainingFindingFingerprints) == 0:
+			attempt.Result = "applied_cleared"
+		default:
+			attempt.Result = "applied_still_matching"
+		}
+	}
+	return save(false)
+}
+
+// attemptApplication narrows a shared stage application to one attempt's
+// actions, so the repair resources it reports belong to that binding alone.
+func attemptApplication(application RecordedPlanApplication, attempt *contracts.StageMitigation) RecordedPlanApplication {
+	count := int(attempt.GetPlanActionCount())
+	if count == 0 {
+		return application
+	}
+	start := int(attempt.GetPlanActionStart())
+	window := func(length int) (int, int) { return min(start, length), min(start+count, length) }
+	result := application.Result
+	low, high := window(len(result.Plan.Actions))
+	result.Plan.Actions = result.Plan.Actions[low:high]
+	low, high = window(len(result.ActionsApplied))
+	result.ActionsApplied = result.ActionsApplied[low:high]
+	low, high = window(len(result.ActionReports))
+	result.ActionReports = result.ActionReports[low:high]
+	application.Result = result
+	return application
 }

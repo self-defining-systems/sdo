@@ -24,10 +24,12 @@ const DefaultMaxResponseLoops = 10
 const maxRecordedToolResponse = 2048
 
 // maxRecordedApplyResponse bounds an apply record that lists the runs of the
-// applied plans. Each incident records at most MaxBatches (5) applies, so they
-// cost at most 5 x 8 KiB = 40 KiB; the other tool calls are 2 KiB each, well
-// under 100 of them (200 KiB). Together they stay far inside the 768 KiB state
-// ConfigMap budget. A compact run is about 250 B, so 8 KiB holds about 30 runs,
+// applied plans. The agent records at most MaxBatches (5) applies; the automatic
+// stage adds one apply per pass over all its matched plans, and a pass never
+// retries a binding it already attempted, so a restart adds at most one more.
+// That is a handful of applies at 8 KiB (tens of KiB); the other tool calls are
+// 2 KiB each, well under 100 of them (200 KiB). Together they stay far inside
+// the 768 KiB state ConfigMap budget. A compact run is about 250 B, so 8 KiB holds about 30 runs,
 // several per applied plan.
 const maxRecordedApplyResponse = 8192
 

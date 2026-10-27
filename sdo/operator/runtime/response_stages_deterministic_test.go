@@ -14,20 +14,30 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/kubernetes"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
+	"strings"
 )
 
 // observedDeploymentRollout plays the deployment controller for a client-go
 // fake, which never populates workload status. A completed wait records the
 // observed rollout in the cluster, so the executor and the controller's
 // independent closure check see the same rollout state.
-type observedDeploymentRollout struct{ client kubernetes.Interface }
+type observedDeploymentRollout struct {
+	client kubernetes.Interface
+	waits  *int
+}
 
 func (r observedDeploymentRollout) Wait(ctx context.Context, refs []sdk.ObjectRef) error {
+	if r.waits != nil {
+		*r.waits++
+	}
 	for _, ref := range refs {
 		if ref.Kind != "Deployment" {
 			continue
@@ -50,7 +60,20 @@ func (r observedDeploymentRollout) Wait(ctx context.Context, refs []sdk.ObjectRe
 
 func pipelineTestLoop(t *testing.T, uncovered bool) (*ResponderLoop, *IncidentState) {
 	t.Helper()
+	return pipelineTestLoopWithServices(t, uncovered)
+}
+
+// pipelineTestLoopWithServices adds drifted Services next to the fixture's
+// "api" Service, so one program matches several bindings.
+func pipelineTestLoopWithServices(t *testing.T, uncovered bool, extraServices ...string) (*ResponderLoop, *IncidentState) {
+	t.Helper()
 	client := fastloopClient("good:v1")
+	for _, name := range extraServices {
+		extra := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "app", UID: types.UID("synthetic-" + name), ResourceVersion: "1"}, Spec: corev1.ServiceSpec{Selector: map[string]string{"app": name}, Ports: []corev1.ServicePort{{Port: 80, TargetPort: intstr.FromInt32(9999)}}}}
+		if _, err := client.CoreV1().Services("app").Create(context.Background(), extra, metav1.CreateOptions{}); err != nil {
+			t.Fatal(err)
+		}
+	}
 	service, _ := client.CoreV1().Services("app").Get(context.Background(), "api", metav1.GetOptions{})
 	service.UID = "synthetic-service"
 	service.ResourceVersion = "1"
@@ -126,7 +149,7 @@ func TestDeterministicResponseStageClearsBothFaultsWithoutAgent(t *testing.T) {
 			t.Fatalf("attempt: %v", attempt)
 		}
 	}
-	if len(loop.PlanApplications()) != 2 {
+	if len(loop.PlanApplications()) != 1 {
 		t.Fatalf("real executor not used: %v", loop.PlanApplications())
 	}
 }
@@ -135,12 +158,12 @@ func TestDeterministicResponseStageClearsBothFaultsWithoutAgent(t *testing.T) {
 // matched plans the stage applies, the agent starts with its full budget.
 func TestDeterministicResponseStageDoesNotSpendAgentRounds(t *testing.T) {
 	loop, state := pipelineTestLoop(t, false)
-	if _, err := (&DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return loop }}).Run(context.Background(), state); err != nil {
+	report, err := (&DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return loop }}).Run(context.Background(), state)
+	if err != nil {
 		t.Fatal(err)
 	}
-	stageApplications := loop.PlanApplications()
-	if len(stageApplications) < 2 {
-		t.Fatalf("fixture must apply several matched plans in the stage: %v", stageApplications)
+	if len(report.Mitigations) < 2 || len(loop.PlanApplications()) == 0 {
+		t.Fatalf("fixture must apply several matched plans in the stage: %v", report)
 	}
 	if loop.LoopsUsed() != 0 || loop.Exhausted() {
 		t.Fatalf("stage applies spent the agent's rounds: used=%d of %d", loop.LoopsUsed(), loop.batchLimit())
@@ -152,7 +175,8 @@ func TestDeterministicResponseStageDoesNotSpendAgentRounds(t *testing.T) {
 }
 
 // Application IDs stay unique across the stage and the agent, including after a
-// restart that restores the persisted state.
+// restart that restores the persisted state, and the agent still gets exactly
+// its five rounds.
 func TestStageAndAgentApplicationsShareOneIDSequence(t *testing.T) {
 	loop, state := pipelineTestLoop(t, false)
 	var saved []byte
@@ -160,12 +184,106 @@ func TestStageAndAgentApplicationsShareOneIDSequence(t *testing.T) {
 	if _, err := (&DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return loop }}).Run(context.Background(), state); err != nil {
 		t.Fatal(err)
 	}
+	used := map[string]bool{}
+	for _, application := range loop.PlanApplications() {
+		used[application.ID] = true
+	}
 	restored := NewResponderLoop(loop.Request, loop.Programs, loop.Provider, loop.Detectors, loop.Executor, 5)
+	restored.ReadView = loop.ReadView
 	if err := restored.restoreToolSnapshot(saved); err != nil {
 		t.Fatal(err)
 	}
 	if restored.LoopsUsed() != 0 || restored.applySeq != loop.applySeq {
 		t.Fatalf("restored accounting differs: used=%d seq=%d want seq=%d", restored.LoopsUsed(), restored.applySeq, loop.applySeq)
+	}
+	service := program.Bindings{Objects: map[string]sdk.ObjectRef{"service": {APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}}}
+	for round := 1; round <= 6; round++ {
+		plan := restored.Handle(context.Background(), ToolRequest{Command: "plan", ProgramID: "service-targetport-mismatch", Bindings: service})
+		if plan.Error != "" {
+			t.Fatalf("round %d plan: %s", round, plan.Error)
+		}
+		applied := restored.Handle(context.Background(), ToolRequest{Command: "apply", PlanIDs: []string{plan.PlanID}})
+		if round == 6 {
+			if applied.Error != "response loop budget exhausted" {
+				t.Fatalf("the sixth agent round must be refused: %+v", applied)
+			}
+			break
+		}
+		if applied.Error != "" || applied.ApplicationID == "" || used[applied.ApplicationID] || applied.MitigationRoundsUsed != round {
+			t.Fatalf("round %d reused an application ID or miscounted: %+v (used %v)", round, applied, used)
+		}
+		used[applied.ApplicationID] = true
+	}
+	agentApplies := 0
+	for _, call := range restored.ToolCalls() {
+		if call.Command == "apply" && call.Error == "" && !strings.Contains(call.RequestJSON, `"stage":true`) {
+			agentApplies++
+		}
+	}
+	if agentApplies != 5 {
+		t.Fatalf("agent apply records: %d", agentApplies)
+	}
+	for _, call := range loop.ToolCalls() {
+		if call.Command == "apply" && !strings.Contains(call.RequestJSON, `"stage":true`) {
+			t.Fatalf("the stage's apply record lost its stage marker: %s", call.RequestJSON)
+		}
+	}
+	var forged ToolRequest
+	if err := json.Unmarshal([]byte(`{"command":"apply","plan_ids":["x"],"stage":true}`), &forged); err != nil || forged.stage {
+		t.Fatalf("a tool call must not be able to set the stage marker: %+v, %v", forged, err)
+	}
+}
+
+// The stage sends all its matched plans in one apply with one rollout wait:
+// one round of stage work whatever the number of bindings, each binding's plan,
+// receipt range and result attributable, and the agent still has all 5 rounds.
+func TestDeterministicResponseStageAppliesMatchedBindingsOnce(t *testing.T) {
+	loop, state := pipelineTestLoopWithServices(t, false, "api2")
+	waits := 0
+	rollouts := loop.Executor.Rollouts.(observedDeploymentRollout)
+	rollouts.waits = &waits
+	loop.Executor.Rollouts = rollouts
+	report, err := (&DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return loop }}).Run(context.Background(), state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	applications := loop.PlanApplications()
+	if len(report.Mitigations) != 3 || len(applications) != 1 || waits != 1 {
+		t.Fatalf("want 3 attempts, 1 application, 1 rollout wait; got %d, %d, %d: %v", len(report.Mitigations), len(applications), waits, report)
+	}
+	if loop.LoopsUsed() != 0 || loop.Exhausted() {
+		t.Fatalf("agent rounds spent: %d", loop.LoopsUsed())
+	}
+	if status := loop.Handle(context.Background(), ToolRequest{Command: "status"}); status.MitigationRoundsUsed != 0 || status.MitigationRoundsAllowed != 5 {
+		t.Fatalf("agent budget at hand-off: %+v", status)
+	}
+	planIDs, starts := map[string]bool{}, map[int32]bool{}
+	for _, attempt := range report.Mitigations {
+		receipt := attempt.ApplyReceipt
+		if attempt.Result != "applied_cleared" || receipt.GetApplicationId() != applications[0].ID || attempt.PlanId == "" || planIDs[attempt.PlanId] || attempt.PlanActionCount != 1 || starts[attempt.PlanActionStart] {
+			t.Fatalf("attempt not attributable: %v", attempt)
+		}
+		planIDs[attempt.PlanId], starts[attempt.PlanActionStart] = true, true
+		ref, err := planActionRef(planActionState(receipt.GetPlan().GetActions()[attempt.PlanActionStart]))
+		if err != nil {
+			t.Fatal(err)
+		}
+		bound := programBindingsState(attempt.Bindings)
+		if want := bound.Objects["service"]; want.Name != "" && ref != want {
+			t.Fatalf("attempt %s owns action on %v, bound to %v", attempt.PlanId, ref, want)
+		}
+		if want := bound.Objects["deployment"]; want.Name != "" && ref != want {
+			t.Fatalf("attempt %s owns action on %v, bound to %v", attempt.PlanId, ref, want)
+		}
+	}
+	// Real producer into the real consumer: the outcome derivation.
+	state.PriorStages = []*contracts.StageReport{report}
+	result, err := responsePipelineResult(state, time.Now(), time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.PlanApplications) != 1 || len(result.PlanApplications[0].PlanIDs) != 3 || len(result.AppliedPlaybooks) != 3 || len(result.ConfirmedRootCauses) != 3 {
+		t.Fatalf("outcome lost a binding: applications=%v playbooks=%v causes=%v", result.PlanApplications, result.AppliedPlaybooks, result.ConfirmedRootCauses)
 	}
 }
 
@@ -434,7 +552,7 @@ func TestDeterministicResponseStageRolloutResultsKeepWritesAndCapOwnWait(t *test
 				t.Fatal(err)
 			}
 			attempt := report.Mitigations[0]
-			if attempt.Result != want || !attempt.ApplyReceipt.Applied || attempt.ApplyReceipt.RolledBack || attempt.PostApplyDiagnose == nil || rollout.observed <= 0 || rollout.observed > DefaultStageRolloutTimeout {
+			if attempt.Result != want || !attempt.ApplyReceipt.Applied || attempt.ApplyReceipt.RolledBack || attempt.PostApplyDiagnose == nil || rollout.observed <= 0 || rollout.observed > DefaultStageBudget {
 				t.Fatalf("stage rollout result %s: %v, wait=%s", want, report, rollout.observed)
 			}
 		})
