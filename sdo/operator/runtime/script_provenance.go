@@ -135,6 +135,8 @@ func mitigationPlanningReason(err error, fallback string) string {
 // Stage reports already persist terminal attempts. Restore the planning refusal
 // before diagnosis prepares any plans after controller/worker restart.
 func (l *ResponderLoop) restoreScriptRefusals(report *contracts.StageReport) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	for _, attempt := range report.GetMitigations() {
 		if attempt.GetSkipReason() != "script_unprovenanced" || attempt.GetProgramRevision() == "" {
 			continue
