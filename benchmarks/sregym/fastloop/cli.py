@@ -420,6 +420,12 @@ def _up(args: argparse.Namespace) -> int:
             "description": str(app["descriptions"]),
         }
     )
+    from benchmarks.sregym.fastloop.lane_installability import capture_topology
+
+    environment.lane_topology = capture_topology(
+        environment.kubeconfig,
+        network_policy=environment.worker_env.get("SREGYM_KIND_REQUIRE_NETWORK_POLICY") == "1",
+    )
     cluster = KubectlApplicationCluster(environment.kubeconfig)
     namespaces = application_namespaces(environment.baseline_path, environment.kubeconfig, environment.namespace)
     if deployed.get("deployed") is True:
@@ -740,6 +746,56 @@ def _run(args: argparse.Namespace) -> int:
     if args.sweep_service and (args.stream is None or args.agent != "sdo"):
         raise SystemExit("--sweep-service requires an SDO --stream run")
     environment = FastloopEnvironment.load(args.run_dir.resolve())
+    run_id = args.run_id or f"{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}-{args.agent}"
+    results_dir = environment.run_dir / "results" / run_id
+    stream_config = load_stream_config(args.stream) if args.stream else None
+    stream: tuple[tuple[str, ...], ...] = stream_config.incidents if stream_config else ()
+    grading_mode = args.diagnosis_grading or (stream_config.diagnosis_grading if stream_config else "off")
+    judge_model_id = args.judge_model_id or (stream_config.judge_model_id if stream_config else "codex-gpt-6-luna")
+    from benchmarks.sregym.fastloop.grading import SregymDiagnosisGrader
+
+    grader = SregymDiagnosisGrader(environment.sregym_dir, judge_model_id) if grading_mode != "off" else None
+    problems = tuple(args.problem or [environment.deploy_problem]) if not stream else tuple(ids[0] for ids in stream)
+    from benchmarks.sregym.fastloop.fault_tracker import describe_sregym_problems, stream_faults
+    from benchmarks.sregym.fastloop.lane_installability import require_runnable
+    from benchmarks.sregym.faults.description import check_composites, validate_suite
+
+    # Discovery and capability checks must finish before a worker can deploy or launch an agent.
+    description_started = time.monotonic()
+    selected_ids = tuple(dict.fromkeys(problem for ids in (stream or tuple((p,) for p in problems)) for problem in ids))
+    descriptions = (
+        describe_sregym_problems(selected_ids, sregym_dir=environment.sregym_dir, app_source_dir=environment.workspace)
+        if environment.app != "toy"
+        else {}
+    )
+    check_composites(descriptions)
+    require_runnable(descriptions, environment, report_path=results_dir / "lane-plan.json")
+    capability_mode = stream_config.capability_mode if stream_config else "strict"
+    capability_evidence = validate_suite(
+        descriptions if args.agent == "sdo" else {},
+        require_tracking=args.require_fault_tracking,
+        capability_mode=capability_mode,
+    )
+    args.permissive_responder = bool(stream_config and stream_config.permissive_responder)
+    args.responder_namespaces = stream_config.responder_namespaces if stream_config else ()
+    if args.agent != "sdo" and args.require_fault_tracking:
+        # Capability scope is specific to SDO; tracking is common to both arms.
+        unsupported = [key for key, item in descriptions.items() if not item.tracking_supported]
+        if unsupported:
+            raise ValueError(f"per-fault tracking unsupported for {unsupported}")
+    catalog = {key: item.ordered_faults() for key, item in descriptions.items()}
+    incidents: tuple[tuple[str, ...], ...] = stream or tuple((problem,) for problem in problems)
+    faults_by_incident: dict[str, tuple[FaultSpec, ...]] = {}
+    for ids in incidents:
+        first_id = next(iter(ids))
+        if len(ids) > 1 or (descriptions and descriptions[first_id].composite):
+            faults_by_incident["+".join(ids)] = stream_faults(ids, catalog=catalog)
+    if args.require_fault_tracking:
+        for key, faults in faults_by_incident.items():
+            if len({fault.name for fault in faults}) != len(faults):
+                raise ValueError(f"{key}: per-fault tracking has duplicate probe identities")
+    registered_composites = bool(faults_by_incident)
+    description_seconds = time.monotonic() - description_started
     if environment.image_delivery == "kind-load-fallback":
         from benchmarks.sregym.fastloop.image_delivery import warn_fallback
 
@@ -777,58 +833,6 @@ def _run(args: argparse.Namespace) -> int:
         os.environ["SDO_DEV_MOUNT"] = "1"
         os.environ["SDO_OPERATOR_BIN"] = str(environment.dev_mount / ".fastloop/sdo-operator")
     os.environ["KUBECONFIG"] = str(environment.kubeconfig)
-    run_id = args.run_id or f"{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}-{args.agent}"
-    results_dir = environment.run_dir / "results" / run_id
-    stream_config = load_stream_config(args.stream) if args.stream else None
-    stream: tuple[tuple[str, ...], ...] = stream_config.incidents if stream_config else ()
-    grading_mode = args.diagnosis_grading or (stream_config.diagnosis_grading if stream_config else "off")
-    judge_model_id = args.judge_model_id or (stream_config.judge_model_id if stream_config else "codex-gpt-6-luna")
-    from benchmarks.sregym.fastloop.grading import SregymDiagnosisGrader
-
-    grader = SregymDiagnosisGrader(environment.sregym_dir, judge_model_id) if grading_mode != "off" else None
-    problems = tuple(args.problem or [environment.deploy_problem]) if not stream else tuple(ids[0] for ids in stream)
-    from benchmarks.sregym.fastloop.fault_tracker import describe_sregym_problems, stream_faults
-    from benchmarks.sregym.fastloop.lane_guard import LaneGuard, assert_faults_installable
-    from benchmarks.sregym.faults.description import check_composites, validate_suite
-
-    # Discovery and capability checks must finish before a worker can deploy or launch an agent.
-    description_started = time.monotonic()
-    selected_ids = tuple(dict.fromkeys(problem for ids in (stream or tuple((p,) for p in problems)) for problem in ids))
-    descriptions = (
-        describe_sregym_problems(selected_ids, sregym_dir=environment.sregym_dir, app_source_dir=environment.workspace)
-        if environment.app != "toy"
-        else {}
-    )
-    check_composites(descriptions)
-    assert_faults_installable(
-        descriptions, environment.sregym_dir, LaneGuard(environment.cluster, environment.kubeconfig, "row-start")
-    )
-    capability_mode = stream_config.capability_mode if stream_config else "strict"
-    capability_evidence = validate_suite(
-        descriptions if args.agent == "sdo" else {},
-        require_tracking=args.require_fault_tracking,
-        capability_mode=capability_mode,
-    )
-    args.permissive_responder = bool(stream_config and stream_config.permissive_responder)
-    args.responder_namespaces = stream_config.responder_namespaces if stream_config else ()
-    if args.agent != "sdo" and args.require_fault_tracking:
-        # Capability scope is specific to SDO; tracking is common to both arms.
-        unsupported = [key for key, item in descriptions.items() if not item.tracking_supported]
-        if unsupported:
-            raise ValueError(f"per-fault tracking unsupported for {unsupported}")
-    catalog = {key: item.ordered_faults() for key, item in descriptions.items()}
-    incidents: tuple[tuple[str, ...], ...] = stream or tuple((problem,) for problem in problems)
-    faults_by_incident: dict[str, tuple[FaultSpec, ...]] = {}
-    for ids in incidents:
-        first_id = next(iter(ids))
-        if len(ids) > 1 or (descriptions and descriptions[first_id].composite):
-            faults_by_incident["+".join(ids)] = stream_faults(ids, catalog=catalog)
-    if args.require_fault_tracking:
-        for key, faults in faults_by_incident.items():
-            if len({fault.name for fault in faults}) != len(faults):
-                raise ValueError(f"{key}: per-fault tracking has duplicate probe identities")
-    registered_composites = bool(faults_by_incident)
-    description_seconds = time.monotonic() - description_started
     results_dir.mkdir(parents=True, exist_ok=True)
     (results_dir / "fault_descriptions.json").write_text(
         json.dumps({key: item.model_dump(mode="json") for key, item in descriptions.items()}, indent=2) + "\n",
@@ -1353,7 +1357,13 @@ def _parallel_attach(args: argparse.Namespace) -> int:
 def _check_plan(args: argparse.Namespace) -> int:
     from benchmarks.sregym.fastloop.probe_coverage import check_plan
 
-    report = check_plan(args.plan, sregym_dir=args.sregym_dir)
+    report = check_plan(
+        args.plan,
+        sregym_dir=args.sregym_dir,
+        environment=FastloopEnvironment.load(args.lane_environment)
+        if getattr(args, "lane_environment", None)
+        else None,
+    )
     print(json.dumps({"tracking_supported": True, **report}))
     return 0
 
@@ -1387,6 +1397,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     check_plan.add_argument("--plan", type=Path, required=True)
     check_plan.add_argument("--sregym-dir", type=Path, default=DEFAULT_SREGYM_DIR)
+    check_plan.add_argument("--lane-environment", type=Path, help="filter against this saved lane before setup")
     check_plan.set_defaults(handler=_check_plan)
 
     up = commands.add_parser("up", help="create or reuse the cluster and deploy the application once")

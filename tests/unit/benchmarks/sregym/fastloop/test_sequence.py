@@ -254,3 +254,113 @@ def test_row_start_tier2_does_not_gate_finished_rows_on_recovery(plan: SequenceP
         finished = json.loads((plan.journal_dir / f"{index:03d}" / "finished.json").read_text())
         assert finished["oracle"]["success"] is oracle_success
     assert (plan.journal_dir / "complete.json").is_file()
+
+
+def test_pre_injection_observation_failure_is_retryable_not_a_hold(plan):
+    from benchmarks.sregym.fastloop.records import NotInjected
+    from benchmarks.sregym.fastloop.sequence import NeverInjectedRetry, _terminal
+
+    path = plan.environment_dir / "results" / f"{plan.run_id}-000" / "incidents.jsonl"
+    append_record(
+        path,
+        IncidentRecord(
+            run_id=path.parent.name,
+            index=0,
+            problem_id="problem",
+            agent="sdo",
+            model="gpt-6-luna",
+            injection=NotInjected(stage="pre_injection"),
+            infra_error="never_injected_retry",
+            error="ObservationUnavailable: temporary",
+        ),
+    )
+    with pytest.raises(NeverInjectedRetry, match="never_injected_retry"):
+        _terminal(plan, 0, path)
+
+
+def test_sequence_restart_retries_only_proven_never_injected_attempt(plan):
+    from benchmarks.sregym.fastloop.loop import LoopConfig, run_incidents
+    from benchmarks.sregym.fastloop.runtime_observation import ObservationUnavailable
+    from benchmarks.sregym.fastloop.sequence import NeverInjectedRetry
+
+    calls = []
+
+    class Agent:
+        name = "sdo"
+        model = "gpt-6-luna"
+
+        def resolve(self, *_args):
+            raise ObservationUnavailable("transient baseline")
+
+        def close(self):
+            pass
+
+    class Driver:
+        def inject(self, *_args):
+            pytest.fail("injected during unavailable baseline")
+
+        def recover(self):
+            pytest.fail("recovered a never-injected row")
+
+    def unavailable(p, index, path):
+        calls.append(path)
+        run_incidents(
+            Agent(),
+            Driver(),
+            LoopConfig(
+                run_id=path.parent.name,
+                problems=(p.rows[index].problem_id,),
+                incidents=1,
+                results_path=path,
+                slot_offset=index,
+            ),
+        )
+
+    with pytest.raises(NeverInjectedRetry):
+        run_sequence(plan, execute=unavailable)
+    assert json.loads((plan.journal_dir / "000/never-injected-0.json").read_text())["status"] == "never_injected_retry"
+
+    def execute(p, index, path):
+        calls.append(path)
+        finish(p, index, path)
+        # Synthetic helper predates per-attempt identities.
+        if "retry" in path.parent.name:
+            rows = [json.loads(line) for line in path.read_text().splitlines()]
+            rows[0]["run_id"] = path.parent.name
+            path.write_text(json.dumps(rows[0]) + "\n")
+
+    run_sequence(plan, execute=execute)
+    assert calls[0] != calls[1]
+    assert calls[0].exists()  # Preserve failed-attempt evidence.
+    assert "retry-1" in str(calls[1])
+    assert (plan.journal_dir / "complete.json").exists()
+
+
+def test_interrupted_retry_attempt_still_holds_uncertain_work(plan):
+    from benchmarks.sregym.fastloop.records import NotInjected
+    from benchmarks.sregym.fastloop.sequence import NeverInjectedRetry
+
+    def unavailable(p, index, path):
+        append_record(
+            path,
+            IncidentRecord(
+                run_id=path.parent.name,
+                index=index,
+                problem_id="problem",
+                agent="sdo",
+                model="gpt-6-luna",
+                injection=NotInjected(stage="pre_injection"),
+                infra_error="never_injected_retry",
+            ),
+        )
+
+    with pytest.raises(NeverInjectedRetry):
+        run_sequence(plan, execute=unavailable)
+
+    def interrupted(*_args):
+        raise KeyboardInterrupt
+
+    with pytest.raises(KeyboardInterrupt):
+        run_sequence(plan, execute=interrupted)
+    with pytest.raises(RuntimeError, match="incomplete.*never reinject"):
+        run_sequence(plan, execute=lambda *_args: pytest.fail("reinjected uncertain retry attempt"))

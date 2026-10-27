@@ -174,6 +174,11 @@ def test_run_checks_sdo_credentials_before_worker_setup(tmp_path: Path, monkeypa
             returncode=1, stderr='Error from server (NotFound): secrets "sdo-agent-credentials" not found'
         )
 
+    from benchmarks.sregym.fastloop import fault_tracker
+
+    # Injector admission precedes credential preflight; this test isolates the
+    # credential contract from external harness discovery.
+    monkeypatch.setattr(fault_tracker, "describe_sregym_problems", lambda *_a, **_kw: {})
     monkeypatch.setattr(cli, "kubectl", missing_secret)
     monkeypatch.setattr(cli, "_worker", lambda _environment: pytest.fail("worker started before credential preflight"))
 

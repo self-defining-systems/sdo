@@ -11,9 +11,11 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+import time
+from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, TypeVar
 from urllib.parse import quote
 
 from benchmarks.sregym.adapter import WaitKind, wait_for
@@ -80,6 +82,58 @@ _NAME = re.compile(r"[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?\Z")
 
 class ObservationUnavailable(ValueError):
     """A private observation could not establish a result (no upstream payload)."""
+
+
+_T = TypeVar("_T")
+
+
+@dataclass(frozen=True)
+class _ObservationBudget:
+    deadline: float
+    monotonic: Callable[[], float]
+
+
+_BASELINE_BUDGET: ContextVar[_ObservationBudget | None] = ContextVar("baseline_observation_budget", default=None)
+
+
+def observation_timeout(default: float) -> float:
+    """Clamp each subprocess to the complete baseline capture's remaining time."""
+    budget = _BASELINE_BUDGET.get()
+    if budget is None:
+        return default
+    remaining = budget.deadline - budget.monotonic()
+    if remaining <= 0:
+        raise ObservationUnavailable("baseline observation deadline exhausted")
+    return min(default, remaining)
+
+
+def baseline_observation(
+    capture: Callable[[], _T],
+    *,
+    timeout_seconds: float = wait_for(WaitKind.BASELINE_OBSERVATION),
+    poll_seconds: float = wait_for(WaitKind.BASELINE_POLL),
+    monotonic: Callable[[], float] = time.monotonic,
+    sleep: Callable[[float], None] = time.sleep,
+) -> _T:
+    """Retry the complete capture, discarding partial pre-injection references."""
+    if not 0 < timeout_seconds <= wait_for(WaitKind.SLOW_COMMAND) or poll_seconds <= 0:
+        raise ValueError("baseline observation requires a positive budget <=120s and poll interval")
+    deadline = monotonic() + timeout_seconds
+    token = _BASELINE_BUDGET.set(_ObservationBudget(deadline, monotonic))
+    try:
+        while True:
+            try:
+                result = capture()
+                if monotonic() > deadline:
+                    raise ObservationUnavailable("baseline observation deadline exhausted")
+                return result
+            except (ObservationUnavailable, subprocess.TimeoutExpired):
+                remaining = deadline - monotonic()
+                if remaining <= 0:
+                    raise ObservationUnavailable("baseline observation unavailable; never_injected_retry") from None
+                sleep(min(poll_seconds, remaining))
+    finally:
+        _BASELINE_BUDGET.reset(token)
 
 
 def _mongo_program(source: str, database: str, collection: str) -> str:
@@ -157,7 +211,12 @@ class KubectlObservationTransport:
         result = None
         try:
             result = self.run(
-                command, input=stdin, capture_output=True, text=True, check=False, timeout=wait_for(WaitKind.PROBE)
+                command,
+                input=stdin,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=observation_timeout(wait_for(WaitKind.PROBE)),
             )
         except Exception:
             # Raise outside the handler: even __context__ must not retain a

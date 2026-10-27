@@ -71,6 +71,8 @@ class WaitKind(Enum):
     SAMPLE = "sample"
     SNAPSHOT_READ = "snapshot_read"
     PROBE = "probe"
+    BASELINE_OBSERVATION = "baseline_observation"
+    BASELINE_POLL = "baseline_poll"
     COMMAND = "command"
     MINUTE = "minute"
     SLOW_COMMAND = "slow_command"
@@ -92,6 +94,8 @@ _FIXED_SECONDS: dict[WaitKind, float] = {
     WaitKind.SNAPSHOT_READ: 15.0,
     WaitKind.POLL: 5.0,
     WaitKind.PROBE: 10.0,
+    WaitKind.BASELINE_OBSERVATION: 90.0,
+    WaitKind.BASELINE_POLL: 3.0,
     WaitKind.COMMAND: 30.0,
     WaitKind.MINUTE: 60.0,
     WaitKind.SLOW_COMMAND: 120.0,
