@@ -204,11 +204,15 @@ func TestQueuedReflectionDetectorChangeRestartsControllerBeforeWorkCloses(t *tes
 	// The relaunched controller still reports the work open until it records
 	// the rollout, then closes it.
 	restarted := newClosureRetryController(t, ClosureRetryPolicy{MaxAttempts: 3}, native, &now)
+	restarted.pendingClosure, restarted.closureState = nil, 0
 	if err := restarted.driveQueuedReflections(ctx, now); err != nil {
 		t.Fatal(err)
 	}
 	if ids := exportState(t, restarted).GetQueuedReflectionIncidentIds(); len(ids) != 1 {
 		t.Fatalf("restarted controller closed work before recording the rollout: %v", ids)
+	}
+	if exportState(t, restarted).GetBusyUntil() == nil {
+		t.Fatal("restarted controller is idle while the rollout it must record is pending")
 	}
 	if err := native.RecordControllerRollout(ControllerRolloutReceipt{Expectation: expectation, Success: true, BuildArtifact: "image", ControllerRevision: "later", ObservedDetectorFingerprint: "after", VerifiedAt: now}); err != nil {
 		t.Fatal(err)
@@ -220,6 +224,11 @@ func TestQueuedReflectionDetectorChangeRestartsControllerBeforeWorkCloses(t *tes
 	}
 	if ids := exportState(t, restarted).GetQueuedReflectionIncidentIds(); len(ids) != 0 || restarted.reflectionWorkOpen() {
 		t.Fatalf("recorded rollout still exported as open work: %v", ids)
+	}
+	// The eval waits on busy_until alone: once the restarted controller has
+	// recorded the rollout nothing it owns remains, so the bound must clear.
+	if got := exportState(t, restarted).GetBusyUntil(); got != nil {
+		t.Fatalf("recorded rollout left busy_until %v with no work running", got.AsTime())
 	}
 }
 

@@ -734,12 +734,6 @@ func (c *Controller) dispatchReady(ctx context.Context, now time.Time, snapshot 
 	}
 	request := c.incidentRequest(now, batch)
 	request.ObservationGeneration = observationGeneration(snapshot)
-	if c.config.CorpusSessionRoot != "" {
-		if err := c.bindIncidentHealthyBaseline(request.IncidentID); err != nil {
-			c.reportHealthyCaptureError(err)
-		}
-		c.captureOpenDetect(ctx, snapshot, request)
-	}
 	if c.Baseline != nil {
 		request.StateChanges = cloneStateChanges(c.Baseline.Changes(now))
 	}
@@ -771,6 +765,16 @@ func (c *Controller) dispatchReady(ctx context.Context, now time.Time, snapshot 
 		FindingKeys: append([]string(nil), c.incidentFindingKeys...), SurfacedPlaybooks: playbookIDs(request.SurfacedPlaybooks),
 	})
 	c.mu.Unlock()
+	// The batcher is drained, so the incident is open before any file I/O: an
+	// observer exporting state mid-capture reads the work, never an idle gap.
+	// The responder starts only after this step returns, so it still finds the
+	// capture in place.
+	if c.config.CorpusSessionRoot != "" {
+		if err := c.bindIncidentHealthyBaseline(request.IncidentID); err != nil {
+			c.reportHealthyCaptureError(err)
+		}
+		c.captureOpenDetect(ctx, snapshot, request)
+	}
 	return nil
 }
 
