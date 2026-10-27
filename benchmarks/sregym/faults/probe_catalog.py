@@ -142,6 +142,21 @@ CLASS_KINDS.update(
     }
 )
 
+# Faults whose state lives inside an application data store (database users and roles, cache ACLs,
+# broker topics), not in a Kubernetes object. Restoring objects does not undo them, and a PVC outlives a
+# redeploy, so a lane recreates the application namespace and its data before the next row.
+DATA_LEVEL_CLASSES = frozenset(
+    {
+        "MongoDBUserUnregistered",
+        "MongoDBRevokeAuth",
+        "ValkeyMemoryDisruption",
+        "ValkeyAuthDisruption",
+        "KafkaQueueProblems",
+        "KafkaPoisonPillHOLBlock",
+    }
+)
+DATA_LEVEL_KINDS = frozenset(CLASS_KINDS[name] for name in DATA_LEVEL_CLASSES)
+
 # Public problem attributes needed to name observable API objects. Never inspect
 # injection backups, diagnosis text, oracle objects or credential values.
 PROBE_ATTRIBUTES = {

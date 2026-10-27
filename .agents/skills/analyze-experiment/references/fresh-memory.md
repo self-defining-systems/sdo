@@ -7,7 +7,9 @@ Every non-toy SDO row starts with the tier-1 wipe (`fastloop/wipe.py`): `<app>-s
 its ConfigMaps, Jobs and checkpoints, harness leftover namespaces and cluster objects are removed, credentials
 are re-provisioned by the lane keeper's hook, and the accepted repository is reset to the row's planned commit.
 `wipe-receipt.json` in the results directory records `tier1_seconds`, `tier2_ran`, `tier2_seconds`,
-`tier2_trigger` (`unclean_attempt`, `previous_row_unrecovered`, `restore_invariant` or `pods_unhealthy`),
+`tier2_trigger` (`unclean_attempt`, `previous_row_unrecovered`, `previous_row_data_faults`, `restore_invariant` or
+`pods_unhealthy`), `previous_row_data_faults` (the previous row's injected faults whose state lives in app data,
+from the fault catalog's `DATA_LEVEL_CLASSES`; they recreate the app even when the row recovered),
 `tier2_reason`, `tier2_namespaces` (deleted with their PVCs before the redeploy) and `force_finalized`
 (`namespace/kind/name` of objects whose finalizers the wipe cleared so a Terminating namespace could finish). Toy lanes still stop the runtime and run
 `sdo-operator reset-control-state --control-namespace <app>-sdo` before install; it deletes only the three

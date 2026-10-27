@@ -32,7 +32,7 @@ from benchmarks.sregym.adapter import WaitKind, wait_for
 from benchmarks.sregym.fastloop.records import Injected, NotInjected
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Collection, Iterable, Sequence
+    from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 
     from benchmarks.sregym.fastloop.environment import FastloopEnvironment
 
@@ -289,6 +289,7 @@ def wipe_environment(
 class Tier2Trigger(StrEnum):
     UNCLEAN_ATTEMPT = "unclean_attempt"
     PREVIOUS_ROW_UNRECOVERED = "previous_row_unrecovered"
+    PREVIOUS_ROW_DATA_FAULTS = "previous_row_data_faults"
     RESTORE_INVARIANT = "restore_invariant"
     PODS_UNHEALTHY = "pods_unhealthy"
 
@@ -297,16 +298,21 @@ class Tier2Trigger(StrEnum):
 class Tier2Reason:
     trigger: Tier2Trigger
     detail: str
+    # Data-level faults the previous row injected, whatever its recovery; the receipt records them.
+    data_faults: tuple[str, ...] = ()
 
 
 UNRECOVERED_PREFIX = "unrecovered: "
+DATA_FAULTS_PREFIX = "data_faults: "
 
 
 class AttemptMarker:
     """Present from the moment a row's attempt starts until it ends with every injected row recovered.
 
     A survivor with no content means the attempt died; one that names rows means they were injected and
-    the harness could not verify their recovery. Either way the next row recreates the application.
+    the harness could not verify their recovery; one that names data-level faults means a fault was
+    injected whose state lives in the application's data, recovered or not. Each makes the next row
+    recreate the application.
     """
 
     def __init__(self, run_dir: Path) -> None:
@@ -317,11 +323,21 @@ class AttemptMarker:
             content = self.path.read_text(encoding="utf-8")
         except FileNotFoundError:
             return None
-        _, _, rows = content.partition(UNRECOVERED_PREFIX)
+        lines = content.splitlines()
+        rows = next((line[len(UNRECOVERED_PREFIX) :] for line in lines if line.startswith(UNRECOVERED_PREFIX)), "")
+        faults = next((line[len(DATA_FAULTS_PREFIX) :] for line in lines if line.startswith(DATA_FAULTS_PREFIX)), "")
+        data_faults = tuple(item.strip() for item in faults.split(", ") if item.strip())
         if rows.strip():
             return Tier2Reason(
                 Tier2Trigger.PREVIOUS_ROW_UNRECOVERED,
                 f"previous row injected and not verified recovered: {rows.strip()}",
+                data_faults,
+            )
+        if data_faults:
+            return Tier2Reason(
+                Tier2Trigger.PREVIOUS_ROW_DATA_FAULTS,
+                f"previous row injected faults whose state lives in application data: {', '.join(data_faults)}",
+                data_faults,
             )
         return Tier2Reason(Tier2Trigger.UNCLEAN_ATTEMPT, "previous attempt did not end cleanly")
 
@@ -329,25 +345,47 @@ class AttemptMarker:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.path.write_text(f"{os.getpid()}\n", encoding="utf-8")
 
-    def end(self, unrecovered: Collection[str]) -> None:
-        """The run ended: forget the attempt unless it left injected rows without verified recovery."""
-        if unrecovered:
-            self.path.write_text(f"{os.getpid()}\n{UNRECOVERED_PREFIX}{', '.join(unrecovered)}\n", encoding="utf-8")
-        else:
+    def end(self, unrecovered: Collection[str], data_faults: Collection[str] = ()) -> None:
+        """The run ended: forget the attempt unless it left unrecovered rows or injected data-level faults."""
+        if not unrecovered and not data_faults:
             self.path.unlink(missing_ok=True)
+            return
+        lines = [str(os.getpid())]
+        if unrecovered:
+            lines.append(f"{UNRECOVERED_PREFIX}{', '.join(unrecovered)}")
+        if data_faults:
+            lines.append(f"{DATA_FAULTS_PREFIX}{', '.join(data_faults)}")
+        self.path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _attempted(record: Any) -> bool:
+    injection = record.injection
+    return isinstance(injection, Injected) or (isinstance(injection, NotInjected) and injection.stage == "injection")
 
 
 def unrecovered_rows(records: Iterable[Any]) -> tuple[str, ...]:
     """Problem ids of rows whose fault was injected, or may have been, without a verified full recovery."""
-    rows = []
-    for record in records:
-        injection = record.injection
-        attempted = isinstance(injection, Injected) or (
-            isinstance(injection, NotInjected) and injection.stage == "injection"
-        )
-        if attempted and (record.recovery_error is not None or not record.full_cleanup_verified):
-            rows.append(record.problem_id)
-    return tuple(rows)
+    return tuple(
+        record.problem_id
+        for record in records
+        if _attempted(record) and (record.recovery_error is not None or not record.full_cleanup_verified)
+    )
+
+
+def data_fault_rows(records: Iterable[Any], data_faults: Mapping[str, Sequence[str]]) -> tuple[str, ...]:
+    """``problem: fault`` for each data-level fault of a row that was, or may have been, injected.
+
+    ``data_faults`` maps a problem id to the names of its faults whose state lives in application data; the
+    fault catalog owns that classification. A composite record (``a+b``) covers each of its problems.
+    Recovery does not matter: a database user or role that was changed stays changed in the PVC.
+    """
+    return tuple(
+        f"{problem}: {fault}"
+        for record in records
+        if _attempted(record)
+        for problem in record.problem_id.split("+")
+        for fault in data_faults.get(problem, ())
+    )
 
 
 def await_healthy_pods(
@@ -425,6 +463,7 @@ class WipeReceipt:
     tier2_reason: str | None
     tier2_namespaces: tuple[str, ...]
     force_finalized: tuple[str, ...]
+    previous_row_data_faults: tuple[str, ...]
 
     def write(self, directory: Path) -> Path:
         directory.mkdir(parents=True, exist_ok=True)
@@ -474,6 +513,7 @@ def run_tier2(
         reason.detail if reason is not None else None,
         recreated,
         force_finalized,
+        reason.data_faults if reason is not None else (),
     )
 
 
