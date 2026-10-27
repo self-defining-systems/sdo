@@ -10,7 +10,6 @@ from google.protobuf.timestamp_pb2 import Timestamp
 
 from sdo.agents.responder.reflection import SessionReflector
 from sdo.agents.responder.reflection_outcomes import (
-    MAX_HISTORY_INCIDENTS,
     collapse_detector_history,
     current_outcome_view,
     history_view,
@@ -183,13 +182,12 @@ def test_history_view_excludes_the_current_incident_and_keeps_order() -> None:
     assert [entry["incident_id"] for entry in view] == ["inc-0", "inc-1"]
 
 
-def test_history_view_keeps_only_the_last_two_prior_incidents() -> None:
-    records = [_outcome(f"inc-{index}") for index in range(5)]
+def test_history_view_shows_every_prior_incident_the_request_carries() -> None:
+    records = [_outcome(f"inc-{index}") for index in range(3)]
 
-    view = history_view(records, current_incident_id="inc-4")
+    view = history_view(records, current_incident_id="inc-2")
 
-    assert MAX_HISTORY_INCIDENTS == 2
-    assert [entry["incident_id"] for entry in view] == ["inc-2", "inc-3"]
+    assert [entry["incident_id"] for entry in view] == ["inc-0", "inc-1"]
 
 
 class _Backend:
@@ -228,17 +226,15 @@ def _prompt(history: list[OutcomeRecord], current: OutcomeRecord, tmp_path: Path
 def test_reflection_prompt_growth_per_prior_outcome_is_bounded(tmp_path: Path) -> None:
     current = _outcome("inc-current")
     small = _prompt([current], current, tmp_path)
-    priors = [_outcome(f"inc-{index}") for index in range(6)]
+    priors = [_outcome(f"inc-{index}") for index in range(2)]
     large = _prompt([*priors, current], current, tmp_path)
 
-    # Only the most recent priors are carried, so growth stops at the cap.
-    assert (len(large) - len(small)) / MAX_HISTORY_INCIDENTS < 2_500
+    # Go keeps the latest few priors; each costs a bounded summary.
+    assert (len(large) - len(small)) / len(priors) < 2_500
     # The current incident is never repeated inside the history.
     assert large.count("inc-current: required ConfigMap was removed") == 1
-    for prior in priors[-MAX_HISTORY_INCIDENTS:]:
+    for prior in priors:
         assert f"{prior.incident_id}: required ConfigMap was removed" in large
-    for prior in priors[:-MAX_HISTORY_INCIDENTS]:
-        assert f"{prior.incident_id}: required ConfigMap was removed" not in large
 
 
 def test_reflection_prompt_without_prior_outcomes_says_so(tmp_path: Path) -> None:

@@ -129,7 +129,11 @@ func fitIncidentRequest(request *contracts.IncidentRequest, build func() (*contr
 		return text
 	}
 	steps, fits, err := degradeToFit(size, []transportRung{
-		{"drop_prior_incident_history", func() bool { changed := len(request.RelevantOutcomes) > 0; request.RelevantOutcomes = nil; return changed }},
+		{"drop_prior_incident_history", func() bool {
+			changed := len(request.RelevantOutcomes) > 0
+			request.RelevantOutcomes = nil
+			return changed
+		}},
 		{"trim_memory_to_touched", func() bool { return trimSnapshotToTouched(request.MemorySnapshot, mentions()) }},
 		{"clip_memory_documents", func() bool { return clipSnapshotDocuments(request.MemorySnapshot) }},
 		{"cap_program_runs_and_detector_history", func() bool {

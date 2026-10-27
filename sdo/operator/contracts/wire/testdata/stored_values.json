@@ -214,6 +214,7 @@
     "",
     "agent_failed",
     "agent_timeout",
+    "request_too_large",
     "result_too_large",
     "timeout"
   ],

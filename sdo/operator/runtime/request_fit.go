@@ -45,9 +45,9 @@ func wireSize(task *contracts.AgentTask) func() (int, error) {
 }
 
 const (
-	keptEdgeCalls    = 8
-	keptCallBytes    = 512
-	keptDetectorRuns = 64
+	keptEdgeCalls     = 8
+	keptCallBytes     = 512
+	keptDetectorRuns  = 64
 	keptDocumentBytes = 16 << 10
 )
 

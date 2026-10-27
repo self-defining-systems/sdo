@@ -10,6 +10,7 @@ import (
 	"log"
 	"os"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -156,6 +157,7 @@ func (w RegisteredReflectionWorker) Reflect(ctx context.Context, closure Inciden
 				history = append(history, summarizeEarlierOutcome(record.Record))
 			}
 		}
+		sort.SliceStable(history, func(i, j int) bool { return verifiedTime(history[i]).Before(verifiedTime(history[j])) })
 		history = history[max(0, len(history)-maxReflectionHistory):]
 		trimReflectionClosure(closed)
 		request := &contracts.ReflectionRequest{Closure: closed, Outcome: current, PriorOutcomes: history, ProposalCommit: proposalCommit, OutcomeCommit: outcomeCommit, SessionMode: mode, Guidance: guidance, ValidationAttempt: attempt, PreviousDiagnostics: feedback.Diagnostics, CauseWork: feedback.CauseWork, UnassignedWork: feedback.UnassignedWork}
@@ -342,13 +344,18 @@ func trimReflectionClosure(closure *contracts.IncidentClosure) {
 	}
 }
 
-// maxReflectionHistory is how many earlier incidents the reflection worker shows; its history view keeps the
-// latest two, so a longer history is only transport weight.
+// maxReflectionHistory is how many earlier incidents the reflection worker shows. It is the one source of that
+// limit: the worker's history view shows every incident the request carries.
 const maxReflectionHistory = 2
 
-// summarizeEarlierOutcome copies an earlier incident without its raw program evaluations and tool transcripts,
-// which dominate the record, grow with every installed program, and are re-sent with every reflection request.
-// The request travels in one ConfigMap, so earlier incidents stay bounded by construction.
+// verifiedTime orders earlier incidents by when they were verified, not by incident ID.
+func verifiedTime(record *contracts.OutcomeRecord) time.Time {
+	return record.GetTimestamps().GetVerifiedAt().AsTime()
+}
+
+// summarizeEarlierOutcome copies an earlier incident without its raw program evaluations, tool transcripts and
+// plan applications, which dominate the record and are re-sent with every reflection request. The full prior
+// record the worker can open by reference therefore omits them too; the stored outcome keeps them.
 func summarizeEarlierOutcome(record *contracts.OutcomeRecord) *contracts.OutcomeRecord {
 	earlier := proto.Clone(record).(*contracts.OutcomeRecord)
 	earlier.ProgramRuns = nil
