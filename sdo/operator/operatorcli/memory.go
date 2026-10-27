@@ -381,7 +381,8 @@ func memoryOutcomes(ctx context.Context, args []string, stdout io.Writer) error 
 	if err != nil {
 		return err
 	}
-	stored, err := memory.OpenReader(absolute).List(ctx)
+	reader := memory.OpenReader(absolute)
+	stored, skipped, err := memory.ListOutcomes(ctx, reader, "memory outcomes")
 	if err != nil {
 		return err
 	}
@@ -394,6 +395,9 @@ func memoryOutcomes(ctx context.Context, args []string, stdout io.Writer) error 
 	}
 	for _, record := range outcomes.Outcomes {
 		fmt.Fprintf(stdout, "%s\t%s\n", record.GetIncidentId(), record.GetClassification())
+	}
+	for _, note := range skipped {
+		fmt.Fprintf(stdout, "unreadable\t%s\t%s\n", note.Name, note.Reason)
 	}
 	return nil
 }

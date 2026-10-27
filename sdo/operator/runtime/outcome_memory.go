@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"log/slog"
 	outcomeclass "sdo.dev/operator/contracts/outcome"
 	"sort"
 	"time"
@@ -20,8 +21,9 @@ const maxRelevantOutcomes = 3
 func relevantOutcomeEvidence(
 	repository string, findings []sdk.Finding, sourceCommit string, origins map[string]string,
 ) []PriorOutcomeEvidence {
-	stored, err := memory.OpenReader(repository).List(context.Background())
+	stored, _, err := memory.ListOutcomes(context.Background(), memory.OpenReader(repository), "relevant outcome recall")
 	if err != nil {
+		slog.Warn("relevant outcome recall unavailable", "repository", repository, "error", err)
 		return nil
 	}
 
