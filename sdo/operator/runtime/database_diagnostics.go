@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	utilexec "k8s.io/client-go/util/exec"
@@ -106,26 +105,14 @@ func databaseStreamFailure(ctx context.Context, t program.DatabaseTarget, err er
 // databaseFailureCode is a stable, value-free reason for a failed database
 // operation. Upstream error text is never copied: it may carry credentials.
 func databaseFailureCode(err error) string {
-	var reference *CredentialReferenceError
-	if errors.As(err, &reference) {
-		return "database_credential_reference_unavailable"
-	}
-	var target *DatabaseTargetError
-	if errors.As(err, &target) {
-		return "database_container_not_found"
-	}
 	var operation *DatabaseOperationError
-	if errors.As(err, &operation) {
-		reason := strings.ReplaceAll(string(operation.Reason), " ", "_")
-		switch operation.Reason {
-		case databaseIdentityChanged:
-			reason = "pod_identity_changed"
-		case databaseInvalidProjection, databaseAmbiguousAuth:
-			reason = strings.Fields(reason)[0]
-		}
-		return "database_" + strings.ReplaceAll(string(operation.Step.safe()), "-", "_") + "_" + reason
+	if errors.As(err, &operation) && operation.Reason == databaseForbidden {
+		return "authorization_denied"
 	}
-	return "database_outcome_unknown"
+	if databaseFailedBeforeWrite(err) {
+		return "execution_failed"
+	}
+	return "outcome_unknown"
 }
 
 // databaseFailedBeforeWrite reports failures that provably precede the catalog

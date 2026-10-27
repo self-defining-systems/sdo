@@ -135,7 +135,9 @@ type Controller struct {
 	// durable is the state stateStore last confirmed durable. With a store
 	// attached, an effect runs only while this state records it, so a
 	// restarted controller can recover every effect that ran.
-	durable                 *contracts.ControllerState
+	durable *contracts.ControllerState
+	// checkpoint survives effect gating failures: recovery must retain accepted receipts.
+	checkpoint              *contracts.ControllerState
 	incidentOpen            bool
 	responderDone           bool
 	responderLoop           *ResponderLoop
@@ -1922,8 +1924,10 @@ func (c *Controller) AttachStateStore(ctx context.Context, store StateStore) err
 	c.mu.Lock()
 	c.stateRestored = revision != ""
 	c.durable = nil
+	c.checkpoint = nil
 	if revision != "" {
 		c.durable = proto.Clone(state).(*contracts.ControllerState)
+		c.checkpoint = proto.Clone(state).(*contracts.ControllerState)
 	}
 	c.mu.Unlock()
 	return nil
@@ -1941,8 +1945,14 @@ func (c *Controller) PersistState(ctx context.Context) error {
 	}
 	defer cancel()
 	state, err := c.ExportState()
+	if err == nil {
+		err = validateRuntimeState(state)
+	}
 	if err != nil {
-		return fmt.Errorf("snapshot controller state: %w", err)
+		state, err = c.recoverInvalidState(err)
+		if err != nil {
+			return fmt.Errorf("snapshot controller state: %w", err)
+		}
 	}
 	if preparer, ok := c.dispatcher.(interface {
 		PrepareDispatch(context.Context, IncidentRequest) (IncidentRequest, error)
@@ -1980,6 +1990,7 @@ func (c *Controller) PersistState(ctx context.Context) error {
 	c.releaseStaleStagedTask(stagedIncident)
 	c.mu.Lock()
 	c.durable = proto.Clone(state).(*contracts.ControllerState)
+	c.checkpoint = proto.Clone(state).(*contracts.ControllerState)
 	archivedIDs := make([]string, 0, len(state.GetFailedClosures()))
 	for _, record := range state.GetFailedClosures() {
 		archivedIDs = append(archivedIDs, record.GetFailure().GetIncidentId())

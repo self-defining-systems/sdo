@@ -105,6 +105,7 @@ func cloneIncidentClosure(closure *IncidentClosure) *IncidentClosure {
 		return nil
 	}
 	copy := *closure
+	copy.StatePersistenceFailure = clonePersistenceFailure(closure.StatePersistenceFailure)
 	copy.Request = *cloneIncidentRequest(&closure.Request)
 	copy.Result = cloneIncidentResult(closure.Result)
 	copy.FinalDetectorStates = cloneEvaluations(closure.FinalDetectorStates)

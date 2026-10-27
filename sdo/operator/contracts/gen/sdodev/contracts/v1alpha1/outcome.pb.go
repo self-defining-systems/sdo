@@ -71,11 +71,12 @@ type OutcomeRecord struct {
 	ReflectionRejections []*ProposalRejection `protobuf:"bytes,52,rep,name=reflection_rejections,json=reflectionRejections,proto3" json:"reflection_rejections,omitempty"`
 	// Controller-observed: source checks that were unavailable when health
 	// verified the closure. Information only; never a verdict.
-	SourceCheckNotes       []string                 `protobuf:"bytes,38,rep,name=source_check_notes,json=sourceCheckNotes,proto3" json:"source_check_notes,omitempty"`
-	DriftReprompt          *DriftReprompt           `protobuf:"bytes,39,opt,name=drift_reprompt,json=driftReprompt,proto3" json:"drift_reprompt,omitempty"`
-	DisabledSetupDetectors []*DisabledSetupDetector `protobuf:"bytes,40,rep,name=disabled_setup_detectors,json=disabledSetupDetectors,proto3" json:"disabled_setup_detectors,omitempty"`
-	unknownFields          protoimpl.UnknownFields
-	sizeCache              protoimpl.SizeCache
+	SourceCheckNotes        []string                 `protobuf:"bytes,38,rep,name=source_check_notes,json=sourceCheckNotes,proto3" json:"source_check_notes,omitempty"`
+	DriftReprompt           *DriftReprompt           `protobuf:"bytes,39,opt,name=drift_reprompt,json=driftReprompt,proto3" json:"drift_reprompt,omitempty"`
+	DisabledSetupDetectors  []*DisabledSetupDetector `protobuf:"bytes,40,rep,name=disabled_setup_detectors,json=disabledSetupDetectors,proto3" json:"disabled_setup_detectors,omitempty"`
+	StatePersistenceFailure *StatePersistenceFailure `protobuf:"bytes,41,opt,name=state_persistence_failure,json=statePersistenceFailure,proto3" json:"state_persistence_failure,omitempty"`
+	unknownFields           protoimpl.UnknownFields
+	sizeCache               protoimpl.SizeCache
 }
 
 func (x *OutcomeRecord) Reset() {
@@ -388,6 +389,13 @@ func (x *OutcomeRecord) GetDisabledSetupDetectors() []*DisabledSetupDetector {
 	return nil
 }
 
+func (x *OutcomeRecord) GetStatePersistenceFailure() *StatePersistenceFailure {
+	if x != nil {
+		return x.StatePersistenceFailure
+	}
+	return nil
+}
+
 type OutcomeTimestamps struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	DetectedAt    *timestamppb.Timestamp `protobuf:"bytes,1,opt,name=detected_at,json=detectedAt,proto3" json:"detected_at,omitempty"`
@@ -632,7 +640,7 @@ var File_sdodev_contracts_v1alpha1_outcome_proto protoreflect.FileDescriptor
 
 const file_sdodev_contracts_v1alpha1_outcome_proto_rawDesc = "" +
 	"\n" +
-	"'sdodev/contracts/v1alpha1/outcome.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a1sdodev/contracts/v1alpha1/controller_config.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a(sdodev/contracts/v1alpha1/messages.proto\x1a&sdodev/contracts/v1alpha1/common.proto\x1a1sdodev/contracts/v1alpha1/memory_diagnostic.proto\x1a'sdodev/contracts/v1alpha1/program.proto\"\xb3\x17\n" +
+	"'sdodev/contracts/v1alpha1/outcome.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a1sdodev/contracts/v1alpha1/controller_config.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a(sdodev/contracts/v1alpha1/messages.proto\x1a&sdodev/contracts/v1alpha1/common.proto\x1a1sdodev/contracts/v1alpha1/memory_diagnostic.proto\x1a'sdodev/contracts/v1alpha1/program.proto\"\xa3\x18\n" +
 	"\rOutcomeRecord\x12F\n" +
 	"\tcode_path\x18d \x01(\v2).sdodev.contracts.v1alpha1.CodePathConfigR\bcodePath\x12.\n" +
 	"\x0eschema_version\x18\x01 \x01(\x05B\a\xbaH\x04\x1a\x02\b\x01R\rschemaVersion\x12,\n" +
@@ -678,7 +686,8 @@ const file_sdodev_contracts_v1alpha1_outcome_proto_rawDesc = "" +
 	"\x15reflection_rejections\x184 \x03(\v2,.sdodev.contracts.v1alpha1.ProposalRejectionR\x14reflectionRejections\x12,\n" +
 	"\x12source_check_notes\x18& \x03(\tR\x10sourceCheckNotes\x12O\n" +
 	"\x0edrift_reprompt\x18' \x01(\v2(.sdodev.contracts.v1alpha1.DriftRepromptR\rdriftReprompt\x12j\n" +
-	"\x18disabled_setup_detectors\x18( \x03(\v20.sdodev.contracts.v1alpha1.DisabledSetupDetectorR\x16disabledSetupDetectorsB\x10\n" +
+	"\x18disabled_setup_detectors\x18( \x03(\v20.sdodev.contracts.v1alpha1.DisabledSetupDetectorR\x16disabledSetupDetectors\x12n\n" +
+	"\x19state_persistence_failure\x18) \x01(\v22.sdodev.contracts.v1alpha1.StatePersistenceFailureR\x17statePersistenceFailureB\x10\n" +
 	"\x0e_repair_commitB\x10\n" +
 	"\x0e_memory_commitJ\x04\b\x16\x10\x17J\x04\b\x1f\x10 J\x04\b \x10!J\x04\b!\x10\"R\x16diagnosis_verification\"\xcc\x02\n" +
 	"\x11OutcomeTimestamps\x12;\n" +
@@ -720,28 +729,29 @@ func file_sdodev_contracts_v1alpha1_outcome_proto_rawDescGZIP() []byte {
 
 var file_sdodev_contracts_v1alpha1_outcome_proto_msgTypes = make([]protoimpl.MessageInfo, 4)
 var file_sdodev_contracts_v1alpha1_outcome_proto_goTypes = []any{
-	(*OutcomeRecord)(nil),         // 0: sdodev.contracts.v1alpha1.OutcomeRecord
-	(*OutcomeTimestamps)(nil),     // 1: sdodev.contracts.v1alpha1.OutcomeTimestamps
-	(*SdkGap)(nil),                // 2: sdodev.contracts.v1alpha1.SdkGap
-	(*UndetectedCause)(nil),       // 3: sdodev.contracts.v1alpha1.UndetectedCause
-	(*CodePathConfig)(nil),        // 4: sdodev.contracts.v1alpha1.CodePathConfig
-	(*DetectorEvaluation)(nil),    // 5: sdodev.contracts.v1alpha1.DetectorEvaluation
-	(*Finding)(nil),               // 6: sdodev.contracts.v1alpha1.Finding
-	(*ConfirmedRootCause)(nil),    // 7: sdodev.contracts.v1alpha1.ConfirmedRootCause
-	(*RepairActionReceipt)(nil),   // 8: sdodev.contracts.v1alpha1.RepairActionReceipt
-	(*UsageMetrics)(nil),          // 9: sdodev.contracts.v1alpha1.UsageMetrics
-	(*ProgramToolCall)(nil),       // 10: sdodev.contracts.v1alpha1.ProgramToolCall
-	(*ProgramRun)(nil),            // 11: sdodev.contracts.v1alpha1.ProgramRun
-	(*PlanApplication)(nil),       // 12: sdodev.contracts.v1alpha1.PlanApplication
-	(*DriftEvent)(nil),            // 13: sdodev.contracts.v1alpha1.DriftEvent
-	(*ReflectionEligibility)(nil), // 14: sdodev.contracts.v1alpha1.ReflectionEligibility
-	(*PlaybookCoverage)(nil),      // 15: sdodev.contracts.v1alpha1.PlaybookCoverage
-	(*StageReport)(nil),           // 16: sdodev.contracts.v1alpha1.StageReport
-	(*ProposalRejection)(nil),     // 17: sdodev.contracts.v1alpha1.ProposalRejection
-	(*DriftReprompt)(nil),         // 18: sdodev.contracts.v1alpha1.DriftReprompt
-	(*DisabledSetupDetector)(nil), // 19: sdodev.contracts.v1alpha1.DisabledSetupDetector
-	(*timestamppb.Timestamp)(nil), // 20: google.protobuf.Timestamp
-	(*ObjectRef)(nil),             // 21: sdodev.contracts.v1alpha1.ObjectRef
+	(*OutcomeRecord)(nil),           // 0: sdodev.contracts.v1alpha1.OutcomeRecord
+	(*OutcomeTimestamps)(nil),       // 1: sdodev.contracts.v1alpha1.OutcomeTimestamps
+	(*SdkGap)(nil),                  // 2: sdodev.contracts.v1alpha1.SdkGap
+	(*UndetectedCause)(nil),         // 3: sdodev.contracts.v1alpha1.UndetectedCause
+	(*CodePathConfig)(nil),          // 4: sdodev.contracts.v1alpha1.CodePathConfig
+	(*DetectorEvaluation)(nil),      // 5: sdodev.contracts.v1alpha1.DetectorEvaluation
+	(*Finding)(nil),                 // 6: sdodev.contracts.v1alpha1.Finding
+	(*ConfirmedRootCause)(nil),      // 7: sdodev.contracts.v1alpha1.ConfirmedRootCause
+	(*RepairActionReceipt)(nil),     // 8: sdodev.contracts.v1alpha1.RepairActionReceipt
+	(*UsageMetrics)(nil),            // 9: sdodev.contracts.v1alpha1.UsageMetrics
+	(*ProgramToolCall)(nil),         // 10: sdodev.contracts.v1alpha1.ProgramToolCall
+	(*ProgramRun)(nil),              // 11: sdodev.contracts.v1alpha1.ProgramRun
+	(*PlanApplication)(nil),         // 12: sdodev.contracts.v1alpha1.PlanApplication
+	(*DriftEvent)(nil),              // 13: sdodev.contracts.v1alpha1.DriftEvent
+	(*ReflectionEligibility)(nil),   // 14: sdodev.contracts.v1alpha1.ReflectionEligibility
+	(*PlaybookCoverage)(nil),        // 15: sdodev.contracts.v1alpha1.PlaybookCoverage
+	(*StageReport)(nil),             // 16: sdodev.contracts.v1alpha1.StageReport
+	(*ProposalRejection)(nil),       // 17: sdodev.contracts.v1alpha1.ProposalRejection
+	(*DriftReprompt)(nil),           // 18: sdodev.contracts.v1alpha1.DriftReprompt
+	(*DisabledSetupDetector)(nil),   // 19: sdodev.contracts.v1alpha1.DisabledSetupDetector
+	(*StatePersistenceFailure)(nil), // 20: sdodev.contracts.v1alpha1.StatePersistenceFailure
+	(*timestamppb.Timestamp)(nil),   // 21: google.protobuf.Timestamp
+	(*ObjectRef)(nil),               // 22: sdodev.contracts.v1alpha1.ObjectRef
 }
 var file_sdodev_contracts_v1alpha1_outcome_proto_depIdxs = []int32{
 	4,  // 0: sdodev.contracts.v1alpha1.OutcomeRecord.code_path:type_name -> sdodev.contracts.v1alpha1.CodePathConfig
@@ -764,20 +774,21 @@ var file_sdodev_contracts_v1alpha1_outcome_proto_depIdxs = []int32{
 	17, // 17: sdodev.contracts.v1alpha1.OutcomeRecord.reflection_rejections:type_name -> sdodev.contracts.v1alpha1.ProposalRejection
 	18, // 18: sdodev.contracts.v1alpha1.OutcomeRecord.drift_reprompt:type_name -> sdodev.contracts.v1alpha1.DriftReprompt
 	19, // 19: sdodev.contracts.v1alpha1.OutcomeRecord.disabled_setup_detectors:type_name -> sdodev.contracts.v1alpha1.DisabledSetupDetector
-	20, // 20: sdodev.contracts.v1alpha1.OutcomeTimestamps.detected_at:type_name -> google.protobuf.Timestamp
-	20, // 21: sdodev.contracts.v1alpha1.OutcomeTimestamps.dispatched_at:type_name -> google.protobuf.Timestamp
-	20, // 22: sdodev.contracts.v1alpha1.OutcomeTimestamps.mitigated_at:type_name -> google.protobuf.Timestamp
-	20, // 23: sdodev.contracts.v1alpha1.OutcomeTimestamps.verified_at:type_name -> google.protobuf.Timestamp
-	20, // 24: sdodev.contracts.v1alpha1.OutcomeTimestamps.completed_at:type_name -> google.protobuf.Timestamp
-	21, // 25: sdodev.contracts.v1alpha1.SdkGap.resources:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	21, // 26: sdodev.contracts.v1alpha1.UndetectedCause.resource:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	20, // 27: sdodev.contracts.v1alpha1.UndetectedCause.open_observed_at:type_name -> google.protobuf.Timestamp
-	20, // 28: sdodev.contracts.v1alpha1.UndetectedCause.fixed_observed_at:type_name -> google.protobuf.Timestamp
-	29, // [29:29] is the sub-list for method output_type
-	29, // [29:29] is the sub-list for method input_type
-	29, // [29:29] is the sub-list for extension type_name
-	29, // [29:29] is the sub-list for extension extendee
-	0,  // [0:29] is the sub-list for field type_name
+	20, // 20: sdodev.contracts.v1alpha1.OutcomeRecord.state_persistence_failure:type_name -> sdodev.contracts.v1alpha1.StatePersistenceFailure
+	21, // 21: sdodev.contracts.v1alpha1.OutcomeTimestamps.detected_at:type_name -> google.protobuf.Timestamp
+	21, // 22: sdodev.contracts.v1alpha1.OutcomeTimestamps.dispatched_at:type_name -> google.protobuf.Timestamp
+	21, // 23: sdodev.contracts.v1alpha1.OutcomeTimestamps.mitigated_at:type_name -> google.protobuf.Timestamp
+	21, // 24: sdodev.contracts.v1alpha1.OutcomeTimestamps.verified_at:type_name -> google.protobuf.Timestamp
+	21, // 25: sdodev.contracts.v1alpha1.OutcomeTimestamps.completed_at:type_name -> google.protobuf.Timestamp
+	22, // 26: sdodev.contracts.v1alpha1.SdkGap.resources:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	22, // 27: sdodev.contracts.v1alpha1.UndetectedCause.resource:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	21, // 28: sdodev.contracts.v1alpha1.UndetectedCause.open_observed_at:type_name -> google.protobuf.Timestamp
+	21, // 29: sdodev.contracts.v1alpha1.UndetectedCause.fixed_observed_at:type_name -> google.protobuf.Timestamp
+	30, // [30:30] is the sub-list for method output_type
+	30, // [30:30] is the sub-list for method input_type
+	30, // [30:30] is the sub-list for extension type_name
+	30, // [30:30] is the sub-list for extension extendee
+	0,  // [0:30] is the sub-list for field type_name
 }
 
 func init() { file_sdodev_contracts_v1alpha1_outcome_proto_init() }
