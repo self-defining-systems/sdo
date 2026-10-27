@@ -77,7 +77,11 @@ func (w KubernetesPlanRollouts) Observe(ctx context.Context, refs []sdk.ObjectRe
 			return fmt.Errorf("observe rollout %s/%s: %w", ref.Namespace, ref.Name, err)
 		}
 		if !deployment.DeploymentRolloutComplete(object) {
-			blockers = append(blockers, w.rolloutBlocker(ctx, object))
+			blocker, admission := w.rolloutBlocker(ctx, object)
+			if admission != nil {
+				return admission
+			}
+			blockers = append(blockers, blocker)
 		}
 	}
 	if len(blockers) > 0 {
@@ -94,11 +98,10 @@ func (w KubernetesPlanRollouts) Wait(ctx context.Context, refs []sdk.ObjectRef) 
 	defer ticker.Stop()
 	var blockers []*contracts.RolloutBlocker
 	diagnostics := map[sdk.ObjectRef]*contracts.RolloutBlocker{}
-	var lastDiagnostics time.Time
 	for {
 		settled := true
 		blockers = nil
-		refreshDiagnostics := time.Since(lastDiagnostics) >= 5*time.Second
+
 		for _, ref := range refs {
 			if ref.Kind != "Deployment" || ref.APIVersion != "apps/v1" {
 				continue
@@ -109,14 +112,13 @@ func (w KubernetesPlanRollouts) Wait(ctx context.Context, refs []sdk.ObjectRef) 
 			}
 			if !deployment.DeploymentRolloutComplete(deploymentObject) {
 				settled = false
-				if refreshDiagnostics || diagnostics[ref] == nil {
-					diagnostics[ref] = w.rolloutBlocker(ctx, deploymentObject)
+				blocker, admission := w.rolloutBlocker(ctx, deploymentObject)
+				if admission != nil {
+					return admission
 				}
+				diagnostics[ref] = blocker
 				blockers = append(blockers, diagnostics[ref])
 			}
-		}
-		if refreshDiagnostics {
-			lastDiagnostics = time.Now()
 		}
 		if settled {
 			return nil

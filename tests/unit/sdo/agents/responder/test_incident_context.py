@@ -248,3 +248,21 @@ def test_many_stage_attempts_cannot_displace_bounded_first_prompt() -> None:
         assert "mitigate" in summary["incident_tools"]["commands"]
         details = Path(rendered.split("Full incident facts: ", 1)[1].splitlines()[0])
         assert len(json.loads(details.read_text())["prior_stages"][0]["mitigations"]) == 20
+
+
+def test_failed_episode_progress_stays_inline_with_full_results_in_facts() -> None:
+    request = _request()
+    request.findings[0].evidence = "large fact " * 4000
+    prior = request.prior_response_progress.add(incident_id="failed-episode")
+    prior.successful_actions.add(
+        action_id="source-fixed", success=True, summary="source reconciled", details="write read back " * 4000
+    )
+    prior.blockers.add(reason_code="admission_blocked", reason="validate.example.test denied Pods")
+    with prepared_incident_data(request) as rendered:
+        assert len(rendered) <= MAX_INCIDENT_SUMMARY_CHARS
+        assert "source-fixed" in rendered
+        assert "admission_blocked" in rendered
+        details = Path(rendered.split("Full incident facts: ", 1)[1].splitlines()[0])
+        evidence = json.loads(details.read_text())["prior_response_progress"][0]
+        assert evidence["successful_actions"][0]["details"] == "write read back " * 4000
+        assert evidence["blockers"][0]["reason_code"] == "admission_blocked"

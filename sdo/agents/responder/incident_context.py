@@ -92,6 +92,31 @@ def prior_stage_summary(reports: list[StageReport]) -> list[dict[str, Any]]:
     return summaries
 
 
+def prior_response_summary(request: IncidentRequest) -> dict[str, Any]:
+    """Keep prior applied work visible; complete receipts remain in the facts file."""
+    episodes = list(request.prior_response_progress)
+    return {
+        "episodes": [
+            {
+                "incident_id": item.incident_id[:100],
+                "successful_actions": [
+                    {"action_id": action.action_id[:80], "summary": action.summary[:120], "success": True}
+                    for action in item.successful_actions[:2]
+                ],
+                "actions_omitted": max(0, len(item.successful_actions) - 2),
+                "blockers": [
+                    {"reason_code": blocker.reason_code, "reason": blocker.reason[:200]}
+                    for blocker in item.blockers[:1]
+                ],
+                "blockers_omitted": max(0, len(item.blockers) - 1),
+                "error": item.error[:120],
+            }
+            for item in episodes[-2:]
+        ],
+        "episodes_omitted": max(0, len(episodes) - 2),
+    }
+
+
 def render_incident_data(request: IncidentRequest) -> str:
     """Render the complete projection; production uses prepared_incident_data for its cap."""
     return _render_data(incident_data_view(request))
@@ -129,6 +154,8 @@ def prepared_incident_data(request: IncidentRequest) -> Iterator[str]:
         facts = write_json(document, command="incident", incident_id=request.incident_id)
         stack.callback(facts.unlink, missing_ok=True)
         inline = {**document, "details_file": str(facts)}
+        if request.prior_response_progress:
+            inline["prior_response_progress"] = prior_response_summary(request)
         if request.prior_stages:
             inline["prior_stages"] = prior_stage_summary(list(request.prior_stages))
         rendered = _render_data(inline)
@@ -200,6 +227,8 @@ def prepared_incident_data(request: IncidentRequest) -> Iterator[str]:
             },
             "incident_tools": document["incident_tools"],
         }
+        if request.prior_response_progress:
+            summary["prior_response_progress"] = prior_response_summary(request)
         if request.prior_stages:
             summary["prior_stages"] = [
                 {

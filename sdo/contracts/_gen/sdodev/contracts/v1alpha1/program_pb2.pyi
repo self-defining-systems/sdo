@@ -307,12 +307,18 @@ class ProgramRun(_message.Message):
     def __init__(self, program_id: _Optional[str] = ..., bindings: _Optional[_Iterable[_Union[Binding, _Mapping]]] = ..., verdict: _Optional[_Union[Verdict, _Mapping]] = ..., duration: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ..., error: _Optional[str] = ..., finding_fingerprint: _Optional[str] = ..., program_revision: _Optional[str] = ..., binding_source: _Optional[str] = ..., can_mitigate: _Optional[bool] = ...) -> None: ...
 
 class RolloutPending(_message.Message):
-    __slots__ = ("reason", "blockers")
+    __slots__ = ("reason_code", "admission_configurations", "admission_webhooks", "reason", "blockers")
+    REASON_CODE_FIELD_NUMBER: _ClassVar[int]
+    ADMISSION_CONFIGURATIONS_FIELD_NUMBER: _ClassVar[int]
+    ADMISSION_WEBHOOKS_FIELD_NUMBER: _ClassVar[int]
     REASON_FIELD_NUMBER: _ClassVar[int]
     BLOCKERS_FIELD_NUMBER: _ClassVar[int]
+    reason_code: str
+    admission_configurations: _containers.RepeatedCompositeFieldContainer[_common_pb2.ObjectRef]
+    admission_webhooks: _containers.RepeatedScalarFieldContainer[str]
     reason: str
     blockers: _containers.RepeatedCompositeFieldContainer[RolloutBlocker]
-    def __init__(self, reason: _Optional[str] = ..., blockers: _Optional[_Iterable[_Union[RolloutBlocker, _Mapping]]] = ...) -> None: ...
+    def __init__(self, reason_code: _Optional[str] = ..., admission_configurations: _Optional[_Iterable[_Union[_common_pb2.ObjectRef, _Mapping]]] = ..., admission_webhooks: _Optional[_Iterable[str]] = ..., reason: _Optional[str] = ..., blockers: _Optional[_Iterable[_Union[RolloutBlocker, _Mapping]]] = ...) -> None: ...
 
 class RolloutBlocker(_message.Message):
     __slots__ = ("ref", "reason", "warning_events")

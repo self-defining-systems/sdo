@@ -206,6 +206,9 @@ message ProgramRun {
 
 // A landed mutation whose rollout is blocked. This never supplies repair credit.
 message RolloutPending {
+  string reason_code = 3 [(buf.validate.field).string = {in: ["", "admission_blocked"]}];
+  repeated ObjectRef admission_configurations = 4;
+  repeated string admission_webhooks = 5;
   string reason = 1;
   repeated RolloutBlocker blockers = 2;
 }

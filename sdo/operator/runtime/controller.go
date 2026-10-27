@@ -1010,9 +1010,10 @@ func (c *Controller) incidentRequest(now time.Time, findings []sdk.Finding) Inci
 	return IncidentRequest{
 		SchemaVersion: ProtocolSchemaVersion, Application: c.config.Application, Namespace: c.config.Namespace,
 		IncidentID: incidentID, Findings: findings,
-		DriftEvents:         driftEvents,
-		NamespaceOnboarding: cloneNamespaceOnboarding(c.namespaceOnboarding),
-		DetectorHistory:     compactDetectorHistory(c.history), SurfacedPlaybooks: surfacedPlaybooks(findings),
+		PriorResponseProgress: priorResponseProgress(c.config.RepositoryWorktree, findings),
+		DriftEvents:           driftEvents,
+		NamespaceOnboarding:   cloneNamespaceOnboarding(c.namespaceOnboarding),
+		DetectorHistory:       compactDetectorHistory(c.history), SurfacedPlaybooks: surfacedPlaybooks(findings),
 		RelevantOutcomes: relevantOutcomeEvidence(
 			c.config.RepositoryWorktree, findings, c.config.SourceCommit, c.detectorOrigins(),
 		),

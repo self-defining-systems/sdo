@@ -75,11 +75,12 @@ type IncidentRequest struct {
 	RepairPolicy          string
 	// StateChanges is the application's configuration diff against its last
 	// healthy baseline when the incident opened; nil without a baseline.
-	StateChanges       *StateChanges
-	InitialProgramRuns []ProgramRun
-	PlaybookCoverage   *contracts.PlaybookCoverage
-	PriorStages        []*contracts.StageReport
-	MaxResponseLoops   int
+	StateChanges          *StateChanges
+	InitialProgramRuns    []ProgramRun
+	PlaybookCoverage      *contracts.PlaybookCoverage
+	PriorResponseProgress []*contracts.ResponseProgress
+	PriorStages           []*contracts.StageReport
+	MaxResponseLoops      int
 	// PreparedAgentTask is the exact ProtoJSON task persisted before a Job may be created.
 	PreparedAgentTask string
 }

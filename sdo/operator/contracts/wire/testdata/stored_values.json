@@ -266,6 +266,10 @@
     "incident_verified",
     "outcome_unknown"
   ],
+  "sdodev.contracts.v1alpha1.RolloutPending.reason_code": [
+    "",
+    "admission_blocked"
+  ],
   "sdodev.contracts.v1alpha1.RootCauseEvidence.kind": [
     "detector-finding",
     "live-observation",
@@ -287,6 +291,7 @@
     "yaml"
   ],
   "sdodev.contracts.v1alpha1.StageMitigation.result": [
+    "admission_blocked",
     "applied_cleared",
     "applied_still_matching",
     "apply_error",

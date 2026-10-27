@@ -24,8 +24,8 @@ const DefaultStageBudget = 45 * time.Second
 // DeterministicResponseStage uses the same plan/apply and immutable receipt
 // boundary as the responder, operating only on accepted registry programs.
 type DeterministicResponseStage struct {
-	NewLoop             func(IncidentRequest) *ResponderLoop
-	Restore             func(context.Context, IncidentRequest, *ResponderLoop) error
+	NewLoop func(IncidentRequest) *ResponderLoop
+	Restore func(context.Context, IncidentRequest, *ResponderLoop) error
 	// KeepLoop leaves the loop NewLoop returns open: it belongs to a running
 	// responder, so a later pass must not close its working programs.
 	KeepLoop bool
@@ -713,6 +713,8 @@ func (stage *DeterministicResponseStage) applyMatched(ctx context.Context, loop 
 		clearVerifiedStageTargets(state, attempt, item.match.ExplainedFindingFingerprints, applied)
 		recordStageFindingProgress(attempt, item.match.ExplainedFindingFingerprints, state.Findings)
 		switch {
+		case attempt.ApplyReceipt.GetRolloutPending().GetReasonCode() == "admission_blocked":
+			attempt.Result = "admission_blocked"
 		case attempt.ApplyReceipt.GetRolloutPending() != nil:
 			attempt.Result = "rollout_pending_at_handoff"
 		case !attempt.ApplyReceipt.GetApplied() || attempt.ApplyReceipt.GetRolledBack() || len(attempt.ApplyReceipt.GetActionsApplied()) < int(attempt.PlanActionStart+attempt.PlanActionCount):

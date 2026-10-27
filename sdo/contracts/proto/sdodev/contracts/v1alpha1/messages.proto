@@ -272,6 +272,15 @@ message IncidentRequest {
   repeated StageReport prior_stages = 29;
   // Go-owned: each lossy step taken so the request fit the transport limit, in order.
   repeated string compaction = 30;
+  // Information from failed episodes of the same continuously open problem.
+  repeated ResponseProgress prior_response_progress = 31;
+}
+
+message ResponseProgress {
+  string incident_id = 1;
+  repeated RepairActionReceipt successful_actions = 2;
+  repeated RolloutPending blockers = 3;
+  string error = 4;
 }
 
 message RootCauseEvidence {
@@ -552,7 +561,7 @@ message StageMitigation {
   repeated Binding bindings = 3;
   string plan_id = 4;
   PlanApplication apply_receipt = 5;
-  string result = 6 [(buf.validate.field).string = {in: ["applied_cleared", "applied_still_matching", "rollout_failed", "rollout_pending_at_handoff", "apply_error", "skipped"]}];
+  string result = 6 [(buf.validate.field).string = {in: ["applied_cleared", "applied_still_matching", "rollout_failed", "rollout_pending_at_handoff", "admission_blocked", "apply_error", "skipped"]}];
   string skip_reason = 7 [(buf.validate.field).string = {in: ["", "multiple_entry_points", "no_mitigation", "unbound_parameter", "diagnose_no_longer_matches", "diagnose_unavailable", "unexplained_coverage", "already_attempted", "repair_policy", "stage_budget"]}];
   ProgramRun post_apply_diagnose = 8;
   repeated string cleared_finding_fingerprints = 9;

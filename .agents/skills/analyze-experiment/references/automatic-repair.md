@@ -23,3 +23,16 @@ The default Go path now runs `deterministic,agent`; `agent` alone preserves the 
 The stage applies all its matched plans in one apply with one rollout wait, inside one 45 s stage budget (checks, apply, rollout wait and this observation); matches it could not apply in time are `skipped` with `stage_budget`. After every opening fault is repaired, newly observed health findings may consume what is left of that budget in bounded observation before handoff. They are retained on timeout; no closure, policy or objective authority is transferred. Findings are assigned their emitting detector identity at `sdk.DetectObserved`, including responder verification and handoff.
 
 Deterministic completion retains real `plan`/`apply` transcripts and performs the ordinary responder final-equivalence check before projecting applications into the outcome. Durable responder rejoin retains those typed stage applications and repaired causes without rerunning automatic writes. Failed-outcome reflection still requires the existing timed, scoped application/NoMatch/final-equivalence proof. Successful closure still requires fresh independent detector clearance. Neither `applied_cleared` text nor a NoMatch alone authorizes reflection publication. Broker objective/policy supersession rules remain authoritative.
+
+Admission-denied Pod creation ends a rollout wait immediately. A stage mitigation
+with `result=admission_blocked` retains its applied repair; its
+`apply_receipt.rollout_pending` has `reason_code=admission_blocked`, named
+`admission_webhooks`, resolved `admission_configurations` and owned workload
+failure evidence. This is an unverified prerequisite, never automatic rollback
+or independent repair credit. Agent applies use the same classification.
+
+New requests can carry `prior_response_progress` from failed episodes with an
+exact overlapping detector/finding fingerprint since the last healthy outcome.
+It contains successful action receipts and observed blockers, as information
+for avoiding duplicate work; it neither credits the new outcome nor restores
+mutation authority. Full receipts remain in the private incident facts file.

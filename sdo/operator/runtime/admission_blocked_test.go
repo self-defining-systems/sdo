@@ -1,0 +1,129 @@
+package runtime
+
+import (
+	"context"
+	"errors"
+	admissionv1 "k8s.io/api/admissionregistration/v1"
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes/fake"
+	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/program"
+	"strings"
+	"testing"
+	"time"
+)
+
+func admissionRollouts() KubernetesPlanRollouts { return admissionRolloutsFor("frontend") }
+
+func admissionRolloutsFor(name string) KubernetesPlanRollouts {
+	n := int32(1)
+	d := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "app", UID: "d", Generation: 2}, Spec: appsv1.DeploymentSpec{Replicas: &n}}
+	rs := &appsv1.ReplicaSet{ObjectMeta: metav1.ObjectMeta{Name: "frontend-next", Namespace: "app", UID: "rs", OwnerReferences: []metav1.OwnerReference{{Kind: "Deployment", UID: d.UID}}}, Spec: appsv1.ReplicaSetSpec{Replicas: &n}}
+	event := &corev1.Event{ObjectMeta: metav1.ObjectMeta{Name: "denied", Namespace: "app"}, Type: corev1.EventTypeWarning, InvolvedObject: corev1.ObjectReference{Kind: "ReplicaSet", Name: rs.Name, Namespace: "app", UID: rs.UID}, Reason: "FailedCreate", Message: `Error creating: admission webhook "validate.example.test" denied the request: policy rejects Pods`}
+	config := &admissionv1.ValidatingWebhookConfiguration{ObjectMeta: metav1.ObjectMeta{Name: "app-policy"}, Webhooks: []admissionv1.ValidatingWebhook{{Name: "validate.example.test"}}}
+	return KubernetesPlanRollouts{Client: fake.NewSimpleClientset(d, rs, event, config)}
+}
+
+func TestAdmissionBlockedStopsRolloutAndPreservesAppliedRepair(t *testing.T) {
+	for _, poll := range []bool{false, true} {
+		t.Run(map[bool]string{false: "agent", true: "stage"}[poll], func(t *testing.T) {
+			loop, cluster := menuB3Loop(t)
+			e := loop.Executor
+			e.Verifier = planFakeVerifier{true}
+			e.Rollouts = admissionRollouts()
+			e.PollRollouts = poll
+			e.RolloutTimeout = 2 * time.Second
+			started := time.Now()
+			result, err := e.Apply(context.Background(), IncidentRequest{Namespace: "app", RepairPolicy: "recorded-actions", ResponseDeadline: time.Now().Add(3 * time.Second)}, program.Plan{Actions: []program.Action{program.ScaleWorkload{Ref: menuDeployment, Replicas: testPlanValue(1)}}}, false)
+			var blocked *AdmissionBlockedError
+			if !errors.As(err, &blocked) || !strings.Contains(err.Error(), "validate.example.test") || result.RolloutPending == nil || len(result.RolloutPending.GetAdmissionConfigurations()) != 1 || result.RolloutPending.AdmissionConfigurations[0].Name != "app-policy" {
+				t.Fatalf("missing typed admission blocker: %+v %v", result, err)
+			}
+			if time.Since(started) > time.Second {
+				t.Fatal("waited on an admission prerequisite")
+			}
+			if !result.Applied || result.RolledBack || result.VerificationCompleted {
+				t.Fatalf("applied repair lost or credited as healthy: %+v", result)
+			}
+			if value, _ := testField(cluster.objects[menuDeployment], "spec.replicas"); value != float64(1) {
+				t.Fatal("write undone")
+			}
+		})
+	}
+}
+
+func TestAdmissionBlockedStageHandsOffWithoutUndoOrRepeat(t *testing.T) {
+	loop, state := pipelineTestLoop(t, false)
+	loop.Executor.Rollouts = admissionRolloutsFor("api")
+	stage := &DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return loop }, Budget: 20 * time.Second}
+	started := time.Now()
+	report, err := stage.Run(context.Background(), state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if time.Since(started) > time.Second {
+		t.Fatal("stage waited on admission prerequisite")
+	}
+	applied := 0
+	for _, attempt := range report.Mitigations {
+		if attempt.GetApplyReceipt().GetApplied() {
+			applied++
+			if attempt.Result != "admission_blocked" || attempt.ApplyReceipt.GetRolledBack() || !strings.Contains(attempt.Error, "app-policy") {
+				t.Fatalf("stage lost admission handoff or repair: %v", attempt)
+			}
+		}
+	}
+	if applied == 0 {
+		t.Fatal("stage never applied repair")
+	}
+	before := len(loop.PlanApplications())
+	state.PriorStages = append(state.PriorStages, report)
+	if _, err := stage.Run(context.Background(), state); err != nil {
+		t.Fatal(err)
+	}
+	if len(loop.PlanApplications()) != before {
+		t.Fatal("stage repeated a previously applied repair")
+	}
+}
+
+func TestAdmissionRejectionClassifiesPrerequisitesOnly(t *testing.T) {
+	for _, message := range []string{
+		`failed calling webhook "validate.example.test": x509: certificate signed by unknown authority`,
+		`admission webhook "validate.example.test" denied the request: policy`,
+		`pods denied by policy require-labels`,
+	} {
+		if !admissionRejection(message) {
+			t.Errorf("missed admission prerequisite: %s", message)
+		}
+	}
+	for _, message := range []string{"FailedScheduling: insufficient cpu", "image pull access denied", "webhook backend container crashed", "quota exceeded"} {
+		if admissionRejection(message) {
+			t.Errorf("false admission prerequisite: %s", message)
+		}
+	}
+}
+
+func TestAdmissionBlockedIgnoresForeignAndOldReplicaSetEvents(t *testing.T) {
+	for _, old := range []bool{false, true} {
+		rollout := admissionRollouts()
+		rs, err := rollout.Client.AppsV1().ReplicaSets("app").Get(context.Background(), "frontend-next", metav1.GetOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if old {
+			rs.Spec.Template.Labels = map[string]string{"old": "template"}
+		} else {
+			rs.OwnerReferences[0].UID = "foreign"
+		}
+		if _, err := rollout.Client.AppsV1().ReplicaSets("app").Update(context.Background(), rs, metav1.UpdateOptions{}); err != nil {
+			t.Fatal(err)
+		}
+		err = rollout.Observe(context.Background(), []sdk.ObjectRef{menuDeployment})
+		var blocked *AdmissionBlockedError
+		if errors.As(err, &blocked) {
+			t.Fatalf("foreign/old ReplicaSet denied current rollout: %v", err)
+		}
+	}
+}
