@@ -61,7 +61,8 @@ func TestKubernetesExecutorNeverRecreatesWorkerWithUnsettledResult(t *testing.T)
 				})
 			}
 			executor := KubernetesExecutor{Client: client, Namespace: "demo", Registry: reflectionTestRegistry(t), RepositoryPVC: "repo", RepositoryMountPath: "/workspace", PollInterval: time.Millisecond}
-			ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+			// Every scenario settles without polling; the ceiling only bounds a regression that starts to poll.
+			ctx, cancel := context.WithTimeout(context.Background(), executeCeiling)
 			defer cancel()
 			got, err := executor.Execute(ctx, task)
 			if scenario == "job-deadline-exceeded" && !errors.Is(err, context.DeadlineExceeded) {

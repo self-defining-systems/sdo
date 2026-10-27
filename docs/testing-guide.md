@@ -45,6 +45,28 @@ Its negative controls run alongside it in `scripts/check_errors.sh`, so an unsaf
 new fixture fails the static gate. Run the whole helper suite with
 `go -C sdo/operator test -race ./internal/testutil`.
 
+## Waiting in Go tests
+
+`Execute` polls until its context ends, so running it under a fixed short
+deadline (`context.WithTimeout(..., 100*time.Millisecond)`) races it against the
+scheduler; the race detector under host load flaked on this. Wait for the
+condition the test asserts instead. In `worker_registry`, `executeUntil` runs
+`Execute` and cancels it once the condition holds, with a 30 s failure ceiling.
+`internal/testutil.TestNoFixedShortDeadlineAroundExecuteInTests` rejects a
+sub-second literal deadline whose context reaches an `Execute` call anywhere in
+`sdo/operator`; `scripts/check_errors.sh` runs it with its negative controls.
+
+## SREGym pin ancestry
+
+`scripts/check_submodule_pin.py` (a `check_errors.sh` step) fails when the
+`third_party/sregym` gitlink is not equal to, or a descendant of, the base
+branch's pin. A merge that keeps the branch's older pin otherwise reverts the
+base silently. The base is `--base`, else `origin/$GITHUB_BASE_REF` (fetched
+with depth 1 in a shallow CI checkout), else a default branch already merged
+into HEAD. Ancestry comes from the initialized submodule when it has both
+commits, else from a blobless fetch of the two pins into a temporary
+repository. It skips with a message when the base or its pin is unavailable.
+
 ## Core commands
 
 ```bash
