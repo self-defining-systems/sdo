@@ -479,7 +479,7 @@ the discovery gate runs instead of silently skipping its cross-repository checks
 The native builder refreshes stale health requirements through the registered judge
 and broker before compiling detectors. Accepted judge commits bind policy to all
 tracked application inputs outside operational memory, the human objective and
-health detector revision. Memory-only outcomes, playbooks and rendered locks do
+health detector revision. Memory-only outcomes and playbooks do
 not trigger judge work. The runtime refuses evaluation, dispatch, plan
 writes and closure while the compiled detector bundle lags the accepted health
 policy, and requests a builder relaunch for adoption. A refresh failure

@@ -160,20 +160,6 @@ def verify_results(output: Path, environment: FastloopEnvironment) -> None:
         )
         if ancestry.returncode:
             raise ValueError("local accepted checkout does not contain the broker source repair")
-    lock = json.loads((environment.workspace / ".sdo/rendered/lock.json").read_text())
-    if not lock.get("objects") or any(item.get("error") or not item.get("file") for item in lock["objects"]):
-        raise ValueError("accepted rendered lock has evidence gaps after source repair")
-    source_commit = lock.get("source_commit")
-    if not isinstance(source_commit, str) or not source_commit:
-        raise ValueError("rendered lock is not bound to source repair evidence")
-    continuity = subprocess.run(
-        ["git", "diff", "--quiet", source_commit, "HEAD", "--", ".", ":(exclude).sdo"],
-        cwd=environment.workspace,
-        capture_output=True,
-        check=False,
-    )
-    if continuity.returncode:
-        raise ValueError("rendered lock predates the accepted source repair")
 
 
 def main(argv: list[str] | None = None) -> int:

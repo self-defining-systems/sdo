@@ -65,20 +65,12 @@ captured Pod object is unchanged. It never reuses Service probes or fixed answer
 to prove an effect. The installed routing example exercises this stricter
 predicate and complete repair-to-NoMatch replay through the shared compiler gate.
 
-## Rendered deployment lock (LK1, phase 1)
+## Accepted source rendering
 
-New controllers publish the sixth artifact class at `.sdo/rendered/`: version-1
-`lock.json` indexes namespace-scoped objects, source commit, selected manifest
-paths, normalized YAML filenames and SHA-256 hashes, plus each container's image
-string as source writes it. The lock is an information snapshot: nothing reads it
-to decide a diff, a reconcile or a closure. Only Go writes these files, through
-the broker after a fresh-render check.
-
-`AcceptedManifest(s)`, adoption, drift and `sdo source` render accepted source
+No rendered lock and no image evidence exist. `AcceptedManifest(s)`, adoption, drift and `sdo source` render accepted source
 directly, like `kubectl diff` and `kubectl apply`. The image string is compared
-and applied exactly as source writes it (tag or digest). No image evidence,
-deployer receipt or image ledger is required, and a stale or missing lock never
-blocks a diff, a reconcile or a closure. A restart before the accepted-source
+and applied exactly as source writes it (tag or digest). No deployer receipt or
+image ledger is required. A restart before the accepted-source
 inventory loads makes a verified closure wait (bounded), never retire.
 Publication errors retain the last accepted revision or explicitly recover the
 broker's advanced HEAD; an empty publication result must never clear it.
@@ -108,8 +100,7 @@ this inventory check. The read-only report includes `evidence_gaps` entries with
 counts them separately from unexplained objects. The live controller logs these
 typed gaps when loading its cached inventory. Zero inventory findings with gaps
 proves only the presence/ownership check, never image equality or global health.
-Image-field comparison still requires the durable rendered evidence, and an
-unavailable, mismatched or stale lock still prevents inventory verification.
+Drift compares rendered accepted source directly; no lock or image evidence is needed.
 
 
 ## Verified onboarding acknowledgement

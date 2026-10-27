@@ -183,8 +183,8 @@ def assert_responder_runs_registrations(
 def assert_seed_supports_scripted_judge(workspace: Path, seed_commit: str | None) -> dict[str, Any]:
     """Fail in seconds when the seed lacks what the scripted health judge reads.
 
-    The scripted judge only retains an accepted bundle (rendered lock, goal and
-    judge-owned detectors). A fresh, un-onboarded seed needs a real judge, so
+    The scripted judge only retains an accepted bundle (goal and judge-owned
+    detectors). A fresh, un-onboarded seed needs a real judge, so
     the rehearsal would otherwise burn its whole setup budget. Reads the seed
     commit the reset restores, never the lane.
     """

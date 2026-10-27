@@ -435,7 +435,7 @@ module inside the lane's responder image (no network, seconds) and fails with th
 build command for the `-scripted` variant when the image is a production build; the
 result is `responder_image` in the report. It also reads the seed commit's `.sdo` (read-only) through the
 scripted health judge's own seed loader and refuses a fresh, un-onboarded seed
-(no accepted `rendered/lock.json` or full judge-owned health bundle): run the first
+(no full judge-owned health bundle): run the first
 live row's production admission proof (`setup-proof.json`) instead. The result is
 `seed` in the report. It then restores the app, installs and
 onboards SDO with scripted registrations,

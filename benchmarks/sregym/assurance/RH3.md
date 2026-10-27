@@ -76,8 +76,8 @@ a changed objective or an incomplete bundle stops the rehearsal.
 
 After the runner completes, the wrapper requires the official mitigation oracle,
 full-cleanup verification, strictly parsed native receipts, broker source and
-outcome commits, and a zero-gap accepted rendered lock bound to the repaired source tree. A stale
-seed lock is rejected even if it has no gap entries. It preserves evidence under
+outcome commits, and an accepted checkout that contains the broker source repair. Drift compares
+rendered accepted source directly; no lock or image evidence exists. It preserves evidence under
 `RUN_DIR/results/rh3-slot-.../`, then resets to seed even after a failed run.
 An expired lease or failed host gate aborts before reset/injection; rerun only once
 the experiment lead has renewed the lease or host load permits it.

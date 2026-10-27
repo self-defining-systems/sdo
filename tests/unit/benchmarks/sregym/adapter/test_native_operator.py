@@ -91,7 +91,6 @@ def test_install_existing_invokes_go_cli_and_parses_receipt(
     assert "--healthy-baseline" in calls[0]
     assert calls[0][calls[0].index("--max-response-loops") + 1] == "3"
     assert calls[0][calls[0].index("--deployed-manifest-path") + 1] == "kubernetes"
-    assert "--seed-broker-root" not in calls[0]
     assert "--drift-tokens-per-hour" not in calls[0]
     assert "pull" in calls[0]
     assert calls[0][0] != "python3"

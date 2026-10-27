@@ -5,7 +5,6 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import re
 import subprocess
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -744,23 +743,7 @@ def _lock_manifests(
             raise ValueError(f"duplicate accepted restore manifest: {identity}")
         seen.add(identity)
         if row.get("error") or not row.get("file") or not row.get("sha256"):
-            name = reference.get("name", "")
-            known_gap = re.fullmatch(
-                rf"(?:Deployment/{re.escape(name)}: )?trusted deployment image evidence missing for container "
-                r"\S+ \(init=(?:true|false)\)",
-                str(row.get("error", "")),
-            )
-            if (
-                reference.get("kind") != "Deployment"
-                or not known_gap
-                or "file" in row
-                or "sha256" in row
-                or identity not in captured
-            ):
-                raise ValueError(f"unbacked or malformed rendered restore gap: {reference}")
-            # A typed evidence gap supplies no replacement spec. Retain the
-            # exact installed capture; it is never reconstructed from runtime.
-            continue
+            raise ValueError(f"unbacked or malformed rendered restore gap: {reference}")
         path = (root / row["file"]).resolve()
         if not path.is_relative_to(root.resolve()):
             raise ValueError("restore manifest escapes accepted rendered directory")
