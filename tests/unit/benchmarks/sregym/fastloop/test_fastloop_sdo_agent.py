@@ -990,5 +990,5 @@ def test_closure_grade_rejects_an_incident_that_predates_injection(tmp_path: Pat
             0,
             "p",
             lambda: InjectionWindow(started_at=injected, finished_at=injected),
-            lambda: pytest.fail("an unrelated incident must never receive a grade"),
+            lambda _point: pytest.fail("an unrelated incident must never receive a grade"),
         )

@@ -644,3 +644,46 @@ def test_a_controller_that_never_closes_the_incident_is_reported_not_waited_on(t
     assert outcome.error is not None
     assert "without a verified closure" in outcome.error
     assert ops.maintenance[-1] == "paused"
+
+
+def test_composite_grades_first_closure_before_its_internal_reflection_drain(tmp_path: Path) -> None:
+    class Ops(FakeOps):
+        def collect_receipt(self, config, incident_id, artifacts_dir):
+            checkpoint = json.loads((tmp_path / "rows.grades" / "000000.json").read_text())
+            assert checkpoint["oracle_incident_id"] == "incident-1"
+            assert checkpoint["oracle"]["success"] is False
+            return super().collect_receipt(config, incident_id, artifacts_dir)
+
+    ops = Ops(second_incident=True)
+    agent = _agent(tmp_path, ops)
+    grades: list[int] = []
+
+    class Driver:
+        def inject(self, _problem: str) -> InjectionWindow:
+            return _inject()
+
+        def oracle(self) -> OracleVerdict:
+            assert ops.receipts == [], "the grade precedes the composite's internal reflection drain"
+            grades.append(1)
+            return OracleVerdict(kind="sregym-mitigation-oracle", success=False)
+
+        def recover(self) -> float:
+            pytest.fail("tier 2 owns the next row's recovery")
+
+    rows = run_incidents(
+        agent,
+        Driver(),
+        LoopConfig("composite-closure-grade", (PROBLEM,), 1, tmp_path / "rows.jsonl", row_start_tier2=True),
+    )
+    assert grades == [1]
+    assert rows[0].oracle_incident_id == "incident-1"
+    assert rows[0].oracle_resolved_at == INJECTED + timedelta(seconds=39)
+    assert rows[0].resolved_at == INJECTED + timedelta(seconds=330)
+    sample = rows[0].model_copy(update={"oracle_finished_at": INJECTED + timedelta(seconds=40)})
+    assert sample.closure_to_grade_seconds == 1
+    assert rows[0].oracle is not None
+    assert rows[0].oracle.success is False
+    assert ops.receipts == ["incident-1", "incident-2"]
+    report = json.loads((tmp_path / "reports" / f"composite_000_{PROBLEM}.json").read_text())
+    assert len(report["incidents"]) == 2
+    assert rows[0].recovery_error is None

@@ -54,6 +54,12 @@ class RecoveryWaitTimeout(RuntimeError):
 
 
 @dataclass(frozen=True)
+class ResolutionGradePoint:
+    incident_id: str | None
+    resolved_at: datetime | None
+
+
+@dataclass(frozen=True)
 class InjectionWindow:
     started_at: datetime
     finished_at: datetime
@@ -474,6 +480,8 @@ def _run_one(
     recovery_oracle: OracleVerdict | None = None
     recovery_oracle_samples: list[RecoveryOracleSample] = []
     oracle_finished_at: datetime | None = None
+    oracle_point: ResolutionGradePoint | None = None
+    diagnosis_grade: DiagnosisGrade | None = None
     recovery_finished_at: datetime | None = None
     recovery_seconds: float | None = None
     cleanup_passes_verified = 0
@@ -486,10 +494,13 @@ def _run_one(
         # problem may itself contribute multiple components; positions are not IDs.
         return driver.oracle()
 
-    def measure_resolution() -> None:
-        nonlocal oracle, infra_error, oracle_finished_at
+    def measure_resolution(point: ResolutionGradePoint | None = None) -> None:
+        nonlocal oracle, infra_error, oracle_finished_at, oracle_point
         if oracle_finished_at is not None:
             return
+        if not windows:
+            raise RuntimeError("cannot grade an incident before injection")
+        oracle_point = point
         try:
             oracle = grade()
             raw_infra = oracle.details.get("infra_error")
@@ -502,6 +513,30 @@ def _run_one(
             errors.append(infra_error)
         finally:
             oracle_finished_at = now()
+            fields = (
+                _outcome_fields(outcome)
+                if outcome is not None
+                else {
+                    "incident_id": oracle_point.incident_id if oracle_point else None,
+                    "resolved_at": oracle_point.resolved_at if oracle_point else None,
+                }
+            )
+            checkpoint = IncidentRecord(
+                run_id=config.run_id,
+                index=index,
+                agent=agent.name,
+                problem_id=problem_id,
+                model=agent.model,
+                injection=Injected(started_at=windows[0].started_at, finished_at=windows[0].finished_at),
+                oracle=oracle,
+                diagnosis_grade=diagnosis_grade,
+                oracle_finished_at=oracle_finished_at,
+                oracle_incident_id=oracle_point.incident_id if oracle_point else None,
+                oracle_resolved_at=oracle_point.resolved_at if oracle_point else None,
+                infra_error=infra_error,
+                **fields,
+            )
+            persist_grade_checkpoint(config.results_path.with_suffix(".grades") / f"{index:06d}.json", checkpoint)
 
     try:
         resolve_at_closure = getattr(agent, "resolve_at_closure", None)
@@ -553,7 +588,6 @@ def _run_one(
         errors.append(_describe(exc))
 
     recovered = bool(windows)
-    diagnosis_grade: DiagnosisGrade | None = None
     if windows and grader is not None and outcome is not None and outcome.diagnosis.strip():
         try:
             diagnosis_grade = grader.grade(problem_ids, outcome.diagnosis if outcome else "")
@@ -563,22 +597,7 @@ def _run_one(
         diagnosis_grade = DiagnosisGrade(skipped=True, skip_reason="no diagnosis text")
 
     if windows and oracle_finished_at is None:
-        measure_resolution()
-    if windows:
-        checkpoint = IncidentRecord(
-            run_id=config.run_id,
-            index=index,
-            agent=agent.name,
-            problem_id=problem_id,
-            model=agent.model,
-            injection=Injected(started_at=windows[0].started_at, finished_at=windows[0].finished_at),
-            oracle=oracle,
-            diagnosis_grade=diagnosis_grade,
-            oracle_finished_at=oracle_finished_at,
-            infra_error=infra_error,
-            **(_outcome_fields(outcome) if outcome is not None else {}),
-        )
-        persist_grade_checkpoint(config.results_path.with_suffix(".grades") / f"{index:06d}.json", checkpoint)
+        measure_resolution(ResolutionGradePoint(outcome.incident_id, outcome.resolved_at) if outcome else None)
 
     learning_complete = outcome is None or not outcome.terminal_error
     if outcome is not None:
@@ -639,6 +658,8 @@ def _run_one(
         recovery_error=recovery_error,
         diagnosis_grade=diagnosis_grade,
         oracle_finished_at=oracle_finished_at,
+        oracle_incident_id=oracle_point.incident_id if oracle_point else None,
+        oracle_resolved_at=oracle_point.resolved_at if oracle_point else None,
         recovery_finished_at=recovery_finished_at,
         fault_recovery_seconds=recovery_seconds,
         post_closure_waits=post_closure_waits,

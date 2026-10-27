@@ -155,3 +155,14 @@ timestamps/oracles remain absent, `full_cleanup_verified` is false, and
 graded row failed. The attempt marker carries the injected problem IDs; the next
 row's wipe receipt records `previous_row_unrecovered` and the recreated namespaces.
 Legacy warm streams without a row-start rebuild retain their recovery fence.
+
+`oracle_incident_id` and `oracle_resolved_at` bind the grade to the first
+verified closure. A composite may internally drain reflection and handle later
+incidents before returning; its existing aggregate `resolved_at` and native
+health-clear timing remain unchanged. `closure_to_grade_seconds` uses the
+oracle's own closure timestamp when present, falling back to `resolved_at` for
+older rows. The grade is never resampled after the later incidents.
+The immutable `incidents.grades/<index>.json` checkpoint is published at that
+sample, including during composite resolution before its first receipt drain.
+Responder/reflection accounting completed later belongs to the final row, not
+to a replacement grade checkpoint.
