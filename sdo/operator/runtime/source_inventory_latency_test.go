@@ -24,8 +24,8 @@ func BenchmarkSourceInventoryClosure(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				clear, findings := c.verifyClosureDrift(context.Background(), time.Unix(100, 0), nil)
-				if !clear || len(findings) != 0 {
+				report := c.verifyClosureSource(context.Background(), time.Unix(100, 0), nil, nil)
+				if len(report.Rollouts) != 0 || len(report.Drift) != 0 {
 					b.Fatal("clean closure blocked")
 				}
 			}

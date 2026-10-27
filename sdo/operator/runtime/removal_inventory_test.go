@@ -7,7 +7,6 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/tools/cache"
-	"path/filepath"
 	"sdo.dev/operator/sdk"
 	"testing"
 	"time"
@@ -80,50 +79,6 @@ func TestRemovalRoleBindingInformerObservesOtherNamespaces(t *testing.T) {
 		if object.GetKind() == "RoleBinding" && object.GetNamespace() == "other" {
 			t.Fatal("foreign binding leaked into application findings")
 		}
-	}
-}
-
-func TestSharedOwnershipEndsResponseWithoutContinuation(t *testing.T) {
-	client := fake.NewSimpleClientset()
-	request := goldenRequest(t)
-	request.ResponseDeadline = time.Now().Add(time.Minute)
-	request.RepositoryWorktree = t.TempDir() + "/proposal"
-	request.MaxResponseLoops = 3
-	objects := latentInventoryObjects()[3:]
-	objects[0].SetName("cluster-admin")
-	objects[1].Object["roleRef"].(map[string]any)["name"] = "cluster-admin"
-	findings := NewSourceInventory("app", "accepted", nil).Findings(objects, time.Now())
-	var blocked sdk.Finding
-	for _, finding := range findings {
-		if finding.PrimaryResource.Kind == "ClusterRole" {
-			blocked = finding
-		}
-	}
-	if blocked.Metadata["removal_blocker"] != "shared_ownership" {
-		t.Fatal("fixture lacks typed blocker")
-	}
-	loop := NewResponderLoop(request, nil, nil, nil, PlanExecutor{}, 3)
-	loop.VerifyResult = func(context.Context, IncidentResult) ToolResponse {
-		return ToolResponse{Summary: "shared authorization requires escalation", Findings: []sdk.Finding{blocked}}
-	}
-	d := KubernetesJobDispatcher{Client: client, Namespace: "demo", Registry: testIncidentRegistry(t, "responder:test"), AgentID: testIncidentAgentID(t), RepositoryPVC: "repo", RepositoryMountPath: filepath.Dir(request.RepositoryWorktree), ServiceAccount: "responder", PollInterval: time.Millisecond, LoopFactory: func(IncidentRequest) *ResponderLoop { return loop }}
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-	type reply struct {
-		result IncidentResult
-		err    error
-	}
-	done := make(chan reply, 1)
-	go func() { result, err := d.Dispatch(ctx, request); done <- reply{result, err} }()
-	job := awaitJob(t, client, IncidentJobName(request.IncidentID))
-	publishContinuationResult(t, client, job, completedResult(request.IncidentID))
-	outcome := <-done
-	if outcome.err != nil || outcome.result.Status != IncidentFailed || outcome.result.Error != "shared_ownership" || outcome.result.ResponseLoopsUsed != 1 {
-		t.Fatalf("shared ownership retried or claimed recovery: %+v error=%v", outcome.result, outcome.err)
-	}
-	resumed, err := d.ContinueAfterVerification(ctx, request, ToolResponse{Findings: []sdk.Finding{blocked}}, time.Now())
-	if err != nil || resumed {
-		t.Fatalf("terminal shared ownership resumed: %v %v", resumed, err)
 	}
 }
 

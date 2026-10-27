@@ -1204,6 +1204,13 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 		return
 	}
 	early := !c.responderDone
+	if early && c.driftOnlyIncidentLocked() {
+		// Drift is the only reason this incident exists, so clear health proves
+		// nothing about it yet: the agent gets its turn and the incident closes
+		// on health once the agent returns.
+		c.mu.Unlock()
+		return
+	}
 	requiresStability := early || c.codePath != nil && c.codePath.Selection.DetectorSource == "shell"
 	if early && (c.dispatchState != contracts.DispatchState_DISPATCH_STATE_RUNNING || c.incidentDispatchedAt.IsZero()) {
 		c.mu.Unlock()
@@ -1254,7 +1261,7 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 			}
 		}
 	}
-	driftClear, driftFindings := c.verifyClosureDriftWithResult(ctx, now, snapshot, nil, rolloutRefs...)
+	source := c.verifyClosureSource(ctx, now, snapshot, nil, rolloutRefs...)
 	c.mu.Lock()
 	// Any observed responder write restarts the stability window, including
 	// the last writes before the responder finished.
@@ -1270,30 +1277,31 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 		ids := c.healthDetectorIDs
 		if len(ids) == 0 {
 			for _, finding := range c.currentIncidentRequest.Findings {
-				ids = append(ids, finding.DetectorID)
+				if !strings.HasPrefix(finding.DetectorID, "drift.") {
+					ids = append(ids, finding.DetectorID)
+				}
 			}
 		}
 		finalStates, healthVerified = c.latestEvaluations(ids, c.earlyLastMutationAt, true)
 	}
-	verified := healthVerified && driftClear
+	verified := healthVerified && len(source.Rollouts) == 0
 	// A terminal dispatch failure closes as failed: once health permits it, or
 	// at once when the responder is done, because a failed Job leaves no
 	// attempt to verify and waiting would only hold still-firing findings back
-	// from the next attempt. Unresolved drift must not delay it or count as
-	// verified recovery.
+	// from the next attempt.
 	jobFailed := !early && c.dispatchError != ""
 	terminalFailure := jobFailed || (healthVerified && c.dispatchError != "")
 	if jobFailed && !healthVerified {
 		slog.Info("incident_terminal_dispatch_failure", "incident_id", c.currentIncidentRequest.IncidentID, "reason", "responder_job_failed", "active_health_detectors", c.activeHealthDetectors())
 	}
-	verification := c.continuationVerificationLocked(healthVerified, driftClear, driftFindings)
+	verification := c.continuationVerificationLocked(healthVerified, source)
 	if early {
 		seen := map[string]bool{}
 		for _, finding := range verification.Findings {
 			seen[FindingFingerprint(finding)] = true
 		}
 		for _, state := range c.tracker.Snapshot() {
-			if state.Active && !seen[FindingFingerprint(state.Finding)] {
+			if state.Active && !strings.HasPrefix(state.DetectorID, "drift.") && !seen[FindingFingerprint(state.Finding)] {
 				verification.Findings = append(verification.Findings, state.Finding)
 			}
 		}
@@ -1341,10 +1349,6 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 		c.closureStableSince = time.Time{}
 	}
 
-	if healthVerified && c.terminalInventoryBlockerLocked(verification) {
-		terminalFailure = true
-		slog.Info("incident_terminal_blocker", "incident_id", c.currentIncidentRequest.IncidentID, "reason", "unchanged_non_transient_findings", "findings", len(verification.Findings))
-	}
 	if !verified && !terminalFailure && (len(verification.Findings) > 0 || verification.Error != "") && c.dispatchError == "" && now.Before(c.currentIncidentRequest.ResponseDeadline) {
 		if continuer, ok := c.dispatcher.(interface {
 			ContinueAfterVerification(context.Context, IncidentRequest, ToolResponse, time.Time) (bool, error)
@@ -1533,15 +1537,23 @@ func logIncidentVerified(incidentID string, healthClearedAt *time.Time, responde
 // finalVerificationStates reports whether the incident is verified: the health
 // detectors (or, without any, the incident's own findings) have cleared and
 // evaluated clear since the responder completed. maybeCloseIncident additionally
-// requires a fresh comparison of admitted source drift through verifyClosureDrift.
+// holds the closure for pending rollouts found by verifyClosureSource; drift is
+// reported there but never decides.
 func (c *Controller) finalVerificationStates() ([]DetectorEvaluation, bool) {
 	if len(c.healthDetectorIDs) == 0 {
-		if c.tracker.HasActiveKeys(c.incidentFindingKeys) {
+		// Drift is information: only the non-drift findings decide health.
+		health := []sdk.Finding{}
+		for _, finding := range c.currentIncidentRequest.Findings {
+			if !strings.HasPrefix(finding.DetectorID, "drift.") {
+				health = append(health, finding)
+			}
+		}
+		if c.tracker.HasActiveKeys(findingKeys(health)) {
 			return nil, false
 		}
 		ids := make([]string, 0)
 		seen := make(map[string]struct{})
-		for _, finding := range c.currentIncidentRequest.Findings {
+		for _, finding := range health {
 			if _, ok := seen[finding.DetectorID]; !ok {
 				seen[finding.DetectorID] = struct{}{}
 				ids = append(ids, finding.DetectorID)
@@ -1905,6 +1917,20 @@ func (c *Controller) actionContext(ctx context.Context) (context.Context, contex
 	}
 	actionCtx, cancel := context.WithCancel(ctx)
 	return actionCtx, cancel, nil
+}
+
+// driftOnlyIncidentLocked reports whether the open incident has no finding
+// other than drift. Caller holds c.mu.
+func (c *Controller) driftOnlyIncidentLocked() bool {
+	if c.currentIncidentRequest == nil || len(c.currentIncidentRequest.Findings) == 0 {
+		return false
+	}
+	for _, finding := range c.currentIncidentRequest.Findings {
+		if !strings.HasPrefix(finding.DetectorID, "drift.") {
+			return false
+		}
+	}
+	return true
 }
 
 func (c *Controller) hasRetainedDrift() bool {

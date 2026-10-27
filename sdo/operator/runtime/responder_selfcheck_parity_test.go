@@ -54,13 +54,13 @@ func TestResponderSelfCheckClosureParity(t *testing.T) {
 			}
 			defer server.Close()
 			actual := exchangeSelfCheck(t, &server, `{"command":"verify"}`)
-			driftClear, driftFindings := c.verifyClosureDrift(context.Background(), now, sdktest.Snapshot{})
+			source := c.verifyClosureSource(context.Background(), now, sdktest.Snapshot{}, nil)
 			_, health := c.finalVerificationStates()
-			expected := c.continuationVerificationLocked(health, driftClear, driftFindings)
+			expected := c.continuationVerificationLocked(health, source)
 			if actual.Healthy != expected.Healthy || len(actual.Findings) != len(expected.Findings) || actual.Error != expected.Error {
 				t.Fatalf("tool=%+v controller=%+v", actual, expected)
 			}
-			if actual.Healthy != (scenario == "healthy") {
+			if actual.Healthy != (scenario == "healthy" || scenario == "drift-remaining") {
 				t.Fatalf("unexpected %s verdict: %+v", scenario, actual)
 			}
 		})

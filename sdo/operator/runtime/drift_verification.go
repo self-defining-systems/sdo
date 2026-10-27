@@ -1,58 +1,30 @@
 package runtime
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"reflect"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
-	"sort"
 	"strings"
-	"time"
 )
 
-// checkRetainedDrift rechecks unexplained drift against accepted source.
-// Playbooks never create or clear detector findings.
-func checkRetainedDrift(ctx context.Context, retained []sdk.Finding, view program.ReadView) ([]sdk.Finding, []DetectorEvaluation) {
-	unresolved := []sdk.Finding{}
-	states := map[string]DetectorEvaluation{}
+// retainedDrift rechecks unexplained drift against accepted source and returns
+// the findings whose declared fields still differ. It is information for the
+// responder and the outcome; it never decides health or closure.
+func retainedDrift(retained []sdk.Finding, view program.ReadView) []sdk.Finding {
+	remaining := []sdk.Finding{}
 	for _, finding := range retained {
 		if finding.DetectorID != "drift.unexplained" {
 			continue
 		}
-		state, exists := states[finding.DetectorID]
-		if !exists {
-			state = DetectorEvaluation{DetectorID: finding.DetectorID, EvaluatedAt: time.Now().UTC(), Status: DetectorEvaluationClear}
+		events := driftEventsForFindings(nil, []sdk.Finding{finding})
+		diff, err := declaredSourceDiff(view, finding.PrimaryResource)
+		if err != nil || !sourceDriftRestored(diff, events) {
+			remaining = append(remaining, finding)
 		}
-		clear := false
-		var err error
-		if finding.DetectorID == "drift.unexplained" {
-			events := driftEventsForFindings(nil, []sdk.Finding{finding})
-			var diff program.Diff
-			diff, err = declaredSourceDiff(view, finding.PrimaryResource)
-			if err == nil {
-				clear = sourceDriftRestored(diff, events)
-			}
-		}
-
-		if !clear {
-			unresolved = append(unresolved, finding)
-			state.Status = DetectorEvaluationFiring
-			state.Fingerprints = append(state.Fingerprints, FindingFingerprint(finding))
-			if err != nil {
-				state.Status = DetectorEvaluationError
-				state.Error = err.Error()
-			}
-		}
-		states[finding.DetectorID] = state
 	}
-	evaluations := make([]DetectorEvaluation, 0, len(states))
-	for _, state := range states {
-		evaluations = append(evaluations, state)
-	}
-	sort.Slice(evaluations, func(i, j int) bool { return evaluations[i].DetectorID < evaluations[j].DetectorID })
-	return unresolved, evaluations
+	return remaining
 }
 
 func driftDiffValues(diff program.Diff) (map[string]any, map[string]any, bool) {
@@ -116,4 +88,13 @@ func driftComparisonValues(object map[string]any) map[string]any {
 		walk(key, value)
 	}
 	return values
+}
+
+func hasRetainedDrift(retained []sdk.Finding) bool {
+	for _, finding := range retained {
+		if finding.DetectorID == "drift.unexplained" {
+			return true
+		}
+	}
+	return false
 }

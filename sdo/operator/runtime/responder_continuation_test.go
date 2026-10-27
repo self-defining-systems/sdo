@@ -371,17 +371,22 @@ func TestControllerContinuationDistinguishesFaultFromObservationWindow(t *testin
 	c.healthDetectorIDs = []string{"health"}
 	c.responderCompletedAt = now
 	c.history = []DetectorEvaluation{{DetectorID: "health", EvaluatedAt: now.Add(-time.Second), Status: DetectorEvaluationClear}}
-	pending := c.continuationVerificationLocked(false, true, nil)
+	pending := c.continuationVerificationLocked(false, closureSourceReport{})
 	if len(pending.Findings) != 0 || pending.Error != "" || !strings.Contains(pending.Summary, "health") || !strings.Contains(pending.Summary, now.Format(time.RFC3339Nano)) {
 		t.Fatalf("unnamed pending observation: %+v", pending)
 	}
 	drift := sdk.Finding{DetectorID: "drift.unexplained", PrimaryResource: sdk.ObjectRef{Kind: "ConfigMap", Namespace: "demo", Name: "flags"}, Fingerprint: "flags/key"}
-	failed := c.continuationVerificationLocked(false, false, []sdk.Finding{drift})
-	if len(failed.Findings) != 1 || failed.Findings[0].PrimaryResource.Name != "flags" {
-		t.Fatalf("clear health concealed unresolved drift: %+v", failed)
+	// Drift is information: it is shown but never holds the verdict.
+	informed := c.continuationVerificationLocked(true, closureSourceReport{Drift: []sdk.Finding{drift}})
+	if !informed.Healthy || len(informed.Findings) != 0 || len(informed.Drift) != 1 || informed.Drift[0].PrimaryResource.Name != "flags" {
+		t.Fatalf("drift changed the health verdict or was hidden: %+v", informed)
+	}
+	failed := c.continuationVerificationLocked(false, closureSourceReport{Drift: []sdk.Finding{drift}})
+	if failed.Healthy {
+		t.Fatalf("drift made unhealthy state healthy: %+v", failed)
 	}
 	c.history = append(c.history, DetectorEvaluation{DetectorID: "health", EvaluatedAt: now.Add(time.Second), Status: DetectorEvaluationError, Error: "snapshot unavailable"})
-	failed = c.continuationVerificationLocked(false, true, nil)
+	failed = c.continuationVerificationLocked(false, closureSourceReport{})
 	if !strings.Contains(failed.Error, "health: snapshot unavailable") {
 		t.Fatalf("unnamed detector failure: %+v", failed)
 	}

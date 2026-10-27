@@ -55,7 +55,7 @@ MUTATION_COMMANDS = frozenset({"act", "apply", "mitigate", "rollback"})
 # Key response paths are part of the CLI help contract, shared with the generated
 # responder reference. Fields are conditional, not a promise of success/presence.
 RESPONSE_FIELDS = {
-    "status": "healthy, findings[], detector_states[], drift_events[], program_runs[]",
+    "status": "healthy, findings[], detector_states[], drift[], drift_events[], program_runs[]",
     "detect": "healthy, findings[], detector_states[]",
     "check": "healthy, findings[], detector_states[], detection (fresh detect response)",
     "diagnose": "program_runs[].{program_id, program_revision, verdict, can_mitigate}, program_revisions",
@@ -63,7 +63,7 @@ RESPONSE_FIELDS = {
     "menu": "menu.options[].{option_id, program_id, program_revision, disabled_reason, parameters}, "
     "selection_schema, selection_set_schema, unexplained_removal_blockers[]",
     "source": "source (accepted Kubernetes object)",
-    "verify": "healthy, unresolved, findings[], detector_states[], drift_events[]",
+    "verify": "healthy, unresolved, findings[], detector_states[], drift[], drift_events[]",
     "report": "report.{status, attempt_id, rounds}, session",
     "act": "actions[].{success, exit_code, receipt, output, failure_reason, hint}",
     "apply": "actions[].{application_id, targeted_healthy, mitigation_health, program_runs, program_revisions, report}",
@@ -279,7 +279,8 @@ def _parser() -> argparse.ArgumentParser:
     verify = commands.add_parser(
         "verify",
         help="read cached controller verification; optionally await a stable verdict",
-        description="Reads the controller's cached health and inventory verdict immediately. "
+        description="Reads the controller's cached health verdict immediately; drift[] lists objects that still "
+        "differ from accepted source and never decides healthy. "
         "Pending observation windows, including unproven synthetic scenarios, are not healthy. "
         "Fresh deployment-rollout-pending findings name owned ReplicaSet/Pod blockers and old-template Pods, "
         "including after recorded actions; inspect their evidence before repeating workload writes. "

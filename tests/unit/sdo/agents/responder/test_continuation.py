@@ -140,3 +140,26 @@ def test_large_inventory_explicitly_counts_omitted_rows_without_losing_evidence(
     assert "Omitted " in prompt
     evidence = Path(prompt.split("Full JSON: ", 1)[1].splitlines()[0])
     assert len(json.loads(evidence.read_text())["still_broken"]) == 90
+
+
+def test_source_differences_are_shown_as_information_not_as_broken_findings() -> None:
+    difference = {
+        "detector_id": "drift.unexplained",
+        "rule_id": "unexplained",
+        "fingerprint": "drift/config",
+        "summary": "ConfigMap differs from accepted source",
+        "evidence": "synthetic",
+        "primary_resource": {"kind": "ConfigMap", "namespace": "app", "name": "policy"},
+    }
+    payload = {
+        "attempt": 1,
+        "healthy": False,
+        "summary": "one remains",
+        "still_broken": [],
+        "source_differences": [difference],
+        "already_done": [],
+    }
+    prompt = continuation_prompt(json.dumps(payload))
+    assert "still_broken: (0)" in prompt
+    assert "source_differences (information, not blocking): (1)" in prompt
+    assert ContinuationFeedback.model_validate(payload).source_differences[0].fingerprint == "drift/config"
