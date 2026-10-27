@@ -9,15 +9,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from benchmarks.sregym.fastloop.idempotent_helm import make_deploy_idempotent
-from benchmarks.sregym.fastloop.lane_guard import injector_secret_scope
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
 #: Worker ops that restart or roll out workloads; each runs under the unschedulable-surge guard.
 SURGE_GUARDED_OPS = frozenset({"recover", "refresh"})
-#: Ops that run the benchmark's own problem code (inject, recover, refresh and grade) on the incidents in flight.
-BENCHMARK_PROBLEM_OPS = SURGE_GUARDED_OPS | {"oracle"}
 
 
 def attach_existing_cluster(worker_infra: Any) -> dict[str, str]:
@@ -58,21 +55,6 @@ def handle_with_surge_guard(
 
 def _make_deploy_idempotent() -> None:
     make_deploy_idempotent(importlib.import_module("sregym.service.helm").Helm)
-
-
-def _injector_secrets(worker_module: Any, problems: Sequence[Any]) -> dict[str, frozenset[str]]:
-    """Namespace -> Secrets the faults of these problems declare (a composite contributes its components)."""
-    from benchmarks.sregym.faults.injector_secrets import declared_secrets
-
-    secrets: dict[str, frozenset[str]] = {}
-    for problem in problems:
-        try:
-            namespace = worker_module._app_namespace(problem)
-        except ValueError:
-            continue
-        names = declared_secrets([problem, *getattr(problem, "components", ())])
-        secrets[namespace] = secrets.get(namespace, frozenset()) | names
-    return secrets
 
 
 def _incident_namespaces(worker_module: Any, worker: Any) -> list[str]:
@@ -149,9 +131,8 @@ def main() -> int:
             problem = self._problem_factory(str(request["problem_id"]))
             if problem.namespace == "hotel-reservation":
                 prepare_install(Path(os.environ["KUBECONFIG"]), problem.namespace, Path(request["baseline_path"]))
-        injected: Any = None
         if op == "inject":
-            problem = injected = self._problem_factory(str(request["problem_id"]))
+            problem = self._problem_factory(str(request["problem_id"]))
             admit_install(Path(os.environ["KUBECONFIG"]), problem.namespace)
         if astronomy:
             prepare_astronomy()
@@ -163,30 +144,19 @@ def main() -> int:
         if request.get("op") == "baseline_oracle":
             problem = self._problem_factory(str(request["problem_id"]))
             assert_clean_baseline(Path(os.environ["KUBECONFIG"]), namespace=problem.namespace)
-            with injector_secret_scope(_injector_secrets(worker, [problem])):
-                verdict = self._grade(problem)
+            verdict = self._grade(problem)
             if request.get("verify_traffic"):
                 from benchmarks.sregym.fastloop.seed_recovery import verify_baseline_traffic
 
                 return verify_baseline_traffic(problem, verdict)
             return verdict
-        # The benchmark's own inject/recover calls may use the Secrets their faults declare; every other
-        # op, and all harness code, stays under the metadata-only Secret rule.
-        scoped = (
-            [injected]
-            if injected is not None
-            else list(getattr(self, "_incidents", ()))
-            if op in BENCHMARK_PROBLEM_OPS
-            else []
+        reply = handle_with_surge_guard(
+            handle,
+            self,
+            request,
+            namespaces=_incident_namespaces(worker, self),
+            kubeconfig=Path(os.environ["KUBECONFIG"]),
         )
-        with injector_secret_scope(_injector_secrets(worker, scoped)):
-            reply = handle_with_surge_guard(
-                handle,
-                self,
-                request,
-                namespaces=_incident_namespaces(worker, self),
-                kubeconfig=Path(os.environ["KUBECONFIG"]),
-            )
         if op == "recover" and request.get("fault") is None and reply.get("success") is True:
             remove_injected_objects(Path(os.environ["KUBECONFIG"]))
         if op == "deploy" and reply.get("deployed") is False:

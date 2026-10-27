@@ -790,7 +790,7 @@ def _run(args: argparse.Namespace) -> int:
     )
     check_composites(descriptions)
     assert_faults_installable(
-        descriptions, environment.namespace, LaneGuard(environment.cluster, environment.kubeconfig, "row-start")
+        descriptions, environment.sregym_dir, LaneGuard(environment.cluster, environment.kubeconfig, "row-start")
     )
     capability_mode = stream_config.capability_mode if stream_config else "strict"
     capability_evidence = validate_suite(
