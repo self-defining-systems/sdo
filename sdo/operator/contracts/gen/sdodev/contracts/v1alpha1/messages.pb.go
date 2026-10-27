@@ -1908,8 +1908,10 @@ type IncidentRequest struct {
 	PlaybookCoverage      *PlaybookCoverage          `protobuf:"bytes,27,opt,name=playbook_coverage,json=playbookCoverage,proto3" json:"playbook_coverage,omitempty"`
 	NamespaceOnboarding   *NamespaceOnboarding       `protobuf:"bytes,28,opt,name=namespace_onboarding,json=namespaceOnboarding,proto3" json:"namespace_onboarding,omitempty"`
 	PriorStages           []*StageReport             `protobuf:"bytes,29,rep,name=prior_stages,json=priorStages,proto3" json:"prior_stages,omitempty"`
-	unknownFields         protoimpl.UnknownFields
-	sizeCache             protoimpl.SizeCache
+	// Go-owned: each lossy step taken so the request fit the transport limit, in order.
+	Compaction    []string `protobuf:"bytes,30,rep,name=compaction,proto3" json:"compaction,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *IncidentRequest) Reset() {
@@ -2113,6 +2115,13 @@ func (x *IncidentRequest) GetNamespaceOnboarding() *NamespaceOnboarding {
 func (x *IncidentRequest) GetPriorStages() []*StageReport {
 	if x != nil {
 		return x.PriorStages
+	}
+	return nil
+}
+
+func (x *IncidentRequest) GetCompaction() []string {
+	if x != nil {
+		return x.Compaction
 	}
 	return nil
 }
@@ -3908,7 +3917,7 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	"\x13environment_objects\x18\x05 \x03(\v23.sdodev.contracts.v1alpha1.InstallEnvironmentObjectR\x12environmentObjects\"j\n" +
 	"\x18InstallEnvironmentObject\x126\n" +
 	"\x03ref\x18\x01 \x01(\v2$.sdodev.contracts.v1alpha1.ObjectRefR\x03ref\x12\x16\n" +
-	"\x06digest\x18\x02 \x01(\tR\x06digest\"\xa9\x0e\n" +
+	"\x06digest\x18\x02 \x01(\tR\x06digest\"\xc9\x0e\n" +
 	"\x0fIncidentRequest\x12>\n" +
 	"\x0eschema_version\x18\x01 \x01(\tB\x17\xbaH\x14r\x12\n" +
 	"\x10sdo.dev/v1alpha1R\rschemaVersion\x12)\n" +
@@ -3937,7 +3946,10 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	"\x16observation_generation\x18\x1a \x01(\tR\x15observationGeneration\x12X\n" +
 	"\x11playbook_coverage\x18\x1b \x01(\v2+.sdodev.contracts.v1alpha1.PlaybookCoverageR\x10playbookCoverage\x12a\n" +
 	"\x14namespace_onboarding\x18\x1c \x01(\v2..sdodev.contracts.v1alpha1.NamespaceOnboardingR\x13namespaceOnboarding\x12I\n" +
-	"\fprior_stages\x18\x1d \x03(\v2&.sdodev.contracts.v1alpha1.StageReportR\vpriorStagesJ\x04\b\v\x10\fJ\x04\b\f\x10\rJ\x04\b\x13\x10\x14J\x04\b\x18\x10\x19R\x19architecture_summary_pathR\x15health_objective_pathR\tfollow_up\"\xbf\x01\n" +
+	"\fprior_stages\x18\x1d \x03(\v2&.sdodev.contracts.v1alpha1.StageReportR\vpriorStages\x12\x1e\n" +
+	"\n" +
+	"compaction\x18\x1e \x03(\tR\n" +
+	"compactionJ\x04\b\v\x10\fJ\x04\b\f\x10\rJ\x04\b\x13\x10\x14J\x04\b\x18\x10\x19R\x19architecture_summary_pathR\x15health_objective_pathR\tfollow_up\"\xbf\x01\n" +
 	"\x11RootCauseEvidence\x12^\n" +
 	"\x04kind\x18\x01 \x01(\tBJ\xbaHGrER\x10detector-findingR\x11synthetic-trafficR\fstate-changeR\x10live-observationR\x04kind\x12\x1f\n" +
 	"\x06source\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x06source\x12)\n" +

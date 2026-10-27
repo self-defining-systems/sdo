@@ -108,6 +108,8 @@ message ReflectionRequest {
   reserved "depth";
   repeated ReflectionCauseWork cause_work = 14;
   repeated ReflectionWorkItem unassigned_work = 15;
+  // Go-owned: each lossy step taken so the request fit the transport limit, in order.
+  repeated string compaction = 16;
 }
 
 message ReflectionResult {

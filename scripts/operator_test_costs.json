@@ -8,7 +8,7 @@
     "sdo.dev/operator/builder/TestProgramSaveReplayDoesNotRequireRenameInvariance": "compiler-replay",
     "sdo.dev/operator/builder/TestTypedObservationProgramCompilesAndRejectsStaleEvidence": "compiler-replay",
     "sdo.dev/operator/operatorcli/TestAdoptionCompilesAsIsAndLaterValidationStillRejects": "compiler-replay",
-    "sdo.dev/operator/worker_registry/TestKubernetesExecutorRejectsRequestOverStagedBudgetNamingTheComponent": "compiler"
+    "sdo.dev/operator/worker_registry/TestKubernetesExecutorRejectsRequestOverBudgetNamingTheComponent": "compiler"
   },
   "costs": {
     "sdo.dev/operator/apihistory/FuzzHistoryStorageSchedule": 0.021,
@@ -608,7 +608,7 @@
     "sdo.dev/operator/worker_registry/TestKubernetesExecutorNeverRecreatesWorkerWithUnsettledResult": 0.02,
     "sdo.dev/operator/worker_registry/TestKubernetesExecutorRecoversRequestBoundStagedResult": 4.105,
     "sdo.dev/operator/worker_registry/TestKubernetesExecutorRejectsCheckoutOutsideMount": 0.001,
-    "sdo.dev/operator/worker_registry/TestKubernetesExecutorRejectsRequestOverStagedBudgetNamingTheComponent": 45.482,
+    "sdo.dev/operator/worker_registry/TestKubernetesExecutorRejectsRequestOverBudgetNamingTheComponent": 0.5,
     "sdo.dev/operator/worker_registry/TestKubernetesExecutorReportsUnwritableRequestStaging": 1.313,
     "sdo.dev/operator/worker_registry/TestKubernetesExecutorRunsRegisteredReflectionInPrivateCheckout": 0.012,
     "sdo.dev/operator/worker_registry/TestKubernetesExecutorStagesRequestsAboveConfigMapBudgetOnRepositoryVolume": 3.19,

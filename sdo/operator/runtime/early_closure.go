@@ -240,7 +240,6 @@ func (c *Controller) finishEarlyReport(ctx context.Context, now time.Time) {
 var errResponderTerminating = errors.New("verified responder is still terminating")
 
 // responderJobNames recovers durable continuation and request-conflict names.
-// The tool journal also covers requests staged on the PVC, without ConfigMaps.
 func (d KubernetesJobDispatcher) responderJobNames(ctx context.Context, id string, attempts int) (map[string]bool, error) {
 	if d.Client == nil {
 		return nil, errors.New("incident worker client is required")
