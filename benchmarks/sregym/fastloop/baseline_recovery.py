@@ -632,6 +632,7 @@ def accepted_restore_baselines(
         ).stdout.strip()
         installed_source = not changes
     if installed_source and all(baseline.installed_digest for baseline in baselines):
+        require_install_matches_source(source, baselines)
         return _keep_adopted_passive_objects(source, baselines)
     selected = _accepted_manifests(source, baselines, kinds=None)
     return tuple(
@@ -646,6 +647,62 @@ def accepted_restore_baselines(
         )
         for baseline in baselines
     )
+
+
+POD_TEMPLATE_KINDS = frozenset({"Deployment", "StatefulSet", "DaemonSet"})
+
+
+class InstallDivergesFromSource(ValueError):
+    """The sealed install runs different images than the accepted source declares."""
+
+
+def _canonical_image(reference: str) -> str:
+    return reference.removeprefix("docker.io/").removeprefix("library/")
+
+
+def _container_images(workload: dict[str, Any]) -> dict[str, str]:
+    template = workload.get("spec", {}).get("template", {}).get("spec", {})
+    return {
+        f"{group}/{container['name']}": _canonical_image(container["image"])
+        for group in ("containers", "initContainers")
+        for container in template.get(group) or []
+        if container.get("name") and container.get("image")
+    }
+
+
+def require_install_matches_source(source: AcceptedSource, baselines: tuple[ApplicationBaseline, ...]) -> None:
+    """Refuse a sealed install whose workload images differ from the accepted source.
+
+    Restore keeps the sealed workloads (no second rollout), so an install deployed with a
+    harness-private image tag would reach SDO as unexplained drift, open an incident before any
+    fault, and let its mitigation roll the workloads. Only workloads the source declares are
+    compared, container by container.
+    """
+    declared = {
+        (value["kind"], value["metadata"].get("namespace", ""), value["metadata"]["name"]): _container_images(value)
+        for value in source.manifests
+        if value["kind"] in POD_TEMPLATE_KINDS
+    }
+    diverging = []
+    for baseline in baselines:
+        for value in baseline.objects:
+            key = (value["kind"], baseline.namespace, value["metadata"]["name"])
+            wanted = declared.get(key)
+            if not wanted:
+                continue
+            installed = _container_images(value)
+            diverging.extend(
+                f"{key[0]}/{key[2]} {container}: installed {installed[container]}, accepted source {image}"
+                for container, image in sorted(wanted.items())
+                if container in installed and installed[container] != image
+            )
+    if diverging:
+        shown = "; ".join(diverging[:5]) + (f"; and {len(diverging) - 5} more" if len(diverging) > 5 else "")
+        raise InstallDivergesFromSource(
+            f"eval: the sealed install runs images the accepted source ({source.revision[:12]}) does not declare "
+            f"({len(diverging)}): {shown}. SDO would open an incident before any fault; redeploy the lane from "
+            "the accepted source (fastloop up --redeploy) before admitting a row"
+        )
 
 
 # Passive kinds SDO adopts from accepted source before any row. The sealed capture

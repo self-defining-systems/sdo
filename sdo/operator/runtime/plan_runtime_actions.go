@@ -89,6 +89,7 @@ func (e PlanExecutor) applyRuntimePlan(ctx context.Context, incident IncidentReq
 		rv      string
 		command []string
 		users   []program.DatabaseUser
+		outcome program.DatabaseUserOutcome
 	}
 	items := make([]prepared, len(plan.Actions))
 	projectedCatalogs := map[string][]program.DatabaseUser{}
@@ -143,6 +144,10 @@ func (e PlanExecutor) applyRuntimePlan(ctx context.Context, incident IncidentReq
 				key := string(keyRaw)
 				if projected, ok := projectedCatalogs[key]; ok {
 					users = projected
+				}
+				items[i].outcome, readErr = program.DatabaseUserTransition(users, a)
+				if readErr != nil {
+					return result, readErr
 				}
 				items[i].users, readErr = program.ApplyEnsureDatabaseUser(users, a)
 				projectedCatalogs[key] = items[i].users
@@ -216,17 +221,27 @@ func (e PlanExecutor) applyRuntimePlan(ctx context.Context, incident IncidentReq
 			}
 			catalog := e.Client.(DatabaseCatalogClient)
 			// Dispatch may have changed the catalog even if transport fails. Retain
-			// irreversible uncertainty; only successful direct read-back confirms it.
+			// irreversible uncertainty unless the failure provably precedes the
+			// write; only successful direct read-back confirms the effect.
+			if effectErr := catalog.EnsureDatabaseUser(ctx, a); effectErr != nil {
+				safe := databaseSafeError(effectErr, "database operation outcome unknown")
+				result.ActionReports[i].FailureReason = databaseFailureCode(effectErr)
+				if databaseFailedBeforeWrite(effectErr) {
+					return result, safe
+				}
+				result.Patches = append(result.Patches, PlanPatch{Ref: ref, Operation: "ensure_database_user", Irreversible: true})
+				result.ActionsApplied = append(result.ActionsApplied, original)
+				result.Applied = true
+				result.ActionReports[i].Status = "unknown"
+				return result, safe
+			}
 			result.Patches = append(result.Patches, PlanPatch{Ref: ref, Operation: "ensure_database_user", Irreversible: true})
 			result.ActionsApplied = append(result.ActionsApplied, original)
 			result.Applied = true
-			if effectErr := catalog.EnsureDatabaseUser(ctx, a); effectErr != nil {
-				result.ActionReports[i].Status = "unknown"
-				return result, databaseSafeError(effectErr, "database operation outcome unknown")
-			}
 			observedPod, podErr := e.Client.Get(ctx, ref)
 			if podErr != nil || observedPod == nil || observedPod.GetUID() != items[i].uid {
 				result.ActionReports[i].Status = "unknown"
+				result.ActionReports[i].FailureReason = databaseFailureCode(&DatabaseOperationError{Step: DatabaseContainerLookup, Reason: databaseIdentityChanged})
 				return result, fmt.Errorf("database operation identity unverified")
 			}
 
@@ -235,11 +250,21 @@ func (e PlanExecutor) applyRuntimePlan(ctx context.Context, incident IncidentReq
 			observedPod, podErr = e.Client.Get(ctx, ref)
 			if podErr != nil || observedPod == nil || observedPod.GetUID() != items[i].uid {
 				result.ActionReports[i].Status = "unknown"
+				result.ActionReports[i].FailureReason = databaseFailureCode(&DatabaseOperationError{Step: DatabaseContainerLookup, Reason: databaseIdentityChanged})
 				return result, fmt.Errorf("database operation identity unverified")
 			}
 			if readErr != nil || normalizeErr != nil || !planValuesEqual(actual, items[i].users) {
 				result.ActionReports[i].Status = "unknown"
+				result.ActionReports[i].FailureReason = "database_user_unverified"
+				if readErr != nil {
+					result.ActionReports[i].FailureReason = databaseFailureCode(readErr)
+				}
 				return result, databaseSafeError(readErr, "database user change unverified")
+			}
+			for _, u := range actual {
+				if u.Name == a.User {
+					result.ActionReports[i].DatabaseUser = &program.DatabaseUserEffect{User: u.Name, Outcome: items[i].outcome, Roles: u.Roles, Verified: true}
+				}
 			}
 			if e.RecordPrimitive != nil {
 				arguments, _ := json.Marshal([]any{a.Target})

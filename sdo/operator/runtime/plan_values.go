@@ -24,8 +24,10 @@ type PlanActionReport struct {
 	ExitCode         *int32                    `json:"exit_code,omitempty"`
 	ExternalEffect   *program.ExternalEffect   `json:"external_effect,omitempty"`
 	KubernetesEffect *program.KubernetesEffect `json:"kubernetes_effect,omitempty"`
-	JobStatus        json.RawMessage           `json:"job_status,omitempty"`
-	RecordingError   string                    `json:"recording_error,omitempty"`
+	// DatabaseUser is set only when the catalog read-back confirmed the user.
+	DatabaseUser   *program.DatabaseUserEffect `json:"database_user,omitempty"`
+	JobStatus      json.RawMessage             `json:"job_status,omitempty"`
+	RecordingError string                      `json:"recording_error,omitempty"`
 }
 
 func newPlanReports(plan program.Plan) []PlanActionReport {

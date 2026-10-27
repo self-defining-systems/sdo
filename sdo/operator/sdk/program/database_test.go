@@ -44,3 +44,23 @@ func TestCredentialReferenceKindsAreExclusive(t *testing.T) {
 		}
 	}
 }
+
+func TestDatabaseUserTransitionIgnoresRoleOrderAndOtherUsers(t *testing.T) {
+	a := program.EnsureDatabaseUser{Target: program.DatabaseTarget{Engine: program.MongoDB, Pod: sdk.ObjectRef{APIVersion: "v1", Kind: "Pod", Namespace: "app", Name: "db"}, Container: "mongo", Database: "application"}, User: "app", Roles: []program.DatabaseRole{{Database: "b", Name: "read"}, {Database: "a", Name: "readWrite"}}, Password: program.CredentialRef{Env: "APP_PASSWORD"}}
+	other := program.DatabaseUser{Name: "other", Roles: []program.DatabaseRole{{Database: "a", Name: "readWrite"}}}
+	for name, tc := range map[string]struct {
+		before []program.DatabaseUser
+		want   program.DatabaseUserOutcome
+	}{
+		"absent":       {[]program.DatabaseUser{other}, program.DatabaseUserCreated},
+		"same roles":   {[]program.DatabaseUser{other, {Name: "app", Roles: []program.DatabaseRole{{Database: "a", Name: "readWrite"}, {Database: "b", Name: "read"}}}}, program.DatabaseUserAlreadyCorrect},
+		"fewer roles":  {[]program.DatabaseUser{{Name: "app", Roles: []program.DatabaseRole{{Database: "a", Name: "readWrite"}}}}, program.DatabaseUserUpdated},
+		"revoked all":  {[]program.DatabaseUser{{Name: "app"}}, program.DatabaseUserUpdated},
+		"extra a role": {[]program.DatabaseUser{{Name: "app", Roles: []program.DatabaseRole{{Database: "a", Name: "readWrite"}, {Database: "b", Name: "read"}, {Database: "c", Name: "read"}}}}, program.DatabaseUserUpdated},
+	} {
+		got, err := program.DatabaseUserTransition(tc.before, a)
+		if err != nil || got != tc.want {
+			t.Fatalf("%s: got %q, %v want %q", name, got, err, tc.want)
+		}
+	}
+}

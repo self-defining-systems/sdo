@@ -159,3 +159,37 @@ def test_single_pending_application_identity_is_visible(tmp_path, monkeypatch):
         },
     )
     assert "rollout pending; application=pending-application" in text
+
+
+def test_option_row_states_database_user_outcome_and_typed_failure(tmp_path, monkeypatch):
+    from sdo.agents.responder.multi_output import format_selection_response
+
+    monkeypatch.setenv("SDO_SESSION_SCRATCH", str(tmp_path))
+    verified = {
+        "user": "app",
+        "outcome": "updated",
+        "roles": [{"database": "app", "name": "readWrite"}],
+        "verified": True,
+    }
+    response = {
+        "command": "mitigate",
+        "summary": "batch",
+        "option_reports": [
+            {"option_id": "EnsureDatabaseUser", "application_id": "ok", "status": "STATUS_UNRESOLVED"},
+            {"option_id": "EnsureDatabaseUser", "application_id": "bad", "status": "STATUS_EXECUTION_ERROR"},
+        ],
+        "report": {
+            "execution": [
+                {"pending": False, "action_results": [{"status": "applied", "database_user": verified}]},
+                {
+                    "pending": False,
+                    "error": "database authentication: rejected",
+                    "action_results": [{"status": "refused", "failure_reason": "database_authentication_rejected"}],
+                },
+            ]
+        },
+    }
+    text, _ = format_selection_response([], [], response)
+    assert "application=ok effect=database user app updated (verified)" in text
+    assert "application=bad effect=failed: database_authentication_rejected" in text
+    assert len(text.encode()) <= 2048
