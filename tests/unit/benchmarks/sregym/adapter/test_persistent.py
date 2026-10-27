@@ -1412,9 +1412,8 @@ def test_reflection_drain_accepts_acknowledged_closure_without_controller_relaun
     assert state["last_acknowledged_incident_id"] == "incident-1"
 
 
-@pytest.mark.parametrize("trust_threshold", [3, 7])
 def test_driver_environment_settings_are_recorded_and_preserved_on_persistent_reuse(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, trust_threshold: int
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     from benchmarks.sregym.adapter import driver, native_operator
 

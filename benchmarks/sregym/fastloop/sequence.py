@@ -47,9 +47,6 @@ class SequencePlan(BaseModel):
     lease: str = "le-hu"
     coord: str = "/mnt/data/shli/coord/coord"
     timeout_seconds: int = Field(default=int(wait_for(WaitKind.RESPONSE)), gt=0)
-    # Retained as experiment provenance. Automatic program trust gating was
-    # removed; this value grants no execution or publication authority.
-    program_trust_threshold: Literal[3] = 3
 
     @model_validator(mode="after")
     def pairs(self) -> Self:
@@ -244,8 +241,6 @@ def run_sequence(plan: SequencePlan, *, execute: Callable[[SequencePlan, int, Pa
                         "seed_commit": environment.seed_commit,
                         "accepted_before": memory_head(environment.workspace),
                         "started_at": _now(),
-                        "program_trust_threshold": plan.program_trust_threshold,
-                        "program_trust_threshold_status": "retired; provenance only",
                     },
                 )
                 execute(plan, index, results)

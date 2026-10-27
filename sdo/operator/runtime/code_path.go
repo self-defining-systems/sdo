@@ -3,7 +3,6 @@ package runtime
 import (
 	"context"
 	"fmt"
-	"slices"
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/sdk"
@@ -16,21 +15,19 @@ type CodePathConfig struct {
 	Overrides CodePathOverrides `json:"overrides,omitempty"`
 }
 type CodePathOverrides struct {
-	DetectorSource   string   `json:"detector_source,omitempty"`
-	Coverage         string   `json:"coverage,omitempty"`
-	ResponseStages   []string `json:"response_stages,omitempty"`
-	MemoryValidation string   `json:"memory_validation,omitempty"`
-	Activation       string   `json:"activation,omitempty"`
-	AgentGuidance    string   `json:"agent_guidance,omitempty"`
+	DetectorSource   string `json:"detector_source,omitempty"`
+	Coverage         string `json:"coverage,omitempty"`
+	MemoryValidation string `json:"memory_validation,omitempty"`
+	Activation       string `json:"activation,omitempty"`
+	AgentGuidance    string `json:"agent_guidance,omitempty"`
 }
 type CodePathSelection struct {
-	Name             string   `json:"name"`
-	DetectorSource   string   `json:"detector_source"`
-	Coverage         string   `json:"coverage"`
-	ResponseStages   []string `json:"response_stages"`
-	MemoryValidation string   `json:"memory_validation"`
-	Activation       string   `json:"activation"`
-	AgentGuidance    string   `json:"agent_guidance"`
+	Name             string `json:"name"`
+	DetectorSource   string `json:"detector_source"`
+	Coverage         string `json:"coverage"`
+	MemoryValidation string `json:"memory_validation"`
+	Activation       string `json:"activation"`
+	AgentGuidance    string `json:"agent_guidance"`
 }
 type CodePathConfigError struct{ Seam, Value, Reason string }
 
@@ -49,7 +46,7 @@ type DetectorSourceRequest struct {
 }
 
 type CoverageProvider interface {
-	Coverage(findings []sdk.Finding, runs []ProgramRun, snapshot sdk.DetectionContext, statistics map[string]ProgramTrust) *contracts.PlaybookCoverage
+	Coverage(findings []sdk.Finding, runs []ProgramRun, snapshot sdk.DetectionContext, counts map[string]ProgramCount) *contracts.PlaybookCoverage
 }
 
 // MemoryValidation owns a mechanism whose dependencies are bound at construction.
@@ -80,7 +77,6 @@ type CodePathRegistry struct {
 	memory     map[string]MemoryValidation
 	activation map[string]PublishActivation
 	guidance   map[string]AgentGuidance
-	stages     map[string]bool
 }
 
 // CodePathDependencies bind each mechanism once, when its plugin is constructed.
@@ -98,15 +94,14 @@ func NewCodePathRegistryWithDependencies(bindings CodePathDependencies) *CodePat
 
 	return &CodePathRegistry{
 		paths: map[string]CodePathSelection{
-			"go":    {Name: "go", DetectorSource: "go", Coverage: "diagnose", ResponseStages: []string{"deterministic", "agent"}, MemoryValidation: "go", Activation: "rollout", AgentGuidance: "go"},
-			"shell": {Name: "shell", DetectorSource: "shell", Coverage: "none", ResponseStages: []string{"agent"}, MemoryValidation: "hygiene", Activation: "pull", AgentGuidance: "shell"},
+			"go":    {Name: "go", DetectorSource: "go", Coverage: "diagnose", MemoryValidation: "go", Activation: "rollout", AgentGuidance: "go"},
+			"shell": {Name: "shell", DetectorSource: "shell", Coverage: "none", MemoryValidation: "hygiene", Activation: "pull", AgentGuidance: "shell"},
 		},
 		detectors:  map[string]DetectorSource{"go": compiledCodePathDetectors{}, "shell": ShellDetectorSource{}},
 		coverage:   map[string]CoverageProvider{"diagnose": goCodePathCoverage{}, "none": noCodePathCoverage{}},
 		memory:     map[string]MemoryValidation{"go": goCodePathValidation{check: bindings.ValidateGo}, "hygiene": shellCodePathValidation{}},
 		activation: map[string]PublishActivation{"rollout": configuredCodePathActivation{name: "rollout", activate: bindings.RebuildController}, "pull": configuredCodePathActivation{name: "pull", activate: bindings.PullAcceptedCommit}},
 		guidance:   map[string]AgentGuidance{"go": codePathGuidance("go"), "shell": codePathGuidance("shell")},
-		stages:     map[string]bool{"deterministic": true, "agent": true},
 	}
 }
 func registerCodePathPlugin[T any](items map[string]T, name string, value T) error {
@@ -149,12 +144,8 @@ func (r *CodePathRegistry) RegisterGuidance(n string, v AgentGuidance) error {
 	}
 	return registerCodePathPlugin(r.guidance, n, v)
 }
-func (r *CodePathRegistry) RegisterResponseStage(n string) error {
-	return registerCodePathPlugin(r.stages, n, true)
-}
 func (r *CodePathRegistry) RegisterCodePath(n string, v CodePathSelection) error {
 	v.Name = n
-	v.ResponseStages = slices.Clone(v.ResponseStages)
 	return registerCodePathPlugin(r.paths, n, v)
 }
 func (r *CodePathRegistry) Resolve(config CodePathConfig) (*CodePath, error) {
@@ -175,11 +166,6 @@ func (r *CodePathRegistry) Resolve(config CodePathConfig) (*CodePath, error) {
 			*item.dst = item.override
 		}
 	}
-	if o.ResponseStages != nil {
-		s.ResponseStages = slices.Clone(o.ResponseStages)
-	} else {
-		s.ResponseStages = slices.Clone(s.ResponseStages)
-	}
 	p := &CodePath{Selection: s, Detectors: r.detectors[s.DetectorSource], Coverage: r.coverage[s.Coverage], Memory: r.memory[s.MemoryValidation], Activation: r.activation[s.Activation], Guidance: r.guidance[s.AgentGuidance]}
 	for _, item := range []struct {
 		seam, value string
@@ -188,19 +174,6 @@ func (r *CodePathRegistry) Resolve(config CodePathConfig) (*CodePath, error) {
 		if item.missing {
 			return nil, &CodePathConfigError{Seam: item.seam, Value: item.value, Reason: "not registered"}
 		}
-	}
-	if len(s.ResponseStages) == 0 {
-		return nil, &CodePathConfigError{Seam: "response_stages", Reason: "at least one stage is required"}
-	}
-	seen := map[string]bool{}
-	for _, stage := range s.ResponseStages {
-		if !r.stages[stage] || seen[stage] {
-			return nil, &CodePathConfigError{Seam: "response_stages", Value: stage, Reason: "unknown or repeated stage"}
-		}
-		seen[stage] = true
-	}
-	if seen["deterministic"] && s.Coverage == "none" {
-		return nil, &CodePathConfigError{Seam: "response_stages", Value: "deterministic", Reason: "requires a coverage provider other than none"}
 	}
 	return p, nil
 }
@@ -213,13 +186,13 @@ func (compiledCodePathDetectors) Detectors(_ context.Context, request DetectorSo
 
 type goCodePathCoverage struct{}
 
-func (goCodePathCoverage) Coverage(f []sdk.Finding, r []ProgramRun, v sdk.DetectionContext, s map[string]ProgramTrust) *contracts.PlaybookCoverage {
+func (goCodePathCoverage) Coverage(f []sdk.Finding, r []ProgramRun, v sdk.DetectionContext, s map[string]ProgramCount) *contracts.PlaybookCoverage {
 	return buildPlaybookCoverage(f, r, v, s)
 }
 
 type noCodePathCoverage struct{}
 
-func (noCodePathCoverage) Coverage([]sdk.Finding, []ProgramRun, sdk.DetectionContext, map[string]ProgramTrust) *contracts.PlaybookCoverage {
+func (noCodePathCoverage) Coverage([]sdk.Finding, []ProgramRun, sdk.DetectionContext, map[string]ProgramCount) *contracts.PlaybookCoverage {
 	return &contracts.PlaybookCoverage{}
 }
 

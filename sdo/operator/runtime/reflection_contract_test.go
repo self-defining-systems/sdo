@@ -252,9 +252,6 @@ func TestT1ScriptedBrokerMatrix(t *testing.T) {
 					if run.positive != c.positive || run.negative != c.negative {
 						t.Errorf("published/attempted cases = +%d/-%d; want +%d/-%d", run.positive, run.negative, c.positive, c.negative)
 					}
-					if got := ProgramTrustStats([]*contracts.OutcomeRecord{run.outcome})[t1Program].VerifiedSuccesses; got != c.credit {
-						t.Errorf("durable trust credit = %d; want %d (reflection rejected=%t)", got, c.credit, reject)
-					}
 					if c.negative > 0 && !run.ledger.ReflectionRejected {
 						t.Error("unchanged false-matching program escaped negative corpus replay rejection")
 					}
@@ -565,29 +562,6 @@ func TestT1TrustProperty(t *testing.T) {
 			})
 		}
 	})
-	outcomes := []*contracts.OutcomeRecord{}
-	for trial, plan := range plans {
-		if time.Now().After(deadline) {
-			t.Fatal("property-test wall-clock budget exhausted")
-		}
-		plan.outcome.Timestamps.CompletedAt = timestamppb.New(time.Unix(int64(200+trial), 0))
-		before := ProgramTrustStats(outcomes)[t1Program]
-		outcomes = append(outcomes, plan.outcome)
-		orderedStats := ProgramTrustStats(outcomes)
-		shuffled := make([]*contracts.OutcomeRecord, len(outcomes))
-		for i, index := range plan.arrival {
-			shuffled[i] = plans[index].outcome
-		}
-		outcomes = shuffled
-		shuffledStats := ProgramTrustStats(outcomes)
-		if !reflect.DeepEqual(orderedStats, shuffledStats) {
-			t.Errorf("seed=186 trial=%d arrival order changed trust", trial)
-		}
-		after := shuffledStats[t1Program]
-		if plan.class.credit == 0 && after.VerifiedSuccesses > before.VerifiedSuccesses {
-			t.Errorf("seed=186 trial=%d class=%s non-covered instance increased trust (before=%+v after=%+v)", trial, plan.class.name, before, after)
-		}
-	}
 }
 
 func TestT1EveryUnboundWriteGetsAQuestion(t *testing.T) {
@@ -679,9 +653,6 @@ observed: {"probePort":8080}`})})
 			work := classifyCauseWork(o, nil)
 			if work[0].Items[0].Disposition != "question" || work[0].Items[0].Reason != "unbound_write" {
 				t.Errorf("unproven learning was silently covered: %v", work)
-			}
-			if state := ProgramTrustStats([]*contracts.OutcomeRecord{o})[t1Program]; state.VerifiedSuccesses != 0 {
-				t.Errorf("unproven historical shape earned credit: %+v", state)
 			}
 		})
 	}

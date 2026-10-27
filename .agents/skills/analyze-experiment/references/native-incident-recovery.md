@@ -35,7 +35,7 @@ remain in process; there is no durable rollback owner or cursor.
 Sources: `controller_state.proto`, `program.proto`,
 `runtime/kubernetes_job_dispatcher_state.go`, `runtime/responder_loop_state.go`,
 `runtime/plan_executor{,_receipt}.go` and `runtime/playbook_coverage.go`. For accepted success/failure evidence, see
-[program trust evidence](fastloop-results.md#program-trust-evidence).
+[program counts and settlement evidence](fastloop-results.md#program-counts-and-settlement-evidence).
 
 Foreign NetworkPolicy drift uses the existing typed DriftEvent evidence: `source` states absence from accepted source and the `spec` field records create/edit values. Admission requires a confirmed source-absence read and reviewed kind, not a failed source lookup. Current repeats require findings from independent incident detectors; accepted-source drift remains `drift.unexplained`, and source verification checks policy deletion. Historical `drift.networkpolicy-service-isolation` entries came from the retired proactive path. Normal controller churn remains excluded.
 

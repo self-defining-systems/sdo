@@ -96,7 +96,7 @@ type ToolResponse struct {
 	TargetedHealthy             bool                    `json:"targeted_healthy,omitempty"`
 	Healthy                     bool                    `json:"healthy"`
 	Unresolved                  bool                    `json:"unresolved"`
-	Trust                       map[string]ProgramTrust `json:"trust,omitempty"`
+	ProgramCounts               map[string]ProgramCount `json:"program_counts,omitempty"`
 }
 
 type ToolCall struct {
@@ -133,7 +133,6 @@ type selectedPlan struct {
 
 // ResponderLoop holds one incident's tool state while its responder Job runs.
 type ResponderLoop struct {
-	stageProgress        map[string]responseStageProgress
 	waitForStageRollouts bool
 	// WorkingProgramRoot is set by the production loop factory to the mounted
 	// proposal checkout. Embedders with an in-memory registry may leave it empty.
@@ -171,7 +170,7 @@ type ResponderLoop struct {
 	ProgramFollowUpSettle time.Duration
 	PendingStallTimeout   time.Duration
 	MaxBatches            int
-	Trust                 map[string]ProgramTrust
+	ProgramCounts         map[string]ProgramCount
 	CorpusSessionRoot     string
 	capturePhase          string
 	timing                toolTiming
@@ -228,12 +227,12 @@ func NewResponderLoop(request IncidentRequest, programs program.ProgramRegistry,
 
 // initializeDispatch may run after LoopFactory has published this loop to the
 // controller. It follows the same operation/state lock order as tools/restore.
-func (l *ResponderLoop) initializeDispatch(trust map[string]ProgramTrust, maxBatches int, runs []ProgramRun) {
+func (l *ResponderLoop) initializeDispatch(counts map[string]ProgramCount, maxBatches int, runs []ProgramRun) {
 	l.operationMu.Lock()
 	defer l.operationMu.Unlock()
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	l.Trust = trust
+	l.ProgramCounts = counts
 	if maxBatches > 0 {
 		l.MaxBatches = maxBatches
 	}
@@ -451,7 +450,7 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 		l.detect(ctx, request.DetectorIDs, &response)
 	case "status":
 		response.DriftEvents = append([]sdk.DriftEvent(nil), l.Request.DriftEvents...)
-		response.Trust = l.Trust
+		response.ProgramCounts = l.ProgramCounts
 		response.Findings, response.ProgramRuns, response.DetectorStates, response.Error = l.refresh(ctx)
 		response.Healthy = response.Error == "" && len(l.findings) == 0
 		for _, state := range response.DetectorStates {

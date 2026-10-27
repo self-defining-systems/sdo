@@ -61,8 +61,8 @@ func TestStateRoundTripRetainsAppliedActionsAndProgramEvidenceWithoutRollbackSta
 	if err != nil {
 		t.Fatal(err)
 	}
-	trust := map[string]ProgramTrust{"capacity": {VerifiedSuccesses: 3, LastChange: "abc"}}
-	response, err := json.Marshal(ToolResponse{Command: "status", Trust: trust, ProgramRuns: []ProgramRun{{ProgramID: "capacity", Bindings: program.Bindings{Objects: program.ObjectBindings{"deployment": ref}}, Verdict: program.Verdict{Result: program.NoMatch}}}})
+	counts := map[string]ProgramCount{programCountKey("capacity", "abc"): {Successes: 3}}
+	response, err := json.Marshal(ToolResponse{Command: "status", ProgramCounts: counts, ProgramRuns: []ProgramRun{{ProgramID: "capacity", Bindings: program.Bindings{Objects: program.ObjectBindings{"deployment": ref}}, Verdict: program.Verdict{Result: program.NoMatch}}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,8 +85,8 @@ func TestStateRoundTripRetainsAppliedActionsAndProgramEvidenceWithoutRollbackSta
 		t.Fatalf("program evidence changed after reload: %+v", result)
 	}
 	var restoredResponse ToolResponse
-	if err := json.Unmarshal([]byte(result.ProgramToolCalls[0].ResponseJSON), &restoredResponse); err != nil || !reflect.DeepEqual(restoredResponse.Trust, trust) {
-		t.Fatalf("trust stats after reload: %+v, %v", restoredResponse.Trust, err)
+	if err := json.Unmarshal([]byte(result.ProgramToolCalls[0].ResponseJSON), &restoredResponse); err != nil || !reflect.DeepEqual(restoredResponse.ProgramCounts, counts) {
+		t.Fatalf("program counts after reload: %+v, %v", restoredResponse.ProgramCounts, err)
 	}
 	got := result.PlanApplications[0].Result
 	if len(got.PreImages) != 0 || len(got.Patches) != 0 || len(got.ActionsApplied) != 1 {
