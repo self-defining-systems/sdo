@@ -36,7 +36,7 @@ def lane(tmp_path, monkeypatch):
         }
 
     gate = admission.LaneAdmission(environment, SimpleNamespace(runtime_state=state), tmp_path / "admission")
-    complete = {"complete": {"acceptedCommit": "a" * 40, "objects": [{}]}, "pending": None}
+    complete = {"complete": {"acceptedCommit": "a" * 40, "objects": [{}]}, "pending": None, "rejected": None}
     monkeypatch.setattr(admission.LaneAdmission, "_onboarding", lambda self, control: complete)
     monkeypatch.setattr(rbac, "verify_rbac", lambda *args: {"passed": True})
     monkeypatch.setattr(hotel_helpers, "admit_install", lambda *args: {"passed": True, "profile": "ABSENT"})
@@ -274,8 +274,8 @@ def first_adoption(gate, monkeypatch, finishes_at: float) -> list[float]:
 
     def onboarding(control):
         if now[0] < finishes_at:
-            return {"complete": None, "pending": {"acceptedCommit": "a" * 40}}
-        return {"complete": {"acceptedCommit": "b" * 40, "objects": [{"kind": "Deployment"}]}, "pending": None}
+            return {"complete": None, "pending": {"acceptedCommit": "a" * 40}, "rejected": None}
+        return {"complete": {"acceptedCommit": "b" * 40, "objects": [{"kind": "Deployment"}]}, "pending": None, "rejected": None}
 
     monkeypatch.setattr(gate.ops, "runtime_state", runtime)
     monkeypatch.setattr(gate, "_onboarding", onboarding)
@@ -304,6 +304,37 @@ def test_unfinished_onboarding_fails_on_its_own_budget_without_sampling_health(l
     evidence = json.loads((gate.directory / "onboarding.json").read_text())
     assert evidence["passed"] is False
     assert evidence["pending"] is True
+
+
+def test_rejected_onboarding_fails_at_once_with_the_controller_reason(lane, monkeypatch):
+    """The controller's rejection is final (one evaluation); waiting out the budget cannot change it."""
+    gate, calls = lane
+    now = first_adoption(gate, monkeypatch, finishes_at=10_000)
+    rejected = {
+        "complete": None,
+        "pending": {"acceptedCommit": "a" * 40},
+        "rejected": {"reason": "install window contradicted or expired"},
+    }
+    monkeypatch.setattr(gate, "_onboarding", lambda control: rejected if now[0] >= 30 else {**rejected, "rejected": None})
+    monkeypatch.setattr(admission, "kubectl", lambda *args, **kwargs: SimpleNamespace(stdout="controller line\n"))
+    with pytest.raises(ValueError, match=r"rejected onboarding after 30s .*install window contradicted or expired"):
+        gate.prove("hotel-reservation-sdo")
+    assert "sample" not in calls
+    assert now[0] < 100
+    evidence = json.loads((gate.directory / "onboarding.json").read_text())
+    assert evidence["passed"] is False
+    assert evidence["rejected_reason"] == "install window contradicted or expired"
+    assert (gate.directory / "onboarding-controller.log").read_text() == "controller line\n"
+
+
+def test_unfinished_onboarding_keeps_the_controller_log(lane, monkeypatch):
+    gate, _ = lane
+    gate.onboarding_timeout_seconds = 120
+    first_adoption(gate, monkeypatch, finishes_at=10_000)
+    monkeypatch.setattr(admission, "kubectl", lambda *args, **kwargs: SimpleNamespace(stdout="window never started\n"))
+    with pytest.raises(ValueError, match=r"did not finish within 120s"):
+        gate.prove("hotel-reservation-sdo")
+    assert (gate.directory / "onboarding-controller.log").read_text() == "window never started\n"
 
 
 def wall_clock(gate, monkeypatch, now):
