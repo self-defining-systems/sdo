@@ -68,6 +68,7 @@ class ContinuationFeedback(BaseModel):
     summary: str
     error: str = ""
     still_broken: list[BrokenFinding]
+    source_differences: list[BrokenFinding] = Field(default_factory=list)
     already_done: list[CompletedRepair]
 
 
@@ -170,6 +171,11 @@ def continuation_prompt(payload: str) -> RenderedPrompt:
                         f"still_broken: ({len(rows)})",
                         *broken_lines,
                         *other_lines,
+                        *(
+                            [f"source_differences (information, not blocking): ({len(feedback.source_differences)})"]
+                            if feedback.source_differences
+                            else []
+                        ),
                         f"already_done: ({len(done)})",
                         *done_lines,
                         *([f"Omitted {omitted} rows; full evidence below."] if omitted else []),
