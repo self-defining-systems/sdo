@@ -80,15 +80,15 @@ func t1Outcome(t *testing.T, revision string) *contracts.OutcomeRecord {
 }
 
 type t1Class struct {
-	name                             string
-	change                           func(*contracts.OutcomeRecord)
-	fixed                            program.Result
-	items                            []string
-	model                            bool
+	name                       string
+	change                     func(*contracts.OutcomeRecord)
+	fixed                      program.Result
+	items                      []string
+	model                      bool
 	positive, negative, credit int
-	decline                          bool
-	prior                            bool
-	unverified                       bool
+	decline                    bool
+	prior                      bool
+	unverified                 bool
 }
 
 func t1Classes() []t1Class {
