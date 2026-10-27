@@ -30,10 +30,7 @@ const (
 type KubernetesJobDispatcher struct {
 	CoverageProvider CoverageProvider
 
-	Standby *worker_registry.StandbyPool
-	// AcceptedRepository is the durable broker-owned checkout used for trust.
-	// Proposal checkouts belong to individual incidents and may be retired.
-	AcceptedRepository    string
+	Standby               *worker_registry.StandbyPool
 	APIProxyImage         string
 	ToolchainImage        string
 	Client                kubernetes.Interface

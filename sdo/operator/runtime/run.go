@@ -593,11 +593,10 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			apiProxyImage = launchConfig.GetValidatorImage()
 		}
 		dispatcher = KubernetesJobDispatcher{
-			AcceptedRepository: resolvedRoot,
-			CoverageProvider:   selectedCodePath.Coverage,
-			APIProxyImage:      apiProxyImage,
-			ToolchainImage:     *toolchainImage,
-			Client:             bootstrapProvider.Client, Namespace: *controlNamespace, Registry: registeredWorkers, AgentID: *responderAgentID,
+			CoverageProvider: selectedCodePath.Coverage,
+			APIProxyImage:    apiProxyImage,
+			ToolchainImage:   *toolchainImage,
+			Client:           bootstrapProvider.Client, Namespace: *controlNamespace, Registry: registeredWorkers, AgentID: *responderAgentID,
 			ServiceAccount: "sdo-responder", RepositoryPVC: *repositoryPVC,
 			RepositoryMountPath: *repositoryMountPath, RepositoryPVCSubPath: *repositoryPVCSubPath,
 			CredentialsSecret: *credentialsSecret, PollInterval: time.Second,
