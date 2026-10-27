@@ -278,3 +278,50 @@ func TestSourceComparisonPreservesUnknownKubernetesAnnotationChanges(t *testing.
 		t.Fatal("unknown Kubernetes annotation was blanket-ignored")
 	}
 }
+
+func TestSourceComparisonSchemaQuantityCases(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		prepare func(*unstructured.Unstructured)
+		change  func(*unstructured.Unstructured)
+		changed bool
+	}{
+		{"numeric YAML quantity", func(o *unstructured.Unstructured) {
+			r := noiseContainer(o)["resources"].(map[string]any)["requests"].(map[string]any)
+			r["cpu"] = int64(1)
+			r["memory"] = int64(1073741824)
+		}, func(o *unstructured.Unstructured) {
+			r := noiseContainer(o)["resources"].(map[string]any)["requests"].(map[string]any)
+			r["cpu"] = "1000m"
+			r["memory"] = "1Gi"
+		}, false},
+		{"emptyDir size limit", func(o *unstructured.Unstructured) {
+			_ = unstructured.SetNestedSlice(o.Object, []any{map[string]any{"name": "scratch", "emptyDir": map[string]any{"sizeLimit": "1Gi"}}}, "spec", "template", "spec", "volumes")
+		}, func(o *unstructured.Unstructured) {
+			v, _, _ := unstructured.NestedSlice(o.Object, "spec", "template", "spec", "volumes")
+			v[0].(map[string]any)["emptyDir"].(map[string]any)["sizeLimit"] = "1024Mi"
+			_ = unstructured.SetNestedSlice(o.Object, v, "spec", "template", "spec", "volumes")
+		}, false},
+		{"resourceFieldRef divisor", func(o *unstructured.Unstructured) {
+			noiseContainer(o)["env"] = []any{map[string]any{"name": "CPU", "valueFrom": map[string]any{"resourceFieldRef": map[string]any{"containerName": "search", "resource": "limits.cpu", "divisor": "1000m"}}}}
+		}, func(o *unstructured.Unstructured) {
+			noiseContainer(o)["env"].([]any)[0].(map[string]any)["valueFrom"].(map[string]any)["resourceFieldRef"].(map[string]any)["divisor"] = "1"
+		}, false},
+		{"unregistered schema string", func(o *unstructured.Unstructured) { o.SetAPIVersion("example.com/v1"); o.SetKind("Widget") }, func(o *unstructured.Unstructured) {
+			noiseContainer(o)["resources"].(map[string]any)["requests"].(map[string]any)["cpu"] = "1"
+		}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			source := noiseSource()
+			tc.prepare(source)
+			live := source.DeepCopy()
+			if err := RecordAcceptance(live, source); err != nil {
+				t.Fatal(err)
+			}
+			tc.change(live)
+			if diff := noiseDiff(t, source, live, nil); diff.Changed != tc.changed {
+				t.Fatalf("changed=%v want=%v: %+v", diff.Changed, tc.changed, diff)
+			}
+		})
+	}
+}

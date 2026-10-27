@@ -3,6 +3,9 @@ package runtime
 import (
 	"fmt"
 	"maps"
+	"reflect"
+
+	"k8s.io/client-go/kubernetes/scheme"
 	"slices"
 	"strings"
 
@@ -61,8 +64,13 @@ func (v LiveReadView) sourceDriftPaths(paths []string, ref sdk.ObjectRef) []stri
 
 // canonicalQuantity retains invalid values so they remain visible as drift.
 func canonicalQuantity(value any) any {
-	text, ok := value.(string)
-	if !ok {
+	var text string
+	switch typed := value.(type) {
+	case string:
+		text = typed
+	case int64, float64:
+		text = fmt.Sprint(typed)
+	default:
 		return value
 	}
 	quantity, err := resource.ParseQuantity(text)
@@ -76,69 +84,88 @@ func canonicalQuantity(value any) any {
 	return decimal
 }
 
-// Normalize only Kubernetes quantity fields. Arbitrary strings such as env
-// values, image tags and ConfigMap payloads must retain their exact meaning.
+// Normalize only fields typed as Kubernetes quantities. Arbitrary strings such
+// as env values, image tags and ConfigMap payloads retain their exact meaning.
 func normalizeSourceQuantities(object map[string]any) {
-	visitSourceQuantityLists(object, "", func(_ string, values map[string]any) {
-		for key, value := range values {
-			values[key] = canonicalQuantity(value)
-		}
-	})
+	visitSourceQuantities(object, func(_ string, value any, set func(any)) { set(canonicalQuantity(value)) })
 }
 
-// The schema walk is shared by object and historical acceptance-value
-// normalization, so the two paths cannot disagree about which strings are quantities.
-func visitSourceQuantityLists(object map[string]any, prefix string, visit func(string, map[string]any)) {
-	resourceList := func(value any, path string) { values, _ := value.(map[string]any); visit(path, values) }
-	resources := func(node map[string]any, path string) {
-		r, _ := node["resources"].(map[string]any)
-		resourceList(r["requests"], path+".resources.requests")
-		resourceList(r["limits"], path+".resources.limits")
+// Use the registered API schema rather than a second hand-maintained list of
+// resource field paths. This includes quantities in resources, volumes and
+// resourceFieldRef divisors, while unknown kinds and invalid shapes stay intact.
+// Callers inspecting historical values never call set or mutate the snapshot.
+func visitSourceQuantities(object map[string]any, visit func(string, any, func(any))) {
+	apiVersion, _ := object["apiVersion"].(string)
+	kind, _ := object["kind"].(string)
+	typed, err := scheme.Scheme.New(schema.FromAPIVersionAndKind(apiVersion, kind))
+	if err != nil {
+		return
 	}
-	podSpec := func(spec map[string]any, path string) {
-		resources(spec, path)
-		resourceList(spec["overhead"], path+".overhead")
-		for _, field := range []string{"containers", "initContainers", "ephemeralContainers"} {
-			containers, _ := spec[field].([]any)
-			for index, container := range containers {
-				if c, ok := container.(map[string]any); ok {
-					resources(c, fmt.Sprintf("%s.%s[%d]", path, field, index))
+	quantityType := reflect.TypeFor[resource.Quantity]()
+	var walk func(any, reflect.Type, string, func(any))
+	walk = func(value any, typ reflect.Type, path string, set func(any)) {
+		for typ.Kind() == reflect.Pointer {
+			typ = typ.Elem()
+		}
+		if typ == quantityType {
+			visit(path, value, set)
+			return
+		}
+		childPath := func(name string) string {
+			if path == "" {
+				return name
+			}
+			return path + "." + name
+		}
+		switch typ.Kind() {
+		case reflect.Struct:
+			fields, ok := value.(map[string]any)
+			if !ok {
+				return
+			}
+			for index := 0; index < typ.NumField(); index++ {
+				field := typ.Field(index)
+				name, _, _ := strings.Cut(field.Tag.Get("json"), ",")
+				if name == "-" || !field.IsExported() {
+					continue
+				}
+				if name == "" && field.Anonymous {
+					walk(value, field.Type, path, set)
+					continue
+				}
+				if name == "" {
+					name = field.Name
+				}
+				if child, exists := fields[name]; exists {
+					walk(child, field.Type, childPath(name), func(next any) { fields[name] = next })
 				}
 			}
-		}
-	}
-	spec, _ := object["spec"].(map[string]any)
-	switch object["kind"] {
-	case "Pod":
-		podSpec(spec, prefix+"spec")
-	case "Deployment", "StatefulSet", "DaemonSet", "ReplicaSet", "ReplicationController", "Job":
-		template, _ := spec["template"].(map[string]any)
-		templateSpec, _ := template["spec"].(map[string]any)
-		podSpec(templateSpec, prefix+"spec.template.spec")
-		claims, _ := spec["volumeClaimTemplates"].([]any)
-		for index, claim := range claims {
-			if c, ok := claim.(map[string]any); ok {
-				s, _ := c["spec"].(map[string]any)
-				resources(s, fmt.Sprintf("%sspec.volumeClaimTemplates[%d].spec", prefix, index))
+		case reflect.Map:
+			fields, ok := value.(map[string]any)
+			if !ok {
+				return
+			}
+			for name, child := range fields {
+				walk(child, typ.Elem(), childPath(name), func(next any) { fields[name] = next })
+			}
+		case reflect.Slice, reflect.Array:
+			values, ok := value.([]any)
+			if !ok {
+				return
+			}
+			for index, child := range values {
+				walk(child, typ.Elem(), fmt.Sprintf("%s[%d]", path, index), func(next any) { values[index] = next })
 			}
 		}
-	case "CronJob":
-		job, _ := spec["jobTemplate"].(map[string]any)
-		visitSourceQuantityLists(map[string]any{"kind": "Job", "spec": job["spec"]}, prefix+"spec.jobTemplate.", visit)
-	case "PersistentVolumeClaim":
-		resources(spec, prefix+"spec")
-	case "PersistentVolume":
-		resourceList(spec["capacity"], prefix+"spec.capacity")
 	}
+	walk(object, reflect.TypeOf(typed), "", func(any) {})
 }
 
 func normalizedAcceptanceValues(observed *unstructured.Unstructured, values map[string]any) map[string]any {
 	result := maps.Clone(values)
-	visitSourceQuantityLists(observed.Object, "", func(path string, quantities map[string]any) {
-		for key := range quantities {
-			if value, ok := result[path+"."+key]; ok {
-				result[path+"."+key] = canonicalQuantity(value)
-			}
+	visitSourceQuantities(observed.Object, func(path string, _ any, _ func(any)) {
+		if value, ok := result[path]; ok {
+			result[path] = canonicalQuantity(value)
 		}
 	})
 	return result
