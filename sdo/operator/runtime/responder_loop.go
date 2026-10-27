@@ -909,7 +909,11 @@ func (l *ResponderLoop) plan(ctx context.Context, request ToolRequest, response 
 		plan, err = l.runMitigator(ctx, request.ProgramID, mitigator, view, request.Bindings)
 		if err != nil {
 			response.Error = err.Error()
-			response.FailureReason = mitigationPlanningReason(err, "")
+			response.FailureReason = ""
+			var provenanceError *ScriptUnprovenancedError
+			if errors.As(err, &provenanceError) {
+				response.FailureReason = "script_unprovenanced"
+			}
 			return
 		}
 	}
