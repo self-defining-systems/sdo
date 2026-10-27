@@ -24,6 +24,9 @@ func (c *Controller) PendingDispatchEffect() (DispatchEffect, bool) {
 	if c.dispatchState != contracts.DispatchState_DISPATCH_STATE_PENDING || c.currentIncidentRequest == nil || c.earlyReportPendingLocked() {
 		return DispatchEffect{}, false
 	}
+	if !c.verificationDeadline.IsZero() && !c.clock().Before(c.verificationDeadlineLocked()) {
+		return DispatchEffect{}, false
+	}
 	if !c.dispatchRetryDueLocked() {
 		return DispatchEffect{}, false
 	}
@@ -40,6 +43,11 @@ func (c *Controller) ExecuteDispatchEffect(ctx context.Context, effect DispatchE
 		c.mu.Unlock()
 		cancel()
 		return fmt.Errorf("dispatch effect is not pending")
+	}
+	if !c.verificationDeadline.IsZero() && !c.clock().Before(c.verificationDeadlineLocked()) {
+		c.mu.Unlock()
+		cancel()
+		return fmt.Errorf("responder verification deadline expired")
 	}
 	if effect.Request.IncidentID != c.currentIncidentRequest.IncidentID {
 		c.mu.Unlock()

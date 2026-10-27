@@ -893,10 +893,13 @@ func (c *Controller) NextWake() time.Time {
 		return deadline
 	}
 	c.mu.Lock()
-	verificationPending := c.incidentOpen && c.responderDone && c.currentIncidentRequest != nil
+	verificationPending := c.incidentOpen && (c.responderDone || !c.verificationDeadline.IsZero()) && c.currentIncidentRequest != nil
 	verificationDeadline := time.Time{}
 	if verificationPending {
 		verificationDeadline = c.verificationDeadlineLocked()
+		if c.earlyStopRetryAt.After(verificationDeadline) {
+			verificationDeadline = c.earlyStopRetryAt
+		}
 	}
 	earlyDeadline := time.Time{}
 	if c.incidentOpen && !c.closureStableSince.IsZero() {
@@ -1141,6 +1144,13 @@ func (c *Controller) handleDispatchCompletion(completion dispatchCompletion, obs
 		)
 		return
 	}
+	// Cancellation at the frozen bound is controller-owned settlement, not a
+	// failed worker report. Keep the completed first turn while quiescence retries.
+	var boundedJobFailure *ResponderJobFailedError
+	if !c.verificationDeadline.IsZero() && !observedAt.Before(c.verificationDeadlineLocked()) && errors.Is(completion.err, context.Canceled) && !errors.As(completion.err, &boundedJobFailure) {
+		c.mu.Unlock()
+		return
+	}
 	c.responseStagesRunning = false
 	if len(completion.priorStages) > 0 {
 		c.currentIncidentRequest.PriorStages = mergeLaterStagePasses(completion.priorStages, c.currentIncidentRequest.PriorStages)
@@ -1265,6 +1275,9 @@ func (c *Controller) cleanupHelpers() {
 }
 
 func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snapshot sdk.DetectionContext) {
+	if !c.settleBoundedContinuation(ctx, now) {
+		return
+	}
 	c.mu.Lock()
 	if !c.incidentOpen || c.currentIncidentRequest == nil {
 		c.mu.Unlock()

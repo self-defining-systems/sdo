@@ -63,7 +63,7 @@ func (c *Controller) retireExpiredIncident(ctx context.Context, now time.Time) e
 	checker, checked := c.dispatcher.(incidentWorkChecker)
 	c.mu.Lock()
 	request := cloneIncidentRequest(c.currentIncidentRequest)
-	resultConsumed := c.responderDone
+	resultConsumed := c.responderDone || !c.verificationDeadline.IsZero()
 	retire, eligible := c.incidentRetirementLocked(now, checked)
 	c.mu.Unlock()
 	if !eligible {
@@ -178,11 +178,11 @@ func (c *Controller) incidentRetirementDueLocked(workActiveCheckable bool) (reti
 		return retirement{}, time.Time{}, false
 	}
 	switch {
-	case c.responderDone:
+	case c.responderDone || !c.verificationDeadline.IsZero():
 		// A harvested result belongs to the live controller, including after
 		// restart or during maintenance. Wake its closure at the verification
 		// bound; retireExpiredIncident drives it rather than archiving it.
-		if c.responderCompletedAt.IsZero() {
+		if c.responderCompletedAt.IsZero() && c.verificationDeadline.IsZero() {
 			return retirement{}, time.Time{}, false
 		}
 		return retirement{}, c.verificationDeadlineLocked(), true
@@ -205,6 +205,8 @@ func (c *Controller) retirementWakeLocked(now time.Time) time.Time {
 	switch {
 	case !ok:
 		return time.Time{}
+	case !c.verificationDeadline.IsZero() && c.earlyStopRetryAt.After(now):
+		return c.earlyStopRetryAt
 	case due.After(now):
 		return due
 	case c.finishedHoldWake.After(now):
