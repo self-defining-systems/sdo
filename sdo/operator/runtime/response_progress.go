@@ -84,8 +84,20 @@ func responseProgress(records []*contracts.OutcomeRecord, findings []sdk.Finding
 		progress := &contracts.ResponseProgress{IncidentId: record.GetIncidentId()}
 		errors := append([]string(nil), record.GetProgramFailureSignals()...)
 		for _, action := range record.GetRepairActions() {
-			if !action.GetSuccess() && action.GetFailureReason() != "" {
-				errors = append(errors, action.GetFailureReason())
+			if !action.GetSuccess() {
+				reason := action.GetFailureReason()
+				if reason == "" {
+					reason = action.GetSummary()
+				}
+				if details := action.GetDetails(); details != "" {
+					if reason != "" {
+						reason += ": "
+					}
+					reason += details
+				}
+				if reason != "" {
+					errors = append(errors, reason)
+				}
 			}
 			if action.GetSuccess() {
 				progress.SuccessfulActions = append(progress.SuccessfulActions, proto.Clone(action).(*contracts.RepairActionReceipt))

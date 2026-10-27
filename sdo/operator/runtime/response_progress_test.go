@@ -3,6 +3,7 @@ package runtime
 import (
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/sdk"
+	"strings"
 	"testing"
 	"time"
 )
@@ -10,10 +11,13 @@ import (
 func TestFailedResponseProgressCarriesSuccessfulReceiptsAndBlockers(t *testing.T) {
 	f := stateFinding("health")
 	f.Fingerprint = "same-open-problem"
-	record := &contracts.OutcomeRecord{IncidentId: "failed-episode", Classification: "failed", Findings: []*contracts.Finding{{DetectorId: f.DetectorID, Fingerprint: f.Fingerprint, PrimaryResource: planRefProto(f.PrimaryResource)}}, RepairActions: []*contracts.RepairActionReceipt{{ActionId: "source-fixed", Success: true, Summary: "source reconciled"}, {ActionId: "failed-write", Success: false}}, PlanApplications: []*contracts.PlanApplication{{Applied: true, RolloutPending: &contracts.RolloutPending{Reason: `admission_blocked: webhook validate.example.test denied Pods`}}}}
+	record := &contracts.OutcomeRecord{IncidentId: "failed-episode", Classification: "failed", Findings: []*contracts.Finding{{DetectorId: f.DetectorID, Fingerprint: f.Fingerprint, PrimaryResource: planRefProto(f.PrimaryResource)}}, RepairActions: []*contracts.RepairActionReceipt{{ActionId: "source-fixed", Success: true, Summary: "source reconciled"}, {ActionId: "failed-write", Success: false, FailureReason: "command_failed", Details: "webhook validate.example.test denied Pods"}}, PlanApplications: []*contracts.PlanApplication{{Applied: true, RolloutPending: &contracts.RolloutPending{Reason: `admission_blocked: webhook validate.example.test denied Pods`}}}}
 	progress := responseProgress([]*contracts.OutcomeRecord{record}, []sdk.Finding{f}, time.Time{})
 	if len(progress) != 1 || len(progress[0].GetSuccessfulActions()) != 1 || progress[0].SuccessfulActions[0].ActionId != "source-fixed" || len(progress[0].GetBlockers()) != 1 {
 		t.Fatalf("failed episode lost progress: %+v", progress)
+	}
+	if !strings.Contains(progress[0].GetError(), "webhook validate.example.test denied Pods") {
+		t.Fatalf("failed action lost actionable error details: %v", progress[0])
 	}
 	unrelated := f
 	unrelated.Fingerprint = "other-problem"
