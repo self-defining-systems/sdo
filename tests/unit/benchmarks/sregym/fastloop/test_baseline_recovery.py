@@ -580,8 +580,9 @@ def test_sealed_restore_never_reverts_passive_objects_to_the_pre_adoption_captur
     assert restored["redirect"]["spec"]["selector"] == {"app": "x"}
     # Declared fields already present in the capture (plus extras SDO cannot remove) stay as captured.
     assert restored["routes"] == captured[2]
-    # Workloads keep the sealed install: restoring them must not start a second rollout.
-    assert restored["api"] == captured[3]
+    # Compose the accepted workload policy before restore; the old chart capture
+    # must not drop it and open a baseline incident after onboarding.
+    assert restored["api"] == accepted[3]
 
 
 def test_restore_after_adoption_leaves_adopted_config_in_place(tmp_path: Path) -> None:
