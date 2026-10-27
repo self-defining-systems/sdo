@@ -25,7 +25,10 @@ def install_or_upgrade(**args: Any) -> None:
     logger.info("Helm upgrade --install: %s in namespace %s", release_name, namespace)
     if not args.get("remote_chart", False):
         subprocess.run(
-            f"helm dependency update {chart_path}", shell=True, capture_output=True, check=False  # noqa: S602
+            f"helm dependency update {chart_path}",
+            shell=True,
+            capture_output=True,
+            check=False,  # noqa: S602
         )
     command = f"helm upgrade --install {release_name} {chart_path} -n {namespace} --create-namespace"
     if args.get("version"):

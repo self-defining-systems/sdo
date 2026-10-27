@@ -72,7 +72,9 @@ def test_deploy_succeeds_over_an_existing_release_for_every_app(helm_state):
         StockHelm.install(**app)  # a second deploy over the existing release
     calls = (helm_state / "calls").read_text().splitlines()
     assert any(
-        call.startswith("upgrade --install astronomy-shop /charts/social-network -n astronomy-shop --create-namespace --version 1.2.3 ")
+        call.startswith(
+            "upgrade --install astronomy-shop /charts/social-network -n astronomy-shop --create-namespace --version 1.2.3 "
+        )
         for call in calls
     )
     assert not [call for call in calls if call.startswith("install ")]
