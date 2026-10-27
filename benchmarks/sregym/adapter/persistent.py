@@ -41,9 +41,10 @@ from benchmarks.sregym.adapter.cluster_resources import kubectl
 from benchmarks.sregym.adapter.eval_guards import (
     INCIDENT_EXECUTION_LABEL,
     STANDBY_LABEL,
+    BusyDeadline,
+    busy_until,
     idle_standby_jobs,
     incident_work_open,
-    queued_reflection_count,
     queued_reflection_ids,
     terminal_incident_ids,
 )
@@ -106,9 +107,6 @@ CONTROLLER_JOB_NAME = "sdo-controller-run"
 STATE_REVISION_ANNOTATION = "sdo.dev/state-revision"
 STATE_DATA_KEY = "runtime-state.json"
 MAINTENANCE_ACK_TIMEOUT_SECONDS = wait_for(WaitKind.OPERATION)
-#: Recovery waits this long for SDO to close an incident that opened after the graded one closed.
-#: Live P4 responder runtime p90 was 442 s (18 rows, 2026-10-26); the rest is closure margin, capped at 10 min.
-POST_CLOSURE_WAIT_SECONDS = wait_for(WaitKind.OPERATION)
 DRAIN_TIMEOUT_SECONDS = wait_for(WaitKind.REFLECTION_DRAIN)
 # After the reflection drain returns, the controller's asynchronous close-out may
 # still be settling the two volatile signals the strict receipt samples: the
@@ -289,8 +287,9 @@ class ControllerPod:
 class VerifiedIncident:
     incident_id: str
     closure: dict[str, Any] | None
-    #: Reflections SDO still owed ahead of this closure in the state that showed it verified.
-    queued_reflections: int = 0
+    #: The controller's ``busy_until`` in the state that showed it verified: its own bound on this closure and
+    #: every reflection queued ahead of it.
+    busy_until: datetime | None = None
 
 
 def runtime_config_payload(config: RuntimeConfig) -> dict[str, Any]:
@@ -775,16 +774,12 @@ class StageInputs:
     lifecycle_installs_controller: bool = False
     #: Budget from a verified closure to its reflection's acknowledgment, shared by every drain of the incident.
     reflection_wait_seconds: float = DRAIN_TIMEOUT_SECONDS
-    #: SDO's worst case to finish or abandon one queued reflection; the deadline adds one per reflection ahead.
-    reflection_attempt_seconds: float = wait_for(WaitKind.REFLECTION_ATTEMPT)
 
     def __post_init__(self) -> None:
         if self.detection_timeout_seconds is not None and self.detection_timeout_seconds <= 0:
             raise ValueError(f"detection_timeout_seconds must be positive, got {self.detection_timeout_seconds}")
         if self.reflection_wait_seconds <= 0:
             raise ValueError(f"reflection_wait_seconds must be positive, got {self.reflection_wait_seconds}")
-        if self.reflection_attempt_seconds <= 0:
-            raise ValueError(f"reflection_attempt_seconds must be positive, got {self.reflection_attempt_seconds}")
 
 
 @dataclass(frozen=True)
@@ -1146,16 +1141,13 @@ def pause_for_recovery(
     *,
     incident_id: str | None = None,
     clock: Clock | None = None,
-    followup_wait_seconds: float = POST_CLOSURE_WAIT_SECONDS,
-    reflection_attempt_seconds: float = wait_for(WaitKind.REFLECTION_ATTEMPT),
     closure_open: bool = False,
 ) -> FollowupClosureWait | None:
     """Fence harness mutations behind a terminal incident and acknowledged intake pause.
 
     An incident that opened after the graded incident closed is SDO's work in progress, not a
-    harness error: recovery waits a bounded time for SDO to close it and reports that wait. Each
-    reflection queued behind a failed attempt's acknowledgment extends the bound by SDO's worst case
-    for one reflection (``reflection_attempt_seconds``), since SDO may legitimately run it that long.
+    harness error: recovery waits for SDO to close it and reports that wait. The bound is the controller's
+    own ``busy_until`` (its response timeout, retries and reflection queue) plus one closeout margin.
     ``closure_open`` is for a row past its reflection deadline: intake is still paused, but the
     still-running closure is left to SDO, so the injected fault does not outlive the row.
     """
@@ -1173,9 +1165,7 @@ def pause_for_recovery(
         if incident_id is not None and incident_id not in closed:
             raise PersistentControllerError(f"eval: recovery incident {incident_id!r} is not durably closed")
 
-    wait = _wait_for_followup_closure(
-        ops, control, incident_id, closed, followup_wait_seconds, reflection_attempt_seconds, clock
-    )
+    wait = _wait_for_followup_closure(ops, control, incident_id, closed, clock)
     require_closed()
     generation = f"benchmark-recovery-{uuid.uuid4().hex}-paused"
     ops.set_maintenance(control, paused=True, generation=generation)
@@ -1196,24 +1186,22 @@ def _wait_for_followup_closure(
     control: str,
     incident_id: str | None,
     closed: set[str],
-    bound: float,
-    reflection_attempt_seconds: float,
     clock: Clock,
 ) -> FollowupClosureWait | None:
     """Wait while the graded incident is closed and a later incident or a queued reflection is still open.
 
-    The bound is the largest ``bound + queued reflections x reflection_attempt_seconds`` seen, so a queue
-    that drains never shortens a wait already in progress.
+    The bound is the controller's ``busy_until`` plus one closeout margin; it grows only when the controller
+    raises it, so a queue that drains never shortens a wait already in progress.
     """
 
     if incident_id is None:
         return None
     started = clock.monotonic()
     followups: list[str] = []
-    budget = bound
+    busy = BusyDeadline(wait_for(WaitKind.CLOSEOUT_SETTLE))
     while True:
         snapshot = ops.runtime_state(control)
-        if not snapshot or not incident_work_open(snapshot):
+        if not snapshot or not busy.observe(snapshot, clock.monotonic(), clock.now()):
             break
         closed.update(terminal_incident_ids(snapshot))
         queued = queued_reflection_ids(snapshot)
@@ -1222,16 +1210,21 @@ def _wait_for_followup_closure(
         if incident_id not in closed or (not queued and names == [incident_id]):
             break
         followups.extend(name for name in names if name not in followups)
-        budget = max(budget, bound + queued_reflection_count(snapshot) * reflection_attempt_seconds)
         waited = clock.monotonic() - started
-        if waited >= budget:
-            raise FollowupClosureTimeout(FollowupClosureWait(incident_id, tuple(followups), waited, budget, False))
+        if busy.expired(clock.monotonic()):
+            raise FollowupClosureTimeout(
+                FollowupClosureWait(
+                    incident_id, tuple(followups), waited, waited + busy.seconds_left(clock.monotonic()), False
+                )
+            )
         clock.sleep(POLL_SECONDS)
     if not followups:
         return None
     waited = clock.monotonic() - started
     logger.info("recovery waited %.1fs for follow-up incident(s) %s to close", waited, ", ".join(followups))
-    return FollowupClosureWait(incident_id, tuple(followups), waited, budget, True)
+    return FollowupClosureWait(
+        incident_id, tuple(followups), waited, waited + busy.seconds_left(clock.monotonic()), True
+    )
 
 
 def collect_followup_incident(
@@ -1479,15 +1472,17 @@ def _lost_controller_message(record: ControllerRecord, pod: ControllerPod | None
 
 
 def reflection_deadline(inputs: StageInputs, verified: VerifiedIncident, clock: Clock) -> datetime:
-    """The incident's one reflection deadline: its budget plus SDO's worst case for each reflection queued ahead.
+    """The incident's one reflection deadline: the later of its budget and the controller's own ``busy_until``.
 
     A closure waits behind the queue's FIFO (one reflection at a time under the broker lock), so a fixed
     budget from verification would expire while SDO is still legitimately working through earlier failed
-    attempts.
+    attempts. The controller states that bound itself, so the deadline adds one closeout margin to it.
     """
 
-    seconds = inputs.reflection_wait_seconds + verified.queued_reflections * inputs.reflection_attempt_seconds
-    return clock.now() + timedelta(seconds=seconds)
+    deadline = clock.now() + timedelta(seconds=inputs.reflection_wait_seconds)
+    if verified.busy_until is not None:
+        deadline = max(deadline, verified.busy_until + timedelta(seconds=wait_for(WaitKind.CLOSEOUT_SETTLE)))
+    return deadline
 
 
 def drain_pending_incident(
@@ -1930,7 +1925,7 @@ def _wait_for_verified_incident(
             return VerifiedIncident(
                 incident_id=observed.verified_incident_id,
                 closure=closure,
-                queued_reflections=queued_reflection_count(state),
+                busy_until=busy_until(state),
             )
         _raise_observation_failure(observed, state)
         clock.sleep(POLL_SECONDS)

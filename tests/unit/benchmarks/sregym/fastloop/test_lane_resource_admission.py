@@ -1,16 +1,17 @@
 """Resource admission must fence setup and the real pre-injection proof."""
 
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
 
-from benchmarks.sregym.adapter import persistent
+from benchmarks.sregym.adapter import WaitKind, persistent, wait_for
 from benchmarks.sregym.fastloop import admission, cli, hotel_helpers, rbac
 
-# The lane fixture stubs worker listing; standby tests exercise the real one.
-ACTIVE_WORKERS = admission.LaneAdmission._active_workers
+EPOCH = datetime(2030, 1, 1, tzinfo=timezone.utc)
+OVERDUE = "2000-01-01T00:00:00Z"  # a busy_until the controller itself has already let lapse
+CLOSEOUT_MARGIN = wait_for(WaitKind.CLOSEOUT_SETTLE)
 
 
 @pytest.fixture
@@ -41,9 +42,6 @@ def lane(tmp_path, monkeypatch):
     )
     complete = {"complete": {"acceptedCommit": "a" * 40, "objects": [{}]}, "pending": None}
     monkeypatch.setattr(admission.LaneAdmission, "_onboarding", lambda self, control: complete)
-    # No SDO worker Job from a previous row is still running.
-    monkeypatch.setattr(admission.LaneAdmission, "_active_workers", lambda self, control: [])
-    monkeypatch.setattr(admission.LaneAdmission, "_work_deadline", lambda self, control: None)
     monkeypatch.setattr(rbac, "verify_rbac", lambda *args: {"passed": True})
     monkeypatch.setattr(hotel_helpers, "admit_install", lambda *args: {"passed": True, "profile": "ABSENT"})
     monkeypatch.setattr(admission, "workload_identity", lambda *args: {"Deployment/app": {"generation": 1}})
@@ -227,7 +225,7 @@ def test_admission_waits_without_restarting_the_healthy_application(lane, monkey
             if waiting_for == "controller":
                 value["history"] = []
             if waiting_for == "reflection":
-                value["pending_closure"] = {"incident_id": "previous", "reflection": "running"}
+                value.update(pending_closure={"incident_id": "previous"}, busy_until=OVERDUE)
         return value
 
     def traffic(*args, **kwargs):
@@ -249,16 +247,19 @@ def test_admission_waits_without_restarting_the_healthy_application(lane, monkey
 def test_admission_never_injects_while_reflection_remains_pending(lane, monkeypatch):
     gate, calls = lane
     now = observe_only(gate, monkeypatch)
-    gate.prior_closure_timeout_seconds = 30
     state = gate.ops.runtime_state
-    monkeypatch.setattr(gate.ops, "runtime_state", lambda control: dict(state(control), pending_closure={"id": "busy"}))
+    monkeypatch.setattr(
+        gate.ops,
+        "runtime_state",
+        lambda control: dict(state(control), pending_closure={"id": "busy"}, busy_until=OVERDUE),
+    )
     inner = SimpleNamespace(
         set_maintenance=lambda *args, **kwargs: None,
         inject_after_resume=lambda *args: pytest.fail("injected during reflection"),
     )
     with pytest.raises(admission.PriorClosureIncompleteError):
         admission.EvalAdmissionOps(inner, gate).inject_after_resume("hotel-reservation-sdo", "g1", lambda: None)
-    assert now[0] == 30
+    assert now[0] == CLOSEOUT_MARGIN
     assert calls == []
     assert not (gate.directory / "stabilization-001.jsonl").exists(), "the stabilization clock started"
     assert json.loads((gate.directory / "prior-closure.json").read_text())["passed"] is False
@@ -274,7 +275,12 @@ def test_workload_refusal_names_the_sdo_incident_active_before_injection(lane, m
         gate.ops,
         "runtime_state",
         lambda control: (
-            dict(state(control), incident_open=True, incident_request={"incident_id": "astronomy-1793"})
+            dict(
+                state(control),
+                incident_open=True,
+                incident_request={"incident_id": "astronomy-1793"},
+                busy_until=OVERDUE,
+            )
             if opened
             else state(control)
         ),
@@ -343,30 +349,45 @@ def test_unfinished_onboarding_fails_on_its_own_budget_without_sampling_health(l
     assert evidence["pending"] is True
 
 
-def previous_reflection(gate, monkeypatch, *, finishes_at: float):
-    """A lane whose previous incident is still reflecting until *finishes_at*."""
+def wall_clock(gate, monkeypatch, now):
+    """Wall time that follows the faked monotonic clock, so ``busy_until`` is seconds after the start."""
+    monkeypatch.setattr(gate, "_wall_now", lambda: EPOCH + timedelta(seconds=now[0]))
+
+
+def busy_at(seconds: float) -> str:
+    return (EPOCH + timedelta(seconds=seconds)).isoformat()
+
+
+def fake_time(gate, monkeypatch):
     now = [0.0]
     monkeypatch.setattr(admission.time, "monotonic", lambda: now[0])
     monkeypatch.setattr(admission.time, "sleep", lambda seconds: now.__setitem__(0, now[0] + seconds))
+    wall_clock(gate, monkeypatch, now)
+    return now
+
+
+def previous_reflection(gate, monkeypatch, *, finishes_at: float, controller_bound: float):
+    """A lane whose previous incident is still reflecting until *finishes_at*; the controller bounds it itself."""
+    now = fake_time(gate, monkeypatch)
     monkeypatch.setattr(admission, "assert_lane_resources", lambda *args, **kwargs: {"passed": True})
     healthy = gate.ops.runtime_state
 
     def state(control):
         if now[0] < finishes_at:
-            return {"closure_state": "CLOSURE_STATE_COMMITTED", "last_acknowledged_incident_id": "row-003"}
+            return {
+                "closure_state": "CLOSURE_STATE_COMMITTED",
+                "last_acknowledged_incident_id": "row-003",
+                "busy_until": busy_at(controller_bound),
+            }
         return {**healthy(control), "last_acknowledged_incident_id": "row-004"}
 
-    def workers(control):
-        return ["sdo-reflect-row-004"] if now[0] < finishes_at else []
-
     gate.ops = SimpleNamespace(runtime_state=state)
-    monkeypatch.setattr(gate, "_active_workers", workers)
     return now
 
 
 def test_admission_waits_for_the_previous_reflection_before_the_stabilization_clock(lane, monkeypatch):
     gate, _ = lane
-    now = previous_reflection(gate, monkeypatch, finishes_at=420)
+    now = previous_reflection(gate, monkeypatch, finishes_at=420, controller_bound=900)
 
     def request(op, **kwargs):
         assert now[0] >= 420, "health was sampled while the previous reflection was running"
@@ -378,15 +399,23 @@ def test_admission_waits_for_the_previous_reflection_before_the_stabilization_cl
     evidence = json.loads((gate.directory / "prior-closure.json").read_text())
     assert evidence["passed"] is True
     assert evidence["last_acknowledged_incident_id"] == "row-004"
-    assert evidence["active_workers"] == []
     assert 420 <= evidence["seconds"] < 430
     assert "accepted_before" in evidence
 
 
-def test_stuck_previous_reflection_is_a_typed_not_measured_row(lane, monkeypatch):
+def test_prior_closure_wait_reads_only_the_controller_state(lane, monkeypatch):
+    """No Job list, label or ConfigMap read: the controller's one published fact is the whole input."""
+    gate, _ = lane
+    now = previous_reflection(gate, monkeypatch, finishes_at=60, controller_bound=900)
+    monkeypatch.setattr(admission, "kubectl", lambda *args, **kwargs: pytest.fail("prior-closure wait read the API"))
+    evidence = gate.await_prior_closure("hotel-reservation-sdo")
+    assert evidence["passed"] is True
+    assert now[0] >= 60
+
+
+def test_stuck_previous_reflection_ends_one_margin_after_the_controllers_own_bound(lane, monkeypatch):
     gate, calls = lane
-    gate.prior_closure_timeout_seconds = 600
-    previous_reflection(gate, monkeypatch, finishes_at=10_000)
+    previous_reflection(gate, monkeypatch, finishes_at=10_000, controller_bound=600)
     with pytest.raises(
         admission.PriorClosureIncompleteError, match=r"previous incident closure did not finish"
     ) as info:
@@ -395,82 +424,19 @@ def test_stuck_previous_reflection_is_a_typed_not_measured_row(lane, monkeypatch
     assert "traffic" not in calls
     evidence = json.loads((gate.directory / "prior-closure.json").read_text())
     assert evidence["passed"] is False
-    assert evidence["active_workers"] == ["sdo-reflect-row-004"]
     assert evidence["closure_state"] == "CLOSURE_STATE_COMMITTED"
-    assert evidence["budget_seconds"] == 600
-
-
-def worker_job(name, *, standby=False, finished=False):
-    labels = {"app.kubernetes.io/name": "sdo-worker", **({"sdo.dev/standby": "true"} if standby else {})}
-    conditions = [{"type": "Complete", "status": "True"}] if finished else []
-    return {
-        "metadata": {"name": name},
-        "spec": {"template": {"metadata": {"labels": labels}}},
-        "status": {"conditions": conditions},
-    }
-
-
-def execution(job_name):
-    identity = {"version": 1, "incident_id": "i-1", "task_id": "i-1", "job_name": job_name, "request_sha256": "a" * 64}
-    return {
-        "metadata": {
-            "name": "sdo-exec-" + "a" * 52,
-            "labels": {"sdo.dev/incident-execution": "1"},
-            "annotations": {"sdo.dev/incident-id": "i-1"},
-        },
-        "data": {"execution.json": json.dumps(identity)},
-    }
-
-
-def control_plane(monkeypatch, jobs, executions):
-    def kubectl(args, **kwargs):
-        items = jobs if args[1] == "jobs" else executions
-        return SimpleNamespace(stdout=json.dumps({"items": items}))
-
-    monkeypatch.setattr(admission, "kubectl", kubectl)
-
-
-def test_unclaimed_responder_standby_is_not_active_work(lane, monkeypatch):
-    gate, _ = lane
-    control_plane(monkeypatch, [worker_job("sdo-standby-a7e6", standby=True)], [])
-    assert ACTIVE_WORKERS(gate, "control") == []
-
-
-def test_claimed_responder_standby_is_active_work(lane, monkeypatch):
-    gate, _ = lane
-    control_plane(monkeypatch, [worker_job("sdo-standby-a7e6", standby=True)], [execution("sdo-standby-a7e6")])
-    assert ACTIVE_WORKERS(gate, "control") == ["sdo-standby-a7e6"]
-
-
-def test_running_reflection_job_is_active_work_beside_an_idle_standby(lane, monkeypatch):
-    gate, _ = lane
-    jobs = [
-        worker_job("sdo-standby-a7e6", standby=True),
-        worker_job("sdo-reflect-row-004"),
-        worker_job("sdo-task-done", finished=True),
-    ]
-    control_plane(monkeypatch, jobs, [])
-    assert ACTIVE_WORKERS(gate, "control") == ["sdo-reflect-row-004"]
-
-
-def test_malformed_execution_identity_fails_closed(lane, monkeypatch):
-    gate, _ = lane
-    broken = execution("sdo-standby-a7e6")
-    broken["data"]["execution.json"] = json.dumps({"version": 1})
-    control_plane(monkeypatch, [worker_job("sdo-standby-a7e6", standby=True)], [broken])
-    with pytest.raises(ValueError, match="invalid incident execution identity"):
-        ACTIVE_WORKERS(gate, "control")
+    assert evidence["busy_until"] == busy_at(600)
+    assert evidence["budget_seconds"] == 600 + CLOSEOUT_MARGIN
 
 
 def closure_record(gate, state):
     gate.prior_closure_timeout_seconds = 0.01
-    gate.reflection_attempt_seconds = 0.01
     gate.ops = SimpleNamespace(runtime_state=lambda _control: state)
 
 
 def test_admission_after_a_permanently_failed_closure_passes(lane):
     gate, _ = lane
-    # The controller keeps the failed closure pending until a new incident begins.
+    # The controller keeps the failed closure pending until a new incident begins; it publishes no busy_until.
     closure_record(
         gate,
         {
@@ -485,63 +451,54 @@ def test_admission_after_a_permanently_failed_closure_passes(lane):
 @pytest.mark.parametrize(
     "state",
     [
-        {
-            "closure_state": "CLOSURE_STATE_FAILED",
-            "pending_closure": {"request": {"incident_id": "row-008"}},
-            "closure_failure": {"incident_id": "row-008", "permanent": False},
-        },
-        {"closure_state": "CLOSURE_STATE_PROCESSING", "pending_closure": {"request": {"incident_id": "row-008"}}},
+        {"closure_state": "CLOSURE_STATE_PENDING", "pending_closure": {"request": {"incident_id": "row-008"}}},
         {"closure_state": "CLOSURE_STATE_ACKNOWLEDGING", "closure_receipt": {"incident_id": "row-008"}},
         {"incident_open": True, "last_acknowledged_incident_id": "row-007"},
-        # A failed attempt's acknowledged closure whose reflection is queued.
+        # A failed attempt's acknowledged closure whose reflection is queued, or whose queue is unreadable.
         {"last_acknowledged_incident_id": "row-008", "queued_reflection_incident_ids": ["row-008"]},
-        # The controller could not read its reflection queue.
         {"last_acknowledged_incident_id": "row-008", "queued_reflections_unknown": True},
     ],
-    ids=[
-        "retrying-failure",
-        "processing",
-        "acknowledging",
-        "open-incident",
-        "queued-reflection",
-        "reflection-queue-unknown",
-    ],
+    ids=["pending", "acknowledging", "open-incident", "queued-reflection", "reflection-queue-unknown"],
 )
-def test_admission_waits_while_a_closure_is_open(lane, state):
+def test_admission_waits_while_the_controller_publishes_busy_until(lane, monkeypatch, state):
     gate, calls = lane
-    closure_record(gate, state)
+    fake_time(gate, monkeypatch)
+    closure_record(gate, {**state, "busy_until": OVERDUE})
     with pytest.raises(admission.PriorClosureIncompleteError):
         gate.await_prior_closure("hotel-reservation-sdo")
     assert "traffic" not in calls
 
 
-def test_admission_budget_covers_every_queued_reflection(lane, monkeypatch):
-    """A queue of N reflections is N response timeouts of SDO work; the default 1800 s budget is one."""
+def test_a_queue_of_two_reflections_with_a_failing_head_is_waited_out(lane, monkeypatch):
+    """P50: two queued reflections (one backing off 182 s) are 2 x 2102 s of SDO work, not a fixed budget."""
     gate, _ = lane
-    gate.prior_closure_timeout_seconds = 30
-    gate.reflection_attempt_seconds = 2102.0
-    polls = iter([2, 2, 2, 1, 0])
+    now = fake_time(gate, monkeypatch)
+    reflection_attempt = 1800 + 182 + 120
+    finishes_at = 2 * reflection_attempt - 300
 
     def state(_control):
+        if now[0] >= finishes_at:
+            return {"last_acknowledged_incident_id": "row-008"}
         return {
             "last_acknowledged_incident_id": "row-008",
-            "queued_reflection_incident_ids": [f"row-{index}" for index in range(next(polls))],
+            "queued_reflection_incident_ids": ["row-007", "row-008"],
+            "busy_until": busy_at(2 * reflection_attempt),
         }
 
     gate.ops = SimpleNamespace(runtime_state=state)
-    monkeypatch.setattr(admission.time, "sleep", lambda _seconds: None)
     evidence = gate.await_prior_closure("hotel-reservation-sdo")
     assert evidence["passed"] is True
-    assert evidence["budget_seconds"] >= 2 * 2102.0
+    assert evidence["seconds"] >= finishes_at
+    assert evidence["budget_seconds"] >= 2 * reflection_attempt
 
 
-def test_new_work_during_stabilization_waits_on_its_own_job_deadline_then_restarts(lane, monkeypatch):
+def test_new_work_during_stabilization_waits_on_the_controllers_bound_then_restarts(lane, monkeypatch):
     """P41: a reflection that starts during stabilization outlives the fixed 300 s stabilization budget."""
     gate, calls = lane
     now = observe_only(gate, monkeypatch)
+    wall_clock(gate, monkeypatch, now)
     healthy = gate.ops.runtime_state
     reads, opened = [0], []  # the reflection opens at the first stabilization sample and runs 450 s
-    gate.prior_closure_timeout_seconds = 30
 
     def running():
         return bool(opened) and now[0] < opened[0] + 450
@@ -552,13 +509,14 @@ def test_new_work_during_stabilization_waits_on_its_own_job_deadline_then_restar
             opened.append(now[0])
         value = healthy(control)
         if running():
-            value.update(incident_open=True, incident_request={"incident_id": "onboarding-incident"})
+            value.update(
+                incident_open=True,
+                incident_request={"incident_id": "onboarding-incident"},
+                busy_until=busy_at(opened[0] + 1800),
+            )
         return value
 
     monkeypatch.setattr(gate.ops, "runtime_state", state)
-    monkeypatch.setattr(gate, "_active_workers", lambda control: ["sdo-reflection-new"] if running() else [])
-    # The Job's own activeDeadlineSeconds (1800 s) is far longer than either fixed budget.
-    monkeypatch.setattr(gate, "_work_deadline", lambda control: opened[0] + 1800 if running() else None)
 
     proof = gate.prove("hotel-reservation-sdo")
 
@@ -580,30 +538,3 @@ def test_an_unreadable_controller_state_is_typed_not_a_closure_timeout(lane):
     assert info.value.reason == "controller_state_unavailable"
     # One type for "state unreadable", shared with the recovery drain.
     assert admission.ControllerStateUnavailableError is persistent.ControllerStateUnavailableError
-
-
-def test_an_incident_loop_cannot_extend_the_prior_closure_wait_forever(lane, monkeypatch):
-    """F3: a lane that keeps opening incidents and Jobs hits a fixed ceiling and fails typed."""
-    gate, _ = lane
-    now = observe_only(gate, monkeypatch)
-    gate.prior_closure_timeout_seconds = 30
-
-    def sleep(seconds: float) -> None:
-        now[0] += seconds
-        assert now[0] < 100_000, "prior-closure wait never ends under an incident loop"
-
-    monkeypatch.setattr(admission.time, "sleep", sleep)
-    gate.ops = SimpleNamespace(
-        runtime_state=lambda _control: {"incident_open": True, "incident_request": {"incident_id": f"loop-{now[0]}"}}
-    )
-    # Every poll sees a fresh Job whose own deadline is 1800 s away.
-    monkeypatch.setattr(gate, "_active_workers", lambda control: [f"sdo-worker-{now[0]}"])
-    monkeypatch.setattr(gate, "_work_deadline", lambda control: now[0] + 1800)
-
-    with pytest.raises(admission.PriorClosureIncompleteError) as info:
-        gate.await_prior_closure("hotel-reservation-sdo")
-
-    first_seen = 1800 + admission.POST_CLOSURE_WAIT_SECONDS
-    assert info.value.reason == "prior_closure_incomplete"
-    assert info.value.evidence["budget_seconds"] == 2 * first_seen
-    assert now[0] <= 2 * first_seen

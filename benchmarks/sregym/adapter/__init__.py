@@ -24,6 +24,7 @@ if TYPE_CHECKING:
     from benchmarks.sregym.adapter.eval_guards import (
         INCIDENT_EXECUTION_LABEL,
         STANDBY_LABEL,
+        BusyDeadline,
         Deadline,
         StabilizationError,
         assert_stable_workloads,
@@ -32,7 +33,6 @@ if TYPE_CHECKING:
         incident_work_open,
         job_labels,
         qualified_scenarios,
-        queued_reflection_count,
         setup_lineage,
         shell_runner_proof,
         terminal_incident_ids,
@@ -63,7 +63,6 @@ if TYPE_CHECKING:
     )
     from benchmarks.sregym.adapter.oracle_observability import prepare_oracle_observability, route_astronomy_traces
     from benchmarks.sregym.adapter.persistent import (
-        POST_CLOSURE_WAIT_SECONDS,
         REJECTED_RECEIPT_FILENAME,
         STRICT_RECEIPT_FILENAME,
         Clock,
@@ -117,7 +116,7 @@ _EXPORTS: dict[str, str] = {
     "StabilizationError": "eval_guards",
     "assert_stable_workloads": "eval_guards",
     "incident_work_open": "eval_guards",
-    "queued_reflection_count": "eval_guards",
+    "BusyDeadline": "eval_guards",
     "SdoBounds": "budgets",
     "WaitKind": "budgets",
     "wait_for": "budgets",
@@ -167,7 +166,6 @@ _EXPORTS: dict[str, str] = {
     "FollowupClosureWait": "persistent",
     "wait_for_maintenance_ack": "persistent",
     "KubectlClusterOps": "persistent",
-    "POST_CLOSURE_WAIT_SECONDS": "persistent",
     "PersistentState": "persistent",
     "StageInputs": "persistent",
     "control_namespace_for": "persistent",
@@ -198,7 +196,7 @@ __all__ = [
     "StabilizationError",
     "assert_stable_workloads",
     "incident_work_open",
-    "queued_reflection_count",
+    "BusyDeadline",
     "SdoBounds",
     "WaitKind",
     "wait_for",
@@ -239,7 +237,6 @@ __all__ = [
     "ReflectionDeadlineError",
     "FollowupClosureTimeout",
     "FollowupClosureWait",
-    "POST_CLOSURE_WAIT_SECONDS",
     "PersistentState",
     "RuntimeConfig",
     "StageInputs",

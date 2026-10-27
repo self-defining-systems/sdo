@@ -381,7 +381,7 @@ def read_incident_evidence(
             assert_shared_repository(config)
         else:
             args.extend(("--repository", str(config.repository)))
-    value = _run("incident-evidence", args, timeout=wait_for(WaitKind.SLOW_COMMAND))
+    value = _run("incident-evidence", args, timeout=int(wait_for(WaitKind.SLOW_COMMAND)))
     ledger = value.get("ledger")
     if (
         value.get("incident_id") != incident_id
@@ -473,7 +473,7 @@ def export_runtime_artifacts(config: NativeInstallConfig, output_dir: Path) -> P
     ]
     if config.kubeconfig is not None:
         args.extend(("--kubeconfig", str(config.kubeconfig)))
-    value = _run("runtime-artifacts", args, timeout=wait_for(WaitKind.OPERATION))
+    value = _run("runtime-artifacts", args, timeout=int(wait_for(WaitKind.OPERATION)))
     expected = output_dir / "sdo_runtime"
     if value.get("directory") != str(expected):
         raise NativeOperatorError("Go runtime artifact export returned an unexpected directory")
@@ -544,7 +544,7 @@ def inspect_existing(config: NativeInstallConfig) -> NativeExistingReceipt:
     ]
     if config.kubeconfig is not None:
         args.extend(("--kubeconfig", str(config.kubeconfig)))
-    value = _run("inspect-existing", args, timeout=wait_for(WaitKind.SLOW_COMMAND))
+    value = _run("inspect-existing", args, timeout=int(wait_for(WaitKind.SLOW_COMMAND)))
     for field in ("job_uid", "pod_uid", "fingerprint"):
         if not isinstance(value.get(field), str) or not value[field].strip():
             raise NativeOperatorError(f"Go inspect-existing lacks {field}")

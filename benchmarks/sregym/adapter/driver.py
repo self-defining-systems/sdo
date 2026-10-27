@@ -709,7 +709,7 @@ def _launch_native_lifecycle(
         healthy_baseline=args.healthy_baseline,
         max_response_loops=args.max_response_loops,
         response_timeout_seconds=args.timeout_sec,
-        verification_timeout_seconds=wait_for(WaitKind.VERIFICATION_SAMPLE),
+        verification_timeout_seconds=int(wait_for(WaitKind.VERIFICATION_SAMPLE)),
         duration_seconds=None if persistent else args.timeout_sec,
         exit_after_closure=not persistent,
         registration_configmap="sdo-agent-registrations" if args.agent_registrations else None,
@@ -814,7 +814,7 @@ def _native_install_for_run(
         responder_namespaces=args.responder_namespaces,
         max_response_loops=args.max_response_loops,
         response_timeout_seconds=args.timeout_sec,
-        verification_timeout_seconds=wait_for(WaitKind.VERIFICATION_SAMPLE),
+        verification_timeout_seconds=int(wait_for(WaitKind.VERIFICATION_SAMPLE)),
         duration_seconds=args.timeout_sec,
         exit_after_closure=True,
         responder_env=(
@@ -968,7 +968,7 @@ def _run_persistent(args: argparse.Namespace, api_base: str, started: float) -> 
     initial_stage = poll_stage_sync(
         api_base,
         wait_for=READY_STAGES | {AWAITING_FAULT_INJECTION},
-        timeout=wait_for(WaitKind.ROLLOUT),
+        timeout=int(wait_for(WaitKind.ROLLOUT)),
         on_timeout="raise",
     )
     if initial_stage != AWAITING_FAULT_INJECTION:
@@ -1065,7 +1065,7 @@ def _run(args: argparse.Namespace) -> dict[str, Any]:
     initial_stage = poll_stage_sync(
         api_base,
         wait_for=READY_STAGES | {AWAITING_FAULT_INJECTION},
-        timeout=wait_for(WaitKind.ROLLOUT),
+        timeout=int(wait_for(WaitKind.ROLLOUT)),
         on_timeout="raise",
     )
     fault_deferred = initial_stage == AWAITING_FAULT_INJECTION

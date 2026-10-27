@@ -146,7 +146,7 @@ def assert_shared_lane(environment: FastloopEnvironment) -> None:
         repository_pvc=PVC_NAME,
         credentials_secret="sdo-agent-credentials",
         model="gpt-6-luna",
-        timeout_seconds=wait_for(WaitKind.RESPONSE, 2),
+        timeout_seconds=int(wait_for(WaitKind.RESPONSE, 2)),
         shared_accepted_id=environment.shared_accepted_id,
         controller_namespace=control_namespace_for(environment.namespace),
     )

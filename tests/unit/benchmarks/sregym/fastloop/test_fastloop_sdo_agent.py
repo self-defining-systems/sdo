@@ -25,6 +25,7 @@ from benchmarks.sregym.adapter.persistent import (
 from benchmarks.sregym.fastloop.loop import InjectionWindow, LoopConfig, run_incidents
 from benchmarks.sregym.fastloop.records import OracleVerdict, load_records
 from benchmarks.sregym.fastloop.sdo_agent import SdoAgentSettings, SdoPersistentAgent
+from tests.unit.benchmarks.sregym.adapter.test_persistent import _with_controller_busy_until
 
 
 def test_program_metrics_exports_match_evidence_and_skip_reason() -> None:
@@ -200,7 +201,7 @@ class FakeOps:
                 self._reflect(control_namespace, incident_id)
             else:
                 self.seen_closures.add((control_namespace, incident_id))
-        return state
+        return _with_controller_busy_until(state)
 
     def controller_logs(self, control_namespace: str) -> str:
         return "\n".join(self.logs.get(control_namespace, []))
@@ -654,20 +655,38 @@ def test_program_metrics_exports_incident_open_coverage() -> None:
     assert _program_metrics({"playbook_coverage": coverage})["playbook_coverage"] == coverage
 
 
-def test_recovery_reports_a_followup_incident_that_outlives_the_bounded_wait(
+def _ticking_clock() -> Clock:
+    """A clock whose wall time follows its monotonic time, as a real one does."""
+    elapsed = [0.0]
+    return Clock(
+        monotonic=lambda: elapsed[0],
+        sleep=lambda seconds: elapsed.__setitem__(0, elapsed[0] + seconds),
+        now=lambda: INJECTED + timedelta(seconds=elapsed[0]),
+    )
+
+
+def _followup_state(outcome_incident: str, busy_until: datetime | None) -> dict[str, Any]:
+    state: dict[str, Any] = {"last_acknowledged_incident_id": outcome_incident}
+    if busy_until is not None:
+        state.update(
+            incident_open=True,
+            incident_request={"incident_id": "incident-late"},
+            busy_until=busy_until.isoformat(),
+        )
+    return state
+
+
+def test_recovery_reports_a_followup_incident_that_outlives_the_controllers_bound(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from benchmarks.sregym.fastloop.loop import RecoveryWaitTimeout
 
-    ops, calls = FakeOps(), []
-    agent = _agent(tmp_path, ops, calls)
+    ops, calls, clock = FakeOps(), [], _ticking_clock()
+    agent = _agent(tmp_path, ops, calls, clock=clock)
     outcome = agent.learn(agent.resolve(0, "p", _inject))
-    followup = {
-        "last_acknowledged_incident_id": outcome.incident_id,
-        "incident_open": True,
-        "incident_request": {"incident_id": "incident-late"},
-    }
-    monkeypatch.setattr(ops, "runtime_state", lambda _control: followup)
+    started = clock.now()
+    bound = started + timedelta(seconds=480)
+    monkeypatch.setattr(ops, "runtime_state", lambda _control: _followup_state(outcome.incident_id, bound))
 
     with pytest.raises(RecoveryWaitTimeout, match="incident-late") as raised:
         agent.prepare_recovery(outcome)
@@ -675,7 +694,35 @@ def test_recovery_reports_a_followup_incident_that_outlives_the_bounded_wait(
     assert raised.value.wait.graded_incident_id == outcome.incident_id
     assert raised.value.wait.followup_incident_ids == ["incident-late"]
     assert raised.value.wait.closed is False
-    assert raised.value.wait.waited_seconds == raised.value.wait.bound_seconds == 600.0
+    # The controller's own bound plus one closeout margin, never a fixed 600 s.
+    assert raised.value.wait.waited_seconds == raised.value.wait.bound_seconds == 480.0 + 120.0
+
+
+def test_recovery_waits_past_ten_minutes_for_a_followup_the_controller_still_owns(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """h9.5 52/012: a follow-up incident ran past a fixed 600 s recovery wait and lost the row (P4RUN2, REQUESTS)."""
+    ops, calls, clock = FakeOps(), [], _ticking_clock()
+    agent = _agent(tmp_path, ops, calls, clock=clock)
+    outcome = agent.learn(agent.resolve(0, "p", _inject))
+    started = clock.now()
+    bound = started + timedelta(seconds=2102)
+    follow_up_runs_for = 1500.0
+
+    def state(_control: str) -> dict[str, Any]:
+        running = (clock.now() - started).total_seconds() < follow_up_runs_for
+        return _followup_state(outcome.incident_id, bound if running else None)
+
+    monkeypatch.setattr(ops, "runtime_state", state)
+
+    wait = agent.prepare_recovery(outcome)
+
+    assert wait is not None
+    assert wait.closed is True
+    assert wait.followup_incident_ids == ["incident-late"]
+    assert follow_up_runs_for <= wait.waited_seconds < follow_up_runs_for + 10
+    assert wait.waited_seconds > 600.0
+    assert wait.bound_seconds >= 2102.0
 
 
 class _WebhookDriver:
@@ -751,7 +798,7 @@ def test_a_running_reflection_delays_recovery_until_it_ends(tmp_path: Path) -> N
                 self.polls += 1
                 if self.polls < 3:
                     events.append("reflecting")
-                    return self.states[control_namespace]
+                    return _with_controller_busy_until(self.states[control_namespace])
                 events.append("reflected")
             return super().runtime_state(control_namespace)
 
