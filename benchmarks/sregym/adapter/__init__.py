@@ -12,7 +12,7 @@ import importlib
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from benchmarks.sregym.adapter.budgets import SdoBounds, WaitKind, wait_for
+    from benchmarks.sregym.adapter.budgets import Deadline, DeadlineExhaustedError, SdoBounds, WaitKind, wait_for
     from benchmarks.sregym.adapter.cluster_resources import kubectl
     from benchmarks.sregym.adapter.driver import (
         DeployedLifecycle,
@@ -25,7 +25,6 @@ if TYPE_CHECKING:
         INCIDENT_EXECUTION_LABEL,
         STANDBY_LABEL,
         BusyDeadline,
-        Deadline,
         StabilizationError,
         assert_stable_workloads,
         controller_proof,
@@ -108,7 +107,8 @@ _EXPORTS: dict[str, str] = {
     "NativeInstallConfig": "native_operator",
     "ImageRetentionError": "image_retention",
     "retain_lane_images": "image_retention",
-    "Deadline": "eval_guards",
+    "Deadline": "budgets",
+    "DeadlineExhaustedError": "budgets",
     "LaneResourcePolicy": "lane_resources",
     "allowed_namespaces": "lane_resources",
     "assert_host_disk_headroom": "lane_resources",
@@ -191,6 +191,7 @@ __all__ = [
     "ImageRetentionError",
     "retain_lane_images",
     "Deadline",
+    "DeadlineExhaustedError",
     "LaneResourcePolicy",
     "allowed_namespaces",
     "assert_host_disk_headroom",

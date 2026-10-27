@@ -7,7 +7,7 @@ description: Find and use operational memory by logical ID, or validate authoriz
 
 Read memory freely; edit only the artifact classes and proposal checkout your task authorizes.
 
-1. Find the matching logical IDs in the supplied snapshot or inventory; read a playbook before using it and check its diagnosis against current resources.
+1. Find the matching logical IDs in the supplied snapshot or inventory; read a playbook before using it. Check its diagnosis against current resources first, or after applying when the match is ready to mitigate.
 2. Before editing, read the [generated layout and ownership map](references/layout.md); preserve accepted provenance and corpus cases, and the task's actor, phase, accepted base and incident identity.
 3. For reflection, read the installed `sdo-playbook-authoring` skill; for detector changes, read `sdo-detector-authoring`. Open only the reference needed for the current step.
 4. Validate final edits with [check_memory](references/runtime.md#check_memory), supply typed decision fields directly, and return the same decision and logical IDs; correct named diagnostics before checking again. The broker independently validates final bytes.

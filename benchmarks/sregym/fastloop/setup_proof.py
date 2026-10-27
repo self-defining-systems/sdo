@@ -10,7 +10,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from benchmarks.sregym.adapter import WaitKind, wait_for
+from benchmarks.sregym.adapter import Deadline, WaitKind, wait_for
 from benchmarks.sregym.fastloop.accepted_source import manifest_paths_for
 
 if TYPE_CHECKING:
@@ -131,13 +131,11 @@ def collect_fingerprint(
     monotonic: Callable[[], float] = time.monotonic,
 ) -> SetupFingerprint:
     """Local files, GETs and one read-only PVC HEAD read share one snapshot-read budget."""
-    deadline = monotonic() + wait_for(WaitKind.SNAPSHOT_READ)
+    budget = Deadline.after(wait_for(WaitKind.SNAPSHOT_READ), "setup fingerprint", monotonic)
 
     def execute(command: list[str]) -> str:
-        remaining = deadline - monotonic()
-        if remaining <= 0:
-            raise TimeoutError("eval: setup fingerprint exceeded 15 seconds")
-        return run(command, check=True, text=True, capture_output=True, timeout=remaining).stdout.strip()
+        timeout = budget.bounded_timeout(command[0], minimum=WaitKind.POLL_FAST)
+        return run(command, check=True, text=True, capture_output=True, timeout=timeout).stdout.strip()
 
     root = Path(__file__).resolve().parents[3]
     revision = execute(
@@ -268,7 +266,7 @@ def collect_fingerprint(
         tools["mounted-code-revision"] = mounted_revision
         binary = environment.dev_mount / ".fastloop/sdo-operator"
         tools["installed-operator"] = hashlib.sha256(binary.read_bytes()).hexdigest()
-    if monotonic() > deadline:
+    if budget.left() <= 0:
         raise TimeoutError("eval: setup fingerprint exceeded 15 seconds")
     return SetupFingerprint(
         environment.cluster,

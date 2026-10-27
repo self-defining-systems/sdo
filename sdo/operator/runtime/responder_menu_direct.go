@@ -73,7 +73,12 @@ func (l *ResponderLoop) listMenu(ctx context.Context, request ToolRequest, respo
 				continue
 			}
 			bindings := []program.Bindings{}
-			if request.ProgramID != "" && len(request.Parameters) > 0 {
+			if request.Match {
+				bindings = coverageMatchBindings(l.Request.PlaybookCoverage, spec.ID, request.Bindings)
+				if len(bindings) == 0 {
+					continue
+				}
+			} else if request.ProgramID != "" && len(request.Parameters) > 0 {
 				bound, err := menuBindProgram(menuEntry{spec: spec, bindings: request.Bindings}, request.Parameters)
 				if err == nil {
 					err = program.ValidateBindings(spec, bound)
@@ -472,4 +477,30 @@ func (l *ResponderLoop) validateMenuPreconditions(ctx context.Context, entry men
 		return fmt.Errorf("program %s no longer matches live state: %s", entry.programID, verdict.Result)
 	}
 	return nil
+}
+
+// coverageMatchBindings returns the bindings of incident-open coverage matches
+// that are ready to mitigate for one playbook, optionally narrowed to matches
+// that bind every requested object. The controller owns coverage, so the
+// responder names the match instead of rebuilding its selection.
+func coverageMatchBindings(coverage *contracts.PlaybookCoverage, playbookID string, requested program.Bindings) []program.Bindings {
+	var result []program.Bindings
+	for _, match := range coverage.GetMatches() {
+		if match.GetPlaybookId() != playbookID || !match.GetCanMitigate() {
+			continue
+		}
+		bound := programBindingsState(match.GetBindings())
+		covers := true
+		for name, want := range requested.Objects {
+			have, ok := bound.Objects[name]
+			if !ok || have.Kind != want.Kind || have.Namespace != want.Namespace || have.Name != want.Name {
+				covers = false
+				break
+			}
+		}
+		if covers {
+			result = append(result, bound)
+		}
+	}
+	return result
 }

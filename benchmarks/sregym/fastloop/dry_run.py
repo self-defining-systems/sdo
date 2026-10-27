@@ -13,7 +13,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from benchmarks.sregym.adapter import WaitKind, wait_for
+from benchmarks.sregym.adapter import Deadline, WaitKind, wait_for
 from benchmarks.sregym.fastloop.observation_conformance import check_observations
 from benchmarks.sregym.fastloop.setup_proof import INVARIANTS
 
@@ -105,8 +105,10 @@ def execute(run_dir: Path, timeout: int, setup_timeout: int = int(wait_for(WaitK
         child = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
         while child.poll() is None:
             document = json.loads(report_path.read_text())
-            remaining = phase_deadline(document, started, setup_timeout, timeout) - time.monotonic()
-            if remaining <= 0:
+            budget = Deadline(
+                phase_deadline(document, started, setup_timeout, timeout), time.monotonic, "dry run phase"
+            )
+            if budget.left() <= 0:
                 os.killpg(child.pid, signal.SIGTERM)
                 try:
                     child.wait(timeout=wait_for(WaitKind.PROBE))
@@ -121,7 +123,7 @@ def execute(run_dir: Path, timeout: int, setup_timeout: int = int(wait_for(WaitK
                 report_path.write_text(json.dumps(document, indent=2) + "\n")
                 break
             try:
-                child.wait(timeout=min(1, remaining))
+                child.wait(timeout=min(wait_for(WaitKind.POLL_FAST), budget.left()))
             except subprocess.TimeoutExpired:
                 pass
     document = json.loads(report_path.read_text())
