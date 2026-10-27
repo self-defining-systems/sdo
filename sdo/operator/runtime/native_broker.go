@@ -281,7 +281,7 @@ func (n NativeIncidentBroker) ProcessClosure(ctx context.Context, closure Incide
 				ledger.RequiresReflection = true
 			} else {
 				indices := partialRepairCauses(ledger.OutcomeDocument)
-				ledger.RequiresReflection = len(indices) > 0 || hasResponderSession(closure) || stageOnlyClosure(closure)
+				ledger.RequiresReflection = len(indices) > 0 || hasResponderSession(closure)
 				if ledger.RequiresReflection {
 					eligibility := n.prepareCauseWork(ctx, ledger.OutcomeDocument, IncidentWorkspace{IncidentID: id, Worktree: closure.Request.RepositoryWorktree, BaseCommit: closure.Request.RepositoryBaseCommit})
 					ledger.OutcomeDocument.ReflectionEligibility = partialReflectionEligibility(eligibility, indices, false)
@@ -290,7 +290,7 @@ func (n NativeIncidentBroker) ProcessClosure(ctx context.Context, closure Incide
 					ledger.ReflectionDecision = &contracts.ReflectionDecision{LearningDecision: "no_change", NoChangeReason: "no_session"}
 				}
 			}
-			if !hasResponderSession(closure) && !stageOnlyClosure(closure) {
+			if !hasResponderSession(closure) {
 				ledger.OutcomeDocument.ReflectionSkipReason = "no_session"
 			}
 			if err := n.saveLedger(ledger); err != nil {
@@ -560,7 +560,7 @@ func (n NativeIncidentBroker) processReflection(ctx context.Context, ledger *con
 			}
 			negativePrepared = true
 		}
-		if effect.Attempt == 1 && !n.ForceReflection && !hasResponderSession(incidentClosureState(effect.Closure)) && !stageOnlyClosure(incidentClosureState(effect.Closure)) && (prepared || negativePrepared) && !causeWorkNeedsModel(work) && !reflectionItemsNeedModel(unassigned) {
+		if effect.Attempt == 1 && !n.ForceReflection && !hasResponderSession(incidentClosureState(effect.Closure)) && (prepared || negativePrepared) && !causeWorkNeedsModel(work) && !reflectionItemsNeedModel(unassigned) {
 			return &contracts.ReflectionDecision{LearningDecision: "updated"}, nil
 		}
 		if n.Reflector == nil {

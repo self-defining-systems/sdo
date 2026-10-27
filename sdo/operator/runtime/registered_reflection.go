@@ -101,9 +101,6 @@ func (w RegisteredReflectionWorker) Reflect(ctx context.Context, closure Inciden
 	if guidance == "" {
 		guidance = "baseline"
 	}
-	if mode == "resume" && stageOnlyClosure(closure) {
-		mode = "fresh"
-	}
 	if mode == "resume" && !hasResponderSession(closure) {
 		return ReflectionDecision{LearningDecision: "no_change", NoChangeReason: "no_session"}, nil
 	}

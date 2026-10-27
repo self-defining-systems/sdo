@@ -157,12 +157,11 @@ def assert_shared_lane(environment: FastloopEnvironment) -> None:
 @contextmanager
 def lane_environment(environment: FastloopEnvironment) -> Iterator[None]:
     # Attachment/preflight is serial. Incident runs always get separate processes.
-    names = ("KUBECONFIG", "SREGYM_BASE_KUBECONFIG", "SDO_TIME_SCALE", "SDO_DEV_MOUNT", "SDO_OPERATOR_BIN")
+    names = ("KUBECONFIG", "SREGYM_BASE_KUBECONFIG", "SDO_DEV_MOUNT", "SDO_OPERATOR_BIN")
     previous = {name: os.environ.get(name) for name in names}
     try:
         for name in names[:2]:
             os.environ[name] = str(environment.kubeconfig)
-        os.environ["SDO_TIME_SCALE"] = "1"
         if environment.dev_mount is not None:
             os.environ["SDO_DEV_MOUNT"] = "1"
             os.environ["SDO_OPERATOR_BIN"] = str(environment.dev_mount / ".fastloop/sdo-operator")

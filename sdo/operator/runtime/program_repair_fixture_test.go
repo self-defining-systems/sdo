@@ -50,7 +50,7 @@ func trustedPortLoop(t *testing.T, withOtherFault, trusted, healthyVerifier bool
 	}
 	loop.InitialDiagnose(context.Background())
 	if trusted {
-		loop.Trust = map[string]ProgramTrust{"service-targetport-mismatch": {VerifiedSuccesses: 3, LastChange: "tree-a"}}
+		loop.ProgramCounts = map[string]ProgramCount{programCountKey("service-targetport-mismatch", "tree-a"): {Successes: 3}}
 	}
 	return loop, client
 }

@@ -57,38 +57,32 @@ func TestResponderFailedHealthSurvivesRestart(t *testing.T) {
 				t.Fatalf("retry failed: %+v", applied)
 			}
 			outcomes := []*contracts.OutcomeRecord{
-				verifiedTrustOutcome(t, "service-targetport-mismatch", "tree-a"),
-				verifiedTrustOutcome(t, "service-targetport-mismatch", "tree-a"),
+				verifiedProgramOutcome(t, "service-targetport-mismatch", "tree-a"),
+				verifiedProgramOutcome(t, "service-targetport-mismatch", "tree-a"),
 				responderRetryOutcome(t, loop),
 			}
-			got := ProgramTrustStats(outcomes)["service-targetport-mismatch"]
-			t.Logf("restart=%v applications=%d signals=%v loops=%d trust=%+v", restart, len(loop.PlanApplications()), loop.FailureSignals(), loop.LoopsUsed(), got)
-			if (got.VerifiedSuccesses > 0 && got.Failures == 0) || got.VerifiedSuccesses != 0 || got.Failures != 1 {
+			got := ProgramCounts(outcomes)[programCountKey("service-targetport-mismatch", "tree-a")]
+			t.Logf("restart=%v applications=%d signals=%v loops=%d counts=%+v", restart, len(loop.PlanApplications()), loop.FailureSignals(), loop.LoopsUsed(), got)
+			if got != (ProgramCount{Successes: 3, Failures: 1}) {
 				t.Fatalf("failed verification must survive a successful retry: %+v", got)
 			}
 		})
 	}
 }
 
-func TestResponderVerificationFailureTrustIsRevisionBound(t *testing.T) {
+func TestResponderVerificationFailureCountIsRevisionBound(t *testing.T) {
 	outcomes := []*contracts.OutcomeRecord{
-		verifiedTrustOutcome(t, "targetport", "revision-a"),
-		verifiedTrustOutcome(t, "targetport", "revision-a"),
+		verifiedProgramOutcome(t, "targetport", "revision-a"),
+		verifiedProgramOutcome(t, "targetport", "revision-a"),
 		{SourceCommit: "unrelated-source-commit", ProgramFailureSignals: []string{"application_verification_failure:targetport@revision-a"}},
-		verifiedTrustOutcome(t, "targetport", "revision-a"),
+		verifiedProgramOutcome(t, "targetport", "revision-b"),
 	}
-	if got := ProgramTrustStats(outcomes)["targetport"]; (got.VerifiedSuccesses > 0 && got.Failures == 0) || got.Failures != 1 || got.LastChange != "revision-a" {
-		t.Fatalf("successful retry erased revision failure: %+v", got)
+	counts := ProgramCounts(outcomes)
+	if got := counts[programCountKey("targetport", "revision-a")]; got != (ProgramCount{Successes: 2, Failures: 1}) {
+		t.Fatalf("revision-a: %+v", got)
 	}
-	for range 3 {
-		outcomes = append(outcomes, verifiedTrustOutcome(t, "targetport", "revision-b"))
-	}
-	if got := ProgramTrustStats(outcomes)["targetport"]; !(got.VerifiedSuccesses > 0 && got.Failures == 0) || got.Failures != 0 || got.LastChange != "revision-b" {
+	if got := counts[programCountKey("targetport", "revision-b")]; got != (ProgramCount{Successes: 1}) {
 		t.Fatalf("failure affected a different revision: %+v", got)
-	}
-	outcomes = append(outcomes, verifiedTrustOutcome(t, "targetport", "revision-a"))
-	if got := ProgramTrustStats(outcomes)["targetport"]; (got.VerifiedSuccesses > 0 && got.Failures == 0) || got.Failures != 1 || got.LastChange != "revision-a" {
-		t.Fatalf("reverting to the failed revision erased failure: %+v", got)
 	}
 }
 

@@ -182,7 +182,7 @@ def test_persistent_gate_waits_for_the_resumed_controllers_all_clear_before_inje
     assert calls[0][0][:2] == ["logs", "job/sdo-controller-run"]
 
 
-def test_persistent_gate_poll_can_follow_fastloop_time_scale() -> None:
+def test_persistent_gate_poll_interval_is_configurable() -> None:
     clock = _Clock()
     outputs = [_maintenance("active", "stage-1"), _maintenance("active", "stage-1") + "\n" + _evaluation()]
 

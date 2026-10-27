@@ -58,17 +58,6 @@ func TestUnassignedMatchesStayQuestionsWithoutNewCauseOrTrustCredit(t *testing.T
 
 }
 
-func TestUnprovenFinalEquivalenceEarnsNeitherSuccessNorFailure(t *testing.T) {
-	outcome := verifiedTrustOutcome(t, "targetport", "revision")
-	notExact := false
-	outcome.PlanApplications[0].FinalEquivalenceVerified = &notExact
-	settleTestOutcome(outcome)
-	state := ProgramTrustStats([]*contracts.OutcomeRecord{outcome})["targetport"]
-	if (state.VerifiedSuccesses > 0 && state.Failures == 0) || state.VerifiedSuccesses != 0 || state.Failures != 0 {
-		t.Fatalf("question became a trust judgment: %+v", state)
-	}
-}
-
 func TestUnboundWritesKeepTheExactConfirmedResource(t *testing.T) {
 	outcome := verifiedRepeat(t)
 	outcome.ProgramRuns = nil

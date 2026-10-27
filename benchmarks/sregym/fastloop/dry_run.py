@@ -280,7 +280,6 @@ def refresh_reused_proof(
     timeout: int,
 ) -> None:
     from benchmarks.sregym.adapter import KubectlClusterOps
-    from benchmarks.sregym.fastloop import cli
     from benchmarks.sregym.fastloop.admission import LaneAdmission
 
     receipt = json.loads(Path(report.setup_proof["receipt"]).read_text())
@@ -291,16 +290,10 @@ def refresh_reused_proof(
     report.phase = "steady"
     report.steady_started = time.monotonic()
     assert_active_intake(environment)
-    with cli._worker(environment) as worker:
-        admission = LaneAdmission(
-            environment,
-            worker,
-            KubectlClusterOps(),
-            directory / "admission",
-            progress=passed,
-            timeout_seconds=timeout,
-        )
-        admission.prove(environment.namespace + "-sdo")
+    admission = LaneAdmission(
+        environment, KubectlClusterOps(), directory / "admission", progress=passed, timeout_seconds=timeout
+    )
+    admission.prove(environment.namespace + "-sdo")
     passed("observation_conformance", **check_observations(environment, directory))
     passed("stabilization", source="fresh live admission", reused_setup=report.setup_proof["receipt"])
     report.passed = True
@@ -325,7 +318,6 @@ def run_lane(run_dir: Path, timeout: int, setup_timeout: int = int(wait_for(Wait
         report.save(report_path)
 
     os.environ["KUBECONFIG"] = str(environment.kubeconfig)
-    os.environ["SDO_TIME_SCALE"] = "1"
     if environment.dev_mount:
         os.environ["SDO_DEV_MOUNT"] = "1"
         os.environ["SDO_OPERATOR_BIN"] = str(environment.dev_mount / ".fastloop/sdo-operator")

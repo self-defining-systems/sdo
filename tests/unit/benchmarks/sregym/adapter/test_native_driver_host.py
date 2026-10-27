@@ -366,9 +366,8 @@ def test_runtime_install_preserves_shared_settings_on_every_lifecycle_path(
 
 
 @pytest.mark.parametrize("entrypoint", ["lifecycle", "evidence"])
-@pytest.mark.parametrize("trust_threshold", [3, 7])
 def test_environment_settings_reach_nonpersistent_native_install(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, entrypoint: str, trust_threshold: int
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, entrypoint: str
 ) -> None:
     monkeypatch.setenv(
         "SREGYM_EXPERIMENT_AGENT_CONFIG",

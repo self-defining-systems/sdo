@@ -474,7 +474,6 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="APP=ENV_DIR[:LEASE]",
         help="real-apps: the lane environment of an app (repeatable); defaults to hotel_reservation on lane 55b",
     )
-    parser.add_argument("--time-scale", type=float, default=1.0, help="real-apps: controller and wait window scale")
     parser.add_argument("--only-slot", type=int, action="append", default=[], help="real-apps: run only these slots")
     return parser
 

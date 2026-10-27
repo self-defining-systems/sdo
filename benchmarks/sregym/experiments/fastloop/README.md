@@ -104,20 +104,31 @@ uv run python -m benchmarks.sregym.fastloop reset \
 uv run python -m benchmarks.sregym.fastloop run \
   --run-dir "$SDO_FASTLOOP_RUN" --agent sdo \
   --stream tests/fixtures/sregym/fastloop/pbprog_repeat.json \
-  --diagnosis-grading off --time-scale 1 --continue-on-error
+  --diagnosis-grading off --continue-on-error
 ```
 
-`--time-scale` defaults to 1. Live LLM runs, including smokes, use 1.
-Values below 1 are refused before runtime setup unless SDO uses the repository's
-`benchmarks/sregym/adapter/scripted_registrations` (explicitly selected, or the
-toy lane default). Custom registrations are conservatively treated as live.
-This keeps live verification and responder deadlines from being shortened.
-For scripted-agent runs it scales controller detector intervals, finding
-debounce, drift baseline settle, diagnosis settle, verification waits, the
-fastloop reflection wait, controller and fault-gate polling, recovery health
-polling, and composite stability and deadline waits. `--continue-on-error` records a failed incident and
+There is no time scaling; every run uses real time. `--continue-on-error` records a failed incident and
 moves on only when recovery has passed its oracle. A new dev lane uses the
 `fastloop-dev-w` cluster prefix; choose another prefix if that name is taken.
+
+# Reused lanes: fault-setup leftovers and redeploy
+
+A fault may install cluster-scoped infrastructure outside the app namespace, such as the
+`ingress-nginx` release of IngressMisroute. The SREGym worker removes what an injection created
+after full recovery, but only from its own memory. Beside each lane's kubeconfig the worker bridge
+also keeps a `<kubeconfig>.setup-ledger.json` window (`fastloop/setup_ledger.py`): it opens before
+an injection runs, records the cluster-scoped objects the injection created when it returns, and
+closes only after a full recovery with nothing pending. An attempt that aborts, times out or is
+killed in between leaves the window open, and the next row's `LaneAdmission.prove` removes those
+objects and waits until they are gone before the lane-resource entry check. The check itself stays:
+it still refuses any foreign namespace no window recorded. Namespaces the entry check allows
+(infrastructure, the app, `<app>-sdo`) are never removed, and a window cut off before the injection
+returned removes only objects new since it opened.
+
+`up --redeploy` is repeatable for every app. The worker bridge routes SREGym's `Helm.install`, the
+one entry point for the app and telemetry charts, through `helm upgrade --install`
+(`fastloop/idempotent_helm.py`), so a lane that still holds the release no longer fails with
+"cannot re-use a name that is still in use".
 
 # Recovery isolation
 
@@ -300,13 +311,12 @@ lane registry. Reuse that cluster and reset it for source edits; no custom
 preloaded node image or archive preparation is needed.
 
 ```bash
-export SDO_TIME_SCALE=0.1
 export TOY_RUN="$PWD/.fastloop/toy"
 uv run python -m benchmarks.sregym.fastloop up --app toy \
   --run-dir "$TOY_RUN" --cluster-prefix my-toy- --dev-mount "$PWD"
 uv run python -m benchmarks.sregym.fastloop run --run-dir "$TOY_RUN" --agent sdo \
   --stream tests/fixtures/sregym/fastloop/toy_latent_repeat.json \
-  --reflection-session fresh --diagnosis-grading off --time-scale 0.1 \
+  --reflection-session fresh --diagnosis-grading off \
   --timeout 300 --detection-timeout 75 --no-checkpoints
 uv run python -m benchmarks.sregym.fastloop reset --run-dir "$TOY_RUN"
 ```

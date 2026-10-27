@@ -212,9 +212,6 @@ func testHermeticRepeatBroker(t *testing.T, rejectFirst, boundSession bool) {
 			t.Fatalf("unexpected repeat edit: %s", path)
 		}
 	}
-	if state := ProgramTrustStats([]*contracts.OutcomeRecord{outcome})[repeatProgram]; !(state.VerifiedSuccesses > 0 && state.Failures == 0) {
-		t.Fatalf("verified repeat earned no trust: %+v", state)
-	}
 	again, err := native.processReflection(ctx, ledger)
 	if err != nil || len(again) != 5 || modelCalls != expectedCalls {
 		t.Fatalf("restart duplicated work: %v %v calls=%d", again, err, modelCalls)

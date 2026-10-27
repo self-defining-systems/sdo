@@ -55,7 +55,6 @@ func (c *Controller) ExecuteDispatchEffect(ctx context.Context, effect DispatchE
 		return err
 	}
 	c.responderCancel = cancel
-	c.responseStagesRunning = !(len(c.codePath.Selection.ResponseStages) == 1 && c.codePath.Selection.ResponseStages[0] == "agent")
 	c.dispatchState = contracts.DispatchState_DISPATCH_STATE_RUNNING
 	if c.incidentDispatchedAt.IsZero() {
 		c.incidentDispatchedAt = c.incidentDetectedAt
@@ -67,8 +66,8 @@ func (c *Controller) ExecuteDispatchEffect(ctx context.Context, effect DispatchE
 	c.mu.Unlock()
 	c.goBackground(func() {
 		defer cancel()
-		result, reports, dispatchErr := c.runResponsePipeline(actionCtx, effect.Request)
-		c.results <- dispatchCompletion{incidentID: effect.Request.IncidentID, result: result, priorStages: reports, err: dispatchErr}
+		result, dispatchErr := c.dispatcher.Dispatch(actionCtx, effect.Request)
+		c.results <- dispatchCompletion{incidentID: effect.Request.IncidentID, result: result, err: dispatchErr}
 	})
 	return nil
 }

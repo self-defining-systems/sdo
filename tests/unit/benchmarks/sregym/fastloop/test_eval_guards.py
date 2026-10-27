@@ -302,6 +302,28 @@ def test_fresh_reset_removes_only_prior_responder_grants(monkeypatch):
     assert [call[1] for call in calls if call[0] == "delete"] == ["RoleBinding/prior-permissive"]
 
 
+def test_fresh_reset_keeps_the_lifecycle_grant_the_controller_runs_under(monkeypatch):
+    """One wildcard binding covers controller and responder; deleting it strands a restart without the installer."""
+    from benchmarks.sregym.fastloop import rbac
+
+    calls = []
+    accounts = ["sdo-controller", "sdo-operate", "sdo-responder", "sdo-image-builder"]
+    lifecycle = {
+        "kind": "ClusterRoleBinding",
+        "metadata": {"name": "sdo-admin-app-sdo"},
+        "roleRef": {"kind": "ClusterRole", "name": "sdo-admin-app-sdo"},
+        "subjects": [{"kind": "ServiceAccount", "name": name, "namespace": "app-sdo"} for name in accounts],
+    }
+
+    def api(args, **kwargs):
+        calls.append(args)
+        return SimpleNamespace(stdout=json.dumps({"items": [lifecycle]}))
+
+    monkeypatch.setattr(rbac, "kubectl", api)
+    rbac.reset_responder_grants(Path("unused"), "app")
+    assert [call for call in calls if call[0] == "delete"] == []
+
+
 @pytest.mark.parametrize("history", [None, []])
 def test_absent_controller_observations_are_unproven(history):
     from benchmarks.sregym.adapter.eval_guards import controller_proof
@@ -413,7 +435,7 @@ def test_lane_resources_reject_before_any_health_wait_or_restore(monkeypatch, tm
 
     monkeypatch.setattr(admission, "assert_lane_resources", reject)
     env = SimpleNamespace(kubeconfig=tmp_path / "kubeconfig", namespace="application")
-    gate = LaneAdmission(env, object(), object(), tmp_path / "proof")
+    gate = LaneAdmission(env, object(), tmp_path / "proof")
     with pytest.raises(ValueError, match="foreign app"):
         gate.prove("application-sdo")
 
