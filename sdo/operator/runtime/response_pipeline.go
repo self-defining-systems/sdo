@@ -122,7 +122,21 @@ func (c *Controller) runResponsePipeline(ctx context.Context, request IncidentRe
 	err := RunResponseStages(ctx, state, stages)
 	c.mu.Lock()
 	if c.currentIncidentRequest != nil && c.currentIncidentRequest.IncidentID == request.IncidentID {
-		c.currentIncidentRequest.PriorStages = mergeLaterStagePasses(state.PriorStages, c.currentIncidentRequest.PriorStages)
+		// The result below is built from these reports, so a playbook a later
+		// pass applied reaches AppliedPlaybooks and the root causes.
+		state.PriorStages = mergeLaterStagePasses(state.PriorStages, c.currentIncidentRequest.PriorStages)
+		c.currentIncidentRequest.PriorStages = cloneStageReports(state.PriorStages)
+		// Findings that joined the incident mid-way are the ones those passes
+		// cleared, so the root causes need them.
+		known := map[string]bool{}
+		for _, finding := range state.Request.Findings {
+			known[FindingFingerprint(finding)] = true
+		}
+		for _, finding := range c.currentIncidentRequest.Findings {
+			if !known[FindingFingerprint(finding)] {
+				state.Request.Findings = append(state.Request.Findings, finding)
+			}
+		}
 		c.currentIncidentRequest.PlaybookCoverage = cloneCoverage(state.Coverage)
 		c.currentIncidentRequest.InitialProgramRuns = append([]ProgramRun(nil), state.Request.InitialProgramRuns...)
 	}

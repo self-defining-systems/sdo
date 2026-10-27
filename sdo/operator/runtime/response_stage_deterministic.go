@@ -105,7 +105,7 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 				}
 			}
 			response := ToolResponse{}
-			loop.verify(ctx, selected, &response)
+			loop.verify(ctx, selected, &response, true)
 			updateStageFindings(state, response)
 			for _, attempt := range report.Mitigations {
 				for _, run := range response.ProgramRuns {
@@ -145,9 +145,6 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 	defer loop.operationMu.Unlock()
 	loop.mu.Lock()
 	defer loop.mu.Unlock()
-	priorWait, priorTimeout := loop.waitForStageRollouts, loop.Executor.RolloutTimeout
-	defer func() { loop.waitForStageRollouts = priorWait; loop.Executor.RolloutTimeout = priorTimeout }()
-	loop.waitForStageRollouts = true
 	matches := stageCandidates(loop, state)
 	attempted := map[string]bool{}
 	// A later pass may complete a binding an earlier one only skipped, because
@@ -262,7 +259,7 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 			if before.Result == program.NoMatch {
 				reason = "diagnose_no_longer_matches"
 				observed := ToolResponse{}
-				loop.verify(ctx, nil, &observed)
+				loop.verify(ctx, nil, &observed, true)
 				updateStageFindings(state, observed)
 			}
 			if err := skip(reason); err != nil {
@@ -276,7 +273,7 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 		loop.matchedViews[matchedViewKey(match.PlaybookId, bindings)] = view
 		delete(loop.matchedPlans, matchedViewKey(match.PlaybookId, bindings))
 		if err := withoutResponderLocks(loop, "plan", true, func() {
-			planResponse = loop.Handle(ctx, ToolRequest{Command: "plan", ProgramID: match.PlaybookId, Bindings: bindings, FindingFingerprints: match.ExplainedFindingFingerprints})
+			planResponse = loop.Handle(ctx, ToolRequest{Command: "plan", ProgramID: match.PlaybookId, Bindings: bindings, FindingFingerprints: match.ExplainedFindingFingerprints, stage: true})
 		}); err != nil {
 			return report, err
 		}
@@ -581,7 +578,7 @@ func (stage *DeterministicResponseStage) awaitRepairedHealth(ctx context.Context
 		case <-timer.C:
 		}
 		response := ToolResponse{}
-		loop.verify(observe, nil, &response)
+		loop.verify(observe, nil, &response, true)
 		updateStageFindings(state, response)
 		if response.Error != "" {
 			return
@@ -674,15 +671,15 @@ func (stage *DeterministicResponseStage) applyMatched(ctx context.Context, loop 
 	if err := save(false); err != nil {
 		return err
 	}
-	loop.Executor.RolloutTimeout = remaining()
-	if stage.RolloutTimeout > 0 && stage.RolloutTimeout < loop.Executor.RolloutTimeout {
-		loop.Executor.RolloutTimeout = stage.RolloutTimeout
+	rolloutTimeout := remaining()
+	if stage.RolloutTimeout > 0 && stage.RolloutTimeout < rolloutTimeout {
+		rolloutTimeout = stage.RolloutTimeout
 	}
 	// Apply through the ordinary tool boundary: mutation fences, recorded
 	// writes, immutable receipts and compensation have one owner.
 	var applied ToolResponse
 	if err := withoutResponderLocks(loop, "apply", true, func() {
-		applied = loop.Handle(ctx, ToolRequest{Command: "apply", PlanIDs: planIDs, stage: true})
+		applied = loop.Handle(ctx, ToolRequest{Command: "apply", PlanIDs: planIDs, stage: true, rolloutTimeout: rolloutTimeout})
 	}); err != nil {
 		return err
 	}
@@ -697,7 +694,7 @@ func (stage *DeterministicResponseStage) applyMatched(ctx context.Context, loop 
 	}
 	// Pending rollouts still get one fresh diagnosis/detector observation.
 	if applied.RolloutPending != nil {
-		loop.verify(ctx, selected, &applied)
+		loop.verify(ctx, selected, &applied, true)
 	}
 	updateStageFindings(state, applied)
 	for _, item := range ready {

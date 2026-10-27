@@ -125,10 +125,45 @@ func TestLearnedMatchThatActivatesMidIncidentIsAppliedWithoutWaitingForTheAgent(
 	close(dispatcher.release)
 	awaitDispatchCompletionQueued(t, controller)
 	step(4)
+	// The incident result, which learning attribution and analysis read, names
+	// the playbook the late pass applied, not only the opening stage's.
+	controller.mu.Lock()
+	final := cloneIncidentResult(controller.currentIncidentResult)
+	controller.mu.Unlock()
+	if final == nil {
+		t.Fatal("no incident result after the agent completed")
+	}
+	applied := false
+	for _, playbook := range final.AppliedPlaybooks {
+		applied = applied || playbook.PlaybookID == "service-targetport-mismatch"
+	}
+	if !applied || len(final.ConfirmedRootCauses) == 0 {
+		t.Fatalf("result omits the late pass: applied=%+v causes=%+v", final.AppliedPlaybooks, final.ConfirmedRootCauses)
+	}
 	controller.mu.Lock()
 	kept := cloneStageReports(controller.currentIncidentRequest.PriorStages)
 	controller.mu.Unlock()
 	if len(kept) < 1 || len(kept[0].Mitigations) != 1 || kept[0].Mitigations[0].Result != "applied_cleared" {
 		t.Fatalf("agent completion erased the late pass: %v", kept)
+	}
+}
+
+// Every pass's notes reach the agent: a stage's own plan and apply calls run
+// through Handle but never take what an earlier pass queued for the agent.
+func TestNotesFromEveryPassSurviveTheStagesOwnCallsUntilTheAgentCalls(t *testing.T) {
+	loop, _ := pipelineTestLoop(t, true)
+	loop.noteStages([]StageNote{{Stage: "deterministic", PlaybookID: "first-pass-playbook", Result: "applied_cleared"}})
+	stageCall := loop.Handle(context.Background(), ToolRequest{Command: "plan", ProgramID: "service-targetport-mismatch", stage: true})
+	if len(stageCall.PriorStages) != 0 {
+		t.Fatalf("the stage's own call took the agent's notes: %+v", stageCall.PriorStages)
+	}
+	loop.noteStages([]StageNote{{Stage: "deterministic", PlaybookID: "second-pass-playbook", Result: "applied_cleared"}})
+	loop.Handle(context.Background(), ToolRequest{Command: "apply", PlanIDs: []string{"missing"}, stage: true})
+	reply := loop.Handle(context.Background(), ToolRequest{Command: "status"})
+	if len(reply.PriorStages) != 2 || reply.PriorStages[0].PlaybookID != "first-pass-playbook" || reply.PriorStages[1].PlaybookID != "second-pass-playbook" {
+		t.Fatalf("the agent was not told about both passes: %+v", reply.PriorStages)
+	}
+	if again := loop.Handle(context.Background(), ToolRequest{Command: "status"}); len(again.PriorStages) != 0 {
+		t.Fatalf("notes repeated: %+v", again.PriorStages)
 	}
 }

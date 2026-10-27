@@ -37,7 +37,10 @@ func (l *ResponderLoop) recordSourceComparisons(ctx context.Context, phase strin
 			continue
 		}
 		if view == nil {
-			snapshot, err := l.Provider.Snapshot(ctx)
+			// Evidence never delays a write for longer than a diagnosis may take.
+			snapshotCtx, cancel := context.WithTimeout(ctx, l.deadline())
+			snapshot, err := l.Provider.Snapshot(snapshotCtx)
+			cancel()
 			if err != nil {
 				slog.Warn("source comparison evidence gap", "incident_id", l.Request.IncidentID, "error", err)
 				return
