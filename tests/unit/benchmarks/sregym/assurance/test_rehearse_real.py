@@ -270,3 +270,12 @@ def test_a_lane_that_cannot_reset_fails_every_problem_at_admission_and_runs_none
     rows = app.run()
     assert [(r.failure.name, r.failure.error_class) for r in rows if r.failure] == [("admission", "reset-failed")] * 2
     assert not any(" run --run-dir" in c and "--problem" in c for c in commands)
+
+
+def test_images_from_other_code_are_refused_before_the_lane_is_touched(tmp_path: Path) -> None:
+    def stale(images: Any, worktree: Path, *, dev_mount: bool) -> None:
+        raise ValueError("eval: image sdo-controller:t source differs from abc in sdo/operator/broker/broker.go")
+
+    assert real.image_source_problems(tmp_path, IMAGES, check=lambda *a, **k: None) == []
+    found = real.image_source_problems(tmp_path, IMAGES, check=stale)
+    assert len(found) == 1 and "source differs" in found[0]

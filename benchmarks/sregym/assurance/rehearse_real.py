@@ -125,6 +125,26 @@ def _git_clone(source: Path, target: Path) -> None:
     subprocess.run(["git", "clone", "--quiet", "--no-hardlinks", str(source), str(target)], check=True, timeout=300)
 
 
+def image_source_problems(
+    code_root: Path, images: dict[str, str], check: Callable[..., None] | None = None
+) -> list[str]:
+    """Why the images cannot run from ``code_root`` (empty when they can).
+
+    Uses the lane's own predicate (``assert_runtime_images``: image source labels against the code root), so the
+    batch refuses before the clone, delivery and reset instead of failing at the lane's first reset.
+    """
+
+    if check is None:
+        from benchmarks.sregym.fastloop.source_preflight import assert_runtime_images as check
+    from benchmarks.sregym.fastloop.environment import Images
+
+    try:
+        check(Images(**images), code_root, dev_mount=False)
+    except (ValueError, OSError, subprocess.SubprocessError) as exc:
+        return [f"{exc}"]
+    return []
+
+
 def deliver_images(lane: RealLane, tags: Sequence[str]) -> None:
     """Load the scripted-worker images into the lane cluster's registry and record it in the private environment."""
 
@@ -503,6 +523,10 @@ def main_real(args: Any) -> int:
         print("apps without a lane:", sorted({p.app for p in problems} - set(lanes)) or "none")
         return 0
     refused = preflight(code_root, absent_images=missing_images(args.image_tag))
+    if refused:
+        print("rehearse-batch --real-apps refused to start:\n  " + "\n  ".join(refused), file=sys.stderr)
+        return 2
+    refused = image_source_problems(code_root, image_refs(args.image_tag))
     if refused:
         print("rehearse-batch --real-apps refused to start:\n  " + "\n  ".join(refused), file=sys.stderr)
         return 2

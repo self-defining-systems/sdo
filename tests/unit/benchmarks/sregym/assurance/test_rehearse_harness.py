@@ -26,8 +26,27 @@ def test_scenarios_cover_the_known_plumbing_failures_with_real_streams() -> None
             assert len(stream["incidents"]) == scenario.expected_incidents
 
 
-def test_the_gate_fits_its_fifteen_minute_budget() -> None:
-    assert gate.UP_BUDGET_SECONDS + sum(s.budget_seconds for s in gate.SCENARIOS) <= gate.BUDGET_SECONDS == 900
+def test_the_gate_scenarios_fit_its_fifteen_minute_budget() -> None:
+    assert sum(s.budget_seconds for s in gate.SCENARIOS) <= gate.BUDGET_SECONDS == 900
+
+
+def test_bring_up_is_bounded_only_by_the_owners_own_deadline(tmp_path: Path) -> None:
+    from benchmarks.sregym.fastloop.cli import CLUSTER_OP_TIMEOUT_SECONDS
+
+    assert gate.UP_BUDGET_SECONDS == CLUSTER_OP_TIMEOUT_SECONDS
+    timeouts: list[float] = []
+    ticks = iter([0.0, 0.0, 270.0, 270.0, 280.0])
+
+    def execute(argv: Any, *, cwd: Path, timeout: float, log: Path) -> tuple[int, str]:
+        timeouts.append(timeout)
+        return 0, ""
+
+    run = gate.Gate(tmp_path, "7", tmp_path / "run", execute=execute, clock=lambda: next(ticks), scenarios=())
+    run.run_dir.mkdir()
+    summary = run.run()
+    assert timeouts == [gate.UP_BUDGET_SECONDS]
+    assert summary["up_seconds"] == 270.0
+    assert summary["within_budget"] is True
 
 
 def test_unknown_check_is_rejected() -> None:

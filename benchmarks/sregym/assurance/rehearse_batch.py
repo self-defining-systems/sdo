@@ -36,6 +36,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from benchmarks.sregym.assurance.rehearse_harness import (
+    UP_BUDGET_SECONDS,
     Check,
     Gate,
     Scenario,
@@ -58,8 +59,6 @@ DEFAULT_CLUSTERS = 4
 VEHICLE_BUDGET_SECONDS = 240
 #: Wall-clock ceiling for the full set at the default cluster count.
 BUDGET_SECONDS = 1800
-#: Parallel cold cluster starts share the host, so each gets far more than the serial gate's budget.
-UP_BUDGET_SECONDS = 900
 
 #: Toy fault each SREGym fault class reduces to (``apps/toy/faults.py`` kinds); classes absent here have no toy analog.
 TOY_VEHICLE: dict[str, str] = {
