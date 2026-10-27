@@ -149,15 +149,17 @@ class CodePathConfig(_message.Message):
     def __init__(self, name: _Optional[str] = ..., overrides: _Optional[_Union[CodePathOverrides, _Mapping]] = ...) -> None: ...
 
 class CodePathOverrides(_message.Message):
-    __slots__ = ("detector_source", "coverage", "memory_validation", "activation", "agent_guidance")
+    __slots__ = ("detector_source", "coverage", "response_stages", "memory_validation", "activation", "agent_guidance")
     DETECTOR_SOURCE_FIELD_NUMBER: _ClassVar[int]
     COVERAGE_FIELD_NUMBER: _ClassVar[int]
+    RESPONSE_STAGES_FIELD_NUMBER: _ClassVar[int]
     MEMORY_VALIDATION_FIELD_NUMBER: _ClassVar[int]
     ACTIVATION_FIELD_NUMBER: _ClassVar[int]
     AGENT_GUIDANCE_FIELD_NUMBER: _ClassVar[int]
     detector_source: str
     coverage: str
+    response_stages: _containers.RepeatedScalarFieldContainer[str]
     memory_validation: str
     activation: str
     agent_guidance: str
-    def __init__(self, detector_source: _Optional[str] = ..., coverage: _Optional[str] = ..., memory_validation: _Optional[str] = ..., activation: _Optional[str] = ..., agent_guidance: _Optional[str] = ...) -> None: ...
+    def __init__(self, detector_source: _Optional[str] = ..., coverage: _Optional[str] = ..., response_stages: _Optional[_Iterable[str]] = ..., memory_validation: _Optional[str] = ..., activation: _Optional[str] = ..., agent_guidance: _Optional[str] = ...) -> None: ...

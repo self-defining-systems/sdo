@@ -44,6 +44,7 @@ func cloneIncidentRequest(request *IncidentRequest) *IncidentRequest {
 	copy.RelevantOutcomes = append(make([]PriorOutcomeEvidence, 0, len(request.RelevantOutcomes)), request.RelevantOutcomes...)
 	copy.StateChanges = cloneStateChanges(request.StateChanges)
 	copy.PlaybookCoverage = cloneCoverage(request.PlaybookCoverage)
+	copy.PriorStages = cloneStageReports(request.PriorStages)
 	return &copy
 }
 

@@ -85,7 +85,7 @@ func TestCreditEquivalentSourceRepairIgnoresServerDefaultsAndUnownedFields(t *te
 	if len(loop.PlanApplications()) != 1 {
 		t.Fatalf("equivalent source repair with defaults earned no credit: %+v", loop.PlanApplications())
 	}
-	if state := settledCredits([]*contracts.OutcomeRecord{equivalentRepairOutcome(t, loop)})["source-repair"]; state.VerifiedSuccesses != 1 || state.Failures != 0 {
+	if state := ProgramTrustStats([]*contracts.OutcomeRecord{equivalentRepairOutcome(t, loop)})["source-repair"]; state.VerifiedSuccesses != 1 || !(state.VerifiedSuccesses > 0 && state.Failures == 0) {
 		t.Fatalf("equivalent source repair missing bound trust receipt: %+v", state)
 	}
 	// A subsequent repair can clear diagnosis while differing from the plan.
@@ -96,7 +96,7 @@ func TestCreditEquivalentSourceRepairIgnoresServerDefaultsAndUnownedFields(t *te
 	if len(applications) != 1 || applications[0].Result.FinalEquivalenceVerified == nil || *applications[0].Result.FinalEquivalenceVerified {
 		t.Fatalf("different fields retained exact credit: %+v", applications)
 	}
-	if state := settledCredits([]*contracts.OutcomeRecord{equivalentRepairOutcome(t, loop)})["source-repair"]; state.VerifiedSuccesses != 0 || state.Failures != 0 {
+	if state := ProgramTrustStats([]*contracts.OutcomeRecord{equivalentRepairOutcome(t, loop)})["source-repair"]; state.VerifiedSuccesses != 0 || state.Failures != 0 {
 		t.Fatalf("question received a trust judgment: %+v", state)
 	}
 }

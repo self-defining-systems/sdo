@@ -200,8 +200,13 @@ func TestHermeticSourceReconcileLearningExposesVerifiedCounters(t *testing.T) {
 	dispatcher := KubernetesJobDispatcher{Client: client, Namespace: "app", Registry: testIncidentRegistry(t, "responder:test"), AgentID: testIncidentAgentID(t), ServiceAccount: "sdo-responder", RepositoryPVC: "repository", RepositoryMountPath: root, LoopFactory: makeLoop}
 	for index := 0; index < 3; index++ {
 		dispatcher.Outcomes = priorOutcomeReader{outcomes: outcomes}
-		if state := programCountsFor(dispatcher.programCounts(ctx), p.Spec().ID); state.Successes != index {
-			t.Fatalf("before repeat %d counts %+v", index, state)
+		trust, err := dispatcher.programTrust(ctx, request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		state := trust[p.Spec().ID]
+		if state.VerifiedSuccesses != index {
+			t.Fatalf("before repeat %d trust %+v", index, state)
 		}
 		snapshot, err := provider.Snapshot(ctx)
 		if err != nil {
@@ -236,8 +241,12 @@ func TestHermeticSourceReconcileLearningExposesVerifiedCounters(t *testing.T) {
 		}
 	}
 	dispatcher.Outcomes = priorOutcomeReader{outcomes: outcomes}
-	if state := programCountsFor(dispatcher.programCounts(ctx), p.Spec().ID); state.Successes != 3 || state.Failures != 0 {
-		t.Fatalf("three counted successes: %+v", state)
+	trust, err := dispatcher.programTrust(ctx, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state := trust[p.Spec().ID]; state.VerifiedSuccesses != 3 || state.Failures != 0 {
+		t.Fatalf("three credited successes: %+v", state)
 	}
 	request.IncidentID = "image-agent-fourth"
 	snapshot, err := provider.Snapshot(ctx)

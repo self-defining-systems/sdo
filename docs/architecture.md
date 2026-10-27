@@ -22,13 +22,13 @@ fresh health-judge proposal -> isolated detector validation -> broker commit
 controller builder/install -> deterministic Go controller -> incident batch
         |
         v
-incident-open coverage -> responder agent -> independent verification -> broker outcome commit
+incident-open coverage -> ordered response stages -> independent verification -> broker outcome commit
         |
         v
 fresh reflection proposal -> broker validation/commit -> controller rollout
 ```
 
-`sdo-operator host` starts the active production lifecycle; the installed `sdo-operator operate` continues it in the cluster. Go coordinates separate Human goal, Upkeep schema, Deployer source and architecture, and HealthJudge bootstrap proposals. The source stage requires a trusted deployment receipt bound to the exact candidate Git tree and immutable running images before publishing; architecture cites the broker-returned accepted source commit. The controller then runs deterministic detectors and independently verifies recovery. At incident open, Go builds finding-bound playbook coverage and dispatches the incident straight to the registered responder; SDO never applies a learned program before the agent. The responder sees which learned playbooks match, applies matched mitigations itself (`sdo mitigate`), fixes the rest, self-checks and decides any undo. Go independently verifies recovery and never rolls back automatically. Per-(program, revision) success/failure counts from earlier outcomes are shown on each match and are information, never write authority. Before recording each successful outcome, Go settles learning by confirmed cause. Exact covered repairs and fixed-capture false matches get deterministic corpus cases through normal validation; questions or rejected cases go to in-session reflection. A full host-to-controller kind smoke passed with live clear detector evaluations; deployment still depends on the target cluster, registry, credentials, and application manifests.
+`sdo-operator host` starts the active production lifecycle; the installed `sdo-operator operate` continues it in the cluster. Go coordinates separate Human goal, Upkeep schema, Deployer source and architecture, and HealthJudge bootstrap proposals. The source stage requires a trusted deployment receipt bound to the exact candidate Git tree and immutable running images before publishing; architecture cites the broker-returned accepted source commit. The controller then runs deterministic detectors and independently verifies recovery. At incident open, Go builds finding-bound playbook coverage and runs configured `ResponseStage` implementations. SDO applies a learned playbook automatically when its diagnose matches live and every parameter binds (stage [deterministic, agent]); the agent is told the result and handles what remains; no automatic rollback, no trust gate. The default `deterministic,agent` pipeline first applies accepted playbooks with a fresh Match, one mitigation entry point and complete finding bindings; it waits at most 30 seconds for its own rollouts and retains completed writes. The registered responder receives remaining findings and typed `prior_stages` reports, including receipts, post-apply diagnoses and skip reasons, and chooses further repairs through the menu. `response_stages: [agent]` selects the baseline. A stage never closes an incident; independent controller verification does. Incidents cleared without a responder still receive fresh reflection with stage evidence. Go independently verifies recovery; only the responder decides rollback. Verified program success/failure counts are information, never write authority. Before recording each successful outcome, Go settles learning by confirmed cause. Exact covered repairs and fixed-capture false matches get deterministic corpus cases through normal validation; questions or rejected cases go to in-session reflection. Trust consumes only the persisted covered instances. A full host-to-controller kind smoke passed with live clear detector evaluations; deployment still depends on the target cluster, registry, credentials, and application manifests.
 
 ## Component boundaries
 
@@ -553,9 +553,9 @@ and executor checks govern execution; the benchmark adapter owns strict experime
 | Modular agent registration | `sdo/contracts/proto/.../worker.proto`, `sdo/operator/worker_registry/`, `sdo/agents/registrations/` | Active | Strict ProtoJSON capabilities and typed task/result URLs select workers without assuming Python or a model provider; Kubernetes Jobs mount isolated proposal checkouts. |
 | Responder API observations | `sdo/operator/apihistory/`, `kubeproxy/`, `operatorcli/evidence.go`, `worker_registry/` | Stage 1 | Per-task localhost sidecar uses Pod RBAC; bounded projected runtime history and read-only CLI expose last-observed state and Unknown without replay or coverage decisions. |
 | Built-in agents | `sdo/agents/{deployer,health_judge,responder}/` | Active | Each implementation owns its prompts and provider choice; tasks carry logical memory snapshots; reflection and the judge return decisions/IDs after direct file edits. |
-| Code-path composition | `sdo/operator/runtime/code_path*.go`, `sdo/operator/shellpath/` | Active, shell opt-in | Named plugin sets select detector source, coverage, memory validation, activation and role guidance. Go remains the default; shell uses a long-lived read-only runner and shared incident lifecycle. |
+| Code-path composition | `sdo/operator/runtime/code_path*.go`, `sdo/operator/shellpath/` | Active, shell opt-in | Named plugin sets select detector source, coverage, ordered PIPE stages, memory validation, activation and role guidance. Go remains the default; shell uses a long-lived read-only runner and shared incident lifecycle. |
 | Detector SDK and execution | `sdo/operator/sdk/`, `core/`, `runtime/` | Active | Deterministic Go snapshots with shared cached/recorded detector and Diagnose reads, detector evaluation, findings, batching, leader election, and generated controller state have Go tests; lifecycle storage is private to `runtime/internal/lifecycleio`. |
-| Program coverage and responder loop | `sdo/operator/runtime/`, `sdo/agents/responder/tools_cli.py`, `sdo/contracts/proto/.../program.proto` | Active | The controller diagnoses bound candidates, serves incident-scoped `sdo` tools through the responder session PVC, including rendered accepted source, applies each plan as written, reports the resulting verification, and records tool and program evidence on the outcome. `apply` has no in-command judging: no dry-run after-images, owned-field or concurrent-change checks, write retries, or automatic rollback after a landed write; a write conflict is returned as the error, a failed rollout or bound verification leaves the plan applied and recorded (with a revision-bound `application_verification_failure` signal); a different explicit open finding does not invalidate a cleared bound diagnosis, and the responder decides whether to call `rollback` or retry. Only a failed multi-write plan compensates the writes that already landed. `sdo act --resource Kind/ns/name -- <command>` runs one live mutation in the responder session and records its repair receipt (resources, timing, outcome and command line) under the session scratch directory; the responder worker merges those receipts into `IncidentResult.repair_actions`, so the model writes no receipt or wrapper script. Failed verification retains completed applications, and the responder decides explicit rollback. Prepared incident tasks preserve the original coverage view across restarts. |
+| Program coverage and responder loop | `sdo/operator/runtime/`, `sdo/agents/responder/tools_cli.py`, `sdo/contracts/proto/.../program.proto` | Active | The controller diagnoses bound candidates, serves incident-scoped `sdo` tools through the responder session PVC, including rendered accepted source, applies each plan as written, reports the resulting verification, and records tool and program evidence on the outcome. `apply` has no in-command judging: no dry-run after-images, owned-field or concurrent-change checks, write retries, or automatic rollback after a landed write; a write conflict is returned as the error, a failed rollout or bound verification leaves the plan applied and recorded (with a revision-bound `application_verification_failure` signal); a different explicit open finding does not invalidate a cleared bound diagnosis, and the responder decides whether to call `rollback` or retry. Only a failed multi-write plan compensates the writes that already landed. `sdo act --resource Kind/ns/name -- <command>` runs one live mutation in the responder session and records its repair receipt (resources, timing, outcome and command line) under the session scratch directory; the responder worker merges those receipts into `IncidentResult.repair_actions`, so the model writes no receipt or wrapper script. Configured response stages select mutations through the same executor. Accepted single-entry repairs can run deterministically before the responder; typed stage reports retain per-finding results. Failed verification retains completed applications, and the responder decides explicit rollback. Prepared incident tasks preserve the original coverage view across restarts. |
 | Drift change feed and response | `sdo/operator/deployment/`, `sdo/operator/sdk/drift.go`, `sdo/operator/runtime/`, `sdo/contracts/proto/.../messages.proto`, `sdo/agents/responder/` | Active | SSA adoption records source contradictions without repairing them. Informers admit changed declared fields and source-absent application/control-plane objects against cached accepted deployment state. Detectors supply findings; finding-bound playbook diagnoses populate the coverage view for responder-selected mitigation. Playbooks never generate `drift.<program>` findings. Unexplained observations open ordinary latent `drift.unexplained` incidents after bounded batching, or attach to the open incident and its late-findings view. The responder establishes source contradiction and a violated relation or observed impact before mutation. Verification and closure recheck retained accepted-source drift as well as detector health. Drift-only batches coalesce for 20 s / 8 events and are otherwise admitted like health findings; there is no dispatch or token rate limit. Always-on incident detectors cover faults; playbooks have no watch-event or timer-driven diagnosis. |
 | Synthetic traffic | `sdo/operator/sdk/traffic/`, `runtime/prober/`, `builder/`, `.sdo/diagnostics/traffic/` | Active | Generated workloads run in an isolated prober; acceptance remains independently validated. |
 | Metrics input | `sdo/operator/sdk/metrics/`, `runtime/prometheus/`, `runtime/metrics_observer.go`, `memory/generic_health.go` | Active, opt-in | Frozen per-cycle Prometheus results for threshold and alert detectors; installed only with a metrics URL, and an unavailable source is a detector error. |
@@ -599,7 +599,7 @@ Explicit memory adoption is compile-only and does not establish health provenanc
 
 Menu options and parameters are agent tool requests. Sessions and reports are presentation state;
 ordinary incident counters use the existing tools-state CAS document outside `.sdo/`.
-Only the broker publishes derived incident outcomes. Controller-owned tool and application records are the outcome's execution evidence; agents cannot author their own receipts.
+Only the broker publishes derived incident outcomes. Controller-owned `prior_stages` records retain automatic and agent-stage evidence; agents cannot author their own prior-stage receipts.
 
 | Artifact | May author | May update | Validation rule |
 |---|---|---|---|
@@ -645,7 +645,7 @@ Source inventory drift compares top-level non-secret informer objects against a 
 | `sdo/operator/toolchain/`, `sdo/operator/cmd/sdo-go-cache/`, `devmount/` | Production compiler/cache provisioning and opt-in development projections; benchmark file projections apply only to development worker Jobs, never controllers or validators. |
 | `sdo/operator/worker_registry/`, `lifecycle/`, `deployment/`, `artifacts/`, `onboarding/` | Production Go interfaces and implementation. |
 | `sdo/operator/broker/`, `memory/` (including `layout/` and `validate/`), `outcome_derivation/`, `install/` | Production Go authority with repository-scoped publication serialization, typed merge conflicts and immutable catalog reads; append-only reflection SDK-gap annotation, physical storage, deterministic verified-repeat corpus materialization and explicit generic-health preparation, the single operational-memory validator including human/operator imports with mandatory production offline replay, three-class outcome derivation without evidence-reference checks, read-only controller observation, and installer/runtime shutdown that preserves accepted storage. |
-| `sdo/operator/sdk/`, `core/`, `runtime/`, `builder/`, `contracts/` | Production Go detector/program SDK with canonical object-ref parsing, deterministic controller, typed plan execution and rollback, verified repair evidence, and generated contracts. |
+| `sdo/operator/sdk/`, `core/`, `runtime/`, `builder/`, `contracts/` | Production Go detector/program SDK with canonical object-ref parsing, deterministic controller and ordered response stages, typed plan execution and rollback, verified repair evidence, and generated contracts. |
 | `sdo/operator/runtime/{plan_script.go,script_job.go}`, `operatorcli/script_{runner,capture}.go` | Production app-local script Job execution and private capture, reusing the existing Kubernetes proxy; no benchmark dependencies. |
 | `sdo/operator/shellpath/`, `runtime/code_path*.go`, `runtime/cmd/sdo-shell-controller/` | Production shell execution and programming-model composition; no benchmark imports. The fixed image-bound controller starts without compiling accepted scripts. |
 | `sdo/operator/runtime/replay/`, `builder/replay.go`, `cmd/sdo-replay/` | Transport-neutral offline tooling; real production plan semantics against isolated client-go fakes, without cluster credentials or benchmark imports. |
@@ -659,7 +659,7 @@ Source inventory drift compares top-level non-secret informer objects against a 
 
 This map does not claim model quality, deployment success across all applications, incident-repair success, or experimental improvement. Those require recorded live runs with exact configuration and evidence.
 
-Program counts are per (program id, revision). An applied, non-dry-run application counts as a success when its incident closed healthy and it was not rolled back, and as a failure otherwise or when a revision-bound `application_verification_failure` was recorded. Outcomes that cannot be read are skipped and logged once. The counts filter no match and authorize no write.
+Program trust fingerprints executable sources and imported helpers, excluding Markdown and Go test files. Successful plan credit remains bound to the applied resources and requires an independently successful incident outcome; a global health failure with no explicit unrelated finding remains a failure. More than one binding of a program can earn equivalence evidence, but an incident contributes at most one trust success per program.
 
 API history completeness is bound to a controller-written attempt generation
 outside the recorder directory (`api-history.generation`). The memory edge
@@ -687,7 +687,7 @@ Program statistics retain independently verified success credit across broker-va
 
 ### RL1 executable learning
 
-Reflection uses only controller verification and responder session observations, never a benchmark grader or oracle. Each verified full or partial cause requires a diagnose/mitigate playbook, handling README, and a detector that references it; detector/playbook links are many-to-many. Go rejects incomplete coverage with retry diagnostics. Typed SDK gaps name exactly the affected cause resources. Session-authored replay fixtures do not require controller open/fixed capture provenance. The learning checks are compilation and an executed mitigation that changes diagnosis from Match to NoMatch. Accepted corpus bytes remain immutable and broker artifact ownership is unchanged.
+Reflection uses only controller verification and responder session observations, never a benchmark grader or oracle. Each verified full or partial cause requires a diagnose/mitigate playbook, handling README, and a detector that references it; detector/playbook links are many-to-many. Go rejects incomplete coverage with retry diagnostics. Typed SDK gaps name exactly the affected cause resources. Session-authored replay fixtures do not require controller open/fixed capture provenance. The learning checks are compilation and an executed mitigation that changes diagnosis from Match to NoMatch. Accepted corpus bytes remain immutable and broker artifact ownership is unchanged. A new broker-validated program earns its initial trust credit from its controller-verified origin and replayed bound fixture, so threshold one can repair its first recurrence without a responder model call.
 
 The installer’s immutable pending snapshot also defines pre-existing environment inventory. The controller reloads the captured object digests across failed health onboarding and restart. Only the same UID, configuration and ownership remain exempt from presence drift; replacements or changed objects are visible. Environment observations never populate healthy-onboarding authority, and legacy name-only records grant no environment exemption. Completion and reachability exclusions still require the original independent health checks. No environment object is labelled, deleted, or applied by this inventory rule.
 
@@ -711,9 +711,11 @@ The native installer and controller accept `--responder-standby=false` to force 
 
 `runtime.CodePathConfig` selects a named set of implementations, with optional
 per-seam overrides. The zero value selects `go`. `CodePathRegistry` resolves
-and validates detector source, coverage provider, memory
+and validates detector source, coverage provider, response-stage names, memory
 validation, activation after publication, and agent guidance before use. Unknown
-names return `CodePathConfigError` naming the invalid seam.
+names, duplicate stages and deterministic response without coverage return
+`CodePathConfigError` naming the invalid seam. PIPE owns response-stage execution;
+the registry selects stages and does not implement another stage runner.
 
 The Go plugins retain compiled SDK detectors, diagnose-based coverage, isolated
 memory validation, controller rollout and the existing role guidance. The
@@ -725,12 +727,14 @@ The shell path intentionally drops the requirement that detectors are determinis
 Go. The Go path remains the production default and retains its validation and
 rollout behavior. Select shell with `--code-path=shell` on host, operate or
 controller (also `install-existing` and `memory adopt-existing`), or with the typed launch value `code_path: {name: shell}`. Optional
-`overrides` choose named implementations per seam.
+`overrides` choose named implementations per seam. `--response-stages` writes
+`overrides.response_stages`; response-stage execution belongs to PIPE.
 
 | Seam | Go default | Shell |
 |---|---|---|
 | Detector source | Compiled SDK detectors | Accepted executable shell scripts |
 | Coverage | Diagnose programs joined to findings | Empty |
+| Response stages | `deterministic,agent` | `agent` |
 | Memory validation | Shared structural/ownership and isolated compile/vet/test/replay | Text, size, credential and path hygiene plus the same actor/phase ownership grants |
 | Activation | Controller build and rollout | Runner pulls accepted Git bytes; activation time is recorded |
 | Role guidance | Existing responder/reflection/judge guidance | Short free-form notes and script guidance |
@@ -739,7 +743,8 @@ Plugins bind their mechanism dependencies at construction. Detector sources take
 `DetectorSourceRequest` (repository root, application namespace, compiled
 candidates); validation and activation calls receive only the operation inputs.
 New implementations register by name without changing another plugin's call
-signature. Unknown selections fail with `CodePathConfigError`.
+signature. Unknown selections and incompatible stage/coverage combinations fail
+with `CodePathConfigError`.
 
 The installer provisions a long-lived `sdo-shell-detectors` Pod and read-only
 results Service in the control namespace. Its dedicated application Role grants

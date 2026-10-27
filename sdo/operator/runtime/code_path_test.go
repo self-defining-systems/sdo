@@ -16,7 +16,7 @@ func TestCodePathDefaultGolden(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := CodePathSelection{Name: "go", DetectorSource: "go", Coverage: "diagnose", MemoryValidation: "go", Activation: "rollout", AgentGuidance: "go"}
+	want := CodePathSelection{Name: "go", DetectorSource: "go", Coverage: "diagnose", ResponseStages: []string{"deterministic", "agent"}, MemoryValidation: "go", Activation: "rollout", AgentGuidance: "go"}
 	if !reflect.DeepEqual(path.Selection, want) {
 		t.Fatalf("default plugins changed: got %#v want %#v", path.Selection, want)
 	}
@@ -28,7 +28,7 @@ func TestCodePathDefaultGolden(t *testing.T) {
 
 func TestCodePathCompositionAndOverrides(t *testing.T) {
 	registry := NewCodePathRegistry()
-	err := registry.RegisterCodePath("custom-agent", CodePathSelection{DetectorSource: "go", Coverage: "none", MemoryValidation: "go", Activation: "pull", AgentGuidance: "shell"})
+	err := registry.RegisterCodePath("custom-agent", CodePathSelection{DetectorSource: "go", Coverage: "none", ResponseStages: []string{"agent"}, MemoryValidation: "go", Activation: "pull", AgentGuidance: "shell"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,11 +36,23 @@ func TestCodePathCompositionAndOverrides(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if !reflect.DeepEqual(path.Selection.ResponseStages, []string{"agent"}) {
+		t.Fatalf("shell selection: %#v", path.Selection)
+	}
 	if got := path.Coverage.Coverage([]sdk.Finding{{Status: sdk.FindingActive}}, nil, nil, nil); len(got.Matches) != 0 {
 		t.Fatal("shell coverage must be empty")
 	}
+	custom := CodePathConfig{Name: "go", Overrides: CodePathOverrides{Coverage: "none"}}
+	_, err = registry.Resolve(custom)
 	var invalid *CodePathConfigError
-	for _, config := range []CodePathConfig{{Name: "missing"}, {Overrides: CodePathOverrides{Activation: "missing"}}} {
+	if !errors.As(err, &invalid) || invalid.Seam != "response_stages" {
+		t.Fatalf("expected named combination error, got %v", err)
+	}
+	custom.Overrides.ResponseStages = []string{"agent"}
+	if _, err = registry.Resolve(custom); err != nil {
+		t.Fatal(err)
+	}
+	for _, config := range []CodePathConfig{{Name: "missing"}, {Overrides: CodePathOverrides{Activation: "missing"}}, {Overrides: CodePathOverrides{ResponseStages: []string{"unknown"}}}} {
 		if _, err = registry.Resolve(config); !errors.As(err, &invalid) {
 			t.Fatalf("expected named error for %#v: %v", config, err)
 		}
@@ -97,9 +109,23 @@ func TestCodePathShellSelection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := CodePathSelection{Name: "shell", DetectorSource: "shell", Coverage: "none", MemoryValidation: "hygiene", Activation: "pull", AgentGuidance: "shell"}
+	want := CodePathSelection{Name: "shell", DetectorSource: "shell", Coverage: "none", ResponseStages: []string{"agent"}, MemoryValidation: "hygiene", Activation: "pull", AgentGuidance: "shell"}
 	if !reflect.DeepEqual(path.Selection, want) {
 		t.Fatalf("shell selection: %#v", path.Selection)
+	}
+}
+
+func TestCodePathGoStagesMatchPipelineDefault(t *testing.T) {
+	pipelineDefault, err := responseStageNames(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	selected, err := NewCodePathRegistry().Resolve(CodePathConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(pipelineDefault, selected.Selection.ResponseStages) {
+		t.Fatalf("Go stages %v differ from PIPE default %v", selected.Selection.ResponseStages, pipelineDefault)
 	}
 }
 

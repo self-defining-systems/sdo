@@ -21,7 +21,7 @@ def test_hermetic_driver_propagates_each_shard_failure(tmp_path: Path, failure: 
         'case "$*" in\n'
         "  *TestReflectionMongoAuth*) shard=reflection ;;\n"
         "  *TestHermeticBringup*) shard=first_runtime ;;\n"
-        "  *TestRunScriptActVerifyRequiresDiagnosisAndTargetedClearance*) shard=second_runtime ;;\n"
+        "  *TestLearnedOriginCredit*) shard=second_runtime ;;\n"
         "  *) shard=other ;;\n"
         "esac\n"
         'if [[ "$shard" == "$LG_DRIVER_FAILURE" ]]; then exit 7; fi\n'
@@ -54,13 +54,13 @@ def test_hermetic_driver_propagates_each_shard_failure(tmp_path: Path, failure: 
     # Python is a joined parallel shard: it must run even when another shard
     # fails, and its own failure must propagate after every Go shard is joined.
     assert "uv" in lines
-    assert any("TestRunScriptActVerifyRequiresDiagnosisAndTargetedClearance" in line for line in lines)
+    assert any("TestLearnedOriginCredit" in line for line in lines)
     assert any("TestHermeticControllerClosureReachesNativeOutcomeBroker" in line for line in lines)
 
     for marker, expected in (
         ("TestReflectionMongoAuth", jobs // 2),
         ("TestHermeticBringup", jobs // 2 - 1),
-        ("TestRunScriptActVerifyRequiresDiagnosisAndTargetedClearance", jobs // 2),
+        ("TestLearnedOriginCredit", jobs // 2),
     ):
         command = next(line for line in lines if marker in line)
         assert f"workers={expected} " in command, command

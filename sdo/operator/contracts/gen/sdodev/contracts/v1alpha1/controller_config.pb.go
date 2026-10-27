@@ -670,6 +670,7 @@ type CodePathOverrides struct {
 	state            protoimpl.MessageState `protogen:"open.v1"`
 	DetectorSource   string                 `protobuf:"bytes,1,opt,name=detector_source,json=detectorSource,proto3" json:"detector_source,omitempty"`
 	Coverage         string                 `protobuf:"bytes,2,opt,name=coverage,proto3" json:"coverage,omitempty"`
+	ResponseStages   []string               `protobuf:"bytes,3,rep,name=response_stages,json=responseStages,proto3" json:"response_stages,omitempty"`
 	MemoryValidation string                 `protobuf:"bytes,4,opt,name=memory_validation,json=memoryValidation,proto3" json:"memory_validation,omitempty"`
 	Activation       string                 `protobuf:"bytes,5,opt,name=activation,proto3" json:"activation,omitempty"`
 	AgentGuidance    string                 `protobuf:"bytes,6,opt,name=agent_guidance,json=agentGuidance,proto3" json:"agent_guidance,omitempty"`
@@ -719,6 +720,13 @@ func (x *CodePathOverrides) GetCoverage() string {
 		return x.Coverage
 	}
 	return ""
+}
+
+func (x *CodePathOverrides) GetResponseStages() []string {
+	if x != nil {
+		return x.ResponseStages
+	}
+	return nil
 }
 
 func (x *CodePathOverrides) GetMemoryValidation() string {
@@ -826,15 +834,16 @@ const file_sdodev_contracts_v1alpha1_controller_config_proto_rawDesc = "" +
 	"\x12_responder_standbyJ\x04\b\x10\x10\x11J\x04\b\x12\x10\x13J\x04\b\x17\x10\x18J\x04\b\x18\x10\x19J\x04\b9\x10:J\x04\b:\x10;J\x04\b;\x10<J\x04\b<\x10=J\x04\b=\x10>J\x04\bC\x10DJ\x04\bD\x10EJ\x04\b@\x10AJ\x04\bA\x10BJ\x04\bE\x10FJ\x04\bH\x10IJ\x04\bI\x10JJ\x04\bJ\x10KR\x06brokerR\vbroker_argsR\x0emax_follow_upsR\x12follow_up_cooldownR\x14drift_sweep_intervalR\x1adrift_investigation_windowR'drift_investigation_dispatches_per_hourR#drift_investigation_tokens_per_hourR\x19drift_dispatches_per_hourR\x15drift_tokens_per_hourR\x14program_min_durationR\x17plan_safety_policy_jsonR\x19plan_safety_policy_sha256R\x17plan_source_policy_json\"p\n" +
 	"\x0eCodePathConfig\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12J\n" +
-	"\toverrides\x18\x02 \x01(\v2,.sdodev.contracts.v1alpha1.CodePathOverridesR\toverrides\"\xe3\x01\n" +
+	"\toverrides\x18\x02 \x01(\v2,.sdodev.contracts.v1alpha1.CodePathOverridesR\toverrides\"\xf5\x01\n" +
 	"\x11CodePathOverrides\x12'\n" +
 	"\x0fdetector_source\x18\x01 \x01(\tR\x0edetectorSource\x12\x1a\n" +
-	"\bcoverage\x18\x02 \x01(\tR\bcoverage\x12+\n" +
+	"\bcoverage\x18\x02 \x01(\tR\bcoverage\x12'\n" +
+	"\x0fresponse_stages\x18\x03 \x03(\tR\x0eresponseStages\x12+\n" +
 	"\x11memory_validation\x18\x04 \x01(\tR\x10memoryValidation\x12\x1e\n" +
 	"\n" +
 	"activation\x18\x05 \x01(\tR\n" +
 	"activation\x12%\n" +
-	"\x0eagent_guidance\x18\x06 \x01(\tR\ragentGuidanceJ\x04\b\x03\x10\x04R\x0fresponse_stagesB\x88\x02\n" +
+	"\x0eagent_guidance\x18\x06 \x01(\tR\ragentGuidanceB\x88\x02\n" +
 	"\x1dcom.sdodev.contracts.v1alpha1B\x15ControllerConfigProtoP\x01ZJsdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1;contractsv1alpha1\xa2\x02\x03SCX\xaa\x02\x19Sdodev.Contracts.V1alpha1\xca\x02\x19Sdodev\\Contracts\\V1alpha1\xe2\x02%Sdodev\\Contracts\\V1alpha1\\GPBMetadata\xea\x02\x1bSdodev::Contracts::V1alpha1b\x06proto3"
 
 var (

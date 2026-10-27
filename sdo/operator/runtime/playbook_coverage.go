@@ -19,7 +19,7 @@ func cloneCoverage(coverage *contracts.PlaybookCoverage) *contracts.PlaybookCove
 // buildPlaybookCoverage joins every successful diagnosis to incident findings.
 // Counts describe past evidence; they never filter a match or authorize a write.
 // The registry supplying runs has already excluded retired playbooks.
-func buildPlaybookCoverage(findings []sdk.Finding, runs []ProgramRun, view sdk.DetectionContext, counts map[string]ProgramCount) *contracts.PlaybookCoverage {
+func buildPlaybookCoverage(findings []sdk.Finding, runs []ProgramRun, view sdk.DetectionContext, stats map[string]ProgramTrust) *contracts.PlaybookCoverage {
 	result := &contracts.PlaybookCoverage{}
 	matches := map[string]*contracts.PlaybookMatch{}
 	explained := map[string]bool{}
@@ -35,9 +35,9 @@ func buildPlaybookCoverage(findings []sdk.Finding, runs []ProgramRun, view sdk.D
 			if canMitigate {
 				match.MitigationSelection = "program-" + menuDigest([]any{run.ProgramID, run.Bindings})
 			}
-			count := counts[programCountKey(run.ProgramID, run.ProgramRevision)]
-			match.VerifiedSuccesses = int32(count.Successes)
-			match.VerifiedFailures = int32(count.Failures)
+			state := stats[run.ProgramID]
+			match.VerifiedSuccesses = int32(state.VerifiedSuccesses)
+			match.VerifiedFailures = int32(state.Failures)
 			matches[key] = match
 		}
 		covered := map[string]bool{}
