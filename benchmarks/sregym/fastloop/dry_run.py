@@ -280,7 +280,6 @@ def refresh_reused_proof(
     timeout: int,
 ) -> None:
     from benchmarks.sregym.adapter import KubectlClusterOps
-    from benchmarks.sregym.fastloop import cli
     from benchmarks.sregym.fastloop.admission import LaneAdmission
 
     receipt = json.loads(Path(report.setup_proof["receipt"]).read_text())
