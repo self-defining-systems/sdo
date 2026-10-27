@@ -718,15 +718,15 @@ def test_scripted_fastloop_reuses_reflected_target_port_program(
     (traffic / "health.yaml").write_text("purpose: health-probe\nscenarios:\n- id: frontend\n")
     plan = rbac.installer_rbac(NAMESPACE)
     grants = []
-    for key in ("ControlRoles", "AppRoles", "ControlBindings", "AppBindings"):
+    for key in ("ClusterRoles", "ClusterBindings"):
         for original in plan[key]:
             row = deepcopy(original)
-            row["kind"] = "RoleBinding" if key.endswith("Bindings") else "Role"
+            row["kind"] = "ClusterRoleBinding" if key.endswith("Bindings") else "ClusterRole"
             grants.append(row)
 
     def admission_api(args, **_kwargs):
         result = {"items": []}
-        if args[:2] == ["get", "roles,rolebindings"]:
+        if args[:2] == ["get", "clusterroles,clusterrolebindings"]:
             result = {"items": grants}
         elif args[:2] == ["get", "pod/sdo-prober"]:
             result = {"status": {"podIP": "127.0.0.1"}}
@@ -927,6 +927,10 @@ def test_scripted_fastloop_reuses_reflected_target_port_program(
     )
     assert all(row.error is None and row.injection_to_mitigation_seconds is not None for row in records)
     assert all("responder_tokens" in row and "reflection_tokens" in row for row in rows)
+    # Every scripted row is bound to the incident its own injection caused (INV1): no negative timings.
+    assert all(row.detected_at is None or row.detected_at >= row.injection_started_at for row in records)
+    assert all((row.injection_to_detection_seconds or 0) >= 0 for row in records)
+    assert all(row.driver_phase_timings_seconds["injection_to_verified_recovery"] > 0 for row in records)
     assert all(Path(str(row.artifacts_dir), "sdo_production_receipt_strict.json").is_file() for row in records)
     assert control_api.deleted == control_api.names
     assert control_api.objects == {}

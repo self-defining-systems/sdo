@@ -31,11 +31,12 @@ from benchmarks.sregym.adapter import (
     PersistentState,
     ReflectionDeadlineError,
     StageInputs,
+    WaitKind,
     drain_pending_incident,
     pause_for_recovery,
     record_failed_closure,
-    reflection_attempt_seconds,
     run_persistent_stage,
+    wait_for,
 )
 from benchmarks.sregym.fastloop.loop import AgentOutcome, InjectionWindow, RecoveryWaitTimeout
 from benchmarks.sregym.fastloop.records import AgentName, PostClosureWait, RecoveryTrigger, TokenCounts
@@ -66,8 +67,8 @@ class SdoAgentSettings:
     state_path: Path
     results_dir: Path
     kubeconfig: str | None = None
-    verification_timeout_seconds: float = 3900.0
-    reflection_wait_seconds: float = 3600.0
+    verification_timeout_seconds: float = wait_for(WaitKind.INCIDENT_VERIFICATION)
+    reflection_wait_seconds: float = wait_for(WaitKind.REFLECTION_DRAIN)
     detection_timeout_seconds: float | None = None
     checkpoint_enabled: bool = True
 
@@ -281,7 +282,6 @@ class SdoPersistentAgent:
             detection_timeout_seconds=settings.detection_timeout_seconds,
             lifecycle_installs_controller=True,
             reflection_wait_seconds=settings.reflection_wait_seconds,
-            reflection_attempt_seconds=reflection_attempt_seconds(settings.runtime_config.timeout_seconds),
         )
 
     def resolve(self, index: int, problem_id: str, inject: Callable[[], InjectionWindow]) -> AgentOutcome:
@@ -473,7 +473,6 @@ class SdoPersistentAgent:
                 record.control_namespace,
                 incident_id=outcome.incident_id if outcome is not None and trigger != "reflection_deadline" else None,
                 clock=self._clock,
-                reflection_attempt_seconds=reflection_attempt_seconds(self._settings.runtime_config.timeout_seconds),
                 closure_open=trigger == "reflection_deadline",
             )
         except FollowupClosureTimeout as exc:

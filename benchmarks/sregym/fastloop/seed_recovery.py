@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from benchmarks.sregym.adapter import WaitKind, wait_for
 from benchmarks.sregym.fastloop.surge_recovery import (
     BlockedSurge,
     KubectlRolloutCluster,
@@ -19,9 +20,9 @@ from benchmarks.sregym.fastloop.surge_recovery import (
 )
 
 #: Time for a plain client rollout to settle before checking for a rollout that cannot surge.
-REFRESH_SETTLE_S = 45
+REFRESH_SETTLE_S = int(wait_for(WaitKind.REFRESH_SETTLE))
 #: Time for the Recreate-restored workloads to settle.
-REFRESH_RETRY_S = 60
+REFRESH_RETRY_S = int(wait_for(WaitKind.MINUTE))
 
 
 def verify_baseline_traffic(problem: Any, baseline: dict[str, Any]) -> dict[str, Any]:

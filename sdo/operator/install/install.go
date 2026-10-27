@@ -13,7 +13,6 @@ import (
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
-	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -202,7 +201,7 @@ func (i Installer) install(ctx context.Context, cfg Config, prepared bool) (resu
 	if i.Client == nil {
 		return Result{}, errors.New("Kubernetes client is required")
 	}
-	plan, err := i.resources(cfg)
+	plan, err := Resources(cfg)
 	if err != nil {
 		return Result{}, err
 	}
@@ -217,16 +216,6 @@ func (i Installer) install(ctx context.Context, cfg Config, prepared bool) (resu
 	}
 	if !reuse && cfg.WaitForCompletion && !prepared && i.SyncRepository == nil {
 		return Result{}, errors.New("completed installation requires repository synchronization")
-	}
-	if prior != nil {
-		if prior.Spec.Template.Annotations[PlanWebhookGrantAnnotation] != "" {
-			if err := i.removeUnconfiguredPlanWebhookGrant(ctx, cfg); err != nil {
-				return Result{}, err
-			}
-		}
-		if err := i.removeStalePermissiveGrants(ctx, cfg, prior); err != nil {
-			return Result{}, err
-		}
 	}
 	if !prepared {
 		if err := i.ensureBase(ctx, cfg, plan); err != nil {
@@ -328,9 +317,6 @@ func (i Installer) install(ctx context.Context, cfg Config, prepared bool) (resu
 }
 
 func (i Installer) ensureBase(ctx context.Context, cfg Config, p Plan) error {
-	if err := i.reconcileUnexplainedRemovalGrants(ctx, cfg, p); err != nil {
-		return err
-	}
 	if p.Namespace != nil {
 		namespaces := i.Client.CoreV1().Namespaces()
 		prior, err := namespaces.Get(ctx, p.Namespace.Name, metav1.GetOptions{})
@@ -374,44 +360,7 @@ func (i Installer) ensureBase(ctx context.Context, cfg Config, p Plan) error {
 	if err := i.ensurePermissiveNamespaces(ctx, cfg); err != nil {
 		return err
 	}
-	if err := i.reconcileObservationGrants(ctx, cfg, p); err != nil {
-		return err
-	}
-	for _, role := range p.ObservationClusterRoles {
-		prior, err := i.Client.RbacV1().ClusterRoles().Get(ctx, role.Name, metav1.GetOptions{})
-		if apierrors.IsNotFound(err) {
-			_, err = i.Client.RbacV1().ClusterRoles().Create(ctx, role, metav1.CreateOptions{})
-		} else if err == nil {
-			role.ResourceVersion = prior.ResourceVersion
-			_, err = i.Client.RbacV1().ClusterRoles().Update(ctx, role, metav1.UpdateOptions{})
-		}
-		if err != nil {
-			return err
-		}
-	}
-	for _, binding := range p.ObservationClusterBindings {
-		prior, err := i.Client.RbacV1().ClusterRoleBindings().Get(ctx, binding.Name, metav1.GetOptions{})
-		if apierrors.IsNotFound(err) {
-			_, err = i.Client.RbacV1().ClusterRoleBindings().Create(ctx, binding, metav1.CreateOptions{})
-		} else if err == nil {
-			binding.ResourceVersion = prior.ResourceVersion
-			_, err = i.Client.RbacV1().ClusterRoleBindings().Update(ctx, binding, metav1.UpdateOptions{})
-		}
-		if err != nil {
-			return err
-		}
-	}
-	for _, role := range append(append(p.ControlRoles, p.AppRoles...), p.ObservationRoles...) {
-		if err := i.upsertRole(ctx, role); err != nil {
-			return err
-		}
-	}
-	for _, binding := range append(append(p.ControlBindings, p.AppBindings...), p.ObservationBindings...) {
-		if err := i.upsertBinding(ctx, binding); err != nil {
-			return err
-		}
-	}
-	if err := i.ensurePermissiveClusterGrants(ctx, p); err != nil {
+	if err := i.ensureClusterGrants(ctx, p); err != nil {
 		return err
 	}
 	_, err = i.Client.CoreV1().Secrets(cfg.controlNamespace()).Get(ctx, cfg.CredentialsSecret, metav1.GetOptions{})
@@ -461,36 +410,6 @@ func (i Installer) ensureBase(ctx context.Context, cfg Config, p Plan) error {
 	return nil
 }
 
-func (i Installer) upsertRole(ctx context.Context, want *rbacv1.Role) error {
-	roles := i.Client.RbacV1().Roles(want.Namespace)
-	prior, err := roles.Get(ctx, want.Name, metav1.GetOptions{})
-	if apierrors.IsNotFound(err) {
-		_, err = roles.Create(ctx, want, metav1.CreateOptions{})
-	} else if err == nil {
-		updated := want.DeepCopy()
-		updated.ResourceVersion = prior.ResourceVersion
-		_, err = roles.Update(ctx, updated, metav1.UpdateOptions{})
-	}
-	if err != nil {
-		return fmt.Errorf("ensure Role %s/%s: %w", want.Namespace, want.Name, err)
-	}
-	return nil
-}
-func (i Installer) upsertBinding(ctx context.Context, want *rbacv1.RoleBinding) error {
-	bindings := i.Client.RbacV1().RoleBindings(want.Namespace)
-	prior, err := bindings.Get(ctx, want.Name, metav1.GetOptions{})
-	if apierrors.IsNotFound(err) {
-		_, err = bindings.Create(ctx, want, metav1.CreateOptions{})
-	} else if err == nil {
-		updated := want.DeepCopy()
-		updated.ResourceVersion = prior.ResourceVersion
-		_, err = bindings.Update(ctx, updated, metav1.UpdateOptions{})
-	}
-	if err != nil {
-		return fmt.Errorf("ensure RoleBinding %s/%s: %w", want.Namespace, want.Name, err)
-	}
-	return nil
-}
 func (i Installer) waitSync(ctx context.Context, namespace string) error {
 	timeout := i.SyncTimeout
 	if timeout <= 0 {

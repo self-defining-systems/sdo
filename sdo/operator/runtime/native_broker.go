@@ -980,13 +980,14 @@ func (n NativeIncidentBroker) ledgerPath(incidentID string) string {
 	return path
 }
 
-// committedRepairHealthReceipt authenticates the narrow post-commit health
-// continuation against durable native evidence and broker Git attribution.
-func (n NativeIncidentBroker) committedRepairHealthReceipt(ctx context.Context, closure IncidentClosure, receipt *ClosureReceipt) (ClosureReceipt, error) {
-	var recovered ClosureReceipt
-	err := n.withLock(func() error {
+// committedClosureReceipt recovers the receipt of a closure whose proposal and
+// outcome the broker already committed, authenticated against durable native
+// evidence and broker Git attribution. ok is false when the closure is not
+// fully committed yet.
+func (n NativeIncidentBroker) committedClosureReceipt(ctx context.Context, closure IncidentClosure, receipt *ClosureReceipt) (recovered ClosureReceipt, ok bool, err error) {
+	err = n.withLock(func() error {
 		if n.Repository == nil || closure.Request.IncidentID == "" {
-			return ErrStaleHealthInvestigation
+			return nil
 		}
 		ledger, err := n.readLedger(closure.Request.IncidentID)
 		if err != nil {
@@ -998,62 +999,27 @@ func (n NativeIncidentBroker) committedRepairHealthReceipt(ctx context.Context, 
 		}
 		stored := closureReceiptState(ledger.Receipt)
 		if stored == nil || stored.IncidentID != closure.Request.IncidentID || stored.BaseCommit != closure.Request.RepositoryBaseCommit || stored.ProposalCommit == "" || stored.OutcomeCommit == "" || stored.AckToken == "" || !proto.Equal(ledger.Closure, projected) || ledger.OutcomeDocument == nil || len(closure.FinalDetectorStates) == 0 {
-			return ErrStaleHealthInvestigation
+			return nil
 		}
 		if receipt != nil && *receipt != *stored {
-			return ErrStaleHealthInvestigation
+			return nil
 		}
 		if ledger.ProposalCommit != stored.ProposalCommit || ledger.OutcomeCommit != stored.OutcomeCommit {
-			return ErrStaleHealthInvestigation
+			return nil
 		}
 		for phase, commit := range map[broker.Phase]string{broker.ProposalPhase: stored.ProposalCommit, broker.OutcomePhase: stored.OutcomeCommit} {
-			accepted, ok, err := n.Repository.AcceptedCommit(ctx, stored.IncidentID, phase)
+			accepted, found, err := n.Repository.AcceptedCommit(ctx, stored.IncidentID, phase)
 			if err != nil {
 				return err
 			}
-			if !ok || accepted.Commit != commit {
-				return ErrStaleHealthInvestigation
+			if !found || accepted.Commit != commit {
+				return nil
 			}
 		}
-		recovered = *stored
+		recovered, ok = *stored, true
 		return nil
 	})
-	return recovered, err
-}
-
-// ownAcceptedProposal authenticates the source repair this closure published
-// before its outcome commit: the frozen verified closure and the broker's
-// accepted proposal commit for the incident must both match, and no outcome
-// may be committed yet (later states have their own proofs). Like
-// committedOutcomeClosure it reads the atomically replaced ledger without the
-// effect lock. It authenticates the repair only: health freshness after
-// adoption comes from ExecuteClosureEffect's live revalidation of the closure
-// and health detectors, which must stay ahead of the outcome commit.
-func (n NativeIncidentBroker) ownAcceptedProposal(ctx context.Context, closure IncidentClosure) (string, error) {
-	id := closure.Request.IncidentID
-	if n.Repository == nil || id == "" || len(closure.FinalDetectorStates) == 0 {
-		return "", ErrStaleHealthInvestigation
-	}
-	ledger, err := n.readLedger(id)
-	if err != nil {
-		return "", err
-	}
-	projected, err := incidentClosureContract(closure)
-	if err != nil {
-		return "", err
-	}
-	if ledger.OutcomeCommit != "" || !proto.Equal(ledger.Closure, projected) {
-		return "", ErrStaleHealthInvestigation
-	}
-	// Git acceptance can survive a crash before its ledger marker is saved.
-	accepted, ok, err := n.Repository.AcceptedCommit(ctx, id, broker.ProposalPhase)
-	if err != nil {
-		return "", err
-	}
-	if !ok || (ledger.ProposalCommit != "" && ledger.ProposalCommit != accepted.Commit) {
-		return "", ErrStaleHealthInvestigation
-	}
-	return accepted.Commit, nil
+	return recovered, ok, err
 }
 
 // committedOutcomeClosure authenticates a historical outcome before allowing
@@ -1094,47 +1060,6 @@ func (n NativeIncidentBroker) committedOutcomeClosure(ctx context.Context, closu
 		return accepted, err
 	}
 	return true, nil
-}
-
-func (n NativeIncidentBroker) checkHistoricalClosureHealth(ctx context.Context, closure IncidentClosure) error {
-	ledger, err := n.readLedger(closure.Request.IncidentID)
-	if err != nil {
-		return err
-	}
-	verifiedRevision := closure.Request.SourceCommit
-	if ledger.ReflectionCommit != "" {
-		_, accepted, err := n.Repository.AcceptedCommitAt(ctx, closure.Request.IncidentID, broker.ReflectionPhase, ledger.ReflectionCommit)
-		if err != nil {
-			return err
-		}
-		if accepted {
-			// Its own validated library publication cannot invalidate its ACK.
-			// Later objective/policy advances still compare against that commit.
-			verifiedRevision = ledger.ReflectionCommit
-		}
-	}
-	diagnostics, err := n.Repository.ReflectionHealthDiagnostics(ctx, verifiedRevision)
-	if err != nil {
-		return err
-	}
-	if len(diagnostics) > 0 {
-		// Record the rejection before the controller durably retires ownership,
-		// including when leadership is lost before the worker finishes.
-		attempt, _ := lifecyclecore.ReflectionFeedback(ledger)
-		rejection := &contracts.ProposalRejection{Attempt: attempt, Diagnostics: diagnostics, RejectedAt: contractTimestamp(n.clock())}
-		for _, prior := range ledger.GetReflectionRejections() {
-			if len(prior.Diagnostics) == 1 && proto.Equal(prior.Diagnostics[0], diagnostics[0]) {
-				rejection = prior
-				break
-			}
-		}
-		_, err = n.Repository.RecordReflectionRejections(ctx, closure.Request.IncidentID, []*contracts.ProposalRejection{rejection})
-		if err != nil {
-			return err
-		}
-		return ErrStaleHealthInvestigation
-	}
-	return nil
 }
 
 func logicalReflectionDecision(decision ReflectionDecision) *contracts.ReflectionDecision {

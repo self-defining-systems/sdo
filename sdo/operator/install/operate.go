@@ -30,7 +30,7 @@ func (i Installer) Prepare(ctx context.Context, cfg Config, seed RepositorySeede
 	if i.Client == nil {
 		return errors.New("Kubernetes client is required")
 	}
-	plan, err := i.resources(cfg)
+	plan, err := Resources(cfg)
 	if err != nil {
 		return err
 	}

@@ -783,7 +783,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		}
 	}
 	if launchConfig != nil && selectedCodePath.Selection.DetectorSource != "shell" {
-		controller.CheckHealth = controllerHealthGuard(controller, resolvedRoot, launchConfig.GetControllerRevision())
+		controller.CheckHealth = acceptedHealthGuard(resolvedRoot, launchConfig.GetControllerRevision())
 	}
 	controller.CanAct = elector.IsLeader
 	controller.GuardAction = elector.GuardContext
@@ -1032,7 +1032,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			fmt.Fprintf(stderr, "persist controller state: %v\n", err)
 		}
 	}
-	if err := controller.prepareHealthEffects(runCtx, time.Now().UTC()); err != nil {
+	if err := controller.requireAdoptedHealth(runCtx); err != nil {
 		return err
 	}
 	if !desired.Paused {
@@ -1751,8 +1751,7 @@ func executePausedEffects(ctx context.Context, controller *Controller) (err erro
 }
 
 func executePendingEffects(ctx context.Context, controller *Controller) (err error) {
-	// Stale health evidence owns retirement before the generic expiry fallback.
-	if err := controller.prepareHealthEffects(ctx, time.Now().UTC()); err != nil {
+	if err := controller.requireAdoptedHealth(ctx); err != nil {
 		return err
 	}
 	// Completions pump effects without a detector Step. Recheck the deadline

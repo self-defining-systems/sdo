@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from benchmarks.sregym.adapter import control_namespace_for, kubectl
+from benchmarks.sregym.adapter import WaitKind, control_namespace_for, kubectl, wait_for
 from benchmarks.sregym.fastloop.environment import FastloopEnvironment
 from benchmarks.sregym.fastloop.parallel_memory import memory_head
 
@@ -61,7 +61,7 @@ def shared_controller_job(job: dict[str, Any], application: str) -> dict[str, An
 
 
 def _command(*args: str) -> str:
-    return subprocess.check_output(args, text=True, stderr=subprocess.PIPE, timeout=30).strip()
+    return subprocess.check_output(args, text=True, stderr=subprocess.PIPE, timeout=wait_for(WaitKind.COMMAND)).strip()
 
 
 def _json(environment: FastloopEnvironment, *args: str, namespace: str | None = None) -> dict[str, Any]:
@@ -130,7 +130,7 @@ def assert_shared_lane(environment: FastloopEnvironment) -> None:
             text=True,
             capture_output=True,
             check=False,
-            timeout=10,
+            timeout=wait_for(WaitKind.PROBE),
         ).stdout.strip()
         == expected_inode
     ]
@@ -146,7 +146,7 @@ def assert_shared_lane(environment: FastloopEnvironment) -> None:
         repository_pvc=PVC_NAME,
         credentials_secret="sdo-agent-credentials",
         model="gpt-6-luna",
-        timeout_seconds=3600,
+        timeout_seconds=int(wait_for(WaitKind.RESPONSE, 2)),
         shared_accepted_id=environment.shared_accepted_id,
         controller_namespace=control_namespace_for(environment.namespace),
     )
@@ -462,6 +462,8 @@ def prepare_shared_lanes(plan: ParallelPlan, report: Path) -> None:
     accepted = plan.accepted_repository.resolve()
     if not accepted.exists():
         subprocess.run(
-            ["git", "clone", "--no-local", str(environments[0].workspace), str(accepted)], check=True, timeout=60
+            ["git", "clone", "--no-local", str(environments[0].workspace), str(accepted)],
+            check=True,
+            timeout=wait_for(WaitKind.SLOW_COMMAND),
         )
     attach_shared_memory(plan, report)

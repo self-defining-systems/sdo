@@ -3,8 +3,6 @@ package runtime
 import (
 	"context"
 	"errors"
-	"runtime"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -15,22 +13,6 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 	clienttesting "k8s.io/client-go/testing"
 )
-
-// informerGoroutines counts live client-go reflector goroutines. A reflector
-// reads process-wide state (klog verbosity), so one left running after its
-// owner returned races with whatever runs next.
-func informerGoroutines() int {
-	buffer := make([]byte, 1<<22)
-	buffer = buffer[:runtime.Stack(buffer, true)]
-	return strings.Count(string(buffer), "k8s.io/client-go/tools/cache.(*Reflector).Run")
-}
-
-func requireNoInformerGoroutines(t *testing.T, owner string) {
-	t.Helper()
-	if count := informerGoroutines(); count != 0 {
-		t.Fatalf("%s left %d informer goroutines running; every started informer must be stopped and awaited", owner, count)
-	}
-}
 
 // failingInformerClient lets each resource's first list (the access probe)
 // succeed and fails every later list, so informers start and never sync.

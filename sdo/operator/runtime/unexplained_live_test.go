@@ -33,7 +33,7 @@ func TestUnexplainedLiveInformerMenu(t *testing.T) {
 		&rbacv1.ClusterRole{ObjectMeta: metadata("configmap-cleanup-controller", ""), Rules: []rbacv1.PolicyRule{{APIGroups: []string{""}, Resources: []string{"configmaps"}, Verbs: []string{"get", "list", "watch"}}, {APIGroups: []string{"apps"}, Resources: []string{"deployments"}, Verbs: []string{"get", "patch"}}}},
 		&rbacv1.ClusterRoleBinding{ObjectMeta: metadata("configmap-cleanup-controller", ""), RoleRef: rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "ClusterRole", Name: "configmap-cleanup-controller"}, Subjects: []rbacv1.Subject{{Kind: "ServiceAccount", Name: "cleanup-controller", Namespace: "hotel-reservation"}}},
 	)
-	inventory, err := NewKubernetesCache(KubernetesCacheConfig{Namespace: "hotel-reservation", Client: client, TrackDrift: true}, nil)
+	inventory, err := newCacheForTest(t, KubernetesCacheConfig{Namespace: "hotel-reservation", Client: client, TrackDrift: true}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

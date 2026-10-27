@@ -157,9 +157,6 @@ func TestTracingSwapRefreshPublishesAndBuildsCurrentRequirements(t *testing.T) {
 	if err := guard(ctx); !errors.Is(err, memory.ErrHealthRefreshRequired) {
 		t.Fatalf("old binary adopted new policy: %v", err)
 	}
-	if err := checkInvestigationHealth(ctx, root, old.Commit, current.Commit); !errors.Is(err, ErrStaleHealthInvestigation) {
-		t.Fatalf("old incident authorized after adoption: %v", err)
-	}
 	if err := acceptedHealthGuard(root, current.Commit)(ctx); err != nil {
 		t.Fatalf("new binary did not adopt policy: %v", err)
 	}

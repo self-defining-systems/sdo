@@ -23,14 +23,6 @@ func labelInstallPlan(c Config, p *Plan) {
 	}
 	labelInstallObjects[metav1.Object](c.Namespace, p.PVC, p.SyncPod, p.Job, &p.Job.Spec.Template.ObjectMeta)
 	labelInstallObjects(c.Namespace, p.ServiceAccounts...)
-	labelInstallObjects(c.Namespace, p.ControlRoles...)
-	labelInstallObjects(c.Namespace, p.AppRoles...)
-	labelInstallObjects(c.Namespace, p.ControlBindings...)
-	labelInstallObjects(c.Namespace, p.AppBindings...)
 	labelInstallObjects(c.Namespace, p.ClusterRoles...)
 	labelInstallObjects(c.Namespace, p.ClusterBindings...)
-	labelInstallObjects(c.Namespace, p.ObservationRoles...)
-	labelInstallObjects(c.Namespace, p.ObservationBindings...)
-	labelInstallObjects(c.Namespace, p.ObservationClusterRoles...)
-	labelInstallObjects(c.Namespace, p.ObservationClusterBindings...)
 }

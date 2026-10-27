@@ -1,8 +1,8 @@
 # SDK operation coverage inventory
 
 LE-X baseline: `151ac41b4`, 2026-10-25. The floor is kubectl's operation
-vocabulary, including arbitrary discovered resources. RBAC is the execution
-boundary. Reading Kubernetes Secret data is excluded; commands use credentials
+vocabulary, including arbitrary discovered resources. The typed plan checks are the
+execution boundary; SDO identities hold a cluster-wide grant. Reading Kubernetes Secret data is excluded; commands use credentials
 from container environment references. Detector execution remains deterministic.
 
 The coverage table is a contract: every row needs a production primitive and a
@@ -79,7 +79,7 @@ object changes run the production executor against the fake API; external and
 subresource effects require exact recorded transitions. Transport tests separately
 exercise stdin-only SPDY, API options, redirect rejection and Secret boundaries.
 See the [authoring vocabulary](../sdo/skills/sdo-playbook-authoring/references/general-actions.md)
-for signatures and replay limitations. Token issuance can run through RBAC, but
+for signatures and replay limitations. Token issuance is allowed, but
 credential responses are discarded; consume generated values inside a container.
 The inventory's cp case covers input streams and container-side transfer; command
 stdout is intentionally unavailable because credential data stays in containers.

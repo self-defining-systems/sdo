@@ -177,6 +177,7 @@ type Controller struct {
 	acknowledgmentResults      chan acknowledgmentCompletion
 	reflectionResults          chan reflectionCompletion
 	reflections                reflectionQueueState
+	busy                       busyWindow
 
 	// Baseline, when set, records healthy configuration and attaches the
 	// diff against it to each new incident request.
@@ -198,9 +199,9 @@ type Controller struct {
 	timeline      []DetectorTimelineEntry
 	stateRestored bool
 
-	// CheckHealth refuses evaluation and effects while accepted health policy is stale.
-	CheckHealth              func(context.Context) error
-	checkInvestigationHealth func(context.Context, string) error
+	// CheckHealth refuses evaluation and effects while the compiled detector bundle
+	// lags the accepted health policy; the rebuilt controller resumes the work.
+	CheckHealth func(context.Context) error
 	// ReconcileRendered is the Go-only deployment lock publication edge.
 	ReconcileRendered func(context.Context, string) (string, error)
 	OnError           func(error)
@@ -328,7 +329,7 @@ func (c *Controller) Step(ctx context.Context, now time.Time, event *sdk.WatchKi
 func (c *Controller) stepPaused(ctx context.Context, now time.Time) error {
 	c.observationMu.Lock()
 	defer c.observationMu.Unlock()
-	if err := c.prepareHealthEffects(ctx, now); err != nil {
+	if err := c.requireAdoptedHealth(ctx); err != nil {
 		return err
 	}
 	before, err := c.ExportState()
@@ -355,8 +356,6 @@ func (c *Controller) stepPaused(ctx context.Context, now time.Time) error {
 	// A failed ACTIVE save can enter maintenance with no confirmed state.
 	retry := !c.pausedEffectRetryAt.IsZero() || (c.stateStore != nil && c.durable == nil)
 	c.mu.Unlock()
-	// prepareHealthEffects already persists retirement archives. Avoid a second
-	// write that would consume that outbox before any paused work changes.
 	if proto.Equal(before, after) && !retry {
 		return nil
 	}
@@ -378,7 +377,7 @@ func (c *Controller) stepPaused(ctx context.Context, now time.Time) error {
 func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk.WatchKind) error {
 	c.observationMu.Lock()
 	defer c.observationMu.Unlock()
-	if err := c.prepareHealthEffects(ctx, now); err != nil {
+	if err := c.requireAdoptedHealth(ctx); err != nil {
 		return err
 	}
 	// Harvest a queued responder result before retirement can judge its
@@ -1313,26 +1312,18 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 		}
 		finalStates, healthVerified = c.latestEvaluations(ids, c.earlyLastMutationAt, true)
 	}
-	scopeCurrent := c.currentIncidentRequest.ObservationGeneration == generation
-	verified := healthVerified && driftClear && scopeCurrent
-	if !scopeCurrent {
-		c.dispatchError = "observation scope changed; incident evidence superseded"
-	}
+	verified := healthVerified && driftClear
 	// A terminal dispatch failure closes as failed: once health permits it, or
 	// at once when the responder is done, because a failed Job leaves no
 	// attempt to verify and waiting would only hold still-firing findings back
 	// from the next attempt. Unresolved drift must not delay it or count as
 	// verified recovery.
 	jobFailed := !early && c.dispatchError != ""
-	terminalFailure := !scopeCurrent || jobFailed || (healthVerified && c.dispatchError != "")
+	terminalFailure := jobFailed || (healthVerified && c.dispatchError != "")
 	if jobFailed && !healthVerified {
 		slog.Info("incident_terminal_dispatch_failure", "incident_id", c.currentIncidentRequest.IncidentID, "reason", "responder_job_failed", "active_health_detectors", c.activeHealthDetectors())
 	}
 	verification := c.continuationVerificationLocked(healthVerified, driftClear, driftFindings)
-	if !scopeCurrent {
-		verification.Healthy = false
-		verification.Error = "observation scope changed; incident evidence superseded"
-	}
 	if early {
 		seen := map[string]bool{}
 		for _, finding := range verification.Findings {
@@ -1391,7 +1382,7 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 		terminalFailure = true
 		slog.Info("incident_terminal_blocker", "incident_id", c.currentIncidentRequest.IncidentID, "reason", "unchanged_non_transient_findings", "findings", len(verification.Findings))
 	}
-	if !verified && !terminalFailure && (len(verification.Findings) > 0 || verification.Error != "") && scopeCurrent && c.dispatchError == "" && now.Before(c.currentIncidentRequest.ResponseDeadline) {
+	if !verified && !terminalFailure && (len(verification.Findings) > 0 || verification.Error != "") && c.dispatchError == "" && now.Before(c.currentIncidentRequest.ResponseDeadline) {
 		if continuer, ok := c.dispatcher.(interface {
 			ContinueAfterVerification(context.Context, IncidentRequest, ToolResponse, time.Time) (bool, error)
 		}); ok {
@@ -1492,7 +1483,7 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 		Request:                       *cloneIncidentRequest(c.currentIncidentRequest), Result: cloneIncidentResult(c.currentIncidentResult),
 		DispatchError: c.dispatchError, FinalDetectorStates: finalStates,
 		IncidentDetectorStates: c.incidentDetectorStates(),
-		PartialDetectorStates:  c.reflectionDetectorStates(verified, scopeCurrent),
+		PartialDetectorStates:  c.reflectionDetectorStates(verified),
 		FinalStateChanges:      finalChanges,
 		HealthClearedAt:        healthClearedAt,
 		DetectedAt:             c.incidentDetectedAt, DispatchedAt: c.incidentDispatchedAt,
@@ -1720,6 +1711,7 @@ func (c *Controller) ExportState() (*contracts.ControllerState, error) {
 		NamespaceOnboarding: cloneNamespaceOnboarding(c.namespaceOnboarding),
 		AcceptedSourceDrift: driftEventsContract(c.acceptedSourceDrift), AcceptedSourceDriftRevision: c.acceptedSourceDriftRevision,
 		DriftEvents: driftEventsContract(c.driftEvents), OwnershipAdoption: adoptionContract(c.ownershipAdoption),
+		BusyUntil: optionalBusyUntil(c.busyUntilLocked(c.clock())),
 	}
 	if c.currentIncidentRequest != nil {
 		message.IncidentRequest, err = incidentRequestContract(*c.currentIncidentRequest)

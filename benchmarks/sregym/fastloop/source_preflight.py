@@ -7,6 +7,7 @@ import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from benchmarks.sregym.adapter import WaitKind, wait_for
 from benchmarks.sregym.fastloop.image_provenance import (
     REVISION_LABEL,
     SOURCE_TREE_LABEL,
@@ -20,7 +21,9 @@ FIRST_PARTY_APPS = ("hotel-reservation", "astronomy-shop", "social-network")
 
 def assert_harness_sources(directory: Path) -> None:
     def git(path: Path, *args: str) -> str:
-        result = subprocess.run(["git", "-C", str(path), *args], capture_output=True, text=True, timeout=5)
+        result = subprocess.run(
+            ["git", "-C", str(path), *args], capture_output=True, text=True, timeout=wait_for(WaitKind.PROBE)
+        )
         if result.returncode:
             raise ValueError(f"eval: initialize pinned SREGym source prerequisite: {path}")
         return result.stdout.strip()
@@ -50,7 +53,11 @@ if TYPE_CHECKING:
 
 def _image_labels(image: str) -> dict[str, str]:
     inspected = subprocess.run(
-        ["docker", "image", "inspect", image], check=True, capture_output=True, text=True, timeout=20
+        ["docker", "image", "inspect", image],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=wait_for(WaitKind.COMMAND),
     )
     return json.loads(inspected.stdout)[0].get("Config", {}).get("Labels") or {}
 
@@ -85,7 +92,7 @@ def assert_runtime_images(images: Images, worktree: Path, *, dev_mount: bool = T
         check=True,
         capture_output=True,
         text=True,
-        timeout=10,
+        timeout=wait_for(WaitKind.PROBE),
     ).stdout.strip()
     sources = {
         image: image_source(worktree, "HEAD", target)
@@ -99,7 +106,7 @@ def assert_runtime_images(images: Images, worktree: Path, *, dev_mount: bool = T
         ["git", "-C", str(worktree), "status", "--porcelain", "--untracked-files=normal", "--", *built_paths],
         capture_output=True,
         text=True,
-        timeout=10,
+        timeout=wait_for(WaitKind.PROBE),
     )
     if dirty.returncode or dirty.stdout.strip():
         raise ValueError(
@@ -139,7 +146,7 @@ def assert_runtime_images(images: Images, worktree: Path, *, dev_mount: bool = T
             check=True,
             capture_output=True,
             text=True,
-            timeout=20,
+            timeout=wait_for(WaitKind.COMMAND),
         )
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
         raise ValueError(

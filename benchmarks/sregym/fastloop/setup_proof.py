@@ -10,6 +10,8 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from benchmarks.sregym.adapter import WaitKind, wait_for
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -127,8 +129,8 @@ def collect_fingerprint(
     run: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
     monotonic: Callable[[], float] = time.monotonic,
 ) -> SetupFingerprint:
-    """Local files, GETs and one read-only PVC HEAD read share a 15-second budget."""
-    deadline = monotonic() + 15
+    """Local files, GETs and one read-only PVC HEAD read share one snapshot-read budget."""
+    deadline = monotonic() + wait_for(WaitKind.SNAPSHOT_READ)
 
     def execute(command: list[str]) -> str:
         remaining = deadline - monotonic()

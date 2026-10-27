@@ -44,6 +44,10 @@ func RunOnce(ctx context.Context, config RunConfig) error {
 	return runWithHealthRefresh(ctx, config, runOnce)
 }
 
+// maxHealthRefreshRestarts bounds consecutive exit-76 relaunches when no
+// installation budget (Controller.Duration) bounds them.
+const maxHealthRefreshRestarts = 16
+
 func runWithHealthRefresh(ctx context.Context, config RunConfig, run func(context.Context, RunConfig) error) error {
 	var deadline time.Time
 	if config.Controller != nil && config.Controller.GetDuration().AsDuration() > 0 {
@@ -53,7 +57,10 @@ func runWithHealthRefresh(ctx context.Context, config RunConfig, run func(contex
 		defer cancel()
 		config.Controller = proto.Clone(config.Controller).(*contractsv1alpha1.ControllerConfig)
 	}
-	for {
+	for restarts := 0; ; restarts++ {
+		if deadline.IsZero() && restarts > maxHealthRefreshRestarts {
+			return fmt.Errorf("health unverified: controller requested %d consecutive health refresh restarts without an installation budget", restarts)
+		}
 		if !deadline.IsZero() {
 			remaining := time.Until(deadline)
 			if remaining <= 0 {

@@ -4,19 +4,19 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
-	"strings"
 	"testing"
 	"time"
 
-	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
 )
 
-// Seeded crash cuts preserve a verified S1 closure, accept S2 before/after
-// restore or effect selection, and try to publish the retained success.
-func TestScopedClosureGenerationSeededCuts(t *testing.T) {
+// STALE3: seeded crash cuts preserve a verified S1 closure and change the
+// observation scope to S2 before/after restore or effect selection. The
+// detector scope changing is not evidence about the cluster: the closure is
+// rechecked under the scope now in force and, being healthy, reaches the broker.
+func TestScopedClosureVerifiedUnderChangedScope(t *testing.T) {
 	for seed := int64(0); seed < 16; seed++ {
 		for _, cut := range []string{"scope-before-restore", "scope-after-restore", "scope-after-selection", "unchanged"} {
 			t.Run(fmt.Sprintf("%d/%s", seed, cut), func(t *testing.T) {
@@ -81,31 +81,23 @@ func TestScopedClosureGenerationSeededCuts(t *testing.T) {
 					restored.provider = changedProvider
 				}
 				err = restored.ExecuteClosureEffect(context.Background(), effect)
-				if cut == "unchanged" {
-					if err != nil {
-						t.Fatalf("current generation closure rejected: %v", err)
-					}
-					awaitBrokerResult(t, restored.closureResults)
-					if len(broker.calls()) != 1 {
-						t.Fatal("current closure did not reach broker")
-					}
-					return
-				}
 				if err != nil {
-					t.Fatalf("obsolete scope closure crashed restart: %v", err)
+					t.Fatalf("closure under %s refused: %v", cut, err)
 				}
-				if restored.closureState != contracts.ClosureState_CLOSURE_STATE_FAILED || !strings.Contains(restored.closureFailure.LastError, "observation scope") {
-					t.Fatal("obsolete scope closure was not durably retired")
+				awaitBrokerResult(t, restored.closureResults)
+				if len(broker.calls()) != 1 {
+					t.Fatalf("closure under %s did not reach the broker", cut)
 				}
-				if len(broker.calls()) != 0 {
-					t.Fatal("stale closure reached broker")
+				if restored.closureFailure != nil {
+					t.Fatalf("closure under %s retired: %v", cut, restored.closureFailure)
 				}
 			})
 		}
 	}
 }
 
-func TestScopedDiagnosisRejectsObsoleteOpenCapture(t *testing.T) {
+// STALE3: a diagnosis keeps running when the scope changes under it.
+func TestScopedDiagnosisSurvivesScopeChange(t *testing.T) {
 	root := t.TempDir()
 	request := IncidentRequest{IncidentID: "generation", Namespace: "app", ObservationGeneration: "S1"}
 	phase := "open@detect"
@@ -116,7 +108,7 @@ func TestScopedDiagnosisRejectsObsoleteOpenCapture(t *testing.T) {
 	}
 	snapshot.ScopedSnapshot.Generation = "S2"
 	loop.Provider = staticProvider{snapshot: snapshot}
-	if _, err := loop.snapshotView(context.Background()); err == nil || !strings.Contains(err.Error(), "observation scope") {
-		t.Fatalf("obsolete capture reused: %v", err)
+	if _, err := loop.snapshotView(context.Background()); err != nil {
+		t.Fatalf("scope change failed the diagnosis: %v", err)
 	}
 }

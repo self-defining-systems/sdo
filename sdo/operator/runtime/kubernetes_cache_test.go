@@ -23,7 +23,7 @@ import (
 )
 
 func TestKubernetesCacheDeclaresTheMetricsWatchWithoutAnInformer(t *testing.T) {
-	_, err := NewKubernetesCache(KubernetesCacheConfig{Namespace: "demo", Client: fake.NewSimpleClientset()},
+	_, err := newCacheForTest(t, KubernetesCacheConfig{Namespace: "demo", Client: fake.NewSimpleClientset()},
 		[]sdk.Detector{scheduledDetector{spec: sdk.DetectorSpec{
 			ID: "metrics", Interval: time.Second, Watches: []sdk.WatchKind{metrics.Watch},
 		}}})
@@ -33,7 +33,7 @@ func TestKubernetesCacheDeclaresTheMetricsWatchWithoutAnInformer(t *testing.T) {
 }
 
 func TestKubernetesCacheRoutesSyntheticTrafficNotificationsWithoutAnInformer(t *testing.T) {
-	cache, err := NewKubernetesCache(KubernetesCacheConfig{Namespace: "demo", Client: fake.NewSimpleClientset()},
+	cache, err := newCacheForTest(t, KubernetesCacheConfig{Namespace: "demo", Client: fake.NewSimpleClientset()},
 		[]sdk.Detector{scheduledDetector{spec: sdk.DetectorSpec{
 			ID: "traffic", Interval: time.Second, Watches: []sdk.WatchKind{traffic.Watch},
 		}}})
@@ -45,7 +45,7 @@ func TestKubernetesCacheRoutesSyntheticTrafficNotificationsWithoutAnInformer(t *
 }
 
 func TestKubernetesCacheRoutesServiceReachabilityNotificationsWithoutAnInformer(t *testing.T) {
-	cache, err := NewKubernetesCache(KubernetesCacheConfig{Namespace: "demo", Client: fake.NewSimpleClientset()},
+	cache, err := newCacheForTest(t, KubernetesCacheConfig{Namespace: "demo", Client: fake.NewSimpleClientset()},
 		[]sdk.Detector{scheduledDetector{spec: sdk.DetectorSpec{
 			ID: "service-reachability", Interval: time.Second, Watches: servicehealth.ReachabilityWatches(),
 		}}})
@@ -67,7 +67,7 @@ func TestKubernetesCacheUsesDeclaredInformerUnionWithoutRelisting(t *testing.T) 
 	client.PrependReactor("list", "deployments", countList(&deploymentLists))
 	client.PrependReactor("list", "configmaps", countList(&configMapLists))
 
-	cache, err := NewKubernetesCache(KubernetesCacheConfig{
+	cache, err := newCacheForTest(t, KubernetesCacheConfig{
 		Namespace: "demo", Client: client, StateConfigMapName: "sdo-controller-state",
 	}, []sdk.Detector{
 		scheduledDetector{spec: sdk.DetectorSpec{ID: "a", Interval: time.Second, Watches: []sdk.WatchKind{
@@ -110,7 +110,7 @@ func TestKubernetesCacheUsesDeclaredInformerUnionWithoutRelisting(t *testing.T) 
 }
 
 func TestKubernetesCacheSnapshotsCarryTheirObservationTimeThroughTraffic(t *testing.T) {
-	cache, err := NewKubernetesCache(KubernetesCacheConfig{Namespace: "demo", Client: fake.NewSimpleClientset()},
+	cache, err := newCacheForTest(t, KubernetesCacheConfig{Namespace: "demo", Client: fake.NewSimpleClientset()},
 		[]sdk.Detector{scheduledDetector{spec: sdk.DetectorSpec{
 			ID: "pods", Interval: time.Second, Watches: []sdk.WatchKind{{APIVersion: "v1", Kind: "Pod"}},
 		}}})
@@ -133,7 +133,7 @@ func TestKubernetesCacheSnapshotsCarryTheirObservationTimeThroughTraffic(t *test
 
 func TestKubernetesCacheRoutesEventsAndIgnoresUndeclaredAndInternalState(t *testing.T) {
 	client := fake.NewSimpleClientset()
-	cache, err := NewKubernetesCache(KubernetesCacheConfig{
+	cache, err := newCacheForTest(t, KubernetesCacheConfig{
 		Namespace: "demo", Client: client, StateConfigMapName: "sdo-controller-state",
 	}, []sdk.Detector{scheduledDetector{spec: sdk.DetectorSpec{
 		ID: "configmaps", Interval: time.Second, Watches: []sdk.WatchKind{{APIVersion: "v1", Kind: "ConfigMap"}},
@@ -183,7 +183,7 @@ func TestKubernetesCacheRoutesEventsAndIgnoresUndeclaredAndInternalState(t *test
 }
 
 func TestKubernetesCacheWaitForSyncHonorsCancellation(t *testing.T) {
-	cache, err := NewKubernetesCache(KubernetesCacheConfig{
+	cache, err := newCacheForTest(t, KubernetesCacheConfig{
 		Namespace: "demo", Client: fake.NewSimpleClientset(),
 	}, []sdk.Detector{scheduledDetector{spec: sdk.DetectorSpec{
 		ID: "pods", Interval: time.Second, Watches: []sdk.WatchKind{{APIVersion: "v1", Kind: "Pod"}},
@@ -228,7 +228,7 @@ func drainWatchEvents(cache *KubernetesCache) {
 
 func TestKubernetesCacheResyncObservesRecreatedNamespaceAfterStop(t *testing.T) {
 	client := fake.NewSimpleClientset(&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "old", Namespace: "demo"}})
-	cache, err := NewKubernetesCache(KubernetesCacheConfig{Namespace: "demo", Client: client}, []sdk.Detector{
+	cache, err := newCacheForTest(t, KubernetesCacheConfig{Namespace: "demo", Client: client}, []sdk.Detector{
 		scheduledDetector{spec: sdk.DetectorSpec{
 			ID: "pods", Interval: time.Second, Watches: []sdk.WatchKind{{APIVersion: "v1", Kind: "Pod"}},
 		}},

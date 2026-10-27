@@ -157,7 +157,7 @@ func TestForeignReadViewDiffAndSourceFailures(t *testing.T) {
 
 func TestForeignDriftNormalChurn(t *testing.T) {
 	source, commit := foreignSource(t)
-	cache, err := NewKubernetesCache(KubernetesCacheConfig{Namespace: "app", Client: fake.NewSimpleClientset(), TrackDrift: true}, []sdk.Detector{scheduledDetector{spec: sdk.DetectorSpec{ID: "events", Watches: []sdk.WatchKind{{APIVersion: "v1", Kind: "Event"}}}}})
+	cache, err := newCacheForTest(t, KubernetesCacheConfig{Namespace: "app", Client: fake.NewSimpleClientset(), TrackDrift: true}, []sdk.Detector{scheduledDetector{spec: sdk.DetectorSpec{ID: "events", Watches: []sdk.WatchKind{{APIVersion: "v1", Kind: "Event"}}}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -232,7 +232,7 @@ func runForeignPolicyIncident(t *testing.T) (string, string, GitPlanSource, stri
 	root := t.TempDir()
 	source, commit := foreignSource(t)
 	policy := foreignPolicy("first-deny")
-	cache, err := NewKubernetesCache(KubernetesCacheConfig{Namespace: "app", Client: fake.NewSimpleClientset(), TrackDrift: true}, nil)
+	cache, err := newCacheForTest(t, KubernetesCacheConfig{Namespace: "app", Client: fake.NewSimpleClientset(), TrackDrift: true}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

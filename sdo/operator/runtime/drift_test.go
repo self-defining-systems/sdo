@@ -92,7 +92,7 @@ func TestControllerOpensUnexplainedIncidentAfterBatchWindow(t *testing.T) {
 	start := time.Unix(10, 0).UTC()
 	old := driftService(8080)
 	next := driftService(9999)
-	cache, err := NewKubernetesCache(KubernetesCacheConfig{Namespace: "app", Client: fake.NewSimpleClientset(), TrackDrift: true}, nil)
+	cache, err := newCacheForTest(t, KubernetesCacheConfig{Namespace: "app", Client: fake.NewSimpleClientset(), TrackDrift: true}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,7 +152,7 @@ func TestControllerPersistsUnexplainedChangeWithoutIncident(t *testing.T) {
 	start := time.Unix(10, 0).UTC()
 	old := driftService(8080)
 	next := driftService(8081)
-	cache, err := NewKubernetesCache(KubernetesCacheConfig{Namespace: "app", Client: fake.NewSimpleClientset(), TrackDrift: true}, nil)
+	cache, err := newCacheForTest(t, KubernetesCacheConfig{Namespace: "app", Client: fake.NewSimpleClientset(), TrackDrift: true}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

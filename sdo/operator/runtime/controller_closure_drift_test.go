@@ -69,7 +69,7 @@ func newClosureDriftFixture(t *testing.T, owned, declared bool, namespace string
 	frontend := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "frontend", Namespace: "app"}, Spec: appsv1.DeploymentSpec{Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "frontend", Image: "missing:v1"}}}}}}
 	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "reservation-pod", Namespace: namespace}, Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "reservation", Ports: []corev1.ContainerPort{{ContainerPort: 8087}}}}}}
 	f.client = fake.NewSimpleClientset(broken, frontend, pod)
-	f.cache, err = NewKubernetesCache(KubernetesCacheConfig{Namespace: "app", Client: f.client, TrackDrift: true}, nil)
+	f.cache, err = newCacheForTest(t, KubernetesCacheConfig{Namespace: "app", Client: f.client, TrackDrift: true}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

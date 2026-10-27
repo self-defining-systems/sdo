@@ -149,6 +149,23 @@ func CaptureReachabilityBaseline(ctx sdk.DetectionContext, a BaselineAuthorizati
 	return b, b.Validate()
 }
 
+// StaleExclusions returns the recorded exclusions whose target configuration no
+// longer matches the snapshot. A target that is gone has nothing left to exclude
+// and is not stale. Staleness only says the record must be measured again by the
+// healthy-baseline gate; it never authorizes a new exclusion.
+func (b *ReachabilityBaseline) StaleExclusions(ctx sdk.DetectionContext) []ReachabilityExclusion {
+	stale := []ReachabilityExclusion{}
+	if b == nil {
+		return stale
+	}
+	for _, e := range b.Exclusions {
+		if config, ok := ReachabilityTargetConfiguration(ctx, e.Target); ok && config != e.Configuration {
+			stale = append(stale, e)
+		}
+	}
+	return stale
+}
+
 // ReachabilityTargetConfiguration binds a target to its observed Service,
 // selected backend configuration, referenced ConfigMaps and selecting network policy.
 // Incarnation metadata and allocated routing addresses/ports are not application

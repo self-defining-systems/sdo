@@ -214,10 +214,6 @@ func StepReflection(state *contracts.BrokerLedger, event ReflectionEvent) (*cont
 		// share a three-attempt cap, including invalid corrections. Persist
 		// the tightened bound so restart cannot grant another attempt.
 		for _, diagnostic := range event.Diagnostics {
-			if diagnostic.GetRule() == "reflection.objective-changed" || diagnostic.GetRule() == "reflection.policy-changed" {
-				next.ReflectionMaxRetries = 0
-				break
-			}
 			if diagnostic.GetMemoryConflict() != nil {
 				next.ReflectionMaxRetries = min(next.ReflectionMaxRetries, 2)
 				break

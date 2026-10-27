@@ -30,9 +30,11 @@ from benchmarks.sregym.adapter import (
     DetectionMissError,
     PersistentControllerError,
     PersistentState,
+    WaitKind,
     collect_followup_incident,
     drain_pending_incident,
     pause_controller,
+    wait_for,
 )
 from benchmarks.sregym.fastloop.fault_tracker import (
     BackgroundPoller,
@@ -54,7 +56,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-STATE_SAMPLE_SECONDS = 10.0
+STATE_SAMPLE_SECONDS = wait_for(WaitKind.PROBE)
 
 
 @dataclass(frozen=True)
@@ -69,12 +71,12 @@ class _Wedge:
 @dataclass(frozen=True)
 class CompositeSettings:
     #: Longest the composite may run after injection before the agent is cut off.
-    deadline_seconds: float = 2400.0
+    deadline_seconds: float = wait_for(WaitKind.COMPOSITE_DEADLINE)
     #: Longest to wait for another incident while faults remain and none is in flight.
-    idle_seconds: float = 600.0
+    idle_seconds: float = wait_for(WaitKind.IDLE)
     #: How long a fault must stay green to count as resolved.
-    stable_seconds: float = 20.0
-    poll_seconds: float = 5.0
+    stable_seconds: float = wait_for(WaitKind.STABLE)
+    poll_seconds: float = wait_for(WaitKind.POLL)
 
     def __post_init__(self) -> None:
         for name in ("deadline_seconds", "idle_seconds", "stable_seconds", "poll_seconds"):
@@ -417,7 +419,7 @@ class CompositeSdoAgent(SdoPersistentAgent):
             raise
         finally:
             sampler_stop.set()
-            sampler.join(timeout=30)
+            sampler.join(timeout=wait_for(WaitKind.COMMAND))
             marks["last_resolve_s"] = time.monotonic() - started
             if "poll_start" in marks:
                 poller.__exit__(None, None, None)
