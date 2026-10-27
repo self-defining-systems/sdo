@@ -128,6 +128,7 @@ func TestSourceReconcilePartialSurvivesReceiptAndResponderResult(t *testing.T) {
 	now := time.Unix(1000, 0).UTC()
 	c := newClosureRetryController(t, ClosureRetryPolicy{}, &rejectingIncidentBroker{}, &now)
 	applications := []RecordedPlanApplication{{ID: "reconcile-residual", Result: result, Error: partial.Error(), StartedAt: now, CompletedAt: now.Add(time.Second)}}
+	c.pendingClosure.Result.Usage = UsageMetrics{InputTokens: 123, OutputTokens: 45, TotalCostUsd: proto.Float64(0.25)}
 	c.pendingClosure.Result.PlanApplications = applications
 	c.pendingClosure.Result.RepairActions = ProgramRepairReceipts(applications, nil)
 	store := lifecycleio.NewConfigMapStateStore(fake.NewSimpleClientset(), "demo", "state")
@@ -144,7 +145,11 @@ func TestSourceReconcilePartialSurvivesReceiptAndResponderResult(t *testing.T) {
 	if err := wire.Validate(saved); err != nil {
 		t.Fatal(err)
 	}
-	repairs := saved.GetPendingClosure().GetResult().GetRepairActions()
+	savedResult := saved.GetPendingClosure().GetResult()
+	if len(savedResult.GetPlanApplications()) != 1 || !proto.Equal(savedResult.GetUsage(), &c.pendingClosure.Result.Usage) {
+		t.Fatalf("residual application or usage discarded: %v", savedResult)
+	}
+	repairs := savedResult.GetRepairActions()
 	if len(repairs) != 1 || repairs[0].GetFailureReason() != "source_residual" || !repairs[0].GetStartedAt().AsTime().Equal(now) || !repairs[0].GetCompletedAt().AsTime().Equal(now.Add(time.Second)) {
 		t.Fatalf("residual repair evidence lost during persistence: %v", saved.GetPendingClosure())
 	}
