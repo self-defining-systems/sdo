@@ -69,6 +69,7 @@ type VerificationBlocker struct {
 
 type ToolResponse struct {
 	VerificationBlockers       []VerificationBlocker          `json:"verification_blockers,omitempty"`
+	ActionReports              []PlanActionReport             `json:"action_reports,omitempty"`
 	SelectionSchema            *MenuSchema                    `json:"selection_schema,omitempty"`
 	SelectionSetSchema         *MenuSchema                    `json:"selection_set_schema,omitempty"`
 	ProgramRevisions           map[string]string              `json:"program_revisions,omitempty"`
@@ -992,6 +993,7 @@ func (l *ResponderLoop) apply(ctx context.Context, request ToolRequest, response
 		executor.RolloutTimeout = request.rolloutTimeout
 	}
 	result, err := executor.Apply(ctx, l.mitigationIncident(selected), batch, false)
+	response.ActionReports = result.ActionReports
 	completed := time.Now().UTC()
 	if result.RolloutPending != nil {
 		l.reservePending(id, batch, "", "", program.Bindings{}, request.FindingFingerprints)

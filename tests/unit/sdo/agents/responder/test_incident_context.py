@@ -248,3 +248,52 @@ def test_many_stage_attempts_cannot_displace_bounded_first_prompt() -> None:
         assert "mitigate" in summary["incident_tools"]["commands"]
         details = Path(rendered.split("Full incident facts: ", 1)[1].splitlines()[0])
         assert len(json.loads(details.read_text())["prior_stages"][0]["mitigations"]) == 20
+
+
+def test_failed_episode_progress_stays_inline_with_full_results_in_facts() -> None:
+    request = _request()
+    request.findings[0].evidence = "large fact " * 4000
+    prior = request.prior_response_progress.add(incident_id="failed-episode")
+    prior.successful_actions.add(
+        action_id="source-fixed", success=True, summary="source reconciled", details="write read back " * 4000
+    )
+    prior.blockers.add(reason_code="admission_blocked", reason="validate.example.test denied Pods")
+    with prepared_incident_data(request) as rendered:
+        assert len(rendered) <= MAX_INCIDENT_SUMMARY_CHARS
+        assert "source-fixed" in rendered
+        assert "admission_blocked" in rendered
+        details = Path(rendered.split("Full incident facts: ", 1)[1].splitlines()[0])
+        evidence = json.loads(details.read_text())["prior_response_progress"][0]
+        assert evidence["successful_actions"][0]["details"] == "write read back " * 4000
+        assert evidence["blockers"][0]["reason_code"] == "admission_blocked"
+
+
+def test_many_prior_episodes_keep_latest_progress_within_first_prompt_budget() -> None:
+    from tests.unit.sdo.agents.prompts.cases import incident
+
+    request = incident(100, oversized=True)
+    for index in range(10):
+        episode = request.prior_response_progress.add(incident_id=f"episode-{index}", error="blocker " * 200)
+        for action in range(8):
+            episode.successful_actions.add(action_id=f"done-{index}-{action}", success=True, summary="repaired " * 100)
+        episode.blockers.add(reason_code="admission_blocked", reason="webhook denial " * 200)
+    for index in range(2):
+        report = request.prior_stages.add(stage=f"stage-{index}", remaining_finding_fingerprints=["f" * 5000] * 20)
+        for attempt in range(20):
+            report.mitigations.add(playbook_id=f"repair-{attempt}-" + "p" * 500, result="apply_error", error="e" * 5000)
+    with prepared_incident_data(request) as rendered:
+        assert len(rendered) <= MAX_INCIDENT_SUMMARY_CHARS
+        assert "done-9-0" in rendered
+        assert "admission_blocked" in rendered
+        details = Path(rendered.split("Full incident facts: ", 1)[1].splitlines()[0])
+        assert len(json.loads(details.read_text())["prior_response_progress"]) == 10
+
+
+def test_prior_progress_summary_preserves_transport_omissions() -> None:
+    from sdo.agents.responder.incident_context import prior_response_summary
+
+    request = _request()
+    request.prior_response_progress.add(incident_id="newest", truncated=True, omitted_episodes=23)
+    summary = prior_response_summary(request)
+    assert summary["episodes_omitted"] == 23
+    assert summary["episodes"][0]["truncated"] is True

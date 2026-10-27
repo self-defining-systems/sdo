@@ -129,6 +129,11 @@ func fitIncidentRequest(request *contracts.IncidentRequest, build func() (*contr
 		return text
 	}
 	steps, fits, err := degradeToFit(size, []transportRung{
+		{"compact_prior_response_progress", func() bool {
+			before := progressWireBytes(request.PriorResponseProgress)
+			request.PriorResponseProgress = boundResponseProgress(request.PriorResponseProgress, 4<<10)
+			return progressWireBytes(request.PriorResponseProgress) < before
+		}},
 		{"drop_prior_incident_history", func() bool {
 			changed := len(request.RelevantOutcomes) > 0
 			request.RelevantOutcomes = nil

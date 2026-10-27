@@ -20,8 +20,9 @@ PLAN_ACTIONS = (
     "SetField updates a schema-checked field by index or unique name, optionally from accepted source; "
     "ConfigMap JSON/YAML entries preserve unrelated keys.\n"
     "CreateFromSource restores a named missing object from accepted source.\n"
-    "ReconcileFromSource restores declared configuration, including source-named cluster objects, "
-    "and removes fields added since acceptance; other undeclared fields stay.\n"
+    "ReconcileFromSource converges source-owned configuration, removes additions since acceptance, "
+    "and reports residual source differences and remaining old-revision ReplicaSets/Pods. "
+    "The Deployment controller and responder handle the rollout.\n"
     "DeleteObject irreversibly removes an allowed named source-absent object and never auto-recreates it."
 )
 
@@ -136,9 +137,10 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="sdo",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="prior_stages: playbook, result, skip_reason of an automatic stage; one that ran "
-        "while you worked shows once, in your next reply. Don't repeat verified repairs. "
-        "Full facts keep apply receipts and post-apply diagnoses.\n\n"
+        epilog="prior_stages: automatic repairs. "
+        "prior_response_progress: bounded failed-episode progress, with omissions. "
+        "Keep repairs; admission_blocked names a current rollout prerequisite. "
+        "Full history stays in outcomes.\n\n"
         "Examples (replace names with incident resources):\n  " + "\n  ".join(CLI_EXAMPLES),
     )
     commands = parser.add_subparsers(dest="command", required=True)

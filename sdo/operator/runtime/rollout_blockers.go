@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -16,7 +17,7 @@ import (
 	"sdo.dev/operator/sdk"
 )
 
-func (w KubernetesPlanRollouts) rolloutBlocker(ctx context.Context, d *appsv1.Deployment) *contracts.RolloutBlocker {
+func (w KubernetesPlanRollouts) rolloutBlocker(ctx context.Context, d *appsv1.Deployment, started time.Time) (*contracts.RolloutBlocker, *AdmissionBlockedError) {
 	sets, setsErr := w.Client.AppsV1().ReplicaSets(d.Namespace).List(ctx, metav1.ListOptions{})
 	pods, podsErr := w.Client.CoreV1().Pods(d.Namespace).List(ctx, metav1.ListOptions{})
 	events, eventsErr := w.Client.CoreV1().Events(d.Namespace).List(ctx, metav1.ListOptions{FieldSelector: "type=Warning"})
@@ -32,7 +33,7 @@ func (w KubernetesPlanRollouts) rolloutBlocker(ctx context.Context, d *appsv1.De
 	if eventsErr == nil {
 		es = events.Items
 	}
-	observation := deploymentRolloutBlocker(d, rs, ps, es)
+	observation := deploymentRolloutBlocker(d, rs, ps, es, started)
 	blocker := observation.blocker
 	for _, read := range []struct {
 		name string
@@ -42,31 +43,47 @@ func (w KubernetesPlanRollouts) rolloutBlocker(ctx context.Context, d *appsv1.De
 			blocker.WarningEvents = append(blocker.WarningEvents, boundedRolloutText(read.name+" evidence unavailable: "+read.err.Error(), 512))
 		}
 	}
-	return blocker
+	return blocker, w.admissionBlocked(ctx, blocker, observation.admission)
 }
 
 type rolloutObservation struct {
-	blocker *contracts.RolloutBlocker
-	pending bool
-	summary string
+	admission []string
+	blocker   *contracts.RolloutBlocker
+	pending   bool
+	summary   string
 }
 
 // deploymentRolloutBlocker projects one observation without I/O. The same
 // ownership join serves write readback and controller closure verification.
-func deploymentRolloutBlocker(d *appsv1.Deployment, sets []appsv1.ReplicaSet, pods []corev1.Pod, events []corev1.Event) rolloutObservation {
+func deploymentRolloutBlocker(d *appsv1.Deployment, sets []appsv1.ReplicaSet, pods []corev1.Pod, events []corev1.Event, since ...time.Time) rolloutObservation {
+	started := time.Time{}
+	if len(since) > 0 {
+		started = since[0]
+	}
+	currentEvidence := func(at time.Time, observed, generation int64) bool {
+		// Child controllers may still report a fresh failure from the previous
+		// attempt until the Deployment controller observes this rollout generation.
+		return d.Status.ObservedGeneration >= d.Generation && observed >= generation && !at.IsZero() && !at.Before(started)
+	}
 	ref := sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: d.Namespace, Name: d.Name}
 	reasons := []string{fmt.Sprintf("%d/%d updated, %d ready, %d available; %d old template replicas; observed generation %d/%d", d.Status.UpdatedReplicas, deploymentDesiredReplicas(d), d.Status.ReadyReplicas, d.Status.AvailableReplicas, max(0, d.Status.Replicas-d.Status.UpdatedReplicas), d.Status.ObservedGeneration, d.Generation)}
 	var failures []string
+	var admission []string
 	for _, c := range d.Status.Conditions {
 		if c.Type == appsv1.DeploymentReplicaFailure && c.Status == corev1.ConditionTrue || c.Type == appsv1.DeploymentProgressing && c.Status == corev1.ConditionFalse {
 			message := string(c.Type) + " " + c.Reason + ": " + c.Message
 			reasons = append(reasons, message)
 			failures = append(failures, message)
+			if c.Reason == "FailedCreate" && admissionRejection(c.Message) && currentEvidence(c.LastUpdateTime.Time, d.Status.ObservedGeneration, d.Generation) {
+				admission = append(admission, message)
+			}
 		}
 	}
 	uids := map[types.UID]bool{}
+	admissionUIDs := map[types.UID]bool{}
 	if d.UID != "" {
 		uids[d.UID] = true
+		admissionUIDs[d.UID] = d.Status.ObservedGeneration >= d.Generation && d.Status.UpdatedReplicas < deploymentDesiredReplicas(d)
 	}
 	oldSets := map[types.UID]bool{}
 	for _, rs := range sets {
@@ -78,11 +95,19 @@ func deploymentRolloutBlocker(d *appsv1.Deployment, sets []appsv1.ReplicaSet, po
 			continue
 		}
 		uids[rs.UID] = true
+		desired := int32(1)
+		if rs.Spec.Replicas != nil {
+			desired = *rs.Spec.Replicas
+		}
+		admissionUIDs[rs.UID] = rs.Status.Replicas < desired && rs.Status.ObservedGeneration >= rs.Generation
 		for _, c := range rs.Status.Conditions {
 			if c.Type == appsv1.ReplicaSetReplicaFailure && c.Status == corev1.ConditionTrue {
 				message := fmt.Sprintf("ReplicaSet/%s %s: %s", rs.Name, c.Reason, c.Message)
 				reasons = append(reasons, message)
 				failures = append(failures, message)
+				if c.Reason == "FailedCreate" && admissionRejection(c.Message) && admissionUIDs[rs.UID] && currentEvidence(c.LastTransitionTime.Time, rs.Status.ObservedGeneration, rs.Generation) {
+					admission = append(admission, message)
+				}
 			}
 		}
 	}
@@ -102,6 +127,9 @@ func deploymentRolloutBlocker(d *appsv1.Deployment, sets []appsv1.ReplicaSet, po
 			continue
 		}
 		uids[pod.UID] = true
+		if !old {
+			admissionUIDs[pod.UID] = true
+		}
 		for _, owner := range pod.OwnerReferences {
 			if _, ok := oldSets[owner.UID]; ok && rolloutOwnedBy([]metav1.OwnerReference{owner}, "ReplicaSet", owner.UID) {
 				uids[owner.UID] = true
@@ -130,6 +158,16 @@ func deploymentRolloutBlocker(d *appsv1.Deployment, sets []appsv1.ReplicaSet, po
 	blocker := &contracts.RolloutBlocker{Ref: planRefProto(ref), Reason: boundedRolloutText(strings.Join(reasons, "; "), 4096)}
 	for _, event := range events {
 		if event.Type == corev1.EventTypeWarning && event.Namespace == d.Namespace && event.InvolvedObject.Namespace == d.Namespace && uids[event.InvolvedObject.UID] {
+			at := event.LastTimestamp.Time
+			if event.EventTime.Time.After(at) {
+				at = event.EventTime.Time
+			}
+			if event.Series != nil && event.Series.LastObservedTime.Time.After(at) {
+				at = event.Series.LastObservedTime.Time
+			}
+			if admissionUIDs[event.InvolvedObject.UID] && event.Reason == "FailedCreate" && admissionRejection(event.Message) && currentEvidence(at, d.Status.ObservedGeneration, d.Generation) {
+				admission = append(admission, event.InvolvedObject.Kind+"/"+event.InvolvedObject.Name+": "+event.Message)
+			}
 			blocker.WarningEvents = append(blocker.WarningEvents, boundedRolloutText(event.InvolvedObject.Kind+"/"+event.InvolvedObject.Name+" "+event.Reason+": "+event.Message, 512))
 		}
 	}
@@ -146,7 +184,7 @@ func deploymentRolloutBlocker(d *appsv1.Deployment, sets []appsv1.ReplicaSet, po
 	} else if len(reasons) > 1 {
 		summary = reasons[1]
 	}
-	return rolloutObservation{blocker: blocker, pending: oldPodRemains || podFailureRemains || !deployment.DeploymentRolloutComplete(d), summary: boundedRolloutText(summary, 200)}
+	return rolloutObservation{admission: admission, blocker: blocker, pending: oldPodRemains || podFailureRemains || !deployment.DeploymentRolloutComplete(d), summary: boundedRolloutText(summary, 200)}
 }
 
 func rolloutOwnedBy(owners []metav1.OwnerReference, kind string, uid types.UID) bool {

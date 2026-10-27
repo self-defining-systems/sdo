@@ -24,6 +24,35 @@ The stage applies all its matched plans in one apply with one rollout wait, insi
 
 Deterministic completion retains real `plan`/`apply` transcripts and performs the ordinary responder final-equivalence check before projecting applications into the outcome. Durable responder rejoin retains those typed stage applications and repaired causes without rerunning automatic writes. Failed-outcome reflection still requires the existing timed, scoped application/NoMatch/final-equivalence proof. Successful closure still requires fresh independent detector clearance. Neither `applied_cleared` text nor a NoMatch alone authorizes reflection publication. Broker objective/policy supersession rules remain authoritative.
 
+Admission-denied Pod creation ends a rollout wait immediately. A stage mitigation
+with `result=admission_blocked` retains its applied repair; its
+`apply_receipt.rollout_pending` has `reason_code=admission_blocked`, named
+`admission_webhooks`, resolved `admission_configurations` and owned workload
+failure evidence. This is an unverified prerequisite, never automatic rollback
+or independent repair credit. Agent applies use the same classification.
+
+New requests can carry `prior_response_progress` from failed episodes with an
+exact overlapping detector/finding fingerprint since the last healthy outcome.
+It contains successful action receipts and observed blockers, as information
+for avoiding duplicate work; it neither credits the new outcome nor restores
+mutation authority. Full receipts remain in the private incident facts file.
+The handoff also retains the existing
+`controller.rollout/deployment-rollout-pending` finding identity for a recorded
+admission prerequisite, including stage rejoin. Old Ready replicas clearing
+health cannot silently skip the responder; fresh controller closure observation
+still owns recovery verification.
+
+
+Prior-response progress is a bounded informational projection (at most eight
+newest episodes and 32 KiB before task encoding); transport pressure can compact
+it further. `ResponseProgress.truncated` and `omitted_episodes` explicitly mark
+loss. Complete receipts remain in the durable outcomes, not necessarily in the
+next request's facts file. Admission prerequisites require current-generation
+owned evidence newer than the rollout observation/wait start; retained warnings
+remain diagnostics and cannot alone abort a later scale-up.
+
+Source reconciliation action reports carry `source_reconcile`: the object reference, `converged`, `residual_paths`, `observation_error`, and `additions_known`. Paths contain no values. Status `partial` with `failure_reason=source_residual` means applied writes remain useful but readback still differs or is unavailable; it supplies no independent verification credit. `additions_known=false` limits comparison to declared source fields because no bound acceptance record is available. Deployment rollout residuals include active old-template ReplicaSets and their remaining Pods as `rollout.replicasets[namespace/name]` and `rollout.pods[namespace/name]`; zero-sized history without Pods is excluded. Reconciliation only observes these remnants; the Deployment controller and responder own rollout handling. The retained wire field `rollout_steps` is no longer produced. Normal rollout completion remains separate evidence.
+
 Live diagnosis bindings come from `program.BindFinding` through `SelectProgramCandidates`, shared by stage selection, matched menu selection and reflection repeat observation. Stage target associations are separate from authored explanation coverage: an unlinked live Match remains applicable. Optional roles may be absent and scalar defaults need no explicit value entry; historical `unbound_parameter` skips can reflect the retired duplicate coverage/completeness gate, not a missing declared parameter.
 
 `plan_not_executable` is a typed terminal skip for a structurally invalid learned plan (including an empty plan or incompatible raw patch/list edits). The common plan builder returns `NonExecutablePlanError`; accepted program/revision failures are remembered before another binding can prepare them, and the durable stage report restores that decision across refresh and restart. No writes are attempted for it; remaining work hands over to the agent. Observation, timeout and execution errors do not become structural terminal decisions merely because planning failed. This is runtime handling, never a replay publication gate.

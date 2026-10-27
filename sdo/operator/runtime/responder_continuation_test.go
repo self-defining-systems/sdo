@@ -2,8 +2,8 @@ package runtime
 
 import (
 	"context"
-	"errors"
 	"encoding/json"
+	"errors"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
@@ -127,6 +127,7 @@ func TestResponderContinuationRetainsSessionBudgetAndUsageAcrossRestart(t *testi
 	result.Status = IncidentFailed
 	result.Usage.InputTokens = 100
 	result.Usage.OutputTokens = 10
+	result.RepairActions = []RepairActionReceipt{{ActionID: "earlier-source-repair", Kind: "source", Target: "demo/api", Summary: "source successfully reconciled", Details: "read back", StartedAt: time.Now().Add(-time.Second), CompletedAt: time.Now(), Success: true}}
 	publishContinuationResult(t, client, first, result)
 	second := awaitJob(t, client, IncidentJobName(request.IncidentID+"-continue-1"))
 	sessionPath := func(j *batchv1.Job) string {
@@ -151,6 +152,9 @@ func TestResponderContinuationRetainsSessionBudgetAndUsageAcrossRestart(t *testi
 		if v.Name == "SDO_RESPONSE_CONTINUATION" {
 			feedback = v.Value
 		}
+	}
+	if !strings.Contains(feedback, "earlier-source-repair") || !strings.Contains(feedback, "source successfully reconciled") {
+		t.Fatalf("failed episode lost earlier successful actions: %s", feedback)
 	}
 	if !strings.Contains(feedback, "unavailable") || !strings.Contains(feedback, `"attempt":1`) {
 		t.Fatalf("missing controller verification feedback: %s", feedback)
