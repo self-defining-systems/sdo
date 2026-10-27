@@ -36,3 +36,18 @@ Single-row SDO results with `cleanup_skipped_reason: row_start_tier2` advance
 without a recovery timestamp/oracle or two cleanup passes. Their independent
 grade is unchanged; the next invocation's attempt marker requires a tier-2 app
 recreate. Acknowledged, correlated learning is still required by the sequence.
+
+Baseline observation exhaustion before injection is a safe retry, identified by
+`injection: {state: not_injected, stage: pre_injection}` together with
+`infra_error: never_injected_retry`. The sequence writes `never-injected-N.json`
+with the original native-result path and `retry.json` with `next_attempt`.
+Restarting executes the row in a fresh `RUN_ID-INDEX-retry-N` result directory;
+the row's slot and memory lineage stay unchanged. Earlier result directories
+remain evidence, not injected incidents. An absent result, an injection-stage
+failure or uncertain native work does not receive retry permission.
+
+`results/RUN_ID/lane-plan.json` records offline admission before any row wipe or
+setup. `not_runnable_on_lane` names unsatisfied worker-count/cluster-feature or
+injector Secret-read requirements. These rows have no injection/grade/learning
+credit. `check-plan --lane-environment RUN_DIR` exposes the same decisions and
+filtered `runnable_problem_ids` for a sweep planner.

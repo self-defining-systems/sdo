@@ -230,7 +230,7 @@ def runtime_probe(
     if kind == "kafka_queue_problems":
         values = _exec_values(read, observe, component, "kafka_offsets")
         if len(values) != 1:
-            raise ValueError("Kafka probe requires one healthy broker observation")
+            raise ObservationUnavailable("Kafka probe requires one healthy broker observation")
         baseline = {row.identity: row for row in _kafka_rows(values[0])}
 
         def queue_drained() -> bool:

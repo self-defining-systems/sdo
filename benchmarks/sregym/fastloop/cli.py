@@ -740,6 +740,30 @@ def _run(args: argparse.Namespace) -> int:
     if args.sweep_service and (args.stream is None or args.agent != "sdo"):
         raise SystemExit("--sweep-service requires an SDO --stream run")
     environment = FastloopEnvironment.load(args.run_dir.resolve())
+    run_id = args.run_id or f"{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}-{args.agent}"
+    results_dir = environment.run_dir / "results" / run_id
+    stream_config = load_stream_config(args.stream) if args.stream else None
+    stream: tuple[tuple[str, ...], ...] = stream_config.incidents if stream_config else ()
+    grading_mode = args.diagnosis_grading or (stream_config.diagnosis_grading if stream_config else "off")
+    judge_model_id = args.judge_model_id or (stream_config.judge_model_id if stream_config else "codex-gpt-6-luna")
+    from benchmarks.sregym.fastloop.grading import SregymDiagnosisGrader
+
+    grader = SregymDiagnosisGrader(environment.sregym_dir, judge_model_id) if grading_mode != "off" else None
+    problems = tuple(args.problem or [environment.deploy_problem]) if not stream else tuple(ids[0] for ids in stream)
+    from benchmarks.sregym.fastloop.fault_tracker import describe_sregym_problems, stream_faults
+    from benchmarks.sregym.fastloop.lane_installability import require_runnable
+    from benchmarks.sregym.faults.description import check_composites, validate_suite
+
+    # Discovery and capability checks must finish before a worker can deploy or launch an agent.
+    description_started = time.monotonic()
+    selected_ids = tuple(dict.fromkeys(problem for ids in (stream or tuple((p,) for p in problems)) for problem in ids))
+    descriptions = (
+        describe_sregym_problems(selected_ids, sregym_dir=environment.sregym_dir, app_source_dir=environment.workspace)
+        if environment.app != "toy"
+        else {}
+    )
+    check_composites(descriptions)
+    require_runnable(descriptions, environment, report_path=results_dir / "lane-plan.json")
     if environment.image_delivery == "kind-load-fallback":
         from benchmarks.sregym.fastloop.image_delivery import warn_fallback
 
@@ -777,32 +801,6 @@ def _run(args: argparse.Namespace) -> int:
         os.environ["SDO_DEV_MOUNT"] = "1"
         os.environ["SDO_OPERATOR_BIN"] = str(environment.dev_mount / ".fastloop/sdo-operator")
     os.environ["KUBECONFIG"] = str(environment.kubeconfig)
-    run_id = args.run_id or f"{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}-{args.agent}"
-    results_dir = environment.run_dir / "results" / run_id
-    stream_config = load_stream_config(args.stream) if args.stream else None
-    stream: tuple[tuple[str, ...], ...] = stream_config.incidents if stream_config else ()
-    grading_mode = args.diagnosis_grading or (stream_config.diagnosis_grading if stream_config else "off")
-    judge_model_id = args.judge_model_id or (stream_config.judge_model_id if stream_config else "codex-gpt-6-luna")
-    from benchmarks.sregym.fastloop.grading import SregymDiagnosisGrader
-
-    grader = SregymDiagnosisGrader(environment.sregym_dir, judge_model_id) if grading_mode != "off" else None
-    problems = tuple(args.problem or [environment.deploy_problem]) if not stream else tuple(ids[0] for ids in stream)
-    from benchmarks.sregym.fastloop.fault_tracker import describe_sregym_problems, stream_faults
-    from benchmarks.sregym.fastloop.lane_guard import LaneGuard, assert_faults_installable
-    from benchmarks.sregym.faults.description import check_composites, validate_suite
-
-    # Discovery and capability checks must finish before a worker can deploy or launch an agent.
-    description_started = time.monotonic()
-    selected_ids = tuple(dict.fromkeys(problem for ids in (stream or tuple((p,) for p in problems)) for problem in ids))
-    descriptions = (
-        describe_sregym_problems(selected_ids, sregym_dir=environment.sregym_dir, app_source_dir=environment.workspace)
-        if environment.app != "toy"
-        else {}
-    )
-    check_composites(descriptions)
-    assert_faults_installable(
-        descriptions, environment.sregym_dir, LaneGuard(environment.cluster, environment.kubeconfig, "row-start")
-    )
     capability_mode = stream_config.capability_mode if stream_config else "strict"
     capability_evidence = validate_suite(
         descriptions if args.agent == "sdo" else {},
@@ -1346,7 +1344,13 @@ def _parallel_attach(args: argparse.Namespace) -> int:
 def _check_plan(args: argparse.Namespace) -> int:
     from benchmarks.sregym.fastloop.probe_coverage import check_plan
 
-    report = check_plan(args.plan, sregym_dir=args.sregym_dir)
+    report = check_plan(
+        args.plan,
+        sregym_dir=args.sregym_dir,
+        environment=FastloopEnvironment.load(args.lane_environment)
+        if getattr(args, "lane_environment", None)
+        else None,
+    )
     print(json.dumps({"tracking_supported": True, **report}))
     return 0
 
@@ -1380,6 +1384,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     check_plan.add_argument("--plan", type=Path, required=True)
     check_plan.add_argument("--sregym-dir", type=Path, default=DEFAULT_SREGYM_DIR)
+    check_plan.add_argument("--lane-environment", type=Path, help="filter against this saved lane before setup")
     check_plan.set_defaults(handler=_check_plan)
 
     up = commands.add_parser("up", help="create or reuse the cluster and deploy the application once")

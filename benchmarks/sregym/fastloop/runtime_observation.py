@@ -11,9 +11,10 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, TypeVar
 from urllib.parse import quote
 
 from benchmarks.sregym.adapter import WaitKind, wait_for
@@ -80,6 +81,31 @@ _NAME = re.compile(r"[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?\Z")
 
 class ObservationUnavailable(ValueError):
     """A private observation could not establish a result (no upstream payload)."""
+
+
+_T = TypeVar("_T")
+
+
+def baseline_observation(
+    capture: Callable[[], _T],
+    *,
+    timeout_seconds: float = 90,
+    poll_seconds: float = 3,
+    monotonic: Callable[[], float] = time.monotonic,
+    sleep: Callable[[float], None] = time.sleep,
+) -> _T:
+    """Retry the complete capture, discarding partial pre-injection references."""
+    if not 0 < timeout_seconds <= 120 or poll_seconds <= 0:
+        raise ValueError("baseline observation requires a positive budget <=120s and poll interval")
+    deadline = monotonic() + timeout_seconds
+    while True:
+        try:
+            return capture()
+        except ObservationUnavailable:
+            remaining = deadline - monotonic()
+            if remaining <= 0:
+                raise ObservationUnavailable("baseline observation unavailable; never_injected_retry") from None
+            sleep(min(poll_seconds, remaining))
 
 
 def _mongo_program(source: str, database: str, collection: str) -> str:
