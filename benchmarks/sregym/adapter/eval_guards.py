@@ -244,6 +244,40 @@ class BusyDeadline:
         return 0.0 if self.deadline is None else max(0.0, self.deadline - monotonic_now)
 
 
+@dataclass
+class ProgressWatch:
+    """Notices a controller that stopped evaluating while an incident is open.
+
+    The controller stamps ``step_count`` at the start of every step pass, before anything that can fail or
+    block, so a count that stays put for ``stall_seconds`` means the step loop is blocked, whatever its
+    ``busy_until`` still says. ``evaluation_iteration`` is not that signal: it also stands still on a failed
+    snapshot, an idle pass and long detector intervals. A state that does not report the count is never
+    judged stalled.
+    """
+
+    stall_seconds: float
+    iteration: int | None = None
+    since: float | None = None
+
+    def __post_init__(self) -> None:
+        if self.stall_seconds <= 0:
+            raise ValueError(f"stall_seconds must be positive, got {self.stall_seconds}")
+
+    def observe(self, state: dict[str, Any], monotonic_now: float) -> float:
+        """Record a state read; the seconds the step count has not moved (zero while it moves)."""
+        raw = state.get("step_count")
+        if not isinstance(raw, int) or not state.get("incident_open"):
+            self.iteration = self.since = None
+            return 0.0
+        if raw != self.iteration or self.since is None:
+            self.iteration, self.since = raw, monotonic_now
+            return 0.0
+        return monotonic_now - self.since
+
+    def stalled(self, state: dict[str, Any], monotonic_now: float) -> bool:
+        return self.observe(state, monotonic_now) >= self.stall_seconds
+
+
 def queued_reflection_ids(state: dict[str, Any]) -> list[str]:
     """Incidents whose acknowledged closure still has a reflection queued, oldest first."""
     ids = state.get("queued_reflection_incident_ids") or []

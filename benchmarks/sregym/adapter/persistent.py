@@ -42,6 +42,7 @@ from benchmarks.sregym.adapter.eval_guards import (
     INCIDENT_EXECUTION_LABEL,
     STANDBY_LABEL,
     BusyDeadline,
+    ProgressWatch,
     busy_until,
     idle_standby_jobs,
     incident_work_open,
@@ -129,6 +130,14 @@ class ClosureFailedError(PersistentControllerError):
 
 class ControllerJobFailedError(ClosureFailedError):
     """The controller Job reached a terminal condition before acknowledging the closure, so no owner can ACK it."""
+
+
+class ControllerStalledError(PersistentControllerError):
+    """The controller's step loop stopped while an incident was open, so no closure can follow.
+
+    An SDO hang, not a slow responder: the wait ends at the stall bound with the incident's last state
+    instead of running out the verification budget.
+    """
 
 
 class ReflectionDeadlineError(PersistentControllerError):
@@ -1128,12 +1137,21 @@ class FollowupClosureWait:
 
 
 class FollowupClosureTimeout(PersistentControllerError):
-    def __init__(self, wait: FollowupClosureWait) -> None:
+    def __init__(self, wait: FollowupClosureWait, controller_state: str = "") -> None:
         super().__init__(
             f"eval: follow-up incident(s) {', '.join(wait.followup_incident_ids)} opened after "
             f"{wait.graded_incident_id!r} closed and stayed open past {wait.bound_seconds:.0f}s"
+            + (f"; controller {controller_state}" if controller_state else "")
         )
         self.wait = wait
+
+
+def controller_closure_state(state: dict[str, Any]) -> str:
+    """The controller's own account of where its incident work stands, for an error message."""
+    keys = ("dispatch_state", "closure_state", "responder_done", "incident_open", "step_count")
+    return ", ".join(f"{key}={state.get(key)}" for key in keys if key in state) + (
+        f", queued_reflections={queued_reflection_ids(state)}" if queued_reflection_ids(state) else ""
+    )
 
 
 def _open_incident_id(snapshot: dict[str, Any]) -> str:
@@ -1206,10 +1224,16 @@ def _wait_for_followup_closure(
     started = clock.monotonic()
     followups: list[str] = []
     busy = BusyDeadline(wait_for(WaitKind.CLOSEOUT_SETTLE))
+    progress = ProgressWatch(wait_for(WaitKind.SLOW_COMMAND))
     while True:
         snapshot = ops.runtime_state(control)
         if not snapshot or not busy.observe(snapshot, clock.monotonic(), clock.now()):
             break
+        if progress.stalled(snapshot, clock.monotonic()):
+            raise ControllerStalledError(
+                "eval: controller step loop stalled while follow-up work was pending: "
+                + controller_closure_state(snapshot)
+            )
         closed.update(terminal_incident_ids(snapshot))
         queued = queued_reflection_ids(snapshot)
         # A reflection queued behind a closure is SDO work even when it belongs to the graded incident.
@@ -1218,11 +1242,14 @@ def _wait_for_followup_closure(
             break
         followups.extend(name for name in names if name not in followups)
         waited = clock.monotonic() - started
-        if busy.expired(clock.monotonic()):
+        # The controller's busy_until is a generous backstop (hours); the cap is the work it names: one
+        # reflection attempt per incident or queued reflection, from the one deadline owner.
+        cap = wait_for(WaitKind.REFLECTION_ATTEMPT, len(followups)) + wait_for(WaitKind.CLOSEOUT_SETTLE)
+        if busy.expired(clock.monotonic()) or waited >= cap:
+            bound = min(waited + busy.seconds_left(clock.monotonic()), cap)
             raise FollowupClosureTimeout(
-                FollowupClosureWait(
-                    incident_id, tuple(followups), waited, waited + busy.seconds_left(clock.monotonic()), False
-                )
+                FollowupClosureWait(incident_id, tuple(followups), waited, bound, False),
+                controller_closure_state(snapshot),
             )
         clock.sleep(POLL_SECONDS)
     if not followups:
@@ -1820,6 +1847,7 @@ def _wait_for_verified_incident(
 
     started = clock.monotonic()
     budget = Deadline(started + timeout, clock.monotonic, "controller verification")
+    progress = ProgressWatch(wait_for(WaitKind.SLOW_COMMAND))
     detected = False
     state: dict[str, Any] = {}
     summary = ""
@@ -1851,6 +1879,11 @@ def _wait_for_verified_incident(
                 busy_until=busy_until(state),
             )
         _raise_observation_failure(observed, state)
+        if progress.stalled(state, clock.monotonic()):
+            raise ControllerStalledError(
+                f"controller stalled in {control!r}: its step loop made no pass for {progress.stall_seconds:.0f}s "
+                f"(step {progress.iteration}){summary}"
+            )
         clock.sleep(POLL_SECONDS)
     raise PersistentControllerError(
         f"controller in {control!r} verified no new incident within {timeout:.0f}s{summary}"

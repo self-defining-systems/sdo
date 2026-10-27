@@ -192,6 +192,9 @@ type Controller struct {
 	// evaluationIteration counts evaluation passes that took a snapshot. It is
 	// durable so telemetry iterations keep increasing across restarts.
 	evaluationIteration int
+	// stepCount is the heartbeat: Step passes begun with observationMu held,
+	// durable so it never runs backwards across a restart.
+	stepCount int64
 	// evaluationAt is the time of the evaluation pass in progress.
 	evaluationAt time.Time
 	// timeline summarizes each finding's firing history since the last incident
@@ -321,12 +324,23 @@ func (c *Controller) Step(ctx context.Context, now time.Time, event *sdk.WatchKi
 	return c.StepEvents(ctx, now, []sdk.WatchKind{*event})
 }
 
+// beatLocked stamps the heartbeat. It runs first in every step pass once
+// observationMu is held, before anything that can fail or block, so only a
+// blocked step loop stops it (evaluation_iteration also stops on a failed
+// snapshot, an idle pass, or long detector intervals).
+func (c *Controller) beatLocked() {
+	c.mu.Lock()
+	c.stepCount++
+	c.mu.Unlock()
+}
+
 // stepPaused advances only work belonging to an already accepted closure. A
 // maintenance pause suspends observation/admission, not the report deadline or
 // outcome and reflection bookkeeping. Persist before exposing broker effects.
 func (c *Controller) stepPaused(ctx context.Context, now time.Time) error {
 	c.observationMu.Lock()
 	defer c.observationMu.Unlock()
+	c.beatLocked()
 	if err := c.requireAdoptedHealth(ctx); err != nil {
 		return err
 	}
@@ -375,6 +389,7 @@ func (c *Controller) stepPaused(ctx context.Context, now time.Time) error {
 func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk.WatchKind) error {
 	c.observationMu.Lock()
 	defer c.observationMu.Unlock()
+	c.beatLocked()
 	if err := c.requireAdoptedHealth(ctx); err != nil {
 		return err
 	}
@@ -1363,10 +1378,22 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 		if continuer, ok := c.dispatcher.(interface {
 			ContinueAfterVerification(context.Context, IncidentRequest, ToolResponse, time.Time) (bool, error)
 		}); ok {
-			resumed, err := continuer.ContinueAfterVerification(ctx, *c.currentIncidentRequest, verification, now)
+			// The dispatcher builds its responder loop through the controller
+			// (LoopFactory registers it under c.mu), so it must run unlocked.
+			request := cloneIncidentRequest(c.currentIncidentRequest)
+			c.mu.Unlock()
+			resumed, err := continuer.ContinueAfterVerification(ctx, *request, verification, now)
+			c.mu.Lock()
 			if err != nil {
 				c.mu.Unlock()
 				c.reportBrokerError("resume unhealthy responder", err)
+				return
+			}
+			// maybeCloseIncident runs only inside StepEvents, which holds observationMu, so no other
+			// step can close or replace the incident while c.mu is released. This re-check is the
+			// defense if that ever stops holding: the continuation's side effects are then abandoned.
+			if !c.incidentOpen || !c.responderDone || c.currentIncidentRequest == nil || c.currentIncidentRequest.IncidentID != request.IncidentID {
+				c.mu.Unlock()
 				return
 			}
 			if resumed {
@@ -1393,15 +1420,6 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 		finalStates = nil
 	}
 	if verified && c.config.CorpusSessionRoot != "" {
-		if snapshot == nil {
-			var err error
-			snapshot, err = c.provider.Snapshot(ctx)
-			if err != nil {
-				c.mu.Unlock()
-				c.reportBrokerError("capture verified snapshot", err)
-				return
-			}
-		}
 		if err := memory.CaptureIncidentSnapshot(c.config.CorpusSessionRoot, c.currentIncidentRequest.IncidentID, "fixed", snapshot, c.config.Namespace, findingCaptureRefs(c.currentIncidentRequest.Findings)...); err != nil {
 			c.mu.Unlock()
 			c.reportBrokerError("capture verified snapshot", err)
@@ -1692,7 +1710,7 @@ func (c *Controller) ExportState() (*contracts.ControllerState, error) {
 		IncidentFindingKeys: append([]string(nil), c.incidentFindingKeys...), ClosureState: c.closureState,
 		ClosureReceipt: closureReceiptContract(c.closureReceipt), ClosureFailure: closureFailureContract(c.closureFailure), FailedClosures: cloneFailedClosures(c.failedClosures),
 		LastAcknowledgedIncidentId: c.lastAcknowledgedIncidentID, QueuedReflectionIncidentIds: append([]string(nil), c.reflections.queued...), QueuedReflectionsUnknown: c.reflections.unknown,
-		EvaluationIteration: int32(c.evaluationIteration), DetectorTimeline: timeline, IncidentView: view,
+		EvaluationIteration: int32(c.evaluationIteration), StepCount: c.stepCount, DetectorTimeline: timeline, IncidentView: view,
 		NamespaceOnboarding: cloneNamespaceOnboarding(c.namespaceOnboarding),
 		AcceptedSourceDrift: driftEventsContract(c.acceptedSourceDrift), AcceptedSourceDriftRevision: c.acceptedSourceDriftRevision,
 		DriftEvents: driftEventsContract(c.driftEvents), OwnershipAdoption: adoptionContract(c.ownershipAdoption),
@@ -1796,6 +1814,7 @@ func (c *Controller) RestoreState(state *contracts.ControllerState) error {
 	}
 	c.lastAcknowledgedIncidentID = state.GetLastAcknowledgedIncidentId()
 	c.evaluationIteration = int(state.GetEvaluationIteration())
+	c.stepCount = state.GetStepCount()
 	c.timeline = cloneTimeline(detectorTimelineState(state.GetDetectorTimeline()))
 	return nil
 }

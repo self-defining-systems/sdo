@@ -202,6 +202,11 @@ message ControllerState {
   // verification timeout and closure retry policy, anchored at the moment the
   // work began so it never slides. Observers wait on this one fact.
   google.protobuf.Timestamp busy_until = 43;
+  // Heartbeat: Step passes begun since the controller first ran, counted once
+  // observationMu is held, whether or not the pass found work, took a
+  // snapshot, or failed. It stops only when the step loop is blocked, so
+  // observers judge a hung controller by it and never by evaluation_iteration.
+  int64 step_count = 44;
   reserved 32, 33, 34;
   reserved "drift_investigation", "drift_admission", "program_sweep_cursors";
 }
