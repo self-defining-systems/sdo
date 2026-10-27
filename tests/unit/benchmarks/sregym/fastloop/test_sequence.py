@@ -334,3 +334,33 @@ def test_sequence_restart_retries_only_proven_never_injected_attempt(plan):
     assert calls[0].exists()  # Preserve failed-attempt evidence.
     assert "retry-1" in str(calls[1])
     assert (plan.journal_dir / "complete.json").exists()
+
+
+def test_interrupted_retry_attempt_still_holds_uncertain_work(plan):
+    from benchmarks.sregym.fastloop.records import NotInjected
+    from benchmarks.sregym.fastloop.sequence import NeverInjectedRetry
+
+    def unavailable(p, index, path):
+        append_record(
+            path,
+            IncidentRecord(
+                run_id=path.parent.name,
+                index=index,
+                problem_id="problem",
+                agent="sdo",
+                model="gpt-6-luna",
+                injection=NotInjected(stage="pre_injection"),
+                infra_error="never_injected_retry",
+            ),
+        )
+
+    with pytest.raises(NeverInjectedRetry):
+        run_sequence(plan, execute=unavailable)
+
+    def interrupted(*_args):
+        raise KeyboardInterrupt
+
+    with pytest.raises(KeyboardInterrupt):
+        run_sequence(plan, execute=interrupted)
+    with pytest.raises(RuntimeError, match="incomplete.*never reinject"):
+        run_sequence(plan, execute=lambda *_args: pytest.fail("reinjected uncertain retry attempt"))

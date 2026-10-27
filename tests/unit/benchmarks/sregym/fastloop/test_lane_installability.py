@@ -84,3 +84,142 @@ def test_rejected_row_never_wipes_or_starts_setup(tmp_path, monkeypatch):
         json.loads((tmp_path / "results/rejected/lane-plan.json").read_text())["synthetic"]["status"]
         == "not_runnable_on_lane"
     )
+
+
+def test_all_source_declared_two_worker_prerequisites_have_admission():
+    import ast
+    from pathlib import Path
+
+    harness = Path(__file__).resolve().parents[5] / "third_party/sregym"
+    found = []
+    for source in (harness / "sregym/conductor/problems").glob("*.py"):
+        tree = ast.parse(source.read_text())
+        for node in tree.body:
+            if isinstance(node, ast.ClassDef) and any(
+                isinstance(value, ast.Constant)
+                and isinstance(value.value, str)
+                and "requires at least two worker nodes" in value.value
+                for value in ast.walk(node)
+            ):
+                found.append(node.name)
+                result = lane_plan(
+                    {"synthetic": description("target_port", node.name)},
+                    LaneTopology(worker_nodes=1, features=frozenset({"calico-bgp"})),
+                    harness,
+                )
+                assert result["synthetic"].status == "not_runnable_on_lane", node.name
+    assert len(found) >= 3  # A missing/uninitialized pin must never silently pass.
+
+
+def test_plan_filter_uses_lane_admission(tmp_path, monkeypatch):
+    import json
+
+    from benchmarks.sregym.fastloop import probe_coverage
+    from benchmarks.sregym.fastloop.environment import FastloopEnvironment
+
+    plan = tmp_path / "plan.json"
+    plan.write_text(json.dumps([{"problem_id": "blocked"}, {"problem_id": "allowed"}]))
+    monkeypatch.setattr(
+        probe_coverage,
+        "describe_sregym_problems",
+        lambda *_a, **_kw: {
+            "blocked": description("internal_traffic_policy_local_astronomy_shop"),
+            "allowed": description("target_port"),
+        },
+    )
+    env = FastloopEnvironment(
+        run_dir=tmp_path,
+        cluster="synthetic-1",
+        kubeconfig=tmp_path / "config",
+        namespace="test",
+        application="test",
+        workspace=tmp_path / "source",
+        sregym_dir=tmp_path / "harness",
+        private_tmp=None,
+        worker_env={"SREGYM_KIND_WORKER_NODES": "1"},
+    )
+    report = probe_coverage.check_plan(plan, sregym_dir=env.sregym_dir, environment=env)
+    assert report["runnable_problem_ids"] == ["allowed"]
+    assert report["lane_plan"]["blocked"]["status"] == "not_runnable_on_lane"
+
+
+def test_topology_capture_records_actual_nodes_and_available_features(tmp_path):
+    import json
+    import subprocess
+
+    from benchmarks.sregym.fastloop.lane_installability import capture_topology
+
+    responses = iter(
+        [
+            {
+                "items": [
+                    {"metadata": {"labels": {"node-role.kubernetes.io/control-plane": ""}}},
+                    {"metadata": {}},
+                    {"metadata": {}},
+                ]
+            },
+            {"status": {"conditions": [{"type": "Available", "status": "True"}]}},
+            {"data": {"calico_backend": "bird"}},
+            {
+                "items": [
+                    {"metadata": {"name": "bgpconfigurations.crd.projectcalico.org"}},
+                    {"metadata": {"name": "bgppeers.crd.projectcalico.org"}},
+                ]
+            },
+        ]
+    )
+
+    def run(command, **kwargs):
+        assert "secret" not in " ".join(command).lower()
+        if "exec" in command:
+            return subprocess.CompletedProcess(command, 0, "BIRD ready", "")
+        return subprocess.CompletedProcess(command, 0, json.dumps(next(responses)), "")
+
+    topology = capture_topology(tmp_path / "config", network_policy=True, run=run)
+    assert topology.worker_nodes == 2
+    assert topology.control_plane_nodes == 1
+    assert topology.features == frozenset({"network-policy", "metrics-server", "calico-bgp"})
+
+
+def test_missing_topology_evidence_cannot_invent_features(tmp_path):
+    import subprocess
+
+    from benchmarks.sregym.fastloop.lane_installability import capture_topology
+
+    topology = capture_topology(
+        tmp_path / "config",
+        network_policy=False,
+        run=lambda command, **kwargs: subprocess.CompletedProcess(command, 1, "", "unavailable"),
+    )
+    assert topology.worker_nodes is None
+    assert not topology.features
+
+
+def test_calico_configuration_without_bgp_crds_cannot_admit_bgp_fault(tmp_path):
+    import json
+    import subprocess
+
+    from benchmarks.sregym.fastloop.lane_installability import capture_topology
+
+    def run(command, **kwargs):
+        return subprocess.CompletedProcess(command, 0, json.dumps({"data": {"calico_backend": "bird"}}), "")
+
+    assert "calico-bgp" not in capture_topology(tmp_path / "config", network_policy=True, run=run).features
+
+
+def test_secret_rotation_admission_uses_guard_policy_owner(tmp_path):
+    from pathlib import Path
+
+    from benchmarks.sregym.fastloop.lane_guard import LaneGuard
+
+    class InjectorReadAllowed(LaneGuard):
+        def command(self, args):
+            return args
+
+    result = lane_plan(
+        {"synthetic": description("secret_rotation_stale_env_credentials_astronomy_shop")},
+        LaneTopology(worker_nodes=1),
+        tmp_path,
+        guard=InjectorReadAllowed("synthetic", Path("/config"), "plan"),
+    )
+    assert result["synthetic"].status == "runnable"

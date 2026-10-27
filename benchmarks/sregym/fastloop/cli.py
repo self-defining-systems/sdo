@@ -420,6 +420,12 @@ def _up(args: argparse.Namespace) -> int:
             "description": str(app["descriptions"]),
         }
     )
+    from benchmarks.sregym.fastloop.lane_installability import capture_topology
+
+    environment.lane_topology = capture_topology(
+        environment.kubeconfig,
+        network_policy=environment.worker_env.get("SREGYM_KIND_REQUIRE_NETWORK_POLICY") == "1",
+    )
     cluster = KubectlApplicationCluster(environment.kubeconfig)
     namespaces = application_namespaces(environment.baseline_path, environment.kubeconfig, environment.namespace)
     if deployed.get("deployed") is True:
@@ -764,6 +770,32 @@ def _run(args: argparse.Namespace) -> int:
     )
     check_composites(descriptions)
     require_runnable(descriptions, environment, report_path=results_dir / "lane-plan.json")
+    capability_mode = stream_config.capability_mode if stream_config else "strict"
+    capability_evidence = validate_suite(
+        descriptions if args.agent == "sdo" else {},
+        require_tracking=args.require_fault_tracking,
+        capability_mode=capability_mode,
+    )
+    args.permissive_responder = bool(stream_config and stream_config.permissive_responder)
+    args.responder_namespaces = stream_config.responder_namespaces if stream_config else ()
+    if args.agent != "sdo" and args.require_fault_tracking:
+        # Capability scope is specific to SDO; tracking is common to both arms.
+        unsupported = [key for key, item in descriptions.items() if not item.tracking_supported]
+        if unsupported:
+            raise ValueError(f"per-fault tracking unsupported for {unsupported}")
+    catalog = {key: item.ordered_faults() for key, item in descriptions.items()}
+    incidents: tuple[tuple[str, ...], ...] = stream or tuple((problem,) for problem in problems)
+    faults_by_incident: dict[str, tuple[FaultSpec, ...]] = {}
+    for ids in incidents:
+        first_id = next(iter(ids))
+        if len(ids) > 1 or (descriptions and descriptions[first_id].composite):
+            faults_by_incident["+".join(ids)] = stream_faults(ids, catalog=catalog)
+    if args.require_fault_tracking:
+        for key, faults in faults_by_incident.items():
+            if len({fault.name for fault in faults}) != len(faults):
+                raise ValueError(f"{key}: per-fault tracking has duplicate probe identities")
+    registered_composites = bool(faults_by_incident)
+    description_seconds = time.monotonic() - description_started
     if environment.image_delivery == "kind-load-fallback":
         from benchmarks.sregym.fastloop.image_delivery import warn_fallback
 
@@ -801,32 +833,6 @@ def _run(args: argparse.Namespace) -> int:
         os.environ["SDO_DEV_MOUNT"] = "1"
         os.environ["SDO_OPERATOR_BIN"] = str(environment.dev_mount / ".fastloop/sdo-operator")
     os.environ["KUBECONFIG"] = str(environment.kubeconfig)
-    capability_mode = stream_config.capability_mode if stream_config else "strict"
-    capability_evidence = validate_suite(
-        descriptions if args.agent == "sdo" else {},
-        require_tracking=args.require_fault_tracking,
-        capability_mode=capability_mode,
-    )
-    args.permissive_responder = bool(stream_config and stream_config.permissive_responder)
-    args.responder_namespaces = stream_config.responder_namespaces if stream_config else ()
-    if args.agent != "sdo" and args.require_fault_tracking:
-        # Capability scope is specific to SDO; tracking is common to both arms.
-        unsupported = [key for key, item in descriptions.items() if not item.tracking_supported]
-        if unsupported:
-            raise ValueError(f"per-fault tracking unsupported for {unsupported}")
-    catalog = {key: item.ordered_faults() for key, item in descriptions.items()}
-    incidents: tuple[tuple[str, ...], ...] = stream or tuple((problem,) for problem in problems)
-    faults_by_incident: dict[str, tuple[FaultSpec, ...]] = {}
-    for ids in incidents:
-        first_id = next(iter(ids))
-        if len(ids) > 1 or (descriptions and descriptions[first_id].composite):
-            faults_by_incident["+".join(ids)] = stream_faults(ids, catalog=catalog)
-    if args.require_fault_tracking:
-        for key, faults in faults_by_incident.items():
-            if len({fault.name for fault in faults}) != len(faults):
-                raise ValueError(f"{key}: per-fault tracking has duplicate probe identities")
-    registered_composites = bool(faults_by_incident)
-    description_seconds = time.monotonic() - description_started
     results_dir.mkdir(parents=True, exist_ok=True)
     (results_dir / "fault_descriptions.json").write_text(
         json.dumps({key: item.model_dump(mode="json") for key, item in descriptions.items()}, indent=2) + "\n",

@@ -239,7 +239,8 @@ def run_sequence(plan: SequencePlan, *, execute: Callable[[SequencePlan, int, Pa
             attempt = json.loads(retry_path.read_text())["next_attempt"] if retry_path.exists() else 0
             suffix = f"-retry-{attempt}" if attempt else ""
             results = plan.environment_dir / "results" / f"{plan.run_id}-{index:03d}{suffix}" / "incidents.jsonl"
-            execute_needed = not manifest.exists() or (attempt > 0 and not results.exists())
+            attempt_manifest = directory / f"attempt-{attempt}.json"
+            execute_needed = not manifest.exists() or (attempt > 0 and not attempt_manifest.exists())
             if not manifest.exists():
                 if results.parent.exists():
                     raise RuntimeError(f"eval: row {index} has unjournaled results; never overwrite native evidence")
@@ -271,6 +272,7 @@ def run_sequence(plan: SequencePlan, *, execute: Callable[[SequencePlan, int, Pa
                 )
             try:
                 if execute_needed:
+                    _save(attempt_manifest, {"attempt": attempt, "native_result": str(results), "started_at": _now()})
                     execute(plan, index, results)
                 terminal = _terminal(plan, index, results)
             except NeverInjectedRetry:

@@ -7,16 +7,18 @@ Missing recorded evidence is not permission to spend a lane discovering it live.
 from __future__ import annotations
 
 import json
+import subprocess
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from benchmarks.sregym.fastloop.lane_guard import FaultNotInstallableError, LaneGuard, assert_faults_installable
+from benchmarks.sregym.faults.probe_catalog import CLASS_KINDS
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Callable, Mapping
 
     from benchmarks.sregym.fastloop.environment import FastloopEnvironment
     from benchmarks.sregym.faults.description import ProblemDescription
@@ -40,6 +42,81 @@ class LaneTopology(BaseModel):
         return cls(worker_nodes=int(workers) if workers is not None else None, features=frozenset(features))
 
 
+def capture_topology(
+    kubeconfig: Path,
+    *,
+    network_policy: bool,
+    run: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+) -> LaneTopology:
+    """Record read-only node/feature evidence at up, never during row admission."""
+
+    def read(resource: str, name: str = "", namespace: str = "") -> dict[str, Any]:
+        command = ["kubectl", "--kubeconfig", str(kubeconfig), "get", resource]
+        if name:
+            command.append(name)
+        if namespace:
+            command += ["-n", namespace]
+        command += ["-o", "json", "--request-timeout=8s"]
+        try:
+            result = run(command, capture_output=True, text=True, check=False, timeout=10)
+            if result.returncode == 0:
+                value = json.loads(result.stdout)
+                if isinstance(value, dict):
+                    return value
+        except (OSError, subprocess.TimeoutExpired, ValueError):
+            pass
+        return {}
+
+    listing = read("nodes")
+    nodes = listing.get("items")
+    workers = None
+    controls = 0
+    if isinstance(nodes, list) and nodes:
+        controls = sum(
+            any(
+                key in ((node.get("metadata") or {}).get("labels") or {})
+                for key in ("node-role.kubernetes.io/control-plane", "node-role.kubernetes.io/master")
+            )
+            for node in nodes
+        )
+        workers = len(nodes) - controls
+    features = {"network-policy"} if network_policy else set()
+    metrics = read("apiservice", "v1beta1.metrics.k8s.io")
+    if any(
+        condition.get("type") == "Available" and condition.get("status") == "True"
+        for condition in (metrics.get("status") or {}).get("conditions") or []
+    ):
+        features.add("metrics-server")
+    calico = read("configmap", "calico-config", "kube-system")
+    if (calico.get("data") or {}).get("calico_backend") == "bird":
+        definitions = read("customresourcedefinitions")
+        names = {(item.get("metadata") or {}).get("name") for item in definitions.get("items") or []}
+        required = {"bgpconfigurations.crd.projectcalico.org", "bgppeers.crd.projectcalico.org"}
+        if required <= names:
+            command = [
+                "kubectl",
+                "--kubeconfig",
+                str(kubeconfig),
+                "-n",
+                "kube-system",
+                "exec",
+                "daemonset/calico-node",
+                "-c",
+                "calico-node",
+                "--",
+                "birdcl",
+                "show",
+                "status",
+            ]
+            try:
+                result = run(command, capture_output=True, text=True, check=False, timeout=10)
+                if result.returncode == 0:
+                    features.add("calico-bgp")
+            except (OSError, subprocess.TimeoutExpired):
+                pass
+    return LaneTopology(worker_nodes=workers, control_plane_nodes=controls, features=frozenset(features))
+
+
 @dataclass(frozen=True)
 class LanePlanResult:
     status: Literal["runnable", "not_runnable_on_lane"]
@@ -61,6 +138,7 @@ _FEATURES = {
     "calico_route_reflector_label_drift": "calico-bgp",
 }
 _CLASS_KINDS = {
+    **CLASS_KINDS,
     "NodeConntrackExhaustionHotelReservation": "node_conntrack_exhaustion_hotel_reservation",
     "CalicoRouteReflectorLabelDriftHotelReservation": "calico_route_reflector_label_drift",
     "KubeletEvictionThresholdMisconfig": "kubelet_eviction_threshold_misconfig",
@@ -94,7 +172,12 @@ def lane_plan(
             if kind == "calico_route_reflector_label_drift" and topology.control_plane_nodes != 1:
                 reasons.append(f"{kind}: requires exactly one control-plane node")
             if kind.startswith("secret_rotation") or fault.class_name.startswith("SecretRotation"):
-                reasons.append(f"{fault.class_name or kind}: injector Secret read is blocked by the lane guard")
+                try:
+                    guard.command(["kubectl", "get", "secret", "injector-prerequisite", "-o", "json"])
+                except ValueError as exc:
+                    reasons.append(
+                        f"{fault.class_name or kind}: injector Secret read is blocked by the lane guard: {exc}"
+                    )
         try:
             assert_faults_installable({problem_id: description}, sregym_dir, guard)
         except FaultNotInstallableError as exc:

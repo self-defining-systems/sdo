@@ -41,7 +41,8 @@ Baseline observation exhaustion before injection is a safe retry, identified by
 `injection: {state: not_injected, stage: pre_injection}` together with
 `infra_error: never_injected_retry`. The sequence writes `never-injected-N.json`
 with the original native-result path and `retry.json` with `next_attempt`.
-Restarting executes the row in a fresh `RUN_ID-INDEX-retry-N` result directory;
+`attempt-N.json` is durable before execution, so interruption of a retry still
+holds uncertain native work. Restarting a proven never-injected failure executes the row in a fresh `RUN_ID-INDEX-retry-N` result directory;
 the row's slot and memory lineage stay unchanged. Earlier result directories
 remain evidence, not injected incidents. An absent result, an injection-stage
 failure or uncertain native work does not receive retry permission.

@@ -41,7 +41,8 @@ unsatisfied injector prerequisites. `run` applies the same admission before any
 wipe, worker startup or onboarding, and writes `results/RUN_ID/lane-plan.json`.
 Worker count comes from the recorded `SREGYM_KIND_WORKER_NODES`; old lanes without
 that fact cannot admit faults requiring a worker count. Optional `lane_topology`
-in `fastloop.json` records worker/control-plane counts and confirmed cluster
+in `fastloop.json`, captured by `up` using node metadata, APIService availability
+and Calico configuration, records worker/control-plane counts and confirmed cluster
 features (`network-policy`, `metrics-server`, `calico-bgp`). Missing feature
 proof fails closed. SecretRotation injectors remain excluded until the lane guard
 allows their Secret read. This admission never grants production repair authority.
