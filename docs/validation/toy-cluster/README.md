@@ -111,7 +111,7 @@ The last warm outcome is still `success`; its row lacks detection/mitigation
 timestamps despite outcome evidence. No production timing/classification change
 was made. The first periodic attempt also used a verification deadline of only
 60 s after time scaling and expired as the sweep opened its incident; the valid
-retry used `--timeout 900 --time-scale 0.1` (120 s verification budget).
+retry used `--timeout 900`.
 
 ## Other live checks
 

@@ -24,7 +24,7 @@ import (
 func TrafficWorkloadNames(detectors []sdk.Detector) []string {
 	seen := make(map[string]bool)
 	for _, detector := range detectors {
-		consumer, ok := sdk.As[traffic.Consumer](detector)
+		consumer, ok := detector.(traffic.Consumer)
 		if !ok {
 			continue
 		}

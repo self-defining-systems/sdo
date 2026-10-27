@@ -20,9 +20,6 @@ var ErrObjectNotCaptured = errors.New("object not captured")
 
 FUNCTIONS
 
-func As[T any](detector Detector) (T, bool)
-    As returns the first detector in the Unwrap chain that implements T.
-
 func CanonicalObjectKind(raw string) string
     CanonicalObjectKind accepts kubectl aliases and group-qualified kinds.
     Unknown kind spelling is preserved, without inventing an API version.
@@ -440,14 +437,6 @@ type SourceDiff struct {
     SourceDiff is the read-only comparison with the accepted source for one
     resource. Missing source or observation evidence is an error, never a clean
     comparison.
-
-type Unwrapper interface {
-	Unwrap() Detector
-}
-    Unwrapper is implemented by detectors that decorate another detector.
-    Every optional capability (observation consumers, windows, confirmation)
-    is read with As, so a decorator that only changes Spec cannot hide what the
-    wrapped detector declares.
 
 type WatchKind struct {
 	APIVersion string

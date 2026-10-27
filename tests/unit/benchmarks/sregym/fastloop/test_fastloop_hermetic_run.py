@@ -907,8 +907,6 @@ def test_scripted_fastloop_reuses_reflected_target_port_program(
                 str(STREAM),
                 "--diagnosis-grading",
                 "off",
-                "--time-scale",
-                "0.01",
                 "--health-timeout",
                 "2",
             ]

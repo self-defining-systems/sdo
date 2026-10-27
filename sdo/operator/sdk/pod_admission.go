@@ -15,7 +15,7 @@ type PodAdmissionResult struct {
 // containing a detector that explicitly requests it.
 func ConsumesPodAdmission(detectors []Detector) bool {
 	for _, detector := range detectors {
-		if consumer, ok := As[interface{ ConsumesPodAdmission() bool }](detector); ok && consumer.ConsumesPodAdmission() {
+		if consumer, ok := detector.(interface{ ConsumesPodAdmission() bool }); ok && consumer.ConsumesPodAdmission() {
 			return true
 		}
 	}

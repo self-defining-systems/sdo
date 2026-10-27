@@ -117,8 +117,6 @@ def execute_row(plan: SequencePlan, index: int, results: Path) -> None:
         "recorded-actions",
         "--reflection-session",
         "resume",
-        "--time-scale",
-        "1",
         "--timeout",
         str(plan.timeout_seconds),
         "--detection-timeout",

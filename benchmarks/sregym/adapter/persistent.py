@@ -726,15 +726,14 @@ class KubectlClusterOps:
         self, control_namespace: str, generation: str, inject: Callable[[], None]
     ) -> dict[str, float]:
         self.set_maintenance(control_namespace, paused=False, generation=generation)
-        scale = float(os.getenv("SDO_TIME_SCALE", "1"))
         return inject_fault_after_resumed_baseline(
             control_namespace,
             generation,
             inject=lambda: inject_while_paused(self, control_namespace, generation, inject),
             kubectl_runner=kubectl,
-            timeout_seconds=RESUMED_BASELINE_TIMEOUT_SECONDS * scale,
-            startup_timeout_seconds=BASELINE_TIMEOUT_SECONDS * scale,
-            poll_seconds=min(1.0, scale),
+            timeout_seconds=RESUMED_BASELINE_TIMEOUT_SECONDS,
+            startup_timeout_seconds=BASELINE_TIMEOUT_SECONDS,
+            poll_seconds=1.0,
         )
 
     def collect_receipt(self, config: RuntimeConfig, incident_id: str, artifacts_dir: Path) -> dict[str, Any]:
@@ -1364,7 +1363,7 @@ def _collect_settled_receipt(
 
     receipt = ops.collect_receipt(config, incident_id, receipt_dir)
     if timeout is None:
-        timeout = CLOSEOUT_SETTLE_TIMEOUT_SECONDS * float(os.getenv("SDO_TIME_SCALE", "1"))
+        timeout = CLOSEOUT_SETTLE_TIMEOUT_SECONDS
     deadline = clock.monotonic() + timeout
     while not _closeout_settled(receipt) and clock.monotonic() < deadline:
         clock.sleep(POLL_SECONDS)
@@ -1887,7 +1886,7 @@ def wait_for_maintenance_ack(
     ops: ClusterOps, control: str, generation: str, clock: Clock, timeout: float | None = None
 ) -> None:
     if timeout is None:
-        timeout = MAINTENANCE_ACK_TIMEOUT_SECONDS * float(os.getenv("SDO_TIME_SCALE", "1"))
+        timeout = MAINTENANCE_ACK_TIMEOUT_SECONDS
     deadline = clock.monotonic() + timeout
     while clock.monotonic() < deadline:
         records = _log_records(ops.controller_logs(control))

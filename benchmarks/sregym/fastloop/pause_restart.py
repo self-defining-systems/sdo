@@ -90,7 +90,7 @@ class RestartControllerInPauseOps:
                 raise PauseRestartError(f"controller Pod {before.name} was not replaced within {self._timeout:.0f}s")
             self._sleep(1.0)
         # The new process reads the paused maintenance state; give it a moment to settle before injection.
-        self._sleep(5.0 * float(os.getenv("SDO_TIME_SCALE", "1")))
+        self._sleep(5.0)
         row = {
             "control_namespace": control_namespace,
             "generation": generation,

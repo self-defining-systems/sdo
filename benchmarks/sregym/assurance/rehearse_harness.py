@@ -2,9 +2,10 @@
 
     uv run python -m benchmarks.sregym.assurance.rehearse_harness --code-root <freeze> --lane <id>
 
-Runs three scenarios serially on one private toy kind cluster (real controller,
-broker, judge refresh and strict receipts; scripted workers, no model, no Secret
-read) built from ``--code-root`` through the fast loop's source mount:
+Runs three scenarios in real time, one private toy kind cluster each and all at
+once (real controller, broker, judge refresh and strict receipts; scripted
+workers, no model, no Secret read) built from ``--code-root`` through the fast
+loop's source mount:
 
 * ``baseline``: learn a program, then reuse it (the RH3 machinery on the toy app);
 * ``p51-restart-in-pause``: the controller Pod is replaced inside the injection pause;
@@ -24,6 +25,7 @@ import shutil
 import subprocess
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -44,7 +46,6 @@ STRICT_RECEIPT = "sdo_production_receipt_strict.json"
 WAIT_BACKSTOP_SECONDS = CLUSTER_OP_TIMEOUT_SECONDS
 LOAD_LIMIT = 40.0
 DISK_FLOOR_GIB = 110
-TIME_SCALE = "0.1"
 #: What the P51 hang looks like in controller logs: resume gave up on a cache that was never started.
 BLIND_RESUME_LINE = "resume observation of namespace"
 BLIND_RESUME_CAUSE = "context deadline exceeded"
@@ -294,7 +295,7 @@ def build_command(tag: str) -> str:
     return f"SDO_IMAGE_TAG={tag} SDO_SCRIPTED_WORKER=1 bash scripts/build_sdo_images.sh"
 
 
-def up_arguments(code_root: Path, run_dir: Path, lane: str, image_tag: str = "fastloop") -> list[str]:
+def up_arguments(code_root: Path, run_dir: Path, lane: str, image_tag: str = "fastloop", worker: int = 0) -> list[str]:
     images = [arg for role, ref in image_refs(image_tag).items() for arg in (f"--{role}-image", ref)]
     return fastloop(
         "up",
@@ -305,7 +306,7 @@ def up_arguments(code_root: Path, run_dir: Path, lane: str, image_tag: str = "fa
         "--cluster-prefix",
         f"reh{lane}-",
         "--worker-id",
-        "0",
+        str(worker),
         "--dev-mount",
         str(code_root),
         *images,
@@ -340,8 +341,6 @@ def run_arguments(code_root: Path, run_dir: Path, scenario: Scenario, run_id: st
         "fresh",
         "--diagnosis-grading",
         "off",
-        "--time-scale",
-        TIME_SCALE,
         "--timeout",
         "300",
         "--detection-timeout",
@@ -389,7 +388,7 @@ def preflight(
 
 
 def _execute(argv: Sequence[str], *, cwd: Path, timeout: float, log: Path) -> tuple[int, str]:
-    env = {**os.environ, "SDO_TIME_SCALE": TIME_SCALE}
+    env = dict(os.environ)
     env.setdefault("SDO_TOY_BASELINE_WAIT", "600")
     log.parent.mkdir(parents=True, exist_ok=True)
     with log.open("a", encoding="utf-8") as handle:
@@ -432,31 +431,23 @@ class Gate:
     scenarios: tuple[Scenario, ...] = SCENARIOS
     up_backstop: float = WAIT_BACKSTOP_SECONDS
 
-    def log(self) -> Path:
-        return self.run_dir / "rehearse-harness.log"
+    def lane_dir(self, scenario: Scenario) -> Path:
+        """Each scenario owns one cluster and run dir, so scenarios run side by side."""
 
-    def _step(self, argv: Sequence[str], timeout: float) -> tuple[int, str]:
-        return self.execute(argv, cwd=self.code_root, timeout=timeout, log=self.log())
+        return self.run_dir / scenario.name
+
+    def _step(self, argv: Sequence[str], timeout: float, lane_dir: Path) -> tuple[int, str]:
+        return self.execute(argv, cwd=self.code_root, timeout=timeout, log=lane_dir / "rehearse-harness.log")
 
     def run(self) -> dict[str, Any]:
         started = datetime.now(timezone.utc)
         t0 = self.clock()
-        results: list[ScenarioResult] = []
-        setup_error = ""
-        up_seconds = 0.0
-        if not (self.run_dir / "fastloop.json").is_file():
-            up_started = self.clock()
-            code, output = self._step(
-                up_arguments(self.code_root, self.run_dir, self.lane, self.image_tag), self.up_backstop
-            )
-            up_seconds = self.clock() - up_started
-            if code:
-                setup_error = f"fastloop up failed (exit {code}): {output[-400:]}"
-        for scenario in self.scenarios:
-            if setup_error:
-                results.append(ScenarioResult(scenario.name, scenario.covers, "error", detail=setup_error))
-                continue
-            results.append(self._scenario(scenario))
+        if self.scenarios:
+            with ThreadPoolExecutor(max_workers=len(self.scenarios)) as pool:
+                lanes = list(pool.map(self._lane, enumerate(self.scenarios)))
+        else:
+            lanes = []
+        results = [result for result, _ in lanes]
         seconds = self.clock() - t0
         summary = {
             "code_root": str(self.code_root),
@@ -465,32 +456,51 @@ class Gate:
             "run_dir": str(self.run_dir),
             "started_at": started.isoformat(),
             "seconds": round(seconds, 1),
-            "up_seconds": round(up_seconds, 1),
+            "up_seconds": round(max((up for _, up in lanes), default=0.0), 1),
             "passed": bool(results) and all(r.passed for r in results),
             "scenarios": [{**asdict(r), "passed": r.passed} for r in results],
         }
+        self.run_dir.mkdir(parents=True, exist_ok=True)
         (self.run_dir / SUMMARY_FILENAME).write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
         return summary
 
-    def _scenario(self, scenario: Scenario) -> ScenarioResult:
+    def _lane(self, item: tuple[int, Scenario]) -> tuple[ScenarioResult, float]:
+        """Bring up this scenario's cluster, then run the scenario on it."""
+
+        worker, scenario = item
+        lane_dir = self.lane_dir(scenario)
+        lane_dir.mkdir(parents=True, exist_ok=True)
+        up_seconds = 0.0
+        if not (lane_dir / "fastloop.json").is_file():
+            up_started = self.clock()
+            code, output = self._step(
+                up_arguments(self.code_root, lane_dir, self.lane, self.image_tag, worker), self.up_backstop, lane_dir
+            )
+            up_seconds = self.clock() - up_started
+            if code:
+                detail = f"fastloop up failed (exit {code}): {output[-400:]}"
+                return ScenarioResult(scenario.name, scenario.covers, "error", detail=detail), up_seconds
+        return self._scenario(scenario, lane_dir), up_seconds
+
+    def _scenario(self, scenario: Scenario, lane_dir: Path) -> ScenarioResult:
         result = ScenarioResult(scenario.name, scenario.covers)
         t0 = self.clock()
         run_id = f"reh-{scenario.name}-{int(time.time())}"
-        results = self.run_dir / "results" / run_id
+        results = lane_dir / "results" / run_id
         try:
-            code, output = self._step(reset_arguments(self.code_root, self.run_dir), WAIT_BACKSTOP_SECONDS)
+            code, output = self._step(reset_arguments(self.code_root, lane_dir), WAIT_BACKSTOP_SECONDS, lane_dir)
             if code:
                 result.status, result.detail = "error", f"reset failed (exit {code}): {output[-300:]}"
                 return result
             code, output = self._step(
-                run_arguments(self.code_root, self.run_dir, scenario, run_id), WAIT_BACKSTOP_SECONDS
+                run_arguments(self.code_root, lane_dir, scenario, run_id), WAIT_BACKSTOP_SECONDS, lane_dir
             )
             if code:
                 # A failed stream still leaves records; the checks name the first broken contract.
                 result.detail = f"fastloop run exit {code}: {output[-300:]}"
-            environment = self.load_environment(self.run_dir)
+            environment = self.load_environment(lane_dir)
             ctx = Context(
-                run_dir=self.run_dir,
+                run_dir=lane_dir,
                 results=results,
                 workspace=environment.workspace,
                 scenario=scenario,
@@ -537,7 +547,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--code-root", type=Path, required=True, help="the harness freeze worktree under test (mounted into the lane)"
     )
     parser.add_argument(
-        "--lane", required=True, help="rehearsal lane id; names the private cluster reh<lane>-toy and its run dir"
+        "--lane", required=True, help="rehearsal lane id; names the private clusters reh<lane>-<n> (one per scenario)"
     )
     parser.add_argument(
         "--run-dir", type=Path, default=None, help="default: /mnt/data/shli/sdo-exp/mixed10/LE/REH/lane<lane>"
@@ -551,10 +561,12 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def dry_run(code_root: Path, run_dir: Path, lane: str, image_tag: str = "fastloop") -> str:
-    lines = [" ".join(up_arguments(code_root, run_dir, lane, image_tag))]
-    for scenario in SCENARIOS:
-        lines.append(" ".join(reset_arguments(code_root, run_dir)))
-        lines.append(" ".join(run_arguments(code_root, run_dir, scenario, f"reh-{scenario.name}-<ts>")))
+    lines = []
+    for worker, scenario in enumerate(SCENARIOS):
+        lane_dir = run_dir / scenario.name
+        lines.append(" ".join(up_arguments(code_root, lane_dir, lane, image_tag, worker)))
+        lines.append(" ".join(reset_arguments(code_root, lane_dir)))
+        lines.append(" ".join(run_arguments(code_root, lane_dir, scenario, f"reh-{scenario.name}-<ts>")))
         lines.append(f"# checks: {', '.join(scenario.checks)}  (covers {', '.join(scenario.covers)})")
     return "\n".join(lines)
 
@@ -576,7 +588,8 @@ def main(argv: list[str] | None = None) -> int:
     print(format_summary(summary))
     print(f"summary: {run_dir / SUMMARY_FILENAME}")
     if args.teardown:
-        gate._step(fastloop("down", "--run-dir", str(run_dir)), 300)
+        for scenario in gate.scenarios:
+            gate._step(fastloop("down", "--run-dir", str(gate.lane_dir(scenario))), 300, gate.lane_dir(scenario))
     return 0 if summary["passed"] else 1
 
 
