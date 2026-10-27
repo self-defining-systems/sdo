@@ -49,7 +49,9 @@ func (r PlanApplicationResult) Proto() (*contracts.PlanApplication, error) {
 	for _, effect := range r.ObjectEffects {
 		encoded := &contracts.PlanObjectEffect{Operation: effect.Operation, Ref: planRefProto(effect.Ref), Uid: effect.UID, State: effect.State, Confirmed: effect.Confirmed, Irreversible: effect.Irreversible}
 		if effect.DeletedPreImage != nil {
-			image, err := structpb.NewStruct(effect.DeletedPreImage.Object)
+			object := effect.DeletedPreImage.DeepCopy().Object
+			sdk.ProjectWebhookCABundles(object)
+			image, err := structpb.NewStruct(object)
 			if err != nil {
 				return nil, fmt.Errorf("encode delete receipt")
 			}
@@ -59,6 +61,7 @@ func (r PlanApplicationResult) Proto() (*contracts.PlanApplication, error) {
 	}
 	for _, report := range r.ActionReports {
 		encoded := &contracts.ActionReport{ActionIndex: uint32(report.ActionIndex), Status: report.Status, ExitCode: report.ExitCode}
+		encoded.WebhookCaDigest = report.WebhookCADigest
 		encoded.FailureReason = report.FailureReason
 		encoded.RecordingError = report.RecordingError
 		encoded.JobStatusJson = report.JobStatus
@@ -107,6 +110,7 @@ func planApplicationState(application *contracts.PlanApplication) RecordedPlanAp
 	}
 	for _, report := range application.GetActionReports() {
 		decoded := PlanActionReport{ActionIndex: int(report.GetActionIndex()), Status: report.GetStatus(), ExitCode: report.ExitCode}
+		decoded.WebhookCADigest = report.GetWebhookCaDigest()
 		decoded.FailureReason = report.GetFailureReason()
 		decoded.RecordingError = report.GetRecordingError()
 		decoded.JobStatus = report.GetJobStatusJson()

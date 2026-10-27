@@ -66,6 +66,9 @@ func generalActionProto(action program.Action) (*contracts.Action, error) {
 		return nil, err
 	}
 	switch a := generalAction(action).(type) {
+	case program.SyncWebhookCA:
+		t := a.Target
+		return &contracts.Action{Kind: &contracts.Action_SyncWebhookCa{SyncWebhookCa: &contracts.SyncWebhookCA{Ref: planRefProto(t.Ref), Webhook: t.Webhook, SecretNamespace: t.SecretNamespace, SecretName: t.SecretName, SecretKey: t.SecretKey, Reason: a.Reason}}}, nil
 	case program.RunScript:
 		env := map[string]*contracts.PlanValue{}
 		for name, value := range a.Env {
@@ -114,6 +117,9 @@ func generalActionProto(action program.Action) (*contracts.Action, error) {
 }
 func generalActionState(action *contracts.Action) (program.Action, error) {
 	switch kind := action.GetKind().(type) {
+	case *contracts.Action_SyncWebhookCa:
+		a := kind.SyncWebhookCa
+		return program.SyncWebhookCA{Target: program.WebhookCA{Ref: objectRefState(a.GetRef()), Webhook: a.GetWebhook(), SecretNamespace: a.GetSecretNamespace(), SecretName: a.GetSecretName(), SecretKey: a.GetSecretKey()}, Reason: a.GetReason()}, nil
 	case *contracts.Action_RunScript:
 		a := kind.RunScript
 		env := map[string]program.Value{}
