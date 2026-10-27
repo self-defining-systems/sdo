@@ -32,7 +32,7 @@ func partialRepairOutcome(t *testing.T, classification string) *contracts.Outcom
 }
 
 func TestNativeBrokerReflectsOnlyVerifiedPartialRepair(t *testing.T) {
-	for _, scenario := range []string{"failed", "cold", "success"} {
+	for _, scenario := range []string{"failed", "cold"} {
 		t.Run(scenario, func(t *testing.T) {
 			classification := scenario
 			if scenario == "cold" {
@@ -47,12 +47,6 @@ func TestNativeBrokerReflectsOnlyVerifiedPartialRepair(t *testing.T) {
 			o := partialRepairOutcome(t, classification)
 			if scenario == "cold" {
 				o = coldPartialRepairOutcome(t)
-			}
-			if classification == "success" {
-				// Only the api cause has independent opening/clearance evidence.
-				// Aggregate success must not authorize the second claimed repair.
-				o.Findings = []*contracts.Finding{{DetectorId: "api-health", RuleId: "available", Status: "active", Severity: "warn", Summary: "service unavailable", Evidence: "synthetic controller observation before repair", PrimaryResource: t1Ref("api"), Fingerprint: "api-health"}}
-				o.FinalHealthDetectorState = []*contracts.DetectorEvaluation{{DetectorId: "api-health", Status: "clear", EvaluatedAt: timestamppb.New(time.Unix(102, 0))}}
 			}
 			original := proto.Clone(o)
 			native := NativeIncidentBroker{Repository: repository, LedgerRoot: t.TempDir(), ResponderBackend: "test", ResponderModel: "test", ForceReflection: true,
@@ -92,14 +86,11 @@ func TestNativeBrokerReflectsOnlyVerifiedPartialRepair(t *testing.T) {
 				if err := task.Request.UnmarshalTo(request); err != nil {
 					t.Fatal(err)
 				}
-				want := 2
-				if classification == "failed" {
-					want = 1
-				}
+				want := 1
 				if len(request.Outcome.ConfirmedRootCauses) != want || len(request.Outcome.RepairActions) != want || len(request.Closure.Result.ConfirmedRootCauses) != want || len(request.Closure.Result.RepairActions) != want || len(request.CauseWork) != 1 {
 					t.Fatalf("reflection leaked unverified repair or changed full success: %v", request)
 				}
-				if request.CauseWork[0].GetCauseIndex() != 0 || len(request.CauseWork[0].GetResources()) != 1 || request.CauseWork[0].Resources[0].Name != "api" || len(request.UnassignedWork) != 1 || request.UnassignedWork[0].GetReason() != "evidence_gap" || len(request.UnassignedWork[0].GetResources()) != 1 || request.UnassignedWork[0].Resources[0].Name != "unverified" {
+				if request.CauseWork[0].GetCauseIndex() != 0 || len(request.CauseWork[0].GetResources()) != 1 || request.CauseWork[0].Resources[0].Name != "api" || len(request.UnassignedWork) != 1 || request.UnassignedWork[0].GetReason() != "no_recorded_repair" || len(request.UnassignedWork[0].GetResources()) != 1 || request.UnassignedWork[0].Resources[0].Name != "unverified" {
 					t.Fatalf("verified drafting work or original-resource evidence gap lost: %v", request)
 				}
 				if request.Outcome.Classification != classification {
@@ -237,13 +228,13 @@ func TestPartialReflectionProjectionDoesNotLeakUnverifiedEvidence(t *testing.T) 
 	badApp.VerificationCompleted = false
 	// Even another application on the same object cannot inherit its peer proof.
 	o.PlanApplications = append(o.PlanApplications, badApp)
-	o.ReflectionEligibility = &contracts.ReflectionEligibility{Version: 1, Causes: []*contracts.ReflectionCauseWork{{CauseIndex: 0, Resources: []*contracts.ObjectRef{t1Ref("unverified")}, Items: []*contracts.ReflectionWorkItem{{Reason: "evidence_gap"}}}, {CauseIndex: 1, Resources: []*contracts.ObjectRef{t1Ref("api")}, Items: []*contracts.ReflectionWorkItem{{Disposition: "question", Reason: "unbound_write"}}}}, Unassigned: []*contracts.ReflectionWorkItem{{Resources: []*contracts.ObjectRef{t1Ref("unverified")}}}}
+	o.ReflectionEligibility = &contracts.ReflectionEligibility{Version: 1, Causes: []*contracts.ReflectionCauseWork{{CauseIndex: 0, Resources: []*contracts.ObjectRef{t1Ref("unverified")}, Items: []*contracts.ReflectionWorkItem{{Reason: "no_recorded_repair"}}}, {CauseIndex: 1, Resources: []*contracts.ObjectRef{t1Ref("api")}, Items: []*contracts.ReflectionWorkItem{{Disposition: "question", Reason: "unbound_write"}}}}, Unassigned: []*contracts.ReflectionWorkItem{{Resources: []*contracts.ObjectRef{t1Ref("unverified")}}}}
 	original := proto.Clone(o)
 	current := partialReflectionOutcome(o)
 	if len(current.ConfirmedRootCauses) != 1 || current.ConfirmedRootCauses[0].Resources[0].Name != "api" || len(current.RepairActions) != 1 || len(current.ProgramRuns) != 1 || len(current.PlanApplications) != 1 || len(current.ProgramToolCalls) != 0 {
 		t.Fatalf("unverified evidence leaked: %v", current)
 	}
-	if len(current.ReflectionEligibility.Causes) != 1 || current.ReflectionEligibility.Causes[0].CauseIndex != 0 || len(current.ReflectionEligibility.Unassigned) != 1 || current.ReflectionEligibility.Unassigned[0].GetReason() != "evidence_gap" || current.ReflectionEligibility.GetEvidenceGapCount() != 0 {
+	if len(current.ReflectionEligibility.Causes) != 1 || current.ReflectionEligibility.Causes[0].CauseIndex != 0 || len(current.ReflectionEligibility.Unassigned) != 1 || current.ReflectionEligibility.Unassigned[0].GetReason() != "no_recorded_repair" || current.ReflectionEligibility.GetNoRepairCount() != 0 {
 		t.Fatalf("learning work escaped verified cause: %v", current.ReflectionEligibility)
 	}
 	current.ConfirmedRootCauses[0].Summary = "changed projection"

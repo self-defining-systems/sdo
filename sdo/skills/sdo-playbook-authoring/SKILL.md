@@ -1,6 +1,6 @@
 ---
 name: sdo-playbook-authoring
-description: Learn or refine reusable playbooks and deterministic Go programs from independently verified incident outcomes. Covers source grounding, captured evidence, parameterized diagnosis and replay.
+description: Learn or refine reusable playbooks and deterministic Go programs from incident outcomes whose closure verified healthy. Covers source grounding, captured evidence, parameterized diagnosis and replay.
 ---
 
 # Authoring a playbook
@@ -17,7 +17,7 @@ Read the [memory principles](../sdo-memory/SKILL.md#memory-principles) for evide
    [generated program SDK](references/program-sdk.md) before choosing API types. The
    [authoring_reference](../sdo-memory/references/runtime.md#authoring_reference) tool retrieves these same
    shipped references as a section index or one section, with a file to search.
-3. For each independently verified cause, submit a diagnose program, mitigation program, a README explaining
+3. For each cause a recorded repair touched on a closure verified healthy, submit a diagnose program, mitigation program, a README explaining
    how to handle the fault, and detector coverage. A detector may surface multiple playbooks;
    `DetectionContext.DiffAgainstSource` observes field drift and source absence before playbook selection.
    Use the responder's recorded actions and existing session observations to build the replay fixture.

@@ -139,9 +139,12 @@ func testCLIAndBrokerAgreeOnAcceptance(t *testing.T, shard int) {
 		{"missing controller healthy capture", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
 			put(t, r, ".sdo/diagnostics/detectors/incidents/cache/detector.go", parityDetector(t, "cache")+"\n// requires trusted healthy reference\n", 0644)
 		}, []string{validate.RuleDetectorHealthyBaseline}, false},
-		{"successful unrelated reported cause", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
-			put(t, r, ".sdo/diagnostics/detectors/incidents/cache/detector.go", parityDetector(t, "cache")+"\n// agent reported an unrelated cause\n", 0644)
-		}, []string{validate.RuleReflectionExecutableCause}, false},
+		// A closure verified healthy is the only precondition: the cause is bound
+		// by the successful repair write on its own resource, so an opening
+		// finding on another resource neither blocks nor is needed.
+		{"successful cause without matching opening finding", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
+			put(t, r, ".sdo/diagnostics/detectors/incidents/cache/detector.go", parityDetector(t, "cache")+"\n// cause bound by its recorded repair write\n", 0644)
+		}, nil, false},
 		{"unverified peer gaps", validate.Responder, validate.ReflectionPhase, func(*testing.T, string) {}, nil, false},
 		{"unverified peer no verified", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
 			put(t, r, ".sdo/diagnostics/detectors/incidents/cache/detector.go", parityDetector(t, "cache")+"\n// No verified cause.\n", 0644)
@@ -641,7 +644,7 @@ func (p Program) Mitigate(ctx context.Context,v program.ReadView,b program.Bindi
 					}
 				}
 				parityFindingRepairProof(outcome)
-				if test.name == "successful unrelated reported cause" {
+				if test.name == "successful cause without matching opening finding" {
 					outcome.Findings[0].PrimaryResource = &contracts.ObjectRef{Kind: "Service", Namespace: "demo", Name: "actual-fault"}
 				}
 				if _, err := repository.RecordOutcome(context.Background(), "incident", outcome); err != nil {

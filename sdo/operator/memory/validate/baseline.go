@@ -66,5 +66,5 @@ func selectCompileBaseline(ctx context.Context, request Request) (Request, error
 }
 
 func healthyCaptureDiagnostic(message string) Diagnostic {
-	return Diagnostic{Rule: RuleDetectorHealthyBaseline, Message: message, Hint: "record a clear controller evaluation and its observations before opening the incident; agent-authored healthy.json and post-repair state cannot supply this reference"}
+	return Diagnostic{Rule: RuleDetectorHealthyBaseline, Message: message, Hint: "the controller records this sample before the incident, or at a closure it verified healthy; agent-authored healthy.json cannot supply it"}
 }

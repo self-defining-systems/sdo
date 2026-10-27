@@ -99,7 +99,7 @@ func (s *run) compile(ctx context.Context) error {
 			}
 			if rule == RuleDetectorHealthyBaseline {
 				path = layout.DiagnosticsDir
-				hint = "incident detectors must stay quiet on the controller pre-incident healthy state; missing observations require controller baseline capture, never post-repair or agent-authored substitutions"
+				hint = "incident detectors must stay quiet on the controller-captured healthy state (pre-incident, or the closure state the controller verified healthy); never substitute an agent-authored snapshot"
 			}
 			if rule == RuleDetectorControllerStart {
 				path = layout.DiagnosticsDir

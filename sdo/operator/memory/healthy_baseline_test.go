@@ -71,3 +71,47 @@ func TestIncidentHealthyReferenceSurvivesRepairAndRestart(t *testing.T) {
 		t.Fatal("new incident did not adopt its own preceding healthy state")
 	}
 }
+
+func TestClosureHealthyBaselineFillsOnlyAMissingPreIncidentReference(t *testing.T) {
+	root := t.TempDir()
+	view := sdktest.Snapshot{NamespaceName: "app", ServiceList: []corev1.Service{{ObjectMeta: metav1.ObjectMeta{Name: "consul", Namespace: "app"}}}}
+	if err := CaptureIncidentSnapshot(root, "incident", "fixed", view, "app"); err != nil {
+		t.Fatal(err)
+	}
+	if err := BindClosureHealthyBaseline(root, "incident"); err != nil {
+		t.Fatal(err)
+	}
+	dir, _ := IncidentCorpusDir(root, "incident")
+	fixed, _ := os.ReadFile(filepath.Join(dir, "fixed.json"))
+	healthy, err := os.ReadFile(filepath.Join(dir, "healthy", "healthy.json"))
+	if err != nil || string(healthy) != string(fixed) {
+		t.Fatalf("closure snapshot not bound as healthy sample: %v", err)
+	}
+	if reference, _ := os.ReadFile(filepath.Join(dir, "healthy", "reference")); string(reference) != "closure\n" {
+		t.Fatalf("reference=%q", reference)
+	}
+	// A pre-incident reference wins over the closure snapshot.
+	other := t.TempDir()
+	if err := CaptureHealthyBaseline(other, "accepted", sdktest.Snapshot{NamespaceName: "app"}, "app"); err != nil {
+		t.Fatal(err)
+	}
+	if err := BindIncidentHealthyBaseline(other, "accepted", "incident"); err != nil {
+		t.Fatal(err)
+	}
+	if err := CaptureIncidentSnapshot(other, "incident", "fixed", view, "app"); err != nil {
+		t.Fatal(err)
+	}
+	dir, _ = IncidentCorpusDir(other, "incident")
+	before, _ := os.ReadFile(filepath.Join(dir, "healthy", "healthy.json"))
+	if err := BindClosureHealthyBaseline(other, "incident"); err != nil {
+		t.Fatal(err)
+	}
+	after, _ := os.ReadFile(filepath.Join(dir, "healthy", "healthy.json"))
+	if string(before) != string(after) {
+		t.Fatal("closure snapshot replaced the pre-incident reference")
+	}
+	// No fixed capture (unverified closure) leaves the reference absent.
+	if err := BindClosureHealthyBaseline(t.TempDir(), "never-closed"); err == nil {
+		t.Fatal("baseline bound without a closure capture")
+	}
+}

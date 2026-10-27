@@ -77,7 +77,7 @@ func TestSameNameRecreatedOwnedPodDoesNotBlockVerifiedWorkloadRepair(t *testing.
 		DetectorHistory:     []*contracts.DetectorEvaluation{{DetectorId: "workload", Status: "clear", EvaluatedAt: timestamppb.New(at.Add(3 * time.Second))}},
 	}
 	DropReplacedOwnedPods(outcome, writeRolloutCapture(t, at, []corev1.Pod{recreatedPod("search-0", "search-old", "before")}, []corev1.Pod{recreatedPod("search-0", "search-old", "after")}))
-	if causes := VerifiedReflectionCauses(outcome); len(causes) != 1 || len(causes[0].GetResources()) != 1 {
+	if causes := observedCauses(outcome); len(causes) != 1 || len(causes[0].GetResources()) != 1 {
 		t.Fatalf("same-name recreated Pod of the repaired Deployment blocked verification: %v", causes)
 	}
 }
@@ -100,12 +100,12 @@ func TestReplacedOwnedPodDoesNotBlockVerifiedWorkloadRepair(t *testing.T) {
 	}
 	rollout := writeRolloutCapture(t, at, []corev1.Pod{pod("search-old-abcde", "search-old")}, []corev1.Pod{pod("search-new-fghij", "search-new")})
 
-	if causes := VerifiedReflectionCauses(outcome); len(causes) != 0 {
+	if causes := observedCauses(outcome); len(causes) != 0 {
 		t.Fatalf("the replaced Pod's uncleared finding must not verify unaided: %v", causes)
 	}
 	got := proto.Clone(outcome).(*contracts.OutcomeRecord)
 	DropReplacedOwnedPods(got, rollout)
-	causes := VerifiedReflectionCauses(got)
+	causes := observedCauses(got)
 	if len(causes) != 1 || len(causes[0].GetResources()) != 1 || !equalCauseResource(causes[0].GetResources()[0], deployment) {
 		t.Fatalf("replaced Pod of the repaired Deployment blocked verification: %v", causes)
 	}
@@ -146,7 +146,7 @@ func TestReplacedOwnedPodDoesNotBlockVerifiedWorkloadRepair(t *testing.T) {
 				tc.change(o)
 			}
 			DropReplacedOwnedPods(o, writeRolloutCapture(t, at, tc.open, tc.fixed))
-			if causes := VerifiedReflectionCauses(o); len(causes) != 0 {
+			if causes := observedCauses(o); len(causes) != 0 {
 				t.Fatalf("unverified cause authorized: %v", causes)
 			}
 		})

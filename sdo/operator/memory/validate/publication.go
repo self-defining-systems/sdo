@@ -214,8 +214,8 @@ func ReflectionDiagnostics(d *contracts.ReflectionDecision, paths []string) []Di
 	if d == nil {
 		return fail("reflection requires an explicit learning decision")
 	}
-	if d.GetDeclineReason() != "" {
-		return fail("only typed SDK gaps may excuse executable learning; missing controller captures do not block session-evidence fixtures")
+	if reason := d.GetDeclineReason(); reason != "" && reason != DeclineNoRecordedRepair {
+		return fail("only typed SDK gaps or a no_recorded_repair decline may excuse executable learning; missing controller captures do not block session-evidence fixtures")
 	}
 	switch d.GetLearningDecision() {
 	case "updated":

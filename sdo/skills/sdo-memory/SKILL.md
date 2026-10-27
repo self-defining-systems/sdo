@@ -15,7 +15,7 @@ Read memory freely; edit only the artifact classes and proposal checkout your ta
 ## Memory principles
 
 - Treat memory as advice and accepted source as intent; check both against live state before acting.
-- Learn only from independently verified evidence; a README alone does not establish learning.
+- When the incident closed verified healthy, save the repair steps it used; a README alone does not establish learning. A bad saved step is caught on the next encounter, which tries it and checks health.
 - Keep one failure mechanism per playbook; refine it when only a resource or parameter differs.
 - Reflection avoids hard-coded service or app names: prefer runtime bindings from findings, Diagnose or responder values; isolate unavoidable names in one logical helper and document app constants in the playbook README.
 - Use detectors to find problems proactively and playbooks to diagnose and mitigate; their relationship need not be one to one.

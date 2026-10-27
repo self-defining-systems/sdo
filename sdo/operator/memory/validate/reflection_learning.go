@@ -86,13 +86,29 @@ func ReflectionLearningDiagnostics(root string, outcome *contracts.OutcomeRecord
 				}
 			}
 		}
+		if !hasProgram && decision.GetDeclineReason() == DeclineNoRecordedRepair && !hasOwnTransition(outcome, cause) {
+			// The cause's own resources have no recorded repair write, so no
+			// program can bind or replay it. It is recorded, not demanded.
+			continue
+		}
 		if !hasProgram {
-			ds = append(ds, Diagnostic{Rule: RuleReflectionProgramRequired, Message: fmt.Sprintf("verified cause %d requires a diagnose program, mitigation program, README and a recorded-observation replay fixture, or a typed SDK gap naming these cause resources", cause.GetCauseIndex())})
+			ds = append(ds, Diagnostic{Rule: RuleReflectionProgramRequired, Message: fmt.Sprintf("verified cause %d requires a diagnose program, mitigation program, README and a recorded-observation replay fixture, or a typed SDK gap naming these cause resources; a cause with no recorded repair write on its own resources is recorded with decline_reason=no_recorded_repair", cause.GetCauseIndex())})
 		} else if !hasDetector {
 			ds = append(ds, detectorRequired(cause, programs, incidentDetectors))
 		}
 	}
 	return ds, nil
+}
+
+// DeclineNoRecordedRepair is the one typed decline reason. It records a verified
+// cause that has no recorded repair transition on its own resources.
+const DeclineNoRecordedRepair = "no_recorded_repair"
+
+// hasOwnTransition reports a successful repair write to one of the cause's own
+// resources, the only transition a program can bind and replay.
+func hasOwnTransition(outcome *contracts.OutcomeRecord, cause *contracts.ReflectionCauseWork) bool {
+	repaired, _, valid := causeRepairs(outcome, cause.GetResources())
+	return !valid || len(repaired) > 0
 }
 
 // detectorRequired names what to link and where. The check accepts any

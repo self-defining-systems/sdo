@@ -57,8 +57,6 @@ func TestRefinementQuestionAF3Replay(t *testing.T) {
 			}
 			work := classifyCauseWork(outcome, nil)
 			eligibility := &contracts.ReflectionEligibility{Version: 1, Causes: work}
-			gaps := appendEvidenceGaps(work, capture)
-			eligibility.EvidenceGapCount = &gaps
 			found := false
 			for _, cause := range work {
 				for _, item := range cause.Items {
@@ -68,8 +66,8 @@ func TestRefinementQuestionAF3Replay(t *testing.T) {
 					}
 				}
 			}
-			if !found || gaps != 0 {
-				t.Fatalf("expected named abstaining candidate without new observation gaps: %v", eligibility)
+			if !found {
+				t.Fatalf("expected named abstaining candidate: %v", eligibility)
 			}
 			positive, negative := settledProgramCases(eligibility)
 			if len(positive) != 0 || len(negative) != 0 {

@@ -123,13 +123,23 @@ def test_summary_separates_agents_and_reports_warm_and_reflection() -> None:
     assert summary["codex"].median_reflection_seconds is None
 
 
-def test_recorded_evidence_gap_count_survives_csv_round_trip(tmp_path: Path) -> None:
-    record = _record(0).model_copy(update={"reflection_evidence_gap_count": 2})
+def test_recorded_no_repair_count_survives_csv_round_trip(tmp_path: Path) -> None:
+    record = _record(0).model_copy(update={"reflection_no_repair_count": 2})
     path = tmp_path / "incidents.jsonl"
     append_record(path, record)
-    assert load_records(path)[0].reflection_evidence_gap_count == 2
+    assert load_records(path)[0].reflection_no_repair_count == 2
     with path.with_suffix(".csv").open() as handle:
-        assert next(csv.DictReader(handle))["reflection_evidence_gap_count"] == "2"
+        assert next(csv.DictReader(handle))["reflection_no_repair_count"] == "2"
+
+
+def test_recorded_row_with_the_old_count_name_loads_as_the_new_field(tmp_path: Path) -> None:
+    row = json.loads(_record(0).model_copy(update={"reflection_no_repair_count": 3}).model_dump_json())
+    row["reflection_evidence_gap_count"] = row.pop("reflection_no_repair_count")
+    path = tmp_path / "incidents.jsonl"
+    path.write_text(json.dumps(row) + "\n", encoding="utf-8")
+    loaded = load_records(path)[0]
+    assert loaded.reflection_no_repair_count == 3
+    assert "reflection_evidence_gap_count" not in loaded.model_dump()
 
 
 def test_typed_injection_state_rejects_timestamps_on_not_injected() -> None:

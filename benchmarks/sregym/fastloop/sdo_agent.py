@@ -123,9 +123,9 @@ def _receipt_closure_fields(receipt: dict[str, Any]) -> tuple[dict[str, float], 
     return _closure_phase_seconds(ledger), skipped if isinstance(skipped, str) else None
 
 
-def _receipt_evidence_gap_count(receipt: dict[str, Any]) -> int | None:
+def _receipt_no_repair_count(receipt: dict[str, Any]) -> int | None:
     ledger = receipt.get("native_ledger")
-    value = ledger.get("reflection_evidence_gap_count") if isinstance(ledger, dict) else None
+    value = ledger.get("reflection_no_repair_count") if isinstance(ledger, dict) else None
     return value if type(value) is int and value >= 0 else None
 
 
@@ -176,7 +176,7 @@ def _with_receipt_times(outcome: AgentOutcome, receipt: dict[str, Any]) -> Agent
         or _timestamp(timestamps.get("dispatched_at"))
         or _timestamp(receipt.get("responder_started_at")),
         responder_finished_at=outcome.responder_finished_at or _timestamp(receipt.get("responder_finished_at")),
-        reflection_evidence_gap_count=_receipt_evidence_gap_count(receipt),
+        reflection_no_repair_count=_receipt_no_repair_count(receipt),
     )
 
 
@@ -430,7 +430,7 @@ class SdoPersistentAgent:
             reflection_tokens=TokenCounts.from_usage(receipt.get("reflection_usage")),
             warm_path=bool(memory["warm_path"]) if "warm_path" in memory else None,
             reflection_skipped_reason=skipped,
-            reflection_evidence_gap_count=_receipt_evidence_gap_count(receipt),
+            reflection_no_repair_count=_receipt_no_repair_count(receipt),
             closure_phase_seconds=closure_phases,
             sdo_resolution=resolution if isinstance(resolution, str) else None,
             **program_metrics,

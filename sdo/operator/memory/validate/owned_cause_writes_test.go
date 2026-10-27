@@ -61,8 +61,8 @@ func TestOwnedChildWriteBindsToItsOwnerCause(t *testing.T) {
 			if got := validate.RepairedCauseObserved(outcome, cause); got != test.verified {
 				t.Fatalf("RepairedCauseObserved = %v, want %v", got, test.verified)
 			}
-			if got := len(validate.VerifiedReflectionCauses(outcome)) == 1; got != test.verified {
-				t.Fatalf("VerifiedReflectionCauses verified = %v, want %v", got, test.verified)
+			if got := len(validate.VerifiedReflectionCauses(outcome)) == 1; !got {
+				t.Fatalf("verified closure with a recorded repair must learn it, got %v", got)
 			}
 		})
 	}

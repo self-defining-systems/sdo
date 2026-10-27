@@ -204,7 +204,7 @@ func testHermeticRepeatBroker(t *testing.T, rejectFirst, boundSession bool) {
 	}
 	// The protected open/fixed snapshots already contain the bound Service.
 	// Primitive calls are not required for an object to count as observed.
-	if ledger.ReflectionEvidenceGapCount == nil || ledger.GetReflectionEvidenceGapCount() != 0 {
+	if ledger.ReflectionNoRepairCount == nil || ledger.GetReflectionNoRepairCount() != 0 {
 		t.Fatalf("incident mislabeled captured open/fixed objects as missing observations: %v", ledger)
 	}
 	for _, path := range paths {

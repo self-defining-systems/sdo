@@ -22,18 +22,18 @@ func TestVerifiedCauseAllowsObservedRecoveredSymptomWithoutWrite(t *testing.T) {
 		RepairActions:       []*contracts.RepairActionReceipt{{Success: true, Resources: []*contracts.ObjectRef{deployment}, StartedAt: timestamppb.New(at), CompletedAt: timestamppb.New(at.Add(time.Second))}},
 		DetectorHistory:     []*contracts.DetectorEvaluation{{DetectorId: "workload", Status: "clear", EvaluatedAt: timestamppb.New(at.Add(2 * time.Second))}, {DetectorId: "endpoints", Status: "clear", EvaluatedAt: timestamppb.New(at.Add(2 * time.Second))}},
 	}
-	if got := VerifiedReflectionCauses(outcome); len(got) != 1 || len(got[0].Resources) != 2 {
+	if got := observedCauses(outcome); len(got) != 1 || len(got[0].Resources) != 2 {
 		t.Fatalf("observed symptom disqualified hand repair: %v", got)
 	}
 	related := proto.Clone(outcome).(*contracts.OutcomeRecord)
 	related.Findings = related.Findings[:1]
 	related.Findings[0].RelatedResources = []*contracts.ObjectRef{service}
-	if got := VerifiedReflectionCauses(related); len(got) != 1 {
+	if got := observedCauses(related); len(got) != 1 {
 		t.Fatalf("opening related symptom was not observed: %v", got)
 	}
 	unobserved := proto.Clone(outcome).(*contracts.OutcomeRecord)
 	unobserved.Findings = unobserved.Findings[:1]
-	if got := VerifiedReflectionCauses(unobserved); len(got) != 1 {
+	if got := observedCauses(unobserved); len(got) != 1 {
 		t.Fatalf("symptom without an opening finding vetoed the observed repair: %v", got)
 	}
 	for name, change := range map[string]func(*contracts.OutcomeRecord){
@@ -57,7 +57,7 @@ func TestVerifiedCauseAllowsObservedRecoveredSymptomWithoutWrite(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			o := proto.Clone(outcome).(*contracts.OutcomeRecord)
 			change(o)
-			if got := VerifiedReflectionCauses(o); len(got) != 0 {
+			if got := observedCauses(o); len(got) != 0 {
 				t.Fatalf("unproven cause authorized: %v", got)
 			}
 		})
@@ -81,7 +81,7 @@ func TestVerifiedCauseTreatsFindinglessSymptomAsContext(t *testing.T) {
 		RepairActions:   []*contracts.RepairActionReceipt{{Success: true, Resources: []*contracts.ObjectRef{deployment}, StartedAt: timestamppb.New(at), CompletedAt: timestamppb.New(at.Add(time.Second))}},
 		DetectorHistory: []*contracts.DetectorEvaluation{{DetectorId: "health-objective", Status: "clear", EvaluatedAt: timestamppb.New(at.Add(2 * time.Second))}, {DetectorId: "service-endpoints", Status: "clear", EvaluatedAt: timestamppb.New(at.Add(2 * time.Second))}},
 	}
-	if got := VerifiedReflectionCauses(outcome); len(got) != 1 || len(got[0].Resources) != 3 {
+	if got := observedCauses(outcome); len(got) != 1 || len(got[0].Resources) != 3 {
 		t.Fatalf("finding-less symptom vetoed the verified repair: %v", got)
 	}
 	for name, change := range map[string]func(*contracts.OutcomeRecord){
@@ -99,7 +99,7 @@ func TestVerifiedCauseTreatsFindinglessSymptomAsContext(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			o := proto.Clone(outcome).(*contracts.OutcomeRecord)
 			change(o)
-			if got := VerifiedReflectionCauses(o); len(got) != 0 {
+			if got := observedCauses(o); len(got) != 0 {
 				t.Fatalf("unproven cause authorized: %v", got)
 			}
 		})
@@ -115,7 +115,7 @@ func TestVerifiedCauseTreatsFindinglessSymptomAsContext(t *testing.T) {
 			if RepairedCauseObserved(o, o.GetConfirmedRootCauses()[0].GetResources()) {
 				t.Fatal("unobserved resource treated as context without global health closure")
 			}
-			if got := VerifiedReflectionCauses(o); len(got) != 0 {
+			if got := observedCauses(o); len(got) != 0 {
 				t.Fatalf("unproven cause authorized: %v", got)
 			}
 		})
@@ -163,12 +163,12 @@ func TestCombinedWriteBindsToEachIndependentlyClearedCause(t *testing.T) {
 		RepairActions:   []*contracts.RepairActionReceipt{{Success: true, Resources: []*contracts.ObjectRef{recommendation, search}, StartedAt: timestamppb.New(at), CompletedAt: timestamppb.New(at.Add(time.Second))}},
 		DetectorHistory: []*contracts.DetectorEvaluation{{DetectorId: "workload-health", Status: "clear", EvaluatedAt: timestamppb.New(at.Add(2 * time.Second))}, {DetectorId: "pod-admission", Status: "clear", EvaluatedAt: timestamppb.New(at.Add(2 * time.Second))}},
 	}
-	if got := VerifiedReflectionCauses(outcome); len(got) != 2 {
+	if got := observedCauses(outcome); len(got) != 2 {
 		t.Fatalf("combined write was not bound to both causes: %v", got)
 	}
 	outcome.DetectorHistory[1].Status = "firing"
 	outcome.DetectorHistory[1].Fingerprints = []string{"search"}
-	if got := VerifiedReflectionCauses(outcome); len(got) != 1 || got[0].GetCauseIndex() != 0 {
+	if got := observedCauses(outcome); len(got) != 1 || got[0].GetCauseIndex() != 0 {
 		t.Fatalf("only the cause whose own finding cleared may bind: %v", got)
 	}
 }
@@ -199,7 +199,7 @@ func TestVerifiedCauseCoversFindinglessWrittenTargetByItsCause(t *testing.T) {
 		FinalHealthDetectorState: []*contracts.DetectorEvaluation{clear("traffic-links", 156*time.Second)},
 	}
 	// Cause 1 stays an evidence gap: the cleared finding belongs to cause 0.
-	if got := VerifiedReflectionCauses(h4); len(got) != 1 || got[0].GetCauseIndex() != 0 {
+	if got := observedCauses(h4); len(got) != 1 || got[0].GetCauseIndex() != 0 {
 		t.Fatalf("h4: want only cause 0 covered by its cleared Service finding: %v", got)
 	}
 	// Listing cause 0's related-only resource in cause 1 does not make cause
@@ -207,7 +207,7 @@ func TestVerifiedCauseCoversFindinglessWrittenTargetByItsCause(t *testing.T) {
 	// the cause covers its finding-less written target.
 	related := proto.Clone(h4).(*contracts.OutcomeRecord)
 	related.ConfirmedRootCauses[1].Resources = append(related.ConfirmedRootCauses[1].Resources, compose)
-	if got := VerifiedReflectionCauses(related); len(got) != 1 || got[0].GetCauseIndex() != 0 {
+	if got := observedCauses(related); len(got) != 1 || got[0].GetCauseIndex() != 0 {
 		t.Fatalf("h4: a related-only resource of another cause's finding covered cause 1: %v", got)
 	}
 
@@ -233,7 +233,7 @@ func TestVerifiedCauseCoversFindinglessWrittenTargetByItsCause(t *testing.T) {
 			clear("health-objective", 90*time.Second), clear("service-endpoints", 90*time.Second), clear("pod-admission", 90*time.Second),
 		},
 	}
-	if got := VerifiedReflectionCauses(h8); len(got) != 1 || len(got[0].GetResources()) != 5 {
+	if got := observedCauses(h8); len(got) != 1 || len(got[0].GetResources()) != 5 {
 		t.Fatalf("h8: finding-less written targets vetoed the covered cause: %v", got)
 	}
 
@@ -274,7 +274,7 @@ func TestVerifiedCauseCoversFindinglessWrittenTargetByItsCause(t *testing.T) {
 					t.Fatalf("unproven cause observed as repaired: %v", cause.GetResources())
 				}
 			}
-			if got := VerifiedReflectionCauses(o); len(got) != 0 {
+			if got := observedCauses(o); len(got) != 0 {
 				t.Fatalf("unproven cause authorized: %v", got)
 			}
 		})
