@@ -235,7 +235,7 @@ def test_reflection_requires_executable_learning_for_verified_parts(
     assert "Use recorded actions as repair evidence" in prompt
     assert "A README note alone does not capture an executable repair" in prompt
     assert "Learn verified parts even when the whole incident remains unhealthy" in prompt
-    assert "only typed SDK gaps scoped to the affected cause" in prompt
+    assert "A cause you cannot save as a program is recorded as a gap, not refused" in prompt
     assert "detector coverage; detectors may surface several playbooks" in prompt
     current = json.loads(prompt.split("Current outcome:\n", 1)[1].split("\n\nOutcome history", 1)[0])
     assert current["classification"] == classification

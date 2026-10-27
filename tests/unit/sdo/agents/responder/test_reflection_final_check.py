@@ -103,49 +103,26 @@ def accepted_reflection(tmp_path: Path, memory_binary: Path, monkeypatch: pytest
     ("provider", "backend_type"), [("codex", CodexSessionBackend), ("claude", ClaudeSessionBackend)]
 )
 @pytest.mark.parametrize("fresh", [False, True])
-def test_final_check_corrects_missing_replay_in_same_session(
+def test_verified_cause_without_a_program_is_a_recorded_gap_not_a_reprompt(
     accepted_reflection: Path,
     provider: str,
     backend_type: type[CodexSessionBackend],
     fresh: bool,
 ) -> None:
-    calls = 0
-
-    def respond(request: CommandRequest) -> FakeRun:
-        nonlocal calls
-        calls += 1
-        if calls == 1:
-            payload = {"summary": "covered", "learning_decision": "no_change", "no_change_reason": "covered"}
-        else:
-            assert calls == 2
-            # Fresh reflection must also retain its newly created provider session for correction.
-            assert "reflection-session" in request.argv
-            payload = {
-                "summary": "Cannot replay catalog writes with the installed SDK",
-                "learning_decision": "sdk_gap",
-                "no_change_reason": "Catalog replay primitive unavailable",
-                "sdk_gaps": [
-                    {
-                        "fault_class": "catalog",
-                        "primitive": "catalog replay",
-                        "reason": "No catalog read/write replay primitive",
-                        "scratch_script": "inspect catalog",
-                        "resources": [{"api_version": "v1", "kind": "Service", "namespace": "demo", "name": "api"}],
-                    }
-                ],
-            }
-        return reply(provider, payload, session_id="reflection-session", branch="reflection")
-
-    agent = ScriptedAgent(respond)
+    agent = ScriptedAgent(
+        lambda _: reply(
+            provider,
+            {"summary": "covered", "learning_decision": "no_change", "no_change_reason": "covered"},
+            session_id="reflection-session",
+            branch="reflection",
+        )
+    )
     backend = backend_type(executor=agent.executor)
     kwargs = {"worktree": accepted_reflection, "prompt": "reflect", "idempotency_key": "one-dispatch"}
     result = backend.fresh(**kwargs) if fresh else backend.resume(session_id="responder-session", **kwargs)
-    assert result.learning_decision == "sdk_gap"
-    assert calls == 2
-    assert "reflection.program-required" in agent.prompts[1]
-    assert "verified cause 0" in agent.prompts[1]
-    assert "rolled back" not in agent.prompts[1]
-    assert result.usage["llm_calls"] == 2
+    assert result.learning_decision == "no_change"
+    assert len(agent.requests) == 1
+    assert result.usage["llm_calls"] == 1
 
 
 def test_worker_does_not_publish_persistently_rejected_memory(

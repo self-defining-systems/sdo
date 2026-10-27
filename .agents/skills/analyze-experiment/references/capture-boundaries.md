@@ -114,9 +114,9 @@ cannot replace that incident's reference. `StateTracker.BaselineAt()` and closur
 
 Reflection acceptance selects this frozen reference through shared memory check
 on both the CLI and broker. An agent-authored corpus `healthy.json` (often a fixed
-state) and the legacy caller-supplied baseline never replace it. Missing reference,
-missing required observations and active learned findings fail with
-`detector.healthy-baseline`. Baseline TCP sampling is bounded; an omitted read is
+state) and the legacy caller-supplied baseline never replace it. Missing required observations and active learned findings fail with
+`detector.healthy-baseline`; a missing reference only skips the replay and is recorded as a
+coverage gap. Baseline TCP sampling is bounded; an omitted read is
 an evidence gap, never a fabricated successful probe. This replay establishes
 quietness on the known healthy app, separately from positive repair replay.
 

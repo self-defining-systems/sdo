@@ -31,6 +31,10 @@ var internalRules = map[string]string{
 	RuleUnsafePath:           "a path-traversal guard against malformed diffs, not an authoring decision",
 	RuleUpkeepMigration:      "only the Upkeep actor migrates schema versions",
 	RuleArchitectureAlone:    "architecture belongs to the deployer lifecycle stage",
+
+	RuleReflectionProgramRequired:  "a coverage-gap name, recorded and never refused; the skills teach saving programs",
+	RuleReflectionDetectorRequired: "a coverage-gap name, recorded and never refused; the skills teach linking detectors",
+	RuleProgramRepeatReachable:     "a coverage-gap name, recorded and never refused; the skills teach reachable replays",
 }
 
 // ruleIDs returns every rule constant declared in rules.go.
