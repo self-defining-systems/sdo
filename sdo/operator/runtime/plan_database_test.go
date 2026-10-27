@@ -21,6 +21,7 @@ type databaseFake struct {
 	ignore                    bool
 	writes                    int
 	credentialErrorAfterWrite *CredentialReferenceError
+	writeErr                  error
 }
 
 func (c *databaseFake) DatabaseUsers(context.Context, program.DatabaseTarget) ([]program.DatabaseUser, error) {
@@ -39,6 +40,9 @@ func (c *databaseFake) DatabaseUsers(context.Context, program.DatabaseTarget) ([
 }
 func (c *databaseFake) EnsureDatabaseUser(_ context.Context, a program.EnsureDatabaseUser) error {
 	c.writes++
+	if c.writeErr != nil {
+		return c.writeErr
+	}
 	if c.fail {
 		return fmt.Errorf("canary-password")
 	}

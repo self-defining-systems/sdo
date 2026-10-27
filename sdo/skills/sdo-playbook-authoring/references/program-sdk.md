@@ -230,6 +230,29 @@ func NormalizeDatabaseUsers(users []DatabaseUser) ([]DatabaseUser, error)
 
 func (u DatabaseUser) Validate() error
 
+type DatabaseUserEffect struct {
+	User     string              `json:"user"`
+	Outcome  DatabaseUserOutcome `json:"outcome"`
+	Roles    []DatabaseRole      `json:"roles"`
+	Verified bool                `json:"verified"`
+}
+    DatabaseUserEffect is the controller's verified result for one
+    EnsureDatabaseUser: the catalog was read back after the write and shows
+    exactly User with Roles. It is nonsecret; credentials appear only as
+    references.
+
+type DatabaseUserOutcome string
+    DatabaseUserOutcome is what a verified EnsureDatabaseUser changed.
+
+const (
+	DatabaseUserCreated        DatabaseUserOutcome = "created"
+	DatabaseUserUpdated        DatabaseUserOutcome = "updated"
+	DatabaseUserAlreadyCorrect DatabaseUserOutcome = "already_correct"
+)
+func DatabaseUserTransition(before []DatabaseUser, a EnsureDatabaseUser) (DatabaseUserOutcome, error)
+    DatabaseUserTransition classifies the change EnsureDatabaseUser makes to the
+    observed catalog before the write.
+
 type DeleteObject struct {
 	Ref    sdk.ObjectRef
 	Reason string

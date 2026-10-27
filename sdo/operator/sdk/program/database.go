@@ -70,6 +70,57 @@ type EnsureDatabaseUser struct {
 
 func (EnsureDatabaseUser) action() {}
 
+// DatabaseUserOutcome is what a verified EnsureDatabaseUser changed.
+type DatabaseUserOutcome string
+
+const (
+	DatabaseUserCreated        DatabaseUserOutcome = "created"
+	DatabaseUserUpdated        DatabaseUserOutcome = "updated"
+	DatabaseUserAlreadyCorrect DatabaseUserOutcome = "already_correct"
+)
+
+// DatabaseUserEffect is the controller's verified result for one
+// EnsureDatabaseUser: the catalog was read back after the write and shows
+// exactly User with Roles. It is nonsecret; credentials appear only as references.
+type DatabaseUserEffect struct {
+	User     string              `json:"user"`
+	Outcome  DatabaseUserOutcome `json:"outcome"`
+	Roles    []DatabaseRole      `json:"roles"`
+	Verified bool                `json:"verified"`
+}
+
+// DatabaseUserTransition classifies the change EnsureDatabaseUser makes to the
+// observed catalog before the write.
+func DatabaseUserTransition(before []DatabaseUser, a EnsureDatabaseUser) (DatabaseUserOutcome, error) {
+	if err := a.Validate(); err != nil {
+		return "", err
+	}
+	current, err := NormalizeDatabaseUsers(before)
+	if err != nil {
+		return "", err
+	}
+	want, err := NormalizeDatabaseUsers([]DatabaseUser{{Name: a.User, Roles: a.Roles}})
+	if err != nil {
+		return "", err
+	}
+	for _, u := range current {
+		if u.Name != a.User {
+			continue
+		}
+		if len(u.Roles) == len(want[0].Roles) {
+			same := true
+			for i := range u.Roles {
+				same = same && u.Roles[i] == want[0].Roles[i]
+			}
+			if same {
+				return DatabaseUserAlreadyCorrect, nil
+			}
+		}
+		return DatabaseUserUpdated, nil
+	}
+	return DatabaseUserCreated, nil
+}
+
 var credentialEnv = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 func (r CredentialRef) Validate() error {
