@@ -46,6 +46,8 @@ def reflection_recording(
     verified_service: bool = False,
     check_prompt: Callable[[str], None] | None = None,
     tool_result_lines: list[str] | None = None,
+    covered_repeat: bool = False,
+    unrelated_playbooks: int = 0,
 ) -> tuple[CheckpointStore, Path]:
     source = tmp_path / "source"
     shutil.copytree(ROOT / "tests/fixtures/sdo/missing_configmap_app", source)
@@ -93,6 +95,12 @@ def reflection_recording(
     else:
         # These tests isolate transport and frontmatter from verified repair learning.
         del record.confirmed_root_causes[:]
+    if covered_repeat:
+        record.applied_playbooks.append("missing-configmap")
+        record.playbook_coverage.matches.add(playbook_id="missing-configmap", program_revision="accepted-program")
+        record.prior_stages.add(stage="deterministic").mitigations.add(
+            playbook_id="missing-configmap", program_revision="accepted-program", result="applied_cleared"
+        )
     outcome = tmp_path / "outcome.json"
     outcome.write_text(to_canonical_json(record))
     recorder = tmp_path / "outcome.go"
@@ -122,6 +130,10 @@ func main() {
     ).strip()
     request = ReflectionRequest(closure=closure, outcome=record, outcome_commit=commit, session_mode="fresh")
     request.memory_snapshot.accepted_commit = commit
+    for index in range(unrelated_playbooks):
+        request.memory_snapshot.playbooks.add(id=f"unrelated-{index}", markdown="unrelated prior learning" * 100)
+    if covered_repeat:
+        request.memory_snapshot.playbooks.add(id="missing-configmap", markdown="Existing accepted repair")
     task = AgentTask(
         schema_version="sdo.dev/v1alpha1",
         task_id="reflection-1",
@@ -201,6 +213,27 @@ def frontmatter_output() -> dict:
         "learning_decision": "updated",
         "proposed_artifact_ids": ["service-targetport-mismatch"],
     }
+
+
+@pytest.mark.parametrize("unrelated_playbooks", [0, 100], ids=["covered-repeat", "late-line-repeat"])
+def test_recorded_covered_reflection_finishes_in_one_request(tmp_path: Path, unrelated_playbooks: int) -> None:
+    def check_prompt(prompt: str) -> None:
+        assert "accepted-program" in prompt
+        assert "applied_cleared" in prompt
+        assert "Existing accepted repair" in prompt
+        assert "unrelated prior learning" not in prompt
+
+    store, source = reflection_recording(
+        tmp_path,
+        [{"summary": "Already covered", "learning_decision": "no_change", "no_change_reason": "accepted repair"}],
+        files={},
+        covered_repeat=True,
+        unrelated_playbooks=unrelated_playbooks,
+        check_prompt=check_prompt,
+    )
+    assert len(list(store.root.parent.glob("000_*/sdo_runtime/sessions/*/model_io/*/*.json"))) == 1
+    result = replay_live_worker(store, 0, "reflection", source=source, live_on_cache_miss=False)
+    assert result["status"] == "completed"
 
 
 def readme_files(*, physical: bool = False) -> dict[str, bytes]:

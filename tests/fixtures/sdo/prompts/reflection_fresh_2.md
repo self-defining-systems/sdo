@@ -1,6 +1,6 @@
 The controller has committed its authoritative incident outcome. You are reflecting in a fresh session: the responder's session transcript is not available, so rely on the incident brief below and supplied memory context.
 
-Incident brief (built by the broker from the verified closure; about 584 tokens):
+Incident brief (built by the broker from the verified closure; about 573 tokens):
 ## Live evidence at dispatch (closure request)
 Application toy in namespace toy; source commit bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb, deployed commit cccccccccccccccccccccccccccccccccccccccc.
 Detected 1970-01-01T00:00:00+00:00, dispatched 1970-01-01T00:00:00+00:00, responder completed 1970-01-01T00:00:00+00:00, health verified 1970-01-01T00:00:00+00:00.
@@ -64,12 +64,6 @@ Health detectors (judge-owned, never edit): none
 return service.Port != intended.Port
 ```
   Reads Kubernetes Events: no
-Playbook index:
-```
-# Playbooks
-repair-0
-
-```
 Existing playbooks: repair-0
 Excerpt of playbook repair-0:
 ```

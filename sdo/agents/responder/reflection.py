@@ -27,7 +27,7 @@ from sdo.agents.responder.credentials import SKILLS_ROOT
 from sdo.agents.responder.memory_check import VALIDATION_TIMEOUT_SECONDS, ValidationResult, check_reflection_result
 from sdo.agents.responder.reflection_authoring import SdkGap
 from sdo.agents.responder.reflection_brief import incident_brief
-from sdo.agents.responder.reflection_evidence import reflection_memory_view
+from sdo.agents.responder.reflection_evidence import incident_memory_snapshot, reflection_memory_view
 from sdo.agents.responder.reflection_outcomes import current_outcome_view, history_view
 from sdo.agents.responder.session_turn import (
     WrongBranchError,
@@ -369,8 +369,13 @@ class SessionReflector:
                     raise ValueError("a fresh first reflection attempt requires the verified closure for its brief")
                 # The brief replaces the responder transcript, which a resumed
                 # session would re-send on every model request.
+                scoped_closure = type(closure)()
+                scoped_closure.CopyFrom(closure)
+                scoped_closure.request.memory_snapshot.CopyFrom(
+                    incident_memory_snapshot(closure.request.memory_snapshot, outcome)
+                )
                 brief = incident_brief(
-                    closure,
+                    scoped_closure,
                     worktree=worktree,
                     detector_detail=self.guidance in _GENERALIZING_GUIDANCE,
                     event_dependence=self.guidance == "generalize-spec",

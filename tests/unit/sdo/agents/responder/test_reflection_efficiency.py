@@ -30,7 +30,7 @@ def test_incident_memory_finds_relevant_books_beyond_the_inventory_prefix() -> N
     assert view["omitted_playbooks"] == 98
     focus = view["incident_context"]
     assert focus["accepted_commit"] == "accepted"
-    assert focus["explained_finding_fingerprints"] == ["finding"]
+    assert focus["explained_findings"] == 1
     assert focus["stage_mitigations"][0]["program_revision"] == "applied-revision"
     assert len(snapshot.playbooks) == 100  # projection never mutates accepted input
 

@@ -261,7 +261,7 @@ def memory_view(snapshot: OperationalMemorySnapshot) -> dict[str, Any]:
     }
 
 
-def reflection_memory_view(snapshot: OperationalMemorySnapshot, outcome: OutcomeRecord) -> dict[str, Any]:
+def incident_memory_snapshot(snapshot: OperationalMemorySnapshot, outcome: OutcomeRecord) -> OperationalMemorySnapshot:
     """Incident-local advice, bound to the accepted snapshot, never learning authority.
 
     Select before clipping: a relevant playbook may be beyond the inventory's
@@ -285,21 +285,29 @@ def reflection_memory_view(snapshot: OperationalMemorySnapshot, outcome: Outcome
         if item.id in detector_ids or playbook_ids.intersection(item.possible_playbook_ids)
     )
     scoped.playbooks.extend(item for item in snapshot.playbooks if item.id in playbook_ids)
+    return scoped
+
+
+def reflection_memory_view(snapshot: OperationalMemorySnapshot, outcome: OutcomeRecord) -> dict[str, Any]:
+    """Compact accepted inventory and controller stage facts; information only."""
+    scoped = incident_memory_snapshot(snapshot, outcome)
     view = memory_view(scoped)
     view["omitted_detectors"] = len(snapshot.detectors) - len(view["detectors"])
     view["omitted_playbooks"] = len(snapshot.playbooks) - len(view["playbooks"])
     if outcome.prior_stages or outcome.playbook_coverage.matches:
-        mitigations = [
-            {
-                "playbook_id": item.playbook_id,
-                "program_revision": item.program_revision,
-                "result": item.result,
-                "skip_reason": item.skip_reason,
-                "cleared_finding_fingerprints": list(item.cleared_finding_fingerprints),
-                "remaining_finding_fingerprints": list(item.remaining_finding_fingerprints),
-            }
+        attempts = {
+            (item.playbook_id, item.program_revision, item.result)
             for stage in outcome.prior_stages
             for item in stage.mitigations
+            if item.result != "skipped"
+        }
+        mitigations = [
+            {
+                "playbook_id": playbook_id,
+                "program_revision": revision,
+                "result": result,
+            }
+            for playbook_id, revision, result in sorted(attempts)
         ]
         explained = sorted(
             {
@@ -314,15 +322,22 @@ def reflection_memory_view(snapshot: OperationalMemorySnapshot, outcome: Outcome
                 {
                     "playbook_id": match.playbook_id,
                     "program_revision": match.program_revision,
-                    "explained_finding_fingerprints": list(match.explained_finding_fingerprints),
                 }
                 for match in outcome.playbook_coverage.matches[:20]
             ],
             "omitted_matches": max(0, len(outcome.playbook_coverage.matches) - 20),
             "stage_mitigations": mitigations[:20],
             "omitted_stage_mitigations": max(0, len(mitigations) - 20),
-            "explained_finding_fingerprints": explained,
-            "unexplained_finding_fingerprints": list(outcome.playbook_coverage.unexplained_finding_fingerprints),
+            "stage_skips": dict(
+                Counter(
+                    item.skip_reason
+                    for stage in outcome.prior_stages
+                    for item in stage.mitigations
+                    if item.result == "skipped"
+                )
+            ),
+            "explained_findings": len(explained),
+            "unexplained_findings": len(outcome.playbook_coverage.unexplained_finding_fingerprints),
         }
     return view
 
