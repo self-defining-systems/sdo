@@ -196,13 +196,12 @@ def _parser() -> argparse.ArgumentParser:
             "Apply several independent options in one call; overlapping object write sets are refused before writes. "
             "Use repeated --option ID followed by that option's --param NAME=VALUE, or --selection-set FILE "
             "with version 1 and options [{option_id, bindings, parameters, finding_fingerprints}]. "
+            "--match ID applies a ready playbook_coverage match; --bind narrows it. "
             "Each option has its own receipt; one call uses one round. Pending rollout returns its application ID; "
             "reads stay open; past its bound it frees its writes as rollout_stalled. "
             "A single option also accepts --NAME VALUE parameters. "
-            "Ordinary executor and controller RBAC; five rounds per incident. "
-            "A script fix is a first-class learnable mitigation with relation-derived Values, within incident budgets."
-            + " "
-            + WORKING_PROGRAM_HELP
+            "Five rounds per incident. "
+            "Script fixes are learnable mitigations." + " " + WORKING_PROGRAM_HELP
         ),
         epilog=(
             "Advertised option IDs remain valid for this session across filtered menu calls. "
@@ -243,6 +242,19 @@ def _parser() -> argparse.ArgumentParser:
         help="independent option ID; repeat, with per-option --param arguments",
     )
     mitigate.add_argument("--param", action=_OptionParameter, type=_binding, default=[], metavar="NAME=VALUE")
+    mitigate.add_argument(
+        "--match",
+        metavar="ID",
+        help="playbook ID of a ready playbook_coverage match",
+    )
+    mitigate.add_argument(
+        "--bind",
+        action="append",
+        type=_binding,
+        default=[],
+        metavar="NAME=REF",
+        help="with --match: only the match binding NAME to REF (Kind/namespace/name); repeat",
+    )
     report = commands.add_parser("report", help="retrieve a settled mitigation report")
     report.add_argument("attempt_id")
     report.add_argument("--incident-id", required=True)
@@ -363,6 +375,11 @@ def _request(args: argparse.Namespace) -> dict[str, object]:
     elif args.command == "mitigate":
         groups = getattr(args, "option_groups", None)
         selection_set = getattr(args, "selection_set", None)
+        if args.match:
+            request["selection_set"] = _match_selection_set(args, groups)
+            return request
+        if args.bind:
+            raise ValueError("--bind belongs to --match")
         if groups or selection_set:
             if (
                 args.selection
@@ -407,6 +424,37 @@ def _request(args: argparse.Namespace) -> dict[str, object]:
     elif args.command == "source":
         request["ref"] = args.ref
     return request
+
+
+def _match_selection_set(args: argparse.Namespace, groups: object) -> dict[str, object]:
+    """Resolve a coverage match to the menu's ready options so no selection JSON is hand-built."""
+    if (
+        args.option
+        or groups
+        or args.selection
+        or args.selection_set
+        or args.param
+        or getattr(args, "named_parameters", None)
+        or args.finding
+        or args.rounds not in (None, 1)
+    ):
+        raise ValueError("--match takes only PLAYBOOK_ID and optional --bind; it builds the selection itself")
+    request: dict[str, object] = {"command": "menu", "program_id": args.match, "match": True}
+    bindings = dict(args.bind)
+    if len(bindings) != len(args.bind):
+        raise ValueError("duplicate binding name")
+    if bindings:
+        request["bindings"] = bindings
+    response = _exchange(request, Path(os.environ.get("SDO_TOOLS_DIR", "/sdo/session/tools")))
+    menu = response.get("menu")
+    if response.get("error") or not isinstance(menu, dict):
+        raise ValueError(str(response.get("error") or "current mitigation menu unavailable"))
+    options = [option for option in menu.get("options", []) if option.get("program_id") == args.match]
+    ready = [option for option in options if not option.get("disabled_reason")]
+    if not ready:
+        reason = next((str(option["disabled_reason"]) for option in options), "")
+        raise ValueError(reason or f"no ready option for playbook {args.match}; see sdo menu")
+    return {"version": 1, "options": [{"option_id": option["option_id"]} for option in ready]}
 
 
 def _option_selection(args: argparse.Namespace, parameters: dict[str, str]) -> dict[str, object]:

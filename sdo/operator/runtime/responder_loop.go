@@ -45,6 +45,7 @@ type ToolRequest struct {
 	Command             string                                 `json:"command"`
 	Ref                 *sdk.ObjectRef                         `json:"ref,omitempty"`
 	ProgramID           string                                 `json:"program_id,omitempty"`
+	Match               bool                                   `json:"match,omitempty"`
 	Bindings            program.Bindings                       `json:"bindings,omitempty"`
 	PlanIDs             []string                               `json:"plan_ids,omitempty"`
 	ApplicationID       string                                 `json:"application_id,omitempty"`

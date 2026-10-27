@@ -505,6 +505,108 @@ def test_mitigate_repeated_options_group_parameters(monkeypatch):
     ]
 
 
+def _coverage_menu(*options):
+    return {"menu": {"round_limit": 5, "remaining_batches": 5, "options": list(options)}}
+
+
+def _drift_option(option_id, name, **extra):
+    return {
+        "option_id": option_id,
+        "program_id": "deployment-source-drift",
+        "bindings": [{"name": "workload", "object": {"kind": "Deployment", "namespace": "app", "name": name}}],
+        **extra,
+    }
+
+
+def test_mitigate_match_applies_every_ready_option_of_a_playbook_in_one_call(monkeypatch):
+    seen = []
+
+    def exchange(request, _directory):
+        seen.append(request)
+        if request["command"] == "menu":
+            return _coverage_menu(
+                _drift_option("program-a", "api"),
+                _drift_option("program-b", "web"),
+                {"option_id": "program-other", "program_id": "other"},
+            )
+        return {"summary": "applied"}
+
+    monkeypatch.setattr(tools_cli, "_exchange", exchange)
+    assert tools_cli.main(["--json", "mitigate", "--match", "deployment-source-drift"]) == 0
+    assert [request["command"] for request in seen] == ["menu", "mitigate"]
+    assert seen[0]["program_id"] == "deployment-source-drift"
+    assert seen[0]["match"] is True
+    assert seen[1]["selection_set"] == {
+        "version": 1,
+        "options": [{"option_id": "program-a"}, {"option_id": "program-b"}],
+    }
+
+
+def test_mitigate_match_narrows_by_binding_and_skips_disabled_options(monkeypatch):
+    seen = []
+
+    def exchange(request, _directory):
+        seen.append(request)
+        if request["command"] == "menu":
+            return _coverage_menu(
+                _drift_option("program-b", "web"),
+                _drift_option("program-c", "web", disabled_reason="blocked"),
+            )
+        return {"summary": "applied"}
+
+    monkeypatch.setattr(tools_cli, "_exchange", exchange)
+    argv = ["--json", "mitigate", "--match", "deployment-source-drift", "--bind", "workload=Deployment/app/web"]
+    assert tools_cli.main(argv) == 0
+    assert seen[0]["bindings"] == {"workload": "Deployment/app/web"}
+    assert seen[1]["selection_set"]["options"] == [{"option_id": "program-b"}]
+
+
+@pytest.mark.parametrize(
+    ("options", "message"),
+    [
+        ([], "no ready option"),
+        ([_drift_option("program-a", "api", disabled_reason="blocked")], "blocked"),
+    ],
+)
+def test_mitigate_match_without_a_ready_option_fails_before_any_write(monkeypatch, capsys, options, message):
+    seen = []
+
+    def exchange(request, _directory):
+        seen.append(request["command"])
+        return _coverage_menu(*options)
+
+    monkeypatch.setattr(tools_cli, "_exchange", exchange)
+    assert tools_cli.main(["--json", "mitigate", "--match", "deployment-source-drift"]) == 1
+    assert seen == ["menu"]
+    assert message in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        ["route"],
+        ["--selection", "file.json"],
+        ["--selection-set", "file.json"],
+        ["--option", "route"],
+        ["--param", "a=b"],
+        ["--rounds", "2"],
+    ],
+)
+def test_mitigate_match_rejects_hand_built_selection_inputs(monkeypatch, capsys, extra):
+    seen = []
+    monkeypatch.setattr(tools_cli, "_exchange", lambda request, _: seen.append(request) or {"summary": "ok"})
+    assert tools_cli.main(["--json", "mitigate", "--match", "deployment-source-drift", *extra]) == 1
+    assert seen == []
+    assert "--match" in capsys.readouterr().err
+
+
+def test_mitigate_match_is_discoverable_in_help_and_generated_surface(capsys):
+    with pytest.raises(SystemExit):
+        tools_cli.main(["mitigate", "--help"])
+    assert "--match ID" in capsys.readouterr().out
+    assert "--match" in tools_cli.command_surface()["commands"]["mitigate"]
+
+
 def test_multi_option_help_and_generated_surface_are_discoverable(capsys):
     with pytest.raises(SystemExit):
         tools_cli.main(["mitigate", "--help"])
