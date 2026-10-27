@@ -29,6 +29,7 @@ from benchmarks.sregym.fastloop.baseline_recovery import (
 from benchmarks.sregym.fastloop.environment import FastloopEnvironment
 from benchmarks.sregym.fastloop.fault_driver import SregymFaultDriver
 from benchmarks.sregym.fastloop.regenerable import REGENERABLE_TLS_SECRETS
+from tests.unit.benchmarks.sregym.fastloop.accepted_source_fixture import commit_accepted_source
 
 NAMESPACE = "policy-system"
 SECRET = "pod-policy-webhook-tls"
@@ -192,6 +193,7 @@ def _environment(tmp_path: Path, baseline: ApplicationBaseline) -> FastloopEnvir
         private_tmp=None,
         seed_commit="synthetic",
     )
+    commit_accepted_source(env.workspace, namespace=NAMESPACE)
     env.baseline_path.write_text("{}")
     save_application_baseline(env.baseline_path, (baseline,))
     return env
@@ -226,7 +228,8 @@ def test_reset_restore_regenerates_through_the_shared_reconcile(tmp_path: Path) 
 
     cluster = ApiServer(set())
 
-    reconcile_and_record(cluster, (webhook_baseline(),), tmp_path / "workspace", tmp_path / "receipts.jsonl")
+    source = commit_accepted_source(tmp_path / "workspace", namespace=NAMESPACE)
+    reconcile_and_record(cluster, (webhook_baseline(),), source, tmp_path / "receipts.jsonl")
 
     assert (NAMESPACE, SECRET) in cluster.secrets
 

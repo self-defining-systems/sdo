@@ -10,9 +10,12 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from benchmarks.sregym.adapter import WaitKind, kubectl, wait_for
+
+if TYPE_CHECKING:
+    from benchmarks.sregym.fastloop.accepted_source import AcceptedSource
 
 logger = logging.getLogger(__name__)
 RESTORE_RECEIPTS = "restore-receipts.jsonl"
@@ -478,7 +481,7 @@ def reconcile_application(
 ) -> RecoveryCleanup:
     """Restore the captured app objects; ``declared`` holds accepted-source (kind, name).
 
-    Without ``declared`` (no accepted lock) the undeclared re-creation check is skipped.
+    Without ``declared`` the undeclared re-creation check is skipped.
     """
     if baseline.namespace != namespace or namespace.endswith("-sdo") or namespace in NON_APPLICATION_NAMESPACES:
         raise ValueError(f"refusing to reconcile non-application namespace {namespace!r}")
@@ -549,23 +552,19 @@ def reconcile_application(
     return cleanup
 
 
-def declared_source_identities(workspace: Path) -> dict[str, frozenset[tuple[str, str]]] | None:
-    """(kind, name) per namespace from the accepted rendered lock; None without a lock."""
-    lock_path = workspace / ".sdo/rendered/lock.json"
-    if not lock_path.is_file():
-        return None
+def declared_source_identities(source: AcceptedSource) -> dict[str, frozenset[tuple[str, str]]]:
+    """(kind, name) per namespace from the rendered accepted source; cluster-scoped objects use ""."""
     declared: dict[str, set[tuple[str, str]]] = {}
-    for row in json.loads(lock_path.read_text(encoding="utf-8")).get("objects", []):
-        reference = row.get("ref", {})
-        if reference.get("kind") and reference.get("name"):
-            declared.setdefault(reference.get("namespace", ""), set()).add((reference["kind"], reference["name"]))
+    for value in source.manifests:
+        metadata = value["metadata"]
+        declared.setdefault(metadata.get("namespace", ""), set()).add((value["kind"], metadata["name"]))
     return {namespace: frozenset(identities) for namespace, identities in declared.items()}
 
 
 def reconcile_and_record(
     cluster: ApplicationCluster,
     baselines: tuple[ApplicationBaseline, ...],
-    workspace: Path,
+    source: AcceptedSource,
     receipts: Path,
 ) -> list[RecoveryCleanup]:
     """Restore each namespace and append one evidence line naming every write.
@@ -575,10 +574,10 @@ def reconcile_and_record(
     """
     from datetime import UTC, datetime
 
-    lock = declared_source_identities(workspace)
+    accepted = declared_source_identities(source)
     cleanups = []
     for baseline in baselines:
-        declared = None if lock is None else lock.get(baseline.namespace, frozenset()) | lock.get("", frozenset())
+        declared = accepted.get(baseline.namespace, frozenset()) | accepted.get("", frozenset())
         cleanup = reconcile_application(cluster, baseline, baseline.namespace, declared=declared)
         warnings = [
             {"type": "restore_recreated_undeclared_object", "object": value} for value in cleanup.undeclared_recreated
@@ -588,7 +587,6 @@ def reconcile_and_record(
         receipt = {
             "at": datetime.now(UTC).isoformat(),
             "namespace": baseline.namespace,
-            "declared_source_checked": declared is not None,
             "deleted_counts": cleanup.deleted_counts,
             "recreated_namespace": cleanup.recreated_namespace,
             "regenerated": cleanup.regenerated,
@@ -602,7 +600,7 @@ def reconcile_and_record(
 
 
 def accepted_restore_baselines(
-    workspace: Path,
+    source: AcceptedSource,
     baselines: tuple[ApplicationBaseline, ...],
     *,
     seed_commit: str | None = None,
@@ -615,7 +613,18 @@ def accepted_restore_baselines(
     installed_source = True
     if seed_commit and any(baseline.installed_digest for baseline in baselines):
         changes = subprocess.run(
-            ["git", "-C", str(workspace), "diff", "--name-only", seed_commit, "HEAD", "--", ".", ":(exclude).sdo"],
+            [
+                "git",
+                "-C",
+                str(source.workspace),
+                "diff",
+                "--name-only",
+                seed_commit,
+                "HEAD",
+                "--",
+                ".",
+                ":(exclude).sdo",
+            ],
             check=True,
             capture_output=True,
             text=True,
@@ -623,10 +632,8 @@ def accepted_restore_baselines(
         ).stdout.strip()
         installed_source = not changes
     if installed_source and all(baseline.installed_digest for baseline in baselines):
-        return _keep_adopted_passive_objects(workspace, baselines)
-    selected = _lock_manifests(workspace, baselines, kinds=None)
-    if selected is None:
-        return baselines
+        return _keep_adopted_passive_objects(source, baselines)
+    selected = _accepted_manifests(source, baselines, kinds=None)
     return tuple(
         baseline
         if baseline.installed_digest and installed_source
@@ -682,15 +689,15 @@ def _merge_declared(captured: Any, declared: Any) -> Any:
 
 
 def _keep_adopted_passive_objects(
-    workspace: Path, baselines: tuple[ApplicationBaseline, ...]
+    source: AcceptedSource, baselines: tuple[ApplicationBaseline, ...]
 ) -> tuple[ApplicationBaseline, ...]:
     """Overlay accepted-source fields of ConfigMaps and Services onto a sealed install.
 
     Workloads keep the sealed install (no second rollout). A passive object whose
     capture already carries every declared field is untouched; otherwise declared
-    fields win and captured extras stay. An unbacked lock row declares nothing.
+    fields win and captured extras stay.
     """
-    selected = _lock_manifests(workspace, baselines, kinds=ADOPTED_KINDS)
+    selected = _accepted_manifests(source, baselines, kinds=ADOPTED_KINDS)
     if not selected:
         return baselines
     result = []
@@ -710,64 +717,24 @@ def _keep_adopted_passive_objects(
     return tuple(result)
 
 
-def _lock_manifests(
-    workspace: Path, baselines: tuple[ApplicationBaseline, ...], *, kinds: frozenset[str] | None
-) -> dict[tuple[str, str, str], dict[str, Any]] | None:
-    """Backed accepted manifests by (kind, namespace, name); None without a lock.
-
-    ``kinds`` limits the read to those kinds and skips unbacked rows; None demands every row be backed.
-    """
-    import yaml
-
-    root = workspace / ".sdo/rendered"
-    lock_path = root / "lock.json"
-    if not lock_path.is_file():
-        return None
-    selected = {}
+def _accepted_manifests(
+    source: AcceptedSource, baselines: tuple[ApplicationBaseline, ...], *, kinds: frozenset[str] | None
+) -> dict[tuple[str, str, str], dict[str, Any]]:
+    """Rendered accepted-source manifests by (kind, namespace, name); ``kinds`` limits the read."""
     captured = {
         (value.get("apiVersion"), value["kind"], baseline.namespace, value["metadata"]["name"]): value
         for baseline in baselines
         for value in baseline.objects
     }
-    seen = set()
-    for row in json.loads(lock_path.read_text())["objects"]:
-        reference = row.get("ref", {})
-        if reference.get("kind") == "Secret":
+    selected = {}
+    for value in source.manifests:
+        if kinds is not None and value["kind"] not in kinds:
             continue
-        if kinds is not None and (
-            reference.get("kind") not in kinds or row.get("error") or not row.get("file") or not row.get("sha256")
-        ):
-            continue
-        identity = tuple(reference.get(field) for field in ("api_version", "kind", "namespace", "name"))
-        if identity in seen:
-            raise ValueError(f"duplicate accepted restore manifest: {identity}")
-        seen.add(identity)
-        if row.get("error") or not row.get("file") or not row.get("sha256"):
-            raise ValueError(f"unbacked or malformed rendered restore gap: {reference}")
-        path = (root / row["file"]).resolve()
-        if not path.is_relative_to(root.resolve()):
-            raise ValueError("restore manifest escapes accepted rendered directory")
-        payload = path.read_bytes()
-        if hashlib.sha256(payload).hexdigest() != row["sha256"]:
-            raise ValueError(f"restore manifest digest differs from accepted lock: {path.name}")
-        value = yaml.safe_load(payload)
-        if value.get("kind") == "Secret":
-            continue
-        ref = value.get("metadata", {})
-        actual = {
-            "api_version": value.get("apiVersion"),
-            "kind": value.get("kind"),
-            "namespace": ref.get("namespace", ""),
-            "name": ref.get("name"),
-        }
-        if any(actual.get(field) != expected for field, expected in reference.items()):
-            raise ValueError(f"restore manifest identity differs from accepted lock: {path.name}")
-        key = (value["kind"], ref.get("namespace", ""), ref["name"])
-        if key in selected:
-            raise ValueError(f"duplicate accepted restore manifest: {key}")
+        namespace = value["metadata"].get("namespace", "")
+        key = (value["kind"], namespace, value["metadata"]["name"])
         # A source PVC may omit its admission-defaulted immutable class.
         # Retain that installed allocation; an explicit source class still wins.
-        installed = captured.get(identity)
+        installed = captured.get((value.get("apiVersion"), *key))
         if value["kind"] == "PersistentVolumeClaim" and "storageClassName" not in value.get("spec", {}):
             installed_spec = installed.get("spec", {}) if installed else {}
             if "storageClassName" in installed_spec:

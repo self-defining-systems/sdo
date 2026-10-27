@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import pytest
 
 from benchmarks.sregym.fastloop import clean_start
+from tests.unit.benchmarks.sregym.fastloop.accepted_source_fixture import commit_accepted_source
 
 
 @pytest.mark.parametrize("namespace", ["hotel-reservation", "astronomy-shop", "social-network"])
@@ -170,14 +171,8 @@ def test_late_dependency_roll_fails_even_when_all_pods_ready():
 
 
 def test_restore_uses_one_accepted_spec_instead_of_stale_capture(tmp_path):
-    import hashlib
-
-    import yaml
-
     from benchmarks.sregym.fastloop.baseline_recovery import ApplicationBaseline, accepted_restore_baselines
 
-    rendered = tmp_path / ".sdo/rendered"
-    rendered.mkdir(parents=True)
     stale = {
         "apiVersion": "apps/v1",
         "kind": "Deployment",
@@ -186,22 +181,8 @@ def test_restore_uses_one_accepted_spec_instead_of_stale_capture(tmp_path):
     }
     accepted = deepcopy(stale)
     accepted["spec"]["template"]["spec"]["containers"][0]["image"] = "installed"
-    payload = yaml.safe_dump(accepted).encode()
-    (rendered / "registry.yaml").write_bytes(payload)
-    (rendered / "lock.json").write_text(
-        json.dumps(
-            {
-                "objects": [
-                    {
-                        "ref": {"kind": "Deployment", "namespace": "app", "name": "registry"},
-                        "file": "registry.yaml",
-                        "sha256": hashlib.sha256(payload).hexdigest(),
-                    }
-                ]
-            }
-        )
-    )
-    baselines = accepted_restore_baselines(tmp_path, (ApplicationBaseline("app", [stale]),))
+    source = commit_accepted_source(tmp_path, [accepted])
+    baselines = accepted_restore_baselines(source, (ApplicationBaseline("app", [stale]),))
     assert baselines[0].objects == [accepted]
     assert stale["spec"]["template"]["spec"]["containers"][0]["image"] == "old"
 
@@ -246,12 +227,15 @@ def test_restore_retires_unlabelled_admission_objects_outside_captured_and_accep
         calls.append(args)
         items = [
             {"kind": "MutatingWebhookConfiguration", "metadata": {"name": name}}
-            for name in ["installed", "stale-unlabelled"]
+            for name in ["installed", "source-owned", "stale-unlabelled"]
         ]
         return SimpleNamespace(stdout=json.dumps({"items": items}))
 
     monkeypatch.setattr(clean_start, "kubectl", api)
-    restore_admission_baseline(Path("unused"), baseline, tmp_path)
+    owned = {"apiVersion": "admissionregistration.k8s.io/v1", "kind": "MutatingWebhookConfiguration"}
+    owned["metadata"] = {"name": "source-owned"}
+    source = commit_accepted_source(tmp_path / "workspace", [owned], namespace="app")
+    restore_admission_baseline(Path("unused"), baseline, source)
     deletes = [call for call in calls if call[0] == "delete"]
     assert len(deletes) == 1
     assert deletes[0][1] == "MutatingWebhookConfiguration/stale-unlabelled"
@@ -440,7 +424,7 @@ def test_lane_resources_reject_before_any_health_wait_or_restore(monkeypatch, tm
         gate.prove("application-sdo")
 
 
-def test_new_lane_restores_its_installed_source_instead_of_an_inherited_rendered_lock(tmp_path):
+def test_new_lane_restores_its_sealed_install_when_source_is_unchanged_since_the_seed(tmp_path):
     from benchmarks.sregym.fastloop.baseline_recovery import (
         ApplicationBaseline,
         accepted_restore_baselines,
@@ -456,11 +440,11 @@ def test_new_lane_restores_its_installed_source_instead_of_an_inherited_rendered
         "spec": {"replicas": 1, "template": {"spec": {"containers": [{"name": "api", "image": "new-lane"}]}}},
     }
     save_application_baseline(path, (ApplicationBaseline("app", [installed]),), installed=True)
-    root = tmp_path / ".sdo/rendered"
-    root.mkdir(parents=True)
-    (root / "lock.json").write_text('{"objects":[{"file":"missing-old-lane.yaml"}]}')
+    other = deepcopy(installed)
+    other["spec"]["template"]["spec"]["containers"][0]["image"] = "inherited"
+    source = commit_accepted_source(tmp_path / "workspace", [other])
     baseline = load_application_baseline(path, "app")
-    assert accepted_restore_baselines(tmp_path, baseline)[0].objects == [installed]
+    assert accepted_restore_baselines(source, baseline)[0].objects == [installed]
     value = json.loads(path.read_text())
     value["fastloop_application"]["namespaces"][0]["objects"][0]["spec"]["replicas"] = 0
     path.write_text(json.dumps(value))
@@ -489,10 +473,7 @@ def test_reusing_a_lane_cannot_reseal_runtime_drift_as_installed_source(tmp_path
 
 
 def test_sealed_install_preserves_metadata_setup_but_yields_to_accepted_source_repair(tmp_path):
-    import hashlib
     import subprocess
-
-    import yaml
 
     from benchmarks.sregym.fastloop.baseline_recovery import (
         ApplicationBaseline,
@@ -501,117 +482,30 @@ def test_sealed_install_preserves_metadata_setup_but_yields_to_accepted_source_r
         save_application_baseline,
     )
 
-    def commit(message):
-        subprocess.run(["git", "-C", str(tmp_path), "add", "."], check=True, capture_output=True)
-        subprocess.run(
-            [
-                "git",
-                "-C",
-                str(tmp_path),
-                "-c",
-                "user.name=Fixture",
-                "-c",
-                "user.email=fixture@example.com",
-                "commit",
-                "-qm",
-                message,
-            ],
-            check=True,
-            capture_output=True,
-        )
-        return subprocess.check_output(["git", "-C", str(tmp_path), "rev-parse", "HEAD"], text=True).strip()
-
-    subprocess.run(["git", "-C", str(tmp_path), "init", "-q"], check=True)
-    (tmp_path / "application.txt").write_text("installed source")
-    seed = commit("installed")
-    baseline_path = tmp_path / "baseline.json"
-    baseline_path.write_text("{}")
+    workspace = tmp_path / "workspace"
     installed = {
+        "apiVersion": "apps/v1",
         "kind": "Deployment",
         "metadata": {"namespace": "app", "name": "api"},
         "spec": {"template": {"spec": {"containers": [{"name": "api", "image": "installed"}]}}},
     }
-    save_application_baseline(baseline_path, (ApplicationBaseline("app", [installed]),), installed=True)
-    # The controller can publish metadata without changing installed source.
-    root = tmp_path / ".sdo/rendered"
-    root.mkdir(parents=True)
     repaired = deepcopy(installed)
     repaired["spec"]["template"]["spec"]["containers"][0]["image"] = "accepted-source-repair"
-    payload = yaml.safe_dump(repaired).encode()
-    (root / "api.yaml").write_bytes(payload)
-    (root / "lock.json").write_text(
-        json.dumps(
-            {
-                "objects": [
-                    {
-                        "ref": {"kind": "Deployment", "name": "api"},
-                        "file": "api.yaml",
-                        "sha256": hashlib.sha256(payload).hexdigest(),
-                    }
-                ]
-            }
-        )
-    )
-    # Keep benchmark capture files out of the application source diff.
-    (tmp_path / "baseline.json").unlink()
-    commit("controller metadata")
+    commit_accepted_source(workspace, [installed])
+    seed = subprocess.check_output(["git", "-C", str(workspace), "rev-parse", "HEAD"], text=True).strip()
+    baseline_path = tmp_path / "baseline.json"
     baseline_path.write_text("{}")
     save_application_baseline(baseline_path, (ApplicationBaseline("app", [installed]),), installed=True)
     baselines = load_application_baseline(baseline_path, "app")
-    assert accepted_restore_baselines(tmp_path, baselines, seed_commit=seed)[0].objects == [installed]
-    baseline_path.unlink()
-    (tmp_path / "application.txt").write_text("accepted repaired source")
-    commit("accepted source repair")
-    assert accepted_restore_baselines(tmp_path, baselines, seed_commit=seed)[0].objects == [repaired]
 
+    # The controller can publish metadata without changing installed source.
+    (workspace / ".sdo").mkdir()
+    (workspace / ".sdo/goal.md").write_text("metadata")
+    source = commit_accepted_source(workspace)
+    assert accepted_restore_baselines(source, baselines, seed_commit=seed)[0].objects == [installed]
 
-@pytest.mark.parametrize("case", ["error", "missing_error", "mixed_file"])
-def test_restore_rejects_unbacked_or_malformed_rendered_rows(tmp_path, case):
-    from benchmarks.sregym.fastloop.baseline_recovery import ApplicationBaseline, accepted_restore_baselines
-
-    installed = {"apiVersion": "apps/v1", "kind": "Deployment", "metadata": {"namespace": "app", "name": "api"}}
-    row = {
-        "ref": {"api_version": "apps/v1", "kind": "Deployment", "namespace": "app", "name": "api"},
-        "error": "source rendering failed",
-    }
-    if case == "missing_error":
-        del row["error"]
-    elif case == "mixed_file":
-        row["file"] = "must-not-be-read.yaml"
-    root = tmp_path / ".sdo/rendered"
-    root.mkdir(parents=True)
-    (root / "lock.json").write_text(json.dumps({"objects": [row]}))
-    with pytest.raises(ValueError, match="rendered.*gap"):
-        accepted_restore_baselines(tmp_path, (ApplicationBaseline("app", [installed]),))
-
-
-def test_restore_rejects_sealed_manifest_for_another_object(tmp_path):
-    import hashlib
-
-    import yaml
-
-    from benchmarks.sregym.fastloop.baseline_recovery import ApplicationBaseline, accepted_restore_baselines
-
-    value = {"apiVersion": "apps/v1", "kind": "Deployment", "metadata": {"namespace": "app", "name": "other"}}
-    root = tmp_path / ".sdo/rendered"
-    root.mkdir(parents=True)
-    payload = yaml.safe_dump(value).encode()
-    (root / "object.yaml").write_bytes(payload)
-    (root / "lock.json").write_text(
-        json.dumps(
-            {
-                "objects": [
-                    {
-                        "ref": {"api_version": "apps/v1", "kind": "Deployment", "namespace": "app", "name": "api"},
-                        "file": "object.yaml",
-                        "sha256": hashlib.sha256(payload).hexdigest(),
-                    }
-                ]
-            }
-        )
-    )
-    with pytest.raises(ValueError, match="identity"):
-        accepted_restore_baselines(tmp_path, (ApplicationBaseline("app", []),))
+    source = commit_accepted_source(workspace, [repaired])
+    assert accepted_restore_baselines(source, baselines, seed_commit=seed)[0].objects == [repaired]
 
 
 def test_stabilization_rejects_late_success_and_does_not_renew_budget():

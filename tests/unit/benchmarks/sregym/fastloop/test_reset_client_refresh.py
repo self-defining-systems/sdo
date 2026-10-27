@@ -9,6 +9,7 @@ import pytest
 from benchmarks.sregym.fastloop.baseline_recovery import ApplicationBaseline
 from benchmarks.sregym.fastloop.environment import FastloopEnvironment
 from benchmarks.sregym.fastloop.reset import reset_environment
+from tests.unit.benchmarks.sregym.fastloop.accepted_source_fixture import commit_accepted_source
 
 
 class Lane:
@@ -70,6 +71,7 @@ def environment(tmp_path: Path) -> FastloopEnvironment:
         private_tmp=None,
         seed_commit="a" * 40,
     )
+    commit_accepted_source(env.workspace, namespace="hotel-reservation")
     baseline = ApplicationBaseline("hotel-reservation", Lane().objects)
     env.baseline_path.write_text(json.dumps({"fastloop_application": {"namespaces": [baseline.__dict__]}}))
     return env
