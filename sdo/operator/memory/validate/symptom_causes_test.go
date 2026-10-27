@@ -137,9 +137,9 @@ func TestReflectionProgramBindsRepairTargetWithoutSymptomParameter(t *testing.T)
 	outcome.ConfirmedRootCauses[0].Resources = append(outcome.ConfirmedRootCauses[0].Resources, symptom)
 	outcome.Findings = append(outcome.Findings, &contracts.Finding{DetectorId: outcome.Findings[0].DetectorId, Status: "active", PrimaryResource: symptom, Fingerprint: "symptom"})
 	decision := &contracts.ReflectionDecision{LearningDecision: "updated", PlaybookIds: []string{"service-targetport-mismatch"}}
-	ds, _, err := ReflectionCoverageGaps(root, outcome, decision)
-	if err != nil || len(ds) != 0 {
-		t.Fatalf("symptom demanded as program parameter: %v %v", ds, err)
+	ds := ReflectionCoverageGaps(root, outcome, decision)
+	if len(ds) != 0 {
+		t.Fatalf("symptom demanded as program parameter: %v", ds)
 	}
 }
 

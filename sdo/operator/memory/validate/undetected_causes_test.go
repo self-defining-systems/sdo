@@ -53,9 +53,9 @@ func TestUndetectedRepairRequiresMeasuredObjectTransition(t *testing.T) {
 		}
 	}
 	decision := &contracts.ReflectionDecision{LearningDecision: "updated", PlaybookIds: []string{"service-targetport-mismatch"}, SdkGaps: []*contracts.SdkGap{{FaultClass: "database", Primitive: "catalog", Reason: "unavailable", ScratchScript: "inspect", Resources: []*contracts.ObjectRef{{Kind: "Deployment", Namespace: "demo", Name: "database"}}}}}
-	ds, _, err := ReflectionCoverageGaps(root, outcome, decision)
-	if err != nil || len(ds) != 0 {
-		t.Fatalf("learnable undetected cause blocked by peer gap: %v %v", ds, err)
+	ds := ReflectionCoverageGaps(root, outcome, decision)
+	if len(ds) != 0 {
+		t.Fatalf("learnable undetected cause blocked by peer gap: %v", ds)
 	}
 	for _, mode := range []string{"unchanged", "stale", "failed-receipt", "detected"} {
 		t.Run(mode, func(t *testing.T) {

@@ -168,12 +168,7 @@ func lifecycleChecks(ctx context.Context, r Request, paths []string, structurall
 				if err := protojson.Unmarshal([]byte(raw), outcome); err != nil {
 					return nil, err
 				}
-				gaps, blocking, err := ReflectionCoverageGaps(r.Root, outcome, r.Decision)
-				if err != nil {
-					return nil, err
-				}
-				ds = append(ds, blocking...)
-				r.noteGaps(gaps...)
+				r.noteGaps(ReflectionCoverageGaps(r.Root, outcome, r.Decision)...)
 				if structurallyValid {
 					if err := programvalidation.ValidateScriptOrigins(r.Root, outcome, paths); err != nil {
 						ds = append(ds, Diagnostic{Rule: RuleProgramMitigationRepair, Message: err.Error()})

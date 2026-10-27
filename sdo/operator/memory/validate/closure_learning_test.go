@@ -104,9 +104,9 @@ func TestVerifiedClosureSavesProgramWithoutBaselineAttributionOrObservation(t *t
 	copyTree(t, "../../../../tests/fixtures/sdo/playbook_program_app/.sdo", filepath.Join(root, ".sdo"))
 	outcome := closureOutcome("success", &contracts.ConfirmedRootCause{Resources: []*contracts.ObjectRef{{Kind: "Service", Namespace: "demo", Name: "front"}}})
 	decision := &contracts.ReflectionDecision{LearningDecision: "updated", PlaybookIds: []string{"service-targetport-mismatch"}}
-	ds, _, err := ReflectionCoverageGaps(root, outcome, decision)
-	if err != nil || len(ds) != 0 {
-		t.Fatalf("verified closure with a delete-only receipt not learnable: %v %v", ds, err)
+	ds := ReflectionCoverageGaps(root, outcome, decision)
+	if len(ds) != 0 {
+		t.Fatalf("verified closure with a delete-only receipt not learnable: %v", ds)
 	}
 	// The same evidence on a closure that did not verify healthy learns nothing.
 	outcome.Classification = "failed"
@@ -137,9 +137,9 @@ func TestCauseWithoutATransitionIsAGapAndTheTypedDeclineStaysValid(t *testing.T)
 		t.Fatalf("setup: both causes should be verified, got %v", got)
 	}
 	decision := &contracts.ReflectionDecision{LearningDecision: "updated", PlaybookIds: []string{"service-targetport-mismatch"}}
-	ds, blocking, err := ReflectionCoverageGaps(root, outcome, decision)
-	if err != nil || len(blocking) != 0 || len(ds) != 1 || ds[0].Rule != RuleReflectionProgramRequired {
-		t.Fatalf("the cause without a transition should be one recorded gap, not a refusal: %v %v %v", ds, blocking, err)
+	ds := ReflectionCoverageGaps(root, outcome, decision)
+	if len(ds) != 1 || ds[0].Rule != RuleReflectionProgramRequired {
+		t.Fatalf("the cause without a transition should be one recorded gap, not a refusal: %v", ds)
 	}
 	if ds := ReflectionDiagnostics(decision, []string{".sdo/playbooks/service-targetport-mismatch/README.md"}); len(ds) != 0 {
 		t.Fatalf("decision with the typed decline reason was rejected: %v", ds)

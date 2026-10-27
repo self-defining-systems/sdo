@@ -17,15 +17,15 @@ import (
 // ReflectionCoverageGaps notes each verified cause that reflection left without
 // executable learning: no replayable program, or a program no detector lists.
 // A gap is information for analysis, never a refusal: the repeat's act-verify
-// loop is the safety net for whatever was not learned. Only a program set that
-// cannot be inspected is blocking.
-func ReflectionCoverageGaps(root string, outcome *contracts.OutcomeRecord, decision *contracts.ReflectionDecision) (gaps, blocking []Diagnostic, err error) {
+// loop is the safety net for whatever was not learned. Memory that cannot be
+// inspected yields no notes: the structural and program layers report why.
+func ReflectionCoverageGaps(root string, outcome *contracts.OutcomeRecord, decision *contracts.ReflectionDecision) (gaps []Diagnostic) {
 	if decision.GetLearningDecision() == "no_change" && decision.GetNoChangeReason() == "no_session" && outcome.GetReflectionSkipReason() == "no_session" {
-		return nil, nil, nil
+		return nil
 	}
 	causes := VerifiedReflectionCauses(outcome)
 	if len(causes) == 0 {
-		return nil, nil, nil
+		return nil
 	}
 	moduleData, _ := os.ReadFile(filepath.Join(root, layout.DiagnosticsGoModFile))
 	module := ""
@@ -38,11 +38,11 @@ func ReflectionCoverageGaps(root string, outcome *contracts.OutcomeRecord, decis
 	}
 	specs, err := programvalidation.InspectMemory(filepath.Join(root, layout.Dir), module)
 	if err != nil {
-		return nil, []Diagnostic{{Rule: RuleReflectionProgramRequired, Message: err.Error()}}, nil
+		return nil
 	}
 	detectors, err := layout.ReadDetectors(filepath.Join(root, layout.DiagnosticsDir))
 	if err != nil {
-		return nil, nil, err
+		return nil
 	}
 	linked := map[string]bool{}
 	for _, d := range detectors {
@@ -59,7 +59,7 @@ func ReflectionCoverageGaps(root string, outcome *contracts.OutcomeRecord, decis
 			for _, id := range spec.Cases {
 				c, err := sdktest.LoadCorpusCase(filepath.Join(root, layout.CorpusDir, id))
 				if err != nil {
-					return nil, nil, err
+					return nil
 				}
 				if !slices.Contains(c.RootCauseProgramIDs, spec.ID) || (!bindingsCoverRepairs(outcome, c.Bindings.Objects, cause.GetResources()) || !UndetectedCaseMatches(outcome, c, cause)) {
 					continue
@@ -79,7 +79,7 @@ func ReflectionCoverageGaps(root string, outcome *contracts.OutcomeRecord, decis
 			gaps = append(gaps, Diagnostic{Rule: RuleReflectionDetectorRequired, Message: fmt.Sprintf("verified cause %d (%s) has a program, but no detector lists it in possiblePlaybooks", cause.GetCauseIndex(), strings.Join(resources, ", "))})
 		}
 	}
-	return gaps, nil, nil
+	return gaps
 }
 
 // DeclineNoRecordedRepair is the one typed decline reason. It records a verified

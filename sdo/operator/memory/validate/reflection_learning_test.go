@@ -18,19 +18,19 @@ func TestReflectionRecordsGapForVerifiedCauseWithoutProgram(t *testing.T) {
 	outcome := &contracts.OutcomeRecord{IncidentId: "first", Classification: "success", ConfirmedRootCauses: []*contracts.ConfirmedRootCause{{Summary: "routing fault", Resources: []*contracts.ObjectRef{{Kind: "Service", Namespace: "app", Name: "api"}}}}}
 	addSyntheticFindingRepairProof(outcome)
 	decision := &contracts.ReflectionDecision{LearningDecision: "updated", PlaybookIds: []string{"base"}}
-	ds, blocking, err := ReflectionCoverageGaps(root, outcome, decision)
-	if err != nil || len(blocking) != 0 || len(ds) != 1 || ds[0].Rule != "reflection.program-required" {
-		t.Fatalf("README-only reflection gap not recorded: %v %v", ds, err)
+	ds := ReflectionCoverageGaps(root, outcome, decision)
+	if len(ds) != 1 || ds[0].Rule != "reflection.program-required" {
+		t.Fatalf("README-only reflection gap not recorded: %v", ds)
 	}
 	decision.LearningDecision = "no_change"
-	ds, blocking, err = ReflectionCoverageGaps(root, outcome, decision)
-	if err != nil || len(ds) != 1 {
-		t.Fatalf("unlearned no-op gap not recorded: %v %v", ds, err)
+	ds = ReflectionCoverageGaps(root, outcome, decision)
+	if len(ds) != 1 {
+		t.Fatalf("unlearned no-op gap not recorded: %v", ds)
 	}
 	decision.DeclineReason = "no_recorded_repair"
-	ds, blocking, err = ReflectionCoverageGaps(root, outcome, decision)
-	if err != nil || len(ds) != 1 {
-		t.Fatalf("decline reason hid the gap: %v %v", ds, err)
+	ds = ReflectionCoverageGaps(root, outcome, decision)
+	if len(ds) != 1 {
+		t.Fatalf("decline reason hid the gap: %v", ds)
 	}
 }
 
@@ -51,9 +51,9 @@ func TestReflectionLearnsFromSessionFixtureWithoutControllerCapture(t *testing.T
 	outcome := &contracts.OutcomeRecord{IncidentId: "first", Classification: "success", ConfirmedRootCauses: []*contracts.ConfirmedRootCause{{Resources: []*contracts.ObjectRef{{Kind: "Service", Namespace: "demo", Name: "front"}}}}}
 	addSyntheticFindingRepairProof(outcome)
 	decision := &contracts.ReflectionDecision{LearningDecision: "updated", PlaybookIds: []string{"service-targetport-mismatch"}}
-	ds, blocking, err := ReflectionCoverageGaps(root, outcome, decision)
-	if err != nil || len(blocking) != 0 || len(ds) != 1 || ds[0].Rule != "reflection.detector-required" {
-		t.Fatalf("missing detector gap not recorded: %v %v", ds, err)
+	ds := ReflectionCoverageGaps(root, outcome, decision)
+	if len(ds) != 1 || ds[0].Rule != "reflection.detector-required" {
+		t.Fatalf("missing detector gap not recorded: %v", ds)
 	}
 	detectors, err := layout.ReadDetectors(filepath.Join(root, layout.DiagnosticsDir))
 	if err != nil {
@@ -64,27 +64,27 @@ func TestReflectionLearnsFromSessionFixtureWithoutControllerCapture(t *testing.T
 	if err := layout.WriteDetector(root, detectors[0]); err != nil {
 		t.Fatal(err)
 	}
-	ds, blocking, err = ReflectionCoverageGaps(root, outcome, decision)
-	if err != nil || len(ds) != 0 {
-		t.Fatalf("shared detector and session fixture left a gap: %v %v", ds, err)
+	ds = ReflectionCoverageGaps(root, outcome, decision)
+	if len(ds) != 0 {
+		t.Fatalf("shared detector and session fixture left a gap: %v", ds)
 	}
 	if err := os.Remove(filepath.Join(root, ".sdo/playbooks/service-targetport-mismatch/mitigate.go")); err != nil {
 		t.Fatal(err)
 	}
-	ds, blocking, err = ReflectionCoverageGaps(root, outcome, decision)
-	if err != nil || len(ds) != 1 || ds[0].Rule != "reflection.program-required" {
-		t.Fatalf("diagnose-only cause gap not recorded: %v %v", ds, err)
+	ds = ReflectionCoverageGaps(root, outcome, decision)
+	if len(ds) != 1 || ds[0].Rule != "reflection.program-required" {
+		t.Fatalf("diagnose-only cause gap not recorded: %v", ds)
 	}
 	decision.SdkGaps = []*contracts.SdkGap{{FaultClass: "routing", Primitive: "listener", Reason: "listener capability unavailable", ScratchScript: "scratch/listener", Resources: outcome.ConfirmedRootCauses[0].Resources}}
-	ds, blocking, err = ReflectionCoverageGaps(root, outcome, decision)
-	if err != nil || len(ds) != 1 {
-		t.Fatalf("scoped SDK gap changed the recorded gap: %v %v", ds, err)
+	ds = ReflectionCoverageGaps(root, outcome, decision)
+	if len(ds) != 1 {
+		t.Fatalf("scoped SDK gap changed the recorded gap: %v", ds)
 	}
 	outcome.ConfirmedRootCauses = append(outcome.ConfirmedRootCauses, &contracts.ConfirmedRootCause{Resources: []*contracts.ObjectRef{{Kind: "Service", Namespace: "demo", Name: "other"}}})
 	addSyntheticFindingRepairProof(outcome)
-	ds, blocking, err = ReflectionCoverageGaps(root, outcome, decision)
-	if err != nil || len(ds) != 2 {
-		t.Fatalf("unrelated cause gap not recorded: %v %v", ds, err)
+	ds = ReflectionCoverageGaps(root, outcome, decision)
+	if len(ds) != 2 {
+		t.Fatalf("unrelated cause gap not recorded: %v", ds)
 	}
 }
 
@@ -94,14 +94,14 @@ func TestFailedReflectionRecordsGapsOnlyForIndependentlyVerifiedPartialCauses(t 
 	outcome := &contracts.OutcomeRecord{Classification: "failed", ConfirmedRootCauses: []*contracts.ConfirmedRootCause{{Resources: verified}, {Resources: []*contracts.ObjectRef{{Kind: "Service", Namespace: "app", Name: "still-broken"}}}}, ReflectionEligibility: &contracts.ReflectionEligibility{Version: 1, Causes: []*contracts.ReflectionCauseWork{{CauseIndex: 0, Resources: verified}}}}
 	addSyntheticFindingRepairProof(outcome)
 	decision := &contracts.ReflectionDecision{LearningDecision: "updated"}
-	ds, _, err := ReflectionCoverageGaps(root, outcome, decision)
-	if err != nil || len(ds) != 1 || ds[0].Rule != RuleReflectionProgramRequired {
-		t.Fatalf("partial coverage was skipped or expanded: %v %v", ds, err)
+	ds := ReflectionCoverageGaps(root, outcome, decision)
+	if len(ds) != 1 || ds[0].Rule != RuleReflectionProgramRequired {
+		t.Fatalf("partial coverage was skipped or expanded: %v", ds)
 	}
 	decision.SdkGaps = []*contracts.SdkGap{{FaultClass: "routing", Primitive: "listener", Reason: "SDK capability unavailable", ScratchScript: "scratch/listener", Resources: verified}}
-	ds, _, err = ReflectionCoverageGaps(root, outcome, decision)
-	if err != nil || len(ds) != 1 {
-		t.Fatalf("unverified cause became a gap: %v %v", ds, err)
+	ds = ReflectionCoverageGaps(root, outcome, decision)
+	if len(ds) != 1 {
+		t.Fatalf("unverified cause became a gap: %v", ds)
 	}
 }
 
@@ -111,10 +111,7 @@ func TestReflectionCoverageCheckPreservesAcceptedCauseEvidence(t *testing.T) {
 	b := []*contracts.ObjectRef{{Kind: "Service", Namespace: "app", Name: "b"}}
 	outcome := &contracts.OutcomeRecord{Classification: "failed", ReflectionEligibility: &contracts.ReflectionEligibility{Version: 1, Causes: []*contracts.ReflectionCauseWork{{CauseIndex: 0, Resources: a}, {CauseIndex: 1, Resources: b}}}}
 	before := proto.Clone(outcome)
-	_, _, err := ReflectionCoverageGaps(root, outcome, &contracts.ReflectionDecision{LearningDecision: "updated", SdkGaps: []*contracts.SdkGap{{FaultClass: "a", Primitive: "missing", Reason: "SDK gap for A", ScratchScript: "scratch/a", Resources: a}}})
-	if err != nil {
-		t.Fatal(err)
-	}
+	ReflectionCoverageGaps(root, outcome, &contracts.ReflectionDecision{LearningDecision: "updated", SdkGaps: []*contracts.SdkGap{{FaultClass: "a", Primitive: "missing", Reason: "SDK gap for A", ScratchScript: "scratch/a", Resources: a}}})
 	if !proto.Equal(before, outcome) {
 		t.Fatal("validation changed accepted cause evidence")
 	}
