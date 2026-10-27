@@ -170,15 +170,15 @@ def test_rbac_equality_uses_real_installer_and_rejects_extra_grants():
 
     expected = installer_rbac("fixture-app")
     listing = []
-    for key in ("ControlRoles", "AppRoles", "ControlBindings", "AppBindings"):
+    for key in ("ClusterRoles", "ClusterBindings"):
         for original in expected[key]:
             row = deepcopy(original)
-            row["kind"] = "RoleBinding" if key.endswith("Bindings") else "Role"
+            row["kind"] = "ClusterRoleBinding" if key.endswith("Bindings") else "ClusterRole"
             listing.append(row)
     assert require_rbac_equality(expected, listing, "fixture-app")["passed"]
     for row in listing:
-        if row["kind"] == "Role" and row["metadata"]["name"] == "sdo-responder":
-            row["rules"].append({"apiGroups": ["*"], "resources": ["*"], "verbs": ["*"]})
+        if row["kind"] == "ClusterRole":
+            row["rules"].append({"apiGroups": ["example.dev"], "resources": ["widgets"], "verbs": ["get"]})
             break
     with pytest.raises(ValueError, match="RBAC differs"):
         require_rbac_equality(expected, listing, "fixture-app")

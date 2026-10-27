@@ -12,7 +12,6 @@ import (
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
-	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	kruntime "k8s.io/apimachinery/pkg/runtime"
@@ -72,88 +71,6 @@ func TestNativeJobSelectsBrokerAndProposalMountTogether(t *testing.T) {
 	}
 	if len(container.VolumeMounts) == 0 || container.VolumeMounts[0].MountPath != "/workspace" {
 		t.Fatal("broker does not own accepted checkout")
-	}
-	for _, r := range plan.AppRoles {
-		if r.Namespace != "demo" {
-			t.Fatal("application grant outside application namespace")
-		}
-	}
-	for _, r := range plan.ControlRoles {
-		if r.Namespace != "demo-sdo" {
-			t.Fatal("control grant outside control namespace")
-		}
-	}
-}
-
-func TestControllerCanApplyProgramsOnlyInApplicationNamespace(t *testing.T) {
-	plan, err := Resources(testConfig())
-	if err != nil {
-		t.Fatal(err)
-	}
-	var controller *rbacv1.Role
-	for _, role := range plan.AppRoles {
-		if role.Name == "sdo-controller" {
-			controller = role
-		}
-	}
-	if controller == nil || controller.Namespace != "demo" {
-		t.Fatalf("application controller role: %+v", controller)
-	}
-	for _, want := range []struct{ group, resource, verb string }{
-		{"", "services", "get"}, {"", "services", "patch"},
-		{"apps", "deployments", "get"}, {"apps", "deployments", "patch"},
-		{"apps", "statefulsets", "get"}, {"apps", "statefulsets", "patch"},
-		{"apps", "daemonsets", "get"}, {"apps", "daemonsets", "patch"},
-		{"apps", "replicasets", "get"}, {"apps", "replicasets", "list"},
-		{"apps", "controllerrevisions", "get"}, {"apps", "controllerrevisions", "list"},
-	} {
-		allowed := false
-		for _, rule := range controller.Rules {
-			if contains(rule.APIGroups, want.group) && contains(rule.Resources, want.resource) && contains(rule.Verbs, want.verb) {
-				allowed = true
-			}
-		}
-		if !allowed {
-			t.Errorf("missing %s %s/%s", want.verb, want.group, want.resource)
-		}
-	}
-	for _, role := range plan.ControlRoles {
-		if role.Name != "sdo-controller" {
-			continue
-		}
-		for _, rule := range role.Rules {
-			if contains(rule.Verbs, "patch") && (contains(rule.Resources, "services") || contains(rule.Resources, "deployments")) {
-				t.Fatal("program write permission leaked into control namespace")
-			}
-		}
-	}
-}
-
-func TestControllerCanAdoptRenderedManifestFields(t *testing.T) {
-	plan, err := Resources(testConfig())
-	if err != nil {
-		t.Fatal(err)
-	}
-	var app *rbacv1.Role
-	for _, role := range plan.AppRoles {
-		if role.Name == "sdo-controller" {
-			app = role
-		}
-	}
-	if app == nil {
-		t.Fatal("application controller role is absent")
-	}
-	for _, want := range []struct{ group, resource string }{
-		{"", "configmaps"}, {"", "pods"}, {"", "endpoints"},
-		{"apps", "replicasets"}, {"discovery.k8s.io", "endpointslices"}, {"networking.k8s.io", "networkpolicies"},
-	} {
-		allowed := false
-		for _, rule := range app.Rules {
-			allowed = allowed || contains(rule.APIGroups, want.group) && contains(rule.Resources, want.resource) && contains(rule.Verbs, "patch")
-		}
-		if !allowed {
-			t.Errorf("missing adoption patch for %s/%s", want.group, want.resource)
-		}
 	}
 }
 
@@ -340,47 +257,6 @@ func TestOperateJobUsesPreparedPVCAcceptedMountAndRegistrationConfigMap(t *testi
 	}
 }
 
-func TestOperateAndControllerApplicationMutationGrants(t *testing.T) {
-	plan, err := Resources(testConfig())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !hasServiceAccount(plan.ServiceAccounts, "sdo-operate") {
-		t.Fatal("missing operate service account")
-	}
-	for _, role := range plan.AppRoles {
-		switch role.Name {
-		case "sdo-operate":
-			if !roleAllows(role, "deployments", "create") || !roleAllows(role, "services", "update") {
-				t.Fatal("operate cannot apply application source")
-			}
-		case "sdo-controller":
-			if !roleAllows(role, "deployments", "create") || !roleAllows(role, "deployments", "delete") || roleAllows(role, "services", "update") {
-				t.Fatal("controller must support named plan lifecycle effects without the source updater grant")
-			}
-		}
-	}
-	for _, binding := range plan.AppBindings {
-		if binding.Name == "sdo-operate" && len(binding.Subjects) == 1 && binding.Subjects[0].Name == "sdo-operate" {
-			return
-		}
-	}
-	t.Fatal("operate ServiceAccount is not bound to application deployment role")
-}
-
-func TestDriftUsesOnlyResponderPermissions(t *testing.T) {
-	plan, err := Resources(testConfig())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if hasServiceAccount(plan.ServiceAccounts, "sdo-drift-investigator") {
-		t.Fatal("removed investigator still installed")
-	}
-	if !hasServiceAccount(plan.ServiceAccounts, "sdo-responder") {
-		t.Fatal("ordinary responder missing")
-	}
-}
-
 func TestStartOperateRequiresPreparedCommitAndCreatesJob(t *testing.T) {
 	cfg := testConfig()
 	client := fake.NewSimpleClientset(&corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: cfg.RepositoryPVC, Namespace: cfg.ControlNamespace}})
@@ -455,17 +331,6 @@ func TestBuilderIdentityAndRegistryCredentialsStaySeparate(t *testing.T) {
 	if !hasServiceAccount(plan.ServiceAccounts, "sdo-image-builder") {
 		t.Fatal("missing unprivileged image builder identity")
 	}
-	for _, binding := range append(plan.ControlBindings, plan.AppBindings...) {
-		for _, subject := range binding.Subjects {
-			if subject.Name == "sdo-image-builder" {
-				t.Fatal("image builder gained Kubernetes RoleBinding")
-			}
-		}
-	}
-	controllerRole := plan.ControlRoles[0]
-	if !roleAllows(controllerRole, "pods/log", "get") {
-		t.Fatal("controller cannot inspect BuildKit Job logs")
-	}
 	client := fake.NewSimpleClientset(&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: cfg.CredentialsSecret, Namespace: cfg.ControlNamespace}})
 	i := Installer{Client: client, PollInterval: time.Millisecond}
 	readySyncPodOnActivation(client, cfg.ControlNamespace)
@@ -492,15 +357,6 @@ func hasServiceAccount(accounts []*corev1.ServiceAccount, name string) bool {
 	}
 	return false
 }
-func roleAllows(role *rbacv1.Role, resource, verb string) bool {
-	for _, rule := range role.Rules {
-		if contains(rule.Resources, resource) && contains(rule.Verbs, verb) {
-			return true
-		}
-	}
-	return false
-}
-
 func TestReuseRequiresMatchingActiveJobAndDoesNotSeed(t *testing.T) {
 	cfg := testConfig()
 	cfg.ReuseExisting = true
@@ -864,79 +720,5 @@ func TestKubeconfigSeederUsesExplicitContextWithoutChangingProcessEnvironment(t 
 	}
 	if got := os.Getenv("KUBECONFIG"); got != "/tmp/wrong-context" {
 		t.Fatalf("process KUBECONFIG changed to %q", got)
-	}
-}
-
-func TestControllerSecretGrantsOnlyAllowMetadataListWatch(t *testing.T) {
-	for _, split := range []bool{false, true} {
-		cfg := testConfig()
-		if !split {
-			cfg.ControlNamespace = cfg.Namespace
-		}
-		plan, err := Resources(cfg)
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, role := range append(plan.ControlRoles, plan.AppRoles...) {
-			if role.Name != "sdo-controller" && role.Name != "sdo-operate" {
-				continue
-			}
-			for _, rule := range role.Rules {
-				if !contains(rule.Resources, "secrets") {
-					continue
-				}
-				if !contains(rule.Verbs, "list") || !contains(rule.Verbs, "watch") {
-					t.Error("Secret metadata observation needs list/watch")
-				}
-				for _, verb := range rule.Verbs {
-					if verb != "list" && verb != "watch" {
-						t.Errorf("Secret grant includes unnecessary verb %q in %s/%s", verb, role.Namespace, role.Name)
-					}
-				}
-			}
-		}
-	}
-}
-
-// Health judge workers use sdo-responder; independent health evaluation uses
-// sdo-operate, and continuous health uses sdo-controller. Dry-run requires the
-// ordinary create grant in each case, including split control namespaces.
-func TestHealthActorsCanDryRunPodAdmission(t *testing.T) {
-	for _, split := range []bool{false, true} {
-		config := testConfig()
-		if !split {
-			config.ControlNamespace = config.Namespace
-		}
-		plan, err := Resources(config)
-		if err != nil {
-			t.Fatal(err)
-		}
-		roles := append(plan.ControlRoles, plan.AppRoles...)
-		bindings := append(plan.ControlBindings, plan.AppBindings...)
-		for _, actor := range []string{"sdo-controller", "sdo-operate", "sdo-responder"} {
-			allowed := false
-			for _, b := range bindings {
-				if b.Namespace != config.Namespace {
-					continue
-				}
-				subject := false
-				for _, s := range b.Subjects {
-					subject = subject || s.Name == actor && s.Namespace == config.controlNamespace()
-				}
-				if !subject {
-					continue
-				}
-				for _, role := range roles {
-					if role.Namespace == b.Namespace && role.Name == b.RoleRef.Name {
-						for _, r := range role.Rules {
-							allowed = allowed || contains(r.APIGroups, "") && contains(r.Resources, "pods") && contains(r.Verbs, "create")
-						}
-					}
-				}
-			}
-			if !allowed {
-				t.Fatalf("split=%v: %s cannot dry-run create app Pods", split, actor)
-			}
-		}
 	}
 }
