@@ -76,11 +76,12 @@ type IncidentRequest struct {
 	RepairPolicy          string
 	// StateChanges is the application's configuration diff against its last
 	// healthy baseline when the incident opened; nil without a baseline.
-	StateChanges       *StateChanges
-	InitialProgramRuns []ProgramRun
-	PlaybookCoverage   *contracts.PlaybookCoverage
-	PriorStages        []*contracts.StageReport
-	MaxResponseLoops   int
+	StateChanges          *StateChanges
+	InitialProgramRuns    []ProgramRun
+	PlaybookCoverage      *contracts.PlaybookCoverage
+	PriorResponseProgress []*contracts.ResponseProgress
+	PriorStages           []*contracts.StageReport
+	MaxResponseLoops      int
 	// PreparedAgentTask is the exact ProtoJSON task persisted before a Job may be created.
 	PreparedAgentTask string
 }
@@ -234,8 +235,9 @@ type IncidentClosure struct {
 	CleanedHelpers []string // UnconfirmedReason is set when the closure-time recheck never saw a
 	// complete observation window within its bound: the closure commits as
 	// unverified (final states moved to partial) instead of being superseded.
-	UnconfirmedReason contracts.ClosureUnconfirmedReason
-	UnconfirmedDetail string
+	UnconfirmedReason       contracts.ClosureUnconfirmedReason
+	UnconfirmedDetail       string
+	StatePersistenceFailure *contracts.StatePersistenceFailure
 	// SourceCheckNotes lists what the accepted-source checks found when the
 	// closure committed: checks that were unavailable, and objects that still
 	// differ from the accepted source. They are information on the outcome, not

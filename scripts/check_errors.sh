@@ -52,8 +52,14 @@ echo "==> Go Execute deadline policy"
     go test ./internal/testutil -run '^Test(ExecuteDeadlinePolicyNegativeControls|NoFixedShortDeadlineAroundExecuteInTests|CountedPollingPolicyNegativeControls|CountedPollingAllowances|NoShortCountedPollingInTests)$' -count=1 -timeout=20s
 )
 
-echo "==> Python counted polling policy"
-uv run --extra test python -m pytest -q -p no:tach tests/unit/test_polling_policy.py
+# Source-scanning invariants must run even when focused tests omit their package.
+# Keep this selection free of integration tests and long property-test sweeps.
+echo "==> Python fast repository ratchets"
+uv run --extra test python -m pytest -q -p no:tach \
+    tests/unit/test_polling_policy.py \
+    tests/unit/benchmarks/sregym/adapter/test_budgets.py::test_the_scanner_sees_each_wait_shape \
+    tests/unit/benchmarks/sregym/adapter/test_budgets.py::test_seconds_literals_in_waits_only_decrease \
+    tests/unit/sdo/agents/test_prompt_generalization.py
 
 # Capture fixtures must come from the real CaptureSnapshot projection.
 echo "==> Go capture fixture policy"

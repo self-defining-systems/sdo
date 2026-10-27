@@ -69,14 +69,19 @@ func (e PlanExecutor) reportSourceResiduals(ctx context.Context, incident Incide
 				report.ObservationError = "accepted source unavailable for readback comparison"
 			} else {
 				report.ResidualPaths, report.AdditionsKnown = sourceResidualPaths(observed, source)
+				if observer, ok := e.Rollouts.(interface {
+					SourceRolloutResiduals(context.Context, *unstructured.Unstructured) ([]string, error)
+				}); ok {
+					paths, observeErr := observer.SourceRolloutResiduals(ctx, observed)
+					report.ResidualPaths = append(report.ResidualPaths, paths...)
+					sort.Strings(report.ResidualPaths)
+					if observeErr != nil {
+						report.ObservationError = "rollout residual observation unavailable or identity changed"
+					}
+				}
 			}
 		}
 		report.Converged = len(report.ResidualPaths) == 0 && report.ObservationError == ""
-		for _, step := range report.RolloutSteps {
-			if step.Error != "" {
-				report.Converged = false
-			}
-		}
 		if !report.Converged {
 			result.ActionReports[index].Status = "partial"
 			result.ActionReports[index].FailureReason = "source_residual"

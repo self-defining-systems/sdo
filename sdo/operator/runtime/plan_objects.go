@@ -272,7 +272,7 @@ func (e PlanExecutor) applyObjectPlan(ctx context.Context, incident IncidentRequ
 	if err := e.awaitObserved(ctx, result.Patches); err != nil {
 		return result, err
 	}
-	if pending, err := e.waitForSourceRollouts(ctx, incident, refs, &result); err != nil {
+	if pending, err := e.waitForRollouts(ctx, incident, refs); err != nil {
 		result.RolloutPending = pending
 		return result, err
 	}

@@ -328,7 +328,7 @@ func (e PlanExecutor) applyOnce(ctx context.Context, incident IncidentRequest, p
 	if err := e.awaitObserved(ctx, result.Patches); err != nil {
 		return result, err
 	}
-	if pending, err := e.waitForSourceRollouts(ctx, incident, refs, &result); err != nil {
+	if pending, err := e.waitForRollouts(ctx, incident, refs); err != nil {
 		result.RolloutPending = pending
 		return result, err
 	}
@@ -555,6 +555,44 @@ func restorePlanFields(before any, bok bool, after any, aok bool, live any, lok 
 	ba, barray := before.([]any)
 	aa, aarray := after.([]any)
 	la, larray := live.([]any)
+	if barray && aarray && larray {
+		if bm, am, lm, ok := namedPlanLists(ba, aa, la); ok {
+			restored := runtime.DeepCopyJSONValue(lm).(map[string]any)
+			keys := map[string]bool{}
+			for k := range bm {
+				keys[k] = true
+			}
+			for k := range am {
+				keys[k] = true
+			}
+			for k := range keys {
+				b, bo := bm[k]
+				a, ao := am[k]
+				l, lo := lm[k]
+				v, exists, err := restorePlanFields(b, bo, a, ao, l, lo)
+				if err != nil {
+					return nil, false, fmt.Errorf("named item %s: %w", k, err)
+				}
+				if exists {
+					restored[k] = v
+				} else {
+					delete(restored, k)
+				}
+			}
+			// Restore original item order, retaining concurrent additions.
+			result := make([]any, 0, len(restored))
+			for _, list := range [][]any{ba, la} {
+				for _, item := range list {
+					name := item.(map[string]any)["name"].(string)
+					if value, exists := restored[name]; exists {
+						result = append(result, value)
+						delete(restored, name)
+					}
+				}
+			}
+			return result, true, nil
+		}
+	}
 	if barray && aarray && larray && len(ba) == len(aa) && len(aa) == len(la) {
 		result := make([]any, len(la))
 		for i := range la {

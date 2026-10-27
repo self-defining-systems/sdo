@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"sdo.dev/operator/internal/testutil"
+	programvalidation "sdo.dev/operator/memory/validate/program"
 )
 
 func programFixture(t *testing.T) string {
@@ -338,5 +339,38 @@ func TestProgramSaveReplayProvesEffectsWithoutFixedSnapshotGate(t *testing.T) {
 	defer w.Close()
 	if _, err := w.ValidateAndBuild(context.Background()); err != nil {
 		t.Fatalf("repair replay unnecessarily depended on fixed snapshot: %v", err)
+	}
+}
+
+// Declaration validity is independent of corpus/replay availability and must
+// remain a save-time check when replay results are informational.
+func TestProgramDeclarationsCheckedWithoutReplay(t *testing.T) {
+	root := programFixture(t)
+	path := filepath.Join(root, ".sdo/playbooks/service-targetport-mismatch/diagnose.go")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := strings.Replace(string(data), "[]program.ParamSpec{", "[]program.ParamSpec{{Name: \"recorded-only\", ValueKind: program.IntValue, Required: true},", 1)
+	if source == string(data) {
+		t.Fatal("missing synthetic declaration anchor")
+	}
+	if err := os.WriteFile(path, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+	w, err := buildProgramFixture(t, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close()
+	if err := generatePrograms(w.Directory, w.ModulePath, []programvalidation.Spec{{ID: "service-targetport-mismatch", Diagnoser: "Program", Mitigator: "Program"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.runGo(context.Background(), "mod", "tidy"); err != nil {
+		t.Fatal(err)
+	}
+	err = w.runGo(context.Background(), "test", "./generated", "-run", "^TestProgramRegistrationContracts$")
+	if err == nil || !strings.Contains(err.Error(), "required scalar parameter") {
+		t.Fatalf("declaration bypassed save-time validation without replay: %v", err)
 	}
 }

@@ -409,6 +409,9 @@ class SdoPersistentAgent:
         receipt_dir = Path(str(outcome.artifacts_dir))
         receipt = self._receipt(receipt_dir)
         if not receipt:
+            from benchmarks.sregym.adapter import export_closure_failure_evidence
+
+            export_closure_failure_evidence(self._ops, settings.runtime_config.control_namespace, receipt_dir)
             raise RuntimeError(f"incident {outcome.incident_id!r} receipt missing after reflection drain")
         # Only a receipt that passed strict validation states how the incident closed.
         resolution = (

@@ -91,6 +91,7 @@ def test_run_repeats_fallback_warning_before_starting_workers(monkeypatch, tmp_p
         run_dir=tmp_path,
         cluster="img1-test",
         kubeconfig=tmp_path / "config",
+        app="toy",
         namespace="toy",
         application="toy",
         workspace=tmp_path / "app",

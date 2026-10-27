@@ -201,6 +201,9 @@ func TestSourceDiffUnchangedForServerDefaultsAndBookkeeping(t *testing.T) {
 			addAnnotation(live, "meta.helm.sh/release-name", "search")
 			acceptAddedFieldsLive(live)
 		},
+		"daemonset controller generation": func(live *unstructured.Unstructured) {
+			addAnnotation(live, "deprecated.daemonset.template.generation", "2")
+		},
 		"kubernetes bookkeeping annotations": func(live *unstructured.Unstructured) {
 			addAnnotation(live, "deployment.kubernetes.io/revision", "3")
 			_ = unstructured.SetNestedStringMap(live.Object, map[string]string{"kubectl.kubernetes.io/restartedAt": "2026-10-26T12:00:00Z"}, "spec", "template", "metadata", "annotations")
