@@ -565,7 +565,8 @@ func restorePlanFields(before any, bok bool, after any, aok bool, live any, lok 
 	ba, barray := before.([]any)
 	aa, aarray := after.([]any)
 	la, larray := live.([]any)
-	if barray && aarray && larray {
+	// Empty configuration lists are omitted by canonicalization/API storage.
+	if (barray || aarray || larray) && (barray || !bok) && (aarray || !aok) && (larray || !lok) {
 		if bm, am, lm, ok := namedPlanLists(ba, aa, la); ok {
 			restored := runtime.DeepCopyJSONValue(lm).(map[string]any)
 			keys := map[string]bool{}
