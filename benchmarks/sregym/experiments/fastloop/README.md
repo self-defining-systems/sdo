@@ -577,3 +577,33 @@ images, accepted memory, manifests, object UIDs/configuration or proof tools
 invalidate the receipt, including changes made by reset. Unknown identity or
 uncommitted source cannot authorize reuse. This setup receipt does not replace
 the separate whole-learning-loop proof.
+
+
+## Host limits
+
+Every fastloop kind node (control planes included) gets Docker CPU, memory and
+PID caps before CNI/image delivery. `up --cpu-limit 3 --memory-limit 16g
+--pids-limit 8192` shows the defaults; use `--memory-limit 24g` for a lane that
+needs more. The 16g default leaves headroom over Astronomy's recorded 9.6 GiB
+p90 lane-container working set, which excludes node/page-cache overhead.
+Memory plus swap is capped at the memory limit. Docker update failure stops
+setup. Existing clusters are recapped when `up` attaches to them.
+
+Image delivery (registry pulls into nodes and archive fallback alike) holds one
+host-wide flock. Tier-2 namespace removal through app deployment holds one of
+two host-wide redeploy slots; ordinary worker deploy requests use the same
+slots. The default shared directory is `/var/tmp/sdo-fastloop/locks`,
+outside the worker's private `/tmp`. For lanes under one experiment root, set
+`up --host-lock-dir /absolute/experiment/root/locks --host-redeploys 2` for
+**every** lane. These settings persist in the lane's worker environment.
+Standalone image delivery accepts `--host-lock-dir` too. Environment defaults
+are `FASTLOOP_HOST_LOCK_DIR` and `FASTLOOP_HOST_REDEPLOYS` (also supported by
+older saved environments without these settings).
+
+All callers must use the same lock directory and redeploy count. A capacity
+file prevents callers silently disagreeing on the number of slots. To change
+the count, stop all admissions first, remove only `redeploy.capacity` from the
+shared lock directory, then start every caller with the new count. Keep the
+lock files themselves: unlinking an in-use lock creates a second lock inode.
+These caps apply when the updated harness is used; they do not modify lanes
+that are already running an older harness.

@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
 from benchmarks.sregym.adapter import WaitKind, wait_for
+from benchmarks.sregym.fastloop.host_limits import HostLimits
 from benchmarks.sregym.fastloop.records import Injected, NotInjected
 
 if TYPE_CHECKING:
@@ -537,6 +538,7 @@ def run_tier2(
     cluster: LaneCluster,
     namespaces: Collection[str],
     deploy: Callable[[], None],
+    host_limits: HostLimits | None = None,
     timeout_seconds: float,
     poll_seconds: float = wait_for(WaitKind.SAMPLE),
     clock: Callable[[], float] = time.monotonic,
@@ -551,16 +553,17 @@ def run_tier2(
     recreated: tuple[str, ...] = ()
     force_finalized = tier1.force_finalized
     if reason is not None:
-        recreated = tuple(sorted(namespaces))
-        force_finalized += remove_until_gone(
-            cluster,
-            [namespace_identity(name) for name in recreated],
-            timeout_seconds=timeout_seconds,
-            poll_seconds=poll_seconds,
-            clock=clock,
-            sleep=sleep,
-        )
-        deploy()
+        with (host_limits or HostLimits.from_env()).admit("redeploy"):
+            recreated = tuple(sorted(namespaces))
+            force_finalized += remove_until_gone(
+                cluster,
+                [namespace_identity(name) for name in recreated],
+                timeout_seconds=timeout_seconds,
+                poll_seconds=poll_seconds,
+                clock=clock,
+                sleep=sleep,
+            )
+            deploy()
     return WipeReceipt(
         tier1.seconds,
         tier1.removed,
