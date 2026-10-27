@@ -15,6 +15,8 @@ from benchmarks.sregym.adapter import WaitKind, kubectl, wait_for
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from benchmarks.sregym.fastloop.accepted_source import AcceptedSource
+
 INJECTED_SELECTOR = "platform.io/injected=true"
 HARNESS_NAMESPACE = "sregym"
 
@@ -258,7 +260,7 @@ def prepare_harness_traffic(app: Any, kubeconfig: Path, *, suspended: bool = Fal
     return True
 
 
-def restore_admission_baseline(kubeconfig: Path, baseline_path: Path, workspace: Path) -> None:
+def restore_admission_baseline(kubeconfig: Path, baseline_path: Path, source: AcceptedSource) -> None:
     """Retire unlabelled legacy admission faults against captured/accepted identity.
 
     The supported harness reset has the same captured-cluster boundary. Source
@@ -270,8 +272,7 @@ def restore_admission_baseline(kubeconfig: Path, baseline_path: Path, workspace:
         "MutatingWebhookConfiguration": "mutating_webhook_configs",
         "ValidatingWebhookConfiguration": "validating_webhook_configs",
     }
-    lock_path = workspace / ".sdo/rendered/lock.json"
-    accepted = json.loads(lock_path.read_text()).get("objects", []) if lock_path.is_file() else []
+    accepted = {(value["kind"], value["metadata"]["name"]) for value in source.manifests}
     listing = json.loads(
         kubectl(
             ["get", "mutatingwebhookconfigurations,validatingwebhookconfigurations", "-o", "json"],
@@ -283,10 +284,7 @@ def restore_admission_baseline(kubeconfig: Path, baseline_path: Path, workspace:
         kind, name = value["kind"], value["metadata"]["name"]
         if kinds[kind] not in baseline:
             raise ValueError("eval: restore requires captured admission identities")
-        source_owned = any(
-            row.get("ref", {}).get("kind") == kind and row["ref"].get("name") == name for row in accepted
-        )
-        if name not in baseline[kinds[kind]] and not source_owned:
+        if name not in baseline[kinds[kind]] and (kind, name) not in accepted:
             kubectl(
                 ["delete", f"{kind}/{name}", "--ignore-not-found=true", "--wait=true", "--timeout=20s"],
                 namespace=None,

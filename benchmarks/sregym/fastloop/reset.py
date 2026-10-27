@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol
 
 from benchmarks.sregym.adapter import PersistentState, WaitKind, kubectl, wait_for
+from benchmarks.sregym.fastloop.accepted_source import AcceptedSource
 from benchmarks.sregym.fastloop.baseline_recovery import (
     NON_APPLICATION_NAMESPACES,
     RESTORE_RECEIPTS,
@@ -222,8 +223,9 @@ class RestoreChecks:
         baselines = load_application_baseline(env.baseline_path, env.namespace)
         if baselines is None:
             raise ValueError("reset requires an application baseline captured by fastloop up")
+        source = AcceptedSource.of(env)
         baselines = complete_recovery_baselines(
-            env.workspace, accepted_restore_baselines(env.workspace, baselines, seed_commit=env.seed_commit)
+            source, accepted_restore_baselines(source, baselines, seed_commit=env.seed_commit)
         )
         absent = set()
         for baseline in baselines:
@@ -271,7 +273,7 @@ class RestoreChecks:
         self.validate()
         for baseline in load_application_baseline(env.baseline_path, env.namespace) or ():
             ensure_application_namespace(env.kubeconfig, baseline.namespace)
-        restore_admission_baseline(env.kubeconfig, env.baseline_path, env.workspace)
+        restore_admission_baseline(env.kubeconfig, env.baseline_path, AcceptedSource.of(env))
         if fresh:
             reset_responder_grants(env.kubeconfig, env.namespace)
 
@@ -353,12 +355,12 @@ def restore_application(
         raise ValueError("reset requires an application baseline captured by fastloop up")
     from benchmarks.sregym.fastloop.recovery_closure import complete_recovery_baselines
 
+    source = AcceptedSource.of(environment)
     baselines = complete_recovery_baselines(
-        environment.workspace,
-        accepted_restore_baselines(environment.workspace, baselines, seed_commit=environment.seed_commit),
+        source, accepted_restore_baselines(source, baselines, seed_commit=environment.seed_commit)
     )
     worker.request("clean_start", problem_id=environment.deploy_problem, timeout=wait_for(WaitKind.ROLLOUT))
-    reconcile_and_record(cluster, baselines, environment.workspace, environment.run_dir / RESTORE_RECEIPTS)
+    reconcile_and_record(cluster, baselines, source, environment.run_dir / RESTORE_RECEIPTS)
     deadline = time.monotonic() + wait_for(WaitKind.MINUTE)
     if checks:
         checks.settle()

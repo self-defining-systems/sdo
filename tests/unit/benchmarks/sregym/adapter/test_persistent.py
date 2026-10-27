@@ -795,6 +795,7 @@ def test_fail_soft_reset_restarts_controller_without_losing_drift_verdicts(tmp_p
     from benchmarks.sregym.fastloop.baseline_recovery import ApplicationBaseline
     from benchmarks.sregym.fastloop.environment import FastloopEnvironment
     from benchmarks.sregym.fastloop.reset import reset_environment
+    from tests.unit.benchmarks.sregym.fastloop.accepted_source_fixture import commit_accepted_source
 
     class RestartOps(FakeOps):
         def install(self, config: RuntimeConfig) -> bool:
@@ -843,6 +844,7 @@ def test_fail_soft_reset_restarts_controller_without_losing_drift_verdicts(tmp_p
         private_tmp=None,
         seed_commit="a" * 40,
     )
+    commit_accepted_source(environment.workspace, namespace="hotel")
     baseline = ApplicationBaseline("hotel", [{"kind": "Deployment", "metadata": {"name": "app"}}])
     environment.baseline_path.write_text(json.dumps({"fastloop_application": {"namespaces": [baseline.__dict__]}}))
 

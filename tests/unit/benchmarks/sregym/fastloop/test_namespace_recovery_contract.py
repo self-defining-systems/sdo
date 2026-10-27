@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from benchmarks.sregym.fastloop.baseline_recovery import capture_application_baseline, reconcile_application
+from tests.unit.benchmarks.sregym.fastloop.accepted_source_fixture import commit_accepted_source
 from tests.unit.benchmarks.sregym.fastloop.test_baseline_recovery import FakeCluster, obj
 
 
@@ -49,14 +50,18 @@ def test_namespace_recovery_capture_contains_referenced_nondefault_service_accou
     assert order.index("ServiceAccount") < order.index("Deployment")
 
 
-def test_ast3_sealed_baseline_recovers_all_referenced_accounts_and_grants() -> None:
+def test_ast3_sealed_baseline_recovers_all_referenced_accounts_and_grants(tmp_path: Path) -> None:
+    import yaml
+
     from benchmarks.sregym.fastloop.baseline_recovery import load_application_baseline
     from benchmarks.sregym.fastloop.recovery_closure import complete_recovery_baselines, missing_prerequisites
 
     root = Path(__file__).parents[4] / "fixtures/benchmarks/namespace_recovery"
     baseline = load_application_baseline(root / "astronomy-baseline.json", "astronomy-shop")
     assert baseline
-    recovered = complete_recovery_baselines(root, baseline)
+    manifests = [yaml.safe_load(path.read_text()) for path in sorted((root / "kubernetes").glob("*.yaml"))]
+    source = commit_accepted_source(tmp_path / "workspace", manifests, namespace="astronomy-shop")
+    recovered = complete_recovery_baselines(source, baseline)
     for captured in recovered:
         accounts = {v["metadata"]["name"] for v in captured.objects if v["kind"] == "ServiceAccount"}
         required = set()
@@ -155,6 +160,7 @@ def test_missing_prerequisites_rejects_before_controller_or_namespace_writes(
         private_tmp=None,
         seed_commit="synthetic",
     )
+    commit_accepted_source(env.workspace, namespace="hotel")
     env.baseline_path.write_text("{}")
     deployment = obj(
         "Deployment",
@@ -183,30 +189,16 @@ def test_missing_prerequisites_rejects_before_controller_or_namespace_writes(
     assert calls == [["get", "namespace", "hotel", "-o", "name"]]
 
 
-def test_secret_manifest_payload_is_never_opened_during_closure(tmp_path: Path) -> None:
-    import json
-
+def test_secret_manifests_are_never_rendered_during_closure(tmp_path: Path) -> None:
     from benchmarks.sregym.fastloop.baseline_recovery import ApplicationBaseline
     from benchmarks.sregym.fastloop.recovery_closure import complete_recovery_baselines, missing_prerequisites
 
-    root = tmp_path / ".sdo/rendered"
-    root.mkdir(parents=True)
-    (root / "lock.json").write_text(
-        json.dumps(
-            {
-                "objects": [
-                    {
-                        "ref": {"kind": "Secret", "namespace": "hotel", "name": "credential"},
-                        "file": "DO-NOT-OPEN",
-                        "sha256": "unused",
-                    }
-                ]
-            }
-        )
-    )
+    secret = {"apiVersion": "v1", "kind": "Secret", "metadata": {"namespace": "hotel", "name": "credential"}}
+    source = commit_accepted_source(tmp_path, [{**secret, "stringData": {"token": "synthetic"}}])
     value = obj("Pod", "app", spec={"containers": [{"envFrom": [{"secretRef": {"name": "credential"}}]}]})
-    result = complete_recovery_baselines(tmp_path, (ApplicationBaseline("hotel", [value]),))
+    result = complete_recovery_baselines(source, (ApplicationBaseline("hotel", [value]),))
     assert [r.label() for r in missing_prerequisites(result)] == ["hotel/Secret/credential"]
+    assert not any(v["kind"] == "Secret" for v in result[0].objects)
 
 
 @pytest.mark.parametrize("kind", ["Role", "RoleBinding", "ServiceAccount"])
@@ -244,31 +236,6 @@ def test_recovery_restores_top_level_identity_and_rbac_fields(
     monkeypatch.setattr("benchmarks.sregym.fastloop.baseline_recovery.kubectl", api)
     KubectlApplicationCluster(tmp_path / "kubeconfig").apply("hotel", value)
     assert live[field] == value[field]
-
-
-@pytest.mark.parametrize("damage", ["digest", "identity", "escape"])
-def test_legacy_prerequisites_require_contained_identity_bound_manifest_bytes(tmp_path: Path, damage: str) -> None:
-    import hashlib
-    import json
-
-    from benchmarks.sregym.fastloop.baseline_recovery import ApplicationBaseline
-    from benchmarks.sregym.fastloop.recovery_closure import complete_recovery_baselines
-
-    root = tmp_path / ".sdo/rendered"
-    root.mkdir(parents=True)
-    manifest = json.dumps(obj("ServiceAccount", "wrong" if damage == "identity" else "reader"))
-    (root / "account.yaml").write_text(manifest)
-    row = {
-        "ref": {"api_version": "apps/v1", "kind": "ServiceAccount", "namespace": "hotel", "name": "reader"},
-        "file": "../account.yaml" if damage == "escape" else "account.yaml",
-        "sha256": "invalid" if damage == "digest" else hashlib.sha256(manifest.encode()).hexdigest(),
-    }
-    (root / "lock.json").write_text(json.dumps({"objects": [row]}))
-    workload = obj("Pod", "app", spec={"serviceAccountName": "reader"})
-    with pytest.raises(
-        ValueError, match={"digest": "digest differs", "identity": "identity differs", "escape": "escapes"}[damage]
-    ):
-        complete_recovery_baselines(tmp_path, (ApplicationBaseline("hotel", [workload]),))
 
 
 def test_reset_cli_checks_prerequisites_before_building_or_starting_a_worker(
@@ -311,32 +278,17 @@ def test_legacy_capture_cannot_delete_unrecorded_namespace_prerequisites(kind: s
 
 
 @pytest.mark.parametrize("unrelated_kind", ["Deployment", "ConfigMap"])
-def test_recovery_reads_only_the_reference_closure_from_an_inherited_lock(tmp_path: Path, unrelated_kind: str) -> None:
-    import hashlib
-    import json
-
+def test_recovery_reads_only_the_reference_closure_from_the_accepted_source(
+    tmp_path: Path, unrelated_kind: str
+) -> None:
     from benchmarks.sregym.fastloop.baseline_recovery import ApplicationBaseline
     from benchmarks.sregym.fastloop.recovery_closure import complete_recovery_baselines
 
-    root = tmp_path / ".sdo/rendered"
-    root.mkdir(parents=True)
-    payload = json.dumps(obj("ServiceAccount", "reader"))
-    (root / "reader.yaml").write_text(payload)
-    rows = [
-        {
-            "ref": {"api_version": "apps/v1", "kind": "ServiceAccount", "namespace": "hotel", "name": "reader"},
-            "file": "reader.yaml",
-            "sha256": hashlib.sha256(payload.encode()).hexdigest(),
-        },
-        {
-            "ref": {"api_version": "v1", "kind": unrelated_kind, "namespace": "hotel", "name": "other-lane"},
-            "file": "unavailable-and-unrelated.yaml",
-            "sha256": "not-needed",
-        },
-    ]
-    (root / "lock.json").write_text(json.dumps({"objects": rows}))
+    source = commit_accepted_source(
+        tmp_path, [obj("ServiceAccount", "reader"), {**obj(unrelated_kind, "other-lane"), "apiVersion": "v1"}]
+    )
     baseline = (ApplicationBaseline("hotel", [obj("Pod", "app", spec={"serviceAccountName": "reader"})]),)
-    completed = complete_recovery_baselines(tmp_path, baseline)
+    completed = complete_recovery_baselines(source, baseline)
     assert [(v["kind"], v["metadata"]["name"]) for v in completed[0].objects] == [
         ("Pod", "app"),
         ("ServiceAccount", "reader"),
@@ -344,36 +296,12 @@ def test_recovery_reads_only_the_reference_closure_from_an_inherited_lock(tmp_pa
 
 
 def test_legacy_default_account_configuration_contributes_transitive_dependencies(tmp_path: Path) -> None:
-    import hashlib
-    import json
-
     from benchmarks.sregym.fastloop.baseline_recovery import ApplicationBaseline
     from benchmarks.sregym.fastloop.recovery_closure import complete_recovery_baselines, missing_prerequisites
 
-    root = tmp_path / ".sdo/rendered"
-    root.mkdir(parents=True)
     value = obj("ServiceAccount", "default", imagePullSecrets=[{"name": "registry"}])
-    payload = json.dumps(value)
-    (root / "default.yaml").write_text(payload)
-    (root / "lock.json").write_text(
-        json.dumps(
-            {
-                "objects": [
-                    {
-                        "ref": {
-                            "api_version": value["apiVersion"],
-                            "kind": "ServiceAccount",
-                            "namespace": "hotel",
-                            "name": "default",
-                        },
-                        "file": "default.yaml",
-                        "sha256": hashlib.sha256(payload.encode()).hexdigest(),
-                    }
-                ]
-            }
-        )
-    )
+    source = commit_accepted_source(tmp_path, [value])
     baselines = (ApplicationBaseline("hotel", [obj("Pod", "app", spec={"containers": []})]),)
-    completed = complete_recovery_baselines(tmp_path, baselines)
+    completed = complete_recovery_baselines(source, baselines)
     assert value in completed[0].objects
     assert [ref.label() for ref in missing_prerequisites(completed)] == ["hotel/Secret/registry"]
