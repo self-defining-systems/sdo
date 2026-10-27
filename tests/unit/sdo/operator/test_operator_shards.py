@@ -201,3 +201,12 @@ def test_hosted_profiles_keep_provenance_and_positive_costs() -> None:
         assert len(profile["source_head"]) == 40
         assert all(math.isfinite(cost) and cost > 0 for cost in profile["costs"].values())
         assert profile.get("placements", {}).keys() <= profile["costs"].keys()
+
+
+def test_measured_slow_acceptance_cases_share_existing_compiler_runner() -> None:
+    source = inventory()
+    name = "TestCLIAndBrokerAgreeOnAcceptanceThirdShard"
+    source[shards.PREFIX + "broker"].append(name)
+    groups = shards.partition(source)
+    assert name in groups["compiler-replay"][shards.PREFIX + "broker"]
+    assert sum(names.count(name) for group in groups.values() for names in group.values()) == 1

@@ -87,6 +87,7 @@ def main() -> None:
     parser.add_argument("--log", type=Path, required=True)
     parser.add_argument("--run", type=int, required=True)
     parser.add_argument("--head", required=True)
+    parser.add_argument("--scope", choices=("all", "runtime", "operator"), default="all")
     parser.add_argument("--write", action="store_true", help="write profiles; default only reports measured entries")
     args = parser.parse_args()
     if args.run <= 0 or len(args.head) != 40 or any(c not in "0123456789abcdef" for c in args.head):
@@ -99,10 +100,12 @@ def main() -> None:
             runtime[name] = max(runtime.get(name, 0.0), seconds)
         elif package.startswith("sdo.dev/operator/"):
             operator[f"{package}/{name}"] = seconds
-    if not runtime or not operator:
-        raise ValueError("both runtime and operator completed timing evidence is required")
-    update_profile(ROOT / "scripts/runtime_test_costs.json", runtime, args.run, args.head, args.write)
-    update_profile(ROOT / "scripts/operator_test_costs.json", operator, args.run, args.head, args.write)
+    selected = {"runtime": runtime, "operator": operator}
+    scopes = tuple(selected) if args.scope == "all" else (args.scope,)
+    if any(not selected[scope] for scope in scopes):
+        raise ValueError("completed timing evidence is required for every selected profile")
+    for scope in scopes:
+        update_profile(ROOT / f"scripts/{scope}_test_costs.json", selected[scope], args.run, args.head, args.write)
 
 
 if __name__ == "__main__":
