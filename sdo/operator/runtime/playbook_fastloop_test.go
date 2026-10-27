@@ -248,7 +248,9 @@ func fullToolAction(t *testing.T, encoded []byte) []byte {
 
 func fastloopTool(t *testing.T, directory string, args ...string) ToolResponse {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	// Include Python startup and cold JIT compilation under the race-enabled CI
+	// shard. Eight seconds can expire even after the CLI emits its response.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	prefix := []string{"run", "python", "-m", "sdo.agents.responder.tools_cli"}
 	compact := os.Getenv("SDO_SCRIPTED_COMPACT_OUTPUT") == "1"
@@ -263,7 +265,7 @@ func fastloopTool(t *testing.T, directory string, args ...string) ToolResponse {
 	command.Stderr = &stderr
 	output, err := command.Output()
 	if err != nil {
-		t.Fatalf("sdo %v: %v: stdout: %s; stderr: %s", args, err, output, stderr.String())
+		t.Fatalf("sdo %v: %v (context: %v): stdout: %s; stderr: %s", args, err, ctx.Err(), output, stderr.String())
 	}
 	var response ToolResponse
 	encoded := []byte(strings.SplitN(string(output), "\n", 2)[0])

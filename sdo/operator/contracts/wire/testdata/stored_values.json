@@ -266,7 +266,8 @@
     "delete_not_confirmed",
     "execution_failed",
     "incident_verified",
-    "outcome_unknown"
+    "outcome_unknown",
+    "source_residual"
   ],
   "sdodev.contracts.v1alpha1.RolloutPending.reason_code": [
     "",
