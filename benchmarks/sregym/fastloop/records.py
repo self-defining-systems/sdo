@@ -259,6 +259,17 @@ class IncidentRecord(_PersistedModel):
     memory_after_commit: str | None = None
     memory_ancestry: list[str] = Field(default_factory=list)
 
+    @model_validator(mode="after")
+    def incident_follows_injection(self) -> IncidentRecord:
+        """A negative injection-to-detection time means the record describes some other incident."""
+        started = self.injection.started_at if isinstance(self.injection, Injected) else None
+        if self.detected_at is not None and started is not None and self.detected_at < started:
+            raise ValueError(
+                f"incident_predates_injection: detected {self.detected_at.isoformat()}, "
+                f"injected {started.isoformat()}"
+            )
+        return self
+
     @computed_field  # type: ignore[prop-decorator]
     @property
     def injection_started_at(self) -> datetime | None:

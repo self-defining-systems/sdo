@@ -74,7 +74,7 @@ from benchmarks.sregym.adapter.runtime import (
     export_controller_logs,
 )
 from benchmarks.sregym.protocol import ProductionReceiptValidationError, validate_production_receipt
-from benchmarks.sregym.protocol.injection import InvalidInjectionError
+from benchmarks.sregym.protocol.injection import IncidentOpenBeforeInjectionError, InvalidInjectionError
 from benchmarks.sregym.protocol.native_receipt import NativeReceiptValidationError
 from sdo.contracts import (
     ControllerObservation,
@@ -941,11 +941,24 @@ def run_persistent_stage(
         raise PersistentControllerError("the persistent controller pod was replaced mid-pipeline")
     state.controllers[inputs.namespace] = record
     state.save(inputs.state_path)
-    known = _known_incident_ids(ops.runtime_state(control))
     install_ready = clock.monotonic()
     generation = f"{inputs.stage_label}-{uuid.uuid4().hex[:8]}"
+    known: set[str] = set()
+
+    def inject_binding_incidents() -> None:
+        # The one point the fault is applied: admission's proof ran its 700-1000 s before this, and any
+        # incident it opened is no more this row's than one from a previous row.
+        state = ops.runtime_state(control)
+        if incident_work_open(state):
+            raise IncidentOpenBeforeInjectionError(
+                f"incident work was open when the fault was about to be injected in {control!r}",
+                {"busy_until": state.get("busy_until"), "incident_request": state.get("incident_request")},
+            )
+        known.update(_known_incident_ids(state))
+        inject()
+
     try:
-        gate_timings = ops.inject_after_resume(control, generation, inject)
+        gate_timings = ops.inject_after_resume(control, generation, inject_binding_incidents)
     except InvalidInjectionError as exc:
         # No incident exists: settle maintenance without waiting for response, reflection,
         # acknowledgment, or a strict receipt, and retain a benchmark terminal record.

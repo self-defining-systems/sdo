@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -24,6 +25,43 @@ class InvalidInjectionError(RuntimeError):
         self.details = details
         self.reply = reply or {}
         self.cleanup_error: str | None = None
+
+
+class PreInjectionIncidentError(InvalidInjectionError):
+    """An incident that this injection did not cause: the row is retried, never graded."""
+
+    def __init__(self, message: str, details: dict[str, Any]) -> None:
+        super().__init__(details)
+        RuntimeError.__init__(self, message)
+
+
+class IncidentOpenBeforeInjectionError(PreInjectionIncidentError):
+    """SDO incident work was still open when the fault was about to be applied, so the lane was not admitted."""
+
+    infra_error = "incident_open_before_injection"
+
+
+class IncidentPredatesInjectionError(PreInjectionIncidentError):
+    """The incident a row would be graded on was detected before the fault was injected."""
+
+    infra_error = "incident_predates_injection"
+
+
+def ensure_incident_follows_injection(
+    incident_id: str | None, detected_at: datetime | None, injection_started_at: datetime | None
+) -> None:
+    """Reject an incident detected before the injection that this row is bound to."""
+    if detected_at is None or injection_started_at is None or detected_at >= injection_started_at:
+        return
+    raise IncidentPredatesInjectionError(
+        f"incident {incident_id or 'unidentified'} was detected at {detected_at.isoformat()}, before the injection "
+        f"started at {injection_started_at.isoformat()}",
+        {
+            "incident_id": incident_id,
+            "detected_at": detected_at.isoformat(),
+            "injection_started_at": injection_started_at.isoformat(),
+        },
+    )
 
 
 def check_injection(reply: dict[str, Any]) -> None:

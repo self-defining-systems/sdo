@@ -36,7 +36,7 @@ from benchmarks.sregym.fastloop.records import (
     write_records,
 )
 from benchmarks.sregym.faults.description import SuiteCapabilities
-from benchmarks.sregym.protocol.injection import InvalidInjectionError
+from benchmarks.sregym.protocol.injection import InvalidInjectionError, ensure_incident_follows_injection
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -465,6 +465,7 @@ def _run_one(
     outcome: AgentOutcome | None = None
     try:
         outcome = agent.resolve(index, problem_id, inject)
+        ensure_incident_follows_injection(outcome.incident_id, outcome.detected_at, outcome.injection.started_at)
     except InvalidInjectionError as exc:
         cleanup_error = exc.cleanup_error
         recovered = False
