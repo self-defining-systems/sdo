@@ -285,6 +285,19 @@ func podUsesService(pod *corev1.Pod, name, namespace string) bool {
 	for _, container := range pod.Spec.Containers {
 		for _, env := range container.Env {
 			value := env.Value
+			endpointNamed := false
+			envKey := strings.ToUpper(env.Name)
+			for _, suffix := range []string{"HOST", "ADDR", "ADDRESS", "ENDPOINT", "URL", "URI", "SERVICE"} {
+				if envKey == suffix || strings.HasSuffix(envKey, "_"+suffix) {
+					endpointNamed = true
+					break
+				}
+			}
+			// Equal arbitrary strings are not a dependency relation. Require
+			// address syntax or an explicitly endpoint-named environment key.
+			if !endpointNamed && !strings.Contains(value, ":") && !strings.Contains(value, ".svc") {
+				continue
+			}
 			if strings.Contains(value, "://") {
 				parsed, err := url.Parse(value)
 				if err != nil {

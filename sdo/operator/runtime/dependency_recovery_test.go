@@ -125,8 +125,10 @@ func TestRestoredBackendRecyclesStaleServiceConsumersOnlyAfterReady(t *testing.T
 			consumer.Spec.Containers[0].Env = []corev1.EnvVar{{Name: "DATASTORE_ADDRESS", Value: "redis://store.app.svc.cluster.local:6379/0"}}
 			unrelated := recoveryPod("unrelated")
 			unrelated.Spec.Containers[0].Env = []corev1.EnvVar{{Name: "DATASTORE_ADDRESS", Value: "store.foreign.svc:6379"}}
+			roleOnly := recoveryPod("role-only")
+			roleOnly.Spec.Containers[0].Env = []corev1.EnvVar{{Name: "ROLE", Value: "store"}}
 			service := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "store", Namespace: "app"}, Spec: corev1.ServiceSpec{Selector: map[string]string{"tier": "store"}}}
-			client := fake.NewSimpleClientset(backend, consumer, unrelated, service)
+			client := fake.NewSimpleClientset(backend, consumer, unrelated, roleOnly, service)
 			sampledReady := false
 			client.PrependReactor("list", "pods", func(action ktesting.Action) (bool, kruntime.Object, error) {
 				if action.(ktesting.ListAction).GetListRestrictions().Labels.String() != "" && ready {
@@ -144,7 +146,7 @@ func TestRestoredBackendRecyclesStaleServiceConsumersOnlyAfterReady(t *testing.T
 				}
 				options := action.(ktesting.DeleteAction).GetDeleteOptions()
 				if options.Preconditions == nil || *options.Preconditions.UID != "consumer" || *options.Preconditions.ResourceVersion != "1" {
-					t.Fatal("recycle omitted UID/version preconditions")
+					t.Fatal("recycle targeted an unrelated Pod or omitted UID/version preconditions")
 				}
 				return false, nil, nil
 			})
@@ -161,9 +163,12 @@ func TestRestoredBackendRecyclesStaleServiceConsumersOnlyAfterReady(t *testing.T
 			} else if err == nil || len(effects) != 0 {
 				t.Fatalf("unready backend caused restart: %+v %v", effects, err)
 			}
-			if _, err := client.CoreV1().Pods("app").Get(context.Background(), "unrelated", metav1.GetOptions{}); err != nil {
-				t.Fatal("unrelated consumer deleted")
+			for _, name := range []string{"unrelated", "role-only"} {
+				if _, err := client.CoreV1().Pods("app").Get(context.Background(), name, metav1.GetOptions{}); err != nil {
+					t.Fatal("unrelated consumer deleted")
+				}
 			}
+
 		})
 	}
 }
