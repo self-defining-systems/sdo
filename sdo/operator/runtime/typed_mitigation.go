@@ -11,19 +11,19 @@ func (v mitigationReadView) LogsWithOptions(ref sdk.ObjectRef, options corev1.Po
 	if err := v.ctx.Err(); err != nil {
 		return zero, err
 	}
-	return v.live.LogsWithOptions(ref, options)
+	return v.ReadView.LogsWithOptions(ref, options)
 }
 func (v mitigationReadView) PodUsage(ref sdk.ObjectRef) (*metricsv1beta1.PodMetrics, error) {
 	var zero *metricsv1beta1.PodMetrics
 	if err := v.ctx.Err(); err != nil {
 		return zero, err
 	}
-	return v.live.PodUsage(ref)
+	return v.ReadView.PodUsage(ref)
 }
 func (v mitigationReadView) NodeUsage(ref sdk.ObjectRef) (*metricsv1beta1.NodeMetrics, error) {
 	var zero *metricsv1beta1.NodeMetrics
 	if err := v.ctx.Err(); err != nil {
 		return zero, err
 	}
-	return v.live.NodeUsage(ref)
+	return v.ReadView.NodeUsage(ref)
 }

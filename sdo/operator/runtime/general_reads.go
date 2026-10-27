@@ -51,9 +51,3 @@ func (v *cachedReadView) KubernetesRead(q program.KubernetesRequest) (json.RawMe
 	err := v.read("KubernetesRead", []any{q}, &r, func() (any, error) { return v.ReadView.KubernetesRead(q) })
 	return r, err
 }
-func (v mitigationReadView) Observe(o program.ExternalOperation) (int32, error) {
-	return v.live.Observe(o)
-}
-func (v mitigationReadView) KubernetesRead(r program.KubernetesRequest) (json.RawMessage, error) {
-	return v.live.KubernetesRead(r)
-}

@@ -139,15 +139,11 @@ func Check(ctx context.Context, p program.Diagnoser, m program.Mitigator, detect
 	if m == nil {
 		return fail(fmt.Errorf("matching program has no mitigator"))
 	}
-	plan, err := m.Mitigate(ctx, newReadView(ctx, c.Corpus.Open, c.Corpus.PhaseRecordings("open"), source), bindings)
+	// The plan comes from the builder the incident stage uses, so a plan the
+	// stage would refuse (empty, invalid, unbindable) fails validation here.
+	plan, err := operator.BuildMitigationPlan(ctx, m, newReadView(ctx, c.Corpus.Open, c.Corpus.PhaseRecordings("open"), source), bindings, 5*time.Second)
 	if err != nil {
 		return fail(fmt.Errorf("Mitigate: %w", err))
-	}
-	if err = plan.Validate(); err != nil {
-		return fail(err)
-	}
-	if err = program.CheckReplicaSetScales(plan, c.Corpus.Open, bindings); err != nil {
-		return fail(err)
 	}
 	if containsScript(plan) {
 		return observedScriptTransition(ctx, p, c, plan, source, r)
