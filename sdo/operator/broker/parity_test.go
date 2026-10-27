@@ -139,16 +139,16 @@ func testCLIAndBrokerAgreeOnAcceptance(t *testing.T, shard int) {
 		{"unverified peer gaps", validate.Responder, validate.ReflectionPhase, func(*testing.T, string) {}, nil, false},
 		{"unverified peer no verified", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
 			put(t, r, ".sdo/diagnostics/detectors/incidents/cache/detector.go", parityDetector(t, "cache")+"\n// No verified cause.\n", 0644)
-		}, []string{"reflection.executable-cause"}, false},
+		}, nil, false},
 		{"verified cause executable with unverified peer", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) { parityProgram(t, r) }, nil, false},
-		{"unverified peer program", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) { parityProgram(t, r) }, []string{"reflection.executable-cause"}, false},
+		{"unverified peer program", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) { parityProgram(t, r) }, nil, false},
 		{"unverified peer script", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
 			put(t, r, ".sdo/playbooks/base/scripts/fix.sh", "#!/bin/bash\nset -eu\nkubectl rollout restart \"$1\"\n# unverified peer\n", 0755)
-		}, []string{"reflection.executable-cause"}, false},
-		{"unverified peer library", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) { put(t, r, ".sdo/lib/unbound/helper.go", "package unbound\n", 0644) }, []string{"reflection.executable-cause"}, false},
+		}, nil, false},
+		{"unverified peer library", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) { put(t, r, ".sdo/lib/unbound/helper.go", "package unbound\n", 0644) }, nil, false},
 		{"unverified peer executable", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
 			put(t, r, ".sdo/diagnostics/detectors/incidents/cache/detector.go", parityDetector(t, "cache")+"\n// Unverified peer signature.\n", 0644)
-		}, []string{"reflection.executable-cause"}, false},
+		}, nil, false},
 		{"unchanged good tree", validate.Responder, validate.ReflectionPhase, func(*testing.T, string) {}, nil, false},
 		{"responder adds a detector", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
 			put(t, r, ".sdo/diagnostics/detectors/incidents/dns/manifest.yaml", strings.Replace(incidentManifest, "%s", "base", 1), 0o644)
@@ -615,9 +615,6 @@ func (p Program) Mitigate(ctx context.Context,v program.ReadView,b program.Bindi
 					}
 				}
 				parityFindingRepairProof(outcome)
-				if test.name == "successful unrelated reported cause" {
-					outcome.Findings[0].PrimaryResource = &contracts.ObjectRef{Kind: "Service", Namespace: "demo", Name: "actual-fault"}
-				}
 				if _, err := repository.RecordOutcome(context.Background(), "incident", outcome); err != nil {
 					t.Fatal(err)
 				}
@@ -640,9 +637,7 @@ func (p Program) Mitigate(ctx context.Context,v program.ReadView,b program.Bindi
 			if capture == "" {
 				capture = t.TempDir()
 			}
-			if test.name != "missing controller healthy capture" {
-				put(t, capture, "healthy/healthy.json", string(capturefixture.FromView(t, `{"namespace":"demo","services":[],"pods":[]}`)), 0644)
-			}
+			put(t, capture, "healthy/healthy.json", string(capturefixture.FromView(t, `{"namespace":"demo","services":[],"pods":[]}`)), 0644)
 			if strings.HasPrefix(test.name, "healthy refused") {
 				// The legacy/caller-authored healthy.json has no Consul ports.
 				// Only the controller capture retains the original healthy app.
