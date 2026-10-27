@@ -30,7 +30,7 @@ func admissionRolloutsFor(name string) KubernetesPlanRollouts {
 
 func TestAdmissionBlockedStopsRolloutAndPreservesAppliedRepair(t *testing.T) {
 	for _, poll := range []bool{false, true} {
-		t.Run(map[bool]string{false: "agent", true: "stage"}[poll], func(t *testing.T) {
+		t.Run(map[bool]string{false: "stage", true: "agent"}[poll], func(t *testing.T) {
 			loop, cluster := menuB3Loop(t)
 			e := loop.Executor
 			e.Verifier = planFakeVerifier{true}
