@@ -12,6 +12,10 @@ import (
 	"sdo.dev/operator/contracts/wire"
 )
 
+// DecisionShape is the expected decision JSON. A malformed or missing decision
+// error carries it, so one correction turn can fix the file.
+const DecisionShape = `{"learning_decision": "updated | no_change | sdk_gap", "no_change_reason": "why nothing changed (no_change and sdk_gap only)", "proposed_artifact_ids": ["playbook-id for each changed playbook"]}`
+
 // LoadReflectionResult preserves the full typed decision input, including
 // fields which must be rejected before converting to publication metadata.
 func LoadReflectionResult(ctx context.Context, root, path string) (*contracts.ReflectionResult, error) {
@@ -31,7 +35,7 @@ func LoadReflectionResult(ctx context.Context, root, path string) (*contracts.Re
 	}
 	result := new(contracts.ReflectionResult)
 	if err := protojson.Unmarshal(data, result); err != nil {
-		return nil, fmt.Errorf("reflection decision: %w", err)
+		return nil, fmt.Errorf("reflection decision is not valid JSON: %w; expected %s", err, DecisionShape)
 	}
 	return result, nil
 }

@@ -7,6 +7,7 @@ import (
 	"log/slog"
 
 	"sdo.dev/operator/memory/layout"
+	"sdo.dev/operator/memory/validate"
 )
 
 // ValidationJobRequest is the contract for an isolated validator. A job
@@ -34,6 +35,8 @@ type ValidationJobReceipt struct {
 	ReadOnlyMountObserved           bool
 	NoPublishingCredentialsObserved bool
 	EgressIsolationCanaryPassed     bool
+	// CoverageGaps are the validator's non-blocking notes for this tree.
+	CoverageGaps []validate.Diagnostic
 }
 
 type ValidationJobClient interface {
@@ -75,9 +78,15 @@ func JobValidator(client ValidationJobClient) Validator {
 			!receipt.ReadOnlyMountObserved || !receipt.NoPublishingCredentialsObserved || !receipt.EgressIsolationCanaryPassed {
 			return errors.New("isolated validator receipt is incomplete or bound to a different candidate tree")
 		}
+		if collected, ok := ctx.Value(coverageGapsKey{}).(*[]validate.Diagnostic); ok {
+			*collected = append(*collected, receipt.CoverageGaps...)
+		}
 		return nil
 	}
 }
+
+// coverageGapsKey carries the broker's collector for the validator Job's gaps.
+type coverageGapsKey struct{}
 
 func compileBaseline(ctx context.Context) string {
 	baseline, _ := ctx.Value(compileBaselineKey{}).(string)

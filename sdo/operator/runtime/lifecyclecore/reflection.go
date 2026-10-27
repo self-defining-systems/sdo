@@ -47,23 +47,25 @@ type ReflectionEvent struct {
 	Commit      string
 	Decision    *contracts.ReflectionDecision
 	Diagnostics []*contracts.MemoryDiagnostic
+	// CoverageGaps are the accepted commit's non-blocking notes.
+	CoverageGaps []*contracts.MemoryDiagnostic
 }
 
 type ReflectionEffect struct {
-	IncidentID       string
-	ProposalCommit   string
-	OutcomeCommit    string
-	Kind             ReflectionEffectKind
-	ID               string
-	Workspace        *contracts.ProposalWorkspace
-	Closure          *contracts.IncidentClosure
-	Outcome          *contracts.OutcomeRecord
-	Decision         *contracts.ReflectionDecision
-	Attempt          uint32
-	Diagnostics      []*contracts.MemoryDiagnostic
-	Paths            []string
-	DispatchAt       *timestamppb.Timestamp
-	NoRepairCount uint32
+	IncidentID     string
+	ProposalCommit string
+	OutcomeCommit  string
+	Kind           ReflectionEffectKind
+	ID             string
+	Workspace      *contracts.ProposalWorkspace
+	Closure        *contracts.IncidentClosure
+	Outcome        *contracts.OutcomeRecord
+	Decision       *contracts.ReflectionDecision
+	Attempt        uint32
+	Diagnostics    []*contracts.MemoryDiagnostic
+	Paths          []string
+	DispatchAt     *timestamppb.Timestamp
+	NoRepairCount  uint32
 }
 
 func ReflectionFeedback(ledger *contracts.BrokerLedger) (uint32, []*contracts.MemoryDiagnostic) {
@@ -199,6 +201,10 @@ func StepReflection(state *contracts.BrokerLedger, event ReflectionEvent) (*cont
 		}
 		next.ReflectionCommit = event.Commit
 		next.ReflectionPaths = slices.Clone(event.Paths)
+		next.ReflectionCoverageGaps = nil
+		for _, gap := range event.CoverageGaps {
+			next.ReflectionCoverageGaps = append(next.ReflectionCoverageGaps, proto.Clone(gap).(*contracts.MemoryDiagnostic))
+		}
 		next.ReflectionPhase = contracts.ReflectionPhase_REFLECTION_PHASE_DONE
 	case ReflectionRejected:
 		if (kind != ReviewReflection && kind != PublishReflection) || len(event.Diagnostics) == 0 {

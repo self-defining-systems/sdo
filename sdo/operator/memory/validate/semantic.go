@@ -19,8 +19,7 @@ import (
 )
 
 var (
-	rolePlaceholder = regexp.MustCompile(`<\w*[A-Z][A-Z0-9_]+>`)
-	markdownLink    = regexp.MustCompile(`\[[^]]+\]\(([^)]+)\)`)
+	markdownLink = regexp.MustCompile(`\[[^]]+\]\(([^)]+)\)`)
 )
 
 func (s *run) semantic(ctx context.Context) error {
@@ -105,15 +104,8 @@ func (s *run) documents() {
 		if doc.Meta["owner"] != "responder" {
 			s.add(Semantic, Diagnostic{Rule: RulePlaybookOwner, Path: at, Message: "playbook owner must be responder"})
 		}
-		fault := layout.PlaybookFaultClass(book.id)
-		if doc.Meta["fault_class"] != fault {
-			s.add(Semantic, Diagnostic{Rule: RulePlaybookFaultClass, Path: at, Message: fmt.Sprintf("fault_class must be %s", fault)})
-		}
 		if incident, ok := doc.Meta["originating_incident"]; !ok || incident == nil || strings.TrimSpace(fmt.Sprint(incident)) == "" {
 			s.add(Semantic, Diagnostic{Rule: RulePlaybookIncident, Path: at, Message: "originating_incident is required"})
-		}
-		if !rolePlaceholder.MatchString(doc.Body) {
-			s.add(Semantic, Diagnostic{Rule: RulePlaybookPlaceholder, Path: at, Message: "playbook must use a role placeholder", Hint: "write resource names as <RESOURCE_NAME> style placeholders, not literals"})
 		}
 	}
 }
@@ -148,7 +140,6 @@ func (s *run) playbookIndex() {
 		}
 		return
 	}
-	linked := map[string]bool{}
 	for _, match := range markdownLink.FindAllStringSubmatchIndex(string(s.index.content), -1) {
 		target := string(s.index.content[match[2]:match[3]])
 		line := strings.Count(string(s.index.content[:match[0]]), "\n") + 1
@@ -168,15 +159,6 @@ func (s *run) playbookIndex() {
 		if book := s.playbooks[id]; book == nil || !book.hasReadme || clean != id+"/"+layout.PlaybookFileName {
 			s.add(Semantic, Diagnostic{Rule: RuleIndexLink, Path: s.index.path, Line: line, Message: fmt.Sprintf("index link does not name a playbook: %s", link)})
 			continue
-		}
-		linked[id] = true
-	}
-	if !s.complete() {
-		return
-	}
-	for _, book := range s.sortedPlaybooks() {
-		if book.hasReadme && !linked[book.id] {
-			s.add(Semantic, Diagnostic{Rule: RulePlaybookNotIndexed, Path: s.index.path, Message: fmt.Sprintf("playbook %s is missing from the index", book.id), Hint: fmt.Sprintf("add `[%s](%s/%s)`", book.id, book.id, layout.PlaybookFileName)})
 		}
 	}
 }

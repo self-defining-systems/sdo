@@ -13,22 +13,19 @@ diagnostic; look it up here.
 ## Front matter
 
 - `README.md` starts with YAML front matter and a non-empty body. Enforced by: `document.parse`.
-- Front matter: `schema_version: 1`, `owner: responder`, `fault_class` equal to the playbook ID (the scaffold
-  sets this), and a non-empty `originating_incident`. Enforced by: `playbook.owner`, `playbook.fault-class`,
-  `playbook.originating-incident`, `document.parse`.
+- Front matter: `schema_version: 1`, `owner: responder`, and a non-empty `originating_incident`; `fault_class` is
+  derived from the playbook ID when SDO publishes. Enforced by: `playbook.owner`, `playbook.originating-incident`,
+  `document.parse`.
 
 ## Body
 
-- The body names resources by role placeholder in angle brackets and capitals, such as `<TARGET_RESOURCE>`, not by
-  concrete names. Enforced by: `playbook.placeholder`.
 - The body, the index, the architecture, scripts, and detector source never contain physical `.sdo/` paths. Refer
   to playbooks as the logical ID and to scripts as `<playbook-id>/<name>.sh`. Enforced by: `text.physical-path`.
 
 ## Index
 
-- The playbook index lists every playbook as a Markdown link to its README using its logical ID and links only to playbooks.
-  `memory new playbook` maintains it. Enforced by: `playbook.index-missing`, `playbook.index-link`,
-  `playbook.not-indexed`.
+- The playbook index links only to playbooks. SDO adds each changed playbook's link when it publishes.
+  Enforced by: `playbook.index-missing`, `playbook.index-link`.
 
 ## Scripts
 
@@ -48,7 +45,10 @@ diagnostic; look it up here.
 - The responder writes playbooks, scripts, and the index during reflection. The health judge writes only the
   health-objective playbook during the initial health-judge stage. Enforced by: `ownership.denied`.
 
-- Recorded faults must produce incident detector findings that bind required roles through production selection, reach Match, and replay mitigation on the same binding; the healthy baseline must stay quiet. Enforced by: `program.repeat-unreachable`.
+- On its recorded fault a playbook's incident detectors must emit valid findings that stay quiet on the healthy fixture, and its Diagnose must Match and have a mitigator. Enforced by: `program.diagnose-no-match`, `program.mitigator-missing`, `detector.invalid-finding`, `detector.fires-on-healthy`, `program.repeat-unavailable`.
+
+Advice, not validator-checked: recorded faults should produce an incident detector finding that selects the playbook. When none does, the mitigation is still replayed and must repair, and the missing link is noted as a coverage gap (`program.repeat-unreachable`), not a refusal.
+
 - A mitigator must clear its diagnosis after its patches are applied to the faulted fixture, An already-faulty target value is not a repair. Enforced by: `program.mitigation-not-repaired`.
 - Prefer narrow typed SetField repairs when the damaged field is known; whole-object ReconcileFromSource requires whole-object justification. Observed and parameter-derived fields require valid patches and available observations; accepted-source field selectors require accepted manifests in the fixture. Enforced by: `program.mitigation-unreplayable`, `program.mitigation-not-repaired`.
 
@@ -73,11 +73,10 @@ pods/exec grant in the application namespace and returns an exit code with no st
 
 ## Corpus evidence
 
-- Each verified cause needs diagnose and mitigation programs, a README, and detector coverage; one detector may
-  surface several playbooks. Reflection can edit only responder-owned incident detectors, so new coverage goes
-  there; health-owned and built-in detectors cannot newly link a program. Only a typed SDK gap naming the cause
-  resources can excuse missing coverage.
-  Enforced by: `reflection.program-required`, `reflection.detector-required`.
+Advice, not validator-checked: save a diagnose and mitigation program, a README, and detector coverage for each verified cause you can; one
+detector may surface several playbooks. Reflection can edit only responder-owned incident detectors, so new
+coverage goes there. A cause left without a program or detector link is recorded as a coverage gap, not refused.
+
 - Build replay fixtures from recorded session observations. Controller capture files and snapshot digests are
   optional. Mitigation must execute and clear diagnosis; skipped effects fail replay. Enforced by: `program.mitigation-not-repaired`.
 - Preserve every accepted case exactly as it appears at the accepted base commit, including snapshots, recordings,

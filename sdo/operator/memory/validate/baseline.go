@@ -54,17 +54,17 @@ func selectCompileBaseline(ctx context.Context, request Request) (Request, error
 				return Request{}, err
 			}
 		}
-		request.HealthyBaseline = filepath.Join(capture, "healthy")
-		if capture == "" {
-			return Request{}, &Failure{Diagnostics: []Diagnostic{healthyCaptureDiagnostic("controller pre-incident healthy capture is unavailable")}}
+		request.HealthyBaseline = ""
+		if capture != "" {
+			if _, err := os.Stat(filepath.Join(capture, "healthy", "healthy.json")); err == nil {
+				request.HealthyBaseline = filepath.Join(capture, "healthy")
+			}
 		}
-		if _, err := os.Stat(filepath.Join(request.HealthyBaseline, "healthy.json")); err != nil {
-			return Request{}, &Failure{Diagnostics: []Diagnostic{healthyCaptureDiagnostic("controller pre-incident healthy capture is unavailable")}}
+		if request.HealthyBaseline == "" {
+			// Without the controller's capture the healthy replay is skipped. The
+			// repeat's act-verify loop still checks the learned detector.
+			request.noteGaps(Diagnostic{Rule: RuleDetectorHealthyBaseline, Message: "controller pre-incident healthy capture is unavailable; the healthy replay was skipped"})
 		}
 	}
 	return request, nil
-}
-
-func healthyCaptureDiagnostic(message string) Diagnostic {
-	return Diagnostic{Rule: RuleDetectorHealthyBaseline, Message: message, Hint: "the controller records this sample before the incident, or at a closure it verified healthy; agent-authored healthy.json cannot supply it"}
 }

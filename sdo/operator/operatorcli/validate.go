@@ -56,9 +56,10 @@ func RunValidate(ctx context.Context, config builder.Config) error {
 // RunValidateReport carries content failures across the isolated Job boundary.
 func RunValidateReport(ctx context.Context, config builder.Config, out io.Writer) error {
 	var notes []sdktest.MitigationReplayResult
+	var gaps []validate.Diagnostic
 	var timings []builder.StageTiming
 	diagnostics, err := validate.CompileCandidate(ctx, validate.Request{
-		MitigationReplayNotes: &notes, StageTimings: &timings,
+		MitigationReplayNotes: &notes, CoverageGaps: &gaps, StageTimings: &timings,
 		Root: config.ApplicationRoot, Layers: validate.Compile, OperatorRoot: config.OperatorRoot, HealthyBaseline: config.HealthyBaseline,
 	})
 	if err != nil {
@@ -67,7 +68,7 @@ func RunValidateReport(ctx context.Context, config builder.Config, out io.Writer
 	if err := validate.WriteStageTimings(out, timings); err != nil {
 		return err
 	}
-	if err := validate.WriteReport(out, diagnostics, notes...); err != nil {
+	if err := validate.WriteReport(out, diagnostics, gaps, notes...); err != nil {
 		return err
 	}
 	return validate.Err(diagnostics)

@@ -35,9 +35,10 @@ snapshot digests and a protected capture mount are not required. Include accepte
 mitigation reads accepted source. For replay, open.json represents the fault and recordings.json contains
 its observed primitive replies; fixed.json and healthy.json remain readable context, not repair proof.
 
-Every cause with a recorded repair on a closure verified healthy requires diagnose and mitigate programs, a README describing fault
-handling, and a detector that references its playbook. One detector may reference several playbooks.
-Replay runs incident detectors on the recorded fault, binds through production finding selection, requires Diagnose Match, executes mitigation on that same binding, and reaches NoMatch; the healthy baseline must remain quiet.
+For every cause with a recorded repair on a closure verified healthy, save diagnose and mitigate programs, a README describing fault
+handling, and a detector that references its playbook. One detector may reference several playbooks. A missing piece is
+recorded as a coverage gap.
+Replay runs incident detectors on the recorded fault, binds through production finding selection, requires Diagnose Match, executes mitigation on that same binding, and reaches NoMatch; an unreachable fault is a noted gap, and the healthy baseline must stay quiet when the controller captured one.
 Compilation and that repeat path are save-time learning checks. Rename, healthy-peer and controller
 capture-provenance checks are offline analysis, not publication prerequisites. Preserve accepted fixture bytes.
 
@@ -100,8 +101,8 @@ unchanged. It never treats a Service probe or a fixed-phase answer as proof of a
 
 The broker enforces artifact ownership and verified-cause coverage independently of the worker's claim.
 Programs must compile and mitigation must clear diagnosis in replay. Failed replay is rejected and retried
-with diagnostics. A skipped effect is not replay success. The only learning exception is a typed SDK gap
-with the confirmed-cause resources and a concrete reason. Missing controller captures do not justify a decline.
+with diagnostics. A skipped effect is not replay success. A cause left without a program is recorded as a
+coverage gap, and a missing controller capture only skips the healthy replay.
 
 ## Go-owned per-cause work
 
@@ -109,9 +110,10 @@ The supplied work list preserves the responder's confirmed resource groups. Cove
 
 A program that still matches the verified fixed capture has a definite false match. Go seeds that exact capture as negative evidence and preserves it through edits; the failing NoMatch replay is the question to resolve. The [generated replay API](../../sdo-detector-authoring/references/replay.md) defines CapturedFixedNoMatchPhase for this observed negative evidence. It is never a positive incident-open phase, a synthetic positive case or a trust credit.
 
-Missing optional controller captures do not block fixtures built from session observations and cannot
-justify a no_recorded_repair decline. That decline records only a verified cause with no recorded repair write on its own resources (for example a Pod deleted under it); the other causes are still learned. An unavailable SDK capability can
-be reported with a typed SDK gap naming its cause resources, primitive, reason and scratch script.
+Missing optional controller captures do not block fixtures built from session observations. A verified cause
+with no recorded repair write on its own resources (for example a Pod deleted under it) is recorded, and the
+other causes are still learned. An unavailable SDK capability can be reported with a typed SDK gap naming its
+cause resources, primitive, reason and scratch script.
 
 Automatic plans require no source-policy file, reviewed-fixture digest, content predicate or credential-delta approval. Explicit FromSource selectors and CreateFromSource read accepted manifests at the incident commit; other repairs may use observed or declared parameter values. DeleteObject does not require source absence. Legacy field actions retain their declared scope checks. The [general action vocabulary](general-actions.md) covers arbitrary nonsecret resources and subresources through Kubernetes RBAC.
 

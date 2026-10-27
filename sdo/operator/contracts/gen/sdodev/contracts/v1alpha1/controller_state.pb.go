@@ -1433,8 +1433,12 @@ type BrokerLedger struct {
 	// incident's follow-up does not wait for it. Replayed after restart.
 	ReflectionQueued   bool                   `protobuf:"varint,28,opt,name=reflection_queued,json=reflectionQueued,proto3" json:"reflection_queued,omitempty"`
 	ReflectionQueuedAt *timestamppb.Timestamp `protobuf:"bytes,29,opt,name=reflection_queued_at,json=reflectionQueuedAt,proto3" json:"reflection_queued_at,omitempty"`
-	unknownFields      protoimpl.UnknownFields
-	sizeCache          protoimpl.SizeCache
+	// Non-blocking coverage gaps the accepted reflection commit carries (a verified
+	// cause without a program, a skipped healthy replay, an unreachable repeat).
+	// The count is the number of entries; the committed outcome file stays immutable.
+	ReflectionCoverageGaps []*MemoryDiagnostic `protobuf:"bytes,30,rep,name=reflection_coverage_gaps,json=reflectionCoverageGaps,proto3" json:"reflection_coverage_gaps,omitempty"`
+	unknownFields          protoimpl.UnknownFields
+	sizeCache              protoimpl.SizeCache
 }
 
 func (x *BrokerLedger) Reset() {
@@ -1652,6 +1656,13 @@ func (x *BrokerLedger) GetReflectionQueued() bool {
 func (x *BrokerLedger) GetReflectionQueuedAt() *timestamppb.Timestamp {
 	if x != nil {
 		return x.ReflectionQueuedAt
+	}
+	return nil
+}
+
+func (x *BrokerLedger) GetReflectionCoverageGaps() []*MemoryDiagnostic {
+	if x != nil {
+		return x.ReflectionCoverageGaps
 	}
 	return nil
 }
@@ -1915,7 +1926,7 @@ const file_sdodev_contracts_v1alpha1_controller_state_proto_rawDesc = "" +
 	"\x1dobserved_detector_fingerprint\x18\x04 \x01(\tR\x1bobservedDetectorFingerprint\x12\x18\n" +
 	"\asuccess\x18\x05 \x01(\bR\asuccess\x12;\n" +
 	"\vverified_at\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
-	"verifiedAt\"\xe8\x11\n" +
+	"verifiedAt\"\xcf\x12\n" +
 	"\fBrokerLedger\x12\x1f\n" +
 	"\vincident_id\x18\x01 \x01(\tR\n" +
 	"incidentId\x12D\n" +
@@ -1945,7 +1956,8 @@ const file_sdodev_contracts_v1alpha1_controller_state_proto_rawDesc = "" +
 	"\x16reflection_dispatch_at\x18\x1a \x01(\v2\x1a.google.protobuf.TimestampR\x14reflectionDispatchAt\x12@\n" +
 	"\x1areflection_no_repair_count\x18\x1b \x01(\rH\x00R\x17reflectionNoRepairCount\x88\x01\x01\x12+\n" +
 	"\x11reflection_queued\x18\x1c \x01(\bR\x10reflectionQueued\x12L\n" +
-	"\x14reflection_queued_at\x18\x1d \x01(\v2\x1a.google.protobuf.TimestampR\x12reflectionQueuedAt\x1ae\n" +
+	"\x14reflection_queued_at\x18\x1d \x01(\v2\x1a.google.protobuf.TimestampR\x12reflectionQueuedAt\x12e\n" +
+	"\x18reflection_coverage_gaps\x18\x1e \x03(\v2+.sdodev.contracts.v1alpha1.MemoryDiagnosticR\x16reflectionCoverageGaps\x1ae\n" +
 	"\x1bClosurePhaseTimestampsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x120\n" +
 	"\x05value\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\x05value:\x028\x01:\xf1\x01\xbaH\xed\x01\x1a\xea\x01\n" +
@@ -2051,6 +2063,7 @@ var file_sdodev_contracts_v1alpha1_controller_state_proto_goTypes = []any{
 	(*ProposalRejection)(nil),            // 34: sdodev.contracts.v1alpha1.ProposalRejection
 	(*OutcomeRecord)(nil),                // 35: sdodev.contracts.v1alpha1.OutcomeRecord
 	(*ProposalWorkspace)(nil),            // 36: sdodev.contracts.v1alpha1.ProposalWorkspace
+	(*MemoryDiagnostic)(nil),             // 37: sdodev.contracts.v1alpha1.MemoryDiagnostic
 }
 var file_sdodev_contracts_v1alpha1_controller_state_proto_depIdxs = []int32{
 	21, // 0: sdodev.contracts.v1alpha1.FindingState.finding:type_name -> sdodev.contracts.v1alpha1.Finding
@@ -2109,17 +2122,18 @@ var file_sdodev_contracts_v1alpha1_controller_state_proto_depIdxs = []int32{
 	10, // 53: sdodev.contracts.v1alpha1.BrokerLedger.reflection_results:type_name -> sdodev.contracts.v1alpha1.ReflectionDecision
 	22, // 54: sdodev.contracts.v1alpha1.BrokerLedger.reflection_dispatch_at:type_name -> google.protobuf.Timestamp
 	22, // 55: sdodev.contracts.v1alpha1.BrokerLedger.reflection_queued_at:type_name -> google.protobuf.Timestamp
-	22, // 56: sdodev.contracts.v1alpha1.OwnershipAdoptionStatus.retry_at:type_name -> google.protobuf.Timestamp
-	22, // 57: sdodev.contracts.v1alpha1.BatcherState.DeadlinesEntry.value:type_name -> google.protobuf.Timestamp
-	22, // 58: sdodev.contracts.v1alpha1.ControllerState.SchedulerDeadlinesEntry.value:type_name -> google.protobuf.Timestamp
-	4,  // 59: sdodev.contracts.v1alpha1.ControllerState.FindingStatesEntry.value:type_name -> sdodev.contracts.v1alpha1.FindingState
-	22, // 60: sdodev.contracts.v1alpha1.ControllerState.DetectorClearSinceEntry.value:type_name -> google.protobuf.Timestamp
-	22, // 61: sdodev.contracts.v1alpha1.BrokerLedger.ClosurePhaseTimestampsEntry.value:type_name -> google.protobuf.Timestamp
-	62, // [62:62] is the sub-list for method output_type
-	62, // [62:62] is the sub-list for method input_type
-	62, // [62:62] is the sub-list for extension type_name
-	62, // [62:62] is the sub-list for extension extendee
-	0,  // [0:62] is the sub-list for field type_name
+	37, // 56: sdodev.contracts.v1alpha1.BrokerLedger.reflection_coverage_gaps:type_name -> sdodev.contracts.v1alpha1.MemoryDiagnostic
+	22, // 57: sdodev.contracts.v1alpha1.OwnershipAdoptionStatus.retry_at:type_name -> google.protobuf.Timestamp
+	22, // 58: sdodev.contracts.v1alpha1.BatcherState.DeadlinesEntry.value:type_name -> google.protobuf.Timestamp
+	22, // 59: sdodev.contracts.v1alpha1.ControllerState.SchedulerDeadlinesEntry.value:type_name -> google.protobuf.Timestamp
+	4,  // 60: sdodev.contracts.v1alpha1.ControllerState.FindingStatesEntry.value:type_name -> sdodev.contracts.v1alpha1.FindingState
+	22, // 61: sdodev.contracts.v1alpha1.ControllerState.DetectorClearSinceEntry.value:type_name -> google.protobuf.Timestamp
+	22, // 62: sdodev.contracts.v1alpha1.BrokerLedger.ClosurePhaseTimestampsEntry.value:type_name -> google.protobuf.Timestamp
+	63, // [63:63] is the sub-list for method output_type
+	63, // [63:63] is the sub-list for method input_type
+	63, // [63:63] is the sub-list for extension type_name
+	63, // [63:63] is the sub-list for extension extendee
+	0,  // [0:63] is the sub-list for field type_name
 }
 
 func init() { file_sdodev_contracts_v1alpha1_controller_state_proto_init() }

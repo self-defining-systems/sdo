@@ -75,6 +75,9 @@ type Request struct {
 	ApplicationNamespace string
 	// MitigationReplayNotes optionally receives informational corpus replay results.
 	MitigationReplayNotes *[]sdktest.MitigationReplayResult
+	// CoverageGaps optionally receives non-blocking notes about learning the
+	// reflection left out. They never reject a candidate.
+	CoverageGaps *[]Diagnostic
 	// StageTimings optionally receives the Go toolchain stage durations of the compile layer.
 	StageTimings *[]builder.StageTiming
 	// Root is the checkout to validate.
@@ -119,6 +122,12 @@ type Diagnostic struct {
 	Line    int
 	Message string
 	Hint    string
+}
+
+func (r Request) noteGaps(gaps ...Diagnostic) {
+	if r.CoverageGaps != nil {
+		*r.CoverageGaps = append(*r.CoverageGaps, gaps...)
+	}
 }
 
 func (d Diagnostic) String() string {
