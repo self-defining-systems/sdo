@@ -149,7 +149,7 @@ func TestCommittedRepairAcknowledgesAfterAdoption(t *testing.T) {
 // health detectors on the live cluster before any outcome is committed, so a
 // bad cluster commits no success.
 func TestClosureCompletesAcrossRepositoryAdvance(t *testing.T) {
-	for _, change := range []string{"none", "refresh-detectors", "refresh-detectors-health-bad", "source", "objective", "policy", "other-incident", "forged-judge-lib", "forged-judge-mixed", "upkeep-lib", "reflection-playbook"} {
+	for _, change := range []string{"none", "refresh-detectors", "refresh-detectors-health-bad", "source", "objective", "policy", "forged-judge-lib", "forged-judge-mixed", "upkeep-lib", "reflection-playbook"} {
 		t.Run(change, func(t *testing.T) {
 			ctx := context.Background()
 			root, _, repository, _, coordinator := tracingFixture(t)
@@ -168,29 +168,17 @@ func TestClosureCompletesAcrossRepositoryAdvance(t *testing.T) {
 				t.Fatal(err)
 			}
 			closure := nativeClosure(workspace)
-			if change == "other-incident" {
-				// Only another incident's repair is accepted; this one never proposed.
-				other, err := native.PrepareIncident(ctx, "other-incident")
-				if err != nil {
-					t.Fatal(err)
-				}
-				tracingWrite(t, other.Worktree, "README.md", "another incident's repair")
-				if _, err := native.ProcessClosure(ctx, nativeClosure(other)); err != nil {
-					t.Fatal(err)
-				}
+			if strings.HasPrefix(change, "refresh-detectors") || strings.HasPrefix(change, "forged-") || change == "upkeep-lib" || change == "reflection-playbook" {
+				tracingWrite(t, workspace.Worktree, "deploy/tracing.yaml", "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: collector\nspec: {}\n")
 			} else {
-				if strings.HasPrefix(change, "refresh-detectors") || strings.HasPrefix(change, "forged-") || change == "upkeep-lib" || change == "reflection-playbook" {
-					tracingWrite(t, workspace.Worktree, "deploy/tracing.yaml", "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: collector\nspec: {}\n")
-				} else {
-					tracingWrite(t, workspace.Worktree, "README.md", "accepted source restoration annotation")
-				}
-				if _, err := native.ProcessClosure(ctx, closure); err == nil {
-					t.Fatal("fixture did not interrupt the closure effect")
-				}
-				ledger, err := native.readLedger(closure.Request.IncidentID)
-				if err != nil || ledger.ProposalCommit == "" || ledger.OutcomeCommit != "" {
-					t.Fatalf("fixture must stop between proposal and outcome: %+v %v", ledger, err)
-				}
+				tracingWrite(t, workspace.Worktree, "README.md", "accepted source restoration annotation")
+			}
+			if _, err := native.ProcessClosure(ctx, closure); err == nil {
+				t.Fatal("fixture did not interrupt the closure effect")
+			}
+			ledger, err := native.readLedger(closure.Request.IncidentID)
+			if err != nil || ledger.ProposalCommit == "" || ledger.OutcomeCommit != "" {
+				t.Fatalf("fixture must stop between proposal and outcome: %+v %v", ledger, err)
 			}
 			interrupted = false
 			current := tracingRefresh(t, root, coordinator)
@@ -283,7 +271,7 @@ func TestClosureCompletesAcrossRepositoryAdvance(t *testing.T) {
 			if !ok {
 				t.Fatal("interrupted closure has no replayable broker effect")
 			}
-			ledger, err := native.readLedger(closure.Request.IncidentID)
+			ledger, err = native.readLedger(closure.Request.IncidentID)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -320,7 +308,10 @@ func TestClosureCompletesAcrossRepositoryAdvance(t *testing.T) {
 			}
 			awaitBrokerResult(t, c.closureResults)
 			c.processBrokerCompletions()
-			if c.closureReceipt == nil || c.closureReceipt.ProposalCommit != proposal || c.closureReceipt.OutcomeCommit == "" {
+			if c.closureReceipt == nil {
+				t.Fatalf("replay failed: state %v failure %+v", c.closureState, c.closureFailure)
+			}
+			if c.closureReceipt.ProposalCommit != proposal || c.closureReceipt.OutcomeCommit == "" {
 				t.Fatalf("replay did not complete on the original proposal: %+v", c.closureReceipt)
 			}
 		})

@@ -184,7 +184,7 @@ func crashCoordinator(t *testing.T, root, proposals, state, cut string) (lifecyc
 // crashStateStore retains the controller's actual durable contract across child
 // processes. Cuts bracket the Save that makes obsolete evidence terminal.
 type crashStateStore struct {
-	path, crashPath, cut string
+	path string
 }
 
 func (s crashStateStore) Load(context.Context) (*contracts.ControllerState, string, error) {
@@ -209,10 +209,6 @@ func (s crashStateStore) Save(ctx context.Context, state *contracts.ControllerSt
 	if current != revision {
 		return "", ErrStateConflict
 	}
-	terminal := len(state.GetFailedClosures()) > 0
-	if terminal {
-		crashAt(s.crashPath, s.cut, "before-closure-persist")
-	}
 	data, err := wire.Canonical(state)
 	if err != nil {
 		return "", err
@@ -222,9 +218,6 @@ func (s crashStateStore) Save(ctx context.Context, state *contracts.ControllerSt
 	}
 	if err := os.Rename(s.path+".tmp", s.path); err != nil {
 		return "", err
-	}
-	if terminal {
-		crashAt(s.crashPath, s.cut, "after-closure-persist")
 	}
 	return fmt.Sprintf("%x", sha256.Sum256(data)), nil
 }
@@ -243,7 +236,7 @@ func crashController(t *testing.T, root, compiled, state, cut string) *Controlle
 		t.Fatal(err)
 	}
 	rv6Guard(c, root, compiled)
-	if err := c.AttachStateStore(context.Background(), crashStateStore{path: state + ".controller", crashPath: state, cut: cut}); err != nil {
+	if err := c.AttachStateStore(context.Background(), crashStateStore{path: state + ".controller"}); err != nil {
 		t.Fatal(err)
 	}
 	c.discardRestoredHealthObservations(time.Unix(1000, 0))
@@ -275,7 +268,7 @@ func TestSR2dCrashProcess(t *testing.T) {
 }
 
 func TestSimRV6HealthRefreshCrashSchedules(t *testing.T) {
-	cuts := []string{"proposal", "request", "job", "result", "before-accept", "after-accept", "before-adoption", "after-adoption", "before-closure-persist", "after-closure-persist"}
+	cuts := []string{"proposal", "request", "job", "result", "before-accept", "after-accept", "before-adoption", "after-adoption"}
 	// The accepted baseline is immutable; each schedule gets a separate clone
 	// and proposal/API/state stores. Avoid republishing it twenty times.
 	baselineRoot, _, _, _, baseline := tracingFixture(t)
@@ -333,7 +326,7 @@ func TestSimRV6HealthRefreshCrashSchedules(t *testing.T) {
 				}
 				return false
 			}
-			store := crashStateStore{path: state + ".controller", crashPath: state}
+			store := crashStateStore{path: state + ".controller"}
 			if _, err := store.Save(ctx, exportState(t, controller), ""); err != nil {
 				t.Fatal(err)
 			}

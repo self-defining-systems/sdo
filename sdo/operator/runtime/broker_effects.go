@@ -309,7 +309,8 @@ func (c *Controller) revalidateClosure(ctx context.Context, snapshot sdk.Detecti
 		incomplete = append(incomplete, reason)
 		bound = max(bound, sdk.ClearingHorizon(detector, snapshot)+2*detector.Spec().Interval)
 	}
-	var denied []string
+	var denied, gone []string
+	evaluated := 0
 	for _, id := range ordered {
 		detector := c.detectors[id]
 		if detector == nil && id == "drift.unexplained" {
@@ -327,13 +328,15 @@ func (c *Controller) revalidateClosure(ctx context.Context, snapshot sdk.Detecti
 		}
 		if detector == nil && !slices.Contains(c.healthDetectorIDs, id) {
 			// The adopted policy no longer has this incident detector. The
-			// repository moving is not evidence about the cluster; the health
-			// detectors still decide.
+			// repository moving is not evidence about the cluster; the
+			// detectors in force still decide, provided one remains.
+			gone = append(gone, id)
 			continue
 		}
 		if detector == nil {
 			return contradicted("closure observation detector %s is unavailable", id)
 		}
+		evaluated++
 		findings, err := sdk.DetectObserved(ctx, detector, snapshot)
 		if err != nil {
 			reason := fmt.Sprintf("closure observation detector %s: %v", id, err)
@@ -362,6 +365,9 @@ func (c *Controller) revalidateClosure(ctx context.Context, snapshot sdk.Detecti
 		if !detectorConfirmed(detector, snapshot) {
 			wait(detector, fmt.Sprintf("closure observation detector %s is unconfirmed: %s", id, detectorConfirmationReason(detector, snapshot)))
 		}
+	}
+	if len(gone) > 0 && evaluated == 0 {
+		return contradicted("closure observation detector %s is unavailable", gone[0])
 	}
 	c.mu.Lock()
 	inventoryClear, _ := c.verifySourceInventoryLocked(closure.Result)
