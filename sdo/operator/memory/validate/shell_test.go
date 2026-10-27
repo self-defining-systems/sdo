@@ -65,7 +65,7 @@ func TestShellCheckRejectsSymlinkAndUnknownMode(t *testing.T) {
 		t.Fatal(err)
 	}
 	ds, err := Check(context.Background(), Request{Root: root, Base: "HEAD", Actor: Responder, Phase: ReflectionPhase, CodePath: "shell"}, nil)
-	if len(ds) == 0 {
+	if err != nil || len(ds) == 0 {
 		t.Fatalf("symlink accepted: %v %#v", err, ds)
 	}
 	_, err = Check(context.Background(), Request{Root: root, Base: "HEAD", Actor: Responder, Phase: ReflectionPhase, CodePath: "unknown"}, nil)
