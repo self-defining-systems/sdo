@@ -508,6 +508,12 @@ type ProgramSpec struct {
 	Params []ParamSpec
 }
 
+type RawMergeSchemaError struct{ Path, Reason string }
+    RawMergeSchemaError refuses an opaque document merge without a trustworthy
+    target schema. Use a typed object action for unknown kinds or subresources.
+
+func (e *RawMergeSchemaError) Error() string
+
 type ReadView interface {
 	WebhookCAMatchesSecret(WebhookCA) (bool, error)
 	sdk.ObjectReader

@@ -69,3 +69,89 @@ func TestCoupledEditsRefuseOpaqueEffects(t *testing.T) {
 		t.Fatalf("coupled edits across an effect were allowed: %v", err)
 	}
 }
+
+func TestRawMergePatchSchemaCannotBeBypassed(t *testing.T) {
+	for _, mode := range []string{"no-ref", "charset", "wrong-ref", "wrong-url"} {
+		t.Run(mode, func(t *testing.T) {
+			ref := sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "app", Name: "api"}
+			a := program.KubernetesRequest{Ref: ref, Method: "PATCH", Path: "/apis/apps/v1/namespaces/app/deployments/api", ContentType: "application/merge-patch+json", Body: []byte(`{"spec":{"template":{"spec":{"containers":[]}}}}`)}
+			switch mode {
+			case "no-ref":
+				a.Ref = sdk.ObjectRef{}
+			case "charset":
+				a.ContentType += "; charset=utf-8"
+			case "wrong-ref":
+				a.Ref.Kind = "ConfigMap"
+			case "wrong-url":
+				a.Path = "/api/v1/namespaces/app/configmaps/api"
+			}
+			err := (program.Plan{Actions: []program.Action{a}}).Validate()
+			if err == nil {
+				t.Fatal("unsafe raw request accepted")
+			}
+			if mode == "no-ref" || mode == "charset" {
+				var replacement *program.KeyedListReplacementError
+				if !errors.As(err, &replacement) {
+					t.Fatalf("want typed keyed-list refusal, got %v", err)
+				}
+			}
+		})
+	}
+}
+
+func TestMergeObjectNamedServicePortNumberChange(t *testing.T) {
+	ref := sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}
+	var object map[string]any
+	if err := json.Unmarshal([]byte(`{"apiVersion":"v1","kind":"Service","metadata":{"name":"api","namespace":"app"},"spec":{"ports":[{"name":"http","port":80,"targetPort":8000},{"name":"other","port":90}]}}`), &object); err != nil {
+		t.Fatal(err)
+	}
+	next, err := program.MergeObject(object, ref, json.RawMessage(`{"spec":{"ports":[{"name":"http","port":8080}]}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ports, _ := program.FieldValue(next, "spec.ports")
+	if len(ports.([]any)) != 2 {
+		t.Fatalf("duplicate named ports: %v", ports)
+	}
+	for path, want := range map[string]any{"spec.ports[name=http].port": int64(8080), "spec.ports[name=http].targetPort": int64(8000), "spec.ports[name=other].port": int64(90)} {
+		got, e := program.FieldValue(next, path)
+		if e != nil || got != want {
+			t.Fatalf("%s: %v %v", path, got, e)
+		}
+	}
+}
+
+func TestRawMergePatchRequiresMatchingKnownSchema(t *testing.T) {
+	ref := sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "app", Name: "api"}
+	for _, mode := range []string{"known", "inferred", "unknown", "subresource", "name", "namespace", "version"} {
+		t.Run(mode, func(t *testing.T) {
+			a := program.KubernetesRequest{Ref: ref, Method: "PATCH", Path: "/apis/apps/v1/namespaces/app/deployments/api", ContentType: "application/merge-patch+json; charset=utf-8", Body: []byte(`{"spec":{"replicas":2}}`)}
+			switch mode {
+			case "inferred":
+				a.Ref = sdk.ObjectRef{}
+			case "unknown":
+				a.Ref = sdk.ObjectRef{}
+				a.Path = "/apis/example.com/v1/namespaces/app/widgets/api"
+			case "subresource":
+				a.Path += "/scale"
+			case "name":
+				a.Ref.Name = "other"
+			case "namespace":
+				a.Ref.Namespace = "other"
+			case "version":
+				a.Ref.APIVersion = "apps/v2"
+			}
+			err := (program.Plan{Actions: []program.Action{a}}).Validate()
+			if mode == "known" || mode == "inferred" {
+				if err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				var schemaError *program.RawMergeSchemaError
+				if !errors.As(err, &schemaError) {
+					t.Fatalf("want typed schema refusal, got %v", err)
+				}
+			}
+		})
+	}
+}

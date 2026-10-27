@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"mime"
 	"net/url"
 	"path"
 	"strings"
@@ -139,9 +140,17 @@ func (r KubernetesRequest) Validate() error {
 	if parts[0] == "api" && len(parts) > index && strings.EqualFold(parts[index], "secrets") {
 		return fmt.Errorf("Secret endpoints are unavailable; use credential references")
 	}
-	if r.Method == "PATCH" && r.ContentType == "application/merge-patch+json" && r.Ref.Kind != "" {
-		if err := validateMergeLists(PatchObject{Ref: r.Ref, Type: "merge", Patch: r.Body}); err != nil {
-			return err
+	if r.Method == "PATCH" {
+		mediaType, _, err := mime.ParseMediaType(r.ContentType)
+		if err != nil {
+			return fmt.Errorf("invalid patch content type: %w", err)
+		}
+		if mediaType == "application/merge-patch+json" {
+			ref, err := rawMergeTarget(r, parts, index)
+			if err != nil {
+				return err
+			}
+			return validateMergeLists(PatchObject{Ref: ref, Type: "merge", Patch: r.Body})
 		}
 	}
 	return nil
@@ -293,7 +302,15 @@ func ProjectPatch(object map[string]any, a PatchObject) (map[string]any, error) 
 			var typed runtime.Object
 			typed, err = patchScheme.New(schema.FromAPIVersionAndKind(a.Ref.APIVersion, a.Ref.Kind))
 			if err == nil {
-				raw, err = strategicpatch.StrategicMergePatch(raw, a.Patch, typed)
+				meta, e := strategicpatch.NewPatchMetaFromStruct(typed)
+				if e != nil {
+					return nil, e
+				}
+				var lookup strategicpatch.LookupPatchMeta = meta
+				if a.Ref.APIVersion == "v1" && a.Ref.Kind == "Service" && namedServicePorts(raw, a.Patch) {
+					lookup = namedPortPatchMeta{LookupPatchMeta: meta}
+				}
+				raw, err = strategicpatch.StrategicMergePatchUsingLookupPatchMeta(raw, a.Patch, lookup)
 			}
 		}
 	}
