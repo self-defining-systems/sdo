@@ -35,7 +35,7 @@ func (l *ResponderLoop) runMitigator(ctx context.Context, id string, p program.M
 	deadline := l.deadline()
 	bindings = cloneProgramBindings(bindings)
 	if stepErr := withoutResponderLocks(l, "mitigator "+id, false, func() {
-		plan, err = runBoundedMitigator(ctx, p, view, bindings, deadline)
+		plan, err = BuildMitigationPlan(ctx, p, view, bindings, deadline)
 	}); stepErr != nil {
 		err = stepErr
 	}
@@ -44,10 +44,11 @@ func (l *ResponderLoop) runMitigator(ctx context.Context, id string, p program.M
 	}
 	return plan, err
 }
+
+// BuildMitigationPlan is the one way a learned mitigation's plan is built: the
+// automatic stage, the responder's plan command, follow-ups and replay
+// validation all come here, so a plan one of them would refuse fails them all.
 func BuildMitigationPlan(ctx context.Context, p program.Mitigator, view program.ReadView, bindings program.Bindings, deadline time.Duration) (program.Plan, error) {
-	return runBoundedMitigator(ctx, p, view, bindings, deadline)
-}
-func runBoundedMitigator(ctx context.Context, p program.Mitigator, view program.ReadView, bindings program.Bindings, deadline time.Duration) (program.Plan, error) {
 	ctx, cancel := context.WithTimeout(ctx, deadline)
 	defer cancel()
 	select {

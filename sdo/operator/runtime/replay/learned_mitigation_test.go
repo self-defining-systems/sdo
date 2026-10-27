@@ -2,6 +2,7 @@ package replay
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"regexp"
 	"strings"
@@ -136,5 +137,22 @@ func TestReplayBuildsMitigationPlansOnlyThroughTheRuntimeBuilder(t *testing.T) {
 		if strings.Contains(string(body), ".Mitigate(") {
 			t.Errorf("%s calls Mitigate directly; use runtime.BuildMitigationPlan", f.Name())
 		}
+	}
+}
+
+// A mitigation that fails the stage's plan builder is reported as that: the
+// reflection worker reads this text to decide what to fix.
+func TestReplayNamesTheStagePlanBuildInAFailure(t *testing.T) {
+	p := emptyPlanProgram{fixtureProgram{mode: "delete"}}
+	r := Check(context.Background(), p, p, nil, fixture("delete"))
+	if !strings.Contains(strings.Join(r.Errors, "; "), "the plan the incident stage would build from this case's captured open view failed") {
+		t.Fatalf("failure does not say which plan failed: %+v", r.Errors)
+	}
+}
+
+func TestReplayMitigationFailureNamesAnUncapturedRead(t *testing.T) {
+	err := mitigationBuildError(fmt.Errorf("%w: apps/v1 Deployment app/api", sdk.ErrObjectNotCaptured))
+	if !strings.Contains(err.Error(), "capture it in the case") {
+		t.Fatalf("no hint for an uncaptured read: %v", err)
 	}
 }

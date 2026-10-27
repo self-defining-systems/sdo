@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 	"time"
@@ -141,9 +142,9 @@ func Check(ctx context.Context, p program.Diagnoser, m program.Mitigator, detect
 	}
 	// The plan comes from the builder the incident stage uses, so a plan the
 	// stage would refuse (empty, invalid, unbindable) fails validation here.
-	plan, err := operator.BuildMitigationPlan(ctx, m, newReadView(ctx, c.Corpus.Open, c.Corpus.PhaseRecordings("open"), source), bindings, 5*time.Second)
+	plan, err := operator.BuildMitigationPlan(ctx, m, newReadView(ctx, c.Corpus.Open, c.Corpus.PhaseRecordings("open"), source), bindings, operator.DefaultDiagnosisDeadline)
 	if err != nil {
-		return fail(fmt.Errorf("Mitigate: %w", err))
+		return fail(mitigationBuildError(err))
 	}
 	if containsScript(plan) {
 		return observedScriptTransition(ctx, p, c, plan, source, r)
@@ -412,4 +413,15 @@ func recordedPhase(c sdktest.CorpusCase, phase string) sdktest.Snapshot {
 	}
 	s.Readings = append(append([]sdktest.PrimitiveCall(nil), s.Readings...), c.PhaseRecordings(phase)...)
 	return s
+}
+
+// mitigationBuildError names what failed: the plan the incident stage would
+// build from this case's captured open view. A read the case never captured is
+// the common cause, and the fix is in the case or the program, not the stage.
+func mitigationBuildError(err error) error {
+	message := "Mitigate: the plan the incident stage would build from this case's captured open view failed: %w"
+	if errors.Is(err, sdk.ErrObjectNotCaptured) {
+		message += " (the case never captured that read: capture it in the case, or stop depending on it)"
+	}
+	return fmt.Errorf(message, err)
 }
