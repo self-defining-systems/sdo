@@ -372,6 +372,14 @@ func (d KubernetesJobDispatcher) programTrust(ctx context.Context, request Incid
 	if err != nil {
 		return nil, fmt.Errorf("read program trust outcomes: %w", err)
 	}
+	// An outcome that cannot be read costs only its own trust evidence.
+	if unreadable, noteErr := memory.UnreadableOutcomes(ctx, d.Outcomes); noteErr != nil {
+		slog.WarnContext(ctx, "unreadable outcome list unavailable", "incident_id", request.IncidentID, "error", noteErr)
+	} else {
+		for _, note := range unreadable {
+			slog.WarnContext(ctx, "skipped unreadable outcome", "incident_id", request.IncidentID, "file", note.Name, "reason", note.Reason)
+		}
+	}
 	if d.AcceptedRepository != "" {
 		request.RepositoryWorktree = d.AcceptedRepository
 	}

@@ -28,6 +28,19 @@ type Reader interface {
 	List(context.Context) ([]Outcome, error)
 }
 
+// UnreadableOutcome records one stored outcome that could not be used. It is a
+// note about that document only; the other outcomes stay available.
+type UnreadableOutcome struct {
+	Name   string
+	Reason string
+}
+
+// UnreadableLister is implemented by readers that skip unusable outcomes in
+// List and can say which ones and why.
+type UnreadableLister interface {
+	Unreadable(context.Context) ([]UnreadableOutcome, error)
+}
+
 // Writer is the commit broker's accepted-state mutation capability.
 type Writer interface {
 	Put(context.Context, *contracts.OutcomeRecord) (Outcome, error)
@@ -37,4 +50,14 @@ type Writer interface {
 type Store interface {
 	Reader
 	Writer
+}
+
+// UnreadableOutcomes reports the stored outcomes reader skipped, or nil when
+// the reader cannot say. Callers record them as notes and carry on.
+func UnreadableOutcomes(ctx context.Context, reader Reader) ([]UnreadableOutcome, error) {
+	lister, ok := reader.(UnreadableLister)
+	if !ok {
+		return nil, nil
+	}
+	return lister.Unreadable(ctx)
 }
