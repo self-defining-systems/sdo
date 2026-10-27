@@ -825,6 +825,7 @@ def _run(args: argparse.Namespace) -> int:
         encoding="utf-8",
     )
     config = LoopConfig(
+        row_start_tier2=_wipes_at_row_start(args, environment) and (len(stream) if stream else args.incidents) == 1,
         delivery_record_path=environment.run_dir / "image_delivery.jsonl",
         image_delivery=environment.image_delivery,
         image_delivery_reason=environment.image_delivery_reason,

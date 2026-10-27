@@ -135,3 +135,13 @@ rendered manifests without replacing sealed installed workload specs. Secret
 payloads and unowned cluster resources are never restored. A named missing
 Secret after namespace loss is unsupported recovery, not an SDO mitigation
 failure or a health timeout; uninjected encounter metrics remain unknown.
+
+## Row-start tier 2 supersedes post-row recovery
+
+For single-row SDO runs with row-start wipes, `cleanup_skipped_reason` is
+`row_start_tier2`: the legacy recovery paths above do not run. No per-fault
+restore, post-closure recovery wait, or recovery-oracle settling gates the grade.
+The durable attempt marker retains injected row IDs, so the next row recreates
+the app namespace/PVCs under tier 2 and records its trigger in `wipe-receipt.json`.
+Entry, restore-invariant, pre-injection baseline and injection-validity checks
+still run. Warm streams without row-start wipes retain their recovery fences.

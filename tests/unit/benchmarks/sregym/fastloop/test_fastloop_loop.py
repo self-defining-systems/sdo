@@ -878,7 +878,12 @@ def test_recovery_cannot_open_incidents_while_sdo_intake_is_live(tmp_path: Path)
             assert state["closed"]
             return super().recover()
 
-    records = run_incidents(Agent(clock), Driver(clock), _config(tmp_path, 1), monotonic=clock.monotonic)
+    records = run_incidents(
+        Agent(clock),
+        Driver(clock),
+        _config(tmp_path, 1),
+        monotonic=clock.monotonic,
+    )
     assert not unsolicited
     assert records[0].recovery_error is None
 
@@ -1033,3 +1038,56 @@ def test_every_derived_duration_is_nonnegative_or_the_row_is_rejected(started, d
     assert detected >= started
     assert record.injection_to_detection_seconds >= 0
     assert record.injection_to_resolution_seconds >= 0
+
+
+@pytest.mark.parametrize("recover_fails", [False, True])
+def test_closure_grade_precedes_resolution_export_and_skips_recovery(tmp_path: Path, recover_fails: bool) -> None:
+    from benchmarks.sregym.fastloop.wipe import AttemptMarker, unrecovered_rows
+
+    clock = FakeClock()
+    events: list[str] = []
+
+    class Agent(FakeAgent):
+        def resolve_at_closure(self, index, problem_id, inject, on_verified):
+            outcome = super().resolve(index, problem_id, inject)
+            on_verified()
+            events.append("export")
+            return outcome
+
+        def learn(self, outcome):
+            events.append("reflection")
+            return super().learn(outcome)
+
+    class Driver(FakeDriver):
+        def oracle(self):
+            events.append("grade")
+            return super().oracle()
+
+        def recover(self):
+            pytest.fail("graded rows must never wait on per-fault recovery")
+
+    records = run_incidents(
+        Agent(clock),
+        Driver(clock, recover_fails=recover_fails),
+        replace(_config(tmp_path, 1), row_start_tier2=True),
+        monotonic=clock.monotonic,
+    )
+    assert events == ["grade", "export", "reflection"]
+    row = records[0]
+    assert row.oracle is not None
+    assert row.oracle.success
+    assert row.error is None
+    assert row.cleanup_skipped_reason == "row_start_tier2"
+    marker = AttemptMarker(tmp_path)
+    marker.begin()
+    marker.end(unrecovered_rows(records))
+    from tests.unit.benchmarks.sregym.fastloop.test_wipe import faulted_lane, tier2
+
+    lane = faulted_lane()
+    receipt, deployed = tier2(lane, marker.pending())
+    assert receipt.tier2_ran
+    assert receipt.tier2_trigger == "previous_row_unrecovered"
+    assert receipt.tier2_namespaces == ("hotel-reservation",)
+    assert len(deployed) == 1
+    assert "hotel-reservation" not in deployed[0]
+    assert lane.contents["hotel-reservation"] == {"pvc/mongodb-geo", "pod/geo"}
