@@ -66,6 +66,7 @@ message OutcomeRecord {
   // Controller-observed: source checks that were unavailable when health
   // verified the closure. Information only; never a verdict.
   repeated string source_check_notes = 38;
+  DriftReprompt drift_reprompt = 39;
 }
 
 message OutcomeTimestamps {

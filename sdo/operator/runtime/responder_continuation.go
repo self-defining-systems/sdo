@@ -41,7 +41,10 @@ func (d KubernetesJobDispatcher) executeResponderTask(ctx context.Context, execu
 	if err != nil {
 		return IncidentResult{}, err
 	}
-	return incidentResultFromAgent(result, task, d.Registry)
+	decoded, err := incidentResultFromAgent(result, task, d.Registry)
+	// Only controller continuation state may publish this evidence.
+	decoded.DriftReprompt = nil
+	return decoded, err
 }
 
 func (d KubernetesJobDispatcher) continueResponder(ctx context.Context, executor worker_registry.KubernetesExecutor, original *contracts.AgentTask, loop *ResponderLoop, request IncidentRequest, now func() time.Time) (IncidentResult, error) {
@@ -106,6 +109,9 @@ func (d KubernetesJobDispatcher) continueResponder(ctx context.Context, executor
 		if err := ctx.Err(); err != nil {
 			return IncidentResult{}, err
 		}
+		if result.DriftReprompt != nil && result.DriftReprompt.FindingsAfter == nil {
+			result.DriftReprompt.FindingsAfter = proto.Int32(int32(len(verification.Drift)))
+		}
 		result.UnresolvedFindings = append([]sdk.Finding(nil), verification.Findings...)
 		state.Attempts++
 		result.ResponseLoopsUsed = state.Attempts
@@ -165,6 +171,9 @@ func accumulateResponderResult(previous *contracts.IncidentResult, current Incid
 		return current
 	}
 	prior := incidentResultState(previous)
+	if current.DriftReprompt == nil {
+		current.DriftReprompt = cloneDriftReprompt(prior.DriftReprompt)
+	}
 	// Resumed workers retain prior receipts. Merge by action identity so actions
 	// are never replayed or credited twice; usage is incremental per CLI turn.
 	seen := map[string]bool{}
@@ -200,7 +209,8 @@ func accumulateResponderResult(previous *contracts.IncidentResult, current Incid
 // when its later independent verification contradicts the dispatcher's check.
 // The request, workspace, provider checkpoint and original deadline stay fixed.
 func (d KubernetesJobDispatcher) ContinueAfterVerification(ctx context.Context, request IncidentRequest, verification ToolResponse, now time.Time) (bool, error) {
-	if verification.Healthy || (len(verification.Findings) == 0 && verification.Error == "") || d.LoopFactory == nil || !now.Before(request.ResponseDeadline) {
+	driftPrompt := verification.Healthy && len(verification.Drift) > 0 && len(verification.Findings) == 0 && verification.Error == ""
+	if (!driftPrompt && (verification.Healthy || (len(verification.Findings) == 0 && verification.Error == ""))) || d.LoopFactory == nil || !now.Before(request.ResponseDeadline) {
 		return false, nil
 	}
 	loop := d.LoopFactory(request)
@@ -215,7 +225,14 @@ func (d KubernetesJobDispatcher) ContinueAfterVerification(ctx context.Context, 
 	if request.MaxResponseLoops > 0 && request.MaxResponseLoops < limit {
 		limit = request.MaxResponseLoops
 	}
-	if state.Result == nil || state.Attempts >= limit || loop.Exhausted() {
+	if state.Result == nil {
+		return false, nil
+	}
+	if driftPrompt && state.Result.GetDriftReprompt() != nil {
+		// Replay a persisted pending transition, never allocate another turn.
+		return !state.Done, nil
+	}
+	if !driftPrompt && (state.Attempts >= limit || loop.Exhausted()) {
 		return false, nil
 	}
 	repairs := loop.continuationRepairs(incidentResultState(state.Result))
@@ -233,6 +250,10 @@ func (d KubernetesJobDispatcher) ContinueAfterVerification(ctx context.Context, 
 	feedback, err := continuationFeedback(state.Attempts, verification, repairs...)
 	if err != nil {
 		return false, err
+	}
+	if driftPrompt {
+		state.Result = proto.Clone(state.Result).(*contracts.IncidentResult)
+		state.Result.DriftReprompt = &contracts.DriftReprompt{FindingsBefore: int32(len(verification.Drift))}
 	}
 	state.Done = false
 	state.Feedback = string(feedback)
@@ -292,7 +313,7 @@ type responderFeedback struct {
 	// SourceDifferences are objects that differ from the accepted source.
 	// They are information; only still_broken and healthy decide closure.
 	SourceDifferences []sdkFindingFeedback `json:"source_differences,omitempty"`
-	AlreadyDone []continuationRepair `json:"already_done"`
+	AlreadyDone       []continuationRepair `json:"already_done"`
 }
 
 func (l *ResponderLoop) continuationRepairs(result IncidentResult) []continuationRepair {
@@ -512,4 +533,33 @@ func (c *Controller) responderResultVerification(ctx context.Context, incidentID
 	_, health := c.finalVerificationStates()
 	response := c.continuationVerificationLocked(health, source)
 	return response
+}
+
+func cloneDriftReprompt(value *contracts.DriftReprompt) *contracts.DriftReprompt {
+	if value == nil {
+		return nil
+	}
+	return proto.Clone(value).(*contracts.DriftReprompt)
+}
+
+func (l *ResponderLoop) driftRepromptPending() bool {
+	if l == nil {
+		return false
+	}
+	pending := false
+	l.locked(func() { pending = l.continuation.Result.GetDriftReprompt() != nil && !l.continuation.Done })
+	return pending
+}
+
+// Read the dispatcher's durable marker after its LoopFactory registered the loop.
+func (c *Controller) driftRepromptRecord() *contracts.DriftReprompt {
+	c.mu.Lock()
+	loop := c.responderLoop
+	c.mu.Unlock()
+	if loop == nil {
+		return nil
+	}
+	var record *contracts.DriftReprompt
+	loop.locked(func() { record = cloneDriftReprompt(loop.continuation.Result.GetDriftReprompt()) })
+	return record
 }

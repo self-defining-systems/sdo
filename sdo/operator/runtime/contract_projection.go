@@ -250,6 +250,7 @@ func incidentRequestContract(request IncidentRequest) (*contracts.IncidentReques
 
 func incidentResultContract(result IncidentResult) (*contracts.IncidentResult, error) {
 	message := &contracts.IncidentResult{
+		DriftReprompt: cloneDriftReprompt(result.DriftReprompt),
 		SchemaVersion: result.SchemaVersion, IncidentId: result.IncidentID, Status: string(result.Status),
 		ConfirmedRootCauses: make([]*contracts.ConfirmedRootCause, 0, len(result.ConfirmedRootCauses)),
 		DriftEvents:         driftEventsContract(result.DriftEvents),
@@ -353,6 +354,7 @@ func incidentResultContract(result IncidentResult) (*contracts.IncidentResult, e
 
 func incidentResultState(message *contracts.IncidentResult) IncidentResult {
 	result := IncidentResult{
+		DriftReprompt: cloneDriftReprompt(message.GetDriftReprompt()),
 		SchemaVersion: message.GetSchemaVersion(), IncidentID: message.GetIncidentId(), Status: IncidentStatus(message.GetStatus()),
 		ConfirmedRootCauses:  make([]ConfirmedRootCause, 0, len(message.GetConfirmedRootCauses())),
 		DriftEvents:          driftEventsState(message.GetDriftEvents()),

@@ -151,6 +151,7 @@ type ResourceOwners struct {
 }
 
 type IncidentResult struct {
+	DriftReprompt         *contracts.DriftReprompt
 	UnresolvedFindings    []sdk.Finding
 	DriftEvents           []sdk.DriftEvent
 	SchemaVersion         string

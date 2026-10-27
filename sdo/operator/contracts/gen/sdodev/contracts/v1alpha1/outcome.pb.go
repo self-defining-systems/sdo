@@ -71,7 +71,8 @@ type OutcomeRecord struct {
 	ReflectionRejections []*ProposalRejection `protobuf:"bytes,52,rep,name=reflection_rejections,json=reflectionRejections,proto3" json:"reflection_rejections,omitempty"`
 	// Controller-observed: source checks that were unavailable when health
 	// verified the closure. Information only; never a verdict.
-	SourceCheckNotes []string `protobuf:"bytes,38,rep,name=source_check_notes,json=sourceCheckNotes,proto3" json:"source_check_notes,omitempty"`
+	SourceCheckNotes []string       `protobuf:"bytes,38,rep,name=source_check_notes,json=sourceCheckNotes,proto3" json:"source_check_notes,omitempty"`
+	DriftReprompt    *DriftReprompt `protobuf:"bytes,39,opt,name=drift_reprompt,json=driftReprompt,proto3" json:"drift_reprompt,omitempty"`
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
 }
@@ -372,6 +373,13 @@ func (x *OutcomeRecord) GetSourceCheckNotes() []string {
 	return nil
 }
 
+func (x *OutcomeRecord) GetDriftReprompt() *DriftReprompt {
+	if x != nil {
+		return x.DriftReprompt
+	}
+	return nil
+}
+
 type OutcomeTimestamps struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	DetectedAt    *timestamppb.Timestamp `protobuf:"bytes,1,opt,name=detected_at,json=detectedAt,proto3" json:"detected_at,omitempty"`
@@ -616,7 +624,7 @@ var File_sdodev_contracts_v1alpha1_outcome_proto protoreflect.FileDescriptor
 
 const file_sdodev_contracts_v1alpha1_outcome_proto_rawDesc = "" +
 	"\n" +
-	"'sdodev/contracts/v1alpha1/outcome.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a1sdodev/contracts/v1alpha1/controller_config.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a(sdodev/contracts/v1alpha1/messages.proto\x1a&sdodev/contracts/v1alpha1/common.proto\x1a1sdodev/contracts/v1alpha1/memory_diagnostic.proto\x1a'sdodev/contracts/v1alpha1/program.proto\"\xf6\x15\n" +
+	"'sdodev/contracts/v1alpha1/outcome.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a1sdodev/contracts/v1alpha1/controller_config.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a(sdodev/contracts/v1alpha1/messages.proto\x1a&sdodev/contracts/v1alpha1/common.proto\x1a1sdodev/contracts/v1alpha1/memory_diagnostic.proto\x1a'sdodev/contracts/v1alpha1/program.proto\"\xc7\x16\n" +
 	"\rOutcomeRecord\x12F\n" +
 	"\tcode_path\x18d \x01(\v2).sdodev.contracts.v1alpha1.CodePathConfigR\bcodePath\x12.\n" +
 	"\x0eschema_version\x18\x01 \x01(\x05B\a\xbaH\x04\x1a\x02\b\x01R\rschemaVersion\x12,\n" +
@@ -660,7 +668,8 @@ const file_sdodev_contracts_v1alpha1_outcome_proto_rawDesc = "" +
 	"\bsdk_gaps\x182 \x03(\v2!.sdodev.contracts.v1alpha1.SdkGapR\asdkGaps\x12W\n" +
 	"\x11undetected_causes\x183 \x03(\v2*.sdodev.contracts.v1alpha1.UndetectedCauseR\x10undetectedCauses\x12a\n" +
 	"\x15reflection_rejections\x184 \x03(\v2,.sdodev.contracts.v1alpha1.ProposalRejectionR\x14reflectionRejections\x12,\n" +
-	"\x12source_check_notes\x18& \x03(\tR\x10sourceCheckNotesB\x10\n" +
+	"\x12source_check_notes\x18& \x03(\tR\x10sourceCheckNotes\x12O\n" +
+	"\x0edrift_reprompt\x18' \x01(\v2(.sdodev.contracts.v1alpha1.DriftRepromptR\rdriftRepromptB\x10\n" +
 	"\x0e_repair_commitB\x10\n" +
 	"\x0e_memory_commitJ\x04\b\x16\x10\x17J\x04\b\x1f\x10 J\x04\b \x10!J\x04\b!\x10\"R\x16diagnosis_verification\"\xcc\x02\n" +
 	"\x11OutcomeTimestamps\x12;\n" +
@@ -720,8 +729,9 @@ var file_sdodev_contracts_v1alpha1_outcome_proto_goTypes = []any{
 	(*PlaybookCoverage)(nil),      // 15: sdodev.contracts.v1alpha1.PlaybookCoverage
 	(*StageReport)(nil),           // 16: sdodev.contracts.v1alpha1.StageReport
 	(*ProposalRejection)(nil),     // 17: sdodev.contracts.v1alpha1.ProposalRejection
-	(*timestamppb.Timestamp)(nil), // 18: google.protobuf.Timestamp
-	(*ObjectRef)(nil),             // 19: sdodev.contracts.v1alpha1.ObjectRef
+	(*DriftReprompt)(nil),         // 18: sdodev.contracts.v1alpha1.DriftReprompt
+	(*timestamppb.Timestamp)(nil), // 19: google.protobuf.Timestamp
+	(*ObjectRef)(nil),             // 20: sdodev.contracts.v1alpha1.ObjectRef
 }
 var file_sdodev_contracts_v1alpha1_outcome_proto_depIdxs = []int32{
 	4,  // 0: sdodev.contracts.v1alpha1.OutcomeRecord.code_path:type_name -> sdodev.contracts.v1alpha1.CodePathConfig
@@ -742,20 +752,21 @@ var file_sdodev_contracts_v1alpha1_outcome_proto_depIdxs = []int32{
 	2,  // 15: sdodev.contracts.v1alpha1.OutcomeRecord.sdk_gaps:type_name -> sdodev.contracts.v1alpha1.SdkGap
 	3,  // 16: sdodev.contracts.v1alpha1.OutcomeRecord.undetected_causes:type_name -> sdodev.contracts.v1alpha1.UndetectedCause
 	17, // 17: sdodev.contracts.v1alpha1.OutcomeRecord.reflection_rejections:type_name -> sdodev.contracts.v1alpha1.ProposalRejection
-	18, // 18: sdodev.contracts.v1alpha1.OutcomeTimestamps.detected_at:type_name -> google.protobuf.Timestamp
-	18, // 19: sdodev.contracts.v1alpha1.OutcomeTimestamps.dispatched_at:type_name -> google.protobuf.Timestamp
-	18, // 20: sdodev.contracts.v1alpha1.OutcomeTimestamps.mitigated_at:type_name -> google.protobuf.Timestamp
-	18, // 21: sdodev.contracts.v1alpha1.OutcomeTimestamps.verified_at:type_name -> google.protobuf.Timestamp
-	18, // 22: sdodev.contracts.v1alpha1.OutcomeTimestamps.completed_at:type_name -> google.protobuf.Timestamp
-	19, // 23: sdodev.contracts.v1alpha1.SdkGap.resources:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	19, // 24: sdodev.contracts.v1alpha1.UndetectedCause.resource:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	18, // 25: sdodev.contracts.v1alpha1.UndetectedCause.open_observed_at:type_name -> google.protobuf.Timestamp
-	18, // 26: sdodev.contracts.v1alpha1.UndetectedCause.fixed_observed_at:type_name -> google.protobuf.Timestamp
-	27, // [27:27] is the sub-list for method output_type
-	27, // [27:27] is the sub-list for method input_type
-	27, // [27:27] is the sub-list for extension type_name
-	27, // [27:27] is the sub-list for extension extendee
-	0,  // [0:27] is the sub-list for field type_name
+	18, // 18: sdodev.contracts.v1alpha1.OutcomeRecord.drift_reprompt:type_name -> sdodev.contracts.v1alpha1.DriftReprompt
+	19, // 19: sdodev.contracts.v1alpha1.OutcomeTimestamps.detected_at:type_name -> google.protobuf.Timestamp
+	19, // 20: sdodev.contracts.v1alpha1.OutcomeTimestamps.dispatched_at:type_name -> google.protobuf.Timestamp
+	19, // 21: sdodev.contracts.v1alpha1.OutcomeTimestamps.mitigated_at:type_name -> google.protobuf.Timestamp
+	19, // 22: sdodev.contracts.v1alpha1.OutcomeTimestamps.verified_at:type_name -> google.protobuf.Timestamp
+	19, // 23: sdodev.contracts.v1alpha1.OutcomeTimestamps.completed_at:type_name -> google.protobuf.Timestamp
+	20, // 24: sdodev.contracts.v1alpha1.SdkGap.resources:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	20, // 25: sdodev.contracts.v1alpha1.UndetectedCause.resource:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	19, // 26: sdodev.contracts.v1alpha1.UndetectedCause.open_observed_at:type_name -> google.protobuf.Timestamp
+	19, // 27: sdodev.contracts.v1alpha1.UndetectedCause.fixed_observed_at:type_name -> google.protobuf.Timestamp
+	28, // [28:28] is the sub-list for method output_type
+	28, // [28:28] is the sub-list for method input_type
+	28, // [28:28] is the sub-list for extension type_name
+	28, // [28:28] is the sub-list for extension extendee
+	0,  // [0:28] is the sub-list for field type_name
 }
 
 func init() { file_sdodev_contracts_v1alpha1_outcome_proto_init() }
