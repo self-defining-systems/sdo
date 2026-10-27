@@ -815,9 +815,12 @@ includes parallel subtests and excludes top-level pauses. Refresh completed
 measurements from a hosted transcript with
 `gh run view RUN --log > /tmp/go-ci.log`, then
 `uv run python scripts/update_go_test_costs.py --log /tmp/go-ci.log --run RUN --head SHA --write`.
+Use `--scope operator` or `--scope runtime` to refresh one profile.
 Without `--write`, the importer reports the measured entry counts. Unfinished
 tests retain their previous costs; no test or seed is removed. Explicit operator
-placements remain reviewable in the operator profile. The redundant-link
+placements remain reviewable in the operator profile. The two measured slowest
+acceptance cases run in a third name partition on the existing compiler-replay
+allocation, preserving all cases and the two-worker parallel cap. The redundant-link
 regression shares the located-binding fixture's real acceptance compilation.
 
 The five existing operator jobs and four-minute Go timeouts stay unchanged.

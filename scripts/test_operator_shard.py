@@ -59,6 +59,7 @@ def partition(inventory: dict[str, list[str]]) -> dict[str, dict[str, list[str]]
                 shard = {
                     "TestCLIAndBrokerAgreeOnAcceptance": "acceptance",
                     "TestCLIAndBrokerAgreeOnAcceptanceSecondShard": "acceptance-second",
+                    "TestCLIAndBrokerAgreeOnAcceptanceThirdShard": "compiler-replay",
                 }.get(name, "broker")
             elif package == PREFIX + "memory/validate":
                 shard = "compiler"
