@@ -248,3 +248,25 @@ def test_teardown_deletes_and_reports_clusters_down_left_behind(monkeypatch: pyt
     deleted.clear()
     assert batch.verify_teardown("reht1", listing=lambda prefix: []) == []
     assert deleted == []
+
+
+def test_a_lane_that_cannot_reset_fails_every_problem_at_admission_and_runs_none(tmp_path: Path) -> None:
+    commands: list[str] = []
+
+    def execute(argv: Sequence[str], *, cwd: Path, timeout: float, log: Path) -> tuple[int, str]:
+        commands.append(" ".join(argv))
+        return 1, "reset exploded"
+
+    app = real.RealApp(
+        real.RealLane.load("hotel_reservation", _lane(tmp_path), "le-p4b"),
+        [_problem(1), _problem(2)],
+        tmp_path,
+        tmp_path / "out",
+        IMAGES,
+        execute=execute,
+        deliver=lambda lane, tags: None,
+    )
+    app.prepare = lambda: app.lane  # type: ignore[method-assign]
+    rows = app.run()
+    assert [(r.failure.name, r.failure.error_class) for r in rows if r.failure] == [("admission", "reset-failed")] * 2
+    assert not any(" run --run-dir" in c and "--problem" in c for c in commands)

@@ -125,6 +125,26 @@ def _git_clone(source: Path, target: Path) -> None:
     subprocess.run(["git", "clone", "--quiet", "--no-hardlinks", str(source), str(target)], check=True, timeout=300)
 
 
+def deliver_images(lane: RealLane, tags: Sequence[str]) -> None:
+    """Load the scripted-worker images into the lane cluster's registry and record it in the private environment."""
+
+    from benchmarks.sregym.fastloop.image_delivery import registry_delivery, save_delivery
+
+    started = time.monotonic()
+    evidence = registry_delivery(lane.cluster, list(tags))
+    save_delivery(
+        lane.run_dir / "image_delivery.jsonl",
+        {
+            "path": "registry",
+            "reason": "rehearse_batch real-apps scripted images",
+            "cluster": lane.cluster,
+            "seconds": time.monotonic() - started,
+            "images": list(tags),
+            "evidence": evidence,
+        },
+    )
+
+
 def run_arguments(lane: RealLane, problem_id: str, *, timeout: int, time_scale: float) -> list[str]:
     """``fastloop run`` for one problem with scripted registrations, behind the lane's lease/Secret fence."""
 
@@ -287,6 +307,7 @@ class RealApp:
     images: dict[str, str]
     time_scale: float = 1.0
     execute: Callable[..., tuple[int, str]] = _execute
+    deliver: Callable[[RealLane, Sequence[str]], None] | None = None
     seconds: dict[str, float] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -303,7 +324,9 @@ class RealApp:
         """Private environment for this app; the lane's own directory stays untouched."""
 
         path = private_environment(self.lane.run_dir, self.out_dir / "environment", images=self.images)
-        return RealLane.load(self.lane.app, path.parent, self.lane.lease)
+        lane = RealLane.load(self.lane.app, path.parent, self.lane.lease)
+        (self.deliver or deliver_images)(lane, list(self.images.values()))
+        return lane
 
     def reset(self, lane: RealLane) -> Stage:
         argv = ["uv", "run", "python", "-m", "benchmarks.sregym.fastloop", "reset", "--run-dir", str(lane.run_dir)]
@@ -350,6 +373,9 @@ class RealApp:
         except Exception as exc:  # the batch reports every stage it could not run
             detail = f"private environment failed: {type(exc).__name__}: {exc}"
             return [Row(p, [Stage("admission", "fail", "cluster-up-failed", detail[:300])]) for p in self.problems]
+        start = self.reset(lane)
+        if start.status == "fail":
+            return [Row(p, [Stage("admission", "fail", start.error_class, start.detail)]) for p in self.problems]
         rows, learned = [], False
         for problem in self.problems:
             row, learned = self.run_problem(lane, problem, learned)
