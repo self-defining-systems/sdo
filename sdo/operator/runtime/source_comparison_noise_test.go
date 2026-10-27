@@ -325,3 +325,30 @@ func TestSourceComparisonSchemaQuantityCases(t *testing.T) {
 		})
 	}
 }
+
+// Synthetic source-shape fingerprint from the previous comparison policy:
+// source declared a revision annotation, which was then part of its path hash.
+func TestSourceComparisonCapturedLegacyRevisionRecord(t *testing.T) {
+	source := noiseSource()
+	live := source.DeepCopy()
+	if err := RecordAcceptance(live, source); err != nil {
+		t.Fatal(err)
+	}
+	record, ok := readAcceptanceRecord(live)
+	if !ok {
+		t.Fatal("missing record")
+	}
+	record.Source = "b03511c446093f995eb9c36764b14985d972e3e7e90c1a9f08023953a2d28503"
+	record.Paths = append(record.Paths, "metadata.annotations.deployment.kubernetes.io/revision")
+	data, err := json.Marshal(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	annotations := live.GetAnnotations()
+	annotations[acceptedPathsAnnotation] = string(data)
+	annotations["deployment.kubernetes.io/revision"] = "5"
+	live.SetAnnotations(annotations)
+	if diff := noiseDiff(t, source, live, nil); diff.Changed {
+		t.Fatalf("legacy capture revision noise: %+v", diff)
+	}
+}

@@ -15,19 +15,46 @@ import (
 	"sdo.dev/operator/sdk"
 )
 
+type sourceAnnotationPolicy struct {
+	name string
+	// legacyCompared marks annotations included in pre-normalization source
+	// shape hashes, solely to recognize those existing captured records.
+	legacyCompared bool
+}
+
 // sourceBookkeepingAnnotations is the single annotation exclusion policy for
 // comparisons, acceptance records and replay. Do not ignore whole annotation
 // domains: user-authored scheduling and security annotations can be repairs.
-var sourceBookkeepingAnnotations = []string{
-	"sdo.dev/source-tree",
-	acceptedPathsAnnotation,
-	"deployment.kubernetes.io/revision",
-	"kubectl.kubernetes.io/last-applied-configuration",
-	"kubectl.kubernetes.io/restartedAt",
+var sourceBookkeepingAnnotations = []sourceAnnotationPolicy{
+	{"sdo.dev/source-tree", false},
+	{acceptedPathsAnnotation, false},
+	{"deployment.kubernetes.io/revision", true},
+	{"kubectl.kubernetes.io/last-applied-configuration", false},
+	{"kubectl.kubernetes.io/restartedAt", true},
 }
 
 func sourceBookkeepingAnnotation(name string) bool {
-	return slices.Contains(sourceBookkeepingAnnotations, name)
+	return slices.ContainsFunc(sourceBookkeepingAnnotations, func(policy sourceAnnotationPolicy) bool { return policy.name == name })
+}
+
+// Legacy fingerprints retain exactly the two annotations newly excluded by
+// this policy; no broader source-shape or UID mismatch is accepted.
+func legacyAcceptedSourceShape(source *unstructured.Unstructured) string {
+	paths := []string{}
+	for path := range flattenDriftObject(source) {
+		paths = append(paths, path)
+	}
+	if source != nil {
+		for _, location := range [][]string{{"metadata", "annotations"}, {"spec", "template", "metadata", "annotations"}} {
+			annotations, _, _ := unstructured.NestedMap(source.Object, location...)
+			for _, policy := range sourceBookkeepingAnnotations {
+				if _, exists := annotations[policy.name]; exists && policy.legacyCompared {
+					paths = append(paths, strings.Join(location, ".")+"."+policy.name)
+				}
+			}
+		}
+	}
+	return sourceShapeDigest(paths)
 }
 
 // HPA ownership comes from the captured target identity, not a manager name or

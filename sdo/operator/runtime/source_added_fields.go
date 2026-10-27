@@ -99,6 +99,10 @@ func acceptedSourceShape(source *unstructured.Unstructured) string {
 	for path := range flattenDriftObject(source) {
 		paths = append(paths, path)
 	}
+	return sourceShapeDigest(paths)
+}
+
+func sourceShapeDigest(paths []string) string {
 	sort.Strings(paths)
 	encoded, _ := json.Marshal(paths)
 	return fmt.Sprintf("%x", sha256.Sum256(encoded))
@@ -123,7 +127,7 @@ func readAcceptanceRecord(object *unstructured.Unstructured) (acceptanceRecord, 
 // object instance against source.
 func currentAcceptanceRecord(observed, source *unstructured.Unstructured) (acceptanceRecord, bool) {
 	record, ok := readAcceptanceRecord(observed)
-	if !ok || (record.UID != "" && record.UID != string(observed.GetUID())) || record.Source != acceptedSourceShape(source) {
+	if !ok || (record.UID != "" && record.UID != string(observed.GetUID())) || (record.Source != acceptedSourceShape(source) && record.Source != legacyAcceptedSourceShape(source)) {
 		return acceptanceRecord{}, false
 	}
 	return record, true
