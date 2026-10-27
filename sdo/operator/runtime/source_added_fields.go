@@ -99,6 +99,10 @@ func acceptedSourceShape(source *unstructured.Unstructured) string {
 	for path := range flattenDriftObject(source) {
 		paths = append(paths, path)
 	}
+	return sourceShapeDigest(paths)
+}
+
+func sourceShapeDigest(paths []string) string {
 	sort.Strings(paths)
 	encoded, _ := json.Marshal(paths)
 	return fmt.Sprintf("%x", sha256.Sum256(encoded))
@@ -123,7 +127,7 @@ func readAcceptanceRecord(object *unstructured.Unstructured) (acceptanceRecord, 
 // object instance against source.
 func currentAcceptanceRecord(observed, source *unstructured.Unstructured) (acceptanceRecord, bool) {
 	record, ok := readAcceptanceRecord(observed)
-	if !ok || (record.UID != "" && record.UID != string(observed.GetUID())) || record.Source != acceptedSourceShape(source) {
+	if !ok || (record.UID != "" && record.UID != string(observed.GetUID())) || (record.Source != acceptedSourceShape(source) && record.Source != legacyAcceptedSourceShape(source)) {
 		return acceptanceRecord{}, false
 	}
 	return record, true
@@ -234,7 +238,7 @@ func changedAcceptedValues(observed *unstructured.Unstructured, record acceptanc
 	leaves := flattenDriftObject(observed)
 	var controllers map[string]bool
 	changed := []string{}
-	for path, accepted := range record.Values {
+	for path, accepted := range normalizedAcceptanceValues(observed, record.Values) {
 		value, ok := leaves[path]
 		if !ok || value == nil || sameScalar(value, accepted) {
 			continue
@@ -323,16 +327,19 @@ func declaredPath(leaves map[string]any, path string) bool {
 	return false
 }
 
-// Kubernetes reserves kubernetes.io and k8s.io label, annotation and finalizer
-// names for its own components (revision stamps, rollout restarts, load
-// balancer cleanup); they are bookkeeping, not configuration that accepted
-// source could declare. Controllers write them after acceptance.
+// Annotation exclusions share the comparison policy; Kubernetes-reserved
+// labels and finalizers retain their existing controller bookkeeping policy.
 func bookkeepingPath(path string, value any) bool {
 	if strings.HasPrefix(path, "metadata.finalizers[") {
 		name, _ := value.(string)
 		return reservedDomainName(name)
 	}
-	for _, prefix := range []string{"metadata.labels.", "metadata.annotations.", "spec.template.metadata.labels.", "spec.template.metadata.annotations."} {
+	for _, prefix := range []string{"metadata.annotations.", "spec.template.metadata.annotations."} {
+		if strings.HasPrefix(path, prefix) {
+			return sourceBookkeepingAnnotation(strings.TrimPrefix(path, prefix))
+		}
+	}
+	for _, prefix := range []string{"metadata.labels.", "spec.template.metadata.labels."} {
 		if strings.HasPrefix(path, prefix) {
 			return reservedDomainName(strings.TrimPrefix(path, prefix))
 		}
