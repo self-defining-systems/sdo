@@ -1422,7 +1422,11 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 	}
 
 	driftPrompt := !early && verified && driftRepromptCanProgress(source.Drift, c.currentIncidentResult)
-	if ((!verified && (len(verification.Findings) > 0 || verification.Error != "" || len(verification.VerificationBlockers) > 0)) || driftPrompt) && !terminalFailure && c.dispatchError == "" && now.Before(c.verificationDeadlineLocked()) {
+	continuationDeadline := c.verificationDeadlineLocked()
+	if driftPrompt {
+		continuationDeadline = c.currentIncidentRequest.ResponseDeadline
+	}
+	if ((!verified && (len(verification.Findings) > 0 || verification.Error != "" || len(verification.VerificationBlockers) > 0)) || driftPrompt) && !terminalFailure && c.dispatchError == "" && now.Before(continuationDeadline) {
 		if continuer, ok := c.dispatcher.(interface {
 			ContinueAfterVerification(context.Context, IncidentRequest, ToolResponse, time.Time) (bool, error)
 		}); ok {
@@ -1446,6 +1450,12 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 				return
 			}
 			if resumed {
+				// Health already verified before optional source work. Its
+				// return needs a fresh observation window; unconfirmed turns
+				// keep their original frozen bound instead.
+				if driftPrompt {
+					c.verificationDeadline = time.Time{}
+				}
 				if c.currentIncidentResult != nil && driftRecord != nil {
 					c.currentIncidentResult.DriftReprompt = driftRecord
 				}

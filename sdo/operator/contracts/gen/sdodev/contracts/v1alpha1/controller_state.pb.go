@@ -156,9 +156,9 @@ const (
 	// The closure recheck was denied its observation scope (RBAC, undeclared or
 	// unsupported dependency). A misconfiguration, never a contradicted repair.
 	ClosureFailureReason_CLOSURE_FAILURE_REASON_OBSERVER_DENIED ClosureFailureReason = 5
-	// The incident's work lost its owner: no live responder execution remains
-	// and no closure began within the response or verification bound plus a
-	// grace (for example, the controller restarted after its responder ended).
+	// The incident's work lost its owner: no live responder execution or
+	// harvested result remains past its response bound plus a grace. A harvested
+	// response stays controller-owned through closure, including after restart.
 	ClosureFailureReason_CLOSURE_FAILURE_REASON_OWNER_LOST ClosureFailureReason = 6
 )
 
@@ -799,9 +799,10 @@ type ControllerState struct {
 	// snapshot, or failed. It stops only when the step loop is blocked, so
 	// observers judge a hung controller by it and never by evaluation_iteration.
 	StepCount int64 `protobuf:"varint,44,opt,name=step_count,json=stepCount,proto3" json:"step_count,omitempty"`
-	// First completed response starts this absolute verification bound. A resumed
-	// responder or controller restart never extends it; it is capped by the
-	// original response deadline and cleared with its incident.
+	// First completed response starts this absolute verification bound. An
+	// unconfirmed continuation or controller restart never extends it. A healthy
+	// optional source turn starts its own fresh verification window on return.
+	// The original response deadline caps both; cleared with the incident.
 	VerificationDeadlineAt *timestamppb.Timestamp `protobuf:"bytes,45,opt,name=verification_deadline_at,json=verificationDeadlineAt,proto3" json:"verification_deadline_at,omitempty"`
 	unknownFields          protoimpl.UnknownFields
 	sizeCache              protoimpl.SizeCache

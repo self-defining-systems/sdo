@@ -692,7 +692,13 @@ func TestFinishedResponderJobIsHarvestedBeforeRetirement(t *testing.T) {
 			if len(got.GetFailedClosures()) != 0 {
 				t.Fatalf("finished responder retired before its result was harvested: %v", got.GetFailedClosures()[0].GetFailure())
 			}
-			if got.GetIncidentRequest().GetIncidentId() != id || !got.GetResponderDone() {
+			if closure := got.GetPendingClosure(); closure != nil {
+				// A late harvest can already be at the original verification
+				// bound: its result is preserved in the normal frozen closure.
+				if closure.GetRequest().GetIncidentId() != id || closure.GetResult().GetStatus() != string(IncidentCompleted) || got.GetClosureState() != contracts.ClosureState_CLOSURE_STATE_PENDING {
+					t.Fatalf("harvested result lost from bounded closure: %v", got)
+				}
+			} else if got.GetIncidentRequest().GetIncidentId() != id || !got.GetResponderDone() || got.GetIncidentResult().GetStatus() != string(IncidentCompleted) {
 				t.Fatalf("finished responder result not harvested: %v", got)
 			}
 		})

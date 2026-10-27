@@ -207,9 +207,10 @@ message ControllerState {
   // snapshot, or failed. It stops only when the step loop is blocked, so
   // observers judge a hung controller by it and never by evaluation_iteration.
   int64 step_count = 44;
-  // First completed response starts this absolute verification bound. A resumed
-  // responder or controller restart never extends it; it is capped by the
-  // original response deadline and cleared with its incident.
+  // First completed response starts this absolute verification bound. An
+  // unconfirmed continuation or controller restart never extends it. A healthy
+  // optional source turn starts its own fresh verification window on return.
+  // The original response deadline caps both; cleared with the incident.
   google.protobuf.Timestamp verification_deadline_at = 45;
   reserved 32, 33, 34;
   reserved "drift_investigation", "drift_admission", "program_sweep_cursors";
