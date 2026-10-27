@@ -535,6 +535,7 @@ message IncidentClosure {
   // accepted source would not render, the inventory did not load). Information
   // only: health alone decided the closure.
   repeated string source_check_notes = 26;
+  StatePersistenceFailure state_persistence_failure = 27;
 }
 
 // ClosureUnconfirmedReason explains why a verified closure was committed
@@ -579,4 +580,11 @@ message DriftReprompt {
   int32 findings_before = 1 [(buf.validate.field).int32.gt = 0];
   // Absent until a post-turn verification is available.
   optional int32 findings_after = 2 [(buf.validate.field).int32.gte = 0];
+}
+
+// Controller-owned failure of the durable state contract. Invalid evidence is
+// quarantined; its field paths remain visible to outcome consumers/reflection.
+message StatePersistenceFailure {
+  string reason = 1 [(buf.validate.field).string.const = "state_persistence_invalid"];
+  string detail = 2 [(buf.validate.field).string.min_len = 1];
 }

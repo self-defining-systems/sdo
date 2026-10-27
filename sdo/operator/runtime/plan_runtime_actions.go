@@ -255,7 +255,7 @@ func (e PlanExecutor) applyRuntimePlan(ctx context.Context, incident IncidentReq
 			}
 			if readErr != nil || normalizeErr != nil || !planValuesEqual(actual, items[i].users) {
 				result.ActionReports[i].Status = "unknown"
-				result.ActionReports[i].FailureReason = "database_user_unverified"
+				result.ActionReports[i].FailureReason = "outcome_unknown"
 				if readErr != nil {
 					result.ActionReports[i].FailureReason = databaseFailureCode(readErr)
 				}

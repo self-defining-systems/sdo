@@ -1940,8 +1940,14 @@ func (c *Controller) PersistState(ctx context.Context) error {
 	}
 	defer cancel()
 	state, err := c.ExportState()
+	if err == nil {
+		err = validateRuntimeState(state)
+	}
 	if err != nil {
-		return fmt.Errorf("snapshot controller state: %w", err)
+		state, err = c.recoverInvalidState(err)
+		if err != nil {
+			return fmt.Errorf("snapshot controller state: %w", err)
+		}
 	}
 	if preparer, ok := c.dispatcher.(interface {
 		PrepareDispatch(context.Context, IncidentRequest) (IncidentRequest, error)

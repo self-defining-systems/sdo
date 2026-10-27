@@ -68,6 +68,7 @@ message OutcomeRecord {
   repeated string source_check_notes = 38;
   DriftReprompt drift_reprompt = 39;
   repeated DisabledSetupDetector disabled_setup_detectors = 40;
+  StatePersistenceFailure state_persistence_failure = 41;
 }
 
 message OutcomeTimestamps {
