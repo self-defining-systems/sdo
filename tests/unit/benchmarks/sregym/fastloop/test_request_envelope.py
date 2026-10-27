@@ -24,7 +24,7 @@ from tests.unit.sdo.agents.responder.test_reflection_outcomes import _outcome
 from tests.unit.sdo.agents.responder.test_reflection_worker import _closure
 
 ROOT = Path(__file__).resolve().parents[5]
-NATIVE_REQUEST_BYTES = 64 << 20
+NATIVE_REQUEST_BYTES = 512 << 10
 
 
 def reflection_task(checkout: Path, base: str = "synthetic-outcome") -> AgentTask:
@@ -34,7 +34,7 @@ def reflection_task(checkout: Path, base: str = "synthetic-outcome") -> AgentTas
     )
     # Logical memory, rather than invalid envelope padding, makes a real large request.
     request.memory_snapshot.accepted_commit = base
-    request.memory_snapshot.architecture_markdown = "Synthetic architecture.\n" * 60000
+    request.memory_snapshot.architecture_markdown = "Synthetic architecture.\n" * 12000
     task = AgentTask(
         schema_version="sdo.dev/v1alpha1",
         task_id="reflection-large",
@@ -55,7 +55,7 @@ import (
     "fmt"
     "sdo.dev/operator/worker_registry"
 )
-func main() { fmt.Print(worker_registry.MaxStagedRequestBytes) }
+func main() { fmt.Print(worker_registry.MaxRequestBytes) }
 """)
     native = int(subprocess.check_output(["go", "run", str(program)], cwd=ROOT / "sdo/operator", timeout=60))
     assert replay.MAX_TASK_BYTES == native == NATIVE_REQUEST_BYTES
@@ -75,7 +75,7 @@ def test_large_reflection_record_ingest_load_and_replay(tmp_path: Path, monkeypa
     base = subprocess.check_output(["git", "-C", str(checkout), "rev-parse", "HEAD"], text=True).strip()
     task = reflection_task(checkout, base)
     wire = to_canonical_json(task)
-    assert 1 << 20 < len(wire.encode()) < NATIVE_REQUEST_BYTES
+    assert 1 << 18 < len(wire.encode()) < NATIVE_REQUEST_BYTES
     receipt = tmp_path / "receipt"
     session = receipt / "sdo_runtime/sessions/synthetic"
     task_path = tmp_path / "task.json"
@@ -103,7 +103,7 @@ def test_large_reflection_record_ingest_load_and_replay(tmp_path: Path, monkeypa
             assert kwargs["outcome_commit"] == base
             closure = kwargs["closure"]
             assert isinstance(closure, IncidentClosure)
-            assert closure.request.memory_snapshot.architecture_markdown == ("Synthetic architecture.\n" * 60000)
+            assert closure.request.memory_snapshot.architecture_markdown == ("Synthetic architecture.\n" * 12000)
             return ReflectionTurn(
                 summary="Synthetic replay",
                 learning_decision="no_change",
