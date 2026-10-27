@@ -545,7 +545,10 @@ def test_the_fault_catalog_owns_which_faults_are_data_level() -> None:
         ),
         injection_order=(0, 1, 2),
     )
-    assert description.data_level_faults() == ("storage_user_unregistered:mongodb-geo", "revoke_auth_mongodb:mongodb-geo")
+    assert description.data_level_faults() == (
+        "storage_user_unregistered:mongodb-geo",
+        "revoke_auth_mongodb:mongodb-geo",
+    )
 
 
 def test_a_dead_attempt_leaves_the_marker_and_forces_tier_2(tmp_path: Path) -> None:
