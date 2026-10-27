@@ -294,10 +294,11 @@ func additionsAgainst(observed *unstructured.Unstructured, record acceptanceReco
 		present[path] = true
 	}
 	declared := flattenDriftObject(source)
+	controllers := ownedBySubresourceWriters(observed)
 	paths := []string{}
 	for path, value := range flattenDriftObject(observed) {
 		// Typed reads serialize unset fields as null; null is absence.
-		if value != nil && !present[path] && !bookkeepingPath(path, value) && !declaredPath(declared, path) {
+		if value != nil && !present[path] && !bookkeepingPath(path, value) && !ownsDriftPath(controllers, path) && !declaredPath(declared, path) {
 			paths = append(paths, path)
 		}
 	}
@@ -411,32 +412,45 @@ func removeAddedFields(next, observed, source *unstructured.Unstructured) {
 		}
 		return found
 	}
-	var prune func(string, map[string]any)
-	prune = func(prefix string, node map[string]any) {
-		for key, child := range node {
-			path := prefix + "." + key
-			if onlyAdded(path) {
-				delete(node, key)
-			} else if nested, ok := child.(map[string]any); ok {
-				prune(path, nested)
+	var prune func(string, any) any
+	prune = func(prefix string, node any) any {
+		switch values := node.(type) {
+		case map[string]any:
+			for key, child := range values {
+				path := prefix + "." + key
+				if onlyAdded(path) {
+					delete(values, key)
+				} else {
+					values[key] = prune(path, child)
+				}
 			}
+		case []any:
+			kept := make([]any, 0, len(values))
+			for index, child := range values {
+				path := fmt.Sprintf("%s[%d]", prefix, index)
+				if !onlyAdded(path) {
+					kept = append(kept, prune(path, child))
+				}
+			}
+			return kept
 		}
+		return node
 	}
 	for key, child := range next.Object {
-		nested, ok := child.(map[string]any)
 		switch {
-		case !ok || key == "apiVersion" || key == "kind" || key == "status":
+		case key == "apiVersion" || key == "kind" || key == "status":
 		case key == "metadata":
+			nested, _ := child.(map[string]any)
 			for _, field := range []string{"labels", "annotations"} {
 				if values, ok := nested[field].(map[string]any); ok {
-					prune("metadata."+field, values)
+					nested[field] = prune("metadata."+field, values)
 				}
 			}
 		default:
 			if onlyAdded(key) {
 				delete(next.Object, key)
 			} else {
-				prune(key, nested)
+				next.Object[key] = prune(key, child)
 			}
 		}
 	}
