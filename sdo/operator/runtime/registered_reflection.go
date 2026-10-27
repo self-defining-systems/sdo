@@ -138,7 +138,7 @@ func (w RegisteredReflectionWorker) Reflect(ctx context.Context, closure Inciden
 		if current.GetIncidentId() != workspace.IncidentID {
 			return ReflectionDecision{}, errors.New("reflection outcome incident differs from proposal")
 		}
-		prior, err := w.Outcomes.List(ctx)
+		prior, _, err := memory.ListOutcomes(ctx, w.Outcomes, "reflection prior outcomes")
 		if err != nil {
 			return ReflectionDecision{}, err
 		}

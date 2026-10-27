@@ -31,7 +31,7 @@ func (s TaskStore) Load(id string) (*contracts.AgentTask, bool, error) {
 		return nil, false, err
 	}
 	task := &contracts.AgentTask{}
-	if err := wire.Unmarshal(payload, task); err != nil {
+	if err := wire.UnmarshalDurable(payload, task); err != nil {
 		return nil, false, fmt.Errorf("read frozen reflection task: %w", err)
 	}
 	if task.GetTaskId() != id {

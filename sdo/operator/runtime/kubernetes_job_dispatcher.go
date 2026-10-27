@@ -368,7 +368,7 @@ func (d KubernetesJobDispatcher) programTrust(ctx context.Context, request Incid
 	if d.Outcomes == nil {
 		return nil, nil
 	}
-	stored, err := d.Outcomes.List(ctx)
+	stored, _, err := memory.ListOutcomes(ctx, d.Outcomes, "program trust")
 	if err != nil {
 		return nil, fmt.Errorf("read program trust outcomes: %w", err)
 	}

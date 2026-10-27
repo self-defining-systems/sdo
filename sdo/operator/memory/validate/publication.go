@@ -12,6 +12,7 @@ import (
 
 	"google.golang.org/protobuf/encoding/protojson"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/contracts/wire"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/layout"
 	programvalidation "sdo.dev/operator/memory/validate/program"
@@ -165,7 +166,7 @@ func lifecycleChecks(ctx context.Context, r Request, paths []string, structurall
 					return append(ds, Diagnostic{Rule: RuleAcceptedOutcome, Message: "reflection requires the committed controller outcome document"}), nil
 				}
 				outcome := new(contracts.OutcomeRecord)
-				if err := protojson.Unmarshal([]byte(raw), outcome); err != nil {
+				if err := wire.UnmarshalLenientMigrating([]byte(raw), outcome); err != nil {
 					return nil, err
 				}
 				r.noteGaps(ReflectionCoverageGaps(r.Root, outcome, r.Decision)...)
