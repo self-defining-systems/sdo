@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"time"
@@ -36,6 +37,10 @@ func ServeWorkingProgram(registry program.ProgramRegistry) {
 		message := jitview.Message{}
 		if err != nil {
 			message.Error = err.Error()
+			var structural *NonExecutablePlanError
+			if errors.As(err, &structural) {
+				message.StructuralPlanFailure = structural.Error()
+			}
 		} else {
 			message.Result, err = json.Marshal(result)
 			if err != nil {
@@ -93,6 +98,9 @@ func ServeWorkingProgram(registry program.ProgramRegistry) {
 		plan, err := p.Mitigate(ctx, view, program.Bindings(request.Bindings))
 		if readErr := readFailure(); readErr != nil {
 			err = readErr
+		}
+		if err == nil {
+			plan, err = detachExecutablePlan(plan)
 		}
 		reply(PlanApplicationResult{Plan: plan}, err)
 	default:

@@ -473,6 +473,9 @@ type ProgramRegistry interface {
     ProgramRegistry is the compiled program catalog available to the controller.
 
 func NewRegistry(diagnosers []Diagnoser, mitigators []Mitigator) (ProgramRegistry, error)
+    NewRegistry requires identical Diagnose/Mitigate declarations. Required
+    scalar parameters need defaults because findings supply object roles only;
+    incident-specific values should be read through ReadView instead.
 
 type ProgramSpec struct {
 	ID     string

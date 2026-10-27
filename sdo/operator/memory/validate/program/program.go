@@ -449,7 +449,7 @@ func TestProgramCorpus(t *testing.T){
 `, item.ID+"/"+id, id, item.ID, id, item.ID, item.ID, id)
 		}
 	}
-	test.WriteString("}\nfunc TestProgramRegistrationContracts(t *testing.T){if _,err:=Programs();err!=nil{t.Fatal(err)}}\n")
+	test.WriteString("}\n")
 	test.WriteString(scriptReplayNoteHelper)
 	return test.String()
 }

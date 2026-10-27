@@ -100,5 +100,16 @@ func generatePrograms(root, module string, programs []programvalidation.Spec) er
 	if err := os.WriteFile(filepath.Join(root, "generated", "programs_test.go"), []byte(programvalidation.ReplayTests(programs)), 0o644); err != nil {
 		return err
 	}
+	// Declaration validation is structural policy, independent of replay results
+	// and available corpus cases. Never make it an informational replay note.
+	declarations := `package generated
+import "testing"
+func TestProgramRegistrationContracts(t *testing.T) {
+ if _, err := Programs(); err != nil { t.Fatal(err) }
+}
+`
+	if err := os.WriteFile(filepath.Join(root, "generated", "program_declarations_test.go"), []byte(declarations), 0o644); err != nil {
+		return err
+	}
 	return nil
 }
