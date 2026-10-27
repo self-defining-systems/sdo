@@ -45,7 +45,13 @@ from benchmarks.sregym.fastloop.fault_driver import SregymFaultDriver
 from benchmarks.sregym.fastloop.loop import LoopConfig, run_incidents, write_loop_manifest
 from benchmarks.sregym.fastloop.records import AgentSummary, IncidentRecord, load_records, summarize
 from benchmarks.sregym.fastloop.stream import load_stream_config
-from benchmarks.sregym.fastloop.wipe import AttemptMarker, run_tier2
+from benchmarks.sregym.fastloop.wipe import (
+    AttemptMarker,
+    KubectlLaneCluster,
+    application_pod_problems,
+    run_tier2,
+    unrecovered_rows,
+)
 from benchmarks.sregym.fastloop.worker_client import SregymWorker, worker_argv
 
 if TYPE_CHECKING:
@@ -55,7 +61,7 @@ if TYPE_CHECKING:
     from benchmarks.sregym.fastloop.composite import CompositeSettings
     from benchmarks.sregym.fastloop.fault_tracker import FaultSpec
     from benchmarks.sregym.fastloop.loop import DiagnosisGrader, IncidentAgent
-    from benchmarks.sregym.fastloop.wipe import Tier1Receipt
+    from benchmarks.sregym.fastloop.wipe import Tier1Receipt, Tier2Reason
 
 logger = logging.getLogger(__name__)
 
@@ -433,7 +439,7 @@ def _up(args: argparse.Namespace) -> int:
         environment.image_delivery, environment.image_delivery_reason = delivery["path"], delivery["reason"]
         environment.image_delivery_seconds, environment.image_delivery_images = delivery["seconds"], delivery["images"]
     if environment.app != "toy":
-        from benchmarks.sregym.fastloop.wipe import KubectlLaneCluster, cluster_scoped, inventory_path, save_inventory
+        from benchmarks.sregym.fastloop.wipe import cluster_scoped, inventory_path, save_inventory
 
         save_inventory(
             inventory_path(environment.kubeconfig),
@@ -631,7 +637,7 @@ def _wipes_at_row_start(args: argparse.Namespace, environment: FastloopEnvironme
 
 def _wipe_sdo_and_harness(args: argparse.Namespace, environment: FastloopEnvironment) -> Tier1Receipt:
     """Tier 1: delete SDO's control namespace and every harness leftover, then re-provision and re-seed SDO's inputs."""
-    from benchmarks.sregym.fastloop.wipe import KubectlLaneCluster, credentials_hook, wipe_environment
+    from benchmarks.sregym.fastloop.wipe import credentials_hook, wipe_environment
 
     if args.credentials_hook is None:
         raise SystemExit("eval: a row-start wipe deletes the SDO namespace; pass --credentials-hook to re-provision it")
@@ -661,17 +667,25 @@ def _recapture_application_baseline(environment: FastloopEnvironment) -> None:
     )
 
 
-def _application_needs_redeploy(environment: FastloopEnvironment, marker: AttemptMarker) -> str | None:
-    """Tier 2 trigger: an unclean previous attempt, or a warm app that fails the restore invariant."""
+def _application_needs_redeploy(environment: FastloopEnvironment, marker: AttemptMarker) -> Tier2Reason | None:
+    """Tier 2 trigger: an unrecovered previous row, a warm app that fails the restore invariant, or a stuck pod."""
     from benchmarks.sregym.fastloop.admission import workload_identity
     from benchmarks.sregym.fastloop.clean_start import assert_clean_baseline
-    from benchmarks.sregym.fastloop.wipe import tier2_reason
+    from benchmarks.sregym.fastloop.wipe import await_healthy_pods, tier2_reason
 
     def invariant() -> None:
         workload_identity(environment.kubeconfig, environment.namespace)
         assert_clean_baseline(environment.kubeconfig, namespace=environment.namespace)
 
-    return tier2_reason(marker, invariant)
+    def stuck_pods() -> list[str]:
+        namespaces = application_namespaces(environment.baseline_path, environment.kubeconfig, environment.namespace)
+        return await_healthy_pods(
+            lambda: application_pod_problems(environment.kubeconfig, namespaces),
+            timeout_seconds=wait_for(WaitKind.MINUTE),
+            poll_seconds=wait_for(WaitKind.POLL),
+        )
+
+    return tier2_reason(marker, invariant, stuck_pods)
 
 
 def deploy_with_setup_proof(
@@ -821,6 +835,10 @@ def _run(args: argparse.Namespace) -> int:
     write_loop_manifest(config)
     marker = AttemptMarker(environment.run_dir)
     redeploy_reason = _application_needs_redeploy(environment, marker) if tier1 is not None else None
+    if redeploy_reason is not None:
+        logger.info(
+            "Tier-2 recreate of the application: %s (%s)", redeploy_reason.trigger.value, redeploy_reason.detail
+        )
     if tier1 is not None:
         marker.begin()
     with _worker(environment) as worker:
@@ -831,7 +849,18 @@ def _run(args: argparse.Namespace) -> int:
                 deploy_with_setup_proof(environment, worker, results_dir, allow_reuse=False, redeploy=True)
                 _recapture_application_baseline(environment)
 
-            run_tier2(redeploy_reason, redeploy_application, tier1).write(results_dir)
+            run_tier2(
+                redeploy_reason,
+                tier1,
+                cluster=KubectlLaneCluster(environment.kubeconfig),
+                namespaces=(
+                    application_namespaces(environment.baseline_path, environment.kubeconfig, environment.namespace)
+                    if redeploy_reason is not None
+                    else ()
+                ),
+                deploy=redeploy_application,
+                timeout_seconds=wait_for(WaitKind.ROLLOUT),
+            ).write(results_dir)
         if redeploy_reason is None:
             deploy_with_setup_proof(
                 environment, worker, results_dir, allow_reuse=args.agent == "sdo" and environment.app != "toy"
@@ -916,7 +945,7 @@ def _run(args: argparse.Namespace) -> int:
                 faults_by_incident,
                 reset_failed if args.continue_on_error else None,
             )
-    marker.end_cleanly()
+    marker.end(unrecovered_rows(records))
     _print_summary(records)
     print(f"results: {config.results_path}")
     return (

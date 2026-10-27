@@ -6,8 +6,9 @@ namespace, ConfigMap and missing key; ordinary reachability findings remain acti
 Every non-toy SDO row starts with the tier-1 wipe (`fastloop/wipe.py`): `<app>-sdo` is deleted with all of
 its ConfigMaps, Jobs and checkpoints, harness leftover namespaces and cluster objects are removed, credentials
 are re-provisioned by the lane keeper's hook, and the accepted repository is reset to the row's planned commit.
-`wipe-receipt.json` in the results directory records `tier1_seconds`, `tier2_ran`, `tier2_seconds` and
-`tier2_reason`. Toy lanes still stop the runtime and run
+`wipe-receipt.json` in the results directory records `tier1_seconds`, `tier2_ran`, `tier2_seconds`,
+`tier2_trigger` (`unclean_attempt`, `previous_row_unrecovered`, `restore_invariant` or `pods_unhealthy`),
+`tier2_reason` and `tier2_namespaces` (deleted with their PVCs before the redeploy). Toy lanes still stop the runtime and run
 `sdo-operator reset-control-state --control-namespace <app>-sdo` before install; it deletes only the three
 SDO-managed onboarding ConfigMaps and the controller checkpoint and never reads Secrets.
 The next confirmed healthy install evaluation must create a new reference;
