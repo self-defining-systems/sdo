@@ -7,9 +7,12 @@ import (
 	"google.golang.org/protobuf/proto"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/kubernetes/fake"
 	"sdo.dev/operator/contracts/wire"
+	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"strings"
 	"testing"
+	"time"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sdo.dev/operator/sdk"
@@ -118,6 +121,44 @@ func TestSourceReconcilePartialSurvivesReceiptAndResponderResult(t *testing.T) {
 	restored := planApplicationState(contract).Result
 	if !proto.Equal(restored.ActionReports[0].SourceReconcile, report.SourceReconcile) || restored.ActionReports[0].Status != "partial" {
 		t.Fatalf("receipt lost residual: %+v", restored.ActionReports)
+	}
+	// Exercise the actual admission residual through repair projection,
+	// validated persistence, reload and closure without losing timing evidence.
+	ctx := context.Background()
+	now := time.Unix(1000, 0).UTC()
+	c := newClosureRetryController(t, ClosureRetryPolicy{}, &rejectingIncidentBroker{}, &now)
+	applications := []RecordedPlanApplication{{ID: "reconcile-residual", Result: result, Error: partial.Error(), StartedAt: now, CompletedAt: now.Add(time.Second)}}
+	c.pendingClosure.Result.Usage = UsageMetrics{InputTokens: 123, OutputTokens: 45, TotalCostUsd: proto.Float64(0.25)}
+	c.pendingClosure.Result.PlanApplications = applications
+	c.pendingClosure.Result.RepairActions = ProgramRepairReceipts(applications, nil)
+	store := lifecycleio.NewConfigMapStateStore(fake.NewSimpleClientset(), "demo", "state")
+	if err := c.AttachStateStore(ctx, store); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.PersistState(ctx); err != nil {
+		t.Fatal(err)
+	}
+	saved, _, err := store.Load(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := wire.Validate(saved); err != nil {
+		t.Fatal(err)
+	}
+	savedResult := saved.GetPendingClosure().GetResult()
+	if len(savedResult.GetPlanApplications()) != 1 || !proto.Equal(savedResult.GetUsage(), &c.pendingClosure.Result.Usage) {
+		t.Fatalf("residual application or usage discarded: %v", savedResult)
+	}
+	repairs := savedResult.GetRepairActions()
+	if len(repairs) != 1 || repairs[0].GetFailureReason() != "source_residual" || !repairs[0].GetStartedAt().AsTime().Equal(now) || !repairs[0].GetCompletedAt().AsTime().Equal(now.Add(time.Second)) {
+		t.Fatalf("residual repair evidence lost during persistence: %v", saved.GetPendingClosure())
+	}
+	if err := c.RestoreState(saved); err != nil {
+		t.Fatal(err)
+	}
+	attemptClosure(t, c)
+	if c.closureReceipt == nil {
+		t.Fatal("residual never produced closure receipt")
 	}
 	encoded, err := json.Marshal(MenuRoundExecution{OptionID: "ReconcileFromSource", ActionResults: restored.ActionReports})
 	if err != nil || !strings.Contains(string(encoded), "residual_paths") || !strings.Contains(string(encoded), "partial") {

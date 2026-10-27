@@ -4361,7 +4361,7 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	"\n" +
 	"started_at\x18\x01 \x01(\v2\x1a.google.protobuf.TimestampB\x06\xbaH\x03\xc8\x01\x01R\tstartedAt\x12E\n" +
 	"\fcompleted_at\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampB\x06\xbaH\x03\xc8\x01\x01R\vcompletedAt:g\xbaHd\x1ab\n" +
-	"\x0etiming.ordered\x12*completed_at must not be before started_at\x1a$this.completed_at >= this.started_at\"\xb2\x06\n" +
+	"\x0etiming.ordered\x12*completed_at must not be before started_at\x1a$this.completed_at >= this.started_at\"\xc3\x06\n" +
 	"\x13RepairActionReceipt\x12$\n" +
 	"\taction_id\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\bactionId\x12\x1b\n" +
 	"\x04kind\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x04kind\x12\x1f\n" +
@@ -4376,8 +4376,8 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	"\n" +
 	"reversible\x18\n" +
 	" \x01(\bR\n" +
-	"reversible\x12\x90\x01\n" +
-	"\x0efailure_reason\x18\v \x01(\tBi\xbaHfrdR\x00R\x14authorization_deniedR\x10execution_failedR\x14delete_not_confirmedR\x0foutcome_unknownR\x11incident_verifiedR\rfailureReason\x12A\n" +
+	"reversible\x12\xa1\x01\n" +
+	"\x0efailure_reason\x18\v \x01(\tBz\xbaHwruR\x00R\x14authorization_deniedR\x10execution_failedR\x14delete_not_confirmedR\x0foutcome_unknownR\x11incident_verifiedR\x0fsource_residualR\rfailureReason\x12A\n" +
 	"\x06owners\x18\f \x03(\v2).sdodev.contracts.v1alpha1.ResourceOwnersR\x06owners\x12#\n" +
 	"\rscript_digest\x18\r \x01(\tR\fscriptDigest:n\xbaHk\x1ai\n" +
 	"\x15repair_action.ordered\x12*completed_at must not be before started_at\x1a$this.completed_at >= this.started_at\"\xab\x01\n" +
