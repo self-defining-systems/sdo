@@ -112,6 +112,7 @@ sdo plan [-h] [--finding FINGERPRINT] [--bind NAME=Kind/namespace/name] program_
 ```
 
 SetField updates a schema-checked field by index or unique name, optionally from accepted source; ConfigMap JSON/YAML entries preserve unrelated keys.
+Object edits write atomically per object; use strategic patches for keyed lists.
 CreateFromSource restores a named missing object from accepted source.
 ReconcileFromSource converges source-owned configuration, removes additions since acceptance, and reports residual source differences and bounded rollout progress.
 DeleteObject irreversibly removes an allowed named source-absent object and never auto-recreates it.

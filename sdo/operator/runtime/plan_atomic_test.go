@@ -98,3 +98,24 @@ func TestPlanExecutorAtomicCoupledWrites(t *testing.T) {
 		})
 	}
 }
+
+func TestPlanExecutorAtomicLostReceiptReconcilesWholeObject(t *testing.T) {
+	ref, plan, client := repeatedReplicaPlan()
+	client.loseReceipt = true
+	executor := PlanExecutor{Client: client, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{passed: true}}
+	result, err := executor.Apply(context.Background(), IncidentRequest{RepairPolicy: "recorded-actions"}, plan, false)
+	if err == nil || result.PendingAction == nil {
+		t.Fatalf("lost receipt did not retain pending aggregate: %v", err)
+	}
+	result, err = executor.Reconcile(context.Background(), result)
+	if err != nil || len(result.ActionsApplied) != len(plan.Actions) || client.attempts != 1 {
+		t.Fatalf("whole-object receipt lost: actions=%d attempts=%d err=%v", len(result.ActionsApplied), client.attempts, err)
+	}
+	if err = executor.Rollback(context.Background(), result); err != nil {
+		t.Fatal(err)
+	}
+	requireRecoveredReplicas(t, client, ref)
+	if client.attempts != 2 {
+		t.Fatalf("rollback used %d writes, want one forward + one reverse", client.attempts)
+	}
+}

@@ -50,3 +50,22 @@ func TestStrategicPatchPreservesKeyedMembersAndContainerFields(t *testing.T) {
 		}
 	}
 }
+
+func TestRawMergePatchRefusesKeyedLists(t *testing.T) {
+	ref := sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "app", Name: "api"}
+	a := program.KubernetesRequest{Ref: ref, Method: "PATCH", Path: "/apis/apps/v1/namespaces/app/deployments/api", ContentType: "application/merge-patch+json", Body: []byte(`{"spec":{"template":{"spec":{"containers":[]}}}}`)}
+	var replacement *program.KeyedListReplacementError
+	if err := (program.Plan{Actions: []program.Action{a}}).Validate(); !errors.As(err, &replacement) {
+		t.Fatalf("raw patch bypassed keyed-list check: %v", err)
+	}
+}
+
+func TestCoupledEditsRefuseOpaqueEffects(t *testing.T) {
+	ref := sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "app", Name: "api"}
+	action := program.ScaleWorkload{Ref: ref, Replicas: program.FromParam("replicas")}
+	plan := program.Plan{Actions: []program.Action{action, program.WaitFor{Ref: ref, Path: "/status/readyReplicas", Equals: 1}, action}}
+	var conflict *program.AtomicWriteConflictError
+	if err := plan.Validate(); !errors.As(err, &conflict) {
+		t.Fatalf("coupled edits across an effect were allowed: %v", err)
+	}
+}

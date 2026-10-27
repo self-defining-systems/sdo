@@ -121,8 +121,11 @@ func TestPlanExecutorRollbackPreservesUnrelatedFieldsAndRejectsConflicts(t *test
 func TestResponderLoopExposesPartialApplicationWhenCompensationFails(t *testing.T) {
 	ref := sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}
 	client := &failingBatchClient{planFakeClient: &planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: planObject(ref, map[string]any{"ports": []any{map[string]any{"targetPort": float64(9999)}}})}}, failRollback: true}
+	other := ref
+	other.Name = "other"
+	client.objects[other] = planObject(other, map[string]any{"ports": []any{map[string]any{"targetPort": float64(9999)}}})
 	loop := recoveryLoop(t, client)
-	loop.plans["two-actions"] = selectedPlan{id: "two-actions", programID: "targetport", plan: program.Plan{Actions: []program.Action{program.SetField{Ref: ref, Path: "spec.ports[0].targetPort", Value: testPlanValue(8080)}, program.SetField{Ref: ref, Path: "spec.ports[0].targetPort", Value: testPlanValue(8081)}}}}
+	loop.plans["two-actions"] = selectedPlan{id: "two-actions", programID: "targetport", plan: program.Plan{Actions: []program.Action{program.SetField{Ref: ref, Path: "spec.ports[0].targetPort", Value: testPlanValue(8080)}, program.SetField{Ref: other, Path: "spec.ports[0].targetPort", Value: testPlanValue(8081)}}}}
 	response := loop.Handle(context.Background(), ToolRequest{Command: "apply", PlanIDs: []string{"two-actions"}})
 	if response.Error == "" || response.ApplicationID == "" {
 		t.Fatalf("lost partial rollback handle: %+v", response)
