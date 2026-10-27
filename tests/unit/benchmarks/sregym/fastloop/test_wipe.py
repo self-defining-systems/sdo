@@ -12,8 +12,6 @@ import pytest
 
 from benchmarks.sregym.adapter import allowed_namespaces
 from benchmarks.sregym.fastloop.records import Injected, NotInjected
-from benchmarks.sregym.faults.description import FaultSpec, ProblemDescription
-from benchmarks.sregym.faults.probe_catalog import CLASS_KINDS, DATA_LEVEL_CLASSES
 from benchmarks.sregym.fastloop.wipe import (
     AttemptMarker,
     KubectlLaneCluster,
@@ -36,6 +34,8 @@ from benchmarks.sregym.fastloop.wipe import (
     tier2_reason,
     unrecovered_rows,
 )
+from benchmarks.sregym.faults.description import FaultSpec, ProblemDescription
+from benchmarks.sregym.faults.probe_catalog import CLASS_KINDS, DATA_LEVEL_CLASSES
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -530,7 +530,7 @@ def test_an_unrecovered_row_that_is_also_data_level_keeps_its_trigger_and_record
 
 
 def test_the_fault_catalog_owns_which_faults_are_data_level() -> None:
-    assert DATA_LEVEL_CLASSES <= set(CLASS_KINDS), "every data-level class is a cataloged fault class"
+    assert set(CLASS_KINDS) >= DATA_LEVEL_CLASSES, "every data-level class is a cataloged fault class"
 
     def fault(class_name: str, component: str, index: int) -> FaultSpec:
         return FaultSpec(kind=CLASS_KINDS[class_name], component=component, class_name=class_name, declared_index=index)
