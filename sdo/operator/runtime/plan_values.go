@@ -14,6 +14,7 @@ import (
 
 type PlanActionReport struct {
 	SourceReconcile *contracts.SourceReconcileResult `json:"source_reconcile,omitempty"`
+	WebhookCADigest string                           `json:"webhook_ca_digest,omitempty"`
 	Script          *ScriptExecutionResult           `json:"script,omitempty"`
 	FailureReason   string                           `json:"failure_reason,omitempty"`
 	ActionIndex     int                              `json:"action_index"`

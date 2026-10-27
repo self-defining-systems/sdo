@@ -27,6 +27,7 @@ var menuActionExamples = sync.OnceValue(func() map[string]map[string]any {
 	wait := program.WaitFor{Ref: pod, Path: "/status/phase", Equals: "Succeeded"}
 	reason := "restore intended behavior"
 	actions := []program.Action{
+		program.SyncWebhookCA{Target: program.WebhookCA{Ref: sdk.ObjectRef{APIVersion: "admissionregistration.k8s.io/v1", Kind: "ValidatingWebhookConfiguration", Name: "policy"}, Webhook: "policy.example", SecretNamespace: "app", SecretName: "serving", SecretKey: "ca.crt"}, Reason: reason},
 		program.ReconcileFromSource{Ref: deployment},
 		program.Rollback{Ref: deployment, ToRevision: "1"},
 		program.SetField{Ref: service, Path: "spec.ports[0].targetPort", Value: program.FromSource(service, "spec.ports[0].targetPort"), Reason: reason},

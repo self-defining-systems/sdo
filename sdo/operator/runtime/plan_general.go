@@ -26,6 +26,10 @@ type PlanAPIClient interface {
 
 func generalAction(a program.Action) program.Action {
 	switch p := a.(type) {
+	case *program.SyncWebhookCA:
+		if p != nil {
+			return *p
+		}
 	case *program.PatchObject:
 		if p != nil {
 			return *p
@@ -51,7 +55,7 @@ func generalAction(a program.Action) program.Action {
 }
 func isGeneralAction(a program.Action) bool {
 	switch generalAction(a).(type) {
-	case program.PatchObject, program.ApplyObject, program.KubernetesRequest, program.WaitFor, program.DeleteObject:
+	case program.SyncWebhookCA, program.PatchObject, program.ApplyObject, program.KubernetesRequest, program.WaitFor, program.DeleteObject:
 		return true
 	}
 	return isExternalAction(a)
@@ -163,6 +167,9 @@ func (e PlanExecutor) generalStep(ctx context.Context, incident IncidentRequest,
 	r.ActionReports = newPlanReports(r.Plan)
 	if !isGeneralAction(action) {
 		return e.Apply(ctx, incident, r.Plan, dry)
+	}
+	if ca, ok := action.(program.SyncWebhookCA); ok {
+		return e.webhookCAStep(ctx, ca, dry)
 	}
 	if script, ok := action.(program.RunScript); ok {
 		return e.scriptStep(ctx, incident, script, dry)
@@ -537,7 +544,9 @@ func (e PlanExecutor) preflightGeneral(ctx context.Context, incident IncidentReq
 		}
 		var step PlanApplicationResult
 		var err error
-		if isGeneralAction(a) {
+		if _, privateCA := a.(program.SyncWebhookCA); privateCA {
+			step, err = e.generalStep(ctx, incident, a, true)
+		} else if isGeneralAction(a) {
 			step, err = projected.generalStep(ctx, incident, a, true)
 		} else {
 			step, err = e.generalStep(ctx, incident, a, true)
