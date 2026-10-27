@@ -33,28 +33,22 @@ The committed outcome retains all causes, receipts, and its failed classificatio
 Its `reflection_eligibility.causes` contains only verified repaired cause groups,
 with indices into the full outcome. Unverified causes are represented separately
 as typed `unassigned` questions with `reason=evidence_gap`; they do not authorize
-executable learning. A cause is verified when each written target's own primary finding and each
-observed symptom cleared after the last write. On `success` outcomes only, cause
-resources that no opening finding named (for example a traffic-only caller
-Service) are unobserved context and, since LEARN1 (2026-10-26), no longer cause
-an `evidence_gap`. Since P35R (2026-10-26), on `success` outcomes a written
-target that no opening finding named is covered by its cause when another
-resource of the same cause is the primary resource of an opening finding that
-cleared after the last cause write (a resource named only as related on another
-cause's finding never covers, P35R2); a cause with no such finding is still an `evidence_gap`. Partial
-and failed outcomes, like this one, still need a cleared finding for every
-cause resource, because opening findings omit findings that activate after launch. Since LEARN2 (2026-10-26), a repair
-receipt's `owners` records each written object's controller owner chain as SDO
-observed it: plan pre-images for controller writes, and for `sdo act` writes the
-broker's walk of the incident's open capture (LEARN2B). Worker-reported chains
-are dropped at ingest, so the agent cannot claim ownership.
-A write whose chain reaches a cause resource (e.g. scaling a Deployment's old
-ReplicaSet) is that cause's work, not an `unassigned` `unbound_write`, and the
-cause's findings must clear after it. Receipts without `owners` (older runs, or
-an object the capture never observed) keep such writes unassigned; names never bind.
-An unchained Pod/ReplicaSet/Job write (e.g. to a ReplicaSet a rollout created after
-open) still bounds every cause's clearance (FIX14A): each cause's findings must
-clear after it. The worker
+executable learning. Since LEARN3 (2026-10-27), on a `success` outcome (closure
+verified healthy) a cause is verified by a recorded successful repair action
+that wrote one of its resources or an object they control. Per-cause finding
+clearance, exclusive resource ownership, a pre-incident capture and a separate
+post-action observation are not required: the repeat's act-verify loop checks the
+saved steps. When no pre-incident healthy capture exists, the controller binds the
+closure's own `fixed` snapshot as the incident's healthy sample
+(`healthy/reference` is `closure`). The unverified-cause `evidence_gap` item now
+means only "no recorded repair touched this cause", and
+`reflection_evidence_gap_count` counts those items; Go no longer creates
+missing-observation gaps. On partial and failed outcomes (and for trust credit) a
+cause is still verified when each written target's own primary finding and each
+observed symptom cleared after the last write, the cause owns its resources
+exclusively, and an owned child write (`owners` chain, LEARN2/LEARN2B; unchained
+Pod/ReplicaSet/Job writes bound every cause, FIX14A) cleared after it. Worker-reported
+owner chains are dropped at ingest. The worker
 receives compact cause indices and only those causes, verified receipts and typed
 applications/diagnoses and scoped cold-verification evidence. Opaque tool transcripts and unattributed playbook/drift
 claims are omitted from that learning view. No global recovery, positive fixed

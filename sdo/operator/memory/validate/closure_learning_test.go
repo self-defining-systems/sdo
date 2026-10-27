@@ -1,6 +1,7 @@
 package validate
 
 import (
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -68,4 +69,24 @@ func observedCauses(outcome *contracts.OutcomeRecord) []*contracts.ReflectionCau
 		}
 	}
 	return causes
+}
+
+// The reflection of a closure verified healthy saves the repair program and
+// detector link with no pre-incident baseline, no per-cause attribution and a
+// delete-only receipt; the learning gate passes (the executable gate is covered
+// in healthy_authority_test.go).
+func TestVerifiedClosureSavesProgramWithoutBaselineAttributionOrObservation(t *testing.T) {
+	root := t.TempDir()
+	copyTree(t, "../../../../tests/fixtures/sdo/playbook_program_app/.sdo", filepath.Join(root, ".sdo"))
+	outcome := closureOutcome("success", &contracts.ConfirmedRootCause{Resources: []*contracts.ObjectRef{{Kind: "Service", Namespace: "demo", Name: "front"}}})
+	decision := &contracts.ReflectionDecision{LearningDecision: "updated", PlaybookIds: []string{"service-targetport-mismatch"}}
+	ds, err := ReflectionLearningDiagnostics(root, outcome, decision)
+	if err != nil || len(ds) != 0 {
+		t.Fatalf("verified closure with a delete-only receipt not learnable: %v %v", ds, err)
+	}
+	// The same evidence on a closure that did not verify healthy learns nothing.
+	outcome.Classification = "failed"
+	if got := VerifiedReflectionCauses(outcome); len(got) != 0 {
+		t.Fatalf("unverified closure authorized learning: %v", got)
+	}
 }

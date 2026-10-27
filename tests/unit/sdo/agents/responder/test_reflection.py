@@ -231,7 +231,7 @@ def test_reflection_requires_executable_learning_for_verified_parts(
         diagnostics=[MemoryDiagnostic(rule="program.replay", message="Correct the fixed case")] if retry else [],
     )
     prompt = str(backend.calls[0]["prompt"])
-    assert "Learn executable diagnosis and mitigation for each independently verified repair" in prompt
+    assert "When the incident closed verified healthy, save the repair steps it used" in prompt
     assert "Use recorded actions as repair evidence" in prompt
     assert "A README note alone does not capture an executable repair" in prompt
     assert "Learn verified parts even when the whole incident remains unhealthy" in prompt

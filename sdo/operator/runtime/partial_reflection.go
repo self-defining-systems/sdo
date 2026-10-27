@@ -25,7 +25,7 @@ func unverifiedCauseWork(outcome *contracts.OutcomeRecord, indices []uint32) []*
 		if verified[uint32(index)] {
 			continue
 		}
-		item := &contracts.ReflectionWorkItem{Disposition: "question", Reason: "evidence_gap", Question: fmt.Sprintf("Cause %d (%s) has no independently verified repair. Record the missing evidence without treating reported command success as repair proof.", index, cause.GetSummary())}
+		item := &contracts.ReflectionWorkItem{Disposition: "question", Reason: "evidence_gap", Question: fmt.Sprintf("Cause %d (%s) has no repair to save: no recorded successful repair action touched its resources.", index, cause.GetSummary())}
 		for _, ref := range cause.GetResources() {
 			item.Resources = append(item.Resources, proto.Clone(ref).(*contracts.ObjectRef))
 		}

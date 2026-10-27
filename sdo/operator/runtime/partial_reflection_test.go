@@ -32,7 +32,7 @@ func partialRepairOutcome(t *testing.T, classification string) *contracts.Outcom
 }
 
 func TestNativeBrokerReflectsOnlyVerifiedPartialRepair(t *testing.T) {
-	for _, scenario := range []string{"failed", "cold", "success"} {
+	for _, scenario := range []string{"failed", "cold"} {
 		t.Run(scenario, func(t *testing.T) {
 			classification := scenario
 			if scenario == "cold" {
@@ -47,12 +47,6 @@ func TestNativeBrokerReflectsOnlyVerifiedPartialRepair(t *testing.T) {
 			o := partialRepairOutcome(t, classification)
 			if scenario == "cold" {
 				o = coldPartialRepairOutcome(t)
-			}
-			if classification == "success" {
-				// Only the api cause has independent opening/clearance evidence.
-				// Aggregate success must not authorize the second claimed repair.
-				o.Findings = []*contracts.Finding{{DetectorId: "api-health", RuleId: "available", Status: "active", Severity: "warn", Summary: "service unavailable", Evidence: "synthetic controller observation before repair", PrimaryResource: t1Ref("api"), Fingerprint: "api-health"}}
-				o.FinalHealthDetectorState = []*contracts.DetectorEvaluation{{DetectorId: "api-health", Status: "clear", EvaluatedAt: timestamppb.New(time.Unix(102, 0))}}
 			}
 			original := proto.Clone(o)
 			native := NativeIncidentBroker{Repository: repository, LedgerRoot: t.TempDir(), ResponderBackend: "test", ResponderModel: "test", ForceReflection: true,
@@ -92,10 +86,7 @@ func TestNativeBrokerReflectsOnlyVerifiedPartialRepair(t *testing.T) {
 				if err := task.Request.UnmarshalTo(request); err != nil {
 					t.Fatal(err)
 				}
-				want := 2
-				if classification == "failed" {
-					want = 1
-				}
+				want := 1
 				if len(request.Outcome.ConfirmedRootCauses) != want || len(request.Outcome.RepairActions) != want || len(request.Closure.Result.ConfirmedRootCauses) != want || len(request.Closure.Result.RepairActions) != want || len(request.CauseWork) != 1 {
 					t.Fatalf("reflection leaked unverified repair or changed full success: %v", request)
 				}

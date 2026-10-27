@@ -278,6 +278,18 @@ func fixedCaptureVerdicts(ctx context.Context, outcome *contracts.OutcomeRecord,
 	return result
 }
 
+// countEvidenceGaps counts causes with no recorded repair, which leave nothing
+// to save. It is information for analysis and never gates learning.
+func countEvidenceGaps(items []*contracts.ReflectionWorkItem) uint32 {
+	var count uint32
+	for _, item := range items {
+		if item.GetReason() == "evidence_gap" {
+			count++
+		}
+	}
+	return count
+}
+
 func causeWorkNeedsModel(work []*contracts.ReflectionCauseWork) bool {
 	if len(work) == 0 {
 		return true
@@ -345,7 +357,7 @@ func (n NativeIncidentBroker) prepareCauseWork(ctx context.Context, outcome *con
 			continue
 		}
 	}
-	count := appendEvidenceGaps(work, capture)
+	count := countEvidenceGaps(unassigned)
 	return &contracts.ReflectionEligibility{Version: 1, Causes: work, Unassigned: unassigned, EvidenceGapCount: &count}
 }
 
