@@ -306,6 +306,13 @@ func ProjectPatch(object map[string]any, a PatchObject) (map[string]any, error) 
 
 func validateGeneralAction(action Action) error {
 	switch a := action.(type) {
+	case SyncWebhookCA:
+		return a.Validate()
+	case *SyncWebhookCA:
+		if a != nil {
+			return a.Validate()
+		}
+		return fmt.Errorf("nil SyncWebhookCA")
 	case PatchObject:
 		return a.Validate()
 	case ApplyObject:

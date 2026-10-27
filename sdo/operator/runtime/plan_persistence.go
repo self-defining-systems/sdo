@@ -70,6 +70,8 @@ func encodePersistedActions(actions []program.Action) ([]persistedAction, error)
 	for _, action := range actions {
 		var kind string
 		switch action.(type) {
+		case program.SyncWebhookCA, *program.SyncWebhookCA:
+			kind = "sync_webhook_ca"
 		case program.PatchObject, *program.PatchObject:
 			kind = "patch_object"
 		case program.ApplyObject, *program.ApplyObject:
@@ -138,6 +140,8 @@ func decodePersistedActions(encoded []persistedAction) ([]program.Action, error)
 			action = &program.ApplyObject{}
 		case "kubernetes_request":
 			action = &program.KubernetesRequest{}
+		case "sync_webhook_ca":
+			action = &program.SyncWebhookCA{}
 		case "wait_for":
 			action = &program.WaitFor{}
 		case "ensure_exec":
@@ -181,6 +185,8 @@ func decodePersistedActions(encoded []persistedAction) ([]program.Action, error)
 			return nil, fmt.Errorf("decode %s action: %w", entry.Kind, err)
 		}
 		switch value := action.(type) {
+		case *program.SyncWebhookCA:
+			decoded = append(decoded, *value)
 		case *program.PatchObject:
 			decoded = append(decoded, *value)
 		case *program.ApplyObject:

@@ -475,6 +475,7 @@ type ProgramSpec struct {
 }
 
 type ReadView interface {
+	WebhookCAMatchesSecret(WebhookCA) (bool, error)
 	sdk.ObjectReader
 	sdk.DetectionContext
 	sdk.ScopedObservationSource
@@ -651,6 +652,17 @@ type StaleBindingError struct {
 
 func (e *StaleBindingError) Error() string
 
+type SyncWebhookCA struct {
+	Target WebhookCA
+	Reason string
+}
+    SyncWebhookCA copies one Secret key into the named webhook's caBundle
+    inside the runtime. Receipts contain references and a SHA256 digest,
+    never CA bytes. This operation is irreversible; no Secret-bearing preimage
+    is retained.
+
+func (a SyncWebhookCA) Validate() error
+
 type Value struct {
 	// Has unexported fields.
 }
@@ -743,6 +755,18 @@ type WaitFor struct {
     bound polling; zero uses 30 seconds / 250 milliseconds respectively.
 
 func (w WaitFor) Validate() error
+
+type WebhookCA struct {
+	Ref             sdk.ObjectRef
+	Webhook         string
+	SecretNamespace string
+	SecretName      string
+	SecretKey       string
+}
+    WebhookCA identifies one webhook and a Secret key. Secret contents remain
+    inside the runtime; programs receive only an equality observation.
+
+func (t WebhookCA) Validate() error
 
 ```
 

@@ -3,6 +3,7 @@ package sdktest
 import (
 	"encoding/json"
 	"fmt"
+	"sdo.dev/operator/sdk"
 	"strings"
 )
 
@@ -45,6 +46,7 @@ func ProjectCapturedObject(raw []byte) ([]byte, error) {
 	} else if _, ok := object["metadata"].(map[string]any); !ok {
 		return nil, fmt.Errorf("capture requires resource metadata")
 	}
+	sdk.ProjectWebhookCABundles(object)
 	redactObjectTree(object)
 	return json.Marshal(object)
 }

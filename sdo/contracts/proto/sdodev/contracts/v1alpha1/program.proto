@@ -88,6 +88,7 @@ message Action {
     EnsureHttp ensure_http = 17;
     RunJob run_job = 18;
     RunScript run_script = 19;
+    SyncWebhookCA sync_webhook_ca = 20;
   }
 }
 
@@ -158,6 +159,8 @@ message ValueProvenance {
 }
 
 message ActionReport {
+  // Digest only; the action carries the Secret reference.
+  string webhook_ca_digest = 11;
   uint32 action_index = 1;
   string status = 2 [(buf.validate.field).string = {in: ["prepared", "applied", "refused", "unknown"]}];
   repeated ValueProvenance values = 3;
@@ -432,4 +435,14 @@ message RunScript {
   map<string, PlanValue> env = 2;
   google.protobuf.Duration timeout = 3;
   string reason = 4;
+}
+
+// References only. CA bytes never cross the runtime boundary.
+message SyncWebhookCA {
+ ObjectRef ref = 1 [(buf.validate.field).required = true];
+ string webhook = 2 [(buf.validate.field).string.min_len = 1];
+ string secret_namespace = 3 [(buf.validate.field).string.min_len = 1];
+ string secret_name = 4 [(buf.validate.field).string.min_len = 1];
+ string secret_key = 5 [(buf.validate.field).string.min_len = 1];
+ string reason = 6 [(buf.validate.field).string.min_len = 1];
 }

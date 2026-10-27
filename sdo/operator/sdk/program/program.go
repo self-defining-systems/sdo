@@ -134,6 +134,7 @@ type Mitigator interface {
 }
 
 type ReadView interface {
+	WebhookCAMatchesSecret(WebhookCA) (bool, error)
 	sdk.ObjectReader
 	sdk.DetectionContext
 	sdk.ScopedObservationSource

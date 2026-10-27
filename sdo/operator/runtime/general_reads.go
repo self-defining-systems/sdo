@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
+	"strings"
 	"time"
 )
 
@@ -39,7 +41,14 @@ func (v LiveReadView) KubernetesRead(r program.KubernetesRequest) (json.RawMessa
 	}
 	ctx, cancel := context.WithTimeout(v.context(), 5*time.Second)
 	defer cancel()
-	return (TypedPlanClient{Client: v.Client, ExecConfig: v.DatabaseExecConfig, ProtectedNamespace: v.ProtectedNamespace}).KubernetesRequest(ctx, r)
+	raw, err := (TypedPlanClient{Client: v.Client, ExecConfig: v.DatabaseExecConfig, ProtectedNamespace: v.ProtectedNamespace}).KubernetesRequest(ctx, r)
+	if err == nil && strings.Contains(r.Path, "webhookconfigurations") {
+		raw, err = sdk.ProjectWebhookCAJSON(raw)
+		if err != nil {
+			return nil, fmt.Errorf("webhook API response projection unavailable")
+		}
+	}
+	return raw, err
 }
 func (v *cachedReadView) Observe(o program.ExternalOperation) (int32, error) {
 	var r int32

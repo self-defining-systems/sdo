@@ -59,6 +59,9 @@ func menuActionParameters(action protoreflect.FieldDescriptor) []MenuParameter {
 		rules, _ := proto.GetExtension(f.Options(), validate.E_Field).(*validate.FieldRules)
 		required := rules.GetRequired() || rules.GetString().GetMinLen() > 0 || rules.GetRepeated().GetMinItems() > 0
 		schema := menuInputSchema(f)
+		if action.Message().Name() == "SyncWebhookCA" && f.Name() == "secret_key" {
+			schema.Description = "Sync a named Secret key into one webhook caBundle privately; receipts expose only the reference and digest."
+		}
 		if action.Message().Name() == "EnsureDatabaseUser" && f.Name() == "target" {
 			schema.Description = "Database Pod/container and catalog; target.auth authenticates catalog reads separately from the create-user password. Failures name the safe execution stage; correct source-declared references before retrying."
 		}

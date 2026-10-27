@@ -56,6 +56,10 @@ func ObservationTime(ctx DetectionContext) time.Time
     from it can only be underestimated: a grace period may elapse late, never
     early. It is zero when the context records no time at all.
 
+func ProjectCABundle(ca []byte) []byte
+    ProjectCABundle replaces certificate bytes with an idempotent digest.
+    It is shared by typed observations, raw API reads and capture projection.
+
 func ProjectForeignDeployment(o appsv1.Deployment) appsv1.Deployment
     Foreign projections use an allowlist. No environment, commands, arguments,
     annotations, probes, volumes, Secret references or arbitrary status
@@ -69,6 +73,16 @@ func ProjectObservationObject(object *unstructured.Unstructured) (*unstructured.
     drift.
 
 func ProjectValidatingWebhook(o admissionv1.ValidatingWebhookConfiguration) admissionv1.ValidatingWebhookConfiguration
+func ProjectWebhookCABundles(value any)
+    ProjectWebhookCABundles removes raw caBundle bytes from arbitrary JSON
+    trees. It preserves all other fields and mutates only the supplied detached
+    tree.
+
+func ProjectWebhookCAJSON(raw []byte) ([]byte, error)
+    ProjectWebhookCAJSON retains the Kubernetes response shape and numeric
+    values while hiding CA bytes before a raw read can reach programs or
+    recordings.
+
 func ServiceExpectsEndpoints(service corev1.Service) bool
     ServiceExpectsEndpoints reports whether Kubernetes can back a Service with
     Endpoints, EndpointSlices, or selected pods. ExternalName Services are DNS
