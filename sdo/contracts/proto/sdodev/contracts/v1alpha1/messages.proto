@@ -281,6 +281,7 @@ message IncidentRequest {
   repeated StageReport prior_stages = 29;
   // Go-owned: each lossy step taken so the request fit the transport limit, in order.
   repeated string compaction = 30;
+  repeated DisabledSetupDetector disabled_setup_detectors = 32;
 }
 
 message RootCauseEvidence {

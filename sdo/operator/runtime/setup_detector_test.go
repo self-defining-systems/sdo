@@ -116,7 +116,7 @@ func TestSetupLearnedDetectorQuarantine(t *testing.T) {
 // Sweep health failure modes and registry orders: suppression is authority
 // derived from a complete health sample, never from incident-detector order.
 func TestSetupDetectorHealthAuthority(t *testing.T) {
-	for _, mode := range []string{"clear", "firing", "error", "already-open", "not-learned", "later-finding"} {
+	for _, mode := range []string{"clear", "firing", "error", "already-open", "not-learned", "later-finding", "resolved"} {
 		for _, learnedFirst := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/learned-first=%t", mode, learnedFirst), func(t *testing.T) {
 				health := inventoryHealth().(*sequenceDetector)
@@ -137,6 +137,9 @@ func TestSetupDetectorHealthAuthority(t *testing.T) {
 				}
 				if mode == "not-learned" {
 					learned = controllerDetector("legacy", time.Second, stateFinding("legacy"))
+				}
+				if mode == "resolved" {
+					learned.samples[0][0].Status = sdk.FindingResolved
 				}
 				if mode == "later-finding" {
 					learned.samples = [][]sdk.Finding{{}, {stateFinding(id)}}
@@ -166,5 +169,92 @@ func TestSetupDetectorHealthAuthority(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestSetupExclusionReachesOutcomeWhenOtherFindingsBlockOnboarding(t *testing.T) {
+	learned := controllerDetector("learned", time.Second, stateFinding("learned"))
+	learned.spec.Class, learned.spec.Owner = sdk.DetectorClassIncident, sdk.DetectorOwnerResponder
+	learned.spec.OriginatingIncident, learned.spec.OriginatingCommit = "prior-incident", "prior-commit"
+	learned.spec.Persistence = sdk.PersistencePolicy{Firing: 1, Clearing: 1}
+	learned.spec.Batching = sdk.BatchingPolicy{Severity: sdk.SeverityWarning}
+	legacy := controllerDetector("legacy", time.Second, stateFinding("legacy"))
+	c, client := stagedInstallerController(t, inventoryHealth(), learned, legacy)
+	ctx := context.Background()
+	if err := c.EvaluateAll(ctx, time.Unix(101, 0)); err != nil {
+		t.Fatal(err)
+	}
+	record, err := onboarding.Load(ctx, client, "control", "app")
+	if err != nil || record != nil {
+		t.Fatalf("other findings must block onboarding: %v %v", record, err)
+	}
+	if len(exportState(t, c).DisabledSetupDetectors) != 1 {
+		t.Fatal("missing setup exclusion")
+	}
+	request, err := incidentRequestContract(c.incidentRequest(time.Unix(102, 0), []sdk.Finding{stateFinding("legacy")}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	at := timestamppb.New(time.Unix(102, 0))
+	derived, err := outcome_derivation.Derive(ctx, &contracts.IncidentClosure{Request: request, DetectedAt: at, DispatchedAt: at, ResponderCompletedAt: at}, "", "synthetic", "synthetic")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(derived.Record.DisabledSetupDetectors) != 1 {
+		t.Fatal("outcome lost setup exclusion when onboarding failed")
+	}
+	calls := learned.calls
+	roundtrip := incidentRequestState(request)
+	loop := NewResponderLoop(*roundtrip, nil, c.provider, []sdk.Detector{inventoryHealth(), learned, legacy}, PlanExecutor{}, 3)
+	response := loop.Handle(ctx, ToolRequest{Command: "detect"})
+	if response.Error != "" {
+		t.Fatal(response.Error)
+	}
+	if learned.calls != calls {
+		t.Fatal("responder self-check evaluated a setup-disabled detector")
+	}
+}
+
+func TestSetupLearnedDetectorWaitsForConfirmedHealth(t *testing.T) {
+	confirmed := false
+	health := installWindowDetector{Detector: inventoryHealth(), confirmed: &confirmed}
+	learned := controllerDetector("learned", time.Second, stateFinding("learned"))
+	learned.spec.Class, learned.spec.Owner = sdk.DetectorClassIncident, sdk.DetectorOwnerResponder
+	learned.spec.OriginatingIncident, learned.spec.OriginatingCommit = "prior-incident", "prior-commit"
+	learned.spec.Persistence = sdk.PersistencePolicy{Firing: 1, Clearing: 1}
+	learned.spec.Batching = sdk.BatchingPolicy{Severity: sdk.SeverityWarning}
+	c, client := stagedInstallerController(t, health, learned)
+	ctx := context.Background()
+	if err := c.EvaluateAll(ctx, time.Unix(101, 0)); err != nil {
+		t.Fatal(err)
+	}
+	if learned.calls != 0 || len(exportState(t, c).DisabledSetupDetectors) != 0 || c.incidentOpen || len(c.batcher.Snapshot().Findings) != 0 {
+		t.Fatal("unconfirmed health consumed learned detector setup opportunity")
+	}
+	confirmed = true
+	if err := c.EvaluateAll(ctx, time.Unix(102, 0)); err != nil {
+		t.Fatal(err)
+	}
+	record, err := onboarding.Load(ctx, client, "control", "app")
+	if err != nil || record == nil || len(record.DisabledSetupDetectors) != 1 {
+		t.Fatalf("confirmed health did not complete setup: %v %v", record, err)
+	}
+	// Even a stale exclusion with this ID can never switch off a judge-owned
+	// health detector when accepted detector ownership changes.
+	replacement := inventoryHealth().(*sequenceDetector)
+	replacement.spec.ID = learned.spec.ID
+	replacement.samples = [][]sdk.Finding{{stateFinding(learned.spec.ID)}}
+	restarted, err := NewController(c.config, []sdk.Detector{inventoryHealth(), replacement}, c.provider, &recordingDispatcher{requests: make(chan IncidentRequest, 10)}, time.Unix(103, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := restarted.RestoreState(exportState(t, c)); err != nil {
+		t.Fatal(err)
+	}
+	if err := restarted.EvaluateAll(ctx, time.Unix(104, 0)); err != nil {
+		t.Fatal(err)
+	}
+	if replacement.calls == 0 {
+		t.Fatal("stale learned exclusion switched off health detector")
 	}
 }

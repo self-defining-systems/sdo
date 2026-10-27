@@ -313,6 +313,7 @@
   "sdodev.contracts.v1alpha1.IncidentRequest.compaction",
   "sdodev.contracts.v1alpha1.IncidentRequest.deployed_commit",
   "sdodev.contracts.v1alpha1.IncidentRequest.detector_history",
+  "sdodev.contracts.v1alpha1.IncidentRequest.disabled_setup_detectors",
   "sdodev.contracts.v1alpha1.IncidentRequest.drift_events",
   "sdodev.contracts.v1alpha1.IncidentRequest.findings",
   "sdodev.contracts.v1alpha1.IncidentRequest.incident_id",

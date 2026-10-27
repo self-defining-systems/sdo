@@ -541,8 +541,7 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 		if !valid {
 			continue
 		}
-		if setupHealthy && learnedIncidentDetector(spec) && len(validFindings) > 0 {
-			c.disableSetupDetector(spec, validFindings, now, onboardingCandidate)
+		if setupHealthy && learnedIncidentDetector(spec) && c.disableSetupDetector(spec, validFindings, now, onboardingCandidate) {
 			continue
 		}
 		changes := c.tracker.Observe(now, spec.ID, validFindings)
@@ -1030,9 +1029,10 @@ func (c *Controller) incidentRequest(now time.Time, findings []sdk.Finding) Inci
 	return IncidentRequest{
 		SchemaVersion: ProtocolSchemaVersion, Application: c.config.Application, Namespace: c.config.Namespace,
 		IncidentID: incidentID, Findings: findings,
-		DriftEvents:         driftEvents,
-		NamespaceOnboarding: c.onboardingWithSetupDetectors(),
-		DetectorHistory:     compactDetectorHistory(c.history), SurfacedPlaybooks: surfacedPlaybooks(findings),
+		DriftEvents:            driftEvents,
+		NamespaceOnboarding:    cloneNamespaceOnboarding(c.namespaceOnboarding),
+		DisabledSetupDetectors: cloneDisabledSetupDetectors(c.disabledSetupDetectors),
+		DetectorHistory:        compactDetectorHistory(c.history), SurfacedPlaybooks: surfacedPlaybooks(findings),
 		RelevantOutcomes: relevantOutcomeEvidence(
 			c.config.RepositoryWorktree, findings, c.config.SourceCommit, c.detectorOrigins(),
 		),

@@ -25,26 +25,34 @@ func cloneDisabledSetupDetectors(records []*contracts.DisabledSetupDetector) []*
 	return result
 }
 
-func (c *Controller) setupDetectorDisabled(id string) bool {
-	if !learnedIncidentDetector(c.detectorSpecs[id]) {
+func setupDetectorExcluded(spec sdk.DetectorSpec, revision string, records []*contracts.DisabledSetupDetector) bool {
+	if !learnedIncidentDetector(spec) {
 		return false
 	}
-	for _, record := range c.disabledSetupDetectors {
-		if record.DetectorId == id && record.AcceptedRevision == c.config.SourceCommit {
+	for _, record := range records {
+		if record.DetectorId == spec.ID && record.AcceptedRevision == revision {
 			return true
 		}
 	}
 	return false
 }
 
-func (c *Controller) enabledSetupDetectors(detectors []sdk.Detector) []sdk.Detector {
+func withoutDisabledSetupDetectors(detectors []sdk.Detector, revision string, records []*contracts.DisabledSetupDetector) []sdk.Detector {
 	result := make([]sdk.Detector, 0, len(detectors))
 	for _, detector := range detectors {
-		if !c.setupDetectorDisabled(detector.Spec().ID) {
+		if !setupDetectorExcluded(detector.Spec(), revision, records) {
 			result = append(result, detector)
 		}
 	}
 	return result
+}
+
+func (c *Controller) setupDetectorDisabled(id string) bool {
+	return setupDetectorExcluded(c.detectorSpecs[id], c.config.SourceCommit, c.disabledSetupDetectors)
+}
+
+func (c *Controller) enabledSetupDetectors(detectors []sdk.Detector) []sdk.Detector {
+	return withoutDisabledSetupDetectors(detectors, c.config.SourceCommit, c.disabledSetupDetectors)
 }
 
 type setupDetection struct {
@@ -82,10 +90,15 @@ func (c *Controller) setupHealth(ctx context.Context, snapshot sdk.DetectionCont
 	return results, healthy
 }
 
-func (c *Controller) disableSetupDetector(spec sdk.DetectorSpec, findings []sdk.Finding, now time.Time, candidate *contracts.NamespaceOnboarding) {
+func (c *Controller) disableSetupDetector(spec sdk.DetectorSpec, findings []sdk.Finding, now time.Time, candidate *contracts.NamespaceOnboarding) bool {
 	fingerprints := make([]string, 0, len(findings))
 	for _, finding := range findings {
-		fingerprints = append(fingerprints, finding.Fingerprint)
+		if finding.Status == sdk.FindingActive {
+			fingerprints = append(fingerprints, finding.Fingerprint)
+		}
+	}
+	if len(fingerprints) == 0 {
+		return false
 	}
 	sort.Strings(fingerprints)
 	record := &contracts.DisabledSetupDetector{DetectorId: spec.ID, AcceptedRevision: c.config.SourceCommit, Fingerprints: fingerprints, DisabledAt: timestamppb.New(now.UTC()), Reason: setupDetectorReason}
@@ -96,12 +109,5 @@ func (c *Controller) disableSetupDetector(spec sdk.DetectorSpec, findings []sdk.
 	if candidate != nil {
 		candidate.DisabledSetupDetectors = cloneDisabledSetupDetectors(c.disabledSetupDetectors)
 	}
-}
-
-func (c *Controller) onboardingWithSetupDetectors() *contracts.NamespaceOnboarding {
-	record := cloneNamespaceOnboarding(c.namespaceOnboarding)
-	if record != nil {
-		record.DisabledSetupDetectors = cloneDisabledSetupDetectors(c.disabledSetupDetectors)
-	}
-	return record
+	return true
 }
