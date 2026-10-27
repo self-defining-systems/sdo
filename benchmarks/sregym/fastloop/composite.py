@@ -100,7 +100,11 @@ def make_tracker(
         or len({f.name for f in faults}) != len(faults)
     ):
         return None
-    return FaultTracker(probes_for(faults, reader), stable_seconds=settings.stable_seconds)
+    from benchmarks.sregym.fastloop.runtime_observation import baseline_observation
+
+    return FaultTracker(
+        baseline_observation(lambda: probes_for(faults, reader)), stable_seconds=settings.stable_seconds
+    )
 
 
 def _unsupported_report(agent: str, problem_id: str, faults: tuple[FaultSpec, ...]) -> dict[str, Any]:

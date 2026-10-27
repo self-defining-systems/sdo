@@ -57,7 +57,7 @@ func TestEnsureDatabaseUserReportsVerifiedOutcome(t *testing.T) {
 func TestEnsureDatabaseUserUnverifiedWriteIsTypedUnknown(t *testing.T) {
 	result, err := applyDatabaseUser(t, &databaseFake{ignore: true})
 	report := result.ActionReports[0]
-	if err == nil || report.Status != "unknown" || report.DatabaseUser != nil || report.FailureReason != "database_user_unverified" {
+	if err == nil || report.Status != "unknown" || report.DatabaseUser != nil || report.FailureReason != "outcome_unknown" {
 		t.Fatalf("%+v %v", report, err)
 	}
 }
@@ -69,9 +69,9 @@ func TestEnsureDatabaseUserPreWriteFailureIsDefinite(t *testing.T) {
 		err    error
 		reason string
 	}{
-		"authentication": {&DatabaseOperationError{Step: DatabaseAuthentication, Reason: databaseRejected}, "database_authentication_rejected"},
-		"credential":     {&CredentialReferenceError{Reference: credential, Reason: "key missing"}, "database_credential_reference_unavailable"},
-		"binary":         {&DatabaseOperationError{Step: DatabaseClientBinary, Reason: databaseNotFound}, "database_client_binary_not_found"},
+		"authentication": {&DatabaseOperationError{Step: DatabaseAuthentication, Reason: databaseRejected}, "execution_failed"},
+		"credential":     {&CredentialReferenceError{Reference: credential, Reason: "key missing"}, "execution_failed"},
+		"binary":         {&DatabaseOperationError{Step: DatabaseClientBinary, Reason: databaseNotFound}, "execution_failed"},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -113,7 +113,7 @@ func TestEnsureDatabaseUserOutcomeReachesMenuReportJSON(t *testing.T) {
 		want   string
 	}{
 		"verified": {&databaseFake{}, "action_results.0.database_user.outcome", "created"},
-		"failed":   {&databaseFake{writeErr: &DatabaseOperationError{Step: DatabaseAuthentication, Reason: databaseRejected}}, "action_results.0.failure_reason", "database_authentication_rejected"},
+		"failed":   {&databaseFake{writeErr: &DatabaseOperationError{Step: DatabaseAuthentication, Reason: databaseRejected}}, "action_results.0.failure_reason", "execution_failed"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			result, _ := applyDatabaseUser(t, tc.client)

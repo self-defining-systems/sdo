@@ -143,7 +143,13 @@ def execute_row(plan: SequencePlan, index: int, results: Path) -> None:
         result = subprocess.run(command, cwd=plan.code_root, stdout=out, stderr=error, check=False)
     _save(directory / "process-exit.json", {"returncode": result.returncode, "finished_at": _now()})
     if result.returncode:
+        if results.exists():
+            _terminal(plan, index, results)  # Propagate a proven never-injected retry.
         raise RuntimeError(f"eval: row {index} exited {result.returncode}; adopt its native evidence before resuming")
+
+
+class NeverInjectedRetry(RuntimeError):
+    """Durable pre-injection evidence permits a fresh row attempt, never a hold."""
 
 
 def _terminal(plan: SequencePlan, index: int, results: Path) -> dict[str, object]:
@@ -161,6 +167,12 @@ def _terminal(plan: SequencePlan, index: int, results: Path) -> dict[str, object
         "gpt-6-luna",
     ):
         raise RuntimeError(f"eval: row {index} native result identity differs")
+    if (
+        record.injection.state == "not_injected"
+        and record.injection.stage == "pre_injection"
+        and record.infra_error == "never_injected_retry"
+    ):
+        raise NeverInjectedRetry(f"eval: row {index} never_injected_retry: baseline observation unavailable")
     if (
         record.injection.state != "injected"
         or not record.incident_id
@@ -223,7 +235,12 @@ def run_sequence(plan: SequencePlan, *, execute: Callable[[SequencePlan, int, Pa
                 memory_ancestry(environment.workspace, old["accepted_after"], memory_head(environment.workspace))
                 continue
             manifest = directory / "manifest.json"
-            results = plan.environment_dir / "results" / f"{plan.run_id}-{index:03d}" / "incidents.jsonl"
+            retry_path = directory / "retry.json"
+            attempt = json.loads(retry_path.read_text())["next_attempt"] if retry_path.exists() else 0
+            suffix = f"-retry-{attempt}" if attempt else ""
+            results = plan.environment_dir / "results" / f"{plan.run_id}-{index:03d}{suffix}" / "incidents.jsonl"
+            attempt_manifest = directory / f"attempt-{attempt}.json"
+            execute_needed = not manifest.exists() or (attempt > 0 and not attempt_manifest.exists())
             if not manifest.exists():
                 if results.parent.exists():
                     raise RuntimeError(f"eval: row {index} has unjournaled results; never overwrite native evidence")
@@ -253,8 +270,22 @@ def run_sequence(plan: SequencePlan, *, execute: Callable[[SequencePlan, int, Pa
                         "program_trust_threshold_status": "retired; provenance only",
                     },
                 )
-                execute(plan, index, results)
-            terminal = _terminal(plan, index, results)
+            try:
+                if execute_needed:
+                    _save(attempt_manifest, {"attempt": attempt, "native_result": str(results), "started_at": _now()})
+                    execute(plan, index, results)
+                terminal = _terminal(plan, index, results)
+            except NeverInjectedRetry:
+                _save(
+                    directory / f"never-injected-{attempt}.json",
+                    {
+                        "status": "never_injected_retry",
+                        "native_result": str(results),
+                        "attempt": attempt,
+                    },
+                )
+                _save(retry_path, {"next_attempt": attempt + 1})
+                raise
             start = json.loads(manifest.read_text())
             after = memory_head(environment.workspace)
             lineage = memory_ancestry(environment.workspace, start["accepted_before"], after)
