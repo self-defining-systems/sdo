@@ -17,6 +17,30 @@ type Detector interface {
 	Detect(context.Context, DetectionContext) ([]Finding, error)
 }
 
+// Unwrapper is implemented by detectors that decorate another detector. Every
+// optional capability (observation consumers, windows, confirmation) is read
+// with As, so a decorator that only changes Spec cannot hide what the wrapped
+// detector declares.
+type Unwrapper interface {
+	Unwrap() Detector
+}
+
+// As returns the first detector in the Unwrap chain that implements T.
+func As[T any](detector Detector) (T, bool) {
+	for detector != nil {
+		if capability, ok := detector.(T); ok {
+			return capability, true
+		}
+		wrapper, ok := detector.(Unwrapper)
+		if !ok {
+			break
+		}
+		detector = wrapper.Unwrap()
+	}
+	var zero T
+	return zero, false
+}
+
 // WindowedDetector is implemented by detectors that judge a rolling window of
 // past observations, so a condition that has just resolved can keep reporting
 // until the window rolls over. EvaluationWindow bounds that lag for the
@@ -35,7 +59,7 @@ func ClearingHorizon(detector Detector, view DetectionContext) time.Duration {
 		clearing = 1
 	}
 	horizon := time.Duration(clearing) * spec.Interval
-	if windowed, ok := detector.(WindowedDetector); ok {
+	if windowed, ok := As[WindowedDetector](detector); ok {
 		horizon += windowed.EvaluationWindow(view)
 	}
 	return horizon

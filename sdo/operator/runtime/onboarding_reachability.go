@@ -25,7 +25,7 @@ type confirmedDetector interface {
 
 func detectorsNeedConfirmation(detectors []sdk.Detector) bool {
 	for _, detector := range detectors {
-		if _, ok := detector.(confirmedDetector); ok {
+		if _, ok := sdk.As[confirmedDetector](detector); ok {
 			return true
 		}
 	}
@@ -33,7 +33,7 @@ func detectorsNeedConfirmation(detectors []sdk.Detector) bool {
 }
 
 func detectorConfirmed(detector sdk.Detector, snapshot sdk.DetectionContext) bool {
-	if d, ok := detector.(confirmedDetector); ok {
+	if d, ok := sdk.As[confirmedDetector](detector); ok {
 		return d.Confirmed(snapshot)
 	}
 	return true
@@ -41,9 +41,9 @@ func detectorConfirmed(detector sdk.Detector, snapshot sdk.DetectionContext) boo
 
 // detectorConfirmationReason is informational; pending is never an execution error.
 func detectorConfirmationReason(detector sdk.Detector, snapshot sdk.DetectionContext) string {
-	if d, ok := detector.(interface {
+	if d, ok := sdk.As[interface {
 		ConfirmationReason(sdk.DetectionContext) string
-	}); ok {
+	}](detector); ok {
 		return d.ConfirmationReason(snapshot)
 	}
 	if !detectorConfirmed(detector, snapshot) {

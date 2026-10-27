@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"sdo.dev/operator/sdk"
-	"sdo.dev/operator/sdk/traffic"
 )
 
 func developmentTimeScale() (float64, error) {
@@ -46,30 +45,8 @@ func (d timedDetector) Detect(ctx context.Context, view sdk.DetectionContext) ([
 	return d.Detector.Detect(ctx, view)
 }
 
-func (d timedDetector) Confirmed(view sdk.DetectionContext) bool {
-	return detectorConfirmed(d.Detector, view)
-}
-
-func (d timedDetector) ConfirmationReason(view sdk.DetectionContext) string {
-	if detectorConfirmed(d.Detector, view) {
-		return ""
-	}
-	return detectorConfirmationReason(d.Detector, view)
-}
-
-func (d timedDetector) EvaluationWindow(view sdk.DetectionContext) time.Duration {
-	if windowed, ok := d.Detector.(sdk.WindowedDetector); ok {
-		return windowed.EvaluationWindow(view)
-	}
-	return 0
-}
-
-func (d timedDetector) TrafficWorkloads() []string {
-	if consumer, ok := d.Detector.(traffic.Consumer); ok {
-		return consumer.TrafficWorkloads()
-	}
-	return nil
-}
+// Unwrap exposes the wrapped detector's capabilities; only Spec is scaled.
+func (d timedDetector) Unwrap() sdk.Detector { return d.Detector }
 
 func scaleDetectors(detectors []sdk.Detector, scale float64) []sdk.Detector {
 	if scale == 1 {

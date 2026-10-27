@@ -47,7 +47,7 @@ func (c HTTPProberClient) DialTargets(ctx context.Context, request prober.DialRe
 // ConsumesServiceReachability reports whether any detector needs dial observations.
 func ConsumesServiceReachability(detectors []sdk.Detector) bool {
 	for _, detector := range detectors {
-		if consumer, ok := detector.(servicehealth.ReachabilityConsumer); ok && consumer.ConsumesServiceReachability() {
+		if consumer, ok := sdk.As[servicehealth.ReachabilityConsumer](detector); ok && consumer.ConsumesServiceReachability() {
 			return true
 		}
 	}

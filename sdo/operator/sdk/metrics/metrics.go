@@ -294,7 +294,7 @@ type Validator interface {
 func Queries(detectors []sdk.Detector) ([]Query, error) {
 	byID := make(map[string]Query)
 	for _, detector := range detectors {
-		consumer, ok := detector.(Consumer)
+		consumer, ok := sdk.As[Consumer](detector)
 		if !ok {
 			continue
 		}
@@ -319,7 +319,7 @@ func Queries(detectors []sdk.Detector) ([]Query, error) {
 // ConsumesAlerts reports whether any detector evaluates alerts.
 func ConsumesAlerts(detectors []sdk.Detector) bool {
 	for _, detector := range detectors {
-		if consumer, ok := detector.(AlertConsumer); ok && consumer.ConsumesAlerts() {
+		if consumer, ok := sdk.As[AlertConsumer](detector); ok && consumer.ConsumesAlerts() {
 			return true
 		}
 	}
@@ -329,12 +329,12 @@ func ConsumesAlerts(detectors []sdk.Detector) bool {
 // ValidateDetector checks one detector's metrics configuration. Detectors
 // that consume no metrics are valid.
 func ValidateDetector(detector sdk.Detector) error {
-	if validator, ok := detector.(Validator); ok {
+	if validator, ok := sdk.As[Validator](detector); ok {
 		if err := validator.Validate(); err != nil {
 			return err
 		}
 	}
-	if consumer, ok := detector.(Consumer); ok {
+	if consumer, ok := sdk.As[Consumer](detector); ok {
 		return ValidateQueries(consumer.MetricQueries())
 	}
 	return nil
