@@ -138,6 +138,7 @@ Finding = messages_pb2.Finding
 DetectorEvaluation = messages_pb2.DetectorEvaluation
 SurfacedPlaybook = messages_pb2.SurfacedPlaybook
 PriorOutcomeEvidence = messages_pb2.PriorOutcomeEvidence
+ResponseProgress = messages_pb2.ResponseProgress
 StateFieldChange = messages_pb2.StateFieldChange
 StateChange = messages_pb2.StateChange
 StateChanges = messages_pb2.StateChanges
@@ -337,6 +338,7 @@ __all__ = [
     "OutcomeRecord",
     "OutcomeTimestamps",
     "PriorOutcomeEvidence",
+    "ResponseProgress",
     "ProposalWorkspace",
     "ReflectionEligibility",
     "ReflectionCauseWork",
