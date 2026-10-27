@@ -151,6 +151,7 @@ type ReadView interface {
 	metrics.UsageSource
 	ProbeTCP(to sdk.ObjectRef, port int32) (ProbeResult, error)
 	ProbeHTTP(to sdk.ObjectRef, req HTTPProbe) (ProbeResult, error)
+	// DiffAgainstSource compares quantities by value and excludes controller bookkeeping (revision, last-applied and restart annotations, status and managedFields), accepted server defaults, and replicas targeted by an HPA.
 	DiffAgainstSource(ref sdk.ObjectRef) (Diff, error)
 	DiffAgainstBaseline(ref sdk.ObjectRef) (Diff, error)
 	DatabaseUsers(DatabaseTarget) ([]DatabaseUser, error)
