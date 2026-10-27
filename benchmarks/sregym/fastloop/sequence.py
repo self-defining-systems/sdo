@@ -165,12 +165,17 @@ def _terminal(plan: SequencePlan, index: int, results: Path) -> dict[str, object
         record.injection.state != "injected"
         or not record.incident_id
         or record.infra_error
-        or record.recovery_error
-        or not record.recovery_finished_at
-        or not record.recovery_oracle
-        or not record.recovery_oracle.success
-        or not record.full_cleanup_verified
-        or record.cleanup_passes_verified != 2
+        or (
+            record.cleanup_skipped_reason != "row_start_tier2"
+            and (
+                record.recovery_error
+                or not record.recovery_finished_at
+                or not record.recovery_oracle
+                or not record.recovery_oracle.success
+                or not record.full_cleanup_verified
+                or record.cleanup_passes_verified != 2
+            )
+        )
         or record.reflection_finished_at is None
         or "learning failed:" in (record.error or "")
     ):

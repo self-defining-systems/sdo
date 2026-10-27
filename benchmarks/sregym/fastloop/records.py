@@ -198,6 +198,8 @@ class IncidentRecord(_PersistedModel):
     responder_started_at: AwareDatetime | None = None
     responder_finished_at: AwareDatetime | None = None
     oracle_finished_at: AwareDatetime | None = None
+    oracle_incident_id: str | None = None
+    oracle_resolved_at: AwareDatetime | None = None
     reflection_started_at: AwareDatetime | None = None
     reflection_finished_at: AwareDatetime | None = None
     rebuild_done_at: AwareDatetime | None = None
@@ -318,7 +320,7 @@ class IncidentRecord(_PersistedModel):
     @computed_field  # type: ignore[prop-decorator]
     @property
     def closure_to_grade_seconds(self) -> float | None:
-        return _seconds(self.resolved_at, self.oracle_finished_at)
+        return _seconds(self.oracle_resolved_at or self.resolved_at, self.oracle_finished_at)
 
     @computed_field  # type: ignore[prop-decorator]
     @property

@@ -943,3 +943,52 @@ def test_a_failed_controller_job_ends_the_closure_wait_as_a_typed_failure(tmp_pa
         PersistentState.load(tmp_path / "sdo_persistent_controller.json").controllers["hotel-reservation"].pending
         is None
     )
+
+
+def test_real_resolution_path_grades_before_evidence_export_and_reflection(tmp_path: Path) -> None:
+    ops = FakeOps()
+    ops.last_runtime_export = None
+    agent = _agent(tmp_path, ops, [])
+    calls: list[str] = []
+
+    class Driver:
+        def inject(self, _problem_id: str) -> InjectionWindow:
+            return _inject()
+
+        def oracle(self) -> OracleVerdict:
+            assert ops.last_runtime_export is None
+            calls.append("oracle")
+            return OracleVerdict(kind="sregym-mitigation-oracle", success=True)
+
+        def recover(self) -> float:
+            pytest.fail("tier 2 replaces post-grade per-fault recovery")
+
+    records = run_incidents(
+        agent,
+        Driver(),
+        LoopConfig(
+            run_id="closure-grade",
+            problems=("p",),
+            incidents=1,
+            results_path=tmp_path / "incidents.jsonl",
+            row_start_tier2=True,
+        ),
+    )
+    assert calls == ["oracle"]
+    assert records[0].oracle.success
+    assert records[0].cleanup_skipped_reason == "row_start_tier2"
+    assert records[0].recovery_error is None
+
+
+def test_closure_grade_rejects_an_incident_that_predates_injection(tmp_path: Path) -> None:
+    from benchmarks.sregym.protocol.injection import IncidentPredatesInjectionError
+
+    agent = _agent(tmp_path, FakeOps(), [])
+    injected = DETECTED + timedelta(seconds=1)
+    with pytest.raises(IncidentPredatesInjectionError):
+        agent.resolve_at_closure(
+            0,
+            "p",
+            lambda: InjectionWindow(started_at=injected, finished_at=injected),
+            lambda _point: pytest.fail("an unrelated incident must never receive a grade"),
+        )

@@ -196,7 +196,7 @@ func (v LiveReadView) DiffAgainstSource(ref sdk.ObjectRef) (program.Diff, error)
 		if observed == nil {
 			return program.Diff{SourceAbsent: true}, nil
 		}
-		encoded, encodeErr := json.Marshal(comparableFields(observed.Object))
+		encoded, encodeErr := json.Marshal(v.sourceComparableFields(observed.Object, ref))
 		if encodeErr != nil {
 			return program.Diff{}, encodeErr
 		}
@@ -214,12 +214,12 @@ func (v LiveReadView) DiffAgainstSource(ref sdk.ObjectRef) (program.Diff, error)
 			return program.Diff{}, projectErr
 		}
 		source = projected
-		before, _ := json.Marshal(comparableFields(source.Object))
+		before, _ := json.Marshal(v.sourceComparableFields(source.Object, ref))
 		var actual any
 		if observed != nil {
-			actual = comparableFields(observed.Object)
+			actual = v.sourceComparableFields(observed.Object, ref)
 			if !(sdk.ObservationTarget{Kind: ref.Kind}).Cluster() {
-				actual = projectSourceFields(actual, comparableFields(source.Object))
+				actual = projectSourceFields(actual, v.sourceComparableFields(source.Object, ref))
 			}
 		}
 		after, _ := json.Marshal(actual)
@@ -233,14 +233,14 @@ func (v LiveReadView) DiffAgainstSource(ref sdk.ObjectRef) (program.Diff, error)
 				return program.Diff{}, fmt.Errorf("normalize accepted manifest for %s/%s: %w", ref.Kind, ref.Name, err)
 			}
 		}
-		before, err := json.Marshal(comparableFields(source.Object))
+		before, err := json.Marshal(v.sourceComparableFields(source.Object, ref))
 		if err != nil {
 			return program.Diff{}, err
 		}
 		return program.Diff{Changed: true, Text: fmt.Sprintf("accepted: %s\nobserved: null", before)}, nil
 	}
-	accepted := comparableFields(source.Object)
-	actual := comparableFields(observed.Object)
+	accepted := v.sourceComparableFields(source.Object, ref)
+	actual := v.sourceComparableFields(observed.Object, ref)
 	left := accepted
 	right := projectSourceFields(actual, left)
 	if v.Client != nil {
@@ -248,7 +248,7 @@ func (v LiveReadView) DiffAgainstSource(ref sdk.ObjectRef) (program.Diff, error)
 		if normalizeErr != nil {
 			return program.Diff{}, fmt.Errorf("normalize accepted manifest for %s/%s: %w", ref.Kind, ref.Name, normalizeErr)
 		}
-		left = comparableFields(normalized.Object)
+		left = v.sourceComparableFields(normalized.Object, ref)
 		right = actual
 	}
 	// Apply normalization answers whether reconciliation changes declared
@@ -279,12 +279,13 @@ func (v LiveReadView) DiffAgainstSource(ref sdk.ObjectRef) (program.Diff, error)
 	// Declared fields agree; fields added since acceptance decide. Without a
 	// current acceptance record that is unknown, never unchanged.
 	added, err := addedSourceFields(observed, source)
+	added = v.sourceDriftPaths(added, ref)
 	if err != nil {
 		return program.Diff{}, &AcceptanceUnknownError{Ref: ref, Declared: program.Diff{Text: text}}
 	}
 	// Name a changed recorded scalar; other additions keep their existing report.
 	if record, ok := currentAcceptanceRecord(observed, source); ok {
-		if changed := changedAcceptedValues(observed, record); len(changed) > 0 {
+		if changed := v.sourceDriftPaths(changedAcceptedValues(observed, record), ref); len(changed) > 0 {
 			text += "\nchanged since acceptance: " + strings.Join(changed, ", ")
 		}
 	}
@@ -305,6 +306,7 @@ func applyAcceptedSource(ctx context.Context, client kubernetes.Interface, ref s
 
 func comparableFields(object map[string]any) map[string]any {
 	object = kruntime.DeepCopyJSON(object)
+	normalizeSourceQuantities(object)
 	if metadata, ok := object["metadata"].(map[string]any); ok {
 		removeRevisionStamp(metadata)
 	}
@@ -343,9 +345,11 @@ func removeRevisionStamp(metadata map[string]any) {
 	if !ok {
 		return
 	}
-	delete(annotations, "sdo.dev/source-tree")
-	delete(annotations, acceptedPathsAnnotation)
-	delete(annotations, "kubectl.kubernetes.io/last-applied-configuration")
+	for key := range annotations {
+		if sourceBookkeepingAnnotation(key) {
+			delete(annotations, key)
+		}
+	}
 	if len(annotations) == 0 {
 		delete(metadata, "annotations")
 	}
