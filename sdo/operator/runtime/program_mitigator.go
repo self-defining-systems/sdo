@@ -7,13 +7,13 @@ import (
 	"fmt"
 	"time"
 
-	admissionv1 "k8s.io/api/admissionregistration/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	corev1 "k8s.io/api/core/v1"
+	discoveryv1 "k8s.io/api/discovery/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	policyv1 "k8s.io/api/policy/v1"
-	"sdo.dev/operator/sdk/servicehealth"
-	"sdo.dev/operator/sdk/traffic"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
@@ -44,6 +44,9 @@ func (l *ResponderLoop) runMitigator(ctx context.Context, id string, p program.M
 	}
 	return plan, err
 }
+func BuildMitigationPlan(ctx context.Context, p program.Mitigator, view program.ReadView, bindings program.Bindings, deadline time.Duration) (program.Plan, error) {
+	return runBoundedMitigator(ctx, p, view, bindings, deadline)
+}
 func runBoundedMitigator(ctx context.Context, p program.Mitigator, view program.ReadView, bindings program.Bindings, deadline time.Duration) (program.Plan, error) {
 	ctx, cancel := context.WithTimeout(ctx, deadline)
 	defer cancel()
@@ -68,24 +71,9 @@ func runBoundedMitigator(ctx context.Context, p program.Mitigator, view program.
 			results <- outcome{err: err}
 			return
 		}
-		var isolated program.ReadView
 		// Each accessor returns defensive copies. Timed-out executions keep only this
 		// private snapshot and read capabilities, never maps owned by ResponderLoop.
-		snapshot := sdktest.Snapshot{NamespaceName: view.Namespace(), ConfigMapList: view.ConfigMaps(), ServiceList: view.Services(), PodList: view.Pods(), DeploymentList: view.Deployments(), ReplicaSetList: view.ReplicaSets(), EndpointList: view.Endpoints(), EndpointSliceList: view.EndpointSlices(), NetworkPolicyList: view.NetworkPolicies(), EventList: view.Events()}
-		if extended, ok := view.(interface{ StatefulSets() []appsv1.StatefulSet }); ok {
-			snapshot.StatefulSetList = extended.StatefulSets()
-		}
-		if extended, ok := view.(interface {
-			HorizontalPodAutoscalers() []autoscalingv2.HorizontalPodAutoscaler
-		}); ok {
-			snapshot.HPAList = extended.HorizontalPodAutoscalers()
-		}
-		if extended, ok := view.(interface {
-			PodDisruptionBudgets() []policyv1.PodDisruptionBudget
-		}); ok {
-			snapshot.PDBList = extended.PodDisruptionBudgets()
-		}
-		isolated = mitigationReadView{Snapshot: snapshot, ctx: ctx, live: view}
+		isolated := newMitigationReadView(ctx, view)
 		observed, readFailure := program.CheckReads(isolated)
 		plan, err := p.Mitigate(ctx, program.ReadFrom(observed), bindings)
 		if readErr := readFailure(); readErr != nil {
@@ -123,104 +111,100 @@ func runBoundedMitigator(ctx context.Context, p program.Mitigator, view program.
 	}
 }
 
+// mitigationReadView is the view a mitigator runs against. The typed object
+// lists are a private frozen copy, so a call that outlives its deadline never
+// touches maps owned by ResponderLoop. Every other read is the live view's own,
+// by embedding: a read the live view offers cannot be silently dropped here, which
+// is how a learned program saw no pod admission and returned an empty plan.
 type mitigationReadView struct {
-	sdktest.Snapshot
-	ctx  context.Context
-	live program.ReadView
+	program.ReadView
+	frozen sdktest.Snapshot
+	ctx    context.Context
+}
+
+func newMitigationReadView(ctx context.Context, live program.ReadView) mitigationReadView {
+	frozen := sdktest.Snapshot{NamespaceName: live.Namespace(), ConfigMapList: live.ConfigMaps(), ServiceList: live.Services(), PodList: live.Pods(), DeploymentList: live.Deployments(), ReplicaSetList: live.ReplicaSets(), EndpointList: live.Endpoints(), EndpointSliceList: live.EndpointSlices(), NetworkPolicyList: live.NetworkPolicies(), EventList: live.Events(), StatefulSetList: live.StatefulSets(), HPAList: live.HorizontalPodAutoscalers(), PDBList: live.PodDisruptionBudgets()}
+	return mitigationReadView{ReadView: live, frozen: frozen, ctx: ctx}
+}
+
+func (v mitigationReadView) Namespace() string                { return v.frozen.Namespace() }
+func (v mitigationReadView) ConfigMaps() []corev1.ConfigMap   { return v.frozen.ConfigMaps() }
+func (v mitigationReadView) Services() []corev1.Service       { return v.frozen.Services() }
+func (v mitigationReadView) Pods() []corev1.Pod               { return v.frozen.Pods() }
+func (v mitigationReadView) Deployments() []appsv1.Deployment { return v.frozen.Deployments() }
+func (v mitigationReadView) ReplicaSets() []appsv1.ReplicaSet { return v.frozen.ReplicaSets() }
+func (v mitigationReadView) Endpoints() []corev1.Endpoints    { return v.frozen.Endpoints() }
+func (v mitigationReadView) EndpointSlices() []discoveryv1.EndpointSlice {
+	return v.frozen.EndpointSlices()
+}
+func (v mitigationReadView) NetworkPolicies() []networkingv1.NetworkPolicy {
+	return v.frozen.NetworkPolicies()
+}
+func (v mitigationReadView) Events() []corev1.Event             { return v.frozen.Events() }
+func (v mitigationReadView) StatefulSets() []appsv1.StatefulSet { return v.frozen.StatefulSets() }
+func (v mitigationReadView) HorizontalPodAutoscalers() []autoscalingv2.HorizontalPodAutoscaler {
+	return v.frozen.HorizontalPodAutoscalers()
+}
+func (v mitigationReadView) PodDisruptionBudgets() []policyv1.PodDisruptionBudget {
+	return v.frozen.PodDisruptionBudgets()
+}
+func (v mitigationReadView) ReadyEndpointCountForService(namespace, service string) int {
+	return v.frozen.ReadyEndpointCountForService(namespace, service)
+}
+func (v mitigationReadView) PodsForService(namespace, service string) []corev1.Pod {
+	return v.frozen.PodsForService(namespace, service)
+}
+func (v mitigationReadView) RecentEventsFor(namespace, kind, name string) []corev1.Event {
+	return v.frozen.RecentEventsFor(namespace, kind, name)
+}
+
+// Object prefers the frozen typed copy so values pinned into the plan match the
+// lists the mitigator read, and falls back to the live view for other kinds.
+func (v mitigationReadView) Object(ref sdk.ObjectRef) (*unstructured.Unstructured, error) {
+	object, err := v.frozen.Object(ref)
+	if err == nil || !errors.Is(err, sdk.ErrObjectNotCaptured) {
+		return object, err
+	}
+	if err := v.ctx.Err(); err != nil {
+		return nil, err
+	}
+	return v.ReadView.Object(ref)
 }
 
 func (v mitigationReadView) Logs(ref sdk.ObjectRef, container string, since time.Duration) (string, error) {
 	if err := v.ctx.Err(); err != nil {
 		return "", err
 	}
-	return v.live.Logs(ref, container, since)
+	return v.ReadView.Logs(ref, container, since)
 }
 func (v mitigationReadView) ProbeTCP(ref sdk.ObjectRef, port int32) (program.ProbeResult, error) {
 	if err := v.ctx.Err(); err != nil {
 		return program.ProbeResult{}, err
 	}
-	return v.live.ProbeTCP(ref, port)
+	return v.ReadView.ProbeTCP(ref, port)
 }
 func (v mitigationReadView) ProbeHTTP(ref sdk.ObjectRef, request program.HTTPProbe) (program.ProbeResult, error) {
 	if err := v.ctx.Err(); err != nil {
 		return program.ProbeResult{}, err
 	}
-	return v.live.ProbeHTTP(ref, request)
+	return v.ReadView.ProbeHTTP(ref, request)
 }
 func (v mitigationReadView) DiffAgainstSource(ref sdk.ObjectRef) (program.Diff, error) {
 	if err := v.ctx.Err(); err != nil {
 		return program.Diff{}, err
 	}
-	return v.live.DiffAgainstSource(ref)
+	return v.ReadView.DiffAgainstSource(ref)
 }
 func (v mitigationReadView) DiffAgainstBaseline(ref sdk.ObjectRef) (program.Diff, error) {
 	if err := v.ctx.Err(); err != nil {
 		return program.Diff{}, err
 	}
-	return v.live.DiffAgainstBaseline(ref)
-}
-
-func (v mitigationReadView) ScopedDeployments(namespace string) ([]appsv1.Deployment, error) {
-	return sdk.ScopedSource(v.live).ScopedDeployments(namespace)
-}
-
-func (v mitigationReadView) ScopedServices(namespace string) ([]corev1.Service, error) {
-	return sdk.ScopedSource(v.live).ScopedServices(namespace)
-}
-
-func (v mitigationReadView) ScopedEndpoints(namespace string) ([]corev1.Endpoints, error) {
-	return sdk.ScopedSource(v.live).ScopedEndpoints(namespace)
-}
-
-func (v mitigationReadView) MutatingWebhookConfigurations() ([]admissionv1.MutatingWebhookConfiguration, error) {
-	return sdk.ScopedSource(v.live).MutatingWebhookConfigurations()
-}
-
-func (v mitigationReadView) ValidatingWebhookConfigurations() ([]admissionv1.ValidatingWebhookConfiguration, error) {
-	return sdk.ScopedSource(v.live).ValidatingWebhookConfigurations()
-}
-
-func (v mitigationReadView) ObservationStatuses() []sdk.ObservationStatus {
-	return sdk.ScopedSource(v.live).ObservationStatuses()
-}
-func (v mitigationReadView) ObservationGeneration() string {
-	return sdk.ScopedSource(v.live).ObservationGeneration()
-}
-
-func (v mitigationReadView) ObservedAt() time.Time {
-	if clock, ok := v.live.(sdk.ObservationClock); ok {
-		return clock.ObservedAt()
-	}
-	return time.Time{}
-}
-
-func (v mitigationReadView) TrafficWindow(name string) (traffic.Window, bool) {
-	if source, ok := v.live.(traffic.Source); ok {
-		return source.TrafficWindow(name)
-	}
-	return traffic.Window{}, false
-}
-
-func (v mitigationReadView) ServiceReachability() (servicehealth.ReachabilityWindow, bool) {
-	if source, ok := v.live.(servicehealth.ReachabilitySource); ok {
-		return source.ServiceReachability()
-	}
-	return servicehealth.ReachabilityWindow{}, false
-}
-
-func (v mitigationReadView) MutatingWebhookConfiguration(name string) (*admissionv1.MutatingWebhookConfiguration, error) {
-	result, err := sdk.ScopedSource(v.live).MutatingWebhookConfiguration(name)
-	return result, err
-}
-
-func (v mitigationReadView) ValidatingWebhookConfiguration(name string) (*admissionv1.ValidatingWebhookConfiguration, error) {
-	result, err := sdk.ScopedSource(v.live).ValidatingWebhookConfiguration(name)
-	return result, err
+	return v.ReadView.DiffAgainstBaseline(ref)
 }
 
 func (v mitigationReadView) DatabaseUsers(t program.DatabaseTarget) ([]program.DatabaseUser, error) {
 	if err := v.ctx.Err(); err != nil {
 		return nil, err
 	}
-	return v.live.DatabaseUsers(t)
+	return v.ReadView.DatabaseUsers(t)
 }

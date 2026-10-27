@@ -432,7 +432,7 @@ type ParamSpec struct {
 type PatchObject struct {
 	Ref    sdk.ObjectRef
 	Type   string
-	Patch  json.RawMessage
+	Patch  json.RawMessage `json:",omitempty"`
 	Edits  []ListEdit
 	Reason string
 }
