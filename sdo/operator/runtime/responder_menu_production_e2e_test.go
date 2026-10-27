@@ -51,7 +51,7 @@ func (p productionMenuProgram) Diagnose(_ context.Context, view program.ReadView
 	return program.Verdict{Result: program.NoMatch}, nil
 }
 func (p productionMenuProgram) Mitigate(_ context.Context, _ program.ReadView, b program.Bindings) (program.Plan, error) {
-	return program.Plan{Actions: []program.Action{program.SetField{Ref: b.Objects["service"], Path: "spec.ports[0].targetPort", Value: program.FromParam("port")}}}, nil
+	return program.Plan{Actions: []program.Action{program.SetField{Ref: b.Objects["service"], Path: "spec.ports[0].targetPort", Value: program.FromParam("port"), Reason: "restore synthetic route"}}}, nil
 }
 
 type productionMenuHealth struct{}
@@ -130,12 +130,22 @@ func TestProductionMenuFixtureAdvancesServiceWriteVersions(t *testing.T) {
 // Starts RunWithOptions with its real job dispatcher and LoopFactory,
 // the ordinary executor and broker; only the Kubernetes API is synthetic.
 func TestProductionResponderMenuScriptedFactoryStrictReceipt(t *testing.T) {
-	testProductionResponderMenuFactory(t, true)
+	testProductionResponderMenuFactory(t, true, false)
 }
 func TestProductionResponderMenuExplicitOptOut(t *testing.T) {
-	testProductionResponderMenuFactory(t, false)
+	testProductionResponderMenuFactory(t, false, false)
 }
-func testProductionResponderMenuFactory(t *testing.T, enabled bool) {
+func TestProductionAutomaticStageUsesLiveDiagnosisWithoutCoverage(t *testing.T) {
+	testProductionResponderMenuFactory(t, true, true)
+}
+func testProductionResponderMenuFactory(t *testing.T, enabled, automatic bool) {
+	// The manual-menu tests exercise two responder attempts. The automatic
+	// variant independently checks the default pipeline with the same real
+	// LoopFactory, broker and contract receipts.
+	stages := "agent"
+	if automatic {
+		stages = "deterministic,agent"
+	}
 	launch := "0"
 	if enabled {
 		launch = "1"
@@ -154,7 +164,12 @@ func testProductionResponderMenuFactory(t *testing.T, enabled bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	closures := make(chan IncidentClosure, 1)
 	native := &NativeIncidentBroker{Repository: repository, LedgerRoot: filepath.Join(mount, "ledger"), SessionRoot: mount, Deriver: OutcomeDeriverFunc(func(ctx context.Context, closure IncidentClosure, repairCommit, backend, model string) (DerivedOutcome, error) {
+		select {
+		case closures <- closure:
+		default:
+		}
 		t.Logf("closure evidence: status=%s repairs=%d plans=%d calls=%d dispatch_error=%s", closure.Result.Status, len(closure.Result.RepairActions), len(closure.Result.PlanApplications), len(closure.Result.ProgramToolCalls), closure.DispatchError)
 		return (ProtoOutcomeDeriver{}).Derive(ctx, closure, repairCommit, backend, model)
 	}), ResponderBackend: "scripted", ResponderModel: "none", Reflector: ReflectionWorkerFunc(func(_ context.Context, _ IncidentClosure, _ IncidentWorkspace, outcome *contracts.OutcomeRecord, _ string, _ string, _ ReflectionFeedback) (ReflectionDecision, error) {
@@ -166,7 +181,12 @@ func testProductionResponderMenuFactory(t *testing.T, enabled bool) {
 	})}
 	service := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: menuService.Name, Namespace: "app", UID: types.UID("fixture-uid"), ResourceVersion: "1"}, Spec: corev1.ServiceSpec{Selector: map[string]string{"app": "backend"}, Ports: []corev1.ServicePort{{Port: 80, TargetPort: intstr.FromInt(9999)}}}}
 	bad, good := productionMenuProgram{"try-wrong-port", 7777}, productionMenuProgram{"restore-route", 8080}
-	registry, err := program.NewRegistry([]program.Diagnoser{bad, good}, []program.Mitigator{bad, good})
+	diagnosers := []program.Diagnoser{bad, good}
+	mitigators := []program.Mitigator{bad, good}
+	if automatic {
+		diagnosers, mitigators = []program.Diagnoser{good}, []program.Mitigator{good}
+	}
+	registry, err := program.NewRegistry(diagnosers, mitigators)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -201,7 +221,7 @@ func testProductionResponderMenuFactory(t *testing.T, enabled bool) {
 	done := make(chan error, 1)
 	start := time.Now().UTC()
 	go func() {
-		done <- RunWithOptions(ctx, []sdk.Detector{productionMenuHealth{}}, RuntimeOptions{Args: []string{"--toolchain-image", "synthetic/controller:compiler", "--namespace", "app", "--control-namespace", "demo", "--app-root", accepted, "--source-commit", revision, "--deployed-manifest-path", "app.yaml", "--deployed-commit", revision, "--repository-pvc", "synthetic-repository", "--repository-mount-path", mount, "--responder-credentials-secret", "unused-placeholder", "--responder-image", "synthetic/responder:scripted", "--agent-registration-directory", registrytest.Directory(), "--repair-policy", "recorded-actions", "--state-baseline=false", "--synthetic-traffic=false", "--clean-responder-helpers=false", "--firing-telemetry-path", "off", "--lifecycle-telemetry-path", "off", "--verification-timeout", "5s", "--exit-after-closure"}, Client: client, Programs: registry, NativeBroker: native, Stdout: writer, Stderr: writer})
+		done <- RunWithOptions(ctx, []sdk.Detector{productionMenuHealth{}}, RuntimeOptions{Args: []string{"--response-stages", stages, "--toolchain-image", "synthetic/controller:compiler", "--namespace", "app", "--control-namespace", "demo", "--app-root", accepted, "--source-commit", revision, "--deployed-manifest-path", "app.yaml", "--deployed-commit", revision, "--repository-pvc", "synthetic-repository", "--repository-mount-path", mount, "--responder-credentials-secret", "unused-placeholder", "--responder-image", "synthetic/responder:scripted", "--agent-registration-directory", registrytest.Directory(), "--repair-policy", "recorded-actions", "--state-baseline=false", "--synthetic-traffic=false", "--clean-responder-helpers=false", "--firing-telemetry-path", "off", "--lifecycle-telemetry-path", "off", "--verification-timeout", "5s", "--exit-after-closure"}, Client: client, Programs: registry, NativeBroker: native, Stdout: writer, Stderr: writer})
 	}()
 	t.Cleanup(func() {
 		cancel()
@@ -213,6 +233,47 @@ func testProductionResponderMenuFactory(t *testing.T, enabled bool) {
 		_ = writer.Close()
 		_ = reader.Close()
 	})
+	if automatic {
+		select {
+		case err := <-done:
+			done <- err
+			if err != nil {
+				t.Fatalf("automatic production closure: %v; %s", err, logs)
+			}
+		case job := <-jobs:
+			t.Fatalf("live matches fell through to responder job %s: %s", job, logs)
+		case <-ctx.Done():
+			t.Fatalf("automatic production closure timed out: %s", logs)
+		}
+		var closure IncidentClosure
+		select {
+		case closure = <-closures:
+		case <-ctx.Done():
+			t.Fatal("missing native closure evidence")
+		}
+		ledger, err := native.readLedger(closure.Request.IncidentID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !ledger.Acknowledged || ledger.GetOutcomeDocument().GetClassification() != "success" {
+			t.Fatalf("automatic native outcome: %v", ledger)
+		}
+		reports := ledger.GetOutcomeDocument().GetPriorStages()
+		if len(reports) != 1 || len(reports[0].Mitigations) != 1 {
+			t.Fatalf("automatic stage reports: %v", reports)
+		}
+		for _, attempt := range reports[0].Mitigations {
+			if attempt.Result != "applied_cleared" || !attempt.GetApplyReceipt().GetApplied() || len(attempt.GetBindings()) != 1 || attempt.Bindings[0].GetName() != "service" {
+				t.Fatalf("live defaulted assignment did not apply and verify: %v", attempt)
+			}
+		}
+		for _, match := range ledger.GetOutcomeDocument().GetPlaybookCoverage().GetMatches() {
+			if len(match.ExplainedFindingFingerprints) != 0 {
+				t.Fatalf("automatic application invented authored coverage: %v", match)
+			}
+		}
+		return
+	}
 	var jobName string
 	select {
 	case jobName = <-jobs:
