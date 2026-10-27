@@ -371,7 +371,7 @@ func (p Program) Mitigate(ctx context.Context,v program.ReadView,b program.Bindi
  return program.Plan{Actions:[]program.Action{program.SetField{Ref:b.Objects["service"],Path:"spec.ports[0].targetPort",Value:program.FromObserved(b.Objects["service"],"spec.ports[0].targetPort")}}},nil
 }
 `, 0644)
-		}, []string{"program.mitigation-not-repaired"}, false},
+		}, nil, false},
 		{"program mitigation skips unreplayable effect", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
 			parityProgram(t, r)
 			put(t, r, ".sdo/playbooks/service-targetport-mismatch/mitigate.go", `package targetport
@@ -381,7 +381,7 @@ func (p Program) Mitigate(ctx context.Context,v program.ReadView,b program.Bindi
  return program.Plan{Actions:[]program.Action{program.ReconcileFromSource{Ref:b.Objects["service"]}}},nil
 }
 `, 0644)
-		}, []string{"program.mitigation-not-repaired"}, false},
+		}, nil, false},
 
 		{"program README physical path", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
 			parityProgram(t, r)
@@ -809,6 +809,22 @@ func (p Program) Mitigate(ctx context.Context,v program.ReadView,b program.Bindi
 			for i, want := range validate.ProtoDiagnostics(brokerDiagnostics) {
 				if got := report.Diagnostics[i]; got.Rule != want.Rule || got.Path != want.Path || got.Line != want.Line || got.Message != want.Message || got.Hint != want.Hint {
 					t.Errorf("diagnostic %d differs: CLI %v broker %v", i, got, want)
+				}
+			}
+
+			if test.name == "program mitigation leaves target port faulty" || test.name == "program mitigation skips unreplayable effect" {
+				if len(report.GetMitigationReplayNotes()) == 0 {
+					t.Fatal("CLI omitted advisory replay")
+				}
+				cliObserved, brokerObserved := false, false
+				for _, gap := range report.GetCoverageGaps() {
+					cliObserved = cliObserved || gap.GetRule() == validate.RuleReplayObservation
+				}
+				for _, gap := range receipt.CoverageGaps {
+					brokerObserved = brokerObserved || gap.Rule == validate.RuleReplayObservation
+				}
+				if !cliObserved || !brokerObserved {
+					t.Fatalf("advisory replay lost: CLI=%v broker=%v", report.GetCoverageGaps(), receipt.CoverageGaps)
 				}
 			}
 			got := rules(report.Diagnostics, nil).cli
