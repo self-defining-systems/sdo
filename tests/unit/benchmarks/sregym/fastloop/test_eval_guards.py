@@ -1,5 +1,6 @@
 """Admission invariants apply to every app, including real harness manifests."""
 
+import ast
 import json
 from copy import deepcopy
 from pathlib import Path
@@ -374,8 +375,43 @@ def test_old_ready_pods_do_not_prove_current_workload_rollout(monkeypatch, statu
         admission.workload_identity(Path("unused"), "any-app")
 
 
+def test_go_fixture_compilation_has_no_execution_deadline():
+    """Cold compilation must finish before a fixture's bounded execution starts."""
+    violations = []
+    for path in sorted(Path(__file__).parent.glob("test_*.py")):
+        for node in ast.walk(ast.parse(path.read_text())):
+            if not isinstance(node, ast.Call) or not node.args:
+                continue
+            if not any(keyword.arg == "timeout" for keyword in node.keywords):
+                continue
+            command = node.args[0]
+            if not isinstance(command, (ast.List, ast.Tuple)):
+                continue
+            prefix = [item.value if isinstance(item, ast.Constant) else None for item in command.elts[:2]]
+            if prefix == ["go", "run"]:
+                violations.append(f"{path.name}:{node.lineno}")
+    assert not violations, f"Build Go fixtures before timed execution: {violations}"
+
+
+@pytest.fixture(scope="module")
+def broker_health_bootstrap_binary(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    import subprocess
+
+    root = Path(__file__).resolve().parents[5]
+    fixture = Path(__file__).with_name("fixtures") / "setup.go"
+    binary = tmp_path_factory.mktemp("broker-health-bootstrap") / "setup"
+    subprocess.run(
+        ["go", "build", "-o", str(binary), str(fixture)],
+        cwd=root / "sdo/operator",
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return binary
+
+
 @pytest.mark.go_integration
-def test_fresh_guard_accepts_actual_broker_health_bootstrap(tmp_path):
+def test_fresh_guard_accepts_actual_broker_health_bootstrap(tmp_path, broker_health_bootstrap_binary: Path):
     import shutil
     import subprocess
 
@@ -394,9 +430,8 @@ def test_fresh_guard_accepts_actual_broker_health_bootstrap(tmp_path):
     ):
         subprocess.run(["git", "-C", str(repository), *args], check=True, capture_output=True)
     seed = subprocess.check_output(["git", "-C", str(repository), "rev-parse", "HEAD"], text=True).strip()
-    fixture = Path(__file__).with_name("fixtures") / "setup.go"
     actual = subprocess.run(
-        ["go", "run", str(fixture), str(repository)],
+        [str(broker_health_bootstrap_binary), str(repository)],
         cwd=root / "sdo/operator",
         check=True,
         capture_output=True,
