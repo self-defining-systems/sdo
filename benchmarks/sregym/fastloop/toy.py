@@ -378,7 +378,8 @@ def record_controller(environment: FastloopEnvironment, config: Any) -> None:
 
 def wait_for_baseline(environment: FastloopEnvironment, accepted_commit: str) -> None:
     """Require real detector evaluations and accepted-source adoption before reporting ready."""
-    deadline = time.monotonic() + 120
+    wait = float(os.environ.get("SDO_TOY_BASELINE_WAIT", "120"))
+    deadline = time.monotonic() + wait
     while time.monotonic() < deadline:
         completed = subprocess.run(
             [
@@ -425,7 +426,7 @@ def wait_for_baseline(environment: FastloopEnvironment, accepted_commit: str) ->
                 break
         time.sleep(0.2)
     else:
-        raise RuntimeError("toy controller did not establish an adopted, clear baseline in 120s")
+        raise RuntimeError(f"toy controller did not establish an adopted, clear baseline in {wait:.0f}s")
 
 
 def baseline_ready(state: dict[str, Any], accepted_commit: str, observed_after: str | None = None) -> bool:
