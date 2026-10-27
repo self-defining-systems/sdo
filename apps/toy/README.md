@@ -16,8 +16,8 @@ and oracle results stay in the experiment driver, outside agent inputs.
 ownership, waits for informer observation, then introduces the real bad port.
 It models an imported object and lets the unchanged periodic invariant sweep
 find the fault even when the ownership-based drift feed has no event. Use
-`toy_sweep.json` after the repeat stream, with `--timeout 900 --time-scale 0.1`
-so the full verification deadline exceeds the 60-second sweep interval.
+`toy_sweep.json` after the repeat stream, with `--timeout 900` so the full
+verification deadline exceeds the 60-second sweep interval.
 
 The hand-authored seed uses the normal SDK endpoint health detector and the
 schema v3 operational-memory layout, per-detector manifests and logical playbook IDs. It is a deterministic test fixture, not

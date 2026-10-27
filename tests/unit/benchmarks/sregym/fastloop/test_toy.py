@@ -131,16 +131,73 @@ def test_baseline_wait_ends_on_the_controllers_exported_state_not_a_fixed_two_mi
         return SimpleNamespace(returncode=0, stdout=json.dumps(document))
 
     pod = {
-        "metadata": {"creationTimestamp": "2000-01-01T00:00:00Z"},
+        "metadata": {"name": "sdo-controller-run-x", "creationTimestamp": "2000-01-01T00:00:00Z"},
         "status": {"phase": "Running", "conditions": [{"type": "Ready", "status": "True"}]},
     }
     monkeypatch.setattr(toy.subprocess, "run", kubectl)
     monkeypatch.setattr(toy, "command", lambda *_args: json.dumps({"items": [pod]}))
+    monkeypatch.setattr(toy, "accepted_head", lambda *_args: "accepted")
     environment = SimpleNamespace(kubeconfig=Path("/kubeconfig"), namespace="toy")
 
     toy.wait_for_baseline(environment, "accepted")
 
     assert ready_at <= now[0] < ready_at + 5, "the wait ended on the exported state"
+
+
+def test_baseline_adoption_follows_the_head_the_judge_refresh_advanced(monkeypatch):
+    """Install commits refreshed health detectors above the installed commit; the controller adopts that head."""
+    import json
+    from types import SimpleNamespace
+
+    from benchmarks.sregym.fastloop import toy
+
+    refreshed = "b" * 40
+    calls: list[tuple[str, ...]] = []
+
+    def kubectl(kubeconfig, namespace, *args, **_kwargs):
+        calls.append(args)
+        if args[0] == "get":
+            return json.dumps({"items": [pod]})
+        if args[0] == "exec":
+            return refreshed + "\n"
+        raise AssertionError(args)
+
+    pod = {
+        "metadata": {"name": "sdo-controller-run-x", "creationTimestamp": "2000-01-01T00:00:00Z"},
+        "status": {"phase": "Running", "conditions": [{"type": "Ready", "status": "True"}]},
+    }
+    state = {
+        "evaluation_iteration": 3,
+        "incident_open": False,
+        "ownership_adoption": {"source_commit": refreshed},
+        "history": [{"detector_id": "toy-endpoints", "status": "clear", "evaluated_at": "2030-01-01T00:00:00Z"}],
+    }
+    document = {"data": {"runtime-state.json": json.dumps(state)}}
+    monkeypatch.setattr(
+        toy.subprocess, "run", lambda *a, **k: SimpleNamespace(returncode=0, stdout=json.dumps(document))
+    )
+    monkeypatch.setattr(toy, "command", kubectl)
+    environment = SimpleNamespace(kubeconfig=Path("/kubeconfig"), namespace="toy")
+
+    toy.wait_for_baseline(environment, "a" * 40)
+
+    exec_call = next(args for args in calls if args[0] == "exec")
+    assert "a" * 40 in exec_call, "the head must be checked to contain the installed commit"
+
+
+def test_accepted_head_is_none_when_the_head_does_not_contain_the_installed_commit(monkeypatch):
+    import subprocess
+    from types import SimpleNamespace
+
+    from benchmarks.sregym.fastloop import toy
+
+    def not_ancestor(*_args, **_kwargs):
+        raise subprocess.CalledProcessError(1, "git")
+
+    monkeypatch.setattr(toy, "command", not_ancestor)
+    environment = SimpleNamespace(kubeconfig=Path("/kubeconfig"), namespace="toy")
+
+    assert toy.accepted_head(environment, "pod", "a" * 40) is None
 
 
 def test_toy_kind_configuration_requires_network_policy_enforcement(tmp_path, monkeypatch):

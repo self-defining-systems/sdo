@@ -31,7 +31,6 @@ from benchmarks.sregym.adapter.persistent import (
     runtime_config_from_payload,
     runtime_config_payload,
     teardown,
-    wait_for_maintenance_ack,
 )
 from benchmarks.sregym.adapter.runtime import RuntimeConfig
 
@@ -279,22 +278,6 @@ def _clock(ops: FakeOps) -> Clock:
     return Clock(monotonic=lambda: now[0], sleep=sleep, now=lambda: DETECTED)
 
 
-def test_maintenance_ack_timeout_follows_time_scale(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("SDO_TIME_SCALE", "0.1")
-
-    class NoAck:
-        def controller_logs(self, _control: str) -> str:
-            return ""
-
-    elapsed = [0.0]
-    clock = _elapsed_clock(elapsed)
-
-    with pytest.raises(PersistentControllerError, match="did not acknowledge maintenance"):
-        wait_for_maintenance_ack(NoAck(), "hotel-sdo", "generation", clock)  # type: ignore[arg-type]
-
-    assert elapsed[0] == pytest.approx(60.0)
-
-
 def test_drain_exports_runtime_evidence_after_reflection_ends(tmp_path: Path) -> None:
     # The stage-end export runs before reflection; only a drain-time export holds reflection's rollout.
     from tests.unit.benchmarks.sregym.adapter.test_closeout_receipt_race import _drained_record
@@ -343,32 +326,6 @@ def test_drain_receipt_reports_ack_and_collection_phases(tmp_path: Path) -> None
         "ack_observed",
         "receipt_collected",
     }
-
-
-def test_closeout_settle_timeout_follows_time_scale(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from tests.unit.benchmarks.sregym.adapter.test_closeout_receipt_race import _drained_record
-
-    monkeypatch.setenv("SDO_TIME_SCALE", "0.1")
-    ops = FakeOps()
-    record = _drained_record(tmp_path, ops)
-    collect = ops.collect_receipt
-
-    def unsettled(config: RuntimeConfig, incident_id: str, artifacts_dir: Path) -> dict[str, Any]:
-        receipt = collect(config, incident_id, artifacts_dir)
-        receipt["completed"] = False
-        return receipt
-
-    ops.collect_receipt = unsettled  # type: ignore[method-assign]
-    elapsed = [0.0]
-    clock = _elapsed_clock(elapsed)
-
-    result = drain_pending_incident(
-        record, ops=ops, repository=tmp_path / "s0" / "application_workspace", drained_by="test", clock=clock
-    )
-    assert result.HasField("failure")
-    assert result.failure.incident_id == record.pending.incident_id
-
-    assert elapsed[0] == pytest.approx(12.0)
 
 
 def _config(tmp_path: Path, namespace: str = "hotel", stage: str = "s0") -> RuntimeConfig:

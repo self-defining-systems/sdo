@@ -152,32 +152,6 @@ def test_parser_defaults_match_the_benchmark_configuration() -> None:
     assert up.kind_worker_nodes == 1
 
 
-def test_run_time_scale_is_explicit_and_defaults_to_normal_timing() -> None:
-    normal = build_parser().parse_args(["run", "--run-dir", "x", "--agent", "sdo"])
-    fast = build_parser().parse_args(["run", "--run-dir", "x", "--agent", "sdo", "--time-scale", "0.1"])
-
-    assert normal.time_scale == 1.0
-    assert fast.time_scale == 0.1
-    from benchmarks.sregym.fastloop.cli import _composite_settings
-
-    settings = _composite_settings(fast)
-    assert settings.deadline_seconds == pytest.approx(fast.composite_deadline * 0.1)
-    assert settings.idle_seconds == pytest.approx(fast.composite_idle * 0.1)
-    assert settings.stable_seconds == pytest.approx(2.0)
-    assert settings.poll_seconds == pytest.approx(0.2)
-
-
-def test_time_scale_shortens_persistent_controller_polls(monkeypatch: pytest.MonkeyPatch) -> None:
-    from benchmarks.sregym.fastloop import cli
-
-    sleeps: list[float] = []
-    monkeypatch.setattr(cli.time, "sleep", sleeps.append)
-
-    cli._scaled_clock(0.1).sleep(1.0)
-
-    assert sleeps == [0.1]
-
-
 def test_run_checks_sdo_credentials_before_worker_setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from benchmarks.sregym.fastloop import cli
 
@@ -694,87 +668,6 @@ def test_sdo_agent_preserves_accepted_seed_manifest_selection(tmp_path: Path) ->
     assert agent.stage_inputs("stage", tmp_path, "fp").runtime_config.deployed_manifest_paths == (
         "kubernetes/astronomy-shop.yaml",
     )
-
-
-@pytest.mark.parametrize(
-    ("agent", "app", "provider", "registrations"),
-    [
-        ("sdo", "sregym", "codex", None),
-        ("sdo", "sregym", "claude", None),
-        ("codex", "sregym", "codex", None),
-        ("codex", "toy", "codex", None),
-        ("sdo", "toy", "codex", "sdo/agents/registrations"),
-    ],
-)
-def test_live_agents_reject_reduced_time_scale_before_runtime_work(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, agent: str, app: str, provider: str, registrations: str | None
-) -> None:
-    from benchmarks.sregym.fastloop import cli
-
-    FastloopEnvironment(
-        run_dir=tmp_path,
-        cluster="img1-time-scale-test",
-        kubeconfig=tmp_path / "config",
-        namespace="app",
-        application="app",
-        workspace=tmp_path / "workspace",
-        sregym_dir=tmp_path / "sregym",
-        private_tmp=None,
-        app=app,
-    ).save()
-    monkeypatch.setenv("SDO_TIME_SCALE", "1")
-    monkeypatch.setattr(cli, "kubectl", lambda *a, **kw: pytest.fail("live run reached Kubernetes"))
-    monkeypatch.setattr(cli, "_worker", lambda *a, **kw: pytest.fail("live run started a worker"))
-    flags = ["--agent-registrations", str(cli.REPO_ROOT / registrations)] if registrations else []
-    with pytest.raises(SystemExit, match="--time-scale.*scripted.*live.*1"):
-        main(
-            ["run", "--run-dir", str(tmp_path), "--agent", agent, "--provider", provider, "--time-scale", "0.1", *flags]
-        )
-    assert cli.os.environ["SDO_TIME_SCALE"] == "1"
-
-
-@pytest.mark.parametrize(
-    ("agent", "app", "scale", "scripted"),
-    [
-        ("sdo", "sregym", "1", False),
-        ("codex", "sregym", "1", False),
-        ("sdo", "toy", "0.1", False),
-        ("sdo", "sregym", "0.1", True),
-    ],
-)
-def test_normal_live_and_reduced_scripted_scales_pass_preflight(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, agent: str, app: str, scale: str, scripted: bool
-) -> None:
-    from benchmarks.sregym.fastloop import cli
-
-    FastloopEnvironment(
-        run_dir=tmp_path,
-        cluster="img1-time-scale-test",
-        kubeconfig=tmp_path / "config",
-        namespace="app",
-        application="app",
-        workspace=tmp_path / "workspace",
-        sregym_dir=tmp_path / "sregym",
-        private_tmp=None,
-        app=app,
-    ).save()
-    monkeypatch.setenv("SDO_TIME_SCALE", "original")
-    monkeypatch.setenv("KUBECONFIG", "original")
-    monkeypatch.setattr(cli, "kubectl", lambda *a, **kw: SimpleNamespace(returncode=0))
-
-    def stop_before_worker(*args: object) -> None:
-        raise RuntimeError("passed time-scale preflight")
-
-    monkeypatch.setattr(cli, "_worker", stop_before_worker)
-    monkeypatch.setattr("benchmarks.sregym.fastloop.fault_tracker.describe_sregym_problems", lambda *args, **kwargs: {})
-    flags = (
-        ["--agent-registrations", str(cli.REPO_ROOT / "benchmarks/sregym/adapter/scripted_registrations")]
-        if scripted
-        else []
-    )
-    with pytest.raises(RuntimeError, match="passed time-scale preflight"):
-        main(["run", "--run-dir", str(tmp_path), "--agent", agent, "--time-scale", scale, *flags])
-    assert float(cli.os.environ["SDO_TIME_SCALE"]) == float(scale)
 
 
 def test_fresh_memory_resets_control_state_before_install_but_warm_repeat_keeps_it(
