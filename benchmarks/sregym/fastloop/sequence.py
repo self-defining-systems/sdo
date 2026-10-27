@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from benchmarks.sregym.adapter import WaitKind, wait_for
 from benchmarks.sregym.fastloop.environment import FastloopEnvironment
 from benchmarks.sregym.fastloop.parallel_memory import memory_ancestry, memory_head
 from benchmarks.sregym.fastloop.records import load_records
@@ -45,7 +46,7 @@ class SequencePlan(BaseModel):
     rows: list[SequenceRow] = Field(min_length=2)
     lease: str = "le-hu"
     coord: str = "/mnt/data/shli/coord/coord"
-    timeout_seconds: int = Field(default=1800, gt=0)
+    timeout_seconds: int = Field(default=int(wait_for(WaitKind.RESPONSE)), gt=0)
     # Retained as experiment provenance. Automatic program trust gating was
     # removed; this value grants no execution or publication authority.
     program_trust_threshold: Literal[3] = 3
@@ -137,7 +138,7 @@ def execute_row(plan: SequencePlan, index: int, results: Path) -> None:
     subprocess.run([plan.coord, "check", environment.cluster, "--lease", plan.lease], check=True)
     while os.getloadavg()[0] >= 40:
         subprocess.run([plan.coord, "check", environment.cluster, "--lease", plan.lease], check=True)
-        time.sleep(15)
+        time.sleep(wait_for(WaitKind.PROBE))
     subprocess.run([plan.coord, "gate", "--lease", plan.lease], check=True)
     subprocess.run([plan.coord, "check", environment.cluster, "--lease", plan.lease], check=True)
     with (directory / "stdout.log").open("a") as out, (directory / "stderr.log").open("a") as error:

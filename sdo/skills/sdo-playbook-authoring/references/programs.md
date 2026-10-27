@@ -10,7 +10,7 @@ Detectors call `ctx.DiffAgainstSource(ref)` before selection, then bind playbook
 Both contexts share recorded comparisons.
 
 Accepted Mitigators and raw one-action plans appear in the responder menu.
-Declare object/value parameters; group related actions. PlanExecutor retains controller RBAC and checks.
+Declare object/value parameters; group related actions. PlanExecutor retains its checks; SDO identities hold a cluster-wide grant, so RBAC refuses nothing.
 Per-action results, provenance and errors guide the responder across five incident rounds.
 Intermediate reports grant neither independent outcomes nor trust credit.
 Mitigate may run again: when its rollout stays pending, the runtime re-plans on fresh observations and
@@ -80,7 +80,7 @@ old-revision ReplicaSet of a bound Deployment, resolves a nonnegative integer re
 reversible fields from captured pre-images; irreversible effects remain disclosed.
 
 `Exec{Pod, Container, Command: []program.Value{...}}` derives every command argument through values. The
-controller's existing Kubernetes RBAC must allow the exec subresource; no grant is created by a plan.
+controller identity performs the exec; a plan creates no grant.
 Callers supply that controller transport through `RuntimeOptions.PlanExecConfig`; nil reports refused. Exec
 can reach mounted Secret files, so stdout and stderr are never requested, returned, or stored. Only the exit
 code is reported. Refused or uncertain execution earns no write or health-verification credit, and a durable
@@ -155,8 +155,8 @@ an assignment selects exactly one literal `NAME=value` line (shell or dotenv, qu
 Missing/duplicate assignments, expansions and command substitution fail with a typed reference error.
 Only the executor resolves ConfigMap bytes and sends them through exec stdin; programs, receipts,
 recordings and corpus retain references only. Env refs resolve inside the container, including
-Secret-backed env. Direct Secret keys are unavailable under the existing metadata-only RBAC;
-never add a grant or read Secret data to work around it.
+Secret-backed env. Programs never read Secret data into plans, receipts, logs or memory;
+do not work around that.
 
 `EnsureDatabaseUser{Target, User, Roles, Password: reference, Reason}` creates a missing
 user with a password resolved privately by the executor. For an existing user it restores exact direct roles

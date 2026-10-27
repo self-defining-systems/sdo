@@ -13,19 +13,27 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import time
-from dataclasses import dataclass
+from contextlib import contextmanager
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol
 
+from benchmarks.sregym.adapter import WaitKind, wait_for
+
 if TYPE_CHECKING:
+    from collections.abc import Callable, Iterator, Sequence
     from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
 #: Upper bound on one workload's graceful termination while it is scaled to zero.
-TERMINATION_TIMEOUT_S = 60.0
-POLL_INTERVAL_S = 1.0
+TERMINATION_TIMEOUT_S = wait_for(WaitKind.SLOW_COMMAND)
+POLL_INTERVAL_S = wait_for(WaitKind.POLL_FAST)
 UNSCHEDULABLE = "Unschedulable"
+#: How long a surge pod may stay Unschedulable behind a bound old pod before a restart path recreates it.
+GUARD_GRACE_S = wait_for(WaitKind.REFRESH_SETTLE)
+GUARD_INTERVAL_S = wait_for(WaitKind.POLL_FAST) * 5
 
 
 class SurgeRecoveryError(RuntimeError):
@@ -166,3 +174,66 @@ class KubectlRolloutCluster:
             namespace=self.namespace,
             kubeconfig=self.kubeconfig,
         )
+
+
+@dataclass
+class SurgeWatch:
+    """Observes one namespace during a harness operation that restarts workloads.
+
+    Any path that restarts a Deployment (a fault's recovery, its client refresh,
+    a fault-driver rollout) can deadlock on a surge pod the 1-worker cluster
+    cannot schedule. ``poll`` recreates a workload only after its surge pod has
+    stayed blocked for ``grace_s``, so a normal rollout is never touched.
+    """
+
+    cluster: RolloutCluster
+    namespace: str
+    grace_s: float | None = None
+    clock: Callable[[], float] = time.monotonic
+    first_seen: dict[tuple[str, str], float] = field(default_factory=dict)
+    recreated: list[BlockedSurge] = field(default_factory=list)
+    errors: list[str] = field(default_factory=list)
+
+    def poll(self) -> list[BlockedSurge]:
+        items = self.cluster.snapshot()
+        names = [item["metadata"]["name"] for item in items if item["kind"] == "Deployment"]
+        now = self.clock()
+        grace_s = GUARD_GRACE_S if self.grace_s is None else self.grace_s
+        blocked = {(surge.deployment, surge.pod) for surge in find_blocked_surges(items, names)}
+        self.first_seen = {key: self.first_seen.get(key, now) for key in blocked}
+        due = sorted({deployment for (deployment, pod), seen in self.first_seen.items() if now - seen >= grace_s})
+        if not due:
+            return []
+        try:
+            done = recreate_blocked_surges(self.cluster, due, namespace=self.namespace)
+        except SurgeRecoveryError as error:
+            self.errors.append(str(error))
+            logger.error("%s", error)
+            return []
+        self.first_seen = {}
+        self.recreated.extend(done)
+        return done
+
+
+@contextmanager
+def guard_blocked_surges(watches: Sequence[SurgeWatch], *, interval_s: float | None = None) -> Iterator[None]:
+    """Poll each watch on a background thread while the wrapped operation runs."""
+
+    stop = threading.Event()
+
+    def run() -> None:
+        while not stop.wait(GUARD_INTERVAL_S if interval_s is None else interval_s):
+            for watch in watches:
+                try:
+                    watch.poll()
+                except Exception as error:  # the guarded operation, not the guard, owns failure
+                    watch.errors.append(f"{type(error).__name__}: {error}")
+                    logger.warning("eval surge guard poll failed in %s: %s", watch.namespace, error)
+
+    thread = threading.Thread(target=run, name="surge-guard", daemon=True)
+    thread.start()
+    try:
+        yield
+    finally:
+        stop.set()
+        thread.join()

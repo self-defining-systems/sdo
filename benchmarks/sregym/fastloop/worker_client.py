@@ -20,11 +20,13 @@ import threading
 import time
 from typing import IO, TYPE_CHECKING, Any
 
+from benchmarks.sregym.adapter import WaitKind, wait_for
+
 if TYPE_CHECKING:
     from pathlib import Path
     from types import TracebackType
 
-DEFAULT_TIMEOUT_SECONDS = 1800.0
+DEFAULT_TIMEOUT_SECONDS = wait_for(WaitKind.RESPONSE)
 
 
 class SregymWorkerError(RuntimeError):
@@ -133,7 +135,7 @@ class SregymWorker:
                 except (BrokenPipeError, ValueError):
                     pass
                 try:
-                    process.wait(timeout=30)
+                    process.wait(timeout=wait_for(WaitKind.COMMAND))
                 except subprocess.TimeoutExpired:
                     process.kill()
                     process.wait()

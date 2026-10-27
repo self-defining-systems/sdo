@@ -14,8 +14,10 @@ from typing import Any
 from benchmarks.sregym.adapter import (
     ImageRetentionError,
     LaneResourcePolicy,
+    WaitKind,
     assert_host_disk_headroom,
     retain_lane_images,
+    wait_for,
 )
 from benchmarks.sregym.fastloop.image_delivery import registry_delivery, save_delivery, warn_fallback
 
@@ -184,6 +186,10 @@ def _load_archive_images(cluster: str, images: list[str]) -> None:
             subprocess.run(
                 ["docker", "image", "save", "--platform", image_platform, "-o", str(archive), *sorted(missing)],
                 check=True,
-                timeout=180,
+                timeout=wait_for(WaitKind.ROLLOUT),
             )
-            subprocess.run(["kind", "load", "image-archive", "--name", cluster, str(archive)], check=True, timeout=180)
+            subprocess.run(
+                ["kind", "load", "image-archive", "--name", cluster, str(archive)],
+                check=True,
+                timeout=wait_for(WaitKind.ROLLOUT),
+            )

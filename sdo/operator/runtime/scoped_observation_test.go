@@ -41,13 +41,13 @@ func TestScopedAvailabilitySeededDenialRegrant(t *testing.T) {
 				}
 				return false, nil, nil
 			})
-			tracker := NewStateTracker(StateTrackerConfig{Client: client, Namespace: "app", Scope: scope, Ceiling: scope, Settle: time.Second})
+			tracker := newTrackerForTest(t, StateTrackerConfig{Client: client, Namespace: "app", Scope: scope, Ceiling: scope, Settle: time.Second})
 			defer tracker.Stop()
 			if err := tracker.Start(ctx); err != nil {
 				t.Fatal(err)
 			}
 			clock := time.Unix(0, 0)
-			cache, err := NewKubernetesCache(KubernetesCacheConfig{Now: func() time.Time { clock = clock.Add(time.Minute); return clock }, Namespace: "app", Client: client, Scope: scope, Ceiling: scope, TrackDrift: true, Generation: "commit"}, nil)
+			cache, err := newCacheForTest(t, KubernetesCacheConfig{Now: func() time.Time { clock = clock.Add(time.Minute); return clock }, Namespace: "app", Client: client, Scope: scope, Ceiling: scope, TrackDrift: true, Generation: "commit"}, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -203,7 +203,7 @@ func TestScopedRevocationChangesReadsAndPreservesIntersection(t *testing.T) {
 	scope := ceiling
 	revision := "one"
 	client := fake.NewSimpleClientset()
-	cache, err := NewKubernetesCache(KubernetesCacheConfig{Namespace: "app", Client: client, Scope: scope, Ceiling: ceiling, AcceptedScope: func(context.Context) (sdk.ObservationScope, string, error) { return scope, revision, nil }}, nil)
+	cache, err := newCacheForTest(t, KubernetesCacheConfig{Namespace: "app", Client: client, Scope: scope, Ceiling: ceiling, AcceptedScope: func(context.Context) (sdk.ObservationScope, string, error) { return scope, revision, nil }}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -233,7 +233,7 @@ func TestScopedCoverageGapInvalidatesSettleWithoutEvaluation(t *testing.T) {
 	client := fake.NewSimpleClientset()
 	target := sdk.ObservationTarget{APIVersion: "v1", Kind: "Service", Namespace: "foreign"}
 	scope := sdk.ObservationScope{Version: 1, Targets: []sdk.ObservationTarget{target}}
-	tracker := NewStateTracker(StateTrackerConfig{Client: client, Namespace: "app", Scope: scope, Ceiling: scope, Settle: time.Second})
+	tracker := newTrackerForTest(t, StateTrackerConfig{Client: client, Namespace: "app", Scope: scope, Ceiling: scope, Settle: time.Second})
 	defer tracker.Stop()
 	if err := tracker.Start(context.Background()); err != nil {
 		t.Fatal(err)
@@ -278,7 +278,7 @@ func TestScopedControllerAvailabilitySeeded(t *testing.T) {
 			spec.Interval = time.Second
 			detector := scheduledDetector{spec: spec}
 			clock := time.Unix(0, 0)
-			cache, err := NewKubernetesCache(KubernetesCacheConfig{Now: func() time.Time { clock = clock.Add(time.Minute); return clock }, Client: client, Namespace: "app", Scope: scope, Ceiling: scope}, []sdk.Detector{detector})
+			cache, err := newCacheForTest(t, KubernetesCacheConfig{Now: func() time.Time { clock = clock.Add(time.Minute); return clock }, Client: client, Namespace: "app", Scope: scope, Ceiling: scope}, []sdk.Detector{detector})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -326,7 +326,7 @@ func TestScopedPendingWebhookDriftSurvivesDenial(t *testing.T) {
 	source, commit := foreignSource(t)
 	target := sdk.ObservationTarget{APIVersion: "admissionregistration.k8s.io/v1", Kind: "MutatingWebhookConfiguration", Name: "policy"}
 	scope := sdk.ObservationScope{Version: 1, Targets: []sdk.ObservationTarget{target}}
-	cache, err := NewKubernetesCache(KubernetesCacheConfig{Namespace: "app", Client: fake.NewSimpleClientset(), Scope: scope, Ceiling: scope, TrackDrift: true}, nil)
+	cache, err := newCacheForTest(t, KubernetesCacheConfig{Namespace: "app", Client: fake.NewSimpleClientset(), Scope: scope, Ceiling: scope, TrackDrift: true}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -437,7 +437,7 @@ func TestScopedRetryBackoffRequiresFreshRegrant(t *testing.T) {
 		}
 		return false, nil, nil
 	})
-	cache, err := NewKubernetesCache(KubernetesCacheConfig{Namespace: "app", Client: client, Scope: scope, Ceiling: scope, Now: func() time.Time { return now }}, nil)
+	cache, err := newCacheForTest(t, KubernetesCacheConfig{Namespace: "app", Client: client, Scope: scope, Ceiling: scope, Now: func() time.Time { return now }}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

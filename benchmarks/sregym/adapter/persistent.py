@@ -36,17 +36,18 @@ from typing import TYPE_CHECKING, Any, Protocol, get_args, get_type_hints
 from google.protobuf import json_format
 from pydantic import BaseModel, ConfigDict, Field
 
+from benchmarks.sregym.adapter.budgets import WaitKind, wait_for
 from benchmarks.sregym.adapter.cluster_resources import kubectl
 from benchmarks.sregym.adapter.eval_guards import (
     INCIDENT_EXECUTION_LABEL,
     STANDBY_LABEL,
+    BusyDeadline,
+    busy_until,
     idle_standby_jobs,
     incident_work_open,
-    queued_reflection_count,
     queued_reflection_ids,
     terminal_incident_ids,
 )
-from benchmarks.sregym.adapter.eval_guards import reflection_attempt_seconds as default_reflection_attempt_seconds
 from benchmarks.sregym.adapter.fault_gate import (
     BASELINE_TIMEOUT_SECONDS,
     RESUMED_BASELINE_TIMEOUT_SECONDS,
@@ -73,7 +74,7 @@ from benchmarks.sregym.adapter.runtime import (
     export_controller_logs,
 )
 from benchmarks.sregym.protocol import ProductionReceiptValidationError, validate_production_receipt
-from benchmarks.sregym.protocol.injection import InvalidInjectionError
+from benchmarks.sregym.protocol.injection import IncidentOpenBeforeInjectionError, InvalidInjectionError
 from benchmarks.sregym.protocol.native_receipt import NativeReceiptValidationError
 from sdo.contracts import (
     ControllerObservation,
@@ -97,19 +98,16 @@ STRICT_RECEIPT_FILENAME = "sdo_production_receipt_strict.json"
 # A drained receipt that failed production validation, kept with its error for analysis.
 REJECTED_RECEIPT_FILENAME = "sdo_rejected_production_receipt.json"
 CONTROLLER_LOGS_SUBDIR = Path(RUNTIME_ARTIFACTS_DIRNAME) / "controller_logs"
-POLL_SECONDS = 1.0
+POLL_SECONDS = wait_for(WaitKind.POLL_FAST)
 #: A state read at or past a deadline still gets this long to be observed, so it decides the outcome.
-OBSERVATION_FLOOR_SECONDS = 5.0
+OBSERVATION_FLOOR_SECONDS = wait_for(WaitKind.POLL)
 CONTROLLER_JOB_NAME = "sdo-controller-run"
 # The runtime storage edge's checkpoint identity (lifecycleio.StateRevisionAnnotation
 # and StateDataKey): its CAS annotation plus typed data key, never its name.
 STATE_REVISION_ANNOTATION = "sdo.dev/state-revision"
 STATE_DATA_KEY = "runtime-state.json"
-MAINTENANCE_ACK_TIMEOUT_SECONDS = 600.0
-#: Recovery waits this long for SDO to close an incident that opened after the graded one closed.
-#: Live P4 responder runtime p90 was 442 s (18 rows, 2026-10-26); the rest is closure margin, capped at 10 min.
-POST_CLOSURE_WAIT_SECONDS = 600.0
-DRAIN_TIMEOUT_SECONDS = 3600.0
+MAINTENANCE_ACK_TIMEOUT_SECONDS = wait_for(WaitKind.OPERATION)
+DRAIN_TIMEOUT_SECONDS = wait_for(WaitKind.REFLECTION_DRAIN)
 # After the reflection drain returns, the controller's asynchronous close-out may
 # still be settling the two volatile signals the strict receipt samples: the
 # durable responder result reaching a terminal ``completed`` status, and the
@@ -118,10 +116,10 @@ DRAIN_TIMEOUT_SECONDS = 3600.0
 # retries), so the gate must wait for these to settle before it samples, or a
 # solved incident is rejected. Bounded so a genuinely unsettled receipt still
 # rejects promptly.
-CLOSEOUT_SETTLE_TIMEOUT_SECONDS = 120.0
+CLOSEOUT_SETTLE_TIMEOUT_SECONDS = wait_for(WaitKind.CLOSEOUT_SETTLE)
 # Resume can require informer resync, state baseline startup and workload probes
 # before reconciliation starts. Bound that path separately from receipt drain.
-RENDERED_LOCK_SETTLE_TIMEOUT_SECONDS = 600.0
+RENDERED_LOCK_SETTLE_TIMEOUT_SECONDS = wait_for(WaitKind.OPERATION)
 STAGE_END_EVIDENCE_SCOPE = "stage-end snapshot; the drained strict receipt supersedes it"
 _ZERO_TIME = "0001-01-01T00:00:00Z"
 
@@ -289,8 +287,9 @@ class ControllerPod:
 class VerifiedIncident:
     incident_id: str
     closure: dict[str, Any] | None
-    #: Reflections SDO still owed ahead of this closure in the state that showed it verified.
-    queued_reflections: int = 0
+    #: The controller's ``busy_until`` in the state that showed it verified: its own bound on this closure and
+    #: every reflection queued ahead of it.
+    busy_until: datetime | None = None
 
 
 def runtime_config_payload(config: RuntimeConfig) -> dict[str, Any]:
@@ -768,23 +767,19 @@ class StageInputs:
     receipt_dir: Path
     state_path: Path
     kubeconfig: str | None = None
-    verification_timeout_seconds: float = 3900.0
+    verification_timeout_seconds: float = wait_for(WaitKind.INCIDENT_VERIFICATION)
     #: End the stage as a detection miss if no incident has opened this long
     #: after injection. None waits the whole verification budget.
     detection_timeout_seconds: float | None = None
     lifecycle_installs_controller: bool = False
     #: Budget from a verified closure to its reflection's acknowledgment, shared by every drain of the incident.
     reflection_wait_seconds: float = DRAIN_TIMEOUT_SECONDS
-    #: SDO's worst case to finish or abandon one queued reflection; the deadline adds one per reflection ahead.
-    reflection_attempt_seconds: float = default_reflection_attempt_seconds()
 
     def __post_init__(self) -> None:
         if self.detection_timeout_seconds is not None and self.detection_timeout_seconds <= 0:
             raise ValueError(f"detection_timeout_seconds must be positive, got {self.detection_timeout_seconds}")
         if self.reflection_wait_seconds <= 0:
             raise ValueError(f"reflection_wait_seconds must be positive, got {self.reflection_wait_seconds}")
-        if self.reflection_attempt_seconds <= 0:
-            raise ValueError(f"reflection_attempt_seconds must be positive, got {self.reflection_attempt_seconds}")
 
 
 @dataclass(frozen=True)
@@ -946,11 +941,24 @@ def run_persistent_stage(
         raise PersistentControllerError("the persistent controller pod was replaced mid-pipeline")
     state.controllers[inputs.namespace] = record
     state.save(inputs.state_path)
-    known = _known_incident_ids(ops.runtime_state(control))
     install_ready = clock.monotonic()
     generation = f"{inputs.stage_label}-{uuid.uuid4().hex[:8]}"
+    known: set[str] = set()
+
+    def inject_binding_incidents() -> None:
+        # The one point the fault is applied: admission's proof ran its 700-1000 s before this, and any
+        # incident it opened is no more this row's than one from a previous row.
+        state = ops.runtime_state(control)
+        if incident_work_open(state):
+            raise IncidentOpenBeforeInjectionError(
+                f"incident work was open when the fault was about to be injected in {control!r}",
+                {"busy_until": state.get("busy_until"), "incident_request": state.get("incident_request")},
+            )
+        known.update(_known_incident_ids(state))
+        inject()
+
     try:
-        gate_timings = ops.inject_after_resume(control, generation, inject)
+        gate_timings = ops.inject_after_resume(control, generation, inject_binding_incidents)
     except InvalidInjectionError as exc:
         # No incident exists: settle maintenance without waiting for response, reflection,
         # acknowledgment, or a strict receipt, and retain a benchmark terminal record.
@@ -1146,16 +1154,13 @@ def pause_for_recovery(
     *,
     incident_id: str | None = None,
     clock: Clock | None = None,
-    followup_wait_seconds: float = POST_CLOSURE_WAIT_SECONDS,
-    reflection_attempt_seconds: float = default_reflection_attempt_seconds(),
     closure_open: bool = False,
 ) -> FollowupClosureWait | None:
     """Fence harness mutations behind a terminal incident and acknowledged intake pause.
 
     An incident that opened after the graded incident closed is SDO's work in progress, not a
-    harness error: recovery waits a bounded time for SDO to close it and reports that wait. Each
-    reflection queued behind a failed attempt's acknowledgment extends the bound by SDO's worst case
-    for one reflection (``reflection_attempt_seconds``), since SDO may legitimately run it that long.
+    harness error: recovery waits for SDO to close it and reports that wait. The bound is the controller's
+    own ``busy_until`` (its response timeout, retries and reflection queue) plus one closeout margin.
     ``closure_open`` is for a row past its reflection deadline: intake is still paused, but the
     still-running closure is left to SDO, so the injected fault does not outlive the row.
     """
@@ -1173,9 +1178,7 @@ def pause_for_recovery(
         if incident_id is not None and incident_id not in closed:
             raise PersistentControllerError(f"eval: recovery incident {incident_id!r} is not durably closed")
 
-    wait = _wait_for_followup_closure(
-        ops, control, incident_id, closed, followup_wait_seconds, reflection_attempt_seconds, clock
-    )
+    wait = _wait_for_followup_closure(ops, control, incident_id, closed, clock)
     require_closed()
     generation = f"benchmark-recovery-{uuid.uuid4().hex}-paused"
     ops.set_maintenance(control, paused=True, generation=generation)
@@ -1196,24 +1199,22 @@ def _wait_for_followup_closure(
     control: str,
     incident_id: str | None,
     closed: set[str],
-    bound: float,
-    reflection_attempt_seconds: float,
     clock: Clock,
 ) -> FollowupClosureWait | None:
     """Wait while the graded incident is closed and a later incident or a queued reflection is still open.
 
-    The bound is the largest ``bound + queued reflections x reflection_attempt_seconds`` seen, so a queue
-    that drains never shortens a wait already in progress.
+    The bound is the controller's ``busy_until`` plus one closeout margin; it grows only when the controller
+    raises it, so a queue that drains never shortens a wait already in progress.
     """
 
     if incident_id is None:
         return None
     started = clock.monotonic()
     followups: list[str] = []
-    budget = bound
+    busy = BusyDeadline(wait_for(WaitKind.CLOSEOUT_SETTLE))
     while True:
         snapshot = ops.runtime_state(control)
-        if not snapshot or not incident_work_open(snapshot):
+        if not snapshot or not busy.observe(snapshot, clock.monotonic(), clock.now()):
             break
         closed.update(terminal_incident_ids(snapshot))
         queued = queued_reflection_ids(snapshot)
@@ -1222,16 +1223,21 @@ def _wait_for_followup_closure(
         if incident_id not in closed or (not queued and names == [incident_id]):
             break
         followups.extend(name for name in names if name not in followups)
-        budget = max(budget, bound + queued_reflection_count(snapshot) * reflection_attempt_seconds)
         waited = clock.monotonic() - started
-        if waited >= budget:
-            raise FollowupClosureTimeout(FollowupClosureWait(incident_id, tuple(followups), waited, budget, False))
+        if busy.expired(clock.monotonic()):
+            raise FollowupClosureTimeout(
+                FollowupClosureWait(
+                    incident_id, tuple(followups), waited, waited + busy.seconds_left(clock.monotonic()), False
+                )
+            )
         clock.sleep(POLL_SECONDS)
     if not followups:
         return None
     waited = clock.monotonic() - started
     logger.info("recovery waited %.1fs for follow-up incident(s) %s to close", waited, ", ".join(followups))
-    return FollowupClosureWait(incident_id, tuple(followups), waited, budget, True)
+    return FollowupClosureWait(
+        incident_id, tuple(followups), waited, waited + busy.seconds_left(clock.monotonic()), True
+    )
 
 
 def collect_followup_incident(
@@ -1358,7 +1364,7 @@ def _rendered_lock_settled(repository: Path) -> bool:
         cwd=repository,
         capture_output=True,
         check=False,
-        timeout=30,
+        timeout=wait_for(WaitKind.COMMAND),
     )
     return result.returncode == 0
 
@@ -1479,15 +1485,17 @@ def _lost_controller_message(record: ControllerRecord, pod: ControllerPod | None
 
 
 def reflection_deadline(inputs: StageInputs, verified: VerifiedIncident, clock: Clock) -> datetime:
-    """The incident's one reflection deadline: its budget plus SDO's worst case for each reflection queued ahead.
+    """The incident's one reflection deadline: the later of its budget and the controller's own ``busy_until``.
 
     A closure waits behind the queue's FIFO (one reflection at a time under the broker lock), so a fixed
     budget from verification would expire while SDO is still legitimately working through earlier failed
-    attempts.
+    attempts. The controller states that bound itself, so the deadline adds one closeout margin to it.
     """
 
-    seconds = inputs.reflection_wait_seconds + verified.queued_reflections * inputs.reflection_attempt_seconds
-    return clock.now() + timedelta(seconds=seconds)
+    deadline = clock.now() + timedelta(seconds=inputs.reflection_wait_seconds)
+    if verified.busy_until is not None:
+        deadline = max(deadline, verified.busy_until + timedelta(seconds=wait_for(WaitKind.CLOSEOUT_SETTLE)))
+    return deadline
 
 
 def drain_pending_incident(
@@ -1854,7 +1862,7 @@ def _observe_state(
     *,
     known: set[str] | None = None,
     incident_id: str = "",
-    timeout: float = 30.0,
+    timeout: float = wait_for(WaitKind.COMMAND),
 ) -> ControllerObservation:
     try:
         observed = observe_controller_state(state, known=known, incident_id=incident_id, timeout=timeout)
@@ -1874,7 +1882,9 @@ def _known_incident_ids(state: dict[str, Any]) -> set[str]:
     return set(_observe_state(state).known_incident_ids)
 
 
-def _wait_for_controller_pod(ops: ClusterOps, control: str, clock: Clock, timeout: float = 300.0) -> ControllerPod:
+def _wait_for_controller_pod(
+    ops: ClusterOps, control: str, clock: Clock, timeout: float = wait_for(WaitKind.ROLLOUT)
+) -> ControllerPod:
     deadline = clock.monotonic() + timeout
     while clock.monotonic() < deadline:
         pod = ops.controller_pod(control)
@@ -1928,7 +1938,7 @@ def _wait_for_verified_incident(
             return VerifiedIncident(
                 incident_id=observed.verified_incident_id,
                 closure=closure,
-                queued_reflections=queued_reflection_count(state),
+                busy_until=busy_until(state),
             )
         _raise_observation_failure(observed, state)
         clock.sleep(POLL_SECONDS)

@@ -8,7 +8,7 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol
 
-from benchmarks.sregym.adapter import PersistentState, kubectl
+from benchmarks.sregym.adapter import PersistentState, WaitKind, kubectl, wait_for
 from benchmarks.sregym.fastloop.baseline_recovery import (
     NON_APPLICATION_NAMESPACES,
     RESTORE_RECEIPTS,
@@ -54,6 +54,8 @@ class ResetCluster(Protocol):
     def apply(self, namespace: str, value: dict[str, Any]) -> None: ...
 
     def create_namespace(self, namespace: str) -> None: ...
+
+    def ensure_secret(self, namespace: str, value: dict[str, Any]) -> bool: ...
 
     def reset_controller(self, seed_commit: str, *, preserve_repository: bool = False) -> None: ...
 
@@ -214,6 +216,7 @@ class RestoreChecks:
     def validate(self) -> None:
         """Reject incomplete recovery before controller or namespace mutations."""
         from benchmarks.sregym.fastloop.recovery_closure import complete_recovery_baselines, missing_prerequisites
+        from benchmarks.sregym.fastloop.regenerable import is_regenerable
 
         env = self.environment
         baselines = load_application_baseline(env.baseline_path, env.namespace)
@@ -236,6 +239,9 @@ class RestoreChecks:
                 absent.add(baseline.namespace)
         unsupported = []
         for ref in missing_prerequisites(baselines):
+            # Restore regenerates these (see regenerable.py); they need no existing object.
+            if is_regenerable(ref.namespace, ref.kind, ref.name):
+                continue
             # A namespaced object omitted by the baseline cannot be recreated.
             # Existing external objects only need a name projection; never read
             # or archive Secret payloads, and never create cluster-scoped objects.
@@ -351,13 +357,13 @@ def restore_application(
         environment.workspace,
         accepted_restore_baselines(environment.workspace, baselines, seed_commit=environment.seed_commit),
     )
-    worker.request("clean_start", problem_id=environment.deploy_problem, timeout=200)
+    worker.request("clean_start", problem_id=environment.deploy_problem, timeout=wait_for(WaitKind.ROLLOUT))
     reconcile_and_record(cluster, baselines, environment.workspace, environment.run_dir / RESTORE_RECEIPTS)
-    deadline = time.monotonic() + 60
+    deadline = time.monotonic() + wait_for(WaitKind.MINUTE)
     if checks:
         checks.settle()
     while True:
-        health = worker.request("health", namespace=environment.namespace, timeout=60)
+        health = worker.request("health", namespace=environment.namespace, timeout=wait_for(WaitKind.SLOW_COMMAND))
         if health.get("healthy") or time.monotonic() >= deadline:
             break
         time.sleep(min(1, max(0, deadline - time.monotonic())))
@@ -369,19 +375,32 @@ def restore_application(
         restore_social_fixture(environment.kubeconfig)
     if checks and environment.app != "toy":
         refreshed = worker.request(
-            "refresh_baseline_clients", problem_id=environment.deploy_problem, dependencies_only=True, timeout=240
+            "refresh_baseline_clients",
+            problem_id=environment.deploy_problem,
+            dependencies_only=True,
+            timeout=wait_for(WaitKind.ROLLOUT),
         )
         if refreshed.get("success") is not True:
             raise RuntimeError("eval: restored application clients did not settle after dependencies")
-    oracle = worker.request("baseline_oracle", problem_id=environment.deploy_problem, verify_traffic=True, timeout=200)
+    oracle = worker.request(
+        "baseline_oracle",
+        problem_id=environment.deploy_problem,
+        verify_traffic=True,
+        timeout=wait_for(WaitKind.ROLLOUT),
+    )
     if not oracle.get("success"):
-        refreshed = worker.request("refresh_baseline_clients", problem_id=environment.deploy_problem, timeout=240)
+        refreshed = worker.request(
+            "refresh_baseline_clients", problem_id=environment.deploy_problem, timeout=wait_for(WaitKind.ROLLOUT)
+        )
         if refreshed.get("success") is not True:
             raise RuntimeError(
                 f"reset client refresh failed for {environment.namespace}: {refreshed}; traffic: {oracle}"
             )
         oracle = worker.request(
-            "baseline_oracle", problem_id=environment.deploy_problem, verify_traffic=True, timeout=200
+            "baseline_oracle",
+            problem_id=environment.deploy_problem,
+            verify_traffic=True,
+            timeout=wait_for(WaitKind.ROLLOUT),
         )
         if not oracle.get("success"):
             raise RuntimeError(f"reset left independent traffic failing for {environment.deploy_problem}: {oracle}")

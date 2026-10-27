@@ -688,9 +688,6 @@ func (l *ResponderLoop) snapshotView(ctx context.Context) (program.ReadView, err
 	if err != nil {
 		return nil, err
 	}
-	if l.Request.ObservationGeneration != "" && l.Request.ObservationGeneration != observationGeneration(snapshot) {
-		return nil, fmt.Errorf("observation scope changed; incident diagnosis requires fresh investigation")
-	}
 	if l.ReadView == nil {
 		return nil, errors.New("live read view is unavailable")
 	}

@@ -29,7 +29,7 @@ func TestPodAdmissionBlocksVerificationUntilAPIRecovers(t *testing.T) {
 		return true, action.(ktesting.CreateAction).GetObject(), probeErr
 	})
 	detector := workloadhealth.NewPodAdmissionDetector(sdk.DetectorSpec{ID: "pod-admission", OriginatingCommit: "synthetic-test", Class: sdk.DetectorClassHealth, Owner: sdk.DetectorOwnerHealthJudge, Batching: sdk.BatchingPolicy{Severity: sdk.SeverityCritical}, Interval: time.Second, Persistence: sdk.PersistencePolicy{Firing: 1, Clearing: 1}, Watches: []sdk.WatchKind{{APIVersion: "v1", Kind: "Pod"}}})
-	cache, err := NewKubernetesCache(KubernetesCacheConfig{Namespace: "app", Client: client}, []sdk.Detector{detector})
+	cache, err := newCacheForTest(t, KubernetesCacheConfig{Namespace: "app", Client: client}, []sdk.Detector{detector})
 	if err != nil {
 		t.Fatal(err)
 	}

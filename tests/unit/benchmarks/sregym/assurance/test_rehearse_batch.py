@@ -66,33 +66,19 @@ def test_every_vehicle_is_a_toy_fault_the_toy_app_can_inject() -> None:
         ("incident 1 x: no error", "boom", "incident-error"),
         ("incident 1 x: detected", "no detector opened the incident", "no-detection"),
         ("incident 2 x: sdo mitigated", "None", "not-mitigated"),
-        ("controller can delete pods", "no", "rbac-missing-verb"),
         ("x: receipt valid", "ValueError", "receipt-invalid"),
-        ("scenario-budget", "300s > 240s", "over-budget"),
         ("scenario", "fastloop up failed (exit 1)", "cluster-up-failed"),
+        (
+            "admission",
+            "p/PVCClaimMismatch: unsupported repair/snapshot scope unreviewed:PVCClaimMismatch",
+            "fault-unsupported",
+        ),
+        ("responder", "oracle reported failure", "oracle-failed"),
         ("something", "new", "other"),
     ],
 )
 def test_failed_checks_get_stable_error_classes(name: str, detail: str, expected: str) -> None:
     assert batch.classify(name, detail) == expected
-
-
-def _can_i(denied: set[str]) -> Any:
-    def command(argv: Any) -> tuple[int, str]:
-        verb, resource = argv[argv.index("can-i") + 1 : argv.index("can-i") + 3]
-        return 0, "no\n" if f"{verb} {resource}" in denied else "yes\n"
-
-    return command
-
-
-def test_rbac_probe_names_the_missing_verb_per_kind_and_skips_namespaces() -> None:
-    missing = batch.probe_rbac(
-        ["Service", "NetworkPolicy", "Namespace", "Secret"],
-        _can_i({"delete networkpolicies.networking.k8s.io"}),
-        namespace="app",
-        kubeconfig="kc",
-    )
-    assert missing == {"NetworkPolicy": ["delete networkpolicies.networking.k8s.io"]}
 
 
 def test_one_failing_stage_does_not_hide_the_others(tmp_path: Path) -> None:
@@ -101,23 +87,16 @@ def test_one_failing_stage_does_not_hide_the_others(tmp_path: Path) -> None:
         "target_port": batch.Stage("vehicle", "fail", "no-detection", "x: detected: none", "/ev"),
         "network_policy": batch.Stage("vehicle", "pass", evidence="/ev2"),
     }
-    rows = {
-        r.problem.problem_id: r
-        for r in batch.build_rows(
-            problems, vehicles, {"MutatingWebhookConfiguration": ["delete mutatingwebhookconfigurations"]}
-        )
-    }
+    rows = {r.problem.problem_id: r for r in batch.build_rows(problems, vehicles)}
 
     port = rows["p-port"]
-    assert [s.status for s in port.stages] == ["pass", "pass", "pass", "fail"]
+    assert [s.status for s in port.stages] == ["pass", "fail"]
     assert port.failure is not None
     assert port.failure.error_class == "no-detection"
     assert port.stage_reached == "vehicle"
 
     hook = rows["p-hook"]
-    assert hook.failure is not None
-    assert hook.failure.error_class == "rbac-missing-verb"
-    assert [s.error_class for s in hook.findings] == ["rbac-missing-verb", batch.COVERAGE_CLASS]
+    assert [s.error_class for s in hook.findings] == [batch.COVERAGE_CLASS]
 
     mixed = rows["p-mixed"]
     assert mixed.failure is not None
@@ -135,7 +114,7 @@ def test_summary_groups_problems_by_class_with_the_first_evidence(tmp_path: Path
         "target_port": batch.Stage("vehicle", "fail", "no-detection", "d", "/ev"),
         "image": batch.Stage("vehicle", "pass"),
     }
-    rows = batch.build_rows(problems, vehicles, {})
+    rows = batch.build_rows(problems, vehicles)
     classes = {c["error_class"]: c for c in batch.group_by_class(rows)}
     assert classes["no-detection"]["problems"] == ["p-port"]
     assert classes["no-detection"]["first_evidence"] == "/ev"
@@ -169,7 +148,7 @@ class FakeGate:
         return {"code_sha": "abc" * 13, "scenarios": results}
 
     def _step(self, argv: Any, timeout: float) -> tuple[int, str]:
-        return _can_i(set())(argv)
+        return 0, ""
 
 
 def test_the_batch_runs_every_vehicle_on_its_cluster_and_continues_after_failures(tmp_path: Path) -> None:
@@ -201,7 +180,7 @@ def test_the_batch_runs_every_vehicle_on_its_cluster_and_continues_after_failure
     assert "p-hook" in markdown
 
 
-def test_a_cluster_that_will_not_start_fails_every_problem_at_rbac_without_raising(tmp_path: Path) -> None:
+def test_a_cluster_that_will_not_start_fails_its_vehicle_problems_without_raising(tmp_path: Path) -> None:
     problems = batch.load_problems(*_plan(tmp_path))
 
     def make(lane: str, run_dir: Path, scenarios: tuple[Scenario, ...]) -> Any:
@@ -233,18 +212,3 @@ def test_clusters_must_be_positive(tmp_path: Path) -> None:
 
 def test_a_check_round_trips_through_the_gate_summary() -> None:
     assert batch._check({"name": "n", "ok": False, "detail": "d"}) == Check("n", False, "d")
-
-
-def test_responder_write_gaps_are_their_own_error_class(tmp_path: Path) -> None:
-    problems = batch.load_problems(*_plan(tmp_path))
-    rows = {r.problem.problem_id: r for r in batch.build_rows(problems, {}, {}, responder_gaps={"Service": "patch"})}
-    assert [s.error_class for s in rows["p-port"].findings] == [batch.RESPONDER_GAP_CLASS]
-    assert "Service (denied patch)" in rows["p-port"].failure.detail
-    assert not [s for s in rows["p-hook"].findings if s.error_class == batch.RESPONDER_GAP_CLASS]
-
-
-def test_a_checkout_without_the_responder_write_check_skips_that_stage_and_says_so(tmp_path: Path) -> None:
-    problems = batch.load_problems(*_plan(tmp_path))
-    rows = batch.build_rows(problems, {}, {}, responder_error="responder-write check not in this checkout")
-    stage = next(s for s in rows[0].stages if s.name == "responder-write")
-    assert (stage.status, stage.error_class) == ("skip", "")

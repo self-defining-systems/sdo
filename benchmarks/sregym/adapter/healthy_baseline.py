@@ -16,6 +16,8 @@ import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Protocol
 
+from benchmarks.sregym.adapter.budgets import WaitKind, wait_for
+
 if TYPE_CHECKING:
     import subprocess
 
@@ -25,7 +27,7 @@ if TYPE_CHECKING:
 BASELINE_DIRECTORY = "/workspace/.sdo-baseline/healthy"
 CONTROLLER_JOB = "job/sdo-controller-run"
 DEFAULT_SNAPSHOT_COUNT = 3
-DEFAULT_SNAPSHOT_INTERVAL_SECONDS = 2.0
+DEFAULT_SNAPSHOT_INTERVAL_SECONDS = wait_for(WaitKind.SAMPLE)
 # Match operatorcli.RunBaselineWrite before opening kubectl's stdin stream.
 # A remote size rejection can close its reader before kubectl finishes sending,
 # leaving kubectl blocked until the outer command timeout.

@@ -16,6 +16,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from benchmarks.sregym.adapter.budgets import WaitKind, wait_for
+
 Run = Callable[..., subprocess.CompletedProcess[str]]
 
 
@@ -28,8 +30,17 @@ def prepare_oracle_observability(
 ) -> float:
     """Return the lane's total CPU cap after installing and checking stock telemetry."""
 
+    observer = sregym_dir / "sregym/observer"
+    if not observer.is_dir():
+        raise ValueError(f"Oracle observability needs {observer}: the SREGym submodule is not checked out")
+
     def command(argv: list[str], **kwargs: Any) -> str:
-        return run(argv, check=True, text=True, capture_output=True, timeout=600, **kwargs).stdout
+        try:
+            return run(
+                argv, check=True, text=True, capture_output=True, timeout=wait_for(WaitKind.OPERATION), **kwargs
+            ).stdout
+        except subprocess.CalledProcessError as exc:
+            raise RuntimeError(f"{' '.join(argv)} exited {exc.returncode}: {exc.stderr}") from exc
 
     nodes = command(["kind", "get", "nodes", "--name", cluster]).split()
     caps = command(["docker", "inspect", "--format", "{{.HostConfig.NanoCpus}}", *nodes]).split()
@@ -37,7 +48,6 @@ def prepare_oracle_observability(
         raise ValueError("Oracle observability requires every lane node to be Docker CPU capped")
     cores = sum(int(cap) for cap in caps) / 1e9
     kube = ["kubectl", "--kubeconfig", str(kubeconfig)]
-    observer = sregym_dir / "sregym/observer"
     command(
         [*kube, "apply", "--server-side", "-f", str(Path(__file__).parent / "infrastructure/openebs-operator.yaml")]
     )
@@ -109,7 +119,7 @@ def route_astronomy_traces(kubeconfig: Path, *, run: Run = subprocess.run) -> No
             check=True,
             capture_output=True,
             text=True,
-            timeout=120,
+            timeout=wait_for(WaitKind.SLOW_COMMAND),
         )
     changed = False
     for name in ("jaeger", "jaeger-agent", "jaeger-collector", "jaeger-query"):
@@ -118,7 +128,7 @@ def route_astronomy_traces(kubeconfig: Path, *, run: Run = subprocess.run) -> No
             check=True,
             capture_output=True,
             text=True,
-            timeout=120,
+            timeout=wait_for(WaitKind.SLOW_COMMAND),
         )
         if existing.stdout.strip():
             spec = json.loads(existing.stdout).get("spec", {})
@@ -133,7 +143,7 @@ def route_astronomy_traces(kubeconfig: Path, *, run: Run = subprocess.run) -> No
             check=True,
             capture_output=True,
             text=True,
-            timeout=120,
+            timeout=wait_for(WaitKind.SLOW_COMMAND),
         )
         run(
             [
@@ -148,7 +158,7 @@ def route_astronomy_traces(kubeconfig: Path, *, run: Run = subprocess.run) -> No
             check=True,
             capture_output=True,
             text=True,
-            timeout=120,
+            timeout=wait_for(WaitKind.SLOW_COMMAND),
         )
 
     if changed:
@@ -157,7 +167,7 @@ def route_astronomy_traces(kubeconfig: Path, *, run: Run = subprocess.run) -> No
             check=True,
             capture_output=True,
             text=True,
-            timeout=120,
+            timeout=wait_for(WaitKind.SLOW_COMMAND),
         )
 
 

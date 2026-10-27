@@ -14,8 +14,8 @@ source by reference. The executor resolves values privately at execution time.
 
 JSON uses `env` or `config_map: {name, key, assignment}`. The same references work
 for database authentication and the repaired user's password. ConfigMap data need
-not be exposed as container env. Direct Secret keys are unavailable under the
-existing metadata-only RBAC and require a separate security review.
+not be exposed as container env. Secret data is never read into plans, logs, prompts or
+memory; direct Secret keys require a separate security review.
 
 A successful catalog write is action evidence. Check application recovery through
 SDO's independent verification; include a dependent Deployment restart when the

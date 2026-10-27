@@ -59,7 +59,7 @@ func acceptedSourceDeployment(t *testing.T, withTree bool) (GitPlanSource, *Stat
 	}
 	service := driftService(8080)
 	service.Spec.Selector = map[string]string{"app": "api"}
-	tracker := NewStateTracker(StateTrackerConfig{Client: fake.NewSimpleClientset(deployed, service), Namespace: "app"})
+	tracker := newTrackerForTest(t, StateTrackerConfig{Client: fake.NewSimpleClientset(deployed, service), Namespace: "app"})
 	if err := tracker.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}

@@ -53,6 +53,12 @@ func AwaitStandbyTask(ctx context.Context, inbox, ready string) (*contracts.Agen
 const (
 	standbyIdleExpiry  = 30 * time.Second
 	standbyClaimExpiry = 5 * time.Minute
+	// A claim is published only while the pod is comfortably alive, and an idle
+	// standby that never becomes ready is replaced once its claim window would
+	// have lapsed. Both bounds derive from the pod's own claim expiry.
+	standbyPublishDeadline = standbyClaimExpiry * 4 / 5
+	standbyReadyDeadline   = standbyClaimExpiry
+	standbyReadyFreshness  = 2 * time.Second
 )
 
 // standbyOwnerAlive bounds an orphaned pod. An idle pod needs a fresh

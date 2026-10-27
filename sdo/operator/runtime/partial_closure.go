@@ -13,9 +13,9 @@ import (
 // reflectionDetectorStates keeps the global closure verdict separate from
 // per-finding repair evidence. A failed closure retains latest post-response
 // observations, including unresolved peers and incomplete confirmation windows.
-// Called with c.mu held; superseded observation scopes supply no repair proof.
-func (c *Controller) reflectionDetectorStates(verified, scopeCurrent bool) []DetectorEvaluation {
-	if verified || !scopeCurrent {
+// Called with c.mu held.
+func (c *Controller) reflectionDetectorStates(verified bool) []DetectorEvaluation {
+	if verified {
 		return nil
 	}
 	ids := []string{}

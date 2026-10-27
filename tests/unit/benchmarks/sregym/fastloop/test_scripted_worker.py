@@ -380,3 +380,48 @@ def test_scripted_responder_repairs_changed_service_behind_deployment_finding(mo
     result = scripted_worker.scripted_responder(request)
     assert {"front", "back"} <= set(repairs)
     assert {"front", "back"} <= {resource.name for action in result.repair_actions for resource in action.resources}
+
+
+def test_scripted_responder_removes_added_objects_and_restores_config_from_source(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request = from_dict(IncidentRequest, json.loads((FIXTURES / "incident_request.json").read_text()))
+    request = evolve(
+        request,
+        namespace="hotel",
+        findings=[],
+        drift_events=[],
+        state_changes=from_dict(
+            StateChanges,
+            {
+                "baseline_at": request.response_deadline,
+                "observed_at": request.response_deadline,
+                "changes": [
+                    {"kind": "ResourceQuota", "name": "tight", "change": "added"},
+                    {"kind": "ValidatingWebhookConfiguration", "name": "deny", "change": "added"},
+                    {"kind": "ConfigMap", "name": "cfg", "change": "modified"},
+                ],
+            },
+        ),
+    )
+    calls: list[list[str]] = []
+    verifies = 0
+
+    def tool(*args: str) -> dict[str, Any]:
+        nonlocal verifies
+        if args[0] == "diagnose":
+            return {"program_runs": []}
+        if args[0] == "source":
+            return {"source": {"data": {"k": "v"}}}
+        verifies += 1
+        return {"healthy": verifies >= 2, "summary": "clear"}
+
+    monkeypatch.setattr(scripted_worker, "_tool", tool)
+    monkeypatch.setattr(scripted_worker, "_command", lambda argv, **_kwargs: calls.append(argv) or "")
+    result = scripted_worker.scripted_responder(request)
+    assert ["kubectl", "-n", "hotel", "delete", "resourcequota", "tight", "--ignore-not-found"] in calls
+    assert ["kubectl", "delete", "validatingwebhookconfiguration", "deny", "--ignore-not-found"] in calls
+    patch = next(argv for argv in calls if "patch" in argv)
+    assert patch[:6] == ["kubectl", "-n", "hotel", "patch", "configmap", "cfg"]
+    assert "--type=merge" in patch
+    assert {action.kind for action in result.repair_actions} == {"kubectl-delete", "kubectl-patch"}

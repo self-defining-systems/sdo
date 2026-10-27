@@ -9,6 +9,8 @@ import threading
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
+from benchmarks.sregym.adapter.budgets import WaitKind, wait_for
+
 if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
@@ -103,7 +105,7 @@ class ClosureGradingMonitor:
         grader: ClosureGrader,
         *,
         read: Callable[[], dict[str, Any] | None],
-        poll_seconds: float = 1.0,
+        poll_seconds: float = wait_for(WaitKind.POLL_FAST),
     ) -> None:
         if poll_seconds <= 0:
             raise ValueError("grading poll interval must be positive")
