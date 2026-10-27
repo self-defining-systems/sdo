@@ -49,6 +49,30 @@ func TestVerifiedClosureNeedsARecordedRepair(t *testing.T) {
 	}
 }
 
+// A repair must touch the cause's own resources or objects they control. A
+// successful write to an unrelated Pod has no recorded owner chain, which bounds
+// every cause for clearance, but it never credits a cause with a repair.
+func TestUnrelatedPodDeleteCreditsNoCause(t *testing.T) {
+	at := time.Unix(100, 0)
+	api := &contracts.ObjectRef{Kind: "Service", Namespace: "app", Name: "api"}
+	db := &contracts.ObjectRef{Kind: "Service", Namespace: "app", Name: "db"}
+	outcome := &contracts.OutcomeRecord{Classification: "success", ConfirmedRootCauses: []*contracts.ConfirmedRootCause{{Resources: []*contracts.ObjectRef{api}}, {Resources: []*contracts.ObjectRef{db}}}}
+	outcome.RepairActions = []*contracts.RepairActionReceipt{{
+		ActionId: "delete-pod", Kind: "kubectl-delete", Success: true,
+		Resources: []*contracts.ObjectRef{{Kind: "Pod", Namespace: "app", Name: "unrelated-0"}},
+		StartedAt: timestamppb.New(at), CompletedAt: timestamppb.New(at.Add(time.Second)),
+	}}
+	if got := VerifiedReflectionCauses(outcome); len(got) != 0 {
+		t.Fatalf("an unrelated pod delete credited causes with a repair: %v", got)
+	}
+	// The same delete with a recorded owner chain to one cause credits only it.
+	outcome.RepairActions[0].Owners = []*contracts.ResourceOwners{{Resource: outcome.RepairActions[0].Resources[0], OwnerChain: []*contracts.ObjectRef{api}}}
+	got := VerifiedReflectionCauses(outcome)
+	if len(got) != 1 || got[0].GetCauseIndex() != 0 {
+		t.Fatalf("a pod controlled by the api cause credited %v, want only cause 0", got)
+	}
+}
+
 func TestUnverifiedClosureStillRequiresPerCauseProof(t *testing.T) {
 	cause := &contracts.ConfirmedRootCause{Resources: []*contracts.ObjectRef{{Kind: "Service", Namespace: "app", Name: "api"}}}
 	outcome := closureOutcome("failed", cause)

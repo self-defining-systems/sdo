@@ -228,8 +228,15 @@ func clearedOpenFinding(outcome *contracts.OutcomeRecord, resource *contracts.Ob
 }
 
 // repairRecorded reports a valid, timed, successful repair action that wrote a
-// cause resource or an object a cause resource controls.
+// cause resource or an object a cause resource controls by a recorded owner
+// chain. A write to an unrelated Pod, ReplicaSet or Job with no chain bounds
+// the cause's clearance window but never credits it with a repair.
 func repairRecorded(outcome *contracts.OutcomeRecord, resources []*contracts.ObjectRef) bool {
-	repaired, after, valid := causeRepairs(outcome, resources)
-	return valid && (len(repaired) > 0 || !after.IsZero())
+	repaired, _, valid := causeRepairs(outcome, resources)
+	if !valid {
+		return false
+	}
+	return len(repaired) > 0 || slices.ContainsFunc(outcome.GetRepairActions(), func(action *contracts.RepairActionReceipt) bool {
+		return action.GetSuccess() && len(OwnedCauseWrites(action, resources)) > 0
+	})
 }
