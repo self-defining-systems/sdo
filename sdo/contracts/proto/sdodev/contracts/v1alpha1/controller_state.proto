@@ -82,9 +82,9 @@ enum ClosureFailureReason {
   // The closure recheck was denied its observation scope (RBAC, undeclared or
   // unsupported dependency). A misconfiguration, never a contradicted repair.
   CLOSURE_FAILURE_REASON_OBSERVER_DENIED = 5;
-  // The incident's work lost its owner: no live responder execution remains
-  // and no closure began within the response or verification bound plus a
-  // grace (for example, the controller restarted after its responder ended).
+  // The incident's work lost its owner: no live responder execution or
+  // harvested result remains past its response bound plus a grace. A harvested
+  // response stays controller-owned through closure, including after restart.
   CLOSURE_FAILURE_REASON_OWNER_LOST = 6;
 }
 
@@ -207,6 +207,11 @@ message ControllerState {
   // snapshot, or failed. It stops only when the step loop is blocked, so
   // observers judge a hung controller by it and never by evaluation_iteration.
   int64 step_count = 44;
+  // First completed response starts this absolute verification bound. An
+  // unconfirmed continuation or controller restart never extends it. A healthy
+  // optional source turn starts its own fresh verification window on return.
+  // The original response deadline caps both; cleared with the incident.
+  google.protobuf.Timestamp verification_deadline_at = 45;
   string setup_evaluated_revision = 46;
   repeated DisabledSetupDetector disabled_setup_detectors = 47;
   reserved 32, 33, 34;

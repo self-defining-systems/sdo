@@ -168,7 +168,7 @@ func TestClosureRecheckIncompleteAtBoundCommitsUnconfirmed(t *testing.T) {
 	executeRecheck(t, controller)
 	assertStillPending(t, controller, broker)
 	if controller.pendingClosure.UnconfirmedReason != contracts.ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_OBSERVATION_INCOMPLETE ||
-		len(controller.pendingClosure.FinalDetectorStates) != 0 || len(controller.pendingClosure.PartialDetectorStates) != 1 ||
+		len(controller.pendingClosure.FinalDetectorStates) != 0 || len(controller.pendingClosure.PartialDetectorStates) != 2 ||
 		!strings.Contains(controller.pendingClosure.UnconfirmedDetail, "health is unconfirmed") {
 		t.Fatalf("bound expiry must mark the closure unconfirmed: %+v", controller.pendingClosure)
 	}
@@ -220,5 +220,22 @@ func TestClosureRecheckDeniedObserverFailsWithTypedReason(t *testing.T) {
 	if controller.closureState != contracts.ClosureState_CLOSURE_STATE_FAILED || len(failures) != 1 || broker.processCalls() != 0 ||
 		failures[0].Reason != contracts.ClosureFailureReason_CLOSURE_FAILURE_REASON_OBSERVER_DENIED {
 		t.Fatalf("a denied observer must fail with its typed reason: state=%v failures=%+v", controller.closureState, failures)
+	}
+}
+
+func TestClosureRecheckPreservesNamedBlockersInOutcomeHistory(t *testing.T) {
+	now := time.Unix(1000, 0).UTC()
+	controller := newClosureRecheckController(t, &windowDetector{}, &recordingClosureBroker{}, &now)
+	executeRecheck(t, controller)
+	now = now.Add(windowRecheckBound)
+	executeRecheck(t, controller)
+	found := false
+	for _, state := range controller.pendingClosure.PartialDetectorStates {
+		if state.DetectorID == "health" && state.Status == DetectorEvaluationPending && strings.Contains(state.Reason, "observation window is incomplete") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("unconfirmed outcome history lost its named observation blocker: %+v", controller.pendingClosure.PartialDetectorStates)
 	}
 }

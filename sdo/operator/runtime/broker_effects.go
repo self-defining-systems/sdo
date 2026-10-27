@@ -131,7 +131,10 @@ func (c *Controller) ExecuteClosureEffect(ctx context.Context, effect ClosureEff
 	// incident began with.
 	var snapshot sdk.DetectionContext
 	var verificationErr error
-	if recovered == nil && !committedOutcome {
+	// An unconfirmed closure makes no health claim. Requiring the unavailable
+	// observation again here would prevent the very receipt that records it.
+	needsRecheck := recovered == nil && !committedOutcome && effect.Closure.UnconfirmedReason == contracts.ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_UNSPECIFIED
+	if needsRecheck {
 		var err error
 		snapshot, err = c.provider.Snapshot(ctx)
 		if err != nil {
@@ -144,8 +147,9 @@ func (c *Controller) ExecuteClosureEffect(ctx context.Context, effect ClosureEff
 	}
 	unconfirmed, denied := "", ""
 	var unconfirmedReason contracts.ClosureUnconfirmedReason
+	var unconfirmedStates []DetectorEvaluation
 	closure := effect.Closure
-	if recovered == nil && !committedOutcome && verificationErr == nil {
+	if needsRecheck && verificationErr == nil {
 		recheck := c.revalidateClosure(actionCtx, snapshot, effect.Closure)
 		closure.SourceCheckNotes = append(closure.SourceCheckNotes, recheck.DriftNotes...)
 		switch recheck.Verdict {
@@ -170,6 +174,7 @@ func (c *Controller) ExecuteClosureEffect(ctx context.Context, effect ClosureEff
 				break
 			}
 			unconfirmed, unconfirmedReason = recheck.Reason, recheck.Unconfirmed
+			unconfirmedStates = recheck.IncompleteStates
 		case closureRecheckDenied:
 			c.clearClosureRecheckWait()
 			denied = recheck.Reason
@@ -199,7 +204,7 @@ func (c *Controller) ExecuteClosureEffect(ctx context.Context, effect ClosureEff
 		return err
 	}
 	if unconfirmed != "" {
-		_, stepErr := c.stepClosureLocked(lifecyclecore.Event{Kind: lifecyclecore.Unconfirmed, At: c.clock(), Error: unconfirmed, UnconfirmedReason: unconfirmedReason})
+		_, stepErr := c.stepClosureLocked(lifecyclecore.Event{Kind: lifecyclecore.Unconfirmed, At: c.clock(), Error: unconfirmed, UnconfirmedReason: unconfirmedReason, UnconfirmedStates: evaluationsContract(unconfirmedStates)})
 		c.mu.Unlock()
 		cancel()
 		c.clearClosureRecheckWait()
@@ -279,8 +284,10 @@ const (
 )
 
 type closureRecheck struct {
-	Verdict closureRecheckVerdict
-	Reason  string
+	// IncompleteStates preserve named blockers in the accepted outcome history.
+	IncompleteStates []DetectorEvaluation
+	Verdict          closureRecheckVerdict
+	Reason           string
 	// Unconfirmed is the typed reason an incomplete recheck commits with at
 	// its bound: an unavailable observer outranks an incomplete window.
 	Unconfirmed contracts.ClosureUnconfirmedReason
@@ -342,10 +349,12 @@ func (c *Controller) revalidateClosure(ctx context.Context, snapshot sdk.Detecti
 	}
 	sort.Strings(ordered)
 	var incomplete, sourceNotes []string
+	var incompleteStates []DetectorEvaluation
 	var bound, sourceBound time.Duration
 	unconfirmed := contracts.ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_OBSERVATION_INCOMPLETE
 	wait := func(detector sdk.Detector, reason string) {
 		incomplete = append(incomplete, reason)
+		incompleteStates = append(incompleteStates, DetectorEvaluation{DetectorID: detector.Spec().ID, EvaluatedAt: c.clock(), Status: DetectorEvaluationPending, Reason: reason})
 		bound = max(bound, sdk.ClearingHorizon(detector, snapshot)+2*detector.Spec().Interval)
 	}
 	var denied, gone []string
@@ -403,7 +412,7 @@ func (c *Controller) revalidateClosure(ctx context.Context, snapshot sdk.Detecti
 		return closureRecheck{Verdict: closureRecheckDenied, Reason: strings.Join(denied, "; "), Skipped: gone}
 	}
 	if len(incomplete) > 0 {
-		return closureRecheck{Verdict: closureRecheckIncomplete, Reason: strings.Join(incomplete, "; "), Bound: max(bound, sourceBound), Unconfirmed: unconfirmed, Skipped: gone, SourceNotes: sourceNotes, DriftNotes: driftNotes}
+		return closureRecheck{Verdict: closureRecheckIncomplete, IncompleteStates: incompleteStates, Reason: strings.Join(incomplete, "; "), Bound: max(bound, sourceBound), Unconfirmed: unconfirmed, Skipped: gone, SourceNotes: sourceNotes, DriftNotes: driftNotes}
 	}
 	if len(sourceNotes) > 0 {
 		return closureRecheck{Verdict: closureRecheckIncomplete, Reason: strings.Join(sourceNotes, "; "), Bound: sourceBound, Skipped: gone, SourceNotes: sourceNotes, SourceOnly: true, DriftNotes: driftNotes}
