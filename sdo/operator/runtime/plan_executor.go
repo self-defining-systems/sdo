@@ -601,6 +601,9 @@ func restorePlanFields(before any, bok bool, after any, aok bool, live any, lok 
 					}
 				}
 			}
+			if len(result) == 0 && !bok {
+				return nil, false, nil
+			}
 			return result, true, nil
 		}
 	}
