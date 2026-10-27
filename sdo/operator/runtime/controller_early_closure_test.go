@@ -120,11 +120,13 @@ func TestControllerEarlyClosurePendingWriteAndWriteReset(t *testing.T) {
 	}
 }
 
-func TestControllerEarlyClosureLatentLeftoverBlocks(t *testing.T) {
+// Latent source-absent objects are information: the incident they opened has
+// only drift findings, so the agent gets its turn, and healthy detectors close
+// it once the agent returns even though the objects remain.
+func TestControllerClosureIgnoresLatentLeftoverAfterTheAgentReturns(t *testing.T) {
 	declared, live := hotelInventory()
 	store := &inventoryStore{objects: append(live, latentInventoryObjects()...)}
 	d := &blockingDispatcher{requests: make(chan IncidentRequest, 1), release: make(chan struct{})}
-	defer close(d.release)
 	cfg := testControllerConfig()
 	cfg.Namespace = "app"
 	c, err := NewController(cfg, []sdk.Detector{inventoryHealth()}, staticProvider{snapshot: sdktest.Snapshot{NamespaceName: "app"}}, d, time.Unix(100, 0))
@@ -144,16 +146,17 @@ func TestControllerEarlyClosureLatentLeftoverBlocks(t *testing.T) {
 	awaitRequest(t, d.requests)
 	for i := 2; i <= 30; i++ {
 		step(i)
-		if !c.IncidentOpen() {
-			t.Fatal("latent leftover was hidden by healthy detectors")
-		}
 	}
-	store.objects = live
-	for i := 31; i <= 46; i++ {
+	if !c.IncidentOpen() {
+		t.Fatal("drift-only incident closed before the agent returned")
+	}
+	close(d.release)
+	awaitDispatchCompletionQueued(t, c)
+	for i := 31; i <= 90 && c.IncidentOpen(); i++ {
 		step(i)
 	}
 	if c.IncidentOpen() {
-		t.Fatal("removed latent objects never verified")
+		t.Fatal("latent leftover held a health-verified closure after the agent returned")
 	}
 }
 

@@ -139,7 +139,10 @@ func (simPartialHealth) Detect(ctx context.Context, v sdk.DetectionContext) ([]s
 	return (fastloopDetector{}).Detect(ctx, snapshot)
 }
 
-func TestSimSchedulePartialRepairCannotVerifyDrift(t *testing.T) {
+// Health decides closure under every restart schedule: a partial repair whose
+// health detectors are clear closes as success and keeps the remaining routing
+// drift on the durable outcome.
+func TestSimSchedulePartialRepairClosesOnHealthWithDriftRecorded(t *testing.T) {
 	sweepSimSeedsN(t, 4, func(t *testing.T, seed uint64) {
 		for _, restartAfter := range []int{0, 1, 5} {
 			t.Run(fmt.Sprintf("restart_after=%d", restartAfter), func(t *testing.T) {
@@ -150,6 +153,7 @@ func TestSimSchedulePartialRepairCannotVerifyDrift(t *testing.T) {
 				w.responder.behavior = func() simBehavior { return simFixFirst }
 				w.broker.reject = func() bool { return false }
 				w.detectors = []sdk.Detector{simPartialHealth{}}
+				w.driftOnly = map[string]bool{simServiceName(1): true}
 				w.configure = func(c *Controller) {
 					c.ConfigureDrift(DriftControllerConfig{View: func(s sdk.DetectionContext) program.ReadView {
 						return LiveReadView{DetectionContext: s, Source: planFakeSource{source: simServiceNamed(simServiceName(1), 8080)}, SourceCommit: "c"}
@@ -187,15 +191,12 @@ func TestSimSchedulePartialRepairCannotVerifyDrift(t *testing.T) {
 						break
 					}
 				}
-				if len(w.closed) != 1 || closureOutcome(t, w.closed[0]) != "failed" {
-					t.Fatalf("partial repair closed as success or stalled: %+v", w.closed)
+				if len(w.closed) != 1 || closureOutcome(t, w.closed[0]) != "success" {
+					t.Fatalf("health-clear partial repair stalled or closed as failure: %+v", w.closed)
 				}
 				closure := w.closed[0]
 				if _, healthy := w.controller.latestEvaluations(w.controller.healthDetectorIDs, closure.ResponderCompletedAt, true); !healthy {
 					t.Fatal("fixture never cleared health independently of routing drift")
-				}
-				if closure.VerifiedAt.Before(closure.ResponderCompletedAt.Add(w.config.VerificationTimeout)) {
-					t.Fatal("closed before the existing verification timeout")
 				}
 				if len(closure.Request.DriftEvents) != 1 {
 					t.Fatal("restart lost admitted drift evidence")
@@ -204,8 +205,8 @@ func TestSimSchedulePartialRepairCannotVerifyDrift(t *testing.T) {
 					t.Fatalf("unexpected extra responder: calls=%d", w.responder.calls)
 				}
 				stored, err := w.outcomes.Get(context.Background(), closure.Request.IncidentID)
-				if err != nil || stored.Record.GetClassification() != "failed" || len(stored.Record.GetDriftEvents()) != 1 {
-					t.Fatalf("durable failed outcome lost drift: %v %v", stored, err)
+				if err != nil || stored.Record.GetClassification() != "success" || len(stored.Record.GetDriftEvents()) != 1 {
+					t.Fatalf("durable outcome lost drift: %v %v", stored, err)
 				}
 				if len(w.violations) > 0 {
 					t.Fatal(w.violations)

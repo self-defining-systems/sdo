@@ -229,8 +229,8 @@ func TestTerminalDriftResponderFailureDoesNotWaitForTTL(t *testing.T) {
 	if closure == nil || closure.GetDispatchError() == "" || closure.Result != nil || state.DispatchState != contracts.DispatchState_DISPATCH_STATE_IDLE {
 		t.Fatalf("terminal failure was not immediate: %+v", state)
 	}
-	if len(closure.FinalDetectorStates) != 0 || closure.HealthClearedAt != nil || len(closure.Request.DriftEvents) != 1 {
-		t.Fatal("terminal failure acquired verification or lost unresolved drift")
+	if len(closure.Request.DriftEvents) != 1 {
+		t.Fatal("terminal failure lost its drift evidence")
 	}
 	if _, ok := c.PendingDispatchEffect(); ok {
 		t.Fatal("terminal drift worker was retried")

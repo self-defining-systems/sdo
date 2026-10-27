@@ -80,20 +80,42 @@ func TestVerifiedClosureStaysSuccessWhenSourceChecksAreUnavailable(t *testing.T)
 	}
 }
 
-// Only an observed difference contradicts: a comparison that still shows the
-// field changed retires the closure whether or not the inventory is loaded.
-func TestClosureWithObservedSourceDifferenceIsContradicted(t *testing.T) {
+// A comparison that still shows the field changed is information too: the
+// closure health verified commits, with the difference noted on the outcome.
+func TestClosureWithObservedSourceDifferenceCommitsWithNote(t *testing.T) {
 	now := time.Unix(1000, 0).UTC()
 	broker := &recordingClosureBroker{}
-	controller := newSourceInformationController(t, &windowDetector{confirmed: true}, DriftControllerConfig{Inventory: true, View: func(sdk.DetectionContext) program.ReadView {
+	controller := newSourceInformationController(t, &windowDetector{confirmed: true}, DriftControllerConfig{View: func(sdk.DetectionContext) program.ReadView {
 		return sourceCompareView{ReplayReadView: &sdktest.ReplayReadView{}, diff: program.Diff{Changed: true, Text: "accepted: {} observed: {\"spec\":{\"ports\":[{\"targetPort\":9999}]}}"}}
 	}}, broker, &now)
-	var failures []ClosureFailure
-	controller.OnClosureFailed = func(failure ClosureFailure) { failures = append(failures, failure) }
+	controller.OnClosureFailed = func(failure ClosureFailure) { t.Fatalf("a source difference retired a health-verified closure: %+v", failure) }
 
 	executeRecheck(t, controller)
-	if controller.closureState != contracts.ClosureState_CLOSURE_STATE_FAILED || len(failures) != 1 || broker.processCalls() != 0 || !strings.Contains(failures[0].LastError, "unrestored") {
-		t.Fatalf("a field still differing from source must supersede: state=%v failures=%+v", controller.closureState, failures)
+	awaitBrokerResult(t, controller.closureResults)
+	controller.processBrokerCompletions()
+	if controller.closureState != contracts.ClosureState_CLOSURE_STATE_COMMITTED || len(broker.closures) != 1 {
+		t.Fatalf("closure did not commit: state=%v failure=%+v", controller.closureState, controller.closureFailure)
+	}
+	got := broker.closures[0]
+	if len(got.FinalDetectorStates) != 1 || !strings.Contains(strings.Join(got.SourceCheckNotes, ";"), "unexplained drift remains on Service/front") {
+		t.Fatalf("difference not recorded or closure downgraded: %+v", got)
+	}
+}
+
+// Drift never rescues a closure whose health is not verified.
+func TestObservedSourceDifferenceDoesNotRescueIncompleteHealth(t *testing.T) {
+	now := time.Unix(1000, 0).UTC()
+	broker := &recordingClosureBroker{}
+	controller := newSourceInformationController(t, &windowDetector{}, DriftControllerConfig{View: func(sdk.DetectionContext) program.ReadView {
+		return sourceCompareView{ReplayReadView: &sdktest.ReplayReadView{}, diff: program.Diff{Changed: true, Text: "accepted: {} observed: {\"spec\":{\"ports\":[{\"targetPort\":9999}]}}"}}
+	}}, broker, &now)
+
+	executeRecheck(t, controller)
+	assertStillPending(t, controller, broker)
+	now = now.Add(windowRecheckBound)
+	executeRecheck(t, controller)
+	if controller.pendingClosure.UnconfirmedReason != contracts.ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_OBSERVATION_INCOMPLETE {
+		t.Fatalf("an incomplete health window must still commit unconfirmed: %+v", controller.pendingClosure)
 	}
 }
 
@@ -112,5 +134,33 @@ func TestSourceNotesDoNotRescueIncompleteHealth(t *testing.T) {
 	executeRecheck(t, controller)
 	if controller.pendingClosure.UnconfirmedReason != contracts.ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_OBSERVATION_INCOMPLETE {
 		t.Fatalf("an incomplete health window must still commit unconfirmed: %+v", controller.pendingClosure)
+	}
+}
+
+// The outcome records what differs from the accepted source even when the
+// closure has no final detector states to recheck or ended in a dispatch error.
+func TestClosureWithoutRecheckableHealthStillRecordsSourceDifference(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		shape func(*IncidentClosure)
+	}{
+		{"no final detector states", func(c *IncidentClosure) { c.FinalDetectorStates = nil }},
+		{"dispatch error", func(c *IncidentClosure) { c.DispatchError = "responder job failed" }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			now := time.Unix(1000, 0).UTC()
+			broker := &recordingClosureBroker{}
+			controller := newSourceInformationController(t, &windowDetector{confirmed: true}, DriftControllerConfig{View: func(sdk.DetectionContext) program.ReadView {
+				return sourceCompareView{ReplayReadView: &sdktest.ReplayReadView{}, diff: program.Diff{Changed: true, Text: "accepted: {} observed: {\"spec\":{\"ports\":[{\"targetPort\":9999}]}}"}}
+			}}, broker, &now)
+			tc.shape(controller.pendingClosure)
+
+			executeRecheck(t, controller)
+			awaitBrokerResult(t, controller.closureResults)
+			controller.processBrokerCompletions()
+			if len(broker.closures) != 1 || !strings.Contains(strings.Join(broker.closures[0].SourceCheckNotes, ";"), "unexplained drift remains on Service/front") {
+				t.Fatalf("difference not recorded on the outcome: %+v", broker.closures)
+			}
+		})
 	}
 }

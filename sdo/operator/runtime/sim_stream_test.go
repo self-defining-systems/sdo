@@ -42,6 +42,9 @@ const simStreamMaxTicks = 6000
 // the pump (drain), never concurrently with the test goroutine's reads.
 type simWorld struct {
 	t              *testing.T
+	// driftOnly names services whose fault no health detector covers: the
+	// controller sees it as drift only, so a verified closure may leave it.
+	driftOnly map[string]bool
 	rng            *rand.Rand
 	clock          *simClock
 	kube           *simKube
@@ -99,6 +102,17 @@ func (w *simWorld) faulty() []string {
 		ports, _, _ := unstructuredPorts(w.kube.objects[simServiceRef(simServiceName(i))].Object)
 		if ports[0].(map[string]any)["targetPort"] == int64(9999) {
 			names = append(names, simServiceName(i))
+		}
+	}
+	return names
+}
+
+// healthFaulty lists the faulty services a health detector covers.
+func (w *simWorld) healthFaulty() []string {
+	var names []string
+	for _, name := range w.faulty() {
+		if !w.driftOnly[name] {
+			names = append(names, name)
 		}
 	}
 	return names
@@ -321,7 +335,7 @@ func (w *simWorld) onClosed(closure IncidentClosure) {
 		(closure.ClosureStabilityWindow <= 0 || closure.VerifiedAt.Sub(*closure.HealthClearedAt) < closure.ClosureStabilityWindow) {
 		w.violate("incident %s committed success %s after health cleared, before its %s stability window", closure.Request.IncidentID, closure.VerifiedAt.Sub(*closure.HealthClearedAt), closure.ClosureStabilityWindow)
 	}
-	if faulty := w.faulty(); len(faulty) > 0 && len(closure.FinalDetectorStates) > 0 {
+	if faulty := w.healthFaulty(); len(faulty) > 0 && len(closure.FinalDetectorStates) > 0 {
 		w.violate("incident %s closed verified while %v still faulty", closure.Request.IncidentID, faulty)
 	}
 	// A failed responder Job leaves nothing to verify; waiting out the

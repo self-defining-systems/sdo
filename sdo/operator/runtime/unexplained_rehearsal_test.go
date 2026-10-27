@@ -191,39 +191,13 @@ func TestHermeticUnexplainedCleanupRemediation(t *testing.T) {
 			result := completedResult(request.IncidentID)
 			result.ResponderSessionID = "cleanup-scripted-session"
 			publishContinuationResult(t, kube, first, result)
-			if denied {
-				second := awaitJob(t, kube, IncidentJobName(request.IncidentID+"-continue-1"))
-				feedback := ""
-				for _, env := range second.Spec.Template.Spec.Containers[0].Env {
-					if env.Name == "SDO_RESPONSE_CONTINUATION" {
-						feedback = env.Value
-					}
-				}
-				checkURContinuationRenderer(t, feedback)
-				var parsed responderFeedback
-				if err := json.Unmarshal([]byte(feedback), &parsed); err != nil || len(parsed.StillBroken) != 3 {
-					t.Fatalf("continuation lost blocker set: %s", feedback)
-				}
-				typed := 0
-				for _, action := range parsed.AlreadyDone {
-					if action.Receipt.FailureReason == "authorization_denied" && !action.Receipt.Success {
-						typed++
-					}
-				}
-				if typed != 3 {
-					t.Fatalf("continuation lost truthful denials: %+v", parsed.AlreadyDone)
-				}
-				publishContinuationResult(t, kube, second, result)
-			}
 			if err := <-errs; err != nil {
 				t.Fatal(err)
 			}
 			final := <-done
-			if denied {
-				if final.Status != IncidentFailed || final.Error != "authorization_denied_no_progress" || final.ResponseLoopExhausted || final.ResponseLoopsUsed != 2 {
-					t.Fatalf("did not stop after one continuation: %+v", final)
-				}
-			} else if final.Status != IncidentCompleted || len(store.SourceDriftObjects()) != 0 {
+			// Health alone decides: denied removals leave the objects in place as
+			// information and the incident still completes after one response.
+			if final.Status != IncidentCompleted || final.ResponseLoopsUsed != 1 || (!denied && len(store.SourceDriftObjects()) != 0) {
 				t.Fatalf("cleanup did not verify: %+v", final)
 			}
 			controller.currentIncidentResult = &final
@@ -234,9 +208,8 @@ func TestHermeticUnexplainedCleanupRemediation(t *testing.T) {
 			controller.OnIncidentClosed = func(closure IncidentClosure) { closed = &closure }
 			now := time.Now()
 			controller.maybeCloseIncident(ctx, now, nil)
-			if closed == nil && !denied {
-				// A verified success commits once health holds for the window;
-				// the terminal denial above must not wait for it.
+			if closed == nil {
+				// A verified success commits once health holds for the window.
 				later := now.Add(controller.config.ClosureStabilityWindow)
 				controller.history = append(controller.history, DetectorEvaluation{DetectorID: "health", Status: DetectorEvaluationClear, EvaluatedAt: later})
 				controller.maybeCloseIncident(ctx, later, nil)
@@ -244,8 +217,8 @@ func TestHermeticUnexplainedCleanupRemediation(t *testing.T) {
 			if closed == nil {
 				t.Fatal("closure waited despite terminal independently checked inventory")
 			}
-			if denied && len(closed.FinalDetectorStates) != 0 {
-				t.Fatal("failed blocker claimed recovery")
+			if len(closed.FinalDetectorStates) == 0 {
+				t.Fatal("health-verified closure lost its final states")
 			}
 			for _, receipt := range final.RepairActions {
 				if strings.HasPrefix(receipt.ActionID, "sdo-program-") && receipt.FailureReason == "authorization_denied" && receipt.Success {
@@ -254,9 +227,6 @@ func TestHermeticUnexplainedCleanupRemediation(t *testing.T) {
 			}
 			jobs, _ := kube.BatchV1().Jobs("demo").List(ctx, metav1.ListOptions{})
 			expected := 1
-			if denied {
-				expected = 2
-			}
 			if len(jobs.Items) != expected {
 				t.Fatalf("created %d jobs, expected %d", len(jobs.Items), expected)
 			}
