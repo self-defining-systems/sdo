@@ -10,6 +10,7 @@ import (
 	"sdo.dev/operator/runtime/jitview"
 	"testing"
 
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/sdk/program"
 )
 
@@ -148,4 +149,40 @@ func (Program) Mitigate(_ context.Context,_ program.ReadView,b program.Bindings)
 		t.Fatal(err)
 	}
 	return registry
+}
+
+func TestMatchedToolUsesLiveDiagnosisBindingsWithoutAuthoredCoverage(t *testing.T) {
+	loop, state := pipelineTestLoop(t, true)
+	for i := range state.Request.Findings {
+		state.Request.Findings[i].Playbooks = nil
+	}
+	loop.Request = state.Request
+	loop.findings = state.Request.Findings
+	runs := loop.InitialDiagnose(context.Background())
+	loop.Request.InitialProgramRuns = runs
+	loop.Request.PlaybookCoverage = buildPlaybookCoverage(loop.Request.Findings, runs, loop.lastDiagnosisView, nil)
+	if len(loop.Request.PlaybookCoverage.Matches) != 1 || len(loop.Request.PlaybookCoverage.Matches[0].ExplainedFindingFingerprints) != 0 {
+		t.Fatal("fixture must have a live match without authored explanation")
+	}
+	loop.MenuConfig = &ResponderMenuConfig{}
+	response := loop.Handle(context.Background(), ToolRequest{Command: "menu", ProgramID: "service-targetport-mismatch", Match: true})
+	if response.Error != "" {
+		t.Fatal(response.Error)
+	}
+	var selection string
+	for _, option := range response.Menu.Options {
+		if option.ProgramId == "service-targetport-mismatch" {
+			selection = option.OptionId
+			if !programBindingsState(option.Bindings).Equal(runs[0].Bindings) {
+				t.Fatalf("menu changed live diagnosis bindings: %v", option)
+			}
+		}
+	}
+	if selection == "" {
+		t.Fatal("matched program was not offered")
+	}
+	applied := loop.Handle(context.Background(), ToolRequest{Command: "mitigate", Selection: &contracts.MitigationSelection{OptionId: selection, RoundLimit: 1}})
+	if applied.Error != "" || len(loop.PlanApplications()) != 1 || !loop.PlanApplications()[0].Result.Applied || !applied.TargetedHealthy || applied.Healthy {
+		t.Fatalf("matched repair must verify its diagnosed finding while the peer remains unhealthy: %+v", applied)
+	}
 }
