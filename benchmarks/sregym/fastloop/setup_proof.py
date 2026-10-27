@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from benchmarks.sregym.adapter import WaitKind, wait_for
+from benchmarks.sregym.fastloop.accepted_source import manifest_paths_for
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -208,10 +209,8 @@ def collect_fingerprint(
     )
     if installed != accepted:
         raise ValueError("eval: installed accepted-memory commit differs from accepted workspace")
-    paths = [environment.baseline_path, environment.workspace / ".sdo/rendered/lock.json"]
-    lock = environment.workspace / ".sdo/rendered/lock.json"
-    selections = json.loads(lock.read_text()).get("manifest_paths", []) if lock.is_file() else ["kubernetes"]
-    for selection in selections:
+    paths = [environment.baseline_path]
+    for selection in manifest_paths_for(environment.application):
         path = (environment.workspace / selection).resolve()
         if not path.is_relative_to(environment.workspace.resolve()):
             raise ValueError("eval: manifest selection escapes accepted workspace")

@@ -32,6 +32,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from benchmarks.sregym.adapter import WaitKind, assert_host_disk_headroom, assert_host_headroom, kubectl, wait_for
+from benchmarks.sregym.fastloop.accepted_source import AcceptedSource, manifest_paths_for
 from benchmarks.sregym.fastloop.baseline_recovery import (
     KubectlApplicationCluster,
     application_namespaces,
@@ -478,20 +479,6 @@ def _cluster_ops(args: argparse.Namespace, namespace: str, *, ops: ClusterOps | 
     return selected
 
 
-def _accepted_manifest_paths(workspace: Path) -> tuple[str, ...]:
-    lock_path = workspace / ".sdo/rendered/lock.json"
-    if not lock_path.exists():
-        return ("kubernetes",)
-    try:
-        lock = json.loads(lock_path.read_text(encoding="utf-8"))
-        paths = lock["manifest_paths"]
-    except (OSError, ValueError, KeyError, TypeError) as exc:
-        raise ValueError(f"cannot read accepted deployment selection from {lock_path}") from exc
-    if not isinstance(paths, list) or any(not isinstance(path, str) or not path for path in paths):
-        raise ValueError(f"invalid accepted deployment selection in {lock_path}")
-    return tuple(paths)
-
-
 def _sdo_agent(
     args: argparse.Namespace,
     environment: FastloopEnvironment,
@@ -524,7 +511,7 @@ def _sdo_agent(
         controller_image=environment.images.controller,
         responder_image=environment.images.responder,
         validator_image=environment.images.validator,
-        deployed_manifest_paths=_accepted_manifest_paths(environment.workspace),
+        deployed_manifest_paths=manifest_paths_for(environment.application),
         repository_pvc="sdo-application-repository",
         credentials_secret=getattr(args, "credentials_secret", "sdo-agent-credentials"),
         model=args.model,
@@ -778,7 +765,7 @@ def _run(args: argparse.Namespace) -> int:
         if baseline is not None:
             from benchmarks.sregym.fastloop.recovery_closure import complete_recovery_baselines
 
-            baseline = complete_recovery_baselines(environment.workspace, baseline)
+            baseline = complete_recovery_baselines(AcceptedSource.of(environment), baseline)
         if baseline is None and args.require_full_cleanup:
             raise ValueError("full cleanup requires an application baseline")
         if baseline is None:

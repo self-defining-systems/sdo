@@ -14,6 +14,7 @@ from benchmarks.sregym.fastloop.cli import build_parser, format_incidents, forma
 from benchmarks.sregym.fastloop.environment import FastloopEnvironment
 from benchmarks.sregym.fastloop.records import IncidentRecord, OracleVerdict, append_record
 from benchmarks.sregym.fastloop.stream import load_stream, load_stream_config
+from tests.unit.benchmarks.sregym.fastloop.accepted_source_fixture import commit_accepted_source
 
 T0 = datetime(2026, 9, 27, 12, 0, 0, tzinfo=timezone.utc)
 
@@ -380,8 +381,6 @@ def test_mf_stream_launches_with_both_component_probes(tmp_path: Path, monkeypat
 
     # A legacy capture must carry its recovered reference closure into every
     # subsequent driver's cleanup, rather than deleting the restored account.
-    import hashlib
-
     from benchmarks.sregym.fastloop.baseline_recovery import ApplicationBaseline, save_application_baseline
 
     workload = {
@@ -397,28 +396,7 @@ def test_mf_stream_launches_with_both_component_probes(tmp_path: Path, monkeypat
     }
     environment.baseline_path.write_text("{}")
     save_application_baseline(environment.baseline_path, (ApplicationBaseline(environment.namespace, [workload]),))
-    rendered = environment.workspace / ".sdo/rendered"
-    rendered.mkdir(parents=True)
-    payload = json.dumps(account)
-    (rendered / "account.yaml").write_text(payload)
-    (rendered / "lock.json").write_text(
-        json.dumps(
-            {
-                "objects": [
-                    {
-                        "ref": {
-                            "api_version": "v1",
-                            "kind": "ServiceAccount",
-                            "namespace": environment.namespace,
-                            "name": "reservation-reader",
-                        },
-                        "file": "account.yaml",
-                        "sha256": hashlib.sha256(payload.encode()).hexdigest(),
-                    }
-                ]
-            }
-        )
-    )
+    commit_accepted_source(environment.workspace, [account], namespace=environment.namespace)
 
     class Worker:
         def __enter__(self) -> Worker:
@@ -646,19 +624,16 @@ def test_codex_prompt_and_oracle_cover_every_playbook_stream_incident(
         ] == expected_faults
 
 
-def test_sdo_agent_preserves_accepted_seed_manifest_selection(tmp_path: Path) -> None:
+def test_sdo_agent_selects_the_applications_deployed_manifests(tmp_path: Path) -> None:
     from benchmarks.sregym.fastloop import cli
 
     workspace = tmp_path / "workspace"
-    rendered = workspace / ".sdo/rendered"
-    rendered.mkdir(parents=True)
-    (rendered / "lock.json").write_text(json.dumps({"manifest_paths": ["kubernetes/astronomy-shop.yaml"]}))
     environment = FastloopEnvironment(
         run_dir=tmp_path,
         cluster="kind-test",
         kubeconfig=tmp_path / "kubeconfig",
         namespace="astronomy-shop",
-        application="astronomy-shop",
+        application="opentelemetry-demo-astronomy-shop",
         workspace=workspace,
         sregym_dir=tmp_path / "sregym",
         private_tmp=tmp_path / "private",

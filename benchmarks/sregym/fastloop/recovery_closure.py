@@ -2,17 +2,13 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
-
-import yaml
 
 from benchmarks.sregym.fastloop.baseline_recovery import WORKLOAD_KINDS, ApplicationBaseline
 
 if TYPE_CHECKING:
-    from pathlib import Path
+    from benchmarks.sregym.fastloop.accepted_source import AcceptedSource
 
 
 @dataclass(frozen=True, order=True)
@@ -123,17 +119,13 @@ def missing_prerequisites(baselines: tuple[ApplicationBaseline, ...]) -> tuple[P
 
 
 def complete_recovery_baselines(
-    workspace: Path, baselines: tuple[ApplicationBaseline, ...]
+    source: AcceptedSource, baselines: tuple[ApplicationBaseline, ...]
 ) -> tuple[ApplicationBaseline, ...]:
-    """Fill legacy capture omissions from hash-verified accepted manifests only.
+    """Fill legacy capture omissions from the rendered accepted source only.
 
     Captured installed objects always win, including their sealed runtime defaults.
-    Secret entries are skipped before opening any referenced manifest file.
+    Secrets are never rendered.
     """
-    root = workspace / ".sdo/rendered"
-    lock = root / "lock.json"
-    if not lock.is_file():
-        return baselines
     namespaces = {b.namespace for b in baselines}
     available = {Prerequisite(b.namespace, v["kind"], v["metadata"]["name"]) for b in baselines for v in b.objects}
     wanted = {ref for b in baselines for value in b.objects for ref in prerequisites(value, b.namespace)}
@@ -150,41 +142,17 @@ def complete_recovery_baselines(
     # A declared default account may carry image-pull references or other
     # configuration even though the namespace creates its empty default.
     wanted.update(accounts)
-    rows = {}
-    for row in json.loads(lock.read_text())["objects"]:
-        ref = row.get("ref", {})
-        kind, namespace = ref.get("kind"), ref.get("namespace")
-        # Secret manifests are excluded before any file access.
-        if kind not in WORKLOAD_KINDS or namespace not in namespaces:
+    rows: dict[Prerequisite, dict[str, Any]] = {}
+    for value in source.manifests:
+        metadata = value["metadata"]
+        if value["kind"] not in WORKLOAD_KINDS or metadata.get("namespace") not in namespaces:
             continue
-        identity = Prerequisite(namespace, kind, ref["name"])
-        if identity in available:
-            continue
-        if identity in rows:
-            raise ValueError(f"duplicate recovery prerequisite: {identity.label()}")
-        rows[identity] = row
+        identity = Prerequisite(metadata["namespace"], value["kind"], metadata["name"])
+        if identity not in available:
+            rows[identity] = value
 
     def read(identity: Prerequisite) -> dict[str, Any]:
-        row = rows[identity]
-        ref = row["ref"]
-        if row.get("error") or not row.get("file") or not row.get("sha256"):
-            raise ValueError(f"unbacked recovery prerequisite: {identity.label()}")
-        path = (root / row["file"]).resolve()
-        if not path.is_relative_to(root.resolve()):
-            raise ValueError("recovery manifest escapes accepted rendered directory")
-        payload = path.read_bytes()
-        if hashlib.sha256(payload).hexdigest() != row["sha256"]:
-            raise ValueError(f"recovery prerequisite digest differs from accepted lock: {identity.label()}")
-        value = yaml.safe_load(payload)
-        metadata = value.get("metadata", {})
-        if (value.get("apiVersion"), value.get("kind"), metadata.get("namespace"), metadata.get("name")) != (
-            ref.get("api_version"),
-            identity.kind,
-            identity.namespace,
-            identity.name,
-        ):
-            raise ValueError(f"recovery prerequisite identity differs from accepted lock: {identity.label()}")
-        return value
+        return rows[identity]
 
     bindings = {identity: read(identity) for identity in rows if identity.kind == "RoleBinding"}
     selected: dict[Prerequisite, dict[str, Any]] = {}

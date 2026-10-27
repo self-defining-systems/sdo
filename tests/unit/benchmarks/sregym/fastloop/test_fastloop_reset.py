@@ -12,6 +12,7 @@ from benchmarks.sregym.fastloop.environment import FastloopEnvironment
 from benchmarks.sregym.fastloop.loop import AgentOutcome, InjectionWindow, LoopConfig, run_incidents
 from benchmarks.sregym.fastloop.records import OracleVerdict
 from benchmarks.sregym.fastloop.reset import KubectlResetCluster, reset_environment
+from tests.unit.benchmarks.sregym.fastloop.accepted_source_fixture import commit_accepted_source
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -70,6 +71,7 @@ def test_reset_restores_application_and_clears_controller_on_existing_environmen
         seed_commit="a" * 40,
     )
     environment.save()
+    commit_accepted_source(environment.workspace, namespace="hotel")
     baseline = ApplicationBaseline(
         "hotel", [{"kind": "Deployment", "metadata": {"name": "app", "namespace": "hotel"}, "spec": {"replicas": 1}}]
     )
@@ -474,6 +476,7 @@ def test_restore_finishes_recovery_mutations_before_ready_snapshot(tmp_path: Pat
         sregym_dir=tmp_path / "sregym",
         private_tmp=None,
     )
+    commit_accepted_source(environment.workspace, namespace="hotel")
     environment.baseline_path.write_text("{}")
     save_application_baseline(environment.baseline_path, (ApplicationBaseline("hotel", FakeCluster().objects),))
     events = []
@@ -497,7 +500,7 @@ def test_restore_finishes_recovery_mutations_before_ready_snapshot(tmp_path: Pat
     assert events.count("baseline_oracle") == 2
 
 
-def test_restore_rejects_malformed_lock_before_any_application_mutation(tmp_path: Path) -> None:
+def test_restore_rejects_ambiguous_accepted_source_before_any_application_mutation(tmp_path: Path) -> None:
     from benchmarks.sregym.fastloop.baseline_recovery import save_application_baseline
 
     environment = FastloopEnvironment(
@@ -512,13 +515,10 @@ def test_restore_rejects_malformed_lock_before_any_application_mutation(tmp_path
     )
     environment.baseline_path.write_text("{}")
     save_application_baseline(environment.baseline_path, (ApplicationBaseline("hotel", FakeCluster().objects),))
-    rendered = environment.workspace / ".sdo/rendered"
-    rendered.mkdir(parents=True)
-    (rendered / "lock.json").write_text(
-        json.dumps({"objects": [{"ref": {"kind": "Deployment", "name": "app"}, "error": "unknown gap"}]})
-    )
+    app = {"apiVersion": "apps/v1", "kind": "Deployment", "metadata": {"name": "app", "namespace": "hotel"}}
+    commit_accepted_source(environment.workspace, [app, app])
     worker = FakeWorker()
-    with pytest.raises(ValueError, match="rendered.*gap"):
+    with pytest.raises(ValueError, match="duplicate accepted manifest"):
         reset.restore_application(environment, FakeCluster(), worker)
     assert worker.calls == []
 
@@ -541,6 +541,7 @@ def test_recovery_never_mutates_while_native_reflection_is_pending(tmp_path: Pat
         seed_commit="a" * 40,
     )
     environment.save()
+    commit_accepted_source(environment.workspace, namespace="hotel")
     baseline = ApplicationBaseline(
         "hotel", [{"kind": "Deployment", "metadata": {"name": "app", "namespace": "hotel"}, "spec": {"replicas": 1}}]
     )
@@ -584,8 +585,6 @@ def test_recovery_never_mutates_while_native_reflection_is_pending(tmp_path: Pat
 def test_restore_receipt_names_each_reapplied_object_and_warns_on_undeclared_recreation(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    import hashlib
-
     from benchmarks.sregym.fastloop.baseline_recovery import RESTORE_RECEIPTS, save_application_baseline
 
     environment = FastloopEnvironment(
@@ -612,13 +611,7 @@ def test_restore_receipt_names_each_reapplied_object_and_warns_on_undeclared_rec
     }
     environment.baseline_path.write_text("{}")
     save_application_baseline(environment.baseline_path, (ApplicationBaseline("hotel", [app, alias, extra]),))
-    lock = environment.workspace / ".sdo/rendered/lock.json"
-    lock.parent.mkdir(parents=True)
-    manifest = json.dumps(app).encode()
-    (lock.parent / "app.yaml").write_bytes(manifest)
-    reference = {"api_version": "apps/v1", "kind": "Deployment", "namespace": "hotel", "name": "app"}
-    row = {"ref": reference, "file": "app.yaml", "sha256": hashlib.sha256(manifest).hexdigest()}
-    lock.write_text(json.dumps({"objects": [row]}))
+    commit_accepted_source(environment.workspace, [app])
     cluster = FakeCluster()  # only Deployment/app (replicas 0): the alias and ConfigMap are absent
 
     reset.restore_application(environment, cluster, FakeWorker())
