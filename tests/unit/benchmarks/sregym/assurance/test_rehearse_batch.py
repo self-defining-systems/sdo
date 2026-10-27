@@ -74,6 +74,7 @@ def test_every_vehicle_is_a_toy_fault_the_toy_app_can_inject() -> None:
             "p/PVCClaimMismatch: unsupported repair/snapshot scope unreviewed:PVCClaimMismatch",
             "fault-unsupported",
         ),
+        ("responder", "oracle reported failure", "oracle-failed"),
         ("something", "new", "other"),
     ],
 )

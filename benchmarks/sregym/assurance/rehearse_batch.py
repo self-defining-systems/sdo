@@ -104,7 +104,7 @@ CLASS_RULES: tuple[tuple[str, str], ...] = (
     (r"ImagePullBackOff|ErrImagePull", "image-pull"),
     (r"controller can ", "rbac-missing-verb"),
     (r": detected", "no-detection"),
-    (r": oracle", "oracle-failed"),
+    (r": oracle|oracle reported failure", "oracle-failed"),
     (r": sdo mitigated", "not-mitigated"),
     (r"receipt valid", "receipt-invalid"),
     (r"strict-receipts", "receipt-missing"),
