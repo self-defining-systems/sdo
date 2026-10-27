@@ -2,6 +2,7 @@ package worker_registry
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -71,4 +72,26 @@ func (e KubernetesExecutor) recoverMissingResult(ctx context.Context, task *cont
 		return fmt.Errorf("worker dispatch receipt %q differs from frozen task", name)
 	}
 	return &JobVanishedError{TaskID: task.GetTaskId(), JobName: name}
+}
+
+// DiscardVanished removes the request and dispatch receipt of a task whose
+// Job vanished, so the task may be dispatched again as if never run. Only the
+// owner of those ConfigMaps may call it, and only for tasks that are safe to
+// run twice. It re-verifies the loss first: a live Job, a durable result, or
+// an undispatched task is left untouched.
+func (e KubernetesExecutor) DiscardVanished(ctx context.Context, task *contracts.AgentTask) error {
+	name, err := e.taskJobName(ctx, task)
+	if err != nil {
+		return err
+	}
+	var vanished *JobVanishedError
+	if err := e.recoverMissingResult(ctx, task, name); !errors.As(err, &vanished) {
+		return err
+	}
+	for _, suffix := range []string{"-request", "-execution"} {
+		if err := e.Client.CoreV1().ConfigMaps(e.Namespace).Delete(ctx, name+suffix, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+			return fmt.Errorf("discard vanished worker %s: %w", name+suffix, err)
+		}
+	}
+	return nil
 }

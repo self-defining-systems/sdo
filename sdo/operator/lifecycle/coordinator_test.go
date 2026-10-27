@@ -137,6 +137,13 @@ type fakeExecutor struct {
 	archFailures        int
 	retiredJudgePayload bool
 	judgeJobFailures    int
+	judgeJobsVanished   int
+	discarded           []string
+}
+
+func (f *fakeExecutor) DiscardVanished(_ context.Context, task *contracts.AgentTask) error {
+	f.discarded = append(f.discarded, task.GetTaskId())
+	return nil
 }
 
 func (f *fakeExecutor) Execute(_ context.Context, task *contracts.AgentTask) (*contracts.AgentResult, error) {
@@ -162,6 +169,10 @@ func (f *fakeExecutor) Execute(_ context.Context, task *contracts.AgentTask) (*c
 		}
 		response, err = anypb.New(&contracts.ArchitectureResult{SummaryMarkdown: "# Architecture\nSource-grounded layout.", TopologyFingerprint: request.GetSourceTopologyFingerprint(), SourceCommit: request.GetAcceptedSourceCommit(), AgentSessionId: "architecture-session"})
 	case healthJudgeTask:
+		if f.judgeJobsVanished > 0 {
+			f.judgeJobsVanished--
+			return nil, &worker_registry.JobVanishedError{TaskID: task.GetTaskId(), JobName: worker_registry.JobName(task.GetTaskId())}
+		}
 		if f.judgeJobFailures > 0 {
 			f.judgeJobFailures--
 			return nil, &worker_registry.JobFailedError{JobName: worker_registry.JobName(task.GetTaskId())}

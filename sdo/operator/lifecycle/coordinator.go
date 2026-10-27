@@ -50,6 +50,12 @@ type WorkerExecutor interface {
 	Execute(context.Context, *contracts.AgentTask) (*contracts.AgentResult, error)
 }
 
+// VanishedDiscarder lets the owner of a worker's durable evidence forget a
+// dispatch whose Job disappeared without a result.
+type VanishedDiscarder interface {
+	DiscardVanished(context.Context, *contracts.AgentTask) error
+}
+
 // DeploymentReceipt binds an independently observed rollout to the exact
 // candidate source tree. Empty or incomplete evidence cannot be accepted.
 type DeploymentReceipt struct {
@@ -551,6 +557,17 @@ func (c Coordinator) execute(ctx context.Context, task *contracts.AgentTask, res
 		return err
 	}
 	result, err := c.Workers.Execute(ctx, task)
+	var vanished *worker_registry.JobVanishedError
+	if discarder, ok := c.Workers.(VanishedDiscarder); ok && errors.As(err, &vanished) {
+		// Lifecycle workers only author proposals in isolated checkouts; the
+		// controller applies and verifies them. Running one twice repeats no
+		// effect, so a Job lost to an earlier killed attempt is dispatched
+		// again instead of failing every restart on the same stale evidence.
+		if err := discarder.DiscardVanished(ctx, task); err != nil {
+			return err
+		}
+		result, err = c.Workers.Execute(ctx, task)
+	}
 	if err != nil {
 		return err
 	}
