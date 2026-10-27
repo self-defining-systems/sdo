@@ -26,14 +26,22 @@ def test_scenarios_cover_the_known_plumbing_failures_with_real_streams() -> None
             assert len(stream["incidents"]) == scenario.expected_incidents
 
 
-def test_the_gate_scenarios_fit_its_fifteen_minute_budget() -> None:
-    assert sum(s.budget_seconds for s in gate.SCENARIOS) <= gate.BUDGET_SECONDS == 900
+def test_no_step_is_bounded_by_a_fixed_time_budget() -> None:
+    """Every wait ends on its owner's state; the only cap is the owner's own deadline (class: budgets that kill
+    steps about to succeed, seen in the build gate, the batch and bring-up)."""
+
+    import dataclasses
+    import inspect
+
+    assert not hasattr(gate, "BUDGET_SECONDS")
+    assert "budget_seconds" not in {f.name for f in dataclasses.fields(gate.Scenario)}
+    assert "scenario-budget" not in inspect.getsource(gate)
 
 
 def test_bring_up_is_bounded_only_by_the_owners_own_deadline(tmp_path: Path) -> None:
     from benchmarks.sregym.fastloop.cli import CLUSTER_OP_TIMEOUT_SECONDS
 
-    assert gate.UP_BUDGET_SECONDS == CLUSTER_OP_TIMEOUT_SECONDS
+    assert gate.WAIT_BACKSTOP_SECONDS == CLUSTER_OP_TIMEOUT_SECONDS
     timeouts: list[float] = []
     ticks = iter([0.0, 0.0, 270.0, 270.0, 280.0])
 
@@ -44,14 +52,14 @@ def test_bring_up_is_bounded_only_by_the_owners_own_deadline(tmp_path: Path) -> 
     run = gate.Gate(tmp_path, "7", tmp_path / "run", execute=execute, clock=lambda: next(ticks), scenarios=())
     run.run_dir.mkdir()
     summary = run.run()
-    assert timeouts == [gate.UP_BUDGET_SECONDS]
+    assert timeouts == [gate.WAIT_BACKSTOP_SECONDS]
     assert summary["up_seconds"] == 270.0
-    assert summary["within_budget"] is True
+    assert "within_budget" not in summary
 
 
 def test_unknown_check_is_rejected() -> None:
     with pytest.raises(ValueError, match="unknown checks"):
-        gate.Scenario(name="x", covers=("P0",), stream=None, budget_seconds=1, checks=("nope",))
+        gate.Scenario(name="x", covers=("P0",), stream=None, checks=("nope",))
 
 
 def test_commands_mount_the_freeze_and_pass_the_restart_evidence_only_to_the_restart_scenario(tmp_path: Path) -> None:
@@ -312,7 +320,7 @@ def test_gate_fails_when_the_lane_cannot_come_up_or_a_scenario_check_fails(tmp_p
     assert result["scenarios"][0]["status"] == "fail"
 
 
-def test_gate_fails_when_it_exceeds_its_budget(tmp_path: Path) -> None:
+def test_a_slow_gate_that_meets_every_contract_passes(tmp_path: Path) -> None:
     ticks = iter(float(n * 400) for n in range(100))
     runner = _fake_gate(tmp_path, [], clock=lambda: next(ticks))
     runner.run_dir.mkdir()
@@ -320,8 +328,9 @@ def test_gate_fails_when_it_exceeds_its_budget(tmp_path: Path) -> None:
 
     summary = runner.run()
 
-    assert not summary["within_budget"]
-    assert not summary["passed"]
+    assert summary["seconds"] > 900
+    assert summary["passed"]
+    assert "within_budget" not in summary
 
 
 def test_dry_run_lists_every_command_without_touching_a_cluster(tmp_path: Path) -> None:

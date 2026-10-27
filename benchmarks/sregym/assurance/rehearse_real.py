@@ -570,8 +570,6 @@ def real_summary(
         "problems": len(rows),
         "seconds": seconds,
         "seconds_per_problem": round(sum(r.seconds for r in ran) / len(ran), 1) if ran else 0.0,
-        "budget_seconds": batch.BUDGET_SECONDS,
-        "within_budget": True,
         "clean": sum(1 for r in rows if not r.findings),
         "failing": sum(1 for r in rows if any(s.error_class not in batch.COVERAGE_CLASSES for s in r.findings)),
         "coverage_gaps": sum(1 for r in rows if any(s.error_class in batch.COVERAGE_CLASSES for s in r.findings)),

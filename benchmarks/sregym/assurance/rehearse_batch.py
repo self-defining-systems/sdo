@@ -36,7 +36,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from benchmarks.sregym.assurance.rehearse_harness import (
-    UP_BUDGET_SECONDS,
+    WAIT_BACKSTOP_SECONDS,
     Check,
     Gate,
     Scenario,
@@ -56,9 +56,6 @@ DEFAULT_OUT = EXP_ROOT / "LE/REH"
 SUMMARY_JSON = "summary.json"
 SUMMARY_MD = "summary.md"
 DEFAULT_CLUSTERS = 4
-VEHICLE_BUDGET_SECONDS = 240
-#: Wall-clock ceiling for the full set at the default cluster count.
-BUDGET_SECONDS = 1800
 
 #: Toy fault each SREGym fault class reduces to (``apps/toy/faults.py`` kinds); classes absent here have no toy analog.
 TOY_VEHICLE: dict[str, str] = {
@@ -113,7 +110,6 @@ CLASS_RULES: tuple[tuple[str, str], ...] = (
     (r"broker outcome", "no-outcome-commit"),
     (r"outcome commit accepted", "outcome-not-accepted"),
     (r"incident-count|incidents-recorded", "incidents-missing"),
-    (r"scenario-budget", "over-budget"),
     (r"timed out", "timeout"),
     (r": no error", "incident-error"),
     (r"stream-exit", "stream-error"),
@@ -238,7 +234,6 @@ def vehicle_scenario(vehicle: str, streams: Path) -> Scenario:
         name=f"vehicle-{vehicle}",
         covers=("batch",),
         stream=str(path.resolve()),
-        budget_seconds=VEHICLE_BUDGET_SECONDS,
         checks=("incidents", "native-receipt"),
         expected_incidents=2,
     )
@@ -390,7 +385,7 @@ def render_markdown(summary: dict[str, Any]) -> str:
         f"# Batch rehearsal {summary['tag']} ({summary['code_sha'][:9]})",
         "",
         f"{summary['problems']} problems, {summary['clusters']} cluster(s), {summary['seconds']}s wall "
-        f"(about {summary['seconds_per_problem']}s per problem; budget {summary['budget_seconds']}s). "
+        f"(about {summary['seconds_per_problem']}s per problem). "
         f"Clean: {summary['clean']}; failing: {summary['failing']}; coverage gaps: {summary['coverage_gaps']}.",
         "",
         "## Error classes",
@@ -442,7 +437,12 @@ class Batch:
         if self.make_gate is not None:
             return self.make_gate(lane, run_dir, scenarios)
         return Gate(
-            self.code_root, lane, run_dir, image_tag=self.image_tag, scenarios=scenarios, up_budget=UP_BUDGET_SECONDS
+            self.code_root,
+            lane,
+            run_dir,
+            image_tag=self.image_tag,
+            scenarios=scenarios,
+            up_backstop=WAIT_BACKSTOP_SECONDS,
         )
 
     def lanes(self) -> list[tuple[str, Path, tuple[Scenario, ...]]]:
@@ -523,8 +523,6 @@ class Batch:
             "problems": len(rows),
             "seconds": seconds,
             "seconds_per_problem": round(seconds / len(rows), 1),
-            "budget_seconds": BUDGET_SECONDS,
-            "within_budget": seconds <= BUDGET_SECONDS,
             "clean": sum(1 for r in rows if not r.findings),
             "failing": failing,
             "coverage_gaps": gaps,

@@ -40,11 +40,10 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 FIXTURES = Path("tests/fixtures/sregym/rehearse_harness")
 SUMMARY_FILENAME = "rehearse-harness-summary.json"
 STRICT_RECEIPT = "sdo_production_receipt_strict.json"
-#: The whole gate, cold cluster included, must finish within this wall time.
-BUDGET_SECONDS = 900
-#: Backstop on ``fastloop up``, which ends on its own readiness (kind nodes Ready, images delivered) and holds this
-#: same deadline itself; a smaller outer cap killed bring-up that was about to succeed (4m29s under load).
-UP_BUDGET_SECONDS = CLUSTER_OP_TIMEOUT_SECONDS
+#: Backstop on every long step (bring-up, reset, stream). Each ends on its owner's state (kind nodes Ready and images
+#: delivered; stream incidents terminal) and holds this same deadline itself; smaller outer caps killed steps about to
+#: succeed (bring-up at 4m29s under load). Wall time is reported, never a verdict.
+WAIT_BACKSTOP_SECONDS = CLUSTER_OP_TIMEOUT_SECONDS
 LOAD_LIMIT = 40.0
 DISK_FLOOR_GIB = 110
 TIME_SCALE = "0.1"
@@ -66,7 +65,6 @@ class Scenario:
     #: The failures this scenario reproduces (P-numbers from FAILURE_PATTERNS) or the baseline it keeps.
     covers: tuple[str, ...]
     stream: str | None
-    budget_seconds: int
     #: Extra ``fastloop run`` flags.
     run_flags: tuple[str, ...] = ()
     #: Names from :data:`CHECKS` run after the stream.
@@ -76,8 +74,8 @@ class Scenario:
     def __post_init__(self) -> None:
         if not self.name or not self.covers:
             raise ValueError("a scenario needs a name and the failures it covers")
-        if self.budget_seconds <= 0 or self.expected_incidents < 1:
-            raise ValueError("a scenario needs a positive budget and incident count")
+        if self.expected_incidents < 1:
+            raise ValueError("a scenario needs a positive incident count")
         unknown = sorted(set(self.checks) - set(CHECKS))
         if unknown:
             raise ValueError(f"unknown checks {unknown}")
@@ -294,7 +292,6 @@ SCENARIOS: tuple[Scenario, ...] = (
         name="baseline",
         covers=("RH3",),
         stream="baseline.json",
-        budget_seconds=300,
         checks=("incidents", "native-receipt"),
         expected_incidents=2,
     ),
@@ -302,7 +299,6 @@ SCENARIOS: tuple[Scenario, ...] = (
         name="p51-restart-in-pause",
         covers=("P51",),
         stream="single_image_fault.json",
-        budget_seconds=150,
         run_flags=("--restart-controller-in-injection-pause",),
         checks=("incidents", "native-receipt", "restart-in-pause"),
     ),
@@ -310,14 +306,12 @@ SCENARIOS: tuple[Scenario, ...] = (
         name="p52-source-repair-refresh",
         covers=("P52",),
         stream="single_image_fault.json",
-        budget_seconds=150,
         checks=("incidents", "native-receipt", "source-repair-refresh"),
     ),
     Scenario(
         name="p53-program-write-rbac",
         covers=("P53",),
         stream=None,
-        budget_seconds=30,
         checks=("program-write-rbac",),
         expected_incidents=1,
     ),
@@ -485,7 +479,7 @@ class Gate:
     load_environment: Callable[[Path], Any] = _load_environment
     image_tag: str = "fastloop"
     scenarios: tuple[Scenario, ...] = SCENARIOS
-    up_budget: float = UP_BUDGET_SECONDS
+    up_backstop: float = WAIT_BACKSTOP_SECONDS
 
     def log(self) -> Path:
         return self.run_dir / "rehearse-harness.log"
@@ -502,7 +496,7 @@ class Gate:
         if not (self.run_dir / "fastloop.json").is_file():
             up_started = self.clock()
             code, output = self._step(
-                up_arguments(self.code_root, self.run_dir, self.lane, self.image_tag), self.up_budget
+                up_arguments(self.code_root, self.run_dir, self.lane, self.image_tag), self.up_backstop
             )
             up_seconds = self.clock() - up_started
             if code:
@@ -513,8 +507,6 @@ class Gate:
                 continue
             results.append(self._scenario(scenario))
         seconds = self.clock() - t0
-        # Bring-up ends on the owner's readiness; the budget covers what the gate itself runs.
-        run_seconds = seconds - up_seconds
         summary = {
             "code_root": str(self.code_root),
             "code_sha": _head(self.code_root),
@@ -523,9 +515,7 @@ class Gate:
             "started_at": started.isoformat(),
             "seconds": round(seconds, 1),
             "up_seconds": round(up_seconds, 1),
-            "budget_seconds": BUDGET_SECONDS,
-            "within_budget": run_seconds <= BUDGET_SECONDS,
-            "passed": bool(results) and all(r.passed for r in results) and run_seconds <= BUDGET_SECONDS,
+            "passed": bool(results) and all(r.passed for r in results),
             "scenarios": [{**asdict(r), "passed": r.passed} for r in results],
         }
         (self.run_dir / SUMMARY_FILENAME).write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
@@ -537,13 +527,13 @@ class Gate:
         run_id = f"reh-{scenario.name}-{int(time.time())}"
         results = self.run_dir / "results" / run_id
         try:
-            code, output = self._step(reset_arguments(self.code_root, self.run_dir), 300)
+            code, output = self._step(reset_arguments(self.code_root, self.run_dir), WAIT_BACKSTOP_SECONDS)
             if code:
                 result.status, result.detail = "error", f"reset failed (exit {code}): {output[-300:]}"
                 return result
             if scenario.stream is not None:
                 code, output = self._step(
-                    run_arguments(self.code_root, self.run_dir, scenario, run_id), scenario.budget_seconds
+                    run_arguments(self.code_root, self.run_dir, scenario, run_id), WAIT_BACKSTOP_SECONDS
                 )
                 if code:
                     # A failed stream still leaves records; the checks name the first broken contract.
@@ -567,9 +557,6 @@ class Gate:
             result.status, result.detail = "error", f"{type(exc).__name__}: {exc}"
         finally:
             result.seconds = round(self.clock() - t0, 1)
-            if result.seconds > scenario.budget_seconds:
-                result.checks.append(Check("scenario-budget", False, f"{result.seconds}s > {scenario.budget_seconds}s"))
-                result.status = "fail" if result.status == "pass" else result.status
         return result
 
 
@@ -583,7 +570,7 @@ def _head(code_root: Path) -> str:
 def format_summary(summary: dict[str, Any]) -> str:
     lines = [
         f"rehearse-harness lane {summary['lane']} {summary['code_sha'][:9]}: "
-        f"{'PASS' if summary['passed'] else 'FAIL'} in {summary['seconds']}s (budget {summary['budget_seconds']}s)"
+        f"{'PASS' if summary['passed'] else 'FAIL'} in {summary['seconds']}s (bring-up {summary['up_seconds']}s)"
     ]
     for scenario in summary["scenarios"]:
         covers = ",".join(scenario["covers"])
