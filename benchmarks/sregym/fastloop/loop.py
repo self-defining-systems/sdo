@@ -170,11 +170,17 @@ class LoopConfig:
     cleanup_passes: int = 1
     lane_id: str | None = None
     accepted_repository: Path | None = None
+    #: A single row whose next invocation rebuilds dirty application state.
+    row_start_tier2: bool = False
     #: Admission's stabilization rule: sample until the app passes, within this budget.
     recovery_settle_seconds: float = wait_for(WaitKind.ROLLOUT)
     recovery_settle_poll_seconds: float = wait_for(WaitKind.SAMPLE)
 
     def __post_init__(self) -> None:
+        if type(self.row_start_tier2) is not bool:
+            raise TypeError("row_start_tier2 must be a boolean")
+        if self.row_start_tier2 and self.incidents != 1:
+            raise ValueError("row_start_tier2 requires one incident per invocation")
         if not 0 < self.recovery_settle_seconds <= 300:
             raise ValueError("recovery_settle_seconds must be in (0, 300]")
         if self.recovery_settle_poll_seconds <= 0:
@@ -463,8 +469,49 @@ def _run_one(
 
     errors: list[str] = []
     outcome: AgentOutcome | None = None
+    oracle: OracleVerdict | None = None
+    infra_error: str | None = None
+    recovery_oracle: OracleVerdict | None = None
+    recovery_oracle_samples: list[RecoveryOracleSample] = []
+    oracle_finished_at: datetime | None = None
+    recovery_finished_at: datetime | None = None
+    recovery_seconds: float | None = None
+    cleanup_passes_verified = 0
+    post_closure_waits: list[PostClosureWait] = []
+    recovery_error: str | None = None
+    recovered = False
+
+    def grade() -> OracleVerdict:
+        # The official aggregate oracle owns collateral/traffic policy. A submitted
+        # problem may itself contribute multiple components; positions are not IDs.
+        return driver.oracle()
+
+    def measure_resolution() -> None:
+        nonlocal oracle, infra_error, oracle_finished_at
+        if oracle_finished_at is not None:
+            return
+        try:
+            oracle = grade()
+            raw_infra = oracle.details.get("infra_error")
+            infra_error = raw_infra if isinstance(raw_infra, str) and raw_infra.strip() else None
+            if not oracle.success and infra_error is None:
+                errors.append("oracle reported failure")
+        except Exception as exc:
+            logger.exception("oracle failed for incident %d", index)
+            infra_error = f"oracle failed: {_describe(exc)}"
+            errors.append(infra_error)
+        finally:
+            oracle_finished_at = now()
+
     try:
-        outcome = agent.resolve(index, problem_id, inject)
+        resolve_at_closure = getattr(agent, "resolve_at_closure", None)
+        outcome = (
+            resolve_at_closure(index, problem_id, inject, measure_resolution)
+            if resolve_at_closure is not None
+            else agent.resolve(index, problem_id, inject)
+        )
+        if outcome is None:
+            raise TypeError("agent resolution returned no outcome")
         if windows:  # the worker's recorded event, never the agent's own clock
             ensure_incident_follows_injection(outcome.incident_id, outcome.detected_at, windows[0].started_at)
     except InvalidInjectionError as exc:
@@ -505,16 +552,6 @@ def _run_one(
         logger.exception("incident %d failed", index)
         errors.append(_describe(exc))
 
-    oracle: OracleVerdict | None = None
-    infra_error: str | None = None
-    recovery_oracle: OracleVerdict | None = None
-    recovery_oracle_samples: list[RecoveryOracleSample] = []
-    oracle_finished_at: datetime | None = None
-    recovery_finished_at: datetime | None = None
-    recovery_seconds: float | None = None
-    cleanup_passes_verified = 0
-    post_closure_waits: list[PostClosureWait] = []
-    recovery_error: str | None = None
     recovered = bool(windows)
     diagnosis_grade: DiagnosisGrade | None = None
     if windows and grader is not None and outcome is not None and outcome.diagnosis.strip():
@@ -525,24 +562,8 @@ def _run_one(
     elif windows and grader is not None:
         diagnosis_grade = DiagnosisGrade(skipped=True, skip_reason="no diagnosis text")
 
-    def grade() -> OracleVerdict:
-        # The official aggregate oracle owns collateral/traffic policy. A submitted
-        # problem may itself contribute multiple components; positions are not IDs.
-        return driver.oracle()
-
-    if windows:
-        try:
-            oracle = grade()
-            raw_infra = oracle.details.get("infra_error")
-            infra_error = raw_infra if isinstance(raw_infra, str) and raw_infra.strip() else None
-            if not oracle.success and infra_error is None:
-                errors.append("oracle reported failure")
-        except Exception as exc:
-            logger.exception("oracle failed for incident %d", index)
-            infra_error = f"oracle failed: {_describe(exc)}"
-            errors.append(infra_error)
-        finally:
-            oracle_finished_at = now()
+    if windows and oracle_finished_at is None:
+        measure_resolution()
     if windows:
         checkpoint = IncidentRecord(
             run_id=config.run_id,
@@ -568,7 +589,7 @@ def _run_one(
             errors.append(f"learning failed: {_describe(exc)}")
             learning_complete = False
 
-    if windows:
+    if windows and not config.row_start_tier2:
         try:
             recovery_seconds = 0.0
             for _ in range(config.cleanup_passes):
@@ -624,10 +645,20 @@ def _run_one(
         recovery_trigger=getattr(agent, "last_recovery_trigger", None) if windows else None,
         cleanup_deleted_counts=cleanup.deleted_counts if cleanup is not None else {},
         cleanup_restored=cleanup.restored if cleanup is not None else [],
-        cleanup_skipped_reason=cleanup.skipped_reason if cleanup is not None else None,
+        cleanup_skipped_reason=(
+            "row_start_tier2"
+            if windows and config.row_start_tier2
+            else cleanup.skipped_reason
+            if cleanup is not None
+            else None
+        ),
         eval_notes=getattr(driver, "last_eval_notes", []) if windows else [],
         confounds=getattr(driver, "last_confounds", []) if windows else [],
-        full_cleanup_verified=getattr(driver, "last_full_cleanup_verified", False) and recovery_error is None,
+        full_cleanup_verified=(
+            not config.row_start_tier2
+            and getattr(driver, "last_full_cleanup_verified", False)
+            and recovery_error is None
+        ),
         cleanup_passes_verified=cleanup_passes_verified,
         incident_wall_seconds=monotonic() - started,
         run_prelude_phase_seconds=config.run_prelude_phase_seconds if index == config.slot_offset else {},

@@ -800,6 +800,7 @@ def run_persistent_stage(
     inject: Callable[[], None],
     clock: Clock | None = None,
     pause_after_verified: bool = True,
+    on_verified: Callable[[str, datetime | None], None] | None = None,
 ) -> dict[str, Any]:
     """Run one benchmark problem against the application's persistent controller.
 
@@ -996,6 +997,8 @@ def run_persistent_stage(
         inputs.detection_timeout_seconds,
     )
     verified_ready = clock.monotonic()
+    if on_verified is not None:
+        on_verified(verified.incident_id, _timestamp((verified.closure or {}).get("detected_at")))
     if pause_after_verified:
         pause_controller(ops, control, label=generation, clock=clock)
     paused_ready = clock.monotonic()

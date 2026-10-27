@@ -42,6 +42,7 @@ from benchmarks.sregym.fastloop.loop import AgentOutcome, InjectionWindow, Recov
 from benchmarks.sregym.fastloop.records import AgentName, PostClosureWait, RecoveryTrigger, TokenCounts
 from benchmarks.sregym.fastloop.replay import CheckpointStore, capture_checkpoints
 from benchmarks.sregym.protocol import receipt_resolution
+from benchmarks.sregym.protocol.injection import ensure_incident_follows_injection
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -285,6 +286,12 @@ class SdoPersistentAgent:
         )
 
     def resolve(self, index: int, problem_id: str, inject: Callable[[], InjectionWindow]) -> AgentOutcome:
+        return self.resolve_at_closure(index, problem_id, inject, lambda: None)
+
+    def resolve_at_closure(
+        self, index: int, problem_id: str, inject: Callable[[], InjectionWindow], on_verified: Callable[[], None]
+    ) -> AgentOutcome:
+        """Measure the app immediately on verified closure, before exporting evidence."""
         settings = self._settings
         lifecycle = self._lifecycle_inputs()
         receipt_dir = settings.results_dir / f"{index:03d}_{problem_id}"
@@ -293,6 +300,12 @@ class SdoPersistentAgent:
         def gated_inject() -> None:
             windows.append(inject())
 
+        def measure_verified(incident_id: str, detected_at: datetime | None) -> None:
+            if not windows:
+                raise RuntimeError("the controller verified an incident without the fault being injected")
+            ensure_incident_follows_injection(incident_id, detected_at, windows[0].started_at)
+            on_verified()
+
         resolution = run_persistent_stage(
             self.stage_inputs(f"fastloop-{index:03d}", receipt_dir, lifecycle.fingerprint),
             ops=self._ops,
@@ -300,6 +313,7 @@ class SdoPersistentAgent:
             inject=gated_inject,
             clock=self._clock,
             pause_after_verified=not self._keep_running,
+            on_verified=measure_verified,
         )
         self._checkpoint(index, str(resolution["incident_id"]), receipt_dir)
         if not windows:
