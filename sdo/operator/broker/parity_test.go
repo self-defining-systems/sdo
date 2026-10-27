@@ -134,8 +134,8 @@ func testCLIAndBrokerAgreeOnAcceptance(t *testing.T, shard int) {
 		allowAdditional bool
 	}
 	cases := []parityCase{
-		{"healthy refused service ports", validate.Responder, validate.ReflectionPhase, parityRefusedPortsDetector, []string{validate.RuleDetectorHealthyBaseline}, false},
-		{"healthy refused ports without recordings", validate.Responder, validate.ReflectionPhase, parityRefusedPortsDetector, []string{validate.RuleDetectorHealthyBaseline}, false},
+		{"healthy refused service ports", validate.Responder, validate.ReflectionPhase, parityRefusedPortsDetector, nil, false},
+		{"healthy refused ports without recordings", validate.Responder, validate.ReflectionPhase, parityRefusedPortsDetector, nil, false},
 		// A closure verified healthy is the only precondition: the cause is bound
 		// by the successful repair write on its own resource, so an opening
 		// finding on another resource neither blocks nor is needed.
@@ -419,7 +419,7 @@ func (p Program) Mitigate(ctx context.Context,v program.ReadView,b program.Bindi
 			}
 			source := strings.Replace(string(data), `ref := sdk.ObjectRefFrom("Service", "v1", &service)`, `ref := sdk.ObjectRefFrom("Service", "v1", &service); ref.Name = "not-observed"`, 1)
 			put(t, r, path, source, 0644)
-		}, []string{validate.RuleProgramDiagnoseNoMatch}, false},
+		}, nil, false},
 		{"program repeat unreachable is information", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
 			parityProgram(t, r)
 			path := ".sdo/diagnostics/detectors/incidents/routing-relations/detector.go"
@@ -439,7 +439,7 @@ func (p Program) Mitigate(ctx context.Context,v program.ReadView,b program.Bindi
 			}
 			source := strings.Replace(string(data), `Summary: "Service targetPort has no matching container port"`, `Summary: ""`, 1)
 			put(t, r, path, source, 0644)
-		}, []string{validate.RuleDetectorInvalidFinding}, false},
+		}, nil, false},
 
 		{"program corpus provenance", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
 			parityProgram(t, r)

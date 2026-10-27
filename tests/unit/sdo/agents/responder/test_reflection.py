@@ -190,7 +190,7 @@ def test_reflection_prompt_requires_direct_edits_and_check_until_green(tmp_path:
     assert "Operational memory is fallible advice." in prompt
     assert "Recovery requires evidence from the intended application behavior." in prompt
     assert "artifact_proposal" not in prompt
-    assert "broker validates" in prompt
+    assert "broker checks" in prompt
     assert "draft-test" not in prompt
     assert "sdo-memory/SKILL.md" in prompt
     assert "DetectionContext exposes" not in prompt  # the SDK reference lives in the skill, not the prompt
@@ -234,7 +234,8 @@ def test_reflection_saves_partial_learning_for_verified_parts(
     assert "Save verified steps with partial coverage" in prompt
     assert "Use recorded actions as repair evidence" in prompt
     assert "Save verified, specific README-only guidance too" in prompt
-    assert "Learn verified parts even when the whole incident remains unhealthy" in prompt
+    assert "Replay is informational" in prompt
+    assert "persistent Match and unavailable replay never block saving" in prompt
     assert "Include scoped sdk_gaps alongside updated for unencoded parts" in prompt
     assert "README orchestration and detectors" in prompt
     current = json.loads(prompt.split("Current outcome:\n", 1)[1].split("\n\nOutcome history", 1)[0])

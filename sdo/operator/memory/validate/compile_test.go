@@ -63,9 +63,6 @@ func TestCompileReportsTheFailingStage(t *testing.T) {
 			edit(t, root, detectorSource, "return Detector{}", `_ = fmt.Sprintf("%d", "not a number")
 	return Detector{}`)
 		}, detectorSource},
-		{"test", RuleDetectorTest, func(t *testing.T, root string) {
-			edit(t, root, ".sdo/diagnostics/detectors/incidents/missing-configmap/detector_test.go", "if len(findings) != 1 {", "if len(findings) != 7 {")
-		}, ""},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()

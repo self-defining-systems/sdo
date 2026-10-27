@@ -3,6 +3,7 @@ package validate
 import (
 	"context"
 	"encoding/json"
+	"go/format"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"os"
@@ -20,7 +21,7 @@ import (
 )
 
 func TestPartialPlaybookPublication(t *testing.T) {
-	for _, mode := range []string{"mechanical-step", "readme-only", "broken-peer"} {
+	for _, mode := range []string{"mechanical-step", "open-no-match", "fixed-still-match", "unverified-read", "missing-fixed", "labels-only", "no-corpus", "readme-only", "broken-peer"} {
 		t.Run(mode, func(t *testing.T) {
 			root := goodTree(t)
 			fixture := "../../../../tests/fixtures/sdo/playbook_program_app/.sdo"
@@ -72,6 +73,30 @@ func TestPartialPlaybookPublication(t *testing.T) {
 				// The fixture's guidance-only playbook predates front matter.
 				write(t, root, ".sdo/playbooks/missing-configmap/README.md", "---\nschema_version: 1\nowner: responder\nfault_class: missing-configmap\noriginating_incident: partial-learning\n---\nInspect the missing reference and restore the intended ConfigMap.\n")
 				ids = append(ids, "service-targetport-mismatch", "missing-configmap")
+				switch mode {
+				case "open-no-match", "fixed-still-match", "unverified-read":
+					verdict := map[string]string{"open-no-match": "NoMatch", "fixed-still-match": "Match", "unverified-read": "Unknown"}[mode]
+					source := `package targetport
+import("context";"sdo.dev/operator/sdk/program")
+type Program struct{}
+func(Program) Spec() program.ProgramSpec{return program.ProgramSpec{ID:"service-targetport-mismatch",Params:[]program.ParamSpec{{Name:"service",Kind:"Service",Required:true}}}}
+func(Program) Diagnose(context.Context,program.ReadView,program.Bindings)(program.Verdict,error){return program.Verdict{Result:program.` + verdict + `},nil}
+`
+					formatted, err := format.Source([]byte(source))
+					if err != nil {
+						t.Fatal(err)
+					}
+					write(t, root, ".sdo/playbooks/service-targetport-mismatch/diagnose.go", string(formatted))
+				case "missing-fixed":
+					remove(t, root, ".sdo/corpus/targetport-mismatch/fixed.json")
+				case "labels-only":
+					for _, name := range []string{"open.json", "fixed.json", "healthy.json", "recordings.json"} {
+						remove(t, root, ".sdo/corpus/targetport-mismatch/"+name)
+					}
+				case "no-corpus":
+					remove(t, root, ".sdo/corpus")
+				}
+
 				if mode == "broken-peer" {
 					// A partial playbook grants no exemption to another malformed program.
 					write(t, root, ".sdo/playbooks/partial-orchestration/mitigate.go", "package broken\n")
@@ -86,7 +111,8 @@ func TestPartialPlaybookPublication(t *testing.T) {
 			}
 			decision := &contracts.ReflectionDecision{LearningDecision: "updated", PlaybookIds: ids, SdkGaps: []*contracts.SdkGap{{FaultClass: "admission", Primitive: "backend decision", Reason: "requires live policy judgement", ScratchScript: "inspect backend availability"}}}
 			var notes []sdktest.MitigationReplayResult
-			ds, err := Check(context.Background(), Request{MitigationReplayNotes: &notes, Root: root, Base: base, Actor: Responder, Phase: ReflectionPhase, Decision: decision, Publication: &PublicationContext{BaseCommit: base, IncidentID: outcome.IncidentId}, OperatorRoot: filepath.Join("..", "..")}, CompileCandidate)
+			var observations []Diagnostic
+			ds, err := Check(context.Background(), Request{CoverageGaps: &observations, MitigationReplayNotes: &notes, Root: root, Base: base, Actor: Responder, Phase: ReflectionPhase, Decision: decision, Publication: &PublicationContext{BaseCommit: base, IncidentID: outcome.IncidentId}, OperatorRoot: filepath.Join("..", "..")}, CompileCandidate)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -99,8 +125,13 @@ func TestPartialPlaybookPublication(t *testing.T) {
 			if len(ds) != 0 {
 				t.Fatalf("partial memory rejected: %+v", ds)
 			}
-			if mode == "mechanical-step" && len(notes) != 1 {
+			if mode != "readme-only" && len(notes) != 1 {
 				t.Fatalf("partial program never replayed: %v", notes)
+			}
+			if mode == "open-no-match" || mode == "fixed-still-match" || mode == "unverified-read" || mode == "missing-fixed" || mode == "labels-only" || mode == "no-corpus" {
+				if notes[0].Status == sdktest.MitigationReplayPassed || len(observations) == 0 {
+					t.Fatalf("unverified replay was hidden: notes=%v observations=%v", notes, observations)
+				}
 			}
 			specs, err := programvalidation.InspectMemory(filepath.Join(root, ".sdo"), "fixture-diagnostics")
 			if err != nil {

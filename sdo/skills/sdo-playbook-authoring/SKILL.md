@@ -28,8 +28,9 @@ Read the [memory principles](../sdo-memory/SKILL.md#memory-principles) for evide
 4. Author final files in the proposal checkout; SDO derives `fault_class` and the index entry. A fixture labels
    its positive programs and binds the confirmed-cause resources. Include observed primitive replies and
    accepted.json when the mitigation needs source values. Preserve accepted cases; add new evidence by ID.
-5. Scope each diagnosis to its step’s bound resources. Validate each program on its own scope: faulted diagnosis matches and its plan builds, applies and clears
-   that diagnosis; unrelated faults may remain. Keep compilation, detector tests and the complete memory check.
+5. Run the complete memory check. Compilation, imports, changed-source formatting and receipt provenance
+   remain required. Replay runs as information: NoMatch, persistent Match and unavailable observations
+   never block saving. Scope diagnosis to the step's resources for useful live decisions.
    Return `updated` with changed playbook IDs and scoped `sdk_gaps` for unencoded parts of the same repair.
    Use `sdk_gap` without edits only when no mechanical step or useful guidance can be saved.
    Controller-listed `undetected_causes` permit new detector coverage for measured repair transitions;

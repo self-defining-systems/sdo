@@ -13,7 +13,6 @@ import (
 	"testing"
 	"time"
 
-	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 	"sdo.dev/operator/broker"
@@ -194,29 +193,8 @@ func testReflectionMongoAuthUpgrade(t *testing.T, fixtureName string) {
 			return nil, err
 		}
 		report, code := runReflectionMemoryCheck(t, binary, checkout, proposal.BaseCommit, operatorRoot)
-		_, publishErr := repository.PublishReflection(ctx, incidentID, publication)
-		var failure *validate.Failure
-		if code != 1 || !errors.As(publishErr, &failure) {
-			t.Fatalf("fixed-only catalog accepted: CLI %d %v broker %v", code, report.Diagnostics, publishErr)
-		}
-		if !proto.Equal(&contracts.MemoryCheckReport{Diagnostics: report.Diagnostics}, &contracts.MemoryCheckReport{Diagnostics: validate.ProtoDiagnostics(failure.Diagnostics)}) {
-			t.Fatalf("catalog replay diagnostics differ: CLI %v broker %v", report.Diagnostics, failure.Diagnostics)
-		}
-		// An unobserved open catalog leaves Diagnose Unknown on its own recorded
-		// fault, so the mitigation cannot be replayed. The hotel detector also
-		// fails its own corpus test, which names the same cause once.
-		expectedRules := []string{validate.RuleProgramDiagnoseNoMatch}
-		if fixtureName == "hotel_mongo_auth_upgrade" || fixtureName == "hotel_run_script_upgrade" {
-			expectedRules = []string{"detector.test"}
-		}
-		gotRules := make([]string, 0, len(report.Diagnostics))
-		for _, diagnostic := range report.Diagnostics {
-			gotRules = append(gotRules, diagnostic.Rule)
-		}
-		slices.Sort(expectedRules)
-		slices.Sort(gotRules)
-		if !slices.Equal(expectedRules, gotRules) {
-			t.Fatalf("unobserved open catalog did not fail program/detector evidence checks: %v", report.Diagnostics)
+		if code != 0 || len(report.Diagnostics) != 0 || len(report.CoverageGaps) == 0 {
+			t.Fatalf("fixed-only observations blocked saving or were hidden: CLI %d %v", code, report)
 		}
 		if err := os.WriteFile(recordingsPath, recorded, 0644); err != nil {
 			return nil, err

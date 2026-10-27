@@ -141,7 +141,7 @@ func TestReflectionCommitsWithRecordedGapsAndStillRejectsBrokenLearning(t *testi
 			t.Fatalf("an unreachable repeat was refused: %v", err)
 		}
 		want, got := gapKeys(cliGaps), gapKeys(receipt.CoverageGaps)
-		if !strings.Contains(strings.Join(want, "\n"), validate.RuleProgramRepeatReachable+":") {
+		if !strings.Contains(strings.Join(want, "\n"), validate.RuleReplayObservation+":") {
 			t.Fatalf("CLI did not record the unreachable repeat: %v", want)
 		}
 		if strings.Join(want, "\n") != strings.Join(got, "\n") {

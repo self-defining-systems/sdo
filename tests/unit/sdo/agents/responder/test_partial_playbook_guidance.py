@@ -21,6 +21,8 @@ def test_partial_learning_is_explicit(relative: str) -> None:
     assert "partial" in text
     assert "readme-only" in text
     assert "judgement" in text
+    assert "replay" in text
+    assert "information" in text
     assert "runscript" in text
     assert "digest-to-receipt" in text
     assert "relation-derived env" in text

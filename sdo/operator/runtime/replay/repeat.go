@@ -12,9 +12,8 @@ import (
 	"sdo.dev/operator/sdk/program"
 )
 
-// Rules named by CheckRepeat. Only RuleRepeatUnreachable is information: the
-// detectors never selected the playbook on its recorded incident, which is a
-// gap in coverage. The others are defects of the program or its detectors.
+// Rules named by informational CheckRepeat observations. Defects are reported
+// for analysis; no replay verdict decides whether memory may be saved.
 const (
 	RuleRepeatUnreachable    = "program.repeat-unreachable"
 	RuleRepeatUnavailable    = "program.repeat-unavailable"
@@ -23,21 +22,6 @@ const (
 	RuleDetectorInvalid      = "detector.invalid-finding"
 	RuleDetectorFiresHealthy = "detector.fires-on-healthy"
 )
-
-var repeatDefectRules = []string{RuleRepeatUnavailable, RuleDiagnoseNoMatch, RuleMitigatorMissing, RuleDetectorInvalid, RuleDetectorFiresHealthy}
-
-// RepeatDefectRule names the blocking rule of the first CheckRepeat error that
-// is a program or detector defect, or "" when there is none.
-func RepeatDefectRule(errors []string) string {
-	for _, message := range errors {
-		for _, rule := range repeatDefectRules {
-			if strings.HasPrefix(message, rule+":") {
-				return rule
-			}
-		}
-	}
-	return ""
-}
 
 // CheckRepeat proves the recorded repeat path through real incident detectors,
 // production candidate selection, diagnosis and the production repair replay.

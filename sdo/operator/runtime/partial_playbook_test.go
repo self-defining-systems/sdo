@@ -2,9 +2,14 @@ package runtime
 
 import (
 	"context"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"os"
 	"path/filepath"
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/sdktest"
 	"testing"
+	"time"
 
 	programvalidation "sdo.dev/operator/memory/validate/program"
 	"sdo.dev/operator/sdk/program"
@@ -46,4 +51,55 @@ func TestReadmeOnlyPlaybookDoesNotAutoApply(t *testing.T) {
 	if len(report.Mitigations) != 0 || len(loop.PlanApplications()) != 0 || len(state.Findings) != len(before) {
 		t.Fatalf("README guidance auto-applied or cleared findings: %v %+v", report, state.Findings)
 	}
+}
+
+// A still-matching diagnosis is information after the first apply. The stage
+// must retain its attempt across later passes even while the fault is observed.
+func TestStillMatchingProgramIsNotAppliedTwiceWithinIncident(t *testing.T) {
+	ctx := context.Background()
+	loop, state := pipelineTestLoop(t, true)
+	loop.Provider = stillFaultedStageView{loop.Provider}
+	state.Coverage = nil
+	state.Request.PlaybookCoverage = nil
+	state.Request.InitialProgramRuns = nil
+	stage := &DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return loop }, KeepLoop: true, ObservationCeiling: time.Millisecond}
+	first, err := stage.Run(ctx, state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state.PriorStages = []*contracts.StageReport{first}
+	if len(loop.PlanApplications()) != 1 {
+		t.Fatalf("fixture did not apply: %v", first)
+	}
+	matched := false
+	for _, attempt := range first.Mitigations {
+		matched = matched || attempt.GetPostApplyDiagnose().GetVerdict().GetResult() == contracts.Verdict_RESULT_MATCH
+	}
+	if !matched {
+		t.Fatalf("fixture lost still-matching diagnosis: %v", first)
+	}
+	for range 2 {
+		if _, err := RunStageAgain(ctx, state, stage); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(loop.PlanApplications()) != 1 {
+		t.Fatalf("still-matching program applied twice: %v", loop.PlanApplications())
+	}
+}
+
+type stillFaultedStageView struct{ SnapshotProvider }
+
+func (v stillFaultedStageView) Snapshot(ctx context.Context) (sdk.DetectionContext, error) {
+	view, err := v.SnapshotProvider.Snapshot(ctx)
+	if err != nil {
+		return nil, err
+	}
+	snapshot := view.(sdktest.Snapshot)
+	for index := range snapshot.ServiceList {
+		if snapshot.ServiceList[index].Name == "api" {
+			snapshot.ServiceList[index].Spec.Ports[0].TargetPort = intstr.FromInt32(9999)
+		}
+	}
+	return snapshot, nil
 }

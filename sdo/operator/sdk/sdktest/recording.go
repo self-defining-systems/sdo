@@ -178,7 +178,13 @@ type CorpusProvenance struct {
 
 // LoadCorpusCase reads open.json, fixed.json, healthy.json, recordings.json,
 // and labels.json from one .sdo/corpus/<case> directory.
-func LoadCorpusCase(dir string) (CorpusCase, error) {
+func LoadCorpusCase(dir string) (CorpusCase, error) { return loadCorpusCase(dir, true) }
+
+// LoadCorpusMetadata reads labels and available receipt recordings without
+// requiring replay snapshots. Static provenance never depends on replay inputs.
+func LoadCorpusMetadata(dir string) (CorpusCase, error) { return loadCorpusCase(dir, false) }
+
+func loadCorpusCase(dir string, snapshots bool) (CorpusCase, error) {
 	var c CorpusCase
 	for _, item := range []struct {
 		name   string
@@ -196,8 +202,14 @@ func LoadCorpusCase(dir string) (CorpusCase, error) {
 			ScriptOrigins          *map[string]string `json:"script_origins,omitempty"`
 		}{&c.RootCauseProgramIDs, &c.NoMatchProgramIDs, &c.Bindings, &c.PeerBindings, &c.Provenance, &c.SyntheticNoMatchReason, &c.HealthImpact, &c.ScriptOrigins}},
 	} {
+		if !snapshots && (item.name == "open.json" || item.name == "fixed.json" || item.name == "healthy.json") {
+			continue
+		}
 		path := filepath.Join(dir, item.name)
 		raw, err := os.ReadFile(path)
+		if !snapshots && item.name == "recordings.json" && os.IsNotExist(err) {
+			continue
+		}
 		if err != nil {
 			return c, fmt.Errorf("corpus %s: %w", path, err)
 		}

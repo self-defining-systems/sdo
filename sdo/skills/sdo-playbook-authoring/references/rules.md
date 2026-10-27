@@ -45,14 +45,10 @@ diagnostic; look it up here.
 - The responder writes playbooks, scripts, and the index during reflection. The health judge writes only the
   health-objective playbook during the initial health-judge stage. Enforced by: `ownership.denied`.
 
-- On its recorded fault a playbook's incident detectors must emit valid findings that stay quiet on the healthy fixture, and its Diagnose must Match and have a mitigator. Enforced by: `program.diagnose-no-match`, `program.mitigator-missing`, `detector.invalid-finding`, `detector.fires-on-healthy`, `program.repeat-unavailable`.
-
-Advice, not validator-checked: recorded faults should produce an incident detector finding that selects the playbook. When none does, the mitigation is still replayed and must repair, and the missing link is noted as a coverage gap (`program.repeat-unreachable`), not a refusal.
-
-- A mitigator must clear its own step diagnosis after its patches apply to the faulted fixture; unrelated faults may remain in fixed and post-plan states. An already-faulty target value is not a repair. Enforced by: `program.mitigation-not-repaired`.
-- Prefer narrow typed SetField repairs when the damaged field is known; whole-object ReconcileFromSource requires whole-object justification. Observed and parameter-derived fields require valid patches and available observations; accepted-source field selectors require accepted manifests in the fixture. Enforced by: `program.mitigation-unreplayable`, `program.mitigation-not-repaired`.
-
-- CreateFromSource requires accepted-source presence; DeleteObject targets any named nonsecret object without a source-absence gate. Both require direct current UID/absence verification. Delete is disclosed as irreversible and never auto-recreated. They must execute successfully in replay to prove repair. Enforced by: `program.mitigation-unreplayable`.
+Replay reports diagnosis, detector observations and plan application as information only. Open NoMatch,
+fixed/post-plan Match, unavailable reads, empty or unappliable plans and failing replay tests never block
+saving. Compilation, imports, changed-source formatting, ownership and provenance remain required.
+Source values and live mutation policies are checked when a plan is applied.
 
 ## Value provenance and runtime effects
 
@@ -67,9 +63,8 @@ Runtime action reports and receipts retain commit/path, resourceVersion/path, or
 The runtime guards DeletePod by UID/version and directly verifies ScaleWorkload replicas. Exec uses the controller's
 pods/exec grant in the application namespace and returns an exit code with no stdout/stderr; commands can reach mounted Secret files.
 
-- Replay external effects only with the required evidence. A skipped effect proves no repair; irreversible
-  Pod deletion or Exec never grants restart mutation or recreation authority. Enforced by:
-  `program.mitigation-unreplayable`.
+Advice, not validator-checked: unavailable external-effect replay proves no repair; report its reason.
+Irreversible Pod deletion or Exec never grants restart mutation or recreation authority.
 
 ## Corpus evidence
 
@@ -81,18 +76,17 @@ and never auto-applied. Return `updated` with IDs and scoped `sdk_gaps` for unen
 Advice, not validator-checked: add detector coverage; one detector may surface several playbooks. Reflection
 can edit only responder-owned incident detectors. Missing executable coverage is a gap, not a refusal.
 
-- Build replay fixtures from recorded session observations. Controller capture files and snapshot digests are
-  optional. Mitigation must execute and clear diagnosis; skipped effects fail replay. Enforced by: `program.mitigation-not-repaired`.
+- Build replay fixtures from recorded session observations when available. Missing or inconclusive replay
+  is recorded with its reason and never rejects publication; retain RunScript receipt linkage. Enforced by: `program.mitigation-not-repaired`.
 - Preserve every accepted case exactly as it appears at the accepted base commit, including snapshots, recordings,
   provenance, bindings and labels. Do not delete or relabel it; submit new evidence with a new case ID. Enforced by: `program.corpus-immutable`.
 
-- RemoveServicePort must identify exactly one port and explicitly allow removing the last entry.
+Advice, not validator-checked: live RemoveServicePort identifies exactly one port and explicitly allows removing the last entry.
   EnsureDatabaseUser uses only env or namespace-local ConfigMap key/assignment references, preserves other users and
-  existing passwords, and discloses irreversible effects. Catalog diagnosis/replay requires a successful
-  recorded open observation; fixed answers never substitute for applying the action. Enforced by:
-  `program.mitigation-unreplayable`, `program.mitigation-not-repaired`.
+  existing passwords, and discloses irreversible effects. Unavailable catalog observations remain Unknown. Replay findings are informational; fixed answers never
+  establish a live repair.
 
 General actions do not require per-fault value provenance or accepted-source presence. Use the
 [general action vocabulary](general-actions.md) and retain exact recorded transition evidence
 for commands, HTTP, raw API effects and one-off completion. Missing evidence remains Unknown;
-Fixed replies never establish an effect. Existing compilation/replay diagnostics still apply.
+Fixed replies never establish an effect. Compilation and provenance still apply; replay verdicts remain information.

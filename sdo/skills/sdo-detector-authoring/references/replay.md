@@ -94,6 +94,11 @@ func LoadCorpusCase(dir string) (CorpusCase, error)
     LoadCorpusCase reads open.json, fixed.json, healthy.json, recordings.json,
     and labels.json from one .sdo/corpus/<case> directory.
 
+func LoadCorpusMetadata(dir string) (CorpusCase, error)
+    LoadCorpusMetadata reads labels and available receipt recordings without
+    requiring replay snapshots. Static provenance never depends on replay
+    inputs.
+
 func (c CorpusCase) PhaseRecordings(phase string) []PrimitiveCall
     PhaseRecordings selects actual observations for one corpus phase. Healthy
     snapshots are the verified fixed snapshot, so they share its observations.

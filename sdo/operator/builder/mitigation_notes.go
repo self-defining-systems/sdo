@@ -8,7 +8,7 @@ import (
 	"sdo.dev/operator/sdk/sdktest"
 )
 
-// MitigationReplayResults reads the generated corpus gate's informational
+// MitigationReplayResults reads the generated corpus replay's informational
 // receipts. They are not proof of an external effect or inputs to live trust.
 func (workspace *Workspace) MitigationReplayResults() ([]sdktest.MitigationReplayResult, error) {
 	path := filepath.Join(workspace.Directory, "generated", "mitigation-replay.json")
@@ -43,7 +43,7 @@ func (workspace *Workspace) MitigationReplayResults() ([]sdktest.MitigationRepla
 func (workspace *Workspace) CoverageGaps() ([]string, error) {
 	data, err := os.ReadFile(filepath.Join(workspace.Directory, "generated", "coverage-gaps.json"))
 	if os.IsNotExist(err) {
-		return nil, nil
+		return append([]string(nil), workspace.advisoryTestErrors...), nil
 	}
 	if err != nil {
 		return nil, err
@@ -55,5 +55,5 @@ func (workspace *Workspace) CoverageGaps() ([]string, error) {
 	if err := json.Unmarshal(data, &gaps); err != nil {
 		return nil, fmt.Errorf("decode coverage gap notes: %w", err)
 	}
-	return gaps, nil
+	return append(gaps, workspace.advisoryTestErrors...), nil
 }

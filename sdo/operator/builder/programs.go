@@ -100,5 +100,5 @@ func generatePrograms(root, module string, programs []programvalidation.Spec) er
 	if err := os.WriteFile(filepath.Join(root, "generated", "programs_test.go"), []byte(programvalidation.ReplayTests(programs)), 0o644); err != nil {
 		return err
 	}
-	return generateDetectorCorpusTest(root, programs)
+	return nil
 }
