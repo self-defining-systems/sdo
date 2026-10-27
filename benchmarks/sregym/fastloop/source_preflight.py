@@ -14,6 +14,7 @@ from benchmarks.sregym.fastloop.image_provenance import (
     ImageSource,
     changed_build_paths,
     image_source,
+    uncommitted_build_files,
 )
 
 FIRST_PARTY_APPS = ("hotel-reservation", "astronomy-shop", "social-network")
@@ -78,7 +79,7 @@ def _assert_image_source(image: str, current: ImageSource, worktree: Path) -> No
             "with scripts/build_sdo_images.sh"
         ) from exc
     if built != current:
-        changed = changed_build_paths(worktree, built, current, revision, "HEAD")
+        changed = changed_build_paths(built, current)
         raise ValueError(
             f"eval: image {image} source differs from {revision} in {', '.join(changed[:5])}; "
             "rebuild with scripts/build_sdo_images.sh"
@@ -101,14 +102,7 @@ def assert_runtime_images(images: Images, worktree: Path, *, dev_mount: bool = T
             (images.validator, "validator"),
         )
     }
-    built_paths = sorted({path for source in sources.values() for path in source.paths})
-    dirty = subprocess.run(
-        ["git", "-C", str(worktree), "status", "--porcelain", "--untracked-files=normal", "--", *built_paths],
-        capture_output=True,
-        text=True,
-        timeout=wait_for(WaitKind.PROBE),
-    )
-    if dirty.returncode or dirty.stdout.strip():
+    if uncommitted_build_files(worktree, list(sources.values())):
         raise ValueError(
             "eval: image source has uncommitted changes; commit and rebuild with scripts/build_sdo_images.sh"
         )
