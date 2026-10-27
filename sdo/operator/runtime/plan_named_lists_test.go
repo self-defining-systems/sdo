@@ -2,6 +2,8 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
+	"strconv"
 	"testing"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -45,7 +47,9 @@ func TestAtomicServicePortRollbackPreservesConcurrentAddition(t *testing.T) {
 			for _, value := range restored {
 				port := value.(map[string]any)
 				name := port["name"].(string)
-				if want, exists := expected[name]; !exists || port["port"] != want {
+				want, exists := expected[name]
+				got, err := json.Marshal(port["port"])
+				if !exists || err != nil || string(got) != strconv.FormatInt(want, 10) {
 					t.Fatalf("unexpected restored port: %+v", port)
 				}
 				delete(expected, name)
