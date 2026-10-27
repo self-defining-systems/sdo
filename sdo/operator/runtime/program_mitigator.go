@@ -105,26 +105,7 @@ func BuildMitigationPlan(ctx context.Context, p program.Mitigator, view program.
 			err = readErr
 		}
 		if err == nil {
-			if validation := plan.Validate(); validation != nil {
-				err = &NonExecutablePlanError{Cause: validation}
-			}
-		}
-		if err == nil && len(plan.Actions) == 0 {
-			err = &NonExecutablePlanError{Cause: errEmptyMitigationPlan}
-		}
-		if err == nil {
-			// Reject unsupported actions and detach the returned values from authored memory.
-			payload, encodeErr := json.Marshal(PlanApplicationResult{Plan: plan})
-			if encodeErr != nil {
-				err = &NonExecutablePlanError{Cause: encodeErr}
-			}
-			if err == nil {
-				var decoded PlanApplicationResult
-				if decodeErr := json.Unmarshal(payload, &decoded); decodeErr != nil {
-					err = &NonExecutablePlanError{Cause: decodeErr}
-				}
-				plan = decoded.Plan
-			}
+			plan, err = detachExecutablePlan(plan)
 		}
 		if err == nil {
 			plan, err = bindMitigationValues(plan, p.Spec(), bindings, isolated)
@@ -140,6 +121,26 @@ func BuildMitigationPlan(ctx context.Context, p program.Mitigator, view program.
 	case result := <-results:
 		return result.plan, result.err
 	}
+}
+
+// detachExecutablePlan validates structure before encoding, at both in-process
+// and compiled-program boundaries. Read and binding failures stay retryable.
+func detachExecutablePlan(plan program.Plan) (program.Plan, error) {
+	if err := plan.Validate(); err != nil {
+		return program.Plan{}, &NonExecutablePlanError{Cause: err}
+	}
+	if len(plan.Actions) == 0 {
+		return program.Plan{}, &NonExecutablePlanError{Cause: errEmptyMitigationPlan}
+	}
+	payload, err := json.Marshal(PlanApplicationResult{Plan: plan})
+	if err != nil {
+		return program.Plan{}, &NonExecutablePlanError{Cause: err}
+	}
+	var decoded PlanApplicationResult
+	if err := json.Unmarshal(payload, &decoded); err != nil {
+		return program.Plan{}, &NonExecutablePlanError{Cause: err}
+	}
+	return decoded.Plan, nil
 }
 
 // mitigationReadView is the view a mitigator runs against. The typed object

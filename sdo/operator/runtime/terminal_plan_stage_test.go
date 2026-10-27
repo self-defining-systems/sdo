@@ -3,8 +3,13 @@ package runtime
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
+	"sdo.dev/operator/builder"
+	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"sdo.dev/operator/contracts/wire"
 	"sdo.dev/operator/sdk"
@@ -13,24 +18,36 @@ import (
 
 type terminalShapeProgram struct {
 	pipelinePortProgram
-	shape string
-	calls *atomic.Int32
+	shape    string
+	calls    *atomic.Int32
+	compiled program.Mitigator
 }
 
-func (p terminalShapeProgram) Mitigate(_ context.Context, _ program.ReadView, b program.Bindings) (program.Plan, error) {
+func (p terminalShapeProgram) Mitigate(ctx context.Context, v program.ReadView, b program.Bindings) (program.Plan, error) {
 	p.calls.Add(1)
+	if p.compiled != nil {
+		return p.compiled.Mitigate(ctx, v, b)
+	}
 	if p.shape == "empty" {
 		return program.Plan{}, nil
 	}
 	return program.Plan{Actions: []program.Action{program.PatchObject{Ref: b.Objects["service"], Type: "merge", Patch: []byte(`{}`), Edits: []program.ListEdit{{Path: "/spec/ports", Match: map[string]any{"name": "http"}, Op: "remove"}}, Reason: "synthetic invalid shape"}}}, nil
 }
 func TestAutomaticStageNonExecutablePlanIsTerminalAcrossBindingsAndRestart(t *testing.T) {
-	for _, shape := range []string{"empty", "exclusive-patch-edits"} {
+	for _, shape := range []string{"empty", "exclusive-patch-edits", "compiled-malformed-json", "compiled-nil-action"} {
 		t.Run(shape, func(t *testing.T) {
 			ctx := context.Background()
 			loop, state := pipelineTestLoopWithServices(t, true, "peer")
 			var calls atomic.Int32
 			p := terminalShapeProgram{shape: shape, calls: &calls}
+			if strings.HasPrefix(shape, "compiled-") {
+				action := `program.PatchObject{Ref:b.Objects["service"],Type:"merge",Patch:[]byte("{"),Reason:"synthetic"}`
+				if shape == "compiled-nil-action" {
+					action = "nil"
+				}
+				p.compiled = compiledTerminalPlanProgram(t, `return program.Plan{Actions:[]program.Action{`+action+`}},nil`)
+
+			}
 			registry, err := program.NewRegistry([]program.Diagnoser{p}, []program.Mitigator{p})
 			if err != nil {
 				t.Fatal(err)
@@ -122,5 +139,71 @@ func TestAutomaticStageTransientPlanningErrorIsNotTerminal(t *testing.T) {
 	}
 	if calls.Load() != 2 || len(report.Mitigations) != 1 || report.Mitigations[0].Result != "applied_cleared" {
 		t.Fatalf("transient error was mistaken for a structural defect: calls=%d report=%v", calls.Load(), report)
+	}
+}
+
+// Compile real authored source so encoding and read errors cross private pipes.
+func compiledTerminalPlanProgram(t *testing.T, body string) *workingProgram {
+	t.Helper()
+	root := nativeRepository(t)
+	spec := (pipelinePortProgram{}).Spec()
+	dir := filepath.Join(root, ".sdo/playbooks", spec.ID)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("---\nfault_class: "+spec.ID+"\n---\n# Synthetic structural defect\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	source := fmt.Sprintf(`package repair
+import("context";"sdo.dev/operator/sdk/program")
+type Program struct{}
+func(Program) Spec()program.ProgramSpec{return program.ProgramSpec{ID:%q,Params:[]program.ParamSpec{{Name:"service",Kind:"Service",Required:true}}}}
+func(Program) Diagnose(context.Context,program.ReadView,program.Bindings)(program.Verdict,error){return program.Verdict{Result:program.Match},nil}
+func(Program) Mitigate(_ context.Context,v program.ReadView,b program.Bindings)(program.Plan,error){%s}
+`, spec.ID, body)
+	if err := os.WriteFile(filepath.Join(dir, "diagnose.go"), []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+	workspace, binary, err := builder.BuildWorkingProgram(context.Background(), builder.Config{ApplicationRoot: root, OperatorRoot: ".."}, spec.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = workspace.Close() })
+	return &workingProgram{spec: spec, binary: binary, canMitigate: true, workspace: workspace}
+}
+
+type transientCompiledReadView struct {
+	program.ReadView
+	reads atomic.Int32
+}
+
+func (v *transientCompiledReadView) Logs(sdk.ObjectRef, string, time.Duration) (string, error) {
+	if v.reads.Add(1) == 1 {
+		return "", fmt.Errorf("synthetic observation unavailable")
+	}
+	return "synthetic observation", nil
+}
+func TestCompiledProgramObservationFailureRemainsRetryable(t *testing.T) {
+	loop, state := pipelineTestLoop(t, true)
+	originalView := loop.ReadView
+	view := &transientCompiledReadView{}
+	loop.ReadView = func(ctx sdk.DetectionContext) program.ReadView { view.ReadView = originalView(ctx); return view }
+	compiled := compiledTerminalPlanProgram(t, `_,err:=v.Logs(b.Objects["service"],"synthetic",0);if err!=nil{return program.Plan{},err};return program.Plan{Actions:[]program.Action{program.SetField{Ref:b.Objects["service"],Path:"spec.ports[0].targetPort",Value:program.FromSource(b.Objects["service"],"spec.ports[0].targetPort"),Reason:"synthetic repair"}}},nil`)
+	var calls atomic.Int32
+	p := terminalShapeProgram{compiled: compiled, calls: &calls}
+	registry, err := program.NewRegistry([]program.Diagnoser{p}, []program.Mitigator{p})
+	if err != nil {
+		t.Fatal(err)
+	}
+	loop.Programs = registry
+	state.Coverage = nil
+	state.Request.InitialProgramRuns = nil
+	loop.Request = state.Request
+	report, err := (&DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return loop }}).Run(context.Background(), state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls.Load() != 2 || view.reads.Load() != 2 || len(report.Mitigations) != 1 || report.Mitigations[0].Result != "applied_cleared" {
+		t.Fatalf("transient compiled observation became terminal: calls=%d reads=%d report=%v", calls.Load(), view.reads.Load(), report)
 	}
 }
