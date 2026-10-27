@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"errors"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"net"
 	"os"
@@ -237,5 +238,52 @@ func TestStartupReachabilityBaselineAfterTerminalClosureAndSourceChange(t *testi
 	}
 	if failed.pendingClosure == nil || failed.closureReceipt == nil || failed.closureState != contracts.ClosureState_CLOSURE_STATE_FAILED {
 		t.Fatal("baseline acceptance discarded failed closure evidence")
+	}
+}
+
+// A recorded exclusion binds to the target's configuration. When that configuration
+// changes (restored ConfigMap, rolled pod template) while the target is still
+// never served and the goal is healthy, the health judge records it again at startup.
+func TestStartupReachabilityBaselineRefreshesAnExclusionWhoseConfigurationChanged(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	root, authority := baselineRepository(t)
+	snapshots := &mutableSnapshots{snapshot: reachabilityApp(9600)}
+	dialer, err := prober.New(prober.Config{Namespace: "shop", LinkAddress: func(link traffic.Link) string { return link.To }, DialContext: func(context.Context, string, string) (net.Conn, error) {
+		return nil, &net.OpError{Op: "dial", Err: syscall.ECONNREFUSED}
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	observer := NewServiceReachabilityObserver(ServiceReachabilityConfig{Prober: reachabilityDirect{dialer}, Snapshots: snapshots, Interval: time.Millisecond})
+	defer observer.Stop()
+	provider := TrafficSnapshotProvider{Base: snapshots, Reachability: observer}
+	goal := controllerDetector("health-objective", time.Second, sdk.Finding{})
+	goal.spec.Class = sdk.DetectorClassHealth
+	accept := func() error {
+		return acceptStartupReachabilityBaseline(ctx, &Controller{}, root, authority, true, observer, provider, []sdk.Detector{goal})
+	}
+	if err := accept(); !errors.Is(err, memory.ErrHealthRefreshRequired) {
+		t.Fatalf("fresh startup did not publish: %v", err)
+	}
+	observer.Stop()
+	first, err := memory.ReadReachabilityBaseline(ctx, root, "HEAD")
+	if err != nil || len(first.Exclusions) != 1 {
+		t.Fatalf("no first baseline: %+v %v", first, err)
+	}
+	head := nativeGit(t, root, "rev-parse", "HEAD")
+	if err := accept(); err != nil || nativeGit(t, root, "rev-parse", "HEAD") != head {
+		t.Fatalf("unchanged configuration republished: %v", err)
+	}
+	changed := reachabilityApp(9600)
+	changed.PodList[0].Spec.Containers[0].Env = []corev1.EnvVar{{Name: "MODE", Value: "restored"}}
+	snapshots.set(changed)
+	if err := accept(); !errors.Is(err, memory.ErrHealthRefreshRequired) {
+		t.Fatalf("stale exclusion was kept: %v", err)
+	}
+	observer.Stop()
+	second, err := memory.ReadReachabilityBaseline(ctx, root, "HEAD")
+	if err != nil || len(second.Exclusions) != 1 || second.Exclusions[0].Configuration == first.Exclusions[0].Configuration {
+		t.Fatalf("exclusion not recorded for the new configuration: %+v %v", second, err)
 	}
 }

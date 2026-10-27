@@ -302,3 +302,26 @@ func TestRecreatedServiceRealFaultRetainsThirdSampleGate(t *testing.T) {
 		}
 	}
 }
+
+func TestStaleExclusionsNameOnlyTargetsWhoseConfigurationChanged(t *testing.T) {
+	s := reachabilitySnapshot{Snapshot: geoSnapshot(intstr.FromInt32(8083), true), window: window(geoTarget(samples(servicehealth.DialRefused, false, false, false)))}
+	auth := servicehealth.BaselineAuthorization{SourceInputs: strings.Repeat("a", 64), ObjectiveDigest: strings.Repeat("b", 64), Reason: "healthy-baseline", GoalHealthy: true}
+	baseline, err := servicehealth.CaptureReachabilityBaseline(s, auth)
+	if err != nil || len(baseline.Exclusions) != 1 {
+		t.Fatalf("no exclusion: %+v %v", baseline, err)
+	}
+	if got := baseline.StaleExclusions(s); len(got) != 0 {
+		t.Fatalf("unchanged configuration is stale: %+v", got)
+	}
+	s.ServiceList[0].Spec.Ports[0].TargetPort = intstr.FromInt32(8888)
+	if got := baseline.StaleExclusions(s); len(got) != 1 {
+		t.Fatalf("changed configuration is not stale: %+v", got)
+	}
+	s.ServiceList = nil
+	if got := baseline.StaleExclusions(s); len(got) != 0 {
+		t.Fatalf("a removed target has nothing to refresh: %+v", got)
+	}
+	if got := (*servicehealth.ReachabilityBaseline)(nil).StaleExclusions(s); len(got) != 0 {
+		t.Fatalf("no record cannot be stale: %+v", got)
+	}
+}

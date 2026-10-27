@@ -46,8 +46,20 @@ func healthyBaselineGoal(ctx context.Context, detectors []sdk.Detector, snapshot
 	return true, nil
 }
 
-func baselineMatches(b *servicehealth.ReachabilityBaseline, revision memory.HealthRevision) bool {
-	return b != nil && b.Authorization.SourceInputs == revision.SourceInputs && b.Authorization.ObjectiveDigest == objectiveDigest(revision.Objective)
+// baselineMatches reports whether the record is current: bound to the accepted
+// health inputs, and every exclusion still describes its target's configuration.
+func baselineMatches(b *servicehealth.ReachabilityBaseline, revision memory.HealthRevision, snapshot sdk.DetectionContext) bool {
+	return b != nil && b.Authorization.SourceInputs == revision.SourceInputs && b.Authorization.ObjectiveDigest == objectiveDigest(revision.Objective) && len(b.StaleExclusions(snapshot)) == 0
+}
+
+// baselineProposalID is unique per measured configuration, so a refresh under
+// unchanged health inputs never reuses an earlier proposal.
+func baselineProposalID(revision memory.HealthRevision, b *servicehealth.ReachabilityBaseline) string {
+	digest := sha256.New()
+	for _, e := range b.Exclusions {
+		fmt.Fprintf(digest, "%s\x00%s\x00", e.Target.ID(), e.Configuration)
+	}
+	return fmt.Sprintf("reachability-baseline-%s-%x", revision.RefreshID(), digest.Sum(nil)[:6])
 }
 
 // publishReachabilityBaseline is reached only from the trusted, opt-in startup
@@ -59,7 +71,7 @@ func publishReachabilityBaseline(ctx context.Context, root string, authority *br
 	if err != nil {
 		return false, err
 	}
-	if baselineMatches(existing, revision) {
+	if baselineMatches(existing, revision, snapshot) {
 		return false, nil
 	}
 	if _, err := healthyBaselineGoal(ctx, detectors, snapshot); err != nil {
@@ -69,7 +81,7 @@ func publishReachabilityBaseline(ctx context.Context, root string, authority *br
 	if err != nil {
 		return false, err
 	}
-	id := "reachability-baseline-" + revision.RefreshID()
+	id := baselineProposalID(revision, baseline)
 	proposal, err := authority.CreateProposalForPhase(ctx, id, broker.InitialPhase)
 	if err != nil {
 		return false, err
@@ -110,7 +122,11 @@ func acceptStartupReachabilityBaseline(ctx context.Context, c *Controller, root 
 	if err != nil {
 		return err
 	}
-	if baselineMatches(existing, revision) {
+	current, err := provider.Snapshot(ctx)
+	if err != nil {
+		return err
+	}
+	if baselineMatches(existing, revision, current) {
 		return nil
 	}
 	observer.Stop()
