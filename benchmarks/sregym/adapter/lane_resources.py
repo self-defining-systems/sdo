@@ -21,7 +21,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
-from benchmarks.sregym.adapter.budgets import WaitKind, wait_for
+from benchmarks.sregym.adapter.budgets import Deadline, DeadlineExhaustedError, WaitKind, wait_for
 
 if TYPE_CHECKING:
     from collections.abc import Set
@@ -337,27 +337,32 @@ def assert_lane_resources(
     """
     if not kubeconfig.is_absolute():
         raise ValueError("eval: lane resource admission requires an absolute trusted kubeconfig")
-    deadline = time.monotonic() + wait_for(WaitKind.SNAPSHOT_READ)
+    budget = Deadline.after(wait_for(WaitKind.SNAPSHOT_READ), "lane inventory read", time.monotonic)
 
     def get(args: list[str]) -> dict[str, Any]:
         errors: list[str] = []
         last_error: Exception | None = None
         backoff = 0.1
-        while (remaining := deadline - time.monotonic()) > 0:
+        while budget.left() > 0:
             stderr: str | bytes | None = None
             try:
+                timeout = budget.bounded_timeout(f"kubectl get {args[0]}", minimum=WaitKind.POLL_FAST)
+            except DeadlineExhaustedError as exc:
+                errors.append(str(exc))
+                break
+            try:
                 result = subprocess.run(
-                    ["kubectl", "--kubeconfig", str(kubeconfig), "get", *args, f"--request-timeout={remaining:.9f}s"],
+                    ["kubectl", "--kubeconfig", str(kubeconfig), "get", *args, f"--request-timeout={timeout:.9f}s"],
                     capture_output=True,
                     text=True,
                     check=True,
-                    timeout=remaining,
+                    timeout=timeout,
                 )
                 stderr = result.stderr
                 document = json.loads(result.stdout)
                 if not isinstance(document, dict):
                     raise ValueError("expected JSON object")
-                if time.monotonic() >= deadline:
+                if budget.left() <= 0:
                     raise TimeoutError("inventory response arrived after overall read deadline")
                 return document
             except (OSError, subprocess.SubprocessError, ValueError) as exc:
@@ -372,9 +377,8 @@ def assert_lane_resources(
                 logging.getLogger(__name__).warning(
                     "eval: lane inventory read failed (%s), attempt %s: %s", " ".join(args), len(errors), detail
                 )
-                remaining = deadline - time.monotonic()
-                if remaining > 0:
-                    time.sleep(min(backoff, remaining))
+                if budget.left() > 0:
+                    time.sleep(min(backoff, budget.left()))
                     backoff = min(backoff * 2, 1.0)
         details = "; ".join(errors) or "read budget exhausted before query"
         raise ValueError(f"eval: lane memory inventory unavailable ({' '.join(args)}): {details}") from last_error
@@ -410,8 +414,7 @@ def assert_lane_resources(
                     policy=policy,
                 )
             except LaneMeasurementUnavailable as exc:
-                remaining = deadline - time.monotonic()
-                if attempt == _MEASUREMENT_ATTEMPTS or remaining <= wait_for(WaitKind.POLL_FAST):
+                if attempt == _MEASUREMENT_ATTEMPTS or budget.left() <= wait_for(WaitKind.POLL_FAST):
                     raise
                 logging.getLogger(__name__).warning("eval: lane measurement attempt %s: %s; re-reading", attempt, exc)
                 time.sleep(wait_for(WaitKind.POLL_FAST))

@@ -12,8 +12,13 @@ does not publish them, so ``SdoBounds`` is the one place the eval states them.
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 from enum import Enum
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 @dataclass(frozen=True)
@@ -128,3 +133,59 @@ def wait_for(kind: WaitKind, queue_len: int = 1, *, bounds: SdoBounds = DEFAULT_
     if queue_len < 0:
         raise ValueError(f"queue_len must not be negative, got {queue_len}")
     return bound(kind, bounds) * max(1, queue_len) + _MARGIN_SECONDS.get(kind, 0.0)
+
+
+class DeadlineExhaustedError(RuntimeError):
+    """A budget ran out before a step that needed time could start; the message names the budget and the step."""
+
+
+@dataclass(frozen=True)
+class Deadline:
+    """One monotonic budget shared by every step of a phase; steps consume it and never renew it.
+
+    Every subprocess, request or queue timeout that is a share of a larger budget comes from here, never
+    from ``deadline - monotonic()`` arithmetic at the call site. A step is one of two kinds:
+
+    * ``step_timeout``: the step must run (observing the controller, deciding a closure). It always gets at
+      least its own ``floor``, so an earlier slow phase cannot hand it a spent budget.
+    * ``bounded_timeout``: the step must not overrun the budget. When less than its ``minimum`` is left, the
+      budget is exhausted and the step does not start.
+    """
+
+    expires_at: float
+    monotonic: Callable[[], float] = time.monotonic
+    what: str = "eval wait"
+
+    @classmethod
+    def after(cls, seconds: float, what: str, monotonic: Callable[[], float] = time.monotonic) -> Deadline:
+        if seconds <= 0:
+            raise ValueError(f"{what}: budget must be positive, got {seconds}")
+        return cls(monotonic() + seconds, monotonic, what)
+
+    def left(self) -> float:
+        """Seconds of budget left; zero once spent. Never negative, never a reason to start a step."""
+        return max(0.0, self.expires_at - self.monotonic())
+
+    def remaining(self) -> float:
+        left = self.left()
+        if left <= 0:
+            raise DeadlineExhaustedError(f"eval: {self.what} budget exhausted")
+        return left
+
+    def step_timeout(self, step: str, *, floor: WaitKind, cap: WaitKind | None = None) -> float:
+        """Timeout for a step that must run: the budget left, within ``[wait_for(floor), wait_for(cap)]``."""
+        low = wait_for(floor)
+        high = wait_for(cap) if cap is not None else float("inf")
+        if high < low:
+            raise ValueError(f"{self.what}: {step} cap {high:g}s is below its floor {low:g}s")
+        return min(high, max(low, self.left()))
+
+    def bounded_timeout(self, step: str, *, minimum: WaitKind, cap: WaitKind | None = None) -> float:
+        """Timeout for a step that must end inside the budget; raises when less than ``minimum`` is left."""
+        need = wait_for(minimum)
+        left = self.left()
+        if left < need:
+            raise DeadlineExhaustedError(
+                f"eval: {self.what} budget exhausted: {step} needs at least {need:g}s and {left:.3f}s is left"
+            )
+        return min(wait_for(cap), left) if cap is not None else left

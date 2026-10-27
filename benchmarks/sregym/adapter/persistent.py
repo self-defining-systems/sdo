@@ -36,7 +36,7 @@ from typing import TYPE_CHECKING, Any, Protocol, get_args, get_type_hints
 from google.protobuf import json_format
 from pydantic import BaseModel, ConfigDict, Field
 
-from benchmarks.sregym.adapter.budgets import WaitKind, wait_for
+from benchmarks.sregym.adapter.budgets import Deadline, WaitKind, wait_for
 from benchmarks.sregym.adapter.cluster_resources import kubectl
 from benchmarks.sregym.adapter.eval_guards import (
     INCIDENT_EXECUTION_LABEL,
@@ -99,8 +99,6 @@ STRICT_RECEIPT_FILENAME = "sdo_production_receipt_strict.json"
 REJECTED_RECEIPT_FILENAME = "sdo_rejected_production_receipt.json"
 CONTROLLER_LOGS_SUBDIR = Path(RUNTIME_ARTIFACTS_DIRNAME) / "controller_logs"
 POLL_SECONDS = wait_for(WaitKind.POLL_FAST)
-#: A state read at or past a deadline still gets this long to be observed, so it decides the outcome.
-OBSERVATION_FLOOR_SECONDS = wait_for(WaitKind.POLL)
 CONTROLLER_JOB_NAME = "sdo-controller-run"
 # The runtime storage edge's checkpoint identity (lifecycleio.StateRevisionAnnotation
 # and StateDataKey): its CAS annotation plus typed data key, never its name.
@@ -1821,16 +1819,17 @@ def _wait_for_verified_incident(
     """
 
     started = clock.monotonic()
-    deadline = started + timeout
+    budget = Deadline(started + timeout, clock.monotonic, "controller verification")
     detected = False
     state: dict[str, Any] = {}
     summary = ""
-    while clock.monotonic() < deadline:
+    while budget.left() > 0:
         state = ops.runtime_state(control)
+        # A slow state read may have spent the stage budget; observing it still decides the stage.
         observed = _observe_state(
             state,
             known=known,
-            timeout=min(30.0, max(0.001, deadline - clock.monotonic())),
+            timeout=budget.step_timeout("observe-controller", floor=WaitKind.POLL, cap=WaitKind.COMMAND),
         )
         summary = observed.open_incident_summary
         if observed.failure.code == ControllerObservationFailure.CODE_CLOSURE_FAILED:
@@ -1920,7 +1919,7 @@ def _wait_for_reflection_drain(
     """
 
     timeout = max(0.0, (deadline_at - clock.now()).total_seconds())
-    deadline = clock.monotonic() + timeout
+    budget = Deadline(clock.monotonic() + timeout, clock.monotonic, "reflection drain")
     while True:
         # Only a read that shows SDO still owning the closure makes a passed deadline a reflection deadline.
         # A failed or empty read, or a failed observation, says nothing; retry within the same budget.
@@ -1936,7 +1935,7 @@ def _wait_for_reflection_drain(
                 observed = _observe_state(
                     state,
                     incident_id=incident_id,
-                    timeout=min(30.0, max(OBSERVATION_FLOOR_SECONDS, deadline - clock.monotonic())),
+                    timeout=budget.step_timeout("observe-controller", floor=WaitKind.POLL, cap=WaitKind.COMMAND),
                 )
                 _raise_observation_failure(observed, state)
             except ClosureFailedError:
@@ -1947,7 +1946,7 @@ def _wait_for_reflection_drain(
                 if observed.acknowledged:
                     return state
             _raise_terminal_controller_job(ops, control, incident_id)
-        if clock.monotonic() >= deadline:
+        if budget.left() <= 0:
             break
         clock.sleep(POLL_SECONDS)
     if not state or not incident_work_open(state):
