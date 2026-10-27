@@ -3,6 +3,7 @@ package broker_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -302,26 +303,24 @@ func TestCLIAndBrokerRetainHealthyInputForProgramOnlyEdits(t *testing.T) {
 	cli.Env = append(os.Environ(), "SDO_ACTOR=responder", "SDO_PHASE=reflection", "SDO_BASE_COMMIT="+proposal.BaseCommit, "SDO_OPERATOR_ROOT="+operatorRoot, "SDO_HEALTHY_BASELINE="+baseline, "SDO_CAPTURED_CORPUS_DIR="+capture, "SDO_INCIDENT_ID=incident")
 	var stdout, stderr bytes.Buffer
 	cli.Stdout, cli.Stderr = &stdout, &stderr
-	if err := cli.Run(); err != nil {
-		t.Fatalf("healthy replay blocked CLI: %v %s %s", err, stdout.String(), stderr.String())
+	if err := cli.Run(); err == nil {
+		t.Fatalf("unobservable healthy detector accepted by CLI: %s", stdout.String())
 	}
 	report := new(contracts.MemoryCheckReport)
 	if err := protojson.Unmarshal(stdout.Bytes(), report); err != nil {
 		t.Fatal(err)
 	}
-	receipt, err := repository.PublishReflection(validate.WithCaptureSource(ctx, capture, "incident"), "incident", decision)
-	if err != nil {
-		t.Fatalf("healthy replay blocked broker: %v", err)
+	_, err = repository.PublishReflection(validate.WithCaptureSource(ctx, capture, "incident"), "incident", decision)
+	var failure *validate.Failure
+	if !errors.As(err, &failure) {
+		t.Fatalf("unobservable healthy detector accepted by broker: %v", err)
 	}
-	cliKeys := gapKeys(reportGaps(report.CoverageGaps))
-	brokerKeys := gapKeys(receipt.CoverageGaps)
-	if len(report.Diagnostics) != 0 || !strings.Contains(strings.Join(cliKeys, "\n"), "healthy-only") {
-		t.Fatalf("healthy replay error was hidden: %v", report)
+	if len(report.Diagnostics) != 1 || report.Diagnostics[0].Rule != validate.RuleDetectorHealthyBaseline || !strings.Contains(report.Diagnostics[0].Message, "healthy-only") {
+		t.Fatalf("CLI lost healthy detector refusal: %v", report)
 	}
-	if strings.Join(cliKeys, "\n") != strings.Join(brokerKeys, "\n") {
-		t.Fatalf("healthy observations differ: CLI %v broker %v", cliKeys, brokerKeys)
+	if len(failure.Diagnostics) != 1 || failure.Diagnostics[0].Rule != report.Diagnostics[0].Rule || failure.Diagnostics[0].Message != report.Diagnostics[0].Message {
+		t.Fatalf("healthy detector refusals differ: CLI %v broker %v", report.Diagnostics, failure.Diagnostics)
 	}
-
 }
 
 // Preserve the independently authored detection predicate and the accepted cache spec.

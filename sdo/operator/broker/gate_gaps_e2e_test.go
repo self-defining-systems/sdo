@@ -152,7 +152,7 @@ func TestReflectionRecordsReplayButStillRejectsInvalidCode(t *testing.T) {
 		path, content, reason string
 		reject                bool
 	}{
-		"failing detector test is information": {".sdo/diagnostics/detectors/incidents/cache/detector_test.go", "package detector\nimport \"testing\"\nfunc TestReject(t *testing.T){t.Fatal(\"sentinel detector failure\")}\n", "sentinel detector failure", false},
+		"failing detector test still rejects": {".sdo/diagnostics/detectors/incidents/cache/detector_test.go", "package detector\nimport \"testing\"\nfunc TestReject(t *testing.T){t.Fatal(\"sentinel detector failure\")}\n", validate.RuleDetectorTest, true},
 		"mitigation that does not repair is information": {".sdo/playbooks/service-targetport-mismatch/mitigate.go", `package targetport
 import ("context"; "sdo.dev/operator/sdk/program")
 func (p Program) Mitigate(ctx context.Context,v program.ReadView,b program.Bindings)(program.Plan,error){

@@ -281,7 +281,7 @@ def test_matched_memory_uses_the_workflow_without_repeating_playbook_bodies(tmp_
     assert "verify.sh" not in prompt
     assert "learned mitigations first, repair the rest" in prompt
     assert "check rollout, current status, late findings" in _workflow()
-    assert "Check conflicts" in _workflow()
+    assert "preconditions and accepted-source values" in _workflow()
 
 
 def test_historical_detector_match_does_not_invent_current_coverage(tmp_path: Path) -> None:

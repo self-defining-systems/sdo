@@ -10,7 +10,8 @@
     "sdo.dev/operator/operatorcli/TestAdoptionCompilesAsIsAndLaterValidationStillRejects": "compiler-replay",
     "sdo.dev/operator/worker_registry/TestKubernetesExecutorRejectsRequestOverBudgetNamingTheComponent": "compiler",
     "sdo.dev/operator/broker/TestReflectionRecordsReplayButStillRejectsInvalidCode": "compiler-replay",
-    "sdo.dev/operator/broker/TestCLIAndBrokerAgreeOnVerifiedCauseReplayCoverage": "compiler-replay"
+    "sdo.dev/operator/broker/TestCLIAndBrokerAgreeOnVerifiedCauseReplayCoverage": "compiler-replay",
+    "sdo.dev/operator/memory/validate/TestPartialPlaybookPublication": "remaining"
   },
   "costs": {
     "sdo.dev/operator/apihistory/FuzzHistoryStorageSchedule": 0.021,
