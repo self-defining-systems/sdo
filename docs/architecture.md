@@ -696,13 +696,7 @@ with `sdo-operator reset-control-state --control-namespace <namespace>`, after
 stopping the runtime. The onboarding package checks SDO ownership for the five
 onboarding ConfigMaps, controller checkpoint and maintenance record before deleting any, uses
 UID/resource-version preconditions,
-and logs deleted identities. It also deletes every worker task ConfigMap
-(request, result, dispatch receipt, standby binding, incident execution identity,
-late findings), whose names the worker registry owns, so a restarted controller
-cannot resume a task whose Job is gone; `--workers-only` does that alone, and the
-fastloop warm reset uses it. A lifecycle worker (deploy, architecture, health judge) whose
-Job vanished is discarded by its registry and dispatched once more instead of
-ending the controller. This command does not access application objects,
+and logs deleted identities. This command does not access application objects,
 Secrets or repository memory. Warm reinstall/restart retains the immutable
 record. Legacy final records without reachability evidence emit a typed
 `reference_absent` note and authorize no exclusions.

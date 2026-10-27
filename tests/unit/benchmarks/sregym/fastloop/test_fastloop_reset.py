@@ -146,12 +146,6 @@ def test_fail_soft_controller_reset_preserves_accepted_repository(
         return subprocess.CompletedProcess(args, 0, "", "")
 
     monkeypatch.setattr("benchmarks.sregym.fastloop.reset.kubectl", fake_kubectl)
-
-    def fake_reset_control_state(control: str, **kwargs: Any) -> dict[str, Any]:
-        calls.append(["reset-control-state", control, str(kwargs)])
-        return {"control_namespace": control, "deleted": []}
-
-    monkeypatch.setattr("benchmarks.sregym.fastloop.reset.reset_control_state", fake_reset_control_state)
     KubectlResetCluster(tmp_path / "kubeconfig", "sdo").reset_controller("a" * 40, preserve_repository=True)
 
     assert payloads, "warm reset must remove proposal scratch without deleting accepted history"
@@ -159,11 +153,6 @@ def test_fail_soft_controller_reset_preserves_accepted_repository(
     stopped = next(i for i, args in enumerate(calls) if args[:2] == ["delete", "jobs"])
     retired = next(i for i, args in enumerate(calls) if args[:3] == ["delete", "configmap", "sdo-controller-state"])
     assert stopped < retired
-    # Worker ConfigMaps of killed attempts go after every writer stopped, and only they:
-    # the Go owner keeps onboarding authority when workers_only is set.
-    workers = next(i for i, args in enumerate(calls) if args[0] == "reset-control-state")
-    assert stopped < workers
-    assert "'workers_only': True" in calls[workers][2]
     assert not any(args[:2] == ["delete", "namespace"] for args in calls)
 
 
@@ -335,9 +324,6 @@ def test_reset_cancels_and_awaits_workers_before_deleting_captures(tmp_path: Pat
         return subprocess.CompletedProcess(args, 0, "", "")
 
     monkeypatch.setattr(reset, "kubectl", fake_kubectl)
-    monkeypatch.setattr(
-        reset, "reset_control_state", lambda control, **_: {"control_namespace": control, "deleted": []}
-    )
     KubectlResetCluster(tmp_path / "kubeconfig", "sdo").reset_controller("a" * 40)
     assert cleaned
 

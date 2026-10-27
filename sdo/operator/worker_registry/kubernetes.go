@@ -658,7 +658,7 @@ func JobName(taskID string) string {
 	if prefix == "" {
 		prefix = "task"
 	}
-	return jobNamePrefix + prefix + "-" + suffix
+	return "sdo-" + prefix + "-" + suffix
 }
 
 func cloneEnvironment(source map[string]string) map[string]string {

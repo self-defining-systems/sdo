@@ -8,9 +8,6 @@ A from-scratch memory stream explicitly stops the prior runtime and invokes
 install. The command deletes only the three SDO-managed onboarding ConfigMaps
 and the controller checkpoint,
 checks ownership and deletion preconditions, and logs each deleted identity.
-It also deletes every worker task ConfigMap (`<job>-request|result|execution|binding`,
-`sdo-exec-*`, `sdo-late-*`; names owned by `worker_registry.IsWorkerConfigMap`);
-warm resets run the same command with `--workers-only`.
 It never reads Secrets or changes application objects. Fresh fastloop state
 (including a v2 fresh-seed environment) uses this path; retained controller
 records and warm resets preserve the existing onboarding record and reference.

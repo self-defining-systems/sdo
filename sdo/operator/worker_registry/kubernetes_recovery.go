@@ -192,7 +192,7 @@ func taskRequestDigest(task *contracts.AgentTask) string {
 // TaskJobName identifies an immutable validated task by its full request,
 // including workspace, base revision and deadline, rather than just task ID.
 func TaskJobName(task *contracts.AgentTask) string {
-	return jobNamePrefix + "task-" + taskRequestDigest(task)[:52]
+	return "sdo-task-" + taskRequestDigest(task)[:52]
 }
 
 func (e KubernetesExecutor) verifyWorkerQuiescence(ctx context.Context, name string) error {

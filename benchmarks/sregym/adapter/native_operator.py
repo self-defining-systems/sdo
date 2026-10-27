@@ -603,13 +603,9 @@ def stop_runtime(
     return result
 
 
-def reset_control_state(
-    control_namespace: str, *, kubeconfig: str | None = None, workers_only: bool = False
-) -> dict[str, Any]:
-    """Explicitly retire SDO onboarding authority and worker task state before a fresh-memory install.
+def reset_control_state(control_namespace: str, *, kubeconfig: str | None = None) -> dict[str, Any]:
+    """Explicitly retire SDO onboarding authority before a fresh-memory install.
 
-    `workers_only` keeps onboarding authority and retires only worker request, result and dispatch
-    ConfigMaps, so a warm reset cannot resume a task whose Job is gone.
     The caller must stop the previous runtime before invoking this command.
     """
     if not control_namespace:
@@ -617,8 +613,6 @@ def reset_control_state(
     args = ["--control-namespace", control_namespace, "--timeout", "60s"]
     if kubeconfig:
         args.extend(("--kubeconfig", kubeconfig))
-    if workers_only:
-        args.append("--workers-only")
     result = json.loads(execute_operator("reset-control-state", args, timeout=wait_for(WaitKind.SLOW_COMMAND)))
     if (
         not isinstance(result, dict)

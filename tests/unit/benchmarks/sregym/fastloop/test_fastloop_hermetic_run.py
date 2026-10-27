@@ -127,9 +127,6 @@ def control_api(tmp_path: Path) -> Iterator[SimpleNamespace]:
         "sdo-namespace-onboarding-rejected",
         "sdo-controller-state",
         "sdo-controller-maintenance",
-        # Synthetic worker task state of a killed attempt.
-        "sdo-health-refresh-synthetic-aaaaaaaaaa-request",
-        "sdo-health-refresh-synthetic-aaaaaaaaaa-execution",
     ]
     objects = {
         name: {
@@ -166,9 +163,7 @@ def control_api(tmp_path: Path) -> Iterator[SimpleNamespace]:
             plural = parts[parts.index(NAMESPACE + "-sdo") + 1]
             if plural == "configmaps":
                 name = parts[-1]
-                if name == "configmaps":
-                    self.reply(200, {"apiVersion": "v1", "kind": "ConfigMapList", "items": list(objects.values())})
-                elif name in objects:
+                if name in objects:
                     self.reply(200, objects[name])
                 else:
                     self.reply(404, {"apiVersion": "v1", "kind": "Status", "reason": "NotFound", "code": 404})
