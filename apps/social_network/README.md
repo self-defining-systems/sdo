@@ -23,6 +23,19 @@ overlay keeps its unbounded MongoDBs: cut a new seed commit that applies it, the
 redeploy and re-capture the baseline on every lane, because a plain reset restores
 the old captured baseline.
 
+Stock `media-frontend` and `nginx-thrift` run an `alpine/git` init container that
+clones DeathStarBench from GitHub on every pod start, so any rollout sits in `Init`
+for 1.5-2 minutes and needs GitHub. The overlay deletes those init containers.
+Each chart's `files/<volume>` is a symlink to the checkout's own directory, and
+`templates/_baseFileConfigMaps.tpl` renders it into a `<service>-<volume>` ConfigMap
+that `_baseNginxDeployment.tpl` mounts where the clone used to copy files. The
+symlinks resolve only inside a full `socialNetwork` checkout, so apply the overlay
+there. Rendered manifests carry the files (about 650 KB), and a seed already cut
+without the overlay keeps cloning: cut a new seed commit, then redeploy and
+re-capture the baseline on every lane.
+`tests/unit/apps/test_social_source_files.py` fails if a rendered workload has an
+init container or runs `git`, `curl` or `wget`, and checks the mounted files equal the source.
+
 Stock SREGym pins Jaeger to `1.57`; the DeathStarBench chart's `latest` can select
 an all-in-one release without the legacy agent on 5778. The overlay restores
 that stock pin and enables the declared Zipkin receiver on 9411 with

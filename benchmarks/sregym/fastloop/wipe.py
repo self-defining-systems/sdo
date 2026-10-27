@@ -6,9 +6,11 @@ credentials by reference, re-seeds the accepted repository at the row's planned 
 controller registry. SDO is reinstalled afterwards by the normal native install. Nothing SDO wrote
 survives except the memory commit itself, so no leftover needs its own cleanup rule.
 
-Tier 2 concerns the application namespaces. The warm app is kept when the previous attempt finished
-cleanly and the restore invariant passes against the captured baseline; otherwise the app is redeployed
-from the image cache.
+Tier 2 concerns the application namespaces. The warm app is kept when the previous row recovered
+cleanly, the restore invariant passes against the captured baseline and every app pod is healthy.
+Otherwise the app namespaces are deleted, PVCs and the data in them included, and the app is deployed
+again from the image cache: fault state that lives in a database is not a Kubernetes object, so no
+restore of objects can undo it.
 """
 
 from __future__ import annotations
@@ -18,13 +20,15 @@ import os
 import subprocess
 import time
 from dataclasses import asdict, dataclass
+from enum import StrEnum
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from benchmarks.sregym.adapter import WaitKind, wait_for
+from benchmarks.sregym.fastloop.records import Injected, NotInjected
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Collection, Iterable
+    from collections.abc import Callable, Collection, Iterable, Sequence
 
     from benchmarks.sregym.fastloop.environment import FastloopEnvironment
 
@@ -133,6 +137,42 @@ class Tier1Receipt:
     inventory_bootstrapped: bool
 
 
+def remove_until_gone(
+    cluster: LaneCluster,
+    identities: Collection[str],
+    *,
+    timeout_seconds: float,
+    poll_seconds: float,
+    clock: Callable[[], float],
+    sleep: Callable[[float], None],
+) -> None:
+    """Delete in webhook, API, RBAC, namespace order and wait until all are gone; fail closed at the deadline."""
+    remaining = frozenset(identities)
+    deadline = clock() + timeout_seconds
+    requested = False
+    error = ""
+    while remaining:
+        if not requested:
+            error = ""
+            for identity in sorted(remaining, key=_deletion_order):
+                try:
+                    cluster.delete(identity)
+                except Exception as exc:  # retried until the deadline
+                    error = f"delete {identity}: {type(exc).__name__}: {str(exc)[:200]}"
+            requested = not error
+        try:
+            remaining &= cluster.list_objects()
+        except Exception as exc:
+            error = f"list cluster objects: {type(exc).__name__}: {str(exc)[:200]}"
+        if not remaining or clock() >= deadline:
+            break
+        sleep(poll_seconds)
+    if remaining:
+        raise WipeError(
+            "eval: wipe could not remove: " + ", ".join(sorted(remaining)) + (f" ({error})" if error else "")
+        )
+
+
 def run_tier1(
     cluster: LaneCluster,
     *,
@@ -158,32 +198,10 @@ def run_tier1(
     bootstrapped = baseline is None
     if baseline is None:
         baseline = cluster_scoped(current)
-    removed = remaining = harness_leftovers(
-        current, baseline, keep_namespaces=keep_namespaces, control_namespace=control_namespace
+    removed = harness_leftovers(current, baseline, keep_namespaces=keep_namespaces, control_namespace=control_namespace)
+    remove_until_gone(
+        cluster, removed, timeout_seconds=timeout_seconds, poll_seconds=poll_seconds, clock=clock, sleep=sleep
     )
-    deadline = started + timeout_seconds
-    requested = False
-    error = ""
-    while remaining:
-        if not requested:
-            error = ""
-            for identity in sorted(remaining, key=_deletion_order):
-                try:
-                    cluster.delete(identity)
-                except Exception as exc:  # retried until the deadline
-                    error = f"delete {identity}: {type(exc).__name__}: {str(exc)[:200]}"
-            requested = not error
-        try:
-            remaining &= cluster.list_objects()
-        except Exception as exc:
-            error = f"list cluster objects: {type(exc).__name__}: {str(exc)[:200]}"
-        if not remaining or clock() >= deadline:
-            break
-        sleep(poll_seconds)
-    if remaining:
-        raise WipeError(
-            "eval: tier-1 wipe could not remove: " + ", ".join(sorted(remaining)) + (f" ({error})" if error else "")
-        )
     if bootstrapped:
         save_inventory(inventory, baseline)
     provision_credentials(control_namespace)
@@ -217,34 +235,131 @@ def wipe_environment(
     )
 
 
+class Tier2Trigger(StrEnum):
+    UNCLEAN_ATTEMPT = "unclean_attempt"
+    PREVIOUS_ROW_UNRECOVERED = "previous_row_unrecovered"
+    RESTORE_INVARIANT = "restore_invariant"
+    PODS_UNHEALTHY = "pods_unhealthy"
+
+
+@dataclass(frozen=True)
+class Tier2Reason:
+    trigger: Tier2Trigger
+    detail: str
+
+
+UNRECOVERED_PREFIX = "unrecovered: "
+
+
 class AttemptMarker:
-    """Present from the moment a row's attempt starts until it ends cleanly; a survivor means an unclean attempt."""
+    """Present from the moment a row's attempt starts until it ends with every injected row recovered.
+
+    A survivor with no content means the attempt died; one that names rows means they were injected and
+    the harness could not verify their recovery. Either way the next row recreates the application.
+    """
 
     def __init__(self, run_dir: Path) -> None:
         self.path = run_dir / MARKER_NAME
 
-    def unclean(self) -> bool:
-        return self.path.exists()
+    def pending(self) -> Tier2Reason | None:
+        try:
+            content = self.path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            return None
+        _, _, rows = content.partition(UNRECOVERED_PREFIX)
+        if rows.strip():
+            return Tier2Reason(
+                Tier2Trigger.PREVIOUS_ROW_UNRECOVERED,
+                f"previous row injected and not verified recovered: {rows.strip()}",
+            )
+        return Tier2Reason(Tier2Trigger.UNCLEAN_ATTEMPT, "previous attempt did not end cleanly")
 
     def begin(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.path.write_text(f"{os.getpid()}\n", encoding="utf-8")
 
-    def end_cleanly(self) -> None:
-        self.path.unlink(missing_ok=True)
+    def end(self, unrecovered: Collection[str]) -> None:
+        """The run ended: forget the attempt unless it left injected rows without verified recovery."""
+        if unrecovered:
+            self.path.write_text(f"{os.getpid()}\n{UNRECOVERED_PREFIX}{', '.join(unrecovered)}\n", encoding="utf-8")
+        else:
+            self.path.unlink(missing_ok=True)
 
 
-def tier2_reason(marker: AttemptMarker, restore_invariant: Callable[[], None]) -> str | None:
-    """Why the application must be redeployed, or ``None`` when the warm app stays.
+def unrecovered_rows(records: Iterable[Any]) -> tuple[str, ...]:
+    """Problem ids of rows whose fault was injected, or may have been, without a verified full recovery."""
+    rows = []
+    for record in records:
+        injection = record.injection
+        attempted = isinstance(injection, Injected) or (
+            isinstance(injection, NotInjected) and injection.stage == "injection"
+        )
+        if attempted and (record.recovery_error is not None or not record.full_cleanup_verified):
+            rows.append(record.problem_id)
+    return tuple(rows)
 
-    The invariant raises ``ValueError``/``RuntimeError`` when the app no longer matches its captured baseline.
+
+def await_healthy_pods(
+    unhealthy: Callable[[], Sequence[str]],
+    *,
+    timeout_seconds: float,
+    poll_seconds: float,
+    clock: Callable[[], float] = time.monotonic,
+    sleep: Callable[[float], None] = time.sleep,
+) -> list[str]:
+    """Pods still unhealthy when the short bound ends; empty as soon as every pod is healthy."""
+    deadline = clock() + timeout_seconds
+    while True:
+        stuck = list(unhealthy())
+        if not stuck or clock() >= deadline:
+            return stuck
+        sleep(poll_seconds)
+
+
+def pod_problems(listing: dict[str, Any]) -> list[str]:
+    """``namespace/pod (why)`` for each pod of a ``kubectl get pods -o json`` listing that is not serving.
+
+    Finished pods (phase Succeeded) and pods already being deleted are not problems.
     """
-    if marker.unclean():
-        return "previous attempt did not end cleanly"
+    problems = []
+    for item in listing["items"]:
+        metadata, status = item["metadata"], item.get("status", {})
+        phase = status.get("phase", "Unknown")
+        if phase == "Succeeded" or metadata.get("deletionTimestamp"):
+            continue
+        ready = any(c.get("type") == "Ready" and c.get("status") == "True" for c in status.get("conditions", []))
+        if phase == "Running" and ready:
+            continue
+        waiting = [
+            c["state"]["waiting"].get("reason", "")
+            for c in status.get("containerStatuses", [])
+            if c.get("state", {}).get("waiting")
+        ]
+        why = next((reason for reason in waiting if reason), phase if phase != "Running" else "NotReady")
+        problems.append(f"{metadata.get('namespace', '')}/{metadata['name']} ({why})")
+    return sorted(problems)
+
+
+def tier2_reason(
+    marker: AttemptMarker,
+    restore_invariant: Callable[[], None],
+    unhealthy_pods: Callable[[], Sequence[str]],
+) -> Tier2Reason | None:
+    """Why the application must be recreated, or ``None`` when the warm app stays.
+
+    The invariant raises ``ValueError``/``RuntimeError`` when the app no longer matches its captured
+    baseline. ``unhealthy_pods`` waits its own short bound and returns the pods still not serving.
+    """
+    pending = marker.pending()
+    if pending is not None:
+        return pending
     try:
         restore_invariant()
     except (ValueError, RuntimeError) as exc:
-        return f"restore invariant failed: {exc}"
+        return Tier2Reason(Tier2Trigger.RESTORE_INVARIANT, f"restore invariant failed: {exc}")
+    stuck = unhealthy_pods()
+    if stuck:
+        return Tier2Reason(Tier2Trigger.PODS_UNHEALTHY, "pods unhealthy after the restore: " + ", ".join(stuck))
     return None
 
 
@@ -255,7 +370,9 @@ class WipeReceipt:
     tier1_inventory_bootstrapped: bool
     tier2_ran: bool
     tier2_seconds: float
+    tier2_trigger: str | None
     tier2_reason: str | None
+    tier2_namespaces: tuple[str, ...]
 
     def write(self, directory: Path) -> Path:
         directory.mkdir(parents=True, exist_ok=True)
@@ -265,23 +382,44 @@ class WipeReceipt:
 
 
 def run_tier2(
-    reason: str | None,
-    redeploy: Callable[[], None],
+    reason: Tier2Reason | None,
     tier1: Tier1Receipt,
     *,
+    cluster: LaneCluster,
+    namespaces: Collection[str],
+    deploy: Callable[[], None],
+    timeout_seconds: float,
+    poll_seconds: float = wait_for(WaitKind.SAMPLE),
     clock: Callable[[], float] = time.monotonic,
+    sleep: Callable[[float], None] = time.sleep,
 ) -> WipeReceipt:
-    """Redeploy the application only when ``reason`` names a trigger; return the row's receipt."""
+    """Recreate the application only when ``reason`` names a trigger; return the row's receipt.
+
+    The application namespaces are deleted whole, so PVCs and the data in them go too, and ``deploy``
+    then installs the app from the image cache into a namespace that does not exist.
+    """
     started = clock()
+    recreated: tuple[str, ...] = ()
     if reason is not None:
-        redeploy()
+        recreated = tuple(sorted(namespaces))
+        remove_until_gone(
+            cluster,
+            [namespace_identity(name) for name in recreated],
+            timeout_seconds=timeout_seconds,
+            poll_seconds=poll_seconds,
+            clock=clock,
+            sleep=sleep,
+        )
+        deploy()
     return WipeReceipt(
         tier1.seconds,
         tier1.removed,
         tier1.inventory_bootstrapped,
         reason is not None,
         round(clock() - started, 3) if reason is not None else 0.0,
-        reason,
+        reason.trigger.value if reason is not None else None,
+        reason.detail if reason is not None else None,
+        recreated,
     )
 
 
@@ -307,6 +445,17 @@ class KubectlLaneCluster:
             namespace=None,
             kubeconfig=self._kubeconfig,
         )
+
+
+def application_pod_problems(kubeconfig: Path, namespaces: Collection[str]) -> list[str]:
+    """The pods of the application namespaces that are not serving right now."""
+    from benchmarks.sregym.adapter import kubectl
+
+    problems: list[str] = []
+    for namespace in namespaces:
+        listing = kubectl(["get", "pods", "-o", "json"], namespace=namespace, kubeconfig=kubeconfig).stdout
+        problems.extend(pod_problems(json.loads(listing)))
+    return problems
 
 
 def credentials_hook(command: Path, kubeconfig: Path) -> Callable[[str], None]:

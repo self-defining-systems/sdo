@@ -124,10 +124,14 @@ in the results directory records `tier1_seconds`, `tier2_ran`, `tier2_seconds`, 
   `accepted_after` for a repeat), and forget the controller registry. The normal native install follows.
   Nothing SDO wrote survives except the memory commit. A lane with no inventory adopts its current
   cluster-scoped objects on the first wipe. Target: under about 90 s.
-- **Tier 2, only when needed.** The warm app stays when the previous attempt ended cleanly (no
-  `attempt-in-progress` file in the run directory) and the restore invariant (`workload_identity` and
-  `assert_clean_baseline`) holds. Otherwise the app is redeployed with `deploy --redeploy` from the image
-  cache and the application baseline is captured again.
+- **Tier 2, only when needed.** The warm app stays when the previous row recovered cleanly, the restore
+  invariant (`workload_identity` and `assert_clean_baseline`) holds and every app pod is serving (checked for
+  up to one minute). Otherwise the app namespaces are deleted whole, PVCs and the data in them included
+  (fault state such as a MongoDB user lives in the data, not in a Kubernetes object), the app is deployed
+  again with `deploy --redeploy` from the image cache and the application baseline is captured again. The
+  trigger is `tier2_trigger` in `wipe-receipt.json`: `unclean_attempt` (the `attempt-in-progress` file survived
+  a dead run), `previous_row_unrecovered` (the file names rows that were injected without a verified full
+  recovery), `restore_invariant` or `pods_unhealthy`.
 
 The lane-resource entry check and the restore invariant stay: they are the measurement-validity checks.
 
