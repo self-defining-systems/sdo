@@ -67,6 +67,8 @@ def bridge_lane_guards(monkeypatch: pytest.MonkeyPatch):
     """Worker-bridge tests run against stub SREGym modules; the idempotent-Helm guard would patch a stub ``Helm``."""
     from benchmarks.sregym.fastloop import worker_bridge
 
+    monkeypatch.setattr(worker_bridge, "install_node_limits", lambda _infra: None)
+
     monkeypatch.setattr(worker_bridge, "_make_deploy_idempotent", lambda: None)
 
 
@@ -81,3 +83,10 @@ def row_start_wipe_guards(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(cli, "_wipe_sdo_and_harness", lambda *_args: wipe.Tier1Receipt(0.0, (), False, ()))
     monkeypatch.setattr(cli, "_application_needs_redeploy", lambda *_args: None)
     monkeypatch.setattr(wipe.KubectlLaneCluster, "list_objects", lambda self: frozenset())
+
+
+@pytest.fixture(autouse=True)
+def isolated_host_limits(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Hermetic tests must never join the live lanes' host semaphore."""
+    monkeypatch.setenv("FASTLOOP_HOST_LOCK_DIR", str(tmp_path / "host-locks"))
+    monkeypatch.setenv("FASTLOOP_HOST_REDEPLOYS", "2")

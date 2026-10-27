@@ -20,6 +20,7 @@ import threading
 from typing import IO, TYPE_CHECKING, Any
 
 from benchmarks.sregym.adapter import Deadline, WaitKind, wait_for
+from benchmarks.sregym.fastloop.host_limits import HostLimits
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -91,6 +92,12 @@ class SregymWorker:
         self._replies.put(None)
 
     def request(self, op: str, *, timeout: float = DEFAULT_TIMEOUT_SECONDS, **args: Any) -> dict[str, Any]:
+        if op == "deploy":
+            with HostLimits.from_env(self._env).admit("redeploy"):
+                return self._request(op, timeout=timeout, **args)
+        return self._request(op, timeout=timeout, **args)
+
+    def _request(self, op: str, *, timeout: float, **args: Any) -> dict[str, Any]:
         process = self._process
         if process is None or process.stdin is None:
             raise SregymWorkerError("worker is not running")
