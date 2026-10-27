@@ -24,3 +24,14 @@ reset itself supplies no health authority.
 The legacy controller checkpoint is recognized by its exact name,
 `sdo.dev/state-revision` annotation and `runtime-state.json` key. Retiring it
 prevents restored controller state from resurrecting old onboarding authority.
+
+Setup detector exclusions: `ControllerState.disabled_setup_detectors`,
+`NamespaceOnboarding.disabled_setup_detectors` (the immutable setup receipt), `IncidentRequest.disabled_setup_detectors`, and
+`OutcomeRecord.disabled_setup_detectors` retain detector ID, accepted revision,
+finding fingerprints, disabled time and the reason "fired on the confirmed-healthy
+app at setup". Only responder-owned learned incident detectors qualify; health
+judge detectors remain authoritative. Evaluation is skipped only at the exact
+accepted revision and resumes on a different revision. Reflection sees the
+outcome records to repair or delete the detector; exclusion is not incident
+recovery or repair credit. `setup_evaluated_revision` prevents later steady-state
+findings being mistaken for setup false positives.

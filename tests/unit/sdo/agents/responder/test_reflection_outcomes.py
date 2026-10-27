@@ -141,7 +141,9 @@ def test_current_outcome_keeps_findings_evidence_and_repairs_verbatim() -> None:
     # An empty source_check_notes is omitted from the view rather than printed as [].
     assert full["source_check_notes"] == []
     assert {key: value for key, value in view.items() if key != "detector_history"} == {
-        key: value for key, value in full.items() if key not in {"detector_history", "source_check_notes"}
+        key: value
+        for key, value in full.items()
+        if key not in {"detector_history", "source_check_notes", "disabled_setup_detectors"}
     }
     assert len(view["detector_history"]) == 2
     assert len(json.dumps(view)) < len(json.dumps(full))
@@ -498,3 +500,19 @@ def test_collapse_pending_history_preserves_qualification_reasons() -> None:
         (history[0].reason, 2),
         (history[2].reason, 1),
     ]
+
+
+def test_current_outcome_retains_setup_detector_exclusion() -> None:
+    outcome = _outcome("next-incident")
+    outcome.disabled_setup_detectors.add(
+        detector_id="learned-port",
+        accepted_revision="accepted-memory",
+        fingerprints=["healthy-port"],
+        disabled_at=_stamp(_T0),
+        reason="fired on the confirmed-healthy app at setup",
+    )
+    view = current_outcome_view(outcome)
+    assert (
+        view["disabled_setup_detectors"]
+        == json_format.MessageToDict(outcome, preserving_proto_field_name=True)["disabled_setup_detectors"]
+    )
