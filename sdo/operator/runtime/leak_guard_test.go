@@ -20,7 +20,8 @@ import (
 // Attribution counts process-wide reflectors, so a test using these helpers
 // must not run in parallel with another that starts informers.
 
-const informerStopGrace = 5 * time.Second
+// informerStopGrace is a variable only so the guard's own test can shorten it.
+var informerStopGrace = 5 * time.Second
 
 // informerGoroutines counts live client-go reflector goroutines.
 func informerGoroutines() int {

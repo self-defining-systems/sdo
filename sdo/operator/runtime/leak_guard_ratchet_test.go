@@ -45,7 +45,7 @@ func directInformerCalls(t *testing.T) map[string][]string {
 	}
 	found := map[string][]string{}
 	for _, file := range files {
-		if file == "leak_guard_test.go" || file == "leak_guard_ratchet_test.go" {
+		if strings.HasPrefix(file, "leak_guard") {
 			continue
 		}
 		parsed, err := parser.ParseFile(token.NewFileSet(), file, nil, 0)
