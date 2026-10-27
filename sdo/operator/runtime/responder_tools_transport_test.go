@@ -20,7 +20,7 @@ func TestSessionToolServerRepliesToIncidentScopedRequest(t *testing.T) {
 	if err := server.Prepare(); err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	done := make(chan struct{})
 	go func() { defer close(done); _ = server.Serve(ctx) }()
 	t.Cleanup(func() { cancel(); <-done })
@@ -31,7 +31,9 @@ func TestSessionToolServerRepliesToIncidentScopedRequest(t *testing.T) {
 		t.Fatal(err)
 	}
 	var response ToolResponse
-	for i := 0; i < 200; i++ {
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
 		data, err := os.ReadFile(filepath.Join(responses, "call-1.json"))
 		if err == nil {
 			if err := json.Unmarshal(data, &response); err != nil {
@@ -39,7 +41,14 @@ func TestSessionToolServerRepliesToIncidentScopedRequest(t *testing.T) {
 			}
 			break
 		}
-		time.Sleep(time.Millisecond)
+		if !os.IsNotExist(err) {
+			t.Fatal(err)
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("waiting for tool response: %v (last read: %v)", ctx.Err(), err)
+		case <-ticker.C:
+		}
 	}
 	if response.Command != "status" || response.Summary != "ready" {
 		t.Fatalf("response: %+v", response)
