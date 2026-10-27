@@ -120,7 +120,9 @@ func testHermeticThreeFaultSelfCheck(t *testing.T, combined bool, batchPrograms 
 	done := make(chan dispatchResult, 1)
 	go func() { result, err := dispatcher.Dispatch(ctx, prepared); done <- dispatchResult{result, err} }()
 	var job *batchv1.Job
-	for i := 0; i < 1000; i++ {
+	jobPoll := time.NewTicker(10 * time.Millisecond)
+	defer jobPoll.Stop()
+	for {
 		select {
 		case ended := <-done:
 			t.Fatalf("dispatch ended before agent Job: %+v", ended)
@@ -130,7 +132,11 @@ func testHermeticThreeFaultSelfCheck(t *testing.T, combined bool, batchPrograms 
 		if err == nil {
 			break
 		}
-		time.Sleep(time.Millisecond)
+		select {
+		case <-ctx.Done():
+			t.Fatalf("waiting for agent Job: %v (last read: %v)", ctx.Err(), err)
+		case <-jobPoll.C:
+		}
 	}
 	if err != nil {
 		t.Fatal(err)
