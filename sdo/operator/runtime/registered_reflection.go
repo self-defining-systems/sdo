@@ -268,6 +268,12 @@ func (w RegisteredReflectionWorker) Reflect(ctx context.Context, closure Inciden
 		}
 	}
 	if err != nil {
+		// A worker the cluster killed for memory is a typed, final failure of this reflection; the incident
+		// closes on health. Any other Job failure keeps failing the closure for inspection.
+		var failedJob *worker_registry.JobFailedError
+		if errors.As(err, &failedJob) && failedJob.FailureReason() != "" {
+			return w.withUsage(ReflectionDecision{LearningDecision: "failed", FailureReason: failedJob.FailureReason(), Error: failedJob.Error()}, workspace.IncidentID)
+		}
 		return ReflectionDecision{}, err
 	}
 	if result == nil || result.GetSchemaVersion() != task.SchemaVersion || result.GetTaskId() != task.TaskId || result.GetProposalId() != proposalID {
@@ -362,6 +368,13 @@ func summarizeEarlierOutcome(record *contracts.OutcomeRecord) *contracts.Outcome
 	earlier.ProgramToolCalls = nil
 	earlier.PlanApplications = nil
 	return earlier
+}
+
+// reflectionSkipReasons are the typed failure reasons that end a reflection for good without blocking closure.
+var reflectionSkipReasons = map[string]bool{
+	ReflectionRequestTooLarge:                       true,
+	worker_registry.FailureWorkerOOMKilled:          true,
+	worker_registry.FailureWorkerResourcesRewritten: true,
 }
 
 // ReflectionRequestTooLarge is the typed, non-retryable reason a reflection is skipped when its request does not
