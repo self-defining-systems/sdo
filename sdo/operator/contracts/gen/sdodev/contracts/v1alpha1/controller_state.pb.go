@@ -799,8 +799,8 @@ type ControllerState struct {
 	// snapshot, or failed. It stops only when the step loop is blocked, so
 	// observers judge a hung controller by it and never by evaluation_iteration.
 	StepCount              int64                    `protobuf:"varint,44,opt,name=step_count,json=stepCount,proto3" json:"step_count,omitempty"`
-	DisabledSetupDetectors []*DisabledSetupDetector `protobuf:"bytes,45,rep,name=disabled_setup_detectors,json=disabledSetupDetectors,proto3" json:"disabled_setup_detectors,omitempty"`
 	SetupEvaluatedRevision string                   `protobuf:"bytes,46,opt,name=setup_evaluated_revision,json=setupEvaluatedRevision,proto3" json:"setup_evaluated_revision,omitempty"`
+	DisabledSetupDetectors []*DisabledSetupDetector `protobuf:"bytes,47,rep,name=disabled_setup_detectors,json=disabledSetupDetectors,proto3" json:"disabled_setup_detectors,omitempty"`
 	unknownFields          protoimpl.UnknownFields
 	sizeCache              protoimpl.SizeCache
 }
@@ -1087,18 +1087,18 @@ func (x *ControllerState) GetStepCount() int64 {
 	return 0
 }
 
-func (x *ControllerState) GetDisabledSetupDetectors() []*DisabledSetupDetector {
-	if x != nil {
-		return x.DisabledSetupDetectors
-	}
-	return nil
-}
-
 func (x *ControllerState) GetSetupEvaluatedRevision() string {
 	if x != nil {
 		return x.SetupEvaluatedRevision
 	}
 	return ""
+}
+
+func (x *ControllerState) GetDisabledSetupDetectors() []*DisabledSetupDetector {
+	if x != nil {
+		return x.DisabledSetupDetectors
+	}
+	return nil
 }
 
 // ReflectionDecision is the learning decision the broker recorded for an
@@ -1912,9 +1912,9 @@ const file_sdodev_contracts_v1alpha1_controller_state_proto_rawDesc = "" +
 	"\n" +
 	"busy_until\x18+ \x01(\v2\x1a.google.protobuf.TimestampR\tbusyUntil\x12\x1d\n" +
 	"\n" +
-	"step_count\x18, \x01(\x03R\tstepCount\x12j\n" +
-	"\x18disabled_setup_detectors\x18- \x03(\v20.sdodev.contracts.v1alpha1.DisabledSetupDetectorR\x16disabledSetupDetectors\x128\n" +
-	"\x18setup_evaluated_revision\x18. \x01(\tR\x16setupEvaluatedRevision\x1aa\n" +
+	"step_count\x18, \x01(\x03R\tstepCount\x128\n" +
+	"\x18setup_evaluated_revision\x18. \x01(\tR\x16setupEvaluatedRevision\x12j\n" +
+	"\x18disabled_setup_detectors\x18/ \x03(\v20.sdodev.contracts.v1alpha1.DisabledSetupDetectorR\x16disabledSetupDetectors\x1aa\n" +
 	"\x17SchedulerDeadlinesEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x120\n" +
 	"\x05value\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\x05value:\x028\x01\x1ai\n" +
