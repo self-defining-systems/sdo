@@ -1363,10 +1363,19 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 		if continuer, ok := c.dispatcher.(interface {
 			ContinueAfterVerification(context.Context, IncidentRequest, ToolResponse, time.Time) (bool, error)
 		}); ok {
-			resumed, err := continuer.ContinueAfterVerification(ctx, *c.currentIncidentRequest, verification, now)
+			// The dispatcher builds its responder loop through the controller
+			// (LoopFactory registers it under c.mu), so it must run unlocked.
+			request := cloneIncidentRequest(c.currentIncidentRequest)
+			c.mu.Unlock()
+			resumed, err := continuer.ContinueAfterVerification(ctx, *request, verification, now)
+			c.mu.Lock()
 			if err != nil {
 				c.mu.Unlock()
 				c.reportBrokerError("resume unhealthy responder", err)
+				return
+			}
+			if !c.incidentOpen || !c.responderDone || c.currentIncidentRequest == nil || c.currentIncidentRequest.IncidentID != request.IncidentID {
+				c.mu.Unlock()
 				return
 			}
 			if resumed {

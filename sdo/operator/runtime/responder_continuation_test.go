@@ -391,3 +391,69 @@ func TestControllerContinuationDistinguishesFaultFromObservationWindow(t *testin
 		t.Fatalf("unnamed detector failure: %+v", failed)
 	}
 }
+
+// reentrantContinuer stands in for the production LoopFactory, which registers
+// the responder loop with the controller under the controller's own mutex.
+type reentrantContinuer struct {
+	verificationRetryDispatcher
+	controller *Controller
+	refuse     bool
+}
+
+func (d *reentrantContinuer) ContinueAfterVerification(ctx context.Context, request IncidentRequest, verification ToolResponse, now time.Time) (bool, error) {
+	d.controller.mu.Lock()
+	d.controller.mu.Unlock()
+	if d.refuse {
+		return false, nil
+	}
+	return d.verificationRetryDispatcher.ContinueAfterVerification(ctx, request, verification, now)
+}
+
+// The controller must never call into the dispatcher's continuation while it
+// holds its own mutex: the dispatcher builds the responder loop through the
+// controller (run.go LoopFactory), so a held mutex deadlocks the whole step
+// loop. Seen live: the controller froze at responder completion for 36 minutes.
+func TestControllerContinuationRunsWithoutHoldingControllerLock(t *testing.T) {
+	for _, refuse := range []bool{false, true} {
+		name := map[bool]string{false: "resumed", true: "refused"}[refuse]
+		t.Run(name, func(t *testing.T) {
+			start := time.Unix(0, 0)
+			cfg := testControllerConfig()
+			cfg.FiringThreshold = 1
+			cfg.BatchDebounce = 0
+			detector := controllerDetector("health", time.Second, stateFinding("bad"), stateFinding("bad"), stateFinding("bad"), stateFinding("bad"))
+			detector.spec.Class = sdk.DetectorClassHealth
+			detector.spec.Owner = sdk.DetectorOwnerHealthJudge
+			detector.spec.Persistence = sdk.PersistencePolicy{Firing: 1, Clearing: 1}
+			detector.spec.Batching = sdk.BatchingPolicy{Severity: sdk.SeverityWarning}
+			detector.spec.OriginatingCommit = "health-objective"
+			d := &reentrantContinuer{verificationRetryDispatcher: verificationRetryDispatcher{requests: make(chan IncidentRequest, 2)}, refuse: refuse}
+			c, err := NewController(cfg, []sdk.Detector{detector}, staticProvider{snapshot: sdktest.Snapshot{}}, d, start)
+			if err != nil {
+				t.Fatal(err)
+			}
+			d.controller = c
+			for sample := 0; sample < 2; sample++ {
+				if err := c.Step(context.Background(), start.Add(time.Duration(sample)*time.Second), nil); err != nil {
+					t.Fatal(err)
+				}
+			}
+			executePendingEffect(t, c)
+			awaitRequest(t, d.requests)
+			awaitDispatchCompletionQueued(t, c)
+			stepped := make(chan error, 1)
+			go func() { stepped <- c.Step(context.Background(), start.Add(2*time.Second), nil) }()
+			select {
+			case err := <-stepped:
+				if err != nil {
+					t.Fatal(err)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("controller step deadlocked: continuation ran while the controller mutex was held")
+			}
+			if resumed := d.resumed == 1; resumed == refuse {
+				t.Fatalf("continuation outcome not applied: resumed=%d refuse=%v", d.resumed, refuse)
+			}
+		})
+	}
+}
