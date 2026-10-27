@@ -680,7 +680,8 @@ def test_mitigation_help_preserves_database_reference_details(capsys: pytest.Cap
 
 
 @pytest.mark.parametrize("command", ["diagnose", "plan", "mitigate"])
-def test_program_help_explains_current_checkout_and_revision(command, capsys):
+def test_program_help_explains_current_checkout_and_revision(command, capsys, monkeypatch):
+    monkeypatch.setenv("COLUMNS", "100000")  # help wrapping may split "working-tree:" at its hyphen
     with pytest.raises(SystemExit) as stopped:
         tools_cli.main([command, "--help"])
     assert stopped.value.code == 0
