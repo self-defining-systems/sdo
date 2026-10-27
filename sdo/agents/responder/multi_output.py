@@ -40,6 +40,18 @@ def option_action_results(response: dict[str, Any]) -> list[dict[str, Any]]:
     return actions
 
 
+def _action_effect(execution: Mapping[str, Any]) -> str:
+    """One short phrase for what the controller verified or why it failed."""
+    parts = []
+    for result in execution.get("action_results") or []:
+        database_user = result.get("database_user")
+        if database_user and database_user.get("verified"):
+            parts.append(f"database user {database_user.get('user', '')} {database_user.get('outcome', '')} (verified)")
+        elif result.get("failure_reason"):
+            parts.append(f"failed: {result['failure_reason']}")
+    return "; ".join(parts)
+
+
 def format_selection_response(
     before: Sequence[Mapping[str, Any]] | None,
     after: Sequence[Mapping[str, Any]] | None,
@@ -86,14 +98,15 @@ def format_selection_response(
     lines[0] = f"Options: {succeeded} succeeded; {pending} pending; {failed} failed; {unresolved} unresolved."
     rows = []
     for action in actions:
+        execution = (action["report"].get("execution") or [{}])[0]
+        effect = _action_effect(execution)
         status = (
             "pending"
             if action["pending"]
             else action["report"].get("status", "STATUS_UNRESOLVED").removeprefix("STATUS_").lower()
         )
-        rows.append(
-            f"option: {_brief(action['option_id'], 48)} {status} application={_brief(action['application_id'], 64)}"
-        )
+        row = f"option: {_brief(action['option_id'], 48)} {status} application={_brief(action['application_id'], 64)}"
+        rows.append(f"{row} effect={_brief(effect, 96)}" if effect else row)
     # Keep verdicts/counts/schema intact. Make room for option identities by
     # moving only displayed finding details to the already complete report.
     lines = [

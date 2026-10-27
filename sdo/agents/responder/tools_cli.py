@@ -215,7 +215,10 @@ def _parser() -> argparse.ArgumentParser:
             "username/password take exactly one credential reference: {env: NAME} or "
             "{config_map: {name: CONFIGMAP, key: KEY, assignment: optional_NAME}} in the target Pod namespace. "
             "Assignment selects one literal NAME=value line. The executor resolves values privately; "
-            "never put credential values in arguments, evidence or memory. Direct Secret keys are unavailable."
+            "never put credential values in arguments, evidence or memory. Direct Secret keys are unavailable. "
+            "The result reads the catalog back: action_results[].database_user states the verified user and "
+            "outcome (created, updated or already_correct), and a failure carries a typed failure_reason. "
+            "A verified user does not mean the application recovered."
         ),
     )
     mitigate.add_argument("option", nargs="?", help="advertised option ID or unambiguous program ID")

@@ -162,7 +162,7 @@ do not work around that.
 user with a password resolved privately by the executor. For an existing user it restores exact direct roles
 and preserves its password. Other users remain unchanged. Local unauthenticated bootstrap requires the
 database's existing policy; the action creates no Kubernetes grants. It is irreversible and never
-re-executed from a durable receipt. Diagnosis must inspect the typed catalog and propagate unavailable
+re-executed from a durable receipt. The controller reads the catalog back after the write and reports the user as created, updated or already_correct, or a typed failure reason. Diagnosis must inspect the typed catalog and propagate unavailable
 reads as Unknown. Build replay from recorded open `DatabaseUsers` results; fixed-phase replies never
 prove a repair. The simulator changes only the named user's direct roles/catalog membership and does
 not simulate credentials, arbitrary Exec, authentication policy, connectivity, or server availability.
