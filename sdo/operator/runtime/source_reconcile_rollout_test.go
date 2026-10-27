@@ -115,7 +115,7 @@ func TestSourceReconcileRolloutProtectsControllerCapacityAndOwnership(t *testing
 				deployment.Status.ObservedGeneration = 1
 			}
 			client := fake.NewSimpleClientset(deployment, current, stale)
-			steps, err := (KubernetesPlanRollouts{Client: client}).ProgressSourceRollouts(context.Background(), []sdk.ObjectRef{addedFieldsRef()})
+			steps, err := (KubernetesPlanRollouts{Client: client}).ProgressSourceRollouts(context.Background(), []sdk.ObjectRef{addedFieldsRef()}, map[sdk.ObjectRef]types.UID{addedFieldsRef(): deployment.UID})
 			if err != nil || len(steps) > 0 {
 				t.Fatalf("unsafe rollout progress: %+v %v", steps, err)
 			}
@@ -215,5 +215,29 @@ func TestSourceReconcilePollOwnsProgressUntilReplacementAppears(t *testing.T) {
 	result, err := executor.Apply(context.Background(), IncidentRequest{Namespace: ref.Namespace, SourceCommit: "accepted", RepairPolicy: "recorded-actions"}, reconcilePlan(ref), false)
 	if err != nil || !result.VerificationPassed || len(result.ActionReports[0].SourceReconcile.RolloutSteps) != 1 {
 		t.Fatalf("source action abandoned progress before replacement observation: pending=%v error=%v", result.RolloutPending, err)
+	}
+}
+
+func TestSourceReconcileProgressBindsWrittenWorkloadInstance(t *testing.T) {
+	deployment, current, stale := reconcileRolloutObjects(t)
+	// The progress read sees a new Deployment instance at the same name after
+	// the executor's successful write/readback of the original instance.
+	client := fake.NewSimpleClientset(deployment, current, stale)
+	source := addedFieldsSource()
+	live := source.DeepCopy()
+	live.SetUID("original-instance")
+	if err := RecordAcceptance(live, source); err != nil {
+		t.Fatal(err)
+	}
+	ref := addedFieldsRef()
+	executor := PlanExecutor{Client: &planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: live}}, Source: planFakeSource{source: source}, Rollouts: KubernetesPlanRollouts{Client: client}, Verifier: planFakeVerifier{passed: true}, RolloutTimeout: 30 * time.Millisecond}
+	result, err := executor.Apply(context.Background(), IncidentRequest{Namespace: ref.Namespace, SourceCommit: "accepted", RepairPolicy: "recorded-actions"}, reconcilePlan(ref), false)
+	if err == nil || result.VerificationPassed {
+		t.Fatal("recreated workload received write/rollout credit")
+	}
+	for _, action := range client.Actions() {
+		if action.GetVerb() == "patch" {
+			t.Fatal("source action mutated ReplicaSets of a different Deployment instance")
+		}
 	}
 }

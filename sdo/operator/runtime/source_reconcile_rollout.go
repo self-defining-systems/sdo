@@ -21,7 +21,7 @@ const sourceReconcileProgressCeiling = 5 * time.Second
 // ProgressSourceRollouts retires only unavailable old templates controlled by
 // the exact reconciled Deployment. Ready capacity, foreign ReplicaSets, paused
 // workloads and a rollout with no replacement remain the controller's to manage.
-func (w KubernetesPlanRollouts) ProgressSourceRollouts(ctx context.Context, refs []sdk.ObjectRef) ([]*contracts.SourceRolloutStep, error) {
+func (w KubernetesPlanRollouts) ProgressSourceRollouts(ctx context.Context, refs []sdk.ObjectRef, expected map[sdk.ObjectRef]types.UID) ([]*contracts.SourceRolloutStep, error) {
 	if w.Client == nil {
 		return nil, fmt.Errorf("Kubernetes rollout client is required")
 	}
@@ -37,7 +37,10 @@ func (w KubernetesPlanRollouts) ProgressSourceRollouts(ctx context.Context, refs
 		if err != nil {
 			return steps, err
 		}
-		if deployment.UID == "" || deployment.Spec.Paused || deployment.Spec.Replicas == nil || *deployment.Spec.Replicas == 0 || deployment.Status.ObservedGeneration < deployment.Generation {
+		if expected[ref] == "" || deployment.UID != expected[ref] {
+			return steps, fmt.Errorf("reconciled Deployment identity changed or is unavailable")
+		}
+		if deployment.Spec.Paused || deployment.Spec.Replicas == nil || *deployment.Spec.Replicas == 0 || deployment.Status.ObservedGeneration < deployment.Generation {
 			continue
 		}
 		sets, err := w.Client.AppsV1().ReplicaSets(ref.Namespace).List(ctx, metav1.ListOptions{})
@@ -98,17 +101,18 @@ func (w KubernetesPlanRollouts) ProgressSourceRollouts(ctx context.Context, refs
 
 type sourceProgressRollouts interface {
 	Observe(context.Context, []sdk.ObjectRef) error
-	ProgressSourceRollouts(context.Context, []sdk.ObjectRef) ([]*contracts.SourceRolloutStep, error)
+	ProgressSourceRollouts(context.Context, []sdk.ObjectRef, map[sdk.ObjectRef]types.UID) ([]*contracts.SourceRolloutStep, error)
 }
 
 type sourceRolloutWaiter struct {
 	sourceProgressRollouts
-	refs   []sdk.ObjectRef
-	result *PlanApplicationResult
+	refs     []sdk.ObjectRef
+	expected map[sdk.ObjectRef]types.UID
+	result   *PlanApplicationResult
 }
 
 func (w sourceRolloutWaiter) Observe(ctx context.Context, refs []sdk.ObjectRef) error {
-	steps, err := w.ProgressSourceRollouts(ctx, w.refs)
+	steps, err := w.ProgressSourceRollouts(ctx, w.refs, w.expected)
 	for _, ref := range w.refs {
 		for index, action := range w.result.Plan.Actions {
 			target, _ := planActionRef(action)
@@ -167,6 +171,12 @@ func (e PlanExecutor) waitForSourceRollouts(ctx context.Context, incident Incide
 			}
 		}
 		if len(reconciled) > 0 {
+			expected := map[sdk.ObjectRef]types.UID{}
+			for _, image := range result.PreImages {
+				if image.Object != nil {
+					expected[image.Ref] = image.Object.GetUID()
+				}
+			}
 			// The source action owns this short step even for polling callers;
 			// returning at the first observation can precede RS creation and
 			// strand cleanup until another model turn. Never extend a shorter
@@ -177,7 +187,7 @@ func (e PlanExecutor) waitForSourceRollouts(ctx context.Context, incident Incide
 					e.RolloutTimeout = sourceReconcileProgressCeiling
 				}
 			}
-			e.Rollouts = sourceRolloutWaiter{sourceProgressRollouts: progress, refs: reconciled, result: result}
+			e.Rollouts = sourceRolloutWaiter{sourceProgressRollouts: progress, refs: reconciled, expected: expected, result: result}
 		}
 	}
 	return e.waitForRollouts(ctx, incident, refs)
