@@ -55,10 +55,10 @@ def prerequisites(value: dict[str, Any], namespace: str) -> set[Prerequisite]:
             add("ServiceAccount", account)
         for field, target in [("runtimeClassName", "RuntimeClass"), ("priorityClassName", "PriorityClass")]:
             add(target, pod.get(field), "")
-        for ref in pod.get("imagePullSecrets", []):
+        for ref in pod.get("imagePullSecrets", []) or []:
             local("Secret", ref)
-        claims = {v["metadata"]["name"] for v in spec.get("volumeClaimTemplates", [])}
-        for volume in pod.get("volumes", []):
+        claims = {v["metadata"]["name"] for v in (spec.get("volumeClaimTemplates", []) or [])}
+        for volume in pod.get("volumes", []) or []:
             for field, target, key in [
                 ("configMap", "ConfigMap", "name"),
                 ("secret", "Secret", "secretName"),
@@ -67,25 +67,25 @@ def prerequisites(value: dict[str, Any], namespace: str) -> set[Prerequisite]:
                 ref = volume.get(field, {})
                 if target != "PersistentVolumeClaim" or ref.get(key) not in claims:
                     local(target, ref, key)
-            for source in volume.get("projected", {}).get("sources", []):
+            for source in volume.get("projected", {}).get("sources") or []:
                 local("ConfigMap", source.get("configMap", {}))
                 local("Secret", source.get("secret", {}))
             if "csi" in volume:
                 add("CSIDriver", volume["csi"].get("driver"), "")
                 local("Secret", volume["csi"].get("nodePublishSecretRef", {}))
         for container in [
-            *pod.get("containers", []),
-            *pod.get("initContainers", []),
-            *pod.get("ephemeralContainers", []),
+            *(pod.get("containers", []) or []),
+            *(pod.get("initContainers", []) or []),
+            *(pod.get("ephemeralContainers", []) or []),
         ]:
-            for env in container.get("env", []):
+            for env in container.get("env", []) or []:
                 source = env.get("valueFrom", {})
                 local("ConfigMap", source.get("configMapKeyRef", {}))
                 local("Secret", source.get("secretKeyRef", {}))
-            for source in container.get("envFrom", []):
+            for source in container.get("envFrom", []) or []:
                 local("ConfigMap", source.get("configMapRef", {}))
                 local("Secret", source.get("secretRef", {}))
-        for claim in spec.get("volumeClaimTemplates", []):
+        for claim in spec.get("volumeClaimTemplates", []) or []:
             refs.update(prerequisites({"kind": "PersistentVolumeClaim", "spec": claim.get("spec", {})}, namespace))
     if kind == "StatefulSet":
         add("Service", spec.get("serviceName"))
@@ -95,12 +95,12 @@ def prerequisites(value: dict[str, Any], namespace: str) -> set[Prerequisite]:
             ref = spec.get(field, {})
             add(ref.get("kind", "Unknown"), ref.get("name"), ref.get("namespace", namespace))
     if kind == "ServiceAccount":
-        for ref in value.get("imagePullSecrets", []):
+        for ref in value.get("imagePullSecrets", []) or []:
             local("Secret", ref)
     if kind == "RoleBinding":
         ref = value.get("roleRef", {})
         add(ref.get("kind", "Role"), ref.get("name"), "" if ref.get("kind") == "ClusterRole" else namespace)
-        for subject in value.get("subjects", []):
+        for subject in value.get("subjects", []) or []:
             if subject.get("kind") == "ServiceAccount" and subject.get("name") != "default":
                 add("ServiceAccount", subject.get("name"), subject.get("namespace", namespace))
     refs.discard(Prerequisite(namespace, "ConfigMap", "kube-root-ca.crt"))
@@ -161,7 +161,7 @@ def complete_recovery_baselines(
         for identity, value in bindings.items():
             subjects = {
                 Prerequisite(subject.get("namespace", identity.namespace), "ServiceAccount", subject["name"])
-                for subject in value.get("subjects", [])
+                for subject in (value.get("subjects", []) or [])
                 if subject.get("kind") == "ServiceAccount"
             }
             if subjects & (accounts | wanted):
