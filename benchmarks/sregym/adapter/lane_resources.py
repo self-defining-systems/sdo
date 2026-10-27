@@ -127,6 +127,16 @@ def _memory_pod_uid(pod: dict[str, Any]) -> str:
     return mirror
 
 
+class LaneMeasurementUnavailable(ValueError):
+    """A running container has no kubelet sample: the pod list and the stats summary disagree."""
+
+
+# The pod API and the kubelet stats are two reads at different moments; a container that starts between
+# them is running in one and unmeasured in the other. Re-read the pair a few times before failing closed.
+_MEASUREMENT_ATTEMPTS = 4
+_MEASUREMENT_RETRY_SECONDS = 1.0
+
+
 def allowed_namespaces(app_namespaces: Set[str], policy: LaneResourcePolicy | None = None) -> frozenset[str]:
     """The only namespaces a lane may hold at admission: infrastructure, the app and its SDO control namespace."""
     policy = policy or LaneResourcePolicy()
@@ -200,7 +210,7 @@ def evaluate_lane_resources(
             memory = measured.get((namespace, name, uid, container_name), {})
             used = memory.get("workingSetBytes")
             if type(used) is not int or used < 0:
-                raise ValueError(f"eval: {component} memory measurement unavailable")
+                raise LaneMeasurementUnavailable(f"eval: {component} memory measurement unavailable")
             age = (now - _timestamp(memory.get("time"), f"{component} memory")).total_seconds()
             if age < -5 or age > policy.max_sample_age_seconds:
                 raise ValueError(f"eval: {component} memory sample stale or future: age={age:.1f}s")
@@ -373,30 +383,39 @@ def assert_lane_resources(
     try:
         namespaces = get(["namespaces", "-o", "json"])
         nodes = get(["nodes", "-o", "json"])
-        summaries = []
         if not nodes["items"]:
             raise ValueError("eval: node memory inventory unavailable")
-        for node in nodes["items"]:
-            name = node["metadata"]["name"]
-            if not isinstance(name, str) or not _DNS.fullmatch(name):
-                raise ValueError("eval: invalid node identity in memory inventory")
-            summary = get(["--raw", f"/api/v1/nodes/{name}/proxy/stats/summary"])
-            if summary["node"]["nodeName"] != name:
-                raise ValueError(f"eval: node memory inventory identity mismatch: {name}")
-            summaries.append(summary)
-        # A short-lived startup container may finish before the kubelet sample
-        # is collected. Judge the current running set, rather than requiring a
-        # measurement for an earlier lifetime that has already ended. New or
-        # still-running containers retain exact UID/sample requirements.
-        pods = get(["pods", "--all-namespaces", "-o", "json"])
-        return evaluate_lane_resources(
-            namespaces=namespaces,
-            pods=pods,
-            summaries=summaries,
-            app_namespaces=app_namespaces,
-            host_available_bytes=host_available_memory(),
-            now=now or datetime.now(timezone.utc),
-            policy=policy,
-        )
+        for attempt in range(1, _MEASUREMENT_ATTEMPTS + 1):
+            summaries = []
+            for node in nodes["items"]:
+                name = node["metadata"]["name"]
+                if not isinstance(name, str) or not _DNS.fullmatch(name):
+                    raise ValueError("eval: invalid node identity in memory inventory")
+                summary = get(["--raw", f"/api/v1/nodes/{name}/proxy/stats/summary"])
+                if summary["node"]["nodeName"] != name:
+                    raise ValueError(f"eval: node memory inventory identity mismatch: {name}")
+                summaries.append(summary)
+            # A short-lived startup container may finish before the kubelet sample
+            # is collected. Judge the current running set, rather than requiring a
+            # measurement for an earlier lifetime that has already ended. New or
+            # still-running containers retain exact UID/sample requirements.
+            pods = get(["pods", "--all-namespaces", "-o", "json"])
+            try:
+                return evaluate_lane_resources(
+                    namespaces=namespaces,
+                    pods=pods,
+                    summaries=summaries,
+                    app_namespaces=app_namespaces,
+                    host_available_bytes=host_available_memory(),
+                    now=now or datetime.now(timezone.utc),
+                    policy=policy,
+                )
+            except LaneMeasurementUnavailable as exc:
+                remaining = deadline - time.monotonic()
+                if attempt == _MEASUREMENT_ATTEMPTS or remaining <= _MEASUREMENT_RETRY_SECONDS:
+                    raise
+                logging.getLogger(__name__).warning("eval: lane measurement attempt %s: %s; re-reading", attempt, exc)
+                time.sleep(_MEASUREMENT_RETRY_SECONDS)
+        raise AssertionError("unreachable: the last measurement attempt returns or raises")
     except (KeyError, TypeError) as exc:
         raise ValueError("eval: malformed lane memory/namespace inventory unavailable") from exc

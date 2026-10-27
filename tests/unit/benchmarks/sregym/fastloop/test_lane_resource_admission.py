@@ -275,7 +275,11 @@ def first_adoption(gate, monkeypatch, finishes_at: float) -> list[float]:
     def onboarding(control):
         if now[0] < finishes_at:
             return {"complete": None, "pending": {"acceptedCommit": "a" * 40}, "rejected": None}
-        return {"complete": {"acceptedCommit": "b" * 40, "objects": [{"kind": "Deployment"}]}, "pending": None, "rejected": None}
+        return {
+            "complete": {"acceptedCommit": "b" * 40, "objects": [{"kind": "Deployment"}]},
+            "pending": None,
+            "rejected": None,
+        }
 
     monkeypatch.setattr(gate.ops, "runtime_state", runtime)
     monkeypatch.setattr(gate, "_onboarding", onboarding)
@@ -315,7 +319,9 @@ def test_rejected_onboarding_fails_at_once_with_the_controller_reason(lane, monk
         "pending": {"acceptedCommit": "a" * 40},
         "rejected": {"reason": "install window contradicted or expired"},
     }
-    monkeypatch.setattr(gate, "_onboarding", lambda control: rejected if now[0] >= 30 else {**rejected, "rejected": None})
+    monkeypatch.setattr(
+        gate, "_onboarding", lambda control: rejected if now[0] >= 30 else {**rejected, "rejected": None}
+    )
     monkeypatch.setattr(admission, "kubectl", lambda *args, **kwargs: SimpleNamespace(stdout="controller line\n"))
     with pytest.raises(ValueError, match=r"rejected onboarding after 30s .*install window contradicted or expired"):
         gate.prove("hotel-reservation-sdo")
