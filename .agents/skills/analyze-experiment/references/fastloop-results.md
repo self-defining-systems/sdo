@@ -73,7 +73,7 @@ Responder applications record the same revision-bound failure as
 `application_verification_failure:<program_id>@<accepted_dependency_revision>`.
 `apply` does not roll back: the signal marks an unverified application that stays applied until the responder issues `rollback` or retries. The tool state saves it so it survives a restart.
 
-The counts shown to the agent (`successful_applications` / `failed_applications` per program revision) are computed once per application. A failed incident, an error or a rollback is a failure; an application in a successful incident is a success. `cleared_without_action` and `unconfirmed` closures carry no verdict. A verification-failure signal turns one counted success of that program into a failure (or adds one failure when no application is recorded), so an application is never both. A successful retry after a failed application leaves one success and one failure for the revision.
+The counts shown to the agent (`successful_applications` / `failed_applications` per program revision) are computed once per application. A failed incident, an error or a rollback is a failure; an application in a successful incident is a success. `cleared_without_action` and `unconfirmed` closures carry no verdict. An application whose record shows a completed, failed verification is a failure. A verification-failure signal with no failed application of that program in the incident stands for one whose record a restart discarded and adds one failure, so an application is never both. A successful retry after a failed application leaves one success and one failure for the revision.
 
 ### Historical learning credit
 

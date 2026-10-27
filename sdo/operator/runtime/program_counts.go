@@ -25,11 +25,13 @@ func programCountKey(id, revision string) string { return id + "@" + revision }
 // neither: the first needed no repair and the second is verified but not a
 // failure, so its applications carry no verdict.
 //
-// A recorded application_verification_failure signal names a program, not an
-// application. When no application of that program already failed in the
-// incident, the signal turns one counted success into the failure it records;
-// with no counted application it adds one failure against the signal's
-// revision. An application is never counted as both.
+// An application whose own record shows a completed verification that did not
+// pass is a failure too. A recorded application_verification_failure signal
+// names a program, not an application: when no application of that program
+// failed in the incident, the signal stands for one whose record was lost
+// (a restart discards application history) and adds one failure against the
+// signal's revision. An application whose record shows the failure is
+// therefore counted once, never as both.
 func ProgramCounts(outcomes []*contracts.OutcomeRecord) map[string]ProgramCount {
 	counts := map[string]ProgramCount{}
 	for _, outcome := range outcomes {
@@ -41,7 +43,6 @@ func ProgramCounts(outcomes []*contracts.OutcomeRecord) map[string]ProgramCount 
 			return outcome.GetSourceCommit()
 		}
 		failedKeys := map[string]bool{}
-		succeededKeys := map[string][]string{}
 		tally := func(key string, verdict applicationOutcome) {
 			count := counts[key]
 			if verdict == failedApplication {
@@ -55,7 +56,8 @@ func ProgramCounts(outcomes []*contracts.OutcomeRecord) map[string]ProgramCount 
 			if !application.GetApplied() || application.GetDryRun() || application.GetRolloutPending() != nil {
 				continue
 			}
-			harmed := application.GetError() != "" || application.GetRolledBack() || application.GetRollbackError() != ""
+			harmed := application.GetError() != "" || application.GetRolledBack() || application.GetRollbackError() != "" ||
+				(application.GetVerificationCompleted() && !application.GetVerificationPassed())
 			verdict := applicationVerdict(outcome.GetClassification(), harmed)
 			if verdict == noVerdict {
 				continue
@@ -65,8 +67,6 @@ func ProgramCounts(outcomes []*contracts.OutcomeRecord) map[string]ProgramCount 
 				tally(key, verdict)
 				if verdict == failedApplication {
 					failedKeys[id] = true
-				} else {
-					succeededKeys[id] = append(succeededKeys[id], key)
 				}
 			}
 		}
@@ -76,13 +76,6 @@ func ProgramCounts(outcomes []*contracts.OutcomeRecord) map[string]ProgramCount 
 				continue
 			}
 			failedKeys[id] = true
-			if keys := succeededKeys[id]; len(keys) > 0 {
-				count := counts[keys[0]]
-				count.Successes--
-				count.Failures++
-				counts[keys[0]] = count
-				continue
-			}
 			if revision == "" {
 				revision = revisionOf(id)
 			}
