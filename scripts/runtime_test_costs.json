@@ -978,7 +978,7 @@
     "TestSyntheticWorkerResultsThroughContracts": 0.002,
     "TestT1ClassificationMatrix": 0.022,
     "TestT1EveryUnboundWriteGetsAQuestion": 0.001,
-    "TestT1NoRecordedRepairDeclineRequiresControllerFlag": 1.512,
+    "TestT1NoRecordedRepairDeclineDoesNotExcuseACauseWithAnOwnWrite": 1.512,
     "TestT1FixedReplayIsIndependentOfProgramOrder": 0.002,
     "TestT1L2MinimalRegressionShapes": 0.002,
     "TestT1ScriptedBrokerMatrix": 18.454,

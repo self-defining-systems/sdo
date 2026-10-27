@@ -590,20 +590,20 @@ func TestT1TrustProperty(t *testing.T) {
 	}
 }
 
-func TestT1NoRecordedRepairDeclineRequiresControllerFlag(t *testing.T) {
-	c := t1Classes()[4] // recorded unbound repair, complete protected observations
+func TestT1NoRecordedRepairDeclineDoesNotExcuseACauseWithAnOwnWrite(t *testing.T) {
+	c := t1Classes()[6] // cause 1 has its own recorded write and no program
 	c.decline = true
 	run := t1RunBroker(t, c, false)
 	if run.ledger.GetReflectionNoRepairCount() != 0 || !run.ledger.ReflectionRejected || run.calls != 1+broker.MaxValidationRetries {
-		t.Fatalf("unflagged decline accepted: calls=%d ledger=%v", run.calls, run.ledger)
+		t.Fatalf("decline excused a cause with its own recorded write and no program: calls=%d ledger=%v", run.calls, run.ledger)
 	}
 	for _, rejection := range run.ledger.ReflectionRejections {
 		found := false
 		for _, diagnostic := range rejection.Diagnostics {
-			found = found || diagnostic.Rule == "reflection.decision"
+			found = found || diagnostic.Rule == "reflection.program-required"
 		}
 		if !found {
-			t.Errorf("missing typed gap rejection: %v", rejection)
+			t.Errorf("a cause with an own-resource write and no program must still require one: %v", rejection)
 		}
 	}
 }

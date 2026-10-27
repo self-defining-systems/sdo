@@ -163,6 +163,17 @@ class PostClosureWait(BaseModel):
 class IncidentRecord(_PersistedModel):
     model_config = ConfigDict(extra="forbid")
 
+    @model_validator(mode="before")
+    @classmethod
+    def _read_recorded_rows_with_the_old_count_name(cls, data: Any) -> Any:
+        # Dev-branch rows recorded before the rename carry the old name. Read it
+        # as the new field; a row never writes it (older values are not comparable).
+        if isinstance(data, dict) and "reflection_evidence_gap_count" in data:
+            data = dict(data)
+            old = data.pop("reflection_evidence_gap_count")
+            data.setdefault("reflection_no_repair_count", old)
+        return data
+
     image_delivery: str = "unknown"
     image_delivery_reason: str = ""
     schema_version: Literal["sdo.fastloop-incident/v2"] = SCHEMA_VERSION

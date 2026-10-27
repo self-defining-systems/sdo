@@ -132,6 +132,16 @@ def test_recorded_no_repair_count_survives_csv_round_trip(tmp_path: Path) -> Non
         assert next(csv.DictReader(handle))["reflection_no_repair_count"] == "2"
 
 
+def test_recorded_row_with_the_old_count_name_loads_as_the_new_field(tmp_path: Path) -> None:
+    row = json.loads(_record(0).model_copy(update={"reflection_no_repair_count": 3}).model_dump_json())
+    row["reflection_evidence_gap_count"] = row.pop("reflection_no_repair_count")
+    path = tmp_path / "incidents.jsonl"
+    path.write_text(json.dumps(row) + "\n", encoding="utf-8")
+    loaded = load_records(path)[0]
+    assert loaded.reflection_no_repair_count == 3
+    assert "reflection_evidence_gap_count" not in loaded.model_dump()
+
+
 def test_typed_injection_state_rejects_timestamps_on_not_injected() -> None:
     row = _record(0).model_dump()
     row["injection"] = {"state": "not_injected", "stage": "pre_injection", "started_at": T0}

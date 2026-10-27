@@ -49,7 +49,7 @@ Reflection evidence browsing is a bounded projection only: inventory and field p
 `reflection_no_repair_count` on the native ledger and first-party incident row counts the `question/no_recorded_repair`
 items of the eligibility: confirmed causes with no recorded successful repair, which leave nothing to save. Before
 LEARN3 (2026-10-27) it counted resource/phase pairs with no recorded observation; Go no longer creates those, so
-older rows are not comparable. Historical absence is unknown, not zero. `decline_reason=no_recorded_repair` identifies an
+older rows are not comparable. `IncidentRecord` still loads dev-branch rows that carry `reflection_evidence_gap_count` by reading it as `reflection_no_repair_count`. Historical absence is unknown, not zero. `decline_reason=no_recorded_repair` identifies an
 actual no-change decline. A nonzero count alone does not establish blocked learning, and already-proven covered
 repairs still skip the model.
 
