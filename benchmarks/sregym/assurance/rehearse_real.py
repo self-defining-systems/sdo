@@ -168,7 +168,7 @@ def deliver_images(lane: RealLane, tags: Sequence[str]) -> None:
 def run_arguments(lane: RealLane, problem_id: str, *, timeout: int, time_scale: float) -> list[str]:
     """``fastloop run`` for one problem with scripted registrations, behind the lane's lease/Secret fence."""
 
-    guard = ["python3", "-m", "benchmarks.sregym.fastloop.lane_guard", "--cluster", lane.cluster]
+    guard = ["uv", "run", "python", "-m", "benchmarks.sregym.fastloop.lane_guard", "--cluster", lane.cluster]
     guard += ["--kubeconfig", str(lane.kubeconfig), "--lease", lane.lease or "none", "--"]
     return [
         *guard,
@@ -363,12 +363,7 @@ class RealApp:
         except RuntimeError as exc:
             row.stages.append(Stage("admission", "fail", "inventory-failed", str(exc)))
             return row, earlier_learning
-        argv = [
-            "uv",
-            "run",
-            "python",
-            *run_arguments(lane, problem.problem_id, timeout=1200, time_scale=self.time_scale),
-        ]
+        argv = run_arguments(lane, problem.problem_id, timeout=1200, time_scale=self.time_scale)
         code, output = self._step(argv, PROBLEM_TIMEOUT_SECONDS)
         record = last_record(lane.run_dir)
         error = "" if code == 0 or record is not None else output[-400:]
