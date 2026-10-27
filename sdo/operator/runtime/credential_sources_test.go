@@ -179,6 +179,9 @@ func TestConfigMapCredentialReadErrorNeverIncludesResponse(t *testing.T) {
 }
 
 func TestCredentialConfigMapNeverEntersVerboseClientLogs(t *testing.T) {
+	if !inIsolatedProcess(t) {
+		return
+	}
 	const canary = "DBC_VERBOSE_API_RESPONSE_CREDENTIAL_CANARY"
 	state := klog.CaptureState()
 	defer state.Restore()
