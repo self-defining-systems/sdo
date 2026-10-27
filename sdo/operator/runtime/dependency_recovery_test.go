@@ -403,3 +403,43 @@ func TestRuntimeBatchRecoversOnceAndPreservesSourceCreateReceipt(t *testing.T) {
 		t.Fatalf("runtime batch lost recovery/creation ownership: %+v %v", result, err)
 	}
 }
+
+func TestDependencyRecoveryPreservesProducedAdmissionPrerequisite(t *testing.T) {
+	ctx := context.Background()
+	rollouts := admissionRolloutsFor("store")
+	deployment, err := rollouts.Client.AppsV1().Deployments("app").Get(ctx, "store", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	deployment.Spec.Selector = &metav1.LabelSelector{MatchLabels: map[string]string{"tier": "store"}}
+	if _, err := rollouts.Client.AppsV1().Deployments("app").Update(ctx, deployment, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	backend := recoveryPod("store-old")
+	backend.Labels = map[string]string{"tier": "store"}
+	backend.Status.Phase = corev1.PodRunning
+	backend.Status.ContainerStatuses = nil
+	backend.Status.Conditions = []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}
+	consumer := recoveryPod("consumer")
+	consumer.Spec.Containers[0].Env = []corev1.EnvVar{{Name: "STORE_ADDR", Value: "store:6379"}}
+	for _, pod := range []*corev1.Pod{backend, consumer} {
+		if _, err := rollouts.Client.CoreV1().Pods("app").Create(ctx, pod, metav1.CreateOptions{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	service := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "store", Namespace: "app"}, Spec: corev1.ServiceSpec{Selector: map[string]string{"tier": "store"}}}
+	if _, err := rollouts.Client.CoreV1().Services("app").Create(ctx, service, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	executor := PlanExecutor{Rollouts: rollouts, RolloutTimeout: time.Second}
+	ref := sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "app", Name: "store"}
+	result := PlanApplicationResult{Applied: true, Patches: []PlanPatch{{Ref: ref, Authorization: "accepted-source"}}}
+	pending, err := executor.waitAfterSourceWrites(ctx, IncidentRequest{Namespace: "app"}, &result, []sdk.ObjectRef{ref})
+	var admission *AdmissionBlockedError
+	if !errors.As(err, &admission) || pending == nil || pending.GetReasonCode() != "admission_blocked" || len(pending.GetAdmissionConfigurations()) != 1 {
+		t.Fatalf("dependency recovery lost produced admission prerequisite: %+v %v", pending, err)
+	}
+	if _, err := rollouts.Client.CoreV1().Pods("app").Get(ctx, "consumer", metav1.GetOptions{}); err != nil {
+		t.Fatal("consumer recycled before new backend generation became Ready")
+	}
+}

@@ -329,6 +329,10 @@ func (e PlanExecutor) waitAfterSourceWrites(ctx context.Context, incident Incide
 		defer stop()
 	}
 	if err := e.settleSourceDependencies(ctx, incident, result); err != nil {
+		var admission *AdmissionBlockedError
+		if errors.As(err, &admission) {
+			return admission.Pending, admission
+		}
 		if errors.Is(err, context.DeadlineExceeded) {
 			pending := &contracts.RolloutPending{Reason: "dependent recovery is pending within the existing rollout budget"}
 			return pending, &RolloutPendingError{Pending: pending}
