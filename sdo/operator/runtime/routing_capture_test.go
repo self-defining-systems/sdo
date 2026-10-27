@@ -438,8 +438,8 @@ func TestHermeticRoutingCaptureCompilesReplayableMitigator(t *testing.T) {
 		t.Fatalf("SetField was not replayed: %+v", notes)
 	}
 
-	// With two faults, the best single binding runs, then whole-incident verification
-	// rolls it back before responder handoff because the other fault remains.
+	// With two faults the agent applies one binding; the peer fault remains and
+	// nothing is rolled back automatically.
 	nativeGit(t, root, "add", ".")
 	nativeGit(t, root, "commit", "-qm", "accepted recorded routing fixture")
 	commit := nativeGit(t, root, "rev-parse", "HEAD")
