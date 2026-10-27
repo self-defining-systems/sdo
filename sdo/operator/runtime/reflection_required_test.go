@@ -14,7 +14,7 @@ import (
 	"sdo.dev/operator/runtime/lifecyclecore"
 )
 
-func TestReadmeOnlyVerifiedReflectionIsRejectedAndRetried(t *testing.T) {
+func TestReadmeOnlyVerifiedReflectionCommitsWithARecordedGap(t *testing.T) {
 	root := nativeRepository(t)
 	copyFastloopTree(t, "../memory/validate/testdata/good/.sdo", filepath.Join(root, ".sdo"))
 	if err := os.Chmod(filepath.Join(root, ".sdo/playbooks/base/scripts/fix.sh"), 0755); err != nil {
@@ -23,7 +23,6 @@ func TestReadmeOnlyVerifiedReflectionIsRejectedAndRetried(t *testing.T) {
 	nativeGit(t, root, "add", "-f", ".sdo")
 	nativeGit(t, root, "commit", "-qm", "accepted memory")
 	repository, err := broker.New(root, t.TempDir(), func(context.Context, string, []string) error {
-		t.Fatal("uncovered verified cause reached compilation")
 		return nil
 	})
 	if err != nil {
@@ -62,12 +61,11 @@ func TestReadmeOnlyVerifiedReflectionIsRejectedAndRetried(t *testing.T) {
 	state, _ = lifecyclecore.StepReflection(state, reviewed)
 	_, effects = lifecyclecore.StepReflection(state, lifecyclecore.ReflectionEvent{Kind: lifecyclecore.ReflectionDrive})
 	event, err := driver.Execute(context.Background(), effects[0])
-	if err != nil || event.Kind != lifecyclecore.ReflectionRejected || len(event.Diagnostics) != 1 || event.Diagnostics[0].Rule != "reflection.program-required" {
-		t.Fatalf("README-only repair was not rejected: %+v %v", event, err)
+	if err != nil || event.Kind != lifecyclecore.ReflectionPublished || len(event.CoverageGaps) != 1 || event.CoverageGaps[0].Rule != "reflection.program-required" {
+		t.Fatalf("README-only repair must commit with a recorded gap: %+v %v", event, err)
 	}
 	next, _ := lifecyclecore.StepReflection(state, event)
-	attempt, diagnostics := lifecyclecore.ReflectionFeedback(next)
-	if next.ReflectionPhase != contracts.ReflectionPhase_REFLECTION_PHASE_RESET || attempt != 2 || len(diagnostics) != 1 || diagnostics[0].Rule != "reflection.program-required" {
-		t.Fatalf("missing typed retry diagnostics: %v", next)
+	if len(next.ReflectionCoverageGaps) != 1 || next.ReflectionCoverageGaps[0].Rule != "reflection.program-required" {
+		t.Fatalf("gap not recorded in the ledger: %v", next)
 	}
 }

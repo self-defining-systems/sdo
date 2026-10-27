@@ -194,26 +194,20 @@ func testReflectionMongoAuthUpgrade(t *testing.T, fixtureName string) {
 			return nil, err
 		}
 		report, code := runReflectionMemoryCheck(t, binary, checkout, proposal.BaseCommit, operatorRoot)
+		_, publishErr := repository.PublishReflection(ctx, incidentID, publication)
 		var failure *validate.Failure
-		hotel := fixtureName == "hotel_mongo_auth_upgrade" || fixtureName == "hotel_run_script_upgrade"
-		var publishErr error
-		if hotel {
-			_, publishErr = repository.PublishReflection(ctx, incidentID, publication)
-		}
-		if !hotel {
-			// An unreachable recorded fault is a noted gap, not a refusal.
-			if code != 0 {
-				t.Fatalf("unreachable catalog evidence refused: CLI %d %v", code, report.Diagnostics)
-			}
-		} else if code != 1 || !errors.As(publishErr, &failure) {
+		if code != 1 || !errors.As(publishErr, &failure) {
 			t.Fatalf("fixed-only catalog accepted: CLI %d %v broker %v", code, report.Diagnostics, publishErr)
 		}
-		if hotel && !proto.Equal(&contracts.MemoryCheckReport{Diagnostics: report.Diagnostics}, &contracts.MemoryCheckReport{Diagnostics: validate.ProtoDiagnostics(failure.Diagnostics)}) {
+		if !proto.Equal(&contracts.MemoryCheckReport{Diagnostics: report.Diagnostics}, &contracts.MemoryCheckReport{Diagnostics: validate.ProtoDiagnostics(failure.Diagnostics)}) {
 			t.Fatalf("catalog replay diagnostics differ: CLI %v broker %v", report.Diagnostics, failure.Diagnostics)
 		}
-		var expectedRules []string
-		if hotel {
-			expectedRules = append(expectedRules, "detector.test")
+		// An unobserved open catalog leaves Diagnose Unknown on its own recorded
+		// fault, so the mitigation cannot be replayed. The hotel detector also
+		// fails its own corpus test, which names the same cause once.
+		expectedRules := []string{validate.RuleProgramDiagnoseNoMatch}
+		if fixtureName == "hotel_mongo_auth_upgrade" || fixtureName == "hotel_run_script_upgrade" {
+			expectedRules = []string{"detector.test"}
 		}
 		gotRules := make([]string, 0, len(report.Diagnostics))
 		for _, diagnostic := range report.Diagnostics {

@@ -190,7 +190,7 @@ def test_scripted_responder_consumes_real_go_tool_responses(tmp_path: Path, monk
 
 
 @pytest.mark.parametrize("verified", [False, True])
-def test_scripted_reflection_note_requires_executable_learning_when_verified(
+def test_scripted_reflection_note_commits_for_verified_and_unverified_outcomes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operator_binary: Path, verified: bool
 ) -> None:
     app = _accepted_app(tmp_path, verified=verified)
@@ -209,10 +209,6 @@ def test_scripted_reflection_note_requires_executable_learning_when_verified(
     monkeypatch.setattr(scripted_worker, "_command", real_operator)
     closure = IncidentClosure()
     closure.request.namespace = "demo"
-    if verified:
-        with pytest.raises(RuntimeError, match="reflection.program-required"):
-            scripted_worker.ScriptedReflector().resume(worktree=app, incident_id="scripted-incident", closure=closure)
-        return
     turn = scripted_worker.ScriptedReflector().resume(worktree=app, incident_id="scripted-incident", closure=closure)
     assert turn.learning_decision == "updated"
     assert turn.playbook_ids == ["verified-repair-notes"]
