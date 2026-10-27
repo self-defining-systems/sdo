@@ -123,14 +123,20 @@ def reset_responder_grants(kubeconfig: Path, namespace: str) -> None:
 
     Grant identity is the exact lane responder ServiceAccount, never a name
     prefix alone. The installer recreates the current run's declared grants.
+    The lifecycle grant (one wildcard ClusterRoleBinding for every SDO identity,
+    controller included) carries no run authority and is not retired here: a
+    restart that does not reinstall, like the toy lane's, would lose the controller's own access.
     """
     control = namespace + "-sdo"
+    lifecycle = "sdo-admin-" + control  # install/grants.go adminGrantName
     seen = set()
     for resources, scope in (("rolebindings", ["--all-namespaces"]), ("clusterrolebindings", [])):
         rows = json.loads(
             kubectl(["get", resources, *scope, "-o", "json"], namespace=None, kubeconfig=kubeconfig).stdout
         )["items"]
         for row in rows:
+            if row.get("roleRef", {}).get("name") == lifecycle:
+                continue
             if not any(
                 subject.get("kind") == "ServiceAccount"
                 and subject.get("name") == "sdo-responder"
