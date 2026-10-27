@@ -61,7 +61,14 @@ type ToolRequest struct {
 	rolloutTimeout time.Duration
 }
 
+// VerificationBlocker names observation work that cannot yet establish health.
+type VerificationBlocker struct {
+	DetectorID string `json:"detector_id"`
+	Reason     string `json:"reason"`
+}
+
 type ToolResponse struct {
+	VerificationBlockers       []VerificationBlocker          `json:"verification_blockers,omitempty"`
 	ActionReports              []PlanActionReport             `json:"action_reports,omitempty"`
 	SelectionSchema            *MenuSchema                    `json:"selection_schema,omitempty"`
 	SelectionSetSchema         *MenuSchema                    `json:"selection_set_schema,omitempty"`
@@ -271,8 +278,18 @@ func (l *ResponderLoop) continuationAttempts() int {
 }
 
 func (l *ResponderLoop) observeMutations() (*apihistory.MutationObservation, error) {
-	var gate *apihistory.MutationGate
-	l.locked(func() { gate = l.MutationGate })
+	// A cancelled turn may still be unwinding a tool. Controller observation
+	// retries on contention instead of waiting behind responder-owned work.
+	gate, err := func() (*apihistory.MutationGate, error) {
+		if !l.mu.TryLock() {
+			return nil, errors.New("responder mutation observation is busy")
+		}
+		defer l.mu.Unlock()
+		return l.MutationGate, nil
+	}()
+	if err != nil {
+		return nil, err
+	}
 	if gate == nil {
 		return nil, nil
 	}

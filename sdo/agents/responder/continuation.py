@@ -61,6 +61,12 @@ class CompletedRepair(BaseModel):
     receipt: RepairReceipt
 
 
+class VerificationBlocker(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    detector_id: str
+    reason: str
+
+
 class ContinuationFeedback(BaseModel):
     model_config = ConfigDict(extra="forbid")
     attempt: int = Field(ge=1)
@@ -70,6 +76,7 @@ class ContinuationFeedback(BaseModel):
     still_broken: list[BrokenFinding]
     source_differences: list[BrokenFinding] = Field(default_factory=list)
     already_done: list[CompletedRepair]
+    verification_blockers: list[VerificationBlocker] = Field(default_factory=list)
 
 
 MAX_CONTINUATION_CHARS = 1500
@@ -148,7 +155,9 @@ def continuation_prompt(payload: str) -> RenderedPrompt:
         last = max(enumerate(attempts), key=lambda item: (_completed_at(item[1]), item[0]))[1] if attempts else None
         rows.append((finding, last))
 
-    def render(width: int, broken_count: int, done_count: int, unmatched_count: int) -> RenderedPrompt:
+    def render(
+        width: int, broken_count: int, done_count: int, unmatched_count: int, blocker_count: int
+    ) -> RenderedPrompt:
         broken_lines = [
             f"- {_brief(finding.fingerprint, 64)} {_brief(finding.summary, width)}; "
             + ("last=" + _action(last, width) if last else "last=none")
@@ -156,7 +165,20 @@ def continuation_prompt(payload: str) -> RenderedPrompt:
         ]
         other_lines = ["- attempt " + _action(repair, width) for repair in unmatched[:unmatched_count]]
         done_lines = ["- " + _action(repair, width) for repair in done[:done_count]]
-        omitted = len(rows) + len(done) + len(unmatched) - broken_count - done_count - unmatched_count
+        blocker_lines = [
+            f"- {_brief(blocker.detector_id, 64)}: {_brief(blocker.reason, max(width, 32))}"
+            for blocker in feedback.verification_blockers[:blocker_count]
+        ]
+        omitted = (
+            len(rows)
+            + len(done)
+            + len(unmatched)
+            + len(feedback.verification_blockers)
+            - broken_count
+            - done_count
+            - unmatched_count
+            - blocker_count
+        )
         return render_prompt(
             "responder",
             "continuation",
@@ -172,6 +194,11 @@ def continuation_prompt(payload: str) -> RenderedPrompt:
                         *broken_lines,
                         *other_lines,
                         *(
+                            [f"verification_blockers: ({len(feedback.verification_blockers)})", *blocker_lines]
+                            if feedback.verification_blockers
+                            else []
+                        ),
+                        *(
                             [f"source_differences (information, not blocking): ({len(feedback.source_differences)})"]
                             if feedback.source_differences
                             else []
@@ -185,14 +212,14 @@ def continuation_prompt(payload: str) -> RenderedPrompt:
             ),
         )
 
-    counts = [len(rows), len(done), len(unmatched)]
+    counts = [len(rows), len(done), len(unmatched), len(feedback.verification_blockers)]
     for width in (64, 32, 16):
         prompt = render(width, *counts)
         if len(prompt) <= MAX_CONTINUATION_CHARS:
             return prompt
     # Large inventories retain complete facts on disk and explicitly count rows
     # omitted from the prompt. Never slice a rendered row or its evidence path.
-    for index in (2, 1, 0):
+    for index in (3, 2, 1, 0):
         while counts[index]:
             counts[index] -= 1
             prompt = render(16, *counts)
