@@ -91,6 +91,7 @@ def rows(directories: list[Path]) -> list[dict[str, Any]]:
                     "tracking_supported": report.get("tracking_supported", True),
                     "faults_total": oracle.get("faults_total", report.get("faults_total")),
                     "faults_fixed": oracle.get("faults_fixed"),
+                    "oracle_invalid": oracle.get("oracle_invalid", 0),
                     "faults_diagnosed": (record.get("diagnosis_grade") or {})
                     .get("details", {})
                     .get("faults_diagnosed"),
