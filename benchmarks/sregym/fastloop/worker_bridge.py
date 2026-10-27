@@ -6,7 +6,13 @@ import importlib
 import os
 import sys
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Sequence
+
+#: Worker ops that restart or roll out workloads; each runs under the unschedulable-surge guard.
+SURGE_GUARDED_OPS = frozenset({"recover", "refresh"})
 
 
 def attach_existing_cluster(worker_infra: Any) -> dict[str, str]:
@@ -18,6 +24,41 @@ def attach_existing_cluster(worker_infra: Any) -> dict[str, str]:
         raise ValueError(f"eval: refusing cluster recreation in attach-only mode: {reason}")
     worker_infra.preflight_cluster_requirements(cluster, kubeconfig)
     return {"cluster": cluster, "kubeconfig": kubeconfig}
+
+
+def handle_with_surge_guard(
+    handle: Callable[[Any, dict[str, Any]], dict[str, Any]],
+    worker: Any,
+    request: dict[str, Any],
+    *,
+    namespaces: Sequence[str],
+    kubeconfig: Path,
+    cluster_factory: Callable[[str, Path], Any] | None = None,
+) -> dict[str, Any]:
+    """Run one worker op; a restart that cannot surge on a 1-worker cluster is recreated, not waited on.
+
+    Every harness path that restarts a workload (a fault's recover_fault, its client refresh, the
+    fault driver's rollouts) goes through the worker, so this is the one place that owns the
+    unschedulable-surge deadlock for all of them.
+    """
+    if request.get("op") not in SURGE_GUARDED_OPS or not namespaces:
+        return handle(worker, request)
+    from benchmarks.sregym.fastloop.surge_recovery import KubectlRolloutCluster, SurgeWatch, guard_blocked_surges
+
+    factory = cluster_factory or KubectlRolloutCluster
+    watches = [SurgeWatch(factory(namespace, kubeconfig), namespace) for namespace in dict.fromkeys(namespaces)]
+    with guard_blocked_surges(watches):
+        return handle(worker, request)
+
+
+def _incident_namespaces(worker_module: Any, worker: Any) -> list[str]:
+    namespaces = []
+    for problem in getattr(worker, "_incidents", ()):
+        try:
+            namespaces.append(worker_module._app_namespace(problem))
+        except ValueError:
+            continue
+    return namespaces
 
 
 def main() -> int:
@@ -102,7 +143,13 @@ def main() -> int:
 
                 return verify_baseline_traffic(problem, verdict)
             return verdict
-        reply = handle(self, request)
+        reply = handle_with_surge_guard(
+            handle,
+            self,
+            request,
+            namespaces=_incident_namespaces(worker, self),
+            kubeconfig=Path(os.environ["KUBECONFIG"]),
+        )
         if op == "recover" and request.get("fault") is None and reply.get("success") is True:
             remove_injected_objects(Path(os.environ["KUBECONFIG"]))
         if op == "deploy" and reply.get("deployed") is False:

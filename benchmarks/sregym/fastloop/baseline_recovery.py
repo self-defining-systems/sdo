@@ -78,6 +78,10 @@ class ApplicationCluster(Protocol):
 
     def create_namespace(self, namespace: str) -> None: ...
 
+    def ensure_secret(self, namespace: str, value: dict[str, Any]) -> bool:
+        """Create the Secret unless it exists; return whether it was created. Never reads Secret data."""
+        ...
+
 
 class KubectlApplicationCluster:
     def __init__(self, kubeconfig: Path) -> None:
@@ -108,6 +112,18 @@ class KubectlApplicationCluster:
         from benchmarks.sregym.fastloop.reset import ensure_application_namespace
 
         ensure_application_namespace(self.kubeconfig, namespace)
+
+    def ensure_secret(self, namespace: str, value: dict[str, Any]) -> bool:
+        name = value["metadata"]["name"]
+        existing = kubectl(
+            ["get", f"secret/{name}", "-o", "name", "--ignore-not-found=true"],
+            namespace=namespace,
+            kubeconfig=self.kubeconfig,
+        ).stdout
+        if existing.strip():
+            return False
+        kubectl(["create", "-f", "-"], namespace=namespace, kubeconfig=self.kubeconfig, input_text=json.dumps(value))
+        return True
 
     def delete(self, namespace: str, kind: str, name: str) -> None:
         kubectl(
@@ -207,6 +223,8 @@ class RecoveryCleanup:
     undeclared_recreated: list[str] = field(default_factory=list)
     # The captured namespace was gone at restore time and was recreated first.
     recreated_namespace: bool = False
+    # Secrets a fault's setup creates, recreated because baselines never archive Secrets.
+    regenerated: list[str] = field(default_factory=list)
 
 
 def _harness_owned(value: dict[str, Any]) -> bool:
@@ -475,6 +493,13 @@ def reconcile_application(
         cluster.create_namespace(namespace)
         cleanup.recreated_namespace = True
         listed = []
+    from benchmarks.sregym.fastloop.regenerable import referenced_regenerable_secrets
+
+    # Workloads mount these Secrets from their first pod; create them before any workload.
+    for secret in referenced_regenerable_secrets(baseline.objects, namespace):
+        if cluster.ensure_secret(namespace, secret):
+            cleanup.regenerated.append(f"{namespace}/Secret/{secret['metadata']['name']}")
+            logger.info("eval restore regenerated %s/Secret/%s", namespace, secret["metadata"]["name"])
     # Live evidence also protects SDO identities present in older snapshots.
     # Resolve the complete owner graph before filtering Pods or normalizing data.
     ownership = _ApplicationOwnership.from_objects(baseline.objects + listed)
@@ -567,6 +592,7 @@ def reconcile_and_record(
             "declared_source_checked": declared is not None,
             "deleted_counts": cleanup.deleted_counts,
             "recreated_namespace": cleanup.recreated_namespace,
+            "regenerated": cleanup.regenerated,
             "reapplied": [value.to_dict() for value in cleanup.reapplied],
             "warnings": warnings,
         }
