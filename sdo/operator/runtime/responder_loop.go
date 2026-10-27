@@ -1086,7 +1086,10 @@ func (l *ResponderLoop) verify(ctx context.Context, applied []selectedPlan, resp
 	response.Unresolved = l.batches >= l.batchLimit() && !response.Healthy
 	if response.Error == "" {
 		response.Summary = fmt.Sprintf("verification: %d open findings", len(findings)) + pendingEvaluationSummary(states)
-		if response.Healthy {
+		switch {
+		case response.Healthy && len(response.Drift) > 0:
+			response.Summary = fmt.Sprintf("verification: health is clear, but %d object(s) still differ from the accepted source; restore them or explain why they should differ, then return the structured incident result", len(response.Drift))
+		case response.Healthy:
 			response.Summary = "verification: healthy; return the structured incident result immediately"
 		}
 	}

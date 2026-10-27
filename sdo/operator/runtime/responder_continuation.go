@@ -416,7 +416,8 @@ func (c *Controller) continuationVerificationLocked(healthVerified bool, source 
 	if len(ids) == 0 && c.currentIncidentRequest != nil {
 		seen := map[string]bool{}
 		for _, finding := range c.currentIncidentRequest.Findings {
-			if !seen[finding.DetectorID] {
+			// Drift is information, never an observation basis for health.
+			if !seen[finding.DetectorID] && !strings.HasPrefix(finding.DetectorID, "drift.") {
 				ids = append(ids, finding.DetectorID)
 				seen[finding.DetectorID] = true
 			}

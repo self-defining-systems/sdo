@@ -207,6 +207,9 @@ func TestUnexplainedDriftSourceErrorIsInformationOnly(t *testing.T) {
 	if !result.Healthy || len(result.Findings) != 0 || len(result.Drift) != 1 {
 		t.Fatalf("drift decided health instead of informing: %+v", result)
 	}
+	if strings.Contains(result.Summary, "immediately") || !strings.Contains(result.Summary, "1 object(s) still differ from the accepted source") {
+		t.Fatalf("verify told the agent to stop while a difference remains: %q", result.Summary)
+	}
 }
 
 func TestUnexplainedDriftRetainsIndependentFieldSetsOnSameObject(t *testing.T) {

@@ -1204,6 +1204,13 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 		return
 	}
 	early := !c.responderDone
+	if early && c.driftOnlyIncidentLocked() {
+		// Drift is the only reason this incident exists, so clear health proves
+		// nothing about it yet: the agent gets its turn and the incident closes
+		// on health once the agent returns.
+		c.mu.Unlock()
+		return
+	}
 	requiresStability := early || c.codePath != nil && c.codePath.Selection.DetectorSource == "shell"
 	if early && (c.dispatchState != contracts.DispatchState_DISPATCH_STATE_RUNNING || c.incidentDispatchedAt.IsZero()) {
 		c.mu.Unlock()
@@ -1270,7 +1277,9 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 		ids := c.healthDetectorIDs
 		if len(ids) == 0 {
 			for _, finding := range c.currentIncidentRequest.Findings {
-				ids = append(ids, finding.DetectorID)
+				if !strings.HasPrefix(finding.DetectorID, "drift.") {
+					ids = append(ids, finding.DetectorID)
+				}
 			}
 		}
 		finalStates, healthVerified = c.latestEvaluations(ids, c.earlyLastMutationAt, true)
@@ -1528,7 +1537,8 @@ func logIncidentVerified(incidentID string, healthClearedAt *time.Time, responde
 // finalVerificationStates reports whether the incident is verified: the health
 // detectors (or, without any, the incident's own findings) have cleared and
 // evaluated clear since the responder completed. maybeCloseIncident additionally
-// requires a fresh comparison of admitted source drift through verifyClosureDrift.
+// holds the closure for pending rollouts found by verifyClosureSource; drift is
+// reported there but never decides.
 func (c *Controller) finalVerificationStates() ([]DetectorEvaluation, bool) {
 	if len(c.healthDetectorIDs) == 0 {
 		// Drift is information: only the non-drift findings decide health.
@@ -1907,6 +1917,20 @@ func (c *Controller) actionContext(ctx context.Context) (context.Context, contex
 	}
 	actionCtx, cancel := context.WithCancel(ctx)
 	return actionCtx, cancel, nil
+}
+
+// driftOnlyIncidentLocked reports whether the open incident has no finding
+// other than drift. Caller holds c.mu.
+func (c *Controller) driftOnlyIncidentLocked() bool {
+	if c.currentIncidentRequest == nil || len(c.currentIncidentRequest.Findings) == 0 {
+		return false
+	}
+	for _, finding := range c.currentIncidentRequest.Findings {
+		if !strings.HasPrefix(finding.DetectorID, "drift.") {
+			return false
+		}
+	}
+	return true
 }
 
 func (c *Controller) hasRetainedDrift() bool {
