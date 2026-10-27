@@ -402,19 +402,7 @@ func projectClient(c admissionv1.WebhookClientConfig) admissionv1.WebhookClientC
 		}
 		out.URL = &v
 	}
-	if len(c.CABundle) > 0 {
-		digest := false
-		if len(c.CABundle) == 71 && strings.HasPrefix(string(c.CABundle), "sha256:") {
-			_, err := hex.DecodeString(string(c.CABundle[7:]))
-			digest = err == nil
-		}
-		if digest {
-			out.CABundle = append([]byte(nil), c.CABundle...)
-		} else {
-			h := sha256.Sum256(c.CABundle)
-			out.CABundle = []byte("sha256:" + hex.EncodeToString(h[:]))
-		}
-	}
+	out.CABundle = ProjectCABundle(c.CABundle)
 	return out
 }
 func ProjectMutatingWebhook(o admissionv1.MutatingWebhookConfiguration) admissionv1.MutatingWebhookConfiguration {

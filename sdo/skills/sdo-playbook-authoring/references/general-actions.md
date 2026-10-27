@@ -89,3 +89,5 @@ remains authoritative. Do not replay a write while refreshing read recordings.
 The raw menu uses protobuf action names; its `EnsureHttp` entry corresponds to
 Go's `program.EnsureHTTP`. JSON byte parameters such as `patch_json`, `object_json`
 and API `body` accept their raw JSON/document content through the menu adapter.
+
+For webhook trust, `WebhookCAMatchesSecret(WebhookCA{Ref, Webhook, SecretNamespace, SecretName, SecretKey})` returns only equality; `SyncWebhookCA{Target, Reason}` copies that key privately at runtime and records its digest. Never embed CA bytes.

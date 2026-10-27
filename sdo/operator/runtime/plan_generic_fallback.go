@@ -67,6 +67,9 @@ func (c TypedPlanClient) genericObjectGet(ctx context.Context, ref sdk.ObjectRef
 // These are transport capabilities, independent of the API server's RBAC.
 func (c TypedPlanClient) unavailableMenuActions() map[string]bool {
 	unavailable := map[string]bool{}
+	if c.Client == nil {
+		unavailable["SyncWebhookCA"] = true
+	}
 	if c.ScriptImage == "" {
 		unavailable["RunScript"] = true
 	}

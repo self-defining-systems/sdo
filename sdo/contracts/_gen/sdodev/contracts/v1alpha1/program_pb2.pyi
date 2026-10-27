@@ -89,7 +89,7 @@ class Plan(_message.Message):
     def __init__(self, actions: _Optional[_Iterable[_Union[Action, _Mapping]]] = ..., rationale: _Optional[str] = ...) -> None: ...
 
 class Action(_message.Message):
-    __slots__ = ("reconcile_from_source", "rollback", "set_field", "restart_rollout", "create_from_source", "delete_object", "delete_pod", "scale_workload", "exec", "remove_service_port", "ensure_database_user", "patch_object", "apply_object", "kubernetes_request", "wait_for", "ensure_exec", "ensure_http", "run_job", "run_script")
+    __slots__ = ("reconcile_from_source", "rollback", "set_field", "restart_rollout", "create_from_source", "delete_object", "delete_pod", "scale_workload", "exec", "remove_service_port", "ensure_database_user", "patch_object", "apply_object", "kubernetes_request", "wait_for", "ensure_exec", "ensure_http", "run_job", "run_script", "sync_webhook_ca")
     RECONCILE_FROM_SOURCE_FIELD_NUMBER: _ClassVar[int]
     ROLLBACK_FIELD_NUMBER: _ClassVar[int]
     SET_FIELD_FIELD_NUMBER: _ClassVar[int]
@@ -109,6 +109,7 @@ class Action(_message.Message):
     ENSURE_HTTP_FIELD_NUMBER: _ClassVar[int]
     RUN_JOB_FIELD_NUMBER: _ClassVar[int]
     RUN_SCRIPT_FIELD_NUMBER: _ClassVar[int]
+    SYNC_WEBHOOK_CA_FIELD_NUMBER: _ClassVar[int]
     reconcile_from_source: ReconcileFromSource
     rollback: Rollback
     set_field: SetField
@@ -128,7 +129,8 @@ class Action(_message.Message):
     ensure_http: EnsureHttp
     run_job: RunJob
     run_script: RunScript
-    def __init__(self, reconcile_from_source: _Optional[_Union[ReconcileFromSource, _Mapping]] = ..., rollback: _Optional[_Union[Rollback, _Mapping]] = ..., set_field: _Optional[_Union[SetField, _Mapping]] = ..., restart_rollout: _Optional[_Union[RestartRollout, _Mapping]] = ..., create_from_source: _Optional[_Union[CreateFromSource, _Mapping]] = ..., delete_object: _Optional[_Union[DeleteObject, _Mapping]] = ..., delete_pod: _Optional[_Union[DeletePod, _Mapping]] = ..., scale_workload: _Optional[_Union[ScaleWorkload, _Mapping]] = ..., exec: _Optional[_Union[Exec, _Mapping]] = ..., remove_service_port: _Optional[_Union[RemoveServicePort, _Mapping]] = ..., ensure_database_user: _Optional[_Union[EnsureDatabaseUser, _Mapping]] = ..., patch_object: _Optional[_Union[PatchObject, _Mapping]] = ..., apply_object: _Optional[_Union[ApplyObject, _Mapping]] = ..., kubernetes_request: _Optional[_Union[KubernetesRequest, _Mapping]] = ..., wait_for: _Optional[_Union[WaitFor, _Mapping]] = ..., ensure_exec: _Optional[_Union[EnsureExec, _Mapping]] = ..., ensure_http: _Optional[_Union[EnsureHttp, _Mapping]] = ..., run_job: _Optional[_Union[RunJob, _Mapping]] = ..., run_script: _Optional[_Union[RunScript, _Mapping]] = ...) -> None: ...
+    sync_webhook_ca: SyncWebhookCA
+    def __init__(self, reconcile_from_source: _Optional[_Union[ReconcileFromSource, _Mapping]] = ..., rollback: _Optional[_Union[Rollback, _Mapping]] = ..., set_field: _Optional[_Union[SetField, _Mapping]] = ..., restart_rollout: _Optional[_Union[RestartRollout, _Mapping]] = ..., create_from_source: _Optional[_Union[CreateFromSource, _Mapping]] = ..., delete_object: _Optional[_Union[DeleteObject, _Mapping]] = ..., delete_pod: _Optional[_Union[DeletePod, _Mapping]] = ..., scale_workload: _Optional[_Union[ScaleWorkload, _Mapping]] = ..., exec: _Optional[_Union[Exec, _Mapping]] = ..., remove_service_port: _Optional[_Union[RemoveServicePort, _Mapping]] = ..., ensure_database_user: _Optional[_Union[EnsureDatabaseUser, _Mapping]] = ..., patch_object: _Optional[_Union[PatchObject, _Mapping]] = ..., apply_object: _Optional[_Union[ApplyObject, _Mapping]] = ..., kubernetes_request: _Optional[_Union[KubernetesRequest, _Mapping]] = ..., wait_for: _Optional[_Union[WaitFor, _Mapping]] = ..., ensure_exec: _Optional[_Union[EnsureExec, _Mapping]] = ..., ensure_http: _Optional[_Union[EnsureHttp, _Mapping]] = ..., run_job: _Optional[_Union[RunJob, _Mapping]] = ..., run_script: _Optional[_Union[RunScript, _Mapping]] = ..., sync_webhook_ca: _Optional[_Union[SyncWebhookCA, _Mapping]] = ...) -> None: ...
 
 class CreateFromSource(_message.Message):
     __slots__ = ("ref", "reason")
@@ -229,7 +231,8 @@ class ValueProvenance(_message.Message):
     def __init__(self, origin: _Optional[str] = ..., ref: _Optional[_Union[_common_pb2.ObjectRef, _Mapping]] = ..., path: _Optional[str] = ..., source_commit: _Optional[str] = ..., resource_version: _Optional[str] = ..., parameter: _Optional[str] = ...) -> None: ...
 
 class ActionReport(_message.Message):
-    __slots__ = ("action_index", "status", "values", "exit_code", "external_effect_json", "kubernetes_effect_json", "recording_error", "job_status_json", "script_result_json", "failure_reason")
+    __slots__ = ("webhook_ca_digest", "action_index", "status", "values", "exit_code", "external_effect_json", "kubernetes_effect_json", "recording_error", "job_status_json", "script_result_json", "failure_reason")
+    WEBHOOK_CA_DIGEST_FIELD_NUMBER: _ClassVar[int]
     ACTION_INDEX_FIELD_NUMBER: _ClassVar[int]
     STATUS_FIELD_NUMBER: _ClassVar[int]
     VALUES_FIELD_NUMBER: _ClassVar[int]
@@ -240,6 +243,7 @@ class ActionReport(_message.Message):
     JOB_STATUS_JSON_FIELD_NUMBER: _ClassVar[int]
     SCRIPT_RESULT_JSON_FIELD_NUMBER: _ClassVar[int]
     FAILURE_REASON_FIELD_NUMBER: _ClassVar[int]
+    webhook_ca_digest: str
     action_index: int
     status: str
     values: _containers.RepeatedCompositeFieldContainer[ValueProvenance]
@@ -250,7 +254,7 @@ class ActionReport(_message.Message):
     job_status_json: bytes
     script_result_json: bytes
     failure_reason: str
-    def __init__(self, action_index: _Optional[int] = ..., status: _Optional[str] = ..., values: _Optional[_Iterable[_Union[ValueProvenance, _Mapping]]] = ..., exit_code: _Optional[int] = ..., external_effect_json: _Optional[bytes] = ..., kubernetes_effect_json: _Optional[bytes] = ..., recording_error: _Optional[str] = ..., job_status_json: _Optional[bytes] = ..., script_result_json: _Optional[bytes] = ..., failure_reason: _Optional[str] = ...) -> None: ...
+    def __init__(self, webhook_ca_digest: _Optional[str] = ..., action_index: _Optional[int] = ..., status: _Optional[str] = ..., values: _Optional[_Iterable[_Union[ValueProvenance, _Mapping]]] = ..., exit_code: _Optional[int] = ..., external_effect_json: _Optional[bytes] = ..., kubernetes_effect_json: _Optional[bytes] = ..., recording_error: _Optional[str] = ..., job_status_json: _Optional[bytes] = ..., script_result_json: _Optional[bytes] = ..., failure_reason: _Optional[str] = ...) -> None: ...
 
 class DeletePod(_message.Message):
     __slots__ = ("ref",)
@@ -729,3 +733,19 @@ class RunScript(_message.Message):
     timeout: _duration_pb2.Duration
     reason: str
     def __init__(self, script: _Optional[str] = ..., env: _Optional[_Mapping[str, PlanValue]] = ..., timeout: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ..., reason: _Optional[str] = ...) -> None: ...
+
+class SyncWebhookCA(_message.Message):
+    __slots__ = ("ref", "webhook", "secret_namespace", "secret_name", "secret_key", "reason")
+    REF_FIELD_NUMBER: _ClassVar[int]
+    WEBHOOK_FIELD_NUMBER: _ClassVar[int]
+    SECRET_NAMESPACE_FIELD_NUMBER: _ClassVar[int]
+    SECRET_NAME_FIELD_NUMBER: _ClassVar[int]
+    SECRET_KEY_FIELD_NUMBER: _ClassVar[int]
+    REASON_FIELD_NUMBER: _ClassVar[int]
+    ref: _common_pb2.ObjectRef
+    webhook: str
+    secret_namespace: str
+    secret_name: str
+    secret_key: str
+    reason: str
+    def __init__(self, ref: _Optional[_Union[_common_pb2.ObjectRef, _Mapping]] = ..., webhook: _Optional[str] = ..., secret_namespace: _Optional[str] = ..., secret_name: _Optional[str] = ..., secret_key: _Optional[str] = ..., reason: _Optional[str] = ...) -> None: ...

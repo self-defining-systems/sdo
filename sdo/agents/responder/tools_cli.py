@@ -210,6 +210,8 @@ def _parser() -> argparse.ArgumentParser:
             "selection_set_schema; nested properties, required fields and oneOf choices describe accepted shapes. "
             "parameters[].example supplies typed synthetic inputs; replace names/values using incident evidence. "
             "CLI --param NAME=VALUE accepts JSON text for structured values. "
+            "SyncWebhookCA privately copies a named Secret key into one webhook caBundle; "
+            "only its reference and digest are returned. "
             "EnsureDatabaseUser repairs a MongoDB user in one call. Its password and target.auth "
             "username/password take exactly one credential reference: {env: NAME} or "
             "{config_map: {name: CONFIGMAP, key: KEY, assignment: optional_NAME}} in the target Pod namespace. "

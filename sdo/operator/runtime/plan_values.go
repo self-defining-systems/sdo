@@ -12,10 +12,11 @@ import (
 )
 
 type PlanActionReport struct {
-	Script        *ScriptExecutionResult `json:"script,omitempty"`
-	FailureReason string                 `json:"failure_reason,omitempty"`
-	ActionIndex   int                    `json:"action_index"`
-	Status        string                 `json:"status"`
+	WebhookCADigest string                 `json:"webhook_ca_digest,omitempty"`
+	Script          *ScriptExecutionResult `json:"script,omitempty"`
+	FailureReason   string                 `json:"failure_reason,omitempty"`
+	ActionIndex     int                    `json:"action_index"`
+	Status          string                 `json:"status"`
 	// Observed qualifies an applied action whose effect is still in progress:
 	// "terminating" is a Pod delete the API server accepted while the Pod stays
 	// readable until it stops, so absence was not observed.
