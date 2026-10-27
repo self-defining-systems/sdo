@@ -301,3 +301,72 @@ func TestAdmissionFreshEvidenceRequiresObservedCurrentGeneration(t *testing.T) {
 		}
 	}
 }
+
+// Deployment and ReplicaSet controllers reconcile independently. A fresh condition
+// on the previous ReplicaSet attempt must not abort an unobserved Deployment.
+func TestAdmissionReplicaSetConditionRequiresBothObservedGenerations(t *testing.T) {
+	for _, deploymentObserved := range []bool{false, true} {
+		for _, replicaSetObserved := range []bool{false, true} {
+			for _, currentTemplate := range []bool{false, true} {
+				for _, wait := range []bool{false, true} {
+					t.Run(fmt.Sprintf("deployment=%v/replicaset=%v/template=%v/wait=%v", deploymentObserved, replicaSetObserved, currentTemplate, wait), func(t *testing.T) {
+						rollout := admissionRollouts()
+						client := rollout.Client.(*fake.Clientset)
+						ctx := context.Background()
+						d, err := client.AppsV1().Deployments("app").Get(ctx, "frontend", metav1.GetOptions{})
+						if err != nil {
+							t.Fatal(err)
+						}
+						d.Generation = 3
+						d.Status.ObservedGeneration = 2
+						if deploymentObserved {
+							d.Status.ObservedGeneration = 3
+						}
+						two := int32(2)
+						d.Spec.Replicas = &two
+						if _, err := client.AppsV1().Deployments("app").Update(ctx, d, metav1.UpdateOptions{}); err != nil {
+							t.Fatal(err)
+						}
+						rs, err := client.AppsV1().ReplicaSets("app").Get(ctx, "frontend-next", metav1.GetOptions{})
+						if err != nil {
+							t.Fatal(err)
+						}
+						rs.Generation = 1
+						rs.Status.ObservedGeneration = 0
+						if replicaSetObserved {
+							rs.Status.ObservedGeneration = 1
+						}
+						if !currentTemplate {
+							rs.Spec.Template.Labels = map[string]string{"revision": "previous"}
+						}
+						rs.Status.Conditions = []appsv1.ReplicaSetCondition{{Type: appsv1.ReplicaSetReplicaFailure, Status: corev1.ConditionTrue, Reason: "FailedCreate", Message: `admission webhook "validate.example.test" denied the request: policy rejects Pods`}}
+						if err := client.CoreV1().Events("app").Delete(ctx, "denied", metav1.DeleteOptions{}); err != nil {
+							t.Fatal(err)
+						}
+						// Stamp evidence at the actual read, after Observe/Wait starts.
+						client.PrependReactor("list", "replicasets", func(ktesting.Action) (bool, kruntime.Object, error) {
+							current := rs.DeepCopy()
+							current.Status.Conditions[0].LastTransitionTime = metav1.NewTime(time.Now())
+							return true, &appsv1.ReplicaSetList{Items: []appsv1.ReplicaSet{*current}}, nil
+						})
+						ctx, cancel := context.WithTimeout(ctx, 30*time.Millisecond)
+						defer cancel()
+						if wait {
+							err = rollout.Wait(ctx, []sdk.ObjectRef{menuDeployment})
+						} else {
+							err = rollout.Observe(ctx, []sdk.ObjectRef{menuDeployment})
+						}
+						var blocked *AdmissionBlockedError
+						wantBlocked := deploymentObserved && replicaSetObserved && currentTemplate
+						if errors.As(err, &blocked) != wantBlocked {
+							t.Fatalf("admission blocked=%v, want %v: %v", blocked != nil, wantBlocked, err)
+						}
+						if err == nil {
+							t.Fatal("pending rollout incorrectly complete")
+						}
+					})
+				}
+			}
+		}
+	}
+}

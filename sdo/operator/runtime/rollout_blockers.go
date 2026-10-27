@@ -61,7 +61,9 @@ func deploymentRolloutBlocker(d *appsv1.Deployment, sets []appsv1.ReplicaSet, po
 		started = since[0]
 	}
 	currentEvidence := func(at time.Time, observed, generation int64) bool {
-		return observed >= generation && !at.IsZero() && !at.Before(started)
+		// Child controllers may still report a fresh failure from the previous
+		// attempt until the Deployment controller observes this rollout generation.
+		return d.Status.ObservedGeneration >= d.Generation && observed >= generation && !at.IsZero() && !at.Before(started)
 	}
 	ref := sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: d.Namespace, Name: d.Name}
 	reasons := []string{fmt.Sprintf("%d/%d updated, %d ready, %d available; %d old template replicas; observed generation %d/%d", d.Status.UpdatedReplicas, deploymentDesiredReplicas(d), d.Status.ReadyReplicas, d.Status.AvailableReplicas, max(0, d.Status.Replicas-d.Status.UpdatedReplicas), d.Status.ObservedGeneration, d.Generation)}
