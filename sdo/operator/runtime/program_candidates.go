@@ -194,3 +194,26 @@ func bindingKey(bindings program.Bindings) string {
 	}
 	return key
 }
+
+// matchedFindingFingerprints joins a successful live diagnosis to the active
+// findings that supplied its bindings. It never reconstructs bindings from
+// authored explanation links, recorded corpus labels, or proposed writes.
+func matchedFindingFingerprints(findings []sdk.Finding, runs []ProgramRun, id string, bindings program.Bindings) []string {
+	matched := map[string]bool{}
+	for _, run := range runs {
+		if run.ProgramID == id && run.Verdict.Result == program.Match && run.Bindings.Equal(bindings) {
+			matched[run.FindingFingerprint] = true
+		}
+	}
+	var fingerprints []string
+	seen := map[string]bool{}
+	for _, finding := range findings {
+		fp := FindingFingerprint(finding)
+		if finding.Status == sdk.FindingActive && matched[fp] && !seen[fp] {
+			fingerprints = append(fingerprints, fp)
+			seen[fp] = true
+		}
+	}
+	sort.Strings(fingerprints)
+	return fingerprints
+}

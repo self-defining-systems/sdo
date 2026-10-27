@@ -301,6 +301,7 @@
     "diagnose_unavailable",
     "multiple_entry_points",
     "no_mitigation",
+    "plan_not_executable",
     "repair_policy",
     "stage_budget",
     "unbound_parameter",

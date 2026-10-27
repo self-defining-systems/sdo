@@ -206,6 +206,7 @@ type ResponderLoop struct {
 	matchedViews          map[string]program.ReadView
 	matchedPlans          map[string]PlanApplicationResult
 	matchedPlanErrors     map[string]error
+	terminalPlanErrors    map[string]*NonExecutablePlanError
 	lastDiagnosisView     program.ReadView
 	findings              []sdk.Finding
 	drift                 []sdk.Finding
