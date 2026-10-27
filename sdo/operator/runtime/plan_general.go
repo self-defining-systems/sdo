@@ -162,7 +162,9 @@ func (e PlanExecutor) generalStep(ctx context.Context, incident IncidentRequest,
 	r.DryRun = dry
 	r.ActionReports = newPlanReports(r.Plan)
 	if !isGeneralAction(action) {
-		return e.Apply(ctx, incident, r.Plan, dry)
+		nested := e
+		nested.deferDependencyRecovery = true
+		return nested.Apply(ctx, incident, r.Plan, dry)
 	}
 	if ca, ok := action.(program.SyncWebhookCA); ok {
 		return e.webhookCAStep(ctx, ca, dry)

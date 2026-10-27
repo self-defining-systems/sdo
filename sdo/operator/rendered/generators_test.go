@@ -143,3 +143,18 @@ func TestSecretGeneratorHashNeverRequiresReadingSecretInputs(t *testing.T) {
 		t.Fatalf("hash-dependent Secret was silently misrendered: %v", err)
 	}
 }
+
+func TestKustomizeConfigMapEnvironmentFilesAreTrackedGeneratorInputs(t *testing.T) {
+	data, err := renderKustomization(context.Background(), "deploy/kustomization.yaml", func(_ context.Context, name string) ([]byte, error) {
+		if name == "deploy/kustomization.yaml" {
+			return []byte("configMapGenerator:\n- name: startup\n  envs: [../config/startup.env]\ngeneratorOptions: {disableNameSuffixHash: true}\n"), nil
+		}
+		if name != "config/startup.env" {
+			t.Fatalf("unexpected generator input %s", name)
+		}
+		return []byte("MODE=synthetic\nCOUNT=1\n"), nil
+	})
+	if err != nil || !strings.Contains(string(data), "MODE: synthetic") || !strings.Contains(string(data), `COUNT: "1"`) {
+		t.Fatalf("environment file generator unavailable: %s %v", data, err)
+	}
+}

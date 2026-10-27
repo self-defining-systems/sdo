@@ -103,6 +103,8 @@ type PlanExecutor struct {
 	// ApplicationID is durable across restart and selects one script Job.
 	ApplicationID     string
 	scriptActionIndex int
+	// Nested action executors leave dependency recovery to their outer batch.
+	deferDependencyRecovery bool
 	// PollRollouts returns pending after one observation instead of waiting.
 	PollRollouts bool
 	DeleteObject func(context.Context, sdk.ObjectRef, types.UID, string) error

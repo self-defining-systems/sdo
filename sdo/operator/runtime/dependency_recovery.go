@@ -19,6 +19,9 @@ import (
 // settleSourceDependencies shares the existing rollout budget. Recovery is a
 // single pass over the pre-recovery Pod identities, never an ongoing restart loop.
 func (e PlanExecutor) settleSourceDependencies(ctx context.Context, incident IncidentRequest, result *PlanApplicationResult) error {
+	if e.deferDependencyRecovery {
+		return nil
+	}
 	recovery, ok := e.Rollouts.(interface {
 		RecoverDependencies(context.Context, []sdk.ObjectRef) ([]PlanObjectEffect, error)
 	})
@@ -27,7 +30,10 @@ func (e PlanExecutor) settleSourceDependencies(ctx context.Context, incident Inc
 	}
 	restored := []sdk.ObjectRef{}
 	for _, patch := range result.Patches {
-		if patch.Authorization == "accepted-source" || patch.Operation == "ensure_database_user" || patch.Ref.Kind == "ConfigMap" {
+		if patch.Operation == "delete" || patch.Operation == "delete_pod" {
+			continue
+		}
+		if patch.Authorization == "accepted-source" || patch.Operation == "ensure_database_user" || (patch.Ref.Kind == "ConfigMap" && patch.After != nil) {
 			restored = append(restored, patch.Ref)
 		}
 	}

@@ -322,3 +322,79 @@ func TestAcceptedInventoryReportsMissingDeclarationsAcrossSupportedKinds(t *test
 		})
 	}
 }
+
+func TestDeletingConfigMapDoesNotRecycleItsConsumers(t *testing.T) {
+	pod := recoveryPod("worker")
+	pod.Spec.Volumes = []corev1.Volume{{Name: "startup", VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: "startup"}}}}}
+	config := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "startup", Namespace: "app", UID: "config", ResourceVersion: "1"}, Data: map[string]string{"mode": "synthetic"}}
+	client := fake.NewSimpleClientset(pod, config)
+	executor := PlanExecutor{Client: TypedPlanClient{Client: client}, Rollouts: KubernetesPlanRollouts{Client: client}, Verifier: planFakeVerifier{true}}
+	ref := sdk.ObjectRef{APIVersion: "v1", Kind: "ConfigMap", Namespace: "app", Name: "startup"}
+	result, err := executor.Apply(context.Background(), IncidentRequest{Namespace: "app", RepairPolicy: "recorded-actions"}, program.Plan{Actions: []program.Action{program.DeleteObject{Ref: ref, Reason: "explicit removal"}}}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.CoreV1().Pods("app").Get(context.Background(), "worker", metav1.GetOptions{}); err != nil || len(result.ObjectEffects) != 1 {
+		t.Fatalf("removal triggered restoration recovery: %+v %v", result.ObjectEffects, err)
+	}
+}
+
+type countingDependencyRollouts struct {
+	planFakeRollout
+	recoveries int
+}
+
+func (w *countingDependencyRollouts) RecoverDependencies(context.Context, []sdk.ObjectRef) ([]PlanObjectEffect, error) {
+	w.recoveries++
+	return nil, nil
+}
+
+func TestMixedPlanRecoversDependenciesOnceAfterAllWrites(t *testing.T) {
+	config := sdk.ObjectRef{APIVersion: "v1", Kind: "ConfigMap", Namespace: "app", Name: "startup"}
+	peer := sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "peer"}
+	accepted := planObject(config, nil)
+	delete(accepted.Object, "spec")
+	accepted.Object["data"] = map[string]any{"mode": "synthetic"}
+	object := planObject(peer, map[string]any{"ports": []any{map[string]any{"port": float64(80)}}})
+	object.SetUID("peer")
+	object.SetResourceVersion("1")
+	client := &lifecycleTestClient{planFakeClient: &planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{peer: object}}}
+	rollouts := &countingDependencyRollouts{}
+	executor := PlanExecutor{Client: client, Source: lifecycleTestSource{objects: map[sdk.ObjectRef]*unstructured.Unstructured{config: accepted}}, Rollouts: rollouts, Verifier: planFakeVerifier{true}}
+	plan := program.Plan{Actions: []program.Action{program.CreateFromSource{Ref: config, Reason: "restore source"}, program.PatchObject{Ref: peer, Type: "merge", Patch: json.RawMessage(`{"metadata":{"labels":{"repaired":"yes"}}}`), Reason: "repair peer"}}}
+	result, err := executor.Apply(context.Background(), IncidentRequest{Namespace: "app", SourceCommit: "accepted", RepairPolicy: "recorded-actions"}, plan, false)
+	if err != nil || len(result.ActionsApplied) != 2 || rollouts.recoveries != 1 {
+		t.Fatalf("dependency recovery repeated within one batch: %d %+v %v", rollouts.recoveries, result, err)
+	}
+}
+
+type databaseLifecycleTestClient struct {
+	*lifecycleTestClient
+	catalog *databaseFake
+}
+
+func (c databaseLifecycleTestClient) DatabaseUsers(ctx context.Context, target program.DatabaseTarget) ([]program.DatabaseUser, error) {
+	return c.catalog.DatabaseUsers(ctx, target)
+}
+func (c databaseLifecycleTestClient) EnsureDatabaseUser(ctx context.Context, action program.EnsureDatabaseUser) error {
+	return c.catalog.EnsureDatabaseUser(ctx, action)
+}
+
+func TestRuntimeBatchRecoversOnceAndPreservesSourceCreateReceipt(t *testing.T) {
+	config := sdk.ObjectRef{APIVersion: "v1", Kind: "ConfigMap", Namespace: "app", Name: "startup"}
+	action := databaseAction()
+	pod := planObject(action.Target.Pod, map[string]any{"containers": []any{map[string]any{"name": "mongo"}}})
+	pod.SetUID("database")
+	pod.SetResourceVersion("1")
+	base := &planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{action.Target.Pod: pod}}
+	client := databaseLifecycleTestClient{lifecycleTestClient: &lifecycleTestClient{planFakeClient: base}, catalog: &databaseFake{planFakeClient: base}}
+	accepted := planObject(config, nil)
+	delete(accepted.Object, "spec")
+	accepted.Object["data"] = map[string]any{"mode": "synthetic"}
+	rollouts := &countingDependencyRollouts{}
+	executor := PlanExecutor{Client: client, Source: lifecycleTestSource{objects: map[sdk.ObjectRef]*unstructured.Unstructured{config: accepted}}, Rollouts: rollouts, Verifier: planFakeVerifier{true}}
+	result, err := executor.Apply(context.Background(), IncidentRequest{Namespace: "app", SourceCommit: "accepted", RepairPolicy: "recorded-actions"}, program.Plan{Actions: []program.Action{action, program.CreateFromSource{Ref: config, Reason: "restore source"}}}, false)
+	if err != nil || len(result.ActionsApplied) != 2 || rollouts.recoveries != 1 || len(result.ObjectEffects) != 1 || result.ObjectEffects[0].UID != "created-uid" {
+		t.Fatalf("runtime batch lost recovery/creation ownership: %+v %v", result, err)
+	}
+}

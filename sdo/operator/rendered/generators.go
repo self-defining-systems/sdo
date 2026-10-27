@@ -138,30 +138,34 @@ func renderKustomization(ctx context.Context, root string, read func(context.Con
 				return fmt.Errorf("invalid ConfigMap generator")
 			}
 			for key := range generator {
-				if key != "name" && key != "namespace" && key != "files" && key != "literals" && key != "options" && key != "behavior" {
+				if key != "name" && key != "namespace" && key != "files" && key != "envs" && key != "literals" && key != "options" && key != "behavior" {
 					return fmt.Errorf("unsupported ConfigMap generator field %s", key)
 				}
 			}
-			inputs, _ := generator["files"].([]any)
-			for _, input := range inputs {
-				value, ok := input.(string)
-				if !ok {
-					return fmt.Errorf("invalid ConfigMap file input")
-				}
-				_, file, hasKey := strings.Cut(value, "=")
-				if !hasKey {
-					file = value
-				}
-				target, err := safe(base, file)
-				if err != nil {
-					return err
-				}
-				content, err := read(ctx, target)
-				if err != nil {
-					return fmt.Errorf("tracked ConfigMap input %s unavailable", target)
-				}
-				if err := write(target, content); err != nil {
-					return err
+			for _, field := range []string{"files", "envs"} {
+				inputs, _ := generator[field].([]any)
+				for _, input := range inputs {
+					value, ok := input.(string)
+					if !ok {
+						return fmt.Errorf("invalid ConfigMap file input")
+					}
+					file := value
+					if field == "files" {
+						if _, inputPath, hasKey := strings.Cut(value, "="); hasKey {
+							file = inputPath
+						}
+					}
+					target, err := safe(base, file)
+					if err != nil {
+						return err
+					}
+					content, err := read(ctx, target)
+					if err != nil {
+						return fmt.Errorf("tracked ConfigMap input %s unavailable", target)
+					}
+					if err := write(target, content); err != nil {
+						return err
+					}
 				}
 			}
 		}
