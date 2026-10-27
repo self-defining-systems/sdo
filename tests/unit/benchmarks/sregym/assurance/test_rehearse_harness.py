@@ -42,16 +42,16 @@ def test_bring_up_is_bounded_only_by_the_owners_own_deadline(tmp_path: Path) -> 
 
     assert gate.WAIT_BACKSTOP_SECONDS == CLUSTER_OP_TIMEOUT_SECONDS
     timeouts: list[float] = []
-    ticks = iter([0.0, 0.0, 270.0, 270.0, 280.0])
+    ticks = iter([0.0, 0.0, 270.0, 270.0, 280.0, 280.0, 290.0])
 
     def execute(argv: Any, *, cwd: Path, timeout: float, log: Path) -> tuple[int, str]:
         timeouts.append(timeout)
         return 0, ""
 
-    run = gate.Gate(tmp_path, "7", tmp_path / "run", execute=execute, clock=lambda: next(ticks), scenarios=())
-    run.run_dir.mkdir()
+    scenario = gate.Scenario(name="fake", covers=("RH3",), stream="baseline.json")
+    run = gate.Gate(tmp_path, "7", tmp_path / "run", execute=execute, clock=lambda: next(ticks), scenarios=(scenario,))
     summary = run.run()
-    assert timeouts == [gate.WAIT_BACKSTOP_SECONDS]
+    assert timeouts == [gate.WAIT_BACKSTOP_SECONDS] * 3
     assert summary["up_seconds"] == 270.0
     assert "within_budget" not in summary
 
@@ -273,7 +273,6 @@ def test_gate_brings_the_lane_up_once_resets_each_scenario_and_writes_the_summar
 ) -> None:
     commands: list[list[str]] = []
     runner = _fake_gate(tmp_path, commands)
-    runner.run_dir.mkdir()
 
     summary = runner.run()
 
@@ -293,7 +292,6 @@ def test_gate_brings_the_lane_up_once_resets_each_scenario_and_writes_the_summar
 def test_gate_fails_when_the_lane_cannot_come_up_or_a_scenario_stream_fails(tmp_path: Path, fake_check: None) -> None:
     commands: list[list[str]] = []
     down = _fake_gate(tmp_path, commands, fail="up")
-    down.run_dir.mkdir()
     summary = down.run()
     assert not summary["passed"]
     assert summary["scenarios"][0]["status"] == "error"
@@ -310,7 +308,7 @@ def test_gate_fails_when_the_lane_cannot_come_up_or_a_scenario_stream_fails(tmp_
 def test_a_slow_gate_that_meets_every_contract_passes(tmp_path: Path, fake_check: None) -> None:
     ticks = iter(float(n * 400) for n in range(100))
     runner = _fake_gate(tmp_path, [], clock=lambda: next(ticks))
-    runner.run_dir.mkdir()
+    runner.run_dir.mkdir(parents=True)
     (runner.run_dir / "fastloop.json").write_text("{}", encoding="utf-8")
 
     summary = runner.run()
@@ -320,9 +318,42 @@ def test_a_slow_gate_that_meets_every_contract_passes(tmp_path: Path, fake_check
     assert "within_budget" not in summary
 
 
+def test_scenarios_bring_up_and_run_on_separate_clusters_at_the_same_time(tmp_path: Path) -> None:
+    """Real time makes a serial gate too slow; each scenario owns a cluster, so all bring-ups overlap."""
+
+    import threading
+
+    together = threading.Barrier(len(gate.SCENARIOS), timeout=10)
+    commands: list[list[str]] = []
+
+    def execute(argv: Any, **kwargs: Any) -> tuple[int, str]:
+        commands.append(list(argv))
+        if "up" in argv:
+            together.wait()  # raises BrokenBarrierError unless every scenario is bringing its cluster up now
+        return 0, ""
+
+    environment = SimpleNamespace(workspace=tmp_path / "ws")
+    runner = gate.Gate(
+        tmp_path / "freeze",
+        "3",
+        tmp_path / "run",
+        execute=execute,
+        load_environment=lambda _dir: environment,
+        parallel=True,
+    )
+
+    runner.run()
+
+    ups = [argv for argv in commands if "up" in argv]
+    assert sorted(argv[argv.index("--worker-id") + 1] for argv in ups) == ["0", "1", "2"]
+    assert len({argv[argv.index("--run-dir") + 1] for argv in ups}) == len(gate.SCENARIOS)
+    assert all("--time-scale" not in argv for argv in commands)
+
+
 def test_dry_run_lists_every_command_without_touching_a_cluster(tmp_path: Path) -> None:
     text = gate.dry_run(tmp_path / "freeze", tmp_path / "run", "3")
     assert text.count(" reset ") == len(gate.SCENARIOS)
+    assert text.count(" up ") == len(gate.SCENARIOS)
     assert "--restart-controller-in-injection-pause" in text
     assert "covers P52" in text
 

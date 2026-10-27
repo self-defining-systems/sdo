@@ -101,7 +101,7 @@ def test_recovery_failure_does_not_echo_unrecognized_component_metadata() -> Non
     assert "CANARY" not in str(caught.value)
 
 
-def test_recovery_poll_interval_can_follow_the_run_time_scale() -> None:
+def test_recovery_poll_interval_is_configurable() -> None:
     now = [0.0]
     worker = FakeWorker(health_sequence=[False, True])
 

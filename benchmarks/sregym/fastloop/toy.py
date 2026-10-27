@@ -19,6 +19,7 @@ from benchmarks.sregym.fastloop.environment import FastloopEnvironment, Images
 ROOT = Path(__file__).resolve().parents[3]
 APP = ROOT / "apps/toy"
 NAMESPACE = "sdo-toy"
+CONTROLLER_REPOSITORY = "/workspace/application"  # the controller Job's --app
 #: The kind cluster name; a scratch run sets ``SDO_TOY_CLUSTER`` to avoid the shared default.
 CLUSTER = os.environ.get("SDO_TOY_CLUSTER", "sdo-toy")
 
@@ -423,14 +424,44 @@ def wait_for_baseline(environment: FastloopEnvironment, accepted_commit: str) ->
                     for item in pod.get("status", {}).get("conditions", [])
                 )
             ]
-            if len(ready) == 1 and baseline_ready(state, accepted_commit, ready[0]["metadata"]["creationTimestamp"]):
+            head = len(ready) == 1 and accepted_head(environment, ready[0]["metadata"]["name"], accepted_commit)
+            if head and baseline_ready(state, head, ready[0]["metadata"]["creationTimestamp"]):
                 break
         time.sleep(0.2)
     else:
         raise RuntimeError(f"toy controller did not establish an adopted, clear baseline in {wait:.0f}s")
 
 
-def baseline_ready(state: dict[str, Any], accepted_commit: str, observed_after: str | None = None) -> bool:
+def accepted_head(environment: FastloopEnvironment, pod_name: str, install_commit: str) -> str | None:
+    """The controller's accepted HEAD if it contains the installed commit, else None.
+
+    Install runs the judge refresh, which commits health detectors on top of the installed commit; the
+    controller then serves and adopts that head, so adoption is judged against it, not the install commit.
+    """
+    try:
+        return (
+            command(
+                str(environment.kubeconfig),
+                environment.namespace + "-sdo",
+                "exec",
+                pod_name,
+                "-c",
+                "controller",
+                "--",
+                "sh",
+                "-c",
+                'git -C "$1" merge-base --is-ancestor "$2" HEAD && git -C "$1" rev-parse HEAD',
+                "sh",
+                CONTROLLER_REPOSITORY,
+                install_commit,
+            ).strip()
+            or None
+        )
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        return None
+
+
+def baseline_ready(state: dict[str, Any], accepted_head: str, observed_after: str | None = None) -> bool:
     """Closed historical firings do not invalidate a currently clear controller."""
     latest = {item["detector_id"]: item for item in state.get("history", [])}
     return bool(
@@ -447,5 +478,5 @@ def baseline_ready(state: dict[str, Any], accepted_commit: str, observed_after: 
             )
         )
         and all(item.get("status") == "clear" for item in latest.values())
-        and state.get("ownership_adoption", {}).get("source_commit") == accepted_commit
+        and state.get("ownership_adoption", {}).get("source_commit") == accepted_head
     )
