@@ -286,9 +286,7 @@ func (e KubernetesExecutor) Execute(ctx context.Context, task *contracts.AgentTa
 			}
 		}
 	}
-	if err := e.projectLateFindings(ctx, task); err != nil {
-		return nil, fmt.Errorf("project late findings: %w", err)
-	}
+	e.projectLateFindings(ctx, task)
 	if e.WarmBinding != nil {
 		if err := e.publishWarmTask(ctx, task); err != nil {
 			var unpublished *standbyClaimUnpublished
@@ -324,9 +322,7 @@ func (e KubernetesExecutor) Execute(ctx context.Context, task *contracts.AgentTa
 	defer ticker.Stop()
 	observed := map[string]bool{}
 	for {
-		if err := e.projectLateFindings(ctx, task); err != nil {
-			return nil, fmt.Errorf("project late findings: %w", err)
-		}
+		e.projectLateFindings(ctx, task)
 		if e.OnPhase != nil && !observed["pod_ready"] {
 			pods, err := e.Client.CoreV1().Pods(e.Namespace).List(ctx, metav1.ListOptions{LabelSelector: "batch.kubernetes.io/job-name=" + jobName})
 			if err == nil {

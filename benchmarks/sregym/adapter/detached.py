@@ -127,7 +127,7 @@ def launch(path: Path, run_dir: Path, command: list[str], *, helpers: Path | Non
             temporary.replace(path)
             owner.stdin.write(b"go\n")
             owner.stdin.close()
-            deadline = time.monotonic() + 10
+            deadline = time.monotonic() + wait_for(WaitKind.PROBE)
             while time.monotonic() < deadline:
                 refs = read_registry(state).processes
                 if ref in refs and any(item.name == "guardian" for item in refs):

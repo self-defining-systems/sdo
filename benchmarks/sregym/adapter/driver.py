@@ -82,7 +82,7 @@ CommandRunner = Callable[..., subprocess.CompletedProcess[str]]
 
 
 def _cleanup_defer_timeout_seconds() -> float:
-    raw = os.getenv("SREGYM_CLEANUP_DEFER_TIMEOUT_SECONDS", "600").strip()
+    raw = os.getenv("SREGYM_CLEANUP_DEFER_TIMEOUT_SECONDS", str(int(wait_for(WaitKind.OPERATION)))).strip()
     timeout = float(raw)
     if timeout <= 0:
         raise ValueError("SREGYM_CLEANUP_DEFER_TIMEOUT_SECONDS must be positive")

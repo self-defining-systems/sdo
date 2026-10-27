@@ -434,7 +434,7 @@ func TestStandbyAdoptionKeepsPodInodeAndLeavesNoStaleTree(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer pod.Close()
-	if err := adoptIntoPod(context.Background(), canonical, held); err != nil {
+	if err := adoptIntoPod(context.Background(), canonical, held, exchangeDirectories); err != nil {
 		t.Fatal(err)
 	}
 	if data, err := pod.ReadFile("source"); err != nil || string(data) != "accepted" {
@@ -460,7 +460,7 @@ func TestStandbyAdoptionFailureLeavesCanonicalUntouched(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(canonical, "source"), []byte("accepted"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := adoptIntoPod(context.Background(), canonical, filepath.Join(root, "missing")); err == nil {
+	if err := adoptIntoPod(context.Background(), canonical, filepath.Join(root, "missing"), exchangeDirectories); err == nil {
 		t.Fatal("adoption into a missing pod directory succeeded")
 	}
 	if data, err := os.ReadFile(filepath.Join(canonical, "source")); err != nil || string(data) != "accepted" {

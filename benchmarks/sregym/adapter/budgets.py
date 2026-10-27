@@ -64,6 +64,7 @@ class WaitKind(Enum):
     POLL = "poll"
     POLL_FAST = "poll_fast"
     SAMPLE = "sample"
+    SNAPSHOT_READ = "snapshot_read"
     PROBE = "probe"
     COMMAND = "command"
     MINUTE = "minute"
@@ -83,6 +84,7 @@ class WaitKind(Enum):
 _FIXED_SECONDS: dict[WaitKind, float] = {
     WaitKind.POLL_FAST: 1.0,
     WaitKind.SAMPLE: 2.0,
+    WaitKind.SNAPSHOT_READ: 15.0,
     WaitKind.POLL: 5.0,
     WaitKind.PROBE: 10.0,
     WaitKind.COMMAND: 30.0,

@@ -353,7 +353,7 @@ def restore_application(
     )
     worker.request("clean_start", problem_id=environment.deploy_problem, timeout=wait_for(WaitKind.ROLLOUT))
     reconcile_and_record(cluster, baselines, environment.workspace, environment.run_dir / RESTORE_RECEIPTS)
-    deadline = time.monotonic() + 60
+    deadline = time.monotonic() + wait_for(WaitKind.MINUTE)
     if checks:
         checks.settle()
     while True:

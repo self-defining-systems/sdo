@@ -318,11 +318,11 @@ def assert_lane_resources(
 
     Runs on the local kind host, as fastloop does. The floor measures that host;
     a remote cluster must supply its host measurement to evaluate_lane_resources.
-    All Kubernetes reads together are capped at fifteen seconds.
+    All Kubernetes reads together are capped at one snapshot-read budget.
     """
     if not kubeconfig.is_absolute():
         raise ValueError("eval: lane resource admission requires an absolute trusted kubeconfig")
-    deadline = time.monotonic() + 15
+    deadline = time.monotonic() + wait_for(WaitKind.SNAPSHOT_READ)
 
     def get(args: list[str]) -> dict[str, Any]:
         errors: list[str] = []

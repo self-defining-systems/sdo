@@ -18,8 +18,6 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from benchmarks.sregym.adapter import WaitKind, wait_for
-
 BAKE_FILE = "scripts/sdo-images.hcl"
 SOURCE_TREE_LABEL = "dev.sdo.source-tree"
 REVISION_LABEL = "org.opencontainers.image.revision"
@@ -54,9 +52,7 @@ class ImageSource:
 
 
 def _git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        ["git", "-C", str(repo), *args], capture_output=True, text=True, timeout=wait_for(WaitKind.COMMAND)
-    )
+    return subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True, timeout=20)
 
 
 def _show(repo: Path, commit: str, path: str) -> str:

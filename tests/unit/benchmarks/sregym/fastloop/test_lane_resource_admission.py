@@ -2,6 +2,7 @@
 
 import json
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -538,3 +539,37 @@ def test_an_unreadable_controller_state_is_typed_not_a_closure_timeout(lane):
     assert info.value.reason == "controller_state_unavailable"
     # One type for "state unreadable", shared with the recovery drain.
     assert admission.ControllerStateUnavailableError is persistent.ControllerStateUnavailableError
+
+
+GOLDEN_STATES = Path(__file__).parents[5] / "sdo/operator/runtime/testdata/eval_wait/chained_reflections.json"
+
+
+def test_eval_wait_outlasts_chained_work_in_the_real_controllers_exported_states(lane, monkeypatch):
+    """REV25 P1 #3: the wait reads states the Go controller actually exported (recorded with a fixed clock).
+
+    Incident 2 opens after incident 1's whole window lapsed and the controller never goes idle. The wait must
+    end at the idle export, not one margin after the stale bound.
+    """
+    samples = json.loads(GOLDEN_STATES.read_text())
+    start = datetime.fromisoformat(samples[0]["at"].replace("Z", "+00:00"))
+    idle_at = (datetime.fromisoformat(samples[-1]["at"].replace("Z", "+00:00")) - start).total_seconds()
+    assert "busy_until" not in samples[-1]["state"], "the last recorded export must be idle"
+    lapsed = (datetime.fromisoformat(samples[1]["at"].replace("Z", "+00:00")) - start).total_seconds()
+    assert lapsed + CLOSEOUT_MARGIN < idle_at, "the recorded timeline must outlast a stale bound plus one margin"
+
+    gate, _ = lane
+    now = fake_time(gate, monkeypatch)
+    monkeypatch.setattr(gate, "_wall_now", lambda: start + timedelta(seconds=now[0]))
+
+    def exported(_control):
+        current = [
+            s
+            for s in samples
+            if (datetime.fromisoformat(s["at"].replace("Z", "+00:00")) - start).total_seconds() <= now[0]
+        ]
+        return current[-1]["state"]
+
+    gate.ops = SimpleNamespace(runtime_state=exported)
+    evidence = gate.await_prior_closure("hotel-reservation-sdo")
+    assert evidence["passed"] is True
+    assert evidence["seconds"] >= idle_at
