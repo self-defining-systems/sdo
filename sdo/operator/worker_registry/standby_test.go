@@ -558,10 +558,24 @@ func TestStandbyExecutorRejoinsDurableBindingWithoutPool(t *testing.T) {
 	if err != nil || bound.WarmBinding == nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	// Execute polls for the result until cancelled; stop it once the claim is published, not after a fixed
+	// time, which the race detector under load can outlast.
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	_, _ = e.Execute(ctx, task)
-	if _, err := os.Stat(filepath.Join(slot.Directory, "control", TaskDataKey)); err != nil {
+	finished := make(chan struct{})
+	go func() {
+		defer close(finished)
+		_, _ = e.Execute(ctx, task)
+	}()
+	claim := filepath.Join(slot.Directory, "control", TaskDataKey)
+	for deadline := time.Now().Add(30 * time.Second); time.Now().Before(deadline); time.Sleep(5 * time.Millisecond) {
+		if _, err := os.Stat(claim); err == nil {
+			break
+		}
+	}
+	cancel()
+	<-finished
+	if _, err := os.Stat(claim); err != nil {
 		t.Fatal("restarted executor did not publish its durable claim without the pool", err)
 	}
 	data, err := os.ReadFile(filepath.Join(e.RepositoryMountPath, "session/startup/startup-dispatch.json"))
