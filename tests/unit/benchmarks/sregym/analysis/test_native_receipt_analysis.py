@@ -9,7 +9,16 @@ from typing import TYPE_CHECKING, Any
 import pytest
 from sregym_run_builder import INJECTED, Run
 
-from benchmarks.sregym.analysis.incident_cost import TokenUsage, load_sdo_pipeline, main
+from benchmarks.sregym.analysis.incident_cost import (
+    ArmPricing,
+    TokenUsage,
+    UnreadableUsageError,
+    _pricing_context,
+    format_usd,
+    load_sdo_pipeline,
+    main,
+    reported_usd,
+)
 from benchmarks.sregym.analysis.run_validity import classify_path
 
 if TYPE_CHECKING:
@@ -197,3 +206,58 @@ def test_protojson_usage_preserves_cache_write_and_reasoning_breakdown() -> None
 @pytest.mark.parametrize(("requests", "expected"), [(None, None), ("0", 0), (0, 0)])
 def test_optional_request_count_distinguishes_unknown_from_zero(requests: object, expected: int | None) -> None:
     assert TokenUsage.from_mapping({"model_requests": requests}).requests == expected
+
+
+# The hotel hr-c/000 closure usage, hand-written in ProtoJSON form (int64 counts as strings).
+_PROTOJSON_RESPONDER = {
+    "input_tokens": "2522631",
+    "cached_input_tokens": "2433152",
+    "cache_read_input_tokens": "2433152",
+    "output_tokens": "13159",
+    "reasoning_output_tokens": "6896",
+    "model_requests": "42",
+}
+
+
+def _arm() -> ArmPricing:
+    return _pricing_context(None, []).arm("codex", "gpt-6-luna")
+
+
+def test_string_and_numeric_counters_price_identically() -> None:
+    numeric = {k: int(v) for k, v in _PROTOJSON_RESPONDER.items()}
+    priced = reported_usd(_PROTOJSON_RESPONDER, _arm())
+    assert priced is not None
+    assert priced > 0.03
+    assert priced == reported_usd(numeric, _arm())
+    assert priced == reported_usd({**numeric, "input_tokens": float(numeric["input_tokens"])}, _arm())
+
+
+@pytest.mark.parametrize(
+    "usage",
+    [
+        None,
+        {},
+        {"model_requests": "3"},
+        {"input_tokens": "lots", "output_tokens": "13159"},
+        {"input_tokens": "2522631", "output_tokens": "13159.5"},
+        {"input_tokens": True, "output_tokens": 1},
+        {"input_tokens": [1], "output_tokens": 1},
+    ],
+)
+def test_missing_or_unparseable_usage_has_an_unknown_price_not_zero(usage: object) -> None:
+    assert reported_usd(usage, _arm()) is None
+
+
+def test_unpriced_model_has_an_unknown_price() -> None:
+    assert reported_usd(_PROTOJSON_RESPONDER, _pricing_context(None, []).arm("codex", "no-such-model")) is None
+
+
+def test_an_unparseable_present_count_is_an_error_not_a_zero() -> None:
+    with pytest.raises(UnreadableUsageError, match="input_tokens"):
+        TokenUsage.from_mapping({"input_tokens": "lots", "output_tokens": "1"})
+
+
+def test_usd_is_formatted_with_cents_and_unknown_is_not_zero() -> None:
+    assert format_usd(0.0398589) == "0.0399"
+    assert format_usd(0.0) == "0.0000"
+    assert format_usd(None) == "unknown"
