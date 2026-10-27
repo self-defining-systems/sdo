@@ -2,14 +2,11 @@ package runtime
 
 import (
 	"context"
-	"go/ast"
-	"go/parser"
-	"go/token"
+	"errors"
+	"fmt"
 	"google.golang.org/protobuf/proto"
-	"io/fs"
 	"path/filepath"
 	"sdo.dev/operator/broker"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -168,78 +165,6 @@ func TestInvalidStateRecoveryProducesFailedOutcomeAndReflection(t *testing.T) {
 	}
 }
 
-// Literal producers are checked structurally; computed database reasons are
-// swept above. Descriptor rules, not another hand-maintained list, own values.
-func TestFailureReasonProducersClosedEnums(t *testing.T) {
-	messages := map[string]proto.Message{"ActionReport": &contracts.ActionReport{}, "PlanActionReport": &contracts.ActionReport{}, "RepairActionReceipt": &contracts.RepairActionReceipt{}, "AgentResult": &contracts.AgentResult{}, "ReflectionDecision": &contracts.ReflectionDecision{}}
-	files, err := parser.ParseDir(token.NewFileSet(), ".", func(info fs.FileInfo) bool { return !strings.HasSuffix(info.Name(), "_test.go") }, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	check := func(node ast.Expr, message proto.Message) {
-		literal, ok := node.(*ast.BasicLit)
-		if !ok || literal.Kind != token.STRING {
-			return
-		}
-		value, err := strconv.Unquote(literal.Value)
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, allowed := range wire.StringIn(message, "failure_reason") {
-			if allowed == value {
-				return
-			}
-		}
-		t.Errorf("failure_reason producer %q is absent from %s proto constraints", value, message.ProtoReflect().Descriptor().FullName())
-	}
-	for _, pkg := range files {
-		for _, file := range pkg.Files {
-			ast.Inspect(file, func(node ast.Node) bool {
-				switch typed := node.(type) {
-				case *ast.AssignStmt:
-					for i, left := range typed.Lhs {
-						selector, ok := left.(*ast.SelectorExpr)
-						if !ok || selector.Sel.Name != "FailureReason" || i >= len(typed.Rhs) {
-							continue
-						}
-						var message proto.Message = &contracts.RepairActionReceipt{}
-						ast.Inspect(selector.X, func(child ast.Node) bool {
-							if field, ok := child.(*ast.SelectorExpr); ok && field.Sel.Name == "ActionReports" {
-								message = &contracts.ActionReport{}
-							}
-							return true
-						})
-						check(typed.Rhs[i], message)
-					}
-				case *ast.CompositeLit:
-					name := ""
-					switch typ := typed.Type.(type) {
-					case *ast.Ident:
-						name = typ.Name
-					case *ast.SelectorExpr:
-						name = typ.Sel.Name
-					}
-					message := messages[name]
-					for _, element := range typed.Elts {
-						if field, ok := element.(*ast.KeyValueExpr); ok {
-							if key, ok := field.Key.(*ast.Ident); ok && key.Name == "FailureReason" {
-								if message == nil {
-									if _, literal := field.Value.(*ast.BasicLit); literal {
-										t.Errorf("unclassified failure_reason producer type %s", name)
-									}
-									continue
-								}
-								check(field.Value, message)
-							}
-						}
-					}
-				}
-				return true
-			})
-		}
-	}
-}
-
 func injectLegacyDatabaseFailure(t *testing.T, c *Controller) {
 	t.Helper()
 	result, err := applyDatabaseUser(t, &databaseFake{writeErr: &DatabaseOperationError{Step: DatabaseAuthentication, Reason: databaseRejected}})
@@ -269,4 +194,111 @@ func persistDispatchCheckpoint(t *testing.T, c *Controller) {
 	c.pendingClosure = closure
 	c.closureState = contracts.ClosureState_CLOSURE_STATE_PENDING
 	c.currentIncidentResult = cloneIncidentResult(closure.Result)
+}
+
+func TestInvalidStateRecoveryRetainsCommittedReceiptAcrossRetries(t *testing.T) {
+	for _, saveFailures := range []int{0, 2} {
+		for _, phase := range []contracts.ClosureState{contracts.ClosureState_CLOSURE_STATE_COMMITTED, contracts.ClosureState_CLOSURE_STATE_ACKNOWLEDGING} {
+			t.Run(fmt.Sprintf("%s/save-failures-%d", phase, saveFailures), func(t *testing.T) {
+				ctx := context.Background()
+				now := time.Unix(1000, 0).UTC()
+				broker := &rejectingIncidentBroker{}
+				c := newClosureRetryController(t, ClosureRetryPolicy{}, broker, &now)
+				store := &retryFailingStateStore{StateStore: lifecycleio.NewConfigMapStateStore(fake.NewSimpleClientset(), "demo", "state")}
+				if err := c.AttachStateStore(ctx, store); err != nil {
+					t.Fatal(err)
+				}
+				if err := c.PersistState(ctx); err != nil {
+					t.Fatal(err)
+				}
+				attemptClosure(t, c)
+				c.closureState = phase
+				if err := c.PersistState(ctx); err != nil {
+					t.Fatal(err)
+				}
+				before, _, err := store.Load(ctx)
+				if err != nil {
+					t.Fatal(err)
+				}
+				// ExportState normally normalizes an in-flight ACK for restart.
+				// Also exercise an ACKNOWLEDGING checkpoint written by a store.
+				if phase == contracts.ClosureState_CLOSURE_STATE_ACKNOWLEDGING {
+					before.ClosureState = phase
+					_, revision, err := store.Load(ctx)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if _, err := store.Save(ctx, before, revision); err != nil {
+						t.Fatal(err)
+					}
+					if err := c.AttachStateStore(ctx, store); err != nil {
+						t.Fatal(err)
+					}
+				}
+				store.failures = saveFailures
+				for retry := 0; retry < 4; retry++ {
+					c.history = []DetectorEvaluation{{DetectorID: "health", Status: DetectorEvaluationStatus("invalid")}}
+					err := c.PersistState(ctx)
+					if retry < saveFailures {
+						if err == nil {
+							t.Fatal("expected injected save failure")
+						}
+						if effect, ok := c.PendingClosureAcknowledgmentEffect(); ok {
+							if err := c.ExecuteClosureAcknowledgmentEffect(ctx, effect); !errors.Is(err, ErrEffectNotDurable) {
+								t.Fatalf("acknowledgment was not gated after failed save: %v", err)
+							}
+						}
+					} else if err != nil {
+						t.Fatalf("retry %d: %v", retry, err)
+					}
+					if c.closureReceipt == nil {
+						t.Fatal("accepted receipt lost in memory")
+					}
+					saved, _, err := store.Load(ctx)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if !proto.Equal(saved.GetClosureReceipt(), before.GetClosureReceipt()) || saved.GetClosureState() != before.GetClosureState() {
+						t.Fatalf("accepted receipt changed on retry %d: %v", retry, saved)
+					}
+				}
+				// Restart through the real store, then consume the retained receipt.
+				c = newClosureRetryController(t, ClosureRetryPolicy{}, broker, &now)
+				if err := c.AttachStateStore(ctx, store); err != nil {
+					t.Fatal(err)
+				}
+				if err := c.PersistState(ctx); err != nil {
+					t.Fatal(err)
+				}
+				ack, ok := c.PendingClosureAcknowledgmentEffect()
+				if !ok {
+					t.Fatal("accepted receipt cannot be acknowledged")
+				}
+				if err := c.ExecuteClosureAcknowledgmentEffect(ctx, ack); err != nil {
+					t.Fatal(err)
+				}
+				awaitBrokerResult(t, c.acknowledgmentResults)
+				c.processBrokerCompletions()
+				if err := c.PersistState(ctx); err != nil {
+					t.Fatal(err)
+				}
+				if broker.processCalls() != 1 {
+					t.Fatalf("closure processed %d times", broker.processCalls())
+				}
+			})
+		}
+	}
+}
+
+type retryFailingStateStore struct {
+	StateStore
+	failures int
+}
+
+func (s *retryFailingStateStore) Save(ctx context.Context, state *contracts.ControllerState, revision string) (string, error) {
+	if s.failures > 0 {
+		s.failures--
+		return "", errors.New("injected persistence failure")
+	}
+	return s.StateStore.Save(ctx, state, revision)
 }

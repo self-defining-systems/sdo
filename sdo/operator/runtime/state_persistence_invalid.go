@@ -23,7 +23,7 @@ func clonePersistenceFailure(failure *contracts.StatePersistenceFailure) *contra
 // The failed result retains the provider session so reflection can still run.
 func (c *Controller) recoverInvalidState(invalid error) (*contracts.ControllerState, error) {
 	c.mu.Lock()
-	baseline := c.durable
+	baseline := c.checkpoint
 	closure := cloneIncidentClosure(c.pendingClosure)
 	request := cloneIncidentRequest(c.currentIncidentRequest)
 	result := cloneIncidentResult(c.currentIncidentResult)
@@ -32,6 +32,14 @@ func (c *Controller) recoverInvalidState(invalid error) (*contracts.ControllerSt
 	state := &contracts.ControllerState{Version: RuntimeStateVersion}
 	if baseline != nil {
 		state = proto.Clone(baseline).(*contracts.ControllerState)
+	}
+	// Accepted receipts are immutable authority. Roll back unrelated invalid
+	// fields to the last confirmed checkpoint; never synthesize a new closure.
+	if state.GetClosureState() == contracts.ClosureState_CLOSURE_STATE_COMMITTED || state.GetClosureState() == contracts.ClosureState_CLOSURE_STATE_ACKNOWLEDGING {
+		if err := c.RestoreState(state); err != nil {
+			return nil, err
+		}
+		return state, nil
 	}
 	if closure != nil {
 		request = &closure.Request
