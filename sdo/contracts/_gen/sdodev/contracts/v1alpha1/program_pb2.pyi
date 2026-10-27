@@ -229,7 +229,7 @@ class ValueProvenance(_message.Message):
     def __init__(self, origin: _Optional[str] = ..., ref: _Optional[_Union[_common_pb2.ObjectRef, _Mapping]] = ..., path: _Optional[str] = ..., source_commit: _Optional[str] = ..., resource_version: _Optional[str] = ..., parameter: _Optional[str] = ...) -> None: ...
 
 class ActionReport(_message.Message):
-    __slots__ = ("action_index", "status", "values", "exit_code", "external_effect_json", "kubernetes_effect_json", "recording_error", "job_status_json", "script_result_json", "failure_reason")
+    __slots__ = ("action_index", "status", "values", "exit_code", "external_effect_json", "kubernetes_effect_json", "recording_error", "job_status_json", "script_result_json", "source_reconcile", "failure_reason")
     ACTION_INDEX_FIELD_NUMBER: _ClassVar[int]
     STATUS_FIELD_NUMBER: _ClassVar[int]
     VALUES_FIELD_NUMBER: _ClassVar[int]
@@ -239,6 +239,7 @@ class ActionReport(_message.Message):
     RECORDING_ERROR_FIELD_NUMBER: _ClassVar[int]
     JOB_STATUS_JSON_FIELD_NUMBER: _ClassVar[int]
     SCRIPT_RESULT_JSON_FIELD_NUMBER: _ClassVar[int]
+    SOURCE_RECONCILE_FIELD_NUMBER: _ClassVar[int]
     FAILURE_REASON_FIELD_NUMBER: _ClassVar[int]
     action_index: int
     status: str
@@ -249,8 +250,37 @@ class ActionReport(_message.Message):
     recording_error: str
     job_status_json: bytes
     script_result_json: bytes
+    source_reconcile: SourceReconcileResult
     failure_reason: str
-    def __init__(self, action_index: _Optional[int] = ..., status: _Optional[str] = ..., values: _Optional[_Iterable[_Union[ValueProvenance, _Mapping]]] = ..., exit_code: _Optional[int] = ..., external_effect_json: _Optional[bytes] = ..., kubernetes_effect_json: _Optional[bytes] = ..., recording_error: _Optional[str] = ..., job_status_json: _Optional[bytes] = ..., script_result_json: _Optional[bytes] = ..., failure_reason: _Optional[str] = ...) -> None: ...
+    def __init__(self, action_index: _Optional[int] = ..., status: _Optional[str] = ..., values: _Optional[_Iterable[_Union[ValueProvenance, _Mapping]]] = ..., exit_code: _Optional[int] = ..., external_effect_json: _Optional[bytes] = ..., kubernetes_effect_json: _Optional[bytes] = ..., recording_error: _Optional[str] = ..., job_status_json: _Optional[bytes] = ..., script_result_json: _Optional[bytes] = ..., source_reconcile: _Optional[_Union[SourceReconcileResult, _Mapping]] = ..., failure_reason: _Optional[str] = ...) -> None: ...
+
+class SourceReconcileResult(_message.Message):
+    __slots__ = ("ref", "converged", "residual_paths", "observation_error", "additions_known", "rollout_steps")
+    REF_FIELD_NUMBER: _ClassVar[int]
+    CONVERGED_FIELD_NUMBER: _ClassVar[int]
+    RESIDUAL_PATHS_FIELD_NUMBER: _ClassVar[int]
+    OBSERVATION_ERROR_FIELD_NUMBER: _ClassVar[int]
+    ADDITIONS_KNOWN_FIELD_NUMBER: _ClassVar[int]
+    ROLLOUT_STEPS_FIELD_NUMBER: _ClassVar[int]
+    ref: _common_pb2.ObjectRef
+    converged: bool
+    residual_paths: _containers.RepeatedScalarFieldContainer[str]
+    observation_error: str
+    additions_known: bool
+    rollout_steps: _containers.RepeatedCompositeFieldContainer[SourceRolloutStep]
+    def __init__(self, ref: _Optional[_Union[_common_pb2.ObjectRef, _Mapping]] = ..., converged: _Optional[bool] = ..., residual_paths: _Optional[_Iterable[str]] = ..., observation_error: _Optional[str] = ..., additions_known: _Optional[bool] = ..., rollout_steps: _Optional[_Iterable[_Union[SourceRolloutStep, _Mapping]]] = ...) -> None: ...
+
+class SourceRolloutStep(_message.Message):
+    __slots__ = ("workload", "ref", "status", "error")
+    WORKLOAD_FIELD_NUMBER: _ClassVar[int]
+    REF_FIELD_NUMBER: _ClassVar[int]
+    STATUS_FIELD_NUMBER: _ClassVar[int]
+    ERROR_FIELD_NUMBER: _ClassVar[int]
+    workload: _common_pb2.ObjectRef
+    ref: _common_pb2.ObjectRef
+    status: str
+    error: str
+    def __init__(self, workload: _Optional[_Union[_common_pb2.ObjectRef, _Mapping]] = ..., ref: _Optional[_Union[_common_pb2.ObjectRef, _Mapping]] = ..., status: _Optional[str] = ..., error: _Optional[str] = ...) -> None: ...
 
 class DeletePod(_message.Message):
     __slots__ = ("ref",)

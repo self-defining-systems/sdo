@@ -159,7 +159,7 @@ message ValueProvenance {
 
 message ActionReport {
   uint32 action_index = 1;
-  string status = 2 [(buf.validate.field).string = {in: ["prepared", "applied", "refused", "unknown"]}];
+  string status = 2 [(buf.validate.field).string = {in: ["prepared", "applied", "partial", "refused", "unknown"]}];
   repeated ValueProvenance values = 3;
   optional int32 exit_code = 4;
   // Measured effects remain outcome evidence even when capture I/O fails.
@@ -168,7 +168,26 @@ message ActionReport {
   string recording_error = 7;
   bytes job_status_json = 8;
   bytes script_result_json = 10;
-  string failure_reason = 9 [(buf.validate.field).string = {in: ["", "authorization_denied", "execution_failed", "delete_not_confirmed", "outcome_unknown"]}];
+  SourceReconcileResult source_reconcile = 12;
+  string failure_reason = 9 [(buf.validate.field).string = {in: ["", "authorization_denied", "execution_failed", "delete_not_confirmed", "outcome_unknown", "source_residual"]}];
+}
+
+// Direct readback of the fields this accepted-source action owns. No payload
+// values are included: paths name remaining work without exposing object data.
+message SourceReconcileResult {
+  ObjectRef ref = 1;
+  bool converged = 2;
+  repeated string residual_paths = 3;
+  string observation_error = 4;
+  bool additions_known = 5;
+  repeated SourceRolloutStep rollout_steps = 6;
+}
+
+message SourceRolloutStep {
+  ObjectRef workload = 4;
+  ObjectRef ref = 1;
+  string status = 2;
+  string error = 3;
 }
 
 message DeletePod {
