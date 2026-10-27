@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING, Any
 
 from benchmarks.sregym.adapter import (
     ClosureFailedError,
+    ControllerStalledError,
     Deadline,
     DetectionMissError,
     PersistentControllerError,
@@ -355,7 +356,11 @@ class CompositeSdoAgent(SdoPersistentAgent):
                     f"no verified closure: {stage_error}",
                     state,
                 )
-                stop_reason = "no_closure_within_deadline"
+                stop_reason = (
+                    "controller_stalled"
+                    if isinstance(stage_error, ControllerStalledError)
+                    else "no_closure_within_deadline"
+                )
                 wedged = True
                 first = self._wedged_outcome(index, problem_id, injected[0], wedge)
             self._base_dir = Path(str(first.artifacts_dir))
@@ -427,6 +432,7 @@ class CompositeSdoAgent(SdoPersistentAgent):
             try:
                 if injected and stop_reason in {
                     "no_closure_within_deadline",
+                    "controller_stalled",
                     "closure_failed",
                 }:
                     # The controller stopped itself; nothing will acknowledge a pause.

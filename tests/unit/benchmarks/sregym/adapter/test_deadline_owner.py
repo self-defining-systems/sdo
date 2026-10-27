@@ -13,7 +13,11 @@ import pytest
 
 from benchmarks.sregym.adapter import Clock
 from benchmarks.sregym.adapter.budgets import Deadline, DeadlineExhaustedError, WaitKind, wait_for
-from benchmarks.sregym.adapter.persistent import PersistentControllerError, _wait_for_verified_incident
+from benchmarks.sregym.adapter.persistent import (
+    ControllerStalledError,
+    PersistentControllerError,
+    _wait_for_verified_incident,
+)
 
 ROOT = Path(__file__).resolve().parents[5]
 SCANNED = ("benchmarks/sregym/fastloop", "benchmarks/sregym/adapter", "benchmarks/sregym/protocol")
@@ -113,6 +117,63 @@ def test_closure_observation_after_a_slow_state_read_runs_the_real_operator_with
     assert "could not run" not in message
     assert "verified no new incident within 30s" in message
     assert ops.reads == ["astro-sdo"]
+
+
+@dataclass
+class _FrozenControllerOps:
+    """A controller that finished its responder (failed) and then stopped evaluating, as seen live."""
+
+    clock: _ManualClock
+    iteration: int
+    advance: bool = False
+    reads: int = 0
+
+    def runtime_state(self, control: str) -> dict[str, Any]:
+        self.reads += 1
+        if self.advance:
+            self.iteration += 1
+        return {
+            "incident_open": True,
+            "responder_done": True,
+            "dispatch_state": "DISPATCH_STATE_COMPLETED",
+            "evaluation_iteration": self.iteration,
+            "incident_request": {"incident_id": "incident-frozen"},
+            "incident_result": {"incident_id": "incident-frozen", "status": "failed"},
+            "busy_until": "2099-01-01T00:00:00Z",
+        }
+
+
+def _sleeping_clock(manual: _ManualClock) -> Clock:
+    def sleep(seconds: float) -> None:
+        manual.now += seconds
+
+    return Clock(monotonic=manual.monotonic, sleep=sleep)
+
+
+def test_a_controller_that_stopped_evaluating_ends_the_wait_with_a_typed_stall() -> None:
+    """The row ends within the stall bound, not after the 2400 s verification budget."""
+    manual = _ManualClock()
+    started = manual.now
+    ops = _FrozenControllerOps(manual, iteration=794)
+
+    with pytest.raises(ControllerStalledError) as raised:
+        _wait_for_verified_incident(ops, "hotel-sdo", set(), 2400.0, _sleeping_clock(manual))  # type: ignore[arg-type]
+
+    message = str(raised.value)
+    assert "controller stalled" in message
+    assert "incident 'incident-frozen' is open, responder status 'failed'" in message
+    assert manual.now - started <= wait_for(WaitKind.SLOW_COMMAND) + wait_for(WaitKind.MINUTE)
+
+
+def test_a_controller_that_keeps_evaluating_keeps_the_full_verification_budget() -> None:
+    manual = _ManualClock()
+    ops = _FrozenControllerOps(manual, iteration=794, advance=True)
+
+    with pytest.raises(PersistentControllerError) as raised:
+        _wait_for_verified_incident(ops, "hotel-sdo", set(), 600.0, _sleeping_clock(manual))  # type: ignore[arg-type]
+
+    assert not isinstance(raised.value, ControllerStalledError)
+    assert "verified no new incident within 600s" in str(raised.value)
 
 
 def _clock_subtractions(node: ast.AST) -> bool:

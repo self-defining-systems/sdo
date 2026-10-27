@@ -42,6 +42,7 @@ from benchmarks.sregym.adapter.eval_guards import (
     INCIDENT_EXECUTION_LABEL,
     STANDBY_LABEL,
     BusyDeadline,
+    ProgressWatch,
     busy_until,
     idle_standby_jobs,
     incident_work_open,
@@ -129,6 +130,14 @@ class ClosureFailedError(PersistentControllerError):
 
 class ControllerJobFailedError(ClosureFailedError):
     """The controller Job reached a terminal condition before acknowledging the closure, so no owner can ACK it."""
+
+
+class ControllerStalledError(PersistentControllerError):
+    """The controller stopped evaluating while an incident was open, so no closure can follow.
+
+    An SDO hang, not a slow responder: the wait ends at the stall bound with the incident's last state
+    instead of running out the verification budget.
+    """
 
 
 class ReflectionDeadlineError(PersistentControllerError):
@@ -1820,6 +1829,7 @@ def _wait_for_verified_incident(
 
     started = clock.monotonic()
     budget = Deadline(started + timeout, clock.monotonic, "controller verification")
+    progress = ProgressWatch(wait_for(WaitKind.SLOW_COMMAND))
     detected = False
     state: dict[str, Any] = {}
     summary = ""
@@ -1851,6 +1861,11 @@ def _wait_for_verified_incident(
                 busy_until=busy_until(state),
             )
         _raise_observation_failure(observed, state)
+        if progress.stalled(state, clock.monotonic()):
+            raise ControllerStalledError(
+                f"controller stalled in {control!r}: no evaluation for {progress.stall_seconds:.0f}s "
+                f"(evaluation {progress.iteration}){summary}"
+            )
         clock.sleep(POLL_SECONDS)
     raise PersistentControllerError(
         f"controller in {control!r} verified no new incident within {timeout:.0f}s{summary}"

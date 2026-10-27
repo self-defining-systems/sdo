@@ -454,6 +454,37 @@ func TestControllerContinuationRunsWithoutHoldingControllerLock(t *testing.T) {
 			if resumed := d.resumed == 1; resumed == refuse {
 				t.Fatalf("continuation outcome not applied: resumed=%d refuse=%v", d.resumed, refuse)
 			}
+			// The eval ends its wait on a controller whose evaluation count stops moving,
+			// so the controller must keep counting after the continuation decision.
+			before := mustExportState(t, c).GetEvaluationIteration()
+			for sample := 3; sample < 5; sample++ {
+				if err := c.Step(context.Background(), start.Add(time.Duration(sample)*time.Second), nil); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if after := mustExportState(t, c).GetEvaluationIteration(); after <= before {
+				t.Fatalf("evaluation_iteration stopped advancing: %d -> %d", before, after)
+			}
+			if refuse {
+				// Nothing can re-prompt the responder, so the incident closes unverified at the
+				// verification timeout instead of staying open.
+				late := start.Add(2*time.Second + c.config.VerificationTimeout + time.Second)
+				if err := c.Step(context.Background(), late, nil); err != nil {
+					t.Fatal(err)
+				}
+				if c.IncidentOpen() {
+					t.Fatal("refused continuation left the incident open past the verification timeout")
+				}
+			}
 		})
 	}
+}
+
+func mustExportState(t *testing.T, c *Controller) *contracts.ControllerState {
+	t.Helper()
+	state, err := c.ExportState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return state
 }
