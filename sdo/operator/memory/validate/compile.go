@@ -81,6 +81,10 @@ func (s *run) compile(ctx context.Context) error {
 	case strings.HasPrefix(stage.Stage, "test"):
 		rule = RuleDetectorTest
 	}
+	if strings.Contains(stage.Output, RuleDetectorHealthyBaseline) {
+		s.add(Compile, Diagnostic{Rule: RuleDetectorHealthyBaseline, Path: layout.DiagnosticsDir, Message: goTestDuration.ReplaceAllString(stage.Output, ""), Hint: "incident detectors must stay quiet on the controller-captured healthy state"})
+		return nil
+	}
 	if strings.Contains(stage.Output, RuleDetectorControllerStart) {
 		message := goTestDuration.ReplaceAllString(stage.Output, "")
 		if len(message) > maxCompileOutput {

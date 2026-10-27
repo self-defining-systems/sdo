@@ -49,9 +49,9 @@ func ValidateScriptOrigins(root string, outcome *contracts.OutcomeRecord, paths 
 		if err != nil {
 			return err
 		}
-		for _, receiptID := range corpus.ScriptOrigins {
+		for digest, receiptID := range corpus.ScriptOrigins {
 			receipt := receipts[receiptID]
-			if receipt == nil || !receipt.GetSuccess() || receipt.GetStartedAt() == nil || receipt.GetCompletedAt() == nil || corpus.Provenance.IncidentID != outcome.GetIncidentId() {
+			if receipt == nil || receipt.GetScriptDigest() == "" || receipt.GetScriptDigest() != digest || !receipt.GetSuccess() || receipt.GetStartedAt() == nil || receipt.GetCompletedAt() == nil || corpus.Provenance.IncidentID != outcome.GetIncidentId() {
 				return fmt.Errorf("RunScript origin %q must reference a successful accepted incident receipt", receiptID)
 			}
 			matched := false
@@ -60,7 +60,7 @@ func ValidateScriptOrigins(root string, outcome *contracts.OutcomeRecord, paths 
 					continue
 				}
 				var recorded sdkprogram.ScriptOriginReceipt
-				if json.Unmarshal(call.Result, &recorded) == nil && recorded.ID == receiptID && recorded.IncidentID == outcome.GetIncidentId() && recorded.Success && recorded.StartedAt.Equal(receipt.GetStartedAt().AsTime()) && recorded.CompletedAt.Equal(receipt.GetCompletedAt().AsTime()) {
+				if json.Unmarshal(call.Result, &recorded) == nil && recorded.ID == receiptID && recorded.ScriptDigest == digest && recorded.IncidentID == outcome.GetIncidentId() && recorded.Success && recorded.StartedAt.Equal(receipt.GetStartedAt().AsTime()) && recorded.CompletedAt.Equal(receipt.GetCompletedAt().AsTime()) {
 					matched = true
 				}
 			}

@@ -32,7 +32,7 @@ func CaptureRepairReceipts(root, incidentID string, outcome *contracts.OutcomeRe
 			if !action.GetSuccess() || action.GetActionId() == "" || action.GetStartedAt() == nil || action.GetCompletedAt() == nil {
 				continue
 			}
-			receipt := program.ScriptOriginReceipt{ID: action.GetActionId(), IncidentID: incidentID, Success: true, StartedAt: action.GetStartedAt().AsTime(), CompletedAt: action.GetCompletedAt().AsTime()}
+			receipt := program.ScriptOriginReceipt{ScriptDigest: action.GetScriptDigest(), ID: action.GetActionId(), IncidentID: incidentID, Success: true, StartedAt: action.GetStartedAt().AsTime(), CompletedAt: action.GetCompletedAt().AsTime()}
 			if receipt.CompletedAt.Before(receipt.StartedAt) {
 				continue
 			}

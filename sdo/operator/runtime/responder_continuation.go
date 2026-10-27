@@ -308,6 +308,7 @@ func (l *ResponderLoop) saveContinuation(ctx context.Context, state responderCon
 // Both continuation paths publish the same factual schema, including object and
 // finding identity. A pending observation window is not an unhealthy finding.
 type continuationReceipt struct {
+	ScriptDigest  string          `json:"script_digest,omitempty"`
 	FailureReason string          `json:"failure_reason,omitempty"`
 	ActionID      string          `json:"action_id"`
 	Kind          string          `json:"kind"`
@@ -442,7 +443,7 @@ func (l *ResponderLoop) applicationRepairsLocked() []continuationRepair {
 }
 
 func feedbackReceipt(receipt RepairActionReceipt) continuationReceipt {
-	return continuationReceipt{ActionID: receipt.ActionID, Kind: receipt.Kind, Target: receipt.Target, Resources: receipt.Resources, Summary: receipt.Summary, Details: receipt.Details, StartedAt: receipt.StartedAt, CompletedAt: receipt.CompletedAt, Success: receipt.Success, Reversible: receipt.Reversible, FailureReason: receipt.FailureReason, Owners: receipt.Owners}
+	return continuationReceipt{ActionID: receipt.ActionID, Kind: receipt.Kind, Target: receipt.Target, Resources: receipt.Resources, Summary: receipt.Summary, Details: receipt.Details, StartedAt: receipt.StartedAt, CompletedAt: receipt.CompletedAt, Success: receipt.Success, Reversible: receipt.Reversible, FailureReason: receipt.FailureReason, ScriptDigest: receipt.ScriptDigest, Owners: receipt.Owners}
 }
 
 func continuationFeedback(attempt int, verification ToolResponse, repairs ...continuationRepair) ([]byte, error) {

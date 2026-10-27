@@ -50,7 +50,7 @@ func TestPartialRunScriptReplayKeepsUnrelatedFaults(t *testing.T) {
 		t.Fatal(err)
 	}
 	script := plan.Actions[0].(program.RunScript)
-	receipt := program.ScriptOriginReceipt{ID: "performed-bash-step", IncidentID: c.ID, Success: true, StartedAt: time.Unix(1, 0), CompletedAt: time.Unix(2, 0)}
+	receipt := program.ScriptOriginReceipt{ScriptDigest: program.ScriptDigest(script.Script), ID: "performed-bash-step", IncidentID: c.ID, Success: true, StartedAt: time.Unix(1, 0), CompletedAt: time.Unix(2, 0)}
 	raw, err := json.Marshal(receipt)
 	if err != nil {
 		t.Fatal(err)

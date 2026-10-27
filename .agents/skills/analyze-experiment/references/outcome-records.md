@@ -187,3 +187,10 @@ items; no clearance, attribution or pre-incident capture is required for the res
 `drift_reprompt` records the controller's single extra response turn after healthy verification with remaining source drift. Presence means it was scheduled durably; `findings_before` counts the differences in its verify payload, and optional `findings_after` counts a fresh post-turn check (absent if no check returned). This turn consumes no mitigation round; drift still never changes the health verdict or gates closure after the turn. Worker-authored values are discarded.
 
 RunScript provenance is enforced on the actual returned actions by the shared runtime plan builder, against original successful timed receipts for that program in the incident accepted commit. `script_unprovenanced` in stage skip reasons or mitigation report reason codes means no script execution; the stage hands over without retrying that revision. Static acceptance or advisory replay does not grant script execution authority.
+
+`RepairActionReceipt.script_digest` is the controller-recorded SHA256 of exact
+executed RunScript bytes. It passes into protected `RepairReceipt` recordings;
+`script_origins` only points to that receipt. Missing or different digests grant
+no script authority, even for successful timed repairs. Worker-supplied digests
+are discarded. Detector tests and healthy-baseline checks remain save gates;
+playbook replay outcomes remain informational.

@@ -134,8 +134,8 @@ func testCLIAndBrokerAgreeOnAcceptance(t *testing.T, shard int) {
 		allowAdditional bool
 	}
 	cases := []parityCase{
-		{"healthy refused service ports", validate.Responder, validate.ReflectionPhase, parityRefusedPortsDetector, nil, false},
-		{"healthy refused ports without recordings", validate.Responder, validate.ReflectionPhase, parityRefusedPortsDetector, nil, false},
+		{"healthy refused service ports", validate.Responder, validate.ReflectionPhase, parityRefusedPortsDetector, []string{validate.RuleDetectorHealthyBaseline}, false},
+		{"healthy refused ports without recordings", validate.Responder, validate.ReflectionPhase, parityRefusedPortsDetector, []string{validate.RuleDetectorHealthyBaseline}, false},
 		// A closure verified healthy is the only precondition: the cause is bound
 		// by the successful repair write on its own resource, so an opening
 		// finding on another resource neither blocks nor is needed.
