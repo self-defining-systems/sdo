@@ -159,6 +159,15 @@ def image_source_problems(
     return []
 
 
+def harness_problems(code_root: Path) -> list[str]:
+    """Why the SREGym harness cannot run from ``code_root`` (the submodule's observer stack must be checked out)."""
+
+    observer = code_root / "third_party/sregym/sregym/observer"
+    if observer.is_dir():
+        return []
+    return [f"{observer} is missing: run `git submodule update --init third_party/sregym` in {code_root}"]
+
+
 def deliver_images(lane: RealLane, tags: Sequence[str]) -> None:
     """Load the scripted-worker images into the lane cluster's registry and record it in the private environment."""
 
@@ -562,7 +571,7 @@ def main_real(args: Any) -> int:
     if refused:
         print("rehearse-batch --real-apps refused to start:\n  " + "\n  ".join(refused), file=sys.stderr)
         return 2
-    refused = image_source_problems(code_root, image_refs(args.image_tag))
+    refused = harness_problems(code_root) + image_source_problems(code_root, image_refs(args.image_tag))
     if refused:
         print("rehearse-batch --real-apps refused to start:\n  " + "\n  ".join(refused), file=sys.stderr)
         return 2

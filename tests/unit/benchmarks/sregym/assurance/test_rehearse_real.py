@@ -293,6 +293,14 @@ def test_images_from_other_code_are_refused_before_the_lane_is_touched(tmp_path:
     assert "source differs" in found[0]
 
 
+def test_an_unchecked_out_harness_is_refused_before_any_lane_is_touched(tmp_path: Path) -> None:
+    found = real.harness_problems(tmp_path)
+    assert len(found) == 1
+    assert "git submodule update --init third_party/sregym" in found[0]
+    (tmp_path / "third_party/sregym/sregym/observer").mkdir(parents=True)
+    assert real.harness_problems(tmp_path) == []
+
+
 def test_an_incident_that_opened_before_the_injection_is_a_baseline_incident() -> None:
     record = _record(
         injection={"state": "injected", "started_at": "2026-10-27T00:13:04Z", "finished_at": "2026-10-27T00:13:54Z"},

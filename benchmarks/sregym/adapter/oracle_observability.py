@@ -30,10 +30,17 @@ def prepare_oracle_observability(
 ) -> float:
     """Return the lane's total CPU cap after installing and checking stock telemetry."""
 
+    observer = sregym_dir / "sregym/observer"
+    if not observer.is_dir():
+        raise ValueError(f"Oracle observability needs {observer}: the SREGym submodule is not checked out")
+
     def command(argv: list[str], **kwargs: Any) -> str:
-        return run(
-            argv, check=True, text=True, capture_output=True, timeout=wait_for(WaitKind.OPERATION), **kwargs
-        ).stdout
+        try:
+            return run(
+                argv, check=True, text=True, capture_output=True, timeout=wait_for(WaitKind.OPERATION), **kwargs
+            ).stdout
+        except subprocess.CalledProcessError as exc:
+            raise RuntimeError(f"{' '.join(argv)} exited {exc.returncode}: {exc.stderr}") from exc
 
     nodes = command(["kind", "get", "nodes", "--name", cluster]).split()
     caps = command(["docker", "inspect", "--format", "{{.HostConfig.NanoCpus}}", *nodes]).split()
@@ -41,7 +48,6 @@ def prepare_oracle_observability(
         raise ValueError("Oracle observability requires every lane node to be Docker CPU capped")
     cores = sum(int(cap) for cap in caps) / 1e9
     kube = ["kubectl", "--kubeconfig", str(kubeconfig)]
-    observer = sregym_dir / "sregym/observer"
     command(
         [*kube, "apply", "--server-side", "-f", str(Path(__file__).parent / "infrastructure/openebs-operator.yaml")]
     )
