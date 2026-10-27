@@ -133,7 +133,6 @@ type selectedPlan struct {
 
 // ResponderLoop holds one incident's tool state while its responder Job runs.
 type ResponderLoop struct {
-	waitForStageRollouts bool
 	// WorkingProgramRoot is set by the production loop factory to the mounted
 	// proposal checkout. Embedders with an in-memory registry may leave it empty.
 	WorkingProgramRoot string
@@ -930,7 +929,7 @@ func (l *ResponderLoop) apply(ctx context.Context, request ToolRequest, response
 	}
 	executor := l.Executor
 	executor.ApplicationID = id
-	executor.PollRollouts = !l.waitForStageRollouts
+	executor.PollRollouts = true
 	result, err := executor.Apply(ctx, l.mitigationIncident(selected), batch, false)
 	completed := time.Now().UTC()
 	if result.RolloutPending != nil {
@@ -1060,7 +1059,7 @@ func (l *ResponderLoop) verify(ctx context.Context, applied []selectedPlan, resp
 				l.addFailureSignal("new_finding_after_apply:" + FindingFingerprint(finding))
 			}
 		}
-	} else if !l.waitForStageRollouts && l.batches == 0 && len(previous) > 0 && len(findings) == 0 {
+	} else if l.batches == 0 && len(previous) > 0 && len(findings) == 0 {
 		matched := false
 		for _, run := range l.runs {
 			if run.Verdict.Result == program.Match {

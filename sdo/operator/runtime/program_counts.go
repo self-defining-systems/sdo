@@ -19,15 +19,17 @@ type ProgramCount struct {
 func programCountKey(id, revision string) string { return id + "@" + revision }
 
 // ProgramCounts tallies applied, non-dry-run applications per (program id,
-// revision), once per application. An application of a failed incident, one
-// that errored or was rolled back, or one whose program has a recorded
-// application_verification_failure signal in the same incident is a failure;
-// otherwise an application in a successful incident is a success. A
-// cleared_without_action or unconfirmed closure is neither: the first needed
-// no repair and the second is verified but not a failure, so its applications
-// carry no verdict. A failure signal for a program with no counted application
-// counts one failure against the signal's revision. An application is never
-// both.
+// revision), once per application. An application of a failed incident, or one
+// that errored or was rolled back, is a failure; an application in a successful
+// incident is a success. A cleared_without_action or unconfirmed closure is
+// neither: the first needed no repair and the second is verified but not a
+// failure, so its applications carry no verdict.
+//
+// A recorded application_verification_failure signal names a program, not an
+// application. When no application of that program already failed in the
+// incident, the signal turns one counted success into the failure it records;
+// with no counted application it adds one failure against the signal's
+// revision. An application is never counted as both.
 func ProgramCounts(outcomes []*contracts.OutcomeRecord) map[string]ProgramCount {
 	counts := map[string]ProgramCount{}
 	for _, outcome := range outcomes {
@@ -38,46 +40,53 @@ func ProgramCounts(outcomes []*contracts.OutcomeRecord) map[string]ProgramCount 
 			}
 			return outcome.GetSourceCommit()
 		}
-		signaled := map[string]string{}
-		for _, signal := range outcome.GetProgramFailureSignals() {
-			if id, revision, ok := parseApplicationFailureSignal(signal); ok {
-				signaled[id] = revision
+		failedKeys := map[string]bool{}
+		succeededKeys := map[string][]string{}
+		tally := func(key string, verdict applicationOutcome) {
+			count := counts[key]
+			if verdict == failedApplication {
+				count.Failures++
+			} else {
+				count.Successes++
 			}
+			counts[key] = count
 		}
-		applicationCounted := map[string]bool{}
 		for _, application := range outcome.GetPlanApplications() {
 			if !application.GetApplied() || application.GetDryRun() || application.GetRolloutPending() != nil {
 				continue
 			}
+			harmed := application.GetError() != "" || application.GetRolledBack() || application.GetRollbackError() != ""
+			verdict := applicationVerdict(outcome.GetClassification(), harmed)
+			if verdict == noVerdict {
+				continue
+			}
 			for _, id := range application.GetProgramIds() {
-				_, signal := signaled[id]
-				failed := application.GetError() != "" || application.GetRolledBack() || application.GetRollbackError() != "" || signal
-				verdict := applicationVerdict(outcome.GetClassification(), failed)
-				if verdict == noVerdict {
-					continue
-				}
 				key := programCountKey(id, revisionOf(id))
-				count := counts[key]
+				tally(key, verdict)
 				if verdict == failedApplication {
-					count.Failures++
+					failedKeys[id] = true
 				} else {
-					count.Successes++
+					succeededKeys[id] = append(succeededKeys[id], key)
 				}
-				counts[key] = count
-				applicationCounted[id] = true
 			}
 		}
-		for id, revision := range signaled {
-			if applicationCounted[id] {
+		for _, signal := range outcome.GetProgramFailureSignals() {
+			id, revision, ok := parseApplicationFailureSignal(signal)
+			if !ok || failedKeys[id] {
+				continue
+			}
+			failedKeys[id] = true
+			if keys := succeededKeys[id]; len(keys) > 0 {
+				count := counts[keys[0]]
+				count.Successes--
+				count.Failures++
+				counts[keys[0]] = count
 				continue
 			}
 			if revision == "" {
 				revision = revisionOf(id)
 			}
-			key := programCountKey(id, revision)
-			count := counts[key]
-			count.Failures++
-			counts[key] = count
+			tally(programCountKey(id, revision), failedApplication)
 		}
 	}
 	return counts

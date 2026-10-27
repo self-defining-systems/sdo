@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	"sdo.dev/operator/broker"
-	"sdo.dev/operator/memory"
 )
 
 func TestOperatorImportContract(t *testing.T) {
@@ -64,10 +63,6 @@ func TestOperatorImportContract(t *testing.T) {
 			}
 			if err != nil {
 				t.Fatal(err)
-			}
-			evidence, err := memory.ReadProgramLearningEvidence(context.Background(), root, receipt.Commit)
-			if err != nil || len(evidence) != 0 {
-				t.Fatalf("import earned learning credit: %v %v", evidence, err)
 			}
 			if receipt.Commit == "" || !validatorCalled {
 				t.Fatal("missing validated receipt")

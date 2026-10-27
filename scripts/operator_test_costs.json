@@ -327,7 +327,7 @@
     "sdo.dev/operator/memory/TestAcceptedDiagnosticsProjectsPhysicalStorage": 0.023,
     "sdo.dev/operator/memory/TestAcceptedDiagnosticsRejectsDirtyProgramMemory": 0.035,
     "sdo.dev/operator/memory/TestAddUsagePreservesPartialAndUnknownCounters": 0.001,
-    "sdo.dev/operator/memory/TestAdoptionPreservesMemoryButDiscardsInheritedLearning": 0.15,
+    "sdo.dev/operator/memory/TestAdoptionPreservesMemoryAndBlocksBypassAfterChange": 0.15,
     "sdo.dev/operator/memory/TestAppendSDKGapsPreservesIncidentEvidence": 0.01,
     "sdo.dev/operator/memory/TestCaptureIncidentCorpusKeepsFirstRealSnapshot": 0.022,
     "sdo.dev/operator/memory/TestCaptureIncidentCorpusKeepsSeparateOpenMoments": 0.01,

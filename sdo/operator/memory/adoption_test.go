@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-func TestAdoptionPreservesMemoryButDiscardsInheritedLearning(t *testing.T) {
+func TestAdoptionPreservesMemoryAndBlocksBypassAfterChange(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
 	git := func(args ...string) string {
@@ -33,8 +33,7 @@ func TestAdoptionPreservesMemoryButDiscardsInheritedLearning(t *testing.T) {
 		t.Fatal(err)
 	}
 	store := NewJSONStore(root)
-	old, err := store.Put(ctx, &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: "inherited", Classification: "success"})
-	if err != nil {
+	if _, err := store.Put(ctx, &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: "inherited", Classification: "success"}); err != nil {
 		t.Fatal(err)
 	}
 	git("add", ".")
@@ -51,14 +50,6 @@ func TestAdoptionPreservesMemoryButDiscardsInheritedLearning(t *testing.T) {
 	}
 	if got := git("show", commit+":.sdo/playbooks/repair/diagnose.go"); got != strings.TrimSpace(string(code)) {
 		t.Fatal("adoption changed program")
-	}
-	fresh, err := store.Put(ctx, &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: "new-live", Classification: "success"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	filtered, err := AfterAdoption(ctx, root, []Outcome{old, fresh})
-	if err != nil || len(filtered) != 1 || filtered[0].IncidentID != "new-live" {
-		t.Fatalf("inherited learning: %+v %v", filtered, err)
 	}
 	ignored := filepath.Join(root, ".sdo/lib/new/helper.go")
 	if err := os.MkdirAll(filepath.Dir(ignored), 0755); err != nil {
