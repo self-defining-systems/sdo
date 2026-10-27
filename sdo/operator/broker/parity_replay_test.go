@@ -118,7 +118,10 @@ func TestCLIAndBrokerAgreeOnVerifiedCauseReplayCoverage(t *testing.T) {
 
 func TestCLIAndBrokerAgreeOnUnobservableDetectorLocator(t *testing.T) {
 	for _, mode := range []string{"unknown", "needs-judgement", "source-evidence-gap"} {
-		t.Run(mode, func(t *testing.T) { checkUnobservableDetectorLocator(t, mode) })
+		t.Run(mode, func(t *testing.T) {
+			t.Parallel()
+			checkUnobservableDetectorLocator(t, mode)
+		})
 	}
 }
 

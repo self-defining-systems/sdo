@@ -73,6 +73,7 @@ func TestReflectionRecordsReplayButStillRejectsInvalidCode(t *testing.T) {
 	}
 	noCapture := validate.WithCaptureSource(ctx, "", "")
 	t.Run("gaps commit", func(t *testing.T) {
+		t.Parallel()
 		repository, root, _, decision := setup(t)
 		receipt, err := repository.PublishReflection(noCapture, "incident", decision)
 		if err != nil {
@@ -98,6 +99,7 @@ func TestReflectionRecordsReplayButStillRejectsInvalidCode(t *testing.T) {
 		}
 	})
 	t.Run("repeat-unreachable gap is the same on the CLI and the broker", func(t *testing.T) {
+		t.Parallel()
 		repository, _, proposal, decision := setup(t)
 		path := filepath.Join(proposal.Path, ".sdo/diagnostics/detectors/incidents/routing-relations/detector.go")
 		data, err := os.ReadFile(path)
@@ -163,6 +165,7 @@ func (p Program) Mitigate(ctx context.Context,v program.ReadView,b program.Bindi
 		"invalid code still rejects": {".sdo/playbooks/service-targetport-mismatch/mitigate.go", "package targetport\nvar broken UndefinedType\n", validate.RuleDetectorCompile, true},
 	} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			repository, _, proposal, decision := setup(t)
 			formatted, err := format.Source([]byte(test.content))
 			if err != nil {
