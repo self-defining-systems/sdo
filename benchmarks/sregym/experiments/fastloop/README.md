@@ -129,9 +129,15 @@ in the results directory records `tier1_seconds`, `tier2_ran`, `tier2_seconds`, 
   up to one minute). Otherwise the app namespaces are deleted whole, PVCs and the data in them included
   (fault state such as a MongoDB user lives in the data, not in a Kubernetes object), the app is deployed
   again with `deploy --redeploy` from the image cache and the application baseline is captured again. The
-  trigger is `tier2_trigger` in `wipe-receipt.json`: `unclean_attempt` (the `attempt-in-progress` file survived
-  a dead run), `previous_row_unrecovered` (the file names rows that were injected without a verified full
-  recovery), `restore_invariant` or `pods_unhealthy`.
+  trigger is `tier2_trigger` in `wipe-receipt.json`: `current_row_data_faults` when the incoming
+  problem contains any catalog `DATA_LEVEL_CLASSES` fault, `lane_last_injection_data_faults` when the
+  lane's last injection did, or `lane_injection_unknown` when its durable state is absent, malformed
+  or pending after an interrupted injection. The driver writes that state beside the lane kubeconfig
+  (`<kubeconfig>.<namespace>.last-injection.json`) before the worker can mutate the app, and confirms it
+  after injection. Run directories, seeded first-try copies and journal predecessors never supply lane
+  history. `current_row_data_faults` and `previous_row_data_faults` in the receipt identify the triggering
+  faults. Other triggers remain `unclean_attempt`, `previous_row_unrecovered`, `restore_invariant` and
+  `pods_unhealthy`. A known non-data injection followed by a healthy non-data row keeps the warm app.
 
 A namespace either tier deletes can stay Terminating on an injected or harness object whose finalizer
 nobody will run (the FinalizerDeadlock fault's cleanup token). When the namespace reports remaining
