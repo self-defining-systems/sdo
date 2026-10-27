@@ -118,7 +118,7 @@ func main() {
 
 @pytest.fixture
 def control_api(tmp_path: Path) -> Iterator[SimpleNamespace]:
-    """Run the real stop/reset CLI against prior-install control leftovers."""
+    """A control namespace API holding prior-install leftovers that a non-toy row must not delete selectively."""
     names = [
         "sdo-namespace-onboarding",
         "sdo-namespace-onboarding-pending",
@@ -933,8 +933,9 @@ def test_scripted_fastloop_reuses_reflected_target_port_program(
     assert all((row.injection_to_detection_seconds or 0) >= 0 for row in records)
     assert all(row.driver_phase_timings_seconds["injection_to_verified_recovery"] > 0 for row in records)
     assert all(Path(str(row.artifacts_dir), "sdo_production_receipt_strict.json").is_file() for row in records)
-    assert control_api.deleted == control_api.names
-    assert control_api.objects == {}
+    # The row-start wipe (test_wipe.py) owns control-state removal; no selective reset runs on a non-toy lane.
+    assert control_api.deleted == []
+    assert set(control_api.objects) == set(control_api.names)
     assert controller.installs == 1
     assert controller.registrations == [REGISTRATIONS, REGISTRATIONS]
     assert records[0].run_prelude_phase_seconds["total_before_first_incident"] >= 0

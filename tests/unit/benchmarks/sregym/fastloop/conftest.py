@@ -62,23 +62,22 @@ def image_repo(tmp_path: Path) -> ImageRepo:
     return repo
 
 
-class _EmptyLaneInventory:
-    def list_objects(self) -> frozenset[str]:
-        return frozenset()
-
-    def delete(self, identity: str) -> None:
-        raise AssertionError(f"unexpected lane delete {identity}")
-
-
 @pytest.fixture(autouse=True)
-def bridge_lane_guards(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
-    """Worker-bridge tests run against stub SREGym modules and a synthetic kubeconfig.
-
-    The bridge's two lane guards would otherwise patch a stub ``Helm`` and write a setup ledger next to
-    a relative kubeconfig while calling kubectl. test_setup_ledger.py overrides this fixture to run them.
-    """
+def bridge_lane_guards(monkeypatch: pytest.MonkeyPatch):
+    """Worker-bridge tests run against stub SREGym modules; the idempotent-Helm guard would patch a stub ``Helm``."""
     from benchmarks.sregym.fastloop import worker_bridge
 
     monkeypatch.setattr(worker_bridge, "_make_deploy_idempotent", lambda: None)
-    monkeypatch.setattr(worker_bridge, "KubectlClusterInventory", lambda kubeconfig: _EmptyLaneInventory())
-    monkeypatch.setattr(worker_bridge, "ledger_path", lambda kubeconfig: tmp_path / "bridge-setup-ledger.json")
+
+
+@pytest.fixture(autouse=True)
+def row_start_wipe_guards(monkeypatch: pytest.MonkeyPatch):
+    """CLI tests run on synthetic kubeconfigs; the row-start wipe and lane inventory would call kubectl on them.
+
+    test_wipe.py exercises the wipe itself against a fake lane.
+    """
+    from benchmarks.sregym.fastloop import cli, wipe
+
+    monkeypatch.setattr(cli, "_wipe_sdo_and_harness", lambda *_args: wipe.Tier1Receipt(0.0, (), False))
+    monkeypatch.setattr(cli, "_application_needs_redeploy", lambda *_args: None)
+    monkeypatch.setattr(wipe.KubectlLaneCluster, "list_objects", lambda self: frozenset())

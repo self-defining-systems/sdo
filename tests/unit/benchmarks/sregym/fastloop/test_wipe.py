@@ -95,9 +95,7 @@ def lane_with(contents: dict[str, set[str]] | None = None, extra: set[str] = fro
 
 
 def recorded_baseline(tmp_path: Path) -> None:
-    save_inventory(
-        tmp_path / "lane.inventory.json", {i for i in LANE if not i.startswith("namespace/")}
-    )
+    save_inventory(tmp_path / "lane.inventory.json", {i for i in LANE if not i.startswith("namespace/")})
 
 
 def test_stale_worker_state_from_a_killed_attempt_does_not_survive_tier_1(tmp_path: Path) -> None:
@@ -291,3 +289,52 @@ def _receipt():
 
 def test_inventory_path_sits_beside_the_kubeconfig(tmp_path: Path) -> None:
     assert inventory_path(tmp_path / "kubeconfig").name == "kubeconfig.lane-inventory.json"
+
+
+def test_wipe_environment_resets_lane_seed_and_controller_registry_together(tmp_path: Path) -> None:
+    from benchmarks.sregym.fastloop.environment import FastloopEnvironment
+    from benchmarks.sregym.fastloop.wipe import wipe_environment
+
+    repo = tmp_path / "workspace"
+    repo.mkdir()
+    git(repo, "init", "-q")
+    heads = []
+    for index in range(2):
+        (repo / "memory.txt").write_text(f"commit {index}\n")
+        git(repo, "add", ".")
+        git(repo, "commit", "-qm", f"accepted {index}")
+        heads.append(git(repo, "rev-parse", "HEAD"))
+    environment = FastloopEnvironment(
+        run_dir=tmp_path / "run",
+        cluster="c",
+        kubeconfig=tmp_path / "kubeconfig",
+        namespace=APP,
+        application=APP,
+        workspace=repo,
+        sregym_dir=tmp_path / "sregym",
+        private_tmp=None,
+    )
+    environment.state_path.parent.mkdir(parents=True)
+    environment.state_path.write_text('{"controllers": {"hotel-reservation": {}}}')
+    lane = lane_with({CONTROL: {"configmap/sdo-health-refresh-x-request"}, "ingress-nginx": set()})
+    save_inventory(inventory_path(environment.kubeconfig), {i for i in LANE if not i.startswith("namespace/")})
+    provisioned: list[str] = []
+
+    def provision(namespace: str) -> None:
+        provisioned.append(namespace)
+        lane.contents[namespace] = set()
+
+    receipt = wipe_environment(
+        environment,
+        lane,
+        applications=[APP],
+        provision_credentials=provision,
+        planned_commit=heads[0],
+        timeout_seconds=30,
+    )
+    assert provisioned == [CONTROL]
+    assert set(lane.contents) == KEEP | {CONTROL}
+    assert lane.contents[CONTROL] == set()
+    assert git(repo, "rev-parse", "HEAD") == heads[0]
+    assert not environment.state_path.exists()
+    assert receipt.removed == (f"namespace/{CONTROL}", "namespace/ingress-nginx")

@@ -24,6 +24,8 @@ from typing import TYPE_CHECKING, Protocol
 if TYPE_CHECKING:
     from collections.abc import Callable, Collection, Iterable
 
+    from benchmarks.sregym.fastloop.environment import FastloopEnvironment
+
 # Kubectl resource names in deletion order: admission and API registrations first so nothing routes to a
 # backend being removed, RBAC before the namespaces whose service accounts it binds, namespaces last.
 CLUSTER_KINDS: tuple[str, ...] = (
@@ -190,6 +192,31 @@ def run_tier1(
     return Tier1Receipt(round(clock() - started, 3), tuple(sorted(removed)), bootstrapped)
 
 
+def wipe_environment(
+    environment: FastloopEnvironment,
+    cluster: LaneCluster,
+    *,
+    applications: Collection[str],
+    provision_credentials: Callable[[str], None],
+    planned_commit: str,
+    timeout_seconds: float,
+) -> Tier1Receipt:
+    """Tier 1 for one fastloop lane: its SDO control namespace, harness leftovers, seed and controller registry."""
+    from benchmarks.sregym.adapter import allowed_namespaces, control_namespace_for
+
+    control = control_namespace_for(environment.namespace)
+    return run_tier1(
+        cluster,
+        inventory=inventory_path(environment.kubeconfig),
+        keep_namespaces=allowed_namespaces(set(applications)) - {control},
+        control_namespace=control,
+        provision_credentials=provision_credentials,
+        reseed=lambda: reseed_workspace(environment.workspace, planned_commit),
+        forget_controller=lambda: environment.state_path.unlink(missing_ok=True),
+        timeout_seconds=timeout_seconds,
+    )
+
+
 class AttemptMarker:
     """Present from the moment a row's attempt starts until it ends cleanly; a survivor means an unclean attempt."""
 
@@ -309,8 +336,8 @@ def reseed_workspace(workspace: Path, planned_commit: str) -> None:
         ["reset", "--hard", planned_commit],
         ["clean", "-fd"],
     ):
-        completed = subprocess.run(
-            ["git", "-C", str(workspace), *argv], capture_output=True, text=True, check=False
-        )
+        completed = subprocess.run(["git", "-C", str(workspace), *argv], capture_output=True, text=True, check=False)
         if completed.returncode:
-            raise WipeError(f"eval: cannot seed {workspace} at {planned_commit}: git {argv[0]}: {completed.stderr.strip()}")
+            raise WipeError(
+                f"eval: cannot seed {workspace} at {planned_commit}: git {argv[0]}: {completed.stderr.strip()}"
+            )
