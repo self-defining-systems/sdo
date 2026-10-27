@@ -49,7 +49,7 @@ from benchmarks.sregym.fastloop.worker_client import SregymWorker, worker_argv
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from benchmarks.sregym.adapter import Clock, ClusterOps
+    from benchmarks.sregym.adapter import ClusterOps
     from benchmarks.sregym.fastloop.composite import CompositeSettings
     from benchmarks.sregym.fastloop.fault_tracker import FaultSpec
     from benchmarks.sregym.fastloop.loop import DiagnosisGrader, IncidentAgent

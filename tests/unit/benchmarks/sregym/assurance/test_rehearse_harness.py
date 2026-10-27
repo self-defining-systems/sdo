@@ -283,7 +283,7 @@ def test_gate_brings_the_lane_up_once_resets_each_scenario_and_writes_the_summar
     assert summary["scenarios"][0]["covers"] == ("RH3",)
     assert json.loads((runner.run_dir / gate.SUMMARY_FILENAME).read_text(encoding="utf-8"))["passed"] is True
 
-    (runner.run_dir / "fake" / "fastloop.json").write_text("{}", encoding="utf-8")
+    (runner.run_dir / "fastloop.json").write_text("{}", encoding="utf-8")
     commands.clear()
     runner.run()
     assert not any("up" in argv[argv.index("benchmarks.sregym.fastloop") + 1 :] for argv in commands)
@@ -298,8 +298,8 @@ def test_gate_fails_when_the_lane_cannot_come_up_or_a_scenario_stream_fails(tmp_
     assert len(commands) == 1  # no scenario runs on a lane that did not come up
 
     denied = _fake_gate(tmp_path / "second", commands, fail="--stream")
-    (denied.run_dir / "fake").mkdir(parents=True)
-    (denied.run_dir / "fake" / "fastloop.json").write_text("{}", encoding="utf-8")
+    denied.run_dir.mkdir(parents=True)
+    (denied.run_dir / "fastloop.json").write_text("{}", encoding="utf-8")
     result = denied.run()
     assert not result["passed"]
     assert result["scenarios"][0]["status"] == "fail"
@@ -308,8 +308,8 @@ def test_gate_fails_when_the_lane_cannot_come_up_or_a_scenario_stream_fails(tmp_
 def test_a_slow_gate_that_meets_every_contract_passes(tmp_path: Path, fake_check: None) -> None:
     ticks = iter(float(n * 400) for n in range(100))
     runner = _fake_gate(tmp_path, [], clock=lambda: next(ticks))
-    (runner.run_dir / "fake").mkdir(parents=True)
-    (runner.run_dir / "fake" / "fastloop.json").write_text("{}", encoding="utf-8")
+    runner.run_dir.mkdir(parents=True)
+    (runner.run_dir / "fastloop.json").write_text("{}", encoding="utf-8")
 
     summary = runner.run()
 
@@ -334,7 +334,12 @@ def test_scenarios_bring_up_and_run_on_separate_clusters_at_the_same_time(tmp_pa
 
     environment = SimpleNamespace(workspace=tmp_path / "ws")
     runner = gate.Gate(
-        tmp_path / "freeze", "3", tmp_path / "run", execute=execute, load_environment=lambda _dir: environment
+        tmp_path / "freeze",
+        "3",
+        tmp_path / "run",
+        execute=execute,
+        load_environment=lambda _dir: environment,
+        parallel=True,
     )
 
     runner.run()

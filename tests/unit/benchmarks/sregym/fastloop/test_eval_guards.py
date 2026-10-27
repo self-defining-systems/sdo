@@ -263,7 +263,7 @@ def test_fresh_reset_removes_only_prior_responder_grants(monkeypatch):
 
 
 def test_fresh_reset_keeps_the_lifecycle_grant_the_controller_runs_under(monkeypatch):
-    """One wildcard binding covers the controller and responder; deleting it strands a restart that skips the installer."""
+    """One wildcard binding covers controller and responder; deleting it strands a restart without the installer."""
     from benchmarks.sregym.fastloop import rbac
 
     calls = []

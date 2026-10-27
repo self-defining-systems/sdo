@@ -430,24 +430,27 @@ class Gate:
     image_tag: str = "fastloop"
     scenarios: tuple[Scenario, ...] = SCENARIOS
     up_backstop: float = WAIT_BACKSTOP_SECONDS
+    #: One cluster per scenario, all at once (the gate's real-time budget); otherwise scenarios share one cluster.
+    parallel: bool = False
 
-    def lane_dir(self, scenario: Scenario) -> Path:
-        """Each scenario owns one cluster and run dir, so scenarios run side by side."""
+    def lanes(self) -> list[tuple[int, Path, tuple[Scenario, ...]]]:
+        """(worker id, run dir, scenarios) per cluster: one cluster per scenario when parallel, else one shared."""
 
-        return self.run_dir / scenario.name
+        if self.parallel:
+            return [(worker, self.run_dir / s.name, (s,)) for worker, s in enumerate(self.scenarios)]
+        return [(0, self.run_dir, self.scenarios)]
 
-    def _step(self, argv: Sequence[str], timeout: float, lane_dir: Path) -> tuple[int, str]:
-        return self.execute(argv, cwd=self.code_root, timeout=timeout, log=lane_dir / "rehearse-harness.log")
+    def _step(self, argv: Sequence[str], timeout: float, lane_dir: Path | None = None) -> tuple[int, str]:
+        log = (lane_dir or self.run_dir) / "rehearse-harness.log"
+        return self.execute(argv, cwd=self.code_root, timeout=timeout, log=log)
 
     def run(self) -> dict[str, Any]:
         started = datetime.now(timezone.utc)
         t0 = self.clock()
-        if self.scenarios:
-            with ThreadPoolExecutor(max_workers=len(self.scenarios)) as pool:
-                lanes = list(pool.map(self._lane, enumerate(self.scenarios)))
-        else:
-            lanes = []
-        results = [result for result, _ in lanes]
+        lanes = self.lanes()
+        with ThreadPoolExecutor(max_workers=max(1, len(lanes))) as pool:
+            ran = list(pool.map(self._lane, lanes))
+        results = [result for lane_results, _ in ran for result in lane_results]
         seconds = self.clock() - t0
         summary = {
             "code_root": str(self.code_root),
@@ -456,7 +459,7 @@ class Gate:
             "run_dir": str(self.run_dir),
             "started_at": started.isoformat(),
             "seconds": round(seconds, 1),
-            "up_seconds": round(max((up for _, up in lanes), default=0.0), 1),
+            "up_seconds": round(max((up for _, up in ran), default=0.0), 1),
             "passed": bool(results) and all(r.passed for r in results),
             "scenarios": [{**asdict(r), "passed": r.passed} for r in results],
         }
@@ -464,13 +467,13 @@ class Gate:
         (self.run_dir / SUMMARY_FILENAME).write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
         return summary
 
-    def _lane(self, item: tuple[int, Scenario]) -> tuple[ScenarioResult, float]:
-        """Bring up this scenario's cluster, then run the scenario on it."""
+    def _lane(self, lane: tuple[int, Path, tuple[Scenario, ...]]) -> tuple[list[ScenarioResult], float]:
+        """Bring up one cluster, then run its scenarios on it in order."""
 
-        worker, scenario = item
-        lane_dir = self.lane_dir(scenario)
+        worker, lane_dir, scenarios = lane
         lane_dir.mkdir(parents=True, exist_ok=True)
         up_seconds = 0.0
+        setup_error = ""
         if not (lane_dir / "fastloop.json").is_file():
             up_started = self.clock()
             code, output = self._step(
@@ -478,9 +481,14 @@ class Gate:
             )
             up_seconds = self.clock() - up_started
             if code:
-                detail = f"fastloop up failed (exit {code}): {output[-400:]}"
-                return ScenarioResult(scenario.name, scenario.covers, "error", detail=detail), up_seconds
-        return self._scenario(scenario, lane_dir), up_seconds
+                setup_error = f"fastloop up failed (exit {code}): {output[-400:]}"
+        results = [
+            ScenarioResult(scenario.name, scenario.covers, "error", detail=setup_error)
+            if setup_error
+            else self._scenario(scenario, lane_dir)
+            for scenario in scenarios
+        ]
+        return results, up_seconds
 
     def _scenario(self, scenario: Scenario, lane_dir: Path) -> ScenarioResult:
         result = ScenarioResult(scenario.name, scenario.covers)
@@ -562,12 +570,12 @@ def build_parser() -> argparse.ArgumentParser:
 
 def dry_run(code_root: Path, run_dir: Path, lane: str, image_tag: str = "fastloop") -> str:
     lines = []
-    for worker, scenario in enumerate(SCENARIOS):
-        lane_dir = run_dir / scenario.name
+    for worker, lane_dir, scenarios in Gate(code_root, lane, run_dir, parallel=True).lanes():
         lines.append(" ".join(up_arguments(code_root, lane_dir, lane, image_tag, worker)))
-        lines.append(" ".join(reset_arguments(code_root, lane_dir)))
-        lines.append(" ".join(run_arguments(code_root, lane_dir, scenario, f"reh-{scenario.name}-<ts>")))
-        lines.append(f"# checks: {', '.join(scenario.checks)}  (covers {', '.join(scenario.covers)})")
+        for scenario in scenarios:
+            lines.append(" ".join(reset_arguments(code_root, lane_dir)))
+            lines.append(" ".join(run_arguments(code_root, lane_dir, scenario, f"reh-{scenario.name}-<ts>")))
+            lines.append(f"# checks: {', '.join(scenario.checks)}  (covers {', '.join(scenario.covers)})")
     return "\n".join(lines)
 
 
@@ -583,13 +591,13 @@ def main(argv: list[str] | None = None) -> int:
         print("rehearse-harness refused to start:\n  " + "\n  ".join(problems), file=sys.stderr)
         return 2
     run_dir.mkdir(parents=True, exist_ok=True)
-    gate = Gate(code_root, args.lane, run_dir, image_tag=args.image_tag)
+    gate = Gate(code_root, args.lane, run_dir, image_tag=args.image_tag, parallel=True)
     summary = gate.run()
     print(format_summary(summary))
     print(f"summary: {run_dir / SUMMARY_FILENAME}")
     if args.teardown:
-        for scenario in gate.scenarios:
-            gate._step(fastloop("down", "--run-dir", str(gate.lane_dir(scenario))), 300, gate.lane_dir(scenario))
+        for _, lane_dir, _ in gate.lanes():
+            gate._step(fastloop("down", "--run-dir", str(lane_dir)), 300, lane_dir)
     return 0 if summary["passed"] else 1
 
 

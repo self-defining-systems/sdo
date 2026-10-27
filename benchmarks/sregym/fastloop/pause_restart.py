@@ -10,7 +10,6 @@ fault is injected; the Job recreates it, and the harness then resumes it.
 from __future__ import annotations
 
 import json
-import os
 import time
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any

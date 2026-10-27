@@ -31,7 +31,6 @@ from benchmarks.sregym.adapter.persistent import (
     runtime_config_from_payload,
     runtime_config_payload,
     teardown,
-    wait_for_maintenance_ack,
 )
 from benchmarks.sregym.adapter.runtime import RuntimeConfig
 
