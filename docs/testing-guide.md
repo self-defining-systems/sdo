@@ -56,6 +56,14 @@ condition the test asserts instead. In `worker_registry`, `executeUntil` runs
 sub-second literal deadline whose context reaches an `Execute` call anywhere in
 `sdo/operator`; `scripts/check_errors.sh` runs it with its negative controls.
 
+Counted sleep loops in Go and Python tests also race loaded CI when their literal
+sleep budget is below five seconds. The Go `TestNoShortCountedPollingInTests` and
+Python `tests/unit/test_polling_policy.py` AST checks run in `check_errors.sh` with
+negative controls. Wait for the asserted condition with a generous failure ceiling
+(or a notification). Intentional timing loops can carry a comment on the loop or
+the preceding line: `test-polling: allow -- <reason>`. Nested loops own their
+waiting budgets; paced event generation is not a polling deadline.
+
 ## SREGym pin ancestry
 
 `scripts/check_submodule_pin.py` (a `check_errors.sh` step) fails when the
