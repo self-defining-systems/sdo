@@ -54,7 +54,8 @@ type PriorOutcomeEvidence struct {
 }
 
 type IncidentRequest struct {
-	NamespaceOnboarding *contracts.NamespaceOnboarding
+	DisabledSetupDetectors []*contracts.DisabledSetupDetector
+	NamespaceOnboarding    *contracts.NamespaceOnboarding
 	// ObservationGeneration binds the incident to accepted scope and installer policy.
 	ObservationGeneration string
 	SchemaVersion         string
