@@ -232,3 +232,25 @@ def test_busy_host_waits_before_starting_the_guarded_native_runner(plan: Sequenc
     assert parsed.cleanup_passes == 2
     assert parsed.provider == "codex"
     assert parsed.model == "gpt-6-luna"
+
+
+@pytest.mark.parametrize("oracle_success", [False, True])
+def test_row_start_tier2_does_not_gate_finished_rows_on_recovery(plan: SequencePlan, oracle_success: bool) -> None:
+    def execute(p: SequencePlan, index: int, path: Path) -> None:
+        finish(p, index, path)
+        record = json.loads(path.read_text())
+        record.update(
+            oracle={"kind": "composition", "success": oracle_success},
+            cleanup_skipped_reason="row_start_tier2",
+            full_cleanup_verified=False,
+            cleanup_passes_verified=0,
+            recovery_finished_at=None,
+            recovery_oracle=None,
+        )
+        path.write_text(json.dumps(record) + "\n")
+
+    run_sequence(plan, execute=execute)
+    for index in range(2):
+        finished = json.loads((plan.journal_dir / f"{index:03d}" / "finished.json").read_text())
+        assert finished["oracle"]["success"] is oracle_success
+    assert (plan.journal_dir / "complete.json").is_file()

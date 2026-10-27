@@ -248,11 +248,16 @@ def dispatch(
             if (
                 record.error
                 or record.infra_error
-                or record.recovery_error
-                or record.cleanup_skipped_reason
-                or not record.full_cleanup_verified
-                or record.recovery_oracle is None
-                or not record.recovery_oracle.success
+                or (
+                    record.cleanup_skipped_reason != "row_start_tier2"
+                    and (
+                        record.recovery_error
+                        or record.cleanup_skipped_reason
+                        or not record.full_cleanup_verified
+                        or record.recovery_oracle is None
+                        or not record.recovery_oracle.success
+                    )
+                )
             ):
                 raise RuntimeError(
                     f"slot {index} did not pass full cleanup and recovery: {record.error or record.recovery_error}"

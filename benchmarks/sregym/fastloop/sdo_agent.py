@@ -38,10 +38,11 @@ from benchmarks.sregym.adapter import (
     run_persistent_stage,
     wait_for,
 )
-from benchmarks.sregym.fastloop.loop import AgentOutcome, InjectionWindow, RecoveryWaitTimeout
+from benchmarks.sregym.fastloop.loop import AgentOutcome, InjectionWindow, RecoveryWaitTimeout, ResolutionGradePoint
 from benchmarks.sregym.fastloop.records import AgentName, PostClosureWait, RecoveryTrigger, TokenCounts
 from benchmarks.sregym.fastloop.replay import CheckpointStore, capture_checkpoints
 from benchmarks.sregym.protocol import receipt_resolution
+from benchmarks.sregym.protocol.injection import ensure_incident_follows_injection
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -256,6 +257,7 @@ class SdoPersistentAgent:
         keep_running: bool = False,
     ) -> None:
         self._keep_running = keep_running
+        self._on_verified: Callable[[ResolutionGradePoint], None] | None = None
         self._settings = settings
         self._ops = ops
         self._lifecycle_inputs = lifecycle_inputs
@@ -284,6 +286,21 @@ class SdoPersistentAgent:
             reflection_wait_seconds=settings.reflection_wait_seconds,
         )
 
+    def resolve_at_closure(
+        self,
+        index: int,
+        problem_id: str,
+        inject: Callable[[], InjectionWindow],
+        on_verified: Callable[[ResolutionGradePoint], None],
+    ) -> AgentOutcome:
+        """Observe closure within the agent's complete (possibly composite) resolution path."""
+        previous = self._on_verified
+        self._on_verified = on_verified
+        try:
+            return self.resolve(index, problem_id, inject)
+        finally:
+            self._on_verified = previous
+
     def resolve(self, index: int, problem_id: str, inject: Callable[[], InjectionWindow]) -> AgentOutcome:
         settings = self._settings
         lifecycle = self._lifecycle_inputs()
@@ -293,6 +310,13 @@ class SdoPersistentAgent:
         def gated_inject() -> None:
             windows.append(inject())
 
+        def measure_verified(incident_id: str, detected_at: datetime | None, verified_at: datetime | None) -> None:
+            if not windows:
+                raise RuntimeError("the controller verified an incident without the fault being injected")
+            ensure_incident_follows_injection(incident_id, detected_at, windows[0].started_at)
+            if self._on_verified is not None:
+                self._on_verified(ResolutionGradePoint(incident_id, verified_at))
+
         resolution = run_persistent_stage(
             self.stage_inputs(f"fastloop-{index:03d}", receipt_dir, lifecycle.fingerprint),
             ops=self._ops,
@@ -300,6 +324,7 @@ class SdoPersistentAgent:
             inject=gated_inject,
             clock=self._clock,
             pause_after_verified=not self._keep_running,
+            on_verified=measure_verified,
         )
         self._checkpoint(index, str(resolution["incident_id"]), receipt_dir)
         if not windows:

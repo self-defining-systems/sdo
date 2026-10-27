@@ -10,8 +10,9 @@ A namespace the wipe deletes may stay Terminating because an injected or harness
 finalizer nobody will ever run (a fault's cleanup token). Those objects are the wipe's own state, so the
 wipe removes their finalizers, within the same deadline, and records each one in the receipt.
 
-Tier 2 concerns the application namespaces. The warm app is kept when the previous row recovered
-cleanly, the restore invariant passes against the captured baseline and every app pod is healthy.
+Tier 2 concerns the application namespaces. Incoming data faults, last lane-injected data faults and
+unknown lane injection state always recreate the app. Otherwise the warm app is kept when the previous
+row recovered cleanly, the restore invariant passes and every app pod is healthy.
 Otherwise the app namespaces are deleted, PVCs and the data in them included, and the app is deployed
 again from the image cache: fault state that lives in a database is not a Kubernetes object, so no
 restore of objects can undo it.
@@ -289,7 +290,9 @@ def wipe_environment(
 class Tier2Trigger(StrEnum):
     UNCLEAN_ATTEMPT = "unclean_attempt"
     PREVIOUS_ROW_UNRECOVERED = "previous_row_unrecovered"
-    PREVIOUS_ROW_DATA_FAULTS = "previous_row_data_faults"
+    CURRENT_ROW_DATA_FAULTS = "current_row_data_faults"
+    LANE_LAST_INJECTION_DATA_FAULTS = "lane_last_injection_data_faults"
+    LANE_INJECTION_UNKNOWN = "lane_injection_unknown"
     RESTORE_INVARIANT = "restore_invariant"
     PODS_UNHEALTHY = "pods_unhealthy"
 
@@ -298,21 +301,19 @@ class Tier2Trigger(StrEnum):
 class Tier2Reason:
     trigger: Tier2Trigger
     detail: str
-    # Data-level faults the previous row injected, whatever its recovery; the receipt records them.
+    # Catalog-classified data-level faults causing this decision.
     data_faults: tuple[str, ...] = ()
 
 
 UNRECOVERED_PREFIX = "unrecovered: "
-DATA_FAULTS_PREFIX = "data_faults: "
 
 
 class AttemptMarker:
     """Present from the moment a row's attempt starts until it ends with every injected row recovered.
 
     A survivor with no content means the attempt died; one that names rows means they were injected and
-    the harness could not verify their recovery; one that names data-level faults means a fault was
-    injected whose state lives in the application's data, recovered or not. Each makes the next row
-    recreate the application.
+    the harness could not verify their recovery. Either makes the next row recreate the application.
+    Data-level fault history is owned separately by LaneInjectionState.
     """
 
     def __init__(self, run_dir: Path) -> None:
@@ -325,19 +326,10 @@ class AttemptMarker:
             return None
         lines = content.splitlines()
         rows = next((line[len(UNRECOVERED_PREFIX) :] for line in lines if line.startswith(UNRECOVERED_PREFIX)), "")
-        faults = next((line[len(DATA_FAULTS_PREFIX) :] for line in lines if line.startswith(DATA_FAULTS_PREFIX)), "")
-        data_faults = tuple(item.strip() for item in faults.split(", ") if item.strip())
         if rows.strip():
             return Tier2Reason(
                 Tier2Trigger.PREVIOUS_ROW_UNRECOVERED,
                 f"previous row injected and not verified recovered: {rows.strip()}",
-                data_faults,
-            )
-        if data_faults:
-            return Tier2Reason(
-                Tier2Trigger.PREVIOUS_ROW_DATA_FAULTS,
-                f"previous row injected faults whose state lives in application data: {', '.join(data_faults)}",
-                data_faults,
             )
         return Tier2Reason(Tier2Trigger.UNCLEAN_ATTEMPT, "previous attempt did not end cleanly")
 
@@ -345,16 +337,14 @@ class AttemptMarker:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.path.write_text(f"{os.getpid()}\n", encoding="utf-8")
 
-    def end(self, unrecovered: Collection[str], data_faults: Collection[str] = ()) -> None:
-        """The run ended: forget the attempt unless it left unrecovered rows or injected data-level faults."""
-        if not unrecovered and not data_faults:
+    def end(self, unrecovered: Collection[str]) -> None:
+        """The run ended: forget the attempt unless it left unrecovered rows."""
+        if not unrecovered:
             self.path.unlink(missing_ok=True)
             return
         lines = [str(os.getpid())]
         if unrecovered:
             lines.append(f"{UNRECOVERED_PREFIX}{', '.join(unrecovered)}")
-        if data_faults:
-            lines.append(f"{DATA_FAULTS_PREFIX}{', '.join(data_faults)}")
         self.path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
@@ -372,20 +362,74 @@ def unrecovered_rows(records: Iterable[Any]) -> tuple[str, ...]:
     )
 
 
-def data_fault_rows(records: Iterable[Any], data_faults: Mapping[str, Sequence[str]]) -> tuple[str, ...]:
-    """``problem: fault`` for each data-level fault of a row that was, or may have been, injected.
+class LaneInjectionState:
+    """Durable lane facts written at the injection boundary, never reconstructed from result journals.
 
-    ``data_faults`` maps a problem id to the names of its faults whose state lives in application data; the
-    fault catalog owns that classification. A composite record (``a+b``) covers each of its problems.
-    Recovery does not matter: a database user or role that was changed stays changed in the PVC.
+    Missing, malformed and pending records are unknown. Write pending before the worker can mutate the
+    app: a killed caller or a partial injection cannot leave a stale clean record behind.
     """
-    return tuple(
-        f"{problem}: {fault}"
-        for record in records
-        if _attempted(record)
-        for problem in record.problem_id.split("+")
-        for fault in data_faults.get(problem, ())
-    )
+
+    def __init__(self, kubeconfig: Path, namespace: str) -> None:
+        if not namespace or "/" in namespace or "\\" in namespace:
+            raise ValueError("lane injection state requires an application namespace")
+        self.path = kubeconfig.with_name(f"{kubeconfig.name}.{namespace}.last-injection.json")
+
+    def _write(self, problems: Sequence[str], faults: Sequence[str], *, complete: bool) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = self.path.with_name(self.path.name + ".tmp")
+        temporary.write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "complete": complete,
+                    "problems": list(problems),
+                    "data_faults": list(faults),
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        os.replace(temporary, self.path)
+
+    def begin(self, problems: Sequence[str]) -> None:
+        self._write(problems, (), complete=False)
+
+    def finish(self, problems: Sequence[str], catalog: Mapping[str, Sequence[str]]) -> None:
+        if not all(problem in catalog for problem in problems):
+            return  # An undescribed injection has unknown data effects.
+        self._write(
+            problems, tuple(f"{problem}: {fault}" for problem in problems for fault in catalog[problem]), complete=True
+        )
+
+    def reason(self) -> Tier2Reason | None:
+        unknown = Tier2Reason(Tier2Trigger.LANE_INJECTION_UNKNOWN, "lane's last injection state is unknown")
+        try:
+            document = json.loads(self.path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return unknown
+        if (
+            not isinstance(document, dict)
+            or type(document.get("version")) is not int
+            or document.get("version") != 1
+            or document.get("complete") is not True
+        ):
+            return unknown
+        problems, faults = document.get("problems"), document.get("data_faults")
+        if (
+            not isinstance(problems, list)
+            or not problems
+            or not all(isinstance(item, str) and item for item in problems)
+            or not isinstance(faults, list)
+            or not all(isinstance(item, str) and item for item in faults)
+        ):
+            return unknown
+        if faults:
+            return Tier2Reason(
+                Tier2Trigger.LANE_LAST_INJECTION_DATA_FAULTS,
+                "lane's last injection changed application data: " + ", ".join(faults),
+                tuple(faults),
+            )
+        return None
 
 
 def await_healthy_pods(
@@ -433,12 +477,25 @@ def tier2_reason(
     marker: AttemptMarker,
     restore_invariant: Callable[[], None],
     unhealthy_pods: Callable[[], Sequence[str]],
+    *,
+    lane_state: LaneInjectionState | None = None,
+    current_data_faults: Sequence[str] = (),
 ) -> Tier2Reason | None:
     """Why the application must be recreated, or ``None`` when the warm app stays.
 
     The invariant raises ``ValueError``/``RuntimeError`` when the app no longer matches its captured
     baseline. ``unhealthy_pods`` waits its own short bound and returns the pods still not serving.
     """
+    if current_data_faults:
+        return Tier2Reason(
+            Tier2Trigger.CURRENT_ROW_DATA_FAULTS,
+            "incoming row changes application data: " + ", ".join(current_data_faults),
+            tuple(current_data_faults),
+        )
+    if lane_state is not None:
+        history = lane_state.reason()
+        if history is not None:
+            return history
     pending = marker.pending()
     if pending is not None:
         return pending
@@ -464,6 +521,7 @@ class WipeReceipt:
     tier2_namespaces: tuple[str, ...]
     force_finalized: tuple[str, ...]
     previous_row_data_faults: tuple[str, ...]
+    current_row_data_faults: tuple[str, ...]
 
     def write(self, directory: Path) -> Path:
         directory.mkdir(parents=True, exist_ok=True)
@@ -513,7 +571,10 @@ def run_tier2(
         reason.detail if reason is not None else None,
         recreated,
         force_finalized,
-        reason.data_faults if reason is not None else (),
+        reason.data_faults
+        if reason is not None and reason.trigger is Tier2Trigger.LANE_LAST_INJECTION_DATA_FAULTS
+        else (),
+        reason.data_faults if reason is not None and reason.trigger is Tier2Trigger.CURRENT_ROW_DATA_FAULTS else (),
     )
 
 

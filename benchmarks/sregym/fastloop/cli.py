@@ -48,8 +48,8 @@ from benchmarks.sregym.fastloop.stream import load_stream_config
 from benchmarks.sregym.fastloop.wipe import (
     AttemptMarker,
     KubectlLaneCluster,
+    LaneInjectionState,
     application_pod_problems,
-    data_fault_rows,
     run_tier2,
     unrecovered_rows,
 )
@@ -673,8 +673,12 @@ def _recapture_application_baseline(environment: FastloopEnvironment) -> None:
     )
 
 
-def _application_needs_redeploy(environment: FastloopEnvironment, marker: AttemptMarker) -> Tier2Reason | None:
-    """Tier 2 trigger: an unrecovered or data-faulted previous row, a failed restore invariant, or a stuck pod."""
+def _application_needs_redeploy(
+    environment: FastloopEnvironment,
+    marker: AttemptMarker,
+    current_data_faults: tuple[str, ...] = (),
+) -> Tier2Reason | None:
+    """Decide tier 2 from incoming faults, lane injection facts and live application health."""
     from benchmarks.sregym.fastloop.admission import workload_identity
     from benchmarks.sregym.fastloop.clean_start import assert_clean_baseline
     from benchmarks.sregym.fastloop.wipe import await_healthy_pods, tier2_reason
@@ -691,7 +695,13 @@ def _application_needs_redeploy(environment: FastloopEnvironment, marker: Attemp
             poll_seconds=wait_for(WaitKind.POLL),
         )
 
-    return tier2_reason(marker, invariant, stuck_pods)
+    return tier2_reason(
+        marker,
+        invariant,
+        stuck_pods,
+        lane_state=LaneInjectionState(environment.kubeconfig, environment.namespace),
+        current_data_faults=current_data_faults,
+    )
 
 
 def deploy_with_setup_proof(
@@ -825,6 +835,7 @@ def _run(args: argparse.Namespace) -> int:
         encoding="utf-8",
     )
     config = LoopConfig(
+        row_start_tier2=_wipes_at_row_start(args, environment) and (len(stream) if stream else args.incidents) == 1,
         delivery_record_path=environment.run_dir / "image_delivery.jsonl",
         image_delivery=environment.image_delivery,
         image_delivery_reason=environment.image_delivery_reason,
@@ -844,7 +855,12 @@ def _run(args: argparse.Namespace) -> int:
     )
     write_loop_manifest(config)
     marker = AttemptMarker(environment.run_dir)
-    redeploy_reason = _application_needs_redeploy(environment, marker) if tier1 is not None else None
+    data_faults = {key: item.data_level_faults() for key, item in descriptions.items()}
+    incoming = config.stream[0] if config.stream else (config.problems[0],)
+    incoming_data_faults = tuple(f"{key}: {fault}" for key in incoming for fault in data_faults.get(key, ()))
+    redeploy_reason = (
+        _application_needs_redeploy(environment, marker, incoming_data_faults) if tier1 is not None else None
+    )
     if redeploy_reason is not None:
         logger.info(
             "Tier-2 recreate of the application: %s (%s)", redeploy_reason.trigger.value, redeploy_reason.detail
@@ -905,6 +921,8 @@ def _run(args: argparse.Namespace) -> int:
             health_timeout_seconds=args.health_timeout,
             health_poll_seconds=wait_for(WaitKind.POLL_FAST),
             before_inject=before_inject,
+            injection_state=LaneInjectionState(environment.kubeconfig, environment.namespace),
+            data_faults=data_faults,
             require_full_cleanup=args.require_full_cleanup,
             require_faulty_oracle=getattr(args, "require_faulty_oracle", False),
             required_faulty_components=tuple(getattr(args, "require_faulty_component", [])),
@@ -955,10 +973,7 @@ def _run(args: argparse.Namespace) -> int:
                 faults_by_incident,
                 reset_failed if args.continue_on_error else None,
             )
-    marker.end(
-        unrecovered_rows(records),
-        data_fault_rows(records, {key: item.data_level_faults() for key, item in descriptions.items()}),
-    )
+    marker.end(unrecovered_rows(records))
     _print_summary(records)
     print(f"results: {config.results_path}")
     return (

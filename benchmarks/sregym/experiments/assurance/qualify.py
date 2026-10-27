@@ -27,6 +27,7 @@ from typing import Any
 
 from benchmarks.sregym.fastloop.environment import FastloopEnvironment
 from benchmarks.sregym.fastloop.fault_driver import WORKER_OP_TIMEOUT_SECONDS, SregymFaultDriver
+from benchmarks.sregym.fastloop.wipe import LaneInjectionState
 from benchmarks.sregym.fastloop.worker_client import SregymWorker, worker_argv
 
 PHASE_ONE = (
@@ -136,7 +137,12 @@ def main(argv: list[str] | None = None) -> int:
             baseline_path=str(environment.baseline_path),
             timeout=2400,
         )
-        driver = SregymFaultDriver(worker, namespace=environment.namespace, health_timeout_seconds=600)
+        driver = SregymFaultDriver(
+            worker,
+            namespace=environment.namespace,
+            health_timeout_seconds=600,
+            injection_state=LaneInjectionState(environment.kubeconfig, environment.namespace),
+        )
         for problem_id in problems:
             for trial in range(1, args.trials + 1):
                 record = qualify(worker, driver, environment.namespace, problem_id, trial)

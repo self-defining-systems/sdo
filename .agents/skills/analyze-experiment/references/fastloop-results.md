@@ -139,3 +139,30 @@ and lock tests prove plumbing; live runs establish learning and speedup.
 Install-time pending namespace inventory records pre-existing environment UID/configuration/ownership digests independently of healthy onboarding. A rejected health window preserves only matching captured observations; replacement or changed objects remain unexplained presence drift. Check the immutable pending snapshot and install boundary; source-declared faults, health/reachability checks and objects added after that boundary remain active. This rule does not label, delete or recreate environment objects.
 For private lane journals and warm-app conversion receipts, see
 [restartable lanes and application conversion](fastloop-sequences.md).
+
+### Resolution grading and row-start recovery
+
+The aggregate `oracle` is sampled once when SDO's verified closure is first
+observed, before controller pause, runtime export, reflection, or follow-up
+incident waits. `oracle_finished_at` identifies this sample; `health_clear_s`
+continues to derive from the original native closure health timestamp.
+
+A single-row SDO invocation with row-start wipes records
+`cleanup_skipped_reason: row_start_tier2`. It does not call per-fault restore,
+wait for follow-up incidents for restore, or sample a recovery oracle. Recovery
+timestamps/oracles remain absent, `full_cleanup_verified` is false, and
+`cleanup_passes_verified` is zero. These mean the lane needs tier 2, not that the
+graded row failed. The attempt marker carries the injected problem IDs; the next
+row's wipe receipt records `previous_row_unrecovered` and the recreated namespaces.
+Legacy warm streams without a row-start rebuild retain their recovery fence.
+
+`oracle_incident_id` and `oracle_resolved_at` bind the grade to the first
+verified closure. A composite may internally drain reflection and handle later
+incidents before returning; its existing aggregate `resolved_at` and native
+health-clear timing remain unchanged. `closure_to_grade_seconds` uses the
+oracle's own closure timestamp when present, falling back to `resolved_at` for
+older rows. The grade is never resampled after the later incidents.
+The immutable `incidents.grades/<index>.json` checkpoint is published at that
+sample, including during composite resolution before its first receipt drain.
+Responder/reflection accounting completed later belongs to the final row, not
+to a replacement grade checkpoint.
