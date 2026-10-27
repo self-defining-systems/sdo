@@ -4,21 +4,19 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 tag="${SDO_IMAGE_TAG:-v0.1.0}"
 # Provenance must describe the bytes Bake consumes, including untracked sources.
-source_changes="$(git -C "${repo_root}" status --porcelain --untracked-files=normal -- sdo/operator scripts/build_sdo_images.sh scripts/sdo-images.hcl)"
+source_changes="$(git -C "${repo_root}" status --porcelain --untracked-files=normal -- scripts/build_sdo_images.sh scripts/sdo-images.hcl)"
 if [[ -n "${source_changes}" ]]; then
   echo "image source has uncommitted changes; commit before building source-bound images" >&2
   exit 1
 fi
 export SDO_SOURCE_REVISION="$(git -C "${repo_root}" rev-parse HEAD)"
-# Source-checked images also carry the tree identity of exactly the paths their
-# Dockerfile stages read, so commits outside those paths reuse them.
+# Source-checked images also carry the identity of exactly the files their build
+# context sends (image_provenance.py), so commits outside those files reuse them.
 provenance="${repo_root}/benchmarks/sregym/fastloop/image_provenance.py"
 for target in controller validator; do
-  built_paths="$(cd "${repo_root}" && python3 "${provenance}" paths "${target}" HEAD)"
-  # shellcheck disable=SC2086 # one repository-relative path per line
-  built_changes="$(git -C "${repo_root}" status --porcelain --untracked-files=normal -- ${built_paths})"
+  built_changes="$(cd "${repo_root}" && python3 "${provenance}" dirty "${target}" HEAD)"
   if [[ -n "${built_changes}" ]]; then
-    echo "image source has uncommitted changes; commit before building source-bound images" >&2
+    echo "image source has uncommitted changes; commit before building source-bound images: ${built_changes}" >&2
     exit 1
   fi
 done

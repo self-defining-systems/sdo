@@ -44,6 +44,52 @@ def test_benchmarks_only_commit_keeps_images_built_from_its_parent(image_repo, m
     preflight(monkeypatch, image_repo, revision_labels(built))
 
 
+@pytest.mark.parametrize(
+    "path", ["sdo/operator/main_test.go", "sdo/operator/testdata/case.json", "sdo/operator/README.md"]
+)
+def test_files_the_build_context_drops_never_invalidate_images(image_repo, monkeypatch, path):
+    built = image_repo.head
+    image_repo.commit({path: (image_repo.path / path).read_text() + "changed\n"}, "test-only change")
+    image_repo.commit({"sdo/operator/new_test.go": "package main\n"}, "new test")
+    preflight(monkeypatch, image_repo, revision_labels(built))
+
+
+def test_test_file_edits_in_the_worktree_are_not_uncommitted_image_source(image_repo, monkeypatch):
+    built = image_repo.head
+    (image_repo.path / "sdo/operator/main_test.go").write_text("package main // edited\n")
+    (image_repo.path / "sdo/operator/other_test.go").write_text("package main\n")
+    preflight(monkeypatch, image_repo, revision_labels(built))
+    (image_repo.path / "sdo/operator/other.go").write_text("package main\n")
+    with pytest.raises(ValueError, match="uncommitted"):
+        preflight(monkeypatch, image_repo, revision_labels(built))
+
+
+def test_tree_label_ignores_test_files_and_follows_production_go(image_repo):
+    from benchmarks.sregym.fastloop.image_provenance import image_source
+
+    before = image_source(image_repo.path, "HEAD", "controller").identity
+    image_repo.commit({"sdo/operator/main_test.go": "package main // edited\n"}, "test-only")
+    assert image_source(image_repo.path, "HEAD", "controller").identity == before
+    image_repo.commit({"sdo/operator/main.go": "package main // edited\n"}, "production")
+    assert image_source(image_repo.path, "HEAD", "controller").identity != before
+
+
+def test_the_real_build_context_sends_no_go_tests():
+    from benchmarks.sregym.fastloop.image_provenance import image_source
+
+    for target in ("controller", "validator"):
+        files = [path for path, _ in image_source(ROOT, "HEAD", target).objects]
+        assert not [path for path in files if path.endswith("_test.go") or "/testdata/" in path]
+        assert "sdo/operator/go.mod" in files
+
+
+def test_unsupported_dockerignore_exceptions_fail_closed():
+    from benchmarks.sregym.fastloop.image_provenance import _ignore_matcher
+
+    with pytest.raises(ValueError, match="exception"):
+        _ignore_matcher("**/*_test.go\n!keep_test.go\n")
+
+
 @pytest.mark.parametrize("path", ["sdo/operator/main.go", "sdo/agents/registrations/responder.json", ".dockerignore"])
 def test_change_under_a_built_path_names_the_differing_file(image_repo, monkeypatch, path):
     built = image_repo.head
@@ -90,12 +136,12 @@ def test_uncommitted_built_path_is_rejected(image_repo, monkeypatch):
 def test_build_paths_follow_the_real_dockerfile_stage_graph():
     from benchmarks.sregym.fastloop.image_provenance import image_source
 
-    assert image_source(ROOT, "HEAD", "controller").paths == (
+    assert image_source(ROOT, "HEAD", "controller").roots == (
         ".dockerignore",
         "sdo/agents/registrations",
         "sdo/operator",
     )
-    assert image_source(ROOT, "HEAD", "validator").paths == (".dockerignore", "sdo/operator")
+    assert image_source(ROOT, "HEAD", "validator").roots == (".dockerignore", "sdo/operator")
 
 
 def test_every_source_checked_image_is_labelled_with_its_tree():
