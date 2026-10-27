@@ -121,7 +121,12 @@ def test_public_admission_uses_selected_arm(tmp_path, monkeypatch, code_path, ru
     gate = admission.LaneAdmission(
         environment, SimpleNamespace(runtime_state=state), tmp_path / "admission", code_path=code_path
     )
-    complete = {"complete": {"acceptedCommit": "a" * 40, "objects": [{}]}, "pending": None}
+    complete = {
+        "complete": {"acceptedCommit": "a" * 40, "objects": [{}]},
+        "pending": None,
+        "rejected": None,
+        "controller_failed": None,
+    }
     monkeypatch.setattr(admission.LaneAdmission, "_onboarding", lambda self, control: complete)
     monkeypatch.setattr(gate, "check_resources", lambda *args: None)
     monkeypatch.setattr(rbac, "verify_rbac", lambda *args: {"passed": True})

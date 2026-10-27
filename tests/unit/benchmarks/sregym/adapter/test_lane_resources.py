@@ -494,6 +494,7 @@ def test_collection_checks_current_lifetimes_after_memory_sample(snapshot, monke
         return subprocess.CompletedProcess(command, 0, json.dumps(document), "")
 
     monkeypatch.setattr(lanes.subprocess, "run", run)
+    monkeypatch.setattr(lanes.time, "sleep", lambda seconds: None)
     monkeypatch.setattr(lanes, "host_available_memory", lambda: 32 * Gi)
     if terminal_phase == "Running":
         with pytest.raises(ValueError, match="validator-canary/network-canary memory measurement unavailable"):
@@ -508,3 +509,49 @@ def test_collection_checks_current_lifetimes_after_memory_sample(snapshot, monke
                 "budget_bytes": 2 * Gi,
             }
         ]
+
+
+def test_container_started_between_the_two_reads_is_measured_on_the_next_read(snapshot, monkeypatch, tmp_path):
+    """C20: the pod list saw a canary the kubelet summary had not sampled yet; the next read agrees."""
+    from copy import deepcopy
+
+    canary = {
+        "metadata": {"namespace": "hotel-reservation-sdo", "name": "validator-canary", "uid": "canary-uid"},
+        "spec": {"containers": [{"name": "network-canary", "image": "registry/canary:fixed"}]},
+        "status": {"phase": "Running", "containerStatuses": [{"name": "network-canary", "state": {"running": {}}}]},
+    }
+    sampled = {
+        "podRef": {"namespace": "hotel-reservation-sdo", "name": "validator-canary", "uid": "canary-uid"},
+        "containers": [
+            {"name": "network-canary", "memory": {"time": "2026-10-25T19:59:50Z", "workingSetBytes": 8 * 1024**2}}
+        ],
+    }
+    summaries_read = 0
+
+    def run(command, **kwargs):
+        nonlocal summaries_read
+        if "namespaces" in command:
+            document = snapshot["namespaces"]
+        elif "nodes" in command:
+            document = snapshot["nodes"]
+        elif "--raw" in command:
+            summaries_read += 1
+            document = deepcopy(snapshot["summary"])
+            if summaries_read > 1:
+                document["pods"].append(sampled)
+        elif "pods" in command:
+            document = deepcopy(snapshot["pods"])
+            document["items"].append(deepcopy(canary))
+        else:
+            raise AssertionError(command)
+        return subprocess.CompletedProcess(command, 0, json.dumps(document), "")
+
+    monkeypatch.setattr(lanes.subprocess, "run", run)
+    monkeypatch.setattr(lanes.time, "sleep", lambda seconds: None)
+    monkeypatch.setattr(lanes, "host_available_memory", lambda: 32 * Gi)
+    evidence = lanes.assert_lane_resources(tmp_path / "kubeconfig", app_namespaces={"hotel-reservation"}, now=NOW)
+    assert evidence["passed"]
+    assert summaries_read == 2
+    assert "hotel-reservation-sdo/validator-canary/network-canary" in {
+        row["component"] for row in evidence["containers"]
+    }
