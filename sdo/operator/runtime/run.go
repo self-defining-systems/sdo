@@ -156,11 +156,6 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	flags.SetOutput(stderr)
 	codePathName := flags.String("code-path", "go", "programming-model plugin set")
 	codePathOverrides := flags.String("code-path-overrides", "", "optional named code-path seam overrides as JSON")
-	var codePathFlagConfig CodePathConfig
-	flags.Func("response-stages", "ordered response stages; overrides the selected code path", func(value string) error {
-		codePathFlagConfig.Overrides.ResponseStages = strings.Split(value, ",")
-		return nil
-	})
 	namespace := flags.String("namespace", "", "Kubernetes namespace to observe")
 	controlNamespace := flags.String(
 		"control-namespace",
@@ -260,9 +255,6 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	selectedPathConfig, err := codePathFromFlags(*codePathName, *codePathOverrides)
 	if err != nil {
 		return err
-	}
-	if codePathFlagConfig.Overrides.ResponseStages != nil {
-		selectedPathConfig.Overrides.ResponseStages = codePathFlagConfig.Overrides.ResponseStages
 	}
 	codePathRegistry := NewCodePathRegistry()
 	selectedCodePath, err := codePathRegistry.Resolve(selectedPathConfig)
@@ -593,11 +585,10 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			apiProxyImage = launchConfig.GetValidatorImage()
 		}
 		dispatcher = KubernetesJobDispatcher{
-			AcceptedRepository: resolvedRoot,
-			CoverageProvider:   selectedCodePath.Coverage,
-			APIProxyImage:      apiProxyImage,
-			ToolchainImage:     *toolchainImage,
-			Client:             bootstrapProvider.Client, Namespace: *controlNamespace, Registry: registeredWorkers, AgentID: *responderAgentID,
+			CoverageProvider: selectedCodePath.Coverage,
+			APIProxyImage:    apiProxyImage,
+			ToolchainImage:   *toolchainImage,
+			Client:           bootstrapProvider.Client, Namespace: *controlNamespace, Registry: registeredWorkers, AgentID: *responderAgentID,
 			ServiceAccount: "sdo-responder", RepositoryPVC: *repositoryPVC,
 			RepositoryMountPath: *repositoryMountPath, RepositoryPVCSubPath: *repositoryPVCSubPath,
 			CredentialsSecret: *credentialsSecret, PollInterval: time.Second,

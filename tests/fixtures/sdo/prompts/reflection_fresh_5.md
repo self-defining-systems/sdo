@@ -264,7 +264,6 @@ Current outcome:
   "response_loop_exhausted": false,
   "drift_events": [],
   "resolution_path": "",
-  "prior_stages": [],
   "reflection_skip_reason": "",
   "sdk_gaps": [],
   "undetected_causes": [],

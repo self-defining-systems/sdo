@@ -81,8 +81,6 @@ ControllerObservationFailure = controller_observation_pb2.ControllerObservationF
 ControllerObservation = controller_observation_pb2.ControllerObservation
 
 
-StageReport = messages_pb2.StageReport
-StageMitigation = messages_pb2.StageMitigation
 PlaybookCoverage = program_pb2.PlaybookCoverage
 PlaybookMatch = program_pb2.PlaybookMatch
 ProgramSpec = program_pb2.ProgramSpec
