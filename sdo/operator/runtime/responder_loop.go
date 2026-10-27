@@ -181,6 +181,7 @@ type ResponderLoop struct {
 	Trust                 map[string]ProgramTrust
 	CorpusSessionRoot     string
 	capturePhase          string
+	sourceCompared        map[string]bool
 	timing                toolTiming
 	preApplyCaptured      bool
 	saveToolState         func(context.Context, []byte) error
@@ -516,17 +517,13 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 		}
 		if l.CorpusSessionRoot != "" {
 			l.capturePhase = "open@detect"
-			view, err := l.snapshotView(ctx)
-			if err != nil {
+			if _, err := l.snapshotView(ctx); err != nil {
 				response.Error = err.Error()
 				break
 			}
 			// An object without an acceptance record compares as unknown;
 			// accepted source itself is still shown.
-			if _, err := view.DiffAgainstSource(*request.Ref); err != nil && !errors.Is(err, ErrAcceptanceRecordUnavailable) {
-				response.Error = err.Error()
-				break
-			}
+			l.recordSourceComparisons(ctx, l.capturePhase, *request.Ref)
 		}
 		object, err := acceptedIncidentManifest(ctx, l.Executor.Source, l.Request.SourceCommit, l.Request.Namespace, *request.Ref)
 		if errors.Is(err, ErrAcceptedManifestAbsent) {
@@ -732,6 +729,9 @@ func (l *ResponderLoop) diagnose(ctx context.Context, findings []sdk.Finding) []
 	l.rememberMatchedViews(ctx, runs, view)
 	l.lastDiagnosisView = view
 	l.runs = append(l.runs, runs...)
+	if l.capturePhase != "" {
+		l.recordSourceComparisons(ctx, l.capturePhase, findingCaptureRefs(findings)...)
+	}
 	return runs
 }
 
