@@ -115,9 +115,8 @@ func podReady(conditions []corev1.PodCondition) bool {
 	return false
 }
 
-// restoreApplicationGrants reapplies the namespace-scoped grants the controller holds in the application
-// namespace. A harness that recreates that namespace between stages deletes them, and the persistent controller
-// would then keep running without being able to observe the application.
+// restoreApplicationGrants re-applies the cluster grant of every SDO identity and the responder namespaces,
+// so a persistent controller keeps its authority across stages.
 func (i Installer) restoreApplicationGrants(ctx context.Context, cfg InspectConfig) error {
 	return i.restoreApplicationGrantsWithSettings(ctx, cfg, "")
 }
@@ -129,7 +128,7 @@ func (i Installer) restoreApplicationGrantsWithSettings(ctx context.Context, cfg
 			return fmt.Errorf("invalid permissive responder settings: %w", err)
 		}
 	}
-	plan, err := i.resources(Config{
+	plan, err := Resources(Config{
 		PermissiveResponder: settings != "", ResponderNamespaces: namespaces,
 		Namespace: cfg.Namespace, ControlNamespace: cfg.ControlNamespace, Application: cfg.Application,
 		RepositoryPVC: cfg.RepositoryPVC, CredentialsSecret: "grants-only", Model: "grants-only",
@@ -143,15 +142,5 @@ func (i Installer) restoreApplicationGrantsWithSettings(ctx context.Context, cfg
 	if err := i.ensurePermissiveNamespaces(ctx, Config{PermissiveResponder: settings != "", ResponderNamespaces: namespaces}); err != nil {
 		return err
 	}
-	for _, role := range plan.AppRoles {
-		if err := i.upsertRole(ctx, role); err != nil {
-			return err
-		}
-	}
-	for _, binding := range plan.AppBindings {
-		if err := i.upsertBinding(ctx, binding); err != nil {
-			return err
-		}
-	}
-	return i.ensurePermissiveClusterGrants(ctx, plan)
+	return i.ensureClusterGrants(ctx, plan)
 }

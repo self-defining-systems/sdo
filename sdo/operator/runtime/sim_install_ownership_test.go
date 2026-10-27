@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	kruntime "k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -19,7 +18,7 @@ import (
 func TestSimInstallerOwnershipStaysOutOfApplicationDrift(t *testing.T) {
 	cfg := install.Config{Namespace: "app", ControlNamespace: "app-sdo", Application: "app", Model: "gpt-fixture", TimeoutSeconds: 60, ControllerImage: "controller:fixture", ResponderImage: "responder:fixture", ValidatorImage: "validator:fixture", RepositoryPVC: "repository", CredentialsSecret: "fixture", AcceptedCommit: strings.Repeat("a", 40), NativeCommand: []string{"/usr/local/bin/sdo-operator"}, BuildKitImage: "moby/buildkit@sha256:" + strings.Repeat("a", 64), RegistryPushSecret: "registry-push", RegistryPushDockerConfig: []byte("{}")}
 	cfg.PermissiveResponder = true
-	plan, err := install.Resources(cfg, &metav1.APIResourceList{GroupVersion: "v1", APIResources: []metav1.APIResource{{Name: "services", Kind: "Service", Namespaced: true, Verbs: []string{"get", "list"}}}})
+	plan, err := install.Resources(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,29 +37,6 @@ func TestSimInstallerOwnershipStaysOutOfApplicationDrift(t *testing.T) {
 	}
 	for _, binding := range plan.ClusterBindings {
 		add(binding, "rbac.authorization.k8s.io/v1", "ClusterRoleBinding")
-	}
-	for _, role := range plan.AppRoles {
-		add(role, "rbac.authorization.k8s.io/v1", "Role")
-	}
-	for _, binding := range plan.AppBindings {
-		add(binding, "rbac.authorization.k8s.io/v1", "RoleBinding")
-	}
-	// Negative control: each app grant must be visible without installer
-	// ownership; names alone cannot explain responder-permissive/read grants.
-	checkedGrants := 0
-	for _, object := range objects {
-		if object.GetNamespace() != cfg.Namespace || (!strings.HasSuffix(object.GetName(), "-responder-permissive") && !strings.HasSuffix(object.GetName(), "-permissive-read")) {
-			continue
-		}
-		checkedGrants++
-		stripped := object.DeepCopy()
-		stripped.SetLabels(nil)
-		if findings := NewSourceInventory(cfg.Namespace, strings.Repeat("a", 40), nil).Findings([]*unstructured.Unstructured{stripped}, time.Unix(1, 0)); len(findings) != 1 {
-			t.Fatalf("unlabelled app grant disappeared: %s/%s %+v", object.GetKind(), object.GetName(), findings)
-		}
-	}
-	if checkedGrants < 3 {
-		t.Fatalf("permissive grant controls were not exercised: %d", checkedGrants)
 	}
 	worker := plan.Job.DeepCopy()
 	worker.Name = "worker-123"

@@ -51,8 +51,7 @@ Captures omit Kubernetes write metadata and sensitive environment values. Reflec
 RunScript is a first-class learnable mitigation alongside typed actions. Mitigate
 returns inline bash and relation-derived Values resolved into process environment.
 A fixed tool image executes an application-local Job with `backoffLimit: 0` under
-`sdo-script`; its namespace repair grants include Secret reads and it inherits
-explicit controller cluster grants. The installer accepts `--script-image` for the
+`sdo-script`, which holds the same cluster grant as every SDO identity. The installer accepts `--script-image` for the
 slim `script-tools` build target; existing installations reuse the cached trusted
 controller image. Script execution defaults to 60 seconds, bounded by five minutes
 and the remaining incident budget, including a short evidence-publication reserve.
@@ -342,69 +341,29 @@ Typed structured plans preserve rollback preimages and patches alongside object 
 
 Incident responders never merge directly into the operational branch. The broker creates isolated worktrees, checks path ownership and append-only rules, runs repository and detector validation, and accepts only attributable commits. Two repair-evidence policies are supported. `commit` retains a proposal commit for every response, including an empty attribution commit. `recorded-actions` permits a live-only repair without a proposal commit when the responder returns a structured, successful action receipt; any repository changes are still validated and committed. In both modes the controller commits the authoritative outcome and reflection, and independently owned health detectors must verify recovery. The source deployer separately authors attributable deployment commits during the initial lifecycle. Health detectors remain judge-owned. Responders can edit playbook/helper drafts during response; only validated reflection publishes those drafts and incident detectors after closure.
 
-At native install/onboarding, Go derives cluster object names from the exact selected
-accepted manifests. API discovery maps those identities to concrete cluster resources.
-The installer grants only `get`, `patch`, and `update` on those names to
-`sdo-controller` and `sdo-operate`; declared ClusterRoles additionally receive named
-`escalate` and `bind` for Kubernetes' RBAC checks. Workers receive no added grant.
-Reinstallation replaces the name set and removes an empty grant. Runtime source
-reconciliation requires the same application's current accepted lock; an unrelated
-cluster object is not admitted by that path. These permissions are separate from
-benchmark fault setup and contain no benchmark names or oracle logic.
+## Cluster permissions
 
-## Permissive responder installation
+SDO does not limit its identities through Kubernetes RBAC. The installer creates
+one ClusterRole, `sdo-admin-<control-namespace>`, with `*` on `*` for `*`, and
+one ClusterRoleBinding to every ServiceAccount SDO runs as: `sdo-controller`,
+`sdo-operate`, `sdo-responder`, `sdo-image-builder` (control namespace) and
+`sdo-script` (application namespace). In a separate control namespace it also
+binds the user the controller impersonates for the checked removal callback.
+There are no per-kind Roles, no readable-versus-writable table and no
+vocabulary-versus-Role ratchet, so a repair or a replayed program is never
+refused for a missing grant (a Deployment, an Ingress, a webhook configuration
+or a Namespace label are all reachable). What a program or responder may change
+is decided by the typed plan checks, review and runtime policy, not by RBAC.
 
-The installer defaults to its existing namespaced grants. Disposable benchmark
-lanes can explicitly select `--permissive-responder`, with repeatable
-`--responder-namespace policy-system` for fault backends. The Go installer
-uses discovery only to select concrete resources from one reviewed table
-(`permissiveKinds` in `sdo/operator/install/permissive.go`). In each admitted
-namespace the responder writes every kind it reads (kubectl parity is the
-floor), and every entry either names its write verbs or a one-line reason it is
-read-only: `pods/log` (read-only subresource), `events` and `events.k8s.io`
-events (audit record), `controllerrevisions` (controller-managed history) and
-`csistoragecapacities` (published by the CSI driver). A ratchet test requires
-the readable-minus-writable set to equal that list exactly, so a new readable
-kind needs a write decision. Workload `/scale` subresources allow update/patch;
-ResourceQuota, LimitRange, Endpoints, EndpointSlices and Leases are writable.
-Namespace objects can be updated and patched, by name and only for admitted
-namespaces, so a repair can fix labels such as Pod Security; create and delete
-stay withheld. Secrets, ServiceAccounts, RBAC and custom APIs stay excluded:
-discovery never automatically trusts a custom group, resource, kind or status
-endpoint, including in the application namespace. Installed namespaces need
-`install-existing` to re-apply the Role. The eval check
-`benchmarks/sregym/fastloop/responder_write_check.py` asks the API server, with
-a SubjectAccessReview, whether the responder can write each object kind the
-faults of a sequence plan create or mutate, and tables the gaps.
-
-Cluster access to mutating/validating webhook configurations is limited to
-get/list/watch/delete. Deleting a bad webhook remains a repair for the selected
-TLS mismatch and backend outage faults; configuration writes and backend takeover
-are unavailable through added grants. Cluster-wide deletion is the chosen repair
-boundary and can remove protective webhooks; no admission-confinement guarantee
-is inferred from it.
-
-The option requires a separate control namespace and rejects foreign kube-*
-namespaces. The baseline repair Role is literally unchanged, including app
-PodSpec writes, helper Jobs, logs, ConfigMaps and exec/attach/port-forward.
-Those pre-existing indirect Secret paths remain available. Permissive mode adds
-no new Secret-data path under the reviewed built-in resource contract; it does
-not establish end-to-end Secret confidentiality or constrain ambient bindings.
-Other worker/controller grants retain their existing scope. Settings are bound
-to the installed Job, restored with namespace grants on reuse, and revoked on
-downgrade; reconciliation replaces old permissive Roles and ClusterRoles.
-Discovery refresh cannot widen grants beyond the reviewed allowlist. Benchmark
-capability policy and per-fault evidence stay under `benchmarks/sregym/`; they
-do not enter production worker tasks or prompts.
-
-Negative installer tests check the authorization prerequisites of each backend
-Secret path, webhook takeover and custom-controller path, with permitted repair
-operations as positive controls. The test authorizer resolves RoleBindings to
-Roles or ClusterRoles, ClusterRoleBindings, standard ServiceAccount group/User
-subjects, and resource/subresource wildcards within the generated Plan. It does
-not model ambient cluster bindings, ClusterRole aggregation, admission,
-non-resource requests or named-resource requests. These are permission-contract
-tests, not proof from a live cluster or a simulated Secret exfiltration.
+A fresh `host`/`operate` install, `install-existing` and `inspect-existing` all
+re-apply the ClusterRole and binding, so a narrowed or deleted grant is restored
+on the next install or inspection. The grant is cluster-wide, so recreating the
+application namespace between stages does not remove it. `--permissive-responder`
+and `--responder-namespace` keep their meaning for the runtime (which namespaces
+the responder may repair in, and creating the fault-backend namespaces) but add
+no separate grant. The read-only detector runner Pod keeps its own narrow Role.
+Credential hygiene is separate from RBAC: Secret contents never reach logs,
+prompts or memory.
 
 ## Controller/responder interaction
 
@@ -599,7 +558,6 @@ and executor checks govern execution; the benchmark adapter owns strict experime
 | Built-in agents | `sdo/agents/{deployer,health_judge,responder}/` | Active | Each implementation owns its prompts and provider choice; tasks carry logical memory snapshots; reflection and the judge return decisions/IDs after direct file edits. |
 | Code-path composition | `sdo/operator/runtime/code_path*.go`, `sdo/operator/shellpath/` | Active, shell opt-in | Named plugin sets select detector source, coverage, ordered PIPE stages, memory validation, activation and role guidance. Go remains the default; shell uses a long-lived read-only runner and shared incident lifecycle. |
 | Detector SDK and execution | `sdo/operator/sdk/`, `core/`, `runtime/` | Active | Deterministic Go snapshots with shared cached/recorded detector and Diagnose reads, detector evaluation, findings, batching, leader election, and generated controller state have Go tests; lifecycle storage is private to `runtime/internal/lifecycleio`. |
-| Accepted cluster source authority | `sdo/operator/install/source_grants.go`, `lifecycle/install_adapter.go`, `operatorcli/onboarding.go` | Active | Trusted install/onboarding derives named controller-only cluster repair grants from selected accepted app manifests; no worker grant or SREGym dependency. |
 | Program coverage and responder loop | `sdo/operator/runtime/`, `sdo/agents/responder/tools_cli.py`, `sdo/contracts/proto/.../program.proto` | Active | The controller diagnoses bound candidates, serves incident-scoped `sdo` tools through the responder session PVC, including rendered accepted source, applies each plan as written, reports the resulting verification, and records tool and program evidence on the outcome. `apply` has no in-command judging: no dry-run after-images, owned-field or concurrent-change checks, write retries, or automatic rollback after a landed write; a write conflict is returned as the error, a failed rollout or bound verification leaves the plan applied and recorded (with a revision-bound `application_verification_failure` signal); a different explicit open finding does not invalidate a cleared bound diagnosis, and the responder decides whether to call `rollback` or retry. Only a failed multi-write plan compensates the writes that already landed. `sdo act --resource Kind/ns/name -- <command>` runs one live mutation in the responder session and records its repair receipt (resources, timing, outcome and command line) under the session scratch directory; the responder worker merges those receipts into `IncidentResult.repair_actions`, so the model writes no receipt or wrapper script. Configured response stages select mutations through the same executor. Accepted single-entry repairs can run deterministically before the responder; typed stage reports retain per-finding results. Failed verification retains completed applications, and the responder decides explicit rollback. Prepared incident tasks preserve the original coverage view across restarts. |
 | Drift change feed and response | `sdo/operator/deployment/`, `sdo/operator/sdk/drift.go`, `sdo/operator/runtime/`, `sdo/contracts/proto/.../messages.proto`, `sdo/agents/responder/` | Active | SSA adoption records source contradictions without repairing them. Informers admit changed declared fields and source-absent application/control-plane objects against cached accepted deployment state. Detectors supply findings; finding-bound playbook diagnoses populate the coverage view for responder-selected mitigation. Playbooks never generate `drift.<program>` findings. Unexplained observations open ordinary latent `drift.unexplained` incidents after bounded batching, or attach to the open incident and its late-findings view. The responder establishes source contradiction and a violated relation or observed impact before mutation. Verification and closure recheck retained accepted-source drift as well as detector health. Drift-only batches coalesce for 20 s / 8 events and are otherwise admitted like health findings; there is no dispatch or token rate limit. Always-on incident detectors cover faults; playbooks have no watch-event or timer-driven diagnosis. |
 | Synthetic traffic | `sdo/operator/sdk/traffic/`, `runtime/prober/`, `builder/`, `.sdo/diagnostics/traffic/` | Active | Generated workloads run in an isolated prober; acceptance remains independently validated. |
