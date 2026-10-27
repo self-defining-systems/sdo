@@ -267,6 +267,9 @@ def prepared_incident_data(request: IncidentRequest) -> Iterator[str]:
             # Newest episode comes first; retain its action and blocker even
             # when older episodes must move to the complete facts file.
             lists.append((progress, "episodes", "episodes_omitted"))
+            if summary.get("prior_stages"):
+                summary["prior_stages_omitted"] = max(0, len(request.prior_stages) - len(summary["prior_stages"]))
+                lists.append((summary, "prior_stages", "prior_stages_omitted"))
         lists += [
             (summary, "findings", "findings_omitted"),
             (summary["playbook_coverage"], "matches", "matches_omitted"),
