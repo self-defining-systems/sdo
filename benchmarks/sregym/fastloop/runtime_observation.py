@@ -110,13 +110,13 @@ def observation_timeout(default: float) -> float:
 def baseline_observation(
     capture: Callable[[], _T],
     *,
-    timeout_seconds: float = 90,
-    poll_seconds: float = 3,
+    timeout_seconds: float = wait_for(WaitKind.BASELINE_OBSERVATION),
+    poll_seconds: float = wait_for(WaitKind.BASELINE_POLL),
     monotonic: Callable[[], float] = time.monotonic,
     sleep: Callable[[float], None] = time.sleep,
 ) -> _T:
     """Retry the complete capture, discarding partial pre-injection references."""
-    if not 0 < timeout_seconds <= 120 or poll_seconds <= 0:
+    if not 0 < timeout_seconds <= wait_for(WaitKind.SLOW_COMMAND) or poll_seconds <= 0:
         raise ValueError("baseline observation requires a positive budget <=120s and poll interval")
     deadline = monotonic() + timeout_seconds
     token = _BASELINE_BUDGET.set(_ObservationBudget(deadline, monotonic))

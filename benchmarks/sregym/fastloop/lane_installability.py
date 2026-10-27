@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from benchmarks.sregym.adapter import WaitKind, wait_for
 from benchmarks.sregym.fastloop.lane_guard import FaultNotInstallableError, LaneGuard, assert_faults_installable
 from benchmarks.sregym.faults.probe_catalog import CLASS_KINDS
 
@@ -56,9 +57,9 @@ def capture_topology(
             command.append(name)
         if namespace:
             command += ["-n", namespace]
-        command += ["-o", "json", "--request-timeout=8s"]
+        command += ["-o", "json", f"--request-timeout={wait_for(WaitKind.PROBE):g}s"]
         try:
-            result = run(command, capture_output=True, text=True, check=False, timeout=10)
+            result = run(command, capture_output=True, text=True, check=False, timeout=wait_for(WaitKind.PROBE))
             if result.returncode == 0:
                 value = json.loads(result.stdout)
                 if isinstance(value, dict):
@@ -109,7 +110,7 @@ def capture_topology(
                 "status",
             ]
             try:
-                result = run(command, capture_output=True, text=True, check=False, timeout=10)
+                result = run(command, capture_output=True, text=True, check=False, timeout=wait_for(WaitKind.PROBE))
                 if result.returncode == 0:
                     features.add("calico-bgp")
             except (OSError, subprocess.TimeoutExpired):
