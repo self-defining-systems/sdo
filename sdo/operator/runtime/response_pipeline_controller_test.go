@@ -92,14 +92,16 @@ func TestHermeticResponsePipelineClearsTwoFaultsThroughControllerClosure(t *test
 	}
 }
 
+// recordingScenarioDispatcher hands each agent request to the test over a
+// channel, because Dispatch runs on the controller's dispatch goroutine.
 type recordingScenarioDispatcher struct {
 	pipelineScenarioDispatcher
-	requests []IncidentRequest
+	requests chan IncidentRequest
 }
 
 func (d *recordingScenarioDispatcher) Dispatch(ctx context.Context, request IncidentRequest) (IncidentResult, error) {
-	d.requests = append(d.requests, request)
-	return d.pipelineScenarioDispatcher.Dispatch(ctx, request)
+	d.requests <- request
+	return completedResult(request.IncidentID), nil
 }
 
 // With one of two faults covered, the controller applies the covered playbook
@@ -107,7 +109,7 @@ func (d *recordingScenarioDispatcher) Dispatch(ctx context.Context, request Inci
 // remaining finding.
 func TestHermeticResponsePipelineHandsAgentStageReportAndRemainingFindings(t *testing.T) {
 	loop, state := pipelineTestLoop(t, true)
-	dispatcher := &recordingScenarioDispatcher{pipelineScenarioDispatcher: pipelineScenarioDispatcher{loop: loop}}
+	dispatcher := &recordingScenarioDispatcher{pipelineScenarioDispatcher: pipelineScenarioDispatcher{loop: loop}, requests: make(chan IncidentRequest, 4)}
 	config := testControllerConfig()
 	config.Application = state.Request.Application
 	config.Namespace = "app"
@@ -135,11 +137,7 @@ func TestHermeticResponsePipelineHandsAgentStageReportAndRemainingFindings(t *te
 	if err := controller.ExecuteDispatchEffect(context.Background(), effect); err != nil {
 		t.Fatal(err)
 	}
-	awaitDispatchCompletionQueued(t, controller)
-	if len(dispatcher.requests) != 1 {
-		t.Fatalf("agent requests = %d, want exactly one", len(dispatcher.requests))
-	}
-	request := dispatcher.requests[0]
+	request := awaitRequest(t, dispatcher.requests)
 	if len(request.PriorStages) != 1 || len(request.PriorStages[0].Mitigations) != 1 || request.PriorStages[0].Mitigations[0].Result != "applied_cleared" {
 		t.Fatalf("agent was not told the stage result: %+v", request.PriorStages)
 	}
