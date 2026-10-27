@@ -76,4 +76,3 @@ func TestGS1LifecycleKindsAndAcceptedSourceDelete(t *testing.T) {
 		}
 	}
 }
-

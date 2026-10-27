@@ -173,4 +173,3 @@ func TestPendingRolloutToolRecordIsBoundedAndNotVerified(t *testing.T) {
 		t.Fatal("bounded record mutated full native evidence")
 	}
 }
-
