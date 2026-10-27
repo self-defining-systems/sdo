@@ -12,6 +12,17 @@ cp -R apps/social_network/source-overlays/. /absolute/fresh-social-source/
 ```
 
 Commit both overlays before building and rendering that same source checkout.
+The overlay also bounds every MongoDB. mongod 4.4 ignores cgroup v2 limits and
+sizes its WiredTiger cache from host RAM, so an unbounded instance grows until
+its container is killed. `mongod.tpl` sets `cacheSizeGB: 0.25` for all six
+`*-mongodb` Deployments and each chart's `values.yaml` gives them a 1Gi limit and
+512Mi request, which holds the cache plus process overhead.
+`tests/unit/apps/test_social_mongodb_memory.py` renders the chart with the overlay
+and fails if any MongoDB lacks a cache bound. A seed already cut without the
+overlay keeps its unbounded MongoDBs: cut a new seed commit that applies it, then
+redeploy and re-capture the baseline on every lane, because a plain reset restores
+the old captured baseline.
+
 Stock SREGym pins Jaeger to `1.57`; the DeathStarBench chart's `latest` can select
 an all-in-one release without the legacy agent on 5778. The overlay restores
 that stock pin and enables the declared Zipkin receiver on 9411 with
