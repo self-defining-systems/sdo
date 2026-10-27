@@ -368,7 +368,7 @@ func (d KubernetesJobDispatcher) programTrust(ctx context.Context, request Incid
 	if d.Outcomes == nil {
 		return nil, nil
 	}
-	stored, unreadable, err := memory.ListOutcomes(ctx, d.Outcomes, "program trust")
+	stored, _, err := memory.ListOutcomes(ctx, d.Outcomes, "program trust")
 	if err != nil {
 		return nil, fmt.Errorf("read program trust outcomes: %w", err)
 	}
@@ -386,12 +386,6 @@ func (d KubernetesJobDispatcher) programTrust(ctx context.Context, request Incid
 		}
 	}
 	stats := ProgramTrustStats(records)
-	if len(unreadable) > 0 {
-		// An unreadable outcome may be a failure. Trust only goes down while
-		// any outcome is unreadable, so no program gains credit from the gap.
-		withholdProgramTrust(stats, len(unreadable))
-		return stats, nil
-	}
 	if request.RepositoryWorktree != "" && gitRevision.MatchString(request.SourceCommit) {
 		if err := creditLearnedPrograms(ctx, request, records, stats); err != nil {
 			// Origin credit is optional. Keep ordinary settled trust when the
