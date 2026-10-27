@@ -7,6 +7,8 @@ from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
 
 import pytest
+from hypothesis import HealthCheck, given, settings
+from hypothesis import strategies as st
 
 from benchmarks.sregym.fastloop.baseline_recovery import RecoveryCleanup
 from benchmarks.sregym.fastloop.loop import (
@@ -964,3 +966,70 @@ def test_pre_injection_error_never_reuses_the_previous_incidents_event(tmp_path:
     record = run_incidents(SetupFailure(clock), driver, _config(tmp_path, 1), monotonic=clock.monotonic)[0]
     assert record.injection.model_dump() == {"state": "not_injected", "stage": "pre_injection"}
     assert record.injection_started_at is None
+
+
+def test_an_incident_detected_before_the_injection_is_retried_not_graded(tmp_path: Path) -> None:
+    """INV1: a baseline incident from the admission proof must never be graded as this row's incident."""
+
+    class GradesBaselineIncident(FakeAgent):
+        def resolve(self, index, problem_id, inject):
+            outcome = super().resolve(index, problem_id, inject)
+            return replace(outcome, detected_at=T0 - timedelta(minutes=12))
+
+    clock = FakeClock()
+    driver = FakeDriver(clock)
+    record = run_incidents(GradesBaselineIncident(clock), driver, _config(tmp_path, 1), monotonic=clock.monotonic)[0]
+    assert record.infra_error == "incident_predates_injection"
+    assert record.oracle is None, "the row was graded"
+    assert record.detected_at is None
+    assert record.injection_to_detection_seconds is None
+    assert record.injection_evidence["incident_id"] == "incident-0"
+    assert "oracle" not in driver.events
+
+
+def test_a_record_cannot_carry_a_negative_injection_to_detection_time() -> None:
+    from pydantic import ValidationError
+
+    from benchmarks.sregym.fastloop.records import IncidentRecord, Injected
+
+    injected = Injected(started_at=T0, finished_at=T0 + timedelta(seconds=5))
+    base = {"run_id": "r", "index": 0, "agent": "sdo", "problem_id": "p", "model": "m", "injection": injected}
+    IncidentRecord(**base, detected_at=T0)
+    with pytest.raises(ValidationError, match="incident_predates_injection"):
+        IncidentRecord(**base, detected_at=T0 - timedelta(seconds=1))
+
+
+@settings(max_examples=300, deadline=None, suppress_health_check=[HealthCheck.too_slow])
+@given(
+    started=st.integers(min_value=0, max_value=10_000),
+    detected=st.integers(min_value=-1_000, max_value=11_000),
+    mitigated=st.integers(min_value=-1_000, max_value=11_000),
+    resolved=st.integers(min_value=-1_000, max_value=11_000),
+)
+def test_every_derived_duration_is_nonnegative_or_the_row_is_rejected(started, detected, mitigated, resolved) -> None:
+    """Over generated timelines, a record either rejects the incident or has no negative injection-based time."""
+    from pydantic import ValidationError
+
+    from benchmarks.sregym.fastloop.records import IncidentRecord, Injected
+
+    def at(seconds: int) -> datetime:
+        return T0 + timedelta(seconds=seconds)
+
+    try:
+        record = IncidentRecord(
+            run_id="r",
+            index=0,
+            agent="sdo",
+            problem_id="p",
+            model="m",
+            injection=Injected(started_at=at(started), finished_at=at(started + 5)),
+            detected_at=at(detected),
+            mitigation_applied_at=at(max(mitigated, detected)),
+            resolved_at=at(max(resolved, mitigated, detected)),
+        )
+    except ValidationError:
+        assert detected < started
+        return
+    assert detected >= started
+    assert record.injection_to_detection_seconds >= 0
+    assert record.injection_to_resolution_seconds >= 0

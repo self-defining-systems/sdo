@@ -265,8 +265,7 @@ class IncidentRecord(_PersistedModel):
         started = self.injection.started_at if isinstance(self.injection, Injected) else None
         if self.detected_at is not None and started is not None and self.detected_at < started:
             raise ValueError(
-                f"incident_predates_injection: detected {self.detected_at.isoformat()}, "
-                f"injected {started.isoformat()}"
+                f"incident_predates_injection: detected {self.detected_at.isoformat()}, injected {started.isoformat()}"
             )
         return self
 

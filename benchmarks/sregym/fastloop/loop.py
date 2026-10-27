@@ -465,7 +465,8 @@ def _run_one(
     outcome: AgentOutcome | None = None
     try:
         outcome = agent.resolve(index, problem_id, inject)
-        ensure_incident_follows_injection(outcome.incident_id, outcome.detected_at, outcome.injection.started_at)
+        if windows:  # the worker's recorded event, never the agent's own clock
+            ensure_incident_follows_injection(outcome.incident_id, outcome.detected_at, windows[0].started_at)
     except InvalidInjectionError as exc:
         cleanup_error = exc.cleanup_error
         recovered = False
