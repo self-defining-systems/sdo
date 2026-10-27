@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import fcntl
-import hashlib
 import platform
 import subprocess
 import tempfile
@@ -19,6 +17,7 @@ from benchmarks.sregym.adapter import (
     retain_lane_images,
     wait_for,
 )
+from benchmarks.sregym.fastloop.host_limits import HostLimits
 from benchmarks.sregym.fastloop.image_delivery import registry_delivery, save_delivery, warn_fallback
 
 
@@ -28,11 +27,9 @@ def load_images(
     *,
     record_path: Path | None = None,
     resource_policy: LaneResourcePolicy | None = None,
+    host_limits: HostLimits | None = None,
 ) -> dict[str, dict[str, str]]:
-    # A host-local lane lock covers delivery and history rotation across run dirs.
-    key = hashlib.sha256(cluster.encode()).hexdigest()
-    with (Path("/tmp") / f"sdo-image-delivery-{key}.lock").open("a") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+    with (host_limits or HostLimits.from_env()).admit("image-delivery"):
         try:
             disk = assert_host_disk_headroom(policy=resource_policy)
         except ValueError as exc:
