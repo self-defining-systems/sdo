@@ -204,6 +204,9 @@ func (e PlanExecutor) applyRuntimePlan(ctx context.Context, incident IncidentReq
 				return result, fmt.Errorf("pod deletion unverified: original UID remains or observation unavailable")
 			}
 
+			if getErr == nil && live != nil && live.GetUID() == items[i].uid {
+				result.ActionReports[i].Observed = "terminating"
+			}
 			result.ObjectEffects = append(result.ObjectEffects, PlanObjectEffect{Operation: "delete", Ref: ref, UID: string(items[i].uid), State: "applied", Confirmed: true, Irreversible: true})
 			result.Patches = append(result.Patches, PlanPatch{Ref: ref, Operation: "delete_pod", Irreversible: true})
 		case program.EnsureDatabaseUser:

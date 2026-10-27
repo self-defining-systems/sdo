@@ -40,9 +40,12 @@ func TestGracefullyTerminatingPodDeleteIsConfirmed(t *testing.T) {
 			client.Resources = []*metav1.APIResourceList{{GroupVersion: "v1", APIResources: []metav1.APIResource{{Name: "pods", Kind: "Pod", Namespaced: true, Verbs: []string{"get", "delete"}}}}}
 			executor := PlanExecutor{Client: TypedPlanClient{Client: client, ExecConfig: &rest.Config{Host: server.URL}}, Rollouts: generalNoRollouts{}, Verifier: generalHealthy{}}
 			action := program.KubernetesRequest{Ref: ref, Method: "DELETE", Path: "/api/v1/namespaces/app/pods/stale"}
-			_, err := executor.Apply(context.Background(), IncidentRequest{Namespace: "app"}, program.Plan{Actions: []program.Action{action}}, false)
+			result, err := executor.Apply(context.Background(), IncidentRequest{Namespace: "app"}, program.Plan{Actions: []program.Action{action}}, false)
 			if terminating && err != nil {
 				t.Fatalf("terminating Pod delete was not confirmed: %v", err)
+			}
+			if terminating && result.ActionReports[0].Observed != "terminating" {
+				t.Fatalf("terminating Pod delete is not recorded as terminating: %+v", result.ActionReports[0])
 			}
 			if !terminating && err == nil {
 				t.Fatal("a Pod that is not terminating was reported deleted")
@@ -66,6 +69,18 @@ func TestDeletePodAcceptsGracefulTermination(t *testing.T) {
 	result, err := e.Apply(context.Background(), IncidentRequest{Namespace: "app", RepairPolicy: "recorded-actions"}, program.Plan{Actions: []program.Action{program.DeletePod{Ref: ref}}}, false)
 	if err != nil || !result.VerificationPassed {
 		t.Fatalf("terminating Pod was not accepted as deleted: %+v %v", result, err)
+	}
+	if result.ActionReports[0].Status != "applied" || result.ActionReports[0].Observed != "terminating" {
+		t.Fatalf("terminating Pod delete is not recorded as terminating: %+v", result.ActionReports[0])
+	}
+}
+
+// A Pod that is gone is a plain applied delete: nothing to flag.
+func TestDeletePodGoneIsNotRecordedAsTerminating(t *testing.T) {
+	e, _, ref := runtimeActionFixture()
+	result, err := e.Apply(context.Background(), IncidentRequest{Namespace: "app", RepairPolicy: "recorded-actions"}, program.Plan{Actions: []program.Action{program.DeletePod{Ref: ref}}}, false)
+	if err != nil || result.ActionReports[0].Status != "applied" || result.ActionReports[0].Observed != "" {
+		t.Fatalf("gone Pod delete report: %+v %v", result.ActionReports[0], err)
 	}
 }
 

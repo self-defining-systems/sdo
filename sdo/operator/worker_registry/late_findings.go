@@ -8,13 +8,15 @@ import (
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/latefindings"
 )
 
-// The already-mounted read-only directory replaces only the ConfigMap volume
-// projection; report identity, receipt format and controller ownership persist.
-func (e KubernetesExecutor) projectWarmLateFindings(ctx context.Context) error {
-	if e.WarmBinding == nil || e.LateFindingsConfigMap == "" {
+// projectLateFindings copies the controller-owned report ConfigMap into the
+// session's read-only late-findings directory. Warm and cold workers read the
+// same mount; a pod that predates its incident cannot mount a ConfigMap.
+func (e KubernetesExecutor) projectLateFindings(ctx context.Context, task *contracts.AgentTask) error {
+	if e.LateFindingsConfigMap == "" || e.SessionPVCSubPath == "" || !task.GetRequest().MessageIs(&contracts.IncidentRequest{}) {
 		return nil
 	}
 	ctx, cancel := context.WithTimeout(ctx, time.Second)
@@ -29,7 +31,7 @@ func (e KubernetesExecutor) projectWarmLateFindings(ctx context.Context) error {
 		return err
 	}
 	if latefindings.ConfigMapName(report.GetIncidentId()) != e.LateFindingsConfigMap {
-		return fmt.Errorf("warm late findings identity mismatch")
+		return fmt.Errorf("late findings identity mismatch")
 	}
 	relative, err := filepath.Rel(sessionPVCBase(e.RepositoryPVCSubPath), e.SessionPVCSubPath)
 	if err != nil {

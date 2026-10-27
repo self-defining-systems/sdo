@@ -253,7 +253,9 @@ type SetField struct {
 
 func (SetField) action() {}
 
-// DeletePod removes one named pod with UID/version preconditions.
+// DeletePod removes one named pod with UID/version preconditions. A graceful
+// delete leaves the Pod terminating: that counts as deleted but the Pod may
+// still run until it stops.
 type DeletePod struct{ Ref sdk.ObjectRef }
 
 func (DeletePod) action() {}
@@ -269,7 +271,8 @@ type ScaleWorkload struct {
 func (ScaleWorkload) action() {}
 
 // Exec executes a provenance-derived command. Only its exit code is reported.
-// The Kubernetes API enforces the controller's existing pods/exec RBAC grant.
+// The install grants the controller pods/exec (get, create) in the application
+// namespace; the Kubernetes API enforces it.
 type Exec struct {
 	Pod       sdk.ObjectRef
 	Container string

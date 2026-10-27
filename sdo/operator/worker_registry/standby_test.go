@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -14,6 +15,8 @@ import (
 	"sdo.dev/operator/contracts/wire"
 	"sdo.dev/operator/memory"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -165,7 +168,7 @@ func TestStandbyBindingRetainsMountedInodesAndDurableSession(t *testing.T) {
 	}
 }
 
-func TestStandbyBusyCaptureAndFailedClaimFallBack(t *testing.T) {
+func TestStandbyBusyCaptureFallsBack(t *testing.T) {
 	pool, e, task := standbyFixture(t)
 	slot := readyStandby(t, pool)
 	release := memory.SessionStorageUse()
@@ -174,15 +177,8 @@ func TestStandbyBusyCaptureAndFailedClaimFallBack(t *testing.T) {
 	if err != nil || bound.WarmBinding != nil {
 		t.Fatal("busy capture did not abstain", err)
 	}
-	if err := os.RemoveAll(task.Workspace.CheckoutPath + "/.git"); err != nil {
-		t.Fatal(err)
-	}
-	bound, err = pool.TryBind(context.Background(), e, task)
-	if err != nil || bound.WarmBinding != nil {
-		t.Fatal("bad checkout did not use cold path", err)
-	}
 	if _, err := os.Stat(filepath.Join(slot.Directory, "control", TaskDataKey)); !os.IsNotExist(err) {
-		t.Fatal("failed claim published a task")
+		t.Fatal("abstained claim published a task")
 	}
 }
 
@@ -206,6 +202,9 @@ func TestStandbyRestartRejoinsClaimAndRetiresStaleIdle(t *testing.T) {
 	}
 	if _, err := e.Client.BatchV1().Jobs(e.Namespace).Get(context.Background(), idle.JobName, metav1.GetOptions{}); !apierrors.IsNotFound(err) {
 		t.Fatal("stale idle Job survived", err)
+	}
+	if _, err := os.Stat(idle.Directory); !os.IsNotExist(err) {
+		t.Fatal("stale idle slot directory leaked", err)
 	}
 	if _, err := e.Client.BatchV1().Jobs(e.Namespace).Get(context.Background(), first.JobName, metav1.GetOptions{}); err != nil {
 		t.Fatal("claimed Job retired", err)
@@ -414,42 +413,141 @@ func TestStandbyRejectsEscapingCheckoutBeforeAnyBinding(t *testing.T) {
 	if err != nil || bound.WarmBinding != nil {
 		t.Fatal("escaping checkout was bound", err)
 	}
-	if _, err := os.Stat(filepath.Join(pool.current.Directory, "reservation")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(pool.current.Directory, "control", standbyClaimFile)); !os.IsNotExist(err) {
 		t.Fatal("escaping checkout consumed standby")
 	}
 }
 
-func TestStandbyInterruptedBindingRestoresCanonicalDirectories(t *testing.T) {
-	for _, cut := range []int{0, 1, 2, 3, 4} {
-		t.Run(fmt.Sprint(cut), func(t *testing.T) {
-			pool, e, task := standbyFixture(t)
-			slot := readyStandby(t, pool)
-			moves := []standbyMove{{task.Workspace.CheckoutPath, filepath.Join(slot.Directory, "checkout"), filepath.Join(slot.Directory, "backup-checkout")}, {filepath.Join(e.RepositoryMountPath, "session"), filepath.Join(slot.Directory, "session"), filepath.Join(slot.Directory, "backup-session")}}
-			j := standbyJournal{Binding: *slot, Moves: moves}
-			if err := writeStandbyJSON(filepath.Join(slot.Directory, "binding-journal.json"), j); err != nil {
-				t.Fatal(err)
-			}
-			operations := 0
-			for _, move := range moves {
-				for _, pair := range [][2]string{{move.Original, move.Backup}, {move.Staged, move.Original}} {
-					if operations < cut {
-						if err := os.Rename(pair[0], pair[1]); err != nil {
-							t.Fatal(err)
-						}
-					}
-					operations++
+func TestStandbyAdoptionKeepsPodInodeAndLeavesNoStaleTree(t *testing.T) {
+	root := t.TempDir()
+	canonical, held := filepath.Join(root, "canonical"), filepath.Join(root, "held")
+	for _, dir := range []string{canonical, held} {
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(canonical, "source"), []byte("accepted"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	pod, err := os.OpenRoot(held)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pod.Close()
+	if err := adoptIntoPod(context.Background(), canonical, held); err != nil {
+		t.Fatal(err)
+	}
+	if data, err := pod.ReadFile("source"); err != nil || string(data) != "accepted" {
+		t.Fatal("pod-held directory does not see the canonical content", err)
+	}
+	if err := pod.WriteFile("edit", []byte("by-pod"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if data, err := os.ReadFile(filepath.Join(canonical, "edit")); err != nil || string(data) != "by-pod" {
+		t.Fatal("canonical path is not the pod-held inode", err)
+	}
+	if _, err := os.Stat(held); !os.IsNotExist(err) {
+		t.Fatal("stale tree survived adoption", err)
+	}
+}
+
+func TestStandbyAdoptionFailureLeavesCanonicalUntouched(t *testing.T) {
+	root := t.TempDir()
+	canonical := filepath.Join(root, "canonical")
+	if err := os.MkdirAll(canonical, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(canonical, "source"), []byte("accepted"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := adoptIntoPod(context.Background(), canonical, filepath.Join(root, "missing")); err == nil {
+		t.Fatal("adoption into a missing pod directory succeeded")
+	}
+	if data, err := os.ReadFile(filepath.Join(canonical, "source")); err != nil || string(data) != "accepted" {
+		t.Fatal("failed adoption damaged the canonical directory", err)
+	}
+}
+
+func TestStandbyExactlyOneClaimantWins(t *testing.T) {
+	for iteration := 0; iteration < 50; iteration++ {
+		pool, e, task := standbyFixture(t)
+		slot := readyStandby(t, pool)
+		const claimants = 8
+		pools := make([]*StandbyPool, claimants)
+		for i := range pools {
+			pools[i] = NewStandbyPool(e, "responder", "app")
+			current := *slot
+			pools[i].current = &current
+		}
+		var wins atomic.Int32
+		var wg sync.WaitGroup
+		for _, contender := range pools {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				if bound, err := contender.TryBind(context.Background(), e, task); err == nil && bound.WarmBinding != nil && bound.WarmBinding.JobName == slot.JobName {
+					wins.Add(1)
 				}
-			}
-			if err := pool.recoverUnclaimed(context.Background()); err != nil {
-				t.Fatal(err)
-			}
-			if data, err := os.ReadFile(task.Workspace.CheckoutPath + "/source"); err != nil || string(data) != "accepted" {
-				t.Fatalf("cut %d lost canonical proposal: %v", cut, err)
-			}
-			if info, err := os.Stat(filepath.Join(e.RepositoryMountPath, "session")); err != nil || !info.IsDir() {
-				t.Fatalf("cut %d lost session: %v", cut, err)
-			}
-		})
+			}()
+		}
+		wg.Wait()
+		if wins.Load() != 1 {
+			t.Fatalf("iteration %d: %d claimants won the standby", iteration, wins.Load())
+		}
+	}
+}
+
+func TestStandbyDeadIdlePodIsNotClaimedAndColdJobTakesTheTask(t *testing.T) {
+	pool, e, task := standbyFixture(t)
+	slot := readyStandby(t, pool)
+	job, err := e.Client.BatchV1().Jobs(e.Namespace).Get(context.Background(), slot.JobName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	job.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobFailed, Status: corev1.ConditionTrue}}
+	if _, err := e.Client.BatchV1().Jobs(e.Namespace).UpdateStatus(context.Background(), job, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	bound, err := pool.TryBind(context.Background(), e, task)
+	if err != nil || bound.WarmBinding != nil {
+		t.Fatal("dead idle pod was claimed", err)
+	}
+	if _, err := os.Stat(filepath.Join(slot.Directory, "control", standbyClaimFile)); !os.IsNotExist(err) {
+		t.Fatal("dead pod consumed the claim")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	_, _ = bound.Execute(ctx, task)
+	if _, err := e.Client.BatchV1().Jobs(e.Namespace).Get(context.Background(), JobName(task.TaskId), metav1.GetOptions{}); err != nil {
+		t.Fatal("cold Job did not take the task", err)
+	}
+}
+
+func TestStandbyClaimedPodSurvivesIdleHeartbeatExpiry(t *testing.T) {
+	inbox := t.TempDir()
+	heartbeat := filepath.Join(inbox, "owner-heartbeat")
+	if err := os.WriteFile(heartbeat, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	stale := time.Now().Add(-time.Minute)
+	if err := os.Chtimes(heartbeat, stale, stale); err != nil {
+		t.Fatal(err)
+	}
+	if err := standbyOwnerAlive(inbox); err == nil {
+		t.Fatal("idle pod outlived its controller heartbeat")
+	}
+	if err := os.WriteFile(filepath.Join(inbox, standbyClaimFile), nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := standbyOwnerAlive(inbox); err != nil {
+		t.Fatal("claimed pod expired while the controller prepares the task", err)
+	}
+	old := time.Now().Add(-standbyClaimExpiry - time.Second)
+	if err := os.Chtimes(filepath.Join(inbox, standbyClaimFile), old, old); err != nil {
+		t.Fatal(err)
+	}
+	if err := standbyOwnerAlive(inbox); err == nil {
+		t.Fatal("claim that was never published leaked its pod")
 	}
 }
 
@@ -501,7 +599,7 @@ func TestStandbyNeverReplacesAnExistingColdExecution(t *testing.T) {
 	if err != nil || bound.WarmBinding != nil {
 		t.Fatal("cold retry was diverted to a second warm worker", err)
 	}
-	if _, err := os.Stat(filepath.Join(slot.Directory, "reservation")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(slot.Directory, "control", standbyClaimFile)); !os.IsNotExist(err) {
 		t.Fatal("cold retry consumed standby")
 	}
 }
