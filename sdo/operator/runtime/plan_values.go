@@ -83,6 +83,7 @@ func (e PlanExecutor) valueInputs(ctx context.Context, incident IncidentRequest)
 // Health clearance and informer freshness cannot stand in for write evidence.
 func (e PlanExecutor) verifyValueWrite(ctx context.Context, action program.Action, patch PlanPatch) error {
 	path := ""
+	removal := false
 	switch a := action.(type) {
 	case program.SetField:
 		path = a.Path
@@ -93,7 +94,9 @@ func (e PlanExecutor) verifyValueWrite(ctx context.Context, action program.Actio
 	case program.ScaleWorkload, *program.ScaleWorkload:
 		path = "spec.replicas"
 	case program.RemoveServicePort, *program.RemoveServicePort:
-		path = "spec.ports"
+		// The action owns the removed member, not the retained list. The
+		// delta proof below checks its absence and permits concurrent additions.
+		removal = true
 	default:
 		return nil
 	}
@@ -106,15 +109,17 @@ func (e PlanExecutor) verifyValueWrite(ctx context.Context, action program.Actio
 	}
 	live = live.DeepCopy()
 	canonicalizePlanObject(live)
-	expected, expectedErr := program.FieldValue(patch.After.Object, path)
-	actual, actualErr := program.FieldValue(live.Object, path)
-	if expectedErr != nil || actualErr != nil {
-		return fmt.Errorf("value write observation unknown: requested path unavailable")
-	}
-	// Requested leaves must match even for no-op writes. Extra server defaults
-	// remain allowed; the delta check below also proves requested removals.
-	if !planRequestedValueObserved(expected, actual) {
-		return fmt.Errorf("value write observation unknown: requested value changed")
+	if !removal {
+		expected, expectedErr := program.FieldValue(patch.After.Object, path)
+		actual, actualErr := program.FieldValue(live.Object, path)
+		if expectedErr != nil || actualErr != nil {
+			return fmt.Errorf("value write observation unknown: requested path unavailable")
+		}
+		// Requested leaves must match even for no-op writes. Extra server
+		// defaults remain allowed; the delta check also proves removals.
+		if !planRequestedValueObserved(expected, actual) {
+			return fmt.Errorf("value write observation unknown: requested value changed")
+		}
 	}
 
 	for _, field := range []string{"spec", "data", "binaryData"} {
