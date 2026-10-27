@@ -25,7 +25,7 @@ Mutation files contain these generated top-level arrays:
 ## General help
 
 ```text
-prior_stages lists what an automatic stage did (playbook_id, result, skip_reason, error, cleared_findings); a pass that runs while you work shows up once, in your next reply, and your call can wait for it. Build on it, don't repeat verified repairs. Full incident facts keep apply receipts and post-apply diagnoses.
+prior_stages: playbook, result, skip_reason of an automatic stage; one that ran while you worked shows once, in your next reply. Don't repeat verified repairs. Full facts keep apply receipts and post-apply diagnoses.
 
 Examples (replace names with incident resources):
   sdo source Deployment/app/api
