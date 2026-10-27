@@ -111,7 +111,7 @@ The CLI decision file contains the unwrapped ReflectionResult below. The model's
 
 ## Mitigation menu and responder continuity
 
-The menu is a convenience over direct commands. It lists accepted Mitigators with their declared object and value parameters, plus registered raw actions as one-action plans. Execution uses the ordinary PlanExecutor under existing controller RBAC and always-on executor checks. The menu adds no selection ledger, quiescence, provenance, health-reader or credential-delta preconditions. Reports return what ran, per-action results, value provenance and any error to the same responder session, with up to five rounds per incident. Pick from the menu when an option fits; if it fails, read the report and pick another or fix it directly. Current unexplained objects have controller-checked removal options; typed failure reasons guide recovery. EnsureDatabaseUser accepts env or namespace-local ConfigMap key credential references, optionally narrowed to one literal assignment. Only the executor resolves values into private stdin; plans, receipts and recordings retain references. Direct Secret keys require a separate security review. Author Mitigators as self-contained repairs with declared parameters and specific failure context. Intermediate reports are not independent incident outcomes or program trust credit.
+The menu is a convenience over direct commands. It lists accepted Mitigators with their declared object and value parameters, plus registered raw actions as one-action plans. Execution uses the ordinary PlanExecutor under existing controller RBAC and always-on executor checks. The menu adds no selection ledger, quiescence, provenance, health-reader or credential-delta preconditions. Reports return what ran, per-action results, value provenance and any error to the same responder session, with up to five rounds per incident. Pick from the menu when an option fits; if it fails, read the report and pick another or fix it directly. Current unexplained objects have controller-checked removal options; typed failure reasons guide recovery. EnsureDatabaseUser accepts env or namespace-local ConfigMap key credential references, optionally narrowed to one literal assignment. Only the executor resolves values into private stdin; plans, receipts and recordings retain references. Direct Secret keys require a separate security review. Author Mitigators as self-contained repairs with declared parameters and specific failure context. Intermediate reports are not independent incident outcomes or program trust credit. prior_response_progress retains successful receipts and blockers from failed episodes of the same open problem. admission_blocked names the webhook/configuration that prevents rollout; applied writes remain.
 
 ## Controller verification and command reports
 
@@ -137,22 +137,25 @@ objects that still differ from accepted source and never decides healthy.
 After a healthy return, SDO may resume once for source differences when
 progress remains; terminal inventory and no-progress stops do not resume.
 restore them or explain the intended difference. Pending observation windows,
-including unproven synthetic scenarios, are not healthy. Fresh deployment-
-rollout-pending findings name owned ReplicaSet/Pod blockers and old-template
-Pods, including after recorded actions; inspect their evidence before
-repeating workload writes. Wait on SDO's verification instead of sleeping.
-After closure, incident_verified is an informational warning on every
-response; reads and reports remain available, while mutations are rejected.
-After verified closure, report grace and outcome/reflection work continue
-during maintenance pauses.
+including unproven synthetic scenarios, are not healthy. verification_blockers
+names incomplete detectors and reasons. SDO resumes once for these blockers,
+then stops any running blocker turn and records an unconfirmed outcome at the
+verification bound if they persist. Fresh deployment-rollout-pending findings
+name owned ReplicaSet/Pod blockers and old-template Pods, including after
+recorded actions; inspect their evidence before repeating workload writes.
+Wait on SDO's verification instead of sleeping. After closure,
+incident_verified is an informational warning on every response; reads and
+reports remain available, while mutations are rejected. After verified
+closure, report grace and outcome/reflection work continue during maintenance
+pauses.
 
 options:
   -h, --help      show this help message and exit
   --wait SECONDS  wait for stable verification, a new/reactivated finding, or
                   this timeout (0: cached and instant)
 
-Key JSON fields: healthy, unresolved, findings[], detector_states[], drift[],
-drift_events[]
+Key JSON fields: healthy, unresolved, findings[], detector_states[],
+verification_blockers[{detector_id,reason}], drift[], drift_events[]
 
 
 ## Supported open phase selections

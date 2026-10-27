@@ -328,7 +328,7 @@ func TestDriftOnlyIncidentGetsOneExtraHealthyTurn(t *testing.T) {
 // Observation must keep progressing while a responder owns its tool mutex.
 // Both early closure and result collection read optional continuation metadata.
 func TestControllerDriftRepromptObservationNeverWaitsForTools(t *testing.T) {
-	for _, mode := range []string{"running", "completion"} {
+	for _, mode := range []string{"running", "running-stopper", "completion"} {
 		t.Run(mode, func(t *testing.T) {
 			f := newClosureDriftFixture(t, true, true, "app")
 			f.step(t, 1)
@@ -336,9 +336,12 @@ func TestControllerDriftRepromptObservationNeverWaitsForTools(t *testing.T) {
 			healthy.Store(true)
 			loop := continuationLoop(*f.c.currentIncidentRequest, &healthy, 1)
 			f.c.responderLoop = loop
-			if mode == "running" {
+			if mode != "completion" {
 				f.c.responderDone = false
 				f.c.dispatchState = contracts.DispatchState_DISPATCH_STATE_RUNNING
+			}
+			if mode == "running-stopper" {
+				f.c.dispatcher = &reportTailDispatcher{Dispatcher: f.c.dispatcher}
 			}
 			completion := dispatchCompletion{incidentID: f.c.currentIncidentRequest.IncidentID, result: *cloneIncidentResult(f.c.currentIncidentResult)}
 			loop.mu.Lock()

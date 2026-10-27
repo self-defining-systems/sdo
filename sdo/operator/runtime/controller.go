@@ -135,7 +135,9 @@ type Controller struct {
 	// durable is the state stateStore last confirmed durable. With a store
 	// attached, an effect runs only while this state records it, so a
 	// restarted controller can recover every effect that ran.
-	durable                 *contracts.ControllerState
+	durable *contracts.ControllerState
+	// checkpoint survives effect gating failures: recovery must retain accepted receipts.
+	checkpoint              *contracts.ControllerState
 	incidentOpen            bool
 	responderDone           bool
 	responderLoop           *ResponderLoop
@@ -161,6 +163,7 @@ type Controller struct {
 	incidentDetectedAt      time.Time
 	incidentDispatchedAt    time.Time
 	responderCompletedAt    time.Time
+	verificationDeadline    time.Time
 	// detectorClearSince maps each detector to the start of its current
 	// streak of clear evaluations; a firing or erroring evaluation ends
 	// the streak. Guarded by mu.
@@ -774,6 +777,7 @@ func (c *Controller) dispatchReady(ctx context.Context, now time.Time, snapshot 
 	c.incidentDetectedAt = now.UTC()
 	c.incidentDispatchedAt = time.Time{}
 	c.responderCompletedAt = time.Time{}
+	c.verificationDeadline = time.Time{}
 	c.resetDispatchRetryLocked()
 	c.dispatchState = contracts.DispatchState_DISPATCH_STATE_PENDING
 	if c.broker != nil {
@@ -891,8 +895,14 @@ func (c *Controller) NextWake() time.Time {
 		return deadline
 	}
 	c.mu.Lock()
-	verificationDeadline := c.responderCompletedAt.Add(c.config.VerificationTimeout)
-	verificationPending := c.incidentOpen && c.responderDone
+	verificationPending := c.incidentOpen && (c.responderDone || !c.verificationDeadline.IsZero()) && c.currentIncidentRequest != nil
+	verificationDeadline := time.Time{}
+	if verificationPending {
+		verificationDeadline = c.verificationDeadlineLocked()
+		if c.earlyStopRetryAt.After(verificationDeadline) {
+			verificationDeadline = c.earlyStopRetryAt
+		}
+	}
 	earlyDeadline := time.Time{}
 	if c.incidentOpen && !c.closureStableSince.IsZero() {
 		earlyDeadline = c.closureStableSince.Add(c.config.ClosureStabilityWindow)
@@ -1030,6 +1040,7 @@ func (c *Controller) incidentRequest(now time.Time, findings []sdk.Finding) Inci
 	return IncidentRequest{
 		SchemaVersion: ProtocolSchemaVersion, Application: c.config.Application, Namespace: c.config.Namespace,
 		IncidentID: incidentID, Findings: findings,
+		PriorResponseProgress:  priorResponseProgress(c.config.RepositoryWorktree, findings),
 		DriftEvents:            driftEvents,
 		NamespaceOnboarding:    cloneNamespaceOnboarding(c.namespaceOnboarding),
 		DisabledSetupDetectors: cloneDisabledSetupDetectors(c.disabledSetupDetectors),
@@ -1136,6 +1147,13 @@ func (c *Controller) handleDispatchCompletion(completion dispatchCompletion, obs
 		)
 		return
 	}
+	// Cancellation at the frozen bound is controller-owned settlement, not a
+	// failed worker report. Keep the completed first turn while quiescence retries.
+	var boundedJobFailure *ResponderJobFailedError
+	if !c.verificationDeadline.IsZero() && !observedAt.Before(c.verificationDeadlineLocked()) && errors.Is(completion.err, context.Canceled) && !errors.As(completion.err, &boundedJobFailure) {
+		c.mu.Unlock()
+		return
+	}
 	c.responseStagesRunning = false
 	if len(completion.priorStages) > 0 {
 		c.currentIncidentRequest.PriorStages = mergeLaterStagePasses(completion.priorStages, c.currentIncidentRequest.PriorStages)
@@ -1225,6 +1243,9 @@ func (c *Controller) handleDispatchCompletion(completion dispatchCompletion, obs
 		c.resetDispatchRetryLocked()
 	}
 	if c.responderDone {
+		if c.verificationDeadline.IsZero() {
+			c.verificationDeadline = c.verificationDeadlineLocked()
+		}
 		c.emitLifecycleLocked(&contracts.LifecycleEvent{
 			Event: PhaseResponderCompleted, RecordedAt: contractTimestamp(c.responderCompletedAt), IncidentId: completion.incidentID,
 			DispatchError: c.dispatchError != "",
@@ -1257,10 +1278,16 @@ func (c *Controller) cleanupHelpers() {
 }
 
 func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snapshot sdk.DetectionContext) {
+	if !c.settleBoundedContinuation(ctx, now) {
+		return
+	}
 	c.mu.Lock()
 	if !c.incidentOpen || c.currentIncidentRequest == nil {
 		c.mu.Unlock()
 		return
+	}
+	if c.responderDone && c.verificationDeadline.IsZero() {
+		c.verificationDeadline = c.verificationDeadlineLocked()
 	}
 	early := !c.responderDone
 	driftOnly := early && c.driftOnlyIncidentLocked()
@@ -1297,13 +1324,18 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 		}
 	}
 	defer release()
+	var snapshotErr error
 	if snapshot == nil {
-		var err error
-		snapshot, err = c.provider.Snapshot(ctx)
-		if err != nil {
+		snapshot, snapshotErr = c.provider.Snapshot(ctx)
+		if snapshotErr != nil {
 			c.resetEarlyStability()
-			c.reportBrokerError("verify observation scope", err)
-			return
+			c.reportBrokerError("verify observation scope", snapshotErr)
+			c.mu.Lock()
+			bounded := c.responderDone && !now.Before(c.verificationDeadlineLocked())
+			c.mu.Unlock()
+			if !bounded {
+				return
+			}
 		}
 	}
 	generation := observationGeneration(snapshot)
@@ -1320,7 +1352,10 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 			}
 		}
 	}
-	source := c.verifyClosureSource(ctx, now, snapshot, nil, rolloutRefs...)
+	source := closureSourceReport{}
+	if snapshotErr == nil {
+		source = c.verifyClosureSource(ctx, now, snapshot, nil, rolloutRefs...)
+	}
 	c.mu.Lock()
 	// Any observed responder write restarts the stability window, including
 	// the last writes before the responder finished.
@@ -1332,6 +1367,9 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 		}
 	}
 	finalStates, healthVerified := c.finalVerificationStates()
+	if snapshotErr != nil {
+		finalStates, healthVerified = nil, false
+	}
 	if early && healthVerified && !c.earlyLastMutationAt.IsZero() {
 		ids := c.healthDetectorIDs
 		if len(ids) == 0 {
@@ -1354,6 +1392,13 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 		slog.Info("incident_terminal_dispatch_failure", "incident_id", c.currentIncidentRequest.IncidentID, "reason", "responder_job_failed", "active_health_detectors", c.activeHealthDetectors())
 	}
 	verification := c.continuationVerificationLocked(healthVerified, source)
+	if snapshotErr != nil {
+		verification.Error = "verification snapshot unavailable: " + snapshotErr.Error()
+		verification.Summary += "; " + verification.Error
+		for _, state := range verification.DetectorStates {
+			verification.VerificationBlockers = append(verification.VerificationBlockers, VerificationBlocker{DetectorID: state.DetectorID, Reason: verification.Error})
+		}
+	}
 	if early {
 		seen := map[string]bool{}
 		for _, finding := range verification.Findings {
@@ -1414,7 +1459,11 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 	}
 
 	driftPrompt := !early && verified && driftRepromptCanProgress(source.Drift, c.currentIncidentResult)
-	if ((!verified && (len(verification.Findings) > 0 || verification.Error != "")) || driftPrompt) && !terminalFailure && c.dispatchError == "" && now.Before(c.currentIncidentRequest.ResponseDeadline) {
+	continuationDeadline := c.verificationDeadlineLocked()
+	if driftPrompt {
+		continuationDeadline = c.currentIncidentRequest.ResponseDeadline
+	}
+	if ((!verified && (len(verification.Findings) > 0 || verification.Error != "" || len(verification.VerificationBlockers) > 0)) || driftPrompt) && !terminalFailure && c.dispatchError == "" && now.Before(continuationDeadline) {
 		if continuer, ok := c.dispatcher.(interface {
 			ContinueAfterVerification(context.Context, IncidentRequest, ToolResponse, time.Time) (bool, error)
 		}); ok {
@@ -1438,6 +1487,12 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 				return
 			}
 			if resumed {
+				// Health already verified before optional source work. Its
+				// return needs a fresh observation window; unconfirmed turns
+				// keep their original frozen bound instead.
+				if driftPrompt {
+					c.verificationDeadline = time.Time{}
+				}
 				if c.currentIncidentResult != nil && driftRecord != nil {
 					c.currentIncidentResult.DriftReprompt = driftRecord
 				}
@@ -1452,9 +1507,9 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 	}
 	if !verified {
 		// One timeout bounds how long a stuck incident can block the stream. It
-		// closes as a normal failed incident: with no final detector states
-		// the outcome is never health-verified.
-		if !terminalFailure && now.Before(c.responderCompletedAt.Add(c.config.VerificationTimeout)) {
+		// closes with a receipt: failed for actionable findings, unconfirmed
+		// for incomplete observations, and never health-verified.
+		if !terminalFailure && now.Before(c.verificationDeadlineLocked()) {
 			c.mu.Unlock()
 			return
 		}
@@ -1529,6 +1584,18 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 		ResponderCompletedAt: c.responderCompletedAt, VerifiedAt: verifiedAt,
 		CleanedHelpers: append([]string(nil), c.cleanedHelpers...),
 	}
+	if !verified && !terminalFailure && len(verification.Findings) == 0 {
+		closure.UnconfirmedReason = contracts.ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_OBSERVATION_INCOMPLETE
+		if verification.Error != "" {
+			closure.UnconfirmedReason = contracts.ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_OBSERVER_UNAVAILABLE
+		}
+		closure.UnconfirmedDetail = verification.Summary
+		// Pending/error states are outcome evidence, not independently cleared
+		// causes. Preserve every named blocker through the memory edge.
+		for _, blocker := range verification.VerificationBlockers {
+			closure.PartialDetectorStates = append(closure.PartialDetectorStates, DetectorEvaluation{DetectorID: blocker.DetectorID, EvaluatedAt: now, Status: DetectorEvaluationPending, Reason: blocker.Reason})
+		}
+	}
 	if early {
 		closure.ResponderCompletedAt = verifiedAt
 		closure.Result = closureGuard.resultSnapshot(*c.currentIncidentRequest, verifiedAt)
@@ -1578,6 +1645,19 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 	if c.OnIncidentClosed != nil {
 		c.OnIncidentClosed(closure)
 	}
+}
+
+// verificationDeadlineLocked bounds observation by both the completed response
+// and its original request budget. Continuations never extend that request.
+func (c *Controller) verificationDeadlineLocked() time.Time {
+	deadline := c.verificationDeadline
+	if deadline.IsZero() {
+		deadline = c.responderCompletedAt.Add(c.config.VerificationTimeout)
+	}
+	if response := c.currentIncidentRequest.ResponseDeadline; !response.IsZero() && response.Before(deadline) {
+		deadline = response
+	}
+	return deadline
 }
 
 func (c *Controller) activeHealthDetectors() []string {
@@ -1641,7 +1721,7 @@ func (c *Controller) finalVerificationStates() ([]DetectorEvaluation, bool) {
 			}
 		}
 		sort.Strings(ids)
-		return c.latestEvaluations(ids, time.Time{}, false)
+		return c.latestEvaluations(ids, time.Time{}, true)
 	}
 	for _, detectorID := range c.healthDetectorIDs {
 		if c.tracker.HasActiveDetector(detectorID) {
@@ -1750,9 +1830,10 @@ func (c *Controller) ExportState() (*contracts.ControllerState, error) {
 		History: evaluationsContract(history), IncidentOpen: c.incidentOpen, ResponderDone: c.responderDone,
 		DispatchError: c.dispatchError, IncidentDetectedAt: optionalTimestamp(c.incidentDetectedAt),
 		IncidentDispatchedAt: optionalTimestamp(c.incidentDispatchedAt), ResponderCompletedAt: optionalTimestamp(c.responderCompletedAt),
-		DetectorClearSince:  timestampsContract(c.detectorClearSince),
-		DispatchState:       dispatchState,
-		IncidentFindingKeys: append([]string(nil), c.incidentFindingKeys...), ClosureState: c.closureState,
+		VerificationDeadlineAt: optionalTimestamp(c.verificationDeadline),
+		DetectorClearSince:     timestampsContract(c.detectorClearSince),
+		DispatchState:          dispatchState,
+		IncidentFindingKeys:    append([]string(nil), c.incidentFindingKeys...), ClosureState: c.closureState,
 		ClosureReceipt: closureReceiptContract(c.closureReceipt), ClosureFailure: closureFailureContract(c.closureFailure), FailedClosures: cloneFailedClosures(c.failedClosures),
 		LastAcknowledgedIncidentId: c.lastAcknowledgedIncidentID, QueuedReflectionIncidentIds: append([]string(nil), c.reflections.queued...), QueuedReflectionsUnknown: c.reflections.unknown,
 		EvaluationIteration: int32(c.evaluationIteration), StepCount: c.stepCount, DetectorTimeline: timeline, IncidentView: view,
@@ -1844,6 +1925,7 @@ func (c *Controller) RestoreState(state *contracts.ControllerState) error {
 	c.incidentDetectedAt = controllerTime(state.GetIncidentDetectedAt())
 	c.incidentDispatchedAt = controllerTime(state.GetIncidentDispatchedAt())
 	c.responderCompletedAt = controllerTime(state.GetResponderCompletedAt())
+	c.verificationDeadline = controllerTime(state.GetVerificationDeadlineAt())
 	c.detectorClearSince = cloneClearSince(timestampsState(state.GetDetectorClearSince()))
 	c.dispatchState = state.DispatchState
 	c.incidentFindingKeys = append([]string(nil), state.IncidentFindingKeys...)
@@ -1921,8 +2003,10 @@ func (c *Controller) AttachStateStore(ctx context.Context, store StateStore) err
 	c.mu.Lock()
 	c.stateRestored = revision != ""
 	c.durable = nil
+	c.checkpoint = nil
 	if revision != "" {
 		c.durable = proto.Clone(state).(*contracts.ControllerState)
+		c.checkpoint = proto.Clone(state).(*contracts.ControllerState)
 	}
 	c.mu.Unlock()
 	return nil
@@ -1940,8 +2024,14 @@ func (c *Controller) PersistState(ctx context.Context) error {
 	}
 	defer cancel()
 	state, err := c.ExportState()
+	if err == nil {
+		err = validateRuntimeState(state)
+	}
 	if err != nil {
-		return fmt.Errorf("snapshot controller state: %w", err)
+		state, err = c.recoverInvalidState(err)
+		if err != nil {
+			return fmt.Errorf("snapshot controller state: %w", err)
+		}
 	}
 	if preparer, ok := c.dispatcher.(interface {
 		PrepareDispatch(context.Context, IncidentRequest) (IncidentRequest, error)
@@ -1979,6 +2069,7 @@ func (c *Controller) PersistState(ctx context.Context) error {
 	c.releaseStaleStagedTask(stagedIncident)
 	c.mu.Lock()
 	c.durable = proto.Clone(state).(*contracts.ControllerState)
+	c.checkpoint = proto.Clone(state).(*contracts.ControllerState)
 	archivedIDs := make([]string, 0, len(state.GetFailedClosures()))
 	for _, record := range state.GetFailedClosures() {
 		archivedIDs = append(archivedIDs, record.GetFailure().GetIncidentId())

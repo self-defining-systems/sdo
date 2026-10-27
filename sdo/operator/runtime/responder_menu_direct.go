@@ -372,6 +372,10 @@ func (l *ResponderLoop) executeMenuEntry(ctx context.Context, entry menuEntry, s
 			report.Status = contracts.MitigationReport_STATUS_UNRESOLVED
 			report.FailedPhase = "rollout"
 			report.ReasonCode = "rollout_pending"
+			if result.RolloutPending.GetReasonCode() == "admission_blocked" {
+				report.ReasonCode = "admission_blocked"
+				break
+			}
 			next, ok, followErr := l.programFollowUp(ctx, entry, bindings, planned)
 			if ok {
 				followUp = &next

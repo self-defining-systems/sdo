@@ -8,6 +8,8 @@ from pathlib import Path  # noqa: TC003 - Pydantic resolves this annotation at r
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from benchmarks.sregym.fastloop.lane_installability import LaneTopology  # noqa: TC001 - Pydantic runtime schema.
+
 ENVIRONMENT_FILENAME = "fastloop.json"
 DEFAULT_PROBLEM = "missing_configmap_hotel_reservation"
 
@@ -23,6 +25,7 @@ class Images(BaseModel):
 class FastloopEnvironment(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    lane_topology: LaneTopology | None = None
     image_delivery: str = "unknown"
     image_delivery_reason: str = ""
     image_delivery_seconds: float = 0

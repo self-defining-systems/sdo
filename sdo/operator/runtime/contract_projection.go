@@ -217,6 +217,7 @@ func incidentRequestContract(request IncidentRequest) (*contracts.IncidentReques
 		RepairPolicy: request.RepairPolicy, StateChanges: stateChangesContract(request.StateChanges),
 		MaxResponseLoops: int32(request.MaxResponseLoops),
 		DriftEvents:      driftEventsContract(request.DriftEvents), PreparedAgentTask: request.PreparedAgentTask,
+		PriorResponseProgress:  cloneResponseProgress(request.PriorResponseProgress),
 		PlaybookCoverage:       cloneCoverage(request.PlaybookCoverage),
 		PriorStages:            cloneStageReports(request.PriorStages),
 		NamespaceOnboarding:    cloneNamespaceOnboarding(request.NamespaceOnboarding),
@@ -446,11 +447,12 @@ func incidentClosureContract(closure IncidentClosure) (*contracts.IncidentClosur
 		FinalStateChanges:                   stateChangesContract(closure.FinalStateChanges),
 		DetectedAt:                          contractTimestamp(closure.DetectedAt), DispatchedAt: contractTimestamp(closure.DispatchedAt),
 		ResponderCompletedAt: contractTimestamp(closure.ResponderCompletedAt), VerifiedAt: contractTimestamp(closure.VerifiedAt),
-		HealthClearedAt:   optionalContractTimestamp(closure.HealthClearedAt),
-		CleanedHelpers:    append([]string(nil), closure.CleanedHelpers...),
-		UnconfirmedReason: closure.UnconfirmedReason,
-		UnconfirmedDetail: closure.UnconfirmedDetail,
-		SourceCheckNotes:  append([]string(nil), closure.SourceCheckNotes...),
+		HealthClearedAt:         optionalContractTimestamp(closure.HealthClearedAt),
+		CleanedHelpers:          append([]string(nil), closure.CleanedHelpers...),
+		UnconfirmedReason:       closure.UnconfirmedReason,
+		UnconfirmedDetail:       closure.UnconfirmedDetail,
+		StatePersistenceFailure: clonePersistenceFailure(closure.StatePersistenceFailure),
+		SourceCheckNotes:        append([]string(nil), closure.SourceCheckNotes...),
 	}
 	if closure.ClosureStabilityWindow == 0 {
 		message.ClosureStabilityWindow = nil
@@ -541,6 +543,7 @@ func incidentRequestState(message *contracts.IncidentRequest) *IncidentRequest {
 		return nil
 	}
 	result := &IncidentRequest{
+		PriorResponseProgress:  cloneResponseProgress(message.GetPriorResponseProgress()),
 		ObservationGeneration:  message.GetObservationGeneration(),
 		NamespaceOnboarding:    cloneNamespaceOnboarding(message.GetNamespaceOnboarding()),
 		DisabledSetupDetectors: cloneDisabledSetupDetectors(message.GetDisabledSetupDetectors()),
@@ -632,11 +635,12 @@ func incidentClosureState(message *contracts.IncidentClosure) IncidentClosure {
 		FinalStateChanges:                   stateChangesState(message.GetFinalStateChanges()),
 		DetectedAt:                          controllerTime(message.GetDetectedAt()), DispatchedAt: controllerTime(message.GetDispatchedAt()),
 		ResponderCompletedAt: controllerTime(message.GetResponderCompletedAt()), VerifiedAt: controllerTime(message.GetVerifiedAt()),
-		HealthClearedAt:   optionalTimeState(message.HealthClearedAt),
-		CleanedHelpers:    append([]string(nil), message.GetCleanedHelpers()...),
-		UnconfirmedReason: message.GetUnconfirmedReason(),
-		UnconfirmedDetail: message.GetUnconfirmedDetail(),
-		SourceCheckNotes:  append([]string(nil), message.GetSourceCheckNotes()...),
+		HealthClearedAt:         optionalTimeState(message.HealthClearedAt),
+		CleanedHelpers:          append([]string(nil), message.GetCleanedHelpers()...),
+		UnconfirmedReason:       message.GetUnconfirmedReason(),
+		UnconfirmedDetail:       message.GetUnconfirmedDetail(),
+		StatePersistenceFailure: clonePersistenceFailure(message.GetStatePersistenceFailure()),
+		SourceCheckNotes:        append([]string(nil), message.GetSourceCheckNotes()...),
 	}
 	if request := incidentRequestState(message.GetRequest()); request != nil {
 		closure.Request = *request

@@ -20,8 +20,9 @@ PLAN_ACTIONS = (
     "SetField updates a schema-checked field by index or unique name, optionally from accepted source; "
     "ConfigMap JSON/YAML entries preserve unrelated keys.\n"
     "CreateFromSource restores a named missing object from accepted source.\n"
-    "ReconcileFromSource restores declared configuration, including source-named cluster objects, "
-    "and removes fields added since acceptance; other undeclared fields stay.\n"
+    "ReconcileFromSource converges source-owned configuration, removes additions since acceptance, "
+    "and reports residual source differences and remaining old-revision ReplicaSets/Pods. "
+    "The Deployment controller and responder handle the rollout.\n"
     "DeleteObject irreversibly removes an allowed named source-absent object and never auto-recreates it."
 )
 
@@ -63,7 +64,8 @@ RESPONSE_FIELDS = {
     "menu": "menu.options[].{option_id, program_id, program_revision, disabled_reason, parameters}, "
     "selection_schema, selection_set_schema, unexplained_removal_blockers[]",
     "source": "source (accepted Kubernetes object)",
-    "verify": "healthy, unresolved, findings[], detector_states[], drift[], drift_events[]",
+    "verify": "healthy, unresolved, findings[], detector_states[], "
+    "verification_blockers[{detector_id,reason}], drift[], drift_events[]",
     "report": "report.{status, attempt_id, rounds}, session",
     "act": "actions[].{success, exit_code, receipt, output, failure_reason, hint}",
     "apply": "actions[].{application_id, targeted_healthy, mitigation_health, program_runs, program_revisions, report}",
@@ -135,9 +137,10 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="sdo",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="prior_stages: playbook, result, skip_reason of an automatic stage; one that ran "
-        "while you worked shows once, in your next reply. Don't repeat verified repairs. "
-        "Full facts keep apply receipts and post-apply diagnoses.\n\n"
+        epilog="prior_stages: automatic repairs. "
+        "prior_response_progress: bounded failed-episode progress, with omissions. "
+        "Keep repairs; admission_blocked names a current rollout prerequisite. "
+        "Full history stays in outcomes.\n\n"
         "Examples (replace names with incident resources):\n  " + "\n  ".join(CLI_EXAMPLES),
     )
     commands = parser.add_subparsers(dest="command", required=True)
@@ -221,7 +224,8 @@ def _parser() -> argparse.ArgumentParser:
             "Assignment selects one literal NAME=value line. The executor resolves values privately; "
             "never put credential values in arguments, evidence or memory. Direct Secret keys are unavailable. "
             "The result reads the catalog back: action_results[].database_user states the verified user and "
-            "outcome (created, updated or already_correct), and a failure carries a typed failure_reason. "
+            "outcome (created, updated or already_correct). Failures use execution_failed, authorization_denied "
+            "or outcome_unknown; details retain the safe database diagnostic. "
             "A verified user does not mean the application recovered."
         ),
     )
@@ -307,6 +311,9 @@ def _parser() -> argparse.ArgumentParser:
         "terminal inventory and no-progress stops do not resume. "
         "restore them or explain the intended difference. "
         "Pending observation windows, including unproven synthetic scenarios, are not healthy. "
+        "verification_blockers names incomplete detectors and reasons. SDO resumes once for these blockers, "
+        "then stops any running blocker turn and records an unconfirmed outcome "
+        "at the verification bound if they persist. "
         "Fresh deployment-rollout-pending findings name owned ReplicaSet/Pod blockers and old-template Pods, "
         "including after recorded actions; inspect their evidence before repeating workload writes. "
         "Wait on SDO's verification instead of sleeping. After closure, incident_verified is an "

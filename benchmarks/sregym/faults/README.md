@@ -47,3 +47,10 @@ The Phase 4 seed42 fixture and offline regression cover all 50 selected problems
 (170 faults, 57 classes). A future class or unsupported variant still fails plan
 admission. These independent observations remain benchmark timing evidence, not
 production learning, repair instructions, or official grader proof.
+
+`adapter/budgets.py` owns eval wait bounds. The AST seconds-literal ratchet and
+its negative controls run in `scripts/check_errors.sh` alongside the Python
+polling and prompt-genericity checks. Go Execute-deadline and sleep-poll policies
+and the SREGym submodule ancestry check also run there. Add fast source-scanning
+invariants to this gate so focused package tests cannot bypass repository rules;
+keep integration and property-test sweeps in their focused suites.

@@ -281,7 +281,19 @@ message IncidentRequest {
   repeated StageReport prior_stages = 29;
   // Go-owned: each lossy step taken so the request fit the transport limit, in order.
   repeated string compaction = 30;
+  // Information from failed episodes of the same continuously open problem.
+  repeated ResponseProgress prior_response_progress = 31;
   repeated DisabledSetupDetector disabled_setup_detectors = 32;
+}
+
+message ResponseProgress {
+  string incident_id = 1;
+  repeated RepairActionReceipt successful_actions = 2;
+  repeated RolloutPending blockers = 3;
+  string error = 4;
+  // Projection only: complete facts remain in durable outcomes.
+  bool truncated = 5;
+  uint32 omitted_episodes = 6;
 }
 
 message RootCauseEvidence {
@@ -537,6 +549,7 @@ message IncidentClosure {
   // accepted source would not render, the inventory did not load). Information
   // only: health alone decided the closure.
   repeated string source_check_notes = 26;
+  StatePersistenceFailure state_persistence_failure = 27;
 }
 
 // ClosureUnconfirmedReason explains why a verified closure was committed
@@ -564,7 +577,7 @@ message StageMitigation {
   repeated Binding bindings = 3;
   string plan_id = 4;
   PlanApplication apply_receipt = 5;
-  string result = 6 [(buf.validate.field).string = {in: ["applied_cleared", "applied_still_matching", "rollout_failed", "rollout_pending_at_handoff", "apply_error", "skipped"]}];
+  string result = 6 [(buf.validate.field).string = {in: ["applied_cleared", "applied_still_matching", "rollout_failed", "rollout_pending_at_handoff", "admission_blocked", "apply_error", "skipped"]}];
   string skip_reason = 7 [(buf.validate.field).string = {in: ["", "multiple_entry_points", "no_mitigation", "unbound_parameter", "diagnose_no_longer_matches", "diagnose_unavailable", "unexplained_coverage", "already_attempted", "repair_policy", "stage_budget", "plan_not_executable"]}];
   ProgramRun post_apply_diagnose = 8;
   repeated string cleared_finding_fingerprints = 9;
@@ -581,4 +594,11 @@ message DriftReprompt {
   int32 findings_before = 1 [(buf.validate.field).int32.gt = 0];
   // Absent until a post-turn verification is available.
   optional int32 findings_after = 2 [(buf.validate.field).int32.gte = 0];
+}
+
+// Controller-owned failure of the durable state contract. Invalid evidence is
+// quarantined; its field paths remain visible to outcome consumers/reflection.
+message StatePersistenceFailure {
+  string reason = 1 [(buf.validate.field).string.const = "state_persistence_invalid"];
+  string detail = 2 [(buf.validate.field).string.min_len = 1];
 }

@@ -37,7 +37,11 @@ from benchmarks.sregym.fastloop.object_probes import (
 from benchmarks.sregym.fastloop.object_probes import (
     flag_disabled as _flag_disabled,
 )
-from benchmarks.sregym.fastloop.runtime_observation import KubectlObservationTransport, ReadOnlyObservation
+from benchmarks.sregym.fastloop.runtime_observation import (
+    KubectlObservationTransport,
+    ReadOnlyObservation,
+    observation_timeout,
+)
 from benchmarks.sregym.fastloop.runtime_probes import Observer, runtime_probe
 from benchmarks.sregym.faults.description import FaultSpec, ProblemDescription, describe_sregym_problems
 from benchmarks.sregym.faults.probe_catalog import (
@@ -411,7 +415,9 @@ class KubectlReader:
         if not name and kind not in {"jobs", "pods"}:
             raise ValueError("only Pod and Job inventories may be listed")
         command += ["-n", self._namespace, "get", kind, *([name] if name else []), "-o", "json", "--ignore-not-found"]
-        completed = subprocess.run(command, capture_output=True, text=True, timeout=self._timeout, check=False)
+        completed = subprocess.run(
+            command, capture_output=True, text=True, timeout=observation_timeout(self._timeout), check=False
+        )
         if completed.returncode != 0:
             raise RuntimeError(completed.stderr.strip() or f"kubectl exited {completed.returncode}")
         if not completed.stdout.strip():

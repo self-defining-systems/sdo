@@ -46,6 +46,7 @@ func cloneIncidentRequest(request *IncidentRequest) *IncidentRequest {
 	copy.StateChanges = cloneStateChanges(request.StateChanges)
 	copy.PlaybookCoverage = cloneCoverage(request.PlaybookCoverage)
 	copy.PriorStages = cloneStageReports(request.PriorStages)
+	copy.PriorResponseProgress = cloneResponseProgress(request.PriorResponseProgress)
 	return &copy
 }
 
@@ -104,6 +105,7 @@ func cloneIncidentClosure(closure *IncidentClosure) *IncidentClosure {
 		return nil
 	}
 	copy := *closure
+	copy.StatePersistenceFailure = clonePersistenceFailure(closure.StatePersistenceFailure)
 	copy.Request = *cloneIncidentRequest(&closure.Request)
 	copy.Result = cloneIncidentResult(closure.Result)
 	copy.FinalDetectorStates = cloneEvaluations(closure.FinalDetectorStates)

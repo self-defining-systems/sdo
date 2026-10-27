@@ -25,7 +25,7 @@ Mutation files contain these generated top-level arrays:
 ## General help
 
 ```text
-prior_stages: playbook, result, skip_reason of an automatic stage; one that ran while you worked shows once, in your next reply. Don't repeat verified repairs. Full facts keep apply receipts and post-apply diagnoses.
+prior_stages: automatic repairs. prior_response_progress: bounded failed-episode progress, with omissions. Keep repairs; admission_blocked names a current rollout prerequisite. Full history stays in outcomes.
 
 Examples (replace names with incident resources):
   sdo source Deployment/app/api
@@ -113,7 +113,7 @@ sdo plan [-h] [--finding FINGERPRINT] [--bind NAME=Kind/namespace/name] program_
 
 SetField updates a schema-checked field by index or unique name, optionally from accepted source; ConfigMap JSON/YAML entries preserve unrelated keys.
 CreateFromSource restores a named missing object from accepted source.
-ReconcileFromSource restores declared configuration, including source-named cluster objects, and removes fields added since acceptance; other undeclared fields stay.
+ReconcileFromSource converges source-owned configuration, removes additions since acceptance, and reports residual source differences and remaining old-revision ReplicaSets/Pods. The Deployment controller and responder handle the rollout.
 DeleteObject irreversibly removes an allowed named source-absent object and never auto-recreates it.
 Program commands use the current checkout, including shared libraries and new playbook IDs. Edits compile on demand; fix compile errors in place and retry. Revision receipts use working-tree:<source digest> for unpublished code. Reusable API reads use program.Kubernetes(view) with upstream client-go options; reads are recorded for replay.
 
@@ -169,7 +169,7 @@ Advertised option IDs remain valid for this session across filtered menu calls. 
 ```
 
 ```text
-Parameters accept ordinary JSON objects, arrays, numbers and booleans, as well as strings. sdo menu exports recursive parameters[].schema for every option, plus selection_schema and selection_set_schema; nested properties, required fields and oneOf choices describe accepted shapes. parameters[].example supplies typed synthetic inputs; replace names/values using incident evidence. CLI --param NAME=VALUE accepts JSON text for structured values. SyncWebhookCA privately copies a named Secret key into one webhook caBundle; only its reference and digest are returned. EnsureDatabaseUser repairs a MongoDB user in one call. Its password and target.auth username/password take exactly one credential reference: {env: NAME} or {config_map: {name: CONFIGMAP, key: KEY, assignment: optional_NAME}} in the target Pod namespace. Assignment selects one literal NAME=value line. The executor resolves values privately; never put credential values in arguments, evidence or memory. Direct Secret keys are unavailable. The result reads the catalog back: action_results[].database_user states the verified user and outcome (created, updated or already_correct), and a failure carries a typed failure_reason. A verified user does not mean the application recovered.
+Parameters accept ordinary JSON objects, arrays, numbers and booleans, as well as strings. sdo menu exports recursive parameters[].schema for every option, plus selection_schema and selection_set_schema; nested properties, required fields and oneOf choices describe accepted shapes. parameters[].example supplies typed synthetic inputs; replace names/values using incident evidence. CLI --param NAME=VALUE accepts JSON text for structured values. SyncWebhookCA privately copies a named Secret key into one webhook caBundle; only its reference and digest are returned. EnsureDatabaseUser repairs a MongoDB user in one call. Its password and target.auth username/password take exactly one credential reference: {env: NAME} or {config_map: {name: CONFIGMAP, key: KEY, assignment: optional_NAME}} in the target Pod namespace. Assignment selects one literal NAME=value line. The executor resolves values privately; never put credential values in arguments, evidence or memory. Direct Secret keys are unavailable. The result reads the catalog back: action_results[].database_user states the verified user and outcome (created, updated or already_correct). Failures use execution_failed, authorization_denied or outcome_unknown; details retain the safe database diagnostic. A verified user does not mean the application recovered.
 ```
 
 Complete report fields (`details_file`): `actions[].{application_id, targeted_healthy, mitigation_health, rollout_pending, program_revisions}, option_reports[]`.
@@ -227,11 +227,11 @@ read cached controller verification; optionally await a stable verdict
 sdo verify [-h] [--wait SECONDS]
 ```
 
-Reads the controller's cached health verdict immediately; drift[] lists objects that still differ from accepted source and never decides healthy. After a healthy return, SDO may resume once for source differences when progress remains; terminal inventory and no-progress stops do not resume. restore them or explain the intended difference. Pending observation windows, including unproven synthetic scenarios, are not healthy. Fresh deployment-rollout-pending findings name owned ReplicaSet/Pod blockers and old-template Pods, including after recorded actions; inspect their evidence before repeating workload writes. Wait on SDO's verification instead of sleeping. After closure, incident_verified is an informational warning on every response; reads and reports remain available, while mutations are rejected. After verified closure, report grace and outcome/reflection work continue during maintenance pauses.
+Reads the controller's cached health verdict immediately; drift[] lists objects that still differ from accepted source and never decides healthy. After a healthy return, SDO may resume once for source differences when progress remains; terminal inventory and no-progress stops do not resume. restore them or explain the intended difference. Pending observation windows, including unproven synthetic scenarios, are not healthy. verification_blockers names incomplete detectors and reasons. SDO resumes once for these blockers, then stops any running blocker turn and records an unconfirmed outcome at the verification bound if they persist. Fresh deployment-rollout-pending findings name owned ReplicaSet/Pod blockers and old-template Pods, including after recorded actions; inspect their evidence before repeating workload writes. Wait on SDO's verification instead of sleeping. After closure, incident_verified is an informational warning on every response; reads and reports remain available, while mutations are rejected. After verified closure, report grace and outcome/reflection work continue during maintenance pauses.
 
 - `--wait`: wait for stable verification, a new/reactivated finding, or this timeout (0: cached and instant)
 
-Key JSON fields: `healthy, unresolved, findings[], detector_states[], drift[], drift_events[]`.
+Key JSON fields: `healthy, unresolved, findings[], detector_states[], verification_blockers[{detector_id,reason}], drift[], drift_events[]`.
 
 ## rollback
 

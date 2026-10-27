@@ -1,7 +1,7 @@
 {
   "source_run": 40276560613,
   "source_head": "d9109afcdb651144b8ac12a0ac923449fc64f831",
-  "description": "Hosted active top-level pass/fail seconds. Explicit placements preserve package overlap and acceptance lanes; new names keep their package default. The redundant full compile is consolidated into the existing located-binding test.",
+  "description": "Hosted active top-level pass/fail seconds. Explicit placements preserve package overlap and acceptance lanes; new names keep their package default. The redundant full compile is consolidated into the existing located-binding test. TestPartialPlaybookPublication uses post-fix local race wall time at 139569e7 (93.09s); its move addresses the compiler package timeout in hosted run 40569608461.",
   "placements": {
     "sdo.dev/operator/builder/TestProgramDetectorCorpusUnknownIsInformation": "broker",
     "sdo.dev/operator/builder/TestOperatorCorpusRequiresProductionClosedLoop": "acceptance-second",
@@ -10,7 +10,8 @@
     "sdo.dev/operator/operatorcli/TestAdoptionCompilesAsIsAndLaterValidationStillRejects": "compiler-replay",
     "sdo.dev/operator/worker_registry/TestKubernetesExecutorRejectsRequestOverBudgetNamingTheComponent": "compiler",
     "sdo.dev/operator/broker/TestReflectionRecordsReplayButStillRejectsInvalidCode": "compiler-replay",
-    "sdo.dev/operator/broker/TestCLIAndBrokerAgreeOnVerifiedCauseReplayCoverage": "compiler-replay"
+    "sdo.dev/operator/broker/TestCLIAndBrokerAgreeOnVerifiedCauseReplayCoverage": "compiler-replay",
+    "sdo.dev/operator/memory/validate/TestPartialPlaybookPublication": "remaining"
   },
   "costs": {
     "sdo.dev/operator/apihistory/FuzzHistoryStorageSchedule": 0.021,
@@ -653,7 +654,8 @@
     "sdo.dev/operator/worker_registry/TestWarmStartupKeepsPodAgeAndClaimClockSeparate": 0.01,
     "sdo.dev/operator/worker_registry/TestWorkerJobKeepsToolAccessWithReadOnlySource": 0.005,
     "sdo.dev/operator/worker_registry/TestWorkerPVCProjectionsShareOneVolumeAcrossLaunchModes": 0.005,
-    "sdo.dev/operator/broker/TestReflectionRecordsReplayButStillRejectsInvalidCode": 60.96
+    "sdo.dev/operator/broker/TestReflectionRecordsReplayButStillRejectsInvalidCode": 60.96,
+    "sdo.dev/operator/memory/validate/TestPartialPlaybookPublication": 93.09
   },
   "local_measurements": {
     "source_head": "5e5fd6a316e7161f2314d827f59624c269417251",
