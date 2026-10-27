@@ -107,6 +107,23 @@ func TestCLIAndBrokerAgreeOnAcceptanceSecondShard(t *testing.T) {
 	testCLIAndBrokerAgreeOnAcceptance(t, 1)
 }
 
+// Measured slow cases share an existing compiler allocation. Every
+// case still has exactly one owner and retains its assertions and parallel cap.
+func TestCLIAndBrokerAgreeOnAcceptanceThirdShard(t *testing.T) {
+	testCLIAndBrokerAgreeOnAcceptance(t, 2)
+}
+
+func acceptanceCaseShard(index int, name string) int {
+	switch name {
+	case "trusted captured program", "healthy refused service ports",
+		"healthy refused ports without recordings", "trailing whitespace normalized",
+		"direct program", "program mitigation leaves target port faulty":
+		return 2
+	default:
+		return index % 2
+	}
+}
+
 func testCLIAndBrokerAgreeOnAcceptance(t *testing.T, shard int) {
 	binary := filepath.Join(t.TempDir(), "sdo-operator")
 	build := exec.Command("go", "build", "-o", binary, "../cmd/sdo-operator")
@@ -576,7 +593,7 @@ func (p Program) Mitigate(ctx context.Context,v program.ReadView,b program.Bindi
 		}, nil, false},
 	}...)
 	for index, test := range cases {
-		if index%2 != shard {
+		if acceptanceCaseShard(index, test.name) != shard {
 			continue
 		}
 		t.Run(test.name, func(t *testing.T) {

@@ -114,7 +114,7 @@ func adoptionNotAdopted(ref sdk.ObjectRef) string {
 	return sourceInventoryKinds[ref.APIVersion+"/"+ref.Kind].NotAdopted
 }
 
-// Findings accounts for top-level objects absent from source and pending
+// Findings accounts for missing accepted objects, top-level objects absent from source and pending
 // deletion of declared objects. Generated children inherit their declared root;
 // controller status and ephemeral endpoint/event churn never enter the check.
 func (s *SourceInventory) Findings(objects []*unstructured.Unstructured, now time.Time) []sdk.Finding {
@@ -194,6 +194,23 @@ func (s *SourceInventory) findingsWithOwnership(objects, ownership []*unstructur
 			ParameterBindings: map[string]sdk.ObjectRef{"resource": ref}, Metadata: map[string]any{"drift_event": event, "source_inventory": true, "stable_inventory": stableInventoryObject(o)},
 		}
 
+		finding.Fingerprint = fmt.Sprintf("%s/%x", FindingFingerprint(finding), sum)
+		findings = append(findings, finding)
+	}
+	// The informer-ready inventory is authoritative for absence as well as
+	// presence. Generated objects use the same accepted identities as raw
+	// manifests; a deleted declaration must not silently disappear from work.
+	for ref, declared := range s.declared {
+		if observed[ref] != nil || !sourceInventoryKind(declared) || inventoryOwned(declared) {
+			continue
+		}
+		event := sdk.DriftEvent{Ref: ref, Source: "missing from live inventory", Manager: "unknown", ObservedAt: now.UTC(), Classification: sdk.DriftUnexplained, Fields: inventoryFields(declared)}
+		encoded, _ := json.Marshal(event)
+		identity, _ := json.Marshal([]any{event.Ref, event.Source, event.Fields})
+		sum := sha256.Sum256(identity)
+		finding := sdk.Finding{DetectorID: "drift.unexplained", RuleID: "unexplained", Status: sdk.FindingActive, Severity: sdk.SeverityLatent,
+			Summary: fmt.Sprintf("missing %s/%s declared in accepted source", ref.Kind, ref.Name), Evidence: fmt.Sprintf("Accepted commit %s; %s", s.Revision, encoded), PrimaryResource: ref,
+			ParameterBindings: map[string]sdk.ObjectRef{"resource": ref}, Metadata: map[string]any{"drift_event": event, "source_inventory": true, "stable_inventory": stableInventoryObject(declared)}}
 		finding.Fingerprint = fmt.Sprintf("%s/%x", FindingFingerprint(finding), sum)
 		findings = append(findings, finding)
 	}

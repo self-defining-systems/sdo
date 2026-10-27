@@ -3,6 +3,9 @@
 set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$root"
+# Collection consumes the pinned harness tree. Initialize it before xdist can
+# turn a prerequisite collection error into an unrelated worker-finished crash.
+uv run python scripts/init_test_prereqs.py
 export GOMAXPROCS="${GOMAXPROCS:-2}"
 export GOFLAGS="${GOFLAGS:--p=2 -trimpath}"
 case " $GOFLAGS " in *" -p="*) ;; *) GOFLAGS="$GOFLAGS -p=2" ;; esac

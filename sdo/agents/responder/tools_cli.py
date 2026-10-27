@@ -19,7 +19,9 @@ from sdo.agents.responder.tool_output import render_summary, write_response
 PLAN_ACTIONS = (
     "SetField updates a schema-checked field by index or unique name, optionally from accepted source; "
     "ConfigMap JSON/YAML entries preserve unrelated keys.\n"
-    "CreateFromSource restores a named missing object from accepted source.\n"
+    "CreateFromSource restores a named missing object, including declared file-generated ConfigMaps, "
+    "from accepted source. Source/config restores may recycle blocked dependent Pods once; "
+    "Pod deletion receipts are irreversible.\n"
     "ReconcileFromSource converges source-owned configuration, removes additions since acceptance, "
     "and reports residual source differences and remaining old-revision ReplicaSets/Pods. "
     "The Deployment controller and responder handle the rollout.\n"

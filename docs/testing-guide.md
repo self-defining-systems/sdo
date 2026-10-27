@@ -810,8 +810,17 @@ hosted run provenance, active top-level timings and explicit measured moves;
 new names retain their package default. Remaining packages are discovered too,
 with the same exhaustive ownership guard. Runtime allocations use the hosted
 costs in `scripts/runtime_test_costs.json` for longest-first balancing. Both
-profiles currently derive from hosted run40276560613; active parent time
-includes parallel subtests and excludes top-level pauses. The redundant-link
+profiles record their hosted run and source head; active parent time
+includes parallel subtests and excludes top-level pauses. Refresh completed
+measurements from a hosted transcript with
+`gh run view RUN --log > /tmp/go-ci.log`, then
+`uv run python scripts/update_go_test_costs.py --log /tmp/go-ci.log --run RUN --head SHA --write`.
+Use `--scope operator` or `--scope runtime` to refresh one profile.
+Without `--write`, the importer reports the measured entry counts. Unfinished
+tests retain their previous costs; no test or seed is removed. Explicit operator
+placements remain reviewable in the operator profile. The measured slow
+acceptance cases run in a third name partition on the existing compiler-replay
+allocation, preserving all cases and the two-worker parallel cap. The redundant-link
 regression shares the located-binding fixture's real acceptance compilation.
 
 The five existing operator jobs and four-minute Go timeouts stay unchanged.

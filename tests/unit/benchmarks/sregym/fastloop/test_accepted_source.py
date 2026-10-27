@@ -150,3 +150,90 @@ def test_revision_is_the_checked_out_accepted_commit(tmp_path: Path) -> None:
         ["git", "-C", str(source.workspace), "rev-parse", "HEAD"], check=True, capture_output=True, text=True
     ).stdout.strip()
     assert source.revision == head
+
+
+@pytest.mark.go_integration
+def test_file_generated_configmap_restore_uses_production_source_renderer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operator_binary: Path
+) -> None:
+    workspace = tmp_path / "workspace"
+    deployment = workspace / "kubernetes"
+    deployment.mkdir(parents=True)
+    (deployment / "kustomization.yaml").write_text(
+        "configMapGenerator:\n- name: startup\n  files: [init.sh]\n"
+        "secretGenerator:\n- name: credential\n  files: [private/password]\n"
+        "generatorOptions: {disableNameSuffixHash: true}\n"
+    )
+    (deployment / "init.sh").write_text("echo accepted\n")
+    source = commit_accepted_source(workspace)
+    # The missing Secret input is intentional: it must never be read to render
+    # public generated configuration, even when accepted source declares it.
+    monkeypatch.setenv("SDO_OPERATOR_BIN", str(operator_binary))
+    (deployment / "init.sh").write_text("unaccepted edits\n")
+    assert source.manifests == (
+        {
+            "apiVersion": "v1",
+            "kind": "ConfigMap",
+            "metadata": {"name": "startup", "namespace": "app"},
+            "data": {"init.sh": "echo accepted\n"},
+        },
+    )
+    captured = {
+        "apiVersion": "v1",
+        "kind": "ConfigMap",
+        "metadata": {"name": "startup", "namespace": "app"},
+        "data": {"init.sh": "stale"},
+    }
+    restored = accepted_restore_baselines(source, (ApplicationBaseline("app", [captured]),))
+    assert restored[0].objects[0]["data"]["init.sh"] == "echo accepted\n"
+    assert "credential" not in json.dumps(restored, default=str)
+
+
+@pytest.mark.go_integration
+@pytest.mark.requires_sregym
+def test_hotel_bootstrap_source_matches_harness_and_remains_restorable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operator_binary: Path
+) -> None:
+    """Pinned hotel source -> real harness staging -> DEP1's Git renderer."""
+    import shutil
+    import subprocess
+
+    monkeypatch.syspath_prepend(str(ROOT / "third_party/sregym"))
+    from sregym.service.source_deploy import _HotelReservationAdapter
+
+    app = ROOT / "third_party/sregym/SREGym-applications/hotelReservation"
+    workspace = tmp_path / "hotel"
+    shutil.copytree(app / "kubernetes", workspace / "kubernetes")
+    source = commit_accepted_source(workspace, namespace="hotel-reservation")
+    adapter = _HotelReservationAdapter()
+    monkeypatch.setattr(adapter, "_source_dir", lambda: workspace)
+    monkeypatch.setattr(adapter, "ensure_images_loaded", lambda **kwargs: None)
+    with adapter.plan(cluster_name="offline", node_architectures=set()) as plan:
+        deployed = list(
+            yaml.safe_load_all(
+                subprocess.run(
+                    ["kubectl", "kustomize", str(plan.manifest_path)], check=True, capture_output=True, text=True
+                ).stdout
+            )
+        )
+    monkeypatch.setenv("SDO_OPERATOR_BIN", str(operator_binary))
+    expected = {obj["metadata"]["name"]: obj for obj in deployed if obj["kind"] == "ConfigMap"}
+    accepted = {obj["metadata"]["name"]: obj for obj in source.manifests if obj["kind"] == "ConfigMap"}
+    for component in ("geo", "rate"):
+        name, key = f"mongo-{component}-script", f"k8s-{component}-mongo.sh"
+        assert (
+            accepted[name]["data"]
+            == expected[name]["data"]
+            == {key: (workspace / "kubernetes/scripts" / key).read_text()}
+        )
+        assert accepted[name]["metadata"]["namespace"] == "hotel-reservation"
+        # Deleting live state does not delete the accepted declaration used by
+        # CreateFromSource. Nor can an unaccepted local script change it.
+        remaining_live = [obj for obj in deployed if obj["metadata"]["name"] != name]
+        assert not any(obj["kind"] == "ConfigMap" and obj["metadata"]["name"] == name for obj in remaining_live)
+        (workspace / "kubernetes/scripts" / key).write_text("echo unaccepted\n")
+        reread = AcceptedSource(workspace, "hotel-reservation")
+        restored = next(
+            obj for obj in reread.manifests if obj["kind"] == "ConfigMap" and obj["metadata"]["name"] == name
+        )
+        assert restored == accepted[name]
