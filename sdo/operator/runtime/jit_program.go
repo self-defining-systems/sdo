@@ -44,6 +44,10 @@ func (p *workingProgram) Diagnose(ctx context.Context, view program.ReadView, bi
 func (p *workingProgram) Mitigate(ctx context.Context, view program.ReadView, bindings program.Bindings) (program.Plan, error) {
 	raw, err := jitview.Run(ctx, p.binary, workingRequest(ctx, "mitigate", p.spec.ID, bindings), view)
 	if err != nil {
+		var structural *jitview.StructuralPlanError
+		if errors.As(err, &structural) {
+			return program.Plan{}, &NonExecutablePlanError{Cause: structural}
+		}
 		return program.Plan{}, err
 	}
 	var result PlanApplicationResult

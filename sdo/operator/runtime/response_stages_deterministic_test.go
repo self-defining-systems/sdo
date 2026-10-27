@@ -13,8 +13,8 @@ import (
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/kubernetes"
@@ -395,11 +395,11 @@ func (r pipelineDuplicateRegistry) List() []program.ProgramSpec {
 }
 
 func TestDeterministicResponseStageTypedSkipsNeverWrite(t *testing.T) {
-	for _, reason := range []string{"unbound_parameter", "multiple_entry_points", "diagnose_no_longer_matches"} {
+	for _, reason := range []string{"diagnose_unavailable", "multiple_entry_points", "diagnose_no_longer_matches"} {
 		t.Run(reason, func(t *testing.T) {
 			loop, state := pipelineTestLoop(t, true)
 			switch reason {
-			case "unbound_parameter":
+			case "diagnose_unavailable":
 				state.Coverage.Matches[0].Bindings = nil
 			case "multiple_entry_points":
 				loop.Programs = pipelineDuplicateRegistry{loop.Programs}

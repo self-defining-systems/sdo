@@ -18,13 +18,19 @@ import (
 	"sdo.dev/operator/sdk/program"
 )
 
+// StructuralPlanError preserves terminal plan defects across the process boundary.
+type StructuralPlanError struct{ Message string }
+
+func (e *StructuralPlanError) Error() string { return e.Message }
+
 type Message struct {
-	Method           string                         `json:"method,omitempty"`
-	Arguments        []json.RawMessage              `json:"arguments,omitempty"`
-	Values           []json.RawMessage              `json:"values,omitempty"`
-	Result           json.RawMessage                `json:"result,omitempty"`
-	Error            string                         `json:"error,omitempty"`
-	UsageUnavailable *metrics.UsageUnavailableError `json:"usage_unavailable,omitempty"`
+	StructuralPlanFailure string                         `json:"structural_plan_failure,omitempty"`
+	Method                string                         `json:"method,omitempty"`
+	Arguments             []json.RawMessage              `json:"arguments,omitempty"`
+	Values                []json.RawMessage              `json:"values,omitempty"`
+	Result                json.RawMessage                `json:"result,omitempty"`
+	Error                 string                         `json:"error,omitempty"`
+	UsageUnavailable      *metrics.UsageUnavailableError `json:"usage_unavailable,omitempty"`
 }
 
 type View struct {
@@ -97,6 +103,9 @@ func Run(ctx context.Context, binary string, request any, view program.ReadView)
 			return nil, fmt.Errorf("working program stopped: %w", err)
 		}
 		if message.Method == "" {
+			if message.StructuralPlanFailure != "" {
+				return nil, &StructuralPlanError{Message: message.StructuralPlanFailure}
+			}
 			if message.Error != "" {
 				return nil, errors.New(message.Error)
 			}
