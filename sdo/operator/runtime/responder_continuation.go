@@ -118,14 +118,10 @@ func (d KubernetesJobDispatcher) continueResponder(ctx context.Context, executor
 		repairs := loop.continuationRepairs(result)
 		noProgress := responderNoProgress(state.Feedback, verification, repairs)
 		deniedNoProgress := !verification.Healthy && verification.Error == "" && authorizationDeniedNoProgress(state.Feedback, verification, repairs)
-		sharedOwnership := sharedOwnershipBlocker(verification, repairs)
-		state.Done = verification.Healthy || exhausted || noProgress || deniedNoProgress || sharedOwnership
+		state.Done = verification.Healthy || exhausted || noProgress || deniedNoProgress
 		if verification.Healthy {
 			result.Status = IncidentCompleted
 			result.FinalDetectorStates = verification.DetectorStates
-		} else if sharedOwnership {
-			result.Status = IncidentFailed
-			result.Error = "shared_ownership"
 		} else if deniedNoProgress {
 			result.Status = IncidentFailed
 			result.Error = "authorization_denied_no_progress"
@@ -230,10 +226,6 @@ func (d KubernetesJobDispatcher) ContinueAfterVerification(ctx context.Context, 
 		if responderNoProgress(state.Feedback, verification, repairs) {
 			return false, nil
 		}
-	case "shared_ownership":
-		if sharedOwnershipBlocker(verification, repairs) {
-			return false, nil
-		}
 	}
 	if !state.Done {
 		return true, nil
@@ -297,6 +289,9 @@ type responderFeedback struct {
 	Error       string               `json:"error,omitempty"`
 	Summary     string               `json:"summary"`
 	StillBroken []sdkFindingFeedback `json:"still_broken"`
+	// SourceDifferences are objects that differ from the accepted source.
+	// They are information; only still_broken and healthy decide closure.
+	SourceDifferences []sdkFindingFeedback `json:"source_differences,omitempty"`
 	AlreadyDone []continuationRepair `json:"already_done"`
 }
 
@@ -402,7 +397,10 @@ func feedbackReceipt(receipt RepairActionReceipt) continuationReceipt {
 }
 
 func continuationFeedback(attempt int, verification ToolResponse, repairs ...continuationRepair) ([]byte, error) {
-	feedback := responderFeedback{Attempt: attempt, Healthy: verification.Healthy, Error: verification.Error, Summary: verification.Summary, StillBroken: []sdkFindingFeedback{}, AlreadyDone: append([]continuationRepair{}, repairs...)}
+	feedback := responderFeedback{Attempt: attempt, Healthy: verification.Healthy, Error: verification.Error, Summary: verification.Summary, StillBroken: []sdkFindingFeedback{}, SourceDifferences: []sdkFindingFeedback{}, AlreadyDone: append([]continuationRepair{}, repairs...)}
+	for _, finding := range verification.Drift {
+		feedback.SourceDifferences = append(feedback.SourceDifferences, sdkFindingFeedback{Resource: finding.PrimaryResource, Fingerprint: FindingFingerprint(finding), DetectorID: finding.DetectorID, RuleID: finding.RuleID, Summary: finding.Summary, Evidence: finding.Evidence})
+	}
 	for _, finding := range verification.Findings {
 		feedback.StillBroken = append(feedback.StillBroken, sdkFindingFeedback{Resource: finding.PrimaryResource, Fingerprint: FindingFingerprint(finding), DetectorID: finding.DetectorID, RuleID: finding.RuleID, Summary: finding.Summary, Evidence: finding.Evidence})
 	}
@@ -412,8 +410,8 @@ func continuationFeedback(attempt int, verification ToolResponse, repairs ...con
 // Caller holds c.mu. Closure drift has already been freshly checked against
 // accepted source. Health samples must be fresh before closure, but waiting for
 // that observation must not reset responderCompletedAt or consume another Job.
-func (c *Controller) continuationVerificationLocked(healthVerified, driftClear bool, driftFindings []sdk.Finding) ToolResponse {
-	result := ToolResponse{Command: "verify", Healthy: healthVerified && driftClear, Findings: append([]sdk.Finding(nil), driftFindings...)}
+func (c *Controller) continuationVerificationLocked(healthVerified bool, source closureSourceReport) ToolResponse {
+	result := ToolResponse{Command: "verify", Healthy: healthVerified && len(source.Rollouts) == 0, Findings: append([]sdk.Finding(nil), source.Rollouts...), Drift: append([]sdk.Finding(nil), source.Drift...)}
 	ids := append([]string(nil), c.healthDetectorIDs...)
 	if len(ids) == 0 && c.currentIncidentRequest != nil {
 		seen := map[string]bool{}
@@ -471,6 +469,9 @@ func (c *Controller) continuationVerificationLocked(healthVerified, driftClear b
 	switch {
 	case result.Healthy:
 		result.Summary = "controller independently verified healthy"
+		if len(result.Drift) > 0 {
+			result.Summary += fmt.Sprintf("; %d object(s) still differ from the accepted source (information only)", len(result.Drift))
+		}
 	case len(result.Findings) > 0:
 		result.Summary = "controller verification retains named unresolved findings"
 	case result.Error != "":
@@ -501,13 +502,13 @@ func (c *Controller) responderResultVerification(ctx context.Context, incidentID
 	if !current {
 		return ToolResponse{Command: "verify", Error: "incident is no longer current"}
 	}
-	driftClear, driftFindings := c.verifyClosureDriftWithResult(ctx, time.Now().UTC(), snapshot, result)
+	source := c.verifyClosureSource(ctx, time.Now().UTC(), snapshot, result)
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.currentIncidentRequest == nil || c.currentIncidentRequest.IncidentID != incidentID {
 		return ToolResponse{Command: "verify", Error: "incident is no longer current"}
 	}
 	_, health := c.finalVerificationStates()
-	response := c.continuationVerificationLocked(health, driftClear, driftFindings)
+	response := c.continuationVerificationLocked(health, source)
 	return response
 }

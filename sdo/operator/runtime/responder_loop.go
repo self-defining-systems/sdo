@@ -56,6 +56,7 @@ type ToolResponse struct {
 	ProgramRevisions           map[string]string              `json:"program_revisions,omitempty"`
 	OptionReports              []*contracts.MitigationReport  `json:"-"`
 	UnexplainedRemovalBlockers []UnexplainedRemovalBlocker    `json:"unexplained_removal_blockers,omitempty"`
+	Drift                      []sdk.Finding                  `json:"drift,omitempty"`
 	BeforeFindings             []sdk.Finding                  `json:"before_findings"`
 	ControllerFindings         []sdk.Finding                  `json:"controller_findings"`
 	Progress                   *FindingProgress               `json:"progress,omitempty"`
@@ -192,6 +193,7 @@ type ResponderLoop struct {
 	matchedPlanErrors     map[string]error
 	lastDiagnosisView     program.ReadView
 	findings              []sdk.Finding
+	drift                 []sdk.Finding
 	batches               int
 }
 
@@ -453,6 +455,7 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 		response.DriftEvents = append([]sdk.DriftEvent(nil), l.Request.DriftEvents...)
 		response.Trust = l.Trust
 		response.Findings, response.ProgramRuns, response.DetectorStates, response.Error = l.refresh(ctx)
+		response.Drift = append([]sdk.Finding(nil), l.drift...)
 		response.Healthy = response.Error == "" && len(l.findings) == 0
 		for _, state := range response.DetectorStates {
 			response.Healthy = response.Healthy && state.Status == DetectorEvaluationClear
@@ -750,9 +753,7 @@ func (l *ResponderLoop) refresh(ctx context.Context) ([]sdk.Finding, []ProgramRu
 		}
 		states = append(states, state)
 	}
-	drift, driftStates := checkRetainedDrift(ctx, l.Request.Findings, view)
-	findings = append(findings, drift...)
-	states = append(states, driftStates...)
+	l.drift = retainedDrift(l.Request.Findings, view)
 	l.findings = findings
 	runs := SelectProgramCandidates(ctx, l.Programs, view, findings, l.deadline())
 	l.stampProgramRuns(runs)
@@ -1047,9 +1048,7 @@ func (l *ResponderLoop) verify(ctx context.Context, applied []selectedPlan, resp
 		}
 		states = append(states, state)
 	}
-	drift, driftStates := checkRetainedDrift(ctx, l.Request.Findings, view)
-	findings = append(findings, drift...)
-	states = append(states, driftStates...)
+	l.drift = retainedDrift(l.Request.Findings, view)
 	l.findings = findings
 	if len(applied) > 0 {
 		old := map[string]bool{}
@@ -1076,13 +1075,14 @@ func (l *ResponderLoop) verify(ctx context.Context, applied []selectedPlan, resp
 		}
 	}
 	response.Findings, response.DetectorStates = append([]sdk.Finding(nil), findings...), states
+	response.Drift = append([]sdk.Finding(nil), l.drift...)
 	if len(findings) > 0 {
 		runs := SelectProgramCandidates(ctx, l.Programs, view, findings, l.deadline())
 		l.stampProgramRuns(runs)
 		response.ProgramRuns = append(response.ProgramRuns, runs...)
 		l.runs = append(l.runs, runs...)
 	}
-	response.Healthy = response.Error == "" && len(findings) == 0 && (len(l.Detectors) > 0 || len(driftStates) > 0) && detectorsConfirmed(l.Detectors, view)
+	response.Healthy = response.Error == "" && len(findings) == 0 && (len(l.Detectors) > 0 || hasRetainedDrift(l.Request.Findings)) && detectorsConfirmed(l.Detectors, view)
 	response.Unresolved = l.batches >= l.batchLimit() && !response.Healthy
 	if response.Error == "" {
 		response.Summary = fmt.Sprintf("verification: %d open findings", len(findings)) + pendingEvaluationSummary(states)

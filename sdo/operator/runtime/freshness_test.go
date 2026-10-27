@@ -177,7 +177,9 @@ func TestClosureHandoffRechecksDetectorState(t *testing.T) {
 	}
 }
 
-func TestClosureHandoffRechecksSourceFieldsAfterVerification(t *testing.T) {
+// A source regression after verification is information: the closure the
+// health detectors verified still commits, with the difference noted.
+func TestClosureHandoffNotesSourceRegressionAfterVerification(t *testing.T) {
 	f := newClosureDriftFixture(t, true, true, "app")
 	f.restoreSource(t)
 	f.settle(t, 1)
@@ -192,7 +194,7 @@ func TestClosureHandoffRechecksSourceFieldsAfterVerification(t *testing.T) {
 	if _, err := f.client.CoreV1().Services("app").Update(context.Background(), service, metav1.UpdateOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	broker := &recordingIncidentBroker{}
+	broker := &recordingClosureBroker{}
 	if err := f.c.SetIncidentBroker(broker); err != nil {
 		t.Fatal(err)
 	}
@@ -203,9 +205,13 @@ func TestClosureHandoffRechecksSourceFieldsAfterVerification(t *testing.T) {
 	if err := f.c.ExecuteClosureEffect(context.Background(), effect); err != nil {
 		t.Fatal(err)
 	}
-	state := exportState(t, f.c)
-	if len(broker.calls()) != 0 || state.ClosureState != contracts.ClosureState_CLOSURE_STATE_FAILED || state.ClosureFailure == nil || !strings.Contains(state.ClosureFailure.LastError, "source fields") {
-		t.Fatalf("source regression reused old verification: state=%v failure=%v calls=%v", state.ClosureState, state.ClosureFailure, broker.calls())
+	awaitBrokerResult(t, f.c.closureResults)
+	f.c.processBrokerCompletions()
+	if len(broker.closures) != 1 || f.c.closureState != contracts.ClosureState_CLOSURE_STATE_COMMITTED {
+		t.Fatalf("source regression retired a health-verified closure: state=%v failure=%+v closures=%d", f.c.closureState, f.c.closureFailure, len(broker.closures))
+	}
+	if notes := strings.Join(broker.closures[0].SourceCheckNotes, ";"); !strings.Contains(notes, "unexplained drift remains on Service/reservation") {
+		t.Fatalf("regression not recorded on the outcome: %q", notes)
 	}
 }
 

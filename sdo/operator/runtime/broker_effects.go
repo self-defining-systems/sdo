@@ -147,6 +147,7 @@ func (c *Controller) ExecuteClosureEffect(ctx context.Context, effect ClosureEff
 	closure := effect.Closure
 	if recovered == nil && !committedOutcome && verificationErr == nil {
 		recheck := c.revalidateClosure(actionCtx, snapshot, effect.Closure)
+		closure.SourceCheckNotes = append(closure.SourceCheckNotes, recheck.DriftNotes...)
 		switch recheck.Verdict {
 		case closureRecheckConfirmed:
 			c.clearClosureRecheckWait()
@@ -164,7 +165,7 @@ func (c *Controller) ExecuteClosureEffect(ctx context.Context, effect ClosureEff
 				// Health alone verified the closure; the source checks that
 				// never became available are information on the outcome.
 				c.clearClosureRecheckWait()
-				closure.SourceCheckNotes = recheck.SourceNotes
+				closure.SourceCheckNotes = append(closure.SourceCheckNotes, recheck.SourceNotes...)
 				slog.Warn("closure_source_check_unavailable", "incident_id", closure.Request.IncidentID, "notes", recheck.SourceNotes)
 				break
 			}
@@ -296,6 +297,14 @@ type closureRecheck struct {
 	SourceNotes []string
 	// SourceOnly marks an incomplete recheck whose only gap is SourceNotes.
 	SourceOnly bool
+	// DriftNotes lists objects that still differ from the accepted source.
+	// They are recorded on the outcome and never hold or contradict a closure.
+	DriftNotes []string
+}
+
+// driftNote describes one object that still differs from the accepted source.
+func driftNote(finding sdk.Finding) string {
+	return fmt.Sprintf("unexplained drift remains on %s/%s: %s", finding.PrimaryResource.Kind, finding.PrimaryResource.Name, finding.Summary)
 }
 
 // closureInventoryLoadBound is how long a closure waits for the accepted-source
@@ -339,19 +348,6 @@ func (c *Controller) revalidateClosure(ctx context.Context, snapshot sdk.Detecti
 	evaluated := 0
 	for _, id := range ordered {
 		detector := c.detectors[id]
-		if detector == nil && id == "drift.unexplained" {
-			retained := []sdk.Finding{}
-			for _, finding := range closure.Request.Findings {
-				if finding.DetectorID == id {
-					retained = append(retained, finding)
-				}
-			}
-			if len(retained) == 0 || c.drift == nil || c.drift.View == nil {
-				return contradicted("closure observation drift %s is unavailable", id)
-			}
-
-			continue // Admitted source fields are independently rechecked below.
-		}
 		if detector == nil && !slices.Contains(c.healthDetectorIDs, id) {
 			// The adopted policy no longer has this incident detector. The
 			// repository moving is not evidence about the cluster; the
@@ -400,14 +396,14 @@ func (c *Controller) revalidateClosure(ctx context.Context, snapshot sdk.Detecti
 	}
 	c.mu.Lock()
 	inventoryAvailable := c.drift == nil || !c.drift.Inventory || c.sourceInventoryAvailableLocked()
-	inventoryClear := true
+	var driftNotes []string
 	if inventoryAvailable {
-		inventoryClear, _ = c.verifySourceInventoryLocked(closure.Result)
+		_, remaining := c.verifySourceInventoryLocked(closure.Result)
+		for _, finding := range remaining {
+			driftNotes = append(driftNotes, driftNote(finding))
+		}
 	}
 	c.mu.Unlock()
-	if !inventoryClear {
-		return contradicted("closure accepted-source inventory remains unexplained")
-	}
 	if !inventoryAvailable {
 		// After a restart the inventory is rebuilt from accepted source on the
 		// next pass. Not loaded yet is not a contradiction of the repair.
@@ -430,19 +426,20 @@ func (c *Controller) revalidateClosure(ctx context.Context, snapshot sdk.Detecti
 			sourceNotes = append(sourceNotes, fmt.Sprintf("source fields for %s/%s were not compared: %v", finding.PrimaryResource.Kind, finding.PrimaryResource.Name, err))
 			sourceBound = closureInventoryLoadBound
 		} else if !restored {
-			return contradicted("closure observation source fields for %s/%s are unrestored", finding.PrimaryResource.Kind, finding.PrimaryResource.Name)
+			driftNotes = append(driftNotes, driftNote(finding))
 		}
 	}
 	if len(denied) > 0 {
 		return closureRecheck{Verdict: closureRecheckDenied, Reason: strings.Join(denied, "; "), Skipped: gone}
 	}
 	if len(incomplete) > 0 {
-		return closureRecheck{Verdict: closureRecheckIncomplete, Reason: strings.Join(incomplete, "; "), Bound: max(bound, sourceBound), Unconfirmed: unconfirmed, Skipped: gone, SourceNotes: sourceNotes}
+		return closureRecheck{Verdict: closureRecheckIncomplete, Reason: strings.Join(incomplete, "; "), Bound: max(bound, sourceBound), Unconfirmed: unconfirmed, Skipped: gone, SourceNotes: sourceNotes, DriftNotes: driftNotes}
 	}
 	if len(sourceNotes) > 0 {
-		return closureRecheck{Verdict: closureRecheckIncomplete, Reason: strings.Join(sourceNotes, "; "), Bound: sourceBound, Skipped: gone, SourceNotes: sourceNotes, SourceOnly: true}
+		return closureRecheck{Verdict: closureRecheckIncomplete, Reason: strings.Join(sourceNotes, "; "), Bound: sourceBound, Skipped: gone, SourceNotes: sourceNotes, SourceOnly: true, DriftNotes: driftNotes}
 	}
 	confirmed.Skipped = gone
+	confirmed.DriftNotes = driftNotes
 	return confirmed
 }
 

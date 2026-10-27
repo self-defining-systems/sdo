@@ -197,12 +197,14 @@ type failedSourceDriftView struct{ driftReadView }
 func (failedSourceDriftView) DiffAgainstSource(sdk.ObjectRef) (program.Diff, error) {
 	return program.Diff{}, fmt.Errorf("source unavailable")
 }
-func TestUnexplainedDriftSourceErrorNeverClears(t *testing.T) {
+// A source that cannot be compared is information about the drift, never a
+// verdict on health.
+func TestUnexplainedDriftSourceErrorIsInformationOnly(t *testing.T) {
 	loop := NewResponderLoop(IncidentRequest{IncidentID: "incident", Findings: []sdk.Finding{unexplainedFinding()}}, nil, staticProvider{snapshot: sdktest.Snapshot{}}, []sdk.Detector{controllerDetector("health", time.Second, sdk.Finding{})}, PlanExecutor{}, 1)
 	loop.ReadView = func(sdk.DetectionContext) program.ReadView { return failedSourceDriftView{} }
 	result := loop.Handle(context.Background(), ToolRequest{Command: "verify"})
-	if result.Healthy || len(result.Findings) != 1 || result.DetectorStates[len(result.DetectorStates)-1].Status != DetectorEvaluationError {
-		t.Fatalf("source error cleared drift: %+v", result)
+	if !result.Healthy || len(result.Findings) != 0 || len(result.Drift) != 1 {
+		t.Fatalf("drift decided health instead of informing: %+v", result)
 	}
 }
 
