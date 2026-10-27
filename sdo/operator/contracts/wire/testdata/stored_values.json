@@ -216,7 +216,9 @@
     "agent_timeout",
     "request_too_large",
     "result_too_large",
-    "timeout"
+    "timeout",
+    "worker_oom_killed",
+    "worker_resources_rewritten"
   ],
   "sdodev.contracts.v1alpha1.ReflectionDecision.learning_decision": [
     "failed",
