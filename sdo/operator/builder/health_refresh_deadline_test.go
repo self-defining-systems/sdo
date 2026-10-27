@@ -31,3 +31,12 @@ func TestHealthRefreshExhaustedRelaunchBudgetIsNotHealthy(t *testing.T) {
 		t.Fatalf("expired unverified install reported healthy: %v", err)
 	}
 }
+
+func TestHealthRefreshRestartsAreBoundedWithoutDuration(t *testing.T) {
+	restart := exec.Command("sh", "-c", "exit 76").Run()
+	runs := 0
+	err := runWithHealthRefresh(context.Background(), RunConfig{Controller: &contracts.ControllerConfig{}}, func(context.Context, RunConfig) error { runs++; return restart })
+	if err == nil || runs != maxHealthRefreshRestarts+1 {
+		t.Fatalf("unbounded restart loop: runs=%d err=%v", runs, err)
+	}
+}

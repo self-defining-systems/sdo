@@ -277,6 +277,9 @@ type closureRecheck struct {
 	// Bound is how long an incomplete recheck may wait: the longest clearing
 	// horizon of the incomplete detectors plus two of their cadences.
 	Bound time.Duration
+	// Skipped lists incident detectors the adopted policy no longer has. They
+	// are not evidence either way; the detectors in force decided.
+	Skipped []string
 }
 
 // revalidateClosure checks live dependencies and admitted source fields, rather
@@ -369,6 +372,9 @@ func (c *Controller) revalidateClosure(ctx context.Context, snapshot sdk.Detecti
 	if len(gone) > 0 && evaluated == 0 {
 		return contradicted("closure observation detector %s is unavailable", gone[0])
 	}
+	if len(gone) > 0 {
+		slog.Warn("closure_detector_skipped", "incident_id", closure.Request.IncidentID, "detectors", gone, "reason", "removed by the adopted policy")
+	}
 	c.mu.Lock()
 	inventoryClear, _ := c.verifySourceInventoryLocked(closure.Result)
 	c.mu.Unlock()
@@ -389,11 +395,12 @@ func (c *Controller) revalidateClosure(ctx context.Context, snapshot sdk.Detecti
 		}
 	}
 	if len(denied) > 0 {
-		return closureRecheck{Verdict: closureRecheckDenied, Reason: strings.Join(denied, "; ")}
+		return closureRecheck{Verdict: closureRecheckDenied, Reason: strings.Join(denied, "; "), Skipped: gone}
 	}
 	if len(incomplete) > 0 {
-		return closureRecheck{Verdict: closureRecheckIncomplete, Reason: strings.Join(incomplete, "; "), Bound: bound, Unconfirmed: unconfirmed}
+		return closureRecheck{Verdict: closureRecheckIncomplete, Reason: strings.Join(incomplete, "; "), Bound: bound, Unconfirmed: unconfirmed, Skipped: gone}
 	}
+	confirmed.Skipped = gone
 	return confirmed
 }
 
