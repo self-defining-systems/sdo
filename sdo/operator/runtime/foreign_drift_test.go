@@ -48,7 +48,7 @@ func foreignSource(t *testing.T) (GitPlanSource, string) {
 		t.Fatal(err)
 	}
 	source := GitPlanSource{Repository: repo, ManifestPaths: []string{"app.yaml"}}
-	return source, seedRenderedLock(t, source, strings.TrimSpace(string(out)), "app")
+	return source, strings.TrimSpace(string(out))
 }
 
 func TestForeignNetworkPolicyAdmission(t *testing.T) {

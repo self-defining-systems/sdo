@@ -296,10 +296,6 @@ func rehearseNativeOnboarding(t *testing.T, maintenanceChange bool) {
 		}
 
 		source := GitPlanSource{Repository: root, ManifestPaths: []string{"deploy/tracing.yaml"}}
-		reconciler := RenderedLockReconciler{Source: source, Client: client, Broker: repository}
-		c.ReconcileRendered = func(ctx context.Context, revision string) (string, error) {
-			return reconciler.Reconcile(ctx, revision, "demo")
-		}
 		objects := []*unstructured.Unstructured{}
 		for _, obj := range baseline {
 			doc, err := kruntime.DefaultUnstructuredConverter.ToUnstructured(obj)

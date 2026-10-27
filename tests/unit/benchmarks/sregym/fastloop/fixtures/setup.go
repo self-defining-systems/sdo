@@ -10,7 +10,6 @@ import (
 
 	"sdo.dev/operator/broker"
 	"sdo.dev/operator/memory/validate"
-	"sdo.dev/operator/rendered"
 )
 
 func must(err error) {
@@ -46,9 +45,5 @@ func main() {
 	must(os.WriteFile(index, append(body, []byte("\n<!-- initial health setup -->\n")...), 0644))
 	receipt, err := authority.Publish(ctx, "health-setup", broker.HealthJudge, broker.InitialPhase)
 	must(err)
-	snapshot, err := (rendered.Source{Repository: root, ManifestPaths: []string{"service.yaml"}}).BuildLock(ctx, receipt.Commit, "sdo-toy")
-	must(err)
-	head, err := authority.RecordRenderedLock(ctx, receipt.Commit, snapshot)
-	must(err)
-	must(json.NewEncoder(os.Stdout).Encode(map[string]any{"head": head, "health_paths": receipt.ChangedPaths}))
+	must(json.NewEncoder(os.Stdout).Encode(map[string]any{"head": receipt.Commit, "health_paths": receipt.ChangedPaths}))
 }

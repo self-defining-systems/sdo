@@ -11,7 +11,6 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"slices"
 	"strings"
 	"time"
 
@@ -284,8 +283,10 @@ func (v LiveReadView) DiffAgainstSource(ref sdk.ObjectRef) (program.Diff, error)
 		return program.Diff{}, &AcceptanceUnknownError{Ref: ref, Declared: program.Diff{Text: text}}
 	}
 	// Name a changed recorded scalar; other additions keep their existing report.
-	if changed := slices.DeleteFunc(slices.Clone(added), func(path string) bool { return !slices.Contains(acceptedValuePaths, path) }); len(changed) > 0 {
-		text += "\nchanged since acceptance: " + strings.Join(changed, ", ")
+	if record, ok := currentAcceptanceRecord(observed, source); ok {
+		if changed := changedAcceptedValues(observed, record); len(changed) > 0 {
+			text += "\nchanged since acceptance: " + strings.Join(changed, ", ")
+		}
 	}
 	return program.Diff{Changed: len(added) > 0, Text: text}, nil
 }

@@ -386,5 +386,5 @@ func seedDeclaredInventory(t *testing.T, root, namespace string, objects []krunt
 	}
 	nativeGit(t, root, "add", "app.yaml")
 	nativeGit(t, root, "commit", "-qm", "declare complete healthy application fixture")
-	return seedRenderedLock(t, GitPlanSource{Repository: root, ManifestPaths: []string{"app.yaml"}}, nativeGit(t, root, "rev-parse", "HEAD"), namespace)
+	return nativeGit(t, root, "rev-parse", "HEAD")
 }

@@ -46,7 +46,6 @@ func acceptedSourceDeployment(t *testing.T) (GitPlanSource, *StateTracker, strin
 	}
 	t.Cleanup(tracker.Stop)
 	tracker.Observe(time.Unix(10, 0), true)
-	commit = seedRenderedLock(t, source, commit, "app")
 	return source, tracker, commit, deployed, service
 }
 

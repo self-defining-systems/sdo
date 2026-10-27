@@ -163,48 +163,8 @@ func (s Source) render(object *unstructured.Unstructured) (*unstructured.Unstruc
 	return &unstructured.Unstructured{Object: document}, nil
 }
 
-func (s Source) sourceTree(ctx context.Context, revision string) (string, error) {
-	data, err := exec.CommandContext(ctx, "git", "-C", s.Repository, "rev-parse", revision+"^{tree}").Output()
-	if err != nil {
-		return "", fmt.Errorf("source tree at %s: %w", revision, err)
-	}
-	return strings.TrimSpace(string(data)), nil
-}
-
-// Memory publication changes the repository tree without deploying application
-// bytes. All other paths remain relevant: a build may consume more than YAML.
-func (s Source) sameImageSource(ctx context.Context, deployedTree, acceptedTree string) (bool, error) {
-	if !gitRevision.MatchString(deployedTree) {
-		return false, fmt.Errorf("invalid deployed source tree %q", deployedTree)
-	}
-	if deployedTree == acceptedTree {
-		return true, nil
-	}
-	err := exec.CommandContext(ctx, "git", "-C", s.Repository, "diff", "--quiet", deployedTree, acceptedTree, "--", ".", ":(exclude).sdo").Run()
-	if err == nil {
-		return true, nil
-	}
-	var exit *exec.ExitError
-	if errors.As(err, &exit) && exit.ExitCode() == 1 {
-		return false, nil
-	}
-	return false, fmt.Errorf("compare deployed source tree %s: %w", deployedTree, err)
-}
-
-// SameInputs compares all application inputs, excluding only operational memory.
-func (s Source) SameInputs(ctx context.Context, left, right string) (bool, error) {
-	if !gitRevision.MatchString(left) || !gitRevision.MatchString(right) {
-		return false, errors.New("full source revisions required")
-	}
-	leftTree, err := s.sourceTree(ctx, left)
-	if err != nil {
-		return false, err
-	}
-	rightTree, err := s.sourceTree(ctx, right)
-	if err != nil {
-		return false, err
-	}
-	return s.sameImageSource(ctx, leftTree, rightTree)
+func objectRef(o *unstructured.Unstructured) sdk.ObjectRef {
+	return sdk.ObjectRef{APIVersion: o.GetAPIVersion(), Kind: o.GetKind(), Namespace: o.GetNamespace(), Name: o.GetName()}
 }
 
 // AcceptedScopedManifest is a read-only source comparison; it does not

@@ -150,3 +150,15 @@ func TestDeriveRejectsReversedControllerTimes(t *testing.T) {
 		t.Fatal("reversed controller timeline must not produce a durable outcome")
 	}
 }
+
+func TestDeriveRecordsUnavailableSourceChecksWithoutChangingTheVerdict(t *testing.T) {
+	closure := fixtureClosure()
+	closure.SourceCheckNotes = []string{"accepted source inventory is loading"}
+	result, err := Derive(context.Background(), closure, "repair-commit", "codex", "test-model")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Record.GetClassification() != "success" || len(result.Record.GetSourceCheckNotes()) != 1 {
+		t.Fatalf("source notes must ride on a verified outcome: %+v", result.Record)
+	}
+}

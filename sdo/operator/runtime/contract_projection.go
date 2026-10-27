@@ -447,6 +447,7 @@ func incidentClosureContract(closure IncidentClosure) (*contracts.IncidentClosur
 		CleanedHelpers:    append([]string(nil), closure.CleanedHelpers...),
 		UnconfirmedReason: closure.UnconfirmedReason,
 		UnconfirmedDetail: closure.UnconfirmedDetail,
+		SourceCheckNotes:  append([]string(nil), closure.SourceCheckNotes...),
 	}
 	if closure.ClosureStabilityWindow == 0 {
 		message.ClosureStabilityWindow = nil
@@ -631,6 +632,7 @@ func incidentClosureState(message *contracts.IncidentClosure) IncidentClosure {
 		CleanedHelpers:    append([]string(nil), message.GetCleanedHelpers()...),
 		UnconfirmedReason: message.GetUnconfirmedReason(),
 		UnconfirmedDetail: message.GetUnconfirmedDetail(),
+		SourceCheckNotes:  append([]string(nil), message.GetSourceCheckNotes()...),
 	}
 	if request := incidentRequestState(message.GetRequest()); request != nil {
 		closure.Request = *request

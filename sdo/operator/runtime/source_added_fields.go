@@ -5,9 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"sort"
+	"strconv"
 	"strings"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
@@ -67,16 +70,27 @@ type acceptanceRecord struct {
 	Source string   `json:"source"`
 	UID    string   `json:"uid"`
 	Paths  []string `json:"paths"`
-	// Values holds the accepted value of the undeclared scalars in
-	// acceptedValuePaths. A server-defaulted field is present at acceptance, so
-	// its path alone cannot tell a later change from the default.
-	Values map[string]string `json:"values,omitempty"`
+	// Values holds the accepted value of every undeclared configuration
+	// scalar. A server-defaulted field is present at acceptance, so its path
+	// alone cannot tell a later change from the default.
+	Values map[string]any `json:"values,omitempty"`
 }
 
-// acceptedValuePaths are configuration scalars that accepted source usually
-// leaves to the API server's default but whose changed value breaks the
-// application (the pod resolver policy), so the record keeps their value.
-var acceptedValuePaths = []string{"spec.template.spec.dnsPolicy"}
+// payloadFields hold content, not configuration: Secret and ConfigMap data can
+// be large and secret, and other writers fill them in. Their keys are tracked
+// as paths only.
+var payloadFields = map[string]bool{"data": true, "binaryData": true, "stringData": true}
+
+// valueTracked reports whether the accepted value of an undeclared scalar at
+// path is recorded: configuration only, never metadata (labels, annotations
+// and finalizers have their own rules), status or payloads.
+func valueTracked(path string) bool {
+	if strings.HasPrefix(path, "metadata.") || strings.Contains(path, ".metadata.") {
+		return false
+	}
+	top, _, _ := strings.Cut(path, ".")
+	return !payloadFields[top]
+}
 
 // acceptedSourceShape identifies which paths accepted source declares. Values
 // stay out so that redacted captures of the same source bind to the record.
@@ -164,25 +178,34 @@ func buildAcceptanceRecord(source, applied, live *unstructured.Unstructured, rea
 		}
 	}
 	sort.Strings(paths)
-	values := map[string]string{}
-	for _, path := range acceptedValuePaths {
-		if value, ok := appliedLeaves[path].(string); ok && !carried[path] && !declaredPath(declared, path) {
+	values := map[string]any{}
+	for path, value := range appliedLeaves {
+		if value != nil && !carried[path] && !bookkeepingPath(path, value) && valueTracked(path) && !declaredPath(declared, path) {
 			values[path] = value
 		}
 	}
-	if len(values) == 0 {
-		values = nil
+	record := acceptanceRecord{Source: acceptedSourceShape(source), UID: string(live.GetUID()), Paths: paths}
+	// Values double the record. An object too large to carry them still keeps
+	// its paths rather than losing the acceptance point altogether.
+	if len(values) > 0 {
+		record.Values = values
 	}
-	encoded, err := json.Marshal(acceptanceRecord{Source: acceptedSourceShape(source), UID: string(live.GetUID()), Paths: paths, Values: values})
+	encoded, err := json.Marshal(record)
 	if err != nil {
 		return "", false, err
+	}
+	if len(encoded) > maxAcceptanceRecordBytes && record.Values != nil {
+		record.Values = nil
+		if encoded, err = json.Marshal(record); err != nil {
+			return "", false, err
+		}
 	}
 	return string(encoded), len(encoded) <= maxAcceptanceRecordBytes, nil
 }
 
 // addedSourceFields returns observed configuration paths that were absent when
 // SDO accepted the object and that accepted source does not declare, plus the
-// recorded scalars (acceptedValuePaths) whose value has since changed. Apply
+// recorded scalars whose value has since changed. Apply
 // normalization keeps such fields, so they need their own check. Without a
 // record taken against this source the additions are unknown, and the
 // comparison fails closed. Identity-only declarations are never stamped and
@@ -201,24 +224,56 @@ func addedSourceFields(observed, source *unstructured.Unstructured) ([]string, e
 }
 
 // changedAcceptedValues lists the recorded scalars whose observed value differs
-// from the one accepted.
+// from the one accepted. A field another controller owns through a subresource
+// (an autoscaler's replicas) is that controller's to change; one written
+// through the object itself, by kubectl or anything else, is drift.
 func changedAcceptedValues(observed *unstructured.Unstructured, record acceptanceRecord) []string {
+	if len(record.Values) == 0 {
+		return nil
+	}
 	leaves := flattenDriftObject(observed)
+	var controllers map[string]bool
 	changed := []string{}
 	for path, accepted := range record.Values {
-		if value, ok := leaves[path].(string); ok && value != accepted {
+		value, ok := leaves[path]
+		if !ok || value == nil || sameScalar(value, accepted) {
+			continue
+		}
+		if controllers == nil {
+			controllers = ownedBySubresourceWriters(observed)
+		}
+		if !ownsDriftPath(controllers, path) {
 			changed = append(changed, path)
 		}
 	}
+	sort.Strings(changed)
 	return changed
+}
+
+// sameScalar compares an observed scalar with its decoded record (JSON turns
+// integers into floats).
+func sameScalar(observed, recorded any) bool {
+	left, _ := json.Marshal(observed)
+	right, _ := json.Marshal(recorded)
+	return string(left) == string(right)
 }
 
 // ownedByOtherWriters returns the paths that field managers other than SDO's
 // deployer and acceptance record own.
 func ownedByOtherWriters(object *unstructured.Unstructured) map[string]bool {
+	return ownedByWriters(object, func(metav1.ManagedFieldsEntry) bool { return true })
+}
+
+// ownedBySubresourceWriters returns the paths other field managers own through
+// a subresource, such as the scale subresource an autoscaler writes.
+func ownedBySubresourceWriters(object *unstructured.Unstructured) map[string]bool {
+	return ownedByWriters(object, func(entry metav1.ManagedFieldsEntry) bool { return entry.Subresource != "" })
+}
+
+func ownedByWriters(object *unstructured.Unstructured, include func(metav1.ManagedFieldsEntry) bool) map[string]bool {
 	owned := map[string]bool{}
 	for _, entry := range object.GetManagedFields() {
-		if entry.Manager == "sdo-deployer" || entry.Manager == acceptanceFieldManager || entry.FieldsV1 == nil {
+		if entry.Manager == "sdo-deployer" || entry.Manager == acceptanceFieldManager || entry.FieldsV1 == nil || !include(entry) {
 			continue
 		}
 		var fields map[string]any
@@ -326,7 +381,7 @@ func removeAddedFields(next, observed, source *unstructured.Unstructured) {
 	restored := changedAcceptedValues(observed, record)
 	for _, path := range restored {
 		// A changed scalar goes back to its accepted value, not to absence.
-		_ = unstructured.SetNestedField(next.Object, record.Values[path], strings.Split(path, ".")...)
+		setLeaf(next.Object, path, record.Values[path])
 	}
 	addedSet := make(map[string]bool, len(added))
 	for _, path := range added {
@@ -397,4 +452,48 @@ func RecordAcceptance(object, source *unstructured.Unstructured) error {
 	annotations[acceptedPathsAnnotation] = record
 	object.SetAnnotations(annotations)
 	return nil
+}
+
+// setLeaf writes value at a flattened path ("a.b[0].c") when every parent
+// exists. Reconciliation has already restored the declared lists, so an index
+// the source does not have is simply skipped.
+func setLeaf(object map[string]any, path string, value any) {
+	if number, ok := value.(float64); ok && number == math.Trunc(number) && math.Abs(number) < 1<<53 {
+		value = int64(number)
+	}
+	var node any = object
+	segments := strings.Split(path, ".")
+	for position, segment := range segments {
+		name, indexes := segment, []int(nil)
+		if open := strings.IndexByte(segment, '['); open >= 0 {
+			name = segment[:open]
+			for _, part := range strings.Split(strings.ReplaceAll(segment[open:], "]", ""), "[")[1:] {
+				index, err := strconv.Atoi(part)
+				if err != nil {
+					return
+				}
+				indexes = append(indexes, index)
+			}
+		}
+		parent, ok := node.(map[string]any)
+		if !ok {
+			return
+		}
+		if position == len(segments)-1 && len(indexes) == 0 {
+			parent[name] = value
+			return
+		}
+		node = parent[name]
+		for step, index := range indexes {
+			items, ok := node.([]any)
+			if !ok || index >= len(items) {
+				return
+			}
+			if position == len(segments)-1 && step == len(indexes)-1 {
+				items[index] = value
+				return
+			}
+			node = items[index]
+		}
+	}
 }

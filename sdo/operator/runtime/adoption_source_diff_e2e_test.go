@@ -13,7 +13,6 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/kubernetes/fake"
 
-	"sdo.dev/operator/broker"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
@@ -122,18 +121,8 @@ func TestHermeticAdoptedHostPortRepairLearnsAndReplays(t *testing.T) {
 	client := fake.NewSimpleClientset(live, pod)
 	sourceClient := bridgeFake(t, client)
 
-	workspace := t.TempDir()
-	authority, err := broker.New(repo, workspace, func(context.Context, string, []string) error { return nil })
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// Controller start: publish the first rendered lock.
 	source := GitPlanSource{Repository: repo, ManifestPaths: paths}
-	locked, err := (RenderedLockReconciler{Source: source, Client: client, Broker: authority}).Reconcile(ctx, base, "app")
-	if err != nil {
-		t.Fatal(err)
-	}
+	locked := base
 
 	// Ownership adoption: the controller takes the declared fields and records
 	// what the accepted object looked like, the point additions count from.

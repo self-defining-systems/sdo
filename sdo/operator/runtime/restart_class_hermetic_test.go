@@ -18,7 +18,6 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes/fake"
 	"sdo.dev/operator/broker"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/contracts/wire"
@@ -227,27 +226,11 @@ func TestRestartClassProcess(t *testing.T) {
 	id := os.Getenv("RT1_INCIDENT")
 	restartClassWriteReceipt(t, native, path+".ack-receipt", id)
 	crashAt(path, cut, "after-ack-before-publication")
-	source := GitPlanSource{Repository: root, ManifestPaths: world.ManifestPaths}
-	client := fake.NewSimpleClientset(world.Live(t, root, os.Getenv("RT1_BASE"))...)
-	c.ReconcileRendered = func(ctx context.Context, revision string) (string, error) {
-		started := time.Now()
-		revision, err := (RenderedLockReconciler{Source: source, Client: client, Broker: native.Repository}).Reconcile(ctx, revision, world.Namespace)
-		// The adapter waits a bounded time for this publication; keep its cost visible.
-		_ = os.WriteFile(path+".reconcile", []byte(time.Since(started).String()), 0600)
-		return revision, err
-	}
-	var diagnostics []string
-	c.OnError = func(err error) { diagnostics = append(diagnostics, err.Error()) }
 	if err := c.Step(ctx, time.Unix(1001, 0), nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := c.PersistState(ctx); err != nil {
 		t.Fatal(err)
-	}
-	head := nativeGit(t, root, "rev-parse", "HEAD")
-	if out, err := exec.Command("git", "-C", root, "show", head+":.sdo/rendered/lock.json").CombinedOutput(); err != nil {
-		t.Logf("lock read: %s", out)
-		t.Fatalf("ACK completed but lock never published: %v", diagnostics)
 	}
 	crashAt(path, cut, "after-publication-before-teardown")
 	ledgerState, err := native.readLedger(id)
@@ -288,10 +271,6 @@ func restartClassBoundary(t *testing.T, ctx context.Context, world restartClassW
 	fixture := os.Getenv("RT1_CLOSEOUT_FIXTURE")
 	proposals, ledger := filepath.Join(directory, "proposals"), filepath.Join(directory, "ledger")
 	native := restartClassNative(t, root, proposals, ledger)
-	source := GitPlanSource{Repository: root, ManifestPaths: world.ManifestPaths}
-	if _, err := (RenderedLockReconciler{Source: source, Client: fake.NewSimpleClientset(world.Live(t, root, base)...), Broker: native.Repository}).Reconcile(ctx, base, world.Namespace); err != nil {
-		t.Fatal(err)
-	}
 	path := filepath.Join(directory, "controller.json")
 	c := restartClassIncident(t, ctx, world, root, base, path, native)
 	id := c.pendingClosure.Request.IncidentID
@@ -393,8 +372,7 @@ func restartClassBoundary(t *testing.T, ctx context.Context, world restartClassW
 		t.Fatal(err)
 	}
 	restartClassStrictReceipt(t, ctx, raw)
-	reconcile, _ := os.ReadFile(path + ".reconcile")
-	t.Logf("boundary=%s changed_generation=%t public_effects=1 receipt=strict outcome=recorded lock_reconcile=%s", cut, changed, reconcile)
+	t.Logf("boundary=%s changed_generation=%t public_effects=1 receipt=strict outcome=recorded", cut, changed)
 }
 
 func TestRestartClassHermetic(t *testing.T) {

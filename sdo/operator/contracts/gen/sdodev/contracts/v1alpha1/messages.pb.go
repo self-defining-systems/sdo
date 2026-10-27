@@ -3326,8 +3326,12 @@ type IncidentClosure struct {
 	// within its bound. Final states moved to partial; the outcome is unverified.
 	UnconfirmedReason ClosureUnconfirmedReason `protobuf:"varint,24,opt,name=unconfirmed_reason,json=unconfirmedReason,proto3,enum=sdodev.contracts.v1alpha1.ClosureUnconfirmedReason" json:"unconfirmed_reason,omitempty"`
 	UnconfirmedDetail string                   `protobuf:"bytes,25,opt,name=unconfirmed_detail,json=unconfirmedDetail,proto3" json:"unconfirmed_detail,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	// Source checks that never became available before the recheck bound (the
+	// accepted source would not render, the inventory did not load). Information
+	// only: health alone decided the closure.
+	SourceCheckNotes []string `protobuf:"bytes,26,rep,name=source_check_notes,json=sourceCheckNotes,proto3" json:"source_check_notes,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *IncidentClosure) Reset() {
@@ -3512,6 +3516,13 @@ func (x *IncidentClosure) GetUnconfirmedDetail() string {
 		return x.UnconfirmedDetail
 	}
 	return ""
+}
+
+func (x *IncidentClosure) GetSourceCheckNotes() []string {
+	if x != nil {
+		return x.SourceCheckNotes
+	}
+	return nil
 }
 
 // Controller-owned evidence from one response stage. Finding credit describes
@@ -4075,7 +4086,7 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	"\x05value\x18\x02 \x01(\v2$.sdodev.contracts.v1alpha1.ObjectRefR\x05value:\x028\x01:\x9d\x02\xbaH\x99\x02\x1a\x80\x01\n" +
 	"\x1etimeline.last_seen_after_first\x120last_seen_at must not precede first_activated_at\x1a,this.last_seen_at >= this.first_activated_at\x1a\x93\x01\n" +
 	"\x1ctimeline.cleared_after_first\x12.cleared_at must not precede first_activated_at\x1aC!has(this.cleared_at) || this.cleared_at >= this.first_activated_atB\r\n" +
-	"\v_cleared_at\"\xb3\x0e\n" +
+	"\v_cleared_at\"\xe1\x0e\n" +
 	"\x0fIncidentClosure\x12L\n" +
 	"\arequest\x18\x01 \x01(\v2*.sdodev.contracts.v1alpha1.IncidentRequestB\x06\xbaH\x03\xc8\x01\x01R\arequest\x12A\n" +
 	"\x06result\x18\x02 \x01(\v2).sdodev.contracts.v1alpha1.IncidentResultR\x06result\x12*\n" +
@@ -4101,7 +4112,8 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	" verified_while_responder_running\x18\x16 \x01(\bR\x1dverifiedWhileResponderRunning\x12S\n" +
 	"\x18closure_stability_window\x18\x17 \x01(\v2\x19.google.protobuf.DurationR\x16closureStabilityWindow\x12b\n" +
 	"\x12unconfirmed_reason\x18\x18 \x01(\x0e23.sdodev.contracts.v1alpha1.ClosureUnconfirmedReasonR\x11unconfirmedReason\x12-\n" +
-	"\x12unconfirmed_detail\x18\x19 \x01(\tR\x11unconfirmedDetailB\x11\n" +
+	"\x12unconfirmed_detail\x18\x19 \x01(\tR\x11unconfirmedDetail\x12,\n" +
+	"\x12source_check_notes\x18\x1a \x03(\tR\x10sourceCheckNotesB\x11\n" +
 	"\x0f_dispatch_errorB\x14\n" +
 	"\x12_health_cleared_atJ\x04\b\x10\x10\x11J\x04\b\x11\x10\x12J\x04\b\x12\x10\x13R\x16observed_state_changesR\x1bdetector_review_required_atR\x16detector_review_reason\"\x98\x02\n" +
 	"\vStageReport\x12\x1d\n" +

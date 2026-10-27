@@ -42,7 +42,7 @@ rules:
 	nativeGit(t, root, "add", "role.yaml")
 	nativeGit(t, root, "commit", "-qm", "source")
 	source := GitPlanSource{Repository: root, ManifestPaths: []string{"role.yaml"}}
-	commit := seedRenderedLock(t, source, nativeGit(t, root, "rev-parse", "HEAD"), "app")
+	commit := nativeGit(t, root, "rev-parse", "HEAD")
 	role := &rbacv1.ClusterRole{ObjectMeta: metav1.ObjectMeta{Name: "app-cleanup", UID: "role-uid", ResourceVersion: "1"}, Rules: []rbacv1.PolicyRule{{APIGroups: []string{""}, Resources: []string{"configmaps"}, Verbs: []string{"get"}}}}
 	ref := sdk.ObjectRef{APIVersion: "rbac.authorization.k8s.io/v1", Kind: "ClusterRole", Name: role.Name}
 	live, err := planUnstructured(role, ref)

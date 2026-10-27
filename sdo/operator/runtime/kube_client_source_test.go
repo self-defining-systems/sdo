@@ -27,7 +27,7 @@ func TestClientGoSourceBindingBecomesStaleAfterAcceptedRoleRemoval(t *testing.T)
 		}
 		nativeGit(t, root, "add", "app.yaml")
 		nativeGit(t, root, "commit", "-qm", "accepted source")
-		return seedRenderedLock(t, GitPlanSource{Repository: root, ManifestPaths: []string{"app.yaml"}}, nativeGit(t, root, "rev-parse", "HEAD"), "app")
+		return nativeGit(t, root, "rev-parse", "HEAD")
 	}
 	accepted := write("api")
 	ref := sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}

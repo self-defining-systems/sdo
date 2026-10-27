@@ -44,7 +44,7 @@ func TestAcceptedSourceRestoresImageAsDeclaredWithoutFalseDrift(t *testing.T) {
 	ref := sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "app", Name: "rate"}
 	image := "example/app:latest"
 	source := GitPlanSource{Repository: repo, ManifestPaths: []string{"app.yaml"}}
-	locked := seedRenderedLock(t, source, strings.TrimSpace(string(commit)), "app")
+	locked := strings.TrimSpace(string(commit))
 	commit = []byte(locked)
 	manifests, err := source.AcceptedManifests(context.Background(), strings.TrimSpace(string(commit)), "app")
 	if err != nil || len(manifests) != 1 || manifests[0].GetName() != "rate" || manifests[0].Object["spec"].(map[string]any)["template"].(map[string]any)["spec"].(map[string]any)["containers"].([]any)[0].(map[string]any)["image"] != image {
@@ -105,7 +105,7 @@ func TestGitPlanSourceReadsManifestAtAcceptedCommit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	locked := seedRenderedLock(t, GitPlanSource{Repository: repo, ManifestPaths: []string{"app.yaml"}}, strings.TrimSpace(string(commit)), "app")
+	locked := strings.TrimSpace(string(commit))
 	commit = []byte(locked)
 	if err := os.WriteFile(path, []byte("broken"), 0600); err != nil {
 		t.Fatal(err)
@@ -148,7 +148,6 @@ func TestGitPlanSourceUsesOnlyDeployedManifestSet(t *testing.T) {
 		t.Fatal(err)
 	}
 	selection := GitPlanSource{Repository: repo, ManifestPaths: []string{"kubernetes"}}
-	commit = []byte(seedRenderedLock(t, selection, strings.TrimSpace(string(commit)), "app"))
 	objects, err := selection.AcceptedManifests(context.Background(), strings.TrimSpace(string(commit)), "app")
 	if err != nil || len(objects) != 2 {
 		t.Fatalf("deployed objects = %+v, %v", objects, err)
@@ -205,7 +204,6 @@ func TestGitPlanSourceSelectsDeployedHotelSeed(t *testing.T) {
 				t.Fatal(err)
 			}
 			source := GitPlanSource{Repository: repo, ManifestPaths: []string{"kubernetes"}}
-			commit = []byte(seedRenderedLock(t, source, strings.TrimSpace(string(commit)), "hotel-res"))
 			objects, err := source.AcceptedManifests(context.Background(), strings.TrimSpace(string(commit)), "hotel-res")
 			if err != nil {
 				t.Fatal(err)
