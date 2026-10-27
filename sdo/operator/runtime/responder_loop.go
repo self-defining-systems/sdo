@@ -49,6 +49,9 @@ type ToolRequest struct {
 	Bindings            program.Bindings                       `json:"bindings,omitempty"`
 	PlanIDs             []string                               `json:"plan_ids,omitempty"`
 	ApplicationID       string                                 `json:"application_id,omitempty"`
+	// stage marks an apply made by the automatic response stage. It is not
+	// decodable from a tool call, so only the stage can set it.
+	stage bool
 }
 
 type ToolResponse struct {
@@ -195,7 +198,11 @@ type ResponderLoop struct {
 	lastDiagnosisView     program.ReadView
 	findings              []sdk.Finding
 	drift                 []sdk.Finding
-	batches               int
+	// batches counts the agent's mitigation rounds, the budget the agent is
+	// told. applySeq numbers every apply, including the automatic stage's, which
+	// never spends that budget.
+	batches  int
+	applySeq int
 }
 
 func NewResponderLoop(request IncidentRequest, programs program.ProgramRegistry, provider SnapshotProvider, detectors []sdk.Detector, executor PlanExecutor, maxBatches int) *ResponderLoop {
@@ -835,7 +842,7 @@ func (l *ResponderLoop) plan(ctx context.Context, request ToolRequest, response 
 		return
 	}
 	view := l.matchedViews[matchedViewKey(request.ProgramID, request.Bindings)]
-	if view == nil || l.batches > 0 {
+	if view == nil || l.appliedAny() {
 		var err error
 		view, err = l.snapshotView(ctx)
 		if err != nil {
@@ -846,7 +853,7 @@ func (l *ResponderLoop) plan(ctx context.Context, request ToolRequest, response 
 	key := matchedViewKey(request.ProgramID, request.Bindings)
 	preview, matched := l.matchedPlans[key]
 	plan := preview.Plan
-	if !matched || l.batches > 0 {
+	if !matched || l.appliedAny() {
 		var err error
 		plan, err = l.runMitigator(ctx, request.ProgramID, mitigator, view, request.Bindings)
 		if err != nil {
@@ -888,7 +895,7 @@ func (l *ResponderLoop) apply(ctx context.Context, request ToolRequest, response
 			}
 		}
 	}
-	if l.batches >= l.batchLimit() {
+	if !request.stage && l.batches >= l.batchLimit() {
 		response.Error = "response loop budget exhausted"
 		response.Unresolved = true
 		return
@@ -919,9 +926,12 @@ func (l *ResponderLoop) apply(ctx context.Context, request ToolRequest, response
 	}
 	// A missing capture is an evidence gap; it must not block the repair.
 	_ = l.capturePreApply(ctx, planCaptureRefs(batch)...)
-	l.batches++
+	l.applySeq++
+	if !request.stage {
+		l.batches++
+	}
 	started := time.Now().UTC()
-	id := fmt.Sprintf("application-%s-%d", l.sessionID, l.batches)
+	id := fmt.Sprintf("application-%s-%d", l.sessionID, l.applySeq)
 	programIDs := make([]string, 0, len(selected))
 	for _, plan := range selected {
 		programIDs = append(programIDs, plan.programID)
@@ -1062,7 +1072,7 @@ func (l *ResponderLoop) verify(ctx context.Context, applied []selectedPlan, resp
 				l.addFailureSignal("new_finding_after_apply:" + FindingFingerprint(finding))
 			}
 		}
-	} else if !l.waitForStageRollouts && l.batches == 0 && len(previous) > 0 && len(findings) == 0 {
+	} else if !l.waitForStageRollouts && !l.appliedAny() && len(previous) > 0 && len(findings) == 0 {
 		matched := false
 		for _, run := range l.runs {
 			if run.Verdict.Result == program.Match {
@@ -1191,6 +1201,10 @@ func (l *ResponderLoop) rollbackApplication(ctx context.Context, request ToolReq
 		response.Summary = "application rolled back and verified"
 	}
 }
+
+// appliedAny reports whether any plan, from the stage or the agent, has been
+// applied: later plans must then be built from a fresh view.
+func (l *ResponderLoop) appliedAny() bool { return l.batches > 0 || l.applySeq > 0 }
 
 // Menu rounds and provider continuations have separate budgets. Advertise and
 // enforce the same incident-wide write-batch limit used by menu execution.

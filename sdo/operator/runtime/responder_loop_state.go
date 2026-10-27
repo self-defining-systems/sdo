@@ -26,6 +26,7 @@ type responderToolState struct {
 	SourceCommit     string
 	FailureSignals   []string
 	Batches          int
+	ApplySeq         int
 	MaxBatches       int
 }
 
@@ -33,7 +34,7 @@ func (l *ResponderLoop) persistToolState(ctx context.Context) error {
 	if l.saveToolState == nil {
 		return nil
 	}
-	payload, err := json.Marshal(responderToolState{StageProgress: l.stageProgress, PendingWrites: l.pendingWrites, CompletedRepairs: l.applicationRepairsLocked(), Continuation: l.continuation, Version: 2, SessionID: l.sessionID, MenuSession: l.menuSession, MenuReports: l.menuReports, MenuRepairs: l.menuRepairs, MenuExecutions: l.menuExecutions, IncidentID: l.Request.IncidentID, SourceCommit: l.Request.SourceCommit, FailureSignals: l.failureSignals, Batches: l.batches, MaxBatches: l.MaxBatches})
+	payload, err := json.Marshal(responderToolState{StageProgress: l.stageProgress, PendingWrites: l.pendingWrites, CompletedRepairs: l.applicationRepairsLocked(), Continuation: l.continuation, Version: 2, SessionID: l.sessionID, MenuSession: l.menuSession, MenuReports: l.menuReports, MenuRepairs: l.menuRepairs, MenuExecutions: l.menuExecutions, IncidentID: l.Request.IncidentID, SourceCommit: l.Request.SourceCommit, FailureSignals: l.failureSignals, Batches: l.batches, ApplySeq: l.applySeq, MaxBatches: l.MaxBatches})
 	if err != nil {
 		return fmt.Errorf("encode responder attempt state: %w", err)
 	}
@@ -60,7 +61,7 @@ func (l *ResponderLoop) restoreToolSnapshot(payload []byte) error {
 	if state.Continuation.Result != nil && state.Continuation.Result.GetIncidentId() != l.Request.IncidentID {
 		return fmt.Errorf("responder continuation belongs to another incident")
 	}
-	if state.Batches < 0 || state.MaxBatches < 0 {
+	if state.Batches < 0 || state.ApplySeq < 0 || state.MaxBatches < 0 {
 		return fmt.Errorf("invalid responder attempt budget")
 	}
 	if state.MenuSession != nil && (state.MenuSession.IncidentId != l.Request.IncidentID || state.MenuSession.SessionId != state.SessionID) {
@@ -78,6 +79,7 @@ func (l *ResponderLoop) restoreToolSnapshot(payload []byte) error {
 	l.menuRepairs = state.MenuRepairs
 	l.menuExecutions = state.MenuExecutions
 	l.batches = state.Batches
+	l.applySeq = max(state.ApplySeq, state.Batches)
 	if state.MaxBatches > 0 && state.MaxBatches < l.MaxBatches {
 		l.MaxBatches = state.MaxBatches
 	}

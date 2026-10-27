@@ -255,7 +255,7 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 		// writes, immutable receipts and compensation have one owner.
 		var applied ToolResponse
 		if err := withoutResponderLocks(loop, "apply", true, func() {
-			applied = loop.Handle(ctx, ToolRequest{Command: "apply", PlanIDs: []string{planResponse.PlanID}})
+			applied = loop.Handle(ctx, ToolRequest{Command: "apply", PlanIDs: []string{planResponse.PlanID}, stage: true})
 		}); err != nil {
 			return report, err
 		}

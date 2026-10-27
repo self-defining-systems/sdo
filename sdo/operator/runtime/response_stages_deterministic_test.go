@@ -131,6 +131,44 @@ func TestDeterministicResponseStageClearsBothFaultsWithoutAgent(t *testing.T) {
 	}
 }
 
+// The stage's applies are not the agent's mitigation rounds: however many
+// matched plans the stage applies, the agent starts with its full budget.
+func TestDeterministicResponseStageDoesNotSpendAgentRounds(t *testing.T) {
+	loop, state := pipelineTestLoop(t, false)
+	if _, err := (&DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return loop }}).Run(context.Background(), state); err != nil {
+		t.Fatal(err)
+	}
+	stageApplications := loop.PlanApplications()
+	if len(stageApplications) < 2 {
+		t.Fatalf("fixture must apply several matched plans in the stage: %v", stageApplications)
+	}
+	if loop.LoopsUsed() != 0 || loop.Exhausted() {
+		t.Fatalf("stage applies spent the agent's rounds: used=%d of %d", loop.LoopsUsed(), loop.batchLimit())
+	}
+	response := loop.Handle(context.Background(), ToolRequest{Command: "status"})
+	if response.MitigationRoundsUsed != 0 || response.MitigationRoundsAllowed != 5 {
+		t.Fatalf("agent budget at hand-off: %+v", response)
+	}
+}
+
+// Application IDs stay unique across the stage and the agent, including after a
+// restart that restores the persisted state.
+func TestStageAndAgentApplicationsShareOneIDSequence(t *testing.T) {
+	loop, state := pipelineTestLoop(t, false)
+	var saved []byte
+	loop.saveToolState = func(_ context.Context, payload []byte) error { saved = payload; return nil }
+	if _, err := (&DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return loop }}).Run(context.Background(), state); err != nil {
+		t.Fatal(err)
+	}
+	restored := NewResponderLoop(loop.Request, loop.Programs, loop.Provider, loop.Detectors, loop.Executor, 5)
+	if err := restored.restoreToolSnapshot(saved); err != nil {
+		t.Fatal(err)
+	}
+	if restored.LoopsUsed() != 0 || restored.applySeq != loop.applySeq {
+		t.Fatalf("restored accounting differs: used=%d seq=%d want seq=%d", restored.LoopsUsed(), restored.applySeq, loop.applySeq)
+	}
+}
+
 func TestDeterministicResponseStageHandsOffCoveredAndUncoveredEvidence(t *testing.T) {
 	loop, state := pipelineTestLoop(t, true)
 	report, err := (&DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return loop }}).Run(context.Background(), state)

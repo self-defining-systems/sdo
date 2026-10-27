@@ -160,6 +160,7 @@ The tool response includes parameter schemas, what ran, per-action results, each
 and any error. Failed and successful reports return to the same responder session so it can choose
 another option or fix the problem directly. The incident allowance is at most five rounds, shared
 across options and ordinary plan batches; a smaller configured allowance remains effective.
+Applies made by the automatic response stage are numbered separately and never spend the agent's rounds.
 Private session/checkpoint messages retain provider identity for presentation, without mutation authority.
 Session presentation, reports, repair receipts and counters survive through the existing tool-state
 snapshot. There is no selection journal, report outbox or menu-specific mutation fence. In-process
