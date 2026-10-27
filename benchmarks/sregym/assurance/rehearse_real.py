@@ -58,7 +58,7 @@ CLUSTER_INVENTORY_KINDS = ("validatingwebhookconfiguration", "mutatingwebhookcon
 NO_REPAIR_MARKERS = ("no source repair", "no scripted repair", "unsupported kind")
 
 
-#: The detecting incident predates the injection: the controller opened one on the clean lane (INV1, astronomy 52/012-013).
+#: The detecting incident predates the injection: the controller opened one on the clean lane (INV1: astronomy 52/012).
 BASELINE_INCIDENT_CLASS = "baseline-incident"
 
 

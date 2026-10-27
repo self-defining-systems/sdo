@@ -289,7 +289,8 @@ def test_images_from_other_code_are_refused_before_the_lane_is_touched(tmp_path:
 
     assert real.image_source_problems(tmp_path, IMAGES, check=lambda *a, **k: None) == []
     found = real.image_source_problems(tmp_path, IMAGES, check=stale)
-    assert len(found) == 1 and "source differs" in found[0]
+    assert len(found) == 1
+    assert "source differs" in found[0]
 
 
 def test_an_incident_that_opened_before_the_injection_is_a_baseline_incident() -> None:
