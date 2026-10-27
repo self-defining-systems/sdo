@@ -36,7 +36,12 @@ def lane(tmp_path, monkeypatch):
         }
 
     gate = admission.LaneAdmission(environment, SimpleNamespace(runtime_state=state), tmp_path / "admission")
-    complete = {"complete": {"acceptedCommit": "a" * 40, "objects": [{}]}, "pending": None, "rejected": None}
+    complete = {
+        "complete": {"acceptedCommit": "a" * 40, "objects": [{}]},
+        "pending": None,
+        "rejected": None,
+        "controller_failed": None,
+    }
     monkeypatch.setattr(admission.LaneAdmission, "_onboarding", lambda self, control: complete)
     monkeypatch.setattr(rbac, "verify_rbac", lambda *args: {"passed": True})
     monkeypatch.setattr(hotel_helpers, "admit_install", lambda *args: {"passed": True, "profile": "ABSENT"})
@@ -274,11 +279,17 @@ def first_adoption(gate, monkeypatch, finishes_at: float) -> list[float]:
 
     def onboarding(control):
         if now[0] < finishes_at:
-            return {"complete": None, "pending": {"acceptedCommit": "a" * 40}, "rejected": None}
+            return {
+                "complete": None,
+                "pending": {"acceptedCommit": "a" * 40},
+                "rejected": None,
+                "controller_failed": None,
+            }
         return {
             "complete": {"acceptedCommit": "b" * 40, "objects": [{"kind": "Deployment"}]},
             "pending": None,
             "rejected": None,
+            "controller_failed": None,
         }
 
     monkeypatch.setattr(gate.ops, "runtime_state", runtime)
@@ -318,6 +329,7 @@ def test_rejected_onboarding_fails_at_once_with_the_controller_reason(lane, monk
         "complete": None,
         "pending": {"acceptedCommit": "a" * 40},
         "rejected": {"reason": "install window contradicted or expired"},
+        "controller_failed": None,
     }
     monkeypatch.setattr(
         gate, "_onboarding", lambda control: rejected if now[0] >= 30 else {**rejected, "rejected": None}
@@ -331,6 +343,24 @@ def test_rejected_onboarding_fails_at_once_with_the_controller_reason(lane, monk
     assert evidence["passed"] is False
     assert evidence["rejected_reason"] == "install window contradicted or expired"
     assert (gate.directory / "onboarding-controller.log").read_text() == "controller line\n"
+
+
+def test_failed_controller_job_fails_onboarding_at_once(lane, monkeypatch):
+    """C21 astronomy: the controller pod crash-looped until the Job hit its backoff limit; no record can follow."""
+    gate, calls = lane
+    now = first_adoption(gate, monkeypatch, finishes_at=10_000)
+    pending = {"complete": None, "pending": {"acceptedCommit": "a" * 40}, "rejected": None}
+    failed = {"reason": "BackoffLimitExceeded: Job has reached the specified backoff limit"}
+    monkeypatch.setattr(
+        gate,
+        "_onboarding",
+        lambda control: {**pending, "controller_failed": failed if now[0] >= 40 else None},
+    )
+    monkeypatch.setattr(admission, "kubectl", lambda *args, **kwargs: SimpleNamespace(stdout="pod a\npod b\n"))
+    with pytest.raises(ValueError, match=r"controller Job failed during onboarding after 40s .*BackoffLimitExceeded"):
+        gate.prove("hotel-reservation-sdo")
+    assert "sample" not in calls
+    assert (gate.directory / "onboarding-controller.log").read_text() == "pod a\npod b\n"
 
 
 def test_unfinished_onboarding_keeps_the_controller_log(lane, monkeypatch):

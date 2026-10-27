@@ -278,13 +278,25 @@ class LaneAdmission:
                 records[key] = {"reason": json.loads(output)["data"]["reason"]}
             else:
                 records[key] = json.loads(json.loads(output)["data"]["onboarding.json"])
+        job = json.loads(
+            kubectl(
+                ["get", "job/sdo-controller-run", "-o", "json", "--ignore-not-found=true"],
+                namespace=control,
+                kubeconfig=self.environment.kubeconfig,
+            ).stdout
+            or "{}"
+        )
+        failed = [c for c in job.get("status", {}).get("conditions", []) if c.get("type") == "Failed"]
+        records["controller_failed"] = (
+            {"reason": f"{failed[0].get('reason')}: {failed[0].get('message')}"} if failed else None
+        )
         return records
 
     def _keep_onboarding_log(self, control: str) -> None:
-        """Save the controller log of a failed onboarding: the Job and its log are gone after the row."""
+        """Save the logs of every controller pod of a failed onboarding: the Job and its pods are gone after the row."""
         try:
             log = kubectl(
-                ["logs", "job/sdo-controller-run", "-c", "controller", "--tail=5000"],
+                ["logs", "-l", "job-name=sdo-controller-run", "-c", "controller", "--prefix", "--tail=2000"],
                 namespace=control,
                 kubeconfig=self.environment.kubeconfig,
             ).stdout
@@ -307,27 +319,38 @@ class LaneAdmission:
             try:
                 records, error = self._onboarding(control), None
             except (RuntimeError, ValueError, KeyError) as exc:
-                records, error = {"complete": None, "pending": None, "rejected": None}, str(exc)
+                records, error = (
+                    {"complete": None, "pending": None, "rejected": None, "controller_failed": None},
+                    str(exc),
+                )
             record = records["complete"] or {}
             done = bool(record.get("acceptedCommit") and record.get("objects"))
             rejected = (records["rejected"] or {}).get("reason")
+            crashed = (records["controller_failed"] or {}).get("reason")
             evidence = {
                 "passed": done,
                 "accepted_commit": record.get("acceptedCommit"),
                 "pending": records["pending"] is not None,
                 "rejected_reason": rejected,
+                "controller_failed": crashed,
                 "last_error": error,
                 "seconds": round(time.monotonic() - started, 3),
                 "budget_seconds": self.onboarding_timeout_seconds,
             }
-            # The controller's rejection is durable and its one evaluation is spent: the completed
-            # record can never appear, so waiting out the budget only delays the same failure.
-            if done or rejected or time.monotonic() - started >= self.onboarding_timeout_seconds:
+            # The controller's rejection is durable and its one evaluation is spent, and a failed controller
+            # Job has stopped restarting: the completed record cannot appear, so waiting out the budget
+            # only delays the same failure.
+            if done or rejected or crashed or time.monotonic() - started >= self.onboarding_timeout_seconds:
                 break
             time.sleep(min(2, max(0, started + self.onboarding_timeout_seconds - time.monotonic())))
         destination.write_text(json.dumps(evidence, indent=2) + "\n")
         if not done:
             self._keep_onboarding_log(control)
+        if not done and crashed and not rejected:
+            raise ValueError(
+                f"eval: SDO controller Job failed during onboarding after {evidence['seconds']:g}s ({crashed}); "
+                "see onboarding-controller.log; no injection"
+            )
         if not done and rejected:
             raise ValueError(
                 f"eval: SDO rejected onboarding after {evidence['seconds']:g}s ({rejected}); the fresh lane was not "
