@@ -580,8 +580,9 @@ def test_sealed_restore_never_reverts_passive_objects_to_the_pre_adoption_captur
     assert restored["redirect"]["spec"]["selector"] == {"app": "x"}
     # Declared fields already present in the capture (plus extras SDO cannot remove) stay as captured.
     assert restored["routes"] == captured[2]
-    # Workloads keep the sealed install: restoring them must not start a second rollout.
-    assert restored["api"] == captured[3]
+    # Compose the accepted workload policy before restore; the old chart capture
+    # must not drop it and open a baseline incident after onboarding.
+    assert restored["api"] == accepted[3]
 
 
 def test_restore_after_adoption_leaves_adopted_config_in_place(tmp_path: Path) -> None:
@@ -933,3 +934,90 @@ def test_recreated_object_outside_accepted_source_is_reported_as_unexplained() -
     cleanup = reconcile_application(cluster, baseline, "hotel", declared=frozenset({("Deployment", "geo")}))
 
     assert cleanup.undeclared_recreated == ["ConfigMap/runtime-extra"]
+
+
+def test_restore_composition_reaches_cluster_with_source_labels_and_policy(tmp_path: Path) -> None:
+    """The restore producer's accepted fields reach the real reconcile consumer."""
+    accepted = obj(
+        "Deployment",
+        "api",
+        namespace="app",
+        spec={"template": {"spec": {"containers": [{"name": "api", "image": "same", "args": ["--accepted"]}]}}},
+    )
+    accepted["metadata"]["labels"] = {"app": "api"}
+    captured = deepcopy(accepted)
+    del captured["metadata"]["labels"]
+    captured["spec"]["template"]["spec"]["containers"][0].pop("args")
+    source = commit_accepted_source(tmp_path, [accepted])
+    baseline = accepted_restore_baselines(source, _sealed(tmp_path, [captured]))[0]
+    cluster = FakeCluster()
+    cluster.add(captured)
+    reconcile_application(cluster, baseline, "app")
+    assert cluster.objects["app", "Deployment", "api"] == accepted
+    # A missing source label alone is still a real restore write; extra live
+    # labels are retained rather than granting source authority over them.
+    current = cluster.objects["app", "Deployment", "api"]
+    current["metadata"]["labels"] = {"runtime.example/owner": "controller"}
+    cluster.touched.clear()
+    reconcile_application(cluster, baseline, "app")
+    assert cluster.touched == [("app", "Deployment", "api")]
+
+
+def test_kubectl_restore_writes_labels_without_replacing_other_metadata(monkeypatch: Any, tmp_path: Path) -> None:
+    desired = obj("Service", "redirect", spec={"type": "ExternalName", "externalName": "synthetic.example"})
+    desired["metadata"]["labels"] = {"app": "redirect"}
+    current = deepcopy(desired)
+    current["metadata"].update(labels={"runtime.example/owner": "controller"}, resourceVersion="17")
+    patches = []
+
+    def api(args: list[str], **_kwargs: Any) -> Any:
+        if args[0] == "get":
+            return SimpleNamespace(stdout=json.dumps(current))
+        patches.extend(json.loads(Path(args[4]).read_text()))
+        return SimpleNamespace(stdout="patched")
+
+    monkeypatch.setattr("benchmarks.sregym.fastloop.baseline_recovery.kubectl", api)
+    KubectlApplicationCluster(tmp_path / "kube").apply("hotel", desired)
+    metadata_patches = [patch for patch in patches if patch["path"].startswith("/metadata/")]
+    assert metadata_patches == [
+        {"op": "test", "path": "/metadata/resourceVersion", "value": "17"},
+        {"op": "add", "path": "/metadata/labels", "value": {"runtime.example/owner": "controller", "app": "redirect"}},
+    ]
+
+
+@pytest.mark.parametrize("kind", ["Deployment", "StatefulSet", "DaemonSet"])
+@pytest.mark.parametrize(
+    ("field", "declared", "installed"),
+    [
+        ("args", ["first", "second"], ["second", "first"]),
+        ("args", [], ["--old-chart-option"]),
+        ("args", ["first", "first"], ["first", "second"]),
+        ("volumes", [], [{"name": "old", "emptyDir": {}}]),
+        ("volumes", [], None),
+    ],
+)
+def test_restore_preserves_declared_list_order_and_explicit_empty(
+    tmp_path: Path, kind: str, field: str, declared: list[Any], installed: list[Any] | None
+) -> None:
+    accepted = obj(
+        kind, "api", namespace="app", spec={"template": {"spec": {"containers": [{"name": "api", "image": "same"}]}}}
+    )
+    captured = deepcopy(accepted)
+    wanted_pod = accepted["spec"]["template"]["spec"]
+    installed_pod = captured["spec"]["template"]["spec"]
+    wanted = wanted_pod["containers"][0] if field == "args" else wanted_pod
+    previous = installed_pod["containers"][0] if field == "args" else installed_pod
+    wanted[field] = declared
+    if installed is not None:
+        previous[field] = installed
+    installed_pod["containers"][0]["terminationMessagePolicy"] = "File"
+    source = commit_accepted_source(tmp_path, [accepted])
+    baseline = accepted_restore_baselines(source, _sealed(tmp_path, [captured]))[0]
+    cluster = FakeCluster()
+    cluster.add(captured)
+    reconcile_application(cluster, baseline, "app")
+    restored_pod = cluster.objects["app", kind, "api"]["spec"]["template"]["spec"]
+    actual = restored_pod["containers"][0] if field == "args" else restored_pod
+    assert field in actual
+    assert actual[field] == declared
+    assert restored_pod["containers"][0]["terminationMessagePolicy"] == "File"
