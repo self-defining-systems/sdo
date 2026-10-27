@@ -319,6 +319,7 @@ class Worker:
     def __init__(self, app: Application) -> None:
         self.app = app
         self.faults: list[tuple[str, str]] = []
+        self.rehearsed: list[str] = []
 
     def __enter__(self) -> Worker:
         return self
@@ -329,8 +330,14 @@ class Worker:
     def request(self, op: str, **kwargs: Any) -> dict[str, Any]:
         if op == "deploy":
             return {"deployed": True}
+        if op == "rehearse_oracles":
+            assert not self.faults
+            assert self.app.healthy()
+            self.rehearsed.append(str(kwargs["problem_id"]))
+            return {"success": True}
         if op == "inject":
             problem = str(kwargs["problem_id"])
+            assert problem in self.rehearsed
             name = component_for(problem)
             kind = "Service" if "target_port" in problem else "Deployment"
             if not kwargs.get("compose"):
@@ -919,6 +926,8 @@ def test_scripted_fastloop_reuses_reflected_target_port_program(
 
     helper_proof = json.loads((tmp_path / "results/hermetic/admission/hotel-script-profile.json").read_text())
     assert helper_proof == {"profile": "hotel-script-free/v1", "passed": True, "objects_checked": len(app.objects)}
+    planned = json.loads(STREAM.read_text())["incidents"]
+    assert worker.rehearsed == list(dict.fromkeys(problem for row in planned for problem in row))
     records = load_records(tmp_path / "results/hermetic/incidents.jsonl")
     with (tmp_path / "results/hermetic/incidents.csv").open(newline="") as handle:
         rows = list(csv.DictReader(handle))

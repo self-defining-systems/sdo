@@ -402,6 +402,7 @@ def test_mf_stream_launches_with_both_component_probes(tmp_path: Path, monkeypat
     environment.baseline_path.write_text("{}")
     save_application_baseline(environment.baseline_path, (ApplicationBaseline(environment.namespace, [workload]),))
     commit_accepted_source(environment.workspace, [account], namespace=environment.namespace)
+    rehearsed: list[str] = []
 
     class Worker:
         def __enter__(self) -> Worker:
@@ -410,7 +411,10 @@ def test_mf_stream_launches_with_both_component_probes(tmp_path: Path, monkeypat
         def __exit__(self, *_args: object) -> None:
             pass
 
-        def request(self, op: str, **_kwargs: object) -> dict[str, object]:
+        def request(self, op: str, **kwargs: object) -> dict[str, object]:
+            if op == "rehearse_oracles":
+                rehearsed.append(str(kwargs["problem_id"]))
+                return {"success": True, "details": {"oracle_invalid": 1}}
             assert op == "deploy"
             return {}
 
@@ -455,6 +459,7 @@ def test_mf_stream_launches_with_both_component_probes(tmp_path: Path, monkeypat
         )
         == 1
     )
+    assert rehearsed == list(dict.fromkeys(problem for ids in load_stream(stream) for problem in ids))
     assert captured["composite"] is True
     faults = captured["stream_faults"]
     assert {key: len(value) for key, value in faults.items()} == {
