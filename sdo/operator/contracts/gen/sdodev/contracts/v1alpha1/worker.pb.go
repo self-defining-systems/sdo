@@ -582,8 +582,10 @@ type ReflectionRequest struct {
 	PreviousDiagnostics []*MemoryDiagnostic    `protobuf:"bytes,12,rep,name=previous_diagnostics,json=previousDiagnostics,proto3" json:"previous_diagnostics,omitempty"`
 	CauseWork           []*ReflectionCauseWork `protobuf:"bytes,14,rep,name=cause_work,json=causeWork,proto3" json:"cause_work,omitempty"`
 	UnassignedWork      []*ReflectionWorkItem  `protobuf:"bytes,15,rep,name=unassigned_work,json=unassignedWork,proto3" json:"unassigned_work,omitempty"`
-	unknownFields       protoimpl.UnknownFields
-	sizeCache           protoimpl.SizeCache
+	// Go-owned: each lossy step taken so the request fit the transport limit, in order.
+	Compaction    []string `protobuf:"bytes,16,rep,name=compaction,proto3" json:"compaction,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ReflectionRequest) Reset() {
@@ -696,6 +698,13 @@ func (x *ReflectionRequest) GetCauseWork() []*ReflectionCauseWork {
 func (x *ReflectionRequest) GetUnassignedWork() []*ReflectionWorkItem {
 	if x != nil {
 		return x.UnassignedWork
+	}
+	return nil
+}
+
+func (x *ReflectionRequest) GetCompaction() []string {
+	if x != nil {
+		return x.Compaction
 	}
 	return nil
 }
@@ -846,7 +855,7 @@ const file_sdodev_contracts_v1alpha1_worker_proto_rawDesc = "" +
 	"\vproposal_id\x18\x05 \x01(\tR\n" +
 	"proposalId\x12#\n" +
 	"\rerror_summary\x18\x06 \x01(\tR\ferrorSummary\x12]\n" +
-	"\x0efailure_reason\x18\a \x01(\tB6\xbaH3r1R\x00R\ragent_timeoutR\fagent_failedR\x10result_too_largeR\rfailureReason\"\xe3\b\n" +
+	"\x0efailure_reason\x18\a \x01(\tB6\xbaH3r1R\x00R\ragent_timeoutR\fagent_failedR\x10result_too_largeR\rfailureReason\"\x83\t\n" +
 	"\x11ReflectionRequest\x12D\n" +
 	"\aclosure\x18\x01 \x01(\v2*.sdodev.contracts.v1alpha1.IncidentClosureR\aclosure\x12'\n" +
 	"\x0fproposal_commit\x18\x04 \x01(\tR\x0eproposalCommit\x12%\n" +
@@ -862,7 +871,10 @@ const file_sdodev_contracts_v1alpha1_worker_proto_rawDesc = "" +
 	"\x14previous_diagnostics\x18\f \x03(\v2+.sdodev.contracts.v1alpha1.MemoryDiagnosticR\x13previousDiagnostics\x12M\n" +
 	"\n" +
 	"cause_work\x18\x0e \x03(\v2..sdodev.contracts.v1alpha1.ReflectionCauseWorkR\tcauseWork\x12V\n" +
-	"\x0funassigned_work\x18\x0f \x03(\v2-.sdodev.contracts.v1alpha1.ReflectionWorkItemR\x0eunassignedWork:\xcb\x01\xbaH\xc7\x01\x1a\xc4\x01\n" +
+	"\x0funassigned_work\x18\x0f \x03(\v2-.sdodev.contracts.v1alpha1.ReflectionWorkItemR\x0eunassignedWork\x12\x1e\n" +
+	"\n" +
+	"compaction\x18\x10 \x03(\tR\n" +
+	"compaction:\xcb\x01\xbaH\xc7\x01\x1a\xc4\x01\n" +
 	",reflection_request.diagnostics_only_on_retry\x12Lprevious_diagnostics are carried exactly by a retry (validation_attempt > 1)\x1aF(this.validation_attempt > 1) == (size(this.previous_diagnostics) > 0)J\x04\b\x02\x10\x03J\x04\b\x03\x10\x04J\x04\b\r\x10\x0eR\foutcome_jsonR\x12prior_outcome_jsonR\x05depth\"\xf3\x04\n" +
 	"\x10ReflectionResult\x12\x18\n" +
 	"\asummary\x18\x01 \x01(\tR\asummary\x12O\n" +

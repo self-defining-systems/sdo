@@ -3,8 +3,6 @@ package worker_registry
 import (
 	"context"
 	"errors"
-	"os"
-	"path/filepath"
 	"sdo.dev/operator/contracts/wire"
 	"strings"
 	"testing"
@@ -325,67 +323,10 @@ func largeReflectionTask(t *testing.T, checkout string, snapshotBytes int) *cont
 	}
 }
 
-func TestKubernetesExecutorStagesRequestsAboveConfigMapBudgetOnRepositoryVolume(t *testing.T) {
+func TestKubernetesExecutorRejectsRequestOverBudgetNamingTheComponent(t *testing.T) {
 	mount := t.TempDir()
 	client := fake.NewSimpleClientset()
-	task := largeReflectionTask(t, mount+"/proposals/reflection-big", 2<<20)
-	jobCreated := make(chan struct{}, 1)
-	executor := KubernetesExecutor{OnPhase: notifyTestJobCreated(jobCreated), Client: client, Namespace: "demo", Registry: reflectionTestRegistry(t), RepositoryPVC: "repo", RepositoryMountPath: mount, RepositoryPVCSubPath: "tenant", PollInterval: time.Millisecond}
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan error, 1)
-	finished := make(chan struct{})
-	t.Cleanup(func() { cancel(); <-finished })
-	go func() { defer close(finished); _, err := executor.Execute(ctx, task); done <- err }()
-	jobName := JobName(task.TaskId)
-	select {
-	case <-jobCreated:
-	case err := <-done:
-		t.Fatalf("executor stopped before Job creation: %v", err)
-	}
-	job, err := client.BatchV1().Jobs("demo").Get(ctx, jobName, metav1.GetOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	maps, err := client.CoreV1().ConfigMaps("demo").List(ctx, metav1.ListOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Only the small dispatch receipt may use a ConfigMap. Request bytes must
-	// stay on the repository volume, regardless of control-plane bookkeeping.
-	if len(maps.Items) != 1 || maps.Items[0].Name != jobName+"-execution" || len(maps.Items[0].Data) != 0 || len(maps.Items[0].BinaryData) != 0 {
-		t.Fatalf("an oversized request must not use a ConfigMap: %+v", maps.Items)
-	}
-	var request *corev1.VolumeMount
-	for _, mount := range job.Spec.Template.Spec.Containers[0].VolumeMounts {
-		if mount.MountPath == "/sdo/request" {
-			request = &mount
-		}
-	}
-	wantSubPath := "tenant/.sdo-runtime/requests/" + jobName
-	if request == nil || request.Name != "repository" || request.SubPath != wantSubPath || !request.ReadOnly {
-		t.Fatalf("worker request is not a read-only repository subPath: %+v", request)
-	}
-	for _, volume := range job.Spec.Template.Spec.Volumes {
-		if volume.ConfigMap != nil {
-			t.Fatalf("job mounts a ConfigMap request: %+v", volume)
-		}
-	}
-	staged, err := os.ReadFile(filepath.Join(mount, ".sdo-runtime/requests", jobName, TaskDataKey))
-	if err != nil {
-		t.Fatal(err)
-	}
-	want, err := wire.Canonical(task)
-	if err != nil || string(staged) != string(want) || len(staged) <= 1<<20 {
-		t.Fatalf("staged request differs from the canonical task (%d bytes, err %v)", len(staged), err)
-	}
-	cancel()
-	<-done
-}
-
-func TestKubernetesExecutorRejectsRequestOverStagedBudgetNamingTheComponent(t *testing.T) {
-	mount := t.TempDir()
-	client := fake.NewSimpleClientset()
-	task := largeReflectionTask(t, mount+"/proposals/reflection-big", MaxStagedRequestBytes+1<<20)
+	task := largeReflectionTask(t, mount+"/proposals/reflection-big", MaxRequestBytes+1<<10)
 	executor := KubernetesExecutor{Client: client, Namespace: "demo", Registry: reflectionTestRegistry(t), RepositoryPVC: "repo", RepositoryMountPath: mount, PollInterval: time.Millisecond}
 	_, err := executor.Execute(context.Background(), task)
 	var tooLarge *RequestTooLargeError
@@ -397,24 +338,33 @@ func TestKubernetesExecutorRejectsRequestOverStagedBudgetNamingTheComponent(t *t
 	}
 }
 
-func TestKubernetesExecutorReportsUnwritableRequestStaging(t *testing.T) {
-	mount := t.TempDir()
-	task := largeReflectionTask(t, mount+"/proposals/reflection-big", 2<<20)
-	if err := os.WriteFile(filepath.Join(mount, ".sdo-runtime"), nil, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	executor := KubernetesExecutor{Client: fake.NewSimpleClientset(), Namespace: "demo", Registry: reflectionTestRegistry(t), RepositoryPVC: "repo", RepositoryMountPath: mount}
-	var staging *RequestStagingError
-	if _, err := executor.Execute(context.Background(), task); !errors.As(err, &staging) {
-		t.Fatalf("want RequestStagingError, got %v", err)
-	}
-}
-
 func notifyTestJobCreated(created chan<- struct{}) func(context.Context, string) error {
 	return func(_ context.Context, phase string) error {
 		if phase == "reflection_job_created" {
 			created <- struct{}{}
 		}
 		return nil
+	}
+}
+
+// The controller reads no logs: a failing worker writes one curated line to /dev/termination-log, so the Job
+// must not ask the kubelet to copy log output into the termination message.
+func TestWorkerJobTerminationMessageNeverFallsBackToLogs(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	task := reflectionTestTask(t)
+	executor := KubernetesExecutor{Client: client, Namespace: "demo", Registry: reflectionTestRegistry(t), RepositoryPVC: "repo", RepositoryMountPath: "/workspace"}
+	registration, err := executor.Registry.Resolve(task.AgentId, task.TaskType)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := executor.ensureJob(context.Background(), task, registration.GetKubernetesJob(), "termination-test", requestSource{ConfigMap: "request"}, "result", "proposals/reflection-1"); err != nil {
+		t.Fatal(err)
+	}
+	job, err := client.BatchV1().Jobs("demo").Get(context.Background(), "termination-test", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := job.Spec.Template.Spec.Containers[0].TerminationMessagePolicy; got != "" && got != corev1.TerminationMessageReadFile {
+		t.Fatalf("worker termination message policy = %q, want the file the worker curates", got)
 	}
 }

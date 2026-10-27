@@ -23,6 +23,7 @@ from sdo.agents.responder.reflection import (
     ReflectionTurn,
     SessionReflector,
 )
+from sdo.agents.responder.termination import record_worker_failure, records_worker_failure
 from sdo.contracts import (
     SCHEMA_VERSION,
     AgentResult,
@@ -99,9 +100,14 @@ def run_reflection_task(
     history = list(request.prior_outcomes)
     closure = IncidentClosure()
     closure.CopyFrom(request.closure)
-    if closure.HasField("result") and not closure.result.program_runs:
-        # The request carries the responder's program runs once, in the outcome derived from them.
-        closure.result.program_runs.extend(outcome.program_runs)
+    if closure.HasField("result"):
+        # The request carries the responder's raw evidence once, in the outcome derived from it.
+        if not closure.result.program_runs:
+            closure.result.program_runs.extend(outcome.program_runs)
+        if not closure.result.program_tool_calls:
+            closure.result.program_tool_calls.extend(outcome.program_tool_calls)
+        if not closure.result.plan_applications:
+            closure.result.plan_applications.extend(outcome.plan_applications)
     if (
         request.memory_snapshot.accepted_commit != request.outcome_commit
         or task.workspace.base_commit != request.outcome_commit
@@ -191,11 +197,13 @@ def _failure_reason(exc: BaseException) -> str:
     return "agent_failed"
 
 
+@records_worker_failure
 def main() -> int:
     namespace = os.environ.get("SDO_NAMESPACE", "")
     result_name = os.environ.get("SDO_RESULT_CONFIGMAP", "")
     if not namespace or not result_name:
         print("SDO_NAMESPACE and SDO_RESULT_CONFIGMAP are required", file=sys.stderr)
+        record_worker_failure(ValueError("SDO_NAMESPACE and SDO_RESULT_CONFIGMAP are required"))
         return 2
     try:
         prepare_codex_home(skills=skills_for_role("reflector"))
@@ -207,6 +215,7 @@ def main() -> int:
         )
     except (OSError, ValueError, RuntimeError) as exc:
         print(str(exc), file=sys.stderr)
+        record_worker_failure(exc)
         return 1
     return 0
 

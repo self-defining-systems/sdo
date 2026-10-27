@@ -320,19 +320,14 @@ def prior_outcome_view(record: OutcomeRecord) -> dict[str, Any]:
     return {key: value for key, value in view.items() if value is not None and value != [] and value != 0}
 
 
-#: Prior incidents carried in the reflection request. Each costs about 5k
-#: characters on every request of the session, so only the latest are kept.
-MAX_HISTORY_INCIDENTS = 2
-
-
 def history_view(
     history: Sequence[OutcomeRecord], *, current_incident_id: str, evidence_directory: Path | None = None
 ) -> list[dict[str, Any]]:
-    """The latest prior incidents only: the current incident is already shown separately."""
+    """Every prior incident the request carries (Go keeps the latest few); the current one is shown separately."""
 
     prior = [record for record in history if record.incident_id != current_incident_id]
     views = []
-    for record in prior[-MAX_HISTORY_INCIDENTS:]:
+    for record in prior:
         view = prior_outcome_view(record)
         if evidence_directory is not None:
             # IDs are data, never paths. These private copies live outside the

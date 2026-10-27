@@ -24,7 +24,7 @@ func (err *JobVanishedError) Error() string {
 func (err *JobVanishedError) NonRetryable() bool { return true }
 
 // Record successful dispatch separately from request preparation. This receipt
-// survives Job TTL and staged-request cleanup; a prepared request alone never
+// survives Job TTL and prepared-task cleanup; a prepared request alone never
 // proves that a worker ran. It has no Job owner reference intentionally.
 func (e KubernetesExecutor) recordWorkerDispatch(ctx context.Context, task *contracts.AgentTask, name string) error {
 	immutable := true

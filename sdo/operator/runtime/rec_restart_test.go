@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"testing"
 	"time"
 
@@ -151,81 +150,6 @@ func TestRECStopResponderFailsClosedOnInventoryAndDeletionErrors(t *testing.T) {
 				t.Fatalf("uncertain worker state must fail closed: %v", err)
 			}
 		})
-	}
-}
-
-func TestRECStopResponderFindsRealStagedConflictJobAndSessionOrphan(t *testing.T) {
-	ctx := context.Background()
-	root := t.TempDir()
-	request := goldenRequest(t)
-	request.RepositoryWorktree = root + "/proposals/incident"
-	request.Findings[0].Evidence = strings.Repeat("x", worker_registry.MaxConfigMapRequestBytes+1024)
-	registry := testIncidentRegistry(t, "sdo-responder:test")
-	task, payload, err := encodeIncidentAgentTask(request, registry, testIncidentAgentID(t))
-	if err != nil {
-		t.Fatal(err)
-	}
-	task.TaskId = request.IncidentID + "-continue-1"
-	// The original payload was oversized before changing only its task identity.
-	if len(payload) <= worker_registry.MaxConfigMapRequestBytes {
-		t.Fatal("fixture did not exceed request ConfigMap budget")
-	}
-	session, err := memory.PrepareIncidentSession(root, "tenant", request.IncidentID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	legacyRequest := recRestartRequest(t, request.IncidentID, 1, false)
-	legacyRequest.Namespace = "demo"
-	client := fake.NewSimpleClientset(legacyRequest)
-	executor := worker_registry.KubernetesExecutor{Client: client, Namespace: "demo", Registry: registry, RepositoryPVC: "repo", RepositoryMountPath: root, RepositoryPVCSubPath: "tenant", SessionPVCSubPath: session, PollInterval: time.Millisecond}
-	workerCtx, cancel := context.WithCancel(ctx)
-	done := make(chan struct{})
-	goUntilCleanup(t, cancel, func() {
-		defer close(done)
-		_, executeErr := executor.Execute(workerCtx, task)
-		if executeErr != nil && workerCtx.Err() == nil {
-			t.Errorf("staged executor: %v", executeErr)
-		}
-	})
-	name := worker_registry.TaskJobName(task)
-	job := awaitJob(t, client, name)
-	cancel()
-	<-done
-	if _, err := client.CoreV1().ConfigMaps("demo").Get(ctx, name+"-request", metav1.GetOptions{}); err == nil {
-		t.Fatal("staged request unexpectedly has a ConfigMap")
-	}
-	orphan := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "staged-orphan", Namespace: "demo"}, Spec: *job.Spec.Template.Spec.DeepCopy(), Status: corev1.PodStatus{Phase: corev1.PodRunning}}
-	if _, err := client.CoreV1().Pods("demo").Create(ctx, orphan, metav1.CreateOptions{}); err != nil {
-		t.Fatal(err)
-	}
-	client.PrependReactor("delete", "jobs", func(ktesting.Action) (bool, kruntime.Object, error) { return true, nil, nil })
-	client.PrependReactor("delete", "pods", func(ktesting.Action) (bool, kruntime.Object, error) { return true, nil, nil })
-	dispatcher := KubernetesJobDispatcher{Client: client, Namespace: "demo", RepositoryMountPath: root, RepositoryPVC: "repo", RepositoryPVCSubPath: "tenant"}
-	if err := dispatcher.StopResponder(ctx, request.IncidentID, 0); !errors.Is(err, errResponderTerminating) {
-		t.Fatalf("staged request conflict worker escaped inventory: %v", err)
-	}
-	deletedJob, deletedPod := false, false
-	for _, action := range client.Actions() {
-		if action.GetVerb() == "delete" {
-			deleted := action.(ktesting.DeleteAction).GetName()
-			deletedJob = deletedJob || action.Matches("delete", "jobs") && deleted == name
-			deletedPod = deletedPod || action.Matches("delete", "pods") && deleted == orphan.Name
-		}
-	}
-	if !deletedJob || !deletedPod {
-		t.Fatalf("termination requested: Job=%v orphan=%v", deletedJob, deletedPod)
-	}
-	if err := client.Tracker().Delete(batchv1.SchemeGroupVersion.WithResource("jobs"), "demo", name); err != nil {
-		t.Fatal(err)
-	}
-	if err := dispatcher.StopResponder(ctx, request.IncidentID, 0); !errors.Is(err, errResponderTerminating) {
-		t.Fatalf("session-only orphan escaped inventory after Job disappeared: %v", err)
-	}
-	if err := client.Tracker().Delete(corev1.SchemeGroupVersion.WithResource("pods"), "demo", orphan.Name); err != nil {
-		t.Fatal(err)
-	}
-	if err := dispatcher.StopResponder(ctx, request.IncidentID, 0); err != nil {
-		t.Fatalf("terminated staged workers still block: %v", err)
 	}
 }
 

@@ -135,8 +135,10 @@ func TestEveryControllerConfigMapStaysUnderBudgetWithLargeMemory(t *testing.T) {
 	if !ok {
 		t.Fatal("next responder not ready")
 	}
-	if len(controller.currentIncidentRequest.PreparedAgentTask) < 5<<20 {
-		t.Fatalf("prepared task did not carry the memory snapshot: %d bytes", len(controller.currentIncidentRequest.PreparedAgentTask))
+	// A snapshot far past the transport limit is degraded before the task is frozen, and the step is recorded on it.
+	prepared := controller.currentIncidentRequest.PreparedAgentTask
+	if len(prepared) > worker_registry.MaxRequestBytes || !strings.Contains(prepared, "clip_memory_documents") {
+		t.Fatalf("prepared task is %d bytes and did not record clipping the memory snapshot", len(prepared))
 	}
 	if err := controller.ExecuteDispatchEffect(ctx, dispatch); err != nil {
 		t.Fatal(err)
@@ -172,8 +174,13 @@ func TestEveryControllerConfigMapStaysUnderBudgetWithLargeMemory(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, configMap := range maps.Items {
-		if strings.HasSuffix(configMap.Name, "-request") {
-			t.Errorf("an oversized worker request used a ConfigMap: %s", configMap.Name)
+		if !strings.HasSuffix(configMap.Name, "-request") {
+			continue
+		}
+		for key, value := range configMap.Data {
+			if len(value) > worker_registry.MaxRequestBytes {
+				t.Errorf("worker request %s/%s is %d bytes after degrading, over the %d byte limit", configMap.Name, key, len(value), worker_registry.MaxRequestBytes)
+			}
 		}
 	}
 }
