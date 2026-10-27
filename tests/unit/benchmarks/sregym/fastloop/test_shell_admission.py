@@ -91,13 +91,8 @@ def test_shell_proof_rejects_incomplete_or_unhealthy_evidence(mutation):
 
 
 @pytest.mark.parametrize("code_path", ["shell", "go"])
-@pytest.mark.parametrize(
-    ("runner_healthy", "controller_clear", "traffic_healthy"),
-    [(True, True, True), (False, True, True), (True, False, True), (True, True, False)],
-)
-def test_public_admission_uses_selected_arm_and_keeps_independent_traffic(
-    tmp_path, monkeypatch, code_path, runner_healthy, controller_clear, traffic_healthy
-):
+@pytest.mark.parametrize(("runner_healthy", "controller_clear"), [(True, True), (False, True), (True, False)])
+def test_public_admission_uses_selected_arm(tmp_path, monkeypatch, code_path, runner_healthy, controller_clear):
     traffic = tmp_path / ".sdo/diagnostics/traffic/workloads"
     traffic.mkdir(parents=True)
     (traffic / "health.yaml").write_text("purpose: health-probe\nscenarios:\n- id: frontend\n")
@@ -123,18 +118,8 @@ def test_public_admission_uses_selected_arm_and_keeps_independent_traffic(
             ]
         }
 
-    def request(operation, **kwargs):
-        assert operation == "baseline_oracle"
-        assert kwargs["verify_traffic"] is True
-        calls.append("oracle")
-        return {"success": traffic_healthy}
-
     gate = admission.LaneAdmission(
-        environment,
-        SimpleNamespace(request=request),
-        SimpleNamespace(runtime_state=state),
-        tmp_path / "admission",
-        code_path=code_path,
+        environment, SimpleNamespace(runtime_state=state), tmp_path / "admission", code_path=code_path
     )
     complete = {"complete": {"acceptedCommit": "a" * 40, "objects": [{}]}, "pending": None}
     monkeypatch.setattr(admission.LaneAdmission, "_onboarding", lambda self, control: complete)
@@ -173,8 +158,7 @@ def test_public_admission_uses_selected_arm_and_keeps_independent_traffic(
     monkeypatch.setattr(admission, "wait_for_proof", wait)
     proof = gate.prove("app-sdo")
     ready = controller_clear and (runner_healthy or code_path == "go")
-    assert proof["passed"] is (ready and traffic_healthy)
-    assert ("oracle" in calls) is ready
+    assert proof["passed"] is ready
     assert ("prober" in calls) is (code_path == "go")
     assert json.loads((gate.directory / "stabilization-001.jsonl").read_text())["code_path"] == code_path
 
@@ -267,7 +251,7 @@ def test_shell_transport_reads_committed_executable_inventory_not_dirty_files(tm
 
     monkeypatch.setattr(admission, "kubectl", kubectl)
     env = SimpleNamespace(workspace=tmp_path, kubeconfig=tmp_path / "kubeconfig")
-    gate = admission.LaneAdmission(env, object(), object(), tmp_path / "admission", code_path="shell")
+    gate = admission.LaneAdmission(env, object(), tmp_path / "admission", code_path="shell")
     evidence = gate._shell_results("app-sdo")
     assert evidence["accepted_commit"] == committed
     assert evidence["scripts"] == [SCRIPT]

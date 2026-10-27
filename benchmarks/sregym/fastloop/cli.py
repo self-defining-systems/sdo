@@ -584,7 +584,6 @@ def _sdo_agent(
         install_config = native_install_config(runtime_config)
         admission = LaneAdmission(
             environment,
-            worker,
             ops,
             results_dir / "admission",
             code_path=runtime_config.code_path,
