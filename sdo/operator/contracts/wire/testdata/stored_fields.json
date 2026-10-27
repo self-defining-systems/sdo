@@ -298,6 +298,7 @@
   "sdodev.contracts.v1alpha1.IncidentClosure.verified_while_responder_running",
   "sdodev.contracts.v1alpha1.IncidentRequest.application",
   "sdodev.contracts.v1alpha1.IncidentRequest.cancellation_token",
+  "sdodev.contracts.v1alpha1.IncidentRequest.compaction",
   "sdodev.contracts.v1alpha1.IncidentRequest.deployed_commit",
   "sdodev.contracts.v1alpha1.IncidentRequest.detector_history",
   "sdodev.contracts.v1alpha1.IncidentRequest.drift_events",

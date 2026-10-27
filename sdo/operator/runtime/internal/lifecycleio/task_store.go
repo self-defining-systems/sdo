@@ -40,6 +40,17 @@ func (s TaskStore) Load(id string) (*contracts.AgentTask, bool, error) {
 	return task, true, nil
 }
 
+// Discard drops a frozen task that can never run, so the next attempt freezes a new one.
+func (s TaskStore) Discard(id string) error {
+	if s.Root == "" {
+		return fmt.Errorf("reflection task store root is required")
+	}
+	if err := os.Remove(s.taskPath(id)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
 func (s TaskStore) Save(task *contracts.AgentTask) error {
 	payload, err := wire.Canonical(task)
 	if err != nil {

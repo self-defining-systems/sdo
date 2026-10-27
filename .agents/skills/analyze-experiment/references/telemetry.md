@@ -206,11 +206,13 @@ Per-Job native timings are exported at `sessions/<session>/startup/attempts/<job
 
 Incident execution discovery uses immutable control ConfigMaps named `sdo-exec-<task-digest-prefix>`, with a versioned `execution.json` binding incident ID, task ID, canonical request SHA-256 and actual Job name (plus the known warm Job UID). The index is published before worker release, independently of request ConfigMap/PVC transport, and survives request cleanup and Job TTL. Restart liveness and report-grace shutdown share the same index-backed inventory, with historical journal/session ownership recovery; API uncertainty retains incident ownership and its fence.
 
-Native worker request checkpoints use the staged dispatch envelope: at most
-64 MiB of exact UTF-8 ProtoJSON, shared by live recording and checkpoint
-save/load, session/ConfigMap ingestion, and replay. A compiled contract test
-compares the benchmark request budget with
-`worker_registry.MaxStagedRequestBytes`. Result and broker-metadata evidence
+Native worker request checkpoints use the dispatch envelope: at most
+512 KiB of exact UTF-8 ProtoJSON (one ConfigMap; there is no second request
+transport), shared by live recording and checkpoint save/load,
+session/ConfigMap ingestion, and replay. A compiled contract test compares the
+benchmark request budget with `worker_registry.MaxRequestBytes`. The reflection
+request keeps within it by construction: raw tool transcripts travel once (in
+the outcome) and earlier incidents as bounded summaries. Result and broker-metadata evidence
 remain capped at 1 MiB; native worker result transport retains its tighter
 700 KiB cap. These budgets do not truncate memory, relax identity or digest
 validation, or grant broker acceptance. A recorder rejecting a native-supported

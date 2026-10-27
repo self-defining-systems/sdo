@@ -27,7 +27,7 @@ func TestRWS2PVCContinuationRemainsDiscoverable(t *testing.T) {
 			if err := task.Request.UnmarshalTo(request); err != nil {
 				t.Fatal(err)
 			}
-			request.MemorySnapshot = &contracts.OperationalMemorySnapshot{AcceptedCommit: task.Workspace.BaseCommit, GoalMarkdown: strings.Repeat("synthetic memory\n", 40000)}
+			request.MemorySnapshot = &contracts.OperationalMemorySnapshot{AcceptedCommit: task.Workspace.BaseCommit, GoalMarkdown: strings.Repeat("synthetic memory\n", 40)}
 			task.Request, _ = anypb.New(request)
 			if conflict {
 				if err := e.ensureRequest(context.Background(), JobName(task.TaskId)+"-request", `{"different":"request"}`); err != nil {

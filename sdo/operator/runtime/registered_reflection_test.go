@@ -9,11 +9,13 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/durationpb"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/validate"
+	"sdo.dev/operator/worker_registry"
 	"sdo.dev/operator/worker_registry/registrytest"
 )
 
@@ -344,5 +346,65 @@ func TestRegisteredReflectionRequestCarriesProgramRunsOnlyOnceAndNotForPriorOutc
 	outcome := &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: "current", Classification: "success", ProgramRuns: []*contracts.ProgramRun{run}}
 	if _, err := w.Reflect(context.Background(), closure, workspace, outcome, "repair", "outcome", ReflectionFeedback{}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// A reflection request is dispatched through a ConfigMap, so its size is bounded by construction: raw tool
+// transcripts are carried once (in the outcome) and earlier incidents only as bounded summaries.
+func TestRegisteredReflectionRequestFitsTheTransportBudgetByConstruction(t *testing.T) {
+	root := nativeRepository(t)
+	base := nativeGit(t, root, "rev-parse", "HEAD")
+	store := memory.NewJSONStore(t.TempDir())
+	transcript := func(prefix string) []*contracts.ProgramToolCall {
+		calls := make([]*contracts.ProgramToolCall, 40)
+		for i := range calls {
+			calls[i] = &contracts.ProgramToolCall{Command: prefix, ResponseJson: strings.Repeat("r", 4000)}
+		}
+		return calls
+	}
+	for _, id := range []string{"prior-1", "prior-2", "prior-3", "prior-4"} {
+		if _, err := store.Put(context.Background(), &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: id, Classification: "success", ProgramToolCalls: transcript(id)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	w := RegisteredReflectionWorker{TaskType: reflectionTaskType(t), AgentID: "reflector", Outcomes: store, Timeout: time.Minute, SessionMode: "fresh"}
+	var dispatched *contracts.AgentTask
+	w.Executor = reflectionTaskExecutorFunc(func(_ context.Context, task *contracts.AgentTask) (*contracts.AgentResult, error) {
+		dispatched = task
+		response, err := anypb.New(&contracts.ReflectionResult{LearningDecision: "no_change", NoChangeReason: "covered"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return &contracts.AgentResult{SchemaVersion: task.SchemaVersion, TaskId: task.TaskId, ProposalId: task.Workspace.ProposalId, Status: "completed", Response: response}, nil
+	})
+	workspace := IncidentWorkspace{IncidentID: "current", Worktree: root, BaseCommit: base}
+	closure := nativeClosure(workspace)
+	for i := 0; i < 40; i++ {
+		closure.Result.ProgramToolCalls = append(closure.Result.ProgramToolCalls, ToolCall{Command: "current", ResponseJSON: strings.Repeat("r", 4000)})
+	}
+	outcome := &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: "current", Classification: "success", ProgramToolCalls: transcript("current")}
+	if _, err := w.Reflect(context.Background(), closure, workspace, outcome, "repair", "outcome", ReflectionFeedback{}); err != nil {
+		t.Fatal(err)
+	}
+	request := &contracts.ReflectionRequest{}
+	if err := dispatched.Request.UnmarshalTo(request); err != nil {
+		t.Fatal(err)
+	}
+	if size := proto.Size(dispatched); size > worker_registry.MaxRequestBytes {
+		t.Fatalf("reflection task is %d bytes, over the %d byte request budget", size, worker_registry.MaxRequestBytes)
+	}
+	if len(request.GetOutcome().GetProgramToolCalls()) != 40 {
+		t.Fatalf("the current outcome lost its tool transcript: %d calls", len(request.GetOutcome().GetProgramToolCalls()))
+	}
+	if len(request.GetClosure().GetResult().GetProgramToolCalls()) != 0 {
+		t.Fatal("the closure repeats the outcome's tool transcript")
+	}
+	for _, prior := range request.GetPriorOutcomes() {
+		if len(prior.GetProgramToolCalls()) != 0 {
+			t.Fatalf("prior outcome %s carries a raw tool transcript", prior.GetIncidentId())
+		}
+	}
+	if len(request.GetPriorOutcomes()) > maxReflectionHistory {
+		t.Fatalf("history carries %d incidents, want at most %d", len(request.GetPriorOutcomes()), maxReflectionHistory)
 	}
 }

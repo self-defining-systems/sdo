@@ -30,7 +30,7 @@ def inventory() -> dict[str, list[str]]:
         ],
         "sdo.dev/operator/memory/validate": ["TestAssuranceSeedsPassHealthJudgeCheck"],
         "sdo.dev/operator/operatorcli": ["TestAdoptionCompilesAsIsAndLaterValidationStillRejects"],
-        "sdo.dev/operator/worker_registry": ["TestKubernetesExecutorRejectsRequestOverStagedBudgetNamingTheComponent"],
+        "sdo.dev/operator/worker_registry": ["TestKubernetesExecutorRejectsRequestOverBudgetNamingTheComponent"],
     }
 
 
@@ -155,7 +155,7 @@ def test_hosted_expensive_nonbuilder_work_shares_existing_runners() -> None:
         "TestNewCLIBehavior",
     ]
     source[shards.PREFIX + "worker_registry"] = [
-        "TestKubernetesExecutorRejectsRequestOverStagedBudgetNamingTheComponent",
+        "TestKubernetesExecutorRejectsRequestOverBudgetNamingTheComponent",
         "FuzzWorker",
     ]
     groups = shards.partition(source)
@@ -163,7 +163,7 @@ def test_hosted_expensive_nonbuilder_work_shares_existing_runners() -> None:
         "TestAdoptionCompilesAsIsAndLaterValidationStillRejects",
     ]
     assert groups["compiler"][shards.PREFIX + "worker_registry"] == [
-        "TestKubernetesExecutorRejectsRequestOverStagedBudgetNamingTheComponent",
+        "TestKubernetesExecutorRejectsRequestOverBudgetNamingTheComponent",
     ]
     assert groups["remaining"][shards.PREFIX + "operatorcli"] == ["TestNewCLIBehavior"]
     assert groups["remaining"][shards.PREFIX + "worker_registry"] == ["FuzzWorker"]

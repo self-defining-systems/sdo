@@ -10,6 +10,8 @@ import (
 	"log"
 	"os"
 	"regexp"
+	"sort"
+	"strings"
 	"time"
 
 	"google.golang.org/protobuf/proto"
@@ -80,6 +82,13 @@ func (w RegisteredReflectionWorker) Reflect(ctx context.Context, closure Inciden
 		if err != nil {
 			return ReflectionDecision{}, err
 		}
+		if task != nil && transportSize(task) > worker_registry.MaxRequestBytes {
+			// Frozen by a build whose request had no transport limit: it never ran, so freeze it again within the limit.
+			if err := w.TaskStore.Discard(proposalID); err != nil {
+				return ReflectionDecision{}, err
+			}
+			task = nil
+		}
 		if task != nil && (task.GetAgentId() != w.AgentID || task.GetTaskType() != w.TaskType || task.GetWorkspace().GetCheckoutPath() != workspace.Worktree || task.GetWorkspace().GetBaseCommit() != workspace.BaseCommit) {
 			return ReflectionDecision{}, errors.New("frozen reflection task differs from registered worker or workspace")
 		}
@@ -145,13 +154,11 @@ func (w RegisteredReflectionWorker) Reflect(ctx context.Context, closure Inciden
 		history := make([]*contracts.OutcomeRecord, 0, len(prior))
 		for _, record := range prior {
 			if record.IncidentID != workspace.IncidentID {
-				earlier := proto.Clone(record.Record).(*contracts.OutcomeRecord)
-				// Reflection summarizes an earlier incident without its raw program evaluations, which dominate
-				// the record and grow with every installed program.
-				earlier.ProgramRuns = nil
-				history = append(history, earlier)
+				history = append(history, summarizeEarlierOutcome(record.Record))
 			}
 		}
+		sort.SliceStable(history, func(i, j int) bool { return verifiedTime(history[i]).Before(verifiedTime(history[j])) })
+		history = history[max(0, len(history)-maxReflectionHistory):]
 		trimReflectionClosure(closed)
 		request := &contracts.ReflectionRequest{Closure: closed, Outcome: current, PriorOutcomes: history, ProposalCommit: proposalCommit, OutcomeCommit: outcomeCommit, SessionMode: mode, Guidance: guidance, ValidationAttempt: attempt, PreviousDiagnostics: feedback.Diagnostics, CauseWork: feedback.CauseWork, UnassignedWork: feedback.UnassignedWork}
 		if w.Catalog != nil {
@@ -190,13 +197,6 @@ func (w RegisteredReflectionWorker) Reflect(ctx context.Context, closure Inciden
 				return ReflectionDecision{}, errors.New("physical operational memory path leaked into reflection task")
 			}
 		}
-		if err := wire.Validate(request); err != nil {
-			return ReflectionDecision{}, err
-		}
-		payload, err := anypb.New(request)
-		if err != nil {
-			return ReflectionDecision{}, err
-		}
 		dispatchAt := feedback.DispatchAt
 		if dispatchAt.IsZero() {
 			dispatchAt = closure.VerifiedAt
@@ -204,10 +204,30 @@ func (w RegisteredReflectionWorker) Reflect(ctx context.Context, closure Inciden
 		if dispatchAt.IsZero() {
 			return ReflectionDecision{}, errors.New("reflection dispatch event time is required")
 		}
-		task = &contracts.AgentTask{
-			SchemaVersion: worker_registry.SchemaVersion, TaskId: proposalID, AgentId: w.AgentID, TaskType: w.TaskType,
-			Request: payload, Workspace: &contracts.ProposalWorkspace{ProposalId: proposalID, CheckoutPath: workspace.Worktree, BaseCommit: workspace.BaseCommit},
-			Deadline: lifecyclecore.ReflectionDeadline(dispatchAt, w.Timeout),
+		build := func() (*contracts.AgentTask, error) {
+			payload, err := anypb.New(request)
+			if err != nil {
+				return nil, err
+			}
+			return &contracts.AgentTask{
+				SchemaVersion: worker_registry.SchemaVersion, TaskId: proposalID, AgentId: w.AgentID, TaskType: w.TaskType,
+				Request: payload, Workspace: &contracts.ProposalWorkspace{ProposalId: proposalID, CheckoutPath: workspace.Worktree, BaseCommit: workspace.BaseCommit},
+				Deadline: lifecyclecore.ReflectionDeadline(dispatchAt, w.Timeout),
+			}, nil
+		}
+		fits, err := fitReflectionRequest(request, build)
+		if err != nil {
+			return ReflectionDecision{}, err
+		}
+		if !fits {
+			return w.withUsage(ReflectionDecision{LearningDecision: "failed", FailureReason: ReflectionRequestTooLarge, Error: fmt.Sprintf("reflection request is over the %d byte transport limit after %s; reflection skipped, the incident closes on health", worker_registry.MaxRequestBytes, strings.Join(request.Compaction, ", "))}, workspace.IncidentID)
+		}
+		if err := wire.Validate(request); err != nil {
+			return ReflectionDecision{}, err
+		}
+		task, err = build()
+		if err != nil {
+			return ReflectionDecision{}, err
 		}
 		if w.TaskStore != nil {
 			if err := w.TaskStore.Save(task); err != nil {
@@ -314,9 +334,79 @@ func (w RegisteredReflectionWorker) withUsage(decision ReflectionDecision, incid
 func trimReflectionClosure(closure *contracts.IncidentClosure) {
 	if closure.GetResult() != nil {
 		closure.Result.ProgramRuns = nil
+		// The outcome carries the same raw transcripts; the worker restores them for a fresh-session brief.
+		closure.Result.ProgramToolCalls = nil
+		closure.Result.PlanApplications = nil
 	}
 	if closure.GetRequest() != nil {
 		closure.Request.PreparedAgentTask = ""
 		closure.Request.InitialProgramRuns = nil
 	}
+}
+
+// maxReflectionHistory is how many earlier incidents the reflection worker shows. It is the one source of that
+// limit: the worker's history view shows every incident the request carries.
+const maxReflectionHistory = 2
+
+// verifiedTime orders earlier incidents by when they were verified, not by incident ID.
+func verifiedTime(record *contracts.OutcomeRecord) time.Time {
+	return record.GetTimestamps().GetVerifiedAt().AsTime()
+}
+
+// summarizeEarlierOutcome copies an earlier incident without its raw program evaluations, tool transcripts and
+// plan applications, which dominate the record and are re-sent with every reflection request. The full prior
+// record the worker can open by reference therefore omits them too; the stored outcome keeps them.
+func summarizeEarlierOutcome(record *contracts.OutcomeRecord) *contracts.OutcomeRecord {
+	earlier := proto.Clone(record).(*contracts.OutcomeRecord)
+	earlier.ProgramRuns = nil
+	earlier.ProgramToolCalls = nil
+	earlier.PlanApplications = nil
+	return earlier
+}
+
+// ReflectionRequestTooLarge is the typed, non-retryable reason a reflection is skipped when its request does not
+// fit the transport after every degrade step. The incident still closes on health.
+const ReflectionRequestTooLarge = "request_too_large"
+
+// fitReflectionRequest degrades the request in a fixed order until the frozen task fits the transport limit,
+// recording each lossy step on the request: earlier incidents, then memory the incident does not touch, then
+// the outcome's raw program runs and tool calls. It reports false when the request still does not fit.
+func fitReflectionRequest(request *contracts.ReflectionRequest, build func() (*contracts.AgentTask, error)) (bool, error) {
+	size := func() (int, error) {
+		task, err := build()
+		if err != nil {
+			return 0, err
+		}
+		return wireSize(task)()
+	}
+	mentions := func() []byte {
+		stripped := proto.Clone(request).(*contracts.ReflectionRequest)
+		stripped.MemorySnapshot = nil
+		text, _ := wire.Marshal(stripped)
+		return text
+	}
+	steps, fits, err := degradeToFit(size, []transportRung{
+		{"drop_prior_incident_history", func() bool { changed := len(request.PriorOutcomes) > 0; request.PriorOutcomes = nil; return changed }},
+		{"trim_memory_to_touched", func() bool { return trimSnapshotToTouched(request.MemorySnapshot, mentions()) }},
+		{"clip_memory_documents", func() bool { return clipSnapshotDocuments(request.MemorySnapshot) }},
+		{"cap_program_runs_and_tool_calls", func() bool {
+			if request.Outcome == nil {
+				return false
+			}
+			runs, runsChanged := capProgramRuns(request.Outcome.ProgramRuns)
+			calls, callsChanged := capToolCalls(request.Outcome.ProgramToolCalls)
+			request.Outcome.ProgramRuns, request.Outcome.ProgramToolCalls = runs, calls
+			return runsChanged || callsChanged
+		}},
+	})
+	request.Compaction = append(request.Compaction, steps...)
+	return fits, err
+}
+
+func transportSize(task *contracts.AgentTask) int {
+	size, err := wireSize(task)()
+	if err != nil {
+		return 0
+	}
+	return size
 }

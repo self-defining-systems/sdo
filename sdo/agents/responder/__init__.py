@@ -28,6 +28,8 @@ _EXPORTS = {
     "history_view": "reflection_outcomes",
     "live_incident_status": "incident_status",
     "prepare_claude_home": "credentials",
+    "record_worker_failure": "termination",
+    "records_worker_failure": "termination",
     "prepare_codex_home": "credentials",
     "reflection_output_schema": "reflection",
     "run_incident_status_cli": "incident_status",
@@ -116,6 +118,12 @@ if TYPE_CHECKING:
         unwrap_branch as unwrap_branch,
     )
     from sdo.agents.responder.standby import await_standby_claim as await_standby_claim
+    from sdo.agents.responder.termination import (
+        record_worker_failure as record_worker_failure,
+    )
+    from sdo.agents.responder.termination import (
+        records_worker_failure as records_worker_failure,
+    )
     from sdo.agents.responder.worker import (
         run_worker_task as run_worker_task,
     )
