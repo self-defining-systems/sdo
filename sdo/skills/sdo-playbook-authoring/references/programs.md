@@ -39,7 +39,7 @@ For every cause with a recorded repair on a closure verified healthy, save diagn
 handling, and a detector that references its playbook. One detector may reference several playbooks. A missing piece is
 recorded as a coverage gap.
 Replay observes incident detectors, binding selection, diagnosis and mitigation on recorded states. Every outcome, including unavailable evidence or a persistent Match, is information only; it never blocks saving.
-Compilation and that repeat path are save-time learning checks. Rename, healthy-peer and controller
+Compilation is a save-time check; the repeat path supplies advisory observations. Rename, healthy-peer and controller
 capture-provenance checks are offline analysis, not publication prerequisites. Preserve accepted fixture bytes.
 
 ## Source restoration
@@ -49,11 +49,15 @@ Prefer a narrow, schema-checked SetField when diagnosis identifies the damaged f
 ConfigMap JSON/YAML entries preserve unrelated values. Use `program.FromSource(ref, path)` for an accepted-source field value,
 and ReconcileFromSource only when restoring the whole source-owned object is justified. Structured effects use the ordinary namespace-scoped executor.
 ReconcileFromSource and Rollback express desired state from accepted source or explicit history. Supply
-accepted manifests in accepted.json for source-based replay. Replay attempts the proposed action and
-clear diagnosis; an unavailable external effect requires a typed SDK gap instead of a skipped success.
+accepted manifests in accepted.json for source-based replay. Replay observes the proposed action and subsequent diagnosis; unavailable effects remain unverified information.
+Record typed SDK gaps for capabilities the repair needs but cannot express.
 CreateFromSource restores only a named missing object present in accepted source. DeleteObject removes a
 named object in the incident namespace; disclose deletion as irreversible, retain its receipt, and never
 auto-recreate it. Live verification requires direct current UID/absence evidence and independent health checks.
+
+RunScript bytes are checked against this program's original successful receipts in accepted memory at plan time.
+Unlinked bytes are refused as `script_unprovenanced`; the automatic stage hands over without retrying.
+The save-time static check gives early feedback but is not execution authority.
 
 ## Values and runtime actions
 

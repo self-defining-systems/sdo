@@ -329,8 +329,8 @@ def test_recorded_program_replay_accepts_session_fixture_without_captures(tmp_pa
     def check_prompt(prompt: str) -> None:
         # This scripted agent checks its task before authoring final Go files.
         # It proves wiring and validation, not how a live model follows instructions.
-        assert "On a closure verified healthy, save the repair steps used" in prompt
-        assert "Learn verified parts even when the whole incident remains unhealthy" in prompt
+        assert "Save verified steps with partial coverage, README orchestration and detectors" in prompt
+        assert "Replay is informational: NoMatch, persistent Match and unavailable replay never block saving" in prompt
         assert "Use recorded actions as repair evidence" in prompt
         current = json.loads(prompt.split("Current outcome:\n", 1)[1].split("\n\nOutcome history", 1)[0])
         assert current["classification"] == classification

@@ -61,6 +61,8 @@ func TestRunScriptActVerifyRequiresDiagnosisAndTargetedClearance(t *testing.T) {
 			snapshot, _ := provider.Snapshot(context.Background())
 			findings, _ := (fastloopDetector{}).Detect(context.Background(), snapshot)
 			loop := NewResponderLoop(IncidentRequest{IncidentID: "script-verify", Namespace: "app", RepairPolicy: "recorded-actions", Findings: findings[:1]}, registry, provider, []sdk.Detector{fastloopDetector{}}, PlanExecutor{Client: verifyingScriptClient{TypedPlanClient{Client: client, ScriptImage: "script-tools:fixture"}}, Rollouts: KubernetesPlanRollouts{Client: client}, Verifier: PlanHealthVerifier{Detectors: []sdk.Detector{fastloopDetector{}}, Provider: provider}}, 3)
+			root, commit := acceptedScriptMemory(t, learned.Spec().ID, `kubectl patch service "$SERVICE" --type merge -p "$PATCH"`)
+			loop.Request.RepositoryWorktree, loop.Request.SourceCommit = root, commit
 			loop.MenuConfig = productionResponderMenu()
 			loop.ReadView = func(snapshot sdk.DetectionContext) program.ReadView {
 				return &sdktest.ReplayReadView{Snapshot: snapshot.(sdktest.Snapshot)}

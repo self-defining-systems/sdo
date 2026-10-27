@@ -3,7 +3,7 @@ name: sdo-incident-response
 description: Fix incidents
 ---
 
-Accepted source and developer changes express intent. Operational memory is fallible advice. Recovery requires evidence from the intended application behavior. Discover capabilities and argument shapes: [CLI](references/commands.md). Use only help-confirmed options; on a usage error, read help, don't guess. Use jq. [Auth](references/database-credentials.md).
+Accepted source and developer changes express intent. Operational memory is fallible advice. Recovery requires evidence from the intended application behavior. Discover commands and arguments: [CLI](references/commands.md). Use only help-confirmed options; on a usage error, read help, don't guess. Use jq. [Auth](references/database-credentials.md).
 
 1. `playbook_coverage`: matches/bindings, mitigation, unexplained findings. Counts inform; never permission gates. Diagnosis-only matches supply evidence. Apply `can_mitigate` matches by playbook ID; check rollout, current status, late findings, preconditions and accepted-source values. Check conflicts; skip prior_stages. Partial playbooks: automatic stages or `sdo mitigate` handle mechanical steps; follow the README for judgement.
 2. Report one cause per independently fixable fault, plus late faults; each its own action, applied together; combine only faults that can't be fixed separately; continue until it verifies; new findings may regress.

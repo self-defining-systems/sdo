@@ -142,7 +142,7 @@ func Check(ctx context.Context, p program.Diagnoser, m program.Mitigator, detect
 	}
 	// The plan comes from the builder the incident stage uses, so a plan the
 	// stage would refuse (empty, invalid, unbindable) fails validation here.
-	plan, err := operator.BuildMitigationPlan(ctx, m, newReadView(ctx, c.Corpus.Open, c.Corpus.PhaseRecordings("open"), source), bindings, operator.DefaultDiagnosisDeadline)
+	plan, err := operator.BuildMitigationPlan(ctx, m, newReadView(ctx, c.Corpus.Open, c.Corpus.PhaseRecordings("open"), source), bindings, operator.DefaultDiagnosisDeadline, operator.ReplayScriptProvenance(c.Corpus))
 	if err != nil {
 		return fail(mitigationBuildError(err))
 	}
