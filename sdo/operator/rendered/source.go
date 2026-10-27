@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"path"
 	"regexp"
 	"strings"
 
@@ -57,18 +58,68 @@ func (s Source) rawManifests(ctx context.Context, revision, namespace string, qu
 	if s.Repository == "" || !gitRevision.MatchString(revision) || namespace == "" {
 		return nil, fmt.Errorf("accepted repository, full commit revision, and namespace are required")
 	}
-	files, err := exec.CommandContext(ctx, "git", "-C", s.Repository, "ls-tree", "-r", "--name-only", revision).Output()
+	files, err := exec.CommandContext(ctx, "git", "-C", s.Repository, "ls-tree", "-r", "-z", revision).Output()
 	if err != nil {
 		return nil, fmt.Errorf("list manifests at %s: %w", revision, err)
 	}
-	paths, err := SelectManifestPaths(strings.Fields(string(files)), s.ManifestPaths)
+	available := []string{}
+	regular := map[string]bool{}
+	for _, entry := range strings.Split(string(files), "\x00") {
+		header, name, ok := strings.Cut(entry, "\t")
+		if !ok {
+			continue
+		}
+		available = append(available, name)
+		regular[name] = strings.HasPrefix(header, "100644 ") || strings.HasPrefix(header, "100755 ")
+	}
+	paths, err := SelectManifestPaths(available, s.ManifestPaths)
 	if err != nil {
 		return nil, err
 	}
 	objects := make([]*unstructured.Unstructured, 0)
 	seen := map[sdk.ObjectRef]bool{}
-	for _, path := range paths {
-		data, err := exec.CommandContext(ctx, "git", "-C", s.Repository, "show", revision+":"+path).Output()
+	totalBytes := 0
+	read := func(ctx context.Context, name string) ([]byte, error) {
+		if !regular[name] {
+			return nil, fmt.Errorf("accepted input %s is not a tracked regular file", name)
+		}
+		data, err := exec.CommandContext(ctx, "git", "-C", s.Repository, "show", revision+":"+name).Output()
+		if err != nil || len(data) > 2<<20 {
+			return nil, fmt.Errorf("accepted input %s unavailable or exceeds 2 MiB", name)
+		}
+		totalBytes += len(data)
+		if totalBytes > 16<<20 {
+			return nil, fmt.Errorf("accepted render inputs exceed 16 MiB")
+		}
+		return data, nil
+	}
+	// A selected directory containing a kustomization is one deployment unit,
+	// rather than every YAML file underneath it (which includes generator inputs).
+	roots := map[string]string{}
+	for _, file := range paths {
+		if path.Base(file) == "kustomization.yaml" || path.Base(file) == "kustomization.yml" || path.Base(file) == "Kustomization" {
+			if roots[path.Dir(file)] != "" {
+				return nil, fmt.Errorf("multiple accepted kustomizations in %s", path.Dir(file))
+			}
+			roots[path.Dir(file)] = file
+		}
+	}
+	for _, file := range paths {
+		covered := false
+		for dir, root := range roots {
+			if file != root && (dir == "." || strings.HasPrefix(file, dir+"/")) {
+				covered = true
+				break
+			}
+		}
+		if covered {
+			continue
+		}
+		path := file
+		data, err := read(ctx, path)
+		if isKustomization(path) {
+			data, err = renderKustomization(ctx, path, read)
+		}
 		if err != nil {
 			return nil, fmt.Errorf("read accepted manifest %s: %w", path, err)
 		}
@@ -81,7 +132,7 @@ func (s Source) rawManifests(ctx context.Context, revision, namespace string, qu
 			if err := decoder.Decode(&document); err == io.EOF {
 				break
 			} else if err != nil {
-				return nil, fmt.Errorf("decode accepted manifest %s: %w", path, err)
+				return nil, fmt.Errorf("decode accepted manifest %s failed", path)
 			}
 			// Unstructured values must use JSON numeric types before DeepCopy or
 			// Kubernetes conversion; YAML's native int values are not supported.
@@ -116,6 +167,9 @@ func (s Source) rawManifests(ctx context.Context, revision, namespace string, qu
 				return nil, fmt.Errorf("%w: duplicate accepted manifest for %s/%s", ErrManifestSelectionUnavailable, ref.Kind, ref.Name)
 			}
 			seen[ref] = true
+			if strings.EqualFold(object.GetKind(), "Secret") {
+				object.Object = secretReference(object.Object)
+			}
 			object.SetNamespace(objectNamespace)
 			objects = append(objects, object)
 		}
@@ -194,4 +248,9 @@ func (s Source) AcceptedScopedManifest(ctx context.Context, revision, applicatio
 // observations still use the separately restricted AcceptedScopedManifest.
 func (s Source) AcceptedApplicationManifest(ctx context.Context, revision, namespace string, ref sdk.ObjectRef) (*unstructured.Unstructured, error) {
 	return s.acceptedObject(ctx, revision, namespace, ref)
+}
+
+func isKustomization(name string) bool {
+	base := path.Base(name)
+	return base == "kustomization.yaml" || base == "kustomization.yml" || base == "Kustomization"
 }

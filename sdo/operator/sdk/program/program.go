@@ -296,6 +296,9 @@ type Plan struct {
 }
 
 func (p Plan) Validate() error {
+	if err := validateAtomicWrites(p); err != nil {
+		return err
+	}
 	for _, action := range p.Actions {
 		if err := validateScriptAction(action); err != nil {
 			return err

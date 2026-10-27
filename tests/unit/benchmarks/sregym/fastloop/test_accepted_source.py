@@ -150,3 +150,40 @@ def test_revision_is_the_checked_out_accepted_commit(tmp_path: Path) -> None:
         ["git", "-C", str(source.workspace), "rev-parse", "HEAD"], check=True, capture_output=True, text=True
     ).stdout.strip()
     assert source.revision == head
+
+
+@pytest.mark.go_integration
+def test_file_generated_configmap_restore_uses_production_source_renderer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operator_binary: Path
+) -> None:
+    workspace = tmp_path / "workspace"
+    deployment = workspace / "kubernetes"
+    deployment.mkdir(parents=True)
+    (deployment / "kustomization.yaml").write_text(
+        "configMapGenerator:\n- name: startup\n  files: [init.sh]\n"
+        "secretGenerator:\n- name: credential\n  files: [private/password]\n"
+        "generatorOptions: {disableNameSuffixHash: true}\n"
+    )
+    (deployment / "init.sh").write_text("echo accepted\n")
+    source = commit_accepted_source(workspace)
+    # The missing Secret input is intentional: it must never be read to render
+    # public generated configuration, even when accepted source declares it.
+    monkeypatch.setenv("SDO_OPERATOR_BIN", str(operator_binary))
+    (deployment / "init.sh").write_text("unaccepted edits\n")
+    assert source.manifests == (
+        {
+            "apiVersion": "v1",
+            "kind": "ConfigMap",
+            "metadata": {"name": "startup", "namespace": "app"},
+            "data": {"init.sh": "echo accepted\n"},
+        },
+    )
+    captured = {
+        "apiVersion": "v1",
+        "kind": "ConfigMap",
+        "metadata": {"name": "startup", "namespace": "app"},
+        "data": {"init.sh": "stale"},
+    }
+    restored = accepted_restore_baselines(source, (ApplicationBaseline("app", [captured]),))
+    assert restored[0].objects[0]["data"]["init.sh"] == "echo accepted\n"
+    assert "credential" not in json.dumps(restored, default=str)

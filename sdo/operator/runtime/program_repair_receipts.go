@@ -75,6 +75,14 @@ func ProgramRepairReceipts(applications []RecordedPlanApplication, existing []Re
 				seen[ref] = true
 			}
 		}
+		irreversible := false
+		for _, effect := range application.Result.ObjectEffects {
+			irreversible = irreversible || effect.Irreversible
+			if effect.Confirmed && effect.State == "applied" && !seen[effect.Ref] {
+				refs = append(refs, effect.Ref)
+				seen[effect.Ref] = true
+			}
+		}
 		if len(refs) == 0 {
 			continue
 		}
@@ -89,7 +97,7 @@ func ProgramRepairReceipts(applications []RecordedPlanApplication, existing []Re
 			ActionID: id, Kind: "program-plan", Target: refs[0].Kind + "/" + refs[0].Name, Resources: refs,
 			Summary: summary, Details: details,
 			StartedAt: application.StartedAt, CompletedAt: application.CompletedAt,
-			Success: !application.RolledBack && application.RollbackError == "", Reversible: !hasAppliedScript(actions) && len(application.Result.PreImages) >= len(refs),
+			Success: !application.RolledBack && application.RollbackError == "", Reversible: !irreversible && !hasAppliedScript(actions) && len(application.Result.PreImages) >= len(refs),
 			Owners: preImageOwners(application.Result.PreImages, refs),
 		})
 	}

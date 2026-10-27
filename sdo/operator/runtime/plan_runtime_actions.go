@@ -292,9 +292,12 @@ func (e PlanExecutor) applyRuntimePlan(ctx context.Context, incident IncidentReq
 			result.ActionReports[i].ExitCode = &exitCode
 			result.Patches = append(result.Patches, PlanPatch{Ref: ref, Operation: "exec", Irreversible: true})
 		default:
-			applied, applyErr := e.Apply(ctx, incident, program.Plan{Actions: []program.Action{original}}, false)
+			nested := e
+			nested.deferDependencyRecovery = true
+			applied, applyErr := nested.Apply(ctx, incident, program.Plan{Actions: []program.Action{original}}, false)
 			result.Patches = append(result.Patches, applied.Patches...)
 			result.PreImages = append(result.PreImages, applied.PreImages...)
+			result.ObjectEffects = append(result.ObjectEffects, applied.ObjectEffects...)
 			if len(applied.ActionReports) > 0 {
 				report := applied.ActionReports[0]
 				report.ActionIndex = i
@@ -318,6 +321,10 @@ func (e PlanExecutor) applyRuntimePlan(ctx context.Context, incident IncidentReq
 		result.ActionReports[i].Status = "applied"
 	}
 	complete = true
+	if pending, err := e.waitAfterSourceWrites(ctx, incident, &result, nil); err != nil {
+		result.RolloutPending = pending
+		return result, err
+	}
 	passed, verifyErr := e.Verifier.Verify(ctx)
 	result.VerificationCompleted = true
 	result.VerificationPassed = passed && verifyErr == nil

@@ -194,3 +194,7 @@ executed RunScript bytes. It passes into protected `RepairReceipt` recordings;
 no script authority, even for successful timed repairs. Worker-supplied digests
 are discarded. Detector tests and healthy-baseline checks remain save gates;
 playbook replay outcomes remain informational.
+
+Accepted-source/config restoration may also recycle blocked dependent Pods once within the same rollout budget. These are ordinary irreversible `PlanApplication.object_effects` delete receipts bound to the old Pod UID; the aggregate repair receipt includes confirmed deleted Pods and is not reversible. A stale service consumer is recycled only after a selector-related backend is observed Ready. API deletion or terminating evidence is not proof of application recovery. Generated ConfigMaps come from the accepted commit's local Kustomize inputs; Secret generators are excluded before input loading and Secret manifests remain identity references.
+
+Source inventory drift events with `source="missing from live inventory"` describe accepted declarations absent from an informer-ready live set, including generated ConfigMaps. They are restoration work, distinct from `absent from accepted source` removal candidates. Restoration clears the absence finding; Secret contents never enter the accepted inventory.
