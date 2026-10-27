@@ -102,7 +102,16 @@ def test_an_agent_that_returns_right_after_a_fix_still_counts_the_fault_resolved
 
 def test_invalid_oracle_count_is_reported_separately_from_fixed_faults(tmp_path: Path) -> None:
     (tmp_path / "composite_000_synthetic.json").write_text(
-        json.dumps({"agent": "sdo", "problem_id": "synthetic", "faults_total": 2, "faults_resolved": 1})
+        json.dumps(
+            {
+                "agent": "sdo",
+                "problem_id": "synthetic",
+                "faults_total": 2,
+                "faults_resolved": 1,
+                "origin": "injection_end",
+                "resolved_s": {"synthetic": 1.0},
+            }
+        )
     )
     (tmp_path / "incidents.jsonl").write_text(
         json.dumps(
