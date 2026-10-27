@@ -25,7 +25,7 @@ Mutation files contain these generated top-level arrays:
 ## General help
 
 ```text
-prior_stages: playbook, result, skip_reason of an automatic stage; one that ran while you worked shows once, in your next reply. Don't repeat verified repairs. Full facts keep apply receipts and post-apply diagnoses.
+prior_stages: automatic repairs. prior_response_progress: bounded failed-episode progress, with omissions. Keep repairs; admission_blocked names a current rollout prerequisite. Full history stays in outcomes.
 
 Examples (replace names with incident resources):
   sdo source Deployment/app/api
@@ -113,7 +113,7 @@ sdo plan [-h] [--finding FINGERPRINT] [--bind NAME=Kind/namespace/name] program_
 
 SetField updates a schema-checked field by index or unique name, optionally from accepted source; ConfigMap JSON/YAML entries preserve unrelated keys.
 CreateFromSource restores a named missing object from accepted source.
-ReconcileFromSource restores declared configuration, including source-named cluster objects, and removes fields added since acceptance; other undeclared fields stay.
+ReconcileFromSource converges source-owned configuration, removes additions since acceptance, and reports residual source differences and remaining old-revision ReplicaSets/Pods. The Deployment controller and responder handle the rollout.
 DeleteObject irreversibly removes an allowed named source-absent object and never auto-recreates it.
 Program commands use the current checkout, including shared libraries and new playbook IDs. Edits compile on demand; fix compile errors in place and retry. Revision receipts use working-tree:<source digest> for unpublished code. Reusable API reads use program.Kubernetes(view) with upstream client-go options; reads are recorded for replay.
 

@@ -46,6 +46,10 @@ func (e PlanExecutor) waitForRollouts(ctx context.Context, incident IncidentRequ
 	if err == nil {
 		return nil, nil
 	}
+	var admission *AdmissionBlockedError
+	if errors.As(err, &admission) {
+		return admission.Pending, admission
+	}
 	if !errors.Is(err, context.DeadlineExceeded) {
 		return nil, err
 	}
@@ -82,6 +86,12 @@ func compactRolloutPending(value *contracts.RolloutPending) *contracts.RolloutPe
 	}
 	result := proto.Clone(value).(*contracts.RolloutPending)
 	result.Reason = boundedRolloutText(result.Reason, 96)
+	if len(result.AdmissionConfigurations) > 1 {
+		result.AdmissionConfigurations = result.AdmissionConfigurations[:1]
+	}
+	if len(result.AdmissionWebhooks) > 1 {
+		result.AdmissionWebhooks = result.AdmissionWebhooks[:1]
+	}
 	if len(result.Blockers) > 1 {
 		result.Blockers = result.Blockers[:1]
 	}
