@@ -203,23 +203,22 @@ def _missing_scripted_worker(ref, modules, **kwargs):
     raise ValueError(f"eval: image {ref} entrypoint smoke failed: {modules[0]}: ModuleNotFoundError")
 
 
-def _seed(workspace, *, lock=True):
-    """Commit an adopted-seed fixture; ``lock=False`` is a fresh, un-onboarded seed."""
-    import json
-    import subprocess
-
-    sdo = workspace / ".sdo"
-    (sdo / "rendered").mkdir(parents=True)
-    (sdo / "goal.md").write_text("---\nschema_version: 1\nowner: human\n---\n# Health objective\n\nhealthy\n")
+def _seed_health_detectors(sdo):
     for name in ("health-objective", "service-endpoints", "service-reachability", "workload-health"):
         path = sdo / "diagnostics/detectors/health" / name / "manifest.yaml"
         path.parent.mkdir(parents=True)
         path.write_text(f"id: {name}\nclass: health\nowner: health_judge\n")
-    if lock:
-        ref = {"kind": "Deployment", "namespace": "app", "name": "web"}
-        (sdo / "rendered/lock.json").write_text(
-            json.dumps({"manifest_paths": ["kubernetes"], "objects": [{"ref": ref}]})
-        )
+
+
+def _seed(workspace, *, onboarded=True):
+    """Commit an adopted-seed fixture; ``onboarded=False`` is a fresh seed with no judge-owned health bundle."""
+    import subprocess
+
+    sdo = workspace / ".sdo"
+    sdo.mkdir(parents=True)
+    (sdo / "goal.md").write_text("---\nschema_version: 1\nowner: human\n---\n# Health objective\n\nhealthy\n")
+    if onboarded:
+        _seed_health_detectors(sdo)
     git = ["git", "-C", str(workspace), "-c", "user.name=t", "-c", "user.email=t@t"]
     subprocess.run([*git, "init", "-q"], check=True)
     subprocess.run([*git, "add", "-A"], check=True)
@@ -227,9 +226,9 @@ def _seed(workspace, *, lock=True):
     return subprocess.run([*git, "rev-parse", "HEAD"], check=True, text=True, capture_output=True).stdout.strip()
 
 
-def test_scripted_preflight_rejects_seed_without_rendered_lock(tmp_path):
-    commit = _seed(tmp_path, lock=False)
-    with pytest.raises(ValueError, match="rendered lock") as error:
+def test_scripted_preflight_rejects_seed_without_health_bundle(tmp_path):
+    commit = _seed(tmp_path, onboarded=False)
+    with pytest.raises(ValueError, match="full bundle") as error:
         dry_run.assert_seed_supports_scripted_judge(tmp_path, commit)
     message = str(error.value)
     assert commit[:12] in message
@@ -238,9 +237,9 @@ def test_scripted_preflight_rejects_seed_without_rendered_lock(tmp_path):
 
 
 def test_scripted_preflight_reads_the_seed_commit_not_the_working_tree(tmp_path):
-    commit = _seed(tmp_path, lock=False)
-    (tmp_path / ".sdo/rendered/lock.json").write_text('{"manifest_paths": ["k"], "objects": [{"ref": {}}]}')
-    with pytest.raises(ValueError, match="rendered lock"):
+    commit = _seed(tmp_path, onboarded=False)
+    _seed_health_detectors(tmp_path / ".sdo")
+    with pytest.raises(ValueError, match="full bundle"):
         dry_run.assert_seed_supports_scripted_judge(tmp_path, commit)
 
 
@@ -261,7 +260,7 @@ def test_dry_run_fails_on_unonboarded_seed_before_any_lane_mutation(monkeypatch,
 
     workspace = tmp_path / "workspace"
     workspace.mkdir()
-    commit = _seed(workspace, lock=False)
+    commit = _seed(workspace, onboarded=False)
     lane = SimpleNamespace(
         run_dir=tmp_path,
         cluster="lane",

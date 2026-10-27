@@ -2,7 +2,7 @@
 
 ## Broker incident ledger
 
-Source repairs change source identity (all non-`.sdo` inputs participate). Reconciliation publishes an informational rendered lock; memory-only reflection preserves it. Diff, reconcile and closure render accepted source directly and never wait on the lock.
+Source repairs change source identity (all non-`.sdo` inputs participate). Diff, reconcile and closure render accepted source directly; no rendered lock or image evidence exists.
 
 For active Go runs, inspect the configured runtime `LedgerRoot` and the Go broker workspace root. The broker stages the deployer receipt before publishing source, then reconciles it to the attributed accepted commit after a crash. The receipt binds the candidate Git tree, strategy, image references, resource IDs, and observed ready revision; it is information and never gates a diff, reconcile or closure.
 
