@@ -286,6 +286,17 @@ func RecordPrimitiveCalls(view program.ReadView, calls []PrimitiveCall) ([]Primi
 		}
 
 		switch call.Method {
+		case "WebhookCAMatchesSecret":
+			var target program.WebhookCA
+			if len(args) != 1 {
+				return nil, fmt.Errorf("invalid webhook CA arguments")
+			}
+			if err := json.Unmarshal(args[0], &target); err != nil {
+				return nil, err
+			}
+			_, _ = recorder.WebhookCAMatchesSecret(target)
+			continue
+
 		case "ExternalEffect", "JobCompletion", "KubernetesEffect", "RunScriptReceipt", "RepairReceipt":
 			// Effects are historical write evidence, never repeat mutations.
 			continue
@@ -483,12 +494,18 @@ func (v *RecordingReadView) ScopedEndpoints(namespace string) ([]corev1.Endpoint
 
 func (v *RecordingReadView) MutatingWebhookConfigurations() ([]admissionv1.MutatingWebhookConfiguration, error) {
 	result, err := sdk.ScopedSource(v.ReadView).MutatingWebhookConfigurations()
+	for i := range result {
+		result[i] = sdk.ProjectMutatingWebhook(result[i])
+	}
 	v.record("MutatingWebhookConfigurations", []any{}, result, err)
 	return result, err
 }
 
 func (v *RecordingReadView) ValidatingWebhookConfigurations() ([]admissionv1.ValidatingWebhookConfiguration, error) {
 	result, err := sdk.ScopedSource(v.ReadView).ValidatingWebhookConfigurations()
+	for i := range result {
+		result[i] = sdk.ProjectValidatingWebhook(result[i])
+	}
 	v.record("ValidatingWebhookConfigurations", []any{}, result, err)
 	return result, err
 }
@@ -535,12 +552,20 @@ func (v *RecordingReadView) ServiceReachability() (servicehealth.ReachabilityWin
 
 func (v *RecordingReadView) MutatingWebhookConfiguration(name string) (*admissionv1.MutatingWebhookConfiguration, error) {
 	result, err := sdk.ScopedSource(v.ReadView).MutatingWebhookConfiguration(name)
+	if result != nil {
+		projected := sdk.ProjectMutatingWebhook(*result)
+		result = &projected
+	}
 	v.record("MutatingWebhookConfiguration", []any{name}, result, err)
 	return result, err
 }
 
 func (v *RecordingReadView) ValidatingWebhookConfiguration(name string) (*admissionv1.ValidatingWebhookConfiguration, error) {
 	result, err := sdk.ScopedSource(v.ReadView).ValidatingWebhookConfiguration(name)
+	if result != nil {
+		projected := sdk.ProjectValidatingWebhook(*result)
+		result = &projected
+	}
 	v.record("ValidatingWebhookConfiguration", []any{name}, result, err)
 	return result, err
 }

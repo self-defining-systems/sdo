@@ -210,6 +210,8 @@ func (v *RecordingReadView) ValidatingWebhookConfiguration(name string) (*admiss
 
 func (v *RecordingReadView) ValidatingWebhookConfigurations() ([]admissionv1.ValidatingWebhookConfiguration, error)
 
+func (v *RecordingReadView) WebhookCAMatchesSecret(t program.WebhookCA) (bool, error)
+
 type ReplayReadView struct {
 	Snapshot
 	Calls []PrimitiveCall
@@ -263,6 +265,8 @@ func (v *ReplayReadView) ServiceReachability() (servicehealth.ReachabilityWindow
 func (v *ReplayReadView) TrafficWindow(name string) (traffic.Window, bool)
 
 func (v *ReplayReadView) ValidatingWebhookConfigurations() ([]admissionv1.ValidatingWebhookConfiguration, error)
+
+func (v *ReplayReadView) WebhookCAMatchesSecret(t program.WebhookCA) (bool, error)
 
 type Snapshot struct {
 	ObjectSnapshotVersion int                         `json:"object_snapshot_version,omitempty"`
@@ -380,5 +384,7 @@ func (s Snapshot) StatefulSets() []appsv1.StatefulSet
 
 func (s Snapshot) TrafficWindow(workload string) (traffic.Window, bool)
     TrafficWindow implements traffic.Source.
+
+func (s Snapshot) WebhookCAMatchesSecret(t program.WebhookCA) (bool, error)
 
 ```

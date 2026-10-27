@@ -306,6 +306,13 @@ func ProjectPatch(object map[string]any, a PatchObject) (map[string]any, error) 
 
 func validateGeneralAction(action Action) error {
 	switch a := action.(type) {
+	case SyncWebhookCA:
+		return a.Validate()
+	case *SyncWebhookCA:
+		if a != nil {
+			return a.Validate()
+		}
+		return fmt.Errorf("nil SyncWebhookCA")
 	case PatchObject:
 		return a.Validate()
 	case ApplyObject:
@@ -346,6 +353,18 @@ type KubernetesEffect struct {
 	BeforeKnown bool              `json:"before_known"`
 	AfterKnown  bool              `json:"after_known"`
 	Response    json.RawMessage   `json:"response"`
+}
+
+// MarshalJSON publishes evidence through the shared CA observation boundary.
+// Execution may retain raw images privately; recordings and durable reports
+// must never export them.
+func (e KubernetesEffect) MarshalJSON() ([]byte, error) {
+	type fields KubernetesEffect
+	raw, err := json.Marshal(fields(e))
+	if err != nil {
+		return nil, err
+	}
+	return sdk.ProjectWebhookCAJSON(raw)
 }
 
 // CredentialResponse identifies API operations whose response is a credential,
