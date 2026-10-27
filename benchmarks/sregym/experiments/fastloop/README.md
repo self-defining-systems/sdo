@@ -133,6 +133,13 @@ in the results directory records `tier1_seconds`, `tier2_ran`, `tier2_seconds`, 
   a dead run), `previous_row_unrecovered` (the file names rows that were injected without a verified full
   recovery), `restore_invariant` or `pods_unhealthy`.
 
+A namespace either tier deletes can stay Terminating on an injected or harness object whose finalizer
+nobody will run (the FinalizerDeadlock fault's cleanup token). When the namespace reports remaining
+finalizers or content, the wipe clears the finalizers of the objects still in it, inside the same
+deadline, and records each as `namespace/kind/name` in `force_finalized` of `wipe-receipt.json`. It never
+touches a namespace it did not ask to delete; if the namespace still does not finish, the row fails closed
+naming the objects.
+
 The lane-resource entry check and the restore invariant stay: they are the measurement-validity checks.
 
 `up --redeploy` is repeatable for every app. The worker bridge routes SREGym's `Helm.install`, the

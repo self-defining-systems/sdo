@@ -78,6 +78,6 @@ def row_start_wipe_guards(monkeypatch: pytest.MonkeyPatch):
     """
     from benchmarks.sregym.fastloop import cli, wipe
 
-    monkeypatch.setattr(cli, "_wipe_sdo_and_harness", lambda *_args: wipe.Tier1Receipt(0.0, (), False))
+    monkeypatch.setattr(cli, "_wipe_sdo_and_harness", lambda *_args: wipe.Tier1Receipt(0.0, (), False, ()))
     monkeypatch.setattr(cli, "_application_needs_redeploy", lambda *_args: None)
     monkeypatch.setattr(wipe.KubectlLaneCluster, "list_objects", lambda self: frozenset())

@@ -18,11 +18,15 @@ from benchmarks.sregym.fastloop.wipe import (
     Tier2Trigger,
     WipeError,
     await_healthy_pods,
+    KubectlLaneCluster,
     credentials_hook,
+    finalizer_holders,
     inventory_path,
     load_inventory,
+    namespace_is_stuck,
     pod_problems,
     reseed_workspace,
+    remove_until_gone,
     run_tier1,
     run_tier2,
     save_inventory,
@@ -42,22 +46,45 @@ LANE = frozenset(
 
 
 class FakeLane:
-    """A lane whose namespaces hold objects; deleting a namespace removes its content after a short delay."""
+    """A lane whose namespaces hold objects; deleting a namespace removes its content after a short delay.
 
-    def __init__(self, contents: dict[str, set[str]], cluster_objects: set[str], lag: int = 1) -> None:
+    Like the API server, a terminating namespace stays (with ``SomeFinalizersRemain``) while any object in it
+    still carries a finalizer. ``finalizers`` lists those objects as ``(namespace, "kind/name")``.
+    """
+
+    def __init__(
+        self,
+        contents: dict[str, set[str]],
+        cluster_objects: set[str],
+        lag: int = 1,
+        finalizers: set[tuple[str, str]] | None = None,
+    ) -> None:
         self.contents = contents
         self.cluster_objects = cluster_objects
         self.terminating: dict[str, int] = {}
         self.lag = lag
         self.deleted: list[str] = []
+        self.finalizers = set(finalizers or ())
+        self.released: list[tuple[str, str]] = []
 
     def list_objects(self) -> frozenset[str]:
         for name in list(self.terminating):
             self.terminating[name] -= 1
-            if self.terminating[name] <= 0:
+            if self.terminating[name] <= 0 and not self._held(name):
                 del self.terminating[name]
                 self.contents.pop(name, None)
         return frozenset({f"namespace/{name}" for name in self.contents} | self.cluster_objects)
+
+    def _held(self, namespace: str) -> list[str]:
+        return sorted(item for owner, item in self.finalizers if owner == namespace)
+
+    def blocking_objects(self, namespace: str) -> tuple[str, ...]:
+        stuck = namespace in self.terminating and self.terminating[namespace] <= 0
+        return tuple(self._held(namespace)) if stuck else ()
+
+    def remove_finalizers(self, namespace: str, item: str) -> None:
+        self.released.append((namespace, item))
+        self.finalizers.discard((namespace, item))
 
     def delete(self, identity: str) -> None:
         self.deleted.append(identity)
@@ -465,7 +492,7 @@ def test_the_receipt_records_tier_seconds_and_trigger(tmp_path: Path) -> None:
 def _receipt():
     from benchmarks.sregym.fastloop.wipe import Tier1Receipt
 
-    return Tier1Receipt(12.0, (), False)
+    return Tier1Receipt(12.0, (), False, ())
 
 
 def test_inventory_path_sits_beside_the_kubeconfig(tmp_path: Path) -> None:
@@ -519,3 +546,146 @@ def test_wipe_environment_resets_lane_seed_and_controller_registry_together(tmp_
     assert git(repo, "rev-parse", "HEAD") == heads[0]
     assert not environment.state_path.exists()
     assert receipt.removed == (f"namespace/{CONTROL}", "namespace/ingress-nginx")
+
+
+# A fault's finalizer keeps an owned namespace Terminating (FinalizerDeadlock on hotel-reservation)
+
+TOKEN = "configmap/reservation-cleanup-token"
+
+
+def finalizer_stuck_lane(namespace: str = APP) -> FakeLane:
+    lane = lane_with({namespace: {"pvc/mongodb-geo", TOKEN}})
+    lane.finalizers = {(namespace, TOKEN)}
+    return lane
+
+
+def test_tier_2_force_finalizes_a_fault_object_that_holds_the_app_namespace_terminating() -> None:
+    lane = finalizer_stuck_lane()
+    receipt, deployed = tier2(lane, Tier2Reason(Tier2Trigger.PREVIOUS_ROW_UNRECOVERED, "hr-a/002"))
+    assert lane.released == [(APP, TOKEN)]
+    assert len(deployed) == 1 and APP not in deployed[0], "the namespace finished deleting before the deploy"
+    assert receipt.force_finalized == (f"{APP}/{TOKEN}",)
+
+
+def test_tier_2_fails_closed_naming_the_objects_when_force_finalizing_does_not_finish() -> None:
+    lane = finalizer_stuck_lane()
+    lane.remove_finalizers = lambda namespace, item: None  # the API keeps the finalizer
+    clock = iter(range(0, 1000, 10)).__next__
+    with pytest.raises(WipeError) as raised:
+        tier2(lane, Tier2Reason(Tier2Trigger.PREVIOUS_ROW_UNRECOVERED, "hr-a/002"), clock=lambda: float(clock()))
+    assert f"namespace/{APP}" in str(raised.value)
+    assert TOKEN in str(raised.value)
+
+
+def test_tier_1_force_finalizes_a_stuck_harness_namespace_and_records_it(tmp_path: Path) -> None:
+    lane = lane_with({"chaos-fault": {"configmap/lock"}})
+    lane.finalizers = {("chaos-fault", "configmap/lock")}
+    recorded_baseline(tmp_path)
+    receipt, _, _ = tier1(lane, tmp_path)
+    assert "namespace/chaos-fault" not in lane.list_objects()
+    assert receipt.force_finalized == ("chaos-fault/configmap/lock",)
+
+
+def test_a_namespace_the_wipe_does_not_delete_is_never_force_finalized(tmp_path: Path) -> None:
+    kept = next(iter(sorted(KEEP)))
+    lane = lane_with({kept: {"configmap/pinned"}})
+    lane.finalizers = {(kept, "configmap/pinned")}
+    lane.terminating[kept] = 0  # terminating for some other reason: not the wipe's to release
+    recorded_baseline(tmp_path)
+    receipt, _, _ = tier1(lane, tmp_path)
+    assert lane.released == []
+    assert receipt.force_finalized == ()
+
+
+def test_a_wipe_without_stuck_namespaces_force_finalizes_nothing(tmp_path: Path) -> None:
+    lane = lane_with({"chaos-fault": {"configmap/ok"}})
+    recorded_baseline(tmp_path)
+    receipt, _, _ = tier1(lane, tmp_path)
+    assert (receipt.force_finalized, lane.released) == ((), [])
+
+
+def test_the_receipt_file_records_what_was_force_finalized(tmp_path: Path) -> None:
+    lane = finalizer_stuck_lane()
+    receipt, _ = tier2(lane, Tier2Reason(Tier2Trigger.PREVIOUS_ROW_UNRECOVERED, "hr-a/002"))
+    written = json.loads(receipt.write(tmp_path).read_text(encoding="utf-8"))
+    assert written["force_finalized"] == [f"{APP}/{TOKEN}"]
+
+
+def test_only_a_terminating_namespace_reporting_remaining_content_is_stuck() -> None:
+    def namespace(deleting: bool, *conditions: tuple[str, str]) -> dict:
+        return {
+            "metadata": {"name": APP, **({"deletionTimestamp": "2026-10-27T08:17:00Z"} if deleting else {})},
+            "status": {"conditions": [{"type": kind, "status": status} for kind, status in conditions]},
+        }
+
+    assert namespace_is_stuck(namespace(True, ("NamespaceFinalizersRemaining", "True")))
+    assert namespace_is_stuck(namespace(True, ("NamespaceContentRemaining", "True")))
+    assert not namespace_is_stuck(namespace(True, ("NamespaceFinalizersRemaining", "False")))
+    assert not namespace_is_stuck(namespace(True))
+    assert not namespace_is_stuck(namespace(False, ("NamespaceFinalizersRemaining", "True")))
+
+
+def test_finalizer_holders_name_the_objects_that_carry_finalizers() -> None:
+    listing = {
+        "items": [
+            {
+                "kind": "ConfigMap",
+                "metadata": {
+                    "name": "reservation-cleanup-token",
+                    "finalizers": ["cleanup.reservations.io/pending-cleanup"],
+                },
+            },
+            {"kind": "ConfigMap", "metadata": {"name": "plain"}},
+            {"kind": "Pod", "metadata": {"name": "geo", "finalizers": []}},
+        ]
+    }
+    assert finalizer_holders(listing) == (TOKEN,)
+
+
+def test_kubectl_lane_cluster_releases_the_stuck_configmap_through_the_real_wipe_loop(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The real ``KubectlLaneCluster`` into the real loop, against a kubectl that behaves like the API server."""
+    state = {"finalizers": ["cleanup.reservations.io/pending-cleanup"], "gone": False}
+    calls: list[list[str]] = []
+
+    def fake_kubectl(args, *, namespace, kubeconfig=None, input_text=None, check=True):
+        calls.append([*args, f"-n={namespace}"])
+        out = ""
+        if args[:2] == ["get", "namespace"]:
+            out = json.dumps(
+                {
+                    "metadata": {"name": APP, "deletionTimestamp": "2026-10-27T08:17:00Z"},
+                    "status": {"conditions": [{"type": "NamespaceFinalizersRemaining", "status": "True"}]},
+                }
+            )
+        elif args[0] == "api-resources":
+            out = "configmaps\npods\n"
+        elif args[0] == "get" and args[1] == "configmaps,pods":
+            item = {"kind": "ConfigMap", "metadata": {"name": "reservation-cleanup-token", **state_meta(state)}}
+            out = json.dumps({"items": [item]})
+        elif args[0] == "patch":
+            state["finalizers"] = []
+            state["gone"] = True
+        return SimpleNamespace(stdout=out, returncode=0, stderr="")
+
+    def state_meta(current: dict) -> dict:
+        return {"finalizers": current["finalizers"]} if current["finalizers"] else {}
+
+    monkeypatch.setattr("benchmarks.sregym.adapter.kubectl", fake_kubectl)
+    # The suite-wide guard empties list_objects; here the namespace lives until its finalizer is gone.
+    monkeypatch.setattr(
+        KubectlLaneCluster, "list_objects", lambda self: frozenset() if state["gone"] else frozenset({f"namespace/{APP}"})
+    )
+    cluster = KubectlLaneCluster(tmp_path.resolve() / "kubeconfig")
+    released = remove_until_gone(
+        cluster,
+        [f"namespace/{APP}"],
+        timeout_seconds=30,
+        poll_seconds=0,
+        clock=iter(range(0, 1000)).__next__,
+        sleep=lambda _seconds: None,
+    )
+    assert released == (f"{APP}/{TOKEN}",)
+    patch = next(call for call in calls if call[0] == "patch")
+    assert patch[1] == TOKEN and f"-n={APP}" in patch

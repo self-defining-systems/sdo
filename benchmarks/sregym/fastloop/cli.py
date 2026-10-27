@@ -652,7 +652,12 @@ def _wipe_sdo_and_harness(args: argparse.Namespace, environment: FastloopEnviron
         planned_commit=planned,
         timeout_seconds=wait_for(WaitKind.ROLLOUT),
     )
-    logger.info("Tier-1 wipe: %.1fs, removed %s", receipt.seconds, ", ".join(receipt.removed) or "nothing")
+    logger.info(
+        "Tier-1 wipe: %.1fs, removed %s, force-finalized %s",
+        receipt.seconds,
+        ", ".join(receipt.removed) or "nothing",
+        ", ".join(receipt.force_finalized) or "nothing",
+    )
     return receipt
 
 
