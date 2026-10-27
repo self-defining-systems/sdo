@@ -166,3 +166,35 @@ func TestSourceReconcilePartialRetainedInMixedRuntimePlan(t *testing.T) {
 		t.Fatalf("mixed plan lost applied partial receipt: applied=%v actions=%d reports=%+v error=%v", result.Applied, len(result.ActionsApplied), result.ActionReports, err)
 	}
 }
+
+func TestSourceReconcileConvergesTopLevelAcceptedLists(t *testing.T) {
+	for _, field := range []string{"subjects", "customEntries"} {
+		t.Run(field, func(t *testing.T) {
+			ref := sdk.ObjectRef{APIVersion: "rbac.authorization.k8s.io/v1", Kind: "RoleBinding", Namespace: "test", Name: "binding"}
+			source := planObject(ref, map[string]any{})
+			delete(source.Object, "spec")
+			source.Object["roleRef"] = map[string]any{"apiGroup": "rbac.authorization.k8s.io", "kind": "Role", "name": "reader"}
+			baseline := map[string]any{"kind": "User", "name": "baseline"}
+			live := source.DeepCopy()
+			live.Object[field] = []any{baseline}
+			if err := RecordAcceptance(live, source); err != nil {
+				t.Fatal(err)
+			}
+			live.Object[field] = []any{baseline, map[string]any{"kind": "User", "name": "added"}}
+			client := &planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: live}}
+			executor := PlanExecutor{Client: client, Source: planFakeSource{source: source}, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{passed: true}}
+			result, err := executor.Apply(context.Background(), IncidentRequest{Namespace: ref.Namespace, SourceCommit: "accepted", RepairPolicy: "recorded-actions"}, reconcilePlan(ref), false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			items, _, _ := unstructured.NestedSlice(client.objects[ref].Object, field)
+			if len(items) != 1 || items[0].(map[string]any)["name"] != "baseline" {
+				t.Fatalf("baseline lost or addition retained: %v", items)
+			}
+			report := result.ActionReports[0].SourceReconcile
+			if !report.Converged || len(report.ResidualPaths) != 0 {
+				t.Fatalf("residual: %v", report)
+			}
+		})
+	}
+}

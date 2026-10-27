@@ -35,13 +35,19 @@ func reconcileRolloutObjects(t *testing.T) (*appsv1.Deployment, *appsv1.ReplicaS
 	stale.Name = "search-old"
 	stale.UID = "old-uid"
 	stale.Spec.Template.Spec.Containers = append(stale.Spec.Template.Spec.Containers, corev1.Container{Name: "old-sidecar", Image: "proxy:1"})
+	current.Labels = map[string]string{appsv1.DefaultDeploymentUniqueLabelKey: "new"}
+	current.Annotations = map[string]string{"deployment.kubernetes.io/revision": "2"}
+	stale.Labels = map[string]string{appsv1.DefaultDeploymentUniqueLabelKey: "old"}
+	stale.Annotations = map[string]string{"deployment.kubernetes.io/revision": "1"}
 	stale.Status.Replicas = 1
 	return &deployment, current, stale
 }
 
 func TestSourceReconcileRetiresUnavailableOldReplicaSetWithinBudget(t *testing.T) {
 	deployment, current, stale := reconcileRolloutObjects(t)
-	client := fake.NewSimpleClientset(deployment, current, stale)
+	controller := true
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "unavailable", Namespace: stale.Namespace, Labels: map[string]string{appsv1.DefaultDeploymentUniqueLabelKey: "old"}, OwnerReferences: []metav1.OwnerReference{{APIVersion: "apps/v1", Kind: "ReplicaSet", Name: stale.Name, UID: stale.UID, Controller: &controller}}}, Status: corev1.PodStatus{Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionFalse}}}}
+	client := fake.NewSimpleClientset(deployment, current, stale, pod)
 	// Model the Deployment controller's status after the scale-down. The real
 	// progress writer must produce this mutation before the real waiter can pass.
 	client.PrependReactor("patch", "replicasets", func(action ktesting.Action) (bool, kruntime.Object, error) {
@@ -239,5 +245,61 @@ func TestSourceReconcileProgressBindsWrittenWorkloadInstance(t *testing.T) {
 		if action.GetVerb() == "patch" {
 			t.Fatal("source action mutated ReplicaSets of a different Deployment instance")
 		}
+	}
+}
+
+func TestSourceReconcileRolloutProtectsFreshPodCapacity(t *testing.T) {
+	for _, mode := range []string{"ready pod", "pod becomes ready", "newest revision", "same hash", "missing hash", "fresh RS ready", "current pod hash", "newest creation", "unknown revision"} {
+		t.Run(mode, func(t *testing.T) {
+			deployment, current, stale := reconcileRolloutObjects(t)
+			controller := true
+			pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "serving", Namespace: stale.Namespace, Labels: map[string]string{appsv1.DefaultDeploymentUniqueLabelKey: "old"}, OwnerReferences: []metav1.OwnerReference{{APIVersion: "apps/v1", Kind: "ReplicaSet", Name: stale.Name, UID: stale.UID, Controller: &controller}}}}
+			switch mode {
+			case "ready pod", "pod becomes ready":
+				pod.Status.Conditions = []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}
+			case "newest revision":
+				stale.Annotations["deployment.kubernetes.io/revision"] = "3"
+			case "same hash":
+				stale.Labels[appsv1.DefaultDeploymentUniqueLabelKey] = "new"
+			case "missing hash":
+				delete(stale.Labels, appsv1.DefaultDeploymentUniqueLabelKey)
+			case "current pod hash":
+				pod.Labels[appsv1.DefaultDeploymentUniqueLabelKey] = "new"
+			case "newest creation":
+				stale.CreationTimestamp = metav1.NewTime(time.Unix(10, 0))
+			case "unknown revision":
+				delete(stale.Annotations, "deployment.kubernetes.io/revision")
+			}
+			client := fake.NewSimpleClientset(deployment, current, stale, pod)
+			if mode == "fresh RS ready" {
+				client.PrependReactor("get", "replicasets", func(action ktesting.Action) (bool, kruntime.Object, error) {
+					if action.(ktesting.GetAction).GetName() == stale.Name {
+						fresh := stale.DeepCopy()
+						fresh.Status.ReadyReplicas = 1
+						return true, fresh, nil
+					}
+					return false, nil, nil
+				})
+			}
+			if mode == "pod becomes ready" {
+				reads := 0
+				client.PrependReactor("list", "pods", func(ktesting.Action) (bool, kruntime.Object, error) {
+					reads++
+					if reads == 1 {
+						return true, &corev1.PodList{}, nil
+					}
+					return false, nil, nil
+				})
+			}
+			steps, err := (KubernetesPlanRollouts{Client: client}).ProgressSourceRollouts(context.Background(), []sdk.ObjectRef{addedFieldsRef()}, map[sdk.ObjectRef]types.UID{addedFieldsRef(): deployment.UID})
+			if err != nil || len(steps) != 0 {
+				t.Fatalf("protected rollout changed: %v %v", steps, err)
+			}
+			for _, action := range client.Actions() {
+				if action.GetVerb() == "patch" {
+					t.Fatal("protected capacity scaled down")
+				}
+			}
+		})
 	}
 }

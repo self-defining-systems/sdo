@@ -437,10 +437,10 @@ func removeAddedFields(next, observed, source *unstructured.Unstructured) {
 		return node
 	}
 	for key, child := range next.Object {
-		nested, ok := child.(map[string]any)
 		switch {
-		case !ok || key == "apiVersion" || key == "kind" || key == "status":
+		case key == "apiVersion" || key == "kind" || key == "status":
 		case key == "metadata":
+			nested, _ := child.(map[string]any)
 			for _, field := range []string{"labels", "annotations"} {
 				if values, ok := nested[field].(map[string]any); ok {
 					nested[field] = prune("metadata."+field, values)
@@ -450,7 +450,7 @@ func removeAddedFields(next, observed, source *unstructured.Unstructured) {
 			if onlyAdded(key) {
 				delete(next.Object, key)
 			} else {
-				next.Object[key] = prune(key, nested)
+				next.Object[key] = prune(key, child)
 			}
 		}
 	}

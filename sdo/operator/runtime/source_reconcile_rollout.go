@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	corev1 "k8s.io/api/core/v1"
+	"strconv"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -57,21 +59,102 @@ func (w KubernetesPlanRollouts) ProgressSourceRollouts(ctx context.Context, refs
 			delete(right.Labels, appsv1.DefaultDeploymentUniqueLabelKey)
 			return equality.Semantic.DeepEqual(left, right)
 		}
-		replacement := false
-		for i := range sets.Items {
-			rs := &sets.Items[i]
-			if owned(rs) && matches(rs) && rs.DeletionTimestamp == nil && rs.Spec.Replicas != nil && *rs.Spec.Replicas > 0 {
-				replacement = true
-			}
-		}
-		if !replacement {
-			continue
-		}
-		for i := range sets.Items {
-			rs := &sets.Items[i]
+		// Require positive identity evidence for an old revision. Neither a
+		// stale aggregate readiness count nor template inequality proves that.
+		eligible := func(rs *appsv1.ReplicaSet) bool {
 			if !owned(rs) || matches(rs) || rs.DeletionTimestamp != nil || rs.Spec.Replicas == nil || *rs.Spec.Replicas == 0 || rs.Status.ReadyReplicas > 0 {
+				return false
+			}
+			hash := rs.Labels[appsv1.DefaultDeploymentUniqueLabelKey]
+			revision, parseErr := strconv.ParseInt(rs.Annotations["deployment.kubernetes.io/revision"], 10, 64)
+			if hash == "" || parseErr != nil {
+				return false
+			}
+			replacement := false
+			for i := range sets.Items {
+				other := &sets.Items[i]
+				if !owned(other) {
+					continue
+				}
+				otherRevision, err := strconv.ParseInt(other.Annotations["deployment.kubernetes.io/revision"], 10, 64)
+				if err != nil {
+					return false
+				}
+				if matches(other) && rs.CreationTimestamp.After(other.CreationTimestamp.Time) {
+					return false
+				}
+				if matches(other) && other.DeletionTimestamp == nil && other.Spec.Replicas != nil && *other.Spec.Replicas > 0 && otherRevision > revision && other.Labels[appsv1.DefaultDeploymentUniqueLabelKey] != "" && other.Labels[appsv1.DefaultDeploymentUniqueLabelKey] != hash {
+					replacement = true
+				}
+			}
+			return replacement
+		}
+		protectedPods := func(rs *appsv1.ReplicaSet) (bool, error) {
+			pods, err := w.Client.CoreV1().Pods(ref.Namespace).List(ctx, metav1.ListOptions{})
+			if err != nil {
+				return false, err
+			}
+			for i := range pods.Items {
+				pod := &pods.Items[i]
+				owner := metav1.GetControllerOf(pod)
+				if owner == nil || owner.UID != rs.UID || owner.Name != rs.Name || owner.Kind != "ReplicaSet" || owner.APIVersion != "apps/v1" {
+					continue
+				}
+				// An unexpected Pod hash is uncertain ownership evidence for
+				// this revision; scaling its parent would delete it as well.
+				if pod.Labels[appsv1.DefaultDeploymentUniqueLabelKey] != rs.Labels[appsv1.DefaultDeploymentUniqueLabelKey] {
+					return true, nil
+				}
+				for _, condition := range pod.Status.Conditions {
+					if condition.Type == corev1.PodReady && condition.Status == corev1.ConditionTrue {
+						return true, nil
+					}
+				}
+			}
+			return false, nil
+		}
+		for _, candidate := range sets.Items {
+			rs := &candidate
+			if !eligible(rs) {
 				continue
 			}
+			ready, err := protectedPods(rs)
+			if err != nil {
+				return steps, err
+			}
+			if ready {
+				continue
+			}
+			// Re-read the exact owner and candidate immediately before the
+			// destructive write, then inspect Pod readiness independently of
+			// the ReplicaSet controller's asynchronously published status.
+			freshDeployment, err := w.Client.AppsV1().Deployments(ref.Namespace).Get(ctx, ref.Name, metav1.GetOptions{})
+			if err != nil {
+				return steps, err
+			}
+			if freshDeployment.UID != deployment.UID || !equality.Semantic.DeepEqual(freshDeployment.Spec, deployment.Spec) || freshDeployment.Status.ObservedGeneration < freshDeployment.Generation {
+				continue
+			}
+			freshSets, err := w.Client.AppsV1().ReplicaSets(ref.Namespace).List(ctx, metav1.ListOptions{})
+			if err != nil {
+				return steps, err
+			}
+			sets = freshSets
+			fresh, err := w.Client.AppsV1().ReplicaSets(rs.Namespace).Get(ctx, rs.Name, metav1.GetOptions{})
+			if err != nil {
+				return steps, err
+			}
+			if fresh.UID != rs.UID || !eligible(fresh) {
+				continue
+			}
+			ready, err = protectedPods(fresh)
+			if err != nil {
+				return steps, err
+			}
+			if ready {
+				continue
+			}
+			rs = fresh
 			step := &contracts.SourceRolloutStep{Ref: planRefProto(sdk.ObjectRef{APIVersion: "apps/v1", Kind: "ReplicaSet", Namespace: rs.Namespace, Name: rs.Name}), Status: "unknown", Workload: planRefProto(ref)}
 			steps = append(steps, step)
 			if rs.UID == "" || rs.ResourceVersion == "" {
