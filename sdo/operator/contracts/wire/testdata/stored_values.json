@@ -267,6 +267,7 @@
     "execution_failed",
     "incident_verified",
     "outcome_unknown",
+    "script_unprovenanced",
     "source_residual"
   ],
   "sdodev.contracts.v1alpha1.RolloutPending.reason_code": [
