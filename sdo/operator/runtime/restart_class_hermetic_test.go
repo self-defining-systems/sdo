@@ -460,7 +460,11 @@ func TestRestartClassHermetic(t *testing.T) {
 	t.Cleanup(func() { t.Logf("default restart sweep wall=%s", time.Since(started)) })
 }
 
-func TestRestartClassRefusesChangedObservationBeforeCommit(t *testing.T) {
+// STALE3: the detector scope changing mid-incident (SDO's own judge or
+// reflection changed a detector) is not evidence about the cluster. The
+// recheck runs under the detectors now in force: a healthy closure commits
+// verified, an unhealthy one is refused by that live health.
+func TestRestartClassRechecksUnderCurrentScopeBeforeCommit(t *testing.T) {
 	for _, mutation := range []string{"generation", "health"} {
 		t.Run(mutation, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
@@ -483,10 +487,22 @@ func TestRestartClassRefusesChangedObservationBeforeCommit(t *testing.T) {
 				t.Fatal("missing durable closure")
 			}
 			err := c.ExecuteClosureEffect(ctx, effect)
-			if mutation == "generation" && (err != nil || exportState(t, c).GetClosureState() != contracts.ClosureState_CLOSURE_STATE_FAILED || !strings.Contains(exportState(t, c).GetClosureFailure().GetLastError(), "observation scope changed")) {
-				t.Fatalf("changed generation was trusted: %v", err)
+			if mutation == "generation" {
+				if err != nil {
+					t.Fatalf("changed scope refused the closure: %v", err)
+				}
+				awaitBrokerResult(t, c.closureResults)
+				c.processBrokerCompletions()
+				if c.closureReceipt == nil || exportState(t, c).GetClosureState() == contracts.ClosureState_CLOSURE_STATE_FAILED {
+					t.Fatalf("closure under a changed scope was not verified: receipt %v failure %v", c.closureReceipt, exportState(t, c).GetClosureFailure())
+				}
+				ledger, err := native.readLedger(id)
+				if err != nil || ledger.Receipt == nil || ledger.OutcomeDocument == nil {
+					t.Fatalf("verified closure did not publish its outcome: %v", err)
+				}
+				return
 			}
-			if mutation == "health" && (err != nil || exportState(t, c).GetClosureState() != contracts.ClosureState_CLOSURE_STATE_FAILED || !strings.Contains(exportState(t, c).GetClosureFailure().GetLastError(), "is active")) {
+			if err != nil || exportState(t, c).GetClosureState() != contracts.ClosureState_CLOSURE_STATE_FAILED || !strings.Contains(exportState(t, c).GetClosureFailure().GetLastError(), "is active") {
 				t.Fatalf("restored success was not revalidated against fresh health: %v", err)
 			}
 			ledger, err := native.readLedger(id)

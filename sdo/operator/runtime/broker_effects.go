@@ -11,6 +11,7 @@ import (
 	"sdo.dev/operator/core"
 	"sdo.dev/operator/runtime/lifecyclecore"
 	"sdo.dev/operator/sdk"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -23,6 +24,12 @@ type WorkspaceEffect struct {
 type ClosureEffect struct {
 	Identity string
 	Closure  IncidentClosure
+}
+
+// committedClosureBroker recovers the receipt of an already committed closure,
+// so a replay fetches it instead of deciding the closure again.
+type committedClosureBroker interface {
+	committedClosureReceipt(context.Context, IncidentClosure, *ClosureReceipt) (ClosureReceipt, bool, error)
 }
 
 // A committed outcome is historical evidence. Resuming its unfinished broker
@@ -102,12 +109,13 @@ func (c *Controller) ExecuteClosureEffect(ctx context.Context, effect ClosureEff
 	c.mu.Lock()
 	configuredBroker := c.broker
 	c.mu.Unlock()
-	if proof, ok := configuredBroker.(committedRepairHealthBroker); ok && c.CheckHealth != nil {
-		receipt, err := proof.committedRepairHealthReceipt(ctx, effect.Closure, nil)
-		if err == nil {
-			recovered = &receipt
-		} else if !errors.Is(err, ErrStaleHealthInvestigation) {
+	if proof, ok := configuredBroker.(committedClosureBroker); ok {
+		receipt, found, err := proof.committedClosureReceipt(ctx, effect.Closure, nil)
+		if err != nil {
 			return err
+		}
+		if found {
+			recovered = &receipt
 		}
 	}
 	committedOutcome := false
@@ -119,7 +127,8 @@ func (c *Controller) ExecuteClosureEffect(ctx context.Context, effect ClosureEff
 		}
 	}
 	// Only closures without an accepted outcome can make a new success decision.
-	// Scope supersession retires them durably; it is never a process-level error.
+	// The recheck runs under the detectors now in force, whatever scope the
+	// incident began with.
 	var snapshot sdk.DetectionContext
 	var verificationErr error
 	if recovered == nil && !committedOutcome {
@@ -127,9 +136,6 @@ func (c *Controller) ExecuteClosureEffect(ctx context.Context, effect ClosureEff
 		snapshot, err = c.provider.Snapshot(ctx)
 		if err != nil {
 			return fmt.Errorf("verify closure observation scope: %w", err)
-		}
-		if effect.Closure.ObservationGeneration != observationGeneration(snapshot) {
-			verificationErr = fmt.Errorf("observation scope changed; pending closure %s is superseded and requires fresh verification", effect.Closure.Request.IncidentID)
 		}
 	}
 	actionCtx, cancel, err := c.actionContext(ctx)
@@ -271,6 +277,9 @@ type closureRecheck struct {
 	// Bound is how long an incomplete recheck may wait: the longest clearing
 	// horizon of the incomplete detectors plus two of their cadences.
 	Bound time.Duration
+	// Skipped lists incident detectors the adopted policy no longer has. They
+	// are not evidence either way; the detectors in force decided.
+	Skipped []string
 }
 
 // revalidateClosure checks live dependencies and admitted source fields, rather
@@ -303,7 +312,8 @@ func (c *Controller) revalidateClosure(ctx context.Context, snapshot sdk.Detecti
 		incomplete = append(incomplete, reason)
 		bound = max(bound, sdk.ClearingHorizon(detector, snapshot)+2*detector.Spec().Interval)
 	}
-	var denied []string
+	var denied, gone []string
+	evaluated := 0
 	for _, id := range ordered {
 		detector := c.detectors[id]
 		if detector == nil && id == "drift.unexplained" {
@@ -319,9 +329,17 @@ func (c *Controller) revalidateClosure(ctx context.Context, snapshot sdk.Detecti
 
 			continue // Admitted source fields are independently rechecked below.
 		}
+		if detector == nil && !slices.Contains(c.healthDetectorIDs, id) {
+			// The adopted policy no longer has this incident detector. The
+			// repository moving is not evidence about the cluster; the
+			// detectors in force still decide, provided one remains.
+			gone = append(gone, id)
+			continue
+		}
 		if detector == nil {
 			return contradicted("closure observation detector %s is unavailable", id)
 		}
+		evaluated++
 		findings, err := sdk.DetectObserved(ctx, detector, snapshot)
 		if err != nil {
 			reason := fmt.Sprintf("closure observation detector %s: %v", id, err)
@@ -351,6 +369,12 @@ func (c *Controller) revalidateClosure(ctx context.Context, snapshot sdk.Detecti
 			wait(detector, fmt.Sprintf("closure observation detector %s is unconfirmed: %s", id, detectorConfirmationReason(detector, snapshot)))
 		}
 	}
+	if len(gone) > 0 && evaluated == 0 {
+		return contradicted("closure observation detector %s is unavailable", gone[0])
+	}
+	if len(gone) > 0 {
+		slog.Warn("closure_detector_skipped", "incident_id", closure.Request.IncidentID, "detectors", gone, "reason", "removed by the adopted policy")
+	}
 	c.mu.Lock()
 	inventoryClear, _ := c.verifySourceInventoryLocked(closure.Result)
 	c.mu.Unlock()
@@ -371,11 +395,12 @@ func (c *Controller) revalidateClosure(ctx context.Context, snapshot sdk.Detecti
 		}
 	}
 	if len(denied) > 0 {
-		return closureRecheck{Verdict: closureRecheckDenied, Reason: strings.Join(denied, "; ")}
+		return closureRecheck{Verdict: closureRecheckDenied, Reason: strings.Join(denied, "; "), Skipped: gone}
 	}
 	if len(incomplete) > 0 {
-		return closureRecheck{Verdict: closureRecheckIncomplete, Reason: strings.Join(incomplete, "; "), Bound: bound, Unconfirmed: unconfirmed}
+		return closureRecheck{Verdict: closureRecheckIncomplete, Reason: strings.Join(incomplete, "; "), Bound: bound, Unconfirmed: unconfirmed, Skipped: gone}
 	}
+	confirmed.Skipped = gone
 	return confirmed
 }
 

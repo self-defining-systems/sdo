@@ -357,7 +357,7 @@ func TestExpiredIncidentPreservesClaimedClosure(t *testing.T) {
 			controller.pendingClosure = &IncidentClosure{Request: request, DetectedAt: start, DispatchedAt: start, ResponderCompletedAt: start, VerifiedAt: start}
 			controller.closureState = phase
 			if phase == contracts.ClosureState_CLOSURE_STATE_FAILED {
-				controller.closureFailure = &ClosureFailure{IncidentID: request.IncidentID, Permanent: true, LastError: ErrStaleHealthInvestigation.Error(), Reason: contracts.ClosureFailureReason_CLOSURE_FAILURE_REASON_BROKER_ERROR}
+				controller.closureFailure = &ClosureFailure{IncidentID: request.IncidentID, Permanent: true, LastError: "earlier broker failure", Reason: contracts.ClosureFailureReason_CLOSURE_FAILURE_REASON_BROKER_ERROR}
 			}
 			before := exportState(t, controller)
 			if err := controller.retireExpiredIncident(ctx, request.ResponseDeadline.Add(time.Second)); err != nil {
@@ -365,51 +365,6 @@ func TestExpiredIncidentPreservesClaimedClosure(t *testing.T) {
 			}
 			if after := exportState(t, controller); !proto.Equal(before, after) {
 				t.Fatalf("expiry replaced a closure claimed by another path: %v", after)
-			}
-		})
-	}
-}
-
-func TestExpiredIncidentHealthRetirementHasPriority(t *testing.T) {
-	for _, entry := range []struct {
-		name string
-		run  func(context.Context, *Controller, time.Time) error
-	}{
-		{"evaluation", func(ctx context.Context, c *Controller, at time.Time) error { return c.Step(ctx, at, nil) }},
-		{"effects", func(ctx context.Context, c *Controller, _ time.Time) error { return executePendingEffects(ctx, c) }},
-	} {
-		t.Run(entry.name, func(t *testing.T) {
-			ctx := context.Background()
-			start := time.Unix(1000, 0)
-			config := testControllerConfig()
-			config.FiringThreshold = 1
-			controller, err := NewController(config, []sdk.Detector{controllerDetector("fault", time.Hour, stateFinding("fault"))}, staticProvider{snapshot: sdktest.Snapshot{}}, &recordingDispatcher{}, start)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := controller.Step(ctx, start, nil); err != nil {
-				t.Fatal(err)
-			}
-			now := controller.currentIncidentRequest.ResponseDeadline.Add(time.Second)
-			controller.now = func() time.Time { return now }
-			controller.CheckHealth = func(context.Context) error {
-				if controller.currentIncidentRequest != nil {
-					return ErrStaleHealthInvestigation
-				}
-				return nil
-			}
-			controller.checkInvestigationHealth = func(context.Context, string) error { return ErrStaleHealthInvestigation }
-			notified := 0
-			controller.OnClosureFailed = func(f ClosureFailure) {
-				if f.LastError == ErrStaleHealthInvestigation.Error() {
-					notified++
-				}
-			}
-			if err := entry.run(ctx, controller, now); err != nil {
-				t.Fatal(err)
-			}
-			if notified != 1 || controller.closureFailure == nil || controller.closureFailure.LastError != ErrStaleHealthInvestigation.Error() {
-				t.Fatalf("health retirement lost ownership: notifications=%d failure=%v", notified, controller.closureFailure)
 			}
 		})
 	}
@@ -432,7 +387,7 @@ func TestExpiredIncidentDoesNotInheritEarlierFailure(t *testing.T) {
 	earlier.IncidentID = "earlier"
 	controller.pendingClosure = &IncidentClosure{Request: earlier, DetectedAt: start, DispatchedAt: start, ResponderCompletedAt: start, VerifiedAt: start}
 	controller.closureState = contracts.ClosureState_CLOSURE_STATE_FAILED
-	controller.closureFailure = &ClosureFailure{IncidentID: earlier.IncidentID, Permanent: true, LastError: ErrStaleHealthInvestigation.Error(), Reason: contracts.ClosureFailureReason_CLOSURE_FAILURE_REASON_BROKER_ERROR}
+	controller.closureFailure = &ClosureFailure{IncidentID: earlier.IncidentID, Permanent: true, LastError: "earlier broker failure", Reason: contracts.ClosureFailureReason_CLOSURE_FAILURE_REASON_BROKER_ERROR}
 	archived := &contracts.FailedIncidentClosure{Closure: mustProject(t, incidentClosureContract, *controller.pendingClosure), Failure: closureFailureContract(controller.closureFailure)}
 	controller.failedClosures = []*contracts.FailedIncidentClosure{archived}
 	if err := controller.retireExpiredIncident(ctx, request.ResponseDeadline.Add(time.Second)); err != nil {

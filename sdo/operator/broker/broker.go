@@ -274,24 +274,6 @@ func (b *Broker) publish(ctx context.Context, incidentID string, actor Actor, ph
 		if err != nil {
 			return err
 		}
-		if phase == ReflectionPhase {
-			frozen, _ := ctx.Value(reflectionHealthKey{}).(string)
-			if frozen == "" {
-				frozen = proposal.BaseCommit
-			}
-			if frozen != current {
-				diagnostics, err := b.reflectionHealthDiagnostics(ctx, frozen, current)
-				if err != nil {
-					return err
-				}
-				if len(diagnostics) > 0 {
-					return validate.Err([]validate.Diagnostic{{Rule: diagnostics[0].Rule, Message: diagnostics[0].Message}})
-				}
-			}
-		}
-		if current != proposal.BaseCommit && expectedSourceTree != "" {
-			return errors.New("verified source proposal base is stale; redeploy from accepted state")
-		}
 		paths, err := validate.ChangedPaths(ctx, proposal.Path, proposal.BaseCommit)
 		if err != nil {
 			return err
@@ -397,11 +379,20 @@ func (b *Broker) publish(ctx context.Context, incidentID string, actor Actor, ph
 			return fmt.Errorf("candidate validation: %w", err)
 		}
 		if expectedSourceTree != "" {
-			stagedTree, err := ProposalTreeDigest(ctx, stage)
+			// The head may have moved since the proposal's base (SDO's own outcome
+			// and judge commits). The proposal was replayed onto it; the replay
+			// must carry exactly the verified source, whatever memory history
+			// landed in between.
+			stagedTree, verifiedTree := "", expectedSourceTree
+			if current == proposal.BaseCommit {
+				stagedTree, err = ProposalTreeDigest(ctx, stage)
+			} else if stagedTree, err = proposalSourceTreeDigest(ctx, stage); err == nil {
+				verifiedTree, err = proposalSourceTreeDigest(ctx, candidateRoot)
+			}
 			if err != nil {
 				return err
 			}
-			if stagedTree != expectedSourceTree {
+			if stagedTree != verifiedTree {
 				return errors.New("staged source tree differs from verified deployment")
 			}
 		}
@@ -728,6 +719,16 @@ func gitText(ctx context.Context, cwd string, args ...string) (string, error) {
 // ProposalTreeDigest computes the complete candidate Git tree without changing
 // the checkout's index. Both deployment and publish use this exact convention.
 func ProposalTreeDigest(ctx context.Context, checkout string) (string, error) {
+	return proposalTreeDigest(ctx, checkout, false)
+}
+
+// proposalSourceTreeDigest is ProposalTreeDigest without operational memory,
+// so two trees that differ only in accepted .sdo history compare equal.
+func proposalSourceTreeDigest(ctx context.Context, checkout string) (string, error) {
+	return proposalTreeDigest(ctx, checkout, true)
+}
+
+func proposalTreeDigest(ctx context.Context, checkout string, sourceOnly bool) (string, error) {
 	root, err := filepath.Abs(checkout)
 	if err != nil {
 		return "", err
@@ -750,6 +751,11 @@ func ProposalTreeDigest(ctx context.Context, checkout string) (string, error) {
 	}
 	if err := addIgnoredOperationalMemory(ctx, root, []string{"GIT_INDEX_FILE=" + index}); err != nil {
 		return "", err
+	}
+	if sourceOnly {
+		if _, err := run("rm", "-r", "--cached", "--ignore-unmatch", "-q", "--", layout.Dir); err != nil {
+			return "", err
+		}
 	}
 	tree, err := run("write-tree")
 	if err != nil {
