@@ -127,3 +127,18 @@ func TestStopSeededLifecycleCuts(t *testing.T) {
 		}
 	}
 }
+
+// A standby responder is a Job labelled sdo.dev/standby; uninstall must remove
+// it even when it never started a pod.
+func TestStopRemovesStandbyJobs(t *testing.T) {
+	standby := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "sdo-standby-abc", Namespace: "demo"}, Spec: batchv1.JobSpec{Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app.kubernetes.io/name": "sdo-worker", "sdo.dev/standby": "true"}}}}}
+	client := fake.NewSimpleClientset(standby)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if result, err := Stop(ctx, client, "demo"); err != nil || len(result.Removed) != 1 || len(result.Leftovers) != 0 {
+		t.Fatalf("stop: %+v %v", result, err)
+	}
+	if _, err := client.BatchV1().Jobs("demo").Get(ctx, standby.Name, metav1.GetOptions{}); err == nil {
+		t.Fatal("standby Job survived uninstall")
+	}
+}

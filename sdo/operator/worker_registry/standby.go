@@ -16,7 +16,6 @@ import (
 	"sync"
 	"time"
 
-	"golang.org/x/sys/unix"
 	"google.golang.org/protobuf/types/known/anypb"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -41,6 +40,7 @@ type WarmBinding struct {
 	Directory  string    `json:"directory"`
 	Digest     string    `json:"request_digest"`
 	ClaimedAt  time.Time `json:"claimed_at"`
+	CreatedAt  time.Time `json:"created_at"`
 }
 
 // StandbyPool owns one waiting one-shot responder per application: an early
@@ -54,10 +54,12 @@ type StandbyPool struct {
 	current              *WarmBinding
 	notify               chan struct{}
 	done                 chan struct{}
+	// exchange atomically swaps two directories; tests replace it.
+	exchange func(a, b string) error
 }
 
 func NewStandbyPool(e KubernetesExecutor, agentID, application string) *StandbyPool {
-	return &StandbyPool{Executor: e, AgentID: agentID, Application: application, notify: make(chan struct{}, 1), done: make(chan struct{})}
+	return &StandbyPool{Executor: e, AgentID: agentID, Application: application, notify: make(chan struct{}, 1), done: make(chan struct{}), exchange: exchangeDirectories}
 }
 
 func (p *StandbyPool) root() string {
@@ -71,6 +73,9 @@ func (p *StandbyPool) Start(ctx context.Context) error {
 	if err := p.recoverUnclaimed(ctx); err != nil {
 		return err
 	}
+	if err := p.probeExchange(); err != nil {
+		return fmt.Errorf("warm adoption is unsupported on this filesystem: %w", err)
+	}
 	if err := p.Ensure(ctx); err != nil {
 		return err
 	}
@@ -78,11 +83,18 @@ func (p *StandbyPool) Start(ctx context.Context) error {
 		defer close(p.done)
 		ticker := time.NewTicker(time.Second)
 		defer ticker.Stop()
+		reap := time.NewTicker(standbyClaimExpiry)
+		defer reap.Stop()
 		for {
 			select {
 			case <-ctx.Done():
 				p.retireIdle()
 				return
+			case <-reap.C:
+				if err := p.reapGone(ctx); err != nil {
+					slog.Warn("responder_standby_reap", "error", err)
+				}
+				continue
 			case <-ticker.C:
 			case <-p.notify:
 			}
@@ -96,6 +108,26 @@ func (p *StandbyPool) Start(ctx context.Context) error {
 
 func (p *StandbyPool) Wait() { <-p.done }
 
+// probeExchange checks once that the PVC supports the atomic directory swap
+// adoption depends on, so an unsupported filesystem never pays the copy.
+func (p *StandbyPool) probeExchange() error {
+	if err := os.MkdirAll(p.root(), 0700); err != nil {
+		return err
+	}
+	probe, err := os.MkdirTemp(p.root(), ".probe-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(probe)
+	a, b := filepath.Join(probe, "a"), filepath.Join(probe, "b")
+	for _, directory := range []string{a, b} {
+		if err := os.Mkdir(directory, 0700); err != nil {
+			return err
+		}
+	}
+	return p.exchange(a, b)
+}
+
 func (p *StandbyPool) Ensure(ctx context.Context) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -104,15 +136,13 @@ func (p *StandbyPool) Ensure(ctx context.Context) error {
 			return err
 		}
 		job, err := p.Executor.Client.BatchV1().Jobs(p.Executor.Namespace).Get(ctx, p.current.JobName, metav1.GetOptions{})
-		if err == nil && !jobFailed(job) && !jobCompleted(job) {
+		if err == nil && !jobFailed(job) && !jobCompleted(job) && (standbyReady(p.current.Directory) || time.Since(p.current.CreatedAt) <= standbyReadyDeadline) {
 			return nil
 		}
 		if err != nil && !apierrors.IsNotFound(err) {
 			return err
 		}
-		if err == nil {
-			p.deleteSlot(ctx, p.current)
-		}
+		p.Executor.releaseStandby(ctx, p.current)
 		p.current = nil
 	}
 	registration, err := p.Executor.Registry.Resolve(p.AgentID, "")
@@ -157,7 +187,7 @@ func (p *StandbyPool) Ensure(ctx context.Context) error {
 	if err := e.ensureJob(ctx, task, registration.GetKubernetesJob(), name, requestSource{PVCSubPath: path.Join(sub, "control")}, name+"-result", path.Join(sub, "checkout")); err != nil {
 		return err
 	}
-	p.current = &WarmBinding{JobName: name, Directory: directory}
+	p.current = &WarmBinding{JobName: name, Directory: directory, CreatedAt: time.Now().UTC()}
 	slog.Info("responder_standby_created", "application", p.Application, "job", name)
 	return nil
 }
@@ -179,7 +209,8 @@ func (p *StandbyPool) TryBind(ctx context.Context, e KubernetesExecutor, task *c
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if p.current == nil || e.SessionPVCSubPath == "" || e.Environment["SDO_RESPONSE_CONTINUATION"] != "" || !validWarmPaths(e, task) {
+	session, ok := warmSessionPath(e, task)
+	if p.current == nil || e.SessionPVCSubPath == "" || e.Environment["SDO_RESPONSE_CONTINUATION"] != "" || !ok {
 		return e, nil
 	}
 	releaseStorage, available := memory.TrySessionStorageBinding()
@@ -188,11 +219,12 @@ func (p *StandbyPool) TryBind(ctx context.Context, e KubernetesExecutor, task *c
 	}
 	defer releaseStorage()
 	slot := p.current
-	for _, name := range []string{"agent", "history"} {
-		info, err := os.Stat(filepath.Join(slot.Directory, "ready", name))
-		if err != nil || time.Since(info.ModTime()) > 2*time.Second {
-			return e, nil
-		}
+	if !standbyReady(slot.Directory) {
+		return e, nil
+	}
+	request := new(contracts.IncidentRequest)
+	if err := task.GetRequest().UnmarshalTo(request); err != nil {
+		return e, err
 	}
 	job, jobErr := e.Client.BatchV1().Jobs(e.Namespace).Get(ctx, slot.JobName, metav1.GetOptions{})
 	if jobErr != nil || jobFailed(job) || jobCompleted(job) {
@@ -225,38 +257,36 @@ func (p *StandbyPool) TryBind(ctx context.Context, e KubernetesExecutor, task *c
 	}
 	claim.Close()
 	p.current = nil
+	bound := false
 	defer func() {
 		select {
 		case p.notify <- struct{}{}:
 		default:
 		}
 	}()
-	request := new(contracts.IncidentRequest)
-	if err := task.GetRequest().UnmarshalTo(request); err != nil {
-		return e, err
-	}
+	// Every exit after the claim gives the slot up unless the incident owns it.
+	defer func() {
+		if !bound {
+			p.Executor.releaseStandby(ctx, slot)
+		}
+	}()
 	slot.IncidentID = request.GetIncidentId()
 	slot.Digest = taskRequestDigest(task)
 	slot.ClaimedAt = time.Now().UTC()
-	sessionRelative, err := filepath.Rel(sessionPVCBase(e.RepositoryPVCSubPath), e.SessionPVCSubPath)
-	if err != nil {
-		return e, err
-	}
 	for _, adopted := range [][2]string{
 		{task.GetWorkspace().GetCheckoutPath(), filepath.Join(slot.Directory, "checkout")},
-		{filepath.Join(e.RepositoryMountPath, sessionRelative), filepath.Join(slot.Directory, "session")},
+		{session, filepath.Join(slot.Directory, "session")},
 	} {
-		if err := adoptIntoPod(ctx, adopted[0], adopted[1]); err != nil {
-			p.deleteSlot(ctx, slot)
+		if err := adoptIntoPod(ctx, adopted[0], adopted[1], p.exchange); err != nil {
 			slog.Warn("responder_standby_fallback", "error", err)
 			return e, nil
 		}
 	}
 	if err := writeStandbyJSON(e.warmBindingPath(task), slot); err != nil {
-		p.deleteSlot(ctx, slot)
 		slog.Warn("responder_standby_fallback", "error", err)
 		return e, nil
 	}
+	bound = true
 	e.WarmBinding = slot
 	return e, nil
 }
@@ -264,14 +294,14 @@ func (p *StandbyPool) TryBind(ctx context.Context, e KubernetesExecutor, task *c
 // adoptIntoPod copies the canonical directory into the pod-held one and swaps
 // them. The pod-held inode is now at the canonical path; the old canonical
 // tree, now at the pod's former path, is stale and removed.
-func adoptIntoPod(ctx context.Context, canonical, held string) error {
+func adoptIntoPod(ctx context.Context, canonical, held string, exchange func(a, b string) error) error {
 	if info, err := os.Lstat(held); err != nil || !info.IsDir() {
 		return fmt.Errorf("standby directory is not a real directory: %s", held)
 	}
 	if err := copyStandbyTree(ctx, canonical, held); err != nil {
 		return err
 	}
-	if err := unix.Renameat2(unix.AT_FDCWD, canonical, unix.AT_FDCWD, held, unix.RENAME_EXCHANGE); err != nil {
+	if err := exchange(canonical, held); err != nil {
 		return fmt.Errorf("exchange %s with the standby directory: %w", canonical, err)
 	}
 	return os.RemoveAll(held)
@@ -349,18 +379,25 @@ func (e KubernetesExecutor) loadWarmBinding(task *contracts.AgentTask) (*WarmBin
 	return &binding, nil
 }
 
-func (p *StandbyPool) deleteSlot(ctx context.Context, b *WarmBinding) {
+// releaseStandby is the only way a slot is given up: its Job and its pod-side
+// directory go together. It outlives a cancelled caller, because a leaked slot
+// holds a PVC subPath and quota.
+func (e KubernetesExecutor) releaseStandby(ctx context.Context, b *WarmBinding) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Second)
+	defer cancel()
 	policy := metav1.DeletePropagationBackground
-	_ = p.Executor.Client.BatchV1().Jobs(p.Executor.Namespace).Delete(ctx, b.JobName, metav1.DeleteOptions{PropagationPolicy: &policy})
-	_ = os.RemoveAll(b.Directory)
+	if err := e.Client.BatchV1().Jobs(e.Namespace).Delete(ctx, b.JobName, metav1.DeleteOptions{PropagationPolicy: &policy}); err != nil && !apierrors.IsNotFound(err) {
+		slog.Warn("responder_standby_release", "job", b.JobName, "error", err)
+	}
+	if err := os.RemoveAll(b.Directory); err != nil {
+		slog.Warn("responder_standby_release", "job", b.JobName, "error", err)
+	}
 }
 func (p *StandbyPool) retireIdle() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.current != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-		defer cancel()
-		p.deleteSlot(ctx, p.current)
+		p.Executor.releaseStandby(context.Background(), p.current)
 		p.current = nil
 	}
 }
@@ -385,7 +422,35 @@ func (p *StandbyPool) recoverUnclaimed(ctx context.Context) error {
 		} else if !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
-		p.deleteSlot(ctx, &WarmBinding{JobName: entry.Name(), Directory: directory})
+		p.Executor.releaseStandby(ctx, &WarmBinding{JobName: entry.Name(), Directory: directory})
+	}
+	return nil
+}
+
+// reapGone releases every published slot whose incident Job no longer exists.
+// A published slot belongs to a running or retained responder until then.
+func (p *StandbyPool) reapGone(ctx context.Context) error {
+	entries, err := os.ReadDir(p.root())
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), "sdo-standby-") {
+			continue
+		}
+		directory := filepath.Join(p.root(), entry.Name())
+		if _, err := os.Stat(filepath.Join(directory, "control", TaskDataKey)); err != nil {
+			continue
+		}
+		_, err := p.Executor.Client.BatchV1().Jobs(p.Executor.Namespace).Get(ctx, entry.Name(), metav1.GetOptions{})
+		if apierrors.IsNotFound(err) {
+			p.Executor.releaseStandby(ctx, &WarmBinding{JobName: entry.Name(), Directory: directory})
+		} else if err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -449,11 +514,11 @@ func (e KubernetesExecutor) publishWarmTask(ctx context.Context, task *contracts
 	if jobFailed(job) || jobCompleted(job) || job.DeletionTimestamp != nil {
 		return unpublished(errors.New("unpublished standby is no longer alive"))
 	}
-	for _, name := range []string{"agent", "history"} {
-		info, err := os.Stat(filepath.Join(b.Directory, "ready", name))
-		if err != nil || time.Since(info.ModTime()) > 2*time.Second {
-			return unpublished(errors.New("unpublished standby lost readiness"))
-		}
+	if !standbyReady(b.Directory) {
+		return unpublished(errors.New("unpublished standby lost readiness"))
+	}
+	if time.Since(b.ClaimedAt) > standbyPublishDeadline {
+		return unpublished(errors.New("standby claim is too old to publish before the pod expires"))
 	}
 	environment := cloneEnvironment(e.Environment)
 	environment["SDO_REQUEST_SHA256"] = taskRequestDigest(task)
@@ -511,8 +576,8 @@ func (e KubernetesExecutor) abandonUnpublished(ctx context.Context, task *contra
 	if err := os.Remove(e.warmBindingPath(task)); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	policy := metav1.DeletePropagationBackground
-	return e.Client.BatchV1().Jobs(e.Namespace).Delete(ctx, b.JobName, metav1.DeleteOptions{PropagationPolicy: &policy})
+	e.releaseStandby(ctx, b)
+	return nil
 }
 
 // ExistingBinding identifies a restart/retry that must retain its API-history generation.
@@ -521,16 +586,33 @@ func (e KubernetesExecutor) HasBoundStandby(task *contracts.AgentTask) (bool, er
 	return binding != nil, err
 }
 
-func validWarmPaths(e KubernetesExecutor, task *contracts.AgentTask) bool {
+// warmSessionPath returns the canonical session directory when the checkout
+// and session are distinct, non-nested directories under the repository mount.
+func warmSessionPath(e KubernetesExecutor, task *contracts.AgentTask) (string, bool) {
 	checkout := path.Clean(task.GetWorkspace().GetCheckoutPath())
 	root := strings.TrimSuffix(path.Clean(e.RepositoryMountPath), "/")
 	if !path.IsAbs(checkout) || !path.IsAbs(root) || !strings.HasPrefix(checkout, root+"/") {
-		return false
+		return "", false
 	}
 	relative, err := filepath.Rel(sessionPVCBase(e.RepositoryPVCSubPath), e.SessionPVCSubPath)
 	if err != nil || relative == ".." || strings.HasPrefix(relative, "../") || filepath.IsAbs(relative) {
-		return false
+		return "", false
 	}
 	session := filepath.Join(e.RepositoryMountPath, relative)
-	return checkout != session && !strings.HasPrefix(checkout, session+"/") && !strings.HasPrefix(session, checkout+"/")
+	if checkout == session || strings.HasPrefix(checkout, session+"/") || strings.HasPrefix(session, checkout+"/") {
+		return "", false
+	}
+	return session, true
+}
+
+// standbyReady reports that the idle pod's agent and history sidecar both
+// refreshed their ready files recently.
+func standbyReady(directory string) bool {
+	for _, name := range []string{"agent", "history"} {
+		info, err := os.Stat(filepath.Join(directory, "ready", name))
+		if err != nil || time.Since(info.ModTime()) > standbyReadyFreshness {
+			return false
+		}
+	}
+	return true
 }
