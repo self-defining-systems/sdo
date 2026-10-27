@@ -41,7 +41,7 @@ func newPlanReports(plan program.Plan) []PlanActionReport {
 }
 func settlePlanReports(result *PlanApplicationResult, err error) {
 	for i := range result.ActionReports {
-		if result.ActionReports[i].Status == "unknown" {
+		if result.ActionReports[i].Status == "unknown" || result.ActionReports[i].Status == "partial" {
 			continue
 		}
 		if i < len(result.ActionsApplied) {

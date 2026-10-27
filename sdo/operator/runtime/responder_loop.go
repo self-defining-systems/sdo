@@ -1,13 +1,13 @@
 package runtime
 
 import (
-	"strings"
 	"context"
 	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -62,6 +62,7 @@ type ToolRequest struct {
 }
 
 type ToolResponse struct {
+	ActionReports              []PlanActionReport             `json:"action_reports,omitempty"`
 	SelectionSchema            *MenuSchema                    `json:"selection_schema,omitempty"`
 	SelectionSetSchema         *MenuSchema                    `json:"selection_set_schema,omitempty"`
 	ProgramRevisions           map[string]string              `json:"program_revisions,omitempty"`
@@ -148,7 +149,7 @@ type selectedPlan struct {
 
 // ResponderLoop holds one incident's tool state while its responder Job runs.
 type ResponderLoop struct {
-	stageProgress        map[string]responseStageProgress
+	stageProgress map[string]responseStageProgress
 	// WorkingProgramRoot is set by the production loop factory to the mounted
 	// proposal checkout. Embedders with an in-memory registry may leave it empty.
 	WorkingProgramRoot string
@@ -978,6 +979,7 @@ func (l *ResponderLoop) apply(ctx context.Context, request ToolRequest, response
 		executor.RolloutTimeout = request.rolloutTimeout
 	}
 	result, err := executor.Apply(ctx, l.mitigationIncident(selected), batch, false)
+	response.ActionReports = result.ActionReports
 	completed := time.Now().UTC()
 	if result.RolloutPending != nil {
 		l.reservePending(id, batch, "", "", program.Bindings{}, request.FindingFingerprints)

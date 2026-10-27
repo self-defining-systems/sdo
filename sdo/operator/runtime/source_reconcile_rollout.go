@@ -18,8 +18,14 @@ import (
 // the exact reconciled Deployment. Ready capacity, foreign ReplicaSets, paused
 // workloads and a rollout with no replacement remain the controller's to manage.
 func (w KubernetesPlanRollouts) ProgressSourceRollouts(ctx context.Context, refs []sdk.ObjectRef) ([]*contracts.SourceRolloutStep, error) {
+	if w.Client == nil {
+		return nil, fmt.Errorf("Kubernetes rollout client is required")
+	}
 	var steps []*contracts.SourceRolloutStep
 	for _, ref := range refs {
+		if err := ctx.Err(); err != nil {
+			return steps, err
+		}
 		if ref.APIVersion != "apps/v1" || ref.Kind != "Deployment" {
 			continue
 		}
@@ -64,6 +70,10 @@ func (w KubernetesPlanRollouts) ProgressSourceRollouts(ctx context.Context, refs
 			if rs.UID == "" || rs.ResourceVersion == "" {
 				step.Error = "stale ReplicaSet identity preconditions unavailable"
 				return steps, fmt.Errorf("%s", step.Error)
+			}
+			if err := ctx.Err(); err != nil {
+				step.Error = "rollout progress budget exhausted"
+				return steps, err
 			}
 			patch, _ := json.Marshal(map[string]any{"metadata": map[string]any{"uid": rs.UID, "resourceVersion": rs.ResourceVersion}, "spec": map[string]any{"replicas": int64(0)}})
 			_, err = w.Client.AppsV1().ReplicaSets(rs.Namespace).Patch(ctx, rs.Name, types.MergePatchType, patch, metav1.PatchOptions{})

@@ -266,10 +266,13 @@ func (e PlanExecutor) applyObjectPlan(ctx context.Context, incident IncidentRequ
 		patch.DirectReadConfirmed = true
 	}
 	complete = true
+	if err := e.reportSourceResiduals(ctx, incident, &result); err != nil {
+		return result, err
+	}
 	if err := e.awaitObserved(ctx, result.Patches); err != nil {
 		return result, err
 	}
-	if pending, err := e.waitForRollouts(ctx, incident, refs); err != nil {
+	if pending, err := e.waitForSourceRollouts(ctx, incident, refs, &result); err != nil {
 		result.RolloutPending = pending
 		return result, err
 	}

@@ -148,6 +148,10 @@ func (e PlanExecutor) Apply(ctx context.Context, incident IncidentRequest, plan 
 		}
 	}()
 	defer func() {
+		var partial *SourceReconcilePartialError
+		if errors.As(err, &partial) {
+			return
+		}
 		residualErr := e.reportSourceResiduals(ctx, incident, &result)
 		if residualErr != nil {
 			err = errors.Join(err, residualErr)

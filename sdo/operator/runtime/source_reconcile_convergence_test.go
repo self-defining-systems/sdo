@@ -19,7 +19,7 @@ import (
 // Sweep additions across lists and maps, including a list populated by defaults
 // at acceptance: pruning only maps cannot restore that last case.
 func TestSourceReconcileConvergesAddedConfiguration(t *testing.T) {
-	for _, location := range []string{"containers", "env", "affinity", "volumes", "tolerations", "annotations", "accepted-list"} {
+	for _, location := range []string{"containers", "env", "affinity", "volumes", "tolerations", "annotations", "accepted-list", "combined"} {
 		t.Run(location, func(t *testing.T) {
 			source := addedFieldsSource()
 			live := addedFieldsLive()
@@ -33,6 +33,11 @@ func TestSourceReconcileConvergesAddedConfiguration(t *testing.T) {
 				}
 			}
 			switch location {
+			case "combined":
+				containers := append(addedFieldsContainers(live), map[string]any{"name": "sidecar", "image": "proxy:1"})
+				containers[0].(map[string]any)["env"] = []any{map[string]any{"name": "ADDED", "value": "bad"}}
+				_ = unstructured.SetNestedSlice(live.Object, containers, "spec", "template", "spec", "containers")
+				_ = unstructured.SetNestedMap(live.Object, map[string]any{"nodeAffinity": map[string]any{"preferredDuringSchedulingIgnoredDuringExecution": []any{map[string]any{"weight": int64(1), "preference": map[string]any{"matchExpressions": []any{map[string]any{"key": "bad", "operator": "Exists"}}}}}}}, "spec", "template", "spec", "affinity")
 			case "containers":
 				_ = unstructured.SetNestedSlice(live.Object, append(addedFieldsContainers(live), map[string]any{"name": "sidecar", "image": "proxy:1"}), "spec", "template", "spec", "containers")
 			case "env":
@@ -135,5 +140,29 @@ func TestSourceReconcileLeavesSubresourceControllerFields(t *testing.T) {
 	replicas, _, _ := unstructured.NestedFieldNoCopy(client.objects[ref].Object, "spec", "replicas")
 	if !planValuesEqual(replicas, int64(4)) || !result.ActionReports[0].SourceReconcile.Converged {
 		t.Fatalf("controller field changed or compared as drift: %v %+v", replicas, result.ActionReports)
+	}
+}
+
+type sourceRuntimeClient struct{ reconcilingAdmissionClient }
+
+func (sourceRuntimeClient) Exec(context.Context, sdk.ObjectRef, string, []string) (int, error) {
+	return 0, nil
+}
+
+func TestSourceReconcilePartialRetainedInMixedRuntimePlan(t *testing.T) {
+	ref := addedFieldsRef()
+	podRef := sdk.ObjectRef{APIVersion: "v1", Kind: "Pod", Namespace: ref.Namespace, Name: "one"}
+	pod := planObject(podRef, map[string]any{})
+	pod.SetUID("pod-uid")
+	pod.SetResourceVersion("7")
+	client := sourceRuntimeClient{reconcilingAdmissionClient{planFakeClient: &planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: addedFieldsLive(), podRef: pod}}, mutate: func(live *unstructured.Unstructured) {
+		_ = unstructured.SetNestedField(live.Object, int64(9), "spec", "replicas")
+	}}}
+	executor := PlanExecutor{Client: client, Source: planFakeSource{source: addedFieldsSource()}, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{passed: true}, Values: program.ValueInputs{Spec: program.ProgramSpec{Params: []program.ParamSpec{{Name: "command", ValueKind: program.StringValue, Default: "/bin/true"}}}}}
+	plan := program.Plan{Actions: []program.Action{program.ReconcileFromSource{Ref: ref}, program.Exec{Pod: podRef, Container: "app", Command: []program.Value{program.FromParam("command")}}}}
+	result, err := executor.Apply(context.Background(), IncidentRequest{Namespace: ref.Namespace, SourceCommit: "accepted", RepairPolicy: "recorded-actions"}, plan, false)
+	var partial *SourceReconcilePartialError
+	if !errors.As(err, &partial) || !result.Applied || result.RolledBack || len(result.ActionsApplied) != 1 || result.ActionReports[0].Status != "partial" || result.ActionReports[0].SourceReconcile == nil {
+		t.Fatalf("mixed plan lost applied partial receipt: applied=%v actions=%d reports=%+v error=%v", result.Applied, len(result.ActionsApplied), result.ActionReports, err)
 	}
 }

@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -124,5 +125,59 @@ func TestSourceReconcileRolloutProtectsControllerCapacityAndOwnership(t *testing
 				}
 			}
 		})
+	}
+}
+
+func TestSourceReconcileRolloutProgressFailureIsTypedPartial(t *testing.T) {
+	deployment, current, stale := reconcileRolloutObjects(t)
+	client := fake.NewSimpleClientset(deployment, current, stale)
+	// An accepted PATCH response is insufficient when admission/controller
+	// interference leaves the old replica count unchanged on direct GET.
+	client.PrependReactor("patch", "replicasets", func(ktesting.Action) (bool, kruntime.Object, error) { return true, stale.DeepCopy(), nil })
+	source := addedFieldsSource()
+	live := source.DeepCopy()
+	live.SetUID(deployment.UID)
+	if err := RecordAcceptance(live, source); err != nil {
+		t.Fatal(err)
+	}
+	ref := addedFieldsRef()
+	executor := PlanExecutor{Client: &planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: live}}, Source: planFakeSource{source: source}, Rollouts: KubernetesPlanRollouts{Client: client}, Verifier: planFakeVerifier{passed: true}, RolloutTimeout: 50 * time.Millisecond}
+	result, err := executor.Apply(context.Background(), IncidentRequest{Namespace: ref.Namespace, SourceCommit: "accepted", RepairPolicy: "recorded-actions"}, reconcilePlan(ref), false)
+	var partial *SourceReconcilePartialError
+	if !errors.As(err, &partial) || !result.Applied || result.RolledBack || result.VerificationPassed {
+		t.Fatalf("unconfirmed rollout cleanup classified incorrectly: %+v %v", result, err)
+	}
+	report := result.ActionReports[0].SourceReconcile
+	if result.ActionReports[0].Status != "partial" || report.Converged || len(report.RolloutSteps) != 1 || report.RolloutSteps[0].Error == "" {
+		t.Fatalf("missing partial progress receipt: %+v", report)
+	}
+}
+
+func TestSourceReconcileRolloutSharesDeadline(t *testing.T) {
+	deployment, current, stale := reconcileRolloutObjects(t)
+	// Keep old ready capacity. The action must report it pending within its
+	// existing budget, never force-delete it to manufacture convergence.
+	stale.Status.ReadyReplicas = 1
+	client := fake.NewSimpleClientset(deployment, current, stale)
+	source := addedFieldsSource()
+	live := source.DeepCopy()
+	live.SetUID(deployment.UID)
+	if err := RecordAcceptance(live, source); err != nil {
+		t.Fatal(err)
+	}
+	ref := addedFieldsRef()
+	executor := PlanExecutor{Client: &planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: live}}, Source: planFakeSource{source: source}, Rollouts: KubernetesPlanRollouts{Client: client}, Verifier: planFakeVerifier{passed: true}, RolloutTimeout: time.Minute}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+	result, err := executor.Apply(ctx, IncidentRequest{Namespace: ref.Namespace, SourceCommit: "accepted", RepairPolicy: "recorded-actions"}, reconcilePlan(ref), false)
+	var pending *RolloutPendingError
+	if !errors.As(err, &pending) || result.RolloutPending == nil || result.VerificationPassed || time.Since(started) > time.Second {
+		t.Fatalf("progress exceeded original context or claimed completion: %+v %v", result, err)
+	}
+	for _, action := range client.Actions() {
+		if action.GetVerb() == "patch" {
+			t.Fatal("ready old capacity was patched")
+		}
 	}
 }
