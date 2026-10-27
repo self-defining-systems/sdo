@@ -225,8 +225,12 @@ func memoryCheck(ctx context.Context, args []string, getenv func(string) string,
 		if _, err := validate.NormalizeAuthoredWhitespace(absolute, paths); err != nil {
 			return exitInfra, err
 		}
+		if _, err := validate.NormalizeAuthoredPlaybooks(absolute, paths); err != nil {
+			return exitInfra, err
+		}
 	}
 	var replayNotes []sdktest.MitigationReplayResult
+	var coverageGaps []validate.Diagnostic
 	var ceiling sdk.ObservationScope
 	appNamespace := ""
 	if publication != nil {
@@ -236,7 +240,7 @@ func memoryCheck(ctx context.Context, args []string, getenv func(string) string,
 	diagnostics, err := validate.Check(ctx, validate.Request{
 		CodePath:           memoryValidationCodePath(getenv),
 		ObservationCeiling: ceiling, ApplicationNamespace: appNamespace,
-		MitigationReplayNotes: &replayNotes,
+		MitigationReplayNotes: &replayNotes, CoverageGaps: &coverageGaps,
 		Root:                  absolute, Base: base, CaptureDirectory: getenv("SDO_CAPTURED_CORPUS_DIR"), IncidentID: getenv(memoryIncidentEnv), Actor: validate.Actor(actor), Phase: validate.Phase(phase), Publication: publication, Decision: decision,
 		OperatorRoot: operatorRootDefault(getenv), HealthyBaseline: getenv("SDO_HEALTHY_BASELINE"),
 		MetricsDetectors: getenv(memoryMetricsEnv) != "",
@@ -245,13 +249,16 @@ func memoryCheck(ctx context.Context, args []string, getenv func(string) string,
 		return exitInfra, err
 	}
 	if *asJSON {
-		report := &contracts.MemoryCheckReport{MitigationReplayNotes: validate.ProtoMitigationReplayNotes(replayNotes), Diagnostics: validate.ProtoDiagnostics(diagnostics), Root: absolute, Actor: actor, Phase: phase, Base: base}
+		report := &contracts.MemoryCheckReport{MitigationReplayNotes: validate.ProtoMitigationReplayNotes(replayNotes), Diagnostics: validate.ProtoDiagnostics(diagnostics), CoverageGaps: validate.ProtoDiagnostics(coverageGaps), Root: absolute, Actor: actor, Phase: phase, Base: base}
 		if err := writeJSON(stdout, report); err != nil {
 			return exitInfra, err
 		}
 	} else {
 		for _, diagnostic := range diagnostics {
 			fmt.Fprintln(stdout, diagnosticLine(diagnostic))
+		}
+		for _, gap := range coverageGaps {
+			fmt.Fprintln(stdout, "coverage_gap "+diagnosticLine(gap))
 		}
 		for _, note := range replayNotes {
 			fmt.Fprintf(stdout, "program=%s case=%s mitigation_replay=%s\n", note.ProgramID, note.CaseID, note.Status)

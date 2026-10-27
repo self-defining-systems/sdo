@@ -59,6 +59,13 @@ func (s *run) compile(ctx context.Context) error {
 		if s.req.MitigationReplayNotes != nil {
 			*s.req.MitigationReplayNotes = append(*s.req.MitigationReplayNotes, notes...)
 		}
+		gaps, gapErr := workspace.CoverageGaps()
+		if gapErr != nil {
+			return gapErr
+		}
+		for _, gap := range gaps {
+			s.req.noteGaps(Diagnostic{Rule: RuleProgramRepeatReachable, Path: layout.PlaybooksDir, Message: gap})
+		}
 		return nil
 	}
 	var stage *builder.StageError
@@ -73,7 +80,7 @@ func (s *run) compile(ctx context.Context) error {
 		rule = RuleDetectorTest
 	}
 	mitigationFailure := false
-	for _, rule := range []string{RuleProgramMitigationRepair, RuleProgramMitigationReplay, RuleProgramRepeatReachable, detectorCorpusObservation, RuleDetectorHealthyBaseline, RuleDetectorControllerStart} {
+	for _, rule := range []string{RuleProgramMitigationRepair, RuleProgramMitigationReplay, detectorCorpusObservation, RuleDetectorHealthyBaseline, RuleDetectorControllerStart} {
 		if strings.Contains(stage.Output, rule) {
 			messages := map[string]bool{}
 			for _, line := range strings.Split(stage.Output, "\n") {
@@ -94,9 +101,6 @@ func (s *run) compile(ctx context.Context) error {
 				message = message[:maxCompileOutput]
 			}
 			path, hint := layout.PlaybooksDir, "mitigation must replay on the faulted fixture and clear its diagnosis"
-			if rule == RuleProgramRepeatReachable {
-				hint = "repair the recorded detector → finding bindings → diagnosis → mitigation link; Diagnose reads additional objects through ReadView"
-			}
 			if rule == RuleDetectorHealthyBaseline {
 				path = layout.DiagnosticsDir
 				hint = "incident detectors must stay quiet on the controller-captured healthy state (pre-incident, or the closure state the controller verified healthy); never substitute an agent-authored snapshot"

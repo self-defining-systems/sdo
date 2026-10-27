@@ -136,12 +136,6 @@ func testCLIAndBrokerAgreeOnAcceptance(t *testing.T, shard int) {
 	cases := []parityCase{
 		{"healthy refused service ports", validate.Responder, validate.ReflectionPhase, parityRefusedPortsDetector, []string{validate.RuleDetectorHealthyBaseline}, false},
 		{"healthy refused ports without recordings", validate.Responder, validate.ReflectionPhase, parityRefusedPortsDetector, []string{validate.RuleDetectorHealthyBaseline}, false},
-		{"missing controller healthy capture", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
-			put(t, r, ".sdo/diagnostics/detectors/incidents/cache/detector.go", parityDetector(t, "cache")+"\n// requires trusted healthy reference\n", 0644)
-		}, []string{validate.RuleDetectorHealthyBaseline}, false},
-		{"successful unrelated reported cause", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
-			put(t, r, ".sdo/diagnostics/detectors/incidents/cache/detector.go", parityDetector(t, "cache")+"\n// agent reported an unrelated cause\n", 0644)
-		}, []string{validate.RuleReflectionExecutableCause}, false},
 		{"unverified peer gaps", validate.Responder, validate.ReflectionPhase, func(*testing.T, string) {}, nil, false},
 		{"unverified peer no verified", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
 			put(t, r, ".sdo/diagnostics/detectors/incidents/cache/detector.go", parityDetector(t, "cache")+"\n// No verified cause.\n", 0644)
@@ -269,12 +263,9 @@ func TestReject(t *testing.T){t.Fatal("sentinel detector failure")}
 		"playbook-none":                 validate.RulePlaybookNone,
 		"playbook-missing-readme":       validate.RulePlaybookNoReadme,
 		"playbook-owner":                validate.RulePlaybookOwner,
-		"playbook-fault-class":          validate.RulePlaybookFaultClass,
 		"playbook-originating-incident": validate.RulePlaybookIncident,
-		"playbook-placeholder":          validate.RulePlaybookPlaceholder,
 		"index-missing":                 validate.RuleIndexMissing,
 		"index-link":                    validate.RuleIndexLink,
-		"playbook-not-indexed":          validate.RulePlaybookNotIndexed,
 		"script-unreferenced":           validate.RuleScriptUnreferenced,
 		"script-syntax":                 validate.RuleScriptSyntax,
 		"physical-path":                 validate.RulePhysicalPath,
@@ -363,24 +354,7 @@ func TestReject(t *testing.T){t.Fatal("sentinel detector failure")}
 			if err := os.RemoveAll(filepath.Join(r, ".sdo/diagnostics/detectors/incidents/routing-relations")); err != nil {
 				t.Fatal(err)
 			}
-		}, []string{validate.RuleProgramRepeatReachable}, false},
-		{"program repeat missing seven deployment roles", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
-			parityProgram(t, r)
-			path := filepath.Join(r, ".sdo/playbooks/service-targetport-mismatch/diagnose.go")
-			data, err := os.ReadFile(path)
-			if err != nil {
-				t.Fatal(err)
-			}
-			var roles strings.Builder
-			for _, name := range []string{"deployment", "search", "rate", "reservation", "profile", "recommendation", "user"} {
-				fmt.Fprintf(&roles, ", {Name:%q,Kind:\"Deployment\",Required:true}", name)
-			}
-			source := strings.Replace(string(data), `Required: true}}}`, `Required: true}`+roles.String()+`}}`, 1)
-			if source == string(data) {
-				t.Fatal("fixture spec was not changed")
-			}
-			put(t, r, ".sdo/playbooks/service-targetport-mismatch/diagnose.go", source, 0644)
-		}, []string{validate.RuleProgramRepeatReachable}, false},
+		}, nil, false},
 
 		{"program mitigation leaves target port faulty", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
 			parityProgram(t, r)
@@ -430,7 +404,7 @@ func (p Program) Mitigate(ctx context.Context,v program.ReadView,b program.Bindi
 			}
 			put(t, r, path, strings.Replace(string(data), "type Program struct{}", "type Program struct{ missing UndefinedType }", 1), 0644)
 		}, []string{validate.RuleDetectorCompile}, false},
-		{"program replay failure", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
+		{"program repeat unreachable is information", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
 			parityProgram(t, r)
 			path := ".sdo/diagnostics/detectors/incidents/routing-relations/detector.go"
 			data, err := os.ReadFile(filepath.Join(r, path))
@@ -439,7 +413,7 @@ func (p Program) Mitigate(ctx context.Context,v program.ReadView,b program.Bindi
 			}
 			source := strings.Replace(string(data), `ref := sdk.ObjectRefFrom("Service", "v1", &service)`, `ref := sdk.ObjectRefFrom("Service", "v1", &service); ref.Name = "not-observed"`, 1)
 			put(t, r, path, source, 0644)
-		}, []string{validate.RuleProgramRepeatReachable}, false},
+		}, nil, false},
 
 		{"program corpus provenance", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
 			parityProgram(t, r)

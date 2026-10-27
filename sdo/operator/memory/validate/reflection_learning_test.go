@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strings"
 	"testing"
 	"time"
 
@@ -14,24 +13,24 @@ import (
 	"sdo.dev/operator/memory/layout"
 )
 
-func TestReflectionRequiresProgramsAndDetectorForEveryVerifiedCause(t *testing.T) {
+func TestReflectionRecordsGapForVerifiedCauseWithoutProgram(t *testing.T) {
 	root := goodTree(t)
 	outcome := &contracts.OutcomeRecord{IncidentId: "first", Classification: "success", ConfirmedRootCauses: []*contracts.ConfirmedRootCause{{Summary: "routing fault", Resources: []*contracts.ObjectRef{{Kind: "Service", Namespace: "app", Name: "api"}}}}}
 	addSyntheticFindingRepairProof(outcome)
 	decision := &contracts.ReflectionDecision{LearningDecision: "updated", PlaybookIds: []string{"base"}}
-	ds, err := ReflectionLearningDiagnostics(root, outcome, decision)
-	if err != nil || len(ds) != 1 || ds[0].Rule != "reflection.program-required" {
-		t.Fatalf("README-only reflection escaped: %v %v", ds, err)
+	ds, blocking, err := ReflectionCoverageGaps(root, outcome, decision)
+	if err != nil || len(blocking) != 0 || len(ds) != 1 || ds[0].Rule != "reflection.program-required" {
+		t.Fatalf("README-only reflection gap not recorded: %v %v", ds, err)
 	}
 	decision.LearningDecision = "no_change"
-	ds, err = ReflectionLearningDiagnostics(root, outcome, decision)
+	ds, blocking, err = ReflectionCoverageGaps(root, outcome, decision)
 	if err != nil || len(ds) != 1 {
-		t.Fatalf("unlearned no-op escaped: %v %v", ds, err)
+		t.Fatalf("unlearned no-op gap not recorded: %v %v", ds, err)
 	}
 	decision.DeclineReason = "no_recorded_repair"
-	ds, err = ReflectionLearningDiagnostics(root, outcome, decision)
+	ds, blocking, err = ReflectionCoverageGaps(root, outcome, decision)
 	if err != nil || len(ds) != 1 {
-		t.Fatalf("missing captures excused missing program: %v %v", ds, err)
+		t.Fatalf("decline reason hid the gap: %v %v", ds, err)
 	}
 }
 
@@ -52,9 +51,9 @@ func TestReflectionLearnsFromSessionFixtureWithoutControllerCapture(t *testing.T
 	outcome := &contracts.OutcomeRecord{IncidentId: "first", Classification: "success", ConfirmedRootCauses: []*contracts.ConfirmedRootCause{{Resources: []*contracts.ObjectRef{{Kind: "Service", Namespace: "demo", Name: "front"}}}}}
 	addSyntheticFindingRepairProof(outcome)
 	decision := &contracts.ReflectionDecision{LearningDecision: "updated", PlaybookIds: []string{"service-targetport-mismatch"}}
-	ds, err := ReflectionLearningDiagnostics(root, outcome, decision)
-	if err != nil || len(ds) != 1 || ds[0].Rule != "reflection.detector-required" {
-		t.Fatalf("missing detector escaped: %v %v", ds, err)
+	ds, blocking, err := ReflectionCoverageGaps(root, outcome, decision)
+	if err != nil || len(blocking) != 0 || len(ds) != 1 || ds[0].Rule != "reflection.detector-required" {
+		t.Fatalf("missing detector gap not recorded: %v %v", ds, err)
 	}
 	detectors, err := layout.ReadDetectors(filepath.Join(root, layout.DiagnosticsDir))
 	if err != nil {
@@ -65,44 +64,44 @@ func TestReflectionLearnsFromSessionFixtureWithoutControllerCapture(t *testing.T
 	if err := layout.WriteDetector(root, detectors[0]); err != nil {
 		t.Fatal(err)
 	}
-	ds, err = ReflectionLearningDiagnostics(root, outcome, decision)
+	ds, blocking, err = ReflectionCoverageGaps(root, outcome, decision)
 	if err != nil || len(ds) != 0 {
-		t.Fatalf("shared detector and session fixture rejected: %v %v", ds, err)
+		t.Fatalf("shared detector and session fixture left a gap: %v %v", ds, err)
 	}
 	if err := os.Remove(filepath.Join(root, ".sdo/playbooks/service-targetport-mismatch/mitigate.go")); err != nil {
 		t.Fatal(err)
 	}
-	ds, err = ReflectionLearningDiagnostics(root, outcome, decision)
+	ds, blocking, err = ReflectionCoverageGaps(root, outcome, decision)
 	if err != nil || len(ds) != 1 || ds[0].Rule != "reflection.program-required" {
-		t.Fatalf("diagnose-only cause accepted: %v %v", ds, err)
+		t.Fatalf("diagnose-only cause gap not recorded: %v %v", ds, err)
 	}
 	decision.SdkGaps = []*contracts.SdkGap{{FaultClass: "routing", Primitive: "listener", Reason: "listener capability unavailable", ScratchScript: "scratch/listener", Resources: outcome.ConfirmedRootCauses[0].Resources}}
-	ds, err = ReflectionLearningDiagnostics(root, outcome, decision)
-	if err != nil || len(ds) != 0 {
-		t.Fatalf("scoped SDK gap rejected: %v %v", ds, err)
+	ds, blocking, err = ReflectionCoverageGaps(root, outcome, decision)
+	if err != nil || len(ds) != 1 {
+		t.Fatalf("scoped SDK gap changed the recorded gap: %v %v", ds, err)
 	}
 	outcome.ConfirmedRootCauses = append(outcome.ConfirmedRootCauses, &contracts.ConfirmedRootCause{Resources: []*contracts.ObjectRef{{Kind: "Service", Namespace: "demo", Name: "other"}}})
 	addSyntheticFindingRepairProof(outcome)
-	ds, err = ReflectionLearningDiagnostics(root, outcome, decision)
-	if err != nil || len(ds) != 1 {
-		t.Fatalf("SDK gap excused an unrelated cause: %v %v", ds, err)
+	ds, blocking, err = ReflectionCoverageGaps(root, outcome, decision)
+	if err != nil || len(ds) != 2 {
+		t.Fatalf("unrelated cause gap not recorded: %v %v", ds, err)
 	}
 }
 
-func TestFailedReflectionRequiresOnlyIndependentlyVerifiedPartialCauses(t *testing.T) {
+func TestFailedReflectionRecordsGapsOnlyForIndependentlyVerifiedPartialCauses(t *testing.T) {
 	root := goodTree(t)
 	verified := []*contracts.ObjectRef{{Kind: "Service", Namespace: "app", Name: "repaired"}}
 	outcome := &contracts.OutcomeRecord{Classification: "failed", ConfirmedRootCauses: []*contracts.ConfirmedRootCause{{Resources: verified}, {Resources: []*contracts.ObjectRef{{Kind: "Service", Namespace: "app", Name: "still-broken"}}}}, ReflectionEligibility: &contracts.ReflectionEligibility{Version: 1, Causes: []*contracts.ReflectionCauseWork{{CauseIndex: 0, Resources: verified}}}}
 	addSyntheticFindingRepairProof(outcome)
 	decision := &contracts.ReflectionDecision{LearningDecision: "updated"}
-	ds, err := ReflectionLearningDiagnostics(root, outcome, decision)
+	ds, _, err := ReflectionCoverageGaps(root, outcome, decision)
 	if err != nil || len(ds) != 1 || ds[0].Rule != RuleReflectionProgramRequired {
 		t.Fatalf("partial coverage was skipped or expanded: %v %v", ds, err)
 	}
 	decision.SdkGaps = []*contracts.SdkGap{{FaultClass: "routing", Primitive: "listener", Reason: "SDK capability unavailable", ScratchScript: "scratch/listener", Resources: verified}}
-	ds, err = ReflectionLearningDiagnostics(root, outcome, decision)
-	if err != nil || len(ds) != 0 {
-		t.Fatalf("unverified cause was made mandatory: %v %v", ds, err)
+	ds, _, err = ReflectionCoverageGaps(root, outcome, decision)
+	if err != nil || len(ds) != 1 {
+		t.Fatalf("unverified cause became a gap: %v %v", ds, err)
 	}
 }
 
@@ -112,7 +111,7 @@ func TestReflectionCoverageCheckPreservesAcceptedCauseEvidence(t *testing.T) {
 	b := []*contracts.ObjectRef{{Kind: "Service", Namespace: "app", Name: "b"}}
 	outcome := &contracts.OutcomeRecord{Classification: "failed", ReflectionEligibility: &contracts.ReflectionEligibility{Version: 1, Causes: []*contracts.ReflectionCauseWork{{CauseIndex: 0, Resources: a}, {CauseIndex: 1, Resources: b}}}}
 	before := proto.Clone(outcome)
-	_, err := ReflectionLearningDiagnostics(root, outcome, &contracts.ReflectionDecision{LearningDecision: "updated", SdkGaps: []*contracts.SdkGap{{FaultClass: "a", Primitive: "missing", Reason: "SDK gap for A", ScratchScript: "scratch/a", Resources: a}}})
+	_, _, err := ReflectionCoverageGaps(root, outcome, &contracts.ReflectionDecision{LearningDecision: "updated", SdkGaps: []*contracts.SdkGap{{FaultClass: "a", Primitive: "missing", Reason: "SDK gap for A", ScratchScript: "scratch/a", Resources: a}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,38 +130,4 @@ func addSyntheticFindingRepairProof(outcome *contracts.OutcomeRecord) {
 		}
 	}
 	outcome.FinalHealthDetectorState = []*contracts.DetectorEvaluation{{DetectorId: "fixture", Status: "clear", EvaluatedAt: timestamppb.New(at.Add(2 * time.Second))}}
-}
-
-// A detector-required rejection must say what to link and where: the matched
-// program, the cause resources, the responder-owned incident detectors that may
-// list it, and that health-owned and built-in detectors cannot supply the link.
-func TestReflectionDetectorRequiredNamesProgramResourcesAndLinkableDetectors(t *testing.T) {
-	root := t.TempDir()
-	copyTree(t, "../../../../tests/fixtures/sdo/playbook_program_app/.sdo", filepath.Join(root, ".sdo"))
-	detectors, err := layout.ReadDetectors(filepath.Join(root, layout.DiagnosticsDir))
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, detector := range detectors {
-		detector.Manifest.PossiblePlaybooks = slices.DeleteFunc(detector.Manifest.PossiblePlaybooks, func(id string) bool { return id == "service-targetport-mismatch" })
-		if err := layout.WriteDetector(root, detector); err != nil {
-			t.Fatal(err)
-		}
-	}
-	outcome := &contracts.OutcomeRecord{IncidentId: "first", Classification: "success", ConfirmedRootCauses: []*contracts.ConfirmedRootCause{{Resources: []*contracts.ObjectRef{{Kind: "Service", Namespace: "demo", Name: "front"}}}}}
-	addSyntheticFindingRepairProof(outcome)
-	decision := &contracts.ReflectionDecision{LearningDecision: "updated", PlaybookIds: []string{"service-targetport-mismatch"}}
-	ds, err := ReflectionLearningDiagnostics(root, outcome, decision)
-	if err != nil || len(ds) != 1 || ds[0].Rule != RuleReflectionDetectorRequired {
-		t.Fatalf("missing detector escaped: %v %v", ds, err)
-	}
-	text := ds[0].String()
-	for _, want := range []string{"service-targetport-mismatch", "Service demo/front", "possiblePlaybooks", "missing-configmap", "routing-relations", "new incident detector", "health", "drift.unexplained"} {
-		if !strings.Contains(text, want) {
-			t.Errorf("detector-required diagnostic lacks %q: %s", want, text)
-		}
-	}
-	if ds[0].Hint == "" || ds[0].Path != layout.DetectorsDir+"/incidents" {
-		t.Errorf("detector-required diagnostic needs a hint and the incident detector path: %+v", ds[0])
-	}
 }

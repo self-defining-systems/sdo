@@ -60,6 +60,9 @@ type Receipt struct {
 	Phase        Phase
 	Commit       string
 	ChangedPaths []string
+	// CoverageGaps are the non-blocking notes the accepting check recorded, also
+	// kept as SDO-Coverage-Gap trailers on the accepted commit.
+	CoverageGaps []string
 }
 
 // SourceEvidence is produced by a trusted deployment strategy, never by an
@@ -305,6 +308,14 @@ func (b *Broker) publish(ctx context.Context, incidentID string, actor Actor, ph
 				return err
 			}
 		}
+		// Playbook fault_class and index entries are derived, never rejected.
+		if normalized, err := validate.NormalizeAuthoredPlaybooks(proposal.Path, paths); err != nil {
+			return fmt.Errorf("normalize authored playbooks: %w", err)
+		} else if len(normalized) > 0 {
+			if paths, err = validate.ChangedPaths(ctx, proposal.Path, proposal.BaseCommit); err != nil {
+				return err
+			}
+		}
 		candidateRoot := proposal.Path
 		if actor == Responder && phase == ProposalPhase {
 			paths = SourceRepairPaths(paths)
@@ -338,7 +349,7 @@ func (b *Broker) publish(ctx context.Context, incidentID string, actor Actor, ph
 		}
 		// Validate before copying so invalid filesystem shapes also receive the
 		// shared diagnostics. Recheck the frozen private clone with the real runner.
-		preflight, err := b.checkCandidate(ctx, candidateRoot, proposal.BaseCommit, actor, phase, paths, func(context.Context, string, []string) error { return nil }, publication, decision)
+		preflight, err := b.checkCandidate(ctx, candidateRoot, proposal.BaseCommit, actor, phase, paths, func(context.Context, string, []string) error { return nil }, publication, decision, nil)
 		if err != nil {
 			return err
 		}
@@ -386,7 +397,8 @@ func (b *Broker) publish(ctx context.Context, incidentID string, actor Actor, ph
 		if err != nil {
 			return err
 		}
-		diagnostics, err := b.checkCandidate(ctx, stage, current, actor, phase, paths, b.validator, publication, decision)
+		var gaps []validate.Diagnostic
+		diagnostics, err := b.checkCandidate(ctx, stage, current, actor, phase, paths, b.validator, publication, decision, &gaps)
 		if err != nil {
 			return fmt.Errorf("proposal validation: %w", err)
 		}
@@ -411,7 +423,7 @@ func (b *Broker) publish(ctx context.Context, incidentID string, actor Actor, ph
 		if err != nil {
 			return err
 		}
-		receipt, err = b.accept(ctx, stage, incidentID, actor, phase, paths)
+		receipt, err = b.accept(ctx, stage, incidentID, actor, phase, paths, gaps...)
 		if err != nil {
 			return err
 		}
@@ -608,7 +620,7 @@ func checkIncidentID(incidentID string) error {
 	return nil
 }
 
-func (b *Broker) accept(ctx context.Context, stage, incidentID string, actor Actor, phase Phase, paths []string) (Receipt, error) {
+func (b *Broker) accept(ctx context.Context, stage, incidentID string, actor Actor, phase Phase, paths []string, gaps ...validate.Diagnostic) (Receipt, error) {
 	if err := checkIncidentID(incidentID); err != nil {
 		return Receipt{}, err
 	}
@@ -625,6 +637,12 @@ func (b *Broker) accept(ctx context.Context, stage, incidentID string, actor Act
 	if phase == ImportPhase {
 		message += "\nSDO-Origin: operator"
 	}
+	var noted []string
+	for _, gap := range gaps {
+		line := strings.Join(strings.Fields(gap.Rule+": "+gap.Message), " ")
+		noted = append(noted, line)
+		message += "\nSDO-Coverage-Gap: " + line
+	}
 	if _, err := runGitEnv(ctx, stage, brokerGitEnv(), "commit", "--quiet", "--allow-empty", "-m", message); err != nil {
 		return Receipt{}, err
 	}
@@ -638,7 +656,7 @@ func (b *Broker) accept(ctx context.Context, stage, incidentID string, actor Act
 	if _, err := runGit(ctx, b.target, "merge", "--ff-only", "--quiet", commit); err != nil {
 		return Receipt{}, fmt.Errorf("accepted branch changed during publish: %w", err)
 	}
-	return Receipt{IncidentID: incidentID, Phase: phase, Commit: commit, ChangedPaths: paths}, nil
+	return Receipt{IncidentID: incidentID, Phase: phase, Commit: commit, ChangedPaths: paths, CoverageGaps: noted}, nil
 }
 
 // AcceptedCommitAt authenticates an exact historical broker commit still in

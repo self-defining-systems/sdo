@@ -33,6 +33,9 @@ message MemoryCheckReport {
   string phase = 4;
   string base = 5;
   repeated MitigationReplayNote mitigation_replay_notes = 6;
+  // Non-blocking notes about learning the check left out, such as a verified
+  // cause with no program or a skipped healthy replay. They never reject.
+  repeated MemoryDiagnostic coverage_gaps = 7;
 }
 
 // One artifact of operational memory, identified by its logical ID.

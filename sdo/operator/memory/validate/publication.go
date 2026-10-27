@@ -168,20 +168,16 @@ func lifecycleChecks(ctx context.Context, r Request, paths []string, structurall
 				if err := protojson.Unmarshal([]byte(raw), outcome); err != nil {
 					return nil, err
 				}
-				learning, err := ReflectionLearningDiagnostics(r.Root, outcome, r.Decision)
+				gaps, blocking, err := ReflectionCoverageGaps(r.Root, outcome, r.Decision)
 				if err != nil {
 					return nil, err
 				}
-				ds = append(ds, learning...)
+				ds = append(ds, blocking...)
+				r.noteGaps(gaps...)
 				if structurallyValid {
 					if err := programvalidation.ValidateScriptOrigins(r.Root, outcome, paths); err != nil {
 						ds = append(ds, Diagnostic{Rule: RuleProgramMitigationRepair, Message: err.Error()})
 					}
-					executable, err := reflectionExecutableDiagnostics(r.Root, outcome, paths)
-					if err != nil {
-						return nil, err
-					}
-					ds = append(ds, executable...)
 				}
 			}
 		}
@@ -209,13 +205,13 @@ func lifecycleChecks(ctx context.Context, r Request, paths []string, structurall
 // ReflectionDiagnostics binds a decision and logical IDs to actual file changes.
 func ReflectionDiagnostics(d *contracts.ReflectionDecision, paths []string) []Diagnostic {
 	fail := func(message string) []Diagnostic {
-		return []Diagnostic{{Rule: RuleReflectionDecision, Message: message, Hint: "write the intended ReflectionDecision JSON to .git/" + DecisionFile + " before running memory check; use the same decision and logical IDs in the returned result"}}
+		return []Diagnostic{{Rule: RuleReflectionDecision, Message: message, Hint: "write the intended decision JSON to .git/" + DecisionFile + " before running memory check, then return the same decision; expected " + DecisionShape}}
 	}
 	if d == nil {
 		return fail("reflection requires an explicit learning decision")
 	}
 	if reason := d.GetDeclineReason(); reason != "" && reason != DeclineNoRecordedRepair {
-		return fail("only typed SDK gaps or a no_recorded_repair decline may excuse executable learning; missing controller captures do not block session-evidence fixtures")
+		return fail("decline_reason must be empty or no_recorded_repair")
 	}
 	switch d.GetLearningDecision() {
 	case "updated":
