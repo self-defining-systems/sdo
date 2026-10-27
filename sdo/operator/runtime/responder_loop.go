@@ -464,6 +464,7 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 	case "diagnose":
 		if request.ProgramID == "" {
 			response.Findings, response.ProgramRuns, response.DetectorStates, response.Error = l.refresh(ctx)
+			response.Drift = append([]sdk.Finding(nil), l.drift...)
 		} else {
 			if l.Programs == nil {
 				response.Error = "no programs are compiled"

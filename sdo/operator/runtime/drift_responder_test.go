@@ -28,7 +28,8 @@ func unexplainedFinding() sdk.Finding {
 	return f
 }
 
-func TestVerifyRetainsDriftWithHealthyDetectors(t *testing.T) {
+// Retained drift is reported next to a clear health verdict; it never decides it.
+func TestVerifyReportsDriftWithoutDecidingHealth(t *testing.T) {
 	f := unexplainedFinding()
 	health := controllerDetector("health", time.Second, sdk.Finding{})
 	loop := NewResponderLoop(IncidentRequest{IncidentID: "incident", Namespace: "app", Findings: []sdk.Finding{f}}, nil, staticProvider{snapshot: sdktest.Snapshot{NamespaceName: "app"}}, []sdk.Detector{health}, PlanExecutor{}, 1)
@@ -37,8 +38,8 @@ func TestVerifyRetainsDriftWithHealthyDetectors(t *testing.T) {
 	}
 	for _, command := range []string{"status", "diagnose", "verify"} {
 		result := loop.Handle(context.Background(), ToolRequest{Command: command})
-		if result.Healthy || len(result.Findings) != 1 {
-			t.Fatalf("%s lost retained drift with quiet health: %+v", command, result)
+		if (command != "diagnose" && !result.Healthy) || len(result.Findings) != 0 || len(result.Drift) != 1 {
+			t.Fatalf("%s hid retained drift or let it decide health: %+v", command, result)
 		}
 	}
 }

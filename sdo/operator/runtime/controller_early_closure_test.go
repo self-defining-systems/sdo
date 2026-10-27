@@ -120,7 +120,9 @@ func TestControllerEarlyClosurePendingWriteAndWriteReset(t *testing.T) {
 	}
 }
 
-func TestControllerEarlyClosureLatentLeftoverBlocks(t *testing.T) {
+// Latent source-absent objects are information: healthy detectors close the
+// incident early while they remain.
+func TestControllerEarlyClosureIgnoresLatentLeftover(t *testing.T) {
 	declared, live := hotelInventory()
 	store := &inventoryStore{objects: append(live, latentInventoryObjects()...)}
 	d := &blockingDispatcher{requests: make(chan IncidentRequest, 1), release: make(chan struct{})}
@@ -144,16 +146,9 @@ func TestControllerEarlyClosureLatentLeftoverBlocks(t *testing.T) {
 	awaitRequest(t, d.requests)
 	for i := 2; i <= 30; i++ {
 		step(i)
-		if !c.IncidentOpen() {
-			t.Fatal("latent leftover was hidden by healthy detectors")
-		}
-	}
-	store.objects = live
-	for i := 31; i <= 46; i++ {
-		step(i)
 	}
 	if c.IncidentOpen() {
-		t.Fatal("removed latent objects never verified")
+		t.Fatal("latent leftover held a health-verified early closure")
 	}
 }
 

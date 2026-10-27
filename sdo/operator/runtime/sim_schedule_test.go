@@ -153,6 +153,7 @@ func TestSimSchedulePartialRepairClosesOnHealthWithDriftRecorded(t *testing.T) {
 				w.responder.behavior = func() simBehavior { return simFixFirst }
 				w.broker.reject = func() bool { return false }
 				w.detectors = []sdk.Detector{simPartialHealth{}}
+				w.driftOnly = map[string]bool{simServiceName(1): true}
 				w.configure = func(c *Controller) {
 					c.ConfigureDrift(DriftControllerConfig{View: func(s sdk.DetectionContext) program.ReadView {
 						return LiveReadView{DetectionContext: s, Source: planFakeSource{source: simServiceNamed(simServiceName(1), 8080)}, SourceCommit: "c"}
