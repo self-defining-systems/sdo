@@ -147,6 +147,16 @@ func (e PlanExecutor) Apply(ctx context.Context, incident IncidentRequest, plan 
 			}
 		}
 	}()
+	defer func() {
+		var partial *SourceReconcilePartialError
+		if errors.As(err, &partial) {
+			return
+		}
+		residualErr := e.reportSourceResiduals(ctx, incident, &result)
+		if residualErr != nil {
+			err = errors.Join(err, residualErr)
+		}
+	}()
 	// A mitigation never spends the incident's global health budget. Keep
 	// write/rollout confirmation, then independently sample its own scope once.
 	if verifier := scopedMitigationVerifier(e.Verifier, plan, incident.Findings); verifier != nil && !dryRun {
@@ -347,6 +357,9 @@ func (e PlanExecutor) applyOnce(ctx context.Context, incident IncidentRequest, p
 	}
 	writesLanded = true
 	result.Applied = true
+	if err := e.reportSourceResiduals(ctx, incident, &result); err != nil {
+		return result, err
+	}
 	if err := e.awaitObserved(ctx, result.Patches); err != nil {
 		return result, err
 	}
@@ -648,6 +661,7 @@ func (e PlanExecutor) prepareAction(ctx context.Context, incident IncidentReques
 			return nil, err
 		}
 		removeAddedFields(next, current, source)
+		preserveSourceControllerFields(next, current)
 		return next, nil
 	case program.Rollback:
 		if e.Source == nil || a.ToRevision == "" {

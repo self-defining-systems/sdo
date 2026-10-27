@@ -61,6 +61,7 @@ func (r PlanApplicationResult) Proto() (*contracts.PlanApplication, error) {
 	}
 	for _, report := range r.ActionReports {
 		encoded := &contracts.ActionReport{ActionIndex: uint32(report.ActionIndex), Status: report.Status, ExitCode: report.ExitCode}
+		encoded.SourceReconcile = report.SourceReconcile
 		encoded.WebhookCaDigest = report.WebhookCADigest
 		encoded.FailureReason = report.FailureReason
 		encoded.RecordingError = report.RecordingError
@@ -110,6 +111,7 @@ func planApplicationState(application *contracts.PlanApplication) RecordedPlanAp
 	}
 	for _, report := range application.GetActionReports() {
 		decoded := PlanActionReport{ActionIndex: int(report.GetActionIndex()), Status: report.GetStatus(), ExitCode: report.ExitCode}
+		decoded.SourceReconcile = report.GetSourceReconcile()
 		decoded.WebhookCADigest = report.GetWebhookCaDigest()
 		decoded.FailureReason = report.GetFailureReason()
 		decoded.RecordingError = report.GetRecordingError()
