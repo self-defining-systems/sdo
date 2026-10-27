@@ -515,9 +515,7 @@ func TestStandbyDeadIdlePodIsNotClaimedAndColdJobTakesTheTask(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(slot.Directory, "control", standbyClaimFile)); !os.IsNotExist(err) {
 		t.Fatal("dead pod consumed the claim")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-	defer cancel()
-	_, _ = bound.Execute(ctx, task)
+	_, _ = executeUntil(t, jobExists(e, JobName(task.TaskId)), func(ctx context.Context) (*contracts.AgentResult, error) { return bound.Execute(ctx, task) })
 	if _, err := e.Client.BatchV1().Jobs(e.Namespace).Get(context.Background(), JobName(task.TaskId), metav1.GetOptions{}); err != nil {
 		t.Fatal("cold Job did not take the task", err)
 	}

@@ -7,6 +7,7 @@
 #   go    — every Go main under benchmarks/ compiles (scripts/check_go_mains.sh)
 #   schema — validator fingerprint and CLI binding contract tests
 #   parity — fast Go/Python/proto contract parity (scripts/check_contracts_fast.sh)
+#   pin    — the SREGym gitlink never moves behind the base branch
 #   refs   — generated skill references and the read-only Kubernetes client facade
 
 set -e
@@ -63,6 +64,11 @@ bash "$SCRIPT_DIR/gen_skill_references.sh" --check
 
 echo "==> generated read-only Kubernetes client facade"
 bash "$SCRIPT_DIR/gen_kube_read_clients.sh" --check
+
+# A merge that keeps this branch's older SREGym pin silently reverts the base
+# branch's pin; the base pin must be an ancestor of (or equal to) this one.
+echo "==> SREGym submodule pin"
+uv run python scripts/check_submodule_pin.py
 
 echo "==> ruff"
 if [ "$1" == "--fix" ]; then

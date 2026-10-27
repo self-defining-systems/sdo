@@ -6,9 +6,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/latefindings"
 )
 
@@ -20,9 +20,7 @@ func TestColdIncidentProjectsLateFindingsIntoReadOnlySessionDirectory(t *testing
 		t.Fatal(err)
 	}
 	e.LateFindingsConfigMap = latefindings.ConfigMapName("incident")
-	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
-	defer cancel()
-	_, _ = e.Execute(ctx, task)
+	_, _ = executeUntil(t, jobExists(e, JobName(task.TaskId)), func(ctx context.Context) (*contracts.AgentResult, error) { return e.Execute(ctx, task) })
 	if _, err := os.Stat(filepath.Join(e.RepositoryMountPath, "session/late-findings", latefindings.ReportKey)); err != nil {
 		t.Fatal("report was not projected before the worker launched", err)
 	}
