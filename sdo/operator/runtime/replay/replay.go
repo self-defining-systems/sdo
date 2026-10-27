@@ -218,6 +218,9 @@ func Check(ctx context.Context, p program.Diagnoser, m program.Mitigator, detect
 		if application.Applied {
 			r.Status = "failed"
 		}
+		if errors.Is(err, operator.ErrAcceptedManifestAbsent) {
+			err = fmt.Errorf("%w (accepted source does not declare the object: restore it to absent with DeleteObject, not ReconcileFromSource)", err)
+		}
 		return fail(fmt.Errorf("PlanExecutor: %w", err))
 	}
 	if !c.RepairOnly {
