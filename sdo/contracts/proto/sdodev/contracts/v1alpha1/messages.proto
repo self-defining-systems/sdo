@@ -403,6 +403,8 @@ message RepairActionReceipt {
   // live object before the write. Cause attribution follows these chains,
   // never generated names.
   repeated ResourceOwners owners = 12;
+  // Controller-recorded SHA256 of the exact executed RunScript bytes.
+  string script_digest = 13;
 }
 
 // ResourceOwners is one written resource's controller owner chain, nearest

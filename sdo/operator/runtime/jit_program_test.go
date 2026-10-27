@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"sdo.dev/operator/builder"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/sdk/program"
 )
@@ -47,6 +48,17 @@ func workingProgramLoop(t *testing.T) (*ResponderLoop, program.Bindings, func(st
 	loop.Request.SourceCommit = nativeGit(t, root, "rev-parse", "HEAD")
 	loop.MenuConfig = &ResponderMenuConfig{}
 	t.Setenv("SDO_OPERATOR_ROOT", "..")
+	// Warm the generated runner's normal build graph outside the production
+	// 30-second operation deadline, just as hosted cache preparation does.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	workspace, _, err := builder.BuildWorkingProgram(ctx, builder.Config{ApplicationRoot: root, OperatorRoot: ".."}, "service-targetport-mismatch")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := workspace.Close(); err != nil {
+		t.Fatal(err)
+	}
 	t.Cleanup(loop.CloseWorkingPrograms)
 	bindings := program.Bindings{Objects: program.ObjectBindings{"service": loop.Request.Findings[0].PrimaryResource}}
 	return loop, bindings, write

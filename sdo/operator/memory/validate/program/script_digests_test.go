@@ -1,6 +1,7 @@
 package program
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,7 +11,7 @@ import (
 
 func TestRunScriptProvenanceDoesNotDependOnReplayVerdicts(t *testing.T) {
 	const script = `kubectl exec --namespace "$NAMESPACE" "$POD" --container "$CONTAINER" -- bash "$MOUNT/$ITEM"`
-	for _, mode := range []string{"literal", "numeric constant", "alias chain changed digest", "type alias", "alias changed digest", "no snapshots", "constant", "constant expression", "changed digest", "missing receipt", "dynamic text"} {
+	for _, mode := range []string{"missing recorded digest", "different recorded digest", "literal", "numeric constant", "alias chain changed digest", "type alias", "alias changed digest", "no snapshots", "constant", "constant expression", "changed digest", "missing receipt", "dynamic text"} {
 		t.Run(mode, func(t *testing.T) {
 			root := t.TempDir()
 			fixture := "../../../../../tests/fixtures/sdo/hotel_run_script_upgrade/.sdo"
@@ -24,6 +25,32 @@ func TestRunScriptProvenanceDoesNotDependOnReplayVerdicts(t *testing.T) {
 			}
 			text := string(data)
 			switch mode {
+			case "missing recorded digest", "different recorded digest":
+				path := filepath.Join(root, "corpus/mongo-auth/recordings.json")
+				raw, err := os.ReadFile(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var calls []map[string]any
+				if err := json.Unmarshal(raw, &calls); err != nil {
+					t.Fatal(err)
+				}
+				for _, call := range calls {
+					if call["method"] == "RepairReceipt" {
+						r := call["result"].(map[string]any)
+						delete(r, "script_digest")
+						if mode == "different recorded digest" {
+							r["script_digest"] = "different"
+						}
+					}
+				}
+				raw, err = json.Marshal(calls)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, raw, 0644); err != nil {
+					t.Fatal(err)
+				}
 			case "numeric constant":
 				text = strings.Replace(text, "`"+script+"`", "savedScript", 1) + fmt.Sprintf("\nconst lastRune = %d\nconst savedScript = %q + string(lastRune)\n", script[len(script)-1], script[:len(script)-1])
 			case "alias chain changed digest":
@@ -59,7 +86,7 @@ func TestRunScriptProvenanceDoesNotDependOnReplayVerdicts(t *testing.T) {
 			// The inspector never runs Diagnose or Mitigate: only the authored script
 			// bytes, the captured linkage and its timed successful receipt matter.
 			_, err = InspectMemory(root, "fixture-diagnostics")
-			wantError := mode == "alias chain changed digest" || mode == "alias changed digest" || mode == "changed digest" || mode == "missing receipt" || mode == "dynamic text"
+			wantError := mode == "missing recorded digest" || mode == "different recorded digest" || mode == "alias chain changed digest" || mode == "alias changed digest" || mode == "changed digest" || mode == "missing receipt" || mode == "dynamic text"
 			if (err != nil) != wantError {
 				t.Fatalf("mode=%s err=%v", mode, err)
 			}

@@ -77,8 +77,8 @@ func (workspace *Workspace) ValidateAndBuild(ctx context.Context) (string, error
 	return workspace.validate(ctx, false)
 }
 
-// Check compiles and vets every package. Tests and replay run as observations;
-// their outcomes never decide whether memory can be saved. The initial package build already links
+// Check compiles and vets every package and enforces detector acceptance.
+// Playbook tests and replay are informational. The initial package build already links
 // the controller, so Check does not link a second controller artifact. The
 // explicit CGO-disabled prober build still checks its portable launch target.
 // A rejected stage is reported as a *StageError.
@@ -110,7 +110,13 @@ func (workspace *Workspace) validate(ctx context.Context, vet bool) (string, err
 		if !vet {
 			stages = append(stages, []string{"test", "-exec=true", "-run", "^$", "./..."})
 		}
-		stages = append(stages, []string{"test", "-run", "^(TestRegistrationContracts|TestProgramRegistrationContracts|TestDetectorsLoadInController|TestMetricsDetectorsDeclareValidQueries)$", "./generated"})
+		// Detector and generated safety contracts remain acceptance gates. Only
+		// authored playbook tests and the program corpus replay are advisory.
+		args := []string{"test", "./detectors/..."}
+		if _, err := os.Stat(filepath.Join(workspace.Directory, "traffic", "generators")); err == nil {
+			args = append(args, "./traffic/...")
+		}
+		stages = append(stages, args, []string{"test", "-skip", "^TestProgramCorpus$", "./generated"})
 	}
 	if !vet {
 		stages = append(stages, []string{"build", "-buildvcs=false", "-o", binary, "./cmd/controller"})

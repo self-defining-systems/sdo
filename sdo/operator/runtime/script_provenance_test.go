@@ -144,6 +144,9 @@ func (p provenancePipelineProgram) Mitigate(context.Context, program.ReadView, p
 }
 
 func acceptedScriptMemory(t *testing.T, id, script string) (string, string) {
+	return acceptedScriptMemoryWithExecutedScript(t, id, script, script)
+}
+func acceptedScriptMemoryWithExecutedScript(t *testing.T, id, script, executed string) (string, string) {
 	t.Helper()
 	root := nativeRepository(t)
 	capture := t.TempDir()
@@ -153,6 +156,18 @@ func acceptedScriptMemory(t *testing.T, id, script string) (string, string) {
 	}
 	at := time.Unix(100, 0)
 	outcome := &contracts.OutcomeRecord{IncidentId: incident, RepairActions: []*contracts.RepairActionReceipt{{ActionId: "original", Success: true, StartedAt: timestamppb.New(at), CompletedAt: timestamppb.New(at.Add(time.Second))}}}
+	if executed != "" {
+		executor := PlanExecutor{Client: &scriptPlanFake{}, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{true}}
+		result, err := executor.Apply(context.Background(), IncidentRequest{IncidentID: incident, Namespace: "app", RepairPolicy: "recorded-actions"}, program.Plan{Actions: []program.Action{program.RunScript{Script: executed}}}, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		receipts := ProgramRepairReceipts([]RecordedPlanApplication{{ID: "original", Result: result, StartedAt: at, CompletedAt: at.Add(time.Second)}}, nil)
+		if len(receipts) == 0 || receipts[0].ScriptDigest == "" {
+			t.Fatal("execution did not produce digest receipt")
+		}
+		outcome.RepairActions[0].ScriptDigest = receipts[0].ScriptDigest
+	}
 	if err := memory.CaptureRepairReceipts(capture, incident, outcome); err != nil {
 		t.Fatal(err)
 	}
@@ -269,6 +284,38 @@ func TestScriptProvenanceUsesOnlyThisProgramsAcceptedReceipts(t *testing.T) {
 			var refused *ScriptUnprovenancedError
 			if !errors.As(err, &refused) {
 				t.Fatalf("invalid lineage accepted: %v", err)
+			}
+		})
+	}
+}
+
+// Review negative control: the only original receipt contains no script bytes
+// or digest, so relabeling it must not authorize a never-executed script.
+func TestREV44BReceiptWithoutScriptBytesCannotAuthorizeScript(t *testing.T) {
+	for _, executed := range []string{"", "echo actually-executed"} {
+		t.Run(executed, func(t *testing.T) {
+			loop, state := pipelineTestLoop(t, true)
+			calls := 0
+			p := provenancePipelineProgram{construction: "provenanced", calls: &calls}
+			registry, err := program.NewRegistry([]program.Diagnoser{p}, []program.Mitigator{p})
+			if err != nil {
+				t.Fatal(err)
+			}
+			loop.Programs = registry
+			root, commit := acceptedScriptMemoryWithExecutedScript(t, p.Spec().ID, "echo recorded", executed)
+			// The label points to either a legacy receipt or different executed bytes.
+			loop.Request.RepositoryWorktree, loop.Request.SourceCommit = root, commit
+			state.Request = loop.Request
+			state.Coverage = nil
+			client := &scriptPlanFake{}
+			loop.Executor.Client = client
+			stage := &DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return loop }, KeepLoop: true, ObservationCeiling: time.Millisecond}
+			report, err := stage.Run(context.Background(), state)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if client.request.Script != "" {
+				t.Fatalf("NEVER-EXECUTED SCRIPT AUTHORIZED: %q; report=%v", client.request.Script, report)
 			}
 		})
 	}

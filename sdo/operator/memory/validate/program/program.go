@@ -408,9 +408,9 @@ func ReplayTests(programs []Spec) string {
 	for _, item := range programs {
 		hasCases = hasCases || len(item.Cases) > 0
 	}
-	imports := []string{"encoding/json", "os", "testing", "sdo.dev/operator/runtime/replay", "sdo.dev/operator/sdk/sdktest"}
+	imports := []string{"encoding/json", "os", "path/filepath", "testing", "sdo.dev/operator/runtime/replay", "sdo.dev/operator/sdk/sdktest"}
 	if hasCases {
-		imports = append(imports, "context", "path/filepath")
+		imports = append(imports, "context")
 	}
 	var test strings.Builder
 	test.WriteString("package generated\nimport(")
@@ -418,6 +418,12 @@ func ReplayTests(programs []Spec) string {
 		fmt.Fprintf(&test, "%q;", name)
 	}
 	test.WriteString(`)
+func TestProgramSourceSafety(t *testing.T){
+ for _, pattern := range []string{"../corpus/*/accepted.json", "../corpus/*/accepted.yaml", "../corpus/*/revisions/*.json", "../corpus/*/revisions/*.yaml"} {
+  paths,err:=filepath.Glob(pattern);if err!=nil{t.Fatal(err)}
+  for _,path:=range paths {if _,err:=replay.LoadManifests(path);err!=nil{t.Fatal(err)}}
+ }
+}
 func TestProgramCorpus(t *testing.T){
  var notes []sdktest.MitigationReplayResult
  var gaps []string

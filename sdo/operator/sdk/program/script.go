@@ -59,8 +59,7 @@ func validateScriptAction(action Action) error {
 	return nil
 }
 
-// ScriptDigest identifies the authored bytes; it does not claim the rewritten
-// program was executed by its historical origin receipt.
+// ScriptDigest identifies exact script bytes; application inputs belong in Env.
 func ScriptDigest(script string) string { return fmt.Sprintf("%x", sha256.Sum256([]byte(script))) }
 
 // ScriptEnvText converts a scalar input into process environment text. It never

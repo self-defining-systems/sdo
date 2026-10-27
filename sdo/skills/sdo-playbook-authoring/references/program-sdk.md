@@ -76,8 +76,8 @@ func ProjectPatch(object map[string]any, a PatchObject) (map[string]any, error)
     Errors leave the input untouched. The API server still validates its schema.
 
 func ScriptDigest(script string) string
-    ScriptDigest identifies the authored bytes; it does not claim the rewritten
-    program was executed by its historical origin receipt.
+    ScriptDigest identifies exact script bytes; application inputs belong in
+    Env.
 
 func ScriptEnvText(value any) (string, error)
     ScriptEnvText converts a scalar input into process environment text.
@@ -628,15 +628,16 @@ type ScriptObjectCapture struct {
 }
 
 type ScriptOriginReceipt struct {
-	ID          string          `json:"id"`
-	IncidentID  string          `json:"incident_id"`
-	Success     bool            `json:"success"`
-	StartedAt   time.Time       `json:"started_at"`
-	CompletedAt time.Time       `json:"completed_at"`
-	Resources   []sdk.ObjectRef `json:"resources,omitempty"`
+	ScriptDigest string          `json:"script_digest,omitempty"`
+	ID           string          `json:"id"`
+	IncidentID   string          `json:"incident_id"`
+	Success      bool            `json:"success"`
+	StartedAt    time.Time       `json:"started_at"`
+	CompletedAt  time.Time       `json:"completed_at"`
+	Resources    []sdk.ObjectRef `json:"resources,omitempty"`
 }
     ScriptOriginReceipt is protected historical evidence. A parameterized script
-    links to its origin; that receipt does not assert the rewritten bytes ran.
+    links to the exact bytes the controller executed.
 
 type SetField struct {
 	Ref    sdk.ObjectRef

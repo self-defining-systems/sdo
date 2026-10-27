@@ -660,6 +660,7 @@
   "sdodev.contracts.v1alpha1.RepairActionReceipt.owners",
   "sdodev.contracts.v1alpha1.RepairActionReceipt.resources",
   "sdodev.contracts.v1alpha1.RepairActionReceipt.reversible",
+  "sdodev.contracts.v1alpha1.RepairActionReceipt.script_digest",
   "sdodev.contracts.v1alpha1.RepairActionReceipt.started_at",
   "sdodev.contracts.v1alpha1.RepairActionReceipt.success",
   "sdodev.contracts.v1alpha1.RepairActionReceipt.summary",

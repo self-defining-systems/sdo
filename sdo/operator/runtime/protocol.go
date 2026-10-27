@@ -127,6 +127,7 @@ type TimingMetrics struct {
 }
 
 type RepairActionReceipt struct {
+	ScriptDigest  string
 	FailureReason string
 	ActionID      string
 	Kind          string

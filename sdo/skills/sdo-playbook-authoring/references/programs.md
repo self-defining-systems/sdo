@@ -185,8 +185,8 @@ script and each output stream retain at most 64 KiB.
 For opaque scripts, label `script_origins` in the corpus case with the script
 SHA-256 digest mapped to its original successful repair receipt ID. The
 controller adds timed `RepairReceipt` observations to protected recordings before
-reflection. Recorded commands, typed/RunScript actions and observed API writes
-supply receipts. Check the cause work and bound receipts
+reflection. Only a controller-recorded RunScript receipt with the exact executed
+script digest authorizes those bytes; legacy receipts and API writes cannot. Check the cause work and bound receipts
 before drafting executables.
 Replay records open and fixed diagnoses with their bindings; neither Match nor NoMatch is required to save. The replay report uses `observed-transition`: it does not execute bash,
 claim exact external-effect simulation, or assert the rewritten script ran.
