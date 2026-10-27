@@ -35,6 +35,44 @@ def test_incident_memory_finds_relevant_books_beyond_the_inventory_prefix() -> N
     assert len(snapshot.playbooks) == 100  # projection never mutates accepted input
 
 
+@pytest.mark.parametrize("link", ["finding", "disabled_detector", "applied_program", "skipped_program"])
+def test_incident_memory_retains_explicit_links_and_owned_programs(link: str) -> None:
+    from sdo.agents.responder.reflection_evidence import incident_memory_snapshot
+
+    snapshot = OperationalMemorySnapshot(accepted_commit="accepted-revision")
+    for index in range(40):
+        snapshot.playbooks.add(id=f"unrelated-{index}", markdown="unrelated")
+        snapshot.detectors.add(id=f"unrelated-{index}")
+    book = snapshot.playbooks.add(id="linked-book", markdown="incident guidance")
+    book.scripts.add(name="repair.go", content="owned program")
+    outcome = OutcomeRecord(incident_id="incident")
+    if link == "finding":
+        outcome.findings.add(detector_id="absent-detector", playbook_ids=[book.id])
+    elif link == "disabled_detector":
+        snapshot.detectors.add(id="disabled", description="repair this detector", possible_playbook_ids=[book.id])
+        outcome.disabled_setup_detectors.add(detector_id="disabled")
+    else:
+        stage = outcome.prior_stages.add(stage="deterministic")
+        stage.mitigations.add(
+            playbook_id=book.id,
+            program_revision="exact-revision",
+            result="skipped" if link == "skipped_program" else "applied_cleared",
+        )
+
+    scoped = incident_memory_snapshot(snapshot, outcome)
+    assert scoped.accepted_commit == "accepted-revision"
+    assert list(scoped.playbooks) == [book]
+    assert scoped.playbooks[0].scripts[0].content == "owned program"
+    view = reflection_memory_view(snapshot, outcome)
+    assert view["accepted_commit"] == "accepted-revision"
+    assert [item["id"] for item in view["playbooks"]] == [book.id]
+    assert view["playbooks"][0]["script_names"] == ["repair.go"]
+    assert [item["id"] for item in view["detectors"]] == (["disabled"] if link == "disabled_detector" else [])
+    if link == "disabled_detector":
+        assert view["detectors"][0]["description"] == "repair this detector"
+    assert len(snapshot.playbooks) == 41
+
+
 @pytest.mark.parametrize("backend_type", [reflection.CodexSessionBackend, reflection.ClaudeSessionBackend])
 def test_agent_cannot_consume_the_final_check_reserve(tmp_path: Path, monkeypatch, backend_type) -> None:
     now = 10.0

@@ -268,7 +268,9 @@ def incident_memory_snapshot(snapshot: OperationalMemorySnapshot, outcome: Outco
     first page. Full accepted files and the authoritative outcome remain intact.
     """
     detector_ids = {finding.detector_id for finding in outcome.findings}
+    detector_ids.update(item.detector_id for item in outcome.disabled_setup_detectors)
     playbook_ids = set(outcome.applied_playbooks) | set(outcome.confirmed_playbooks)
+    playbook_ids.update(playbook_id for finding in outcome.findings for playbook_id in finding.playbook_ids)
     playbook_ids.update(match.playbook_id for match in outcome.playbook_coverage.matches)
     playbook_ids.update(mitigation.playbook_id for stage in outcome.prior_stages for mitigation in stage.mitigations)
     for detector in snapshot.detectors:
