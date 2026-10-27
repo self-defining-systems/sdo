@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"google.golang.org/protobuf/encoding/protojson"
 	"runtime/debug"
@@ -20,6 +21,8 @@ import (
 // observation share it. Matches the stage could not apply or verify inside it
 // go to the agent in the stage report (skip reason "stage_budget").
 const DefaultStageBudget = 45 * time.Second
+
+const stagePlanNotExecutable = "plan_not_executable"
 
 // DeterministicResponseStage uses the same plan/apply and immutable receipt
 // boundary as the responder, operating only on accepted registry programs.
@@ -43,6 +46,18 @@ type responseStageProgress struct {
 	Coverage           *contracts.PlaybookCoverage
 	InitialProgramRuns []ProgramRun
 	Complete           bool
+}
+
+// Restore decisions for automatic refresh and ordinary tool rejoin alike;
+// unchanged accepted code cannot regain retries by crossing a checkpoint.
+func (l *ResponderLoop) restoreTerminalStagePlanErrors() {
+	for _, progress := range l.stageProgress {
+		for _, attempt := range progress.Report.GetMitigations() {
+			if attempt.SkipReason == stagePlanNotExecutable {
+				l.rememberTerminalPlanError(attempt.PlaybookId, attempt.ProgramRevision, &NonExecutablePlanError{Cause: errors.New(attempt.Error)})
+			}
+		}
+	}
 }
 
 func (*DeterministicResponseStage) Name() string { return "deterministic" }
@@ -85,6 +100,8 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 		state.Request.InitialProgramRuns = append([]ProgramRun(nil), progress.InitialProgramRuns...)
 		loop.Request = state.Request
 	}
+	loop.restoreTerminalStagePlanErrors()
+
 	save := func(complete bool) error {
 		report.RemainingFindingFingerprints = findingFingerprints(state.Findings)
 		loop.stageProgress[stage.Name()] = responseStageProgress{Report: report, Coverage: cloneCoverage(state.Coverage), InitialProgramRuns: append([]ProgramRun(nil), state.Request.InitialProgramRuns...), Complete: complete}
@@ -153,7 +170,7 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 	retry := map[string]*contracts.StageMitigation{}
 	for _, attempt := range report.Mitigations {
 		key := stageAttemptKey(attempt.PlaybookId, programBindingsState(attempt.Bindings))
-		if state.Refresh && attempt.Result == "skipped" {
+		if state.Refresh && attempt.Result == "skipped" && attempt.SkipReason != stagePlanNotExecutable {
 			retry[key] = attempt
 			continue
 		}
@@ -188,6 +205,13 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 			attempt.SkipReason = reason
 			recordStageFindingProgress(attempt, match.targets, state.Findings)
 			return save(false)
+		}
+		if terminal := loop.terminalPlanError(match.PlaybookId); terminal != nil {
+			attempt.Error = terminal.Error()
+			if err := skip(stagePlanNotExecutable); err != nil {
+				return report, err
+			}
+			continue
 		}
 		if remaining() <= 0 {
 			if err := skip("stage_budget"); err != nil {
@@ -272,6 +296,13 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 			return report, err
 		}
 		if planResponse.Error != "" {
+			if terminal := loop.terminalPlanError(match.PlaybookId); terminal != nil {
+				attempt.Error = terminal.Error()
+				if err := skip(stagePlanNotExecutable); err != nil {
+					return report, err
+				}
+				continue
+			}
 			attempt.Result = "apply_error"
 			attempt.Error = planResponse.Error
 			if err := save(false); err != nil {

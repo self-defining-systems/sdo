@@ -26,12 +26,32 @@ import (
 // state is passed to them and subsequent work fails closed when slots are spent.
 var errEmptyMitigationPlan = errors.New("program returned an empty plan")
 
+// NonExecutablePlanError is a structural program defect, not unavailable live
+// evidence. The automatic stage hands it off without retrying the program.
+type NonExecutablePlanError struct{ Cause error }
+
+func (e *NonExecutablePlanError) Error() string { return e.Cause.Error() }
+func (e *NonExecutablePlanError) Unwrap() error { return e.Cause }
+
+func (l *ResponderLoop) terminalPlanError(id string) *NonExecutablePlanError {
+	return l.terminalPlanErrors[id+"\x00"+l.programRevision(id)]
+}
+func (l *ResponderLoop) rememberTerminalPlanError(id, revision string, err *NonExecutablePlanError) {
+	if l.terminalPlanErrors == nil {
+		l.terminalPlanErrors = map[string]*NonExecutablePlanError{}
+	}
+	l.terminalPlanErrors[id+"\x00"+revision] = err
+}
+
 var mitigationSlots = make(chan struct{}, 4)
 
 // runMitigator is called with mu held; authored code always runs without it.
 // operationMu serializes tool/diagnosis operations while readers can still
 // inspect the loop during a slow or non-cooperative authored call.
 func (l *ResponderLoop) runMitigator(ctx context.Context, id string, p program.Mitigator, view program.ReadView, bindings program.Bindings) (plan program.Plan, err error) {
+	if prior := l.terminalPlanError(id); prior != nil {
+		return program.Plan{}, prior
+	}
 	deadline := l.deadline()
 	bindings = cloneProgramBindings(bindings)
 	if stepErr := withoutResponderLocks(l, "mitigator "+id, false, func() {
@@ -40,6 +60,10 @@ func (l *ResponderLoop) runMitigator(ctx context.Context, id string, p program.M
 		err = stepErr
 	}
 	if err != nil {
+		var terminal *NonExecutablePlanError
+		if errors.As(err, &terminal) {
+			l.rememberTerminalPlanError(id, l.programRevision(id), terminal)
+		}
 		l.addFailureSignal("mitigator_failure:" + id)
 	}
 	return plan, err
@@ -81,18 +105,24 @@ func BuildMitigationPlan(ctx context.Context, p program.Mitigator, view program.
 			err = readErr
 		}
 		if err == nil {
-			err = plan.Validate()
+			if validation := plan.Validate(); validation != nil {
+				err = &NonExecutablePlanError{Cause: validation}
+			}
 		}
 		if err == nil && len(plan.Actions) == 0 {
-			err = errEmptyMitigationPlan
+			err = &NonExecutablePlanError{Cause: errEmptyMitigationPlan}
 		}
 		if err == nil {
 			// Reject unsupported actions and detach the returned values from authored memory.
 			payload, encodeErr := json.Marshal(PlanApplicationResult{Plan: plan})
-			err = encodeErr
+			if encodeErr != nil {
+				err = &NonExecutablePlanError{Cause: encodeErr}
+			}
 			if err == nil {
 				var decoded PlanApplicationResult
-				err = json.Unmarshal(payload, &decoded)
+				if decodeErr := json.Unmarshal(payload, &decoded); decodeErr != nil {
+					err = &NonExecutablePlanError{Cause: decodeErr}
+				}
 				plan = decoded.Plan
 			}
 		}
