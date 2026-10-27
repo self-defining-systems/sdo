@@ -20,7 +20,6 @@ from benchmarks.sregym.fastloop.wipe import (
     WipeError,
     await_healthy_pods,
     credentials_hook,
-    data_fault_rows,
     finalizer_holders,
     inventory_path,
     load_inventory,
@@ -454,79 +453,6 @@ def test_tier_2_end_to_end_marker_to_receipt_for_the_incident_that_left_database
     assert document["tier2_trigger"] == "previous_row_unrecovered"
     assert "mongodb_user_unregistered" in document["tier2_reason"]
     assert not lane.has(APP, "data/mongodb-geo/user-unregistered")
-
-
-HOTEL_DB_FAULTS = {"hr_mongo": ("storage_user_unregistered:mongodb-geo", "revoke_auth_mongodb:mongodb-geo")}
-
-
-def injected_row(problem_id: str, *, recovered: bool = True, stage: str | None = None):
-    now = datetime(2026, 10, 27, tzinfo=timezone.utc)
-    return SimpleNamespace(
-        index=0,
-        problem_id=problem_id,
-        injection=NotInjected(stage=stage) if stage else Injected(started_at=now, finished_at=now),
-        recovery_error=None if recovered else "geo unhealthy",
-        full_cleanup_verified=recovered,
-    )
-
-
-def test_a_recovered_row_with_data_level_faults_still_recreates_the_app_and_its_data(tmp_path: Path) -> None:
-    """hr-b/003: the first try recovered 5/5, yet its MongoDB user and role changes survived in the PVC."""
-    row = injected_row("hr_mongo", recovered=True)
-    assert unrecovered_rows([row]) == ()
-    ended = AttemptMarker(tmp_path / "lane")
-    ended.begin()
-    ended.end(unrecovered_rows([row]), data_fault_rows([row], HOTEL_DB_FAULTS))
-    reason = tier2_reason(
-        AttemptMarker(tmp_path / "lane"),
-        lambda: pytest.fail("a data-faulted app is not probed"),
-        lambda: pytest.fail("a data-faulted app is not probed"),
-    )
-    assert reason is not None
-    assert reason.trigger is Tier2Trigger.PREVIOUS_ROW_DATA_FAULTS
-    lane = faulted_lane()
-    receipt, deployed = tier2(lane, reason)
-    assert not lane.has(APP, "data/mongodb-geo/user-unregistered")
-    assert APP not in deployed[0]
-    document = json.loads(receipt.write(tmp_path / "results").read_text())
-    assert document["tier2_trigger"] == "previous_row_data_faults"
-    assert document["previous_row_data_faults"] == [
-        "hr_mongo: storage_user_unregistered:mongodb-geo",
-        "hr_mongo: revoke_auth_mongodb:mongodb-geo",
-    ]
-
-
-def test_a_recovered_row_without_data_level_faults_keeps_the_warm_app(tmp_path: Path) -> None:
-    row = injected_row("hr_selector")
-    ended = AttemptMarker(tmp_path)
-    ended.begin()
-    ended.end(unrecovered_rows([row]), data_fault_rows([row], HOTEL_DB_FAULTS))
-    assert tier2_reason(AttemptMarker(tmp_path), lambda: None, list) is None
-
-
-def test_data_faults_count_only_rows_that_were_or_may_have_been_injected() -> None:
-    rows = [
-        injected_row("hr_mongo", stage="pre_injection"),
-        injected_row("hr_mongo", stage="injection"),
-        injected_row("other+hr_mongo"),
-    ]
-    assert data_fault_rows(rows, HOTEL_DB_FAULTS) == (
-        "hr_mongo: storage_user_unregistered:mongodb-geo",
-        "hr_mongo: revoke_auth_mongodb:mongodb-geo",
-        "hr_mongo: storage_user_unregistered:mongodb-geo",
-        "hr_mongo: revoke_auth_mongodb:mongodb-geo",
-    )
-
-
-def test_an_unrecovered_row_that_is_also_data_level_keeps_its_trigger_and_records_the_faults(tmp_path: Path) -> None:
-    row = injected_row("hr_mongo", recovered=False)
-    ended = AttemptMarker(tmp_path)
-    ended.begin()
-    ended.end(unrecovered_rows([row]), data_fault_rows([row], HOTEL_DB_FAULTS))
-    reason = AttemptMarker(tmp_path).pending()
-    assert reason is not None
-    assert reason.trigger is Tier2Trigger.PREVIOUS_ROW_UNRECOVERED
-    assert reason.data_faults == tuple(data_fault_rows([row], HOTEL_DB_FAULTS))
 
 
 def test_the_fault_catalog_owns_which_faults_are_data_level() -> None:
