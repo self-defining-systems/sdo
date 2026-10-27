@@ -2,18 +2,21 @@ package runtime
 
 import (
 	"context"
-	"errors"
-	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
-	"sdo.dev/operator/sdk"
-	"strings"
 	"testing"
 	"time"
+
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/sdk"
 )
 
 func rv6Guard(c *Controller, root, compiled string) {
-	c.CheckHealth = controllerHealthGuard(c, root, compiled)
+	c.CheckHealth = acceptedHealthGuard(root, compiled)
 }
-func TestRV6PendingClosureAfterAdoption(t *testing.T) {
+
+// STALE3: investigations and closures begun before a health adoption belong to
+// the restarted controller. The accepted repository head moving never retires,
+// refuses or fails them; closure is decided by health verification alone.
+func TestPendingClosureSurvivesAdoption(t *testing.T) {
 	ctx := context.Background()
 	root, _, _, _, coordinator := tracingFixture(t)
 	old := tracingRefresh(t, root, coordinator)
@@ -22,7 +25,8 @@ func TestRV6PendingClosureAfterAdoption(t *testing.T) {
 	now := time.Unix(0, 0)
 	cfg := testControllerConfig()
 	cfg.SourceCommit = current.Commit
-	c, err := NewController(cfg, nil, staticProvider{}, &recordingDispatcher{}, now)
+	detectors := []sdk.Detector{controllerDetector("health", time.Second, sdk.Finding{})}
+	c, err := NewController(cfg, detectors, staticProvider{}, &recordingDispatcher{}, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,7 +40,7 @@ func TestRV6PendingClosureAfterAdoption(t *testing.T) {
 		t.Fatal(err)
 	}
 	state := exportState(t, c)
-	restored, err := NewController(cfg, nil, staticProvider{}, &recordingDispatcher{}, now)
+	restored, err := NewController(cfg, detectors, staticProvider{}, &recordingDispatcher{}, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,17 +56,19 @@ func TestRV6PendingClosureAfterAdoption(t *testing.T) {
 	if !ok {
 		t.Fatal("missing closure")
 	}
-	err = restored.ExecuteClosureEffect(ctx, effect)
-	if err == nil {
-		awaitBrokerResult(t, restored.closureResults)
-		t.Fatalf("obsolete verified closure reached broker after adoption: %v", b.calls())
+	if err := restored.ExecuteClosureEffect(ctx, effect); err != nil {
+		t.Fatalf("adopted controller refused a closure begun before adoption: %v", err)
 	}
-	if !errors.Is(err, ErrStaleHealthInvestigation) {
-		t.Fatal(err)
+	awaitBrokerResult(t, restored.closureResults)
+	if len(b.calls()) == 0 {
+		t.Fatal("closure begun before adoption never reached the broker")
+	}
+	if restored.closureState == contracts.ClosureState_CLOSURE_STATE_FAILED || len(restored.failedClosures) != 0 {
+		t.Fatalf("closure retired by adoption: state %v archive %d", restored.closureState, len(restored.failedClosures))
 	}
 }
 
-func TestRV6AcknowledgmentAfterAdoption(t *testing.T) {
+func TestAcknowledgmentSurvivesAdoption(t *testing.T) {
 	ctx := context.Background()
 	root, _, _, _, coordinator := tracingFixture(t)
 	old := tracingRefresh(t, root, coordinator)
@@ -87,14 +93,12 @@ func TestRV6AcknowledgmentAfterAdoption(t *testing.T) {
 	if !ok {
 		t.Fatal("missing acknowledgment")
 	}
-	if err := c.ExecuteClosureAcknowledgmentEffect(ctx, effect); !errors.Is(err, ErrStaleHealthInvestigation) {
-		t.Fatalf("stale acknowledgment allowed: %v", err)
-	}
-	if len(b.calls()) != 0 {
-		t.Fatalf("stale evidence reached broker: %v", b.calls())
+	if err := c.ExecuteClosureAcknowledgmentEffect(ctx, effect); err != nil {
+		t.Fatalf("adoption refused the acknowledgment: %v", err)
 	}
 }
-func TestRV6OpenIncidentAfterAdoption(t *testing.T) {
+
+func TestOpenIncidentSurvivesAdoption(t *testing.T) {
 	ctx := context.Background()
 	root, _, _, _, coordinator := tracingFixture(t)
 	old := tracingRefresh(t, root, coordinator)
@@ -115,31 +119,12 @@ func TestRV6OpenIncidentAfterAdoption(t *testing.T) {
 	c.responderDone = true
 	c.responderCompletedAt = now
 	rv6Guard(c, root, current.Commit)
-
-	visible := false
-	c.OnClosureFailed = func(f ClosureFailure) { visible = f.Permanent && strings.Contains(f.LastError, "fresh investigation") }
-	if err := c.Step(ctx, now.Add(time.Hour), nil); err != nil {
+	failed := false
+	c.OnClosureFailed = func(ClosureFailure) { failed = true }
+	if err := c.Step(ctx, now.Add(time.Second), nil); err != nil {
 		t.Fatal(err)
 	}
-	if c.incidentOpen || !visible || c.closureState != contracts.ClosureState_CLOSURE_STATE_FAILED || len(c.failedClosures) != 1 {
-		t.Fatalf("stale incident not terminal: open=%v visible=%v archive=%d", c.incidentOpen, visible, len(c.failedClosures))
-	}
-	if c.pendingClosure.DispatchError == "" || len(c.pendingClosure.FinalDetectorStates) != 0 {
-		t.Fatal("obsolete investigation retained success")
-	}
-	state := exportState(t, c)
-	restarted, err := NewController(cfg, nil, staticProvider{}, &recordingDispatcher{}, now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := restarted.RestoreState(state); err != nil {
-		t.Fatal(err)
-	}
-	rv6Guard(restarted, root, current.Commit)
-	if err := restarted.Step(ctx, now.Add(2*time.Hour), nil); err != nil {
-		t.Fatalf("terminal incident blocked restart: %v", err)
-	}
-	if restarted.incidentOpen || restarted.closureBlocksNextLocked() {
-		t.Fatal("stale incident blocks fresh investigation")
+	if !c.incidentOpen && c.closureState == contracts.ClosureState_CLOSURE_STATE_FAILED || failed || len(c.failedClosures) != 0 {
+		t.Fatalf("adoption retired an investigation: open=%v failed=%v archive=%d", c.incidentOpen, failed, len(c.failedClosures))
 	}
 }
