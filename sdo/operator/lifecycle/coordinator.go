@@ -52,6 +52,8 @@ type WorkerExecutor interface {
 
 // VanishedDiscarder lets the owner of a worker's durable evidence forget a
 // dispatch whose Job disappeared without a result.
+const vanishedWorkerRule = "worker.job_vanished"
+
 type VanishedDiscarder interface {
 	DiscardVanished(context.Context, *contracts.AgentTask) error
 }
@@ -520,7 +522,7 @@ func (c Coordinator) judgeOnce(ctx context.Context, id string, cfg Config, attem
 		if errors.As(err, &vanished) {
 			// Redispatch already failed too: record a typed failed attempt and
 			// let the bounded retry start a fresh task rather than end the process.
-			return broker.Receipt{}, false, err.Error(), []*contracts.MemoryDiagnostic{{Rule: "worker.job_vanished", Message: err.Error()}}, nil
+			return broker.Receipt{}, false, err.Error(), []*contracts.MemoryDiagnostic{{Rule: vanishedWorkerRule, Message: err.Error()}}, nil
 		}
 		_ = c.Broker.ReleaseProposal(id, broker.InitialPhase)
 		return fail(err.Error())

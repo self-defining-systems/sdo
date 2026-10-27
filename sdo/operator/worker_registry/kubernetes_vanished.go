@@ -80,6 +80,9 @@ func (e KubernetesExecutor) recoverMissingResult(ctx context.Context, task *cont
 // run twice. It re-verifies the loss first: a live Job, a durable result, or
 // an undispatched task is left untouched.
 func (e KubernetesExecutor) DiscardVanished(ctx context.Context, task *contracts.AgentTask) error {
+	if !lifecycleTask(task) {
+		return fmt.Errorf("task %q is not a lifecycle task; its vanished Job stays terminal", task.GetTaskId())
+	}
 	name, err := e.taskJobName(ctx, task)
 	if err != nil {
 		return err
@@ -88,10 +91,23 @@ func (e KubernetesExecutor) DiscardVanished(ctx context.Context, task *contracts
 	if err := e.recoverMissingResult(ctx, task, name); !errors.As(err, &vanished) {
 		return err
 	}
+	// A Job deleted by a reset can leave a terminating Pod that still writes the
+	// shared checkout or result; the replacement must not overlap it.
+	if err := e.verifyWorkerQuiescence(ctx, name); err != nil {
+		return err
+	}
 	for _, suffix := range []string{"-request", "-execution"} {
 		if err := e.Client.CoreV1().ConfigMaps(e.Namespace).Delete(ctx, name+suffix, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
 			return fmt.Errorf("discard vanished worker %s: %w", name+suffix, err)
 		}
 	}
 	return nil
+}
+
+// lifecycleTask reports whether the task only authors a proposal in an
+// isolated checkout (deploy, architecture, health judge). Running one twice
+// repeats no effect; incident, warm and reflection tasks may.
+func lifecycleTask(task *contracts.AgentTask) bool {
+	request := task.GetRequest()
+	return request.MessageIs(&contracts.SourceDeploymentRequest{}) || request.MessageIs(&contracts.ArchitectureRequest{}) || request.MessageIs(&contracts.HealthJudgeRequest{})
 }

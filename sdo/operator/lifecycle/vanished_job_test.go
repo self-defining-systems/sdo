@@ -35,10 +35,30 @@ func TestRepeatedlyVanishedHealthWorkerIsRecordedAndBounded(t *testing.T) {
 		t.Fatal("expected failure when the worker keeps vanishing")
 	}
 	log, _ := b.Rejections("op-judge-1")
-	if len(log.GetRejections()) == 0 || log.GetRejections()[0].GetDiagnostics()[0].GetRule() != "worker.job_vanished" {
-		t.Fatalf("vanished attempts were not recorded as typed failures: %v", log)
+	if !log.GetTerminal() || len(log.GetRejections()) != 1+broker.MaxValidationRetries {
+		t.Fatalf("want a terminal log of %d rejections, got %v", 1+broker.MaxValidationRetries, log)
 	}
-	if got := len(judgeRequests(t, e)); got > 2*(1+broker.MaxValidationRetries) {
-		t.Fatalf("vanished worker was dispatched %d times", got)
+	for _, rejection := range log.GetRejections() {
+		if rejection.GetDiagnostics()[0].GetRule() != vanishedWorkerRule {
+			t.Fatalf("vanished attempt recorded as %v", rejection)
+		}
+	}
+	// Every attempt is a fresh task, dispatched at most twice (once, then redispatched).
+	ids := map[string]int{}
+	for _, task := range e.tasks {
+		if task.GetTaskType() == healthJudgeTask {
+			ids[task.GetTaskId()]++
+		}
+	}
+	if len(ids) != 1+broker.MaxValidationRetries {
+		t.Fatalf("attempts did not use fresh tasks: %v", ids)
+	}
+	for id, n := range ids {
+		if n != 2 {
+			t.Fatalf("task %s dispatched %d times, want 2", id, n)
+		}
+	}
+	if _, ok := ids["op-judge-1-retry1"]; !ok {
+		t.Fatalf("retry task IDs missing: %v", ids)
 	}
 }

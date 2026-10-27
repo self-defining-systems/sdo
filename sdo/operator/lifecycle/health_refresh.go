@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"sdo.dev/operator/broker"
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory"
 )
 
@@ -23,7 +24,10 @@ func (c Coordinator) RefreshHealth(ctx context.Context, cfg Config, revision mem
 	// The logical input ID ignores operational-memory commits. The concrete
 	// proposal/task must also bind its immutable accepted base: a retained Job
 	// must never receive a different request or write into a recreated checkout.
-	publicationID := revision.RefreshID() + "-base-" + revision.Commit
+	publicationID, err := c.refreshGeneration(revision.RefreshID() + "-base-" + revision.Commit)
+	if err != nil {
+		return broker.Receipt{}, fmt.Errorf("refresh health requirements: %w", err)
+	}
 	receipt, ready, feedback, err := c.judge(ctx, publicationID, cfg, 1, revision.Commit, revision.Commit, "")
 	if err != nil {
 		return broker.Receipt{}, fmt.Errorf("refresh health requirements: %w", err)
@@ -32,4 +36,34 @@ func (c Coordinator) RefreshHealth(ctx context.Context, cfg Config, revision mem
 		return broker.Receipt{}, fmt.Errorf("health unverified: %s", feedback)
 	}
 	return receipt, nil
+}
+
+// refreshGeneration returns the publication ID whose rejection log still has
+// attempts left. A log made terminal only by lost workers says nothing about
+// the judge's work, so the next controller start gets a fresh bounded
+// generation instead of failing on that log forever.
+func (c Coordinator) refreshGeneration(base string) (string, error) {
+	for generation := 0; ; generation++ {
+		id := base
+		if generation > 0 {
+			id = fmt.Sprintf("%s-g%d", base, generation)
+		}
+		log, err := c.Broker.Rejections(id)
+		if err != nil {
+			return "", err
+		}
+		if !log.GetTerminal() || !onlyLostWorkers(log) {
+			return id, nil
+		}
+	}
+}
+
+func onlyLostWorkers(log *contracts.ProposalRejectionLog) bool {
+	for _, rejection := range log.GetRejections() {
+		diagnostics := rejection.GetDiagnostics()
+		if len(diagnostics) == 0 || diagnostics[0].GetRule() != vanishedWorkerRule {
+			return false
+		}
+	}
+	return true
 }
