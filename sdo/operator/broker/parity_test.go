@@ -116,7 +116,8 @@ func TestCLIAndBrokerAgreeOnAcceptanceThirdShard(t *testing.T) {
 func acceptanceCaseShard(index int, name string) int {
 	switch name {
 	case "trusted captured program", "healthy refused service ports",
-		"healthy refused ports without recordings", "trailing whitespace normalized":
+		"healthy refused ports without recordings", "trailing whitespace normalized",
+		"direct program", "program mitigation leaves target port faulty":
 		return 2
 	default:
 		return index % 2
