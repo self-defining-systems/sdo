@@ -212,6 +212,7 @@ func (c *Controller) clearIncidentLocked() {
 	c.closureMutationRevision = ""
 	c.earlyLastMutationAt = time.Time{}
 	c.responderLoop = nil
+	c.midStage = midIncidentStage{}
 	c.responderCancel = nil
 	c.finishedHoldWake = time.Time{}
 	c.earlyStopRetryAt = time.Time{}

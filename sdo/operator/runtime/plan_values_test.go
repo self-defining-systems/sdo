@@ -104,7 +104,7 @@ func TestXV2ExtendedObservedValuesStayOnMitigationSnapshot(t *testing.T) {
 	replicas := int32(2)
 	snapshot := sdktest.Snapshot{NamespaceName: "app", StatefulSetList: []appsv1.StatefulSet{{ObjectMeta: metav1.ObjectMeta{Name: source.Name, Namespace: source.Namespace, ResourceVersion: "17"}, Spec: appsv1.StatefulSetSpec{Replicas: &replicas}}}}
 	p := observedScaleProgram{source: source, target: target}
-	plan, err := runBoundedMitigator(context.Background(), p, &sdktest.ReplayReadView{Snapshot: snapshot}, program.Bindings{}, time.Second)
+	plan, err := BuildMitigationPlan(context.Background(), p, &sdktest.ReplayReadView{Snapshot: snapshot}, program.Bindings{}, time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,7 +121,7 @@ func TestXV2ExtendedObservedValuesStayOnMitigationSnapshot(t *testing.T) {
 	if !planValuesEqual(got, 2) || first.ActionReports[0].Values[0].ResourceVersion != "17" {
 		t.Fatalf("invocation lost pinned observation: value=%v report=%+v", got, first.ActionReports)
 	}
-	refreshed, err := runBoundedMitigator(context.Background(), p, &sdktest.ReplayReadView{Snapshot: snapshot}, program.Bindings{}, time.Second)
+	refreshed, err := BuildMitigationPlan(context.Background(), p, &sdktest.ReplayReadView{Snapshot: snapshot}, program.Bindings{}, time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}

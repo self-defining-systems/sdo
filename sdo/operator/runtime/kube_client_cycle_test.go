@@ -106,7 +106,7 @@ func (ignoredClientMitigator) Mitigate(ctx context.Context, v program.ReadView, 
 	return program.Plan{Actions: []program.Action{program.DeleteObject{Ref: sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}, Reason: "synthetic regression"}}}, nil
 }
 func TestIgnoredClientGoReadCannotAuthorizeMitigation(t *testing.T) {
-	_, err := runBoundedMitigator(context.Background(), ignoredClientMitigator{}, program.ReadFrom(sdktest.Snapshot{NamespaceName: "app"}), program.Bindings{}, time.Second)
+	_, err := BuildMitigationPlan(context.Background(), ignoredClientMitigator{}, program.ReadFrom(sdktest.Snapshot{NamespaceName: "app"}), program.Bindings{}, time.Second)
 	if err == nil || !strings.Contains(err.Error(), "Secret") {
 		t.Fatalf("ignored client read did not refuse the mitigation for its failed observation: %v", err)
 	}

@@ -164,6 +164,15 @@ The automatic response stage sends all its matched plans in one apply with one r
 fixed 45 s stage budget (`DefaultStageBudget`); that apply is numbered separately and never spends the
 agent's rounds. Matches the stage could not apply or verify in time reach the agent in `prior_stages`
 with skip reason `stage_budget`.
+The stage runs again, on the responder's own loop, when a finding that a learned playbook explains
+activates after dispatch (`attachLearnedActivation`, at most eight passes, each within the same budget).
+The finding joins the open incident, a pass redoes attempts that were only skipped and never repeats one
+that wrote, and the one `deterministic` report in `prior_stages` is updated in place. The responder reads
+the new attempts once, as `prior_stages` in its next tool reply.
+Evidence for source-reconcile learning: every resource a write names, at each write boundary and at
+detect, gets one `DiffAgainstSource` recording in the incident capture (`recordSourceComparisons`); an
+object with no acceptance record keeps its declared-field result and the typed reason
+`acceptance_record_unavailable`.
 Private session/checkpoint messages retain provider identity for presentation, without mutation authority.
 Session presentation, reports, repair receipts and counters survive through the existing tool-state
 snapshot. There is no selection journal, report outbox or menu-specific mutation fence. In-process
