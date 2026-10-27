@@ -589,5 +589,5 @@ def test_reflection_preserves_mixed_learning_and_offers_undetected_repairs(tmp_p
     prompt = str(backend.calls[0]["prompt"])
     current = json.loads(prompt.split("Current outcome:\n", 1)[1].split("\n\nOutcome history", 1)[0])
     assert current["undetected_causes"][0]["repair_action_id"] == "recorded-patch"
-    assert "Return updated with scoped peer gaps" in prompt
+    assert "recorded as a gap, not refused" in prompt
     assert "listed undetected transitions" in prompt

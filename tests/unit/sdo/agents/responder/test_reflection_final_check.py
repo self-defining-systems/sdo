@@ -159,14 +159,17 @@ def test_worker_does_not_publish_persistently_rejected_memory(
         def publish_payload(self, *args: object) -> None:
             published.append(args)
 
-    agent = ScriptedAgent(
-        lambda _: reply(
+    def respond(_: CommandRequest) -> FakeRun:
+        # An unowned path is a blocking rejection the agent never fixes.
+        (accepted_reflection / ".sdo/notes.txt").write_text("not an owned artifact\n")
+        return reply(
             "codex",
             {"summary": "covered", "learning_decision": "no_change", "no_change_reason": "covered"},
             session_id="reflection-session",
             branch="reflection",
         )
-    )
+
+    agent = ScriptedAgent(respond)
     result = run_reflection_task(
         task_path,
         "result",
@@ -177,7 +180,7 @@ def test_worker_does_not_publish_persistently_rejected_memory(
     # The rejected memory is never published; the controller receives a typed failure instead.
     assert (result.status, result.failure_reason) == ("failed", "agent_failed")
     assert not result.HasField("response")
-    assert "reflection.program-required" in result.error_summary
+    assert "layout.unknown-path" in result.error_summary
     assert len(published) == 1
     assert all("reflection-session" in request.argv for request in agent.requests[1:])
 
@@ -236,24 +239,26 @@ def test_final_check_stops_at_original_deadline(
         nonlocal now
         budgets.append(timeout)
         checked = check_reflection_result(root, result, timeout)
-        now = 12.0  # The existing deadline expires during the rejected check.
+        now = 100.0  # The existing deadline expires during the rejected check.
         return checked
 
-    agent = ScriptedAgent(
-        lambda _: reply(
+    def respond(_: CommandRequest) -> FakeRun:
+        (accepted_reflection / ".sdo/notes.txt").write_text("not an owned artifact\n")
+        return reply(
             "codex",
             {"summary": "covered", "learning_decision": "no_change", "no_change_reason": "covered"},
             session_id="reflection-session",
             branch="reflection",
         )
-    )
-    with pytest.raises(RuntimeError, match="reflection.program-required"):
-        CodexSessionBackend(executor=agent.executor, memory_checker=check, timeout_seconds=1).fresh(
+
+    agent = ScriptedAgent(respond)
+    with pytest.raises(RuntimeError, match="layout.unknown-path"):
+        CodexSessionBackend(executor=agent.executor, memory_checker=check, timeout_seconds=30).fresh(
             worktree=accepted_reflection,
             prompt="reflect",
             idempotency_key="one-dispatch",
         )
-    assert budgets == [1.0]
+    assert budgets == [30.0]
     assert len(agent.requests) == 1
 
 
@@ -373,7 +378,7 @@ def learned_reflection(accepted_reflection: Path, monkeypatch: pytest.MonkeyPatc
 
 
 def test_repeat_chain_is_corrected_in_the_same_reflection_session(learned_reflection: Path) -> None:
-    """The real compiler's finding-binding rejection reaches the live correction loop."""
+    """The real compiler's rejection reaches the live correction loop."""
     root = learned_reflection
     path = root / ".sdo/diagnostics/detectors/incidents/routing-relations/detector.go"
     valid = path.read_text()
@@ -383,12 +388,7 @@ def test_repeat_chain_is_corrected_in_the_same_reflection_session(learned_reflec
         nonlocal calls
         calls += 1
         if calls == 1:
-            path.write_text(
-                valid.replace(
-                    '"service": ref',
-                    '"service": {APIVersion: "v1", Kind: "Service", Namespace: "demo", Name: "not-observed"}',
-                )
-            )
+            path.write_text(valid + "\nfunc broken(\n")
         else:
             assert calls == 2, agent.prompts[-1]
             assert "reflection-session" in request.argv
@@ -410,8 +410,7 @@ def test_repeat_chain_is_corrected_in_the_same_reflection_session(learned_reflec
     )
     assert calls == 2
     assert result.learning_decision == "updated"
-    assert "program.repeat-unreachable" in agent.prompts[1]
-    assert "service-targetport-mismatch" in agent.prompts[1]
+    assert "detector.go" in agent.prompts[1]
 
 
 @pytest.mark.parametrize("backend_type", [CodexSessionBackend, ClaudeSessionBackend])
