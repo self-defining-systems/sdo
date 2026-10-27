@@ -5,7 +5,7 @@
 #   arch  — AST facade imports and ownership rules (tests/unit/test_architecture.py)
 #   types — pyright (scripts/type_check.sh)
 #   go    — every Go main under benchmarks/ compiles (scripts/check_go_mains.sh)
-#   deadline — no Go test runs Execute under a fixed sub-second context deadline
+#   deadline — no short Execute deadlines or counted sleep-poll budgets in tests
 #   schema — validator fingerprint and CLI binding contract tests
 #   parity — fast Go/Python/proto contract parity (scripts/check_contracts_fast.sh)
 #   pin    — the SREGym gitlink never moves behind the base branch
@@ -49,8 +49,11 @@ echo "==> Go git fixture lifetime policy"
 echo "==> Go Execute deadline policy"
 (
     cd "$PROJECT_ROOT/sdo/operator"
-    go test ./internal/testutil -run '^Test(ExecuteDeadlinePolicyNegativeControls|NoFixedShortDeadlineAroundExecuteInTests)$' -count=1 -timeout=20s
+    go test ./internal/testutil -run '^Test(ExecuteDeadlinePolicyNegativeControls|NoFixedShortDeadlineAroundExecuteInTests|CountedPollingPolicyNegativeControls|CountedPollingAllowances|NoShortCountedPollingInTests)$' -count=1 -timeout=20s
 )
+
+echo "==> Python counted polling policy"
+uv run --extra test python -m pytest -q -p no:tach tests/unit/test_polling_policy.py
 
 # Capture fixtures must come from the real CaptureSnapshot projection.
 echo "==> Go capture fixture policy"
