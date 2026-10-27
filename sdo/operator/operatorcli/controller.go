@@ -34,8 +34,6 @@ func ParseControllerLaunch(args []string) (builder.RunConfig, bool, error) {
 	}
 	flags := flag.NewFlagSet("sdo-operator controller", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
-	var responseStageOverrides []string
-	flags.Func("response-stages", "ordered response stages; overrides the selected code path", func(value string) error { responseStageOverrides = stageOverride(value); return nil })
 	codePath := flags.String("code-path", "", "programming-model plugin set: go or shell")
 	codePathOverrides := flags.String("code-path-overrides", "", "CodePathOverrides JSON")
 	app := flags.String("app", "", "accepted application checkout")
@@ -119,7 +117,6 @@ func ParseControllerLaunch(args []string) (builder.RunConfig, bool, error) {
 	if err != nil {
 		return builder.RunConfig{}, false, err
 	}
-	addResponseStageOverride(&selectedCodePath, responseStageOverrides)
 	launch := &contracts.ControllerConfig{
 		CodePath:         selectedCodePath,
 		ResponderStandby: standby,

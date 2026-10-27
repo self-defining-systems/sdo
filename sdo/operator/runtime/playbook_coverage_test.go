@@ -32,7 +32,7 @@ func TestPlaybookCoverageIncludesEveryMatchAndUnexplainedFinding(t *testing.T) {
 	for _, result := range []program.Result{program.NoMatch, program.Unknown, program.NeedsJudgement} {
 		runs = append(runs, ProgramRun{ProgramID: string(result), Bindings: program.Bindings{Objects: program.ObjectBindings{"service": refs[2]}}, Verdict: program.Verdict{Result: result}})
 	}
-	coverage := buildPlaybookCoverage(findings, runs, nil, map[string]ProgramTrust{"repair-a": {VerifiedSuccesses: 2, Failures: 3}})
+	coverage := buildPlaybookCoverage(findings, runs, nil, map[string]ProgramCount{programCountKey("repair-a", "rev"): {Successes: 2, Failures: 3}})
 	if len(coverage.GetMatches()) != 3 || !reflect.DeepEqual(coverage.GetUnexplainedFindingFingerprints(), []string{FindingFingerprint(findings[2])}) {
 		t.Fatalf("coverage=%+v", coverage)
 	}
@@ -47,7 +47,7 @@ func TestPlaybookCoverageIncludesEveryMatchAndUnexplainedFinding(t *testing.T) {
 	for i, j := 0, len(runs)-1; i < j; i, j = i+1, j-1 {
 		runs[i], runs[j] = runs[j], runs[i]
 	}
-	if !reflect.DeepEqual(coverage, buildPlaybookCoverage(findings, runs, nil, map[string]ProgramTrust{"repair-a": {VerifiedSuccesses: 2, Failures: 3}})) {
+	if !reflect.DeepEqual(coverage, buildPlaybookCoverage(findings, runs, nil, map[string]ProgramCount{programCountKey("repair-a", "rev"): {Successes: 2, Failures: 3}})) {
 		t.Fatal("coverage depends on input ordering")
 	}
 }

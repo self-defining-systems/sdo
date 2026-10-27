@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 )
@@ -44,15 +43,6 @@ func TestGS1DeployedIdentityAndNamespaceScope(t *testing.T) {
 	}
 }
 
-func TestGS1TrustSurvivesProgramRevision(t *testing.T) {
-	first := verifiedTrustOutcome(t, "targetport", "revision-a")
-	next := &contracts.OutcomeRecord{ProgramRuns: []*contracts.ProgramRun{{ProgramId: "targetport", ProgramRevision: "revision-b"}}}
-	state := settledTrustStats([]*contracts.OutcomeRecord{first, next})["targetport"]
-	if (state.VerifiedSuccesses == 0 || state.Failures != 0) || state.VerifiedSuccesses != 1 || state.LastChange != "revision-b" {
-		t.Fatalf("revision reset trust: %+v", state)
-	}
-}
-
 func TestGS1LifecycleKindsAndAcceptedSourceDelete(t *testing.T) {
 	for _, create := range []bool{false, true} {
 		ref := sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "app", Name: "accepted-workload"}
@@ -87,14 +77,3 @@ func TestGS1LifecycleKindsAndAcceptedSourceDelete(t *testing.T) {
 	}
 }
 
-func TestGS1TrustDefaultAndRealFailure(t *testing.T) {
-	success := verifiedTrustOutcome(t, "targetport", "revision-a")
-	settledTrustStats([]*contracts.OutcomeRecord{success})
-	if state := ProgramTrustStats([]*contracts.OutcomeRecord{success})["targetport"]; (state.VerifiedSuccesses == 0 || state.Failures != 0) || state.VerifiedSuccesses != 1 {
-		t.Fatalf("default threshold: %+v", state)
-	}
-	failure := &contracts.OutcomeRecord{ProgramFailureSignals: []string{"application_verification_failure:targetport@revision-a"}}
-	if state := ProgramTrustStats([]*contracts.OutcomeRecord{success, failure})["targetport"]; (state.VerifiedSuccesses != 0 && state.Failures == 0) || state.VerifiedSuccesses != 0 || state.Failures != 1 {
-		t.Fatalf("real failure retained trust: %+v", state)
-	}
-}
