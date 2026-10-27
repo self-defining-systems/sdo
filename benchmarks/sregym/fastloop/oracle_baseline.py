@@ -28,14 +28,18 @@ class OracleBaselines:
             if saved.get("identity") == identity:
                 self.grades = saved["grades"]
 
-    def rehearse(self, problem_id: str, evaluate: Callable[[], dict[str, Any]]) -> dict[str, Any]:
+    def rehearse(
+        self, problem_id: str, evaluate: Callable[[], dict[str, Any]], *, fresh: bool = False
+    ) -> dict[str, Any]:
         """Evaluate once while healthy, before any of the planned faults is injected."""
-        if problem_id not in self.grades:
+        if problem_id not in self.grades or fresh:
             grade = evaluate()
             details = grade.get("details", {})
             # An unhealthy app is not evidence that a fault oracle is invalid.
             if details.get("collateral_ok") is False or details.get("traffic_ok") is False:
                 return grade
+            if problem_id in self.grades:
+                return self.apply(problem_id, grade)
             self.grades[problem_id] = deepcopy(grade)
             self.path.parent.mkdir(parents=True, exist_ok=True)
             temporary = self.path.with_suffix(".tmp")
@@ -58,7 +62,12 @@ class OracleBaselines:
             invalid = [i for i, part in enumerate(baseline_parts) if part.get("success") is not True]
             if not invalid:
                 return grade
+            if any(
+                part.get("name") != reference.get("name") for part, reference in zip(parts, baseline_parts, strict=True)
+            ):
+                raise ValueError("oracle component identities changed since healthy rehearsal")
             for i in invalid:
+                parts[i]["raw_verdict"] = deepcopy(parts[i])
                 parts[i]["status"] = "oracle_invalid"
                 parts[i]["baseline_verdict"] = deepcopy(baseline_parts[i])
                 parts[i]["success"] = None
@@ -81,16 +90,20 @@ class OracleBaselines:
                 details["accuracy"] = 100.0 if result["success"] else 0.0
         else:
             invalid_single = baseline.get("success") is not True
-            details["oracle_invalid"] = int(invalid_single)
+            if not invalid_single:
+                return grade
+            details["oracle_invalid"] = 1
             if invalid_single:
                 details.update(status="oracle_invalid", baseline_verdict=healthy, faults_total=0, faults_fixed=0)
+                details["raw_verdict"] = deepcopy(grade.get("details", {}))
+                details["success"] = None
                 result["success"] = True
         return result
 
 
 def install_oracle_baselines(
     worker: Any, baselines: OracleBaselines, *, confirm_healthy: Callable[[Any], bool] | None = None
-) -> Callable[[str], dict[str, Any]]:
+) -> Callable[..., dict[str, Any]]:
     """Bind factory identities and the real worker's grading consumer to one cache."""
     factory, grade = worker._problem_factory, worker._grade
 
@@ -105,16 +118,21 @@ def install_oracle_baselines(
         # aggregate scoring, where fault counts and collateral are available.
         if oracle is not None:
             return result
-        return baselines.apply(problem._baseline_problem_id, result)
+        filtered_grade = baselines.apply(problem._baseline_problem_id, result)
+        if filtered_grade.get("details", {}).get("status") == "oracle_invalid" and confirm_healthy is not None:
+            # A plain problem has no aggregate collateral/traffic oracle. Once
+            # its fault oracle is excluded, grade the current application.
+            filtered_grade["success"] = confirm_healthy(problem)
+        return filtered_grade
 
-    def rehearse(problem_id: str) -> dict[str, Any]:
+    def rehearse(problem_id: str, *, fresh: bool = False) -> dict[str, Any]:
         def evaluate() -> dict[str, Any]:
             problem = identified(problem_id)
             if confirm_healthy is not None and not confirm_healthy(problem):
                 return {"kind": "health-check", "success": False, "details": {"collateral_ok": False}}
             return grade(problem)
 
-        return baselines.rehearse(problem_id, evaluate)
+        return baselines.rehearse(problem_id, evaluate, fresh=fresh)
 
     worker._problem_factory = identified
     worker._grade = filtered

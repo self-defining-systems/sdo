@@ -98,3 +98,27 @@ def test_an_agent_that_returns_right_after_a_fix_still_counts_the_fault_resolved
 
     assert table[0]["resolved"] == "2/2"
     assert table[0]["all_resolved_s"] == 10.0
+
+
+def test_invalid_oracle_count_is_reported_separately_from_fixed_faults(tmp_path: Path) -> None:
+    (tmp_path / "composite_000_synthetic.json").write_text(
+        json.dumps({"agent": "sdo", "problem_id": "synthetic", "faults_total": 2, "faults_resolved": 1})
+    )
+    (tmp_path / "incidents.jsonl").write_text(
+        json.dumps(
+            {
+                "index": 0,
+                "oracle": {
+                    "success": True,
+                    "details": {
+                        "faults_total": 1,
+                        "faults_fixed": 1,
+                        "oracle_invalid": 1,
+                    },
+                },
+            }
+        )
+        + "\n"
+    )
+    row = rows([tmp_path])[0]
+    assert (row["faults_total"], row["faults_fixed"], row["oracle_invalid"]) == (1, 1, 1)
