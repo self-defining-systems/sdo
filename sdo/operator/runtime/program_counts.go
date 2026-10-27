@@ -5,6 +5,7 @@ import (
 	"log/slog"
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/memory"
 )
 
 // ProgramCount is how often a learned program's applications ended well or
@@ -75,7 +76,7 @@ func (d KubernetesJobDispatcher) programCounts(ctx context.Context) map[string]P
 	if d.Outcomes == nil {
 		return nil
 	}
-	stored, err := d.Outcomes.List(ctx)
+	stored, notes, err := memory.ListOutcomes(ctx, d.Outcomes, "program counts")
 	if err != nil {
 		slog.WarnContext(ctx, "program counts unavailable", "error", err)
 		return nil
@@ -86,7 +87,7 @@ func (d KubernetesJobDispatcher) programCounts(ctx context.Context) map[string]P
 			records = append(records, outcome.Record)
 		}
 	}
-	if skipped := len(stored) - len(records); skipped > 0 {
+	if skipped := len(notes) + len(stored) - len(records); skipped > 0 {
 		slog.WarnContext(ctx, "program counts skipped unreadable outcomes", "skipped", skipped)
 	}
 	return ProgramCounts(records)

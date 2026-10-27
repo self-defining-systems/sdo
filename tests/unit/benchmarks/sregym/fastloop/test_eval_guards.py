@@ -67,31 +67,71 @@ def test_old_clear_cannot_prove_health_after_resume():
     assert not controller_proof(state, {"traffic-health"}, "2026-10-25T19:59:00Z")["passed"]
 
 
-@pytest.mark.parametrize("path", [".sdo/outcomes/x.json", ".sdo/playbooks/repair/README.md", "kubernetes/app.yaml"])
-def test_setup_health_ownership_cannot_admit_incident_learning(path):
+def test_setup_commits_need_only_a_passed_broker_validation():
     from benchmarks.sregym.adapter.eval_guards import validate_setup_commit
 
-    with pytest.raises(ValueError, match="health-owned"):
-        validate_setup_commit("health_judge", "initial", "passed", [path])
+    validate_setup_commit("passed")
+    for validation in ("failed", "", "skipped"):
+        with pytest.raises(ValueError, match="unvalidated setup commit"):
+            validate_setup_commit(validation)
 
 
-def test_real_setup_ownership_shapes_are_admitted():
-    from benchmarks.sregym.adapter.eval_guards import validate_setup_commit
+@pytest.mark.parametrize(
+    ("actor", "phase", "paths", "expected"),
+    [
+        ("health_judge", "initial", [".sdo/diagnostics/traffic/workloads/frontend.yaml"], True),
+        (
+            "health_judge",
+            "initial",
+            [".sdo/diagnostics/detectors/health/x/detector.go", ".sdo/playbooks/README.md"],
+            True,
+        ),
+        ("controller", "outcome", [".sdo/outcomes/x.json"], False),
+        ("health_judge", "initial", [".sdo/outcomes/x.json"], False),
+        ("responder", "initial", [".sdo/diagnostics/traffic/workloads/frontend.yaml"], False),
+        ("health_judge", "initial", [], False),
+    ],
+)
+def test_lineage_labels_commits_beyond_health_setup(actor, phase, paths, expected):
+    from benchmarks.sregym.adapter.eval_guards import is_health_setup
 
-    validate_setup_commit(
-        "health_judge",
-        "initial",
-        "passed",
-        [
-            ".sdo/diagnostics/detectors/health/traffic-health/detector.go",
-            ".sdo/diagnostics/traffic/workloads/frontend.yaml",
-            ".sdo/playbooks/health-objective/README.md",
-        ],
+    assert is_health_setup(actor, phase, paths) is expected
+
+
+def _commit(repository, name, trailers):
+    import subprocess
+
+    (repository / name).write_text(name)
+    subprocess.run(["git", "-C", str(repository), "add", name], check=True)
+    message = "\n".join(["change", "", *trailers])
+    subprocess.run(
+        ["git", "-C", str(repository), "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-qm", message],
+        check=True,
     )
-    with pytest.raises(ValueError, match="unvalidated health setup"):
-        validate_setup_commit("controller", "rendered", "passed", [".sdo/rendered/lock.json"])
-    with pytest.raises(ValueError, match="unvalidated health setup"):
-        validate_setup_commit("responder", "initial", "passed", [".sdo/diagnostics/traffic/workloads/frontend.yaml"])
+
+
+def test_lineage_admits_a_controller_outcome_commit_and_reports_it(tmp_path):
+    """A pre-injection incident outcome (controller, phase outcome) must not stop the row; it is labelled."""
+    import subprocess
+
+    from benchmarks.sregym.adapter.eval_guards import setup_lineage
+
+    repository = tmp_path / "repo"
+    subprocess.run(["git", "init", "-q", str(repository)], check=True)
+    _commit(repository, "seed", [])
+    seed = subprocess.run(
+        ["git", "-C", str(repository), "rev-parse", "HEAD"], capture_output=True, text=True, check=True
+    ).stdout.strip()
+    judge = ["SDO-Actor: health_judge", "SDO-Phase: initial", "SDO-Validation: passed"]
+    outcome = ["SDO-Actor: controller", "SDO-Phase: outcome", "SDO-Validation: passed"]
+    _commit(repository, "setup", judge)
+    _commit(repository, "outcome", outcome)
+    lineage = setup_lineage(repository, seed)
+    assert [commit["health_setup"] for commit in lineage["commits"]] == [False, False]  # paths are not health-owned
+    assert lineage["non_setup_commits"] == [commit["sha"] for commit in lineage["commits"]]
+    _commit(repository, "unvalidated", ["SDO-Actor: controller", "SDO-Phase: outcome", "SDO-Validation: failed"])
+    with pytest.raises(ValueError, match="unvalidated setup commit"):
+        setup_lineage(repository, seed)
 
 
 def test_stabilization_observes_until_deadline_then_fails_without_injecting():
