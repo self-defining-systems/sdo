@@ -2509,13 +2509,13 @@ func (x *ReflectionWorkItem) GetEvaluation() *ProgramRun {
 // Controller-settled learning evidence, persisted before the outcome commit.
 // Absence on historical outcomes is unproven and never supplies success credit.
 type ReflectionEligibility struct {
-	state            protoimpl.MessageState `protogen:"open.v1"`
-	Version          uint32                 `protobuf:"varint,1,opt,name=version,proto3" json:"version,omitempty"`
-	Causes           []*ReflectionCauseWork `protobuf:"bytes,2,rep,name=causes,proto3" json:"causes,omitempty"`
-	Unassigned       []*ReflectionWorkItem  `protobuf:"bytes,3,rep,name=unassigned,proto3" json:"unassigned,omitempty"`
-	EvidenceGapCount *uint32                `protobuf:"varint,4,opt,name=evidence_gap_count,json=evidenceGapCount,proto3,oneof" json:"evidence_gap_count,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Version       uint32                 `protobuf:"varint,1,opt,name=version,proto3" json:"version,omitempty"`
+	Causes        []*ReflectionCauseWork `protobuf:"bytes,2,rep,name=causes,proto3" json:"causes,omitempty"`
+	Unassigned    []*ReflectionWorkItem  `protobuf:"bytes,3,rep,name=unassigned,proto3" json:"unassigned,omitempty"`
+	NoRepairCount *uint32                `protobuf:"varint,4,opt,name=no_repair_count,json=noRepairCount,proto3,oneof" json:"no_repair_count,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ReflectionEligibility) Reset() {
@@ -2569,9 +2569,9 @@ func (x *ReflectionEligibility) GetUnassigned() []*ReflectionWorkItem {
 	return nil
 }
 
-func (x *ReflectionEligibility) GetEvidenceGapCount() uint32 {
-	if x != nil && x.EvidenceGapCount != nil {
-		return *x.EvidenceGapCount
+func (x *ReflectionEligibility) GetNoRepairCount() uint32 {
+	if x != nil && x.NoRepairCount != nil {
+		return *x.NoRepairCount
 	}
 	return 0
 }
@@ -4232,14 +4232,14 @@ const file_sdodev_contracts_v1alpha1_program_proto_rawDesc = "" +
 	"causeIndex\x12B\n" +
 	"\tresources\x18\x02 \x03(\v2$.sdodev.contracts.v1alpha1.ObjectRefR\tresources\x12C\n" +
 	"\x05items\x18\x03 \x03(\v2-.sdodev.contracts.v1alpha1.ReflectionWorkItemR\x05items\x12C\n" +
-	"\x0elearning_basis\x18\x04 \x01(\tB\x1c\xbaH\x19r\x17R\x00R\x13observed_transitionR\rlearningBasis\"\xd7\x05\n" +
+	"\x0elearning_basis\x18\x04 \x01(\tB\x1c\xbaH\x19r\x17R\x00R\x13observed_transitionR\rlearningBasis\"\xdd\x05\n" +
 	"\x12ReflectionWorkItem\x12\x1d\n" +
 	"\n" +
 	"program_id\x18\x01 \x01(\tR\tprogramId\x12>\n" +
 	"\bbindings\x18\x02 \x03(\v2\".sdodev.contracts.v1alpha1.BindingR\bbindings\x12G\n" +
 	"\vdisposition\x18\x03 \x01(\tB%\xbaH\"r R\acoveredR\vfalse_matchR\bquestionR\vdisposition\x12\x1a\n" +
-	"\bquestion\x18\x04 \x01(\tR\bquestion\x12\xbf\x01\n" +
-	"\x06reason\x18\x05 \x01(\tB\xa6\x01\xbaH\xa2\x01r\x9f\x01R\x1averified_equivalent_repairR\x13fixed_capture_matchR\x13binding_not_writtenR\x1brepair_equivalence_questionR\runbound_writeR\tuncertainR\fevidence_gapR\x12program_refinementR\x06reason\x12B\n" +
+	"\bquestion\x18\x04 \x01(\tR\bquestion\x12\xc5\x01\n" +
+	"\x06reason\x18\x05 \x01(\tB\xac\x01\xbaH\xa8\x01r\xa5\x01R\x1averified_equivalent_repairR\x13fixed_capture_matchR\x13binding_not_writtenR\x1brepair_equivalence_questionR\runbound_writeR\tuncertainR\x12no_recorded_repairR\x12program_refinementR\x06reason\x12B\n" +
 	"\tresources\x18\x06 \x03(\v2$.sdodev.contracts.v1alpha1.ObjectRefR\tresources\x12;\n" +
 	"\x0eevidence_phase\x18\a \x01(\tB\x14\xbaH\x11r\x0fR\x00R\x04openR\x05fixedR\revidencePhase\x12)\n" +
 	"\x10program_revision\x18\b \x01(\tR\x0fprogramRevision\x12H\n" +
@@ -4247,15 +4247,15 @@ const file_sdodev_contracts_v1alpha1_program_proto_rawDesc = "" +
 	"\n" +
 	"evaluation\x18\n" +
 	" \x01(\v2%.sdodev.contracts.v1alpha1.ProgramRunR\n" +
-	"evaluation\"\x9b\x02\n" +
+	"evaluation\"\x92\x02\n" +
 	"\x15ReflectionEligibility\x12!\n" +
 	"\aversion\x18\x01 \x01(\rB\a\xbaH\x04*\x02\b\x01R\aversion\x12F\n" +
 	"\x06causes\x18\x02 \x03(\v2..sdodev.contracts.v1alpha1.ReflectionCauseWorkR\x06causes\x12M\n" +
 	"\n" +
 	"unassigned\x18\x03 \x03(\v2-.sdodev.contracts.v1alpha1.ReflectionWorkItemR\n" +
-	"unassigned\x121\n" +
-	"\x12evidence_gap_count\x18\x04 \x01(\rH\x00R\x10evidenceGapCount\x88\x01\x01B\x15\n" +
-	"\x13_evidence_gap_count\"\xa0\x01\n" +
+	"unassigned\x12+\n" +
+	"\x0fno_repair_count\x18\x04 \x01(\rH\x00R\rnoRepairCount\x88\x01\x01B\x12\n" +
+	"\x10_no_repair_count\"\xa0\x01\n" +
 	"\x10PlaybookCoverage\x12B\n" +
 	"\amatches\x18\x01 \x03(\v2(.sdodev.contracts.v1alpha1.PlaybookMatchR\amatches\x12H\n" +
 	" unexplained_finding_fingerprints\x18\x02 \x03(\tR\x1eunexplainedFindingFingerprints\"\x93\x03\n" +

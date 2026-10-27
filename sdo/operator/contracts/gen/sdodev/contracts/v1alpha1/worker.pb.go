@@ -863,15 +863,15 @@ const file_sdodev_contracts_v1alpha1_worker_proto_rawDesc = "" +
 	"\n" +
 	"cause_work\x18\x0e \x03(\v2..sdodev.contracts.v1alpha1.ReflectionCauseWorkR\tcauseWork\x12V\n" +
 	"\x0funassigned_work\x18\x0f \x03(\v2-.sdodev.contracts.v1alpha1.ReflectionWorkItemR\x0eunassignedWork:\xcb\x01\xbaH\xc7\x01\x1a\xc4\x01\n" +
-	",reflection_request.diagnostics_only_on_retry\x12Lprevious_diagnostics are carried exactly by a retry (validation_attempt > 1)\x1aF(this.validation_attempt > 1) == (size(this.previous_diagnostics) > 0)J\x04\b\x02\x10\x03J\x04\b\x03\x10\x04J\x04\b\r\x10\x0eR\foutcome_jsonR\x12prior_outcome_jsonR\x05depth\"\xed\x04\n" +
+	",reflection_request.diagnostics_only_on_retry\x12Lprevious_diagnostics are carried exactly by a retry (validation_attempt > 1)\x1aF(this.validation_attempt > 1) == (size(this.previous_diagnostics) > 0)J\x04\b\x02\x10\x03J\x04\b\x03\x10\x04J\x04\b\r\x10\x0eR\foutcome_jsonR\x12prior_outcome_jsonR\x05depth\"\xf3\x04\n" +
 	"\x10ReflectionResult\x12\x18\n" +
 	"\asummary\x18\x01 \x01(\tR\asummary\x12O\n" +
 	"\x11learning_decision\x18\x02 \x01(\tB\"\xbaH\x1fr\x1dR\aupdatedR\tno_changeR\asdk_gapR\x10learningDecision\x12(\n" +
 	"\x10no_change_reason\x18\x03 \x01(\tR\x0enoChangeReason\x122\n" +
 	"\x15proposed_artifact_ids\x18\x04 \x03(\tR\x13proposedArtifactIds\x12g\n" +
 	"\x11artifact_proposal\x18\x05 \x01(\v26.sdodev.contracts.v1alpha1.OperationalArtifactProposalB\x02\x18\x01R\x10artifactProposal\x12<\n" +
-	"\bsdk_gaps\x18\x06 \x03(\v2!.sdodev.contracts.v1alpha1.SdkGapR\asdkGaps\x12<\n" +
-	"\x0edecline_reason\x18\a \x01(\tB\x15\xbaH\x12r\x10R\x00R\fevidence_gapR\rdeclineReason:\xaa\x01\xbaH\xa6\x01\x1a\xa3\x01\n" +
+	"\bsdk_gaps\x18\x06 \x03(\v2!.sdodev.contracts.v1alpha1.SdkGapR\asdkGaps\x12B\n" +
+	"\x0edecline_reason\x18\a \x01(\tB\x1b\xbaH\x18r\x16R\x00R\x12no_recorded_repairR\rdeclineReason:\xaa\x01\xbaH\xa6\x01\x1a\xa3\x01\n" +
 	"\x1freflection.no_change_has_reason\x12<a no_change or sdk_gap reflection requires a concrete reason\x1aBthis.learning_decision == 'updated' || this.no_change_reason != ''B\xfe\x01\n" +
 	"\x1dcom.sdodev.contracts.v1alpha1B\vWorkerProtoP\x01ZJsdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1;contractsv1alpha1\xa2\x02\x03SCX\xaa\x02\x19Sdodev.Contracts.V1alpha1\xca\x02\x19Sdodev\\Contracts\\V1alpha1\xe2\x02%Sdodev\\Contracts\\V1alpha1\\GPBMetadata\xea\x02\x1bSdodev::Contracts::V1alpha1b\x06proto3"
 

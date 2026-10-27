@@ -278,12 +278,12 @@ func fixedCaptureVerdicts(ctx context.Context, outcome *contracts.OutcomeRecord,
 	return result
 }
 
-// countEvidenceGaps counts causes with no recorded repair, which leave nothing
+// countNoRepair counts causes with no recorded repair, which leave nothing
 // to save. It is information for analysis and never gates learning.
-func countEvidenceGaps(items []*contracts.ReflectionWorkItem) uint32 {
+func countNoRepair(items []*contracts.ReflectionWorkItem) uint32 {
 	var count uint32
 	for _, item := range items {
-		if item.GetReason() == "evidence_gap" {
+		if item.GetReason() == "no_recorded_repair" {
 			count++
 		}
 	}
@@ -296,7 +296,7 @@ func causeWorkNeedsModel(work []*contracts.ReflectionCauseWork) bool {
 	}
 	for _, cause := range work {
 		for _, item := range cause.GetItems() {
-			if item.GetDisposition() == "question" && item.GetReason() != "evidence_gap" {
+			if item.GetDisposition() == "question" && item.GetReason() != "no_recorded_repair" {
 				return true
 			}
 		}
@@ -357,8 +357,8 @@ func (n NativeIncidentBroker) prepareCauseWork(ctx context.Context, outcome *con
 			continue
 		}
 	}
-	count := countEvidenceGaps(unassigned)
-	return &contracts.ReflectionEligibility{Version: 1, Causes: work, Unassigned: unassigned, EvidenceGapCount: &count}
+	count := countNoRepair(unassigned)
+	return &contracts.ReflectionEligibility{Version: 1, Causes: work, Unassigned: unassigned, NoRepairCount: &count}
 }
 
 // Corpus publication and trust consume the same settled dispositions.
@@ -452,7 +452,7 @@ func unassignedReflectionQuestions(outcome *contracts.OutcomeRecord, fixed map[s
 
 func reflectionItemsNeedModel(items []*contracts.ReflectionWorkItem) bool {
 	for _, item := range items {
-		if item.GetDisposition() == "question" && item.GetReason() != "evidence_gap" {
+		if item.GetDisposition() == "question" && item.GetReason() != "no_recorded_repair" {
 			return true
 		}
 	}

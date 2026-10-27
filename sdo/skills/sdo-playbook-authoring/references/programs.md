@@ -110,7 +110,7 @@ The supplied work list preserves the responder's confirmed resource groups. Cove
 A program that still matches the verified fixed capture has a definite false match. Go seeds that exact capture as negative evidence and preserves it through edits; the failing NoMatch replay is the question to resolve. The [generated replay API](../../sdo-detector-authoring/references/replay.md) defines CapturedFixedNoMatchPhase for this observed negative evidence. It is never a positive incident-open phase, a synthetic positive case or a trust credit.
 
 Missing optional controller captures do not block fixtures built from session observations and cannot
-justify an evidence_gap decline. An unavailable SDK capability can
+justify a no_recorded_repair decline. That decline records only a verified cause with no recorded repair write on its own resources (for example a Pod deleted under it); the other causes are still learned. An unavailable SDK capability can
 be reported with a typed SDK gap naming its cause resources, primitive, reason and scratch script.
 
 Automatic plans require no source-policy file, reviewed-fixture digest, content predicate or credential-delta approval. Explicit FromSource selectors and CreateFromSource read accepted manifests at the incident commit; other repairs may use observed or declared parameter values. DeleteObject does not require source absence. Legacy field actions retain their declared scope checks. The [general action vocabulary](general-actions.md) covers arbitrary nonsecret resources and subresources through Kubernetes RBAC.

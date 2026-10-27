@@ -25,7 +25,7 @@ func unverifiedCauseWork(outcome *contracts.OutcomeRecord, indices []uint32) []*
 		if verified[uint32(index)] {
 			continue
 		}
-		item := &contracts.ReflectionWorkItem{Disposition: "question", Reason: "evidence_gap", Question: fmt.Sprintf("Cause %d (%s) has no repair to save: no recorded successful repair action touched its resources.", index, cause.GetSummary())}
+		item := &contracts.ReflectionWorkItem{Disposition: "question", Reason: "no_recorded_repair", Question: fmt.Sprintf("Cause %d (%s) has no repair to save: no recorded successful repair action touched its resources.", index, cause.GetSummary())}
 		for _, ref := range cause.GetResources() {
 			item.Resources = append(item.Resources, proto.Clone(ref).(*contracts.ObjectRef))
 		}
@@ -232,7 +232,7 @@ func partialReflectionEligibility(eligibility *contracts.ReflectionEligibility, 
 					continue
 				}
 				work.Items = append(work.Items, proto.Clone(item).(*contracts.ReflectionWorkItem))
-				if item.GetReason() == "evidence_gap" {
+				if item.GetReason() == "no_recorded_repair" {
 					for _, ref := range item.GetResources() {
 						gaps[[4]string{ref.GetKind(), ref.GetNamespace(), ref.GetName(), item.GetEvidencePhase()}] = true
 					}
@@ -245,7 +245,7 @@ func partialReflectionEligibility(eligibility *contracts.ReflectionEligibility, 
 		}
 	}
 	count := uint32(len(gaps))
-	result.EvidenceGapCount = &count
+	result.NoRepairCount = &count
 	return result
 }
 

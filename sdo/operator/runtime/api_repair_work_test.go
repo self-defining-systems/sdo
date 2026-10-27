@@ -19,7 +19,7 @@ func TestReflectionWorkOffersOnlyCausesWithARecordedRepair(t *testing.T) {
 	if len(work.Causes) != 1 || work.Causes[0].CauseIndex != 0 {
 		t.Fatalf("cause without a recorded repair offered as drafting work: %+v", work)
 	}
-	if len(work.Unassigned) != 1 || work.Unassigned[0].Reason != "evidence_gap" || len(work.Unassigned[0].Resources) != 1 || work.Unassigned[0].Resources[0].Name != "peer" {
+	if len(work.Unassigned) != 1 || work.Unassigned[0].Reason != "no_recorded_repair" || len(work.Unassigned[0].Resources) != 1 || work.Unassigned[0].Resources[0].Name != "peer" {
 		t.Fatalf("missing early gap for the cause without a recorded repair: %+v", work)
 	}
 }

@@ -59,7 +59,7 @@ class ReflectionTurn(BaseModel):
     summary: str = Field(min_length=1)
     learning_decision: Literal["updated", "no_change", "sdk_gap"]
     no_change_reason: str | None = Field(default=None, min_length=1)
-    decline_reason: Literal["", "evidence_gap"] = ""
+    decline_reason: Literal["", "no_recorded_repair"] = ""
     playbook_ids: list[str] = Field(default_factory=list)
     sdk_gaps: list[SdkGap] = Field(default_factory=list)
     # Provider accounting for the turn; kept out of the model-facing schema.
@@ -82,7 +82,7 @@ class ReflectionTurn(BaseModel):
             summary=result.summary,
             learning_decision=cast("Literal['updated', 'no_change', 'sdk_gap']", result.learning_decision),
             no_change_reason=result.no_change_reason or None,
-            decline_reason=cast("Literal['', 'evidence_gap']", result.decline_reason),
+            decline_reason=cast("Literal['', 'no_recorded_repair']", result.decline_reason),
             playbook_ids=list(result.proposed_artifact_ids),
             sdk_gaps=[
                 SdkGap.model_validate(json_format.MessageToDict(gap, preserving_proto_field_name=True))
@@ -111,11 +111,11 @@ class ReflectionTurn(BaseModel):
         if len(set(self.playbook_ids)) != len(self.playbook_ids):
             raise ValueError("reflection playbook IDs must be unique")
         if (
-            self.decline_reason == "evidence_gap"
+            self.decline_reason == "no_recorded_repair"
             and self.learning_decision == "no_change"
-            and self.no_change_reason != "evidence gap"
+            and self.no_change_reason != "no recorded repair"
         ):
-            raise ValueError("evidence gap no_change uses the canonical evidence gap reason")
+            raise ValueError("no_recorded_repair no_change uses the canonical no recorded repair reason")
         if self.learning_decision == "no_change" and self.sdk_gaps:
             raise ValueError("no_change reflection cannot report SDK gaps")
         if self.learning_decision in {"no_change", "sdk_gap"}:

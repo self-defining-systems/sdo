@@ -93,7 +93,7 @@ The CLI decision file contains the unwrapped ReflectionResult below. The model's
       "type": "string",
       "enum": [
         "",
-        "evidence_gap"
+        "no_recorded_repair"
       ]
     }
   },

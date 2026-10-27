@@ -1415,7 +1415,7 @@ type BrokerLedger struct {
 	ReflectionMaxRetries uint32                 `protobuf:"varint,25,opt,name=reflection_max_retries,json=reflectionMaxRetries,proto3" json:"reflection_max_retries,omitempty"`
 	ReflectionDispatchAt *timestamppb.Timestamp `protobuf:"bytes,26,opt,name=reflection_dispatch_at,json=reflectionDispatchAt,proto3" json:"reflection_dispatch_at,omitempty"`
 	// Distinct resource/phase observations absent from protected recordings.
-	ReflectionEvidenceGapCount *uint32 `protobuf:"varint,27,opt,name=reflection_evidence_gap_count,json=reflectionEvidenceGapCount,proto3,oneof" json:"reflection_evidence_gap_count,omitempty"`
+	ReflectionNoRepairCount *uint32 `protobuf:"varint,27,opt,name=reflection_no_repair_count,json=reflectionNoRepairCount,proto3,oneof" json:"reflection_no_repair_count,omitempty"`
 	// A failed attempt's reflection is queued behind its acknowledgment so the
 	// incident's follow-up does not wait for it. Replayed after restart.
 	ReflectionQueued   bool                   `protobuf:"varint,28,opt,name=reflection_queued,json=reflectionQueued,proto3" json:"reflection_queued,omitempty"`
@@ -1622,9 +1622,9 @@ func (x *BrokerLedger) GetReflectionDispatchAt() *timestamppb.Timestamp {
 	return nil
 }
 
-func (x *BrokerLedger) GetReflectionEvidenceGapCount() uint32 {
-	if x != nil && x.ReflectionEvidenceGapCount != nil {
-		return *x.ReflectionEvidenceGapCount
+func (x *BrokerLedger) GetReflectionNoRepairCount() uint32 {
+	if x != nil && x.ReflectionNoRepairCount != nil {
+		return *x.ReflectionNoRepairCount
 	}
 	return 0
 }
@@ -1870,15 +1870,15 @@ const file_sdodev_contracts_v1alpha1_controller_state_proto_rawDesc = "" +
 	"*state.failed_closure_has_permanent_failure\x126a failed closure requires its permanent failure record\x1aXthis.closure_state != 5 || (has(this.closure_failure) && this.closure_failure.permanent)\x1a\xe0\x02\n" +
 	"-state.closure_failure_matches_pending_closure\x12da closure failure must belong to the pending closure and its permanence must match the closure state\x1a\xc8\x01!has(this.closure_failure) || (has(this.pending_closure) && this.closure_failure.incident_id == this.pending_closure.request.incident_id && this.closure_failure.permanent == (this.closure_state == 5))\x1a\x9c\x01\n" +
 	"!state.pending_closure_has_payload\x129pending or processing closure requires its frozen payload\x1a<!(this.closure_state in [1, 2]) || has(this.pending_closure)\x1a\x9c\x01\n" +
-	"#state.committed_closure_has_receipt\x127committed or acknowledging closure requires its receipt\x1a<!(this.closure_state in [3, 4]) || has(this.closure_receipt)J\x04\b\x0e\x10\x0fJ\x04\b\x0f\x10\x10J\x04\b\x10\x10\x11J\x04\b\x12\x10\x13J\x04\b\x1a\x10\x1bJ\x04\b \x10!J\x04\b!\x10\"J\x04\b\"\x10#R\x18detector_review_requiredR\x1bdetector_review_required_atR\x16detector_review_reasonR\x19incident_observed_changesR\x10pending_releasesR\x13drift_investigationR\x0fdrift_admissionR\x15program_sweep_cursors\"\xf3\x03\n" +
+	"#state.committed_closure_has_receipt\x127committed or acknowledging closure requires its receipt\x1a<!(this.closure_state in [3, 4]) || has(this.closure_receipt)J\x04\b\x0e\x10\x0fJ\x04\b\x0f\x10\x10J\x04\b\x10\x10\x11J\x04\b\x12\x10\x13J\x04\b\x1a\x10\x1bJ\x04\b \x10!J\x04\b!\x10\"J\x04\b\"\x10#R\x18detector_review_requiredR\x1bdetector_review_required_atR\x16detector_review_reasonR\x19incident_observed_changesR\x10pending_releasesR\x13drift_investigationR\x0fdrift_admissionR\x15program_sweep_cursors\"\xf9\x03\n" +
 	"\x12ReflectionDecision\x12W\n" +
 	"\x11learning_decision\x18\x01 \x01(\tB*\xbaH'r%R\aupdatedR\tno_changeR\asdk_gapR\x06failedR\x10learningDecision\x12(\n" +
 	"\x10no_change_reason\x18\x02 \x01(\tR\x0enoChangeReason\x12!\n" +
 	"\fplaybook_ids\x18\x03 \x03(\tR\vplaybookIds\x12\x14\n" +
 	"\x05error\x18\x04 \x01(\tR\x05error\x12<\n" +
 	"\bsdk_gaps\x18\x05 \x03(\v2!.sdodev.contracts.v1alpha1.SdkGapR\asdkGaps\x12=\n" +
-	"\x05usage\x18\x06 \x01(\v2'.sdodev.contracts.v1alpha1.UsageMetricsR\x05usage\x12<\n" +
-	"\x0edecline_reason\x18\a \x01(\tB\x15\xbaH\x12r\x10R\x00R\fevidence_gapR\rdeclineReason\x12f\n" +
+	"\x05usage\x18\x06 \x01(\v2'.sdodev.contracts.v1alpha1.UsageMetricsR\x05usage\x12B\n" +
+	"\x0edecline_reason\x18\a \x01(\tB\x1b\xbaH\x18r\x16R\x00R\x12no_recorded_repairR\rdeclineReason\x12f\n" +
 	"\x0efailure_reason\x18\b \x01(\tB?\xbaH<r:R\x00R\atimeoutR\ragent_timeoutR\fagent_failedR\x10result_too_largeR\rfailureReason\"\xaa\x01\n" +
 	"\x14ProposalRejectionLog\x12(\n" +
 	"\vproposal_id\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\n" +
@@ -1900,7 +1900,7 @@ const file_sdodev_contracts_v1alpha1_controller_state_proto_rawDesc = "" +
 	"\x1dobserved_detector_fingerprint\x18\x04 \x01(\tR\x1bobservedDetectorFingerprint\x12\x18\n" +
 	"\asuccess\x18\x05 \x01(\bR\asuccess\x12;\n" +
 	"\vverified_at\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
-	"verifiedAt\"\xf1\x11\n" +
+	"verifiedAt\"\xe8\x11\n" +
 	"\fBrokerLedger\x12\x1f\n" +
 	"\vincident_id\x18\x01 \x01(\tR\n" +
 	"incidentId\x12D\n" +
@@ -1927,15 +1927,15 @@ const file_sdodev_contracts_v1alpha1_controller_state_proto_rawDesc = "" +
 	"\x10reflection_paths\x18\x17 \x03(\tR\x0freflectionPaths\x12\\\n" +
 	"\x12reflection_results\x18\x18 \x03(\v2-.sdodev.contracts.v1alpha1.ReflectionDecisionR\x11reflectionResults\x124\n" +
 	"\x16reflection_max_retries\x18\x19 \x01(\rR\x14reflectionMaxRetries\x12P\n" +
-	"\x16reflection_dispatch_at\x18\x1a \x01(\v2\x1a.google.protobuf.TimestampR\x14reflectionDispatchAt\x12F\n" +
-	"\x1dreflection_evidence_gap_count\x18\x1b \x01(\rH\x00R\x1areflectionEvidenceGapCount\x88\x01\x01\x12+\n" +
+	"\x16reflection_dispatch_at\x18\x1a \x01(\v2\x1a.google.protobuf.TimestampR\x14reflectionDispatchAt\x12@\n" +
+	"\x1areflection_no_repair_count\x18\x1b \x01(\rH\x00R\x17reflectionNoRepairCount\x88\x01\x01\x12+\n" +
 	"\x11reflection_queued\x18\x1c \x01(\bR\x10reflectionQueued\x12L\n" +
 	"\x14reflection_queued_at\x18\x1d \x01(\v2\x1a.google.protobuf.TimestampR\x12reflectionQueuedAt\x1ae\n" +
 	"\x1bClosurePhaseTimestampsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x120\n" +
 	"\x05value\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\x05value:\x028\x01:\xf1\x01\xbaH\xed\x01\x1a\xea\x01\n" +
-	"+broker_ledger.terminal_rejection_has_record\x12Va terminal reflection rejection requires a recorded rejection and no reflection commit\x1ac!this.reflection_rejected || (size(this.reflection_rejections) > 0 && this.reflection_commit == '')B \n" +
-	"\x1e_reflection_evidence_gap_countJ\x04\b\x13\x10\x14J\x04\b\x14\x10\x15\"\xaf\x03\n" +
+	"+broker_ledger.terminal_rejection_has_record\x12Va terminal reflection rejection requires a recorded rejection and no reflection commit\x1ac!this.reflection_rejected || (size(this.reflection_rejections) > 0 && this.reflection_commit == '')B\x1d\n" +
+	"\x1b_reflection_no_repair_countJ\x04\b\x13\x10\x14J\x04\b\x14\x10\x15\"\xaf\x03\n" +
 	"\x17OwnershipAdoptionStatus\x12#\n" +
 	"\rsource_commit\x18\x01 \x01(\tR\fsourceCommit\x12'\n" +
 	"\x0fadopted_objects\x18\x02 \x01(\x05R\x0eadoptedObjects\x120\n" +

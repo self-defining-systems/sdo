@@ -206,7 +206,7 @@ class IncidentRecord(_PersistedModel):
     binding_sources: list[str] = Field(default_factory=list)
     reflection_attempts: int | None = None
     reflection_skipped_reason: str | None = None
-    reflection_evidence_gap_count: int | None = None
+    reflection_no_repair_count: int | None = None
     playbook_coverage: dict[str, Any] | None = None
     resolution_path: str | None = None
 

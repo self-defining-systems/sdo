@@ -481,24 +481,24 @@ def _verified_repeat_outcome() -> OutcomeRecord:
     )
 
 
-def test_typed_evidence_gap_decline_has_a_canonical_reason() -> None:
+def test_typed_no_recorded_repair_decline_has_a_canonical_reason() -> None:
     from sdo.agents.responder.reflection import ReflectionTurn
 
     turn = ReflectionTurn.from_model_output(
         {
-            "summary": "The Go-flagged fixed observation is absent.",
+            "summary": "No recorded repair touched the cause.",
             "learning_decision": "no_change",
-            "no_change_reason": "evidence gap",
-            "decline_reason": "evidence_gap",
+            "no_change_reason": "no recorded repair",
+            "decline_reason": "no_recorded_repair",
         }
     )
-    assert turn.decline_reason == "evidence_gap"
+    assert turn.decline_reason == "no_recorded_repair"
     with pytest.raises(ValueError, match="canonical"):
         ReflectionTurn(
             summary="Missing observation",
             learning_decision="no_change",
             no_change_reason="some inferred absence",
-            decline_reason="evidence_gap",
+            decline_reason="no_recorded_repair",
         )
 
 

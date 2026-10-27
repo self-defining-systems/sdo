@@ -28,7 +28,7 @@ func TestReflectionRequiresProgramsAndDetectorForEveryVerifiedCause(t *testing.T
 	if err != nil || len(ds) != 1 {
 		t.Fatalf("unlearned no-op escaped: %v %v", ds, err)
 	}
-	decision.DeclineReason = "evidence_gap"
+	decision.DeclineReason = "no_recorded_repair"
 	ds, err = ReflectionLearningDiagnostics(root, outcome, decision)
 	if err != nil || len(ds) != 1 {
 		t.Fatalf("missing captures excused missing program: %v %v", ds, err)

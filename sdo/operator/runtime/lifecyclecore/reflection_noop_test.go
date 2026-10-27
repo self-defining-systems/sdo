@@ -11,7 +11,7 @@ import (
 func TestReflectionEmptyDiffRequiresBrokerAcceptance(t *testing.T) {
 	for _, decision := range []*contracts.ReflectionDecision{
 		{LearningDecision: "no_change", NoChangeReason: "already covered"},
-		{LearningDecision: "no_change", NoChangeReason: "missing observation", DeclineReason: "evidence_gap"},
+		{LearningDecision: "no_change", NoChangeReason: "missing observation", DeclineReason: "no_recorded_repair"},
 		{LearningDecision: "sdk_gap", NoChangeReason: "unsupported observation"},
 		{LearningDecision: "updated"},
 	} {

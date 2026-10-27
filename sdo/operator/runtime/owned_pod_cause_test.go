@@ -20,7 +20,7 @@ import (
 // A hostPort repair rolls the Deployment and replaces its Pending Pod. The
 // responder names both; only the Deployment has an opening finding. The
 // closure's recorded outcome must keep the cause learnable instead of turning
-// it into an evidence_gap question that blocks the playbook.
+// it into an no_recorded_repair question that blocks the playbook.
 func TestClosureLearnsWorkloadRepairWhoseCauseNamesItsReplacedPod(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -84,7 +84,7 @@ func TestClosureLearnsWorkloadRepairWhoseCauseNamesItsReplacedPod(t *testing.T) 
 		t.Fatal("verified closure skipped reflection")
 	}
 	for _, item := range reflected.GetReflectionEligibility().GetUnassigned() {
-		if item.GetReason() == "evidence_gap" {
+		if item.GetReason() == "no_recorded_repair" {
 			t.Fatalf("replaced owned Pod made the workload repair unverifiable: %v", item)
 		}
 	}

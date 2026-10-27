@@ -90,7 +90,7 @@ func TestReflectionEveryClosedResponderIncident(t *testing.T) {
 								t.Fatalf("missing per-cause evidence gaps: %v", request.UnassignedWork)
 							}
 							for _, item := range request.UnassignedWork {
-								if item.Reason != "evidence_gap" || len(item.Resources) != 1 {
+								if item.Reason != "no_recorded_repair" || len(item.Resources) != 1 {
 									t.Fatalf("untyped evidence gap: %v", item)
 								}
 							}

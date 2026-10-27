@@ -581,7 +581,7 @@ The controller writes `recovery.json` only for independently verified successful
 or cleared closures; `after-fix` requires compatible observations beginning after
 that marker. A final API write is never recovery evidence. Proxy history does
 not replace captures, pre-apply checkpoints or action receipts, and is not a
-replay source, coverage policy or `evidence_gap` implementation. Direct network
+replay source, coverage policy or `no_recorded_repair` implementation. Direct network
 traffic, alternate kubeconfigs and controller SDK reads remain outside its view.
 
 ## Component map
@@ -717,7 +717,7 @@ even after a failed recorder exits. This runtime boundary remains outside `.sdo/
 
 Reflection work is grouped only by confirmed_root_causes resource sets. Go settles exact covered bindings and records observed fixed-capture false matches as required NoMatch cases. Unwritten bindings, unproven final plan equivalence and unbound writes remain typed questions in the resumed incident session; observations outside confirmed groups stay explicitly unassigned. No inferred cause, merge/split decision or trust credit is created for a question. Affirmative PlanApplication.final_equivalence_verified and an explicit fixed NoMatch are required for covered eligibility. Missing final proof or an absent fixed verdict remains a question. OutcomeRecord.reflection_eligibility version 1 records program revision, bindings and disposition before the outcome commit; trust and corpus publication consume that same result. Historical outcomes without trusted eligibility add no partial success credit. Newly authored programs may earn one origin credit through executable-v1 broker validation and a controller-verified bound fixture. Final completion object reads are cached once per distinct resource across applications. The final-equivalence field distinguishes an uncredited question from a failed execution without changing the historical applied/verification evidence. The fixed-negative provenance phase is SDK-defined, can label only NoMatch cases, and selects actual fixed-phase primitive observations. All materialized files still pass the same independent validator and broker.
 
-Go indexes missing open/fixed resource observations before the outcome commit and persists the count in settled eligibility. The broker allows an evidence-gap decline only for Go-flagged gaps. First-party incident records expose the count.
+Go counts confirmed causes with no recorded successful repair before the outcome commit and persists the count in settled eligibility. The broker allows a `no_recorded_repair` decline only for Go-flagged causes. First-party incident records expose the count.
 
 Controller maintenance normally resets the configuration baseline after a planned redeploy. Its explicit `preserve_baseline` observation option keeps the last healthy baseline while evaluation is paused. The benchmark injection-validity barrier uses that option so partial invalid writes cannot dispatch responders, while valid latent faults remain visible after resume. Go owns the maintenance state and baseline policy; no benchmark identities enter this interface.
 

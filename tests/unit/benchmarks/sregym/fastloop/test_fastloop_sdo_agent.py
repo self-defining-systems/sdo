@@ -635,13 +635,13 @@ def test_checkpoint_opt_out_preserves_resolution_and_learning(tmp_path: Path, mo
     assert learned.reflection_tokens.input_tokens > 0
 
 
-def test_evidence_gap_count_preserves_unknown_zero_and_recorded_counts() -> None:
-    from benchmarks.sregym.fastloop.sdo_agent import _receipt_evidence_gap_count
+def test_no_repair_count_preserves_unknown_zero_and_recorded_counts() -> None:
+    from benchmarks.sregym.fastloop.sdo_agent import _receipt_no_repair_count
 
-    assert _receipt_evidence_gap_count({}) is None
-    assert _receipt_evidence_gap_count({"native_ledger": {"reflection_evidence_gap_count": 0}}) == 0
-    assert _receipt_evidence_gap_count({"native_ledger": {"reflection_evidence_gap_count": 2}}) == 2
-    assert _receipt_evidence_gap_count({"native_ledger": {"reflection_evidence_gap_count": True}}) is None
+    assert _receipt_no_repair_count({}) is None
+    assert _receipt_no_repair_count({"native_ledger": {"reflection_no_repair_count": 0}}) == 0
+    assert _receipt_no_repair_count({"native_ledger": {"reflection_no_repair_count": 2}}) == 2
+    assert _receipt_no_repair_count({"native_ledger": {"reflection_no_repair_count": True}}) is None
 
 
 def test_program_metrics_exports_incident_open_coverage() -> None:

@@ -275,7 +275,7 @@ message ReflectionWorkItem {
   repeated Binding bindings = 2;
   string disposition = 3 [(buf.validate.field).string = {in: ["covered", "false_match", "question"]}];
   string question = 4;
-  string reason = 5 [(buf.validate.field).string = {in: ["verified_equivalent_repair", "fixed_capture_match", "binding_not_written", "repair_equivalence_question", "unbound_write", "uncertain", "evidence_gap", "program_refinement"]}];
+  string reason = 5 [(buf.validate.field).string = {in: ["verified_equivalent_repair", "fixed_capture_match", "binding_not_written", "repair_equivalence_question", "unbound_write", "uncertain", "no_recorded_repair", "program_refinement"]}];
   repeated ObjectRef resources = 6;
   string evidence_phase = 7 [(buf.validate.field).string = {in: ["", "open", "fixed"]}];
   string program_revision = 8;
@@ -291,7 +291,7 @@ message ReflectionEligibility {
   uint32 version = 1 [(buf.validate.field).uint32.const = 1];
   repeated ReflectionCauseWork causes = 2;
   repeated ReflectionWorkItem unassigned = 3;
-  optional uint32 evidence_gap_count = 4;
+  optional uint32 no_repair_count = 4;
 }
 
 // Incident-open diagnosis coverage. This is information, never apply authority.

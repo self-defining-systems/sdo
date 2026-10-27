@@ -429,16 +429,16 @@ class ReflectionWorkItem(_message.Message):
     def __init__(self, program_id: _Optional[str] = ..., bindings: _Optional[_Iterable[_Union[Binding, _Mapping]]] = ..., disposition: _Optional[str] = ..., question: _Optional[str] = ..., reason: _Optional[str] = ..., resources: _Optional[_Iterable[_Union[_common_pb2.ObjectRef, _Mapping]]] = ..., evidence_phase: _Optional[str] = ..., program_revision: _Optional[str] = ..., capture_open_phase: _Optional[str] = ..., evaluation: _Optional[_Union[ProgramRun, _Mapping]] = ...) -> None: ...
 
 class ReflectionEligibility(_message.Message):
-    __slots__ = ("version", "causes", "unassigned", "evidence_gap_count")
+    __slots__ = ("version", "causes", "unassigned", "no_repair_count")
     VERSION_FIELD_NUMBER: _ClassVar[int]
     CAUSES_FIELD_NUMBER: _ClassVar[int]
     UNASSIGNED_FIELD_NUMBER: _ClassVar[int]
-    EVIDENCE_GAP_COUNT_FIELD_NUMBER: _ClassVar[int]
+    NO_REPAIR_COUNT_FIELD_NUMBER: _ClassVar[int]
     version: int
     causes: _containers.RepeatedCompositeFieldContainer[ReflectionCauseWork]
     unassigned: _containers.RepeatedCompositeFieldContainer[ReflectionWorkItem]
-    evidence_gap_count: int
-    def __init__(self, version: _Optional[int] = ..., causes: _Optional[_Iterable[_Union[ReflectionCauseWork, _Mapping]]] = ..., unassigned: _Optional[_Iterable[_Union[ReflectionWorkItem, _Mapping]]] = ..., evidence_gap_count: _Optional[int] = ...) -> None: ...
+    no_repair_count: int
+    def __init__(self, version: _Optional[int] = ..., causes: _Optional[_Iterable[_Union[ReflectionCauseWork, _Mapping]]] = ..., unassigned: _Optional[_Iterable[_Union[ReflectionWorkItem, _Mapping]]] = ..., no_repair_count: _Optional[int] = ...) -> None: ...
 
 class PlaybookCoverage(_message.Message):
     __slots__ = ("matches", "unexplained_finding_fingerprints")
