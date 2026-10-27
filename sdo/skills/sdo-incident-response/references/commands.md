@@ -25,7 +25,7 @@ Mutation files contain these generated top-level arrays:
 ## General help
 
 ```text
-prior_stages: automatic repairs. prior_response_progress: bounded receipts/blockers from failed episodes; truncation/omissions are explicit. Keep applied repairs; admission_blocked names a current rollout prerequisite. Full history stays in outcomes.
+prior_stages: automatic repairs. prior_response_progress: bounded failed-episode progress, with omissions. Keep repairs; admission_blocked names a current rollout prerequisite. Full history stays in outcomes.
 
 Examples (replace names with incident resources):
   sdo source Deployment/app/api

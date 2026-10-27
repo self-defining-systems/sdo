@@ -3,14 +3,14 @@ package runtime
 import (
 	"context"
 	"encoding/json"
-	"google.golang.org/protobuf/encoding/protojson"
-	"google.golang.org/protobuf/reflect/protoreflect"
 	"sort"
 	"strings"
 	"time"
 	"unicode/utf8"
 
+	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/reflect/protoreflect"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/sdk"
@@ -170,6 +170,17 @@ func boundResponseProgress(items []*contracts.ResponseProgress, budget int) []*c
 		clipped := clipProgressMessage(projected.ProtoReflect(), 256, 4)
 		if progressWireBytes([]*contracts.ResponseProgress{projected}) > budget/2 {
 			clipped = clipProgressMessage(projected.ProtoReflect(), 64, 1) || clipped
+			// Owner chains, object inventories and nested warning diagnostics are
+			// durable facts; preserve actionable summaries ahead of those details.
+			for _, action := range projected.SuccessfulActions {
+				action.Owners = nil
+				action.Resources = nil
+			}
+			for _, blocker := range projected.Blockers {
+				blocker.Blockers = nil
+				blocker.AdmissionConfigurations = nil
+				blocker.AdmissionWebhooks = nil
+			}
 		}
 		candidate := append([]*contracts.ResponseProgress{projected}, kept...)
 		if progressWireBytes(candidate) > budget-128 {

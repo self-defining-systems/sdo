@@ -95,6 +95,8 @@ type Controller struct {
 	onboardingClient            kubernetes.Interface
 	onboardingControl           string
 	namespaceOnboarding         *contracts.NamespaceOnboarding
+	disabledSetupDetectors      []*contracts.DisabledSetupDetector
+	setupEvaluatedRevision      string
 	sourceInventoryError        string
 	sourceInventoryRetryAt      time.Time
 	sourceInventoryFindings     []sdk.Finding
@@ -424,7 +426,7 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 	} else {
 		c.observeSourceInventory(now)
 	}
-	detectors := c.scheduler.SelectEvents(now, events)
+	detectors := c.enabledSetupDetectors(c.scheduler.SelectEvents(now, events))
 	probes := c.dueGateProbes(now, detectors)
 	var objectChanges []ObjectChange
 	if c.drift != nil {
@@ -449,8 +451,9 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 	// Startup's full batch may precede confirmation. Once the observation
 	// windows are ready, evaluate every detector together on this snapshot;
 	// event-driven partial batches must not strand the install opportunity.
+	setupSweep := c.namespaceOnboarding != nil && c.setupEvaluatedRevision != c.config.SourceCommit && c.setupIncidentFree(false)
 	onboardingDetectors := detectors
-	if c.pendingOnboarding != nil {
+	if c.pendingOnboarding != nil || setupSweep {
 		onboardingDetectors = c.detectorList()
 	}
 	unreferencedSnapshot := snapshot
@@ -463,12 +466,12 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 			return err
 		}
 	}
-	if c.pendingOnboarding != nil {
-		if len(detectors) != len(onboardingDetectors) && detectorsNeedConfirmation(onboardingDetectors) && (confirmed || confirmationExpired) {
+	if c.pendingOnboarding != nil || setupSweep {
+		if len(detectors) != len(onboardingDetectors) && (setupSweep || detectorsNeedConfirmation(onboardingDetectors)) && (confirmed || confirmationExpired) {
 			// This extra install sweep must not postpone ordinary fault checks.
 			deadlines := c.scheduler.Deadlines()
 			c.scheduler.ExpediteAll(now)
-			detectors = c.scheduler.SelectEvents(now, nil)
+			detectors = c.enabledSetupDetectors(c.scheduler.SelectEvents(now, nil))
 			if err := c.scheduler.RestoreDeadlines(deadlines); err != nil {
 				return err
 			}
@@ -485,6 +488,7 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 			c.onboardingReachability.candidate = nil
 		}
 	}
+	setupResults, setupHealthy := c.setupHealth(ctx, snapshot, detectors, onboardingCandidate)
 	sampleFindings := make([]sdk.Finding, 0)
 	errored := confirmationExpired
 	c.mu.Lock()
@@ -493,7 +497,14 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 	c.mu.Unlock()
 	for _, detector := range detectors {
 		spec := detector.Spec()
-		findings, detectErr := sdk.DetectObserved(ctx, detector, snapshot)
+		if onboardingCandidate == nil && (c.pendingOnboarding != nil || setupSweep && !confirmed && !confirmationExpired) && learnedIncidentDetector(spec) {
+			continue
+		}
+		result, cached := setupResults[spec.ID]
+		if !cached {
+			result.findings, result.err = sdk.DetectObserved(ctx, detector, snapshot)
+		}
+		findings, detectErr := result.findings, result.err
 		if detectErr != nil {
 			c.resetGate(spec.ID)
 			c.recordDetectorError(spec.ID, now, detectErr)
@@ -531,6 +542,9 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 		if !valid {
 			continue
 		}
+		if setupHealthy && learnedIncidentDetector(spec) && c.disableSetupDetector(spec, validFindings, now, onboardingCandidate) {
+			continue
+		}
 		changes := c.tracker.Observe(now, spec.ID, validFindings)
 		c.observeGate(spec.ID, now, validFindings)
 		sampleFindings = append(sampleFindings, validFindings...)
@@ -563,6 +577,11 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 			}
 		}
 		c.recordFiring(spec, now, validFindings, changes)
+	}
+	if setupHealthy {
+		c.mu.Lock()
+		c.setupEvaluatedRevision = c.config.SourceCommit
+		c.mu.Unlock()
 	}
 	c.finishOnboarding(ctx, onboardingCandidate, sampleFindings, errored, now)
 	if deferInventory && c.pendingOnboarding == nil {
@@ -747,6 +766,7 @@ func (c *Controller) dispatchReady(ctx context.Context, now time.Time, snapshot 
 	c.responderLoop = nil
 	c.midStage = midIncidentStage{}
 	c.incidentOpen = true
+	c.setupEvaluatedRevision = c.config.SourceCommit
 	c.responderDone = false
 	c.currentIncidentRequest = cloneIncidentRequest(&request)
 	c.currentIncidentResult = nil
@@ -1010,10 +1030,11 @@ func (c *Controller) incidentRequest(now time.Time, findings []sdk.Finding) Inci
 	return IncidentRequest{
 		SchemaVersion: ProtocolSchemaVersion, Application: c.config.Application, Namespace: c.config.Namespace,
 		IncidentID: incidentID, Findings: findings,
-		PriorResponseProgress: priorResponseProgress(c.config.RepositoryWorktree, findings),
-		DriftEvents:           driftEvents,
-		NamespaceOnboarding:   cloneNamespaceOnboarding(c.namespaceOnboarding),
-		DetectorHistory:       compactDetectorHistory(c.history), SurfacedPlaybooks: surfacedPlaybooks(findings),
+		PriorResponseProgress:  priorResponseProgress(c.config.RepositoryWorktree, findings),
+		DriftEvents:            driftEvents,
+		NamespaceOnboarding:    cloneNamespaceOnboarding(c.namespaceOnboarding),
+		DisabledSetupDetectors: cloneDisabledSetupDetectors(c.disabledSetupDetectors),
+		DetectorHistory:        compactDetectorHistory(c.history), SurfacedPlaybooks: surfacedPlaybooks(findings),
 		RelevantOutcomes: relevantOutcomeEvidence(
 			c.config.RepositoryWorktree, findings, c.config.SourceCommit, c.detectorOrigins(),
 		),
@@ -1722,6 +1743,7 @@ func (c *Controller) ExportState() (*contracts.ControllerState, error) {
 		return nil, err
 	}
 	message := &contracts.ControllerState{
+		DisabledSetupDetectors: cloneDisabledSetupDetectors(c.disabledSetupDetectors), SetupEvaluatedRevision: c.setupEvaluatedRevision,
 		Version: RuntimeStateVersion, SchedulerDeadlines: timestampsContract(c.scheduler.Deadlines()), FindingStates: findingStates,
 		PendingBatch: &contracts.BatcherState{
 			Findings: batch, Deadlines: timestampsContract(pendingBatch.Deadlines), Deadline: optionalTimestamp(pendingBatch.Deadline),
@@ -1816,6 +1838,8 @@ func (c *Controller) RestoreState(state *contracts.ControllerState) error {
 	c.acceptedSourceDriftRevision = state.GetAcceptedSourceDriftRevision()
 	c.ownershipAdoption = adoptionState(state.GetOwnershipAdoption())
 	c.namespaceOnboarding = cloneNamespaceOnboarding(state.GetNamespaceOnboarding())
+	c.disabledSetupDetectors = cloneDisabledSetupDetectors(state.GetDisabledSetupDetectors())
+	c.setupEvaluatedRevision = state.GetSetupEvaluatedRevision()
 	c.sourceInventory = nil
 	c.dispatchError = state.DispatchError
 	c.incidentDetectedAt = controllerTime(state.GetIncidentDetectedAt())
