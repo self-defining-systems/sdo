@@ -2,6 +2,7 @@ package replay
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"regexp"
 	"strings"
@@ -136,5 +137,45 @@ func TestReplayBuildsMitigationPlansOnlyThroughTheRuntimeBuilder(t *testing.T) {
 		if strings.Contains(string(body), ".Mitigate(") {
 			t.Errorf("%s calls Mitigate directly; use runtime.BuildMitigationPlan", f.Name())
 		}
+	}
+}
+
+// A mitigation that fails the stage's plan builder is reported as that: the
+// reflection worker reads this text to decide what to fix.
+func TestReplayNamesTheStagePlanBuildInAFailure(t *testing.T) {
+	p := emptyPlanProgram{fixtureProgram{mode: "delete"}}
+	r := Check(context.Background(), p, p, nil, fixture("delete"))
+	if !strings.Contains(strings.Join(r.Errors, "; "), "the plan the incident stage would build from this case's captured open view failed") {
+		t.Fatalf("failure does not say which plan failed: %+v", r.Errors)
+	}
+}
+
+func TestReplayMitigationFailureNamesAnUncapturedRead(t *testing.T) {
+	err := mitigationBuildError(fmt.Errorf("%w: apps/v1 Deployment app/api", sdk.ErrObjectNotCaptured))
+	if !strings.Contains(err.Error(), "capture it in the case") {
+		t.Fatalf("no hint for an uncaptured read: %v", err)
+	}
+}
+
+// Restoring an object the incident created and accepted source never declared
+// is expressed as DeleteObject and replays. Reconciling it from source cannot
+// work, live or offline, and the failure says which action to use.
+type reconcileAbsentProgram struct{ fixtureProgram }
+
+func (reconcileAbsentProgram) Mitigate(_ context.Context, _ program.ReadView, _ program.Bindings) (program.Plan, error) {
+	ref := sdk.ObjectRef{APIVersion: "networking.k8s.io/v1", Kind: "NetworkPolicy", Namespace: "app", Name: "api"}
+	return program.Plan{Actions: []program.Action{program.ReconcileFromSource{Ref: ref}}}, nil
+}
+
+func TestReplayRestoreToAbsentIsDeleteObjectAndReconcileSaysSo(t *testing.T) {
+	deleting := fixtureProgram{mode: "delete"}
+	if r := Check(context.Background(), deleting, deleting, nil, fixture("delete")); r.Status != "replayed" {
+		t.Fatalf("restore-to-absent by DeleteObject must replay: %+v", r)
+	}
+	reconciling := reconcileAbsentProgram{fixtureProgram{mode: "delete"}}
+	r := Check(context.Background(), reconciling, reconciling, nil, fixture("delete"))
+	text := strings.Join(r.Errors, "; ")
+	if r.Status == "replayed" || !strings.Contains(text, "DeleteObject") {
+		t.Fatalf("reconciling a source-absent object must fail naming DeleteObject: %+v", r)
 	}
 }

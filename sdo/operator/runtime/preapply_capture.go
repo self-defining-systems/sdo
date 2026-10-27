@@ -20,7 +20,15 @@ const preApplyCaptureGap = "pre_apply_capture_gap"
 // repair. Handle serializes ad hoc acknowledgements and typed plan application.
 // The protected file is the durable marker across responder/controller restarts.
 // This boundary does no diagnosis, primitive probing, or settle waiting.
-func (l *ResponderLoop) capturePreApply(ctx context.Context, refs ...sdk.ObjectRef) (captureErr error) {
+func (l *ResponderLoop) capturePreApply(ctx context.Context, refs ...sdk.ObjectRef) error {
+	err := l.capturePreApplySnapshot(ctx, refs...)
+	if err == nil {
+		l.recordSourceComparisons(ctx, "open@pre-apply", refs...)
+	}
+	return err
+}
+
+func (l *ResponderLoop) capturePreApplySnapshot(ctx context.Context, refs ...sdk.ObjectRef) (captureErr error) {
 	if l.CorpusSessionRoot == "" || l.preApplyCaptured {
 		return nil
 	}

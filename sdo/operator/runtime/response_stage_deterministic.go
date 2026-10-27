@@ -26,6 +26,9 @@ const DefaultStageBudget = 45 * time.Second
 type DeterministicResponseStage struct {
 	NewLoop             func(IncidentRequest) *ResponderLoop
 	Restore             func(context.Context, IncidentRequest, *ResponderLoop) error
+	// KeepLoop leaves the loop NewLoop returns open: it belongs to a running
+	// responder, so a later pass must not close its working programs.
+	KeepLoop bool
 	// Budget is the stage's total time (DefaultStageBudget when unset).
 	Budget time.Duration
 	// RolloutTimeout and ObservationCeiling can only shorten what the budget
@@ -59,7 +62,9 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 	if loop == nil {
 		return report, nil
 	}
-	defer loop.CloseWorkingPrograms()
+	if !stage.KeepLoop {
+		defer loop.CloseWorkingPrograms()
+	}
 	defer func() {
 		state.RepairActions = loop.ApplicationRepairReceipts(state.RepairActions)
 		state.ProgramToolCalls = loop.ToolCalls()
@@ -100,7 +105,7 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 				}
 			}
 			response := ToolResponse{}
-			loop.verify(ctx, selected, &response)
+			loop.verify(ctx, selected, &response, true)
 			updateStageFindings(state, response)
 			for _, attempt := range report.Mitigations {
 				for _, run := range response.ProgramRuns {
@@ -112,13 +117,26 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 				}
 			}
 		}()
-		if progress.Complete {
+		if progress.Complete && !state.Refresh {
 			return report, save(true)
 		}
 	}
+	// A later pass rebuilds coverage for what is still open, from a fresh
+	// diagnosis. The opening capture is immutable evidence, so it is not retaken.
+	if state.Refresh {
+		state.Coverage = nil
+	}
 	if state.Coverage == nil {
-		state.Request.InitialProgramRuns = loop.InitialDiagnose(ctx)
-		fillProgramRevisions(ctx, state.Request.InitialProgramRuns, state.Request.RepositoryWorktree, state.Request.SourceCommit)
+		var runs []ProgramRun
+		if state.Refresh {
+			runs = loop.RefreshDiagnose(ctx)
+			fillProgramRevisions(ctx, runs, state.Request.RepositoryWorktree, state.Request.SourceCommit)
+			runs = append(append([]ProgramRun(nil), state.Request.InitialProgramRuns...), runs...)
+		} else {
+			runs = loop.InitialDiagnose(ctx)
+			fillProgramRevisions(ctx, runs, state.Request.RepositoryWorktree, state.Request.SourceCommit)
+		}
+		state.Request.InitialProgramRuns = runs
 		state.Coverage = buildPlaybookCoverage(state.Findings, state.Request.InitialProgramRuns, loop.lastDiagnosisView, loop.Trust)
 		state.Request.PlaybookCoverage = cloneCoverage(state.Coverage)
 		loop.Request = state.Request
@@ -127,13 +145,19 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 	defer loop.operationMu.Unlock()
 	loop.mu.Lock()
 	defer loop.mu.Unlock()
-	priorWait, priorTimeout := loop.waitForStageRollouts, loop.Executor.RolloutTimeout
-	defer func() { loop.waitForStageRollouts = priorWait; loop.Executor.RolloutTimeout = priorTimeout }()
-	loop.waitForStageRollouts = true
 	matches := stageCandidates(loop, state)
 	attempted := map[string]bool{}
+	// A later pass may complete a binding an earlier one only skipped, because
+	// its finding had not activated yet. A skip wrote nothing, so that attempt
+	// is redone in its place; any attempt that wrote is never repeated.
+	retry := map[string]*contracts.StageMitigation{}
 	for _, attempt := range report.Mitigations {
-		attempted[stageAttemptKey(attempt.PlaybookId, programBindingsState(attempt.Bindings))] = true
+		key := stageAttemptKey(attempt.PlaybookId, programBindingsState(attempt.Bindings))
+		if state.Refresh && attempt.Result == "skipped" {
+			retry[key] = attempt
+			continue
+		}
+		attempted[key] = true
 	}
 	var ready []stageReady
 	for _, match := range matches {
@@ -153,7 +177,13 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 		if attempt.ProgramRevision == "" {
 			attempt.ProgramRevision = loop.programRevision(match.PlaybookId)
 		}
-		report.Mitigations = append(report.Mitigations, attempt)
+		if earlier := retry[key]; earlier != nil {
+			proto.Reset(earlier)
+			proto.Merge(earlier, attempt)
+			attempt = earlier
+		} else {
+			report.Mitigations = append(report.Mitigations, attempt)
+		}
 		skip := func(reason string) error {
 			attempt.SkipReason = reason
 			recordStageFindingProgress(attempt, match.ExplainedFindingFingerprints, state.Findings)
@@ -229,7 +259,7 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 			if before.Result == program.NoMatch {
 				reason = "diagnose_no_longer_matches"
 				observed := ToolResponse{}
-				loop.verify(ctx, nil, &observed)
+				loop.verify(ctx, nil, &observed, true)
 				updateStageFindings(state, observed)
 			}
 			if err := skip(reason); err != nil {
@@ -243,7 +273,7 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 		loop.matchedViews[matchedViewKey(match.PlaybookId, bindings)] = view
 		delete(loop.matchedPlans, matchedViewKey(match.PlaybookId, bindings))
 		if err := withoutResponderLocks(loop, "plan", true, func() {
-			planResponse = loop.Handle(ctx, ToolRequest{Command: "plan", ProgramID: match.PlaybookId, Bindings: bindings, FindingFingerprints: match.ExplainedFindingFingerprints})
+			planResponse = loop.Handle(ctx, ToolRequest{Command: "plan", ProgramID: match.PlaybookId, Bindings: bindings, FindingFingerprints: match.ExplainedFindingFingerprints, stage: true})
 		}); err != nil {
 			return report, err
 		}
@@ -262,7 +292,9 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 	}
 	// Once all opening faults have verified repairs, let the remaining health
 	// detectors' own windows roll over before handoff.
-	stage.awaitRepairedHealth(ctx, loop, state, report, remaining())
+	if !state.Refresh {
+		stage.awaitRepairedHealth(ctx, loop, state, report, remaining())
+	}
 	if err := ctx.Err(); err != nil {
 		return report, err
 	}
@@ -546,7 +578,7 @@ func (stage *DeterministicResponseStage) awaitRepairedHealth(ctx context.Context
 		case <-timer.C:
 		}
 		response := ToolResponse{}
-		loop.verify(observe, nil, &response)
+		loop.verify(observe, nil, &response, true)
 		updateStageFindings(state, response)
 		if response.Error != "" {
 			return
@@ -639,15 +671,15 @@ func (stage *DeterministicResponseStage) applyMatched(ctx context.Context, loop 
 	if err := save(false); err != nil {
 		return err
 	}
-	loop.Executor.RolloutTimeout = remaining()
-	if stage.RolloutTimeout > 0 && stage.RolloutTimeout < loop.Executor.RolloutTimeout {
-		loop.Executor.RolloutTimeout = stage.RolloutTimeout
+	rolloutTimeout := remaining()
+	if stage.RolloutTimeout > 0 && stage.RolloutTimeout < rolloutTimeout {
+		rolloutTimeout = stage.RolloutTimeout
 	}
 	// Apply through the ordinary tool boundary: mutation fences, recorded
 	// writes, immutable receipts and compensation have one owner.
 	var applied ToolResponse
 	if err := withoutResponderLocks(loop, "apply", true, func() {
-		applied = loop.Handle(ctx, ToolRequest{Command: "apply", PlanIDs: planIDs, stage: true})
+		applied = loop.Handle(ctx, ToolRequest{Command: "apply", PlanIDs: planIDs, stage: true, rolloutTimeout: rolloutTimeout})
 	}); err != nil {
 		return err
 	}
@@ -662,7 +694,7 @@ func (stage *DeterministicResponseStage) applyMatched(ctx context.Context, loop 
 	}
 	// Pending rollouts still get one fresh diagnosis/detector observation.
 	if applied.RolloutPending != nil {
-		loop.verify(ctx, selected, &applied)
+		loop.verify(ctx, selected, &applied, true)
 	}
 	updateStageFindings(state, applied)
 	for _, item := range ready {

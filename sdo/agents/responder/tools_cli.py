@@ -135,9 +135,9 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="sdo",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="prior_stages holds earlier stages’ actions and results; "
-        "build on them, don't repeat verified repairs. "
-        "Full incident facts keep apply receipts and post-apply diagnoses.\n\n"
+        epilog="prior_stages: playbook, result, skip_reason of an automatic stage; one that ran "
+        "while you worked shows once, in your next reply. Don't repeat verified repairs. "
+        "Full facts keep apply receipts and post-apply diagnoses.\n\n"
         "Examples (replace names with incident resources):\n  " + "\n  ".join(CLI_EXAMPLES),
     )
     commands = parser.add_subparsers(dest="command", required=True)

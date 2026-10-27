@@ -84,6 +84,7 @@ type Controller struct {
 	provider                    SnapshotProvider
 	dispatcher                  Dispatcher
 	responseStagesRunning       bool
+	midStage                    midIncidentStage
 	history                     []DetectorEvaluation
 	drift                       *DriftControllerConfig
 	driftEvents                 []sdk.DriftEvent
@@ -545,7 +546,7 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 			c.mu.Unlock()
 		}
 		for _, finding := range changes.Activated {
-			if c.mergeIntoOpenIncident(finding) {
+			if c.mergeIntoOpenIncident(finding) || c.attachLearnedActivation(ctx, finding) {
 				continue
 			}
 			batchSpec := c.detectorSpecs[spec.ID]
@@ -744,6 +745,7 @@ func (c *Controller) dispatchReady(ctx context.Context, now time.Time, snapshot 
 	c.closureMutationRevision = ""
 	c.earlyLastMutationAt = time.Time{}
 	c.responderLoop = nil
+	c.midStage = midIncidentStage{}
 	c.incidentOpen = true
 	c.responderDone = false
 	c.currentIncidentRequest = cloneIncidentRequest(&request)
@@ -1115,7 +1117,7 @@ func (c *Controller) handleDispatchCompletion(completion dispatchCompletion, obs
 	}
 	c.responseStagesRunning = false
 	if len(completion.priorStages) > 0 {
-		c.currentIncidentRequest.PriorStages = cloneStageReports(completion.priorStages)
+		c.currentIncidentRequest.PriorStages = mergeLaterStagePasses(completion.priorStages, c.currentIncidentRequest.PriorStages)
 	}
 	if c.earlyReportPendingLocked() {
 		if completion.err == nil {
