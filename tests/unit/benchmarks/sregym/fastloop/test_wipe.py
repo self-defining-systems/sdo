@@ -14,19 +14,19 @@ from benchmarks.sregym.adapter import allowed_namespaces
 from benchmarks.sregym.fastloop.records import Injected, NotInjected
 from benchmarks.sregym.fastloop.wipe import (
     AttemptMarker,
+    KubectlLaneCluster,
     Tier2Reason,
     Tier2Trigger,
     WipeError,
     await_healthy_pods,
-    KubectlLaneCluster,
     credentials_hook,
     finalizer_holders,
     inventory_path,
     load_inventory,
     namespace_is_stuck,
     pod_problems,
-    reseed_workspace,
     remove_until_gone,
+    reseed_workspace,
     run_tier1,
     run_tier2,
     save_inventory,
@@ -563,7 +563,8 @@ def test_tier_2_force_finalizes_a_fault_object_that_holds_the_app_namespace_term
     lane = finalizer_stuck_lane()
     receipt, deployed = tier2(lane, Tier2Reason(Tier2Trigger.PREVIOUS_ROW_UNRECOVERED, "hr-a/002"))
     assert lane.released == [(APP, TOKEN)]
-    assert len(deployed) == 1 and APP not in deployed[0], "the namespace finished deleting before the deploy"
+    assert len(deployed) == 1
+    assert APP not in deployed[0], "the namespace finished deleting before the deploy"
     assert receipt.force_finalized == (f"{APP}/{TOKEN}",)
 
 
@@ -675,7 +676,9 @@ def test_kubectl_lane_cluster_releases_the_stuck_configmap_through_the_real_wipe
     monkeypatch.setattr("benchmarks.sregym.adapter.kubectl", fake_kubectl)
     # The suite-wide guard empties list_objects; here the namespace lives until its finalizer is gone.
     monkeypatch.setattr(
-        KubectlLaneCluster, "list_objects", lambda self: frozenset() if state["gone"] else frozenset({f"namespace/{APP}"})
+        KubectlLaneCluster,
+        "list_objects",
+        lambda self: frozenset() if state["gone"] else frozenset({f"namespace/{APP}"}),
     )
     cluster = KubectlLaneCluster(tmp_path.resolve() / "kubeconfig")
     released = remove_until_gone(
@@ -683,9 +686,10 @@ def test_kubectl_lane_cluster_releases_the_stuck_configmap_through_the_real_wipe
         [f"namespace/{APP}"],
         timeout_seconds=30,
         poll_seconds=0,
-        clock=iter(range(0, 1000)).__next__,
+        clock=iter(range(1000)).__next__,
         sleep=lambda _seconds: None,
     )
     assert released == (f"{APP}/{TOKEN}",)
     patch = next(call for call in calls if call[0] == "patch")
-    assert patch[1] == TOKEN and f"-n={APP}" in patch
+    assert patch[1] == TOKEN
+    assert f"-n={APP}" in patch

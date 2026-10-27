@@ -528,7 +528,6 @@ class KubectlLaneCluster:
             kubeconfig=self._kubeconfig,
         )
 
-
     def blocking_objects(self, namespace: str) -> tuple[str, ...]:
         from benchmarks.sregym.adapter import kubectl
 
