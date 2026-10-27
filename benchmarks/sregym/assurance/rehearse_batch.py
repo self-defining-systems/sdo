@@ -25,6 +25,7 @@ import argparse
 import importlib
 import json
 import re
+import subprocess
 import sys
 import time
 from collections import defaultdict
@@ -93,6 +94,9 @@ DELETE_KINDS = frozenset({"NetworkPolicy", "MutatingWebhookConfiguration", "Vali
 STAGES = ("catalog", "rbac", "responder-write", "vehicle")
 RESPONDER_GAP_CLASS = "responder-write-gap"
 COVERAGE_CLASS = "no-toy-vehicle"
+#: Classes that name a missing rehearsal vehicle, not a defect in what was rehearsed.
+COVERAGE_CLASSES = frozenset({COVERAGE_CLASS, "no-lane"})
+LEFTOVER_CLASS = "cluster-leftover"
 
 #: First matching rule names the error class of a failed check; the check name and its detail are searched.
 CLASS_RULES: tuple[tuple[str, str], ...] = (
@@ -186,6 +190,8 @@ class Stage:
 class Row:
     problem: Problem
     stages: list[Stage] = field(default_factory=list)
+    #: Wall time of the problem's real-app run (0 when it only ran static stages).
+    seconds: float = 0.0
 
     @property
     def stage_reached(self) -> str:
@@ -197,7 +203,7 @@ class Row:
         """Every stage with an error class, real failures before coverage gaps."""
 
         found = [s for s in self.stages if s.error_class]
-        return sorted(found, key=lambda s: s.error_class == COVERAGE_CLASS)
+        return sorted(found, key=lambda s: s.error_class in COVERAGE_CLASSES)
 
     @property
     def failure(self) -> Stage | None:
@@ -211,6 +217,7 @@ class Row:
             "app": self.problem.app,
             "fault_classes": list(self.problem.fault_classes),
             "stage_reached": self.stage_reached,
+            "seconds": self.seconds,
             "first_failure": f"{failure.name}: {failure.detail}"[:300] if failure else "",
             "error_class": failure.error_class if failure else "",
             "evidence": failure.evidence if failure else "",
@@ -368,7 +375,7 @@ def group_by_class(rows: Sequence[Row]) -> list[dict[str, Any]]:
         classes.append(
             {
                 "error_class": error_class,
-                "kind": "coverage" if error_class == COVERAGE_CLASS else "failure",
+                "kind": "coverage" if error_class in COVERAGE_CLASSES else "failure",
                 "count": len(members),
                 "problems": [m.problem.problem_id for m in members],
                 "slots": [m.problem.slot for m in members],
@@ -402,12 +409,13 @@ def render_markdown(summary: dict[str, Any]) -> str:
         "",
         "## Problems",
         "",
-        "| slot | problem | stage reached | error class | first failure | evidence |",
-        "|---|---|---|---|---|---|",
+        "| slot | problem | stage reached | seconds | error class | first failure | evidence |",
+        "|---|---|---|---|---|---|---|",
     ]
     for row in summary["rows"]:
         lines.append(
-            f"| {row['slot']} | {row['problem']} | {row['stage_reached']} | {row['error_class']} | "
+            f"| {row['slot']} | {row['problem']} | {row['stage_reached']} | {row['seconds'] or ''} | "
+            f"{row['error_class']} | "
             f"{row['first_failure'][:120].replace('|', '/')} | {row['evidence']} |"
         )
     return "\n".join(lines) + "\n"
@@ -505,8 +513,8 @@ class Batch:
         )
         seconds = round(self.clock() - t0, 1)
         classes = group_by_class(rows)
-        failing = sum(1 for r in rows if any(s.error_class != COVERAGE_CLASS for s in r.findings))
-        gaps = sum(1 for r in rows if any(s.error_class == COVERAGE_CLASS for s in r.findings))
+        failing = sum(1 for r in rows if any(s.error_class not in COVERAGE_CLASSES for s in r.findings))
+        gaps = sum(1 for r in rows if any(s.error_class in COVERAGE_CLASSES for s in r.findings))
         summary = {
             "tag": self.tag,
             "code_root": str(self.code_root),
@@ -528,6 +536,22 @@ class Batch:
         (self.out_dir / SUMMARY_JSON).write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
         (self.out_dir / SUMMARY_MD).write_text(render_markdown(summary), encoding="utf-8")
         return summary
+
+
+def remaining_clusters(prefix: str) -> list[str]:
+    """Kind clusters whose name starts with ``prefix`` (``fastloop down`` has been seen to leave them behind)."""
+
+    done = subprocess.run(["kind", "get", "clusters"], capture_output=True, text=True, check=False)
+    return sorted(name for name in done.stdout.split() if name.startswith(prefix))
+
+
+def verify_teardown(prefix: str, *, listing: Callable[[str], list[str]] = remaining_clusters) -> list[str]:
+    """Clusters still present after teardown, each deleted here; callers fail loudly on a non-empty result."""
+
+    left = listing(prefix)
+    for name in left:
+        subprocess.run(["kind", "delete", "cluster", "--name", name], capture_output=True, check=False, timeout=300)
+    return left
 
 
 def _check(raw: dict[str, Any]) -> Check:
@@ -560,7 +584,23 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--dry-run", action="store_true", help="print the plan of work without touching Docker or a cluster"
     )
-    parser.add_argument("--teardown", action="store_true", help="remove the clusters afterwards")
+    parser.add_argument(
+        "--teardown", action="store_true", help="remove the clusters afterwards and verify they are gone"
+    )
+    parser.add_argument(
+        "--real-apps",
+        action="store_true",
+        help="run every problem on its real app lane (scripted workers) instead of the toy cluster",
+    )
+    parser.add_argument(
+        "--lane",
+        action="append",
+        default=[],
+        metavar="APP=ENV_DIR[:LEASE]",
+        help="real-apps: the lane environment of an app (repeatable); defaults to hotel_reservation on lane 55b",
+    )
+    parser.add_argument("--time-scale", type=float, default=1.0, help="real-apps: controller and wait window scale")
+    parser.add_argument("--only-slot", type=int, action="append", default=[], help="real-apps: run only these slots")
     return parser
 
 
@@ -591,6 +631,10 @@ def format_summary(summary: dict[str, Any]) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if args.real_apps:
+        from benchmarks.sregym.assurance import rehearse_real
+
+        return rehearse_real.main_real(args)
     code_root = args.code_root.resolve()
     out_dir = (args.out_root / f"batch-{args.tag}").resolve()
     batch = Batch(
@@ -613,10 +657,14 @@ def main(argv: list[str] | None = None) -> int:
     summary = batch.run()
     print(format_summary(summary))
     print(f"summary: {out_dir / SUMMARY_MD}")
+    left: list[str] = []
     if args.teardown:
         for lane, run_dir, _ in batch.lanes():
             batch._gate(lane, run_dir, ())._step(fastloop("down", "--run-dir", str(run_dir)), 300)
-    return 1 if summary["failing"] else 0
+        left = verify_teardown(f"reh{args.tag}")
+        if left:
+            print(f"{LEFTOVER_CLASS}: fastloop down left kind clusters {left}; deleted them here", file=sys.stderr)
+    return 1 if summary["failing"] or left else 0
 
 
 if __name__ == "__main__":
