@@ -26,6 +26,9 @@ const DefaultStageBudget = 45 * time.Second
 type DeterministicResponseStage struct {
 	NewLoop             func(IncidentRequest) *ResponderLoop
 	Restore             func(context.Context, IncidentRequest, *ResponderLoop) error
+	// KeepLoop leaves the loop NewLoop returns open: it belongs to a running
+	// responder, so a later pass must not close its working programs.
+	KeepLoop bool
 	// Budget is the stage's total time (DefaultStageBudget when unset).
 	Budget time.Duration
 	// RolloutTimeout and ObservationCeiling can only shorten what the budget
@@ -59,7 +62,9 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 	if loop == nil {
 		return report, nil
 	}
-	defer loop.CloseWorkingPrograms()
+	if !stage.KeepLoop {
+		defer loop.CloseWorkingPrograms()
+	}
 	defer func() {
 		state.RepairActions = loop.ApplicationRepairReceipts(state.RepairActions)
 		state.ProgramToolCalls = loop.ToolCalls()
@@ -112,13 +117,26 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 				}
 			}
 		}()
-		if progress.Complete {
+		if progress.Complete && !state.Refresh {
 			return report, save(true)
 		}
 	}
+	// A later pass rebuilds coverage for what is still open, from a fresh
+	// diagnosis. The opening capture is immutable evidence, so it is not retaken.
+	if state.Refresh {
+		state.Coverage = nil
+	}
 	if state.Coverage == nil {
-		state.Request.InitialProgramRuns = loop.InitialDiagnose(ctx)
-		fillProgramRevisions(ctx, state.Request.InitialProgramRuns, state.Request.RepositoryWorktree, state.Request.SourceCommit)
+		var runs []ProgramRun
+		if state.Refresh {
+			runs = loop.RefreshDiagnose(ctx)
+			fillProgramRevisions(ctx, runs, state.Request.RepositoryWorktree, state.Request.SourceCommit)
+			runs = append(append([]ProgramRun(nil), state.Request.InitialProgramRuns...), runs...)
+		} else {
+			runs = loop.InitialDiagnose(ctx)
+			fillProgramRevisions(ctx, runs, state.Request.RepositoryWorktree, state.Request.SourceCommit)
+		}
+		state.Request.InitialProgramRuns = runs
 		state.Coverage = buildPlaybookCoverage(state.Findings, state.Request.InitialProgramRuns, loop.lastDiagnosisView, loop.Trust)
 		state.Request.PlaybookCoverage = cloneCoverage(state.Coverage)
 		loop.Request = state.Request
@@ -132,8 +150,17 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 	loop.waitForStageRollouts = true
 	matches := stageCandidates(loop, state)
 	attempted := map[string]bool{}
+	// A later pass may complete a binding an earlier one only skipped, because
+	// its finding had not activated yet. A skip wrote nothing, so that attempt
+	// is redone in its place; any attempt that wrote is never repeated.
+	retry := map[string]*contracts.StageMitigation{}
 	for _, attempt := range report.Mitigations {
-		attempted[stageAttemptKey(attempt.PlaybookId, programBindingsState(attempt.Bindings))] = true
+		key := stageAttemptKey(attempt.PlaybookId, programBindingsState(attempt.Bindings))
+		if state.Refresh && attempt.Result == "skipped" {
+			retry[key] = attempt
+			continue
+		}
+		attempted[key] = true
 	}
 	var ready []stageReady
 	for _, match := range matches {
@@ -153,7 +180,13 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 		if attempt.ProgramRevision == "" {
 			attempt.ProgramRevision = loop.programRevision(match.PlaybookId)
 		}
-		report.Mitigations = append(report.Mitigations, attempt)
+		if earlier := retry[key]; earlier != nil {
+			proto.Reset(earlier)
+			proto.Merge(earlier, attempt)
+			attempt = earlier
+		} else {
+			report.Mitigations = append(report.Mitigations, attempt)
+		}
 		skip := func(reason string) error {
 			attempt.SkipReason = reason
 			recordStageFindingProgress(attempt, match.ExplainedFindingFingerprints, state.Findings)
@@ -262,7 +295,9 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 	}
 	// Once all opening faults have verified repairs, let the remaining health
 	// detectors' own windows roll over before handoff.
-	stage.awaitRepairedHealth(ctx, loop, state, report, remaining())
+	if !state.Refresh {
+		stage.awaitRepairedHealth(ctx, loop, state, report, remaining())
+	}
 	if err := ctx.Err(); err != nil {
 		return report, err
 	}

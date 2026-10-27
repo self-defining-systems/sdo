@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"fmt"
+	"sort"
 
 	"google.golang.org/protobuf/proto"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
@@ -27,6 +28,10 @@ type IncidentState struct {
 	Result              *IncidentResult
 	RepairActions       []RepairActionReceipt
 	ProgramToolCalls    []ToolCall
+	// Refresh marks a later pass over an incident whose opening pass already
+	// ran: Findings are re-observed and coverage is rebuilt, and attempts the
+	// stage recorded earlier are never repeated.
+	Refresh bool
 }
 
 // RunResponseStages stops when no findings remain. Every attempted stage has a
@@ -67,6 +72,61 @@ func RunResponseStages(ctx context.Context, state *IncidentState, stages []Respo
 		}
 	}
 	return nil
+}
+
+// RunStageAgain runs a stage a second (or later) time over an incident whose
+// earlier pass is already in state.PriorStages. The stage's one report is
+// updated in place of the earlier one: its attempts keep their order and
+// receipts, new attempts follow, and clearance accumulates.
+func RunStageAgain(ctx context.Context, state *IncidentState, stage ResponseStage) (*contracts.StageReport, error) {
+	var earlier *contracts.StageReport
+	index := -1
+	for i, prior := range state.PriorStages {
+		if prior.GetStage() == stage.Name() {
+			earlier, index = prior, i
+		}
+	}
+	state.Refresh = true
+	defer func() { state.Refresh = false }()
+	report, err := stage.Run(ctx, state)
+	if report == nil {
+		report = &contracts.StageReport{}
+	}
+	state.refreshUnexplained()
+	report.Stage = stage.Name()
+	remaining := map[string]bool{}
+	report.RemainingFindingFingerprints = nil
+	for _, finding := range state.Findings {
+		fp := FindingFingerprint(finding)
+		remaining[fp] = true
+		report.RemainingFindingFingerprints = append(report.RemainingFindingFingerprints, fp)
+	}
+	cleared := map[string]bool{}
+	for _, fp := range earlier.GetClearedFindingFingerprints() {
+		cleared[fp] = true
+	}
+	for _, fp := range findingFingerprints(state.Request.Findings) {
+		if !remaining[fp] {
+			cleared[fp] = true
+		}
+	}
+	report.ClearedFindingFingerprints = nil
+	for fp := range cleared {
+		report.ClearedFindingFingerprints = append(report.ClearedFindingFingerprints, fp)
+	}
+	sort.Strings(report.ClearedFindingFingerprints)
+	if err != nil {
+		report.Error = err.Error()
+	}
+	if index >= 0 {
+		state.PriorStages[index] = report
+	} else {
+		state.PriorStages = append(state.PriorStages, report)
+	}
+	if err != nil {
+		return report, fmt.Errorf("response stage %s: %w", stage.Name(), err)
+	}
+	return report, nil
 }
 
 func cloneStageReports(reports []*contracts.StageReport) []*contracts.StageReport {

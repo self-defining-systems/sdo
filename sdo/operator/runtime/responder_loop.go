@@ -719,6 +719,17 @@ func (l *ResponderLoop) snapshotView(ctx context.Context) (program.ReadView, err
 	return view, nil
 }
 
+// RefreshDiagnose diagnoses the open findings against a fresh snapshot without
+// retaking a capture: the opening captures stay what the incident opened with.
+func (l *ResponderLoop) RefreshDiagnose(ctx context.Context) []ProgramRun {
+	l.operationMu.Lock()
+	defer l.operationMu.Unlock()
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.capturePhase = ""
+	return l.diagnose(ctx, l.findings)
+}
+
 func (l *ResponderLoop) diagnose(ctx context.Context, findings []sdk.Finding) []ProgramRun {
 	view, err := l.snapshotView(ctx)
 	if err != nil {
