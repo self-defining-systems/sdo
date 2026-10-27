@@ -82,7 +82,7 @@ func runRestartStorm(t *testing.T, qps float32, burst int, podEvents int, spacin
 	podHealth := healthSpec(podWatch)
 	podHealth.Batching.Debounce = 0
 	detectors := []sdk.Detector{clearDetector{spec: podHealth}, probe}
-	informerCache, err := NewKubernetesCache(KubernetesCacheConfig{
+	informerCache, err := newCacheForTest(t, KubernetesCacheConfig{
 		Namespace: "demo", Client: client, StateConfigMapName: "sdo-controller-state",
 	}, detectors)
 	if err != nil {

@@ -19,7 +19,7 @@ func TestKubernetesCacheSyncErrorNamesTheUnsyncedKind(t *testing.T) {
 	client.PrependReactor("list", "persistentvolumeclaims", func(ktesting.Action) (bool, runtime.Object, error) {
 		return true, nil, errors.New("persistentvolumeclaims is forbidden")
 	})
-	cache, err := NewKubernetesCache(KubernetesCacheConfig{Namespace: "demo", Client: client, TrackDrift: true}, nil)
+	cache, err := newCacheForTest(t, KubernetesCacheConfig{Namespace: "demo", Client: client, TrackDrift: true}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,7 +42,7 @@ func TestKubernetesCacheSyncErrorNamesTheUnsyncedKind(t *testing.T) {
 }
 
 func TestKubernetesCacheSyncSucceedsWhenEveryInformerLists(t *testing.T) {
-	cache, err := NewKubernetesCache(KubernetesCacheConfig{Namespace: "demo", Client: fake.NewSimpleClientset(), TrackDrift: true}, nil)
+	cache, err := newCacheForTest(t, KubernetesCacheConfig{Namespace: "demo", Client: fake.NewSimpleClientset(), TrackDrift: true}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +63,7 @@ func TestInformerResourcesCoverEveryInformer(t *testing.T) {
 			t.Errorf("informerResources lists %s but informerFor rejects it: %v", key, err)
 		}
 	}
-	cache, err := NewKubernetesCache(KubernetesCacheConfig{Namespace: "demo", Client: fake.NewSimpleClientset(), TrackDrift: true}, nil)
+	cache, err := newCacheForTest(t, KubernetesCacheConfig{Namespace: "demo", Client: fake.NewSimpleClientset(), TrackDrift: true}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +78,7 @@ func TestInformerResourcesCoverEveryInformer(t *testing.T) {
 // informers. Resume must start them rather than wait for a sync that cannot
 // happen (h9.4 lane 50 row 005: resume timed out every minute, forever).
 func TestKubernetesCacheObserveRunningStartsACacheThatWasNeverStarted(t *testing.T) {
-	cache, err := NewKubernetesCache(KubernetesCacheConfig{Namespace: "demo", Client: fake.NewSimpleClientset(), TrackDrift: true}, nil)
+	cache, err := newCacheForTest(t, KubernetesCacheConfig{Namespace: "demo", Client: fake.NewSimpleClientset(), TrackDrift: true}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,7 +92,7 @@ func TestKubernetesCacheObserveRunningStartsACacheThatWasNeverStarted(t *testing
 
 func TestKubernetesCacheObserveRunningKeepsRunningInformers(t *testing.T) {
 	client := fake.NewSimpleClientset()
-	cache, err := NewKubernetesCache(KubernetesCacheConfig{Namespace: "demo", Client: client, TrackDrift: true}, nil)
+	cache, err := newCacheForTest(t, KubernetesCacheConfig{Namespace: "demo", Client: client, TrackDrift: true}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,7 +114,7 @@ func TestKubernetesCacheObserveRunningKeepsRunningInformers(t *testing.T) {
 
 func TestKubernetesCacheObserveRelistsAfterStop(t *testing.T) {
 	client := fake.NewSimpleClientset()
-	cache, err := NewKubernetesCache(KubernetesCacheConfig{Namespace: "demo", Client: client, TrackDrift: true}, nil)
+	cache, err := newCacheForTest(t, KubernetesCacheConfig{Namespace: "demo", Client: client, TrackDrift: true}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

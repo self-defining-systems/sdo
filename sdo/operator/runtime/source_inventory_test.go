@@ -301,7 +301,7 @@ func TestSourceInventoryIdentityIgnoresMemoryOnlyCommit(t *testing.T) {
 }
 
 func TestSourceInventoryCacheOnlyExposesNamespaceBoundClusterRBAC(t *testing.T) {
-	c, err := NewKubernetesCache(KubernetesCacheConfig{Namespace: "app", Client: fake.NewSimpleClientset(), TrackDrift: true}, nil)
+	c, err := newCacheForTest(t, KubernetesCacheConfig{Namespace: "app", Client: fake.NewSimpleClientset(), TrackDrift: true}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

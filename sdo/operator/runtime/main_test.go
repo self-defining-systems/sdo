@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"fmt"
 	"os"
 	"testing"
 )
@@ -15,5 +16,12 @@ func TestMain(m *testing.M) {
 	os.Setenv("GIT_CONFIG_VALUE_0", "0")
 	os.Setenv("GIT_CONFIG_KEY_1", "maintenance.auto")
 	os.Setenv("GIT_CONFIG_VALUE_1", "false")
-	os.Exit(m.Run())
+	code := m.Run()
+	// Backstop for informers started where the leak-guarded test constructors
+	// do not reach (for example through Run): none may outlive the package.
+	if code == 0 && awaitInformerGoroutines(0, informerStopGrace) != 0 {
+		fmt.Fprintln(os.Stderr, "FAIL: informer goroutines still running after all tests; some test started informers it never stopped")
+		code = 1
+	}
+	os.Exit(code)
 }

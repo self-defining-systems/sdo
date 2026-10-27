@@ -51,7 +51,7 @@ func newDriftScenario(t *testing.T) (*Controller, *fake.Clientset, *KubernetesCa
 	first, peer := driftService(8080), driftService(8080)
 	peer.Name = "peer"
 	client := fake.NewSimpleClientset(first, peer)
-	cache, err := NewKubernetesCache(KubernetesCacheConfig{Namespace: "app", Client: client, TrackDrift: true}, nil)
+	cache, err := newCacheForTest(t, KubernetesCacheConfig{Namespace: "app", Client: client, TrackDrift: true}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

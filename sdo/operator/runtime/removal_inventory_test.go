@@ -34,7 +34,7 @@ func TestRemovalOwnershipIncludesUnrelatedLiveBindings(t *testing.T) {
 					role.SetLabels(map[string]string{"export": "yes"})
 				}
 			}
-			c, err := NewKubernetesCache(KubernetesCacheConfig{Namespace: "app", Client: fake.NewSimpleClientset(), TrackDrift: true}, nil)
+			c, err := newCacheForTest(t, KubernetesCacheConfig{Namespace: "app", Client: fake.NewSimpleClientset(), TrackDrift: true}, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -61,7 +61,7 @@ func TestRemovalOwnershipIncludesUnrelatedLiveBindings(t *testing.T) {
 
 func TestRemovalRoleBindingInformerObservesOtherNamespaces(t *testing.T) {
 	client := fake.NewSimpleClientset(&rbacv1.RoleBinding{ObjectMeta: metav1.ObjectMeta{Name: "outside", Namespace: "other"}})
-	c, err := NewKubernetesCache(KubernetesCacheConfig{Namespace: "app", Client: client, TrackDrift: true}, nil)
+	c, err := newCacheForTest(t, KubernetesCacheConfig{Namespace: "app", Client: client, TrackDrift: true}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,7 +128,7 @@ func TestSharedOwnershipEndsResponseWithoutContinuation(t *testing.T) {
 }
 
 func TestRemovalForeignBindingDeletionOnlyWakesOwnership(t *testing.T) {
-	c, err := NewKubernetesCache(KubernetesCacheConfig{Namespace: "app", Client: fake.NewSimpleClientset(), TrackDrift: true}, nil)
+	c, err := newCacheForTest(t, KubernetesCacheConfig{Namespace: "app", Client: fake.NewSimpleClientset(), TrackDrift: true}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -94,7 +94,7 @@ func secretAPITracker(t *testing.T, secret *corev1.Secret, status int, fullReply
 			}
 		}
 	})
-	tracker := NewStateTracker(StateTrackerConfig{Client: client, MetadataClient: metadataClient, Namespace: hotel})
+	tracker := newTrackerForTest(t, StateTrackerConfig{Client: client, MetadataClient: metadataClient, Namespace: hotel})
 	t.Cleanup(tracker.Stop)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
