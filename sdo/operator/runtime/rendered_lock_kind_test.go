@@ -214,7 +214,7 @@ spec:
 	revision = receipt.Commit
 	source.DeployedCommit = revision
 	responder := &lockKindResponder{source: source, client: client}
-	cache, err := NewKubernetesCache(KubernetesCacheConfig{Client: client, Namespace: "lk1", TrackDrift: true}, []sdk.Detector{fastloopDetector{}})
+	cache, err := newCacheForTest(t, KubernetesCacheConfig{Client: client, Namespace: "lk1", TrackDrift: true}, []sdk.Detector{fastloopDetector{}})
 	if err != nil {
 		t.Fatal(err)
 	}

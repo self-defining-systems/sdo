@@ -29,7 +29,7 @@ func TestResourceVersionAtLeast(t *testing.T) {
 func TestKubernetesCacheAwaitsWritesBeforeVerification(t *testing.T) {
 	service := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "demo", ResourceVersion: "5"}}
 	client := fake.NewSimpleClientset(service)
-	cache, err := NewKubernetesCache(KubernetesCacheConfig{Namespace: "demo", Client: client},
+	cache, err := newCacheForTest(t, KubernetesCacheConfig{Namespace: "demo", Client: client},
 		[]sdk.Detector{scheduledDetector{spec: sdk.DetectorSpec{ID: "svc", Interval: time.Second, Watches: []sdk.WatchKind{{APIVersion: "v1", Kind: "Service"}}}}})
 	if err != nil {
 		t.Fatal(err)

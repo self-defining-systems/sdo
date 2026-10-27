@@ -579,6 +579,12 @@ func CaptureReachabilityBaseline(ctx sdk.DetectionContext, a BaselineAuthorizati
     independently diagnoses from fresh failed probes in this authorized
     snapshot.
 
+func (b *ReachabilityBaseline) StaleExclusions(ctx sdk.DetectionContext) []ReachabilityExclusion
+    StaleExclusions returns the recorded exclusions whose target configuration
+    no longer matches the snapshot. A target that is gone has nothing left to
+    exclude and is not stale. Staleness only says the record must be measured
+    again by the healthy-baseline gate; it never authorizes a new exclusion.
+
 func (b *ReachabilityBaseline) Validate() error
 
 type ReachabilityConsumer interface {

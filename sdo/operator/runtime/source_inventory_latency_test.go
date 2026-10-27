@@ -34,7 +34,7 @@ func BenchmarkSourceInventoryClosure(b *testing.B) {
 }
 func BenchmarkSourceInventoryInformerHotel(b *testing.B) {
 	declared, live := hotelInventory()
-	c, err := NewKubernetesCache(KubernetesCacheConfig{Namespace: "app", Client: fake.NewSimpleClientset(), TrackDrift: true}, nil)
+	c, err := newCacheForTest(b, KubernetesCacheConfig{Namespace: "app", Client: fake.NewSimpleClientset(), TrackDrift: true}, nil)
 	if err != nil {
 		b.Fatal(err)
 	}

@@ -46,7 +46,7 @@ func TestVerifyRetainsDriftWithHealthyDetectors(t *testing.T) {
 func TestRepairedDriftRecursWithoutProgram(t *testing.T) {
 	start := time.Unix(100, 0).UTC()
 	before, broken := driftService(8080), driftService(9999)
-	cache, err := NewKubernetesCache(KubernetesCacheConfig{Namespace: "app", Client: fake.NewSimpleClientset(), TrackDrift: true}, nil)
+	cache, err := newCacheForTest(t, KubernetesCacheConfig{Namespace: "app", Client: fake.NewSimpleClientset(), TrackDrift: true}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +77,7 @@ func TestRepairedDriftRecursWithoutProgram(t *testing.T) {
 func TestUnexplainedDriftDuringResponseAttachesToOpenIncident(t *testing.T) {
 	start := time.Unix(100, 0).UTC()
 	before, broken := driftService(8080), driftService(9999)
-	cache, err := NewKubernetesCache(KubernetesCacheConfig{Namespace: "app", Client: fake.NewSimpleClientset(), TrackDrift: true}, nil)
+	cache, err := newCacheForTest(t, KubernetesCacheConfig{Namespace: "app", Client: fake.NewSimpleClientset(), TrackDrift: true}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,7 +151,7 @@ func TestUnexplainedDriftDuringResponseAttachesToOpenIncident(t *testing.T) {
 func TestUnexplainedTargetPortOpensLatentIncidentWithDriftCorpus(t *testing.T) {
 	start := time.Unix(100, 0).UTC()
 	root := t.TempDir()
-	cache, err := NewKubernetesCache(KubernetesCacheConfig{Namespace: "app", Client: fake.NewSimpleClientset(), TrackDrift: true}, nil)
+	cache, err := newCacheForTest(t, KubernetesCacheConfig{Namespace: "app", Client: fake.NewSimpleClientset(), TrackDrift: true}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -228,7 +228,7 @@ func TestUnexplainedDriftRetainsIndependentFieldSetsOnSameObject(t *testing.T) {
 // quiet for its first sample and fires from the second.
 func pendingDriftController(t *testing.T, start time.Time, health []sdk.Finding, changed *bool) (*Controller, *memorySink, *KubernetesCache) {
 	t.Helper()
-	cache, err := NewKubernetesCache(KubernetesCacheConfig{Namespace: "app", Client: fake.NewSimpleClientset(), TrackDrift: true}, nil)
+	cache, err := newCacheForTest(t, KubernetesCacheConfig{Namespace: "app", Client: fake.NewSimpleClientset(), TrackDrift: true}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
