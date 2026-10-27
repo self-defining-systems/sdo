@@ -61,7 +61,8 @@ func validateScriptDigests(base, corpusRoot string, item Spec) error {
 		return value.Value, nil
 	}
 	// Constant declarations may depend on later declarations in the package.
-	for range len(constants) + 1 {
+	for {
+		resolved := false
 		for _, decl := range constants {
 			for index, name := range decl.Names {
 				if index >= len(decl.Values) || pkg.Scope().Lookup(name.Name) != nil {
@@ -69,31 +70,42 @@ func validateScriptDigests(base, corpusRoot string, item Spec) error {
 				}
 				value, err := eval(decl.Values[index])
 				if err == nil {
-					pkg.Scope().Insert(types.NewConst(name.Pos(), pkg, name.Name, types.Typ[types.UntypedString], value))
+					kind := map[constant.Kind]types.BasicKind{constant.Bool: types.UntypedBool, constant.Int: types.UntypedInt, constant.Float: types.UntypedFloat, constant.Complex: types.UntypedComplex, constant.String: types.UntypedString}[value.Kind()]
+					pkg.Scope().Insert(types.NewConst(name.Pos(), pkg, name.Name, types.Typ[kind], value))
+					resolved = true
 				}
 			}
 		}
+		if !resolved {
+			break
+		}
 	}
 	aliases := map[string]bool{}
-	for range len(parsed) + 1 {
+	for {
+		discovered := false
 		for _, file := range parsed {
 			ast.Inspect(file, func(node ast.Node) bool {
 				spec, ok := node.(*ast.TypeSpec)
-				if !ok || !spec.Assign.IsValid() {
+				if !ok || !spec.Assign.IsValid() || aliases[spec.Name.Name] {
 					return true
 				}
 				switch typ := spec.Type.(type) {
 				case *ast.SelectorExpr:
 					if typ.Sel.Name == "RunScript" {
 						aliases[spec.Name.Name] = true
+						discovered = true
 					}
 				case *ast.Ident:
 					if aliases[typ.Name] {
 						aliases[spec.Name.Name] = true
+						discovered = true
 					}
 				}
 				return true
 			})
+		}
+		if !discovered {
+			break
 		}
 	}
 	var scripts []string

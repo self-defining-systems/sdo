@@ -10,7 +10,7 @@ import (
 
 func TestRunScriptProvenanceDoesNotDependOnReplayVerdicts(t *testing.T) {
 	const script = `kubectl exec --namespace "$NAMESPACE" "$POD" --container "$CONTAINER" -- bash "$MOUNT/$ITEM"`
-	for _, mode := range []string{"literal", "type alias", "alias changed digest", "no snapshots", "constant", "constant expression", "changed digest", "missing receipt", "dynamic text"} {
+	for _, mode := range []string{"literal", "numeric constant", "alias chain changed digest", "type alias", "alias changed digest", "no snapshots", "constant", "constant expression", "changed digest", "missing receipt", "dynamic text"} {
 		t.Run(mode, func(t *testing.T) {
 			root := t.TempDir()
 			fixture := "../../../../../tests/fixtures/sdo/hotel_run_script_upgrade/.sdo"
@@ -24,6 +24,11 @@ func TestRunScriptProvenanceDoesNotDependOnReplayVerdicts(t *testing.T) {
 			}
 			text := string(data)
 			switch mode {
+			case "numeric constant":
+				text = strings.Replace(text, "`"+script+"`", "savedScript", 1) + fmt.Sprintf("\nconst lastRune = %d\nconst savedScript = %q + string(lastRune)\n", script[len(script)-1], script[:len(script)-1])
+			case "alias chain changed digest":
+				text = strings.ReplaceAll(text, "program.RunScript{", "FirstStep{") + "\ntype FirstStep = SecondStep\ntype SecondStep = ThirdStep\ntype ThirdStep = FourthStep\ntype FourthStep = FifthStep\ntype FifthStep = program.RunScript\n"
+				text = strings.Replace(text, script, script+"\n", 1)
 			case "type alias", "alias changed digest":
 				text = strings.ReplaceAll(text, "program.RunScript{", "ScriptStep{") + "\ntype ScriptStep = program.RunScript\n"
 				if mode == "alias changed digest" {
@@ -54,7 +59,7 @@ func TestRunScriptProvenanceDoesNotDependOnReplayVerdicts(t *testing.T) {
 			// The inspector never runs Diagnose or Mitigate: only the authored script
 			// bytes, the captured linkage and its timed successful receipt matter.
 			_, err = InspectMemory(root, "fixture-diagnostics")
-			wantError := mode == "alias changed digest" || mode == "changed digest" || mode == "missing receipt" || mode == "dynamic text"
+			wantError := mode == "alias chain changed digest" || mode == "alias changed digest" || mode == "changed digest" || mode == "missing receipt" || mode == "dynamic text"
 			if (err != nil) != wantError {
 				t.Fatalf("mode=%s err=%v", mode, err)
 			}
