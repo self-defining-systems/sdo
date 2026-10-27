@@ -63,3 +63,14 @@ func TestFailedResponseProgressEndsAtHealthyClosureAndRequiresSameResource(t *te
 		t.Fatalf("same fingerprint on different resource recalled old work: %v", got)
 	}
 }
+
+func TestFailedResponseProgressEndsWhenFailedWorkerWasIndependentlyHealthy(t *testing.T) {
+	f := stateFinding("health")
+	f.Fingerprint = "same-fault-returned"
+	// Outcome classification follows failed worker status even when the
+	// controller independently observed healthy closure. That still ends work.
+	record := &contracts.OutcomeRecord{IncidentId: "failed-but-cleared", Classification: "failed", Timestamps: &contracts.OutcomeTimestamps{VerifiedAt: contractTimestamp(time.Unix(2, 0)), CompletedAt: contractTimestamp(time.Unix(2, 0))}, Findings: []*contracts.Finding{{DetectorId: f.DetectorID, Fingerprint: f.Fingerprint, PrimaryResource: planRefProto(f.PrimaryResource)}}, RepairActions: []*contracts.RepairActionReceipt{{ActionId: "old-repair", Success: true}}}
+	if got := responseProgress([]*contracts.OutcomeRecord{record}, []sdk.Finding{f}, time.Time{}); len(got) != 0 {
+		t.Fatalf("closed healthy problem reopened as already-done work: %v", got)
+	}
+}

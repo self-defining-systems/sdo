@@ -39,8 +39,18 @@ func priorResponseProgress(repository string, findings []sdk.Finding) []*contrac
 // problem; similar later incidents must not inherit its already-done work.
 func responseProgress(records []*contracts.OutcomeRecord, findings []sdk.Finding, healthyAfter time.Time) []*contracts.ResponseProgress {
 	for _, record := range records {
-		if (record.GetClassification() == "success" || record.GetClassification() == "cleared_without_action") && outcomeCompletedAt(record).After(healthyAfter) {
-			healthyAfter = outcomeCompletedAt(record)
+		healthy := record.GetClassification() == "success" || record.GetClassification() == "cleared_without_action"
+		at := outcomeCompletedAt(record)
+		// A failed worker can still have an independently healthy closure.
+		// Classification alone must not turn that later recurrence into a retry.
+		if verified := record.GetTimestamps().GetVerifiedAt(); verified != nil && verified.IsValid() {
+			healthy = true
+			if verified.AsTime().After(at) {
+				at = verified.AsTime()
+			}
+		}
+		if healthy && at.After(healthyAfter) {
+			healthyAfter = at
 		}
 	}
 	current := map[string]sdk.ObjectRef{}
