@@ -18,8 +18,11 @@ def test_sdo_cli_exchanges_typed_request_with_fake_controller(tmp_path, monkeypa
     monkeypatch.setenv("SDO_TOOLS_DIR", str(tmp_path))
     seen = []
 
+    stop = threading.Event()
+
     def controller():
-        for _ in range(100):
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline and not stop.is_set():
             files = [path for path in requests.glob("*.json") if not path.name.startswith(".")]
             if files:
                 request = json.loads(files[0].read_text())
@@ -28,14 +31,16 @@ def test_sdo_cli_exchanges_typed_request_with_fake_controller(tmp_path, monkeypa
                     json.dumps({"command": "diagnose", "summary": "one match", "program_runs": []})
                 )
                 return
-            time.sleep(0.01)
+            stop.wait(0.01)
 
     worker = threading.Thread(target=controller)
     worker.start()
     try:
         assert tools_cli.main(["--json", "diagnose", "targetport", "--bind", "service=Service/app/api"]) == 0
     finally:
-        worker.join(timeout=2)
+        stop.set()
+        worker.join(timeout=30)
+    assert not worker.is_alive()
     assert seen == [
         {
             "command": "diagnose",

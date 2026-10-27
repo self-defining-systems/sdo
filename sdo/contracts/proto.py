@@ -142,6 +142,7 @@ StateFieldChange = messages_pb2.StateFieldChange
 StateChange = messages_pb2.StateChange
 StateChanges = messages_pb2.StateChanges
 InstallEnvironmentObject = messages_pb2.InstallEnvironmentObject
+DisabledSetupDetector = messages_pb2.DisabledSetupDetector
 NamespaceOnboarding = messages_pb2.NamespaceOnboarding
 IncidentRequest = messages_pb2.IncidentRequest
 RootCauseEvidence = messages_pb2.RootCauseEvidence
@@ -293,6 +294,7 @@ __all__ = [
     "IncidentClosure",
     "IncidentRequest",
     "NamespaceOnboarding",
+    "DisabledSetupDetector",
     "InstallEnvironmentObject",
     "IncidentResult",
     "LateFindingsPull",

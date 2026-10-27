@@ -226,6 +226,7 @@ func NewResponderLoop(request IncidentRequest, programs program.ProgramRegistry,
 	if _, err := rand.Read(session); err != nil {
 		panic(err)
 	}
+	detectors = withoutDisabledSetupDetectors(detectors, request.SourceCommit, request.DisabledSetupDetectors)
 	loop := &ResponderLoop{sessionID: fmt.Sprintf("%x", session), Request: request, Programs: programs, Provider: provider, Detectors: detectors, Executor: executor, MaxBatches: maxBatches, plans: map[string]selectedPlan{}, applications: map[string]PlanApplicationResult{}, matchedViews: map[string]program.ReadView{}, matchedPlans: map[string]PlanApplicationResult{}, findings: append([]sdk.Finding(nil), request.Findings...)}
 	priorRecorder := executor.RecordPrimitive
 	loop.Executor.RecordPrimitive = func(call sdktest.PrimitiveCall) error {

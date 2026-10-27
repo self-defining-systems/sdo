@@ -217,9 +217,10 @@ func incidentRequestContract(request IncidentRequest) (*contracts.IncidentReques
 		RepairPolicy: request.RepairPolicy, StateChanges: stateChangesContract(request.StateChanges),
 		MaxResponseLoops: int32(request.MaxResponseLoops),
 		DriftEvents:      driftEventsContract(request.DriftEvents), PreparedAgentTask: request.PreparedAgentTask,
-		PlaybookCoverage:    cloneCoverage(request.PlaybookCoverage),
-		PriorStages:         cloneStageReports(request.PriorStages),
-		NamespaceOnboarding: cloneNamespaceOnboarding(request.NamespaceOnboarding),
+		PlaybookCoverage:       cloneCoverage(request.PlaybookCoverage),
+		PriorStages:            cloneStageReports(request.PriorStages),
+		NamespaceOnboarding:    cloneNamespaceOnboarding(request.NamespaceOnboarding),
+		DisabledSetupDetectors: cloneDisabledSetupDetectors(request.DisabledSetupDetectors),
 	}
 	for _, run := range request.InitialProgramRuns {
 		result.InitialProgramRuns = append(result.InitialProgramRuns, programRunContract(run))
@@ -540,10 +541,11 @@ func incidentRequestState(message *contracts.IncidentRequest) *IncidentRequest {
 		return nil
 	}
 	result := &IncidentRequest{
-		ObservationGeneration: message.GetObservationGeneration(),
-		NamespaceOnboarding:   cloneNamespaceOnboarding(message.GetNamespaceOnboarding()),
-		PriorStages:           cloneStageReports(message.GetPriorStages()),
-		SchemaVersion:         message.GetSchemaVersion(), Application: message.GetApplication(), Namespace: message.GetNamespace(),
+		ObservationGeneration:  message.GetObservationGeneration(),
+		NamespaceOnboarding:    cloneNamespaceOnboarding(message.GetNamespaceOnboarding()),
+		DisabledSetupDetectors: cloneDisabledSetupDetectors(message.GetDisabledSetupDetectors()),
+		PriorStages:            cloneStageReports(message.GetPriorStages()),
+		SchemaVersion:          message.GetSchemaVersion(), Application: message.GetApplication(), Namespace: message.GetNamespace(),
 		IncidentID: message.GetIncidentId(), Findings: findingsState(message.GetFindings()),
 		DetectorHistory:   evaluationsState(message.GetDetectorHistory()),
 		SurfacedPlaybooks: make([]SurfacedPlaybook, 0, len(message.GetSurfacedPlaybooks())),
