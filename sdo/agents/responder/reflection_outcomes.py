@@ -79,6 +79,8 @@ def current_outcome_view(outcome: OutcomeRecord) -> dict[str, Any]:
     view = json_format.MessageToDict(
         outcome, preserving_proto_field_name=True, always_print_fields_with_no_presence=True
     )
+    if not view.get("disabled_setup_detectors"):
+        view.pop("disabled_setup_detectors", None)
     view.pop("reflection_eligibility", None)  # supplied once as controller-owned work
     if not view.get("source_check_notes"):
         view.pop("source_check_notes", None)  # information only; shown when the closure recorded any
