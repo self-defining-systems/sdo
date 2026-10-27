@@ -113,6 +113,7 @@ func checkFailureReason(file *ast.File, expr ast.Expr, message proto.Message) er
 }
 
 func TestFailureReasonProducersClosedEnums(t *testing.T) {
+	t.Run("forwarded-action-reports", TestActionFailureReasonsBelongToRepairReceiptContract)
 	t.Run("database", TestDatabaseFailureReasonsBelongToBothReceiptContracts)
 	t.Run("worker", TestWorkerFailureReasonProducerClosedEnums)
 	t.Run("negative-controls", TestFailureReasonRatchetRejectsComputedVocabulary)
@@ -268,5 +269,19 @@ func TestWorkerFailureReasonProducerClosedEnums(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("worker reason producer disappeared; update ratchet")
+	}
+}
+
+// ProgramRepairReceipts forwards action reasons unchanged. Checking writes
+// against only ActionReport misses vocabulary rejected by that downstream seam.
+func TestActionFailureReasonsBelongToRepairReceiptContract(t *testing.T) {
+	allowed := map[string]bool{}
+	for _, reason := range wire.StringIn(&contracts.RepairActionReceipt{}, "failure_reason") {
+		allowed[reason] = true
+	}
+	for _, reason := range wire.StringIn(&contracts.ActionReport{}, "failure_reason") {
+		if !allowed[reason] {
+			t.Errorf("ActionReport failure_reason %q cannot be forwarded to RepairActionReceipt", reason)
+		}
 	}
 }
