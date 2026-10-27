@@ -159,6 +159,7 @@ type Controller struct {
 	incidentDetectedAt      time.Time
 	incidentDispatchedAt    time.Time
 	responderCompletedAt    time.Time
+	verificationDeadline    time.Time
 	// detectorClearSince maps each detector to the start of its current
 	// streak of clear evaluations; a firing or erroring evaluation ends
 	// the streak. Guarded by mu.
@@ -754,6 +755,7 @@ func (c *Controller) dispatchReady(ctx context.Context, now time.Time, snapshot 
 	c.incidentDetectedAt = now.UTC()
 	c.incidentDispatchedAt = time.Time{}
 	c.responderCompletedAt = time.Time{}
+	c.verificationDeadline = time.Time{}
 	c.resetDispatchRetryLocked()
 	c.dispatchState = contracts.DispatchState_DISPATCH_STATE_PENDING
 	if c.broker != nil {
@@ -1207,6 +1209,9 @@ func (c *Controller) handleDispatchCompletion(completion dispatchCompletion, obs
 		c.resetDispatchRetryLocked()
 	}
 	if c.responderDone {
+		if c.verificationDeadline.IsZero() {
+			c.verificationDeadline = c.verificationDeadlineLocked()
+		}
 		c.emitLifecycleLocked(&contracts.LifecycleEvent{
 			Event: PhaseResponderCompleted, RecordedAt: contractTimestamp(c.responderCompletedAt), IncidentId: completion.incidentID,
 			DispatchError: c.dispatchError != "",
@@ -1243,6 +1248,9 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 	if !c.incidentOpen || c.currentIncidentRequest == nil {
 		c.mu.Unlock()
 		return
+	}
+	if c.responderDone && c.verificationDeadline.IsZero() {
+		c.verificationDeadline = c.verificationDeadlineLocked()
 	}
 	early := !c.responderDone
 	driftOnly := early && c.driftOnlyIncidentLocked()
@@ -1595,7 +1603,10 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 // verificationDeadlineLocked bounds observation by both the completed response
 // and its original request budget. Continuations never extend that request.
 func (c *Controller) verificationDeadlineLocked() time.Time {
-	deadline := c.responderCompletedAt.Add(c.config.VerificationTimeout)
+	deadline := c.verificationDeadline
+	if deadline.IsZero() {
+		deadline = c.responderCompletedAt.Add(c.config.VerificationTimeout)
+	}
 	if response := c.currentIncidentRequest.ResponseDeadline; !response.IsZero() && response.Before(deadline) {
 		deadline = response
 	}
@@ -1771,9 +1782,10 @@ func (c *Controller) ExportState() (*contracts.ControllerState, error) {
 		History: evaluationsContract(history), IncidentOpen: c.incidentOpen, ResponderDone: c.responderDone,
 		DispatchError: c.dispatchError, IncidentDetectedAt: optionalTimestamp(c.incidentDetectedAt),
 		IncidentDispatchedAt: optionalTimestamp(c.incidentDispatchedAt), ResponderCompletedAt: optionalTimestamp(c.responderCompletedAt),
-		DetectorClearSince:  timestampsContract(c.detectorClearSince),
-		DispatchState:       dispatchState,
-		IncidentFindingKeys: append([]string(nil), c.incidentFindingKeys...), ClosureState: c.closureState,
+		VerificationDeadlineAt: optionalTimestamp(c.verificationDeadline),
+		DetectorClearSince:     timestampsContract(c.detectorClearSince),
+		DispatchState:          dispatchState,
+		IncidentFindingKeys:    append([]string(nil), c.incidentFindingKeys...), ClosureState: c.closureState,
 		ClosureReceipt: closureReceiptContract(c.closureReceipt), ClosureFailure: closureFailureContract(c.closureFailure), FailedClosures: cloneFailedClosures(c.failedClosures),
 		LastAcknowledgedIncidentId: c.lastAcknowledgedIncidentID, QueuedReflectionIncidentIds: append([]string(nil), c.reflections.queued...), QueuedReflectionsUnknown: c.reflections.unknown,
 		EvaluationIteration: int32(c.evaluationIteration), StepCount: c.stepCount, DetectorTimeline: timeline, IncidentView: view,
@@ -1863,6 +1875,7 @@ func (c *Controller) RestoreState(state *contracts.ControllerState) error {
 	c.incidentDetectedAt = controllerTime(state.GetIncidentDetectedAt())
 	c.incidentDispatchedAt = controllerTime(state.GetIncidentDispatchedAt())
 	c.responderCompletedAt = controllerTime(state.GetResponderCompletedAt())
+	c.verificationDeadline = controllerTime(state.GetVerificationDeadlineAt())
 	c.detectorClearSince = cloneClearSince(timestampsState(state.GetDetectorClearSince()))
 	c.dispatchState = state.DispatchState
 	c.incidentFindingKeys = append([]string(nil), state.IncidentFindingKeys...)

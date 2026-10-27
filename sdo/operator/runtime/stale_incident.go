@@ -230,6 +230,7 @@ func (c *Controller) clearIncidentLocked() {
 	c.incidentDetectedAt = time.Time{}
 	c.incidentDispatchedAt = time.Time{}
 	c.responderCompletedAt = time.Time{}
+	c.verificationDeadline = time.Time{}
 	c.dispatchState = contracts.DispatchState_DISPATCH_STATE_IDLE
 	c.incidentFindingKeys = nil
 	c.cleanedHelpers = nil

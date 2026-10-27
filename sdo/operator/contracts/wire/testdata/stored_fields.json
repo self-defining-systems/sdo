@@ -164,6 +164,7 @@
   "sdodev.contracts.v1alpha1.ControllerState.scheduler_deadlines",
   "sdodev.contracts.v1alpha1.ControllerState.selection_ledger",
   "sdodev.contracts.v1alpha1.ControllerState.step_count",
+  "sdodev.contracts.v1alpha1.ControllerState.verification_deadline_at",
   "sdodev.contracts.v1alpha1.ControllerState.version",
   "sdodev.contracts.v1alpha1.CreateFromSource.reason",
   "sdodev.contracts.v1alpha1.CreateFromSource.ref",
