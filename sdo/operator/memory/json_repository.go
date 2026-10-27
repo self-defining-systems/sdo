@@ -127,20 +127,16 @@ func (s *JSONStore) Get(ctx context.Context, incidentID string) (Outcome, error)
 }
 
 // List returns every readable outcome. An outcome that cannot be read, decoded
-// or validated is skipped and reported by Unreadable: one bad document must
+// or validated is skipped and reported by ListWithNotes: one bad document must
 // never stop the controller from using the rest of accepted memory.
 func (s *JSONStore) List(ctx context.Context) ([]Outcome, error) {
-	outcomes, _, err := s.scan(ctx)
+	outcomes, _, err := s.ListWithNotes(ctx)
 	return outcomes, err
 }
 
-// Unreadable reports the outcome documents List skipped, in file-name order.
-func (s *JSONStore) Unreadable(ctx context.Context) ([]UnreadableOutcome, error) {
-	_, notes, err := s.scan(ctx)
-	return notes, err
-}
-
-func (s *JSONStore) scan(ctx context.Context) ([]Outcome, []UnreadableOutcome, error) {
+// ListWithNotes is List plus a note per skipped outcome document, in file-name
+// order, from the same scan.
+func (s *JSONStore) ListWithNotes(ctx context.Context) ([]Outcome, []UnreadableOutcome, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, nil, err
 	}
@@ -154,6 +150,10 @@ func (s *JSONStore) scan(ctx context.Context) ([]Outcome, []UnreadableOutcome, e
 	for _, entry := range entries {
 		if err := ctx.Err(); err != nil {
 			return nil, nil, err
+		}
+		if filepath.Ext(entry.Name()) != ".json" {
+			// Not an outcome document (for example a leftover write temp file).
+			continue
 		}
 		outcome, err := readOutcomeEntry(directory, entry)
 		if err != nil {
@@ -180,7 +180,7 @@ func (s *JSONStore) scan(ctx context.Context) ([]Outcome, []UnreadableOutcome, e
 }
 
 func readOutcomeEntry(directory string, entry os.DirEntry) (Outcome, error) {
-	if !entry.Type().IsRegular() || filepath.Ext(entry.Name()) != ".json" {
+	if !entry.Type().IsRegular() {
 		return Outcome{}, fmt.Errorf("invalid outcome entry")
 	}
 	data, err := os.ReadFile(filepath.Join(directory, entry.Name()))

@@ -7,6 +7,7 @@ import (
 
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
+	"google.golang.org/protobuf/reflect/protoregistry"
 )
 
 // Accepted memory and durable controller state outlive the build that wrote
@@ -16,7 +17,8 @@ import (
 // old name or value; these tables are the only place that remembers them.
 // TestRetiredTablesCoverEverySchemaRemoval fails when a removal is not listed.
 
-// retiredFieldNames maps "<message>.<old field>" to the field that replaced it.
+// retiredFieldNames maps "<message>.<old field>" to the field that replaced it,
+// or to "" when the field was removed and its stored value is dropped.
 var retiredFieldNames = map[string]string{
 	"sdodev.contracts.v1alpha1.ReflectionEligibility.evidence_gap_count":   "no_repair_count",
 	"sdodev.contracts.v1alpha1.BrokerLedger.reflection_evidence_gap_count": "reflection_no_repair_count",
@@ -49,6 +51,9 @@ func UnmarshalLenientMigrating(data []byte, message proto.Message) error {
 }
 
 func migrateRetired(data json.RawMessage, descriptor protoreflect.MessageDescriptor) (json.RawMessage, error) {
+	if descriptor.FullName() == "google.protobuf.Any" {
+		return migrateAny(data)
+	}
 	if strings.HasPrefix(string(descriptor.FullName()), "google.protobuf.") || string(data) == "null" {
 		return data, nil
 	}
@@ -65,6 +70,10 @@ func migrateRetired(data json.RawMessage, descriptor protoreflect.MessageDescrip
 		}
 		if field == nil {
 			successor, retired := retiredFieldNames[string(descriptor.FullName())+"."+key]
+			if retired && successor == "" {
+				delete(object, key)
+				continue
+			}
 			target := fields.ByName(protoreflect.Name(successor))
 			if !retired || target == nil {
 				continue
@@ -88,6 +97,38 @@ func migrateRetired(data json.RawMessage, descriptor protoreflect.MessageDescrip
 		object[key] = migrated
 	}
 	return json.Marshal(object)
+}
+
+// migrateAny migrates the message packed in an Any, whose fields sit beside
+// "@type" in ProtoJSON. An Any naming an unknown type is left for the decoder.
+func migrateAny(data json.RawMessage) (json.RawMessage, error) {
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal(data, &object); err != nil {
+		return data, nil
+	}
+	var url string
+	if err := json.Unmarshal(object["@type"], &url); err != nil || url == "" {
+		return data, nil
+	}
+	messageType, err := protoregistry.GlobalTypes.FindMessageByURL(url)
+	if err != nil {
+		return data, nil
+	}
+	delete(object, "@type")
+	inner, err := json.Marshal(object)
+	if err != nil {
+		return nil, err
+	}
+	migrated, err := migrateRetired(inner, messageType.Descriptor())
+	if err != nil {
+		return nil, err
+	}
+	var result map[string]json.RawMessage
+	if err := json.Unmarshal(migrated, &result); err != nil {
+		return nil, err
+	}
+	result["@type"], _ = json.Marshal(url)
+	return json.Marshal(result)
 }
 
 func migrateField(value json.RawMessage, field protoreflect.FieldDescriptor) (json.RawMessage, error) {

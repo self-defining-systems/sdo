@@ -166,6 +166,17 @@ func ProgramTrustStats(outcomes []*contracts.OutcomeRecord) map[string]ProgramTr
 	return stats
 }
 
+// withholdProgramTrust counts each outcome that could not be read as a failure
+// of every program with recorded evidence and clears its success streak, so
+// missing evidence can only lower trust.
+func withholdProgramTrust(stats map[string]ProgramTrust, unreadable int) {
+	for id, state := range stats {
+		state.VerifiedSuccesses = 0
+		state.Failures += unreadable
+		stats[id] = state
+	}
+}
+
 // parseProgramToolCall decodes one recorded program tool call, rejecting
 // errored or self-inconsistent records.
 func parseProgramToolCall(call *contracts.ProgramToolCall) (ToolRequest, ToolResponse, bool) {

@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -60,7 +61,7 @@ func TestOneUnreadableOutcomeNeverHidesTheRest(t *testing.T) {
 	if len(all) != 1 || all[0].IncidentID != "good" {
 		t.Fatalf("readable outcomes = %+v", all)
 	}
-	notes, err := store.Unreadable(context.Background())
+	_, notes, err := store.ListWithNotes(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,5 +80,30 @@ func TestOneUnreadableOutcomeNeverHidesTheRest(t *testing.T) {
 	}
 	if !strings.Contains(notes[0].Name+notes[1].Name, ".json") {
 		t.Fatalf("notes do not name the files: %+v", notes)
+	}
+}
+
+func TestListOutcomesLogsEverySkippedOutcomeAndIgnoresNonDocuments(t *testing.T) {
+	root := t.TempDir()
+	store := NewJSONStore(root)
+	if _, err := store.Put(context.Background(), outcome("good", "success")); err != nil {
+		t.Fatal(err)
+	}
+	writeOutcomeFile(t, root, "bad", `{"schema_version":1,"incident_id":"bad","classification":"not-a-class"}`)
+	leftover := filepath.Join(root, layout.OutcomesDir, ".outcome-123")
+	if err := os.WriteFile(leftover, []byte("partial"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var logged strings.Builder
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logged, nil)))
+	defer slog.SetDefault(previous)
+
+	outcomes, notes, err := ListOutcomes(context.Background(), store, "test reading")
+	if err != nil || len(outcomes) != 1 || len(notes) != 1 {
+		t.Fatalf("ListOutcomes = %d outcomes, %d notes, %v", len(outcomes), len(notes), err)
+	}
+	if !strings.Contains(logged.String(), "skipped unreadable outcome") || !strings.Contains(logged.String(), "test reading") || !strings.Contains(logged.String(), notes[0].Name) {
+		t.Fatalf("skipped outcome not logged with its reader and file: %q", logged.String())
 	}
 }

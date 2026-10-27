@@ -382,11 +382,7 @@ func memoryOutcomes(ctx context.Context, args []string, stdout io.Writer) error 
 		return err
 	}
 	reader := memory.OpenReader(absolute)
-	stored, err := reader.List(ctx)
-	if err != nil {
-		return err
-	}
-	skipped, err := memory.UnreadableOutcomes(ctx, reader)
+	stored, skipped, err := memory.ListOutcomes(ctx, reader, "memory outcomes")
 	if err != nil {
 		return err
 	}
