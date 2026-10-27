@@ -49,7 +49,7 @@ diagnostic; look it up here.
 
 Advice, not validator-checked: recorded faults should produce an incident detector finding that selects the playbook. When none does, the mitigation is still replayed and must repair, and the missing link is noted as a coverage gap (`program.repeat-unreachable`), not a refusal.
 
-- A mitigator must clear its diagnosis after its patches are applied to the faulted fixture, An already-faulty target value is not a repair. Enforced by: `program.mitigation-not-repaired`.
+- A mitigator must clear its own step diagnosis after its patches apply to the faulted fixture; unrelated faults may remain in fixed and post-plan states. An already-faulty target value is not a repair. Enforced by: `program.mitigation-not-repaired`.
 - Prefer narrow typed SetField repairs when the damaged field is known; whole-object ReconcileFromSource requires whole-object justification. Observed and parameter-derived fields require valid patches and available observations; accepted-source field selectors require accepted manifests in the fixture. Enforced by: `program.mitigation-unreplayable`, `program.mitigation-not-repaired`.
 
 - CreateFromSource requires accepted-source presence; DeleteObject targets any named nonsecret object without a source-absence gate. Both require direct current UID/absence verification. Delete is disclosed as irreversible and never auto-recreated. They must execute successfully in replay to prove repair. Enforced by: `program.mitigation-unreplayable`.
@@ -73,9 +73,13 @@ pods/exec grant in the application namespace and returns an exit code with no st
 
 ## Corpus evidence
 
-Advice, not validator-checked: save a diagnose and mitigation program, a README, and detector coverage for each verified cause you can; one
-detector may surface several playbooks. Reflection can edit only responder-owned incident detectors, so new
-coverage goes there. A cause left without a program or detector link is recorded as a coverage gap, not refused.
+Partial mechanical coverage is useful: save each verified step as a program; the README explains orchestration
+and judgement about when and in what order to run steps (what to observe, decide and why).
+Any performed repair can be a `RunScript` bash step with relation-derived Env and digest-to-receipt linkage;
+difficulty never justifies saving nothing. Verified, specific README-only playbooks are allowed
+and never auto-applied. Return `updated` with IDs and scoped `sdk_gaps` for unencoded parts of the same repair.
+Advice, not validator-checked: add detector coverage; one detector may surface several playbooks. Reflection
+can edit only responder-owned incident detectors. Missing executable coverage is a gap, not a refusal.
 
 - Build replay fixtures from recorded session observations. Controller capture files and snapshot digests are
   optional. Mitigation must execute and clear diagnosis; skipped effects fail replay. Enforced by: `program.mitigation-not-repaired`.

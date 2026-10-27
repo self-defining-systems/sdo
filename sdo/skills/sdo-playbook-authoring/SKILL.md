@@ -17,17 +17,21 @@ Read the [memory principles](../sdo-memory/SKILL.md#memory-principles) for evide
    [generated program SDK](references/program-sdk.md) before choosing API types. The
    [authoring_reference](../sdo-memory/references/runtime.md#authoring_reference) tool retrieves these same
    shipped references as a section index or one section, with a file to search.
-3. For each cause a recorded repair touched on a closure verified healthy, submit a diagnose program, mitigation program, a README explaining
-   how to handle the fault, and detector coverage. A detector may surface multiple playbooks;
+3. Save each verified mechanical step as a diagnose and mitigation program, even with partial coverage.
+   Any performed repair, however nuanced, can be a `RunScript` bash step with relation-derived Env and
+   digest-to-receipt linkage; difficulty never justifies saving nothing. Put judgement about when and in
+   what order to run steps in the README, with observations and decisions that guide it.
+   Save README-only playbooks with verified, specific guidance too; these are never auto-applied. Add detector coverage. A detector may surface multiple playbooks;
    `DetectionContext.DiffAgainstSource` observes field drift and source absence before playbook selection.
    Use the responder's recorded actions and existing session observations to build the replay fixture.
    Controller captures and the evidence tools are optional sources, never prerequisites for learning.
 4. Author final files in the proposal checkout; SDO derives `fault_class` and the index entry. A fixture labels
    its positive programs and binds the confirmed-cause resources. Include observed primitive replies and
    accepted.json when the mitigation needs source values. Preserve accepted cases; add new evidence by ID.
-5. Validate compilation, detector tests and mitigation-clears-diagnosis replay, then return the same decision and
-   changed logical IDs. A cause you cannot save as a program is recorded as a coverage gap; say why in the result.
-   Return `updated` with changed playbook IDs and scoped `sdk_gaps` when only some causes are learnable.
+5. Scope each diagnosis to its step’s bound resources. Validate each program on its own scope: faulted diagnosis matches and its plan builds, applies and clears
+   that diagnosis; unrelated faults may remain. Keep compilation, detector tests and the complete memory check.
+   Return `updated` with changed playbook IDs and scoped `sdk_gaps` for unencoded parts of the same repair.
+   Use `sdk_gap` without edits only when no mechanical step or useful guidance can be saved.
    Controller-listed `undetected_causes` permit new detector coverage for measured repair transitions;
    bind the replay case to their captured open/fixed configuration without claiming independent health proof.
 

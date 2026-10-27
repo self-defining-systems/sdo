@@ -15,7 +15,7 @@ Read memory freely; edit only the artifact classes and proposal checkout your ta
 ## Memory principles
 
 - Treat memory as advice and accepted source as intent; check both against live state before acting.
-- When the incident closed verified healthy, save the repair steps it used; a README alone does not establish learning. A bad saved step is caught on the next encounter, which tries it and checks health.
+- Save verified mechanical steps even with partial coverage. Any performed repair can be a `RunScript` bash step with relation-derived Env and digest-to-receipt linkage; difficulty never justifies saving nothing. The README explains judgement about when and in what order to run steps, and what to observe and decide. Verified, specific README-only guidance is useful memory; it is never auto-applied. Return `updated` with IDs and scoped `sdk_gaps` for unencoded parts.
 - Keep one failure mechanism per playbook; refine it when only a resource or parameter differs.
 - Reflection avoids hard-coded service or app names: prefer runtime bindings from findings, Diagnose or responder values; isolate unavoidable names in one logical helper and document app constants in the playbook README.
 - Use detectors to find problems proactively and playbooks to diagnose and mitigate; their relationship need not be one to one.
