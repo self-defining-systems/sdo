@@ -96,6 +96,7 @@ LEFTOVER_CLASS = "cluster-leftover"
 
 #: First matching rule names the error class of a failed check; the check name and its detail are searched.
 CLASS_RULES: tuple[tuple[str, str], ...] = (
+    (r"unsupported repair/snapshot scope", "fault-unsupported"),
     (r"fastloop up failed", "cluster-up-failed"),
     (r"reset failed", "reset-failed"),
     (r"context deadline exceeded", "deadline-exceeded"),

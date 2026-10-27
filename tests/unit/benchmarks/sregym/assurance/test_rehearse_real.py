@@ -176,7 +176,9 @@ def test_program_reuse_is_asserted_only_when_a_program_matched() -> None:
 
 def test_run_arguments_run_the_scripted_registrations_behind_the_lane_guard(tmp_path: Path) -> None:
     lane = real.RealLane("hotel_reservation", tmp_path, "luna-pilot-54", tmp_path / "cfg", "hotel", "le-p4b")
-    argv = real.run_arguments(lane, "p1", timeout=100, time_scale=1.0)
+    argv = real.run_arguments(lane, tmp_path / "s.json", timeout=100, time_scale=1.0)
+    assert argv[argv.index("--stream") + 1] == str(tmp_path / "s.json")
+    assert "--problem" not in argv
     # ``-m`` must follow the interpreter directly (a stray word there makes Python open it as a file).
     assert argv[:5] == ["uv", "run", "python", "-m", "benchmarks.sregym.fastloop.lane_guard"]
     assert argv[argv.index("--") + 1] == "benchmarks.sregym.fastloop"
@@ -306,3 +308,13 @@ def test_an_incident_after_the_injection_is_not_a_baseline_incident() -> None:
         detected_at="2026-10-27T00:00:10Z",
     )
     assert all(s.status == "pass" for s in real.record_stages(record))
+
+
+def test_the_problem_stream_matches_production_capability_settings() -> None:
+    stream = real.problem_stream("p1")
+    assert stream["incidents"] == ["p1"]
+    assert (stream["capability_mode"], stream["permissive_responder"]) == ("permissive", True)
+    # The same fields the Phase 4 lane streams carry (so strict capability review cannot reject a planned fault).
+    from benchmarks.sregym.fastloop.stream import StreamConfig
+
+    assert {"capability_mode", "permissive_responder"} <= set(StreamConfig.__dataclass_fields__)

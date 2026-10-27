@@ -69,6 +69,11 @@ def test_every_vehicle_is_a_toy_fault_the_toy_app_can_inject() -> None:
         ("controller can delete pods", "no", "rbac-missing-verb"),
         ("x: receipt valid", "ValueError", "receipt-invalid"),
         ("scenario", "fastloop up failed (exit 1)", "cluster-up-failed"),
+        (
+            "admission",
+            "p/PVCClaimMismatch: unsupported repair/snapshot scope unreviewed:PVCClaimMismatch",
+            "fault-unsupported",
+        ),
         ("something", "new", "other"),
     ],
 )

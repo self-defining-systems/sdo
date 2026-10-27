@@ -179,7 +179,18 @@ def deliver_images(lane: RealLane, tags: Sequence[str]) -> None:
     )
 
 
-def run_arguments(lane: RealLane, problem_id: str, *, timeout: int, time_scale: float) -> list[str]:
+def problem_stream(problem_id: str) -> dict[str, Any]:
+    """The Phase 4 stream settings for one problem (permissive capability review and responder, as in production)."""
+
+    return {
+        "incidents": [problem_id],
+        "diagnosis_grading": "off",
+        "capability_mode": "permissive",
+        "permissive_responder": True,
+    }
+
+
+def run_arguments(lane: RealLane, stream: Path, *, timeout: int, time_scale: float) -> list[str]:
     """``fastloop run`` for one problem with scripted registrations, behind the lane's lease/Secret fence."""
 
     guard = ["uv", "run", "python", "-m", "benchmarks.sregym.fastloop.lane_guard", "--cluster", lane.cluster]
@@ -194,10 +205,8 @@ def run_arguments(lane: RealLane, problem_id: str, *, timeout: int, time_scale: 
         "sdo",
         "--agent-registrations",
         str(SCRIPTED_REGISTRATIONS),
-        "--problem",
-        problem_id,
-        "--diagnosis-grading",
-        "off",
+        "--stream",
+        str(stream),
         "--healthy-baseline",
         "--no-checkpoints",
         "--require-full-cleanup",
@@ -392,7 +401,10 @@ class RealApp:
         except RuntimeError as exc:
             row.stages.append(Stage("admission", "fail", "inventory-failed", str(exc)))
             return row, earlier_learning
-        argv = run_arguments(lane, problem.problem_id, timeout=1200, time_scale=self.time_scale)
+        stream = self.out_dir / "streams" / f"{problem.slot}.json"
+        stream.parent.mkdir(parents=True, exist_ok=True)
+        stream.write_text(json.dumps(problem_stream(problem.problem_id), indent=2) + "\n", encoding="utf-8")
+        argv = run_arguments(lane, stream, timeout=1200, time_scale=self.time_scale)
         code, output = self._step(argv, PROBLEM_TIMEOUT_SECONDS)
         record = last_record(lane.run_dir)
         error = "" if code == 0 or record is not None else output[-400:]
