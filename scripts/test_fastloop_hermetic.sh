@@ -53,7 +53,8 @@ runtime_status=0
             tests/unit/sdo/agents/responder/test_result_publisher.py \
             tests/unit/benchmarks/sregym/fastloop/test_fastloop_hermetic_run.py \
             tests/unit/benchmarks/sregym/fastloop/test_fastloop_loop.py \
-            tests/unit/benchmarks/sregym/fastloop/test_fastloop_cli.py::test_fresh_memory_resets_control_state_before_install_but_warm_repeat_keeps_it \
+            tests/unit/benchmarks/sregym/fastloop/test_fastloop_cli.py::test_native_install_runs_without_a_selective_reset_because_the_row_start_wipe_owns_it \
+            tests/unit/benchmarks/sregym/fastloop/test_wipe.py \
             tests/unit/benchmarks/sregym/fastloop/test_sdo3_descriptions.py \
             tests/unit/benchmarks/sregym/fastloop/test_sdo3_s3a_contracts.py \
             tests/unit/benchmarks/sregym/fastloop/test_fastloop_composite.py::test_failed_composite_resets_only_after_verified_harness_recovery \

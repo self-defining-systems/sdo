@@ -21,6 +21,8 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
+from benchmarks.sregym.adapter import WaitKind, wait_for
+
 if TYPE_CHECKING:
     from collections.abc import Callable, Collection, Iterable
 
@@ -44,8 +46,6 @@ NAMESPACE_KIND = "namespace"
 INVENTORY_SUFFIX = ".lane-inventory.json"
 MARKER_NAME = "attempt-in-progress"
 RECEIPT_NAME = "wipe-receipt.json"
-#: Target for tier 1 (seconds); reported in the receipt, never a gate.
-TIER1_TARGET_SECONDS = 90.0
 
 
 class WipeError(RuntimeError):
@@ -143,7 +143,7 @@ def run_tier1(
     reseed: Callable[[], None],
     forget_controller: Callable[[], None],
     timeout_seconds: float,
-    poll_seconds: float = 1.0,
+    poll_seconds: float = wait_for(WaitKind.SAMPLE),
     clock: Callable[[], float] = time.monotonic,
     sleep: Callable[[float], None] = time.sleep,
 ) -> Tier1Receipt:

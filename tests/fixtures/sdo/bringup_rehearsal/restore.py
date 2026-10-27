@@ -80,9 +80,15 @@ def main() -> None:
             "benchmarks/sregym/adapter/scripted_registrations",
         ]
     )
+    # The row-start wipe deletes the control namespace, which this fake API cannot model (test_wipe.py covers
+    # it). Retire the prior install's control state through the same Go commands so the install below still
+    # runs against the state a wiped lane has.
+    control = adapter.control_namespace_for(environment.namespace)
+    adapter.stop_runtime(control, kubeconfig=str(environment.kubeconfig))
+    adapter.reset_control_state(control, kubeconfig=str(environment.kubeconfig))
     agent = cli._sdo_agent(args, environment, Path(run_dir) / "results")
     assert agent._run_lifecycle(SimpleNamespace(health_objective="Keep tracing healthy.")) is False
-    print("Fresh-stream CLI: real stop -> reset-control-state -> native prepared install passed")
+    print("Fresh-stream CLI: real stop -> reset-control-state, then native prepared install passed")
 
 
 if __name__ == "__main__":
