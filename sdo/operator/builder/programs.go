@@ -104,7 +104,7 @@ func generatePrograms(root, module string, programs []programvalidation.Spec) er
 	// and available corpus cases. Never make it an informational replay note.
 	declarations := `package generated
 import "testing"
-func TestProgramDeclarations(t *testing.T) {
+func TestProgramRegistrationContracts(t *testing.T) {
  if _, err := Programs(); err != nil { t.Fatal(err) }
 }
 `

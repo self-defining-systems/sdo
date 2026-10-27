@@ -369,7 +369,7 @@ func TestProgramDeclarationsCheckedWithoutReplay(t *testing.T) {
 	if err := w.runGo(context.Background(), "mod", "tidy"); err != nil {
 		t.Fatal(err)
 	}
-	err = w.runGo(context.Background(), "test", "./generated", "-run", "^TestProgramDeclarations$")
+	err = w.runGo(context.Background(), "test", "./generated", "-run", "^TestProgramRegistrationContracts$")
 	if err == nil || !strings.Contains(err.Error(), "required scalar parameter") {
 		t.Fatalf("declaration bypassed save-time validation without replay: %v", err)
 	}
