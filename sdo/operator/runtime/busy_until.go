@@ -35,7 +35,11 @@ func (p ClosureRetryPolicy) retryBackoffTotal() time.Duration {
 // work: an open incident, a closure in flight, a reflection queued or running
 // (an unreadable queue counts as one), or a finding already pending in the
 // batcher. Finding states are not work: an active finding, drift included, may
-// stay active without ever opening an incident or gating a closure.
+// stay active without ever opening an incident or gating a closure, and a
+// finding still pending confirmation is not work until it is batched. Reflection
+// state is work only while this process owns the task that will finish it: it
+// is rebuilt from the broker ledger at start and never restored from a persisted
+// export, so a restart cannot carry stale queue state into the bound.
 func (c *Controller) incidentWorkOpenLocked() (inFlight bool, reflections int) {
 	reflections = len(c.reflections.queued)
 	if c.reflections.unknown {

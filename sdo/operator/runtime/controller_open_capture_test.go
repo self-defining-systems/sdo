@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/protobuf/types/known/timestamppb"
+
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
@@ -133,5 +135,23 @@ func TestOpenDetectCaptureFailureNeverBlocksIncident(t *testing.T) {
 	defer mu.Unlock()
 	if len(reported) == 0 {
 		t.Fatal("capture failure was not reported")
+	}
+}
+
+// Between draining the batcher and opening the incident the controller does file I/O for the corpus.
+// Nothing else then marks the work, so the incident must already be open: an observer exporting state
+// in that window must read busy, not idle.
+func TestIncidentIsOpenBeforeTheCorpusCaptureIO(t *testing.T) {
+	var controller *Controller
+	var busyDuringCapture *timestamppb.Timestamp
+	var openDuringCapture bool
+	controller, _ = openCaptureController(t, t.TempDir(), func(s sdk.DetectionContext) program.ReadView {
+		state := exportState(t, controller)
+		busyDuringCapture, openDuringCapture = state.GetBusyUntil(), state.GetIncidentOpen()
+		return LiveReadView{DetectionContext: s, Prober: &routingTestProber{}}
+	})
+	openIncident(t, controller)
+	if !openDuringCapture || busyDuringCapture == nil {
+		t.Fatalf("corpus capture ran with the batcher drained and no incident open (open=%v busy_until=%v)", openDuringCapture, busyDuringCapture)
 	}
 }
