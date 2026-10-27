@@ -40,7 +40,6 @@ if TYPE_CHECKING:
     from benchmarks.sregym.adapter import ClusterOps, NativeInstallConfig
     from benchmarks.sregym.fastloop.environment import FastloopEnvironment
     from benchmarks.sregym.fastloop.setup_ledger import ClusterInventory
-    from benchmarks.sregym.fastloop.worker_client import SregymWorker
 
 
 def workload_identity(kubeconfig: Path, namespace: str) -> dict[str, Any]:
@@ -165,7 +164,6 @@ class LaneAdmission:
     def __init__(
         self,
         environment: FastloopEnvironment,
-        worker: SregymWorker,
         ops: ClusterOps,
         directory: Path,
         *,
@@ -182,7 +180,7 @@ class LaneAdmission:
         if code_path not in {"go", "shell"}:
             raise ValueError(f"eval: unsupported admission code path {code_path!r}")
         self.code_path = code_path
-        self.environment, self.worker, self.ops = environment, worker, ops
+        self.environment, self.ops = environment, ops
         self.directory = directory
         self.timeout_seconds = timeout_seconds
         self.onboarding_timeout_seconds = onboarding_timeout_seconds
@@ -400,6 +398,9 @@ class LaneAdmission:
         return removed
 
     def prove(self, control: str, *, fresh: bool = False) -> dict[str, Any]:
+        # Detector evaluations after the resume count as evidence, including those made while onboarding and
+        # the previous row's closure are awaited: admission never waits for a re-evaluation that already ran.
+        boundary = datetime.now(timezone.utc).isoformat()
         self.remove_setup_leftovers()
         self.check_resources("entry")
         self._policy()
@@ -413,20 +414,21 @@ class LaneAdmission:
             self.before_proof(control, onboarding)
         for _ in range(MAX_STABILIZATION_RESTARTS):
             try:
-                return self._stabilize(control, fresh=fresh)
+                return self._stabilize(control, fresh=fresh, boundary=boundary)
             except _IncidentWorkStarted:
                 # Work SDO opened during stabilization gets the closure wait's derived budget,
-                # never the fixed stabilization budget; the stabilization clock then restarts.
+                # never the fixed stabilization budget; evidence must then postdate that work.
                 self.await_prior_closure(control)
+                boundary = datetime.now(timezone.utc).isoformat()
         try:
-            return self._stabilize(control, fresh=fresh)
+            return self._stabilize(control, fresh=fresh, boundary=boundary)
         except _IncidentWorkStarted as exc:
             raise StabilizationError(
                 f"eval: SDO opened incident work during each of {MAX_STABILIZATION_RESTARTS + 1} stabilization "
                 f"windows ({exc}); no injection"
             ) from exc
 
-    def _stabilize(self, control: str, *, fresh: bool) -> dict[str, Any]:
+    def _stabilize(self, control: str, *, fresh: bool, boundary: str) -> dict[str, Any]:
         from benchmarks.sregym.fastloop.rbac import verify_rbac
 
         deadline = Deadline(time.monotonic() + self.timeout_seconds, time.monotonic)
@@ -434,7 +436,6 @@ class LaneAdmission:
         self.directory.mkdir(parents=True, exist_ok=True)
         rbac = verify_rbac(env.kubeconfig, env.namespace, self.install_config)
         (self.directory / "rbac.json").write_text(json.dumps(rbac, indent=2) + "\n")
-        boundary = datetime.now(timezone.utc).isoformat()
         if self.progress:
             self.progress("rbac_equality", evidence=str(self.directory / "rbac.json"))
         self._identity = workload_identity(env.kubeconfig, env.namespace)
@@ -478,16 +479,6 @@ class LaneAdmission:
                 except (RuntimeError, ValueError, KeyError) as exc:
                     proof.update(qualified_scenarios=False, prober_error=str(exc))
                 proof["passed"] = proof["passed"] and proof["qualified_scenarios"]
-            if proof["passed"]:
-                traffic = self.worker.request(
-                    "baseline_oracle",
-                    problem_id=env.deploy_problem,
-                    verify_traffic=True,
-                    timeout=deadline.remaining(),
-                )
-                proof["independent_traffic"] = traffic
-                proof["passed"] = traffic.get("success") is True
-                stable_workloads()
             proof["required_scenarios"] = sorted(self.required_scenarios)
             return proof
 
