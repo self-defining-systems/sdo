@@ -7,6 +7,8 @@ import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from benchmarks.sregym.adapter.budgets import WaitKind, wait_for
+
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
@@ -44,7 +46,7 @@ def _source_mount_args(source_root: Path, run: Callable[..., Any]) -> list[str]:
         check=True,
         capture_output=True,
         text=True,
-        timeout=60,
+        timeout=wait_for(WaitKind.SLOW_COMMAND),
     )
     paths = json.loads(result.stdout)
     args: list[str] = []
@@ -84,7 +86,7 @@ def assert_image_entrypoints(
             check=False,
             text=True,
             capture_output=True,
-            timeout=120,
+            timeout=wait_for(WaitKind.SLOW_COMMAND),
         )
         if result.returncode or not result.stdout.strip().startswith("sdo.dev/"):
             raise ValueError(
@@ -109,7 +111,7 @@ def assert_image_entrypoints(
         check=False,
         text=True,
         capture_output=True,
-        timeout=120,
+        timeout=wait_for(WaitKind.SLOW_COMMAND),
     )
     try:
         error = json.loads(result.stdout.strip().splitlines()[-1]).get("import_error")

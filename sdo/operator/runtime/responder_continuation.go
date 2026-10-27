@@ -509,9 +509,5 @@ func (c *Controller) responderResultVerification(ctx context.Context, incidentID
 	}
 	_, health := c.finalVerificationStates()
 	response := c.continuationVerificationLocked(health, driftClear, driftFindings)
-	if c.currentIncidentRequest.ObservationGeneration != observationGeneration(snapshot) {
-		response.Healthy = false
-		response.Error = "observation scope changed; incident evidence superseded"
-	}
 	return response
 }

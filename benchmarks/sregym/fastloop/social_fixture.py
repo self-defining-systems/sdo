@@ -18,7 +18,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from benchmarks.sregym.adapter import Deadline, kubectl
+from benchmarks.sregym.adapter import Deadline, WaitKind, kubectl, wait_for
 from benchmarks.sregym.fastloop.transient_cleanup import retire_pods, wait_deleted
 
 if TYPE_CHECKING:
@@ -28,7 +28,7 @@ if TYPE_CHECKING:
 NAMESPACE = "social-network"
 CLIENTS = ("compose-post-service", "post-storage-service", "user-timeline-service", "home-timeline-service")
 REDIS_STORES = ("user-timeline-redis", "home-timeline-redis")
-HELPER_LIFETIME_SECONDS = 120
+HELPER_LIFETIME_SECONDS = int(wait_for(WaitKind.HELPER_LIFETIME))
 _helpers: ContextVar[list[str] | None] = ContextVar("social_fixture_helpers", default=None)
 
 

@@ -6,31 +6,27 @@ import ipaddress
 import json
 import subprocess
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 import yaml
 
 from benchmarks.sregym.adapter import (
-    INCIDENT_EXECUTION_LABEL,
-    POST_CLOSURE_WAIT_SECONDS,
-    STANDBY_LABEL,
+    BusyDeadline,
     ControllerStateUnavailableError,
     Deadline,
     StabilizationError,
+    WaitKind,
     assert_host_disk_headroom,
     assert_lane_resources,
     assert_stable_workloads,
     controller_proof,
-    idle_standby_jobs,
     incident_work_open,
-    job_labels,
     kubectl,
     qualified_scenarios,
-    queued_reflection_count,
-    reflection_attempt_seconds,
     setup_lineage,
     shell_runner_proof,
+    wait_for,
     wait_for_proof,
 )
 from benchmarks.sregym.fastloop.clean_start import assert_clean_baseline
@@ -151,21 +147,8 @@ class _IncidentWorkStarted(Exception):
     """SDO opened incident work during stabilization; admission waits for it to close, then restarts the clock."""
 
 
-#: Work first seen sets the prior-closure budget; Jobs seen later may extend it to at most this multiple.
-PRIOR_CLOSURE_CEILING_FACTOR = 2
-
 #: Stabilization restarts after new SDO work at most this often; a lane that keeps opening incidents is not stable.
 MAX_STABILIZATION_RESTARTS = 3
-
-
-def _job_deadline(job: dict[str, Any], now: datetime) -> datetime | None:
-    """When a worker Job's own ``activeDeadlineSeconds`` ends it; ``None`` when it has no deadline."""
-    seconds = job.get("spec", {}).get("activeDeadlineSeconds")
-    if not isinstance(seconds, int):
-        return None
-    started = job.get("status", {}).get("startTime")
-    start = datetime.fromisoformat(started.replace("Z", "+00:00")) if isinstance(started, str) else now
-    return start + timedelta(seconds=seconds)
 
 
 def _accepted_head(workspace: Path) -> str | None:
@@ -183,11 +166,10 @@ class LaneAdmission:
         ops: ClusterOps,
         directory: Path,
         *,
-        timeout_seconds: float = 300,
-        onboarding_timeout_seconds: float = 600,
-        prior_closure_timeout_seconds: float = 1800,
+        timeout_seconds: float = int(wait_for(WaitKind.ROLLOUT)),
+        onboarding_timeout_seconds: float = int(wait_for(WaitKind.OPERATION)),
+        prior_closure_timeout_seconds: float = int(wait_for(WaitKind.RESPONSE)),
         code_path: str = "go",
-        reflection_attempt_seconds: float = reflection_attempt_seconds(),
         install_config: NativeInstallConfig | None = None,
         synchronize: Callable[[], None] | None = None,
         progress: Callable[..., None] | None = None,
@@ -201,7 +183,6 @@ class LaneAdmission:
         self.timeout_seconds = timeout_seconds
         self.onboarding_timeout_seconds = onboarding_timeout_seconds
         self.prior_closure_timeout_seconds = prior_closure_timeout_seconds
-        self.reflection_attempt_seconds = reflection_attempt_seconds
         self.install_config = install_config
         self.synchronize, self.progress = synchronize, progress
         self.before_proof = before_proof
@@ -327,100 +308,49 @@ class LaneAdmission:
             self.progress("onboarding", accepted_commit=evidence["accepted_commit"], evidence=str(destination))
         return evidence
 
-    def _active_workers(self, control: str) -> list[str]:
-        """Name SDO worker Jobs (responder, reflection) that have not finished.
-
-        The controller's warm responder standby runs until an incident claims
-        it, so an unclaimed standby is idle capacity, not work.
-        """
-        return sorted(job["metadata"]["name"] for job in self._active_jobs(control))
-
-    def _work_deadline(self, control: str) -> float | None:
-        """Monotonic time by which every active SDO worker Job has hit its own deadline (durable Job spec)."""
-        now = datetime.now(timezone.utc)
-        deadlines = [deadline for job in self._active_jobs(control) if (deadline := _job_deadline(job, now))]
-        if not deadlines:
-            return None
-        return time.monotonic() + (max(deadlines) - now).total_seconds()
-
-    def _active_jobs(self, control: str) -> list[dict[str, Any]]:
-        listing = json.loads(
-            kubectl(["get", "jobs", "-o", "json"], namespace=control, kubeconfig=self.environment.kubeconfig).stdout
-        )["items"]
-        jobs = [
-            job
-            for job in listing
-            if job_labels(job).get("app.kubernetes.io/name") == "sdo-worker"
-            and not any(
-                row.get("type") in {"Complete", "Failed"} and row.get("status") == "True"
-                for row in job.get("status", {}).get("conditions") or []
-            )
-        ]
-        idle: set[str] = set()
-        if any(job_labels(job).get(STANDBY_LABEL) == "true" for job in jobs):
-            executions = json.loads(
-                kubectl(
-                    ["get", "configmaps", "-l", INCIDENT_EXECUTION_LABEL, "-o", "json"],
-                    namespace=control,
-                    kubeconfig=self.environment.kubeconfig,
-                ).stdout
-            )["items"]
-            idle = idle_standby_jobs(jobs, executions)
-        return [job for job in jobs if job["metadata"]["name"] not in idle]
+    @staticmethod
+    def _wall_now() -> datetime:
+        return datetime.now(timezone.utc)
 
     def await_prior_closure(self, control: str) -> dict[str, Any]:
-        """Wait, on a separate recorded budget, until every previous incident on the lane has closed naturally.
+        """Wait until the controller reports no incident work, bounded by the controller's own ``busy_until``.
 
-        A repeat must start on the memory the previous row's reflection
-        accepted, and its admission clock must not contain that reflection.
-        Closed means ``incident_work_open`` is false (no open incident or
-        request, and any closure is terminal: acknowledged, permanently
-        failed or retired) and no SDO worker Job is still running. The budget
-        is never shorter than the work first seen: the first poll extends it to
-        the latest active worker Job's own deadline plus the closure margin.
-        Jobs that start later may extend it only up to twice that original
-        budget, so a lane that keeps opening incidents cannot hold admission
-        forever. Each queued reflection adds SDO's worst case for one
-        reflection, which no ceiling cuts. The wait never aborts or reuses
-        running work; when the budget ends the row is not measured.
+        A repeat must start on the memory the previous row's reflection accepted, and its admission clock
+        must not contain that reflection. The controller publishes one fact: ``busy_until`` is unset when it
+        owns no open incident, closure or queued reflection, and otherwise is the latest time it can still be
+        working (from its own response timeout, retry policy and queue). The wait ends when the fact clears;
+        the only slack past ``busy_until`` is one closeout margin. A state that cannot be read is retried
+        for ``prior_closure_timeout_seconds``. The wait never aborts or reuses running work; when it ends
+        busy, the row is not measured.
         """
         started = time.monotonic()
         self.directory.mkdir(parents=True, exist_ok=True)
         destination = self.directory / "prior-closure.json"
-        expires = started + self.prior_closure_timeout_seconds
-        ceiling: float | None = None
+        busy = BusyDeadline(wait_for(WaitKind.CLOSEOUT_SETTLE))
+        unreadable_expires = started + self.prior_closure_timeout_seconds
         while True:
             try:
-                state, workers, error = self.ops.runtime_state(control), self._active_workers(control), None
-                work_deadline = self._work_deadline(control) if workers else None
+                state, error = self.ops.runtime_state(control), None
                 if not state:
                     error = "empty controller state"
             except (RuntimeError, ValueError, KeyError) as exc:
-                state, workers, work_deadline, error = {}, [], None, str(exc)
-            if work_deadline is not None:
-                expires = max(expires, work_deadline + POST_CLOSURE_WAIT_SECONDS)
-            # SDO runs queued reflections one at a time, each up to its own worst case.
-            queue_budget = started + queued_reflection_count(state) * self.reflection_attempt_seconds
-            expires = max(expires, queue_budget)
-            if ceiling is None:
-                ceiling = started + PRIOR_CLOSURE_CEILING_FACTOR * (expires - started)
-            ceiling = max(ceiling, queue_budget)
-            expires = min(expires, ceiling)
-            closure_state = state.get("closure_state")
-            done = error is None and not incident_work_open(state) and not workers
+                state, error = {}, str(exc)
+            still_busy = error is None and busy.observe(state, time.monotonic(), self._wall_now())
+            done = error is None and not still_busy
+            expires = unreadable_expires if error is not None else (busy.deadline or started)
             evidence = {
                 "passed": done,
-                "closure_state": closure_state,
+                "closure_state": state.get("closure_state"),
                 "incident_work": active_incident(state),
+                "busy_until": state.get("busy_until"),
                 "last_acknowledged_incident_id": state.get("last_acknowledged_incident_id") or None,
-                "active_workers": workers,
                 "last_error": error,
                 "seconds": round(time.monotonic() - started, 3),
                 "budget_seconds": round(expires - started, 3),
             }
             if done or time.monotonic() >= expires:
                 break
-            time.sleep(min(2, max(0, expires - time.monotonic())))
+            time.sleep(min(wait_for(WaitKind.SAMPLE), max(0, expires - time.monotonic())))
         # Recorded after the wait, so a repeat names the memory its predecessor's reflection accepted.
         evidence["accepted_before"] = _accepted_head(self.environment.workspace)
         destination.write_text(json.dumps(evidence, indent=2) + "\n")
@@ -428,8 +358,8 @@ class LaneAdmission:
             failure = ControllerStateUnavailableError if error is not None else PriorClosureIncompleteError
             raise failure(
                 f"eval: previous incident closure did not finish within {evidence['budget_seconds']:g}s "
-                f"(closure state: {closure_state}, incident work: {evidence['incident_work']}, "
-                f"active workers: {workers}, last error: {error}); row not measured, no injection",
+                f"(controller busy until {evidence['busy_until']}, closure state: {evidence['closure_state']}, "
+                f"incident work: {evidence['incident_work']}, last error: {error}); row not measured, no injection",
                 evidence,
             )
         if self.progress:

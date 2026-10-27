@@ -16,6 +16,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from benchmarks.sregym.adapter.budgets import WaitKind, wait_for
+
 Run = Callable[..., subprocess.CompletedProcess[str]]
 
 
@@ -29,7 +31,9 @@ def prepare_oracle_observability(
     """Return the lane's total CPU cap after installing and checking stock telemetry."""
 
     def command(argv: list[str], **kwargs: Any) -> str:
-        return run(argv, check=True, text=True, capture_output=True, timeout=600, **kwargs).stdout
+        return run(
+            argv, check=True, text=True, capture_output=True, timeout=wait_for(WaitKind.OPERATION), **kwargs
+        ).stdout
 
     nodes = command(["kind", "get", "nodes", "--name", cluster]).split()
     caps = command(["docker", "inspect", "--format", "{{.HostConfig.NanoCpus}}", *nodes]).split()
@@ -109,7 +113,7 @@ def route_astronomy_traces(kubeconfig: Path, *, run: Run = subprocess.run) -> No
             check=True,
             capture_output=True,
             text=True,
-            timeout=120,
+            timeout=wait_for(WaitKind.SLOW_COMMAND),
         )
     changed = False
     for name in ("jaeger", "jaeger-agent", "jaeger-collector", "jaeger-query"):
@@ -118,7 +122,7 @@ def route_astronomy_traces(kubeconfig: Path, *, run: Run = subprocess.run) -> No
             check=True,
             capture_output=True,
             text=True,
-            timeout=120,
+            timeout=wait_for(WaitKind.SLOW_COMMAND),
         )
         if existing.stdout.strip():
             spec = json.loads(existing.stdout).get("spec", {})
@@ -133,7 +137,7 @@ def route_astronomy_traces(kubeconfig: Path, *, run: Run = subprocess.run) -> No
             check=True,
             capture_output=True,
             text=True,
-            timeout=120,
+            timeout=wait_for(WaitKind.SLOW_COMMAND),
         )
         run(
             [
@@ -148,7 +152,7 @@ def route_astronomy_traces(kubeconfig: Path, *, run: Run = subprocess.run) -> No
             check=True,
             capture_output=True,
             text=True,
-            timeout=120,
+            timeout=wait_for(WaitKind.SLOW_COMMAND),
         )
 
     if changed:
@@ -157,7 +161,7 @@ def route_astronomy_traces(kubeconfig: Path, *, run: Run = subprocess.run) -> No
             check=True,
             capture_output=True,
             text=True,
-            timeout=120,
+            timeout=wait_for(WaitKind.SLOW_COMMAND),
         )
 
 

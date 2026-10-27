@@ -1,0 +1,49 @@
+[
+  {
+    "at": "2030-01-01T00:00:00Z",
+    "note": "incident 1's reflection is queued",
+    "state": {
+      "busy_until": "2030-01-01T00:12:02Z",
+      "ownership_adoption": {},
+      "pending_batch": {},
+      "queued_reflection_incident_ids": [
+        "incident-1"
+      ],
+      "scheduler_deadlines": {
+        "fault": "2030-01-01T01:00:00Z",
+        "health": "2030-01-01T01:00:00Z"
+      },
+      "version": "sdo.controller/v1"
+    }
+  },
+  {
+    "at": "2030-01-01T00:13:02Z",
+    "note": "incident 2 opened after incident 1's whole window lapsed; the controller never went idle",
+    "state": {
+      "busy_until": "2030-01-01T00:25:04Z",
+      "ownership_adoption": {},
+      "pending_batch": {},
+      "queued_reflection_incident_ids": [
+        "incident-2"
+      ],
+      "scheduler_deadlines": {
+        "fault": "2030-01-01T01:00:00Z",
+        "health": "2030-01-01T01:00:00Z"
+      },
+      "version": "sdo.controller/v1"
+    }
+  },
+  {
+    "at": "2030-01-01T00:24:04Z",
+    "note": "all work finished",
+    "state": {
+      "ownership_adoption": {},
+      "pending_batch": {},
+      "scheduler_deadlines": {
+        "fault": "2030-01-01T01:00:00Z",
+        "health": "2030-01-01T01:00:00Z"
+      },
+      "version": "sdo.controller/v1"
+    }
+  }
+]

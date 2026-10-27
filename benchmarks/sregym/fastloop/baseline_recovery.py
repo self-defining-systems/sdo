@@ -13,7 +13,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any, Protocol
 
-from benchmarks.sregym.adapter import kubectl
+from benchmarks.sregym.adapter import WaitKind, kubectl, wait_for
 
 logger = logging.getLogger(__name__)
 RESTORE_RECEIPTS = "restore-receipts.jsonl"
@@ -594,7 +594,7 @@ def accepted_restore_baselines(
             check=True,
             capture_output=True,
             text=True,
-            timeout=5,
+            timeout=wait_for(WaitKind.PROBE),
         ).stdout.strip()
         installed_source = not changes
     if installed_source and all(baseline.installed_digest for baseline in baselines):
