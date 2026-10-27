@@ -11,6 +11,7 @@ is not part of the seed.
 import re
 import shutil
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -52,7 +53,7 @@ def violations(documents: list[dict[str, Any]]) -> list[str]:
 
 def render(chart: Path) -> list[dict[str, Any]]:
     out = subprocess.run(
-        ["helm", "template", "social-network", str(chart / "socialnetwork"), "-n", "social-network"],
+        ["helm", "template", "social-network", str(chart / "helm-chart/socialnetwork"), "-n", "social-network"],
         check=True,
         capture_output=True,
         text=True,
@@ -64,13 +65,12 @@ def render(chart: Path) -> list[dict[str, Any]]:
     shutil.which("helm") is None or not (STOCK_CHART / "socialnetwork").is_dir(),
     reason="needs helm and the initialized apps/deathstarbench source",
 )
-def test_fresh_social_source_bounds_every_mongodb(tmp_path: Path) -> None:
-    stock = tmp_path / "stock"
-    shutil.copytree(STOCK_CHART, stock)
-    assert violations(render(stock)), "the stock chart is expected to be unbounded; the overlay is what fixes it"
-    shutil.copytree(OVERLAY, stock, dirs_exist_ok=True)
+def test_fresh_social_source_bounds_every_mongodb(fresh_social_chart: Callable[[bool], Path]) -> None:
+    assert violations(render(fresh_social_chart(False))), (
+        "the stock chart is expected to be unbounded; the overlay is what fixes it"
+    )
 
-    assert violations(render(stock)) == []
+    assert violations(render(fresh_social_chart(True))) == []
 
 
 def test_overlay_names_every_social_mongodb_chart() -> None:
