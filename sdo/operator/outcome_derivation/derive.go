@@ -109,6 +109,7 @@ func Derive(ctx context.Context, closure *contractsv1alpha1.IncidentClosure, rep
 		commit = &repairCommit
 	}
 	record := &contractsv1alpha1.OutcomeRecord{
+		DriftReprompt: cloneMessage(result.GetDriftReprompt()),
 		SchemaVersion: 1, IncidentId: request.GetIncidentId(), SourceCommit: request.GetSourceCommit(), DeployedCommit: request.GetDeployedCommit(),
 		DetectorHistory: append(append(cloneMessages(request.GetDetectorHistory()), cloneMessages(closure.GetIncidentDetectorStates())...), cloneMessages(closure.GetPartialDetectorStates())...), Findings: cloneMessages(request.GetFindings()),
 		DriftEvents:       cloneMessages(request.GetDriftEvents()),

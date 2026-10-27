@@ -113,6 +113,7 @@ def _run(args: argparse.Namespace) -> int:
     from benchmarks.sregym.fastloop.fault_driver import SregymFaultDriver
     from benchmarks.sregym.fastloop.loop import LoopConfig, run_incidents
     from benchmarks.sregym.fastloop.sdo_agent import SdoAgentSettings, SdoPersistentAgent
+    from benchmarks.sregym.fastloop.wipe import LaneInjectionState
     from benchmarks.sregym.fastloop.worker_client import SregymWorker, worker_argv
 
     environment = FastloopEnvironment.load(args.run_dir.resolve())
@@ -191,7 +192,12 @@ def _run(args: argparse.Namespace) -> int:
             baseline_path=str(environment.baseline_path),
             timeout=DEPLOY_OP_TIMEOUT_SECONDS,
         )
-        driver = SregymFaultDriver(worker, namespace=environment.namespace, health_timeout_seconds=300.0)
+        driver = SregymFaultDriver(
+            worker,
+            namespace=environment.namespace,
+            health_timeout_seconds=300.0,
+            injection_state=LaneInjectionState(environment.kubeconfig, environment.namespace),
+        )
         run_incidents(agent, driver, config)
     records = agent.records
     print(format_report(records))

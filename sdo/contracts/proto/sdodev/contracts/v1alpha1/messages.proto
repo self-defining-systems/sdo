@@ -438,6 +438,7 @@ message IncidentResult {
   repeated DriftEvent drift_events = 26;
   // Controller verification at terminal responder completion, never worker authority.
   repeated Finding unresolved_findings = 27;
+  DriftReprompt drift_reprompt = 28;
 }
 
 // A responder claim that it read controller-published findings during its turn.
@@ -561,4 +562,11 @@ message StageMitigation {
   // application. These select this attempt's actions in apply_receipt.plan.
   int32 plan_action_start = 12;
   int32 plan_action_count = 13;
+}
+
+// Controller-owned evidence of the single optional healthy source-drift turn.
+message DriftReprompt {
+  int32 findings_before = 1 [(buf.validate.field).int32.gt = 0];
+  // Absent until a post-turn verification is available.
+  optional int32 findings_after = 2 [(buf.validate.field).int32.gte = 0];
 }

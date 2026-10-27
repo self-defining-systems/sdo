@@ -205,14 +205,14 @@ type Controller struct {
 
 	// CheckHealth refuses evaluation and effects while the compiled detector bundle
 	// lags the accepted health policy; the rebuilt controller resumes the work.
-	CheckHealth func(context.Context) error
-	OnError           func(error)
-	OnResult          func(IncidentResult)
-	OnEvaluation      func([]sdk.Finding)
-	OnIncidentClosed  func(IncidentClosure)
-	OnClosureFailed   func(ClosureFailure)
-	CanAct            func() bool
-	GuardAction       func(context.Context) (context.Context, context.CancelFunc, error)
+	CheckHealth      func(context.Context) error
+	OnError          func(error)
+	OnResult         func(IncidentResult)
+	OnEvaluation     func([]sdk.Finding)
+	OnIncidentClosed func(IncidentClosure)
+	OnClosureFailed  func(ClosureFailure)
+	CanAct           func() bool
+	GuardAction      func(context.Context) (context.Context, context.CancelFunc, error)
 	// now overrides the wall clock for closure and dispatch retry backoff in
 	// tests.
 	now func() time.Time
@@ -1101,6 +1101,7 @@ func (c *Controller) processDispatchCompletions(observedAt time.Time) {
 }
 
 func (c *Controller) handleDispatchCompletion(completion dispatchCompletion, observedAt time.Time) {
+	durableDriftPrompt := c.driftRepromptRecord()
 	c.mu.Lock()
 	if c.currentIncidentRequest == nil || completion.incidentID != c.currentIncidentRequest.IncidentID {
 		currentIncidentID := ""
@@ -1142,6 +1143,10 @@ func (c *Controller) handleDispatchCompletion(completion dispatchCompletion, obs
 		c.mu.Unlock()
 		return
 	}
+	priorDriftPrompt := durableDriftPrompt
+	if c.currentIncidentResult != nil && c.currentIncidentResult.DriftReprompt != nil {
+		priorDriftPrompt = cloneDriftReprompt(c.currentIncidentResult.DriftReprompt)
+	}
 	var jobFailed *ResponderJobFailedError
 	if errors.As(completion.err, &jobFailed) {
 		// A failed Job is terminal and exactly-once dispatch forbids a second
@@ -1163,6 +1168,12 @@ func (c *Controller) handleDispatchCompletion(completion dispatchCompletion, obs
 				startedAt = c.responderCompletedAt
 			}
 			c.currentIncidentResult = &IncidentResult{SchemaVersion: ProtocolSchemaVersion, IncidentID: completion.incidentID, Status: IncidentFailed, ResponderSessionID: completion.result.ResponderSessionID, Error: completion.err.Error(), Timing: TimingMetrics{StartedAt: startedAt, CompletedAt: c.responderCompletedAt}}
+		}
+		if priorDriftPrompt != nil {
+			if c.currentIncidentResult == nil {
+				c.currentIncidentResult = &IncidentResult{SchemaVersion: ProtocolSchemaVersion, IncidentID: completion.incidentID, Status: IncidentFailed, Error: completion.err.Error(), Timing: TimingMetrics{StartedAt: c.incidentDispatchedAt, CompletedAt: c.responderCompletedAt}}
+			}
+			c.currentIncidentResult.DriftReprompt = priorDriftPrompt
 		}
 		c.resetDispatchRetryLocked()
 	} else if completion.err != nil {
@@ -1231,13 +1242,7 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 		return
 	}
 	early := !c.responderDone
-	if early && c.driftOnlyIncidentLocked() {
-		// Drift is the only reason this incident exists, so clear health proves
-		// nothing about it yet: the agent gets its turn and the incident closes
-		// on health once the agent returns.
-		c.mu.Unlock()
-		return
-	}
+	driftOnly := early && c.driftOnlyIncidentLocked()
 	requiresStability := early || c.codePath != nil && c.codePath.Selection.DetectorSource == "shell"
 	if early && c.responseStagesRunning {
 		c.mu.Unlock()
@@ -1249,6 +1254,8 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 	}
 	loop := c.responderLoop
 	c.mu.Unlock()
+	// Keep observing while drift-only responses and the optional extra turn run.
+	waitForResponder := early && (driftOnly || loop.driftRepromptPending())
 	var guard *apihistory.MutationObservation
 	release := func() {}
 	safe := true
@@ -1343,6 +1350,11 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 		}
 	}
 	c.cacheVerificationLocked(verification)
+	if waitForResponder {
+		// Refresh verify reports without ending the responder's whole turn.
+		c.mu.Unlock()
+		return
+	}
 	if requiresStability {
 		if !safe || guard != nil && guard.Pending {
 			c.closureStableSince = time.Time{}
@@ -1380,7 +1392,8 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 		c.closureStableSince = time.Time{}
 	}
 
-	if !verified && !terminalFailure && (len(verification.Findings) > 0 || verification.Error != "") && c.dispatchError == "" && now.Before(c.currentIncidentRequest.ResponseDeadline) {
+	driftPrompt := !early && verified && driftRepromptCanProgress(source.Drift, c.currentIncidentResult)
+	if ((!verified && (len(verification.Findings) > 0 || verification.Error != "")) || driftPrompt) && !terminalFailure && c.dispatchError == "" && now.Before(c.currentIncidentRequest.ResponseDeadline) {
 		if continuer, ok := c.dispatcher.(interface {
 			ContinueAfterVerification(context.Context, IncidentRequest, ToolResponse, time.Time) (bool, error)
 		}); ok {
@@ -1389,6 +1402,7 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 			request := cloneIncidentRequest(c.currentIncidentRequest)
 			c.mu.Unlock()
 			resumed, err := continuer.ContinueAfterVerification(ctx, *request, verification, now)
+			driftRecord := c.driftRepromptRecord()
 			c.mu.Lock()
 			if err != nil {
 				c.mu.Unlock()
@@ -1403,6 +1417,9 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 				return
 			}
 			if resumed {
+				if c.currentIncidentResult != nil && driftRecord != nil {
+					c.currentIncidentResult.DriftReprompt = driftRecord
+				}
 				c.responderDone = false
 				c.responderCompletedAt = time.Time{}
 				c.dispatchState = contracts.DispatchState_DISPATCH_STATE_PENDING

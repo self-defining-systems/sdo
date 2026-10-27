@@ -19,10 +19,11 @@ from benchmarks.sregym.fastloop.records import EvalNote, OracleVerdict
 from benchmarks.sregym.protocol.injection import FaultComponent, InvalidInjectionError, check_injection
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
+    from collections.abc import Callable, Mapping, Sequence
     from pathlib import Path
 
     from benchmarks.sregym.fastloop.baseline_recovery import ApplicationCluster
+    from benchmarks.sregym.fastloop.wipe import LaneInjectionState
 
 HEALTH_POLL_SECONDS = wait_for(WaitKind.POLL_FAST)
 #: The oracle waits up to 60 s for rollouts itself; injection and recovery wait on rollouts too.
@@ -108,6 +109,8 @@ class SregymFaultDriver:
         monotonic: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], None] = time.sleep,
         before_inject: Callable[[str], None] | None = None,
+        injection_state: LaneInjectionState | None = None,
+        data_faults: Mapping[str, Sequence[str]] | None = None,
         require_full_cleanup: bool = False,
         require_faulty_oracle: bool = False,
         pre_repair_oracle_path: Path | None = None,
@@ -148,6 +151,8 @@ class SregymFaultDriver:
         self._monotonic = monotonic
         self._sleep = sleep
         self._before_inject = before_inject
+        self._injection_state = injection_state
+        self._data_faults = data_faults if data_faults is not None else {}
         self.last_injection_window: InjectionWindow | None = None
         #: Eval notes from the last full recovery, and those the last injection inherited.
         self.last_eval_notes: list[EvalNote] = []
@@ -158,11 +163,15 @@ class SregymFaultDriver:
         self.last_confounds = []
         if self._before_inject is not None:
             self._before_inject(problem_id)
+        if self._injection_state is not None:
+            self._injection_state.begin((problem_id,))
         reply = self._worker.request("inject", problem_id=problem_id, timeout=WORKER_OP_TIMEOUT_SECONDS)
         self.last_injection_window = _window(reply)
         self.last_confounds = _notes(reply, "confounds")
         self.last_components = [FaultComponent.model_validate(item) for item in reply.get("components", [])]
         check_injection(reply)
+        if self._injection_state is not None:
+            self._injection_state.finish((problem_id,), self._data_faults)
         self._check_faulty_oracle()
         return self.last_injection_window
 
@@ -179,6 +188,8 @@ class SregymFaultDriver:
             raise ValueError("a composite fault needs at least one non-empty problem id")
         if len(set(problems)) != len(problems):
             raise ValueError(f"a composite fault lists a problem more than once: {problems}")
+        if self._injection_state is not None:
+            self._injection_state.begin(problems)
         faults: list[InjectedFault] = []
         self.last_components = []
         for position, problem_id in enumerate(problems):
@@ -222,6 +233,8 @@ class SregymFaultDriver:
                             f"composite injection failed at {problem_id}: {exc}; recovery failed: {recovery_error}"
                         ) from recovery_error
                 raise FastloopFaultError(f"composite injection failed at {problem_id}: {exc}") from exc
+        if self._injection_state is not None:
+            self._injection_state.finish(problems, self._data_faults)
         self._check_faulty_oracle()
         return CompositeInjection(faults=tuple(faults))
 
