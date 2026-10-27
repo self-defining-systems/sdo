@@ -320,7 +320,11 @@ const closureInventoryLoadBound = 30 * time.Second
 func (c *Controller) revalidateClosure(ctx context.Context, snapshot sdk.DetectionContext, closure IncidentClosure) closureRecheck {
 	confirmed := closureRecheck{Verdict: closureRecheckConfirmed}
 	if len(closure.FinalDetectorStates) == 0 || closure.DispatchError != "" {
-		return confirmed // Already unverified; this closure cannot publish success.
+		// Already unverified or without detector states to recheck; the outcome
+		// still records what differs from the accepted source.
+		driftNotes, _, _ := c.closureDriftNotes(ctx, snapshot, closure)
+		confirmed.DriftNotes = driftNotes
+		return confirmed
 	}
 	contradicted := func(format string, args ...any) closureRecheck {
 		return closureRecheck{Verdict: closureRecheckContradicted, Reason: fmt.Sprintf(format, args...)}
@@ -394,9 +398,28 @@ func (c *Controller) revalidateClosure(ctx context.Context, snapshot sdk.Detecti
 	if len(gone) > 0 {
 		slog.Warn("closure_detector_skipped", "incident_id", closure.Request.IncidentID, "detectors", gone, "reason", "removed by the adopted policy")
 	}
+	driftNotes, sourceNotes, sourceBound := c.closureDriftNotes(ctx, snapshot, closure)
+	if len(denied) > 0 {
+		return closureRecheck{Verdict: closureRecheckDenied, Reason: strings.Join(denied, "; "), Skipped: gone}
+	}
+	if len(incomplete) > 0 {
+		return closureRecheck{Verdict: closureRecheckIncomplete, Reason: strings.Join(incomplete, "; "), Bound: max(bound, sourceBound), Unconfirmed: unconfirmed, Skipped: gone, SourceNotes: sourceNotes, DriftNotes: driftNotes}
+	}
+	if len(sourceNotes) > 0 {
+		return closureRecheck{Verdict: closureRecheckIncomplete, Reason: strings.Join(sourceNotes, "; "), Bound: sourceBound, Skipped: gone, SourceNotes: sourceNotes, SourceOnly: true, DriftNotes: driftNotes}
+	}
+	confirmed.Skipped = gone
+	confirmed.DriftNotes = driftNotes
+	return confirmed
+}
+
+// closureDriftNotes compares the accepted source with the live namespace for a
+// closure. driftNotes lists objects that still differ. sourceNotes lists checks
+// that were not available, and sourceBound is how long a closure may wait for
+// them. Neither is a verdict on health.
+func (c *Controller) closureDriftNotes(ctx context.Context, snapshot sdk.DetectionContext, closure IncidentClosure) (driftNotes, sourceNotes []string, sourceBound time.Duration) {
 	c.mu.Lock()
 	inventoryAvailable := c.drift == nil || !c.drift.Inventory || c.sourceInventoryAvailableLocked()
-	var driftNotes []string
 	if inventoryAvailable {
 		_, remaining := c.verifySourceInventoryLocked(closure.Result)
 		for _, finding := range remaining {
@@ -429,18 +452,7 @@ func (c *Controller) revalidateClosure(ctx context.Context, snapshot sdk.Detecti
 			driftNotes = append(driftNotes, driftNote(finding))
 		}
 	}
-	if len(denied) > 0 {
-		return closureRecheck{Verdict: closureRecheckDenied, Reason: strings.Join(denied, "; "), Skipped: gone}
-	}
-	if len(incomplete) > 0 {
-		return closureRecheck{Verdict: closureRecheckIncomplete, Reason: strings.Join(incomplete, "; "), Bound: max(bound, sourceBound), Unconfirmed: unconfirmed, Skipped: gone, SourceNotes: sourceNotes, DriftNotes: driftNotes}
-	}
-	if len(sourceNotes) > 0 {
-		return closureRecheck{Verdict: closureRecheckIncomplete, Reason: strings.Join(sourceNotes, "; "), Bound: sourceBound, Skipped: gone, SourceNotes: sourceNotes, SourceOnly: true, DriftNotes: driftNotes}
-	}
-	confirmed.Skipped = gone
-	confirmed.DriftNotes = driftNotes
-	return confirmed
+	return driftNotes, sourceNotes, sourceBound
 }
 
 // observerDenied separates a permanent scope denial from an observer that is

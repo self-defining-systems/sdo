@@ -136,3 +136,31 @@ func TestSourceNotesDoNotRescueIncompleteHealth(t *testing.T) {
 		t.Fatalf("an incomplete health window must still commit unconfirmed: %+v", controller.pendingClosure)
 	}
 }
+
+// The outcome records what differs from the accepted source even when the
+// closure has no final detector states to recheck or ended in a dispatch error.
+func TestClosureWithoutRecheckableHealthStillRecordsSourceDifference(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		shape func(*IncidentClosure)
+	}{
+		{"no final detector states", func(c *IncidentClosure) { c.FinalDetectorStates = nil }},
+		{"dispatch error", func(c *IncidentClosure) { c.DispatchError = "responder job failed" }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			now := time.Unix(1000, 0).UTC()
+			broker := &recordingClosureBroker{}
+			controller := newSourceInformationController(t, &windowDetector{confirmed: true}, DriftControllerConfig{View: func(sdk.DetectionContext) program.ReadView {
+				return sourceCompareView{ReplayReadView: &sdktest.ReplayReadView{}, diff: program.Diff{Changed: true, Text: "accepted: {} observed: {\"spec\":{\"ports\":[{\"targetPort\":9999}]}}"}}
+			}}, broker, &now)
+			tc.shape(controller.pendingClosure)
+
+			executeRecheck(t, controller)
+			awaitBrokerResult(t, controller.closureResults)
+			controller.processBrokerCompletions()
+			if len(broker.closures) != 1 || !strings.Contains(strings.Join(broker.closures[0].SourceCheckNotes, ";"), "unexplained drift remains on Service/front") {
+				t.Fatalf("difference not recorded on the outcome: %+v", broker.closures)
+			}
+		})
+	}
+}
