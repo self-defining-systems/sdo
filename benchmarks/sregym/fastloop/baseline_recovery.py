@@ -153,6 +153,15 @@ class KubectlApplicationCluster:
             patch = [
                 {"op": "test", "path": "/metadata/resourceVersion", "value": current["metadata"]["resourceVersion"]}
             ]
+            labels = value.get("metadata", {}).get("labels")
+            if labels:
+                patch.append(
+                    {
+                        "op": "add",
+                        "path": "/metadata/labels",
+                        "value": {**current.get("metadata", {}).get("labels", {}), **labels},
+                    }
+                )
             for key in RESTORED_FIELDS:
                 if key in value:
                     patch.append({"op": "add", "path": f"/{key}", "value": value[key]})
@@ -539,7 +548,12 @@ def reconcile_application(
         if present is None and (kind, name) in redirects and (kind, name) not in known:
             cleanup.harness_absent.append(f"{kind}/{name}")
             continue
-        if present is None or _content(present) != _content(value):
+        labels = _manifest(value).get("metadata", {}).get("labels", {})
+        if (
+            present is None
+            or _content(present) != _content(value)
+            or not _declares(present.get("metadata", {}).get("labels", {}), labels)
+        ):
             cluster.apply(namespace, value)
             cleanup.restored.append(f"{kind}/{name}")
             cleanup.reapplied.append(
@@ -605,7 +619,7 @@ def accepted_restore_baselines(
     *,
     seed_commit: str | None = None,
 ) -> tuple[ApplicationBaseline, ...]:
-    """Use the sealed installed manifests as the sole source for selected objects.
+    """Compose accepted source and captured runtime defaults before restoration.
 
     Captured runtime-only objects and API defaults remain available. Never apply
     a captured spec followed by a conflicting source spec (a second rollout).
@@ -633,7 +647,7 @@ def accepted_restore_baselines(
         installed_source = not changes
     if installed_source and all(baseline.installed_digest for baseline in baselines):
         require_install_matches_source(source, baselines)
-        return _keep_adopted_passive_objects(source, baselines)
+        return _keep_declared_source_objects(source, baselines)
     selected = _accepted_manifests(source, baselines, kinds=None)
     return tuple(
         baseline
@@ -705,11 +719,6 @@ def require_install_matches_source(source: AcceptedSource, baselines: tuple[Appl
         )
 
 
-# Passive kinds SDO adopts from accepted source before any row. The sealed capture
-# predates that adoption, so restoring it verbatim reverts declared fields.
-ADOPTED_KINDS = frozenset({"ConfigMap", "Service"})
-
-
 def _declares(captured: Any, declared: Any) -> bool:
     """True when ``captured`` already carries every field ``declared`` sets."""
     if isinstance(declared, dict):
@@ -717,26 +726,36 @@ def _declares(captured: Any, declared: Any) -> bool:
             key in captured and _declares(captured[key], value) for key, value in declared.items()
         )
     if isinstance(declared, list):
-        return isinstance(captured, list) and all(
-            any(_declares(item, value) for item in captured) for value in declared
+        if not isinstance(captured, list):
+            return False
+        if declared and all(_port_key(item) is not None for item in (*captured, *declared)):
+            captured_by_key = {_port_key(item): item for item in captured}
+            return all(
+                _port_key(value) in captured_by_key and _declares(captured_by_key[_port_key(value)], value)
+                for value in declared
+            )
+        # Positional lists own their order and cardinality; explicit empties clear entries.
+        return len(captured) == len(declared) and all(
+            _declares(item, value) for item, value in zip(captured, declared, strict=True)
         )
     return captured == declared
 
 
 def _port_key(item: Any) -> Any:
-    """Identity of a Service port entry: its name, else its port number; None for other list items."""
+    """Identity of a named entry or Service port; None for positional list items."""
     if isinstance(item, dict):
         return item.get("name") or item.get("port")
     return None
 
 
 def _merge_declared(captured: Any, declared: Any) -> Any:
-    """Declared fields win; captured extras stay. Dicts merge by key, port lists by name or port number."""
+    """Declared fields win; retain captured defaults by field and named-entry or Service-port identity."""
     if isinstance(captured, dict) and isinstance(declared, dict):
         return {**captured, **{key: _merge_declared(captured.get(key), value) for key, value in declared.items()}}
     if (
         isinstance(captured, list)
         and isinstance(declared, list)
+        and declared
         and all(_port_key(item) is not None for item in (*captured, *declared))
     ):
         declared_by_key = {_port_key(item): item for item in declared}
@@ -745,16 +764,16 @@ def _merge_declared(captured: Any, declared: Any) -> Any:
     return deepcopy(declared)
 
 
-def _keep_adopted_passive_objects(
+def _keep_declared_source_objects(
     source: AcceptedSource, baselines: tuple[ApplicationBaseline, ...]
 ) -> tuple[ApplicationBaseline, ...]:
-    """Overlay accepted-source fields of ConfigMaps and Services onto a sealed install.
+    """Restore declared source fields once, retaining captured runtime defaults.
 
-    Workloads keep the sealed install (no second rollout). A passive object whose
-    capture already carries every declared field is untouched; otherwise declared
-    fields win and captured extras stay.
+    A sealed chart render proves what was installed, not what source declares.
+    Reapplying its conflicting workload policy creates a baseline incident before
+    injection. Compose one restore object per identity before any cluster write.
     """
-    selected = _accepted_manifests(source, baselines, kinds=ADOPTED_KINDS)
+    selected = _accepted_manifests(source, baselines, kinds=None)
     if not selected:
         return baselines
     result = []
@@ -762,6 +781,21 @@ def _keep_adopted_passive_objects(
         objects, changed = [], False
         for value in baseline.objects:
             declared = selected.get((value["kind"], baseline.namespace, value["metadata"]["name"]))
+            if declared is not None and value["kind"] in POD_TEMPLATE_KINDS:
+                declared = deepcopy(declared)
+                installed_images = _container_images(value)
+                pod = declared.get("spec", {}).get("template", {}).get("spec", {})
+                for group in ("containers", "initContainers"):
+                    for container in pod.get(group) or []:
+                        image = container.get("image")
+                        key = f"{group}/{container.get('name')}"
+                        if image and installed_images.get(key) == _canonical_image(image):
+                            # Preserve API image spelling when it names the same image;
+                            # a registry-prefix alias must not cause a rollout.
+                            installed_pod = value["spec"]["template"]["spec"]
+                            container["image"] = next(
+                                item["image"] for item in installed_pod[group] if item["name"] == container["name"]
+                            )
             fields = {key: declared[key] for key in RESTORED_FIELDS if declared and key in declared}
             labels = (declared or {}).get("metadata", {}).get("labels")
             if labels:

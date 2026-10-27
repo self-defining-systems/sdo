@@ -71,3 +71,21 @@ def test_bridge_delivery_then_in_node_tag_publishes_the_declared_ref(monkeypatch
         "yg397/openresty-thrift:xenial",
         "yg397/media-frontend:xenial",
     }
+
+
+def test_astronomy_source_plan_preserves_seed_manifest(monkeypatch, tmp_path):
+    import importlib
+
+    monkeypatch.syspath_prepend(str(ROOT / "third_party/sregym"))
+    source = importlib.import_module("sregym.service.source_deploy")
+    manifest = tmp_path / "kubernetes/astronomy-shop.yaml"
+    manifest.parent.mkdir()
+    manifest.write_text("synthetic accepted source")
+    monkeypatch.setenv("SREGYM_APP_SOURCE_DIR", str(tmp_path))
+    monkeypatch.setenv("SREGYM_KIND_CLUSTER_NAME", "synthetic-lane")
+    monkeypatch.setattr(source._AstronomyShopAdapter, "ensure_images_loaded", lambda *a, **kw: None)
+    with source.plan_for_app(
+        SimpleNamespace(name="OpenTelemetry Demo Astronomy Shop"), node_architectures={"amd64"}
+    ) as plan:
+        assert plan.manifest_path == manifest
+        assert plan.helm_extra_args == ()
