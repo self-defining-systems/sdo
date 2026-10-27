@@ -218,7 +218,7 @@ message ReflectionDecision {
   string decline_reason = 7 [(buf.validate.field).string = {in: ["", "no_recorded_repair"]}];
   // Terminal execution failure; never a model-authored verdict. "timeout" is the
   // controller's frozen task deadline; the others are the worker's typed failure.
-  string failure_reason = 8 [(buf.validate.field).string = {in: ["", "timeout", "agent_timeout", "agent_failed", "result_too_large"]}];
+  string failure_reason = 8 [(buf.validate.field).string = {in: ["", "timeout", "agent_timeout", "agent_failed", "result_too_large", "request_too_large"]}];
 }
 
 // ProposalRejectionLog is the broker's durable retry state for one proposal

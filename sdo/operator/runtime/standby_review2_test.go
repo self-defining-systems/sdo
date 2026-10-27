@@ -6,7 +6,6 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -132,7 +131,7 @@ func TestRWS2RestartAfterDeadlineSeesPVCContinuation(t *testing.T) {
 	}
 	id := state.IncidentRequest.IncidentId
 	root := t.TempDir()
-	request := &contracts.IncidentRequest{IncidentId: id, MemorySnapshot: &contracts.OperationalMemorySnapshot{GoalMarkdown: strings.Repeat("synthetic memory\n", 40000)}}
+	request := &contracts.IncidentRequest{IncidentId: id, MemorySnapshot: &contracts.OperationalMemorySnapshot{GoalMarkdown: "synthetic memory\n"}}
 	payload, _ := anypb.New(request)
 	task := &contracts.AgentTask{SchemaVersion: ProtocolSchemaVersion, TaskId: id + "-continue-1", AgentId: testIncidentAgentID(t), TaskType: testIncidentTaskType(t), Request: payload, Workspace: &contracts.ProposalWorkspace{CheckoutPath: root + "/proposal", BaseCommit: "accepted"}}
 	client := fake.NewSimpleClientset()

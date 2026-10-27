@@ -29,8 +29,11 @@ func (err *PreparedTaskUnavailableError) Error() string {
 }
 func (err *PreparedTaskUnavailableError) Unwrap() error { return err.Err }
 
-// PreparedTaskStore keeps the controller's frozen canonical task beside the Job's staged request, so the state
-// ConfigMap holds only a digest reference. The file lives under the same per-job directory as a staged request.
+// stagedRequestsDir is the repository-volume directory of per-job prepared tasks.
+const stagedRequestsDir = ".sdo-runtime/requests"
+
+// PreparedTaskStore keeps the controller's frozen canonical task on the repository volume, so the state
+// ConfigMap holds only a digest reference. The file lives under a per-job directory.
 type PreparedTaskStore struct{ MountPath string }
 
 // IsPreparedTaskReference reports whether value is a reference rather than task bytes.

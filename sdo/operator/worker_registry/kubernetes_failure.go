@@ -3,6 +3,7 @@ package worker_registry
 import (
 	"context"
 	"sort"
+	"strings"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -11,14 +12,15 @@ import (
 )
 
 // Bound status text before it enters controller logs or durable diagnostics.
-// No logs, environment, volumes or Secrets are consulted.
+// The controller reads no logs, environment, volumes or Secrets: a worker's termination
+// message is the one curated line it wrote to /dev/termination-log. Invalid UTF-8 is repaired.
 func failureText(value string) string {
 	const maxRunes = 512
-	text := []rune(value)
+	text := []rune(strings.ToValidUTF8(value, "\uFFFD"))
 	if len(text) > maxRunes {
 		return string(text[:maxRunes]) + "…"
 	}
-	return value
+	return string(text)
 }
 
 func (e KubernetesExecutor) taskJobFailure(ctx context.Context, task *contracts.AgentTask, job *batchv1.Job) error {

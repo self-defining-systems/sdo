@@ -270,6 +270,8 @@ message IncidentRequest {
   PlaybookCoverage playbook_coverage = 27;
   NamespaceOnboarding namespace_onboarding = 28;
   repeated StageReport prior_stages = 29;
+  // Go-owned: each lossy step taken so the request fit the transport limit, in order.
+  repeated string compaction = 30;
 }
 
 message RootCauseEvidence {

@@ -44,12 +44,12 @@ func run(ctx context.Context) error {
 		return err
 	}
 	defer requestFile.Close()
-	requestWire, err := io.ReadAll(io.LimitReader(requestFile, worker_registry.MaxStagedRequestBytes+1))
+	requestWire, err := io.ReadAll(io.LimitReader(requestFile, worker_registry.MaxRequestBytes+1))
 	if err != nil {
 		return err
 	}
-	if len(requestWire) > worker_registry.MaxStagedRequestBytes {
-		return fmt.Errorf("dispatch request exceeds %d bytes", worker_registry.MaxStagedRequestBytes)
+	if len(requestWire) > worker_registry.MaxRequestBytes {
+		return fmt.Errorf("dispatch request exceeds %d bytes", worker_registry.MaxRequestBytes)
 	}
 	resultWire, err := os.ReadFile(filepath.Join(*checkpoint, "result.json"))
 	if err != nil {

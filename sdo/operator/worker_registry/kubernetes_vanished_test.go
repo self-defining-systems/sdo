@@ -7,28 +7,22 @@ import (
 	"testing"
 	"time"
 
-	"google.golang.org/protobuf/types/known/anypb"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
 	ktesting "k8s.io/client-go/testing"
-	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/contracts/wire"
 )
 
 func TestKubernetesExecutorVanishedJobIsTerminalAcrossRestart(t *testing.T) {
-	for _, scenario := range []string{"reflection", "staged-reflection", "bound-staged-reflection", "responder"} {
+	for _, scenario := range []string{"reflection", "conflicting-request-reflection", "responder"} {
 		t.Run(scenario, func(t *testing.T) {
 			task := reflectionTestTask(t)
 			client := fake.NewSimpleClientset()
 			executor := KubernetesExecutor{Client: client, Namespace: "demo", Registry: reflectionTestRegistry(t), RepositoryPVC: "repo", RepositoryMountPath: t.TempDir(), PollInterval: time.Millisecond}
 			task.Workspace.CheckoutPath = executor.RepositoryMountPath + "/proposals/reflection-1"
 			name := JobName(task.TaskId)
-			if strings.Contains(scenario, "staged") {
-				request := &contracts.ReflectionRequest{OutcomeCommit: "abc", MemorySnapshot: &contracts.OperationalMemorySnapshot{AcceptedCommit: "abc", GoalMarkdown: strings.Repeat("synthetic memory\n", 40000)}}
-				task.Request, _ = anypb.New(request)
-			}
-			if scenario == "bound-staged-reflection" {
+			if scenario == "conflicting-request-reflection" {
 				if err := executor.ensureRequest(context.Background(), name+"-request", `{"different":"request"}`); err != nil {
 					t.Fatal(err)
 				}

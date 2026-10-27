@@ -18,6 +18,7 @@ from sdo.agents.responder.codex import ResponderExecutionError, execute_incident
 from sdo.agents.responder.credentials import prepare_claude_home, prepare_codex_home, skills_for_role
 from sdo.agents.responder.job import KubernetesResultPublisher, write_application_kubeconfig
 from sdo.agents.responder.standby import await_standby_claim
+from sdo.agents.responder.termination import record_worker_failure, records_worker_failure
 from sdo.contracts import (
     SCHEMA_VERSION,
     AgentResult,
@@ -133,12 +134,14 @@ def run_worker_task(
     return envelope
 
 
+@records_worker_failure
 def main() -> int:
     await_standby_claim()
     namespace = os.environ.get("SDO_NAMESPACE", "")
     result_name = os.environ.get("SDO_RESULT_CONFIGMAP", "")
     if not namespace or not result_name:
         print("SDO_NAMESPACE and SDO_RESULT_CONFIGMAP are required", file=sys.stderr)
+        record_worker_failure(ValueError("SDO_NAMESPACE and SDO_RESULT_CONFIGMAP are required"))
         return 2
     try:
         prepare_codex_home(skills=skills_for_role("responder"))
@@ -150,6 +153,7 @@ def main() -> int:
         )
     except (OSError, ValueError, RuntimeError) as exc:
         print(str(exc), file=sys.stderr)
+        record_worker_failure(exc)
         return 1
     return 0
 

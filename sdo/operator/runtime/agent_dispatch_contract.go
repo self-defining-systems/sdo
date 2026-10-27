@@ -3,7 +3,9 @@ package runtime
 import (
 	"bytes"
 	"fmt"
+	"strings"
 
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/contracts/wire"
@@ -40,21 +42,35 @@ func encodeIncidentAgentTask(request IncidentRequest, registry *worker_registry.
 	if err != nil {
 		return nil, nil, err
 	}
-	packed, err := anypb.New(typedRequest)
-	if err != nil {
-		return nil, nil, fmt.Errorf("pack incident request: %w", err)
+	build := func() (*contracts.AgentTask, error) {
+		packed, err := anypb.New(typedRequest)
+		if err != nil {
+			return nil, fmt.Errorf("pack incident request: %w", err)
+		}
+		return &contracts.AgentTask{
+			SchemaVersion: worker_registry.SchemaVersion,
+			TaskId:        request.IncidentID,
+			AgentId:       agentID,
+			TaskType:      taskType,
+			Request:       packed,
+			Workspace: &contracts.ProposalWorkspace{
+				ProposalId:   request.IncidentID,
+				CheckoutPath: request.RepositoryWorktree,
+				BaseCommit:   request.RepositoryBaseCommit,
+			},
+		}, nil
 	}
-	task := &contracts.AgentTask{
-		SchemaVersion: worker_registry.SchemaVersion,
-		TaskId:        request.IncidentID,
-		AgentId:       agentID,
-		TaskType:      taskType,
-		Request:       packed,
-		Workspace: &contracts.ProposalWorkspace{
-			ProposalId:   request.IncidentID,
-			CheckoutPath: request.RepositoryWorktree,
-			BaseCommit:   request.RepositoryBaseCommit,
-		},
+	fits, err := fitIncidentRequest(typedRequest, build)
+	if err != nil {
+		return nil, nil, err
+	}
+	task, err := build()
+	if err != nil {
+		return nil, nil, err
+	}
+	if !fits {
+		size, _ := wireSize(task)()
+		return nil, nil, &worker_registry.RequestTooLargeError{TaskID: task.GetTaskId(), Bytes: size, Limit: worker_registry.MaxRequestBytes, Components: append([]string{"after " + strings.Join(typedRequest.Compaction, ", ")}, worker_registry.RequestComponents(task)...)}
 	}
 	payload, err := wire.Canonical(task)
 	if err != nil {
@@ -93,4 +109,42 @@ func withoutResponderOwners(result *contracts.IncidentResult) *contracts.Inciden
 		action.Owners = nil
 	}
 	return result
+}
+
+// fitIncidentRequest degrades a responder request in a fixed order until the frozen task fits the transport
+// limit, recording each lossy step on the request: prior-incident evidence, then memory the incident does not
+// touch, then raw program runs and old detector evaluations. It reports false when the request still does not fit.
+func fitIncidentRequest(request *contracts.IncidentRequest, build func() (*contracts.AgentTask, error)) (bool, error) {
+	size := func() (int, error) {
+		task, err := build()
+		if err != nil {
+			return 0, err
+		}
+		return wireSize(task)()
+	}
+	mentions := func() []byte {
+		stripped := proto.Clone(request).(*contracts.IncidentRequest)
+		stripped.MemorySnapshot = nil
+		text, _ := wire.Marshal(stripped)
+		return text
+	}
+	steps, fits, err := degradeToFit(size, []transportRung{
+		{"drop_prior_incident_history", func() bool {
+			changed := len(request.RelevantOutcomes) > 0
+			request.RelevantOutcomes = nil
+			return changed
+		}},
+		{"trim_memory_to_touched", func() bool { return trimSnapshotToTouched(request.MemorySnapshot, mentions()) }},
+		{"clip_memory_documents", func() bool { return clipSnapshotDocuments(request.MemorySnapshot) }},
+		{"cap_program_runs_and_detector_history", func() bool {
+			runs, changed := capProgramRuns(request.InitialProgramRuns)
+			request.InitialProgramRuns = runs
+			if len(request.DetectorHistory) > keptDetectorRuns {
+				request.DetectorHistory, changed = request.DetectorHistory[len(request.DetectorHistory)-keptDetectorRuns:], true
+			}
+			return changed
+		}},
+	})
+	request.Compaction = append(request.Compaction, steps...)
+	return fits, err
 }
