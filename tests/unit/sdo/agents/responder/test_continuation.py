@@ -163,3 +163,25 @@ def test_source_differences_are_shown_as_information_not_as_broken_findings() ->
     assert "still_broken: (0)" in prompt
     assert "source_differences (information, not blocking): (1)" in prompt
     assert ContinuationFeedback.model_validate(payload).source_differences[0].fingerprint == "drift/config"
+
+
+@pytest.mark.parametrize("count", [1, 40])
+def test_continuation_names_unconfirmed_detectors_within_budget(count: int) -> None:
+    payload = {
+        "attempt": 1,
+        "healthy": False,
+        "summary": "controller awaits confirmation",
+        "still_broken": [],
+        "already_done": [],
+        "verification_blockers": [
+            {"detector_id": f"health-{index}", "reason": "observation window is incomplete " * 8}
+            for index in range(count)
+        ],
+    }
+    prompt = continuation_prompt(json.dumps(payload))
+    assert "verification_blockers" in prompt
+    assert "health-0" in prompt
+    assert "observation window" in prompt
+    assert len(prompt) <= 1500
+    evidence = Path(prompt.split("Full JSON: ", 1)[1].splitlines()[0])
+    assert json.loads(evidence.read_text()) == payload

@@ -63,10 +63,16 @@ func (c *Controller) retireExpiredIncident(ctx context.Context, now time.Time) e
 	checker, checked := c.dispatcher.(incidentWorkChecker)
 	c.mu.Lock()
 	request := cloneIncidentRequest(c.currentIncidentRequest)
-	resultConsumed := c.responderDone
+	resultConsumed := c.responderDone || !c.verificationDeadline.IsZero()
 	retire, eligible := c.incidentRetirementLocked(now, checked)
 	c.mu.Unlock()
 	if !eligible {
+		return nil
+	}
+	// A harvested response has a live closure owner: this controller. Drive
+	// its bounded closure even after restart or pause, never archive OwnerLost.
+	if resultConsumed {
+		c.maybeCloseIncident(ctx, now, nil)
 		return nil
 	}
 	reason := retire.reason
@@ -172,14 +178,14 @@ func (c *Controller) incidentRetirementDueLocked(workActiveCheckable bool) (reti
 		return retirement{}, time.Time{}, false
 	}
 	switch {
-	case c.responderDone:
-		// Verification closes within VerificationTimeout while a controller
-		// observes; an incident still open past it has lost that owner.
-		if c.responderCompletedAt.IsZero() {
+	case c.responderDone || !c.verificationDeadline.IsZero():
+		// A harvested result belongs to the live controller, including after
+		// restart or during maintenance. Wake its closure at the verification
+		// bound; retireExpiredIncident drives it rather than archiving it.
+		if c.responderCompletedAt.IsZero() && c.verificationDeadline.IsZero() {
 			return retirement{}, time.Time{}, false
 		}
-		return retirement{lifecyclecore.OwnerLost, "responder finished but no closure began within the verification bound; no live incident work"},
-			c.responderCompletedAt.Add(c.config.VerificationTimeout + ownerLostGrace), true
+		return retirement{}, c.verificationDeadlineLocked(), true
 	case c.dispatchState == contracts.DispatchState_DISPATCH_STATE_RUNNING || c.dispatchState == contracts.DispatchState_DISPATCH_STATE_WORKSPACE_RUNNING:
 		if !workActiveCheckable {
 			return retirement{}, time.Time{}, false
@@ -199,6 +205,8 @@ func (c *Controller) retirementWakeLocked(now time.Time) time.Time {
 	switch {
 	case !ok:
 		return time.Time{}
+	case !c.verificationDeadline.IsZero() && c.earlyStopRetryAt.After(now):
+		return c.earlyStopRetryAt
 	case due.After(now):
 		return due
 	case c.finishedHoldWake.After(now):
@@ -224,6 +232,7 @@ func (c *Controller) clearIncidentLocked() {
 	c.incidentDetectedAt = time.Time{}
 	c.incidentDispatchedAt = time.Time{}
 	c.responderCompletedAt = time.Time{}
+	c.verificationDeadline = time.Time{}
 	c.dispatchState = contracts.DispatchState_DISPATCH_STATE_IDLE
 	c.incidentFindingKeys = nil
 	c.cleanedHelpers = nil
