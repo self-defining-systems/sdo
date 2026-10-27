@@ -261,3 +261,46 @@ def test_real_external_factory_consumes_up_limits_before_images(
     assert all(
         argv[argv.index("--memory") + 1] == "24g" and argv[argv.index("--pids-limit") + 1] == "4096" for argv in updates
     )
+
+
+def test_worker_bridge_installs_node_caps_hook(monkeypatch: pytest.MonkeyPatch) -> None:
+    from types import SimpleNamespace
+
+    from benchmarks.sregym.fastloop import host_limits, worker_bridge
+
+    calls = []
+    infra = SimpleNamespace(preflight_cluster_requirements=lambda *_args: calls.append(["images"]))
+    source = SimpleNamespace()
+
+    class Worker:
+        def handle(self, request):
+            return {}
+
+    def worker_main():
+        infra.apply_worker_cpu_limit("lane")
+        infra.preflight_cluster_requirements("lane", "/synthetic/config")
+        return 0
+
+    worker = SimpleNamespace(FastloopWorker=Worker, main=worker_main, probe_pod_manifest=lambda *args: {})
+    monkeypatch.setattr(worker_bridge, "install_node_limits", host_limits.install_node_limits)
+    monkeypatch.setattr(
+        worker_bridge,
+        "importlib",
+        SimpleNamespace(
+            import_module=lambda name: {
+                "sregym.worker_infra": infra,
+                "sregym.service.source_deploy": source,
+            }.get(name, worker)
+        ),
+    )
+
+    def run(argv, **kwargs):
+        calls.append(argv)
+        return subprocess.CompletedProcess(argv, 0, "lane-control-plane\nlane-worker\n", "")
+
+    monkeypatch.setattr(subprocess, "run", run)
+    assert worker_bridge.main() == 0
+    assert calls[-1] == ["images"]
+    updates = [argv for argv in calls if argv[:2] == ["docker", "update"]]
+    assert {argv[-1] for argv in updates} == {"lane-control-plane", "lane-worker"}
+    assert all("--memory" in argv and "--pids-limit" in argv for argv in updates)
