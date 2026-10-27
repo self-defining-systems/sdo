@@ -1,5 +1,7 @@
 package runtime
 
+import "slices"
+
 // namedPlanLists recognizes only unambiguous named lists. Other arrays retain
 // positional matching; duplicate or missing names never establish ownership.
 func namedPlanLists(before, after, live []any) (map[string]any, map[string]any, map[string]any, bool) {
@@ -24,5 +26,26 @@ func namedPlanLists(before, after, live []any) (map[string]any, map[string]any, 
 	b, bok := index(before)
 	a, aok := index(after)
 	l, lok := index(live)
-	return b, a, l, bok && aok && lok
+	if !bok || !aok || !lok {
+		return b, a, l, false
+	}
+	// Positional writes still own identity at their original positions. Permit
+	// additions/removals, but never relax the existing reordered-list refusal.
+	commonOrder := func(left, right []any, li, ri map[string]any) bool {
+		var ln, rn []string
+		for _, item := range left {
+			name := item.(map[string]any)["name"].(string)
+			if _, ok := ri[name]; ok {
+				ln = append(ln, name)
+			}
+		}
+		for _, item := range right {
+			name := item.(map[string]any)["name"].(string)
+			if _, ok := li[name]; ok {
+				rn = append(rn, name)
+			}
+		}
+		return slices.Equal(ln, rn)
+	}
+	return b, a, l, commonOrder(before, after, b, a) && commonOrder(after, live, a, l) && commonOrder(before, live, b, l)
 }
