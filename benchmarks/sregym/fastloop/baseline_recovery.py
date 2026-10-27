@@ -634,9 +634,25 @@ def _declares(captured: Any, declared: Any) -> bool:
     return captured == declared
 
 
+def _port_key(item: Any) -> Any:
+    """Identity of a Service port entry: its name, else its port number; None for other list items."""
+    if isinstance(item, dict):
+        return item.get("name") or item.get("port")
+    return None
+
+
 def _merge_declared(captured: Any, declared: Any) -> Any:
+    """Declared fields win; captured extras stay. Dicts merge by key, port lists by name or port number."""
     if isinstance(captured, dict) and isinstance(declared, dict):
         return {**captured, **{key: _merge_declared(captured.get(key), value) for key, value in declared.items()}}
+    if (
+        isinstance(captured, list)
+        and isinstance(declared, list)
+        and all(_port_key(item) is not None for item in (*captured, *declared))
+    ):
+        declared_by_key = {_port_key(item): item for item in declared}
+        merged = [_merge_declared(item, declared_by_key.pop(_port_key(item), item)) for item in captured]
+        return merged + [deepcopy(item) for item in declared_by_key.values()]
     return deepcopy(declared)
 
 

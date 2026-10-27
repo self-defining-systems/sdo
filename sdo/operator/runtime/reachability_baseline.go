@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"reflect"
 	"sdo.dev/operator/broker"
@@ -52,14 +53,43 @@ func baselineMatches(b *servicehealth.ReachabilityBaseline, revision memory.Heal
 	return b != nil && b.Authorization.SourceInputs == revision.SourceInputs && b.Authorization.ObjectiveDigest == objectiveDigest(revision.Objective) && len(b.StaleExclusions(snapshot)) == 0
 }
 
-// baselineProposalID is unique per measured configuration, so a refresh under
-// unchanged health inputs never reuses an earlier proposal.
+// stalenessOnly reports a record bound to the accepted health inputs whose only
+// defect is a stale exclusion. Such a record may be measured again, but only for
+// the targets it already excludes.
+func stalenessOnly(b *servicehealth.ReachabilityBaseline, revision memory.HealthRevision) bool {
+	return b != nil && b.Authorization.SourceInputs == revision.SourceInputs && b.Authorization.ObjectiveDigest == objectiveDigest(revision.Objective)
+}
+
+// keepRecordedExclusions drops every exclusion whose target the earlier record does
+// not already exclude. A refresh that staleness alone triggered re-measures recorded
+// targets; a port that newly fails is a defect to report, never an exclusion.
+func keepRecordedExclusions(b, earlier *servicehealth.ReachabilityBaseline) {
+	recorded := map[string]bool{}
+	for _, e := range earlier.Exclusions {
+		recorded[e.Namespace+"/"+e.Target.ID()] = true
+	}
+	kept := b.Exclusions[:0]
+	for _, e := range b.Exclusions {
+		if recorded[e.Namespace+"/"+e.Target.ID()] {
+			kept = append(kept, e)
+		}
+	}
+	b.Exclusions = kept
+}
+
+// errBaselineDeferred marks a refresh that could not be authorized now. The old
+// record stays and the next gate tries again.
+var errBaselineDeferred = errors.New("reachability baseline refresh deferred")
+
+// baselineProposalID is unique per accepted revision and measured configuration.
+// A configuration that returns to an earlier value (R, C, R) at a later commit
+// never reuses the first proposal.
 func baselineProposalID(revision memory.HealthRevision, b *servicehealth.ReachabilityBaseline) string {
 	digest := sha256.New()
 	for _, e := range b.Exclusions {
 		fmt.Fprintf(digest, "%s\x00%s\x00", e.Target.ID(), e.Configuration)
 	}
-	return fmt.Sprintf("reachability-baseline-%s-%x", revision.RefreshID(), digest.Sum(nil)[:6])
+	return fmt.Sprintf("reachability-baseline-%s-%.12s-%x", revision.RefreshID(), revision.Commit, digest.Sum(nil)[:6])
 }
 
 // publishReachabilityBaseline is reached only from the trusted, opt-in startup
@@ -75,11 +105,14 @@ func publishReachabilityBaseline(ctx context.Context, root string, authority *br
 		return false, nil
 	}
 	if _, err := healthyBaselineGoal(ctx, detectors, snapshot); err != nil {
-		return false, err
+		return false, fmt.Errorf("%w: %w", errBaselineDeferred, err)
 	}
 	baseline, err := servicehealth.CaptureReachabilityBaseline(snapshot, servicehealth.BaselineAuthorization{SourceInputs: revision.SourceInputs, ObjectiveDigest: objectiveDigest(revision.Objective), Reason: "healthy-baseline", GoalHealthy: true})
 	if err != nil {
 		return false, err
+	}
+	if stalenessOnly(existing, revision) {
+		keepRecordedExclusions(baseline, existing)
 	}
 	id := baselineProposalID(revision, baseline)
 	proposal, err := authority.CreateProposalForPhase(ctx, id, broker.InitialPhase)
@@ -153,7 +186,7 @@ func acceptStartupReachabilityBaseline(ctx context.Context, c *Controller, root 
 		_, err = healthyBaselineGoal(ctx, detectors, snapshot)
 		return err
 	}); err != nil {
-		return fmt.Errorf("reachability healthy baseline not accepted: %w", err)
+		return c.deferStaleBaseline(ctx, existing, revision, fmt.Errorf("reachability healthy baseline not accepted: %w", err))
 	}
 	snapshot, err := provider.Snapshot(ctx)
 	if err != nil {
@@ -161,10 +194,28 @@ func acceptStartupReachabilityBaseline(ctx context.Context, c *Controller, root 
 	}
 	accepted, err := publishReachabilityBaseline(ctx, root, authority, revision, detectors, snapshot)
 	if err != nil {
+		if errors.Is(err, errBaselineDeferred) {
+			return c.deferStaleBaseline(ctx, existing, revision, err)
+		}
 		return err
 	}
 	if accepted {
 		return memory.ErrHealthRefreshRequired
+	}
+	return nil
+}
+
+// deferStaleBaseline keeps a record that is current except for a stale exclusion
+// when its refresh cannot be authorized now (the goal is firing, the application
+// is still changing). Failing the controller would crash-loop until the goal heals,
+// and the same record is consumed meanwhile exactly as before this refresh existed.
+// Every other record, and a cancelled context, still fails the gate.
+func (c *Controller) deferStaleBaseline(ctx context.Context, existing *servicehealth.ReachabilityBaseline, revision memory.HealthRevision, cause error) error {
+	if ctx.Err() != nil || !stalenessOnly(existing, revision) {
+		return cause
+	}
+	if c.OnError != nil {
+		c.OnError(fmt.Errorf("%w; keeping the recorded exclusions and retrying at the next gate", cause))
 	}
 	return nil
 }

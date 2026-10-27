@@ -870,6 +870,41 @@ def test_application_helper_migration_leaves_sdo_owned_deployments_untouched(ope
     assert cluster.objects[(namespace, "Deployment", "mongodb-geo")] == owned
 
 
+def test_sealed_restore_merges_service_ports_by_name_and_keeps_captured_extras(tmp_path: Path) -> None:
+    routes = {"apiVersion": "v1", "kind": "Service", "metadata": {"name": "routes", "namespace": "app"}}
+    captured = [
+        {
+            **routes,
+            "spec": {
+                "ports": [
+                    {"name": "http", "port": 80, "targetPort": 8080, "protocol": "TCP"},
+                    {"name": "metrics", "port": 90, "protocol": "TCP"},
+                    {"port": 100, "protocol": "TCP"},
+                ]
+            },
+        }
+    ]
+    _write_lock(
+        tmp_path,
+        [
+            {
+                **routes,
+                "spec": {
+                    "ports": [{"name": "http", "port": 80, "targetPort": 9090}, {"port": 100, "targetPort": 1000}]
+                },
+            }
+        ],
+    )
+
+    ports = accepted_restore_baselines(tmp_path, _sealed(tmp_path, captured))[0].objects[0]["spec"]["ports"]
+
+    assert ports == [
+        {"name": "http", "port": 80, "targetPort": 9090, "protocol": "TCP"},
+        {"name": "metrics", "port": 90, "protocol": "TCP"},
+        {"port": 100, "targetPort": 1000, "protocol": "TCP"},
+    ]
+
+
 def redirect(name: str, namespace: str = "social-network", target: str = "otel-collector.observe") -> dict[str, Any]:
     return {
         "apiVersion": "v1",

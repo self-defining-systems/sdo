@@ -11,8 +11,8 @@ def fingerprint(namespace: str, kind: str, name: str) -> str:
     return f"drift.unexplained/unexplained/{namespace}/{kind}/{name}/{DIGEST}"
 
 
-def state(*rows: dict) -> dict:
-    return {"history": list(rows)}
+def state(*rows: dict, iteration: int = 1) -> dict:
+    return {"evaluation_iteration": iteration, "history": list(rows)}
 
 
 def drift_row(status: str, *fingerprints: str, **extra: str) -> dict:
@@ -33,10 +33,28 @@ def test_firing_drift_is_named_per_object_and_sorted() -> None:
     ]
 
 
-def test_clear_or_unevaluated_drift_is_empty() -> None:
+def test_a_clear_drift_row_is_empty() -> None:
     assert drift_empty(state(drift_row("clear")), ["shop"]) == []
-    assert drift_empty(state({"detector_id": "workload-health", "status": "clear"}), ["shop"]) == []
-    assert drift_empty({}, ["shop"]) == []
+
+
+@pytest.mark.parametrize(
+    "unevaluated",
+    [
+        {},
+        {"evaluation_iteration": 0, "history": [drift_row("clear")]},
+        {"evaluation_iteration": 3, "history": []},
+        # The history is a 100-entry log over all detectors; a trimmed drift row reads as absent, not as clear.
+        {"evaluation_iteration": 3, "history": [{"detector_id": "workload-health", "status": "clear"}]},
+    ],
+)
+def test_an_assessment_the_controller_has_not_published_is_not_read_as_empty(unevaluated: dict) -> None:
+    with pytest.raises(DriftAssessmentUnavailable, match="not published|evaluat"):
+        drift_empty(unevaluated, ["shop"])
+
+
+def test_a_firing_row_without_fingerprints_is_not_read_as_empty() -> None:
+    with pytest.raises(DriftAssessmentUnavailable, match="firing"):
+        drift_empty(state(drift_row("firing")), ["shop"])
 
 
 def test_drift_outside_the_restored_namespaces_is_not_a_mismatch() -> None:

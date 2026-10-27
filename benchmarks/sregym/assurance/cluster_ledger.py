@@ -42,17 +42,29 @@ class DriftMismatch:
 def drift_empty(state: Mapping[str, Any], namespaces: Collection[str]) -> list[DriftMismatch]:
     """Mismatches the controller reports in ``namespaces``; an empty list means source and cluster agree.
 
-    ``state`` is the controller runtime state (``history`` holds the latest row per detector). The controller
-    publishes a drift row only once it has evaluated drift, so no row means nothing is reported.
+    Fails closed: ``state`` is the controller runtime state, and an empty list needs proof that drift was
+    evaluated. The controller must have run an evaluation (``evaluation_iteration > 0``) and ``history``, a log
+    capped at 100 entries over all detectors, must still hold a ``drift.unexplained`` row (the latest one counts).
+    A missing row, a row that is neither ``clear`` nor ``firing``, a ``firing`` row without fingerprints and an
+    unreadable fingerprint all raise ``DriftAssessmentUnavailable``.
     """
     scope = set(namespaces)
     if not scope:
         raise ValueError("drift_empty requires at least one restored namespace")
+    if int(state.get("evaluation_iteration") or 0) <= 0:
+        raise DriftAssessmentUnavailable("drift assessment unavailable: the controller has not completed an evaluation")
     latest = {row.get("detector_id"): row for row in (state.get("history") or [])}
     row = latest.get(DRIFT_DETECTOR)
-    if row is None or row.get("status") == "clear":
+    if row is None:
+        raise DriftAssessmentUnavailable(
+            "drift assessment not published: no drift.unexplained row in the evaluation history"
+        )
+    if row.get("status") == "clear":
         return []
     if row.get("status") != "firing":
         raise DriftAssessmentUnavailable(f"drift assessment is {row.get('status')!r}: {row.get('reason') or row}")
-    mismatches = [DriftMismatch.from_fingerprint(fp) for fp in row.get("fingerprints") or []]
+    fingerprints = row.get("fingerprints") or []
+    if not fingerprints:
+        raise DriftAssessmentUnavailable("drift assessment is firing but names no object")
+    mismatches = [DriftMismatch.from_fingerprint(fp) for fp in fingerprints]
     return sorted((m for m in mismatches if m.namespace in scope), key=lambda m: (m.namespace, m.kind, m.name))

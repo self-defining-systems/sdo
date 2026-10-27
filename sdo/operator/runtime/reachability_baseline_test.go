@@ -287,3 +287,169 @@ func TestStartupReachabilityBaselineRefreshesAnExclusionWhoseConfigurationChange
 		t.Fatalf("exclusion not recorded for the new configuration: %+v %v", second, err)
 	}
 }
+
+type baselineGate struct {
+	t          *testing.T
+	ctx        context.Context
+	root       string
+	snapshots  *mutableSnapshots
+	observer   *ServiceReachabilityObserver
+	provider   TrafficSnapshotProvider
+	controller *Controller
+	logged     []error
+	authority  *broker.Broker
+}
+
+// newBaselineGate wires the real startup gate over a service whose every port is refused.
+func newBaselineGate(t *testing.T, app func() *mutableSnapshots) *baselineGate {
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	root, authority := baselineRepository(t)
+	snapshots := app()
+	dialer, err := prober.New(prober.Config{Namespace: "shop", LinkAddress: func(link traffic.Link) string { return link.To }, DialContext: func(context.Context, string, string) (net.Conn, error) {
+		return nil, &net.OpError{Op: "dial", Err: syscall.ECONNREFUSED}
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	observer := NewServiceReachabilityObserver(ServiceReachabilityConfig{Prober: reachabilityDirect{dialer}, Snapshots: snapshots, Interval: time.Millisecond})
+	t.Cleanup(observer.Stop)
+	g := &baselineGate{t: t, ctx: ctx, root: root, snapshots: snapshots, observer: observer, authority: authority}
+	g.provider = TrafficSnapshotProvider{Base: snapshots, Reachability: observer}
+	g.controller = &Controller{OnError: func(err error) { g.logged = append(g.logged, err) }}
+	return g
+}
+
+func healthyGoal() sdk.Detector {
+	goal := controllerDetector("health-objective", time.Second, sdk.Finding{})
+	goal.spec.Class = sdk.DetectorClassHealth
+	return goal
+}
+
+func firingGoal() sdk.Detector {
+	goal := controllerDetector("health-objective", time.Second, stateFinding("health-objective"))
+	goal.spec.Class = sdk.DetectorClassHealth
+	return goal
+}
+
+func (g *baselineGate) accept(goal sdk.Detector) error {
+	err := acceptStartupReachabilityBaseline(g.ctx, g.controller, g.root, g.authority, true, g.observer, g.provider, []sdk.Detector{goal})
+	g.observer.Stop()
+	return err
+}
+
+func (g *baselineGate) baseline() *servicehealth.ReachabilityBaseline {
+	b, err := memory.ReadReachabilityBaseline(g.ctx, g.root, "HEAD")
+	if err != nil || b == nil {
+		g.t.Fatalf("no baseline: %v", err)
+	}
+	return b
+}
+
+func (g *baselineGate) head() string { return nativeGit(g.t, g.root, "rev-parse", "HEAD") }
+
+func withMode(mode string) *mutableSnapshots {
+	s := reachabilityApp(9600)
+	if mode != "" {
+		s.PodList[0].Spec.Containers[0].Env = []corev1.EnvVar{{Name: "MODE", Value: mode}}
+	}
+	return &mutableSnapshots{snapshot: s}
+}
+
+// The configuration R -> C -> R must publish three accepted revisions, not reuse
+// the first proposal.
+func TestStartupReachabilityBaselineRefreshesWhenConfigurationReturnsToAnEarlierValue(t *testing.T) {
+	g := newBaselineGate(t, func() *mutableSnapshots { return withMode("") })
+	if err := g.accept(healthyGoal()); !errors.Is(err, memory.ErrHealthRefreshRequired) {
+		t.Fatalf("first capture: %v", err)
+	}
+	first := g.baseline().Exclusions[0].Configuration
+	g.snapshots.set(withMode("restored").snapshot)
+	if err := g.accept(healthyGoal()); !errors.Is(err, memory.ErrHealthRefreshRequired) {
+		t.Fatalf("second capture: %v", err)
+	}
+	if g.baseline().Exclusions[0].Configuration == first {
+		t.Fatal("second capture kept the first configuration")
+	}
+	g.snapshots.set(withMode("").snapshot)
+	head := g.head()
+	if err := g.accept(healthyGoal()); !errors.Is(err, memory.ErrHealthRefreshRequired) {
+		t.Fatalf("third capture was not published: %v", err)
+	}
+	if g.head() == head || g.baseline().Exclusions[0].Configuration != first {
+		t.Fatalf("record stayed stale after the configuration returned: %+v", g.baseline().Exclusions)
+	}
+	if err := g.accept(healthyGoal()); err != nil {
+		t.Fatalf("a current record was refreshed again: %v", err)
+	}
+}
+
+// Staleness only says a recorded exclusion must be measured again. A port that
+// newly fails at the gate is a defect to report, never an exclusion.
+func TestStartupReachabilityBaselineStalenessNeverAddsAnExclusion(t *testing.T) {
+	g := newBaselineGate(t, func() *mutableSnapshots { return withMode("") })
+	if err := g.accept(healthyGoal()); !errors.Is(err, memory.ErrHealthRefreshRequired) {
+		t.Fatalf("first capture: %v", err)
+	}
+	changed := withMode("restored").snapshot
+	changed.ServiceList[0].Spec.Ports = append(changed.ServiceList[0].Spec.Ports, corev1.ServicePort{Name: "metrics", Port: 9601, TargetPort: intstr.FromInt32(9601)})
+	g.snapshots.set(changed)
+	if err := g.accept(healthyGoal()); !errors.Is(err, memory.ErrHealthRefreshRequired) {
+		t.Fatalf("refresh: %v", err)
+	}
+	exclusions := g.baseline().Exclusions
+	if len(exclusions) != 1 || exclusions[0].Target.Port != 9600 {
+		t.Fatalf("refresh recorded a port that was not already excluded: %+v", exclusions)
+	}
+	baseline, source, objective, err := loadReachabilityBaseline(g.ctx, g.root, "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	g.provider.Baseline, g.provider.SourceInputs, g.provider.ObjectiveDigest = baseline, source, objective
+	for i := 0; i < g.observer.config.Failures; i++ {
+		g.observer.Cycle(g.ctx)
+	}
+	snapshot, err := g.provider.Snapshot(g.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	findings, err := servicehealth.NewReachabilityDetector(sdk.DetectorSpec{ID: "service-reachability"}).Detect(g.ctx, snapshot)
+	if err != nil || len(findings) != 1 {
+		t.Fatalf("newly failing port was hidden: %+v %v", findings, err)
+	}
+}
+
+// A stale record with a goal that is firing now is kept and retried at the next
+// gate; it must not make Run or resume fail.
+func TestStartupReachabilityBaselineKeepsAStaleRecordWhileTheGoalIsFiring(t *testing.T) {
+	g := newBaselineGate(t, func() *mutableSnapshots { return withMode("") })
+	if err := g.accept(healthyGoal()); !errors.Is(err, memory.ErrHealthRefreshRequired) {
+		t.Fatalf("first capture: %v", err)
+	}
+	first := g.baseline().Exclusions[0].Configuration
+	head := g.head()
+	g.snapshots.set(withMode("restored").snapshot)
+	if err := g.accept(firingGoal()); err != nil {
+		t.Fatalf("a firing goal made the gate fail: %v", err)
+	}
+	if g.head() != head || g.baseline().Exclusions[0].Configuration != first || len(g.logged) == 0 {
+		t.Fatalf("stale record not kept and logged: head moved=%v logged=%v", g.head() != head, g.logged)
+	}
+	if err := g.accept(healthyGoal()); !errors.Is(err, memory.ErrHealthRefreshRequired) {
+		t.Fatalf("next gate did not retry: %v", err)
+	}
+	if g.baseline().Exclusions[0].Configuration == first {
+		t.Fatal("retry kept the stale record")
+	}
+}
+
+// The proposal id is unique per accepted revision: the same refresh inputs and
+// measured configuration at a later accepted commit never reuse an earlier proposal.
+func TestBaselineProposalIDIsUniquePerAcceptedRevision(t *testing.T) {
+	baseline := &servicehealth.ReachabilityBaseline{Exclusions: []servicehealth.ReachabilityExclusion{{Target: servicehealth.ReachabilityTarget{Service: "geo", Port: 9600}, Configuration: "r"}}}
+	first := baselineProposalID(memory.HealthRevision{Commit: "c1", SourceInputs: "s", Objective: "o", DetectorRevision: "d"}, baseline)
+	later := baselineProposalID(memory.HealthRevision{Commit: "c3", SourceInputs: "s", Objective: "o", DetectorRevision: "d"}, baseline)
+	if first == later {
+		t.Fatalf("proposal id reused across accepted revisions: %s", first)
+	}
+}
