@@ -471,7 +471,7 @@ func (c *Controller) continuationVerificationLocked(healthVerified bool, source 
 	case result.Healthy:
 		result.Summary = "controller independently verified healthy"
 		if len(result.Drift) > 0 {
-			result.Summary += fmt.Sprintf("; %d object(s) still differ from the accepted source (information only)", len(result.Drift))
+			result.Summary += fmt.Sprintf("; %d object(s) still differ from the accepted source: restore each or explain why it is intended before returning", len(result.Drift))
 		}
 	case len(result.Findings) > 0:
 		result.Summary = "controller verification retains named unresolved findings"

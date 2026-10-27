@@ -51,6 +51,8 @@ def test_incident_workflow_installs_from_the_shipped_skill_root(tmp_path: Path, 
     assert "Inspect rollout blockers and old-template Pods before repeating writes" in body
     assert "When an admission control blocks recovery and its backend is gone, restore the backend if you can" in body
     assert "a scoped fail-open or removal that restores availability is acceptable; report it" in body
+    assert "never widen a selector or policy to other namespaces" in body
+    assert "is not done while unexplained differences from accepted source remain" in body
 
 
 @pytest.mark.parametrize(

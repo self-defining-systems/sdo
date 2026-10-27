@@ -382,6 +382,10 @@ func TestControllerContinuationDistinguishesFaultFromObservationWindow(t *testin
 	if !informed.Healthy || len(informed.Findings) != 0 || len(informed.Drift) != 1 || informed.Drift[0].PrimaryResource.Name != "flags" {
 		t.Fatalf("drift changed the health verdict or was hidden: %+v", informed)
 	}
+	// A healthy verdict with remaining drift must not read as finished work.
+	if !strings.Contains(informed.Summary, "1 object(s) still differ from the accepted source") || strings.Contains(informed.Summary, "information only") || !strings.Contains(informed.Summary, "restore each or explain why it is intended") {
+		t.Fatalf("healthy summary with drift reads as done: %q", informed.Summary)
+	}
 	failed := c.continuationVerificationLocked(false, closureSourceReport{Drift: []sdk.Finding{drift}})
 	if failed.Healthy {
 		t.Fatalf("drift made unhealthy state healthy: %+v", failed)
