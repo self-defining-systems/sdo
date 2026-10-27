@@ -52,3 +52,25 @@ def test_missing_or_invalid_timing_evidence_fails_closed() -> None:
         costs.measured_costs([event("run", 0)])
     with pytest.raises(ValueError, match="finite"):
         costs.measured_costs([event("pass", 8, Elapsed=float("nan"))])
+
+
+def test_operator_only_refresh_preserves_runtime_profile(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    profiles = tmp_path / "scripts"
+    profiles.mkdir()
+    runtime = profiles / "runtime_test_costs.json"
+    runtime.write_text("unchanged runtime profile")
+    operator = profiles / "operator_test_costs.json"
+    operator.write_text(json.dumps({"costs": {"Old": 1}, "placements": {"Old": "remaining"}}))
+    log = tmp_path / "events.log"
+    done = event("pass", 8, Elapsed=8)
+    done["Package"] = "sdo.dev/operator/broker"
+    log.write_text(json.dumps(done))
+    monkeypatch.setattr(costs, "ROOT", tmp_path)
+    monkeypatch.setattr(
+        "sys.argv", ["update", "--scope", "operator", "--log", str(log), "--run", "123", "--head", "a" * 40, "--write"]
+    )
+    costs.main()
+    assert runtime.read_text() == "unchanged runtime profile"
+    result = json.loads(operator.read_text())
+    assert result["placements"] == {"Old": "remaining"}
+    assert result["costs"]["sdo.dev/operator/broker/TestParent"] == 8
