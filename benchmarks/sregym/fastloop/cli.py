@@ -42,6 +42,7 @@ from benchmarks.sregym.fastloop.baseline_recovery import (
 )
 from benchmarks.sregym.fastloop.environment import DEFAULT_PROBLEM, FastloopEnvironment, Images
 from benchmarks.sregym.fastloop.fault_driver import SregymFaultDriver
+from benchmarks.sregym.fastloop.host_limits import DEFAULT_MEMORY_LIMIT, DEFAULT_PIDS_LIMIT, HostLimits, NodeLimits
 from benchmarks.sregym.fastloop.loop import LoopConfig, run_incidents, write_loop_manifest
 from benchmarks.sregym.fastloop.records import AgentSummary, IncidentRecord, load_records, summarize
 from benchmarks.sregym.fastloop.stream import load_stream_config
@@ -176,6 +177,9 @@ def up_worker_environment(args: argparse.Namespace, *, workspace: Path) -> dict[
         "SREGYM_KIND_REQUIRED_IMAGES": json.dumps([images.controller, images.responder, images.validator]),
         "SREGYM_REUSE_CLUSTER": "1",
         "SREGYM_WORKER_CPU_LIMIT": args.cpu_limit,
+        "SREGYM_WORKER_MEMORY_LIMIT": args.memory_limit,
+        "SREGYM_WORKER_PIDS_LIMIT": str(args.pids_limit),
+        **HostLimits(args.host_lock_dir.resolve(), args.host_redeploys).worker_env(),
         "SREGYM_DEPLOY_FROM_SOURCE": "1",
         "SREGYM_APP_SOURCE_DIR": str(workspace),
         "SREGYM_PRESERVE_INFRASTRUCTURE": "1",
@@ -272,6 +276,8 @@ def up_preflight(args: argparse.Namespace) -> None:
 
 
 def _up(args: argparse.Namespace) -> int:
+    NodeLimits(args.cpu_limit, args.memory_limit, args.pids_limit)
+    HostLimits(args.host_lock_dir.resolve(), args.host_redeploys)
     up_preflight(args)
     if args.app == "toy":
         from benchmarks.sregym.fastloop.toy import up
@@ -889,6 +895,7 @@ def _run(args: argparse.Namespace) -> int:
                     else ()
                 ),
                 deploy=redeploy_application,
+                host_limits=HostLimits.from_env(environment.worker_env),
                 timeout_seconds=wait_for(WaitKind.ROLLOUT),
             ).write(results_dir)
         if redeploy_reason is None:
@@ -1414,6 +1421,24 @@ def build_parser() -> argparse.ArgumentParser:
         help="attach with KUBECONFIG or refuse; never create or recreate a kind cluster",
     )
     up.add_argument("--cpu-limit", default="3", help="docker --cpus per kind node, as the benchmark workers use")
+    up.add_argument(
+        "--memory-limit",
+        default=DEFAULT_MEMORY_LIMIT,
+        help="Docker memory cap per kind node (Astronomy headroom included)",
+    )
+    up.add_argument("--pids-limit", type=int, default=DEFAULT_PIDS_LIMIT, help="Docker PID cap per kind node")
+    up.add_argument(
+        "--host-lock-dir",
+        type=Path,
+        default=HostLimits.from_env().directory,
+        help="host-wide lock directory shared by ALL lanes, outside private /tmp",
+    )
+    up.add_argument(
+        "--host-redeploys",
+        type=int,
+        default=HostLimits.from_env().redeploys,
+        help="host-wide concurrent app redeploys (same value for every lane)",
+    )
     up.add_argument(
         "--kind-worker-nodes",
         type=int,

@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from benchmarks.sregym.adapter import WaitKind, wait_for
+from benchmarks.sregym.fastloop.host_limits import install_node_limits
 from benchmarks.sregym.fastloop.idempotent_helm import make_deploy_idempotent
 
 if TYPE_CHECKING:
@@ -73,6 +74,7 @@ def main() -> int:
     # The external worker and its dependencies run in SREGym's own environment.
     worker_infra: Any = importlib.import_module("sregym.worker_infra")
     worker = importlib.import_module("sregym.fastloop.worker")
+    install_node_limits(worker_infra)
     handle = worker.FastloopWorker.handle
     from benchmarks.sregym.fastloop.clean_start import install_probe_isolation
     from benchmarks.sregym.fastloop.hotel_helpers import admit_install, configure_profile, prepare_install
