@@ -146,7 +146,8 @@ def test_ops_that_do_not_restart_workloads_run_unguarded() -> None:
         cluster_factory=lambda _ns, _config: pytest.fail("guard must not observe the cluster"),
     )
 
-    assert calls == ["health"] and cluster.scale_calls == []
+    assert calls == ["health"]
+    assert cluster.scale_calls == []
 
 
 def test_a_rollout_that_can_surge_is_never_touched() -> None:
@@ -177,5 +178,6 @@ def test_grace_period_spares_a_surge_pod_that_is_only_briefly_pending(monkeypatc
     watch = surge_recovery.SurgeWatch(cluster, NAMESPACE, clock=iter([0.0, 1.0, 2.0]).__next__)
     cluster.restart()
 
-    assert watch.poll() == [] and watch.poll() == []
+    assert watch.poll() == []
+    assert watch.poll() == []
     assert cluster.scale_calls == []

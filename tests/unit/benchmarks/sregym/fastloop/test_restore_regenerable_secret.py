@@ -276,7 +276,8 @@ def test_kubectl_ensure_secret_creates_only_when_absent_and_never_reads_data(
         if args[0] == "get":
             assert args[1:4] == [f"secret/{SECRET}", "-o", "name"], "only the name may be inspected"
             return subprocess.CompletedProcess(args, 0, "secret/x\n" if present["value"] else "", "")
-        assert args == ["create", "-f", "-"] and kwargs["namespace"] == NAMESPACE
+        assert args == ["create", "-f", "-"]
+        assert kwargs["namespace"] == NAMESPACE
         present["value"] = True
         return subprocess.CompletedProcess(args, 0, "", "")
 
