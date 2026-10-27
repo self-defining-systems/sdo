@@ -407,3 +407,41 @@ def test_persistent_cleanup_drains_before_pausing(tmp_path: Path, monkeypatch: p
     monkeypatch.setattr(driver, "pause_for_recovery", pause)
     driver._quiesce_persistent_cleanup(driver._parse_args([]), {"namespace": "hotel", "incident_id": "incident-1"})
     assert events == ["drained", "saved", "paused"]
+
+
+def test_recovery_caps_a_follow_up_wait_the_controller_bounds_at_hours() -> None:
+    from benchmarks.sregym.adapter.budgets import WaitKind, wait_for
+    from benchmarks.sregym.adapter.persistent import FollowupClosureTimeout, pause_for_recovery
+
+    elapsed, clock = _fake_clock()
+    ops = _queued_reflection_ops(["incident-1"], open_polls=None, busy_seconds=4 * 3600.0)
+
+    with pytest.raises(FollowupClosureTimeout, match=r"controller .*queued_reflections=\['incident-1'\]") as raised:
+        pause_for_recovery(ops, "hotel-sdo", incident_id="incident-1", clock=clock)
+
+    cap = wait_for(WaitKind.REFLECTION_ATTEMPT, 1) + wait_for(WaitKind.CLOSEOUT_SETTLE)
+    assert raised.value.wait.bound_seconds == cap
+    assert elapsed[0] <= cap + wait_for(WaitKind.MINUTE)
+    assert not ops.events
+
+
+def test_recovery_ends_a_follow_up_wait_on_a_controller_that_stopped_evaluating() -> None:
+    from benchmarks.sregym.adapter.budgets import WaitKind, wait_for
+    from benchmarks.sregym.adapter.persistent import ControllerStalledError, pause_for_recovery
+    from tests.unit.benchmarks.sregym.adapter.test_persistent import FakeOps
+
+    class FrozenOps(FakeOps):
+        def runtime_state(self, control_namespace: str) -> dict[str, Any]:
+            return {
+                "last_acknowledged_incident_id": "incident-1",
+                "incident_open": True,
+                "incident_request": {"incident_id": "incident-2"},
+                "evaluation_iteration": 794,
+                "dispatch_state": "DISPATCH_STATE_COMPLETED",
+                "busy_until": _busy_until(4 * 3600.0),
+            }
+
+    elapsed, clock = _fake_clock()
+    with pytest.raises(ControllerStalledError, match="dispatch_state=DISPATCH_STATE_COMPLETED"):
+        pause_for_recovery(FrozenOps(logs={"hotel-sdo": []}), "hotel-sdo", incident_id="incident-1", clock=clock)
+    assert elapsed[0] <= wait_for(WaitKind.SLOW_COMMAND) + wait_for(WaitKind.MINUTE)
