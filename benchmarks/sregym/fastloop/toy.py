@@ -15,6 +15,7 @@ from typing import Any
 from apps.toy.faults import IMAGE, command, fault_spec
 from benchmarks.sregym.adapter import WaitKind, wait_for
 from benchmarks.sregym.fastloop.environment import FastloopEnvironment, Images
+from benchmarks.sregym.fastloop.host_limits import HostLimits, NodeLimits, apply_node_limits
 
 ROOT = Path(__file__).resolve().parents[3]
 APP = ROOT / "apps/toy"
@@ -105,6 +106,7 @@ def up(args: Any) -> int:
 
     if args.dev_mount is None:
         raise ValueError("toy lanes require a development mount; omit --no-dev-mount")
+    host_limits = HostLimits(args.host_lock_dir.resolve(), args.host_redeploys)
     cluster = cluster_name(args)
     image = f"{IMAGE}-{cluster}"
     started = time.monotonic()
@@ -113,6 +115,7 @@ def up(args: Any) -> int:
     worktree = (args.dev_mount or ROOT).resolve()
     if (run_dir / "fastloop.json").exists():
         env = FastloopEnvironment.load(run_dir)
+        apply_node_limits(env.cluster, NodeLimits(args.cpu_limit, args.memory_limit, args.pids_limit))
         if env.dev_mount is None:
             raise ValueError("toy environment requires a development mount")
         if not ToyWorker(env).request("health")["healthy"]:
@@ -128,12 +131,15 @@ def up(args: Any) -> int:
                 env.cluster,
                 [desired.controller, desired.responder, desired.validator],
                 record_path=run_dir / "image_delivery.jsonl",
+                host_limits=host_limits,
             )
             env = FastloopEnvironment.load(run_dir)
             env.images = desired
             env.save()
         if env.dev_mount is None:
             raise ValueError("toy environment requires a development mount")
+        env.worker_env.update(host_limits.worker_env())
+        env.save()
         prepare_dev_mount(env.dev_mount, None, run_dir)
         config = install_controller(env)
         record_controller(env, config)
@@ -176,6 +182,7 @@ def up(args: Any) -> int:
         ],
         check=True,
     )
+    apply_node_limits(cluster, NodeLimits(args.cpu_limit, args.memory_limit, args.pids_limit))
     created = time.monotonic()
     images = Images(controller=args.controller_image, responder=args.responder_image, validator=args.validator_image)
     from benchmarks.sregym.fastloop.toy_images import load_images
@@ -184,6 +191,7 @@ def up(args: Any) -> int:
         cluster,
         [image, images.controller, images.responder, images.validator, *CALICO_IMAGES],
         record_path=run_dir / "image_delivery.jsonl",
+        host_limits=host_limits,
     )
     images_loaded = time.monotonic()
     install_calico(kubeconfig, run_dir / "calico.yaml")
@@ -231,8 +239,9 @@ def up(args: Any) -> int:
         ["git", "-C", str(workspace), "rev-parse", "HEAD"], check=True, capture_output=True, text=True
     ).stdout.strip()
     command(str(kubeconfig), "default", "create", "namespace", NAMESPACE)
-    command(str(kubeconfig), NAMESPACE, "apply", "-f", str(workspace / "kubernetes"))
-    command(str(kubeconfig), NAMESPACE, "rollout", "status", "deployment", "--timeout=60s")
+    with host_limits.admit("redeploy"):
+        command(str(kubeconfig), NAMESPACE, "apply", "-f", str(workspace / "kubernetes"))
+        command(str(kubeconfig), NAMESPACE, "rollout", "status", "deployment", "--timeout=60s")
     env = FastloopEnvironment(
         run_dir=run_dir,
         app="toy",
@@ -247,7 +256,10 @@ def up(args: Any) -> int:
         seed_commit=seed,
         dev_mount=worktree,
         images=images,
-        worker_env={"FASTLOOP_TOY_IMAGE": image},
+        worker_env={
+            "FASTLOOP_TOY_IMAGE": image,
+            **host_limits.worker_env(),
+        },
     )
     from benchmarks.sregym.fastloop.image_delivery import delivery_state
 
