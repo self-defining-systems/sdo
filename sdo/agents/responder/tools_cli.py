@@ -222,7 +222,8 @@ def _parser() -> argparse.ArgumentParser:
             "Assignment selects one literal NAME=value line. The executor resolves values privately; "
             "never put credential values in arguments, evidence or memory. Direct Secret keys are unavailable. "
             "The result reads the catalog back: action_results[].database_user states the verified user and "
-            "outcome (created, updated or already_correct), and a failure carries a typed failure_reason. "
+            "outcome (created, updated or already_correct). Failures use execution_failed, authorization_denied "
+            "or outcome_unknown; details retain the safe database diagnostic. "
             "A verified user does not mean the application recovered."
         ),
     )

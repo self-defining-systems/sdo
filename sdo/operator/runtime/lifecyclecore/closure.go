@@ -39,6 +39,9 @@ const (
 	// OwnerLost ends an incident whose work no longer has a live owner (no
 	// responder execution, no closure begun) past its durable bound.
 	OwnerLost
+	// PersistenceInvalid replaces an uncommitted incident's invalid evidence
+	// with a validated failed closure. An accepted receipt is never replayed.
+	PersistenceInvalid
 )
 
 type RetryPolicy struct {
@@ -98,6 +101,16 @@ func Step(state *contracts.ControllerState, event Event) (*contracts.ControllerS
 	}
 	pending := next.GetPendingClosure()
 	phase := next.GetClosureState()
+	if event.Kind == PersistenceInvalid {
+		if event.Closure == nil || event.Closure.GetStatePersistenceFailure() == nil ||
+			event.Closure.GetRequest().GetIncidentId() == "" || phase == contracts.ClosureState_CLOSURE_STATE_COMMITTED || phase == contracts.ClosureState_CLOSURE_STATE_ACKNOWLEDGING {
+			return next, nil
+		}
+		next.PendingClosure = proto.Clone(event.Closure).(*contracts.IncidentClosure)
+		next.ClosureState = contracts.ClosureState_CLOSURE_STATE_PENDING
+		next.ClosureReceipt, next.ClosureFailure = nil, nil
+		return next, nil
+	}
 	if event.Kind == Begin {
 		if event.Closure == nil || event.Closure.GetRequest().GetIncidentId() == "" || BlocksNext(next.GetClosureState(), next.GetPendingClosure() != nil) {
 			return next, nil

@@ -70,8 +70,8 @@ batching Severity sdk.SeverityCritical and Debounce 500*time.Millisecond; playbo
 []string{"health-objective"}; no originating incident; and OriginatingCommit
 "lifecycle-bootstrap". Do not substitute incident/responder ownership or another ID.
 
-Never read environment variables, benchmark results, SREGym data, verdict files, hidden fault labels, or any external
-oracle. Never call an LLM at detector runtime. Edit the final health detector manifest, detector.go and
+Never read environment variables, external grading or evaluation data, verdict files, or hidden fault labels.
+Never call an LLM at detector runtime. Edit the final health detector manifest, detector.go and
 detector_test.go directly under
 `.sdo/diagnostics/detectors/health/health-objective/` in this checkout. Author the complete
 `.sdo/playbooks/health-objective/README.md` with front matter: schema_version: 1, owner: responder,

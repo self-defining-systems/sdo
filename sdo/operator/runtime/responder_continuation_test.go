@@ -273,6 +273,9 @@ func TestControllerResumesAfterUnhealthyIndependentVerification(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Pending dispatch now checks the frozen verification bound against its
+	// clock; keep that clock on the same synthetic timeline as Step.
+	c.now = func() time.Time { return start.Add(2 * time.Second) }
 	for sample := 0; sample < 2; sample++ {
 		if err := c.Step(context.Background(), start.Add(time.Duration(sample)*time.Second), nil); err != nil {
 			t.Fatal(err)
@@ -290,6 +293,9 @@ func TestControllerResumesAfterUnhealthyIndependentVerification(t *testing.T) {
 	effect, pending := c.PendingDispatchEffect()
 	if !pending || effect.Request.IncidentID != first.IncidentID || !effect.Request.ResponseDeadline.Equal(first.ResponseDeadline) {
 		t.Fatal("continuation changed incident or original deadline")
+	}
+	if c.verificationDeadlineLocked().IsZero() || c.verificationDeadlineLocked().After(first.ResponseDeadline) {
+		t.Fatal("continuation lost its frozen verification bound")
 	}
 }
 
