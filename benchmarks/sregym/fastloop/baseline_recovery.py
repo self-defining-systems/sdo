@@ -78,6 +78,10 @@ class ApplicationCluster(Protocol):
 
     def create_namespace(self, namespace: str) -> None: ...
 
+    def ensure_secret(self, namespace: str, value: dict[str, Any]) -> bool:
+        """Create the Secret unless it exists; return whether it was created. Never reads Secret data."""
+        ...
+
 
 class KubectlApplicationCluster:
     def __init__(self, kubeconfig: Path) -> None:
@@ -108,6 +112,18 @@ class KubectlApplicationCluster:
         from benchmarks.sregym.fastloop.reset import ensure_application_namespace
 
         ensure_application_namespace(self.kubeconfig, namespace)
+
+    def ensure_secret(self, namespace: str, value: dict[str, Any]) -> bool:
+        name = value["metadata"]["name"]
+        existing = kubectl(
+            ["get", f"secret/{name}", "-o", "name", "--ignore-not-found=true"],
+            namespace=namespace,
+            kubeconfig=self.kubeconfig,
+        ).stdout
+        if existing.strip():
+            return False
+        kubectl(["create", "-f", "-"], namespace=namespace, kubeconfig=self.kubeconfig, input_text=json.dumps(value))
+        return True
 
     def delete(self, namespace: str, kind: str, name: str) -> None:
         kubectl(
@@ -207,6 +223,8 @@ class RecoveryCleanup:
     undeclared_recreated: list[str] = field(default_factory=list)
     # The captured namespace was gone at restore time and was recreated first.
     recreated_namespace: bool = False
+    # Secrets a fault's setup creates, recreated because baselines never archive Secrets.
+    regenerated: list[str] = field(default_factory=list)
 
 
 def _harness_owned(value: dict[str, Any]) -> bool:
@@ -475,6 +493,13 @@ def reconcile_application(
         cluster.create_namespace(namespace)
         cleanup.recreated_namespace = True
         listed = []
+    from benchmarks.sregym.fastloop.regenerable import referenced_regenerable_secrets
+
+    # Workloads mount these Secrets from their first pod; create them before any workload.
+    for secret in referenced_regenerable_secrets(baseline.objects, namespace):
+        if cluster.ensure_secret(namespace, secret):
+            cleanup.regenerated.append(f"{namespace}/Secret/{secret['metadata']['name']}")
+            logger.info("eval restore regenerated %s/Secret/%s", namespace, secret["metadata"]["name"])
     # Live evidence also protects SDO identities present in older snapshots.
     # Resolve the complete owner graph before filtering Pods or normalizing data.
     ownership = _ApplicationOwnership.from_objects(baseline.objects + listed)
@@ -567,6 +592,7 @@ def reconcile_and_record(
             "declared_source_checked": declared is not None,
             "deleted_counts": cleanup.deleted_counts,
             "recreated_namespace": cleanup.recreated_namespace,
+            "regenerated": cleanup.regenerated,
             "reapplied": [value.to_dict() for value in cleanup.reapplied],
             "warnings": warnings,
         }
@@ -587,8 +613,6 @@ def accepted_restore_baselines(
     Captured runtime-only objects and API defaults remain available. Never apply
     a captured spec followed by a conflicting source spec (a second rollout).
     """
-    import yaml
-
     installed_source = True
     if seed_commit and any(baseline.installed_digest for baseline in baselines):
         changes = subprocess.run(
@@ -600,11 +624,106 @@ def accepted_restore_baselines(
         ).stdout.strip()
         installed_source = not changes
     if installed_source and all(baseline.installed_digest for baseline in baselines):
+        return _keep_adopted_passive_objects(workspace, baselines)
+    selected = _lock_manifests(workspace, baselines, kinds=None)
+    if selected is None:
         return baselines
+    return tuple(
+        baseline
+        if baseline.installed_digest and installed_source
+        else ApplicationBaseline(
+            baseline.namespace,
+            [
+                deepcopy(selected.get((value["kind"], baseline.namespace, value["metadata"]["name"]), value))
+                for value in baseline.objects
+            ],
+        )
+        for baseline in baselines
+    )
+
+
+# Passive kinds SDO adopts from accepted source before any row. The sealed capture
+# predates that adoption, so restoring it verbatim reverts declared fields.
+ADOPTED_KINDS = frozenset({"ConfigMap", "Service"})
+
+
+def _declares(captured: Any, declared: Any) -> bool:
+    """True when ``captured`` already carries every field ``declared`` sets."""
+    if isinstance(declared, dict):
+        return isinstance(captured, dict) and all(
+            key in captured and _declares(captured[key], value) for key, value in declared.items()
+        )
+    if isinstance(declared, list):
+        return isinstance(captured, list) and all(
+            any(_declares(item, value) for item in captured) for value in declared
+        )
+    return captured == declared
+
+
+def _port_key(item: Any) -> Any:
+    """Identity of a Service port entry: its name, else its port number; None for other list items."""
+    if isinstance(item, dict):
+        return item.get("name") or item.get("port")
+    return None
+
+
+def _merge_declared(captured: Any, declared: Any) -> Any:
+    """Declared fields win; captured extras stay. Dicts merge by key, port lists by name or port number."""
+    if isinstance(captured, dict) and isinstance(declared, dict):
+        return {**captured, **{key: _merge_declared(captured.get(key), value) for key, value in declared.items()}}
+    if (
+        isinstance(captured, list)
+        and isinstance(declared, list)
+        and all(_port_key(item) is not None for item in (*captured, *declared))
+    ):
+        declared_by_key = {_port_key(item): item for item in declared}
+        merged = [_merge_declared(item, declared_by_key.pop(_port_key(item), item)) for item in captured]
+        return merged + [deepcopy(item) for item in declared_by_key.values()]
+    return deepcopy(declared)
+
+
+def _keep_adopted_passive_objects(
+    workspace: Path, baselines: tuple[ApplicationBaseline, ...]
+) -> tuple[ApplicationBaseline, ...]:
+    """Overlay accepted-source fields of ConfigMaps and Services onto a sealed install.
+
+    Workloads keep the sealed install (no second rollout). A passive object whose
+    capture already carries every declared field is untouched; otherwise declared
+    fields win and captured extras stay. An unbacked lock row declares nothing.
+    """
+    selected = _lock_manifests(workspace, baselines, kinds=ADOPTED_KINDS)
+    if not selected:
+        return baselines
+    result = []
+    for baseline in baselines:
+        objects, changed = [], False
+        for value in baseline.objects:
+            declared = selected.get((value["kind"], baseline.namespace, value["metadata"]["name"]))
+            fields = {key: declared[key] for key in RESTORED_FIELDS if declared and key in declared}
+            labels = (declared or {}).get("metadata", {}).get("labels")
+            if labels:
+                fields["metadata"] = {"labels": labels}
+            if declared is not None and not _declares(value, fields):
+                value = {**value, **_merge_declared(value, fields)}
+                changed = True
+            objects.append(value)
+        result.append(ApplicationBaseline(baseline.namespace, objects) if changed else baseline)
+    return tuple(result)
+
+
+def _lock_manifests(
+    workspace: Path, baselines: tuple[ApplicationBaseline, ...], *, kinds: frozenset[str] | None
+) -> dict[tuple[str, str, str], dict[str, Any]] | None:
+    """Backed accepted manifests by (kind, namespace, name); None without a lock.
+
+    ``kinds`` limits the read to those kinds and skips unbacked rows; None demands every row be backed.
+    """
+    import yaml
+
     root = workspace / ".sdo/rendered"
     lock_path = root / "lock.json"
     if not lock_path.is_file():
-        return baselines
+        return None
     selected = {}
     captured = {
         (value.get("apiVersion"), value["kind"], baseline.namespace, value["metadata"]["name"]): value
@@ -615,6 +734,10 @@ def accepted_restore_baselines(
     for row in json.loads(lock_path.read_text())["objects"]:
         reference = row.get("ref", {})
         if reference.get("kind") == "Secret":
+            continue
+        if kinds is not None and (
+            reference.get("kind") not in kinds or row.get("error") or not row.get("file") or not row.get("sha256")
+        ):
             continue
         identity = tuple(reference.get(field) for field in ("api_version", "kind", "namespace", "name"))
         if identity in seen:
@@ -668,18 +791,7 @@ def accepted_restore_baselines(
                 value = deepcopy(value)
                 value.setdefault("spec", {})["storageClassName"] = installed_spec["storageClassName"]
         selected[key] = value
-    return tuple(
-        baseline
-        if baseline.installed_digest and installed_source
-        else ApplicationBaseline(
-            baseline.namespace,
-            [
-                deepcopy(selected.get((value["kind"], baseline.namespace, value["metadata"]["name"]), value))
-                for value in baseline.objects
-            ],
-        )
-        for baseline in baselines
-    )
+    return selected
 
 
 def stalled_replica_sets(objects: list[dict[str, Any]]) -> list[str]:

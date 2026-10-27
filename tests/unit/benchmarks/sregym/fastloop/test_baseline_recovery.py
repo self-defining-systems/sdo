@@ -553,6 +553,104 @@ def test_source_claim_retains_installed_default_only_when_source_omits_class(
     assert result[0].objects[0]["spec"]["storageClassName"] == expected
 
 
+def _write_lock(root: Path, manifests: list[dict[str, Any]]) -> None:
+    import yaml
+
+    rendered = root / ".sdo/rendered"
+    rendered.mkdir(parents=True)
+    rows = []
+    for index, manifest in enumerate(manifests):
+        payload = yaml.safe_dump(manifest).encode()
+        (rendered / f"{index}.yaml").write_bytes(payload)
+        rows.append(
+            {
+                "ref": {
+                    "api_version": manifest["apiVersion"],
+                    "kind": manifest["kind"],
+                    "namespace": manifest["metadata"]["namespace"],
+                    "name": manifest["metadata"]["name"],
+                },
+                "file": f"{index}.yaml",
+                "sha256": hashlib.sha256(payload).hexdigest(),
+            }
+        )
+    (rendered / "lock.json").write_text(json.dumps({"objects": rows}))
+
+
+def _sealed(tmp_path: Path, objects: list[dict[str, Any]]) -> tuple[ApplicationBaseline, ...]:
+    path = tmp_path / "baseline.json"
+    path.write_text("{}")
+    save_application_baseline(path, (ApplicationBaseline("app", objects),), installed=True)
+    baselines = load_application_baseline(path, "app")
+    assert baselines is not None
+    return baselines
+
+
+def test_sealed_restore_never_reverts_passive_objects_to_the_pre_adoption_capture(tmp_path: Path) -> None:
+    """The capture predates SDO's adoption of accepted source; restoring it flips adopted fields back."""
+    config = {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "settings", "namespace": "app"}}
+    redirect = {"apiVersion": "v1", "kind": "Service", "metadata": {"name": "redirect", "namespace": "app"}}
+    routes = {"apiVersion": "v1", "kind": "Service", "metadata": {"name": "routes", "namespace": "app"}}
+    api = {"apiVersion": "apps/v1", "kind": "Deployment", "metadata": {"name": "api", "namespace": "app"}}
+    captured = [
+        {**config, "data": {"app.yml": "pre-adoption", "extra": "kept"}},
+        {**redirect, "spec": {"type": "ExternalName", "externalName": "sink.other.svc", "selector": {"app": "x"}}},
+        {**routes, "spec": {"ports": [{"name": "http", "port": 80, "protocol": "TCP"}, {"name": "m", "port": 90}]}},
+        {**api, "spec": {"template": {"spec": {"containers": [{"name": "api", "image": "installed"}]}}}},
+    ]
+    accepted = [
+        {**config, "data": {"app.yml": "adopted"}},
+        {
+            **redirect,
+            "metadata": {**redirect["metadata"], "labels": {"app.kubernetes.io/name": "redirect"}},
+            "spec": {"type": "ExternalName", "externalName": "sink.other.svc"},
+        },
+        {**routes, "spec": {"ports": [{"name": "http", "port": 80}]}},
+        {**api, "spec": {"template": {"spec": {"containers": [{"name": "api", "image": "other"}]}}}},
+    ]
+    _write_lock(tmp_path, accepted)
+
+    restored = {
+        value["metadata"]["name"]: value
+        for value in accepted_restore_baselines(tmp_path, _sealed(tmp_path, captured))[0].objects
+    }
+
+    assert restored["settings"]["data"] == {"app.yml": "adopted", "extra": "kept"}
+    assert restored["redirect"]["metadata"]["labels"] == {"app.kubernetes.io/name": "redirect"}
+    assert restored["redirect"]["spec"]["selector"] == {"app": "x"}
+    # Declared fields already present in the capture (plus extras SDO cannot remove) stay as captured.
+    assert restored["routes"] == captured[2]
+    # Workloads keep the sealed install: restoring them must not start a second rollout.
+    assert restored["api"] == captured[3]
+
+
+def test_sealed_restore_ignores_an_inherited_lock_it_cannot_back(tmp_path: Path) -> None:
+    config = {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "settings", "namespace": "app"}}
+    rendered = tmp_path / ".sdo/rendered"
+    rendered.mkdir(parents=True)
+    (rendered / "lock.json").write_text(
+        json.dumps(
+            {"objects": [{"ref": {"kind": "ConfigMap", "namespace": "app", "name": "settings"}, "error": "gap"}]}
+        )
+    )
+    captured = [{**config, "data": {"k": "v"}}]
+    assert accepted_restore_baselines(tmp_path, _sealed(tmp_path, captured))[0].objects == captured
+
+
+def test_restore_after_adoption_leaves_adopted_config_in_place(tmp_path: Path) -> None:
+    config = {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "settings", "namespace": "app"}}
+    cluster = FakeCluster()
+    cluster.add({**config, "data": {"app.yml": "adopted"}})
+    _write_lock(tmp_path, [{**config, "data": {"app.yml": "adopted"}}])
+    (baseline,) = accepted_restore_baselines(
+        tmp_path, _sealed(tmp_path, [{**config, "data": {"app.yml": "pre-adoption"}}])
+    )
+
+    reconcile_application(cluster, baseline, "app")
+
+    assert cluster.objects[("app", "ConfigMap", "settings")]["data"] == {"app.yml": "adopted"}
+
+
 def test_deployed_faulty_application_service_remains_captured_and_reported() -> None:
     service = obj("Service", "app", spec={"selector": {"app": "healthy"}, "ports": [{"port": 80}]})
     service["metadata"]["managedFields"] = [{"manager": "sdo-deployer", "operation": "Apply"}]
@@ -770,6 +868,41 @@ def test_application_helper_migration_leaves_sdo_owned_deployments_untouched(ope
 
     assert cluster.touched == []
     assert cluster.objects[(namespace, "Deployment", "mongodb-geo")] == owned
+
+
+def test_sealed_restore_merges_service_ports_by_name_and_keeps_captured_extras(tmp_path: Path) -> None:
+    routes = {"apiVersion": "v1", "kind": "Service", "metadata": {"name": "routes", "namespace": "app"}}
+    captured = [
+        {
+            **routes,
+            "spec": {
+                "ports": [
+                    {"name": "http", "port": 80, "targetPort": 8080, "protocol": "TCP"},
+                    {"name": "metrics", "port": 90, "protocol": "TCP"},
+                    {"port": 100, "protocol": "TCP"},
+                ]
+            },
+        }
+    ]
+    _write_lock(
+        tmp_path,
+        [
+            {
+                **routes,
+                "spec": {
+                    "ports": [{"name": "http", "port": 80, "targetPort": 9090}, {"port": 100, "targetPort": 1000}]
+                },
+            }
+        ],
+    )
+
+    ports = accepted_restore_baselines(tmp_path, _sealed(tmp_path, captured))[0].objects[0]["spec"]["ports"]
+
+    assert ports == [
+        {"name": "http", "port": 80, "targetPort": 9090, "protocol": "TCP"},
+        {"name": "metrics", "port": 90, "protocol": "TCP"},
+        {"port": 100, "targetPort": 1000, "protocol": "TCP"},
+    ]
 
 
 def redirect(name: str, namespace: str = "social-network", target: str = "otel-collector.observe") -> dict[str, Any]:
