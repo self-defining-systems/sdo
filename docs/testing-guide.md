@@ -725,6 +725,19 @@ unfiltered `pytest tests` still executes both groups. Add the marker to future
 contracts that compile Go. Compiler parallelism is bounded for parent and nested
 builds with `GOFLAGS=-p=2` and `GOMAXPROCS=2` on hosted runners.
 
+Prebuilding a fixture executable does not warm Go commands it launches itself.
+The broker health-bootstrap fixture therefore runs its complete validation on a
+disposable accepted repository during fixture preparation. Preparation and the
+timed fresh-repository invocation share the same compiler cache and `-trimpath`,
+including generated controller tests, vet and the CGO-disabled traffic prober.
+Its operation deadline stays at 60 seconds. To verify preparation from scratch:
+
+```bash
+GOCACHE=$(mktemp -d) uv run --extra test pytest -q -p no:tach \
+  tests/unit/benchmarks/sregym/fastloop/test_eval_guards.py::test_fresh_guard_accepts_actual_broker_health_bootstrap \
+  --durations=5
+```
+
 ### Validator cache and local startup measurement
 
 Validator Pods read the compiler, module cache and warmed SDK cache from immutable
