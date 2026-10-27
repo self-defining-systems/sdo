@@ -134,8 +134,8 @@ func testCLIAndBrokerAgreeOnAcceptance(t *testing.T, shard int) {
 		allowAdditional bool
 	}
 	cases := []parityCase{
-		{"healthy refused service ports", validate.Responder, validate.ReflectionPhase, parityRefusedPortsDetector, []string{validate.RuleDetectorHealthyBaseline}, false},
-		{"healthy refused ports without recordings", validate.Responder, validate.ReflectionPhase, parityRefusedPortsDetector, []string{validate.RuleDetectorHealthyBaseline}, false},
+		{"healthy refused service ports", validate.Responder, validate.ReflectionPhase, parityRefusedPortsDetector, nil, false},
+		{"healthy refused ports without recordings", validate.Responder, validate.ReflectionPhase, parityRefusedPortsDetector, nil, false},
 		// A closure verified healthy is the only precondition: the cause is bound
 		// by the successful repair write on its own resource, so an opening
 		// finding on another resource neither blocks nor is needed.
@@ -371,7 +371,7 @@ func (p Program) Mitigate(ctx context.Context,v program.ReadView,b program.Bindi
  return program.Plan{Actions:[]program.Action{program.SetField{Ref:b.Objects["service"],Path:"spec.ports[0].targetPort",Value:program.FromObserved(b.Objects["service"],"spec.ports[0].targetPort")}}},nil
 }
 `, 0644)
-		}, []string{"program.mitigation-not-repaired"}, false},
+		}, nil, false},
 		{"program mitigation skips unreplayable effect", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
 			parityProgram(t, r)
 			put(t, r, ".sdo/playbooks/service-targetport-mismatch/mitigate.go", `package targetport
@@ -381,7 +381,7 @@ func (p Program) Mitigate(ctx context.Context,v program.ReadView,b program.Bindi
  return program.Plan{Actions:[]program.Action{program.ReconcileFromSource{Ref:b.Objects["service"]}}},nil
 }
 `, 0644)
-		}, []string{"program.mitigation-not-repaired"}, false},
+		}, nil, false},
 
 		{"program README physical path", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
 			parityProgram(t, r)
@@ -419,7 +419,7 @@ func (p Program) Mitigate(ctx context.Context,v program.ReadView,b program.Bindi
 			}
 			source := strings.Replace(string(data), `ref := sdk.ObjectRefFrom("Service", "v1", &service)`, `ref := sdk.ObjectRefFrom("Service", "v1", &service); ref.Name = "not-observed"`, 1)
 			put(t, r, path, source, 0644)
-		}, []string{validate.RuleProgramDiagnoseNoMatch}, false},
+		}, nil, false},
 		{"program repeat unreachable is information", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
 			parityProgram(t, r)
 			path := ".sdo/diagnostics/detectors/incidents/routing-relations/detector.go"
@@ -439,7 +439,7 @@ func (p Program) Mitigate(ctx context.Context,v program.ReadView,b program.Bindi
 			}
 			source := strings.Replace(string(data), `Summary: "Service targetPort has no matching container port"`, `Summary: ""`, 1)
 			put(t, r, path, source, 0644)
-		}, []string{validate.RuleDetectorInvalidFinding}, false},
+		}, nil, false},
 
 		{"program corpus provenance", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
 			parityProgram(t, r)
@@ -809,6 +809,22 @@ func (p Program) Mitigate(ctx context.Context,v program.ReadView,b program.Bindi
 			for i, want := range validate.ProtoDiagnostics(brokerDiagnostics) {
 				if got := report.Diagnostics[i]; got.Rule != want.Rule || got.Path != want.Path || got.Line != want.Line || got.Message != want.Message || got.Hint != want.Hint {
 					t.Errorf("diagnostic %d differs: CLI %v broker %v", i, got, want)
+				}
+			}
+
+			if test.name == "program mitigation leaves target port faulty" || test.name == "program mitigation skips unreplayable effect" {
+				if len(report.GetMitigationReplayNotes()) == 0 {
+					t.Fatal("CLI omitted advisory replay")
+				}
+				cliObserved, brokerObserved := false, false
+				for _, gap := range report.GetCoverageGaps() {
+					cliObserved = cliObserved || gap.GetRule() == validate.RuleReplayObservation
+				}
+				for _, gap := range receipt.CoverageGaps {
+					brokerObserved = brokerObserved || gap.Rule == validate.RuleReplayObservation
+				}
+				if !cliObserved || !brokerObserved {
+					t.Fatalf("advisory replay lost: CLI=%v broker=%v", report.GetCoverageGaps(), receipt.CoverageGaps)
 				}
 			}
 			got := rules(report.Diagnostics, nil).cli

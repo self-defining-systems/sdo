@@ -201,7 +201,9 @@ def _parser() -> argparse.ArgumentParser:
             "reads stay open; past its bound it frees its writes as rollout_stalled. "
             "A single option also accepts --NAME VALUE parameters. "
             "Five rounds per incident. "
-            "Script fixes are learnable mitigations." + " " + WORKING_PROGRAM_HELP
+            "Script fixes are learnable mitigations; unlinked script bytes are refused as script_unprovenanced."
+            + " "
+            + WORKING_PROGRAM_HELP
         ),
         epilog=(
             "Advertised option IDs remain valid for this session across filtered menu calls. "

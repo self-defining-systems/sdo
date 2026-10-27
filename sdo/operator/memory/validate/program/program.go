@@ -21,8 +21,7 @@ import (
 // Spec is a validated program constructor and its replay cases.
 type Spec struct {
 	ID, Diagnoser, Mitigator string
-	Cases, NegativeCases     []string
-	OperatorCases            []string
+	Cases                    []string
 }
 
 var programID = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
@@ -180,27 +179,39 @@ func inspect(workspace, module, detectors string, adoption bool) ([]Spec, error)
 		if err != nil {
 			return nil, err
 		}
-		if len(Cases) == 0 {
-			return nil, fmt.Errorf("playbook %s needs a labeled corpus case", ID)
-		}
 		item.Cases = Cases
-		for _, caseID := range Cases {
-			marked, err := OperatorCorpus(filepath.Join(workspace, "corpus", caseID))
-			if err != nil {
-				return nil, err
-			}
-			if marked {
-				item.OperatorCases = append(item.OperatorCases, caseID)
-			}
-		}
-		item.NegativeCases, err = noMatchCasesFor(filepath.Join(workspace, "corpus"), ID)
-		if err != nil {
-			return nil, err
+		if err := validateScriptDigests(base, filepath.Join(workspace, "corpus"), item); err != nil {
+			return nil, fmt.Errorf("playbook %s: %w", ID, err)
 		}
 		programs = append(programs, item)
 	}
 	sort.Slice(programs, func(i, j int) bool { return programs[i].ID < programs[j].ID })
 	if !adoption {
+		allCases := map[string]bool{}
+		for _, item := range programs {
+			for _, id := range item.Cases {
+				allCases[id] = true
+			}
+		}
+		var shared Spec
+		for id := range allCases {
+			shared.Cases = append(shared.Cases, id)
+		}
+		sort.Strings(shared.Cases)
+		if err := filepath.WalkDir(filepath.Join(workspace, "lib"), func(path string, entry os.DirEntry, walkErr error) error {
+			if os.IsNotExist(walkErr) {
+				return nil
+			}
+			if walkErr != nil {
+				return walkErr
+			}
+			if entry.IsDir() {
+				return validateScriptDigests(path, filepath.Join(workspace, "corpus"), shared)
+			}
+			return nil
+		}); err != nil {
+			return nil, fmt.Errorf("shared script provenance: %w", err)
+		}
 		if err := checkCorpusLabels(filepath.Join(workspace, "corpus"), programs, retired); err != nil {
 			return nil, err
 		}
@@ -245,7 +256,7 @@ func checkCorpusLabels(root string, programs []Spec, retired map[string]bool) er
 				return fmt.Errorf("unexpected corpus file %s; only snapshots, recordings, and labels are allowed", filepath.Join(entry.Name(), file.Name()))
 			}
 		}
-		caseData, err := sdktest.LoadCorpusCase(filepath.Join(root, entry.Name()))
+		caseData, err := sdktest.LoadCorpusMetadata(filepath.Join(root, entry.Name()))
 		if err != nil {
 			return err
 		}
@@ -374,7 +385,7 @@ func corpusCasesFor(root, programID string) ([]string, error) {
 		if !entry.IsDir() {
 			return nil, fmt.Errorf("corpus entry %s must be a directory", entry.Name())
 		}
-		caseData, err := sdktest.LoadCorpusCase(filepath.Join(root, entry.Name()))
+		caseData, err := sdktest.LoadCorpusMetadata(filepath.Join(root, entry.Name()))
 		if err != nil {
 			return nil, err
 		}
@@ -388,67 +399,51 @@ func corpusCasesFor(root, programID string) ([]string, error) {
 	return result, nil
 }
 
-func noMatchCasesFor(root, programID string) ([]string, error) {
-	entries, err := os.ReadDir(root)
-	if os.IsNotExist(err) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	var result []string
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		caseData, err := sdktest.LoadCorpusCase(filepath.Join(root, entry.Name()))
-		if err != nil {
-			return nil, err
-		}
-		for _, ID := range caseData.NoMatchProgramIDs {
-			if ID == programID {
-				result = append(result, entry.Name())
-				break
-			}
-		}
-	}
-	return result, nil
-}
-
-// ReplayTests proves detector reachability and mitigation clearance on each recorded incident.
+// ReplayTests records replay observations without using their verdicts as acceptance gates.
 func ReplayTests(programs []Spec) string {
-	hasReplay := false
-	for _, item := range programs {
-		hasReplay = hasReplay || len(item.Cases) > 0
-	}
-	if !hasReplay {
+	if len(programs) == 0 {
 		return "package generated\n"
 	}
+	hasCases := false
+	for _, item := range programs {
+		hasCases = hasCases || len(item.Cases) > 0
+	}
+	imports := []string{"encoding/json", "os", "testing", "sdo.dev/operator/runtime/replay", "sdo.dev/operator/sdk/sdktest"}
+	if hasCases {
+		imports = append(imports, "context", "path/filepath")
+	}
 	var test strings.Builder
-	test.WriteString(`package generated
-import("context";"encoding/json";"os";"path/filepath";"testing";"sdo.dev/operator/runtime/replay";"sdo.dev/operator/sdk/sdktest")
+	test.WriteString("package generated\nimport(")
+	for _, name := range imports {
+		fmt.Fprintf(&test, "%q;", name)
+	}
+	test.WriteString(`)
 func TestProgramCorpus(t *testing.T){
  var notes []sdktest.MitigationReplayResult
  var gaps []string
  defer func(){data,err:=json.Marshal(notes);if err!=nil{t.Fatal(err)};if err:=os.WriteFile("mitigation-replay.json",data,0600);err!=nil{t.Fatal(err)};data,err=json.Marshal(gaps);if err!=nil{t.Fatal(err)};if err:=os.WriteFile("coverage-gaps.json",data,0600);err!=nil{t.Fatal(err)}}()
- registry,err:=Programs();if err!=nil{t.Fatal(err)}
 `)
+	if hasCases {
+		test.WriteString("registry,err:=Programs();if err!=nil{t.Fatal(err)}\n")
+	}
 	for _, item := range programs {
+		if len(item.Cases) == 0 {
+			fmt.Fprintf(&test, `notes=append(notes,sdktest.MitigationReplayResult{ProgramID:%q,CaseID:"unavailable",Status:sdktest.MitigationReplaySkippedUnreplayableEffect,Effects:[]string{"replay unverified: no recorded case"}})
+`, item.ID)
+		}
 		for _, id := range item.Cases {
 			fmt.Fprintf(&test, `t.Run(%q,func(t *testing.T){
- c,err:=replay.LoadRepairCase(filepath.Join("..","corpus",%q));if err!=nil{t.Fatal(err)}
+ c,err:=replay.LoadRepairCase(filepath.Join("..","corpus",%q))
+ if err!=nil{notes=append(notes,sdktest.MitigationReplayResult{ProgramID:%q,CaseID:%q,Status:sdktest.MitigationReplaySkippedUnreplayableEffect,Effects:[]string{"replay unverified: "+err.Error()}});return}
  r:=replay.CheckRepeat(context.Background(),registry,All(),%q,c)
- if r.Status!="replayed" {
-  rule:=replay.RepeatDefectRule(r.Errors);if rule=="" {rule="program.mitigation-not-repaired"}
-  t.Fatalf("%%s: mitigation must clear diagnosis: status=%%s errors=%%v faulted=%%s post=%%s",rule,r.Status,r.Errors,r.Faulted.Result,r.Post.Result)
- }
+ t.Logf("replay observation: status=%%s errors=%%v faulted=%%s post=%%s",r.Status,r.Errors,r.Faulted.Result,r.Post.Result)
  gaps=append(gaps,r.Notes...)
  notes=append(notes,ReplayNote(%q,%q,r))
  })
-`, item.ID+"/"+id, id, item.ID, item.ID, id)
+`, item.ID+"/"+id, id, item.ID, id, item.ID, item.ID, id)
 		}
 	}
-	test.WriteString("}\n")
+	test.WriteString("}\nfunc TestProgramRegistrationContracts(t *testing.T){if _,err:=Programs();err!=nil{t.Fatal(err)}}\n")
 	test.WriteString(scriptReplayNoteHelper)
 	return test.String()
 }

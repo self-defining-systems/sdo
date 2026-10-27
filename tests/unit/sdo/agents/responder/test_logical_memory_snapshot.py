@@ -96,5 +96,5 @@ def test_reflection_brief_uses_logical_snapshot_without_loading_memory_files(tmp
     )
     prompt = str(backend.calls[-1]["prompt"])
     assert "Edit final operational-memory files only" in prompt
-    assert "broker independently validates" in prompt
+    assert "broker checks" in prompt
     assert "draft-test" not in prompt

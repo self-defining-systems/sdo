@@ -38,8 +38,8 @@ its observed primitive replies; fixed.json and healthy.json remain readable cont
 For every cause with a recorded repair on a closure verified healthy, save diagnose and mitigate programs, a README describing fault
 handling, and a detector that references its playbook. One detector may reference several playbooks. A missing piece is
 recorded as a coverage gap.
-Replay runs incident detectors on the recorded fault, binds through production finding selection, requires Diagnose Match, executes mitigation on that same binding, and reaches NoMatch; an unreachable fault is a noted gap, and the healthy baseline must stay quiet when the controller captured one.
-Compilation and that repeat path are save-time learning checks. Rename, healthy-peer and controller
+Replay observes incident detectors, binding selection, diagnosis and mitigation on recorded states. Every outcome, including unavailable evidence or a persistent Match, is information only; it never blocks saving.
+Compilation is a save-time check; the repeat path supplies advisory observations. Rename, healthy-peer and controller
 capture-provenance checks are offline analysis, not publication prerequisites. Preserve accepted fixture bytes.
 
 ## Source restoration
@@ -49,11 +49,15 @@ Prefer a narrow, schema-checked SetField when diagnosis identifies the damaged f
 ConfigMap JSON/YAML entries preserve unrelated values. Use `program.FromSource(ref, path)` for an accepted-source field value,
 and ReconcileFromSource only when restoring the whole source-owned object is justified. Structured effects use the ordinary namespace-scoped executor.
 ReconcileFromSource and Rollback express desired state from accepted source or explicit history. Supply
-accepted manifests in accepted.json for source-based replay. Replay must execute the proposed action and
-clear diagnosis; an unavailable external effect requires a typed SDK gap instead of a skipped success.
+accepted manifests in accepted.json for source-based replay. Replay observes the proposed action and subsequent diagnosis; unavailable effects remain unverified information.
+Record typed SDK gaps for capabilities the repair needs but cannot express.
 CreateFromSource restores only a named missing object present in accepted source. DeleteObject removes a
 named object in the incident namespace; disclose deletion as irreversible, retain its receipt, and never
 auto-recreate it. Live verification requires direct current UID/absence evidence and independent health checks.
+
+RunScript bytes are checked against this program's original successful receipts in accepted memory at plan time.
+Unlinked bytes are refused as `script_unprovenanced`; the automatic stage hands over without retrying.
+The save-time static check gives early feedback but is not execution authority.
 
 ## Values and runtime actions
 
@@ -100,15 +104,15 @@ unchanged. It never treats a Service probe or a fixed-phase answer as proof of a
 ## Acceptance
 
 The broker enforces artifact ownership and verified-cause coverage independently of the worker's claim.
-Programs must compile and mitigation must clear diagnosis in replay. Failed replay is rejected and retried
-with diagnostics. A skipped effect is not replay success. A cause left without a program is recorded as a
+Programs must compile. Replay outcomes are informational and never reject memory publication.
+A skipped effect supplies no repair proof. A cause left without a program is recorded as a
 coverage gap, and a missing controller capture only skips the healthy replay.
 
 ## Go-owned per-cause work
 
 The supplied work list preserves the responder's confirmed resource groups. Covered repairs and their corpus cases are already settled; address only typed questions. Unwritten bindings, unproven plan equivalence, and writes without a matched binding earn no credit. Unassigned observations and causes with no recorded repair stay questions. Never infer grouping.
 
-A program that still matches the verified fixed capture has a definite false match. Go seeds that exact capture as negative evidence and preserves it through edits; the failing NoMatch replay is the question to resolve. The [generated replay API](../../sdo-detector-authoring/references/replay.md) defines CapturedFixedNoMatchPhase for this observed negative evidence. It is never a positive incident-open phase, a synthetic positive case or a trust credit.
+A program that still matches the verified fixed capture prompts refinement. Go preserves that capture as negative evidence; the replay result is information and never blocks publication. The [generated replay API](../../sdo-detector-authoring/references/replay.md) defines CapturedFixedNoMatchPhase for this observed negative evidence. It is never a positive incident-open phase, a synthetic positive case or a trust credit.
 
 Missing optional controller captures do not block fixtures built from session observations. A verified cause
 with no recorded repair write on its own resources (for example a Pod deleted under it) is recorded, and the
@@ -184,8 +188,7 @@ controller adds timed `RepairReceipt` observations to protected recordings befor
 reflection. Recorded commands, typed/RunScript actions and observed API writes
 supply receipts. Check the cause work and bound receipts
 before drafting executables.
-Open Diagnose must Match and fixed Diagnose must NoMatch with valid
-bindings. The replay report uses `observed-transition`: it does not execute bash,
+Replay records open and fixed diagnoses with their bindings; neither Match nor NoMatch is required to save. The replay report uses `observed-transition`: it does not execute bash,
 claim exact external-effect simulation, or assert the rewritten script ran.
 The live apply→Diagnose check verifies that version; global health owns closure.
 Preimages and API receipts are retained, with explicit gaps for opaque effects;

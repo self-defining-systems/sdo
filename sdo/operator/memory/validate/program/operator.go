@@ -39,7 +39,7 @@ func OperatorCorpus(dir string) (bool, error) {
 	if err := decoder.Decode(new(any)); err != io.EOF || p.SchemaVersion != 1 || p.Origin != "operator" || strings.TrimSpace(p.Description) == "" {
 		return true, fmt.Errorf("operator corpus %s: requires schema_version 1, origin operator, and description", filepath.Base(dir))
 	}
-	c, err := sdktest.LoadCorpusCase(dir)
+	c, err := sdktest.LoadCorpusMetadata(dir)
 	if err != nil {
 		return true, err
 	}

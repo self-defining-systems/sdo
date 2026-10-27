@@ -280,8 +280,8 @@ def test_matched_memory_uses_the_workflow_without_repeating_playbook_bodies(tmp_
     assert "Restore `<MISSING_CONFIG_MAP>` from source" not in prompt
     assert "verify.sh" not in prompt
     assert "learned mitigations first, repair the rest" in prompt
-    assert "Check current status and any late findings" in _workflow()
-    assert "Investigate contradictions" in _workflow()
+    assert "check rollout, current status, late findings" in _workflow()
+    assert "Check conflicts" in _workflow()
 
 
 def test_historical_detector_match_does_not_invent_current_coverage(tmp_path: Path) -> None:
@@ -290,7 +290,7 @@ def test_historical_detector_match_does_not_invent_current_coverage(tmp_path: Pa
     document = json.loads(prompt.split("Incident request:\n", 1)[1])
     assert document["findings"][0]["detector_id"] == "health-objective"
     assert "Warm path" not in prompt
-    assert "quick live check of their preconditions" in _workflow()
+    assert "preconditions and accepted-source values" in _workflow()
 
 
 def test_warm_and_cold_paths_share_live_precondition_checks(tmp_path: Path) -> None:
@@ -561,8 +561,8 @@ def test_prompt_marks_known_program_capabilities(can_mitigate: bool | None) -> N
         assert view["capability"] == "diagnosis-and-mitigation"
     else:
         assert view["capability"] == "unknown"
-    assert "diagnosis-only match supplies evidence, not a repair" in _workflow()
-    assert "Success/failure counts inform; never permission gates" in _workflow()
+    assert "Diagnosis-only matches supply evidence" in _workflow()
+    assert "Counts inform; never permission gates" in _workflow()
     assert "Discover capabilities and argument shapes" in _workflow()
     assert "--bind" not in prompt.split("Incident request:", 1)[0]
     assert "--bind" in json.loads(prompt.split("Incident request:\n", 1)[1])["incident_tools"]["commands"]["plan"]

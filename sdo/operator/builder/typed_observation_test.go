@@ -20,7 +20,7 @@ import (
 
 // Exercise the actual authored-program compiler and generated memory replay,
 // including rejected stale observations, rather than a test-only Diagnoser.
-func TestTypedObservationProgramCompilesAndRejectsStaleEvidence(t *testing.T) {
+func TestTypedObservationProgramCompilesAndReportsStaleEvidence(t *testing.T) {
 	testutil.OfflineGo(t, "..")
 	t.Setenv("GOFLAGS", os.Getenv("GOFLAGS")+" -mod=mod -p=2")
 	root := programFixture(t)
@@ -89,8 +89,15 @@ func TestTypedObservationProgramCompilesAndRejectsStaleEvidence(t *testing.T) {
 				t.Fatal(err)
 			}
 			_, err = workspace.ValidateAndBuild(context.Background())
-			if err == nil || !strings.Contains(err.Error(), "unrecorded "+method) {
-				t.Fatalf("stale %s not rejected by memory replay: %v", method, err)
+			if err != nil {
+				t.Fatalf("stale %s blocked saving: %v", method, err)
+			}
+			notes, err := workspace.MitigationReplayResults()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(notes) != 1 || !strings.Contains(strings.Join(notes[0].Effects, " "), "unrecorded "+method) {
+				t.Fatalf("stale %s not reported: %v", method, notes)
 			}
 		})
 	}

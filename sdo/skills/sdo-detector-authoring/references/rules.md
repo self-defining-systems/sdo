@@ -53,15 +53,11 @@ health objective needs more.
 
 ## Tests
 
-- A detector ships `detector_test.go` with a matching case and near-miss cases, using `sdktest.Snapshot`. The
-  tests run during `memory check` and fail it when they fail. Enforced by: `detector.test`.
-Advice, not validator-checked: make tests generalize by varying resource names, namespaces, and counts from the
-incident that taught the pattern.
-- Incident detectors must stay quiet on the controller's healthy reference (pre-incident, or the closure state it
-  verified healthy), including required recorded observations; an agent-authored healthy state cannot replace it.
-  When the controller has no capture, the healthy replay is skipped and noted. Enforced by: `detector.healthy-baseline`.
-- Health detectors must not report ExternalName Services for missing endpoints; the compile layer runs this
-  generated check. Enforced by: `detector.test`.
+- Compile and vet detector source and tests. Compilation and static registration failures reject memory.
+  Enforced by: `detector.compile`, `detector.vet`, `detector.test`.
+Advice, not validator-checked: tests and recorded-state replay run as information only. Failing assertions, unavailable observations,
+  findings on healthy captures and diagnosis mismatches never reject saving. Inspect their reasons when
+  refining a detector; preserve controller-captured evidence and never substitute invented observations.
 
 ## Playbooks by ID
 

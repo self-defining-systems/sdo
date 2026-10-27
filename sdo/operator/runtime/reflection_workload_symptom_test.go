@@ -2,7 +2,6 @@ package runtime
 
 import (
 	"context"
-	"errors"
 	"go/format"
 	"os"
 	"os/exec"
@@ -11,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 	"sdo.dev/operator/broker"
@@ -153,33 +151,9 @@ func TestReflectionLearnsDeploymentRepairWithUnwrittenServiceSymptoms(t *testing
 		checkout := task.Workspace.CheckoutPath
 		decision := &contracts.ReflectionResult{LearningDecision: "updated", ProposedArtifactIds: []string{"extra-workload-listener"}}
 		publication := &contracts.ReflectionDecision{LearningDecision: "updated", PlaybookIds: decision.ProposedArtifactIds}
-		reject := func(rule string, publish bool) {
-			t.Helper()
-			writeReflectionCheckDecision(t, checkout, decision)
-			report, code := runReflectionMemoryCheck(t, binary, checkout, proposal.BaseCommit, operatorRoot)
-			found := false
-			for _, d := range report.Diagnostics {
-				found = found || d.Rule == rule
-			}
-			if code != 1 || !found {
-				t.Fatalf("wanted CLI rejection %s, code%d diagnostics%v", rule, code, report.Diagnostics)
-			}
-			if !publish {
-				return
-			}
-			_, publishErr := repository.PublishReflection(ctx, incidentID, publication)
-			var failure *validate.Failure
-			if !errors.As(publishErr, &failure) {
-				t.Fatalf("unsafe fixture accepted by broker: %v", publishErr)
-			}
-			if !proto.Equal(&contracts.MemoryCheckReport{Diagnostics: report.Diagnostics}, &contracts.MemoryCheckReport{Diagnostics: validate.ProtoDiagnostics(failure.Diagnostics)}) {
-				t.Fatalf("CLI/broker diagnostics differ: %v / %v", report.Diagnostics, failure.Diagnostics)
-			}
-		}
 		copyFastloopTree(t, fixture, filepath.Join(checkout, ".sdo"))
-		// Negative controls exercise actual replay and production finding selection.
-		// Compile each once through the shared checker; publication below proves
-		// the same final bytes through the broker without duplicate failing builds.
+		// A nonrepairing plan is recorded as unverified information; publication
+		// below independently checks the final authored bytes through the broker.
 		mitigation := filepath.Join(checkout, book, "mitigate.go")
 		original, err := os.ReadFile(mitigation)
 		if err != nil {
@@ -196,7 +170,15 @@ func(Program) Mitigate(context.Context,program.ReadView,program.Bindings)(progra
 		if err := os.WriteFile(mitigation, formatted, 0644); err != nil {
 			return nil, err
 		}
-		reject(validate.RuleProgramMitigationRepair, false)
+		writeReflectionCheckDecision(t, checkout, decision)
+		advisory, exit := runReflectionMemoryCheck(t, binary, checkout, proposal.BaseCommit, operatorRoot)
+		unverified := false
+		for _, note := range advisory.MitigationReplayNotes {
+			unverified = unverified || note.Status == contracts.MitigationReplayNote_STATUS_SKIPPED_UNREPLAYABLE_EFFECT && len(note.Effects) > 0
+		}
+		if exit != 0 || len(advisory.Diagnostics) != 0 || !unverified {
+			t.Fatalf("empty mitigation blocked saving or hid replay: %d %v", exit, advisory)
+		}
 		if err := os.WriteFile(mitigation, original, 0644); err != nil {
 			return nil, err
 		}

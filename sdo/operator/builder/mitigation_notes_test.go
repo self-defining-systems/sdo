@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func TestUnreplayableMitigatorFailsSaveGate(t *testing.T) {
+func TestUnreplayableMitigatorIsSavedWithReason(t *testing.T) {
 	root := programFixture(t)
 	path := filepath.Join(root, ".sdo/playbooks/service-targetport-mismatch/mitigate.go")
 	source := `package targetport
@@ -26,7 +26,14 @@ func (p Program) Mitigate(ctx context.Context,v program.ReadView,b program.Bindi
 		t.Fatal(err)
 	}
 	defer w.Close()
-	if err := w.Check(context.Background()); err == nil || !strings.Contains(err.Error(), "mitigation must clear diagnosis") {
-		t.Fatalf("unreplayed mitigation passed save gate: %v", err)
+	if err := w.Check(context.Background()); err != nil {
+		t.Fatalf("unverified replay blocked saving: %v", err)
+	}
+	notes, err := w.MitigationReplayResults()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(notes) != 1 || notes[0].Status == "replayed" || !strings.Contains(strings.Join(notes[0].Effects, " "), "PlanExecutor:") {
+		t.Fatalf("unverified replay reason missing: %v", notes)
 	}
 }

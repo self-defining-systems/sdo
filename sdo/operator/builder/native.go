@@ -29,6 +29,8 @@ type Config struct {
 	CompileOnly bool
 }
 
+var advisoryDuration = regexp.MustCompile(`(?m)(?:\t(?:[0-9]+\.[0-9]+s|\(cached\))| \([0-9]+\.[0-9]+s\))$`)
+
 type Workspace struct {
 	Directory   string
 	ModulePath  string
@@ -36,7 +38,9 @@ type Workspace struct {
 	compileOnly bool
 	// StageTimings lists each Go toolchain stage run by Check or
 	// ValidateAndBuild, including a rejected final stage.
-	StageTimings []StageTiming
+	StageTimings        []StageTiming
+	advisoryTestErrors  []string
+	advisorySetupErrors []string
 }
 
 // StageTiming is the wall-clock cost of one Go toolchain stage.
@@ -73,8 +77,8 @@ func (workspace *Workspace) ValidateAndBuild(ctx context.Context) (string, error
 	return workspace.validate(ctx, false)
 }
 
-// Check builds every package, vets it, and runs all tests including replay:
-// the full detector acceptance gate. The initial package build already links
+// Check compiles and vets every package. Tests and replay run as observations;
+// their outcomes never decide whether memory can be saved. The initial package build already links
 // the controller, so Check does not link a second controller artifact. The
 // explicit CGO-disabled prober build still checks its portable launch target.
 // A rejected stage is reported as a *StageError.
@@ -101,7 +105,12 @@ func (workspace *Workspace) validate(ctx context.Context, vet bool) (string, err
 	if workspace.compileOnly {
 		stages = append(stages, []string{"build", "-buildvcs=false", "./..."})
 	} else {
-		stages = append(stages, []string{"test", "./..."})
+		// Vet already compiles source and tests. Launch-only builds still
+		// compile tests without executing their behavioral assertions.
+		if !vet {
+			stages = append(stages, []string{"test", "-exec=true", "-run", "^$", "./..."})
+		}
+		stages = append(stages, []string{"test", "-run", "^(TestRegistrationContracts|TestProgramRegistrationContracts|TestDetectorsLoadInController|TestMetricsDetectorsDeclareValidQueries)$", "./generated"})
 	}
 	if !vet {
 		stages = append(stages, []string{"build", "-buildvcs=false", "-o", binary, "./cmd/controller"})
@@ -112,6 +121,28 @@ func (workspace *Workspace) validate(ctx context.Context, vet bool) (string, err
 		workspace.StageTimings = append(workspace.StageTimings, StageTiming{Stage: strings.Join(args, " "), Duration: time.Since(started)})
 		if err != nil {
 			return "", err
+		}
+	}
+	if !workspace.compileOnly {
+		started := time.Now()
+		err := workspace.runGo(ctx, "test", "-count=1", "-timeout=30s", "./...")
+		workspace.StageTimings = append(workspace.StageTimings, StageTiming{Stage: "test (informational)", Duration: time.Since(started)})
+		if ctx.Err() != nil {
+			return "", ctx.Err()
+		}
+		workspace.advisoryTestErrors = nil
+		if err != nil {
+			message := err.Error()
+			var failed *StageError
+			if errors.As(err, &failed) {
+				message = failed.Output
+			}
+			message = strings.ReplaceAll(message, workspace.Directory, "<workspace>")
+			message = advisoryDuration.ReplaceAllString(message, "")
+			if len(message) > 4096 {
+				message = message[:4096] + " (truncated)"
+			}
+			workspace.advisoryTestErrors = append(workspace.advisoryTestErrors, message)
 		}
 	}
 	if workspace.HasProber {
@@ -252,9 +283,10 @@ func BuildWorkspace(ctx context.Context, config Config) (_ *Workspace, err error
 	if err := generateControllerStartTest(directory); err != nil {
 		return nil, err
 	}
+	var setupErrors []string
 	if config.HealthyBaseline != "" {
 		if err := generateHealthyBaselineTest(config.HealthyBaseline, directory); err != nil {
-			return nil, err
+			setupErrors = append(setupErrors, "healthy replay unverified: "+strings.ReplaceAll(err.Error(), config.HealthyBaseline, "<healthy input>"))
 		}
 	}
 	main := fmt.Sprintf("package main\n\nimport (\n\t\"log\"\n\t\"sdo.dev/operator/runtime\"\n\t%q\n)\n\nfunc main() { programs, err := generated.Programs(); if err != nil { log.Fatal(err) }; runtime.RunWithPrograms(generated.All(), programs) }\n", module+"/generated")
@@ -265,7 +297,7 @@ func BuildWorkspace(ctx context.Context, config Config) (_ *Workspace, err error
 	if err != nil {
 		return nil, err
 	}
-	return &Workspace{Directory: directory, ModulePath: module, HasProber: hasProber, compileOnly: config.CompileOnly}, nil
+	return &Workspace{Directory: directory, ModulePath: module, HasProber: hasProber, compileOnly: config.CompileOnly, advisorySetupErrors: setupErrors}, nil
 }
 
 func validateDetectors(detectors []layout.Detector) error {

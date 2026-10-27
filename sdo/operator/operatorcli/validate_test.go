@@ -1,10 +1,12 @@
 package operatorcli
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sdo.dev/operator/memory/validate"
 	"strings"
 	"testing"
 
@@ -49,14 +51,27 @@ func TestIsolatedValidatorChecksProgramCorpus(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// A plan that writes back the faulty port must fail actual repair replay.
+	// Writing the faulty port is accepted for partial learning, but the isolated
+	// runner must report its failed repair replay as advisory information.
 	data = []byte(strings.Replace(string(data), "Value: replacementValue", "Value: program.FromObserved(ref, \"spec.ports[0].targetPort\")", 1))
 	data = []byte(strings.Replace(string(data), "if !matched && replacement > 0 {", "if !matched && replacement > 0 { _ = replacementValue", 1))
 	if err := os.WriteFile(path, data, 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := RunValidate(context.Background(), builder.Config{ApplicationRoot: app, OperatorRoot: ".."}); err == nil || !strings.Contains(err.Error(), "program.mitigation-not-repaired") {
-		t.Fatalf("ineffective mitigation accepted: %v", err)
+	var report bytes.Buffer
+	if err := RunValidateReport(context.Background(), builder.Config{ApplicationRoot: app, OperatorRoot: ".."}, &report); err != nil {
+		t.Fatalf("advisory replay blocked saving: %v", err)
+	}
+	diagnostics, err := validate.ParseReport(report.String())
+	if err != nil || len(diagnostics) != 0 {
+		t.Fatalf("replay became a blocking diagnostic: %v %v", diagnostics, err)
+	}
+	observed := false
+	for _, gap := range validate.ParseReportGaps(report.String()) {
+		observed = observed || (gap.Rule == validate.RuleReplayObservation && (strings.Contains(gap.Message, "replay status: failed") && strings.Contains(gap.Message, "post diagnosis: Match")))
+	}
+	if !observed {
+		t.Fatalf("isolated validator lost the failed repair observation: %s", report.String())
 	}
 
 }

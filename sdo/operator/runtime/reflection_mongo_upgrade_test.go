@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"go/format"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,7 +14,6 @@ import (
 	"testing"
 	"time"
 
-	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 	"sdo.dev/operator/broker"
@@ -194,34 +194,39 @@ func testReflectionMongoAuthUpgrade(t *testing.T, fixtureName string) {
 			return nil, err
 		}
 		report, code := runReflectionMemoryCheck(t, binary, checkout, proposal.BaseCommit, operatorRoot)
-		_, publishErr := repository.PublishReflection(ctx, incidentID, publication)
-		var failure *validate.Failure
-		if code != 1 || !errors.As(publishErr, &failure) {
-			t.Fatalf("fixed-only catalog accepted: CLI %d %v broker %v", code, report.Diagnostics, publishErr)
-		}
-		if !proto.Equal(&contracts.MemoryCheckReport{Diagnostics: report.Diagnostics}, &contracts.MemoryCheckReport{Diagnostics: validate.ProtoDiagnostics(failure.Diagnostics)}) {
-			t.Fatalf("catalog replay diagnostics differ: CLI %v broker %v", report.Diagnostics, failure.Diagnostics)
-		}
-		// An unobserved open catalog leaves Diagnose Unknown on its own recorded
-		// fault, so the mitigation cannot be replayed. The hotel detector also
-		// fails its own corpus test, which names the same cause once.
-		expectedRules := []string{validate.RuleProgramDiagnoseNoMatch}
-		if fixtureName == "hotel_mongo_auth_upgrade" || fixtureName == "hotel_run_script_upgrade" {
-			expectedRules = []string{"detector.test"}
-		}
-		gotRules := make([]string, 0, len(report.Diagnostics))
-		for _, diagnostic := range report.Diagnostics {
-			gotRules = append(gotRules, diagnostic.Rule)
-		}
-		slices.Sort(expectedRules)
-		slices.Sort(gotRules)
-		if !slices.Equal(expectedRules, gotRules) {
-			t.Fatalf("unobserved open catalog did not fail program/detector evidence checks: %v", report.Diagnostics)
+		if code != 0 || len(report.Diagnostics) != 0 || len(report.CoverageGaps) == 0 {
+			t.Fatalf("fixed-only observations blocked saving or were hidden: CLI %d %v", code, report)
 		}
 		if err := os.WriteFile(recordingsPath, recorded, 0644); err != nil {
 			return nil, err
 		}
 		if fixtureName == "hotel_run_script_upgrade" {
+			diagnosePath := filepath.Join(checkout, book, "diagnose.go")
+			original, err := os.ReadFile(diagnosePath)
+			if err != nil {
+				return nil, err
+			}
+			for _, verdict := range []string{"Match", "NoMatch"} {
+				source := strings.Replace(string(original), `return mongorelation.Diagnose(v, b.Objects["pod"])`, `if b.Objects["pod"].Name!="" {return program.Verdict{Result:program.`+verdict+`},nil}; return mongorelation.Diagnose(v, b.Objects["pod"])`, 1)
+				formatted, err := format.Source([]byte(source))
+				if err != nil {
+					return nil, err
+				}
+				if err := os.WriteFile(diagnosePath, formatted, 0644); err != nil {
+					return nil, err
+				}
+				advisory, exit := runReflectionMemoryCheck(t, binary, checkout, proposal.BaseCommit, operatorRoot)
+				unverified := false
+				for _, note := range advisory.MitigationReplayNotes {
+					unverified = unverified || note.Status == contracts.MitigationReplayNote_STATUS_SKIPPED_UNREPLAYABLE_EFFECT
+				}
+				if exit != 0 || len(advisory.Diagnostics) != 0 || !unverified {
+					t.Fatalf("script %s diagnosis blocked saving or hid replay: %d %v", verdict, exit, advisory)
+				}
+			}
+			if err := os.WriteFile(diagnosePath, original, 0644); err != nil {
+				return nil, err
+			}
 			labelsPath := filepath.Join(checkout, ".sdo/corpus/mongo-auth/labels.json")
 			originalLabels, err := os.ReadFile(labelsPath)
 			if err != nil {
@@ -234,7 +239,7 @@ func testReflectionMongoAuthUpgrade(t *testing.T, fixtureName string) {
 			rejected, exit := runReflectionMemoryCheck(t, binary, checkout, proposal.BaseCommit, operatorRoot)
 			_, publishErr := repository.PublishReflection(ctx, incidentID, publication)
 			var originFailure *validate.Failure
-			if exit != 1 || !errors.As(publishErr, &originFailure) || len(rejected.Diagnostics) != 1 || rejected.Diagnostics[0].Rule != validate.RuleProgramMitigationRepair {
+			if exit != 1 || !errors.As(publishErr, &originFailure) || len(rejected.Diagnostics) != 1 || rejected.Diagnostics[0].Rule != "program.invalid" {
 				t.Fatalf("unlinked script accepted: CLI=%d %v broker=%v", exit, rejected.Diagnostics, publishErr)
 			}
 			if err = os.WriteFile(labelsPath, originalLabels, 0644); err != nil {

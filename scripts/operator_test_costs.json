@@ -3,12 +3,14 @@
   "source_head": "d9109afcdb651144b8ac12a0ac923449fc64f831",
   "description": "Hosted active top-level pass/fail seconds. Explicit placements preserve package overlap and acceptance lanes; new names keep their package default. The redundant full compile is consolidated into the existing located-binding test.",
   "placements": {
-    "sdo.dev/operator/builder/TestProgramDetectorCorpusChecksEveryLocatedBinding": "broker",
+    "sdo.dev/operator/builder/TestProgramDetectorCorpusUnknownIsInformation": "broker",
     "sdo.dev/operator/builder/TestOperatorCorpusRequiresProductionClosedLoop": "acceptance-second",
     "sdo.dev/operator/builder/TestProgramSaveReplayDoesNotRequireRenameInvariance": "compiler-replay",
-    "sdo.dev/operator/builder/TestTypedObservationProgramCompilesAndRejectsStaleEvidence": "compiler-replay",
+    "sdo.dev/operator/builder/TestTypedObservationProgramCompilesAndReportsStaleEvidence": "compiler-replay",
     "sdo.dev/operator/operatorcli/TestAdoptionCompilesAsIsAndLaterValidationStillRejects": "compiler-replay",
-    "sdo.dev/operator/worker_registry/TestKubernetesExecutorRejectsRequestOverBudgetNamingTheComponent": "compiler"
+    "sdo.dev/operator/worker_registry/TestKubernetesExecutorRejectsRequestOverBudgetNamingTheComponent": "compiler",
+    "sdo.dev/operator/broker/TestReflectionRecordsReplayButStillRejectsInvalidCode": "compiler-replay",
+    "sdo.dev/operator/broker/TestCLIAndBrokerAgreeOnVerifiedCauseReplayCoverage": "compiler-replay"
   },
   "costs": {
     "sdo.dev/operator/apihistory/FuzzHistoryStorageSchedule": 0.021,
@@ -54,7 +56,7 @@
     "sdo.dev/operator/broker/TestCLIAndBrokerAgreeOnAcceptanceSecondShard": 221.941,
     "sdo.dev/operator/broker/TestCLIAndBrokerAgreeOnReflectionResultContracts": 2.77,
     "sdo.dev/operator/broker/TestCLIAndBrokerAgreeOnUnobservableDetectorLocator": 35.9,
-    "sdo.dev/operator/broker/TestCLIAndBrokerAgreeOnVerifiedCauseReplayCoverage": 2.47,
+    "sdo.dev/operator/broker/TestCLIAndBrokerAgreeOnVerifiedCauseReplayCoverage": 47.05,
     "sdo.dev/operator/broker/TestCLIAndBrokerRetainHealthyInputForProgramOnlyEdits": 11.681,
     "sdo.dev/operator/broker/TestConcurrentMemoryCleanReplayStillRequiresValidation": 0.75,
     "sdo.dev/operator/broker/TestConcurrentMemoryConflictAndResolvedResubmit": 2.89,
@@ -143,7 +145,7 @@
     "sdo.dev/operator/builder/TestOperatorCorpusRequiresProductionClosedLoop": 171.161,
     "sdo.dev/operator/builder/TestProgramAcceptsRecordedSyntheticNoMatchCase": 6.612,
     "sdo.dev/operator/builder/TestProgramAndLibraryRejectPersistentShellFiles": 0.04,
-    "sdo.dev/operator/builder/TestProgramDetectorCorpusChecksEveryLocatedBinding": 72.87,
+    "sdo.dev/operator/builder/TestProgramDetectorCorpusUnknownIsInformation": 72.87,
     "sdo.dev/operator/builder/TestProgramMustCompile": 1.52,
     "sdo.dev/operator/builder/TestProgramSaveReplayDoesNotRequireRenameInvariance": 40.674,
     "sdo.dev/operator/builder/TestProgramValidationRejectsUnsafeMemory": 2.843,
@@ -152,7 +154,7 @@
     "sdo.dev/operator/builder/TestReadThroughGoCacheDoesNotCopySeedAtStartup": 0.004,
     "sdo.dev/operator/builder/TestSuperviseAnnouncesEachRelaunch": 0.001,
     "sdo.dev/operator/builder/TestSuperviseRejectsBoundedControllerModes": 0.001,
-    "sdo.dev/operator/builder/TestTypedObservationProgramCompilesAndRejectsStaleEvidence": 13.69,
+    "sdo.dev/operator/builder/TestTypedObservationProgramCompilesAndReportsStaleEvidence": 13.69,
     "sdo.dev/operator/builder/TestUnreplayableMitigatorFailsSaveGate": 11.043,
     "sdo.dev/operator/builder/TestValidateAndBuildSeedsGoCacheBeforeProgramCompilation": 0.01,
     "sdo.dev/operator/builder/TestValidateAndBuildUsesColdCacheWhenImageHasNoSeed": 0.01,
@@ -650,6 +652,15 @@
     "sdo.dev/operator/worker_registry/TestStartupAttemptEvidencePreservesInitialAndColdContinuation": 0.01,
     "sdo.dev/operator/worker_registry/TestWarmStartupKeepsPodAgeAndClaimClockSeparate": 0.01,
     "sdo.dev/operator/worker_registry/TestWorkerJobKeepsToolAccessWithReadOnlySource": 0.005,
-    "sdo.dev/operator/worker_registry/TestWorkerPVCProjectionsShareOneVolumeAcrossLaunchModes": 0.005
+    "sdo.dev/operator/worker_registry/TestWorkerPVCProjectionsShareOneVolumeAcrossLaunchModes": 0.005,
+    "sdo.dev/operator/broker/TestReflectionRecordsReplayButStillRejectsInvalidCode": 60.96
+  },
+  "local_measurements": {
+    "source_head": "5e5fd6a316e7161f2314d827f59624c269417251",
+    "description": "REFL3B local -race, -parallel=2, -timeout=4m run; active top-level times for new/expanded advisory replay publication tests. Move the new test off the saturated broker package; keep every existing shard and deadline.",
+    "tests": [
+      "sdo.dev/operator/broker/TestReflectionRecordsReplayButStillRejectsInvalidCode",
+      "sdo.dev/operator/broker/TestCLIAndBrokerAgreeOnVerifiedCauseReplayCoverage"
+    ]
   }
 }
