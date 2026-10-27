@@ -217,6 +217,7 @@ func incidentRequestContract(request IncidentRequest) (*contracts.IncidentReques
 		RepairPolicy: request.RepairPolicy, StateChanges: stateChangesContract(request.StateChanges),
 		MaxResponseLoops: int32(request.MaxResponseLoops),
 		DriftEvents:      driftEventsContract(request.DriftEvents), PreparedAgentTask: request.PreparedAgentTask,
+		PriorResponseProgress:  cloneResponseProgress(request.PriorResponseProgress),
 		PlaybookCoverage:       cloneCoverage(request.PlaybookCoverage),
 		PriorStages:            cloneStageReports(request.PriorStages),
 		NamespaceOnboarding:    cloneNamespaceOnboarding(request.NamespaceOnboarding),
@@ -541,6 +542,7 @@ func incidentRequestState(message *contracts.IncidentRequest) *IncidentRequest {
 		return nil
 	}
 	result := &IncidentRequest{
+		PriorResponseProgress:  cloneResponseProgress(message.GetPriorResponseProgress()),
 		ObservationGeneration:  message.GetObservationGeneration(),
 		NamespaceOnboarding:    cloneNamespaceOnboarding(message.GetNamespaceOnboarding()),
 		DisabledSetupDetectors: cloneDisabledSetupDetectors(message.GetDisabledSetupDetectors()),

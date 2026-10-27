@@ -25,7 +25,7 @@ Mutation files contain these generated top-level arrays:
 ## General help
 
 ```text
-prior_stages: playbook, result, skip_reason of an automatic stage; one that ran while you worked shows once, in your next reply. Don't repeat verified repairs. Full facts keep apply receipts and post-apply diagnoses.
+prior_stages: automatic repairs. prior_response_progress: bounded failed-episode progress, with omissions. Keep repairs; admission_blocked names a current rollout prerequisite. Full history stays in outcomes.
 
 Examples (replace names with incident resources):
   sdo source Deployment/app/api

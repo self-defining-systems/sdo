@@ -107,6 +107,7 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 	loop.restoreTerminalStagePlanErrors()
 
 	save := func(complete bool) error {
+		retainAdmissionStageFindings(state, report)
 		report.RemainingFindingFingerprints = findingFingerprints(state.Findings)
 		loop.stageProgress[stage.Name()] = responseStageProgress{Report: report, Coverage: cloneCoverage(state.Coverage), InitialProgramRuns: append([]ProgramRun(nil), state.Request.InitialProgramRuns...), Complete: complete}
 		return loop.persistToolState(ctx)
@@ -717,6 +718,8 @@ func (stage *DeterministicResponseStage) applyMatched(ctx context.Context, loop 
 		clearVerifiedStageTargets(state, attempt, item.match.targets, applied)
 		recordStageFindingProgress(attempt, item.match.targets, state.Findings)
 		switch {
+		case attempt.ApplyReceipt.GetRolloutPending().GetReasonCode() == "admission_blocked":
+			attempt.Result = "admission_blocked"
 		case attempt.ApplyReceipt.GetRolloutPending() != nil:
 			attempt.Result = "rollout_pending_at_handoff"
 		case !attempt.ApplyReceipt.GetApplied() || attempt.ApplyReceipt.GetRolledBack() || len(attempt.ApplyReceipt.GetActionsApplied()) < int(attempt.PlanActionStart+attempt.PlanActionCount):
