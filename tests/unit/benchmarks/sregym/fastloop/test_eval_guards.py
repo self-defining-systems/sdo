@@ -88,9 +88,10 @@ def test_real_setup_ownership_shapes_are_admitted():
             ".sdo/playbooks/health-objective/README.md",
         ],
     )
-    validate_setup_commit("controller", "rendered", "passed", [".sdo/rendered/lock.json"])
     with pytest.raises(ValueError, match="unvalidated health setup"):
-        validate_setup_commit("responder", "initial", "passed", [".sdo/rendered/lock.json"])
+        validate_setup_commit("controller", "rendered", "passed", [".sdo/rendered/lock.json"])
+    with pytest.raises(ValueError, match="unvalidated health setup"):
+        validate_setup_commit("responder", "initial", "passed", [".sdo/diagnostics/traffic/workloads/frontend.yaml"])
 
 
 def test_stabilization_observes_until_deadline_then_fails_without_injecting():
@@ -328,7 +329,7 @@ def test_old_ready_pods_do_not_prove_current_workload_rollout(monkeypatch, statu
 
 
 @pytest.mark.go_integration
-def test_fresh_guard_accepts_actual_broker_health_bootstrap_and_rendered_commit(tmp_path):
+def test_fresh_guard_accepts_actual_broker_health_bootstrap(tmp_path):
     import shutil
     import subprocess
 
@@ -360,7 +361,7 @@ def test_fresh_guard_accepts_actual_broker_health_bootstrap_and_rendered_commit(
     assert ".sdo/playbooks/README.md" in published["health_paths"]
     lineage = setup_lineage(repository, seed)
     assert lineage["accepted_commit"] == published["head"]
-    assert [row["actor"] for row in lineage["commits"]] == ["health_judge", "controller"]
+    assert [row["actor"] for row in lineage["commits"]] == ["health_judge"]
 
 
 def test_lane_resources_reject_before_any_health_wait_or_restore(monkeypatch, tmp_path):

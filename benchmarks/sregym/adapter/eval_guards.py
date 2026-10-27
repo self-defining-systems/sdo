@@ -20,7 +20,6 @@ HEALTH_SETUP_PATHS = (
     ".sdo/diagnostics/detectors/health/",
     ".sdo/diagnostics/traffic/",
     ".sdo/playbooks/health-objective/",
-    ".sdo/rendered/",
 )
 
 
@@ -43,7 +42,7 @@ class Deadline:
 
 
 def validate_setup_commit(actor: str, phase: str, validation: str, paths: list[str]) -> None:
-    if actor not in {"health_judge", "controller"} or phase not in {"initial", "rendered"} or validation != "passed":
+    if actor != "health_judge" or phase != "initial" or validation != "passed":
         raise ValueError(f"unvalidated health setup commit: actor={actor}, phase={phase}, validation={validation}")
     if not paths or any(
         (not path.startswith(HEALTH_SETUP_PATHS) and path != ".sdo/playbooks/README.md") or ".." in Path(path).parts
