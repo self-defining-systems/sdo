@@ -184,7 +184,7 @@ func crashCoordinator(t *testing.T, root, proposals, state, cut string) (lifecyc
 // crashStateStore retains the controller's actual durable contract across child
 // processes. Cuts bracket the Save that makes obsolete evidence terminal.
 type crashStateStore struct {
-	path, crashPath, cut string
+	path string
 }
 
 func (s crashStateStore) Load(context.Context) (*contracts.ControllerState, string, error) {
@@ -209,10 +209,6 @@ func (s crashStateStore) Save(ctx context.Context, state *contracts.ControllerSt
 	if current != revision {
 		return "", ErrStateConflict
 	}
-	terminal := len(state.GetFailedClosures()) > 0
-	if terminal {
-		crashAt(s.crashPath, s.cut, "before-closure-persist")
-	}
 	data, err := wire.Canonical(state)
 	if err != nil {
 		return "", err
@@ -222,9 +218,6 @@ func (s crashStateStore) Save(ctx context.Context, state *contracts.ControllerSt
 	}
 	if err := os.Rename(s.path+".tmp", s.path); err != nil {
 		return "", err
-	}
-	if terminal {
-		crashAt(s.crashPath, s.cut, "after-closure-persist")
 	}
 	return fmt.Sprintf("%x", sha256.Sum256(data)), nil
 }
@@ -243,7 +236,7 @@ func crashController(t *testing.T, root, compiled, state, cut string) *Controlle
 		t.Fatal(err)
 	}
 	rv6Guard(c, root, compiled)
-	if err := c.AttachStateStore(context.Background(), crashStateStore{path: state + ".controller", crashPath: state, cut: cut}); err != nil {
+	if err := c.AttachStateStore(context.Background(), crashStateStore{path: state + ".controller"}); err != nil {
 		t.Fatal(err)
 	}
 	c.discardRestoredHealthObservations(time.Unix(1000, 0))
@@ -275,7 +268,7 @@ func TestSR2dCrashProcess(t *testing.T) {
 }
 
 func TestSimRV6HealthRefreshCrashSchedules(t *testing.T) {
-	cuts := []string{"proposal", "request", "job", "result", "before-accept", "after-accept", "before-adoption", "after-adoption", "before-closure-persist", "after-closure-persist"}
+	cuts := []string{"proposal", "request", "job", "result", "before-accept", "after-accept", "before-adoption", "after-adoption"}
 	// The accepted baseline is immutable; each schedule gets a separate clone
 	// and proposal/API/state stores. Avoid republishing it twenty times.
 	baselineRoot, _, _, _, baseline := tracingFixture(t)
@@ -333,7 +326,7 @@ func TestSimRV6HealthRefreshCrashSchedules(t *testing.T) {
 				}
 				return false
 			}
-			store := crashStateStore{path: state + ".controller", crashPath: state}
+			store := crashStateStore{path: state + ".controller"}
 			if _, err := store.Save(ctx, exportState(t, controller), ""); err != nil {
 				t.Fatal(err)
 			}
@@ -443,19 +436,19 @@ func TestSimRV6HealthRefreshCrashSchedules(t *testing.T) {
 				t.Fatal(err)
 			}
 			if effect, ok := restarted.PendingClosureEffect(); ok {
-				if err := restarted.ExecuteClosureEffect(ctx, effect); !errors.Is(err, ErrStaleHealthInvestigation) {
+				if err := restarted.ExecuteClosureEffect(ctx, effect); err != nil {
 					if timedOut(err) {
 						return
 					}
-					t.Fatalf("stale success: %v", err)
+					t.Fatalf("adopted controller refused its pending closure: %v", err)
 				}
 			}
 			if effect, ok := restarted.PendingClosureAcknowledgmentEffect(); ok {
-				if err := restarted.ExecuteClosureAcknowledgmentEffect(ctx, effect); !errors.Is(err, ErrStaleHealthInvestigation) {
+				if err := restarted.ExecuteClosureAcknowledgmentEffect(ctx, effect); err != nil {
 					if timedOut(err) {
 						return
 					}
-					t.Fatalf("stale ack: %v", err)
+					t.Fatalf("adopted controller refused its acknowledgment: %v", err)
 				}
 			}
 			evaluations := 0
@@ -466,36 +459,14 @@ func TestSimRV6HealthRefreshCrashSchedules(t *testing.T) {
 				}
 				t.Fatalf("paused startup blocked recovery: %v", err)
 			}
-			if evaluations != 0 || restarted.incidentOpen || restarted.closureBlocksNextLocked() || len(b.calls()) != 0 {
-				t.Fatal("paused recovery evaluated application or retained obsolete effects")
+			if evaluations != 0 {
+				t.Fatal("paused recovery evaluated application detectors")
 			}
 			persisted, _, err := store.Load(ctx)
-			if err != nil || len(persisted.GetFailedClosures()) != 1 || !strings.Contains(persisted.GetClosureFailure().GetLastError(), "fresh investigation") {
-				t.Fatalf("paused startup missing durable visible failure: %v %v", persisted, err)
+			if err != nil || len(persisted.GetFailedClosures()) != 0 {
+				t.Fatalf("adoption retired a closure it must resume: %v %v", persisted, err)
 			}
-			if err := restarted.Step(ctx, time.Unix(1000, 0).Add(time.Hour), nil); err != nil {
-				if timedOut(err) {
-					return
-				}
-				t.Fatalf("old evidence blocked fresh evaluation: %v", err)
-			}
-			if restarted.incidentOpen || restarted.closureBlocksNextLocked() || len(b.calls()) != 0 || len(restarted.history) == 0 {
-				t.Fatal("obsolete evidence blocked evaluation or reached broker")
-			}
-			again := crashController(t, root, current.Commit, state, "")
-			if err := executeStartupEffects(ctx, again, true); err != nil {
-				if timedOut(err) {
-					return
-				}
-				t.Fatalf("terminal failure blocked another paused startup: %v", err)
-			}
-			if err := again.Step(ctx, time.Unix(1000, 0).Add(2*time.Hour), nil); err != nil || again.incidentOpen || again.closureBlocksNextLocked() {
-				if timedOut(err) {
-					return
-				}
-				t.Fatalf("terminal failure blocked another restart: %v", err)
-			}
-			t.Logf("seed=%d cut=%s verified=%s old_evidence=failed", seed, cut, current.Commit)
+			t.Logf("seed=%d cut=%s verified=%s closure_resumed", seed, cut, current.Commit)
 		})
 	}
 	// A filtered -run subtest selection is a replay, not a coverage sweep.

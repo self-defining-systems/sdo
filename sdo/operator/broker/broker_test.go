@@ -419,6 +419,65 @@ func TestVerifiedSourceRejectsMutationAfterDeployment(t *testing.T) {
 	}
 }
 
+// STALE3: an accepted head that moved after the deployment was verified is
+// replayed, not refused. The replay must still carry exactly the verified
+// source, so a moved head with unrelated memory history is accepted while one
+// that changed source is not.
+func TestVerifiedSourceReplaysOntoMovedHead(t *testing.T) {
+	for _, moved := range []string{"memory", "source"} {
+		t.Run(moved, func(t *testing.T) {
+			ctx := context.Background()
+			target := repository(t)
+			b, err := New(target, filepath.Join(t.TempDir(), "workspaces"), func(context.Context, string, []string) error { return nil })
+			if err != nil {
+				t.Fatal(err)
+			}
+			proposal, err := b.CreateProposalForPhase(ctx, "source", InitialPhase)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(proposal.Path, "app.txt"), []byte("deployed source\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			expected, err := ProposalTreeDigest(ctx, proposal.Path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			path := ".sdo/outcomes/moved.json"
+			if moved == "source" {
+				path = "other.txt"
+			}
+			if err := os.MkdirAll(filepath.Dir(filepath.Join(target, path)), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(target, path), []byte("later\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			git(t, target, "add", "-A")
+			git(t, target, "commit", "-qm", "head moves after verification")
+			receipt, err := b.PublishVerifiedSource(ctx, "source", sourceEvidence(expected))
+			if moved == "source" {
+				if err == nil {
+					t.Fatal("replay accepted a tree that differs from the verified source")
+				}
+				if !strings.Contains(err.Error(), "differs from verified") {
+					t.Fatalf("refused for the wrong reason: %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("moved head refused the verified source: %v", err)
+			}
+			if got := git(t, target, "show", receipt.Commit+":app.txt"); got != "deployed source" {
+				t.Fatalf("replay lost the verified source: %q", got)
+			}
+			if got := git(t, target, "show", receipt.Commit+":"+path); got != "later" {
+				t.Fatalf("replay dropped the later memory commit: %q", got)
+			}
+		})
+	}
+}
+
 func sourceEvidence(tree string) SourceEvidence {
 	return SourceEvidence{ProposalTreeDigest: tree, ObservedRevision: tree, StrategyID: "raw-manifests", Images: []string{"registry.example/app@sha256:" + strings.Repeat("a", 64)}, ResourceIDs: []string{"Deployment/default/app"}, ManifestPaths: []string{"deploy/app.yaml"}, Ready: true}
 }
