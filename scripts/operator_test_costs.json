@@ -3,7 +3,7 @@
   "source_head": "ba4c0906cb18c005409d063603b02e46dbefa063",
   "description": "Hosted completed top-level active seconds, including parallel children and excluding pauses. Completed timings of at least one second are refreshed; unobserved and unfinished names retain their earlier bounds.",
   "placements": {
-    "sdo.dev/operator/builder/TestProgramDetectorCorpusChecksEveryLocatedBinding": "broker",
+    "sdo.dev/operator/builder/TestProgramDetectorCorpusChecksEveryLocatedBinding": "compiler-replay",
     "sdo.dev/operator/builder/TestOperatorCorpusRequiresProductionClosedLoop": "acceptance-second",
     "sdo.dev/operator/builder/TestProgramSaveReplayDoesNotRequireRenameInvariance": "compiler-replay",
     "sdo.dev/operator/builder/TestTypedObservationProgramCompilesAndRejectsStaleEvidence": "compiler-replay",
