@@ -280,11 +280,16 @@ func (l *ResponderLoop) continuationAttempts() int {
 func (l *ResponderLoop) observeMutations() (*apihistory.MutationObservation, error) {
 	// A cancelled turn may still be unwinding a tool. Controller observation
 	// retries on contention instead of waiting behind responder-owned work.
-	if !l.mu.TryLock() {
-		return nil, errors.New("responder mutation observation is busy")
+	gate, err := func() (*apihistory.MutationGate, error) {
+		if !l.mu.TryLock() {
+			return nil, errors.New("responder mutation observation is busy")
+		}
+		defer l.mu.Unlock()
+		return l.MutationGate, nil
+	}()
+	if err != nil {
+		return nil, err
 	}
-	gate := l.MutationGate
-	l.mu.Unlock()
 	if gate == nil {
 		return nil, nil
 	}
