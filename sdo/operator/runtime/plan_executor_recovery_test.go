@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"testing"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -30,8 +31,11 @@ func TestPlanExecutorCompensatesSecondPatchFailure(t *testing.T) {
 		t.Run(map[bool]string{false: "compensated", true: "rollback fails"}[failRollback], func(t *testing.T) {
 			ref := sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "app", Name: "api"}
 			client := &failingBatchClient{planFakeClient: &planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: planObject(ref, map[string]any{"replicas": float64(1)})}}, failRollback: failRollback}
+			other := ref
+			other.Name = "other"
+			client.objects[other] = planObject(other, map[string]any{"replicas": float64(1)})
 			executor := PlanExecutor{Client: client, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{passed: true}}
-			result, err := executor.Apply(context.Background(), IncidentRequest{RepairPolicy: "recorded-actions"}, program.Plan{Actions: []program.Action{program.SetField{Ref: ref, Path: "spec.replicas", Value: testPlanValue(float64(2))}, program.SetField{Ref: ref, Path: "spec.replicas", Value: testPlanValue(float64(3))}}}, false)
+			result, err := executor.Apply(context.Background(), IncidentRequest{RepairPolicy: "recorded-actions"}, program.Plan{Actions: []program.Action{program.SetField{Ref: ref, Path: "spec.replicas", Value: testPlanValue(float64(2))}, program.SetField{Ref: other, Path: "spec.replicas", Value: testPlanValue(float64(3))}}}, false)
 			if err == nil || !result.Applied || len(result.ActionsApplied) != 1 {
 				t.Fatalf("partial application lost: %+v, %v", result, err)
 			}
@@ -117,8 +121,11 @@ func TestPlanExecutorRollbackPreservesUnrelatedFieldsAndRejectsConflicts(t *test
 func TestResponderLoopExposesPartialApplicationWhenCompensationFails(t *testing.T) {
 	ref := sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}
 	client := &failingBatchClient{planFakeClient: &planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: planObject(ref, map[string]any{"ports": []any{map[string]any{"targetPort": float64(9999)}}})}}, failRollback: true}
+	other := ref
+	other.Name = "other"
+	client.objects[other] = planObject(other, map[string]any{"ports": []any{map[string]any{"targetPort": float64(9999)}}})
 	loop := recoveryLoop(t, client)
-	loop.plans["two-actions"] = selectedPlan{id: "two-actions", programID: "targetport", plan: program.Plan{Actions: []program.Action{program.SetField{Ref: ref, Path: "spec.ports[0].targetPort", Value: testPlanValue(8080)}, program.SetField{Ref: ref, Path: "spec.ports[0].targetPort", Value: testPlanValue(8081)}}}}
+	loop.plans["two-actions"] = selectedPlan{id: "two-actions", programID: "targetport", plan: program.Plan{Actions: []program.Action{program.SetField{Ref: ref, Path: "spec.ports[0].targetPort", Value: testPlanValue(8080)}, program.SetField{Ref: other, Path: "spec.ports[0].targetPort", Value: testPlanValue(8081)}}}}
 	response := loop.Handle(context.Background(), ToolRequest{Command: "apply", PlanIDs: []string{"two-actions"}})
 	if response.Error == "" || response.ApplicationID == "" {
 		t.Fatalf("lost partial rollback handle: %+v", response)
@@ -132,6 +139,14 @@ func TestResponderLoopExposesPartialApplicationWhenCompensationFails(t *testing.
 func TestPlanExecutorRetainsInProcessRollbackProgress(t *testing.T) {
 	ctx := context.Background()
 	ref, plan, client := repeatedReplicaPlan()
+	// Compensation progress spans independent object writes, not intermediate
+	// states of one object (which now have one atomic write).
+	for i := range plan.Actions {
+		target := ref
+		target.Name = fmt.Sprintf("workers-%d", i)
+		client.objects[target] = planObject(target, map[string]any{"replicas": float64(1)})
+		plan.Actions[i] = program.SetField{Ref: target, Path: "spec.replicas", Value: testPlanValue(i + 2)}
+	}
 	client.rejectAttempt = 6 // Three forward writes and two reverse writes succeed.
 	executor := PlanExecutor{Client: client, Rollouts: recoveryRolloutFailure{}, Verifier: planFakeVerifier{passed: true}}
 	result, err := executor.Apply(ctx, IncidentRequest{RepairPolicy: "recorded-actions"}, plan, false)
@@ -145,7 +160,9 @@ func TestPlanExecutorRetainsInProcessRollbackProgress(t *testing.T) {
 	if err = executor.rollback(ctx, &result); err != nil {
 		t.Fatal(err)
 	}
-	requireRecoveredReplicas(t, client, ref)
+	for target := range client.objects {
+		requireRecoveredReplicas(t, client, target)
+	}
 }
 
 type statusBumpingClient struct {

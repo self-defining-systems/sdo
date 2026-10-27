@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Any
 
 import yaml
 
-from benchmarks.sregym.adapter import WaitKind, wait_for
+from benchmarks.sregym.adapter import WaitKind, execute_operator, wait_for
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -113,9 +113,34 @@ class AcceptedSource:
                 for selection in self.manifest_paths
                 for candidate in tree
                 if (candidate == selection or candidate.startswith(selection + "/"))
-                and candidate.endswith(_MANIFEST_SUFFIXES)
+                and (candidate.endswith(_MANIFEST_SUFFIXES) or PurePosixPath(candidate).name == "Kustomization")
             }
         )
+        if any(
+            PurePosixPath(path).name in {"kustomization.yaml", "kustomization.yml", "Kustomization"} for path in files
+        ):
+            # Keep generator evaluation at the production source owner. Only
+            # non-secret objects cross this transport into benchmark records.
+            rendered = json.loads(
+                execute_operator(
+                    "render-source",
+                    [],
+                    timeout=wait_for(WaitKind.COMMAND),
+                    input_text=json.dumps(
+                        {
+                            "repository": str(self.workspace.resolve()),
+                            "revision": self.revision,
+                            "namespace": self.namespace,
+                            "manifest_paths": self.manifest_paths,
+                        }
+                    ),
+                )
+            )
+            if not isinstance(rendered, list) or any(
+                not isinstance(obj, dict) or obj.get("kind") == "Secret" for obj in rendered
+            ):
+                raise ValueError("accepted source renderer returned invalid non-secret inventory")
+            return tuple(rendered)
         objects: list[dict[str, Any]] = []
         seen: set[tuple[str, str, str]] = set()
         for path in files:

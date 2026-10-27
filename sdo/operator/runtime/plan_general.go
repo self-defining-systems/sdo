@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"time"
 
-	jsonpatch "github.com/evanphx/json-patch"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -153,7 +152,7 @@ func (e PlanExecutor) applyGeneralPlan(ctx context.Context, incident IncidentReq
 		}
 	}
 	complete = true
-	if pending, waitErr := e.waitForRollouts(ctx, incident, refs); waitErr != nil {
+	if pending, waitErr := e.waitAfterSourceWrites(ctx, incident, &result, refs); waitErr != nil {
 		result.RolloutPending = pending
 		return result, waitErr
 	}
@@ -166,7 +165,9 @@ func (e PlanExecutor) generalStep(ctx context.Context, incident IncidentRequest,
 	r.DryRun = dry
 	r.ActionReports = newPlanReports(r.Plan)
 	if !isGeneralAction(action) {
-		return e.Apply(ctx, incident, r.Plan, dry)
+		nested := e
+		nested.deferDependencyRecovery = true
+		return nested.Apply(ctx, incident, r.Plan, dry)
 	}
 	if ca, ok := action.(program.SyncWebhookCA); ok {
 		return e.webhookCAStep(ctx, ca, dry)
@@ -299,8 +300,10 @@ func (e PlanExecutor) generalStep(ctx context.Context, incident IncidentRequest,
 		var fields map[string]any
 		raw, _ := json.Marshal(a.Object)
 		if !missing && a.Mode != "replace" {
-			old, _ := json.Marshal(before.Object)
-			raw, err = jsonpatch.MergePatch(old, raw)
+			fields, err = program.MergeObject(before.Object, a.Ref, raw)
+			if err == nil {
+				raw, err = json.Marshal(fields)
+			}
 		}
 		if err == nil {
 			err = utiljson.Unmarshal(raw, &fields)
