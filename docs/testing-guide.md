@@ -818,7 +818,7 @@ measurements from a hosted transcript with
 Use `--scope operator` or `--scope runtime` to refresh one profile.
 Without `--write`, the importer reports the measured entry counts. Unfinished
 tests retain their previous costs; no test or seed is removed. Explicit operator
-placements remain reviewable in the operator profile. The two measured slowest
+placements remain reviewable in the operator profile. The measured slow
 acceptance cases run in a third name partition on the existing compiler-replay
 allocation, preserving all cases and the two-worker parallel cap. The redundant-link
 regression shares the located-binding fixture's real acceptance compilation.
