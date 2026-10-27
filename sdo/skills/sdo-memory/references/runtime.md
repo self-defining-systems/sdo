@@ -134,7 +134,8 @@ usage: sdo verify [-h] [--wait SECONDS]
 
 Reads the controller's cached health verdict immediately; drift[] lists
 objects that still differ from accepted source and never decides healthy.
-After a healthy return, SDO may resume once for remaining source differences;
+After a healthy return, SDO may resume once for source differences when
+progress remains; terminal inventory and no-progress stops do not resume.
 restore them or explain the intended difference. Pending observation windows,
 including unproven synthetic scenarios, are not healthy. Fresh deployment-
 rollout-pending findings name owned ReplicaSet/Pod blockers and old-template

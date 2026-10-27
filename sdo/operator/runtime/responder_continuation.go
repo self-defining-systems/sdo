@@ -228,14 +228,11 @@ func (d KubernetesJobDispatcher) ContinueAfterVerification(ctx context.Context, 
 	if state.Result == nil {
 		return false, nil
 	}
-	if driftPrompt && state.Result.GetDriftReprompt() != nil {
-		// Replay a persisted pending transition, never allocate another turn.
-		return !state.Done, nil
-	}
-	if !driftPrompt && (state.Attempts >= limit || loop.Exhausted()) {
+	result := incidentResultState(state.Result)
+	if driftPrompt && !driftRepromptCanProgress(verification.Drift, &result) {
 		return false, nil
 	}
-	repairs := loop.continuationRepairs(incidentResultState(state.Result))
+	repairs := loop.continuationRepairs(result)
 	switch state.Result.GetError() {
 	case "authorization_denied_no_progress":
 		return false, nil
@@ -243,6 +240,13 @@ func (d KubernetesJobDispatcher) ContinueAfterVerification(ctx context.Context, 
 		if responderNoProgress(state.Feedback, verification, repairs) {
 			return false, nil
 		}
+	}
+	if driftPrompt && state.Result.GetDriftReprompt() != nil {
+		// Terminal stops above also apply to replay of a pending transition.
+		return !state.Done, nil
+	}
+	if !driftPrompt && (state.Attempts >= limit || loop.Exhausted()) {
+		return false, nil
 	}
 	if !state.Done {
 		return true, nil
@@ -261,6 +265,30 @@ func (d KubernetesJobDispatcher) ContinueAfterVerification(ctx context.Context, 
 		return false, err
 	}
 	return true, nil
+}
+
+// The optional drift turn may extend a successful response, but cannot reopen a
+// terminal response. Inventory with completed known failures has already used
+// its remediation opportunity; reporting it again cannot authorize progress.
+// Both closure and durable continuation recovery use this same admission rule.
+func driftRepromptCanProgress(drift []sdk.Finding, result *IncidentResult) bool {
+	if len(drift) == 0 || result == nil || result.Status != IncidentCompleted || result.Error != "" || result.ResponseLoopExhausted {
+		return false
+	}
+	repairs := make([]continuationRepair, 0, len(result.RepairActions))
+	for _, receipt := range result.RepairActions {
+		repairs = append(repairs, continuationRepair{ActionID: receipt.ActionID, Receipt: feedbackReceipt(receipt)})
+	}
+	for _, finding := range drift {
+		stable, _ := finding.Metadata["stable_inventory"].(bool)
+		if !inventoryFinding(finding) || !stable || inventoryEvent(finding).Source != "absent from accepted source" {
+			return true
+		}
+		if _, terminal := failedInventoryAttempts(repairs, map[sdk.ObjectRef]bool{finding.PrimaryResource: true}); !terminal {
+			return true
+		}
+	}
+	return false
 }
 
 func (l *ResponderLoop) saveContinuation(ctx context.Context, state responderContinuation) error {

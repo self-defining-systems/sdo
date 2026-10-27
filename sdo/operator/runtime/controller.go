@@ -1392,7 +1392,7 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 		c.closureStableSince = time.Time{}
 	}
 
-	driftPrompt := !early && verified && len(source.Drift) > 0
+	driftPrompt := !early && verified && driftRepromptCanProgress(source.Drift, c.currentIncidentResult)
 	if ((!verified && (len(verification.Findings) > 0 || verification.Error != "")) || driftPrompt) && !terminalFailure && c.dispatchError == "" && now.Before(c.currentIncidentRequest.ResponseDeadline) {
 		if continuer, ok := c.dispatcher.(interface {
 			ContinueAfterVerification(context.Context, IncidentRequest, ToolResponse, time.Time) (bool, error)

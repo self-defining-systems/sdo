@@ -3,6 +3,8 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"google.golang.org/protobuf/proto"
 	"path/filepath"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
@@ -12,6 +14,7 @@ import (
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/client-go/kubernetes/fake"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/sdk"
@@ -128,7 +131,7 @@ func TestHealthyDriftRepromptOnceAcrossRestart(t *testing.T) {
 // Fresh closure drift is produced by the real controller/source comparison and
 // consumed by the real durable continuation dispatcher, through a worker Job.
 func TestControllerHealthyDriftRepromptClosesAfterReturn(t *testing.T) {
-	for _, mode := range []string{"remaining", "repaired", "deadline", "dispatch-error", "reprompt-failure"} {
+	for _, mode := range []string{"remaining", "repaired", "deadline", "dispatch-error", "reprompt-failure", "no-progress", "authorization-denied", "failed-result", "cancelled-result"} {
 		t.Run(mode, func(t *testing.T) {
 			f := newClosureDriftFixture(t, true, true, "app")
 			f.step(t, 1) // consume the initial worker result, start the stability window
@@ -162,6 +165,16 @@ func TestControllerHealthyDriftRepromptClosesAfterReturn(t *testing.T) {
 			loop := dispatcher.LoopFactory(request)
 			if err := dispatcher.restoreToolState(context.Background(), request, loop); err != nil {
 				t.Fatal(err)
+			}
+			switch mode {
+			case "no-progress":
+				f.c.currentIncidentResult.Error = "no_progress"
+			case "authorization-denied":
+				f.c.currentIncidentResult.Error = "authorization_denied_no_progress"
+			case "failed-result":
+				f.c.currentIncidentResult.Status = IncidentFailed
+			case "cancelled-result":
+				f.c.currentIncidentResult.Status = IncidentCancelled
 			}
 			initial, err := incidentResultContract(*f.c.currentIncidentResult)
 			if err != nil {
@@ -348,6 +361,100 @@ func TestControllerDriftRepromptObservationNeverWaitsForTools(t *testing.T) {
 				loop.mu.Unlock()
 				<-done
 				t.Fatal("controller observation waited for a responder tool mutex")
+			}
+		})
+	}
+}
+
+// Terminal stops outrank even a pending persisted drift transition after restart.
+func TestDriftRepromptDoesNotResumeTerminalState(t *testing.T) {
+	for _, pending := range []bool{false, true} {
+		for _, reason := range []string{"no_progress", "authorization_denied_no_progress", "worker failed"} {
+			t.Run(fmt.Sprintf("%s/pending=%v", reason, pending), func(t *testing.T) {
+				request := goldenRequest(t)
+				request.RepositoryWorktree = filepath.Join(t.TempDir(), "proposal")
+				request.ResponseDeadline = time.Now().Add(time.Minute)
+				var healthy atomic.Bool
+				healthy.Store(true)
+				dispatcher := KubernetesJobDispatcher{Client: fake.NewSimpleClientset(), Namespace: "demo", LoopFactory: func(r IncidentRequest) *ResponderLoop { return continuationLoop(r, &healthy, 1) }}
+				loop := dispatcher.LoopFactory(request)
+				if err := dispatcher.restoreToolState(context.Background(), request, loop); err != nil {
+					t.Fatal(err)
+				}
+				result, err := incidentResultContract(completedResult(request.IncidentID))
+				if err != nil {
+					t.Fatal(err)
+				}
+				result.Error = proto.String(reason)
+				if pending {
+					result.DriftReprompt = &contracts.DriftReprompt{FindingsBefore: 1}
+				}
+				state := responderContinuation{Attempts: 1, Done: !pending, Result: result}
+				if err := loop.saveContinuation(context.Background(), state); err != nil {
+					t.Fatal(err)
+				}
+				resumed, err := dispatcher.ContinueAfterVerification(context.Background(), request, ToolResponse{Healthy: true, Drift: []sdk.Finding{{DetectorID: "drift.source"}}}, time.Now())
+				if err != nil || resumed {
+					t.Fatalf("terminal state resumed: %v %v", resumed, err)
+				}
+				restored := dispatcher.LoopFactory(request)
+				if err := dispatcher.restoreToolState(context.Background(), request, restored); err != nil {
+					t.Fatal(err)
+				}
+				if restored.continuation.Done != state.Done || !proto.Equal(restored.continuation.Result, state.Result) {
+					t.Fatal("terminal continuation mutated")
+				}
+			})
+		}
+	}
+}
+
+// Real inventory findings feed the persisted continuation admission boundary.
+// Known failed attempts are terminal; unknown effects or another actionable
+// difference must retain the opportunity to make progress.
+func TestDriftRepromptInventoryProgress(t *testing.T) {
+	for _, mode := range []string{"authorization_denied", "execution_failed", "unknown", "unattempted", "unfinished", "success", "mixed"} {
+		t.Run(mode, func(t *testing.T) {
+			request := goldenRequest(t)
+			request.RepositoryWorktree = filepath.Join(t.TempDir(), "proposal")
+			request.ResponseDeadline = time.Now().Add(time.Minute)
+			ref := sdk.ObjectRef{APIVersion: "v1", Kind: "ServiceAccount", Namespace: "app", Name: "cleanup"}
+			drift := NewSourceInventory("app", request.SourceCommit, nil).Findings([]*unstructured.Unstructured{urObject(ref)}, time.Now())
+			if len(drift) != 1 {
+				t.Fatalf("inventory fixture: %+v", drift)
+			}
+			result := completedResult(request.IncidentID)
+			reason := mode
+			if mode == "mixed" {
+				reason = "authorization_denied"
+				drift = append(drift, sdk.Finding{DetectorID: "drift.source", PrimaryResource: sdk.ObjectRef{Kind: "Service", Name: "api"}})
+			}
+			stamp := time.Now()
+			receipt := RepairActionReceipt{ActionID: "remove-cleanup", Resources: []sdk.ObjectRef{ref}, FailureReason: reason, StartedAt: stamp, CompletedAt: stamp, Success: mode == "success"}
+			if mode == "unfinished" {
+				receipt.CompletedAt = time.Time{}
+			}
+			if mode != "unattempted" {
+				result.RepairActions = []RepairActionReceipt{receipt}
+			}
+			var healthy atomic.Bool
+			healthy.Store(true)
+			dispatcher := KubernetesJobDispatcher{Client: fake.NewSimpleClientset(), Namespace: "demo", LoopFactory: func(r IncidentRequest) *ResponderLoop { return continuationLoop(r, &healthy, 1) }}
+			loop := dispatcher.LoopFactory(request)
+			if err := dispatcher.restoreToolState(context.Background(), request, loop); err != nil {
+				t.Fatal(err)
+			}
+			encoded, err := incidentResultContract(result)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := loop.saveContinuation(context.Background(), responderContinuation{Attempts: 1, Done: true, Result: encoded}); err != nil {
+				t.Fatal(err)
+			}
+			resumed, err := dispatcher.ContinueAfterVerification(context.Background(), request, ToolResponse{Healthy: true, Drift: drift}, time.Now())
+			want := mode != "authorization_denied" && mode != "execution_failed"
+			if err != nil || resumed != want {
+				t.Fatalf("resume=%v want=%v err=%v", resumed, want, err)
 			}
 		})
 	}
