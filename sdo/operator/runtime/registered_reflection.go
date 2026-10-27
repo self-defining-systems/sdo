@@ -145,13 +145,10 @@ func (w RegisteredReflectionWorker) Reflect(ctx context.Context, closure Inciden
 		history := make([]*contracts.OutcomeRecord, 0, len(prior))
 		for _, record := range prior {
 			if record.IncidentID != workspace.IncidentID {
-				earlier := proto.Clone(record.Record).(*contracts.OutcomeRecord)
-				// Reflection summarizes an earlier incident without its raw program evaluations, which dominate
-				// the record and grow with every installed program.
-				earlier.ProgramRuns = nil
-				history = append(history, earlier)
+				history = append(history, summarizeEarlierOutcome(record.Record))
 			}
 		}
+		history = history[max(0, len(history)-maxReflectionHistory):]
 		trimReflectionClosure(closed)
 		request := &contracts.ReflectionRequest{Closure: closed, Outcome: current, PriorOutcomes: history, ProposalCommit: proposalCommit, OutcomeCommit: outcomeCommit, SessionMode: mode, Guidance: guidance, ValidationAttempt: attempt, PreviousDiagnostics: feedback.Diagnostics, CauseWork: feedback.CauseWork, UnassignedWork: feedback.UnassignedWork}
 		if w.Catalog != nil {
@@ -314,9 +311,27 @@ func (w RegisteredReflectionWorker) withUsage(decision ReflectionDecision, incid
 func trimReflectionClosure(closure *contracts.IncidentClosure) {
 	if closure.GetResult() != nil {
 		closure.Result.ProgramRuns = nil
+		// The outcome carries the same raw transcripts; the worker restores them for a fresh-session brief.
+		closure.Result.ProgramToolCalls = nil
+		closure.Result.PlanApplications = nil
 	}
 	if closure.GetRequest() != nil {
 		closure.Request.PreparedAgentTask = ""
 		closure.Request.InitialProgramRuns = nil
 	}
+}
+
+// maxReflectionHistory is how many earlier incidents the reflection worker shows; its history view keeps the
+// latest two, so a longer history is only transport weight.
+const maxReflectionHistory = 2
+
+// summarizeEarlierOutcome copies an earlier incident without its raw program evaluations and tool transcripts,
+// which dominate the record, grow with every installed program, and are re-sent with every reflection request.
+// The request travels in one ConfigMap, so earlier incidents stay bounded by construction.
+func summarizeEarlierOutcome(record *contracts.OutcomeRecord) *contracts.OutcomeRecord {
+	earlier := proto.Clone(record).(*contracts.OutcomeRecord)
+	earlier.ProgramRuns = nil
+	earlier.ProgramToolCalls = nil
+	earlier.PlanApplications = nil
+	return earlier
 }

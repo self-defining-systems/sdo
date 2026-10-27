@@ -113,3 +113,17 @@ func TestKubernetesExecutorFailureDiagnosticsBoundStatusText(t *testing.T) {
 		t.Fatalf("structured termination evidence lost: %+v", failed)
 	}
 }
+
+// The cause of a crash is the last thing the worker logged, so a bounded message keeps its end.
+func TestKubernetesExecutorFailureDiagnosticsKeepTheEndOfTheContainerMessage(t *testing.T) {
+	task := reflectionTestTask(t)
+	name := JobName(task.TaskId)
+	message := strings.Repeat("noise ", 1000) + "FileNotFoundError: /sdo/request/agent-task.json"
+	job := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: name, UID: "worker", Namespace: "demo"}, Status: batchv1.JobStatus{Failed: 1, Conditions: []batchv1.JobCondition{{Type: batchv1.JobFailed, Status: corev1.ConditionTrue, Reason: "BackoffLimitExceeded"}}}}
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "failed-agent", Namespace: "demo", OwnerReferences: []metav1.OwnerReference{{Kind: "Job", Name: name, UID: job.UID}}}, Status: corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{{Name: "agent", State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{Reason: "Error", ExitCode: 1, Message: message}}}}}}
+	executor := KubernetesExecutor{Client: fake.NewSimpleClientset(job, pod), Namespace: "demo", Registry: reflectionTestRegistry(t), RepositoryPVC: "repo", RepositoryMountPath: "/workspace"}
+	_, err := executor.Execute(context.Background(), task)
+	if err == nil || !strings.Contains(err.Error(), "FileNotFoundError: /sdo/request/agent-task.json") {
+		t.Fatalf("the end of the worker's message was cut: %v", err)
+	}
+}

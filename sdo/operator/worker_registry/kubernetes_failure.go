@@ -21,6 +21,16 @@ func failureText(value string) string {
 	return value
 }
 
+// failureTail bounds a worker's termination message to its end: the last log lines name the cause.
+func failureTail(value string) string {
+	const maxRunes = 512
+	text := []rune(value)
+	if len(text) > maxRunes {
+		return "…" + string(text[len(text)-maxRunes:])
+	}
+	return value
+}
+
 func (e KubernetesExecutor) taskJobFailure(ctx context.Context, task *contracts.AgentTask, job *batchv1.Job) error {
 	failure := taskJobFailure(task, job)
 	failed, ok := failure.(*JobFailedError)
@@ -57,7 +67,7 @@ func (e KubernetesExecutor) taskJobFailure(ctx context.Context, task *contracts.
 			if termination == nil {
 				continue
 			}
-			failed.Containers = append(failed.Containers, ContainerFailure{PodName: pod.Name, ContainerName: status.Name, Reason: failureText(termination.Reason), ExitCode: termination.ExitCode, Message: failureText(termination.Message)})
+			failed.Containers = append(failed.Containers, ContainerFailure{PodName: pod.Name, ContainerName: status.Name, Reason: failureText(termination.Reason), ExitCode: termination.ExitCode, Message: failureTail(termination.Message)})
 			if len(failed.Containers) == 16 {
 				return failed
 			}

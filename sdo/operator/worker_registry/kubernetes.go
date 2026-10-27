@@ -32,12 +32,10 @@ import (
 const (
 	TaskDataKey   = "agent-task.json"
 	ResultDataKey = "agent-result.json"
-	// MaxConfigMapRequestBytes keeps a ConfigMap request well under the API server's 1 MiB object limit. Larger
-	// requests are staged on the repository volume instead.
-	MaxConfigMapRequestBytes = 512 << 10
-	// MaxStagedRequestBytes is the hard budget for one staged request. Exceeding it fails before any API call.
-	MaxStagedRequestBytes = 64 << 20
-	stagedRequestsDir     = ".sdo-runtime/requests"
+	// MaxRequestBytes keeps a ConfigMap request well under the API server's 1 MiB object limit. A request over it
+	// fails before any API call: requesters keep requests small by reference, never by a second transport.
+	MaxRequestBytes   = 512 << 10
+	stagedRequestsDir = ".sdo-runtime/requests"
 )
 
 // requestSource says where a worker reads /sdo/request/agent-task.json: a ConfigMap, or a repository-volume subPath.
@@ -46,7 +44,7 @@ type requestSource struct {
 	PVCSubPath string
 }
 
-// RequestTooLargeError names the request components that exhausted the staged-request budget.
+// RequestTooLargeError names the request components that exhausted the request budget.
 type RequestTooLargeError struct {
 	TaskID     string
 	Bytes      int
@@ -57,17 +55,6 @@ type RequestTooLargeError struct {
 func (err *RequestTooLargeError) Error() string {
 	return fmt.Sprintf("agent request for task %q is %d bytes, over the %d byte budget; largest components: %s", err.TaskID, err.Bytes, err.Limit, strings.Join(err.Components, ", "))
 }
-
-// RequestStagingError reports that a large request could not be written to the repository volume.
-type RequestStagingError struct {
-	TaskID string
-	Err    error
-}
-
-func (err *RequestStagingError) Error() string {
-	return fmt.Sprintf("stage agent request for task %q on the repository volume: %v", err.TaskID, err.Err)
-}
-func (err *RequestStagingError) Unwrap() error { return err.Err }
 
 // KubernetesExecutor is the implementation-neutral Job transport. By default,
 // a Job sees only its independent proposal checkout.
@@ -239,27 +226,21 @@ func (e KubernetesExecutor) Execute(ctx context.Context, task *contracts.AgentTa
 	}
 	requestName, resultName := jobName+"-request", jobName+"-result"
 	request := requestSource{ConfigMap: requestName}
-	if len(payload) <= MaxConfigMapRequestBytes {
-		err := e.ensureRequest(ctx, requestName, string(payload))
-		var conflict *RequestPayloadConflictError
-		if errors.As(err, &conflict) && jobName != TaskJobName(task) {
-			// Another controller may provision a different payload between
-			// the read-only recovery check and create-if-absent request write.
-			jobName = TaskJobName(task)
-			requestName, resultName = jobName+"-request", jobName+"-result"
-			request.ConfigMap = requestName
-			err = e.ensureRequest(ctx, requestName, string(payload))
-		}
-		if err != nil {
-			return nil, err
-		}
-	} else {
-		staged, err := e.stageRequest(task, jobName, payload)
-		if err != nil {
-			return nil, err
-		}
-		request = requestSource{PVCSubPath: staged}
-		defer e.unstageRequest(jobName)
+	if len(payload) > MaxRequestBytes {
+		return nil, &RequestTooLargeError{TaskID: task.GetTaskId(), Bytes: len(payload), Limit: MaxRequestBytes, Components: requestComponents(task)}
+	}
+	err = e.ensureRequest(ctx, requestName, string(payload))
+	var conflict *RequestPayloadConflictError
+	if errors.As(err, &conflict) && jobName != TaskJobName(task) {
+		// Another controller may provision a different payload between
+		// the read-only recovery check and create-if-absent request write.
+		jobName = TaskJobName(task)
+		requestName, resultName = jobName+"-request", jobName+"-result"
+		request.ConfigMap = requestName
+		err = e.ensureRequest(ctx, requestName, string(payload))
+	}
+	if err != nil {
+		return nil, err
 	}
 	if e.WarmBinding == nil {
 		if err := e.ensureIncidentExecution(ctx, task, jobName, ""); err != nil {
@@ -410,25 +391,6 @@ func (e KubernetesExecutor) Execute(ctx context.Context, task *contracts.AgentTa
 		case <-ticker.C:
 		}
 	}
-}
-
-// stageRequest writes an oversized request under a per-job directory of the repository volume and returns the PVC
-// subPath that holds it. The directory is outside every proposal checkout and session.
-func (e KubernetesExecutor) stageRequest(task *contracts.AgentTask, jobName string, payload []byte) (string, error) {
-	if len(payload) > MaxStagedRequestBytes {
-		return "", &RequestTooLargeError{TaskID: task.GetTaskId(), Bytes: len(payload), Limit: MaxStagedRequestBytes, Components: requestComponents(task)}
-	}
-	if err := writeStaged(e.RepositoryMountPath, jobName, TaskDataKey, payload); err != nil {
-		return "", &RequestStagingError{TaskID: task.GetTaskId(), Err: err}
-	}
-	return path.Join(e.RepositoryPVCSubPath, stagedRequestsDir, jobName), nil
-}
-
-// unstageRequest removes the Job's request copy but not a prepared task the controller state still references.
-func (e KubernetesExecutor) unstageRequest(jobName string) {
-	directory := filepath.Join(e.RepositoryMountPath, filepath.FromSlash(stagedRequestsDir), jobName)
-	_ = os.Remove(filepath.Join(directory, TaskDataKey))
-	_ = os.Remove(directory)
 }
 
 // requestComponents lists the request's largest populated top-level fields with their encoded sizes.
@@ -614,8 +576,10 @@ func (e KubernetesExecutor) ensureJob(ctx context.Context, task *contracts.Agent
 					Containers: []corev1.Container{{
 						Name: "agent", Image: launch.GetImage(), Command: append([]string(nil), launch.GetCommand()...),
 						WorkingDir: task.GetWorkspace().GetCheckoutPath(), EnvFrom: envFrom, Env: env, VolumeMounts: mounts,
-						SecurityContext: &corev1.SecurityContext{AllowPrivilegeEscalation: &noEscalation, ReadOnlyRootFilesystem: &readOnlyRoot, Capabilities: &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}}},
-						Resources:       corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("250m"), corev1.ResourceMemory: resource.MustParse("512Mi")}, Limits: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("2"), corev1.ResourceMemory: resource.MustParse("4Gi")}},
+						// The controller reads no logs; a crash's last log lines become its termination message.
+						TerminationMessagePolicy: corev1.TerminationMessageFallbackToLogsOnError,
+						SecurityContext:          &corev1.SecurityContext{AllowPrivilegeEscalation: &noEscalation, ReadOnlyRootFilesystem: &readOnlyRoot, Capabilities: &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}}},
+						Resources:                corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("250m"), corev1.ResourceMemory: resource.MustParse("512Mi")}, Limits: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("2"), corev1.ResourceMemory: resource.MustParse("4Gi")}},
 					}}, Volumes: volumes,
 				},
 			},
