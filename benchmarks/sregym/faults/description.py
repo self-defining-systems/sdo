@@ -13,7 +13,7 @@ if TYPE_CHECKING:
 
 from pydantic import BaseModel, ConfigDict, model_validator
 
-from benchmarks.sregym.faults.probe_catalog import CLASS_KINDS
+from benchmarks.sregym.faults.probe_catalog import CLASS_KINDS, DATA_LEVEL_KINDS
 from benchmarks.sregym.faults.sregym_subprocess import SregymSubprocessError, run_sregym_json, sregym_env
 
 PROBE_KINDS = frozenset(CLASS_KINDS.values())
@@ -103,6 +103,11 @@ class FaultSpec:
     def name(self) -> str:
         return f"{self.kind}:{self.component}"
 
+    @property
+    def data_level(self) -> bool:
+        """Its state lives in application data, which a restore of Kubernetes objects does not undo."""
+        return self.kind in DATA_LEVEL_KINDS
+
 
 class ProblemDescription(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -128,6 +133,9 @@ class ProblemDescription(BaseModel):
         return all(fault.tracking_supported for fault in self.faults) and len({f.name for f in self.faults}) == len(
             self.faults
         )
+
+    def data_level_faults(self) -> tuple[str, ...]:
+        return tuple(fault.name for fault in self.faults if fault.data_level)
 
     def ordered_faults(self) -> tuple[FaultSpec, ...]:
         faults = {fault.declared_index: fault for fault in self.faults}
