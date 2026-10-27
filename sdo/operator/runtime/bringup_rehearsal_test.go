@@ -131,9 +131,6 @@ func rehearseNativeOnboarding(t *testing.T, maintenanceChange bool) {
 	installed := nativeGit(t, root, "rev-parse", "HEAD")
 	// P35 installs without a rendered lock and with pre-existing identities
 	// absent from source. Only the frozen install snapshot may acknowledge them.
-	if (GitPlanSource{Repository: root, ManifestPaths: []string{"deploy/tracing.yaml"}}).LockCurrent(ctx, installed, "demo") {
-		t.Fatal("fixture pre-created its missing lock")
-	}
 	extra := &corev1.ConfigMap{TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "ConfigMap"}, ObjectMeta: metav1.ObjectMeta{Name: "failure-admin-geo", Namespace: "demo"}, Data: map[string]string{"synthetic": "pre-existing"}}
 	baseline = append(baseline, extra)
 	clientObjects := append([]kruntime.Object{&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "demo-sdo"}}, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "demo"}}}, baseline...)
@@ -298,7 +295,7 @@ func rehearseNativeOnboarding(t *testing.T, maintenanceChange bool) {
 			t.Fatal(err)
 		}
 
-		source := GitPlanSource{Repository: root, ManifestPaths: []string{"deploy/tracing.yaml"}, DeployedCommit: installed}
+		source := GitPlanSource{Repository: root, ManifestPaths: []string{"deploy/tracing.yaml"}}
 		reconciler := RenderedLockReconciler{Source: source, Client: client, Broker: repository}
 		c.ReconcileRendered = func(ctx context.Context, revision string) (string, error) {
 			return reconciler.Reconcile(ctx, revision, "demo")
@@ -350,10 +347,6 @@ func rehearseNativeOnboarding(t *testing.T, maintenanceChange bool) {
 			t.Fatal(err)
 		}
 		if round == 0 {
-			source := GitPlanSource{Repository: root, ManifestPaths: []string{"deploy/tracing.yaml"}}
-			if !source.LockCurrent(ctx, c.CurrentAcceptedCommit(), "demo") || c.CurrentAcceptedCommit() == installed {
-				t.Fatal("controller did not publish the missing lock before inventory")
-			}
 			if c.sourceInventory == nil || c.sourceInventory.Revision != c.CurrentAcceptedCommit() {
 				t.Fatal("controller did not load current rendered inventory")
 			}

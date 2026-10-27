@@ -282,6 +282,10 @@ type closureRecheck struct {
 	Skipped []string
 }
 
+// closureInventoryLoadBound is how long a closure waits for the accepted-source
+// inventory to load before it commits unconfirmed.
+const closureInventoryLoadBound = 30 * time.Second
+
 // revalidateClosure checks live dependencies and admitted source fields, rather
 // than treating a matching policy generation as proof of continued recovery.
 // Every detector is evaluated, so a contradiction dominates an incomplete peer.
@@ -376,10 +380,20 @@ func (c *Controller) revalidateClosure(ctx context.Context, snapshot sdk.Detecti
 		slog.Warn("closure_detector_skipped", "incident_id", closure.Request.IncidentID, "detectors", gone, "reason", "removed by the adopted policy")
 	}
 	c.mu.Lock()
-	inventoryClear, _ := c.verifySourceInventoryLocked(closure.Result)
+	inventoryAvailable := c.drift == nil || !c.drift.Inventory || c.sourceInventoryAvailableLocked()
+	inventoryClear := true
+	if inventoryAvailable {
+		inventoryClear, _ = c.verifySourceInventoryLocked(closure.Result)
+	}
 	c.mu.Unlock()
 	if !inventoryClear {
 		return contradicted("closure accepted-source inventory remains unexplained")
+	}
+	if !inventoryAvailable {
+		// After a restart the inventory is rebuilt from accepted source on the
+		// next pass. Not loaded yet is not a contradiction of the repair.
+		incomplete = append(incomplete, "accepted source inventory is loading")
+		bound = max(bound, closureInventoryLoadBound)
 	}
 	for _, finding := range closure.Request.Findings {
 		if inventoryFinding(finding) || !strings.HasPrefix(finding.DetectorID, "drift.") {

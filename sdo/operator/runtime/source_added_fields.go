@@ -67,7 +67,16 @@ type acceptanceRecord struct {
 	Source string   `json:"source"`
 	UID    string   `json:"uid"`
 	Paths  []string `json:"paths"`
+	// Values holds the accepted value of the undeclared scalars in
+	// acceptedValuePaths. A server-defaulted field is present at acceptance, so
+	// its path alone cannot tell a later change from the default.
+	Values map[string]string `json:"values,omitempty"`
 }
+
+// acceptedValuePaths are configuration scalars that accepted source usually
+// leaves to the API server's default but whose changed value breaks the
+// application (the pod resolver policy), so the record keeps their value.
+var acceptedValuePaths = []string{"spec.template.spec.dnsPolicy"}
 
 // acceptedSourceShape identifies which paths accepted source declares. Values
 // stay out so that redacted captures of the same source bind to the record.
@@ -148,13 +157,23 @@ func buildAcceptanceRecord(source, applied, live *unstructured.Unstructured, rea
 		}
 	}
 	paths := []string{}
-	for path, value := range flattenDriftObject(applied) {
+	appliedLeaves, declared := flattenDriftObject(applied), flattenDriftObject(source)
+	for path, value := range appliedLeaves {
 		if value != nil && !carried[path] && !bookkeepingPath(path, value) {
 			paths = append(paths, path)
 		}
 	}
 	sort.Strings(paths)
-	encoded, err := json.Marshal(acceptanceRecord{Source: acceptedSourceShape(source), UID: string(live.GetUID()), Paths: paths})
+	values := map[string]string{}
+	for _, path := range acceptedValuePaths {
+		if value, ok := appliedLeaves[path].(string); ok && !carried[path] && !declaredPath(declared, path) {
+			values[path] = value
+		}
+	}
+	if len(values) == 0 {
+		values = nil
+	}
+	encoded, err := json.Marshal(acceptanceRecord{Source: acceptedSourceShape(source), UID: string(live.GetUID()), Paths: paths, Values: values})
 	if err != nil {
 		return "", false, err
 	}
@@ -162,7 +181,8 @@ func buildAcceptanceRecord(source, applied, live *unstructured.Unstructured, rea
 }
 
 // addedSourceFields returns observed configuration paths that were absent when
-// SDO accepted the object and that accepted source does not declare. Apply
+// SDO accepted the object and that accepted source does not declare, plus the
+// recorded scalars (acceptedValuePaths) whose value has since changed. Apply
 // normalization keeps such fields, so they need their own check. Without a
 // record taken against this source the additions are unknown, and the
 // comparison fails closed. Identity-only declarations are never stamped and
@@ -175,7 +195,22 @@ func addedSourceFields(observed, source *unstructured.Unstructured) ([]string, e
 	if !ok {
 		return nil, ErrAcceptanceRecordUnavailable
 	}
-	return additionsAgainst(observed, record, source), nil
+	paths := append(additionsAgainst(observed, record, source), changedAcceptedValues(observed, record)...)
+	sort.Strings(paths)
+	return paths, nil
+}
+
+// changedAcceptedValues lists the recorded scalars whose observed value differs
+// from the one accepted.
+func changedAcceptedValues(observed *unstructured.Unstructured, record acceptanceRecord) []string {
+	leaves := flattenDriftObject(observed)
+	changed := []string{}
+	for path, accepted := range record.Values {
+		if value, ok := leaves[path].(string); ok && value != accepted {
+			changed = append(changed, path)
+		}
+	}
+	return changed
 }
 
 // ownedByOtherWriters returns the paths that field managers other than SDO's
@@ -287,9 +322,18 @@ func removeAddedFields(next, observed, source *unstructured.Unstructured) {
 	if err != nil || len(added) == 0 {
 		return
 	}
+	record, _ := currentAcceptanceRecord(observed, source)
+	restored := changedAcceptedValues(observed, record)
+	for _, path := range restored {
+		// A changed scalar goes back to its accepted value, not to absence.
+		_ = unstructured.SetNestedField(next.Object, record.Values[path], strings.Split(path, ".")...)
+	}
 	addedSet := make(map[string]bool, len(added))
 	for _, path := range added {
 		addedSet[path] = true
+	}
+	for _, path := range restored {
+		delete(addedSet, path)
 	}
 	leaves := flattenDriftObject(observed)
 	onlyAdded := func(path string) bool {

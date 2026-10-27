@@ -20,14 +20,7 @@ import (
 	"sdo.dev/operator/sdk/sdktest"
 )
 
-type fixedSourceImages struct{ image, tree string }
-
-func (i fixedSourceImages) BaselineImage(sdk.ObjectRef, string, bool) (string, bool) {
-	return i.image, true
-}
-func (i fixedSourceImages) BaselineTree(sdk.ObjectRef) string { return i.tree }
-
-func TestRenderedSourceRestoresBuiltImageWithoutFalseDrift(t *testing.T) {
+func TestAcceptedSourceRestoresImageAsDeclaredWithoutFalseDrift(t *testing.T) {
 	repo := t.TempDir()
 	testutil.InitGit(t, repo)
 	for _, args := range [][]string{{"config", "user.name", "Test"}, {"config", "user.email", "test@example.com"}} {
@@ -49,11 +42,8 @@ func TestRenderedSourceRestoresBuiltImageWithoutFalseDrift(t *testing.T) {
 		t.Fatal(err)
 	}
 	ref := sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "app", Name: "rate"}
-	image := "example/app@sha256:" + strings.Repeat("b", 64)
-	if _, err := (GitPlanSource{Repository: repo, ManifestPaths: []string{"app.yaml"}}).AcceptedManifest(context.Background(), strings.TrimSpace(string(commit)), ref); err == nil {
-		t.Fatal("mutable raw image restored without deployed image evidence")
-	}
-	source := GitPlanSource{Repository: repo, Images: fixedSourceImages{image: image, tree: nativeGit(t, repo, "rev-parse", "HEAD^{tree}")}, ManifestPaths: []string{"app.yaml"}}
+	image := "example/app:latest"
+	source := GitPlanSource{Repository: repo, ManifestPaths: []string{"app.yaml"}}
 	locked := seedRenderedLock(t, source, strings.TrimSpace(string(commit)), "app")
 	commit = []byte(locked)
 	manifests, err := source.AcceptedManifests(context.Background(), strings.TrimSpace(string(commit)), "app")
@@ -214,7 +204,7 @@ func TestGitPlanSourceSelectsDeployedHotelSeed(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			source := GitPlanSource{Repository: repo, ManifestPaths: []string{"kubernetes"}, Images: fixedSourceImages{image: "example/app@sha256:" + strings.Repeat("a", 64), tree: nativeGit(t, repo, "rev-parse", "HEAD^{tree}")}}
+			source := GitPlanSource{Repository: repo, ManifestPaths: []string{"kubernetes"}}
 			commit = []byte(seedRenderedLock(t, source, strings.TrimSpace(string(commit)), "hotel-res"))
 			objects, err := source.AcceptedManifests(context.Background(), strings.TrimSpace(string(commit)), "hotel-res")
 			if err != nil {

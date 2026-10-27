@@ -227,7 +227,7 @@ func TestRestartClassProcess(t *testing.T) {
 	id := os.Getenv("RT1_INCIDENT")
 	restartClassWriteReceipt(t, native, path+".ack-receipt", id)
 	crashAt(path, cut, "after-ack-before-publication")
-	source := GitPlanSource{Repository: root, ManifestPaths: world.ManifestPaths, DeployedCommit: os.Getenv("RT1_BASE")}
+	source := GitPlanSource{Repository: root, ManifestPaths: world.ManifestPaths}
 	client := fake.NewSimpleClientset(world.Live(t, root, os.Getenv("RT1_BASE"))...)
 	c.ReconcileRendered = func(ctx context.Context, revision string) (string, error) {
 		started := time.Now()
@@ -245,7 +245,8 @@ func TestRestartClassProcess(t *testing.T) {
 		t.Fatal(err)
 	}
 	head := nativeGit(t, root, "rev-parse", "HEAD")
-	if !source.LockCurrent(ctx, head, world.Namespace) {
+	if out, err := exec.Command("git", "-C", root, "show", head+":.sdo/rendered/lock.json").CombinedOutput(); err != nil {
+		t.Logf("lock read: %s", out)
 		t.Fatalf("ACK completed but lock never published: %v", diagnostics)
 	}
 	crashAt(path, cut, "after-publication-before-teardown")
@@ -287,7 +288,7 @@ func restartClassBoundary(t *testing.T, ctx context.Context, world restartClassW
 	fixture := os.Getenv("RT1_CLOSEOUT_FIXTURE")
 	proposals, ledger := filepath.Join(directory, "proposals"), filepath.Join(directory, "ledger")
 	native := restartClassNative(t, root, proposals, ledger)
-	source := GitPlanSource{Repository: root, ManifestPaths: world.ManifestPaths, DeployedCommit: base}
+	source := GitPlanSource{Repository: root, ManifestPaths: world.ManifestPaths}
 	if _, err := (RenderedLockReconciler{Source: source, Client: fake.NewSimpleClientset(world.Live(t, root, base)...), Broker: native.Repository}).Reconcile(ctx, base, world.Namespace); err != nil {
 		t.Fatal(err)
 	}

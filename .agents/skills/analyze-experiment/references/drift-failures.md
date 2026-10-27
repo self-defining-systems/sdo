@@ -69,33 +69,17 @@ predicate and complete repair-to-NoMatch replay through the shared compiler gate
 
 New controllers publish the sixth artifact class at `.sdo/rendered/`: version-1
 `lock.json` indexes namespace-scoped objects, source commit, selected manifest
-paths, normalized YAML filenames and SHA-256 hashes, plus named regular/init
-container digests. YAML retains the applied image reference, including an existing
-mutable tag; compare its separate index digest to runtime image identity rather
-than treating tag-versus-digest spelling as spec drift. A failed object has an explicit `error` entry. Only Go writes
-these files, through the broker after rollout observation and fresh-render checks.
+paths, normalized YAML filenames and SHA-256 hashes, plus each container's image
+string as source writes it. The lock is an information snapshot: nothing reads it
+to decide a diff, a reconcile or a closure. Only Go writes these files, through
+the broker after a fresh-render check.
 
-For post-memory-commit rendering failures, compare the Git tree of
-`.sdo/rendered/` before and after the `.sdo/` publication. It must be identical;
-the lock's `source_commit` need not equal the operational head. Compare application
-inputs outside `.sdo/` before calling a lock stale. Other application changes
-invalidate evidence until the completed deployment receives a new lock.
-`AcceptedManifest(s)`, adoption, drift and `sdo source` read this accepted snapshot.
-A cold restart no longer needs the former in-memory healthy image baseline. Source-pinned
-images must remain identical. Mutable or built references require trusted
-apply/rollout-time evidence in the broker's private `source-evidence` ledger,
-bound to the accepted source inputs, workload, container name and regular/init
-role. Its `container_images` entries retain both `applied` and `digest`. Optional
-`inputs` records the trusted plan's `source_image`, `context_path`, and
-`dockerfile_path`; a source image with empty paths explicitly has no local
-build. Missing inputs retain the all-source rule. Known builds compare their
-context (respecting Docker ignore files), Dockerfile and ignore configuration.
-Any intervening accepted source change to these inputs retires that image's
-evidence, including an edit followed by a revert. Unaffected images retain
-coverage; gapped workloads require fresh trusted deployment evidence. Legacy
-flat `images` lists cannot authorize a substitution. Matching current annotations,
-readiness or Pod image status alone are insufficient. A missing ledger after
-restart creates an explicit per-object gap rather than accepting the live image.
+`AcceptedManifest(s)`, adoption, drift and `sdo source` render accepted source
+directly, like `kubectl diff` and `kubectl apply`. The image string is compared
+and applied exactly as source writes it (tag or digest). No image evidence,
+deployer receipt or image ledger is required, and a stale or missing lock never
+blocks a diff, a reconcile or a closure. A restart before the accepted-source
+inventory loads makes a verified closure wait (bounded), never retire.
 Publication errors retain the last accepted revision or explicitly recover the
 broker's advanced HEAD; an empty publication result must never clear it.
 

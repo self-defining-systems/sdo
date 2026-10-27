@@ -32,7 +32,7 @@ func TestRestartClassResumedControllerPublishesAfterACK(t *testing.T) {
 	replicas := int32(1)
 	live := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "jaeger", Namespace: "demo", Generation: 1}, Spec: appsv1.DeploymentSpec{Replicas: &replicas}, Status: appsv1.DeploymentStatus{ObservedGeneration: 1, Replicas: 1, UpdatedReplicas: 1, ReadyReplicas: 1, AvailableReplicas: 1}}
 	client := fake.NewSimpleClientset(live, maintenanceConfigMap("demo-sdo", "paused", "before-publication"))
-	source := GitPlanSource{Repository: root, ManifestPaths: []string{"deploy/tracing.yaml"}, DeployedCommit: base.Commit}
+	source := GitPlanSource{Repository: root, ManifestPaths: []string{"deploy/tracing.yaml"}}
 	if _, err := (RenderedLockReconciler{Source: source, Client: client, Broker: native.Repository}).Reconcile(ctx, base.Commit, "demo"); err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +77,7 @@ func TestRestartClassResumedControllerPublishesAfterACK(t *testing.T) {
 		t.Fatal(err)
 	}
 	head := nativeGit(t, root, "rev-parse", "HEAD")
-	if source.LockCurrent(ctx, head, "demo") {
+	if lockCurrent(ctx, source, head) {
 		t.Fatal("fixture did not retain a stale post-repair lock")
 	}
 	store := lifecycleio.NewConfigMapStateStore(client, "demo-sdo", controllerStateConfigMap)
@@ -121,7 +121,7 @@ func TestRestartClassResumedControllerPublishesAfterACK(t *testing.T) {
 	deadline = time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		head = nativeGit(t, root, "rev-parse", "HEAD")
-		if source.LockCurrent(ctx, head, "demo") {
+		if lockCurrent(ctx, source, head) {
 			ledger, err := native.readLedger(ack.Receipt.IncidentID)
 			if err != nil || !ledger.Acknowledged {
 				t.Fatalf("publication lost durable ACK: %v", err)

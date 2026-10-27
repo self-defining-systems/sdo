@@ -22,32 +22,32 @@ var ErrAcceptedManifestAbsent = errors.New("object is absent from accepted manif
 
 var gitRevision = regexp.MustCompile(`^[a-fA-F0-9]{40,64}$`)
 
-// SourceImages provides FX1 image evidence keyed by workload, name and role.
-type SourceImages interface {
-	BaselineImage(sdk.ObjectRef, string, bool) (string, bool)
-	BaselineTree(sdk.ObjectRef) string
-}
-
-// Source reads durable accepted locks and prepares controller-owned renders.
+// Source reads accepted manifests from Git and renders them as source writes
+// them: images keep the exact string the manifest declares, tag or digest.
 type Source struct {
-	Evidence   []DeploymentEvidence
-	Gaps       map[sdk.ObjectRef]string
-	Repository string
-	Images     SourceImages
-	// Digests records pull identities separately when applied references are mutable.
-	Digests       SourceImages
+	Repository    string
 	ManifestPaths []string
-	// DeployedCommit binds explicit image evidence for legacy deployments that
-	// predate source-tree annotations. It is the trusted deployed revision,
-	// never the advancing operational-memory head.
-	DeployedCommit string
 }
 
 // AcceptedManifests returns rendered, namespace-scoped source objects that
 // the drift change feed can own. Render failures return the available objects
 // together with an explicit error; callers must not treat a partial set as complete.
 func (s Source) AcceptedManifests(ctx context.Context, revision, namespace string) ([]*unstructured.Unstructured, error) {
-	return s.lockManifests(ctx, revision, namespace)
+	raw, err := s.RawManifests(ctx, revision, namespace)
+	if err != nil {
+		return nil, err
+	}
+	objects := make([]*unstructured.Unstructured, 0, len(raw))
+	var failures []error
+	for _, object := range raw {
+		rendered, err := s.render(object)
+		if err != nil {
+			failures = append(failures, err)
+			continue
+		}
+		objects = append(objects, rendered)
+	}
+	return objects, errors.Join(failures...)
 }
 
 func (s Source) RawManifests(ctx context.Context, revision, namespace string) ([]*unstructured.Unstructured, error) {
@@ -124,7 +124,20 @@ func (s Source) rawManifests(ctx context.Context, revision, namespace string, qu
 }
 
 func (s Source) AcceptedManifest(ctx context.Context, revision string, ref sdk.ObjectRef) (*unstructured.Unstructured, error) {
-	return s.lockManifest(ctx, revision, ref)
+	return s.acceptedObject(ctx, revision, ref.Namespace, ref)
+}
+
+func (s Source) acceptedObject(ctx context.Context, revision, namespace string, ref sdk.ObjectRef) (*unstructured.Unstructured, error) {
+	raw, err := s.RawManifests(ctx, revision, namespace)
+	if err != nil {
+		return nil, err
+	}
+	for _, object := range raw {
+		if objectRef(object) == ref {
+			return s.render(object)
+		}
+	}
+	return nil, fmt.Errorf("%w: %s/%s", ErrAcceptedManifestAbsent, ref.Kind, ref.Name)
 }
 
 func (s Source) Revision(ctx context.Context, ref sdk.ObjectRef, revision string) (*unstructured.Unstructured, error) {
@@ -140,64 +153,14 @@ func (s Source) Revision(ctx context.Context, ref sdk.ObjectRef, revision string
 	return nil, fmt.Errorf("%w: %s/%s/%s at %s", ErrAcceptedManifestAbsent, ref.Kind, ref.Namespace, ref.Name, revision)
 }
 
-func (s Source) renderDocument(ctx context.Context, document map[string]any, tree string, ref sdk.ObjectRef, path string) (*unstructured.Unstructured, error) {
-	renderTree := ""
-	useImages := s.Images != nil
-	if useImages {
-		observedTree := s.Images.BaselineTree(ref)
-		deployedTree := observedTree
-		if deployedTree == "" && s.DeployedCommit != "" {
-			if !gitRevision.MatchString(s.DeployedCommit) {
-				return nil, fmt.Errorf("full deployed commit revision is required")
-			}
-			var err error
-			deployedTree, err = s.sourceTree(ctx, s.DeployedCommit)
-			if err != nil {
-				return nil, err
-			}
-		}
-		useImages = deployedTree != ""
-		if useImages {
-			same, err := s.SameWorkloadInputs(ctx, deployedTree, tree, &unstructured.Unstructured{Object: document}, s.Evidence)
-			if err != nil {
-				return nil, fmt.Errorf("image source identity for %s/%s: %w", ref.Kind, ref.Name, err)
-			}
-			useImages = same
-			if same {
-				renderTree = observedTree
-			}
-		}
+// render applies the namespace default and returns a copy; images are kept
+// exactly as source declares them.
+func (s Source) render(object *unstructured.Unstructured) (*unstructured.Unstructured, error) {
+	document := object.DeepCopy().Object
+	if _, _, err := RenderManifest(document, object.GetNamespace(), "", nil); err != nil {
+		return nil, fmt.Errorf("render accepted manifest %s/%s: %w", object.GetKind(), object.GetName(), err)
 	}
-	missingImage := false
-	_, _, err := RenderManifest(document, ref.Namespace, renderTree, func(kind, name, container string, init bool, sourceImage string) string {
-		if immutableImage.MatchString(sourceImage) {
-			return sourceImage
-		}
-		if useImages {
-			if image, ok := s.Images.BaselineImage(sdk.ObjectRef{APIVersion: ref.APIVersion, Kind: kind, Namespace: ref.Namespace, Name: name}, container, init); ok {
-				return image
-			}
-		}
-		if !strings.Contains(sourceImage, "@sha256:") {
-			missingImage = true
-		}
-		return sourceImage
-	})
-	if err != nil {
-		return nil, fmt.Errorf("render accepted manifest %s: %w", path, err)
-	}
-	if missingImage {
-		return nil, fmt.Errorf("deployed image for %s/%s is unavailable from trusted deployment evidence", ref.Kind, ref.Name)
-	}
-	encoded, err := json.Marshal(document)
-	if err != nil {
-		return nil, err
-	}
-	object := &unstructured.Unstructured{}
-	if err := json.Unmarshal(encoded, &object.Object); err != nil {
-		return nil, err
-	}
-	return object, nil
+	return &unstructured.Unstructured{Object: document}, nil
 }
 
 func (s Source) sourceTree(ctx context.Context, revision string) (string, error) {
@@ -244,13 +207,9 @@ func (s Source) SameInputs(ctx context.Context, left, right string) (bool, error
 	return s.sameImageSource(ctx, leftTree, rightTree)
 }
 
-// AcceptedScopedManifest is a read-only source comparison. The application's
-// trusted lock proves source selection/freshness; it does not authorize foreign
-// writes, image fallback or a foreign rendered lock.
+// AcceptedScopedManifest is a read-only source comparison; it does not
+// authorize foreign writes.
 func (s Source) AcceptedScopedManifest(ctx context.Context, revision, applicationNamespace string, ref sdk.ObjectRef) (*unstructured.Unstructured, error) {
-	if _, err := s.readLock(ctx, revision, applicationNamespace); err != nil {
-		return nil, err
-	}
 	target := sdk.ObservationTarget{APIVersion: ref.APIVersion, Kind: ref.Kind, Namespace: ref.Namespace}
 	if target.Cluster() {
 		target.Name = ref.Name
@@ -270,19 +229,9 @@ func (s Source) AcceptedScopedManifest(ctx context.Context, revision, applicatio
 	return nil, ErrAcceptedManifestAbsent
 }
 
-// AcceptedApplicationManifest reads a source-declared object through the owning
-// application's accepted render lock, including named cluster-scoped objects.
-// Its full locked fields are usable for source restoration; arbitrary foreign
+// AcceptedApplicationManifest reads a source-declared object, including named
+// cluster-scoped objects, for source restoration; arbitrary foreign
 // observations still use the separately restricted AcceptedScopedManifest.
 func (s Source) AcceptedApplicationManifest(ctx context.Context, revision, namespace string, ref sdk.ObjectRef) (*unstructured.Unstructured, error) {
-	snapshot, err := s.readLock(ctx, revision, namespace)
-	if err != nil {
-		return nil, err
-	}
-	for _, entry := range snapshot.Lock.Objects {
-		if entry.Ref == ref {
-			return s.lockedObject(ctx, revision, snapshot, entry)
-		}
-	}
-	return nil, fmt.Errorf("%w: %s/%s", ErrAcceptedManifestAbsent, ref.Kind, ref.Name)
+	return s.acceptedObject(ctx, revision, namespace, ref)
 }

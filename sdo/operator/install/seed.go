@@ -1,7 +1,6 @@
 package install
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -24,30 +23,9 @@ func KubectlTarSeeder(repositoryPath, acceptedCommit string) RepositorySeeder {
 // KubectlTarSeederWithKubeconfig directs kubectl to the same cluster as the
 // host client without changing the process environment or other launchers.
 func KubectlTarSeederWithKubeconfig(repositoryPath, acceptedCommit, kubeconfig string) RepositorySeeder {
-	return KubectlTarSeederWithBrokerEvidence(repositoryPath, acceptedCommit, kubeconfig, "")
-}
-
-// KubectlTarSeederWithBrokerEvidence also restores an explicitly supplied trusted
-// deployment ledger. The ledger is operator input, never inferred from Git or Pods.
-func KubectlTarSeederWithBrokerEvidence(repositoryPath, acceptedCommit, kubeconfig, brokerRoot string) RepositorySeeder {
-	return KubectlTarAdoptionSeeder(repositoryPath, acceptedCommit, kubeconfig, brokerRoot, nil)
-}
-
-// KubectlTarAdoptionSeeder prefers an operator-supplied ledger. Without one,
-// it captures the adopted application's image identities at this install.
-func KubectlTarAdoptionSeeder(repositoryPath, acceptedCommit, kubeconfig, brokerRoot string, capture *AdoptionCapture) RepositorySeeder {
 	return func(ctx context.Context, cfg Config) error {
 		if cfg.AcceptedCommit != "" && cfg.AcceptedCommit != acceptedCommit {
 			return fmt.Errorf("repository seeder commit differs from installer accepted commit")
-		}
-		evidence, err := seedBrokerArchive(ctx, repositoryPath, acceptedCommit, brokerRoot)
-		if err != nil {
-			return fmt.Errorf("trusted seed deployment evidence: %w", err)
-		}
-		if brokerRoot == "" && capture != nil {
-			if evidence, err = adoptionArchive(ctx, *capture, repositoryPath, acceptedCommit, cfg.Namespace); err != nil {
-				return fmt.Errorf("adopted deployment evidence: %w", err)
-			}
 		}
 		checkout, cleanup, err := prepareAcceptedCheckout(ctx, repositoryPath, acceptedCommit)
 		if err != nil {
@@ -78,13 +56,6 @@ func KubectlTarAdoptionSeeder(repositoryPath, acceptedCommit, kubeconfig, broker
 		producerErr := producer.Wait()
 		if producerErr != nil || consumerErr != nil {
 			return fmt.Errorf("copy accepted repository into controller PVC: tar=%v kubectl=%v", producerErr, consumerErr)
-		}
-		if len(evidence) > 0 {
-			copy := kubectlCommand(ctx, kubeconfig, "--namespace", cfg.controlNamespace(), "exec", "-i", RepositorySyncPodName, "--", "tar", "-C", "/workspace/worktrees", "-xf", "-")
-			copy.Stdin = bytes.NewReader(evidence)
-			if output, err := copy.CombinedOutput(); err != nil {
-				return fmt.Errorf("copy trusted seed deployment ledger: %w: %s", err, strings.TrimSpace(string(output)))
-			}
 		}
 		return nil
 	}

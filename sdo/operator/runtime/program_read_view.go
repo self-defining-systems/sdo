@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -280,6 +281,9 @@ func (v LiveReadView) DiffAgainstSource(ref sdk.ObjectRef) (program.Diff, error)
 	added, err := addedSourceFields(observed, source)
 	if err != nil {
 		return program.Diff{}, &AcceptanceUnknownError{Ref: ref, Declared: program.Diff{Text: text}}
+	}
+	if len(added) > 0 {
+		text += "\nchanged since acceptance: " + strings.Join(added, ", ")
 	}
 	return program.Diff{Changed: len(added) > 0, Text: text}, nil
 }

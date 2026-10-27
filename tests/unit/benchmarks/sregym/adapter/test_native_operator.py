@@ -46,11 +46,6 @@ def _install(tmp_path: Path) -> NativeInstallConfig:
     )
 
 
-def test_trusted_seed_broker_root_requires_an_absolute_host_path(tmp_path: Path) -> None:
-    with pytest.raises(ValueError, match="trusted seed broker root must be absolute"):
-        replace(_install(tmp_path), seed_broker_root=tmp_path.relative_to(tmp_path.anchor))
-
-
 @pytest.mark.parametrize("code_path", ["go", "shell"])
 def test_install_existing_invokes_go_cli_and_parses_receipt(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, code_path: str
@@ -77,7 +72,6 @@ def test_install_existing_invokes_go_cli_and_parses_receipt(
             responder_namespaces=("policy-system",),
             max_response_loops=3,
             deployed_manifest_paths=("kubernetes",),
-            seed_broker_root=tmp_path / "trusted-seed-broker",
         )
     )
 
@@ -97,7 +91,7 @@ def test_install_existing_invokes_go_cli_and_parses_receipt(
     assert "--healthy-baseline" in calls[0]
     assert calls[0][calls[0].index("--max-response-loops") + 1] == "3"
     assert calls[0][calls[0].index("--deployed-manifest-path") + 1] == "kubernetes"
-    assert calls[0][calls[0].index("--seed-broker-root") + 1] == str(tmp_path / "trusted-seed-broker")
+    assert "--seed-broker-root" not in calls[0]
     assert "--drift-tokens-per-hour" not in calls[0]
     assert "pull" in calls[0]
     assert calls[0][0] != "python3"
