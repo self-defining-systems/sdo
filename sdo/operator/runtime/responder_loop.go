@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"strings"
 	"context"
 	"crypto/rand"
 	"encoding/json"
@@ -88,6 +89,9 @@ type ToolResponse struct {
 	ApplicationID              string                         `json:"application_id,omitempty"`
 	Patches                    []PlanPatch                    `json:"patches,omitempty"`
 	ProgramRuns                []ProgramRun                   `json:"program_runs,omitempty"`
+	// PriorStages reports automatic passes that ran while the responder worked,
+	// each once, in the vocabulary of the incident's prior_stages.
+	PriorStages []StageNote `json:"prior_stages,omitempty"`
 
 	// ProgramRunsOmitted counts runs a truncated record could not list; the
 	// trust reader fails closed on it. ProgramRunsUnrelatedOmitted counts apply
@@ -182,6 +186,7 @@ type ResponderLoop struct {
 	CorpusSessionRoot     string
 	capturePhase          string
 	sourceCompared        map[string]bool
+	stageNotes            []StageNote
 	timing                toolTiming
 	preApplyCaptured      bool
 	saveToolState         func(context.Context, []byte) error
@@ -592,6 +597,14 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 		response.Error = fmt.Sprintf("unknown sdo command %q", request.Command)
 	}
 	response.LoopsUsed = l.batches
+	if notes := l.takeStageNotes(); len(notes) > 0 {
+		response.PriorStages = notes
+		lines := make([]string, len(notes))
+		for i, note := range notes {
+			lines[i] = note.String()
+		}
+		response.Summary = "automatic stage ran while you worked: " + strings.Join(lines, "; ") + ". " + response.Summary
+	}
 	return response
 }
 

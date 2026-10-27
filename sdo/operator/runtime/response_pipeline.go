@@ -122,7 +122,7 @@ func (c *Controller) runResponsePipeline(ctx context.Context, request IncidentRe
 	err := RunResponseStages(ctx, state, stages)
 	c.mu.Lock()
 	if c.currentIncidentRequest != nil && c.currentIncidentRequest.IncidentID == request.IncidentID {
-		c.currentIncidentRequest.PriorStages = cloneStageReports(state.PriorStages)
+		c.currentIncidentRequest.PriorStages = mergeLaterStagePasses(state.PriorStages, c.currentIncidentRequest.PriorStages)
 		c.currentIncidentRequest.PlaybookCoverage = cloneCoverage(state.Coverage)
 		c.currentIncidentRequest.InitialProgramRuns = append([]ProgramRun(nil), state.Request.InitialProgramRuns...)
 	}
