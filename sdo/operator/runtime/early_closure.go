@@ -193,10 +193,9 @@ func (c *Controller) finishEarlyReport(ctx context.Context, now time.Time) {
 	}
 	id := c.currentIncidentRequest.IncidentID
 	cancel := c.responderCancel
-	loop := c.responderLoop
 	attempts := max(0, c.currentIncidentRequest.MaxResponseLoops)
 	c.mu.Unlock()
-	if err := c.stopResponderWork(ctx, id, attempts, loop, cancel); err != nil {
+	if err := c.stopResponderWork(ctx, id, attempts, cancel); err != nil {
 		c.mu.Lock()
 		c.earlyStopRetryAt = now.Add(time.Second)
 		c.mu.Unlock()
@@ -240,9 +239,9 @@ func (c *Controller) settleBoundedContinuation(ctx context.Context, now time.Tim
 	}
 	id := c.currentIncidentRequest.IncidentID
 	attempts := max(0, c.currentIncidentRequest.MaxResponseLoops)
-	cancel, loop := c.responderCancel, c.responderLoop
+	cancel := c.responderCancel
 	c.mu.Unlock()
-	if err := c.stopResponderWork(ctx, id, attempts, loop, cancel); err != nil {
+	if err := c.stopResponderWork(ctx, id, attempts, cancel); err != nil {
 		c.mu.Lock()
 		c.earlyStopRetryAt = now.Add(time.Second)
 		c.mu.Unlock()
@@ -268,12 +267,9 @@ func (c *Controller) settleBoundedContinuation(ctx context.Context, now time.Tim
 // Stop scheduling turns before inventory and prove Job/Pod quiescence even
 // when dispatch completion has already arrived. Both bounded lifecycle paths
 // use this same termination protocol.
-func (c *Controller) stopResponderWork(ctx context.Context, id string, attempts int, loop *ResponderLoop, cancel context.CancelFunc) error {
+func (c *Controller) stopResponderWork(ctx context.Context, id string, attempts int, cancel context.CancelFunc) error {
 	if cancel != nil {
 		cancel()
-	}
-	if loop != nil {
-		attempts = max(attempts, loop.continuationAttempts())
 	}
 	if stopper, ok := c.dispatcher.(interface {
 		StopResponder(context.Context, string, int) error
