@@ -733,7 +733,7 @@ class KubectlClusterOps:
             kubectl_runner=kubectl,
             timeout_seconds=RESUMED_BASELINE_TIMEOUT_SECONDS,
             startup_timeout_seconds=BASELINE_TIMEOUT_SECONDS,
-            poll_seconds=1.0,
+            poll_seconds=POLL_SECONDS,
         )
 
     def collect_receipt(self, config: RuntimeConfig, incident_id: str, artifacts_dir: Path) -> dict[str, Any]:

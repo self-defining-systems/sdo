@@ -453,8 +453,8 @@ def _composite_settings(args: argparse.Namespace) -> CompositeSettings:
     return CompositeSettings(
         deadline_seconds=args.composite_deadline,
         idle_seconds=args.composite_idle,
-        stable_seconds=20.0,
-        poll_seconds=1.0,
+        stable_seconds=wait_for(WaitKind.STABLE),
+        poll_seconds=wait_for(WaitKind.POLL_FAST),
     )
 
 
@@ -554,7 +554,7 @@ def _sdo_agent(
         results_dir=results_dir,
         kubeconfig=str(environment.kubeconfig),
         verification_timeout_seconds=float(args.composite_deadline if composite else args.timeout + 300),
-        reflection_wait_seconds=3600.0,
+        reflection_wait_seconds=wait_for(WaitKind.REFLECTION_DRAIN),
         detection_timeout_seconds=args.detection_timeout,
         checkpoint_enabled=not args.no_checkpoints,
     )
@@ -801,7 +801,7 @@ def _run(args: argparse.Namespace) -> int:
             baseline=baseline,
             cluster=KubectlApplicationCluster(environment.kubeconfig) if baseline is not None else None,
             health_timeout_seconds=args.health_timeout,
-            health_poll_seconds=1.0,
+            health_poll_seconds=wait_for(WaitKind.POLL_FAST),
             before_inject=before_inject,
             require_full_cleanup=args.require_full_cleanup,
             require_faulty_oracle=getattr(args, "require_faulty_oracle", False),
