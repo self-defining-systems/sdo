@@ -185,3 +185,14 @@ recorded repair keep their original resources as unassigned `question/no_recorde
 items; no clearance, attribution or pre-incident capture is required for the rest. Failed-outcome projection keeps its existing handling.
 
 `drift_reprompt` records the controller's single extra response turn after healthy verification with remaining source drift. Presence means it was scheduled durably; `findings_before` counts the differences in its verify payload, and optional `findings_after` counts a fresh post-turn check (absent if no check returned). This turn consumes no mitigation round; drift still never changes the health verdict or gates closure after the turn. Worker-authored values are discarded.
+
+Setup detector exclusions: `ControllerState.disabled_setup_detectors`,
+`NamespaceOnboarding.disabled_setup_detectors` (the immutable setup receipt), and
+`OutcomeRecord.disabled_setup_detectors` retain detector ID, accepted revision,
+finding fingerprints, disabled time and the reason "fired on the confirmed-healthy
+app at setup". Only responder-owned learned incident detectors qualify; health
+judge detectors remain authoritative. Evaluation is skipped only at the exact
+accepted revision and resumes on a different revision. Reflection sees the
+outcome records to repair or delete the detector; exclusion is not incident
+recovery or repair credit. `setup_evaluated_revision` prevents later steady-state
+findings being mistaken for setup false positives.

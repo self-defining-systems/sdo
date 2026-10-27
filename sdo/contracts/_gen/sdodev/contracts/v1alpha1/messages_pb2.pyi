@@ -350,19 +350,35 @@ class OperationalArtifactProposal(_message.Message):
     delete_playbook_ids: _containers.RepeatedScalarFieldContainer[str]
     def __init__(self, detectors: _Optional[_Iterable[_Union[ProposedDetector, _Mapping]]] = ..., playbooks: _Optional[_Iterable[_Union[ProposedPlaybook, _Mapping]]] = ..., traffic_generators: _Optional[_Iterable[_Union[ProposedTrafficGenerator, _Mapping]]] = ..., traffic_workloads: _Optional[_Iterable[_Union[_traffic_pb2.TrafficWorkload, _Mapping]]] = ..., delete_detector_ids: _Optional[_Iterable[str]] = ..., delete_playbook_ids: _Optional[_Iterable[str]] = ...) -> None: ...
 
+class DisabledSetupDetector(_message.Message):
+    __slots__ = ("detector_id", "accepted_revision", "fingerprints", "disabled_at", "reason")
+    DETECTOR_ID_FIELD_NUMBER: _ClassVar[int]
+    ACCEPTED_REVISION_FIELD_NUMBER: _ClassVar[int]
+    FINGERPRINTS_FIELD_NUMBER: _ClassVar[int]
+    DISABLED_AT_FIELD_NUMBER: _ClassVar[int]
+    REASON_FIELD_NUMBER: _ClassVar[int]
+    detector_id: str
+    accepted_revision: str
+    fingerprints: _containers.RepeatedScalarFieldContainer[str]
+    disabled_at: _timestamp_pb2.Timestamp
+    reason: str
+    def __init__(self, detector_id: _Optional[str] = ..., accepted_revision: _Optional[str] = ..., fingerprints: _Optional[_Iterable[str]] = ..., disabled_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., reason: _Optional[str] = ...) -> None: ...
+
 class NamespaceOnboarding(_message.Message):
-    __slots__ = ("namespace", "accepted_commit", "established_at", "objects", "environment_objects")
+    __slots__ = ("disabled_setup_detectors", "namespace", "accepted_commit", "established_at", "objects", "environment_objects")
+    DISABLED_SETUP_DETECTORS_FIELD_NUMBER: _ClassVar[int]
     NAMESPACE_FIELD_NUMBER: _ClassVar[int]
     ACCEPTED_COMMIT_FIELD_NUMBER: _ClassVar[int]
     ESTABLISHED_AT_FIELD_NUMBER: _ClassVar[int]
     OBJECTS_FIELD_NUMBER: _ClassVar[int]
     ENVIRONMENT_OBJECTS_FIELD_NUMBER: _ClassVar[int]
+    disabled_setup_detectors: _containers.RepeatedCompositeFieldContainer[DisabledSetupDetector]
     namespace: str
     accepted_commit: str
     established_at: _timestamp_pb2.Timestamp
     objects: _containers.RepeatedCompositeFieldContainer[_common_pb2.ObjectRef]
     environment_objects: _containers.RepeatedCompositeFieldContainer[InstallEnvironmentObject]
-    def __init__(self, namespace: _Optional[str] = ..., accepted_commit: _Optional[str] = ..., established_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., objects: _Optional[_Iterable[_Union[_common_pb2.ObjectRef, _Mapping]]] = ..., environment_objects: _Optional[_Iterable[_Union[InstallEnvironmentObject, _Mapping]]] = ...) -> None: ...
+    def __init__(self, disabled_setup_detectors: _Optional[_Iterable[_Union[DisabledSetupDetector, _Mapping]]] = ..., namespace: _Optional[str] = ..., accepted_commit: _Optional[str] = ..., established_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., objects: _Optional[_Iterable[_Union[_common_pb2.ObjectRef, _Mapping]]] = ..., environment_objects: _Optional[_Iterable[_Union[InstallEnvironmentObject, _Mapping]]] = ...) -> None: ...
 
 class InstallEnvironmentObject(_message.Message):
     __slots__ = ("ref", "digest")
