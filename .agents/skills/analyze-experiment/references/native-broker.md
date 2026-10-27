@@ -92,3 +92,32 @@ script's exit code, duration (Go duration nanoseconds), stdout/stderr tails, tim
 error and fired streak. Two nonzero runs fire; errors reset the streak and block
 health. Controller closure still owns recovery and its stability evidence. Keep
 activation latency separate from script execution and responder runtime.
+## Ordered response stages
+
+`ControllerConfig.code_path.overrides.response_stages` defaults to `deterministic,agent`; `agent`
+alone is the baseline. `IncidentRequest.prior_stages` and
+`OutcomeRecord.prior_stages` retain typed controller-owned stage reports.
+Each mitigation identifies the accepted playbook revision, bindings, plan,
+`apply_receipt`, post-apply Diagnose, and cleared/remaining finding fingerprints.
+Results distinguish `applied_cleared`, `applied_still_matching`, `rollout_failed`,
+`rollout_pending_at_handoff`, `apply_error`, and `skipped` with `skip_reason`.
+Stage-level fingerprints describe work remaining at each handoff. These scoped
+observations never replace independent controller closure/classification.
+
+The deterministic stage requires a fresh Match, exactly one mitigation entry
+point, and all parameters bound from covered findings. It has no trust gate and
+never automatically undoes a completed apply. Its own rollout wait is capped at
+30 seconds. Interrupted apply intent survives in the incident tool checkpoint;
+a retry reports uncertainty instead of repeating a potentially landed mutation.
+
+`resolution_path: deterministic` means the incident needed no responder worker;
+usage is zero model work, while recorded plan actions remain repair evidence.
+These incidents still receive reflection using a fresh session and the same
+stage reports; a missing session from a failed responder does not enable that
+fallback. Attribute learning only from the accepted reflection and independently
+verified cause evidence. The responder's inline view summarizes stages; complete
+receipts remain in its private incident facts and committed outcome.
+
+### Receipts after responder retirement
+
+The controller may retire a responder Job after an early report. Post-reflection receipt collection uses the broker ledger's frozen incident request, correlated result, durable dispatch/completion timestamps, independently verified closure, and accepted acknowledgment. A live responder Job is not a receipt prerequisite. An empty `responder_job_evidence` means no Kubernetes success claim is made; the Go checker requires valid ordered lifecycle timestamps and a completed correlated result instead. Historical receipts with Job evidence retain their original validation.

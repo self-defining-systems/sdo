@@ -70,7 +70,7 @@ func TestT1L2ShadowReplay(t *testing.T) {
 			for _, key := range keys {
 				t.Logf("fixed %s = %s", key, fixed[key])
 			}
-			t.Logf("work=%v missing_final_proofs=%d", t1Items(work), missingFinal)
+			t.Logf("work=%v missing_final_proofs=%d trust=%+v", t1Items(work), missingFinal, ProgramTrustStats([]*contracts.OutcomeRecord{outcome}))
 			for _, item := range unassigned {
 				t.Logf("unassigned=%s/%s program=%s bindings=%v resources=%v", item.Disposition, item.Reason, item.ProgramId, item.Bindings, item.Resources)
 			}

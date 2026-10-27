@@ -373,7 +373,7 @@ class InstallEnvironmentObject(_message.Message):
     def __init__(self, ref: _Optional[_Union[_common_pb2.ObjectRef, _Mapping]] = ..., digest: _Optional[str] = ...) -> None: ...
 
 class IncidentRequest(_message.Message):
-    __slots__ = ("schema_version", "application", "namespace", "incident_id", "findings", "detector_history", "surfaced_playbooks", "relevant_outcomes", "source_commit", "deployed_commit", "repository_worktree", "repository_base_commit", "response_deadline", "cancellation_token", "repair_policy", "state_changes", "memory_snapshot", "initial_program_runs", "max_response_loops", "drift_events", "prepared_agent_task", "observation_generation", "playbook_coverage", "namespace_onboarding")
+    __slots__ = ("schema_version", "application", "namespace", "incident_id", "findings", "detector_history", "surfaced_playbooks", "relevant_outcomes", "source_commit", "deployed_commit", "repository_worktree", "repository_base_commit", "response_deadline", "cancellation_token", "repair_policy", "state_changes", "memory_snapshot", "initial_program_runs", "max_response_loops", "drift_events", "prepared_agent_task", "observation_generation", "playbook_coverage", "namespace_onboarding", "prior_stages")
     SCHEMA_VERSION_FIELD_NUMBER: _ClassVar[int]
     APPLICATION_FIELD_NUMBER: _ClassVar[int]
     NAMESPACE_FIELD_NUMBER: _ClassVar[int]
@@ -398,6 +398,7 @@ class IncidentRequest(_message.Message):
     OBSERVATION_GENERATION_FIELD_NUMBER: _ClassVar[int]
     PLAYBOOK_COVERAGE_FIELD_NUMBER: _ClassVar[int]
     NAMESPACE_ONBOARDING_FIELD_NUMBER: _ClassVar[int]
+    PRIOR_STAGES_FIELD_NUMBER: _ClassVar[int]
     schema_version: str
     application: str
     namespace: str
@@ -422,7 +423,8 @@ class IncidentRequest(_message.Message):
     observation_generation: str
     playbook_coverage: _program_pb2.PlaybookCoverage
     namespace_onboarding: NamespaceOnboarding
-    def __init__(self, schema_version: _Optional[str] = ..., application: _Optional[str] = ..., namespace: _Optional[str] = ..., incident_id: _Optional[str] = ..., findings: _Optional[_Iterable[_Union[Finding, _Mapping]]] = ..., detector_history: _Optional[_Iterable[_Union[DetectorEvaluation, _Mapping]]] = ..., surfaced_playbooks: _Optional[_Iterable[_Union[SurfacedPlaybook, _Mapping]]] = ..., relevant_outcomes: _Optional[_Iterable[_Union[PriorOutcomeEvidence, _Mapping]]] = ..., source_commit: _Optional[str] = ..., deployed_commit: _Optional[str] = ..., repository_worktree: _Optional[str] = ..., repository_base_commit: _Optional[str] = ..., response_deadline: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., cancellation_token: _Optional[str] = ..., repair_policy: _Optional[str] = ..., state_changes: _Optional[_Union[StateChanges, _Mapping]] = ..., memory_snapshot: _Optional[_Union[OperationalMemorySnapshot, _Mapping]] = ..., initial_program_runs: _Optional[_Iterable[_Union[_program_pb2.ProgramRun, _Mapping]]] = ..., max_response_loops: _Optional[int] = ..., drift_events: _Optional[_Iterable[_Union[DriftEvent, _Mapping]]] = ..., prepared_agent_task: _Optional[str] = ..., observation_generation: _Optional[str] = ..., playbook_coverage: _Optional[_Union[_program_pb2.PlaybookCoverage, _Mapping]] = ..., namespace_onboarding: _Optional[_Union[NamespaceOnboarding, _Mapping]] = ...) -> None: ...
+    prior_stages: _containers.RepeatedCompositeFieldContainer[StageReport]
+    def __init__(self, schema_version: _Optional[str] = ..., application: _Optional[str] = ..., namespace: _Optional[str] = ..., incident_id: _Optional[str] = ..., findings: _Optional[_Iterable[_Union[Finding, _Mapping]]] = ..., detector_history: _Optional[_Iterable[_Union[DetectorEvaluation, _Mapping]]] = ..., surfaced_playbooks: _Optional[_Iterable[_Union[SurfacedPlaybook, _Mapping]]] = ..., relevant_outcomes: _Optional[_Iterable[_Union[PriorOutcomeEvidence, _Mapping]]] = ..., source_commit: _Optional[str] = ..., deployed_commit: _Optional[str] = ..., repository_worktree: _Optional[str] = ..., repository_base_commit: _Optional[str] = ..., response_deadline: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., cancellation_token: _Optional[str] = ..., repair_policy: _Optional[str] = ..., state_changes: _Optional[_Union[StateChanges, _Mapping]] = ..., memory_snapshot: _Optional[_Union[OperationalMemorySnapshot, _Mapping]] = ..., initial_program_runs: _Optional[_Iterable[_Union[_program_pb2.ProgramRun, _Mapping]]] = ..., max_response_loops: _Optional[int] = ..., drift_events: _Optional[_Iterable[_Union[DriftEvent, _Mapping]]] = ..., prepared_agent_task: _Optional[str] = ..., observation_generation: _Optional[str] = ..., playbook_coverage: _Optional[_Union[_program_pb2.PlaybookCoverage, _Mapping]] = ..., namespace_onboarding: _Optional[_Union[NamespaceOnboarding, _Mapping]] = ..., prior_stages: _Optional[_Iterable[_Union[StageReport, _Mapping]]] = ...) -> None: ...
 
 class RootCauseEvidence(_message.Message):
     __slots__ = ("kind", "source", "observation")
@@ -717,3 +719,43 @@ class IncidentClosure(_message.Message):
     unconfirmed_detail: str
     source_check_notes: _containers.RepeatedScalarFieldContainer[str]
     def __init__(self, request: _Optional[_Union[IncidentRequest, _Mapping]] = ..., result: _Optional[_Union[IncidentResult, _Mapping]] = ..., dispatch_error: _Optional[str] = ..., final_detector_states: _Optional[_Iterable[_Union[DetectorEvaluation, _Mapping]]] = ..., incident_detector_states: _Optional[_Iterable[_Union[DetectorEvaluation, _Mapping]]] = ..., detector_timeline: _Optional[_Iterable[_Union[DetectorTimelineEntry, _Mapping]]] = ..., incident_detector_fired_before_dispatch: _Optional[bool] = ..., incident_detector_fired_after_dispatch: _Optional[bool] = ..., no_incident_detector_fired: _Optional[bool] = ..., final_state_changes: _Optional[_Union[StateChanges, _Mapping]] = ..., detected_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., dispatched_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., responder_completed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., verified_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., health_cleared_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., cleaned_helpers: _Optional[_Iterable[str]] = ..., observation_generation: _Optional[str] = ..., partial_detector_states: _Optional[_Iterable[_Union[DetectorEvaluation, _Mapping]]] = ..., verified_while_responder_running: _Optional[bool] = ..., closure_stability_window: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ..., unconfirmed_reason: _Optional[_Union[ClosureUnconfirmedReason, str]] = ..., unconfirmed_detail: _Optional[str] = ..., source_check_notes: _Optional[_Iterable[str]] = ...) -> None: ...
+
+class StageReport(_message.Message):
+    __slots__ = ("stage", "mitigations", "remaining_finding_fingerprints", "error", "cleared_finding_fingerprints")
+    STAGE_FIELD_NUMBER: _ClassVar[int]
+    MITIGATIONS_FIELD_NUMBER: _ClassVar[int]
+    REMAINING_FINDING_FINGERPRINTS_FIELD_NUMBER: _ClassVar[int]
+    ERROR_FIELD_NUMBER: _ClassVar[int]
+    CLEARED_FINDING_FINGERPRINTS_FIELD_NUMBER: _ClassVar[int]
+    stage: str
+    mitigations: _containers.RepeatedCompositeFieldContainer[StageMitigation]
+    remaining_finding_fingerprints: _containers.RepeatedScalarFieldContainer[str]
+    error: str
+    cleared_finding_fingerprints: _containers.RepeatedScalarFieldContainer[str]
+    def __init__(self, stage: _Optional[str] = ..., mitigations: _Optional[_Iterable[_Union[StageMitigation, _Mapping]]] = ..., remaining_finding_fingerprints: _Optional[_Iterable[str]] = ..., error: _Optional[str] = ..., cleared_finding_fingerprints: _Optional[_Iterable[str]] = ...) -> None: ...
+
+class StageMitigation(_message.Message):
+    __slots__ = ("playbook_id", "program_revision", "bindings", "plan_id", "apply_receipt", "result", "skip_reason", "post_apply_diagnose", "cleared_finding_fingerprints", "remaining_finding_fingerprints", "error")
+    PLAYBOOK_ID_FIELD_NUMBER: _ClassVar[int]
+    PROGRAM_REVISION_FIELD_NUMBER: _ClassVar[int]
+    BINDINGS_FIELD_NUMBER: _ClassVar[int]
+    PLAN_ID_FIELD_NUMBER: _ClassVar[int]
+    APPLY_RECEIPT_FIELD_NUMBER: _ClassVar[int]
+    RESULT_FIELD_NUMBER: _ClassVar[int]
+    SKIP_REASON_FIELD_NUMBER: _ClassVar[int]
+    POST_APPLY_DIAGNOSE_FIELD_NUMBER: _ClassVar[int]
+    CLEARED_FINDING_FINGERPRINTS_FIELD_NUMBER: _ClassVar[int]
+    REMAINING_FINDING_FINGERPRINTS_FIELD_NUMBER: _ClassVar[int]
+    ERROR_FIELD_NUMBER: _ClassVar[int]
+    playbook_id: str
+    program_revision: str
+    bindings: _containers.RepeatedCompositeFieldContainer[_program_pb2.Binding]
+    plan_id: str
+    apply_receipt: _program_pb2.PlanApplication
+    result: str
+    skip_reason: str
+    post_apply_diagnose: _program_pb2.ProgramRun
+    cleared_finding_fingerprints: _containers.RepeatedScalarFieldContainer[str]
+    remaining_finding_fingerprints: _containers.RepeatedScalarFieldContainer[str]
+    error: str
+    def __init__(self, playbook_id: _Optional[str] = ..., program_revision: _Optional[str] = ..., bindings: _Optional[_Iterable[_Union[_program_pb2.Binding, _Mapping]]] = ..., plan_id: _Optional[str] = ..., apply_receipt: _Optional[_Union[_program_pb2.PlanApplication, _Mapping]] = ..., result: _Optional[str] = ..., skip_reason: _Optional[str] = ..., post_apply_diagnose: _Optional[_Union[_program_pb2.ProgramRun, _Mapping]] = ..., cleared_finding_fingerprints: _Optional[_Iterable[str]] = ..., remaining_finding_fingerprints: _Optional[_Iterable[str]] = ..., error: _Optional[str] = ...) -> None: ...

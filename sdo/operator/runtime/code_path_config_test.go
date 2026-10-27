@@ -1,12 +1,13 @@
 package runtime
 
 import (
+	"reflect"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"testing"
 )
 
 func TestCodePathTypedLaunchRoundTrip(t *testing.T) {
-	config := &contracts.ControllerConfig{CodePath: &contracts.CodePathConfig{Name: "shell", Overrides: &contracts.CodePathOverrides{Coverage: "none"}}}
+	config := &contracts.ControllerConfig{CodePath: &contracts.CodePathConfig{Name: "shell", Overrides: &contracts.CodePathOverrides{Coverage: "none", ResponseStages: []string{"agent"}}}}
 	args := controllerConfigToArgs(config)
 	found := false
 	for i, arg := range args {
@@ -21,7 +22,7 @@ func TestCodePathTypedLaunchRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resolved.Selection.Name != "shell" || resolved.Selection.Coverage != "none" {
-		t.Fatalf("shell selection changed: %#v", resolved.Selection)
+	if !reflect.DeepEqual(resolved.Selection.ResponseStages, []string{"agent"}) {
+		t.Fatal("shell stage selection changed")
 	}
 }

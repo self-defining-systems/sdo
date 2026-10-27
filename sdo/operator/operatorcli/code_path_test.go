@@ -29,6 +29,21 @@ func TestShellHealthRefreshRequiresShellDetector(t *testing.T) {
 		t.Fatalf("existing shell health: %v %v", need, err)
 	}
 }
+func TestResponseStageFlagUsesOnlyCodePathOverride(t *testing.T) {
+	args := append(schemaControllerArgs(".."), "--response-stages", "agent")
+	launch, _, err := ParseControllerLaunch(args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := launch.Controller.GetCodePath()
+	if cfg.GetName() != "go" || len(cfg.GetOverrides().GetResponseStages()) != 1 || cfg.GetOverrides().GetResponseStages()[0] != "agent" {
+		t.Fatal(cfg)
+	}
+	if launch.Controller.ProtoReflect().Descriptor().Fields().ByName("response_stages") != nil {
+		t.Fatal("duplicate stage configuration returned")
+	}
+}
+
 func TestShellInstallExistingForwardsTypedSelection(t *testing.T) {
 	args := []string{"install-existing", "--repository", "/accepted/app", "--namespace", "demo", "--application", "demo", "--controller-image", "controller:test", "--responder-image", "responder:test", "--validator-image", "validator:test", "--repository-pvc", "repository", "--credentials-secret", "credentials", "--model", "model", "--code-path", "shell"}
 	launch, err := ParseInstallExistingLaunch(args)

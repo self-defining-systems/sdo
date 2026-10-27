@@ -209,6 +209,11 @@ func(Program) Mitigate(context.Context,program.ReadView,program.Bindings)(progra
 		if err != nil {
 			return nil, err
 		}
+		dispatcher := KubernetesJobDispatcher{Outcomes: memory.OpenReader(target)}
+		stats, err := dispatcher.programTrust(ctx, IncidentRequest{RepositoryWorktree: target, SourceCommit: receipt.Commit})
+		if err != nil || stats["extra-workload-listener"].VerifiedSuccesses != 1 {
+			t.Fatalf("accepted symptom-aware repair lost origin credit: %v %v", stats, err)
+		}
 		for _, p := range []string{book + "/diagnose.go", book + "/mitigate.go", ".sdo/diagnostics/detectors/incidents/listener-conflict/detector.go"} {
 			if content := nativeGit(t, target, "show", receipt.Commit+":"+p); strings.TrimSpace(content) == "" {
 				t.Fatalf("missing accepted executable: %s", p)

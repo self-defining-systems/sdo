@@ -133,6 +133,14 @@ func TestCompletionReadsEachFinalObjectOnceAcrossApplications(t *testing.T) {
 	}
 }
 
+func TestHistoricalOutcomeWithoutSettlementCannotCreateSuccessCredit(t *testing.T) {
+	o := verifiedTrustOutcome(t, "targetport", "revision")
+	o.ReflectionEligibility = nil
+	if got := ProgramTrustStats([]*contracts.OutcomeRecord{o})["targetport"]; got.VerifiedSuccesses != 0 || (got.VerifiedSuccesses > 0 && got.Failures == 0) {
+		t.Fatalf("historical compatibility created proof: %+v", got)
+	}
+}
+
 // A prior accepted repair with identical receipts cannot bypass current fixed
 // classification. Its earlier bound NoMatch cannot override a final Match,
 // even when every reflection edit is rejected.
@@ -220,6 +228,9 @@ func TestFalseFixedMatchIsDurableBeforeReflectionRejectionAndNeverCredited(t *te
 		if len(feedback.Diagnostics) == 0 {
 			t.Fatal("model ran before deterministic replay rejected")
 		}
+		if state := ProgramTrustStats([]*contracts.OutcomeRecord{outcome})[repeatProgram]; state.VerifiedSuccesses != 0 || (state.VerifiedSuccesses > 0 && state.Failures == 0) {
+			t.Fatalf("false match credited before rejection: %+v", state)
+		}
 		return ReflectionDecision{LearningDecision: "no_change", NoChangeReason: "cannot safely refine"}, nil
 	})}
 	workspace, err := native.PrepareIncident(ctx, o.IncidentId)
@@ -247,6 +258,9 @@ func TestFalseFixedMatchIsDurableBeforeReflectionRejectionAndNeverCredited(t *te
 	// once and rejects; a no-change decision over that diff is malformed after.
 	if len(ledger.ReflectionRejections) == 0 || ledger.ReflectionRejections[0].Diagnostics[0].Rule != "corpus.replay" {
 		t.Fatalf("missing replay rejection: %v", ledger.ReflectionRejections)
+	}
+	if state := ProgramTrustStats([]*contracts.OutcomeRecord{stored.Record})[repeatProgram]; state.VerifiedSuccesses != 0 || (state.VerifiedSuccesses > 0 && state.Failures == 0) {
+		t.Fatalf("rejected reflection left credit: %+v", state)
 	}
 }
 
