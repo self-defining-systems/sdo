@@ -934,3 +934,52 @@ def test_recreated_object_outside_accepted_source_is_reported_as_unexplained() -
     cleanup = reconcile_application(cluster, baseline, "hotel", declared=frozenset({("Deployment", "geo")}))
 
     assert cleanup.undeclared_recreated == ["ConfigMap/runtime-extra"]
+
+
+def test_restore_composition_reaches_cluster_with_source_labels_and_policy(tmp_path: Path) -> None:
+    """The restore producer's accepted fields reach the real reconcile consumer."""
+    accepted = obj(
+        "Deployment",
+        "api",
+        namespace="app",
+        spec={"template": {"spec": {"containers": [{"name": "api", "image": "same", "args": ["--accepted"]}]}}},
+    )
+    accepted["metadata"]["labels"] = {"app": "api"}
+    captured = deepcopy(accepted)
+    del captured["metadata"]["labels"]
+    captured["spec"]["template"]["spec"]["containers"][0].pop("args")
+    source = commit_accepted_source(tmp_path, [accepted])
+    baseline = accepted_restore_baselines(source, _sealed(tmp_path, [captured]))[0]
+    cluster = FakeCluster()
+    cluster.add(captured)
+    reconcile_application(cluster, baseline, "app")
+    assert cluster.objects["app", "Deployment", "api"] == accepted
+    # A missing source label alone is still a real restore write; extra live
+    # labels are retained rather than granting source authority over them.
+    current = cluster.objects["app", "Deployment", "api"]
+    current["metadata"]["labels"] = {"runtime.example/owner": "controller"}
+    cluster.touched.clear()
+    reconcile_application(cluster, baseline, "app")
+    assert cluster.touched == [("app", "Deployment", "api")]
+
+
+def test_kubectl_restore_writes_labels_without_replacing_other_metadata(monkeypatch: Any, tmp_path: Path) -> None:
+    desired = obj("Service", "redirect", spec={"type": "ExternalName", "externalName": "synthetic.example"})
+    desired["metadata"]["labels"] = {"app": "redirect"}
+    current = deepcopy(desired)
+    current["metadata"].update(labels={"runtime.example/owner": "controller"}, resourceVersion="17")
+    patches = []
+
+    def api(args: list[str], **_kwargs: Any) -> Any:
+        if args[0] == "get":
+            return SimpleNamespace(stdout=json.dumps(current))
+        patches.extend(json.loads(Path(args[4]).read_text()))
+        return SimpleNamespace(stdout="patched")
+
+    monkeypatch.setattr("benchmarks.sregym.fastloop.baseline_recovery.kubectl", api)
+    KubectlApplicationCluster(tmp_path / "kube").apply("hotel", desired)
+    metadata_patches = [patch for patch in patches if patch["path"].startswith("/metadata/")]
+    assert metadata_patches == [
+        {"op": "test", "path": "/metadata/resourceVersion", "value": "17"},
+        {"op": "add", "path": "/metadata/labels", "value": {"runtime.example/owner": "controller", "app": "redirect"}},
+    ]
