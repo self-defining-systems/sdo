@@ -20,6 +20,7 @@ from typing import Any
 
 from google.protobuf import json_format
 
+from benchmarks.sregym.adapter.budgets import WaitKind, wait_for
 from benchmarks.sregym.protocol.native_receipt import native_production_receipt
 from sdo.contracts import ControllerObservation, ControllerObservationRequest, validate
 
@@ -54,8 +55,8 @@ class NativeInstallConfig:
     code_path: str = "go"
 
     max_response_loops: int = 10
-    response_timeout_seconds: int = 1800
-    verification_timeout_seconds: int = 300
+    response_timeout_seconds: int = int(wait_for(WaitKind.RESPONSE))
+    verification_timeout_seconds: int = int(wait_for(WaitKind.VERIFICATION_SAMPLE))
     duration_seconds: int | None = None
     exit_after_closure: bool = False
     healthy_baseline: bool = False
@@ -202,7 +203,7 @@ class NativeExistingReceipt:
 
 
 # A cold build downloads modules and compiles the whole controller graph.
-_OPERATOR_BUILD_TIMEOUT_SECONDS = 300
+_OPERATOR_BUILD_TIMEOUT_SECONDS = int(wait_for(WaitKind.ROLLOUT))
 
 
 @lru_cache(maxsize=1)
@@ -261,7 +262,7 @@ def observe_controller_state(
     *,
     known: set[str] | None = None,
     incident_id: str = "",
-    timeout: float = 30.0,
+    timeout: float = wait_for(WaitKind.COMMAND),
 ) -> ControllerObservation:
     request = ControllerObservationRequest(known_incident_ids=sorted(known or ()), incident_id=incident_id)
     payload = json_format.MessageToDict(request, preserving_proto_field_name=True)
@@ -303,7 +304,7 @@ def sync_existing(config: NativeInstallConfig) -> None:
     ]
     if config.kubeconfig is not None:
         args.extend(("--kubeconfig", str(config.kubeconfig)))
-    output = execute_operator("sync-existing", args, timeout=600)
+    output = execute_operator("sync-existing", args, timeout=wait_for(WaitKind.OPERATION))
     if output.strip():
         raise NativeOperatorError("Go sync-existing returned unexpected stdout")
 
@@ -331,7 +332,7 @@ def assert_shared_repository(config: NativeInstallConfig) -> None:
             "/workspace/application/.git/sdo-shared-id",
         ]
     )
-    observed = subprocess.run(args, text=True, capture_output=True, check=False, timeout=15)
+    observed = subprocess.run(args, text=True, capture_output=True, check=False, timeout=wait_for(WaitKind.COMMAND))
     if observed.returncode or observed.stdout.strip() != config.shared_accepted_id:
         raise NativeOperatorError("controller shared accepted repository identity differs")
 
@@ -353,7 +354,7 @@ def set_maintenance(
         args.append("--preserve-baseline")
     if kubeconfig is not None:
         args.extend(("--kubeconfig", str(kubeconfig)))
-    output = execute_operator("maintenance", args, timeout=120)
+    output = execute_operator("maintenance", args, timeout=wait_for(WaitKind.SLOW_COMMAND))
     if output.strip():
         raise NativeOperatorError("Go maintenance returned unexpected stdout")
 
@@ -380,7 +381,7 @@ def read_incident_evidence(
             assert_shared_repository(config)
         else:
             args.extend(("--repository", str(config.repository)))
-    value = _run("incident-evidence", args, timeout=120)
+    value = _run("incident-evidence", args, timeout=int(wait_for(WaitKind.SLOW_COMMAND)))
     ledger = value.get("ledger")
     if (
         value.get("incident_id") != incident_id
@@ -398,7 +399,9 @@ def _kubectl_json(config: NativeInstallConfig, *args: str) -> dict[str, Any]:
         command.extend(("--kubeconfig", str(config.kubeconfig)))
     command.extend(("--namespace", config.control_namespace, *args, "-o", "json"))
     try:
-        completed = subprocess.run(command, capture_output=True, text=True, timeout=60, check=False)
+        completed = subprocess.run(
+            command, capture_output=True, text=True, timeout=wait_for(WaitKind.SLOW_COMMAND), check=False
+        )
     except (OSError, subprocess.SubprocessError) as exc:
         raise NativeOperatorError(f"Kubernetes receipt query failed: {exc}") from exc
     if completed.returncode != 0:
@@ -470,7 +473,7 @@ def export_runtime_artifacts(config: NativeInstallConfig, output_dir: Path) -> P
     ]
     if config.kubeconfig is not None:
         args.extend(("--kubeconfig", str(config.kubeconfig)))
-    value = _run("runtime-artifacts", args, timeout=600)
+    value = _run("runtime-artifacts", args, timeout=int(wait_for(WaitKind.OPERATION)))
     expected = output_dir / "sdo_runtime"
     if value.get("directory") != str(expected):
         raise NativeOperatorError("Go runtime artifact export returned an unexpected directory")
@@ -541,7 +544,7 @@ def inspect_existing(config: NativeInstallConfig) -> NativeExistingReceipt:
     ]
     if config.kubeconfig is not None:
         args.extend(("--kubeconfig", str(config.kubeconfig)))
-    value = _run("inspect-existing", args, timeout=120)
+    value = _run("inspect-existing", args, timeout=int(wait_for(WaitKind.SLOW_COMMAND)))
     for field in ("job_uid", "pod_uid", "fingerprint"):
         if not isinstance(value.get(field), str) or not value[field].strip():
             raise NativeOperatorError(f"Go inspect-existing lacks {field}")
@@ -596,7 +599,7 @@ def stop_runtime(
         args.extend(("--kubeconfig", kubeconfig))
     if inspect:
         args.append("--inspect")
-    result = json.loads(execute_operator("stop", args, timeout=75))
+    result = json.loads(execute_operator("stop", args, timeout=wait_for(WaitKind.SLOW_COMMAND)))
     if not isinstance(result, dict) or any(
         not isinstance(result.get(key), list) or any(not isinstance(item, str) for item in result[key])
         for key in ("removed", "leftovers")
@@ -615,7 +618,7 @@ def reset_control_state(control_namespace: str, *, kubeconfig: str | None = None
     args = ["--control-namespace", control_namespace, "--timeout", "60s"]
     if kubeconfig:
         args.extend(("--kubeconfig", kubeconfig))
-    result = json.loads(execute_operator("reset-control-state", args, timeout=75))
+    result = json.loads(execute_operator("reset-control-state", args, timeout=wait_for(WaitKind.SLOW_COMMAND)))
     if (
         not isinstance(result, dict)
         or result.get("control_namespace") != control_namespace

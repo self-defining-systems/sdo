@@ -17,6 +17,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from benchmarks.sregym.adapter import WaitKind, wait_for
+
 
 @dataclass(frozen=True)
 class LaneGuard:
@@ -115,7 +117,9 @@ class LaneGuard:
 
         request = SregymWorker.request
 
-        def fenced_request(self: SregymWorker, op: str, *, timeout: float = 1800, **args: Any) -> dict[str, Any]:
+        def fenced_request(
+            self: SregymWorker, op: str, *, timeout: float = int(wait_for(WaitKind.CLUSTER_OP)), **args: Any
+        ) -> dict[str, Any]:
             check()
             return request(self, op, timeout=timeout, **args)
 

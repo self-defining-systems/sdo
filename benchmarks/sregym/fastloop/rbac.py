@@ -7,7 +7,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from benchmarks.sregym.adapter import NativeInstallConfig, kubectl
+from benchmarks.sregym.adapter import NativeInstallConfig, WaitKind, kubectl, wait_for
 
 
 def canonical_rules(rules: list[dict[str, Any]]) -> list[str]:
@@ -110,7 +110,7 @@ def installer_rbac(namespace: str, config: NativeInstallConfig | None = None) ->
         capture_output=True,
         text=True,
         check=True,
-        timeout=30,
+        timeout=wait_for(WaitKind.COMMAND),
     )
     return json.loads(result.stdout)
 

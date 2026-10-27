@@ -20,6 +20,7 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Protocol
 
+from benchmarks.sregym.adapter import WaitKind, wait_for
 from benchmarks.sregym.fastloop.records import (
     AgentName,
     DiagnosisGrade,
@@ -170,8 +171,8 @@ class LoopConfig:
     lane_id: str | None = None
     accepted_repository: Path | None = None
     #: Admission's stabilization rule: sample until the app passes, within this budget.
-    recovery_settle_seconds: float = 300.0
-    recovery_settle_poll_seconds: float = 2.0
+    recovery_settle_seconds: float = wait_for(WaitKind.ROLLOUT)
+    recovery_settle_poll_seconds: float = wait_for(WaitKind.SAMPLE)
 
     def __post_init__(self) -> None:
         if not 0 < self.recovery_settle_seconds <= 300:
@@ -223,7 +224,7 @@ def run_incidents(
     *,
     grader: DiagnosisGrader | None = None,
     diagnosis_grading: str = "off",
-    grading_timeout_seconds: float = 1800.0,
+    grading_timeout_seconds: float = wait_for(WaitKind.RESPONSE),
     on_failed_incident: Callable[[], None] | None = None,
     monotonic: Callable[[], float] = time.monotonic,
     now: Callable[[], datetime] = lambda: datetime.now(timezone.utc),

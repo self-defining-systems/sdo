@@ -15,12 +15,16 @@ import time
 import urllib.request
 from typing import TYPE_CHECKING, Any
 
+from benchmarks.sregym.adapter import WaitKind, wait_for
+
 if TYPE_CHECKING:
     from pathlib import Path
 
 
 def _run(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(argv, check=True, capture_output=True, text=True, timeout=300, **kwargs)
+    return subprocess.run(
+        argv, check=True, capture_output=True, text=True, timeout=wait_for(WaitKind.ROLLOUT), **kwargs
+    )
 
 
 def image_ref(image: str) -> str:
@@ -35,7 +39,7 @@ def image_ref(image: str) -> str:
 def _wait_registry(host: str) -> None:
     for _ in range(50):
         try:
-            with urllib.request.urlopen(f"http://{host}/v2/", timeout=1) as response:
+            with urllib.request.urlopen(f"http://{host}/v2/", timeout=wait_for(WaitKind.PROBE)) as response:
                 if response.status == 200:
                     return
         except OSError:

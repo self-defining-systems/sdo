@@ -7,9 +7,11 @@ import re
 import subprocess
 import time
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+from benchmarks.sregym.adapter.budgets import WaitKind, wait_for
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -53,7 +55,11 @@ def validate_setup_commit(actor: str, phase: str, validation: str, paths: list[s
 def setup_lineage(repository: Path, seed: str, head: str = "HEAD") -> dict[str, Any]:
     def git(*args: str) -> str:
         return subprocess.run(
-            ["git", "-C", str(repository), *args], check=True, capture_output=True, text=True, timeout=10
+            ["git", "-C", str(repository), *args],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=wait_for(WaitKind.PROBE),
         ).stdout.strip()
 
     git("merge-base", "--is-ancestor", seed, head)
@@ -159,10 +165,6 @@ def assert_stable_workloads(before: dict[str, Any], after: dict[str, Any]) -> No
         raise ValueError(f"restore invariant: workloads rolled after Ready: {changed}")
 
 
-#: Closure states in which no incident is being closed, reflected or acknowledged.
-IDLE_CLOSURE_STATES = frozenset({None, 0, "", "CLOSURE_STATE_UNSPECIFIED"})
-
-
 def terminal_incident_ids(state: dict[str, Any]) -> set[str]:
     """Incidents whose closure is over: acknowledged, permanently failed or retired."""
     terminal = {state.get("last_acknowledged_incident_id")}
@@ -174,52 +176,63 @@ def terminal_incident_ids(state: dict[str, Any]) -> set[str]:
     return {incident_id for incident_id in terminal if isinstance(incident_id, str)}
 
 
-def incident_work_open(state: dict[str, Any]) -> bool:
-    """The one "closure is over" rule: whether SDO still owns incident work.
+def busy_until(state: dict[str, Any]) -> datetime | None:
+    """The controller's one published fact about incident work: unset when idle, else its own latest end.
 
-    An open incident or request is work. A pending closure or a non-idle
-    closure state is work unless its incident's closure is terminal
-    (acknowledged, permanently failed or retired). A failed attempt's
-    reflection queued or running after its acknowledgment is work, and so is
-    its accepted detector change until the restarted controller records the
-    rollout, so the next problem starts only on the controller that learned. A
-    queue the controller could not read is unknown, which counts as work.
+    The controller computes it from its open incident, closure in flight and reflection queue, and from its
+    own response timeout, verification timeout and retry policy (``busyUntilLocked`` in the runtime). Every
+    eval wait on SDO's incident work reads this and nothing else: no Job list, label or queue count.
     """
-    if (
-        state.get("incident_request")
-        or state.get("incident_open")
-        or state.get("queued_reflection_incident_ids")
-        or state.get("queued_reflections_unknown")
-    ):
+    raw = state.get("busy_until")
+    if not raw:
+        return None
+    return datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+
+
+def incident_work_open(state: dict[str, Any]) -> bool:
+    """Whether SDO still owns incident work: exactly whether the controller published ``busy_until``."""
+    return busy_until(state) is not None
+
+
+def busy_remaining_seconds(state: dict[str, Any], now: datetime | None = None) -> float | None:
+    """Seconds until the controller's own bound on its work (negative once passed); None when idle."""
+    until = busy_until(state)
+    if until is None:
+        return None
+    return (until - (now or datetime.now(timezone.utc))).total_seconds()
+
+
+@dataclass
+class BusyDeadline:
+    """A wait bound that follows ``busy_until`` and nothing else.
+
+    ``margin_seconds`` is the only slack past the controller's own bound. The deadline never moves back, and
+    it only moves forward when the controller itself raises ``busy_until`` (new work joined), so a controller
+    that stays busy past its bound expires the wait one margin later instead of extending it forever.
+    """
+
+    margin_seconds: float
+    deadline: float | None = None
+
+    def __post_init__(self) -> None:
+        if self.margin_seconds < 0:
+            raise ValueError(f"margin_seconds must not be negative, got {self.margin_seconds}")
+
+    def observe(self, state: dict[str, Any], monotonic_now: float, now: datetime | None = None) -> bool:
+        """Record a state read; true while the controller is busy."""
+        remaining = busy_remaining_seconds(state, now)
+        if remaining is None:
+            return False
+        candidate = monotonic_now + max(remaining, 0.0) + self.margin_seconds
+        if self.deadline is None or remaining > 0:
+            self.deadline = candidate if self.deadline is None else max(self.deadline, candidate)
         return True
-    closure_state = state.get("closure_state")
-    pending = state.get("pending_closure")
-    if not pending and closure_state in IDLE_CLOSURE_STATES:
-        return False
-    request = (pending or {}).get("request") or {}
-    incident_id = (
-        request.get("incident_id")
-        or (state.get("closure_receipt") or {}).get("incident_id")
-        or (state.get("closure_failure") or {}).get("incident_id")
-    )
-    return incident_id not in terminal_incident_ids(state)
 
+    def expired(self, monotonic_now: float) -> bool:
+        return self.deadline is not None and monotonic_now >= self.deadline
 
-#: A queued reflection runs for at most the controller's response timeout: its frozen deadline is
-#: dispatch time + ``--response-timeout`` (registered_reflection.go ReflectionDeadline), 30 min by default (run.go).
-DEFAULT_RESPONSE_TIMEOUT_SECONDS = 1800.0
-#: Transient failures retry with the default closure backoff (2+4+8+16+32+60+60 s, closure_retry.go and
-#: reflection_queue.go) before the reflection is abandoned.
-CLOSURE_RETRY_BACKOFF_SECONDS = 182.0
-#: Commit, cleanup and detector-rollout handoff after the last attempt.
-REFLECTION_CLOSEOUT_SECONDS = 120.0
-
-
-def reflection_attempt_seconds(response_timeout_seconds: float = DEFAULT_RESPONSE_TIMEOUT_SECONDS) -> float:
-    """SDO's worst case to finish or abandon one queued reflection (the FIFO runs one at a time)."""
-    if response_timeout_seconds <= 0:
-        raise ValueError(f"response_timeout_seconds must be positive, got {response_timeout_seconds}")
-    return response_timeout_seconds + CLOSURE_RETRY_BACKOFF_SECONDS + REFLECTION_CLOSEOUT_SECONDS
+    def seconds_left(self, monotonic_now: float) -> float:
+        return 0.0 if self.deadline is None else max(0.0, self.deadline - monotonic_now)
 
 
 def queued_reflection_ids(state: dict[str, Any]) -> list[str]:
@@ -228,16 +241,11 @@ def queued_reflection_ids(state: dict[str, Any]) -> list[str]:
     return [incident_id for incident_id in ids if isinstance(incident_id, str)]
 
 
-def queued_reflection_count(state: dict[str, Any]) -> int:
-    """Reflections SDO still owes; a queue the controller could not read counts as one."""
-    return len(queued_reflection_ids(state)) + (1 if state.get("queued_reflections_unknown") else 0)
-
-
 def wait_for_proof(
     sample: Callable[[], dict[str, Any]],
     record: Callable[[dict[str, Any]], None],
     *,
-    timeout_seconds: float = 300,
+    timeout_seconds: float = int(wait_for(WaitKind.ROLLOUT)),
     monotonic: Callable[[], float] = time.monotonic,
     sleep: Callable[[float], None] = time.sleep,
     deadline: Deadline | None = None,

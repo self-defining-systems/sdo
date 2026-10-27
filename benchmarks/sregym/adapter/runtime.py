@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from benchmarks.sregym.adapter.budgets import WaitKind, wait_for
 from benchmarks.sregym.adapter.cluster_resources import kubectl
 from benchmarks.sregym.adapter.native_operator import (
     NativeInstallConfig,
@@ -42,7 +43,7 @@ class RuntimeConfig:
     model: str
     timeout_seconds: int
     validator_image: str = "sdo-detector-validator:v0.1.0"
-    verification_timeout_seconds: int = 300
+    verification_timeout_seconds: int = int(wait_for(WaitKind.VERIFICATION_SAMPLE))
     wait_for_completion: bool = False
     repair_policy: str = "recorded-actions"
     agent_provider: str = "codex"

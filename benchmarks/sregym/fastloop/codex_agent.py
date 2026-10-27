@@ -27,6 +27,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from benchmarks.sregym.adapter import WaitKind, wait_for
 from benchmarks.sregym.fastloop.loop import AgentOutcome, InjectionWindow
 from benchmarks.sregym.fastloop.records import AgentName, TokenCounts
 
@@ -174,7 +175,7 @@ class CodexSettings:
     auth_file: Path
     kubeconfig: Path
     results_dir: Path
-    timeout_seconds: float = 3600.0
+    timeout_seconds: float = wait_for(WaitKind.RESPONSE, 2)
     reasoning_effort: str | None = None
     codex_binary: str = "codex"
 
