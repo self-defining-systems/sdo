@@ -123,6 +123,11 @@ def test_infra_error_before_injection_is_an_admission_failure() -> None:
     assert [(s.name, s.error_class) for s in real.record_stages(record)] == [("admission", "infra-error")]
 
 
+def test_a_crashed_run_names_its_last_line() -> None:
+    stages = real.record_stages(None, "Traceback (most recent call last):\n  File x\nRuntimeError: boom\n")
+    assert [(s.error_class, s.detail) for s in stages] == [("run-crashed", "RuntimeError: boom")]
+
+
 def test_missing_record_is_a_failure_not_a_pass() -> None:
     stages = real.record_stages(None)
     assert [(s.name, s.status, s.error_class) for s in stages] == [("admission", "fail", "no-record")]
@@ -175,6 +180,7 @@ def test_run_arguments_run_the_scripted_registrations_behind_the_lane_guard(tmp_
     # ``-m`` must follow the interpreter directly (a stray word there makes Python open it as a file).
     assert argv[:5] == ["uv", "run", "python", "-m", "benchmarks.sregym.fastloop.lane_guard"]
     assert argv[argv.index("--") + 1] == "benchmarks.sregym.fastloop"
+    assert argv[argv.index("--coord") + 1] == real.COORD
     assert argv[argv.index("--cluster") + 1] == "luna-pilot-54"
     assert argv[argv.index("--lease") + 1] == "le-p4b"
     assert argv[argv.index("--agent-registrations") + 1] == str(real.SCRIPTED_REGISTRATIONS)

@@ -33,6 +33,7 @@ if TYPE_CHECKING:
 SCRIPTED_REGISTRATIONS = Path(__file__).resolve().parents[1] / "adapter/scripted_registrations"
 #: Stage names of a real-app problem, in order. ``lane-ready`` is the guarded reset the next problem starts from.
 REAL_STAGES = ("admission", "inject", "detect", "responder", "closure", "recovery", "cleanup", "lane-ready")
+COORD = "/mnt/data/shli/coord/coord"
 PROBLEM_TIMEOUT_SECONDS = 1500
 RESET_TIMEOUT_SECONDS = 600
 #: Kinds whose leftovers a fault can leave behind (namespaced first, then cluster-scoped).
@@ -182,7 +183,7 @@ def run_arguments(lane: RealLane, problem_id: str, *, timeout: int, time_scale: 
     """``fastloop run`` for one problem with scripted registrations, behind the lane's lease/Secret fence."""
 
     guard = ["uv", "run", "python", "-m", "benchmarks.sregym.fastloop.lane_guard", "--cluster", lane.cluster]
-    guard += ["--kubeconfig", str(lane.kubeconfig), "--lease", lane.lease or "none", "--"]
+    guard += ["--kubeconfig", str(lane.kubeconfig), "--lease", lane.lease or "none", "--coord", COORD, "--"]
     return [
         *guard,
         "benchmarks.sregym.fastloop",
@@ -251,7 +252,9 @@ def record_stages(record: dict[str, Any] | None, error: str = "") -> list[Stage]
 
     if record is None:
         detail = error or "fastloop run wrote no incident record"
-        return [Stage("admission", "fail", classify("admission", detail) if error else "no-record", detail[:300])]
+        found = classify("admission", detail) if error else "no-record"
+        last = next((line for line in reversed(detail.splitlines()) if line.strip()), detail)
+        return [Stage("admission", "fail", "run-crashed" if found == "other" else found, last[:300])]
     stages: list[Stage] = []
     text = " ".join(str(record.get(k) or "") for k in ("infra_error", "error", "recovery_error"))
     injected = (record.get("injection") or {}).get("state") == "injected"
