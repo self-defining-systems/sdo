@@ -29,8 +29,8 @@ func namedPlanLists(before, after, live []any) (map[string]any, map[string]any, 
 	if !bok || !aok || !lok {
 		return b, a, l, false
 	}
-	// Positional writes still own identity at their original positions. Permit
-	// additions/removals, but never relax the existing reordered-list refusal.
+	// Preserve the relative identity of existing items. Permit additions/removals,
+	// but never relax the existing reordered-list refusal.
 	commonOrder := func(left, right []any, li, ri map[string]any) bool {
 		var ln, rn []string
 		for _, item := range left {
