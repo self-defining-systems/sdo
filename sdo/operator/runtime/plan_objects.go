@@ -266,6 +266,9 @@ func (e PlanExecutor) applyObjectPlan(ctx context.Context, incident IncidentRequ
 		patch.DirectReadConfirmed = true
 	}
 	complete = true
+	if err := e.reportSourceResiduals(ctx, incident, &result); err != nil {
+		return result, err
+	}
 	if err := e.awaitObserved(ctx, result.Patches); err != nil {
 		return result, err
 	}

@@ -142,6 +142,10 @@ func (e PlanExecutor) applyGeneralPlan(ctx context.Context, incident IncidentReq
 			result.ActionsApplied = append(result.ActionsApplied, a)
 		}
 		if stepErr != nil {
+			var partial *SourceReconcilePartialError
+			if errors.As(stepErr, &partial) {
+				complete = true
+			}
 			return result, stepErr
 		}
 		if ref, refErr := planActionRef(a); refErr == nil && ref.Kind != "" && objectActionOperation(a) != "delete" {

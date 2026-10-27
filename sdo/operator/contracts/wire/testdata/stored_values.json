@@ -4,10 +4,12 @@
     "authorization_denied",
     "delete_not_confirmed",
     "execution_failed",
-    "outcome_unknown"
+    "outcome_unknown",
+    "source_residual"
   ],
   "sdodev.contracts.v1alpha1.ActionReport.status": [
     "applied",
+    "partial",
     "prepared",
     "refused",
     "unknown"

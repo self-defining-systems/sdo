@@ -22,8 +22,9 @@ PLAN_ACTIONS = (
     "CreateFromSource restores a named missing object, including declared file-generated ConfigMaps, "
     "from accepted source. Source/config restores may recycle blocked dependent Pods once; "
     "Pod deletion receipts are irreversible.\n"
-    "ReconcileFromSource restores declared configuration, including source-named cluster objects, "
-    "and removes fields added since acceptance; other undeclared fields stay.\n"
+    "ReconcileFromSource converges source-owned configuration, removes additions since acceptance, "
+    "and reports residual source differences and remaining old-revision ReplicaSets/Pods. "
+    "The Deployment controller and responder handle the rollout.\n"
     "DeleteObject irreversibly removes an allowed named source-absent object and never auto-recreates it."
 )
 
