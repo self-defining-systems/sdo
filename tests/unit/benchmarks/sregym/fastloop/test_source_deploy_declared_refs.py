@@ -22,6 +22,8 @@ def test_bridge_delivery_then_in_node_tag_publishes_the_declared_ref(monkeypatch
     import importlib
 
     source = importlib.import_module("sregym.service.source_deploy")
+    # The bridge's lazy imports run while import_module is stubbed below; resolve them first.
+    importlib.import_module("benchmarks.sregym.fastloop.clean_start")
     events: list[tuple[str, str]] = []
     monkeypatch.setattr(
         toy_images, "load_images", lambda cluster, images, **kw: events.extend(("deliver", i) for i in images) or {}
@@ -29,7 +31,9 @@ def test_bridge_delivery_then_in_node_tag_publishes_the_declared_ref(monkeypatch
     monkeypatch.setattr(source, "_build_image", lambda *args, **kwargs: None)
     monkeypatch.setattr(source, "_BUILT_IMAGES", set())
     monkeypatch.setattr(
-        source, "tag_image_in_kind_nodes", lambda cluster, built, declared: events.append(("tag", f"{built} {declared}"))
+        source,
+        "tag_image_in_kind_nodes",
+        lambda cluster, built, declared: events.append(("tag", f"{built} {declared}")),
     )
     monkeypatch.setenv("FASTLOOP_DELIVERY_RECORD", str(tmp_path / "delivery.jsonl"))
     monkeypatch.setenv("SREGYM_APP_SOURCE_DIR", str(tmp_path))
