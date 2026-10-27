@@ -46,7 +46,7 @@ func IncidentActionReceipts(repositoryMount, incidentID string) ([]*contracts.Re
 			return nil, true, "", err
 		}
 		receipt := new(contracts.RepairActionReceipt)
-		if err := wire.Unmarshal(entry.Receipt, receipt); err != nil {
+		if err := wire.UnmarshalDurable(entry.Receipt, receipt); err != nil {
 			return nil, true, "", err
 		}
 		// The journal is agent-writable: owner chains come only from SDO's

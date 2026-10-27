@@ -90,7 +90,7 @@ func (b *Broker) readRejections(proposalID string) (*contracts.ProposalRejection
 		return nil, err
 	}
 	log := &contracts.ProposalRejectionLog{}
-	if err := wire.Unmarshal(data, log); err != nil {
+	if err := wire.UnmarshalDurable(data, log); err != nil {
 		return nil, err
 	}
 	if log.ProposalId != proposalID {

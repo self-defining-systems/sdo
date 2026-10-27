@@ -1,0 +1,322 @@
+{
+  "sdodev.contracts.v1alpha1.ActionReport.failure_reason": [
+    "",
+    "authorization_denied",
+    "delete_not_confirmed",
+    "execution_failed",
+    "outcome_unknown"
+  ],
+  "sdodev.contracts.v1alpha1.ActionReport.status": [
+    "applied",
+    "prepared",
+    "refused",
+    "unknown"
+  ],
+  "sdodev.contracts.v1alpha1.BrokerLedger.reflection_phase": [
+    "REFLECTION_PHASE_DISPATCH",
+    "REFLECTION_PHASE_DONE",
+    "REFLECTION_PHASE_FAILED_CLEANUP",
+    "REFLECTION_PHASE_INSPECT",
+    "REFLECTION_PHASE_INSPECT_RESULT",
+    "REFLECTION_PHASE_PUBLISH",
+    "REFLECTION_PHASE_RESET",
+    "REFLECTION_PHASE_REVIEW",
+    "REFLECTION_PHASE_UNSPECIFIED"
+  ],
+  "sdodev.contracts.v1alpha1.ClosureFailure.reason": [
+    "CLOSURE_FAILURE_REASON_AGENT_TIMEOUT",
+    "CLOSURE_FAILURE_REASON_BROKER_ERROR",
+    "CLOSURE_FAILURE_REASON_INVALID_RECEIPT",
+    "CLOSURE_FAILURE_REASON_OBSERVER_DENIED",
+    "CLOSURE_FAILURE_REASON_OWNER_LOST",
+    "CLOSURE_FAILURE_REASON_RETRY_EXHAUSTED",
+    "CLOSURE_FAILURE_REASON_UNSPECIFIED"
+  ],
+  "sdodev.contracts.v1alpha1.ControllerState.closure_state": [
+    "CLOSURE_STATE_ACKNOWLEDGING",
+    "CLOSURE_STATE_COMMITTED",
+    "CLOSURE_STATE_FAILED",
+    "CLOSURE_STATE_PENDING",
+    "CLOSURE_STATE_PROCESSING",
+    "CLOSURE_STATE_UNSPECIFIED"
+  ],
+  "sdodev.contracts.v1alpha1.ControllerState.dispatch_state": [
+    "DISPATCH_STATE_COMPLETED",
+    "DISPATCH_STATE_IDLE",
+    "DISPATCH_STATE_PENDING",
+    "DISPATCH_STATE_RUNNING",
+    "DISPATCH_STATE_UNSPECIFIED",
+    "DISPATCH_STATE_WORKSPACE_PENDING",
+    "DISPATCH_STATE_WORKSPACE_RUNNING"
+  ],
+  "sdodev.contracts.v1alpha1.DatabaseTarget.engine": [
+    "mongodb"
+  ],
+  "sdodev.contracts.v1alpha1.DatabaseTarget.shell": [
+    "",
+    "mongo",
+    "mongosh"
+  ],
+  "sdodev.contracts.v1alpha1.DetectorEvaluation.status": [
+    "clear",
+    "error",
+    "firing",
+    "pending"
+  ],
+  "sdodev.contracts.v1alpha1.DetectorTimelineEntry.relation": [
+    "after_dispatch",
+    "before_dispatch",
+    "no_incident"
+  ],
+  "sdodev.contracts.v1alpha1.DriftEvent.classification": [
+    "fault",
+    "unexplained"
+  ],
+  "sdodev.contracts.v1alpha1.DriftEvent.investigation_verdict": [
+    "",
+    "benign",
+    "bug",
+    "unsure"
+  ],
+  "sdodev.contracts.v1alpha1.DriftEvidence.kind": [
+    "observed_impact",
+    "source_contradiction",
+    "violated_relation"
+  ],
+  "sdodev.contracts.v1alpha1.Finding.severity": [
+    "critical",
+    "info",
+    "latent",
+    "warn"
+  ],
+  "sdodev.contracts.v1alpha1.Finding.status": [
+    "active",
+    "resolved"
+  ],
+  "sdodev.contracts.v1alpha1.IncidentClosure.unconfirmed_reason": [
+    "CLOSURE_UNCONFIRMED_REASON_OBSERVATION_INCOMPLETE",
+    "CLOSURE_UNCONFIRMED_REASON_OBSERVER_UNAVAILABLE",
+    "CLOSURE_UNCONFIRMED_REASON_UNSPECIFIED"
+  ],
+  "sdodev.contracts.v1alpha1.IncidentRequest.repair_policy": [
+    "commit",
+    "recorded-actions"
+  ],
+  "sdodev.contracts.v1alpha1.IncidentResult.resolution_path": [
+    "",
+    "deterministic",
+    "responder"
+  ],
+  "sdodev.contracts.v1alpha1.IncidentResult.status": [
+    "cancelled",
+    "completed",
+    "failed"
+  ],
+  "sdodev.contracts.v1alpha1.MitigationActionReceipt.compensation_state": [
+    "STATE_APPLIED",
+    "STATE_NOT_APPLIED",
+    "STATE_UNKNOWN",
+    "STATE_UNSPECIFIED"
+  ],
+  "sdodev.contracts.v1alpha1.MitigationActionReceipt.effect": [
+    "EFFECT_DEPLOYMENT_RESTART",
+    "EFFECT_SCOPED_ROUTING_SET_FIELD",
+    "EFFECT_SDK_PLAN_ACTION",
+    "EFFECT_UNSPECIFIED"
+  ],
+  "sdodev.contracts.v1alpha1.MitigationActionReceipt.state": [
+    "STATE_APPLIED",
+    "STATE_NOT_APPLIED",
+    "STATE_UNKNOWN",
+    "STATE_UNSPECIFIED"
+  ],
+  "sdodev.contracts.v1alpha1.MitigationBarrier.phase": [
+    "after_compensation",
+    "after_write",
+    "before_round",
+    "closure",
+    "recovery"
+  ],
+  "sdodev.contracts.v1alpha1.MitigationReport.failed_phase": [
+    "",
+    "acceptance",
+    "barrier",
+    "closure",
+    "compensation",
+    "diagnosis",
+    "forward",
+    "planning",
+    "recovery",
+    "rollout",
+    "safety",
+    "verification"
+  ],
+  "sdodev.contracts.v1alpha1.MitigationReport.status": [
+    "STATUS_DIFFERENT_CAUSE",
+    "STATUS_EXECUTION_ERROR",
+    "STATUS_INTERRUPTED",
+    "STATUS_REFUSED",
+    "STATUS_SUCCESS",
+    "STATUS_SUPERSEDED",
+    "STATUS_TIMEOUT",
+    "STATUS_UNRESOLVED",
+    "STATUS_UNSPECIFIED"
+  ],
+  "sdodev.contracts.v1alpha1.OutcomeRecord.classification": [
+    "cleared_without_action",
+    "failed",
+    "success",
+    "unconfirmed"
+  ],
+  "sdodev.contracts.v1alpha1.OutcomeRecord.reflection_skip_reason": [
+    "",
+    "no_session"
+  ],
+  "sdodev.contracts.v1alpha1.OutcomeRecord.resolution_path": [
+    "",
+    "deterministic",
+    "responder"
+  ],
+  "sdodev.contracts.v1alpha1.PlanApplication.final_verification_basis": [
+    "",
+    "observed-transition"
+  ],
+  "sdodev.contracts.v1alpha1.PlanObjectEffect.operation": [
+    "create",
+    "delete"
+  ],
+  "sdodev.contracts.v1alpha1.PlanObjectEffect.state": [
+    "applied",
+    "not_applied",
+    "unknown"
+  ],
+  "sdodev.contracts.v1alpha1.PriorOutcomeEvidence.match_reason": [
+    "detector-rule-resource-kind",
+    "exact-fingerprint",
+    "learned-detector-origin"
+  ],
+  "sdodev.contracts.v1alpha1.ProgramRun.binding_source": [
+    "",
+    "finding",
+    "hint",
+    "sweep"
+  ],
+  "sdodev.contracts.v1alpha1.ReflectionCauseWork.learning_basis": [
+    "",
+    "observed_transition"
+  ],
+  "sdodev.contracts.v1alpha1.ReflectionDecision.decline_reason": [
+    "",
+    "evidence_gap",
+    "no_recorded_repair"
+  ],
+  "sdodev.contracts.v1alpha1.ReflectionDecision.failure_reason": [
+    "",
+    "agent_failed",
+    "agent_timeout",
+    "result_too_large",
+    "timeout"
+  ],
+  "sdodev.contracts.v1alpha1.ReflectionDecision.learning_decision": [
+    "failed",
+    "no_change",
+    "sdk_gap",
+    "updated"
+  ],
+  "sdodev.contracts.v1alpha1.ReflectionWorkItem.capture_open_phase": [
+    "",
+    "detect",
+    "pre-apply"
+  ],
+  "sdodev.contracts.v1alpha1.ReflectionWorkItem.disposition": [
+    "covered",
+    "false_match",
+    "question"
+  ],
+  "sdodev.contracts.v1alpha1.ReflectionWorkItem.evidence_phase": [
+    "",
+    "fixed",
+    "open"
+  ],
+  "sdodev.contracts.v1alpha1.ReflectionWorkItem.reason": [
+    "binding_not_written",
+    "evidence_gap",
+    "fixed_capture_match",
+    "no_recorded_repair",
+    "program_refinement",
+    "repair_equivalence_question",
+    "unbound_write",
+    "uncertain",
+    "verified_equivalent_repair"
+  ],
+  "sdodev.contracts.v1alpha1.RemoveServicePort.protocol": [
+    "",
+    "SCTP",
+    "TCP",
+    "UDP"
+  ],
+  "sdodev.contracts.v1alpha1.RepairActionReceipt.failure_reason": [
+    "",
+    "authorization_denied",
+    "delete_not_confirmed",
+    "execution_failed",
+    "incident_verified",
+    "outcome_unknown"
+  ],
+  "sdodev.contracts.v1alpha1.RootCauseEvidence.kind": [
+    "detector-finding",
+    "live-observation",
+    "state-change",
+    "synthetic-traffic"
+  ],
+  "sdodev.contracts.v1alpha1.SelectionAction.phase": [
+    "compensation",
+    "forward"
+  ],
+  "sdodev.contracts.v1alpha1.SelectionLedger.provider": [
+    "",
+    "claude",
+    "codex"
+  ],
+  "sdodev.contracts.v1alpha1.SetField.document_format": [
+    "",
+    "json",
+    "yaml"
+  ],
+  "sdodev.contracts.v1alpha1.StageMitigation.result": [
+    "applied_cleared",
+    "applied_still_matching",
+    "apply_error",
+    "rollout_failed",
+    "rollout_pending_at_handoff",
+    "skipped"
+  ],
+  "sdodev.contracts.v1alpha1.StageMitigation.skip_reason": [
+    "",
+    "already_attempted",
+    "diagnose_no_longer_matches",
+    "diagnose_unavailable",
+    "multiple_entry_points",
+    "no_mitigation",
+    "repair_policy",
+    "unbound_parameter",
+    "unexplained_coverage"
+  ],
+  "sdodev.contracts.v1alpha1.StateChange.change": [
+    "added",
+    "modified",
+    "removed"
+  ],
+  "sdodev.contracts.v1alpha1.ValueProvenance.origin": [
+    "observed",
+    "parameter",
+    "source"
+  ],
+  "sdodev.contracts.v1alpha1.Verdict.result": [
+    "RESULT_MATCH",
+    "RESULT_NEEDS_JUDGEMENT",
+    "RESULT_NO_MATCH",
+    "RESULT_UNKNOWN",
+    "RESULT_UNSPECIFIED"
+  ]
+}

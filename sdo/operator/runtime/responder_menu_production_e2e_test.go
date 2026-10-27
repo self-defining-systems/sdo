@@ -268,7 +268,7 @@ func testProductionResponderMenuFactory(t *testing.T, enabled bool) {
 	cmd := exec.CommandContext(ctx, python, "run", "--no-sync", "python", script, request.IncidentID, sessionDir)
 	cmd.Dir = root
 	cmd.Env = append(os.Environ(), "PYTHONPATH="+root, "SDO_TOOLS_DIR="+filepath.Join(sessionDir, "tools"), "CODEX_HOME="+filepath.Join(sessionDir, "codex"), "SDO_SESSION_SCRATCH="+filepath.Join(sessionDir, "scratch"), "SDO_MITIGATION_SESSION=1")
-	output, err := cmd.CombinedOutput()
+	output, err := cmd.Output()
 	if err != nil {
 		live, readErr := client.CoreV1().Services("app").Get(ctx, menuService.Name, metav1.GetOptions{})
 		for _, action := range client.Actions() {

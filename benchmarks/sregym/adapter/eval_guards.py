@@ -41,14 +41,23 @@ class Deadline:
         return remaining
 
 
-def validate_setup_commit(actor: str, phase: str, validation: str, paths: list[str]) -> None:
-    if actor != "health_judge" or phase != "initial" or validation != "passed":
-        raise ValueError(f"unvalidated health setup commit: actor={actor}, phase={phase}, validation={validation}")
-    if not paths or any(
-        (not path.startswith(HEALTH_SETUP_PATHS) and path != ".sdo/playbooks/README.md") or ".." in Path(path).parts
-        for path in paths
-    ):
-        raise ValueError(f"setup changed paths outside health-owned artifacts: {paths}")
+def validate_setup_commit(validation: str) -> None:
+    """The broker owns artifact ownership; admission only needs the commit to have passed its validation."""
+    if validation != "passed":
+        raise ValueError(f"unvalidated setup commit: validation={validation}")
+
+
+def is_health_setup(actor: str, phase: str, paths: list[str]) -> bool:
+    """Whether a setup-window commit is the health judge's initial setup rather than other accepted memory."""
+    return (
+        actor == "health_judge"
+        and phase == "initial"
+        and bool(paths)
+        and all(
+            (path.startswith(HEALTH_SETUP_PATHS) or path == ".sdo/playbooks/README.md") and ".." not in Path(path).parts
+            for path in paths
+        )
+    )
 
 
 def setup_lineage(repository: Path, seed: str, head: str = "HEAD") -> dict[str, Any]:
@@ -73,11 +82,26 @@ def setup_lineage(repository: Path, seed: str, head: str = "HEAD") -> dict[str, 
             if line.startswith("SDO-") and ": " in line
         )
         paths = git("diff-tree", "--no-commit-id", "--name-only", "-r", sha).splitlines()
-        validate_setup_commit(
-            trailers.get("SDO-Actor", ""), trailers.get("SDO-Phase", ""), trailers.get("SDO-Validation", ""), paths
+        validate_setup_commit(trailers.get("SDO-Validation", ""))
+        actor, phase = trailers.get("SDO-Actor", ""), trailers.get("SDO-Phase", "")
+        commits.append(
+            {
+                "sha": sha,
+                "actor": actor,
+                "phase": phase,
+                "paths": paths,
+                "health_setup": is_health_setup(actor, phase, paths),
+            }
         )
-        commits.append({"sha": sha, "actor": trailers["SDO-Actor"], "phase": trailers["SDO-Phase"], "paths": paths})
-    return {"passed": True, "seed": seed, "accepted_commit": git("rev-parse", head), "commits": commits}
+    return {
+        "passed": True,
+        "seed": seed,
+        "accepted_commit": git("rev-parse", head),
+        "commits": commits,
+        # Accepted memory beyond health setup (say, an incident outcome the controller recorded before
+        # injection) does not block the row, but the first encounter then did not start from a bare seed.
+        "non_setup_commits": [commit["sha"] for commit in commits if not commit["health_setup"]],
+    }
 
 
 def controller_proof(state: dict[str, Any], required: set[str], not_before: str) -> dict[str, Any]:
