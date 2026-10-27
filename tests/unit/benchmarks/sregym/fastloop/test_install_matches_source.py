@@ -117,3 +117,28 @@ def test_repaired_source_wins_over_the_install_without_a_divergence_error(tmp_pa
     restored = accepted_restore_baselines(repaired, baselines, seed_commit=seed)
 
     assert restored[0].objects[0]["spec"]["template"]["spec"]["containers"][0]["image"] == "org/svc:2"
+
+
+@pytest.mark.parametrize("kind", ["Deployment", "StatefulSet", "DaemonSet"])
+def test_restore_cannot_reintroduce_chart_policy_over_accepted_source(tmp_path: Path, kind: str) -> None:
+    """A sealed old render has no authority to replace any declared workload field."""
+    from copy import deepcopy
+
+    declared = _deployment("api", "org/svc:1", init_image="org/init:1", kind=kind)
+    pod = declared["spec"]["template"]["spec"]
+    pod["initContainers"][0]["resources"] = {"limits": {"memory": "128Mi"}, "requests": {"memory": "0"}}
+    pod["containers"][0]["env"] = [{"name": "GOMEMLIMIT", "value": "160MiB"}]
+    declared["spec"]["template"]["metadata"] = {"annotations": {"checksum/config": "accepted-config"}}
+    installed = deepcopy(declared)
+    installed_pod = installed["spec"]["template"]["spec"]
+    del installed_pod["initContainers"][0]["resources"]
+    installed_pod["containers"][0]["env"][0]["value"] = "358MiB"
+    installed_pod["dnsPolicy"] = "ClusterFirst"
+    installed["spec"]["template"]["metadata"]["annotations"]["checksum/config"] = "harness-config"
+    source = commit_accepted_source(tmp_path / "workspace", [declared])
+    restored = accepted_restore_baselines(source, _seal(tmp_path, source, [installed]))
+    actual = restored[0].objects[0]["spec"]["template"]
+    assert actual["spec"]["initContainers"] == pod["initContainers"]
+    assert actual["spec"]["containers"] == pod["containers"]
+    assert actual["metadata"] == declared["spec"]["template"]["metadata"]
+    assert actual["spec"]["dnsPolicy"] == "ClusterFirst"

@@ -29,6 +29,7 @@ var sourceBookkeepingAnnotations = []sourceAnnotationPolicy{
 	{"sdo.dev/source-tree", false},
 	{acceptedPathsAnnotation, false},
 	{"deployment.kubernetes.io/revision", true},
+	{"deprecated.daemonset.template.generation", true},
 	{"kubectl.kubernetes.io/last-applied-configuration", false},
 	{"kubectl.kubernetes.io/restartedAt", true},
 }
@@ -37,7 +38,7 @@ func sourceBookkeepingAnnotation(name string) bool {
 	return slices.ContainsFunc(sourceBookkeepingAnnotations, func(policy sourceAnnotationPolicy) bool { return policy.name == name })
 }
 
-// Legacy fingerprints retain exactly the two annotations newly excluded by
+// Legacy fingerprints retain exactly the bookkeeping annotations excluded by
 // this policy; no broader source-shape or UID mismatch is accepted.
 func legacyAcceptedSourceShape(source *unstructured.Unstructured) string {
 	paths := []string{}
