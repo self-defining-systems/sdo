@@ -221,10 +221,19 @@ message OperationalArtifactProposal {
   repeated string delete_playbook_ids = 6;
 }
 
-// IncidentRequest is the snapshot the controller dispatches to the responder.
+// Controller-owned exclusion, valid only at the exact accepted memory revision.
+message DisabledSetupDetector {
+  string detector_id = 1 [(buf.validate.field).string.min_len = 1];
+  string accepted_revision = 2 [(buf.validate.field).string.min_len = 1];
+  repeated string fingerprints = 3 [(buf.validate.field).repeated = {min_items: 1, items: {string: {min_len: 1}}}];
+  google.protobuf.Timestamp disabled_at = 4 [(buf.validate.field).required = true];
+  string reason = 5 [(buf.validate.field).string.const = "fired on the confirmed-healthy app at setup"];
+}
+
 // NamespaceOnboarding is controller-owned identity acknowledgement at verified
 // initial installation. It never asserts content correctness or repair credit.
 message NamespaceOnboarding {
+  repeated DisabledSetupDetector disabled_setup_detectors = 6;
   string namespace = 1;
   string accepted_commit = 2;
   google.protobuf.Timestamp established_at = 3;
@@ -272,6 +281,7 @@ message IncidentRequest {
   repeated StageReport prior_stages = 29;
   // Go-owned: each lossy step taken so the request fit the transport limit, in order.
   repeated string compaction = 30;
+  repeated DisabledSetupDetector disabled_setup_detectors = 32;
 }
 
 message RootCauseEvidence {

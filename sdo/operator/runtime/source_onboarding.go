@@ -40,6 +40,9 @@ func (c *Controller) SetNamespaceOnboarding(record *contracts.NamespaceOnboardin
 		return fmt.Errorf("namespace onboarding acknowledgement cannot be replaced")
 	}
 	c.namespaceOnboarding = cloneNamespaceOnboarding(record)
+	if len(c.disabledSetupDetectors) == 0 {
+		c.disabledSetupDetectors = cloneDisabledSetupDetectors(record.DisabledSetupDetectors)
+	}
 	c.sourceInventory = nil
 	return nil
 }
@@ -127,7 +130,7 @@ func (c *Controller) AttachPendingOnboarding(ctx context.Context, client kuberne
 }
 
 func (c *Controller) beginOnboarding(ctx context.Context, detectors []sdk.Detector, now time.Time) *contracts.NamespaceOnboarding {
-	if c.pendingOnboarding == nil || len(detectors) != len(c.detectors) {
+	if c.pendingOnboarding == nil || len(detectors) != len(c.detectorList()) {
 		return nil
 	}
 	// Availability is checked before the create-once claim. Missing inventory

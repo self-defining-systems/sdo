@@ -212,6 +212,8 @@ message ControllerState {
   // optional source turn starts its own fresh verification window on return.
   // The original response deadline caps both; cleared with the incident.
   google.protobuf.Timestamp verification_deadline_at = 45;
+  string setup_evaluated_revision = 46;
+  repeated DisabledSetupDetector disabled_setup_detectors = 47;
   reserved 32, 33, 34;
   reserved "drift_investigation", "drift_admission", "program_sweep_cursors";
 }
