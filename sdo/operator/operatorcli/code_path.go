@@ -2,6 +2,7 @@ package operatorcli
 
 import (
 	"fmt"
+	"strings"
 
 	"sdo.dev/operator/broker"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
@@ -27,6 +28,18 @@ func parseCodePathSelection(name, overrides string) (*contracts.CodePathConfig, 
 		}
 	}
 	return result, nil
+}
+func addResponseStageOverride(config **contracts.CodePathConfig, value []string) {
+	if value == nil {
+		return
+	}
+	if *config == nil {
+		*config = &contracts.CodePathConfig{Name: "go"}
+	}
+	if (*config).Overrides == nil {
+		(*config).Overrides = &contracts.CodePathOverrides{}
+	}
+	(*config).Overrides.ResponseStages = append([]string{}, value...)
 }
 func memoryCodePath(config *contracts.CodePathConfig) string {
 	mode := config.GetOverrides().GetMemoryValidation()
@@ -58,6 +71,7 @@ func codePathWorkerEnvironment(config *contracts.CodePathConfig, environment map
 	environment["SDO_MEMORY_VALIDATION"] = memoryCodePath(config)
 	return environment
 }
+func stageOverride(value string) []string { return strings.Split(value, ",") }
 
 func selectMemoryValidator(config *contracts.CodePathConfig, goValidator broker.Validator) broker.Validator {
 	if memoryCodePath(config) == "shell" {

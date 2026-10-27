@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -171,5 +172,27 @@ func TestPendingRolloutToolRecordIsBoundedAndNotVerified(t *testing.T) {
 	}
 	if len(p.Reason) < 1000 {
 		t.Fatal("bounded record mutated full native evidence")
+	}
+}
+
+// A pending rollout has no independent repair verdict. It must not erase a
+// previously verified revision's trust, nor mask a separate false match.
+func TestPendingRolloutDoesNotCountAsDurableTrustFailure(t *testing.T) {
+	for _, falseMatch := range []bool{false, true} {
+		t.Run(fmt.Sprint(falseMatch), func(t *testing.T) {
+			prior := &contracts.OutcomeRecord{Classification: "success", SourceCommit: "revision-a", ProgramRuns: []*contracts.ProgramRun{{ProgramId: "repair", ProgramRevision: "revision-a"}}, ReflectionEligibility: &contracts.ReflectionEligibility{Version: 1, Unassigned: []*contracts.ReflectionWorkItem{{Disposition: "covered", ProgramId: "repair", ProgramRevision: "revision-a"}}}}
+			pending := &contracts.OutcomeRecord{Classification: "failed", SourceCommit: "revision-a", ProgramRuns: []*contracts.ProgramRun{{ProgramId: "repair", ProgramRevision: "revision-a"}}, PlanApplications: []*contracts.PlanApplication{{ApplicationId: "application-pending", Applied: true, ProgramIds: []string{"repair"}, Error: "rollout_pending", RolloutPending: &contracts.RolloutPending{Reason: "peer admission blocks rollout"}}}}
+			if falseMatch {
+				pending.ReflectionEligibility = &contracts.ReflectionEligibility{Version: 1, Unassigned: []*contracts.ReflectionWorkItem{{Disposition: "false_match", ProgramId: "repair", ProgramRevision: "revision-a"}}}
+			}
+			state := ProgramTrustStats([]*contracts.OutcomeRecord{prior, pending})["repair"]
+			if falseMatch {
+				if state.Failures != 1 || (state.VerifiedSuccesses > 0 && state.Failures == 0) {
+					t.Fatalf("pending masked independent false match: %+v", state)
+				}
+			} else if state.Failures != 0 || state.VerifiedSuccesses != 1 || !(state.VerifiedSuccesses > 0 && state.Failures == 0) {
+				t.Fatalf("pending alone changed durable trust: %+v", state)
+			}
+		})
 	}
 }

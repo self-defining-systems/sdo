@@ -78,6 +78,7 @@ type IncidentRequest struct {
 	StateChanges       *StateChanges
 	InitialProgramRuns []ProgramRun
 	PlaybookCoverage   *contracts.PlaybookCoverage
+	PriorStages        []*contracts.StageReport
 	MaxResponseLoops   int
 	// PreparedAgentTask is the exact ProtoJSON task persisted before a Job may be created.
 	PreparedAgentTask string
@@ -233,7 +234,9 @@ type IncidentClosure struct {
 	// unverified (final states moved to partial) instead of being superseded.
 	UnconfirmedReason contracts.ClosureUnconfirmedReason
 	UnconfirmedDetail string
-	// SourceCheckNotes lists source checks that were unavailable when health
-	// verified the closure. They are information on the outcome, not a verdict.
+	// SourceCheckNotes lists what the accepted-source checks found when the
+	// closure committed: checks that were unavailable, and objects that still
+	// differ from the accepted source. They are information on the outcome, not
+	// a verdict.
 	SourceCheckNotes []string
 }

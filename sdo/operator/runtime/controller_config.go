@@ -26,7 +26,7 @@ func LoadControllerConfig(path string) (*contractsv1alpha1.ControllerConfig, err
 		return nil, fmt.Errorf("read controller config: %w", err)
 	}
 	config := &contractsv1alpha1.ControllerConfig{}
-	if err := wire.Unmarshal(raw, config); err != nil {
+	if err := wire.UnmarshalDurable(raw, config); err != nil {
 		return nil, fmt.Errorf("controller config %s: %w", path, err)
 	}
 	return config, nil

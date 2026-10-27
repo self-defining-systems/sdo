@@ -66,23 +66,23 @@ func TestClosureNamesRolloutBlockersWithoutProgramApplication(t *testing.T) {
 	if err != nil || !strings.Contains(string(payload), "policy.example") {
 		t.Fatalf("continuation lost blocker: %s %v", payload, err)
 	}
-	clear, findings := c.verifyClosureDrift(context.Background(), now, snapshot)
+	clear, findings := closureRollouts(c, now, snapshot)
 	if clear || len(findings) != 1 {
 		t.Fatalf("closure and self-check disagree: %v %+v", clear, findings)
 	}
 	d.Status.UpdatedReplicas = 1
 	snapshot.DeploymentList = []appsv1.Deployment{d}
-	clear, findings = c.verifyClosureDrift(context.Background(), now, snapshot)
+	clear, findings = closureRollouts(c, now, snapshot)
 	if clear || len(findings) != 1 {
 		t.Fatal("old live Pod escaped newer deployment counters")
 	}
 	snapshot.PodList = []corev1.Pod{blocked}
-	clear, findings = c.verifyClosureDrift(context.Background(), now, snapshot)
+	clear, findings = closureRollouts(c, now, snapshot)
 	if clear || len(findings) != 1 {
 		t.Fatal("live image pull failure escaped newer deployment counters")
 	}
 	snapshot.PodList[0].Status = corev1.PodStatus{Phase: corev1.PodRunning}
-	clear, findings = c.verifyClosureDrift(context.Background(), now, snapshot)
+	clear, findings = closureRollouts(c, now, snapshot)
 	if !clear || len(findings) != 0 {
 		t.Fatalf("stale rollout evidence survived completed rollout: %+v", findings)
 	}
@@ -102,7 +102,7 @@ func TestClosureRolloutIgnoresOtherNamespacesAndHelpers(t *testing.T) {
 		t.Fatal(err)
 	}
 	c.currentIncidentRequest = &IncidentRequest{IncidentID: "synthetic", Namespace: "demo", Findings: []sdk.Finding{{PrimaryResource: sdk.ObjectRef{Kind: "Deployment", Namespace: "demo", Name: "api"}}}}
-	clear, findings := c.verifyClosureDrift(context.Background(), time.Now(), snapshot)
+	clear, findings := closureRollouts(c, time.Now(), snapshot)
 	if !clear || len(findings) != 0 {
 		t.Fatalf("unrelated rollout prevented closure: %+v", findings)
 	}
@@ -231,4 +231,10 @@ func TestClosureRolloutRecordedWriteReachesCachedVerification(t *testing.T) {
 	if !found || response.Healthy {
 		t.Fatalf("recorded write blocker absent from cached tool response: %+v", response)
 	}
+}
+
+// closureRollouts reports whether pending rollouts hold the closure.
+func closureRollouts(c *Controller, now time.Time, snapshot sdk.DetectionContext) (bool, []sdk.Finding) {
+	report := c.verifyClosureSource(context.Background(), now, snapshot, nil)
+	return len(report.Rollouts) == 0, report.Rollouts
 }

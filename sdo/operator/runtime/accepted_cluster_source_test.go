@@ -156,7 +156,9 @@ func TestAcceptedClusterSourceMissingObservationIsNotAbsence(t *testing.T) {
 	}
 }
 
-func assertClusterSourceStatusVerify(t *testing.T, ref sdk.ObjectRef, view LiveReadView, healthy bool) {
+// Source evidence is information: status and verify report health from the
+// detectors alone and list the object in drift[] while it differs from source.
+func assertClusterSourceStatusVerify(t *testing.T, ref sdk.ObjectRef, view LiveReadView, restored bool) {
 	t.Helper()
 	finding := unexplainedFinding()
 	finding.PrimaryResource = ref
@@ -169,7 +171,7 @@ func assertClusterSourceStatusVerify(t *testing.T, ref sdk.ObjectRef, view LiveR
 	}
 	for _, command := range []string{"status", "verify"} {
 		response := loop.Handle(context.Background(), ToolRequest{Command: command})
-		if response.Healthy != healthy {
+		if !response.Healthy || (len(response.Drift) == 0) != restored {
 			t.Fatalf("%s disagrees with source evidence for %+v: %+v", command, ref, response)
 		}
 	}

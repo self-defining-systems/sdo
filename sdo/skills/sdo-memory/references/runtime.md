@@ -132,7 +132,8 @@ Mutating commands always store complete per-action results, evidence, program ru
 
 usage: sdo verify [-h] [--wait SECONDS]
 
-Reads the controller's cached health and inventory verdict immediately.
+Reads the controller's cached health verdict immediately; drift[] lists
+objects that still differ from accepted source and never decides healthy.
 Pending observation windows, including unproven synthetic scenarios, are not
 healthy. Fresh deployment-rollout-pending findings name owned ReplicaSet/Pod
 blockers and old-template Pods, including after recorded actions; inspect
@@ -147,7 +148,7 @@ options:
   --wait SECONDS  wait for stable verification, a new/reactivated finding, or
                   this timeout (0: cached and instant)
 
-Key JSON fields: healthy, unresolved, findings[], detector_states[],
+Key JSON fields: healthy, unresolved, findings[], detector_states[], drift[],
 drift_events[]
 
 

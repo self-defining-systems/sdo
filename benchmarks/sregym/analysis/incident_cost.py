@@ -109,6 +109,29 @@ class IncidentCostError(ValueError):
     """Raised when a result directory lacks the evidence this analysis needs."""
 
 
+class UnreadableUsageError(IncidentCostError):
+    """Raised when a usage record names a token count that is not a whole number."""
+
+
+def _read_count(name: str, value: object) -> int | None:
+    """One reported count: a number or a numeric string (ProtoJSON int64); ``None`` when absent.
+
+    A present value that is not a whole number raises rather than reading as 0,
+    because a zero count prices the usage at $0.
+    """
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        raise UnreadableUsageError(f"{name} must be a whole number, got {value!r}")
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    if isinstance(value, str) and re.fullmatch(r"\s*-?[0-9]+(\.0+)?\s*", value):
+        return int(float(value)) if "." in value else int(value)
+    raise UnreadableUsageError(f"{name} must be a whole number, got {value!r}")
+
+
 @dataclass(frozen=True)
 class TokenUsage:
     """Token usage in agentshim's normalized breakdown, plus the model-request count.
@@ -151,17 +174,18 @@ class TokenUsage:
         if not isinstance(usage, dict):
             return cls()
         # Native receipts use ProtoJSON, which encodes int64 counts as decimal
-        # strings. agentshim's mapping reader only accepts numeric values.
+        # strings; agentshim's mapping reader silently reads those as 0. This
+        # is the one place a reported count becomes a number.
         usage = dict(usage)
-        for name in (*_COUNT_FIELDS, "cache_read_input_tokens", "model_requests"):
-            value = usage.get(name)
-            if isinstance(value, str) and re.fullmatch(r"-?[0-9]+", value):
-                usage[name] = int(value)
-        requests = usage.get("model_requests")
-        return cls.from_normalized(
-            NormalizedUsage.from_dict(usage),
-            requests=requests if isinstance(requests, int) and not isinstance(requests, bool) else None,
-        )
+        for name in (*_COUNT_FIELDS, "cache_read_input_tokens"):
+            count = _read_count(name, usage.get(name))
+            if count is not None:
+                usage[name] = count
+        try:
+            requests = _read_count("model_requests", usage.get("model_requests"))
+        except UnreadableUsageError:
+            requests = None
+        return cls.from_normalized(NormalizedUsage.from_dict(usage), requests=requests)
 
     @classmethod
     def from_normalized(cls, tokens: NormalizedUsage, *, requests: int | None = None) -> TokenUsage:
@@ -337,6 +361,25 @@ class UsageSummary:
             usd=avg([s.usd for s in summaries]),
             requests=avg_known([s.requests for s in summaries]),
         )
+
+
+def reported_usd(usage: object, pricing: ArmPricing) -> float | None:
+    """The USD of one recorded usage, ``None`` (unknown, never 0) when it cannot be priced.
+
+    Unknown means: no usage mapping, no input or output count in it, a count
+    that is not a whole number, or a model the price table does not list.
+    """
+    if not isinstance(usage, dict) or not any(key in usage for key in ("input_tokens", "output_tokens")):
+        return None
+    try:
+        return UsageSummary.of(TokenUsage.from_mapping(usage), pricing).usd
+    except UnreadableUsageError:
+        return None
+
+
+def format_usd(value: float | None) -> str:
+    """A USD amount for a report line: four decimals, ``unknown`` for ``None``."""
+    return "unknown" if value is None else f"{value:.4f}"
 
 
 @dataclass(frozen=True)

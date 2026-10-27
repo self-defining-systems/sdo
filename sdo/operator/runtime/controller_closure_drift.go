@@ -10,13 +10,19 @@ import (
 	"sdo.dev/operator/sdk"
 )
 
-// verifyClosureDrift rechecks the owned fields admitted on source-declared
-// objects. Health clearance and responder claims cannot resolve a live/source
-// mismatch. Admission stays in the drift classifier, including for late drift.
-func (c *Controller) verifyClosureDrift(ctx context.Context, now time.Time, snapshot sdk.DetectionContext) (bool, []sdk.Finding) {
-	return c.verifyClosureDriftWithResult(ctx, now, snapshot, nil)
+// closureSourceReport is what the closure check learned from the live
+// namespace. Pending rollouts hold the closure because health samples are not
+// settled yet. Drift is information: it never holds verification or closure.
+type closureSourceReport struct {
+	Rollouts []sdk.Finding
+	Drift    []sdk.Finding
 }
-func (c *Controller) verifyClosureDriftWithResult(ctx context.Context, now time.Time, snapshot sdk.DetectionContext, result *IncidentResult, rolloutRefs ...sdk.ObjectRef) (bool, []sdk.Finding) {
+
+// verifyClosureSource rechecks the owned fields admitted on source-declared
+// objects and the accepted-source inventory, and reports what still differs.
+// Health alone decides closure; admission stays in the drift classifier,
+// including for late drift.
+func (c *Controller) verifyClosureSource(ctx context.Context, now time.Time, snapshot sdk.DetectionContext, result *IncidentResult, rolloutRefs ...sdk.ObjectRef) closureSourceReport {
 	c.mu.Lock()
 	findings := append([]sdk.Finding(nil), c.currentIncidentRequest.Findings...)
 	if result == nil {
@@ -38,13 +44,9 @@ func (c *Controller) verifyClosureDriftWithResult(ctx context.Context, now time.
 			rolloutRefs = append(rolloutRefs, action.Resources...)
 		}
 	}
-	clear, unresolvedFindings := c.verifySourceInventoryLocked(result)
+	_, drift := c.verifySourceInventoryLocked(result)
 	c.mu.Unlock()
-	rollouts := closureRolloutFindings(snapshot, namespace, rolloutRefs)
-	if len(rollouts) > 0 {
-		clear = false
-		unresolvedFindings = append(unresolvedFindings, rollouts...)
-	}
+	report := closureSourceReport{Rollouts: closureRolloutFindings(snapshot, namespace, rolloutRefs), Drift: drift}
 	active := map[string][]sdk.Finding{}
 	errors := map[string]error{}
 	for _, finding := range findings {
@@ -62,11 +64,10 @@ func (c *Controller) verifyClosureDriftWithResult(ctx context.Context, now time.
 		}
 		resolved, err := c.closureSourceRestored(ctx, snapshot, finding, events)
 		if !resolved {
-			clear = false
 			if err != nil {
 				finding.Evidence += "; source verification: " + err.Error()
 			}
-			unresolvedFindings = append(unresolvedFindings, finding)
+			report.Drift = append(report.Drift, finding)
 			active[finding.DetectorID] = append(active[finding.DetectorID], finding)
 			if err != nil {
 				errors[finding.DetectorID] = err
@@ -93,7 +94,8 @@ func (c *Controller) verifyClosureDriftWithResult(ctx context.Context, now time.
 			c.recordEvaluation(id, now, unresolved)
 		}
 	}
-	return clear, unresolvedFindings
+	sortFindings(report.Drift)
+	return report
 }
 
 // closureSourceRestored is also used at the broker handoff, where a restored

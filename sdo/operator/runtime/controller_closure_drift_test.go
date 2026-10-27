@@ -140,51 +140,41 @@ func closureOutcome(t *testing.T, closure IncidentClosure) string {
 	return derived.Record.GetClassification()
 }
 
+// Health decides closure. Drift that remains on the object (an owned field the
+// responder did not restore) closes as success and stays on the outcome.
 func TestClosureAdmittedDriftContracts(t *testing.T) {
 	for _, tc := range []struct {
 		name            string
 		owned, declared bool
 		namespace       string
 		repair          bool
+		driftRecorded   bool
 	}{
-		{"image_only", true, true, "app", false},
-		{"both_fixed", true, true, "app", true},
-		{"unowned", false, true, "app", false},
-		{"undeclared", true, false, "app", false},
-		{"other_namespace", true, true, "other", false},
+		{"image_only", true, true, "app", false, true},
+		{"both_fixed", true, true, "app", true, false},
+		{"unowned", false, true, "app", false, false},
+		{"undeclared", true, false, "app", false, false},
+		{"other_namespace", true, true, "other", false, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newClosureDriftFixture(t, tc.owned, tc.declared, tc.namespace)
 			if tc.repair {
 				f.restoreSource(t)
 			}
-			f.step(t, 1)
-			blocked := tc.owned && tc.declared && tc.namespace == "app" && !tc.repair
-			if blocked {
-				if len(f.closed) != 0 {
-					t.Fatalf("image repair closed with unresolved targetPort drift: %s", closureOutcome(t, f.closed[0]))
-				}
-				f.step(t, 6)
-			} else {
-				f.settle(t, 1)
-			}
+			f.settle(t, 1)
 			if len(f.closed) != 1 {
 				t.Fatalf("closures=%d", len(f.closed))
 			}
-			want := "success"
-			if blocked {
-				want = "failed"
+			if got := closureOutcome(t, f.closed[0]); got != "success" {
+				t.Fatalf("classification=%s want success", got)
 			}
-			if got := closureOutcome(t, f.closed[0]); got != want {
-				t.Fatalf("classification=%s want %s", got, want)
-			}
-			if blocked {
+			if tc.driftRecorded {
 				derived, err := (ProtoOutcomeDeriver{}).Derive(context.Background(), f.closed[0], "repair", "codex", "fixture")
 				if err != nil {
 					t.Fatal(err)
 				}
-				if len(derived.Record.GetDriftEvents()) != 1 || len(f.closed[0].IncidentDetectorStates) != 1 || f.closed[0].IncidentDetectorStates[0].Status != DetectorEvaluationFiring {
-					t.Fatalf("outcome lost unresolved drift: %v closure=%+v", derived.Record, f.closed[0])
+				if len(derived.Record.GetDriftEvents()) != 1 {
+					t.Fatalf("outcome lost remaining drift: %v", derived.Record)
 				}
 			}
 		})
@@ -206,37 +196,29 @@ func TestClosureDriftResolvedByRestoringSource(t *testing.T) {
 
 // Hand-written reduction of L3 i04, from FX1's analysis: the image is repaired,
 // Service reservation remains port 8087 -> targetPort 9999, and its Pod declares
-// 8087. No experiment captures or oracle verdicts are inputs to the controller.
-func TestClosureL3I04Reduction(t *testing.T) {
+// 8087. Health is clear, so the incident closes; the routing difference stays on
+// the outcome as information. No experiment captures or oracle verdicts are
+// inputs to the controller.
+func TestClosureL3I04ReductionClosesOnHealthWithDriftRecorded(t *testing.T) {
 	f := newClosureDriftFixture(t, true, true, "app")
-	f.step(t, 1)
-	if len(f.closed) != 0 {
-		t.Fatal("readiness recovery hid the remaining L3 routing fault")
-	}
-	f.step(t, 6)
-	if len(f.closed) != 1 || closureOutcome(t, f.closed[0]) != "failed" {
-		t.Fatal("incomplete composite repair did not fail at the verification deadline")
+	f.settle(t, 1)
+	if len(f.closed) != 1 || closureOutcome(t, f.closed[0]) != "success" {
+		t.Fatalf("health-clear incident did not close: %+v", f.closed)
 	}
 	event := f.closed[0].Request.DriftEvents[0]
 	if len(event.Fields) != 1 || event.Fields[0].New != "9999" || event.Fields[0].Source != "8087" {
 		t.Fatalf("routing evidence=%+v", event)
 	}
-	t.Logf("L3 reduction: %s; %s/%s still targets %s rather than %s", closureOutcome(t, f.closed[0]), event.Ref.Kind, event.Ref.Name, event.Fields[0].New, event.Fields[0].Source)
 }
 
-func TestClosureDriftSourceErrorFailsClosed(t *testing.T) {
+// A source that cannot be read is information about the drift, never a reason
+// to hold a health-verified closure.
+func TestClosureDriftSourceErrorDoesNotHoldClosure(t *testing.T) {
 	f := newClosureDriftFixture(t, true, true, "app")
 	f.c.drift.View = func(sdk.DetectionContext) program.ReadView { return failedSourceDriftView{} }
-	f.step(t, 1)
-	if len(f.closed) != 0 {
-		t.Fatal("source read error verified drift")
-	}
-	f.step(t, 6)
-	if len(f.closed) != 1 || closureOutcome(t, f.closed[0]) != "failed" {
+	f.settle(t, 1)
+	if len(f.closed) != 1 || closureOutcome(t, f.closed[0]) != "success" {
 		t.Fatal(fmt.Sprint(f.closed))
-	}
-	if len(f.closed[0].IncidentDetectorStates) != 1 || f.closed[0].IncidentDetectorStates[0].Status != DetectorEvaluationError {
-		t.Fatal("source comparison error was not recorded in closure")
 	}
 }
 
@@ -277,7 +259,7 @@ func TestClosureDriftUsesSourceFieldsWhenReconcileIsNoop(t *testing.T) {
 		if finding.DetectorID != "drift.unexplained" {
 			continue
 		}
-		retained, _ := checkRetainedDrift(context.Background(), []sdk.Finding{finding}, driftReadView{diff: diff})
+		retained := retainedDrift([]sdk.Finding{finding}, driftReadView{diff: diff})
 		if len(retained) != 1 {
 			t.Fatal("status accepted apply normalization while admitted source fields differ")
 		}
@@ -341,7 +323,7 @@ func TestClosureDriftRemovedExtraFieldsAgreeWithStatus(t *testing.T) {
 			if err != nil || !clear {
 				t.Fatalf("controller verifier disagrees with clear source status: clear=%v err=%v", clear, err)
 			}
-			retained, _ := checkRetainedDrift(context.Background(), []sdk.Finding{finding}, view)
+			retained := retainedDrift([]sdk.Finding{finding}, view)
 			if len(retained) != 0 {
 				t.Fatalf("status retains restored fields: %+v", retained)
 			}

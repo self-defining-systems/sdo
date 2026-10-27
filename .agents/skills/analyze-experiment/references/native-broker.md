@@ -19,7 +19,7 @@ failure signal, drift event, exhausted loop or source repair. The prompt is then
 expected decision is `no_change`. Empty or `full` (fresh fallback, retries, anything else) is the
 complete authoring reflection. The closure's `request.state_changes` (absent in older ledgers or without a healthy baseline) is the controller's configuration diff against its last healthy baseline when the incident opened: `baseline_at`, `observed_at`, `changes` (`kind`, `name`, `change` of `added`/`removed`/`modified`, and field-level `before`/`after`, where ConfigMap data appears only as `sha256:` digests; current Secret fields are only `uid` and `resourceVersion`, with the object name on the change. Secret content drift is a resourceVersion change, never a data digest. Strict metadata-only list/watch has no full-object fallback; unsupported or forbidden metadata reads mark `Secret` unobserved. Secret type and key names are unavailable in PartialObjectMetadata and omitted. Older ledgers may contain Secret data digests), `omitted`, and `unobserved_kinds`; objects that existed unchanged at the baseline, such as SREGym's `failure-admin-*` decoys, never appear. The closure's `final_state_changes` (absent in ledgers before the verification-time state diff, and without a healthy baseline) is the same shape of diff, recomputed at verification time instead of dispatch time: a composite fault's later component can land a few seconds after dispatch while the incident is still open (K2's readiness-probe fault about 6s after its selector fault), so it can appear here without appearing in `request.state_changes`. Current derivation records these diffs for context without checking diagnosis references. Historical closures may also carry `observed_state_changes` to date cited changes against repairs; current closures omit it. `health_cleared_at` records the start of the final health-clear streak, without root-cause attribution. Program trust retains its separate bound application and NoMatch checks. The closure's `cleaned_helpers` (absent in older ledgers) lists the responder helper pods and Jobs (`sdo.dev/responder-helper=true`) the controller deleted when the responder completed. The closure's `incident_detector_states` (absent in older ledgers) holds the latest post-response evaluation of each non-health detector that raised a finding; it is learning evidence, not a closure gate. A closure with empty `final_detector_states` means health never cleared within the controller's verification window; the broker classifies it `failed` and strict receipt validation rejects it as a full mitigation. Reflection can still run for an independently verified partial repair, as described below. A missing proposal commit is valid under `recorded-actions`; current success classification uses successful repair actions, while verified clearing without a repair is `cleared_without_action`. Receipts do not re-check diagnosis or repair evidence. Require incident IDs and commit hashes to agree with the receipt and outcome.
 
-`IncidentClosure.source_check_notes` and `OutcomeRecord.source_check_notes` list source or render checks that were unavailable when health verified the closure (accepted source would not render, the source inventory had not loaded). They are information only: the closure stays a success decided by health alone, and only an observed source difference contradicts it. Absent in older ledgers and outcomes.
+`IncidentClosure.source_check_notes` and `OutcomeRecord.source_check_notes` list source or render checks that were unavailable when health verified the closure (accepted source would not render, the source inventory had not loaded). They are information only: the closure stays a success decided by health alone. The notes also list each object that still differs from accepted source ("unexplained drift remains on Kind/name"); an observed source difference no longer contradicts a closure. Absent in older ledgers and outcomes.
 
 
 
@@ -92,3 +92,32 @@ script's exit code, duration (Go duration nanoseconds), stdout/stderr tails, tim
 error and fired streak. Two nonzero runs fire; errors reset the streak and block
 health. Controller closure still owns recovery and its stability evidence. Keep
 activation latency separate from script execution and responder runtime.
+## Ordered response stages
+
+`ControllerConfig.code_path.overrides.response_stages` defaults to `deterministic,agent`; `agent`
+alone is the baseline. `IncidentRequest.prior_stages` and
+`OutcomeRecord.prior_stages` retain typed controller-owned stage reports.
+Each mitigation identifies the accepted playbook revision, bindings, plan,
+`apply_receipt`, post-apply Diagnose, and cleared/remaining finding fingerprints.
+Results distinguish `applied_cleared`, `applied_still_matching`, `rollout_failed`,
+`rollout_pending_at_handoff`, `apply_error`, and `skipped` with `skip_reason`.
+Stage-level fingerprints describe work remaining at each handoff. These scoped
+observations never replace independent controller closure/classification.
+
+The deterministic stage requires a fresh Match, exactly one mitigation entry
+point, and all parameters bound from covered findings. It has no trust gate and
+never automatically undoes a completed apply. Its own rollout wait is capped at
+30 seconds. Interrupted apply intent survives in the incident tool checkpoint;
+a retry reports uncertainty instead of repeating a potentially landed mutation.
+
+`resolution_path: deterministic` means the incident needed no responder worker;
+usage is zero model work, while recorded plan actions remain repair evidence.
+These incidents still receive reflection using a fresh session and the same
+stage reports; a missing session from a failed responder does not enable that
+fallback. Attribute learning only from the accepted reflection and independently
+verified cause evidence. The responder's inline view summarizes stages; complete
+receipts remain in its private incident facts and committed outcome.
+
+### Receipts after responder retirement
+
+The controller may retire a responder Job after an early report. Post-reflection receipt collection uses the broker ledger's frozen incident request, correlated result, durable dispatch/completion timestamps, independently verified closure, and accepted acknowledgment. A live responder Job is not a receipt prerequisite. An empty `responder_job_evidence` means no Kubernetes success claim is made; the Go checker requires valid ordered lifecycle timestamps and a completed correlated result instead. Historical receipts with Job evidence retain their original validation.

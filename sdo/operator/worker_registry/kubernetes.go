@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
 	"os"
@@ -217,7 +216,7 @@ func (e KubernetesExecutor) Execute(ctx context.Context, task *contracts.AgentTa
 	}
 	if e.TaskPayload != "" {
 		prepared := new(contracts.AgentTask)
-		if err := protojson.Unmarshal([]byte(e.TaskPayload), prepared); err != nil || !proto.Equal(prepared, task) {
+		if err := wire.UnmarshalDurable([]byte(e.TaskPayload), prepared); err != nil || !proto.Equal(prepared, task) {
 			return nil, errors.New("prepared agent task differs from validated task")
 		}
 		payload = []byte(e.TaskPayload)
@@ -437,7 +436,7 @@ func (e KubernetesExecutor) ensureRequest(ctx context.Context, name, payload str
 		return fmt.Errorf("get existing agent request ConfigMap: %w", err)
 	}
 	prior, next := new(contracts.AgentTask), new(contracts.AgentTask)
-	if wire.Unmarshal([]byte(existing.Data[TaskDataKey]), prior) != nil || wire.Unmarshal([]byte(payload), next) != nil || !proto.Equal(prior, next) {
+	if wire.UnmarshalDurable([]byte(existing.Data[TaskDataKey]), prior) != nil || wire.UnmarshalDurable([]byte(payload), next) != nil || !proto.Equal(prior, next) {
 		return &RequestPayloadConflictError{ConfigMap: name}
 	}
 	return nil

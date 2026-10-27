@@ -17,7 +17,7 @@ import (
 
 func restartPortLoop(original *ResponderLoop) *ResponderLoop {
 	loop := NewResponderLoop(original.Request, original.Programs, original.Provider, original.Detectors, original.Executor, original.MaxBatches)
-	loop.ReadView, loop.ProgramCounts = original.ReadView, original.ProgramCounts
+	loop.ReadView, loop.Trust = original.ReadView, original.Trust
 	return loop
 }
 

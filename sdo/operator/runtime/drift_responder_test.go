@@ -28,7 +28,8 @@ func unexplainedFinding() sdk.Finding {
 	return f
 }
 
-func TestVerifyRetainsDriftWithHealthyDetectors(t *testing.T) {
+// Retained drift is reported next to a clear health verdict; it never decides it.
+func TestVerifyReportsDriftWithoutDecidingHealth(t *testing.T) {
 	f := unexplainedFinding()
 	health := controllerDetector("health", time.Second, sdk.Finding{})
 	loop := NewResponderLoop(IncidentRequest{IncidentID: "incident", Namespace: "app", Findings: []sdk.Finding{f}}, nil, staticProvider{snapshot: sdktest.Snapshot{NamespaceName: "app"}}, []sdk.Detector{health}, PlanExecutor{}, 1)
@@ -37,8 +38,8 @@ func TestVerifyRetainsDriftWithHealthyDetectors(t *testing.T) {
 	}
 	for _, command := range []string{"status", "diagnose", "verify"} {
 		result := loop.Handle(context.Background(), ToolRequest{Command: command})
-		if result.Healthy || len(result.Findings) != 1 {
-			t.Fatalf("%s lost retained drift with quiet health: %+v", command, result)
+		if (command != "diagnose" && !result.Healthy) || len(result.Findings) != 0 || len(result.Drift) != 1 {
+			t.Fatalf("%s hid retained drift or let it decide health: %+v", command, result)
 		}
 	}
 }
@@ -197,12 +198,17 @@ type failedSourceDriftView struct{ driftReadView }
 func (failedSourceDriftView) DiffAgainstSource(sdk.ObjectRef) (program.Diff, error) {
 	return program.Diff{}, fmt.Errorf("source unavailable")
 }
-func TestUnexplainedDriftSourceErrorNeverClears(t *testing.T) {
+// A source that cannot be compared is information about the drift, never a
+// verdict on health.
+func TestUnexplainedDriftSourceErrorIsInformationOnly(t *testing.T) {
 	loop := NewResponderLoop(IncidentRequest{IncidentID: "incident", Findings: []sdk.Finding{unexplainedFinding()}}, nil, staticProvider{snapshot: sdktest.Snapshot{}}, []sdk.Detector{controllerDetector("health", time.Second, sdk.Finding{})}, PlanExecutor{}, 1)
 	loop.ReadView = func(sdk.DetectionContext) program.ReadView { return failedSourceDriftView{} }
 	result := loop.Handle(context.Background(), ToolRequest{Command: "verify"})
-	if result.Healthy || len(result.Findings) != 1 || result.DetectorStates[len(result.DetectorStates)-1].Status != DetectorEvaluationError {
-		t.Fatalf("source error cleared drift: %+v", result)
+	if !result.Healthy || len(result.Findings) != 0 || len(result.Drift) != 1 {
+		t.Fatalf("drift decided health instead of informing: %+v", result)
+	}
+	if strings.Contains(result.Summary, "immediately") || !strings.Contains(result.Summary, "1 object(s) still differ from the accepted source") {
+		t.Fatalf("verify told the agent to stop while a difference remains: %q", result.Summary)
 	}
 }
 

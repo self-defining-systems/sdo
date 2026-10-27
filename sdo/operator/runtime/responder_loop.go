@@ -56,6 +56,7 @@ type ToolResponse struct {
 	ProgramRevisions           map[string]string              `json:"program_revisions,omitempty"`
 	OptionReports              []*contracts.MitigationReport  `json:"-"`
 	UnexplainedRemovalBlockers []UnexplainedRemovalBlocker    `json:"unexplained_removal_blockers,omitempty"`
+	Drift                      []sdk.Finding                  `json:"drift,omitempty"`
 	BeforeFindings             []sdk.Finding                  `json:"before_findings"`
 	ControllerFindings         []sdk.Finding                  `json:"controller_findings"`
 	Progress                   *FindingProgress               `json:"progress,omitempty"`
@@ -96,7 +97,7 @@ type ToolResponse struct {
 	TargetedHealthy             bool                    `json:"targeted_healthy,omitempty"`
 	Healthy                     bool                    `json:"healthy"`
 	Unresolved                  bool                    `json:"unresolved"`
-	ProgramCounts               map[string]ProgramCount `json:"program_counts,omitempty"`
+	Trust                       map[string]ProgramTrust `json:"trust,omitempty"`
 }
 
 type ToolCall struct {
@@ -133,6 +134,7 @@ type selectedPlan struct {
 
 // ResponderLoop holds one incident's tool state while its responder Job runs.
 type ResponderLoop struct {
+	stageProgress        map[string]responseStageProgress
 	waitForStageRollouts bool
 	// WorkingProgramRoot is set by the production loop factory to the mounted
 	// proposal checkout. Embedders with an in-memory registry may leave it empty.
@@ -170,7 +172,7 @@ type ResponderLoop struct {
 	ProgramFollowUpSettle time.Duration
 	PendingStallTimeout   time.Duration
 	MaxBatches            int
-	ProgramCounts         map[string]ProgramCount
+	Trust                 map[string]ProgramTrust
 	CorpusSessionRoot     string
 	capturePhase          string
 	timing                toolTiming
@@ -191,6 +193,7 @@ type ResponderLoop struct {
 	matchedPlanErrors     map[string]error
 	lastDiagnosisView     program.ReadView
 	findings              []sdk.Finding
+	drift                 []sdk.Finding
 	batches               int
 }
 
@@ -227,12 +230,12 @@ func NewResponderLoop(request IncidentRequest, programs program.ProgramRegistry,
 
 // initializeDispatch may run after LoopFactory has published this loop to the
 // controller. It follows the same operation/state lock order as tools/restore.
-func (l *ResponderLoop) initializeDispatch(counts map[string]ProgramCount, maxBatches int, runs []ProgramRun) {
+func (l *ResponderLoop) initializeDispatch(trust map[string]ProgramTrust, maxBatches int, runs []ProgramRun) {
 	l.operationMu.Lock()
 	defer l.operationMu.Unlock()
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	l.ProgramCounts = counts
+	l.Trust = trust
 	if maxBatches > 0 {
 		l.MaxBatches = maxBatches
 	}
@@ -450,8 +453,9 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 		l.detect(ctx, request.DetectorIDs, &response)
 	case "status":
 		response.DriftEvents = append([]sdk.DriftEvent(nil), l.Request.DriftEvents...)
-		response.ProgramCounts = l.ProgramCounts
+		response.Trust = l.Trust
 		response.Findings, response.ProgramRuns, response.DetectorStates, response.Error = l.refresh(ctx)
+		response.Drift = append([]sdk.Finding(nil), l.drift...)
 		response.Healthy = response.Error == "" && len(l.findings) == 0
 		for _, state := range response.DetectorStates {
 			response.Healthy = response.Healthy && state.Status == DetectorEvaluationClear
@@ -461,6 +465,7 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 	case "diagnose":
 		if request.ProgramID == "" {
 			response.Findings, response.ProgramRuns, response.DetectorStates, response.Error = l.refresh(ctx)
+			response.Drift = append([]sdk.Finding(nil), l.drift...)
 		} else {
 			if l.Programs == nil {
 				response.Error = "no programs are compiled"
@@ -749,9 +754,7 @@ func (l *ResponderLoop) refresh(ctx context.Context) ([]sdk.Finding, []ProgramRu
 		}
 		states = append(states, state)
 	}
-	drift, driftStates := checkRetainedDrift(ctx, l.Request.Findings, view)
-	findings = append(findings, drift...)
-	states = append(states, driftStates...)
+	l.drift = retainedDrift(l.Request.Findings, view)
 	l.findings = findings
 	runs := SelectProgramCandidates(ctx, l.Programs, view, findings, l.deadline())
 	l.stampProgramRuns(runs)
@@ -1046,9 +1049,7 @@ func (l *ResponderLoop) verify(ctx context.Context, applied []selectedPlan, resp
 		}
 		states = append(states, state)
 	}
-	drift, driftStates := checkRetainedDrift(ctx, l.Request.Findings, view)
-	findings = append(findings, drift...)
-	states = append(states, driftStates...)
+	l.drift = retainedDrift(l.Request.Findings, view)
 	l.findings = findings
 	if len(applied) > 0 {
 		old := map[string]bool{}
@@ -1075,17 +1076,21 @@ func (l *ResponderLoop) verify(ctx context.Context, applied []selectedPlan, resp
 		}
 	}
 	response.Findings, response.DetectorStates = append([]sdk.Finding(nil), findings...), states
+	response.Drift = append([]sdk.Finding(nil), l.drift...)
 	if len(findings) > 0 {
 		runs := SelectProgramCandidates(ctx, l.Programs, view, findings, l.deadline())
 		l.stampProgramRuns(runs)
 		response.ProgramRuns = append(response.ProgramRuns, runs...)
 		l.runs = append(l.runs, runs...)
 	}
-	response.Healthy = response.Error == "" && len(findings) == 0 && (len(l.Detectors) > 0 || len(driftStates) > 0) && detectorsConfirmed(l.Detectors, view)
+	response.Healthy = response.Error == "" && len(findings) == 0 && (len(l.Detectors) > 0 || hasRetainedDrift(l.Request.Findings)) && detectorsConfirmed(l.Detectors, view)
 	response.Unresolved = l.batches >= l.batchLimit() && !response.Healthy
 	if response.Error == "" {
 		response.Summary = fmt.Sprintf("verification: %d open findings", len(findings)) + pendingEvaluationSummary(states)
-		if response.Healthy {
+		switch {
+		case response.Healthy && len(response.Drift) > 0:
+			response.Summary = fmt.Sprintf("verification: health is clear, but %d object(s) still differ from the accepted source; restore them or explain why they should differ, then return the structured incident result", len(response.Drift))
+		case response.Healthy:
 			response.Summary = "verification: healthy; return the structured incident result immediately"
 		}
 	}

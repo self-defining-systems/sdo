@@ -25,6 +25,8 @@ Mutation files contain these generated top-level arrays:
 ## General help
 
 ```text
+prior_stages holds earlier stages’ actions and results; build on them, don't repeat verified repairs. Full incident facts keep apply receipts and post-apply diagnoses.
+
 Examples (replace names with incident resources):
   sdo source Deployment/app/api
   sdo diagnose targetport --bind service=Service/app/api
@@ -57,7 +59,7 @@ read fresh findings and detector confirmation; pending is not healthy
 sdo status [-h]
 ```
 
-Key JSON fields: `healthy, findings[], detector_states[], drift_events[], program_runs[]`.
+Key JSON fields: `healthy, findings[], detector_states[], drift[], drift_events[], program_runs[]`.
 
 ## detect
 
@@ -223,11 +225,11 @@ read cached controller verification; optionally await a stable verdict
 sdo verify [-h] [--wait SECONDS]
 ```
 
-Reads the controller's cached health and inventory verdict immediately. Pending observation windows, including unproven synthetic scenarios, are not healthy. Fresh deployment-rollout-pending findings name owned ReplicaSet/Pod blockers and old-template Pods, including after recorded actions; inspect their evidence before repeating workload writes. Wait on SDO's verification instead of sleeping. After closure, incident_verified is an informational warning on every response; reads and reports remain available, while mutations are rejected. After verified closure, report grace and outcome/reflection work continue during maintenance pauses.
+Reads the controller's cached health verdict immediately; drift[] lists objects that still differ from accepted source and never decides healthy. Pending observation windows, including unproven synthetic scenarios, are not healthy. Fresh deployment-rollout-pending findings name owned ReplicaSet/Pod blockers and old-template Pods, including after recorded actions; inspect their evidence before repeating workload writes. Wait on SDO's verification instead of sleeping. After closure, incident_verified is an informational warning on every response; reads and reports remain available, while mutations are rejected. After verified closure, report grace and outcome/reflection work continue during maintenance pauses.
 
 - `--wait`: wait for stable verification, a new/reactivated finding, or this timeout (0: cached and instant)
 
-Key JSON fields: `healthy, unresolved, findings[], detector_states[], drift_events[]`.
+Key JSON fields: `healthy, unresolved, findings[], detector_states[], drift[], drift_events[]`.
 
 ## rollback
 

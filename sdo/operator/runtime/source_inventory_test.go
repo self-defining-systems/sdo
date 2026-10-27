@@ -150,7 +150,9 @@ func acceptInventoryFindings(findings []sdk.Finding) []sdk.DriftEvent {
 	}
 	return labels
 }
-func TestLatentAllHealthClearClosureRequiresRemovalOrRecordedAcceptance(t *testing.T) {
+// Latent source drift is shown to the responder and the outcome; the closure
+// follows health alone.
+func TestLatentAllHealthClearClosureCarriesInventoryDriftAsInformation(t *testing.T) {
 	for _, mode := range []string{"removed", "accepted"} {
 		t.Run(mode, func(t *testing.T) {
 			start := time.Unix(100, 0).UTC()
@@ -184,8 +186,8 @@ func TestLatentAllHealthClearClosureRequiresRemovalOrRecordedAcceptance(t *testi
 				t.Fatalf("health clear hid latent work: request=%+v closed=%+v", request, closed)
 			}
 			check := c.responderVerification(context.Background(), request.IncidentID)
-			if check.Healthy || len(check.Findings) != 5 {
-				t.Fatalf("continuation lost latent drift: %+v", check)
+			if !check.Healthy || len(check.Findings) != 0 || len(check.Drift) != 5 {
+				t.Fatalf("continuation hid latent drift or let it decide health: %+v", check)
 			}
 			if mode == "removed" {
 				store.objects = live
@@ -194,8 +196,8 @@ func TestLatentAllHealthClearClosureRequiresRemovalOrRecordedAcceptance(t *testi
 				// Empty reasons cannot authorize closure.
 				saved := c.currentIncidentResult.DriftEvents[0].InvestigationReason
 				c.currentIncidentResult.DriftEvents[0].InvestigationReason = ""
-				if c.responderVerification(context.Background(), request.IncidentID).Healthy {
-					t.Fatal("empty acceptance reason authorized closure")
+				if drift := c.responderVerification(context.Background(), request.IncidentID).Drift; len(drift) == 0 {
+					t.Fatal("empty acceptance reason explained the drift")
 				}
 				c.currentIncidentResult.DriftEvents[0].InvestigationReason = saved
 			}
@@ -327,7 +329,7 @@ func TestSourceInventoryCacheOnlyExposesNamespaceBoundClusterRBAC(t *testing.T) 
 	}
 }
 
-func TestSourceInventoryMissingAuthorityPreservesMonitoringButNeverVerifies(t *testing.T) {
+func TestSourceInventoryMissingAuthorityPreservesMonitoringAndIsInformation(t *testing.T) {
 	start := time.Unix(100, 0).UTC()
 	config := testControllerConfig()
 	config.Namespace = "app"
@@ -343,14 +345,8 @@ func TestSourceInventoryMissingAuthorityPreservesMonitoringButNeverVerifies(t *t
 	c.incidentOpen = true
 	c.responderDone = true
 	c.responderCompletedAt = start
-	if check := c.responderVerification(context.Background(), "unverified"); check.Healthy || len(check.Findings) != 1 || !strings.Contains(check.Findings[0].Evidence, "unavailable") {
-		t.Fatalf("missing source authority became clear: %+v", check)
-	}
-	closed := false
-	c.OnIncidentClosed = func(IncidentClosure) { closed = true }
-	c.maybeCloseIncident(context.Background(), start.Add(time.Second), sdktest.Snapshot{NamespaceName: "app"})
-	if closed {
-		t.Fatal("health clearance verified without accepted source authority")
+	if check := c.responderVerification(context.Background(), "unverified"); !check.Healthy || len(check.Findings) != 0 || len(check.Drift) != 1 || !strings.Contains(check.Drift[0].Evidence, "unavailable") {
+		t.Fatalf("missing source authority decided health or was hidden: %+v", check)
 	}
 }
 func TestSourceInventoryAcceptanceBindsObjectIncarnationAndOwnership(t *testing.T) {

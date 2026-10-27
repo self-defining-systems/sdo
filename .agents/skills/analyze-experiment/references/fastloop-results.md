@@ -38,9 +38,9 @@ Historical runs can contain `drift.<program>` findings and `DriftEvent.source` v
 
 Reflection's shared memory check runs recorded faulty observations through incident detectors, production finding-to-program selection, Match diagnosis, and mitigation replay on that same binding. A program or detector defect on that path is a blocking rejection under its own rule: `program.diagnose-no-match` (a selecting finding binds an object Diagnose does not match), `program.mitigator-missing`, `detector.invalid-finding`, `detector.fires-on-healthy` (an incident detector fires on the recorded healthy fixture), `program.repeat-unavailable` (a recorded source or detector read failed). `program.repeat-unreachable` is only a coverage-gap note: no finding exists or none selects the playbook. The mitigation is still replayed with the case bindings and must repair (`program.mitigation-not-repaired`). Case-file object bindings do not select the repeat-path diagnosis. Coverage gaps are counted from the incident ledger's `reflection_coverage_gaps` (see `native-reflection.md`).
 
-## Program counts and settlement evidence
+## Program trust evidence
 
-`runtime/program_counts.go` tallies per-(program id, revision) success/failure counts from accepted outcomes: an applied, non-dry-run application succeeds when its incident closed healthy and it was not rolled back, and fails otherwise or on a recorded `application_verification_failure`. The counts are shown to the responder and gate nothing. Unreadable outcomes are skipped and logged once. Reflection settlement is separate: the broker persists
+`runtime/program_trust.go` derives informational success/failure counters from accepted outcomes in completion order. There is no automatic execution threshold. The broker persists
 `reflection_eligibility` version 1 before committing the authoritative outcome.
 Its cause groups exactly preserve `confirmed_root_causes` resources; observations
 outside those groups remain unassigned. Only `covered` items for the same program
