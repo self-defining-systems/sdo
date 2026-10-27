@@ -30,6 +30,9 @@ type fakeBroker struct {
 	// rejectPublish makes the next N Publish calls for a proposal fail with
 	// typed validator diagnostics, as the real broker does.
 	rejectPublish map[string]int
+	// proposalRoot overrides the checkout directory for tests that run a real
+	// executor against a temporary repository mount.
+	proposalRoot string
 	rejections    map[string]*contracts.ProposalRejectionLog
 }
 
@@ -56,7 +59,11 @@ func (f *fakeBroker) RecordRejection(id string, diagnostics []*contracts.MemoryD
 
 func (f *fakeBroker) CreateProposalForPhase(_ context.Context, id string, phase broker.Phase) (broker.Proposal, error) {
 	f.events = append(f.events, "create:"+id)
-	return broker.Proposal{IncidentID: id, Path: "/workspace/proposals/" + id, BaseCommit: f.lastCommit}, nil
+	root := f.proposalRoot
+	if root == "" {
+		root = "/workspace/proposals/"
+	}
+	return broker.Proposal{IncidentID: id, Path: root + id, BaseCommit: f.lastCommit}, nil
 }
 func (f *fakeBroker) Publish(_ context.Context, id string, actor broker.Actor, phase broker.Phase) (broker.Receipt, error) {
 	f.events = append(f.events, "publish:"+id+":"+string(actor))
@@ -137,6 +144,13 @@ type fakeExecutor struct {
 	archFailures        int
 	retiredJudgePayload bool
 	judgeJobFailures    int
+	judgeJobsVanished   int
+	discarded           []string
+}
+
+func (f *fakeExecutor) DiscardVanished(_ context.Context, task *contracts.AgentTask) error {
+	f.discarded = append(f.discarded, task.GetTaskId())
+	return nil
 }
 
 func (f *fakeExecutor) Execute(_ context.Context, task *contracts.AgentTask) (*contracts.AgentResult, error) {
@@ -162,6 +176,10 @@ func (f *fakeExecutor) Execute(_ context.Context, task *contracts.AgentTask) (*c
 		}
 		response, err = anypb.New(&contracts.ArchitectureResult{SummaryMarkdown: "# Architecture\nSource-grounded layout.", TopologyFingerprint: request.GetSourceTopologyFingerprint(), SourceCommit: request.GetAcceptedSourceCommit(), AgentSessionId: "architecture-session"})
 	case healthJudgeTask:
+		if f.judgeJobsVanished > 0 {
+			f.judgeJobsVanished--
+			return nil, &worker_registry.JobVanishedError{TaskID: task.GetTaskId(), JobName: worker_registry.JobName(task.GetTaskId())}
+		}
 		if f.judgeJobFailures > 0 {
 			f.judgeJobFailures--
 			return nil, &worker_registry.JobFailedError{JobName: worker_registry.JobName(task.GetTaskId())}
