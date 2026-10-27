@@ -6,6 +6,10 @@ credentials by reference, re-seeds the accepted repository at the row's planned 
 controller registry. SDO is reinstalled afterwards by the normal native install. Nothing SDO wrote
 survives except the memory commit itself, so no leftover needs its own cleanup rule.
 
+A namespace the wipe deletes may stay Terminating because an injected or harness object in it keeps a
+finalizer nobody will ever run (a fault's cleanup token). Those objects are the wipe's own state, so the
+wipe removes their finalizers, within the same deadline, and records each one in the receipt.
+
 Tier 2 concerns the application namespaces. The warm app is kept when the previous row recovered
 cleanly, the restore invariant passes against the captured baseline and every app pod is healthy.
 Otherwise the app namespaces are deleted, PVCs and the data in them included, and the app is deployed
@@ -78,6 +82,17 @@ class LaneCluster(Protocol):
         """Request deletion; an already absent object is not an error."""
         ...
 
+    def blocking_objects(self, namespace: str) -> tuple[str, ...]:
+        """Objects (``kind/name``) holding finalizers in a namespace that is Terminating and reports remaining content.
+
+        Empty for a namespace that is not stuck, so a namespace still draining pods is left alone.
+        """
+        ...
+
+    def remove_finalizers(self, namespace: str, identity: str) -> None:
+        """Clear the finalizers of one object in ``namespace``; an already absent object is not an error."""
+        ...
+
 
 def inventory_path(kubeconfig: Path) -> Path:
     return kubeconfig.with_name(kubeconfig.name + INVENTORY_SUFFIX)
@@ -135,6 +150,28 @@ class Tier1Receipt:
     seconds: float
     removed: tuple[str, ...]
     inventory_bootstrapped: bool
+    force_finalized: tuple[str, ...]
+
+
+def release_stuck_namespaces(cluster: LaneCluster, remaining: Collection[str], released: list[str]) -> tuple[str, ...]:
+    """Clear finalizers on the objects holding the remaining namespaces Terminating; return what still blocks.
+
+    Only namespace identities in ``remaining`` are touched, and ``remaining`` holds only what this wipe asked to
+    delete, so a namespace outside the lane's owned set is never reached. Each release is appended to ``released``
+    as ``namespace/kind/name``.
+    """
+    blocking: list[str] = []
+    for identity in sorted(remaining):
+        if object_kind(identity) != NAMESPACE_KIND:
+            continue
+        namespace = object_name(identity)
+        for item in cluster.blocking_objects(namespace):
+            cluster.remove_finalizers(namespace, item)
+            owned = f"{namespace}/{item}"
+            if owned not in released:
+                released.append(owned)
+            blocking.append(owned)
+    return tuple(blocking)
 
 
 def remove_until_gone(
@@ -145,12 +182,18 @@ def remove_until_gone(
     poll_seconds: float,
     clock: Callable[[], float],
     sleep: Callable[[float], None],
-) -> None:
-    """Delete in webhook, API, RBAC, namespace order and wait until all are gone; fail closed at the deadline."""
+) -> tuple[str, ...]:
+    """Delete in webhook, API, RBAC, namespace order and wait until all are gone; fail closed at the deadline.
+
+    A namespace that stays Terminating on objects with finalizers has them released. Returns the objects released
+    (``namespace/kind/name``); the failure names whatever still blocks.
+    """
     remaining = frozenset(identities)
     deadline = clock() + timeout_seconds
     requested = False
     error = ""
+    released: list[str] = []
+    blocking: tuple[str, ...] = ()
     while remaining:
         if not requested:
             error = ""
@@ -164,13 +207,21 @@ def remove_until_gone(
             remaining &= cluster.list_objects()
         except Exception as exc:
             error = f"list cluster objects: {type(exc).__name__}: {str(exc)[:200]}"
+        if remaining and requested:
+            try:
+                blocking = release_stuck_namespaces(cluster, remaining, released)
+            except Exception as exc:  # retried until the deadline
+                error = f"release finalizers: {type(exc).__name__}: {str(exc)[:200]}"
         if not remaining or clock() >= deadline:
             break
         sleep(poll_seconds)
     if remaining:
+        if blocking:
+            error = (error + "; " if error else "") + "still blocking after finalizer removal: " + ", ".join(blocking)
         raise WipeError(
             "eval: wipe could not remove: " + ", ".join(sorted(remaining)) + (f" ({error})" if error else "")
         )
+    return tuple(released)
 
 
 def run_tier1(
@@ -199,7 +250,7 @@ def run_tier1(
     if baseline is None:
         baseline = cluster_scoped(current)
     removed = harness_leftovers(current, baseline, keep_namespaces=keep_namespaces, control_namespace=control_namespace)
-    remove_until_gone(
+    force_finalized = remove_until_gone(
         cluster, removed, timeout_seconds=timeout_seconds, poll_seconds=poll_seconds, clock=clock, sleep=sleep
     )
     if bootstrapped:
@@ -207,7 +258,7 @@ def run_tier1(
     provision_credentials(control_namespace)
     reseed()
     forget_controller()
-    return Tier1Receipt(round(clock() - started, 3), tuple(sorted(removed)), bootstrapped)
+    return Tier1Receipt(round(clock() - started, 3), tuple(sorted(removed)), bootstrapped, force_finalized)
 
 
 def wipe_environment(
@@ -373,6 +424,7 @@ class WipeReceipt:
     tier2_trigger: str | None
     tier2_reason: str | None
     tier2_namespaces: tuple[str, ...]
+    force_finalized: tuple[str, ...]
 
     def write(self, directory: Path) -> Path:
         directory.mkdir(parents=True, exist_ok=True)
@@ -400,9 +452,10 @@ def run_tier2(
     """
     started = clock()
     recreated: tuple[str, ...] = ()
+    force_finalized = tier1.force_finalized
     if reason is not None:
         recreated = tuple(sorted(namespaces))
-        remove_until_gone(
+        force_finalized += remove_until_gone(
             cluster,
             [namespace_identity(name) for name in recreated],
             timeout_seconds=timeout_seconds,
@@ -420,6 +473,34 @@ def run_tier2(
         reason.trigger.value if reason is not None else None,
         reason.detail if reason is not None else None,
         recreated,
+        force_finalized,
+    )
+
+
+# Namespace conditions the API server sets while a deleted namespace still has content it cannot remove.
+STUCK_CONDITIONS = frozenset(
+    {"NamespaceFinalizersRemaining", "NamespaceContentRemaining", "NamespaceDeletionContentFailure"}
+)
+
+
+def namespace_is_stuck(namespace: dict[str, Any]) -> bool:
+    """True for a Terminating namespace whose deletion reports remaining finalizers or content."""
+    if not namespace.get("metadata", {}).get("deletionTimestamp"):
+        return False
+    return any(
+        condition.get("type") in STUCK_CONDITIONS and condition.get("status") == "True"
+        for condition in namespace.get("status", {}).get("conditions", [])
+    )
+
+
+def finalizer_holders(listing: dict[str, Any]) -> tuple[str, ...]:
+    """``kind/name`` of each object of a ``kubectl get ... -o json`` listing that carries finalizers."""
+    return tuple(
+        sorted(
+            f"{item['kind'].lower()}/{item['metadata']['name']}"
+            for item in listing.get("items", [])
+            if item.get("metadata", {}).get("finalizers")
+        )
     )
 
 
@@ -428,6 +509,7 @@ class KubectlLaneCluster:
         if not isinstance(kubeconfig, Path) or not kubeconfig.is_absolute():
             raise ValueError("eval: lane wipe requires an absolute kubeconfig path")
         self._kubeconfig = kubeconfig
+        self._namespaced_kinds: str | None = None
 
     def list_objects(self) -> frozenset[str]:
         from benchmarks.sregym.adapter import kubectl
@@ -444,6 +526,42 @@ class KubectlLaneCluster:
             ["delete", identity, "--ignore-not-found=true", "--wait=false"],
             namespace=None,
             kubeconfig=self._kubeconfig,
+        )
+
+    def blocking_objects(self, namespace: str) -> tuple[str, ...]:
+        from benchmarks.sregym.adapter import kubectl
+
+        described = kubectl(
+            ["get", "namespace", namespace, "-o", "json", "--ignore-not-found=true"],
+            namespace=None,
+            kubeconfig=self._kubeconfig,
+        ).stdout
+        if not described.strip() or not namespace_is_stuck(json.loads(described)):
+            return ()
+        if self._namespaced_kinds is None:
+            kinds = kubectl(
+                ["api-resources", "--verbs=list", "--namespaced=true", "-o", "name"],
+                namespace=None,
+                kubeconfig=self._kubeconfig,
+            ).stdout
+            self._namespaced_kinds = ",".join(line.strip() for line in kinds.splitlines() if line.strip())
+        # Some kinds (aggregated APIs) may not list; a partial listing still names the holders.
+        listing = kubectl(
+            ["get", self._namespaced_kinds, "-o", "json", "--ignore-not-found=true"],
+            namespace=namespace,
+            kubeconfig=self._kubeconfig,
+            check=False,
+        ).stdout
+        return finalizer_holders(json.loads(listing)) if listing.strip() else ()
+
+    def remove_finalizers(self, namespace: str, identity: str) -> None:
+        from benchmarks.sregym.adapter import kubectl
+
+        kubectl(
+            ["patch", identity, "--type=merge", "-p", '{"metadata":{"finalizers":null}}'],
+            namespace=namespace,
+            kubeconfig=self._kubeconfig,
+            check=False,
         )
 
 
