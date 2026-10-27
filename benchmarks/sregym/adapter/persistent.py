@@ -988,14 +988,18 @@ def run_persistent_stage(
         )
         raise
     injected = clock.monotonic()
-    verified = _wait_for_verified_incident(
-        ops,
-        control,
-        known,
-        inputs.verification_timeout_seconds,
-        clock,
-        inputs.detection_timeout_seconds,
-    )
+    try:
+        verified = _wait_for_verified_incident(
+            ops,
+            control,
+            known,
+            inputs.verification_timeout_seconds,
+            clock,
+            inputs.detection_timeout_seconds,
+        )
+    except PersistentControllerError:
+        export_closure_failure_evidence(ops, control, inputs.receipt_dir)
+        raise
     verified_ready = clock.monotonic()
     if on_verified is not None:
         on_verified(
@@ -1091,6 +1095,23 @@ def run_persistent_stage(
     state.save(inputs.state_path)
     persist_resolution(resolution, inputs.receipt_dir)
     return resolution
+
+
+def export_closure_failure_evidence(ops: ClusterOps, control: str, receipt_dir: Path) -> None:
+    """Preserve controller evidence before a later row can wipe the lane.
+
+    Each read is independent and best effort: failure to read state must not
+    suppress logs or replace the original closure/receipt error.
+    """
+
+    for name, export in (
+        ("state", lambda: _write_json(ops.runtime_state(control), receipt_dir / "sdo-controller-state.json")),
+        ("logs", lambda: ops.export_controller_logs(control, receipt_dir)),
+    ):
+        try:
+            export()
+        except Exception:
+            logger.exception("failed to export closure %s evidence for %s", name, control)
 
 
 def _export_stage_end_evidence(
@@ -1296,8 +1317,10 @@ def collect_followup_incident(
     try:
         verified = _wait_for_verified_incident(ops, control, known, timeout_seconds, clock)
     except ClosureFailedError:
+        export_closure_failure_evidence(ops, control, inputs.receipt_dir)
         raise
     except PersistentControllerError:
+        export_closure_failure_evidence(ops, control, inputs.receipt_dir)
         return None
     config = replace(inputs.runtime_config, persistent=True, wait_for_completion=False)
     evidence = _export_stage_end_evidence(ops, control, config, inputs.receipt_dir, clock)
@@ -1393,13 +1416,23 @@ def _collect_settled_receipt(
     a real failure is reported promptly rather than hidden.
     """
 
-    receipt = ops.collect_receipt(config, incident_id, receipt_dir)
+    try:
+        receipt = ops.collect_receipt(config, incident_id, receipt_dir)
+    except Exception:
+        export_closure_failure_evidence(ops, config.control_namespace, receipt_dir)
+        raise
     if timeout is None:
         timeout = CLOSEOUT_SETTLE_TIMEOUT_SECONDS
     deadline = clock.monotonic() + timeout
     while not _closeout_settled(receipt) and clock.monotonic() < deadline:
         clock.sleep(POLL_SECONDS)
-        receipt = ops.collect_receipt(config, incident_id, receipt_dir)
+        try:
+            receipt = ops.collect_receipt(config, incident_id, receipt_dir)
+        except Exception:
+            export_closure_failure_evidence(ops, config.control_namespace, receipt_dir)
+            raise
+    if not receipt:
+        export_closure_failure_evidence(ops, config.control_namespace, receipt_dir)
     return receipt
 
 
@@ -1471,8 +1504,7 @@ def drain_pending_incident(
             ops, record.control_namespace, pending.incident_id, pending.reflection_deadline_at, clock
         )
     except ClosureFailedError:
-        # The controller log holds every broker rejection of the closure.
-        ops.export_controller_logs(record.control_namespace, pending.receipt_dir)
+        export_closure_failure_evidence(ops, record.control_namespace, pending.receipt_dir)
         raise
     phases["wait_for_ack"] = clock.monotonic() - started
     phase_timestamps["ack_observed"] = clock.now().isoformat()
@@ -1523,7 +1555,7 @@ def drain_pending_incident(
     except ProductionReceiptValidationError as exc:
         if isinstance(exc, NativeReceiptValidationError):
             receipt = exc.receipt
-        ops.export_controller_logs(record.control_namespace, pending.receipt_dir)
+        export_closure_failure_evidence(ops, record.control_namespace, pending.receipt_dir)
         failure = (
             exc.failure
             if isinstance(exc, NativeReceiptValidationError)
@@ -1712,6 +1744,7 @@ def publish_deferred_receipts(state_path: Path, results_root: Path) -> list[Path
         sources = [
             entry.staging_dir / STRICT_RECEIPT_FILENAME,
             entry.staging_dir / REJECTED_RECEIPT_FILENAME,
+            entry.staging_dir / "sdo-controller-state.json",
         ]
         logs_dir = entry.staging_dir / CONTROLLER_LOGS_SUBDIR
         if logs_dir.is_dir():

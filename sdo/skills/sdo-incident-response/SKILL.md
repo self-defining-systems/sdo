@@ -11,7 +11,7 @@ Accepted source and developer changes express intent. Operational memory is fall
 4. SDO's independent verification is the source of truth; wait on it instead of sleeping. `healthy` is not done while unexplained differences from accepted source remain: restore each or justify it. SDO resumes once if progress remains. Inspect rollout blockers and old-template Pods before repeating writes. Verify live state. Cite live cause observations, explained_detectors, verification; never claim done without this self-check. If findings self-clear, return cancelled rather than inventing one.
 5. Controller snapshots govern, even empty; flag possible regressions; cap stdout. A complete JSON report: evidence/errors/schema. Verified warning is informational; reads/reports stay; closed-incident mutations are rejected.
 6. Undo proven harms; keep useful repairs. Clean up temporary investigation resources; label helper Pods/Jobs `sdo.dev/responder-helper=true`, never application workloads.
-7. Fix `still_broken`; keep `already_done`; controller rechecks. Merge peer learning on conflicts.
+7. Fix `still_broken`; investigate named `verification_blockers` on the single extra turn. Keep `already_done`. Persistent blockers close unconfirmed at the bound. Merge peer learning on conflicts.
 
 Fix source before raw commands.
 

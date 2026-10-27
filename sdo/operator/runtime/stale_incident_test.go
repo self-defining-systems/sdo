@@ -180,7 +180,9 @@ func testExpiredIncidentFailureArchiveSurvivesRestart(t *testing.T, paused bool)
 	now := old.ResponseDeadline.AsTime().Add(time.Second)
 	step := controller.Step
 	if paused {
-		step = func(ctx context.Context, now time.Time, _ *sdk.WatchKind) error { return controller.stepPaused(ctx, now) }
+		step = func(ctx context.Context, now time.Time, _ *sdk.WatchKind) error {
+			return controller.stepPaused(ctx, now)
+		}
 	}
 	if err := step(ctx, now, nil); err != nil {
 		t.Fatal(err)
@@ -539,6 +541,12 @@ func TestOwnerlessIncidentWorkBecomesTypedFailureAndFreesAdmission(t *testing.T)
 			if got.GetIncidentOpen() || got.GetIncidentRequest().GetIncidentId() == oldID {
 				t.Fatalf("ownerless incident still blocks admission: %v", got)
 			}
+			if tc.responderDone {
+				if got.GetPendingClosure().GetRequest().GetIncidentId() != oldID || got.GetClosureState() != contracts.ClosureState_CLOSURE_STATE_PENDING || len(got.GetFailedClosures()) != 0 {
+					t.Fatalf("controller-owned verification must begin a receipted closure: %v", got)
+				}
+				return
+			}
 			if len(got.GetFailedClosures()) != 1 {
 				t.Fatalf("ownerless incident dropped without a terminal record: %v", got)
 			}
@@ -579,11 +587,12 @@ func TestOwnerlessRetirementKeepsLiveOrUncertainWork(t *testing.T) {
 				if err := restored.RestoreState(state); err != nil {
 					t.Fatal(err)
 				}
-				if err := restored.retireExpiredIncident(context.Background(), bound.Add(time.Hour)); (err != nil) != (tc.err != nil) {
+				if err := restored.retireExpiredIncident(context.Background(), bound.Add(time.Hour)); (err != nil) != (tc.err != nil && !responderDone) {
 					t.Fatalf("uncertainty not surfaced: %v", err)
 				}
-				if got := exportState(t, restored); !got.GetIncidentOpen() || len(got.GetFailedClosures()) != 0 {
-					t.Fatalf("live or uncertain owner retired: %v", got)
+				got := exportState(t, restored)
+				if len(got.GetFailedClosures()) != 0 || (responderDone && got.GetPendingClosure() == nil) || (!responderDone && !got.GetIncidentOpen()) {
+					t.Fatalf("live controller/worker owner lost: %v", got)
 				}
 			})
 		}

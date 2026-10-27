@@ -69,6 +69,12 @@ func (c *Controller) retireExpiredIncident(ctx context.Context, now time.Time) e
 	if !eligible {
 		return nil
 	}
+	// A harvested response has a live closure owner: this controller. Drive
+	// its bounded closure even after restart or pause, never archive OwnerLost.
+	if resultConsumed {
+		c.maybeCloseIncident(ctx, now, nil)
+		return nil
+	}
 	reason := retire.reason
 	if checked {
 		work, err := checker.IncidentWork(ctx, request.IncidentID)

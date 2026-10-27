@@ -871,8 +871,11 @@ func (c *Controller) NextWake() time.Time {
 		return deadline
 	}
 	c.mu.Lock()
-	verificationDeadline := c.responderCompletedAt.Add(c.config.VerificationTimeout)
-	verificationPending := c.incidentOpen && c.responderDone
+	verificationPending := c.incidentOpen && c.responderDone && c.currentIncidentRequest != nil
+	verificationDeadline := time.Time{}
+	if verificationPending {
+		verificationDeadline = c.verificationDeadlineLocked()
+	}
 	earlyDeadline := time.Time{}
 	if c.incidentOpen && !c.closureStableSince.IsZero() {
 		earlyDeadline = c.closureStableSince.Add(c.config.ClosureStabilityWindow)
@@ -1393,7 +1396,7 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 	}
 
 	driftPrompt := !early && verified && driftRepromptCanProgress(source.Drift, c.currentIncidentResult)
-	if ((!verified && (len(verification.Findings) > 0 || verification.Error != "")) || driftPrompt) && !terminalFailure && c.dispatchError == "" && now.Before(c.currentIncidentRequest.ResponseDeadline) {
+	if ((!verified && (len(verification.Findings) > 0 || verification.Error != "" || len(verification.VerificationBlockers) > 0)) || driftPrompt) && !terminalFailure && c.dispatchError == "" && now.Before(c.verificationDeadlineLocked()) {
 		if continuer, ok := c.dispatcher.(interface {
 			ContinueAfterVerification(context.Context, IncidentRequest, ToolResponse, time.Time) (bool, error)
 		}); ok {
@@ -1433,7 +1436,7 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 		// One timeout bounds how long a stuck incident can block the stream. It
 		// closes as a normal failed incident: with no final detector states
 		// the outcome is never health-verified.
-		if !terminalFailure && now.Before(c.responderCompletedAt.Add(c.config.VerificationTimeout)) {
+		if !terminalFailure && now.Before(c.verificationDeadlineLocked()) {
 			c.mu.Unlock()
 			return
 		}
@@ -1508,6 +1511,18 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 		ResponderCompletedAt: c.responderCompletedAt, VerifiedAt: verifiedAt,
 		CleanedHelpers: append([]string(nil), c.cleanedHelpers...),
 	}
+	if !verified && !terminalFailure && len(verification.Findings) == 0 {
+		closure.UnconfirmedReason = contracts.ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_OBSERVATION_INCOMPLETE
+		if verification.Error != "" {
+			closure.UnconfirmedReason = contracts.ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_OBSERVER_UNAVAILABLE
+		}
+		closure.UnconfirmedDetail = verification.Summary
+		// Pending/error states are outcome evidence, not independently cleared
+		// causes. Preserve every named blocker through the memory edge.
+		for _, blocker := range verification.VerificationBlockers {
+			closure.PartialDetectorStates = append(closure.PartialDetectorStates, DetectorEvaluation{DetectorID: blocker.DetectorID, EvaluatedAt: now, Status: DetectorEvaluationPending, Reason: blocker.Reason})
+		}
+	}
 	if early {
 		closure.ResponderCompletedAt = verifiedAt
 		closure.Result = closureGuard.resultSnapshot(*c.currentIncidentRequest, verifiedAt)
@@ -1557,6 +1572,16 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 	if c.OnIncidentClosed != nil {
 		c.OnIncidentClosed(closure)
 	}
+}
+
+// verificationDeadlineLocked bounds observation by both the completed response
+// and its original request budget. Continuations never extend that request.
+func (c *Controller) verificationDeadlineLocked() time.Time {
+	deadline := c.responderCompletedAt.Add(c.config.VerificationTimeout)
+	if response := c.currentIncidentRequest.ResponseDeadline; !response.IsZero() && response.Before(deadline) {
+		deadline = response
+	}
+	return deadline
 }
 
 func (c *Controller) activeHealthDetectors() []string {

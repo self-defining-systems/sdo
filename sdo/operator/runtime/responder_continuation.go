@@ -19,10 +19,11 @@ import (
 // Response continuation is controller state, separate from provider sessions and
 // apply batches. Persist it before dispatch so restart rejoins the same task.
 type responderContinuation struct {
-	Attempts int
-	Feedback string
-	Result   *contracts.IncidentResult
-	Done     bool
+	Attempts            int
+	UnconfirmedPrompted bool
+	Feedback            string
+	Result              *contracts.IncidentResult
+	Done                bool
 }
 
 type agentTaskExecutor interface {
@@ -94,18 +95,9 @@ func (d KubernetesJobDispatcher) continueResponder(ctx context.Context, executor
 			return loop.Handle(ctx, ToolRequest{Command: "verify"})
 		}
 		verification := verify()
-		// Clearing persistence is observation work, not another response turn.
-		// Wait for the controller rather than re-prompting without a named fault.
-		for !verification.Healthy && len(verification.Findings) == 0 && verification.Error == "" && now().Before(request.ResponseDeadline) {
-			timer := time.NewTimer(100 * time.Millisecond)
-			select {
-			case <-ctx.Done():
-				timer.Stop()
-				return IncidentResult{}, ctx.Err()
-			case <-timer.C:
-			}
-			verification = verify()
-		}
+		// Observation waits belong to the controller's verification bound.
+		// Return a completed worker promptly; ContinueAfterVerification owns
+		// the one named-blocker continuation, including across restarts.
 		if err := ctx.Err(); err != nil {
 			return IncidentResult{}, err
 		}
@@ -124,7 +116,8 @@ func (d KubernetesJobDispatcher) continueResponder(ctx context.Context, executor
 		repairs := loop.continuationRepairs(result)
 		noProgress := responderNoProgress(state.Feedback, verification, repairs)
 		deniedNoProgress := !verification.Healthy && verification.Error == "" && authorizationDeniedNoProgress(state.Feedback, verification, repairs)
-		state.Done = verification.Healthy || exhausted || noProgress || deniedNoProgress
+		observationOnly := len(verification.Findings) == 0 && (verification.Error == "" || len(verification.VerificationBlockers) > 0)
+		state.Done = verification.Healthy || exhausted || noProgress || deniedNoProgress || observationOnly
 		if verification.Healthy {
 			result.Status = IncidentCompleted
 			result.FinalDetectorStates = verification.DetectorStates
@@ -209,8 +202,9 @@ func accumulateResponderResult(previous *contracts.IncidentResult, current Incid
 // when its later independent verification contradicts the dispatcher's check.
 // The request, workspace, provider checkpoint and original deadline stay fixed.
 func (d KubernetesJobDispatcher) ContinueAfterVerification(ctx context.Context, request IncidentRequest, verification ToolResponse, now time.Time) (bool, error) {
+	unconfirmedPrompt := !verification.Healthy && len(verification.Findings) == 0 && len(verification.VerificationBlockers) > 0
 	driftPrompt := verification.Healthy && len(verification.Drift) > 0 && len(verification.Findings) == 0 && verification.Error == ""
-	if (!driftPrompt && (verification.Healthy || (len(verification.Findings) == 0 && verification.Error == ""))) || d.LoopFactory == nil || !now.Before(request.ResponseDeadline) {
+	if (!driftPrompt && (verification.Healthy || (len(verification.Findings) == 0 && verification.Error == "" && !unconfirmedPrompt))) || d.LoopFactory == nil || !now.Before(request.ResponseDeadline) {
 		return false, nil
 	}
 	loop := d.LoopFactory(request)
@@ -227,6 +221,9 @@ func (d KubernetesJobDispatcher) ContinueAfterVerification(ctx context.Context, 
 	}
 	if state.Result == nil {
 		return false, nil
+	}
+	if unconfirmedPrompt && state.UnconfirmedPrompted {
+		return !state.Done, nil
 	}
 	result := incidentResultState(state.Result)
 	if driftPrompt && !driftRepromptCanProgress(verification.Drift, &result) {
@@ -260,6 +257,9 @@ func (d KubernetesJobDispatcher) ContinueAfterVerification(ctx context.Context, 
 		state.Result.DriftReprompt = &contracts.DriftReprompt{FindingsBefore: int32(len(verification.Drift))}
 	}
 	state.Done = false
+	if unconfirmedPrompt {
+		state.UnconfirmedPrompted = true
+	}
 	state.Feedback = string(feedback)
 	if err := loop.saveContinuation(ctx, state); err != nil {
 		return false, err
@@ -333,11 +333,12 @@ type continuationRepair struct {
 	Receipt       continuationReceipt `json:"receipt"`
 }
 type responderFeedback struct {
-	Attempt     int                  `json:"attempt"`
-	Healthy     bool                 `json:"healthy"`
-	Error       string               `json:"error,omitempty"`
-	Summary     string               `json:"summary"`
-	StillBroken []sdkFindingFeedback `json:"still_broken"`
+	VerificationBlockers []VerificationBlocker `json:"verification_blockers,omitempty"`
+	Attempt              int                   `json:"attempt"`
+	Healthy              bool                  `json:"healthy"`
+	Error                string                `json:"error,omitempty"`
+	Summary              string                `json:"summary"`
+	StillBroken          []sdkFindingFeedback  `json:"still_broken"`
 	// SourceDifferences are objects that differ from the accepted source.
 	// They are information; only still_broken and healthy decide closure.
 	SourceDifferences []sdkFindingFeedback `json:"source_differences,omitempty"`
@@ -446,7 +447,7 @@ func feedbackReceipt(receipt RepairActionReceipt) continuationReceipt {
 }
 
 func continuationFeedback(attempt int, verification ToolResponse, repairs ...continuationRepair) ([]byte, error) {
-	feedback := responderFeedback{Attempt: attempt, Healthy: verification.Healthy, Error: verification.Error, Summary: verification.Summary, StillBroken: []sdkFindingFeedback{}, SourceDifferences: []sdkFindingFeedback{}, AlreadyDone: append([]continuationRepair{}, repairs...)}
+	feedback := responderFeedback{VerificationBlockers: verification.VerificationBlockers, Attempt: attempt, Healthy: verification.Healthy, Error: verification.Error, Summary: verification.Summary, StillBroken: []sdkFindingFeedback{}, SourceDifferences: []sdkFindingFeedback{}, AlreadyDone: append([]continuationRepair{}, repairs...)}
 	for _, finding := range verification.Drift {
 		feedback.SourceDifferences = append(feedback.SourceDifferences, sdkFindingFeedback{Resource: finding.PrimaryResource, Fingerprint: FindingFingerprint(finding), DetectorID: finding.DetectorID, RuleID: finding.RuleID, Summary: finding.Summary, Evidence: finding.Evidence})
 	}
@@ -490,6 +491,11 @@ func (c *Controller) continuationVerificationLocked(healthVerified bool, source 
 				description += ": " + latest.Reason
 			}
 			pending = append(pending, description)
+			// Old clear samples need only a fresh observation; a pending or
+			// absent detector names an actual verification blocker.
+			if latest == nil || latest.Status == DetectorEvaluationPending {
+				result.VerificationBlockers = append(result.VerificationBlockers, VerificationBlocker{DetectorID: id, Reason: description})
+			}
 			continue
 		}
 		if latest.Status == DetectorEvaluationFiring {
@@ -500,6 +506,7 @@ func (c *Controller) continuationVerificationLocked(healthVerified bool, source 
 		}
 		if latest.Status == DetectorEvaluationError {
 			errors = append(errors, id+": "+latest.Error)
+			result.VerificationBlockers = append(result.VerificationBlockers, VerificationBlocker{DetectorID: id, Reason: latest.Error})
 		}
 	}
 	for _, state := range c.tracker.Snapshot() {
@@ -509,6 +516,7 @@ func (c *Controller) continuationVerificationLocked(healthVerified bool, source 
 			for _, id := range ids {
 				if id == state.DetectorID {
 					pending = append(pending, id)
+					result.VerificationBlockers = append(result.VerificationBlockers, VerificationBlocker{DetectorID: id, Reason: "clearing confirmation pending"})
 					break
 				}
 			}

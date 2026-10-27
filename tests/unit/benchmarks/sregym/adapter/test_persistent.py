@@ -1285,8 +1285,15 @@ def test_an_incident_that_opened_keeps_the_full_verification_budget(tmp_path: Pa
 
 
 def test_a_timeout_behind_a_permanently_failed_closure_says_so(tmp_path: Path) -> None:
+    ops = _ClosureFailedOps()
     with pytest.raises(ClosureFailedError) as raised:
-        _run(tmp_path, _ClosureFailedOps(), "s0", [])
+        _run(tmp_path, ops, "s0", [])
+
+    state_files = list(tmp_path.rglob("sdo-controller-state.json"))
+    assert len(state_files) == 1
+    captured = json.loads(state_files[0].read_text())
+    assert captured["closure_failure"]["incident_id"] == "incident-0"
+    assert list(tmp_path.rglob("sdo-controller-run-1.log"))
 
     assert "incident 'incident-0' closure permanently failed" in str(raised.value)
     assert "broker exited 1" in str(raised.value)

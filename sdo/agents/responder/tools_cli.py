@@ -63,7 +63,8 @@ RESPONSE_FIELDS = {
     "menu": "menu.options[].{option_id, program_id, program_revision, disabled_reason, parameters}, "
     "selection_schema, selection_set_schema, unexplained_removal_blockers[]",
     "source": "source (accepted Kubernetes object)",
-    "verify": "healthy, unresolved, findings[], detector_states[], drift[], drift_events[]",
+    "verify": "healthy, unresolved, findings[], detector_states[], "
+    "verification_blockers[{detector_id,reason}], drift[], drift_events[]",
     "report": "report.{status, attempt_id, rounds}, session",
     "act": "actions[].{success, exit_code, receipt, output, failure_reason, hint}",
     "apply": "actions[].{application_id, targeted_healthy, mitigation_health, program_runs, program_revisions, report}",
@@ -305,6 +306,8 @@ def _parser() -> argparse.ArgumentParser:
         "terminal inventory and no-progress stops do not resume. "
         "restore them or explain the intended difference. "
         "Pending observation windows, including unproven synthetic scenarios, are not healthy. "
+        "verification_blockers names incomplete detectors and reasons. SDO resumes once for these blockers, "
+        "then records an unconfirmed outcome at the verification bound if they persist. "
         "Fresh deployment-rollout-pending findings name owned ReplicaSet/Pod blockers and old-template Pods, "
         "including after recorded actions; inspect their evidence before repeating workload writes. "
         "Wait on SDO's verification instead of sleeping. After closure, incident_verified is an "
