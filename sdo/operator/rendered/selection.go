@@ -28,7 +28,7 @@ func SelectManifestPaths(available, selected []string) ([]string, error) {
 			if candidate != selection && !strings.HasPrefix(candidate, selection+"/") {
 				continue
 			}
-			if !strings.HasSuffix(candidate, ".yaml") && !strings.HasSuffix(candidate, ".yml") && !strings.HasSuffix(candidate, ".json") {
+			if path.Base(candidate) != "Kustomization" && !strings.HasSuffix(candidate, ".yaml") && !strings.HasSuffix(candidate, ".yml") && !strings.HasSuffix(candidate, ".json") {
 				continue
 			}
 			matched = true

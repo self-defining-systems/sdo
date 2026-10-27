@@ -32,6 +32,8 @@ func TestLatentSourceAbsentInitialObjectsAreUnexplained(t *testing.T) {
 	for _, object := range objects {
 		pointers = append(pointers, object.DeepCopy())
 	}
+	// Keep accepted declarations present while isolating the two live extras.
+	pointers = append(pointers, manifests...)
 	if findings := index.Findings(pointers, time.Unix(100, 0)); len(findings) != 2 {
 		t.Fatalf("startup latent objects are invisible: %+v", findings)
 	}
