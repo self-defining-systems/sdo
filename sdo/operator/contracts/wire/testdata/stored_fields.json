@@ -718,6 +718,8 @@
   "sdodev.contracts.v1alpha1.StageMitigation.bindings",
   "sdodev.contracts.v1alpha1.StageMitigation.cleared_finding_fingerprints",
   "sdodev.contracts.v1alpha1.StageMitigation.error",
+  "sdodev.contracts.v1alpha1.StageMitigation.plan_action_count",
+  "sdodev.contracts.v1alpha1.StageMitigation.plan_action_start",
   "sdodev.contracts.v1alpha1.StageMitigation.plan_id",
   "sdodev.contracts.v1alpha1.StageMitigation.playbook_id",
   "sdodev.contracts.v1alpha1.StageMitigation.post_apply_diagnose",

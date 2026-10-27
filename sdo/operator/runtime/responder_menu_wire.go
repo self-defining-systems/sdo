@@ -27,6 +27,9 @@ func (r *ToolRequest) UnmarshalJSON(data []byte) error {
 		Selection    json.RawMessage `json:"selection"`
 		ReportQuery  json.RawMessage `json:"report_query"`
 		Checkpoint   json.RawMessage `json:"checkpoint"`
+		// Recorded stage applies carry "stage": true. It is read and dropped,
+		// so a tool call can never set ToolRequest.stage.
+		Stage bool `json:"stage"`
 	}{plain: (*plain)(r)}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
@@ -116,7 +119,10 @@ func (r ToolRequest) MarshalJSON() ([]byte, error) {
 		Selection    json.RawMessage `json:"selection,omitempty"`
 		ReportQuery  json.RawMessage `json:"report_query,omitempty"`
 		Checkpoint   json.RawMessage `json:"checkpoint,omitempty"`
-	}{plain(r), selectionSet, selection, query, checkpoint})
+		// Recorded calls keep the stage marker so analysis can tell the
+		// automatic stage's apply from the agent's. Decoding never reads it.
+		Stage bool `json:"stage,omitempty"`
+	}{plain(r), selectionSet, selection, query, checkpoint, r.stage})
 }
 func (r ToolResponse) MarshalJSON() ([]byte, error) {
 	type plain ToolResponse

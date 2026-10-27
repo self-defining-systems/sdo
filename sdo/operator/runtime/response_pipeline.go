@@ -142,19 +142,33 @@ func responsePipelineResult(state *IncidentState, started, completed time.Time) 
 	result.ProgramToolCalls = append([]ToolCall(nil), state.ProgramToolCalls...)
 	seenApplication := map[string]bool{}
 	seenCause := map[string]bool{}
+	attemptPlans := map[string][]string{}
+	for _, report := range state.PriorStages {
+		for _, attempt := range report.Mitigations {
+			if id := attempt.GetApplyReceipt().GetApplicationId(); id != "" {
+				attemptPlans[id] = append(attemptPlans[id], attempt.PlanId)
+			}
+		}
+	}
 	for _, report := range state.PriorStages {
 		for _, attempt := range report.Mitigations {
 			if attempt.PostApplyDiagnose != nil {
 				result.ProgramRuns = append(result.ProgramRuns, programRunState(attempt.PostApplyDiagnose))
 			}
 			receipt := attempt.ApplyReceipt
-			if receipt == nil || seenApplication[receipt.ApplicationId] {
+			if receipt == nil {
 				continue
 			}
-			seenApplication[receipt.ApplicationId] = true
+			// Attempts of one stage apply share a single application; each keeps
+			// its own applied playbook and root cause.
 			application := planApplicationState(receipt)
-			application.PlanIDs = []string{attempt.PlanId}
-			result.PlanApplications = append(result.PlanApplications, application)
+			if !seenApplication[receipt.ApplicationId] {
+				seenApplication[receipt.ApplicationId] = true
+				recorded := application
+				recorded.PlanIDs = attemptPlans[receipt.ApplicationId]
+				result.PlanApplications = append(result.PlanApplications, recorded)
+			}
+			application = attemptApplication(application, attempt)
 			if receipt.Applied {
 				result.AppliedPlaybooks = append(result.AppliedPlaybooks, AppliedPlaybook{PlaybookID: attempt.PlaybookId, ParameterBindings: programBindingsState(attempt.Bindings).Objects})
 			}

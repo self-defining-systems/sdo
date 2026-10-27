@@ -300,6 +300,7 @@
     "multiple_entry_points",
     "no_mitigation",
     "repair_policy",
+    "stage_budget",
     "unbound_parameter",
     "unexplained_coverage"
   ],

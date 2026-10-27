@@ -3625,8 +3625,12 @@ type StageMitigation struct {
 	ClearedFindingFingerprints   []string               `protobuf:"bytes,9,rep,name=cleared_finding_fingerprints,json=clearedFindingFingerprints,proto3" json:"cleared_finding_fingerprints,omitempty"`
 	RemainingFindingFingerprints []string               `protobuf:"bytes,10,rep,name=remaining_finding_fingerprints,json=remainingFindingFingerprints,proto3" json:"remaining_finding_fingerprints,omitempty"`
 	Error                        string                 `protobuf:"bytes,11,opt,name=error,proto3" json:"error,omitempty"`
-	unknownFields                protoimpl.UnknownFields
-	sizeCache                    protoimpl.SizeCache
+	// One stage apply covers several attempts; apply_receipt is that whole
+	// application. These select this attempt's actions in apply_receipt.plan.
+	PlanActionStart int32 `protobuf:"varint,12,opt,name=plan_action_start,json=planActionStart,proto3" json:"plan_action_start,omitempty"`
+	PlanActionCount int32 `protobuf:"varint,13,opt,name=plan_action_count,json=planActionCount,proto3" json:"plan_action_count,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *StageMitigation) Reset() {
@@ -3734,6 +3738,20 @@ func (x *StageMitigation) GetError() string {
 		return x.Error
 	}
 	return ""
+}
+
+func (x *StageMitigation) GetPlanActionStart() int32 {
+	if x != nil {
+		return x.PlanActionStart
+	}
+	return 0
+}
+
+func (x *StageMitigation) GetPlanActionCount() int32 {
+	if x != nil {
+		return x.PlanActionCount
+	}
+	return 0
 }
 
 var File_sdodev_contracts_v1alpha1_messages_proto protoreflect.FileDescriptor
@@ -4133,7 +4151,7 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	"\vmitigations\x18\x02 \x03(\v2*.sdodev.contracts.v1alpha1.StageMitigationR\vmitigations\x12D\n" +
 	"\x1eremaining_finding_fingerprints\x18\x03 \x03(\tR\x1cremainingFindingFingerprints\x12\x14\n" +
 	"\x05error\x18\x04 \x01(\tR\x05error\x12@\n" +
-	"\x1ccleared_finding_fingerprints\x18\x05 \x03(\tR\x1aclearedFindingFingerprints\"\xe1\x06\n" +
+	"\x1ccleared_finding_fingerprints\x18\x05 \x03(\tR\x1aclearedFindingFingerprints\"\xc7\a\n" +
 	"\x0fStageMitigation\x12(\n" +
 	"\vplaybook_id\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\n" +
 	"playbookId\x12)\n" +
@@ -4141,14 +4159,16 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	"\bbindings\x18\x03 \x03(\v2\".sdodev.contracts.v1alpha1.BindingR\bbindings\x12\x17\n" +
 	"\aplan_id\x18\x04 \x01(\tR\x06planId\x12O\n" +
 	"\rapply_receipt\x18\x05 \x01(\v2*.sdodev.contracts.v1alpha1.PlanApplicationR\fapplyReceipt\x12\x88\x01\n" +
-	"\x06result\x18\x06 \x01(\tBp\xbaHmrkR\x0fapplied_clearedR\x16applied_still_matchingR\x0erollout_failedR\x1arollout_pending_at_handoffR\vapply_errorR\askippedR\x06result\x12\xce\x01\n" +
-	"\vskip_reason\x18\a \x01(\tB\xac\x01\xbaH\xa8\x01r\xa5\x01R\x00R\x15multiple_entry_pointsR\rno_mitigationR\x11unbound_parameterR\x1adiagnose_no_longer_matchesR\x14diagnose_unavailableR\x14unexplained_coverageR\x11already_attemptedR\rrepair_policyR\n" +
+	"\x06result\x18\x06 \x01(\tBp\xbaHmrkR\x0fapplied_clearedR\x16applied_still_matchingR\x0erollout_failedR\x1arollout_pending_at_handoffR\vapply_errorR\askippedR\x06result\x12\xdc\x01\n" +
+	"\vskip_reason\x18\a \x01(\tB\xba\x01\xbaH\xb6\x01r\xb3\x01R\x00R\x15multiple_entry_pointsR\rno_mitigationR\x11unbound_parameterR\x1adiagnose_no_longer_matchesR\x14diagnose_unavailableR\x14unexplained_coverageR\x11already_attemptedR\rrepair_policyR\fstage_budgetR\n" +
 	"skipReason\x12U\n" +
 	"\x13post_apply_diagnose\x18\b \x01(\v2%.sdodev.contracts.v1alpha1.ProgramRunR\x11postApplyDiagnose\x12@\n" +
 	"\x1ccleared_finding_fingerprints\x18\t \x03(\tR\x1aclearedFindingFingerprints\x12D\n" +
 	"\x1eremaining_finding_fingerprints\x18\n" +
 	" \x03(\tR\x1cremainingFindingFingerprints\x12\x14\n" +
-	"\x05error\x18\v \x01(\tR\x05error*\xb2\x01\n" +
+	"\x05error\x18\v \x01(\tR\x05error\x12*\n" +
+	"\x11plan_action_start\x18\f \x01(\x05R\x0fplanActionStart\x12*\n" +
+	"\x11plan_action_count\x18\r \x01(\x05R\x0fplanActionCount*\xb2\x01\n" +
 	"\x18ClosureUnconfirmedReason\x12*\n" +
 	"&CLOSURE_UNCONFIRMED_REASON_UNSPECIFIED\x10\x00\x125\n" +
 	"1CLOSURE_UNCONFIRMED_REASON_OBSERVATION_INCOMPLETE\x10\x01\x123\n" +

@@ -204,7 +204,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		5*time.Minute,
 		"maximum wait for independent health detectors to clear after a response; the incident then closes as failed",
 	)
-	maxResponseLoops := flags.Int("max-response-loops", DefaultMaxResponseLoops, "maximum sdo apply batches per incident")
+	maxResponseLoops := flags.Int("max-response-loops", DefaultMaxResponseLoops, "maximum mitigation rounds the responder agent may use per incident (the automatic stage's one apply does not count)")
 	diagnosisDeadline := flags.Duration("diagnosis-deadline", DefaultDiagnosisDeadline, "shared deadline for candidate diagnosis")
 	driftBatchWindow := flags.Duration("drift-batch-window", 20*time.Second, "batch window for unexplained drift")
 	repairPolicy := flags.String("repair-policy", "recorded-actions", "repair evidence policy: commit or recorded-actions")
