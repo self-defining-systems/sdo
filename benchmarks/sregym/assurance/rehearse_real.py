@@ -21,6 +21,7 @@ import subprocess
 import sys
 import time
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -54,6 +55,18 @@ INVENTORY_KINDS = (
 CLUSTER_INVENTORY_KINDS = ("validatingwebhookconfiguration", "mutatingwebhookconfiguration")
 #: First matching text of a record's error names a responder that could not express the repair.
 NO_REPAIR_MARKERS = ("no source repair", "no scripted repair", "unsupported kind")
+
+
+#: The detecting incident predates the injection: the controller opened one on the clean lane (INV1, astronomy 52/012-013).
+BASELINE_INCIDENT_CLASS = "baseline-incident"
+
+
+def _when(value: str) -> datetime:
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
+def _before(first: str, second: str) -> bool:
+    return _when(first) < _when(second)
 
 
 @dataclass(frozen=True)
@@ -253,6 +266,19 @@ def record_stages(record: dict[str, Any] | None, error: str = "") -> list[Stage]
     stages.append(Stage("inject", "pass"))
     if not record.get("detected_at"):
         stages.append(Stage("detect", "fail", "no-detection", (record.get("error") or "no incident opened")[:300]))
+        return stages
+    started = (record.get("injection") or {}).get("started_at")
+    if started and _before(str(record["detected_at"]), str(started)):
+        gap = (_when(str(started)) - _when(str(record["detected_at"]))).total_seconds()
+        stages.append(
+            Stage(
+                "detect",
+                "fail",
+                BASELINE_INCIDENT_CLASS,
+                f"the incident bound to this row opened {gap:.0f}s before the injection started: SDO opened an "
+                "incident on the fresh lane during the admission proof (no fault)",
+            )
+        )
         return stages
     stages.append(Stage("detect", "pass"))
     if any(marker in text.lower() for marker in NO_REPAIR_MARKERS):

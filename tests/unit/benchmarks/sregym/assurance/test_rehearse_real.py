@@ -282,3 +282,21 @@ def test_images_from_other_code_are_refused_before_the_lane_is_touched(tmp_path:
     assert real.image_source_problems(tmp_path, IMAGES, check=lambda *a, **k: None) == []
     found = real.image_source_problems(tmp_path, IMAGES, check=stale)
     assert len(found) == 1 and "source differs" in found[0]
+
+
+def test_an_incident_that_opened_before_the_injection_is_a_baseline_incident() -> None:
+    record = _record(
+        injection={"state": "injected", "started_at": "2026-10-27T00:13:04Z", "finished_at": "2026-10-27T00:13:54Z"},
+        detected_at="2026-10-26T23:56:32Z",
+    )
+    failed = [s for s in real.record_stages(record) if s.status == "fail"]
+    assert [(s.name, s.error_class) for s in failed] == [("detect", "baseline-incident")]
+    assert "992s before the injection" in failed[0].detail
+
+
+def test_an_incident_after_the_injection_is_not_a_baseline_incident() -> None:
+    record = _record(
+        injection={"state": "injected", "started_at": "2026-10-27T00:00:00Z", "finished_at": "2026-10-27T00:00:09Z"},
+        detected_at="2026-10-27T00:00:10Z",
+    )
+    assert all(s.status == "pass" for s in real.record_stages(record))
