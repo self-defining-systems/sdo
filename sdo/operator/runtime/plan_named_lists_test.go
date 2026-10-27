@@ -64,3 +64,21 @@ func TestAtomicServicePortRollbackPreservesConcurrentAddition(t *testing.T) {
 		})
 	}
 }
+
+func TestRemoveServicePortRejectsReintroducedMember(t *testing.T) {
+	ref := sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}
+	removed := map[string]any{"name": "rpc", "port": int64(8300)}
+	object := planObject(ref, map[string]any{"ports": []any{removed, map[string]any{"name": "http", "port": int64(8500)}}})
+	client, ref := newServerPlanClient(object)
+	client.afterPatch = func(live *unstructured.Unstructured) {
+		ports, _, _ := unstructured.NestedSlice(live.Object, "spec", "ports")
+		ports = append([]any{removed}, ports...)
+		_ = unstructured.SetNestedSlice(live.Object, ports, "spec", "ports")
+	}
+	executor := PlanExecutor{Client: client, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{true}}
+	result, err := executor.Apply(context.Background(), IncidentRequest{Namespace: "app", RepairPolicy: "recorded-actions"},
+		program.Plan{Actions: []program.Action{program.RemoveServicePort{Ref: ref, Name: "rpc"}}}, false)
+	if err == nil || result.VerificationPassed {
+		t.Fatalf("reintroduced removed member was credited: %+v %v", result, err)
+	}
+}
