@@ -347,9 +347,9 @@ func notifyTestJobCreated(created chan<- struct{}) func(context.Context, string)
 	}
 }
 
-// A worker that dies before it can publish a result has only its last log lines to say why; the controller never
-// reads logs, so the kubelet must put them in the termination message.
-func TestWorkerJobTerminationMessageFallsBackToLogsOnError(t *testing.T) {
+// The controller reads no logs: a failing worker writes one curated line to /dev/termination-log, so the Job
+// must not ask the kubelet to copy log output into the termination message.
+func TestWorkerJobTerminationMessageNeverFallsBackToLogs(t *testing.T) {
 	client := fake.NewSimpleClientset()
 	task := reflectionTestTask(t)
 	executor := KubernetesExecutor{Client: client, Namespace: "demo", Registry: reflectionTestRegistry(t), RepositoryPVC: "repo", RepositoryMountPath: "/workspace"}
@@ -364,7 +364,7 @@ func TestWorkerJobTerminationMessageFallsBackToLogsOnError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := job.Spec.Template.Spec.Containers[0].TerminationMessagePolicy; got != corev1.TerminationMessageFallbackToLogsOnError {
-		t.Fatalf("worker termination message policy = %q, want FallbackToLogsOnError", got)
+	if got := job.Spec.Template.Spec.Containers[0].TerminationMessagePolicy; got != "" && got != corev1.TerminationMessageReadFile {
+		t.Fatalf("worker termination message policy = %q, want the file the worker curates", got)
 	}
 }

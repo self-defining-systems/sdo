@@ -19,7 +19,14 @@ from sdo.agents.lifecycle import (
 )
 from sdo.agents.prompt_templates import render_prompt
 from sdo.agents.provider import MODEL_ENV, resolve_agent
-from sdo.agents.responder import AGENT_SKILLS, KubernetesResultPublisher, prepare_claude_home, prepare_codex_home
+from sdo.agents.responder import (
+    AGENT_SKILLS,
+    KubernetesResultPublisher,
+    prepare_claude_home,
+    prepare_codex_home,
+    record_worker_failure,
+    records_worker_failure,
+)
 from sdo.contracts import (
     SCHEMA_VERSION,
     AgentResult,
@@ -254,11 +261,13 @@ def run_architecture_task(
     return result
 
 
+@records_worker_failure
 def main() -> int:
     namespace = os.environ.get("SDO_NAMESPACE", "")
     result_name = os.environ.get("SDO_RESULT_CONFIGMAP", "")
     if not namespace or not result_name:
         print("SDO_NAMESPACE and SDO_RESULT_CONFIGMAP are required", file=sys.stderr)
+        record_worker_failure(ValueError("SDO_NAMESPACE and SDO_RESULT_CONFIGMAP are required"))
         return 2
     try:
         prepare_codex_home(skills=AGENT_SKILLS["deployer"])
@@ -274,6 +283,7 @@ def main() -> int:
             raise ValueError(f"unsupported deployer request type {task.request.TypeName()!r}")
     except (OSError, ValueError, RuntimeError) as exc:
         print(str(exc), file=sys.stderr)
+        record_worker_failure(exc)
         return 1
     return 0
 

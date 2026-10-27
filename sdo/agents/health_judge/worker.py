@@ -18,7 +18,13 @@ from sdo.agents.lifecycle import (
 )
 from sdo.agents.memory_diagnostics import render_validation_feedback
 from sdo.agents.provider import resolve_agent
-from sdo.agents.responder import KubernetesResultPublisher, prepare_claude_home, prepare_codex_home
+from sdo.agents.responder import (
+    KubernetesResultPublisher,
+    prepare_claude_home,
+    prepare_codex_home,
+    record_worker_failure,
+    records_worker_failure,
+)
 from sdo.contracts import (
     SCHEMA_VERSION,
     AgentResult,
@@ -172,11 +178,13 @@ def run_judge_task(
     return result
 
 
+@records_worker_failure
 def main() -> int:
     namespace = os.environ.get("SDO_NAMESPACE", "")
     result_name = os.environ.get("SDO_RESULT_CONFIGMAP", "")
     if not namespace or not result_name:
         print("SDO_NAMESPACE and SDO_RESULT_CONFIGMAP are required", file=sys.stderr)
+        record_worker_failure(ValueError("SDO_NAMESPACE and SDO_RESULT_CONFIGMAP are required"))
         return 2
     try:
         if agent_guidance() == "shell":
@@ -192,6 +200,7 @@ def main() -> int:
         )
     except (OSError, ValueError, RuntimeError) as exc:
         print(str(exc), file=sys.stderr)
+        record_worker_failure(exc)
         return 1
     return 0
 
