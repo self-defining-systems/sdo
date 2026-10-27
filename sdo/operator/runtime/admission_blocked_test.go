@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"errors"
+	"fmt"
 	admissionv1 "k8s.io/api/admissionregistration/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -21,9 +22,9 @@ func admissionRollouts() KubernetesPlanRollouts { return admissionRolloutsFor("f
 
 func admissionRolloutsFor(name string) KubernetesPlanRollouts {
 	n := int32(1)
-	d := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "app", UID: "d", Generation: 2}, Spec: appsv1.DeploymentSpec{Replicas: &n}}
+	d := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "app", UID: "d", Generation: 2}, Spec: appsv1.DeploymentSpec{Replicas: &n}, Status: appsv1.DeploymentStatus{ObservedGeneration: 2}}
 	rs := &appsv1.ReplicaSet{ObjectMeta: metav1.ObjectMeta{Name: "frontend-next", Namespace: "app", UID: "rs", OwnerReferences: []metav1.OwnerReference{{Kind: "Deployment", UID: d.UID}}}, Spec: appsv1.ReplicaSetSpec{Replicas: &n}}
-	event := &corev1.Event{ObjectMeta: metav1.ObjectMeta{Name: "denied", Namespace: "app"}, Type: corev1.EventTypeWarning, InvolvedObject: corev1.ObjectReference{Kind: "ReplicaSet", Name: rs.Name, Namespace: "app", UID: rs.UID}, Reason: "FailedCreate", Message: `Error creating: admission webhook "validate.example.test" denied the request: policy rejects Pods`}
+	event := &corev1.Event{ObjectMeta: metav1.ObjectMeta{Name: "denied", Namespace: "app"}, Type: corev1.EventTypeWarning, InvolvedObject: corev1.ObjectReference{Kind: "ReplicaSet", Name: rs.Name, Namespace: "app", UID: rs.UID}, LastTimestamp: metav1.NewTime(time.Now().Add(time.Minute)), Reason: "FailedCreate", Message: `Error creating: admission webhook "validate.example.test" denied the request: policy rejects Pods`}
 	config := &admissionv1.ValidatingWebhookConfiguration{ObjectMeta: metav1.ObjectMeta{Name: "app-policy"}, Webhooks: []admissionv1.ValidatingWebhook{{Name: "validate.example.test"}}}
 	return KubernetesPlanRollouts{Client: fake.NewSimpleClientset(d, rs, event, config)}
 }
@@ -203,5 +204,100 @@ func TestAdmissionBlockedStageHandsOffEvenWhenHealthDetectorsClear(t *testing.T)
 		}
 		// Rejoin from the durable completed stage checkpoint, with fresh health.
 		state = &IncidentState{Request: state.Request, Findings: append([]sdk.Finding(nil), state.Request.Findings...), Coverage: state.Coverage}
+	}
+}
+
+func TestAdmissionStaleEvidenceDoesNotAbortCurrentScaleUp(t *testing.T) {
+	for _, source := range []string{"replicaset-event", "deployment-event", "replicaset-condition", "deployment-condition"} {
+		for _, wait := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/wait=%v", source, wait), func(t *testing.T) {
+				rollout := admissionRollouts()
+				client := rollout.Client.(*fake.Clientset)
+				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+				defer cancel()
+				event, _ := client.CoreV1().Events("app").Get(ctx, "denied", metav1.GetOptions{})
+				old := metav1.NewTime(time.Now().Add(-time.Hour))
+				event.LastTimestamp = old
+				event.FirstTimestamp = old
+				d, _ := client.AppsV1().Deployments("app").Get(ctx, "frontend", metav1.GetOptions{})
+				d.Status.ObservedGeneration = d.Generation
+				rs, _ := client.AppsV1().ReplicaSets("app").Get(ctx, "frontend-next", metav1.GetOptions{})
+				rs.Generation = 2
+				rs.Status.ObservedGeneration = 2
+				two := int32(2)
+				rs.Spec.Replicas = &two
+				rs.Status.Replicas = 1
+				if source == "deployment-event" {
+					event.InvolvedObject = corev1.ObjectReference{Kind: "Deployment", Namespace: "app", Name: d.Name, UID: d.UID}
+				}
+				if strings.HasSuffix(source, "condition") {
+					event.Reason = "HistoricalDiagnostic"
+				}
+				if source == "replicaset-condition" {
+					rs.Status.Conditions = []appsv1.ReplicaSetCondition{{Type: appsv1.ReplicaSetReplicaFailure, Status: corev1.ConditionTrue, Reason: "FailedCreate", Message: event.Message, LastTransitionTime: old}}
+				}
+				if source == "deployment-condition" {
+					d.Status.Conditions = []appsv1.DeploymentCondition{{Type: appsv1.DeploymentReplicaFailure, Status: corev1.ConditionTrue, Reason: "FailedCreate", Message: event.Message, LastTransitionTime: old, LastUpdateTime: old}}
+				}
+				client.AppsV1().Deployments("app").Update(ctx, d, metav1.UpdateOptions{})
+				client.AppsV1().ReplicaSets("app").Update(ctx, rs, metav1.UpdateOptions{})
+				client.CoreV1().Events("app").Update(ctx, event, metav1.UpdateOptions{})
+				var err error
+				if wait {
+					err = rollout.Wait(ctx, []sdk.ObjectRef{menuDeployment})
+				} else {
+					err = rollout.Observe(ctx, []sdk.ObjectRef{menuDeployment})
+				}
+				var blocked *AdmissionBlockedError
+				if errors.As(err, &blocked) {
+					t.Fatalf("retained %s aborted healthy admission scale-up: %v", source, err)
+				}
+				if err == nil {
+					t.Fatal("pending rollout incorrectly complete")
+				}
+			})
+		}
+	}
+}
+
+func TestAdmissionFreshEvidenceRequiresObservedCurrentGeneration(t *testing.T) {
+	for _, source := range []string{"replicaset-event", "deployment-event", "replicaset-condition", "deployment-condition"} {
+		for _, observed := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/current=%v", source, observed), func(t *testing.T) {
+				rollout := admissionRollouts()
+				client := rollout.Client.(*fake.Clientset)
+				ctx := context.Background()
+				event, _ := client.CoreV1().Events("app").Get(ctx, "denied", metav1.GetOptions{})
+				d, _ := client.AppsV1().Deployments("app").Get(ctx, "frontend", metav1.GetOptions{})
+				rs, _ := client.AppsV1().ReplicaSets("app").Get(ctx, "frontend-next", metav1.GetOptions{})
+				rs.Generation = 2
+				if observed {
+					rs.Status.ObservedGeneration = 2
+				} else {
+					d.Status.ObservedGeneration = 1
+				}
+				fresh := metav1.NewTime(time.Now().Add(time.Minute))
+				if source == "deployment-event" {
+					event.InvolvedObject = corev1.ObjectReference{Kind: "Deployment", Namespace: "app", Name: d.Name, UID: d.UID}
+				}
+				if strings.HasSuffix(source, "condition") {
+					event.Reason = "Diagnostic"
+				}
+				if source == "replicaset-condition" {
+					rs.Status.Conditions = []appsv1.ReplicaSetCondition{{Type: appsv1.ReplicaSetReplicaFailure, Status: corev1.ConditionTrue, Reason: "FailedCreate", Message: event.Message, LastTransitionTime: fresh}}
+				}
+				if source == "deployment-condition" {
+					d.Status.Conditions = []appsv1.DeploymentCondition{{Type: appsv1.DeploymentReplicaFailure, Status: corev1.ConditionTrue, Reason: "FailedCreate", Message: event.Message, LastTransitionTime: fresh, LastUpdateTime: fresh}}
+				}
+				client.AppsV1().Deployments("app").Update(ctx, d, metav1.UpdateOptions{})
+				client.AppsV1().ReplicaSets("app").Update(ctx, rs, metav1.UpdateOptions{})
+				client.CoreV1().Events("app").Update(ctx, event, metav1.UpdateOptions{})
+				err := rollout.Observe(ctx, []sdk.ObjectRef{menuDeployment})
+				var blocked *AdmissionBlockedError
+				if errors.As(err, &blocked) != observed {
+					t.Fatalf("current-generation admission=%v: %v", observed, err)
+				}
+			})
+		}
 	}
 }

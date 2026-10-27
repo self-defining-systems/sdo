@@ -2,9 +2,13 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
+	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/reflect/protoreflect"
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"google.golang.org/protobuf/proto"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
@@ -19,7 +23,7 @@ func cloneResponseProgress(items []*contracts.ResponseProgress) []*contracts.Res
 			result = append(result, proto.Clone(item).(*contracts.ResponseProgress))
 		}
 	}
-	return result
+	return boundResponseProgress(result, maxResponseProgressBytes)
 }
 
 func priorResponseProgress(repository string, findings []sdk.Finding) []*contracts.ResponseProgress {
@@ -131,8 +135,113 @@ func responseProgress(records []*contracts.OutcomeRecord, findings []sdk.Finding
 		}
 		progress.Error = strings.Join(errors, "; ")
 		if len(progress.SuccessfulActions) > 0 || len(progress.Blockers) > 0 || progress.Error != "" {
-			result = append(result, progress)
+			result = boundResponseProgress(append(result, progress), maxResponseProgressBytes)
 		}
 	}
 	return result
+}
+
+// These are projection budgets, never durable-history or repair-credit limits.
+// Keep chronological order for consumers, evicting the oldest episodes first.
+const maxResponseProgressBytes = 32 << 10
+const maxResponseProgressEpisodes = 8
+
+func boundResponseProgress(items []*contracts.ResponseProgress, budget int) []*contracts.ResponseProgress {
+	var kept []*contracts.ResponseProgress
+	var omitted uint32
+	truncated := false
+	for i := len(items) - 1; i >= 0; i-- {
+		item := items[i]
+		if item == nil {
+			continue
+		}
+		omitted += item.GetOmittedEpisodes()
+		truncated = truncated || item.GetTruncated()
+		if len(kept) >= maxResponseProgressEpisodes {
+			omitted++
+			truncated = true
+			continue
+		}
+		projected := proto.Clone(item).(*contracts.ResponseProgress)
+		projected.OmittedEpisodes = 0
+		projected.Truncated = false
+		// Bound every nested string and inventory, including receipt owner chains
+		// and webhook references. Retain the newest entries within an episode.
+		clipped := clipProgressMessage(projected.ProtoReflect(), 256, 4)
+		if progressWireBytes([]*contracts.ResponseProgress{projected}) > budget/2 {
+			clipped = clipProgressMessage(projected.ProtoReflect(), 64, 1) || clipped
+		}
+		candidate := append([]*contracts.ResponseProgress{projected}, kept...)
+		if progressWireBytes(candidate) > budget-128 {
+			omitted++
+			truncated = true
+			continue
+		}
+		projected.Truncated = clipped
+		truncated = truncated || clipped
+		kept = candidate
+	}
+	if len(kept) == 0 && (truncated || omitted > 0) {
+		kept = []*contracts.ResponseProgress{{}}
+	}
+	if len(kept) > 0 {
+		kept[len(kept)-1].Truncated = truncated
+		kept[len(kept)-1].OmittedEpisodes = omitted
+	}
+	return kept
+}
+
+func progressWireBytes(items []*contracts.ResponseProgress) int {
+	data, err := (protojson.MarshalOptions{UseProtoNames: true}).Marshal(&contracts.IncidentRequest{PriorResponseProgress: items})
+	if err != nil {
+		return maxResponseProgressBytes + 1
+	}
+	var document any
+	if json.Unmarshal(data, &document) != nil {
+		return maxResponseProgressBytes + 1
+	}
+	canonical, err := json.Marshal(document)
+	if err != nil {
+		return maxResponseProgressBytes + 1
+	}
+	return len(canonical)
+}
+
+func clipProgressMessage(message protoreflect.Message, textBytes, count int) bool {
+	changed := len(message.GetUnknown()) > 0
+	message.SetUnknown(nil)
+	message.Range(func(field protoreflect.FieldDescriptor, value protoreflect.Value) bool {
+		clip := func(v protoreflect.Value) protoreflect.Value {
+			if field.Kind() == protoreflect.StringKind && len(v.String()) > textBytes {
+				text := v.String()[:textBytes]
+				for !utf8.ValidString(text) {
+					text = text[:len(text)-1]
+				}
+				changed = true
+				return protoreflect.ValueOfString(text + " [truncated]")
+			}
+			if field.Kind() == protoreflect.MessageKind {
+				changed = clipProgressMessage(v.Message(), textBytes, count) || changed
+			}
+			return v
+		}
+		if field.IsList() {
+			list := value.List()
+			if list.Len() > count {
+				start := list.Len() - count
+				for i := 0; i < count; i++ {
+					list.Set(i, list.Get(start+i))
+				}
+				list.Truncate(count)
+				changed = true
+			}
+			for i := 0; i < list.Len(); i++ {
+				list.Set(i, clip(list.Get(i)))
+			}
+		} else {
+			message.Set(field, clip(value))
+		}
+		return true
+	})
+	return changed
 }

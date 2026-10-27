@@ -281,6 +281,9 @@ message ResponseProgress {
   repeated RepairActionReceipt successful_actions = 2;
   repeated RolloutPending blockers = 3;
   string error = 4;
+  // Projection only: complete facts remain in durable outcomes.
+  bool truncated = 5;
+  uint32 omitted_episodes = 6;
 }
 
 message RootCauseEvidence {

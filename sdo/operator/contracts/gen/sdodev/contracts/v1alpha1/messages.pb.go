@@ -2141,8 +2141,11 @@ type ResponseProgress struct {
 	SuccessfulActions []*RepairActionReceipt `protobuf:"bytes,2,rep,name=successful_actions,json=successfulActions,proto3" json:"successful_actions,omitempty"`
 	Blockers          []*RolloutPending      `protobuf:"bytes,3,rep,name=blockers,proto3" json:"blockers,omitempty"`
 	Error             string                 `protobuf:"bytes,4,opt,name=error,proto3" json:"error,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	// Projection only: complete facts remain in durable outcomes.
+	Truncated       bool   `protobuf:"varint,5,opt,name=truncated,proto3" json:"truncated,omitempty"`
+	OmittedEpisodes uint32 `protobuf:"varint,6,opt,name=omitted_episodes,json=omittedEpisodes,proto3" json:"omitted_episodes,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *ResponseProgress) Reset() {
@@ -2201,6 +2204,20 @@ func (x *ResponseProgress) GetError() string {
 		return x.Error
 	}
 	return ""
+}
+
+func (x *ResponseProgress) GetTruncated() bool {
+	if x != nil {
+		return x.Truncated
+	}
+	return false
+}
+
+func (x *ResponseProgress) GetOmittedEpisodes() uint32 {
+	if x != nil {
+		return x.OmittedEpisodes
+	}
+	return 0
 }
 
 type RootCauseEvidence struct {
@@ -4107,13 +4124,15 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	"\n" +
 	"compaction\x18\x1e \x03(\tR\n" +
 	"compaction\x12c\n" +
-	"\x17prior_response_progress\x18\x1f \x03(\v2+.sdodev.contracts.v1alpha1.ResponseProgressR\x15priorResponseProgressJ\x04\b\v\x10\fJ\x04\b\f\x10\rJ\x04\b\x13\x10\x14J\x04\b\x18\x10\x19R\x19architecture_summary_pathR\x15health_objective_pathR\tfollow_up\"\xef\x01\n" +
+	"\x17prior_response_progress\x18\x1f \x03(\v2+.sdodev.contracts.v1alpha1.ResponseProgressR\x15priorResponseProgressJ\x04\b\v\x10\fJ\x04\b\f\x10\rJ\x04\b\x13\x10\x14J\x04\b\x18\x10\x19R\x19architecture_summary_pathR\x15health_objective_pathR\tfollow_up\"\xb8\x02\n" +
 	"\x10ResponseProgress\x12\x1f\n" +
 	"\vincident_id\x18\x01 \x01(\tR\n" +
 	"incidentId\x12]\n" +
 	"\x12successful_actions\x18\x02 \x03(\v2..sdodev.contracts.v1alpha1.RepairActionReceiptR\x11successfulActions\x12E\n" +
 	"\bblockers\x18\x03 \x03(\v2).sdodev.contracts.v1alpha1.RolloutPendingR\bblockers\x12\x14\n" +
-	"\x05error\x18\x04 \x01(\tR\x05error\"\xbf\x01\n" +
+	"\x05error\x18\x04 \x01(\tR\x05error\x12\x1c\n" +
+	"\ttruncated\x18\x05 \x01(\bR\ttruncated\x12)\n" +
+	"\x10omitted_episodes\x18\x06 \x01(\rR\x0fomittedEpisodes\"\xbf\x01\n" +
 	"\x11RootCauseEvidence\x12^\n" +
 	"\x04kind\x18\x01 \x01(\tBJ\xbaHGrER\x10detector-findingR\x11synthetic-trafficR\fstate-changeR\x10live-observationR\x04kind\x12\x1f\n" +
 	"\x06source\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x06source\x12)\n" +

@@ -1,8 +1,11 @@
 package runtime
 
 import (
+	"encoding/json"
+	"fmt"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/worker_registry"
 	"strings"
 	"testing"
 	"time"
@@ -76,5 +79,83 @@ func TestFailedResponseProgressEndsWhenFailedWorkerWasIndependentlyHealthy(t *te
 	record := &contracts.OutcomeRecord{IncidentId: "failed-but-cleared", Classification: "failed", Timestamps: &contracts.OutcomeTimestamps{VerifiedAt: contractTimestamp(time.Unix(2, 0)), CompletedAt: contractTimestamp(time.Unix(2, 0))}, Findings: []*contracts.Finding{{DetectorId: f.DetectorID, Fingerprint: f.Fingerprint, PrimaryResource: planRefProto(f.PrimaryResource)}}, RepairActions: []*contracts.RepairActionReceipt{{ActionId: "old-repair", Success: true}}}
 	if got := responseProgress([]*contracts.OutcomeRecord{record}, []sdk.Finding{f}, time.Time{}); len(got) != 0 {
 		t.Fatalf("closed healthy problem reopened as already-done work: %v", got)
+	}
+}
+
+func TestFailedResponseProgressProducerFitsDispatchAtLimits(t *testing.T) {
+	for _, episodes := range []int{8, 9, 80} {
+		t.Run(fmt.Sprint(episodes), func(t *testing.T) {
+			repository := t.TempDir()
+			var lines []string
+			for i := 0; i < episodes; i++ {
+				record := map[string]any{"incident_id": fmt.Sprintf("failed-%03d", i), "classification": "failed", "timestamps": map[string]any{"completed_at": time.Unix(int64(i+1), 0).UTC().Format(time.RFC3339)}, "findings": []any{map[string]any{"detector_id": "health", "rule_id": "missing", "status": "active", "severity": "critical", "summary": "missing", "evidence": "missing", "primary_resource": map[string]any{"kind": "ConfigMap", "namespace": "app", "name": "cfg"}, "fingerprint": "missing:cfg"}}, "repair_actions": []any{map[string]any{"action_id": fmt.Sprintf("fixed-%03d", i), "kind": "source", "target": "app/cfg", "summary": "source reconciled", "details": strings.Repeat("verbose readback ", 4096), "started_at": "2026-01-01T00:00:00Z", "completed_at": "2026-01-01T00:00:01Z", "success": true}}, "plan_applications": []any{map[string]any{"plan": map[string]any{}, "applied": true, "rollout_pending": map[string]any{"reason_code": "admission_blocked", "reason": "newest webhook blocker"}}}}
+				encoded, err := json.Marshal(record)
+				if err != nil {
+					t.Fatal(err)
+				}
+				lines = append(lines, string(encoded))
+			}
+			recordOutcomes(t, repository, strings.Join(lines, "\n"))
+			c := &Controller{config: testControllerConfig()}
+			c.config.RepositoryWorktree = repository
+			request := c.incidentRequest(time.Now(), []sdk.Finding{{DetectorID: "health", Fingerprint: "missing:cfg", PrimaryResource: sdk.ObjectRef{Kind: "ConfigMap", Namespace: "app", Name: "cfg"}}})
+			// Use a valid public envelope while preserving the real controller projection.
+			envelope := goldenRequest(t)
+			envelope.PriorResponseProgress = request.PriorResponseProgress
+			task, payload, err := encodeIncidentAgentTask(envelope, testIncidentRegistry(t, ""), testIncidentAgentID(t))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(payload) > worker_registry.MaxRequestBytes {
+				t.Fatal("oversized dispatch")
+			}
+			var typed contracts.IncidentRequest
+			if err := task.Request.UnmarshalTo(&typed); err != nil {
+				t.Fatal(err)
+			}
+			progress := typed.GetPriorResponseProgress()
+			if progressWireBytes(progress) > maxResponseProgressBytes {
+				t.Fatal("unbounded projection bytes")
+			}
+			if len(progress) == 0 || !progress[len(progress)-1].GetTruncated() || progress[len(progress)-1].GetOmittedEpisodes() != uint32(max(0, episodes-8)) {
+				t.Fatalf("missing typed omissions: %v", progress)
+			}
+			if len(progress) > 8 {
+				t.Fatalf("unbounded episode count: %d", len(progress))
+			}
+			found := false
+			for _, item := range progress {
+				for _, action := range item.SuccessfulActions {
+					if action.ActionId == fmt.Sprintf("fixed-%03d", episodes-1) && len(item.Blockers) > 0 {
+						found = true
+					}
+				}
+			}
+			if !found {
+				t.Fatal("newest action/blocker lost")
+			}
+		})
+	}
+}
+
+func TestFailedResponseProgressBudgetsBoundEveryNestedInventory(t *testing.T) {
+	for _, budget := range []int{4 << 10, maxResponseProgressBytes} {
+		for _, text := range []string{strings.Repeat("<>&", 1000), strings.Repeat("界", 1000), strings.Repeat("\\\"\n", 1000)} {
+			item := &contracts.ResponseProgress{IncidentId: "newest", Error: text}
+			for i := 0; i < 20; i++ {
+				item.SuccessfulActions = append(item.SuccessfulActions, &contracts.RepairActionReceipt{ActionId: fmt.Sprint(i), Summary: text, Details: text})
+				item.Blockers = append(item.Blockers, &contracts.RolloutPending{Reason: text, AdmissionWebhooks: []string{text, text, text, text, text}})
+			}
+			got := boundResponseProgress([]*contracts.ResponseProgress{item}, budget)
+			if progressWireBytes(got) > budget || len(got) != 1 || !got[0].GetTruncated() {
+				t.Fatalf("budget %d violated: %d", budget, progressWireBytes(got))
+			}
+			if len(got[0].SuccessfulActions) == 0 || got[0].SuccessfulActions[len(got[0].SuccessfulActions)-1].ActionId != "19" || len(got[0].Blockers) == 0 {
+				t.Fatalf("newest actionable evidence lost at %d: %v", budget, got)
+			}
+			if len(item.SuccessfulActions) != 20 || item.Error != text {
+				t.Fatal("durable source mutated")
+			}
+		}
 	}
 }

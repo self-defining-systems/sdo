@@ -93,12 +93,13 @@ def prior_stage_summary(reports: list[StageReport]) -> list[dict[str, Any]]:
 
 
 def prior_response_summary(request: IncidentRequest) -> dict[str, Any]:
-    """Keep prior applied work visible; complete receipts remain in the facts file."""
+    """Keep bounded prior work visible; complete history remains in durable outcomes."""
     episodes = list(request.prior_response_progress)
     return {
         "episodes": [
             {
                 "incident_id": item.incident_id[:100],
+                "truncated": item.truncated,
                 "successful_actions": [
                     {"action_id": action.action_id[:80], "summary": action.summary[:120], "success": True}
                     for action in item.successful_actions[:2]
@@ -113,7 +114,7 @@ def prior_response_summary(request: IncidentRequest) -> dict[str, Any]:
             }
             for item in reversed(episodes[-2:])
         ],
-        "episodes_omitted": max(0, len(episodes) - 2),
+        "episodes_omitted": sum(item.omitted_episodes for item in episodes) + max(0, len(episodes) - 2),
     }
 
 

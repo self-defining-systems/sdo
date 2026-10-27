@@ -135,8 +135,10 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="sdo",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="prior_stages: automatic repairs. prior_response_progress: receipts/blockers from failed episodes. "
-        "Keep applied repairs; admission_blocked names a rollout prerequisite. Full facts keep receipts/diagnoses.\n\n"
+        epilog="prior_stages: automatic repairs. "
+        "prior_response_progress: bounded receipts/blockers from failed episodes; truncation/omissions are explicit. "
+        "Keep applied repairs; admission_blocked names a current rollout prerequisite. "
+        "Full history stays in outcomes.\n\n"
         "Examples (replace names with incident resources):\n  " + "\n  ".join(CLI_EXAMPLES),
     )
     commands = parser.add_subparsers(dest="command", required=True)

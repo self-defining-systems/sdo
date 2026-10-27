@@ -287,3 +287,13 @@ def test_many_prior_episodes_keep_latest_progress_within_first_prompt_budget() -
         assert "admission_blocked" in rendered
         details = Path(rendered.split("Full incident facts: ", 1)[1].splitlines()[0])
         assert len(json.loads(details.read_text())["prior_response_progress"]) == 10
+
+
+def test_prior_progress_summary_preserves_transport_omissions() -> None:
+    from sdo.agents.responder.incident_context import prior_response_summary
+
+    request = _request()
+    request.prior_response_progress.add(incident_id="newest", truncated=True, omitted_episodes=23)
+    summary = prior_response_summary(request)
+    assert summary["episodes_omitted"] == 23
+    assert summary["episodes"][0]["truncated"] is True

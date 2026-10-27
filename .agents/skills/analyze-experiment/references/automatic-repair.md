@@ -41,3 +41,12 @@ The handoff also retains the existing
 admission prerequisite, including stage rejoin. Old Ready replicas clearing
 health cannot silently skip the responder; fresh controller closure observation
 still owns recovery verification.
+
+
+Prior-response progress is a bounded informational projection (at most eight
+newest episodes and 32 KiB before task encoding); transport pressure can compact
+it further. `ResponseProgress.truncated` and `omitted_episodes` explicitly mark
+loss. Complete receipts remain in the durable outcomes, not necessarily in the
+next request's facts file. Admission prerequisites require current-generation
+owned evidence newer than the rollout observation/wait start; retained warnings
+remain diagnostics and cannot alone abort a later scale-up.
