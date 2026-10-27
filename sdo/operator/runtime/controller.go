@@ -451,8 +451,9 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 	// Startup's full batch may precede confirmation. Once the observation
 	// windows are ready, evaluate every detector together on this snapshot;
 	// event-driven partial batches must not strand the install opportunity.
+	setupSweep := c.namespaceOnboarding != nil && c.setupEvaluatedRevision != c.config.SourceCommit && c.setupIncidentFree(false)
 	onboardingDetectors := detectors
-	if c.pendingOnboarding != nil {
+	if c.pendingOnboarding != nil || setupSweep {
 		onboardingDetectors = c.detectorList()
 	}
 	unreferencedSnapshot := snapshot
@@ -465,8 +466,8 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 			return err
 		}
 	}
-	if c.pendingOnboarding != nil {
-		if len(detectors) != len(onboardingDetectors) && detectorsNeedConfirmation(onboardingDetectors) && (confirmed || confirmationExpired) {
+	if c.pendingOnboarding != nil || setupSweep {
+		if len(detectors) != len(onboardingDetectors) && (setupSweep || detectorsNeedConfirmation(onboardingDetectors)) && (confirmed || confirmationExpired) {
 			// This extra install sweep must not postpone ordinary fault checks.
 			deadlines := c.scheduler.Deadlines()
 			c.scheduler.ExpediteAll(now)
@@ -496,7 +497,7 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 	c.mu.Unlock()
 	for _, detector := range detectors {
 		spec := detector.Spec()
-		if onboardingCandidate == nil && c.pendingOnboarding != nil && learnedIncidentDetector(spec) {
+		if onboardingCandidate == nil && (c.pendingOnboarding != nil || setupSweep && !confirmed && !confirmationExpired) && learnedIncidentDetector(spec) {
 			continue
 		}
 		result, cached := setupResults[spec.ID]

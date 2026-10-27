@@ -103,11 +103,19 @@ func TestSetupLearnedDetectorQuarantine(t *testing.T) {
 				t.Fatal("restart re-evaluated disabled detector")
 			}
 			restarted.config.SourceCommit = "new-memory-revision"
-			if err := restarted.EvaluateAll(ctx, time.Unix(104, 0)); err != nil {
+			// Restore a realistic skewed schedule: the learned detector is due before
+			// health. Revision adoption must still take one fresh complete setup sweep.
+			if err := restarted.scheduler.RestoreDeadlines(map[string]time.Time{"health": time.Unix(1000, 0), "learned": time.Unix(104, 0)}); err != nil {
+				t.Fatal(err)
+			}
+			if err := restarted.Step(ctx, time.Unix(104, 0), nil); err != nil {
 				t.Fatal(err)
 			}
 			if learned.calls == calls {
 				t.Fatal("new revision did not re-enable detector")
+			}
+			if len(exportState(t, restarted).DisabledSetupDetectors) != 2 {
+				t.Fatal("new revision failed to take a confirmed-health setup sweep")
 			}
 		})
 	}

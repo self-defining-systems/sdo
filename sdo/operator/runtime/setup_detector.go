@@ -60,19 +60,27 @@ type setupDetection struct {
 	err      error
 }
 
+// Legacy state without a setup marker cannot prove a prior incident belongs
+// to another revision, so it conservatively retains its incident protection.
+func (c *Controller) setupIncidentFree(pendingInstall bool) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.incidentOpen || c.closureBlocksNextLocked() || c.currentIncidentRequest != nil {
+		return false
+	}
+	if pendingInstall || c.setupEvaluatedRevision == "" {
+		return c.incidentDetectedAt.IsZero() && c.lastAcknowledgedIncidentID == "" && len(c.failedClosures) == 0
+	}
+	return true
+}
+
 // Establish health on this same snapshot before interpreting learned findings.
 // Caching preserves one execution per detector regardless of registry order.
 func (c *Controller) setupHealth(ctx context.Context, snapshot sdk.DetectionContext, detectors []sdk.Detector, candidate *contracts.NamespaceOnboarding) (map[string]setupDetection, bool) {
 	if candidate == nil && c.namespaceOnboarding == nil || c.setupEvaluatedRevision == c.config.SourceCommit || len(c.healthDetectorIDs) == 0 || len(detectors) != len(c.detectorList()) {
 		return nil, false
 	}
-	c.mu.Lock()
-	busy := c.incidentOpen || c.closureBlocksNextLocked() || c.currentIncidentRequest != nil
-	if candidate != nil || c.setupEvaluatedRevision == "" {
-		busy = busy || !c.incidentDetectedAt.IsZero() || c.lastAcknowledgedIncidentID != "" || len(c.failedClosures) != 0
-	}
-	c.mu.Unlock()
-	if busy || len(c.sourceInventoryFindings) > 0 {
+	if !c.setupIncidentFree(candidate != nil) || len(c.sourceInventoryFindings) > 0 {
 		return nil, false
 	}
 	results := map[string]setupDetection{}
