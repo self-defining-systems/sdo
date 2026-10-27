@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import importlib
 import os
+import subprocess
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from benchmarks.sregym.adapter import WaitKind, wait_for
 from benchmarks.sregym.fastloop.idempotent_helm import make_deploy_idempotent
 
 if TYPE_CHECKING:
@@ -110,7 +112,42 @@ def main() -> int:
 
             self._problem_factory = isolated_factory
             self._harness_factory_ready = True
+        from benchmarks.sregym.fastloop.oracle_baseline import OracleBaselines, install_oracle_baselines
+
+        if not hasattr(self, "_rehearse_oracles") and os.environ.get("FASTLOOP_ORACLE_BASELINES"):
+            assert worker.__file__ is not None
+
+            def confirm_healthy(problem: Any) -> bool:
+                from benchmarks.sregym.fastloop.seed_recovery import verify_baseline_traffic
+
+                if not self._health_probe(problem.namespace).get("healthy"):
+                    return False
+                return (
+                    verify_baseline_traffic(problem, {"kind": "health-check", "success": True, "details": {}})[
+                        "success"
+                    ]
+                    is True
+                )
+
+            self._rehearse_oracles = install_oracle_baselines(
+                self,
+                OracleBaselines(
+                    Path(os.environ["FASTLOOP_ORACLE_BASELINES"]),
+                    os.environ["FASTLOOP_ORACLE_IDENTITY"]
+                    + ":"
+                    + subprocess.check_output(
+                        ["git", "-C", str(Path(worker.__file__).resolve().parents[2]), "rev-parse", "HEAD"],
+                        text=True,
+                        timeout=wait_for(WaitKind.PROBE),
+                    ).strip(),
+                ),
+                confirm_healthy=confirm_healthy,
+            )
         op = request.get("op")
+        if op == "rehearse_oracles":
+            problem = self._problem_factory(str(request["problem_id"]))
+            assert_clean_baseline(Path(os.environ["KUBECONFIG"]), namespace=problem.namespace)
+            return self._rehearse_oracles(str(request["problem_id"]))
         if op == "attach_existing":
             return attach_existing_cluster(worker_infra)
         if op in {"deploy", "clean_start"}:
@@ -144,7 +181,13 @@ def main() -> int:
         if request.get("op") == "baseline_oracle":
             problem = self._problem_factory(str(request["problem_id"]))
             assert_clean_baseline(Path(os.environ["KUBECONFIG"]), namespace=problem.namespace)
-            verdict = self._grade(problem)
+            problem_id = str(request["problem_id"])
+            # Rehearsal classifies only once. Recovery still takes a fresh grade:
+            # cached healthy observations cannot establish a restored baseline.
+            if hasattr(self, "_rehearse_oracles"):
+                verdict = self._rehearse_oracles(problem_id, fresh=True)
+            else:
+                verdict = self._grade(problem)
             if request.get("verify_traffic"):
                 from benchmarks.sregym.fastloop.seed_recovery import verify_baseline_traffic
 
