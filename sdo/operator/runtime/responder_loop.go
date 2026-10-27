@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"strings"
 	"context"
 	"crypto/rand"
 	"encoding/json"
@@ -51,9 +52,13 @@ type ToolRequest struct {
 	Bindings            program.Bindings                       `json:"bindings,omitempty"`
 	PlanIDs             []string                               `json:"plan_ids,omitempty"`
 	ApplicationID       string                                 `json:"application_id,omitempty"`
-	// stage marks an apply made by the automatic response stage. It is not
-	// decodable from a tool call, so only the stage can set it.
+	// stage marks a call made by the automatic response stage. It is not
+	// decodable from a tool call, so only the stage can set it. A stage call
+	// never takes the notes queued for the agent and waits for rollouts inline.
 	stage bool
+	// rolloutTimeout bounds a stage apply's rollout wait; it is not decodable
+	// either, and an agent call keeps the executor's own timeout.
+	rolloutTimeout time.Duration
 }
 
 type ToolResponse struct {
@@ -88,6 +93,9 @@ type ToolResponse struct {
 	ApplicationID              string                         `json:"application_id,omitempty"`
 	Patches                    []PlanPatch                    `json:"patches,omitempty"`
 	ProgramRuns                []ProgramRun                   `json:"program_runs,omitempty"`
+	// PriorStages reports automatic passes that ran while the responder worked,
+	// each once, in the vocabulary of the incident's prior_stages.
+	PriorStages []StageNote `json:"prior_stages,omitempty"`
 
 	// ProgramRunsOmitted counts runs a truncated record could not list; the
 	// trust reader fails closed on it. ProgramRunsUnrelatedOmitted counts apply
@@ -141,7 +149,6 @@ type selectedPlan struct {
 // ResponderLoop holds one incident's tool state while its responder Job runs.
 type ResponderLoop struct {
 	stageProgress        map[string]responseStageProgress
-	waitForStageRollouts bool
 	// WorkingProgramRoot is set by the production loop factory to the mounted
 	// proposal checkout. Embedders with an in-memory registry may leave it empty.
 	WorkingProgramRoot string
@@ -181,6 +188,8 @@ type ResponderLoop struct {
 	Trust                 map[string]ProgramTrust
 	CorpusSessionRoot     string
 	capturePhase          string
+	sourceCompared        map[string]bool
+	stageNotes            []StageNote
 	timing                toolTiming
 	preApplyCaptured      bool
 	saveToolState         func(context.Context, []byte) error
@@ -516,17 +525,13 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 		}
 		if l.CorpusSessionRoot != "" {
 			l.capturePhase = "open@detect"
-			view, err := l.snapshotView(ctx)
-			if err != nil {
+			if _, err := l.snapshotView(ctx); err != nil {
 				response.Error = err.Error()
 				break
 			}
 			// An object without an acceptance record compares as unknown;
 			// accepted source itself is still shown.
-			if _, err := view.DiffAgainstSource(*request.Ref); err != nil && !errors.Is(err, ErrAcceptanceRecordUnavailable) {
-				response.Error = err.Error()
-				break
-			}
+			l.recordSourceComparisons(ctx, l.capturePhase, *request.Ref)
 		}
 		object, err := acceptedIncidentManifest(ctx, l.Executor.Source, l.Request.SourceCommit, l.Request.Namespace, *request.Ref)
 		if errors.Is(err, ErrAcceptedManifestAbsent) {
@@ -587,7 +592,7 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 			l.findings = append([]sdk.Finding(nil), response.Findings...)
 			response.LoopsAllowed = l.batchLimit()
 		} else {
-			l.verify(ctx, nil, &response)
+			l.verify(ctx, nil, &response, request.stage)
 		}
 	case "rollback":
 		l.rollbackApplication(ctx, request, &response)
@@ -595,6 +600,14 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 		response.Error = fmt.Sprintf("unknown sdo command %q", request.Command)
 	}
 	response.LoopsUsed = l.batches
+	if notes := l.takeStageNotes(request); len(notes) > 0 {
+		response.PriorStages = notes
+		lines := make([]string, len(notes))
+		for i, note := range notes {
+			lines[i] = note.String()
+		}
+		response.Summary = "automatic stage ran while you worked: " + strings.Join(lines, "; ") + ". " + response.Summary
+	}
 	return response
 }
 
@@ -722,6 +735,17 @@ func (l *ResponderLoop) snapshotView(ctx context.Context) (program.ReadView, err
 	return view, nil
 }
 
+// RefreshDiagnose diagnoses the open findings against a fresh snapshot without
+// retaking a capture: the opening captures stay what the incident opened with.
+func (l *ResponderLoop) RefreshDiagnose(ctx context.Context) []ProgramRun {
+	l.operationMu.Lock()
+	defer l.operationMu.Unlock()
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.capturePhase = ""
+	return l.diagnose(ctx, l.findings)
+}
+
 func (l *ResponderLoop) diagnose(ctx context.Context, findings []sdk.Finding) []ProgramRun {
 	view, err := l.snapshotView(ctx)
 	if err != nil {
@@ -732,6 +756,9 @@ func (l *ResponderLoop) diagnose(ctx context.Context, findings []sdk.Finding) []
 	l.rememberMatchedViews(ctx, runs, view)
 	l.lastDiagnosisView = view
 	l.runs = append(l.runs, runs...)
+	if l.capturePhase != "" {
+		l.recordSourceComparisons(ctx, l.capturePhase, findingCaptureRefs(findings)...)
+	}
 	return runs
 }
 
@@ -946,7 +973,10 @@ func (l *ResponderLoop) apply(ctx context.Context, request ToolRequest, response
 	}
 	executor := l.Executor
 	executor.ApplicationID = id
-	executor.PollRollouts = !l.waitForStageRollouts
+	executor.PollRollouts = !request.stage
+	if request.stage && request.rolloutTimeout > 0 {
+		executor.RolloutTimeout = request.rolloutTimeout
+	}
 	result, err := executor.Apply(ctx, l.mitigationIncident(selected), batch, false)
 	completed := time.Now().UTC()
 	if result.RolloutPending != nil {
@@ -961,7 +991,7 @@ func (l *ResponderLoop) apply(ctx context.Context, request ToolRequest, response
 	}
 	response.RolloutPending = result.RolloutPending
 	if result.RolloutPending == nil {
-		l.verify(ctx, selected, response)
+		l.verify(ctx, selected, response, request.stage)
 	}
 	// The application is recorded as observed and left in place; whether to roll
 	// it back, apply again or edit is the responder's decision.
@@ -1015,7 +1045,9 @@ func (l *ResponderLoop) apply(ctx context.Context, request ToolRequest, response
 	response.Unresolved = l.batches >= l.batchLimit() && !response.Healthy
 }
 
-func (l *ResponderLoop) verify(ctx context.Context, applied []selectedPlan, response *ToolResponse) {
+// verify observes fresh findings. stage is true for the automatic stage's own
+// observations, which are not the agent's ad hoc fixes.
+func (l *ResponderLoop) verify(ctx context.Context, applied []selectedPlan, response *ToolResponse, stage bool) {
 	previous := append([]sdk.Finding(nil), l.findings...)
 	view, err := l.snapshotView(ctx)
 	if err != nil {
@@ -1074,7 +1106,7 @@ func (l *ResponderLoop) verify(ctx context.Context, applied []selectedPlan, resp
 				l.addFailureSignal("new_finding_after_apply:" + FindingFingerprint(finding))
 			}
 		}
-	} else if !l.waitForStageRollouts && !l.appliedAny() && len(previous) > 0 && len(findings) == 0 {
+	} else if !stage && !l.appliedAny() && len(previous) > 0 && len(findings) == 0 {
 		matched := false
 		for _, run := range l.runs {
 			if run.Verdict.Result == program.Match {
@@ -1198,7 +1230,7 @@ func (l *ResponderLoop) rollbackApplication(ctx context.Context, request ToolReq
 		response.Error = rollbackErr.Error()
 		return
 	}
-	l.verify(ctx, nil, response)
+	l.verify(ctx, nil, response, request.stage)
 	if response.Error == "" {
 		response.Summary = "application rolled back and verified"
 	}
