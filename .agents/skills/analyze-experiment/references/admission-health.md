@@ -9,7 +9,7 @@ The bounded `--evaluate-once` health command reports `status: unavailable` and a
 Steady synthetic traffic uses `pending` when a scenario has never succeeded since observation began or lacks enough recent usable SLO samples. `DetectorEvaluation.reason` (protobuf field 6; `Reason` in the Go tool-state JSON) names unproven scenarios and is informational, separate from `error`. Partial qualification blocks aggregate health clearance; qualified failures still fire. Pending alone never dispatches an incident and is not independent recovery evidence. Qualification remains process-local: after a mid-incident restart, fresh successful steady samples and ordinary clearing persistence restore closure eligibility. `sdo verify` reports the controller's verdict, not the burst aggregate alone. Preserve reason transitions during history compaction.
 
 
-`fastloop eval-dry-run --run-dir <lane>` writes `eval-dry-run/report.json` with per-invariant pass/fail, elapsed seconds, and explicit `fault_injected:false` / `live_model_calls:false`. It executes the real pre-injection path using scripted registrations. A five-minute process deadline marks unfinished invariants failed; this evidence establishes eval plumbing, never learning. Admission evidence includes setup lineage, exact responder RBAC against the real installer plan, current controller detector states, qualified native prober scenarios, independent traffic and stable workload identity. Stabilization is recorded before the incident injection window and excluded from incident clocks. Preserve the report and the `admission/` evidence when a slot is rejected.
+`fastloop eval-dry-run --run-dir <lane>` writes `eval-dry-run/report.json` with per-invariant pass/fail, elapsed seconds, and explicit `fault_injected:false` / `live_model_calls:false`. It executes the real pre-injection path using scripted registrations. A five-minute process deadline marks unfinished invariants failed; this evidence establishes eval plumbing, never learning. Admission evidence includes setup lineage, exact responder RBAC against the real installer plan, current controller detector states (clear since the resume), qualified native prober scenarios and stable workload identity; independent traffic is proven once, by the restore that precedes admission. Stabilization is recorded before the incident injection window and excluded from incident clocks. Preserve the report and the `admission/` evidence when a slot is rejected.
 
 ## Lane resource evidence
 
@@ -75,7 +75,7 @@ reset invalidates reuse even when its name is unchanged.
 Reuse skips the dry run's reset/deploy/onboarding and the live SDO runner's deploy
 request. Admission still checks exact RBAC, clean baseline placement, fresh
 controller detector clearance/no incident work, qualified probe scenarios,
-independent traffic, stable workloads and lane memory/disk floors. The reused
+stable workloads and lane memory/disk floors. The reused
 dry run additionally requires active intake and the same fingerprint after
 these checks; failure cannot fall back to a passing cached health verdict.
 Inherited setup invariants name `reused_from`; fresh admission evidence is

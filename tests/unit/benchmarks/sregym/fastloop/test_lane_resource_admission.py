@@ -2,6 +2,7 @@
 
 import json
 from datetime import datetime, timedelta, timezone
+from functools import partial
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -26,10 +27,6 @@ def lane(tmp_path, monkeypatch):
     calls = []
     monkeypatch.setattr(admission, "assert_host_disk_headroom", lambda: {"passed": True, "mount": "/fixture"})
 
-    def request(*args, **kwargs):
-        calls.append("traffic")
-        return {"success": True}
-
     def state(_control):
         return {
             "history": [
@@ -38,22 +35,21 @@ def lane(tmp_path, monkeypatch):
             ]
         }
 
-    gate = admission.LaneAdmission(
-        environment, SimpleNamespace(request=request), SimpleNamespace(runtime_state=state), tmp_path / "admission"
-    )
+    gate = admission.LaneAdmission(environment, SimpleNamespace(runtime_state=state), tmp_path / "admission")
     complete = {"complete": {"acceptedCommit": "a" * 40, "objects": [{}]}, "pending": None}
     monkeypatch.setattr(admission.LaneAdmission, "_onboarding", lambda self, control: complete)
     monkeypatch.setattr(rbac, "verify_rbac", lambda *args: {"passed": True})
     monkeypatch.setattr(hotel_helpers, "admit_install", lambda *args: {"passed": True, "profile": "ABSENT"})
     monkeypatch.setattr(admission, "workload_identity", lambda *args: {"Deployment/app": {"generation": 1}})
     monkeypatch.setattr(admission, "assert_clean_baseline", lambda *args, **kwargs: None)
-    monkeypatch.setattr(
-        gate,
-        "_windows",
-        lambda *args: {
+
+    def windows(*args):
+        calls.append("sample")
+        return {
             "windows": {"health": {"scenarios": [{"scenario": {"id": "frontend"}, "qualified": True, "samples": [{}]}]}}
-        },
-    )
+        }
+
+    monkeypatch.setattr(gate, "_windows", windows)
     return gate, calls
 
 
@@ -72,7 +68,7 @@ def test_resources_checked_before_and_after_stabilization(lane, monkeypatch, fai
     monkeypatch.setattr(admission, "assert_lane_resources", resources, raising=False)
     with pytest.raises(ValueError, match="hotel-reservation/jaeger/container"):
         gate.prove("hotel-reservation-sdo")
-    assert calls == (["resources"] if failing_check == 1 else ["resources", "traffic", "resources"])
+    assert calls == (["resources"] if failing_check == 1 else ["resources", "sample", "resources"])
     if failing_check == 2:
         assert json.loads((gate.directory / "lane-resources.json").read_text())["passed"]
 
@@ -101,7 +97,7 @@ def test_disk_pressure_blocks_entry_and_final_injection_proof(lane, monkeypatch,
     monkeypatch.setattr(admission, "assert_host_disk_headroom", disk)
     with pytest.raises(ValueError, match=r"disk mount /mnt/data"):
         gate.prove("hotel-reservation-sdo")
-    assert calls == (["disk"] if failing_check == 1 else ["disk", "traffic", "disk"])
+    assert calls == (["disk"] if failing_check == 1 else ["disk", "sample", "disk"])
 
 
 def test_host_disk_floor_precedes_lane_setup(monkeypatch, tmp_path):
@@ -116,41 +112,12 @@ def test_host_disk_floor_precedes_lane_setup(monkeypatch, tmp_path):
         cli.check_host_capacity(SimpleNamespace(run_dir=tmp_path))
 
 
-def test_oracle_uses_remaining_admission_budget_instead_of_shorter_poll_timeout(lane, monkeypatch):
-    gate, _ = lane
-    monkeypatch.setattr(admission, "assert_lane_resources", lambda *args, **kwargs: {"passed": True})
-    now = [0.0]
-    monkeypatch.setattr(admission.time, "monotonic", lambda: now[0])
-
-    def request(op, **kwargs):
-        assert op == "baseline_oracle"
-        assert kwargs["timeout"] == pytest.approx(280)
-        now[0] += 200
-        return {"success": True}
-
-    def windows(_control):
-        now[0] += 20
-        return {
-            "windows": {"health": {"scenarios": [{"scenario": {"id": "frontend"}, "qualified": True, "samples": [{}]}]}}
-        }
-
-    gate.worker.request = request
-    monkeypatch.setattr(gate, "_windows", windows)
-    assert gate.prove("hotel-reservation-sdo")["passed"] is True
-
-
 def test_onboarding_has_its_own_budget_before_steady_admission(lane, monkeypatch):
     gate, _ = lane
     monkeypatch.setattr(admission, "assert_lane_resources", lambda *args, **kwargs: {"passed": True})
     now = [0.0]
     monkeypatch.setattr(admission.time, "monotonic", lambda: now[0])
     gate.before_proof = lambda *args: now.__setitem__(0, now[0] + 345)
-
-    def request(op, **kwargs):
-        assert kwargs["timeout"] == pytest.approx(300)
-        return {"success": True}
-
-    gate.worker.request = request
     assert gate.prove("hotel-reservation-sdo")["passed"]
 
 
@@ -185,7 +152,7 @@ def test_admission_uses_the_requested_installer_configuration(lane, monkeypatch)
 
     monkeypatch.setattr(rbac, "verify_rbac", verify)
     monkeypatch.setattr(admission, "assert_lane_resources", lambda *args, **kwargs: {"passed": True})
-    gate = admission.LaneAdmission(env, original.worker, original.ops, original.directory, install_config=requested)
+    gate = admission.LaneAdmission(env, original.ops, original.directory, install_config=requested)
     with pytest.raises(ReachedRBAC):
         gate.prove(env.namespace + "-sdo")
     assert seen == [requested]
@@ -213,9 +180,9 @@ def observe_only(gate, monkeypatch) -> list[float]:
     return now
 
 
-@pytest.mark.parametrize("waiting_for", ["controller", "traffic", "reflection", "independent_traffic"])
+@pytest.mark.parametrize("waiting_for", ["controller", "traffic", "reflection"])
 def test_admission_waits_without_restarting_the_healthy_application(lane, monkeypatch, waiting_for):
-    gate, calls = lane
+    gate, _calls = lane
     now = observe_only(gate, monkeypatch)
     state = gate.ops.runtime_state
     windows = gate._windows
@@ -229,13 +196,7 @@ def test_admission_waits_without_restarting_the_healthy_application(lane, monkey
                 value.update(pending_closure={"incident_id": "previous"}, busy_until=OVERDUE)
         return value
 
-    def traffic(*args, **kwargs):
-        assert args == ("baseline_oracle",), "admission must only observe application traffic"
-        calls.append("traffic")
-        return {"success": waiting_for != "independent_traffic" or now[0] >= 6}
-
     monkeypatch.setattr(gate.ops, "runtime_state", runtime)
-    monkeypatch.setattr(gate.worker, "request", traffic)
     monkeypatch.setattr(
         gate, "_windows", lambda control: {} if waiting_for == "traffic" and now[0] < 6 else windows(control)
     )
@@ -325,11 +286,6 @@ def test_stabilization_clock_starts_only_after_first_adoption_onboarding(lane, m
     gate, _ = lane
     now = first_adoption(gate, monkeypatch, finishes_at=290)
 
-    def request(op, **kwargs):
-        assert kwargs["timeout"] == pytest.approx(300), "onboarding consumed the stabilization window"
-        return {"success": True}
-
-    gate.worker.request = request
     assert gate.prove("hotel-reservation-sdo")["passed"] is True
     evidence = json.loads((gate.directory / "onboarding.json").read_text())
     assert evidence["passed"] is True
@@ -344,7 +300,7 @@ def test_unfinished_onboarding_fails_on_its_own_budget_without_sampling_health(l
     first_adoption(gate, monkeypatch, finishes_at=10_000)
     with pytest.raises(ValueError, match=r"onboarding did not finish within 120s"):
         gate.prove("hotel-reservation-sdo")
-    assert "traffic" not in calls
+    assert "sample" not in calls
     evidence = json.loads((gate.directory / "onboarding.json").read_text())
     assert evidence["passed"] is False
     assert evidence["pending"] is True
@@ -390,12 +346,13 @@ def test_admission_waits_for_the_previous_reflection_before_the_stabilization_cl
     gate, _ = lane
     now = previous_reflection(gate, monkeypatch, finishes_at=420, controller_bound=900)
 
-    def request(op, **kwargs):
-        assert now[0] >= 420, "health was sampled while the previous reflection was running"
-        assert kwargs["timeout"] == pytest.approx(300), "the previous reflection consumed the stabilization window"
-        return {"success": True}
+    windows = gate._windows
 
-    gate.worker.request = request
+    def sampled(control):
+        assert now[0] >= 420, "health was sampled while the previous reflection was running"
+        return windows(control)
+
+    gate._windows = sampled
     assert gate.prove("hotel-reservation-sdo")["passed"] is True
     evidence = json.loads((gate.directory / "prior-closure.json").read_text())
     assert evidence["passed"] is True
@@ -422,7 +379,7 @@ def test_stuck_previous_reflection_ends_one_margin_after_the_controllers_own_bou
     ) as info:
         gate.prove("hotel-reservation-sdo")
     assert info.value.reason == "prior_closure_incomplete"
-    assert "traffic" not in calls
+    assert "sample" not in calls
     evidence = json.loads((gate.directory / "prior-closure.json").read_text())
     assert evidence["passed"] is False
     assert evidence["closure_state"] == "CLOSURE_STATE_COMMITTED"
@@ -467,7 +424,7 @@ def test_admission_waits_while_the_controller_publishes_busy_until(lane, monkeyp
     closure_record(gate, {**state, "busy_until": OVERDUE})
     with pytest.raises(admission.PriorClosureIncompleteError):
         gate.await_prior_closure("hotel-reservation-sdo")
-    assert "traffic" not in calls
+    assert "sample" not in calls
 
 
 def test_a_queue_of_two_reflections_with_a_failing_head_is_waited_out(lane, monkeypatch):
@@ -573,3 +530,115 @@ def test_eval_wait_outlasts_chained_work_in_the_real_controllers_exported_states
     evidence = gate.await_prior_closure("hotel-reservation-sdo")
     assert evidence["passed"] is True
     assert evidence["seconds"] >= idle_at
+
+
+# --- ADMP1: the readiness rule is "controller idle, every required detector clear since the resume" ---
+
+
+def frozen_wall_clock(monkeypatch, now: list[float]) -> None:
+    """Make admission's wall clock follow the fake monotonic clock, so evidence times are exact."""
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return EPOCH + timedelta(seconds=now[0])
+
+    monkeypatch.setattr(admission, "datetime", Clock)
+
+
+def test_clear_evidence_gathered_while_the_previous_closure_ran_is_not_re_awaited(lane, monkeypatch):
+    """Admission is ready when the controller is idle and its detectors are clear since the resume.
+
+    Detectors evaluate while the previous row's closure is awaited; those evaluations after the resume count.
+    The proof must not wait for a second round of evaluations after the closure ends.
+    """
+    gate, calls = lane
+    now = previous_reflection(gate, monkeypatch, finishes_at=60, controller_bound=900)
+    frozen_wall_clock(monkeypatch, now)
+    gate.timeout_seconds = 10
+    monkeypatch.setattr(
+        admission,
+        "wait_for_proof",
+        partial(admission.wait_for_proof, sleep=lambda seconds: now.__setitem__(0, now[0] + seconds)),
+    )
+    healthy = gate.ops.runtime_state
+
+    def state(control):
+        value = healthy(control)
+        if "history" in value:
+            evaluated = (EPOCH + timedelta(seconds=30)).isoformat()  # during the wait, after the resume
+            value["history"] = [dict(row, evaluated_at=evaluated) for row in value["history"]]
+        return value
+
+    gate.ops = SimpleNamespace(runtime_state=state)
+    proof = gate.prove("hotel-reservation-sdo")
+    assert proof["passed"] is True
+    assert calls.count("sample") == 1, "admission waited for a re-evaluation that had already happened"
+    assert now[0] < 70
+
+
+def test_evidence_from_before_the_resume_is_not_ready(lane, monkeypatch):
+    gate, _ = lane
+    now = observe_only(gate, monkeypatch)
+    frozen_wall_clock(monkeypatch, now)
+    stale = (EPOCH - timedelta(seconds=1)).isoformat()
+    healthy = gate.ops.runtime_state
+    gate.ops = SimpleNamespace(
+        runtime_state=lambda control: dict(
+            healthy(control), history=[dict(row, evaluated_at=stale) for row in healthy(control)["history"]]
+        )
+    )
+    with pytest.raises(admission.StabilizationError, match="did not settle"):
+        gate.prove("hotel-reservation-sdo")
+
+
+def test_admission_proof_is_controller_and_prober_evidence_only(lane, monkeypatch):
+    """Traffic is proven once, by the restore that precedes admission; admission records no traffic call."""
+    gate, calls = lane
+    monkeypatch.setattr(admission, "assert_lane_resources", lambda *args, **kwargs: {"passed": True})
+    proof = gate.prove("hotel-reservation-sdo")
+    assert proof["passed"] is True
+    assert "independent_traffic" not in proof
+    assert not hasattr(gate, "worker")
+
+
+# --- the three kept checks, each refusing a polluted lane before injection ---
+
+
+def test_foreign_namespace_residue_refuses_the_row(lane, monkeypatch):
+    gate, calls = lane
+
+    def residue(*args, **kwargs):
+        raise ValueError("eval: injected objects remain: Deployment/other-app/leftover")
+
+    monkeypatch.setattr(admission, "assert_lane_resources", lambda *args, **kwargs: {"passed": True})
+    monkeypatch.setattr(admission, "assert_clean_baseline", residue)
+    with pytest.raises(ValueError, match="injected objects remain"):
+        gate.prove("hotel-reservation-sdo")
+    assert "sample" not in calls
+
+
+def test_a_workload_that_rolls_after_ready_refuses_the_row(lane, monkeypatch):
+    gate, _ = lane
+    monkeypatch.setattr(admission, "assert_lane_resources", lambda *args, **kwargs: {"passed": True})
+    identities = iter([{"Deployment/app": {"pods": ["uid-1"]}}, {"Deployment/app": {"pods": ["uid-2"]}}])
+    monkeypatch.setattr(admission, "workload_identity", lambda *args: next(identities))
+    with pytest.raises(ValueError, match=r"restore invariant: workloads rolled after Ready: \['Deployment/app'\]"):
+        gate.prove("hotel-reservation-sdo")
+
+
+def test_open_incident_work_refuses_injection_and_names_the_incident(lane, monkeypatch):
+    gate, calls = lane
+    now = fake_time(gate, monkeypatch)
+    monkeypatch.setattr(admission, "assert_lane_resources", lambda *args, **kwargs: {"passed": True})
+    gate.ops = SimpleNamespace(
+        runtime_state=lambda _control: {
+            "incident_open": True,
+            "incident_request": {"incident_id": "row-009"},
+            "busy_until": busy_at(120),
+        }
+    )
+    with pytest.raises(admission.PriorClosureIncompleteError, match=r"incident work: row-009"):
+        gate.prove("hotel-reservation-sdo")
+    assert "sample" not in calls
+    assert now[0] == 120 + CLOSEOUT_MARGIN

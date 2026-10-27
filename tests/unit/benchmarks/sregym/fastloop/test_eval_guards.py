@@ -435,7 +435,7 @@ def test_lane_resources_reject_before_any_health_wait_or_restore(monkeypatch, tm
 
     monkeypatch.setattr(admission, "assert_lane_resources", reject)
     env = SimpleNamespace(kubeconfig=tmp_path / "kubeconfig", namespace="application")
-    gate = LaneAdmission(env, object(), object(), tmp_path / "proof")
+    gate = LaneAdmission(env, object(), tmp_path / "proof")
     with pytest.raises(ValueError, match="foreign app"):
         gate.prove("application-sdo")
 

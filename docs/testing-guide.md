@@ -819,7 +819,11 @@ content against local images, and runs the validator's Go toolchain as nonroot
 in a read-only offline container. `scripts/build_sdo_images.sh` records the source
 revision in the existing Bake graph. Missing or stale labels require rebuilding
 through that script and delivering through `fastloop up`; tag names alone do
-not prove provenance. Focused regressions live in
+not prove provenance. An image's identity covers exactly the files its build
+context sends: `image_provenance.py` derives the roots from the Bake target and
+Dockerfile stage graph and drops what `.dockerignore` lists (Go `_test.go` files,
+`testdata`, operator Markdown), so test-only, docs-only and eval-only commits keep
+built images valid and any change to an image input invalidates them. Focused regressions live in
 `tests/unit/benchmarks/sregym/fastloop/test_source_preflight.py` and `test_dev.py`.
 
 

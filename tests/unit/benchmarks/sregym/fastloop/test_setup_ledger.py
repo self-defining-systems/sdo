@@ -194,9 +194,7 @@ def entry_gate(tmp_path, monkeypatch, cluster):
     monkeypatch.setattr(admission, "assert_lane_resources", lane_resources)
     monkeypatch.setattr(admission, "assert_host_disk_headroom", lambda: {"passed": True})
     monkeypatch.setattr(admission.LaneAdmission, "_policy", past_entry)
-    return admission.LaneAdmission(
-        environment, SimpleNamespace(), SimpleNamespace(), tmp_path / "admission", lane_inventory=cluster
-    )
+    return admission.LaneAdmission(environment, SimpleNamespace(), tmp_path / "admission", lane_inventory=cluster)
 
 
 def test_the_next_rows_entry_removes_an_aborted_setup(tmp_path, monkeypatch):
