@@ -19,7 +19,7 @@ import (
 	"sdo.dev/operator/sdk/sdktest"
 )
 
-func stagedInstallerController(t *testing.T, health sdk.Detector) (*Controller, *fake.Clientset) {
+func stagedInstallerController(t *testing.T, health sdk.Detector, learned ...sdk.Detector) (*Controller, *fake.Clientset) {
 	t.Helper()
 	ctx := context.Background()
 	declared, live := cleanInstallerInventory()
@@ -43,7 +43,7 @@ func stagedInstallerController(t *testing.T, health sdk.Detector) (*Controller, 
 	config.Namespace, config.SourceCommit = "app", commit
 	// This fixture uses synthetic revisions and an in-memory accepted source.
 	config.RepositoryWorktree = ""
-	c, err := NewController(config, []sdk.Detector{health}, staticProvider{snapshot: sdktest.Snapshot{NamespaceName: "app"}}, &recordingDispatcher{requests: make(chan IncidentRequest, 10)}, time.Unix(100, 0))
+	c, err := NewController(config, append([]sdk.Detector{health}, learned...), staticProvider{snapshot: sdktest.Snapshot{NamespaceName: "app"}}, &recordingDispatcher{requests: make(chan IncidentRequest, 10)}, time.Unix(100, 0))
 	if err != nil {
 		t.Fatal(err)
 	}

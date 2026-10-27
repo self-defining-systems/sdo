@@ -1,13 +1,13 @@
 package runtime
 
 import (
-	"strings"
 	"context"
 	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -148,7 +148,7 @@ type selectedPlan struct {
 
 // ResponderLoop holds one incident's tool state while its responder Job runs.
 type ResponderLoop struct {
-	stageProgress        map[string]responseStageProgress
+	stageProgress map[string]responseStageProgress
 	// WorkingProgramRoot is set by the production loop factory to the mounted
 	// proposal checkout. Embedders with an in-memory registry may leave it empty.
 	WorkingProgramRoot string
@@ -224,6 +224,7 @@ func NewResponderLoop(request IncidentRequest, programs program.ProgramRegistry,
 	if _, err := rand.Read(session); err != nil {
 		panic(err)
 	}
+	detectors = withoutDisabledSetupDetectors(detectors, request.SourceCommit, request.DisabledSetupDetectors)
 	loop := &ResponderLoop{sessionID: fmt.Sprintf("%x", session), Request: request, Programs: programs, Provider: provider, Detectors: detectors, Executor: executor, MaxBatches: maxBatches, plans: map[string]selectedPlan{}, applications: map[string]PlanApplicationResult{}, matchedViews: map[string]program.ReadView{}, matchedPlans: map[string]PlanApplicationResult{}, findings: append([]sdk.Finding(nil), request.Findings...)}
 	priorRecorder := executor.RecordPrimitive
 	loop.Executor.RecordPrimitive = func(call sdktest.PrimitiveCall) error {
