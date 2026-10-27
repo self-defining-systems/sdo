@@ -1,0 +1,38 @@
+[
+  {
+    "at": "2030-01-01T00:00:00Z",
+    "note": "drift findings stay active; nothing is open, batched or queued",
+    "state": {
+      "finding_states": {
+        "drift.unexplained\u0000drift.unexplained": {
+          "activations": 1,
+          "active": true,
+          "detector_id": "drift.unexplained",
+          "finding": {
+            "detector_id": "drift.unexplained",
+            "evidence": "evidence",
+            "fingerprint": "drift.unexplained",
+            "primary_resource": {
+              "kind": "Deployment",
+              "name": "drift.unexplained"
+            },
+            "rule_id": "drift.unexplained",
+            "severity": "warn",
+            "status": "active",
+            "summary": "fault"
+          },
+          "firing_count": 3,
+          "first_seen_at": "2030-01-01T00:00:00Z"
+        }
+      },
+      "ownership_adoption": {},
+      "pending_batch": {},
+      "scheduler_deadlines": {
+        "fault": "2030-01-01T01:00:00Z",
+        "health": "2030-01-01T01:00:00Z"
+      },
+      "step_count": "1",
+      "version": "sdo.controller/v1"
+    }
+  }
+]

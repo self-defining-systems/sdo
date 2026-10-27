@@ -627,6 +627,27 @@ def test_eval_wait_outlasts_chained_work_in_the_real_controllers_exported_states
     assert evidence["seconds"] >= idle_at
 
 
+ACTIVE_FINDINGS_STATE = Path(__file__).parents[5] / "sdo/operator/runtime/testdata/eval_wait/active_findings_idle.json"
+
+
+def test_eval_wait_ends_at_once_on_a_controller_whose_findings_are_active_but_owns_no_work(lane, monkeypatch):
+    """The real controller's export with an active, never-dispatched finding and no incident work: not busy.
+
+    The wait must not follow finding states; it passes at the first read instead of running to a backstop.
+    """
+    sample = json.loads(ACTIVE_FINDINGS_STATE.read_text())[0]["state"]
+    assert any(f["active"] for f in sample["finding_states"].values()), (
+        "the recorded export must hold an active finding"
+    )
+    gate, _ = lane
+    now = fake_time(gate, monkeypatch)
+    gate.ops = SimpleNamespace(runtime_state=lambda _control: sample)
+    evidence = gate.await_prior_closure("hotel-reservation-sdo")
+    assert evidence["passed"] is True
+    assert evidence["seconds"] < CLOSEOUT_MARGIN
+    assert now[0] < CLOSEOUT_MARGIN
+
+
 # --- ADMP1: the readiness rule is "controller idle, every required detector clear since the resume" ---
 
 
