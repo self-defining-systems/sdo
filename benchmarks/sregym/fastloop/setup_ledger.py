@@ -18,12 +18,14 @@ from __future__ import annotations
 import json
 import os
 import time
-from collections.abc import Callable, Collection, Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
-from benchmarks.sregym.adapter import kubectl
+from benchmarks.sregym.adapter import WaitKind, kubectl, wait_for
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Collection, Iterable
 
 # kubectl resource names, in deletion order: admission and API registrations first so nothing routes
 # to a backend being removed, RBAC before the namespaces whose service accounts it binds, and
@@ -42,7 +44,7 @@ CLUSTER_KINDS: tuple[str, ...] = (
 )
 NAMESPACE_KIND = "namespace"
 LEDGER_SUFFIX = ".setup-ledger.json"
-REMOVAL_TIMEOUT_SECONDS = 180.0
+REMOVAL_TIMEOUT_SECONDS = wait_for(WaitKind.ROLLOUT)
 
 
 class SetupLedgerError(RuntimeError):
@@ -180,7 +182,7 @@ def replay(
     *,
     protected_namespaces: Collection[str],
     timeout_seconds: float = REMOVAL_TIMEOUT_SECONDS,
-    poll_seconds: float = 2.0,
+    poll_seconds: float = wait_for(WaitKind.SAMPLE),
     clock: Callable[[], float] = time.monotonic,
     sleep: Callable[[float], None] = time.sleep,
 ) -> frozenset[str]:

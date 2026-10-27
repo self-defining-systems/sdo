@@ -9,6 +9,7 @@ SREGym installs every app, and its telemetry, through ``Helm.install``, which ru
 from __future__ import annotations
 
 import logging
+import shlex
 import subprocess
 from typing import Any
 
@@ -24,18 +25,14 @@ def install_or_upgrade(**args: Any) -> None:
         raise ValueError("helm deploy requires release_name, chart_path and namespace")
     logger.info("Helm upgrade --install: %s in namespace %s", release_name, namespace)
     if not args.get("remote_chart", False):
-        subprocess.run(
-            f"helm dependency update {chart_path}",
-            shell=True,
-            capture_output=True,
-            check=False,  # noqa: S602
-        )
-    command = f"helm upgrade --install {release_name} {chart_path} -n {namespace} --create-namespace"
+        subprocess.run(["helm", "dependency", "update", str(chart_path)], capture_output=True, check=False)
+    command = ["helm", "upgrade", "--install", str(release_name), str(chart_path), "-n", str(namespace)]
+    command.append("--create-namespace")
     if args.get("version"):
-        command += f" --version {args['version']}"
-    if args.get("extra_args"):
-        command += " " + " ".join(args["extra_args"])
-    completed = subprocess.run(command, shell=True, capture_output=True, text=True, check=False)  # noqa: S602
+        command += ["--version", str(args["version"])]
+    for extra in args.get("extra_args") or []:
+        command += shlex.split(str(extra))
+    completed = subprocess.run(command, capture_output=True, text=True, check=False)
     if completed.stderr.strip():
         logger.warning("Helm upgrade --install stderr output:\n%s", completed.stderr.strip())
     if completed.returncode != 0:

@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from benchmarks.sregym.adapter import allowed_namespaces
-from benchmarks.sregym.fastloop import admission, hotel_helpers, rbac
+from benchmarks.sregym.fastloop import admission
 from benchmarks.sregym.fastloop.setup_ledger import (
     SetupLedger,
     SetupLedgerError,
@@ -61,6 +61,11 @@ def replay_now(ledger, cluster, namespaces=("hotel-reservation",)):
     )
 
 
+@pytest.fixture(autouse=True)
+def bridge_lane_guards():
+    """Override the conftest stub: these tests run the real guards."""
+
+
 @pytest.fixture
 def ledger(tmp_path):
     return SetupLedger(ledger_path(tmp_path / "kubeconfig"))
@@ -75,7 +80,7 @@ def test_a_setup_cut_off_mid_injection_is_removed_by_the_next_replay(ledger):
 
     with pytest.raises(TimeoutError):
         run_in_window(ledger, cluster, cut_off)
-    assert INGRESS <= cluster.objects
+    assert cluster.objects >= INGRESS
     # A new process (the next row) reads the same ledger.
     assert replay_now(SetupLedger(ledger.path), cluster) == INGRESS
     assert cluster.objects == LANE
@@ -125,7 +130,7 @@ def test_full_recovery_closes_the_window_and_a_partial_recovery_does_not(ledger)
     assert close_after_full_recovery(ledger, {"op": "recover"}, done)
     assert ledger.window() is None
     assert replay_now(ledger, cluster) == frozenset()
-    assert INGRESS <= cluster.objects  # recovery, not the ledger, owns removal while the worker lives
+    assert cluster.objects >= INGRESS  # recovery, not the ledger, owns removal while the worker lives
 
 
 def test_a_composition_keeps_the_first_setups_baseline(ledger):

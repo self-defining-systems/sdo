@@ -44,8 +44,8 @@ class StockHelm:
 
     @staticmethod
     def install(**args):
-        command = f"helm install {args['release_name']} {args['chart_path']} -n {args['namespace']} --create-namespace"
-        done = subprocess.run(command, shell=True, capture_output=True, text=True)
+        command = ["helm", "install", args["release_name"], args["chart_path"], "-n", args["namespace"]]
+        done = subprocess.run([*command, "--create-namespace"], capture_output=True, text=True)
         if done.returncode:
             raise RuntimeError(done.stderr.strip())
 
@@ -72,9 +72,8 @@ def test_deploy_succeeds_over_an_existing_release_for_every_app(helm_state):
         StockHelm.install(**app)  # a second deploy over the existing release
     calls = (helm_state / "calls").read_text().splitlines()
     assert any(
-        call.startswith(
-            "upgrade --install astronomy-shop /charts/social-network -n astronomy-shop --create-namespace --version 1.2.3 "
-        )
+        call.startswith("upgrade --install astronomy-shop /charts/social-network -n astronomy-shop ")
+        and " --create-namespace --version 1.2.3 " in call
         for call in calls
     )
     assert not [call for call in calls if call.startswith("install ")]

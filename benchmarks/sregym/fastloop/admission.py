@@ -38,8 +38,8 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from benchmarks.sregym.adapter import ClusterOps, NativeInstallConfig
-    from benchmarks.sregym.fastloop.setup_ledger import ClusterInventory
     from benchmarks.sregym.fastloop.environment import FastloopEnvironment
+    from benchmarks.sregym.fastloop.setup_ledger import ClusterInventory
     from benchmarks.sregym.fastloop.worker_client import SregymWorker
 
 

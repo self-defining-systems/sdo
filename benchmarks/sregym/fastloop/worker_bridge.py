@@ -62,6 +62,10 @@ def handle_with_surge_guard(
         return handle(worker, request)
 
 
+def _make_deploy_idempotent() -> None:
+    make_deploy_idempotent(importlib.import_module("sregym.service.helm").Helm)
+
+
 def run_with_setup_ledger(
     request: dict[str, Any],
     kubeconfig: Path,
@@ -103,7 +107,7 @@ def main() -> int:
     from benchmarks.sregym.fastloop.hotel_helpers import admit_install, configure_profile, prepare_install
 
     install_probe_isolation(importlib.import_module("sregym.conductor.problems.composition.grading"))
-    make_deploy_idempotent(importlib.import_module("sregym.service.helm").Helm)
+    _make_deploy_idempotent()
 
     def prepare_astronomy() -> None:
         from benchmarks.sregym.adapter import prepare_oracle_observability
