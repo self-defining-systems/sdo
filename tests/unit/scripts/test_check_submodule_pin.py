@@ -95,7 +95,8 @@ def test_reverted_pin_fails_with_the_restore_command(world: World) -> None:
     world.pin(world.first, "merge kept the older pin")
     result = world.run("--base", "base")
     assert result.returncode == 1
-    assert world.second in result.stderr and "git update-index --cacheinfo" in result.stderr
+    assert world.second in result.stderr
+    assert "git update-index --cacheinfo" in result.stderr
 
 
 def test_diverged_pin_fails(world: World) -> None:
@@ -126,13 +127,15 @@ def test_unfetchable_base_pin_skips_cleanly(world: World) -> None:
 def test_missing_base_branch_skips(world: World) -> None:
     world.pin(world.first)
     result = world.run("--base", "no-such-branch")
-    assert result.returncode == 0 and result.stdout.startswith("SKIP")
+    assert result.returncode == 0
+    assert result.stdout.startswith("SKIP")
 
 
 def test_default_base_must_be_contained_in_head(world: World) -> None:
     world.pin(world.first)
     result = world.run()
-    assert result.returncode == 0 and result.stdout.startswith("SKIP")
+    assert result.returncode == 0
+    assert result.stdout.startswith("SKIP")
 
 
 def test_shallow_pull_request_checkout_fetches_the_base_branch(world: World, tmp_path: Path) -> None:
@@ -147,7 +150,8 @@ def test_shallow_pull_request_checkout_fetches_the_base_branch(world: World, tmp
     )
     assert git(shallow, "rev-parse", "--is-shallow-repository") == "true"
     failing = world.run(cwd=shallow, GITHUB_BASE_REF="dev")
-    assert failing.returncode == 1 and world.second in failing.stderr
+    assert failing.returncode == 1
+    assert world.second in failing.stderr
     world.pin(world.second, "restored")
     fixed = tmp_path / "fixed"
     subprocess.run(
