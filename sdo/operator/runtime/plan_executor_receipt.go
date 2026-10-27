@@ -53,7 +53,14 @@ func (e PlanExecutor) Reconcile(ctx context.Context, result PlanApplicationResul
 		landed = landed || !planFieldsMatch(b, bok, a, aok, v, vok, true)
 	}
 	if landed && len(result.ActionsApplied) == index {
-		result.ActionsApplied = append(result.ActionsApplied, result.Plan.Actions[index])
+		count := patch.ActionCount
+		if count < 1 {
+			count = 1
+		}
+		if index+count > len(result.Plan.Actions) {
+			return result, fmt.Errorf("invalid pending action count")
+		}
+		result.ActionsApplied = append(result.ActionsApplied, result.Plan.Actions[index:index+count]...)
 		result.Applied = true
 	}
 	result.PendingAction = nil

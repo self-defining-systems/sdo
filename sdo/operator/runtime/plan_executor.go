@@ -43,6 +43,8 @@ type PlanVerifier interface {
 
 type PlanPatch struct {
 	Authorization string
+	// ActionCount binds one physical write to consecutive logical actions.
+	ActionCount int
 	// DirectReadConfirmed is process-local proof, never restored from a receipt.
 	DirectReadConfirmed bool `json:"-"`
 	Operation           string
@@ -128,6 +130,7 @@ type PlanExecutor struct {
 // plan is compensated; once every write has landed, a failed rollout wait or
 // health verification is reported and left to the caller.
 func (e PlanExecutor) Apply(ctx context.Context, incident IncidentRequest, plan program.Plan, dryRun bool) (result PlanApplicationResult, err error) {
+	plan = groupDocumentActions(plan)
 	defer func() {
 		if err != nil {
 			reason := "execution_failed"
@@ -174,7 +177,7 @@ func (e PlanExecutor) Apply(ctx context.Context, incident IncidentRequest, plan 
 }
 
 func (e PlanExecutor) applyOnce(ctx context.Context, incident IncidentRequest, plan program.Plan, dryRun bool) (result PlanApplicationResult, err error) {
-	if hasGeneralActions(plan) {
+	if hasGeneralActions(plan) && !atomicDocumentPlan(plan) {
 		return e.applyGeneralPlan(ctx, incident, plan, dryRun)
 	}
 	if hasRuntimeEffects(plan) {
@@ -225,7 +228,6 @@ func (e PlanExecutor) applyOnce(ctx context.Context, incident IncidentRequest, p
 	}
 	result.PreImages = make([]PlanPreImage, 0, len(plan.Actions))
 	current := make(map[sdk.ObjectRef]*unstructured.Unstructured)
-	originals := make(map[sdk.ObjectRef]*unstructured.Unstructured)
 	refs := make([]sdk.ObjectRef, 0, len(plan.Actions))
 	// Capture every pre-image before any write, including later actions' targets.
 	for _, action := range plan.Actions {
@@ -253,7 +255,6 @@ func (e PlanExecutor) applyOnce(ctx context.Context, incident IncidentRequest, p
 
 		result.PreImages = append(result.PreImages, newPlanPreImage(ref, object))
 		current[ref] = object.DeepCopy()
-		originals[ref] = object.DeepCopy()
 		refs = append(refs, ref)
 	}
 	for actionIndex, action := range plan.Actions {
@@ -288,72 +289,36 @@ func (e PlanExecutor) applyOnce(ctx context.Context, incident IncidentRequest, p
 	for i := range result.Patches {
 		canonicalizePlanObject(result.Patches[i].After)
 	}
+	if err := coalesceDocumentPatches(&result); err != nil {
+		return result, err
+	}
 	if dryRun {
 		return result, nil
 	}
-	// The first write to an object is conditional on its pre-image; later writes to the same
-	// object are conditional only on its identity, because the object's own controllers bump
-	// resourceVersion between our writes.
-	written := make(map[sdk.ObjectRef]bool)
-	for index, patch := range result.Patches {
-		if written[patch.Ref] && isRemoveServicePort(plan.Actions[index]) {
-			fresh, readErr := e.Client.Get(ctx, patch.Ref)
-			if readErr != nil || fresh == nil || !samePlanRef(fresh, patch.Ref) || fresh.GetUID() != originals[patch.Ref].GetUID() {
-				return result, errors.New("Service port removal identity changed")
-			}
-			next, prepareErr := e.prepareAction(ctx, incident, plan.Actions[index], fresh)
-			if prepareErr != nil {
-				return result, prepareErr
-			}
-			before, marshalErr := json.Marshal(fresh.Object)
-			if marshalErr != nil {
-				return result, marshalErr
-			}
-			after, marshalErr := json.Marshal(next.Object)
-			if marshalErr != nil {
-				return result, marshalErr
-			}
-			delta, patchErr := jsonpatch.CreateMergePatch(before, after)
-			if patchErr != nil {
-				return result, patchErr
-			}
-			delta, patchErr = conditionalPlanPatch(delta, fresh)
-			if patchErr != nil {
-				return result, patchErr
-			}
-			canonicalizePlanObject(next)
-			result.Patches[index].Before = fresh.DeepCopy()
-			result.Patches[index].After = next
-			result.Patches[index].Patch = delta
-		} else if written[patch.Ref] {
-			var patchErr error
-			result.Patches[index].Patch, patchErr = uidOnlyPlanPatch(patch.Patch, originals[patch.Ref])
-			if patchErr != nil {
-				return result, patchErr
-			}
-		}
-
+	for index := 0; index < len(result.Patches); {
+		patch := &result.Patches[index]
+		count := patch.ActionCount
 		pending := index
 		result.PendingAction = &pending
-		if err := e.Client.Patch(ctx, patch.Ref, types.MergePatchType, result.Patches[index].Patch); err != nil {
-			return result, fmt.Errorf("apply action %d to %s/%s: %w", index, patch.Ref.Kind, patch.Ref.Name, err)
+		if err := e.Client.Patch(ctx, patch.Ref, types.MergePatchType, patch.Patch); err != nil {
+			return result, fmt.Errorf("apply object write %d to %s/%s: %w", index, patch.Ref.Kind, patch.Ref.Name, err)
 		}
-		written[patch.Ref] = true
 		result.Applied = true
-		result.ActionsApplied = append(result.ActionsApplied, plan.Actions[index])
+		result.ActionsApplied = append(result.ActionsApplied, plan.Actions[index:index+count]...)
 		result.PendingAction = nil
-		// Rollback compares against the version our write produced; if the read fails the
-		// after-image keeps its predicted version and rollback retries on a conflict.
 		if observed, getErr := e.Client.Get(ctx, patch.Ref); getErr == nil {
-			result.Patches[index].After.SetResourceVersion(observed.GetResourceVersion())
+			patch.After.SetResourceVersion(observed.GetResourceVersion())
 		}
-		if err := e.verifyStructuredWrites(ctx, PlanApplicationResult{Patches: []PlanPatch{result.Patches[index]}}); err != nil {
+		if err := e.verifyStructuredWrites(ctx, PlanApplicationResult{Patches: []PlanPatch{*patch}}); err != nil {
 			return result, err
 		}
-		if err := e.verifyValueWrite(ctx, plan.Actions[index], result.Patches[index]); err != nil {
-			return result, err
+		for member := index; member < index+count; member++ {
+			if err := e.verifyValueWrite(ctx, plan.Actions[member], *patch); err != nil {
+				return result, err
+			}
+			result.Patches[member].DirectReadConfirmed = patch.Structured
 		}
-		result.Patches[index].DirectReadConfirmed = patch.Structured
+		index += count
 	}
 	writesLanded = true
 	result.Applied = true
@@ -673,6 +638,35 @@ func (e PlanExecutor) prepareAction(ctx context.Context, incident IncidentReques
 		}
 
 		return sourceFields(next, previous, a.Ref)
+	case program.PatchObject:
+		fields, err := program.ProjectPatch(current.Object, a)
+		if err != nil {
+			return nil, err
+		}
+		return &unstructured.Unstructured{Object: fields}, nil
+	case *program.PatchObject:
+		if a == nil {
+			return nil, errors.New("nil PatchObject")
+		}
+		return e.prepareAction(ctx, incident, *a, current)
+	case program.ApplyObject:
+		if err := a.Validate(); err != nil {
+			return nil, err
+		}
+		raw, err := json.Marshal(a.Object)
+		if err != nil {
+			return nil, err
+		}
+		fields, err := program.MergeObject(current.Object, a.Ref, raw)
+		if err != nil {
+			return nil, err
+		}
+		return &unstructured.Unstructured{Object: fields}, nil
+	case *program.ApplyObject:
+		if a == nil {
+			return nil, errors.New("nil ApplyObject")
+		}
+		return e.prepareAction(ctx, incident, *a, current)
 	case program.RemoveServicePort:
 		if err := program.ApplyRemoveServicePort(next.Object, a); err != nil {
 			return nil, err

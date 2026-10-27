@@ -139,6 +139,11 @@ func (r KubernetesRequest) Validate() error {
 	if parts[0] == "api" && len(parts) > index && strings.EqualFold(parts[index], "secrets") {
 		return fmt.Errorf("Secret endpoints are unavailable; use credential references")
 	}
+	if r.Method == "PATCH" && r.ContentType == "application/merge-patch+json" && r.Ref.Kind != "" {
+		if err := validateMergeLists(PatchObject{Ref: r.Ref, Type: "merge", Patch: r.Body}); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 func (a PatchObject) Validate() error {
@@ -168,6 +173,9 @@ func (a PatchObject) Validate() error {
 	}
 	if !json.Valid(a.Patch) {
 		return fmt.Errorf("patch must be valid JSON")
+	}
+	if a.Type == "merge" {
+		return validateMergeLists(a)
 	}
 	return nil
 }
