@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from benchmarks.sregym.adapter.budgets import WaitKind, wait_for
+from benchmarks.sregym.adapter.budgets import Deadline, WaitKind, wait_for
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -25,20 +25,6 @@ HEALTH_SETUP_PATHS = (
 
 class StabilizationError(RuntimeError):
     """The app never established independent and controller traffic proof."""
-
-
-@dataclass(frozen=True)
-class Deadline:
-    """Child operations consume the same monotonic budget, never renew it."""
-
-    expires_at: float
-    monotonic: Callable[[], float] = time.monotonic
-
-    def remaining(self) -> float:
-        remaining = self.expires_at - self.monotonic()
-        if remaining <= 0:
-            raise StabilizationError("eval: admission deadline exhausted; no injection")
-        return remaining
 
 
 def validate_setup_commit(validation: str) -> None:
@@ -283,7 +269,7 @@ def wait_for_proof(
     if timeout_seconds <= 0 or timeout_seconds > 300:
         raise ValueError("stabilization budget must be in (0, 300] seconds")
     started = monotonic()
-    budget = deadline or Deadline(started + timeout_seconds, monotonic)
+    budget = deadline or Deadline(started + timeout_seconds, monotonic, "admission")
     while monotonic() < budget.expires_at:
         proof = sample()
         if monotonic() >= budget.expires_at:

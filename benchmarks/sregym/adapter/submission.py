@@ -31,6 +31,8 @@ class SubmissionBridgeError(RuntimeError):
 
 
 SUBMISSION_TIMEOUT_SECONDS = 300
+#: One guard decision is a short local call; it never takes the leftover of the stage wait around it.
+GUARD_TIMEOUT_SECONDS = 30.0
 STAGE_POLL_INTERVAL_SECONDS = 1.0
 
 
@@ -59,8 +61,7 @@ def _wait_for_decision(
         request = urllib.request.Request(f"{api_base.rstrip('/')}/status", method="GET")
         with opener(request, timeout=SUBMISSION_TIMEOUT_SECONDS) as response:
             payload = json.loads(response.read())
-        remaining = max(0.001, deadline - time.monotonic())
-        decision = _guard(phase, payload, timeout=min(30.0, remaining), submission_sent=submission_sent)
+        decision = _guard(phase, payload, timeout=GUARD_TIMEOUT_SECONDS, submission_sent=submission_sent)
         if decision.action != SubmissionGuardDecision.ACTION_WAIT:
             return decision
         time.sleep(STAGE_POLL_INTERVAL_SECONDS)

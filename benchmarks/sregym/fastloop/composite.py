@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING, Any
 
 from benchmarks.sregym.adapter import (
     ClosureFailedError,
+    Deadline,
     DetectionMissError,
     PersistentControllerError,
     PersistentState,
@@ -367,7 +368,7 @@ class CompositeSdoAgent(SdoPersistentAgent):
                     "fallback_usage": self._wedge_usage if wedged else None,
                 }
             )
-            deadline = started + composite.deadline_seconds
+            budget = Deadline(started + composite.deadline_seconds, time.monotonic, "composite incident")
             known = {str(first.incident_id)}
             lifecycle = self._lifecycle_inputs()
             while not wedged:
@@ -391,7 +392,7 @@ class CompositeSdoAgent(SdoPersistentAgent):
                 if tracker.all_resolved_at() is not None or self._wait_resolved(tracker, composite):
                     stop_reason = "all_faults_resolved"
                     break
-                remaining = deadline - time.monotonic()
+                remaining = budget.left()
                 if remaining <= 0:
                     stop_reason = "deadline"
                     break
