@@ -407,7 +407,12 @@ class LaneInjectionState:
             document = json.loads(self.path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             return unknown
-        if not isinstance(document, dict) or document.get("version") != 1 or document.get("complete") is not True:
+        if (
+            not isinstance(document, dict)
+            or type(document.get("version")) is not int
+            or document.get("version") != 1
+            or document.get("complete") is not True
+        ):
             return unknown
         problems, faults = document.get("problems"), document.get("data_faults")
         if (

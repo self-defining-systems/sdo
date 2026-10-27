@@ -46,7 +46,17 @@ def test_non_data_injection_on_known_lane_keeps_warm_app(tmp_path: Path) -> None
     assert tier2_reason(AttemptMarker(tmp_path / "other-run"), lambda: None, list, lane_state=state) is None
 
 
-@pytest.mark.parametrize("contents", [None, "broken", "{}", '{"version": 99}'])
+@pytest.mark.parametrize(
+    "contents",
+    [
+        None,
+        "broken",
+        "{}",
+        '{"version": 99}',
+        '{"version": true, "complete": true, "problems": ["clean"], "data_faults": []}',
+        '{"version": 1.0, "complete": true, "problems": ["clean"], "data_faults": []}',
+    ],
+)
 def test_unknown_lane_history_forces_recreation(tmp_path: Path, contents: str | None) -> None:
     state = LaneInjectionState(tmp_path / "lane.kubeconfig", "hotel")
     if contents is not None:
