@@ -84,10 +84,9 @@ func (s simInventory) SourceDriftObjects() []*unstructured.Unstructured {
 }
 func (simInventory) TakeObjectChanges() []ObjectChange { return nil }
 
-// A foreign Pod is ordinary source-absent latent drift. The documented closure
-// rule applies to the whole current inventory, even if the incident opened for
-// another fault: disappearance (or an exact checked benign assessment) releases
-// the block. This schedule exercises disappearance across maintenance/restart.
+// A foreign Pod is ordinary source-absent latent drift. It is information: an
+// incident opened for another fault closes on health while the Pod exists, and
+// the finding stays observable across maintenance/restart until it disappears.
 func runSimForeignPodDuringUnrelatedIncident(t *testing.T, seed uint64) {
 	t.Helper()
 	w := newSimWorld(t, seed)
@@ -127,9 +126,6 @@ func runSimForeignPodDuringUnrelatedIncident(t *testing.T, seed uint64) {
 		w.step()
 		w.drain()
 		if tick >= create && tick < remove {
-			if len(w.closed) > 0 {
-				t.Fatal("unexplained foreign Pod did not block unrelated incident closure")
-			}
 			for _, finding := range w.controller.sourceInventoryFindings {
 				if finding.PrimaryResource != simForeignPodRef {
 					continue
@@ -142,7 +138,7 @@ func runSimForeignPodDuringUnrelatedIncident(t *testing.T, seed uint64) {
 			}
 		}
 		if tick >= remove+settle && (len(w.closed) != 1 || !w.idle()) {
-			t.Fatalf("removed foreign Pod stranded unrelated closure: closures=%d open=%v", len(w.closed), w.controller.IncidentOpen())
+			t.Fatalf("foreign Pod stranded unrelated closure: closures=%d open=%v", len(w.closed), w.controller.IncidentOpen())
 		}
 	}
 	if !seen || len(w.closed) != 1 || len(w.closed[0].FinalDetectorStates) == 0 || w.responder.calls != 1 {
