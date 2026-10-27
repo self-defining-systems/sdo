@@ -248,9 +248,11 @@ class BusyDeadline:
 class ProgressWatch:
     """Notices a controller that stopped evaluating while an incident is open.
 
-    The controller counts every evaluation pass in ``evaluation_iteration`` and its detectors are due every
-    few seconds, so a count that stays put for ``stall_seconds`` means the controller hung, whatever its
-    ``busy_until`` still says. A state that does not report the count is never judged stalled.
+    The controller stamps ``step_count`` at the start of every step pass, before anything that can fail or
+    block, so a count that stays put for ``stall_seconds`` means the step loop is blocked, whatever its
+    ``busy_until`` still says. ``evaluation_iteration`` is not that signal: it also stands still on a failed
+    snapshot, an idle pass and long detector intervals. A state that does not report the count is never
+    judged stalled.
     """
 
     stall_seconds: float
@@ -262,8 +264,8 @@ class ProgressWatch:
             raise ValueError(f"stall_seconds must be positive, got {self.stall_seconds}")
 
     def observe(self, state: dict[str, Any], monotonic_now: float) -> float:
-        """Record a state read; the seconds the evaluation count has not moved (zero while it moves)."""
-        raw = state.get("evaluation_iteration")
+        """Record a state read; the seconds the step count has not moved (zero while it moves)."""
+        raw = state.get("step_count")
         if not isinstance(raw, int) or not state.get("incident_open"):
             self.iteration = self.since = None
             return 0.0

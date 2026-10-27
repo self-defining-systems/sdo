@@ -436,7 +436,7 @@ def test_recovery_ends_a_follow_up_wait_on_a_controller_that_stopped_evaluating(
                 "last_acknowledged_incident_id": "incident-1",
                 "incident_open": True,
                 "incident_request": {"incident_id": "incident-2"},
-                "evaluation_iteration": 794,
+                "step_count": 794,
                 "dispatch_state": "DISPATCH_STATE_COMPLETED",
                 "busy_until": _busy_until(4 * 3600.0),
             }

@@ -793,7 +793,12 @@ type ControllerState struct {
 	// time the controller can still be working, from its own response timeout,
 	// verification timeout and closure retry policy, anchored at the moment the
 	// work began so it never slides. Observers wait on this one fact.
-	BusyUntil     *timestamppb.Timestamp `protobuf:"bytes,43,opt,name=busy_until,json=busyUntil,proto3" json:"busy_until,omitempty"`
+	BusyUntil *timestamppb.Timestamp `protobuf:"bytes,43,opt,name=busy_until,json=busyUntil,proto3" json:"busy_until,omitempty"`
+	// Heartbeat: Step passes begun since the controller first ran, counted once
+	// observationMu is held, whether or not the pass found work, took a
+	// snapshot, or failed. It stops only when the step loop is blocked, so
+	// observers judge a hung controller by it and never by evaluation_iteration.
+	StepCount     int64 `protobuf:"varint,44,opt,name=step_count,json=stepCount,proto3" json:"step_count,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1071,6 +1076,13 @@ func (x *ControllerState) GetBusyUntil() *timestamppb.Timestamp {
 		return x.BusyUntil
 	}
 	return nil
+}
+
+func (x *ControllerState) GetStepCount() int64 {
+	if x != nil {
+		return x.StepCount
+	}
+	return 0
 }
 
 // ReflectionDecision is the learning decision the broker recorded for an
@@ -1843,7 +1855,7 @@ const file_sdodev_contracts_v1alpha1_controller_state_proto_rawDesc = "" +
 	"\tpermanent\x18\b \x01(\bR\tpermanent\x12\x16\n" +
 	"\x06action\x18\t \x01(\tR\x06action\x12Q\n" +
 	"\x06reason\x18\n" +
-	" \x01(\x0e2/.sdodev.contracts.v1alpha1.ClosureFailureReasonB\b\xbaH\x05\x82\x01\x02\x10\x01R\x06reason\"\xbe!\n" +
+	" \x01(\x0e2/.sdodev.contracts.v1alpha1.ClosureFailureReasonB\b\xbaH\x05\x82\x01\x02\x10\x01R\x06reason\"\xdd!\n" +
 	"\x0fControllerState\x122\n" +
 	"\aversion\x18\x01 \x01(\tB\x18\xbaH\x15r\x13\n" +
 	"\x11sdo.controller/v1R\aversion\x12s\n" +
@@ -1882,7 +1894,9 @@ const file_sdodev_contracts_v1alpha1_controller_state_proto_rawDesc = "" +
 	"\x1equeued_reflection_incident_ids\x18) \x03(\tR\x1bqueuedReflectionIncidentIds\x12<\n" +
 	"\x1aqueued_reflections_unknown\x18* \x01(\bR\x18queuedReflectionsUnknown\x129\n" +
 	"\n" +
-	"busy_until\x18+ \x01(\v2\x1a.google.protobuf.TimestampR\tbusyUntil\x1aa\n" +
+	"busy_until\x18+ \x01(\v2\x1a.google.protobuf.TimestampR\tbusyUntil\x12\x1d\n" +
+	"\n" +
+	"step_count\x18, \x01(\x03R\tstepCount\x1aa\n" +
 	"\x17SchedulerDeadlinesEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x120\n" +
 	"\x05value\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\x05value:\x028\x01\x1ai\n" +

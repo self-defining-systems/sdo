@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"encoding/json"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
@@ -487,4 +488,84 @@ func mustExportState(t *testing.T, c *Controller) *contracts.ControllerState {
 		t.Fatal(err)
 	}
 	return state
+}
+
+// clearingContinuer drops the incident while the continuation runs, which
+// observationMu makes impossible in production; the controller must then
+// abandon the continuation instead of reopening a closed incident.
+type clearingContinuer struct {
+	verificationRetryDispatcher
+	controller *Controller
+}
+
+func (d *clearingContinuer) ContinueAfterVerification(context.Context, IncidentRequest, ToolResponse, time.Time) (bool, error) {
+	d.controller.mu.Lock()
+	d.controller.incidentOpen = false
+	d.controller.mu.Unlock()
+	return true, nil
+}
+
+func TestControllerAbandonsContinuationWhenTheIncidentChangedDuringIt(t *testing.T) {
+	start := time.Unix(0, 0)
+	cfg := testControllerConfig()
+	cfg.FiringThreshold = 1
+	cfg.BatchDebounce = 0
+	detector := controllerDetector("health", time.Second, stateFinding("bad"), stateFinding("bad"), stateFinding("bad"), stateFinding("bad"))
+	detector.spec.Class = sdk.DetectorClassHealth
+	detector.spec.Owner = sdk.DetectorOwnerHealthJudge
+	detector.spec.Persistence = sdk.PersistencePolicy{Firing: 1, Clearing: 1}
+	detector.spec.Batching = sdk.BatchingPolicy{Severity: sdk.SeverityWarning}
+	detector.spec.OriginatingCommit = "health-objective"
+	d := &clearingContinuer{verificationRetryDispatcher: verificationRetryDispatcher{requests: make(chan IncidentRequest, 2)}}
+	c, err := NewController(cfg, []sdk.Detector{detector}, staticProvider{snapshot: sdktest.Snapshot{}}, d, start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.controller = c
+	for sample := 0; sample < 2; sample++ {
+		if err := c.Step(context.Background(), start.Add(time.Duration(sample)*time.Second), nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	executePendingEffect(t, c)
+	awaitRequest(t, d.requests)
+	awaitDispatchCompletionQueued(t, c)
+	if err := c.Step(context.Background(), start.Add(2*time.Second), nil); err != nil {
+		t.Fatal(err)
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.responderDone || c.dispatchState == contracts.DispatchState_DISPATCH_STATE_PENDING {
+		t.Fatalf("a continuation for a changed incident was applied: responderDone=%v dispatch=%v", c.responderDone, c.dispatchState)
+	}
+}
+
+type failingSnapshotProvider struct{}
+
+func (failingSnapshotProvider) Snapshot(context.Context) (sdk.DetectionContext, error) {
+	return nil, errors.New("api server unavailable")
+}
+
+// The eval calls a controller hung when step_count stops, so the heartbeat
+// must keep moving while snapshots fail and evaluation_iteration stands still.
+func TestStepCountAdvancesWhileSnapshotsFailAndEvaluationsStop(t *testing.T) {
+	start := time.Unix(0, 0)
+	detector := controllerDetector("health", time.Second, stateFinding("bad"))
+	c, err := NewController(testControllerConfig(), []sdk.Detector{detector}, failingSnapshotProvider{}, &recordingDispatcher{requests: make(chan IncidentRequest, 1)}, start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := mustExportState(t, c)
+	for sample := 0; sample < 3; sample++ {
+		if err := c.Step(context.Background(), start.Add(time.Duration(sample)*time.Second), nil); err == nil {
+			t.Fatal("snapshot failure was not reported")
+		}
+	}
+	after := mustExportState(t, c)
+	if after.GetStepCount()-before.GetStepCount() != 3 {
+		t.Fatalf("heartbeat missed failing steps: %d -> %d", before.GetStepCount(), after.GetStepCount())
+	}
+	if after.GetEvaluationIteration() != before.GetEvaluationIteration() {
+		t.Fatalf("evaluation advanced without a snapshot: %d -> %d", before.GetEvaluationIteration(), after.GetEvaluationIteration())
+	}
 }

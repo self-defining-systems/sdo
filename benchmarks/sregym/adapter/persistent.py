@@ -133,7 +133,7 @@ class ControllerJobFailedError(ClosureFailedError):
 
 
 class ControllerStalledError(PersistentControllerError):
-    """The controller stopped evaluating while an incident was open, so no closure can follow.
+    """The controller's step loop stopped while an incident was open, so no closure can follow.
 
     An SDO hang, not a slow responder: the wait ends at the stall bound with the incident's last state
     instead of running out the verification budget.
@@ -1148,7 +1148,7 @@ class FollowupClosureTimeout(PersistentControllerError):
 
 def controller_closure_state(state: dict[str, Any]) -> str:
     """The controller's own account of where its incident work stands, for an error message."""
-    keys = ("dispatch_state", "closure_state", "responder_done", "incident_open", "evaluation_iteration")
+    keys = ("dispatch_state", "closure_state", "responder_done", "incident_open", "step_count")
     return ", ".join(f"{key}={state.get(key)}" for key in keys if key in state) + (
         f", queued_reflections={queued_reflection_ids(state)}" if queued_reflection_ids(state) else ""
     )
@@ -1231,7 +1231,8 @@ def _wait_for_followup_closure(
             break
         if progress.stalled(snapshot, clock.monotonic()):
             raise ControllerStalledError(
-                f"eval: controller stalled while follow-up work was pending: {controller_closure_state(snapshot)}"
+                "eval: controller step loop stalled while follow-up work was pending: "
+                + controller_closure_state(snapshot)
             )
         closed.update(terminal_incident_ids(snapshot))
         queued = queued_reflection_ids(snapshot)
@@ -1880,8 +1881,8 @@ def _wait_for_verified_incident(
         _raise_observation_failure(observed, state)
         if progress.stalled(state, clock.monotonic()):
             raise ControllerStalledError(
-                f"controller stalled in {control!r}: no evaluation for {progress.stall_seconds:.0f}s "
-                f"(evaluation {progress.iteration}){summary}"
+                f"controller stalled in {control!r}: its step loop made no pass for {progress.stall_seconds:.0f}s "
+                f"(step {progress.iteration}){summary}"
             )
         clock.sleep(POLL_SECONDS)
     raise PersistentControllerError(

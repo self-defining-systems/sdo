@@ -136,7 +136,8 @@ class _FrozenControllerOps:
             "incident_open": True,
             "responder_done": True,
             "dispatch_state": "DISPATCH_STATE_COMPLETED",
-            "evaluation_iteration": self.iteration,
+            "step_count": self.iteration,
+            "evaluation_iteration": 794,  # stands still on snapshot failures; never the stall signal
             "incident_request": {"incident_id": "incident-frozen"},
             "incident_result": {"incident_id": "incident-frozen", "status": "failed"},
             "busy_until": "2099-01-01T00:00:00Z",
@@ -165,7 +166,7 @@ def test_a_controller_that_stopped_evaluating_ends_the_wait_with_a_typed_stall()
     assert manual.now - started <= wait_for(WaitKind.SLOW_COMMAND) + wait_for(WaitKind.MINUTE)
 
 
-def test_a_controller_that_keeps_evaluating_keeps_the_full_verification_budget() -> None:
+def test_a_live_controller_whose_evaluations_stand_still_keeps_the_full_verification_budget() -> None:
     manual = _ManualClock()
     ops = _FrozenControllerOps(manual, iteration=794, advance=True)
 
