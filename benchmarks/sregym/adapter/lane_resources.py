@@ -134,7 +134,6 @@ class LaneMeasurementUnavailable(ValueError):
 # The pod API and the kubelet stats are two reads at different moments; a container that starts between
 # them is running in one and unmeasured in the other. Re-read the pair a few times before failing closed.
 _MEASUREMENT_ATTEMPTS = 4
-_MEASUREMENT_RETRY_SECONDS = 1.0
 
 
 def allowed_namespaces(app_namespaces: Set[str], policy: LaneResourcePolicy | None = None) -> frozenset[str]:
@@ -412,10 +411,10 @@ def assert_lane_resources(
                 )
             except LaneMeasurementUnavailable as exc:
                 remaining = deadline - time.monotonic()
-                if attempt == _MEASUREMENT_ATTEMPTS or remaining <= _MEASUREMENT_RETRY_SECONDS:
+                if attempt == _MEASUREMENT_ATTEMPTS or remaining <= wait_for(WaitKind.POLL_FAST):
                     raise
                 logging.getLogger(__name__).warning("eval: lane measurement attempt %s: %s; re-reading", attempt, exc)
-                time.sleep(_MEASUREMENT_RETRY_SECONDS)
+                time.sleep(wait_for(WaitKind.POLL_FAST))
         raise AssertionError("unreachable: the last measurement attempt returns or raises")
     except (KeyError, TypeError) as exc:
         raise ValueError("eval: malformed lane memory/namespace inventory unavailable") from exc
