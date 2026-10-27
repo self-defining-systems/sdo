@@ -53,7 +53,7 @@ func TestDatabaseFailureProducerPersistsAndCloses(t *testing.T) {
 }
 
 func TestInvalidStatePersistsFailedClosureAndRestarts(t *testing.T) {
-	for _, corrupt := range []string{"failure_reason", "history"} {
+	for _, corrupt := range []string{"failure_reason", "failure_reason_cold", "history"} {
 		t.Run(corrupt, func(t *testing.T) {
 			ctx := context.Background()
 			now := time.Unix(1000, 0).UTC()
@@ -62,11 +62,11 @@ func TestInvalidStatePersistsFailedClosureAndRestarts(t *testing.T) {
 			if err := c.AttachStateStore(ctx, store); err != nil {
 				t.Fatal(err)
 			}
-			if err := c.PersistState(ctx); err != nil {
-				t.Fatal(err)
+			if corrupt != "failure_reason_cold" {
+				persistDispatchCheckpoint(t, c)
 			}
-			if corrupt == "failure_reason" {
-				c.pendingClosure.Result.RepairActions = []RepairActionReceipt{{ActionID: "database", FailureReason: "database_authentication_rejected"}}
+			if strings.HasPrefix(corrupt, "failure_reason") {
+				injectLegacyDatabaseFailure(t, c)
 			} else {
 				c.history = []DetectorEvaluation{{DetectorID: "health", Status: DetectorEvaluationStatus("invalid")}}
 			}
@@ -81,7 +81,7 @@ func TestInvalidStatePersistsFailedClosureAndRestarts(t *testing.T) {
 				t.Fatal(err)
 			}
 			closure := saved.GetPendingClosure()
-			if closure.GetResult().GetStatus() != "failed" || !strings.Contains(closure.GetDispatchError(), "state_persistence_invalid") || !strings.Contains(closure.GetDispatchError(), corrupt) {
+			if closure.GetResult().GetStatus() != "failed" || !strings.Contains(closure.GetDispatchError(), "state_persistence_invalid") || !strings.Contains(closure.GetDispatchError(), strings.TrimSuffix(corrupt, "_cold")) {
 				t.Fatalf("missing typed failure and offending field: %v", closure)
 			}
 			if err := c.RestoreState(saved); err != nil {
@@ -129,7 +129,7 @@ func TestInvalidStateRecoveryProducesFailedOutcomeAndReflection(t *testing.T) {
 		Reflector: ReflectionWorkerFunc(func(_ context.Context, _ IncidentClosure, _ IncidentWorkspace, outcome *contracts.OutcomeRecord, _, _ string, _ ReflectionFeedback) (ReflectionDecision, error) {
 			reflected++
 			failure := outcome.GetStatePersistenceFailure()
-			if outcome.GetClassification() != "failed" || failure.GetReason() != "state_persistence_invalid" || !strings.Contains(failure.GetDetail(), "failure_reason") || len(outcome.GetRepairActions()) != 0 {
+			if outcome.GetClassification() != "failed" || failure.GetReason() != "state_persistence_invalid" || !strings.Contains(failure.GetDetail(), "repair_actions[0].failure_reason") || !strings.Contains(failure.GetDetail(), "action_reports[0].failure_reason") || len(outcome.GetRepairActions()) != 0 {
 				t.Errorf("invalid evidence reached reflection: %v", outcome)
 			}
 			return ReflectionDecision{LearningDecision: "no_change", NoChangeReason: "invalid controller evidence quarantined"}, nil
@@ -150,7 +150,7 @@ func TestInvalidStateRecoveryProducesFailedOutcomeAndReflection(t *testing.T) {
 	if err := c.PersistState(ctx); err != nil {
 		t.Fatal(err)
 	}
-	c.pendingClosure.Result.RepairActions = []RepairActionReceipt{{ActionID: "database", FailureReason: "database_authentication_rejected"}}
+	injectLegacyDatabaseFailure(t, c)
 	if err := c.PersistState(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -171,17 +171,12 @@ func TestInvalidStateRecoveryProducesFailedOutcomeAndReflection(t *testing.T) {
 // Literal producers are checked structurally; computed database reasons are
 // swept above. Descriptor rules, not another hand-maintained list, own values.
 func TestFailureReasonProducersClosedEnums(t *testing.T) {
-	allowed := map[string]bool{}
-	for _, message := range []proto.Message{&contracts.ActionReport{}, &contracts.RepairActionReceipt{}, &contracts.AgentResult{}, &contracts.ReflectionDecision{}} {
-		for _, value := range wire.StringIn(message, "failure_reason") {
-			allowed[value] = true
-		}
-	}
+	messages := map[string]proto.Message{"ActionReport": &contracts.ActionReport{}, "PlanActionReport": &contracts.ActionReport{}, "RepairActionReceipt": &contracts.RepairActionReceipt{}, "AgentResult": &contracts.AgentResult{}, "ReflectionDecision": &contracts.ReflectionDecision{}}
 	files, err := parser.ParseDir(token.NewFileSet(), ".", func(info fs.FileInfo) bool { return !strings.HasSuffix(info.Name(), "_test.go") }, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	check := func(node ast.Expr) {
+	check := func(node ast.Expr, message proto.Message) {
 		literal, ok := node.(*ast.BasicLit)
 		if !ok || literal.Kind != token.STRING {
 			return
@@ -190,9 +185,12 @@ func TestFailureReasonProducersClosedEnums(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !allowed[value] {
-			t.Errorf("failure_reason producer %q is absent from proto constraints", value)
+		for _, allowed := range wire.StringIn(message, "failure_reason") {
+			if allowed == value {
+				return
+			}
 		}
+		t.Errorf("failure_reason producer %q is absent from %s proto constraints", value, message.ProtoReflect().Descriptor().FullName())
 	}
 	for _, pkg := range files {
 		for _, file := range pkg.Files {
@@ -200,17 +198,75 @@ func TestFailureReasonProducersClosedEnums(t *testing.T) {
 				switch typed := node.(type) {
 				case *ast.AssignStmt:
 					for i, left := range typed.Lhs {
-						if selector, ok := left.(*ast.SelectorExpr); ok && selector.Sel.Name == "FailureReason" && i < len(typed.Rhs) {
-							check(typed.Rhs[i])
+						selector, ok := left.(*ast.SelectorExpr)
+						if !ok || selector.Sel.Name != "FailureReason" || i >= len(typed.Rhs) {
+							continue
 						}
+						var message proto.Message = &contracts.RepairActionReceipt{}
+						ast.Inspect(selector.X, func(child ast.Node) bool {
+							if field, ok := child.(*ast.SelectorExpr); ok && field.Sel.Name == "ActionReports" {
+								message = &contracts.ActionReport{}
+							}
+							return true
+						})
+						check(typed.Rhs[i], message)
 					}
-				case *ast.KeyValueExpr:
-					if key, ok := typed.Key.(*ast.Ident); ok && key.Name == "FailureReason" {
-						check(typed.Value)
+				case *ast.CompositeLit:
+					name := ""
+					switch typ := typed.Type.(type) {
+					case *ast.Ident:
+						name = typ.Name
+					case *ast.SelectorExpr:
+						name = typ.Sel.Name
+					}
+					message := messages[name]
+					for _, element := range typed.Elts {
+						if field, ok := element.(*ast.KeyValueExpr); ok {
+							if key, ok := field.Key.(*ast.Ident); ok && key.Name == "FailureReason" {
+								if message == nil {
+									if _, literal := field.Value.(*ast.BasicLit); literal {
+										t.Errorf("unclassified failure_reason producer type %s", name)
+									}
+									continue
+								}
+								check(field.Value, message)
+							}
+						}
 					}
 				}
 				return true
 			})
 		}
 	}
+}
+
+func injectLegacyDatabaseFailure(t *testing.T, c *Controller) {
+	t.Helper()
+	result, err := applyDatabaseUser(t, &databaseFake{writeErr: &DatabaseOperationError{Step: DatabaseAuthentication, Reason: databaseRejected}})
+	if err == nil {
+		t.Fatal("expected authentication rejection")
+	}
+	// Exact historical value captured from the failed live action report.
+	result.ActionReports[0].FailureReason = "database_authentication_rejected"
+	c.pendingClosure.Result.PlanApplications = []RecordedPlanApplication{{ID: "database", Result: result, Error: err.Error(), StartedAt: c.pendingClosure.DispatchedAt, CompletedAt: c.pendingClosure.ResponderCompletedAt}}
+	c.pendingClosure.Result.RepairActions = ProgramRepairReceipts(c.pendingClosure.Result.PlanApplications, nil)
+}
+
+// The last saved live state was dispatch PENDING, with no closure payload.
+func persistDispatchCheckpoint(t *testing.T, c *Controller) {
+	t.Helper()
+	closure := c.pendingClosure
+	c.currentIncidentRequest = cloneIncidentRequest(&closure.Request)
+	c.incidentDetectedAt = closure.DetectedAt
+	c.incidentDispatchedAt = closure.DispatchedAt
+	c.responderCompletedAt = closure.ResponderCompletedAt
+	c.pendingClosure = nil
+	c.closureState = contracts.ClosureState_CLOSURE_STATE_UNSPECIFIED
+	c.dispatchState = contracts.DispatchState_DISPATCH_STATE_PENDING
+	if err := c.PersistState(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	c.pendingClosure = closure
+	c.closureState = contracts.ClosureState_CLOSURE_STATE_PENDING
+	c.currentIncidentResult = cloneIncidentResult(closure.Result)
 }

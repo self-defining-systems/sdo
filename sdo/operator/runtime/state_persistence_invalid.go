@@ -7,6 +7,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/contracts/wire"
+	"sdo.dev/operator/runtime/lifecyclecore"
 )
 
 func clonePersistenceFailure(failure *contracts.StatePersistenceFailure) *contracts.StatePersistenceFailure {
@@ -60,6 +61,13 @@ func (c *Controller) recoverInvalidState(invalid error) (*contracts.ControllerSt
 			}
 		}
 	}
+	// Keep the original incident clock even when the last checkpoint was
+	// dispatch-pending rather than closure-pending.
+	for _, stamp := range []*timestamppb.Timestamp{state.GetIncidentDetectedAt(), state.GetIncidentDispatchedAt(), state.GetResponderCompletedAt()} {
+		if stamp != nil && stamp.IsValid() && stamp.AsTime().After(at) {
+			at = stamp.AsTime()
+		}
+	}
 	now := timestamppb.New(at)
 	failure := &contracts.StatePersistenceFailure{Reason: wire.StringConst(&contracts.StatePersistenceFailure{}, "reason"), Detail: invalid.Error()}
 	failedResult := &contracts.IncidentResult{SchemaVersion: ProtocolSchemaVersion, IncidentId: typedRequest.GetIncidentId(), Status: "failed", Usage: &contracts.UsageMetrics{}, Timing: &contracts.TimingMetrics{StartedAt: now, CompletedAt: now}}
@@ -73,13 +81,20 @@ func (c *Controller) recoverInvalidState(invalid error) (*contracts.ControllerSt
 	if previous := state.GetPendingClosure(); previous != nil && previous.GetRequest().GetIncidentId() == typedRequest.GetIncidentId() {
 		failedClosure.DetectedAt = previous.DetectedAt
 		failedClosure.DispatchedAt = previous.DispatchedAt
+	} else {
+		if state.GetIncidentDetectedAt() != nil {
+			failedClosure.DetectedAt = state.GetIncidentDetectedAt()
+		}
+		if state.GetIncidentDispatchedAt() != nil {
+			failedClosure.DispatchedAt = state.GetIncidentDispatchedAt()
+		}
 	}
 	state.IncidentRequest = typedRequest
 	state.IncidentResult = failedResult
-	state.PendingClosure = failedClosure
-	state.ClosureState = contracts.ClosureState_CLOSURE_STATE_PENDING
-	state.ClosureReceipt = nil
-	state.ClosureFailure = nil
+	state, _ = lifecyclecore.Step(state, lifecyclecore.Event{Kind: lifecyclecore.PersistenceInvalid, Closure: failedClosure})
+	if state.GetPendingClosure().GetStatePersistenceFailure() == nil {
+		return nil, fmt.Errorf("state_persistence_invalid cannot replace a committed closure: %w", invalid)
+	}
 	state.IncidentOpen = false
 	state.ResponderDone = true
 	state.DispatchState = contracts.DispatchState_DISPATCH_STATE_COMPLETED
