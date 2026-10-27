@@ -3,6 +3,8 @@ package lifecycle
 import (
 	"context"
 	"testing"
+
+	"sdo.dev/operator/broker"
 )
 
 // A Job lost to an earlier killed attempt must not fail the lifecycle: the
@@ -23,16 +25,20 @@ func TestVanishedLifecycleWorkerIsDiscardedAndRedispatched(t *testing.T) {
 	}
 }
 
-// A worker that vanishes again after redispatch is a real failure, reported
-// once per execution instead of looping.
-func TestRepeatedlyVanishedLifecycleWorkerFailsBounded(t *testing.T) {
-	c, _, e, _ := testCoordinator(t)
+// A worker that vanishes again after redispatch is a recorded failed attempt
+// on a fresh task, bounded by the validation retries, never an unbounded loop.
+func TestRepeatedlyVanishedHealthWorkerIsRecordedAndBounded(t *testing.T) {
+	c, b, e, _ := testCoordinator(t)
 	e.judgeJobsVanished = 1000
 	_, err := c.Run(context.Background(), Config{OperationID: "op", Application: "demo", Namespace: "demo", HealthObjective: "serve", DeployerAgentID: "source-agent", JudgeAgentID: "judge-agent", MaxAttempts: 1})
 	if err == nil {
 		t.Fatal("expected failure when the worker keeps vanishing")
 	}
-	if len(e.discarded) > len(judgeRequests(t, e)) {
-		t.Fatalf("discarded more often than dispatched: %v", e.discarded)
+	log, _ := b.Rejections("op-judge-1")
+	if len(log.GetRejections()) == 0 || log.GetRejections()[0].GetDiagnostics()[0].GetRule() != "worker.job_vanished" {
+		t.Fatalf("vanished attempts were not recorded as typed failures: %v", log)
+	}
+	if got := len(judgeRequests(t, e)); got > 2*(1+broker.MaxValidationRetries) {
+		t.Fatalf("vanished worker was dispatched %d times", got)
 	}
 }

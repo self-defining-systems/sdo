@@ -516,6 +516,12 @@ func (c Coordinator) judgeOnce(ctx context.Context, id string, cfg Config, attem
 			// Preserve the failed attempt and proposal for the bounded retry.
 			return broker.Receipt{}, false, err.Error(), []*contracts.MemoryDiagnostic{{Rule: "worker.job_failed", Message: err.Error()}}, nil
 		}
+		var vanished *worker_registry.JobVanishedError
+		if errors.As(err, &vanished) {
+			// Redispatch already failed too: record a typed failed attempt and
+			// let the bounded retry start a fresh task rather than end the process.
+			return broker.Receipt{}, false, err.Error(), []*contracts.MemoryDiagnostic{{Rule: "worker.job_vanished", Message: err.Error()}}, nil
+		}
 		_ = c.Broker.ReleaseProposal(id, broker.InitialPhase)
 		return fail(err.Error())
 	}
