@@ -8,9 +8,11 @@ case. Admission calls this; it does not call the cluster itself.
 
 from __future__ import annotations
 
-from collections.abc import Collection, Mapping
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Collection, Mapping
 
 DRIFT_DETECTOR = "drift.unexplained"
 _FINGERPRINT_PREFIX = (DRIFT_DETECTOR, "unexplained")
@@ -53,6 +55,4 @@ def drift_empty(state: Mapping[str, Any], namespaces: Collection[str]) -> list[D
     if row.get("status") != "firing":
         raise DriftAssessmentUnavailable(f"drift assessment is {row.get('status')!r}: {row.get('reason') or row}")
     mismatches = [DriftMismatch.from_fingerprint(fp) for fp in row.get("fingerprints") or []]
-    return sorted(
-        (m for m in mismatches if m.namespace in scope), key=lambda m: (m.namespace, m.kind, m.name)
-    )
+    return sorted((m for m in mismatches if m.namespace in scope), key=lambda m: (m.namespace, m.kind, m.name))
