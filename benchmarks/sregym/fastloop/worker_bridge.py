@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from benchmarks.sregym.fastloop.idempotent_helm import make_deploy_idempotent
 from benchmarks.sregym.fastloop.setup_ledger import (
     KubectlClusterInventory,
     SetupLedger,
@@ -102,6 +103,7 @@ def main() -> int:
     from benchmarks.sregym.fastloop.hotel_helpers import admit_install, configure_profile, prepare_install
 
     install_probe_isolation(importlib.import_module("sregym.conductor.problems.composition.grading"))
+    make_deploy_idempotent(importlib.import_module("sregym.service.helm").Helm)
 
     def prepare_astronomy() -> None:
         from benchmarks.sregym.adapter import prepare_oracle_observability
