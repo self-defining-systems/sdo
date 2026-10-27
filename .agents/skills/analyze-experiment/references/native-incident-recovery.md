@@ -21,7 +21,7 @@ Failed responder verification adds
 `application_verification_failure:<program_id>@<accepted_dependency_revision>` to
 `FailureSignals` and saves it; `apply` does not roll back. It survives any later
 responder-issued rollback and restarts without retaining executable application state. A successful
-retry does not erase the earlier revision's failure or restore its trust.
+retry does not erase the earlier revision's failure count.
 
 Incident-open `playbook_coverage` survives prepared-task replay and is copied unchanged into the outcome. No automatic apply or fast-path restart marker is used. Native receipts require responder Job evidence.
 
@@ -43,7 +43,7 @@ Current controllers have no namespace sweep or program confirmation timer. Retir
 
 Primitive recordings now carry optional `phase` metadata (`open`, `fixed`, or `healthy`); omitted phases mean `open` only. Generalization and rename replay select the matching phase instead of reusing open answers. Since the captured healthy snapshot equals fixed, healthy replay uses fixed observations unless explicit healthy observations exist. The responder source tool records `DiffAgainstSource` through the same live read view, including source absence, even before any program exists. At verified closure the controller repeats inspected primitives against the captured fixed snapshot and appends actual `fixed` observations to each protected open recordings file. Missing later observations yield Unknown, never invented healthy answers.
 
-Program revision identity includes the accepted program directory and its transitive shared-library import closure. Unrelated libraries do not reset trust; changed imported helper sources do.
+Program revision identity includes the accepted program directory and its transitive shared-library import closure. Unrelated libraries do not change the revision; changed imported helper sources do.
 
 Mitigator validation is best-effort for external effects. Diagnosis open/fixed,
 healthy-peer, generalization and rename replay remain mandatory. SetField-only
@@ -53,9 +53,9 @@ rejects a retained match, and unavailable post-plan observations remain
 plan validation with `skipped_unreplayable_effect`, without post-plan replay.
 `MemoryCheckReport.mitigation_replay_notes` carries typed `MitigationReplayNote`
 statuses `STATUS_REPLAYED` or `STATUS_SKIPPED_UNREPLAYABLE_EFFECT`, program/case IDs
-and effect types separately from rejecting diagnostics. Notes prove no external effect or trust.
+and effect types separately from rejecting diagnostics. Notes prove no external effect.
 
-Corpus acceptance supplies no origin credit; current trust consumes only persisted covered instances. Verified successes and revision-attributed failures are informational counters. Equivalent
+Corpus acceptance supplies no origin credit. Per-revision successful and failed application counts are informational. Equivalent
 ad-hoc repairs retain bound plan-equivalence receipts and post-repair NoMatch;
 unrelated repairs in the outcome do not suppress credit. Every planned resource
 needs a successful receipt, exact observed plan equivalence, and independent

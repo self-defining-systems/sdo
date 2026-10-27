@@ -326,7 +326,7 @@
     "TestHermeticRoutingCaptureCompilesReplayableMitigator": 6.447,
     "TestHermeticSharedMemoryControllers": 24.964,
     "TestHermeticSourceAbsentDriftSelectsLearnedPlaybook": 29.617,
-    "TestHermeticSourceReconcileLearningExposesVerifiedCounters": 5.628,
+    "TestHermeticSourceReconcileEquivalentRepairsAreCountedInCoverage": 5.628,
     "TestHermeticStaleSavedStepRepromptsWithOnlyTheStillBrokenFinding": 1.0,
     "TestHermeticUnexplainedCleanupRemediation": 3.158,
     "TestIgnoredClientGoReadCannotAuthorizeMitigation": 0.001,

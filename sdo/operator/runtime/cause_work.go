@@ -361,7 +361,7 @@ func (n NativeIncidentBroker) prepareCauseWork(ctx context.Context, outcome *con
 	return &contracts.ReflectionEligibility{Version: 1, Causes: work, Unassigned: unassigned, NoRepairCount: &count}
 }
 
-// Corpus publication and trust consume the same settled dispositions.
+// Corpus publication and settlement consume the same settled dispositions.
 func settledProgramCases(eligibility *contracts.ReflectionEligibility) (map[string][]program.Bindings, map[string][]program.Bindings) {
 	positive, negative := map[string][]program.Bindings{}, map[string][]program.Bindings{}
 	if eligibility.GetVersion() != 1 {

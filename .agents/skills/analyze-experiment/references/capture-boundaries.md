@@ -44,7 +44,7 @@ A harness `developer_source_receipt.json` records a pre-controller source patch:
 Resolve both Git commits and require the patch commit to preserve the `.sdo`
 tree. The idempotent replay receipt can omit `memory_tree`; derive it from the
 recorded commit. This is setup provenance, not a broker acceptance, live
-operator update, incident outcome, or trust credit. A later stage may inherit
+operator update, incident outcome, or program credit. A later stage may inherit
 accepted learning as well as developer commits; compare actual artifact hashes
 before attributing a verdict to the original memory.
 
@@ -95,7 +95,7 @@ scoped arrays for the entire captured object.
 
 A discovery/list error fails capture explicitly. A protected missing or oversized
 snapshot is an evidence gap. Capture/replay does not establish a successful live
-repair, and synthetic fault tests do not grant program trust.
+repair, and synthetic fault tests do not grant program credit.
 
 ## Controller-owned healthy reference
 

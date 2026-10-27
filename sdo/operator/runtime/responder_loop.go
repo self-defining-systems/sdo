@@ -83,7 +83,7 @@ type ToolResponse struct {
 	ProgramRuns                []ProgramRun                   `json:"program_runs,omitempty"`
 
 	// ProgramRunsOmitted counts runs a truncated record could not list; the
-	// trust reader fails closed on it. ProgramRunsUnrelatedOmitted counts apply
+	// evidence reader fails closed on it. ProgramRunsUnrelatedOmitted counts apply
 	// runs of programs or bindings the applied plans do not name, which the
 	// reader never consults.
 	ProgramRunsOmitted          int                     `json:"program_runs_omitted,omitempty"`
@@ -583,7 +583,7 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 }
 
 // truncatedToolResponse is the over-cap record shape. It embeds ToolResponse so
-// the identifiers and compact program runs that program trust reads share the
+// the identifiers and compact program runs that program evidence readers share the
 // writer's definition; everything bulky is reduced to a count.
 type truncatedToolResponse struct {
 	ToolResponse
@@ -597,7 +597,7 @@ type truncatedToolResponse struct {
 }
 
 // recordedToolResponseJSON caps the stored response. An apply record keeps every
-// run of the applied plans' (program, bindings) — all program trust reads — and
+// run of the applied plans' (program, bindings) — all the evidence readers consult — and
 // counts the runs of other programs separately, since a real apply response
 // carries a run for every installed program. Other commands drop runs from the
 // end; the reader fails closed on any such omission.
@@ -648,7 +648,7 @@ func runOfAppliedPlan(run ProgramRun, applied []selectedPlan) bool {
 	return false
 }
 
-// compactProgramRun keeps what program trust binds to: identity, revision,
+// compactProgramRun keeps what program evidence binds to: identity, revision,
 // bindings, result and the diagnosis error (the evidence entry without a
 // resource kind).
 func compactProgramRun(run ProgramRun) ProgramRun {
@@ -956,7 +956,7 @@ func (l *ResponderLoop) apply(ctx context.Context, request ToolRequest, response
 			targetedFindingsClear(l.mitigationIncident(selected).Findings, response.Findings) &&
 			result.VerificationPassed
 		if !result.VerificationPassed {
-			// Program trust counts an unverified application against the program's
+			// The program counts include an unverified application against the program's
 			// current revision, durably, even if the responder is restarted.
 			failedRuns := make([]ProgramRun, 0, len(programIDs))
 			for _, plan := range selected {

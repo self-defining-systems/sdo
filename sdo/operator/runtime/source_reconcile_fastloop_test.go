@@ -40,7 +40,7 @@ func (s sourceImageManifests) Revision(ctx context.Context, ref sdk.ObjectRef, r
 	return s.AcceptedManifest(ctx, revision, ref)
 }
 
-func TestHermeticSourceReconcileLearningExposesVerifiedCounters(t *testing.T) {
+func TestHermeticSourceReconcileEquivalentRepairsAreCountedInCoverage(t *testing.T) {
 	ctx := context.Background()
 	root := nativeRepository(t)
 	copyFastloopTree(t, "../memory/validate/testdata/good/.sdo", filepath.Join(root, ".sdo"))
@@ -254,7 +254,7 @@ func TestHermeticSourceReconcileLearningExposesVerifiedCounters(t *testing.T) {
 	}
 	coverage := prepared.PlaybookCoverage
 	if len(coverage.GetMatches()) != 1 || coverage.Matches[0].SuccessfulApplications != 3 {
-		t.Fatalf("source repair coverage lost verified counters: %v", coverage)
+		t.Fatalf("source repair coverage lost the application counts: %v", coverage)
 	}
 	live, err := client.AppsV1().Deployments("app").Get(ctx, "api", metav1.GetOptions{})
 	if err != nil || live.Spec.Template.Spec.Containers[0].Image != "missing:v1" {

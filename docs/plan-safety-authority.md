@@ -1,6 +1,6 @@
 # Agent-selected repair checks
 
-Automatic repair relies on save-time compile, vet, tests and recorded-corpus repair replay; independent post-apply verification; and explicit responder rollback when requested. The broker still enforces artifact ownership, including the health-judge/responder split. State budgets and the benchmark submission guard are unchanged.
+Agent-applied repair relies on save-time compile, vet, tests and recorded-corpus repair replay; independent post-apply verification; and explicit responder rollback when requested. The broker still enforces artifact ownership, including the health-judge/responder split. State budgets and the benchmark submission guard are unchanged.
 
 Plans execute within the controller-derived incident namespace. Application identity does not require a hand-maintained mapping from a benchmark name to a deployed chart name. Control and other namespaces remain excluded. Cluster-scoped targets, including webhook configurations, are outside this namespace scope; no cluster webhook mutation grant is installed. Upgrades revoke the retired named webhook grants.
 

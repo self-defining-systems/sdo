@@ -404,9 +404,9 @@ to nested workers. Default mounts and offline network policy remain unchanged.
 
 ## Automatic repair defaults (GS1)
 
-Every incident dispatches the responder with a playbook coverage view. `recorded-actions` is the default, with 10 response loops, 5 validation retries and a 5-minute verification timeout. The menu is on unless `SDO_RESPONDER_MENU=0`. The agent chooses mitigations and rollback; verified program counters are information only.
+Every incident dispatches the responder with a playbook coverage view. `recorded-actions` is the default, with 10 response loops, 5 validation retries and a 5-minute verification timeout. The menu is on unless `SDO_RESPONDER_MENU=0`. The agent chooses mitigations and rollback; the per-program success and failure counts are information only. SDO applies, verifies and rolls back nothing before the agent runs.
 
-One trusted match is selected by distinct findings covered, then program ID and canonical bindings. Uncovered findings and unexplained drift do not prevent the attempt. Whole-incident verification still decides success; failure rolls back reversible writes and dispatches the responder sequentially with the attempt summary. No source-plan policy file is needed, even when the deployed application name differs from its benchmark name. See [automatic repair checks](../../../../docs/plan-safety-authority.md).
+Each match in the coverage view names the findings it explains and a `mitigation_selection` the agent passes to `sdo mitigate`. Uncovered findings and unexplained drift do not prevent the attempt. Whole-incident verification still decides success. No source-plan policy file is needed, even when the deployed application name differs from its benchmark name. See [agent-applied repair checks](../../../../docs/plan-safety-authority.md).
 
 For a private scripted lane (no model calls), set `SDO_TOY_CLUSTER=gs1-toy` for `up --app toy --dev-mount "$PWD"` and use a fresh run directory outside the repository. `--cluster-prefix gs1-` selects an isolated toy cluster with the configured worker ID; `SDO_TOY_CLUSTER` remains an explicit override. Subsequent commands use the saved kubeconfig and environment. A target-port incident followed by a repeat exercises learning, save-time validation and agent-selected program reuse.
 

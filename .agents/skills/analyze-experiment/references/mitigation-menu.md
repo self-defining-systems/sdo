@@ -55,7 +55,7 @@ A report query reflects a later explicit rollback; already returned response sna
 
 Menu action receipts enter `IncidentResult.repair_actions` with action identity,
 resources, timing, details and success. Menu reports are not legacy PlanApplication
-proof and add no positive program trust credit. Intermediate rounds are not independent
+proof and add no positive program credit. Intermediate rounds are not independent
 incidents. Terminal menu success alone is not controller health verification, broker
 ACK or a strict benchmark receipt.
 

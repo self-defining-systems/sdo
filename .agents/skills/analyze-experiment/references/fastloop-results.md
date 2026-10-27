@@ -49,8 +49,8 @@ revision and named bindings supply success credit. They require affirmative
 NoMatch, and an explicit NoMatch on the independently verified fixed capture.
 Missing proof, unavailable captures, different-field repairs and unbound writes
 remain questions, with no success or failure judgment. A definite fixed Match
-is a false match: Go records a negative case, revokes trust for that revision,
-and gives no credit, even if reflection is rejected.
+is a false match: Go records a negative case and gives no credit, even if
+reflection is rejected.
 
 Corpus publication and reflection dispatch consume that same settled result.
 Exact positive and negative cases use ordinary broker validation; the model is
@@ -69,12 +69,11 @@ already committed eligibility facts.
 
 Program failures are recorded as `application_verification_failure:<program_id>@<accepted_dependency_revision>`; counters describe evidence and never gate dispatch.
 
-Responder applications record the same revision-bound trust failure as
+Responder applications record the same revision-bound failure as
 `application_verification_failure:<program_id>@<accepted_dependency_revision>`.
-`apply` does not roll back: the signal marks an unverified application that stays applied until the responder issues `rollback` or retries. The tool state saves it so it survives a restart. Trust
-counts the signal with the failed application once, or on its own after restart
-discards application history; a successful retry in that incident leaves zero
-successes and one failure for the affected revision.
+`apply` does not roll back: the signal marks an unverified application that stays applied until the responder issues `rollback` or retries. The tool state saves it so it survives a restart.
+
+The counts shown to the agent (`successful_applications` / `failed_applications` per program revision) are computed once per application. A failed incident, an error or a rollback is a failure; an application in a successful incident is a success. `cleared_without_action` and `unconfirmed` closures carry no verdict. A verification-failure signal turns one counted success of that program into a failure (or adds one failure when no application is recorded), so an application is never both. A successful retry after a failed application leaves one success and one failure for the revision.
 
 ### Historical learning credit
 

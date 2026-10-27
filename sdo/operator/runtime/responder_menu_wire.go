@@ -163,7 +163,7 @@ func (r ToolResponse) MarshalJSON() ([]byte, error) {
 }
 
 // Defining an outer marshaler prevents the embedded ToolResponse marshaler
-// from swallowing truncation counters used by the revision-bound trust reader.
+// from swallowing truncation counters used by the revision-bound evidence reader.
 func (r truncatedToolResponse) MarshalJSON() ([]byte, error) {
 	encoded, err := json.Marshal(r.ToolResponse)
 	if err != nil {

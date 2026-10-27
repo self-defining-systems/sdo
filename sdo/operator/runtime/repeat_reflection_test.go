@@ -35,7 +35,7 @@ func TestCompositeRepairKeepsBoundSuccessWhileOtherFaultIsOpen(t *testing.T) {
 	}
 	for _, signal := range loop.FailureSignals() {
 		if strings.HasPrefix(signal, "application_verification_failure:") || strings.HasPrefix(signal, "diagnosis_clear_detectors_firing:") {
-			t.Fatalf("unrelated fault poisoned program trust: %s", signal)
+			t.Fatalf("unrelated fault recorded a program failure signal: %s", signal)
 		}
 	}
 }

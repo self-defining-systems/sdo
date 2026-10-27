@@ -114,7 +114,7 @@ func (l *ResponderLoop) CreditEquivalentRepairs(ctx context.Context, repairs []R
 		verified := ProgramRun{ProgramID: run.ProgramID, ProgramRevision: run.ProgramRevision, Bindings: cloneProgramBindings(run.Bindings), Verdict: verdict}
 		l.runs = append(l.runs, verified)
 		// These controller receipts describe equivalence verification, not a live
-		// program apply. They preserve the same bound trust evidence as an apply.
+		// program apply. They preserve the same bound evidence as an apply.
 		planRequest, _ := json.Marshal(ToolRequest{Command: "plan", ProgramID: run.ProgramID, Bindings: run.Bindings})
 		planResponse, _ := json.Marshal(ToolResponse{Command: "plan", PlanID: planID})
 		applyRequest, _ := json.Marshal(ToolRequest{Command: "apply", PlanIDs: []string{planID}})

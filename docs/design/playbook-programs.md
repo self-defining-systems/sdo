@@ -201,7 +201,7 @@ same session reflects at the end.
 Tools: `sdo status`, `sdo diagnose`, `sdo plan`, `sdo apply`, `sdo verify`,
 `sdo rollback`. Every call is logged to the outcome.
 
-Failure signals recorded for reflection, the corpus and trust:
+Failure signals recorded for reflection, the corpus and the program counts:
 
 | Observation | Meaning |
 |---|---|
@@ -271,7 +271,7 @@ The maintainer proposes typed edits: merge, split, tighten, retire, promote,
 or extract. The broker accepts an edit only if replay precision and recall do
 not drop and every previously solved case still has a matching program. A
 retirement that strands a case needs a recorded justification. An edit resets
-the trust count of every program it touches. Nothing is retired for disuse:
+the success and failure counts of every program it touches. Nothing is retired for disuse:
 rarely needed programs are the long-tail knowledge memory exists to keep.
 
 **Detectors and diagnosers:** these remain separate roles that share code.
@@ -300,7 +300,7 @@ rarely needed programs are the long-tail knowledge memory exists to keep.
    messages for `Verdict` and `Plan`.
 2. **Controller and loop:** candidate selection, parallel `Diagnose` under a
    deadline, the plan executor through the repair policy, verification,
-   responder tools, the loop budget, and outcome logging plus trust statistics.
+   responder tools, the loop budget, and outcome logging plus program counts.
 3. **Agents:** resume-mode reflection by default, the compile-to-programs or
    `sdk_gap` reflection contract, responder prompts for program verdicts and
    scratch scripts, and reflection token export.

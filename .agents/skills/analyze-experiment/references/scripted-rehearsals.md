@@ -10,7 +10,7 @@ registrations beside the usual result files. Action receipts from `sdo act` are
 not strict native incident receipts. Require the strict native receipt parser,
 broker source/outcome commits, the accepted lock's zero-gap evidence, and verified
 full seed recovery before reporting a slot as passed. The replay's no-change
-reflection and zero model usage establish no learned-program trust credit.
+reflection and zero model usage establish no learned-program credit.
 
 Credential-slot rehearsals request `--cleanup-passes 2` on the same live driver.
 `cleanup_passes_verified` counts full seed-compatible recovery, seed reconciliation,

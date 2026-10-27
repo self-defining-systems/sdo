@@ -45,7 +45,7 @@ async def render_contract() -> str:
         "receipts and recordings retain references. Direct Secret keys require a separate security review. "
         "Author Mitigators as "
         "self-contained repairs with declared parameters and specific failure context. Intermediate reports "
-        "are not independent incident outcomes or program trust credit.",
+        "are not independent incident outcomes or program credit.",
         "## Controller verification and command reports\n\n"
         "Plain verification returns the cached controller verdict immediately. Waiting returns on stable "
         "independent closure, a new or reactivated finding, or timeout, without running detectors. "

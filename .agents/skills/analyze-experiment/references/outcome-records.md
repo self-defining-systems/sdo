@@ -81,14 +81,14 @@ coverage and detector evaluation times. Missing/overflowed summaries cannot prov
 absence. Resource-related findings and later mutations block clearance. The full
 failed outcome remains authoritative; reflection receives only independently
 repaired cause groups and scoped verification evidence. This is learning eligibility,
-not global health or program trust; authored program bytes still pass the existing
+not global health or a program count; authored program bytes still pass the existing
 capture provenance and corpus replay validator. No fixed snapshot is fabricated.
 
 A complete healthy controller verify with zero findings also proves individual
 repairs when the global closure is failed. It requires all evaluated detectors
 clear and no unresolved flag; classification stays failed. No peer fault is required.
 
-RL1 typed SDK gaps include resources to scope a decline to one confirmed cause; another verified cause still requires its program and detector. First-encounter replay learning can earn one trust credit even when the program did not exist during the repair. This requires a broker-validated reflection commit associated with the controller-verified origin; a later verified program failure is not erased by replay. Controller corpus provenance is optional for session-evidence fixtures; no benchmark grade or recovery verdict is a verification source.
+RL1 typed SDK gaps include resources to scope a decline to one confirmed cause; another verified cause still requires its program and detector. First-encounter replay learning can earn one settlement credit even when the program did not exist during the repair. This requires a broker-validated reflection commit associated with the controller-verified origin; a later verified program failure is not erased by replay. Controller corpus provenance is optional for session-evidence fixtures; no benchmark grade or recovery verdict is a verification source.
 
 ### Applied writes with a pending rollout
 

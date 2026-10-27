@@ -52,7 +52,7 @@ owner chains are dropped at ingest. The worker
 receives compact cause indices and only those causes, verified receipts and typed
 applications/diagnoses and scoped cold-verification evidence. Opaque tool transcripts and unattributed playbook/drift
 claims are omitted from that learning view. No global recovery, positive fixed
-capture, program trust credit, or repaired peer is inferred from partial repair.
+capture, program credit, or repaired peer is inferred from partial repair.
 A cause with no recorded successful repair is not saved. Full-success reflection follows the
 LEARN3 rule: any recorded successful repair on a verified-healthy closure is saved.
 
