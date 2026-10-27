@@ -89,4 +89,12 @@ class FastloopEnvironment(BaseModel):
         return cls.model_validate(json.loads(path.read_text(encoding="utf-8")))
 
     def worker_process_env(self) -> dict[str, str]:
-        return {**self.worker_env, "KUBECONFIG": str(self.kubeconfig), "PYTHONUNBUFFERED": "1"}
+        return {
+            **self.worker_env,
+            "KUBECONFIG": str(self.kubeconfig),
+            "PYTHONUNBUFFERED": "1",
+            "FASTLOOP_ORACLE_BASELINES": str(self.run_dir / "oracle-baselines.json"),
+            "FASTLOOP_ORACLE_IDENTITY": json.dumps(
+                [self.app, self.namespace, self.seed_commit, str(self.sregym_dir.resolve())]
+            ),
+        }

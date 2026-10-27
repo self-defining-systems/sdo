@@ -891,6 +891,13 @@ def _run(args: argparse.Namespace) -> int:
             deploy_with_setup_proof(
                 environment, worker, results_dir, allow_reuse=args.agent == "sdo" and environment.app != "toy"
             )
+        if environment.app != "toy":
+            for problem_id in dict.fromkeys(problem for ids in incidents for problem in ids):
+                rehearsal = worker.request(
+                    "rehearse_oracles", problem_id=problem_id, timeout=wait_for(WaitKind.LONG_OPERATION)
+                )
+                if rehearsal.get("success") is not True:
+                    raise ValueError(f"eval: no-fault rehearsal has unhealthy collateral/traffic for {problem_id}")
         deployed = time.monotonic()
         described = deployed
         baseline = load_application_baseline(environment.baseline_path, environment.namespace)

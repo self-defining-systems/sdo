@@ -166,3 +166,19 @@ The immutable `incidents.grades/<index>.json` checkpoint is published at that
 sample, including during composite resolution before its first receipt drain.
 Responder/reflection accounting completed later belongs to the final row, not
 to a replacement grade checkpoint.
+
+## Healthy-baseline oracle exclusions
+
+`oracle-baselines.json` in the environment run directory records the raw no-fault
+oracle grades once per problem, bound to application namespace, seed commit and
+harness revision. Preparation still requires healthy collateral and fresh traffic.
+A fault oracle red at baseline is `oracle_invalid`, not an SDO repair failure.
+Post-incident `oracle.details.oracles[i]` retains the raw baseline under
+`baseline_verdict`, sets `status=oracle_invalid`, and gives no boolean repair
+verdict (`success=null`, `fault_i_verdict=null`). `faults_total` and `faults_fixed`
+count only valid oracles; `oracle_invalid` reports the excluded count separately.
+Collateral and traffic failures still fail the aggregate. The composite analysis
+table exposes `oracle_invalid`. Do not count an excluded fault as fixed or unfixed.
+Historical C64 candidates: as-e/000 and as-e/001, and the first/repeat rows for
+seed42 astronomy slots 6, 8, 39 and 40 (TRIAGE3 reported eight affected rows;
+confirm row/slot overlap before re-grading). Raw historical grades remain intact.
