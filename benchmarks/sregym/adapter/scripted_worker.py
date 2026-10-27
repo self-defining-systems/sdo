@@ -41,6 +41,20 @@ PROGRAM_ID = "service-targetport-mismatch"
 PROGRAM_SOURCE = Path("/opt/sdo-scripted/targetport")
 NETWORKPOLICY_PROGRAM_ID = "networkpolicy-service-isolation"
 NETWORKPOLICY_PROGRAM_SOURCE = Path("/opt/sdo-scripted/networkpolicy")
+#: Kinds the scripted responder restores from accepted source, and the field that carries their state.
+SOURCE_RESTORED_FIELDS = {"ConfigMap": "data", "Ingress": "spec", "HorizontalPodAutoscaler": "spec"}
+#: Kinds a fault adds that accepted source never declares; the scripted responder deletes them.
+REMOVED_KINDS = frozenset(
+    {
+        "NetworkPolicy",
+        "ResourceQuota",
+        "LimitRange",
+        "PodDisruptionBudget",
+        "MutatingWebhookConfiguration",
+        "ValidatingWebhookConfiguration",
+    }
+)
+CLUSTER_SCOPED_KINDS = frozenset({"MutatingWebhookConfiguration", "ValidatingWebhookConfiguration"})
 LOG = logging.getLogger(__name__)
 
 
@@ -114,16 +128,37 @@ def _patch_from_source(request: IncidentRequest, ref: dict[str, str]) -> None:
                 }
             }
         }
+    elif kind in SOURCE_RESTORED_FIELDS:
+        field = SOURCE_RESTORED_FIELDS[kind]
+        patch = {field: source[field]}
     else:
         raise RuntimeError(f"scripted fastloop has no source repair for {kind}")
+    patch_type = "merge" if kind in SOURCE_RESTORED_FIELDS else "strategic"
     _command(
-        ["kubectl", "-n", request.namespace, "patch", kind.lower(), name, "--type=strategic", "-p", json.dumps(patch)]
+        [
+            "kubectl",
+            "-n",
+            request.namespace,
+            "patch",
+            kind.lower(),
+            name,
+            f"--type={patch_type}",
+            "-p",
+            json.dumps(patch),
+        ]
     )
     if kind == "Deployment":
         _command(
             ["kubectl", "-n", request.namespace, "rollout", "status", f"deployment/{name}", "--timeout=600s"],
             timeout=610,
         )
+
+
+def _remove_added(request: IncidentRequest, ref: dict[str, str]) -> None:
+    """Delete an object a fault added that accepted source does not declare."""
+
+    scope = [] if ref["kind"] in CLUSTER_SCOPED_KINDS else ["-n", request.namespace]
+    _command(["kubectl", *scope, "delete", ref["kind"].lower(), ref["name"], "--ignore-not-found"])
 
 
 def _binding_args(bindings: dict[str, Any]) -> list[str]:
@@ -358,33 +393,42 @@ def scripted_responder(request: IncidentRequest) -> IncidentResult:
                 "name": change.name,
             }
             for change in changed
-            if change.kind in {"Service", "Deployment"} and change.change == "modified"
+            if (change.kind in {"Service", "Deployment", *SOURCE_RESTORED_FIELDS} and change.change == "modified")
+            or (change.kind in REMOVED_KINDS and change.change == "added")
         ]
         candidates.extend(
             json_format.MessageToDict(finding.primary_resource, preserving_proto_field_name=True)
             for finding in request.findings
         )
         for ref in candidates:
-            if ref["kind"] not in {"Service", "Deployment"}:
+            removed = ref["kind"] in REMOVED_KINDS
+            if ref["kind"] not in {"Service", "Deployment", *SOURCE_RESTORED_FIELDS} and not removed:
                 continue
             key = (ref["kind"], ref["name"])
             if key in seen:
                 continue
             seen.add(key)
             action_start = _now()
-            _patch_from_source(request, ref)
+            if removed:
+                _remove_added(request, ref)
+            else:
+                _patch_from_source(request, ref)
             repairs.append(
                 {
                     "action_id": f"source-{len(repairs) + 1}",
-                    "kind": "kubectl-patch",
+                    "kind": "kubectl-delete" if removed else "kubectl-patch",
                     "target": f"{ref['kind']}/{ref['name']}",
                     "resources": [ref],
-                    "summary": f"Restored {ref['kind']}/{ref['name']} from accepted source",
-                    "details": "Applied accepted source fields and waited for the rollout",
+                    "summary": f"Removed source-absent {ref['kind']}/{ref['name']}"
+                    if removed
+                    else f"Restored {ref['kind']}/{ref['name']} from accepted source",
+                    "details": "Deleted the object the fault added"
+                    if removed
+                    else "Applied accepted source fields and waited for the rollout",
                     "started_at": action_start,
                     "completed_at": _now(),
                     "success": True,
-                    "reversible": True,
+                    "reversible": not removed,
                 }
             )
     verification = first
