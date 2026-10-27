@@ -1,4 +1,5 @@
 """The external-process driver owns its pinned inputs before pytest workers start."""
+
 from __future__ import annotations
 
 import json
