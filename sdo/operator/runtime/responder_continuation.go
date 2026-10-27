@@ -109,7 +109,7 @@ func (d KubernetesJobDispatcher) continueResponder(ctx context.Context, executor
 		if err := ctx.Err(); err != nil {
 			return IncidentResult{}, err
 		}
-		if result.DriftReprompt != nil && result.DriftReprompt.FindingsAfter == nil {
+		if result.DriftReprompt != nil && result.DriftReprompt.FindingsAfter == nil && verification.Error == "" {
 			result.DriftReprompt.FindingsAfter = proto.Int32(int32(len(verification.Drift)))
 		}
 		result.UnresolvedFindings = append([]sdk.Finding(nil), verification.Findings...)

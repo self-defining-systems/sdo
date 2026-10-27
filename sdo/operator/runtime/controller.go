@@ -1099,6 +1099,7 @@ func (c *Controller) processDispatchCompletions(observedAt time.Time) {
 }
 
 func (c *Controller) handleDispatchCompletion(completion dispatchCompletion, observedAt time.Time) {
+	durableDriftPrompt := c.driftRepromptRecord()
 	c.mu.Lock()
 	if c.currentIncidentRequest == nil || completion.incidentID != c.currentIncidentRequest.IncidentID {
 		currentIncidentID := ""
@@ -1140,8 +1141,8 @@ func (c *Controller) handleDispatchCompletion(completion dispatchCompletion, obs
 		c.mu.Unlock()
 		return
 	}
-	var priorDriftPrompt *contracts.DriftReprompt
-	if c.currentIncidentResult != nil {
+	priorDriftPrompt := durableDriftPrompt
+	if c.currentIncidentResult != nil && c.currentIncidentResult.DriftReprompt != nil {
 		priorDriftPrompt = cloneDriftReprompt(c.currentIncidentResult.DriftReprompt)
 	}
 	var jobFailed *ResponderJobFailedError

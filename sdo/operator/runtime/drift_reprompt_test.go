@@ -18,7 +18,7 @@ import (
 )
 
 func TestHealthyDriftRepromptOnceAcrossRestart(t *testing.T) {
-	for _, mode := range []string{"remaining", "repaired", "no-drift", "deadline"} {
+	for _, mode := range []string{"remaining", "repaired", "no-drift", "deadline", "verification-error"} {
 		t.Run(mode, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
@@ -59,7 +59,7 @@ func TestHealthyDriftRepromptOnceAcrossRestart(t *testing.T) {
 				now = request.ResponseDeadline
 			}
 			resumed, err := dispatcher.ContinueAfterVerification(ctx, request, verification, now)
-			want := mode == "remaining" || mode == "repaired"
+			want := mode == "remaining" || mode == "repaired" || mode == "verification-error"
 			if err != nil || resumed != want {
 				t.Fatalf("resume=%v want=%v err=%v", resumed, want, err)
 			}
@@ -88,6 +88,9 @@ func TestHealthyDriftRepromptOnceAcrossRestart(t *testing.T) {
 			if mode == "repaired" {
 				verification.Drift = nil
 			}
+			if mode == "verification-error" {
+				verification = ToolResponse{Command: "verify", Error: "snapshot unavailable", Summary: "verification unavailable"}
+			}
 			publishContinuationResult(t, client, second, completedResult(request.IncidentID))
 			if err := <-errs; err != nil {
 				t.Fatal(err)
@@ -96,6 +99,12 @@ func TestHealthyDriftRepromptOnceAcrossRestart(t *testing.T) {
 			after := int32(1)
 			if mode == "repaired" {
 				after = 0
+			}
+			if mode == "verification-error" {
+				if final.DriftReprompt == nil || final.DriftReprompt.FindingsAfter != nil {
+					t.Fatalf("failed verification invented after count: %+v", final.DriftReprompt)
+				}
+				return
 			}
 			if final.DriftReprompt == nil || final.DriftReprompt.FindingsBefore != 1 || final.DriftReprompt.FindingsAfter == nil || *final.DriftReprompt.FindingsAfter != after {
 				t.Fatalf("lost drift prompt counts: %+v", final.DriftReprompt)
