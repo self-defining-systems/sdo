@@ -21,6 +21,7 @@ Read the [memory principles](../sdo-memory/SKILL.md#memory-principles) for evide
    Any performed repair, however nuanced, can be a `RunScript` bash step with relation-derived Env and
    digest-to-receipt linkage; difficulty never justifies saving nothing. Put judgement about when and in
    what order to run steps in the README, with observations and decisions that guide it.
+   Stop the ongoing cause or producer before restarting its victims; if the repair cannot, state that limitation in the README.
    Save README-only playbooks with verified, specific guidance too; these are never auto-applied. Add detector coverage. A detector may surface multiple playbooks;
    `DetectionContext.DiffAgainstSource` observes field drift and source absence before playbook selection.
    Use the responder's recorded actions and existing session observations to build the replay fixture.
