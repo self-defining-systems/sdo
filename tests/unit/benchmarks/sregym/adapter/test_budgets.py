@@ -35,6 +35,21 @@ def _constant(node: ast.AST) -> bool:
     return False
 
 
+def _is_clock_read(node: ast.AST) -> bool:
+    return isinstance(node, ast.Call) and ast.unparse(node.func).endswith(
+        ("monotonic", "time.time", "perf_counter", "time", "now")
+    )
+
+
+def _numeric_string(node: ast.AST) -> bool:
+    if not (isinstance(node, ast.Constant) and isinstance(node.value, str)):
+        return False
+    try:
+        return float(node.value) != 0
+    except ValueError:
+        return False
+
+
 def _zero(node: ast.AST) -> bool:
     return isinstance(node, ast.Constant) and node.value == 0
 
@@ -56,7 +71,16 @@ def seconds_literals(source: str) -> list[tuple[int, str]]:
             found.append((value.lineno, f"{label}={ast.unparse(value)}"))
 
     for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Add, ast.Sub)):
+            # Deadline arithmetic: ``time.monotonic() + 120``.
+            for clock, offset in ((node.left, node.right), (node.right, node.left)):
+                if _is_clock_read(clock) and _constant(offset) and not _zero(offset):
+                    found.append((offset.lineno, f"clock+={ast.unparse(offset)}"))
         if isinstance(node, ast.Call):
+            if ast.unparse(node.func) in ("os.environ.get", "os.getenv") and len(node.args) == 2:
+                name, default = node.args
+                if isinstance(name, ast.Constant) and _named(str(name.value)) and _numeric_string(default):
+                    found.append((default.lineno, f"{name.value}={ast.unparse(default)}"))
             for keyword in node.keywords:
                 if _named(keyword.arg):
                     note(node, keyword.value, keyword.arg)
@@ -182,6 +206,11 @@ def test_the_scanner_sees_each_wait_shape():
         "width = 80\n"
         "run(timeout=0)\n"
         "run(timeout=wait_for(WaitKind.POLL))\n"
+        "give_up = time.monotonic() + 120\n"
+        "give_up = time.time() - 5\n"
+        "give_up = time.monotonic() + wait\n"
+        "os.environ.get('SDO_TOY_BASELINE_WAIT', '120')\n"
+        "os.environ.get('SDO_NAME', 'x')\n"
     )
     labels = sorted(label for _, label in seconds_literals(source))
     assert labels == sorted(
@@ -193,6 +222,9 @@ def test_the_scanner_sees_each_wait_shape():
             "deadline=90",
             "--timeout=300",
             "wait_seconds=10",
+            "clock+=120",
+            "clock+=5",
+            "SDO_TOY_BASELINE_WAIT='120'",
         ]
     )
 

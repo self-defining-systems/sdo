@@ -379,7 +379,7 @@ def record_controller(environment: FastloopEnvironment, config: Any) -> None:
 
 def wait_for_baseline(environment: FastloopEnvironment, accepted_commit: str) -> None:
     """Require real detector evaluations and accepted-source adoption before reporting ready."""
-    wait = float(os.environ.get("SDO_TOY_BASELINE_WAIT", "120"))
+    wait = float(os.environ.get("SDO_TOY_BASELINE_WAIT", str(wait_for(WaitKind.OPERATION))))
     deadline = time.monotonic() + wait
     while time.monotonic() < deadline:
         completed = subprocess.run(
