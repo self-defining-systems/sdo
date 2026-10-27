@@ -64,6 +64,13 @@ func main() {
 		}
 		return
 	}
+	if len(os.Args) == 2 && os.Args[1] == "render-source" {
+		if err := operatorcli.RunSourceRender(context.Background(), os.Stdin, os.Stdout); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
 	if len(os.Args) == 2 && os.Args[1] == "observe-controller" {
 		if err := operatorcli.RunControllerObservation(os.Stdin, os.Stdout); err != nil {
 			fmt.Fprintln(os.Stderr, err)

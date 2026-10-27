@@ -103,6 +103,8 @@ type PlanExecutor struct {
 	// ApplicationID is durable across restart and selects one script Job.
 	ApplicationID     string
 	scriptActionIndex int
+	// Nested action executors leave dependency recovery to their outer batch.
+	deferDependencyRecovery bool
 	// PollRollouts returns pending after one observation instead of waiting.
 	PollRollouts bool
 	DeleteObject func(context.Context, sdk.ObjectRef, types.UID, string) error
@@ -363,7 +365,7 @@ func (e PlanExecutor) applyOnce(ctx context.Context, incident IncidentRequest, p
 	if err := e.awaitObserved(ctx, result.Patches); err != nil {
 		return result, err
 	}
-	if pending, err := e.waitForRollouts(ctx, incident, refs); err != nil {
+	if pending, err := e.waitAfterSourceWrites(ctx, incident, &result, refs); err != nil {
 		result.RolloutPending = pending
 		return result, err
 	}
@@ -397,6 +399,14 @@ func (e PlanExecutor) rollback(ctx context.Context, application *PlanApplication
 		patch := application.Patches[i]
 		if patch.Operation == "delete" || patch.Irreversible {
 			irreversible = errors.Join(irreversible, fmt.Errorf("irreversible %s effect on %s/%s was not restored; never auto-recreate or replay", patch.Operation, patch.Ref.Kind, patch.Ref.Name))
+		}
+	}
+
+	// Supplemental dependency recovery is part of the application receipt,
+	// even though it is not an authored action or a reversible field patch.
+	for _, effect := range application.ObjectEffects {
+		if effect.Irreversible && effect.State != "not_applied" {
+			irreversible = errors.Join(irreversible, fmt.Errorf("irreversible %s effect on %s/%s was not restored; never auto-recreate or replay", effect.Operation, effect.Ref.Kind, effect.Ref.Name))
 		}
 	}
 

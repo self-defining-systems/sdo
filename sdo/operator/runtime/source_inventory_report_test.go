@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"google.golang.org/protobuf/encoding/protojson"
 	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 	"os"
@@ -47,7 +48,7 @@ func TestSourceInventoryReadOnlyReport(t *testing.T) {
 
 func TestSourceInventoryEvaluateOnceDoesNotWriteToKubernetes(t *testing.T) {
 	source, _ := foreignSource(t)
-	client := fake.NewSimpleClientset(&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "extra-controller", Namespace: "app"}})
+	client := fake.NewSimpleClientset(&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "extra-controller", Namespace: "app"}}, &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "app"}})
 	provider := &core.KubernetesSnapshotProvider{Client: client, Namespace: "app"}
 	var output, stderr bytes.Buffer
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -72,7 +73,7 @@ func TestSourceInventoryEvaluateOnceDoesNotWriteToKubernetes(t *testing.T) {
 
 func TestSourceInventoryEvaluateOnceUsesInstallerAcknowledgementWithoutRecapture(t *testing.T) {
 	source, _ := foreignSource(t)
-	client := fake.NewSimpleClientset(&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "pre-existing", Namespace: "app"}})
+	client := fake.NewSimpleClientset(&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "pre-existing", Namespace: "app"}}, &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "app"}})
 	provider := &core.KubernetesSnapshotProvider{Client: client, Namespace: "app"}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
