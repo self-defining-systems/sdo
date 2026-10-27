@@ -65,7 +65,7 @@ func (e KubernetesExecutor) RecoverCompleted(ctx context.Context, task *contract
 	request, err := e.Client.CoreV1().ConfigMaps(e.Namespace).Get(ctx, name+"-request", metav1.GetOptions{})
 	if err == nil {
 		prior := new(contracts.AgentTask)
-		if err := wire.Unmarshal([]byte(request.Data[TaskDataKey]), prior); err != nil || !proto.Equal(prior, task) {
+		if err := wire.UnmarshalDurable([]byte(request.Data[TaskDataKey]), prior); err != nil || !proto.Equal(prior, task) {
 			if name == JobName(task.GetTaskId()) {
 				return nil, false, nil
 			}
@@ -152,7 +152,7 @@ func (e KubernetesExecutor) taskJobName(ctx context.Context, task *contracts.Age
 	request, err := maps.Get(ctx, name+"-request", metav1.GetOptions{})
 	if err == nil {
 		prior := new(contracts.AgentTask)
-		if wire.Unmarshal([]byte(request.Data[TaskDataKey]), prior) == nil && proto.Equal(prior, task) {
+		if wire.UnmarshalDurable([]byte(request.Data[TaskDataKey]), prior) == nil && proto.Equal(prior, task) {
 			result, err := maps.Get(ctx, name+"-result", metav1.GetOptions{})
 			if apierrors.IsNotFound(err) {
 				return name, nil
