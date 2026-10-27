@@ -114,6 +114,9 @@ func (c *Controller) completeHealthyEvaluation() bool {
 		return false
 	}
 	for id := range c.detectors {
+		if c.setupDetectorDisabled(id) {
+			continue
+		}
 		evaluation, found := latest[id]
 		if !found || evaluation.Status != DetectorEvaluationClear || evaluation.EvaluatedAt.Before(c.startedAt) {
 			return false

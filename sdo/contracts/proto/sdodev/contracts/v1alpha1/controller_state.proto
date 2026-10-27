@@ -207,6 +207,8 @@ message ControllerState {
   // snapshot, or failed. It stops only when the step loop is blocked, so
   // observers judge a hung controller by it and never by evaluation_iteration.
   int64 step_count = 44;
+  string setup_evaluated_revision = 46;
+  repeated DisabledSetupDetector disabled_setup_detectors = 47;
   reserved 32, 33, 34;
   reserved "drift_investigation", "drift_admission", "program_sweep_cursors";
 }
