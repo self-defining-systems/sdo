@@ -111,6 +111,25 @@ There is no time scaling; every run uses real time. `--continue-on-error` record
 moves on only when recovery has passed its oracle. A new dev lane uses the
 `fastloop-dev-w` cluster prefix; choose another prefix if that name is taken.
 
+# Reused lanes: fault-setup leftovers and redeploy
+
+A fault may install cluster-scoped infrastructure outside the app namespace, such as the
+`ingress-nginx` release of IngressMisroute. The SREGym worker removes what an injection created
+after full recovery, but only from its own memory. Beside each lane's kubeconfig the worker bridge
+also keeps a `<kubeconfig>.setup-ledger.json` window (`fastloop/setup_ledger.py`): it opens before
+an injection runs, records the cluster-scoped objects the injection created when it returns, and
+closes only after a full recovery with nothing pending. An attempt that aborts, times out or is
+killed in between leaves the window open, and the next row's `LaneAdmission.prove` removes those
+objects and waits until they are gone before the lane-resource entry check. The check itself stays:
+it still refuses any foreign namespace no window recorded. Namespaces the entry check allows
+(infrastructure, the app, `<app>-sdo`) are never removed, and a window cut off before the injection
+returned removes only objects new since it opened.
+
+`up --redeploy` is repeatable for every app. The worker bridge routes SREGym's `Helm.install`, the
+one entry point for the app and telemetry charts, through `helm upgrade --install`
+(`fastloop/idempotent_helm.py`), so a lane that still holds the release no longer fails with
+"cannot re-use a name that is still in use".
+
 # Recovery isolation
 
 For SDO streams with latent faults, add `--detection-timeout SECONDS` to

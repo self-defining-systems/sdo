@@ -69,9 +69,9 @@ func (p compiledForeignInvariant) Diagnose(ctx context.Context, view program.Rea
 	}
 	cmd := exec.CommandContext(ctx, p.binary)
 	cmd.Stdin = bytes.NewReader(data)
-	output, err := cmd.CombinedOutput()
+	output, stderr, err := commandStdout(cmd)
 	if err != nil {
-		return program.Verdict{}, fmt.Errorf("scripted invariant: %w: %s", err, output)
+		return program.Verdict{}, fmt.Errorf("scripted invariant: %w: %s%s", err, output, stderr)
 	}
 	var verdict program.Verdict
 	if err := json.Unmarshal(output, &verdict); err != nil {

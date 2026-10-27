@@ -127,6 +127,12 @@ def _memory_pod_uid(pod: dict[str, Any]) -> str:
     return mirror
 
 
+def allowed_namespaces(app_namespaces: Set[str], policy: LaneResourcePolicy | None = None) -> frozenset[str]:
+    """The only namespaces a lane may hold at admission: infrastructure, the app and its SDO control namespace."""
+    policy = policy or LaneResourcePolicy()
+    return policy.infrastructure_namespaces | set(app_namespaces) | {f"{name}-sdo" for name in app_namespaces}
+
+
 def evaluate_lane_resources(
     *,
     namespaces: dict[str, Any],
@@ -145,7 +151,7 @@ def evaluate_lane_resources(
         _namespace(namespace)
     if now.utcoffset() is None:
         raise ValueError("eval: admission clock must include timezone")
-    allowed = policy.infrastructure_namespaces | set(app_namespaces) | {f"{name}-sdo" for name in app_namespaces}
+    allowed = allowed_namespaces(app_namespaces, policy)
     observed = set()
     for row in namespaces["items"]:
         metadata = row["metadata"]

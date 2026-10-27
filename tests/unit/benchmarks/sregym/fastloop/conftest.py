@@ -57,3 +57,25 @@ def image_repo(tmp_path: Path) -> ImageRepo:
         "image inputs",
     )
     return repo
+
+
+class _EmptyLaneInventory:
+    def list_objects(self) -> frozenset[str]:
+        return frozenset()
+
+    def delete(self, identity: str) -> None:
+        raise AssertionError(f"unexpected lane delete {identity}")
+
+
+@pytest.fixture(autouse=True)
+def bridge_lane_guards(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    """Worker-bridge tests run against stub SREGym modules and a synthetic kubeconfig.
+
+    The bridge's two lane guards would otherwise patch a stub ``Helm`` and write a setup ledger next to
+    a relative kubeconfig while calling kubectl. test_setup_ledger.py overrides this fixture to run them.
+    """
+    from benchmarks.sregym.fastloop import worker_bridge
+
+    monkeypatch.setattr(worker_bridge, "_make_deploy_idempotent", lambda: None)
+    monkeypatch.setattr(worker_bridge, "KubectlClusterInventory", lambda kubeconfig: _EmptyLaneInventory())
+    monkeypatch.setattr(worker_bridge, "ledger_path", lambda kubeconfig: tmp_path / "bridge-setup-ledger.json")

@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -268,7 +269,7 @@ func testProductionResponderMenuFactory(t *testing.T, enabled bool) {
 	cmd := exec.CommandContext(ctx, python, "run", "--no-sync", "python", script, request.IncidentID, sessionDir)
 	cmd.Dir = root
 	cmd.Env = append(os.Environ(), "PYTHONPATH="+root, "SDO_TOOLS_DIR="+filepath.Join(sessionDir, "tools"), "CODEX_HOME="+filepath.Join(sessionDir, "codex"), "SDO_SESSION_SCRATCH="+filepath.Join(sessionDir, "scratch"), "SDO_MITIGATION_SESSION=1")
-	output, err := cmd.Output()
+	output, stderr, err := commandStdout(cmd)
 	if err != nil {
 		live, readErr := client.CoreV1().Services("app").Get(ctx, menuService.Name, metav1.GetOptions{})
 		for _, action := range client.Actions() {
@@ -276,13 +277,13 @@ func testProductionResponderMenuFactory(t *testing.T, enabled bool) {
 				t.Logf("Service write: %s", patch.GetPatch())
 			}
 		}
-		t.Fatalf("factory scripted worker: %v; live Service=%+v read error=%v\n%s\n%s", err, live, readErr, output, logs)
+		t.Fatalf("factory scripted worker: %v; live Service=%+v read error=%v\n%s\n%s\n%s", err, live, readErr, output, stderr, logs)
 	}
 	var scripted struct {
 		SessionID string `json:"session_id"`
 	}
 	if err := json.Unmarshal(output, &scripted); err != nil {
-		t.Fatal(err)
+		t.Fatalf("factory scripted worker stdout is not JSON: %v\nstdout: %s\nstderr: %s", err, output, stderr)
 	}
 	result := completedResult(request.IncidentID)
 	result.ResponderSessionID = scripted.SessionID
@@ -383,3 +384,29 @@ turn.finish("read failed mitigation report and selected successful alternate in 
 (directory/"factory-report.json").write_text(json.dumps(dict(first=first,second=second)))
 print(json.dumps(dict(session_id=rollout.session_id)))
 `
+
+// commandStdout runs cmd and returns stdout, the one channel a test may parse as data. Stderr belongs
+// to the tool (uv prints its own deprecation warnings there) and is returned only for failure messages.
+func commandStdout(cmd *exec.Cmd) (stdout, stderr []byte, err error) {
+	var out, errOut bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &errOut
+	err = cmd.Run()
+	return out.Bytes(), errOut.Bytes(), err
+}
+
+func TestCommandStdoutKeepsToolWarningsOutOfTheDataChannel(t *testing.T) {
+	cmd := exec.Command("sh", "-c", `echo 'warning: deprecated setting' >&2; echo '{"session_id":"s1"}'`)
+	stdout, stderr, err := commandStdout(cmd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var parsed struct {
+		SessionID string `json:"session_id"`
+	}
+	if err := json.Unmarshal(stdout, &parsed); err != nil || parsed.SessionID != "s1" {
+		t.Fatalf("stdout must be exactly the data channel: %q %v", stdout, err)
+	}
+	if !strings.Contains(string(stderr), "deprecated setting") {
+		t.Fatalf("stderr must stay available for failure messages: %q", stderr)
+	}
+}
