@@ -104,9 +104,9 @@ func TestVerifiedClosureSavesProgramWithoutBaselineAttributionOrObservation(t *t
 	copyTree(t, "../../../../tests/fixtures/sdo/playbook_program_app/.sdo", filepath.Join(root, ".sdo"))
 	outcome := closureOutcome("success", &contracts.ConfirmedRootCause{Resources: []*contracts.ObjectRef{{Kind: "Service", Namespace: "demo", Name: "front"}}})
 	decision := &contracts.ReflectionDecision{LearningDecision: "updated", PlaybookIds: []string{"service-targetport-mismatch"}}
-	ds, err := ReflectionLearningDiagnostics(root, outcome, decision)
-	if err != nil || len(ds) != 0 {
-		t.Fatalf("verified closure with a delete-only receipt not learnable: %v %v", ds, err)
+	ds := ReflectionCoverageGaps(root, outcome, decision)
+	if len(ds) != 0 {
+		t.Fatalf("verified closure with a delete-only receipt not learnable: %v", ds)
 	}
 	// The same evidence on a closure that did not verify healthy learns nothing.
 	outcome.Classification = "failed"
@@ -119,7 +119,7 @@ func TestVerifiedClosureSavesProgramWithoutBaselineAttributionOrObservation(t *t
 // owner-chained write to an object they control) has no transition a program
 // can bind or replay, so "a program or a typed SDK gap" has no reachable exit.
 // A no_recorded_repair decline records it and the replayable cause still learns.
-func TestNoRecordedRepairDeclineRecordsACauseWithoutATransition(t *testing.T) {
+func TestCauseWithoutATransitionIsAGapAndTheTypedDeclineStaysValid(t *testing.T) {
 	root := t.TempDir()
 	copyTree(t, "../../../../tests/fixtures/sdo/playbook_program_app/.sdo", filepath.Join(root, ".sdo"))
 	front := &contracts.ConfirmedRootCause{Resources: []*contracts.ObjectRef{{Kind: "Service", Namespace: "demo", Name: "front"}}}
@@ -137,13 +137,9 @@ func TestNoRecordedRepairDeclineRecordsACauseWithoutATransition(t *testing.T) {
 		t.Fatalf("setup: both causes should be verified, got %v", got)
 	}
 	decision := &contracts.ReflectionDecision{LearningDecision: "updated", PlaybookIds: []string{"service-targetport-mismatch"}}
-	ds, err := ReflectionLearningDiagnostics(root, outcome, decision)
-	if err != nil || len(ds) != 1 || ds[0].Rule != RuleReflectionProgramRequired {
-		t.Fatalf("expected the unreachable program demand for the cause without a transition: %v %v", ds, err)
-	}
-	decision.DeclineReason = "no_recorded_repair"
-	if ds, err = ReflectionLearningDiagnostics(root, outcome, decision); err != nil || len(ds) != 0 {
-		t.Fatalf("decline did not record the cause without a transition: %v %v", ds, err)
+	ds := ReflectionCoverageGaps(root, outcome, decision)
+	if len(ds) != 1 || ds[0].Rule != RuleReflectionProgramRequired {
+		t.Fatalf("the cause without a transition should be one recorded gap, not a refusal: %v", ds)
 	}
 	if ds := ReflectionDiagnostics(decision, []string{".sdo/playbooks/service-targetport-mismatch/README.md"}); len(ds) != 0 {
 		t.Fatalf("decision with the typed decline reason was rejected: %v", ds)

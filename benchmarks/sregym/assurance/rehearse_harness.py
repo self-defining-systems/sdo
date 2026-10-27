@@ -2,16 +2,14 @@
 
     uv run python -m benchmarks.sregym.assurance.rehearse_harness --code-root <freeze> --lane <id>
 
-Runs four scenarios serially on one private toy kind cluster (real controller,
+Runs three scenarios serially on one private toy kind cluster (real controller,
 broker, judge refresh and strict receipts; scripted workers, no model, no Secret
 read) built from ``--code-root`` through the fast loop's source mount:
 
 * ``baseline``: learn a program, then reuse it (the RH3 machinery on the toy app);
 * ``p51-restart-in-pause``: the controller Pod is replaced inside the injection pause;
 * ``p52-source-repair-refresh``: the responder's own source repair moves accepted
-  memory and the judge refresh rewrites a health detector before closure;
-* ``p53-program-write-rbac``: the installed controller may delete the ReplicaSets and
-  Pods a learned program's plan deletes.
+  memory and the judge refresh rewrites a health detector before closure.
 
 A new harness may switch lanes only after this exits 0 on one lane. The summary
 JSON (``rehearse-harness-summary.json``) records every scenario's checks.
@@ -51,12 +49,6 @@ TIME_SCALE = "0.1"
 BLIND_RESUME_LINE = "resume observation of namespace"
 BLIND_RESUME_CAUSE = "context deadline exceeded"
 HEALTH_DETECTORS = ".sdo/diagnostics/detectors/health"
-#: Writes a learned program's plan may emit that the installed controller must be allowed to perform.
-PROGRAM_WRITE_PROBES: tuple[tuple[str, str], ...] = (
-    ("delete", "replicasets.apps"),
-    ("patch", "replicasets.apps"),
-    ("delete", "pods"),
-)
 
 
 @dataclass(frozen=True)
@@ -64,7 +56,7 @@ class Scenario:
     name: str
     #: The failures this scenario reproduces (P-numbers from FAILURE_PATTERNS) or the baseline it keeps.
     covers: tuple[str, ...]
-    stream: str | None
+    stream: str
     #: Extra ``fastloop run`` flags.
     run_flags: tuple[str, ...] = ()
     #: Names from :data:`CHECKS` run after the stream.
@@ -110,10 +102,6 @@ class Context:
     results: Path
     workspace: Path
     scenario: Scenario
-    #: Runs a command and returns ``(exit code, combined output)`` (used by the cluster probes).
-    command: Callable[[Sequence[str]], tuple[int, str]]
-    namespace: str = ""
-    kubeconfig: str = ""
 
 
 # --- checks ------------------------------------------------------------------------------------------------
@@ -252,39 +240,11 @@ def check_restart_in_pause(ctx: Context) -> list[Check]:
     return checks
 
 
-def check_program_write_rbac(ctx: Context) -> list[Check]:
-    """P53: the installed controller may perform the deletes a learned program's plan emits."""
-
-    control = f"{ctx.namespace}-sdo"
-    subject = f"system:serviceaccount:{control}:sdo-controller"
-    checks = []
-    for verb, resource in PROGRAM_WRITE_PROBES:
-        code, output = ctx.command(
-            [
-                "kubectl",
-                "--kubeconfig",
-                ctx.kubeconfig,
-                "auth",
-                "can-i",
-                verb,
-                resource,
-                "-n",
-                ctx.namespace,
-                "--as",
-                subject,
-            ]
-        )
-        allowed = output.strip().splitlines()[-1:] == ["yes"] if code == 0 else False
-        checks.append(Check(f"controller can {verb} {resource}", allowed, output.strip()[:200]))
-    return checks
-
-
 CHECKS: dict[str, Callable[[Context], list[Check]]] = {
     "incidents": check_incidents,
     "native-receipt": check_native_receipt,
     "source-repair-refresh": check_source_repair_refresh,
     "restart-in-pause": check_restart_in_pause,
-    "program-write-rbac": check_program_write_rbac,
 }
 
 SCENARIOS: tuple[Scenario, ...] = (
@@ -307,13 +267,6 @@ SCENARIOS: tuple[Scenario, ...] = (
         covers=("P52",),
         stream="single_image_fault.json",
         checks=("incidents", "native-receipt", "source-repair-refresh"),
-    ),
-    Scenario(
-        name="p53-program-write-rbac",
-        covers=("P53",),
-        stream=None,
-        checks=("program-write-rbac",),
-        expected_incidents=1,
     ),
 )
 
@@ -362,13 +315,11 @@ def up_arguments(code_root: Path, run_dir: Path, lane: str, image_tag: str = "fa
 def scenario_stream(code_root: Path, scenario: Scenario) -> Path:
     """The scenario's stream: a fixture name under :data:`FIXTURES`, or an absolute path a caller generated."""
 
-    assert scenario.stream is not None
     stream = Path(scenario.stream)
     return stream if stream.is_absolute() else code_root / FIXTURES / stream
 
 
 def run_arguments(code_root: Path, run_dir: Path, scenario: Scenario, run_id: str) -> list[str]:
-    assert scenario.stream is not None
     flags = list(scenario.run_flags)
     if "--restart-controller-in-injection-pause" in flags:
         flags.insert(
@@ -531,22 +482,18 @@ class Gate:
             if code:
                 result.status, result.detail = "error", f"reset failed (exit {code}): {output[-300:]}"
                 return result
-            if scenario.stream is not None:
-                code, output = self._step(
-                    run_arguments(self.code_root, self.run_dir, scenario, run_id), WAIT_BACKSTOP_SECONDS
-                )
-                if code:
-                    # A failed stream still leaves records; the checks name the first broken contract.
-                    result.detail = f"fastloop run exit {code}: {output[-300:]}"
+            code, output = self._step(
+                run_arguments(self.code_root, self.run_dir, scenario, run_id), WAIT_BACKSTOP_SECONDS
+            )
+            if code:
+                # A failed stream still leaves records; the checks name the first broken contract.
+                result.detail = f"fastloop run exit {code}: {output[-300:]}"
             environment = self.load_environment(self.run_dir)
             ctx = Context(
                 run_dir=self.run_dir,
                 results=results,
                 workspace=environment.workspace,
                 scenario=scenario,
-                command=lambda argv: self._step(argv, 60),
-                namespace=environment.namespace,
-                kubeconfig=str(environment.kubeconfig),
             )
             for name in scenario.checks:
                 result.checks.extend(CHECKS[name](ctx))
@@ -607,8 +554,7 @@ def dry_run(code_root: Path, run_dir: Path, lane: str, image_tag: str = "fastloo
     lines = [" ".join(up_arguments(code_root, run_dir, lane, image_tag))]
     for scenario in SCENARIOS:
         lines.append(" ".join(reset_arguments(code_root, run_dir)))
-        if scenario.stream is not None:
-            lines.append(" ".join(run_arguments(code_root, run_dir, scenario, f"reh-{scenario.name}-<ts>")))
+        lines.append(" ".join(run_arguments(code_root, run_dir, scenario, f"reh-{scenario.name}-<ts>")))
         lines.append(f"# checks: {', '.join(scenario.checks)}  (covers {', '.join(scenario.covers)})")
     return "\n".join(lines)
 

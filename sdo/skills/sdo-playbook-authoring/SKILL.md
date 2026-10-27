@@ -22,12 +22,11 @@ Read the [memory principles](../sdo-memory/SKILL.md#memory-principles) for evide
    `DetectionContext.DiffAgainstSource` observes field drift and source absence before playbook selection.
    Use the responder's recorded actions and existing session observations to build the replay fixture.
    Controller captures and the evidence tools are optional sources, never prerequisites for learning.
-4. Author final files in the proposal checkout and register every playbook in its index. A fixture labels
+4. Author final files in the proposal checkout; SDO derives `fault_class` and the index entry. A fixture labels
    its positive programs and binds the confirmed-cause resources. Include observed primitive replies and
    accepted.json when the mitigation needs source values. Preserve accepted cases; add new evidence by ID.
-5. Validate compilation and mitigation-clears-diagnosis replay, then return the same decision and changed
-   logical IDs. A README-only update fails for a verified repair. The only exception is a typed SDK gap
-   naming the cause resources, missing primitive and concrete reason; it cannot excuse other causes.
+5. Validate compilation, detector tests and mitigation-clears-diagnosis replay, then return the same decision and
+   changed logical IDs. A cause you cannot save as a program is recorded as a coverage gap; say why in the result.
    Return `updated` with changed playbook IDs and scoped `sdk_gaps` when only some causes are learnable.
    Controller-listed `undetected_causes` permit new detector coverage for measured repair transitions;
    bind the replay case to their captured open/fixed configuration without claiming independent health proof.

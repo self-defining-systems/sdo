@@ -58,8 +58,8 @@ health objective needs more.
 Advice, not validator-checked: make tests generalize by varying resource names, namespaces, and counts from the
 incident that taught the pattern.
 - Incident detectors must stay quiet on the controller's healthy reference (pre-incident, or the closure state it
-  verified healthy), including required recorded observations; an agent-authored healthy state cannot replace it. Enforced by:
-  `detector.healthy-baseline`.
+  verified healthy), including required recorded observations; an agent-authored healthy state cannot replace it.
+  When the controller has no capture, the healthy replay is skipped and noted. Enforced by: `detector.healthy-baseline`.
 - Health detectors must not report ExternalName Services for missing endpoints; the compile layer runs this
   generated check. Enforced by: `detector.test`.
 

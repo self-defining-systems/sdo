@@ -307,6 +307,10 @@ message BrokerLedger {
   // incident's follow-up does not wait for it. Replayed after restart.
   bool reflection_queued = 28;
   google.protobuf.Timestamp reflection_queued_at = 29;
+  // Non-blocking coverage gaps the accepted reflection commit carries (a verified
+  // cause without a program, a skipped healthy replay, an unreachable repeat).
+  // The count is the number of entries; the committed outcome file stays immutable.
+  repeated MemoryDiagnostic reflection_coverage_gaps = 30;
 }
 
 // Source field ownership adoption survives controller restarts.

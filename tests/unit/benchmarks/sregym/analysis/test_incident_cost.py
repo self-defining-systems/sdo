@@ -1056,3 +1056,37 @@ def test_stage_reflection_total_includes_every_logged_turn_of_its_incident(tmp_p
     assert (usage.input_tokens, usage.output_tokens) == (350, 35)
     # A receipt that already totals the turns is kept.
     assert _reflection_usage({"reflection_usage": _usage(350, 35)}, [], None, None).input_tokens == 350
+
+
+def _reflection_log(run: Path, incident: str, turns: list[dict[str, int]]) -> None:
+    import hashlib
+
+    digest = hashlib.sha256(incident.encode()).hexdigest()[:32]
+    log = run / "sdo_runtime" / "sessions" / digest / "reflection-usage.jsonl"
+    log.parent.mkdir(parents=True)
+    log.write_text("".join(json.dumps({"session_id": "s", "usage": turn}) + "\n" for turn in turns), encoding="utf-8")
+
+
+@pytest.mark.parametrize("mode", ["resume", "fresh"])
+def test_reflection_cost_keeps_a_failed_turn_the_exported_rollouts_lack(tmp_path: Path, mode: str) -> None:
+    """Two reflection turns, the first failed: its rollout turn never completed, so only the usage log has it."""
+
+    from benchmarks.sregym.analysis.incident_cost import logged_reflection_cost
+
+    failed, retried = _usage(700, 7), _usage(300, 20)
+    run = tmp_path / "run"
+    _reflection_log(run, "incident-3", [failed, retried])
+    responder_rollout = tmp_path / "rollout-responder.jsonl"
+    own_rollout = tmp_path / "rollout-reflection.jsonl"
+    if mode == "resume":
+        _token_turns(responder_rollout, [[_usage(500, 10)], [retried]])
+        own = None
+    else:
+        _token_turns(responder_rollout, [[_usage(500, 10)]])
+        _token_turns(own_rollout, [[retried]])
+        own = [own_rollout]
+    receipt = {"reflection_session_mode": mode, "reflection_usage": retried}
+
+    usage = _reflection_usage(receipt, [responder_rollout], own, logged_reflection_cost(run, "incident-3"))
+
+    assert (usage.input_tokens, usage.output_tokens) == (1000, 27)

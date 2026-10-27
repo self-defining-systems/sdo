@@ -46,7 +46,7 @@ func TestAcceptedCorpusUsesAcceptedBaseCommit(t *testing.T) {
 	}
 }
 
-func TestSessionFixtureRequiresAnIndependentHealthyReference(t *testing.T) {
+func TestSessionFixtureWithoutIndependentHealthyReferenceSkipsReplayAndRecordsAGap(t *testing.T) {
 	for _, name := range []string{"missing directory", "absent directory", "file instead of directory", "missing incident", "empty provisioned context", "healthy reference only"} {
 		t.Run(name, func(t *testing.T) {
 			root := copyParityTree(t)
@@ -85,19 +85,25 @@ func TestSessionFixtureRequiresAnIndependentHealthyReference(t *testing.T) {
 				ctx = validate.WithCaptureSource(ctx, "", "")
 			}
 			compiled := false
-			diagnostics, err := validate.Check(ctx, request, func(context.Context, validate.Request) ([]validate.Diagnostic, error) {
-				compiled = true
+			var gaps []validate.Diagnostic
+			request.CoverageGaps = &gaps
+			baseline := "unset"
+			diagnostics, err := validate.Check(ctx, request, func(_ context.Context, r validate.Request) ([]validate.Diagnostic, error) {
+				compiled, baseline = true, r.HealthyBaseline
 				return nil, nil
 			})
 			if err != nil {
 				t.Fatal(err)
 			}
+			if len(diagnostics) != 0 || !compiled {
+				t.Fatalf("session-authored positive fixture rejected: %v compiled=%v", diagnostics, compiled)
+			}
 			if name == "healthy reference only" {
-				if len(diagnostics) != 0 || !compiled {
-					t.Fatalf("session-authored positive fixture rejected despite trusted healthy reference: %v", diagnostics)
+				if baseline == "" || len(gaps) != 0 {
+					t.Fatalf("trusted healthy reference not used: baseline=%q gaps=%v", baseline, gaps)
 				}
-			} else if len(diagnostics) != 1 || diagnostics[0].Rule != validate.RuleDetectorHealthyBaseline || compiled {
-				t.Fatalf("missing independent healthy reference did not fail closed: %v compiled=%v", diagnostics, compiled)
+			} else if baseline != "" || len(gaps) != 1 || gaps[0].Rule != validate.RuleDetectorHealthyBaseline {
+				t.Fatalf("missing independent healthy reference must skip the replay and record a gap: baseline=%q gaps=%v", baseline, gaps)
 			}
 		})
 	}

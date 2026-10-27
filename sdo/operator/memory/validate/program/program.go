@@ -426,10 +426,11 @@ func ReplayTests(programs []Spec) string {
 	}
 	var test strings.Builder
 	test.WriteString(`package generated
-import("context";"encoding/json";"os";"path/filepath";"strings";"testing";"sdo.dev/operator/runtime/replay";"sdo.dev/operator/sdk/sdktest")
+import("context";"encoding/json";"os";"path/filepath";"testing";"sdo.dev/operator/runtime/replay";"sdo.dev/operator/sdk/sdktest")
 func TestProgramCorpus(t *testing.T){
  var notes []sdktest.MitigationReplayResult
- defer func(){data,err:=json.Marshal(notes);if err!=nil{t.Fatal(err)};if err:=os.WriteFile("mitigation-replay.json",data,0600);err!=nil{t.Fatal(err)}}()
+ var gaps []string
+ defer func(){data,err:=json.Marshal(notes);if err!=nil{t.Fatal(err)};if err:=os.WriteFile("mitigation-replay.json",data,0600);err!=nil{t.Fatal(err)};data,err=json.Marshal(gaps);if err!=nil{t.Fatal(err)};if err:=os.WriteFile("coverage-gaps.json",data,0600);err!=nil{t.Fatal(err)}}()
  registry,err:=Programs();if err!=nil{t.Fatal(err)}
 `)
 	for _, item := range programs {
@@ -438,9 +439,10 @@ func TestProgramCorpus(t *testing.T){
  c,err:=replay.LoadRepairCase(filepath.Join("..","corpus",%q));if err!=nil{t.Fatal(err)}
  r:=replay.CheckRepeat(context.Background(),registry,All(),%q,c)
  if r.Status!="replayed" {
-  for _,message:=range r.Errors {if strings.Contains(message,"program.repeat-unreachable:"){t.Fatal(message)}}
-  t.Fatalf("program.mitigation-not-repaired: mitigation must clear diagnosis: status=%%s errors=%%v faulted=%%s post=%%s",r.Status,r.Errors,r.Faulted.Result,r.Post.Result)
+  rule:=replay.RepeatDefectRule(r.Errors);if rule=="" {rule="program.mitigation-not-repaired"}
+  t.Fatalf("%%s: mitigation must clear diagnosis: status=%%s errors=%%v faulted=%%s post=%%s",rule,r.Status,r.Errors,r.Faulted.Result,r.Post.Result)
  }
+ gaps=append(gaps,r.Notes...)
  notes=append(notes,ReplayNote(%q,%q,r))
  })
 `, item.ID+"/"+id, id, item.ID, item.ID, id)

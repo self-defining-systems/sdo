@@ -156,8 +156,11 @@ type MemoryCheckReport struct {
 	Phase                 string                  `protobuf:"bytes,4,opt,name=phase,proto3" json:"phase,omitempty"`
 	Base                  string                  `protobuf:"bytes,5,opt,name=base,proto3" json:"base,omitempty"`
 	MitigationReplayNotes []*MitigationReplayNote `protobuf:"bytes,6,rep,name=mitigation_replay_notes,json=mitigationReplayNotes,proto3" json:"mitigation_replay_notes,omitempty"`
-	unknownFields         protoimpl.UnknownFields
-	sizeCache             protoimpl.SizeCache
+	// Non-blocking notes about learning the check left out, such as a verified
+	// cause with no program or a skipped healthy replay. They never reject.
+	CoverageGaps  []*MemoryDiagnostic `protobuf:"bytes,7,rep,name=coverage_gaps,json=coverageGaps,proto3" json:"coverage_gaps,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *MemoryCheckReport) Reset() {
@@ -228,6 +231,13 @@ func (x *MemoryCheckReport) GetBase() string {
 func (x *MemoryCheckReport) GetMitigationReplayNotes() []*MitigationReplayNote {
 	if x != nil {
 		return x.MitigationReplayNotes
+	}
+	return nil
+}
+
+func (x *MemoryCheckReport) GetCoverageGaps() []*MemoryDiagnostic {
+	if x != nil {
+		return x.CoverageGaps
 	}
 	return nil
 }
@@ -407,14 +417,15 @@ const file_sdodev_contracts_v1alpha1_memory_proto_rawDesc = "" +
 	"\x12STATUS_UNSPECIFIED\x10\x00\x12\x13\n" +
 	"\x0fSTATUS_REPLAYED\x10\x01\x12&\n" +
 	"\"STATUS_SKIPPED_UNREPLAYABLE_EFFECT\x10\x02\x12\x1e\n" +
-	"\x1aSTATUS_OBSERVED_TRANSITION\x10\x03\"\x9f\x02\n" +
+	"\x1aSTATUS_OBSERVED_TRANSITION\x10\x03\"\xf1\x02\n" +
 	"\x11MemoryCheckReport\x12M\n" +
 	"\vdiagnostics\x18\x01 \x03(\v2+.sdodev.contracts.v1alpha1.MemoryDiagnosticR\vdiagnostics\x12\x12\n" +
 	"\x04root\x18\x02 \x01(\tR\x04root\x12\x14\n" +
 	"\x05actor\x18\x03 \x01(\tR\x05actor\x12\x14\n" +
 	"\x05phase\x18\x04 \x01(\tR\x05phase\x12\x12\n" +
 	"\x04base\x18\x05 \x01(\tR\x04base\x12g\n" +
-	"\x17mitigation_replay_notes\x18\x06 \x03(\v2/.sdodev.contracts.v1alpha1.MitigationReplayNoteR\x15mitigationReplayNotes\"\x81\x01\n" +
+	"\x17mitigation_replay_notes\x18\x06 \x03(\v2/.sdodev.contracts.v1alpha1.MitigationReplayNoteR\x15mitigationReplayNotes\x12P\n" +
+	"\rcoverage_gaps\x18\a \x03(\v2+.sdodev.contracts.v1alpha1.MemoryDiagnosticR\fcoverageGaps\"\x81\x01\n" +
 	"\x0eMemoryArtifact\x12\x1b\n" +
 	"\x04kind\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x04kind\x12\x0e\n" +
 	"\x02id\x18\x02 \x01(\tR\x02id\x12\x1b\n" +
@@ -454,13 +465,14 @@ var file_sdodev_contracts_v1alpha1_memory_proto_depIdxs = []int32{
 	0, // 0: sdodev.contracts.v1alpha1.MitigationReplayNote.status:type_name -> sdodev.contracts.v1alpha1.MitigationReplayNote.Status
 	6, // 1: sdodev.contracts.v1alpha1.MemoryCheckReport.diagnostics:type_name -> sdodev.contracts.v1alpha1.MemoryDiagnostic
 	1, // 2: sdodev.contracts.v1alpha1.MemoryCheckReport.mitigation_replay_notes:type_name -> sdodev.contracts.v1alpha1.MitigationReplayNote
-	3, // 3: sdodev.contracts.v1alpha1.MemoryListing.artifacts:type_name -> sdodev.contracts.v1alpha1.MemoryArtifact
-	7, // 4: sdodev.contracts.v1alpha1.MemoryOutcomes.outcomes:type_name -> sdodev.contracts.v1alpha1.OutcomeRecord
-	5, // [5:5] is the sub-list for method output_type
-	5, // [5:5] is the sub-list for method input_type
-	5, // [5:5] is the sub-list for extension type_name
-	5, // [5:5] is the sub-list for extension extendee
-	0, // [0:5] is the sub-list for field type_name
+	6, // 3: sdodev.contracts.v1alpha1.MemoryCheckReport.coverage_gaps:type_name -> sdodev.contracts.v1alpha1.MemoryDiagnostic
+	3, // 4: sdodev.contracts.v1alpha1.MemoryListing.artifacts:type_name -> sdodev.contracts.v1alpha1.MemoryArtifact
+	7, // 5: sdodev.contracts.v1alpha1.MemoryOutcomes.outcomes:type_name -> sdodev.contracts.v1alpha1.OutcomeRecord
+	6, // [6:6] is the sub-list for method output_type
+	6, // [6:6] is the sub-list for method input_type
+	6, // [6:6] is the sub-list for extension type_name
+	6, // [6:6] is the sub-list for extension extendee
+	0, // [0:6] is the sub-list for field type_name
 }
 
 func init() { file_sdodev_contracts_v1alpha1_memory_proto_init() }

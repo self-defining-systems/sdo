@@ -897,26 +897,31 @@ def _reflection_usage(
     Reflection turns in sessions of their own (fresh mode, fresh retries) are
     read from those sessions' rollouts (*own_rollouts*), which also carry the
     reasoning and request counts older receipts lack. Without rollouts, the
-    receipt's ``reflection_usage`` is used, unless the incident's own usage log
-    (*logged*) totals more: receipts written before the outcome record summed
-    every reflection turn kept only the last.
+    receipt's ``reflection_usage`` is used.
+
+    The incident's own usage log (*logged*) records every reflection turn,
+    failed and retried ones included, so no source may total less than it:
+    receipts written before the outcome record summed kept only the last turn,
+    and a turn that failed leaves no complete rollout turn.
     """
 
     ledger = receipt.get("native_ledger")
     decision = ledger.get("reflection_decision") if isinstance(ledger, dict) else None
     native_usage = decision.get("usage") if isinstance(decision, dict) else None
     recorded = TokenUsage.from_mapping(receipt.get("reflection_usage") or native_usage)
-    if logged is not None and _raw_total(logged.usage) > _raw_total(recorded):
-        recorded = logged.usage
     own = [turn for turn in rollout_turn_usages(own_rollouts or []) if turn.input_tokens]
+    measured: TokenUsage | None = None
     if receipt.get("reflection_session_mode") == "resume":
         shared = rollout_turn_usages(responder_rollouts)
-        if len(shared) < 2:
-            return recorded
-        return sum([*shared[1:], *own], TokenUsage())
-    if own:
-        return sum(own, TokenUsage())
-    return recorded
+        if len(shared) >= 2:
+            measured = sum([*shared[1:], *own], TokenUsage())
+    elif own:
+        measured = sum(own, TokenUsage())
+    # A resumed receipt's recorded usage is session-cumulative, so it competes only when nothing was measured.
+    candidate = measured if measured is not None else recorded
+    if logged is not None and _raw_total(logged.usage) > _raw_total(candidate):
+        return logged.usage
+    return candidate
 
 
 def _usage_session_ids(paths: list[Path], *, incident_id: str | None = None) -> list[str]:

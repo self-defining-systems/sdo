@@ -16,7 +16,7 @@ import (
 func TestMitigationReplayNotesAreInformational(t *testing.T) {
 	var output bytes.Buffer
 	note := sdktest.MitigationReplayResult{ProgramID: "restore", CaseID: "incident", Status: sdktest.MitigationReplaySkippedUnreplayableEffect, Effects: []string{"program.ReconcileFromSource"}}
-	if err := WriteReport(&output, nil, note); err != nil {
+	if err := WriteReport(&output, nil, nil, note); err != nil {
 		t.Fatal(err)
 	}
 	var report contracts.MemoryCheckReport

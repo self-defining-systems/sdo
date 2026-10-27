@@ -590,24 +590,6 @@ func TestT1TrustProperty(t *testing.T) {
 	}
 }
 
-func TestT1NoRecordedRepairDeclineDoesNotExcuseACauseWithAnOwnWrite(t *testing.T) {
-	c := t1Classes()[6] // cause 1 has its own recorded write and no program
-	c.decline = true
-	run := t1RunBroker(t, c, false)
-	if run.ledger.GetReflectionNoRepairCount() != 0 || !run.ledger.ReflectionRejected || run.calls != 1+broker.MaxValidationRetries {
-		t.Fatalf("decline excused a cause with its own recorded write and no program: calls=%d ledger=%v", run.calls, run.ledger)
-	}
-	for _, rejection := range run.ledger.ReflectionRejections {
-		found := false
-		for _, diagnostic := range rejection.Diagnostics {
-			found = found || diagnostic.Rule == "reflection.program-required"
-		}
-		if !found {
-			t.Errorf("a cause with an own-resource write and no program must still require one: %v", rejection)
-		}
-	}
-}
-
 func TestT1EveryUnboundWriteGetsAQuestion(t *testing.T) {
 	for _, grouped := range []bool{true, false} {
 		t.Run(fmt.Sprintf("grouped=%t", grouped), func(t *testing.T) {

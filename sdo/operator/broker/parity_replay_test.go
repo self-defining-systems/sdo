@@ -93,24 +93,25 @@ func TestCLIAndBrokerAgreeOnVerifiedCauseReplayCoverage(t *testing.T) {
 				cli.Env = append(os.Environ(), "SDO_ACTOR=responder", "SDO_PHASE=reflection", "SDO_BASE_COMMIT="+proposal.BaseCommit, "SDO_OPERATOR_ROOT="+operatorRoot, "SDO_HEALTHY_BASELINE=", "SDO_CAPTURED_CORPUS_DIR=", "SDO_INCIDENT_ID=incident")
 				var stdout, stderr bytes.Buffer
 				cli.Stdout, cli.Stderr = &stdout, &stderr
-				cliErr := cli.Run()
+				if cliErr := cli.Run(); cliErr != nil {
+					t.Fatalf("a coverage gap must not fail the check: %v: %s", cliErr, stderr.String())
+				}
 				report := new(contracts.MemoryCheckReport)
 				if err := protojson.Unmarshal(stdout.Bytes(), report); err != nil {
-					t.Fatalf("CLI: %v: %v: %s", cliErr, err, stderr.String())
+					t.Fatalf("CLI: %v: %s", err, stderr.String())
 				}
-				_, publishErr := repository.PublishReflection(ctx, "incident", decision)
-				var failure *validate.Failure
-				if !errors.As(publishErr, &failure) {
-					t.Fatalf("want shared content rejection: %v", publishErr)
+				receipt, publishErr := repository.PublishReflection(validate.WithCaptureSource(ctx, "", ""), "incident", decision)
+				if publishErr != nil {
+					t.Fatalf("a coverage gap must not reject the reflection: %v", publishErr)
 				}
-				if !proto.Equal(&contracts.MemoryCheckReport{Diagnostics: report.Diagnostics}, &contracts.MemoryCheckReport{Diagnostics: validate.ProtoDiagnostics(failure.Diagnostics)}) {
-					t.Fatalf("CLI/broker diagnostics differ: CLI %v broker %v", report.Diagnostics, failure.Diagnostics)
+				if len(receipt.CoverageGaps) == 0 || !strings.Contains(strings.Join(gapKeys(receipt.CoverageGaps), "\n"), validate.RuleReflectionProgramRequired+": verified cause 1") {
+					t.Fatalf("broker receipt omitted the program gap: %v", receipt.CoverageGaps)
 				}
 				return report
 			}
 			report := check()
-			if len(report.Diagnostics) != 1 || report.Diagnostics[0].Rule != validate.RuleReflectionProgramRequired || !strings.Contains(report.Diagnostics[0].Message, "cause 1") {
-				t.Fatalf("uncovered verified cause was omitted or unverified cause included: %v", report)
+			if len(report.Diagnostics) != 0 || len(report.CoverageGaps) == 0 || report.CoverageGaps[0].Rule != validate.RuleReflectionProgramRequired || !strings.Contains(report.CoverageGaps[0].Message, "cause 1") {
+				t.Fatalf("uncovered verified cause was refused or unrecorded: %v", report)
 			}
 		})
 	}
@@ -226,7 +227,7 @@ func checkUnobservableDetectorLocator(t *testing.T, mode string) {
 	if !proto.Equal(&contracts.MemoryCheckReport{Diagnostics: report.Diagnostics}, &contracts.MemoryCheckReport{Diagnostics: validate.ProtoDiagnostics(failure.Diagnostics)}) {
 		t.Fatalf("diagnostics differ: CLI %v broker %v", report.Diagnostics, failure.Diagnostics)
 	}
-	if len(report.Diagnostics) != 2 || report.Diagnostics[0].Rule != validate.RuleDetectorTest || report.Diagnostics[1].Rule != validate.RuleProgramRepeatReachable || !strings.Contains(report.Diagnostics[0].Message, "detector.corpus-observation") {
+	if len(report.Diagnostics) != 1 || report.Diagnostics[0].Rule != validate.RuleDetectorTest || !strings.Contains(report.Diagnostics[0].Message, "detector.corpus-observation") {
 		t.Fatalf("locator failure was not actionable: %v", report)
 	}
 	if mode == "needs-judgement" && !strings.Contains(report.Diagnostics[0].Message, "Which listener is intended?") {

@@ -37,3 +37,23 @@ func (workspace *Workspace) MitigationReplayResults() ([]sdktest.MitigationRepla
 	}
 	return results, nil
 }
+
+// CoverageGaps reads the generated corpus gate's non-blocking notes, such as a
+// recorded incident the learned detectors do not reach.
+func (workspace *Workspace) CoverageGaps() ([]string, error) {
+	data, err := os.ReadFile(filepath.Join(workspace.Directory, "generated", "coverage-gaps.json"))
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > 1<<20 {
+		return nil, fmt.Errorf("coverage gap notes exceed 1 MiB")
+	}
+	var gaps []string
+	if err := json.Unmarshal(data, &gaps); err != nil {
+		return nil, fmt.Errorf("decode coverage gap notes: %w", err)
+	}
+	return gaps, nil
+}

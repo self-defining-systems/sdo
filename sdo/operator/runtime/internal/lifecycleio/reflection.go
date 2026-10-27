@@ -84,6 +84,7 @@ func (d ReflectionDriver) Execute(ctx context.Context, effect lifecyclecore.Refl
 		accepted, err = d.Repository.PublishReflection(publishCtx, id, effect.Decision)
 		event.Kind = lifecyclecore.ReflectionPublished
 		event.Commit, event.Paths = accepted.Commit, accepted.ChangedPaths
+		event.CoverageGaps = validate.ProtoDiagnostics(accepted.CoverageGaps)
 	case lifecyclecore.ResetReflection, lifecyclecore.CleanupReflection:
 		err = d.Repository.ReleaseProposal(id, broker.ReflectionPhase)
 		event.Kind = lifecyclecore.ReflectionReset

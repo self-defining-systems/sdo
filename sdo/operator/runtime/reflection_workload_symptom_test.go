@@ -176,11 +176,6 @@ func TestReflectionLearnsDeploymentRepairWithUnwrittenServiceSymptoms(t *testing
 				t.Fatalf("CLI/broker diagnostics differ: %v / %v", report.Diagnostics, failure.Diagnostics)
 			}
 		}
-		// README-only guidance still cannot represent an executable repair.
-		if err := os.WriteFile(filepath.Join(checkout, book, "README.md"), append(readme, []byte("\nObserved a successful manual workload repair.\n")...), 0644); err != nil {
-			return nil, err
-		}
-		reject(validate.RuleReflectionProgramRequired, true)
 		copyFastloopTree(t, fixture, filepath.Join(checkout, ".sdo"))
 		// Negative controls exercise actual replay and production finding selection.
 		// Compile each once through the shared checker; publication below proves
@@ -203,26 +198,6 @@ func(Program) Mitigate(context.Context,program.ReadView,program.Bindings)(progra
 		}
 		reject(validate.RuleProgramMitigationRepair, false)
 		if err := os.WriteFile(mitigation, original, 0644); err != nil {
-			return nil, err
-		}
-		detectorPath := filepath.Join(checkout, ".sdo/diagnostics/detectors/incidents/listener-conflict/detector.go")
-		detector, err := os.ReadFile(detectorPath)
-		if err != nil {
-			return nil, err
-		}
-		unbound := strings.Replace(string(detector), "PrimaryResource: ref", "PrimaryResource: sdk.ObjectRef{APIVersion: \"v1\", Kind: \"Service\", Namespace: ref.Namespace, Name: ref.Name}", 1)
-		if unbound == string(detector) {
-			t.Fatal("finding-binding negative control did not alter detector")
-		}
-		formatted, err = format.Source([]byte(unbound))
-		if err != nil {
-			return nil, err
-		}
-		if err := os.WriteFile(detectorPath, formatted, 0644); err != nil {
-			return nil, err
-		}
-		reject(validate.RuleProgramRepeatReachable, false)
-		if err := os.WriteFile(detectorPath, detector, 0644); err != nil {
 			return nil, err
 		}
 		writeReflectionCheckDecision(t, checkout, decision)

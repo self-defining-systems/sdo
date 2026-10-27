@@ -135,6 +135,19 @@ A playbook program is accepted only if:
   broken fixture and an empty plan on the fixed one.
 - The README contains no shell commands.
 
+What is not a gate (2026-10-27): a verified cause without a program or detector
+link, a skipped healthy replay (no controller capture), and a recorded fault no
+incident detector reaches (`program.repeat-unreachable`) are recorded as
+coverage gaps (ledger `reflection_coverage_gaps`, commit trailers, check
+report), never refused: the repeat's act-verify loop is the safety net. The
+memory edge derives the playbook `fault_class` from its ID, accepts literal
+resource names and writes the index entry. When no finding selects a playbook
+its mitigation is still replayed with the case bindings and must repair. A
+program or detector defect on the repeat path is still blocking under its own
+rule: `program.diagnose-no-match`, `program.mitigator-missing`,
+`detector.invalid-finding`, `detector.fires-on-healthy`,
+`program.repeat-unavailable`.
+
 Rename replay keeps namespace names, IP addresses, image digests, binary
 ConfigMap data, and HTTP probe paths unchanged. The corpus has no safe
 substitute for those opaque or externally resolved values. Existing library
