@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -8,6 +9,7 @@ import (
 	"time"
 
 	"google.golang.org/protobuf/encoding/protojson"
+	"sdo.dev/operator/sdk"
 )
 
 // Observers wait on busy_until alone, so it must be unset exactly when the
@@ -73,6 +75,32 @@ func TestBusyUntilCountsFindingsPendingInTheBatcher(t *testing.T) {
 	}
 }
 
+// Findings are not work. A finding the controller holds as active (for example drift on objects absent
+// from accepted source) neither opens an incident nor gates closure, so a controller with nothing open,
+// nothing batched and nothing queued is idle however many findings stay active.
+func TestBusyUntilIgnoresActiveFindingsThatOwnNoWork(t *testing.T) {
+	now := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
+	controller := newClosureRetryController(t, ClosureRetryPolicy{}, &rejectingIncidentBroker{}, &now)
+	controller.pendingClosure, controller.closureState = nil, 0
+	drift := stateFinding("drift.unexplained")
+	for pass := 0; pass < 3; pass++ {
+		controller.tracker.Observe(now.Add(time.Duration(pass)*time.Second), drift.DetectorID, []sdk.Finding{drift})
+	}
+	if controller.tracker.Quiet() {
+		t.Fatal("setup: the tracker should hold an active finding")
+	}
+	if err := controller.Step(context.Background(), now, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := exportState(t, controller).GetBusyUntil(); got != nil {
+		t.Fatalf("an active finding with no incident, batch, closure or reflection published busy_until %v", got.AsTime())
+	}
+	// The Python eval wait reads this export (test_lane_resource_admission.py): the producer feeds the consumer.
+	assertEvalWaitGolden(t, "active_findings_idle.json", []evalWaitSample{
+		recordEvalWaitSample(t, controller, now, "drift findings stay active; nothing is open, batched or queued"),
+	})
+}
+
 func TestBusyUntilDoesNotSlideWhileTheSameWorkContinues(t *testing.T) {
 	now := time.Now().UTC()
 	controller := newClosureRetryController(t, ClosureRetryPolicy{}, &rejectingIncidentBroker{}, &now)
@@ -129,22 +157,9 @@ func TestBusyUntilExportedStatesForTheEvalWait(t *testing.T) {
 	now := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
 	controller := newClosureRetryController(t, ClosureRetryPolicy{}, &rejectingIncidentBroker{}, &now)
 	controller.pendingClosure, controller.closureState = nil, 0
-	type sample struct {
-		At    time.Time      `json:"at"`
-		Note  string         `json:"note"`
-		State map[string]any `json:"state"`
-	}
-	var samples []sample
+	var samples []evalWaitSample
 	record := func(note string) {
-		raw, err := (protojson.MarshalOptions{UseProtoNames: true}).Marshal(exportState(t, controller))
-		if err != nil {
-			t.Fatal(err)
-		}
-		var state map[string]any
-		if err := json.Unmarshal(raw, &state); err != nil {
-			t.Fatal(err)
-		}
-		samples = append(samples, sample{At: now, Note: note, State: state})
+		samples = append(samples, recordEvalWaitSample(t, controller, now, note))
 	}
 	queue := func(ids ...string) {
 		controller.mu.Lock()
@@ -162,12 +177,37 @@ func TestBusyUntilExportedStatesForTheEvalWait(t *testing.T) {
 	queue()
 	record("all work finished")
 
+	assertEvalWaitGolden(t, "chained_reflections.json", samples)
+}
+
+// evalWaitSample is one recorded controller export for the Python eval wait.
+type evalWaitSample struct {
+	At    time.Time      `json:"at"`
+	Note  string         `json:"note"`
+	State map[string]any `json:"state"`
+}
+
+func recordEvalWaitSample(t *testing.T, controller *Controller, at time.Time, note string) evalWaitSample {
+	t.Helper()
+	raw, err := (protojson.MarshalOptions{UseProtoNames: true}).Marshal(exportState(t, controller))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var state map[string]any
+	if err := json.Unmarshal(raw, &state); err != nil {
+		t.Fatal(err)
+	}
+	return evalWaitSample{At: at, Note: note, State: state}
+}
+
+func assertEvalWaitGolden(t *testing.T, name string, samples []evalWaitSample) {
+	t.Helper()
 	got, err := json.MarshalIndent(samples, "", "  ")
 	if err != nil {
 		t.Fatal(err)
 	}
 	got = append(got, '\n')
-	path := filepath.Join("testdata", "eval_wait", "chained_reflections.json")
+	path := filepath.Join("testdata", "eval_wait", name)
 	if os.Getenv("SDO_UPDATE_GOLDEN") == "1" {
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			t.Fatal(err)

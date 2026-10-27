@@ -33,8 +33,9 @@ func (p ClosureRetryPolicy) retryBackoffTotal() time.Duration {
 
 // incidentWorkOpenLocked reports whether the controller still owns incident
 // work: an open incident, a closure in flight, a reflection queued or running
-// (an unreadable queue counts as one), or a finding that will become an incident
-// (pending in the batcher or not yet dispatched, as quiet() sees it).
+// (an unreadable queue counts as one), or a finding already pending in the
+// batcher. Finding states are not work: an active finding, drift included, may
+// stay active without ever opening an incident or gating a closure.
 func (c *Controller) incidentWorkOpenLocked() (inFlight bool, reflections int) {
 	reflections = len(c.reflections.queued)
 	if c.reflections.unknown {
@@ -44,8 +45,7 @@ func (c *Controller) incidentWorkOpenLocked() (inFlight bool, reflections int) {
 		reflections = 1
 	}
 	_, batched := c.batcher.Deadline()
-	inFlight = c.incidentOpen || c.currentIncidentRequest != nil || c.closureBlocksNextLocked() ||
-		batched || !c.tracker.Quiet()
+	inFlight = c.incidentOpen || c.currentIncidentRequest != nil || c.closureBlocksNextLocked() || batched
 	return inFlight, reflections
 }
 
