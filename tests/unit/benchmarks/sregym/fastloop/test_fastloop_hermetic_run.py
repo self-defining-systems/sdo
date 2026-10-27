@@ -718,15 +718,15 @@ def test_scripted_fastloop_reuses_reflected_target_port_program(
     (traffic / "health.yaml").write_text("purpose: health-probe\nscenarios:\n- id: frontend\n")
     plan = rbac.installer_rbac(NAMESPACE)
     grants = []
-    for key in ("ControlRoles", "AppRoles", "ControlBindings", "AppBindings"):
+    for key in ("ClusterRoles", "ClusterBindings"):
         for original in plan[key]:
             row = deepcopy(original)
-            row["kind"] = "RoleBinding" if key.endswith("Bindings") else "Role"
+            row["kind"] = "ClusterRoleBinding" if key.endswith("Bindings") else "ClusterRole"
             grants.append(row)
 
     def admission_api(args, **_kwargs):
         result = {"items": []}
-        if args[:2] == ["get", "roles,rolebindings"]:
+        if args[:2] == ["get", "clusterroles,clusterrolebindings"]:
             result = {"items": grants}
         elif args[:2] == ["get", "pod/sdo-prober"]:
             result = {"status": {"podIP": "127.0.0.1"}}
