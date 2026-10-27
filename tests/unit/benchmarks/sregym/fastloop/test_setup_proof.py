@@ -174,7 +174,6 @@ def test_dry_run_reuse_does_not_reset_or_redeploy_and_refreshes_health(tmp_path,
     monkeypatch.setattr(cli, "_worker", lambda *args: nullcontext(object()))
     calls = []
     monkeypatch.setenv("KUBECONFIG", "other-lane")
-    monkeypatch.setenv("SDO_TIME_SCALE", "previous-scale")
 
     def live_admission(*args, **kwargs):
         assert os.environ["KUBECONFIG"] == str(environment.kubeconfig)
@@ -216,7 +215,6 @@ def test_dry_run_reuse_rejects_drift_during_live_checks(tmp_path, fingerprint, m
         row["passed"] = True
     proof.save_receipt(tmp_path / proof.RECEIPTS, fingerprint, asdict(report))
     monkeypatch.setenv("KUBECONFIG", "other-lane")
-    monkeypatch.setenv("SDO_TIME_SCALE", "previous-scale")
     observations = iter([fingerprint, replace(fingerprint, live_objects={"app/Service/web": "drift"})])
     monkeypatch.setattr(FastloopEnvironment, "load", lambda path: environment)
     monkeypatch.setattr(proof, "collect_fingerprint", lambda env: next(observations))

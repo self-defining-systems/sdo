@@ -325,7 +325,6 @@ def run_lane(run_dir: Path, timeout: int, setup_timeout: int = int(wait_for(Wait
         report.save(report_path)
 
     os.environ["KUBECONFIG"] = str(environment.kubeconfig)
-    os.environ["SDO_TIME_SCALE"] = "1"
     if environment.dev_mount:
         os.environ["SDO_DEV_MOUNT"] = "1"
         os.environ["SDO_OPERATOR_BIN"] = str(environment.dev_mount / ".fastloop/sdo-operator")

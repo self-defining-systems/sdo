@@ -57,13 +57,6 @@ func TestUnqualifiedTrafficIsPendingWithoutOpeningIncident(t *testing.T) {
 	}
 }
 
-func TestScaledTrafficRetainsObservationConfirmation(t *testing.T) {
-	detector := scaleDetectors([]sdk.Detector{trafficDetector("traffic-health", "health")}, .1)[0]
-	if detectorConfirmed(detector, sdktest.Snapshot{}) {
-		t.Fatal("scaled detector lost pending observation state")
-	}
-}
-
 func TestPendingTrafficReasonsSurviveCompaction(t *testing.T) {
 	history := []DetectorEvaluation{
 		{DetectorID: "traffic-health", Status: DetectorEvaluationPending, Reason: "no synthetic scenario has succeeded since observation began: search, login"},

@@ -235,10 +235,10 @@ func TestResponderLoopAppliesOneBatchThenRefusesExhaustedBudgetAndLogsCalls(t *t
 	}
 	client := &planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: planObject(ref, map[string]any{"ports": []any{map[string]any{"targetPort": float64(9999)}}})}}
 	loop := NewResponderLoop(IncidentRequest{IncidentID: "i", Namespace: "app", RepairPolicy: "recorded-actions", Findings: []sdk.Finding{{Status: sdk.FindingActive, PrimaryResource: ref}}}, registry, staticProvider{snapshot: sdktest.Snapshot{NamespaceName: "app"}}, []sdk.Detector{loopDetector{finding: sdk.Finding{Status: sdk.FindingActive, PrimaryResource: ref, Playbooks: []string{"health-objective"}}}}, PlanExecutor{Client: client, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{passed: false}}, 1)
-	loop.Trust = map[string]ProgramTrust{"targetport": {VerifiedSuccesses: 2}}
+	loop.ProgramCounts = map[string]ProgramCount{programCountKey("targetport", "rev"): {Successes: 2}}
 	loop.ReadView = func(snapshot sdk.DetectionContext) program.ReadView { return &sdktest.ReplayReadView{} }
-	if status := loop.Handle(context.Background(), ToolRequest{Command: "status"}); status.Trust["targetport"].VerifiedSuccesses != 2 {
-		t.Fatalf("status trust: %+v", status)
+	if status := loop.Handle(context.Background(), ToolRequest{Command: "status"}); status.ProgramCounts[programCountKey("targetport", "rev")].Successes != 2 {
+		t.Fatalf("status program counts: %+v", status)
 	}
 	plan := loop.Handle(context.Background(), ToolRequest{Command: "plan", ProgramID: "targetport", Bindings: program.Bindings{Objects: program.ObjectBindings{"service": ref}}})
 	if plan.Error != "" || plan.PlanID == "" || len(plan.Patches) != 1 {

@@ -30,10 +30,7 @@ const (
 type KubernetesJobDispatcher struct {
 	CoverageProvider CoverageProvider
 
-	Standby *worker_registry.StandbyPool
-	// AcceptedRepository is the durable broker-owned checkout used for trust.
-	// Proposal checkouts belong to individual incidents and may be retired.
-	AcceptedRepository    string
+	Standby               *worker_registry.StandbyPool
 	APIProxyImage         string
 	ToolchainImage        string
 	Client                kubernetes.Interface
@@ -97,7 +94,6 @@ func (d KubernetesJobDispatcher) PrepareDispatch(ctx context.Context, request In
 				request.InitialProgramRuns = append(request.InitialProgramRuns, programRunState(run))
 			}
 			request.PlaybookCoverage = cloneCoverage(typed.GetPlaybookCoverage())
-			request.PriorStages = cloneStageReports(typed.GetPriorStages())
 			request.Findings = findingsState(typed.GetFindings())
 			request.MaxResponseLoops = int(typed.GetMaxResponseLoops())
 			request.PreparedAgentTask = payload
@@ -113,11 +109,7 @@ func (d KubernetesJobDispatcher) PrepareDispatch(ctx context.Context, request In
 	}
 	if d.LoopFactory != nil {
 		if loop := d.LoopFactory(request); loop != nil {
-			trust, err := d.programTrust(ctx, request)
-			if err != nil {
-				return IncidentRequest{}, err
-			}
-			request = loop.prepareDispatch(ctx, request, trust, coverage)
+			request = loop.prepareDispatch(ctx, request, d.programCounts(ctx), coverage)
 		}
 	}
 	if request.PlaybookCoverage == nil {
@@ -144,17 +136,17 @@ func (d KubernetesJobDispatcher) PrepareDispatch(ctx context.Context, request In
 
 // prepareDispatch snapshots diagnosis and its coverage together; the factory
 // may already have exposed this loop to the controller's observation goroutine.
-func (l *ResponderLoop) prepareDispatch(ctx context.Context, request IncidentRequest, trust map[string]ProgramTrust, coverage CoverageProvider) IncidentRequest {
+func (l *ResponderLoop) prepareDispatch(ctx context.Context, request IncidentRequest, counts map[string]ProgramCount, coverage CoverageProvider) IncidentRequest {
 	l.operationMu.Lock()
 	defer l.operationMu.Unlock()
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	l.Trust = trust
+	l.ProgramCounts = counts
 	l.capturePhase = "open@detect"
 	defer func() { l.capturePhase = "" }()
 	request.InitialProgramRuns = l.diagnose(ctx, l.findings)
 	fillProgramRevisions(ctx, request.InitialProgramRuns, request.RepositoryWorktree, request.SourceCommit)
-	request.PlaybookCoverage = coverage.Coverage(request.Findings, request.InitialProgramRuns, l.lastDiagnosisView, trust)
+	request.PlaybookCoverage = coverage.Coverage(request.Findings, request.InitialProgramRuns, l.lastDiagnosisView, counts)
 	request.MaxResponseLoops = l.MaxBatches
 	return request
 }
@@ -211,11 +203,7 @@ func (d KubernetesJobDispatcher) dispatch(ctx context.Context, request IncidentR
 			defer loop.CloseWorkingPrograms()
 		}
 		if loop != nil {
-			trust, err := d.programTrust(ctx, request)
-			if err != nil {
-				return IncidentResult{}, err
-			}
-			loop.initializeDispatch(trust, request.MaxResponseLoops, request.InitialProgramRuns)
+			loop.initializeDispatch(d.programCounts(ctx), request.MaxResponseLoops, request.InitialProgramRuns)
 			if err := d.restoreToolState(ctx, request, loop); err != nil {
 				return IncidentResult{}, fmt.Errorf("restore responder tool state: %w", err)
 			}
@@ -362,38 +350,6 @@ func (d KubernetesJobDispatcher) dispatch(ctx context.Context, request IncidentR
 		return IncidentResult{}, fmt.Errorf("validate incident result: %w", err)
 	}
 	return result, nil
-}
-
-func (d KubernetesJobDispatcher) programTrust(ctx context.Context, request IncidentRequest) (map[string]ProgramTrust, error) {
-	if d.Outcomes == nil {
-		return nil, nil
-	}
-	stored, _, err := memory.ListOutcomes(ctx, d.Outcomes, "program trust")
-	if err != nil {
-		return nil, fmt.Errorf("read program trust outcomes: %w", err)
-	}
-	if d.AcceptedRepository != "" {
-		request.RepositoryWorktree = d.AcceptedRepository
-	}
-	stored, err = memory.AfterAdoption(ctx, request.RepositoryWorktree, stored)
-	if err != nil {
-		return nil, fmt.Errorf("read adoption learning boundary: %w", err)
-	}
-	records := make([]*contracts.OutcomeRecord, 0, len(stored))
-	for _, outcome := range stored {
-		if outcome.Record != nil {
-			records = append(records, outcome.Record)
-		}
-	}
-	stats := ProgramTrustStats(records)
-	if request.RepositoryWorktree != "" && gitRevision.MatchString(request.SourceCommit) {
-		if err := creditLearnedPrograms(ctx, request, records, stats); err != nil {
-			// Origin credit is optional. Keep ordinary settled trust when the
-			// extra Git evidence is unavailable; never invent origin credit.
-			slog.WarnContext(ctx, "optional program learning credit unavailable", "incident_id", request.IncidentID, "error", err)
-		}
-	}
-	return stats, nil
 }
 
 // ResponderJobFailedError preserves the controller's terminal dispatch signal.

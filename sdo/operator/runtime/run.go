@@ -156,11 +156,6 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	flags.SetOutput(stderr)
 	codePathName := flags.String("code-path", "go", "programming-model plugin set")
 	codePathOverrides := flags.String("code-path-overrides", "", "optional named code-path seam overrides as JSON")
-	var codePathFlagConfig CodePathConfig
-	flags.Func("response-stages", "ordered response stages; overrides the selected code path", func(value string) error {
-		codePathFlagConfig.Overrides.ResponseStages = strings.Split(value, ",")
-		return nil
-	})
 	namespace := flags.String("namespace", "", "Kubernetes namespace to observe")
 	controlNamespace := flags.String(
 		"control-namespace",
@@ -261,9 +256,6 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	if err != nil {
 		return err
 	}
-	if codePathFlagConfig.Overrides.ResponseStages != nil {
-		selectedPathConfig.Overrides.ResponseStages = codePathFlagConfig.Overrides.ResponseStages
-	}
 	codePathRegistry := NewCodePathRegistry()
 	selectedCodePath, err := codePathRegistry.Resolve(selectedPathConfig)
 	if err != nil {
@@ -277,14 +269,6 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		return errors.New("SDO_RESPONDER_MENU must be 0 or 1")
 	}
 
-	timeScale, err := developmentTimeScale()
-	if err != nil {
-		return err
-	}
-	detectors = scaleDetectors(detectors, timeScale)
-	*verificationTimeout = scaledDuration(*verificationTimeout, timeScale)
-	*closureStability = scaledDuration(*closureStability, timeScale)
-	*reportGrace = scaledDuration(*reportGrace, timeScale)
 	if options.NativeBroker != nil && *forceReflection {
 		options.NativeBroker.ForceReflection = true
 	}
@@ -557,7 +541,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 				return fmt.Errorf("create Secret metadata client: %w", err)
 			}
 		}
-		stateTracker = NewStateTracker(StateTrackerConfig{Scope: scope, Ceiling: ceiling, Client: bootstrapProvider.Client, MetadataClient: metadataClient, Namespace: *namespace, Settle: scaledDuration(DefaultStateSettle, timeScale)})
+		stateTracker = NewStateTracker(StateTrackerConfig{Scope: scope, Ceiling: ceiling, Client: bootstrapProvider.Client, MetadataClient: metadataClient, Namespace: *namespace, Settle: DefaultStateSettle})
 		kubernetesCache.scopedTracker = stateTracker
 		defer stateTracker.Stop()
 	}
@@ -601,11 +585,10 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			apiProxyImage = launchConfig.GetValidatorImage()
 		}
 		dispatcher = KubernetesJobDispatcher{
-			AcceptedRepository: resolvedRoot,
-			CoverageProvider:   selectedCodePath.Coverage,
-			APIProxyImage:      apiProxyImage,
-			ToolchainImage:     *toolchainImage,
-			Client:             bootstrapProvider.Client, Namespace: *controlNamespace, Registry: registeredWorkers, AgentID: *responderAgentID,
+			CoverageProvider: selectedCodePath.Coverage,
+			APIProxyImage:    apiProxyImage,
+			ToolchainImage:   *toolchainImage,
+			Client:           bootstrapProvider.Client, Namespace: *controlNamespace, Registry: registeredWorkers, AgentID: *responderAgentID,
 			ServiceAccount: "sdo-responder", RepositoryPVC: *repositoryPVC,
 			RepositoryMountPath: *repositoryMountPath, RepositoryPVCSubPath: *repositoryPVCSubPath,
 			CredentialsSecret: *credentialsSecret, PollInterval: time.Second,
@@ -615,7 +598,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 				loop := NewResponderLoop(request, options.Programs, snapshotProvider, detectors, PlanExecutor{
 					Client: GenericPlanClient{TypedPlanClient: TypedPlanClient{Client: bootstrapProvider.Client, ExecConfig: planExecConfig, ProtectedNamespace: protectedNamespace, ScriptImage: scriptJobImage}, Objects: genericCapture}, Source: planSource,
 
-					Rollouts: KubernetesPlanRollouts{Client: bootstrapProvider.Client}, Verifier: PlanHealthVerifier{Detectors: detectors, Provider: snapshotProvider, Timeout: *verificationTimeout, PollInterval: scaledDuration(time.Second, timeScale)}, Observer: kubernetesCache,
+					Rollouts: KubernetesPlanRollouts{Client: bootstrapProvider.Client}, Verifier: PlanHealthVerifier{Detectors: detectors, Provider: snapshotProvider, Timeout: *verificationTimeout, PollInterval: time.Second}, Observer: kubernetesCache,
 				}, *maxResponseLoops)
 				loop.WorkingProgramRoot = request.RepositoryWorktree
 				if menuEnabled != "0" {
@@ -745,12 +728,12 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		ClosureStabilityWindow: *closureStability,
 		ResponderReportGrace:   *reportGrace,
 		RepairPolicy:           *repairPolicy,
-		FiringThreshold:        2, ClearThreshold: 2, BatchDebounce: scaledDuration(500*time.Millisecond, timeScale),
-		ConfirmationInterval: scaledDuration(time.Second, timeScale),
+		FiringThreshold:        2, ClearThreshold: 2, BatchDebounce: 500 * time.Millisecond,
+		ConfirmationInterval: time.Second,
 		// The submit gate confirms a clearing finding on 3 fresh evaluations
 		// over at least 2 s instead of waiting for the detector's interval;
 		// closure keeps the health judge's clear persistence.
-		GateConfirmation: GateConfirmationPolicy{Evaluations: 3, Window: scaledDuration(2*time.Second, timeScale), Interval: scaledDuration(time.Second, timeScale)},
+		GateConfirmation: GateConfirmationPolicy{Evaluations: 3, Window: 2 * time.Second, Interval: time.Second},
 	}, detectors, snapshotProvider, dispatcher, start)
 	if err != nil {
 		return err

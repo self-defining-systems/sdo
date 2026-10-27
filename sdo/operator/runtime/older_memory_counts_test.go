@@ -13,7 +13,7 @@ import (
 // Producer to consumer: outcome files on disk, as an earlier build and a
 // damaged write left them, through the real repository reader into dispatch
 // preparation. Neither may stop the controller from preparing a responder.
-func TestDispatchPreparationSurvivesOlderAndUnreadableOutcomes(t *testing.T) {
+func TestProgramCountsSurviveOlderAndUnreadableOutcomes(t *testing.T) {
 	ctx := context.Background()
 	root := nativeRepository(t)
 	write := func(incidentID, document string) {
@@ -30,8 +30,9 @@ func TestDispatchPreparationSurvivesOlderAndUnreadableOutcomes(t *testing.T) {
 	nativeGit(t, root, "add", ".")
 	nativeGit(t, root, "commit", "-qm", "outcomes from earlier builds")
 	d := KubernetesJobDispatcher{Outcomes: memory.OpenReader(root)}
-	request := IncidentRequest{RepositoryWorktree: root, SourceCommit: nativeGit(t, root, "rev-parse", "HEAD")}
-	if _, err := d.programTrust(ctx, request); err != nil {
-		t.Fatalf("stored outcomes blocked dispatch preparation: %v", err)
+	// Both files are skipped (one invalid at its schema, one damaged); the
+	// scan returns instead of failing, and dispatch preparation goes on.
+	if counts := d.programCounts(ctx); len(counts) != 0 {
+		t.Fatalf("unreadable outcomes produced counts: %v", counts)
 	}
 }

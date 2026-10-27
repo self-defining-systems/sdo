@@ -199,7 +199,7 @@ def problem_stream(problem_id: str) -> dict[str, Any]:
     }
 
 
-def run_arguments(lane: RealLane, stream: Path, *, timeout: int, time_scale: float) -> list[str]:
+def run_arguments(lane: RealLane, stream: Path, *, timeout: int) -> list[str]:
     """``fastloop run`` for one problem with scripted registrations, behind the lane's lease/Secret fence."""
 
     guard = ["uv", "run", "python", "-m", "benchmarks.sregym.fastloop.lane_guard", "--cluster", lane.cluster]
@@ -220,8 +220,6 @@ def run_arguments(lane: RealLane, stream: Path, *, timeout: int, time_scale: flo
         "--no-checkpoints",
         "--require-full-cleanup",
         "--continue-on-error",
-        "--time-scale",
-        str(time_scale),
         "--timeout",
         str(timeout),
     ]
@@ -372,7 +370,6 @@ class RealApp:
     code_root: Path
     out_dir: Path
     images: dict[str, str]
-    time_scale: float = 1.0
     execute: Callable[..., tuple[int, str]] = _execute
     deliver: Callable[[RealLane, Sequence[str]], None] | None = None
     seconds: dict[str, float] = field(default_factory=dict)
@@ -413,7 +410,7 @@ class RealApp:
         stream = self.out_dir / "streams" / f"{problem.slot}.json"
         stream.parent.mkdir(parents=True, exist_ok=True)
         stream.write_text(json.dumps(problem_stream(problem.problem_id), indent=2) + "\n", encoding="utf-8")
-        argv = run_arguments(lane, stream, timeout=1200, time_scale=self.time_scale)
+        argv = run_arguments(lane, stream, timeout=1200)
         code, output = self._step(argv, PROBLEM_TIMEOUT_SECONDS)
         record = last_record(lane.run_dir)
         error = "" if code == 0 or record is not None else output[-400:]
@@ -494,7 +491,6 @@ def run_real(
     code_root: Path,
     out_dir: Path,
     images: dict[str, str],
-    time_scale: float,
     execute: Callable[..., tuple[int, str]] = _execute,
 ) -> list[Row]:
     """Static stages for every problem, real-app stages for the apps with a lane (apps in parallel)."""
@@ -510,7 +506,6 @@ def run_real(
             code_root,
             out_dir / app,
             images,
-            time_scale,
             execute,
         )
         for app, (path, lease) in lanes.items()
@@ -560,7 +555,6 @@ def main_real(args: Any) -> int:
         code_root=code_root,
         out_dir=out_dir,
         images=image_refs(args.image_tag),
-        time_scale=args.time_scale,
     )
     out_dir.mkdir(parents=True, exist_ok=True)
     seconds = round(time.monotonic() - t0, 1)

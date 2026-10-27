@@ -15,8 +15,7 @@ On restart, completed rows are skipped. A terminal native result written before
 the journal commit is adopted after checking recovery and acknowledged learning.
 An incomplete row holds the lane for native recovery and is never reinjected.
 `complete.json` means all rows passed the advance gate, not that every repair
-passed its official oracle. `program_trust_threshold: 3` records experiment intent
-only: automatic trust gating is retired and the value grants no authority.
+passed its official oracle.
 
 ## Warm-lane application retirement
 

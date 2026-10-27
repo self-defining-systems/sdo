@@ -22,6 +22,11 @@ import (
 var retiredFieldNames = map[string]string{
 	"sdodev.contracts.v1alpha1.ReflectionEligibility.evidence_gap_count":   "no_repair_count",
 	"sdodev.contracts.v1alpha1.BrokerLedger.reflection_evidence_gap_count": "reflection_no_repair_count",
+	// Response stages were deleted: the agent always responds first. Stored stage
+	// reports and the stage override are dropped.
+	"sdodev.contracts.v1alpha1.CodePathOverrides.response_stages": "",
+	"sdodev.contracts.v1alpha1.IncidentRequest.prior_stages":      "",
+	"sdodev.contracts.v1alpha1.OutcomeRecord.prior_stages":        "",
 }
 
 // retiredValues maps "<message>.<field>" to retired value -> successor, for
@@ -29,6 +34,8 @@ var retiredFieldNames = map[string]string{
 var retiredValues = map[string]map[string]string{
 	"sdodev.contracts.v1alpha1.ReflectionWorkItem.reason":         {"evidence_gap": "no_recorded_repair"},
 	"sdodev.contracts.v1alpha1.ReflectionDecision.decline_reason": {"evidence_gap": "no_recorded_repair"},
+	"sdodev.contracts.v1alpha1.IncidentResult.resolution_path":    {"deterministic": "responder"},
+	"sdodev.contracts.v1alpha1.OutcomeRecord.resolution_path":     {"deterministic": "responder"},
 }
 
 // RetiredValues reports the retired value -> successor table of one field,

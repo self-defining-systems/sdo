@@ -438,8 +438,8 @@ func TestHermeticRoutingCaptureCompilesReplayableMitigator(t *testing.T) {
 		t.Fatalf("SetField was not replayed: %+v", notes)
 	}
 
-	// With two faults, the best single binding runs, then whole-incident verification
-	// rolls it back before responder handoff because the other fault remains.
+	// With two faults the agent applies one binding; the peer fault remains and
+	// nothing is rolled back automatically.
 	nativeGit(t, root, "add", ".")
 	nativeGit(t, root, "commit", "-qm", "accepted recorded routing fixture")
 	commit := nativeGit(t, root, "rev-parse", "HEAD")
@@ -470,7 +470,7 @@ func TestHermeticRoutingCaptureCompilesReplayableMitigator(t *testing.T) {
 	}
 	outcomes := []memory.Outcome{}
 	for i := 0; i < 3; i++ {
-		outcomes = append(outcomes, memory.Outcome{IncidentID: fmt.Sprintf("routing-success-%d", i), Record: verifiedTrustOutcome(t, p.Spec().ID, revision)})
+		outcomes = append(outcomes, memory.Outcome{IncidentID: fmt.Sprintf("routing-success-%d", i), Record: verifiedProgramOutcome(t, p.Spec().ID, revision)})
 	}
 	warm := KubernetesJobDispatcher{Client: client, Namespace: "app", Registry: testIncidentRegistry(t, "responder:test"), AgentID: testIncidentAgentID(t), ServiceAccount: "sdo-responder", RepositoryPVC: "repository", RepositoryMountPath: root, Outcomes: priorOutcomeReader{outcomes: outcomes}, LoopFactory: func(request IncidentRequest) *ResponderLoop {
 		loop := NewResponderLoop(request, registry, liveProvider, []sdk.Detector{fastloopDetector{}}, PlanExecutor{Client: TypedPlanClient{Client: client}, Rollouts: &planFakeRollout{}, Verifier: PlanHealthVerifier{Detectors: []sdk.Detector{fastloopDetector{}}, Provider: liveProvider}}, 1)
@@ -478,10 +478,7 @@ func TestHermeticRoutingCaptureCompilesReplayableMitigator(t *testing.T) {
 		return loop
 	}}
 	loop := warm.LoopFactory(repeated)
-	loop.Trust, err = warm.programTrust(ctx, repeated)
-	if err != nil {
-		t.Fatal(err)
-	}
+	loop.ProgramCounts = warm.programCounts(ctx)
 	loop.InitialDiagnose(ctx)
 	planned := loop.Handle(ctx, ToolRequest{Command: "plan", ProgramID: "service-targetport-mismatch", Bindings: program.Bindings{Objects: program.ObjectBindings{"service": serviceRef("api")}}})
 	attempt := loop.Handle(ctx, ToolRequest{Command: "apply", PlanIDs: []string{planned.PlanID}})

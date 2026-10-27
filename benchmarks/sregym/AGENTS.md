@@ -25,6 +25,7 @@ The external SREGym implementation is a separately pinned Git submodule at `thir
 - Put reusable production lifecycle, responder, contracts, and operational-memory behavior under `sdo/`.
 - Keep benchmark verdicts, oracle answers, hidden fault identity, and injection metadata out of production requests, detectors, memory, and prompts.
 - Keep changes to the external harness in `third_party/sregym/`; do not copy its implementation into first-party packages.
+- The harness deploys exactly the image refs the app source declares. SDO accepts the source as desired state, so a harness-only tag is unexplained drift at time zero (a baseline incident before any injection) and the first reconcile would write the source's ref back. Source builds use a lane-private tag only to build and load; the harness then publishes the image on the lane's nodes under the declared ref (`source_deploy._declare_image`) and applies the unmodified manifests and charts.
 
 ## Grading
 

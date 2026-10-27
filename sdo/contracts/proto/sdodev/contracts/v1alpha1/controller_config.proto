@@ -156,7 +156,8 @@ message CodePathConfig {
 message CodePathOverrides {
   string detector_source = 1;
   string coverage = 2;
-  repeated string response_stages = 3;
+  reserved 3;
+  reserved "response_stages";
   string memory_validation = 4;
   string activation = 5;
   string agent_guidance = 6;

@@ -78,7 +78,6 @@ type IncidentRequest struct {
 	StateChanges       *StateChanges
 	InitialProgramRuns []ProgramRun
 	PlaybookCoverage   *contracts.PlaybookCoverage
-	PriorStages        []*contracts.StageReport
 	MaxResponseLoops   int
 	// PreparedAgentTask is the exact ProtoJSON task persisted before a Job may be created.
 	PreparedAgentTask string

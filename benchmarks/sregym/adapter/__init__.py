@@ -47,6 +47,7 @@ if TYPE_CHECKING:
     from benchmarks.sregym.adapter.image_retention import ImageRetentionError, retain_lane_images
     from benchmarks.sregym.adapter.lane_resources import (
         LaneResourcePolicy,
+        allowed_namespaces,
         assert_host_disk_headroom,
         assert_host_headroom,
         assert_lane_resources,
@@ -109,6 +110,7 @@ _EXPORTS: dict[str, str] = {
     "retain_lane_images": "image_retention",
     "Deadline": "eval_guards",
     "LaneResourcePolicy": "lane_resources",
+    "allowed_namespaces": "lane_resources",
     "assert_host_disk_headroom": "lane_resources",
     "assert_host_headroom": "lane_resources",
     "assert_lane_resources": "lane_resources",
@@ -190,6 +192,7 @@ __all__ = [
     "retain_lane_images",
     "Deadline",
     "LaneResourcePolicy",
+    "allowed_namespaces",
     "assert_host_disk_headroom",
     "assert_host_headroom",
     "assert_lane_resources",

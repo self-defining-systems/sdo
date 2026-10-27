@@ -771,9 +771,9 @@ func (detector) Detect(context.Context,sdk.DetectionContext)([]sdk.Finding,error
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("build reflected program runner: %v: %s", err, output)
 	}
-	output, err := exec.CommandContext(ctx, bin, snapshotPath).CombinedOutput()
+	output, stderr, err := commandStdout(exec.CommandContext(ctx, bin, snapshotPath))
 	if err != nil {
-		t.Fatalf("run reflected program: %v: %s", err, output)
+		t.Fatalf("run reflected program: %v: %s%s", err, output, stderr)
 	}
 	var run struct {
 		Result string `json:"result"`

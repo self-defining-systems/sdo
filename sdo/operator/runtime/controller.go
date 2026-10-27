@@ -64,10 +64,9 @@ type ControllerConfig struct {
 }
 
 type dispatchCompletion struct {
-	priorStages []*contracts.StageReport
-	incidentID  string
-	result      IncidentResult
-	err         error
+	incidentID string
+	result     IncidentResult
+	err        error
 }
 
 type Controller struct {
@@ -83,7 +82,6 @@ type Controller struct {
 	batcher                     *Batcher
 	provider                    SnapshotProvider
 	dispatcher                  Dispatcher
-	responseStagesRunning       bool
 	history                     []DetectorEvaluation
 	drift                       *DriftControllerConfig
 	driftEvents                 []sdk.DriftEvent
@@ -201,14 +199,14 @@ type Controller struct {
 
 	// CheckHealth refuses evaluation and effects while the compiled detector bundle
 	// lags the accepted health policy; the rebuilt controller resumes the work.
-	CheckHealth func(context.Context) error
-	OnError           func(error)
-	OnResult          func(IncidentResult)
-	OnEvaluation      func([]sdk.Finding)
-	OnIncidentClosed  func(IncidentClosure)
-	OnClosureFailed   func(ClosureFailure)
-	CanAct            func() bool
-	GuardAction       func(context.Context) (context.Context, context.CancelFunc, error)
+	CheckHealth      func(context.Context) error
+	OnError          func(error)
+	OnResult         func(IncidentResult)
+	OnEvaluation     func([]sdk.Finding)
+	OnIncidentClosed func(IncidentClosure)
+	OnClosureFailed  func(ClosureFailure)
+	CanAct           func() bool
+	GuardAction      func(context.Context) (context.Context, context.CancelFunc, error)
 	// now overrides the wall clock for closure and dispatch retry backoff in
 	// tests.
 	now func() time.Time
@@ -1093,10 +1091,6 @@ func (c *Controller) handleDispatchCompletion(completion dispatchCompletion, obs
 		)
 		return
 	}
-	c.responseStagesRunning = false
-	if len(completion.priorStages) > 0 {
-		c.currentIncidentRequest.PriorStages = cloneStageReports(completion.priorStages)
-	}
 	if c.earlyReportPendingLocked() {
 		if completion.err == nil {
 			snapshot := *c.pendingClosure.Result
@@ -1211,10 +1205,6 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 	}
 	early := !c.responderDone
 	requiresStability := early || c.codePath != nil && c.codePath.Selection.DetectorSource == "shell"
-	if early && c.responseStagesRunning {
-		c.mu.Unlock()
-		return
-	}
 	if early && (c.dispatchState != contracts.DispatchState_DISPATCH_STATE_RUNNING || c.incidentDispatchedAt.IsZero()) {
 		c.mu.Unlock()
 		return
@@ -1461,15 +1451,6 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 	if early {
 		closure.ResponderCompletedAt = verifiedAt
 		closure.Result = closureGuard.resultSnapshot(*c.currentIncidentRequest, verifiedAt)
-		if len(closure.Request.PriorStages) > 0 {
-			merged, mergeErr := responsePipelineResult(&IncidentState{Request: closure.Request, PriorStages: closure.Request.PriorStages, Result: closure.Result}, closure.DispatchedAt, verifiedAt)
-			if mergeErr != nil {
-				c.mu.Unlock()
-				c.reportBrokerError("stage closure evidence", mergeErr)
-				return
-			}
-			closure.Result = &merged
-		}
 	}
 	if verified {
 		c.retainSourceInventoryAcceptancesLocked(c.currentIncidentResult)
@@ -1869,7 +1850,7 @@ func (c *Controller) PersistState(ctx context.Context) error {
 	}
 	if preparer, ok := c.dispatcher.(interface {
 		PrepareDispatch(context.Context, IncidentRequest) (IncidentRequest, error)
-	}); ok && state.DispatchState == contracts.DispatchState_DISPATCH_STATE_PENDING && state.IncidentRequest != nil && state.IncidentRequest.PreparedAgentTask == "" && !c.automaticResponsePending(state.IncidentRequest) {
+	}); ok && state.DispatchState == contracts.DispatchState_DISPATCH_STATE_PENDING && state.IncidentRequest != nil && state.IncidentRequest.PreparedAgentTask == "" {
 		prepared, err := preparer.PrepareDispatch(actionCtx, *incidentRequestState(state.IncidentRequest))
 		if err != nil {
 			return fmt.Errorf("prepare responder dispatch: %w", err)

@@ -35,7 +35,7 @@ func classifyCauseWork(outcome *contracts.OutcomeRecord, fixed map[string]progra
 				if strings.HasSuffix(signal, ":"+id) {
 					failed = true
 				}
-				failedID, _, ok := parseProgramTrustFailureSignal(signal)
+				failedID, _, ok := parseApplicationFailureSignal(signal)
 				if ok && failedID == id {
 					failed = true
 				}

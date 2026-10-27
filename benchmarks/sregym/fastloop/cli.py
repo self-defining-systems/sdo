@@ -49,7 +49,7 @@ from benchmarks.sregym.fastloop.worker_client import SregymWorker, worker_argv
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from benchmarks.sregym.adapter import Clock, ClusterOps
+    from benchmarks.sregym.adapter import ClusterOps
     from benchmarks.sregym.fastloop.composite import CompositeSettings
     from benchmarks.sregym.fastloop.fault_tracker import FaultSpec
     from benchmarks.sregym.fastloop.loop import DiagnosisGrader, IncidentAgent
@@ -451,10 +451,10 @@ def _composite_settings(args: argparse.Namespace) -> CompositeSettings:
     from benchmarks.sregym.fastloop.composite import CompositeSettings
 
     return CompositeSettings(
-        deadline_seconds=args.composite_deadline * args.time_scale,
-        idle_seconds=args.composite_idle * args.time_scale,
-        stable_seconds=20.0 * args.time_scale,
-        poll_seconds=min(1.0, 2.0 * args.time_scale),
+        deadline_seconds=args.composite_deadline,
+        idle_seconds=args.composite_idle,
+        stable_seconds=wait_for(WaitKind.STABLE),
+        poll_seconds=wait_for(WaitKind.POLL_FAST),
     )
 
 
@@ -476,12 +476,6 @@ def _cluster_ops(args: argparse.Namespace, namespace: str, *, ops: ClusterOps | 
 
         selected = RestartControllerInPauseOps(selected, restart_evidence)  # type: ignore[assignment]
     return selected
-
-
-def _scaled_clock(scale: float) -> Clock:
-    from benchmarks.sregym.adapter import Clock
-
-    return Clock(sleep=lambda seconds: time.sleep(seconds * scale))
 
 
 def _accepted_manifest_paths(workspace: Path) -> tuple[str, ...]:
@@ -559,9 +553,8 @@ def _sdo_agent(
         state_path=environment.state_path,
         results_dir=results_dir,
         kubeconfig=str(environment.kubeconfig),
-        verification_timeout_seconds=float(args.composite_deadline if composite else args.timeout + 300)
-        * args.time_scale,
-        reflection_wait_seconds=3600.0 * args.time_scale,
+        verification_timeout_seconds=float(args.composite_deadline if composite else args.timeout + 300),
+        reflection_wait_seconds=wait_for(WaitKind.REFLECTION_DRAIN),
         detection_timeout_seconds=args.detection_timeout,
         checkpoint_enabled=not args.no_checkpoints,
     )
@@ -622,7 +615,6 @@ def _sdo_agent(
         "ops": ops,
         "lifecycle_inputs": lambda: deployed_lifecycle(environment.namespace),
         "run_lifecycle": start_native,
-        "clock": _scaled_clock(args.time_scale),
     }
     if composite:
         from benchmarks.sregym.fastloop.composite import CompositeSdoAgent, reader_for
@@ -674,19 +666,6 @@ def _run(args: argparse.Namespace) -> int:
         warn_fallback(
             environment.image_delivery_reason, environment.image_delivery_images, environment.image_delivery_seconds
         )
-    if args.time_scale <= 0:
-        raise SystemExit("--time-scale must be positive")
-    if args.time_scale < 1:
-        scripted = args.agent == "sdo" and (
-            args.agent_registrations.resolve()
-            == (REPO_ROOT / "benchmarks/sregym/adapter/scripted_registrations").resolve()
-            if args.agent_registrations is not None
-            else environment.app == "toy"
-        )
-        if not scripted:
-            raise SystemExit(
-                "--time-scale below 1 is for scripted-agent runs only; live LLM runs must use --time-scale 1"
-            )
     if args.agent == "sdo":
         from benchmarks.sregym.adapter import control_namespace_for
 
@@ -702,7 +681,6 @@ def _run(args: argparse.Namespace) -> int:
                 f"agent credentials Secret {secret!r} is missing or inaccessible in "
                 f"{control_namespace_for(environment.namespace)!r}: {checked.stderr.strip()}"
             )
-    os.environ["SDO_TIME_SCALE"] = str(args.time_scale)
     if environment.dev_mount is not None:
         from benchmarks.sregym.fastloop.dev import prepare_dev_mount
 
@@ -822,8 +800,8 @@ def _run(args: argparse.Namespace) -> int:
             baseline_problem_id=environment.deploy_problem if baseline is not None else None,
             baseline=baseline,
             cluster=KubectlApplicationCluster(environment.kubeconfig) if baseline is not None else None,
-            health_timeout_seconds=args.health_timeout * args.time_scale,
-            health_poll_seconds=min(1.0, args.time_scale),
+            health_timeout_seconds=args.health_timeout,
+            health_poll_seconds=wait_for(WaitKind.POLL_FAST),
             before_inject=before_inject,
             require_full_cleanup=args.require_full_cleanup,
             require_faulty_oracle=getattr(args, "require_faulty_oracle", False),
@@ -1428,12 +1406,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     run.add_argument("--reasoning-effort", default=None, help="Codex baseline reasoning effort (default: Codex's)")
     run.add_argument("--timeout", type=int, default=3600, help="per-incident agent timeout in seconds")
-    run.add_argument(
-        "--time-scale",
-        type=float,
-        default=1.0,
-        help="multiply controller and wait windows; values below 1 require scripted agents (default 1)",
-    )
 
     run.add_argument(
         "--detection-timeout",
