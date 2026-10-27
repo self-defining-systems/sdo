@@ -293,3 +293,44 @@ func TestDriftOnlyIncidentGetsOneExtraHealthyTurn(t *testing.T) {
 		t.Fatalf("remaining drift gated drift-only closure: %d", closed)
 	}
 }
+
+// Observation must keep progressing while a responder owns its tool mutex.
+// Both early closure and result collection read optional continuation metadata.
+func TestControllerDriftRepromptObservationNeverWaitsForTools(t *testing.T) {
+	for _, mode := range []string{"running", "completion"} {
+		t.Run(mode, func(t *testing.T) {
+			f := newClosureDriftFixture(t, true, true, "app")
+			f.step(t, 1)
+			var healthy atomic.Bool
+			healthy.Store(true)
+			loop := continuationLoop(*f.c.currentIncidentRequest, &healthy, 1)
+			f.c.responderLoop = loop
+			if mode == "running" {
+				f.c.responderDone = false
+				f.c.dispatchState = contracts.DispatchState_DISPATCH_STATE_RUNNING
+			}
+			completion := dispatchCompletion{incidentID: f.c.currentIncidentRequest.IncidentID, result: *cloneIncidentResult(f.c.currentIncidentResult)}
+			loop.mu.Lock()
+			done := make(chan error, 1)
+			go func() {
+				if mode == "completion" {
+					f.c.handleDispatchCompletion(completion, f.start.Add(20*time.Second))
+					done <- nil
+					return
+				}
+				done <- f.c.Step(context.Background(), f.start.Add(20*time.Second), nil)
+			}()
+			select {
+			case err := <-done:
+				loop.mu.Unlock()
+				if err != nil {
+					t.Fatal(err)
+				}
+			case <-time.After(5 * time.Second):
+				loop.mu.Unlock()
+				<-done
+				t.Fatal("controller observation waited for a responder tool mutex")
+			}
+		})
+	}
+}

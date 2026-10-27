@@ -546,9 +546,12 @@ func (l *ResponderLoop) driftRepromptPending() bool {
 	if l == nil {
 		return false
 	}
-	pending := false
-	l.locked(func() { pending = l.continuation.Result.GetDriftReprompt() != nil && !l.continuation.Done })
-	return pending
+	// A busy tool already makes early closure unsafe. Never stall observation.
+	if !l.mu.TryLock() {
+		return true
+	}
+	defer l.mu.Unlock()
+	return l.continuation.Result.GetDriftReprompt() != nil && !l.continuation.Done
 }
 
 // Read the dispatcher's durable marker after its LoopFactory registered the loop.
@@ -559,7 +562,10 @@ func (c *Controller) driftRepromptRecord() *contracts.DriftReprompt {
 	if loop == nil {
 		return nil
 	}
-	var record *contracts.DriftReprompt
-	loop.locked(func() { record = cloneDriftReprompt(loop.continuation.Result.GetDriftReprompt()) })
-	return record
+	// Completion and observation must not wait on long-running tool I/O.
+	if !loop.mu.TryLock() {
+		return nil
+	}
+	defer loop.mu.Unlock()
+	return cloneDriftReprompt(loop.continuation.Result.GetDriftReprompt())
 }

@@ -1418,7 +1418,7 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 				return
 			}
 			if resumed {
-				if c.currentIncidentResult != nil {
+				if c.currentIncidentResult != nil && driftRecord != nil {
 					c.currentIncidentResult.DriftReprompt = driftRecord
 				}
 				c.responderDone = false
