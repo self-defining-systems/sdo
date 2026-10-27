@@ -47,7 +47,9 @@ def reflection_task(checkout: Path, base: str = "synthetic-outcome") -> AgentTas
     return task
 
 
-def test_native_request_budget_parity(tmp_path: Path) -> None:
+@pytest.fixture(scope="module")
+def native_budget_binary(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    tmp_path = tmp_path_factory.mktemp("native-budget")
     # Compile the exported native constant: no regex assumption about its spelling/expression.
     program = tmp_path / "native_budget.go"
     program.write_text("""package main
@@ -57,7 +59,14 @@ import (
 )
 func main() { fmt.Print(worker_registry.MaxRequestBytes) }
 """)
-    native = int(subprocess.check_output(["go", "run", str(program)], cwd=ROOT / "sdo/operator", timeout=60))
+    binary = tmp_path / "native-budget"
+    subprocess.run(["go", "build", "-o", str(binary), str(program)], cwd=ROOT / "sdo/operator", check=True)
+    return binary
+
+
+@pytest.mark.go_integration
+def test_native_request_budget_parity(native_budget_binary: Path) -> None:
+    native = int(subprocess.check_output([str(native_budget_binary)], timeout=60))
     assert replay.MAX_TASK_BYTES == native == NATIVE_REQUEST_BYTES
     assert replay.MAX_RESULT_BYTES == replay.MAX_BROKER_BYTES == 1 << 20
 
@@ -248,16 +257,26 @@ def test_loaded_broker_metadata_is_still_bounded(tmp_path: Path) -> None:
         store.load(0, "reflection")
 
 
-def test_native_broker_entrypoint_rejects_oversized_request(tmp_path: Path) -> None:
+@pytest.fixture(scope="module")
+def replay_binary(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    binary = tmp_path_factory.mktemp("replay") / "replay"
+    subprocess.run(
+        ["go", "build", "-o", str(binary), str(ROOT / "benchmarks/sregym/fastloop/replay_go/main.go")],
+        cwd=ROOT / "sdo/operator/runtime",
+        check=True,
+    )
+    return binary
+
+
+@pytest.mark.go_integration
+def test_native_broker_entrypoint_rejects_oversized_request(tmp_path: Path, replay_binary: Path) -> None:
     # A sparse file proves the command bounds reads before decoding or opening
     # result/source evidence, without allocating another oversized ProtoJSON task.
     with (tmp_path / "request.json").open("wb") as stream:
         stream.truncate(NATIVE_REQUEST_BYTES + 1)
     completed = subprocess.run(
         [
-            "go",
-            "run",
-            str(ROOT / "benchmarks/sregym/fastloop/replay_go/main.go"),
+            str(replay_binary),
             "--checkpoint",
             str(tmp_path),
             "--source",

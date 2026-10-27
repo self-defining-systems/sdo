@@ -1,6 +1,10 @@
 """Admission invariants apply to every app, including real harness manifests."""
 
+import ast
 import json
+import os
+import shutil
+import subprocess
 from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
@@ -100,8 +104,6 @@ def test_lineage_labels_commits_beyond_health_setup(actor, phase, paths, expecte
 
 
 def _commit(repository, name, trailers):
-    import subprocess
-
     (repository / name).write_text(name)
     subprocess.run(["git", "-C", str(repository), "add", name], check=True)
     message = "\n".join(["change", "", *trailers])
@@ -113,8 +115,6 @@ def _commit(repository, name, trailers):
 
 def test_lineage_admits_a_controller_outcome_commit_and_reports_it(tmp_path):
     """A pre-injection incident outcome (controller, phase outcome) must not stop the row; it is labelled."""
-    import subprocess
-
     from benchmarks.sregym.adapter.eval_guards import setup_lineage
 
     repository = tmp_path / "repo"
@@ -374,15 +374,27 @@ def test_old_ready_pods_do_not_prove_current_workload_rollout(monkeypatch, statu
         admission.workload_identity(Path("unused"), "any-app")
 
 
-@pytest.mark.go_integration
-def test_fresh_guard_accepts_actual_broker_health_bootstrap(tmp_path):
-    import shutil
-    import subprocess
+def test_go_fixture_compilation_has_no_execution_deadline():
+    """Cold compilation must finish before a fixture's bounded execution starts."""
+    violations = []
+    for path in sorted(Path(__file__).parent.glob("test_*.py")):
+        for node in ast.walk(ast.parse(path.read_text())):
+            if not isinstance(node, ast.Call) or not node.args:
+                continue
+            if not any(keyword.arg == "timeout" for keyword in node.keywords):
+                continue
+            command = node.args[0]
+            if not isinstance(command, (ast.List, ast.Tuple)):
+                continue
+            prefix = [item.value if isinstance(item, ast.Constant) else None for item in command.elts[:2]]
+            if prefix == ["go", "run"]:
+                violations.append(f"{path.name}:{node.lineno}")
+    assert not violations, f"Build Go fixtures before timed execution: {violations}"
 
-    from benchmarks.sregym.adapter.eval_guards import setup_lineage
 
+def _bootstrap_repository(repository: Path) -> str:
+    """Identical accepted inputs for cache preparation and the fresh-guard contract."""
     root = Path(__file__).resolve().parents[5]
-    repository = tmp_path / "accepted"
     shutil.copytree(root / "apps/toy/seed", repository)
     (repository / "service.yaml").write_text(
         "apiVersion: v1\nkind: Service\nmetadata:\n  name: frontend\nspec:\n  ports:\n  - port: 80\n"
@@ -393,11 +405,55 @@ def test_fresh_guard_accepts_actual_broker_health_bootstrap(tmp_path):
         ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.com", "commit", "-qm", "installed seed"],
     ):
         subprocess.run(["git", "-C", str(repository), *args], check=True, capture_output=True)
-    seed = subprocess.check_output(["git", "-C", str(repository), "rev-parse", "HEAD"], text=True).strip()
+    return subprocess.check_output(["git", "-C", str(repository), "rev-parse", "HEAD"], text=True).strip()
+
+
+@pytest.fixture(scope="module")
+def broker_health_bootstrap_binary(tmp_path_factory: pytest.TempPathFactory) -> tuple[Path, dict[str, str]]:
+    root = Path(__file__).resolve().parents[5]
     fixture = Path(__file__).with_name("fixtures") / "setup.go"
-    actual = subprocess.run(
-        ["go", "run", str(fixture), str(repository)],
+    directory = tmp_path_factory.mktemp("broker-health-bootstrap")
+    binary = directory / "setup"
+    # The bootstrap itself compiles generated detector/controller packages. Warm
+    # that exact graph, including vet/test archives, before the operation deadline.
+    # trimpath lets the real test's isolated proposal reuse the warm archives.
+    env = dict(os.environ)
+    env["GOFLAGS"] = env.get("GOFLAGS", "") + " -trimpath"
+    subprocess.run(
+        ["go", "build", "-o", str(binary), str(fixture)],
         cwd=root / "sdo/operator",
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    repository = directory / "warm-accepted"
+    _bootstrap_repository(repository)
+    subprocess.run(
+        [str(binary), str(repository)],
+        cwd=root / "sdo/operator",
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return binary, env
+
+
+@pytest.mark.go_integration
+def test_fresh_guard_accepts_actual_broker_health_bootstrap(
+    tmp_path: Path, broker_health_bootstrap_binary: tuple[Path, dict[str, str]]
+):
+    from benchmarks.sregym.adapter.eval_guards import setup_lineage
+
+    binary, env = broker_health_bootstrap_binary
+    root = Path(__file__).resolve().parents[5]
+    repository = tmp_path / "accepted"
+    seed = _bootstrap_repository(repository)
+    actual = subprocess.run(
+        [str(binary), str(repository)],
+        cwd=root / "sdo/operator",
+        env=env,
         check=True,
         capture_output=True,
         text=True,
@@ -473,8 +529,6 @@ def test_reusing_a_lane_cannot_reseal_runtime_drift_as_installed_source(tmp_path
 
 
 def test_sealed_install_preserves_metadata_setup_but_yields_to_accepted_source_repair(tmp_path):
-    import subprocess
-
     from benchmarks.sregym.fastloop.baseline_recovery import (
         ApplicationBaseline,
         accepted_restore_baselines,
