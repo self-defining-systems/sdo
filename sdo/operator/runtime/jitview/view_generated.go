@@ -290,3 +290,8 @@ func (v *View) ValidatingWebhookConfigurations() (r0 []p9.ValidatingWebhookConfi
 	r1 = err
 	return
 }
+func (v *View) WebhookCAMatchesSecret(a0 p2.WebhookCA) (r0 bool, r1 error) {
+	err := v.call("WebhookCAMatchesSecret", []any{a0}, []any{&r0})
+	r1 = err
+	return
+}

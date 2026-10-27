@@ -405,7 +405,14 @@ func (v LiveReadView) DiffAgainstBaseline(ref sdk.ObjectRef) (program.Diff, erro
 	return program.Diff{}, nil
 }
 
-func (v LiveReadView) Object(ref sdk.ObjectRef) (*unstructured.Unstructured, error) {
+func (v LiveReadView) Object(ref sdk.ObjectRef) (object *unstructured.Unstructured, err error) {
+	defer func() {
+		if err == nil && object != nil && (ref.Kind == "ValidatingWebhookConfiguration" || ref.Kind == "MutatingWebhookConfiguration") {
+			object = object.DeepCopy()
+			sdk.ProjectWebhookCABundles(object.Object)
+		}
+	}()
+
 	if err := (TypedPlanClient{ProtectedNamespace: v.ProtectedNamespace}).checkPlanNamespace(ref.Namespace); err != nil {
 		return nil, err
 	}
