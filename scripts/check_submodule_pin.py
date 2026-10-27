@@ -109,7 +109,9 @@ def ancestry(repository: Path, path: str, remote: str, base: str, head: str) -> 
         if git(store, *fetch, base, head).returncode:
             if git(store, *fetch, base).returncode:
                 raise Skip(f"base pin {base} is not fetchable from {remote}")
-            raise PinError(f"head pin {head} is not fetchable from {remote}; the submodule pin points at a commit the fork lacks")
+            raise PinError(
+                f"head pin {head} is not fetchable from {remote}; the submodule pin points at a commit the fork lacks"
+            )
         answer = history_contains(store, base, head)
         if answer is None:
             raise PinError(f"fetched {base} and {head} from {remote} but cannot read their history")
