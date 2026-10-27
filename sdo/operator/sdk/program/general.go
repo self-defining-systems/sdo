@@ -355,6 +355,18 @@ type KubernetesEffect struct {
 	Response    json.RawMessage   `json:"response"`
 }
 
+// MarshalJSON publishes evidence through the shared CA observation boundary.
+// Execution may retain raw images privately; recordings and durable reports
+// must never export them.
+func (e KubernetesEffect) MarshalJSON() ([]byte, error) {
+	type fields KubernetesEffect
+	raw, err := json.Marshal(fields(e))
+	if err != nil {
+		return nil, err
+	}
+	return sdk.ProjectWebhookCAJSON(raw)
+}
+
 // CredentialResponse identifies API operations whose response is a credential,
 // rather than cluster evidence. Their bodies are never read by the controller.
 // Use a container command when the generated value must be consumed there.

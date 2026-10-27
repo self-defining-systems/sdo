@@ -27,7 +27,7 @@ func ProjectCABundle(ca []byte) []byte {
 }
 
 // ProjectWebhookCABundles removes raw caBundle bytes from arbitrary JSON trees.
-// It preserves all other fields and mutates only the supplied detached tree.
+// It projects embedded last-applied JSON too and mutates only the detached tree.
 func ProjectWebhookCABundles(value any) {
 	switch v := value.(type) {
 	case []any:
@@ -35,6 +35,22 @@ func ProjectWebhookCABundles(value any) {
 			ProjectWebhookCABundles(item)
 		}
 	case map[string]any:
+		// kubectl stores a second object document as a string. Project it at
+		// this same boundary; malformed copies cannot be safe evidence.
+		const lastApplied = "kubectl.kubernetes.io/last-applied-configuration"
+		if embedded, ok := v[lastApplied]; ok {
+			text, valid := embedded.(string)
+			if valid {
+				projected, err := ProjectWebhookCAJSON([]byte(text))
+				if err == nil {
+					v[lastApplied] = string(projected)
+				} else {
+					delete(v, lastApplied)
+				}
+			} else {
+				delete(v, lastApplied)
+			}
+		}
 		if encoded, ok := v["caBundle"].(string); ok && encoded != "" {
 			ca, err := base64.StdEncoding.DecodeString(encoded)
 			if err != nil {

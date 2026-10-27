@@ -155,3 +155,5 @@ unrecorded usage remain unavailable errors, including offline replay; never infe
 zero usage or borrow a fixed-phase sample to explain opening state.
 
 CA bundles in generic capture objects and typed webhook observations are SHA256 projections. `WebhookCAMatchesSecret` records only its reference arguments and boolean result. `SyncWebhookCA` receipts carry the reference-only action plus `action_reports[].webhook_ca_digest`; CA bytes and Secret documents never enter these receipts. The operation is irreversible and has no stored preimage.
+
+Generic action recordings and application JSON/protobuf receipts apply that same CA projection to response bodies, before/after images and delete preimages, including embedded last-applied annotation JSON. Raw compensation images remain private execution state; published digests must never be interpreted as certificate bytes for replaying writes.

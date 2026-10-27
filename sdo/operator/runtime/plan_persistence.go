@@ -1,10 +1,13 @@
 package runtime
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	utiljson "k8s.io/apimachinery/pkg/util/json"
 
+	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 )
 
@@ -32,11 +35,17 @@ func (result PlanApplicationResult) MarshalJSON() ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("encode applied actions: %w", err)
 	}
-	return json.Marshal(struct {
+	raw, err := json.Marshal(struct {
 		planApplicationFields
 		Plan           persistedPlan     `json:"Plan"`
 		ActionsApplied []persistedAction `json:"ActionsApplied"`
 	}{planApplicationFields(result), persistedPlan{Actions: plan, Rationale: result.Plan.Rationale}, applied})
+	if err != nil {
+		return nil, err
+	}
+	// Raw execution images remain process-local for compensation. All JSON
+	// receipts/checkpoints cross the same observation projection as captures.
+	return sdk.ProjectWebhookCAJSON(raw)
 }
 
 func (result *PlanApplicationResult) UnmarshalJSON(data []byte) error {
@@ -229,4 +238,47 @@ func decodePersistedActions(encoded []persistedAction) ([]program.Action, error)
 		}
 	}
 	return decoded, nil
+}
+
+// MarshalJSON is the publication boundary for patches, including dry-run tool
+// responses which publish the patch list without the enclosing application.
+// In-memory images stay raw for compensation; projected images cannot authorize
+// restoration from a durable checkpoint.
+func (patch PlanPatch) MarshalJSON() ([]byte, error) {
+	for _, object := range []*unstructured.Unstructured{patch.Before, patch.After} {
+		if object == nil {
+			continue
+		}
+		raw, err := json.Marshal(object.Object)
+		if err != nil {
+			return nil, err
+		}
+		projected, err := sdk.ProjectWebhookCAJSON(raw)
+		if err != nil {
+			return nil, err
+		}
+		if !bytes.Equal(raw, projected) {
+			patch.Irreversible = true
+		}
+	}
+	type fields PlanPatch
+	return projectPlanEvidence(fields(patch))
+}
+
+func (image PlanPreImage) MarshalJSON() ([]byte, error) {
+	type fields PlanPreImage
+	return projectPlanEvidence(fields(image))
+}
+
+func (effect PlanObjectEffect) MarshalJSON() ([]byte, error) {
+	type fields PlanObjectEffect
+	return projectPlanEvidence(fields(effect))
+}
+
+func projectPlanEvidence(value any) ([]byte, error) {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return nil, err
+	}
+	return sdk.ProjectWebhookCAJSON(raw)
 }

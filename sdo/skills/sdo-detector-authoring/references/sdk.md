@@ -75,8 +75,8 @@ func ProjectObservationObject(object *unstructured.Unstructured) (*unstructured.
 func ProjectValidatingWebhook(o admissionv1.ValidatingWebhookConfiguration) admissionv1.ValidatingWebhookConfiguration
 func ProjectWebhookCABundles(value any)
     ProjectWebhookCABundles removes raw caBundle bytes from arbitrary JSON
-    trees. It preserves all other fields and mutates only the supplied detached
-    tree.
+    trees. It projects embedded last-applied JSON too and mutates only the
+    detached tree.
 
 func ProjectWebhookCAJSON(raw []byte) ([]byte, error)
     ProjectWebhookCAJSON retains the Kubernetes response shape and numeric

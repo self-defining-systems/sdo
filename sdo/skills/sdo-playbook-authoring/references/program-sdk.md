@@ -376,6 +376,11 @@ type KubernetesEffect struct {
     rejects missing images instead of inventing a subresource or admission
     effect.
 
+func (e KubernetesEffect) MarshalJSON() ([]byte, error)
+    MarshalJSON publishes evidence through the shared CA observation boundary.
+    Execution may retain raw images privately; recordings and durable reports
+    must never export them.
+
 type KubernetesRequest struct {
 	Ref         sdk.ObjectRef
 	Method      string            `json:"method"`

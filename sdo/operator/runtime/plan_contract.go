@@ -49,7 +49,9 @@ func (r PlanApplicationResult) Proto() (*contracts.PlanApplication, error) {
 	for _, effect := range r.ObjectEffects {
 		encoded := &contracts.PlanObjectEffect{Operation: effect.Operation, Ref: planRefProto(effect.Ref), Uid: effect.UID, State: effect.State, Confirmed: effect.Confirmed, Irreversible: effect.Irreversible}
 		if effect.DeletedPreImage != nil {
-			image, err := structpb.NewStruct(effect.DeletedPreImage.Object)
+			object := effect.DeletedPreImage.DeepCopy().Object
+			sdk.ProjectWebhookCABundles(object)
+			image, err := structpb.NewStruct(object)
 			if err != nil {
 				return nil, fmt.Errorf("encode delete receipt")
 			}

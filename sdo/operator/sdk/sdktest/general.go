@@ -35,8 +35,13 @@ func (v *RecordingReadView) KubernetesRead(q program.KubernetesRequest) (json.Ra
 		return nil, err
 	}
 	r, err := v.ReadView.KubernetesRead(q)
-	if err == nil && strings.Contains(q.Path, "webhookconfigurations") {
-		r, err = sdk.ProjectWebhookCAJSON(r)
+	if err == nil {
+		projected, projectionErr := sdk.ProjectWebhookCAJSON(r)
+		if projectionErr == nil {
+			r = projected
+		} else if strings.Contains(q.Path, "webhookconfigurations") {
+			err = projectionErr
+		}
 	}
 	if err != nil {
 		err = fmt.Errorf("Kubernetes API observation unavailable")

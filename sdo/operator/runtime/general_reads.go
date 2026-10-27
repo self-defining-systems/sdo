@@ -42,9 +42,11 @@ func (v LiveReadView) KubernetesRead(r program.KubernetesRequest) (json.RawMessa
 	ctx, cancel := context.WithTimeout(v.context(), 5*time.Second)
 	defer cancel()
 	raw, err := (TypedPlanClient{Client: v.Client, ExecConfig: v.DatabaseExecConfig, ProtectedNamespace: v.ProtectedNamespace}).KubernetesRequest(ctx, r)
-	if err == nil && strings.Contains(r.Path, "webhookconfigurations") {
-		raw, err = sdk.ProjectWebhookCAJSON(raw)
-		if err != nil {
+	if err == nil {
+		projected, projectionErr := sdk.ProjectWebhookCAJSON(raw)
+		if projectionErr == nil {
+			raw = projected
+		} else if strings.Contains(r.Path, "webhookconfigurations") {
 			return nil, fmt.Errorf("webhook API response projection unavailable")
 		}
 	}
