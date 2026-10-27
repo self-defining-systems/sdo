@@ -71,6 +71,7 @@ func (l *ResponderLoop) restoreToolSnapshot(payload []byte) error {
 		l.sessionID = state.SessionID
 	}
 	l.stageProgress = state.StageProgress
+	l.restoreTerminalStagePlanErrors()
 	l.pendingWrites = state.PendingWrites
 	l.completedRepairs = state.CompletedRepairs
 	l.continuation = state.Continuation

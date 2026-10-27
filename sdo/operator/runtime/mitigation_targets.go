@@ -35,6 +35,11 @@ func (l *ResponderLoop) mitigationIncident(selected []selectedPlan) IncidentRequ
 				}
 				continue
 			}
+			for _, fp := range matchedFindingFingerprints(l.Request.Findings, l.Request.InitialProgramRuns, plan.programID, plan.bindings) {
+				if fp == FindingFingerprint(finding) {
+					targeted = true
+				}
+			}
 			for _, match := range l.Request.PlaybookCoverage.GetMatches() {
 				if match.GetPlaybookId() != plan.programID || !programBindingsState(match.GetBindings()).Equal(plan.bindings) {
 					continue
