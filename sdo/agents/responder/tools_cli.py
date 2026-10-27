@@ -21,7 +21,8 @@ PLAN_ACTIONS = (
     "ConfigMap JSON/YAML entries preserve unrelated keys.\n"
     "CreateFromSource restores a named missing object from accepted source.\n"
     "ReconcileFromSource converges source-owned configuration, removes additions since acceptance, "
-    "and reports residual source differences and bounded rollout progress.\n"
+    "and reports residual source differences and remaining old-revision ReplicaSets/Pods. "
+    "The Deployment controller and responder handle the rollout.\n"
     "DeleteObject irreversibly removes an allowed named source-absent object and never auto-recreates it."
 )
 
