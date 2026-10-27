@@ -16,7 +16,7 @@ SPEC.loader.exec_module(shards)
 
 
 def inventory() -> dict[str, list[str]]:
-    return {
+    source = {
         "sdo.dev/operator/builder": [
             *shards.MOVED_BUILDER_TESTS,
             "TestBuildWorkspaceCompilesApplicationDetectors",
@@ -32,6 +32,14 @@ def inventory() -> dict[str, list[str]]:
         "sdo.dev/operator/operatorcli": ["TestAdoptionCompilesAsIsAndLaterValidationStillRejects"],
         "sdo.dev/operator/worker_registry": ["TestKubernetesExecutorRejectsRequestOverBudgetNamingTheComponent"],
     }
+    # Every measured move participates in this synthetic compiled inventory;
+    # negative controls below remove anchors after construction.
+    for full in shards.MOVED_TESTS:
+        package, _, name = full.rpartition("/")
+        names = source.setdefault(package, [])
+        if name not in names:
+            names.append(name)
+    return source
 
 
 def test_compiler_work_is_exhaustive_disjoint_and_keeps_new_names() -> None:
@@ -169,7 +177,7 @@ def test_hosted_expensive_nonbuilder_work_shares_existing_runners() -> None:
     assert groups["remaining"][shards.PREFIX + "worker_registry"] == ["FuzzWorker"]
 
 
-@pytest.mark.parametrize("package", ["operatorcli", "worker_registry"])
+@pytest.mark.parametrize("package", ["broker", "operatorcli", "worker_registry"])
 def test_removed_or_renamed_nonbuilder_cost_anchor_fails_closed(package: str) -> None:
     source = inventory()
     source[shards.PREFIX + package].clear()
