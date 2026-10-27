@@ -14,12 +14,15 @@ from benchmarks.sregym.adapter.budgets import DEFAULT_BOUNDS, bound
 ROOT = Path(__file__).resolve().parents[5]
 SCANNED = ("benchmarks/sregym/fastloop", "benchmarks/sregym/adapter")
 BUDGET_MODULE = "benchmarks/sregym/adapter/budgets.py"
+IMAGE_DOCKERFILES = ("benchmarks/sregym/Dockerfile.worker", "benchmarks/sregym/assurance/Dockerfile.scripted")
+#: Files a build script runs directly, outside any package: stdlib only.
+STANDALONE = ("benchmarks/sregym/fastloop/image_provenance.py",)
 WAIT_NAME = re.compile(r"(timeout|seconds|deadline|interval|poll|settle|wait|delay|backoff|ttl|grace)", re.IGNORECASE)
 
 # The count of numeric seconds literals used as a wait or timeout. It may only decrease: lowering a
-# value here is the review step that records a literal being moved onto ``wait_for``. What remains are
-# the argparse defaults of the run CLIs and the image-bound modules that are COPYed into the worker image.
-SECONDS_LITERAL_CEILING = 39
+# value here is the review step that records a literal being moved onto ``wait_for``. Image-bound files
+# are outside the count (they cannot import ``budgets``; see ``test_image_bound_files_import_nothing_unshipped``).
+SECONDS_LITERAL_CEILING = 16
 
 
 def _constant(node: ast.AST) -> bool:
@@ -87,12 +90,31 @@ def seconds_literals(source: str) -> list[tuple[int, str]]:
     return found
 
 
+def image_bound_files() -> set[str]:
+    """Repo paths the worker images COPY, plus the files a build script runs standalone."""
+    copied: set[str] = set(STANDALONE)
+    for dockerfile in IMAGE_DOCKERFILES:
+        for line in (ROOT / dockerfile).read_text().splitlines():
+            parts = line.split()
+            if parts[:1] != ["COPY"] or any(part.startswith("--from") for part in parts):
+                continue
+            for source in parts[1:-1]:
+                if not source.startswith("benchmarks/"):
+                    continue
+                path = ROOT / source
+                copied.update(
+                    p.relative_to(ROOT).as_posix() for p in ([path] if path.is_file() else path.rglob("*.py"))
+                )
+    return {path for path in copied if path.endswith(".py")}
+
+
 def _repo_literals() -> list[str]:
     found = []
+    image_bound = image_bound_files()
     for directory in SCANNED:
         for path in sorted((ROOT / directory).rglob("*.py")):
             relative = path.relative_to(ROOT).as_posix()
-            if relative == BUDGET_MODULE:
+            if relative == BUDGET_MODULE or relative in image_bound:
                 continue
             found += [f"{relative}:{line} {label}" for line, label in seconds_literals(path.read_text())]
     return found
@@ -107,6 +129,45 @@ def test_seconds_literals_in_waits_only_decrease():
     assert len(literals) >= SECONDS_LITERAL_CEILING - 3, (
         f"only {len(literals)} literals remain: lower SECONDS_LITERAL_CEILING to lock in the gain"
     )
+
+
+def _imported_modules(source: str) -> set[tuple[str, str | None]]:
+    """(module, name) pairs imported at run time; ``if TYPE_CHECKING`` blocks never execute."""
+    modules: set[tuple[str, str | None]] = set()
+
+    def visit(node: ast.AST) -> None:
+        if isinstance(node, ast.If) and ast.unparse(node.test) == "TYPE_CHECKING":
+            for child in node.orelse:
+                visit(child)
+            return
+        if isinstance(node, ast.Import):
+            modules.update((alias.name, None) for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+            modules.update((node.module, alias.name) for alias in node.names)
+        for child in ast.iter_child_nodes(node):
+            visit(child)
+
+    visit(ast.parse(source))
+    return modules
+
+
+BUDGET_NAMES = {"wait_for", "WaitKind", "SdoBounds", "bound"}
+
+
+def test_image_bound_files_do_not_import_the_budgets():
+    """The image carries only its COPYed files, so a ``wait_for`` import there is ModuleNotFoundError."""
+    shipped = image_bound_files()
+    assert "benchmarks/sregym/fastloop/image_provenance.py" in shipped
+    assert "benchmarks/sregym/adapter/submission.py" in shipped
+    for relative in sorted(shipped):
+        for module, name in _imported_modules((ROOT / relative).read_text()):
+            budget = module.endswith("adapter.budgets") or (
+                module == "benchmarks.sregym.adapter" and name in BUDGET_NAMES
+            )
+            assert not budget, f"{relative} imports the eval budgets, which its image does not ship: keep a literal"
+    for relative in STANDALONE:
+        imports = {m for m, _ in _imported_modules((ROOT / relative).read_text()) if m.startswith("benchmarks")}
+        assert not imports, f"{relative} runs standalone and imports {sorted(imports)}"
 
 
 def test_the_scanner_sees_each_wait_shape():
