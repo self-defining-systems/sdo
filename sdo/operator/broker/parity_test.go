@@ -136,6 +136,12 @@ func testCLIAndBrokerAgreeOnAcceptance(t *testing.T, shard int) {
 	cases := []parityCase{
 		{"healthy refused service ports", validate.Responder, validate.ReflectionPhase, parityRefusedPortsDetector, []string{validate.RuleDetectorHealthyBaseline}, false},
 		{"healthy refused ports without recordings", validate.Responder, validate.ReflectionPhase, parityRefusedPortsDetector, []string{validate.RuleDetectorHealthyBaseline}, false},
+		// A closure verified healthy is the only precondition: the cause is bound
+		// by the successful repair write on its own resource, so an opening
+		// finding on another resource neither blocks nor is needed.
+		{"successful cause without matching opening finding", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
+			put(t, r, ".sdo/diagnostics/detectors/incidents/cache/detector.go", parityDetector(t, "cache")+"\n// cause bound by its recorded repair write\n", 0644)
+		}, nil, false},
 		{"unverified peer gaps", validate.Responder, validate.ReflectionPhase, func(*testing.T, string) {}, nil, false},
 		{"unverified peer no verified", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
 			put(t, r, ".sdo/diagnostics/detectors/incidents/cache/detector.go", parityDetector(t, "cache")+"\n// No verified cause.\n", 0644)
@@ -615,6 +621,9 @@ func (p Program) Mitigate(ctx context.Context,v program.ReadView,b program.Bindi
 					}
 				}
 				parityFindingRepairProof(outcome)
+				if test.name == "successful cause without matching opening finding" {
+					outcome.Findings[0].PrimaryResource = &contracts.ObjectRef{Kind: "Service", Namespace: "demo", Name: "actual-fault"}
+				}
 				if _, err := repository.RecordOutcome(context.Background(), "incident", outcome); err != nil {
 					t.Fatal(err)
 				}
