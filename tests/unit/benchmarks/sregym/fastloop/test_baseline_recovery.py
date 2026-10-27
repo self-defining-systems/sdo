@@ -561,7 +561,12 @@ def test_sealed_restore_never_reverts_passive_objects_to_the_pre_adoption_captur
             "spec": {"type": "ExternalName", "externalName": "sink.other.svc"},
         },
         {**routes, "spec": {"ports": [{"name": "http", "port": 80}]}},
-        {**api, "spec": {"template": {"spec": {"containers": [{"name": "api", "image": "other"}]}}}},
+        {
+            **api,
+            "spec": {
+                "template": {"spec": {"containers": [{"name": "api", "image": "installed", "args": ["--declared"]}]}}
+            },
+        },
     ]
     source = commit_accepted_source(tmp_path, accepted)
 
