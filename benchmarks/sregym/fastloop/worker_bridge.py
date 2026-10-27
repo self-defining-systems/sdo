@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from benchmarks.sregym.adapter import WaitKind, wait_for
 from benchmarks.sregym.fastloop.idempotent_helm import make_deploy_idempotent
 
 if TYPE_CHECKING:
@@ -137,7 +138,7 @@ def main() -> int:
                     + subprocess.check_output(
                         ["git", "-C", str(Path(worker.__file__).resolve().parents[2]), "rev-parse", "HEAD"],
                         text=True,
-                        timeout=10,
+                        timeout=wait_for(WaitKind.PROBE),
                     ).strip(),
                 ),
                 confirm_healthy=confirm_healthy,
