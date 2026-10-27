@@ -84,7 +84,7 @@ func IncidentExecutionNames(ctx context.Context, client kubernetes.Interface, na
 			continue
 		}
 		task := new(contracts.AgentTask)
-		if wire.Unmarshal([]byte(cm.Data[TaskDataKey]), task) != nil {
+		if wire.UnmarshalDurable([]byte(cm.Data[TaskDataKey]), task) != nil {
 			continue
 		}
 		request := new(contracts.IncidentRequest)

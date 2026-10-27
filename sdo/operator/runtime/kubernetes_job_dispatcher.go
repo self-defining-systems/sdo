@@ -10,11 +10,11 @@ import (
 	"sync"
 	"time"
 
-	"google.golang.org/protobuf/encoding/protojson"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/contracts/wire"
 	"sdo.dev/operator/latefindings"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/worker_registry"
@@ -76,7 +76,7 @@ func (d KubernetesJobDispatcher) PrepareDispatch(ctx context.Context, request In
 		if err == nil {
 			payload := existing.Data[jobRequestDataKey]
 			task := new(contracts.AgentTask)
-			if payload == "" || protojson.Unmarshal([]byte(payload), task) != nil ||
+			if payload == "" || wire.UnmarshalDurable([]byte(payload), task) != nil ||
 				task.GetTaskId() != request.IncidentID || task.GetAgentId() != d.AgentID ||
 				task.GetWorkspace().GetCheckoutPath() != request.RepositoryWorktree ||
 				task.GetWorkspace().GetBaseCommit() != request.RepositoryBaseCommit {
@@ -189,7 +189,7 @@ func (d KubernetesJobDispatcher) dispatch(ctx context.Context, request IncidentR
 	}
 	task := new(contracts.AgentTask)
 	var err error
-	if err := protojson.Unmarshal([]byte(request.PreparedAgentTask), task); err != nil {
+	if err := wire.UnmarshalDurable([]byte(request.PreparedAgentTask), task); err != nil {
 		return IncidentResult{}, fmt.Errorf("decode prepared agent task: %w", err)
 	}
 	if task.GetTaskId() != request.IncidentID || task.GetWorkspace().GetCheckoutPath() != request.RepositoryWorktree ||

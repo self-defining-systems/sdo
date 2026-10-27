@@ -294,3 +294,26 @@ func TestColdStandbySwitchSurvivesTypedRuntimeLaunch(t *testing.T) {
 		t.Fatalf("cold switch absent: %v", args)
 	}
 }
+
+// A config the launcher wrote before the response stage was deleted still sets
+// response_stages; the controller loads it and drops the retired override.
+func TestLoadControllerConfigDropsRetiredResponseStages(t *testing.T) {
+	raw := []byte(`{
+		"namespace": "hotel-reservation",
+		"app_root": "/workspace/app",
+		"dispatcher_mode": "job",
+		"repair_policy": "commit",
+		"code_path": {"name": "go", "overrides": {"coverage": "go", "response_stages": "deterministic"}}
+	}`)
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(path, raw, 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	config, err := LoadControllerConfig(path)
+	if err != nil {
+		t.Fatalf("a config written before stage deletion must load: %v", err)
+	}
+	if config.GetCodePath().GetOverrides().GetCoverage() != "go" {
+		t.Fatalf("retired override dropped sibling overrides: %v", config)
+	}
+}
