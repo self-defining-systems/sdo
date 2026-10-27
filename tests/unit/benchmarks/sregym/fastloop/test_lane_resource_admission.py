@@ -363,6 +363,34 @@ def test_failed_controller_job_fails_onboarding_at_once(lane, monkeypatch):
     assert (gate.directory / "onboarding-controller.log").read_text() == "pod a\npod b\n"
 
 
+def test_onboarding_reads_the_real_cluster_records(lane, monkeypatch):
+    """Producer into consumer: the kubectl reads that feed await_onboarding, for a rejected and a crash-looping lane."""
+    gate, _ = lane
+    monkeypatch.undo()  # drop the fixture's fake _onboarding; the reads below are the real ones
+    gate.environment.kubeconfig.write_text("apiVersion: v1\n")
+    cluster = {"configmap/sdo-namespace-onboarding-rejected": None, "job/sdo-controller-run": None}
+
+    def kubectl(args, **kwargs):
+        document = cluster.get(args[1])
+        return SimpleNamespace(stdout=json.dumps(document) if document is not None else "")
+
+    monkeypatch.setattr(admission, "kubectl", kubectl)
+    quiet = gate._onboarding("hotel-reservation-sdo")
+    assert quiet == {"complete": None, "pending": None, "rejected": None, "controller_failed": None}
+
+    cluster["configmap/sdo-namespace-onboarding-rejected"] = {"data": {"reason": "install window expired"}}
+    assert gate._onboarding("hotel-reservation-sdo")["rejected"] == {"reason": "install window expired"}
+
+    cluster["job/sdo-controller-run"] = {"status": {"failed": 1}}
+    assert gate._onboarding("hotel-reservation-sdo")["controller_failed"] is None
+    cluster["job/sdo-controller-run"] = {"status": {"failed": 2}}
+    assert "2 controller pods failed" in gate._onboarding("hotel-reservation-sdo")["controller_failed"]["reason"]
+    cluster["job/sdo-controller-run"] = {
+        "status": {"failed": 7, "conditions": [{"type": "Failed", "reason": "BackoffLimitExceeded", "message": "m"}]}
+    }
+    assert gate._onboarding("hotel-reservation-sdo")["controller_failed"] == {"reason": "BackoffLimitExceeded: m"}
+
+
 def test_unfinished_onboarding_keeps_the_controller_log(lane, monkeypatch):
     gate, _ = lane
     gate.onboarding_timeout_seconds = 120

@@ -160,6 +160,11 @@ def _accepted_head(workspace: Path) -> str | None:
     return completed.stdout.strip() or None if completed.returncode == 0 else None
 
 
+# Failed controller pods that make onboarding hopeless: a restarted process cannot prove the continuity of the
+# install window and the Job's backoff takes ~10 minutes to give up.
+CONTROLLER_CRASH_LOOP_PODS = 2
+
+
 class LaneAdmission:
     def __init__(
         self,
@@ -286,10 +291,14 @@ class LaneAdmission:
             ).stdout
             or "{}"
         )
-        failed = [c for c in job.get("status", {}).get("conditions", []) if c.get("type") == "Failed"]
-        records["controller_failed"] = (
-            {"reason": f"{failed[0].get('reason')}: {failed[0].get('message')}"} if failed else None
-        )
+        status = job.get("status", {})
+        failed = [c for c in status.get("conditions", []) if c.get("type") == "Failed"]
+        if failed:
+            records["controller_failed"] = {"reason": f"{failed[0].get('reason')}: {failed[0].get('message')}"}
+        elif status.get("failed", 0) >= CONTROLLER_CRASH_LOOP_PODS:
+            records["controller_failed"] = {"reason": f"{status['failed']} controller pods failed (crash loop)"}
+        else:
+            records["controller_failed"] = None
         return records
 
     def _keep_onboarding_log(self, control: str) -> None:
