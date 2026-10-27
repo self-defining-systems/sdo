@@ -221,11 +221,14 @@ func (c *KubernetesCache) observe(start, ctx context.Context, keepRunning bool) 
 // absent, without discarding pending watch events.
 func (c *KubernetesCache) Stop() {
 	c.informerMu.Lock()
-	defer c.informerMu.Unlock()
+	factory := c.factory
 	if c.cancel != nil {
 		c.cancel()
 		c.cancel = nil
 	}
+	c.informerMu.Unlock()
+	// Outside the lock: Shutdown waits for handlers that may read the cache.
+	factory.Shutdown()
 }
 
 // Resync replaces the informers with a fresh generation, starts it, and waits
@@ -239,6 +242,7 @@ func (c *KubernetesCache) Resync(ctx context.Context) error {
 	if c.cancel != nil {
 		c.cancel()
 	}
+	previous := c.factory
 	parent := c.parent
 	if parent == nil {
 		parent = ctx
@@ -248,6 +252,8 @@ func (c *KubernetesCache) Resync(ctx context.Context) error {
 	c.factory, c.informers = factory, built
 	factory.Start(running.Done())
 	c.informerMu.Unlock()
+	// The replaced generation is stopped; wait for its goroutines to exit.
+	previous.Shutdown()
 	return c.WaitForSync(ctx)
 }
 

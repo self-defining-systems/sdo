@@ -361,6 +361,14 @@ def up_arguments(code_root: Path, run_dir: Path, lane: str, image_tag: str = "fa
     )
 
 
+def scenario_stream(code_root: Path, scenario: Scenario) -> Path:
+    """The scenario's stream: a fixture name under :data:`FIXTURES`, or an absolute path a caller generated."""
+
+    assert scenario.stream is not None
+    stream = Path(scenario.stream)
+    return stream if stream.is_absolute() else code_root / FIXTURES / stream
+
+
 def run_arguments(code_root: Path, run_dir: Path, scenario: Scenario, run_id: str) -> list[str]:
     assert scenario.stream is not None
     flags = list(scenario.run_flags)
@@ -376,7 +384,7 @@ def run_arguments(code_root: Path, run_dir: Path, scenario: Scenario, run_id: st
         "--agent",
         "sdo",
         "--stream",
-        str(code_root / FIXTURES / scenario.stream),
+        str(scenario_stream(code_root, scenario)),
         "--run-id",
         run_id,
         "--reflection-session",
@@ -433,6 +441,7 @@ def preflight(
 
 def _execute(argv: Sequence[str], *, cwd: Path, timeout: float, log: Path) -> tuple[int, str]:
     env = {**os.environ, "SDO_TIME_SCALE": TIME_SCALE}
+    env.setdefault("SDO_TOY_BASELINE_WAIT", "600")
     log.parent.mkdir(parents=True, exist_ok=True)
     with log.open("a", encoding="utf-8") as handle:
         handle.write(f"$ {' '.join(argv)}\n")
@@ -472,6 +481,7 @@ class Gate:
     load_environment: Callable[[Path], Any] = _load_environment
     image_tag: str = "fastloop"
     scenarios: tuple[Scenario, ...] = SCENARIOS
+    up_budget: float = UP_BUDGET_SECONDS
 
     def log(self) -> Path:
         return self.run_dir / "rehearse-harness.log"
@@ -486,7 +496,7 @@ class Gate:
         setup_error = ""
         if not (self.run_dir / "fastloop.json").is_file():
             code, output = self._step(
-                up_arguments(self.code_root, self.run_dir, self.lane, self.image_tag), UP_BUDGET_SECONDS
+                up_arguments(self.code_root, self.run_dir, self.lane, self.image_tag), self.up_budget
             )
             if code:
                 setup_error = f"fastloop up failed (exit {code}): {output[-400:]}"

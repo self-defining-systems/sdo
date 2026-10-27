@@ -372,13 +372,22 @@ Tests for `benchmarks/sregym/adapter/` should prove that benchmark resources are
 
 ## Test style
 
-- Write a failing reproducer before fixing a bug.
+- Write a failing reproducer before fixing a bug; see [Fix the class](#fix-the-class-not-the-instance).
 - Test observable contracts and persisted evidence, not private fields or call order that is not part of the protocol.
 - Prefer small explicit fakes over deep mock graphs.
 - Use `tmp_path` and temporary Git repositories for repository mutations.
 - Mock external subprocess boundaries in unit tests; do not require local `kubectl`, Docker, Go downloads, or model APIs unless the test is explicitly external.
 - Assert failure paths: malformed structured responses, timeouts, stale commits, ownership violations, invalid detector code, interrupted rollouts, and duplicate acknowledgements.
 - Keep one behavior per test and use names that state the invariant.
+
+## Fix the class, not the instance
+
+Fixing a bug means making its whole class impossible, not patching the one case you saw.
+
+1. Before patching, ask whether the failing mechanism can be deleted. Deleting it is the cheapest fix for every instance at once.
+2. Name the cause and search for earlier bugs with the same cause. On a second instance, fix the cause at its one owner (one rule, one budget source, one start path). Never add another exception or special case.
+3. Guard the class with a ratchet, property test, or sweep that would fail for the next instance. Add a test that fails at the buggy commit as well.
+4. Find bugs in batches: run the scripted (model-free) rehearsal over every planned problem before spending live model runs.
 
 ## Live validation
 

@@ -122,18 +122,26 @@ func frontendEndpoints(ready int) *corev1.Endpoints {
 // 13d5613, run.go's start context stopped the tracker's informers once Start
 // returned, so the diff stayed frozen at the startup state and was empty.
 func TestRunAttachesStateChangesMadeAfterStartupToIncident(t *testing.T) {
-	testRunAttachesStateChanges(t, false, false)
+	testRunAttachesStateChanges(t, false, false, false)
 }
 
 func TestRunPreservesStateChangesAcrossObservationBarrier(t *testing.T) {
-	testRunAttachesStateChanges(t, true, false)
+	testRunAttachesStateChanges(t, true, false, false)
 }
 
 func TestRunPreservesLatentFaultAcrossObservationBarrier(t *testing.T) {
-	testRunAttachesStateChanges(t, true, true)
+	testRunAttachesStateChanges(t, true, true, false)
 }
 
-func testRunAttachesStateChanges(t *testing.T, observationBarrier, latent bool) {
+// A controller launched inside a baseline-preserving pause (a restart during
+// fault injection) never ran the unpaused start path. Resume must start every
+// component that path starts, informers and the state tracker alike: the
+// incident must carry the state change made after resume. P51.
+func TestRunStartsObservationWhenResumedFromLaunchInsidePreservingPause(t *testing.T) {
+	testRunAttachesStateChanges(t, true, false, true)
+}
+
+func testRunAttachesStateChanges(t *testing.T, observationBarrier, latent, launchPaused bool) {
 	objects := hotelObjects()
 	objects = append(objects, frontendEndpoints(1))
 	for index := range readyFrontend() {
@@ -175,6 +183,15 @@ func testRunAttachesStateChanges(t *testing.T, observationBarrier, latent bool) 
 		runArgs = append(runArgs, "--deployed-manifest-path", "app.yaml")
 	}
 
+	if launchPaused {
+		_, err := client.CoreV1().ConfigMaps(hotel+"-sdo").Create(ctx, &corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{Name: MaintenanceConfigMapName, Namespace: hotel + "-sdo"},
+			Data:       map[string]string{"state": "paused", "generation": "barrier", "preserve_baseline": "true"},
+		}, metav1.CreateOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
 	go func() {
 		defer close(exited)
 		runErr = RunWithOptions(ctx, []sdk.Detector{detector}, RuntimeOptions{
@@ -195,6 +212,9 @@ func testRunAttachesStateChanges(t *testing.T, observationBarrier, latent bool) 
 	})
 
 	started := func() bool { return lines.has(`{"state_baseline_startup_ms"`) }
+	if launchPaused {
+		started = func() bool { return lines.has(`{"controller_maintenance":"paused"`) }
+	}
 	eventually(t, "the state tracker to start", func() bool {
 		select {
 		case <-exited:
@@ -205,6 +225,24 @@ func testRunAttachesStateChanges(t *testing.T, observationBarrier, latent bool) 
 	})
 	// Outlive the start deadline, so a tracker still bound to it has stopped.
 	time.Sleep(4 * startTimeout)
+	if launchPaused && lines.has(`{"state_baseline_startup_ms"`) {
+		t.Fatal("the state tracker started while the controller was paused")
+	}
+	if launchPaused {
+		// Resume first and let the new process baseline the healthy
+		// application: a fault injected before any baseline cannot be diffed.
+		cm, err := client.CoreV1().ConfigMaps(hotel+"-sdo").Get(ctx, MaintenanceConfigMapName, metav1.GetOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		cm.Data = map[string]string{"state": "active", "generation": "barrier-resumed"}
+		if _, err := client.CoreV1().ConfigMaps(hotel+"-sdo").Update(ctx, cm, metav1.UpdateOptions{}); err != nil {
+			t.Fatal(err)
+		}
+		eventually(t, "resume to start the state tracker", func() bool { return lines.has(`{"state_baseline_startup_ms"`) })
+		time.Sleep(500 * time.Millisecond)
+		observationBarrier = false
+	}
 	if observationBarrier {
 		_, err := client.CoreV1().ConfigMaps(hotel+"-sdo").Create(ctx, &corev1.ConfigMap{
 			ObjectMeta: metav1.ObjectMeta{Name: MaintenanceConfigMapName, Namespace: hotel + "-sdo"},
