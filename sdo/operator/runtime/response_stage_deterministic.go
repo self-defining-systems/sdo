@@ -24,8 +24,8 @@ const DefaultStageBudget = 45 * time.Second
 // DeterministicResponseStage uses the same plan/apply and immutable receipt
 // boundary as the responder, operating only on accepted registry programs.
 type DeterministicResponseStage struct {
-	NewLoop             func(IncidentRequest) *ResponderLoop
-	Restore             func(context.Context, IncidentRequest, *ResponderLoop) error
+	NewLoop func(IncidentRequest) *ResponderLoop
+	Restore func(context.Context, IncidentRequest, *ResponderLoop) error
 	// KeepLoop leaves the loop NewLoop returns open: it belongs to a running
 	// responder, so a later pass must not close its working programs.
 	KeepLoop bool
@@ -145,7 +145,7 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 	defer loop.operationMu.Unlock()
 	loop.mu.Lock()
 	defer loop.mu.Unlock()
-	matches := stageCandidates(loop, state)
+	matches := stageCandidates(state)
 	attempted := map[string]bool{}
 	// A later pass may complete a binding an earlier one only skipped, because
 	// its finding had not activated yet. A skip wrote nothing, so that attempt
@@ -186,7 +186,7 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 		}
 		skip := func(reason string) error {
 			attempt.SkipReason = reason
-			recordStageFindingProgress(attempt, match.ExplainedFindingFingerprints, state.Findings)
+			recordStageFindingProgress(attempt, match.targets, state.Findings)
 			return save(false)
 		}
 		if remaining() <= 0 {
@@ -219,7 +219,7 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 			}
 			continue
 		}
-		mitigator, ok := loop.Programs.Mitigator(match.PlaybookId)
+		_, ok := loop.Programs.Mitigator(match.PlaybookId)
 		if !ok {
 			if err := skip("no_mitigation"); err != nil {
 				return report, err
@@ -229,18 +229,6 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 		diagnoser, ok := loop.Programs.Diagnoser(match.PlaybookId)
 		if !ok {
 			if err := skip("diagnose_unavailable"); err != nil {
-				return report, err
-			}
-			continue
-		}
-		if !completeFindingBindings(mitigator.Spec(), bindings, state.Request.Findings, match.ExplainedFindingFingerprints) || program.ValidateBindings(diagnoser.Spec(), bindings) != nil {
-			if err := skip("unbound_parameter"); err != nil {
-				return report, err
-			}
-			continue
-		}
-		if len(match.ExplainedFindingFingerprints) == 0 {
-			if err := skip("unexplained_coverage"); err != nil {
 				return report, err
 			}
 			continue
@@ -267,13 +255,19 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 			}
 			continue
 		}
+		if len(match.targets) == 0 {
+			if err := skip("unexplained_coverage"); err != nil {
+				return report, err
+			}
+			continue
+		}
 		// Pin the live diagnosis view for planning; never reuse the dispatch-time
 		// view, and never invoke a working-checkout compiler in the automatic stage.
 		planResponse := ToolResponse{}
 		loop.matchedViews[matchedViewKey(match.PlaybookId, bindings)] = view
 		delete(loop.matchedPlans, matchedViewKey(match.PlaybookId, bindings))
 		if err := withoutResponderLocks(loop, "plan", true, func() {
-			planResponse = loop.Handle(ctx, ToolRequest{Command: "plan", ProgramID: match.PlaybookId, Bindings: bindings, FindingFingerprints: match.ExplainedFindingFingerprints, stage: true})
+			planResponse = loop.Handle(ctx, ToolRequest{Command: "plan", ProgramID: match.PlaybookId, Bindings: bindings, FindingFingerprints: match.targets, stage: true})
 		}); err != nil {
 			return report, err
 		}
@@ -339,46 +333,18 @@ func findingFingerprints(findings []sdk.Finding) []string {
 	return result
 }
 
-// Bindings must be complete and reproducible from an authored covered finding.
-// Scalar defaults alone do not supply a finding-derived binding.
-func completeFindingBindings(spec program.ProgramSpec, bindings program.Bindings, findings []sdk.Finding, covered []string) bool {
-	if program.ValidateBindings(spec, bindings) != nil {
-		return false
-	}
-	for _, param := range spec.Params {
-		_, object := bindings.Objects[param.Name]
-		_, value := bindings.Values[param.Name]
-		if !object && !value {
-			return false
-		}
-	}
-	for _, finding := range findings {
-		for _, fp := range covered {
-			if FindingFingerprint(finding) == fp {
-				if bound, err := program.BindFinding(spec, finding); err == nil && bound.Equal(bindings) {
-					return true
-				}
-			}
-		}
-	}
-	return false
+// A candidate retains the exact live diagnosis bindings and its finding
+// associations. Authored explanation links describe coverage, not bindability.
+type stageCandidate struct {
+	*contracts.PlaybookMatch
+	targets []string
 }
 
-func stageCandidates(loop *ResponderLoop, state *IncidentState) []*contracts.PlaybookMatch {
-	matches := append([]*contracts.PlaybookMatch(nil), state.Coverage.GetMatches()...)
-	// Missing parameters can prevent a Match altogether. Preserve that skipped
-	// decision for explicitly linked playbooks instead of dropping it silently.
-	if loop.Programs != nil {
-		for _, finding := range state.Request.Findings {
-			for _, spec := range loop.Programs.List() {
-				if !programExplainsFinding(finding, spec.ID) {
-					continue
-				}
-				if bound, err := program.BindFinding(spec, finding); err != nil {
-					matches = append(matches, &contracts.PlaybookMatch{PlaybookId: spec.ID, Bindings: programBindingsContract(bound), ExplainedFindingFingerprints: []string{FindingFingerprint(finding)}})
-				}
-			}
-		}
+func stageCandidates(state *IncidentState) []stageCandidate {
+	var matches []stageCandidate
+	for _, match := range state.Coverage.GetMatches() {
+		bindings := programBindingsState(match.Bindings)
+		matches = append(matches, stageCandidate{PlaybookMatch: match, targets: matchedFindingFingerprints(state.Request.Findings, state.Request.InitialProgramRuns, match.PlaybookId, bindings)})
 	}
 	return matches
 }
@@ -631,7 +597,7 @@ func (l *ResponderLoop) locked(fn func()) {
 
 // stageReady is one matched, planned binding waiting for the stage's apply.
 type stageReady struct {
-	match    *contracts.PlaybookMatch
+	match    stageCandidate
 	attempt  *contracts.StageMitigation
 	bindings program.Bindings
 	planID   string
@@ -648,7 +614,7 @@ func (stage *DeterministicResponseStage) applyMatched(ctx context.Context, loop 
 	if remaining() <= 0 {
 		for _, item := range ready {
 			item.attempt.Result, item.attempt.SkipReason = "skipped", "stage_budget"
-			recordStageFindingProgress(item.attempt, item.match.ExplainedFindingFingerprints, state.Findings)
+			recordStageFindingProgress(item.attempt, item.match.targets, state.Findings)
 		}
 		return save(false)
 	}
@@ -710,8 +676,8 @@ func (stage *DeterministicResponseStage) applyMatched(ctx context.Context, loop 
 		// Scoped executor verification and the bound post-write diagnosis are
 		// newer evidence than a retained opening incident finding. An incident
 		// detector may not be installed in this loop's health-only registry.
-		clearVerifiedStageTargets(state, attempt, item.match.ExplainedFindingFingerprints, applied)
-		recordStageFindingProgress(attempt, item.match.ExplainedFindingFingerprints, state.Findings)
+		clearVerifiedStageTargets(state, attempt, item.match.targets, applied)
+		recordStageFindingProgress(attempt, item.match.targets, state.Findings)
 		switch {
 		case attempt.ApplyReceipt.GetRolloutPending() != nil:
 			attempt.Result = "rollout_pending_at_handoff"

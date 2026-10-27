@@ -67,7 +67,9 @@ Observed values remain bound to their program invocation when several plans shar
 Use `bindings.Objects[name]` for resource identities and `bindings.Values[name]` for scalar inputs.
 `Bindings.Equal` uses the shared object citation parser: known kind aliases and omitted default API versions compare equally; names, namespaces, explicit versions and scalar values must agree.
 Declare value parameters in `ProgramSpec.Params` with `ValueKind` (`StringValue`, `IntValue`, `QuantityValue`,
-`DurationValue`, or `BoolValue`) and an optional `Default`. Keep object `Kind` empty for a value parameter.
+`DurationValue`, or `BoolValue`). Required scalar parameters need a `Default` so the live finding path
+can bind them; read incident-specific values through ReadView. Diagnose and Mitigate must declare identical
+parameters. Keep object `Kind` empty for a value parameter.
 `ValidateBindings` rejects wrong types, unknown names, duplicate declarations, and mixed object/value kinds.
 Use `bindings.Parameter(spec, name)` to retrieve a validated binding or its default. Quantities and durations
 are strings in Kubernetes quantity and Go duration syntax; booleans and integers retain their scalar types.
