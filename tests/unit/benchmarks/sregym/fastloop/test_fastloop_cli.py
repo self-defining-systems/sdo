@@ -670,7 +670,7 @@ def test_sdo_agent_preserves_accepted_seed_manifest_selection(tmp_path: Path) ->
     )
 
 
-def test_fresh_memory_resets_control_state_before_install_but_warm_repeat_keeps_it(
+def test_native_install_runs_without_a_selective_reset_because_the_row_start_wipe_owns_it(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from benchmarks.sregym import adapter
@@ -729,7 +729,7 @@ def test_fresh_memory_resets_control_state_before_install_but_warm_repeat_keeps_
         agent = cli._sdo_agent(args, environment, tmp_path / "results")
         agent._clock = _clock()
         agent.learn(agent.resolve(0, "p", _inject))
-        assert calls == ["stop", "reset-control-state", "install"] * (fresh + 1)
+        assert calls == ["install"] * (fresh + 1)
         # A new CLI invocation and the warm reset/reinstall path retain memory.
         state = adapter.PersistentState.load(environment.state_path)
         record = state.controllers[environment.namespace]
@@ -741,4 +741,4 @@ def test_fresh_memory_resets_control_state_before_install_but_warm_repeat_keeps_
         warm = cli._sdo_agent(args, environment, tmp_path / "results")
         warm._clock = _clock()
         warm.learn(warm.resolve(1, "p", _inject))
-        assert calls == ["stop", "reset-control-state", "install"] * (fresh + 1)
+        assert calls == ["install"] * (fresh + 1)

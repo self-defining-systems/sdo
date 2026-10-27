@@ -111,19 +111,25 @@ There is no time scaling; every run uses real time. `--continue-on-error` record
 moves on only when recovery has passed its oracle. A new dev lane uses the
 `fastloop-dev-w` cluster prefix; choose another prefix if that name is taken.
 
-# Reused lanes: fault-setup leftovers and redeploy
+# Reused lanes: the row-start wipe
 
-A fault may install cluster-scoped infrastructure outside the app namespace, such as the
-`ingress-nginx` release of IngressMisroute. The SREGym worker removes what an injection created
-after full recovery, but only from its own memory. Beside each lane's kubeconfig the worker bridge
-also keeps a `<kubeconfig>.setup-ledger.json` window (`fastloop/setup_ledger.py`): it opens before
-an injection runs, records the cluster-scoped objects the injection created when it returns, and
-closes only after a full recovery with nothing pending. An attempt that aborts, times out or is
-killed in between leaves the window open, and the next row's `LaneAdmission.prove` removes those
-objects and waits until they are gone before the lane-resource entry check. The check itself stays:
-it still refuses any foreign namespace no window recorded. Namespaces the entry check allows
-(infrastructure, the app, `<app>-sdo`) are never removed, and a window cut off before the injection
-returned removes only objects new since it opened.
+Every `run --agent sdo` row starts with two tiers (`fastloop/wipe.py`; the receipt `wipe-receipt.json`
+in the results directory records `tier1_seconds`, `tier2_ran`, `tier2_seconds`, `tier2_reason`):
+
+- **Tier 1, always.** Delete `<app>-sdo` and every namespace and cluster-scoped object that is not the
+  lane's own (namespaces outside the infrastructure and app set; cluster objects new since the
+  `<kubeconfig>.lane-inventory.json` that `up` records). Then run `--credentials-hook EXECUTABLE <app>-sdo`
+  (the lane keeper creates the namespace and its credentials Secret; fastloop never reads or copies a value),
+  reset the accepted repository to `--planned-commit` (the seed for a first try, the previous row's
+  `accepted_after` for a repeat), and forget the controller registry. The normal native install follows.
+  Nothing SDO wrote survives except the memory commit. A lane with no inventory adopts its current
+  cluster-scoped objects on the first wipe. Target: under about 90 s.
+- **Tier 2, only when needed.** The warm app stays when the previous attempt ended cleanly (no
+  `attempt-in-progress` file in the run directory) and the restore invariant (`workload_identity` and
+  `assert_clean_baseline`) holds. Otherwise the app is redeployed with `deploy --redeploy` from the image
+  cache and the application baseline is captured again.
+
+The lane-resource entry check and the restore invariant stay: they are the measurement-validity checks.
 
 `up --redeploy` is repeatable for every app. The worker bridge routes SREGym's `Helm.install`, the
 one entry point for the app and telemetry charts, through `helm upgrade --install`
@@ -412,20 +418,12 @@ For a private scripted lane (no model calls), set `SDO_TOY_CLUSTER=gs1-toy` for 
 
 ### Fresh memory and namespace control state
 
-A fresh fastloop state file starts a new memory stream. Before native install,
-fastloop stops the old SDO runtime and runs the production command
-`sdo-operator reset-control-state --control-namespace <app>-sdo --kubeconfig <lane-config>`.
-This explicitly retires only SDO-owned `sdo-namespace-onboarding`,
-`sdo-namespace-onboarding-pending`, and `sdo-namespace-onboarding-attempt`
-ConfigMaps and `sdo-controller-state`; logs and the JSON receipt identify
-deletions. Repository memory,
-application objects and Secret data are outside this command's scope.
-Run it only with the controller/workers stopped and before a from-scratch
-reinstall. A new confirmed healthy install establishes the next reference.
-Warm repeats and `reset_environment(..., preserve_repository=True)` retain their
-controller record, skip this reset, and keep the original reference. A legacy
-final record without reachability evidence logs `reference_absent` and grants
-no reachability exclusions.
+Non-toy SDO rows no longer retire control state selectively: the row-start wipe (see "Reused lanes")
+deletes `<app>-sdo` entirely, so no onboarding record, controller checkpoint or worker ConfigMap from an
+earlier attempt survives, and the install after it is always from-scratch on the planned commit. Only toy
+lanes still run `stop` and `sdo-operator reset-control-state` before install. A new confirmed healthy install
+establishes the next reachability reference; a legacy final record without reachability evidence logs
+`reference_absent` and grants no reachability exclusions.
 
 The legacy controller checkpoint is recognized by its exact name,
 `sdo.dev/state-revision` annotation and `runtime-state.json` key. Retiring it
