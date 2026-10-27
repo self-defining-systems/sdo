@@ -19,10 +19,15 @@ type ProgramCount struct {
 func programCountKey(id, revision string) string { return id + "@" + revision }
 
 // ProgramCounts tallies applied, non-dry-run applications per (program id,
-// revision). An application succeeds when its incident closed healthy and it
-// was neither rolled back nor errored. A recorded
-// application_verification_failure counts once, unless an application of that
-// program already counted as failed in the same incident.
+// revision), once per application. An application of a failed incident, one
+// that errored or was rolled back, or one whose program has a recorded
+// application_verification_failure signal in the same incident is a failure;
+// otherwise an application in a successful incident is a success. A
+// cleared_without_action or unconfirmed closure is neither: the first needed
+// no repair and the second is verified but not a failure, so its applications
+// carry no verdict. A failure signal for a program with no counted application
+// counts one failure against the signal's revision. An application is never
+// both.
 func ProgramCounts(outcomes []*contracts.OutcomeRecord) map[string]ProgramCount {
 	counts := map[string]ProgramCount{}
 	for _, outcome := range outcomes {
@@ -33,27 +38,37 @@ func ProgramCounts(outcomes []*contracts.OutcomeRecord) map[string]ProgramCount 
 			}
 			return outcome.GetSourceCommit()
 		}
-		failedHere := map[string]bool{}
+		signaled := map[string]string{}
+		for _, signal := range outcome.GetProgramFailureSignals() {
+			if id, revision, ok := parseApplicationFailureSignal(signal); ok {
+				signaled[id] = revision
+			}
+		}
+		applicationCounted := map[string]bool{}
 		for _, application := range outcome.GetPlanApplications() {
 			if !application.GetApplied() || application.GetDryRun() || application.GetRolloutPending() != nil {
 				continue
 			}
-			failed := outcome.GetClassification() != "success" || application.GetError() != "" || application.GetRolledBack() || application.GetRollbackError() != ""
 			for _, id := range application.GetProgramIds() {
+				_, signal := signaled[id]
+				failed := application.GetError() != "" || application.GetRolledBack() || application.GetRollbackError() != "" || signal
+				verdict := applicationVerdict(outcome.GetClassification(), failed)
+				if verdict == noVerdict {
+					continue
+				}
 				key := programCountKey(id, revisionOf(id))
 				count := counts[key]
-				if failed {
+				if verdict == failedApplication {
 					count.Failures++
-					failedHere[id] = true
 				} else {
 					count.Successes++
 				}
 				counts[key] = count
+				applicationCounted[id] = true
 			}
 		}
-		for _, signal := range outcome.GetProgramFailureSignals() {
-			id, revision, ok := parseApplicationFailureSignal(signal)
-			if !ok || failedHere[id] {
+		for id, revision := range signaled {
+			if applicationCounted[id] {
 				continue
 			}
 			if revision == "" {
@@ -63,7 +78,43 @@ func ProgramCounts(outcomes []*contracts.OutcomeRecord) map[string]ProgramCount 
 			count := counts[key]
 			count.Failures++
 			counts[key] = count
-			failedHere[id] = true
+		}
+	}
+	return counts
+}
+
+type applicationOutcome int
+
+const (
+	noVerdict applicationOutcome = iota
+	succeededApplication
+	failedApplication
+)
+
+// applicationVerdict maps one application's incident classification and own
+// harm to a count. Classifications that carry no verdict are listed, so a new
+// closure kind is counted as a failure only if it is not one of them.
+func applicationVerdict(classification string, harmed bool) applicationOutcome {
+	switch classification {
+	case "cleared_without_action", "unconfirmed":
+		return noVerdict
+	case "success":
+		if harmed {
+			return failedApplication
+		}
+		return succeededApplication
+	default:
+		return failedApplication
+	}
+}
+
+// countsFromCoverage is the count view the agent was shown: the matches of the
+// frozen coverage, keyed like ProgramCounts.
+func countsFromCoverage(coverage *contracts.PlaybookCoverage) map[string]ProgramCount {
+	counts := map[string]ProgramCount{}
+	for _, match := range coverage.GetMatches() {
+		counts[programCountKey(match.GetPlaybookId(), match.GetProgramRevision())] = ProgramCount{
+			Successes: int(match.GetSuccessfulApplications()), Failures: int(match.GetFailedApplications()),
 		}
 	}
 	return counts

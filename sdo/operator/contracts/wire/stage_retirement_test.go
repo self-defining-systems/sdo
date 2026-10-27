@@ -14,7 +14,7 @@ import (
 // The automatic response stage is gone, but the stored documents still carry
 // its fields; every durable reader must accept them.
 const (
-	oldStageReport  = `{"stage":"deterministic","outcome":"verified","mitigations":[{"program_id":"p","applied":true}]}`
+	oldStageReport = `{"stage":"deterministic","outcome":"verified","mitigations":[{"program_id":"p","applied":true}]}`
 )
 
 // oldIncidentRequest is the JSON of a valid incident request with the retired
@@ -110,5 +110,25 @@ func TestDurableControllerConfigDropsRetiredResponseStages(t *testing.T) {
 	}
 	if config.GetCodePath().GetOverrides().GetCoverage() != "go" {
 		t.Fatalf("migration lost sibling overrides: %v", config)
+	}
+}
+
+func TestDurableControllerStateRenamesStoredMatchCounts(t *testing.T) {
+	match := `{"playbook_id":"targetport","program_revision":"r","verified_successes":2,"verified_failures":1}`
+	coverage := `{"matches":[` + match + `]}`
+	request := oldIncidentRequest(t)
+	var parsed any
+	if err := json.Unmarshal([]byte(coverage), &parsed); err != nil {
+		t.Fatal(err)
+	}
+	request["playbook_coverage"] = parsed
+	data := mustJSON(t, map[string]any{"version": "sdo.controller/v1", "incident_open": true, "incident_request": request})
+	state := new(contracts.ControllerState)
+	if err := UnmarshalDurable(data, state); err != nil {
+		t.Fatalf("cannot restore stored match counts: %v", err)
+	}
+	got := state.GetIncidentRequest().GetPlaybookCoverage().GetMatches()[0]
+	if got.GetSuccessfulApplications() != 2 || got.GetFailedApplications() != 1 {
+		t.Fatalf("counts not carried to the renamed fields: %v", got)
 	}
 }

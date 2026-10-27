@@ -100,8 +100,8 @@ def test_coverage_keeps_diagnosis_only_flags_counts_and_resource_bindings() -> N
     view = incident_data_view(request)["playbook_coverage"]
     selected = view["matches"][0]
     assert selected["can_mitigate"] is False
-    assert selected["verified_successes"] == 0
-    assert selected["verified_failures"] == 0
+    assert selected["successful_applications"] == 0
+    assert selected["failed_applications"] == 0
     assert selected["bindings"][0]["object"]["name"] == "service-0"
     assert selected["explained_finding_fingerprints"] == ["finding-0"]
     assert view["unexplained_finding_fingerprints"] == ["finding-1"]

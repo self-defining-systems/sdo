@@ -50,7 +50,10 @@ func TestProgramCountsAreInformationPerProgramRevision(t *testing.T) {
 		{"dry run, pending rollout and unapplied plans count nothing", []*contracts.OutcomeRecord{countedOutcome("success", "a", dryRun), countedOutcome("failed", "a", pending), countedOutcome("success", "a", notApplied)}, map[string]ProgramCount{}},
 		{"revisions count apart", []*contracts.OutcomeRecord{countedOutcome("success", "a", applied()), countedOutcome("failed", "b", applied()), countedOutcome("success", "b", applied())}, map[string]ProgramCount{"repair@a": {Successes: 1}, "repair@b": {Successes: 1, Failures: 1}}},
 		{"a recorded verification failure counts once with its failed application", []*contracts.OutcomeRecord{countedOutcome("success", "a", rolledBack, "application_verification_failure:repair@a")}, map[string]ProgramCount{"repair@a": {Failures: 1}}},
-		{"a verification failure with no failed application still counts", []*contracts.OutcomeRecord{countedOutcome("success", "a", applied(), "application_verification_failure:repair@a")}, map[string]ProgramCount{"repair@a": {Successes: 1, Failures: 1}}},
+		{"a verification failure makes that application a failure, never also a success", []*contracts.OutcomeRecord{countedOutcome("success", "a", applied(), "application_verification_failure:repair@a")}, map[string]ProgramCount{"repair@a": {Failures: 1}}},
+		{"unconfirmed and cleared closures are not failures", []*contracts.OutcomeRecord{countedOutcome("unconfirmed", "a", applied()), countedOutcome("cleared_without_action", "a", applied())}, map[string]ProgramCount{}},
+		{"a retired classification still counts as a failure", []*contracts.OutcomeRecord{countedOutcome("partial", "a", applied())}, map[string]ProgramCount{"repair@a": {Failures: 1}}},
+		{"two applications in one incident count once each", []*contracts.OutcomeRecord{{Classification: "success", SourceCommit: "s", PlanApplications: []*contracts.PlanApplication{{Applied: true, ProgramIds: []string{"repair"}}, {Applied: true, ProgramIds: []string{"repair"}}}}}, map[string]ProgramCount{"repair@s": {Successes: 2}}},
 		{"a failure signal alone counts against its revision", []*contracts.OutcomeRecord{{SourceCommit: "source", ProgramFailureSignals: []string{"application_verification_failure:repair@a"}}}, map[string]ProgramCount{"repair@a": {Failures: 1}}},
 		{"a run-less outcome falls back to its source commit", []*contracts.OutcomeRecord{{Classification: "success", SourceCommit: "source", PlanApplications: []*contracts.PlanApplication{{Applied: true, ProgramIds: []string{"repair"}}}}}, map[string]ProgramCount{"repair@source": {Successes: 1}}},
 	} {
@@ -148,7 +151,7 @@ func TestMatchedLearnedPlaybookReachesTheAgentWithCountsAndNoPriorWrite(t *testi
 
 	matches := request.PlaybookCoverage.GetMatches()
 	if len(matches) != 1 || matches[0].GetPlaybookId() != "targetport" || !matches[0].GetCanMitigate() ||
-		matches[0].GetVerifiedSuccesses() != 2 || matches[0].GetVerifiedFailures() != 1 {
+		matches[0].GetSuccessfulApplications() != 2 || matches[0].GetFailedApplications() != 1 {
 		t.Fatalf("agent request lacks the learned match with its counts: %v", request.PlaybookCoverage)
 	}
 	if len(client.patches) != 0 || rollouts.calls != 0 {

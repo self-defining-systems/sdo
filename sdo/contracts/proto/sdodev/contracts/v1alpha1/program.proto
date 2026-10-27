@@ -307,8 +307,10 @@ message PlaybookMatch {
   bool can_mitigate = 5;
   // Logical program selection for a fresh menu at these bindings.
   string mitigation_selection = 6;
-  int32 verified_successes = 7;
-  int32 verified_failures = 8;
+  // Earlier applications of this program revision whose incident closed healthy
+  // with no recorded harm, and those that failed. Information only.
+  int32 successful_applications = 7;
+  int32 failed_applications = 8;
 }
 
 message RemoveServicePort {

@@ -36,8 +36,8 @@ func buildPlaybookCoverage(findings []sdk.Finding, runs []ProgramRun, view sdk.D
 				match.MitigationSelection = "program-" + menuDigest([]any{run.ProgramID, run.Bindings})
 			}
 			count := counts[programCountKey(run.ProgramID, run.ProgramRevision)]
-			match.VerifiedSuccesses = int32(count.Successes)
-			match.VerifiedFailures = int32(count.Failures)
+			match.SuccessfulApplications = int32(count.Successes)
+			match.FailedApplications = int32(count.Failures)
 			matches[key] = match
 		}
 		covered := map[string]bool{}

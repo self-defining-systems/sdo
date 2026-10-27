@@ -248,8 +248,8 @@ def rendered_cases() -> dict[str, str]:
             program_revision="d" * 40,
             can_mitigate=True,
             mitigation_selection="restore-port",
-            verified_successes=2,
-            verified_failures=1,
+            successful_applications=2,
+            failed_applications=1,
             explained_finding_fingerprints=["fingerprint-0"],
         )
         match.bindings.add(name="service").object.CopyFrom(matched.findings[0].primary_resource)

@@ -2638,10 +2638,12 @@ type PlaybookMatch struct {
 	CanMitigate                  bool                   `protobuf:"varint,5,opt,name=can_mitigate,json=canMitigate,proto3" json:"can_mitigate,omitempty"`
 	// Logical program selection for a fresh menu at these bindings.
 	MitigationSelection string `protobuf:"bytes,6,opt,name=mitigation_selection,json=mitigationSelection,proto3" json:"mitigation_selection,omitempty"`
-	VerifiedSuccesses   int32  `protobuf:"varint,7,opt,name=verified_successes,json=verifiedSuccesses,proto3" json:"verified_successes,omitempty"`
-	VerifiedFailures    int32  `protobuf:"varint,8,opt,name=verified_failures,json=verifiedFailures,proto3" json:"verified_failures,omitempty"`
-	unknownFields       protoimpl.UnknownFields
-	sizeCache           protoimpl.SizeCache
+	// Earlier applications of this program revision whose incident closed healthy
+	// with no recorded harm, and those that failed. Information only.
+	SuccessfulApplications int32 `protobuf:"varint,7,opt,name=successful_applications,json=successfulApplications,proto3" json:"successful_applications,omitempty"`
+	FailedApplications     int32 `protobuf:"varint,8,opt,name=failed_applications,json=failedApplications,proto3" json:"failed_applications,omitempty"`
+	unknownFields          protoimpl.UnknownFields
+	sizeCache              protoimpl.SizeCache
 }
 
 func (x *PlaybookMatch) Reset() {
@@ -2716,16 +2718,16 @@ func (x *PlaybookMatch) GetMitigationSelection() string {
 	return ""
 }
 
-func (x *PlaybookMatch) GetVerifiedSuccesses() int32 {
+func (x *PlaybookMatch) GetSuccessfulApplications() int32 {
 	if x != nil {
-		return x.VerifiedSuccesses
+		return x.SuccessfulApplications
 	}
 	return 0
 }
 
-func (x *PlaybookMatch) GetVerifiedFailures() int32 {
+func (x *PlaybookMatch) GetFailedApplications() int32 {
 	if x != nil {
-		return x.VerifiedFailures
+		return x.FailedApplications
 	}
 	return 0
 }
@@ -4258,7 +4260,7 @@ const file_sdodev_contracts_v1alpha1_program_proto_rawDesc = "" +
 	"\x10_no_repair_count\"\xa0\x01\n" +
 	"\x10PlaybookCoverage\x12B\n" +
 	"\amatches\x18\x01 \x03(\v2(.sdodev.contracts.v1alpha1.PlaybookMatchR\amatches\x12H\n" +
-	" unexplained_finding_fingerprints\x18\x02 \x03(\tR\x1eunexplainedFindingFingerprints\"\x93\x03\n" +
+	" unexplained_finding_fingerprints\x18\x02 \x03(\tR\x1eunexplainedFindingFingerprints\"\xa1\x03\n" +
 	"\rPlaybookMatch\x12\x1f\n" +
 	"\vplaybook_id\x18\x01 \x01(\tR\n" +
 	"playbookId\x12)\n" +
@@ -4266,9 +4268,9 @@ const file_sdodev_contracts_v1alpha1_program_proto_rawDesc = "" +
 	"\bbindings\x18\x03 \x03(\v2\".sdodev.contracts.v1alpha1.BindingR\bbindings\x12D\n" +
 	"\x1eexplained_finding_fingerprints\x18\x04 \x03(\tR\x1cexplainedFindingFingerprints\x12!\n" +
 	"\fcan_mitigate\x18\x05 \x01(\bR\vcanMitigate\x121\n" +
-	"\x14mitigation_selection\x18\x06 \x01(\tR\x13mitigationSelection\x12-\n" +
-	"\x12verified_successes\x18\a \x01(\x05R\x11verifiedSuccesses\x12+\n" +
-	"\x11verified_failures\x18\b \x01(\x05R\x10verifiedFailures\"\xad\x03\n" +
+	"\x14mitigation_selection\x18\x06 \x01(\tR\x13mitigationSelection\x127\n" +
+	"\x17successful_applications\x18\a \x01(\x05R\x16successfulApplications\x12/\n" +
+	"\x13failed_applications\x18\b \x01(\x05R\x12failedApplications\"\xad\x03\n" +
 	"\x11RemoveServicePort\x12>\n" +
 	"\x03ref\x18\x01 \x01(\v2$.sdodev.contracts.v1alpha1.ObjectRefB\x06\xbaH\x03\xc8\x01\x01R\x03ref\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x1f\n" +

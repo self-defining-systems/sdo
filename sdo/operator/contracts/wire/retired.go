@@ -27,6 +27,9 @@ var retiredFieldNames = map[string]string{
 	"sdodev.contracts.v1alpha1.CodePathOverrides.response_stages": "",
 	"sdodev.contracts.v1alpha1.IncidentRequest.prior_stages":      "",
 	"sdodev.contracts.v1alpha1.OutcomeRecord.prior_stages":        "",
+	// The match counts are applications, not independently verified runs.
+	"sdodev.contracts.v1alpha1.PlaybookMatch.verified_successes": "successful_applications",
+	"sdodev.contracts.v1alpha1.PlaybookMatch.verified_failures":  "failed_applications",
 }
 
 // retiredValues maps "<message>.<field>" to retired value -> successor, for

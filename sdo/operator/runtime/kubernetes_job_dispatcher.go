@@ -203,7 +203,7 @@ func (d KubernetesJobDispatcher) dispatch(ctx context.Context, request IncidentR
 			defer loop.CloseWorkingPrograms()
 		}
 		if loop != nil {
-			loop.initializeDispatch(d.programCounts(ctx), request.MaxResponseLoops, request.InitialProgramRuns)
+			loop.initializeDispatch(countsFromCoverage(request.PlaybookCoverage), request.MaxResponseLoops, request.InitialProgramRuns)
 			if err := d.restoreToolState(ctx, request, loop); err != nil {
 				return IncidentResult{}, fmt.Errorf("restore responder tool state: %w", err)
 			}

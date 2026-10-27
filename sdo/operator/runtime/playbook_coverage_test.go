@@ -36,7 +36,7 @@ func TestPlaybookCoverageIncludesEveryMatchAndUnexplainedFinding(t *testing.T) {
 	if len(coverage.GetMatches()) != 3 || !reflect.DeepEqual(coverage.GetUnexplainedFindingFingerprints(), []string{FindingFingerprint(findings[2])}) {
 		t.Fatalf("coverage=%+v", coverage)
 	}
-	if coverage.Matches[0].PlaybookId != "other" || coverage.Matches[1].VerifiedSuccesses != 2 || coverage.Matches[1].VerifiedFailures != 3 || !coverage.Matches[1].CanMitigate {
+	if coverage.Matches[0].PlaybookId != "other" || coverage.Matches[1].SuccessfulApplications != 2 || coverage.Matches[1].FailedApplications != 3 || !coverage.Matches[1].CanMitigate {
 		t.Fatalf("order/counters=%+v", coverage.Matches)
 	}
 	for _, match := range coverage.Matches {

@@ -449,24 +449,24 @@ class PlaybookCoverage(_message.Message):
     def __init__(self, matches: _Optional[_Iterable[_Union[PlaybookMatch, _Mapping]]] = ..., unexplained_finding_fingerprints: _Optional[_Iterable[str]] = ...) -> None: ...
 
 class PlaybookMatch(_message.Message):
-    __slots__ = ("playbook_id", "program_revision", "bindings", "explained_finding_fingerprints", "can_mitigate", "mitigation_selection", "verified_successes", "verified_failures")
+    __slots__ = ("playbook_id", "program_revision", "bindings", "explained_finding_fingerprints", "can_mitigate", "mitigation_selection", "successful_applications", "failed_applications")
     PLAYBOOK_ID_FIELD_NUMBER: _ClassVar[int]
     PROGRAM_REVISION_FIELD_NUMBER: _ClassVar[int]
     BINDINGS_FIELD_NUMBER: _ClassVar[int]
     EXPLAINED_FINDING_FINGERPRINTS_FIELD_NUMBER: _ClassVar[int]
     CAN_MITIGATE_FIELD_NUMBER: _ClassVar[int]
     MITIGATION_SELECTION_FIELD_NUMBER: _ClassVar[int]
-    VERIFIED_SUCCESSES_FIELD_NUMBER: _ClassVar[int]
-    VERIFIED_FAILURES_FIELD_NUMBER: _ClassVar[int]
+    SUCCESSFUL_APPLICATIONS_FIELD_NUMBER: _ClassVar[int]
+    FAILED_APPLICATIONS_FIELD_NUMBER: _ClassVar[int]
     playbook_id: str
     program_revision: str
     bindings: _containers.RepeatedCompositeFieldContainer[Binding]
     explained_finding_fingerprints: _containers.RepeatedScalarFieldContainer[str]
     can_mitigate: bool
     mitigation_selection: str
-    verified_successes: int
-    verified_failures: int
-    def __init__(self, playbook_id: _Optional[str] = ..., program_revision: _Optional[str] = ..., bindings: _Optional[_Iterable[_Union[Binding, _Mapping]]] = ..., explained_finding_fingerprints: _Optional[_Iterable[str]] = ..., can_mitigate: _Optional[bool] = ..., mitigation_selection: _Optional[str] = ..., verified_successes: _Optional[int] = ..., verified_failures: _Optional[int] = ...) -> None: ...
+    successful_applications: int
+    failed_applications: int
+    def __init__(self, playbook_id: _Optional[str] = ..., program_revision: _Optional[str] = ..., bindings: _Optional[_Iterable[_Union[Binding, _Mapping]]] = ..., explained_finding_fingerprints: _Optional[_Iterable[str]] = ..., can_mitigate: _Optional[bool] = ..., mitigation_selection: _Optional[str] = ..., successful_applications: _Optional[int] = ..., failed_applications: _Optional[int] = ...) -> None: ...
 
 class RemoveServicePort(_message.Message):
     __slots__ = ("ref", "name", "port", "protocol", "allow_empty", "reason")

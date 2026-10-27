@@ -253,7 +253,7 @@ func TestHermeticSourceReconcileLearningExposesVerifiedCounters(t *testing.T) {
 		t.Fatal(err)
 	}
 	coverage := prepared.PlaybookCoverage
-	if len(coverage.GetMatches()) != 1 || coverage.Matches[0].VerifiedSuccesses != 3 {
+	if len(coverage.GetMatches()) != 1 || coverage.Matches[0].SuccessfulApplications != 3 {
 		t.Fatalf("source repair coverage lost verified counters: %v", coverage)
 	}
 	live, err := client.AppsV1().Deployments("app").Get(ctx, "api", metav1.GetOptions{})
