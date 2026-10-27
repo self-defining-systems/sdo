@@ -16,7 +16,7 @@ from sdo.agents.responder.reflection_authoring import OpenPhase
 if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
 
-    from sdo.contracts import OperationalMemorySnapshot
+    from sdo.contracts import OperationalMemorySnapshot, OutcomeRecord
 
 CapturePhase = OpenPhase | Literal["fixed"]
 CaptureSection = Literal[
@@ -259,6 +259,72 @@ def memory_view(snapshot: OperationalMemorySnapshot) -> dict[str, Any]:
         "omitted_playbooks": max(0, len(snapshot.playbooks) - 30),
         "full_text": "Read relevant accepted files in the proposal checkout through the memory inventory.",
     }
+
+
+def reflection_memory_view(snapshot: OperationalMemorySnapshot, outcome: OutcomeRecord) -> dict[str, Any]:
+    """Incident-local advice, bound to the accepted snapshot, never learning authority.
+
+    Select before clipping: a relevant playbook may be beyond the inventory's
+    first page. Full accepted files and the authoritative outcome remain intact.
+    """
+    detector_ids = {finding.detector_id for finding in outcome.findings}
+    playbook_ids = set(outcome.applied_playbooks) | set(outcome.confirmed_playbooks)
+    playbook_ids.update(match.playbook_id for match in outcome.playbook_coverage.matches)
+    playbook_ids.update(mitigation.playbook_id for stage in outcome.prior_stages for mitigation in stage.mitigations)
+    for detector in snapshot.detectors:
+        if detector.id in detector_ids:
+            playbook_ids.update(detector.possible_playbook_ids)
+    scoped = type(snapshot)(
+        accepted_commit=snapshot.accepted_commit,
+        goal_markdown=snapshot.goal_markdown,
+        architecture_markdown=snapshot.architecture_markdown,
+    )
+    scoped.detectors.extend(
+        item
+        for item in snapshot.detectors
+        if item.id in detector_ids or playbook_ids.intersection(item.possible_playbook_ids)
+    )
+    scoped.playbooks.extend(item for item in snapshot.playbooks if item.id in playbook_ids)
+    view = memory_view(scoped)
+    view["omitted_detectors"] = len(snapshot.detectors) - len(view["detectors"])
+    view["omitted_playbooks"] = len(snapshot.playbooks) - len(view["playbooks"])
+    if outcome.prior_stages or outcome.playbook_coverage.matches:
+        mitigations = [
+            {
+                "playbook_id": item.playbook_id,
+                "program_revision": item.program_revision,
+                "result": item.result,
+                "skip_reason": item.skip_reason,
+                "cleared_finding_fingerprints": list(item.cleared_finding_fingerprints),
+                "remaining_finding_fingerprints": list(item.remaining_finding_fingerprints),
+            }
+            for stage in outcome.prior_stages
+            for item in stage.mitigations
+        ]
+        explained = sorted(
+            {
+                fingerprint
+                for match in outcome.playbook_coverage.matches
+                for fingerprint in match.explained_finding_fingerprints
+            }
+        )
+        view["incident_context"] = {
+            "accepted_commit": snapshot.accepted_commit,
+            "matches": [
+                {
+                    "playbook_id": match.playbook_id,
+                    "program_revision": match.program_revision,
+                    "explained_finding_fingerprints": list(match.explained_finding_fingerprints),
+                }
+                for match in outcome.playbook_coverage.matches[:20]
+            ],
+            "omitted_matches": max(0, len(outcome.playbook_coverage.matches) - 20),
+            "stage_mitigations": mitigations[:20],
+            "omitted_stage_mitigations": max(0, len(mitigations) - 20),
+            "explained_finding_fingerprints": explained,
+            "unexplained_finding_fingerprints": list(outcome.playbook_coverage.unexplained_finding_fingerprints),
+        }
+    return view
 
 
 def install_evidence_tools(server: FastMCP) -> None:

@@ -2,7 +2,7 @@ Idempotency key: reflection:toy-incident:outcome
 
 The controller has committed its authoritative incident outcome.
 Reflect using the same incident context.
-The committed outcome is authoritative; failed incidents supply a filtered learning view. Accepted source and developer changes express intent. Operational memory is fallible advice. Recovery requires evidence from the intended application behavior. Save verified steps with partial coverage, README orchestration and detectors. Replay is informational: NoMatch, persistent Match and unavailable replay never block saving. Keep compile, imports, formatting and receipt provenance checks. Any performed repair can be a RunScript bash step with relation-derived Env and digest-to-receipt linkage; difficulty never justifies saving nothing. Put judgement about when and in what order to run steps in the README. Use recorded actions as repair evidence and the session's live observations to build replay fixtures. Save verified, specific README-only guidance too; it is never auto-applied. Learn detectors from listed undetected transitions; do not infer recovery. The authoring guide starts at /opt/sdo/skills/sdo-memory/SKILL.md. Preserve Go-owned corpus and trust; answer session questions without inferring cause groups. Unavailable observations remain Unknown. Search full evidence in a temporary file; never infer from truncated output. Edit final operational-memory files only in this isolated checkout. Protect source, outcomes, goal and architecture. Return updated for a validated nonempty diff, including Go-authored edits, with changed playbook IDs. Include scoped sdk_gaps alongside updated for unencoded parts; use sdk_gap without edits only when nothing mechanical or useful guidance can be saved. Otherwise return no_change with a reason. The broker checks and publishes. Answer in the `reflection` field and leave `incident_result` null.
+Committed outcomes are authoritative; failed incidents supply filtered learning. Accepted source and developer changes express intent. Operational memory is fallible advice. Recovery requires evidence from the intended application behavior. Keep revisions that applied cleanly unless this incident shows failure or incompleteness; add or narrowly edit, never rewrite working steps. Save verified steps with partial coverage, README orchestration and detectors. Replay is informational: NoMatch, persistent Match and unavailable replay never block saving; do not correct them. Keep compile, imports, formatting and receipt provenance checks. Any performed repair can be a RunScript with relation-derived Env and digest-to-receipt linkage; difficulty never justifies saving nothing. Put judgement in the README; Save verified, specific README-only guidance too. Use recorded actions as repair evidence and session observations for fixtures. Learn listed undetected transitions without inferring recovery. The authoring guide starts at /opt/sdo/skills/sdo-memory/SKILL.md. Preserve Go-owned corpus and trust. Unavailable observations remain Unknown. Search full evidence in a temporary file; never infer from truncated output. Edit final operational-memory files only in this isolated checkout. Protect source, outcomes, goal and architecture. Return updated for a validated nonempty diff, including Go-authored edits, with changed playbook IDs. Include scoped sdk_gaps alongside updated for unencoded parts. Use sdk_gap without edits only when nothing useful can be saved. If accepted playbooks cover the repair, return no_change with a reason or a small evidence-backed addition. The broker checks and publishes. Answer in the `reflection` field and leave `incident_result` null.
 
 Go has settled covered items and materialized their evidence in this checkout. Preserve Go-owned cases and address only the per-cause questions in the same incident session. A false-match fixed capture is a required NoMatch regression. Missing controller captures do not block learning from recorded session observations. Return updated whenever final files include Go or agent edits.
 Per-cause work:
@@ -25,30 +25,14 @@ Operational memory snapshot:
   "architecture_markdown": "# Toy architecture\nAPI depends on store.\n",
   "goal_omitted_characters": 0,
   "architecture_omitted_characters": 0,
-  "detectors": [
-    {
-      "id": "detector-0",
-      "description": "Toy service port mismatch",
-      "playbook_ids": [
-        "repair-0"
-      ]
-    }
-  ],
-  "playbooks": [
-    {
-      "id": "repair-0",
-      "excerpt": "# Repair\nRestore the accepted target port.\n",
-      "script_names": [
-        "diagnose.go"
-      ]
-    }
-  ],
-  "omitted_detectors": 0,
-  "omitted_playbooks": 0,
+  "detectors": [],
+  "playbooks": [],
+  "omitted_detectors": 1,
+  "omitted_playbooks": 1,
   "full_text": "Read relevant accepted files in the proposal checkout through the memory inventory."
 }
 
-Repeated program evaluations and tool calls below carry counts. Large tool responses are excerpted; outcome_call_index and response_json_sha256 identify the full response in the committed outcome. Root causes, findings, action receipts and program transitions are retained.
+Inspect only incident-relevant memory; stage results and coverage summarize existing explanations. Repeated calls carry counts; excerpts identify full committed responses by outcome_call_index and response_json_sha256.
 Current outcome:
 {
   "schema_version": 1,
@@ -84,3 +68,4 @@ Current outcome:
 }
 
 Outcome history (prior incidents, compact): none
+
