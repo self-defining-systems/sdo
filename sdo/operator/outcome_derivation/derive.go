@@ -109,8 +109,9 @@ func Derive(ctx context.Context, closure *contractsv1alpha1.IncidentClosure, rep
 		commit = &repairCommit
 	}
 	record := &contractsv1alpha1.OutcomeRecord{
-		DriftReprompt: cloneMessage(result.GetDriftReprompt()),
-		SchemaVersion: 1, IncidentId: request.GetIncidentId(), SourceCommit: request.GetSourceCommit(), DeployedCommit: request.GetDeployedCommit(),
+		DriftReprompt:           cloneMessage(result.GetDriftReprompt()),
+		StatePersistenceFailure: cloneMessage(closure.GetStatePersistenceFailure()),
+		SchemaVersion:           1, IncidentId: request.GetIncidentId(), SourceCommit: request.GetSourceCommit(), DeployedCommit: request.GetDeployedCommit(),
 		DetectorHistory: append(append(cloneMessages(request.GetDetectorHistory()), cloneMessages(closure.GetIncidentDetectorStates())...), cloneMessages(closure.GetPartialDetectorStates())...), Findings: cloneMessages(request.GetFindings()),
 		DriftEvents:       cloneMessages(request.GetDriftEvents()),
 		SurfacedPlaybooks: surfaced, InspectedPlaybooks: append([]string(nil), surfaced...), ConfirmedPlaybooks: append([]string(nil), applied...),
@@ -175,7 +176,7 @@ func difference(left, right []string) []string {
 // completed (unconfirmed), or anything else that cleared (success).
 func classify(closure *contractsv1alpha1.IncidentClosure, repairCommit string, healthVerified bool) string {
 	result := closure.GetResult()
-	if closure.GetRequest() == nil || closure.GetDispatchError() != "" || result == nil ||
+	if closure.GetStatePersistenceFailure() != nil || closure.GetRequest() == nil || closure.GetDispatchError() != "" || result == nil ||
 		result.GetStatus() == "failed" {
 		return outcomeclass.Failed
 	}

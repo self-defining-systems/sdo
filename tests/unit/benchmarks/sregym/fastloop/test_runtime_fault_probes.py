@@ -675,3 +675,38 @@ def test_unsupported_source_never_runs_a_mongo_query(variant):
     assert caught.value.__context__ is None
     assert "CANARY" not in str(caught.value)
     assert calls == []
+
+
+def test_tracker_baseline_retries_complete_kafka_capture(monkeypatch):
+    from functools import partial
+
+    from benchmarks.sregym.fastloop import runtime_observation
+    from benchmarks.sregym.fastloop.composite import CompositeSettings, make_tracker
+
+    f = fault("KafkaQueueProblems", "kafka")
+    c = Cluster("kafka")
+    c.values["kafka_offsets"] = "GROUP TOPIC PARTITION CURRENT-OFFSET LOG-END-OFFSET LAG\ngroup topic 0 10 10 0\n"
+    observe = c.observe
+    attempts = []
+
+    def flaky(request):
+        attempts.append(request)
+        if len(attempts) < 3:
+            raise runtime_observation.ObservationUnavailable("transient")
+        return observe(request)
+
+    c.observe = flaky
+    clock = [0.0]
+    monkeypatch.setattr(
+        runtime_observation,
+        "baseline_observation",
+        partial(
+            runtime_observation.baseline_observation,
+            monotonic=lambda: clock[0],
+            sleep=lambda t: clock.__setitem__(0, clock[0] + t),
+        ),
+    )
+    tracker = make_tracker("synthetic", c, CompositeSettings(), faults=(f,))
+    assert tracker is not None
+    assert tracker.poll().states[f.name] is True
+    assert len(attempts) == 4

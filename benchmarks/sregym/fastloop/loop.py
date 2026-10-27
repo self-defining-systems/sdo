@@ -586,6 +586,10 @@ def _run_one(
     except Exception as exc:
         logger.exception("incident %d failed", index)
         errors.append(_describe(exc))
+        from benchmarks.sregym.fastloop.runtime_observation import ObservationUnavailable
+
+        if isinstance(exc, ObservationUnavailable) and not injection_attempted and not windows:
+            infra_error = "never_injected_retry"
 
     recovered = bool(windows)
     if windows and grader is not None and outcome is not None and outcome.diagnosis.strip():
