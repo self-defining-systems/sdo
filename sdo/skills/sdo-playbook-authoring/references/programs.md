@@ -35,7 +35,7 @@ snapshot digests and a protected capture mount are not required. Include accepte
 mitigation reads accepted source. For replay, open.json represents the fault and recordings.json contains
 its observed primitive replies; fixed.json and healthy.json remain readable context, not repair proof.
 
-Every independently verified cause requires diagnose and mitigate programs, a README describing fault
+Every cause with a recorded repair on a closure verified healthy requires diagnose and mitigate programs, a README describing fault
 handling, and a detector that references its playbook. One detector may reference several playbooks.
 Replay runs incident detectors on the recorded fault, binds through production finding selection, requires Diagnose Match, executes mitigation on that same binding, and reaches NoMatch; the healthy baseline must remain quiet.
 Compilation and that repeat path are save-time learning checks. Rename, healthy-peer and controller
@@ -105,12 +105,12 @@ with the confirmed-cause resources and a concrete reason. Missing controller cap
 
 ## Go-owned per-cause work
 
-The supplied work list preserves the responder's confirmed resource groups. Covered repairs and their corpus cases are already settled; address only typed questions. Unwritten bindings, unproven plan equivalence, and writes without a matched binding earn no credit. Unassigned observations and unverified causes stay questions. Never infer grouping.
+The supplied work list preserves the responder's confirmed resource groups. Covered repairs and their corpus cases are already settled; address only typed questions. Unwritten bindings, unproven plan equivalence, and writes without a matched binding earn no credit. Unassigned observations and causes with no recorded repair stay questions. Never infer grouping.
 
 A program that still matches the verified fixed capture has a definite false match. Go seeds that exact capture as negative evidence and preserves it through edits; the failing NoMatch replay is the question to resolve. The [generated replay API](../../sdo-detector-authoring/references/replay.md) defines CapturedFixedNoMatchPhase for this observed negative evidence. It is never a positive incident-open phase, a synthetic positive case or a trust credit.
 
-Go's missing-observation flags describe optional controller captures. They do not block fixtures built
-from session observations and cannot justify an evidence_gap decline. An unavailable SDK capability can
+Missing optional controller captures do not block fixtures built from session observations and cannot
+justify an evidence_gap decline. An unavailable SDK capability can
 be reported with a typed SDK gap naming its cause resources, primitive, reason and scratch script.
 
 Automatic plans require no source-policy file, reviewed-fixture digest, content predicate or credential-delta approval. Explicit FromSource selectors and CreateFromSource read accepted manifests at the incident commit; other repairs may use observed or declared parameter values. DeleteObject does not require source absence. Legacy field actions retain their declared scope checks. The [general action vocabulary](general-actions.md) covers arbitrary nonsecret resources and subresources through Kubernetes RBAC.
@@ -180,8 +180,8 @@ For opaque scripts, label `script_origins` in the corpus case with the script
 SHA-256 digest mapped to its original successful repair receipt ID. The
 controller adds timed `RepairReceipt` observations to protected recordings before
 reflection. Recorded commands, typed/RunScript actions and observed API writes
-supply receipts. Check independently verified cause work and bound receipts
-before drafting executables; retain missing evidence as a gap.
+supply receipts. Check the cause work and bound receipts
+before drafting executables.
 Open Diagnose must Match and fixed Diagnose must NoMatch with valid
 bindings. The replay report uses `observed-transition`: it does not execute bash,
 claim exact external-effect simulation, or assert the rewritten script ran.

@@ -18,7 +18,7 @@ import (
 const RuleReflectionExecutableCause = "reflection.executable-cause"
 
 // reflectionExecutableDiagnostics binds every changed executable to the
-// accepted incident's verified causes. Coverage is a separate obligation: an
+// accepted incident's verified causes (see VerifiedReflectionCauses). Coverage is a separate obligation: an
 // SDK gap for one cause cannot authorize executable learning for a peer.
 // Both memory check and publication call this with the committed outcome.
 func reflectionExecutableDiagnostics(root string, outcome *contracts.OutcomeRecord, paths []string) ([]Diagnostic, error) {
@@ -175,7 +175,7 @@ func reflectionExecutableDiagnostics(root string, outcome *contracts.OutcomeReco
 			dir = layout.PlaybookDir(book)
 		}
 		if !authorized[dir] || denied[dir] {
-			ds = append(ds, Diagnostic{Rule: RuleReflectionExecutableCause, Path: p, Message: "executable change is not bound to an independently verified cause of this incident", Hint: "bind replay resources to an opening primary-resource finding cleared after its recorded repair; aggregate healthy closure and responder cause claims are insufficient; retain unproven causes as evidence gaps"})
+			ds = append(ds, Diagnostic{Rule: RuleReflectionExecutableCause, Path: p, Message: "executable change is not bound to a repaired cause of this incident", Hint: "bind replay resources to the resources a recorded successful repair wrote; on a closure that did not verify healthy, also to an opening primary-resource finding cleared after that repair"})
 		}
 	}
 	return ds, nil

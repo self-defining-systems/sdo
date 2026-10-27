@@ -2,7 +2,7 @@
 
 ### Partial repair reflection
 
-Aggregate `classification=failed` does not erase independently verified repairs.
+Aggregate `classification=failed` does not erase independently verified repairs (this section is the failed-closure rule; `success` outcomes use the LEARN3 rule below).
 For an existing executable repair, the broker admits a confirmed cause only when every cause resource has a successful,
 timed repair receipt linked to its controller application (or exact-equivalent manual repair): not dry-run or
 rolled back, no application/rollback error, affirmative verification and final exact
@@ -53,8 +53,8 @@ receives compact cause indices and only those causes, verified receipts and type
 applications/diagnoses and scoped cold-verification evidence. Opaque tool transcripts and unattributed playbook/drift
 claims are omitted from that learning view. No global recovery, positive fixed
 capture, program trust credit, or repaired peer is inferred from partial repair.
-A missing fixed capture remains an evidence gap. Full-success reflection retains
-its existing behavior.
+A missing fixed capture remains an evidence gap. Full-success reflection follows the
+LEARN3 rule: any recorded successful repair on a verified-healthy closure is saved.
 
 Every closed incident with a resumable responder session requires reflection,
 including failed, cancelled and self-healed incidents with no verified repair.
