@@ -52,20 +52,20 @@ type ReflectionEvent struct {
 }
 
 type ReflectionEffect struct {
-	IncidentID       string
-	ProposalCommit   string
-	OutcomeCommit    string
-	Kind             ReflectionEffectKind
-	ID               string
-	Workspace        *contracts.ProposalWorkspace
-	Closure          *contracts.IncidentClosure
-	Outcome          *contracts.OutcomeRecord
-	Decision         *contracts.ReflectionDecision
-	Attempt          uint32
-	Diagnostics      []*contracts.MemoryDiagnostic
-	Paths            []string
-	DispatchAt       *timestamppb.Timestamp
-	NoRepairCount uint32
+	IncidentID     string
+	ProposalCommit string
+	OutcomeCommit  string
+	Kind           ReflectionEffectKind
+	ID             string
+	Workspace      *contracts.ProposalWorkspace
+	Closure        *contracts.IncidentClosure
+	Outcome        *contracts.OutcomeRecord
+	Decision       *contracts.ReflectionDecision
+	Attempt        uint32
+	Diagnostics    []*contracts.MemoryDiagnostic
+	Paths          []string
+	DispatchAt     *timestamppb.Timestamp
+	NoRepairCount  uint32
 }
 
 func ReflectionFeedback(ledger *contracts.BrokerLedger) (uint32, []*contracts.MemoryDiagnostic) {
