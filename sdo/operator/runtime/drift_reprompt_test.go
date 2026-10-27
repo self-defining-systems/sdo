@@ -204,6 +204,24 @@ func TestControllerHealthyDriftRepromptClosesAfterReturn(t *testing.T) {
 			job := awaitJob(t, client, IncidentJobName(request.IncidentID+"-continue-1"))
 			// Healthy observations must not cancel this extra turn before its return.
 			f.step(t, 21)
+			before, err := f.client.CoreV1().Services("app").Get(context.Background(), "reservation", metav1.GetOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.restoreSource(t)
+			f.step(t, 22)
+			cached := f.c.cachedResponderVerification(context.Background(), request.IncidentID, 0)
+			if len(cached.Drift) != 0 {
+				t.Fatal("active drift turn froze the verification report after repair")
+			}
+			if _, err := f.client.CoreV1().Services("app").Update(context.Background(), before, metav1.UpdateOptions{}); err != nil {
+				t.Fatal(err)
+			}
+			f.step(t, 23)
+			cached = f.c.cachedResponderVerification(context.Background(), request.IncidentID, 0)
+			if len(cached.Drift) != 1 {
+				t.Fatal("active drift turn hid recurring source differences")
+			}
 			f.step(t, 40)
 			if len(f.closed) != 0 {
 				t.Fatal("early health closure cancelled drift turn")

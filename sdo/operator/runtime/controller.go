@@ -1242,13 +1242,7 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 		return
 	}
 	early := !c.responderDone
-	if early && c.driftOnlyIncidentLocked() {
-		// Drift is the only reason this incident exists, so clear health proves
-		// nothing about it yet: the agent gets its turn and the incident closes
-		// on health once the agent returns.
-		c.mu.Unlock()
-		return
-	}
+	driftOnly := early && c.driftOnlyIncidentLocked()
 	requiresStability := early || c.codePath != nil && c.codePath.Selection.DetectorSource == "shell"
 	if early && c.responseStagesRunning {
 		c.mu.Unlock()
@@ -1260,10 +1254,8 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 	}
 	loop := c.responderLoop
 	c.mu.Unlock()
-	// A healthy drift continuation gets its whole turn, including drift-only incidents.
-	if early && loop.driftRepromptPending() {
-		return
-	}
+	// Keep observing while drift-only responses and the optional extra turn run.
+	waitForResponder := early && (driftOnly || loop.driftRepromptPending())
 	var guard *apihistory.MutationObservation
 	release := func() {}
 	safe := true
@@ -1358,6 +1350,11 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 		}
 	}
 	c.cacheVerificationLocked(verification)
+	if waitForResponder {
+		// Refresh verify reports without ending the responder's whole turn.
+		c.mu.Unlock()
+		return
+	}
 	if requiresStability {
 		if !safe || guard != nil && guard.Pending {
 			c.closureStableSince = time.Time{}
