@@ -25,7 +25,7 @@ func ReplayNote(programID,caseID string,r replay.Result) sdktest.MitigationRepla
 `
 
 // ValidateScriptOrigins binds newly authored origin labels to the accepted
-// controller outcome. Replay separately checks the actual returned script digest.
+// controller outcome. Static inspection separately checks the authored script digest.
 func ValidateScriptOrigins(root string, outcome *contracts.OutcomeRecord, paths []string) error {
 	cases := map[string]bool{}
 	for _, path := range paths {

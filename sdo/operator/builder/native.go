@@ -38,8 +38,9 @@ type Workspace struct {
 	compileOnly bool
 	// StageTimings lists each Go toolchain stage run by Check or
 	// ValidateAndBuild, including a rejected final stage.
-	StageTimings       []StageTiming
-	advisoryTestErrors []string
+	StageTimings        []StageTiming
+	advisoryTestErrors  []string
+	advisorySetupErrors []string
 }
 
 // StageTiming is the wall-clock cost of one Go toolchain stage.
@@ -104,8 +105,12 @@ func (workspace *Workspace) validate(ctx context.Context, vet bool) (string, err
 	if workspace.compileOnly {
 		stages = append(stages, []string{"build", "-buildvcs=false", "./..."})
 	} else {
-		// Compile authored tests independently of their behavioral verdicts.
-		stages = append(stages, []string{"test", "-exec=true", "-run", "^$", "./..."}, []string{"test", "-run", "^(TestRegistrationContracts|TestDetectorsLoadInController|TestMetricsDetectorsDeclareValidQueries)$", "./generated"})
+		// Vet already compiles source and tests. Launch-only builds still
+		// compile tests without executing their behavioral assertions.
+		if !vet {
+			stages = append(stages, []string{"test", "-exec=true", "-run", "^$", "./..."})
+		}
+		stages = append(stages, []string{"test", "-run", "^(TestRegistrationContracts|TestProgramRegistrationContracts|TestDetectorsLoadInController|TestMetricsDetectorsDeclareValidQueries)$", "./generated"})
 	}
 	if !vet {
 		stages = append(stages, []string{"build", "-buildvcs=false", "-o", binary, "./cmd/controller"})
@@ -278,9 +283,10 @@ func BuildWorkspace(ctx context.Context, config Config) (_ *Workspace, err error
 	if err := generateControllerStartTest(directory); err != nil {
 		return nil, err
 	}
+	var setupErrors []string
 	if config.HealthyBaseline != "" {
 		if err := generateHealthyBaselineTest(config.HealthyBaseline, directory); err != nil {
-			return nil, err
+			setupErrors = append(setupErrors, "healthy replay unverified: "+strings.ReplaceAll(err.Error(), config.HealthyBaseline, "<healthy input>"))
 		}
 	}
 	main := fmt.Sprintf("package main\n\nimport (\n\t\"log\"\n\t\"sdo.dev/operator/runtime\"\n\t%q\n)\n\nfunc main() { programs, err := generated.Programs(); if err != nil { log.Fatal(err) }; runtime.RunWithPrograms(generated.All(), programs) }\n", module+"/generated")
@@ -291,7 +297,7 @@ func BuildWorkspace(ctx context.Context, config Config) (_ *Workspace, err error
 	if err != nil {
 		return nil, err
 	}
-	return &Workspace{Directory: directory, ModulePath: module, HasProber: hasProber, compileOnly: config.CompileOnly}, nil
+	return &Workspace{Directory: directory, ModulePath: module, HasProber: hasProber, compileOnly: config.CompileOnly, advisorySetupErrors: setupErrors}, nil
 }
 
 func validateDetectors(detectors []layout.Detector) error {

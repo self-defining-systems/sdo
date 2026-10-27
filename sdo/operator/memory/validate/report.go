@@ -106,7 +106,7 @@ func reportDiagnostics(items []*contracts.MemoryDiagnostic) ([]Diagnostic, error
 	return ds, nil
 }
 
-// ProtoMitigationReplayNotes keeps successful policy notes separate from failures.
+// ProtoMitigationReplayNotes projects advisory replay results, including inconclusive runs.
 func ProtoMitigationReplayNotes(notes []sdktest.MitigationReplayResult) []*contracts.MitigationReplayNote {
 	result := make([]*contracts.MitigationReplayNote, 0, len(notes))
 	for _, note := range notes {

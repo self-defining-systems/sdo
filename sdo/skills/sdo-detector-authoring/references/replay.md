@@ -122,7 +122,8 @@ type MitigationReplayResult struct {
 func CheckMitigation(p program.Diagnoser, m program.Mitigator, c CorpusCase) (MitigationReplayResult, error)
     CheckMitigation validates every plan. SetField-only plans must repair the
     faulted fixture; plans with external effects return an explicit skipped
-    note. Diagnosis corpus replay remains a separate mandatory gate.
+    note. Diagnosis replay is an analysis helper; its outcome never gates
+    publication.
 
 type MitigationReplayStatus string
 

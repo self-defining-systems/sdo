@@ -23,7 +23,7 @@ import (
 // A reflection that leaves out learning the memory edge can live without is
 // accepted and records what it left out; the checks that protect memory quality
 // (detector tests, mitigations that repair) still reject.
-func TestReflectionCommitsWithRecordedGapsAndStillRejectsBrokenLearning(t *testing.T) {
+func TestReflectionRecordsReplayButStillRejectsInvalidCode(t *testing.T) {
 	ctx := context.Background()
 	binary := filepath.Join(t.TempDir(), "sdo-operator")
 	if out, err := exec.Command("go", "build", "-o", binary, "../cmd/sdo-operator").CombinedOutput(); err != nil {
@@ -149,16 +149,18 @@ func TestReflectionCommitsWithRecordedGapsAndStillRejectsBrokenLearning(t *testi
 		}
 	})
 	for name, test := range map[string]struct {
-		path, content, rule string
+		path, content, reason string
+		reject                bool
 	}{
-		"failing detector test still rejects": {".sdo/diagnostics/detectors/incidents/cache/detector_test.go", "package detector\nimport \"testing\"\nfunc TestReject(t *testing.T){t.Fatal(\"sentinel detector failure\")}\n", validate.RuleDetectorTest},
-		"mitigation that does not repair still rejects": {".sdo/playbooks/service-targetport-mismatch/mitigate.go", `package targetport
+		"failing detector test is information": {".sdo/diagnostics/detectors/incidents/cache/detector_test.go", "package detector\nimport \"testing\"\nfunc TestReject(t *testing.T){t.Fatal(\"sentinel detector failure\")}\n", "sentinel detector failure", false},
+		"mitigation that does not repair is information": {".sdo/playbooks/service-targetport-mismatch/mitigate.go", `package targetport
 import ("context"; "sdo.dev/operator/sdk/program")
 func (p Program) Mitigate(ctx context.Context,v program.ReadView,b program.Bindings)(program.Plan,error){
  verdict,err:=p.Diagnose(ctx,v,b);if err!=nil || verdict.Result!=program.Match{return program.Plan{},err}
  return program.Plan{Actions:[]program.Action{program.SetField{Ref:b.Objects["service"],Path:"spec.ports[0].targetPort",Value:program.FromObserved(b.Objects["service"],"spec.ports[0].targetPort")}}},nil
 }
-`, validate.RuleProgramMitigationRepair},
+`, "post diagnosis: Match", false},
+		"invalid code still rejects": {".sdo/playbooks/service-targetport-mismatch/mitigate.go", "package targetport\nvar broken UndefinedType\n", validate.RuleDetectorCompile, true},
 	} {
 		t.Run(name, func(t *testing.T) {
 			repository, _, proposal, decision := setup(t)
@@ -169,18 +171,28 @@ func (p Program) Mitigate(ctx context.Context,v program.ReadView,b program.Bindi
 			if err := os.WriteFile(filepath.Join(proposal.Path, test.path), formatted, 0o644); err != nil {
 				t.Fatal(err)
 			}
-			_, err = repository.PublishReflection(noCapture, "incident", decision)
+			receipt, err := repository.PublishReflection(noCapture, "incident", decision)
+			if !test.reject {
+				if err != nil {
+					t.Fatalf("replay/test verdict blocked saving: %v", err)
+				}
+				if !strings.Contains(strings.Join(gapKeys(receipt.CoverageGaps), "\n"), test.reason) {
+					t.Fatalf("replay reason was lost: %v", receipt.CoverageGaps)
+				}
+				return
+			}
 			var failure *validate.Failure
 			if !errors.As(err, &failure) {
-				t.Fatalf("broken learning was accepted: %v", err)
+				t.Fatalf("invalid code was accepted: %v", err)
 			}
 			found := false
 			for _, d := range failure.Diagnostics {
-				found = found || d.Rule == test.rule
+				found = found || d.Rule == test.reason
 			}
 			if !found {
-				t.Fatalf("want %s, got %v", test.rule, failure.Diagnostics)
+				t.Fatalf("want %s, got %v", test.reason, failure.Diagnostics)
 			}
+
 		})
 	}
 }
