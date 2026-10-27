@@ -9,18 +9,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from benchmarks.sregym.fastloop.idempotent_helm import make_deploy_idempotent
-from benchmarks.sregym.fastloop.setup_ledger import (
-    KubectlClusterInventory,
-    SetupLedger,
-    close_after_full_recovery,
-    ledger_path,
-    run_in_window,
-)
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
-
-    from benchmarks.sregym.fastloop.setup_ledger import ClusterInventory
 
 #: Worker ops that restart or roll out workloads; each runs under the unschedulable-surge guard.
 SURGE_GUARDED_OPS = frozenset({"recover", "refresh"})
@@ -64,28 +55,6 @@ def handle_with_surge_guard(
 
 def _make_deploy_idempotent() -> None:
     make_deploy_idempotent(importlib.import_module("sregym.service.helm").Helm)
-
-
-def run_with_setup_ledger(
-    request: dict[str, Any],
-    kubeconfig: Path,
-    run: Callable[[], dict[str, Any]],
-    *,
-    inventory: ClusterInventory | None = None,
-) -> dict[str, Any]:
-    """Run one worker op so the lane's setup ledger covers every exit path of a fault's injection.
-
-    An injection opens the window before the fault installs anything; only a successful full
-    recovery closes it. A worker killed or aborted in between leaves it for the next row's entry.
-    """
-    ledger = SetupLedger(ledger_path(kubeconfig))
-    if request.get("op") == "inject":
-        return run_in_window(
-            ledger, inventory or KubectlClusterInventory(kubeconfig), run, compose=bool(request.get("compose"))
-        )
-    reply = run()
-    close_after_full_recovery(ledger, request, reply)
-    return reply
 
 
 def _incident_namespaces(worker_module: Any, worker: Any) -> list[str]:
@@ -181,16 +150,12 @@ def main() -> int:
 
                 return verify_baseline_traffic(problem, verdict)
             return verdict
-        reply = run_with_setup_ledger(
+        reply = handle_with_surge_guard(
+            handle,
+            self,
             request,
-            Path(os.environ["KUBECONFIG"]).resolve(),
-            lambda: handle_with_surge_guard(
-                handle,
-                self,
-                request,
-                namespaces=_incident_namespaces(worker, self),
-                kubeconfig=Path(os.environ["KUBECONFIG"]),
-            ),
+            namespaces=_incident_namespaces(worker, self),
+            kubeconfig=Path(os.environ["KUBECONFIG"]),
         )
         if op == "recover" and request.get("fault") is None and reply.get("success") is True:
             remove_injected_objects(Path(os.environ["KUBECONFIG"]))

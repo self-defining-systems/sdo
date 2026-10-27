@@ -141,9 +141,7 @@ func TestKubernetesExecutorHealthJudgeRecordsSetupUsageBeforeResult(t *testing.T
 	task := &contracts.AgentTask{SchemaVersion: SchemaVersion, TaskId: "setup-judge", AgentId: "sdo-health-judge", TaskType: taskType, Request: request, Workspace: &contracts.ProposalWorkspace{ProposalId: "setup", CheckoutPath: mount + "/proposal", BaseCommit: "abc"}}
 	client := fake.NewSimpleClientset()
 	executor := KubernetesExecutor{Client: client, Namespace: "demo", Registry: registry, RepositoryPVC: "repo", RepositoryMountPath: mount, RepositoryPVCSubPath: "tenant", PollInterval: time.Millisecond}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
-	defer cancel()
-	_, err = executor.Execute(ctx, task)
+	_, err = executeUntil(t, jobExists(executor, JobName(task.TaskId)), func(ctx context.Context) (*contracts.AgentResult, error) { return executor.Execute(ctx, task) })
 	if err == nil {
 		t.Fatal("unfinished worker unexpectedly returned a result")
 	}

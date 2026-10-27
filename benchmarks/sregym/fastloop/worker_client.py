@@ -17,10 +17,9 @@ import os
 import queue
 import subprocess
 import threading
-import time
 from typing import IO, TYPE_CHECKING, Any
 
-from benchmarks.sregym.adapter import WaitKind, wait_for
+from benchmarks.sregym.adapter import Deadline, WaitKind, wait_for
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -102,13 +101,12 @@ class SregymWorker:
             process.stdin.flush()
         except BrokenPipeError as exc:
             raise SregymWorkerError(f"worker exited before {op!r} (see {self._log_path})") from exc
-        deadline = time.monotonic() + timeout
+        budget = Deadline.after(timeout, f"worker request {op!r}")
         while True:
             try:
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
+                if budget.left() <= 0:
                     raise queue.Empty
-                line = self._replies.get(timeout=remaining)
+                line = self._replies.get(timeout=budget.left())
             except queue.Empty as exc:
                 self._abandoned = True
                 raise SregymWorkerError(f"worker request {op!r} timed out after {timeout:.0f}s") from exc

@@ -14,7 +14,6 @@ import (
 	"sdo.dev/operator/contracts/wire"
 	"strings"
 	"testing"
-	"time"
 )
 
 func TestRWSWarmContinuationCreatesColdJob(t *testing.T) {
@@ -62,9 +61,11 @@ func TestRWSWarmContinuationCreatesColdJob(t *testing.T) {
 			}
 			next := proto.Clone(task).(*contracts.AgentTask)
 			next.TaskId += "-continue-1"
-			ctx, cancel := context.WithTimeout(context.Background(), 40*time.Millisecond)
-			defer cancel()
-			bound.Execute(ctx, next)
+			continued := func() bool {
+				name, err := e.taskJobName(context.Background(), next)
+				return err == nil && jobExists(e, name)()
+			}
+			executeUntil(t, continued, func(ctx context.Context) (*contracts.AgentResult, error) { return bound.Execute(ctx, next) })
 			name, _ := e.taskJobName(context.Background(), next)
 			if _, err := e.Client.BatchV1().Jobs(e.Namespace).Get(context.Background(), name, metav1.GetOptions{}); err != nil {
 				t.Fatalf("continuation Job missing: %v", err)
@@ -101,9 +102,11 @@ func TestRWSUnpublishedExpiredClaimFallsBack(t *testing.T) {
 	job, _ := e.Client.BatchV1().Jobs(e.Namespace).Get(context.Background(), slot.JobName, metav1.GetOptions{})
 	job.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobFailed, Status: corev1.ConditionTrue}}
 	e.Client.BatchV1().Jobs(e.Namespace).UpdateStatus(context.Background(), job, metav1.UpdateOptions{})
-	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Millisecond)
-	defer cancel()
-	bound.Execute(ctx, task)
+	replaced := func() bool {
+		name, err := e.taskJobName(context.Background(), task)
+		return err == nil && name != slot.JobName && jobExists(e, name)()
+	}
+	executeUntil(t, replaced, func(ctx context.Context) (*contracts.AgentResult, error) { return bound.Execute(ctx, task) })
 	if _, err := os.Stat(filepath.Join(slot.Directory, "control", TaskDataKey)); !os.IsNotExist(err) {
 		t.Fatal("published to dead worker")
 	}

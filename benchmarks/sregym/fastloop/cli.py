@@ -44,6 +44,7 @@ from benchmarks.sregym.fastloop.fault_driver import SregymFaultDriver
 from benchmarks.sregym.fastloop.loop import LoopConfig, run_incidents, write_loop_manifest
 from benchmarks.sregym.fastloop.records import AgentSummary, IncidentRecord, load_records, summarize
 from benchmarks.sregym.fastloop.stream import load_stream_config
+from benchmarks.sregym.fastloop.wipe import AttemptMarker, run_tier2
 from benchmarks.sregym.fastloop.worker_client import SregymWorker, worker_argv
 
 if TYPE_CHECKING:
@@ -53,6 +54,7 @@ if TYPE_CHECKING:
     from benchmarks.sregym.fastloop.composite import CompositeSettings
     from benchmarks.sregym.fastloop.fault_tracker import FaultSpec
     from benchmarks.sregym.fastloop.loop import DiagnosisGrader, IncidentAgent
+    from benchmarks.sregym.fastloop.wipe import Tier1Receipt
 
 logger = logging.getLogger(__name__)
 
@@ -429,6 +431,13 @@ def _up(args: argparse.Namespace) -> int:
         delivery = delivery_state(delivery_path)
         environment.image_delivery, environment.image_delivery_reason = delivery["path"], delivery["reason"]
         environment.image_delivery_seconds, environment.image_delivery_images = delivery["seconds"], delivery["images"]
+    if environment.app != "toy":
+        from benchmarks.sregym.fastloop.wipe import KubectlLaneCluster, cluster_scoped, inventory_path, save_inventory
+
+        save_inventory(
+            inventory_path(environment.kubeconfig),
+            cluster_scoped(KubectlLaneCluster(environment.kubeconfig).list_objects()),
+        )
     environment.save()
     if environment.parallel_root is not None:
         from benchmarks.sregym.fastloop.shared_memory import provision_parallel_volume
@@ -596,12 +605,12 @@ def _sdo_agent(
 
             inspect_existing(native_install_config(runtime_config))
             return True
-        if fresh_memory_start:
+        if fresh_memory_start and environment.app == "toy":
             control = control_namespace_for(environment.namespace)
             stop_runtime(control, kubeconfig=str(environment.kubeconfig))
             receipt = reset_control_state(control, kubeconfig=str(environment.kubeconfig))
             logger.info("Fresh-memory control state reset: %s", json.dumps(receipt, sort_keys=True))
-            fresh_memory_start = False
+        fresh_memory_start = False
         if environment.app == "toy":
             from benchmarks.sregym.fastloop.toy import install_controller
 
@@ -629,8 +638,62 @@ def _sdo_agent(
     return SdoPersistentAgent(settings, **agent_arguments)
 
 
+def _wipes_at_row_start(args: argparse.Namespace, environment: FastloopEnvironment) -> bool:
+    return args.agent == "sdo" and environment.app != "toy" and not environment.shared_accepted_id
+
+
+def _wipe_sdo_and_harness(args: argparse.Namespace, environment: FastloopEnvironment) -> Tier1Receipt:
+    """Tier 1: delete SDO's control namespace and every harness leftover, then re-provision and re-seed SDO's inputs."""
+    from benchmarks.sregym.fastloop.wipe import KubectlLaneCluster, credentials_hook, wipe_environment
+
+    if args.credentials_hook is None:
+        raise SystemExit("eval: a row-start wipe deletes the SDO namespace; pass --credentials-hook to re-provision it")
+    planned = args.planned_commit or environment.seed_commit
+    if not planned:
+        raise ValueError("eval: the row-start wipe needs --planned-commit or a seed commit captured by fastloop up")
+    receipt = wipe_environment(
+        environment,
+        KubectlLaneCluster(environment.kubeconfig),
+        applications=application_namespaces(environment.baseline_path, environment.kubeconfig, environment.namespace),
+        provision_credentials=credentials_hook(args.credentials_hook.resolve(), environment.kubeconfig),
+        planned_commit=planned,
+        timeout_seconds=wait_for(WaitKind.ROLLOUT),
+    )
+    logger.info("Tier-1 wipe: %.1fs, removed %s", receipt.seconds, ", ".join(receipt.removed) or "nothing")
+    return receipt
+
+
+def _recapture_application_baseline(environment: FastloopEnvironment) -> None:
+    """A redeployed app defines the next captured baseline, as in ``fastloop up``."""
+    cluster = KubectlApplicationCluster(environment.kubeconfig)
+    namespaces = application_namespaces(environment.baseline_path, environment.kubeconfig, environment.namespace)
+    save_application_baseline(
+        environment.baseline_path,
+        tuple(capture_application_baseline(cluster, namespace) for namespace in namespaces),
+        installed=True,
+    )
+
+
+def _application_needs_redeploy(environment: FastloopEnvironment, marker: AttemptMarker) -> str | None:
+    """Tier 2 trigger: an unclean previous attempt, or a warm app that fails the restore invariant."""
+    from benchmarks.sregym.fastloop.admission import workload_identity
+    from benchmarks.sregym.fastloop.clean_start import assert_clean_baseline
+    from benchmarks.sregym.fastloop.wipe import tier2_reason
+
+    def invariant() -> None:
+        workload_identity(environment.kubeconfig, environment.namespace)
+        assert_clean_baseline(environment.kubeconfig, namespace=environment.namespace)
+
+    return tier2_reason(marker, invariant)
+
+
 def deploy_with_setup_proof(
-    environment: FastloopEnvironment, worker: SregymWorker, results_dir: Path, *, allow_reuse: bool = True
+    environment: FastloopEnvironment,
+    worker: SregymWorker,
+    results_dir: Path,
+    *,
+    allow_reuse: bool = True,
+    redeploy: bool = False,
 ) -> dict[str, Any]:
     """Reuse only the deploy/warm-up evidence; per-injection admission still runs."""
     from benchmarks.sregym.fastloop.setup_proof import check_reuse
@@ -649,6 +712,7 @@ def deploy_with_setup_proof(
             "deploy",
             problem_id=environment.deploy_problem,
             baseline_path=str(environment.baseline_path),
+            redeploy=redeploy,
             timeout=DEPLOY_OP_TIMEOUT_SECONDS,
         )
     return decision
@@ -665,6 +729,7 @@ def _run(args: argparse.Namespace) -> int:
         warn_fallback(
             environment.image_delivery_reason, environment.image_delivery_images, environment.image_delivery_seconds
         )
+    tier1 = _wipe_sdo_and_harness(args, environment) if _wipes_at_row_start(args, environment) else None
     if args.agent == "sdo":
         from benchmarks.sregym.adapter import control_namespace_for
 
@@ -767,11 +832,23 @@ def _run(args: argparse.Namespace) -> int:
         accepted_repository=environment.workspace if environment.shared_accepted_id else None,
     )
     write_loop_manifest(config)
+    marker = AttemptMarker(environment.run_dir)
+    redeploy_reason = _application_needs_redeploy(environment, marker) if tier1 is not None else None
+    if tier1 is not None:
+        marker.begin()
     with _worker(environment) as worker:
         worker_ready = time.monotonic()
-        deploy_with_setup_proof(
-            environment, worker, results_dir, allow_reuse=args.agent == "sdo" and environment.app != "toy"
-        )
+        if tier1 is not None:
+
+            def redeploy_application() -> None:
+                deploy_with_setup_proof(environment, worker, results_dir, allow_reuse=False, redeploy=True)
+                _recapture_application_baseline(environment)
+
+            run_tier2(redeploy_reason, redeploy_application, tier1).write(results_dir)
+        if redeploy_reason is None:
+            deploy_with_setup_proof(
+                environment, worker, results_dir, allow_reuse=args.agent == "sdo" and environment.app != "toy"
+            )
         deployed = time.monotonic()
         described = deployed
         baseline = load_application_baseline(environment.baseline_path, environment.namespace)
@@ -852,6 +929,7 @@ def _run(args: argparse.Namespace) -> int:
                 faults_by_incident,
                 reset_failed if args.continue_on_error else None,
             )
+    marker.end_cleanly()
     _print_summary(records)
     print(f"results: {config.results_path}")
     return (
@@ -1342,6 +1420,17 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--run-dir", type=Path, required=True)
     run.add_argument("--agent", choices=("sdo", "codex"), required=True)
     run.add_argument("--no-checkpoints", action="store_true", help="skip optional offline replay checkpoint export")
+    run.add_argument(
+        "--credentials-hook",
+        type=Path,
+        help="executable the lane keeper provides; called with the SDO namespace to re-provision its credentials "
+        "after the row-start wipe (required for non-toy SDO rows)",
+    )
+    run.add_argument(
+        "--planned-commit",
+        help="accepted commit this row starts from (seed for a first try, the previous row's accepted_after "
+        "for a repeat); defaults to the seed captured by up",
+    )
     run.add_argument("--agent-registrations", type=Path, help="SDO worker registration directory")
     run.add_argument("--problem", "--problems", action="append", help="problem id; repeat to cycle through several")
     run.add_argument(

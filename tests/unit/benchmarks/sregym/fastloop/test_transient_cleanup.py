@@ -10,7 +10,7 @@ import pytest
 
 
 def test_retirement_shares_deadline_and_requests_zero_grace(monkeypatch):
-    from benchmarks.sregym.adapter.eval_guards import Deadline
+    from benchmarks.sregym.adapter.budgets import Deadline
     from benchmarks.sregym.fastloop import transient_cleanup as cleanup
 
     now = [0.0]
@@ -58,7 +58,7 @@ def test_retirement_shares_deadline_and_requests_zero_grace(monkeypatch):
 
 @pytest.mark.parametrize(("namespace", "owner"), [("foreign", "ReplicaSet"), ("social-network", "Job")])
 def test_retirement_refuses_foreign_identity_before_any_write(monkeypatch, namespace, owner):
-    from benchmarks.sregym.adapter.eval_guards import Deadline
+    from benchmarks.sregym.adapter.budgets import Deadline
     from benchmarks.sregym.fastloop import transient_cleanup as cleanup
 
     def command(args, **kwargs):

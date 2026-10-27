@@ -17,7 +17,6 @@ from benchmarks.sregym.adapter import (
     Deadline,
     StabilizationError,
     WaitKind,
-    allowed_namespaces,
     assert_host_disk_headroom,
     assert_lane_resources,
     assert_stable_workloads,
@@ -31,7 +30,6 @@ from benchmarks.sregym.adapter import (
     wait_for_proof,
 )
 from benchmarks.sregym.fastloop.clean_start import assert_clean_baseline
-from benchmarks.sregym.fastloop.setup_ledger import KubectlClusterInventory, SetupLedger, ledger_path, replay
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -39,7 +37,6 @@ if TYPE_CHECKING:
 
     from benchmarks.sregym.adapter import ClusterOps, NativeInstallConfig
     from benchmarks.sregym.fastloop.environment import FastloopEnvironment
-    from benchmarks.sregym.fastloop.setup_ledger import ClusterInventory
 
 
 def workload_identity(kubeconfig: Path, namespace: str) -> dict[str, Any]:
@@ -180,7 +177,6 @@ class LaneAdmission:
         synchronize: Callable[[], None] | None = None,
         progress: Callable[..., None] | None = None,
         before_proof: Callable[[str, dict[str, Any]], None] | None = None,
-        lane_inventory: ClusterInventory | None = None,
     ) -> None:
         if code_path not in {"go", "shell"}:
             raise ValueError(f"eval: unsupported admission code path {code_path!r}")
@@ -193,7 +189,6 @@ class LaneAdmission:
         self.install_config = install_config
         self.synchronize, self.progress = synchronize, progress
         self.before_proof = before_proof
-        self.lane_inventory = lane_inventory
         self.required_detectors = {"workload-health", "service-endpoints", "service-reachability", "traffic-health"}
         self.required_scenarios: set[str] = set()
         self._identity: dict[str, Any] | None = None
@@ -447,25 +442,10 @@ class LaneAdmission:
         if self.progress:
             self.progress("lane_resources", evidence=str(destination))
 
-    def remove_setup_leftovers(self) -> frozenset[str]:
-        """Remove what an earlier attempt's fault setup left on this reused lane, before the entry check.
-
-        The check itself stays: it refuses anything no setup window recorded.
-        """
-        ledger = SetupLedger(ledger_path(self.environment.kubeconfig))
-        if ledger.window() is None:
-            return frozenset()
-        inventory = self.lane_inventory or KubectlClusterInventory(self.environment.kubeconfig)
-        removed = replay(ledger, inventory, protected_namespaces=allowed_namespaces({self.environment.namespace}))
-        if self.progress:
-            self.progress("setup_leftovers_removed", removed=sorted(removed))
-        return removed
-
     def prove(self, control: str, *, fresh: bool = False) -> dict[str, Any]:
         # Detector evaluations after the resume count as evidence, including those made while onboarding and
         # the previous row's closure are awaited: admission never waits for a re-evaluation that already ran.
         boundary = datetime.now(timezone.utc).isoformat()
-        self.remove_setup_leftovers()
         self.check_resources("entry")
         self._policy()
         # Onboarding has its own budget: the stabilization clock below must never

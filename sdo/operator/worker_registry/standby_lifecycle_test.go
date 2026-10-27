@@ -80,9 +80,13 @@ func TestStandbySlotIsReleasedOnEveryExitPath(t *testing.T) {
 				t.Fatal("bind", err)
 			}
 			failJob(t, e, slot.JobName)
-			ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-			defer cancel()
-			_, _ = bound.Execute(ctx, task)
+			cold := jobExists(e, JobName(task.TaskId))
+			released := func() bool {
+				_, statErr := os.Stat(slot.Directory)
+				_, getErr := e.Client.BatchV1().Jobs(e.Namespace).Get(context.Background(), slot.JobName, metav1.GetOptions{})
+				return cold() && os.IsNotExist(statErr) && apierrors.IsNotFound(getErr)
+			}
+			_, _ = executeUntil(t, released, func(ctx context.Context) (*contracts.AgentResult, error) { return bound.Execute(ctx, task) })
 			return e, slot
 		}},
 		{"published slot whose Job is gone", func(t *testing.T) (KubernetesExecutor, *WarmBinding) {
@@ -192,9 +196,7 @@ func TestStandbyStaleClaimIsNeverPublished(t *testing.T) {
 	if err := writeStandbyJSON(e.warmBindingPath(task), bound.WarmBinding); err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-	defer cancel()
-	_, _ = bound.Execute(ctx, task)
+	_, _ = executeUntil(t, jobExists(e, JobName(task.TaskId)), func(ctx context.Context) (*contracts.AgentResult, error) { return bound.Execute(ctx, task) })
 	if _, err := os.Stat(filepath.Join(slot.Directory, "control", TaskDataKey)); !os.IsNotExist(err) {
 		t.Fatal("published to a pod about to expire")
 	}
@@ -239,9 +241,7 @@ func TestStandbyReadyOldStandbyIsKept(t *testing.T) {
 func TestLateFindingsProjectionErrorNeverAbortsExecute(t *testing.T) {
 	_, e, task := standbyFixture(t)
 	e.LateFindingsConfigMap = "late-findings-missing"
-	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
-	defer cancel()
-	_, err := e.Execute(ctx, task)
+	_, err := executeUntil(t, jobExists(e, JobName(task.TaskId)), func(ctx context.Context) (*contracts.AgentResult, error) { return e.Execute(ctx, task) })
 	if err != nil && strings.Contains(err.Error(), "late findings") {
 		t.Fatalf("projection error aborted Execute: %v", err)
 	}
