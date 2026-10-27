@@ -80,15 +80,15 @@ func t1Outcome(t *testing.T, revision string) *contracts.OutcomeRecord {
 }
 
 type t1Class struct {
-	name                             string
-	change                           func(*contracts.OutcomeRecord)
-	fixed                            program.Result
-	items                            []string
-	model                            bool
-	positive, negative, credit, gaps int
-	decline                          bool
-	prior                            bool
-	unverified                       bool
+	name                       string
+	change                     func(*contracts.OutcomeRecord)
+	fixed                      program.Result
+	items                      []string
+	model                      bool
+	positive, negative, credit int
+	decline                    bool
+	prior                      bool
+	unverified                 bool
 }
 
 func t1Classes() []t1Class {
@@ -116,7 +116,6 @@ func t1Classes() []t1Class {
 			o.ProgramToolCalls = nil
 			o.RepairActions = nil
 		}, items: []string{"0/question/uncertain/"}, model: true, unverified: true},
-		{name: "evidence_gap", fixed: program.Unknown, items: []string{"0/question/uncertain/contract-repair", "0/question/evidence_gap/"}, model: true, gaps: 1},
 		{name: "partly_covered", fixed: program.NoMatch, change: func(o *contracts.OutcomeRecord) {
 			o.ConfirmedRootCauses = append(o.ConfirmedRootCauses, &contracts.ConfirmedRootCause{Summary: "another cause", Resources: []*contracts.ObjectRef{t1Ref("other")}})
 			o.RepairActions = append(o.RepairActions, &contracts.RepairActionReceipt{ActionId: "manual-other", Kind: "manual", Target: "Service/app/other", Summary: "repair another cause", Details: "manual repair", StartedAt: timestamppb.New(time.Unix(99, 0)), CompletedAt: timestamppb.New(time.Unix(100, 0)), Success: true, Resources: []*contracts.ObjectRef{t1Ref("other")}})
@@ -152,7 +151,7 @@ func t1Captures(t *testing.T, dir string, c t1Class) {
 	for _, name := range []string{"api", "peer", "other"} {
 		ref := sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: name}
 		for _, phase := range []string{"open", "fixed"} {
-			if phase == "fixed" && name == "api" && (c.name == "absent_fixed_verdict" || c.gaps > 0) {
+			if phase == "fixed" && name == "api" && c.name == "absent_fixed_verdict" {
 				continue
 			}
 			calls = append(calls, sdktest.PrimitiveCall{Phase: phase, Method: "DiffAgainstSource", Arguments: t1JSON(t, []any{ref}), Result: t1JSON(t, program.Diff{Changed: name == "api" && (phase == "open" || c.fixed == program.Match)})})
@@ -197,9 +196,6 @@ func t1AssertWork(t *testing.T, work []*contracts.ReflectionCauseWork, c t1Class
 			if item.Disposition == "question" && item.Question == "" {
 				t.Error("question has no actionable text")
 			}
-			if item.Reason == "evidence_gap" && (item.EvidencePhase != "fixed" || len(item.Resources) != 1 || item.Resources[0].Name != "api") {
-				t.Errorf("wrong gap resource/phase: %v", item)
-			}
 		}
 	}
 }
@@ -222,9 +218,6 @@ func TestT1ClassificationMatrix(t *testing.T) {
 			// present. This case isolates classification from evidence indexing.
 			if c.name == "absent_fixed_verdict" {
 				t1Captures(t, capture, t1Class{fixed: program.NoMatch})
-			}
-			if gaps := appendEvidenceGaps(work, capture); int(gaps) != c.gaps {
-				t.Errorf("gap count = %d; want %d", gaps, c.gaps)
 			}
 			t1AssertWork(t, work, c)
 		})
@@ -249,7 +242,7 @@ func TestT1ScriptedBrokerMatrix(t *testing.T) {
 					}
 					if c.model {
 						if c.unverified {
-							if len(run.work) != 0 || len(run.unassigned) != 1 || run.unassigned[0].GetDisposition() != "question" || run.unassigned[0].GetReason() != "evidence_gap" || len(run.unassigned[0].GetResources()) != 1 || !proto.Equal(run.unassigned[0].Resources[0], t1Ref("api")) {
+							if len(run.work) != 0 || len(run.unassigned) != 1 || run.unassigned[0].GetDisposition() != "question" || run.unassigned[0].GetReason() != "no_recorded_repair" || len(run.unassigned[0].GetResources()) != 1 || !proto.Equal(run.unassigned[0].Resources[0], t1Ref("api")) {
 								t.Fatalf("unverified cause escaped evidence-gap projection: work=%v unassigned=%v", run.work, run.unassigned)
 							}
 						} else {
@@ -268,8 +261,12 @@ func TestT1ScriptedBrokerMatrix(t *testing.T) {
 					if !reject && !c.model && run.ledger.ReflectionCommit == "" {
 						t.Error("covered case was not accepted through the broker")
 					}
-					if int(run.ledger.GetReflectionEvidenceGapCount()) != c.gaps {
-						t.Errorf("durable gap count = %d; want %d", run.ledger.GetReflectionEvidenceGapCount(), c.gaps)
+					wantGaps := 0
+					if c.unverified {
+						wantGaps = 1
+					}
+					if int(run.ledger.GetReflectionNoRepairCount()) != wantGaps {
+						t.Errorf("durable gap count = %d; want %d", run.ledger.GetReflectionNoRepairCount(), wantGaps)
 					}
 				})
 			}
@@ -469,10 +466,10 @@ func t1RunBroker(t *testing.T, c t1Class, reject bool) t1Run {
 			t.Error("retry lost typed rejection")
 		}
 		response := &contracts.ReflectionResult{LearningDecision: "updated", ProposedArtifactIds: []string{"base"}}
-		if c.gaps > 0 || c.decline {
+		if c.decline {
 			response = &contracts.ReflectionResult{LearningDecision: "no_change", NoChangeReason: "protected fixed observation missing"}
 			if c.decline {
-				response.DeclineReason = "evidence_gap"
+				response.DeclineReason = "no_recorded_repair"
 			}
 		} else {
 			// A visible, bounded scripted edit ensures questions exercise publication.
@@ -593,20 +590,20 @@ func TestT1TrustProperty(t *testing.T) {
 	}
 }
 
-func TestT1EvidenceGapDeclineRequiresControllerFlag(t *testing.T) {
-	c := t1Classes()[5] // no installed program, complete protected observations
+func TestT1NoRecordedRepairDeclineDoesNotExcuseACauseWithAnOwnWrite(t *testing.T) {
+	c := t1Classes()[6] // cause 1 has its own recorded write and no program
 	c.decline = true
 	run := t1RunBroker(t, c, false)
-	if run.ledger.GetReflectionEvidenceGapCount() != 0 || !run.ledger.ReflectionRejected || run.calls != 1+broker.MaxValidationRetries {
-		t.Fatalf("unflagged decline accepted: calls=%d ledger=%v", run.calls, run.ledger)
+	if run.ledger.GetReflectionNoRepairCount() != 0 || !run.ledger.ReflectionRejected || run.calls != 1+broker.MaxValidationRetries {
+		t.Fatalf("decline excused a cause with its own recorded write and no program: calls=%d ledger=%v", run.calls, run.ledger)
 	}
 	for _, rejection := range run.ledger.ReflectionRejections {
 		found := false
 		for _, diagnostic := range rejection.Diagnostics {
-			found = found || diagnostic.Rule == "reflection.decision"
+			found = found || diagnostic.Rule == "reflection.program-required"
 		}
 		if !found {
-			t.Errorf("missing typed gap rejection: %v", rejection)
+			t.Errorf("a cause with an own-resource write and no program must still require one: %v", rejection)
 		}
 	}
 }
@@ -698,14 +695,6 @@ observed: {"probePort":8080}`})})
 			capture := t.TempDir()
 			t1Write(t, capture, "open@detect-recordings.json", t1JSON(t, calls))
 			work := classifyCauseWork(o, nil)
-			gaps := appendEvidenceGaps(work, capture)
-			wantGaps := uint32(4)
-			if readiness {
-				wantGaps = 0
-			}
-			if gaps != wantGaps {
-				t.Errorf("missing resource/phase pairs=%d; want %d", gaps, wantGaps)
-			}
 			if work[0].Items[0].Disposition != "question" || work[0].Items[0].Reason != "unbound_write" {
 				t.Errorf("unproven learning was silently covered: %v", work)
 			}

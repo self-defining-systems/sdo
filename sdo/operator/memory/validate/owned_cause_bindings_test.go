@@ -53,7 +53,7 @@ func TestObservedOwnedChildWriteNeedsNoProgramBinding(t *testing.T) {
 			if !bindingsCoverRepairs(outcome, bindings, cause) {
 				t.Fatal("a Deployment-bound program must cover a cause whose repair also wrote an owned ReplicaSet")
 			}
-			if got := len(VerifiedReflectionCauses(outcome)) == 1; got != test.verified {
+			if got := len(observedCauses(outcome)) == 1; got != test.verified {
 				t.Fatalf("verified = %v, want %v: the owned child write must bound the cause's clearance", got, test.verified)
 			}
 		})
@@ -124,7 +124,7 @@ func TestUnchainedControlledWriteBoundsEveryCause(t *testing.T) {
 			if owners := outcome.GetRepairActions()[1].GetOwners(); len(owners) != 0 {
 				t.Fatalf("post-open ReplicaSet got an owner chain: %v", owners)
 			}
-			if got := len(VerifiedReflectionCauses(outcome)) == 1; got != test.verified {
+			if got := len(observedCauses(outcome)) == 1; got != test.verified {
 				t.Fatalf("verified = %v, want %v: an unchained controlled write must bound every cause's clearance", got, test.verified)
 			}
 		})

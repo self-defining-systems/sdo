@@ -46,14 +46,14 @@ Current reflection workers can materialize positive cases through the typed `cre
 
 Reflection evidence browsing is a bounded projection only: inventory and field pages carry the accepted outcome commit, incident ID and capture digests. Oversized page items require narrower field selection, not a conclusion that evidence is absent. Full captures and the committed outcome remain authoritative.
 
-`reflection_evidence_gap_count` on the native ledger and first-party incident row counts distinct confirmed
-resource/phase pairs with no observation in the complete protected recordings or controller object snapshots.
-A captured symptom object counts as observed even when no program primitive read it. Historical absence is unknown,
-not zero. Recorded errors count as present calls, not as successful evidence. `decline_reason=evidence_gap`
-identifies an actual no-change decline; Go rejects it when no gap was flagged. A nonzero presence-gap count
-alone does not establish blocked learning, and already-proven covered repairs still skip the model.
+`reflection_no_repair_count` on the native ledger and first-party incident row counts the `question/no_recorded_repair`
+items of the eligibility: confirmed causes with no recorded successful repair, which leave nothing to save. Before
+LEARN3 (2026-10-27) it counted resource/phase pairs with no recorded observation; Go no longer creates those, so
+older rows are not comparable. `IncidentRecord` still loads dev-branch rows that carry `reflection_evidence_gap_count` by reading it as `reflection_no_repair_count`. Historical absence is unknown, not zero. `decline_reason=no_recorded_repair` identifies an
+actual no-change decline. A nonzero count alone does not establish blocked learning, and already-proven covered
+repairs still skip the model.
 
-Evidence-gap items and the distinct resource/phase count are part of the same pre-commit `reflection_eligibility` result. The native ledger projects that saved count for receipts; it does not reclassify recordings during reflection retries. Historical outcomes without an indexed count remain unknown, rather than zero.
+`no_recorded_repair` items and their count (`no_repair_count`; it replaced `evidence_gap_count`, and older rows are not comparable) are part of the same pre-commit `reflection_eligibility` result. The native ledger projects that saved count for receipts; it does not reclassify recordings during reflection retries. Historical outcomes without an indexed count remain unknown, rather than zero.
 
 
 Structured plan effects: `SetField.value_from_source` selects the incident-bound accepted manifest; `document_format` and `document_path` identify a JSON/YAML entry within a ConfigMap key. Intent is not health proof. Current execution uses incident namespace scope, current field/UID checks, informer barriers, independent verification and rollback. Missing or stalled observations remain unknown. Preimages stay process-local; durable protobuf applications never acquire mutation journals or replay authority. Historical XV1 traces additionally used expiring content authorization; see [automatic repair evidence](automatic-repair.md).
@@ -179,8 +179,7 @@ benchmark traffic oracle. Shell has no Go prober/scenario-window requirement;
 Go admission retains both. Missing, stale, errored or incomplete shell evidence
 blocks injection, including a nonzero script before its second firing run.
 
-Successful global closure also filters the controller's executable cause-work list
-through the shared independent repair gate. Unverified claimed causes retain
-their original resources as unassigned `question/evidence_gap` items before
-reflection authors candidates; aggregate recovery never makes them executable
-drafting obligations. Failed-outcome projection keeps its existing handling.
+Successful global closure (verified healthy) filters the controller's executable
+cause-work list to causes a recorded successful repair touched. Causes with no
+recorded repair keep their original resources as unassigned `question/no_recorded_repair`
+items; no clearance, attribution or pre-incident capture is required for the rest. Failed-outcome projection keeps its existing handling.

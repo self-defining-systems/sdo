@@ -33,23 +33,21 @@ func TestReflectionBaselineUsesControllerCaptureInsteadOfAuthoredHealthy(t *test
 	}
 }
 
-func TestSuccessfulClosureCannotAuthorizeAnUnrelatedCause(t *testing.T) {
+func TestVerifiedClosureAuthorizesExecutableOnlyForARepairedCause(t *testing.T) {
 	root := goodTree(t)
 	refs := []*contracts.ObjectRef{{Kind: "Service", Namespace: "app", Name: "consul"}}
 	outcome := &contracts.OutcomeRecord{Classification: "success", ConfirmedRootCauses: []*contracts.ConfirmedRootCause{{Resources: refs}}, ReflectionEligibility: &contracts.ReflectionEligibility{Causes: []*contracts.ReflectionCauseWork{{Resources: refs, Items: []*contracts.ReflectionWorkItem{{ProgramId: "base", Disposition: "covered", Reason: "verified_equivalent_repair"}}}}}}
-	at := time.Unix(100, 0)
-	outcome.RepairActions = []*contracts.RepairActionReceipt{{ActionId: "sdo-act-1", Success: true, Resources: refs, StartedAt: timestamppb.New(at), CompletedAt: timestamppb.New(at.Add(time.Second))}}
-	outcome.FinalHealthDetectorState = []*contracts.DetectorEvaluation{{DetectorId: "objective", Status: "clear", EvaluatedAt: timestamppb.New(at.Add(2 * time.Second))}}
-	outcome.Findings = []*contracts.Finding{{DetectorId: "objective", Status: "active", Fingerprint: "original-fault", PrimaryResource: &contracts.ObjectRef{Kind: "Service", Namespace: "app", Name: "api"}}}
 	paths := []string{".sdo/diagnostics/detectors/incidents/cache/detector.go"}
 	ds, err := reflectionExecutableDiagnostics(root, outcome, paths)
 	if err != nil || len(ds) != 1 || ds[0].Rule != RuleReflectionExecutableCause {
-		t.Fatalf("unrelated Consul repair authorized: %v %v", ds, err)
+		t.Fatalf("cause without a recorded repair authorized an executable: %v %v", ds, err)
 	}
-	outcome.Findings[0].PrimaryResource = refs[0]
+	at := time.Unix(100, 0)
+	outcome.RepairActions = []*contracts.RepairActionReceipt{{ActionId: "sdo-act-1", Success: true, Resources: refs, StartedAt: timestamppb.New(at), CompletedAt: timestamppb.New(at.Add(time.Second))}}
+	// No opening finding, clearance or baseline is needed beyond the verified closure.
 	ds, err = reflectionExecutableDiagnostics(root, outcome, paths)
 	if err != nil || len(ds) != 0 {
-		t.Fatalf("finding-bound repair rejected: %v %v", ds, err)
+		t.Fatalf("recorded repair on a verified closure rejected: %v %v", ds, err)
 	}
 }
 
@@ -57,7 +55,7 @@ func TestVerifiedCauseRequiresFreshFindingClearanceForTheLastChange(t *testing.T
 	at := time.Unix(100, 0)
 	ref := &contracts.ObjectRef{Kind: "Service", Namespace: "app", Name: "consul"}
 	baseline := &contracts.OutcomeRecord{Classification: "success", ConfirmedRootCauses: []*contracts.ConfirmedRootCause{{Resources: []*contracts.ObjectRef{ref}}}, Findings: []*contracts.Finding{{DetectorId: "routing", Status: "active", Fingerprint: "opening", PrimaryResource: ref}}, RepairActions: []*contracts.RepairActionReceipt{{ActionId: "controller", Success: true, Resources: []*contracts.ObjectRef{ref}, StartedAt: timestamppb.New(at), CompletedAt: timestamppb.New(at.Add(time.Second))}}, FinalHealthDetectorState: []*contracts.DetectorEvaluation{{DetectorId: "routing", Status: "clear", EvaluatedAt: timestamppb.New(at.Add(2 * time.Second))}}}
-	if len(VerifiedReflectionCauses(baseline)) != 1 {
+	if len(observedCauses(baseline)) != 1 {
 		t.Fatal("complete finding-bound proof rejected")
 	}
 	for name, mutate := range map[string]func(*contracts.OutcomeRecord){
@@ -78,21 +76,18 @@ func TestVerifiedCauseRequiresFreshFindingClearanceForTheLastChange(t *testing.T
 			action.CompletedAt = timestamppb.New(at.Add(3 * time.Second))
 			o.RepairActions = append(o.RepairActions, action)
 		},
-		"ambiguous same-object causes": func(o *contracts.OutcomeRecord) {
-			o.ConfirmedRootCauses = append(o.ConfirmedRootCauses, proto.Clone(o.ConfirmedRootCauses[0]).(*contracts.ConfirmedRootCause))
-		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			outcome := proto.Clone(baseline).(*contracts.OutcomeRecord)
 			mutate(outcome)
-			if got := VerifiedReflectionCauses(outcome); len(got) != 0 {
+			if got := observedCauses(outcome); len(got) != 0 {
 				t.Fatalf("unverified cause authorized: %v", got)
 			}
 		})
 	}
 	baseline.DetectorHistory = baseline.FinalHealthDetectorState
 	baseline.FinalHealthDetectorState = nil
-	if len(VerifiedReflectionCauses(baseline)) != 1 {
+	if len(observedCauses(baseline)) != 1 {
 		t.Fatal("post-response incident detector history ignored")
 	}
 }

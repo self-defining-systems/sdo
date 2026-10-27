@@ -697,7 +697,7 @@ class CompositeSdoAgent(SdoPersistentAgent):
                 f"{len(self._incidents) - receipts_seen} incident receipt(s) missing after reflection drain"
             )
         timed = self._merge(timed_outcomes)
-        gap_counts = [item.reflection_evidence_gap_count for item in timed_outcomes]
+        gap_counts = [item.reflection_no_repair_count for item in timed_outcomes]
         return outcome.with_learning(
             detected_at=outcome.detected_at or timed.detected_at,
             mitigation_applied_at=outcome.mitigation_applied_at or timed.mitigation_applied_at,
@@ -710,7 +710,7 @@ class CompositeSdoAgent(SdoPersistentAgent):
             match_reasons=tuple(dict.fromkeys(reasons)),
             binding_sources=tuple(dict.fromkeys(binding_sources)),
             reflection_attempts=attempts,
-            reflection_evidence_gap_count=sum(count for count in gap_counts if count is not None)
+            reflection_no_repair_count=sum(count for count in gap_counts if count is not None)
             if gap_counts and all(count is not None for count in gap_counts)
             else None,
             reflection_skipped_reason="; ".join(dict.fromkeys(skipped_reasons)) or None,

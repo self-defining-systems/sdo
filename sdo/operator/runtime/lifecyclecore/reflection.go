@@ -63,7 +63,7 @@ type ReflectionEffect struct {
 	Diagnostics      []*contracts.MemoryDiagnostic
 	Paths            []string
 	DispatchAt       *timestamppb.Timestamp
-	EvidenceGapCount uint32
+	NoRepairCount uint32
 }
 
 func ReflectionFeedback(ledger *contracts.BrokerLedger) (uint32, []*contracts.MemoryDiagnostic) {
@@ -94,9 +94,9 @@ func StepReflection(state *contracts.BrokerLedger, event ReflectionEvent) (*cont
 	}
 	if event.Kind == ReflectionBegin {
 		eligibility := next.GetOutcomeDocument().GetReflectionEligibility()
-		if next.ReflectionEvidenceGapCount == nil && eligibility != nil && eligibility.EvidenceGapCount != nil {
-			count := eligibility.GetEvidenceGapCount()
-			next.ReflectionEvidenceGapCount = &count
+		if next.ReflectionNoRepairCount == nil && eligibility != nil && eligibility.NoRepairCount != nil {
+			count := eligibility.GetNoRepairCount()
+			next.ReflectionNoRepairCount = &count
 		}
 
 		if next.ReflectionCommit != "" {
@@ -133,7 +133,7 @@ func StepReflection(state *contracts.BrokerLedger, event ReflectionEvent) (*cont
 	identity := reflectionIdentity(next, kind)
 	if event.Kind == ReflectionDrive {
 		attempt, diagnostics := ReflectionFeedback(next)
-		effect := ReflectionEffect{IncidentID: next.GetIncidentId(), ProposalCommit: next.GetProposalCommit(), OutcomeCommit: next.GetOutcomeCommit(), Kind: kind, ID: identity, Attempt: attempt, Diagnostics: diagnostics, Paths: slices.Clone(next.ReflectionPaths), EvidenceGapCount: next.GetReflectionEvidenceGapCount()}
+		effect := ReflectionEffect{IncidentID: next.GetIncidentId(), ProposalCommit: next.GetProposalCommit(), OutcomeCommit: next.GetOutcomeCommit(), Kind: kind, ID: identity, Attempt: attempt, Diagnostics: diagnostics, Paths: slices.Clone(next.ReflectionPaths), NoRepairCount: next.GetReflectionNoRepairCount()}
 		if next.ReflectionWorkspace != nil {
 			effect.Workspace = proto.Clone(next.ReflectionWorkspace).(*contracts.ProposalWorkspace)
 		}

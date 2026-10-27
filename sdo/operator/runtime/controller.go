@@ -1430,6 +1430,11 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 			c.reportBrokerError("capture verified snapshot", err)
 			return
 		}
+		if err := memory.BindClosureHealthyBaseline(c.config.CorpusSessionRoot, c.currentIncidentRequest.IncidentID); err != nil {
+			c.mu.Unlock()
+			c.reportBrokerError("bind closure healthy baseline", err)
+			return
+		}
 		if c.drift != nil && c.drift.View != nil {
 			incidentID := c.currentIncidentRequest.IncidentID
 			findings := append([]sdk.Finding(nil), c.currentIncidentRequest.Findings...)

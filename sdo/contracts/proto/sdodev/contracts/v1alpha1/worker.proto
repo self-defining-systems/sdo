@@ -124,5 +124,5 @@ message ReflectionResult {
   repeated string proposed_artifact_ids = 4;
   OperationalArtifactProposal artifact_proposal = 5 [deprecated = true];
   repeated SdkGap sdk_gaps = 6;
-  string decline_reason = 7 [(buf.validate.field).string = {in: ["", "evidence_gap"]}];
+  string decline_reason = 7 [(buf.validate.field).string = {in: ["", "no_recorded_repair"]}];
 }

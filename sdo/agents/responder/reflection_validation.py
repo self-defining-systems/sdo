@@ -97,7 +97,7 @@ def validation_server(
         learning_decision: Literal["updated", "no_change", "sdk_gap"] | None = None,
         summary: str = "",
         no_change_reason: str = "",
-        decline_reason: Literal["", "evidence_gap"] = "",
+        decline_reason: Literal["", "no_recorded_repair"] = "",
         proposed_artifact_ids: list[str] | None = None,
         sdk_gaps: list[SdkGap] | None = None,
     ) -> ValidationResult:

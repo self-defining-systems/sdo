@@ -88,7 +88,7 @@ class AgentOutcome:
     binding_sources: tuple[str, ...] = ()
     reflection_attempts: int | None = None
     reflection_skipped_reason: str | None = None
-    reflection_evidence_gap_count: int | None = None
+    reflection_no_repair_count: int | None = None
     playbook_coverage: dict[str, Any] | None = None
     resolution_path: str | None = None
 
@@ -664,7 +664,7 @@ def _outcome_fields(outcome: AgentOutcome) -> dict[str, Any]:
         "binding_sources": list(outcome.binding_sources),
         "reflection_attempts": outcome.reflection_attempts,
         "reflection_skipped_reason": outcome.reflection_skipped_reason,
-        "reflection_evidence_gap_count": outcome.reflection_evidence_gap_count,
+        "reflection_no_repair_count": outcome.reflection_no_repair_count,
         "playbook_coverage": outcome.playbook_coverage,
         "resolution_path": outcome.resolution_path,
         "closure_phase_seconds": dict(outcome.closure_phase_seconds),

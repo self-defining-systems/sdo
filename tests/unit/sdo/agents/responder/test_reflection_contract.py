@@ -39,7 +39,7 @@ class _Publisher:
         ("question", "program_refinement", False),
         ("question", "unbound_write", False),
         ("question", "uncertain", False),
-        ("question", "evidence_gap", False),
+        ("question", "no_recorded_repair", False),
         ("covered", "verified_equivalent_repair", False),
         ("false_match", "fixed_capture_match", True),
         ("question", "unbound_write", True),
@@ -74,7 +74,7 @@ def test_t1_work_reaches_scripted_session(
         corpus = tmp_path / ".sdo/corpus/repeat-t1/labels.json"
         corpus.parent.mkdir(parents=True)
         corpus.write_text('{"root_cause_program_ids":["contract-repair"]}', encoding="utf-8")
-    if reason == "evidence_gap":
+    if reason == "no_recorded_repair":
         item.evidence_phase = "fixed"
         item.resources.add(kind="Service", namespace="app", name="api")
     if reason == "program_refinement":

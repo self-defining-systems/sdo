@@ -2,7 +2,7 @@
 
 ### Partial repair reflection
 
-Aggregate `classification=failed` does not erase independently verified repairs.
+Aggregate `classification=failed` does not erase independently verified repairs (this section is the failed-closure rule; `success` outcomes use the LEARN3 rule below).
 For an existing executable repair, the broker admits a confirmed cause only when every cause resource has a successful,
 timed repair receipt linked to its controller application (or exact-equivalent manual repair): not dry-run or
 rolled back, no application/rollback error, affirmative verification and final exact
@@ -32,43 +32,37 @@ other open findings, without the peer cause or opaque transcript.
 The committed outcome retains all causes, receipts, and its failed classification.
 Its `reflection_eligibility.causes` contains only verified repaired cause groups,
 with indices into the full outcome. Unverified causes are represented separately
-as typed `unassigned` questions with `reason=evidence_gap`; they do not authorize
-executable learning. A cause is verified when each written target's own primary finding and each
-observed symptom cleared after the last write. On `success` outcomes only, cause
-resources that no opening finding named (for example a traffic-only caller
-Service) are unobserved context and, since LEARN1 (2026-10-26), no longer cause
-an `evidence_gap`. Since P35R (2026-10-26), on `success` outcomes a written
-target that no opening finding named is covered by its cause when another
-resource of the same cause is the primary resource of an opening finding that
-cleared after the last cause write (a resource named only as related on another
-cause's finding never covers, P35R2); a cause with no such finding is still an `evidence_gap`. Partial
-and failed outcomes, like this one, still need a cleared finding for every
-cause resource, because opening findings omit findings that activate after launch. Since LEARN2 (2026-10-26), a repair
-receipt's `owners` records each written object's controller owner chain as SDO
-observed it: plan pre-images for controller writes, and for `sdo act` writes the
-broker's walk of the incident's open capture (LEARN2B). Worker-reported chains
-are dropped at ingest, so the agent cannot claim ownership.
-A write whose chain reaches a cause resource (e.g. scaling a Deployment's old
-ReplicaSet) is that cause's work, not an `unassigned` `unbound_write`, and the
-cause's findings must clear after it. Receipts without `owners` (older runs, or
-an object the capture never observed) keep such writes unassigned; names never bind.
-An unchained Pod/ReplicaSet/Job write (e.g. to a ReplicaSet a rollout created after
-open) still bounds every cause's clearance (FIX14A): each cause's findings must
-clear after it. The worker
+as typed `unassigned` questions with `reason=no_recorded_repair`; they do not authorize
+executable learning. Since LEARN3 (2026-10-27), on a `success` outcome (closure
+verified healthy) a cause is verified by a recorded successful repair action
+that wrote one of its resources or an object they control. Per-cause finding
+clearance, exclusive resource ownership, a pre-incident capture and a separate
+post-action observation are not required: the repeat's act-verify loop checks the
+saved steps. When no pre-incident healthy capture exists, the controller binds the
+closure's own `fixed` snapshot as the incident's healthy sample
+(`healthy/reference` is `closure`). The unverified-cause `no_recorded_repair` item now
+means only "no recorded repair touched this cause", and
+`reflection_no_repair_count` counts those items; Go no longer creates
+missing-observation gaps. On partial and failed outcomes (and for trust credit) a
+cause is still verified when each written target's own primary finding and each
+observed symptom cleared after the last write, the cause owns its resources
+exclusively, and an owned child write (`owners` chain, LEARN2/LEARN2B; unchained
+Pod/ReplicaSet/Job writes bound every cause, FIX14A) cleared after it. Worker-reported
+owner chains are dropped at ingest. The worker
 receives compact cause indices and only those causes, verified receipts and typed
 applications/diagnoses and scoped cold-verification evidence. Opaque tool transcripts and unattributed playbook/drift
 claims are omitted from that learning view. No global recovery, positive fixed
 capture, program trust credit, or repaired peer is inferred from partial repair.
-A missing fixed capture remains an evidence gap. Full-success reflection retains
-its existing behavior.
+A cause with no recorded successful repair is not saved. Full-success reflection follows the
+LEARN3 rule: any recorded successful repair on a verified-healthy closure is saved.
 
 Every closed incident with a resumable responder session requires reflection,
 including failed, cancelled and self-healed incidents with no verified repair.
 The worker resumes that session by default, independently of the response budget
 and benchmark cleanup. Settled corpus work does not bypass this dispatch.
 Without a verified repaired cause, reflection may return `no_change` with a
-concrete evidence-gap reason or typed SDK gaps; it cannot publish an `updated`
-README or executable claim. A responder Job failure preserves its provider checkpoint from the incident tool
+concrete no-recorded-repair reason or typed SDK gaps; it cannot publish an `updated`
+README or executable claim. `decline_reason=no_recorded_repair` also records one verified cause with no recorded repair write on its own resources (an owner-chained write only) beside an `updated` decision; the replayable causes are still learned and the validator no longer demands a program for the recorded one. A responder Job failure preserves its provider checkpoint from the incident tool
 state even when no worker result was delivered. When no resumable session exists,
 the accepted outcome carries `reflection_skip_reason=no_session`; reflection
 never falls back to a fresh session. The ledger's skip decision also names

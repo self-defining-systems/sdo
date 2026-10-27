@@ -215,7 +215,7 @@ message ReflectionDecision {
   string error = 4;
   repeated SdkGap sdk_gaps = 5;
   UsageMetrics usage = 6;
-  string decline_reason = 7 [(buf.validate.field).string = {in: ["", "evidence_gap"]}];
+  string decline_reason = 7 [(buf.validate.field).string = {in: ["", "no_recorded_repair"]}];
   // Terminal execution failure; never a model-authored verdict. "timeout" is the
   // controller's frozen task deadline; the others are the worker's typed failure.
   string failure_reason = 8 [(buf.validate.field).string = {in: ["", "timeout", "agent_timeout", "agent_failed", "result_too_large"]}];
@@ -302,7 +302,7 @@ message BrokerLedger {
   uint32 reflection_max_retries = 25;
   google.protobuf.Timestamp reflection_dispatch_at = 26;
   // Distinct resource/phase observations absent from protected recordings.
-  optional uint32 reflection_evidence_gap_count = 27;
+  optional uint32 reflection_no_repair_count = 27;
   // A failed attempt's reflection is queued behind its acknowledgment so the
   // incident's follow-up does not wait for it. Replayed after restart.
   bool reflection_queued = 28;

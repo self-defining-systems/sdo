@@ -108,8 +108,8 @@ Checkpoint capture maps retain the controller's frozen `healthy/healthy.json` an
 nested capture names; traversal and other nested paths are rejected. Export and
 both worker/broker replay restore the same private directory and retain existing
 per-file, bundle and content-digest checks. A missing historical healthy reference
-is a replay evidence gap; never substitute an agent-authored corpus healthy state
-or the repaired fixed state. A session-authored positive replay case can still
+is a replay evidence gap for a closure that did not verify healthy; never substitute an agent-authored corpus healthy state.
+On a verified-healthy closure with no pre-incident reference, the controller binds its own `fixed` capture as `healthy/healthy.json` (`reference` is `closure`). A session-authored positive replay case can still
 omit incident captures when its controller healthy reference is retained.
 
 ## Concurrent shared-memory lanes

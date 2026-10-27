@@ -87,3 +87,34 @@ func RemoveHealthyBaseline(root, reference string) error {
 	}
 	return err
 }
+
+// BindClosureHealthyBaseline gives an incident without a pre-incident capture
+// the controller's own post-closure healthy snapshot as its healthy sample. It
+// is called only after the controller verified the closure healthy and captured
+// "fixed"; an existing pre-incident reference is never replaced.
+func BindClosureHealthyBaseline(root, incidentID string) error {
+	releaseSessionStorage := SessionStorageUse()
+	defer releaseSessionStorage()
+
+	dir, err := IncidentCorpusDir(root, incidentID)
+	if err != nil {
+		return err
+	}
+	healthy := filepath.Join(dir, "healthy")
+	if _, err := os.Stat(filepath.Join(healthy, "healthy.json")); err == nil {
+		return nil
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, "fixed.json"))
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(healthy, 0700); err != nil {
+		return err
+	}
+	if err := writeCapturedFile(filepath.Join(healthy, "healthy.json"), raw); err != nil {
+		return err
+	}
+	return writeCapturedFile(filepath.Join(healthy, "reference"), []byte("closure\n"))
+}
