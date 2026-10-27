@@ -22,6 +22,7 @@ def test_real_injection_survives_seeded_journal_and_run_directory_switch(tmp_pat
         data_faults={"mongo": ("revoke_auth_mongodb:rate-db",)},
     )
     driver.inject("mongo")
+    driver.recover()  # Verified harness recovery does not prove PVC data was reset.
     # Repeat-only reruns seed their journal from another run. That is not lane history.
     (tmp_path / "journal.json").write_text('{"previous": "clean-selector-row"}')
     reason = tier2_reason(
@@ -140,3 +141,12 @@ def test_cli_row_start_uses_lane_facts_and_incoming_faults(tmp_path: Path) -> No
     assert reason.trigger.value == "current_row_data_faults"
     reason = _application_needs_redeploy(environment, marker)
     assert reason.trigger.value == "lane_injection_unknown"
+
+
+def test_undescribed_injection_cannot_retain_an_older_clean_record(tmp_path: Path) -> None:
+    state = LaneInjectionState(tmp_path / "lane.kubeconfig", "hotel")
+    driver = SregymFaultDriver(FakeWorker(), namespace="hotel", injection_state=state, data_faults={"selector": ()})
+    driver.inject("selector")
+    assert state.reason() is None
+    driver.inject("not-in-catalog")
+    assert state.reason().trigger.value == "lane_injection_unknown"
