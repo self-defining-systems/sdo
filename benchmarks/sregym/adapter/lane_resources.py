@@ -21,6 +21,8 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
+from benchmarks.sregym.adapter.budgets import WaitKind, wait_for
+
 if TYPE_CHECKING:
     from collections.abc import Set
 
@@ -268,7 +270,7 @@ def assert_host_disk_headroom(path: Path | None = None, *, policy: LaneResourceP
                 check=True,
                 capture_output=True,
                 text=True,
-                timeout=5,
+                timeout=wait_for(WaitKind.PROBE),
             )
             location = inspected.stdout.strip()
             if not location or not Path(location).is_absolute():
@@ -316,11 +318,11 @@ def assert_lane_resources(
 
     Runs on the local kind host, as fastloop does. The floor measures that host;
     a remote cluster must supply its host measurement to evaluate_lane_resources.
-    All Kubernetes reads together are capped at fifteen seconds.
+    All Kubernetes reads together are capped at one snapshot-read budget.
     """
     if not kubeconfig.is_absolute():
         raise ValueError("eval: lane resource admission requires an absolute trusted kubeconfig")
-    deadline = time.monotonic() + 15
+    deadline = time.monotonic() + wait_for(WaitKind.SNAPSHOT_READ)
 
     def get(args: list[str]) -> dict[str, Any]:
         errors: list[str] = []

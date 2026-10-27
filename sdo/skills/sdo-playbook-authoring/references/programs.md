@@ -74,7 +74,7 @@ Named constants such as a scale amount are defaulted parameters. An emergency li
 parameter the responder supplies and justifies; a permanent intended-state change requires a source repair.
 
 `DeletePod{Ref}` deletes one named Pod with UID/version preconditions and verifies absence or a replacement
-UID. It never recreates a Pod during undo. `ScaleWorkload{Ref, Replicas}` accepts a Deployment, StatefulSet or
+UID; a graceful delete leaves the Pod terminating, which counts as deleted and is reported `observed: terminating` (the Pod may still run until it stops). It never recreates a Pod during undo. `ScaleWorkload{Ref, Replicas}` accepts a Deployment, StatefulSet or
 old-revision ReplicaSet of a bound Deployment, resolves a nonnegative integer replica count, and directly verifies `spec.replicas`. Partial failures undo
 reversible fields from captured pre-images; irreversible effects remain disclosed.
 

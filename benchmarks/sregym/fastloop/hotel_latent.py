@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 
 import yaml
 
-from benchmarks.sregym.adapter import kubectl
+from benchmarks.sregym.adapter import WaitKind, kubectl, wait_for
 from benchmarks.sregym.fastloop.baseline_recovery import ApplicationBaseline, load_application_baseline
 from benchmarks.sregym.fastloop.environment import FastloopEnvironment
 
@@ -72,7 +72,7 @@ def sweep_preparer(
         )
         # Adoption runs at startup and after accepted commits. Prepare only at
         # the injection boundary, and let the informer see the healthy object.
-        sleep(1)
+        sleep(wait_for(WaitKind.POLL_FAST))
         logging.getLogger(__name__).info("prepared imported Service/%s for periodic sweep", service)
 
     return prepare

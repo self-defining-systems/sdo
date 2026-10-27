@@ -17,7 +17,6 @@ import (
 	"time"
 
 	"google.golang.org/protobuf/types/known/anypb"
-	batchv1 "k8s.io/api/batch/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
@@ -25,54 +24,57 @@ import (
 	"sdo.dev/operator/memory"
 )
 
-const standbyRoot = ".sdo-runtime/standby"
+const (
+	standbyRoot = ".sdo-runtime/standby"
+	// standbyClaimFile in the pod's inbox marks it taken; the idle heartbeat
+	// expiry then yields to the claim grace.
+	standbyClaimFile = "claimed"
+)
 
-// WarmBinding is durable before work is published. A retry rejoins this Job;
-// it must never launch a second worker after the claim may have been observed.
+// WarmBinding is durable once the pod holds the incident directories. A retry
+// rejoins this Job; it must never launch a second worker after the task may
+// have been published.
 type WarmBinding struct {
 	JobName    string    `json:"job_name"`
 	IncidentID string    `json:"incident_id"`
 	Directory  string    `json:"directory"`
 	Digest     string    `json:"request_digest"`
 	ClaimedAt  time.Time `json:"claimed_at"`
+	CreatedAt  time.Time `json:"created_at"`
 }
 
-type standbyMove struct {
-	Original string `json:"original"`
-	Staged   string `json:"staged"`
-	Backup   string `json:"backup"`
-}
-type standbyJournal struct {
-	Binding WarmBinding   `json:"binding"`
-	Moves   []standbyMove `json:"moves"`
-}
-
-// StandbyPool owns one waiting one-shot responder per application. The claim
-// channel is the same private PVC filesystem transport as responder tools.
-// Only the controller mounts its parent; workers see their own read-only inbox.
+// StandbyPool owns one waiting one-shot responder per application: an early
+// claimant for a task that is otherwise run by a cold Job. The inbox is the
+// same private PVC filesystem transport as responder tools; only the controller
+// mounts its parent, workers see their own read-only inbox.
 type StandbyPool struct {
 	Executor             KubernetesExecutor
 	AgentID, Application string
-	ResponseBudget       time.Duration
 	mu                   sync.Mutex
 	current              *WarmBinding
 	notify               chan struct{}
 	done                 chan struct{}
+	// exchange atomically swaps two directories; tests replace it.
+	exchange func(a, b string) error
 }
 
 func NewStandbyPool(e KubernetesExecutor, agentID, application string) *StandbyPool {
-	return &StandbyPool{Executor: e, AgentID: agentID, Application: application, notify: make(chan struct{}, 1), done: make(chan struct{})}
+	return &StandbyPool{Executor: e, AgentID: agentID, Application: application, notify: make(chan struct{}, 1), done: make(chan struct{}), exchange: exchangeDirectories}
 }
 
 func (p *StandbyPool) root() string {
 	return filepath.Join(p.Executor.RepositoryMountPath, standbyRoot, JobName(p.Application))
 }
 
-// Start runs only after controller leadership. Old unclaimed daemons are
-// retired; claimed Jobs and their canonical session directories survive.
+// Start runs only after controller leadership. Idle daemons from a previous
+// controller are retired; a Job that already holds a published task is an
+// ordinary responder and survives.
 func (p *StandbyPool) Start(ctx context.Context) error {
 	if err := p.recoverUnclaimed(ctx); err != nil {
 		return err
+	}
+	if err := p.probeExchange(); err != nil {
+		return fmt.Errorf("warm adoption is unsupported on this filesystem: %w", err)
 	}
 	if err := p.Ensure(ctx); err != nil {
 		return err
@@ -81,11 +83,18 @@ func (p *StandbyPool) Start(ctx context.Context) error {
 		defer close(p.done)
 		ticker := time.NewTicker(time.Second)
 		defer ticker.Stop()
+		reap := time.NewTicker(standbyClaimExpiry)
+		defer reap.Stop()
 		for {
 			select {
 			case <-ctx.Done():
 				p.retireIdle()
 				return
+			case <-reap.C:
+				if err := p.reapGone(ctx); err != nil {
+					slog.Warn("responder_standby_reap", "error", err)
+				}
+				continue
 			case <-ticker.C:
 			case <-p.notify:
 			}
@@ -99,6 +108,26 @@ func (p *StandbyPool) Start(ctx context.Context) error {
 
 func (p *StandbyPool) Wait() { <-p.done }
 
+// probeExchange checks once that the PVC supports the atomic directory swap
+// adoption depends on, so an unsupported filesystem never pays the copy.
+func (p *StandbyPool) probeExchange() error {
+	if err := os.MkdirAll(p.root(), 0700); err != nil {
+		return err
+	}
+	probe, err := os.MkdirTemp(p.root(), ".probe-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(probe)
+	a, b := filepath.Join(probe, "a"), filepath.Join(probe, "b")
+	for _, directory := range []string{a, b} {
+		if err := os.Mkdir(directory, 0700); err != nil {
+			return err
+		}
+	}
+	return p.exchange(a, b)
+}
+
 func (p *StandbyPool) Ensure(ctx context.Context) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -107,15 +136,13 @@ func (p *StandbyPool) Ensure(ctx context.Context) error {
 			return err
 		}
 		job, err := p.Executor.Client.BatchV1().Jobs(p.Executor.Namespace).Get(ctx, p.current.JobName, metav1.GetOptions{})
-		if err == nil && !jobFailed(job) && !jobCompleted(job) && standbyLifetimeCovers(job, time.Now(), p.responseBudget()) {
+		if err == nil && !jobFailed(job) && !jobCompleted(job) && (standbyReady(p.current.Directory) || time.Since(p.current.CreatedAt) <= standbyReadyDeadline) {
 			return nil
 		}
 		if err != nil && !apierrors.IsNotFound(err) {
 			return err
 		}
-		if err == nil {
-			p.deleteSlot(ctx, p.current)
-		}
+		p.Executor.releaseStandby(ctx, p.current)
 		p.current = nil
 	}
 	registration, err := p.Executor.Registry.Resolve(p.AgentID, "")
@@ -160,15 +187,19 @@ func (p *StandbyPool) Ensure(ctx context.Context) error {
 	if err := e.ensureJob(ctx, task, registration.GetKubernetesJob(), name, requestSource{PVCSubPath: path.Join(sub, "control")}, name+"-result", path.Join(sub, "checkout")); err != nil {
 		return err
 	}
-	p.current = &WarmBinding{JobName: name, Directory: directory}
+	p.current = &WarmBinding{JobName: name, Directory: directory, CreatedAt: time.Now().UTC()}
 	slog.Info("responder_standby_created", "application", p.Application, "job", name)
 	return nil
 }
 
-// TryBind never waits for readiness. A successful reservation is single-use.
-// Directory renames retain the inodes already bind-mounted by the kubelet, so
-// the worker gets the canonical broker checkout/session with the same narrow
-// mounts and read-only corpus/history/tools boundaries as a cold Job.
+// TryBind never waits for readiness. The claim is one create-only file, so
+// exactly one claimant wins. The kubelet bind-mounted the idle pod's directory
+// inodes, so the canonical checkout and session are copied into them and the
+// two directories are exchanged in one atomic rename each: the pod then holds
+// the canonical paths with the same narrow mounts and read-only
+// corpus/history/tools boundaries as a cold Job. Every state in between leaves
+// a valid canonical directory, so a failure needs no rollback: the cold Job
+// mounts whatever the canonical path holds.
 func (p *StandbyPool) TryBind(ctx context.Context, e KubernetesExecutor, task *contracts.AgentTask) (KubernetesExecutor, error) {
 	if binding, err := e.loadWarmBinding(task); err != nil {
 		return e, err
@@ -178,7 +209,8 @@ func (p *StandbyPool) TryBind(ctx context.Context, e KubernetesExecutor, task *c
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if p.current == nil || e.SessionPVCSubPath == "" || e.Environment["SDO_RESPONSE_CONTINUATION"] != "" || !validWarmPaths(e, task) {
+	session, ok := warmSessionPath(e, task)
+	if p.current == nil || e.SessionPVCSubPath == "" || e.Environment["SDO_RESPONSE_CONTINUATION"] != "" || !ok {
 		return e, nil
 	}
 	releaseStorage, available := memory.TrySessionStorageBinding()
@@ -187,25 +219,15 @@ func (p *StandbyPool) TryBind(ctx context.Context, e KubernetesExecutor, task *c
 	}
 	defer releaseStorage()
 	slot := p.current
-	for _, name := range []string{"agent", "history"} {
-		info, err := os.Stat(filepath.Join(slot.Directory, "ready", name))
-		if err != nil || time.Since(info.ModTime()) > 2*time.Second {
-			return e, nil
-		}
+	if !standbyReady(slot.Directory) {
+		return e, nil
+	}
+	request := new(contracts.IncidentRequest)
+	if err := task.GetRequest().UnmarshalTo(request); err != nil {
+		return e, err
 	}
 	job, jobErr := e.Client.BatchV1().Jobs(e.Namespace).Get(ctx, slot.JobName, metav1.GetOptions{})
-	budget := p.responseBudget()
-	incident := new(contracts.IncidentRequest)
-	if task.GetRequest().UnmarshalTo(incident) == nil && incident.GetResponseDeadline() != nil {
-		budget = time.Until(incident.GetResponseDeadline().AsTime())
-	}
-	if task.GetDeadline() != nil {
-		budget = time.Until(task.GetDeadline().AsTime())
-		if budget < 0 {
-			return e, nil
-		}
-	}
-	if jobErr != nil || jobFailed(job) || jobCompleted(job) || !standbyLifetimeCovers(job, time.Now(), budget) {
+	if jobErr != nil || jobFailed(job) || jobCompleted(job) {
 		return e, nil
 	}
 	// A prepared cold request/result/Job owns this immutable task already.
@@ -229,81 +251,60 @@ func (p *StandbyPool) TryBind(ctx context.Context, e KubernetesExecutor, task *c
 	if priorErr == nil || !apierrors.IsNotFound(priorErr) {
 		return e, nil
 	}
-	reservation, err := os.OpenFile(filepath.Join(slot.Directory, "reservation"), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	claim, err := os.OpenFile(filepath.Join(slot.Directory, "control", standbyClaimFile), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if err != nil {
 		return e, nil
 	}
-	reservation.Close()
+	claim.Close()
 	p.current = nil
+	bound := false
 	defer func() {
 		select {
 		case p.notify <- struct{}{}:
 		default:
 		}
 	}()
-	stopLease := holdStandbyReservation(ctx, slot)
-	bound := false
+	// Every exit after the claim gives the slot up unless the incident owns it.
 	defer func() {
 		if !bound {
-			stopLease()
+			p.Executor.releaseStandby(ctx, slot)
 		}
 	}()
-	request := new(contracts.IncidentRequest)
-	if err := task.GetRequest().UnmarshalTo(request); err != nil {
-		return e, err
-	}
 	slot.IncidentID = request.GetIncidentId()
 	slot.Digest = taskRequestDigest(task)
 	slot.ClaimedAt = time.Now().UTC()
-	sessionRelative, err := filepath.Rel(sessionPVCBase(e.RepositoryPVCSubPath), e.SessionPVCSubPath)
-	if err != nil {
-		return e, err
-	}
-	moves := []standbyMove{{task.GetWorkspace().GetCheckoutPath(), filepath.Join(slot.Directory, "checkout"), filepath.Join(slot.Directory, "backup-checkout")}, {filepath.Join(e.RepositoryMountPath, sessionRelative), filepath.Join(slot.Directory, "session"), filepath.Join(slot.Directory, "backup-session")}}
-	journal := standbyJournal{Binding: *slot, Moves: moves}
-	for _, move := range moves {
-		if err := copyStandbyTree(ctx, move.Original, move.Staged); err != nil {
-			p.deleteSlot(ctx, slot)
+	for _, adopted := range [][2]string{
+		{task.GetWorkspace().GetCheckoutPath(), filepath.Join(slot.Directory, "checkout")},
+		{session, filepath.Join(slot.Directory, "session")},
+	} {
+		if err := adoptIntoPod(ctx, adopted[0], adopted[1], p.exchange); err != nil {
 			slog.Warn("responder_standby_fallback", "error", err)
 			return e, nil
 		}
 	}
-	// The proposal was issued from accepted state. Refresh it at this exact
-	// immutable commit before publishing a task; never use standby-era state.
-	if output, err := exec.CommandContext(ctx, "git", "-C", moves[0].Staged, "reset", "--hard", task.GetWorkspace().GetBaseCommit()).CombinedOutput(); err != nil {
-		p.deleteSlot(ctx, slot)
-		slog.Warn("responder_standby_fallback", "error", fmt.Errorf("refresh accepted checkout: %w: %s", err, output))
-		return e, nil
-	}
-	if err := writeStandbyJSON(filepath.Join(slot.Directory, "binding-journal.json"), journal); err != nil {
-		return e, err
-	}
-	for _, move := range moves {
-		if err := os.Rename(move.Original, move.Backup); err != nil {
-			if rollbackErr := p.rollback(journal); rollbackErr != nil {
-				return e, rollbackErr
-			}
-			p.deleteSlot(ctx, slot)
-			return e, nil
-		}
-		if err := os.Rename(move.Staged, move.Original); err != nil {
-			if rollbackErr := p.rollback(journal); rollbackErr != nil {
-				return e, rollbackErr
-			}
-			p.deleteSlot(ctx, slot)
-			return e, nil
-		}
-	}
 	if err := writeStandbyJSON(e.warmBindingPath(task), slot); err != nil {
-		if rollbackErr := p.rollback(journal); rollbackErr != nil {
-			return e, rollbackErr
-		}
-		p.deleteSlot(ctx, slot)
+		slog.Warn("responder_standby_fallback", "error", err)
 		return e, nil
 	}
-	e.WarmBinding = slot
 	bound = true
+	e.WarmBinding = slot
 	return e, nil
+}
+
+// adoptIntoPod copies the canonical directory into the pod-held one and swaps
+// them. The pod-held inode is now at the canonical path; the old canonical
+// tree, now at the pod's former path, is stale and removed.
+func adoptIntoPod(ctx context.Context, canonical, held string, exchange func(a, b string) error) error {
+	if info, err := os.Lstat(held); err != nil || !info.IsDir() {
+		return fmt.Errorf("standby directory is not a real directory: %s", held)
+	}
+	if err := copyStandbyTree(ctx, canonical, held); err != nil {
+		return err
+	}
+	if err := exchange(canonical, held); err != nil {
+		return fmt.Errorf("exchange %s with the standby directory: %w", canonical, err)
+	}
+	return os.RemoveAll(held)
 }
 
 func copyStandbyTree(ctx context.Context, source, destination string) error {
@@ -378,39 +379,31 @@ func (e KubernetesExecutor) loadWarmBinding(task *contracts.AgentTask) (*WarmBin
 	return &binding, nil
 }
 
-func (p *StandbyPool) rollback(j standbyJournal) error {
-	for i := len(j.Moves) - 1; i >= 0; i-- {
-		move := j.Moves[i]
-		if _, err := os.Stat(move.Backup); err == nil {
-			if _, err := os.Stat(move.Staged); errors.Is(err, os.ErrNotExist) {
-				if err := os.Rename(move.Original, move.Staged); err != nil && !errors.Is(err, os.ErrNotExist) {
-					return fmt.Errorf("restore standby staged directory: %w", err)
-				}
-			}
-			if err := os.Rename(move.Backup, move.Original); err != nil {
-				return fmt.Errorf("restore canonical incident directory: %w", err)
-			}
-		} else if !errors.Is(err, os.ErrNotExist) {
-			return err
-		}
-	}
-	return nil
-}
-
-func (p *StandbyPool) deleteSlot(ctx context.Context, b *WarmBinding) {
+// releaseStandby is the only way a slot is given up: its Job and its pod-side
+// directory go together. It outlives a cancelled caller, because a leaked slot
+// holds a PVC subPath and quota.
+func (e KubernetesExecutor) releaseStandby(ctx context.Context, b *WarmBinding) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Second)
+	defer cancel()
 	policy := metav1.DeletePropagationBackground
-	_ = p.Executor.Client.BatchV1().Jobs(p.Executor.Namespace).Delete(ctx, b.JobName, metav1.DeleteOptions{PropagationPolicy: &policy})
+	if err := e.Client.BatchV1().Jobs(e.Namespace).Delete(ctx, b.JobName, metav1.DeleteOptions{PropagationPolicy: &policy}); err != nil && !apierrors.IsNotFound(err) {
+		slog.Warn("responder_standby_release", "job", b.JobName, "error", err)
+	}
+	if err := os.RemoveAll(b.Directory); err != nil {
+		slog.Warn("responder_standby_release", "job", b.JobName, "error", err)
+	}
 }
 func (p *StandbyPool) retireIdle() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.current != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-		defer cancel()
-		p.deleteSlot(ctx, p.current)
+		p.Executor.releaseStandby(context.Background(), p.current)
 		p.current = nil
 	}
 }
+
+// recoverUnclaimed retires every standby whose task was never published. A
+// published one is an ordinary running responder and is left alone.
 func (p *StandbyPool) recoverUnclaimed(ctx context.Context) error {
 	entries, err := os.ReadDir(p.root())
 	if errors.Is(err, os.ErrNotExist) {
@@ -424,21 +417,40 @@ func (p *StandbyPool) recoverUnclaimed(ctx context.Context) error {
 			continue
 		}
 		directory := filepath.Join(p.root(), entry.Name())
-		data, err := os.ReadFile(filepath.Join(directory, "binding-journal.json"))
-		if err == nil {
-			var j standbyJournal
-			if err := json.Unmarshal(data, &j); err != nil {
-				return err
-			}
-			index := filepath.Join(p.Executor.RepositoryMountPath, standbyRoot, "bindings", j.Binding.Digest+".json")
-			if _, err := os.Stat(index); err == nil {
-				continue
-			}
-			if err := p.rollback(j); err != nil {
-				return err
-			}
+		if _, err := os.Stat(filepath.Join(directory, "control", TaskDataKey)); err == nil {
+			continue
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return err
 		}
-		p.deleteSlot(ctx, &WarmBinding{JobName: entry.Name(), Directory: directory})
+		p.Executor.releaseStandby(ctx, &WarmBinding{JobName: entry.Name(), Directory: directory})
+	}
+	return nil
+}
+
+// reapGone releases every published slot whose incident Job no longer exists.
+// A published slot belongs to a running or retained responder until then.
+func (p *StandbyPool) reapGone(ctx context.Context) error {
+	entries, err := os.ReadDir(p.root())
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), "sdo-standby-") {
+			continue
+		}
+		directory := filepath.Join(p.root(), entry.Name())
+		if _, err := os.Stat(filepath.Join(directory, "control", TaskDataKey)); err != nil {
+			continue
+		}
+		_, err := p.Executor.Client.BatchV1().Jobs(p.Executor.Namespace).Get(ctx, entry.Name(), metav1.GetOptions{})
+		if apierrors.IsNotFound(err) {
+			p.Executor.releaseStandby(ctx, &WarmBinding{JobName: entry.Name(), Directory: directory})
+		} else if err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -499,22 +511,14 @@ func (e KubernetesExecutor) publishWarmTask(ctx context.Context, task *contracts
 	if inspectErr != nil {
 		return inspectErr
 	}
-	budget := 15 * time.Minute
-	incident := new(contracts.IncidentRequest)
-	if task.GetRequest().UnmarshalTo(incident) == nil && incident.GetResponseDeadline() != nil {
-		budget = time.Until(incident.GetResponseDeadline().AsTime())
+	if jobFailed(job) || jobCompleted(job) || job.DeletionTimestamp != nil {
+		return unpublished(errors.New("unpublished standby is no longer alive"))
 	}
-	if task.GetDeadline() != nil {
-		budget = time.Until(task.GetDeadline().AsTime())
+	if !standbyReady(b.Directory) {
+		return unpublished(errors.New("unpublished standby lost readiness"))
 	}
-	if jobFailed(job) || jobCompleted(job) || job.DeletionTimestamp != nil || !standbyLifetimeCovers(job, time.Now(), budget) {
-		return unpublished(errors.New("unpublished standby is no longer alive or lacks response lifetime"))
-	}
-	for _, name := range []string{"agent", "history"} {
-		info, err := os.Stat(filepath.Join(b.Directory, "ready", name))
-		if err != nil || time.Since(info.ModTime()) > 2*time.Second {
-			return unpublished(errors.New("unpublished standby lost readiness"))
-		}
+	if time.Since(b.ClaimedAt) > standbyPublishDeadline {
+		return unpublished(errors.New("standby claim is too old to publish before the pod expires"))
 	}
 	environment := cloneEnvironment(e.Environment)
 	environment["SDO_REQUEST_SHA256"] = taskRequestDigest(task)
@@ -522,9 +526,6 @@ func (e KubernetesExecutor) publishWarmTask(ctx context.Context, task *contracts
 	environment["SDO_NAMESPACE"] = e.Namespace
 	environment["SDO_WORKSPACE_ALIAS"] = "/sdo/proposal"
 	environment["SDO_STARTUP_TIMING_PATH"] = "/sdo/session/startup-workers/" + b.JobName + "/startup-worker.json"
-	if err := e.projectWarmLateFindings(ctx); err != nil {
-		return unpublished(err)
-	}
 	if err := writeStandbyJSON(filepath.Join(b.Directory, "control/environment.json"), environment); err != nil {
 		return unpublished(err)
 	}
@@ -560,17 +561,13 @@ func (e KubernetesExecutor) publishWarmTask(ctx context.Context, task *contracts
 		}
 		return unpublished(fmt.Errorf("publish standby claim: %w", err))
 	}
-	// Backups are no longer needed once the immutable binding is published.
-	for _, name := range []string{"backup-checkout", "backup-session"} {
-		_ = os.RemoveAll(filepath.Join(b.Directory, name))
-	}
 	slog.Info("responder_standby_claimed", "job", b.JobName, "task_id", task.GetTaskId(), "claimed_at", b.ClaimedAt)
 	return nil
 }
 
-// abandonUnpublished keeps the canonical mounted directories: their inodes
-// may already be held by the tool server. Only an unpublished claim may take
-// this path; a published/uncertain claim always rejoins its original Job.
+// abandonUnpublished keeps the canonical directories: their inodes may already
+// be held by the tool server. Only an unpublished claim may take this path; a
+// published/uncertain claim always rejoins its original Job.
 func (e KubernetesExecutor) abandonUnpublished(ctx context.Context, task *contracts.AgentTask) error {
 	b := e.WarmBinding
 	if err := e.removeUnpublishedIncidentExecution(ctx, task); err != nil {
@@ -579,14 +576,8 @@ func (e KubernetesExecutor) abandonUnpublished(ctx context.Context, task *contra
 	if err := os.Remove(e.warmBindingPath(task)); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	if err := os.Remove(filepath.Join(b.Directory, "binding-journal.json")); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
-	for _, name := range []string{"backup-checkout", "backup-session"} {
-		_ = os.RemoveAll(filepath.Join(b.Directory, name))
-	}
-	policy := metav1.DeletePropagationBackground
-	return e.Client.BatchV1().Jobs(e.Namespace).Delete(ctx, b.JobName, metav1.DeleteOptions{PropagationPolicy: &policy})
+	e.releaseStandby(ctx, b)
+	return nil
 }
 
 // ExistingBinding identifies a restart/retry that must retain its API-history generation.
@@ -595,63 +586,33 @@ func (e KubernetesExecutor) HasBoundStandby(task *contracts.AgentTask) (bool, er
 	return binding != nil, err
 }
 
-func validWarmPaths(e KubernetesExecutor, task *contracts.AgentTask) bool {
+// warmSessionPath returns the canonical session directory when the checkout
+// and session are distinct, non-nested directories under the repository mount.
+func warmSessionPath(e KubernetesExecutor, task *contracts.AgentTask) (string, bool) {
 	checkout := path.Clean(task.GetWorkspace().GetCheckoutPath())
 	root := strings.TrimSuffix(path.Clean(e.RepositoryMountPath), "/")
 	if !path.IsAbs(checkout) || !path.IsAbs(root) || !strings.HasPrefix(checkout, root+"/") {
-		return false
+		return "", false
 	}
 	relative, err := filepath.Rel(sessionPVCBase(e.RepositoryPVCSubPath), e.SessionPVCSubPath)
 	if err != nil || relative == ".." || strings.HasPrefix(relative, "../") || filepath.IsAbs(relative) {
-		return false
+		return "", false
 	}
 	session := filepath.Join(e.RepositoryMountPath, relative)
-	return checkout != session && !strings.HasPrefix(checkout, session+"/") && !strings.HasPrefix(session, checkout+"/")
+	if checkout == session || strings.HasPrefix(checkout, session+"/") || strings.HasPrefix(session, checkout+"/") {
+		return "", false
+	}
+	return session, true
 }
 
-const standbyExpiryMargin = time.Minute
-
-func (p *StandbyPool) responseBudget() time.Duration {
-	if p.ResponseBudget > 0 {
-		return p.ResponseBudget
-	}
-	return 15 * time.Minute
-}
-func standbyLifetimeCovers(job *batchv1.Job, now time.Time, budget time.Duration) bool {
-	if job.Spec.ActiveDeadlineSeconds == nil {
-		return true
-	}
-	start := job.CreationTimestamp.Time
-	if job.Status.StartTime != nil {
-		start = job.Status.StartTime.Time
-	}
-	// An unscheduled new Job has not begun consuming its active deadline.
-	if start.IsZero() {
-		return true
-	}
-	return start.Add(time.Duration(*job.Spec.ActiveDeadlineSeconds)*time.Second).Sub(now) >= budget+standbyExpiryMargin
-}
-
-// Keep a reservation alive while checkout copying and tool-server publication
-// run. The lease ends at immutable task publication or controller cancellation.
-func holdStandbyReservation(ctx context.Context, b *WarmBinding) context.CancelFunc {
-	leaseCtx, cancel := context.WithCancel(ctx)
-	go func() {
-		ticker := time.NewTicker(time.Second)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-leaseCtx.Done():
-				return
-			case <-ticker.C:
-			}
-			if _, err := os.Stat(filepath.Join(b.Directory, "control", TaskDataKey)); err == nil {
-				return
-			}
-			if err := os.WriteFile(filepath.Join(b.Directory, "control/owner-heartbeat"), []byte(time.Now().UTC().Format(time.RFC3339Nano)), 0600); err != nil {
-				return
-			}
+// standbyReady reports that the idle pod's agent and history sidecar both
+// refreshed their ready files recently.
+func standbyReady(directory string) bool {
+	for _, name := range []string{"agent", "history"} {
+		info, err := os.Stat(filepath.Join(directory, "ready", name))
+		if err != nil || time.Since(info.ModTime()) > standbyReadyFreshness {
+			return false
 		}
-	}()
-	return cancel
+	}
+	return true
 }

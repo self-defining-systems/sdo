@@ -927,6 +927,10 @@ def test_scripted_fastloop_reuses_reflected_target_port_program(
     )
     assert all(row.error is None and row.injection_to_mitigation_seconds is not None for row in records)
     assert all("responder_tokens" in row and "reflection_tokens" in row for row in rows)
+    # Every scripted row is bound to the incident its own injection caused (INV1): no negative timings.
+    assert all(row.detected_at is None or row.detected_at >= row.injection_started_at for row in records)
+    assert all((row.injection_to_detection_seconds or 0) >= 0 for row in records)
+    assert all(row.driver_phase_timings_seconds["injection_to_verified_recovery"] > 0 for row in records)
     assert all(Path(str(row.artifacts_dir), "sdo_production_receipt_strict.json").is_file() for row in records)
     assert control_api.deleted == control_api.names
     assert control_api.objects == {}

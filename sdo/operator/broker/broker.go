@@ -14,6 +14,7 @@ import (
 	"reflect"
 	"strings"
 	"syscall"
+	"unicode"
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory"
@@ -161,8 +162,8 @@ func (b *Broker) CreateProposal(ctx context.Context, incidentID string) (Proposa
 // phase. Reflection starts from the accepted outcome commit with the responder's
 // isolated working playbook changes carried forward for validation.
 func (b *Broker) CreateProposalForPhase(ctx context.Context, incidentID string, phase Phase) (Proposal, error) {
-	if strings.TrimSpace(incidentID) == "" {
-		return Proposal{}, errors.New("incident ID is required")
+	if err := checkIncidentID(incidentID); err != nil {
+		return Proposal{}, err
 	}
 	if phase != ProposalPhase && phase != ReflectionPhase && phase != InitialPhase && phase != ImportPhase {
 		return Proposal{}, fmt.Errorf("invalid proposal phase %q", phase)
@@ -273,24 +274,6 @@ func (b *Broker) publish(ctx context.Context, incidentID string, actor Actor, ph
 		if err != nil {
 			return err
 		}
-		if phase == ReflectionPhase {
-			frozen, _ := ctx.Value(reflectionHealthKey{}).(string)
-			if frozen == "" {
-				frozen = proposal.BaseCommit
-			}
-			if frozen != current {
-				diagnostics, err := b.reflectionHealthDiagnostics(ctx, frozen, current)
-				if err != nil {
-					return err
-				}
-				if len(diagnostics) > 0 {
-					return validate.Err([]validate.Diagnostic{{Rule: diagnostics[0].Rule, Message: diagnostics[0].Message}})
-				}
-			}
-		}
-		if current != proposal.BaseCommit && expectedSourceTree != "" {
-			return errors.New("verified source proposal base is stale; redeploy from accepted state")
-		}
 		paths, err := validate.ChangedPaths(ctx, proposal.Path, proposal.BaseCommit)
 		if err != nil {
 			return err
@@ -396,11 +379,20 @@ func (b *Broker) publish(ctx context.Context, incidentID string, actor Actor, ph
 			return fmt.Errorf("candidate validation: %w", err)
 		}
 		if expectedSourceTree != "" {
-			stagedTree, err := ProposalTreeDigest(ctx, stage)
+			// The head may have moved since the proposal's base (SDO's own outcome
+			// and judge commits). The proposal was replayed onto it; the replay
+			// must carry exactly the verified source, whatever memory history
+			// landed in between.
+			stagedTree, verifiedTree := "", expectedSourceTree
+			if current == proposal.BaseCommit {
+				stagedTree, err = ProposalTreeDigest(ctx, stage)
+			} else if stagedTree, err = proposalSourceTreeDigest(ctx, stage); err == nil {
+				verifiedTree, err = proposalSourceTreeDigest(ctx, candidateRoot)
+			}
 			if err != nil {
 				return err
 			}
-			if stagedTree != expectedSourceTree {
+			if stagedTree != verifiedTree {
 				return errors.New("staged source tree differs from verified deployment")
 			}
 		}
@@ -466,8 +458,8 @@ func (b *Broker) DiagnosticsFingerprint(ctx context.Context, commit string) (str
 // ReleaseProposal removes a proposal checkout after acknowledgement or a
 // superseded incident. Accepted commits remain in the operational repository.
 func (b *Broker) ReleaseProposal(incidentID string, phase Phase) error {
-	if strings.TrimSpace(incidentID) == "" {
-		return errors.New("incident ID is required")
+	if err := checkIncidentID(incidentID); err != nil {
+		return err
 	}
 	return b.locked(func() error { return os.RemoveAll(b.proposalRoot(incidentID, phase)) })
 }
@@ -475,6 +467,9 @@ func (b *Broker) ReleaseProposal(incidentID string, phase Phase) error {
 // RecordOutcome writes an authoritative immutable outcome in a private broker
 // clone and commits it. Agents cannot supply an outcome through Publish.
 func (b *Broker) RecordOutcome(ctx context.Context, incidentID string, record *contracts.OutcomeRecord) (Receipt, error) {
+	if err := checkIncidentID(incidentID); err != nil {
+		return Receipt{}, err
+	}
 	var receipt Receipt
 	err := b.locked(func() error {
 		if err := b.requireClean(ctx); err != nil {
@@ -589,7 +584,25 @@ func (b *Broker) locked(fn func() error) error {
 	return fn()
 }
 
+// checkIncidentID rejects IDs that are empty or contain a control or line
+// separator character. Accepted commits carry the ID in a trailer block that
+// other code matches line by line, so a line break would forge trailers.
+func checkIncidentID(incidentID string) error {
+	if strings.TrimSpace(incidentID) == "" {
+		return errors.New("incident ID is required")
+	}
+	for _, r := range incidentID {
+		if unicode.IsControl(r) || r == '\u2028' || r == '\u2029' {
+			return fmt.Errorf("incident ID %q contains a control or line separator character", incidentID)
+		}
+	}
+	return nil
+}
+
 func (b *Broker) accept(ctx context.Context, stage, incidentID string, actor Actor, phase Phase, paths []string) (Receipt, error) {
+	if err := checkIncidentID(incidentID); err != nil {
+		return Receipt{}, err
+	}
 	if err := addIgnoredOperationalMemory(ctx, stage, nil); err != nil {
 		return Receipt{}, err
 	}
@@ -706,6 +719,16 @@ func gitText(ctx context.Context, cwd string, args ...string) (string, error) {
 // ProposalTreeDigest computes the complete candidate Git tree without changing
 // the checkout's index. Both deployment and publish use this exact convention.
 func ProposalTreeDigest(ctx context.Context, checkout string) (string, error) {
+	return proposalTreeDigest(ctx, checkout, false)
+}
+
+// proposalSourceTreeDigest is ProposalTreeDigest without operational memory,
+// so two trees that differ only in accepted .sdo history compare equal.
+func proposalSourceTreeDigest(ctx context.Context, checkout string) (string, error) {
+	return proposalTreeDigest(ctx, checkout, true)
+}
+
+func proposalTreeDigest(ctx context.Context, checkout string, sourceOnly bool) (string, error) {
 	root, err := filepath.Abs(checkout)
 	if err != nil {
 		return "", err
@@ -728,6 +751,11 @@ func ProposalTreeDigest(ctx context.Context, checkout string) (string, error) {
 	}
 	if err := addIgnoredOperationalMemory(ctx, root, []string{"GIT_INDEX_FILE=" + index}); err != nil {
 		return "", err
+	}
+	if sourceOnly {
+		if _, err := run("rm", "-r", "--cached", "--ignore-unmatch", "-q", "--", layout.Dir); err != nil {
+			return "", err
+		}
 	}
 	tree, err := run("write-tree")
 	if err != nil {

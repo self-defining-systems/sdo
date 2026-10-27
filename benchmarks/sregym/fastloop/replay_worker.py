@@ -15,7 +15,7 @@ from unittest.mock import patch
 
 from google.protobuf import json_format
 
-from benchmarks.sregym.adapter import scripted_worker
+from benchmarks.sregym.adapter import WaitKind, scripted_worker, wait_for
 from benchmarks.sregym.fastloop.fake_kube import FakeKubernetesAPIServer
 from benchmarks.sregym.fastloop.file_edits import apply_file_edits, record_file_edits
 from benchmarks.sregym.fastloop.model_recording import RecordingExecutor
@@ -213,7 +213,7 @@ def replay_scripted_reflection(
         publisher = _Publisher()
         binary = root / "sdo-operator"
 
-        def command(argv: list[str], *, timeout: int = 180) -> str:
+        def command(argv: list[str], *, timeout: int = int(wait_for(WaitKind.ROLLOUT))) -> str:
             if argv[0] != "sdo-operator":
                 raise CheckpointError(f"unexpected reflection command: {argv[:3]}")
             if not binary.is_file():
@@ -222,7 +222,7 @@ def replay_scripted_reflection(
                     cwd=operator_root,
                     capture_output=True,
                     text=True,
-                    timeout=180,
+                    timeout=wait_for(WaitKind.ROLLOUT),
                     check=False,
                 )
                 if built.returncode:
@@ -284,7 +284,9 @@ def _clone_at(source: Path, destination: Path, commit: str) -> None:
         ["git", "clone", "--quiet", "--no-hardlinks", "--no-checkout", "--", str(source), str(destination)],
         ["git", "-C", str(destination), "reset", "--quiet", "--hard", commit],
     ):
-        completed = subprocess.run(command, capture_output=True, text=True, timeout=120, check=False)
+        completed = subprocess.run(
+            command, capture_output=True, text=True, timeout=wait_for(WaitKind.SLOW_COMMAND), check=False
+        )
         if completed.returncode:
             raise CheckpointError(f"prepare accepted replay source: {completed.stderr.strip()[-4096:]}")
 
@@ -361,7 +363,7 @@ def replay_live_worker(
                 cwd=operator_root,
                 check=True,
                 capture_output=True,
-                timeout=180,
+                timeout=wait_for(WaitKind.ROLLOUT),
             )
         with (
             FakeKubernetesAPIServer(snapshot) as server,

@@ -31,7 +31,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from benchmarks.sregym.adapter import assert_host_disk_headroom, assert_host_headroom, kubectl
+from benchmarks.sregym.adapter import WaitKind, assert_host_disk_headroom, assert_host_headroom, kubectl, wait_for
 from benchmarks.sregym.fastloop.baseline_recovery import (
     KubectlApplicationCluster,
     application_namespaces,
@@ -59,8 +59,8 @@ logger = logging.getLogger(__name__)
 REPO_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_SREGYM_DIR = REPO_ROOT / "third_party" / "sregym"
 INCIDENTS_FILENAME = "incidents.jsonl"
-CLUSTER_OP_TIMEOUT_SECONDS = 1800.0
-DEPLOY_OP_TIMEOUT_SECONDS = 2400.0
+CLUSTER_OP_TIMEOUT_SECONDS = wait_for(WaitKind.CLUSTER_OP)
+DEPLOY_OP_TIMEOUT_SECONDS = wait_for(WaitKind.DEPLOY_OP)
 
 
 def _worker(environment: FastloopEnvironment) -> SregymWorker:
@@ -340,7 +340,9 @@ def _up(args: argparse.Namespace) -> int:
                 )
                 route_astronomy_traces(previous.kubeconfig)
             with _worker(previous) as cached_worker:
-                health = cached_worker.request("health", namespace=previous.namespace, timeout=60)
+                health = cached_worker.request(
+                    "health", namespace=previous.namespace, timeout=wait_for(WaitKind.SLOW_COMMAND)
+                )
             if health.get("healthy"):
                 if previous.dev_mount is not None and previous.state_path.is_file():
                     return _reset(argparse.Namespace(run_dir=previous.run_dir, dev_mount=previous.dev_mount))
@@ -576,7 +578,7 @@ def _sdo_agent(
     # memory stream. Retained records identify warm repeats and warm resets.
     fresh_memory_start = environment.namespace not in PersistentState.load(environment.state_path).controllers
     if worker is not None and environment.app != "toy":
-        from benchmarks.sregym.adapter import native_install_config, reflection_attempt_seconds, sync_existing
+        from benchmarks.sregym.adapter import native_install_config, sync_existing
         from benchmarks.sregym.fastloop.admission import EvalAdmissionOps, LaneAdmission
 
         install_config = native_install_config(runtime_config)
@@ -588,7 +590,6 @@ def _sdo_agent(
             code_path=runtime_config.code_path,
             timeout_seconds=getattr(args, "admission_timeout_seconds", 300),
             onboarding_timeout_seconds=getattr(args, "admission_onboarding_timeout_seconds", 600),
-            reflection_attempt_seconds=reflection_attempt_seconds(args.timeout),
             install_config=install_config,
             synchronize=lambda: sync_existing(install_config),
             progress=getattr(args, "admission_progress", None),
@@ -728,7 +729,7 @@ def _run(args: argparse.Namespace) -> int:
     grader = SregymDiagnosisGrader(environment.sregym_dir, judge_model_id) if grading_mode != "off" else None
     problems = tuple(args.problem or [environment.deploy_problem]) if not stream else tuple(ids[0] for ids in stream)
     from benchmarks.sregym.fastloop.fault_tracker import describe_sregym_problems, stream_faults
-    from benchmarks.sregym.faults.description import validate_suite
+    from benchmarks.sregym.faults.description import check_composites, validate_suite
 
     # Discovery and capability checks must finish before a worker can deploy or launch an agent.
     description_started = time.monotonic()
@@ -738,6 +739,7 @@ def _run(args: argparse.Namespace) -> int:
         if environment.app != "toy"
         else {}
     )
+    check_composites(descriptions)
     capability_mode = stream_config.capability_mode if stream_config else "strict"
     capability_evidence = validate_suite(
         descriptions if args.agent == "sdo" else {},

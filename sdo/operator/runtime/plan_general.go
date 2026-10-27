@@ -237,6 +237,9 @@ func (e PlanExecutor) generalStep(ctx context.Context, incident IncidentRequest,
 					r.ActionReports[0].FailureReason = "delete_not_confirmed"
 					return r, fmt.Errorf("delete_not_confirmed: API accepted DELETE but absence is unconfirmed")
 				}
+				if a.Method == "DELETE" && effect.After != nil {
+					r.ActionReports[0].Observed = "terminating"
+				}
 				if effect.BeforeKnown && effect.Before == nil && effect.After != nil {
 					patch.Operation = "create"
 				}

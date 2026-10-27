@@ -36,12 +36,8 @@ func AwaitStandbyTask(ctx context.Context, inbox, ready string) (*contracts.Agen
 		if !errors.Is(err, os.ErrNotExist) {
 			return nil, err
 		}
-		heartbeat, err := os.Stat(filepath.Join(inbox, "owner-heartbeat"))
-		if err != nil {
+		if err := standbyOwnerAlive(inbox); err != nil {
 			return nil, err
-		}
-		if time.Since(heartbeat.ModTime()) > 30*time.Second {
-			return nil, errors.New("standby controller heartbeat expired")
 		}
 		if err := os.WriteFile(ready, []byte("waiting"), 0600); err != nil {
 			return nil, err
@@ -52,6 +48,37 @@ func AwaitStandbyTask(ctx context.Context, inbox, ready string) (*contracts.Agen
 		case <-ticker.C:
 		}
 	}
+}
+
+const (
+	standbyIdleExpiry  = 30 * time.Second
+	standbyClaimExpiry = 5 * time.Minute
+	// A claim is published only while the pod is comfortably alive, and an idle
+	// standby that never becomes ready is replaced once its claim window would
+	// have lapsed. Both bounds derive from the pod's own claim expiry.
+	standbyPublishDeadline = standbyClaimExpiry * 4 / 5
+	standbyReadyDeadline   = standbyClaimExpiry
+	standbyReadyFreshness  = 2 * time.Second
+)
+
+// standbyOwnerAlive bounds an orphaned pod. An idle pod needs a fresh
+// controller heartbeat; once claimed it gets a longer grace for the controller
+// to publish the task.
+func standbyOwnerAlive(inbox string) error {
+	if claim, err := os.Stat(filepath.Join(inbox, standbyClaimFile)); err == nil {
+		if time.Since(claim.ModTime()) > standbyClaimExpiry {
+			return errors.New("standby claim was never published")
+		}
+		return nil
+	}
+	heartbeat, err := os.Stat(filepath.Join(inbox, "owner-heartbeat"))
+	if err != nil {
+		return err
+	}
+	if time.Since(heartbeat.ModTime()) > standbyIdleExpiry {
+		return errors.New("standby controller heartbeat expired")
+	}
+	return nil
 }
 
 type StandbyDaemonOptions struct {

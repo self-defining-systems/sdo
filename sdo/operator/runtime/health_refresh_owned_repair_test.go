@@ -3,21 +3,21 @@ package runtime
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
-	"sdo.dev/operator/memory"
 	"sdo.dev/operator/sdk"
 )
 
-// RH3: the broker has already independently verified and committed a repair.
-// Source and authenticated health refresh advances permit its durable ACK.
-// Objective/policy changes and unauthenticated closure state remain stale.
-func TestHealthRefreshAcknowledgesOnlyOwnCommittedRepair(t *testing.T) {
-	for _, change := range []string{"none", "source", "objective", "policy", "receipt", "processing", "receipt-not-persisted", "ledger-incomplete"} {
+// RH3/STALE3: the broker has already independently verified and committed a
+// repair. Adopting the repository advance (source, judge refresh) never
+// blocks its durable ACK, nor the replay of an unpersisted receipt.
+func TestCommittedRepairAcknowledgesAfterAdoption(t *testing.T) {
+	for _, change := range []string{"none", "source", "objective", "policy", "receipt-not-persisted"} {
 		t.Run(change, func(t *testing.T) {
 			ctx := context.Background()
 			root, _, repository, _, coordinator := tracingFixture(t)
@@ -62,9 +62,6 @@ func TestHealthRefreshAcknowledgesOnlyOwnCommittedRepair(t *testing.T) {
 				}
 				current = tracingRefresh(t, root, coordinator)
 			}
-			if change == "receipt" {
-				receipt.AckToken = "forged"
-			}
 			now := time.Now().UTC()
 			cfg := testControllerConfig()
 			cfg.SourceCommit = current.Commit
@@ -75,24 +72,9 @@ func TestHealthRefreshAcknowledgesOnlyOwnCommittedRepair(t *testing.T) {
 			c.pendingClosure = &closure
 			c.closureState = contracts.ClosureState_CLOSURE_STATE_COMMITTED
 			c.closureReceipt = &receipt
-			if change == "ledger-incomplete" {
-				ledger, err := native.readLedger(closure.Request.IncidentID)
-				if err != nil {
-					t.Fatal(err)
-				}
-				ledger.Receipt = nil
-				if err := native.saveLedger(ledger); err != nil {
-					t.Fatal(err)
-				}
-				c.closureState = contracts.ClosureState_CLOSURE_STATE_PROCESSING
-				c.closureReceipt = nil
-			}
 			if change == "receipt-not-persisted" {
 				c.closureState = contracts.ClosureState_CLOSURE_STATE_PROCESSING
 				c.closureReceipt = nil
-			}
-			if change == "processing" {
-				c.closureState = contracts.ClosureState_CLOSURE_STATE_PROCESSING
 			}
 			if err := c.SetIncidentBroker(native); err != nil {
 				t.Fatal(err)
@@ -120,21 +102,6 @@ func TestHealthRefreshAcknowledgesOnlyOwnCommittedRepair(t *testing.T) {
 				t.Fatal("fixture lost original evidence")
 			}
 			err = c.CheckHealth(ctx)
-			if change != "none" && change != "source" && change != "receipt-not-persisted" {
-				if !errors.Is(err, ErrStaleHealthInvestigation) {
-					t.Fatalf("unrelated/stale change allowed: %v", err)
-				}
-				if change == "objective" || change == "policy" {
-					if again := c.CheckHealth(ctx); !errors.Is(again, ErrStaleHealthInvestigation) {
-						t.Fatalf("repeated stale health check changed its decision: %v", again)
-					}
-					got, readErr := memory.OpenReader(root).Get(ctx, closure.Request.IncidentID)
-					if readErr != nil || len(got.Record.GetReflectionRejections()) != 1 || got.Record.ReflectionRejections[0].Diagnostics[0].Message != change+" changed" {
-						t.Fatalf("stale reflection lost named outcome rejection: %+v %v", got.Record, readErr)
-					}
-				}
-				return
-			}
 			if err != nil {
 				t.Fatalf("own committed repair cannot finish after unchanged policy adoption: %v", err)
 			}
@@ -173,19 +140,16 @@ func TestHealthRefreshAcknowledgesOnlyOwnCommittedRepair(t *testing.T) {
 	}
 }
 
-// STALE2: the closure effect publishes the incident's own source repair before
-// it derives the outcome. Health adoption of that repair may interrupt the
-// effect between the two; the replay must finish the same incident, and only
-// that repair may be adopted this way.
-//
-// STALE2B: adopting that repair makes the judge refresh rewrite the health
-// detectors (the repair renames a workload). Judge commits that follow the
-// incident's own proposal do not stale it; any other policy writer does.
-// Health freshness never comes from this guard: the replayed
-// ExecuteClosureEffect re-runs the closure and health detectors on the live
-// cluster before any outcome is committed, so a bad cluster commits no success.
-func TestHealthRefreshReplaysClosureAfterOwnProposalCommit(t *testing.T) {
-	for _, change := range []string{"none", "refresh-detectors", "refresh-detectors-health-bad", "source", "objective", "policy", "other-incident"} {
+// STALE3: the closure effect publishes the incident's own source repair before
+// it derives the outcome, and a restart can interrupt it between the two. The
+// repository may move meanwhile (the judge rewrites health detectors, another
+// incident's repair or an objective/policy edit lands). Closure is decided by
+// health verification alone: the replay finishes the same incident on its own
+// proposal, and the replayed ExecuteClosureEffect re-runs the closure and
+// health detectors on the live cluster before any outcome is committed, so a
+// bad cluster commits no success.
+func TestClosureCompletesAcrossRepositoryAdvance(t *testing.T) {
+	for _, change := range []string{"none", "refresh-detectors", "refresh-detectors-health-bad", "source", "objective", "policy", "forged-judge-lib", "forged-judge-mixed", "upkeep-lib", "reflection-playbook"} {
 		t.Run(change, func(t *testing.T) {
 			ctx := context.Background()
 			root, _, repository, _, coordinator := tracingFixture(t)
@@ -204,34 +168,22 @@ func TestHealthRefreshReplaysClosureAfterOwnProposalCommit(t *testing.T) {
 				t.Fatal(err)
 			}
 			closure := nativeClosure(workspace)
-			if change == "other-incident" {
-				// Only another incident's repair is accepted; this one never proposed.
-				other, err := native.PrepareIncident(ctx, "other-incident")
-				if err != nil {
-					t.Fatal(err)
-				}
-				tracingWrite(t, other.Worktree, "README.md", "another incident's repair")
-				if _, err := native.ProcessClosure(ctx, nativeClosure(other)); err != nil {
-					t.Fatal(err)
-				}
+			if strings.HasPrefix(change, "refresh-detectors") || strings.HasPrefix(change, "forged-") || change == "upkeep-lib" || change == "reflection-playbook" {
+				tracingWrite(t, workspace.Worktree, "deploy/tracing.yaml", "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: collector\nspec: {}\n")
 			} else {
-				if strings.HasPrefix(change, "refresh-detectors") {
-					tracingWrite(t, workspace.Worktree, "deploy/tracing.yaml", "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: collector\nspec: {}\n")
-				} else {
-					tracingWrite(t, workspace.Worktree, "README.md", "accepted source restoration annotation")
-				}
-				if _, err := native.ProcessClosure(ctx, closure); err == nil {
-					t.Fatal("fixture did not interrupt the closure effect")
-				}
-				ledger, err := native.readLedger(closure.Request.IncidentID)
-				if err != nil || ledger.ProposalCommit == "" || ledger.OutcomeCommit != "" {
-					t.Fatalf("fixture must stop between proposal and outcome: %+v %v", ledger, err)
-				}
+				tracingWrite(t, workspace.Worktree, "README.md", "accepted source restoration annotation")
+			}
+			if _, err := native.ProcessClosure(ctx, closure); err == nil {
+				t.Fatal("fixture did not interrupt the closure effect")
+			}
+			ledger, err := native.readLedger(closure.Request.IncidentID)
+			if err != nil || ledger.ProposalCommit == "" || ledger.OutcomeCommit != "" {
+				t.Fatalf("fixture must stop between proposal and outcome: %+v %v", ledger, err)
 			}
 			interrupted = false
 			current := tracingRefresh(t, root, coordinator)
 			switch change {
-			case "refresh-detectors", "refresh-detectors-health-bad":
+			case "refresh-detectors", "refresh-detectors-health-bad", "forged-judge-lib", "forged-judge-mixed", "upkeep-lib", "reflection-playbook":
 				if current.DetectorRevision == old.DetectorRevision {
 					t.Fatal("fixture: the judge refresh must rewrite the health detectors")
 				}
@@ -245,6 +197,40 @@ func TestHealthRefreshReplaysClosureAfterOwnProposalCommit(t *testing.T) {
 			if change == "source" || change == "objective" || change == "policy" {
 				nativeGit(t, root, "add", ".")
 				nativeGit(t, root, "commit", "-qm", "unrelated accepted change")
+				current = tracingRefresh(t, root, coordinator)
+			}
+			// Commits after the judge refresh, by whoever can write the branch.
+			// Trailers are plain text, so a forged judge trailer proves nothing
+			// about which paths the commit touched.
+			judgeTrailers := "\n\nSDO-Incident: forged\nSDO-Actor: health_judge\nSDO-Phase: initial\nSDO-Validation: passed"
+			later := map[string]struct {
+				message string
+				write   func()
+			}{
+				"forged-judge-lib": {"forged judge commit" + judgeTrailers, func() {
+					tracingWrite(t, root, ".sdo/lib/forged/lib.go", "package forged\n")
+				}},
+				"forged-judge-mixed": {"forged judge commit" + judgeTrailers, func() {
+					detector := strings.Fields(nativeGit(t, root, "ls-files", ".sdo/diagnostics/detectors/health"))[0]
+					body, err := os.ReadFile(filepath.Join(root, detector))
+					if err != nil {
+						t.Fatal(err)
+					}
+					tracingWrite(t, root, detector, string(body)+"\n")
+					tracingWrite(t, root, ".sdo/playbooks/forged/diagnose.go", "package forged\n")
+				}},
+				"upkeep-lib": {"upkeep bump\n\nSDO-Actor: upkeep\nSDO-Phase: initial\nSDO-Validation: passed", func() {
+					tracingWrite(t, root, ".sdo/lib/upkeep/lib.go", "package upkeep\n")
+				}},
+				// Playbooks feed neither the source nor the detector revision.
+				"reflection-playbook": {"reflection\n\nSDO-Incident: other\nSDO-Actor: responder\nSDO-Phase: reflection\nSDO-Validation: passed", func() {
+					tracingWrite(t, root, ".sdo/playbooks/learned/diagnose.go", "package learned\n")
+				}},
+			}
+			if commit, ok := later[change]; ok {
+				commit.write()
+				nativeGit(t, root, "add", ".")
+				nativeGit(t, root, "commit", "-qm", commit.message)
 				current = tracingRefresh(t, root, coordinator)
 			}
 			now := time.Now().UTC()
@@ -278,21 +264,14 @@ func TestHealthRefreshReplaysClosureAfterOwnProposalCommit(t *testing.T) {
 				t.Fatal("fixture lost original evidence")
 			}
 			rv6Guard(c, root, current.Commit)
-			err = c.CheckHealth(ctx)
-			if change == "source" || change == "objective" || change == "policy" || change == "other-incident" {
-				if !errors.Is(err, ErrStaleHealthInvestigation) {
-					t.Fatalf("unrelated change allowed across own proposal: %v", err)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("own accepted proposal made its closure stale: %v", err)
+			if err := c.CheckHealth(ctx); err != nil {
+				t.Fatalf("repository advance (%s) refused the closure: %v", change, err)
 			}
 			replay, ok := c.PendingClosureEffect()
 			if !ok {
 				t.Fatal("interrupted closure has no replayable broker effect")
 			}
-			ledger, err := native.readLedger(closure.Request.IncidentID)
+			ledger, err = native.readLedger(closure.Request.IncidentID)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -302,13 +281,24 @@ func TestHealthRefreshReplaysClosureAfterOwnProposalCommit(t *testing.T) {
 				t.Fatal(err)
 			}
 			if change == "refresh-detectors-health-bad" {
-				// Fresh evidence after adoption contradicts the closure: no success.
+				// Fresh evidence after adoption contradicts the closure. The
+				// retirement is synchronous, so assert the retired end state
+				// instead of "nothing happened yet": a closure that was handed to
+				// the broker would still be processing here.
+				if _, ok := c.PendingClosureEffect(); ok {
+					t.Fatal("closure still has a broker effect although health is bad after adoption")
+				}
+				if c.closureState != contracts.ClosureState_CLOSURE_STATE_FAILED || c.closureFailure == nil {
+					t.Fatalf("closure not retired although health is bad after adoption: state %v failure %+v", c.closureState, c.closureFailure)
+				}
+				select {
+				case result := <-c.closureResults:
+					t.Fatalf("closure reached the broker although health is bad after adoption: %+v", result)
+				case <-time.After(200 * time.Millisecond):
+				}
 				c.processBrokerCompletions()
 				if c.closureReceipt != nil || nativeGit(t, root, "rev-parse", "HEAD") != head {
 					t.Fatalf("closure credited although health is bad after adoption: %+v", c.closureReceipt)
-				}
-				if c.closureState == contracts.ClosureState_CLOSURE_STATE_COMMITTED {
-					t.Fatalf("closure committed although health is bad after adoption: %v", c.closureState)
 				}
 				ledger, err := native.readLedger(closure.Request.IncidentID)
 				if err != nil || ledger.OutcomeCommit != "" {
@@ -318,7 +308,10 @@ func TestHealthRefreshReplaysClosureAfterOwnProposalCommit(t *testing.T) {
 			}
 			awaitBrokerResult(t, c.closureResults)
 			c.processBrokerCompletions()
-			if c.closureReceipt == nil || c.closureReceipt.ProposalCommit != proposal || c.closureReceipt.OutcomeCommit == "" {
+			if c.closureReceipt == nil {
+				t.Fatalf("replay failed: state %v failure %+v", c.closureState, c.closureFailure)
+			}
+			if c.closureReceipt.ProposalCommit != proposal || c.closureReceipt.OutcomeCommit == "" {
 				t.Fatalf("replay did not complete on the original proposal: %+v", c.closureReceipt)
 			}
 		})

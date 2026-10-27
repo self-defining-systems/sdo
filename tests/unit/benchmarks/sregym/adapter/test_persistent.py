@@ -84,6 +84,27 @@ def _receipt(incident_id: str) -> dict[str, Any]:
     }
 
 
+#: A bound that has already passed: the fake controller is busy, and the wait expires one closeout margin later.
+FAKE_CONTROLLER_BUSY_UNTIL = "2000-01-01T00:00:00Z"
+
+
+def _with_controller_busy_until(state: dict[str, Any]) -> dict[str, Any]:
+    """Stand in for the controller's published fact: ``busy_until`` is set exactly while the fake owns work.
+
+    A permanently failed closure keeps its pending evidence but blocks nothing (lifecyclecore.BlocksNext).
+    """
+    if "busy_until" in state:
+        return state
+    failed = state.get("closure_state") == "CLOSURE_STATE_FAILED"
+    open_work = (
+        bool(state.get("incident_open") or state.get("incident_request"))
+        or bool(state.get("queued_reflection_incident_ids") or state.get("queued_reflections_unknown"))
+        or (bool(state.get("pending_closure")) and not failed)
+        or state.get("closure_state") in {"CLOSURE_STATE_COMMITTED", "CLOSURE_STATE_ACKNOWLEDGING"}
+    )
+    return {**state, "busy_until": FAKE_CONTROLLER_BUSY_UNTIL} if open_work else state
+
+
 @dataclass
 class FakeOps:
     """In-memory cluster: one controller pod per control namespace, driven by the test."""
@@ -155,7 +176,7 @@ class FakeOps:
                 self.polls_until_reflected[incident_id] = remaining - 1
             elif incident_id in self.reflectable:
                 self._finish_reflection(control_namespace, incident_id)
-        return self.states.get(control_namespace, {})
+        return _with_controller_busy_until(self.states.get(control_namespace, {}))
 
     def _finish_reflection(self, control_namespace: str, incident_id: str) -> None:
         state = self.states[control_namespace]
@@ -1667,29 +1688,32 @@ def test_a_controller_job_past_its_backoff_limit_is_terminal() -> None:
     assert controller_job_failure({"status": {"conditions": [{"type": "Failed", "status": "False"}]}}) is None
 
 
-def test_reflection_deadline_covers_the_queued_reflections_ahead_of_the_closure(tmp_path: Path) -> None:
-    """A closure behind N queued reflections waits for them under the same per-incident deadline."""
+def test_reflection_deadline_follows_the_controllers_busy_until(tmp_path: Path) -> None:
+    """A closure behind queued reflections waits for the controller's own bound under one per-incident deadline."""
     from benchmarks.sregym.adapter.persistent import VerifiedIncident, reflection_deadline
 
     now = datetime(2026, 10, 26, tzinfo=timezone.utc)
     clock = Clock(now=lambda: now)
-    inputs = replace(_inputs(tmp_path, "s0"), reflection_wait_seconds=3600.0, reflection_attempt_seconds=2102.0)
+    inputs = replace(_inputs(tmp_path, "s0"), reflection_wait_seconds=3600.0)
 
     assert reflection_deadline(inputs, VerifiedIncident("a", None), clock) == now + timedelta(seconds=3600)
-    behind_two = VerifiedIncident("a", None, queued_reflections=2)
-    assert reflection_deadline(inputs, behind_two, clock) == now + timedelta(seconds=3600 + 2 * 2102)
+    soon = VerifiedIncident("a", None, busy_until=now + timedelta(seconds=600))
+    assert reflection_deadline(inputs, soon, clock) == now + timedelta(seconds=3600)
+    behind_two = VerifiedIncident("a", None, busy_until=now + timedelta(seconds=3 * 2102))
+    assert reflection_deadline(inputs, behind_two, clock) == now + timedelta(seconds=3 * 2102 + 120)
 
 
-def test_verified_incident_records_the_reflection_queue_it_waits_behind() -> None:
+def test_verified_incident_records_the_controllers_bound_on_the_queue_it_waits_behind() -> None:
     from benchmarks.sregym.adapter.persistent import _wait_for_verified_incident
 
     state = {
         "last_acknowledged_incident_id": "",
         "queued_reflection_incident_ids": ["old-1", "old-2"],
         "queued_reflections_unknown": True,
+        "busy_until": "2026-10-26T01:00:00Z",
         "pending_closure": {"request": {"incident_id": "incident-1"}},
     }
     ops = FakeOps(states={"hotel-sdo": state}, logs={"hotel-sdo": []}, reflectable={"incident-1"})
     verified = _wait_for_verified_incident(ops, "hotel-sdo", set(), 30.0, Clock(sleep=lambda _s: None))
     assert verified.incident_id == "incident-1"
-    assert verified.queued_reflections == 3
+    assert verified.busy_until == datetime(2026, 10, 26, 1, 0, tzinfo=timezone.utc)

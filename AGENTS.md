@@ -16,7 +16,7 @@ Production code must not import from SREGym packages. Benchmark adapters may imp
 
 ## Development conventions
 
-- Begin with a failing test for bugs and new public behavior.
+- Begin with a failing test for bugs and new public behavior; fix bugs as a class ([guide](docs/testing-guide.md#fix-the-class-not-the-instance)).
 - Test contracts and ownership boundaries, not private implementation details.
 - Use Python type hints, `autopep8`, `ruff`, and `pytest`.
 - Prefer dataclasses or Pydantic models over repeated raw mapping shapes.

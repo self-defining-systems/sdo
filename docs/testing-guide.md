@@ -372,13 +372,22 @@ Tests for `benchmarks/sregym/adapter/` should prove that benchmark resources are
 
 ## Test style
 
-- Write a failing reproducer before fixing a bug.
+- Write a failing reproducer before fixing a bug; see [Fix the class](#fix-the-class-not-the-instance).
 - Test observable contracts and persisted evidence, not private fields or call order that is not part of the protocol.
 - Prefer small explicit fakes over deep mock graphs.
 - Use `tmp_path` and temporary Git repositories for repository mutations.
 - Mock external subprocess boundaries in unit tests; do not require local `kubectl`, Docker, Go downloads, or model APIs unless the test is explicitly external.
 - Assert failure paths: malformed structured responses, timeouts, stale commits, ownership violations, invalid detector code, interrupted rollouts, and duplicate acknowledgements.
 - Keep one behavior per test and use names that state the invariant.
+
+## Fix the class, not the instance
+
+Fixing a bug means making its whole class impossible, not patching the one case you saw.
+
+1. Before patching, ask whether the failing mechanism can be deleted. Deleting it is the cheapest fix for every instance at once.
+2. Name the cause and search for earlier bugs with the same cause. On a second instance, fix the cause at its one owner (one rule, one budget source, one start path). Never add another exception or special case.
+3. Guard the class with a ratchet, property test, or sweep that would fail for the next instance. Add a test that fails at the buggy commit as well.
+4. Find bugs in batches: run the scripted (model-free) rehearsal over every planned problem before spending live model runs.
 
 ## Live validation
 
@@ -471,20 +480,13 @@ The native builder refreshes stale health requirements through the registered ju
 and broker before compiling detectors. Accepted judge commits bind policy to all
 tracked application inputs outside operational memory, the human objective and
 health detector revision. Memory-only outcomes, playbooks and rendered locks do
-not trigger judge work. The runtime refuses stale evaluation, dispatch, plan
-writes and closure, and requests a builder relaunch for adoption. A refresh failure
-leaves health unverified. An investigation or unaccepted frozen closure that predates a
-source, objective or health detector change is durably archived as a visible
-failure after adoption, allowing
-fresh evaluation without publishing or acknowledging its obsolete success.
-An exact historical closure with a broker-accepted outcome retains unfinished
-reflection and ACK ownership across source adoption and authenticated judge
-refreshes. Its supplied receipt must match the persisted receipt, and publication
-still passes current-head broker merge and shared memory validation. Objective
-or unrelated policy advances retain the stale-closure rule and append a named
-`reflection.objective-changed` / `reflection.policy-changed` rejection to the
-accepted outcome before retirement. A later judge refresh cannot authorize an
-intervening unrelated policy or library change.
+not trigger judge work. The runtime refuses evaluation, dispatch, plan
+writes and closure while the compiled detector bundle lags the accepted health
+policy, and requests a builder relaunch for adoption. A refresh failure
+leaves health unverified. Investigations, pending closures and acknowledgments
+that began before the adoption are resumed by the restarted controller; the
+repository head, objective, policy or detector scope moving never retires,
+refuses or fails them. Closure is decided by the live recheck alone.
 
 The model-free tracing regression and seeded restart schedule run with:
 
@@ -495,11 +497,10 @@ The model-free tracing regression and seeded restart schedule run with:
 The tracing capture replaces Jaeger with a collector while preserving old
 architecture, compiles accepted detectors, and requires collector coverage without
 Jaeger. The 20-seed RV6 schedule sends real SIGKILLs at proposal, request, Job, result,
-before/after acceptance, before/after adoption, and before/after stale-closure
-failure persistence. It retains fake Kubernetes resources and controller state
+before/after acceptance, before/after adoption, and resumption of the interrupted
+closure. It retains fake Kubernetes resources and controller state
 across processes, optionally advances memory while interrupted, and requires
-fresh policy acceptance, durable stale-evidence failure, and fresh evaluation
-after another restart. Accepted work is reused and the old binary remains
+fresh policy acceptance and the resumed closure not to be retired. Accepted work is reused and the old binary remains
 unauthorized. The smaller cancellation schedule checks handled worker errors.
 These checks use scripted judge results and no cluster or model calls; they do
 not evaluate actual judge model behavior.

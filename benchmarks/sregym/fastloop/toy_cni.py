@@ -7,6 +7,8 @@ import subprocess
 import urllib.request
 from typing import TYPE_CHECKING
 
+from benchmarks.sregym.adapter import WaitKind, wait_for
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -20,7 +22,7 @@ CALICO_IMAGES = [f"calico/{name}:{CALICO_VERSION}" for name in ("cni", "node", "
 
 def install_calico(kubeconfig: Path, destination: Path) -> None:
     """Use a pinned manifest and preloaded images; workload startup cannot pull images."""
-    with urllib.request.urlopen(CALICO_URL, timeout=30) as response:
+    with urllib.request.urlopen(CALICO_URL, timeout=wait_for(WaitKind.COMMAND)) as response:
         data = response.read()
     if hashlib.sha256(data).hexdigest() != CALICO_SHA256:
         raise ValueError("Calico manifest checksum mismatch")

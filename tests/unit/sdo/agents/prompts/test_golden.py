@@ -1,6 +1,7 @@
 """Byte goldens captured from production builders before template extraction."""
 
 import re
+import tempfile
 from pathlib import Path
 
 from tests.unit.sdo.agents.prompts.cases import rendered_cases
@@ -25,6 +26,15 @@ def test_prompt_goldens() -> None:
     for name, prompt in prompts.items():
         prompt = normalize_prompt(prompt)
         assert prompt.encode("utf-8") == (GOLDENS / f"{name}.md").read_bytes(), name
+
+
+def test_prompt_goldens_are_independent_of_temp_root(monkeypatch, tmp_path: Path) -> None:
+    """Prompt size caps count temp-path characters, so the fixture owns the temp root."""
+    expected = {name: normalize_prompt(prompt) for name, prompt in rendered_cases().items()}
+    long_root = tmp_path / ("x" * 80)
+    long_root.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(long_root))
+    assert {name: normalize_prompt(prompt) for name, prompt in rendered_cases().items()} == expected
 
 
 def test_fixture_skill_root_is_independent_of_checkout(monkeypatch, tmp_path: Path) -> None:

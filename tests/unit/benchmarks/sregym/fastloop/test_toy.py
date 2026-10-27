@@ -106,6 +106,43 @@ def test_readiness_uses_latest_evaluation_after_a_closed_incident():
     assert not baseline_ready(state, "accepted")
 
 
+def test_baseline_wait_ends_on_the_controllers_exported_state_not_a_fixed_two_minutes(monkeypatch):
+    """A loaded host took ~2 minutes to reach an adopted, clear baseline; the old fixed 120 s killed every scenario."""
+    import json
+    from types import SimpleNamespace
+
+    from benchmarks.sregym.fastloop import toy
+
+    now = [0.0]
+    monkeypatch.delenv("SDO_TOY_BASELINE_WAIT", raising=False)
+    monkeypatch.setattr(toy.time, "monotonic", lambda: now[0])
+    monkeypatch.setattr(toy.time, "sleep", lambda seconds: now.__setitem__(0, now[0] + max(seconds, 1.0)))
+    ready_at = 150.0  # past the old fixed budget
+    clear = {
+        "evaluation_iteration": 3,
+        "incident_open": False,
+        "ownership_adoption": {"source_commit": "accepted"},
+        "history": [{"detector_id": "toy-endpoints", "status": "clear", "evaluated_at": "2030-01-01T00:00:00Z"}],
+    }
+
+    def kubectl(*_args, **_kwargs):
+        state = clear if now[0] >= ready_at else {**clear, "evaluation_iteration": 0}
+        document = {"data": {"runtime-state.json": json.dumps(state)}}
+        return SimpleNamespace(returncode=0, stdout=json.dumps(document))
+
+    pod = {
+        "metadata": {"creationTimestamp": "2000-01-01T00:00:00Z"},
+        "status": {"phase": "Running", "conditions": [{"type": "Ready", "status": "True"}]},
+    }
+    monkeypatch.setattr(toy.subprocess, "run", kubectl)
+    monkeypatch.setattr(toy, "command", lambda *_args: json.dumps({"items": [pod]}))
+    environment = SimpleNamespace(kubeconfig=Path("/kubeconfig"), namespace="toy")
+
+    toy.wait_for_baseline(environment, "accepted")
+
+    assert ready_at <= now[0] < ready_at + 5, "the wait ended on the exported state"
+
+
 def test_toy_kind_configuration_requires_network_policy_enforcement(tmp_path, monkeypatch):
     from subprocess import CompletedProcess
 

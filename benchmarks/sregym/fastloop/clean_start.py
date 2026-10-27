@@ -10,7 +10,7 @@ import json
 from copy import deepcopy
 from typing import TYPE_CHECKING, Any
 
-from benchmarks.sregym.adapter import kubectl
+from benchmarks.sregym.adapter import WaitKind, kubectl, wait_for
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -211,7 +211,9 @@ def prepare_harness_traffic(app: Any, kubeconfig: Path, *, suspended: bool = Fal
             from benchmarks.sregym.adapter import Deadline
             from benchmarks.sregym.fastloop.transient_cleanup import retire_harness_workload
 
-            retire_harness_workload(kubeconfig, Deadline(time.monotonic() + 120, time.monotonic))
+            retire_harness_workload(
+                kubeconfig, Deadline(time.monotonic() + wait_for(WaitKind.SLOW_COMMAND), time.monotonic)
+            )
             manager.start(suspended=True)
         else:
             manager.start()

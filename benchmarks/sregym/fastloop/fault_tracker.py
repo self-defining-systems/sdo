@@ -23,6 +23,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from benchmarks.sregym.adapter import WaitKind, wait_for
 from benchmarks.sregym.fastloop.object_probes import (
     admitted_memory_probe,
     cronjob_recovered,
@@ -291,7 +292,7 @@ class FaultTracker:
         self,
         probes: Mapping[str, Callable[[], bool]],
         *,
-        stable_seconds: float = 20.0,
+        stable_seconds: float = wait_for(WaitKind.STABLE),
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         if not probes:
@@ -376,7 +377,9 @@ class FaultTracker:
 class KubectlReader:
     """Reads one namespaced object as JSON; ``None`` when it does not exist."""
 
-    def __init__(self, *, namespace: str, kubeconfig: Path | str | None = None, timeout: float = 20.0) -> None:
+    def __init__(
+        self, *, namespace: str, kubeconfig: Path | str | None = None, timeout: float = wait_for(WaitKind.COMMAND)
+    ) -> None:
         self._namespace = namespace
         self._kubeconfig = str(kubeconfig) if kubeconfig else None
         self._timeout = timeout
@@ -420,7 +423,7 @@ class KubectlReader:
 class BackgroundPoller:
     """Polls a tracker on a thread until stopped."""
 
-    def __init__(self, tracker: FaultTracker, *, interval_seconds: float = 5.0) -> None:
+    def __init__(self, tracker: FaultTracker, *, interval_seconds: float = wait_for(WaitKind.POLL)) -> None:
         if interval_seconds <= 0:
             raise ValueError("interval_seconds must be positive")
         self._tracker = tracker
@@ -440,5 +443,5 @@ class BackgroundPoller:
 
     def __exit__(self, *exc: object) -> None:
         self._stop.set()
-        self._thread.join(timeout=30)
+        self._thread.join(timeout=wait_for(WaitKind.COMMAND))
         self._tracker.poll()

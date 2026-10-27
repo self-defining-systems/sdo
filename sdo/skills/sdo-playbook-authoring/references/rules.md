@@ -64,8 +64,8 @@ Declare each scalar parameter's kind and optional default. The SDK's `ValidateBi
 its value resolver rejects undeclared parameters, wrong types, zero Values, and Secret references before writes.
 
 Runtime action reports and receipts retain commit/path, resourceVersion/path, or parameter-name provenance.
-The runtime guards DeletePod by UID/version and directly verifies ScaleWorkload replicas. Exec uses existing
-controller RBAC and returns an exit code with no stdout/stderr; commands can reach mounted Secret files.
+The runtime guards DeletePod by UID/version and directly verifies ScaleWorkload replicas. Exec uses the controller's
+pods/exec grant in the application namespace and returns an exit code with no stdout/stderr; commands can reach mounted Secret files.
 
 - Replay external effects only with the required evidence. A skipped effect proves no repair; irreversible
   Pod deletion or Exec never grants restart mutation or recreation authority. Enforced by:

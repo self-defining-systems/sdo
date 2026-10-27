@@ -67,12 +67,10 @@ Only `observed` means a complete read, including a successful empty list or name
 
 Foreign Deployment captures exclude all environment values/references, command/args, volumes, probes, annotations and free-text status. Webhook URLs retain origin only; CA bytes are digest markers. Service/Endpoints projections exclude arbitrary metadata and endpoint target references. These are safe views, not complete Kubernetes backups. App-local ConfigMap capture-only redaction is unchanged. Scoped polling uses no foreign Secret reads and no webhook-wide list.
 
-Incident requests and closures persist `observation_generation`. A closure may
-reach the broker only after a fresh snapshot confirms its verification generation;
-a restored or adopted closure from an obsolete scope fails visibly and cannot
-publish retained success. A scope change during an open incident supersedes its
-evidence and produces a failed closure. `open@detect` remains historical evidence;
-diagnosis rejects reuse when its generation differs from the current snapshot.
+Incident requests and closures persist `observation_generation` as provenance
+only. A scope change during an open incident never supersedes its evidence or
+fails its closure: the closure recheck and verification run under the scope in
+force, and diagnosis continues. `open@detect` remains historical evidence.
 
 ## Generic object captures (CAP1)
 

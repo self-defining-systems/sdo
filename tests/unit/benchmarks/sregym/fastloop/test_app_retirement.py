@@ -201,7 +201,9 @@ def test_native_quiesce_retains_pending_work_and_pauses_idle_controller(tmp_path
     from benchmarks.sregym.fastloop import app_retirement
 
     fake = SimpleNamespace(
-        runtime_state=lambda _namespace: {"pending_closure": {"incident": "active"}} if pending else {}
+        runtime_state=lambda _namespace: (
+            {"pending_closure": {"incident": "active"}, "busy_until": "2000-01-01T00:00:00Z"} if pending else {}
+        )
     )
     pauses = []
     monkeypatch.setattr(adapter, "KubectlClusterOps", lambda: fake)

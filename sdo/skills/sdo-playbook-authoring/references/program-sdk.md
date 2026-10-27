@@ -238,7 +238,9 @@ type DeleteObject struct {
     Its receipt retains a nonsecret preimage; compensation never recreates it.
 
 type DeletePod struct{ Ref sdk.ObjectRef }
-    DeletePod removes one named pod with UID/version preconditions.
+    DeletePod removes one named pod with UID/version preconditions. A graceful
+    delete leaves the Pod terminating: that counts as deleted but the Pod may
+    still run until it stops.
 
 type Diagnoser interface {
 	Spec() ProgramSpec
@@ -289,7 +291,8 @@ type Exec struct {
 	Command   []Value
 }
     Exec executes a provenance-derived command. Only its exit code is reported.
-    The Kubernetes API enforces the controller's existing pods/exec RBAC grant.
+    The install grants the controller pods/exec (get, create) in the application
+    namespace; the Kubernetes API enforces it.
 
 type ExternalEffect struct {
 	Observe  ExternalOperation `json:"observe"`

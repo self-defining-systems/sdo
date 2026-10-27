@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict
 
+from benchmarks.sregym.adapter.budgets import WaitKind, wait_for
 from benchmarks.sregym.adapter.processes import ProcessRef, read_registry
 
 if TYPE_CHECKING:
@@ -126,7 +127,7 @@ def launch(path: Path, run_dir: Path, command: list[str], *, helpers: Path | Non
             temporary.replace(path)
             owner.stdin.write(b"go\n")
             owner.stdin.close()
-            deadline = time.monotonic() + 10
+            deadline = time.monotonic() + wait_for(WaitKind.PROBE)
             while time.monotonic() < deadline:
                 refs = read_registry(state).processes
                 if ref in refs and any(item.name == "guardian" for item in refs):
@@ -140,11 +141,11 @@ def launch(path: Path, run_dir: Path, command: list[str], *, helpers: Path | Non
             if ref.alive():
                 os.kill(ref.pid, signal.SIGTERM)
             try:
-                owner.wait(timeout=10)
+                owner.wait(timeout=wait_for(WaitKind.PROBE))
             except subprocess.TimeoutExpired:
                 if ref.alive():
                     os.kill(ref.pid, signal.SIGKILL)
-                owner.wait(timeout=5)
+                owner.wait(timeout=wait_for(WaitKind.PROBE))
             raise
 
 

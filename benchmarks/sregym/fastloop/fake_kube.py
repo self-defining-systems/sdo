@@ -8,6 +8,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
 
+from benchmarks.sregym.adapter import WaitKind, wait_for
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -75,7 +77,7 @@ class FakeKubernetesAPIServer:
     def __exit__(self, *_args: object) -> None:
         self._http.shutdown()
         self._http.server_close()
-        self._thread.join(timeout=2)
+        self._thread.join(timeout=wait_for(WaitKind.PROBE))
 
     def write_kubeconfig(self, path: Path) -> Path:
         host, port = self._http.server_address[:2]

@@ -11,6 +11,19 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from benchmarks.sregym.adapter import WaitKind, wait_for
+from benchmarks.sregym.fastloop.surge_recovery import (
+    BlockedSurge,
+    KubectlRolloutCluster,
+    SurgeRecoveryError,
+    recreate_blocked_surges,
+)
+
+#: Time for a plain client rollout to settle before checking for a rollout that cannot surge.
+REFRESH_SETTLE_S = int(wait_for(WaitKind.REFRESH_SETTLE))
+#: Time for the Recreate-restored workloads to settle.
+REFRESH_RETRY_S = int(wait_for(WaitKind.MINUTE))
+
 
 def verify_baseline_traffic(problem: Any, baseline: dict[str, Any]) -> dict[str, Any]:
     """Require seed health and fresh real HTTP, without regrading injected faults."""
@@ -142,7 +155,19 @@ def refresh_baseline_clients(problem: Any, *, dependencies_only: bool = False) -
     resources = " ".join(f"deployment/{name}" for name in clients)
     problem.kubectl.exec_command(f"kubectl rollout restart {resources} -n {shlex.quote(problem.namespace)}")
     clusters = importlib.import_module("sregym.conductor.problems.colocated_composite")
-    settled = clusters.KubeClusterIO().wait_for_rollouts(problem.namespace, timeout_s=90)
+    rollouts = clusters.KubeClusterIO()
+    settled = rollouts.wait_for_rollouts(problem.namespace, timeout_s=REFRESH_SETTLE_S)
+    recreated: list[BlockedSurge] = []
+    if not settled.settled:
+        # A rollout that cannot surge never settles on its own; restore those workloads with a bounded Recreate.
+        try:
+            recreated = recreate_blocked_surges(
+                KubectlRolloutCluster(problem.namespace, config), clients, namespace=problem.namespace
+            )
+        except SurgeRecoveryError as error:
+            return _refresh_result(clients, settled.waited_s, str(error), recreated=[], settled=False)
+        if recreated:
+            settled = rollouts.wait_for_rollouts(problem.namespace, timeout_s=REFRESH_RETRY_S)
     if settled.settled:
         listing = json.loads(
             kubectl(["get", "deployments,pods", "-o", "json"], namespace=problem.namespace, kubeconfig=config).stdout
@@ -159,10 +184,17 @@ def refresh_baseline_clients(problem: Any, *, dependencies_only: bool = False) -
             ]
         for dependency in STARTUP_DEPENDENCIES[problem.namespace]:
             require_dependency_order(dependency, pod_times)
+    return _refresh_result(clients, settled.waited_s, settled.reason, recreated=recreated, settled=settled.settled)
+
+
+def _refresh_result(
+    clients: tuple[str, ...], waited_s: float, reason: str, *, recreated: list[BlockedSurge], settled: bool
+) -> dict[str, Any]:
     return {
-        "success": settled.settled,
+        "success": settled,
         "scope": "application-clients",
         "deployments": list(clients),
-        "waited_s": settled.waited_s,
-        "reason": settled.reason,
+        "waited_s": waited_s,
+        "reason": reason,
+        "recreated": [surge.as_receipt() for surge in recreated],
     }

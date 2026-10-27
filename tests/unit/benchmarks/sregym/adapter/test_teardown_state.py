@@ -15,7 +15,11 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 CONTROL = "hotel-sdo"
-PENDING = {"pending_closure": {"request": {"incident_id": "unclosable"}}, "closure_state": "CLOSURE_STATE_PENDING"}
+PENDING = {
+    "pending_closure": {"request": {"incident_id": "unclosable"}},
+    "closure_state": "CLOSURE_STATE_PENDING",
+    "busy_until": "2000-01-01T00:00:00Z",
+}
 
 
 class FakeApi:

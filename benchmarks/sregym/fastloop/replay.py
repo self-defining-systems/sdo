@@ -14,6 +14,7 @@ from typing import Any
 
 from google.protobuf.json_format import ParseError
 
+from benchmarks.sregym.adapter import WaitKind, wait_for
 from benchmarks.sregym.fastloop.checkpoint_limits import MAX_BROKER_BYTES, MAX_RESULT_BYTES, MAX_TASK_BYTES
 from benchmarks.sregym.fastloop.file_edits import FileEdit, decode_file_edits, encode_file_edits
 from sdo.contracts import AgentResult, AgentTask, parse_json
@@ -433,7 +434,12 @@ def replay_broker_result(checkpoint: StageCheckpoint, *, source: Path, operator_
             str(operator_root),
         ]
         completed = subprocess.run(
-            command, cwd=operator_root / "runtime", capture_output=True, text=True, timeout=300, check=False
+            command,
+            cwd=operator_root / "runtime",
+            capture_output=True,
+            text=True,
+            timeout=wait_for(WaitKind.ROLLOUT),
+            check=False,
         )
         if completed.returncode:
             raise CheckpointError(f"broker replay failed: {completed.stderr.strip()[-4096:]}")
