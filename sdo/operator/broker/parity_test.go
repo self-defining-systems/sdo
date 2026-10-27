@@ -410,7 +410,7 @@ func (p Program) Mitigate(ctx context.Context,v program.ReadView,b program.Bindi
 			}
 			put(t, r, path, strings.Replace(string(data), "type Program struct{}", "type Program struct{ missing UndefinedType }", 1), 0644)
 		}, []string{validate.RuleDetectorCompile}, false},
-		{"program repeat unreachable is information", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
+		{"program replay failure", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
 			parityProgram(t, r)
 			path := ".sdo/diagnostics/detectors/incidents/routing-relations/detector.go"
 			data, err := os.ReadFile(filepath.Join(r, path))
@@ -418,6 +418,16 @@ func (p Program) Mitigate(ctx context.Context,v program.ReadView,b program.Bindi
 				t.Fatal(err)
 			}
 			source := strings.Replace(string(data), `ref := sdk.ObjectRefFrom("Service", "v1", &service)`, `ref := sdk.ObjectRefFrom("Service", "v1", &service); ref.Name = "not-observed"`, 1)
+			put(t, r, path, source, 0644)
+		}, []string{validate.RuleProgramDiagnoseNoMatch}, false},
+		{"program repeat unreachable is information", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
+			parityProgram(t, r)
+			path := ".sdo/diagnostics/detectors/incidents/routing-relations/detector.go"
+			data, err := os.ReadFile(filepath.Join(r, path))
+			if err != nil {
+				t.Fatal(err)
+			}
+			source := strings.Replace(string(data), `ref := sdk.ObjectRefFrom("Service", "v1", &service)`, `ref := sdk.ObjectRefFrom("Service", "v1", &service); ref.Kind = "Pod"`, 1)
 			put(t, r, path, source, 0644)
 		}, nil, false},
 
@@ -955,7 +965,7 @@ func (j subprocessParityJob) Validate(ctx context.Context, r broker.ValidationJo
 	if runErr != nil {
 		return broker.ValidationJobReceipt{}, runErr
 	}
-	return broker.ValidationJobReceipt{CandidateTree: r.CandidateTree, Accepted: true, DetectorCompiled: true, SourceValidated: true, ReadOnlyMountObserved: true, NoPublishingCredentialsObserved: true, EgressIsolationCanaryPassed: true}, nil
+	return broker.ValidationJobReceipt{CandidateTree: r.CandidateTree, Accepted: true, DetectorCompiled: true, SourceValidated: true, ReadOnlyMountObserved: true, NoPublishingCredentialsObserved: true, EgressIsolationCanaryPassed: true, CoverageGaps: validate.ParseReportGaps(stdout.String())}, nil
 }
 
 func copyParityChange(t *testing.T, source, target, name string) {

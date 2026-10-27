@@ -45,7 +45,9 @@ diagnostic; look it up here.
 - The responder writes playbooks, scripts, and the index during reflection. The health judge writes only the
   health-objective playbook during the initial health-judge stage. Enforced by: `ownership.denied`.
 
-Advice, not validator-checked: recorded faults should produce incident detector findings that bind required roles through production selection, reach Match, and replay mitigation on the same binding. An unreachable recorded fault is noted as a coverage gap, not a refusal.
+- On its recorded fault a playbook's incident detectors must emit valid findings that stay quiet on the healthy fixture, and its Diagnose must Match and have a mitigator. Enforced by: `program.diagnose-no-match`, `program.mitigator-missing`, `detector.invalid-finding`, `detector.fires-on-healthy`, `program.repeat-unavailable`.
+
+Advice, not validator-checked: recorded faults should produce an incident detector finding that selects the playbook. When none does, the mitigation is still replayed and must repair, and the missing link is noted as a coverage gap (`program.repeat-unreachable`), not a refusal.
 
 - A mitigator must clear its diagnosis after its patches are applied to the faulted fixture, An already-faulty target value is not a repair. Enforced by: `program.mitigation-not-repaired`.
 - Prefer narrow typed SetField repairs when the damaged field is known; whole-object ReconcileFromSource requires whole-object justification. Observed and parameter-derived fields require valid patches and available observations; accepted-source field selectors require accepted manifests in the fixture. Enforced by: `program.mitigation-unreplayable`, `program.mitigation-not-repaired`.

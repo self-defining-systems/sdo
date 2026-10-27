@@ -15,10 +15,15 @@ func (b *Broker) checkCandidate(ctx context.Context, root, base string, actor Ac
 	if runner != nil {
 		compile = func(ctx context.Context, request validate.Request) ([]validate.Diagnostic, error) {
 			ctx = context.WithValue(ctx, compileBaselineKey{}, request.HealthyBaseline)
+			var jobGaps []validate.Diagnostic
+			ctx = context.WithValue(ctx, coverageGapsKey{}, &jobGaps)
 			err := runner(ctx, root, paths)
 			var failure *validate.Failure
 			if errors.As(err, &failure) {
 				return failure.Diagnostics, nil
+			}
+			if err == nil && request.CoverageGaps != nil {
+				*request.CoverageGaps = append(*request.CoverageGaps, jobGaps...)
 			}
 			return nil, err
 		}

@@ -104,7 +104,7 @@ func TestCLIAndBrokerAgreeOnVerifiedCauseReplayCoverage(t *testing.T) {
 				if publishErr != nil {
 					t.Fatalf("a coverage gap must not reject the reflection: %v", publishErr)
 				}
-				if len(receipt.CoverageGaps) == 0 || !strings.Contains(strings.Join(receipt.CoverageGaps, "\n"), validate.RuleReflectionProgramRequired+": verified cause 1") {
+				if len(receipt.CoverageGaps) == 0 || !strings.Contains(strings.Join(gapKeys(receipt.CoverageGaps), "\n"), validate.RuleReflectionProgramRequired+": verified cause 1") {
 					t.Fatalf("broker receipt omitted the program gap: %v", receipt.CoverageGaps)
 				}
 				return report

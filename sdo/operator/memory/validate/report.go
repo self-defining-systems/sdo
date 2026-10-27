@@ -48,8 +48,10 @@ func ParseStageTimings(logs string) []builder.StageTiming {
 	return timings
 }
 
-func WriteReport(out io.Writer, diagnostics []Diagnostic, notes ...sdktest.MitigationReplayResult) error {
-	data, err := protojson.Marshal(&contracts.MemoryCheckReport{Diagnostics: ProtoDiagnostics(diagnostics), MitigationReplayNotes: ProtoMitigationReplayNotes(notes)})
+// WriteReport frames the runner's verdict. Coverage gaps are non-blocking
+// notes the broker records beside the accepted commit.
+func WriteReport(out io.Writer, diagnostics, gaps []Diagnostic, notes ...sdktest.MitigationReplayResult) error {
+	data, err := protojson.Marshal(&contracts.MemoryCheckReport{Diagnostics: ProtoDiagnostics(diagnostics), CoverageGaps: ProtoDiagnostics(gaps), MitigationReplayNotes: ProtoMitigationReplayNotes(notes)})
 	if err != nil {
 		return err
 	}
@@ -71,16 +73,37 @@ func ParseReport(logs string) ([]Diagnostic, error) {
 		if err := protojson.Unmarshal([]byte(strings.TrimPrefix(line, ReportPrefix)), report); err != nil {
 			return nil, err
 		}
-		var ds []Diagnostic
-		for _, d := range report.GetDiagnostics() {
-			if d.Rule == "" || d.Message == "" {
-				return nil, fmt.Errorf("incomplete validator diagnostic")
-			}
-			ds = append(ds, Diagnostic{Rule: d.Rule, Path: d.Path, Line: int(d.Line), Message: d.Message, Hint: d.Hint})
-		}
-		return ds, nil
+		return reportDiagnostics(report.GetDiagnostics())
 	}
 	return nil, fmt.Errorf("validator omitted structured memory report")
+}
+
+// ParseReportGaps reads the coverage gaps of a runner's report. Gaps never
+// affect acceptance, so a missing or malformed report yields none.
+func ParseReportGaps(logs string) []Diagnostic {
+	for _, line := range strings.Split(logs, "\n") {
+		if !strings.HasPrefix(line, ReportPrefix) {
+			continue
+		}
+		report := &contracts.MemoryCheckReport{}
+		if protojson.Unmarshal([]byte(strings.TrimPrefix(line, ReportPrefix)), report) != nil {
+			return nil
+		}
+		gaps, _ := reportDiagnostics(report.GetCoverageGaps())
+		return gaps
+	}
+	return nil
+}
+
+func reportDiagnostics(items []*contracts.MemoryDiagnostic) ([]Diagnostic, error) {
+	var ds []Diagnostic
+	for _, d := range items {
+		if d.Rule == "" || d.Message == "" {
+			return nil, fmt.Errorf("incomplete validator diagnostic")
+		}
+		ds = append(ds, Diagnostic{Rule: d.Rule, Path: d.Path, Line: int(d.Line), Message: d.Message, Hint: d.Hint})
+	}
+	return ds, nil
 }
 
 // ProtoMitigationReplayNotes keeps successful policy notes separate from failures.

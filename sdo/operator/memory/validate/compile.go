@@ -80,7 +80,7 @@ func (s *run) compile(ctx context.Context) error {
 		rule = RuleDetectorTest
 	}
 	mitigationFailure := false
-	for _, rule := range []string{RuleProgramMitigationRepair, RuleProgramMitigationReplay, detectorCorpusObservation, RuleDetectorHealthyBaseline, RuleDetectorControllerStart} {
+	for _, rule := range []string{RuleProgramMitigationRepair, RuleProgramMitigationReplay, RuleProgramRepeatDefect, RuleProgramDiagnoseNoMatch, RuleProgramMitigatorMissing, RuleDetectorInvalidFinding, RuleDetectorFiresOnHealthy, detectorCorpusObservation, RuleDetectorHealthyBaseline, RuleDetectorControllerStart} {
 		if strings.Contains(stage.Output, rule) {
 			messages := map[string]bool{}
 			for _, line := range strings.Split(stage.Output, "\n") {

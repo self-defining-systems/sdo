@@ -88,15 +88,9 @@ func TestTypedObservationProgramCompilesAndRejectsStaleEvidence(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(workspace.Directory, "corpus", "targetport-mismatch", "recordings.json"), raw, 0644); err != nil {
 				t.Fatal(err)
 			}
-			if _, err = workspace.ValidateAndBuild(context.Background()); err != nil {
-				t.Fatalf("stale %s must be recorded, not rejected: %v", method, err)
-			}
-			gaps, err := workspace.CoverageGaps()
-			if err != nil {
-				t.Fatal(err)
-			}
-			if !strings.Contains(strings.Join(gaps, "\n"), "unrecorded "+method) {
-				t.Fatalf("stale %s not recorded as a coverage gap by memory replay: %v", method, gaps)
+			_, err = workspace.ValidateAndBuild(context.Background())
+			if err == nil || !strings.Contains(err.Error(), "unrecorded "+method) {
+				t.Fatalf("stale %s not rejected by memory replay: %v", method, err)
 			}
 		})
 	}

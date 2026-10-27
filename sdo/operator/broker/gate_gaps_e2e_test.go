@@ -1,15 +1,18 @@
 package broker_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"go/format"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 
+	"google.golang.org/protobuf/encoding/protojson"
 	"sdo.dev/operator/broker"
 	"sdo.dev/operator/builder"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
@@ -75,7 +78,7 @@ func TestReflectionCommitsWithRecordedGapsAndStillRejectsBrokenLearning(t *testi
 		if err != nil {
 			t.Fatalf("a reflection with only coverage gaps was refused: %v", err)
 		}
-		recorded := strings.Join(receipt.CoverageGaps, "\n")
+		recorded := strings.Join(gapKeys(receipt.CoverageGaps), "\n")
 		for _, want := range []string{validate.RuleReflectionProgramRequired + ": verified cause 1", validate.RuleDetectorHealthyBaseline + ": controller pre-incident healthy capture is unavailable"} {
 			if !strings.Contains(recorded, want) {
 				t.Errorf("gap %q not recorded: %v", want, receipt.CoverageGaps)
@@ -92,6 +95,57 @@ func TestReflectionCommitsWithRecordedGapsAndStillRejectsBrokenLearning(t *testi
 		index, err := exec.Command("git", "-C", root, "show", receipt.Commit+":.sdo/playbooks/README.md").Output()
 		if err != nil || !strings.Contains(string(index), "(service-targetport-mismatch/README.md)") {
 			t.Fatalf("playbook index was not generated: %v %s", err, index)
+		}
+	})
+	t.Run("repeat-unreachable gap is the same on the CLI and the broker", func(t *testing.T) {
+		repository, _, proposal, decision := setup(t)
+		path := filepath.Join(proposal.Path, ".sdo/diagnostics/detectors/incidents/routing-relations/detector.go")
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		old := `ref := sdk.ObjectRefFrom("Service", "v1", &service)`
+		if !strings.Contains(string(data), old) {
+			t.Fatal("fixture detector changed")
+		}
+		if err := os.WriteFile(path, []byte(strings.Replace(string(data), old, old+`; ref.Kind = "Pod"`, 1)), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		result := &contracts.ReflectionResult{LearningDecision: decision.LearningDecision, ProposedArtifactIds: decision.PlaybookIds}
+		raw, err := protojson.Marshal(result)
+		if err != nil {
+			t.Fatal(err)
+		}
+		decisionFile := filepath.Join(t.TempDir(), "decision.json")
+		if err := os.WriteFile(decisionFile, raw, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		cli := exec.Command(binary, "memory", "check", "--json", "--decision", decisionFile)
+		cli.Dir = proposal.Path
+		cli.Env = append(os.Environ(), "SDO_ACTOR=responder", "SDO_PHASE=reflection", "SDO_BASE_COMMIT="+proposal.BaseCommit, "SDO_OPERATOR_ROOT="+operatorRoot, "SDO_HEALTHY_BASELINE=", "SDO_CAPTURED_CORPUS_DIR=", "SDO_INCIDENT_ID=incident")
+		var stdout, stderr bytes.Buffer
+		cli.Stdout, cli.Stderr = &stdout, &stderr
+		if err := cli.Run(); err != nil {
+			t.Fatalf("an unreachable repeat must not fail the check: %v: %s", err, stderr.String())
+		}
+		report := new(contracts.MemoryCheckReport)
+		if err := protojson.Unmarshal(stdout.Bytes(), report); err != nil {
+			t.Fatal(err)
+		}
+		var cliGaps []validate.Diagnostic
+		for _, gap := range report.CoverageGaps {
+			cliGaps = append(cliGaps, validate.Diagnostic{Rule: gap.Rule, Message: gap.Message})
+		}
+		receipt, err := repository.PublishReflection(noCapture, "incident", decision)
+		if err != nil {
+			t.Fatalf("an unreachable repeat was refused: %v", err)
+		}
+		want, got := gapKeys(cliGaps), gapKeys(receipt.CoverageGaps)
+		if !strings.Contains(strings.Join(want, "\n"), validate.RuleProgramRepeatReachable+":") {
+			t.Fatalf("CLI did not record the unreachable repeat: %v", want)
+		}
+		if strings.Join(want, "\n") != strings.Join(got, "\n") {
+			t.Fatalf("CLI and broker disagree on coverage gaps:\nCLI    %v\nbroker %v", want, got)
 		}
 	})
 	for name, test := range map[string]struct {
@@ -129,4 +183,14 @@ func (p Program) Mitigate(ctx context.Context,v program.ReadView,b program.Bindi
 			}
 		})
 	}
+}
+
+// gapKeys is the sorted "rule: message" form shared by the commit trailers.
+func gapKeys(gaps []validate.Diagnostic) []string {
+	keys := make([]string, 0, len(gaps))
+	for _, gap := range gaps {
+		keys = append(keys, strings.Join(strings.Fields(gap.Rule+": "+gap.Message), " "))
+	}
+	sort.Strings(keys)
+	return keys
 }

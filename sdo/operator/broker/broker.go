@@ -62,7 +62,7 @@ type Receipt struct {
 	ChangedPaths []string
 	// CoverageGaps are the non-blocking notes the accepting check recorded, also
 	// kept as SDO-Coverage-Gap trailers on the accepted commit.
-	CoverageGaps []string
+	CoverageGaps []validate.Diagnostic
 }
 
 // SourceEvidence is produced by a trusted deployment strategy, never by an
@@ -628,11 +628,8 @@ func (b *Broker) accept(ctx context.Context, stage, incidentID string, actor Act
 	if phase == ImportPhase {
 		message += "\nSDO-Origin: operator"
 	}
-	var noted []string
 	for _, gap := range gaps {
-		line := strings.Join(strings.Fields(gap.Rule+": "+gap.Message), " ")
-		noted = append(noted, line)
-		message += "\nSDO-Coverage-Gap: " + line
+		message += "\nSDO-Coverage-Gap: " + strings.Join(strings.Fields(gap.Rule+": "+gap.Message), " ")
 	}
 	if _, err := runGitEnv(ctx, stage, brokerGitEnv(), "commit", "--quiet", "--allow-empty", "-m", message); err != nil {
 		return Receipt{}, err
@@ -647,7 +644,7 @@ func (b *Broker) accept(ctx context.Context, stage, incidentID string, actor Act
 	if _, err := runGit(ctx, b.target, "merge", "--ff-only", "--quiet", commit); err != nil {
 		return Receipt{}, fmt.Errorf("accepted branch changed during publish: %w", err)
 	}
-	return Receipt{IncidentID: incidentID, Phase: phase, Commit: commit, ChangedPaths: paths, CoverageGaps: noted}, nil
+	return Receipt{IncidentID: incidentID, Phase: phase, Commit: commit, ChangedPaths: paths, CoverageGaps: gaps}, nil
 }
 
 // AcceptedCommitAt authenticates an exact historical broker commit still in

@@ -59,6 +59,7 @@ type Result struct {
 	IncidentFalseNegatives []string                    `json:"incident_false_negatives,omitempty"`
 	Overlap                []string                    `json:"overlap,omitempty"`
 	Errors                 []string                    `json:"errors,omitempty"`
+	Notes                  []string                    `json:"notes,omitempty"`
 	DurationMS             float64                     `json:"duration_ms"`
 }
 

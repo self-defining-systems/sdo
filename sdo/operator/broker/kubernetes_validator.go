@@ -172,6 +172,7 @@ func (k KubernetesValidationJobClient) Validate(ctx context.Context, request Val
 	return ValidationJobReceipt{
 		CandidateTree: request.CandidateTree, Accepted: true, DetectorCompiled: true, SourceValidated: true,
 		ReadOnlyMountObserved: true, NoPublishingCredentialsObserved: true, EgressIsolationCanaryPassed: true,
+		CoverageGaps: validate.ParseReportGaps(k.jobLogs(name)),
 	}, nil
 }
 

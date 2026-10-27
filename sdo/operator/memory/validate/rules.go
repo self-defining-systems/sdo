@@ -73,6 +73,11 @@ const (
 
 	// Compile.
 	RuleProgramRepeatReachable  = "program.repeat-unreachable"
+	RuleProgramRepeatDefect     = "program.repeat-unavailable"
+	RuleProgramDiagnoseNoMatch  = "program.diagnose-no-match"
+	RuleProgramMitigatorMissing = "program.mitigator-missing"
+	RuleDetectorInvalidFinding  = "detector.invalid-finding"
+	RuleDetectorFiresOnHealthy  = "detector.fires-on-healthy"
 	RuleProgramMitigationRepair = "program.mitigation-not-repaired"
 	RuleProgramMitigationReplay = "program.mitigation-unreplayable"
 	RuleDetectorCompile         = "detector.compile"

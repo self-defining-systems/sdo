@@ -52,6 +52,9 @@ commands:
         logical IDs. A broker memory.conflict carries the newer accepted commit,
         conflicting paths, peer incidents and validator errors; merge both
         incidents' intent and preserve accepted learning before resubmitting.
+        Coverage gaps (a verified cause without a program, a skipped healthy replay,
+        a recorded fault no detector reaches) never fail the check: they print as
+        coverage_gap lines, or in the JSON coverage_gaps field.
         Exit 0 when clean,
         1 for diagnostics, 2 for missing inputs or infrastructure/usage errors.
   ls [--root .] [--kind goal|architecture|playbook|script|detector] [--json]
