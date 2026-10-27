@@ -24,6 +24,11 @@ def inventory() -> dict[str, list[str]]:
             "Example_compiler",
         ],
         "sdo.dev/operator/broker": [
+            *(
+                full.removeprefix("sdo.dev/operator/broker/")
+                for full in shards.MOVED_TESTS
+                if full.startswith("sdo.dev/operator/broker/")
+            ),
             "TestCLIAndBrokerAgreeOnAcceptance",
             "TestCLIAndBrokerAgreeOnAcceptanceSecondShard",
             "TestNewBrokerBehavior",
