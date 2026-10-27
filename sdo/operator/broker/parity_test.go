@@ -107,7 +107,7 @@ func TestCLIAndBrokerAgreeOnAcceptanceSecondShard(t *testing.T) {
 	testCLIAndBrokerAgreeOnAcceptance(t, 1)
 }
 
-// The two measured slowest cases share an existing compiler allocation. Every
+// Measured slow cases share an existing compiler allocation. Every
 // case still has exactly one owner and retains its assertions and parallel cap.
 func TestCLIAndBrokerAgreeOnAcceptanceThirdShard(t *testing.T) {
 	testCLIAndBrokerAgreeOnAcceptance(t, 2)
@@ -115,7 +115,8 @@ func TestCLIAndBrokerAgreeOnAcceptanceThirdShard(t *testing.T) {
 
 func acceptanceCaseShard(index int, name string) int {
 	switch name {
-	case "trusted captured program", "healthy refused service ports":
+	case "trusted captured program", "healthy refused service ports",
+		"healthy refused ports without recordings", "trailing whitespace normalized":
 		return 2
 	default:
 		return index % 2
