@@ -219,7 +219,7 @@ def continuation_prompt(payload: str) -> RenderedPrompt:
             return prompt
     # Large inventories retain complete facts on disk and explicitly count rows
     # omitted from the prompt. Never slice a rendered row or its evidence path.
-    for index in (2, 1, 0, 3):
+    for index in (3, 2, 1, 0):
         while counts[index]:
             counts[index] -= 1
             prompt = render(16, *counts)

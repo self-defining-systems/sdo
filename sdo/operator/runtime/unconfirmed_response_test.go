@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"fmt"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"k8s.io/client-go/kubernetes/fake"
+	"sdo.dev/operator/broker"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/sdktest"
@@ -25,9 +27,29 @@ func TestUnconfirmedResponseContinuesOnceThenReturnsToClosureOwner(t *testing.T)
 	now := time.Now().UTC()
 	snapshot := sdktest.Snapshot{}
 	request := goldenRequest(t)
-	request.RepositoryWorktree = t.TempDir() + "/proposal"
+	repository, err := broker.New(nativeRepository(t), filepath.Join(t.TempDir(), "proposals"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reflections := 0
+	native := &NativeIncidentBroker{Repository: repository, LedgerRoot: t.TempDir(), Deriver: ProtoOutcomeDeriver{}, ResponderBackend: "test", ResponderModel: "test",
+		Reflector: ReflectionWorkerFunc(func(_ context.Context, _ IncidentClosure, _ IncidentWorkspace, outcome *contracts.OutcomeRecord, _, _ string, _ ReflectionFeedback) (ReflectionDecision, error) {
+			reflections++
+			if outcome.GetClassification() != "unconfirmed" {
+				t.Errorf("reflection received %q", outcome.GetClassification())
+			}
+			return ReflectionDecision{LearningDecision: "no_change", NoChangeReason: "observation blockers remain unconfirmed"}, nil
+		}),
+	}
+	workspace, err := native.PrepareIncident(ctx, request.IncidentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.RepositoryWorktree, request.RepositoryBaseCommit = workspace.Worktree, workspace.BaseCommit
+	request.SourceCommit, request.DeployedCommit = workspace.BaseCommit, workspace.BaseCommit
+
 	request.ResponseDeadline = now.Add(time.Minute)
-	request.MaxResponseLoops = 4
+	request.MaxResponseLoops = 2
 	controller, err := NewController(testControllerConfig(), []sdk.Detector{&windowDetector{}}, staticProvider{snapshot: snapshot}, &recordingDispatcher{}, now)
 	if err != nil {
 		t.Fatal(err)
@@ -42,7 +64,7 @@ func TestUnconfirmedResponseContinuesOnceThenReturnsToClosureOwner(t *testing.T)
 	controller.incidentOpen = true
 	controller.incidentDetectedAt, controller.incidentDispatchedAt = now, now
 	controller.healthDetectorIDs = []string{"health"}
-	loop := NewResponderLoop(request, nil, staticProvider{snapshot: snapshot}, nil, PlanExecutor{}, 4)
+	loop := NewResponderLoop(request, nil, staticProvider{snapshot: snapshot}, nil, PlanExecutor{}, 2)
 	loop.VerifyResult = func(context.Context, IncidentResult) ToolResponse {
 		controller.mu.Lock()
 		defer controller.mu.Unlock()
@@ -51,8 +73,7 @@ func TestUnconfirmedResponseContinuesOnceThenReturnsToClosureOwner(t *testing.T)
 	}
 	d := KubernetesJobDispatcher{Client: client, Namespace: "demo", Registry: testIncidentRegistry(t, "responder:test"), AgentID: testIncidentAgentID(t), RepositoryPVC: "repo", RepositoryMountPath: filepath.Dir(request.RepositoryWorktree), ServiceAccount: "responder", PollInterval: time.Millisecond, LoopFactory: func(IncidentRequest) *ResponderLoop { return loop }}
 	controller.dispatcher = d
-	broker := &recordingClosureBroker{}
-	if err := controller.SetIncidentBroker(broker); err != nil {
+	if err := controller.SetIncidentBroker(native); err != nil {
 		t.Fatal(err)
 	}
 	done := make(chan dispatchCompletion, 1)
@@ -78,7 +99,9 @@ func TestUnconfirmedResponseContinuesOnceThenReturnsToClosureOwner(t *testing.T)
 	}
 	dispatch()
 	first := awaitJob(t, client, IncidentJobName(request.IncidentID))
-	publishContinuationResult(t, client, first, completedResult(request.IncidentID))
+	workerResult := completedResult(request.IncidentID)
+	workerResult.ResponderSessionID = "scripted-unconfirmed-session"
+	publishContinuationResult(t, client, first, workerResult)
 	finish()
 	controller.maybeCloseIncident(ctx, now, snapshot)
 	if controller.responderDone {
@@ -105,11 +128,11 @@ assert len(prompt)<=1500, len(prompt)
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("real continuation consumer rejected feedback: %v %s", err, output)
 	}
-	publishContinuationResult(t, client, second, completedResult(request.IncidentID))
+	publishContinuationResult(t, client, second, workerResult)
 	finish()
 	// Restore the durable dispatcher state into a fresh loop: restart cannot
 	// authorize another blocker continuation.
-	restored := NewResponderLoop(request, nil, nil, nil, PlanExecutor{}, 4)
+	restored := NewResponderLoop(request, nil, nil, nil, PlanExecutor{}, 2)
 	restarted := d
 	restarted.LoopFactory = func(IncidentRequest) *ResponderLoop { return restored }
 	verification := loop.VerifyResult(ctx, completedResult(request.IncidentID))
@@ -148,47 +171,80 @@ assert len(prompt)<=1500, len(prompt)
 	if controller.closureReceipt == nil || controller.closureReceipt.OutcomeCommit == "" || controller.closureFailure != nil {
 		t.Fatalf("unconfirmed closure missing receipt: %+v %+v", controller.closureReceipt, controller.closureFailure)
 	}
+	if _, err := closeAndReflect(t, ctx, native, *controller.pendingClosure); err != nil {
+		t.Fatal(err)
+	}
+	ledger, err := native.readLedger(request.IncidentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reflections != 1 || !ledger.GetReflectionProcessed() || ledger.GetOutcomeDocument().GetClassification() != "unconfirmed" {
+		t.Fatalf("unconfirmed outcome did not reach reflection: calls=%d ledger=%v", reflections, ledger)
+	}
 }
 
 func TestUnconfirmedVerificationClosesWithReceiptAtBound(t *testing.T) {
 	for _, status := range []DetectorEvaluationStatus{DetectorEvaluationPending, DetectorEvaluationError} {
+		for _, unavailable := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/snapshot-unavailable=%v", status, unavailable), func(t *testing.T) {
+				now := time.Unix(1000, 0).UTC()
+				cfg := testControllerConfig()
+				cfg.VerificationTimeout = 30 * time.Second
+				snapshot := sdktest.Snapshot{}
+				c, err := NewController(cfg, nil, staticProvider{snapshot: snapshot}, &recordingDispatcher{}, now)
+				if err != nil {
+					t.Fatal(err)
+				}
+				broker := &recordingClosureBroker{}
+				if err := c.SetIncidentBroker(broker); err != nil {
+					t.Fatal(err)
+				}
+				if unavailable {
+					c.provider = failingSnapshotProvider{}
+				}
+				c.now = func() time.Time { return now }
+				request := goldenRequest(t)
+				request.ResponseDeadline = now.Add(time.Hour)
+				c.currentIncidentRequest = &request
+				result := completedResult(request.IncidentID)
+				c.currentIncidentResult = &result
+				c.incidentOpen, c.responderDone = true, true
+				c.responderCompletedAt = now
+				c.healthDetectorIDs = []string{"health"}
+				c.history = []DetectorEvaluation{{DetectorID: "health", Status: status, Reason: "window incomplete", Error: "observer unavailable", EvaluatedAt: now}}
+				c.maybeCloseIncident(context.Background(), now, nil)
+				if c.pendingClosure != nil {
+					t.Fatal("closed before verification bound")
+				}
+				now = now.Add(cfg.VerificationTimeout)
+				c.maybeCloseIncident(context.Background(), now, nil)
+				if c.pendingClosure == nil || c.pendingClosure.UnconfirmedReason == contracts.ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_UNSPECIFIED || !strings.Contains(c.pendingClosure.UnconfirmedDetail, "health") {
+					t.Fatalf("missing typed unconfirmed closure: %+v", c.pendingClosure)
+				}
+				executeRecheck(t, c)
+				awaitBrokerResult(t, c.closureResults)
+				c.processBrokerCompletions()
+				if c.closureReceipt == nil || c.closureReceipt.OutcomeCommit == "" || c.closureFailure != nil {
+					t.Fatalf("closure has no receipt or retired OwnerLost: receipt=%+v failure=%+v", c.closureReceipt, c.closureFailure)
+				}
+			})
+		}
+	}
+}
+
+func TestIncidentDetectorRequiresClearEvaluationForHealthyClosure(t *testing.T) {
+	for _, status := range []DetectorEvaluationStatus{DetectorEvaluationPending, DetectorEvaluationError, DetectorEvaluationFiring, DetectorEvaluationClear} {
 		t.Run(string(status), func(t *testing.T) {
-			now := time.Unix(1000, 0).UTC()
-			cfg := testControllerConfig()
-			cfg.VerificationTimeout = 30 * time.Second
-			snapshot := sdktest.Snapshot{}
-			c, err := NewController(cfg, nil, staticProvider{snapshot: snapshot}, &recordingDispatcher{}, now)
+			now := time.Unix(1000, 0)
+			c, err := NewController(testControllerConfig(), nil, staticProvider{snapshot: sdktest.Snapshot{}}, &recordingDispatcher{}, now)
 			if err != nil {
 				t.Fatal(err)
 			}
-			broker := &recordingClosureBroker{}
-			if err := c.SetIncidentBroker(broker); err != nil {
-				t.Fatal(err)
-			}
-			c.now = func() time.Time { return now }
 			request := goldenRequest(t)
-			request.ResponseDeadline = now.Add(time.Hour)
 			c.currentIncidentRequest = &request
-			result := completedResult(request.IncidentID)
-			c.currentIncidentResult = &result
-			c.incidentOpen, c.responderDone = true, true
-			c.responderCompletedAt = now
-			c.healthDetectorIDs = []string{"health"}
-			c.history = []DetectorEvaluation{{DetectorID: "health", Status: status, Reason: "window incomplete", Error: "observer unavailable", EvaluatedAt: now}}
-			c.maybeCloseIncident(context.Background(), now, snapshot)
-			if c.pendingClosure != nil {
-				t.Fatal("closed before verification bound")
-			}
-			now = now.Add(cfg.VerificationTimeout)
-			c.maybeCloseIncident(context.Background(), now, snapshot)
-			if c.pendingClosure == nil || c.pendingClosure.UnconfirmedReason == contracts.ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_UNSPECIFIED || !strings.Contains(c.pendingClosure.UnconfirmedDetail, "health") {
-				t.Fatalf("missing typed unconfirmed closure: %+v", c.pendingClosure)
-			}
-			executeRecheck(t, c)
-			awaitBrokerResult(t, c.closureResults)
-			c.processBrokerCompletions()
-			if c.closureReceipt == nil || c.closureReceipt.OutcomeCommit == "" || c.closureFailure != nil {
-				t.Fatalf("closure has no receipt or retired OwnerLost: receipt=%+v failure=%+v", c.closureReceipt, c.closureFailure)
+			c.history = []DetectorEvaluation{{DetectorID: request.Findings[0].DetectorID, Status: status, Reason: "window incomplete", EvaluatedAt: now}}
+			if states, healthy := c.finalVerificationStates(); healthy != (status == DetectorEvaluationClear) {
+				t.Fatalf("non-clear incident detector supplied health authority: %+v", states)
 			}
 		})
 	}

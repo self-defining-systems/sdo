@@ -1763,7 +1763,7 @@ def publish_deferred_receipts(state_path: Path, results_root: Path) -> list[Path
             target = run_dir / source.relative_to(entry.staging_dir)
             target.parent.mkdir(parents=True, exist_ok=True)
             temporary = target.with_suffix(target.suffix + ".tmp")
-            if source in sources:
+            if source in sources and source.name != "sdo-controller-state.json":
                 text = source.read_text(encoding="utf-8").replace(entry.staging_dir.name, run_dir.parent.name)
                 temporary.write_text(text, encoding="utf-8")
             else:

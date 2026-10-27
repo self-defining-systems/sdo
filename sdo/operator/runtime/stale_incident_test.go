@@ -486,7 +486,11 @@ func ownerlessIncidentState(t *testing.T, responderDone bool) (ControllerConfig,
 		state.ResponderDone = true
 		state.DispatchState = contracts.DispatchState_DISPATCH_STATE_COMPLETED
 		state.ResponderCompletedAt = contractTimestamp(completed)
-		return config, state, completed.Add(controller.config.VerificationTimeout + ownerLostGrace)
+		bound := completed.Add(controller.config.VerificationTimeout)
+		if response := state.IncidentRequest.ResponseDeadline.AsTime(); response.Before(bound) {
+			bound = response
+		}
+		return config, state, bound
 	}
 	state.DispatchState = contracts.DispatchState_DISPATCH_STATE_RUNNING
 	return config, state, state.GetIncidentRequest().GetResponseDeadline().AsTime().Add(ownerLostGrace)

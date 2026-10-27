@@ -59,6 +59,7 @@ type Event struct {
 	NonRetryable        bool
 	// UnconfirmedReason is required for Unconfirmed events.
 	UnconfirmedReason contracts.ClosureUnconfirmedReason
+	UnconfirmedStates []*contracts.DetectorEvaluation
 }
 
 type EffectKind uint8
@@ -134,6 +135,9 @@ func Step(state *contracts.ControllerState, event Event) (*contracts.ControllerS
 			return next, nil
 		}
 		pending.PartialDetectorStates = append(pending.PartialDetectorStates, pending.FinalDetectorStates...)
+		for _, state := range event.UnconfirmedStates {
+			pending.PartialDetectorStates = append(pending.PartialDetectorStates, proto.Clone(state).(*contracts.DetectorEvaluation))
+		}
 		pending.FinalDetectorStates = nil
 		pending.UnconfirmedReason = event.UnconfirmedReason
 		pending.UnconfirmedDetail = event.Error

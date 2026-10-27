@@ -1279,13 +1279,18 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 		}
 	}
 	defer release()
+	var snapshotErr error
 	if snapshot == nil {
-		var err error
-		snapshot, err = c.provider.Snapshot(ctx)
-		if err != nil {
+		snapshot, snapshotErr = c.provider.Snapshot(ctx)
+		if snapshotErr != nil {
 			c.resetEarlyStability()
-			c.reportBrokerError("verify observation scope", err)
-			return
+			c.reportBrokerError("verify observation scope", snapshotErr)
+			c.mu.Lock()
+			bounded := c.responderDone && !now.Before(c.verificationDeadlineLocked())
+			c.mu.Unlock()
+			if !bounded {
+				return
+			}
 		}
 	}
 	generation := observationGeneration(snapshot)
@@ -1302,7 +1307,10 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 			}
 		}
 	}
-	source := c.verifyClosureSource(ctx, now, snapshot, nil, rolloutRefs...)
+	source := closureSourceReport{}
+	if snapshotErr == nil {
+		source = c.verifyClosureSource(ctx, now, snapshot, nil, rolloutRefs...)
+	}
 	c.mu.Lock()
 	// Any observed responder write restarts the stability window, including
 	// the last writes before the responder finished.
@@ -1314,6 +1322,9 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 		}
 	}
 	finalStates, healthVerified := c.finalVerificationStates()
+	if snapshotErr != nil {
+		finalStates, healthVerified = nil, false
+	}
 	if early && healthVerified && !c.earlyLastMutationAt.IsZero() {
 		ids := c.healthDetectorIDs
 		if len(ids) == 0 {
@@ -1336,6 +1347,13 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 		slog.Info("incident_terminal_dispatch_failure", "incident_id", c.currentIncidentRequest.IncidentID, "reason", "responder_job_failed", "active_health_detectors", c.activeHealthDetectors())
 	}
 	verification := c.continuationVerificationLocked(healthVerified, source)
+	if snapshotErr != nil {
+		verification.Error = "verification snapshot unavailable: " + snapshotErr.Error()
+		verification.Summary += "; " + verification.Error
+		for _, state := range verification.DetectorStates {
+			verification.VerificationBlockers = append(verification.VerificationBlockers, VerificationBlocker{DetectorID: state.DetectorID, Reason: verification.Error})
+		}
+	}
 	if early {
 		seen := map[string]bool{}
 		for _, finding := range verification.Findings {
@@ -1434,8 +1452,8 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 	}
 	if !verified {
 		// One timeout bounds how long a stuck incident can block the stream. It
-		// closes as a normal failed incident: with no final detector states
-		// the outcome is never health-verified.
+		// closes with a receipt: failed for actionable findings, unconfirmed
+		// for incomplete observations, and never health-verified.
 		if !terminalFailure && now.Before(c.verificationDeadlineLocked()) {
 			c.mu.Unlock()
 			return
@@ -1645,7 +1663,7 @@ func (c *Controller) finalVerificationStates() ([]DetectorEvaluation, bool) {
 			}
 		}
 		sort.Strings(ids)
-		return c.latestEvaluations(ids, time.Time{}, false)
+		return c.latestEvaluations(ids, time.Time{}, true)
 	}
 	for _, detectorID := range c.healthDetectorIDs {
 		if c.tracker.HasActiveDetector(detectorID) {

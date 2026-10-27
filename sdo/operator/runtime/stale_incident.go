@@ -179,13 +179,13 @@ func (c *Controller) incidentRetirementDueLocked(workActiveCheckable bool) (reti
 	}
 	switch {
 	case c.responderDone:
-		// Verification closes within VerificationTimeout while a controller
-		// observes; an incident still open past it has lost that owner.
+		// A harvested result belongs to the live controller, including after
+		// restart or during maintenance. Wake its closure at the verification
+		// bound; retireExpiredIncident drives it rather than archiving it.
 		if c.responderCompletedAt.IsZero() {
 			return retirement{}, time.Time{}, false
 		}
-		return retirement{lifecyclecore.OwnerLost, "responder finished but no closure began within the verification bound; no live incident work"},
-			c.responderCompletedAt.Add(c.config.VerificationTimeout + ownerLostGrace), true
+		return retirement{}, c.verificationDeadlineLocked(), true
 	case c.dispatchState == contracts.DispatchState_DISPATCH_STATE_RUNNING || c.dispatchState == contracts.DispatchState_DISPATCH_STATE_WORKSPACE_RUNNING:
 		if !workActiveCheckable {
 			return retirement{}, time.Time{}, false

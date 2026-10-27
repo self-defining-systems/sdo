@@ -127,7 +127,7 @@ func (d KubernetesJobDispatcher) continueResponder(ctx context.Context, executor
 		} else if noProgress {
 			result.Status = IncidentFailed
 			result.Error = "no_progress"
-		} else if exhausted {
+		} else if exhausted && !observationOnly {
 			result.Status = IncidentFailed
 			result.ResponseLoopExhausted = true
 			result.Error = "response deadline or loop budget exhausted with unresolved findings"
@@ -458,8 +458,8 @@ func continuationFeedback(attempt int, verification ToolResponse, repairs ...con
 }
 
 // Caller holds c.mu. Closure drift has already been freshly checked against
-// accepted source. Health samples must be fresh before closure, but waiting for
-// that observation must not reset responderCompletedAt or consume another Job.
+// accepted source. Old clear samples await freshness without another Job;
+// named incomplete observations allow one bounded continuation.
 func (c *Controller) continuationVerificationLocked(healthVerified bool, source closureSourceReport) ToolResponse {
 	result := ToolResponse{Command: "verify", Healthy: healthVerified && len(source.Rollouts) == 0, Findings: append([]sdk.Finding(nil), source.Rollouts...), Drift: append([]sdk.Finding(nil), source.Drift...)}
 	ids := append([]string(nil), c.healthDetectorIDs...)
@@ -486,10 +486,14 @@ func (c *Controller) continuationVerificationLocked(healthVerified bool, source 
 			}
 		}
 		if latest == nil || latest.Status == DetectorEvaluationPending || (len(c.healthDetectorIDs) > 0 && latest.EvaluatedAt.Before(c.responderCompletedAt)) {
-			description := id
-			if latest != nil && latest.Reason != "" {
-				description += ": " + latest.Reason
+			reason := "awaiting detector evaluation"
+			if latest != nil {
+				reason = latest.Reason
+				if reason == "" {
+					reason = "awaiting clearing confirmation or a fresh post-response evaluation"
+				}
 			}
+			description := id + ": " + reason
 			pending = append(pending, description)
 			// Old clear samples need only a fresh observation; a pending or
 			// absent detector names an actual verification blocker.

@@ -898,7 +898,12 @@ def test_deferred_receipts_are_published_into_the_run_the_harness_already_publis
     state_path = tmp_path / "sdo_persistent_controller.json"
 
     assert teardown(state_path, ops=ops, clock=_clock(ops)) == []
+    snapshot = staging / "sdo-controller-state.json"
+    snapshot.parent.mkdir(parents=True, exist_ok=True)
+    snapshot.write_text('{"incident_id":"incident-1","path":"anon_abc"}\n')
+    snapshot_bytes = snapshot.read_bytes()
     published = publish_deferred_receipts(state_path, tmp_path / "pipeline")
+    assert (run_dir / "sdo-controller-state.json").read_bytes() == snapshot_bytes
 
     receipt_path = run_dir / STRICT_RECEIPT_FILENAME
     assert receipt_path in published
@@ -1683,3 +1688,39 @@ def test_verified_incident_records_the_controllers_bound_on_the_queue_it_waits_b
     verified = _wait_for_verified_incident(ops, "hotel-sdo", set(), 30.0, Clock(sleep=lambda _s: None))
     assert verified.incident_id == "incident-1"
     assert verified.busy_until == datetime(2026, 10, 26, 1, 0, tzinfo=timezone.utc)
+
+
+@pytest.mark.parametrize("raises", [False, True])
+def test_missing_receipt_preserves_controller_state_and_logs(tmp_path: Path, raises: bool) -> None:
+    class MissingReceiptOps(FakeOps):
+        def collect_receipt(self, config: RuntimeConfig, incident_id: str, artifacts_dir: Path) -> dict[str, Any]:
+            if raises:
+                raise RuntimeError("native receipt missing")
+            return {}
+
+    ops = MissingReceiptOps()
+    _run(tmp_path, ops, "s0", [])
+    ops.reflectable.add("incident-1")
+    record = PersistentState.load(tmp_path / "sdo_persistent_controller.json").controllers["hotel"]
+    if raises:
+        with pytest.raises(RuntimeError, match="native receipt missing"):
+            drain_pending_incident(record, ops=ops, repository=tmp_path, drained_by="test", clock=_clock(ops))
+    else:
+        drained = drain_pending_incident(record, ops=ops, repository=tmp_path, drained_by="test", clock=_clock(ops))
+        assert drained.HasField("failure")
+    assert record.pending is not None
+    directory = record.pending.receipt_dir
+    state = json.loads((directory / "sdo-controller-state.json").read_text())
+    assert state["last_acknowledged_incident_id"] == "incident-1"
+    assert (directory / "sdo_runtime/controller_logs/sdo-controller-run-1.log").is_file()
+
+
+def test_unreadable_failure_state_still_exports_controller_log(tmp_path: Path) -> None:
+    from benchmarks.sregym.adapter import export_closure_failure_evidence
+
+    class UnreadableStateOps(FakeOps):
+        def runtime_state(self, control_namespace: str) -> dict[str, Any]:
+            raise RuntimeError("state read unavailable")
+
+    export_closure_failure_evidence(UnreadableStateOps(), "hotel-sdo", tmp_path)
+    assert (tmp_path / "sdo_runtime/controller_logs/sdo-controller-run-1.log").is_file()
