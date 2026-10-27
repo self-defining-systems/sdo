@@ -734,7 +734,10 @@ def test_scripted_fastloop_reuses_reflected_target_port_program(
             # The fake controller's install is already onboarded when admission starts.
             record = {"acceptedCommit": "a" * 40, "objects": [{"kind": "Deployment"}]}
             result = {"data": {"onboarding.json": json.dumps(record)}}
-        elif args[:2] == ["get", "configmap/sdo-namespace-onboarding-pending"]:
+        elif args[:2] in (
+            ["get", "configmap/sdo-namespace-onboarding-pending"],
+            ["get", "configmap/sdo-namespace-onboarding-rejected"],
+        ):
             return SimpleNamespace(stdout="")
         elif args[0] == "exec":
             result = {
