@@ -777,6 +777,7 @@ def _run(args: argparse.Namespace) -> int:
     grader = SregymDiagnosisGrader(environment.sregym_dir, judge_model_id) if grading_mode != "off" else None
     problems = tuple(args.problem or [environment.deploy_problem]) if not stream else tuple(ids[0] for ids in stream)
     from benchmarks.sregym.fastloop.fault_tracker import describe_sregym_problems, stream_faults
+    from benchmarks.sregym.fastloop.lane_guard import LaneGuard, assert_faults_installable
     from benchmarks.sregym.faults.description import check_composites, validate_suite
 
     # Discovery and capability checks must finish before a worker can deploy or launch an agent.
@@ -788,6 +789,9 @@ def _run(args: argparse.Namespace) -> int:
         else {}
     )
     check_composites(descriptions)
+    assert_faults_installable(
+        descriptions, environment.sregym_dir, LaneGuard(environment.cluster, environment.kubeconfig, "row-start")
+    )
     capability_mode = stream_config.capability_mode if stream_config else "strict"
     capability_evidence = validate_suite(
         descriptions if args.agent == "sdo" else {},
