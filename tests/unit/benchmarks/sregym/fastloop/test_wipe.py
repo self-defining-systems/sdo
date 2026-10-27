@@ -4,22 +4,30 @@ from __future__ import annotations
 
 import json
 import subprocess
+from datetime import datetime, timezone
+from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
 import pytest
 
 from benchmarks.sregym.adapter import allowed_namespaces
+from benchmarks.sregym.fastloop.records import Injected, NotInjected
 from benchmarks.sregym.fastloop.wipe import (
     AttemptMarker,
+    Tier2Reason,
+    Tier2Trigger,
     WipeError,
+    await_healthy_pods,
     credentials_hook,
     inventory_path,
     load_inventory,
+    pod_problems,
     reseed_workspace,
     run_tier1,
     run_tier2,
     save_inventory,
     tier2_reason,
+    unrecovered_rows,
 )
 
 if TYPE_CHECKING:
@@ -234,51 +242,224 @@ def test_the_credentials_hook_gets_the_namespace_and_lane_never_a_value(tmp_path
 # Tier 2
 
 
-def test_tier_2_keeps_the_warm_app_when_the_attempt_was_clean_and_the_invariant_holds(tmp_path: Path) -> None:
-    marker = AttemptMarker(tmp_path)
-    assert tier2_reason(marker, lambda: None) is None
-    redeployed: list[str] = []
-    receipt = run_tier2(None, lambda: redeployed.append("x"), _receipt())
-    assert (redeployed, receipt.tier2_ran, receipt.tier2_seconds) == ([], False, 0.0)
+def tier2(lane: FakeLane, reason, *, deploy=None, namespaces=(APP,), clock=None):
+    """Run tier 2 against the fake lane; ``deploy`` stands in for the app deploy and sees the lane as left."""
+    deployed: list[dict[str, set[str]]] = []
+
+    def default_deploy() -> None:
+        deployed.append({name: set(items) for name, items in lane.contents.items()})
+        lane.contents[APP] = {"pvc/mongodb-geo", "pod/geo"}
+
+    receipt = run_tier2(
+        reason,
+        _receipt(),
+        cluster=lane,
+        namespaces=namespaces,
+        deploy=deploy or default_deploy,
+        timeout_seconds=30,
+        poll_seconds=0,
+        sleep=lambda _seconds: None,
+        **({"clock": clock} if clock else {}),
+    )
+    return receipt, deployed
 
 
-def test_tier_2_redeploys_after_an_unclean_attempt(tmp_path: Path) -> None:
+def faulted_lane() -> FakeLane:
+    """The hotel app whose geo database holds the injected user fault inside its PVC."""
+    return lane_with({APP: {"pvc/mongodb-geo", "data/mongodb-geo/user-unregistered", "pod/geo"}})
+
+
+def test_tier_2_keeps_the_warm_app_when_the_attempt_was_clean_and_the_app_is_healthy(tmp_path: Path) -> None:
     marker = AttemptMarker(tmp_path)
-    marker.begin()  # the attempt died: end_cleanly never ran
-    assert AttemptMarker(tmp_path).unclean()
-    reason = tier2_reason(AttemptMarker(tmp_path), lambda: pytest.fail("a known-unclean app is not probed"))
-    assert reason == "previous attempt did not end cleanly"
-    redeployed: list[str] = []
-    receipt = run_tier2(reason, lambda: redeployed.append("x"), _receipt())
-    assert redeployed == ["x"]
+    marker.begin()
+    marker.end([])
+    assert tier2_reason(marker, lambda: None, list) is None
+    lane = faulted_lane()
+    receipt, deployed = tier2(lane, None)
+    assert (deployed, receipt.tier2_ran, receipt.tier2_seconds, receipt.tier2_trigger) == ([], False, 0.0, None)
+    assert lane.has(APP, "data/mongodb-geo/user-unregistered")
+    assert lane.deleted == []
+
+
+def test_tier_2_recreates_the_namespace_and_its_data_after_an_unrecovered_row(tmp_path: Path) -> None:
+    marker = AttemptMarker(tmp_path)
+    marker.begin()
+    marker.end(["hr-c/001"])  # the row was injected and the harness recovery was not verified
+    reason = tier2_reason(
+        AttemptMarker(tmp_path),
+        lambda: pytest.fail("a known-unrecovered app is not probed"),
+        lambda: pytest.fail("a known-unrecovered app is not probed"),
+    )
+    assert reason is not None
+    assert reason.trigger is Tier2Trigger.PREVIOUS_ROW_UNRECOVERED
+    assert "hr-c/001" in reason.detail
+    lane = faulted_lane()
+    receipt, deployed = tier2(lane, reason)
+    assert f"namespace/{APP}" in lane.deleted
+    assert len(deployed) == 1
+    assert APP not in deployed[0], "the deploy sees no app namespace: its PVC and the fault state are gone"
+    assert CONTROL in deployed[0], "only the application is recreated"
+    assert not lane.has(APP, "data/mongodb-geo/user-unregistered")
+    assert lane.has(APP, "pvc/mongodb-geo")  # a fresh PVC from the deploy
     assert receipt.tier2_ran
-    assert receipt.tier2_reason == reason
+    assert receipt.tier2_trigger == "previous_row_unrecovered"
+
+
+def test_tier_2_recreates_the_namespace_when_a_pod_stays_unhealthy_after_the_restore(tmp_path: Path) -> None:
+    reason = tier2_reason(
+        AttemptMarker(tmp_path),
+        lambda: None,
+        lambda: ["hotel-reservation/geo-5d9f (CrashLoopBackOff)"],
+    )
+    assert reason is not None
+    assert reason.trigger is Tier2Trigger.PODS_UNHEALTHY
+    assert "geo-5d9f" in reason.detail
+    lane = faulted_lane()
+    receipt, _ = tier2(lane, reason)
+    assert not lane.has(APP, "data/mongodb-geo/user-unregistered")
+    assert receipt.tier2_trigger == "pods_unhealthy"
+
+
+def test_tier_2_fails_closed_when_the_app_namespace_cannot_be_removed() -> None:
+    lane = faulted_lane()
+    lane.lag = 10**9  # stuck terminating
+    ticks = iter(range(0, 1000, 20))
+    reason = Tier2Reason(Tier2Trigger.PODS_UNHEALTHY, "x")
+    with pytest.raises(WipeError, match=f"namespace/{APP}"):
+        tier2(lane, reason, clock=lambda: next(ticks))
+
+
+def test_a_pod_that_recovers_within_the_bound_does_not_trigger_tier_2() -> None:
+    answers = iter([["a/x (Pending)"], ["a/x (Pending)"], []])
+    clock = iter(range(100))
+    assert (
+        await_healthy_pods(
+            lambda: next(answers),
+            timeout_seconds=30,
+            poll_seconds=0,
+            clock=lambda: next(clock),
+            sleep=lambda _seconds: None,
+        )
+        == []
+    )
+
+
+def test_a_pod_that_stays_unhealthy_is_reported_when_the_bound_ends() -> None:
+    clock = iter(range(0, 1000, 10))
+    stuck = await_healthy_pods(
+        lambda: ["a/x (CrashLoopBackOff)"],
+        timeout_seconds=30,
+        poll_seconds=0,
+        clock=lambda: next(clock),
+        sleep=lambda _seconds: None,
+    )
+    assert stuck == ["a/x (CrashLoopBackOff)"]
+
+
+def pod(name: str, phase: str, ready: bool, *, waiting: str | None = None, owner: str | None = None, deleting=False):
+    status = {"ready": ready, "state": {"waiting": {"reason": waiting}} if waiting else {"running": {}}}
+    metadata: dict = {"name": name, "namespace": APP}
+    if owner:
+        metadata["ownerReferences"] = [{"kind": owner}]
+    if deleting:
+        metadata["deletionTimestamp"] = "2026-10-27T00:00:00Z"
+    return {
+        "metadata": metadata,
+        "status": {
+            "phase": phase,
+            "conditions": [{"type": "Ready", "status": "True" if ready else "False"}],
+            "containerStatuses": [status],
+        },
+    }
+
+
+def test_pod_problems_names_pods_that_are_not_ready_and_ignores_finished_jobs_and_terminating_pods() -> None:
+    listing = {
+        "items": [
+            pod("frontend", "Running", True),
+            pod("geo", "Running", False, waiting="CrashLoopBackOff"),
+            pod("search", "Pending", False),
+            pod("migrate", "Succeeded", False, owner="Job"),
+            pod("old", "Running", False, deleting=True),
+        ]
+    }
+    assert pod_problems(listing) == [f"{APP}/geo (CrashLoopBackOff)", f"{APP}/search (Pending)"]
+
+
+def test_unrecovered_rows_name_injected_rows_without_verified_recovery() -> None:
+    now = datetime(2026, 10, 27, tzinfo=timezone.utc)
+
+    def record(index: int, injection, **fields):
+        return SimpleNamespace(index=index, problem_id=f"p{index}", injection=injection, **fields)
+
+    injected = Injected(started_at=now, finished_at=now)
+    recovered = {"recovery_error": None, "full_cleanup_verified": True}
+    records = [
+        record(0, injected, **recovered),
+        record(1, injected, recovery_error=None, full_cleanup_verified=False),
+        record(2, injected, recovery_error="geo crash", full_cleanup_verified=False),
+        record(3, NotInjected(stage="injection"), recovery_error=None, full_cleanup_verified=False),
+        record(4, NotInjected(stage="pre_injection"), recovery_error=None, full_cleanup_verified=False),
+    ]
+    assert unrecovered_rows(records) == ("p1", "p2", "p3")
+
+
+def test_tier_2_end_to_end_marker_to_receipt_for_the_incident_that_left_database_state(tmp_path: Path) -> None:
+    """The real marker (written by the run that ended) feeds the real decision, tier 2 and the receipt file."""
+    now = datetime(2026, 10, 27, tzinfo=timezone.utc)
+    row = SimpleNamespace(
+        index=1,
+        problem_id="mongodb_user_unregistered",
+        injection=Injected(started_at=now, finished_at=now),
+        recovery_error="geo unhealthy",
+        full_cleanup_verified=False,
+    )
+    ended = AttemptMarker(tmp_path / "lane")
+    ended.begin()
+    ended.end(unrecovered_rows([row]))
+    reason = tier2_reason(AttemptMarker(tmp_path / "lane"), lambda: None, list)
+    lane = faulted_lane()
+    receipt, _ = tier2(lane, reason)
+    document = json.loads(receipt.write(tmp_path / "results").read_text())
+    assert document["tier2_trigger"] == "previous_row_unrecovered"
+    assert "mongodb_user_unregistered" in document["tier2_reason"]
+    assert not lane.has(APP, "data/mongodb-geo/user-unregistered")
+
+
+def test_a_dead_attempt_leaves_the_marker_and_forces_tier_2(tmp_path: Path) -> None:
+    AttemptMarker(tmp_path).begin()  # the attempt died: end never ran
+    reason = tier2_reason(AttemptMarker(tmp_path), lambda: None, list)
+    assert reason is not None
+    assert reason.trigger is Tier2Trigger.UNCLEAN_ATTEMPT
 
 
 def test_tier_2_redeploys_when_the_restore_invariant_fails(tmp_path: Path) -> None:
     def invariant() -> None:
         raise ValueError("restore invariant: workload not Ready: Deployment/frontend (ready 0/1)")
 
-    reason = tier2_reason(AttemptMarker(tmp_path), invariant)
+    reason = tier2_reason(AttemptMarker(tmp_path), invariant, lambda: pytest.fail("the invariant already failed"))
     assert reason is not None
-    assert reason.startswith("restore invariant failed")
+    assert reason.trigger is Tier2Trigger.RESTORE_INVARIANT
+    assert "workload not Ready" in reason.detail
 
 
-def test_a_clean_end_clears_the_marker(tmp_path: Path) -> None:
-    marker = AttemptMarker(tmp_path)
-    marker.begin()
-    marker.end_cleanly()
-    assert tier2_reason(marker, lambda: None) is None
+def test_the_receipt_records_tier_seconds_and_trigger(tmp_path: Path) -> None:
+    now = [0.0]
 
+    def slow_deploy() -> None:
+        now[0] = 7.5
 
-def test_the_receipt_records_tier_seconds(tmp_path: Path) -> None:
-    clock = iter([0.0, 7.5])
-    receipt = run_tier2("restore invariant failed: x", lambda: None, _receipt(), clock=lambda: next(clock))
-    path = receipt.write(tmp_path / "results")
-    document = json.loads(path.read_text())
+    receipt, _ = tier2(
+        faulted_lane(),
+        Tier2Reason(Tier2Trigger.RESTORE_INVARIANT, "x"),
+        deploy=slow_deploy,
+        clock=lambda: now[0],
+    )
+    document = json.loads(receipt.write(tmp_path / "results").read_text())
     assert document["tier1_seconds"] == 12.0
     assert document["tier2_ran"] is True
     assert document["tier2_seconds"] == 7.5
+    assert document["tier2_trigger"] == "restore_invariant"
 
 
 def _receipt():
