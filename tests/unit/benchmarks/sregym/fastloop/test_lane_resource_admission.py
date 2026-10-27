@@ -636,7 +636,9 @@ def test_eval_wait_ends_at_once_on_a_controller_whose_findings_are_active_but_ow
     The wait must not follow finding states; it passes at the first read instead of running to a backstop.
     """
     sample = json.loads(ACTIVE_FINDINGS_STATE.read_text())[0]["state"]
-    assert any(f["active"] for f in sample["finding_states"].values()), "the recorded export must hold an active finding"
+    assert any(f["active"] for f in sample["finding_states"].values()), (
+        "the recorded export must hold an active finding"
+    )
     gate, _ = lane
     now = fake_time(gate, monkeypatch)
     gate.ops = SimpleNamespace(runtime_state=lambda _control: sample)
