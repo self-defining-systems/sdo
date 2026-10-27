@@ -149,7 +149,7 @@ func (e PlanExecutor) applyGeneralPlan(ctx context.Context, incident IncidentReq
 		}
 	}
 	complete = true
-	if pending, waitErr := e.waitForRollouts(ctx, incident, refs); waitErr != nil {
+	if pending, waitErr := e.waitAfterSourceWrites(ctx, incident, &result, refs); waitErr != nil {
 		result.RolloutPending = pending
 		return result, waitErr
 	}

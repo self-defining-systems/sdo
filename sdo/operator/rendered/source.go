@@ -58,20 +58,38 @@ func (s Source) rawManifests(ctx context.Context, revision, namespace string, qu
 	if s.Repository == "" || !gitRevision.MatchString(revision) || namespace == "" {
 		return nil, fmt.Errorf("accepted repository, full commit revision, and namespace are required")
 	}
-	files, err := exec.CommandContext(ctx, "git", "-C", s.Repository, "ls-tree", "-r", "--name-only", revision).Output()
+	files, err := exec.CommandContext(ctx, "git", "-C", s.Repository, "ls-tree", "-r", "-z", revision).Output()
 	if err != nil {
 		return nil, fmt.Errorf("list manifests at %s: %w", revision, err)
 	}
-	paths, err := SelectManifestPaths(strings.Fields(string(files)), s.ManifestPaths)
+	available := []string{}
+	regular := map[string]bool{}
+	for _, entry := range strings.Split(string(files), "\x00") {
+		header, name, ok := strings.Cut(entry, "\t")
+		if !ok {
+			continue
+		}
+		available = append(available, name)
+		regular[name] = strings.HasPrefix(header, "100644 ") || strings.HasPrefix(header, "100755 ")
+	}
+	paths, err := SelectManifestPaths(available, s.ManifestPaths)
 	if err != nil {
 		return nil, err
 	}
 	objects := make([]*unstructured.Unstructured, 0)
 	seen := map[sdk.ObjectRef]bool{}
+	totalBytes := 0
 	read := func(ctx context.Context, name string) ([]byte, error) {
+		if !regular[name] {
+			return nil, fmt.Errorf("accepted input %s is not a tracked regular file", name)
+		}
 		data, err := exec.CommandContext(ctx, "git", "-C", s.Repository, "show", revision+":"+name).Output()
 		if err != nil || len(data) > 2<<20 {
 			return nil, fmt.Errorf("accepted input %s unavailable or exceeds 2 MiB", name)
+		}
+		totalBytes += len(data)
+		if totalBytes > 16<<20 {
+			return nil, fmt.Errorf("accepted render inputs exceed 16 MiB")
 		}
 		return data, nil
 	}
@@ -80,13 +98,16 @@ func (s Source) rawManifests(ctx context.Context, revision, namespace string, qu
 	roots := map[string]string{}
 	for _, file := range paths {
 		if path.Base(file) == "kustomization.yaml" || path.Base(file) == "kustomization.yml" || path.Base(file) == "Kustomization" {
+			if roots[path.Dir(file)] != "" {
+				return nil, fmt.Errorf("multiple accepted kustomizations in %s", path.Dir(file))
+			}
 			roots[path.Dir(file)] = file
 		}
 	}
 	for _, file := range paths {
 		covered := false
 		for dir, root := range roots {
-			if file != root && strings.HasPrefix(file, dir+"/") {
+			if file != root && (dir == "." || strings.HasPrefix(file, dir+"/")) {
 				covered = true
 				break
 			}
@@ -111,7 +132,7 @@ func (s Source) rawManifests(ctx context.Context, revision, namespace string, qu
 			if err := decoder.Decode(&document); err == io.EOF {
 				break
 			} else if err != nil {
-				return nil, fmt.Errorf("decode accepted manifest %s: %w", path, err)
+				return nil, fmt.Errorf("decode accepted manifest %s failed", path)
 			}
 			// Unstructured values must use JSON numeric types before DeepCopy or
 			// Kubernetes conversion; YAML's native int values are not supported.

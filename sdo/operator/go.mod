@@ -8,6 +8,8 @@ require (
 	google.golang.org/protobuf v1.36.12
 	k8s.io/metrics v0.30.3
 	sdo.dev/operator/contracts v0.0.0
+	sigs.k8s.io/kustomize/api v0.17.2
+	sigs.k8s.io/kustomize/kyaml v0.17.1
 )
 
 require (
@@ -18,8 +20,6 @@ require (
 	github.com/xlab/treeprint v1.2.0 // indirect
 	go.starlark.net v0.0.0-20200306205701-8dd3e2ee1dd5 // indirect
 	gopkg.in/evanphx/json-patch.v4 v4.12.0 // indirect
-	sigs.k8s.io/kustomize/api v0.17.2 // indirect
-	sigs.k8s.io/kustomize/kyaml v0.17.1 // indirect
 )
 
 require (

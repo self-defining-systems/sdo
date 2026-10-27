@@ -40,8 +40,8 @@ func TestAcceptedFileGeneratorsUseOnlyAcceptedGitAndExcludeSecrets(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(objects) != 2 {
-		t.Fatalf("wanted generated ConfigMap and Pod, got %v", objects)
+	if len(objects) != 3 {
+		t.Fatalf("wanted generated ConfigMap, Pod and Secret reference, got %v", objects)
 	}
 	cm, err := source.AcceptedManifest(context.Background(), revision, sdk.ObjectRef{APIVersion: "v1", Kind: "ConfigMap", Namespace: "app", Name: "startup"})
 	if err != nil {
@@ -86,9 +86,9 @@ func TestGeneratorInputsAreLocalBoundedAndSecretsNeverLoaded(t *testing.T) {
 		if name != "deploy/kustomization.yaml" {
 			t.Fatalf("Secret file was read: %s", name)
 		}
-		return []byte("secretGenerator:\n- name: credential\n  files: [../private/password]\nconfigMapGenerator:\n- name: startup\n  literals: [mode=synthetic]\n"), nil
+		return []byte("generatorOptions: {disableNameSuffixHash: true}\nsecretGenerator:\n- name: credential\n  files: [../private/password]\nconfigMapGenerator:\n- name: startup\n  literals: [mode=synthetic]\n"), nil
 	})
-	if err != nil || strings.Contains(string(data), "credential") {
+	if err != nil || strings.Contains(string(data), "password") {
 		t.Fatalf("secret generator was rendered: %s %v", data, err)
 	}
 }
@@ -111,5 +111,35 @@ func TestAcceptedSecretRemainsOnlyAnIdentityReference(t *testing.T) {
 	encoded, _ := json.Marshal(objects)
 	if strings.Contains(string(encoded), "SECRET-CANARY") {
 		t.Fatal("Secret data or metadata escaped")
+	}
+}
+
+func TestKustomizeFileGeneratorHashesRewriteConsumersAtAcceptedRevision(t *testing.T) {
+	read := func(_ context.Context, name string) ([]byte, error) {
+		inputs := map[string]string{
+			"kustomization.yaml": "resources: [pod.yaml]\nconfigMapGenerator:\n- name: startup\n  files: [init.sh]\n",
+			"init.sh":            "echo synthetic\n",
+			"pod.yaml":           "apiVersion: v1\nkind: Pod\nmetadata: {name: backend}\nspec:\n  containers: [{name: backend, image: example/backend:1}]\n  volumes:\n  - name: config\n    configMap: {name: startup}\n",
+		}
+		return []byte(inputs[name]), nil
+	}
+	data, err := renderKustomization(context.Background(), "kustomization.yaml", read)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "name: startup\n") || strings.Count(string(data), "name: startup-") != 2 {
+		t.Fatalf("generated identity and consumer were not rewritten together: %s", data)
+	}
+}
+
+func TestSecretGeneratorHashNeverRequiresReadingSecretInputs(t *testing.T) {
+	_, err := renderKustomization(context.Background(), "kustomization.yaml", func(_ context.Context, name string) ([]byte, error) {
+		if name != "kustomization.yaml" {
+			t.Fatalf("Secret input loaded to derive hash: %s", name)
+		}
+		return []byte("secretGenerator:\n- name: credential\n  files: [private/password]\n"), nil
+	})
+	if err == nil || !strings.Contains(err.Error(), "stable names") {
+		t.Fatalf("hash-dependent Secret was silently misrendered: %v", err)
 	}
 }

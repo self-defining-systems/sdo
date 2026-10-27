@@ -304,6 +304,10 @@ func (e PlanExecutor) applyRuntimePlan(ctx context.Context, incident IncidentReq
 		result.ActionReports[i].Status = "applied"
 	}
 	complete = true
+	if pending, err := e.waitAfterSourceWrites(ctx, incident, &result, nil); err != nil {
+		result.RolloutPending = pending
+		return result, err
+	}
 	passed, verifyErr := e.Verifier.Verify(ctx)
 	result.VerificationCompleted = true
 	result.VerificationPassed = passed && verifyErr == nil

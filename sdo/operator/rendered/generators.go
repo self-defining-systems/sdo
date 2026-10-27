@@ -46,10 +46,6 @@ func renderKustomization(ctx context.Context, root string, read func(context.Con
 		if err != nil {
 			return err
 		}
-		var doc map[string]any
-		if err := yaml.Unmarshal(data, &doc); err != nil {
-			return fmt.Errorf("decode generator declaration %s: %w", name, err)
-		}
 		base := path.Dir(name)
 		if path.Base(name) != "kustomization.yaml" && path.Base(name) != "kustomization.yml" && path.Base(name) != "Kustomization" {
 			// Secret manifests remain identity-only, including multi-document inputs.
@@ -74,15 +70,45 @@ func renderKustomization(ctx context.Context, root string, read func(context.Con
 			}
 			return write(name, out.Bytes())
 		}
-		allowed := map[string]bool{"apiVersion": true, "kind": true, "resources": true, "configMapGenerator": true, "secretGenerator": true, "generatorOptions": true, "namespace": true, "namePrefix": true, "nameSuffix": true, "commonLabels": true, "commonAnnotations": true}
+		var doc map[string]any
+		if err := yaml.Unmarshal(data, &doc); err != nil {
+			return fmt.Errorf("decode generator declaration %s failed", name)
+		}
+		allowed := map[string]bool{"apiVersion": true, "kind": true, "resources": true, "configMapGenerator": true, "secretGenerator": true, "generatorOptions": true, "namespace": true, "namePrefix": true, "nameSuffix": true, "commonLabels": true, "commonAnnotations": true, "images": true, "replicas": true, "labels": true}
 		for key := range doc {
 			if !allowed[key] {
 				return fmt.Errorf("unsupported accepted kustomization field %s in %s", key, name)
 			}
 		}
-		delete(doc, "secretGenerator")
 		resources, _ := doc["resources"].([]any)
-		for _, raw := range resources {
+		secrets, _ := doc["secretGenerator"].([]any)
+		globalOptions, _ := doc["generatorOptions"].(map[string]any)
+		for index, raw := range secrets {
+			generator, ok := raw.(map[string]any)
+			if !ok {
+				return fmt.Errorf("invalid Secret generator reference")
+			}
+			options, _ := generator["options"].(map[string]any)
+			if globalOptions["disableNameSuffixHash"] != true && options["disableNameSuffixHash"] != true {
+				return fmt.Errorf("accepted Secret generator requires stable names for value-free source references")
+			}
+			reference := secretReference(map[string]any{"apiVersion": "v1", "metadata": generator})
+			encoded, err := yaml.Marshal(reference)
+			if err != nil {
+				return err
+			}
+			// Virtual resources exist only in the private render filesystem, never
+			// in Git or the accepted checkout. No Secret inputs are loaded.
+			virtual := fmt.Sprintf(".sdo-secret-reference-%d.yaml", index)
+			if err := write(path.Join(base, virtual), encoded); err != nil {
+				return err
+			}
+			resources = append(resources, virtual)
+		}
+		delete(doc, "secretGenerator")
+		declaredResources, _ := doc["resources"].([]any)
+		doc["resources"] = resources
+		for _, raw := range declaredResources {
 			resource, ok := raw.(string)
 			if !ok {
 				return fmt.Errorf("invalid resource in %s", name)
