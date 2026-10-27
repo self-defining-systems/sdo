@@ -2,12 +2,8 @@ package runtime
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -17,8 +13,6 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/kubernetes/fake"
 
-	"sdo.dev/operator/broker"
-	"sdo.dev/operator/install"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
@@ -123,35 +117,12 @@ func TestHermeticAdoptedHostPortRepairLearnsAndReplays(t *testing.T) {
 		Spec:       appsv1.DeploymentSpec{Replicas: &one, Selector: &metav1.LabelSelector{MatchLabels: labelsOf}, Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: labelsOf}, Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "hotel-reserv-search", Image: "example/hotelreservation:latest", Ports: []corev1.ContainerPort{{ContainerPort: 8082, Protocol: corev1.ProtocolTCP}}}}}}},
 		Status:     appsv1.DeploymentStatus{ObservedGeneration: 1, Replicas: 1, UpdatedReplicas: 1, ReadyReplicas: 1, AvailableReplicas: 1},
 	}
-	pulled := "docker.io/example/hotelreservation@sha256:" + strings.Repeat("a", 64)
-	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "search-1", Namespace: "app", Labels: labelsOf}, Spec: live.Spec.Template.Spec, Status: corev1.PodStatus{Phase: corev1.PodRunning, ContainerStatuses: []corev1.ContainerStatus{{Name: "hotel-reserv-search", Image: "example/hotelreservation:latest", ImageID: pulled, Ready: true}}}}
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "search-1", Namespace: "app", Labels: labelsOf}, Spec: live.Spec.Template.Spec, Status: corev1.PodStatus{Phase: corev1.PodRunning, ContainerStatuses: []corev1.ContainerStatus{{Name: "hotel-reserv-search", Image: "example/hotelreservation:latest", Ready: true}}}}
 	client := fake.NewSimpleClientset(live, pod)
 	sourceClient := bridgeFake(t, client)
 
-	// install-existing: capture adoption evidence into the broker ledger.
-	evidence, ok, err := (install.AdoptionCapture{Client: client, ManifestPaths: paths}).Evidence(ctx, repo, base, "app")
-	if err != nil || !ok {
-		t.Fatalf("adoption evidence: %v %v", ok, err)
-	}
-	workspace := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(workspace, "source-evidence"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	encoded, _ := json.Marshal(evidence)
-	if err := os.WriteFile(filepath.Join(workspace, "source-evidence", fmt.Sprintf("%x.json", sha256.Sum256([]byte(base)))), encoded, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	authority, err := broker.New(repo, workspace, func(context.Context, string, []string) error { return nil })
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// Controller start: publish the first rendered lock.
-	source := GitPlanSource{Repository: repo, ManifestPaths: paths, DeployedCommit: base}
-	locked, err := (RenderedLockReconciler{Source: source, Client: client, Broker: authority}).Reconcile(ctx, base, "app")
-	if err != nil {
-		t.Fatal(err)
-	}
+	source := GitPlanSource{Repository: repo, ManifestPaths: paths}
+	locked := base
 
 	// Ownership adoption: the controller takes the declared fields and records
 	// what the accepted object looked like, the point additions count from.

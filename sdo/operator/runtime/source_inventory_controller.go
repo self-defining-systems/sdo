@@ -32,12 +32,13 @@ func (c *Controller) prepareSourceInventory(ctx context.Context) error {
 	inventory, err := acceptedSourceInventory(ctx, c.drift.Source, revision, c.config.Namespace)
 	if err != nil {
 		c.mu.Lock()
+		repeated := c.sourceInventoryError == err.Error()
 		c.sourceInventory = nil
 		c.sourceInventoryError = err.Error()
 		c.sourceInventoryRetryAt = time.Now().Add(2 * time.Second)
 		c.mu.Unlock()
-		if c.OnError != nil {
-			c.OnError(fmt.Errorf("load accepted source inventory; closure remains unverified: %w", err))
+		if c.OnError != nil && !repeated {
+			c.OnError(fmt.Errorf("load accepted source inventory: %w", err))
 		}
 		return nil
 	}
@@ -62,11 +63,6 @@ func (c *Controller) prepareSourceInventory(ctx context.Context) error {
 		c.acceptedSourceDriftRevision = index.Identity
 	}
 	c.mu.Unlock()
-	if c.OnError != nil {
-		for _, gap := range index.EvidenceGaps {
-			c.OnError(fmt.Errorf("source inventory remains available with field evidence gap: %w", gap))
-		}
-	}
 	return nil
 }
 
@@ -166,11 +162,11 @@ func (c *Controller) observeSourceInventory(now time.Time) {
 	}
 }
 
-// Caller holds c.mu; neither this check nor acceptance performs external reads.
-func (c *Controller) verifySourceInventoryLocked(result *IncidentResult) (bool, []sdk.Finding) {
-	if c.drift == nil || !c.drift.Inventory {
-		return true, nil
-	}
+// sourceInventoryAvailableLocked reports whether the accepted-source inventory
+// for the current revision is loaded and the live reader is ready. Unavailable
+// means "not yet", for example right after a controller restart, never a
+// contradiction. Caller holds c.mu.
+func (c *Controller) sourceInventoryAvailableLocked() bool {
 	_, hasReader := c.drift.Events.(interface {
 		SourceDriftObjects() []*unstructured.Unstructured
 	})
@@ -178,7 +174,15 @@ func (c *Controller) verifySourceInventoryLocked(result *IncidentResult) (bool, 
 	if source, ok := c.drift.Events.(interface{ SourceDriftReady() bool }); ok {
 		ready = source.SourceDriftReady()
 	}
-	if c.sourceInventory == nil || c.sourceInventory.Revision != c.config.SourceCommit || !ready {
+	return c.sourceInventory != nil && c.sourceInventory.Revision == c.config.SourceCommit && ready
+}
+
+// Caller holds c.mu; neither this check nor acceptance performs external reads.
+func (c *Controller) verifySourceInventoryLocked(result *IncidentResult) (bool, []sdk.Finding) {
+	if c.drift == nil || !c.drift.Inventory {
+		return true, nil
+	}
+	if !c.sourceInventoryAvailableLocked() {
 		return false, []sdk.Finding{{DetectorID: "drift.unexplained", RuleID: "source-inventory-unavailable", Status: sdk.FindingActive, Severity: sdk.SeverityLatent, Summary: "accepted source inventory is unavailable", Evidence: bounded(c.sourceInventoryError), PrimaryResource: sdk.ObjectRef{APIVersion: "v1", Kind: "Namespace", Name: c.config.Namespace}}}
 	}
 	labels := append([]sdk.DriftEvent(nil), c.acceptedSourceDrift...)

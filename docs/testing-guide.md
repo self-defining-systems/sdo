@@ -169,20 +169,17 @@ accepted manifests still use the deployed regular and init-container images.
 Both annotated deployments and legacy deployments bound to the configured
 deployed commit are covered. A later Service targetPort change must produce unexplained drift. Separate
 coverage checks retain Service adoption and responder admission when another
-workload cannot render, with the render gap recorded for retry; application
+workload cannot render; application
 source changes must never reuse the old deployment images.
 The gate needs Go and `uv`, but no cluster or container runtime.
 
-`TestHermeticBringupPersistsPendingAndRestarts` rehearses a cold native bring-up from a lockless P35-shaped seed against one fake Kubernetes API: retained onboarding and worker-result records, the production fresh-control reset, HY clean restore through kubectl, native prepared installation, a scripted startup judge with real broker/builder validation, real rendered-lock publication before inventory loading, confirmed never-served-port observations, real ConfigMap ControllerState validation, the read-only inventory evaluator, partial event-driven batches through the real scheduler, a confirmed full sweep, six quiet probe cycles, and restart. It asserts the original 21-second simulated install-to-record schedule and uses simulated probe time and a two-minute test budget. This is the offline gate before repeating a live bring-up.
+`TestHermeticBringupPersistsPendingAndRestarts` rehearses a cold native bring-up from a P35-shaped seed against one fake Kubernetes API: retained onboarding and worker-result records, the production fresh-control reset, HY clean restore through kubectl, native prepared installation, a scripted startup judge with real broker/builder validation, direct source rendering for the inventory, confirmed never-served-port observations, real ConfigMap ControllerState validation, the read-only inventory evaluator, partial event-driven batches through the real scheduler, a confirmed full sweep, six quiet probe cycles, and restart. It asserts the original 21-second simulated install-to-record schedule and uses simulated probe time and a two-minute test budget. This is the offline gate before repeating a live bring-up.
 
-### Rendered deployment lock (LK1)
+### Source rendering on a real cluster (LK1)
 
-The fast hermetic gate includes rollout/restart lock contracts, the FX1 memory
-publication regression using durable locks, and the seeded lock schedule.
-`SDO_CHAOS_SEED=<n> go test -run '^TestSimRenderedLockSchedule$' -timeout=5m .`
-from `sdo/operator/runtime` replays one schedule. The properties require unchanged
-lock bytes after memory commits, recovery between rollout and lock publication,
-and continued Service drift when another object's lock evidence is unavailable.
+The fast hermetic gate renders accepted source directly (no lock) and covers
+rollout and restart, the FX1 memory publication regression, and continued
+Service drift when another object cannot render.
 
 The scripted Level 6 uses only the task's lane `luna-pilot-53`:
 
@@ -195,10 +192,9 @@ flock /absolute/path/to/shared/lane53.lock env \
 
 It creates that kind cluster if absent, loads `busybox:1.36`, and runs a real
 Deployment with a mutable regular and init image. The production controller,
-informer cache, SSA adoption, lock broker and `sdo source` tool process two
+informer cache, SSA adoption and `sdo source` tool process two
 scripted targetPort incidents with a human memory publication and controller
-restart between them. Each incident requires a restored real HTTP route and
-unchanged lock bytes. It makes no model calls, deletes its test namespace, and
+restart between them. Each incident requires a restored real HTTP route. It makes no model calls, deletes its test namespace, and
 leaves lane 53 available for inspection. It does not install a controller Pod or
 exercise model-authored workers; those remain separate deployment gates.
 
@@ -479,7 +475,7 @@ the discovery gate runs instead of silently skipping its cross-repository checks
 The native builder refreshes stale health requirements through the registered judge
 and broker before compiling detectors. Accepted judge commits bind policy to all
 tracked application inputs outside operational memory, the human objective and
-health detector revision. Memory-only outcomes, playbooks and rendered locks do
+health detector revision. Memory-only outcomes and playbooks do
 not trigger judge work. The runtime refuses evaluation, dispatch, plan
 writes and closure while the compiled detector bundle lags the accepted health
 policy, and requests a builder relaunch for adoption. A refresh failure

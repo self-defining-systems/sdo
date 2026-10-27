@@ -139,11 +139,22 @@ def test_current_outcome_keeps_findings_evidence_and_repairs_verbatim() -> None:
     full = json_format.MessageToDict(
         outcome, preserving_proto_field_name=True, always_print_fields_with_no_presence=True
     )
+    # An empty source_check_notes is omitted from the view rather than printed as [].
+    assert full["source_check_notes"] == []
     assert {key: value for key, value in view.items() if key != "detector_history"} == {
-        key: value for key, value in full.items() if key != "detector_history"
+        key: value for key, value in full.items() if key not in {"detector_history", "source_check_notes"}
     }
     assert len(view["detector_history"]) == 2
     assert len(json.dumps(view)) < len(json.dumps(full))
+
+
+def test_current_outcome_shows_source_check_notes_only_when_recorded() -> None:
+    outcome = _outcome("inc-1")
+    assert "source_check_notes" not in current_outcome_view(outcome)
+
+    outcome.source_check_notes.append("accepted source could not render at closure")
+
+    assert current_outcome_view(outcome)["source_check_notes"] == ["accepted source could not render at closure"]
 
 
 def test_prior_outcome_keeps_learning_signal_and_drops_bulk() -> None:

@@ -202,8 +202,6 @@ type Controller struct {
 	// CheckHealth refuses evaluation and effects while the compiled detector bundle
 	// lags the accepted health policy; the rebuilt controller resumes the work.
 	CheckHealth func(context.Context) error
-	// ReconcileRendered is the Go-only deployment lock publication edge.
-	ReconcileRendered func(context.Context, string) (string, error)
 	OnError           func(error)
 	OnResult          func(IncidentResult)
 	OnEvaluation      func([]sdk.Finding)
@@ -392,31 +390,6 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 		return err
 	}
 	c.attachPendingDrift()
-	c.mu.Lock()
-	reconcileReady := !c.incidentOpen && (c.broker == nil || !c.closureBlocksNextLocked())
-	c.mu.Unlock()
-	// Rendering is an onboarding prerequisite. Verified render-only lineage
-	// preserves the install boundary while making its inventory available.
-	if c.ReconcileRendered != nil && reconcileReady {
-		actionCtx, cancel, err := c.actionContext(ctx)
-		revision := c.CurrentAcceptedCommit()
-		if err == nil {
-			revision, err = c.ReconcileRendered(actionCtx, revision)
-			cancel()
-		}
-		if err != nil {
-			if c.OnError != nil {
-				c.OnError(fmt.Errorf("reconcile rendered lock: %w", err))
-			}
-		}
-		if revision != "" && revision != c.CurrentAcceptedCommit() {
-			c.mu.Lock()
-			c.config.SourceCommit = revision
-			c.sourceInventoryRetryAt = time.Time{}
-			c.adoptionNeeded = true
-			c.mu.Unlock()
-		}
-	}
 	if err := c.prepareSourceInventory(ctx); err != nil {
 		return err
 	}

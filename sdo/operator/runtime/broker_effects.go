@@ -144,6 +144,7 @@ func (c *Controller) ExecuteClosureEffect(ctx context.Context, effect ClosureEff
 	}
 	unconfirmed, denied := "", ""
 	var unconfirmedReason contracts.ClosureUnconfirmedReason
+	closure := effect.Closure
 	if recovered == nil && !committedOutcome && verificationErr == nil {
 		recheck := c.revalidateClosure(actionCtx, snapshot, effect.Closure)
 		switch recheck.Verdict {
@@ -158,6 +159,14 @@ func (c *Controller) ExecuteClosureEffect(ctx context.Context, effect ClosureEff
 			if !c.closureRecheckWaitExpired(effect.Identity, recheck.Bound) {
 				cancel()
 				return nil
+			}
+			if recheck.SourceOnly {
+				// Health alone verified the closure; the source checks that
+				// never became available are information on the outcome.
+				c.clearClosureRecheckWait()
+				closure.SourceCheckNotes = recheck.SourceNotes
+				slog.Warn("closure_source_check_unavailable", "incident_id", closure.Request.IncidentID, "notes", recheck.SourceNotes)
+				break
 			}
 			unconfirmed, unconfirmedReason = recheck.Reason, recheck.Unconfirmed
 		case closureRecheckDenied:
@@ -241,7 +250,7 @@ func (c *Controller) ExecuteClosureEffect(ctx context.Context, effect ClosureEff
 		if recovered != nil {
 			receipt = *recovered
 		} else {
-			receipt, processErr = broker.ProcessClosure(actionCtx, effect.Closure)
+			receipt, processErr = broker.ProcessClosure(actionCtx, closure)
 		}
 		c.closureResults <- closureCompletion{effectID: effect.Identity, receipt: receipt, err: processErr}
 	})
@@ -280,11 +289,25 @@ type closureRecheck struct {
 	// Skipped lists incident detectors the adopted policy no longer has. They
 	// are not evidence either way; the detectors in force decided.
 	Skipped []string
+	// SourceNotes lists source checks that could not run (the accepted source
+	// would not render, the inventory is not loaded, the dry-run failed).
+	// They are information: they wait for the bound, never contradict, and
+	// never downgrade a closure that health alone has verified.
+	SourceNotes []string
+	// SourceOnly marks an incomplete recheck whose only gap is SourceNotes.
+	SourceOnly bool
 }
+
+// closureInventoryLoadBound is how long a closure waits for the accepted-source
+// checks (inventory, field comparison) to become available before it commits
+// on health alone, with the unavailable checks noted.
+const closureInventoryLoadBound = 30 * time.Second
 
 // revalidateClosure checks live dependencies and admitted source fields, rather
 // than treating a matching policy generation as proof of continued recovery.
 // Every detector is evaluated, so a contradiction dominates an incomplete peer.
+// Source and render state are information only: an unavailable source check
+// waits and is noted, and only an observed difference contradicts.
 func (c *Controller) revalidateClosure(ctx context.Context, snapshot sdk.DetectionContext, closure IncidentClosure) closureRecheck {
 	confirmed := closureRecheck{Verdict: closureRecheckConfirmed}
 	if len(closure.FinalDetectorStates) == 0 || closure.DispatchError != "" {
@@ -305,8 +328,8 @@ func (c *Controller) revalidateClosure(ctx context.Context, snapshot sdk.Detecti
 		ordered = append(ordered, id)
 	}
 	sort.Strings(ordered)
-	var incomplete []string
-	var bound time.Duration
+	var incomplete, sourceNotes []string
+	var bound, sourceBound time.Duration
 	unconfirmed := contracts.ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_OBSERVATION_INCOMPLETE
 	wait := func(detector sdk.Detector, reason string) {
 		incomplete = append(incomplete, reason)
@@ -376,10 +399,20 @@ func (c *Controller) revalidateClosure(ctx context.Context, snapshot sdk.Detecti
 		slog.Warn("closure_detector_skipped", "incident_id", closure.Request.IncidentID, "detectors", gone, "reason", "removed by the adopted policy")
 	}
 	c.mu.Lock()
-	inventoryClear, _ := c.verifySourceInventoryLocked(closure.Result)
+	inventoryAvailable := c.drift == nil || !c.drift.Inventory || c.sourceInventoryAvailableLocked()
+	inventoryClear := true
+	if inventoryAvailable {
+		inventoryClear, _ = c.verifySourceInventoryLocked(closure.Result)
+	}
 	c.mu.Unlock()
 	if !inventoryClear {
 		return contradicted("closure accepted-source inventory remains unexplained")
+	}
+	if !inventoryAvailable {
+		// After a restart the inventory is rebuilt from accepted source on the
+		// next pass. Not loaded yet is not a contradiction of the repair.
+		sourceNotes = append(sourceNotes, "accepted source inventory is loading")
+		sourceBound = closureInventoryLoadBound
 	}
 	for _, finding := range closure.Request.Findings {
 		if inventoryFinding(finding) || !strings.HasPrefix(finding.DetectorID, "drift.") {
@@ -390,15 +423,24 @@ func (c *Controller) revalidateClosure(ctx context.Context, snapshot sdk.Detecti
 			continue
 		}
 		restored, err := c.closureSourceRestored(ctx, snapshot, finding, events)
-		if !restored {
-			return contradicted("closure observation source fields for %s/%s are unverified: %v", finding.PrimaryResource.Kind, finding.PrimaryResource.Name, err)
+		if err != nil {
+			// A source that cannot be rendered or compared is not a
+			// contradiction; only a comparison that shows the field still
+			// differs is.
+			sourceNotes = append(sourceNotes, fmt.Sprintf("source fields for %s/%s were not compared: %v", finding.PrimaryResource.Kind, finding.PrimaryResource.Name, err))
+			sourceBound = closureInventoryLoadBound
+		} else if !restored {
+			return contradicted("closure observation source fields for %s/%s are unrestored", finding.PrimaryResource.Kind, finding.PrimaryResource.Name)
 		}
 	}
 	if len(denied) > 0 {
 		return closureRecheck{Verdict: closureRecheckDenied, Reason: strings.Join(denied, "; "), Skipped: gone}
 	}
 	if len(incomplete) > 0 {
-		return closureRecheck{Verdict: closureRecheckIncomplete, Reason: strings.Join(incomplete, "; "), Bound: bound, Unconfirmed: unconfirmed, Skipped: gone}
+		return closureRecheck{Verdict: closureRecheckIncomplete, Reason: strings.Join(incomplete, "; "), Bound: max(bound, sourceBound), Unconfirmed: unconfirmed, Skipped: gone, SourceNotes: sourceNotes}
+	}
+	if len(sourceNotes) > 0 {
+		return closureRecheck{Verdict: closureRecheckIncomplete, Reason: strings.Join(sourceNotes, "; "), Bound: sourceBound, Skipped: gone, SourceNotes: sourceNotes, SourceOnly: true}
 	}
 	confirmed.Skipped = gone
 	return confirmed

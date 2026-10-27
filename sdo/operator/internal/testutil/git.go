@@ -24,7 +24,9 @@ func Git(t testing.TB, root string, args ...string) string {
 
 // InitGit initializes an existing temporary directory before any fixture commit.
 // A waited commit can otherwise spawn detached GC that races TempDir cleanup.
-// Local configuration also covers production Git commands and linked worktrees.
+// Local configuration also covers production Git commands and linked worktrees,
+// and gives the repository a commit identity so fixtures never depend on the
+// host's global Git configuration.
 func InitGit(t testing.TB, root string) {
 	t.Helper()
 	Git(t, root, "init", "-q")
@@ -38,7 +40,7 @@ func CloneGit(t testing.TB, source, destination string, options ...string) {
 	args := []string{"clone", "--quiet"}
 	// Clone can run maintenance itself. Write the lifetime policy before its
 	// first fetch, rather than configuring the repository after it returns.
-	for _, setting := range gitLifetimeConfig {
+	for _, setting := range gitFixtureConfig() {
 		args = append(args, "--config", setting[0]+"="+setting[1])
 	}
 	args = append(args, options...)
@@ -47,9 +49,13 @@ func CloneGit(t testing.TB, source, destination string, options ...string) {
 
 func configureGit(t testing.TB, root string) {
 	t.Helper()
-	for _, setting := range gitLifetimeConfig {
+	for _, setting := range gitFixtureConfig() {
 		Git(t, root, "config", "--local", setting[0], setting[1])
 	}
+}
+
+func gitFixtureConfig() [][2]string {
+	return append(append([][2]string{}, gitLifetimeConfig...), gitIdentityConfig...)
 }
 
 var gitLifetimeConfig = [][2]string{
@@ -57,4 +63,9 @@ var gitLifetimeConfig = [][2]string{
 	{"maintenance.auto", "false"},
 	{"gc.autoDetach", "false"},
 	{"maintenance.autoDetach", "false"},
+}
+
+var gitIdentityConfig = [][2]string{
+	{"user.name", "SDO Fixture"},
+	{"user.email", "fixture@example.invalid"},
 }

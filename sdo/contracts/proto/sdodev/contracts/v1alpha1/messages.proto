@@ -518,6 +518,10 @@ message IncidentClosure {
   // within its bound. Final states moved to partial; the outcome is unverified.
   ClosureUnconfirmedReason unconfirmed_reason = 24;
   string unconfirmed_detail = 25;
+  // Source checks that never became available before the recheck bound (the
+  // accepted source would not render, the inventory did not load). Information
+  // only: health alone decided the closure.
+  repeated string source_check_notes = 26;
 }
 
 // ClosureUnconfirmedReason explains why a verified closure was committed

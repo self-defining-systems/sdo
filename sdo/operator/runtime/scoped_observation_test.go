@@ -393,7 +393,7 @@ func TestScopedDeclaredSourceWebhookCannotClearWhileChanged(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	commit := seedRenderedLock(t, source, strings.TrimSpace(string(revision)), "app")
+	commit := strings.TrimSpace(string(revision))
 	ref := sdk.ObjectRef{APIVersion: "admissionregistration.k8s.io/v1", Kind: "ValidatingWebhookConfiguration", Name: "policy"}
 	accepted, err := source.AcceptedScopedManifest(context.Background(), commit, "app", ref)
 	if err != nil || accepted.GetNamespace() != "" {
@@ -487,7 +487,7 @@ func TestScopedWebhookDefaultsChangedThenRestored(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			commit := seedRenderedLock(t, source, strings.TrimSpace(string(revision)), "app")
+			commit := strings.TrimSpace(string(revision))
 			target := sdk.ObservationTarget{APIVersion: "admissionregistration.k8s.io/v1", Kind: kind, Name: "policy"}
 			ref := sdk.ObjectRef{APIVersion: target.APIVersion, Kind: target.Kind, Name: target.Name}
 			fail := admissionv1.Fail

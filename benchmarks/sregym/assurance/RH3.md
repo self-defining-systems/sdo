@@ -32,22 +32,14 @@ seed; failure remains an error rather than a fabricated successful action.
 
 ## Phase B prerequisites
 
-Keep the accepted seed's private deployment ledger with its Git history. Set
-`SDO_SEED_BROKER_ROOT` to the independently produced seed broker directory before
-installing a fresh rehearsal controller. The adapter passes this trusted host
-path as `install-existing --seed-broker-root`; Go validates the bounded named
-image evidence against accepted history and restores only `source-evidence/`
-after resetting the PVC. Proposals, incident receipts and other private state
-are not imported. Without a seed ledger, `install-existing` captures the adopted
-application's image identities itself: only containers whose live template
-applies the accepted source image, and for tag images only one pulled digest
-agreed by every current Pod. Anything else stays an explicit lock gap. Never
-infer that authority from rendered locks or from Pods after installation.
+`install-existing` adopts the application as its accepted source declares it. It
+needs no seed ledger or image capture: diff and reconcile compare and apply the
+rendered source exactly as written, tag or digest.
 
 The experiment lead must first refresh the social seed (JG1, lane 53) and astronomy
 seed (PO1, lane 52). Each fastloop environment must have a green full detector
-baseline, functioning official oracles, full-recovery support, and trusted scoped
-image-input evidence. Its controller/responder images must include this PR and
+baseline, functioning official oracles, and full-recovery support. Its
+controller/responder images must include this PR and
 carry the scripted image label (build with `assurance/build_images.sh`). The
 wrapper refuses an ordinary model image, the wrong lane/namespace, an expired or
 missing `responder-lanes` lease, or a busy shared lane lock. Use a disposable copy
@@ -84,8 +76,8 @@ a changed objective or an incomplete bundle stops the rehearsal.
 
 After the runner completes, the wrapper requires the official mitigation oracle,
 full-cleanup verification, strictly parsed native receipts, broker source and
-outcome commits, and a zero-gap accepted rendered lock bound to the repaired source tree. A stale
-seed lock is rejected even if it has no gap entries. It preserves evidence under
+outcome commits, and an accepted checkout that contains the broker source repair. Drift compares
+rendered accepted source directly; no lock or image evidence exists. It preserves evidence under
 `RUN_DIR/results/rh3-slot-.../`, then resets to seed even after a failed run.
 An expired lease or failed host gate aborts before reset/injection; rerun only once
 the experiment lead has renewed the lease or host load permits it.

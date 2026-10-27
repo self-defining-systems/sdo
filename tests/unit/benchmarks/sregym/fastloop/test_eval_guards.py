@@ -88,9 +88,10 @@ def test_real_setup_ownership_shapes_are_admitted():
             ".sdo/playbooks/health-objective/README.md",
         ],
     )
-    validate_setup_commit("controller", "rendered", "passed", [".sdo/rendered/lock.json"])
     with pytest.raises(ValueError, match="unvalidated health setup"):
-        validate_setup_commit("responder", "initial", "passed", [".sdo/rendered/lock.json"])
+        validate_setup_commit("controller", "rendered", "passed", [".sdo/rendered/lock.json"])
+    with pytest.raises(ValueError, match="unvalidated health setup"):
+        validate_setup_commit("responder", "initial", "passed", [".sdo/diagnostics/traffic/workloads/frontend.yaml"])
 
 
 def test_stabilization_observes_until_deadline_then_fails_without_injecting():
@@ -328,7 +329,7 @@ def test_old_ready_pods_do_not_prove_current_workload_rollout(monkeypatch, statu
 
 
 @pytest.mark.go_integration
-def test_fresh_guard_accepts_actual_broker_health_bootstrap_and_rendered_commit(tmp_path):
+def test_fresh_guard_accepts_actual_broker_health_bootstrap(tmp_path):
     import shutil
     import subprocess
 
@@ -360,7 +361,7 @@ def test_fresh_guard_accepts_actual_broker_health_bootstrap_and_rendered_commit(
     assert ".sdo/playbooks/README.md" in published["health_paths"]
     lineage = setup_lineage(repository, seed)
     assert lineage["accepted_commit"] == published["head"]
-    assert [row["actor"] for row in lineage["commits"]] == ["health_judge", "controller"]
+    assert [row["actor"] for row in lineage["commits"]] == ["health_judge"]
 
 
 def test_lane_resources_reject_before_any_health_wait_or_restore(monkeypatch, tmp_path):
@@ -502,56 +503,24 @@ def test_sealed_install_preserves_metadata_setup_but_yields_to_accepted_source_r
     assert accepted_restore_baselines(tmp_path, baselines, seed_commit=seed)[0].objects == [repaired]
 
 
-@pytest.mark.parametrize("wrapped", [False, True])
-def test_restore_preserves_exact_captured_object_for_typed_image_gap(tmp_path, wrapped):
-    from benchmarks.sregym.fastloop.baseline_recovery import ApplicationBaseline, accepted_restore_baselines
-
-    installed = {
-        "apiVersion": "apps/v1",
-        "kind": "Deployment",
-        "metadata": {"namespace": "app", "name": "api"},
-        "spec": {"replicas": 1},
-    }
-    error = "trusted deployment image evidence missing for container api (init=false)"
-    if wrapped:
-        error = "Deployment/api: " + error
-    root = tmp_path / ".sdo/rendered"
-    root.mkdir(parents=True)
-    row = {"ref": {"api_version": "apps/v1", "kind": "Deployment", "namespace": "app", "name": "api"}, "error": error}
-    (root / "lock.json").write_text(json.dumps({"version": 1, "objects": [row]}))
-    result = accepted_restore_baselines(tmp_path, (ApplicationBaseline("app", [installed]),))
-    assert result[0].objects == [installed]
-
-
-@pytest.mark.parametrize(
-    "case", ["unknown_error", "missing_error", "wrong_api", "wrong_namespace", "wrong_name", "mixed_file", "unbacked"]
-)
-def test_restore_rejects_unbacked_or_malformed_rendered_gaps(tmp_path, case):
+@pytest.mark.parametrize("case", ["error", "missing_error", "mixed_file"])
+def test_restore_rejects_unbacked_or_malformed_rendered_rows(tmp_path, case):
     from benchmarks.sregym.fastloop.baseline_recovery import ApplicationBaseline, accepted_restore_baselines
 
     installed = {"apiVersion": "apps/v1", "kind": "Deployment", "metadata": {"namespace": "app", "name": "api"}}
     row = {
         "ref": {"api_version": "apps/v1", "kind": "Deployment", "namespace": "app", "name": "api"},
-        "error": "trusted deployment image evidence missing for container api (init=false)",
+        "error": "source rendering failed",
     }
-    if case == "unknown_error":
-        row["error"] = "source rendering failed"
-    elif case == "missing_error":
+    if case == "missing_error":
         del row["error"]
-    elif case == "wrong_api":
-        row["ref"]["api_version"] = "extensions/v1beta1"
-    elif case == "wrong_namespace":
-        row["ref"]["namespace"] = "another-app"
-    elif case == "wrong_name":
-        row["ref"]["name"] = "other"
     elif case == "mixed_file":
         row["file"] = "must-not-be-read.yaml"
     root = tmp_path / ".sdo/rendered"
     root.mkdir(parents=True)
     (root / "lock.json").write_text(json.dumps({"objects": [row]}))
-    baseline = ApplicationBaseline("app", [] if case == "unbacked" else [installed])
     with pytest.raises(ValueError, match="rendered.*gap"):
-        accepted_restore_baselines(tmp_path, (baseline,))
+        accepted_restore_baselines(tmp_path, (ApplicationBaseline("app", [installed]),))
 
 
 def test_restore_rejects_sealed_manifest_for_another_object(tmp_path):

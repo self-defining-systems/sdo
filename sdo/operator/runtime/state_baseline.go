@@ -125,8 +125,6 @@ type StateTracker struct {
 	unobserved []string
 	baseline   *stateSnapshot
 	candidate  *stateSnapshot
-	// Named deployment evidence used only during lock construction.
-	images *stateSnapshot
 }
 
 // NewStateTracker creates an unstarted tracker.
@@ -223,8 +221,7 @@ func (t *StateTracker) Stop() {
 }
 
 // Reset forgets the baseline, for example when a maintenance window may have
-// redeployed the application. Last healthy image evidence is retained separately;
-// it is usable only with matching source identity.
+// redeployed the application.
 func (t *StateTracker) Reset() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -301,54 +298,6 @@ func (t *StateTracker) Changes(now time.Time) *StateChanges {
 	}
 	sort.Strings(changes.UnobservedKinds)
 	return changes
-}
-
-// recordDeployedImage fills the named image store from trusted deployment
-// evidence or source pins. A fresh tracker is used for lock construction, keeping the
-// healthy configuration-diff baseline and its settle lifecycle independent.
-func (t *StateTracker) recordDeployedImage(ref sdk.ObjectRef, container string, init bool, image, tree string) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	if t.images == nil {
-		t.images = &stateSnapshot{objects: map[string]objectState{}}
-	}
-	key := ref.Kind + "/" + ref.Name
-	state := t.images.objects[key]
-	if state == nil {
-		state = objectState{}
-		t.images.objects[key] = state
-	}
-	prefix := "container"
-	if init {
-		prefix = "initContainer"
-	}
-	state[prefix+"["+container+"].image"] = image
-	state["template.sourceTree"] = tree
-}
-
-// BaselineImage returns a named image explicitly recorded for lock construction.
-func (t *StateTracker) BaselineImage(ref sdk.ObjectRef, container string, init bool) (string, bool) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	if t.images == nil || ref.Namespace != t.config.Namespace {
-		return "", false
-	}
-	state := t.images.objects[ref.Kind+"/"+ref.Name]
-	prefix := "container"
-	if init {
-		prefix = "initContainer"
-	}
-	image := state[prefix+"["+container+"].image"]
-	return image, image != ""
-}
-
-func (t *StateTracker) BaselineTree(ref sdk.ObjectRef) string {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	if t.images == nil || ref.Namespace != t.config.Namespace {
-		return ""
-	}
-	return t.images.objects[ref.Kind+"/"+ref.Name]["template.sourceTree"]
 }
 
 func (t *StateTracker) snapshotLocked(now time.Time) *stateSnapshot {

@@ -108,8 +108,8 @@ def test_scripted_control_only_tolerates_already_existing_resources(
             mixed10_rehearsal.prepare_scripted_control(environment)
 
 
-@pytest.mark.parametrize("change", ["none", "unqualified-source", "topology", "objective", "missing-detector"])
-def test_scripted_health_refresh_retains_complete_bundle_only_for_same_objective_and_topology(
+@pytest.mark.parametrize("change", ["none", "unqualified-source", "objective", "missing-detector"])
+def test_scripted_health_refresh_retains_complete_bundle_only_for_same_objective(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, change: str
 ) -> None:
     from benchmarks.sregym.adapter import scripted_worker
@@ -117,7 +117,7 @@ def test_scripted_health_refresh_retains_complete_bundle_only_for_same_objective
 
     monkeypatch.setenv("SDO_SCRIPTED_REPLAY_SLOT", "2")
     sdo = tmp_path / ".sdo"
-    (sdo / "rendered").mkdir(parents=True)
+    sdo.mkdir()
     goal_document = "---\nschema_version: 1\nowner: human\n---\n# Health objective\n\nhealthy\n"
     (sdo / "goal.md").write_text(goal_document)
     names = {"health-objective", "service-endpoints", "service-reachability", "workload-health"}
@@ -128,17 +128,12 @@ def test_scripted_health_refresh_retains_complete_bundle_only_for_same_objective
         path.parent.mkdir(parents=True)
         path.write_text(f"id: {name}\nclass: health\nowner: health_judge\n")
     ref = {"kind": "Deployment", "namespace": "social-network", "name": "synthetic"}
-    (sdo / "rendered/lock.json").write_text(json.dumps({"manifest_paths": ["kubernetes"], "objects": [{"ref": ref}]}))
     request = HealthJudgeRequest(
         namespace="social-network",
         health_objective="changed" if change == "objective" else "healthy",
         accepted_source_commit="a" * 40,
         source_resources=[SourceResource(**ref, source="kubernetes/app.yaml")],
     )
-    if change == "topology":
-        request.source_resources.add(
-            kind="Service", namespace="social-network", name="new", source="kubernetes/new.yaml"
-        )
     if change == "unqualified-source":
         request.source_resources[0].namespace = "default"
     if change not in ("none", "unqualified-source"):
@@ -448,53 +443,6 @@ def test_service_restoration_preserves_cluster_allocated_identity(
 
     result = replay(allocated, 7, {"incident_id": "test", "namespace": "social-network"}, tmp_path)
     assert result["status"] == "completed"
-
-
-def test_phase_b_rejects_zero_gap_lock_from_before_source_repair(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    import subprocess
-    from types import SimpleNamespace
-
-    from benchmarks.sregym.assurance import mixed10_rehearsal
-
-    def git(*args: str) -> str:
-        return subprocess.check_output(["git", "-C", str(tmp_path), *args], text=True).strip()
-
-    git("init", "-q")
-    source = tmp_path / "app.yaml"
-    source.write_text("before\n")
-    git("add", "app.yaml")
-    git("-c", "user.name=test", "-c", "user.email=test@example.invalid", "commit", "-qm", "seed")
-    seed = git("rev-parse", "HEAD")
-    source.write_text("repaired\n")
-    git("add", "app.yaml")
-    git("-c", "user.name=test", "-c", "user.email=test@example.invalid", "commit", "-qm", "repair")
-    repaired = git("rev-parse", "HEAD")
-    output = tmp_path / "results"
-    output.mkdir()
-    (output / "sdo_production_receipt_strict.json").write_text(
-        json.dumps(
-            {
-                "proposal_commit": repaired,
-                "outcome_commit": repaired,
-                "native_ledger": {"outcome_document": {"classification": "success"}},
-            }
-        )
-    )
-    rendered = tmp_path / ".sdo/rendered"
-    rendered.mkdir(parents=True)
-    (rendered / "lock.json").write_text(json.dumps({"source_commit": seed, "objects": [{"file": "object.yaml"}]}))
-    monkeypatch.setattr(
-        mixed10_rehearsal,
-        "load_records",
-        lambda _: [
-            SimpleNamespace(index=2, error=None, full_cleanup_verified=True, oracle=SimpleNamespace(success=True))
-        ],
-    )
-    monkeypatch.setattr(mixed10_rehearsal, "validate_native_production_receipt", lambda _: None)
-    with pytest.raises(ValueError, match="source repair"):
-        mixed10_rehearsal.verify_results(output, SimpleNamespace(workspace=tmp_path))
 
 
 def test_slot_nine_retries_pending_pod_only_after_old_affinity_pod_is_gone(

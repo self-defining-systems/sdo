@@ -24,7 +24,6 @@ type InstallExistingConfig struct {
 	AdoptExistingMemory bool
 	OperatorRoot        string
 	Kubeconfig          string
-	SeedBrokerRoot      string
 	// DeployedManifestPaths scopes adoption evidence to the accepted deployment.
 	DeployedManifestPaths []string
 	Duration              time.Duration
@@ -78,7 +77,6 @@ func ParseInstallExistingLaunch(args []string) (InstallExistingConfig, error) {
 	metricsURL := flags.String("metrics-url", "", "Prometheus-compatible API URL; installs the metrics alerts detector and lets metric detectors query it")
 	registrationConfigMap := flags.String("agent-registration-configmap", "", "registration ConfigMap")
 	kubeconfig := flags.String("kubeconfig", "", "Kubernetes client and kubectl config")
-	seedBrokerRoot := flags.String("seed-broker-root", "", "operator-controlled trusted seed broker directory, outside the accepted repository")
 	standby := flags.Bool("responder-standby", true, "pre-start a responder; false forces cold Jobs")
 	var responderEnv repeatable
 	flags.Var(&responderEnv, "responder-env", "responder environment NAME=VALUE")
@@ -102,9 +100,6 @@ func ParseInstallExistingLaunch(args []string) (InstallExistingConfig, error) {
 	}
 	if !filepath.IsAbs(*repository) || (*kubeconfig != "" && !filepath.IsAbs(*kubeconfig)) {
 		return InstallExistingConfig{}, errors.New("repository and kubeconfig paths must be absolute")
-	}
-	if *seedBrokerRoot != "" && !filepath.IsAbs(*seedBrokerRoot) {
-		return InstallExistingConfig{}, errors.New("trusted seed broker root must be absolute")
 	}
 	if *provider != "codex" && *provider != "claude" {
 		return InstallExistingConfig{}, fmt.Errorf("unsupported agent provider %q", *provider)
@@ -172,7 +167,7 @@ func ParseInstallExistingLaunch(args []string) (InstallExistingConfig, error) {
 	if *exitAfterClosure {
 		config.ExtraControllerArgs = append(config.ExtraControllerArgs, "--exit-after-closure")
 	}
-	return InstallExistingConfig{AdoptExistingMemory: *adopt, OperatorRoot: *operatorRoot, Repository: *repository, Kubeconfig: *kubeconfig, SeedBrokerRoot: *seedBrokerRoot, DeployedManifestPaths: deployedManifestPaths, Duration: *duration, Install: config}, nil
+	return InstallExistingConfig{AdoptExistingMemory: *adopt, OperatorRoot: *operatorRoot, Repository: *repository, Kubeconfig: *kubeconfig, DeployedManifestPaths: deployedManifestPaths, Duration: *duration, Install: config}, nil
 }
 
 func RunInstallExisting(ctx context.Context, launch InstallExistingConfig) (InstallExistingResult, error) {
@@ -188,7 +183,7 @@ func RunInstallExisting(ctx context.Context, launch InstallExistingConfig) (Inst
 	config.AcceptedCommit = commit
 	installer := install.Installer{
 		Client:         client,
-		SeedRepository: install.KubectlTarAdoptionSeeder(launch.Repository, commit, launch.Kubeconfig, launch.SeedBrokerRoot, &install.AdoptionCapture{Client: client, ManifestPaths: launch.DeployedManifestPaths}),
+		SeedRepository: install.KubectlTarSeederWithKubeconfig(launch.Repository, commit, launch.Kubeconfig),
 		SyncRepository: install.KubectlTarSynchronizerWithKubeconfig(launch.Repository, launch.Kubeconfig),
 	}
 	installer.BeforeControllerStart = existingNamespaceOnboardingHook(client, launch, commit)

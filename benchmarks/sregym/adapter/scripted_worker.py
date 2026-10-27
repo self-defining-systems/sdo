@@ -12,7 +12,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -766,7 +766,6 @@ class ScriptedJudgeSeed:
 
     toy: bool
     objective: str
-    lock: dict[str, Any] = field(default_factory=dict)
     detector_ids: tuple[str, ...] = ()
 
 
@@ -796,8 +795,8 @@ def scripted_judge_seed(checkout: Path) -> ScriptedJudgeSeed:
     """Load the accepted-seed prerequisites of the scripted health judge.
 
     The judge only retains an already accepted bundle, so a fresh seed without
-    a rendered lock or full judge-owned bundle cannot pass the scripted
-    rehearsal. The eval dry run calls this before touching a lane.
+    a full judge-owned bundle cannot pass the scripted rehearsal. The eval dry
+    run calls this before touching a lane.
     """
     accepted = checkout / ".sdo"
     if (accepted / "diagnostics/detectors/health/toy-endpoints").is_dir():
@@ -818,24 +817,13 @@ def scripted_judge_seed(checkout: Path) -> ScriptedJudgeSeed:
     # Match memory.HealthInputs: the request carries the human objective, not
     # the document header or its human-ownership metadata.
     goal = parts[2].strip().removeprefix("# Health objective\n").strip()
-    text = _read_seed(accepted / "rendered/lock.json", "an accepted rendered lock")
-    try:
-        lock = json.loads(text)
-    except ValueError as exc:
-        raise ValueError("scripted health refresh requires an accepted rendered lock (invalid JSON)") from exc
-    paths = lock.get("manifest_paths") if isinstance(lock, dict) else None
-    if not isinstance(paths, list) or not paths or not all(isinstance(path, str) and path for path in paths):
-        raise ValueError("scripted health refresh needs accepted manifest selection")
-    objects = lock.get("objects")
-    if not isinstance(objects, list) or not objects:
-        raise ValueError("scripted health refresh needs accepted rendered objects")
     ids = _judge_owned_ids(accepted)
     missing = sorted(REQUIRED_HEALTH_DETECTORS.difference(ids))
     if missing:
         raise ValueError(
             f"scripted health refresh cannot weaken the accepted full bundle (missing {', '.join(missing)})"
         )
-    return ScriptedJudgeSeed(toy=False, objective=goal, lock=lock, detector_ids=ids)
+    return ScriptedJudgeSeed(toy=False, objective=goal, detector_ids=ids)
 
 
 def _scripted_toy_health_judge(
@@ -894,36 +882,9 @@ def scripted_health_judge(request: HealthJudgeRequest, checkout: Path) -> Health
     goal = seed.objective
     if request.health_objective.strip() != goal:
         raise ValueError("scripted health refresh cannot change the objective")
-    lock = seed.lock
-    paths = lock["manifest_paths"]
-    cluster_kinds = {
-        "Namespace",
-        "ClusterRole",
-        "ClusterRoleBinding",
-        "CustomResourceDefinition",
-        "MutatingWebhookConfiguration",
-        "ValidatingWebhookConfiguration",
-    }
-
-    def identity(kind: str, namespace: str, name: str) -> tuple[str, str, str]:
-        # Source inventory uses "default" for namespace-less YAML; the accepted
-        # renderer binds those selected source objects to the application lane.
-        effective = request.namespace if namespace in ("", "default") else namespace
-        return kind, "" if kind in cluster_kinds else effective, name
-
-    expected = {
-        identity(item["ref"]["kind"], item["ref"].get("namespace", ""), item["ref"]["name"]) for item in lock["objects"]
-    }
-    current = {
-        identity(row.kind, row.namespace, row.name)
-        for row in request.source_resources
-        if any(row.source == path or row.source.startswith(path.rstrip("/") + "/") for path in paths)
-    }
-    if not expected or current != expected:
-        raise ValueError("scripted health refresh cannot change the deployed topology")
     return HealthJudgeResult(
         authored=True,
-        summary="Retained complete accepted generic health bundle for unchanged deployed topology",
+        summary="Retained complete accepted generic health bundle",
         agent_session_id="scripted-health-" + request.accepted_source_commit[:12],
         objective_digest=hashlib.sha256(goal.encode()).hexdigest(),
         detector_ids=list(seed.detector_ids),

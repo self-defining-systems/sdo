@@ -561,7 +561,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		kubernetesCache.scopedTracker = stateTracker
 		defer stateTracker.Stop()
 	}
-	planSource := GitPlanSource{Repository: resolvedRoot, ManifestPaths: deployedManifestPaths, DeployedCommit: resolvedDeployedCommit}
+	planSource := GitPlanSource{Repository: resolvedRoot, ManifestPaths: deployedManifestPaths}
 	var primitiveProber PrimitiveProber
 	if proberAddress != nil {
 		primitiveProber = HTTPProberClient{BaseURL: proberAddress}
@@ -983,12 +983,6 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			// A redeploy replaces the application's configuration baseline.
 			stateTracker.Stop()
 			stateTracker.Reset()
-		}
-	}
-	if options.NativeBroker != nil {
-		reconciler := RenderedLockReconciler{Source: planSource, Client: bootstrapProvider.Client, Broker: options.NativeBroker.Repository}
-		controller.ReconcileRendered = func(ctx context.Context, revision string) (string, error) {
-			return reconciler.Reconcile(ctx, revision, *namespace)
 		}
 	}
 	syncPolicy := options.InformerSync

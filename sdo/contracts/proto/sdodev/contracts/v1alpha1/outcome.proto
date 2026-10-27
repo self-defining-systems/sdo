@@ -63,6 +63,9 @@ message OutcomeRecord {
   repeated UndetectedCause undetected_causes = 51;
   // Broker-only append: named rejections retain the original incident evidence.
   repeated ProposalRejection reflection_rejections = 52;
+  // Controller-observed: source checks that were unavailable when health
+  // verified the closure. Information only; never a verdict.
+  repeated string source_check_notes = 38;
 }
 
 message OutcomeTimestamps {

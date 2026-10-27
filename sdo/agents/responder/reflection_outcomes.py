@@ -80,6 +80,8 @@ def current_outcome_view(outcome: OutcomeRecord) -> dict[str, Any]:
         outcome, preserving_proto_field_name=True, always_print_fields_with_no_presence=True
     )
     view.pop("reflection_eligibility", None)  # supplied once as controller-owned work
+    if not view.get("source_check_notes"):
+        view.pop("source_check_notes", None)  # information only; shown when the closure recorded any
     view["detector_history"] = collapse_detector_history(outcome.detector_history)
     compaction = {}
     if view["program_runs"]:
