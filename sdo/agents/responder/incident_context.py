@@ -111,7 +111,7 @@ def prior_response_summary(request: IncidentRequest) -> dict[str, Any]:
                 "blockers_omitted": max(0, len(item.blockers) - 1),
                 "error": item.error[:120],
             }
-            for item in episodes[-2:]
+            for item in reversed(episodes[-2:])
         ],
         "episodes_omitted": max(0, len(episodes) - 2),
     }
@@ -261,6 +261,12 @@ def prepared_incident_data(request: IncidentRequest) -> Iterator[str]:
                 ("remaining_finding_fingerprints", "remaining_findings_omitted"),
             )
         ]
+        progress = summary.get("prior_response_progress")
+        if progress:
+            lists += [(episode, "successful_actions", "actions_omitted") for episode in progress["episodes"]]
+            # Newest episode comes first; retain its action and blocker even
+            # when older episodes must move to the complete facts file.
+            lists.append((progress, "episodes", "episodes_omitted"))
         lists += [
             (summary, "findings", "findings_omitted"),
             (summary["playbook_coverage"], "matches", "matches_omitted"),
