@@ -28,8 +28,9 @@ func TestReflectionVanishedJobStopsClosureRetriesWithEvidence(t *testing.T) {
 
 func testReflectionTerminalJob(t *testing.T, vanished bool) {
 	t.Helper()
-	logEvidence := []string{"OOMKilled", "exit_code=137"}
-	diagnostics := []string{"BackoffLimitExceeded", "failed-worker", "OOMKilled", "137", "memory limit exceeded"}
+	// An ordinary crash: a worker killed for memory is typed and skipped (TestReflectionWorkerKilledForMemory...).
+	logEvidence := []string{"exit_code=1", "worker crashed"}
+	diagnostics := []string{"BackoffLimitExceeded", "failed-worker", "Error", "1", "worker crashed"}
 	if vanished {
 		diagnostics = []string{"worker Job vanished"}
 		logEvidence = diagnostics
@@ -69,7 +70,7 @@ func testReflectionTerminalJob(t *testing.T, vanished bool) {
 		if _, err = client.BatchV1().Jobs("demo").UpdateStatus(ctx, job, metav1.UpdateOptions{}); err != nil {
 			return err
 		}
-		_, err = client.CoreV1().Pods("demo").Create(ctx, &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "failed-worker", OwnerReferences: []metav1.OwnerReference{{Kind: "Job", Name: job.Name, UID: job.UID}}}, Status: corev1.PodStatus{Phase: corev1.PodFailed, ContainerStatuses: []corev1.ContainerStatus{{Name: "agent", State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{Reason: "OOMKilled", ExitCode: 137, Message: "memory limit exceeded"}}}}}}, metav1.CreateOptions{})
+		_, err = client.CoreV1().Pods("demo").Create(ctx, &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "failed-worker", OwnerReferences: []metav1.OwnerReference{{Kind: "Job", Name: job.Name, UID: job.UID}}}, Status: corev1.PodStatus{Phase: corev1.PodFailed, ContainerStatuses: []corev1.ContainerStatus{{Name: "agent", State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{Reason: "Error", ExitCode: 1, Message: "worker crashed"}}}}}}, metav1.CreateOptions{})
 		return err
 	}
 	native.Reflector = RegisteredReflectionWorker{AgentID: agent, TaskType: reflectionTaskType(t), Outcomes: memory.OpenReader(root), Timeout: time.Minute, TaskStore: &lifecycleio.TaskStore{Root: t.TempDir()}, Executor: executor, SessionExecutor: func(string) (ReflectionTaskExecutor, error) { return executor, nil }}

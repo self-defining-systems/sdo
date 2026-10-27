@@ -362,9 +362,10 @@ func (n NativeIncidentBroker) reflectLocked(ctx context.Context, ledger *contrac
 		return err
 	}
 	ledger.ReflectionProcessed = true
-	if ledger.GetReflectionDecision().GetFailureReason() == ReflectionRequestTooLarge {
-		// A transport limit never decides closure: health already did. The skip is typed and not retried.
-		ledger.ReflectionSkippedReason = ReflectionRequestTooLarge
+	if reason := ledger.GetReflectionDecision().GetFailureReason(); reflectionSkipReasons[reason] {
+		// A transport limit or a worker killed for memory never decides closure: health already did. The skip is
+		// typed and not retried.
+		ledger.ReflectionSkippedReason = reason
 	}
 	var gaps []*contracts.SdkGap
 	for _, decision := range ledger.GetReflectionResults() {

@@ -11,13 +11,58 @@ import argparse
 import os
 import re
 import runpy
+import shlex
 import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from benchmarks.sregym.adapter import WaitKind, wait_for
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+
+    from benchmarks.sregym.faults.description import ProblemDescription
+
+_SECRET_GET = re.compile(r"kubectl\s+get\s+secrets?\b[^\"'\n]*")
+
+
+class FaultNotInstallableError(ValueError):
+    """A fault of this row runs a Secret read the lane guard rejects, so its injection could never succeed."""
+
+    reason = "fault_not_installable"
+
+
+def assert_faults_installable(
+    descriptions: Mapping[str, ProblemDescription], sregym_dir: Path, guard: LaneGuard
+) -> None:
+    """Fail at row start, not after onboarding, when a fault's own source reads a Secret the guard rejects.
+
+    Each ``kubectl get secret`` command in the fault's problem class is run through the same
+    ``LaneGuard.command`` rule that fences the worker, with f-string fields replaced by a placeholder.
+    """
+    classes = {fault.class_name for description in descriptions.values() for fault in description.faults}
+    sources = {path: path.read_text() for path in sorted((sregym_dir / "sregym" / "conductor").rglob("*.py"))}
+    rejected: dict[str, str] = {}
+    for name in sorted(filter(None, classes)):
+        for path, source in sources.items():
+            start = re.search(rf"^class {re.escape(name)}\b", source, re.MULTILINE)
+            if start is None:
+                continue
+            following = re.search(r"^class \w", source[start.end() :], re.MULTILINE)
+            body = source[start.start() : start.end() + following.start()] if following else source[start.start() :]
+            for match in _SECRET_GET.finditer(body):
+                command = shlex.split(re.sub(r"\{[^}]*\}", "x", match.group(0)))
+                try:
+                    guard.command(command)
+                except ValueError as error:
+                    rejected[f"{name} ({path.name})"] = f"{' '.join(command)!r}: {error}"
+    if rejected:
+        raise FaultNotInstallableError(
+            f"{FaultNotInstallableError.reason}: "
+            + "; ".join(f"{key}: {message}" for key, message in sorted(rejected.items()))
+        )
 
 
 @dataclass(frozen=True)

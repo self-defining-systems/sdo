@@ -87,10 +87,12 @@ type KubernetesExecutor struct {
 // JobFailedError is terminal for an immutable task execution. Transport retries
 // rejoin that execution; only a new logical task may start another worker.
 type JobFailedError struct {
-	JobName       string
-	Conditions    []JobFailureCondition
-	Containers    []ContainerFailure
-	EvidenceError string
+	JobName string
+	// RequestedMemoryLimit is the memory limit the Job template asked for.
+	RequestedMemoryLimit string
+	Conditions           []JobFailureCondition
+	Containers           []ContainerFailure
+	EvidenceError        string
 }
 
 type JobFailureCondition struct {
@@ -106,17 +108,22 @@ type ContainerFailure struct {
 	Reason        string
 	ExitCode      int32
 	Message       string
+	// MemoryLimit is the limit the pod was admitted with, which a cluster admission webhook can rewrite.
+	MemoryLimit string
 }
 
 func (err *JobFailedError) NonRetryable() bool { return true }
 
 func (err *JobFailedError) Error() string {
 	parts := []string{fmt.Sprintf("agent Job %q failed", err.JobName)}
+	if reason := err.FailureReason(); reason != "" {
+		parts = append(parts, fmt.Sprintf("reason %s (Job requested memory limit %s)", reason, err.RequestedMemoryLimit))
+	}
 	for _, condition := range err.Conditions {
 		parts = append(parts, fmt.Sprintf("condition %s=%s reason=%q message=%q", condition.Type, condition.Status, condition.Reason, condition.Message))
 	}
 	for _, container := range err.Containers {
-		parts = append(parts, fmt.Sprintf("Pod %q container %q terminated reason=%q exit_code=%d message=%q", container.PodName, container.ContainerName, container.Reason, container.ExitCode, container.Message))
+		parts = append(parts, fmt.Sprintf("Pod %q container %q terminated reason=%q exit_code=%d memory_limit=%q message=%q", container.PodName, container.ContainerName, container.Reason, container.ExitCode, container.MemoryLimit, container.Message))
 	}
 	if err.EvidenceError != "" {
 		parts = append(parts, "Pod termination evidence unavailable: "+err.EvidenceError)
@@ -579,7 +586,7 @@ func (e KubernetesExecutor) ensureJob(ctx context.Context, task *contracts.Agent
 						WorkingDir: task.GetWorkspace().GetCheckoutPath(), EnvFrom: envFrom, Env: env, VolumeMounts: mounts,
 						// The controller reads no logs: a failing worker writes one curated line to /dev/termination-log.
 						SecurityContext: &corev1.SecurityContext{AllowPrivilegeEscalation: &noEscalation, ReadOnlyRootFilesystem: &readOnlyRoot, Capabilities: &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}}},
-						Resources:       corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("250m"), corev1.ResourceMemory: resource.MustParse("512Mi")}, Limits: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("2"), corev1.ResourceMemory: resource.MustParse("4Gi")}},
+						Resources:       corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("250m"), corev1.ResourceMemory: resource.MustParse(WorkerMemoryRequest)}, Limits: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("2"), corev1.ResourceMemory: resource.MustParse(WorkerMemoryLimit)}},
 					}}, Volumes: volumes,
 				},
 			},

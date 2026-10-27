@@ -49,6 +49,7 @@ from benchmarks.sregym.fastloop.wipe import (
     AttemptMarker,
     KubectlLaneCluster,
     application_pod_problems,
+    data_fault_rows,
     run_tier2,
     unrecovered_rows,
 )
@@ -673,7 +674,7 @@ def _recapture_application_baseline(environment: FastloopEnvironment) -> None:
 
 
 def _application_needs_redeploy(environment: FastloopEnvironment, marker: AttemptMarker) -> Tier2Reason | None:
-    """Tier 2 trigger: an unrecovered previous row, a warm app that fails the restore invariant, or a stuck pod."""
+    """Tier 2 trigger: an unrecovered or data-faulted previous row, a failed restore invariant, or a stuck pod."""
     from benchmarks.sregym.fastloop.admission import workload_identity
     from benchmarks.sregym.fastloop.clean_start import assert_clean_baseline
     from benchmarks.sregym.fastloop.wipe import await_healthy_pods, tier2_reason
@@ -777,6 +778,7 @@ def _run(args: argparse.Namespace) -> int:
     grader = SregymDiagnosisGrader(environment.sregym_dir, judge_model_id) if grading_mode != "off" else None
     problems = tuple(args.problem or [environment.deploy_problem]) if not stream else tuple(ids[0] for ids in stream)
     from benchmarks.sregym.fastloop.fault_tracker import describe_sregym_problems, stream_faults
+    from benchmarks.sregym.fastloop.lane_guard import LaneGuard, assert_faults_installable
     from benchmarks.sregym.faults.description import check_composites, validate_suite
 
     # Discovery and capability checks must finish before a worker can deploy or launch an agent.
@@ -788,6 +790,9 @@ def _run(args: argparse.Namespace) -> int:
         else {}
     )
     check_composites(descriptions)
+    assert_faults_installable(
+        descriptions, environment.sregym_dir, LaneGuard(environment.cluster, environment.kubeconfig, "row-start")
+    )
     capability_mode = stream_config.capability_mode if stream_config else "strict"
     capability_evidence = validate_suite(
         descriptions if args.agent == "sdo" else {},
@@ -950,7 +955,10 @@ def _run(args: argparse.Namespace) -> int:
                 faults_by_incident,
                 reset_failed if args.continue_on_error else None,
             )
-    marker.end(unrecovered_rows(records))
+    marker.end(
+        unrecovered_rows(records),
+        data_fault_rows(records, {key: item.data_level_faults() for key, item in descriptions.items()}),
+    )
     _print_summary(records)
     print(f"results: {config.results_path}")
     return (

@@ -21,6 +21,12 @@ import (
 // reflection worker, and returns the broker, the receipt and the tasks the executor saw.
 func closeWithReflection(t *testing.T, shape func(*contracts.OutcomeRecord)) (NativeIncidentBroker, IncidentWorkspace, ClosureReceipt, []*contracts.AgentTask, error) {
 	t.Helper()
+	return closeWithReflectionWorkerError(t, shape, nil)
+}
+
+// closeWithReflectionWorkerError closes an incident whose reflection worker fails with workerErr when it is set.
+func closeWithReflectionWorkerError(t *testing.T, shape func(*contracts.OutcomeRecord), workerErr error) (NativeIncidentBroker, IncidentWorkspace, ClosureReceipt, []*contracts.AgentTask, error) {
+	t.Helper()
 	accepted := nativeRepository(t)
 	repository, err := broker.New(accepted, filepath.Join(t.TempDir(), "proposals"), func(context.Context, string, []string) error { return nil })
 	if err != nil {
@@ -31,6 +37,9 @@ func closeWithReflection(t *testing.T, shape func(*contracts.OutcomeRecord)) (Na
 		TaskType: reflectionTaskType(t), AgentID: "reflector", Outcomes: memory.NewJSONStore(t.TempDir()), Timeout: time.Minute, SessionMode: "fresh",
 		Executor: reflectionTaskExecutorFunc(func(_ context.Context, task *contracts.AgentTask) (*contracts.AgentResult, error) {
 			dispatched = append(dispatched, task)
+			if workerErr != nil {
+				return nil, workerErr
+			}
 			response, err := anypb.New(&contracts.ReflectionResult{LearningDecision: "no_change", NoChangeReason: "covered"})
 			if err != nil {
 				t.Fatal(err)
@@ -162,5 +171,37 @@ func TestFrozenOverLimitReflectionTaskIsRebuilt(t *testing.T) {
 	}
 	if last := dispatched[len(dispatched)-1]; proto.Size(last) > worker_registry.MaxRequestBytes {
 		t.Fatalf("the rebuilt task is still %d bytes", proto.Size(last))
+	}
+}
+
+// A worker killed for memory ends the reflection with a typed reason on the ledger and the incident closes on
+// health, instead of a bare Job backoff that fails the closure.
+func TestReflectionWorkerKilledForMemoryIsSkippedTypedAndTheIncidentCloses(t *testing.T) {
+	for _, reason := range []string{worker_registry.FailureWorkerOOMKilled, worker_registry.FailureWorkerResourcesRewritten} {
+		t.Run(reason, func(t *testing.T) {
+			limit := worker_registry.WorkerMemoryLimit
+			if reason == worker_registry.FailureWorkerResourcesRewritten {
+				limit = "16Mi"
+			}
+			failure := &worker_registry.JobFailedError{JobName: "job", RequestedMemoryLimit: worker_registry.WorkerMemoryLimit, Containers: []worker_registry.ContainerFailure{{ContainerName: "agent", Reason: "OOMKilled", ExitCode: 137, MemoryLimit: limit}}}
+			native, workspace, receipt, dispatched, err := closeWithReflectionWorkerError(t, func(*contracts.OutcomeRecord) {}, failure)
+			if err != nil || receipt.AckToken == "" {
+				t.Fatalf("closure failed on a worker memory kill: receipt=%+v err=%v", receipt, err)
+			}
+			if len(dispatched) != 1 {
+				t.Fatalf("reflection dispatched %d times", len(dispatched))
+			}
+			ledger, err := native.readLedger(workspace.IncidentID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			decision := ledger.GetReflectionDecision()
+			if !ledger.ReflectionProcessed || ledger.ReflectionSkippedReason != reason || decision.GetFailureReason() != reason || decision.GetLearningDecision() != "failed" {
+				t.Fatalf("typed reason not recorded: processed=%v skipped=%q decision=%v", ledger.ReflectionProcessed, ledger.ReflectionSkippedReason, decision)
+			}
+			if !strings.Contains(decision.GetError(), limit) {
+				t.Fatalf("decision error does not name the limit %s: %q", limit, decision.GetError())
+			}
+		})
 	}
 }
