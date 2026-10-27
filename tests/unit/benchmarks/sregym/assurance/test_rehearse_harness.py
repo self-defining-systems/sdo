@@ -18,12 +18,11 @@ REPO_ROOT = Path(__file__).resolve().parents[5]
 
 def test_scenarios_cover_the_known_plumbing_failures_with_real_streams() -> None:
     covered = {item for scenario in gate.SCENARIOS for item in scenario.covers}
-    assert {"P51", "P52", "P53", "RH3"} <= covered
+    assert {"P51", "P52", "RH3"} <= covered
     assert len({scenario.name for scenario in gate.SCENARIOS}) == len(gate.SCENARIOS)
     for scenario in gate.SCENARIOS:
-        if scenario.stream is not None:
-            stream = json.loads((REPO_ROOT / gate.FIXTURES / scenario.stream).read_text(encoding="utf-8"))
-            assert len(stream["incidents"]) == scenario.expected_incidents
+        stream = json.loads((REPO_ROOT / gate.FIXTURES / scenario.stream).read_text(encoding="utf-8"))
+        assert len(stream["incidents"]) == scenario.expected_incidents
 
 
 def test_no_step_is_bounded_by_a_fixed_time_budget() -> None:
@@ -166,7 +165,6 @@ def _ctx(tmp_path: Path, scenario: str, **extra: Any) -> gate.Context:
         "results": results,
         "workspace": tmp_path / "ws",
         "scenario": chosen,
-        "command": lambda argv: (1, "unused"),
     }
     values.update(extra)
     return gate.Context(**values)
@@ -242,25 +240,14 @@ def test_source_repair_check_fails_without_a_source_proposal(tmp_path: Path) -> 
     assert not all(check.ok for check in gate.check_source_repair_refresh(ctx))
 
 
-def test_rbac_check_denies_what_the_controller_cannot_delete(tmp_path: Path) -> None:
-    seen: list[list[str]] = []
-
-    def answer(argv: Any) -> tuple[int, str]:
-        seen.append(list(argv))
-        return (0, "no\n") if "replicasets.apps" in argv else (0, "yes\n")
-
-    ctx = _ctx(tmp_path, "p53-program-write-rbac", command=answer, namespace="app", kubeconfig="kc")
-    checks = gate.check_program_write_rbac(ctx)
-
-    assert {check.name: check.ok for check in checks} == {
-        "controller can delete replicasets.apps": False,
-        "controller can patch replicasets.apps": False,
-        "controller can delete pods": True,
-    }
-    assert all("system:serviceaccount:app-sdo:sdo-controller" in argv for argv in seen)
-
-
 # --- the gate end to end, with fake commands ---------------------------------------------------------------
+
+
+@pytest.fixture
+def fake_check(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A scenario check that passes, so the gate's own sequencing is tested apart from the real checks."""
+
+    monkeypatch.setitem(gate.CHECKS, "fake", lambda _ctx: [gate.Check("fake", True)])
 
 
 def _fake_gate(tmp_path: Path, commands: list[list[str]], *, fail: str | None = None, clock: Any = None) -> gate.Gate:
@@ -268,8 +255,8 @@ def _fake_gate(tmp_path: Path, commands: list[list[str]], *, fail: str | None = 
         commands.append(list(argv))
         return (1, "failed") if fail and fail in argv else (0, "yes")
 
-    environment = SimpleNamespace(workspace=tmp_path / "ws", namespace="app", kubeconfig=Path("kc"))
-    scenarios = (next(s for s in gate.SCENARIOS if s.name == "p53-program-write-rbac"),)
+    environment = SimpleNamespace(workspace=tmp_path / "ws")
+    scenarios = (gate.Scenario(name="fake", covers=("RH3",), stream="baseline.json", checks=("fake",)),)
     return gate.Gate(
         tmp_path / "freeze",
         "3",
@@ -281,29 +268,29 @@ def _fake_gate(tmp_path: Path, commands: list[list[str]], *, fail: str | None = 
     )
 
 
-def test_gate_brings_the_lane_up_once_resets_each_scenario_and_writes_the_summary(tmp_path: Path) -> None:
+def test_gate_brings_the_lane_up_once_resets_each_scenario_and_writes_the_summary(
+    tmp_path: Path, fake_check: None
+) -> None:
     commands: list[list[str]] = []
     runner = _fake_gate(tmp_path, commands)
     runner.run_dir.mkdir()
 
     summary = runner.run()
 
-    verbs = [
-        argv[0] if argv[0] == "kubectl" else argv[argv.index("benchmarks.sregym.fastloop") + 1] for argv in commands
-    ]
-    assert verbs[:2] == ["up", "reset"]
+    verbs = [argv[argv.index("benchmarks.sregym.fastloop") + 1] for argv in commands]
+    assert verbs[:3] == ["up", "reset", "run"]
     assert verbs.count("up") == 1
     assert summary["passed"]
-    assert summary["scenarios"][0]["covers"] == ("P53",)
+    assert summary["scenarios"][0]["covers"] == ("RH3",)
     assert json.loads((runner.run_dir / gate.SUMMARY_FILENAME).read_text(encoding="utf-8"))["passed"] is True
 
     (runner.run_dir / "fastloop.json").write_text("{}", encoding="utf-8")
     commands.clear()
     runner.run()
-    assert not any("up" in argv[argv.index("benchmarks.sregym.fastloop") + 1 :] for argv in commands if argv[0] == "uv")
+    assert not any("up" in argv[argv.index("benchmarks.sregym.fastloop") + 1 :] for argv in commands)
 
 
-def test_gate_fails_when_the_lane_cannot_come_up_or_a_scenario_check_fails(tmp_path: Path) -> None:
+def test_gate_fails_when_the_lane_cannot_come_up_or_a_scenario_stream_fails(tmp_path: Path, fake_check: None) -> None:
     commands: list[list[str]] = []
     down = _fake_gate(tmp_path, commands, fail="up")
     down.run_dir.mkdir()
@@ -312,7 +299,7 @@ def test_gate_fails_when_the_lane_cannot_come_up_or_a_scenario_check_fails(tmp_p
     assert summary["scenarios"][0]["status"] == "error"
     assert len(commands) == 1  # no scenario runs on a lane that did not come up
 
-    denied = _fake_gate(tmp_path / "second", commands, fail="can-i")
+    denied = _fake_gate(tmp_path / "second", commands, fail="--stream")
     denied.run_dir.mkdir(parents=True)
     (denied.run_dir / "fastloop.json").write_text("{}", encoding="utf-8")
     result = denied.run()
@@ -320,7 +307,7 @@ def test_gate_fails_when_the_lane_cannot_come_up_or_a_scenario_check_fails(tmp_p
     assert result["scenarios"][0]["status"] == "fail"
 
 
-def test_a_slow_gate_that_meets_every_contract_passes(tmp_path: Path) -> None:
+def test_a_slow_gate_that_meets_every_contract_passes(tmp_path: Path, fake_check: None) -> None:
     ticks = iter(float(n * 400) for n in range(100))
     runner = _fake_gate(tmp_path, [], clock=lambda: next(ticks))
     runner.run_dir.mkdir()
@@ -337,7 +324,7 @@ def test_dry_run_lists_every_command_without_touching_a_cluster(tmp_path: Path) 
     text = gate.dry_run(tmp_path / "freeze", tmp_path / "run", "3")
     assert text.count(" reset ") == len(gate.SCENARIOS)
     assert "--restart-controller-in-injection-pause" in text
-    assert "covers P53" in text
+    assert "covers P52" in text
 
 
 def test_fastloop_run_wraps_the_cluster_only_when_asked_to_restart_in_the_pause(tmp_path: Path) -> None:
