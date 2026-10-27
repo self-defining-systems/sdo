@@ -9,7 +9,7 @@
     "sdo.dev/operator/builder/TestTypedObservationProgramCompilesAndReportsStaleEvidence": "compiler-replay",
     "sdo.dev/operator/operatorcli/TestAdoptionCompilesAsIsAndLaterValidationStillRejects": "compiler-replay",
     "sdo.dev/operator/worker_registry/TestKubernetesExecutorRejectsRequestOverBudgetNamingTheComponent": "compiler",
-    "sdo.dev/operator/broker/TestReflectionRecordsReplayButStillRejectsInvalidCode": "compiler-replay",
+    "sdo.dev/operator/broker/TestReflectionRecordsReplayButStillRejectsInvalidCode": "remaining",
     "sdo.dev/operator/broker/TestCLIAndBrokerAgreeOnVerifiedCauseReplayCoverage": "compiler-replay",
     "sdo.dev/operator/memory/validate/TestPartialPlaybookPublication": "remaining",
     "sdo.dev/operator/broker/TestCLIAndBrokerAgreeOnUnobservableDetectorLocator": "remaining"
@@ -672,11 +672,8 @@
     "sdo.dev/operator/worker_registry/TestWorkerPVCProjectionsShareOneVolumeAcrossLaunchModes": 0.005
   },
   "local_measurements": {
-    "source_head": "5e5fd6a316e7161f2314d827f59624c269417251",
-    "description": "REFL3B local -race, -parallel=2, -timeout=4m run; active top-level times for new/expanded advisory replay publication tests. Move the new test off the saturated broker package; keep every existing shard and deadline.",
-    "tests": [
-      "sdo.dev/operator/broker/TestReflectionRecordsReplayButStillRejectsInvalidCode",
-      "sdo.dev/operator/broker/TestCLIAndBrokerAgreeOnVerifiedCauseReplayCoverage"
-    ]
+    "head": "0355c152",
+    "log": "merge6-506-compiler-replay.log",
+    "reason": "Replay-information acceptance made broker replay cases costlier; move complete reflection case to existing remaining runner, preserving cases and deadlines."
   }
 }
