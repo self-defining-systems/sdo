@@ -81,6 +81,11 @@ func (s *run) compile(ctx context.Context) error {
 	}
 	mitigationFailure := false
 	for _, rule := range []string{RuleProgramMitigationRepair, RuleProgramMitigationReplay, RuleProgramRepeatDefect, RuleProgramDiagnoseNoMatch, RuleProgramMitigatorMissing, RuleDetectorInvalidFinding, RuleDetectorFiresOnHealthy, detectorCorpusObservation, RuleDetectorHealthyBaseline, RuleDetectorControllerStart} {
+		if rule == RuleProgramRepeatDefect && strings.Contains(stage.Output, detectorCorpusObservation) {
+			// An unobservable detector locator fails the detector's own corpus
+			// test; the repeat check would only repeat that diagnostic.
+			continue
+		}
 		if strings.Contains(stage.Output, rule) {
 			messages := map[string]bool{}
 			for _, line := range strings.Split(stage.Output, "\n") {

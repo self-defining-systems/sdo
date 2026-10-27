@@ -104,11 +104,11 @@ func TestReflectionCommitsWithRecordedGapsAndStillRejectsBrokenLearning(t *testi
 		if err != nil {
 			t.Fatal(err)
 		}
-		old := `ref := sdk.ObjectRefFrom("Service", "v1", &service)`
-		if !strings.Contains(string(data), old) {
+		if !strings.Contains(string(data), "if faulty {") {
 			t.Fatal("fixture detector changed")
 		}
-		if err := os.WriteFile(path, []byte(strings.Replace(string(data), old, old+`; ref.Kind = "Pod"`, 1)), 0o644); err != nil {
+		// The detector never fires, so no finding selects the playbook.
+		if err := os.WriteFile(path, []byte(strings.Replace(string(data), "if faulty {", `if faulty && service.Name == "" {`, 1)), 0o644); err != nil {
 			t.Fatal(err)
 		}
 		result := &contracts.ReflectionResult{LearningDecision: decision.LearningDecision, ProposedArtifactIds: decision.PlaybookIds}

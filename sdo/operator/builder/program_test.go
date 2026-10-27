@@ -132,6 +132,7 @@ func TestProgramValidationRejectsUnsafeMemory(t *testing.T) {
 		{"syscall import", ".sdo/lib/ports/ports.go", "import (", "import (\n\t\"syscall\"", "may not import"},
 		{"plugin import", ".sdo/lib/ports/ports.go", "import (", "import (\n\t\"plugin\"", "may not import"},
 		{"missing diagnoser", ".sdo/playbooks/service-targetport-mismatch/diagnose.go", "func (Program) Diagnose", "func (Program) Inspect", "exactly one Diagnoser"},
+		{"invalid detector finding", ".sdo/diagnostics/detectors/incidents/routing-relations/detector.go", `Summary: "Service targetPort has no matching container port"`, `Summary: ""`, "detector.invalid-finding"},
 		{"detector binds an object Diagnose rejects", ".sdo/diagnostics/detectors/incidents/routing-relations/detector.go", `ref := sdk.ObjectRefFrom("Service", "v1", &service)`, `ref := sdk.ObjectRefFrom("Service", "v1", &service); ref.Name = "not-observed"`, "program.diagnose-no-match"},
 		{"shell guidance", ".sdo/playbooks/service-targetport-mismatch/README.md", "Check the", "kubectl get services\nCheck the", "shell command"},
 		{"shell fence", ".sdo/playbooks/service-targetport-mismatch/README.md", "Check the", "```bash\n```\nCheck the", "shell command"},
@@ -169,8 +170,8 @@ func TestProgramRepeatUnreachableIsRecordedAsGap(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	old := `ref := sdk.ObjectRefFrom("Service", "v1", &service)`
-	if err := os.WriteFile(path, []byte(strings.Replace(string(data), old, old+`; ref.Kind = "Pod"`, 1)), 0o644); err != nil {
+	// The detector never fires, so no finding selects the playbook.
+	if err := os.WriteFile(path, []byte(strings.Replace(string(data), "if faulty {", `if faulty && service.Name == "" {`, 1)), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	w, err := buildProgramFixture(t, root)

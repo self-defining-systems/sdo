@@ -427,9 +427,19 @@ func (p Program) Mitigate(ctx context.Context,v program.ReadView,b program.Bindi
 			if err != nil {
 				t.Fatal(err)
 			}
-			source := strings.Replace(string(data), `ref := sdk.ObjectRefFrom("Service", "v1", &service)`, `ref := sdk.ObjectRefFrom("Service", "v1", &service); ref.Kind = "Pod"`, 1)
+			source := strings.Replace(string(data), "if faulty {", `if faulty && service.Name == "" {`, 1)
 			put(t, r, path, source, 0644)
 		}, nil, false},
+		{"program detector emits an invalid finding", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
+			parityProgram(t, r)
+			path := ".sdo/diagnostics/detectors/incidents/routing-relations/detector.go"
+			data, err := os.ReadFile(filepath.Join(r, path))
+			if err != nil {
+				t.Fatal(err)
+			}
+			source := strings.Replace(string(data), `Summary: "Service targetPort has no matching container port"`, `Summary: ""`, 1)
+			put(t, r, path, source, 0644)
+		}, []string{validate.RuleDetectorInvalidFinding}, false},
 
 		{"program corpus provenance", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
 			parityProgram(t, r)
