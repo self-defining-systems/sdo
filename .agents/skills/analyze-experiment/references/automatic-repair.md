@@ -36,3 +36,8 @@ exact overlapping detector/finding fingerprint since the last healthy outcome.
 It contains successful action receipts and observed blockers, as information
 for avoiding duplicate work; it neither credits the new outcome nor restores
 mutation authority. Full receipts remain in the private incident facts file.
+The handoff also retains the existing
+`controller.rollout/deployment-rollout-pending` finding identity for a recorded
+admission prerequisite, including stage rejoin. Old Ready replicas clearing
+health cannot silently skip the responder; fresh controller closure observation
+still owns recovery verification.

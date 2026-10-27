@@ -86,6 +86,7 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 		loop.Request = state.Request
 	}
 	save := func(complete bool) error {
+		retainAdmissionStageFindings(state, report)
 		report.RemainingFindingFingerprints = findingFingerprints(state.Findings)
 		loop.stageProgress[stage.Name()] = responseStageProgress{Report: report, Coverage: cloneCoverage(state.Coverage), InitialProgramRuns: append([]ProgramRun(nil), state.Request.InitialProgramRuns...), Complete: complete}
 		return loop.persistToolState(ctx)

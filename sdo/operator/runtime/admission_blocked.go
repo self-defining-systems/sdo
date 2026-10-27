@@ -82,3 +82,34 @@ func (w KubernetesPlanRollouts) admissionBlocked(ctx context.Context, blocker *c
 	}
 	return &AdmissionBlockedError{Pending: pending}
 }
+
+// Health can clear on old Ready replicas while new Pods are denied. Preserve
+// the recorded rollout prerequisite at every durable handoff, including rejoin,
+// so an empty health sample cannot silently skip the agent stage. Fresh closure
+// observation still decides whether the workload is actually recovered.
+func retainAdmissionStageFindings(state *IncidentState, report *contracts.StageReport) {
+	seen := map[string]bool{}
+	for _, finding := range state.Findings {
+		seen[FindingFingerprint(finding)] = true
+	}
+	for _, attempt := range report.GetMitigations() {
+		receipt := attempt.GetApplyReceipt()
+		pending := receipt.GetRolloutPending()
+		if !receipt.GetApplied() || receipt.GetRolledBack() || pending.GetReasonCode() != "admission_blocked" {
+			continue
+		}
+		for _, blocker := range pending.GetBlockers() {
+			ref := objectRefState(blocker.GetRef())
+			if ref.Kind != "Deployment" || ref.Name == "" {
+				continue
+			}
+			finding := deploymentRolloutFinding(ref, "admission_blocked: "+boundedRolloutText(pending.GetReason(), 200), pending.GetReason())
+			if !seen[FindingFingerprint(finding)] {
+				state.Findings = append(state.Findings, finding)
+				seen[FindingFingerprint(finding)] = true
+			}
+		}
+	}
+	sortFindings(state.Findings)
+	state.refreshUnexplained()
+}

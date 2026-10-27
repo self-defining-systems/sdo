@@ -32,7 +32,7 @@ func closureRolloutFindings(snapshot sdk.DetectionContext, namespace string, ref
 			evidence += "; " + strings.Join(blocker.WarningEvents, "; ")
 		}
 		ref := sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: d.Namespace, Name: d.Name}
-		findings = append(findings, sdk.Finding{DetectorID: "controller.rollout", RuleID: "deployment-rollout-pending", Fingerprint: fmt.Sprintf("controller.rollout/deployment-rollout-pending/%s/%s", d.Namespace, d.Name), PrimaryResource: ref, Severity: sdk.SeverityCritical, Status: sdk.FindingActive, Summary: fmt.Sprintf("Deployment %s rollout pending: %s", d.Name, observation.summary), Evidence: evidence})
+		findings = append(findings, deploymentRolloutFinding(ref, observation.summary, evidence))
 	}
 	sortFindings(findings)
 	return findings
@@ -77,4 +77,10 @@ func rolloutRelated(d appsv1.Deployment, refs []sdk.ObjectRef, sets []appsv1.Rep
 		}
 	}
 	return false
+}
+
+// One finding identity joins rollout write readback, stage handoff and fresh
+// independent closure observations. Only closure owns recovery verification.
+func deploymentRolloutFinding(ref sdk.ObjectRef, summary, evidence string) sdk.Finding {
+	return sdk.Finding{DetectorID: "controller.rollout", RuleID: "deployment-rollout-pending", Fingerprint: fmt.Sprintf("controller.rollout/deployment-rollout-pending/%s/%s", ref.Namespace, ref.Name), PrimaryResource: ref, Severity: sdk.SeverityCritical, Status: sdk.FindingActive, Summary: fmt.Sprintf("Deployment %s rollout pending: %s", ref.Name, summary), Evidence: evidence}
 }

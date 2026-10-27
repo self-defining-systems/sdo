@@ -159,3 +159,49 @@ func TestAdmissionDenialAppearingDuringRolloutStopsNextObservation(t *testing.T)
 		t.Fatalf("new admission evidence did not stop polling promptly: reads=%d elapsed=%s error=%v", reads, time.Since(started), err)
 	}
 }
+
+type admissionClearDetector struct{ pipelineDetector }
+
+func (admissionClearDetector) Detect(context.Context, sdk.DetectionContext) ([]sdk.Finding, error) {
+	return nil, nil
+}
+
+// Old Ready replicas may clear health while admission rejects new Pods. The
+// real pipeline must still send the prerequisite to the agent immediately.
+func TestAdmissionBlockedStageHandsOffEvenWhenHealthDetectorsClear(t *testing.T) {
+	loop, state := pipelineTestLoop(t, false)
+	loop.Detectors = []sdk.Detector{admissionClearDetector{}}
+	loop.Executor.Rollouts = admissionRolloutsFor("api")
+	applications := 0
+	for pass := 0; pass < 2; pass++ {
+		dispatcher := &recordingDispatcher{requests: make(chan IncidentRequest, 1)}
+		err := RunResponseStages(context.Background(), state, []ResponseStage{
+			&DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return loop }},
+			AgentResponseStage{Dispatcher: dispatcher},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case request := <-dispatcher.requests:
+			found := false
+			for _, finding := range request.Findings {
+				if finding.DetectorID == "controller.rollout" && strings.Contains(finding.Evidence, "validate.example.test") {
+					found = true
+				}
+			}
+			if !found || len(request.PriorStages) != 1 {
+				t.Fatalf("pass %d agent lost admission prerequisite: %+v", pass, request)
+			}
+		default:
+			t.Fatalf("pass %d clear health hid the admission prerequisite and skipped agent handoff", pass)
+		}
+		if pass == 0 {
+			applications = len(loop.PlanApplications())
+		} else if len(loop.PlanApplications()) != applications {
+			t.Fatal("rejoin repeated the repair")
+		}
+		// Rejoin from the durable completed stage checkpoint, with fresh health.
+		state = &IncidentState{Request: state.Request, Findings: append([]sdk.Finding(nil), state.Request.Findings...), Coverage: state.Coverage}
+	}
+}
