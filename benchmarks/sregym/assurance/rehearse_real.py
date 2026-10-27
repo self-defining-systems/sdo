@@ -451,7 +451,7 @@ class RealApp:
 DEFAULT_LANES = {
     "hotel_reservation": (Path("/mnt/data/shli/sdo-exp/mixed10/LE/P4/live/lane-55b/environment"), "le-p4b")
 }
-STATIC_STAGES = ("catalog", "rbac", "responder-write")
+STATIC_STAGES = ("catalog",)
 
 
 def parse_lanes(values: Sequence[str]) -> dict[str, tuple[Path, str]]:
@@ -495,14 +495,13 @@ def run_real(
     out_dir: Path,
     images: dict[str, str],
     time_scale: float,
-    draws: Path,
     execute: Callable[..., tuple[int, str]] = _execute,
 ) -> list[Row]:
     """Static stages for every problem, real-app stages for the apps with a lane (apps in parallel)."""
 
     from concurrent.futures import ThreadPoolExecutor
 
-    from benchmarks.sregym.assurance.rehearse_batch import build_rows, probe_rbac, probe_responder_write
+    from benchmarks.sregym.assurance.rehearse_batch import build_rows
 
     apps = {
         app: RealApp(
@@ -524,28 +523,7 @@ def run_real(
         for row in rows:
             row.seconds = app.seconds.get(row.problem.problem_id, 0.0)
             real[row.problem.problem_id] = row
-    missing: dict[str, list[str]] = {}
-    gaps: dict[str, str] = {}
-    rbac_error = responder_error = ""
-    for app in apps.values():
-        lane = app.lane
-        try:
-            kinds = sorted({k for p in app.problems for k in p.kinds})
-            found = probe_rbac(
-                kinds,
-                lambda argv: execute(argv, cwd=code_root, timeout=60, log=out_dir / "static.log"),
-                namespace=lane.namespace,
-                kubeconfig=str(lane.kubeconfig),
-            )
-            missing.update(found)
-            gaps.update(probe_responder_write(draws, str(lane.kubeconfig), f"{lane.namespace}-sdo"))
-        except ImportError as exc:
-            responder_error = f"responder-write check not in this checkout: {exc}"
-        except Exception as exc:  # the batch reports every stage it could not run
-            rbac_error = f"static probe failed: {type(exc).__name__}: {exc}"
-    static = build_rows(
-        problems, {}, missing, rbac_error=rbac_error, responder_gaps=gaps, responder_error=responder_error
-    )
+    static = build_rows(problems, {})
     return merge_rows(static, real, lanes)
 
 
@@ -583,7 +561,6 @@ def main_real(args: Any) -> int:
         out_dir=out_dir,
         images=image_refs(args.image_tag),
         time_scale=args.time_scale,
-        draws=args.draws,
     )
     out_dir.mkdir(parents=True, exist_ok=True)
     seconds = round(time.monotonic() - t0, 1)
@@ -618,7 +595,6 @@ def real_summary(
         "clean": sum(1 for r in rows if not r.findings),
         "failing": sum(1 for r in rows if any(s.error_class not in batch.COVERAGE_CLASSES for s in r.findings)),
         "coverage_gaps": sum(1 for r in rows if any(s.error_class in batch.COVERAGE_CLASSES for s in r.findings)),
-        "responder_write_note": "",
         "classes": batch.group_by_class(rows),
         "rows": [r.as_dict() for r in rows],
     }

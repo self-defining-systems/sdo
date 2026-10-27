@@ -73,19 +73,13 @@ type Config struct {
 }
 
 type Plan struct {
-	ObservationRoles             []*rbacv1.Role
-	ObservationBindings          []*rbacv1.RoleBinding
-	ObservationClusterRoles      []*rbacv1.ClusterRole
-	ObservationClusterBindings   []*rbacv1.ClusterRoleBinding
-	Namespace                    *corev1.Namespace
-	PVC                          *corev1.PersistentVolumeClaim
-	ServiceAccounts              []*corev1.ServiceAccount
-	ControlRoles, AppRoles       []*rbacv1.Role
-	ControlBindings, AppBindings []*rbacv1.RoleBinding
-	ClusterRoles                 []*rbacv1.ClusterRole
-	ClusterBindings              []*rbacv1.ClusterRoleBinding
-	SyncPod                      *corev1.Pod
-	Job                          *batchv1.Job
+	Namespace       *corev1.Namespace
+	PVC             *corev1.PersistentVolumeClaim
+	ServiceAccounts []*corev1.ServiceAccount
+	ClusterRoles    []*rbacv1.ClusterRole
+	ClusterBindings []*rbacv1.ClusterRoleBinding
+	SyncPod         *corev1.Pod
+	Job             *batchv1.Job
 }
 
 var namespaceName = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$`)
@@ -209,6 +203,9 @@ func (c Config) validate() error {
 			return errors.New("duplicate SDO_LATE_FINDINGS responder setting; use LateFindings")
 		}
 	}
+	if err := c.validatePermissive(); err != nil {
+		return err
+	}
 	if len(c.NativeCommand) == 0 || strings.TrimSpace(c.NativeCommand[0]) == "" {
 		return errors.New("native controller entrypoint is required")
 	}
@@ -220,7 +217,7 @@ func (c Config) validate() error {
 	return nil
 }
 
-func Resources(c Config, resources ...*metav1.APIResourceList) (Plan, error) {
+func Resources(c Config) (Plan, error) {
 	if err := c.validate(); err != nil {
 		return Plan{}, err
 	}
@@ -233,80 +230,8 @@ func Resources(c Config, resources ...*metav1.APIResourceList) (Plan, error) {
 	for _, name := range []string{"sdo-controller", "sdo-operate", "sdo-responder", "sdo-image-builder"} {
 		plan.ServiceAccounts = append(plan.ServiceAccounts, &corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: control}})
 	}
-	controllerRules := []rbacv1.PolicyRule{
-		// Kubernetes RBAC cannot distinguish metadata-only reads from full objects.
-		// The baseline negotiates metadata strictly and never needs Secret get.
-		rule("", []string{"secrets"}, "list", "watch"),
-		rule("", []string{"configmaps"}, "get", "list", "watch", "create", "update", "delete"),
-		rule("", []string{"services", "pods", "endpoints", "events", "persistentvolumeclaims", "serviceaccounts"}, "get", "list", "watch"),
-		rule("", []string{"pods/log"}, "get"),
-		rule("", []string{"pods", "services"}, "create", "delete"),
-		rule("apps", []string{"deployments", "replicasets", "statefulsets", "daemonsets"}, "get", "list", "watch"),
-		rule("autoscaling", []string{"horizontalpodautoscalers"}, "get", "list"),
-		rule("policy", []string{"poddisruptionbudgets"}, "get", "list"),
-		rule("discovery.k8s.io", []string{"endpointslices"}, "get", "list", "watch"),
-		rule("networking.k8s.io", []string{"networkpolicies"}, "get", "list", "watch", "create", "update", "delete"),
-		rule("rbac.authorization.k8s.io", []string{"roles", "rolebindings"}, "get", "list", "watch"),
-		rule("coordination.k8s.io", []string{"leases"}, "get", "create", "update", "patch"),
-		rule("batch", []string{"jobs"}, "get", "list", "watch", "create", "delete"),
-		rule("batch", []string{"cronjobs"}, "get", "list", "watch"),
-	}
-	responderRules := []rbacv1.PolicyRule{
-		rule("", []string{"configmaps", "services", "pods", "persistentvolumeclaims"}, "get", "list", "watch", "create", "update", "patch", "delete"),
-		rule("", []string{"pods/log", "events", "endpoints"}, "get", "list", "watch"),
-		rule("", []string{"pods/exec", "pods/attach", "pods/portforward"}, "get", "create"),
-		rule("apps", []string{"deployments", "statefulsets", "daemonsets", "replicasets"}, "get", "list", "watch", "create", "update", "patch", "delete"),
-		rule("autoscaling", []string{"horizontalpodautoscalers"}, "get", "list"),
-		rule("policy", []string{"poddisruptionbudgets"}, "get", "list"),
-		rule("networking.k8s.io", []string{"networkpolicies", "ingresses"}, "get", "list", "watch", "create", "update", "patch", "delete"),
-		rule("discovery.k8s.io", []string{"endpointslices"}, "get", "list", "watch"),
-		rule("batch", []string{"jobs"}, "get", "list", "watch", "create", "update", "patch", "delete"),
-	}
-	if split {
-		plan.ControlRoles = append(plan.ControlRoles, role(control, "sdo-controller", controllerRules), role(control, "sdo-operate", controllerRules), role(control, "sdo-responder", []rbacv1.PolicyRule{rule("", []string{"configmaps"}, "get", "list", "watch", "create", "update", "patch")}))
-		readRules := []rbacv1.PolicyRule{}
-		for _, r := range controllerRules {
-			if r.APIGroups[0] == "coordination.k8s.io" || r.APIGroups[0] == "batch" {
-				continue
-			}
-			if len(r.Resources) == 1 && r.Resources[0] == "secrets" {
-				readRules = append(readRules, r)
-				continue
-			}
-			readRules = append(readRules, rule(r.APIGroups[0], r.Resources, "get", "list", "watch"))
-		}
-		// The controller watches Jobs and CronJobs in the application namespace;
-		// the batch rules above also carry control-namespace writes it must not get here.
-		readRules = append(readRules, rule("batch", []string{"jobs", "cronjobs"}, "get", "list", "watch"))
-		readRules = append(readRules, programApplyRules()...)
-		readRules = append(readRules, adoptionRules()...)
-		plan.AppRoles = append(plan.AppRoles, role(c.Namespace, "sdo-controller", readRules), role(c.Namespace, "sdo-operate", responderRules), role(c.Namespace, "sdo-responder", responderRules), role(c.Namespace, "sdo-controller-helper-cleanup", []rbacv1.PolicyRule{rule("", []string{"pods"}, "list", "delete"), rule("batch", []string{"jobs"}, "list", "delete")}))
-		for _, name := range []string{"sdo-controller", "sdo-operate", "sdo-responder", "sdo-controller-helper-cleanup"} {
-			subject := name
-			if name == "sdo-controller-helper-cleanup" {
-				subject = "sdo-controller"
-			}
-			plan.AppBindings = append(plan.AppBindings, binding(c.Namespace, name, subject, control))
-		}
-	} else {
-		controllerWrites := append(append([]rbacv1.PolicyRule{}, controllerRules...), programApplyRules()...)
-		controllerWrites = append(controllerWrites, adoptionRules()...)
-		plan.ControlRoles = append(plan.ControlRoles, role(control, "sdo-controller", controllerWrites), role(control, "sdo-operate", append(append([]rbacv1.PolicyRule{}, controllerRules...), responderRules...)), role(control, "sdo-responder", responderRules))
-	}
-	for _, name := range []string{"sdo-controller", "sdo-operate", "sdo-responder"} {
-		plan.ControlBindings = append(plan.ControlBindings, binding(control, name, name, control))
-	}
-	if err := addPermissiveGrants(c, &plan, resources); err != nil {
-		return Plan{}, err
-	}
-	if err := addCaptureGrants(c, &plan, resources); err != nil {
-		return Plan{}, err
-	}
-	if err := addUnexplainedRemovalGrants(c, &plan, resources); err != nil {
-		return Plan{}, err
-	}
-	addObservationGrants(&plan, c)
-	addScriptGrants(c, &plan)
+	plan.ServiceAccounts = append(plan.ServiceAccounts, &corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: "sdo-script", Namespace: c.Namespace}})
+	addAdminGrant(c, &plan)
 	plan.SyncPod = syncPod(c)
 	plan.Job = controllerJob(c)
 	if c.AcceptedCommit != "" {
@@ -333,52 +258,6 @@ func Resources(c Config, resources ...*metav1.APIResourceList) (Plan, error) {
 	hash := sha256.Sum256(encoded)
 	plan.Job.Annotations = map[string]string{InstallFingerprintAnnotation: hex.EncodeToString(hash[:16]), WorkerMountPolicyAnnotation: "proposal-only"}
 	return plan, nil
-}
-
-// programApplyRules grant the verbs of the program plan vocabulary
-// (actiongrants.ActionPermissions); TestControllerRoleHoldsEveryProgramActionPermission
-// ties them together. Kinds a program names outside that table are open-ended
-// and authorized by the API server alone.
-func programApplyRules() []rbacv1.PolicyRule {
-	return []rbacv1.PolicyRule{
-		rule("", []string{"configmaps", "services", "pods"}, "get", "patch", "create", "delete"),
-		// The exec transport of Exec, EnsureExec, EnsureHTTP and EnsureDatabaseUser
-		// runs as the controller's in-cluster identity.
-		rule("", []string{"pods/exec"}, "get", "create"),
-		rule("autoscaling", []string{"horizontalpodautoscalers"}, "get", "patch", "create", "delete"),
-		rule("policy", []string{"poddisruptionbudgets"}, "get", "patch", "create", "delete"),
-		rule("apps", []string{"deployments", "statefulsets"}, "get", "patch", "create", "delete"),
-		rule("apps", []string{"daemonsets"}, "get", "patch", "delete"),
-		rule("apps", []string{"replicasets"}, "get", "list", "patch", "delete"),
-		rule("apps", []string{"controllerrevisions"}, "get", "list"),
-		rule("networking.k8s.io", []string{"networkpolicies"}, "get", "patch", "create", "delete"),
-	}
-}
-
-// adoptionRules are the verbs the ownership-adoption pass needs on every kind
-// it handles: get to read, patch to adopt, and create because the server-side
-// dry run of a declared object that is absent is authorized as a create. RBAC
-// kinds are absent on purpose: Kubernetes escalation checks would refuse the
-// patch unless the controller held escalate or bind, so adoption leaves them
-// inventory-only (runtime sourceInventoryKinds).
-func adoptionRules() []rbacv1.PolicyRule {
-	return []rbacv1.PolicyRule{
-		rule("", []string{"configmaps", "pods", "endpoints", "serviceaccounts", "persistentvolumeclaims"}, "get", "patch", "create"),
-		rule("apps", []string{"replicasets", "daemonsets"}, "get", "patch", "create"),
-		rule("batch", []string{"jobs", "cronjobs"}, "get", "patch", "create"),
-		rule("discovery.k8s.io", []string{"endpointslices"}, "get", "patch"),
-		rule("networking.k8s.io", []string{"networkpolicies"}, "get", "patch"),
-	}
-}
-
-func rule(group string, resources []string, verbs ...string) rbacv1.PolicyRule {
-	return rbacv1.PolicyRule{APIGroups: []string{group}, Resources: resources, Verbs: verbs}
-}
-func role(namespace, name string, rules []rbacv1.PolicyRule) *rbacv1.Role {
-	return &rbacv1.Role{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace}, Rules: rules}
-}
-func binding(namespace, name, subject, subjectNamespace string) *rbacv1.RoleBinding {
-	return &rbacv1.RoleBinding{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace}, Subjects: []rbacv1.Subject{{Kind: "ServiceAccount", Name: subject, Namespace: subjectNamespace}}, RoleRef: rbacv1.RoleRef{APIGroup: "rbac.authorization.k8s.io", Kind: "Role", Name: name}}
 }
 
 func podSecurity() *corev1.PodSecurityContext {

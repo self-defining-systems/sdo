@@ -363,9 +363,9 @@ type KubernetesRequest struct {
 	Reason      string            `json:"reason,omitempty"`
 }
     KubernetesRequest exposes the Kubernetes HTTP API, including subresources,
-    cluster resources and discovered kinds. Query carries API options.
-    Only the API server's RBAC authorizes operations. Secret endpoints are never
-    accessed.
+    cluster resources and discovered kinds. Query carries API options. Only the
+    plan checks bound operations (SDO identities hold a cluster-wide grant,
+    so RBAC does not). Secret endpoints are never accessed.
 
 func (r KubernetesRequest) CredentialResponse() bool
     CredentialResponse identifies API operations whose response is a credential,

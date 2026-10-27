@@ -41,22 +41,10 @@ def require_rbac_equality(
 
     bindings = {}
     roles = {}
-    for key, kind in (
-        ("ControlBindings", "RoleBinding"),
-        ("AppBindings", "RoleBinding"),
-        ("ClusterBindings", "ClusterRoleBinding"),
-        ("ObservationBindings", "RoleBinding"),
-        ("ObservationClusterBindings", "ClusterRoleBinding"),
-    ):
-        bindings.update({identity(row, kind): row for row in expected.get(key, []) or [] if bound(row)})
-    for key, kind in (
-        ("ControlRoles", "Role"),
-        ("AppRoles", "Role"),
-        ("ClusterRoles", "ClusterRole"),
-        ("ObservationRoles", "Role"),
-        ("ObservationClusterRoles", "ClusterRole"),
-    ):
-        roles.update({identity(row, kind): row for row in expected.get(key, []) or []})
+    bindings.update(
+        {identity(row, "ClusterRoleBinding"): row for row in expected.get("ClusterBindings", []) or [] if bound(row)}
+    )
+    roles.update({identity(row, "ClusterRole"): row for row in expected.get("ClusterRoles", []) or []})
     actual_bindings = {
         identity(row, row["kind"]): row
         for row in listing

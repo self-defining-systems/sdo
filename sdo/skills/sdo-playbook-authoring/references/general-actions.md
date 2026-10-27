@@ -1,8 +1,8 @@
 # General operations and replay evidence
 
 Choose a general primitive before declaring an SDK gap. The operation inventory
-and executable floor live in `docs/sdk-action-inventory.{md,json}`. API RBAC is
-the execution boundary. Programs propose plans; they never receive a writer.
+and executable floor live in `docs/sdk-action-inventory.{md,json}`. The typed plan
+checks are the execution boundary; RBAC does not limit SDO identities. Programs propose plans; they never receive a writer.
 Credentials remain references. Typed database actions accept env or namespace-local ConfigMap
 key/assignment references; only the executor resolves ConfigMap bytes into private exec stdin.
 Never read Kubernetes Secret data or include credential values in argv or recordings. Environment-backed authentication headers use `HeaderEnv`; `Bearer`
@@ -21,7 +21,7 @@ is an environment reference. Plain `Headers` carry nonsecret values only.
 - `ApplyObject{Ref, Object, Mode}` creates a missing named object or merges desired
   fields into an existing object. `create` requires absence; `replace` replaces
   its document. `DeleteObject` deletes any named nonsecret object. General
-  operations cover cluster and foreign scopes through discovery and API RBAC.
+  operations cover cluster and foreign scopes through discovery.
 - `KubernetesRequest{Ref, Method, Path, Query, ContentType, Body}` reaches the API,
   including eviction, server-side apply and other subresources. Supply `Ref` for
   measured object effects. Server-side apply uses its API content type and

@@ -62,7 +62,7 @@ func (ApplyObject) action() {}
 
 // KubernetesRequest exposes the Kubernetes HTTP API, including subresources,
 // cluster resources and discovered kinds. Query carries API options. Only the
-// API server's RBAC authorizes operations. Secret endpoints are never accessed.
+// plan checks bound operations (SDO identities hold a cluster-wide grant, so RBAC does not). Secret endpoints are never accessed.
 type KubernetesRequest struct {
 	Ref         sdk.ObjectRef
 	Method      string            `json:"method"`
