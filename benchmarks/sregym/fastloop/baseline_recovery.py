@@ -726,26 +726,36 @@ def _declares(captured: Any, declared: Any) -> bool:
             key in captured and _declares(captured[key], value) for key, value in declared.items()
         )
     if isinstance(declared, list):
-        return isinstance(captured, list) and all(
-            any(_declares(item, value) for item in captured) for value in declared
+        if not isinstance(captured, list):
+            return False
+        if declared and all(_port_key(item) is not None for item in (*captured, *declared)):
+            captured_by_key = {_port_key(item): item for item in captured}
+            return all(
+                _port_key(value) in captured_by_key and _declares(captured_by_key[_port_key(value)], value)
+                for value in declared
+            )
+        # Positional lists own their order and cardinality; explicit empties clear entries.
+        return len(captured) == len(declared) and all(
+            _declares(item, value) for item, value in zip(captured, declared, strict=True)
         )
     return captured == declared
 
 
 def _port_key(item: Any) -> Any:
-    """Identity of a Service port entry: its name, else its port number; None for other list items."""
+    """Identity of a named entry or Service port; None for positional list items."""
     if isinstance(item, dict):
         return item.get("name") or item.get("port")
     return None
 
 
 def _merge_declared(captured: Any, declared: Any) -> Any:
-    """Declared fields win; captured extras stay. Dicts merge by key, port lists by name or port number."""
+    """Declared fields win; retain captured defaults by field and named-entry or Service-port identity."""
     if isinstance(captured, dict) and isinstance(declared, dict):
         return {**captured, **{key: _merge_declared(captured.get(key), value) for key, value in declared.items()}}
     if (
         isinstance(captured, list)
         and isinstance(declared, list)
+        and declared
         and all(_port_key(item) is not None for item in (*captured, *declared))
     ):
         declared_by_key = {_port_key(item): item for item in declared}

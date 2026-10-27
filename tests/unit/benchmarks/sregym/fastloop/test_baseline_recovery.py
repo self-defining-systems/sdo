@@ -983,3 +983,41 @@ def test_kubectl_restore_writes_labels_without_replacing_other_metadata(monkeypa
         {"op": "test", "path": "/metadata/resourceVersion", "value": "17"},
         {"op": "add", "path": "/metadata/labels", "value": {"runtime.example/owner": "controller", "app": "redirect"}},
     ]
+
+
+@pytest.mark.parametrize("kind", ["Deployment", "StatefulSet", "DaemonSet"])
+@pytest.mark.parametrize(
+    ("field", "declared", "installed"),
+    [
+        ("args", ["first", "second"], ["second", "first"]),
+        ("args", [], ["--old-chart-option"]),
+        ("args", ["first", "first"], ["first", "second"]),
+        ("volumes", [], [{"name": "old", "emptyDir": {}}]),
+        ("volumes", [], None),
+    ],
+)
+def test_restore_preserves_declared_list_order_and_explicit_empty(
+    tmp_path: Path, kind: str, field: str, declared: list[Any], installed: list[Any] | None
+) -> None:
+    accepted = obj(
+        kind, "api", namespace="app", spec={"template": {"spec": {"containers": [{"name": "api", "image": "same"}]}}}
+    )
+    captured = deepcopy(accepted)
+    wanted_pod = accepted["spec"]["template"]["spec"]
+    installed_pod = captured["spec"]["template"]["spec"]
+    wanted = wanted_pod["containers"][0] if field == "args" else wanted_pod
+    previous = installed_pod["containers"][0] if field == "args" else installed_pod
+    wanted[field] = declared
+    if installed is not None:
+        previous[field] = installed
+    installed_pod["containers"][0]["terminationMessagePolicy"] = "File"
+    source = commit_accepted_source(tmp_path, [accepted])
+    baseline = accepted_restore_baselines(source, _sealed(tmp_path, [captured]))[0]
+    cluster = FakeCluster()
+    cluster.add(captured)
+    reconcile_application(cluster, baseline, "app")
+    restored_pod = cluster.objects["app", kind, "api"]["spec"]["template"]["spec"]
+    actual = restored_pod["containers"][0] if field == "args" else restored_pod
+    assert field in actual
+    assert actual[field] == declared
+    assert restored_pod["containers"][0]["terminationMessagePolicy"] == "File"
