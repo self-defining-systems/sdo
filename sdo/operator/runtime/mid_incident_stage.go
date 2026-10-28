@@ -43,7 +43,7 @@ func (n StageNote) String() string {
 }
 
 // attachLearnedActivation handles a finding that activates after the responder
-// was dispatched. When a learned playbook explains it, the finding joins the
+// was dispatched. When a learned program can bind it, the finding joins the
 // open incident and the automatic stage runs again, so the learned repair is
 // applied when the finding appears rather than when the responder next looks.
 // It reports whether the finding was taken.
@@ -98,7 +98,7 @@ func learnedPlaybookExplains(loop *ResponderLoop, finding sdk.Finding) bool {
 		return false
 	}
 	for _, spec := range loop.Programs.List() {
-		if programExplainsFinding(finding, spec.ID) {
+		if programLinksFinding(spec, finding) {
 			return true
 		}
 	}

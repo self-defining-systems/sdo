@@ -17,8 +17,8 @@ Mitigate may run again: when its rollout stays pending, the runtime re-plans on 
 applies the next plan until it repeats an earlier plan (at most three follow-ups). Write a repair
 that depends on what its write causes as one Mitigate over current state, e.g. also retiring an old-template
 ReplicaSet once new pods are Unschedulable beside it. Select that ReplicaSet by its controller ownerReference to
-a bound Deployment and an older `deployment.kubernetes.io/revision`, never by name; any other ReplicaSet scale is
-refused as `replicaset_scale_refused`. Once a stalled rollout is released, a later responder write ends the
+its Deployment and an older `deployment.kubernetes.io/revision`, never by name; the owner need not be bound.
+Scaling a current revision or an unowned ReplicaSet is refused as `replicaset_scale_refused`. Once a stalled rollout is released, a later responder write ends the
 program's credit for it. Prose in the README never runs.
 
 A program directory contains diagnose.go, optional mitigate.go, Go tests and a README with responder ownership,

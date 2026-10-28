@@ -49,6 +49,7 @@ def reflection_recording(
     tool_result_lines: list[str] | None = None,
     covered_repeat: bool = False,
     unrelated_playbooks: int = 0,
+    receipt: dict[str, str] | None = None,
 ) -> tuple[CheckpointStore, Path]:
     source = tmp_path / "source"
     shutil.copytree(ROOT / "tests/fixtures/sdo/missing_configmap_app", source)
@@ -83,6 +84,8 @@ def reflection_recording(
         observed = max(evaluation.evaluated_at.seconds for evaluation in record.detector_history)
         record.repair_actions[0].started_at.seconds = observed + 1
         record.repair_actions[0].completed_at.seconds = observed + 2
+        for field, value in (receipt or {}).items():
+            setattr(record.repair_actions[0], field, value)
         cleared = record.detector_history.add(detector_id=record.findings[0].detector_id, status="clear")
         cleared.evaluated_at.seconds = observed + 3
         record.timestamps.completed_at.seconds = observed + 3
@@ -419,4 +422,92 @@ def test_recorded_program_replay_accepts_session_fixture_without_captures(tmp_pa
     result = replay_live_worker(store, 0, "reflection", source=source, live_on_cache_miss=False)
     assert result["proposals"][0]["status"] == "accepted", result["proposals"][0].get("error", result)
     assert result["proposals"][0]["commit"]
+    assert result["proposals"][0]["artifact_ids"] == ["service-targetport-mismatch"]
+
+
+#: The RunScript encoding of the recorded ``sdo act`` kubectl repair, with
+#: relation-derived Env. Its bytes never ran: the receipt recorded a command.
+RUNSCRIPT_PORT_REPAIR = (
+    'kubectl -n "$NAMESPACE" patch service "$SERVICE" --type=json '
+    """-p '[{"op":"replace","path":"/spec/ports/0/targetPort","value":8080}]'"""
+)
+RUNSCRIPT_MITIGATE = "\n".join(
+    [
+        "package targetport",
+        "",
+        "import (",
+        '\t"context"',
+        "",
+        '\t"sdo.dev/operator/sdk/program"',
+        ")",
+        "",
+        "func (Program) Mitigate(_ context.Context, _ program.ReadView, b program.Bindings) (program.Plan, error) {",
+        '\tref := b.Objects["service"]',
+        "\tenv := map[string]program.Value{"
+        + '"NAMESPACE": program.FromObserved(ref, "metadata.namespace"), '
+        + '"SERVICE": program.FromObserved(ref, "metadata.name")}',
+        "\treturn program.Plan{Actions: []program.Action{program.RunScript{"
+        + f"Script: `{RUNSCRIPT_PORT_REPAIR}`, "
+        + 'Env: env, Reason: "restore the recorded Service port"}}}, nil',
+        "}",
+        "",
+    ]
+)
+
+
+def test_recorded_readme_only_reflection_is_corrected_once_into_a_runscript_step(tmp_path: Path) -> None:
+    """A recorded kubectl hand repair: README-only is rejected, one correction saves RunScript."""
+
+    fixture = ROOT / "tests/fixtures/sdo/playbook_program_app/.sdo"
+    incident = _closure().request.incident_id
+    action_id = "sdo-act-00000000-0000-4000-8000-000000000001"
+    observed = max(evaluation.evaluated_at.seconds for evaluation in _outcome(incident).detector_history)
+
+    def stamp(seconds: int) -> str:
+        return datetime.fromtimestamp(seconds, UTC).isoformat().replace("+00:00", "Z")
+
+    # The controller's capture of the original receipt (memory.CaptureRepairReceipts).
+    receipt = {
+        "id": action_id,
+        "incident_id": incident,
+        "success": True,
+        "started_at": stamp(observed + 1),
+        "completed_at": stamp(observed + 2),
+        "resources": [{"api_version": "v1", "kind": "Service", "namespace": "demo", "name": "front"}],
+    }
+    program_files = readme_files()
+    program_files[".sdo/playbooks/service-targetport-mismatch/diagnose.go"] = (
+        fixture / "playbooks/service-targetport-mismatch/diagnose.go"
+    ).read_bytes()
+    program_files[".sdo/playbooks/service-targetport-mismatch/mitigate.go"] = RUNSCRIPT_MITIGATE.encode()
+    program_files[".sdo/lib/ports/ports.go"] = (fixture / "lib/ports/ports.go").read_bytes()
+    program_files[".sdo/diagnostics/go.mod"] = (fixture / "diagnostics/go.mod").read_bytes()
+    labels = {
+        "root_cause_program_ids": ["service-targetport-mismatch"],
+        "bindings": {"objects": {"service": receipt["resources"][0]}},
+        "provenance": {"incident_id": incident},
+        "script_origins": {hashlib.sha256(RUNSCRIPT_PORT_REPAIR.encode()).hexdigest(): action_id},
+    }
+    program_files[".sdo/corpus/kubectl-port-repair/labels.json"] = json.dumps(labels).encode()
+    program_files[".sdo/corpus/kubectl-port-repair/recordings.json"] = json.dumps(
+        [{"method": "RepairReceipt", "arguments": [], "result": receipt}]
+    ).encode()
+
+    prompts: list[str] = []
+    store, source = reflection_recording(
+        tmp_path,
+        [frontmatter_output(), frontmatter_output()],
+        file_turns=[readme_files(), program_files],
+        verified_service=True,
+        receipt={"action_id": action_id, "kind": "kubectl-patch"},
+        check_prompt=prompts.append,
+    )
+
+    # Exactly one correction turn, and it names the typed rule and the uncovered repair.
+    assert len(prompts) == 2
+    assert "reflection.program-required" in prompts[1]
+    assert action_id in prompts[1]
+    assert len(list(store.root.parent.glob("000_*/sdo_runtime/sessions/*/model_io/*/*.json"))) == 2
+    result = replay_live_worker(store, 0, "reflection", source=source, live_on_cache_miss=False)
+    assert result["proposals"][0]["status"] == "accepted", result["proposals"][0].get("error", result)
     assert result["proposals"][0]["artifact_ids"] == ["service-targetport-mismatch"]

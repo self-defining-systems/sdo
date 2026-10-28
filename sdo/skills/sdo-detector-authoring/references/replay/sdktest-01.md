@@ -61,8 +61,10 @@ func ProjectCapturedObject(raw []byte) ([]byte, error)
     Secrets entirely; this also protects recorded JSON.
 
 func ScriptOrigin(script program.RunScript, c CorpusCase) (program.ScriptOriginReceipt, error)
-    ScriptOrigin checks linkage against controller-recorded successful receipts.
-    It never matches opaque shell commands against typed external effects.
+    ScriptOrigin checks linkage to an original successful timed receipt of the
+    case's incident. Every recorded mutation path qualifies (RunScript, sdo act,
+    observed API writes); when the receipt recorded script bytes, they must be
+    these bytes.
 
 func ValidateCorpusProvenance(dir string) error
     ValidateCorpusProvenance checks that persisted case snapshots still match
@@ -239,6 +241,4 @@ func (v *ReplayReadView) KubernetesRead(q program.KubernetesRequest) (json.RawMe
 func (v *ReplayReadView) Logs(ref sdk.ObjectRef, container string, since time.Duration) (string, error)
 
 func (v *ReplayReadView) LogsWithOptions(ref sdk.ObjectRef, options corev1.PodLogOptions) (string, error)
-
-func (v *ReplayReadView) MetricResult(id string) (metrics.Result, bool)
 ```

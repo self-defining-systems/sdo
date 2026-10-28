@@ -88,8 +88,9 @@ type ScriptOriginReceipt struct {
 	CompletedAt  time.Time       `json:"completed_at"`
 	Resources    []sdk.ObjectRef `json:"resources,omitempty"`
 }
-    ScriptOriginReceipt is protected historical evidence. A parameterized script
-    links to the exact bytes the controller executed.
+    ScriptOriginReceipt is protected historical evidence: the original
+    successful repair a learned step encodes. Any recorded mutation qualifies;
+    ScriptDigest, when present, names the exact RunScript bytes that ran.
 
 type SetField struct {
 	Ref    sdk.ObjectRef

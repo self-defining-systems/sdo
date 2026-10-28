@@ -86,7 +86,9 @@ func TestRunScriptProvenanceDoesNotDependOnReplayVerdicts(t *testing.T) {
 			// The inspector never runs Diagnose or Mitigate: only the authored script
 			// bytes, the captured linkage and its timed successful receipt matter.
 			_, err = InspectMemory(root, "fixture-diagnostics")
-			wantError := mode == "missing recorded digest" || mode == "different recorded digest" || mode == "alias chain changed digest" || mode == "alias changed digest" || mode == "changed digest" || mode == "missing receipt" || mode == "dynamic text"
+			// A receipt without script bytes (sdo act, observed API write) links by
+			// identity; recorded bytes must match.
+			wantError := mode == "different recorded digest" || mode == "alias chain changed digest" || mode == "alias changed digest" || mode == "changed digest" || mode == "missing receipt" || mode == "dynamic text"
 			if (err != nil) != wantError {
 				t.Fatalf("mode=%s err=%v", mode, err)
 			}
