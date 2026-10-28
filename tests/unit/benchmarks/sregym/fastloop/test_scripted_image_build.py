@@ -9,9 +9,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[5]
 
 
-def test_compiler_cache_lives_only_in_controller_image() -> None:
+def test_compiler_cache_lives_in_shared_compiler_base() -> None:
     runtime = (ROOT / "sdo/operator/Dockerfile.runtime").read_text()
-    controller = runtime.split(" AS controller\n")[1].split("\nFROM ")[0]
+    controller = runtime.split(" AS compiler-base\n")[1].split("\nFROM ")[0]
     assert "COPY --from=go-deps /go/build-cache /go/build-cache" in controller
     assert "COPY --from=go-runtime /go/build-cache-delta/ /go/build-cache/" in controller
     assert "SDO_GO_CACHE_SEED=/go/build-cache" in runtime

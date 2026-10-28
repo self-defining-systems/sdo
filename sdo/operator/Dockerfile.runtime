@@ -28,7 +28,7 @@ RUN mkdir /deps \
 
 FROM go-modules AS go-deps
 # Bound shared-host build parallelism, including nested compiler jobs.
-ENV GOMAXPROCS=8 GOFLAGS="-p=8"
+ENV GOMAXPROCS=4 GOFLAGS="-p=4"
 COPY --from=go-dep-list /deps /deps
 RUN for dir in sdo/operator/sdk sdo/operator/core sdo/operator/runtime sdo/operator; do \
       (cd "$dir" && go build $(cat "/deps/$(echo "$dir" | tr / _).txt")); \
@@ -149,28 +149,27 @@ RUN mkdir /go/build-cache-delta \
       | tar -cf - -T - | tar -xf - -C /go/build-cache-delta
 
 
-FROM runtime-base AS runtime-sources
+# One inherited layer chain for the full offline compiler seed. Copying the
+# same directories independently in each role produces different layer digests
+# because their parent chains differ. Keep these copies at their single owner.
+FROM runtime-base AS compiler-base
+COPY --from=go-deps /usr/local/go /usr/local/go
+COPY --from=go-deps /go/pkg/mod /go/pkg/mod
+COPY --from=go-deps /go/build-cache /go/build-cache
+COPY --from=go-runtime /go/build-cache-delta/ /go/build-cache/
+
+FROM compiler-base AS runtime-sources
 COPY --from=go-runtime /usr/local/bin/sdo-operator /usr/local/bin/sdo-operator
 COPY --from=go-runtime /usr/local/bin/sdo-observation-check /usr/local/bin/sdo-observation-check
 COPY --from=go-runtime /opt/sdo/sdo/operator /opt/sdo/sdo/operator
 
 FROM runtime-sources AS controller
 COPY --from=go-runtime /usr/local/bin/sdo-shell-controller /usr/local/bin/sdo-shell-controller
-COPY --from=go-deps /usr/local/go /usr/local/go
-COPY --from=go-deps /go/pkg/mod /go/pkg/mod
-COPY --from=go-deps /go/build-cache /go/build-cache
-COPY --from=go-runtime /go/build-cache-delta/ /go/build-cache/
 COPY sdo/agents/registrations /opt/sdo/sdo/agents/registrations
 LABEL org.opencontainers.image.title="SDO Go operator" org.opencontainers.image.version="0.1.0"
 CMD ["/usr/local/bin/sdo-operator", "controller", "--help"]
 
-# Compiler/module/dependency layers are shared with controller. Application
-# source never enters these stages; only SDK changes rebuild the cache delta.
-FROM runtime-base AS validator-toolchain
-COPY --from=go-deps /usr/local/go /usr/local/go
-COPY --from=go-deps /go/pkg/mod /go/pkg/mod
-COPY --from=go-deps /go/build-cache /go/build-cache
-COPY --from=go-runtime /go/build-cache-delta/ /go/build-cache/
+FROM compiler-base AS validator-toolchain
 COPY --from=go-runtime /usr/local/bin/sdo-go-cache /usr/local/bin/sdo-go-cache
 ENV GOCACHEPROG=/usr/local/bin/sdo-go-cache
 # Fail the image build if compiler, SDK cache, or module seed is absent.

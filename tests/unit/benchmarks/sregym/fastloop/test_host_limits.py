@@ -61,7 +61,7 @@ def _fake_delivery(directory: str, cluster: str, entered, release, attempted, fa
     from benchmarks.sregym.fastloop import toy_images
     from benchmarks.sregym.fastloop.host_limits import HostLimits
 
-    def deliver(*_args):
+    def deliver(*_args, **_kwargs):
         entered.put(cluster)
         if not release.wait(10):
             raise RuntimeError("test delivery was not released")
@@ -71,7 +71,7 @@ def _fake_delivery(directory: str, cluster: str, entered, release, attempted, fa
     toy_images.retain_lane_images = lambda *_args: {}
     if fallback:
 
-        def registry(*_args):
+        def registry(*_args, **_kwargs):
             raise RuntimeError("fake registry offline")
 
         toy_images.registry_delivery = registry
