@@ -69,5 +69,14 @@ func (l *ResponderLoop) capturePreApplySnapshot(ctx context.Context, refs ...sdk
 		return fmt.Errorf("capture pre-apply snapshot: %w", err)
 	}
 	l.preApplyCaptured = true
+	if l.ReadView != nil {
+		// Evidence never delays a write for longer than a diagnosis may take.
+		budget, cancel := context.WithTimeout(ctx, min(l.deadline(), sourceComparisonCaptureBudget))
+		comparisons := sourceInventoryComparisons(budget, snapshot, l.ReadView(snapshot))
+		cancel()
+		if err := memory.AppendCapturedRecordings(l.CorpusSessionRoot, l.Request.IncidentID, "open@pre-apply", comparisons); err != nil {
+			slog.Warn("source comparison evidence gap", "incident_id", l.Request.IncidentID, "error", err)
+		}
+	}
 	return nil
 }

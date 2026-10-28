@@ -7,6 +7,9 @@ and object bindings for the confirmed cause. Keep originating incident attributi
 snapshot digests and a protected capture mount are not required. Include accepted.json when the executed
 mitigation reads accepted source. For replay, open.json represents the fault and recordings.json contains
 its observed primitive replies; fixed.json and healthy.json remain readable context, not repair proof.
+Diagnose replays on the replies the controller recorded in each phase, including source comparisons of
+every namespace object, database catalogs and pod admission. A read nobody recorded replays Unknown and
+names the call: use the open capture that recorded it (a repair's own reads are in pre-apply).
 
 When accepted playbooks do not already cover a recorded repair on a closure verified healthy, save useful diagnose and mitigate steps and a README describing fault
 handling, and a detector that references its playbook. One detector may reference several playbooks. A missing piece is

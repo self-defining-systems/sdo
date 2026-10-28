@@ -14,7 +14,7 @@ import (
 func TestRecordPrimitiveCallsRepeatsEveryRecordedRead(t *testing.T) {
 	samples := map[reflect.Type]reflect.Value{
 		reflect.TypeOf(program.DatabaseTarget{}): reflect.ValueOf(program.DatabaseTarget{Engine: program.MongoDB, Pod: sdk.ObjectRef{APIVersion: "v1", Kind: "Pod", Namespace: "app", Name: "db-0"}, Container: "db", Database: "app"}),
-		reflect.TypeOf(sdk.ObjectRef{}):           reflect.ValueOf(sdk.ObjectRef{APIVersion: "v1", Kind: "Pod", Namespace: "app", Name: "db-0"}),
+		reflect.TypeOf(sdk.ObjectRef{}):          reflect.ValueOf(sdk.ObjectRef{APIVersion: "v1", Kind: "Pod", Namespace: "app", Name: "db-0"}),
 	}
 	recorder := &RecordingReadView{ReadView: program.ReadFrom(Snapshot{NamespaceName: "app"})}
 	readView := reflect.TypeOf((*program.ReadView)(nil)).Elem()

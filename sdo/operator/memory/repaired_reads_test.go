@@ -50,7 +50,6 @@ func TestRepairedReadsCoverEveryOpenObservation(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	view := func(sdk.DetectionContext) program.ReadView { return repairedReads{} }
 	count := func() map[string]int {
 		dir, err := IncidentCorpusDir(root, "incident")
 		if err != nil {
@@ -71,10 +70,11 @@ func TestRepairedReadsCoverEveryOpenObservation(t *testing.T) {
 		return counts
 	}
 	for range 2 {
-		if err := CaptureRepairedProgramReads(root, "incident", view); err != nil {
+		if err := CaptureRepairedProgramReads(root, "incident", repairedReads{}); err != nil {
 			t.Fatal(err)
 		}
-		if got := count(); got["fixed/DiffAgainstSource"] != 2 || got["fixed/DatabaseUsers"] != 1 {
+		// A repeated state read keeps its first observation in each phase.
+		if got := count(); got["/DiffAgainstSource"] != 1 || got["fixed/DiffAgainstSource"] != 1 || got["fixed/DatabaseUsers"] != 1 {
 			t.Fatalf("fixed recordings do not cover the open phase exactly once: %v", got)
 		}
 	}
