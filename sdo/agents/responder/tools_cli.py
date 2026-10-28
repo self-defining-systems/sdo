@@ -12,6 +12,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from sdo.agents.context_output import budget_for, cap_text
 from sdo.agents.responder import recorded_actions
 from sdo.agents.responder.mutation_output import compact_mutation_envelope
 from sdo.agents.responder.tool_output import render_summary, write_response
@@ -718,7 +719,9 @@ def _print_response(response: dict[str, Any], *, full_json: bool) -> None:
             print(text)
         return
     output = write_response(response)
-    print(json.dumps(response, ensure_ascii=False, sort_keys=True) if full_json else render_summary(output))
+    text = json.dumps(response, ensure_ascii=False, sort_keys=True) if full_json else render_summary(output)
+    limit = budget_for("tool_stdout." + str(response["command"]))
+    print(cap_text(text, limit - 1, json_output=full_json))
 
 
 def _print_client_error(args: argparse.Namespace, error: Exception) -> None:

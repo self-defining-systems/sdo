@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 from string import Template
 from typing import TYPE_CHECKING
+
+from sdo.agents.context_output import budget_for, cap_text
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -23,7 +26,20 @@ class RenderedPrompt(str):
     parts: tuple[PromptPart, ...]
 
     def __new__(cls, parts: Iterable[PromptPart]) -> RenderedPrompt:
-        ordered = tuple(parts)
+        raw = tuple(parts)
+        grouped: dict[str, str] = defaultdict(str)
+        for part in raw:
+            grouped[part.name] += part.text
+        capped = {name: cap_text(text, budget_for(name)) for name, text in grouped.items()}
+        emitted: set[str] = set()
+        result: list[PromptPart] = []
+        for part in raw:
+            if capped[part.name] == grouped[part.name]:
+                result.append(part)
+            elif part.name not in emitted:
+                result.append(PromptPart(part.name, capped[part.name]))
+                emitted.add(part.name)
+        ordered = tuple(result)
         value = super().__new__(cls, "".join(part.text for part in ordered))
         value.parts = ordered
         return value
@@ -75,7 +91,7 @@ def render_prompt(role: str, name: str, /, *, part: str, **values: object) -> Re
     Binary reading avoids silently normalizing CRLF before measuring the prompt.
     """
     template = Template((Path(__file__).parent / role / "prompts" / f"{name}.md").read_bytes().decode("utf-8"))
-    final = template.substitute(values)
+    template.substitute(values)  # validate missing placeholders before writing evidence
     parts: list[PromptPart] = []
     cursor = 0
     role = part.split(".", 1)[0]
@@ -95,8 +111,6 @@ def render_prompt(role: str, name: str, /, *, part: str, **values: object) -> Re
     if cursor < len(template.template):
         parts.append(PromptPart(part, template.template[cursor:]))
     rendered = RenderedPrompt(parts)
-    if rendered != final:
-        raise ValueError(f"prompt parts differ from strict template rendering: {name}")
     return rendered
 
 
