@@ -40,6 +40,7 @@ def test_excluded(): assert False
     scripts = tmp_path / "scripts"
     scripts.mkdir()
     (scripts / "python_integration_test_costs.json").write_text('{"costs":{}}')
+    monkeypatch.setenv("PYTEST_XDIST_WORKER", "outer-worker")
     monkeypatch.setenv("PYTHONPATH", str(Path(__file__).resolve().parents[3]))
     monkeypatch.setattr(planner, "ROOT", tmp_path)
     path = tmp_path / "plan.json"
