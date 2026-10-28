@@ -477,3 +477,78 @@ def test_existing_scripted_program_reports_actual_checkout_diff(
     expected_ids = [scripted_worker.PROGRAM_ID] if change == "playbook" else []
     assert turn.playbook_ids == expected_ids
     assert checked == ([] if change == "empty" else [expected_ids])
+
+
+@pytest.mark.parametrize("health_finding", [False, True])
+def test_scripted_health_repair_is_not_suppressed_by_unsure_drift(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, health_finding: bool
+) -> None:
+    ref = {"api_version": "apps/v1", "kind": "Deployment", "namespace": "demo", "name": "catalog"}
+    findings = [{"detector_id": "drift.unexplained", "primary_resource": ref}]
+    if health_finding:
+        findings.append({"detector_id": "workload-health", "primary_resource": ref})
+    request = from_dict(
+        IncidentRequest,
+        {
+            "incident_id": "synthetic-image-fault",
+            "namespace": "demo",
+            "repository_worktree": str(tmp_path),
+            "findings": findings,
+            "drift_events": [
+                {
+                    "ref": ref,
+                    "fields": [
+                        {"path": "spec.template.spec.containers[0].image", "old": "accepted:v1", "new": "missing:v1"}
+                    ],
+                }
+            ],
+        },
+    )
+    patches: list[dict[str, str]] = []
+    monkeypatch.delenv("SDO_SCRIPTED_SOURCE_REPAIR", raising=False)
+    monkeypatch.setattr(scripted_worker, "_patch_from_source", lambda _request, resource: patches.append(resource))
+    monkeypatch.setattr(
+        scripted_worker,
+        "_tool",
+        lambda op, *_args: {"program_runs": []} if op == "diagnose" else {"healthy": bool(patches)},
+    )
+    response = scripted_worker.scripted_responder(request)
+    assert patches == ([ref] if health_finding else [])
+    assert response.status == ("completed" if health_finding else "failed")
+    assert response.drift_events[0].investigation_verdict == "unsure"
+
+
+@pytest.mark.parametrize("classification", ["failed", "success"])
+def test_scripted_notes_require_eligible_learning_on_failed_closure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, classification: str
+) -> None:
+    import subprocess
+
+    from sdo.contracts import OutcomeRecord
+
+    for args in (
+        ["init", "-q"],
+        [
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@example.invalid",
+            "commit",
+            "--allow-empty",
+            "-qm",
+            "synthetic outcome",
+        ],
+    ):
+        subprocess.run(["git", "-C", str(tmp_path), *args], check=True)
+    monkeypatch.setenv("SDO_BASE_COMMIT", "HEAD")
+    monkeypatch.setenv("SDO_SCRIPTED_MEMORY_CHANGE", "1")
+    monkeypatch.setenv("SDO_CAPTURED_CORPUS_DIR", str(tmp_path / "no-capture"))
+    monkeypatch.setattr(scripted_worker, "_check_reflection", lambda *_args: None)
+    turn = scripted_worker.ScriptedReflector().resume(
+        worktree=tmp_path,
+        incident_id="synthetic-outcome",
+        outcome=OutcomeRecord(classification=classification),
+        cause_work=[],
+    )
+    assert turn.learning_decision == ("no_change" if classification == "failed" else "updated")
+    assert (tmp_path / ".sdo/playbooks/verified-repair-notes/README.md").exists() == (classification == "success")

@@ -382,7 +382,14 @@ def scripted_responder(request: IncidentRequest) -> IncidentResult:
         )
     first = _tool("verify")
     if not first.get("healthy"):
-        seen: set[tuple[str, str]] = set(unsure)
+        # Unknown drift alone is not repair authority. A separate health
+        # finding on the same object still authorizes source-backed recovery.
+        health_resources = {
+            (finding.primary_resource.kind, finding.primary_resource.name)
+            for finding in request.findings
+            if not finding.detector_id.startswith("drift.")
+        }
+        seen: set[tuple[str, str]] = unsure - health_resources
         seen.update((ref["kind"], ref["name"]) for repair in repairs for ref in repair["resources"])
         changed = request.state_changes.changes if request.state_changes else []
         candidates = [
@@ -408,6 +415,7 @@ def scripted_responder(request: IncidentRequest) -> IncidentResult:
             if key in seen:
                 continue
             seen.add(key)
+            unsure.discard(key)
             action_start = _now()
             if removed:
                 _remove_added(request, ref)
@@ -663,6 +671,9 @@ class ScriptedReflector:
                 "Rehearsal verifies closure without inventing reusable memory",
             )
         incident = str(kwargs["incident_id"])
+        outcome = kwargs.get("outcome")
+        if outcome is not None and outcome.classification != "success" and not kwargs.get("cause_work"):
+            return _checkout_reflection(worktree, "No independently eligible repair to save", "no recorded repair")
         capture = Path(os.environ.get("SDO_CAPTURED_CORPUS_DIR", "/sdo/session/corpus"))
         open_at = "detect"
         policy_pair = _captured_policy_pair(capture, open_at)
