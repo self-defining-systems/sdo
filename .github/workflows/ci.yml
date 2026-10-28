@@ -73,6 +73,8 @@ jobs:
               - 'sdo/operator/**'
               - 'sdo/skills/**'
               - 'scripts/gen_skill_references.sh'
+              - 'scripts/go_cost_plan.py'
+              - 'scripts/go_test_timing.py'
               - 'scripts/test_runtime_shard.py'
               - 'scripts/runtime_test_costs.json'
               - 'scripts/test_operator_shard.py'
@@ -161,6 +163,7 @@ jobs:
         mode: [normal, race]
     outputs:
       schema_identity: ${{ steps.schema.outputs.value }}
+      test_matrix: ${{ steps.cost-plan.outputs.matrix }}
     steps:
       - name: Select prepared compiler cache
         run: echo "GOCACHE=${{ runner.temp }}/sdo-go-build-${{ matrix.mode }}" >> "$GITHUB_ENV"
@@ -194,6 +197,13 @@ jobs:
             ci-prepared-v4-race-${{ runner.os }}-${{ runner.arch }}-1.26.8-
       - name: Compile dependency graphs outside operation timeouts
         run: bash scripts/prepare_go_ci.sh "${{ matrix.mode }}"
+
+      - name: Plan capacity from compiled inventory and hosted costs
+        if: matrix.mode == 'normal'
+        id: cost-plan
+        run: |
+          python3 scripts/go_cost_plan.py --prepared --output .fastloop/test-bin/go-test-plan.json | tee "$RUNNER_TEMP/cost-plan.log"
+          grep '^matrix=' "$RUNNER_TEMP/cost-plan.log" >> "$GITHUB_OUTPUT"
 
       - name: Keep only the source-bound test executable
         if: matrix.mode == 'normal'
@@ -292,73 +302,7 @@ jobs:
       GOSUMDB: "off"
     strategy:
       fail-fast: false
-      matrix:
-        # The runtime module's floor is go 1.26 (buf.build/go/protovalidate);
-        # pin its toolchain explicitly so the job is deterministic rather than
-        # silently network-downloading 1.26 via GOTOOLCHAIN=auto. sdk/core stay
-        # on 1.24.5 to keep proving they still build under the lower floor.
-        include:
-          - module: foundation-sdk
-            directory: sdo/operator/sdk
-            go-version: "1.24.5"
-            foundation: stable
-          - module: foundation-contracts
-            directory: sdo/operator/contracts
-            go-version: "1.26.8"
-            foundation: contracts
-            operator: compiler-replay
-          - module: runtime-reflection-corpus
-            directory: sdo/operator/runtime
-            go-version: "1.26.8"
-            shard: reflection,corpus
-          - module: runtime-reflection-mongo
-            directory: sdo/operator/runtime
-            go-version: "1.26.8"
-            shard: reflection-mongo
-          - module: runtime-reflection-programs
-            directory: sdo/operator/runtime
-            go-version: "1.26.8"
-            shard: reflection-programs
-          - module: runtime-contracts
-            directory: sdo/operator/runtime
-            go-version: "1.26.8"
-            shard: contracts
-          - module: runtime-rendered
-            directory: sdo/operator/runtime
-            go-version: "1.26.8"
-            shard: rendered
-          - module: runtime-simulation-remaining
-            directory: sdo/operator/runtime
-            go-version: "1.26.8"
-            shard: simulation,remaining
-          - module: runtime-schedules
-            directory: sdo/operator/runtime
-            go-version: "1.26.8"
-            shard: schedules
-          - module: runtime-recovery
-            directory: sdo/operator/runtime
-            go-version: "1.26.8"
-            shard: recovery
-          - module: operator
-            directory: sdo/operator
-            go-version: "1.26.8"
-            operator: remaining
-          - module: operator-broker
-            directory: sdo/operator
-            go-version: "1.26.8"
-            operator: broker
-          - module: operator-acceptance
-            directory: sdo/operator
-            go-version: "1.26.8"
-            operator: acceptance
-          - module: operator-acceptance-second
-            directory: sdo/operator
-            go-version: "1.26.8"
-            operator: acceptance-second
-          - module: operator-compiler
-            directory: sdo/operator
-            go-version: "1.26.8"
-            operator: compiler
+      matrix: ${{ fromJSON(needs.prepare-go.outputs.test_matrix) }}
     steps:
       - name: Select prepared compiler cache
         run: echo "GOCACHE=${{ runner.temp }}/sdo-go-build-normal" >> "$GITHUB_ENV"
@@ -388,33 +332,22 @@ jobs:
           go-version: "${{ matrix.go-version }}"
           cache: false
       - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc # v6.4.3
-        if: matrix.shard
+        if: matrix.cost_scope == 'runtime'
         with:
           version: "0.9.24"
           python-version: "3.12"
           enable-cache: true
       - run: uv sync --locked --all-extras
-        if: matrix.shard
-      # TestReplay* and TestChaos* have dedicated, 5-minute-capped jobs below;
-      # skip them here so the runtime module's tests aren't compiled and run a
-      # second time in this job.
-      - name: Run runtime shard with exhaustive coverage guard
-        if: matrix.shard
-        run: python3 scripts/test_runtime_shard.py --shard '${{ matrix.shard }}'
+        if: matrix.cost_scope == 'runtime'
+      - name: Run computed test bin with budget and coverage guards
+        if: matrix.cost_scope
+        run: python3 scripts/test_${{ matrix.cost_scope }}_shard.py '${{ matrix.cost_bin }}' --plan .fastloop/test-bin/go-test-plan.json
       - name: Run small module contracts with shared build caches
         if: matrix.foundation
         run: bash scripts/test_go_foundation.sh '${{ matrix.foundation }}'
-      - name: Run complete operator package partition
-        if: matrix.operator
-        run: bash scripts/test_operator_shard.sh '${{ matrix.operator }}'
-
-
-      # Wall-clock latency is meaningful only without race instrumentation.
-      # Retain all pass-through, redaction and gap contracts in the race suite.
+      # Wall latency remains a normal-build acceptance, once per PR.
       - name: Normal-build proxy latency acceptance
-        if: matrix.module == 'operator'
-        env:
-          GOMAXPROCS: "2"
+        if: matrix.cost_scope == 'operator' && matrix.cost_bin == '0'
         run: go test -p 1 -count=3 -run '^(TestProxyWarmAddedP95|TestLargeResponseWarmAddedP95|TestProjectionTailLatency)$' -v ./kubeproxy ./operatorcli
         working-directory: sdo/operator
 

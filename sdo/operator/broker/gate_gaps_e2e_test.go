@@ -25,10 +25,7 @@ import (
 // (detector tests, mitigations that repair) still reject.
 func TestReflectionCommitsWithRecordedGapsAndStillRejectsBrokenLearning(t *testing.T) {
 	ctx := context.Background()
-	binary := filepath.Join(t.TempDir(), "sdo-operator")
-	if out, err := exec.Command("go", "build", "-o", binary, "../cmd/sdo-operator").CombinedOutput(); err != nil {
-		t.Fatalf("build CLI: %v: %s", err, out)
-	}
+	binary := operatorCLIFixture(t)
 	operatorRoot, err := filepath.Abs("..")
 	if err != nil {
 		t.Fatal(err)

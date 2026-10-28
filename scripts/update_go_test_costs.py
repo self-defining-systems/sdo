@@ -77,7 +77,7 @@ def update_profile(path: Path, measured: dict[str, float], run: int, head: str, 
     )
     profile["costs"].update(measured)
     profile["costs"] = dict(sorted(profile["costs"].items()))
-    print(f"{path.name}: {len(measured)} measured costs; placements and test inventory unchanged")
+    print(f"{path.name}: {len(measured)} measured costs; test inventory unchanged; capacity is computed automatically")
     if write:
         path.write_text(json.dumps(profile, indent=2) + "\n")
 

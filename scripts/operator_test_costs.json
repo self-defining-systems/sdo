@@ -2,16 +2,6 @@
   "source_run": 40580801119,
   "source_head": "e198bdf7249e1d5fe927f218ab42db2a87b96782",
   "description": "Hosted completed top-level active seconds, including parallel children and excluding pauses. Completed timings of at least one second are refreshed; unobserved and unfinished names retain their earlier bounds.",
-  "placements": {
-    "sdo.dev/operator/builder/TestProgramDetectorCorpusChecksEveryLocatedBinding": "compiler-replay",
-    "sdo.dev/operator/builder/TestOperatorCorpusRequiresProductionClosedLoop": "acceptance-second",
-    "sdo.dev/operator/builder/TestProgramSaveReplayDoesNotRequireRenameInvariance": "compiler-replay",
-    "sdo.dev/operator/builder/TestTypedObservationProgramCompilesAndRejectsStaleEvidence": "compiler-replay",
-    "sdo.dev/operator/operatorcli/TestAdoptionCompilesAsIsAndLaterValidationStillRejects": "compiler-replay",
-    "sdo.dev/operator/worker_registry/TestKubernetesExecutorRejectsRequestOverBudgetNamingTheComponent": "compiler",
-    "sdo.dev/operator/broker/TestCLIAndBrokerAgreeOnVerifiedCauseReplayCoverage": "compiler-replay",
-    "sdo.dev/operator/broker/TestCLIAndBrokerAgreeOnUnobservableDetectorLocator": "remaining"
-  },
   "costs": {
     "sdo.dev/operator/apihistory/FuzzHistoryStorageSchedule": 0.021,
     "sdo.dev/operator/apihistory/FuzzRV3bOpaqueLeaves": 0.13,

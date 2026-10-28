@@ -125,11 +125,7 @@ func acceptanceCaseShard(index int, name string) int {
 }
 
 func testCLIAndBrokerAgreeOnAcceptance(t *testing.T, shard int) {
-	binary := filepath.Join(t.TempDir(), "sdo-operator")
-	build := exec.Command("go", "build", "-o", binary, "../cmd/sdo-operator")
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build CLI: %v: %s", err, out)
-	}
+	binary := operatorCLIFixture(t)
 	operatorRoot, err := filepath.Abs("..")
 	if err != nil {
 		t.Fatal(err)

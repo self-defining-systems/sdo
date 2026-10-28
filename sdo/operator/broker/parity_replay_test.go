@@ -27,11 +27,7 @@ import (
 // outcome, not just successfully compile the one authored program.
 func TestCLIAndBrokerAgreeOnVerifiedCauseReplayCoverage(t *testing.T) {
 	ctx := context.Background()
-	binary := filepath.Join(t.TempDir(), "sdo-operator")
-	command := exec.Command("go", "build", "-o", binary, "../cmd/sdo-operator")
-	if out, err := command.CombinedOutput(); err != nil {
-		t.Fatalf("build CLI: %v: %s", err, out)
-	}
+	binary := operatorCLIFixture(t)
 	operatorRoot, err := filepath.Abs("..")
 	if err != nil {
 		t.Fatal(err)
@@ -125,10 +121,7 @@ func TestCLIAndBrokerAgreeOnUnobservableDetectorLocator(t *testing.T) {
 
 func checkUnobservableDetectorLocator(t *testing.T, mode string) {
 	ctx := context.Background()
-	binary := filepath.Join(t.TempDir(), "sdo-operator")
-	if out, err := exec.Command("go", "build", "-o", binary, "../cmd/sdo-operator").CombinedOutput(); err != nil {
-		t.Fatalf("build CLI: %v: %s", err, out)
-	}
+	binary := operatorCLIFixture(t)
 	operatorRoot, err := filepath.Abs("..")
 	if err != nil {
 		t.Fatal(err)
@@ -241,10 +234,7 @@ func checkUnobservableDetectorLocator(t *testing.T, mode string) {
 
 func TestCLIAndBrokerRetainHealthyInputForProgramOnlyEdits(t *testing.T) {
 	ctx := context.Background()
-	binary := filepath.Join(t.TempDir(), "sdo-operator")
-	if out, err := exec.Command("go", "build", "-o", binary, "../cmd/sdo-operator").CombinedOutput(); err != nil {
-		t.Fatalf("build CLI: %v: %s", err, out)
-	}
+	binary := operatorCLIFixture(t)
 	operatorRoot, err := filepath.Abs("..")
 	if err != nil {
 		t.Fatal(err)

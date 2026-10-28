@@ -22,7 +22,16 @@ for module in sdo/operator sdo/operator/runtime; do
   mkdir -p "$destination"
   # -c never starts TestMain or a test. Normal Python contracts need test-only
   # archives too, not just the race shards. Go still links/discovers per shard.
-  (cd "$root/$module" && go test "${build_flags[@]}" -c -o "$destination/" ./...)
+  if [[ "$mode" == normal ]]; then
+    # Discovery also compiles/links the test-only graph: do it once, and reuse
+    # its exact inventory for capacity planning instead of linking again.
+    scope=operator
+    if [[ "$module" == sdo/operator/runtime ]]; then scope=runtime; fi
+    mkdir -p "$root/.fastloop/test-bin"
+    (cd "$root/$module" && go test -list . -json ./...) > "$root/.fastloop/test-bin/inventory-$scope.json"
+  else
+    (cd "$root/$module" && go test "${build_flags[@]}" -c -o "$destination/" ./...)
+  fi
 done
 if [[ "$mode" == normal ]]; then
   # Generated traffic probers explicitly disable CGO; those archives have
