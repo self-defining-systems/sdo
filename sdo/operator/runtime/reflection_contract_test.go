@@ -378,12 +378,22 @@ func t1RunBroker(t *testing.T, c t1Class, reject bool) t1Run {
 				if err != nil {
 					t.Fatal(err)
 				}
-				actual, err := os.ReadFile(filepath.Join(filepath.Dir(label), file))
+				actual, err := os.ReadFile(sdktest.CorpusSnapshotFile(filepath.Dir(label), file))
 				if err != nil {
 					t.Fatal(err)
 				}
 				if !bytes.Equal(actual, expected) {
 					t.Errorf("case %s changed protected %s bytes", name, file)
+				}
+			}
+			// Each distinct snapshot is stored once; healthy (and a fixed open) is fixed.json.
+			copies := []string{"healthy.json"}
+			if openSource == "fixed.json" {
+				copies = append(copies, "open.json")
+			}
+			for _, copied := range copies {
+				if _, err := os.Stat(filepath.Join(filepath.Dir(label), copied)); !os.IsNotExist(err) {
+					t.Errorf("case %s stores %s, a copy of fixed.json", name, copied)
 				}
 			}
 			if strings.HasPrefix(name, "repeat-") {
