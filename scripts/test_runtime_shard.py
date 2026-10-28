@@ -87,11 +87,12 @@ COST_FILE = Path(__file__).with_name("runtime_test_costs.json")
 SHARD_BUDGET_SECONDS = 5 * 60 * 70 // 100
 # Hosted costs drive all measured placements; no local-only overrides.
 # Run 40611912416 exhausted simulation's hosted deadline while programs and
-# contracts finished in 161.55s and 171.91s. Move 43.53s and 22.80s of measured
+# contracts finished in 161.55s and 171.91s. Move 29.61s and 36.72s of measured
 # independent work, leaving the expensive hotel replay on its existing runner.
+# The closure move also keeps programs below its unchanged timeout on local replay.
 PLACEMENTS: dict[str, str] = {
     "TestHermeticReflectionLearnsThenAgentSelectsIdenticalRecurrence": "reflection-programs",
-    "TestClosureCompletesAcrossRepositoryAdvance": "reflection-programs",
+    "TestClosureCompletesAcrossRepositoryAdvance": "contracts",
     "TestResponderDeletedNewProgramCannotRunCachedBinary": "contracts",
     "TestT1TrustProperty": "contracts",
 }
