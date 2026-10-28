@@ -8,6 +8,7 @@ import pytest
 
 from benchmarks.sregym.fastloop.baseline_recovery import ApplicationBaseline
 from benchmarks.sregym.fastloop.fault_driver import FastloopFaultError, SregymFaultDriver
+from tests.unit.benchmarks.sregym.fastloop.accepted_source_fixture import fixed_source_provider
 
 
 @dataclass
@@ -239,6 +240,7 @@ def test_recovery_reconciles_before_waiting_for_health() -> None:
         namespace="hotel-reservation",
         baseline=ApplicationBaseline("hotel-reservation", []),
         cluster=Cluster(),
+        accepted_source=fixed_source_provider(ApplicationBaseline("hotel-reservation", []), "hotel-reservation"),
     )
 
     driver.recover()
@@ -247,7 +249,7 @@ def test_recovery_reconciles_before_waiting_for_health() -> None:
     assert driver.last_cleanup.deleted_counts == {"Job": 1}
 
 
-def test_recovery_cleans_every_recorded_application_namespace() -> None:
+def test_recovery_does_not_treat_captured_foreign_namespaces_as_source() -> None:
     class Cluster:
         def list_objects(self, namespace: str) -> list[dict[str, Any]]:
             return [{"kind": "Job", "metadata": {"namespace": namespace, "name": "agent-fix"}, "spec": {}}]
@@ -264,12 +266,15 @@ def test_recovery_cleans_every_recorded_application_namespace() -> None:
         namespace="hotel-reservation",
         baseline=(ApplicationBaseline("hotel-reservation", []), ApplicationBaseline("hotel-db", [])),
         cluster=Cluster(),
+        accepted_source=fixed_source_provider(
+            (ApplicationBaseline("hotel-reservation", []), ApplicationBaseline("hotel-db", [])), "hotel-reservation"
+        ),
     )
 
     driver.recover()
 
-    assert deleted == [("hotel-reservation", "Job", "agent-fix"), ("hotel-db", "Job", "agent-fix")]
-    assert driver.last_cleanup.deleted_counts == {"Job": 2}
+    assert deleted == [("hotel-reservation", "Job", "agent-fix")]
+    assert driver.last_cleanup.deleted_counts == {"Job": 1}
 
 
 def test_oracle_verdict_is_typed() -> None:
@@ -397,7 +402,12 @@ def test_full_cleanup_requires_v2_success_and_baseline_reconciliation(reply: dic
             raise AssertionError("no objects to restore")
 
     driver = SregymFaultDriver(
-        Worker(), namespace="app", baseline=ApplicationBaseline("app", []), cluster=Cluster(), require_full_cleanup=True
+        Worker(),
+        namespace="app",
+        baseline=ApplicationBaseline("app", []),
+        cluster=Cluster(),
+        require_full_cleanup=True,
+        accepted_source=fixed_source_provider(ApplicationBaseline("app", []), "app"),
     )
     assert driver.last_full_cleanup_verified is False
     if reply.get("success") is True:

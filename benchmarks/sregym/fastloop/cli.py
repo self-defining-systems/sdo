@@ -35,6 +35,7 @@ from benchmarks.sregym.adapter import WaitKind, assert_host_disk_headroom, asser
 from benchmarks.sregym.fastloop.accepted_source import AcceptedSource, manifest_paths_for
 from benchmarks.sregym.fastloop.baseline_recovery import (
     KubectlApplicationCluster,
+    accepted_restore_baselines,
     application_namespaces,
     capture_application_baseline,
     load_application_baseline,
@@ -347,14 +348,13 @@ def _up(args: argparse.Namespace) -> int:
             and node_images_match(previous.cluster, images)
         ):
             if previous.namespace == "astronomy-shop":
-                from benchmarks.sregym.adapter import prepare_oracle_observability, route_astronomy_traces
+                from benchmarks.sregym.adapter import prepare_oracle_observability
 
                 prepare_oracle_observability(
                     kubeconfig=previous.kubeconfig,
                     sregym_dir=previous.sregym_dir,
                     cluster=previous.cluster,
                 )
-                route_astronomy_traces(previous.kubeconfig)
             with _worker(previous) as cached_worker:
                 health = cached_worker.request(
                     "health", namespace=previous.namespace, timeout=wait_for(WaitKind.SLOW_COMMAND)
@@ -917,7 +917,8 @@ def _run(args: argparse.Namespace) -> int:
         if baseline is not None:
             from benchmarks.sregym.fastloop.recovery_closure import complete_recovery_baselines
 
-            baseline = complete_recovery_baselines(AcceptedSource.of(environment), baseline)
+            source = AcceptedSource.of(environment)
+            baseline = complete_recovery_baselines(source, accepted_restore_baselines(source, baseline))
         if baseline is None and args.require_full_cleanup:
             raise ValueError("full cleanup requires an application baseline")
         if baseline is None:
@@ -937,6 +938,7 @@ def _run(args: argparse.Namespace) -> int:
             namespace=environment.namespace,
             baseline_problem_id=environment.deploy_problem if baseline is not None else None,
             baseline=baseline,
+            accepted_source=lambda: AcceptedSource.of(environment),
             cluster=KubectlApplicationCluster(environment.kubeconfig) if baseline is not None else None,
             health_timeout_seconds=args.health_timeout,
             health_poll_seconds=wait_for(WaitKind.POLL_FAST),

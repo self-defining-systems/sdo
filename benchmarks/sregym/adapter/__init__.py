@@ -61,7 +61,7 @@ if TYPE_CHECKING:
         stop_runtime,
         sync_existing,
     )
-    from benchmarks.sregym.adapter.oracle_observability import prepare_oracle_observability, route_astronomy_traces
+    from benchmarks.sregym.adapter.oracle_observability import prepare_oracle_observability
     from benchmarks.sregym.adapter.persistent import (
         REJECTED_RECEIPT_FILENAME,
         STRICT_RECEIPT_FILENAME,
@@ -138,7 +138,6 @@ _EXPORTS: dict[str, str] = {
     "SCRIPTED_REPLAY_SLOTS": "scripted_replay_catalog",
     "scripted_judge_seed": "scripted_worker",
     "prepare_oracle_observability": "oracle_observability",
-    "route_astronomy_traces": "oracle_observability",
     "bind_state": "processes",
     "runtime_config_payload": "persistent",
     "runtime_config_from_payload": "persistent",
@@ -222,7 +221,6 @@ __all__ = [
     "SCRIPTED_REPLAY_SLOTS",
     "scripted_judge_seed",
     "prepare_oracle_observability",
-    "route_astronomy_traces",
     "bind_state",
     "runtime_config_payload",
     "runtime_config_from_payload",

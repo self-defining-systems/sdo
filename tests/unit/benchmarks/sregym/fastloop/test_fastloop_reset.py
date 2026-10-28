@@ -73,8 +73,17 @@ def test_reset_restores_application_and_clears_controller_on_existing_environmen
     environment.save()
     commit_accepted_source(environment.workspace, namespace="hotel")
     baseline = ApplicationBaseline(
-        "hotel", [{"kind": "Deployment", "metadata": {"name": "app", "namespace": "hotel"}, "spec": {"replicas": 1}}]
+        "hotel",
+        [
+            {
+                "apiVersion": "apps/v1",
+                "kind": "Deployment",
+                "metadata": {"name": "app", "namespace": "hotel"},
+                "spec": {"replicas": 1},
+            }
+        ],
     )
+    commit_accepted_source(environment.workspace, baseline.objects)
     environment.baseline_path.write_text(json.dumps({"fastloop_application": {"namespaces": [baseline.__dict__]}}))
     cluster = FakeCluster()
 
@@ -183,8 +192,16 @@ def test_failed_learning_keeps_program_for_third_incident(tmp_path: Path, monkey
     )
     baseline = ApplicationBaseline(
         "hotel",
-        [{"kind": "Deployment", "metadata": {"name": "app", "namespace": "hotel"}, "spec": {"replicas": 1}}],
+        [
+            {
+                "apiVersion": "apps/v1",
+                "kind": "Deployment",
+                "metadata": {"name": "app", "namespace": "hotel"},
+                "spec": {"replicas": 1},
+            }
+        ],
     )
+    commit_accepted_source(environment.workspace, baseline.objects)
     environment.baseline_path.write_text(json.dumps({"fastloop_application": {"namespaces": [baseline.__dict__]}}))
     cluster = FakeCluster()
     monkeypatch.setattr(reset, "KubectlResetCluster", lambda *_args: cluster)
@@ -543,8 +560,17 @@ def test_recovery_never_mutates_while_native_reflection_is_pending(tmp_path: Pat
     environment.save()
     commit_accepted_source(environment.workspace, namespace="hotel")
     baseline = ApplicationBaseline(
-        "hotel", [{"kind": "Deployment", "metadata": {"name": "app", "namespace": "hotel"}, "spec": {"replicas": 1}}]
+        "hotel",
+        [
+            {
+                "apiVersion": "apps/v1",
+                "kind": "Deployment",
+                "metadata": {"name": "app", "namespace": "hotel"},
+                "spec": {"replicas": 1},
+            }
+        ],
     )
+    commit_accepted_source(environment.workspace, baseline.objects)
     environment.baseline_path.write_text(json.dumps({"fastloop_application": {"namespaces": [baseline.__dict__]}}))
     record = ControllerRecord(
         application="hotel",
@@ -582,7 +608,7 @@ def test_recovery_never_mutates_while_native_reflection_is_pending(tmp_path: Pat
     assert worker.calls == ["clean_start", "health", "baseline_oracle"]
 
 
-def test_restore_receipt_names_each_reapplied_object_and_warns_on_undeclared_recreation(
+def test_restore_receipt_names_only_accepted_objects_and_never_recreates_capture_extras(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     from benchmarks.sregym.fastloop.baseline_recovery import RESTORE_RECEIPTS, save_application_baseline
@@ -618,11 +644,7 @@ def test_restore_receipt_names_each_reapplied_object_and_warns_on_undeclared_rec
 
     receipts = [json.loads(line) for line in (tmp_path / RESTORE_RECEIPTS).read_text().splitlines()]
     assert receipts[0]["reapplied"] == [
-        {"kind": "ConfigMap", "namespace": "hotel", "name": "extra", "recreated": True, "harness_owned": False},
         {"kind": "Deployment", "namespace": "hotel", "name": "app", "recreated": False, "harness_owned": False},
     ]
-    assert receipts[0]["warnings"] == [
-        {"type": "restore_recreated_undeclared_object", "object": "ConfigMap/extra"},
-        {"type": "harness_redirect_left_absent", "object": "Service/jaeger-agent"},
-    ]
-    assert "restore_recreated_undeclared_object" in caplog.text
+    assert receipts[0]["warnings"] == []
+    assert "restore_recreated_undeclared_object" not in caplog.text
