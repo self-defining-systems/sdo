@@ -53,7 +53,6 @@ from agentshim import (
     TokenUsage,
     ToolCall,
     TurnRequest,
-    UsageReport,
     cost_usd,
     default_pricing,
     normalized_usage,
@@ -62,6 +61,7 @@ from agentshim import (
 from agentshim.execution.host import ProcessCommandHandle
 from agentshim.providers.codex import install_rules
 
+from libs.agent_cli.claude_usage import ClaudeBill, ClaudeLedger, api_tokens, session_ledger, token_mapping
 from libs.agent_cli.errors import ProviderRateLimited, StructuredTurnError
 from libs.agent_cli.provider_capacity import ProviderCapacity, is_claude_rate_limit
 from libs.agent_cli.session_ownership import (
@@ -73,6 +73,8 @@ from libs.agent_cli.session_ownership import (
 from libs.agent_cli.startup import StartupTelemetry
 
 if TYPE_CHECKING:
+    from typing import Any
+
     from agentshim import (
         AgentEvent,
         CommandExecutor,
@@ -191,6 +193,7 @@ class StructuredTurn:
     skill_directory: Path | None = None
     rate_limit_wait_seconds: float = 0.0
     concurrency_wait_seconds: float = 0.0
+    usd_complete: bool | None = None
 
 
 def turn_usage(turn: StructuredTurn) -> dict[str, int | float]:
@@ -227,27 +230,13 @@ class _ShellCommandRecorder:
     commands: list[str] = field(default_factory=list[str])
     tool_calls: int = 0
     on_session_started: Callable[[str], None] | None = None
-    on_usage: Callable[[dict[str, int | float], bool], None] | None = None
     session_id: str | None = None
-    incremental: dict[str, int | float] = field(default_factory=dict[str, int | float])
 
     def on_event(self, event: AgentEvent) -> None:
         if isinstance(event, SessionStarted):
             self.session_id = event.session_id
             if self.on_session_started is not None:
                 self.on_session_started(event.session_id)
-        if isinstance(event, UsageReport) and self.on_usage is not None and event.usage.provider == "claude":
-            observed = turn_usage(StructuredTurn("", self.session_id or "", event.usage))
-            # Claude assistant reports are incremental; the terminal report has
-            # num_turns and supersedes them. Codex reports only at turn end.
-            if event.usage.provider == "claude" and event.usage.tokens.turns == 0:
-                for name, value in observed.items():
-                    self.incremental[name] = self.incremental.get(name, 0) + value
-                self.incremental["llm_calls"] += 1
-                self.incremental["model_requests"] = self.incremental["llm_calls"]
-                self.on_usage(dict(self.incremental), False)
-            else:
-                self.on_usage(observed, False)
         if not isinstance(event, ToolCall):
             return
         self.tool_calls += 1
@@ -405,6 +394,7 @@ def _with_prior_usage(turn: StructuredTurn, prior: Mapping[str, int | float]) ->
         turn,
         usage=replace(turn.usage, tokens=tokens, total_cost_usd=cost),
         model_requests=int(combined["model_requests"]) if "model_requests" in combined else None,
+        usd_complete=(turn.usd_complete and cost is not None) if turn.usd_complete is not None else None,
     )
 
 
@@ -480,16 +470,56 @@ def _run_structured_turn_once(
         if on_session_started is not None:
             on_session_started(session_id)
 
-    recorder = _ShellCommandRecorder(on_session_started=session_started, on_usage=on_usage)
+    recorder = _ShellCommandRecorder(on_session_started=session_started)
     started = time.monotonic()
     interrupted = threading.Event()
     codex_home: Path | None = None
     rollout_before: _RolloutTotals | None = None
+    claude_before = ClaudeLedger()
+    claude_ledger = ClaudeLedger()
+    claude_home: Path | None = None
+    claude_bill: ClaudeBill | None = None
+    usage_lock = threading.RLock()
+    claude_result: dict[str, object] = {}
+
+    def claude_snapshot() -> ClaudeBill:
+        with usage_lock:
+            if claude_home is not None:
+                sid = recorder.session_id or resume_session_id
+                for path in sorted((claude_home / "projects").glob(f"**/{sid}.jsonl")) if sid else []:
+                    claude_ledger.merge_file(path)
+            return claude_ledger.since(claude_before, default_pricing())
+
+    def capture_stdout(line: str) -> None:
+        try:
+            record = json.loads(line)
+        except ValueError:
+            return
+        if isinstance(record, dict):
+            record = cast("dict[str, Any]", record)
+            with usage_lock:
+                claude_ledger.observe(record, model=model)
+                if record.get("type") == "result":
+                    claude_result.update(record)
+                if record.get("type") == "assistant" and on_usage is not None:
+                    on_usage(claude_snapshot().usage(), False)
 
     def spent_usage() -> dict[str, int | float]:
         """Accounting of a stopped turn: its rollout delta, or Claude's incremental reports."""
         if provider != "codex":
-            return dict(recorder.incremental)
+            bill = claude_snapshot()
+            if bill.requests or not claude_result:
+                return bill.usage()
+            raw = claude_result.get("usage")
+            if not isinstance(raw, dict):
+                return {}
+            tokens = api_tokens(cast("dict[str, Any]", raw))
+            observed = token_mapping(tokens, int(cast("int", claude_result.get("num_turns")) or 0))
+            dollars = claude_result.get("total_cost_usd")
+            entry = price_for("claude", model, default_pricing())
+            if isinstance(dollars, (int, float)) and entry and abs(cost_usd(tokens, entry) - dollars) < 1e-7:
+                observed["total_cost_usd"] = dollars
+            return observed
         latest = _codex_rollout_totals(codex_home, recorder.session_id or resume_session_id)
         delta = latest.since(rollout_before) if latest is not None else None
         if delta is None or delta.tokens is None or delta.requests == 0:
@@ -510,7 +540,9 @@ def _run_structured_turn_once(
 
     try:
         with ExitStack() as turn_scope:
-            writer = _WriterExecutor(executor or HostCommandExecutor())
+            writer = _WriterExecutor(
+                executor or HostCommandExecutor(), capture_stdout if provider == "claude" else None
+            )
             if ownership is not None:
                 turn_scope.callback(lambda: ownership.close(writer_closed=writer.closed))
                 if resume_session_id is not None:
@@ -524,6 +556,10 @@ def _run_structured_turn_once(
             if startup.endpoint:
                 executor = startup.executor(executor)
             effective_environment = {**os.environ, **(environment or {}), **extra_env}
+            if provider == "claude":
+                claude_home = Path(effective_environment.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
+                claude_before = session_ledger(claude_home, resume_session_id)
+                claude_ledger = ClaudeLedger(dict(claude_before.requests), list(claude_before.states))
             home_variable = "CODEX_HOME" if provider == "codex" else "CLAUDE_CONFIG_DIR"
             default_home = Path.home() / (".codex" if provider == "codex" else ".claude")
             skill_directory = Path(effective_environment.get(home_variable) or default_home).expanduser() / "skills"
@@ -564,7 +600,13 @@ def _run_structured_turn_once(
             usage_errors: list[Exception] = []
 
             def sample_usage() -> None:
-                if provider != "codex" or on_usage is None:
+                if provider == "claude":
+                    with usage_lock:
+                        bill = claude_snapshot()
+                        if bill.requests and on_usage is not None:
+                            on_usage(bill.usage(), False)
+                    return
+                if on_usage is None:
                     return
                 latest = _codex_rollout_totals(codex_home, recorder.session_id or resume_session_id)
                 delta = latest.since(rollout_before) if latest is not None else None
@@ -598,6 +640,35 @@ def _run_structured_turn_once(
             watcher = threading.Thread(target=watch_interrupt, name="sdo-turn-interrupt", daemon=True)
             if interrupt_when is not None:
                 watcher.start()
+            turn_started = time.time()
+
+            def journal(event: str, bill: ClaudeBill | None = None) -> None:
+                log = effective_environment.get(TURN_USAGE_LOG_ENV, "").strip()
+                directory = effective_environment.get("SDO_SESSION_DIR", "").strip()
+                if provider != "claude" or not (log or directory):
+                    return
+                path = (
+                    Path(directory) / "claude-turns.jsonl"
+                    if directory
+                    else Path(log).expanduser().with_name("claude-turns.jsonl")
+                )
+                path.parent.mkdir(parents=True, exist_ok=True)
+                record = {
+                    "event": event,
+                    "role": session_ownership_role,
+                    "provider": provider,
+                    "model": model,
+                    "session_id": recorder.session_id or resume_session_id or "",
+                    "recorded_at_epoch": turn_started if event == "start" else time.time(),
+                    "cwd": str(workspace),
+                    "usage": bill.usage() if bill else {},
+                    "usd_complete": bill.usd_complete if bill else False,
+                }
+                with path.open("a", encoding="utf-8") as stream:
+                    stream.write(json.dumps(record, sort_keys=True) + "\n")
+
+            journal("start")
+            turn_finished = False
             try:
                 result = session.turn(
                     TurnRequest(
@@ -608,6 +679,7 @@ def _run_structured_turn_once(
                         mcp_servers=mcp_servers,
                     )
                 )
+                turn_finished = True
             finally:
                 stop_usage.set()
                 if interrupt_when is not None:
@@ -617,6 +689,11 @@ def _run_structured_turn_once(
                     sample_usage()
                     if usage_errors:
                         raise StructuredTurnError(f"usage checkpoint failed: {usage_errors[0]}") from usage_errors[0]
+                if provider == "claude":
+                    claude_bill = claude_snapshot()
+                    if claude_bill.requests and on_usage is not None:
+                        on_usage(claude_bill.usage(), claude_bill.usd_complete)
+                    journal("complete" if turn_finished else "error", claude_bill)
             # Read the rollout now: a workspace-write Codex home is deleted
             # when the turn scope closes.
             rollout_after = _codex_rollout_totals(codex_home, result.session_id or resume_session_id)
@@ -669,7 +746,10 @@ def _run_structured_turn_once(
     model_requests: int | None = None
     model_requests_source: str | None = None
     usage = result.usage
-    if provider == "claude" and result.usage.tokens.turns > 0:
+    if provider == "claude" and claude_bill is not None and claude_bill.requests:
+        usage = replace(result.usage, tokens=claude_bill.tokens, total_cost_usd=claude_bill.usd)
+        model_requests, model_requests_source = claude_bill.requests, "claude-unique-message-id"
+    elif provider == "claude" and result.usage.tokens.turns > 0:
         model_requests, model_requests_source = result.usage.tokens.turns, CLAUDE_TURNS_REQUEST_SOURCE
     elif rollout_after is not None:
         turn_totals = rollout_after.since(rollout_before)
@@ -691,6 +771,7 @@ def _run_structured_turn_once(
         model_requests_source=model_requests_source,
         resumed=resume_session_id is not None,
         skill_directory=skill_directory,
+        usd_complete=claude_bill.usd_complete if claude_bill is not None else None,
     )
     # A model can spend tokens and then fail the structured-response contract.
     # Persist its observed accounting before rejecting that response.
@@ -713,8 +794,9 @@ class _WriterExecutor:
     after restart; an OS lock disappearing does not manufacture a release.
     """
 
-    def __init__(self, live: CommandExecutor) -> None:
+    def __init__(self, live: CommandExecutor, observe_stdout: Callable[[str], None] | None = None) -> None:
         self.live = live
+        self.observe_stdout = observe_stdout
         self.closed = True
 
     def find_binary(self, name: str, env: Mapping[str, str]) -> str:
@@ -736,11 +818,14 @@ class _WriterExecutor:
                 sink.started(handle)
 
             def stdout(self, line: str) -> None:
+                if self_observer is not None:
+                    self_observer(line)
                 sink.stdout(line)
 
             def stderr(self, line: str) -> None:
                 sink.stderr(line)
 
+        self_observer = self.observe_stdout
         try:
             result = self.live.run(request, Sink())
             terminal = True
@@ -800,10 +885,14 @@ def _append_turn_usage(
         "shell_commands": len(turn.shell_commands),
         "shell_command_lines": [_bounded_command(command) for command in turn.shell_commands],
         "usage": turn_usage(turn),
+        "usd_complete": turn.usd_complete,
     }
     if turn.usage.total_cost_usd is not None:
         record["cost_usd"] = turn.usage.total_cost_usd
         record["cost_source"] = "provider"
+    elif turn.usd_complete is False:
+        record["cost_usd"] = None
+        record["cost_source"] = "incomplete"
     elif (pricing := price_for(provider, model, default_pricing())) is not None:
         record["cost_usd"] = cost_usd(turn.usage.tokens, pricing)
         record["cost_source"] = "agentshim-pricing"
