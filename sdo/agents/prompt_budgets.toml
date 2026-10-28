@@ -69,8 +69,8 @@ max_chars = 100
 reason = "Portable fixture configuration maximum: 86 Unicode code points, rounded upward to 100."
 
 [reflection.instructions]
-max_chars = 2500
-reason = "Baseline synthetic fixture maximum: 2447 Unicode code points; LEARN3 added one sentence for the verified-healthy-closure learning rule."
+max_chars = 2000
+reason = "REFLP1: purpose-first coverage decision; production-rendered synthetic maximum 1963 Unicode code points, with full memory inventory counted separately."
 
 [reflection.memory]
 max_chars = 800
