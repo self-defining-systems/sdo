@@ -12,13 +12,14 @@ from typing import Any
 from benchmarks.sregym.adapter.budgets import WaitKind, wait_for
 from benchmarks.sregym.adapter.cluster_resources import kubectl
 from benchmarks.sregym.adapter.native_operator import (
+    AGENT_EFFORTS,
+    DEFAULT_AGENT_EFFORT,
     NativeInstallConfig,
     collect_native_receipt,
     install_existing,
 )
 from benchmarks.sregym.protocol import ProductionReceiptValidationError
 from benchmarks.sregym.protocol import validate_production_receipt as validate_receipt_contract
-from sdo.agents.provider import AGENT_EFFORTS, DEFAULT_AGENT_EFFORT
 
 logger = logging.getLogger(__name__)
 RUNTIME_ARTIFACTS_DIRNAME = "sdo_runtime"
