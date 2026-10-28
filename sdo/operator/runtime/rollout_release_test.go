@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"google.golang.org/protobuf/proto"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -118,5 +119,64 @@ func TestToolResponseRoundTripsRolloutRelease(t *testing.T) {
 	}
 	if !proto.Equal(decoded.RolloutPending, pending) {
 		t.Fatalf("round trip lost the release: %v", decoded.RolloutPending)
+	}
+}
+
+// A replacement that cannot even be created (quota, LimitRange, Pod Security)
+// is as stalled as one that cannot be placed: the ReplicaSet controller retries
+// forever until another actor changes the namespace or the template. The
+// rerun19 hotel profile shape: a quota rejects the new revision while the old
+// revision's Pod hangs in an init container and keeps its place.
+func TestReplacementThatCannotBeCreatedHandsOffAsStalled(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		message string
+		release bool
+	}{
+		{"quota-requires-limits", `pods "search-new-x" is forbidden: failed quota: memory-limit-quota: must specify memory for: app`, false},
+		{"quota-exceeded", `pods "search-new-x" is forbidden: exceeded quota: compute, requested: limits.memory=512Mi, used: limits.memory=1Gi, limited: limits.memory=1Gi`, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			deployment, current, stale := reconcileRolloutObjects(t)
+			deployment.Annotations = map[string]string{"deployment.kubernetes.io/revision": "2"}
+			deployment.Status.UpdatedReplicas, deployment.Status.AvailableReplicas, deployment.Status.ReadyReplicas = 0, 0, 0
+			current.Status.ObservedGeneration = current.Generation
+			current.Status.Conditions = []appsv1.ReplicaSetCondition{{Type: appsv1.ReplicaSetReplicaFailure, Status: corev1.ConditionTrue, Reason: "FailedCreate", Message: tc.message, LastTransitionTime: metav1.Now()}}
+			controller := true
+			oldPod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "old-pod", Namespace: stale.Namespace, UID: "old-pod-uid", OwnerReferences: []metav1.OwnerReference{{APIVersion: "apps/v1", Kind: "ReplicaSet", Name: stale.Name, UID: stale.UID, Controller: &controller}}},
+				Status: corev1.PodStatus{Phase: corev1.PodPending, Conditions: []corev1.PodCondition{{Type: corev1.PodScheduled, Status: corev1.ConditionTrue}, {Type: corev1.PodInitialized, Status: corev1.ConditionFalse, Reason: "ContainersNotInitialized"}}}}
+			kube := fake.NewSimpleClientset(deployment, current, stale, oldPod)
+			source := addedFieldsSource()
+			live := source.DeepCopy()
+			live.SetUID(deployment.UID)
+			if err := RecordAcceptance(live, source); err != nil {
+				t.Fatal(err)
+			}
+			ref := addedFieldsRef()
+			bound := 6 * time.Second
+			executor := PlanExecutor{Client: contextAwareSourceClient{&planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: live}}}, Source: planFakeSource{source: source}, Rollouts: KubernetesPlanRollouts{Client: kube}, Verifier: planFakeVerifier{passed: true}, RolloutTimeout: bound}
+			started := time.Now()
+			result, err := executor.Apply(context.Background(), IncidentRequest{Namespace: ref.Namespace, SourceCommit: "accepted", RepairPolicy: "recorded-actions", ResponseDeadline: started.Add(bound)}, reconcilePlan(ref), false)
+			var pending *RolloutPendingError
+			if !errors.As(err, &pending) || errors.Is(err, context.DeadlineExceeded) || result.RolloutPending == nil || len(result.RolloutPending.Blockers) == 0 {
+				t.Fatalf("uncreatable replacement was not handed off as stalled: %v", err)
+			}
+			if elapsed := time.Since(started); elapsed > bound/2 {
+				t.Fatalf("uncreatable replacement spent the wait: %s", elapsed)
+			}
+			if result.RolloutPending.ReasonCode == "admission_blocked" {
+				t.Fatal("a quota rejection is not a webhook admission prerequisite")
+			}
+			reason := result.RolloutPending.Reason
+			for _, want := range []string{"Pod/old-pod", "ReplicaSet/" + stale.Name, "FailedCreate", "quota"} {
+				if !strings.Contains(reason, want) {
+					t.Fatalf("handoff %q does not name %q", reason, want)
+				}
+			}
+			released := len(result.RolloutPending.Blockers[0].Release) == 1 && result.RolloutPending.Blockers[0].Release[0].GetRetireOldRevision().GetRef().GetName() == stale.Name
+			if released != tc.release {
+				t.Fatalf("release = %v, want old revision retired only when it holds quota the replacement needs (%v)", result.RolloutPending.Blockers[0].Release, tc.release)
+			}
+		})
 	}
 }

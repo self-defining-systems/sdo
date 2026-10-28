@@ -119,6 +119,16 @@ func deploymentRolloutBlocker(d *appsv1.Deployment, sets []appsv1.ReplicaSet, po
 				if c.Reason == "FailedCreate" && admissionRejection(c.Message) && admissionUIDs[rs.UID] && currentEvidence(c.LastTransitionTime.Time, rs.Status.ObservedGeneration, rs.Generation) {
 					admission = append(admission, message)
 				}
+				// Quota, LimitRange or Pod Security rejections repeat on every
+				// retry until another actor changes the namespace or the
+				// template. The ReplicaSet controller clears the condition on
+				// the next successful create, so a current-template set that
+				// still reports it at its observed generation cannot create its
+				// replacement now. Its transition time (one-second precision,
+				// often set by the write itself) says nothing about staleness.
+				if c.Reason == "FailedCreate" && !admissionRejection(c.Message) && admissionUIDs[rs.UID] && d.Status.ObservedGeneration >= d.Generation {
+					stuck = append(stuck, "replacement "+message)
+				}
 			}
 		}
 	}
@@ -191,11 +201,10 @@ func deploymentRolloutBlocker(d *appsv1.Deployment, sets []appsv1.ReplicaSet, po
 		// what to change.
 		sort.Strings(stuck)
 		sort.Strings(holders)
-		cause = "cannot progress without another actor: "
 		if len(holders) > 0 {
-			cause += "old-template " + strings.Join(holders, ", ") + " still holds its place; "
+			cause = "stalled behind old-template " + strings.Join(holders, ", ") + "; "
 		} else {
-			cause += "no old-template Pod is draining; "
+			cause = "stalled with no old-template Pod draining; "
 		}
 		var retired []string
 		for _, action := range program.StalledRolloutRelease(rolloutLists{deployment: *d, sets: sets, pods: pods}, ref) {
@@ -209,7 +218,7 @@ func deploymentRolloutBlocker(d *appsv1.Deployment, sets []appsv1.ReplicaSet, po
 		if len(retired) > 0 {
 			cause += "release: RetireOldRevision " + strings.Join(retired, ", ") + "; "
 		}
-		cause += strings.Join(stuck, "; ")
+		cause += "cannot progress without another actor: " + strings.Join(stuck, "; ")
 		reasons = append([]string{cause}, reasons...)
 	}
 	blocker := &contracts.RolloutBlocker{Ref: planRefProto(ref), Reason: boundedRolloutText(strings.Join(reasons, "; "), 4096), Release: release}

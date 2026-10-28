@@ -2,6 +2,7 @@ package program
 
 import (
 	"sort"
+	"strings"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -10,9 +11,9 @@ import (
 )
 
 // RetireOldRevision scales one old-revision ReplicaSet of a Deployment to zero.
-// It releases a rollout whose replacement Pod cannot be placed while the old
-// revision's Pod holds its place (hard anti-affinity, a host port or capacity
-// on a small cluster). The Deployment controller never scales a retired
+// It releases a rollout whose replacement Pod cannot be placed or created while
+// the old revision's Pod holds its place (hard anti-affinity, a host port,
+// node capacity or namespace quota). The Deployment controller never scales a retired
 // revision back up. It is refused like any ReplicaSet scale for a current
 // revision or a ReplicaSet without an observed controlling Deployment.
 type RetireOldRevision struct {
@@ -30,10 +31,12 @@ type RolloutView interface {
 }
 
 // StalledRolloutRelease returns the standard release of a Deployment rollout
-// whose current-revision Pod is Unschedulable: one RetireOldRevision for each
-// old revision that still keeps a replica, in name order. It returns nothing
-// while no current-revision Pod is Unschedulable, so a crashing or merely slow
-// rollout never loses the revision that still serves. SDO offers the same
+// whose replacement cannot get the place the old revision holds: a
+// current-revision Pod is Unschedulable, or its ReplicaSet cannot create Pods
+// because the namespace quota is exceeded. It is one RetireOldRevision for
+// each old revision that still keeps a replica, in name order, and nothing
+// otherwise, so a crashing, merely slow or misconfigured rollout never loses
+// the revision that still serves. SDO offers the same
 // actions to the responder when it hands off a stalled rollout.
 func StalledRolloutRelease(view RolloutView, deployment sdk.ObjectRef) []Action {
 	var owner *appsv1.Deployment
@@ -48,6 +51,7 @@ func StalledRolloutRelease(view RolloutView, deployment sdk.ObjectRef) []Action 
 	}
 	current := owner.Annotations[deploymentRevisionAnnotation]
 	currentSets := map[string]bool{}
+	unplaceable := false
 	var old []string
 	for _, set := range view.ReplicaSets() {
 		if set.Namespace != owner.Namespace || !controlledBy(set.OwnerReferences, "Deployment", owner.Name, string(owner.UID)) {
@@ -57,11 +61,13 @@ func StalledRolloutRelease(view RolloutView, deployment sdk.ObjectRef) []Action 
 		switch {
 		case revision == current:
 			currentSets[set.Name] = true
+			for _, condition := range set.Status.Conditions {
+				unplaceable = unplaceable || condition.Type == appsv1.ReplicaSetReplicaFailure && condition.Status == corev1.ConditionTrue && condition.Reason == "FailedCreate" && strings.Contains(condition.Message, "exceeded quota")
+			}
 		case revision != "" && (set.Spec.Replicas == nil || *set.Spec.Replicas > 0 || set.Status.Replicas > 0):
 			old = append(old, set.Name)
 		}
 	}
-	unplaceable := false
 	for _, pod := range view.Pods() {
 		if pod.Namespace != owner.Namespace || pod.DeletionTimestamp != nil || !ownedByAny(pod.OwnerReferences, currentSets) {
 			continue

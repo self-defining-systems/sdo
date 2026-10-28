@@ -193,3 +193,32 @@ def test_option_row_states_database_user_outcome_and_typed_failure(tmp_path, mon
     assert "application=ok effect=database user app updated (verified)" in text
     assert "application=bad effect=failed: database_authentication_rejected" in text
     assert len(text.encode()) <= 2048
+
+
+def test_stalled_mitigation_names_its_standard_release(tmp_path, monkeypatch):
+    from sdo.agents.responder.multi_output import format_selection_response
+
+    monkeypatch.setenv("SDO_SESSION_SCRATCH", str(tmp_path))
+    release = {"retire_old_revision": {"ref": {"api_version": "apps/v1", "kind": "ReplicaSet", "namespace": "app", "name": "web-old"}}}
+    pending = {
+        "reason": "stalled",
+        "blockers": [{"ref": {"kind": "Deployment", "namespace": "app", "name": "web"}, "release": [release]}],
+    }
+    single, _ = format_selection_response(
+        [], [], {"command": "mitigate", "application_id": "one", "rollout_pending": pending, "summary": "unresolved"}
+    )
+    batch, _ = format_selection_response(
+        [],
+        [],
+        {
+            "command": "mitigate",
+            "rollout_pending": pending,
+            "option_reports": [{"option_id": "first", "application_id": "one", "status": "STATUS_UNRESOLVED"}],
+            "report": {"execution": [{"option_id": "first", "application_id": "one", "pending": True}]},
+        },
+    )
+    for text in (single, batch):
+        assert (
+            "Deployment/app/web cannot roll out beside its old revision: "
+            "sdo mitigate RetireOldRevision --ref ReplicaSet/app/web-old"
+        ) in text.splitlines()[:3]
