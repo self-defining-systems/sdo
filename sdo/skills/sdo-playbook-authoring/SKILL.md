@@ -69,5 +69,4 @@ Open only the topic needed for the current edit.
 - [recorded-repair-coverage](references/programs/recorded-repair-coverage.md)
 - [removing-one-service-port](references/programs/removing-one-service-port.md)
 - [routing](references/programs/routing.md)
-- [source-restoration](references/programs/source-restoration.md)
 - [values-and-runtime-actions](references/programs/values-and-runtime-actions.md)
