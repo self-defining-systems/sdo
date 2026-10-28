@@ -232,6 +232,7 @@ func fullToolAction(t *testing.T, encoded []byte) []byte {
 		if err != nil {
 			t.Fatal(err)
 		}
+		encoded = data
 		if err = json.Unmarshal(data, &envelope); err != nil {
 			t.Fatal(err)
 		}

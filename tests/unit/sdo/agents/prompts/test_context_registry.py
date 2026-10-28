@@ -40,14 +40,23 @@ def prompt_bypasses(source: str) -> list[int]:
     for node in ast.walk(tree):
         if isinstance(node, ast.Call):
             name = qualified(node.func)
-            if name in {"libs.agent_cli.structured.run_structured_turn", "string.Template", "agentshim.CliAgent"}:
+            if name in {"libs.agent_cli.structured.run_structured_turn", "string.Template"} or (
+                name.startswith("agentshim.") and name.endswith(".CliAgent")
+            ):
                 errors.append(node.lineno)
             if isinstance(node.func, ast.Attribute) and node.func.attr in {"substitute", "safe_substitute"}:
                 errors.append(node.lineno)
         if isinstance(node, (ast.Assign, ast.AnnAssign)):
             targets = node.targets if isinstance(node, ast.Assign) else [node.target]
-            if any(isinstance(target, ast.Name) and target.id == "prompt" for target in targets) and isinstance(
-                node.value, (ast.Constant, ast.JoinedStr)
+            if (
+                any(isinstance(target, ast.Name) and target.id == "prompt" for target in targets)
+                and isinstance(node.value, (ast.Constant, ast.JoinedStr))
+                or any(isinstance(target, ast.Name) and target.id == "prompt" for target in targets)
+                and (
+                    isinstance(node.value, ast.Call)
+                    and isinstance(node.value.func, ast.Attribute)
+                    and node.value.func.attr in {"format", "join"}
+                )
             ):
                 errors.append(node.lineno)
     return errors
@@ -60,6 +69,9 @@ def prompt_bypasses(source: str) -> list[int]:
         "import libs.agent_cli.structured as runner\nrunner.run_structured_turn('codex','raw')",
         "from string import Template as T\nT('raw').substitute(x=1)",
         "prompt = f'inline {123}'",
+        "from agentshim.agent import CliAgent as Runner\nRunner('codex')",
+        "prompt = 'inline {}'.format(123)",
+        "prompt = '\\n'.join(['inline', 'prompt'])",
     ],
 )
 def test_prompt_bypass_negative_controls(source):
@@ -140,14 +152,26 @@ def test_every_registered_capability_has_a_production_render_fixture():
 
     cases = rendered_cases()
     fixtures = {
-        ("sdo-deployer", "source-deployment"): cases["deployer_source"],
-        ("sdo-deployer", "source-architecture"): cases["lifecycle_DeployerDraft"],
-        ("sdo-health-judge", "health-judgment-direct-v1"): cases["lifecycle_HealthJudgeDraft"],
-        ("sdo-reflector", "outcome-reflection-direct-v1"): cases["reflection_resume_5"],
-        ("sdo-responder", "incident-response"): cases["responder_oversized"],
+        ("sdo-deployer", "source-deployment", ("python3", "-m", "sdo.agents.deployer.worker")): cases[
+            "deployer_source"
+        ],
+        ("sdo-deployer", "source-architecture", ("python3", "-m", "sdo.agents.deployer.worker")): cases[
+            "lifecycle_DeployerDraft"
+        ],
+        ("sdo-health-judge", "health-judgment-direct-v1", ("python3", "-m", "sdo.agents.health_judge.worker")): cases[
+            "lifecycle_HealthJudgeDraft"
+        ],
+        (
+            "sdo-reflector",
+            "outcome-reflection-direct-v1",
+            ("python3", "-m", "sdo.agents.responder.reflection_worker"),
+        ): cases["reflection_resume_5"],
+        ("sdo-responder", "incident-response", ("python3", "-m", "sdo.agents.responder.worker")): cases[
+            "responder_oversized"
+        ],
     }
     registered = {
-        (document["agent_id"], capability["task_type"])
+        (document["agent_id"], capability["task_type"], tuple(document["kubernetes_job"]["command"]))
         for path in (ROOT / "sdo/agents/registrations").glob("*.json")
         for document in [json.loads(path.read_text())]
         for capability in document["capabilities"]

@@ -3,7 +3,7 @@ name: sdo-incident-response
 description: Fix incidents
 ---
 
-Accepted source and developer changes express intent. Operational memory is fallible advice. Recovery requires evidence from the intended application behavior. Discover capabilities and argument shapes: [CLI](references/commands.md). Use only help-confirmed options; on a usage error, read help, don't guess. [Auth](references/database-credentials.md).
+Accepted source and developer changes express intent. Operational memory is fallible advice. Recovery requires evidence from the intended application behavior. Tools: [CLI](references/commands.md). Use only help-confirmed options; on a usage error, read help, don't guess. [Auth](references/database-credentials.md). [CA](references/webhook-ca.md).
 
 1. Read `playbook_coverage` and [matched repair guidance](references/coverage.md); check current evidence and apply useful matches. README guides judgement.
 2. Report one cause per independently fixable fault, plus late faults; each its own action, applied together; combine only faults that can't be fixed separately; continue until it verifies; findings may regress.
