@@ -21,6 +21,7 @@ import (
 // ObjectReader reads an exact, versioned identity. Returned objects are private copies.
 // An absent or uncaptured identity is an error, never an empty healthy object.
 type ObjectReader interface {
+	// Object reads one exact object by kind, namespace and name.
 	Object(ObjectRef) (*unstructured.Unstructured, error)
 }
 

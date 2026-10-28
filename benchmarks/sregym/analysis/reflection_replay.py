@@ -28,8 +28,8 @@ from google.protobuf import json_format
 from benchmarks.sregym.analysis.incident_cost import RECEIPT_NAME
 from benchmarks.sregym.memory_cli import read_outcomes
 from libs.agent_cli.structured import run_structured_turn, turn_usage
+from sdo.agents.provider import DEFAULT_AGENT_EFFORT
 from sdo.agents.responder import (
-    INCIDENT_REASONING_EFFORT,
     REFLECTION_GUIDANCE_MODES,
     CodexSessionBackend,
     ReflectionTurn,
@@ -109,7 +109,7 @@ def replay(workspace: Path, suffix: str, guidance: str, out: Path, *, model: str
     outcome = next(r for r in reversed(records) if r.incident_id == ledger["incident_id"])
     closure = json_format.ParseDict(ledger["closure"], IncidentClosure(), ignore_unknown_fields=True)
     reflector = SessionReflector(
-        _ScopedBackend(model=model, reasoning_effort=INCIDENT_REASONING_EFFORT, timeout_seconds=timeout),
+        _ScopedBackend(model=model, reasoning_effort=DEFAULT_AGENT_EFFORT, timeout_seconds=timeout),
         guidance=guidance,  # type: ignore[arg-type]
     )
     turn = reflector.resume(

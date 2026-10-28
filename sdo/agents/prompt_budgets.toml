@@ -25,20 +25,20 @@ max_chars = 300
 reason = "Baseline synthetic fixture maximum: 273 Unicode code points; byte-identical template extraction."
 
 [health_judge.instructions]
-max_chars = 7700
-reason = "Baseline synthetic fixture maximum: 7622 Unicode code points; byte-identical template extraction."
+max_chars = 7900
+reason = "Synthetic fixture maximum: 7713 Unicode code points after the critical-path latency and saturation principle (HEALTH2)."
 
 [health_judge.metrics_authoring]
-max_chars = 900
-reason = "Baseline synthetic fixture maximum: 813 Unicode code points; byte-identical template extraction."
+max_chars = 1000
+reason = "Synthetic fixture maximum: 911 Unicode code points after the saturation clause (HEALTH2)."
 
 [health_judge.previous_payload]
 max_chars = 100
 reason = "Baseline synthetic fixture maximum: 4 Unicode code points; byte-identical template extraction."
 
 [health_judge.traffic_authoring]
-max_chars = 5300
-reason = "Baseline synthetic fixture maximum: 5202 Unicode code points; byte-identical template extraction."
+max_chars = 5800
+reason = "Synthetic fixture maximum: 5743 Unicode code points after latency bounds and every-record coverage (HEALTH2)."
 
 [lifecycle.incident_data]
 max_chars = 100

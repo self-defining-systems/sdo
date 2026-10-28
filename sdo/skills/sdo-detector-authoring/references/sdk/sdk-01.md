@@ -155,6 +155,8 @@ type DetectionContext interface {
 	PodsForService(namespace string, service string) []corev1.Pod
 	RecentEventsFor(namespace string, kind string, name string) []corev1.Event
 }
+    DetectionContext is the frozen snapshot read by detectors and, through
+    ReadView, by programs.
 
 type Detector interface {
 	Spec() DetectorSpec

@@ -22,6 +22,7 @@ from libs.agent_cli.structured import (
 from sdo.agents.code_paths import SKILLS_ROOT, agent_guidance
 from sdo.agents.prompt_templates import named_prompt, render_prompt
 from sdo.agents.prompt_templates import run_agent_turn as run_structured_turn
+from sdo.agents.provider import DEFAULT_AGENT_EFFORT
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -212,7 +213,7 @@ class CodexLifecycleBackend:
         self,
         *,
         model: str | None = None,
-        reasoning_effort: str = "medium",
+        reasoning_effort: str = DEFAULT_AGENT_EFFORT,
         timeout_seconds: int = 900,
         executor: CommandExecutor | None = None,
     ) -> None:

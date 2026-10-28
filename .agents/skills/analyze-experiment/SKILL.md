@@ -66,6 +66,7 @@ For scripted repair gates, read [scripted rehearsal evidence](references/scripte
 Before judging mixed-app slot validity or recovery, read [slot cleanup evidence](references/slot-cleanup.md).
 For fresh-memory installs and legacy onboarding references, read [fresh memory control state](references/fresh-memory.md).
 Before reconstructing a timeline, read [telemetry and trajectories](references/telemetry.md).
+For missing recordings and offline replay, read [checkpoint recording evidence](references/checkpoint-recording.md).
 For oversized responder outputs, default stdout budgets and offline size audits, read [tool output audits](references/tool-output-audit.md).
 When classifying behavior, read [common failures](references/failure-patterns.md); for latent drift or toy lanes,
 also read [drift and toy failures](references/drift-failures.md).
@@ -73,3 +74,5 @@ also read [drift and toy failures](references/drift-failures.md).
 For automatic repair gate changes, defaults, match selection and historical receipt provenance, read [automatic repair evidence](references/automatic-repair.md).
 
 For fastloop capability, infrastructure, ordered dispatch and image-delivery interpretation, read [dispatch evidence](references/fastloop-dispatch.md).
+
+For ordered stage reports and pending rollout handoffs, read [ordered response stages](references/response-stages.md).
