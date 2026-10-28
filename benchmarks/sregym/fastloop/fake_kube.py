@@ -33,9 +33,21 @@ class FakeKubernetesAPIServer:
         if not isinstance(self.namespace, str) or not self.namespace:
             raise ValueError("captured snapshot requires a namespace")
         self.objects: dict[tuple[str, str], dict[str, Any]] = {}
+        # Objects-only captures (object_snapshot_version 2) store each object once.
+        objects_only = snapshot.get("object_snapshot_version", 0) >= 2
         for api_version, group in _RESOURCES.items():
             for plural, (kind, collection) in group.items():
-                for item in snapshot.get(collection) or []:
+                items = (
+                    [
+                        item
+                        for item in snapshot.get("objects") or []
+                        if (item.get("apiVersion"), item.get("kind")) == (api_version, kind)
+                        and item.get("metadata", {}).get("namespace") == self.namespace
+                    ]
+                    if objects_only
+                    else snapshot.get(collection) or []
+                )
+                for item in items:
                     value = json.loads(json.dumps(item))
                     value["apiVersion"] = api_version
                     value["kind"] = kind

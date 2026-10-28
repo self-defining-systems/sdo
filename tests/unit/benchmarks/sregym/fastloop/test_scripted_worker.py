@@ -279,7 +279,18 @@ def test_scripted_entry_points_complete_on_seed_copy_with_fake_kubernetes_api(
     assert not decision.HasField("artifact_proposal")
 
 
-def test_captured_pair_selects_changed_service_and_healthy_peer(tmp_path: Path) -> None:
+def _objects_only(snapshot: dict[str, Any]) -> dict[str, Any]:
+    """The controller's objects-only capture form of a typed-list snapshot."""
+    objects = [
+        {"apiVersion": "v1", "kind": kind, **item, "metadata": {**item["metadata"], "namespace": "app"}}
+        for kind, section in (("Service", "services"), ("Pod", "pods"))
+        for item in snapshot.get(section, [])
+    ]
+    return {"object_snapshot_version": 2, "namespace": "app", "objects": objects}
+
+
+@pytest.mark.parametrize("form", ["typed-lists", "objects-only"])
+def test_captured_pair_selects_changed_service_and_healthy_peer(tmp_path: Path, form: str) -> None:
     open_snapshot = {"services": [{"metadata": {"name": "front"}, "spec": {"ports": [{"targetPort": 9999}]}}]}
     fixed_snapshot = {
         "services": [
@@ -294,6 +305,8 @@ def test_captured_pair_selects_changed_service_and_healthy_peer(tmp_path: Path) 
             }
         ],
     }
+    if form == "objects-only":
+        open_snapshot, fixed_snapshot = _objects_only(open_snapshot), _objects_only(fixed_snapshot)
     (tmp_path / "open@detect.json").write_text(json.dumps(open_snapshot), encoding="utf-8")
     (tmp_path / "fixed.json").write_text(json.dumps(fixed_snapshot), encoding="utf-8")
     assert scripted_worker._captured_pair(tmp_path) == ("front", "peer")
