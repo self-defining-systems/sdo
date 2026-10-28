@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import subprocess
 from dataclasses import dataclass
 from typing import Any
@@ -70,6 +71,21 @@ class NodeImage:
         if not isinstance(identity, str) or not identity or size < 0 or not all(isinstance(r, str) for r in references):
             raise ValueError("eval: image retention inventory malformed")
         return cls(identity, references, size)
+
+
+def _image_repositories(image: NodeImage) -> set[str]:
+    """Shared content aliases need a source ref proving the owning SDO role.
+
+    A bare shared alias or any foreign alias must never grant GC authority.
+    Legacy per-role registry aliases continue to prove their exact repository.
+    """
+    repositories = {repo for ref in image.references if (repo := _alias_repository(ref))}
+    if not repositories:
+        return set()
+    shared = r"127\.0\.0\.1:[0-9]+/sdo/images(?:@sha256:|:sha256-)[0-9a-f]{64}"
+    if any(_alias_repository(ref) is None and not re.fullmatch(shared, ref) for ref in image.references):
+        return set()
+    return repositories
 
 
 def _canonical_reference(reference: str) -> str:
@@ -157,12 +173,7 @@ def retain_node_images(node: str, delivered: list[str]) -> dict[str, Any]:
         prior = history.get(repository)
         if prior is None:
             baseline = sorted(
-                {
-                    image.identity
-                    for image in images
-                    if any(_alias_repository(ref) == repository for ref in image.references)
-                }
-                - {current}
+                {image.identity for image in images if repository in _image_repositories(image)} - {current}
             )
             history[repository] = [current, *baseline]
         elif prior[0] != current:
@@ -173,7 +184,8 @@ def retain_node_images(node: str, delivered: list[str]) -> dict[str, Any]:
         for image in images
         if image.identity not in protected
         and image.references
-        and all(_alias_repository(ref) in history for ref in image.references)
+        and (owners := _image_repositories(image))
+        and owners.issubset(history)
     ]
     before = _free(node)
     _run(node, ["sh", "-c", f"cat > {_STATE}.tmp && mv {_STATE}.tmp {_STATE}"], input=json.dumps(history))
@@ -186,7 +198,8 @@ def retain_node_images(node: str, delivered: list[str]) -> dict[str, Any]:
             if (
                 fresh is None
                 or not fresh.references
-                or not all(_alias_repository(ref) in history for ref in fresh.references)
+                or not (owners := _image_repositories(fresh))
+                or not owners.issubset(history)
             ):
                 continue
             if image.identity in _used(

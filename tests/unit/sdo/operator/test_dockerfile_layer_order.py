@@ -89,7 +89,8 @@ def test_worker_targets_share_the_compiler_free_base():
             stage = parent
         assert "runtime-base" in lineage
     assert stages["controller"][0] == "runtime-sources"
-    assert any("COPY --from=go-deps /usr/local/go" in line for line in stages["controller"][1])
+    assert stages["runtime-sources"][0] == "compiler-base"
+    assert any("COPY --from=go-deps /usr/local/go" in line for line in stages["compiler-base"][1])
 
 
 def test_build_scripts_never_flatten_image_layers():
@@ -102,7 +103,8 @@ def test_build_scripts_never_flatten_image_layers():
 
 def test_validator_inherits_the_immutable_compiler_and_cache_layers():
     text = "\n".join(_lines("Dockerfile.runtime"))
-    stage = text.split("FROM runtime-base AS validator-toolchain\n", 1)[1].split("FROM model-deps", 1)[0]
+    stage = text.split("FROM runtime-base AS compiler-base\n", 1)[1].split("FROM model-deps", 1)[0]
+    assert "FROM compiler-base AS validator-toolchain" in stage
     assert "FROM validator-toolchain AS validator" in stage
     for source in ("/usr/local/go", "/go/pkg/mod", "/go/build-cache"):
         assert f"COPY --from=go-deps {source} {source}" in stage
