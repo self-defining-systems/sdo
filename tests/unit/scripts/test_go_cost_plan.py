@@ -87,7 +87,12 @@ func FuzzSeed(f *testing.F) { f.Add("seed"); f.Fuzz(func(t *testing.T, s string)
         '//go:build race\n\npackage ci\nimport "testing"\nfunc TestRaceOnly(t *testing.T) {}\n'
     )
     (module / "normal_only_test.go").write_text(
-        '//go:build !race\n\npackage ci\nimport "testing"\nfunc TestNormalOnly(t *testing.T) { t.Fatal("normal-only test cannot enter a race plan") }\n'
+        """//go:build !race
+
+package ci
+import "testing"
+func TestNormalOnly(t *testing.T) { t.Fatal("normal-only test cannot enter a race plan") }
+"""
     )
     profiles = tmp_path / "scripts"
     profiles.mkdir()

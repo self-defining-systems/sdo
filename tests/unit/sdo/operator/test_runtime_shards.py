@@ -23,6 +23,12 @@ def test_cost_plan_drives_the_required_controller_matrix():
     planner = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(planner)
     assert controller["timeout-minutes"] * 60 == planner.BUDGET + planner.SETUP_MARGIN
+    preparation = jobs["prepare-go"]["steps"]
+    plan_step = next(step for step in preparation if step.get("id") == "cost-plan")
+    assert plan_step["if"] == "matrix.mode == 'race'"
+    published = next(step for step in preparation if step.get("with", {}).get("name") == "compiled-go-test-plan")
+    assert published["if"] == "matrix.mode == 'race'"
+    assert any(step.get("with", {}).get("name") == "compiled-go-test-plan" for step in controller["steps"])
     filters = yaml.safe_load(jobs["changes"]["steps"][1]["with"]["filters"])
     assert "scripts/go_cost_plan.py" in filters["go"]
     assert "scripts/go_test_timing.py" in filters["go"]
