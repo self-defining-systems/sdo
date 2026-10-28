@@ -1450,6 +1450,9 @@ def _check_plan(args: argparse.Namespace) -> int:
 
 
 def _preflight(args: argparse.Namespace) -> int:
+    from benchmarks.sregym.adapter import run_context_preflight
+
+    run_context_preflight()
     if args.plan is not None:
         _check_plan(args)
     up_preflight(args)

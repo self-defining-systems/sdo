@@ -1,9 +1,9 @@
-Author corrected final files. You are correcting operational-memory edits that SDO's broker rejected. The controller has committed its authoritative incident outcome; the responder's session context remains available.
+Author corrected final files: SDO's broker rejected your operational-memory edits. The incident outcome is committed; your session context remains.
 
 This is validation attempt 1. The controller's broker rejected your previous proposal and rolled it back; the checkout is clean. Fix every diagnostic below:
 - [toy-rule] toy.go:3: fix toy (hint: check type)
 
-Checkout is clean at current accepted memory. Fix diagnostics in final files. On conflicts, merge both incidents’ intent and preserve accepted peer learning.
+Checkout is clean at accepted memory; fix diagnostics in final files. On conflicts, merge both incidents’ intent and preserve accepted peer learning.
 
 Original reflection request:
 Memory exists so later incidents are fixed faster and cheaper. First compare applied playbooks, matching detectors and unchanged source with this incident. If existing playbooks match well and nothing is new, return no_change with a short reason and finish. Every recorded hand repair needs an executable typed SDK plan or RunScript step; README holds only judgement and ordering, and sdk_gaps name actually unavailable observations or effects, never work not encoded yet. Update or retire applied playbooks that failed, left findings unresolved or needed later hand repair.
@@ -16,10 +16,6 @@ Outcome commit: dddddddddddddddddddddddddddddddddddddddd
 Operational memory snapshot:
 {
   "accepted_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-  "goal_markdown": "Keep the toy application available.\n",
-  "architecture_markdown": "# Toy architecture\nAPI depends on store.\n",
-  "goal_omitted_characters": 0,
-  "architecture_omitted_characters": 0,
   "detectors": [
     {
       "id": "detector-0",
@@ -32,21 +28,21 @@ Operational memory snapshot:
   "playbooks": [
     {
       "id": "repair-0",
-      "excerpt": "# Repair\nRestore the accepted target port.\n",
+      "description": "Repair",
       "script_names": [
         "diagnose.go"
       ]
     }
   ],
-  "omitted_detectors": 0,
-  "omitted_playbooks": 0,
-  "full_text": "Read relevant accepted files in the proposal checkout through the memory inventory."
+  "full_text": "Open only relevant accepted files in the proposal checkout.",
+  "full_index_path": "<context file>"
 }
 
+Full outcome and memory index: referenced files; open only what you need.
 Current outcome:
 {
-  "schema_version": 1,
   "incident_id": "toy-incident",
+  "classification": "success",
   "findings": [
     {
       "detector_id": "detector-0",
@@ -149,33 +145,11 @@ Current outcome:
       "parameter_bindings": {}
     }
   ],
-  "classification": "success",
-  "source_commit": "",
-  "deployed_commit": "",
-  "detector_history": [],
-  "surfaced_playbooks": [],
-  "inspected_playbooks": [],
-  "confirmed_playbooks": [],
-  "rejected_playbooks": [],
-  "applied_playbooks": [],
   "confirmed_root_causes": [],
-  "final_health_detector_state": [],
   "repair_actions": [],
-  "responder_backend": "",
-  "responder_model": "",
-  "program_tool_calls": [],
-  "program_runs": [],
   "plan_applications": [],
-  "program_failure_signals": [],
-  "response_loops_used": 0,
-  "response_loop_exhausted": false,
-  "drift_events": [],
-  "resolution_path": "",
-  "prior_stages": [],
-  "reflection_skip_reason": "",
-  "sdk_gaps": [],
   "undetected_causes": [],
-  "reflection_rejections": []
+  "full_current_outcome_path": "<context file>"
 }
 
 Outcome history (prior incidents, compact): none

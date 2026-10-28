@@ -20,6 +20,7 @@ from sdo.contracts import (
     to_canonical_json,
     validate,
 )
+from tests.context_helpers import expand_context
 from tests.unit.sdo.agents.responder.test_reflection_outcomes import _outcome
 
 FIXTURE = Path(__file__).resolve().parents[4] / "fixtures" / "sdo" / "contracts" / "go" / "closure_repaired.json"
@@ -412,7 +413,7 @@ def test_registered_task_preserves_settled_work_in_actual_session_prompt(
     path.write_text(to_canonical_json(task), encoding="utf-8")
     backend = _CapturingBackend()
     run_reflection_task(path, "result-map", Publisher(), reflector=SessionReflector(backend))
-    prompt = str(backend.calls[0]["prompt"])
+    prompt = expand_context(str(backend.calls[0]["prompt"]))
     assert backend.calls[0]["mode"] == "resume"
     assert disposition in prompt
     assert reason in prompt

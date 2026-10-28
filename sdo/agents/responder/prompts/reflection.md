@@ -8,6 +8,7 @@ ${work_section}Outcome commit: ${outcome_commit}
 Operational memory snapshot:
 ${memory_view_json}
 
+Full outcome and memory index: referenced files; open only what you need.
 Current outcome:
 ${current_outcome_view_json}
 

@@ -9,6 +9,7 @@ from sdo.agents.responder import reflection
 from sdo.agents.responder.memory_check import ValidationResult
 from sdo.agents.responder.reflection_evidence import reflection_memory_view
 from sdo.contracts import OperationalMemorySnapshot, OutcomeRecord
+from tests.context_helpers import expand_context
 from tests.structured_turns import ScriptedAgent, reply
 
 
@@ -27,7 +28,6 @@ def test_incident_memory_finds_relevant_books_beyond_the_inventory_prefix() -> N
     view = reflection_memory_view(snapshot, outcome)
     assert [book["id"] for book in view["playbooks"]] == ["book-98", "book-99"] + [f"book-{i}" for i in range(98)]
     assert [item["id"] for item in view["detectors"]] == ["relevant", "unrelated"]
-    assert view["omitted_playbooks"] == 0
     focus = view["incident_context"]
     assert focus["accepted_commit"] == "accepted"
     assert focus["explained_findings"] == 1
@@ -154,8 +154,8 @@ def test_history_relevance_and_size_do_not_grow_with_unrelated_incidents() -> No
         record = OutcomeRecord(incident_id=f"related-{index}")
         record.findings.add(detector_id="incident-detector")
         history.append(record)
-    section = reflection._history_section(outcome, history)
-    views = json.loads(section.split("\n", 1)[1].split("\nFull prior", 1)[0])
+    section = expand_context(reflection._history_section(outcome, history))
+    views = json.JSONDecoder().raw_decode(section.split("\n", 1)[1])[0]
     assert [view["incident_id"] for view in views] == ["related-7", "related-8", "related-9"]
     assert "unrelated" not in section
 
@@ -198,9 +198,12 @@ def test_reflection_sessions_show_all_memory_once_with_incident_entries_first(tm
         session_mode=mode,
         closure=closure,
     )
-    prompt = str(backend.calls[0]["prompt"])
+    raw = str(backend.calls[0]["prompt"])
+    assert raw.count('"full_index_path"') == 1, "the memory index appears in exactly one prompt section"
+    prompt = expand_context(raw)
     for index in range(45):
-        assert prompt.count(f'advice-{index}"') == 1
+        assert raw.count(f'"id": "unrelated-{index}"') <= 1
+        assert f'"id": "unrelated-{index}"' in prompt
         assert f"signature-{index}" in prompt
     assert prompt.index('"id": "linked"') < prompt.index('"id": "unrelated-0"')
     assert "Inspect only incident-relevant memory" not in prompt
