@@ -4,7 +4,6 @@ import (
 	"context"
 	"go/format"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -29,12 +28,7 @@ func TestReflectionLearnsDeploymentRepairWithUnwrittenServiceSymptoms(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	binary := filepath.Join(t.TempDir(), "sdo-operator")
-	build := exec.Command("go", "build", "-o", binary, "./cmd/sdo-operator")
-	build.Dir = operatorRoot
-	if output, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build CLI: %v: %s", err, output)
-	}
+	binary := operatorCLIFixture(t)
 	fixture := "../../../tests/fixtures/sdo/workload_symptom_learning/.sdo"
 	target := nativeRepository(t)
 	copyFastloopTree(t, "../memory/validate/testdata/good/.sdo", filepath.Join(target, ".sdo"))

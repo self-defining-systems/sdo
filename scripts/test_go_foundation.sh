@@ -7,6 +7,10 @@ case "${1:?select stable or contracts}" in
     modules=(sdo/operator/sdk sdo/operator/core)
     export GOTOOLCHAIN=go1.24.5
     ;;
+  current)
+    modules=(sdo/operator/sdk sdo/operator/core)
+    export GOTOOLCHAIN=go1.26.8
+    ;;
   contracts)
     modules=(sdo/operator/contracts benchmarks/sregym/protocol/native_receipt_go benchmarks/sregym/protocol/submission_go)
     export GOTOOLCHAIN=go1.26.8

@@ -2,7 +2,9 @@ name: Nightly fuzz
 
 # Coverage-guided campaigns compile instrumented packages and run for their
 # whole budget, so they stay out of PR CI; every PR still replays each target's
-# seed corpus through plain `go test`. One job per module keeps a single
+# seed corpus through plain `go test`. Oversized atomic tests use separate
+# cost-planned nightly jobs with the same prepared graph and unchanged caps.
+# One job per fuzz module keeps a single
 # instrumented compile per job and each job under the 5-minute fuzz cap.
 on:
   workflow_dispatch:
@@ -48,3 +50,311 @@ jobs:
           for target in $TARGETS; do
             timeout 120s go test -run '^$' -fuzz "^${target}\$" -fuzzminimizetime=1s -fuzztime=30s -parallel=2 -timeout=2m .
           done
+
+  prepare-go:
+    name: prepare shared Go builds (${{ matrix.mode }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [normal, race]
+    outputs:
+      schema_identity: ${{ steps.schema.outputs.value }}
+    steps:
+      - name: Select prepared compiler cache
+        run: echo "GOCACHE=${{ runner.temp }}/sdo-go-build-${{ matrix.mode }}" >> "$GITHUB_ENV"
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version: "1.26.8"
+          cache: false
+      - name: Publish the normal compiler and module caches
+        if: matrix.mode == 'normal'
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: |
+            ${{ runner.temp }}/sdo-go-build-normal
+            ~/go/pkg/mod
+            .fastloop/test-bin
+          key: ci-prepared-v4-normal-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
+          restore-keys: |
+            ci-prepared-v4-normal-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-
+            ci-prepared-v4-normal-${{ runner.os }}-${{ runner.arch }}-1.26.8-
+      - name: Publish the race compiler cache
+        if: matrix.mode == 'race'
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: ${{ runner.temp }}/sdo-go-build-race
+          key: ci-prepared-v4-race-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
+          restore-keys: |
+            ci-prepared-v4-race-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-
+            ci-prepared-v4-race-${{ runner.os }}-${{ runner.arch }}-1.26.8-
+      - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc # v6.4.3
+        if: matrix.mode == 'normal'
+        with:
+          version: "0.9.24"
+          python-version: "3.12"
+          enable-cache: true
+      - run: uv sync --locked --all-extras
+        if: matrix.mode == 'normal'
+      - name: Compile dependency graphs outside operation timeouts
+        run: bash scripts/prepare_go_ci.sh "${{ matrix.mode }}"
+
+      - name: Plan capacity from compiled inventory and hosted costs
+        if: matrix.mode == 'race'
+        id: cost-plan
+        run: python3 scripts/go_cost_plan.py --prepared --include-dedicated --inventory-only --output .fastloop/test-bin/go-test-plan.json
+
+      - name: Publish the exact race test plan
+        if: matrix.mode == 'race'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: compiled-go-test-plan
+          path: .fastloop/test-bin/go-test-plan.json
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Collect all Go-backed Python contracts once
+        if: matrix.mode == 'normal'
+        id: python-plan
+        run: |
+          uv run python scripts/init_test_prereqs.py
+          uv run python scripts/python_cost_plan.py --inventory-only --output .fastloop/test-bin/python-test-plan.json
+      - name: Publish the exact Python integration plan
+        if: matrix.mode == 'normal'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: compiled-python-test-plan
+          path: .fastloop/test-bin/python-test-plan.json
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Keep only the source-bound test executable
+        if: matrix.mode == 'normal'
+        run: |
+          current="$(python3 scripts/operator_test_binary.py)"
+          test -f "$current"
+          find .fastloop/test-bin -maxdepth 1 -type f -name 'sdo-operator-*' ! -samefile "$current" -delete
+
+      - name: Bind image schema to the compiled source
+        if: matrix.mode == 'normal'
+        id: schema
+        run: |
+          identity="$(cd sdo/operator && go run ./cmd/sdo-operator schema-identity)"
+          echo "value=${identity}" >> "$GITHUB_OUTPUT"
+
+  plan:
+    name: deferred test plan
+    needs: prepare-go
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.plan.outputs.nightly_matrix }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: compiled-go-test-plan
+          path: .fastloop/test-bin
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: compiled-python-test-plan
+          path: .fastloop/test-bin
+      - id: plan
+        run: |
+          python3 scripts/pr_test_plan.py --go .fastloop/test-bin/go-test-plan.json --python .fastloop/test-bin/python-test-plan.json --nightly --output .fastloop/test-bin/nightly-test-plan.json | tee "$RUNNER_TEMP/plan.log"
+          grep '^nightly_matrix=' "$RUNNER_TEMP/plan.log" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: nightly-test-plan
+          path: .fastloop/test-bin/nightly-test-plan.json
+          if-no-files-found: error
+          retention-days: 1
+
+  deferred:
+    name: deferred contracts (${{ matrix.bin }})
+    needs: [prepare-go, plan]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    steps:
+      - name: Select prepared compiler cache
+        run: echo "GOCACHE=${{ runner.temp }}/sdo-go-build-normal" >> "$GITHUB_ENV"
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          # A mutable PR merge ref can change after a retarget; test this event.
+          ref: ${{ github.sha }}
+      - name: Restore the prepared normal and race build graph
+        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: |
+            ${{ runner.temp }}/sdo-go-build-normal
+            ~/go/pkg/mod
+            .fastloop/test-bin
+          key: ci-prepared-v4-normal-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
+          fail-on-cache-miss: true
+      - name: Restore the prepared race build graph
+        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: ${{ runner.temp }}/sdo-go-build-race
+          key: ci-prepared-v4-race-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
+          fail-on-cache-miss: true
+      - name: Combine prepared compiler entries without replacing existing files
+        run: bash scripts/merge_go_ci_caches.sh '${{ runner.temp }}/sdo-go-build-normal' '${{ runner.temp }}/sdo-go-build-race'
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version: "1.26.8"
+          cache: false
+      - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc # v6.4.3
+        if: matrix.needs_uv
+        with:
+          version: "0.9.24"
+          python-version: "3.12"
+          enable-cache: true
+      - run: uv sync --locked --all-extras
+        if: matrix.needs_uv
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: nightly-test-plan
+          path: .fastloop/test-bin
+      - name: Share linked binaries between tests
+        run: bash scripts/link_cache.sh >> "$GITHUB_ENV"
+      - name: Run every deferred assertion
+        run: |
+          if [[ '${{ matrix.needs_uv }}' == true ]]; then
+            uv run --extra test python scripts/run_ci_contracts.py --plan .fastloop/test-bin/nightly-test-plan.json --bin '${{ matrix.bin }}' --nightly
+          else
+            python3 scripts/run_ci_contracts.py --plan .fastloop/test-bin/nightly-test-plan.json --bin '${{ matrix.bin }}' --nightly
+          fi
+
+  proto:
+    name: proto contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          # A mutable PR merge ref can change after a retarget; test this event.
+          ref: ${{ github.sha }}
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version: "1.24.5"
+      - name: Install the proto toolchain
+        run: |
+          go install github.com/bufbuild/buf/cmd/buf@v1.73.0
+          go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.12
+          echo "${HOME}/go/bin" >> "${GITHUB_PATH}"
+      - name: Lint and codegen-diff checks
+        run: |
+          ./scripts/check_proto.sh
+      - name: Build the generated Go contracts module
+        run: go build ./...
+        working-directory: sdo/operator/contracts
+
+  images:
+    name: images (${{ matrix.family }})
+    strategy:
+      fail-fast: false
+      matrix:
+        family: [controller, validator, responder, benchmark]
+    needs: prepare-go
+    runs-on: ubuntu-latest
+    env:
+      SDO_SOURCE_REVISION: ${{ github.sha }}
+      SDO_VALIDATOR_SCHEMA_IDENTITY: ${{ needs.prepare-go.outputs.schema_identity }}
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          # A mutable PR merge ref can change after a retarget; test this event.
+          ref: ${{ github.sha }}
+      - name: Enable the native containerd image store
+        run: |
+          config=/etc/docker/daemon.json
+          if sudo test -f "$config"; then sudo cat "$config"; else echo '{}'; fi > "$RUNNER_TEMP/docker-daemon.json"
+          jq '.features += {"containerd-snapshotter": true}' "$RUNNER_TEMP/docker-daemon.json" | sudo tee "$config"
+          sudo systemctl restart docker
+      - uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+        with:
+          # Build into the smoke test's own image store, avoiding tar export/load.
+          driver: docker
+          cleanup: false
+      - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc # v6.4.3
+        with:
+          version: "0.9.24"
+          python-version: "3.12"
+          enable-cache: true
+      - run: uv sync --locked --all-extras
+      - name: Select affected images and compute schema identity
+        id: image-inputs
+        env:
+          CONTROLLER: ${{ matrix.family == 'controller' }}
+          VALIDATOR: ${{ matrix.family == 'validator' }}
+          RESPONDER: ${{ matrix.family == 'responder' }}
+          BENCHMARK: ${{ matrix.family == 'benchmark' }}
+        run: |
+          images=()
+          for image in controller validator responder benchmark; do
+            variable="${image^^}"
+            if [ "${!variable}" = "true" ]; then
+              images+=("${image}")
+            fi
+          done
+          echo "images=${images[*]}" >> "${GITHUB_OUTPUT}"
+          (IFS=,; echo "targets=${images[*]}") >> "${GITHUB_OUTPUT}"
+          test -n "${SDO_VALIDATOR_SCHEMA_IDENTITY}"
+
+      - name: Build affected images with persistent layers
+        if: steps.image-inputs.outputs.targets != ''
+        uses: docker/bake-action@3acf805d94d93a86cce4ca44798a76464a75b88c # v6.9.0
+        with:
+          source: .
+          files: scripts/sdo-images.hcl
+          targets: ${{ steps.image-inputs.outputs.targets }}
+          # Local smoke images need neither transport compression nor a second
+          # archive export. The maintenance workflow owns max-cache publication.
+          set: |
+            *.output=type=image,compression=uncompressed
+            controller.cache-from=type=gha,scope=sdo-controller
+            validator.cache-from=type=gha,scope=sdo-validator
+            responder.cache-from=type=gha,scope=sdo-responder
+            benchmark.cache-from=type=gha,scope=sdo-benchmark
+      - name: Smoke and probe every affected image
+        if: steps.image-inputs.outputs.targets != ''
+        env:
+          SDO_IMAGES: ${{ steps.image-inputs.outputs.images }}
+          SDO_SKIP_IMAGE_BUILD: "1"
+          SDO_IMAGE_PREFLIGHT: "1"
+        run: ./scripts/build_sdo_images.sh
+      - name: Confirm the responder image carries no SREGym answer key
+        if: matrix.family == 'benchmark'
+        # Belt-and-braces over tests/unit/sdo/operator/test_dockerfile_benchmark_scope.py,
+        # which checks the Dockerfile COPY lines statically: this lists the files an
+        # actually built image carries, so a leak would fail here even if some other
+        # build step (a base image, a stray COPY --from) reintroduced one.
+        run: |
+          files="$(docker run --rm --entrypoint find sdo-sregym-responder:v0.1.0 /opt/sdo/benchmarks -type f)"
+          echo "${files}"
+          printf '%s\n' "${files}" | python3 scripts/check_responder_image.py
+
+
+  foundation:
+    name: module compatibility (${{ matrix.mode }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [stable, current, contracts]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version: '1.26.8'
+          cache-dependency-path: '**/go.sum'
+      - run: bash scripts/test_go_foundation.sh '${{ matrix.mode }}'

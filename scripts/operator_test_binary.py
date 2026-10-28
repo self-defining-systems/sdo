@@ -82,6 +82,8 @@ def source_identity(module: Path) -> str:
             digest.update(item)
 
     settings = json.loads(environment)
+    # The link-cache wrapper serves equal links; it never changes the binary.
+    settings["GOFLAGS"] = " ".join(f for f in settings.get("GOFLAGS", "").split() if not f.startswith("-toolexec="))
     # Workspace paths differ across checkouts; hash workspace contents instead.
     workspace = settings.pop("GOWORK", "")
     add("build environment", json.dumps(settings, sort_keys=True).encode())

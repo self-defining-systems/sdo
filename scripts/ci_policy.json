@@ -1,0 +1,12 @@
+{
+  "contract_jobs": 2,
+  "python_jobs": 2,
+  "contract_work_seconds": 180,
+  "setup_margin_seconds": 90,
+  "protected_patterns": [
+    "sdo\\.dev/operator/(broker|builder|memory|operatorcli)\\b",
+    "go:runtime:Test(Hermetic|Reflection|Responder|Learned|FirstEncounter|Production|Replay|Chaos|Exhaustive|Explorer)",
+    "python:.*(reflection|memory|scripted_worker|recorded|eval_guards)"
+  ],
+  "protected_share": 0.4
+}

@@ -8,6 +8,9 @@ export GOMAXPROCS="${GOMAXPROCS:-2}"
 export GOFLAGS="${GOFLAGS:--p=2 -trimpath}"
 case " $GOFLAGS " in *" -p="*) ;; *) GOFLAGS="$GOFLAGS -p=2" ;; esac
 case " $GOFLAGS " in *" -trimpath "*) ;; *) GOFLAGS="$GOFLAGS -trimpath" ;; esac
+# The test jobs reuse this wrapper to share linked binaries between tests.
+mkdir -p "$root/.fastloop/test-bin"
+go build -o "$root/.fastloop/test-bin/linkcache" "$root/scripts/linkcache/main.go"
 mode="${1:-normal}"
 case "$mode" in
   normal) build_flags=() ;;
@@ -17,17 +20,23 @@ esac
 test_build="$(mktemp -d)"
 trap 'rm -rf "$test_build"' EXIT
 for module in sdo/operator sdo/operator/runtime; do
-  (cd "$root/$module" && go build "${build_flags[@]}" ./...)
   destination="$test_build/$module"
   mkdir -p "$destination"
-  # -c never starts TestMain or a test. Normal Python contracts need test-only
-  # archives too, not just the race shards. Go still links/discovers per shard.
-  (cd "$root/$module" && go test "${build_flags[@]}" -c -o "$destination/" ./...)
+  # The inventory must use the consumer's race build tags. Discover once while
+  # compiling that graph; normal Python contracts still need their own archives.
+  if [[ "$mode" == race ]]; then
+    scope=operator
+    if [[ "$module" == sdo/operator/runtime ]]; then scope=runtime; fi
+    mkdir -p "$root/.fastloop/test-bin"
+    (cd "$root/$module" && go test -race -list . -json ./...) > "$root/.fastloop/test-bin/inventory-$scope.json"
+  else
+    (cd "$root/$module" && go test -c -o "$destination/" ./...)
+  fi
 done
 if [[ "$mode" == normal ]]; then
   # Generated traffic probers explicitly disable CGO; those archives have
   # different build IDs from the ordinary hosted graph.
-  (cd "$root/sdo/operator/runtime" && CGO_ENABLED=0 go build ./...)
+  (cd "$root/sdo/operator/runtime" && CGO_ENABLED=0 go build ./prober)
   # This source-bound executable is verified again by every Python consumer.
   python3 "$root/scripts/operator_test_binary.py"
   (cd "$root/sdo/operator" && go build -o "$root/.fastloop/test-bin/setup" "$root/tests/unit/benchmarks/sregym/fastloop/fixtures/setup.go")

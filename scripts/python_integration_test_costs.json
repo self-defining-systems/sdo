@@ -1,0 +1,54 @@
+{
+  "source_run": 40621496611,
+  "source_head": "54d285b33ce03583526fab17865f4e4a63e88050",
+  "sources": [
+    {
+      "run": 40617464016,
+      "head": "2085a4832f9574f25f3a5d7fd1d745289352cb59"
+    },
+    {
+      "run": 40621496611,
+      "head": "54d285b33ce03583526fab17865f4e4a63e88050"
+    }
+  ],
+  "description": "Bootstrap from hosted pytest duration reports. Unlisted phases conservatively use the smallest listed duration (the top-N report cutoff). Structured future reports include every phase. Entries the CIROOT2 change made cheaper (validator link cache, lean validation links) were re-measured on 2026-10-28 on a matched 2-core local run (taskset, GOMAXPROCS=2, race, GOPROXY=off, cold per-test link cache) and recorded as 1.5x the measured seconds until a hosted run refreshes them with update_go_test_costs.py. Deferred tests were then re-measured together in one process with a shared link cache (matched 2-core local, race, -parallel=2; the way a CI bucket runs) and recorded as 1.25x the measured seconds.",
+  "costs": {
+    "tests/unit/benchmarks/sregym/adapter/test_reflection_drain.py::test_real_native_broker_terminal_reflection_reaches_both_drain_consumers[failed]": 10.7,
+    "tests/unit/benchmarks/sregym/adapter/test_reflection_drain.py::test_real_native_broker_terminal_reflection_reaches_both_drain_consumers[no_change]": 1.8,
+    "tests/unit/benchmarks/sregym/fastloop/test_accepted_source.py::test_file_generated_configmap_restore_uses_production_source_renderer": 2.26,
+    "tests/unit/benchmarks/sregym/fastloop/test_accepted_source.py::test_hotel_bootstrap_source_matches_harness_and_remains_restorable": 4.2,
+    "tests/unit/benchmarks/sregym/fastloop/test_eval_guards.py::test_fresh_guard_accepts_actual_broker_health_bootstrap": 33.1,
+    "tests/unit/benchmarks/sregym/fastloop/test_fastloop_hermetic_run.py::test_fake_application_recovers_after_interrupted_responder": 2.25,
+    "tests/unit/benchmarks/sregym/fastloop/test_fastloop_hermetic_run.py::test_fake_controller_finishes_each_reflection_once": 2.25,
+    "tests/unit/benchmarks/sregym/fastloop/test_fastloop_hermetic_run.py::test_scripted_fastloop_reuses_reflected_target_port_program": 7.5,
+    "tests/unit/benchmarks/sregym/fastloop/test_recorded_reflection_stage.py::test_recorded_program_replay_accepts_session_fixture_without_captures[failed]": 40.5,
+    "tests/unit/benchmarks/sregym/fastloop/test_recorded_reflection_stage.py::test_recorded_program_replay_accepts_session_fixture_without_captures[success]": 25.1,
+    "tests/unit/benchmarks/sregym/fastloop/test_recorded_reflection_stage.py::test_recorded_reflection_corrects_within_one_dispatch": 32.7,
+    "tests/unit/benchmarks/sregym/fastloop/test_recorded_reflection_stage.py::test_recorded_reflection_frontmatter_reaches_real_broker": 26.2,
+    "tests/unit/benchmarks/sregym/fastloop/test_recorded_reflection_stage.py::test_recorded_reflection_over_the_old_model_io_limit_replays_to_acceptance": 24.3,
+    "tests/unit/benchmarks/sregym/fastloop/test_recorded_reflection_stage.py::test_recorded_reflection_withholds_persistently_rejected_result": 3.8,
+    "tests/unit/benchmarks/sregym/fastloop/test_request_envelope.py::test_native_broker_entrypoint_rejects_oversized_request": 8.4,
+    "tests/unit/benchmarks/sregym/fastloop/test_request_envelope.py::test_native_request_budget_parity": 3.5,
+    "tests/unit/benchmarks/sregym/fastloop/test_scripted_worker_contract.py::test_scripted_binding_args_extract_object_bindings[False]": 2.25,
+    "tests/unit/benchmarks/sregym/fastloop/test_scripted_worker_contract.py::test_scripted_binding_args_extract_object_bindings[True]": 2.25,
+    "tests/unit/benchmarks/sregym/fastloop/test_scripted_worker_contract.py::test_scripted_binding_args_never_drop_scalar_values": 2.25,
+    "tests/unit/benchmarks/sregym/fastloop/test_scripted_worker_contract.py::test_scripted_reflection_note_commits_for_verified_and_unverified_outcomes[False]": 7.9,
+    "tests/unit/benchmarks/sregym/fastloop/test_scripted_worker_contract.py::test_scripted_reflection_note_commits_for_verified_and_unverified_outcomes[True]": 7.1,
+    "tests/unit/benchmarks/sregym/fastloop/test_scripted_worker_contract.py::test_scripted_reflector_writes_program_that_passes_real_memory_check[ordinary-repair]": 21.8,
+    "tests/unit/benchmarks/sregym/fastloop/test_scripted_worker_contract.py::test_scripted_reflector_writes_program_that_passes_real_memory_check[verified-drift-repair]": 22.0,
+    "tests/unit/benchmarks/sregym/fastloop/test_scripted_worker_contract.py::test_scripted_responder_consumes_real_go_tool_responses": 29.2,
+    "tests/unit/benchmarks/sregym/test_memory_cli.py::test_arguments_name_the_memory_subcommands": 2.25,
+    "tests/unit/benchmarks/sregym/test_memory_cli.py::test_lists_artifacts_through_the_cli": 2.25,
+    "tests/unit/benchmarks/sregym/test_memory_cli.py::test_parses_cli_output_into_generated_messages": 2.25,
+    "tests/unit/benchmarks/sregym/test_memory_cli.py::test_reads_stored_outcomes_through_the_cli": 1.5,
+    "tests/unit/scripts/test_go_cost_plan.py::test_real_compiled_inventory_reaches_real_runner": 3.1,
+    "tests/unit/scripts/test_go_cost_plan.py::test_test_compilation_checks_packages_without_test_files": 0.9,
+    "tests/unit/scripts/test_link_cache.py::test_real_go_toolchain_reuses_links_and_still_relinks_changed_source": 8.0,
+    "tests/unit/sdo/operator/test_ci_speed.py::test_generated_packages_share_only_equal_source_archives": 2.25,
+    "tests/unit/test_operator_binary_identity.py::test_binary_guard_rejects_cross_source_cache_and_unstamped_binary": 2.25,
+    "tests/unit/test_operator_binary_identity.py::test_build_settings_are_part_of_cache_identity": 2.25,
+    "tests/unit/test_operator_binary_identity.py::test_ci_pins_checkout_to_event_commit": 2.25,
+    "tests/unit/test_operator_binary_identity.py::test_identity_tracks_embeds_and_local_module_replacements": 2.25,
+    "tests/unit/test_operator_binary_identity.py::test_real_operator_embeds_its_input_identity": 2.2
+  }
+}

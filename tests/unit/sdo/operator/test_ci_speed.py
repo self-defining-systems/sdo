@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import fnmatch
 import os
 import re
 import shlex
@@ -17,56 +16,6 @@ ROOT = Path(__file__).resolve().parents[4]
 
 def workflow() -> dict:
     return yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
-
-
-@pytest.mark.parametrize(
-    ("path", "images"),
-    [
-        ("docs/architecture.md", set()),
-        ("tests/unit/test_example.py", set()),
-        ("sdo/agents/responder/worker.py", {"responder", "benchmark"}),
-        ("libs/agent_cli/cli.py", {"responder", "benchmark"}),
-        ("sdo/operator/runtime/controller.go", {"controller", "validator", "responder", "benchmark"}),
-        ("sdo/agents/registrations/responder.yaml", {"controller", "responder", "benchmark"}),
-        ("benchmarks/sregym/adapter/submission.py", {"benchmark"}),
-        ("benchmarks/sregym/fastloop/recording_worker.py", {"benchmark"}),
-        ("benchmarks/sregym/analysis/report.py", set()),
-        ("scripts/build_sdo_images.sh", {"controller", "validator", "responder", "benchmark"}),
-    ],
-)
-def test_image_filters_follow_runtime_inputs(path: str, images: set[str]) -> None:
-    filters = yaml.safe_load(workflow()["jobs"]["changes"]["steps"][1]["with"]["filters"])
-    selected = {
-        image
-        for image in ("controller", "validator", "responder", "benchmark")
-        if any(fnmatch.fnmatchcase(path, pattern) for pattern in filters[f"image_{image}"])
-    }
-    assert selected == images
-
-
-@pytest.mark.parametrize("event", ["pull_request", "merge_group"])
-def test_merge_queue_forces_every_image_and_test_area(event: str, tmp_path: Path) -> None:
-    step = next(s for s in workflow()["jobs"]["changes"]["steps"] if s.get("id") == "resolve")
-    output = tmp_path / "output"
-    result = subprocess.run(
-        ["bash", "-e", "-c", step["run"]],
-        env={**os.environ, **dict.fromkeys(step["env"], "false"), "EVENT": event, "GITHUB_OUTPUT": str(output)},
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert result.returncode == 0, result.stderr
-    resolved = dict(line.split("=", 1) for line in output.read_text().splitlines())
-    for name in ("python", "go", "image_controller", "image_validator", "image_responder", "image_benchmark"):
-        assert resolved[name] == str(event == "merge_group").lower()
-
-
-def test_required_ci_still_accounts_for_every_job() -> None:
-    jobs = workflow()["jobs"]
-    aggregate = jobs["required-pr-ci"]
-    assert aggregate["name"] == "Required PR CI"
-    assert aggregate["if"] == "always()"
-    assert set(aggregate["needs"]) == jobs.keys() - {"required-pr-ci"}
 
 
 @pytest.mark.parametrize(
@@ -160,9 +109,9 @@ def test_ci_bounds_nested_go_builds_and_routes_compiling_contracts() -> None:
     assert configuration["env"]["GOMAXPROCS"] == "2"
     jobs = configuration["jobs"]
     assert all(0 < job.get("timeout-minutes", 0) <= 5 for job in jobs.values())
-    assert "go-integration" in jobs["required-pr-ci"]["needs"]
-    steps = jobs["go-integration"]["steps"]
-    assert any("scripts/test_go_integration.sh" in step.get("run", "") for step in steps)
+    assert "contracts" in jobs["required-pr-ci"]["needs"]
+    steps = jobs["contracts"]["steps"]
+    assert any("scripts/run_ci_contracts.py" in step.get("run", "") for step in steps)
     python_runs = [row["run"] for row in jobs["python"]["strategy"]["matrix"]["include"]]
     assert any("not go_integration" in run for run in python_runs)
     assert len(python_runs) == 2  # check_errors already owns types and architecture.
@@ -171,9 +120,9 @@ def test_ci_bounds_nested_go_builds_and_routes_compiling_contracts() -> None:
 def test_go_shards_restore_the_completed_preparation_cache() -> None:
     jobs = workflow()["jobs"]
     warm = jobs["prepare-go"]
-    assert warm["timeout-minutes"] == 5
+    assert warm["timeout-minutes"] == 4
     assert any("scripts/prepare_go_ci.sh" in step.get("run", "") for step in warm["steps"])
-    for name in ("python", "controller", "go-integration", "replay", "chaos"):
+    for name in ("python", "contracts"):
         assert "prepare-go" in jobs[name]["needs"]
         caches = [step for step in jobs[name]["steps"] if step.get("uses", "").startswith("actions/cache")]
         assert any("ci-prepared" in step["with"]["key"] for step in caches), name
@@ -181,7 +130,7 @@ def test_go_shards_restore_the_completed_preparation_cache() -> None:
 
 def test_go_test_jobs_never_download_modules(tmp_path: Path) -> None:
     """Controller jobs run offline on the module graph that preparation caches."""
-    controller = workflow()["jobs"]["controller"]
+    controller = workflow()["jobs"]["contracts"]
     assert controller["env"]["GOPROXY"] == "off"
     command = tmp_path / "go"
     command.write_text('#!/bin/sh\nprintf "%s:%s\\n" "$PWD" "$*" >> "$SDO_TEST_CALLS"\n')
@@ -202,7 +151,10 @@ def test_go_test_jobs_never_download_modules(tmp_path: Path) -> None:
     modules = {str(ROOT / "sdo/operator" / name) for name in ("sdk", "core", "runtime", "contracts")} | {
         str(ROOT / "sdo/operator")
     }
-    tested = {str(ROOT / item["directory"]) for item in controller["strategy"]["matrix"]["include"]}
+    # The generated inventory covers both production Go modules. Foundation
+    # module graphs are still prepared alongside them.
+    assert controller["strategy"]["matrix"]["bin"] == [0, 1]
+    tested = {str(ROOT / "sdo/operator"), str(ROOT / "sdo/operator/runtime")}
     foundation = (ROOT / "scripts/test_go_foundation.sh").read_text()
     tested |= {str(ROOT / module) for module in re.findall(r"\b(benchmarks/\S+_go)\b", foundation)}
     modules |= {str(ROOT / "benchmarks/sregym/protocol" / name) for name in ("native_receipt_go", "submission_go")}
@@ -211,21 +163,13 @@ def test_go_test_jobs_never_download_modules(tmp_path: Path) -> None:
 
 
 def test_image_jobs_use_the_compilation_owners_schema_identity() -> None:
-    jobs = workflow()["jobs"]
+    jobs = nightly_fuzz()["jobs"]
     images = jobs["images"]
     assert "prepare-go" in images["needs"]
     assert images["env"]["SDO_SOURCE_REVISION"] == "${{ github.sha }}"
     assert images["env"]["SDO_VALIDATOR_SCHEMA_IDENTITY"] == "${{ needs.prepare-go.outputs.schema_identity }}"
     assert set(images["strategy"]["matrix"]["family"]) == {"controller", "validator", "responder", "benchmark"}
-    partitions = [row["operator"] for row in jobs["controller"]["strategy"]["matrix"]["include"] if "operator" in row]
-    assert sorted(partitions) == [
-        "acceptance",
-        "acceptance-second",
-        "broker",
-        "compiler",
-        "compiler-replay",
-        "remaining",
-    ]
+    assert jobs["prepare-go"]["outputs"]["schema_identity"] == "${{ steps.schema.outputs.value }}"
 
 
 @pytest.mark.parametrize("mode", ["normal", "race"])
@@ -249,21 +193,14 @@ def test_preparation_compiles_shared_race_test_archive_without_running_tests(tmp
     invocations = [line.split(":", 1) for line in calls.read_text().splitlines()]
     for module in ("sdo/operator", "sdo/operator/runtime"):
         commands = [shlex.split(args) for directory, args in invocations if directory == str(ROOT / module)]
-        expected = [["build", *(["-race"] if mode == "race" else []), "./..."]]
+        assert not any(args[:1] == ["build"] and args[-1:] == ["./..."] for args in commands)
         if mode == "race":
-            assert len(commands) == 2
-            assert commands[1][:4] == ["test", "-race", "-c", "-o"]
-            assert commands[1][-1] == "./..."
-            assert "-run" not in commands[1]
-            assert commands[:1] == expected
+            assert commands == [["test", "-race", "-list", ".", "-json", "./..."]]
         else:
-            assert commands[:1] == expected
-            assert commands[1][:3] == ["test", "-c", "-o"]
-            assert commands[1][-1] == "./..."
+            assert commands[0][:3] == ["test", "-c", "-o"]
+            assert commands[0][-1] == "./..."
             if module.endswith("/runtime"):
-                assert commands[2] == ["build", "./..."]
-            else:
-                assert all(args[0] != "test" or "-c" in args for args in commands)
+                assert commands[1] == ["build", "./prober"]
 
 
 def test_normal_and_race_preparation_are_independent_bounded_jobs() -> None:
@@ -273,7 +210,7 @@ def test_normal_and_race_preparation_are_independent_bounded_jobs() -> None:
     caches = [step for step in preparation["steps"] if step.get("uses", "").startswith("actions/cache")]
     assert {step["if"] for step in caches} == {"matrix.mode == 'normal'", "matrix.mode == 'race'"}
     assert sum("~/go/pkg/mod" in step["with"]["path"] for step in caches) == 1
-    for name in ("controller", "replay", "chaos"):
+    for name in ("contracts",):
         keys = [step["with"]["key"] for step in jobs[name]["steps"] if step.get("uses", "").startswith("actions/cache")]
         assert any("ci-prepared-v4-normal-" in key for key in keys)
         assert any("ci-prepared-v4-race-" in key for key in keys)
@@ -299,7 +236,7 @@ def test_image_builder_refuses_dirty_source_before_docker(tmp_path: Path) -> Non
 
 
 def test_downstream_cache_archives_never_unpack_into_the_same_path() -> None:
-    for name in ("python", "controller", "go-integration", "replay", "chaos"):
+    for name in ("python", "contracts"):
         steps = workflow()["jobs"][name]["steps"]
         restored = [
             line.strip()
@@ -334,7 +271,7 @@ def test_consumers_restore_the_paths_published_by_each_mode_owner() -> None:
         )
         for mode in ("normal", "race")
     }
-    for name in ("python", "controller", "go-integration", "replay", "chaos"):
+    for name in ("python", "contracts"):
         for step in jobs[name]["steps"]:
             if step.get("uses", "").startswith("actions/cache"):
                 mode = "race" if "v4-race-" in step["with"]["key"] else "normal"
@@ -342,7 +279,7 @@ def test_consumers_restore_the_paths_published_by_each_mode_owner() -> None:
 
 
 def test_hosted_image_builds_use_native_store_without_transport_compression() -> None:
-    steps = workflow()["jobs"]["images"]["steps"]
+    steps = nightly_fuzz()["jobs"]["images"]["steps"]
     builder = next(step for step in steps if step.get("uses", "").startswith("docker/setup-buildx-action@"))
     assert builder["with"]["driver"] == "docker"
     engine = next(step for step in steps if step.get("name") == "Enable the native containerd image store")
@@ -361,7 +298,9 @@ def test_image_assembly_warms_archives_without_linking_test_binaries() -> None:
 
 def test_bake_overrides_do_not_replace_an_earlier_cache_source() -> None:
     bake = next(
-        step for step in workflow()["jobs"]["images"]["steps"] if step.get("uses", "").startswith("docker/bake-action@")
+        step
+        for step in nightly_fuzz()["jobs"]["images"]["steps"]
+        if step.get("uses", "").startswith("docker/bake-action@")
     )
     keys = [line.split("=", 1)[0] for line in bake["with"]["set"].splitlines() if line.strip()]
     assert len(keys) == len(set(keys)), "repeated Bake --set assignments replace earlier cache sources"
@@ -374,7 +313,7 @@ def test_prepared_builds_include_the_portable_prober_and_source_stable_inputs() 
     assert "CGO_ENABLED=0" in prepare
     assert "TestAssuranceSeedsPassHealthJudgeCheck" not in prepare
     assert "operator_test_binary.py" in prepare
-    for name in ("prepare-go", "python", "go-integration"):
+    for name in ("prepare-go", "python", "contracts"):
         normal = [
             step
             for step in jobs["jobs"][name]["steps"]
@@ -462,7 +401,7 @@ def test_pr_ci_replays_fuzz_seeds_without_coverage_guided_campaigns() -> None:
 def test_nightly_fuzz_campaigns_cover_each_target_within_one_job_budget() -> None:
     configuration = nightly_fuzz()
     assert "schedule" in configuration[True]  # YAML 1.1 reads the bare `on` key as True.
-    (job,) = configuration["jobs"].values()
+    job = configuration["jobs"]["fuzz"]
     assert 0 < job["timeout-minutes"] <= 5
     rows = job["strategy"]["matrix"]["include"]
     assert {row["directory"]: set(row["targets"].split()) for row in rows} == NIGHTLY_FUZZ_TARGETS
@@ -476,11 +415,10 @@ def test_nightly_fuzz_campaigns_cover_each_target_within_one_job_budget() -> Non
         assert all(f"func {target}(" in sources for target in targets)
 
 
-def test_recorded_reflection_contracts_share_existing_replay_job() -> None:
+def test_all_integration_contracts_use_fixed_shared_capacity() -> None:
     jobs = workflow()["jobs"]
-    external = jobs["go-integration"]
-    replay = jobs["replay"]
-    assert any("scripts/test_go_integration.sh external" in step.get("run", "") for step in external["steps"])
-    assert any("scripts/test_go_integration.sh replay" in step.get("run", "") for step in replay["steps"])
-    assert "needs.changes.outputs.python == 'true'" in replay["if"]
-    assert external["timeout-minutes"] == replay["timeout-minutes"] == 5
+    integration = jobs["contracts"]
+    assert integration["strategy"]["matrix"]["bin"] == [0, 1]
+    assert any(step.get("with", {}).get("name") == "compiled-python-test-plan" for step in integration["steps"])
+    assert set(jobs) == {"prepare-go", "python", "contracts", "required-pr-ci"}
+    assert integration["timeout-minutes"] == 5
