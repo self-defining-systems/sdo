@@ -47,6 +47,40 @@ class FakeCluster:
         self.jobs.clear()
 
 
+# Install-owned and archived control-namespace records that survive a reset.
+DURABLE_CONTROL_CONFIGMAPS = (
+    "kube-root-ca.crt",
+    "sdo-agent-registrations",
+    "sdo-controller-maintenance",
+    "sdo-namespace-onboarding",
+    "sdo-late-0123456789abcdef0123",
+    "sdo-failed-closure-0123456789abcdef",
+)
+
+
+def worker_records(job: str) -> dict[str, dict[str, Any]]:
+    """Synthetic copies of the record shapes the Go worker executor writes."""
+    digest = {"annotations": {"sdo.dev/request-sha256": "0" * 64}}
+    return {
+        f"{job}-request": {"data": {"agent-task.json": "task"}},
+        f"{job}-result": {**digest, "data": {"agent-result.json": "result"}},
+        f"{job}-execution": digest,
+        "sdo-exec-" + "1" * 52: {
+            "labels": {"sdo.dev/incident-execution": "1", "app.kubernetes.io/managed-by": "sdo-operator"},
+            "data": {"execution.json": "{}"},
+        },
+    }
+
+
+def _split(configmaps: dict[str, dict[str, Any]]) -> list[tuple[str, tuple[dict[str, Any], dict[str, Any]]]]:
+    rows = []
+    for name, record in configmaps.items():
+        meta = {key: record[key] for key in ("labels", "annotations") if key in record}
+        data = {"data": record["data"]} if "data" in record else {}
+        rows.append((name, (meta, data)))
+    return rows
+
+
 class FakeWorker:
     calls: list[str]
 
@@ -374,9 +408,10 @@ def test_pending_reset_retires_state_and_preserves_durable_history(
     unrelated = workspace / "credentials/opaque"
     unrelated.parent.mkdir(parents=True)
     unrelated.write_bytes(b"synthetic-do-not-touch")
-    historical = {"sdo-prior-request": "evidence", "sdo-prior-result": "evidence"}
+    durable = {name: {} for name in DURABLE_CONTROL_CONFIGMAPS}
     transient = {"sdo-controller-state", "sdo-controller-state-drift-verdicts"}
-    configmaps = {**historical, **dict.fromkeys(transient, "pending")}
+    configmaps = {**durable, **dict.fromkeys(transient, {}), **worker_records("sdo-health-refresh-prior")}
+    before_reset = set(configmaps)
     state: dict[str, Any] = {"incident_open": True, "incident_request": {"incident_id": "prior"}}
     stopped = False
     fail_stop = stop_fails_once
@@ -418,6 +453,9 @@ def test_pending_reset_retires_state_and_preserves_durable_history(
         if args[:3] == ["delete", "pod", "orphan-controller"]:
             assert "--wait=true" in args
             orphan_stopped.append(True)
+        if args[:3] == ["get", "configmaps", "-o"]:
+            items = [{"metadata": {"name": name, **meta}} | data for name, (meta, data) in _split(configmaps)]
+            return subprocess.CompletedProcess(args, 0, json.dumps({"items": items}), "")
         if args[:3] == ["delete", "configmap", "sdo-controller-state"]:
             assert stopped, "reset retired state while a controller could recreate it"
             assert not orphan_phase or orphan_stopped, "orphan controller still running"
@@ -438,7 +476,7 @@ def test_pending_reset_retires_state_and_preserves_durable_history(
         with pytest.raises(RuntimeError, match="synthetic writer stop failed"):
             cluster.reset_controller(seed, preserve_repository=preserve)
         assert state["incident_open"] is True
-        assert set(configmaps) == set(historical) | transient
+        assert set(configmaps) == before_reset
         assert ledger.read_bytes() == ledger_bytes
         assert proposal.exists()
         assert session.exists()
@@ -454,7 +492,10 @@ def test_pending_reset_retires_state_and_preserves_durable_history(
         assert not ledger.exists()
         assert not session.exists()
     assert state == {}, "next controller would resume an expired prior incident"
-    assert configmaps == historical, "reset must retire transient drift cache and retain historical evidence"
+    assert set(configmaps) == set(durable), (
+        "reset must retire controller state and every worker execution, request and result record "
+        "while keeping install-owned and archived records"
+    )
     assert unrelated.read_bytes() == b"synthetic-do-not-touch"
     if has_job or orphan_phase:
         assert not proposal.exists(), "proposal checkout must not survive a completed reset"
@@ -626,3 +667,28 @@ def test_restore_receipt_names_each_reapplied_object_and_warns_on_undeclared_rec
         {"type": "harness_redirect_left_absent", "object": "Service/jaeger-agent"},
     ]
     assert "restore_recreated_undeclared_object" in caplog.text
+
+
+def test_reset_worker_record_predicate_tracks_every_go_worker_record_kind() -> None:
+    """Ratchet: a new or renamed worker record kind must also be retired by reset."""
+    import re
+    from pathlib import Path
+
+    registry = Path(__file__).resolve().parents[5] / "sdo/operator/worker_registry"
+    sources = {path.name: path.read_text() for path in registry.glob("*.go") if not path.name.endswith("_test.go")}
+    joined = "\n".join(sources.values())
+    for constant in ("TaskDataKey", "ResultDataKey"):
+        value = re.search(rf'\b{constant}\s*=\s*"([^"]+)"', joined)
+        assert value, constant
+        assert value.group(1) in reset.WORKER_RECORD_DATA_KEYS, constant
+    assert f'requestDigestAnnotation = "{reset.WORKER_RECORD_ANNOTATION}"' in joined
+    assert f'incidentExecutionLabel = "{reset.WORKER_RECORD_LABEL}"' in joined
+    constructors = sorted(name for name, text in sources.items() for _ in re.finditer(r"&corev1\.ConfigMap\{", text))
+    assert constructors == ["incident_identity.go", "kubernetes.go", "kubernetes_vanished.go"], (
+        "a new worker ConfigMap kind needs a marker that reset.is_worker_record retires"
+    )
+    for record in worker_records("sdo-task-x").values():
+        metadata = {key: record[key] for key in ("labels", "annotations") if key in record}
+        assert reset.is_worker_record({"metadata": metadata, **({"data": record["data"]} if "data" in record else {})})
+    for name in DURABLE_CONTROL_CONFIGMAPS:
+        assert not reset.is_worker_record({"metadata": {"name": name}, "data": {"state": "{}"}})
