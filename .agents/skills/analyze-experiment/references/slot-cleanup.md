@@ -44,6 +44,8 @@ fast path. Control state reset stays separate. After every writer stops it retir
 controller state and all worker request, result and execution records, so a later
 identical request cannot reuse a result computed against a deleted checkout. Those
 records survive only in per-incident checkpoints; the native ledger is unchanged.
+On a shared-memory lane the wipe re-provisions the private repository claim and its PV
+together; a PV still bound to a deleted claim's UID is recreated with it, never left Released.
 
 ## Ordered mixed-app dispatch
 

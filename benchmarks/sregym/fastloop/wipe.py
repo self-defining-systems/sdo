@@ -276,7 +276,7 @@ def wipe_environment(
     from benchmarks.sregym.adapter import allowed_namespaces, control_namespace_for
 
     control = control_namespace_for(environment.namespace)
-    return run_tier1(
+    receipt = run_tier1(
         cluster,
         inventory=inventory_path(environment.kubeconfig),
         keep_namespaces=allowed_namespaces(set(applications)) - {control},
@@ -286,6 +286,13 @@ def wipe_environment(
         forget_controller=lambda: environment.state_path.unlink(missing_ok=True),
         timeout_seconds=timeout_seconds,
     )
+    if environment.parallel_root is not None:
+        from benchmarks.sregym.fastloop.shared_memory import provision_parallel_volume
+
+        # Deleting the control namespace deleted the lane repository claim;
+        # restore the claim and its PV together before anything mounts it.
+        provision_parallel_volume(environment)
+    return receipt
 
 
 class Tier2Trigger(StrEnum):
