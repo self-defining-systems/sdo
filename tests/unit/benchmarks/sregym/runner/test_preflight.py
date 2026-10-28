@@ -37,7 +37,7 @@ from benchmarks.sregym.runner.preflight import (
     run_preflight,
 )
 from sdo.agents.lifecycle.agents import CodexLifecycleBackend
-from sdo.agents.responder import INCIDENT_REASONING_EFFORT
+from sdo.agents.provider import DEFAULT_AGENT_EFFORT
 
 REPO_ROOT = Path(__file__).resolve().parents[5]
 EXPERIMENTS = REPO_ROOT / "benchmarks" / "sregym" / "experiments"
@@ -491,7 +491,7 @@ def test_warn_mode_launches_but_marks_the_report_waived(fake_host: FakeHost, sre
 def test_policy_effort_is_the_effort_sdo_pins_in_code() -> None:
     lifecycle_default = inspect.signature(CodexLifecycleBackend.__init__).parameters["reasoning_effort"].default
 
-    assert ModelPolicy().agent_effort == INCIDENT_REASONING_EFFORT == lifecycle_default
+    assert ModelPolicy().agent_effort == DEFAULT_AGENT_EFFORT == lifecycle_default
 
 
 def test_settings_reject_nonsense() -> None:

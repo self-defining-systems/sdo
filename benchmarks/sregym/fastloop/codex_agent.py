@@ -206,6 +206,14 @@ class CodexBaselineAgent:
     def model(self) -> str:
         return self._settings.model
 
+    @property
+    def provider(self) -> str:
+        return "codex"
+
+    @property
+    def reasoning_effort(self) -> str | None:
+        return self._settings.reasoning_effort
+
     def resolve(self, index: int, problem_id: str, inject: Callable[[], InjectionWindow]) -> AgentOutcome:
         settings = self._settings
         incident_dir = settings.results_dir / f"{index:03d}_{problem_id}"

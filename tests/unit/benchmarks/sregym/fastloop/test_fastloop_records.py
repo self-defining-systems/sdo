@@ -173,3 +173,77 @@ def test_not_injected_round_trip_is_excluded_from_incident_statistics(tmp_path: 
     summary = summarize([loaded])[0]
     assert summary.incidents == summary.oracle_passed == 0
     assert summary.infrastructure_outcomes == 1
+
+
+def test_a_claude_rows_tokens_keep_every_priced_class_so_its_cost_is_complete(tmp_path: Path) -> None:
+    from agentshim import TokenUsage as ProviderTokens
+    from agentshim import cost_usd, default_pricing, price_for
+
+    from benchmarks.sregym.analysis.incident_cost import PricingContext, TokenUsage
+
+    # A Claude turn's usage as the worker records it (``turn_usage``) and as the receipt's ProtoJSON spells it.
+    turn = {
+        "input_tokens": 10_000,
+        "cached_input_tokens": 6_000,
+        "cache_read_input_tokens": 6_000,
+        "cache_write_input_tokens": 3_000,
+        "cache_write_1h_input_tokens": 1_000,
+        "uncached_input_tokens": 1_000,
+        "output_tokens": 500,
+        "reasoning_output_tokens": 200,
+    }
+    proto = {
+        "inputTokens": "10000",
+        "cachedInputTokens": "6000",
+        "cacheReadInputTokens": "6000",
+        "cacheWriteInputTokens": "3000",
+        "cacheWrite1hInputTokens": "1000",
+        "outputTokens": "500",
+        "reasoningOutputTokens": "200",
+    }
+    pricing = price_for("claude", "claude-opus-5-5", default_pricing())
+    assert pricing is not None
+    expected = cost_usd(
+        ProviderTokens(
+            input_tokens=10_000,
+            cache_read_input_tokens=6_000,
+            cache_write_input_tokens=3_000,
+            cache_write_1h_input_tokens=1_000,
+            output_tokens=500,
+            reasoning_output_tokens=200,
+        ),
+        pricing,
+    )
+    arm = PricingContext(default_pricing()).arm("claude", "claude-opus-5-5")
+    for usage in (turn, proto):
+        record = _record(0).model_copy(update={"responder_tokens": TokenCounts.from_usage(usage)})
+        path = tmp_path / f"incidents-{len(usage)}.jsonl"
+        append_record(path, record)
+        (loaded,) = load_records(path)
+        tokens = TokenUsage.from_mapping(loaded.responder_tokens.model_dump())
+        assert arm.entry is not None
+        assert cost_usd(tokens.normalized(), arm.entry) == pytest.approx(expected)
+
+
+def test_token_counts_add_every_class() -> None:
+    left = TokenCounts(input_tokens=10, cached_input_tokens=2, cache_write_input_tokens=3, output_tokens=4)
+    right = TokenCounts(input_tokens=5, cache_write_input_tokens=1, cache_write_1h_input_tokens=1, output_tokens=1)
+
+    assert left + right == TokenCounts(
+        input_tokens=15,
+        cached_input_tokens=2,
+        cache_write_input_tokens=4,
+        cache_write_1h_input_tokens=1,
+        output_tokens=5,
+    )
+
+
+def test_a_row_records_the_provider_model_and_effort_its_agents_ran_with(tmp_path: Path) -> None:
+    record = _record(0).model_copy(
+        update={"provider": "claude", "model": "claude-opus-5-5", "reasoning_effort": "medium"}
+    )
+    path = tmp_path / "incidents.jsonl"
+    append_record(path, record)
+
+    (loaded,) = load_records(path)
+    assert (loaded.provider, loaded.model, loaded.reasoning_effort) == ("claude", "claude-opus-5-5", "medium")
