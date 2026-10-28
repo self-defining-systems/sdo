@@ -263,7 +263,7 @@ def test_sweep_stream_models_an_unowned_service_without_changing_controller():
 
 
 @pytest.mark.parametrize(
-    "change", ["none", "namespace", "objective", "topology", "missing-detector", "changed-detector"]
+    "change", ["none", "source-repair", "namespace", "objective", "topology", "missing-detector", "changed-detector"]
 )
 def test_toy_scripted_health_refresh_needs_no_rehearsal_slot(tmp_path, monkeypatch, change):
     import shutil
@@ -271,14 +271,26 @@ def test_toy_scripted_health_refresh_needs_no_rehearsal_slot(tmp_path, monkeypat
     import yaml
 
     from benchmarks.sregym.adapter import scripted_worker
-    from sdo.contracts import HealthJudgeRequest, SourceResource
+    from sdo.contracts import HealthJudgeRequest, IncidentRequest, SourceResource
 
     monkeypatch.delenv("SDO_SCRIPTED_REPLAY_SLOT", raising=False)
     seed = ROOT / "apps/toy/seed/.sdo"
     shutil.copytree(seed, tmp_path / ".sdo")
     body = (seed / "goal.md").read_text().split("---\n", 2)[2].strip()
+    source = tmp_path / "kubernetes"
+    shutil.copytree(ROOT / "apps/toy/kubernetes", source)
+    if change == "source-repair":
+        monkeypatch.setenv("SDO_SCRIPTED_SOURCE_REPAIR", "1")
+        monkeypatch.setattr(
+            scripted_worker, "_tool", lambda *args: {"program_runs": []} if args[0] == "diagnose" else {"healthy": True}
+        )
+        monkeypatch.setattr(scripted_worker, "_command", lambda *_args, **_kwargs: "")
+        result = scripted_worker.scripted_responder(
+            IncidentRequest(incident_id="synthetic", namespace="sdo-toy", repository_worktree=str(tmp_path))
+        )
+        assert len(result.repair_actions) == 1
     resources = []
-    for path in sorted((ROOT / "apps/toy/kubernetes").glob("*.yaml")):
+    for path in sorted(source.glob("*.yaml")):
         resources.extend(
             SourceResource(
                 kind=obj["kind"],
@@ -303,7 +315,7 @@ def test_toy_scripted_health_refresh_needs_no_rehearsal_slot(tmp_path, monkeypat
         detector.unlink()
     if change == "changed-detector":
         detector.write_text("package toy\n")
-    if change == "none":
+    if change in {"none", "source-repair"}:
         result = scripted_worker.scripted_health_judge(request, tmp_path)
         assert result.authored
         assert "toy-endpoints" in result.detector_ids
