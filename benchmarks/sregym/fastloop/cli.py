@@ -348,14 +348,13 @@ def _up(args: argparse.Namespace) -> int:
             and node_images_match(previous.cluster, images)
         ):
             if previous.namespace == "astronomy-shop":
-                from benchmarks.sregym.adapter import prepare_oracle_observability, route_astronomy_traces
+                from benchmarks.sregym.adapter import prepare_oracle_observability
 
                 prepare_oracle_observability(
                     kubeconfig=previous.kubeconfig,
                     sregym_dir=previous.sregym_dir,
                     cluster=previous.cluster,
                 )
-                route_astronomy_traces(previous.kubeconfig)
             with _worker(previous) as cached_worker:
                 health = cached_worker.request(
                     "health", namespace=previous.namespace, timeout=wait_for(WaitKind.SLOW_COMMAND)

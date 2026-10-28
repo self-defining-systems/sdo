@@ -412,7 +412,7 @@ uv run python -m benchmarks.sregym.adapter.oracle_observability \
   --sregym-dir third_party/sregym
 ```
 
-After applying the seed, use `--route-astronomy-traces` on the same command to
+Tracing Service declarations belong in the accepted application source; the harness does not rewrite them to
 match the stock conductor's Jaeger ExternalName routing. The native benchmark
 adapter also prepares this stack before installing a seeded controller. OpenEBS
 is vendored at the revision recorded in the module; all telemetry runs inside

@@ -214,10 +214,6 @@ def main() -> int:
         if op == "deploy":
             problem = self._problem_factory(str(request["problem_id"]))
             assert_clean_baseline(Path(os.environ["KUBECONFIG"]), namespace=problem.namespace)
-        if astronomy:
-            from benchmarks.sregym.adapter import route_astronomy_traces
-
-            route_astronomy_traces(Path(os.environ["KUBECONFIG"]))
         return reply
 
     if "FASTLOOP_KIND_CONFIG" in os.environ:

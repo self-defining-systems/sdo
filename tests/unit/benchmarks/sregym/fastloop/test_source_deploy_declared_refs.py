@@ -87,7 +87,9 @@ def test_astronomy_source_plan_preserves_seed_manifest(monkeypatch, tmp_path):
     monkeypatch.setenv("SREGYM_APP_SOURCE_DIR", str(tmp_path))
     monkeypatch.setenv("SREGYM_ACCEPTED_RENDER", str(manifest))
     monkeypatch.setenv("SREGYM_KIND_CLUSTER_NAME", "synthetic-lane")
-    monkeypatch.setattr(source._AstronomyShopAdapter, "ensure_images_loaded", lambda *a, **kw: None)
+    monkeypatch.setattr(
+        source._SUPPORTED_ADAPTERS["OpenTelemetry Demo Astronomy Shop"], "ensure_images_loaded", lambda *a, **kw: None
+    )
     with source.plan_for_app(
         SimpleNamespace(name="OpenTelemetry Demo Astronomy Shop"), node_architectures={"amd64"}
     ) as plan:
