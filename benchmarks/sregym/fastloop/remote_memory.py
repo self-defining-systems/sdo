@@ -13,9 +13,11 @@ never prints it.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import tempfile
 import uuid
@@ -173,6 +175,34 @@ def adopt_run_branch(repository: Path, endpoint: MemoryEndpoint, url: str | None
     return commit
 
 
+def shared_identity(endpoint: MemoryEndpoint) -> str:
+    """The harness's shared-memory identity for every lane of one app's run branch."""
+
+    return hashlib.sha256(f"{endpoint.repo}#{endpoint.branch}".encode()).hexdigest()[:32]
+
+
+def create_memory_mirror(destination: Path, endpoint: MemoryEndpoint, url: str | None = None) -> Path:
+    """A host clone of the run branch that the harness reads as the lane's accepted repository.
+
+    It carries the shared identity and the remote marker, so harness reads refresh it from the
+    branch (``refresh_memory_mirror``) and treat the lane as a prepared shared lane: no reseed,
+    reset or reinstall.
+    """
+    from benchmarks.sregym.adapter.native_operator import MEMORY_MIRROR_MARKER, refresh_memory_mirror
+
+    if destination.exists():
+        shutil.rmtree(destination)
+    destination.mkdir(parents=True)
+    _git(destination, "init", "--quiet")
+    git_dir = destination / ".git"
+    (git_dir / MEMORY_MIRROR_MARKER).write_text(
+        json.dumps({"url": url or endpoint.url, "branch": endpoint.branch}) + "\n", encoding="utf-8"
+    )
+    (git_dir / "sdo-shared-id").write_text(shared_identity(endpoint) + "\n", encoding="utf-8")
+    refresh_memory_mirror(destination)
+    return destination
+
+
 def controller_job_with_upstream(job: dict[str, Any], endpoint: MemoryEndpoint) -> dict[str, Any]:
     """The controller Job with the run branch and the read-only key mount, as the Go installer builds it."""
 
@@ -291,6 +321,7 @@ def bind_lane_to_branch(
         if seed:
             ensure_run_branch(endpoint, local)
         commit = adopt_run_branch(local, endpoint)
+        (local / ".git" / "sdo-shared-id").write_text(shared_identity(endpoint) + "\n", encoding="utf-8")
         packed = subprocess.run(["tar", "-C", str(local), "-cf", "-", "."], capture_output=True, check=True).stdout
         staged = REPOSITORY + ".bind"
         _pod_tar(
@@ -318,6 +349,10 @@ def bind_lane_to_branch(
     )
     environment.application = application
     environment.memory_repo, environment.memory_branch = endpoint.repo, endpoint.branch
+    # The harness treats the lane as a prepared shared lane reading a refreshed branch mirror.
+    environment.workspace = create_memory_mirror(environment.run_dir / "memory-mirror", endpoint)
+    environment.shared_accepted_id = shared_identity(endpoint)
+    environment.parallel_lane = environment.parallel_lane or environment.cluster
     environment.state_path.unlink(missing_ok=True)
     environment.save()
     return commit

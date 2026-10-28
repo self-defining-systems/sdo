@@ -310,8 +310,37 @@ def sync_existing(config: NativeInstallConfig) -> None:
         raise NativeOperatorError("Go sync-existing returned unexpected stdout")
 
 
+MEMORY_MIRROR_MARKER = "sdo-memory-remote"
+
+
+def refresh_memory_mirror(repository: Path) -> None:
+    """Bring a host mirror of a remote memory branch to the branch head; no-op for other checkouts.
+
+    Lanes sharing memory through a remote branch have no host-visible accepted checkout.
+    Their host workspace is a mirror marked by ``.git/sdo-memory-remote`` ({url, branch});
+    every shared-identity read refreshes it first, so evidence reads see what the brokers pushed.
+    """
+    marker = repository / ".git" / MEMORY_MIRROR_MARKER
+    if not marker.is_file():
+        return
+    remote = json.loads(marker.read_text(encoding="utf-8"))
+    environment = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
+    for args in (
+        ("fetch", "--no-tags", "--quiet", "--", remote["url"], f"+refs/heads/{remote['branch']}:refs/sdo/upstream"),
+        ("reset", "--hard", "--quiet", "refs/sdo/upstream"),
+    ):
+        subprocess.run(
+            ["git", "-C", str(repository), *args],
+            check=True,
+            capture_output=True,
+            env=environment,
+            timeout=wait_for(WaitKind.COMMAND),
+        )
+
+
 def assert_shared_repository(config: NativeInstallConfig) -> None:
     """Prove the controller and host share identity before bypassing archive transport."""
+    refresh_memory_mirror(config.repository)
     identity = config.repository / ".git" / "sdo-shared-id"
     if not config.shared_accepted_id or identity.read_text().strip() != config.shared_accepted_id:
         raise NativeOperatorError("shared accepted repository host identity differs")

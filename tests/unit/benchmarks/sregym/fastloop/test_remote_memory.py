@@ -148,3 +148,30 @@ def test_close_tags_the_branch_and_indexes_it_on_main_once(tmp_path: Path) -> No
     readme = git(remote, "show", "main:README.md")
     assert readme.count(row) == 1
     assert git(remote, "rev-parse", f"refs/heads/{ENDPOINT.branch}") == head
+
+
+def test_host_mirror_follows_the_branch_and_carries_the_shared_identity(tmp_path: Path) -> None:
+    from benchmarks.sregym.adapter.native_operator import refresh_memory_mirror
+    from benchmarks.sregym.fastloop.parallel_memory import memory_head
+    from benchmarks.sregym.fastloop.remote_memory import create_memory_mirror, shared_identity
+
+    remote = bare(tmp_path)
+    lane = accepted(tmp_path, "lane", {"app.txt": "app\n"})
+    head = ensure_run_branch(ENDPOINT, lane, str(remote))
+    mirror = create_memory_mirror(tmp_path / "mirror", ENDPOINT, str(remote))
+    identity = (mirror / ".git" / "sdo-shared-id").read_text().strip()
+    assert identity == shared_identity(ENDPOINT) == shared_identity(MemoryEndpoint(ENDPOINT.repo, ENDPOINT.branch))
+    assert identity != shared_identity(MemoryEndpoint(ENDPOINT.repo, "live/20261028-other"))
+    assert memory_head(mirror) == head
+
+    (lane / "learned.txt").write_text("peer learning\n")
+    git(lane, "add", ".")
+    git(lane, "commit", "--quiet", "-m", "peer publication")
+    git(lane, "push", "--quiet", str(remote), f"HEAD:refs/heads/{ENDPOINT.branch}")
+    assert memory_head(mirror) == git(lane, "rev-parse", "HEAD")
+    assert (mirror / "learned.txt").read_text() == "peer learning\n"
+
+    plain = accepted(tmp_path, "plain", {"app.txt": "app\n"})
+    before = git(plain, "rev-parse", "HEAD")
+    refresh_memory_mirror(plain)
+    assert git(plain, "rev-parse", "HEAD") == before

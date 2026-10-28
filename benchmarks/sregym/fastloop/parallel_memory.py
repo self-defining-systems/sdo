@@ -21,6 +21,9 @@ def _git(repository: Path, *args: str) -> str:
 
 
 def memory_head(repository: Path) -> str:
+    from benchmarks.sregym.adapter.native_operator import refresh_memory_mirror
+
+    refresh_memory_mirror(repository)
     return _git(repository, "rev-parse", "--verify", "HEAD^{commit}")
 
 
