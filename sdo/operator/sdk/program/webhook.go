@@ -27,6 +27,38 @@ func (t WebhookCA) Validate() error {
 	return nil
 }
 
+// MaxAdmissionWebhooks bounds one AdmissionWebhooksFor answer.
+const MaxAdmissionWebhooks = 16
+
+// WebhookSecretKey names a Secret (and key, when the serving Pod mounts one) by
+// reference only.
+type WebhookSecretKey struct {
+	Namespace string `json:"namespace"`
+	Name      string `json:"name"`
+	Key       string `json:"key,omitempty"`
+}
+
+// AdmissionWebhook is one webhook entry that admits Pod creation in the asked
+// namespace, with its backend: the Service, its ready endpoint count and the
+// Secrets its Pods mount. CABundle is a digest, never certificate bytes.
+type AdmissionWebhook struct {
+	Configuration  sdk.ObjectRef      `json:"configuration"`
+	Webhook        string             `json:"webhook"`
+	FailurePolicy  string             `json:"failure_policy"`
+	Service        *sdk.ObjectRef     `json:"service,omitempty"`
+	Port           int32              `json:"port,omitempty"`
+	ReadyEndpoints int                `json:"ready_endpoints"`
+	ServingSecrets []WebhookSecretKey `json:"serving_secrets,omitempty"`
+	CABundle       string             `json:"ca_bundle,omitempty"`
+}
+
+// CATarget names this entry and one serving Secret key for SyncWebhookCA and
+// WebhookCAMatchesSecret. An empty secret.Key means the Pod mounts the whole
+// Secret; set the key the serving certificate uses.
+func (w AdmissionWebhook) CATarget(secret WebhookSecretKey) WebhookCA {
+	return WebhookCA{Ref: w.Configuration, Webhook: w.Webhook, SecretNamespace: secret.Namespace, SecretName: secret.Name, SecretKey: secret.Key}
+}
+
 // SyncWebhookCA copies one Secret key into the named webhook's caBundle inside
 // the runtime. Receipts contain references and a SHA256 digest, never CA bytes.
 // This operation is irreversible; no Secret-bearing preimage is retained.
@@ -48,6 +80,20 @@ func (v snapshotReadView) WebhookCAMatchesSecret(t WebhookCA) (bool, error) {
 }
 func (v *checkedReadView) WebhookCAMatchesSecret(t WebhookCA) (bool, error) {
 	r, err := v.ReadView.WebhookCAMatchesSecret(t)
+	v.check(err)
+	return r, err
+}
+
+func (v snapshotReadView) AdmissionWebhooksFor(subject sdk.ObjectRef) ([]AdmissionWebhook, error) {
+	if source, ok := v.DetectionContext.(interface {
+		AdmissionWebhooksFor(sdk.ObjectRef) ([]AdmissionWebhook, error)
+	}); ok {
+		return source.AdmissionWebhooksFor(subject)
+	}
+	return nil, fmt.Errorf("admission webhook observation unavailable")
+}
+func (v *checkedReadView) AdmissionWebhooksFor(subject sdk.ObjectRef) ([]AdmissionWebhook, error) {
+	r, err := v.ReadView.AdmissionWebhooksFor(subject)
 	v.check(err)
 	return r, err
 }
