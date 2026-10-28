@@ -416,13 +416,22 @@ func requireOnlyRejectionEvidenceSince(t *testing.T, repo, accepted, incident st
 	if err != nil {
 		t.Fatal(err)
 	}
-	recorded := stored.Record.GetReflectionRejections()
-	if len(recorded) != len(rejections) {
-		t.Fatalf("rejection evidence = %d entries, want %d", len(recorded), len(rejections))
+	// The ledger keeps the physical diagnostics; the stored outcome reads them
+	// as logical memory references.
+	projection := proto.Clone(stored.Record).(*contracts.OutcomeRecord)
+	projection.ReflectionRejections = rejections
+	logical, err := memory.LogicalOutcome(projection)
+	if err != nil {
+		t.Fatal(err)
 	}
-	for i := range rejections {
-		if !proto.Equal(recorded[i], rejections[i]) {
-			t.Fatalf("rejection evidence %d = %v, want %v", i, recorded[i], rejections[i])
+	want := logical.GetReflectionRejections()
+	recorded := stored.Record.GetReflectionRejections()
+	if len(recorded) != len(want) {
+		t.Fatalf("rejection evidence = %d entries, want %d", len(recorded), len(want))
+	}
+	for i := range want {
+		if !proto.Equal(recorded[i], want[i]) {
+			t.Fatalf("rejection evidence %d = %v, want %v", i, recorded[i], want[i])
 		}
 	}
 }
