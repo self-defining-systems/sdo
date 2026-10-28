@@ -123,7 +123,6 @@ func (e PlanExecutor) applyObjectPlan(ctx context.Context, incident IncidentRequ
 	}
 	current := map[sdk.ObjectRef]*unstructured.Unstructured{}
 	originals := map[sdk.ObjectRef]*unstructured.Unstructured{}
-	var refs []sdk.ObjectRef
 	// Capture and validate every pre-image before the first mutation.
 	for _, action := range plan.Actions {
 		ref, _ := planActionRef(action)
@@ -154,7 +153,6 @@ func (e PlanExecutor) applyObjectPlan(ctx context.Context, incident IncidentRequ
 		}
 		current[ref] = object.DeepCopy()
 		originals[ref] = object.DeepCopy()
-		refs = append(refs, ref)
 		result.PreImages = append(result.PreImages, newPlanPreImage(ref, object))
 	}
 	for index, action := range plan.Actions {
@@ -266,22 +264,7 @@ func (e PlanExecutor) applyObjectPlan(ctx context.Context, incident IncidentRequ
 		patch.DirectReadConfirmed = true
 	}
 	complete = true
-	if err := e.reportSourceResiduals(ctx, incident, &result); err != nil {
-		return result, err
-	}
-	if err := e.awaitObserved(ctx, result.Patches); err != nil {
-		return result, err
-	}
-	if pending, err := e.waitAfterSourceWrites(ctx, incident, &result, refs); err != nil {
-		result.RolloutPending = pending
-		return result, err
-	}
-	passed, verifyErr := e.Verifier.Verify(ctx)
-	if verifyErr != nil {
-		return result, fmt.Errorf("object plan verification failed")
-	}
-	result.VerificationPassed = passed
-	result.VerificationCompleted = true
+
 	return result, nil
 }
 

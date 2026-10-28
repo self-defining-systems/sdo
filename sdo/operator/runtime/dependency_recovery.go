@@ -339,10 +339,21 @@ func (e PlanExecutor) waitAfterSourceWrites(ctx context.Context, incident Incide
 		}
 		return nil, err
 	}
-	if len(refs) == 0 {
-		return nil, nil
+	if len(refs) > 0 {
+		pending, err := e.waitForRollouts(ctx, incident, refs)
+		if err != nil {
+			if !e.PollRollouts && ctx.Err() != nil {
+				if residualErr := e.reportSourceResiduals(ctx, incident, result); residualErr != nil {
+					return nil, errors.Join(err, residualErr)
+				}
+			}
+			if pending != nil {
+				_ = e.observeSourceResiduals(ctx, incident, result)
+			}
+			return pending, err
+		}
 	}
-	return e.waitForRollouts(ctx, incident, refs)
+	return e.waitSourceConvergence(ctx, incident, result)
 }
 
 func managedRecoveryPod(pod *corev1.Pod) bool {

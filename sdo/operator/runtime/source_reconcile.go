@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
+	"time"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -35,6 +37,23 @@ func isSourceReconcile(action program.Action) bool {
 // Read back after rollout observation as admission and other writers can
 // change the object after our successful PATCH. Paths only; never object values.
 func (e PlanExecutor) reportSourceResiduals(ctx context.Context, incident IncidentRequest, result *PlanApplicationResult) error {
+	err := e.observeSourceResiduals(ctx, incident, result)
+	var partial *SourceReconcilePartialError
+	if errors.As(err, &partial) {
+		result.VerificationPassed = false
+		for i := range result.ActionReports {
+			if report := result.ActionReports[i].SourceReconcile; report != nil && !report.Converged {
+				result.ActionReports[i].Status = "partial"
+				result.ActionReports[i].FailureReason = "source_residual"
+			}
+		}
+	}
+	return err
+}
+
+// Observation records evidence without turning an accepted, in-flight write into
+// a terminal failure. Only the owner of the convergence bound settles it.
+func (e PlanExecutor) observeSourceResiduals(ctx context.Context, incident IncidentRequest, result *PlanApplicationResult) error {
 	if result.DryRun || !result.Applied || result.RolledBack {
 		return nil
 	}
@@ -44,10 +63,7 @@ func (e PlanExecutor) reportSourceResiduals(ctx context.Context, incident Incide
 			continue
 		}
 		ref, _ := planActionRef(action)
-		report := result.ActionReports[index].SourceReconcile
-		if report == nil {
-			report = &contracts.SourceReconcileResult{Ref: planRefProto(ref)}
-		}
+		report := &contracts.SourceReconcileResult{Ref: planRefProto(ref)}
 		result.ActionReports[index].SourceReconcile = report
 		observed, err := e.Client.Get(ctx, ref)
 		if err == nil && (observed == nil || !samePlanRef(observed, ref)) {
@@ -83,13 +99,13 @@ func (e PlanExecutor) reportSourceResiduals(ctx context.Context, incident Incide
 		}
 		report.Converged = len(report.ResidualPaths) == 0 && report.ObservationError == ""
 		if !report.Converged {
-			result.ActionReports[index].Status = "partial"
-			result.ActionReports[index].FailureReason = "source_residual"
 			partial = append(partial, report)
+		} else if result.ActionReports[index].FailureReason == "source_residual" {
+			result.ActionReports[index].Status = "applied"
+			result.ActionReports[index].FailureReason = ""
 		}
 	}
 	if len(partial) > 0 {
-		result.VerificationPassed = false
 		return &SourceReconcilePartialError{Results: partial}
 	}
 	return nil
@@ -182,6 +198,48 @@ func preserveSourceControllerFields(next, observed *unstructured.Unstructured) {
 		}
 		if annotations != nil {
 			_ = unstructured.SetNestedMap(next.Object, annotations, location...)
+		}
+	}
+}
+
+// waitSourceConvergence uses the remaining shared rollout budget. Ordinary
+// source-field residuals are terminal after rollout; old-template capacity may
+// still disappear after Deployment status reports completion.
+func (e PlanExecutor) waitSourceConvergence(ctx context.Context, incident IncidentRequest, result *PlanApplicationResult) (*contracts.RolloutPending, error) {
+	for {
+		err := e.observeSourceResiduals(ctx, incident, result)
+		if err == nil {
+			return nil, nil
+		}
+		var partial *SourceReconcilePartialError
+		if !errors.As(err, &partial) {
+			return nil, err
+		}
+		rolling := false
+		for _, report := range partial.Results {
+			for _, path := range report.ResidualPaths {
+				rolling = rolling || strings.HasPrefix(path, "rollout.")
+			}
+		}
+		if !rolling {
+			return nil, e.reportSourceResiduals(ctx, incident, result)
+		}
+		if e.PollRollouts && ctx.Err() == nil {
+			pending := &contracts.RolloutPending{Reason: "source rollout is settling; writes remain applied and are not independently verified"}
+			return pending, &RolloutPendingError{Pending: pending}
+		}
+		select {
+		case <-ctx.Done():
+			// Preserve the last measured residual, even when the final API read can no
+			// longer run under the original deadline.
+			for i := range result.ActionReports {
+				if report := result.ActionReports[i].SourceReconcile; report != nil && !report.Converged {
+					result.ActionReports[i].Status = "partial"
+					result.ActionReports[i].FailureReason = "source_residual"
+				}
+			}
+			return nil, err
+		case <-time.After(100 * time.Millisecond):
 		}
 	}
 }

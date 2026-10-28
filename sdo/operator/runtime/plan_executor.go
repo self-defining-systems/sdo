@@ -132,6 +132,8 @@ type PlanExecutor struct {
 // plan is compensated; once every write has landed, a failed rollout wait or
 // health verification is reported and left to the caller.
 func (e PlanExecutor) Apply(ctx context.Context, incident IncidentRequest, plan program.Plan, dryRun bool) (result PlanApplicationResult, err error) {
+	started := time.Now()
+	defer func() { result.Duration = time.Since(started) }()
 	plan = groupDocumentActions(plan)
 	defer func() {
 		if err != nil {
@@ -154,7 +156,7 @@ func (e PlanExecutor) Apply(ctx context.Context, incident IncidentRequest, plan 
 	}()
 	defer func() {
 		var partial *SourceReconcilePartialError
-		if errors.As(err, &partial) {
+		if e.deferDependencyRecovery || result.RolloutPending != nil || errors.As(err, &partial) {
 			return
 		}
 		residualErr := e.reportSourceResiduals(ctx, incident, &result)
@@ -174,6 +176,30 @@ func (e PlanExecutor) Apply(ctx context.Context, incident IncidentRequest, plan 
 		if err == nil || result.Applied || !apierrors.IsConflict(err) {
 			break
 		}
+	}
+	if err == nil && !dryRun && !e.deferDependencyRecovery {
+		var objectWrites []PlanPatch
+		var refs []sdk.ObjectRef
+		for _, patch := range result.Patches {
+			if patch.After != nil || patch.Operation == "delete" {
+				objectWrites = append(objectWrites, patch)
+			}
+			if patch.After != nil && patch.Operation != "delete" {
+				refs = append(refs, patch.Ref)
+			}
+		}
+		if err = e.awaitObserved(ctx, objectWrites); err != nil {
+			return result, err
+		}
+		result.RolloutPending, err = e.waitAfterSourceWrites(ctx, incident, &result, refs)
+		if err != nil {
+			return result, err
+		}
+		if err = e.reportSourceResiduals(ctx, incident, &result); err != nil {
+			return result, err
+		}
+		result.VerificationPassed, err = e.Verifier.Verify(ctx)
+		result.VerificationCompleted = err == nil
 	}
 	return result, err
 }
@@ -230,7 +256,6 @@ func (e PlanExecutor) applyOnce(ctx context.Context, incident IncidentRequest, p
 	}
 	result.PreImages = make([]PlanPreImage, 0, len(plan.Actions))
 	current := make(map[sdk.ObjectRef]*unstructured.Unstructured)
-	refs := make([]sdk.ObjectRef, 0, len(plan.Actions))
 	// Capture every pre-image before any write, including later actions' targets.
 	for _, action := range plan.Actions {
 		ref, refErr := planActionRef(action)
@@ -257,7 +282,6 @@ func (e PlanExecutor) applyOnce(ctx context.Context, incident IncidentRequest, p
 
 		result.PreImages = append(result.PreImages, newPlanPreImage(ref, object))
 		current[ref] = object.DeepCopy()
-		refs = append(refs, ref)
 	}
 	for actionIndex, action := range plan.Actions {
 		e.report = &result.ActionReports[actionIndex]
@@ -324,22 +348,7 @@ func (e PlanExecutor) applyOnce(ctx context.Context, incident IncidentRequest, p
 	}
 	writesLanded = true
 	result.Applied = true
-	if err := e.reportSourceResiduals(ctx, incident, &result); err != nil {
-		return result, err
-	}
-	if err := e.awaitObserved(ctx, result.Patches); err != nil {
-		return result, err
-	}
-	if pending, err := e.waitAfterSourceWrites(ctx, incident, &result, refs); err != nil {
-		result.RolloutPending = pending
-		return result, err
-	}
-	passed, err := e.Verifier.Verify(ctx)
-	if err != nil {
-		return result, fmt.Errorf("verify plan health: %w", err)
-	}
-	result.VerificationPassed = passed
-	result.VerificationCompleted = true
+
 	return result, nil
 }
 
