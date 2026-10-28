@@ -189,7 +189,9 @@ def run_bridge(monkeypatch: Any, requests: list[dict[str, Any]], api: API) -> li
     monkeypatch.setattr(
         worker_bridge.importlib,
         "import_module",
-        lambda name: module if name.endswith(".worker") else SimpleNamespace(probe_pod_manifest=lambda *args: {}),
+        lambda name: module
+        if name.endswith(".worker")
+        else SimpleNamespace(probe_pod_manifest=lambda *args: {}, _build_image=None),
     )
     return worker_bridge.main()
 

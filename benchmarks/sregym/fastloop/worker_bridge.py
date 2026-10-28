@@ -10,7 +10,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from benchmarks.sregym.adapter import WaitKind, wait_for
-from benchmarks.sregym.fastloop.host_limits import install_node_limits
+from benchmarks.sregym.fastloop.app_images import install_shared_builds
+from benchmarks.sregym.fastloop.host_limits import HostLimits, install_node_limits
 from benchmarks.sregym.fastloop.idempotent_helm import make_deploy_idempotent
 
 if TYPE_CHECKING:
@@ -234,6 +235,12 @@ def main() -> int:
         deliver(cluster_name, [image_ref])
 
     source_deploy._kind_load_image = deliver_source
+    record = os.environ.get("FASTLOOP_DELIVERY_RECORD")
+    install_shared_builds(
+        source_deploy,
+        record_path=Path(record).parent / "app_images.jsonl" if record else None,
+        lock_dir=HostLimits.from_env().directory,
+    )
     worker.FastloopWorker.handle = extended_handle
     return worker.main()
 
