@@ -94,6 +94,7 @@ type Broker struct {
 	workspaceRoot        string
 	lockPath             string
 	validator            Validator
+	upstream             *Upstream
 }
 
 // New requires the workspace root to be outside the accepted repository.
@@ -181,6 +182,9 @@ func (b *Broker) CreateProposalForPhase(ctx context.Context, incidentID string, 
 		if !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
+		if err := b.syncUpstream(ctx); err != nil {
+			return err
+		}
 		if err := b.requireClean(ctx); err != nil {
 			return err
 		}
@@ -245,7 +249,7 @@ func (b *Broker) publish(ctx context.Context, incidentID string, actor Actor, ph
 		return Receipt{}, errors.New("outcomes must use RecordOutcome")
 	}
 	var receipt Receipt
-	err := b.locked(func() error {
+	err := b.locked(b.withUpstream(ctx, func() error {
 		if prior, ok, err := b.findAccepted(ctx, incidentID, phase); err != nil {
 			return err
 		} else if ok {
@@ -426,7 +430,7 @@ func (b *Broker) publish(ctx context.Context, incidentID string, actor Actor, ph
 			}
 		}
 		return nil
-	})
+	}))
 	return receipt, err
 }
 
@@ -483,7 +487,7 @@ func (b *Broker) RecordOutcome(ctx context.Context, incidentID string, record *c
 		return Receipt{}, err
 	}
 	var receipt Receipt
-	err := b.locked(func() error {
+	err := b.locked(b.withUpstream(ctx, func() error {
 		if err := b.requireClean(ctx); err != nil {
 			return err
 		}
@@ -522,7 +526,7 @@ func (b *Broker) RecordOutcome(ctx context.Context, incidentID string, record *c
 		}
 		receipt, err = b.accept(ctx, stage, incidentID, "controller", OutcomePhase, paths)
 		return err
-	})
+	}))
 	return receipt, err
 }
 
@@ -636,6 +640,9 @@ func (b *Broker) accept(ctx context.Context, stage, incidentID string, actor Act
 	}
 	commit, err := gitText(ctx, stage, "rev-parse", "HEAD")
 	if err != nil {
+		return Receipt{}, err
+	}
+	if err := b.replicate(ctx, stage, commit); err != nil {
 		return Receipt{}, err
 	}
 	if _, err := runGit(ctx, b.target, "fetch", "--no-tags", "--quiet", stage, commit); err != nil {

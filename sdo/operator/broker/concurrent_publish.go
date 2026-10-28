@@ -145,6 +145,9 @@ func (b *Broker) RebaseProposal(ctx context.Context, incidentID string, phase Ph
 		if err != nil {
 			return err
 		}
+		if err := b.syncUpstream(ctx); err != nil {
+			return err
+		}
 		current, err := gitText(ctx, b.target, "rev-parse", "HEAD")
 		if err != nil {
 			return err
