@@ -388,24 +388,24 @@ def test_fresh_reflection_brief_summarizes_program_diagnosis_and_application(tmp
     assert "verification NoMatch" in brief
 
 
-def test_missing_provider_session_restarts_reflection_fresh(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_missing_provider_session_fails_without_fresh_fallback(tmp_path: Path) -> None:
     class MissingSession(_CapturingBackend):
         def resume(self, *, session_id: str, worktree: Path, prompt: str, idempotency_key: str) -> ReflectionTurn:
+            self.calls.append({"mode": "resume"})
             raise ResponderSessionUnavailable("session not found")
 
     backend = MissingSession()
-    turn = SessionReflector(backend).resume(
-        session_id="missing",
-        incident_id="inc-1",
-        worktree=tmp_path,
-        outcome=_outcome(),
-        history=[],
-        outcome_commit="outcome-sha",
-        closure=_fresh_closure(tmp_path),
-    )
-    assert turn.learning_decision == "no_change"
-    assert backend.calls[0]["mode"] == "fresh"
-    assert "session not found" in capsys.readouterr().err
+    with pytest.raises(ResponderSessionUnavailable, match="session not found"):
+        SessionReflector(backend).resume(
+            session_id="missing",
+            incident_id="inc-1",
+            worktree=tmp_path,
+            outcome=_outcome(),
+            history=[],
+            outcome_commit="outcome-sha",
+            closure=_fresh_closure(tmp_path),
+        )
+    assert backend.calls == [{"mode": "resume"}]
 
 
 def test_generic_resume_failure_propagates_without_fresh_retry(tmp_path: Path) -> None:
