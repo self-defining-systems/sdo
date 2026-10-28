@@ -1,5 +1,8 @@
 {
   "provider": "SDO_AGENT_PROVIDER",
+  "effort": "SDO_AGENT_EFFORT",
+  "default_effort": "medium",
+  "efforts": ["low", "medium", "high", "xhigh", "max"],
   "models": {
     "responder": "SDO_RESPONDER_MODEL",
     "reflection": "SDO_REFLECTION_MODEL",

@@ -176,6 +176,14 @@ class TrackedAgent:
     def model(self) -> str:
         return self._inner.model
 
+    @property
+    def provider(self) -> str | None:
+        return getattr(self._inner, "provider", None)
+
+    @property
+    def reasoning_effort(self) -> str | None:
+        return getattr(self._inner, "reasoning_effort", None)
+
     def resolve(self, index: int, problem_id: str, inject: Callable[[], InjectionWindow]) -> AgentOutcome:
         tracker = (
             make_tracker(problem_id, self._reader, self._settings, faults=self._stream_faults.get(problem_id, ()))
@@ -663,7 +671,7 @@ class CompositeSdoAgent(SdoPersistentAgent):
             timed_outcomes.append(_with_receipt_times(item["outcome"], receipt))
             if not receipt and item.get("fallback_usage"):
                 # No strict receipt exists for an incident that never closed; its responder usage is in state.
-                usage = _add(usage, TokenCounts.from_usage(item["fallback_usage"]))
+                usage = usage + TokenCounts.from_usage(item["fallback_usage"])
                 receipts_seen += 1
                 continue
             if not receipt:
@@ -697,8 +705,8 @@ class CompositeSdoAgent(SdoPersistentAgent):
                 verdicts[name] = verdicts.get(name, 0) + count
             for name, count in metrics["tool_commands"].items():
                 commands[name] = commands.get(name, 0) + count
-            usage = _add(usage, TokenCounts.from_usage(receipt.get("usage") or outcome_document.get("usage")))
-            reflection = _add(reflection, TokenCounts.from_usage(receipt.get("reflection_usage")))
+            usage = usage + TokenCounts.from_usage(receipt.get("usage") or outcome_document.get("usage"))
+            reflection = reflection + TokenCounts.from_usage(receipt.get("reflection_usage"))
             raw_memory = receipt.get("memory_reuse")
             memory: dict[str, Any] = raw_memory if isinstance(raw_memory, dict) else {}
             warm = warm or bool(memory.get("warm_path"))
@@ -756,14 +764,6 @@ def _controller_job_summary(control: str) -> dict[str, Any]:
         }
     except Exception as exc:  # evidence only
         return {"error": f"{type(exc).__name__}: {exc}"}
-
-
-def _add(left: TokenCounts, right: TokenCounts) -> TokenCounts:
-    return TokenCounts(
-        input_tokens=left.input_tokens + right.input_tokens,
-        cached_input_tokens=left.cached_input_tokens + right.cached_input_tokens,
-        output_tokens=left.output_tokens + right.output_tokens,
-    )
 
 
 def _iso(value: Any) -> str | None:
