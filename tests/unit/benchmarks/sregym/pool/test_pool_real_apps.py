@@ -187,6 +187,16 @@ def test_current_seed_renderer_feeds_scripted_judge_without_source_run_memory(tm
     assert not (target / ".sdo-runtime").exists()
     assert not (target / ".sdo/outcomes.jsonl").exists()
     assert "Deployment synthetic" in (target / ".sdo/arch.md").read_text()
+    import yaml
+
+    header = yaml.safe_load((target / ".sdo/arch.md").read_text().split("---\n", 2)[1])
+    assert (
+        subprocess.run(
+            ["git", "-C", str(target), "merge-base", "--is-ancestor", header["generated_at_commit"], revision],
+            capture_output=True,
+        ).returncode
+        == 0
+    )
 
 
 def test_remote_endpoint_mismatch_fails_before_any_api_call(tmp_path, monkeypatch):
@@ -272,3 +282,33 @@ def test_relay_cannot_certify_an_unowned_listener(tmp_path, monkeypatch):
             tmp_path / "state",
         )
     assert not http
+
+
+def test_prepared_lane_persists_pull_only_for_restarted_workers(tmp_path):
+    from benchmarks.sregym.fastloop.environment import FastloopEnvironment
+    from benchmarks.sregym.pool.real_apps import persist_image_settings
+
+    environment = FastloopEnvironment(
+        run_dir=tmp_path,
+        cluster="pool2-c5-l0-0",
+        kubeconfig=tmp_path / "kc",
+        namespace="hotel",
+        application="hotel",
+        workspace=tmp_path / "source",
+        sregym_dir=tmp_path / "sregym",
+        private_tmp=None,
+    )
+    setup = RealAppSetup(
+        code_root=tmp_path,
+        seed=tmp_path / "seed",
+        seed_revision="a" * 40,
+        registry="127.0.0.1:55302",
+        credentials_hook=tmp_path / "hook",
+        images={"controller": "c", "responder": "r", "validator": "v"},
+    )
+    persist_image_settings(setup, environment)
+    restarted = FastloopEnvironment.load(tmp_path)
+    assert restarted.worker_process_env()["FASTLOOP_APP_IMAGE_PULL_ONLY"] == "1"
+    assert restarted.worker_process_env()["FASTLOOP_APP_IMAGE_REGISTRY"] == setup.registry
+    restarted.workspace = tmp_path / "branch-mirror"
+    assert restarted.worker_process_env()["SREGYM_APP_SOURCE_DIR"] == str(restarted.workspace)

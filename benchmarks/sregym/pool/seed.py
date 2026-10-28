@@ -9,8 +9,6 @@ import subprocess
 import tarfile
 from typing import TYPE_CHECKING
 
-import yaml
-
 from benchmarks.sregym.fastloop.accepted_source import AcceptedSource, manifest_paths_for
 from benchmarks.sregym.pool.real_apps import SEED_RECEIPT
 
@@ -70,20 +68,8 @@ def render_seed(code_root: Path, source: Path, destination: Path, application: s
     )
     rendered = AcceptedSource(destination, namespace, manifest_paths_for(application)).manifests
     fingerprint = hashlib.sha256(json.dumps(rendered, sort_keys=True).encode()).hexdigest()
-    summary = (
-        "# Application architecture\n\nAccepted source resources:\n\n"
-        + "\n".join(f"- {obj['kind']} {obj['metadata']['name']}" for obj in rendered)
-        + "\n"
-    )
-    header = {
-        "schema_version": 1,
-        "generated_at_commit": revision,
-        "application": application,
-        "topology_fingerprint": fingerprint,
-    }
-    (memory / "arch.md").write_text("---\n" + yaml.safe_dump(header) + "---\n" + summary)
     subprocess.run(
-        ["go", "run", str(code_root / "benchmarks/sregym/pool/seed_render.go"), str(destination)],
+        ["go", "run", str(code_root / "benchmarks/sregym/pool/seed_render.go"), str(destination), application],
         cwd=code_root / "sdo/operator/runtime",
         check=True,
     )

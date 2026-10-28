@@ -6,6 +6,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
@@ -18,6 +19,29 @@ SEED_RECEIPT = "sdo-pool-seed.json"
 
 if TYPE_CHECKING:
     from benchmarks.sregym.fastloop.environment import FastloopEnvironment
+
+
+def persist_image_settings(setup: RealAppSetup, environment: FastloopEnvironment) -> None:
+    """Persist lane policy across worker restarts, including no-fault preparation and recovery."""
+    configured = setup.process_environment()
+    for name in ("FASTLOOP_APP_IMAGE_REGISTRY", "FASTLOOP_APP_IMAGE_PULL_ONLY"):
+        environment.worker_env[name] = configured[name]
+    environment.save()
+
+
+def admit_load(lease: str, timeout: float = 300) -> None:
+    deadline = time.monotonic() + timeout
+    while True:
+        if (
+            subprocess.run(
+                ["/mnt/data/shli/coord/coord", "gate", "40", "--lease", lease], capture_output=True
+            ).returncode
+            == 0
+        ):
+            return
+        if time.monotonic() >= deadline:
+            raise TimeoutError("pool: host load stayed at or above 40 for five minutes; preparation is resumable")
+        time.sleep(5)
 
 
 class RealAppSetup(BaseModel):
@@ -117,10 +141,23 @@ def prepare_real_app(
     command = guarded_module(
         command, cluster=cluster, kubeconfig=kubeconfig, lease=lease, coord=Path("/mnt/data/shli/coord/coord")
     )
-    subprocess.run(command, env={**environment, "KUBECONFIG": str(kubeconfig)}, check=True)
+    if (run_dir / "fastloop.json").is_file():
+        existing = FastloopEnvironment.load(run_dir)
+        if (existing.cluster, existing.deploy_problem, existing.dev_mount, existing.images, existing.seed_commit) != (
+            cluster,
+            problem,
+            setup.code_root,
+            setup.images,
+            setup.seed_revision,
+        ):
+            raise ValueError("pool: completed deployment differs from this preparation; retire it explicitly")
+    else:
+        admit_load(lease)
+        subprocess.run(command, env={**environment, "KUBECONFIG": str(kubeconfig)}, check=True)
     if os.environ.get("SDO_OPUS_POOL_NFS_SERVER"):
         nodes = subprocess.check_output(["kind", "get", "nodes", "--name", cluster], text=True).splitlines()
         for node in nodes:
+            admit_load(lease)
             subprocess.run(
                 [
                     "docker",
@@ -133,6 +170,7 @@ def prepare_real_app(
                 check=True,
             )
     lane_env = FastloopEnvironment.load(run_dir)
+    persist_image_settings(setup, lane_env)
     subprocess.run(
         [str(setup.credentials_hook), lane_env.namespace + "-sdo"],
         env={**environment, "KUBECONFIG": str(lane_env.kubeconfig)},
@@ -170,6 +208,7 @@ def prepare_real_app(
         capability_mode="permissive",
         permissive_responder=True,
     )
+    admit_load(lease)
     prepare_lane(plan, lane)
     lane_env = FastloopEnvironment.load(run_dir)
     lane_env.parallel_lane = lane
