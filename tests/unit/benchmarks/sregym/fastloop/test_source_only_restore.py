@@ -61,6 +61,8 @@ def test_native_deploy_consumes_the_same_accepted_render(
     monkeypatch.setenv("SREGYM_DEPLOY_FROM_SOURCE", "1")
     monkeypatch.setenv("SREGYM_KIND_CLUSTER_NAME", "offline")
     monkeypatch.setattr(builds._SUPPORTED_ADAPTERS[app_name], "ensure_images_loaded", lambda **kwargs: None)
+    (tmp_path / "repo").mkdir()
+    (tmp_path / "repo/build-input").write_text("accepted build input")
     source = commit_accepted_source(
         tmp_path / "repo",
         [
@@ -76,11 +78,15 @@ def test_native_deploy_consumes_the_same_accepted_render(
     )
     # Dirty working bytes must not affect either deployment or restoration.
     next((tmp_path / "repo/kubernetes").glob("*.yaml")).write_text("not accepted")
+    (tmp_path / "repo/build-input").write_text("unaccepted build input")
     applied = []
 
     app = SimpleNamespace(name=app_name, namespace=namespace)
 
     def deploy():
+        import os
+
+        assert (Path(os.environ["SREGYM_APP_SOURCE_DIR"]) / "build-input").read_text() == "accepted build input"
         with builds.plan_for_app(app) as plan:
             applied.extend(json.loads(plan.manifest_path.read_text())["items"])
 
