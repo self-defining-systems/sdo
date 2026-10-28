@@ -16,6 +16,8 @@ Every rule names the validator rule IDs that enforce it. The detector and playbo
   unique. Enforced by: `id.pattern`, `id.duplicate`.
 - Memory is shared by every cluster that adopts it: it holds what to measure and thresholds, never one cluster's
   measurements (Service UIDs, allocated IPs, probe or capture times). Enforced by: `memory.cluster-local`.
+- Memory, captured corpus cases included, never holds Kubernetes Secret data; reference a Secret by kind and name.
+  Enforced by: `memory.secret-data`.
 
 ## Ownership
 
