@@ -138,6 +138,18 @@ class StructuredTurnTimeout(StructuredTurnError):
         super().__init__(f"agent turn timed out after {timeout_seconds:g}s")
 
 
+class StructuredTurnInterrupted(StructuredTurnError):
+    """The caller stopped a running turn; its session can be resumed.
+
+    ``usage`` holds the accounting the stopped turn had already spent.
+    """
+
+    def __init__(self, session_id: str, usage: dict[str, int | float]) -> None:
+        self.session_id = session_id
+        self.usage = usage
+        super().__init__(f"agent turn interrupted (session {session_id or 'unknown'})")
+
+
 @dataclass(frozen=True)
 class StructuredTurn:
     """What one structured turn produced.
@@ -252,10 +264,15 @@ def run_structured_turn(
     session_ownership_role: Literal["responder", "reflection"] = "responder",
     session_ownership_worker: WorkerIdentity | None = None,
     session_termination_observer: Callable[[WorkerIdentity, float], WorkerTermination | None] | None = None,
+    interrupt_when: Callable[[], bool] | None = None,
 ) -> StructuredTurn:
     """Run one structured turn, fresh or resumed, and return its output.
 
+    ``interrupt_when`` is polled while the turn runs; once it returns true the
+    running CLI is stopped. A turn that still finished normally is returned.
+
     Raises:
+        StructuredTurnInterrupted: ``interrupt_when`` stopped the turn.
         StructuredTurnTimeout: The turn exceeded ``timeout_seconds``.
         StructuredTurnError: The CLI failed, or reported no session id or no
             structured output.
@@ -301,6 +318,32 @@ def run_structured_turn(
 
     recorder = _ShellCommandRecorder(on_session_started=session_started, on_usage=on_usage)
     started = time.monotonic()
+    interrupted = threading.Event()
+    codex_home: Path | None = None
+    rollout_before: _RolloutTotals | None = None
+
+    def spent_usage() -> dict[str, int | float]:
+        """Accounting of a stopped turn: its rollout delta, or Claude's incremental reports."""
+        if provider != "codex":
+            return dict(recorder.incremental)
+        latest = _codex_rollout_totals(codex_home, recorder.session_id or resume_session_id)
+        delta = latest.since(rollout_before) if latest is not None else None
+        if delta is None or delta.tokens is None or delta.requests == 0:
+            return {}
+        from agentshim import ProviderUsage
+
+        return turn_usage(
+            StructuredTurn(
+                "", recorder.session_id or "", ProviderUsage(tokens=delta.tokens), model_requests=delta.requests
+            )
+        )
+
+    def stopped() -> StructuredTurnInterrupted:
+        usage = spent_usage()
+        if usage and on_usage is not None:
+            on_usage(usage, True)
+        return StructuredTurnInterrupted(recorder.session_id or resume_session_id or "", usage)
+
     try:
         with ExitStack() as turn_scope:
             writer = _WriterExecutor(executor or HostCommandExecutor())
@@ -378,6 +421,18 @@ def run_structured_turn(
             monitor = threading.Thread(target=monitor_usage, name="sdo-usage-checkpoint", daemon=True)
             if on_usage is not None:
                 monitor.start()
+
+            def watch_interrupt() -> None:
+                assert interrupt_when is not None
+                while not stop_usage.wait(0.2):
+                    if interrupt_when():
+                        interrupted.set()
+                        session.cancel()
+                        return
+
+            watcher = threading.Thread(target=watch_interrupt, name="sdo-turn-interrupt", daemon=True)
+            if interrupt_when is not None:
+                watcher.start()
             try:
                 result = session.turn(
                     TurnRequest(
@@ -390,6 +445,8 @@ def run_structured_turn(
                 )
             finally:
                 stop_usage.set()
+                if interrupt_when is not None:
+                    watcher.join()
                 if on_usage is not None:
                     monitor.join()
                     sample_usage()
@@ -399,13 +456,19 @@ def run_structured_turn(
             # when the turn scope closes.
             rollout_after = _codex_rollout_totals(codex_home, result.session_id or resume_session_id)
     except CliTimeoutError as exc:
+        if interrupted.is_set():
+            raise stopped() from exc
         raise StructuredTurnTimeout(exc.timeout) from exc
     except CliExitError as exc:
+        if interrupted.is_set():
+            raise stopped() from exc
         # Both streams, stderr first: a provider may report the real cause on
         # either, and callers hand this text back to the next attempt.
         details = "\n".join(part.strip() for part in (exc.stderr, exc.stdout) if part.strip())
         raise StructuredTurnError(f"{provider} exited with code {exc.returncode}: {details or 'no output'}") from exc
     except AgentShimError as exc:
+        if interrupted.is_set():
+            raise stopped() from exc
         raise StructuredTurnError(f"{provider} turn failed: {exc}") from exc
 
     if on_usage is not None and provider == "codex" and resume_session_id is not None:
