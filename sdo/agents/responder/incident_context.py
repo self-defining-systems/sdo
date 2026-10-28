@@ -143,7 +143,7 @@ def stage_action_lines(reports: Iterable[StageReport]) -> list[str]:
     """
     lines = []
     for report in reports:
-        actions: dict[tuple[object, ...], dict[str, Any]] = {}
+        actions: dict[tuple[str, str | int, str, str, bool, str], dict[str, Any]] = {}
         for index, attempt in enumerate(report.mitigations):
             receipt = attempt.apply_receipt
             error = attempt.error or receipt.error
