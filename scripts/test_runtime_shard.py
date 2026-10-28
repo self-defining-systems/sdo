@@ -85,16 +85,12 @@ COST_FILE = Path(__file__).with_name("runtime_test_costs.json")
 # Report when work exceeds 70% of the unchanged five-minute controller job.
 # The Go and job deadlines alone enforce failure.
 SHARD_BUDGET_SECONDS = 5 * 60 * 70 // 100
-# Hosted costs drive all measured placements; no local-only overrides.
-# Run 40611912416 exhausted simulation's hosted deadline while programs and
-# contracts finished in 161.55s and 171.91s. Move 29.61s and 36.72s of measured
-# independent work, leaving the expensive hotel replay on its existing runner.
-# The closure move also keeps programs below its unchanged timeout on local replay.
+# Hosted run 40611902688 at 05a69b4e: the simulation job hit its cap,
+# while rendered finished with headroom. Exchange the 110.05s hotel-script
+# case and the 45.61s Mongo case without disturbing the other six allocations.
 PLACEMENTS: dict[str, str] = {
-    "TestHermeticReflectionLearnsThenAgentSelectsIdenticalRecurrence": "reflection-programs",
-    "TestClosureCompletesAcrossRepositoryAdvance": "contracts",
-    "TestResponderDeletedNewProgramCannotRunCachedBinary": "contracts",
-    "TestT1TrustProperty": "contracts",
+    "TestReflectionHotelRunScriptUpgradesReadmeThroughCLIAndBroker": "rendered",
+    "TestReflectionMongoAuthUpgradesReadmeThroughCLIAndBroker": "simulation",
 }
 
 
