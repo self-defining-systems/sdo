@@ -218,7 +218,8 @@ def render_card() -> str:
             alias, *parts = symbol.split(".")
             if len(parts) == 2:
                 owner, member = parts
-                if owner[0].isupper() and re.search(rf"^type {owner} interface", "\n".join(blocks[alias]), re.M):
+                interface = re.search(rf"^type {owner} interface", "\n".join(blocks[alias]), re.MULTILINE)
+                if interface:
                     declaration, _ = _split_block(find(alias, rf"type {owner} interface"))
                     signature, doc = _member_doc(declaration, member)
                     entry = f"{owner}.{signature}"
@@ -242,7 +243,7 @@ def render_card() -> str:
                     entry = _compact(declaration)
                 if name in {"Result", "ValueKind"}:
                     consts = find(alias, rf"const \(?\s*\w+\s+{name}\b|const \w+ {name} ")
-                    values = re.findall(rf"^\s*(?:const )?(\w+)\s+{name}\b", consts, re.M)
+                    values = re.findall(rf"^\s*(?:const )?(\w+)\s+{name}\b", consts, re.MULTILINE)
                     entry += " (" + ", ".join(values) + ")"
             if not doc:
                 undocumented.append(symbol)
@@ -259,7 +260,7 @@ def card_coverage_failures() -> list[str]:
     actions = set()
     for path in (SDK / "program").glob("*.go"):
         if not path.name.endswith("_test.go"):
-            actions.update(re.findall(r"^func \((\w+)\) action\(\)", path.read_text(), re.M))
+            actions.update(re.findall(r"^func \((\w+)\) action\(\)", path.read_text(), re.MULTILINE))
     return [f"program action {name} is missing from the SDK card groups" for name in sorted(actions - listed)]
 
 
