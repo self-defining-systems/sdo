@@ -210,3 +210,12 @@ def test_measured_slow_acceptance_cases_share_existing_compiler_runner() -> None
     groups = shards.partition(source)
     assert name in groups["compiler-replay"][shards.PREFIX + "broker"]
     assert sum(names.count(name) for group in groups.values() for names in group.values()) == 1
+
+
+def test_advisory_acceptance_group_shares_existing_broker_runner() -> None:
+    source = inventory()
+    name = "TestCLIAndBrokerAgreeOnAcceptanceFourthShard"
+    source[shards.PREFIX + "broker"].append(name)
+    groups = shards.partition(source)
+    assert name in groups["broker"][shards.PREFIX + "broker"]
+    assert sum(names.count(name) for group in groups.values() for names in group.values()) == 1
