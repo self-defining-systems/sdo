@@ -72,6 +72,13 @@ func (s *run) compile(ctx context.Context) error {
 		for _, edge := range edges {
 			s.req.noteGaps(Diagnostic{Rule: RuleTrafficUndrivenEdge, Path: layout.TrafficWorkloadsDir, Message: edge})
 		}
+		bounds, boundErr := workspace.TrafficLatencyGaps()
+		if boundErr != nil {
+			s.req.noteGaps(Diagnostic{Rule: RuleTrafficDefaultLatency, Path: layout.TrafficWorkloadsDir, Message: "traffic latency bounds unverified: " + boundErr.Error()})
+		}
+		for _, bound := range bounds {
+			s.req.noteGaps(Diagnostic{Rule: RuleTrafficDefaultLatency, Path: layout.TrafficWorkloadsDir, Message: bound})
+		}
 		for _, note := range notes {
 			s.req.noteGaps(Diagnostic{Rule: RuleReplayObservation, Path: layout.PlaybookDir(note.ProgramID), Message: fmt.Sprintf("program=%s case=%s replay=%s: %s", note.ProgramID, note.CaseID, note.Status, strings.Join(note.Effects, "; "))})
 		}

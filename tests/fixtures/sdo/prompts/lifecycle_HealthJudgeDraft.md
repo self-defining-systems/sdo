@@ -105,6 +105,8 @@ provenance itself from the trusted inventory (ConfigMap, Deployment, NetworkPoli
 metadata and does not choose your checks.
 
 Choose the checks from the human objective and the application's own topology, not from a catalogue of fault types.
+Cover each critical user path's success and latency and the saturation of the services on it, using signals the
+application already exposes.
 Derive what a check depends on from the objects observed at detection time (the relationships the deployer assessment
 and the active topology record) rather than hard-coding object names, so each check stays valid when objects are
 recreated, and include matching and near-miss tests for every check.
@@ -123,7 +125,10 @@ few requests per second; the traffic health detector opens an incident when a sc
 responder's repair is accepted only when the same scenarios recover. A dependency no continuous scenario calls can
 break unseen, so the health workload must send at least one request across every service-to-service edge you
 declare in links.yaml, write paths included (services only a write reaches never see a read). Every scenario
-must succeed against the healthy application.
+must succeed against the healthy application. A path is healthy only while it also stays fast: a saturated service
+slows its path long before it fails, so bound each health scenario's latency near its healthy latency. Make each
+scenario fail on every sample when what it covers breaks: cover every seeded record rather than one picked at random,
+and read back what a write changed.
 
 1. Generators: Go package `generators` in `.sdo/diagnostics/traffic/generators/` exporting
    `func Scenarios() traffic.Catalog` (import "sdo.dev/operator/sdk/traffic"). Each traffic.Scenario has ID,
@@ -145,7 +150,8 @@ must succeed against the healthy application.
    `health` (purpose health-probe, ratePerSecond at most 4, reads plus the write journeys that reach otherwise
    uncovered edges, writing only marked synthetic data as the application's own tests or clients do) and `verify`
    (purpose verify-burst, ratePerSecond about 12, duration 3s, the same scenarios). Optional: timeout (2s) and
-   slo {window, minSamples, maxErrorRate, maxTimeoutRate, latencyPercentile, maxLatency}. Journey workloads run only
+   slo {window, minSamples, maxErrorRate, maxTimeoutRate, latencyPercentile, maxLatency}; set maxLatency per health
+   scenario (memory check notes each one left on the default as `traffic.default-latency`). Journey workloads run only
    on demand and never feed detection.
 3. Firing policy: `traffic.NewDetector` defaults `Persistence.MinDuration` to `traffic.DefaultHealthMinDuration`
    (9s) for a health-class detector, so a brief data-plane stall (about 3s after some pod-network changes) does not
@@ -169,10 +175,11 @@ Metrics (optional input). Only when the controller has a metrics source (a Prome
 operator configured) may a health detector also judge application metrics: import "sdo.dev/operator/sdk/metrics",
 declare `Watches: []sdk.WatchKind{metrics.Watch}`, and build it with `metrics.NewThresholdDetector(spec, rules)`.
 Each rule names a query ID and a PromQL expression you ground in metrics the application actually exports, a
-comparison, a threshold, and the label names that identify its Deployment, Pod or Service. The controller runs
-each query once per cycle; the detector never does I/O, and an unreachable source is a detector error, not a
-clear. Never assume a metrics source: without one, omit these detectors. The shared check installs the generic
-alerts detector itself when a source is configured.
+comparison, a threshold, and the label names that identify its Deployment, Pod or Service. Include saturation
+(CPU throttling, memory near its limit) of the services on each critical path. The controller runs each query once
+per cycle; the detector never does I/O, and an unreachable source is a detector error, not a clear. Never assume
+a metrics source: without one, omit these detectors. The shared check installs the generic alerts detector itself
+when a source is configured.
 Write traffic generator Go and workload YAML files directly in their final directories.
 The shared memory check installs and checks the generic detector for each health-probe or link-probe workload.
 It compiles and tests the complete candidate, including the health detector and traffic generators.
