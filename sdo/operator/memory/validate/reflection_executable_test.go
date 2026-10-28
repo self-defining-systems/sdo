@@ -202,7 +202,7 @@ func TestProgramRequiredHintEntryClearsTheDiagnostic(t *testing.T) {
 	if len(ds) != 1 || ds[0].Rule != RuleReflectionProgramRequired {
 		t.Fatalf("unlinked repair: %v", ds)
 	}
-	for _, want := range []string{"proposed_artifact_ids", "root_cause_program_ids", "Service demo/front", "recordings.json"} {
+	for _, want := range []string{"proposed_artifact_ids", "root_cause_program_ids", `{"api_version":"v1","kind":"Service","namespace":"demo","name":"front"}`, "recordings.json"} {
 		if !strings.Contains(ds[0].Hint, want) {
 			t.Fatalf("hint does not say %q: %s", want, ds[0].Hint)
 		}
@@ -242,7 +242,7 @@ func TestProgramRequiredNamesTheUnboundResource(t *testing.T) {
 	linkRecordedRepair(t, root, "targetport-mismatch", "service-targetport-mismatch", o, receipt)
 	d := &contracts.ReflectionDecision{LearningDecision: "updated", PlaybookIds: []string{"service-targetport-mismatch"}}
 	ds := ReflectionRepairDiagnostics(root, o, d, []string{".sdo/playbooks/service-targetport-mismatch/mitigate.go"})
-	if len(ds) != 1 || !strings.Contains(ds[0].Hint, "ConfigMap demo/front-config") || strings.Contains(ds[0].Hint, "Service demo/front,") {
+	if len(ds) != 1 || !strings.Contains(ds[0].Hint, `{"kind":"ConfigMap","namespace":"demo","name":"front-config"}`) || strings.Contains(ds[0].Hint, `"name":"front"}`) {
 		t.Fatalf("unbound resource not named: %v", ds)
 	}
 }

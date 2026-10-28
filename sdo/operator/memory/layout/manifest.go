@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"reflect"
 	"regexp"
 	"strings"
 	"time"
@@ -213,4 +214,27 @@ func ParseDocument(data []byte) (Document, error) {
 		return Document{}, errors.New("body must not be empty")
 	}
 	return Document{Meta: meta, Body: parts[2], Source: string(data)}, nil
+}
+
+// ManifestKeys lists the detector manifest's YAML keys, nested keys in braces,
+// so a parse diagnostic can name every accepted field.
+func ManifestKeys() string {
+	return yamlKeys(reflect.TypeOf(DetectorManifest{}))
+}
+
+func yamlKeys(t reflect.Type) string {
+	var keys []string
+	for i := 0; i < t.NumField(); i++ {
+		field := t.Field(i)
+		name, _, _ := strings.Cut(field.Tag.Get("yaml"), ",")
+		element := field.Type
+		if element.Kind() == reflect.Slice {
+			element = element.Elem()
+		}
+		if element.Kind() == reflect.Struct {
+			name += "{" + yamlKeys(element) + "}"
+		}
+		keys = append(keys, name)
+	}
+	return strings.Join(keys, ", ")
 }

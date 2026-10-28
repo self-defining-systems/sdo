@@ -103,15 +103,17 @@ func programRequiredHint(incident string, receipt *contracts.RepairActionReceipt
 	var unbound []string
 	for index, ref := range receipt.GetResources() {
 		if !linked || !covered[index] {
-			unbound = append(unbound, ref.GetKind()+" "+ref.GetNamespace()+"/"+ref.GetName())
+			// The exact ref to bind: cluster-scoped objects carry no namespace.
+			exact, _ := json.Marshal(sdk.ObjectRef{APIVersion: ref.GetApiVersion(), Kind: ref.GetKind(), Namespace: ref.GetNamespace(), Name: ref.GetName()})
+			unbound = append(unbound, string(exact))
 		}
 	}
 	bind := ""
 	if len(unbound) > 0 {
-		bind = " and bind " + strings.Join(unbound, ", ") + " (or a recorded owner) under labels.json bindings.objects"
+		bind = " and bind " + strings.Join(unbound, ", ") + " (or a recorded owner) as a role under labels.json bindings.objects"
 	}
 	if linked {
-		return "a case already links this receipt; in that case" + bind + "; replay results stay informational"
+		return "a case already links this receipt; in that case, bind " + strings.Join(unbound, ", ") + " (or a recorded owner) as a role under labels.json bindings.objects, exactly as written; replay results stay informational"
 	}
 	link := program.ScriptOriginReceipt{ID: receipt.GetActionId(), IncidentID: incident, Success: true, StartedAt: receipt.GetStartedAt().AsTime(), CompletedAt: receipt.GetCompletedAt().AsTime(), ScriptDigest: receipt.GetScriptDigest()}
 	for _, ref := range receipt.GetResources() {
