@@ -90,6 +90,29 @@ def replay_verdicts(stdout: str) -> list[dict[str, Any]]:
     return rows
 
 
+def replay_failures(rows: list[dict[str, Any]]) -> tuple[int, list[str]]:
+    """Cases replayed, and each case where an expected program missed the fault or matched healthy.
+
+    Only rows for the case's own root-cause programs count; the replay matrix also
+    runs every other program and health detector against every case.
+    """
+
+    cases: dict[str, list[str]] = {}
+    for row in rows:
+        if str(row.get("program_id", "")).startswith("detector:") or not row.get("expected_match"):
+            cases.setdefault(str(row.get("case_id")), [])
+            continue
+        case = str(row.get("case_id"))
+        faulted = (row.get("faulted") or {}).get("result")
+        healthy = (row.get("healthy") or {}).get("result")
+        problems = cases.setdefault(case, [])
+        if faulted != "Match":
+            problems.append(f"{case}: {row['program_id']} faulted={faulted or 'none'}")
+        if healthy != "NoMatch":
+            problems.append(f"{case}: {row['program_id']} healthy={healthy or 'none'}")
+    return len(cases), [problem for problems in cases.values() for problem in problems]
+
+
 def memory_check_passed(check: dict[str, Any] | None) -> bool | None:
     if not check:
         return None
@@ -115,6 +138,12 @@ class RunMetrics:
     replay_rows: list[dict[str, Any]] = field(default_factory=list)
 
     @property
+    def replay(self) -> dict[str, Any]:
+        cases, failures = replay_failures(self.replay_rows)
+        failed = {failure.split(":", 1)[0] for failure in failures}
+        return {"cases": cases, "passed": cases - len(failed), "failures": failures}
+
+    @property
     def programs_per_hand_repair(self) -> float | None:
         if not self.hand_repairs:
             return None
@@ -123,6 +152,7 @@ class RunMetrics:
     def to_json(self) -> dict[str, Any]:
         data = asdict(self)
         data["programs_per_hand_repair"] = self.programs_per_hand_repair
+        data["replay"] = self.replay
         return data
 
 

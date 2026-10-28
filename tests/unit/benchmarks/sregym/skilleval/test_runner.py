@@ -8,6 +8,7 @@ from benchmarks.sregym.skilleval.metrics import (
     hand_repairs,
     memory_check_passed,
     programs_written,
+    replay_failures,
 )
 from benchmarks.sregym.skilleval.runner import docker_command, table, toolchain_image
 from benchmarks.sregym.skilleval.scenario import Scenario, ScenarioSource
@@ -161,10 +162,24 @@ def test_table_renders_one_row_per_run() -> None:
         "programs_written": ["drift"],
         "hand_repairs": ["Deployment/b", "Deployment/c"],
         "replay_cases": ["drift-case"],
-        "replay_exit_code": 0,
+        "replay": {"cases": 1, "passed": 1, "failures": []},
         "disallowed_paths": [],
     }
 
     lines = table([row]).splitlines()
 
-    assert lines[-1] == "| synthetic | baseline | completed | 5 | 2.0 (1.5) | 4.0 | 1.5 | pass | 1/2 | pass | yes |"
+    assert lines[-1] == "| synthetic | baseline | completed | 5 | 2.0 (1.5) | 4.0 | 1.5 | pass | 1/2 | 1/1 | yes |"
+
+
+def test_replay_judges_each_case_by_its_own_root_cause_programs() -> None:
+    rows = [
+        {"program_id": "drift", "case_id": "a", "expected_match": True, "faulted": {"result": "Match"},
+         "healthy": {"result": "NoMatch"}},
+        {"program_id": "webhook", "case_id": "a", "expected_match": False, "faulted": {"result": "Unknown"},
+         "healthy": {"result": "Unknown"}},
+        {"program_id": "detector:health", "case_id": "a", "expected_match": True, "faulted": {"result": ""}},
+        {"program_id": "drift", "case_id": "b", "expected_match": True, "faulted": {"result": "Unknown"},
+         "healthy": {"result": "NoMatch"}},
+    ]  # fmt: skip
+
+    assert replay_failures(rows) == (2, ["b: drift faulted=Unknown"])

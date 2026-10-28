@@ -123,6 +123,7 @@ def docker_command(
     model: str,
     name: str,
     extra_skills: tuple[str, ...] = (),
+    post_only: bool = False,
 ) -> list[str]:
     """The reflection Job's container, as one ``docker run``: same image, paths, user-visible env."""
 
@@ -166,6 +167,7 @@ def docker_command(
         "SDO_AGENT_GUIDANCE": "go",
         "SDO_MEMORY_VALIDATION": "go",
         "SKILLEVAL_EXTRA_SKILLS": ",".join(extra_skills),
+        "SKILLEVAL_POST_ONLY": "1" if post_only else "0",
     }
     if (run_dir / "session" / "api-history").is_dir():
         environment["SDO_API_HISTORY_DIR"] = f"{session}/api-history"
@@ -228,6 +230,7 @@ def run_one(
         subprocess.run(["cp", "-a", str(scenario_dir / part), str(run_dir / part)], check=True)
     for part in ("tmp", "codex-homes", "out"):
         (run_dir / part).mkdir()
+    (run_dir / "tmp" / "home").mkdir()
     _fresh_task(scenario_dir, run_dir / "task.json", budget_seconds)
     name = f"skilleval-{scenario.scenario_id}-{label}-r{repeat_index}-{os.getpid()}"
     command = docker_command(
@@ -249,6 +252,33 @@ def run_one(
             subprocess.run(["docker", "rm", "-f", name], capture_output=True, check=False)
     wall = time.monotonic() - started
     metrics = collect(scenario_dir, run_dir, label=label, wall_seconds=wall)
+    (run_dir / "metrics.json").write_text(json.dumps(metrics.to_json(), indent=2) + "\n", encoding="utf-8")
+    shutil.rmtree(run_dir / "tmp", ignore_errors=True)
+    shutil.rmtree(run_dir / "codex-homes", ignore_errors=True)
+    return metrics
+
+
+def remeasure(scenario_dir: Path, run_dir: Path, *, skills: Path, toolchain_cache: Path, auth: Path) -> RunMetrics:
+    """Rerun the memory check and replay of a finished run, without a model turn."""
+
+    scenario = Scenario.load(scenario_dir)
+    previous = json.loads((run_dir / "metrics.json").read_text(encoding="utf-8"))
+    for part in ("tmp", "codex-homes"):
+        (run_dir / part).mkdir(exist_ok=True)
+    (run_dir / "tmp" / "home").mkdir(exist_ok=True)
+    command = docker_command(
+        scenario=scenario,
+        run_dir=run_dir,
+        skills=skills.resolve(),
+        toolchain=prepare_toolchain(scenario.image, toolchain_cache),
+        auth=auth,
+        model=DEFAULT_MODEL,
+        name=f"skilleval-post-{scenario.scenario_id}-{run_dir.name}-{os.getpid()}",
+        post_only=True,
+    )
+    with (run_dir / "container-post.log").open("w", encoding="utf-8") as log:
+        subprocess.run(command, stdout=log, stderr=subprocess.STDOUT, timeout=1800, check=False)
+    metrics = collect(scenario_dir, run_dir, label=previous["label"], wall_seconds=previous["wall_seconds"])
     (run_dir / "metrics.json").write_text(json.dumps(metrics.to_json(), indent=2) + "\n", encoding="utf-8")
     shutil.rmtree(run_dir / "tmp", ignore_errors=True)
     shutil.rmtree(run_dir / "codex-homes", ignore_errors=True)
@@ -292,12 +322,12 @@ def collect(scenario_dir: Path, run_dir: Path, *, label: str, wall_seconds: floa
 def table(rows: list[dict[str, Any]]) -> str:
     header = (
         "| scenario | label | status | calls | input M (cached M) | output k | min | check "
-        "| programs/hand repairs | replay | only allowed files |"
+        "| programs/hand repairs | replay cases passed | only allowed files |"
     )
     lines = [header, "|" + "---|" * 11]
     for row in rows:
         usage = row["usage"]
-        replay = "-" if not row["replay_cases"] else ("pass" if row["replay_exit_code"] == 0 else "fail")
+        replay = f"{row['replay']['passed']}/{row['replay']['cases']}" if row["replay"]["cases"] else "-"
         lines.append(
             f"| {row['scenario']} | {row['label']} | {row['status']} | {usage['model_calls']} | "
             f"{usage['input_tokens'] / 1e6:.1f} ({usage['cached_input_tokens'] / 1e6:.1f}) | "
@@ -316,6 +346,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--skills", type=Path, required=True, help="skills root mounted over /opt/sdo/sdo/skills")
     parser.add_argument("--extra-skill", action="append", default=[], help="install this extra skill too")
     parser.add_argument("--label", required=True)
+    parser.add_argument(
+        "--remeasure", action="store_true", help="rerun only the check and replay of finished runs under --out"
+    )
     parser.add_argument("--repeat", type=int, default=1)
     parser.add_argument("--parallel", type=int, default=4)
     parser.add_argument("--out", type=Path, required=True)
@@ -339,10 +372,28 @@ def main(argv: list[str] | None = None) -> int:
     for image in sorted({Scenario.load(path).image for path in scenarios}):
         prepare_toolchain(image, args.toolchain_cache)
     jobs = [(path, index) for index in range(1, args.repeat + 1) for path in scenarios]
+    if args.remeasure:
+        jobs = [
+            (path, int(run.name.rsplit("-r", 1)[1]))
+            for path in scenarios
+            for run in sorted((args.out / path.name).glob(f"{args.label}-r*"))
+            if (run / "metrics.json").is_file()
+        ]
 
     def launch(job: tuple[Path, int]) -> dict[str, Any]:
         path, index = job
         try:
+            if args.remeasure:
+                metrics = remeasure(
+                    path,
+                    args.out / path.name / f"{args.label}-r{index}",
+                    skills=args.skills,
+                    toolchain_cache=args.toolchain_cache,
+                    auth=args.auth,
+                )
+                row = metrics.to_json()
+                print(json.dumps({key: row[key] for key in ("scenario", "label", "status")}), flush=True)
+                return row
             metrics = run_one(
                 path,
                 skills=args.skills,

@@ -37,10 +37,10 @@ def _skills() -> tuple[str, ...]:
     return tuple(dict.fromkeys(names))
 
 
-def _run(argv: list[str], *, cwd: Path, timeout: float) -> dict[str, object]:
+def _run(argv: list[str], *, cwd: Path, timeout: float, env: dict[str, str] | None = None) -> dict[str, object]:
     started = time.monotonic()
     try:
-        completed = subprocess.run(argv, cwd=cwd, capture_output=True, text=True, timeout=timeout, check=False)
+        completed = subprocess.run(argv, cwd=cwd, capture_output=True, text=True, timeout=timeout, check=False, env=env)
     except subprocess.TimeoutExpired as exc:
         return {"argv": argv, "exit_code": None, "timed_out": True, "stdout": str(exc.stdout or "")[-20000:]}
     return {
@@ -68,33 +68,48 @@ def _incident_cases(checkout: Path, incident_id: str, destination: Path) -> list
     return copied
 
 
-def main() -> int:
-    OUT.mkdir(parents=True, exist_ok=True)
+def _reflect() -> dict[str, object]:
     codex_home = Path(os.environ["CODEX_HOME"])
     shutil.rmtree(codex_home / "skills", ignore_errors=True)
     # The evaluated skills are mounted over the image's skills root, which this installs from.
     prepare_codex_home(skills=_skills())
-    task = json.loads(TASK.read_text(encoding="utf-8"))
-    checkout = Path(task["workspace"]["checkout_path"])
     started = time.monotonic()
     result = run_reflection_task(TASK, "skilleval", FilePublisher())
-    summary: dict[str, object] = {
+    return {
         "status": result.status,
         "failure_reason": result.failure_reason,
         "error_summary": result.error_summary,
         "reflection_seconds": round(time.monotonic() - started, 1),
     }
+
+
+def main() -> int:
+    OUT.mkdir(parents=True, exist_ok=True)
+    task = json.loads(TASK.read_text(encoding="utf-8"))
+    checkout = Path(task["workspace"]["checkout_path"])
+    previous = OUT / "entry-summary.json"
+    if os.environ.get("SKILLEVAL_POST_ONLY") == "1":
+        # Re-measure a finished run without another model turn.
+        summary: dict[str, object] = json.loads(previous.read_text(encoding="utf-8"))
+    else:
+        summary = _reflect()
     payload = json.loads((OUT / "agent-result.json").read_text(encoding="utf-8"))
     decision = dict(payload.get("response") or {})
     decision.pop("@type", None)
     if decision:
         decision_path = OUT / "decision.json"
         decision_path.write_text(json.dumps(decision), encoding="utf-8")
+        # The same environment the worker's own pre-submission check runs with.
+        environment = {**os.environ, "SDO_INCIDENT_ID": task["request"]["outcome"]["incident_id"]}
         summary["memory_check"] = _run(
-            ["sdo-operator", "memory", "check", "--json", "--decision", str(decision_path)], cwd=checkout, timeout=600
+            ["sdo-operator", "memory", "check", "--json", "--decision", str(decision_path)],
+            cwd=checkout,
+            timeout=600,
+            env=environment,
         )
     fixtures = OUT / "replay-fixtures"
-    fixtures.mkdir(exist_ok=True)
+    shutil.rmtree(fixtures, ignore_errors=True)
+    fixtures.mkdir()
     cases = _incident_cases(checkout, task["request"]["outcome"]["incident_id"], fixtures)
     summary["replay_cases"] = cases
     if cases and REPLAY_BINARY.is_file():
