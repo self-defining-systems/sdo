@@ -220,10 +220,12 @@ type ResponderLoop struct {
 	lastDiagnosisView     program.ReadView
 	findings              []sdk.Finding
 	drift                 []sdk.Finding
-	// batches counts the agent's mitigation rounds, the budget the agent is
-	// told. applySeq numbers every apply, including the automatic stage's, which
-	// never spends that budget.
+	// batches counts the agent's response loops, the budget the agent is told.
+	// A loop is one act→verify cycle: loopOpen is set by the first write after a
+	// verification and cleared by the next one. applySeq numbers every apply,
+	// including the automatic stage's, which never spends that budget.
 	batches  int
+	loopOpen bool
 	applySeq int
 }
 
@@ -337,7 +339,7 @@ func (l *ResponderLoop) LoopsUsed() int { l.mu.Lock(); defer l.mu.Unlock(); retu
 func (l *ResponderLoop) Exhausted() bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	return l.batches >= l.batchLimit() && len(l.findings) > 0
+	return l.loopsRemaining() == 0 && len(l.findings) > 0
 }
 
 // toolTiming accumulates the phase durations of one Handle call. capture is
@@ -501,8 +503,8 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 		for _, state := range response.DetectorStates {
 			response.Healthy = response.Healthy && state.Status == DetectorEvaluationClear
 		}
-		response.Unresolved = l.batches >= l.batchLimit() && !response.Healthy
-		response.Summary = fmt.Sprintf("%d open findings; %d of %d apply batches used", len(l.findings), l.batches, l.batchLimit()) + pendingEvaluationSummary(response.DetectorStates)
+		response.Unresolved = l.loopsRemaining() == 0 && !response.Healthy
+		response.Summary = fmt.Sprintf("%d open findings; %d of %d act-verify loops used", len(l.findings), l.batches, l.batchLimit()) + pendingEvaluationSummary(response.DetectorStates)
 	case "diagnose":
 		if request.ProgramID == "" {
 			response.Findings, response.ProgramRuns, response.DetectorStates, response.Error = l.refresh(ctx)
@@ -615,6 +617,9 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 			response.LoopsAllowed = l.batchLimit()
 		} else {
 			l.verify(ctx, nil, &response, request.stage)
+		}
+		if response.Error == "" {
+			l.closeLoop()
 		}
 	case "rollback":
 		l.rollbackApplication(ctx, request, &response)
@@ -945,13 +950,13 @@ func (l *ResponderLoop) apply(ctx context.Context, request ToolRequest, response
 				if consumed == requested {
 					response.ApplicationID = entry.ID
 					response.Error = "prepared plan already consumed by " + entry.ID
-					response.Unresolved = l.batches >= l.batchLimit()
+					response.Unresolved = l.loopsRemaining() == 0
 					return
 				}
 			}
 		}
 	}
-	if !request.stage && l.batches >= l.batchLimit() {
+	if !request.stage && l.loopsRemaining() == 0 {
 		response.Error = "response loop budget exhausted"
 		response.Unresolved = true
 		return
@@ -984,7 +989,7 @@ func (l *ResponderLoop) apply(ctx context.Context, request ToolRequest, response
 	_ = l.capturePreApply(ctx, planCaptureRefs(batch)...)
 	l.applySeq++
 	if !request.stage {
-		l.batches++
+		l.spendLoop()
 	}
 	started := time.Now().UTC()
 	id := fmt.Sprintf("application-%s-%d", l.sessionID, l.applySeq)
@@ -1020,6 +1025,10 @@ func (l *ResponderLoop) apply(ctx context.Context, request ToolRequest, response
 	response.RolloutPending = result.RolloutPending
 	if result.RolloutPending == nil {
 		l.verify(ctx, selected, response, request.stage)
+		// apply verifies its own batch: one complete act→verify cycle.
+		if !request.stage && response.Error == "" {
+			l.closeLoop()
+		}
 	}
 	// The application is recorded as observed and left in place; whether to roll
 	// it back, apply again or edit is the responder's decision.
@@ -1070,7 +1079,7 @@ func (l *ResponderLoop) apply(ctx context.Context, request ToolRequest, response
 	if response.Error == "" {
 		response.Summary = fmt.Sprintf("%s applied; %d open findings", id, len(response.Findings))
 	}
-	response.Unresolved = l.batches >= l.batchLimit() && !response.Healthy
+	response.Unresolved = l.loopsRemaining() == 0 && !response.Healthy
 }
 
 // verify observes fresh findings. stage is true for the automatic stage's own
@@ -1157,7 +1166,7 @@ func (l *ResponderLoop) verify(ctx context.Context, applied []selectedPlan, resp
 		l.runs = append(l.runs, runs...)
 	}
 	response.Healthy = response.Error == "" && len(findings) == 0 && (len(l.Detectors) > 0 || hasRetainedDrift(l.Request.Findings)) && detectorsConfirmed(l.Detectors, view)
-	response.Unresolved = l.batches >= l.batchLimit() && !response.Healthy
+	response.Unresolved = l.loopsRemaining() == 0 && !response.Healthy
 	if response.Error == "" {
 		response.Summary = fmt.Sprintf("verification: %d open findings", len(findings)) + pendingEvaluationSummary(states)
 		switch {
@@ -1275,6 +1284,28 @@ func (l *ResponderLoop) batchLimit() int {
 		return min(5, l.MaxBatches)
 	}
 	return l.MaxBatches
+}
+
+// spendLoop charges a write to the open act→verify cycle, opening one if the
+// last verification closed it. Every write path calls it only once a write is
+// about to run, so a call that writes nothing spends no loop.
+func (l *ResponderLoop) spendLoop() {
+	if !l.loopOpen {
+		l.batches++
+		l.loopOpen = true
+	}
+}
+
+// closeLoop ends the open cycle: a verification observed its writes.
+func (l *ResponderLoop) closeLoop() { l.loopOpen = false }
+
+// loopsRemaining counts the cycles that may still write, including the open one.
+func (l *ResponderLoop) loopsRemaining() int {
+	remaining := max(0, l.batchLimit()-l.batches)
+	if l.loopOpen {
+		remaining++
+	}
+	return remaining
 }
 
 func (l *ResponderLoop) clock() time.Time {

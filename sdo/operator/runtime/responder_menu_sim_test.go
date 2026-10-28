@@ -224,6 +224,8 @@ func testSimResponderMenuSchedule(t *testing.T, seed uint64, schedule string) {
 			if response.Report.Status == contracts.MitigationReport_STATUS_SUCCESS && response.Healthy {
 				break
 			}
+			// Each try ends with a verification, so each round is one response loop.
+			loop.Handle(ctx, ToolRequest{Command: "verify"})
 		}
 		task.result = completedResult(request.IncidentID)
 		task.result.Timing.StartedAt = w.clock.Now()
