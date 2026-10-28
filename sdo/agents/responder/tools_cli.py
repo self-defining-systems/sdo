@@ -140,10 +140,9 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="sdo",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="prior_stages: per-repair receipts. "
-        "prior_response_progress: bounded failed-episode progress, with omissions. "
-        "Keep repairs; admission_blocked names a current rollout prerequisite. "
-        "Full history stays in outcomes.\n\n"
+        epilog="Output: session schema; correct feedback once. "
+        "prior_stages: per-repair receipts; prior_response_progress: bounded failed-episode progress with omissions. "
+        "Keep repairs; admission_blocked names a rollout prerequisite.\n\n"
         "Examples (replace names with incident resources):\n  " + "\n  ".join(CLI_EXAMPLES),
     )
     commands = parser.add_subparsers(dest="command", required=True)
@@ -359,17 +358,12 @@ def verification_help() -> str:
 
 
 def command_surface() -> dict[str, object]:
-    """Generate incident-facing signatures from the same parser that accepts commands."""
+    """Keep one capability line per command; detailed help belongs in the reference."""
     parser = _parser()
     subcommands = next(action for action in parser._actions if isinstance(action, argparse._SubParsersAction))
     return {
-        "commands": {
-            name: " ".join(command.format_usage().removeprefix("usage: ").split())
-            for name, command in subcommands.choices.items()
-        },
-        "mitigation": subcommands.choices["mitigate"].description,
-        "output": "Full JSON: path retains complete evidence. Mutations print progress and the file schema; "
-        "--json keeps mutations compact and prints other complete responses. Extract needed fields.",
+        "commands": {action.dest: action.help for action in subcommands._choices_actions},
+        "reference": "sdo-incident-response/references/commands.md",
     }
 
 

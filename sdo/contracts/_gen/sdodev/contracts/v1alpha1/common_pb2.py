@@ -22,9 +22,10 @@ _runtime_version.ValidateProtobufRuntimeVersion(
 _sym_db = _symbol_database.Default()
 
 
+from google.protobuf import descriptor_pb2 as google_dot_protobuf_dot_descriptor__pb2
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n&sdodev/contracts/v1alpha1/common.proto\x12\x19sdodev.contracts.v1alpha1\"r\n\tObjectRef\x12\x1f\n\x0b\x61pi_version\x18\x01 \x01(\tR\napiVersion\x12\x12\n\x04kind\x18\x02 \x01(\tR\x04kind\x12\x1c\n\tnamespace\x18\x03 \x01(\tR\tnamespace\x12\x12\n\x04name\x18\x04 \x01(\tR\x04nameB\xfe\x01\n\x1d\x63om.sdodev.contracts.v1alpha1B\x0b\x43ommonProtoP\x01ZJsdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1;contractsv1alpha1\xa2\x02\x03SCX\xaa\x02\x19Sdodev.Contracts.V1alpha1\xca\x02\x19Sdodev\\Contracts\\V1alpha1\xe2\x02%Sdodev\\Contracts\\V1alpha1\\GPBMetadata\xea\x02\x1bSdodev::Contracts::V1alpha1b\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n&sdodev/contracts/v1alpha1/common.proto\x12\x19sdodev.contracts.v1alpha1\x1a google/protobuf/descriptor.proto\"r\n\tObjectRef\x12\x1f\n\x0b\x61pi_version\x18\x01 \x01(\tR\napiVersion\x12\x12\n\x04kind\x18\x02 \x01(\tR\x04kind\x12\x1c\n\tnamespace\x18\x03 \x01(\tR\tnamespace\x12\x12\n\x04name\x18\x04 \x01(\tR\x04name:J\n\x10\x63ontroller_owned\x12\x1d.google.protobuf.FieldOptions\x18\xb9\x8e\x03 \x01(\x08R\x0f\x63ontrollerOwnedB\xfe\x01\n\x1d\x63om.sdodev.contracts.v1alpha1B\x0b\x43ommonProtoP\x01ZJsdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1;contractsv1alpha1\xa2\x02\x03SCX\xaa\x02\x19Sdodev.Contracts.V1alpha1\xca\x02\x19Sdodev\\Contracts\\V1alpha1\xe2\x02%Sdodev\\Contracts\\V1alpha1\\GPBMetadata\xea\x02\x1bSdodev::Contracts::V1alpha1b\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -32,6 +33,6 @@ _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'sdodev.contracts.v1alpha1.c
 if not _descriptor._USE_C_DESCRIPTORS:
   _globals['DESCRIPTOR']._loaded_options = None
   _globals['DESCRIPTOR']._serialized_options = b'\n\035com.sdodev.contracts.v1alpha1B\013CommonProtoP\001ZJsdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1;contractsv1alpha1\242\002\003SCX\252\002\031Sdodev.Contracts.V1alpha1\312\002\031Sdodev\\Contracts\\V1alpha1\342\002%Sdodev\\Contracts\\V1alpha1\\GPBMetadata\352\002\033Sdodev::Contracts::V1alpha1'
-  _globals['_OBJECTREF']._serialized_start=69
-  _globals['_OBJECTREF']._serialized_end=183
+  _globals['_OBJECTREF']._serialized_start=103
+  _globals['_OBJECTREF']._serialized_end=217
 # @@protoc_insertion_point(module_scope)

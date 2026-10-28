@@ -1,4 +1,4 @@
-from sdo.contracts.model_schema import model_output_schema
+from sdo.contracts.model_schema import model_output_schema, worker_result_payload
 from sdo.contracts.proto import (
     CONDUCTOR_TERMINAL_STAGES,
     NATIVE_RECEIPT_SCHEMA_VERSION,
@@ -192,6 +192,7 @@ __all__ = [
     "MitigationBarrier",
     "MitigationObservation",
     "model_output_schema",
+    "worker_result_payload",
     "NATIVE_RECEIPT_SCHEMA_VERSION",
     "ResponderJobEvidence",
     "NativeProductionReceipt",

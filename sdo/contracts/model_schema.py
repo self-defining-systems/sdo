@@ -8,8 +8,8 @@ the full ``validate`` after the reply is parsed. A strict provider schema lists
 every property as required and forbids extras.
 
 Fields the agent must not supply (worker-owned accounting, controller-owned
-state) are named in ``omit`` by message full name, so each exclusion is visible
-at the call site. Deprecated fields are never requested.
+state) are excluded by contract ownership annotations. Additional worker-specific
+exclusions are named in ``omit`` by message full name. Deprecated fields are never requested.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any
 
 from google.protobuf.descriptor import FieldDescriptor
 
-from sdo.contracts.proto import validate_pb2
+from sdo.contracts.proto import common_pb2, validate_pb2
 
 if TYPE_CHECKING:
     from collections.abc import Collection, Mapping
@@ -61,7 +61,7 @@ def _message_schema(descriptor: Any, omit: Mapping[str, frozenset[str]], seen: s
     properties = {
         field.name: _field_schema(field, omit, seen)
         for field in descriptor.fields
-        if field.name not in omitted and not field.GetOptions().deprecated
+        if field.name not in omitted and not field.GetOptions().deprecated and not controller_owned(field)
     }
     return {"type": "object", "properties": properties, "required": list(properties), "additionalProperties": False}
 
@@ -103,3 +103,41 @@ def _apply_string_rules(item: dict[str, Any], rules: Any) -> None:
     allowed = list(getattr(rules, "in"))
     if allowed:
         item["enum"] = allowed
+
+
+def controller_owned(field: Any) -> bool:
+    """Whether the contract assigns this field exclusively to the controller."""
+
+    return bool(field.GetOptions().Extensions[common_pb2.controller_owned])
+
+
+def worker_result_payload(payload: Any, descriptor: Any) -> Any:
+    """Drop controller facts before parsing, including malformed values and JSON aliases.
+
+    Unknown keys remain so the strict parser still reports schema violations.
+    This projection never changes or validates the controller's own records.
+    """
+
+    if not isinstance(payload, dict):
+        return payload
+    fields = {key: field for field in descriptor.fields for key in (field.name, field.json_name)}
+    document = {}
+    for key, value in payload.items():
+        field = fields.get(key)
+        if field is None:
+            document[key] = value
+            continue
+        if controller_owned(field):
+            continue
+        child = field.message_type
+        if child is not None:
+            if child.GetOptions().map_entry and isinstance(value, dict):
+                item = child.fields_by_name["value"].message_type
+                if item is not None:
+                    value = {name: worker_result_payload(entry, item) for name, entry in value.items()}
+            elif field.is_repeated and isinstance(value, list):
+                value = [worker_result_payload(entry, child) for entry in value]
+            else:
+                value = worker_result_payload(value, child)
+        document[key] = value
+    return document

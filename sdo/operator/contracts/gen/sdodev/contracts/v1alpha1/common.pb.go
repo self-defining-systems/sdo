@@ -14,6 +14,7 @@ package contractsv1alpha1
 import (
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
+	descriptorpb "google.golang.org/protobuf/types/descriptorpb"
 	reflect "reflect"
 	sync "sync"
 	unsafe "unsafe"
@@ -95,17 +96,35 @@ func (x *ObjectRef) GetName() string {
 	return ""
 }
 
+var file_sdodev_contracts_v1alpha1_common_proto_extTypes = []protoimpl.ExtensionInfo{
+	{
+		ExtendedType:  (*descriptorpb.FieldOptions)(nil),
+		ExtensionType: (*bool)(nil),
+		Field:         51001,
+		Name:          "sdodev.contracts.v1alpha1.controller_owned",
+		Tag:           "varint,51001,opt,name=controller_owned",
+		Filename:      "sdodev/contracts/v1alpha1/common.proto",
+	},
+}
+
+// Extension fields to descriptorpb.FieldOptions.
+var (
+	// optional bool controller_owned = 51001;
+	E_ControllerOwned = &file_sdodev_contracts_v1alpha1_common_proto_extTypes[0]
+)
+
 var File_sdodev_contracts_v1alpha1_common_proto protoreflect.FileDescriptor
 
 const file_sdodev_contracts_v1alpha1_common_proto_rawDesc = "" +
 	"\n" +
-	"&sdodev/contracts/v1alpha1/common.proto\x12\x19sdodev.contracts.v1alpha1\"r\n" +
+	"&sdodev/contracts/v1alpha1/common.proto\x12\x19sdodev.contracts.v1alpha1\x1a google/protobuf/descriptor.proto\"r\n" +
 	"\tObjectRef\x12\x1f\n" +
 	"\vapi_version\x18\x01 \x01(\tR\n" +
 	"apiVersion\x12\x12\n" +
 	"\x04kind\x18\x02 \x01(\tR\x04kind\x12\x1c\n" +
 	"\tnamespace\x18\x03 \x01(\tR\tnamespace\x12\x12\n" +
-	"\x04name\x18\x04 \x01(\tR\x04nameB\xfe\x01\n" +
+	"\x04name\x18\x04 \x01(\tR\x04name:J\n" +
+	"\x10controller_owned\x12\x1d.google.protobuf.FieldOptions\x18\xb9\x8e\x03 \x01(\bR\x0fcontrollerOwnedB\xfe\x01\n" +
 	"\x1dcom.sdodev.contracts.v1alpha1B\vCommonProtoP\x01ZJsdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1;contractsv1alpha1\xa2\x02\x03SCX\xaa\x02\x19Sdodev.Contracts.V1alpha1\xca\x02\x19Sdodev\\Contracts\\V1alpha1\xe2\x02%Sdodev\\Contracts\\V1alpha1\\GPBMetadata\xea\x02\x1bSdodev::Contracts::V1alpha1b\x06proto3"
 
 var (
@@ -122,13 +141,15 @@ func file_sdodev_contracts_v1alpha1_common_proto_rawDescGZIP() []byte {
 
 var file_sdodev_contracts_v1alpha1_common_proto_msgTypes = make([]protoimpl.MessageInfo, 1)
 var file_sdodev_contracts_v1alpha1_common_proto_goTypes = []any{
-	(*ObjectRef)(nil), // 0: sdodev.contracts.v1alpha1.ObjectRef
+	(*ObjectRef)(nil),                 // 0: sdodev.contracts.v1alpha1.ObjectRef
+	(*descriptorpb.FieldOptions)(nil), // 1: google.protobuf.FieldOptions
 }
 var file_sdodev_contracts_v1alpha1_common_proto_depIdxs = []int32{
-	0, // [0:0] is the sub-list for method output_type
-	0, // [0:0] is the sub-list for method input_type
-	0, // [0:0] is the sub-list for extension type_name
-	0, // [0:0] is the sub-list for extension extendee
+	1, // 0: sdodev.contracts.v1alpha1.controller_owned:extendee -> google.protobuf.FieldOptions
+	1, // [1:1] is the sub-list for method output_type
+	1, // [1:1] is the sub-list for method input_type
+	1, // [1:1] is the sub-list for extension type_name
+	0, // [0:1] is the sub-list for extension extendee
 	0, // [0:0] is the sub-list for field type_name
 }
 
@@ -144,12 +165,13 @@ func file_sdodev_contracts_v1alpha1_common_proto_init() {
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_sdodev_contracts_v1alpha1_common_proto_rawDesc), len(file_sdodev_contracts_v1alpha1_common_proto_rawDesc)),
 			NumEnums:      0,
 			NumMessages:   1,
-			NumExtensions: 0,
+			NumExtensions: 1,
 			NumServices:   0,
 		},
 		GoTypes:           file_sdodev_contracts_v1alpha1_common_proto_goTypes,
 		DependencyIndexes: file_sdodev_contracts_v1alpha1_common_proto_depIdxs,
 		MessageInfos:      file_sdodev_contracts_v1alpha1_common_proto_msgTypes,
+		ExtensionInfos:    file_sdodev_contracts_v1alpha1_common_proto_extTypes,
 	}.Build()
 	File_sdodev_contracts_v1alpha1_common_proto = out.File
 	file_sdodev_contracts_v1alpha1_common_proto_goTypes = nil

@@ -163,6 +163,30 @@ def test_local_help_is_a_concise_capability_index() -> None:
     assert len(help_text) < 2000
 
 
+def test_incident_command_index_keeps_details_in_reference(monkeypatch: pytest.MonkeyPatch) -> None:
+    import argparse
+
+    from sdo.agents.responder.command_reference import render_reference
+
+    parser = tools_cli._parser()
+    commands = next(action for action in parser._actions if isinstance(action, argparse._SubParsersAction))
+    purposes = {action.dest: action.help for action in commands._choices_actions}
+    monkeypatch.setattr(tools_cli, "_parser", lambda: parser)
+    surface = tools_cli.command_surface()
+    assert surface["commands"] == purposes
+    assert surface["reference"] == "sdo-incident-response/references/commands.md"
+    assert all("\n" not in text for text in surface["commands"].values())
+
+    for name, command in commands.choices.items():
+        command.description = f"Detailed {name} behavior " * 100
+        command.epilog = f"Detailed {name} output " * 100
+    assert tools_cli.command_surface() == surface
+    reference = render_reference()
+    for name in commands.choices:
+        assert f"Detailed {name} behavior" in reference
+        assert f"Detailed {name} output" in reference
+
+
 @pytest.mark.parametrize("response", [{"summary": "captured"}, {"error": "capture failed"}])
 def test_act_waits_for_controller_capture_before_running(tmp_path, monkeypatch, response):
     seen = []
@@ -605,11 +629,13 @@ def test_mitigate_match_rejects_hand_built_selection_inputs(monkeypatch, capsys,
     assert "--match" in capsys.readouterr().err
 
 
-def test_mitigate_match_is_discoverable_in_help_and_generated_surface(capsys):
+def test_mitigate_match_is_discoverable_in_help_and_generated_reference(capsys):
+    from sdo.agents.responder.command_reference import render_reference
+
     with pytest.raises(SystemExit):
         tools_cli.main(["mitigate", "--help"])
     assert "--match ID" in capsys.readouterr().out
-    assert "--match" in tools_cli.command_surface()["commands"]["mitigate"]
+    assert "--match" in render_reference()
 
 
 def test_multi_option_help_and_generated_surface_are_discoverable(capsys):
@@ -618,7 +644,7 @@ def test_multi_option_help_and_generated_surface_are_discoverable(capsys):
     help_text = capsys.readouterr().out
     assert "independent options" in help_text
     assert "overlapping" in help_text.lower()
-    assert "independent options" in tools_cli.command_surface()["mitigation"]
+    assert "independent options" in tools_cli.command_surface()["commands"]["mitigate"]
 
 
 def test_act_does_not_bypass_pending_mutation_refusal(monkeypatch):
