@@ -76,6 +76,12 @@ depends_on = [
 ]
 
 [[modules]]
+path = "benchmarks.sregym.skilleval"
+depends_on = [
+    "sdo.agents.responder",
+]
+
+[[modules]]
 path = "benchmarks.sregym.assurance"
 depends_on = [
     "benchmarks.sregym.adapter",
