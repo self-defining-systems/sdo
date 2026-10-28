@@ -100,19 +100,18 @@ def prior_response_summary(request: IncidentRequest) -> dict[str, Any]:
     return {
         "episodes": [
             {
-                "incident_id": item.incident_id[:100],
+                "incident_id": item.incident_id,
                 "truncated": item.truncated,
                 "successful_actions": [
-                    {"action_id": action.action_id[:80], "summary": action.summary[:120], "success": True}
+                    {"action_id": action.action_id, "summary": action.summary, "success": True}
                     for action in item.successful_actions[:2]
                 ],
                 "actions_omitted": max(0, len(item.successful_actions) - 2),
                 "blockers": [
-                    {"reason_code": blocker.reason_code, "reason": blocker.reason[:200]}
-                    for blocker in item.blockers[:1]
+                    {"reason_code": blocker.reason_code, "reason": blocker.reason} for blocker in item.blockers[:1]
                 ],
                 "blockers_omitted": max(0, len(item.blockers) - 1),
-                "error": item.error[:120],
+                "error": item.error,
             }
             for item in reversed(episodes[-2:])
         ],

@@ -384,7 +384,7 @@ def test_program_run_summary_caps_reasons_and_programs() -> None:
 
     assert kept == []
     assert len(summary[0]["unknown_reasons"]) == 3
-    assert all(len(reason) <= 160 for reason in summary[0]["unknown_reasons"])
+    assert summary[0]["unknown_reasons"] == [run["error"] for run in runs[:3]]
     assert summary[0]["unknown_reasons_omitted"] == 2
     assert summary[0]["unknown"] == 5
     assert summary[-1] == {"programs_omitted": 3}

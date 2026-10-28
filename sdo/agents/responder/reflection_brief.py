@@ -27,10 +27,7 @@ if TYPE_CHECKING:
 
     from sdo.contracts import DetectorEvaluation, Finding, IncidentClosure, IncidentResult, ObjectRef
 
-#: Upper bound on the whole brief: about 4 characters per token, under 8K tokens.
-BRIEF_MAX_CHARS = 30_000
 _MAX_FULL_FINDINGS = 4
-_HEAD_COMMANDS = 10
 _MAX_PLAYBOOK_EXCERPTS = 4
 
 

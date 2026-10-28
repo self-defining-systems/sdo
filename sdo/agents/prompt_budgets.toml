@@ -451,14 +451,6 @@ reason = "Explicit template-placeholder cap; preserve small identities inline an
 max_chars = 256
 reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
 
-[template_data.responder-clip_01-omitted]
-max_chars = 256
-reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
-
-[template_data.responder-clip_01-text]
-max_chars = 256
-reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
-
 [template_data.responder-commands_section_02-header]
 max_chars = 256
 reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
@@ -504,10 +496,6 @@ max_chars = 256
 reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
 
 [template_data.responder-fenced_01-fence_2]
-max_chars = 256
-reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
-
-[template_data.responder-fenced_01-text]
 max_chars = 256
 reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
 
@@ -647,18 +635,6 @@ reason = "Explicit template-placeholder cap; preserve small identities inline an
 max_chars = 256
 reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
 
-[template_data.responder-incident_data-request_json]
-max_chars = 256
-reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
-
-[template_data.responder-incident_data_overflow-details_file]
-max_chars = 256
-reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
-
-[template_data.responder-incident_data_overflow-summary_json]
-max_chars = 256
-reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
-
 [template_data.responder-incident_response_instructions-branch_instruction]
 max_chars = 256
 reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
@@ -751,15 +727,7 @@ reason = "Explicit template-placeholder cap; preserve small identities inline an
 max_chars = 256
 reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
 
-[template_data.responder-reflection-current_outcome_view_json]
-max_chars = 256
-reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
-
 [template_data.responder-reflection-history_section]
-max_chars = 256
-reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
-
-[template_data.responder-reflection-memory_view_json]
 max_chars = 256
 reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
 
@@ -807,15 +775,7 @@ reason = "Explicit template-placeholder cap; preserve small identities inline an
 max_chars = 256
 reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
 
-[template_data.responder-reflection_shell-memory_view_json]
-max_chars = 256
-reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
-
 [template_data.responder-reflection_shell-outcome_commit]
-max_chars = 256
-reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
-
-[template_data.responder-reflection_shell-outcome_json]
 max_chars = 256
 reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
 

@@ -48,3 +48,21 @@ Read [validator rules](references/rules.md) when a diagnostic names a playbook, 
 For API reads, use the [recorded Kubernetes client](references/kubernetes-client.md) with upstream client-go conventions.
 
 For object, command, HTTP, Job or subresource repairs, read the [general action vocabulary](references/general-actions.md).
+
+<!-- reference-topics -->
+## Reference topics
+
+Open only the topic needed for the current edit.
+
+- [program-01](references/program-sdk/program-01.md)
+- [program-02](references/program-sdk/program-02.md)
+- [program-03](references/program-sdk/program-03.md)
+- [routing-01](references/program-sdk/routing-01.md)
+- [acceptance](references/programs/acceptance.md)
+- [database-catalogs](references/programs/database-catalogs.md)
+- [evidence-and-replay-fixtures](references/programs/evidence-and-replay-fixtures.md)
+- [go-owned-per-cause-work](references/programs/go-owned-per-cause-work.md)
+- [removing-one-service-port](references/programs/removing-one-service-port.md)
+- [routing](references/programs/routing.md)
+- [source-restoration](references/programs/source-restoration.md)
+- [values-and-runtime-actions](references/programs/values-and-runtime-actions.md)

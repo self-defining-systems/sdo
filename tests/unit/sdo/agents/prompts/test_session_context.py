@@ -4,13 +4,13 @@ import json
 
 import pytest
 
-from benchmarks.sregym.assurance.context_preflight import check_context_shapes
+from benchmarks.sregym.adapter.context_preflight import check_context_shapes
 from benchmarks.sregym.assurance.scripted_codex.wire import Rollout
 from sdo.agents.session_context import measure_session
 
 
 def test_live_shape_preflight_measures_production_producers(tmp_path):
-    measured = check_context_shapes(tmp_path)
+    measured = check_context_shapes(tmp_path, rollout_factory=lambda home: Rollout.create(home, cwd=str(tmp_path)))
     assert measured["responder"]["first_message_chars"] < 12000
     assert measured["reflection"]["first_message_chars"] < 15000
     assert measured["responder"]["tool_outputs"] > 0

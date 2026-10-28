@@ -15,15 +15,16 @@ def render_bundle(title: str, packages: tuple[str, ...], stem: str) -> dict[str,
     files: dict[str, str] = {}
     links = []
     for package in packages:
+        flags = [] if package == "./traffic" else ["-all"]
         text = subprocess.run(
-            ["go", "doc", "-all", package], cwd=SDK, check=True, text=True, capture_output=True
+            ["go", "doc", *flags, package], cwd=SDK, check=True, text=True, capture_output=True
         ).stdout
         blocks = re.split(r"\n(?=(?:type|func|var|const) )", text)
         chunks: list[str] = []
         for block in blocks:
-            if len(block.split()) > 1800:
+            if len(block.split()) > 1800 or len(block) > 11000:
                 raise ValueError(f"{package}: one declaration exceeds the reference budget")
-            if not chunks or len((chunks[-1] + block).split()) > 1800:
+            if not chunks or len((chunks[-1] + block).split()) > 1800 or len(chunks[-1] + block) > 11000:
                 chunks.append(block)
             else:
                 chunks[-1] += "\n" + block
@@ -42,6 +43,25 @@ def render_bundle(title: str, packages: tuple[str, ...], stem: str) -> dict[str,
         "Read only the relevant API topic.\n\n" + "\n".join(links) + "\n"
     )
     return files
+
+
+def sync_topic_links(skill: str, *, check: bool) -> list[str]:
+    path = ROOT / "sdo/skills" / skill / "SKILL.md"
+    original = path.read_text()
+    marker = "<!-- reference-topics -->"
+    base = original.split(marker, 1)[0].rstrip()
+    linked = {match.split("#", 1)[0] for match in re.findall(r"\]\(([^)]+)\)", base)}
+    topics = [
+        file
+        for file in sorted((path.parent / "references").rglob("*.md"))
+        if str(file.relative_to(path.parent)) not in linked
+    ]
+    expected = base + "\n\n" + marker + "\n## Reference topics\n\nOpen only the topic needed for the current edit.\n\n"
+    expected += "\n".join(f"- [{file.stem}]({file.relative_to(path.parent)})" for file in topics) + "\n"
+    if check:
+        return [str(path.relative_to(ROOT))] if original != expected else []
+    path.write_text(expected)
+    return []
 
 
 def main() -> None:
@@ -74,6 +94,8 @@ def main() -> None:
             else:
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text(expected)
+    for skill in sorted({bundle[0] for bundle in bundles}):
+        failures.extend(sync_topic_links(skill, check=args.check))
     if failures:
         raise SystemExit("Stale generated references; run scripts/gen_skill_references.sh:\n" + "\n".join(failures))
 

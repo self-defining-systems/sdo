@@ -3,10 +3,15 @@
 from __future__ import annotations
 
 import io
+import json
 import os
 from contextlib import redirect_stdout
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from typing import TYPE_CHECKING, Protocol
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 from sdo.agents.responder.codex import _responder_prompt
 from sdo.agents.responder.incident_context import prepared_incident_data
@@ -15,10 +20,38 @@ from sdo.agents.responder.tools_cli import _print_response, command_surface
 from sdo.agents.session_context import measure_session
 from sdo.contracts import IncidentClosure, IncidentRequest, OperationalMemorySnapshot, OutcomeRecord
 
-from .scripted_codex.wire import Rollout
+
+class ContextRollout(Protocol):
+    path: Path
+
+    def user_message(self, text: str) -> None: ...
+    def function_call_output(self, call_id: str, output: str, exit_code: int) -> None: ...
 
 
-def check_context_shapes(directory: Path) -> dict[str, dict[str, int]]:
+class _OfflineRollout:
+    """Canonical provider response items for the host preflight, without a provider process."""
+
+    def __init__(self, home: Path) -> None:
+        home.mkdir(parents=True, exist_ok=True)
+        self.path = home / "rollout.jsonl"
+        self.path.write_text("")
+
+    def _write(self, payload: dict[str, object]) -> None:
+        with self.path.open("a") as stream:
+            stream.write(json.dumps({"type": "response_item", "payload": payload}) + "\n")
+
+    def user_message(self, text: str) -> None:
+        self._write({"type": "message", "role": "user", "content": [{"type": "input_text", "text": text}]})
+
+    def function_call_output(self, call_id: str, output: str, exit_code: int) -> None:
+        self._write({"type": "function_call_output", "call_id": call_id, "output": f"Exit code: {exit_code}\n{output}"})
+
+
+def check_context_shapes(
+    directory: Path,
+    *,
+    rollout_factory: Callable[[Path], ContextRollout] = _OfflineRollout,
+) -> dict[str, dict[str, int]]:
     """No cluster, provider process or model; emit/read the real scripted session format."""
     directory.mkdir(parents=True, exist_ok=True)
     request = IncidentRequest(
@@ -58,7 +91,7 @@ def check_context_shapes(directory: Path) -> dict[str, dict[str, int]]:
         )
         rollouts = {}
         for role, prompt in (("responder", responder), ("reflection", reflection)):
-            rollout = Rollout.create(directory / role, cwd=str(directory))
+            rollout = rollout_factory(directory / role)
             rollout.user_message(prompt)
             rollouts[role] = rollout
         findings = [

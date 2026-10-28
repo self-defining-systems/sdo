@@ -52,7 +52,13 @@ def _responder_prompt(request: IncidentRequest) -> str:
 
 
 def _workflow() -> str:
-    return (SKILLS_ROOT / "sdo-incident-response/SKILL.md").read_text(encoding="utf-8")
+    return (
+        (SKILLS_ROOT / "sdo-incident-response/SKILL.md").read_text(encoding="utf-8")
+        + "\n"
+        + (SKILLS_ROOT / "sdo-incident-response/references/live-repairs.md").read_text()
+        + "\n"
+        + (SKILLS_ROOT / "sdo-incident-response/references/coverage.md").read_text()
+    )
 
 
 def _request(name: str = "incident_request.json") -> IncidentRequest:

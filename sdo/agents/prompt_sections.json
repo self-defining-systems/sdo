@@ -75,10 +75,6 @@
   "responder/brief_heading_02": {},
   "responder/brief_heading_03": {},
   "responder/brief_heading_04": {},
-  "responder/clip_01": {
-    "text": "template_data.responder-clip_01-text",
-    "omitted": "template_data.responder-clip_01-omitted"
-  },
   "responder/commands_section_01": {},
   "responder/commands_section_02": {
     "header": "template_data.responder-commands_section_02-header"
@@ -180,10 +176,6 @@
   },
   "responder/incident_data": {
     "request_json": "responder.incident_data"
-  },
-  "responder/incident_data_overflow": {
-    "summary_json": "responder.incident_data",
-    "details_file": "template_data.responder-incident_data_overflow-details_file"
   },
   "responder/incident_response_instructions": {
     "incident_id": "template_data.responder-incident_response_instructions-incident_id",

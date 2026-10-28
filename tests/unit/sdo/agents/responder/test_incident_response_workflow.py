@@ -35,6 +35,8 @@ def test_incident_workflow_installs_from_the_shipped_skill_root(tmp_path: Path, 
     assert metadata["name"] == WORKFLOW
     assert 0 < len(metadata["description"]) <= 200
     assert len(document) <= 3000
+    body += (installed.parent / "references/live-repairs.md").read_text()
+    body += (installed.parent / "references/coverage.md").read_text()
     assert "SDO's independent verification is the source of truth" in body
     assert "wait on it instead of sleeping" in body
     assert "one cause per independently fixable fault" in body
@@ -178,6 +180,7 @@ def test_actual_benchmark_transport_and_pull_guidance_fit_the_instruction_cap(mo
 
 def test_act_help_and_workflow_share_the_one_cause_per_action_principle() -> None:
     commands = (SKILLS_ROOT / WORKFLOW / "references/commands.md").read_text(encoding="utf-8")
+    commands += "\n".join(file.read_text() for file in (SKILLS_ROOT / WORKFLOW / "references/commands").glob("*.md"))
     act_help = commands.split("\n## act\n", 1)[1].split("\n## ", 1)[0]
     body = (SKILLS_ROOT / WORKFLOW / "SKILL.md").read_text(encoding="utf-8")
     for principle in (
