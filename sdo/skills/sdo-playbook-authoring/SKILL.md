@@ -28,7 +28,8 @@ Work in the proposal checkout, in this order. Open other files only when a step 
 5. **Label one corpus case** per new program (rules below): `create_corpus` copies the controller's captures
    (pass `observations` only when none exist, with `repair_receipt_ids`) and writes it in one call. Each program should Match its fault
    capture and NoMatch healthy: decide from what the capture holds (snapshot objects, `pod_admission`, reads
-   `recordings_index` lists); a read the capture lacks replays as Unknown.
+   `recordings_index` lists); a read the capture lacks replays as Unknown, so keep live-only reads
+   (webhook relations, database catalogs, probes) in Mitigate, as `webhook-ca-sync` does.
 6. **Check**: `check_memory` with `learning_decision: updated`, `proposed_artifact_ids` = the changed
    playbook IDs, and a summary. It formats changed Go first. Fix each blocking diagnostic as its hint says,
    then check again. Its `next` field says what to do: return, refine replay, or fix diagnostics.
