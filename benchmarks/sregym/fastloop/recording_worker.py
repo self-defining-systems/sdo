@@ -54,6 +54,15 @@ def _record_payload(path: Path, payload: str, *, limit: int = 1 << 20) -> None:
     temporary.replace(path)
 
 
+def record_reflection_edits(directory: Path, checkout: Path, base_commit: str) -> None:
+    """Record the reflection's file edits for replay; replay evidence never fails a finished reflection."""
+    try:
+        edits = record_file_edits(checkout, base_commit)
+        _record_payload(directory / "file_edits.json", encode_file_edits(edits).decode(), limit=MAX_FILE_EDITS_BYTES)
+    except ValueError as exc:
+        _record_payload(directory / "file_edits.unrecorded.txt", str(exc))
+
+
 def main(argv: list[str] | None = None) -> int:
     args = argv if argv is not None else sys.argv[1:]
     if len(args) != 1 or args[0] not in {"responder", "reflection"}:
@@ -81,10 +90,7 @@ def main(argv: list[str] | None = None) -> int:
                 raise ValueError(f"unexpected worker result key {key!r}")
             if args[0] == "reflection" and json.loads(payload).get("status") == "completed":
                 task = parse_json(wire, AgentTask())
-                edits = record_file_edits(Path(task.workspace.checkout_path), task.workspace.base_commit)
-                _record_payload(
-                    directory / "file_edits.json", encode_file_edits(edits).decode(), limit=MAX_FILE_EDITS_BYTES
-                )
+                record_reflection_edits(directory, Path(task.workspace.checkout_path), task.workspace.base_commit)
             _record_payload(directory / "result.json", payload)
             remote.publish_payload(name, key, payload)
 
