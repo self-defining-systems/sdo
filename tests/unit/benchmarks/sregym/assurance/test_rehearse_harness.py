@@ -405,6 +405,24 @@ def test_fastloop_run_wraps_the_cluster_only_when_asked_to_restart_in_the_pause(
     assert type(wrapped._inner).__name__ == "HealthyBaselineCaptureOps"  # type: ignore[attr-defined]
 
 
+def test_preflight_refuses_a_freeze_whose_worker_modules_do_not_import() -> None:
+    """The toy rehearsal never source-deploys, so it passed on h9.18 while every astronomy deploy failed."""
+    error = "worker modules do not import in SREGym's venv: ModuleNotFoundError: No module named 'protovalidate'"
+    problems = gate.preflight(REPO_ROOT, load=1.0, free_gib=500, worker_import_error=error)
+    assert problems == [error]
+
+
+def test_the_gate_runs_the_worker_import_check_on_its_code_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(gate, "missing_images", lambda tag: [])
+    monkeypatch.setattr(gate.shutil, "disk_usage", lambda path: SimpleNamespace(free=500 * 2**30))
+    code = gate.main(["--code-root", str(tmp_path), "--lane", "7", "--run-dir", str(tmp_path / "run")])
+    assert code == 2
+    assert "SREGym harness is not checked out" in capsys.readouterr().err
+    assert not (tmp_path / "run").exists()
+
+
 def test_up_names_the_freeze_images_and_preflight_names_missing_ones(tmp_path: Path) -> None:
     up = gate.up_arguments(tmp_path / "freeze", tmp_path / "run", "3", "le-h96")
     assert up[up.index("--controller-image") + 1] == "sdo-controller:le-h96"

@@ -47,7 +47,7 @@ def lane(tmp_path, monkeypatch):
     monkeypatch.setattr(admission.LaneAdmission, "_controller_job", lambda self, control: CONTROLLER_JOB)
     monkeypatch.setattr(rbac, "verify_rbac", lambda *args: {"passed": True})
     monkeypatch.setattr(hotel_helpers, "admit_install", lambda *args: {"passed": True, "profile": "ABSENT"})
-    monkeypatch.setattr(admission, "workload_identity", lambda *args: {"Deployment/app": {"generation": 1}})
+    monkeypatch.setattr(admission, "workload_identity", lambda *args: {"Deployment/app": {"pods": []}})
     monkeypatch.setattr(admission, "assert_clean_baseline", lambda *args, **kwargs: None)
 
     def windows(*args):
@@ -832,6 +832,55 @@ def test_a_workload_that_rolls_after_ready_refuses_the_row(lane, monkeypatch):
     monkeypatch.setattr(admission, "workload_identity", lambda *args: next(identities))
     with pytest.raises(ValueError, match=r"restore invariant: workloads rolled after Ready: \['Deployment/app'\]"):
         gate.prove("hotel-reservation-sdo")
+
+
+def listing(*, generation: int = 1, pod_uid: str = "pod-a", restarts: int = 0) -> SimpleNamespace:
+    """A `kubectl get deployments,statefulsets,daemonsets,pods -o json` result for one Ready Deployment."""
+    labels = {"io.kompose.service": "search"}
+    deployment = {
+        "kind": "Deployment",
+        "metadata": {"name": "search", "generation": generation},
+        "spec": {"replicas": 1, "selector": {"matchLabels": labels}},
+        "status": {"observedGeneration": generation, "updatedReplicas": 1, "replicas": 1, "readyReplicas": 1},
+    }
+    pod = {
+        "kind": "Pod",
+        "metadata": {"name": f"search-{pod_uid}", "uid": pod_uid, "labels": labels},
+        "status": {
+            "phase": "Running",
+            "conditions": [{"type": "Ready", "status": "True"}],
+            "containerStatuses": [{"restartCount": restarts}],
+        },
+    }
+    return SimpleNamespace(stdout=json.dumps({"items": [deployment, pod]}))
+
+
+def identity_after(monkeypatch, tmp_path, **cluster) -> dict:
+    monkeypatch.setattr(admission, "kubectl", lambda *args, **kwargs: listing(**cluster))
+    return admission.workload_identity(tmp_path / "kubeconfig", "hotel-reservation")
+
+
+def test_sdo_adoption_of_an_unchanged_workload_is_not_a_roll(monkeypatch, tmp_path):
+    """The controller's own acceptance apply bumps a recreated Deployment's generation without replacing a pod.
+
+    Admission starts while a lane's controller is still adopting the accepted head (a peer published to the shared
+    memory, or recovery recreated the Deployments), so that apply lands inside the stabilization window.
+    """
+    from benchmarks.sregym.adapter import assert_stable_workloads
+
+    before = identity_after(monkeypatch, tmp_path, generation=1)
+    after = identity_after(monkeypatch, tmp_path, generation=2)
+    assert_stable_workloads(before, after)
+
+
+@pytest.mark.parametrize("replacement", [{"pod_uid": "pod-b"}, {"restarts": 1}], ids=["pod-replaced", "pod-restarted"])
+def test_a_replaced_or_restarted_pod_is_still_a_roll(monkeypatch, tmp_path, replacement):
+    from benchmarks.sregym.adapter import assert_stable_workloads
+
+    before = identity_after(monkeypatch, tmp_path)
+    after = identity_after(monkeypatch, tmp_path, generation=2, **replacement)
+    with pytest.raises(ValueError, match=r"rolled after Ready: \['Deployment/search'\]"):
+        assert_stable_workloads(before, after)
 
 
 def test_open_incident_work_refuses_injection_and_names_the_incident(lane, monkeypatch):

@@ -133,7 +133,7 @@ def test_public_admission_uses_selected_arm(tmp_path, monkeypatch, code_path, ru
     monkeypatch.setattr(gate, "check_resources", lambda *args: None)
     monkeypatch.setattr(rbac, "verify_rbac", lambda *args: {"passed": True})
     monkeypatch.setattr(hotel_helpers, "admit_install", lambda *args: {"passed": True})
-    monkeypatch.setattr(admission, "workload_identity", lambda *args: {"Deployment/app": {"generation": 1}})
+    monkeypatch.setattr(admission, "workload_identity", lambda *args: {"Deployment/app": {"pods": []}})
     monkeypatch.setattr(admission, "assert_clean_baseline", lambda *args, **kwargs: None)
 
     def results(_control):

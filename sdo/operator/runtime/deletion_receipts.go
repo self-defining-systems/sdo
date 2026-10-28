@@ -140,9 +140,9 @@ func failedInventoryAttempts(repairs []continuationRepair, remaining map[sdk.Obj
 	for _, repair := range repairs {
 		receipt := repair.Receipt
 		// An unknown target cannot prove failure coverage.
-  if len(receipt.Resources) == 0 {
-   return nil, false
-  }
+		if len(receipt.Resources) == 0 {
+			return nil, false
+		}
 		relevant := false
 		for _, ref := range receipt.Resources {
 			if remaining[ref] {

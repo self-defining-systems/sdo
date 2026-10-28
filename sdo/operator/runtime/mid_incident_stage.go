@@ -124,10 +124,11 @@ func deterministicStageReport(reports []*contracts.StageReport) *contracts.Stage
 	return report
 }
 
+// A reverted attempt left nothing behind, so it is not an application here.
 func stageAppliedPrograms(report *contracts.StageReport) map[string]bool {
 	applied := map[string]bool{}
 	for _, attempt := range report.GetMitigations() {
-		if attempt.GetResult() != "skipped" {
+		if attempt.GetResult() != "skipped" && attempt.GetResult() != stageRevertedIneffective {
 			applied[attempt.GetPlaybookId()] = true
 		}
 	}

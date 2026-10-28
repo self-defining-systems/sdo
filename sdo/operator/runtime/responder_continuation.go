@@ -95,6 +95,10 @@ func (d KubernetesJobDispatcher) continueResponder(ctx context.Context, executor
 			return loop.Handle(ctx, ToolRequest{Command: "verify"})
 		}
 		verification := verify()
+		if verification.Error == "" {
+			// The controller's check observes this turn's writes.
+			loop.locked(loop.closeLoop)
+		}
 		// Observation waits belong to the controller's verification bound.
 		// Return a completed worker promptly; ContinueAfterVerification owns
 		// the one named-blocker continuation, including across restarts.
