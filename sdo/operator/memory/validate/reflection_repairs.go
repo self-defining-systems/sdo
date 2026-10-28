@@ -48,6 +48,11 @@ func ReflectionRepairDiagnostics(root string, outcome *contracts.OutcomeRecord, 
 	for _, stage := range outcome.GetPriorStages() {
 		for _, m := range stage.GetMitigations() {
 			if m.GetResult() == "skipped" {
+				// The stage skips a playbook as ineffective only after it applied
+				// in this incident and left its findings open.
+				if m.GetSkipReason() == "ineffective" {
+					stale[m.GetPlaybookId()] = "stage skipped it as ineffective"
+				}
 				continue
 			}
 			app := m.GetApplyReceipt()

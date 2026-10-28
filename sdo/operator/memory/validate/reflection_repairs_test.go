@@ -142,12 +142,14 @@ func TestReflectionCoverageCannotExcusePeersOrRelabelHandRepairs(t *testing.T) {
 }
 
 func TestReflectionStageResultCoverageSweep(t *testing.T) {
-	for _, result := range []string{"applied_cleared", "applied_still_matching", "rollout_failed", "rollout_pending_at_handoff", "admission_blocked", "apply_error", "skipped"} {
+	// A typed ineffective skip names a playbook that already failed to clear
+	// its findings in this incident, so it is stale like its applied attempt.
+	for _, result := range []string{"applied_cleared", "applied_still_matching", "rollout_failed", "rollout_pending_at_handoff", "admission_blocked", "apply_error", "skipped", "skipped/stage_budget", "skipped/ineffective"} {
 		t.Run(result, func(t *testing.T) {
 			o := repairCoverageOutcome()
-			o.PriorStages[0].Mitigations[0].Result = result
+			o.PriorStages[0].Mitigations[0].Result, o.PriorStages[0].Mitigations[0].SkipReason, _ = strings.Cut(result, "/")
 			ds := ReflectionRepairDiagnostics(repairTree(t, "peer"), o, &contracts.ReflectionDecision{LearningDecision: "no_change", NoChangeReason: "covered"}, nil)
-			want := result != "applied_cleared" && result != "skipped"
+			want := result != "applied_cleared" && result != "skipped" && result != "skipped/stage_budget"
 			if (len(ds) > 0) != want {
 				t.Fatalf("result %s: %v", result, ds)
 			}

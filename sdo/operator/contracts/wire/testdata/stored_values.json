@@ -311,6 +311,7 @@
     "already_attempted",
     "diagnose_no_longer_matches",
     "diagnose_unavailable",
+    "ineffective",
     "multiple_entry_points",
     "no_mitigation",
     "plan_not_executable",
