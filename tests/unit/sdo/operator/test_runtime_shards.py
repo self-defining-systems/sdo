@@ -14,6 +14,15 @@ def test_cost_plan_drives_the_required_controller_matrix():
     assert "controller" in jobs["required-pr-ci"]["needs"]
     assert jobs["required-pr-ci"]["name"] == "Required PR CI"
     assert all(job["timeout-minutes"] <= 5 for job in jobs.values())
+    # A smaller job cap must also shrink the computed work allowance.
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("cost_budget", ROOT / "scripts/go_cost_plan.py")
+    assert spec is not None
+    assert spec.loader is not None
+    planner = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(planner)
+    assert controller["timeout-minutes"] * 60 == planner.BUDGET + planner.SETUP_MARGIN
     filters = yaml.safe_load(jobs["changes"]["steps"][1]["with"]["filters"])
     assert "scripts/go_cost_plan.py" in filters["go"]
     assert "scripts/go_test_timing.py" in filters["go"]

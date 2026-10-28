@@ -2,7 +2,9 @@ name: Nightly fuzz
 
 # Coverage-guided campaigns compile instrumented packages and run for their
 # whole budget, so they stay out of PR CI; every PR still replays each target's
-# seed corpus through plain `go test`. One job per module keeps a single
+# seed corpus through plain `go test`. Oversized atomic tests use separate
+# cost-planned nightly jobs with the same prepared graph and unchanged caps.
+# One job per fuzz module keeps a single
 # instrumented compile per job and each job under the 5-minute fuzz cap.
 on:
   workflow_dispatch:

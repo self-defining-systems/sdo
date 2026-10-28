@@ -20,8 +20,8 @@ for module in sdo/operator sdo/operator/runtime; do
   (cd "$root/$module" && go build "${build_flags[@]}" ./...)
   destination="$test_build/$module"
   mkdir -p "$destination"
-  # -c never starts TestMain or a test. Normal Python contracts need test-only
-  # archives too, not just the race shards. Go still links/discovers per shard.
+  # Normal discovery links the test-only graph and records its inventory. Race
+  # preparation uses -c, which starts neither TestMain nor test bodies.
   if [[ "$mode" == normal ]]; then
     # Discovery also compiles/links the test-only graph: do it once, and reuse
     # its exact inventory for capacity planning instead of linking again.

@@ -96,52 +96,28 @@ const (
 	incidentManifest = "apiVersion: sdo.dev/v1alpha1\nkind: DetectorManifest\nsdkVersion: v0.1\nid: dns\nconstructor: New\nclass: incident\nowner: responder\nwatches:\n  - apiVersion: v1\n    kind: Pod\ninterval: 30s\npersistence:\n  firing: 1\n  clearing: 1\nbatching:\n  severity: warn\n  debounce: \"0\"\npossiblePlaybooks:\n  - %s\noriginatingIncident: inc-2\noriginatingCommit: abc\n"
 )
 
-// TestCLIAndBrokerAgreeOnAcceptance exercises every layer through the real CLI
-// and the broker pipeline, including the validation Job's actual runner body.
-// Any caller-only diagnostic or omitted layer changes these verdicts/rules.
-func TestCLIAndBrokerAgreeOnAcceptance(t *testing.T) {
+// These independently discoverable groups exercise every real CLI and broker
+// layer. Case ownership is automatic; CI schedules groups by their measured cost.
+const acceptanceShardCount = 5
+
+func TestCLIAndBrokerAgreeOnAcceptanceAutomatic0(t *testing.T) {
 	testCLIAndBrokerAgreeOnAcceptance(t, 0)
 }
-
-func TestCLIAndBrokerAgreeOnAcceptanceSecondShard(t *testing.T) {
+func TestCLIAndBrokerAgreeOnAcceptanceAutomatic1(t *testing.T) {
 	testCLIAndBrokerAgreeOnAcceptance(t, 1)
 }
-
-// Measured slow cases share an existing compiler allocation. Every
-// case still has exactly one owner and retains its assertions and parallel cap.
-func TestCLIAndBrokerAgreeOnAcceptanceThirdShard(t *testing.T) {
+func TestCLIAndBrokerAgreeOnAcceptanceAutomatic2(t *testing.T) {
 	testCLIAndBrokerAgreeOnAcceptance(t, 2)
 }
-
-// Advisory replay makes these source-evidence cases perform full validation.
-// Share the existing broker runner; every case keeps exactly one owner.
-func TestCLIAndBrokerAgreeOnAcceptanceFourthShard(t *testing.T) {
-	t.Parallel()
+func TestCLIAndBrokerAgreeOnAcceptanceAutomatic3(t *testing.T) {
 	testCLIAndBrokerAgreeOnAcceptance(t, 3)
 }
-
-// The second group exceeded its package deadline on hosted runners. Keep the
-// measured slow cases in the existing compiler job with the same parallel cap.
-func TestCLIAndBrokerAgreeOnAcceptanceFifthShard(t *testing.T) {
+func TestCLIAndBrokerAgreeOnAcceptanceAutomatic4(t *testing.T) {
 	testCLIAndBrokerAgreeOnAcceptance(t, 4)
 }
 
-func acceptanceCaseShard(index int, name string) int {
-	switch name {
-	case "existing program adds unproven positive case", "unverified peer script",
-		"verified cause executable with unverified peer":
-		return 4
-	case "unverified peer no verified", "accepted case needs no current capture",
-		"program repeat has no detector", "program replay failure", "program mitigation skips unreplayable effect":
-		return 3
-	case "trusted captured program", "healthy refused service ports",
-		"healthy refused ports without recordings", "trailing whitespace normalized",
-		"direct program", "program mitigation leaves target port faulty":
-		return 2
-	default:
-		return index % 2
-	}
-}
+// Omitting the case name makes name-based placement exceptions impossible.
+func automaticAcceptanceShard(index int) int { return index % acceptanceShardCount }
 
 func testCLIAndBrokerAgreeOnAcceptance(t *testing.T, shard int) {
 	binary := operatorCLIFixture(t)
@@ -608,7 +584,7 @@ func (p Program) Mitigate(ctx context.Context,v program.ReadView,b program.Bindi
 		}, nil, false},
 	}...)
 	for index, test := range cases {
-		if acceptanceCaseShard(index, test.name) != shard {
+		if automaticAcceptanceShard(index) != shard {
 			continue
 		}
 		t.Run(test.name, func(t *testing.T) {
