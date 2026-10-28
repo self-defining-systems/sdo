@@ -196,27 +196,15 @@ def test_hotel_bootstrap_source_matches_harness_and_remains_restorable(
 ) -> None:
     """Pinned hotel source -> real harness staging -> DEP1's Git renderer."""
     import shutil
-    import subprocess
 
     monkeypatch.syspath_prepend(str(ROOT / "third_party/sregym"))
-    from sregym.service.source_deploy import _HotelReservationAdapter
 
     app = ROOT / "third_party/sregym/SREGym-applications/hotelReservation"
     workspace = tmp_path / "hotel"
     shutil.copytree(app / "kubernetes", workspace / "kubernetes")
     source = commit_accepted_source(workspace, namespace="hotel-reservation")
-    adapter = _HotelReservationAdapter()
-    monkeypatch.setattr(adapter, "_source_dir", lambda: workspace)
-    monkeypatch.setattr(adapter, "ensure_images_loaded", lambda **kwargs: None)
-    with adapter.plan(cluster_name="offline", node_architectures=set()) as plan:
-        deployed = list(
-            yaml.safe_load_all(
-                subprocess.run(
-                    ["kubectl", "kustomize", str(plan.manifest_path)], check=True, capture_output=True, text=True
-                ).stdout
-            )
-        )
     monkeypatch.setenv("SDO_OPERATOR_BIN", str(operator_binary))
+    deployed = list(source.manifests)
     expected = {obj["metadata"]["name"]: obj for obj in deployed if obj["kind"] == "ConfigMap"}
     accepted = {obj["metadata"]["name"]: obj for obj in source.manifests if obj["kind"] == "ConfigMap"}
     for component in ("geo", "rate"):

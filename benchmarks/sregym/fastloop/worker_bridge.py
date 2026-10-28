@@ -108,7 +108,10 @@ def main() -> int:
             def isolated_factory(problem_id: str) -> Any:
                 problem = factory(problem_id)
                 if hasattr(problem, "app"):
+                    from benchmarks.sregym.fastloop.source_deployment import configure_source_deployment
+
                     configure_profile(problem.app)
+                    configure_source_deployment(problem.app)
                     prepare_harness_traffic(problem.app, Path(os.environ["KUBECONFIG"]))
                 return problem
 

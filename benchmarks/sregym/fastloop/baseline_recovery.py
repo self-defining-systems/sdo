@@ -5,14 +5,13 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import subprocess
 from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING, Any, Protocol
 
-from benchmarks.sregym.adapter import WaitKind, kubectl, wait_for
+from benchmarks.sregym.adapter import kubectl
 
 if TYPE_CHECKING:
     from benchmarks.sregym.fastloop.accepted_source import AcceptedSource
@@ -80,10 +79,6 @@ class ApplicationCluster(Protocol):
 
     def create_namespace(self, namespace: str) -> None: ...
 
-    def ensure_secret(self, namespace: str, value: dict[str, Any]) -> bool:
-        """Create the Secret unless it exists; return whether it was created. Never reads Secret data."""
-        ...
-
 
 class KubectlApplicationCluster:
     def __init__(self, kubeconfig: Path) -> None:
@@ -114,18 +109,6 @@ class KubectlApplicationCluster:
         from benchmarks.sregym.fastloop.reset import ensure_application_namespace
 
         ensure_application_namespace(self.kubeconfig, namespace)
-
-    def ensure_secret(self, namespace: str, value: dict[str, Any]) -> bool:
-        name = value["metadata"]["name"]
-        existing = kubectl(
-            ["get", f"secret/{name}", "-o", "name", "--ignore-not-found=true"],
-            namespace=namespace,
-            kubeconfig=self.kubeconfig,
-        ).stdout
-        if existing.strip():
-            return False
-        kubectl(["create", "-f", "-"], namespace=namespace, kubeconfig=self.kubeconfig, input_text=json.dumps(value))
-        return True
 
     def delete(self, namespace: str, kind: str, name: str) -> None:
         kubectl(
@@ -504,13 +487,6 @@ def reconcile_application(
         cluster.create_namespace(namespace)
         cleanup.recreated_namespace = True
         listed = []
-    from benchmarks.sregym.fastloop.regenerable import referenced_regenerable_secrets
-
-    # Workloads mount these Secrets from their first pod; create them before any workload.
-    for secret in referenced_regenerable_secrets(baseline.objects, namespace):
-        if cluster.ensure_secret(namespace, secret):
-            cleanup.regenerated.append(f"{namespace}/Secret/{secret['metadata']['name']}")
-            logger.info("eval restore regenerated %s/Secret/%s", namespace, secret["metadata"]["name"])
     # Live evidence also protects SDO identities present in older snapshots.
     # Resolve the complete owner graph before filtering Pods or normalizing data.
     ownership = _ApplicationOwnership.from_objects(baseline.objects + listed)
@@ -588,6 +564,7 @@ def reconcile_and_record(
     """
     from datetime import UTC, datetime
 
+    baselines = accepted_restore_baselines(source, baselines)
     accepted = declared_source_identities(source)
     cleanups = []
     for baseline in baselines:
@@ -619,47 +596,17 @@ def accepted_restore_baselines(
     *,
     seed_commit: str | None = None,
 ) -> tuple[ApplicationBaseline, ...]:
-    """Compose accepted source and captured runtime defaults before restoration.
+    """Use the accepted render as restore authority; captures carry allocations only.
 
-    Captured runtime-only objects and API defaults remain available. Never apply
-    a captured spec followed by a conflicting source spec (a second rollout).
+    ``seed_commit`` identifies historical evidence, never desired content. In
+    particular a sealed capture cannot authorize extra objects, fields or list
+    entries after source has removed them.
     """
-    installed_source = True
-    if seed_commit and any(baseline.installed_digest for baseline in baselines):
-        changes = subprocess.run(
-            [
-                "git",
-                "-C",
-                str(source.workspace),
-                "diff",
-                "--name-only",
-                seed_commit,
-                "HEAD",
-                "--",
-                ".",
-                ":(exclude).sdo",
-            ],
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=wait_for(WaitKind.PROBE),
-        ).stdout.strip()
-        installed_source = not changes
-    if installed_source and all(baseline.installed_digest for baseline in baselines):
-        require_install_matches_source(source, baselines)
-        return _keep_declared_source_objects(source, baselines)
-    selected = _accepted_manifests(source, baselines, kinds=None)
+    selected = _accepted_manifests(source, baselines, kinds=WORKLOAD_KINDS)
+    namespaces = sorted({source.namespace, *(namespace for _, namespace, _ in selected if namespace)})
     return tuple(
-        baseline
-        if baseline.installed_digest and installed_source
-        else ApplicationBaseline(
-            baseline.namespace,
-            [
-                deepcopy(selected.get((value["kind"], baseline.namespace, value["metadata"]["name"]), value))
-                for value in baseline.objects
-            ],
-        )
-        for baseline in baselines
+        ApplicationBaseline(namespace, [deepcopy(value) for (_, ns, _), value in selected.items() if ns == namespace])
+        for namespace in namespaces
     )
 
 
@@ -746,66 +693,6 @@ def _port_key(item: Any) -> Any:
     if isinstance(item, dict):
         return item.get("name") or item.get("port")
     return None
-
-
-def _merge_declared(captured: Any, declared: Any) -> Any:
-    """Declared fields win; retain captured defaults by field and named-entry or Service-port identity."""
-    if isinstance(captured, dict) and isinstance(declared, dict):
-        return {**captured, **{key: _merge_declared(captured.get(key), value) for key, value in declared.items()}}
-    if (
-        isinstance(captured, list)
-        and isinstance(declared, list)
-        and declared
-        and all(_port_key(item) is not None for item in (*captured, *declared))
-    ):
-        declared_by_key = {_port_key(item): item for item in declared}
-        merged = [_merge_declared(item, declared_by_key.pop(_port_key(item), item)) for item in captured]
-        return merged + [deepcopy(item) for item in declared_by_key.values()]
-    return deepcopy(declared)
-
-
-def _keep_declared_source_objects(
-    source: AcceptedSource, baselines: tuple[ApplicationBaseline, ...]
-) -> tuple[ApplicationBaseline, ...]:
-    """Restore declared source fields once, retaining captured runtime defaults.
-
-    A sealed chart render proves what was installed, not what source declares.
-    Reapplying its conflicting workload policy creates a baseline incident before
-    injection. Compose one restore object per identity before any cluster write.
-    """
-    selected = _accepted_manifests(source, baselines, kinds=None)
-    if not selected:
-        return baselines
-    result = []
-    for baseline in baselines:
-        objects, changed = [], False
-        for value in baseline.objects:
-            declared = selected.get((value["kind"], baseline.namespace, value["metadata"]["name"]))
-            if declared is not None and value["kind"] in POD_TEMPLATE_KINDS:
-                declared = deepcopy(declared)
-                installed_images = _container_images(value)
-                pod = declared.get("spec", {}).get("template", {}).get("spec", {})
-                for group in ("containers", "initContainers"):
-                    for container in pod.get(group) or []:
-                        image = container.get("image")
-                        key = f"{group}/{container.get('name')}"
-                        if image and installed_images.get(key) == _canonical_image(image):
-                            # Preserve API image spelling when it names the same image;
-                            # a registry-prefix alias must not cause a rollout.
-                            installed_pod = value["spec"]["template"]["spec"]
-                            container["image"] = next(
-                                item["image"] for item in installed_pod[group] if item["name"] == container["name"]
-                            )
-            fields = {key: declared[key] for key in RESTORED_FIELDS if declared and key in declared}
-            labels = (declared or {}).get("metadata", {}).get("labels")
-            if labels:
-                fields["metadata"] = {"labels": labels}
-            if declared is not None and not _declares(value, fields):
-                value = {**value, **_merge_declared(value, fields)}
-                changed = True
-            objects.append(value)
-        result.append(ApplicationBaseline(baseline.namespace, objects) if changed else baseline)
-    return tuple(result)
 
 
 def _accepted_manifests(

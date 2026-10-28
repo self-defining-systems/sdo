@@ -56,8 +56,6 @@ class ResetCluster(Protocol):
 
     def create_namespace(self, namespace: str) -> None: ...
 
-    def ensure_secret(self, namespace: str, value: dict[str, Any]) -> bool: ...
-
     def reset_controller(self, seed_commit: str, *, preserve_repository: bool = False) -> None: ...
 
 
@@ -217,7 +215,6 @@ class RestoreChecks:
     def validate(self) -> None:
         """Reject incomplete recovery before controller or namespace mutations."""
         from benchmarks.sregym.fastloop.recovery_closure import complete_recovery_baselines, missing_prerequisites
-        from benchmarks.sregym.fastloop.regenerable import is_regenerable
 
         env = self.environment
         baselines = load_application_baseline(env.baseline_path, env.namespace)
@@ -241,9 +238,6 @@ class RestoreChecks:
                 absent.add(baseline.namespace)
         unsupported = []
         for ref in missing_prerequisites(baselines):
-            # Restore regenerates these (see regenerable.py); they need no existing object.
-            if is_regenerable(ref.namespace, ref.kind, ref.name):
-                continue
             # A namespaced object omitted by the baseline cannot be recreated.
             # Existing external objects only need a name projection; never read
             # or archive Secret payloads, and never create cluster-scoped objects.

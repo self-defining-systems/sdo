@@ -35,6 +35,7 @@ from benchmarks.sregym.adapter import WaitKind, assert_host_disk_headroom, asser
 from benchmarks.sregym.fastloop.accepted_source import AcceptedSource, manifest_paths_for
 from benchmarks.sregym.fastloop.baseline_recovery import (
     KubectlApplicationCluster,
+    accepted_restore_baselines,
     application_namespaces,
     capture_application_baseline,
     load_application_baseline,
@@ -915,7 +916,8 @@ def _run(args: argparse.Namespace) -> int:
         if baseline is not None:
             from benchmarks.sregym.fastloop.recovery_closure import complete_recovery_baselines
 
-            baseline = complete_recovery_baselines(AcceptedSource.of(environment), baseline)
+            source = AcceptedSource.of(environment)
+            baseline = complete_recovery_baselines(source, accepted_restore_baselines(source, baseline))
         if baseline is None and args.require_full_cleanup:
             raise ValueError("full cleanup requires an application baseline")
         if baseline is None:

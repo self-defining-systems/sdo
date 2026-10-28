@@ -55,6 +55,9 @@ def test_bridge_delivery_then_in_node_tag_publishes_the_declared_ref(monkeypatch
     modules = {"sregym.worker_infra": infra, "sregym.service.source_deploy": source}
     monkeypatch.setattr(worker_bridge.importlib, "import_module", lambda name: modules.get(name, worker))
     (tmp_path / "kubernetes").mkdir()
+    rendered = tmp_path / "accepted.json"
+    rendered.write_text("[]")
+    monkeypatch.setenv("SREGYM_ACCEPTED_RENDER", str(rendered))
     assert worker_bridge.main() == 0
 
     private = "sregym-src-"
@@ -82,6 +85,7 @@ def test_astronomy_source_plan_preserves_seed_manifest(monkeypatch, tmp_path):
     manifest.parent.mkdir()
     manifest.write_text("synthetic accepted source")
     monkeypatch.setenv("SREGYM_APP_SOURCE_DIR", str(tmp_path))
+    monkeypatch.setenv("SREGYM_ACCEPTED_RENDER", str(manifest))
     monkeypatch.setenv("SREGYM_KIND_CLUSTER_NAME", "synthetic-lane")
     monkeypatch.setattr(source._AstronomyShopAdapter, "ensure_images_loaded", lambda *a, **kw: None)
     with source.plan_for_app(
