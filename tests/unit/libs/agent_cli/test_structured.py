@@ -78,6 +78,15 @@ def _settings(argv: list[str]) -> dict[str, Any] | None:
     return json.loads(argv[argv.index("--settings") + 1])
 
 
+def test_run_setting_controls_effort_before_provider_execution(tmp_path, monkeypatch):
+    monkeypatch.setenv("SDO_AGENT_REASONING_EFFORT", "high")
+    _, agent = _run("codex", tmp_path, reasoning_effort="medium")
+    assert any('model_reasoning_effort="high"' in part for part in agent.requests[-1].argv)
+    monkeypatch.setenv("SDO_AGENT_REASONING_EFFORT", "invalid")
+    with pytest.raises(ValueError, match="SDO_AGENT_REASONING_EFFORT"):
+        _run("codex", tmp_path)
+
+
 @pytest.mark.parametrize("provider", AGENT_PROVIDERS)
 @pytest.mark.parametrize("access", ACCESS_MODES)
 def test_every_combination_returns_the_structured_output_and_session(

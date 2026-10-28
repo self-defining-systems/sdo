@@ -300,6 +300,11 @@ def run_structured_turn(
         raise ValueError(f"unsupported access mode {access!r}")
     if timeout_seconds is not None and timeout_seconds <= 0:
         raise ValueError("timeout_seconds must be positive")
+    configured_effort = os.environ.get("SDO_AGENT_REASONING_EFFORT")
+    if configured_effort is not None:
+        if configured_effort not in {"low", "medium", "high", "xhigh", "max"}:
+            raise ValueError("SDO_AGENT_REASONING_EFFORT must be low, medium, high, xhigh or max")
+        reasoning_effort = configured_effort
     if reasoning_effort is not None and not reasoning_effort.strip():
         raise ValueError("reasoning_effort must not be empty")
     if resume_session_id is not None and not resume_session_id.strip():

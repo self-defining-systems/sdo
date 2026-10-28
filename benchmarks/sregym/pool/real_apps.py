@@ -1,0 +1,247 @@
+"""The pool's real-app preparation path, shared by hotel, social and astronomy."""
+
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+from typing import TYPE_CHECKING, Literal
+
+from pydantic import BaseModel, ConfigDict, Field
+
+from benchmarks.sregym.fastloop.environment import Images  # noqa: TC001 - Pydantic resolves this at runtime.
+from benchmarks.sregym.pool.relay import RelayConfig, ensure_relay
+
+SEED_RECEIPT = "sdo-pool-seed.json"
+
+if TYPE_CHECKING:
+    from benchmarks.sregym.fastloop.environment import FastloopEnvironment
+
+
+class RealAppSetup(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    code_root: Path
+    seed: Path
+    seed_revision: str = Field(pattern=r"^[0-9a-f]{40}$")
+    registry: str = Field(min_length=1)
+    images: Images
+    credentials_hook: Path
+    relay: RelayConfig | None = None
+    cpu_limit: float = Field(default=2, gt=0)
+
+    def process_environment(self) -> dict[str, str]:
+        return {**os.environ, "FASTLOOP_APP_IMAGE_REGISTRY": self.registry, "FASTLOOP_APP_IMAGE_PULL_ONLY": "1"}
+
+    def verify_seed(self) -> None:
+        receipt = self.seed / ".git" / SEED_RECEIPT
+        if not receipt.is_file():
+            raise ValueError("pool: seed needs a freshly rendered source revision receipt")
+        facts = json.loads(receipt.read_text())
+        revision = subprocess.check_output(["git", "-C", str(self.code_root), "rev-parse", "HEAD"], text=True).strip()
+        head = subprocess.check_output(["git", "-C", str(self.seed), "rev-parse", "HEAD"], text=True).strip()
+        if facts.get("build_revision") != revision or facts.get("seed_revision") != head or head != self.seed_revision:
+            raise ValueError("pool: seed source revision differs from the build being run")
+        if subprocess.check_output(["git", "-C", str(self.seed), "status", "--porcelain"], text=True).strip():
+            raise ValueError("pool: seed has uncommitted edits")
+        if any((self.seed / ".sdo" / name).exists() for name in ("corpus", "outcomes.jsonl")):
+            raise ValueError("pool: a fresh seed cannot contain incident history")
+        if list((self.seed / ".sdo/outcomes").glob("*.json")):
+            raise ValueError("pool: a fresh seed cannot contain incident outcomes")
+
+
+def prepare_real_app(
+    setup: RealAppSetup,
+    *,
+    run_dir: Path,
+    lane: str,
+    problem: str,
+    lease: str,
+    repo: str,
+    branch: str,
+    registrations: Path | None = None,
+    provider: Literal["codex", "claude"] = "claude",
+    model: str = "claude-opus-5-5",
+    reasoning_effort: Literal["low", "medium", "high", "xhigh", "max"] = "medium",
+) -> None:
+    from benchmarks.sregym.fastloop.environment import FastloopEnvironment
+    from benchmarks.sregym.fastloop.lane_guard import LaneGuard
+    from benchmarks.sregym.fastloop.parallel import Encounter, ParallelPlan
+    from benchmarks.sregym.fastloop.remote_memory import MemoryEndpoint, bind_lane_to_branch
+    from benchmarks.sregym.fastloop.shared_memory import prepare_lane
+    from benchmarks.sregym.pool.endpoints import MemoryEndpoint as PoolMemoryEndpoint
+    from benchmarks.sregym.pool.guard import guarded_module
+    from benchmarks.sregym.pool.scheduler import PairSpec
+    from benchmarks.sregym.pool.worker import worker_registrations
+
+    setup.verify_seed()
+    environment = setup.process_environment()
+    if setup.relay is not None:
+        ensure_relay(setup.relay, setup.code_root, run_dir.parent / "registry-relay")
+    prefix = f"pool2-{lane}-"
+    cluster = prefix + "0"
+    kubeconfig = run_dir / "kubeconfigs/worker_0.kubeconfig"
+    guard = LaneGuard(cluster, kubeconfig, lease, "/mnt/data/shli/coord/coord")
+    guard.install()
+    command = [
+        sys.executable,
+        "-m",
+        "benchmarks.sregym.fastloop",
+        "up",
+        "--run-dir",
+        str(run_dir),
+        "--seed",
+        str(setup.seed),
+        "--problem",
+        problem,
+        "--cluster-prefix",
+        prefix,
+        "--worker-id",
+        "0",
+        "--cpu-limit",
+        str(setup.cpu_limit),
+        "--dev-mount",
+        str(setup.code_root),
+        "--sregym-dir",
+        str(setup.code_root / "third_party/sregym"),
+    ]
+    for role, image in setup.images.model_dump().items():
+        command.extend([f"--{role}-image", image])
+    command = guarded_module(
+        command, cluster=cluster, kubeconfig=kubeconfig, lease=lease, coord=Path("/mnt/data/shli/coord/coord")
+    )
+    subprocess.run(command, env={**environment, "KUBECONFIG": str(kubeconfig)}, check=True)
+    lane_env = FastloopEnvironment.load(run_dir)
+    subprocess.run(
+        [str(setup.credentials_hook), lane_env.namespace + "-sdo"],
+        env={**environment, "KUBECONFIG": str(lane_env.kubeconfig)},
+        check=True,
+    )
+    settings = PairSpec(
+        run_id=f"prepare-{lane}",
+        lane=lane,
+        problem=problem,
+        app=lane_env.problem_application,
+        encounters=["first"],
+        run_dir=run_dir,
+        output=run_dir / "prepare",
+        provider=provider,
+        model=model,
+        reasoning_effort=reasoning_effort,
+        timeout_seconds=2400,
+        diagnosis_grading="off",
+        capability_mode="permissive",
+        lane_memory="shared",
+        memory=PoolMemoryEndpoint(repo=repo, branch=branch),
+        agent_registrations=registrations,
+        lease=lease,
+    )
+    prepared_registrations = worker_registrations(settings, lane_env)
+    plan = ParallelPlan(
+        run_id=f"prepare-{lane}",
+        accepted_repository=run_dir.parent / "unused-accepted",
+        lanes={lane: run_dir},
+        encounters=[Encounter(problem=problem, lane=lane)],
+        provider=provider,
+        model=model,
+        agent_registrations=prepared_registrations,
+        capability_mode="permissive",
+        permissive_responder=True,
+    )
+    prepare_lane(plan, lane)
+    lane_env = FastloopEnvironment.load(run_dir)
+    lane_env.parallel_lane = lane
+    bind_lane_to_branch(lane_env, MemoryEndpoint(repo, branch), seed=True)
+    preflight_memory(lane_env, repo, branch)
+
+
+def preflight_memory(environment: FastloopEnvironment, repo: str, branch: str) -> str:
+    """Prove this controller's mounted host key can fetch and push its exact branch."""
+    from benchmarks.sregym.adapter import control_namespace_for, kubectl
+    from benchmarks.sregym.fastloop.remote_memory import SSH_DIR, MemoryEndpoint, shared_identity
+
+    endpoint = MemoryEndpoint(repo, branch)
+    if (environment.memory_repo, environment.memory_branch, environment.shared_accepted_id) != (
+        repo,
+        branch,
+        shared_identity(endpoint),
+    ):
+        raise ValueError("pool: lane is not bound to the run's app memory branch")
+    # Push exactly the fetched SHA to the same branch: checks write permission without a synthetic memory commit.
+    script = (
+        "scratch=$(mktemp -d); trap 'rm -rf \"$scratch\"' EXIT; "
+        f'cp {SSH_DIR}/identity "$scratch/identity"; chmod 600 "$scratch/identity"; '
+        f'export GIT_SSH_COMMAND="ssh -F /dev/null -i $scratch/identity -o IdentitiesOnly=yes '
+        f'-o BatchMode=yes -o UserKnownHostsFile={SSH_DIR}/known_hosts -o StrictHostKeyChecking=yes"; '
+        'git init --quiet "$scratch/repo"; cd "$scratch/repo"; '
+        'git fetch --quiet --no-tags "$1" "refs/heads/$2" && '
+        'git push --porcelain "$1" "FETCH_HEAD:refs/heads/$2" && git rev-parse FETCH_HEAD'
+    )
+    result = kubectl(
+        [
+            "exec",
+            "job/sdo-controller-run",
+            "-c",
+            "controller",
+            "--",
+            "sh",
+            "-ec",
+            script,
+            "sh",
+            endpoint.url,
+            endpoint.branch,
+        ],
+        namespace=control_namespace_for(environment.namespace),
+        kubeconfig=environment.kubeconfig,
+    )
+    head = result.stdout.strip().splitlines()[-1]
+    (environment.run_dir / "memory-preflight.json").write_text(
+        json.dumps({"repo": repo, "branch": branch, "head": head}) + "\n"
+    )
+    return head
+
+
+def configure_workers(environment: FastloopEnvironment, registrations: Path, provider: str, model: str) -> None:
+    """Switch idle prepared lanes between scripted and live workers without reseeding memory."""
+    from benchmarks.sregym import adapter
+    from benchmarks.sregym.fastloop.shared_memory import JOB_NAME, _json, lane_environment, shared_controller_job
+
+    control = adapter.control_namespace_for(environment.namespace)
+    job = _json(environment, "get", "job", JOB_NAME, "-o", "json", namespace=control)
+    pod = job["spec"]["template"]["spec"]
+    [volume] = [v for v in pod["volumes"] if v["name"] == "registrations"]
+    name = volume["configMap"]["name"]
+    current = _json(environment, "get", "configmap", name, "-o", "json", namespace=control)
+    desired = {path.name: path.read_text() for path in registrations.glob("*.json")}
+    args = pod["containers"][0]["args"]
+    if (
+        current["data"] == desired
+        and args[args.index("--model") + 1] == model
+        and args[args.index("--responder-backend") + 1] == provider
+    ):
+        return
+    with lane_environment(environment):
+        adapter.pause_for_recovery(adapter.KubectlClusterOps(), control)
+    recreated = shared_controller_job(job, environment.application)
+    arguments = recreated["spec"]["template"]["spec"]["containers"][0]["args"]
+    for flag, value in (("--model", model), ("--responder-backend", provider)):
+        arguments[arguments.index(flag) + 1] = value
+    adapter.kubectl(
+        ["delete", "job", JOB_NAME, "--cascade=foreground", "--wait=true", "--timeout=120s"],
+        namespace=control,
+        kubeconfig=environment.kubeconfig,
+    )
+    current["data"] = desired
+    adapter.kubectl(
+        ["replace", "-f", "-"], namespace=control, kubeconfig=environment.kubeconfig, input_text=json.dumps(current)
+    )
+    adapter.kubectl(
+        ["create", "-f", "-"], namespace=control, kubeconfig=environment.kubeconfig, input_text=json.dumps(recreated)
+    )
+    adapter.kubectl(
+        ["wait", "--for=condition=Ready", "pod", "--selector", f"job-name={JOB_NAME}", "--timeout=120s"],
+        namespace=control,
+        kubeconfig=environment.kubeconfig,
+    )
+    environment.state_path.unlink(missing_ok=True)

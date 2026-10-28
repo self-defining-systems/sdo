@@ -48,10 +48,67 @@ def main(argv: list[str] | None = None) -> int:
     remove.add_argument("--registry", type=Path, required=True)
     remove.add_argument("--lane", required=True)
     remove.add_argument("--note", required=True)
+    relay = commands.add_parser("relay", help="foreground TCP relay supervised by the pool's systemd unit")
+    relay.add_argument("--spec", type=Path, required=True)
+    relay.add_argument("--ready", type=Path)
+    ensure = commands.add_parser("ensure-relay", help="install, check and restart the pool registry relay")
+    for name in ("spec", "code-root", "state"):
+        ensure.add_argument(f"--{name}", type=Path, required=True)
+    real = commands.add_parser("prepare-real-app", help="deploy, credential, prepare and bind a real app lane")
+    real.add_argument("--setup", type=Path, required=True)
+    for name in ("lane", "problem", "lease", "repo", "branch"):
+        real.add_argument(f"--{name}", required=True)
+    real.add_argument("--run-dir", type=Path, required=True)
+    real.add_argument("--agent-registrations", type=Path)
+    real.add_argument("--provider", choices=("codex", "claude"), default="claude")
+    real.add_argument("--model", default="claude-opus-5-5")
+    real.add_argument("--reasoning-effort", choices=("low", "medium", "high", "xhigh", "max"), default="medium")
+    seed = commands.add_parser("render-seed", help="render fresh memory with current Go policy and source inputs")
+    for name in ("code-root", "source", "destination"):
+        seed.add_argument(f"--{name}", type=Path, required=True)
+    seed.add_argument("--application", required=True)
+    seed.add_argument("--namespace", required=True)
     for verb in ("pair", "prepare"):
         worker = commands.add_parser(verb, help=f"host-side {verb} process started by the pool owner")
         worker.add_argument("--spec", type=Path, required=True)
     args = parser.parse_args(argv)
+
+    if args.command == "ensure-relay":
+        from benchmarks.sregym.pool.relay import RelayConfig, ensure_relay
+
+        ensure_relay(RelayConfig.model_validate_json(args.spec.read_text()), args.code_root, args.state)
+        return 0
+
+    if args.command == "render-seed":
+        from benchmarks.sregym.pool.seed import render_seed
+
+        print(render_seed(args.code_root, args.source, args.destination, args.application, args.namespace))
+        return 0
+
+    if args.command == "relay":
+        import asyncio
+
+        from benchmarks.sregym.pool.relay import RelayConfig, serve
+
+        asyncio.run(serve(RelayConfig.model_validate_json(args.spec.read_text()), args.ready))
+        return 0
+    if args.command == "prepare-real-app":
+        from benchmarks.sregym.pool.real_apps import RealAppSetup, prepare_real_app
+
+        prepare_real_app(
+            RealAppSetup.model_validate_json(args.setup.read_text()),
+            run_dir=args.run_dir,
+            lane=args.lane,
+            problem=args.problem,
+            lease=args.lease,
+            repo=args.repo,
+            branch=args.branch,
+            registrations=args.agent_registrations,
+            provider=args.provider,
+            model=args.model,
+            reasoning_effort=args.reasoning_effort,
+        )
+        return 0
 
     from benchmarks.sregym.pool.registry import LaneRegistry
     from benchmarks.sregym.pool.scheduler import DeploySpec, PairSpec, PoolConfig, Scheduler, release_hold

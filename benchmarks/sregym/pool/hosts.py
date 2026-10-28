@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Protocol
 from pydantic import BaseModel, ConfigDict, Field
 
 from benchmarks.sregym.pool.placement import DEFAULT_MAX_LOAD
+from benchmarks.sregym.pool.relay import RelayConfig  # noqa: TC001 - Pydantic schema.
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -44,6 +45,7 @@ class HostConfig(BaseModel):
     max_load: float = Field(default=DEFAULT_MAX_LOAD, gt=0)
     nice: int = Field(default=10, ge=0, le=19)
     env_script: Path | None = ENV_SCRIPT
+    registry_relay: RelayConfig | None = None
 
 
 class Host(Protocol):
@@ -56,6 +58,7 @@ class Host(Protocol):
     def load1(self) -> float: ...
     def lease_cores(self) -> float: ...
     def gate(self) -> bool: ...
+    def ensure_registry(self) -> None: ...
 
 
 Runner = "Callable[..., subprocess.CompletedProcess[str]]"
@@ -153,3 +156,25 @@ class ShellHost:
     def gate(self) -> bool:
         argv = [str(self.config.coord), "gate", str(self.config.max_load), "--lease", self.config.lease]
         return self.run(argv).returncode == 0
+
+    def ensure_registry(self) -> None:
+        """Owner checks the entire app-image transport, restarting its own supervised relay if needed."""
+        if self.config.registry_relay is None:
+            return
+        spec = self.config.work_root / "registry-relay.json"
+        self.write_text(spec, self.config.registry_relay.model_dump_json() + "\n")
+        argv = [
+            str(self.config.python),
+            "-m",
+            "benchmarks.sregym.pool",
+            "ensure-relay",
+            "--spec",
+            str(spec),
+            "--code-root",
+            str(self.config.code_root),
+            "--state",
+            str(self.config.work_root / "registry-relay"),
+        ]
+        if self.config.env_script:
+            argv = ["bash", "-c", 'source "$0" && exec "$@"', str(self.config.env_script), *argv]
+        self._checked(argv, timeout=60)
