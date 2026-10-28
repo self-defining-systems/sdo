@@ -420,7 +420,7 @@ class Verdict:
 
         if self.raw_incl_judge_seconds is None or self.grading_wait_seconds is None:
             return None
-        return max(0.0, self.raw_incl_judge_seconds - self.grading_wait_seconds - self.provider_wait_seconds)
+        return self.raw_incl_judge_seconds - self.grading_wait_seconds
 
     @property
     def ttm_seconds(self) -> float | None:
@@ -434,6 +434,7 @@ class Verdict:
         excluded = self.judge_excluded_seconds
         if excluded is None:
             return None
+        excluded = max(0.0, excluded - self.provider_wait_seconds)
         if self.last_mitigation_seconds is None:
             return excluded
         return max(excluded, self.last_mitigation_seconds - self.provider_wait_before_last_mitigation_seconds)

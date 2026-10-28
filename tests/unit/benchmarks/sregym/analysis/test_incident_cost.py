@@ -61,6 +61,7 @@ def test_ttm_excludes_provider_wait_without_double_subtracting_judge_wait(tmp_pa
     )
     verdict = with_provider_waits(verdict, tmp_path, evidence=ProviderWaitEvidence((interval,)))
     assert verdict.rate_limit_wait_seconds == 50
+    assert verdict.judge_excluded_seconds == 80
     assert verdict.ttm_seconds == 50  # raw 100 - judge 20 - nonoverlapping provider wait 30
     assert verdict.last_mitigation_seconds == 90
 
