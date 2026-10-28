@@ -307,7 +307,9 @@ func writeCapturedFile(path string, data []byte) error {
 
 // CaptureRepairedProgramReads records fresh answers at the controller's verified
 // fixed boundary for every primitive inspected before repair. They travel in
-// the same protected recordings file with explicit phase metadata.
+// the same protected recordings file with explicit phase metadata. Each open
+// read is repeated unless the phase already holds its fixed answer (a plan's
+// own verification read), so repeated calls add nothing.
 func CaptureRepairedProgramReads(repositoryMount, incidentID string, readView func(sdk.DetectionContext) program.ReadView) error {
 	releaseSessionStorage := SessionStorageUse()
 	defer releaseSessionStorage()
@@ -336,17 +338,24 @@ func CaptureRepairedProgramReads(repositoryMount, incidentID string, readView fu
 		if err := json.Unmarshal(raw, &calls); err != nil {
 			return err
 		}
-		var open []sdktest.PrimitiveCall
-		fixed := false
+		fixed := map[string]int{}
 		for _, call := range calls {
 			if call.Phase == "fixed" {
-				fixed = true
-			}
-			if call.Phase == "" || call.Phase == "open" {
-				open = append(open, call)
+				fixed[recordedReadKey(call)]++
 			}
 		}
-		if fixed || len(open) == 0 {
+		var open []sdktest.PrimitiveCall
+		for _, call := range calls {
+			if call.Phase != "" && call.Phase != "open" {
+				continue
+			}
+			if key := recordedReadKey(call); fixed[key] > 0 {
+				fixed[key]--
+				continue
+			}
+			open = append(open, call)
+		}
+		if len(open) == 0 {
 			continue
 		}
 		observed, err := sdktest.RecordPrimitiveCalls(readView(snapshot), open)
@@ -361,4 +370,21 @@ func CaptureRepairedProgramReads(repositoryMount, incidentID string, readView fu
 		}
 	}
 	return nil
+}
+
+// recordedReadKey identifies one read independent of its phase. A catalog read
+// is identified like its capture: credential source and shell do not matter.
+func recordedReadKey(call sdktest.PrimitiveCall) string {
+	if call.Method == "DatabaseUsers" {
+		call.Phase = ""
+		if identity, err := databaseCaptureIdentity(call); err == nil {
+			return call.Method + "\x00" + identity
+		}
+	}
+	var arguments any
+	if err := json.Unmarshal(call.Arguments, &arguments); err != nil {
+		return call.Method + "\x00" + string(call.Arguments)
+	}
+	canonical, _ := json.Marshal(arguments)
+	return call.Method + "\x00" + string(canonical)
 }
