@@ -127,9 +127,9 @@ def test_controller_job_gets_branch_and_read_only_key_like_the_go_installer() ->
         *("--memory-upstream-ssh-dir", SSH_DIR),
     ]
     assert {"name": "memory-upstream-ssh", "mountPath": SSH_DIR, "readOnly": True} in container["volumeMounts"]
-    assert {"name": "memory-upstream-ssh", "secret": {"secretName": SSH_SECRET, "defaultMode": 0o444}} in once[
-        "spec"
-    ]["template"]["spec"]["volumes"]
+    assert {"name": "memory-upstream-ssh", "secret": {"secretName": SSH_SECRET, "defaultMode": 0o444}} in once["spec"][
+        "template"
+    ]["spec"]["volumes"]
     installer = (ROOT / "sdo/operator/install/resources.go").read_text()
     assert f'MemoryUpstreamSSHDir = "{SSH_DIR}"' in installer
     for flag in ("--memory-upstream-url", "--memory-upstream-branch", "--memory-upstream-ssh-dir"):

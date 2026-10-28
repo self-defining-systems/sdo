@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/internal/testutil"
 )
 
 const upstreamBranch = "live/20261028-synthetic"
@@ -20,13 +21,13 @@ func upstreamLanes(t *testing.T) (string, *Broker, *Broker, string, string) {
 	t.Helper()
 	seed, _, _ := sharedReflectionFixture(t)
 	remote := filepath.Join(t.TempDir(), "memory.git")
-	git(t, "", "init", "--quiet", "--bare", remote)
+	testutil.CloneGit(t, seed, remote, "--bare")
 	git(t, seed, "push", "--quiet", remote, "HEAD:refs/heads/"+upstreamBranch)
 	var roots []string
 	var brokers []*Broker
 	for _, lane := range []string{"lane-a", "lane-b"} {
 		root := filepath.Join(t.TempDir(), lane, "accepted")
-		git(t, "", "clone", "--quiet", "--branch", upstreamBranch, remote, root)
+		testutil.CloneGit(t, remote, root, "--branch", upstreamBranch)
 		b := sharedMemoryBroker(t, root, func(context.Context, string, []string) error { return nil })
 		if err := b.SetUpstream(Upstream{URL: remote, Branch: upstreamBranch}); err != nil {
 			t.Fatal(err)

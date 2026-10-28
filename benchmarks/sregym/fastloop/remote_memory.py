@@ -16,7 +16,6 @@ from __future__ import annotations
 import json
 import os
 import re
-import shutil
 import subprocess
 import tempfile
 import uuid
@@ -156,7 +155,15 @@ def adopt_run_branch(repository: Path, endpoint: MemoryEndpoint, url: str | None
     """
 
     tree = _git(repository, "rev-parse", "HEAD^{tree}")
-    _git(repository, "fetch", "--no-tags", "--quiet", "--", url or endpoint.url, f"+refs/heads/{endpoint.branch}:refs/sdo/upstream")
+    _git(
+        repository,
+        "fetch",
+        "--no-tags",
+        "--quiet",
+        "--",
+        url or endpoint.url,
+        f"+refs/heads/{endpoint.branch}:refs/sdo/upstream",
+    )
     commit = matching_commit(repository, tree, "refs/sdo/upstream")
     _git(repository, "reset", "--quiet", "--soft", commit)
     if _git(repository, "status", "--porcelain"):
@@ -227,8 +234,23 @@ def apply_ssh_secret(environment: FastloopEnvironment, identity: Path, known_hos
     )
 
 
-def _lane_node_command(*args: str) -> str:
-    return subprocess.check_output(args, text=True, stderr=subprocess.PIPE, timeout=wait_for(WaitKind.COMMAND))
+REPOSITORY = "/workspace/application"
+
+
+def _pod_tar(environment: FastloopEnvironment, pod: str, script: str, data: bytes | None = None) -> bytes:
+    """Run a tar pipeline in the lane's controller container; bytes in and out."""
+
+    command = [
+        *("kubectl", "--kubeconfig", str(environment.kubeconfig), "--namespace"),
+        *(control_namespace_for(environment.namespace), "exec", *(["-i"] if data is not None else []), pod),
+        *("-c", "controller", "--", "sh", "-c", script),
+    ]
+    completed = subprocess.run(
+        command, input=data, capture_output=True, check=False, timeout=wait_for(WaitKind.SLOW_COMMAND)
+    )
+    if completed.returncode:
+        raise RuntimeError(f"eval: lane repository copy failed: {completed.stderr.decode(errors='replace')[-1024:]}")
+    return completed.stdout
 
 
 def bind_lane_to_branch(
@@ -241,69 +263,54 @@ def bind_lane_to_branch(
 ) -> str:
     """Bind one prepared, idle lane's accepted repository to the run branch.
 
-    Pauses and stops the lane's controller, copies its accepted repository out of the
-    node, seeds the branch from it (first lane only) or adopts the branch history with
-    the lane's own tree, copies it back and recreates the controller with the upstream.
+    Pauses the lane's controller, copies its accepted repository out, seeds the branch
+    from it (first lane of the app) or adopts the branch history with the lane's own tree,
+    copies it back through the paused controller, and recreates the controller Job with
+    the upstream and the read-only key. Works for any lane PVC; nothing is shared on disk.
     """
     from benchmarks.sregym import adapter
-    from benchmarks.sregym.fastloop.shared_memory import (
-        JOB_NAME,
-        _json,
-        lane_environment,
-        lane_nodes,
-        repository_volume_path,
-        shared_controller_job,
-    )
+    from benchmarks.sregym.fastloop.shared_memory import JOB_NAME, _json, lane_environment, shared_controller_job
 
     control = control_namespace_for(environment.namespace)
-    nodes = lane_nodes(environment)
-    path = repository_volume_path(environment) + "/application"
     pods = _json(environment, "get", "pods", "--selector", f"job-name={JOB_NAME}", "-o", "json", namespace=control)
-    owners = [p["spec"]["nodeName"] for p in pods["items"] if p.get("status", {}).get("phase") == "Running"]
-    if len(owners) != 1 or owners[0] not in nodes:
-        raise ValueError("eval: binding requires one running controller on a kind node")
-    node = owners[0]
+    running = [p["metadata"]["name"] for p in pods["items"] if p.get("status", {}).get("phase") == "Running"]
+    if len(running) != 1:
+        raise ValueError("eval: binding requires one running controller")
+    pod = running[0]
     job = _json(environment, "get", "job", JOB_NAME, "-o", "json", namespace=control)
     # Incident IDs derive from the application name, so lanes sharing a branch need distinct ones.
     application = f"{environment.problem_application or environment.application}-{environment.cluster}"
     application = application[:30].rstrip("-") + "-" + uuid.uuid4().hex
     with lane_environment(environment):
         adapter.pause_for_recovery(adapter.KubectlClusterOps(), control)
-    kubectl(
-        ["delete", "job", JOB_NAME, "--cascade=foreground", "--wait=true", "--timeout=120s"],
-        namespace=control,
-        kubeconfig=environment.kubeconfig,
-    )
     with tempfile.TemporaryDirectory(prefix="sdo-memory-bind-") as scratch:
         local = Path(scratch) / "application"
         local.mkdir()
-        archive = subprocess.run(
-            ["docker", "exec", node, "tar", "-C", path, "-cf", "-", "."],
-            capture_output=True,
-            check=True,
-            timeout=wait_for(WaitKind.COMMAND),
-        ).stdout
+        archive = _pod_tar(environment, pod, f"tar -C {REPOSITORY} -cf - .")
         subprocess.run(["tar", "-C", str(local), "-xf", "-"], input=archive, check=True)
         if seed:
             ensure_run_branch(endpoint, local)
         commit = adopt_run_branch(local, endpoint)
         packed = subprocess.run(["tar", "-C", str(local), "-cf", "-", "."], capture_output=True, check=True).stdout
-        staged = path + ".bind"
-        script = (
+        staged = REPOSITORY + ".bind"
+        _pod_tar(
+            environment,
+            pod,
             f'rm -rf "{staged}" && mkdir "{staged}" && tar -C "{staged}" -xf - && '
-            f'chown -R 65532:65532 "{staged}" && rm -rf "{path}" && mv "{staged}" "{path}"'
+            f'rm -rf "{REPOSITORY}.old" && mv "{REPOSITORY}" "{REPOSITORY}.old" && mv "{staged}" "{REPOSITORY}" && '
+            f'rm -rf "{REPOSITORY}.old"',
+            packed,
         )
-        subprocess.run(
-            ["docker", "exec", "-i", node, "sh", "-c", script],
-            input=packed,
-            check=True,
-            capture_output=True,
-            timeout=wait_for(WaitKind.COMMAND),
-        )
-        shutil.rmtree(local, ignore_errors=True)
+    kubectl(
+        ["delete", "job", JOB_NAME, "--cascade=foreground", "--wait=true", "--timeout=120s"],
+        namespace=control,
+        kubeconfig=environment.kubeconfig,
+    )
     apply_ssh_secret(environment, identity, known_hosts)
     recreated = controller_job_with_upstream(shared_controller_job(job, application), endpoint)
-    kubectl(["create", "-f", "-"], namespace=control, kubeconfig=environment.kubeconfig, input_text=json.dumps(recreated))
+    kubectl(
+        ["create", "-f", "-"], namespace=control, kubeconfig=environment.kubeconfig, input_text=json.dumps(recreated)
+    )
     kubectl(
         ["wait", "--for=condition=Ready", "pod", "--selector", f"job-name={JOB_NAME}", "--timeout=120s"],
         namespace=control,
@@ -329,12 +336,24 @@ def close_run_branch(endpoint: MemoryEndpoint, row: str, *, message: str, url: s
         index = Path(scratch) / "index"
         _git(None, "clone", "--quiet", "--depth", "1", "--branch", "main", "--", url or endpoint.url, str(index))
         _git(index, "fetch", "--quiet", "--depth", "1", "origin", head)
-        _git(index, "-c", "user.name=SDO run", "-c", "user.email=sdo-run@invalid", "tag", "-a", tag, "-m", message, head)
+        _git(
+            index, "-c", "user.name=SDO run", "-c", "user.email=sdo-run@invalid", "tag", "-a", tag, "-m", message, head
+        )
         readme = index / "README.md"
         text = readme.read_text(encoding="utf-8") if readme.exists() else ""
         if endpoint.branch not in text:
             readme.write_text(text.rstrip("\n") + "\n" + row + "\n", encoding="utf-8")
             _git(index, "add", "README.md")
-            _git(index, "-c", "user.name=SDO run", "-c", "user.email=sdo-run@invalid", "commit", "--quiet", "-m", f"index {endpoint.branch}")
+            _git(
+                index,
+                "-c",
+                "user.name=SDO run",
+                "-c",
+                "user.email=sdo-run@invalid",
+                "commit",
+                "--quiet",
+                "-m",
+                f"index {endpoint.branch}",
+            )
         _git(index, "push", "--quiet", "origin", "HEAD:refs/heads/main", f"refs/tags/{tag}")
     return tag
