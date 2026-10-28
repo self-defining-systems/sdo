@@ -299,10 +299,14 @@ func testProductionResponderMenuFactory(t *testing.T, enabled, automatic bool) {
 				t.Fatalf("live defaulted assignment did not apply and verify: %v", attempt)
 			}
 		}
+		// Coverage uses the stage's own rule: the applied diagnosis explains
+		// the finding that bound it, with no detector playbook list.
+		explained := false
 		for _, match := range ledger.GetOutcomeDocument().GetPlaybookCoverage().GetMatches() {
-			if len(match.ExplainedFindingFingerprints) != 0 {
-				t.Fatalf("automatic application invented authored coverage: %v", match)
-			}
+			explained = explained || (match.GetPlaybookId() == reports[0].Mitigations[0].GetPlaybookId() && len(match.ExplainedFindingFingerprints) == 1)
+		}
+		if !explained {
+			t.Fatalf("coverage disagrees with the automatic stage's applied match: %v", ledger.GetOutcomeDocument().GetPlaybookCoverage())
 		}
 		return
 	}
