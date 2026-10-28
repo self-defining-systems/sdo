@@ -21,6 +21,7 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, computed_field
 
 from benchmarks.sregym.faults.description import CapabilityMode, FaultCapability  # noqa: TC001
 from benchmarks.sregym.protocol.injection import FaultComponent  # noqa: TC001 - Pydantic resolves this at runtime.
+from benchmarks.sregym.protocol.provider_capacity import ProviderWaitInterval, wait_seconds_between
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -210,6 +211,7 @@ class IncidentRecord(_PersistedModel):
     image_delivery_reason: str = ""
     schema_version: Literal["sdo.fastloop-incident/v2"] = SCHEMA_VERSION
     infra_error: str | None = None
+    provider_waits: list[ProviderWaitInterval] = Field(default_factory=list)
     recovery_error: str | None = None
     injection_evidence: dict[str, Any] = Field(default_factory=dict)
     fault_components: list[FaultComponent] = Field(default_factory=list)
@@ -317,6 +319,52 @@ class IncidentRecord(_PersistedModel):
             )
         return self
 
+    def _active_seconds(self, start: datetime | None, end: datetime | None) -> float | None:
+        raw = _seconds(start, end)
+        return max(0.0, raw - wait_seconds_between(self.provider_waits, start, end)) if raw is not None else None
+
+    def _wait_end(self) -> datetime | None:
+        return (
+            self.resolved_at
+            or self.responder_finished_at
+            or max((item.finished_at for item in self.provider_waits), default=None)
+        )
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def grade_status(self) -> Literal["GRADED", "NOT-GRADED"]:
+        return "NOT-GRADED" if self.infra_error or isinstance(self.injection, NotInjected) else "GRADED"
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def not_graded_reason(self) -> str | None:
+        return self.infra_error or ("not_injected" if isinstance(self.injection, NotInjected) else None)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def raw_injection_to_mitigation_seconds(self) -> float | None:
+        return _seconds(self.injection_started_at, self.mitigation_applied_at)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def rate_limit_wait_seconds(self) -> float:
+        return wait_seconds_between(
+            self.provider_waits,
+            self.injection_started_at,
+            self._wait_end(),
+            kind="rate_limit",
+        )
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def concurrency_wait_seconds(self) -> float:
+        return wait_seconds_between(
+            self.provider_waits,
+            self.injection_started_at,
+            self._wait_end(),
+            kind="concurrency",
+        )
+
     @computed_field  # type: ignore[prop-decorator]
     @property
     def injection_started_at(self) -> datetime | None:
@@ -335,17 +383,17 @@ class IncidentRecord(_PersistedModel):
     @computed_field  # type: ignore[prop-decorator]
     @property
     def detection_to_mitigation_seconds(self) -> float | None:
-        return _seconds(self.detected_at, self.mitigation_applied_at)
+        return self._active_seconds(self.detected_at, self.mitigation_applied_at)
 
     @computed_field  # type: ignore[prop-decorator]
     @property
     def injection_to_mitigation_seconds(self) -> float | None:
-        return _seconds(self.injection_started_at, self.mitigation_applied_at)
+        return self._active_seconds(self.injection_started_at, self.mitigation_applied_at)
 
     @computed_field  # type: ignore[prop-decorator]
     @property
     def injection_to_resolution_seconds(self) -> float | None:
-        return _seconds(self.injection_started_at, self.resolved_at)
+        return self._active_seconds(self.injection_started_at, self.resolved_at)
 
     @computed_field  # type: ignore[prop-decorator]
     @property

@@ -33,6 +33,39 @@ PROBLEM_A = "missing_configmap_hotel_reservation"
 PROBLEM_B = "missing_configmap_mongodb_rate_hotel_reservation"
 
 
+def test_ttm_excludes_provider_wait_without_double_subtracting_judge_wait(tmp_path: Path) -> None:
+    from datetime import datetime, timedelta, timezone
+
+    from benchmarks.sregym.analysis.incident_cost import with_provider_waits
+    from benchmarks.sregym.protocol.provider_capacity import ProviderWaitEvidence, ProviderWaitInterval
+
+    start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    with (tmp_path / "sdo_ALL_results.csv").open("w") as stream:
+        writer = csv.DictWriter(
+            stream, fieldnames=["fault_injected_at", "diagnosis_submitted_at", "mitigation_submitted_at", "TTL"]
+        )
+        writer.writeheader()
+        writer.writerow(
+            {
+                "fault_injected_at": start.timestamp(),
+                "diagnosis_submitted_at": start.timestamp() + 20,
+                "mitigation_submitted_at": start.timestamp() + 100,
+                "TTL": 40,
+            }
+        )
+    verdict = read_verdict(tmp_path)
+    assert verdict is not None
+    verdict = replace(verdict, last_mitigation_seconds=90)
+    interval = ProviderWaitInterval(
+        kind="rate_limit", started_at=start + timedelta(seconds=10), finished_at=start + timedelta(seconds=60)
+    )
+    verdict = with_provider_waits(verdict, tmp_path, evidence=ProviderWaitEvidence((interval,)))
+    assert verdict.rate_limit_wait_seconds == 50
+    assert verdict.judge_excluded_seconds == 80
+    assert verdict.ttm_seconds == 50  # raw 100 - judge 20 - nonoverlapping provider wait 30
+    assert verdict.last_mitigation_seconds == 90
+
+
 def _usage(input_tokens: int, output_tokens: int, cached: int = 0) -> dict[str, int]:
     return {"input_tokens": input_tokens, "cached_input_tokens": cached, "output_tokens": output_tokens}
 

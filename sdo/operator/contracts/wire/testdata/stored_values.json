@@ -216,6 +216,7 @@
     "",
     "agent_failed",
     "agent_timeout",
+    "rate_limited",
     "request_too_large",
     "result_too_large",
     "session_handoff_invalid",
