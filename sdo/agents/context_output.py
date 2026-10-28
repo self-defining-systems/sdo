@@ -115,10 +115,10 @@ def cap_text(text: str, limit: int, *, json_output: bool = False, bytes_limit: b
         # Summarize structured payloads uniformly, including fenced prompt data.
         start, end = text.find("{"), text.rfind("}")
         try:
-            # A JSON fragment inside prose is not the section; its head is a better summary.
-            document = (
-                json.loads(text[start : end + 1]) if 0 <= start < end and (end + 1 - start) * 2 >= len(text) else None
-            )
+            # When the prose around a JSON block overflows on its own, the block is a
+            # fragment of a prose section and the head is the better summary.
+            prose = len(text) - (end + 1 - start)
+            document = json.loads(text[start : end + 1]) if 0 <= start < end and prose <= remaining else None
         except ValueError:
             document = None
 
