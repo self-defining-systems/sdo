@@ -62,7 +62,8 @@ def test_memory_view_omits_scripts_and_bounds_repeated_memory_text() -> None:
         book.scripts.add(name="inspect.sh", content="script body" * 1000)
     view = memory_view(snapshot)
     assert view["accepted_commit"] == "accepted"
-    assert view["omitted_playbooks"] == 70
+    assert len(view["playbooks"]) == 100
+    assert {item["id"] for item in view["playbooks"]} == {f"book-{index}" for index in range(100)}
     assert "script body" not in json.dumps(view)
     assert len(json.dumps(view)) < 30_000
 

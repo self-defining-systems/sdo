@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 from google.protobuf import json_format
 
-from sdo.agents.prompt_templates import RenderedPrompt, join_prompts, named_prompt, prompt_prefix, render_prompt
+from sdo.agents.prompt_templates import RenderedPrompt, join_prompts, named_prompt, render_prompt
 from sdo.agents.responder import recorded_actions
 from sdo.contracts import Verdict, timestamp_datetime, to_canonical_json
 
@@ -29,30 +29,9 @@ if TYPE_CHECKING:
 
 #: Upper bound on the whole brief: about 4 characters per token, under 8K tokens.
 BRIEF_MAX_CHARS = 30_000
-_FINDINGS_BUDGET = 12_000
-_RESULT_BUDGET = 6_000
-_COMMANDS_BUDGET = 6_000
-_MEMORY_BUDGET = 9_000
 _MAX_FULL_FINDINGS = 4
-_EVIDENCE_MAX_CHARS = 3_000
-_METADATA_MAX_CHARS = 1_200
-_DETAILS_MAX_CHARS = 700
-_COMMAND_MAX_CHARS = 300
 _HEAD_COMMANDS = 10
-_PLAYBOOK_EXCERPT_CHARS = 700
 _MAX_PLAYBOOK_EXCERPTS = 4
-_INDEX_EXCERPT_CHARS = 1_000
-_DETECTOR_DESCRIPTION_CHARS = 500
-_DETECTOR_PREDICATE_CHARS = 1_400
-
-
-def _clip(text: str, limit: int) -> str:
-    if len(text) <= limit:
-        return text
-    omitted = len(text) - limit
-    return render_prompt(
-        "responder", "clip_01", part="reflection_brief.instructions", text=prompt_prefix(text, limit), omitted=omitted
-    )
 
 
 def _iso(value: Timestamp) -> str:
@@ -120,11 +99,11 @@ def _finding(finding: Finding) -> str:
     if finding.playbook_ids:
         lines.append("  playbooks: " + ", ".join(finding.playbook_ids))
     lines.append(render_prompt("responder", "finding_05", part="reflection_brief.instructions"))
-    lines.append(_fenced(_clip(finding.evidence, _EVIDENCE_MAX_CHARS)))
+    lines.append(_fenced(finding.evidence))
     if finding.metadata.fields:
         metadata = json.dumps(_plain(json_format.MessageToDict(finding.metadata)), sort_keys=True, default=str)
         lines.append(render_prompt("responder", "finding_06", part="reflection_brief.instructions"))
-        lines.append(_fenced(_clip(metadata, _METADATA_MAX_CHARS)))
+        lines.append(_fenced(metadata))
     return "\n".join(lines)
 
 
@@ -208,10 +187,10 @@ def _findings_section(closure: IncidentClosure) -> str:
         )
     if request.HasField("state_changes"):
         lines.append(render_prompt("responder", "findings_section_04", part="reflection_brief.instructions"))
-        lines.append(_fenced(_clip(to_canonical_json(request.state_changes), 2_000)))
+        lines.append(_fenced(to_canonical_json(request.state_changes)))
     if closure.HasField("final_state_changes"):
         lines.append(render_prompt("responder", "findings_section_05", part="reflection_brief.instructions"))
-        lines.append(_fenced(_clip(to_canonical_json(closure.final_state_changes), 2_000)))
+        lines.append(_fenced(to_canonical_json(closure.final_state_changes)))
     lines.append(render_prompt("responder", "brief_heading_02", part="reflection_brief.instructions"))
     lines.extend(_finding(finding) for finding in request.findings[:_MAX_FULL_FINDINGS])
     lines.extend(
@@ -259,7 +238,7 @@ def _findings_section(closure: IncidentClosure) -> str:
             closure.incident_detector_states,
         )
     )
-    return _clip("\n".join(lines), _FINDINGS_BUDGET)
+    return "\n".join(lines)
 
 
 def _result_section(result: IncidentResult | None, dispatch_error: str) -> str:
@@ -344,7 +323,7 @@ def _result_section(result: IncidentResult | None, dispatch_error: str) -> str:
                         "responder",
                         "result_section_11",
                         part="reflection_brief.instructions",
-                        clip=_clip(application.error, 120),
+                        clip=application.error,
                     )
                     if application.error
                     else ""
@@ -382,7 +361,7 @@ def _result_section(result: IncidentResult | None, dispatch_error: str) -> str:
             kind=action.kind,
             target=action.target,
             summary=action.summary,
-            clip=_clip(action.details, _DETAILS_MAX_CHARS),
+            clip=action.details,
         )
         for action in result.repair_actions
     )
@@ -401,7 +380,7 @@ def _result_section(result: IncidentResult | None, dispatch_error: str) -> str:
             part="reflection_brief.instructions",
             value="passed" if evidence.passed else "FAILED",
             name=evidence.name,
-            clip=_clip(evidence.details, _DETAILS_MAX_CHARS),
+            clip=evidence.details,
         )
         for evidence in result.verification_evidence
     )
@@ -427,7 +406,7 @@ def _result_section(result: IncidentResult | None, dispatch_error: str) -> str:
                 scripts=scripts,
             )
         )
-    return _clip("\n".join(lines), _RESULT_BUDGET)
+    return "\n".join(lines)
 
 
 def responder_shell_commands(log: Path | None, session_id: str | None) -> list[str] | None:
@@ -467,48 +446,11 @@ def _commands_section(commands: list[str] | None) -> str:
             "commands_section_04",
             part="reflection_brief.instructions",
             index=index,
-            clip=_clip(command, _COMMAND_MAX_CHARS),
+            clip=command,
         )
         for index, command in enumerate(commands, 1)
     ]
-    if sum(len(line) + 1 for line in rendered) <= _COMMANDS_BUDGET:
-        return "\n".join(
-            [
-                render_prompt(
-                    "responder",
-                    "commands_section_05",
-                    part="reflection_brief.instructions",
-                    header=header,
-                    len=len(commands),
-                ),
-                *rendered,
-            ]
-        )
-    # Keep the first diagnostic commands and as many of the last (repair and
-    # verification) commands as fit.
-    head = rendered[:_HEAD_COMMANDS]
-    used = sum(len(line) + 1 for line in head)
-    tail: list[str] = []
-    for line in reversed(rendered[_HEAD_COMMANDS:]):
-        if used + len(line) + 1 > _COMMANDS_BUDGET - 80:
-            break
-        tail.insert(0, line)
-        used += len(line) + 1
-    omitted = len(rendered) - len(head) - len(tail)
-    return "\n".join(
-        [
-            render_prompt(
-                "responder",
-                "commands_section_06",
-                part="reflection_brief.instructions",
-                header=header,
-                len=len(commands),
-            ),
-            *head,
-            render_prompt("responder", "commands_section_07", part="reflection_brief.instructions", omitted=omitted),
-            *tail,
-        ]
-    )
+    return "\n".join([header, *rendered])
 
 
 def _relevant_playbooks(
@@ -565,10 +507,10 @@ def _logical_memory_section(closure: IncidentClosure, *, detector_detail: bool, 
             if detector.description:
                 lines.append(
                     render_prompt("responder", "logical_memory_section_05", part="reflection_brief.instructions")
-                    + _clip(detector.description, _DETECTOR_DESCRIPTION_CHARS)
+                    + detector.description
                 )
             if detector.predicate_excerpt:
-                lines.append(_fenced(_clip(detector.predicate_excerpt, _DETECTOR_PREDICATE_CHARS)))
+                lines.append(_fenced(detector.predicate_excerpt))
             if event_dependence:
                 lines.append(
                     render_prompt("responder", "logical_memory_section_06", part="reflection_brief.instructions")
@@ -576,7 +518,7 @@ def _logical_memory_section(closure: IncidentClosure, *, detector_detail: bool, 
                 )
     if snapshot.playbook_index_markdown:
         lines.append(render_prompt("responder", "logical_memory_section_07", part="reflection_brief.instructions"))
-        lines.append(_fenced(_clip(snapshot.playbook_index_markdown, _INDEX_EXCERPT_CHARS)))
+        lines.append(_fenced(snapshot.playbook_index_markdown))
     available = {item.id: item for item in snapshot.playbooks}
     lines.append(
         render_prompt("responder", "logical_memory_section_08", part="reflection_brief.instructions")
@@ -591,8 +533,8 @@ def _logical_memory_section(closure: IncidentClosure, *, detector_detail: bool, 
                 "responder", "logical_memory_section_09", part="reflection_brief.instructions", playbook_id=playbook_id
             )
         )
-        lines.append(_fenced(_clip(available[playbook_id].markdown.strip(), _PLAYBOOK_EXCERPT_CHARS)))
-    return _clip("\n".join(lines), _MEMORY_BUDGET)
+        lines.append(_fenced(available[playbook_id].markdown.strip()))
+    return "\n".join(lines)
 
 
 def incident_brief(
@@ -625,7 +567,7 @@ def incident_brief(
             "reflection_brief.commands", _commands_section(responder_shell_commands(responder_turn_log, session_id))
         ),
     ]
-    body = _clip(join_prompts("\n\n", sections, part="reflection_brief.separators"), BRIEF_MAX_CHARS)
+    body = join_prompts("\n\n", sections, part="reflection_brief.separators")
     return render_prompt(
         "responder", "incident_brief", part="reflection_brief.instructions", len=len(body) // 4, body=body
     )

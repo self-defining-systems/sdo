@@ -28,6 +28,7 @@ from sdo.contracts.proto import (
     RepairActionReceipt,
     Verdict,
 )
+from tests.context_helpers import expand_context
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -236,7 +237,7 @@ def test_reflection_prompt_growth_per_prior_outcome_is_bounded(tmp_path: Path) -
     # The current incident is never repeated inside the history.
     assert large.count("inc-current: required ConfigMap was removed") == 1
     for prior in priors:
-        assert f"{prior.incident_id}: required ConfigMap was removed" in large
+        assert f"{prior.incident_id}: required ConfigMap was removed" in expand_context(large)
 
 
 def test_reflection_prompt_without_prior_outcomes_says_so(tmp_path: Path) -> None:
@@ -342,9 +343,9 @@ def test_current_outcome_bounds_tool_responses_and_keeps_corpus_refs() -> None:
     assert len(calls) == 1
     assert calls[0]["evaluations"] == 5
     assert view["reflection_compaction"]["program_tool_calls_omitted_duplicates"] == 4
-    assert len(json.dumps(calls)) < 6000
+    assert calls[0]["response_json"] == outcome.program_tool_calls[0].response_json
     assert calls[0]["corpus_refs"] == ["captured/open@detect.json"]
-    assert calls[0]["response_json_omitted_chars"] > 0
+    assert "response_json_omitted_chars" not in calls[0]
 
 
 def test_reflection_prompt_repeated_sweep_payload_is_bounded(tmp_path: Path) -> None:
@@ -353,22 +354,17 @@ def test_reflection_prompt_repeated_sweep_payload_is_bounded(tmp_path: Path) -> 
     small_prompt = _prompt([], small, tmp_path)
     large_prompt = _prompt([], large, tmp_path)
     assert len(large_prompt) - len(small_prompt) < 100
-    assert large_prompt.count("FailedMount") == 40
+    assert large_prompt.count("FailedMount") < 40
+    assert expand_context(large_prompt).count("FailedMount") >= 40
 
 
 def test_reflection_prompt_size_reduction_on_synthetic_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    import sdo.agents.responder.reflection as reflection
-
     outcome = _program_outcome()
     full = json_format.MessageToDict(
         outcome, preserving_proto_field_name=True, always_print_fields_with_no_presence=True
     )
-    # The old model view only collapsed detector_history. Keep the same prompt
-    # instructions on both sides to isolate the outcome-projection savings.
-    full["detector_history"] = collapse_detector_history(outcome.detector_history)
-    with monkeypatch.context() as baseline:
-        baseline.setattr(reflection, "current_outcome_view", lambda _: full)
-        before = _prompt([], outcome, tmp_path)
+    # Compare the old unbounded outcome payload with the complete capped prompt.
+    before = json.dumps(full)
     after = _prompt([], outcome, tmp_path)
     reduction = 100 * (len(before) - len(after)) / len(before)
     print(
@@ -428,7 +424,7 @@ def test_prior_history_stays_bounded_when_one_incident_has_many_transitions(tmp_
     large = _prompt([prior], current, tmp_path)
 
     assert len(large) - len(small) < 6_000
-    assert "omitted" in large
+    assert "Summary" in large
     assert prior.SerializeToString() == before
 
 
@@ -445,8 +441,8 @@ def test_reflection_prior_evidence_reference_is_readable_during_the_turn(tmp_pat
 
     class ReadingBackend:
         def resume(self, **kwargs: object) -> ReflectionTurn:
-            prompt = str(kwargs["prompt"])
-            paths = re.findall(r'"full_outcome_path": "([^"]+)"', prompt)
+            prompt = expand_context(str(kwargs["prompt"]))
+            paths = sorted(set(re.findall(r'"full_outcome_path": "([^"]+)"', prompt)))
             assert len(paths) == 1
             from pathlib import Path
 
@@ -455,7 +451,7 @@ def test_reflection_prior_evidence_reference_is_readable_during_the_turn(tmp_pat
             loaded = json_format.Parse(path.read_text(), OutcomeRecord())
             assert loaded == prior
             assert path.stat().st_mode & 0o077 == 0
-            assert "FailedMount" not in prompt.split("Outcome history", 1)[1]
+            assert "FailedMount" not in str(kwargs["prompt"]).split("Outcome history", 1)[1]
             return ReflectionTurn(summary="covered", learning_decision="no_change", no_change_reason="already covered")
 
         fresh = resume

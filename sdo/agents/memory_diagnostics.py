@@ -25,7 +25,7 @@ def render_validation_feedback(validation_attempt: int, diagnostics: Iterable[Me
         render_prompt(
             "lifecycle",
             "render_validation_feedback_01",
-            part="validation.instructions",
+            part="reflection.validation_feedback",
             validation_attempt=validation_attempt,
         )
     ]
@@ -34,20 +34,20 @@ def render_validation_feedback(validation_attempt: int, diagnostics: Iterable[Me
         text = render_prompt(
             "lifecycle",
             "render_validation_feedback_02",
-            part="validation.instructions",
+            part="reflection.validation_feedback",
             rule=row.rule,
             value=location + ": " if location else "",
             message=row.message,
         )
         if row.hint:
             text += render_prompt(
-                "lifecycle", "render_validation_feedback_03", part="validation.instructions", hint=row.hint
+                "lifecycle", "render_validation_feedback_03", part="reflection.validation_feedback", hint=row.hint
             )
         if row.HasField("memory_conflict"):
             text += render_prompt(
                 "lifecycle",
                 "memory_conflict",
-                part="validation.instructions",
+                part="reflection.validation_feedback",
                 conflict_json=json.dumps(
                     json_format.MessageToDict(row.memory_conflict, preserving_proto_field_name=True), indent=2
                 ),

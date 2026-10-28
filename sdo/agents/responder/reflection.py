@@ -17,12 +17,13 @@ from libs.agent_cli.structured import (
     AgentProvider,
     StructuredTurn,
     StructuredTurnError,
-    run_structured_turn,
     turn_usage,
 )
 from sdo.agents.code_paths import agent_guidance
+from sdo.agents.context_output import save_context
 from sdo.agents.memory_diagnostics import render_validation_feedback
 from sdo.agents.prompt_templates import RenderedPrompt, named_prompt, render_prompt
+from sdo.agents.prompt_templates import run_agent_turn as run_structured_turn
 from sdo.agents.responder.credentials import SKILLS_ROOT
 from sdo.agents.responder.memory_check import VALIDATION_TIMEOUT_SECONDS, ValidationResult, check_reflection_result
 from sdo.agents.responder.reflection_authoring import SdkGap
@@ -200,6 +201,30 @@ def _logical_learning_request(
     if not closure.request.HasField("memory_snapshot"):
         raise ValueError("logical reflection requires an operational memory snapshot")
     snapshot = closure.request.memory_snapshot
+    linked = {finding.detector_id for finding in outcome.findings}
+    linked.update(playbook for finding in outcome.findings for playbook in finding.playbook_ids)
+    memory_index = memory_view(snapshot, linked_ids=linked)
+    _, memory_path = save_context(json.dumps(memory_index, indent=2))
+    _, outcome_path = save_context(json_format.MessageToJson(outcome, preserving_proto_field_name=True))
+    outcome_view = current_outcome_view(outcome)
+    outcome_summary = {
+        key: outcome_view[key]
+        for key in (
+            "incident_id",
+            "classification",
+            "findings",
+            "confirmed_root_causes",
+            "repair_actions",
+            "plan_applications",
+            "undetected_causes",
+            "final_detector_states",
+            "source_check_notes",
+            "disabled_setup_detectors",
+        )
+        if key in outcome_view
+    }
+    outcome_summary["full_current_outcome_path"] = outcome_path
+    memory_index["full_index_path"] = memory_path
     if agent_guidance() == "shell":
         return render_prompt(
             "responder",
@@ -207,11 +232,9 @@ def _logical_learning_request(
             part="reflection.instructions",
             skills_root=SKILLS_ROOT,
             branch_instruction=branch_instruction("reflection"),
-            memory_view_json=named_prompt("reflection.memory", json.dumps(memory_view(snapshot), indent=2)),
+            memory_view_json=named_prompt("reflection.memory", json.dumps(memory_index, indent=2)),
             outcome_commit=outcome_commit,
-            outcome_json=named_prompt(
-                "reflection.outcome", json_format.MessageToJson(outcome, preserving_proto_field_name=True)
-            ),
+            outcome_json=named_prompt("reflection.outcome", json.dumps(outcome_summary, indent=2)),
             history_section=named_prompt("reflection.history", _history_section(outcome, history, history_directory)),
         )
     work_section = ""
@@ -234,10 +257,8 @@ def _logical_learning_request(
         branch_instruction=branch_instruction("reflection"),
         work_section=named_prompt("reflection.cause_work", work_section),
         outcome_commit=outcome_commit,
-        memory_view_json=named_prompt("reflection.memory", json.dumps(memory_view(snapshot), indent=2)),
-        current_outcome_view_json=named_prompt(
-            "reflection.outcome", json.dumps(current_outcome_view(outcome), indent=2)
-        ),
+        memory_view_json=named_prompt("reflection.memory", json.dumps(memory_index, indent=2)),
+        current_outcome_view_json=named_prompt("reflection.outcome", json.dumps(outcome_summary, indent=2)),
         history_section=named_prompt("reflection.history", _history_section(outcome, history, history_directory)),
     )
     if closure.request.HasField("namespace_onboarding"):
@@ -371,11 +392,24 @@ class SessionReflector:
 
 
 def memory_check_correction(check: ValidationResult, idempotency_key: str) -> RenderedPrompt:
+    details = check.stdout + "\n" + check.stderr
+    feedback = details
+    try:
+        report = json.loads(check.stdout)
+        diagnostics = report.get("diagnostics", [])
+        if diagnostics:
+            feedback = "\n".join(
+                f"[{item.get('rule', '')}] {item.get('path', '')}: {item.get('message', '')}" for item in diagnostics
+            )
+            _, path = save_context(details)
+            feedback += "\nFull check: " + path
+    except (ValueError, AttributeError, TypeError):
+        pass
     correction = render_prompt(
         "responder",
         "reflection_check_correction",
         part="reflection.instructions",
-        diagnostics=named_prompt("reflection.validation_feedback", check.stdout + "\n" + check.stderr),
+        diagnostics=named_prompt("reflection.validation_feedback", feedback),
     )
     return render_prompt(
         "responder",

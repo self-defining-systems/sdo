@@ -53,6 +53,7 @@ runtime_status=0
         cd "$root"
         uv run --extra test pytest -q -p no:tach \
             tests/unit/scripts/test_hermetic_shards.py \
+            tests/unit/sdo/agents/prompts/test_session_context.py \
             tests/unit/libs/agent_cli/test_structured.py \
             tests/unit/sdo/agents/test_health_judge_worker.py \
             tests/unit/sdo/agents/responder/test_result_publisher.py \

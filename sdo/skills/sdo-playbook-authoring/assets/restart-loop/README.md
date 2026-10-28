@@ -1,6 +1,7 @@
 ---
 schema_version: 1
 owner: responder
+description: Diagnose and repair a container restart loop from observed termination evidence.
 fault_class: restart-loop
 originating_incident: example-incident
 ---

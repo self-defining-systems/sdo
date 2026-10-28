@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import json
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 from string import Template
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
+from libs.agent_cli.structured import AgentProvider, StructuredTurn
+from libs.agent_cli.structured import run_structured_turn as _run_structured_turn
 from sdo.agents.context_output import budget_for, cap_text
 
 if TYPE_CHECKING:
@@ -24,6 +27,7 @@ class RenderedPrompt(str):
     """A normal prompt string with the ordered parts that produced its exact bytes."""
 
     parts: tuple[PromptPart, ...]
+    context_files: tuple[Path, ...]
 
     def __new__(cls, parts: Iterable[PromptPart]) -> RenderedPrompt:
         raw = tuple(parts)
@@ -42,6 +46,15 @@ class RenderedPrompt(str):
         ordered = tuple(result)
         value = super().__new__(cls, "".join(part.text for part in ordered))
         value.parts = ordered
+        value.context_files = tuple(
+            sorted(
+                {
+                    path
+                    for text in (*[part.text for part in raw], *capped.values())
+                    for path in getattr(text, "context_files", ())
+                }
+            )
+        )
         return value
 
     @property
@@ -91,6 +104,11 @@ def render_prompt(role: str, name: str, /, *, part: str, **values: object) -> Re
     Binary reading avoids silently normalizing CRLF before measuring the prompt.
     """
     template = Template((Path(__file__).parent / role / "prompts" / f"{name}.md").read_bytes().decode("utf-8"))
+    manifest = json.loads(Path(__file__).with_name("prompt_sections.json").read_text())
+    configured = manifest.get(f"{role}/{name}")
+    identifiers = set(template.get_identifiers())
+    if configured is None or set(configured) != identifiers:
+        raise ValueError(f"Missing prompt placeholder budget entries: {role}/{name}")
     template.substitute(values)  # validate missing placeholders before writing evidence
     parts: list[PromptPart] = []
     cursor = 0
@@ -104,7 +122,7 @@ def render_prompt(role: str, name: str, /, *, part: str, **values: object) -> Re
             if isinstance(value, RenderedPrompt):
                 parts.extend(value.parts)
             else:
-                parts.append(PromptPart(f"{role}.incident_data", str(value)))
+                parts.append(PromptPart(configured[key], str(value)))
         elif match.group("escaped") is not None:
             parts.append(PromptPart(part, "$"))
         cursor = match.end()
@@ -124,15 +142,8 @@ def join_prompts(separator: str, prompts: Iterable[str], *, part: str) -> Render
     return RenderedPrompt(parts)
 
 
-def prompt_prefix(prompt: str, limit: int) -> str:
-    """Clip an ordered prompt to code points without throwing away its part names."""
+def run_agent_turn(provider: AgentProvider, prompt: str, **options: Any) -> StructuredTurn:
+    """Only prompts carrying capped production provenance may reach a provider."""
     if not isinstance(prompt, RenderedPrompt):
-        return prompt[:limit]
-    parts: list[PromptPart] = []
-    remaining = limit
-    for part in prompt.parts:
-        if remaining <= 0:
-            break
-        parts.append(PromptPart(part.name, part.text[:remaining]))
-        remaining -= len(part.text)
-    return RenderedPrompt(parts)
+        raise TypeError("agent prompts must use the capped renderer")
+    return _run_structured_turn(provider, RenderedPrompt(prompt.parts), **options)

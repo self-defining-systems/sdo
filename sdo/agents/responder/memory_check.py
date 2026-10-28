@@ -17,7 +17,6 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 VALIDATION_TIMEOUT_SECONDS = 300
-_MAX_OUTPUT_CHARS = 24_000
 
 
 @dataclass(frozen=True)
@@ -29,11 +28,7 @@ class ValidationResult:
 
 
 def validation_output(raw: bytes) -> str:
-    text = raw.decode("utf-8", errors="replace")
-    if len(text) <= _MAX_OUTPUT_CHARS:
-        return text
-    half = _MAX_OUTPUT_CHARS // 2
-    return f"{text[:half]}\n[... {len(text) - _MAX_OUTPUT_CHARS} characters omitted ...]\n{text[-half:]}"
+    return raw.decode("utf-8", errors="replace")
 
 
 def communicate_within(process: subprocess.Popen[bytes], timeout_seconds: float) -> tuple[bytes, bytes]:

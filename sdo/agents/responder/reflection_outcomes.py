@@ -12,7 +12,6 @@ raw evidence.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import re
@@ -104,7 +103,6 @@ def current_outcome_view(outcome: OutcomeRecord) -> dict[str, Any]:
 # Keep head and tail so command failures and final status remain visible. Full
 # responses can be retrieved from the committed outcome, rather than replayed
 # into every reflection model request.
-_TOOL_RESPONSE_MAX_CHARS = 4000
 
 
 def _canonical(value: Any) -> str:
@@ -237,18 +235,13 @@ def _collapse_tool_calls(calls: list[dict[str, Any]]) -> list[dict[str, Any]]:
             previous[1]["last_at"] = call.get("at")
             continue
         entry = {**call, "evaluations": 1, "last_at": call.get("at"), "outcome_call_index": index}
-        if len(response) > _TOOL_RESPONSE_MAX_CHARS:
-            half = _TOOL_RESPONSE_MAX_CHARS // 2
-            entry["response_json"] = response[:half] + "\n[... omitted ...]\n" + response[-half:]
-            entry["response_json_omitted_chars"] = len(response) - _TOOL_RESPONSE_MAX_CHARS
-            entry["response_json_sha256"] = hashlib.sha256(call["response_json"].encode()).hexdigest()
-            entry["corpus_refs"] = _corpus_refs(parsed_response if parsed_response is not None else response)
-            if isinstance(parsed_response, dict):
-                entry["response_status"] = {
-                    key: parsed_response[key]
-                    for key in ("error", "summary", "application_id", "plan_id", "healthy", "unresolved")
-                    if key in parsed_response
-                }
+        entry["corpus_refs"] = _corpus_refs(parsed_response if parsed_response is not None else response)
+        if isinstance(parsed_response, dict):
+            entry["response_status"] = {
+                key: parsed_response[key]
+                for key in ("error", "summary", "application_id", "plan_id", "healthy", "unresolved")
+                if key in parsed_response
+            }
         retained.append(entry)
         latest[identity] = (signature, entry)
     return retained

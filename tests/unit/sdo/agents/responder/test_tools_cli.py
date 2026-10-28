@@ -8,6 +8,7 @@ import time
 import pytest
 
 from sdo.agents.responder import tools_cli
+from tests.context_helpers import expand_context
 
 
 def test_sdo_cli_exchanges_typed_request_with_fake_controller(tmp_path, monkeypatch, capsys):
@@ -48,7 +49,7 @@ def test_sdo_cli_exchanges_typed_request_with_fake_controller(tmp_path, monkeypa
             "bindings": {"service": "Service/app/api"},
         }
     ]
-    output = capsys.readouterr().out
+    output = expand_context(capsys.readouterr().out)
     assert '"command": "diagnose"' in output
     assert "one match" in output
 
@@ -69,7 +70,7 @@ def test_sdo_source_cli_sends_a_namespaced_resource(monkeypatch, capsys):
             "ref": "Deployment/app/rate",
         }
     ]
-    assert '"source": {"kind": "Deployment"}' in capsys.readouterr().out
+    assert '"source": {"kind": "Deployment"}' in expand_context(capsys.readouterr().out)
 
 
 @pytest.mark.parametrize("command", [[], ["source"], ["plan"]])
@@ -77,7 +78,7 @@ def test_cli_help_shows_concrete_source_and_named_binding_examples(command, caps
     with pytest.raises(SystemExit) as captured:
         tools_cli.main(["--json", *command, "--help"])
     assert captured.value.code == 0
-    output = capsys.readouterr().out
+    output = expand_context(capsys.readouterr().out)
     if command != ["plan"]:
         assert "sdo source Deployment/app/api" in output
     if command != ["source"]:
@@ -119,7 +120,7 @@ def test_sdo_cli_preserves_program_capability_metadata(monkeypatch, capsys, can_
 
     assert tools_cli.main(["--json", "diagnose", "targetport", "--bind", "service=Service/app/api"]) == 0
 
-    output = json.loads(capsys.readouterr().out.splitlines()[0])
+    output = json.loads(expand_context(capsys.readouterr().out).splitlines()[0])
     assert output["program_runs"][0]["can_mitigate"] is can_mitigate
 
 
@@ -317,7 +318,7 @@ def test_check_retains_fresh_detection_and_independent_closure(monkeypatch, caps
         detection_error
     )
     assert seen == [{"command": "detect", "detector_ids": ["routing", "availability"]}, {"command": "verify"}]
-    output = json.loads(capsys.readouterr().out.splitlines()[0])
+    output = json.loads(expand_context(capsys.readouterr().out).splitlines()[0])
     assert output["command"] == "check"
     assert output["detection"] == detection
     assert all(output[key] == value for key, value in closure.items() if key != "command")
@@ -334,7 +335,7 @@ def test_check_does_not_report_health_when_detection_failed(monkeypatch, capsys)
     )
     monkeypatch.setattr(tools_cli, "_exchange", lambda *_: next(responses))
     assert tools_cli.main(["--json", "check"]) == 1
-    output = json.loads(capsys.readouterr().out.splitlines()[0])
+    output = json.loads(expand_context(capsys.readouterr().out).splitlines()[0])
     assert output["healthy"] is False
     assert output["error"] == "read unavailable"
     assert output["detection"]["error"] == "read unavailable"
@@ -366,7 +367,7 @@ def test_cli_bounds_stdout_and_preserves_full_response_in_private_json(monkeypat
     }[command]
 
     assert tools_cli.main(args) == 0
-    stdout = capsys.readouterr().out
+    stdout = expand_context(capsys.readouterr().out)
     assert len(stdout) <= 3200
     if command == "mitigate":
         assert "This action: target finding cleared" in stdout
@@ -396,7 +397,7 @@ def test_cli_persists_small_responses_too(monkeypatch, capsys):
     response = {"command": "verify", "healthy": True, "summary": "clear"}
     monkeypatch.setattr(tools_cli, "_exchange", lambda *_: response)
     assert tools_cli.main(["verify"]) == 0
-    output = capsys.readouterr().out
+    output = expand_context(capsys.readouterr().out)
     details = Path(output.split("Full JSON: ", 1)[1].splitlines()[0])
     try:
         assert "sdo verify: clear" in output
@@ -411,7 +412,7 @@ def test_json_flag_works_before_or_after_the_subcommand(monkeypatch, capsys, arg
     response = {"command": "verify", "healthy": False, "findings": [{"evidence": "full live fact"}]}
     monkeypatch.setattr(tools_cli, "_exchange", lambda *_: response)
     assert tools_cli.main(arguments) == 0
-    assert json.loads(capsys.readouterr().out) == response
+    assert json.loads(expand_context(capsys.readouterr().out)) == response
 
 
 def test_act_full_json_preserves_existing_output_redaction(monkeypatch, capsys, tmp_path):
@@ -439,7 +440,7 @@ def test_act_full_json_preserves_existing_output_redaction(monkeypatch, capsys, 
         )
         == 0
     )
-    text = capsys.readouterr().out
+    text = expand_context(capsys.readouterr().out)
     details = Path(text.split("Full JSON: ", 1)[1].splitlines()[0])
     full = details.read_text()
     assert "SYNTHETIC_PRIVATE_CANARY" not in text + full
@@ -452,7 +453,7 @@ def test_client_side_failures_also_produce_compact_output_and_complete_json(monk
 
     monkeypatch.setattr(tools_cli, "_exchange", lambda *_: {"error": "menu read failed"})
     assert tools_cli.main(["mitigate", "repair"]) == 1
-    text = capsys.readouterr().out
+    text = expand_context(capsys.readouterr().out)
     details = Path(text.split("Full JSON: ", 1)[1].splitlines()[0])
     try:
         assert json.loads(details.read_text())["actions"][0]["error"] == "menu read failed"
@@ -608,14 +609,14 @@ def test_mitigate_match_rejects_hand_built_selection_inputs(monkeypatch, capsys,
 def test_mitigate_match_is_discoverable_in_help_and_generated_surface(capsys):
     with pytest.raises(SystemExit):
         tools_cli.main(["mitigate", "--help"])
-    assert "--match ID" in capsys.readouterr().out
-    assert "--match" in tools_cli.command_surface()["commands"]["mitigate"]
+    assert "--match ID" in expand_context(capsys.readouterr().out)
+    assert "sdo mitigate --help" in tools_cli.command_surface()["commands"]["mitigate"]
 
 
 def test_multi_option_help_and_generated_surface_are_discoverable(capsys):
     with pytest.raises(SystemExit):
         tools_cli.main(["mitigate", "--help"])
-    help_text = capsys.readouterr().out
+    help_text = expand_context(capsys.readouterr().out)
     assert "independent options" in help_text
     assert "overlapping" in help_text.lower()
     assert "independent options" in tools_cli.command_surface()["mitigation"]
@@ -664,7 +665,7 @@ def test_verify_wait_uses_cached_controller_protocol(monkeypatch, capsys):
     monkeypatch.setattr(tools_cli, "_exchange", lambda request, _: seen.append(request) or {"summary": "cached"})
     assert tools_cli.main(["verify", "--wait", "0.25"]) == 0
     assert seen == [{"command": "verify", "wait_seconds": 0.25}]
-    assert "cached" in capsys.readouterr().out
+    assert "cached" in expand_context(capsys.readouterr().out)
 
 
 @pytest.mark.parametrize("value", ["-1", "nan", "inf", "86401"])
@@ -677,7 +678,7 @@ def test_mitigation_help_preserves_database_reference_details(capsys: pytest.Cap
     with pytest.raises(SystemExit) as stopped:
         tools_cli.main(["mitigate", "--help"])
     assert stopped.value.code == 0
-    help_text = " ".join(capsys.readouterr().out.split())
+    help_text = " ".join(expand_context(capsys.readouterr().out).split())
     assert "EnsureDatabaseUser" in help_text
     assert "config_map" in help_text
     assert "assignment" in help_text
@@ -690,7 +691,7 @@ def test_program_help_explains_current_checkout_and_revision(command, capsys, mo
     with pytest.raises(SystemExit) as stopped:
         tools_cli.main([command, "--help"])
     assert stopped.value.code == 0
-    output = " ".join(capsys.readouterr().out.split())
+    output = " ".join(expand_context(capsys.readouterr().out).split())
     assert "current checkout" in output
     assert "compile" in output
     assert "working-tree:" in output

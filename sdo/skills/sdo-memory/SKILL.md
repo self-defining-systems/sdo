@@ -7,7 +7,7 @@ description: Find and use operational memory by logical ID, or validate authoriz
 
 Read memory freely; edit only the artifact classes and proposal checkout your task authorizes.
 
-1. Find the matching logical IDs in the supplied snapshot or inventory; read a playbook before using it. Check its diagnosis against current resources first, or after applying when the match is ready to mitigate.
+1. Read the supplied playbook index (ID and one-line description), then open only relevant READMEs; read a playbook before using it. Check its diagnosis against current resources first, or after applying when the match is ready to mitigate.
 2. Before editing, read the [generated layout and ownership map](references/layout.md); preserve accepted provenance and corpus cases, and the task's actor, phase, accepted base and incident identity.
 3. For reflection, read the installed `sdo-playbook-authoring` skill; for detector changes, read `sdo-detector-authoring`. Open only the reference needed for the current step.
 4. Validate final edits with [check_memory](references/runtime.md#check_memory), supply typed decision fields directly, and return the same decision and logical IDs; correct named diagnostics before checking again. The broker independently validates final bytes.
@@ -20,7 +20,7 @@ Read memory freely; edit only the artifact classes and proposal checkout your ta
 - Reflection avoids hard-coded service or app names: prefer runtime bindings from findings, Diagnose or responder values; isolate unavoidable names in one logical helper and document app constants in the playbook README.
 - Use detectors to find problems proactively and playbooks to diagnose and mitigate; their relationship need not be one to one.
 - Refine a playbook whose mitigation failed or was undone, or set `status: retired` and a nonempty `retired_reason` in its front matter; retired playbooks remain in history but are not compiled or offered.
-- Keep memory small and current: maintain its index, merge duplicates and respect the worker snapshot budget.
+- Keep memory small and current: give each playbook README a one-line `description:` in its YAML front matter; maintain its index and merge duplicates.
 - A script fix is a first-class learnable mitigation with relation-derived Values, within incident budgets.
 - Preserve [credential references](../sdo-incident-response/references/database-credentials.md), never resolved values: typed database repairs accept env or namespace-local ConfigMap keys and optional literal assignment names; only the executor resolves them.
 - Exclude benchmark/grader details, secrets and physical paths from memory text; physical layout is only for checkout edits and tooling, while prose and results use logical IDs.

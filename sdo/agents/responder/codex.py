@@ -7,10 +7,11 @@ from typing import TYPE_CHECKING
 
 from google.protobuf import json_format
 
-from libs.agent_cli.structured import AGENT_PROVIDERS, StructuredTurnError, run_structured_turn, turn_usage
+from libs.agent_cli.structured import AGENT_PROVIDERS, StructuredTurnError, turn_usage
 from libs.agent_cli.usage_checkpoint import UsageCheckpoint
 from sdo.agents.code_paths import agent_guidance
 from sdo.agents.prompt_templates import RenderedPrompt, named_prompt, render_prompt
+from sdo.agents.prompt_templates import run_agent_turn as run_structured_turn
 from sdo.agents.provider import MODEL_ENV, resolve_agent
 from sdo.agents.responder import recorded_actions
 from sdo.agents.responder.continuation import continuation_prompt

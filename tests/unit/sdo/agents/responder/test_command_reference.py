@@ -11,6 +11,7 @@ import pytest
 
 from sdo.agents.responder import tools_cli
 from sdo.agents.responder.credentials import AGENT_SKILLS, install_skills
+from tests.context_helpers import expand_context
 
 ROOT = Path(__file__).resolve().parents[5]
 REFERENCE = ROOT / "sdo/skills/sdo-incident-response/references/commands.md"
@@ -21,9 +22,9 @@ def test_generated_reference_covers_cli_and_installs_with_worker(tmp_path: Path)
 
     generated = render_reference()
     assert REFERENCE.read_text() == generated
-    for command, usage in tools_cli.command_surface()["commands"].items():
+    for command in tools_cli.command_surface()["commands"]:
         assert f"## {command}\n" in generated
-        assert usage in generated
+        assert tools_cli.command_surface()["commands"][command].split("; read sdo", 1)[0].split(": ", 1)[1] in generated
     install_skills(tmp_path, AGENT_SKILLS["responder"])
     assert (tmp_path / "skills/sdo-incident-response/references/commands.md").read_text() == generated
 
@@ -72,7 +73,7 @@ def test_response_fields_are_the_cli_help_contract(capsys: pytest.CaptureFixture
         with pytest.raises(SystemExit) as stopped:
             tools_cli.main([command, "--help"])
         assert stopped.value.code == 0
-        assert fields in " ".join(capsys.readouterr().out.split())
+        assert fields in " ".join(expand_context(capsys.readouterr().out).split())
 
 
 def test_mutation_reference_distinguishes_envelope_from_complete_file(capsys: pytest.CaptureFixture[str]) -> None:
@@ -84,7 +85,7 @@ def test_mutation_reference_distinguishes_envelope_from_complete_file(capsys: py
         assert "Complete report fields (`details_file`)" in section
         with pytest.raises(SystemExit):
             tools_cli.main([name, "--help"])
-        assert "Complete report fields (details_file)" in " ".join(capsys.readouterr().out.split())
+        assert "Complete report fields (details_file)" in " ".join(expand_context(capsys.readouterr().out).split())
 
 
 def test_reference_keeps_new_help_notes_without_repeating_shared_help(monkeypatch: pytest.MonkeyPatch) -> None:

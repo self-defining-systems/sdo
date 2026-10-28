@@ -117,8 +117,8 @@ max_chars = 744
 reason = "Actual benchmark transport appendix: 676 Unicode code points, with 10 percent headroom."
 
 [responder.incident_data]
-max_chars = 6471
-reason = "Measured typed-coverage fixture maximum: 5882 Unicode code points, with 10 percent headroom; real coverage replaces the pending marker and complete overflow facts remain available."
+max_chars = 5400
+reason = "Reduced to the existing incident tool-output cap; complete facts and generated summaries share the production renderer."
 
 [responder.instructions]
 max_chars = 513

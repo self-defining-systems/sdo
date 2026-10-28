@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import os
 import re
 import sys
 import time
 import uuid
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from typing import Any
 
@@ -137,8 +139,23 @@ class _OptionFinding(argparse.Action):
             namespace.finding = [*getattr(namespace, "finding", []), values]
 
 
+class _CappedParser(argparse.ArgumentParser):
+    """Help and usage errors share the same context boundary as command results."""
+
+    def _limit(self) -> int:
+        command = self.prog.split()[1:]
+        return budget_for("tool_stdout." + command[0]) if command else 8192
+
+    def print_help(self, file=None) -> None:
+        self._print_message(cap_text(self.format_help(), self._limit() - 1) + "\n", file or sys.stdout)
+
+    def error(self, message: str) -> None:
+        text = self.format_usage() + f"{self.prog}: error: {message}\n"
+        self.exit(2, cap_text(text, self._limit() - 1) + "\n")
+
+
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
+    parser = _CappedParser(
         prog="sdo",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="prior_stages: automatic repairs. "
@@ -363,14 +380,18 @@ def command_surface() -> dict[str, object]:
     """Generate incident-facing signatures from the same parser that accepts commands."""
     parser = _parser()
     subcommands = next(action for action in parser._actions if isinstance(action, argparse._SubParsersAction))
+    purposes = {action.dest: action.help for action in subcommands._choices_actions}
+    descriptions = {
+        name: f"sdo {name}: {purposes[name]}; read sdo {name} --help for arguments." for name in subcommands.choices
+    }
+    for name, description in descriptions.items():
+        if len(description) > budget_for("session_context.tool_description"):
+            raise ValueError(f"{name}: listing description exceeds its budget")
     return {
-        "commands": {
-            name: " ".join(command.format_usage().removeprefix("usage: ").split())
-            for name, command in subcommands.choices.items()
-        },
-        "mitigation": subcommands.choices["mitigate"].description,
+        "commands": descriptions,
+        "mitigation": purposes["mitigate"],
         "output": "Full JSON: path retains complete evidence. Mutations print progress and the file schema; "
-        "--json keeps mutations compact and prints other complete responses. Extract needed fields.",
+        "--json uses the same caps; complete evidence stays in files. Extract needed fields.",
     }
 
 
@@ -746,7 +767,7 @@ def _check(args: argparse.Namespace, directory: Path) -> dict[str, object]:
     return response
 
 
-def main(argv: list[str] | None = None) -> int:
+def _main(argv: list[str] | None = None) -> int:
     parser = _parser()
     args, extra = parser.parse_known_args(argv)
     if extra:
@@ -767,6 +788,30 @@ def main(argv: list[str] | None = None) -> int:
         _print_client_error(args, exc)
         return 1
     return 1 if response.get("error") else 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Cap all emitted channels, including help, errors and future command handlers."""
+    arguments = list(sys.argv[1:] if argv is None else argv)
+    commands = RESPONSE_FIELDS.keys()
+    command = next((value for value in arguments if value in commands), None)
+    limit = budget_for("tool_stdout." + command) if command else 8192
+    stdout, stderr = io.StringIO(), io.StringIO()
+    try:
+        with redirect_stdout(stdout), redirect_stderr(stderr):
+            return _main(arguments)
+    finally:
+        out, err = stdout.getvalue(), stderr.getvalue()
+        combined = out + err
+        size = len(combined.encode()) if command in MUTATION_COMMANDS else len(combined)
+        if size <= limit:
+            sys.stdout.write(out)
+            sys.stderr.write(err)
+        else:
+            text = cap_text(
+                combined, limit - 1, json_output="--json" in arguments, bytes_limit=command in MUTATION_COMMANDS
+            )
+            print(text)
 
 
 if __name__ == "__main__":

@@ -75,8 +75,9 @@ async def render_contract() -> str:
         "the whole result.",
     ]
     with tempfile.TemporaryDirectory() as directory:
-        tools = await validation_server(Path(directory)).list_tools()
-    sections.extend(f"## {tool.name}\n\n{inspect.cleandoc(tool.description or '').rstrip()}" for tool in tools)
+        server = validation_server(Path(directory))
+        tools = await server.list_tools()
+    sections.extend(f"## {tool.name}\n\n{inspect.cleandoc(server.help_texts[tool.name]).rstrip()}" for tool in tools)
     return "\n\n".join(sections) + "\n"
 
 

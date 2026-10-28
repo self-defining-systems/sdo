@@ -920,3 +920,31 @@ target's seed corpus through plain `go test`, and
 one job per module). `tests/unit/sdo/operator/test_ci_speed.py` rejects a `-fuzz`
 flag in `ci.yml` and checks that every nightly target still exists, since Go passes
 a missing target silently.
+
+## Context engineering gates
+
+All registered agents use `sdo.agents.prompt_templates` for construction and provider dispatch. Every template placeholder has an explicit entry in `sdo/agents/prompt_sections.json`, referring to a cap in `prompt_budgets.toml`. Oversized values become generated summaries and private session-file references. Repeated parts share an aggregate cap; complete data is never discarded. The renderer rejects unknown sections and placeholders.
+
+Run the registry, real-scale producer, golden and provider-session checks together:
+
+```bash
+uv run --extra test pytest -q -p no:tach tests/unit/sdo/agents/prompts
+uv run python scripts/update_prompt_goldens.py
+uv run python scripts/check_prompt_budgets.py --base origin/vic-lsh/dev/sdo-improve --head HEAD
+```
+
+`test_context_registry.py` enumerates capability registrations and requires a production-rendered fixture for each implementation/capability. Its AST scan rejects direct provider calls, independent template evaluation and inline prompt construction outside the single owner; negative controls prove the guard fires. The template sweep enumerates every placeholder on generated ~185k-character values. No new template or role can silently inherit an unmeasured exception.
+
+`test_production_caps.py` enumerates every CLI command and MCP registration, requires a matching real-scale fixture, and invokes the actual output boundary. CLI help/errors/stdout/stderr share a runtime cap; MCP dispatch caps every result and error. JSON callers receive a bounded envelope with the complete file path. Listing descriptions have their own caps; longer help lives in files. Full tool replies and prompt values are private, content-addressed session files under `$SDO_SESSION_SCRATCH/context/` (standalone calls use `/tmp/sdo-context/`). Playbook inventories list logical IDs and one-line README `description:` metadata; open only relevant documents.
+
+`check_errors.sh` runs the registry ratchet and `scripts/check_skill_sizes.py`. The size lint globs all Markdown below `sdo/skills/`, including future skills/references, and rejects SKILL.md over 100 lines/1,200 words or other documents over 2,000 words. SDK references are generated indexes plus per-package topic files; `gen_skill_references.sh --check` checks the entire bundle.
+
+Fastloop `preflight` runs the offline live-shape gate before host checks. It generates a 100-finding/100-playbook incident, renders responder/reflection prompts, emits each registered CLI command's text and JSON response, and reads the scripted provider's real session file. The hermetic shard runs the same producer/consumer check and negative controls. Actual scripted-agent turns also check their persisted provider sessions before returning a result. Budgets currently cap responder messages at 12k characters, reflection messages at 15k, and total tool text at 128 KiB characters; the manifest is authoritative.
+
+For a saved provider session:
+
+```bash
+uv run python scripts/check_session_context.py /absolute/path/to/rollout.jsonl --role reflection
+```
+
+The reader measures canonical Codex response items or Claude messages, including list-valued custom tool outputs and resumed messages, without double counting event mirrors. Missing or unsupported evidence fails closed. A gate failure points to the measured dimension and configured cap. This is a context-shape check; model repair quality still requires the separately authorized replay/live tiers. Keep recorded inputs read-only and measurement outputs outside the repository.

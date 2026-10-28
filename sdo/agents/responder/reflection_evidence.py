@@ -239,25 +239,41 @@ def read_capture(
     return page.model_dump()
 
 
-def memory_view(snapshot: OperationalMemorySnapshot) -> dict[str, Any]:
-    """Inventory the accepted snapshot; full files remain in the proposal checkout."""
+def playbook_description(markdown: str) -> str:
+    """Prefer authored one-line metadata; index old accepted documents too."""
+    import yaml
+
+    if markdown.startswith("---\n"):
+        sections = markdown.split("---\n", 2)
+        if len(sections) == 3:
+            metadata = yaml.safe_load(sections[1])
+            if isinstance(metadata, dict) and isinstance(metadata.get("description"), str):
+                return " ".join(metadata["description"].split())
+            markdown = sections[2]
+    return next(
+        (line.lstrip("# ").strip() for line in markdown.splitlines() if line.startswith("#")),
+        "Description absent; open README.",
+    )
+
+
+def memory_view(snapshot: OperationalMemorySnapshot, *, linked_ids: set[str] | None = None) -> dict[str, Any]:
+    """Every logical ID and description, incident-linked first; bodies stay in files."""
+    linked = linked_ids or set()
     return {
         "accepted_commit": snapshot.accepted_commit,
-        "goal_markdown": snapshot.goal_markdown[:1000],
-        "architecture_markdown": snapshot.architecture_markdown[:2000],
-        "goal_omitted_characters": max(0, len(snapshot.goal_markdown) - 1000),
-        "architecture_omitted_characters": max(0, len(snapshot.architecture_markdown) - 2000),
         "detectors": [
-            {"id": item.id, "description": item.description[:200], "playbook_ids": list(item.possible_playbook_ids)}
-            for item in snapshot.detectors[:30]
+            {
+                "id": item.id,
+                "description": " ".join(item.description.split()),
+                "playbook_ids": list(item.possible_playbook_ids),
+            }
+            for item in sorted(snapshot.detectors, key=lambda item: (item.id not in linked, item.id))
         ],
         "playbooks": [
-            {"id": item.id, "excerpt": item.markdown[:400], "script_names": [script.name for script in item.scripts]}
-            for item in snapshot.playbooks[:30]
+            {"id": item.id, "description": playbook_description(item.markdown)}
+            for item in sorted(snapshot.playbooks, key=lambda item: (item.id not in linked, item.id))
         ],
-        "omitted_detectors": max(0, len(snapshot.detectors) - 30),
-        "omitted_playbooks": max(0, len(snapshot.playbooks) - 30),
-        "full_text": "Read relevant accepted files in the proposal checkout through the memory inventory.",
+        "full_text": "Open only relevant accepted files in the proposal checkout.",
     }
 
 

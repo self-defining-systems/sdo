@@ -13,6 +13,8 @@ Accepted source and developer changes express intent. Operational memory is fall
 6. Undo proven harms; keep useful repairs. Clean up temporary investigation resources; label helper Pods/Jobs `sdo.dev/responder-helper=true`, never application workloads.
 7. Fix `still_broken`; inspect `verification_blockers`; keep `already_done`/`prior_response_progress`; controller rechecks. Merge peer learning.
 
+Read the playbook index and its one-line descriptions first; open only relevant READMEs. Oversized prompt sections, tool replies and help point to complete session files; extract only the fields needed.
+
 Source before raw commands.
 
 Unfinished: blockers.

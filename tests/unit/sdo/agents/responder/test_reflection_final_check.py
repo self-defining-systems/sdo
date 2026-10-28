@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from sdo.agents.responder.reflection import ClaudeSessionBackend, CodexSessionBackend
+from tests.context_helpers import expand_context
 from tests.structured_turns import ScriptedAgent, reply
 
 if TYPE_CHECKING:
@@ -219,7 +220,7 @@ def test_final_check_rechecks_edits_after_an_earlier_pass(
     )
     assert result.learning_decision == "no_change"
     assert calls == 2
-    assert "layout.unknown-path" in agent.prompts[1]
+    assert "layout.unknown-path" in expand_context(agent.prompts[1])
 
 
 def test_final_check_stops_at_original_deadline(
@@ -410,7 +411,7 @@ def test_repeat_chain_is_corrected_in_the_same_reflection_session(learned_reflec
     )
     assert calls == 2
     assert result.learning_decision == "updated"
-    assert "detector.go" in agent.prompts[1]
+    assert "detector.go" in expand_context(agent.prompts[1])
 
 
 @pytest.mark.parametrize("backend_type", [CodexSessionBackend, ClaudeSessionBackend])
