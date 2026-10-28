@@ -417,9 +417,9 @@ func (o *TrafficObserver) Summary() map[string]any {
 // TrafficSnapshotProvider adds synthetic-traffic windows and Service
 // reachability observations to another provider's snapshots.
 type TrafficSnapshotProvider struct {
-	Base                          SnapshotProvider
-	Observer                      *TrafficObserver
-	Reachability                  *ServiceReachabilityObserver
+	Base         SnapshotProvider
+	Observer     *TrafficObserver
+	Reachability *ServiceReachabilityObserver
 	// Reference is this cluster's reachability baseline; nil means no record.
 	Reference *ReachabilityReference
 }

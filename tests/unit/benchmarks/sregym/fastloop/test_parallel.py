@@ -377,32 +377,30 @@ def test_lane_tree_rejects_volumes_outside_the_shared_root(tmp_path, volume):
         shared_memory.lane_git_command(_lane(tmp_path), volume, tmp_path, "status")
 
 
-BASELINE = ".sdo/diagnostics/detectors/health/service-reachability/baseline.json"
-
-
 def _divergence(monkeypatch, tmp_path, lane_tree, changed):
     def command(*argv):
         return lane_tree if "rev-parse" in argv else "\n".join(changed)
 
     monkeypatch.setattr(shared_memory, "_command", command)
-    return shared_memory.lane_divergence(_lane(tmp_path), "/opt/sdo-parallel/lanes/kind-a", tmp_path, "tree-a")
+    return shared_memory.assert_lane_matches(_lane(tmp_path), "/opt/sdo-parallel/lanes/kind-a", tmp_path, "tree-a")
 
 
-def test_lanes_may_differ_only_in_per_cluster_health_captures(monkeypatch, tmp_path):
-    assert _divergence(monkeypatch, tmp_path, "tree-a", []) == []
-    assert _divergence(monkeypatch, tmp_path, "tree-b", [BASELINE]) == [BASELINE]
+def test_identical_lane_trees_attach(monkeypatch, tmp_path):
+    assert _divergence(monkeypatch, tmp_path, "tree-a", []) is None
 
 
+# Cluster-local health captures are controller state now, so no path is exempt:
+# lanes from one accepted tree are byte-identical or attachment refuses.
 @pytest.mark.parametrize(
     "changed",
     [
         [],
         [".sdo/playbooks/fix/README.md"],
-        [BASELINE, ".sdo/outcomes/x.json"],
-        [".sdo/diagnostics/detectors/health/a/b/baseline.json"],
+        [".sdo/diagnostics/detectors/health/service-reachability/baseline.json"],
+        [".sdo/diagnostics/detectors/health/service-reachability/baseline.json", ".sdo/outcomes/x.json"],
     ],
 )
-def test_any_other_lane_divergence_is_refused(monkeypatch, tmp_path, changed):
+def test_any_lane_divergence_is_refused(monkeypatch, tmp_path, changed):
     with pytest.raises(ValueError, match="merge through the broker"):
         _divergence(monkeypatch, tmp_path, "tree-b", changed)
 
