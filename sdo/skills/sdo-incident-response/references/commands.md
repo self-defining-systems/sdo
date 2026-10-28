@@ -55,7 +55,7 @@ Action output separates target progress from incident verification and lists fix
 
 ## status
 
-read fresh findings and detector confirmation; pending is not healthy
+read findings and detector confirmation
 
 ```text
 sdo status [-h]
@@ -65,7 +65,7 @@ Key JSON fields: `healthy, findings[], detector_states[], drift[], drift_events[
 
 ## detect
 
-run fresh detectors; pending with a reason means health is unproven
+run fresh detectors; pending health is unproven
 
 ```text
 sdo detect [-h] [--detector ID [ID ...]]
@@ -77,7 +77,7 @@ Key JSON fields: `healthy, findings[], detector_states[]`.
 
 ## check
 
-run fresh detectors then independent closure verification
+run detectors and verify closure; --detector ID selects detectors
 
 ```text
 sdo check [-h] [--detector ID [ID ...]]
@@ -151,7 +151,7 @@ Complete report fields (`details_file`): `actions[].{application_id, targeted_he
 
 ## mitigate
 
-apply independent options in one call; overlaps refused; shows progress and full JSON
+apply independent options; --finding FINGERPRINT scopes verification; overlapping writes refused
 
 ```text
 sdo mitigate [-h] [--finding FINGERPRINT] [--rounds ROUNDS] [--selection FILE] [--selection-set FILE] [--option ID] [--param NAME=VALUE] [--match ID] [--bind NAME=REF] [option]
@@ -203,7 +203,7 @@ Key JSON fields: `source (accepted Kubernetes object)`.
 
 ## act
 
-record one command; outer shell chains run separately; shows progress and a complete JSON report
+record a command with --resource Kind/namespace/name
 
 ```text
 sdo act [-h] --resource Kind/namespace/name [--summary SUMMARY] [--irreversible] ...
