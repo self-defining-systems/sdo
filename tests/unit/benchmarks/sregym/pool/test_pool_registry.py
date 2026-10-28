@@ -71,8 +71,8 @@ def test_transition_refuses_unexpected_state(tmp_path: Path) -> None:
     ],
 )
 def test_lane_states_carry_their_facts(changes: dict[str, object]) -> None:
-    with pytest.raises(ValueError):
-        lane("a", **changes)
+    with pytest.raises(ValueError, match="lane a"):
+        Lane.model_validate({"id": "a", "host": "chelan5", "run_dir": "/l", "work": "p", **changes})
 
 
 def test_unique_ids_and_host_cap(tmp_path: Path) -> None:
