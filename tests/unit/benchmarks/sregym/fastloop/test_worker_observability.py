@@ -29,7 +29,6 @@ def test_legacy_astronomy_problem_gets_telemetry_before_deployment(monkeypatch: 
     monkeypatch.setenv("KUBECONFIG", "/lane/kubeconfig")
     monkeypatch.setenv("SREGYM_KIND_CLUSTER_NAME", "lane52")
     monkeypatch.setattr(adapter, "prepare_oracle_observability", lambda **_: calls.append("telemetry"))
-    monkeypatch.setattr(adapter, "route_astronomy_traces", lambda *_: calls.append("traces"))
     monkeypatch.setattr(
         worker_bridge,
         "importlib",
@@ -40,4 +39,4 @@ def test_legacy_astronomy_problem_gets_telemetry_before_deployment(monkeypatch: 
         ),
     )
     assert worker_bridge.main() == {"deployed": True}
-    assert calls == ["cleanup", "telemetry", "deploy", "admission", "traces"]
+    assert calls == ["cleanup", "telemetry", "deploy", "admission"]

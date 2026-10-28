@@ -72,6 +72,9 @@ def _command(argv: list[str], *, timeout: int = 180) -> str:
 def _tool(*args: str) -> dict[str, Any]:
     output = _command(["sdo", *args, "--json"])
     response = json.loads(output.splitlines()[0])
+    if isinstance(response, dict) and response.get("summarized") and response.get("details_file"):
+        # Capped replies keep the complete response in the file they name.
+        response = json.loads(Path(response["details_file"]).read_text(encoding="utf-8"))
     if not isinstance(response, dict) or response.get("error"):
         raise RuntimeError(f"sdo {' '.join(args)}: {response.get('error') if isinstance(response, dict) else output}")
     return response
@@ -313,6 +316,33 @@ def _assess_policy_drift(request: IncidentRequest, event: DriftEvent, label: Dri
     return label
 
 
+def _health_related(request: IncidentRequest, objects: set[tuple[str, str]]) -> set[tuple[str, str]]:
+    """Objects a non-drift health finding names directly or selects through an accepted Service."""
+
+    related: set[tuple[str, str]] = set()
+    for finding in request.findings:
+        if finding.detector_id.startswith("drift."):
+            continue
+        ref = finding.primary_resource
+        if (ref.kind, ref.name) in objects:
+            related.add((ref.kind, ref.name))
+        workloads = {
+            (kind, name) for kind, name in objects - related if kind in {"Deployment", "StatefulSet", "DaemonSet"}
+        }
+        if ref.kind != "Service" or not workloads:
+            continue
+        try:
+            selector = _tool("source", f"Service/{request.namespace}/{ref.name}")["source"]["spec"].get("selector")
+            for kind, name in sorted(workloads) if selector else ():
+                source = _tool("source", f"{kind}/{request.namespace}/{name}")["source"]
+                labels = source["spec"]["template"]["metadata"].get("labels") or {}
+                if all(labels.get(key) == value for key, value in selector.items()):
+                    related.add((kind, name))
+        except (KeyError, TypeError, RuntimeError):
+            continue
+    return related
+
+
 def scripted_responder(request: IncidentRequest) -> IncidentResult:
     if os.environ.get("SDO_SCRIPTED_REPLAY_SLOT") is not None:
         from .scripted_replay import replay_recorded_repair as replay
@@ -382,7 +412,10 @@ def scripted_responder(request: IncidentRequest) -> IncidentResult:
         )
     first = _tool("verify")
     if not first.get("healthy"):
-        seen: set[tuple[str, str]] = set(unsure)
+        # Unknown drift alone is not repair authority. A separate health
+        # finding on the object, or on a Service selecting its pods, still
+        # authorizes source-backed recovery.
+        seen: set[tuple[str, str]] = unsure - _health_related(request, unsure)
         seen.update((ref["kind"], ref["name"]) for repair in repairs for ref in repair["resources"])
         changed = request.state_changes.changes if request.state_changes else []
         candidates = [
@@ -408,6 +441,7 @@ def scripted_responder(request: IncidentRequest) -> IncidentResult:
             if key in seen:
                 continue
             seen.add(key)
+            unsure.discard(key)
             action_start = _now()
             if removed:
                 _remove_added(request, ref)
@@ -439,41 +473,56 @@ def scripted_responder(request: IncidentRequest) -> IncidentResult:
         time.sleep(5)
     healthy = bool(verification.get("healthy"))
     if healthy and os.environ.get("SDO_SCRIPTED_SOURCE_REPAIR") == "1":
-        # A harmless source addition exercises accepted SOURCE publication.
-        # Keep it once per repository so the next incident tests the resulting
-        # lock rather than invalidating it again with another fixture change.
-        path = Path(request.repository_worktree) / "kubernetes/verification-policy.yaml"
-        if not path.exists():
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(
-                json.dumps(
-                    {
-                        "apiVersion": "v1",
-                        "kind": "ConfigMap",
-                        "metadata": {"name": "verification-policy", "namespace": request.namespace},
-                        "data": {"verification": "independent-health"},
-                    }
-                )
-                + "\n",
-                encoding="utf-8",
-            )
+        # Refine an existing source object: source publication must not invent
+        # topology that the independent toy judge correctly refuses.
+        marker = "sdo.dev/scripted-verification"
+        candidate = None
+        present = False
+        for path in sorted((Path(request.repository_worktree) / "kubernetes").rglob("*.yaml")):
+            documents = list(yaml.safe_load_all(path.read_text()))
+            for obj in documents:
+                if not isinstance(obj, dict) or obj.get("kind") not in {
+                    "Service",
+                    "Deployment",
+                    "StatefulSet",
+                    "DaemonSet",
+                    "ConfigMap",
+                }:
+                    continue
+                metadata = obj.get("metadata", {})
+                if (
+                    not obj.get("apiVersion")
+                    or not metadata.get("name")
+                    or metadata.get("namespace", request.namespace) != request.namespace
+                ):
+                    continue
+                if metadata.get("annotations", {}).get(marker) == "independent-health":
+                    present = True
+                if candidate is None:
+                    candidate = path, documents, obj
+        if not present:
+            if candidate is None:
+                raise ValueError("scripted source repair requires an existing deployment manifest")
+            path, documents, obj = candidate
+            obj["metadata"].setdefault("annotations", {})[marker] = "independent-health"
+            path.write_text(yaml.safe_dump_all(documents, sort_keys=False))
             action_start = _now()
             _command(["kubectl", "-n", request.namespace, "apply", "-f", str(path)])
             repairs.append(
                 {
                     "action_id": f"source-{len(repairs) + 1}",
                     "kind": "kubectl-apply",
-                    "target": "ConfigMap/verification-policy",
+                    "target": f"{obj['kind']}/{obj['metadata']['name']}",
                     "resources": [
                         {
-                            "api_version": "v1",
-                            "kind": "ConfigMap",
+                            "api_version": obj["apiVersion"],
+                            "kind": obj["kind"],
                             "namespace": request.namespace,
-                            "name": "verification-policy",
+                            "name": obj["metadata"]["name"],
                         }
                     ],
                     "summary": "Recorded scripted verification policy in source",
-                    "details": "Applied the source-backed scripted gate ConfigMap",
+                    "details": "Applied a source-backed annotation without changing topology",
                     "started_at": action_start,
                     "completed_at": _now(),
                     "success": True,
@@ -603,17 +652,54 @@ def _check_reflection(worktree: Path, playbook_ids: list[str]) -> None:
         _command(["sdo-operator", "memory", "check", "--root", str(worktree), "--decision", str(decision)], timeout=180)
 
 
+def _checkout_reflection(worktree: Path, summary: str, reason: str) -> ReflectionTurn:
+    """Report the actual publication diff, including Go-prepared corpus edits."""
+    base = os.environ.get("SDO_BASE_COMMIT", "HEAD")
+    git = ["git", "-C", str(worktree)]
+    paths: set[str] = set()
+    for args in (
+        [
+            "-c",
+            "diff.external=",
+            "diff",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--no-renames",
+            "--name-only",
+            "-z",
+            base,
+            "--",
+        ],
+        ["ls-files", "--others", "--exclude-standard", "-z"],
+        ["ls-files", "--others", "-z", "--", ".sdo/lib", ".sdo/corpus", ".sdo/rendered"],
+    ):
+        paths.update(path for path in _command([*git, *args]).split("\0") if path)
+    ids = sorted(
+        {parts[2] for path in paths if len(parts := Path(path).parts) >= 4 and parts[:2] == (".sdo", "playbooks")}
+    )
+    if paths:
+        _check_reflection(worktree, ids)
+        return ReflectionTurn(
+            summary="Publish existing checkout edits: " + summary,
+            learning_decision="updated",
+            playbook_ids=ids,
+        )
+    return ReflectionTurn(summary=summary, learning_decision="no_change", no_change_reason=reason, playbook_ids=[])
+
+
 class ScriptedReflector:
     def resume(self, **kwargs: Any) -> ReflectionTurn:
-        if os.environ.get("SDO_SCRIPTED_REPLAY_SLOT") is not None:
-            return ReflectionTurn(
-                summary="Recorded source restoration has no generalized program fixture",
-                learning_decision="no_change",
-                no_change_reason="Rehearsal verifies closure without inventing reusable memory",
-                playbook_ids=[],
-            )
         worktree = Path(kwargs["worktree"])
+        if os.environ.get("SDO_SCRIPTED_REPLAY_SLOT") is not None:
+            return _checkout_reflection(
+                worktree,
+                "Recorded source restoration has no generalized program fixture",
+                "Rehearsal verifies closure without inventing reusable memory",
+            )
         incident = str(kwargs["incident_id"])
+        outcome = kwargs.get("outcome")
+        if outcome is not None and outcome.classification != "success" and not kwargs.get("cause_work"):
+            return _checkout_reflection(worktree, "No independently eligible repair to save", "no recorded repair")
         capture = Path(os.environ.get("SDO_CAPTURED_CORPUS_DIR", "/sdo/session/corpus"))
         open_at = "detect"
         policy_pair = _captured_policy_pair(capture, open_at)
@@ -621,11 +707,8 @@ class ScriptedReflector:
         program_source = NETWORKPOLICY_PROGRAM_SOURCE if policy_pair else PROGRAM_SOURCE
         parameter = "policy=NetworkPolicy" if policy_pair else "service=Service"
         if (worktree / ".sdo" / "playbooks" / program_id / "diagnose.go").is_file():
-            return ReflectionTurn(
-                summary=f"{program_id} program is already accepted",
-                learning_decision="no_change",
-                no_change_reason="Accepted program covers this class",
-                playbook_ids=[],
+            return _checkout_reflection(
+                worktree, f"{program_id} program is already accepted", "Accepted program covers this class"
             )
         pair = policy_pair or _captured_pair(capture, open_at)
         if pair is None:
@@ -656,11 +739,10 @@ class ScriptedReflector:
                     learning_decision="updated",
                     playbook_ids=[notes_id],
                 )
-            return ReflectionTurn(
-                summary="No captured target port repair",
-                learning_decision="no_change",
-                no_change_reason="Captured incident has no target port transition and healthy peer",
-                playbook_ids=[],
+            return _checkout_reflection(
+                worktree,
+                "No captured target port repair",
+                "Captured incident has no target port transition and healthy peer",
             )
         target = worktree / ".sdo/playbooks" / program_id
         target.parent.mkdir(parents=True, exist_ok=True)

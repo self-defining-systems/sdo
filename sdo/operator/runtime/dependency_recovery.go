@@ -19,7 +19,7 @@ import (
 // settleSourceDependencies shares the existing rollout budget. Recovery is a
 // single pass over the pre-recovery Pod identities, never an ongoing restart loop.
 func (e PlanExecutor) settleSourceDependencies(ctx context.Context, incident IncidentRequest, result *PlanApplicationResult) error {
-	if e.deferDependencyRecovery {
+	if e.deferConvergence {
 		return nil
 	}
 	recovery, ok := e.Rollouts.(interface {
@@ -328,21 +328,50 @@ func (e PlanExecutor) waitAfterSourceWrites(ctx context.Context, incident Incide
 		ctx, stop = context.WithDeadline(ctx, incident.ResponseDeadline)
 		defer stop()
 	}
-	if err := e.settleSourceDependencies(ctx, incident, result); err != nil {
+	// Waiting never spends the reserved share of the unchanged deadline: every
+	// written object is still read back after the slowest one stops the wait.
+	waitCtx, stopWait := context.WithCancel(ctx)
+	if deadline, ok := ctx.Deadline(); ok {
+		stopWait()
+		waitCtx, stopWait = context.WithDeadline(ctx, deadline.Add(-sourceReadbackReserve(time.Until(deadline), len(result.Plan.Actions))))
+	}
+	defer stopWait()
+	if err := e.settleSourceDependencies(waitCtx, incident, result); err != nil {
 		var admission *AdmissionBlockedError
 		if errors.As(err, &admission) {
 			return admission.Pending, admission
 		}
 		if errors.Is(err, context.DeadlineExceeded) {
 			pending := &contracts.RolloutPending{Reason: "dependent recovery is pending within the existing rollout budget"}
+			_ = e.observeSourceResiduals(ctx, incident, result)
 			return pending, &RolloutPendingError{Pending: pending}
 		}
 		return nil, err
 	}
-	if len(refs) == 0 {
-		return nil, nil
+	// Keep nonterminal evidence before a wait can exhaust the API read budget.
+	// Observing a residual here never refuses an accepted write.
+	_ = e.observeSourceResiduals(waitCtx, incident, result)
+	if len(refs) > 0 {
+		pending, err := e.waitForRollouts(waitCtx, incident, refs)
+		if err != nil {
+			if !e.PollRollouts && waitCtx.Err() != nil {
+				if residualErr := e.reportSourceResiduals(ctx, incident, result); residualErr != nil {
+					return nil, errors.Join(waitCtx.Err(), residualErr)
+				}
+			}
+			if pending != nil {
+				_ = e.observeSourceResiduals(ctx, incident, result)
+			}
+			return pending, err
+		}
 	}
-	return e.waitForRollouts(ctx, incident, refs)
+	return e.waitSourceConvergence(waitCtx, ctx, incident, result)
+}
+
+// sourceReadbackReserve is the share of a bounded wait kept for readbacks: a
+// fixed base plus a slice per written object, never more than a quarter.
+func sourceReadbackReserve(remaining time.Duration, objects int) time.Duration {
+	return min(remaining/4, 500*time.Millisecond+time.Duration(objects)*250*time.Millisecond)
 }
 
 func managedRecoveryPod(pod *corev1.Pod) bool {

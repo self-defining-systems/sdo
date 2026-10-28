@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 
 from sdo.agents.responder.continuation import ContinuationFeedback, continuation_prompt
+from tests.context_helpers import expand_context
 
 
 def test_continuation_has_only_current_findings_and_receipts() -> None:
@@ -63,7 +64,7 @@ def test_ten_receipt_continuation_fits_complete_prompt_budget() -> None:
         assert action_id(index) in done
     assert "Forbidden" in broken
     assert "synthetic typed mutation" not in prompt
-    evidence = Path(prompt.split("Full JSON: ", 1)[1].splitlines()[0])
+    evidence = Path(expand_context(prompt).split("Full JSON: ", 1)[1].splitlines()[0])
     assert json.loads(evidence.read_text()) == payload
     assert evidence.stat().st_mode & 0o777 == 0o600
 
@@ -109,7 +110,7 @@ def test_continuation_large_fields_are_bounded_and_full_evidence_survives() -> N
     assert len(prompt) <= 1500
     assert "verification unavailable" in prompt
     assert action_id(1) not in prompt.split("already_done:", 1)[1]
-    evidence = Path(prompt.split("Full JSON: ", 1)[1].splitlines()[0])
+    evidence = Path(expand_context(prompt).split("Full JSON: ", 1)[1].splitlines()[0])
     assert json.loads(evidence.read_text()) == payload
 
 
@@ -137,8 +138,8 @@ def test_large_inventory_explicitly_counts_omitted_rows_without_losing_evidence(
     prompt = continuation_prompt(json.dumps(payload))
     assert len(prompt) <= 1500
     assert "still_broken: (90)" in prompt
-    assert "Omitted " in prompt
-    evidence = Path(prompt.split("Full JSON: ", 1)[1].splitlines()[0])
+    assert "Summary" in prompt
+    evidence = Path(expand_context(prompt).split("Full JSON: ", 1)[1].splitlines()[0])
     assert len(json.loads(evidence.read_text())["still_broken"]) == 90
 
 
@@ -183,5 +184,5 @@ def test_continuation_names_unconfirmed_detectors_within_budget(count: int) -> N
     assert "health-0" in prompt
     assert "observation window" in prompt
     assert len(prompt) <= 1500
-    evidence = Path(prompt.split("Full JSON: ", 1)[1].splitlines()[0])
+    evidence = Path(expand_context(prompt).split("Full JSON: ", 1)[1].splitlines()[0])
     assert json.loads(evidence.read_text()) == payload

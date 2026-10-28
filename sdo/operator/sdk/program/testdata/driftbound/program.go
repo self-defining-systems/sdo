@@ -17,7 +17,7 @@ func (Program) Diagnose(_ context.Context, view program.ReadView, bindings progr
 		return program.Verdict{}, err
 	}
 	result := program.NoMatch
-	if diff.Changed && diff.SourceAbsent {
+	if diff.PresentButNotInSource() {
 		result = program.Match
 	}
 	return program.Verdict{Result: result}, nil

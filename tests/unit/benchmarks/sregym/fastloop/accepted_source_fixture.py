@@ -38,8 +38,28 @@ def commit_accepted_source(
     if manifests:
         (workspace / path).parent.mkdir(parents=True, exist_ok=True)
         (workspace / path).write_text(yaml.safe_dump_all(manifests))
+    if not (workspace / "kubernetes").exists():
+        # An explicitly empty synthetic inventory still selects a real source
+        # file. Production rendering must never treat missing paths as empty.
+        (workspace / "kubernetes").mkdir()
+        (workspace / "kubernetes/manifests.yaml").write_text("# Synthetic empty inventory.\n")
     git("add", "-A")
     git("commit", "-q", "--allow-empty", "-m", "accepted source")
     if namespace is None:
         namespace = next((m["metadata"]["namespace"] for m in manifests if m["metadata"].get("namespace")), "app")
     return AcceptedSource(workspace, namespace)
+
+
+def fixed_source_provider(baseline, namespace):
+    """An immutable synthetic renderer boundary for external-I/O unit fixtures."""
+    from copy import deepcopy
+    from dataclasses import dataclass
+
+    @dataclass(frozen=True)
+    class SourceFixture:
+        namespace: str
+        manifests: tuple[dict[str, Any], ...]
+
+    baselines = baseline if isinstance(baseline, tuple) else (baseline,)
+    source = SourceFixture(namespace, tuple(deepcopy(obj) for row in baselines for obj in row.objects))
+    return lambda: source

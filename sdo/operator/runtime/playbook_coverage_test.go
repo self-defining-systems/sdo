@@ -93,3 +93,25 @@ func TestPlaybookCoverageDoesNotOfferUnloadedPlaybooks(t *testing.T) {
 		t.Fatalf("coverage offered an unloaded playbook: %v", coverage)
 	}
 }
+
+// One linkage rule: a program explains a finding when its diagnosis, bound from
+// that finding, matches. Health and generated detectors list only their own
+// playbook, and reflection cannot edit them; a learned program still explains
+// their findings, while a run bound from another finding does not.
+func TestPlaybookCoverageLinksLearnedProgramsByDiagnosisNotDetectorList(t *testing.T) {
+	configMap := sdk.ObjectRef{Kind: "ConfigMap", Namespace: "app", Name: "flags"}
+	other := sdk.ObjectRef{Kind: "ConfigMap", Namespace: "app", Name: "other"}
+	findings := []sdk.Finding{
+		{DetectorID: "generic-source-drift", RuleID: "drift", Status: sdk.FindingActive, PrimaryResource: configMap, Playbooks: []string{"health-objective"}},
+		{DetectorID: "health-objective", RuleID: "objective", Status: sdk.FindingActive, PrimaryResource: other, Playbooks: []string{"health-objective"}},
+	}
+	yes := true
+	runs := []ProgramRun{{FindingFingerprint: FindingFingerprint(findings[0]), ProgramID: "configmap-source-drift", ProgramRevision: "rev", CanMitigate: &yes, Bindings: program.Bindings{Objects: program.ObjectBindings{"config": configMap}}, Verdict: program.Verdict{Result: program.Match}}}
+	coverage := buildPlaybookCoverage(findings, runs, nil, nil)
+	if len(coverage.GetMatches()) != 1 || !reflect.DeepEqual(coverage.Matches[0].ExplainedFindingFingerprints, []string{FindingFingerprint(findings[0])}) {
+		t.Fatalf("learned program does not explain the finding it diagnosed: %+v", coverage)
+	}
+	if !reflect.DeepEqual(coverage.GetUnexplainedFindingFingerprints(), []string{FindingFingerprint(findings[1])}) {
+		t.Fatalf("unrelated finding explained: %+v", coverage)
+	}
+}

@@ -72,6 +72,15 @@ def plan(tmp_path: Path) -> SequencePlan:
 
 
 def finish(plan: SequencePlan, index: int, path: Path) -> None:
+    from benchmarks.sregym.fastloop.reset_provenance import publish_reset_generation
+
+    environment = FastloopEnvironment.load(plan.environment_dir)
+    reset = path.parent / "reset-generation.json"
+    if not reset.exists():
+        head = subprocess.check_output(
+            ["git", "-C", str(environment.workspace), "rev-parse", "HEAD"], text=True
+        ).strip()
+        publish_reset_generation(reset, environment.workspace, head, head)
     now = datetime.now(timezone.utc)
     artifact = path.parent / "native"
     artifact.mkdir(parents=True, exist_ok=True)
@@ -364,3 +373,85 @@ def test_interrupted_retry_attempt_still_holds_uncertain_work(plan):
         run_sequence(plan, execute=interrupted)
     with pytest.raises(RuntimeError, match="incomplete.*never reinject"):
         run_sequence(plan, execute=lambda *_args: pytest.fail("reinjected uncertain retry attempt"))
+
+
+def test_post_reset_generation_replaces_abandoned_pre_reset_lineage(plan: SequencePlan) -> None:
+    from benchmarks.sregym.fastloop.reset_provenance import publish_reset_generation
+
+    environment = FastloopEnvironment.load(plan.environment_dir)
+    repo = environment.workspace
+
+    def git(*args: str) -> str:
+        return subprocess.check_output(["git", "-C", str(repo), *args], text=True).strip()
+
+    git("-c", "user.name=Test", "-c", "user.email=t@example.invalid", "commit", "--allow-empty", "-qm", "abandoned")
+    abandoned = git("rev-parse", "HEAD")
+
+    def execute(p: SequencePlan, index: int, path: Path) -> None:
+        before = git("rev-parse", "HEAD")
+        if index == 0:
+            git("reset", "--hard", environment.seed_commit)
+        actual = git("rev-parse", "HEAD")
+        publish_reset_generation(path.parent / "reset-generation.json", repo, actual, before)
+        git(
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=t@example.invalid",
+            "commit",
+            "--allow-empty",
+            "-qm",
+            f"accepted-{index}",
+        )
+        finish(p, index, path)
+
+    run_sequence(plan, execute=execute)
+    first = json.loads((plan.journal_dir / "000/finished.json").read_text())
+    repeat = json.loads((plan.journal_dir / "001/finished.json").read_text())
+    assert first["pre_reset_head"] == abandoned
+    assert first["accepted_before"] == environment.seed_commit
+    assert repeat["accepted_before"] == first["accepted_after"]
+    assert first["generation"] != repeat["generation"]
+
+
+def test_missing_reset_generation_holds_without_reinjection(plan: SequencePlan) -> None:
+    def execute(p: SequencePlan, index: int, path: Path) -> None:
+        finish(p, index, path)
+        (path.parent / "reset-generation.json").unlink()
+
+    with pytest.raises(FileNotFoundError, match="reset-generation"):
+        run_sequence(plan, execute=execute)
+    with pytest.raises(FileNotFoundError, match="reset-generation"):
+        run_sequence(plan, execute=lambda *_: pytest.fail("reinjected"))
+
+
+def test_real_rewind_after_reset_still_blocks_repeat(plan: SequencePlan) -> None:
+    environment = FastloopEnvironment.load(plan.environment_dir)
+    calls = []
+
+    def execute(p: SequencePlan, index: int, path: Path) -> None:
+        calls.append(index)
+        finish(p, index, path)  # Publishes the genuine reset generation first.
+        subprocess.run(["git", "-C", str(environment.workspace), "checkout", "--orphan", "unrelated"], check=True)
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                str(environment.workspace),
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=t@example.invalid",
+                "commit",
+                "--allow-empty",
+                "-qm",
+                "unrelated memory",
+            ],
+            check=True,
+        )
+
+    with pytest.raises(ValueError, match="rewound"):
+        run_sequence(plan, execute=execute)
+    assert calls == [0]
+    assert not (plan.journal_dir / "000/finished.json").exists()
+    assert not (plan.journal_dir / "001/manifest.json").exists()

@@ -42,6 +42,10 @@ const (
 	// PersistenceInvalid replaces an uncommitted incident's invalid evidence
 	// with a validated failed closure. An accepted receipt is never replayed.
 	PersistenceInvalid
+	// Freeze folds the closure-time recheck's notes into the pending closure
+	// once, before its first broker attempt. The frozen closure is the
+	// incident's terminal identity; no later event rewrites its contents.
+	Freeze
 )
 
 type RetryPolicy struct {
@@ -63,6 +67,8 @@ type Event struct {
 	// UnconfirmedReason is required for Unconfirmed events.
 	UnconfirmedReason contracts.ClosureUnconfirmedReason
 	UnconfirmedStates []*contracts.DetectorEvaluation
+	// SourceCheckNotes are the recheck's notes a Freeze event records.
+	SourceCheckNotes []string
 }
 
 type EffectKind uint8
@@ -70,6 +76,10 @@ type EffectKind uint8
 const (
 	ProcessClosure EffectKind = iota + 1
 	AcknowledgeClosure
+	// FreezeClosure asks the driver to recheck an unfrozen pending closure and
+	// return a Freeze event. Only frozen closures reach ProcessClosure, so one
+	// ProcessClosure identity always carries one payload.
+	FreezeClosure
 )
 
 type Effect struct {
@@ -142,8 +152,17 @@ func Step(state *contracts.ControllerState, event Event) (*contracts.ControllerS
 	if (event.Kind == ResponseExpired || event.Kind == OwnerLost) && phase != contracts.ClosureState_CLOSURE_STATE_PENDING && phase != contracts.ClosureState_CLOSURE_STATE_PROCESSING {
 		return next, nil
 	}
+	if event.Kind == Freeze {
+		if pending == nil || pending.GetFrozen() || phase != contracts.ClosureState_CLOSURE_STATE_PENDING ||
+			event.EffectID != Identity(pending.GetRequest().GetIncidentId(), pending.GetRequest().GetRepositoryBaseCommit(), FreezeClosure) {
+			return next, nil
+		}
+		pending.SourceCheckNotes = append(pending.SourceCheckNotes, event.SourceCheckNotes...)
+		pending.Frozen = true
+		return next, nil
+	}
 	if event.Kind == Unconfirmed {
-		if pending == nil || phase != contracts.ClosureState_CLOSURE_STATE_PENDING || len(pending.GetFinalDetectorStates()) == 0 ||
+		if pending == nil || pending.GetFrozen() || phase != contracts.ClosureState_CLOSURE_STATE_PENDING || len(pending.GetFinalDetectorStates()) == 0 ||
 			event.UnconfirmedReason == contracts.ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_UNSPECIFIED {
 			return next, nil
 		}
@@ -202,6 +221,13 @@ func Step(state *contracts.ControllerState, event Event) (*contracts.ControllerS
 			failure := next.GetClosureFailure()
 			if failure.GetPermanent() || (failure.GetNextAttemptAt() != nil && event.At.Before(failure.NextAttemptAt.AsTime())) {
 				return next, nil
+			}
+			if !pending.GetFrozen() {
+				if event.EffectID != "" {
+					return next, nil
+				}
+				freezeID := Identity(id, pending.GetRequest().GetRepositoryBaseCommit(), FreezeClosure)
+				return next, []Effect{{Kind: FreezeClosure, ID: freezeID, Closure: proto.Clone(pending).(*contracts.IncidentClosure)}}
 			}
 			next.ClosureState = contracts.ClosureState_CLOSURE_STATE_PROCESSING
 			return next, []Effect{{Kind: ProcessClosure, ID: processID, Closure: proto.Clone(pending).(*contracts.IncidentClosure)}}
