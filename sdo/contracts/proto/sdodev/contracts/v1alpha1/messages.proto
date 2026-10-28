@@ -582,7 +582,7 @@ message StageMitigation {
   string plan_id = 4;
   PlanApplication apply_receipt = 5;
   string result = 6 [(buf.validate.field).string = {in: ["applied_cleared", "applied_still_matching", "rollout_failed", "rollout_pending_at_handoff", "admission_blocked", "apply_error", "skipped"]}];
-  string skip_reason = 7 [(buf.validate.field).string = {in: ["", "multiple_entry_points", "no_mitigation", "unbound_parameter", "diagnose_no_longer_matches", "diagnose_unavailable", "unexplained_coverage", "already_attempted", "repair_policy", "stage_budget", "plan_not_executable"]}];
+  string skip_reason = 7 [(buf.validate.field).string = {in: ["", "multiple_entry_points", "no_mitigation", "unbound_parameter", "diagnose_no_longer_matches", "diagnose_unavailable", "unexplained_coverage", "already_attempted", "repair_policy", "stage_budget", "plan_not_executable", "ineffective"]}];
   ProgramRun post_apply_diagnose = 8;
   repeated string cleared_finding_fingerprints = 9;
   repeated string remaining_finding_fingerprints = 10;
