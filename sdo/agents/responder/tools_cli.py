@@ -204,7 +204,7 @@ def _parser() -> argparse.ArgumentParser:
             "--match ID selects a playbook_coverage match; --bind narrows it. "
             "Each option has a receipt; one call uses one of five rounds. --NAME VALUE also sets parameters. "
             "Pending rollout retains its application ID and allows reads; "
-            "rollout_stalled releases writes at its bound. "
+            "rollout_stalled releases writes once stuck or at its bound. "
             "Source reconciliation waits for old objects to drain; persistent differences return source_residual. "
             "Script fixes are learnable; unlinked bytes are refused as script_unprovenanced."
             + " "
