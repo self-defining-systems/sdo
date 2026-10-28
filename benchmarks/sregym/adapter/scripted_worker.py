@@ -382,7 +382,14 @@ def scripted_responder(request: IncidentRequest) -> IncidentResult:
         )
     first = _tool("verify")
     if not first.get("healthy"):
-        seen: set[tuple[str, str]] = set(unsure)
+        # Unknown drift alone is not repair authority. A separate health
+        # finding on the same object still authorizes source-backed recovery.
+        health_resources = {
+            (finding.primary_resource.kind, finding.primary_resource.name)
+            for finding in request.findings
+            if not finding.detector_id.startswith("drift.")
+        }
+        seen: set[tuple[str, str]] = unsure - health_resources
         seen.update((ref["kind"], ref["name"]) for repair in repairs for ref in repair["resources"])
         changed = request.state_changes.changes if request.state_changes else []
         candidates = [
@@ -408,6 +415,7 @@ def scripted_responder(request: IncidentRequest) -> IncidentResult:
             if key in seen:
                 continue
             seen.add(key)
+            unsure.discard(key)
             action_start = _now()
             if removed:
                 _remove_added(request, ref)
@@ -618,17 +626,54 @@ def _check_reflection(worktree: Path, playbook_ids: list[str]) -> None:
         _command(["sdo-operator", "memory", "check", "--root", str(worktree), "--decision", str(decision)], timeout=180)
 
 
+def _checkout_reflection(worktree: Path, summary: str, reason: str) -> ReflectionTurn:
+    """Report the actual publication diff, including Go-prepared corpus edits."""
+    base = os.environ.get("SDO_BASE_COMMIT", "HEAD")
+    git = ["git", "-C", str(worktree)]
+    paths: set[str] = set()
+    for args in (
+        [
+            "-c",
+            "diff.external=",
+            "diff",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--no-renames",
+            "--name-only",
+            "-z",
+            base,
+            "--",
+        ],
+        ["ls-files", "--others", "--exclude-standard", "-z"],
+        ["ls-files", "--others", "-z", "--", ".sdo/lib", ".sdo/corpus", ".sdo/rendered"],
+    ):
+        paths.update(path for path in _command([*git, *args]).split("\0") if path)
+    ids = sorted(
+        {parts[2] for path in paths if len(parts := Path(path).parts) >= 4 and parts[:2] == (".sdo", "playbooks")}
+    )
+    if paths:
+        _check_reflection(worktree, ids)
+        return ReflectionTurn(
+            summary="Publish existing checkout edits: " + summary,
+            learning_decision="updated",
+            playbook_ids=ids,
+        )
+    return ReflectionTurn(summary=summary, learning_decision="no_change", no_change_reason=reason, playbook_ids=[])
+
+
 class ScriptedReflector:
     def resume(self, **kwargs: Any) -> ReflectionTurn:
-        if os.environ.get("SDO_SCRIPTED_REPLAY_SLOT") is not None:
-            return ReflectionTurn(
-                summary="Recorded source restoration has no generalized program fixture",
-                learning_decision="no_change",
-                no_change_reason="Rehearsal verifies closure without inventing reusable memory",
-                playbook_ids=[],
-            )
         worktree = Path(kwargs["worktree"])
+        if os.environ.get("SDO_SCRIPTED_REPLAY_SLOT") is not None:
+            return _checkout_reflection(
+                worktree,
+                "Recorded source restoration has no generalized program fixture",
+                "Rehearsal verifies closure without inventing reusable memory",
+            )
         incident = str(kwargs["incident_id"])
+        outcome = kwargs.get("outcome")
+        if outcome is not None and outcome.classification != "success" and not kwargs.get("cause_work"):
+            return _checkout_reflection(worktree, "No independently eligible repair to save", "no recorded repair")
         capture = Path(os.environ.get("SDO_CAPTURED_CORPUS_DIR", "/sdo/session/corpus"))
         open_at = "detect"
         policy_pair = _captured_policy_pair(capture, open_at)
@@ -636,11 +681,8 @@ class ScriptedReflector:
         program_source = NETWORKPOLICY_PROGRAM_SOURCE if policy_pair else PROGRAM_SOURCE
         parameter = "policy=NetworkPolicy" if policy_pair else "service=Service"
         if (worktree / ".sdo" / "playbooks" / program_id / "diagnose.go").is_file():
-            return ReflectionTurn(
-                summary=f"{program_id} program is already accepted",
-                learning_decision="no_change",
-                no_change_reason="Accepted program covers this class",
-                playbook_ids=[],
+            return _checkout_reflection(
+                worktree, f"{program_id} program is already accepted", "Accepted program covers this class"
             )
         pair = policy_pair or _captured_pair(capture, open_at)
         if pair is None:
@@ -671,11 +713,10 @@ class ScriptedReflector:
                     learning_decision="updated",
                     playbook_ids=[notes_id],
                 )
-            return ReflectionTurn(
-                summary="No captured target port repair",
-                learning_decision="no_change",
-                no_change_reason="Captured incident has no target port transition and healthy peer",
-                playbook_ids=[],
+            return _checkout_reflection(
+                worktree,
+                "No captured target port repair",
+                "Captured incident has no target port transition and healthy peer",
             )
         target = worktree / ".sdo/playbooks" / program_id
         target.parent.mkdir(parents=True, exist_ok=True)

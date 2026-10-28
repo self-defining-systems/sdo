@@ -440,3 +440,115 @@ def test_scripted_responder_removes_added_objects_and_restores_config_from_sourc
     assert patch[:6] == ["kubectl", "-n", "hotel", "patch", "configmap", "cfg"]
     assert "--type=merge" in patch
     assert {action.kind for action in result.repair_actions} == {"kubectl-delete", "kubectl-patch"}
+
+
+@pytest.mark.parametrize("change", ["empty", "corpus", "playbook", "committed", "staged"])
+def test_existing_scripted_program_reports_actual_checkout_diff(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, change: str
+) -> None:
+    import subprocess
+
+    def git(*args: str) -> str:
+        return subprocess.check_output(["git", "-C", str(tmp_path), *args], text=True)
+
+    git("init", "-q")
+    git("config", "user.email", "fixture@example.invalid")
+    git("config", "user.name", "Synthetic fixture")
+    program = tmp_path / ".sdo/playbooks" / scripted_worker.PROGRAM_ID / "diagnose.go"
+    program.parent.mkdir(parents=True)
+    program.write_text("package fixture\n")
+    git("add", ".")
+    git("commit", "-qm", "synthetic accepted program")
+    base = git("rev-parse", "HEAD").strip()
+    monkeypatch.setenv("SDO_BASE_COMMIT", base)
+    monkeypatch.delenv("SDO_SCRIPTED_REPLAY_SLOT", raising=False)
+    if change != "empty":
+        path = program if change == "playbook" else tmp_path / ".sdo/corpus/repeat/labels.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("{}\n")
+        if change in {"committed", "staged"}:
+            git("add", ".")
+        if change == "committed":
+            git("commit", "-qm", "synthetic prepared corpus")
+    checked: list[list[str]] = []
+    monkeypatch.setattr(scripted_worker, "_check_reflection", lambda _root, ids: checked.append(ids))
+    turn = scripted_worker.ScriptedReflector().resume(worktree=tmp_path, incident_id="synthetic-repeat")
+    assert turn.learning_decision == ("no_change" if change == "empty" else "updated")
+    expected_ids = [scripted_worker.PROGRAM_ID] if change == "playbook" else []
+    assert turn.playbook_ids == expected_ids
+    assert checked == ([] if change == "empty" else [expected_ids])
+
+
+@pytest.mark.parametrize("health_finding", [False, True])
+def test_scripted_health_repair_is_not_suppressed_by_unsure_drift(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, health_finding: bool
+) -> None:
+    ref = {"api_version": "apps/v1", "kind": "Deployment", "namespace": "demo", "name": "catalog"}
+    findings = [{"detector_id": "drift.unexplained", "primary_resource": ref}]
+    if health_finding:
+        findings.append({"detector_id": "workload-health", "primary_resource": ref})
+    request = from_dict(
+        IncidentRequest,
+        {
+            "incident_id": "synthetic-image-fault",
+            "namespace": "demo",
+            "repository_worktree": str(tmp_path),
+            "findings": findings,
+            "drift_events": [
+                {
+                    "ref": ref,
+                    "fields": [
+                        {"path": "spec.template.spec.containers[0].image", "old": "accepted:v1", "new": "missing:v1"}
+                    ],
+                }
+            ],
+        },
+    )
+    patches: list[dict[str, str]] = []
+    monkeypatch.delenv("SDO_SCRIPTED_SOURCE_REPAIR", raising=False)
+    monkeypatch.setattr(scripted_worker, "_patch_from_source", lambda _request, resource: patches.append(resource))
+    monkeypatch.setattr(
+        scripted_worker,
+        "_tool",
+        lambda op, *_args: {"program_runs": []} if op == "diagnose" else {"healthy": bool(patches)},
+    )
+    response = scripted_worker.scripted_responder(request)
+    assert patches == ([ref] if health_finding else [])
+    assert response.status == ("completed" if health_finding else "failed")
+    assert response.drift_events[0].investigation_verdict == "unsure"
+
+
+@pytest.mark.parametrize("classification", ["failed", "success"])
+def test_scripted_notes_require_eligible_learning_on_failed_closure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, classification: str
+) -> None:
+    import subprocess
+
+    from sdo.contracts import OutcomeRecord
+
+    for args in (
+        ["init", "-q"],
+        [
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@example.invalid",
+            "commit",
+            "--allow-empty",
+            "-qm",
+            "synthetic outcome",
+        ],
+    ):
+        subprocess.run(["git", "-C", str(tmp_path), *args], check=True)
+    monkeypatch.setenv("SDO_BASE_COMMIT", "HEAD")
+    monkeypatch.setenv("SDO_SCRIPTED_MEMORY_CHANGE", "1")
+    monkeypatch.setenv("SDO_CAPTURED_CORPUS_DIR", str(tmp_path / "no-capture"))
+    monkeypatch.setattr(scripted_worker, "_check_reflection", lambda *_args: None)
+    turn = scripted_worker.ScriptedReflector().resume(
+        worktree=tmp_path,
+        incident_id="synthetic-outcome",
+        outcome=OutcomeRecord(classification=classification),
+        cause_work=[],
+    )
+    assert turn.learning_decision == ("no_change" if classification == "failed" else "updated")
+    assert (tmp_path / ".sdo/playbooks/verified-repair-notes/README.md").exists() == (classification == "success")
