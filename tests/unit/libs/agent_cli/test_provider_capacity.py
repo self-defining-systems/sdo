@@ -26,6 +26,122 @@ LIMITS = [
 ]
 
 
+@pytest.mark.parametrize("shares", [(4, 4), (2, 6)])
+def test_host_pools_are_independent_and_app_mounts_share_tokens(tmp_path: Path, shares: tuple[int, int]) -> None:
+    from contextlib import ExitStack
+
+    from libs.agent_cli.provider_capacity import prepare_host_pool
+
+    with ExitStack() as stack:
+        for host, share in zip(("chelan5", "chelan4"), shares, strict=True):
+            root = tmp_path / host / "pool"
+            aliases = [tmp_path / host / app / "opus-pool" for app in ("hotel", "social")]
+            prepare_host_pool(root, aliases, capacity=share)
+            # Provisioning is idempotent and must preserve live lock inodes.
+            prepare_host_pool(root, aliases, capacity=share)
+            for index in range(share):
+                manager = ProviderCapacity(
+                    environment={
+                        "SDO_OPUS_POOL_MODE": "per_host",
+                        "SDO_OPUS_POOL_HOST_ID": host,
+                        "SDO_OPUS_POOL_DIR": str(aliases[index % 2]),
+                        "SDO_OPUS_MAX_SESSIONS": str(share),
+                    }
+                )
+                stack.enter_context(manager.opus_session("opus"))
+            assert OpusPool(root, share).try_acquire() is None
+            assert all(OpusPool(alias, share).try_acquire() is None for alias in aliases)
+
+
+@pytest.mark.parametrize("fault", ["full", "missing", "missing_slot", "capacity_mismatch", "missing_host"])
+def test_host_worker_never_starts_without_its_token(tmp_path: Path, fault: str) -> None:
+    from libs.agent_cli.provider_capacity import prepare_host_pool
+
+    root = tmp_path / "pool"
+    environment = {
+        "SDO_OPUS_POOL_MODE": "per_host",
+        "SDO_OPUS_POOL_HOST_ID": "chelan5",
+        "SDO_OPUS_POOL_DIR": str(root),
+    }
+    if fault != "missing":
+        prepare_host_pool(root, [], capacity=4)
+    held = []
+    if fault == "full":
+        held = [OpusPool(root, 4).try_acquire() for _ in range(4)]
+    elif fault == "missing_slot":
+        (root / "slot-0.lock").unlink()
+    elif fault == "capacity_mismatch":
+        environment["SDO_OPUS_MAX_SESSIONS"] = "5"
+    elif fault == "missing_host":
+        environment.pop("SDO_OPUS_POOL_HOST_ID")
+    clock = Clock()
+    manager = ProviderCapacity(
+        environment=environment,
+        monotonic=clock.monotonic,
+        sleep=clock.sleep,
+        policy=RateLimitPolicy(max_wait_seconds=2),
+    )
+    agent = ScriptedAgent(lambda _: reply("claude", {"answer": "ok"}, session_id="s-1"))
+    try:
+        with pytest.raises((ProviderRateLimited, ValueError)):
+            run_structured_turn(
+                "claude",
+                "prompt",
+                output_schema=SCHEMA,
+                cwd=tmp_path / "workspace",
+                access="read-only",
+                model="opus",
+                executor=agent.executor,
+                provider_capacity=manager,
+            )
+        assert not agent.requests
+    finally:
+        for handle in held:
+            assert handle is not None
+            handle.close()
+
+
+def test_host_pool_provisioning_rejects_an_independent_alias(tmp_path: Path) -> None:
+    from libs.agent_cli.provider_capacity import prepare_host_pool
+
+    root, alias = tmp_path / "pool", tmp_path / "alias"
+    prepare_host_pool(alias, [], capacity=4)
+    with pytest.raises(ValueError, match="inode"):
+        prepare_host_pool(root, [alias], capacity=4)
+
+
+@pytest.mark.parametrize("seed", range(8))
+def test_host_pool_seeded_acquire_release_schedules(tmp_path: Path, seed: int) -> None:
+    import random
+
+    from libs.agent_cli.provider_capacity import prepare_host_pool
+
+    rng = random.Random(seed)
+    shares = (2, 6)
+    pools = []
+    held = [[], []]
+    for host, share in enumerate(shares):
+        root = tmp_path / str(host) / "pool"
+        alias = tmp_path / str(host) / "app" / "opus-pool"
+        prepare_host_pool(root, [alias], capacity=share)
+        pools.append([OpusPool(path, share, create=False) for path in (root, alias)])
+    try:
+        for _ in range(100):
+            host = rng.randrange(2)
+            if held[host] and rng.randrange(3) == 0:
+                held[host].pop(rng.randrange(len(held[host]))).close()
+            else:
+                token = rng.choice(pools[host]).try_acquire()
+                assert (token is not None) == (len(held[host]) < shares[host])
+                if token is not None:
+                    held[host].append(token)
+            assert sum(map(len, held)) <= sum(shares)
+    finally:
+        for tokens in held:
+            for token in tokens:
+                token.close()
+
+
 class Clock:
     seconds = 0.0
 
@@ -253,18 +369,23 @@ def test_retry_policy_rejects_invalid_configuration(kwargs: dict[str, float]) ->
         RateLimitPolicy(**kwargs)
 
 
-def test_shared_pool_releases_a_token_when_its_process_dies(tmp_path: Path) -> None:
+@pytest.mark.parametrize("mode", ["shared", "per_host"])
+def test_shared_pool_releases_a_token_when_its_process_dies(tmp_path: Path, mode: str) -> None:
+    if mode == "per_host":
+        from libs.agent_cli.provider_capacity import prepare_host_pool
+
+        prepare_host_pool(tmp_path, [], capacity=1)
     code = """
 import sys
 import pathlib
 from libs.agent_cli.provider_capacity import OpusPool
-handle = OpusPool(pathlib.Path(sys.argv[1]), capacity=1).try_acquire()
+handle = OpusPool(pathlib.Path(sys.argv[1]), capacity=1, create=sys.argv[2] != 'per_host').try_acquire()
 assert handle is not None
 print('acquired', flush=True)
 sys.stdin.read()
 """
     with subprocess.Popen(
-        [sys.executable, "-c", code, str(tmp_path)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True
+        [sys.executable, "-c", code, str(tmp_path), mode], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True
     ) as child:
         assert child.stdout is not None
         assert child.stdout.readline().strip() == "acquired"

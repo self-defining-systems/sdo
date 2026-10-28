@@ -27,7 +27,15 @@ Check provider capacity before attributing a failed row to SDO.
   of waiting at most. Frozen outer deadlines still apply; a deadline consumed
   by provider waiting also makes the affected row ungradable.
 
+- Fastloop manifests and rows retain `opus_pool: {mode, host_id, capacity}`.
+  In explicit `per_host` mode, `capacity` is that host's static share (default
+  four); sum the distinct hosts' shares, not the rows or lanes. Two hosts at
+  four each reserve eight account sessions. All apps on a host must use the
+  same lock inodes, including through different extraMount aliases. An idle
+  share is never borrowed. Older rows without `opus_pool` provide no allocation
+  evidence; launcher settings describe configuration, not proof of live adoption.
+
 See [deployment configuration](../../../../docs/provider-capacity.md) for the
-shared eight-session Opus pool. Missing pool configuration blocks Opus rather
-than creating a private per-host pool. Older images and non-SDO CLI sessions
-are outside this admission path.
+shared or static per-host Opus pools. Missing pool configuration blocks Opus;
+per-host mode also refuses unprovisioned token files. Older images and non-SDO
+CLI sessions are outside this admission path.

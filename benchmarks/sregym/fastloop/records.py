@@ -22,6 +22,7 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, computed_field
 from benchmarks.sregym.faults.description import CapabilityMode, FaultCapability  # noqa: TC001
 from benchmarks.sregym.protocol.injection import FaultComponent  # noqa: TC001 - Pydantic resolves this at runtime.
 from benchmarks.sregym.protocol.provider_capacity import ProviderWaitInterval, wait_seconds_between
+from libs.agent_cli.provider_capacity import OpusPoolAllocation  # noqa: TC001 - Pydantic resolves this at runtime.
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -212,6 +213,8 @@ class IncidentRecord(_PersistedModel):
     schema_version: Literal["sdo.fastloop-incident/v2"] = SCHEMA_VERSION
     infra_error: str | None = None
     provider_waits: list[ProviderWaitInterval] = Field(default_factory=list)
+    #: Run-configured pool allocation; capacity is this host's share in per_host mode.
+    opus_pool: OpusPoolAllocation | None = None
     recovery_error: str | None = None
     injection_evidence: dict[str, Any] = Field(default_factory=dict)
     fault_components: list[FaultComponent] = Field(default_factory=list)

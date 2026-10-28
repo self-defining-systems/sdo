@@ -14,9 +14,10 @@ from __future__ import annotations
 import json
 import logging
 import math
+import os
 import time
 from concurrent.futures import Future, ThreadPoolExecutor, wait
-from dataclasses import dataclass, field, replace
+from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -39,6 +40,7 @@ from benchmarks.sregym.faults.description import SuiteCapabilities
 from benchmarks.sregym.protocol.injection import InvalidInjectionError, ensure_incident_follows_injection
 from benchmarks.sregym.protocol.provider_capacity import ProviderWaitInterval, RateLimitedRun
 from libs.agent_cli.errors import rate_limit_failure
+from libs.agent_cli.provider_capacity import OpusPoolAllocation
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -184,6 +186,15 @@ class LoopConfig:
     #: Admission's stabilization rule: sample until the app passes, within this budget.
     recovery_settle_seconds: float = wait_for(WaitKind.ROLLOUT)
     recovery_settle_poll_seconds: float = wait_for(WaitKind.SAMPLE)
+    opus_pool: OpusPoolAllocation | None = field(
+        default_factory=lambda: (
+            OpusPoolAllocation.from_environment(os.environ)
+            if any(
+                os.environ.get(name) for name in ("SDO_OPUS_POOL_MODE", "SDO_OPUS_POOL_DIR", "SDO_OPUS_POOL_NFS_SERVER")
+            )
+            else None
+        )
+    )
 
     def __post_init__(self) -> None:
         if type(self.row_start_tier2) is not bool:
@@ -224,6 +235,7 @@ def write_loop_manifest(config: LoopConfig) -> None:
                 "permissive_responder": config.permissive_responder,
                 "responder_namespaces": list(config.responder_namespaces),
                 "cleanup_passes": config.cleanup_passes,
+                "opus_pool": asdict(config.opus_pool) if config.opus_pool is not None else None,
             },
             indent=2,
         )
@@ -566,6 +578,7 @@ def _run_one(
             except Exception as recovery_exc:
                 cleanup_error = f"invalid injection cleanup failed: {_describe(recovery_exc)}"
         return IncidentRecord(
+            opus_pool=config.opus_pool,
             run_id=config.run_id,
             index=index,
             agent=agent.name,
@@ -672,6 +685,7 @@ def _run_one(
         _outcome_fields(outcome) if outcome is not None else {"provider_waits": limited_waits}
     )
     record = IncidentRecord(
+        opus_pool=config.opus_pool,
         image_delivery=delivery,
         image_delivery_reason=reason,
         run_id=config.run_id,
