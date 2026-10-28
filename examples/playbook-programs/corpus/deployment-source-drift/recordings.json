@@ -1,0 +1,51 @@
+[
+ {
+  "method": "DiffAgainstSource",
+  "arguments": [
+   {
+    "api_version": "apps/v1",
+    "kind": "Deployment",
+    "namespace": "demo",
+    "name": "cart"
+   }
+  ],
+  "result": {
+   "changed": true,
+   "text": "spec.template.spec.containers[name=cart].resources.requests.cpu: accepted 100m, live 4"
+  }
+ },
+ {
+  "phase": "fixed",
+  "method": "DiffAgainstSource",
+  "arguments": [
+   {
+    "api_version": "apps/v1",
+    "kind": "Deployment",
+    "namespace": "demo",
+    "name": "cart"
+   }
+  ],
+  "result": {
+   "changed": false
+  }
+ },
+ {
+  "method": "RepairReceipt",
+  "arguments": {},
+  "result": {
+   "id": "example-act-1",
+   "incident_id": "worked-example",
+   "success": true,
+   "started_at": "2026-01-01T00:00:10Z",
+   "completed_at": "2026-01-01T00:00:12Z",
+   "resources": [
+    {
+     "api_version": "apps/v1",
+     "kind": "Deployment",
+     "namespace": "demo",
+     "name": "cart"
+    }
+   ]
+  }
+ }
+]

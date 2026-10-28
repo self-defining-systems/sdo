@@ -1,0 +1,46 @@
+{
+ "namespace": "demo",
+ "deployments": [
+  {
+   "apiVersion": "apps/v1",
+   "kind": "Deployment",
+   "metadata": {
+    "namespace": "demo",
+    "name": "cart",
+    "uid": "cart-uid",
+    "resourceVersion": "8",
+    "annotations": {
+     "deployment.kubernetes.io/revision": "2"
+    }
+   },
+   "spec": {
+    "replicas": 1,
+    "selector": {
+     "matchLabels": {
+      "app": "cart"
+     }
+    },
+    "template": {
+     "metadata": {
+      "labels": {
+       "app": "cart"
+      }
+     },
+     "spec": {
+      "containers": [
+       {
+        "name": "cart",
+        "image": "cart:1",
+        "resources": {
+         "requests": {
+          "cpu": "100m"
+         }
+        }
+       }
+      ]
+     }
+    }
+   }
+  }
+ ]
+}

@@ -1,0 +1,73 @@
+{
+ "namespace": "demo",
+ "deployments": [
+  {
+   "apiVersion": "apps/v1",
+   "kind": "Deployment",
+   "metadata": {
+    "namespace": "demo",
+    "name": "checkout",
+    "uid": "checkout-uid",
+    "resourceVersion": "3"
+   },
+   "spec": {
+    "replicas": 1,
+    "selector": {
+     "matchLabels": {
+      "app": "checkout"
+     }
+    },
+    "template": {
+     "metadata": {
+      "labels": {
+       "app": "checkout"
+      }
+     },
+     "spec": {
+      "containers": [
+       {
+        "name": "checkout",
+        "image": "checkout:1"
+       }
+      ]
+     }
+    }
+   }
+  }
+ ],
+ "pods": [
+  {
+   "apiVersion": "v1",
+   "kind": "Pod",
+   "metadata": {
+    "namespace": "demo",
+    "name": "checkout-1",
+    "labels": {
+     "app": "checkout"
+    }
+   },
+   "spec": {
+    "containers": [
+     {
+      "name": "checkout",
+      "image": "checkout:1"
+     }
+    ]
+   },
+   "status": {
+    "containerStatuses": [
+     {
+      "name": "checkout",
+      "image": "checkout:1",
+      "imageID": "",
+      "ready": true,
+      "restartCount": 5,
+      "state": {
+       "running": {}
+      }
+     }
+    ]
+   }
+  }
+ ]
+}

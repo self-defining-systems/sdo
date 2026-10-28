@@ -1,0 +1,18 @@
+{
+ "root_cause_program_ids": [
+  "deployment-source-drift"
+ ],
+ "bindings": {
+  "objects": {
+   "deployment": {
+    "api_version": "apps/v1",
+    "kind": "Deployment",
+    "namespace": "demo",
+    "name": "cart"
+   }
+  }
+ },
+ "provenance": {
+  "incident_id": "worked-example"
+ }
+}
