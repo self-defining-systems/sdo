@@ -231,6 +231,12 @@ def test_reflection_saves_partial_learning_for_verified_parts(
         diagnostics=[MemoryDiagnostic(rule="program.replay", message="Correct the fixed case")] if retry else [],
     )
     prompt = expand_context(str(backend.calls[0]["prompt"]))
+    if retry and session_mode == "resume":
+        # The resumed session already holds the request; a correction carries
+        # only the rejection and keeps the rejected edits in the checkout.
+        assert "Original reflection request" not in prompt
+        assert "Your edits are kept" in prompt
+        return
     assert "Preserve verified partial steps" in prompt
     assert "Use recorded actions as repair evidence" in prompt
     assert "Replay is informational" in prompt
@@ -257,6 +263,31 @@ def test_reflection_retry_prompt_carries_typed_broker_diagnostics(tmp_path: Path
     (call,) = backend.calls
     assert call["mode"] == "resume"
     assert "[detector.manifest] m.yaml:4: bad id (hint: kebab)" in str(call["prompt"])
+
+
+def test_reflection_conflict_retry_resolves_marked_collisions_in_kept_edits(tmp_path: Path) -> None:
+    backend = _CapturingBackend()
+    conflict = MemoryDiagnostic(rule="memory.conflict", message="memory conflict at accepted commit peer")
+    conflict.memory_conflict.accepted_commit = "peer"
+    conflict.memory_conflict.conflicting_paths.append("playbook:shared")
+    SessionReflector(backend).resume(
+        session_id="session-1",
+        incident_id="inc-1",
+        worktree=tmp_path,
+        outcome=_outcome(),
+        history=[],
+        outcome_commit="outcome-sha",
+        session_mode="resume",
+        closure=_fresh_closure(tmp_path),
+        validation_attempt=2,
+        diagnostics=[conflict],
+    )
+    prompt = str(backend.calls[0]["prompt"])
+    assert "rolled it back" not in prompt
+    assert "clean" not in prompt
+    assert "conflict markers" in prompt
+    assert "playbook:shared" in prompt
+    assert len(prompt) < 2000
 
 
 def test_reflection_first_attempt_prompt_has_no_rejection_text(tmp_path: Path) -> None:
