@@ -1178,7 +1178,18 @@ func parityFindingRepairProof(outcome *contracts.OutcomeRecord) {
 		}
 		for _, ref := range cause.GetResources() {
 			outcome.Findings = append(outcome.Findings, &contracts.Finding{DetectorId: "fixture", RuleId: "repair", Severity: "critical", Summary: "synthetic opening fault", Evidence: "synthetic opening observation", Status: "active", Fingerprint: ref.GetName(), PrimaryResource: ref})
-			outcome.RepairActions = append(outcome.RepairActions, &contracts.RepairActionReceipt{ActionId: "fixture-" + ref.GetName(), Kind: "kubectl-patch", Target: ref.GetKind() + "/" + ref.GetName(), Summary: "synthetic recorded mutation", Details: "synthetic controller receipt", Success: true, Resources: []*contracts.ObjectRef{ref}, StartedAt: timestamppb.New(at), CompletedAt: timestamppb.New(at.Add(time.Second))})
+			outcome.RepairActions = append(outcome.RepairActions, &contracts.RepairActionReceipt{ActionId: "sdo-program-fixture-" + ref.GetName(), Kind: "program-plan", Target: ref.GetKind() + "/" + ref.GetName(), Summary: "synthetic recorded mutation", Details: "synthetic controller receipt", Success: true, Resources: []*contracts.ObjectRef{ref}, StartedAt: timestamppb.New(at), CompletedAt: timestamppb.New(at.Add(time.Second))})
+			// These acceptance fixtures exercise edits after an already covered
+			// repair. Recorded-hand-repair requirements have their own real CLI,
+			// executable and receipt-producer tests; do not invent unrelated hand
+			// work that would prevent this fixture reaching its intended gate.
+			outcome.PlanApplications = append(outcome.PlanApplications, &contracts.PlanApplication{
+				ApplicationId: "fixture-" + ref.GetName(), ProgramIds: []string{"base"}, Applied: true,
+				Plan:      &contracts.Plan{Actions: []*contracts.Action{{Kind: &contracts.Action_ReconcileFromSource{ReconcileFromSource: &contracts.ReconcileFromSource{Ref: ref}}}}},
+				StartedAt: timestamppb.New(at), CompletedAt: timestamppb.New(at.Add(time.Second)),
+				VerificationCompleted: true, VerificationPassed: true, Verification: &contracts.Verdict{Result: contracts.Verdict_RESULT_NO_MATCH},
+			})
+
 		}
 	}
 	outcome.FinalHealthDetectorState = []*contracts.DetectorEvaluation{{DetectorId: "fixture", Status: "clear", EvaluatedAt: timestamppb.New(at.Add(2 * time.Second))}}
