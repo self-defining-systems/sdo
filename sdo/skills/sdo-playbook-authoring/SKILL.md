@@ -47,6 +47,7 @@ Keep revisions that applied cleanly unless this incident shows failure or incomp
 - `RunScript`: inline bash byte-identical to the recorded command, application inputs only through
   relation-derived Env, and digest-to-receipt linkage in `script_origins`.
 - Credentials stay references (env or ConfigMap key); never read Secret data.
+- Leave the `health-objective` playbook and health detectors alone; the health judge owns them.
 - When the check reports that no finding binds a program's roles (`reflection.detector-required`), add an
   incident detector with `sdo-detector-authoring`.
 
