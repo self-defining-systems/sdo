@@ -44,6 +44,15 @@ Test using `sdktest.Snapshot.Readings` plus phase recordings; never fill absent 
 
 Steady traffic remains pending until every scenario has succeeded since observation began and has enough recent usable SLO samples. Pending carries a reason naming unproven scenarios, establishes no health and never opens an incident by itself. Qualified violations still fire alongside unproven peers. Process restarts lose qualification; recovery requires fresh observations and the controller's ordinary clearing check. A verify burst reports present scenario evidence, while controller verification owns incident closure.
 
+Health traffic sees only what it calls. Give each service-to-service edge in `links.yaml` at least one continuous
+health-probe scenario whose request crosses it; a link probe proves only that a connection opens, so a dependency
+that accepts connections but fails requests (a payment call behind checkout) stays invisible without one. Reads rarely
+reach write-path services, so include the application's own write journeys (add to cart and place an order, book,
+post) with a `Marker` naming dedicated synthetic data, modelled on its load generator or tests; send JSON bodies with
+`WithJSON`. Prefer an idempotent or self-cleaning write; journey workloads run only on demand and detect nothing.
+When no request can safely cross an edge, say why in a comment above that link; `traffic.undriven-edge` notes list
+the edges still undriven.
+
 ## Metrics detectors (optional input)
 
 When the controller runs with a metrics source (`--metrics-url`, a Prometheus-compatible API), a health detector can

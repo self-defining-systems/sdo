@@ -73,6 +73,9 @@ const (
 
 	// Informational replay evidence, never an acceptance diagnostic.
 	RuleReplayObservation = "program.replay-observation"
+	// Informational traffic coverage: a declared dependency edge no
+	// health-probe scenario drives. Never an acceptance diagnostic.
+	RuleTrafficUndrivenEdge = "traffic.undriven-edge"
 
 	// Compile.
 	RuleProgramMitigationRepair = "program.mitigation-not-repaired"

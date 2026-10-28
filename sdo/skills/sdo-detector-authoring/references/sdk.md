@@ -857,6 +857,7 @@ func LinkFinding(spec sdk.DetectorSpec, namespace string, window Window, ...) (s
 func NewDetector(spec sdk.DetectorSpec, workload string) sdk.Detector
 func NewLinkDetector(spec sdk.DetectorSpec, workload string) sdk.Detector
 func ScenarioFinding(spec sdk.DetectorSpec, namespace string, workload Workload, ...) sdk.Finding
+func UndrivenLinkNote(link Link) string
 type Arrival string
     const ArrivalUniform Arrival = "uniform" ...
 type Catalog []Scenario
@@ -877,6 +878,7 @@ type HTTPEndpoint struct{ ... }
     func POST(path string, query Params) *HTTPEndpoint
     func PUT(path string, query Params) *HTTPEndpoint
 type Link struct{ ... }
+    func UndrivenLinks(catalog Catalog, workloads []Workload) []Link
 type LinkObservations struct{ ... }
 type LinkProtocol string
     const LinkProtocolTCP LinkProtocol = "tcp"
