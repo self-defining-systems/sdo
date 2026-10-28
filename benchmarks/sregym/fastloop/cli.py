@@ -32,7 +32,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from benchmarks.sregym.adapter import WaitKind, assert_host_disk_headroom, assert_host_headroom, kubectl, wait_for
-from benchmarks.sregym.fastloop.accepted_source import AcceptedSource, manifest_paths_for
+from benchmarks.sregym.fastloop.accepted_source import AcceptedSource, manifest_paths_for_environment
 from benchmarks.sregym.fastloop.baseline_recovery import (
     KubectlApplicationCluster,
     accepted_restore_baselines,
@@ -577,7 +577,7 @@ def _sdo_agent(
         controller_image=environment.images.controller,
         responder_image=environment.images.responder,
         validator_image=environment.images.validator,
-        deployed_manifest_paths=manifest_paths_for(environment.application),
+        deployed_manifest_paths=manifest_paths_for_environment(environment),
         repository_pvc="sdo-application-repository",
         credentials_secret=getattr(args, "credentials_secret", "sdo-agent-credentials"),
         model=args.model,

@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from benchmarks.sregym.fastloop.records import IncidentRecord, load_records, write_records
+from benchmarks.sregym.fastloop.records import EVAL_CLEANUP_PASSES, IncidentRecord, load_records, write_records
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -145,7 +145,7 @@ def execute_lane(
         "--inject-before-resume",
         "--require-full-cleanup",
         "--cleanup-passes",
-        "2",
+        str(EVAL_CLEANUP_PASSES),
     ]
     command.extend(plan.worker_arguments())
     with (directory / "worker.log").open("w") as log:
