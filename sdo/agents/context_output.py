@@ -116,7 +116,9 @@ def cap_text(text: str, limit: int, *, json_output: bool = False, bytes_limit: b
         start, end = text.find("{"), text.rfind("}")
         try:
             # A JSON fragment inside prose is not the section; its head is a better summary.
-            document = json.loads(text[start : end + 1]) if 0 <= start < end and (end + 1 - start) * 2 >= len(text) else None
+            document = (
+                json.loads(text[start : end + 1]) if 0 <= start < end and (end + 1 - start) * 2 >= len(text) else None
+            )
         except ValueError:
             document = None
 
