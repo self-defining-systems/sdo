@@ -31,7 +31,7 @@ def test_unknown_names_have_conservative_cost_and_deterministic_ownership():
     names = [f"TestNew{i}" for i in range(30)]
     bins, nightly = planner.pack(names, {}, budget=210)
     assert bins == planner.pack(list(reversed(names)), {}, budget=210)[0]
-    assert len(bins) >= 3
+    assert len(bins) == len(names)
     assert sorted(n for b in bins for n in b) == sorted(names)
     assert not nightly
 

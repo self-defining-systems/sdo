@@ -15,7 +15,8 @@ ROOT = Path(__file__).resolve().parents[1]
 JOB_SECONDS = 300.0
 SETUP_MARGIN = 90.0
 BUDGET = JOB_SECONDS - SETUP_MARGIN
-DEFAULT_COST = 180.0
+# Unmeasured names own a whole bin, so a new slow test cannot overload peers.
+DEFAULT_COST = BUDGET
 DEDICATED = re.compile(r"^Test(?:Replay|Chaos|Exhaustive|Explorer)")
 
 

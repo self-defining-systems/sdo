@@ -5,7 +5,7 @@
 - `go_cost_plan.py`: deterministic first-fit decreasing allocation of that inventory
   using `operator_test_costs.json` and `runtime_test_costs.json`. Each bin gets 210
   seconds of measured work inside the unchanged five-minute job, leaving 90
-  seconds for setup. Unknown tests reserve 180 seconds. Capacity grows through
+  seconds for setup. Unknown tests reserve the full work budget and run in isolation. Capacity grows through
   the generated Actions matrix; no test placement lists are maintained. A single
   test above the work budget is included in the nightly overflow suite.
 - `test_operator_shard.py`, `test_runtime_shard.py`: run a numbered computed bin
