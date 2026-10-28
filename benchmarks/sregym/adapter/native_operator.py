@@ -21,12 +21,18 @@ from typing import TYPE_CHECKING, Any
 from google.protobuf import json_format
 
 from benchmarks.sregym.adapter.budgets import WaitKind, wait_for
-from sdo.agents.provider import AGENT_EFFORTS, DEFAULT_AGENT_EFFORT
 
 if TYPE_CHECKING:
     from sdo.contracts import ControllerObservation
 
 _OPERATOR_MODULE = Path(__file__).resolve().parents[3] / "sdo" / "operator"
+# SREGym's venv imports this module without SDO's agent dependencies, so the
+# effort settings come from the shared worker-environment manifest itself.
+_AGENT_ENVIRONMENT = json.loads(
+    (Path(__file__).resolve().parents[3] / "sdo" / "contracts" / "agent_env.json").read_text("utf-8")
+)
+DEFAULT_AGENT_EFFORT: str = _AGENT_ENVIRONMENT["default_effort"]
+AGENT_EFFORTS: tuple[str, ...] = tuple(_AGENT_ENVIRONMENT["efforts"])
 _IMAGE_DIGEST = re.compile(r"@sha256:[0-9a-f]{64}$")
 _REGISTRY_HOST = re.compile(r"[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?(?::[1-9][0-9]{0,4})?\Z")
 
