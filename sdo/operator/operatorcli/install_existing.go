@@ -60,6 +60,7 @@ func ParseInstallExistingLaunch(args []string) (InstallExistingConfig, error) {
 	credentialsSecret := flags.String("credentials-secret", "", "agent credentials Secret")
 	model := flags.String("model", "", "agent model")
 	provider := flags.String("agent-provider", "codex", "agent provider")
+	effort := flags.String("agent-effort", "", "reasoning effort of every agent worker (empty: the shared default)")
 	repairPolicy := flags.String("repair-policy", "recorded-actions", "repair evidence policy")
 	reflectionSession := flags.String("reflection-session", "resume", "reflection session mode: fresh or resume")
 	reflectionGuidance := flags.String("reflection-guidance", "baseline", "reflection guidance mode")
@@ -132,7 +133,7 @@ func ParseInstallExistingLaunch(args []string) (InstallExistingConfig, error) {
 		Namespace: *namespace, ControlNamespace: *controlNamespace, Application: *application,
 		ScriptImage: *scriptImage, ControllerImage: *controllerImage, ResponderImage: *responderImage, ValidatorImage: *validatorImage,
 		RepositoryPVC: *repositoryPVC, CredentialsSecret: *credentialsSecret, Model: *model,
-		RepairPolicy: *repairPolicy, ReflectionSession: *reflectionSession, ReflectionGuidance: *reflectionGuidance, ForceReflection: *forceReflection, AgentProvider: *provider,
+		RepairPolicy: *repairPolicy, ReflectionSession: *reflectionSession, ReflectionGuidance: *reflectionGuidance, ForceReflection: *forceReflection, AgentProvider: *provider, AgentEffort: *effort,
 		MaxResponseLoops: *maxResponseLoops,
 		ResponderMenu:    menu != "0",
 		LateFindings:     *lateFindings,

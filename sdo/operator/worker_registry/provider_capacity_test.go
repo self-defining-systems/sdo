@@ -36,11 +36,15 @@ func TestProviderCapacityRefusesPartialMountConfiguration(t *testing.T) {
 func TestAgentEnvironmentCarriesSharedCapacityForEveryRole(t *testing.T) {
 	t.Setenv("SDO_OPUS_POOL_NFS_SERVER", "server")
 	t.Setenv("SDO_OPUS_POOL_NFS_PATH", "/pool")
-	env, err := AgentEnvironment("claude", "opus")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if env["SDO_OPUS_POOL_NFS_SERVER"] != "server" || env["SDO_OPUS_POOL_NFS_PATH"] != "/pool" {
-		t.Fatalf("pool lost at worker boundary: %+v", env)
+	for _, provider := range []string{"", "codex", "claude"} {
+		for _, effort := range AgentEfforts {
+			env, err := AgentEnvironment(provider, "opus", effort)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if env["SDO_OPUS_POOL_NFS_SERVER"] != "server" || env["SDO_OPUS_POOL_NFS_PATH"] != "/pool" || env[EffortEnvironment] != effort {
+				t.Fatalf("pool or effort lost at worker boundary (%q): %+v", provider, env)
+			}
+		}
 	}
 }

@@ -78,7 +78,9 @@ class Reflector(Protocol):
 
 def _default_reflector(guidance: ReflectionGuidance) -> SessionReflector:
     resolved = resolve_agent("reflection", "reflection")
-    backend = (ClaudeSessionBackend if resolved.provider == "claude" else CodexSessionBackend)(model=resolved.model)
+    backend = (ClaudeSessionBackend if resolved.provider == "claude" else CodexSessionBackend)(
+        model=resolved.model, reasoning_effort=resolved.effort
+    )
     return SessionReflector(backend, guidance=guidance)
 
 

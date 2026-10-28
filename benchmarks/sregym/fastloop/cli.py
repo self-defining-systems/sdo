@@ -56,6 +56,7 @@ from benchmarks.sregym.fastloop.wipe import (
     unrecovered_rows,
 )
 from benchmarks.sregym.fastloop.worker_client import SregymWorker, worker_argv
+from sdo.agents.provider import AGENT_EFFORTS, DEFAULT_AGENT_EFFORT
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -584,6 +585,7 @@ def _sdo_agent(
         timeout_seconds=args.timeout,
         repair_policy=args.repair_policy,
         agent_provider=args.provider,
+        agent_effort=args.reasoning_effort,
         reflection_session=args.reflection_session,
         reflection_guidance=args.reflection_guidance,
         code_path=getattr(args, "code_path", "go"),
@@ -1667,7 +1669,12 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="EVIDENCE_JSONL",
         help="scripted-agent gate: delete the controller Pod inside every injection pause and record it here",
     )
-    run.add_argument("--reasoning-effort", default=None, help="Codex baseline reasoning effort (default: Codex's)")
+    run.add_argument(
+        "--reasoning-effort",
+        choices=AGENT_EFFORTS,
+        default=DEFAULT_AGENT_EFFORT,
+        help="reasoning effort of every agent in the run: each SDO agent and the Codex baseline",
+    )
     run.add_argument("--timeout", type=int, default=3600, help="per-incident agent timeout in seconds")
 
     run.add_argument(

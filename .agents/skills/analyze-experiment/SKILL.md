@@ -75,3 +75,5 @@ also read [drift and toy failures](references/drift-failures.md).
 For automatic repair gate changes, defaults, match selection and historical receipt provenance, read [automatic repair evidence](references/automatic-repair.md).
 
 For fastloop capability, infrastructure, ordered dispatch and image-delivery interpretation, read [dispatch evidence](references/fastloop-dispatch.md).
+
+For ordered stage reports and pending rollout handoffs, read [ordered response stages](references/response-stages.md).

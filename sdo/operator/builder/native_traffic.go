@@ -252,6 +252,20 @@ func TestTrafficNotesUndrivenLinks(t *testing.T) {
     if err := os.WriteFile("` + trafficCoverageNotes + `", data, 0o600); err != nil { t.Fatal(err) }
 }
 
+// TestTrafficNotesDefaultLatencyBounds records, as non-blocking notes, the
+// continuously probed scenarios whose path may slow down without firing.
+func TestTrafficNotesDefaultLatencyBounds(t *testing.T) {
+    workloads, err := prober.ParseWorkloads(TrafficWorkloads)
+    if err != nil { t.Fatal(err) }
+    notes := []string{}
+    for _, id := range traffic.DefaultLatencyScenarios(workloads) {
+        notes = append(notes, traffic.DefaultLatencyNote(id))
+    }
+    data, err := json.Marshal(notes)
+    if err != nil { t.Fatal(err) }
+    if err := os.WriteFile("` + trafficLatencyNotes + `", data, 0o600); err != nil { t.Fatal(err) }
+}
+
 func TestTrafficGeneratorsDetectTheirFaultClasses(t *testing.T) {
     for _, failure := range traffic.CheckCatalog(context.Background(), TrafficCatalog()) {
         t.Error(failure)

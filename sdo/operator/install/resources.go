@@ -46,7 +46,7 @@ type Config struct {
 	ScriptImage                                     string
 	RepositoryPVC, CredentialsSecret, Model         string
 	AcceptedCommit                                  string
-	RepairPolicy, AgentProvider                     string
+	RepairPolicy, AgentProvider, AgentEffort        string
 	ReflectionSession, ReflectionGuidance           string
 	ForceReflection                                 bool
 	LateFindings                                    string
@@ -172,6 +172,9 @@ func (c Config) validate() error {
 	}
 	if c.AgentProvider != "" && c.AgentProvider != "codex" && c.AgentProvider != "claude" {
 		return errors.New("invalid agent provider")
+	}
+	if c.AgentEffort != "" && !slices.Contains(worker_registry.AgentEfforts, c.AgentEffort) {
+		return fmt.Errorf("invalid agent effort %q", c.AgentEffort)
 	}
 	if c.ReflectionSession != "" && !slices.Contains(wire.StringIn(&contracts.ControllerConfig{}, "reflection_session"), c.ReflectionSession) {
 		return errors.New("invalid reflection session")
@@ -309,6 +312,9 @@ func controllerJob(c Config) *batchv1.Job {
 		args = append(args, "--script-image", c.ScriptImage)
 	}
 	args = append(args, "--broker-mode=native", "--worker-mount-mode=proposal-only", "--validator-image", c.ValidatorImage, "--model", c.Model, "--responder-backend", provider)
+	if c.AgentEffort != "" {
+		args = append(args, "--agent-effort", c.AgentEffort)
+	}
 	args = append(args, "--reflection-session", reflectionSession(c))
 	args = append(args, "--reflection-guidance", reflectionGuidance(c))
 	if c.ForceReflection {
