@@ -8,7 +8,8 @@ import pytest
 SPEC = importlib.util.spec_from_file_location(
     "go_cost_plan", Path(__file__).resolve().parents[3] / "scripts/go_cost_plan.py"
 )
-assert SPEC and SPEC.loader
+assert SPEC is not None
+assert SPEC.loader is not None
 planner = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(planner)
 
@@ -43,3 +44,57 @@ def test_single_test_over_budget_runs_nightly():
 def test_invalid_measurements_fail_closed(cost):
     with pytest.raises(ValueError, match="cost"):
         planner.pack(["TestOne"], {"TestOne": cost}, budget=210)
+
+
+def test_duplicate_test_names_cannot_receive_two_owners(tmp_path, monkeypatch):
+    profiles = tmp_path / "scripts"
+    profiles.mkdir()
+    (profiles / "operator_test_costs.json").write_text('{"costs":{"pkg/a/TestSame":120,"pkg/b/TestSame":120}}')
+    monkeypatch.setattr(planner, "ROOT", tmp_path)
+    data = planner.plan("operator", {"pkg/a": ["TestSame"], "pkg/b": ["TestSame"]})
+    assert data["nightly"] == ["TestSame"]
+    assert data["packages"]["TestSame"] == ["pkg/a", "pkg/b"]
+
+
+def test_removed_cost_entries_do_not_create_tests(tmp_path, monkeypatch):
+    profiles = tmp_path / "scripts"
+    profiles.mkdir()
+    (profiles / "operator_test_costs.json").write_text('{"costs":{"pkg/a/TestRemoved":200}}')
+    monkeypatch.setattr(planner, "ROOT", tmp_path)
+    data = planner.plan("operator", {"pkg/a": ["TestNew"]})
+    assert data["bins"] == [["TestNew"]]
+    assert data["costs"]["TestNew"] == planner.DEFAULT_COST
+
+
+def test_real_compiled_inventory_reaches_real_runner(tmp_path, monkeypatch):
+    """The Go producer and selection consumer run together; no fake inventory."""
+    import json
+    import sys
+
+    module = tmp_path / "sdo/operator"
+    module.mkdir(parents=True)
+    (module / "go.mod").write_text("module synthetic.example/ci\n\ngo 1.24\n")
+    (module / "plan_test.go").write_text("""package ci
+import "testing"
+func TestFirst(t *testing.T) {}
+func TestSecond(t *testing.T) {}
+func FuzzSeed(f *testing.F) { f.Add("seed"); f.Fuzz(func(t *testing.T, s string) {}) }
+""")
+    profiles = tmp_path / "scripts"
+    profiles.mkdir()
+    (profiles / "operator_test_costs.json").write_text('{"costs":{}}')
+    monkeypatch.setattr(planner, "ROOT", tmp_path)
+    source = planner.inventory("")
+    assert source == {"synthetic.example/ci": ["TestFirst", "TestSecond", "FuzzSeed"]}
+    data = planner.plan("operator", source)
+    assert len(data["bins"]) == 3
+    path = tmp_path / "plan.json"
+    path.write_text(json.dumps({"operator": data}))
+    sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
+    import time
+
+    from go_test_timing import run_tests
+
+    restored = json.loads(path.read_text())["operator"]
+    for members in restored["bins"]:
+        run_tests(planner.go_command(restored, members), started=time.monotonic(), cwd=module)

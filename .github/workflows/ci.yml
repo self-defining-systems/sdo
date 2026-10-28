@@ -164,6 +164,7 @@ jobs:
     outputs:
       schema_identity: ${{ steps.schema.outputs.value }}
       test_matrix: ${{ steps.cost-plan.outputs.matrix }}
+      nightly_matrix: ${{ steps.cost-plan.outputs.nightly_matrix }}
     steps:
       - name: Select prepared compiler cache
         run: echo "GOCACHE=${{ runner.temp }}/sdo-go-build-${{ matrix.mode }}" >> "$GITHUB_ENV"
@@ -203,7 +204,7 @@ jobs:
         id: cost-plan
         run: |
           python3 scripts/go_cost_plan.py --prepared --output .fastloop/test-bin/go-test-plan.json | tee "$RUNNER_TEMP/cost-plan.log"
-          grep '^matrix=' "$RUNNER_TEMP/cost-plan.log" >> "$GITHUB_OUTPUT"
+          grep -E '^(matrix|nightly_matrix)=' "$RUNNER_TEMP/cost-plan.log" >> "$GITHUB_OUTPUT"
 
       - name: Keep only the source-bound test executable
         if: matrix.mode == 'normal'

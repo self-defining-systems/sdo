@@ -11,7 +11,9 @@ import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-BUDGET = 210.0
+JOB_SECONDS = 300.0
+SETUP_MARGIN = 90.0
+BUDGET = JOB_SECONDS - SETUP_MARGIN
 DEFAULT_COST = 180.0
 DEDICATED = re.compile(r"^Test(?:Replay|Chaos|Exhaustive|Explorer)")
 
@@ -112,22 +114,30 @@ def main() -> None:
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(plans, sort_keys=True) + "\n")
     print("matrix=" + json.dumps({"include": matrix}, separators=(",", ":")))
-
-
-if __name__ == "__main__":
-    main()
+    overflow = [
+        {"cost_scope": scope, "nightly_index": str(index)}
+        for scope, data in plans.items()
+        for index, _ in enumerate(data["nightly"])
+    ]
+    # GitHub rejects an empty matrix: one explicit no-op keeps the workflow valid.
+    print(
+        "nightly_matrix="
+        + json.dumps({"include": overflow or [{"cost_scope": "operator", "nightly_index": "0"}]}, separators=(",", ":"))
+    )
 
 
 def run_main(scope: str) -> None:
     """Run the prepared plan, or discover it for standalone local invocations."""
-    import time
     import os
-    from operator_test_binary import build_operator
+    import time
+
     from go_test_timing import run_tests
+    from operator_test_binary import build_operator
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("bin", help="zero-based automatic bin, or nightly")
     parser.add_argument("--plan", type=Path)
+    parser.add_argument("--nightly-index", type=int)
     args = parser.parse_args()
     started = time.monotonic()
     data = (
@@ -137,6 +147,10 @@ def run_main(scope: str) -> None:
     )
     if args.bin == "nightly":
         names = data["nightly"]
+        if args.nightly_index is not None:
+            if args.nightly_index < 0 or (names and args.nightly_index >= len(names)):
+                parser.error("nightly index is outside the prepared plan")
+            names = names[args.nightly_index : args.nightly_index + 1]
     else:
         index = int(args.bin)
         if index < 0 or index >= len(data["bins"]):
@@ -146,22 +160,32 @@ def run_main(scope: str) -> None:
     if not names:
         print(f"{scope}: no nightly overflow")
         return
-    packages = sorted({p for n in names for p in data["packages"][n]})
-    selection = "^(" + "|".join(re.escape(n) for n in names) + ")$"
     os.environ["SDO_TEST_OPERATOR_BINARY"] = str(build_operator(ROOT / "sdo/operator", ROOT / ".fastloop/test-bin"))
     run_tests(
-        [
-            "go",
-            "test",
-            "-race",
-            "-parallel=2",
-            "-count=1",
-            "-timeout=" + ("5m" if scope == "runtime" else "4m"),
-            "-json",
-            "-run",
-            selection,
-            *packages,
-        ],
+        go_command(data, names),
         started=started,
         cwd=ROOT / "sdo/operator" / ("runtime" if scope == "runtime" else ""),
     )
+
+
+def go_command(data: dict, names: list[str]) -> list[str]:
+    """A whole-name union preserves all subtests and seeds in their owner bin."""
+    scope = data["scope"]
+    packages = sorted({p for n in names for p in data["packages"][n]})
+    selection = "^(" + "|".join(re.escape(n) for n in names) + ")$"
+    return [
+        "go",
+        "test",
+        "-race",
+        "-parallel=2",
+        "-count=1",
+        "-timeout=" + ("5m" if scope == "runtime" else "4m"),
+        "-json",
+        "-run",
+        selection,
+        *packages,
+    ]
+
+
+if __name__ == "__main__":
+    main()

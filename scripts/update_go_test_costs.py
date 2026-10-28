@@ -56,11 +56,10 @@ def measured_costs(events: Iterable[dict[str, Any]]) -> dict[tuple[str, str], fl
             seconds = max(elapsed, active)
             if not math.isfinite(seconds) or seconds < 0:
                 raise ValueError(f"{key}: active timing must be finite and nonnegative")
-            if seconds >= 1:
-                result[key] = max(result.get(key, 0.0), round(seconds, 3))
+            result[key] = max(result.get(key, 0.0), round(seconds, 3), 0.001)
             starts.pop(key, None)
     if not result:
-        raise ValueError("no completed top-level test timings of at least one second")
+        raise ValueError("no completed top-level test timings")
     return result
 
 
@@ -72,7 +71,7 @@ def update_profile(path: Path, measured: dict[str, float], run: int, head: str, 
     profile["source_head"] = head
     profile["description"] = (
         "Hosted completed top-level active seconds, including parallel children and excluding pauses. "
-        "Completed timings of at least one second are refreshed; "
+        "All completed timings are refreshed (0.001s resolution floor); "
         "unobserved and unfinished names retain their earlier bounds."
     )
     profile["costs"].update(measured)

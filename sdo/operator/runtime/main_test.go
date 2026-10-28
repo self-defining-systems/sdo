@@ -23,6 +23,8 @@ func TestMain(m *testing.M) {
 		fmt.Fprintln(os.Stderr, "FAIL: informer goroutines still running after all tests; some test started informers it never stopped")
 		code = 1
 	}
-	if cliFixture.directory != "" { os.RemoveAll(cliFixture.directory) }
+	if cliFixture.directory != "" {
+		os.RemoveAll(cliFixture.directory)
+	}
 	os.Exit(code)
 }

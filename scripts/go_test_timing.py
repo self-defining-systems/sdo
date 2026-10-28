@@ -1,6 +1,7 @@
 """Streaming Go JSON diagnostics; Go and CI retain their existing deadlines."""
 
 from __future__ import annotations
+
 import json
 import subprocess
 import time

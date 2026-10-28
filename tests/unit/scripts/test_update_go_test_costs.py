@@ -74,3 +74,14 @@ def test_operator_only_refresh_preserves_runtime_profile(tmp_path: Path, monkeyp
     result = json.loads(operator.read_text())
     assert result["placements"] == {"Old": "remaining"}
     assert result["costs"]["sdo.dev/operator/broker/TestParent"] == 8
+
+
+def test_subsecond_tests_remain_measured_instead_of_unknown_forever() -> None:
+    done = event("pass", 0, "TestFast", Elapsed=0.02)
+    assert costs.measured_costs([done]) == {("sdo.dev/operator/runtime", "TestFast"): 0.02}
+
+
+def test_zero_resolution_completion_has_positive_cost_floor() -> None:
+    assert costs.measured_costs([event("pass", 0, "TestInstant", Elapsed=0)]) == {
+        ("sdo.dev/operator/runtime", "TestInstant"): 0.001,
+    }
