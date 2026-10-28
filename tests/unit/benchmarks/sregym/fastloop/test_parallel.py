@@ -191,6 +191,7 @@ def test_lane_process_overrides_ambient_kubeconfig_and_caps_host_build_jobs(monk
         assert (args.provider, args.model) == (provider, model)
         stream = load_stream_config(args.stream)
         assert (stream.capability_mode, stream.permissive_responder) == ("permissive", True)
+        assert stream.diagnosis_grading == "off"
         assert kwargs["env"]["SREGYM_BASE_KUBECONFIG"] == str(tmp_path / "left" / "config")
         assert kwargs["env"]["KUBECONFIG"] == str(tmp_path / "left" / "config")
         assert kwargs["env"]["GOMAXPROCS"] == "4"
