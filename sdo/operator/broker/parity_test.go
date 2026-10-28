@@ -121,7 +121,8 @@ func TestCLIAndBrokerAgreeOnAcceptanceFourthShard(t *testing.T) {
 
 func acceptanceCaseShard(index int, name string) int {
 	switch name {
-	case "unverified peer no verified", "accepted case needs no current capture":
+	case "unverified peer no verified", "accepted case needs no current capture",
+		"program repeat has no detector", "program replay failure", "program mitigation skips unreplayable effect":
 		return 3
 	case "trusted captured program", "healthy refused service ports",
 		"healthy refused ports without recordings", "trailing whitespace normalized",
