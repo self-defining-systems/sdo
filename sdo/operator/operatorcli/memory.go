@@ -40,6 +40,8 @@ commands:
   check [--root .] [--json] [--decision FILE]
         Run structural, semantic, ownership, compilation and provenance checks.
         Tests and replay run as information; their verdicts never block saving.
+        Like the broker, it derives playbook fault_class and regenerates the
+        playbook index from each README's first heading; never edit the index.
         SDO_CODE_PATH=shell selects text/size/credential hygiene and ownership
         without Go compilation or replay; broker launch policy is authoritative.
         SDO_ACTOR, SDO_PHASE, and SDO_BASE_COMMIT are required. Operator sources

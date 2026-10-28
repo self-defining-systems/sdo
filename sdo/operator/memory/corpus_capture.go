@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sdo.dev/operator/memory/layout"
+	"slices"
 	"strings"
 	"sync"
 
@@ -19,6 +20,15 @@ import (
 var capturedRecordingsMu sync.Mutex
 
 func AppendCapturedRecording(repositoryMount, incidentID, phase string, call sdktest.PrimitiveCall) error {
+	return AppendCapturedRecordings(repositoryMount, incidentID, phase, []sdktest.PrimitiveCall{call})
+}
+
+// AppendCapturedRecordings adds calls to one open phase's recordings in one
+// write. A state read (source comparison, database catalog, admission
+// webhooks) keeps its first
+// observation per phase: a live view freezes such reads per snapshot, and
+// replay answers every repeated read from that first reply.
+func AppendCapturedRecordings(repositoryMount, incidentID, phase string, added []sdktest.PrimitiveCall) error {
 	releaseSessionStorage := SessionStorageUse()
 	defer releaseSessionStorage()
 
@@ -40,35 +50,37 @@ func AppendCapturedRecording(repositoryMount, incidentID, phase string, call sdk
 	if err := json.Unmarshal(data, &calls); err != nil {
 		return err
 	}
-	if call.Method == "RepairReceipt" {
-		for _, prior := range calls {
-			if prior.Method == call.Method && string(prior.Result) == string(call.Result) {
-				return nil
-			}
+	seen := map[string]bool{}
+	for _, prior := range calls {
+		if key, ok, err := firstObservationKey(prior); err != nil {
+			return err
+		} else if ok {
+			seen[key] = true
 		}
 	}
-	if call.Method == "DatabaseUsers" {
-		identity, err := databaseCaptureIdentity(call)
+	appended := false
+	for _, call := range added {
+		if call.Method == "RepairReceipt" && slices.ContainsFunc(calls, func(prior sdktest.PrimitiveCall) bool {
+			return prior.Method == call.Method && string(prior.Result) == string(call.Result)
+		}) {
+			continue
+		}
+		key, ok, err := firstObservationKey(call)
 		if err != nil {
 			return err
 		}
-		for _, prior := range calls {
-			if prior.Method != "DatabaseUsers" {
-				continue
-			}
-			previous, err := databaseCaptureIdentity(prior)
-			if err != nil {
-				return err
-			}
-			// Catalogs are mutable. A later responder call cannot replace the
-			// first observation at this immutable capture boundary, even when
-			// it selects another credential source or an equivalent shell.
-			if identity == previous {
-				return nil
-			}
+		if ok && seen[key] {
+			continue
 		}
+		if ok {
+			seen[key] = true
+		}
+		calls = append(calls, call)
+		appended = true
 	}
-	calls = append(calls, call)
+	if !appended {
+		return nil
+	}
 	data, err = json.Marshal(calls)
 	if err != nil {
 		return err
@@ -86,6 +98,28 @@ func AppendCapturedRecording(repositoryMount, incidentID, phase string, call sdk
 		return err
 	}
 	return os.Rename(file.Name(), path)
+}
+
+// firstObservationKey identifies a state read within its phase. Catalogs are
+// mutable: a later responder call cannot replace the first observation at this
+// immutable capture boundary, even with another credential source or an
+// equivalent shell.
+func firstObservationKey(call sdktest.PrimitiveCall) (string, bool, error) {
+	phase := call.Phase
+	if phase == "" {
+		phase = "open"
+	}
+	switch call.Method {
+	case "DatabaseUsers":
+		identity, err := databaseCaptureIdentity(call)
+		if err != nil {
+			return "", false, err
+		}
+		return identity, true, nil
+	case "DiffAgainstSource", "DiffAgainstBaseline", "AdmissionWebhooksFor", "WebhookCAMatchesSecret":
+		return phase + "\x00" + recordedReadKey(call), true, nil
+	}
+	return "", false, nil
 }
 
 func databaseCaptureIdentity(call sdktest.PrimitiveCall) (string, error) {
@@ -314,22 +348,18 @@ func writeCapturedFile(path string, data []byte) error {
 }
 
 // CaptureRepairedProgramReads records fresh answers at the controller's verified
-// fixed boundary for every primitive inspected before repair. They travel in
-// the same protected recordings file with explicit phase metadata.
-func CaptureRepairedProgramReads(repositoryMount, incidentID string, readView func(sdk.DetectionContext) program.ReadView) error {
+// fixed boundary for every primitive inspected before repair. The view reads
+// the live fixed-boundary snapshot: the captured fixed.json is projected
+// (ConfigMap values redacted), so comparisons recomputed from it are wrong. They travel in
+// the same protected recordings file with explicit phase metadata. Each open
+// read is repeated unless the phase already holds its fixed answer (a plan's
+// own verification read), so repeated calls add nothing.
+func CaptureRepairedProgramReads(repositoryMount, incidentID string, view program.ReadView) error {
 	releaseSessionStorage := SessionStorageUse()
 	defer releaseSessionStorage()
 
 	dir, err := IncidentCorpusDir(repositoryMount, incidentID)
 	if err != nil {
-		return err
-	}
-	raw, err := os.ReadFile(filepath.Join(dir, "fixed.json"))
-	if err != nil {
-		return err
-	}
-	var snapshot sdktest.Snapshot
-	if err := json.Unmarshal(raw, &snapshot); err != nil {
 		return err
 	}
 	for _, phase := range []string{"open@detect", "open@settle", "open@pre-apply"} {
@@ -344,29 +374,53 @@ func CaptureRepairedProgramReads(repositoryMount, incidentID string, readView fu
 		if err := json.Unmarshal(raw, &calls); err != nil {
 			return err
 		}
-		var open []sdktest.PrimitiveCall
-		fixed := false
+		fixed := map[string]int{}
 		for _, call := range calls {
 			if call.Phase == "fixed" {
-				fixed = true
-			}
-			if call.Phase == "" || call.Phase == "open" {
-				open = append(open, call)
+				fixed[recordedReadKey(call)]++
 			}
 		}
-		if fixed || len(open) == 0 {
+		var open []sdktest.PrimitiveCall
+		for _, call := range calls {
+			if call.Phase != "" && call.Phase != "open" {
+				continue
+			}
+			if key := recordedReadKey(call); fixed[key] > 0 {
+				fixed[key]--
+				continue
+			}
+			open = append(open, call)
+		}
+		if len(open) == 0 {
 			continue
 		}
-		observed, err := sdktest.RecordPrimitiveCalls(readView(snapshot), open)
+		observed, err := sdktest.RecordPrimitiveCalls(view, open)
 		if err != nil {
 			return err
 		}
-		for _, call := range observed {
-			call.Phase = "fixed"
-			if err := AppendCapturedRecording(repositoryMount, incidentID, phase, call); err != nil {
-				return err
-			}
+		for i := range observed {
+			observed[i].Phase = "fixed"
+		}
+		if err := AppendCapturedRecordings(repositoryMount, incidentID, phase, observed); err != nil {
+			return err
 		}
 	}
 	return nil
+}
+
+// recordedReadKey identifies one read independent of its phase. A catalog read
+// is identified like its capture: credential source and shell do not matter.
+func recordedReadKey(call sdktest.PrimitiveCall) string {
+	if call.Method == "DatabaseUsers" {
+		call.Phase = ""
+		if identity, err := databaseCaptureIdentity(call); err == nil {
+			return call.Method + "\x00" + identity
+		}
+	}
+	var arguments any
+	if err := json.Unmarshal(call.Arguments, &arguments); err != nil {
+		return call.Method + "\x00" + string(call.Arguments)
+	}
+	canonical, _ := json.Marshal(arguments)
+	return call.Method + "\x00" + string(canonical)
 }

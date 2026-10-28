@@ -144,6 +144,7 @@ def _relevant(item: dict[str, Any] | None, kind: str) -> Any:
 
 def replay_scripted_responder(store: CheckpointStore, incident: int, *, source: Path) -> dict[str, Any]:
     checkpoint = store.load(incident, "responder")
+    checkpoint.require_captures()
     task = parse_json(checkpoint.request, AgentTask())
     typed = IncidentRequest()
     if not task.request.Unpack(typed):
@@ -205,6 +206,7 @@ def replay_scripted_reflection(
     store: CheckpointStore, incident: int, *, source: Path, operator_root: Path
 ) -> dict[str, Any]:
     checkpoint = store.load(incident, "reflection")
+    checkpoint.require_captures()
     task = parse_json(checkpoint.request, AgentTask())
     typed = ReflectionRequest()
     if not task.request.Unpack(typed):
@@ -317,6 +319,7 @@ def replay_live_worker(
     operator_root: Path | None = None,
 ) -> dict[str, Any]:
     checkpoint = store.load(incident, stage)
+    checkpoint.require_captures()
     operator_root = operator_root or Path(__file__).resolve().parents[3] / "sdo/operator"
     proposals: list[dict[str, Any]] = []
     task = parse_json(checkpoint.request, AgentTask())

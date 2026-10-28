@@ -91,6 +91,12 @@ depends_on = [
 ]
 
 [[modules]]
+path = "benchmarks.sregym.pool"
+depends_on = [
+    "benchmarks.sregym.fastloop",
+]
+
+[[modules]]
 path = "benchmarks.sregym.runner"
 depends_on = [
     "benchmarks.sregym.faults",

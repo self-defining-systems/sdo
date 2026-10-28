@@ -1,6 +1,7 @@
 package sdktest
 
 import (
+	"errors"
 	"fmt"
 	"sdo.dev/operator/sdk/program"
 )
@@ -23,8 +24,13 @@ func (v *ReplayReadView) DatabaseUsers(t program.DatabaseTarget) ([]program.Data
 	if err := t.Validate(); err != nil {
 		return nil, err
 	}
+	// A catalog is state: repeated reads in one phase see the recorded answer.
 	var r []program.DatabaseUser
-	if err := v.replay("DatabaseUsers", []any{t}, &r); err != nil {
+	if err := v.Recorded("DatabaseUsers", []any{t}, &r); err != nil {
+		var unrecorded *UnrecordedError
+		if errors.As(err, &unrecorded) {
+			return nil, err
+		}
 		return nil, fmt.Errorf("database catalog observation unavailable")
 	}
 	return program.NormalizeDatabaseUsers(r)

@@ -102,6 +102,34 @@ def lane_process_environment(environment: FastloopEnvironment, lanes: int) -> di
     }
 
 
+def lane_run_command(
+    run_dir: Path, run_id: str, stream: Path, timeout_seconds: int, worker_arguments: Sequence[str]
+) -> list[str]:
+    """The guarded eval encounter command every experiment lane runs (healthy baseline, full cleanup)."""
+    return [
+        sys.executable,
+        "-m",
+        "benchmarks.sregym.fastloop",
+        "run",
+        "--run-dir",
+        str(run_dir),
+        "--run-id",
+        run_id,
+        "--agent",
+        "sdo",
+        "--stream",
+        str(stream),
+        "--timeout",
+        str(timeout_seconds),
+        "--healthy-baseline",
+        "--inject-before-resume",
+        "--require-full-cleanup",
+        "--cleanup-passes",
+        str(EVAL_CLEANUP_PASSES),
+        *worker_arguments,
+    ]
+
+
 def execute_lane(
     name: str, directory: Path, encounters: Sequence[Encounter], plan: ParallelPlan
 ) -> list[IncidentRecord]:
@@ -126,28 +154,7 @@ def execute_lane(
         )
         + "\n"
     )
-    command = [
-        sys.executable,
-        "-m",
-        "benchmarks.sregym.fastloop",
-        "run",
-        "--run-dir",
-        str(run_dir),
-        "--run-id",
-        run_id,
-        "--agent",
-        "sdo",
-        "--stream",
-        str(stream),
-        "--timeout",
-        str(plan.timeout_seconds),
-        "--healthy-baseline",
-        "--inject-before-resume",
-        "--require-full-cleanup",
-        "--cleanup-passes",
-        str(EVAL_CLEANUP_PASSES),
-    ]
-    command.extend(plan.worker_arguments())
+    command = lane_run_command(run_dir, run_id, stream, plan.timeout_seconds, plan.worker_arguments())
     with (directory / "worker.log").open("w") as log:
         completed = subprocess.run(
             command,

@@ -34,6 +34,8 @@ for module in sdo/operator sdo/operator/runtime; do
   fi
 done
 if [[ "$mode" == normal ]]; then
+  # Python static analysis vets benchmark mains against the same source graph.
+  bash "$root/scripts/check_go_mains.sh"
   # Generated traffic probers explicitly disable CGO; those archives have
   # different build IDs from the ordinary hosted graph.
   (cd "$root/sdo/operator/runtime" && CGO_ENABLED=0 go build ./prober)
@@ -49,6 +51,6 @@ if [[ "$mode" == normal ]]; then
   # modules), so a new module is covered without editing this.
   git -C "$root" ls-files 'sdo/operator/go.mod' 'sdo/operator/**/go.mod' 'benchmarks/sregym/protocol/**/go.mod' | grep -v /testdata/ |
     while read -r manifest; do
-      (cd "$root/$(dirname "$manifest")" && go mod download all)
+      bash "$root/scripts/download_go_modules.sh" "$root/$(dirname "$manifest")"
     done
 fi

@@ -55,6 +55,11 @@ func (v *ReplayReadView) ProbeTCP(ref sdk.ObjectRef, port int32) (program.ProbeR
 
 func (v *ReplayReadView) QueryMetrics(q metrics.Query) metrics.Result
 
+func (v *ReplayReadView) Recorded(method string, arguments any, result any) error
+    Recorded answers a state read from the first matching recorded reply without
+    consuming it: a live read view freezes such reads per snapshot, so repeated
+    identical reads see the same answer. Missing replies are *UnrecordedError.
+
 func (v *ReplayReadView) ScopedDeployments(namespace string) ([]appsv1.Deployment, error)
 
 func (v *ReplayReadView) ScopedEndpoints(namespace string) ([]corev1.Endpoints, error)
@@ -199,4 +204,12 @@ func (s *Snapshot) UnmarshalJSON(data []byte) error
     UnmarshalJSON reads both the version 1 form and the objects-only form.
 
 func (s Snapshot) WebhookCAMatchesSecret(t program.WebhookCA) (bool, error)
+
+type UnrecordedError struct {
+	Method    string
+	Arguments json.RawMessage
+}
+    UnrecordedError names a read a replay was asked for that no recording holds.
+
+func (e *UnrecordedError) Error() string
 ```
