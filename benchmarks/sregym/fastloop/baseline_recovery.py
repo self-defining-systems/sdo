@@ -136,15 +136,16 @@ class KubectlApplicationCluster:
             patch = [
                 {"op": "test", "path": "/metadata/resourceVersion", "value": current["metadata"]["resourceVersion"]}
             ]
-            labels = value.get("metadata", {}).get("labels")
-            if labels:
-                patch.append(
-                    {
-                        "op": "add",
-                        "path": "/metadata/labels",
-                        "value": {**current.get("metadata", {}).get("labels", {}), **labels},
-                    }
-                )
+            for attribute in ("labels", "annotations"):
+                declared = value.get("metadata", {}).get(attribute)
+                if declared:
+                    patch.append(
+                        {
+                            "op": "add",
+                            "path": f"/metadata/{attribute}",
+                            "value": {**current.get("metadata", {}).get(attribute, {}), **declared},
+                        }
+                    )
             for key in RESTORED_FIELDS:
                 if key in value:
                     patch.append({"op": "add", "path": f"/{key}", "value": value[key]})
@@ -524,11 +525,13 @@ def reconcile_application(
         if present is None and (kind, name) in redirects and (kind, name) not in known:
             cleanup.harness_absent.append(f"{kind}/{name}")
             continue
-        labels = _manifest(value).get("metadata", {}).get("labels", {})
+        metadata = {
+            key: item for key, item in _manifest(value).get("metadata", {}).items() if key in {"labels", "annotations"}
+        }
         if (
             present is None
             or _content(present) != _content(value)
-            or not _declares(present.get("metadata", {}).get("labels", {}), labels)
+            or not _declares(present.get("metadata", {}), metadata)
         ):
             cluster.apply(namespace, value)
             cleanup.restored.append(f"{kind}/{name}")

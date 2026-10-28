@@ -48,3 +48,18 @@ def commit_accepted_source(
     if namespace is None:
         namespace = next((m["metadata"]["namespace"] for m in manifests if m["metadata"].get("namespace")), "app")
     return AcceptedSource(workspace, namespace)
+
+
+def fixed_source_provider(baseline, namespace):
+    """An immutable synthetic renderer boundary for external-I/O unit fixtures."""
+    from copy import deepcopy
+    from dataclasses import dataclass
+
+    @dataclass(frozen=True)
+    class SourceFixture:
+        namespace: str
+        manifests: tuple[dict[str, Any], ...]
+
+    baselines = baseline if isinstance(baseline, tuple) else (baseline,)
+    source = SourceFixture(namespace, tuple(deepcopy(obj) for row in baselines for obj in row.objects))
+    return lambda: source

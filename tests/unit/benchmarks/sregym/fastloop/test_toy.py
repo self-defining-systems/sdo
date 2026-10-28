@@ -7,6 +7,7 @@ import pytest
 from apps.toy.faults import SERVICES, fault_spec
 from benchmarks.sregym.fastloop.cli import build_parser
 from benchmarks.sregym.fastloop.stream import load_stream_config
+from tests.unit.benchmarks.sregym.fastloop.accepted_source_fixture import fixed_source_provider
 
 ROOT = Path(__file__).resolve().parents[5]
 
@@ -29,6 +30,7 @@ def test_toy_recovery_meets_the_warm_lane_protocol(tmp_path, monkeypatch):
         baseline=ApplicationBaseline(namespace="toy", objects=[]),
         cluster=cluster,
         require_full_cleanup=True,
+        accepted_source=fixed_source_provider(ApplicationBaseline(namespace="toy", objects=[]), "toy"),
     )
     driver.recover()
     assert driver.last_full_cleanup_verified

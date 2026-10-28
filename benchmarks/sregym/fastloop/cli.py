@@ -936,6 +936,7 @@ def _run(args: argparse.Namespace) -> int:
             namespace=environment.namespace,
             baseline_problem_id=environment.deploy_problem if baseline is not None else None,
             baseline=baseline,
+            accepted_source=lambda: AcceptedSource.of(environment),
             cluster=KubectlApplicationCluster(environment.kubeconfig) if baseline is not None else None,
             health_timeout_seconds=args.health_timeout,
             health_poll_seconds=wait_for(WaitKind.POLL_FAST),
