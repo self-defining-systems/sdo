@@ -69,8 +69,8 @@ max_chars = 100
 reason = "Portable fixture configuration maximum: 86 Unicode code points, rounded upward to 100."
 
 [reflection.instructions]
-max_chars = 2100
-reason = "CTXFAIL1: fresh-session retry instructions render to 1993 characters (2005 after the concurrent reflection edit); retain every literal instruction instead of replacing the aggregate with a partial summary."
+max_chars = 2200
+reason = "CTXFAIL1: fresh-session retries plus preserved history framing and backend API-history guidance require up to 2153 characters. Preserve every instruction through final provider transport, including this combined variant."
 
 [reflection.memory]
 max_chars = 800
