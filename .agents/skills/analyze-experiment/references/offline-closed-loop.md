@@ -1,6 +1,6 @@
 # Offline closed-loop reports
 
-`sdo/operator/cmd/sdo-replay` builds the accepted program/detector registrations through the production builder, then runs `runtime/replay` on explicit CorpusCase fixtures and accepted source manifests. Reports are JSONL outside the repository. They are synthetic offline evidence, never independent live outcomes, program trust credits, broker ACKs or benchmark receipts.
+`sdo/operator/cmd/sdo-replay` builds the accepted program/detector registrations through the production builder, then runs `runtime/replay` on explicit CorpusCase fixtures and accepted source manifests. Reports are JSONL outside the repository. They are synthetic offline evidence, never independent live outcomes, program trust credits, broker ACKs or benchmark receipts. Analysis can report failed replay; no replay verdict gates saving memory.
 
 Each row has `program_id`, `case_id`, `status`, `expected_match`, `healthy`, `faulted`, `post`, `detectors` by phase, bound object identities, action statuses/value provenance, `effects`, `false_positives`, `errors`, and `duration_ms`. Detector-only matrix rows use `program_id: detector:<id>` and status `detected` or `negative` when correct; program rows use `replayed` or `negative`. `failed` and `refused` never prove repair. A passing detector-only row proves detection, not mitigation.
 
@@ -30,7 +30,7 @@ Pre-execution recorded comparisons may establish phase-bound absence.
 
 ## Operator imports
 
-`human` / `import` accepted broker commits carry `SDO-Origin: operator`. This is operator authorship, not responder learning or a captured incident. Each hand-written positive case has an `operator.json` object (`schema_version: 1`, `origin: "operator"`, nonempty `description`) beside the normal five corpus files, plus an explicit `accepted.json` source inventory. Captured provenance must be absent; accepted cases remain immutable. Programs run the production `runtime/replay.Check` during the independent validator build, alongside unchanged generalization, compilation, vet, tests and secret rules. The import grants no accepted outcome, origin learning credit, or live trust. `memory import prepare` returns a base-bound broker checkout; `memory import publish` uses the ordinary isolated Kubernetes validator. Do not present an offline replay success as a live mitigation.
+`human` / `import` accepted broker commits carry `SDO-Origin: operator`. This is operator authorship, not responder learning or a captured incident. Each hand-written positive case has an `operator.json` object (`schema_version: 1`, `origin: "operator"`, nonempty `description`) beside its labels and any available replay inputs, plus an explicit `accepted.json` source inventory. Captured provenance must be absent; accepted cases remain immutable. Programs run the production `runtime/replay.Check` during the independent validator build, as information alongside compilation, vet, static provenance and hygiene checks. Behavioral test results are informational too. The import grants no accepted outcome, origin learning credit, or live trust. `memory import prepare` returns a base-bound broker checkout; `memory import publish` uses the ordinary isolated Kubernetes validator. Do not present an offline replay success as a live mitigation.
 
 ## Adopted existing memory
 

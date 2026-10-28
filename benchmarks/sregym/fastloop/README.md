@@ -53,3 +53,25 @@ exhausted before any injection, the result has `infra_error: never_injected_retr
 A sequence writes `never-injected-N.json` and `retry.json`; restarting it uses a
 fresh `-retry-N` result directory and preserves all earlier evidence. Missing,
 uncertain or attempted-injection evidence still holds for native recovery.
+
+## Shared image delivery
+
+All lanes publish frozen host image IDs to the harness-owned
+`sdo-fastloop-registry` container on the `kind` Docker network. The existing
+host-wide image-delivery lock covers registry creation, publication, node pulls
+and retention. A content-derived tag locates a manifest; verified cache hits skip
+`docker push`. Nodes pull its immutable manifest digest and retain the original
+source image names. Manifest bytes, the frozen config ID and each node's CRI
+image ID are checked before reporting success. Identical images under different
+source names share the same publication.
+
+Lane teardown removes only retired lane-owned registries. It leaves the host
+registry and its data intact for other lanes. The host registry is bound to a
+loopback port for uploads; nodes reach it through the kind network. An existing
+container with that name must prove harness ownership. Registry failures retain
+the existing loud, recorded archive fallback.
+
+Each `image_delivery.jsonl` entry includes `registry` metadata: container name,
+`uploads`, `cache_hits`, `publication_seconds`, `pull_seconds`, `frozen_ids` and
+`manifest_digests`. Total `seconds` includes setup and transfer; retention evidence is recorded
+separately. Use the phase fields to distinguish a first publication from subsequent lane delivery.

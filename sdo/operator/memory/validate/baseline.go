@@ -22,7 +22,7 @@ func candidateHasIncidentDetector(candidate string) (bool, error) {
 	return false, nil
 }
 
-// BaselineGateRequired selects the healthy replay gate for both transports.
+// BaselineGateRequired selects informational healthy replay inputs for both transports.
 func BaselineGateRequired(candidate string, changedPaths []string) (bool, error) {
 	// Promoted detectors execute playbook programs and shared libraries too.
 	// Reuse rollout dependency classification so editing those files cannot

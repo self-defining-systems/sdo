@@ -34,7 +34,7 @@ func TestWorkerReportedOwnerChainsAreIgnored(t *testing.T) {
 	unrelated := sdk.ObjectRef{APIVersion: "v1", Kind: "Pod", Namespace: "app", Name: "unrelated-7c9d"}
 	result := completedResult(request.IncidentID)
 	result.RepairActions = []RepairActionReceipt{{
-		ActionID: "sdo-act-forged", Kind: "kubectl-delete", Target: "Pod/unrelated-7c9d", Resources: []sdk.ObjectRef{unrelated},
+		ScriptDigest: "forged-script-digest", ActionID: "sdo-act-forged", Kind: "kubectl-delete", Target: "Pod/unrelated-7c9d", Resources: []sdk.ObjectRef{unrelated},
 		Summary: "delete", Details: "delete", StartedAt: at, CompletedAt: at.Add(time.Second), Success: true,
 		Owners: []ResourceOwners{{Resource: unrelated, OwnerChain: []sdk.ObjectRef{{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "app", Name: "cause"}}}},
 	}}
@@ -61,7 +61,7 @@ func TestWorkerReportedOwnerChainsAreIgnored(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(decoded.RepairActions) != 1 || len(decoded.RepairActions[0].Owners) != 0 {
+	if len(decoded.RepairActions) != 1 || len(decoded.RepairActions[0].Owners) != 0 || decoded.RepairActions[0].ScriptDigest != "" {
 		t.Fatalf("worker-reported owner chain reached SDO: %#v", decoded.RepairActions)
 	}
 }

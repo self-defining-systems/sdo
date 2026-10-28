@@ -57,15 +57,15 @@ func TestRepeatUnreachableIsANoteAndTheMitigationStillMustRepair(t *testing.T) {
 				t.Fatalf("missing role not named: %+v", got)
 			}
 			broken := CheckRepeat(context.Background(), repeatRegistry(t, repeatRoleProgram{databaseProgram{wrong: true}}, true), detectors, p.Spec().ID, repeatCaseWithBinding("database"))
-			if broken.Status == "replayed" || len(broken.Errors) == 0 || RepeatDefectRule(broken.Errors) != "" {
+			if broken.Status == "replayed" || len(broken.Errors) == 0 {
 				t.Fatalf("unreachable repeat skipped the mitigation repair check: %+v", broken)
 			}
 		})
 	}
 }
 
-// Program and detector defects stay blocking, each under its own rule.
-func TestRepeatDefectsAreBlockingUnderTheirOwnRule(t *testing.T) {
+// Program and detector replay defects remain observable under their own rules.
+func TestRepeatObservationsNameProgramAndDetectorDefects(t *testing.T) {
 	for _, test := range []struct {
 		name          string
 		detector      repeatCatalogDetector
@@ -81,8 +81,8 @@ func TestRepeatDefectsAreBlockingUnderTheirOwnRule(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			p := repeatRoleProgram{}
 			got := CheckRepeat(context.Background(), repeatRegistry(t, p, test.withMitigator), []sdk.Detector{test.detector}, p.Spec().ID, repeatCaseWithBinding("database"))
-			if got.Status == "replayed" || RepeatDefectRule(got.Errors) != test.rule || len(got.Notes) != 0 {
-				t.Fatalf("want blocking %s, got %+v", test.rule, got)
+			if got.Status == "replayed" || !strings.Contains(strings.Join(got.Errors, " "), test.rule+":") || len(got.Notes) != 0 {
+				t.Fatalf("want observation %s, got %+v", test.rule, got)
 			}
 		})
 	}

@@ -93,6 +93,10 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 		loop.stageProgress = map[string]responseStageProgress{}
 	}
 	progress := loop.stageProgress[stage.Name()]
+	for _, prior := range state.PriorStages {
+		loop.restoreScriptRefusals(prior)
+	}
+	loop.restoreScriptRefusals(progress.Report)
 	if progress.Report != nil {
 		report = proto.Clone(progress.Report).(*contracts.StageReport)
 		state.Coverage = cloneCoverage(progress.Coverage)
@@ -306,6 +310,9 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 			}
 			attempt.Result = "apply_error"
 			attempt.Error = planResponse.Error
+			if planResponse.FailureReason == "script_unprovenanced" {
+				attempt.SkipReason = "script_unprovenanced"
+			}
 			if err := save(false); err != nil {
 				return report, err
 			}

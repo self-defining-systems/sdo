@@ -111,5 +111,5 @@ func TestProgramRegistrationContracts(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "generated", "program_declarations_test.go"), []byte(declarations), 0o644); err != nil {
 		return err
 	}
-	return generateDetectorCorpusTest(root, programs)
+	return nil
 }

@@ -24,10 +24,12 @@ func ProgramRepairReceipts(applications []RecordedPlanApplication, existing []Re
 			actions = application.Result.ActionsApplied
 		}
 		for index, action := range actions {
-			if _, script := concreteExternalAction(action).(program.RunScript); script && index < len(application.Result.ActionReports) {
+			if script, isScript := concreteExternalAction(action).(program.RunScript); isScript && index < len(application.Result.ActionReports) {
 				report := application.Result.ActionReports[index]
 				scoped := scriptRepairResources(report)
-				if report.Status == "applied" && application.Result.Applied {
+				if report.Status == "applied" && application.Result.Applied && report.Script != nil && report.Script.ScriptDigest == program.ScriptDigest(script.Script) && !application.RolledBack && application.RollbackError == "" {
+					id := uniqueRepairID(fmt.Sprintf("sdo-program-%s-script-%d", application.ID, index+1), used)
+					result = append(result, RepairActionReceipt{ActionID: id, Kind: "run-script", ScriptDigest: report.Script.ScriptDigest, Resources: scoped, Target: "script", Summary: "completed script", Details: "controller-recorded exact script digest", StartedAt: application.StartedAt, CompletedAt: application.CompletedAt, Success: true})
 					for _, ref := range scoped {
 						if !seen[ref] {
 							seen[ref] = true
@@ -152,7 +154,7 @@ func (l *ResponderLoop) ApplicationRepairReceipts(existing []RepairActionReceipt
 	seen := map[string]bool{}
 	for _, repair := range completed {
 		receipt := repair.Receipt
-		result = append(result, RepairActionReceipt{ActionID: receipt.ActionID, Kind: receipt.Kind, Target: receipt.Target, Resources: append([]sdk.ObjectRef(nil), receipt.Resources...), Summary: receipt.Summary, Details: receipt.Details, StartedAt: receipt.StartedAt, CompletedAt: receipt.CompletedAt, Success: receipt.Success, Reversible: receipt.Reversible, FailureReason: receipt.FailureReason, Owners: append([]ResourceOwners(nil), receipt.Owners...)})
+		result = append(result, RepairActionReceipt{ActionID: receipt.ActionID, Kind: receipt.Kind, Target: receipt.Target, Resources: append([]sdk.ObjectRef(nil), receipt.Resources...), Summary: receipt.Summary, Details: receipt.Details, StartedAt: receipt.StartedAt, CompletedAt: receipt.CompletedAt, Success: receipt.Success, Reversible: receipt.Reversible, ScriptDigest: receipt.ScriptDigest, FailureReason: receipt.FailureReason, Owners: append([]ResourceOwners(nil), receipt.Owners...)})
 		seen[receipt.ActionID] = true
 	}
 	for _, receipt := range existing {

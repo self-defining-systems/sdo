@@ -49,15 +49,27 @@ var mitigationSlots = make(chan struct{}, 4)
 // operationMu serializes tool/diagnosis operations while readers can still
 // inspect the loop during a slow or non-cooperative authored call.
 func (l *ResponderLoop) runMitigator(ctx context.Context, id string, p program.Mitigator, view program.ReadView, bindings program.Bindings) (plan program.Plan, err error) {
+	key := id + "\x00" + l.programRevision(id)
+	if refused := l.scriptRefusals[key]; refused != nil {
+		return program.Plan{}, refused
+	}
 	if prior := l.terminalPlanError(id); prior != nil {
 		return program.Plan{}, prior
 	}
 	deadline := l.deadline()
 	bindings = cloneProgramBindings(bindings)
+	origin := l.scriptProvenance(id)
 	if stepErr := withoutResponderLocks(l, "mitigator "+id, false, func() {
-		plan, err = BuildMitigationPlan(ctx, p, view, bindings, deadline)
+		plan, err = BuildMitigationPlan(ctx, p, view, bindings, deadline, origin)
 	}); stepErr != nil {
 		err = stepErr
+	}
+	var provenanceError *ScriptUnprovenancedError
+	if errors.As(err, &provenanceError) {
+		if l.scriptRefusals == nil {
+			l.scriptRefusals = map[string]error{}
+		}
+		l.scriptRefusals[key] = err
 	}
 	if err != nil {
 		var terminal *NonExecutablePlanError
@@ -72,7 +84,7 @@ func (l *ResponderLoop) runMitigator(ctx context.Context, id string, p program.M
 // BuildMitigationPlan is the one way a learned mitigation's plan is built: the
 // automatic stage, the responder's plan command, follow-ups and replay
 // validation all come here, so a plan one of them would refuse fails them all.
-func BuildMitigationPlan(ctx context.Context, p program.Mitigator, view program.ReadView, bindings program.Bindings, deadline time.Duration) (program.Plan, error) {
+func BuildMitigationPlan(ctx context.Context, p program.Mitigator, view program.ReadView, bindings program.Bindings, deadline time.Duration, origins ...ScriptProvenance) (program.Plan, error) {
 	ctx, cancel := context.WithTimeout(ctx, deadline)
 	defer cancel()
 	select {
@@ -106,6 +118,9 @@ func BuildMitigationPlan(ctx context.Context, p program.Mitigator, view program.
 		}
 		if err == nil {
 			plan, err = detachExecutablePlan(plan)
+		}
+		if err == nil {
+			err = checkPlanScriptProvenance(ctx, p.Spec().ID, plan, origins)
 		}
 		if err == nil {
 			plan, err = bindMitigationValues(plan, p.Spec(), bindings, isolated)

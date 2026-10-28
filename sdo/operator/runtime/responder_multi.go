@@ -82,12 +82,12 @@ func (l *ResponderLoop) mitigateSelection(ctx context.Context, request ToolReque
 		}
 		bindings, err := menuBindProgram(entry, selected.Parameters)
 		if err != nil {
-			l.refuseSelection(response, "direct_plan_failed", err.Error())
+			l.refuseSelection(response, mitigationPlanningReason(err, "direct_plan_failed"), err.Error())
 			return
 		}
 		plan, err := l.prepareMenuPlan(ctx, entry, selected.Parameters, bindings)
 		if err != nil {
-			l.refuseSelection(response, "direct_plan_failed", err.Error())
+			l.refuseSelection(response, mitigationPlanningReason(err, "direct_plan_failed"), err.Error())
 			return
 		}
 		refs, err := l.menuPlanWriteRefs(plan)
@@ -116,7 +116,7 @@ func (l *ResponderLoop) mitigateSelection(ctx context.Context, request ToolReque
 		// Preserve reservation ownership diagnostics even when an earlier
 		// pending write has already cleared the program's live diagnosis.
 		if err := l.validateMenuPreconditions(ctx, entry, bindings); err != nil {
-			l.refuseSelection(response, "direct_plan_failed", err.Error())
+			l.refuseSelection(response, mitigationPlanningReason(err, "direct_plan_failed"), err.Error())
 			return
 		}
 
@@ -134,7 +134,7 @@ func (l *ResponderLoop) mitigateSelection(ctx context.Context, request ToolReque
 			return
 		}
 		if _, err := l.Executor.Apply(ctx, l.mitigationIncident([]selectedPlan{{programID: item.entry.programID, bindings: item.entry.bindings, targetFingerprints: item.selection.FindingFingerprints}}), item.plan, true); err != nil {
-			l.refuseSelection(response, "direct_plan_failed", err.Error())
+			l.refuseSelection(response, mitigationPlanningReason(err, "direct_plan_failed"), err.Error())
 			return
 		}
 	}

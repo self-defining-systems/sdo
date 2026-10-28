@@ -36,7 +36,7 @@ Current controllers run incident detectors continuously. Playbook Diagnose runs 
 
 Historical runs can contain `drift.<program>` findings and `DriftEvent.source` values `watch event program match` or `periodic program sweep`. Those were proactive playbook detections, with their own firing/clearing confirmation timers; do not interpret them as current detector-driven coverage. Current controller state has no program sweep cursor, and the former sweep/persistence flags have been removed.
 
-Reflection's shared memory check runs recorded faulty observations through incident detectors, production finding-to-program selection, Match diagnosis, and mitigation replay on that same binding. A program or detector defect on that path is a blocking rejection under its own rule: `program.diagnose-no-match` (a selecting finding binds an object Diagnose does not match), `program.mitigator-missing`, `detector.invalid-finding`, `detector.fires-on-healthy` (an incident detector fires on the recorded healthy fixture), `program.repeat-unavailable` (a recorded source or detector read failed). `program.repeat-unreachable` is only a coverage-gap note: no finding exists or none selects the playbook. The mitigation is still replayed with the case bindings and must repair (`program.mitigation-not-repaired`). Case-file object bindings do not select the repeat-path diagnosis. Coverage gaps are counted from the incident ledger's `reflection_coverage_gaps` (see `native-reflection.md`).
+Reflection's shared memory check compiles and vets authored code, then records replay and test outcomes without gating saving on them. `program.replay-observation` entries retain program/case, diagnoses, replay status and reasons in the incident's reflection ledger and accepted commit trailers. Open NoMatch, persistent post-plan Match, missing case/observations and failed test assertions are information; compilation, imports, formatting and provenance remain blocking. Existing mitigation replay notes use `skipped_unreplayable_effect` for inconclusive replay. See [reflection evidence](native-reflection.md) before counting coverage or trust; a saved program is not proof that a repair worked.
 
 ## Program trust evidence
 
@@ -185,3 +185,15 @@ table exposes `oracle_invalid`. Do not count an excluded fault as fixed or unfix
 Historical C64 candidates: as-e/000 and as-e/001, and the first/repeat rows for
 seed42 astronomy slots 6, 8, 39 and 40 (TRIAGE3 reported eight affected rows;
 confirm row/slot overlap before re-grading). Raw historical grades remain intact.
+
+### Shared host image registry
+
+New image-delivery entries include a `registry` object with `registry` (the
+harness-owned container name), `uploads`, `cache_hits`, `publication_seconds`,
+`pull_seconds`, `frozen_ids` and `manifest_digests`. These fields distinguish
+one-time build publication from each lane's CRI pull/unpack. A cache hit verifies
+manifest bytes and frozen image identity before skipping upload; nodes pull by
+manifest digest and verify their CRI config IDs. Total delivery `seconds`
+includes registry setup and transfer; it excludes retention and waiting for
+the host-wide image-delivery lock. Older entries lack this object. A fallback can retain
+partial registry metrics; use `path` and `success` to establish the result.

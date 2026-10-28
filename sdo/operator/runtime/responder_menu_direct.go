@@ -236,7 +236,7 @@ func (l *ResponderLoop) executeMenuEntry(ctx context.Context, entry menuEntry, s
 		if err != nil {
 			report.Status = contracts.MitigationReport_STATUS_EXECUTION_ERROR
 			report.FailedPhase = "planning"
-			report.ReasonCode = reason
+			report.ReasonCode = mitigationPlanningReason(err, reason)
 			if errors.Is(err, program.ErrReplicaSetScaleRefused) {
 				report.ReasonCode = "replicaset_scale_refused"
 			}

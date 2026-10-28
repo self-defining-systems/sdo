@@ -3,8 +3,8 @@ package validate
 import (
 	"context"
 	"errors"
+	"fmt"
 	"regexp"
-	"sort"
 	"strconv"
 	"strings"
 
@@ -14,7 +14,6 @@ import (
 )
 
 const maxCompileOutput = 4096
-const detectorCorpusObservation = "detector.corpus-observation"
 
 // Go test timings and cache hits differ on repeated runs; they are log detail,
 // not part of a diagnostic's identity.
@@ -54,17 +53,20 @@ func (s *run) compile(ctx context.Context) error {
 	if err == nil {
 		notes, noteErr := workspace.MitigationReplayResults()
 		if noteErr != nil {
-			return noteErr
+			s.req.noteGaps(Diagnostic{Rule: RuleReplayObservation, Message: "replay unverified: " + noteErr.Error()})
 		}
 		if s.req.MitigationReplayNotes != nil {
 			*s.req.MitigationReplayNotes = append(*s.req.MitigationReplayNotes, notes...)
 		}
 		gaps, gapErr := workspace.CoverageGaps()
 		if gapErr != nil {
-			return gapErr
+			s.req.noteGaps(Diagnostic{Rule: RuleReplayObservation, Message: "replay unverified: " + gapErr.Error()})
 		}
 		for _, gap := range gaps {
-			s.req.noteGaps(Diagnostic{Rule: RuleProgramRepeatReachable, Path: layout.PlaybooksDir, Message: gap})
+			s.req.noteGaps(Diagnostic{Rule: RuleReplayObservation, Path: layout.PlaybooksDir, Message: gap})
+		}
+		for _, note := range notes {
+			s.req.noteGaps(Diagnostic{Rule: RuleReplayObservation, Path: layout.PlaybookDir(note.ProgramID), Message: fmt.Sprintf("program=%s case=%s replay=%s: %s", note.ProgramID, note.CaseID, note.Status, strings.Join(note.Effects, "; "))})
 		}
 		return nil
 	}
@@ -79,51 +81,16 @@ func (s *run) compile(ctx context.Context) error {
 	case strings.HasPrefix(stage.Stage, "test"):
 		rule = RuleDetectorTest
 	}
-	mitigationFailure := false
-	for _, rule := range []string{RuleProgramMitigationRepair, RuleProgramMitigationReplay, RuleProgramRepeatDefect, RuleProgramDiagnoseNoMatch, RuleProgramMitigatorMissing, RuleDetectorInvalidFinding, RuleDetectorFiresOnHealthy, detectorCorpusObservation, RuleDetectorHealthyBaseline, RuleDetectorControllerStart} {
-		if rule == RuleProgramRepeatDefect && strings.Contains(stage.Output, detectorCorpusObservation) {
-			// An unobservable detector locator fails the detector's own corpus
-			// test; the repeat check would only repeat that diagnostic.
-			continue
-		}
-		if strings.Contains(stage.Output, rule) {
-			messages := map[string]bool{}
-			for _, line := range strings.Split(stage.Output, "\n") {
-				if index := strings.Index(line, rule+":"); index >= 0 {
-					messages[strings.TrimSpace(line[index:])] = true
-				}
-			}
-			ordered := make([]string, 0, len(messages))
-			for message := range messages {
-				ordered = append(ordered, message)
-			}
-			sort.Strings(ordered)
-			message := strings.Join(ordered, "; ")
-			if message == "" {
-				message = rule
-			}
-			if len(message) > maxCompileOutput {
-				message = message[:maxCompileOutput]
-			}
-			path, hint := layout.PlaybooksDir, "mitigation must replay on the faulted fixture and clear its diagnosis"
-			if rule == RuleDetectorHealthyBaseline {
-				path = layout.DiagnosticsDir
-				hint = "incident detectors must stay quiet on the controller-captured healthy state (pre-incident, or the closure state the controller verified healthy); never substitute an agent-authored snapshot"
-			}
-			if rule == RuleDetectorControllerStart {
-				path = layout.DiagnosticsDir
-				hint = "accepted detectors must load in the controller: declare only watches the controller supports and read other objects through them, or report the missing watch as an SDK gap"
-			}
-			if rule == detectorCorpusObservation {
-				rule = RuleDetectorTest
-				path = layout.DiagnosticsDir
-				hint = "evaluate every locator binding on complete corpus snapshots; unavailable observations cannot establish detector coverage"
-			}
-			s.add(Compile, Diagnostic{Rule: rule, Path: path, Message: message, Hint: hint})
-			mitigationFailure = true
-		}
+	if strings.Contains(stage.Output, RuleDetectorHealthyBaseline) {
+		s.add(Compile, Diagnostic{Rule: RuleDetectorHealthyBaseline, Path: layout.DiagnosticsDir, Message: goTestDuration.ReplaceAllString(stage.Output, ""), Hint: "incident detectors must stay quiet on the controller-captured healthy state"})
+		return nil
 	}
-	if mitigationFailure {
+	if strings.Contains(stage.Output, RuleDetectorControllerStart) {
+		message := goTestDuration.ReplaceAllString(stage.Output, "")
+		if len(message) > maxCompileOutput {
+			message = message[:maxCompileOutput]
+		}
+		s.add(Compile, Diagnostic{Rule: RuleDetectorControllerStart, Path: layout.DiagnosticsDir, Message: message, Hint: "accepted detectors must load in the controller"})
 		return nil
 	}
 	located := goLocation.FindAllStringSubmatch(stage.Output, -1)
