@@ -113,8 +113,16 @@ func TestCLIAndBrokerAgreeOnAcceptanceThirdShard(t *testing.T) {
 	testCLIAndBrokerAgreeOnAcceptance(t, 2)
 }
 
+// Advisory replay makes these source-evidence cases perform full validation.
+// Share the existing broker runner; every case keeps exactly one owner.
+func TestCLIAndBrokerAgreeOnAcceptanceFourthShard(t *testing.T) {
+	testCLIAndBrokerAgreeOnAcceptance(t, 3)
+}
+
 func acceptanceCaseShard(index int, name string) int {
 	switch name {
+	case "unverified peer no verified", "accepted case needs no current capture":
+		return 3
 	case "trusted captured program", "healthy refused service ports",
 		"healthy refused ports without recordings", "trailing whitespace normalized",
 		"direct program", "program mitigation leaves target port faulty":
