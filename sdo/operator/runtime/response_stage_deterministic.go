@@ -103,7 +103,7 @@ func (l *ResponderLoop) restoreTerminalStagePlanErrors() {
 	for _, progress := range l.stageProgress {
 		for _, attempt := range progress.Report.GetMitigations() {
 			if attempt.SkipReason == stagePlanNotExecutable {
-				l.rememberTerminalPlanError(attempt.PlaybookId, attempt.ProgramRevision, &NonExecutablePlanError{Cause: errors.New(attempt.Error)})
+				l.rememberTerminalPlanError(attempt.PlaybookId, attempt.ProgramRevision, programBindingsState(attempt.Bindings), &NonExecutablePlanError{Cause: errors.New(attempt.Error)})
 			}
 		}
 	}
@@ -274,7 +274,7 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 			recordStageFindingProgress(attempt, match.targets, state.Findings)
 			return save(false)
 		}
-		if terminal := loop.terminalPlanError(match.PlaybookId); terminal != nil {
+		if terminal := loop.terminalPlanError(match.PlaybookId, bindings); terminal != nil {
 			attempt.Error = terminal.Error()
 			if err := skip(stagePlanNotExecutable); err != nil {
 				return report, err
@@ -376,7 +376,7 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 			return report, err
 		}
 		if planResponse.Error != "" {
-			if terminal := loop.terminalPlanError(match.PlaybookId); terminal != nil {
+			if terminal := loop.terminalPlanError(match.PlaybookId, bindings); terminal != nil {
 				attempt.Error = terminal.Error()
 				if err := skip(stagePlanNotExecutable); err != nil {
 					return report, err

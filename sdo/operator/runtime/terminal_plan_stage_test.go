@@ -33,7 +33,7 @@ func (p terminalShapeProgram) Mitigate(ctx context.Context, v program.ReadView, 
 	}
 	return program.Plan{Actions: []program.Action{program.PatchObject{Ref: b.Objects["service"], Type: "merge", Patch: []byte(`{}`), Edits: []program.ListEdit{{Path: "/spec/ports", Match: map[string]any{"name": "http"}, Op: "remove"}}, Reason: "synthetic invalid shape"}}}, nil
 }
-func TestAutomaticStageNonExecutablePlanIsTerminalAcrossBindingsAndRestart(t *testing.T) {
+func TestAutomaticStageNonExecutablePlanIsTerminalPerBindingAndRestart(t *testing.T) {
 	for _, shape := range []string{"empty", "exclusive-patch-edits", "compiled-malformed-json", "compiled-nil-action"} {
 		t.Run(shape, func(t *testing.T) {
 			ctx := context.Background()
@@ -65,8 +65,8 @@ func TestAutomaticStageNonExecutablePlanIsTerminalAcrossBindingsAndRestart(t *te
 				t.Fatal(err)
 			}
 			request := <-dispatcher.requests
-			if calls.Load() != 1 {
-				t.Fatalf("non-executable program was retried across live bindings: %d calls", calls.Load())
+			if calls.Load() != 2 {
+				t.Fatalf("each non-executable binding needs one attempt: %d calls", calls.Load())
 			}
 			if len(request.PriorStages) != 1 || len(request.PriorStages[0].Mitigations) != 2 {
 				t.Fatalf("missing terminal handoff evidence: %+v", request)
@@ -86,7 +86,7 @@ func TestAutomaticStageNonExecutablePlanIsTerminalAcrossBindingsAndRestart(t *te
 			if _, err := RunStageAgain(ctx, state, stage); err != nil {
 				t.Fatal(err)
 			}
-			if calls.Load() != 1 {
+			if calls.Load() != 2 {
 				t.Fatalf("refresh retried a terminal plan: %d", calls.Load())
 			}
 			fresh := NewResponderLoop(loop.Request, registry, loop.Provider, loop.Detectors, loop.Executor, 5)
@@ -96,18 +96,126 @@ func TestAutomaticStageNonExecutablePlanIsTerminalAcrossBindingsAndRestart(t *te
 			}
 			selected := request.PriorStages[0].Mitigations[0]
 			response := fresh.Handle(ctx, ToolRequest{Command: "plan", ProgramID: selected.PlaybookId, Bindings: programBindingsState(selected.Bindings)})
-			if response.Error == "" || calls.Load() != 1 {
+			if response.Error == "" || calls.Load() != 2 {
 				t.Fatalf("tool rejoin retried terminal program: calls=%d response=%+v", calls.Load(), response)
 			}
 			resumed := &IncidentState{Request: loop.Request, Findings: opening, Refresh: true}
 			if _, err := (&DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return fresh }, KeepLoop: true}).Run(ctx, resumed); err != nil {
 				t.Fatal(err)
 			}
-			if calls.Load() != 1 || len(fresh.PlanApplications()) != 0 {
+			if calls.Load() != 2 || len(fresh.PlanApplications()) != 0 {
 				t.Fatalf("restart retried terminal program: calls=%d applications=%v", calls.Load(), fresh.PlanApplications())
 			}
 		})
 	}
+}
+
+// A phantom webhook binding returned an empty plan before the real binding.
+// Sweep which binding is empty so traversal order cannot grant shared failure.
+func TestAutomaticStageEmptyPlanDoesNotPoisonAnotherBinding(t *testing.T) {
+	for _, empty := range []string{"api", "peer"} {
+		t.Run(empty, func(t *testing.T) {
+			loop, state := pipelineTestLoopWithServices(t, true, "peer")
+			var calls atomic.Int32
+			p := bindingShapeProgram{empty: empty, calls: &calls}
+			registry, err := program.NewRegistry([]program.Diagnoser{p}, []program.Mitigator{p})
+			if err != nil {
+				t.Fatal(err)
+			}
+			loop.Programs, loop.Request = registry, state.Request
+			var durable []byte
+			loop.saveToolState = func(_ context.Context, data []byte) error { durable = append([]byte(nil), data...); return nil }
+			state.Coverage, state.Request.InitialProgramRuns = nil, nil
+			report, err := (&DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return loop }}).Run(context.Background(), state)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(report.Mitigations) != 2 || len(loop.PlanApplications()) != 1 {
+				t.Fatalf("empty binding poisoned a peer: %v", report)
+			}
+			for _, attempt := range report.Mitigations {
+				name := programBindingsState(attempt.Bindings).Objects["service"].Name
+				if name == empty {
+					if attempt.SkipReason != stagePlanNotExecutable {
+						t.Fatalf("empty binding must stay terminal: %v", attempt)
+					}
+				} else if attempt.Result != "applied_cleared" {
+					t.Fatalf("valid binding must execute: %v", attempt)
+				}
+			}
+			fresh := NewResponderLoop(loop.Request, registry, loop.Provider, loop.Detectors, loop.Executor, 5)
+			fresh.ReadView = loop.ReadView
+			if err := fresh.restoreToolSnapshot(durable); err != nil {
+				t.Fatal(err)
+			}
+			before := calls.Load()
+			for _, attempt := range report.Mitigations {
+				bindings := programBindingsState(attempt.Bindings)
+				if bindings.Objects["service"].Name != empty {
+					continue
+				}
+				response := fresh.Handle(context.Background(), ToolRequest{Command: "plan", ProgramID: p.Spec().ID, Bindings: bindings})
+				if response.Error == "" || calls.Load() != before {
+					t.Fatal("restart retried the same terminal binding")
+				}
+			}
+			for _, attempt := range report.Mitigations {
+				bindings := programBindingsState(attempt.Bindings)
+				if bindings.Objects["service"].Name == empty {
+					continue
+				}
+				response := fresh.Handle(context.Background(), ToolRequest{Command: "plan", ProgramID: p.Spec().ID, Bindings: bindings})
+				if response.Error != "" || response.PlanID == "" || calls.Load() != before+1 {
+					t.Fatalf("restored failure poisoned another binding: %+v", response)
+				}
+			}
+		})
+	}
+}
+
+type bindingShapeProgram struct {
+	pipelinePortProgram
+	empty string
+	calls *atomic.Int32
+}
+
+func (p bindingShapeProgram) Mitigate(ctx context.Context, v program.ReadView, b program.Bindings) (program.Plan, error) {
+	p.calls.Add(1)
+	if b.Objects["service"].Name == p.empty {
+		return program.Plan{}, nil
+	}
+	return p.pipelinePortProgram.Mitigate(ctx, v, b)
+}
+
+func TestTerminalPlanFailureIsScopedToScalarBindingValues(t *testing.T) {
+	loop, _ := pipelineTestLoop(t, true)
+	p := scalarShapeProgram{}
+	registry, err := program.NewRegistry([]program.Diagnoser{p}, []program.Mitigator{p})
+	if err != nil {
+		t.Fatal(err)
+	}
+	loop.Programs = registry
+	bindings := program.Bindings{Objects: program.ObjectBindings{"service": {APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}}, Values: map[string]any{"executable": false}}
+	first := loop.Handle(context.Background(), ToolRequest{Command: "plan", ProgramID: p.Spec().ID, Bindings: bindings})
+	bindings.Values["executable"] = true
+	second := loop.Handle(context.Background(), ToolRequest{Command: "plan", ProgramID: p.Spec().ID, Bindings: bindings})
+	if first.Error == "" || second.Error != "" || second.PlanID == "" {
+		t.Fatalf("scalar input was omitted from failure scope: first=%+v second=%+v", first, second)
+	}
+}
+
+type scalarShapeProgram struct{ pipelinePortProgram }
+
+func (scalarShapeProgram) Spec() program.ProgramSpec {
+	spec := (pipelinePortProgram{}).Spec()
+	spec.Params = append(spec.Params, program.ParamSpec{Name: "executable", ValueKind: program.BoolValue, Default: false})
+	return spec
+}
+func (p scalarShapeProgram) Mitigate(ctx context.Context, v program.ReadView, b program.Bindings) (program.Plan, error) {
+	if b.Values["executable"] != true {
+		return program.Plan{}, nil
+	}
+	return p.pipelinePortProgram.Mitigate(ctx, v, b)
 }
 
 type transientPlanProgram struct {

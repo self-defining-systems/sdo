@@ -27,20 +27,34 @@ import (
 var errEmptyMitigationPlan = errors.New("program returned an empty plan")
 
 // NonExecutablePlanError is a structural program defect, not unavailable live
-// evidence. The automatic stage hands it off without retrying the program.
+// evidence. The automatic stage hands off this binding without retrying it.
 type NonExecutablePlanError struct{ Cause error }
 
 func (e *NonExecutablePlanError) Error() string { return e.Cause.Error() }
 func (e *NonExecutablePlanError) Unwrap() error { return e.Cause }
 
-func (l *ResponderLoop) terminalPlanError(id string) *NonExecutablePlanError {
-	return l.terminalPlanErrors[id+"\x00"+l.programRevision(id)]
+func terminalPlanBindingKey(id, revision string, bindings program.Bindings) (string, error) {
+	// Include full versioned object identities and scalar values. A failure
+	// belongs to this invocation's inputs, not every binding of the program.
+	raw, err := json.Marshal(bindings)
+	return id + "\x00" + revision + "\x00" + string(raw), err
 }
-func (l *ResponderLoop) rememberTerminalPlanError(id, revision string, err *NonExecutablePlanError) {
+func (l *ResponderLoop) terminalPlanError(id string, bindings program.Bindings) *NonExecutablePlanError {
+	key, err := terminalPlanBindingKey(id, l.programRevision(id), bindings)
+	if err != nil {
+		return nil
+	}
+	return l.terminalPlanErrors[key]
+}
+func (l *ResponderLoop) rememberTerminalPlanError(id, revision string, bindings program.Bindings, err *NonExecutablePlanError) {
+	key, keyErr := terminalPlanBindingKey(id, revision, bindings)
+	if keyErr != nil {
+		return
+	}
 	if l.terminalPlanErrors == nil {
 		l.terminalPlanErrors = map[string]*NonExecutablePlanError{}
 	}
-	l.terminalPlanErrors[id+"\x00"+revision] = err
+	l.terminalPlanErrors[key] = err
 }
 
 var mitigationSlots = make(chan struct{}, 4)
@@ -53,7 +67,7 @@ func (l *ResponderLoop) runMitigator(ctx context.Context, id string, p program.M
 	if refused := l.scriptRefusals[key]; refused != nil {
 		return program.Plan{}, refused
 	}
-	if prior := l.terminalPlanError(id); prior != nil {
+	if prior := l.terminalPlanError(id, bindings); prior != nil {
 		return program.Plan{}, prior
 	}
 	deadline := l.deadline()
@@ -74,7 +88,7 @@ func (l *ResponderLoop) runMitigator(ctx context.Context, id string, p program.M
 	if err != nil {
 		var terminal *NonExecutablePlanError
 		if errors.As(err, &terminal) {
-			l.rememberTerminalPlanError(id, l.programRevision(id), terminal)
+			l.rememberTerminalPlanError(id, l.programRevision(id), bindings, terminal)
 		}
 		l.addFailureSignal("mitigator_failure:" + id)
 	}
@@ -117,7 +131,7 @@ func BuildMitigationPlan(ctx context.Context, p program.Mitigator, view program.
 			err = readErr
 		}
 		if err == nil {
-			plan, err = detachExecutablePlan(plan)
+			plan, err = detachExecutablePlan(plan, program.ReadFrom(observed))
 		}
 		if err == nil {
 			err = checkPlanScriptProvenance(ctx, p.Spec().ID, plan, origins)
@@ -140,7 +154,12 @@ func BuildMitigationPlan(ctx context.Context, p program.Mitigator, view program.
 
 // detachExecutablePlan validates structure before encoding, at both in-process
 // and compiled-program boundaries. Read and binding failures stay retryable.
-func detachExecutablePlan(plan program.Plan) (program.Plan, error) {
+func detachExecutablePlan(plan program.Plan, view program.ReadView) (program.Plan, error) {
+	var err error
+	plan, err = bindPlanRelations(plan, view)
+	if err != nil {
+		return program.Plan{}, err
+	}
 	if err := plan.Validate(); err != nil {
 		return program.Plan{}, &NonExecutablePlanError{Cause: err}
 	}

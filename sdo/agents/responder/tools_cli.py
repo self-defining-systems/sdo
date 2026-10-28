@@ -221,6 +221,7 @@ def _parser() -> argparse.ArgumentParser:
             "Repeat --option ID with --param NAME=VALUE, or use --selection-set FILE "
             "with version 1 and options [{option_id, bindings, parameters, finding_fingerprints}]. "
             "--match ID selects a playbook_coverage match with its supplied bindings; --bind narrows it. "
+            "Learned CA plans resolve missing references only from one observed serving relation. "
             "Each option has a receipt; writes before your next verify share one of five loops. "
             "--NAME VALUE also sets parameters. "
             "Pending rollout retains its application ID and allows reads; "
