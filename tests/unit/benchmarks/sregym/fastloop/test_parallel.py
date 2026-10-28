@@ -332,7 +332,7 @@ def test_parallel_prepare_passes_plan_model_to_real_run_parser(monkeypatch, tmp_
 
     monkeypatch.setattr(cli, "_sdo_agent", agent)
     with pytest.raises(Prepared):
-        shared_memory.prepare_shared_lanes(selected, tmp_path / "attachment.json")
+        shared_memory.prepare_lane(selected, "left")
 
 
 @pytest.mark.parametrize("fields", [{"provider": "unknown"}, {"model": ""}])
@@ -375,34 +375,6 @@ def test_lane_tree_is_read_by_a_git_container_because_kind_nodes_ship_no_git(tmp
 def test_lane_tree_rejects_volumes_outside_the_shared_root(tmp_path, volume):
     with pytest.raises(ValueError, match="eval: lane volume"):
         shared_memory.lane_git_command(_lane(tmp_path), volume, tmp_path, "status")
-
-
-def _divergence(monkeypatch, tmp_path, lane_tree, changed):
-    def command(*argv):
-        return lane_tree if "rev-parse" in argv else "\n".join(changed)
-
-    monkeypatch.setattr(shared_memory, "_command", command)
-    return shared_memory.assert_lane_matches(_lane(tmp_path), "/opt/sdo-parallel/lanes/kind-a", tmp_path, "tree-a")
-
-
-def test_identical_lane_trees_attach(monkeypatch, tmp_path):
-    assert _divergence(monkeypatch, tmp_path, "tree-a", []) is None
-
-
-# Cluster-local health captures are controller state now, so no path is exempt:
-# lanes from one accepted tree are byte-identical or attachment refuses.
-@pytest.mark.parametrize(
-    "changed",
-    [
-        [],
-        [".sdo/playbooks/fix/README.md"],
-        [".sdo/diagnostics/detectors/health/service-reachability/baseline.json"],
-        [".sdo/diagnostics/detectors/health/service-reachability/baseline.json", ".sdo/outcomes/x.json"],
-    ],
-)
-def test_any_lane_divergence_is_refused(monkeypatch, tmp_path, changed):
-    with pytest.raises(ValueError, match="merge through the broker"):
-        _divergence(monkeypatch, tmp_path, "tree-b", changed)
 
 
 def test_attachment_never_runs_tools_inside_nodes_that_kind_images_lack():

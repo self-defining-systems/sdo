@@ -19,6 +19,7 @@ var menuActionExamples = sync.OnceValue(func() map[string]map[string]any {
 	pod := sdk.ObjectRef{APIVersion: "v1", Kind: "Pod", Namespace: "app", Name: "example"}
 	service := sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "example"}
 	deployment := sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "app", Name: "example"}
+	replicaSet := sdk.ObjectRef{APIVersion: "apps/v1", Kind: "ReplicaSet", Namespace: "app", Name: "example-old"}
 	credential := program.CredentialRef{Env: "APP_PASSWORD"}
 	target := program.DatabaseTarget{Engine: program.MongoDB, Pod: pod, Container: "app", Database: "app", Auth: &program.DatabaseAuth{Database: "admin", Username: program.CredentialRef{Env: "ADMIN_USER"}, Password: program.CredentialRef{ConfigMap: &program.ConfigMapCredentialRef{Name: "bootstrap", Key: "init.sh", Assignment: "ADMIN_PASSWORD"}}}}
 	command := program.Command{Pod: pod, Container: "app", Args: []string{"true"}}
@@ -36,6 +37,7 @@ var menuActionExamples = sync.OnceValue(func() map[string]map[string]any {
 		program.DeleteObject{Ref: service, Reason: reason},
 		program.DeletePod{Ref: pod},
 		program.ScaleWorkload{Ref: deployment, Replicas: program.FromSource(deployment, "spec.replicas")},
+		program.RetireOldRevision{Ref: replicaSet},
 		program.Exec{Pod: pod, Container: "app", Command: []program.Value{program.FromSource(deployment, "spec.template.spec.containers[0].command[0]")}},
 		program.RemoveServicePort{Ref: service, Name: "obsolete", Reason: reason},
 		program.EnsureDatabaseUser{Target: target, User: "app", Roles: []program.DatabaseRole{{Database: "app", Name: "readWrite"}}, Password: credential, Reason: reason},

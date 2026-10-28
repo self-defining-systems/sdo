@@ -88,7 +88,9 @@ func TestClosureWithObservedSourceDifferenceCommitsWithNote(t *testing.T) {
 	controller := newSourceInformationController(t, &windowDetector{confirmed: true}, DriftControllerConfig{View: func(sdk.DetectionContext) program.ReadView {
 		return sourceCompareView{ReplayReadView: &sdktest.ReplayReadView{}, diff: program.Diff{Changed: true, Text: "accepted: {} observed: {\"spec\":{\"ports\":[{\"targetPort\":9999}]}}"}}
 	}}, broker, &now)
-	controller.OnClosureFailed = func(failure ClosureFailure) { t.Fatalf("a source difference retired a health-verified closure: %+v", failure) }
+	controller.OnClosureFailed = func(failure ClosureFailure) {
+		t.Fatalf("a source difference retired a health-verified closure: %+v", failure)
+	}
 
 	executeRecheck(t, controller)
 	awaitBrokerResult(t, controller.closureResults)

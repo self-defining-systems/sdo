@@ -195,7 +195,9 @@ same session reflects at the end.
      hidden behind the fixed one surface here.
 3. The loop stops when every detector clears, or after the loop budget: 5
    iterations by default, set with `--max-response-loops` or controller
-   config. The incident is then reported as unresolved.
+   config. The incident is then reported as unresolved. An iteration is one
+   act→verify cycle: all writes before the next verification share it, and a
+   call that writes nothing spends none.
 4. Ad-hoc fixes go through the same verification (`sdo verify`).
 
 Tools: `sdo status`, `sdo diagnose`, `sdo plan`, `sdo apply`, `sdo verify`,
