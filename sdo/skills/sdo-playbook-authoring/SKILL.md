@@ -1,74 +1,74 @@
 ---
 name: sdo-playbook-authoring
-description: Learn or refine reusable playbooks and deterministic Go programs from incident outcomes whose closure verified healthy. Covers source grounding, captured evidence, parameterized diagnosis and replay.
+description: Start here for reflection. Turn recorded hand repairs into validated playbook programs (diagnose.go, mitigate.go, a labelled corpus case), or return no_change.
 ---
 
-# Authoring a playbook
+# From hand repairs to validated programs
 
-A playbook captures a verified failure mechanism and repair for reuse on different resources.
-Accepted Mitigators become responder menu options, a convenience over direct commands through the ordinary
-executor. Bind required roles from findings; Diagnose reads objects by relation, `LogsWithOptions` (previous instances), and `PodUsage`/`NodeUsage` through ReadView.
-Declare object and value parameters, group actions that must run together, and supply specific
-failure context for the report returned to the same responder session.
-Read the [memory principles](../sdo-memory/SKILL.md#memory-principles) for evidence, reuse, generalization and retirement; that skill also defines ownership and logical IDs.
+Work in the proposal checkout, in this order. Open other files only when a step or a diagnostic names them.
 
-1. First judge whether all accepted memory already covers the incident: applied playbooks, matching detectors and unchanged source. Read across unrelated memory as needed. Only when existing playbooks match well may you return `no_change` with a short reason and finish; cover every recorded hand repair with an executable typed SDK or `RunScript` step, and update or retire applied playbooks that failed, left findings unresolved or needed later hand repair; otherwise make the smallest useful addition.
-   Keep revisions that applied cleanly unless this incident shows failure or incompleteness; add or narrowly edit, never rewrite working steps.
-2. For deterministic programs, read [program authoring](references/programs.md) before editing and the
-   [generated program SDK](references/program-sdk.md) before choosing API types. The
-   [authoring_reference](../sdo-memory/references/runtime.md#authoring_reference) tool retrieves these same
-   shipped references as a section index or one section, with a file to search.
-3. Save each verified mechanical step as a diagnose and mitigation program, even with partial coverage.
-   `RunScript` bash can express any probe or repair the responder ran: use relation-derived Env and
-   digest-to-receipt linkage to its original receipt; replay evidence is optional.
-   A program's diagnosis should check the conditions its action needs (for example, the cause is gone before
-   a restart), so the automatic stage, which runs programs one at a time with a fresh diagnosis before each,
-   can find a working order. Put judgement about when and in
-   what order to run steps in the README, with observations and decisions that guide it.
-   Stop the ongoing cause or producer before restarting its victims; if the repair cannot, state that limitation in the README.
-   README text holds only judgement and ordering; every recorded repair needs an executable step linked to its original receipt. Add detector coverage. A detector may surface multiple playbooks;
-   `DetectionContext.DiffAgainstSource` observes field drift and source absence before playbook selection.
-   Use the responder's recorded actions and existing session observations to build the replay fixture.
-   Controller captures and the evidence tools are optional sources, never prerequisites for learning.
-4. Author final files in the proposal checkout; SDO derives `fault_class` and the index entry. A fixture labels
-   its positive programs and binds the confirmed-cause resources. Include observed primitive replies and
-   accepted.json when the mitigation needs source values. Preserve accepted cases; add new evidence by ID.
-5. Run the complete memory check. Compilation, imports, changed-source formatting and receipt provenance
-   remain required. Replay runs as information: NoMatch, persistent Match and unavailable observations
-   never block saving. Scope diagnosis to the step's resources for useful live decisions.
-   Return `updated` with changed playbook IDs. Typed `sdk_gaps` name actually unavailable observations or effects; work not encoded yet is not a gap and cannot excuse a recorded repair.
-   Controller-listed `undetected_causes` permit new detector coverage for measured repair transitions;
-   bind the replay case to their captured open/fixed configuration without claiming independent health proof.
+1. **Is anything new?** The prompt's per-cause work lists the open questions; the current outcome lists
+   `repair_actions` (receipts) and `plan_applications`. If no hand repair is left uncovered and no applied
+   playbook failed, call `check_memory` with `no_change` and a one-line `no_change_reason`, and finish.
+   Update or retire (`status: retired` and `retired_reason` in front matter) an applied playbook that failed,
+   left findings unresolved or needed a later hand repair.
+2. **Map each hand repair to a step.** Every successful hand repair needs an executable step: the typed
+   action matching what ran, or `RunScript` with the recorded bytes. README text and `sdk_gaps` never replace
+   a step; work not encoded yet is not an SDK gap. One playbook per failure mechanism; partial coverage is fine.
+3. **Copy the closest worked example** from `/opt/sdo/examples/playbook-programs/` (`playbooks/<id>/` and
+   its `corpus/<id>/`): `deployment-source-drift`, `webhook-ca-sync`, `database-user-recovery`,
+   `crashloop-script-repair` (RunScript), `service-targetport-mismatch`. Exact signatures are on the
+   [SDK card](references/sdk-card.md), grouped by fault.
+4. **Write `.sdo/playbooks/<id>/`**: `diagnose.go` (`Spec`, `Diagnose`), `mitigate.go` (`Mitigate`, same
+   package and spec) and `README.md` with front matter `schema_version: 1`, `owner: responder`,
+   `originating_incident: <incident id>`, `description: <one line>`. The README holds only judgement and
+   ordering: when to use it, what first, what to check after. SDO adds `fault_class` and the index entry.
+5. **Label one corpus case** per new program (rules below), with `create_corpus` or by hand.
+6. **Check**: `check_memory` with `learning_decision: updated`, `proposed_artifact_ids` = the changed
+   playbook IDs, and a summary. It formats changed Go first. Fix each blocking diagnostic as its hint says,
+   then check again. Replay notes and `coverage_gaps` are information, not errors.
+7. Return the same decision and IDs.
 
-Mitigation returns to accepted or observed state;
-intended-state changes are source repairs. An emergency literal is a declared parameter the responder fills
-and justifies.
+Keep revisions that applied cleanly unless this incident shows failure or incompleteness; add or narrowly edit, never rewrite working steps.
 
-Before returning memory edits, run the complete memory check and resolve blocking diagnostics; do not correct informational replay results.
+## Program rules
 
-Read [validator rules](references/rules.md) when a diagnostic names a playbook, script or corpus rule.
+- Roles come from findings: one `ParamSpec` per object Kind. Read other objects through ReadView by
+  relation (selector, owner, mount), never by app name; put unavoidable app facts in the README.
+- Write values only as `FromSource`, `FromObserved` or `FromParam` (a declared scalar with a default).
+- Diagnose returns Match on positive evidence, NoMatch when the fault is absent, and an error (Unknown)
+  when a read is unavailable. Check what the action needs, e.g. that the cause is gone before a restart.
+- Mitigate returns to accepted or observed state; intended-state changes are source repairs. Prefer a
+  narrow `SetField`; `ReconcileFromSource` restores a whole object. After a workload write, append
+  `program.StalledRolloutRelease(v, ref)`.
+- `RunScript`: inline bash byte-identical to the recorded command, application inputs only through
+  relation-derived Env, and digest-to-receipt linkage in `script_origins`.
+- Credentials stay references (env or ConfigMap key); never read Secret data.
+- When the check reports that no finding binds a program's roles (`reflection.detector-required`), add an
+  incident detector with `sdo-detector-authoring`.
 
-For API reads, use the [recorded Kubernetes client](references/kubernetes-client.md) with upstream client-go conventions.
+## Corpus labels
 
-For object, command, HTTP, Job or subresource repairs, read the [general action vocabulary](references/general-actions.md).
+A case is `.sdo/corpus/<case-id>/`. Use a new ID; never edit or delete an accepted case.
 
-<!-- reference-topics -->
-## Reference topics
+- `labels.json`:
+  - `root_cause_program_ids`: programs whose Diagnose must Match `open.json` (the fault).
+  - `no_match_program_ids`: programs that must NoMatch it (a healthy state, or a fixed capture a program
+    wrongly matched).
+  - `bindings.objects`: role name (as in `ParamSpec`) to `{api_version, kind, namespace, name}`; bind each
+    resource the linked receipts repaired, or its recorded owner.
+  - `provenance.incident_id`: this incident. `script_origins`: RunScript sha256 to receipt ID.
+- `recordings.json`: the replies Diagnose reads, `{"phase", "method", "arguments", "result"}` (empty phase
+  is open; `fixed`, `healthy`), plus one `RepairReceipt` entry per encoded hand repair. The
+  `reflection.program-required` hint prints the exact entry to append.
+- `open.json`, `fixed.json`, `healthy.json` snapshots, and `accepted.json` when Mitigate reads source.
+  Missing captures never block saving; replay results are information.
 
-Open only the topic needed for the current edit.
+## More detail, only when needed
 
-- [program-01](references/program-sdk/program-01.md)
-- [program-02](references/program-sdk/program-02.md)
-- [program-03](references/program-sdk/program-03.md)
-- [program-04](references/program-sdk/program-04.md)
-- [routing-01](references/program-sdk/routing-01.md)
-- [acceptance](references/programs/acceptance.md)
-- [database-catalogs](references/programs/database-catalogs.md)
-- [evidence-and-replay-fixtures](references/programs/evidence-and-replay-fixtures.md)
-- [go-owned-per-cause-work](references/programs/go-owned-per-cause-work.md)
-- [recorded-repair-coverage](references/programs/recorded-repair-coverage.md)
-- [removing-one-service-port](references/programs/removing-one-service-port.md)
-- [routing](references/programs/routing.md)
-- [source-restoration](references/programs/source-restoration.md)
-- [values-and-runtime-actions](references/programs/values-and-runtime-actions.md)
-- [sdk-card](references/sdk-card.md)
+- A diagnostic names a rule: [validator rules](references/rules.md).
+- Patches, commands, HTTP, Jobs: [general actions](references/general-actions.md); typed API reads:
+  [recorded client](references/kubernetes-client.md).
+- Stalled rollouts, database catalogs, routing probes, Service ports, per-cause work:
+  [program notes](references/programs.md).
+- Full generated API: [program SDK](references/program-sdk.md).

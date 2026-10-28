@@ -13,7 +13,6 @@ ROOT = Path(__file__).resolve().parents[5]
         "sdo/agents/responder/prompts/reflection.md",
         "sdo/skills/sdo-playbook-authoring/SKILL.md",
         "sdo/skills/sdo-playbook-authoring/references/rules.md",
-        "sdo/skills/sdo-memory/SKILL.md",
     ],
 )
 def test_partial_learning_is_explicit(relative: str) -> None:
@@ -36,3 +35,11 @@ def test_partial_learning_is_explicit(relative: str) -> None:
         assert "difficulty never justifies saving nothing" not in text
     assert "a readme alone does not establish learning" not in text
     assert "a readme note alone does not capture an executable repair" not in text
+
+
+def test_memory_skill_delegates_reflection_to_one_entry_point() -> None:
+    """Reflection guidance lives once, in the playbook-authoring entry point."""
+    text = (ROOT / "sdo/skills/sdo-memory/SKILL.md").read_text()
+    assert "`sdo-playbook-authoring`" in text
+    assert "reflection entry point" in text
+    assert "not encoded yet" not in text

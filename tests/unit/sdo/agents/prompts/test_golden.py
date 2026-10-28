@@ -49,7 +49,7 @@ def test_fixture_skill_root_is_independent_of_checkout(monkeypatch, tmp_path: Pa
     monkeypatch.setattr(reflection, "SKILLS_ROOT", tmp_path / "other-checkout/skills")
     prompts = rendered_cases()
     assert "Read /opt/sdo/skills/sdo-incident-response/SKILL.md" in prompts["responder_cold_two"]
-    assert "guide starts at /opt/sdo/skills/sdo-memory/SKILL.md" in prompts["reflection_resume_2"]
+    assert "guide starts at /opt/sdo/skills/sdo-playbook-authoring/SKILL.md" in prompts["reflection_resume_2"]
 
 
 def test_production_instructions_never_spill_to_context_files() -> None:

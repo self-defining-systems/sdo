@@ -192,7 +192,7 @@ def test_reflection_prompt_requires_direct_edits_and_check_until_green(tmp_path:
     assert "artifact_proposal" not in prompt
     assert "broker checks" in prompt
     assert "draft-test" not in prompt
-    assert "sdo-memory/SKILL.md" in prompt
+    assert "sdo-playbook-authoring/SKILL.md" in prompt
     assert "DetectionContext exposes" not in prompt  # the SDK reference lives in the skill, not the prompt
     assert '"playbooks"' in prompt
     assert "Edit only authorized operational-memory files" in prompt
@@ -317,7 +317,7 @@ def test_reflection_prompt_routes_to_one_shipped_guide_without_protocol_recipes(
         closure=_fresh_closure(tmp_path),
     )
     prompt = expand_context(str(backend.calls[0]["prompt"]))
-    assert str(SKILLS_ROOT / "sdo-memory/SKILL.md") in prompt
+    assert str(SKILLS_ROOT / "sdo-playbook-authoring/SKILL.md") in prompt
     for tool in ("authoring_reference", "create_corpus", "check_memory"):
         assert tool not in prompt
     assert "--" not in prompt

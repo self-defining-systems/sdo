@@ -43,7 +43,7 @@ def _full_reference(reply: str) -> str:
 def test_program_reference_uses_shipped_sdk_and_worked_example(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("SDO_SESSION_SCRATCH", str(tmp_path))
     reference = _full_reference(authoring_reference("programs"))
-    assert "Direct program authoring" in reference
+    assert "# Program notes" in reference
     assert "func" in reference
     assert "program.ReadView" in reference
     assert "ProbeTCP" in reference

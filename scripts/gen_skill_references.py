@@ -269,11 +269,19 @@ def sync_topic_links(skill: str, *, check: bool) -> list[str]:
     marker = "<!-- reference-topics -->"
     base = original.split(marker, 1)[0].rstrip()
     linked = {match.split("#", 1)[0] for match in re.findall(r"\]\(([^)]+)\)", base)}
+    # Parts of a linked index (references/<stem>/*.md under references/<stem>.md) are reached through it.
     topics = [
         file
         for file in sorted((path.parent / "references").rglob("*.md"))
         if str(file.relative_to(path.parent)) not in linked
+        and str(file.parent.relative_to(path.parent)) + ".md" not in linked
     ]
+    if not topics:
+        expected = base + "\n"
+        if check:
+            return [str(path.relative_to(ROOT))] if original != expected else []
+        path.write_text(expected)
+        return []
     expected = base + "\n\n" + marker + "\n## Reference topics\n\nOpen only the topic needed for the current edit.\n\n"
     expected += "\n".join(f"- [{file.stem}]({file.relative_to(path.parent)})" for file in topics) + "\n"
     if check:
