@@ -416,6 +416,7 @@ def test_the_gate_runs_the_worker_import_check_on_its_code_root(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     monkeypatch.setattr(gate, "missing_images", lambda tag: [])
+    monkeypatch.setattr(gate.shutil, "disk_usage", lambda path: SimpleNamespace(free=500 * 2**30))
     code = gate.main(["--code-root", str(tmp_path), "--lane", "7", "--run-dir", str(tmp_path / "run")])
     assert code == 2
     assert "SREGym harness is not checked out" in capsys.readouterr().err
