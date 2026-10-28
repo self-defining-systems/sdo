@@ -18,8 +18,8 @@ const maxMidIncidentPasses = 8
 // midIncidentStage coalesces the re-runs of the automatic stage over the
 // open incident: one pass at a time, and one more when a match arrived during it.
 // A pass that clears no finding and applies no program new to the incident
-// settles the stage: the responder owns what remains, and only a finding a
-// program that never applied here could explain starts another pass.
+// settles the stage: the responder owns what remains, and later activations
+// join the incident without another pass.
 type midIncidentStage struct {
 	running bool
 	dirty   bool
@@ -57,7 +57,7 @@ func (c *Controller) attachLearnedActivation(ctx context.Context, finding sdk.Fi
 	if !c.incidentOpen || c.currentIncidentRequest == nil || c.incidentDispatchedAt.IsZero() ||
 		c.dispatchState != contracts.DispatchState_DISPATCH_STATE_RUNNING || c.responseStagesRunning || c.responderDone ||
 		loop == nil || c.midStage.passes >= maxMidIncidentPasses || !c.deterministicStageSelectedLocked() ||
-		!learnedPlaybookExplains(loop, finding, nil) {
+		!learnedPlaybookExplains(loop, finding) {
 		c.mu.Unlock()
 		return false
 	}
@@ -74,7 +74,7 @@ func (c *Controller) attachLearnedActivation(ctx context.Context, finding sdk.Fi
 		c.noteBatchedLocked(request.IncidentID, []sdk.Finding{finding})
 	}
 	// A settled stage hands the finding to the responder with the incident.
-	if c.midStage.settled && !learnedPlaybookExplains(loop, finding, c.midStageAppliedLocked()) {
+	if c.midStage.settled {
 		c.mu.Unlock()
 		return true
 	}
@@ -102,27 +102,16 @@ func (c *Controller) deterministicStageSelectedLocked() bool {
 	return false
 }
 
-// learnedPlaybookExplains reports whether a learned program outside except
-// can explain the finding.
-func learnedPlaybookExplains(loop *ResponderLoop, finding sdk.Finding, except map[string]bool) bool {
+func learnedPlaybookExplains(loop *ResponderLoop, finding sdk.Finding) bool {
 	if loop.Programs == nil {
 		return false
 	}
 	for _, spec := range loop.Programs.List() {
-		if !except[spec.ID] && programLinksFinding(spec, finding) {
+		if programLinksFinding(spec, finding) {
 			return true
 		}
 	}
 	return false
-}
-
-// midStageAppliedLocked lists the programs a settled stage has already
-// applied in this incident; before the stage settles nothing is excluded.
-func (c *Controller) midStageAppliedLocked() map[string]bool {
-	if !c.midStage.settled || c.currentIncidentRequest == nil {
-		return nil
-	}
-	return stageAppliedPrograms(deterministicStageReport(c.currentIncidentRequest.PriorStages))
 }
 
 func deterministicStageReport(reports []*contracts.StageReport) *contracts.StageReport {
@@ -145,21 +134,24 @@ func stageAppliedPrograms(report *contracts.StageReport) map[string]bool {
 	return applied
 }
 
-// stagePassProgressed reports whether a later pass cleared a finding or
-// applied a program the incident had not applied before.
+// stagePassProgressed reports whether a later pass verified a repair of its
+// own (an attempt it added or completed is applied_cleared) or applied a
+// program the incident had not applied before. Findings the responder cleared
+// meanwhile are not the stage's progress.
 func stagePassProgressed(earlier, report *contracts.StageReport) bool {
-	cleared := map[string]bool{}
-	for _, fp := range earlier.GetClearedFindingFingerprints() {
-		cleared[fp] = true
+	before := map[string]*contracts.StageMitigation{}
+	for _, attempt := range earlier.GetMitigations() {
+		before[stageAttemptKey(attempt.PlaybookId, programBindingsState(attempt.Bindings))] = attempt
 	}
-	for _, fp := range report.GetClearedFindingFingerprints() {
-		if !cleared[fp] {
+	for _, attempt := range report.GetMitigations() {
+		prior := before[stageAttemptKey(attempt.PlaybookId, programBindingsState(attempt.Bindings))]
+		if attempt.GetResult() == "applied_cleared" && prior.GetResult() != "applied_cleared" {
 			return true
 		}
 	}
-	before := stageAppliedPrograms(earlier)
+	applied := stageAppliedPrograms(earlier)
 	for id := range stageAppliedPrograms(report) {
-		if !before[id] {
+		if !applied[id] {
 			return true
 		}
 	}
@@ -173,8 +165,8 @@ func (c *Controller) runMidIncidentPasses(ctx context.Context, incidentID string
 			slog.Warn("later automatic stage pass", "incident_id", incidentID, "error", err)
 		}
 		c.mu.Lock()
-		if err == nil {
-			c.midStage.settled = !progressed
+		if err == nil && !progressed {
+			c.midStage.settled = true
 		}
 		again := c.midStage.dirty && !c.midStage.settled && c.midStage.passes < maxMidIncidentPasses && c.incidentOpen &&
 			c.currentIncidentRequest != nil && c.currentIncidentRequest.IncidentID == incidentID && !c.responderDone

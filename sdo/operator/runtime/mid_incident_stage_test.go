@@ -193,8 +193,8 @@ func (d stagedPortDetector) Detect(ctx context.Context, view sdk.DetectionContex
 }
 
 // A later pass that clears nothing and applies no program new to the incident
-// settles the stage. The next activation that only the same program explains
-// joins the incident for the responder without another pass.
+// settles the stage. The next activation joins the incident for the responder
+// without another pass.
 func TestNoProgressLaterPassSettlesTheStage(t *testing.T) {
 	loop, state := pipelineTestLoopWithServices(t, true, "api2", "api3")
 	registry, err := program.NewRegistry([]program.Diagnoser{pipelineIneffectivePortProgram{}}, []program.Mitigator{pipelineIneffectivePortProgram{}})
