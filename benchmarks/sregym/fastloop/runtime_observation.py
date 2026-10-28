@@ -35,6 +35,14 @@ Operation = Literal[
     "mongo_rate_read",
 ]
 
+#: Kafka admin CLIs run inside the broker container and would inherit the broker's own
+#: JVM options. The demo image's OpenTelemetry agent alone made one describe take 20-29 s
+#: under load (8 s budget), so every Kafka tool starts with the CLI's own defaults.
+_KAFKA_CLI_ENV = (
+    "unset KAFKA_OPTS KAFKA_HEAP_OPTS KAFKA_JVM_PERFORMANCE_OPTS KAFKA_GC_LOG_OPTS KAFKA_JMX_OPTS "
+    "JMX_PORT KAFKA_LOG4J_OPTS KAFKA_DEBUG JAVA_TOOL_OPTIONS JDK_JAVA_OPTIONS _JAVA_OPTIONS; "
+)
+
 _EXEC_SCRIPTS = {
     "ephemeral_ports": "cat /proc/sys/net/ipv4/ip_local_port_range",
     "valkey_memory": (
@@ -49,11 +57,11 @@ _EXEC_SCRIPTS = {
         'cat "$sdo_mem_usage_path"'
     ),
     "kafka_offsets": (
-        "/opt/kafka/bin/kafka-consumer-groups.sh --bootstrap-server localhost:9092 "
+        _KAFKA_CLI_ENV + "/opt/kafka/bin/kafka-consumer-groups.sh --bootstrap-server localhost:9092 "
         "--describe --all-groups --timeout 3000"
     ),
     "kafka_progress": (
-        "/opt/kafka/bin/kafka-consumer-groups.sh --bootstrap-server localhost:9092 "
+        _KAFKA_CLI_ENV + "/opt/kafka/bin/kafka-consumer-groups.sh --bootstrap-server localhost:9092 "
         "--describe --group orders-validator --timeout 3000 || exit 1; "
         "printf '\\n__SDO_OUTPUT__\\n'; "
         "/opt/kafka/bin/kafka-get-offsets.sh --bootstrap-server localhost:9092 "
