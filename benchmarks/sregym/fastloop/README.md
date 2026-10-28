@@ -63,7 +63,9 @@ and retention. A content-derived tag locates a manifest; verified cache hits ski
 `docker push`. Nodes pull its immutable manifest digest and retain the original
 source image names. Manifest bytes, the frozen config ID and each node's CRI
 image ID are checked before reporting success. Identical images under different
-source names share the same publication.
+source names share the same publication. The frozen ID is the config digest on
+Docker's classic image store and the manifest digest on its containerd image
+store; both are accepted, and nodes are always checked against the config digest.
 
 Lane teardown removes only retired lane-owned registries. It leaves the host
 registry and its data intact for other lanes. The host registry is bound to a
@@ -75,3 +77,22 @@ Each `image_delivery.jsonl` entry includes `registry` metadata: container name,
 `uploads`, `cache_hits`, `publication_seconds`, `pull_seconds`, `frozen_ids` and
 `manifest_digests`. Total `seconds` includes setup and transfer; retention evidence is recorded
 separately. Use the phase fields to distinguish a first publication from subsequent lane delivery.
+
+## Shared source-built app images
+
+SREGym tags each source-built app image `sregym-src-<identity>`, where the
+identity digests the build context, Dockerfile, build arguments and platform,
+and labels it `sregym.source-identity`. No lane name is part of the ref, so
+every lane deploying the same sources resolves the same image. All hosts share
+one app-image registry, `FASTLOOP_APP_IMAGE_REGISTRY` (`host:port`; default:
+this host's `sdo-fastloop-registry`), as `sdo/app-src:<tag>`. Docker pulls
+plain HTTP only from loopback, so another host names a loopback port that
+relays to the registry host over the LAN. Before a build, the worker bridge
+holds a host lock for that identity and uses the local image carrying it, else
+pulls it from the shared registry, else builds and publishes it there. A pulled
+image must carry its identity label. An unreachable registry is recorded as
+`registry_error` and the lane builds without publishing. Each lookup is
+appended to `app_images.jsonl` next to `image_delivery.jsonl`, with its
+`source` (`local`, `registry` or `build`), `published`, `pull_seconds` and
+`seconds`. Node delivery is unchanged: kind nodes still receive app images
+through the host's image-delivery path above.
