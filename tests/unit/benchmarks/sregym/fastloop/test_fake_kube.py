@@ -37,3 +37,21 @@ def test_fake_api_accepts_go_snapshot_null_collections() -> None:
         status, response = server.read("/api/v1/namespaces/demo/pods")
     assert status == 200
     assert response["items"] == []
+
+
+def test_fake_api_serves_objects_only_capture() -> None:
+    snapshot = {
+        "object_snapshot_version": 2,
+        "namespace": "demo",
+        "objects": [
+            {"apiVersion": "v1", "kind": "Pod", "metadata": {"name": "web", "namespace": "demo"}},
+            {"apiVersion": "v1", "kind": "Pod", "metadata": {"name": "other", "namespace": "elsewhere"}},
+            {"apiVersion": "apps/v1", "kind": "Deployment", "metadata": {"name": "web", "namespace": "demo"}},
+        ],
+    }
+    with FakeKubernetesAPIServer(snapshot) as server:
+        status, pods = server.read("/api/v1/namespaces/demo/pods")
+        _, deployment = server.read("/apis/apps/v1/namespaces/demo/deployments/web")
+    assert status == 200
+    assert [item["metadata"]["name"] for item in pods["items"]] == ["web"]
+    assert deployment["kind"] == "Deployment"

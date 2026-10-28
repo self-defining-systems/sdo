@@ -192,10 +192,11 @@ def prepare_corpus(
     }
     target.parent.mkdir(parents=True, exist_ok=True)
     target.mkdir()
+    # Each distinct snapshot is stored once: healthy is the verified fixed
+    # snapshot, so the case references fixed.json instead of a copy.
     for name, data in {
         "open.json": opened,
         "fixed.json": fixed,
-        "healthy.json": fixed,
         "recordings.json": recordings,
         "labels.json": json.dumps(labels).encode(),
     }.items():
@@ -223,10 +224,9 @@ def prepare_session_corpus(
     target = root / ".sdo/corpus" / case_id
     target.parent.mkdir(parents=True, exist_ok=True)
     target.mkdir()
-    # The legacy context files retain the observed bytes. Only executing the
-    # mitigation supplies a repaired post-state; these files prove no repair.
-    for name in ("open.json", "fixed.json", "healthy.json"):
-        (target / name).write_text(observations.snapshot_json)
+    # The observed bytes are stored once; open and healthy reference fixed.json.
+    # Only executing the mitigation supplies a repaired post-state; this proves no repair.
+    (target / "fixed.json").write_text(observations.snapshot_json)
     (target / "recordings.json").write_text(observations.recordings_json)
     (target / "labels.json").write_text(
         json.dumps(

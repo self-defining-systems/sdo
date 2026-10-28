@@ -29,8 +29,10 @@ def test_session_fixture_does_not_require_controller_open_or_fixed_captures(tmp_
         SessionObservations(snapshot_json=observed),
     )
     case = tmp_path / ".sdo/corpus/routing"
-    assert (case / "open.json").read_text() == observed
+    # One observed snapshot is stored once; open and healthy reference fixed.json.
     assert (case / "fixed.json").read_text() == observed
+    assert not (case / "open.json").exists()
+    assert not (case / "healthy.json").exists()
     assert json.loads((case / "labels.json").read_text())["provenance"] == {"incident_id": "first"}
     assert (case / "recordings.json").read_text() == "[]"
 
@@ -91,7 +93,7 @@ def test_corpus_tool_supplies_provenance_and_preserves_capture_bytes(tmp_path: P
     case = root / ".sdo/corpus/case-1"
     assert (case / "open.json").read_bytes() == opened
     assert (case / "fixed.json").read_bytes() == fixed
-    assert (case / "healthy.json").read_bytes() == fixed
+    assert not (case / "healthy.json").exists(), "healthy is the fixed snapshot; the case references it"
     assert (case / "recordings.json").read_bytes() == recordings
     labels = json.loads((case / "labels.json").read_text())
     assert labels["provenance"] == {

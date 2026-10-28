@@ -36,6 +36,35 @@ CaptureSection = Literal[
 ]
 
 
+# Typed sections of a capture by object identity. Objects-only captures
+# (object_snapshot_version 2) store namespace-local objects once, in "objects".
+_SECTION_KINDS = {
+    ("v1", "ConfigMap"): "configMaps",
+    ("v1", "Service"): "services",
+    ("v1", "Pod"): "pods",
+    ("apps/v1", "Deployment"): "deployments",
+    ("apps/v1", "StatefulSet"): "statefulSets",
+    ("apps/v1", "ReplicaSet"): "replicaSets",
+    ("autoscaling/v2", "HorizontalPodAutoscaler"): "horizontalPodAutoscalers",
+    ("policy/v1", "PodDisruptionBudget"): "podDisruptionBudgets",
+    ("v1", "Endpoints"): "endpoints",
+    ("discovery.k8s.io/v1", "EndpointSlice"): "endpointSlices",
+    ("networking.k8s.io/v1", "NetworkPolicy"): "networkPolicies",
+    ("v1", "Event"): "events",
+}
+
+
+def capture_sections(snapshot: dict[str, Any]) -> dict[str, list[Any]]:
+    """List-valued capture fields, with typed sections rebuilt for objects-only captures."""
+    sections = {key: value for key, value in snapshot.items() if isinstance(value, list)}
+    if snapshot.get("object_snapshot_version", 0) >= 2:
+        for item in snapshot.get("objects") or []:
+            section = _SECTION_KINDS.get((item.get("apiVersion"), item.get("kind")))
+            if section and (item.get("metadata") or {}).get("namespace") == snapshot.get("namespace"):
+                sections.setdefault(section, []).append(item)
+    return sections
+
+
 class ResourceSummary(BaseModel):
     count: int
     names: list[str]
@@ -98,10 +127,9 @@ def capture_inventory(captures: Path) -> dict[str, Any]:
         snapshot = json.loads(raw)
         resources = {}
         if isinstance(snapshot, dict):
-            for kind, items in snapshot.items():
-                if isinstance(items, list):
-                    names = [str(item.get("metadata", {}).get("name", ""))[:80] for item in items[:8]]
-                    resources[kind] = ResourceSummary(count=len(items), names=names, omitted=max(0, len(items) - 8))
+            for kind, items in capture_sections(snapshot).items():
+                names = [str(item.get("metadata", {}).get("name", ""))[:80] for item in items[:8]]
+                resources[kind] = ResourceSummary(count=len(items), names=names, omitted=max(0, len(items) - 8))
         elif isinstance(snapshot, list):
             resources["recordings"] = ResourceSummary(count=len(snapshot), names=[], omitted=len(snapshot))
         summaries.append(
@@ -206,7 +234,7 @@ def read_capture(
     )
     raw = (captures / filename).read_bytes()
     snapshot = json.loads(raw)
-    items = snapshot if section == "recordings" else snapshot.get(section) or []
+    items = snapshot if section == "recordings" else capture_sections(snapshot).get(section) or []
     if section == "recordings":
         items = [item for item in items if (item.get("phase") or "open") == ("fixed" if phase == "fixed" else "open")]
     if name is not None:
