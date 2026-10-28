@@ -30,7 +30,7 @@ Read the [memory principles](../sdo-memory/SKILL.md#memory-principles) for evide
    `DetectionContext.DiffAgainstSource` observes field drift and source absence before playbook selection.
    Use the responder's recorded actions and existing session observations to build the replay fixture.
    Controller captures and the evidence tools are optional sources, never prerequisites for learning.
-4. Author final files in the proposal checkout; SDO derives `fault_class` and the index entry. A fixture labels
+4. Author final files in the proposal checkout; SDO derives `fault_class` and the playbook index. A fixture labels
    its positive programs and binds the confirmed-cause resources. Include observed primitive replies and
    accepted.json when the mitigation needs source values. Preserve accepted cases; add new evidence by ID.
 5. Run the complete memory check. Compilation, imports, changed-source formatting and receipt provenance
