@@ -311,9 +311,7 @@ def test_baseline_file_preserves_infrastructure_and_older_files_skip_reconciliat
     assert json.loads(path.read_text(encoding="utf-8"))["namespaces"] == ["observe"]
 
 
-def test_capture_discovers_secondary_app_namespaces_without_control_or_observability(
-    tmp_path: Path, monkeypatch: Any
-) -> None:
+def test_capture_namespace_ownership_does_not_expand_from_cluster_discovery(tmp_path: Path, monkeypatch: Any) -> None:
     from benchmarks.sregym.fastloop import baseline_recovery
 
     path = tmp_path / "cluster_baseline_state.json"
@@ -325,7 +323,7 @@ def test_capture_discovers_secondary_app_namespaces_without_control_or_observabi
 
     monkeypatch.setattr(baseline_recovery, "kubectl", fake_kubectl)
 
-    assert application_namespaces(path, tmp_path / "kubeconfig", "hotel") == ("hotel", "hotel-db")
+    assert application_namespaces(path, tmp_path / "kubeconfig", "hotel") == ("hotel",)
 
 
 ALLOCATED_CASES = [

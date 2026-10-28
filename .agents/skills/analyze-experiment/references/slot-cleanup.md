@@ -145,3 +145,5 @@ The durable attempt marker retains injected row IDs, so the next row recreates
 the app namespace/PVCs under tier 2 and records its trigger in `wipe-receipt.json`.
 Entry, restore-invariant, pre-injection baseline and injection-validity checks
 still run. Warm streams without row-start wipes retain their recovery fences.
+
+Namespace ownership follows the accepted render's configured application namespace. A namespace discovered after an infrastructure snapshot is not evidence of application ownership; recreation must not delete it merely because the snapshot omitted it.

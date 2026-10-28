@@ -406,21 +406,12 @@ def capture_application_baseline(cluster: ApplicationCluster, namespace: str) ->
 
 
 def application_namespaces(path: Path, kubeconfig: Path, primary: str) -> tuple[str, ...]:
-    """Find app namespaces created after SREGym's infrastructure snapshot."""
+    """Return the namespace boundary used by the accepted-source renderer.
 
-    infrastructure = set(json.loads(path.read_text(encoding="utf-8")).get("namespaces", []))
-    listing = json.loads(kubectl(["get", "namespaces", "-o", "json"], namespace=None, kubeconfig=kubeconfig).stdout)
-    created = {
-        value["metadata"]["name"] for value in listing["items"] if value["metadata"]["name"] not in infrastructure
-    }
-    return tuple(
-        sorted(
-            {
-                primary,
-                *(name for name in created if not name.endswith("-sdo") and name not in NON_APPLICATION_NAMESPACES),
-            }
-        )
-    )
+    Cluster discovery and an old infrastructure snapshot cannot grant ownership
+    of another namespace. All supported source renders are namespace-scoped.
+    """
+    return (primary,)
 
 
 def save_application_baseline(
