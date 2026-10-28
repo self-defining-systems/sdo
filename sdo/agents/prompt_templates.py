@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any
 
 from libs.agent_cli.structured import AgentProvider, StructuredTurn
 from libs.agent_cli.structured import run_structured_turn as _run_structured_turn
-from sdo.agents.context_output import budget_for, cap_text
+from sdo.agents.context_output import ContextText, budget_for, cap_text, save_context
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -21,11 +21,29 @@ if TYPE_CHECKING:
 class PromptPart:
     name: str
     text: str
+    required: bool = True
+    priority: int = 0
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.name, str) or not isinstance(self.text, str):
+            raise TypeError("prompt part name and text must be strings")
+        if type(self.required) is not bool or type(self.priority) is not int:
+            raise TypeError("required must be bool and priority must be int")
+        if not self.required and self.name.endswith(".instructions"):
+            raise ValueError(f"{self.name}: instructions are always required")
+
+
+class PromptBudgetError(ValueError):
+    """A named budget cannot retain the required prompt content."""
 
 
 def cap_section(name: str, text: str) -> str:
-    """The one place a registered prompt section meets its budget."""
+    """The one place optional prompt context meets its registered budget."""
     return cap_text(text, budget_for(name))
+
+
+def _omission(characters: int) -> str:
+    return f"\n[Optional content omitted: {characters} characters]\n"
 
 
 class RenderedPrompt(str):
@@ -36,18 +54,52 @@ class RenderedPrompt(str):
 
     def __new__(cls, parts: Iterable[PromptPart]) -> RenderedPrompt:
         raw = tuple(parts)
-        grouped: dict[str, str] = defaultdict(str)
-        for part in raw:
-            grouped[part.name] += part.text
-        capped = {name: cap_section(name, text) for name, text in grouped.items()}
-        emitted: set[str] = set()
-        result: list[PromptPart] = []
-        for part in raw:
-            if capped[part.name] == grouped[part.name]:
-                result.append(part)
-            elif part.name not in emitted:
-                result.append(PromptPart(part.name, capped[part.name]))
-                emitted.add(part.name)
+        grouped: dict[str, list[tuple[int, PromptPart]]] = defaultdict(list)
+        for index, part in enumerate(raw):
+            grouped[part.name].append((index, part))
+        replacements: dict[int, str] = {}
+        for name, sections in grouped.items():
+            limit = budget_for(name)
+            required_size = sum(len(section.text) for _, section in sections if section.required)
+            if required_size > limit:
+                raise PromptBudgetError(
+                    f"{name}: required content is {required_size} characters, budget is {limit}; "
+                    "shorten the required content or raise its budget in a budget-only commit"
+                )
+            remaining = limit - required_size
+            # Reserve required bytes first, then optional groups in priority order.
+            optional: dict[int, list[tuple[int, PromptPart]]] = defaultdict(list)
+            for index, section in sections:
+                if not section.required:
+                    optional[section.priority].append((index, section))
+            groups = [optional[priority] for priority in sorted(optional, reverse=True)]
+            for position, fragments in enumerate(groups):
+                text = "".join(fragment.text for _, fragment in fragments)
+                reserve = sum(
+                    len(_omission(sum(len(fragment.text) for _, fragment in later))) for later in groups[position + 1 :]
+                )
+                available = max(0, remaining - reserve)
+                if len(text) <= available:
+                    remaining -= len(text)
+                    continue
+                try:
+                    replacement = cap_section(name, text) if available == limit else cap_text(text, available)
+                except ValueError as exc:
+                    omission = _omission(len(text))
+                    if isinstance(exc, PromptBudgetError):
+                        raise
+                    if len(omission) > available:
+                        raise PromptBudgetError(f"{name}: required content cannot fit: {exc}") from exc
+                    path, _ = save_context(text)
+                    replacement = ContextText(omission, path, degraded=True)
+                replacements[fragments[0][0]] = replacement
+                for index, _ in fragments[1:]:
+                    replacements[index] = ""
+                remaining -= len(replacement)
+        result = [
+            PromptPart(part.name, replacements.get(index, part.text), part.required, part.priority)
+            for index, part in enumerate(raw)
+        ]
         ordered = tuple(result)
         value = super().__new__(cls, "".join(part.text for part in ordered))
         value.parts = ordered
@@ -55,7 +107,7 @@ class RenderedPrompt(str):
             sorted(
                 {
                     path
-                    for text in (*[part.text for part in raw], *capped.values())
+                    for text in (*[part.text for part in raw], *replacements.values())
                     for path in getattr(text, "context_files", ())
                 }
             )
@@ -91,9 +143,14 @@ class RenderedPrompt(str):
         )
 
 
-def named_prompt(name: str, text: str) -> RenderedPrompt:
-    """Name an opaque rendered data section, including its separators."""
-    return RenderedPrompt((PromptPart(name, text),))
+def named_prompt(name: str, text: str, *, required: bool = True, priority: int = 0) -> RenderedPrompt:
+    """Name data; optional sections must opt into ranked, counted summarization.
+
+    A wrapper cannot erase the requirements or provenance of a rendered value.
+    """
+    if isinstance(text, RenderedPrompt):
+        return RenderedPrompt(text.parts)
+    return RenderedPrompt((PromptPart(name, text, required, priority),))
 
 
 def count_chars(text: str) -> int:

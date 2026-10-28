@@ -62,7 +62,9 @@ uv run --extra test python -m pytest -q -p no:tach \
     tests/unit/benchmarks/sregym/adapter/test_budgets.py::test_the_scanner_sees_each_wait_shape \
     tests/unit/benchmarks/sregym/adapter/test_budgets.py::test_seconds_literals_in_waits_only_decrease \
     tests/unit/sdo/agents/test_prompt_generalization.py \
-    tests/unit/sdo/agents/prompts/test_context_registry.py
+    tests/unit/sdo/agents/prompts/test_context_registry.py \
+    tests/unit/sdo/agents/prompts/test_required_content.py \
+    tests/unit/sdo/agents/responder/test_incident_context.py::test_many_stage_attempts_cannot_displace_bounded_first_prompt
 
 # Capture fixtures must come from the real CaptureSnapshot projection.
 echo "==> Go capture fixture policy"

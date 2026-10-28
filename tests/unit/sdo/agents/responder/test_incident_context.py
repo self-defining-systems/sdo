@@ -224,16 +224,11 @@ def test_many_stage_attempts_cannot_displace_bounded_first_prompt() -> None:
             result="apply_error",
             error="e" * 5000,
         )
-    with prepared_incident_data(request) as rendered:
-        assert len(rendered) <= MAX_INCIDENT_SUMMARY_CHARS
-        summary = incident_document(rendered)
-        actions = summary["stage_actions"]
-        assert "-> apply_error; error: eee" in actions[0]
-        assert len(actions) + summary["stage_actions_omitted"] == 20
-        assert summary["findings"]
-        assert "mitigate" in summary["incident_tools"]["commands"]
-        details = incident_facts_path(rendered)
-        assert len(json.loads(details.read_text())["prior_stages"][0]["mitigations"]) == 20
+    from sdo.agents.prompt_templates import PromptBudgetError
+
+    with pytest.raises(PromptBudgetError, match="responder.incident_data.*required"):
+        with prepared_incident_data(request):
+            pass
 
 
 def test_failed_episode_progress_stays_inline_with_full_results_in_facts() -> None:
@@ -263,10 +258,6 @@ def test_many_prior_episodes_keep_latest_progress_within_first_prompt_budget() -
         for action in range(8):
             episode.successful_actions.add(action_id=f"done-{index}-{action}", success=True, summary="repaired " * 100)
         episode.blockers.add(reason_code="admission_blocked", reason="webhook denial " * 200)
-    for index in range(2):
-        report = request.prior_stages.add(stage=f"stage-{index}", remaining_finding_fingerprints=["f" * 5000] * 20)
-        for attempt in range(20):
-            report.mitigations.add(playbook_id=f"repair-{attempt}-" + "p" * 500, result="apply_error", error="e" * 5000)
     with prepared_incident_data(request) as rendered:
         assert len(rendered) <= MAX_INCIDENT_SUMMARY_CHARS
         assert "done-9-0" in rendered

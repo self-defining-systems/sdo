@@ -18,7 +18,7 @@ from sdo.agents.prompt_templates import (
     named_prompt,
     render_prompt,
 )
-from sdo.agents.responder.continuation import continuation_prompt
+from sdo.agents.responder.continuation import MAX_CONTINUATION_CHARS, continuation_prompt
 from sdo.agents.responder.incident_context import prepared_incident_data
 from tests.unit.sdo.agents.prompts.cases import incident, rendered_cases, responder_prompt
 from tests.unit.sdo.agents.responder.continuation_cases import ten_receipt_continuation
@@ -36,7 +36,7 @@ def measured_parts() -> dict[str, int]:
     maxima: dict[str, int] = defaultdict(int)
     prompts = rendered_cases()
     prompts["ten_receipt_continuation"] = continuation_prompt(json.dumps(ten_receipt_continuation()))
-    assert len(prompts["ten_receipt_continuation"]) <= 1500
+    assert len(prompts["ten_receipt_continuation"]) <= MAX_CONTINUATION_CHARS
     boundary = incident(5, oversized=True)
     boundary.memory_snapshot.goal_markdown = "目" * 1000
     boundary.memory_snapshot.architecture_markdown = "界" * 2000

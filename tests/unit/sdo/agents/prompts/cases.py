@@ -282,6 +282,46 @@ def live_shaped_reflection(scale: int = 1) -> SimpleNamespace:
     )
 
 
+def recorded_scale_reflection() -> SimpleNamespace:
+    """Synthetic values at recorded run19 cardinalities, never copied run artifacts.
+
+    The 63-task run19 replay found maxima of 20 causes / 91 questions and 24
+    repair receipts. Names, prose and resources here are deliberately synthetic.
+    Full recording provenance and measurements live in the CTXFAIL1 handoff.
+    """
+    live = live_shaped_reflection()
+    del live.cause_work[:]
+    del live.unassigned_work[:]
+    for cause_index in range(20):
+        cause = ReflectionCauseWork(
+            cause_index=cause_index,
+            resources=[ObjectRef(**_toy_ref("ConfigMap", f"toy-cause-{cause_index}"))],
+        )
+        for index in range(5 if cause_index < 11 else 4):
+            question = (
+                f"Synthetic question {cause_index}/{index}: " + "Which recorded observation explains this repair? " * 3
+            )
+            cause.items.add(
+                disposition="question",
+                question=question,
+                reason="unbound_write",
+                program_id=f"toy-program-{cause_index}",
+                program_revision="r" * 64,
+                resources=[ObjectRef(**_toy_ref("ConfigMap", f"toy-cause-{cause_index}"))],
+            )
+        live.cause_work.append(cause)
+    original = type(live.outcome.repair_actions[0])()
+    original.CopyFrom(live.outcome.repair_actions[0])
+    del live.outcome.repair_actions[:]
+    for index in range(24):
+        action = live.outcome.repair_actions.add()
+        action.CopyFrom(original)
+        action.action_id = f"synthetic-repair-{index}"
+        action.summary = f"Synthetic repair {index}: restore the accepted configuration."
+        action.details = "Synthetic controller-confirmed resource effect. " * 6
+    return live
+
+
 def rendered_cases(*, scale: int = 1) -> dict[str, str]:
     """Golden prompts; ``scale`` multiplies findings and lengthens them to live sizes."""
 
@@ -387,7 +427,7 @@ def rendered_cases(*, scale: int = 1) -> dict[str, str]:
         prompts["responder_transport"] = responder_prompt(scaled())
         patch.setenv("SDO_RESPONDER_EXTRA_INSTRUCTIONS", "Use the toy incident transport.")
 
-        for mode in ("resume", "fresh", "retry"):
+        for mode in ("resume", "fresh", "retry", "fresh_retry"):
             for count in (2, 5):
                 capture = ReflectionCapture()
                 request = scaled(count, warm=True, drift=True)
@@ -413,11 +453,11 @@ def rendered_cases(*, scale: int = 1) -> dict[str, str]:
                     history=[OutcomeRecord(schema_version=1, incident_id="prior-toy", classification="success")],
                     outcome_commit="d" * 40,
                     closure=closure,
-                    session_mode="fresh" if mode == "fresh" else "resume",
+                    session_mode="fresh" if mode in {"fresh", "fresh_retry"} else "resume",
                     diagnostics=[
                         MemoryDiagnostic(rule="toy-rule", path="toy.go", line=3, message="fix toy", hint="check type")
                     ]
-                    if mode == "retry"
+                    if mode in {"retry", "fresh_retry"}
                     else (),
                 )
                 prompts[f"reflection_{mode}_{count}"] = capture.prompt
