@@ -77,7 +77,7 @@ class ToyWorker:
             return {"kind": "health-check", "success": bool(checks) and all(checks.values()), "details": checks}
         if op == "recover":
             started = time.monotonic()
-            command(config, env.namespace, "apply", "-f", str(env.workspace / "kubernetes"))
+            apply_accepted_source(env.workspace, env.namespace, env.kubeconfig)
             return {
                 "seconds": time.monotonic() - started,
                 "protocol_version": 2,
@@ -89,6 +89,17 @@ class ToyWorker:
             # credential clients across recovery.
             return {"protocol_version": 2, "success": True, "recovery_contract": "seed-compatible/v1"}
         raise ValueError(f"unsupported toy worker operation: {op}")
+
+
+def apply_accepted_source(workspace: Path, namespace: str, kubeconfig: Path) -> None:
+    from benchmarks.sregym.fastloop.accepted_source import AcceptedSource
+    from benchmarks.sregym.fastloop.baseline_recovery import KubectlApplicationCluster
+
+    source = AcceptedSource(workspace, namespace, ("kubernetes",))
+    manifests = source.manifests
+    cluster = KubectlApplicationCluster(kubeconfig)
+    for manifest in manifests:
+        cluster.apply(namespace, manifest)
 
 
 def cluster_name(args: Any) -> str:
@@ -240,7 +251,7 @@ def up(args: Any) -> int:
     ).stdout.strip()
     command(str(kubeconfig), "default", "create", "namespace", NAMESPACE)
     with host_limits.admit("redeploy"):
-        command(str(kubeconfig), NAMESPACE, "apply", "-f", str(workspace / "kubernetes"))
+        apply_accepted_source(workspace, NAMESPACE, kubeconfig)
         command(str(kubeconfig), NAMESPACE, "rollout", "status", "deployment", "--timeout=60s")
     env = FastloopEnvironment(
         run_dir=run_dir,

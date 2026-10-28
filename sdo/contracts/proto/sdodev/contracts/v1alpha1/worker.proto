@@ -76,7 +76,7 @@ message AgentResult {
   string proposal_id = 5;
   string error_summary = 6;
   // Why a failed agent stopped, when it published its failure.
-  string failure_reason = 7 [(buf.validate.field).string = {in: ["", "agent_timeout", "agent_failed", "result_too_large"]}];
+  string failure_reason = 7 [(buf.validate.field).string = {in: ["", "agent_timeout", "agent_failed", "session_handoff_timeout", "session_handoff_invalid", "session_unavailable", "result_too_large"]}];
 }
 
 // Reflection runs only after the broker has committed an authoritative

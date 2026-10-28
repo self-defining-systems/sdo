@@ -93,6 +93,9 @@ func TestIncidentAPIRepairReceiptsRejectUnprovenOrUnrelatedWrites(t *testing.T) 
 				start.Started = at.Add(-time.Second)
 			case "unconfirmed-delete":
 				start.Verb = "delete"
+			case "wrong-body", "missing-body", "missing-rv":
+				// Only a create learns its name from the response body.
+				start.Verb, start.Name = "post", ""
 			}
 			if name != "missing-start" {
 				store.Record(start, nil)
@@ -192,5 +195,62 @@ func TestIncidentAPIRepairReceiptsPreservePositiveFactsAfterHardStop(t *testing.
 	receipts, err := IncidentAPIRepairReceipts(root, id, refs, at, at.Add(10*time.Second))
 	if err != nil || len(receipts) != 1 {
 		t.Fatalf("durable positive pair lost after hard stop: %+v %v", receipts, err)
+	}
+}
+
+// Every API write class a shell can make yields a receipt: writes to kinds
+// whose bodies are never projected, scale and status subresource writes, and
+// evictions confirmed by a later 404 read. Exec stays a sdo act mutation: the
+// proxy sees the session, never its command.
+func TestIncidentAPIRepairReceiptsCoverMutatingSubresources(t *testing.T) {
+	for _, mode := range []string{"scale", "status", "eviction", "unprojected"} {
+		t.Run(mode, func(t *testing.T) {
+			root := t.TempDir()
+			const incident = "subresource"
+			sub, err := PrepareIncidentSession(root, "", incident)
+			if err != nil {
+				t.Fatal(err)
+			}
+			store, err := apihistory.Open(filepath.Join(root, sub, "api-history"), incident, apihistory.Limits{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			at := time.Unix(100, 0)
+			record := func(id, verb, group, resource, name, subresource string, status int, offset time.Duration, body string) {
+				start := apihistory.Event{RequestID: id, Phase: "start", Started: at.Add(offset), Verb: verb, Group: group, Version: "v1", Resource: resource, Namespace: "app", Name: name, Subresource: subresource}
+				store.Record(start, nil)
+				end := start
+				end.Phase = "end"
+				end.Status = status
+				end.Finished = start.Started.Add(time.Second)
+				store.Record(end, []byte(body))
+			}
+			ref := &contracts.ObjectRef{ApiVersion: "apps/v1", Kind: "Deployment", Namespace: "app", Name: "web"}
+			switch mode {
+			case "scale":
+				record("scale", "patch", "apps", "deployments", "web", "scale", 200, time.Second, `{"apiVersion":"autoscaling/v1","kind":"Scale","metadata":{"name":"web","namespace":"app","resourceVersion":"3"},"spec":{"replicas":0}}`)
+			case "status":
+				record("status", "put", "apps", "deployments", "web", "status", 200, time.Second, `{"apiVersion":"apps/v1","kind":"Deployment","metadata":{"name":"web","namespace":"app","resourceVersion":"3"}}`)
+			case "unprojected":
+				ref = &contracts.ObjectRef{ApiVersion: "admissionregistration.k8s.io/v1", Kind: "ValidatingWebhookConfiguration", Name: "policy.example.test"}
+				start := apihistory.Event{RequestID: "patch-webhook", Phase: "start", Started: at.Add(time.Second), Verb: "patch", Group: "admissionregistration.k8s.io", Version: "v1", Resource: "validatingwebhookconfigurations", Name: ref.Name}
+				store.Record(start, nil)
+				end := start
+				end.Phase, end.Status, end.Finished = "end", 200, start.Started.Add(time.Second)
+				store.Record(end, []byte(`{"apiVersion":"admissionregistration.k8s.io/v1","kind":"ValidatingWebhookConfiguration","metadata":{"name":"policy.example.test","resourceVersion":"4"}}`))
+			case "eviction":
+				ref = &contracts.ObjectRef{ApiVersion: "v1", Kind: "Pod", Namespace: "app", Name: "web-1"}
+				record("evict", "post", "", "pods", "web-1", "eviction", 201, time.Second, `{"apiVersion":"v1","kind":"Status","status":"Success"}`)
+				record("gone", "get", "", "pods", "web-1", "", 404, 3*time.Second, "")
+			}
+			store.Close()
+			receipts, err := IncidentAPIRepairReceipts(root, incident, []*contracts.ObjectRef{ref}, at, at.Add(10*time.Second))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(receipts) != 1 || !receipts[0].Success || receipts[0].Resources[0].Name != ref.Name || receipts[0].Kind != "kubernetes-api" {
+				t.Fatalf("%s write left no receipt: %+v", mode, receipts)
+			}
+		})
 	}
 }

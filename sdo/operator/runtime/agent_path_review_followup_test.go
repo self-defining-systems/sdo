@@ -4,6 +4,7 @@ import (
 	"context"
 	"k8s.io/client-go/kubernetes/fake"
 	"path/filepath"
+	"reflect"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
@@ -62,7 +63,10 @@ func TestContinuationStillBrokenExcludesFindingAwaitingClearing(t *testing.T) {
 	}
 }
 
-func TestCoverageRequiresExplicitFindingProgramRelationAndKeepsAggregateMatch(t *testing.T) {
+// Coverage and the automatic stage share one explanation rule: a diagnosis
+// Match explains each active finding that bound those roles. Two findings on
+// one Deployment both bind it, so both are explained, as the stage targets them.
+func TestCoverageExplainsEveryFindingThatBoundTheMatchedRoles(t *testing.T) {
 	ref := sdk.ObjectRef{Kind: "Deployment", Namespace: "app", Name: "api"}
 	image := sdk.Finding{DetectorID: "health", RuleID: "image", Fingerprint: "image", Status: sdk.FindingActive, PrimaryResource: ref, Playbooks: []string{"image"}}
 	env := image
@@ -81,8 +85,9 @@ func TestCoverageRequiresExplicitFindingProgramRelationAndKeepsAggregateMatch(t 
 	if len(got.Matches) != 1 {
 		t.Fatalf("aggregate Match disappeared: %+v", got)
 	}
-	if len(got.Matches[0].ExplainedFindingFingerprints) != 1 || got.Matches[0].ExplainedFindingFingerprints[0] != "image" || len(got.UnexplainedFindingFingerprints) != 1 || got.UnexplainedFindingFingerprints[0] != "env" {
-		t.Fatalf("shared Deployment falsely attributed: %+v", got)
+	targets := matchedFindingFingerprints(findings, runs, "image", programBindingsState(got.Matches[0].Bindings))
+	if !reflect.DeepEqual(got.Matches[0].ExplainedFindingFingerprints, []string{"env", "image"}) || !reflect.DeepEqual(targets, got.Matches[0].ExplainedFindingFingerprints) || len(got.UnexplainedFindingFingerprints) != 0 {
+		t.Fatalf("coverage differs from the automatic stage's targets %v: %+v", targets, got)
 	}
 }
 

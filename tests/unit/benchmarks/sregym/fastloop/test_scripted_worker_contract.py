@@ -99,6 +99,28 @@ def _accepted_app(tmp_path: Path, *, verified: bool = False) -> Path:
     return app
 
 
+def _captured_repair_receipts(app: Path) -> str:
+    """Mirror memory.CaptureRepairReceipts: original receipts in captured recordings."""
+    record = json.loads(next((app / ".sdo/outcomes").glob("*.json")).read_text())
+    return json.dumps(
+        [
+            {
+                "method": "RepairReceipt",
+                "arguments": [],
+                "result": {
+                    "id": action["action_id"],
+                    "incident_id": record["incident_id"],
+                    "success": True,
+                    "started_at": action["started_at"],
+                    "completed_at": action["completed_at"],
+                    "resources": action["resources"],
+                },
+            }
+            for action in record.get("repair_actions", [])
+        ]
+    )
+
+
 @pytest.mark.parametrize("drift", [False, True], ids=["ordinary-repair", "verified-drift-repair"])
 def test_scripted_reflector_writes_program_that_passes_real_memory_check(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operator_binary: Path, drift: bool
@@ -113,7 +135,7 @@ def test_scripted_reflector_writes_program_that_passes_real_memory_check(
     fixed["services"].extend(healthy["services"])
     fixed["pods"].extend(healthy["pods"])
     (capture / "open@detect.json").write_text(json.dumps(opened))
-    (capture / "open@detect-recordings.json").write_text("[]")
+    (capture / "open@detect-recordings.json").write_text(_captured_repair_receipts(app))
     (capture / "fixed.json").write_text(json.dumps(fixed))
     # Freeze the hand-written known-good state as the controller's reference.
     (capture / "healthy").mkdir()
@@ -209,6 +231,14 @@ def test_scripted_reflection_note_commits_for_verified_and_unverified_outcomes(
     monkeypatch.setattr(scripted_worker, "_command", real_operator)
     closure = IncidentClosure()
     closure.request.namespace = "demo"
+    if verified:
+        # A verified hand repair needs an executable step; README notes are
+        # judgement only and the real memory check names the uncovered repair.
+        with pytest.raises(
+            RuntimeError, match=r'reflection\.program-required: recorded hand repair "restore-front-port"'
+        ):
+            scripted_worker.ScriptedReflector().resume(worktree=app, incident_id="scripted-incident", closure=closure)
+        return
     turn = scripted_worker.ScriptedReflector().resume(worktree=app, incident_id="scripted-incident", closure=closure)
     assert turn.learning_decision == "updated"
     assert turn.playbook_ids == ["verified-repair-notes"]

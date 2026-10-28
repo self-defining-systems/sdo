@@ -8,6 +8,7 @@ import pytest
 
 from benchmarks.sregym.fastloop.baseline_recovery import ApplicationBaseline
 from benchmarks.sregym.fastloop.fault_driver import FastloopFaultError, SregymFaultDriver
+from tests.unit.benchmarks.sregym.fastloop.accepted_source_fixture import fixed_source_provider
 
 
 @dataclass
@@ -239,6 +240,7 @@ def test_recovery_reconciles_before_waiting_for_health() -> None:
         namespace="hotel-reservation",
         baseline=ApplicationBaseline("hotel-reservation", []),
         cluster=Cluster(),
+        accepted_source=fixed_source_provider(ApplicationBaseline("hotel-reservation", []), "hotel-reservation"),
     )
 
     driver.recover()
@@ -247,7 +249,7 @@ def test_recovery_reconciles_before_waiting_for_health() -> None:
     assert driver.last_cleanup.deleted_counts == {"Job": 1}
 
 
-def test_recovery_cleans_every_recorded_application_namespace() -> None:
+def test_recovery_does_not_treat_captured_foreign_namespaces_as_source() -> None:
     class Cluster:
         def list_objects(self, namespace: str) -> list[dict[str, Any]]:
             return [{"kind": "Job", "metadata": {"namespace": namespace, "name": "agent-fix"}, "spec": {}}]
@@ -264,12 +266,15 @@ def test_recovery_cleans_every_recorded_application_namespace() -> None:
         namespace="hotel-reservation",
         baseline=(ApplicationBaseline("hotel-reservation", []), ApplicationBaseline("hotel-db", [])),
         cluster=Cluster(),
+        accepted_source=fixed_source_provider(
+            (ApplicationBaseline("hotel-reservation", []), ApplicationBaseline("hotel-db", [])), "hotel-reservation"
+        ),
     )
 
     driver.recover()
 
-    assert deleted == [("hotel-reservation", "Job", "agent-fix"), ("hotel-db", "Job", "agent-fix")]
-    assert driver.last_cleanup.deleted_counts == {"Job": 2}
+    assert deleted == [("hotel-reservation", "Job", "agent-fix")]
+    assert driver.last_cleanup.deleted_counts == {"Job": 1}
 
 
 def test_oracle_verdict_is_typed() -> None:
@@ -397,7 +402,12 @@ def test_full_cleanup_requires_v2_success_and_baseline_reconciliation(reply: dic
             raise AssertionError("no objects to restore")
 
     driver = SregymFaultDriver(
-        Worker(), namespace="app", baseline=ApplicationBaseline("app", []), cluster=Cluster(), require_full_cleanup=True
+        Worker(),
+        namespace="app",
+        baseline=ApplicationBaseline("app", []),
+        cluster=Cluster(),
+        require_full_cleanup=True,
+        accepted_source=fixed_source_provider(ApplicationBaseline("app", []), "app"),
     )
     assert driver.last_full_cleanup_verified is False
     if reply.get("success") is True:
@@ -550,3 +560,23 @@ def test_partial_composite_failure_keeps_full_recorded_injection_span() -> None:
     assert driver.last_injection_window is not None
     assert driver.last_injection_window.started_at == datetime.fromtimestamp(1790000000.0, tz=timezone.utc)
     assert driver.last_injection_window.finished_at == datetime.fromtimestamp(1790000015.0, tz=timezone.utc)
+
+
+@pytest.mark.parametrize("recreate", [False, True])
+def test_partial_composite_failure_has_one_reset_owner(recreate: bool) -> None:
+    class PartialWorker(FakeWorker):
+        injections = 0
+
+        def request(self, op, **kwargs):
+            if op == "inject":
+                self.injections += 1
+                if self.injections == 2:
+                    raise RuntimeError("partial injection")
+                return {**super().request(op, **kwargs), "fault": 0, "faults": [0]}
+            return super().request(op, **kwargs)
+
+    worker = PartialWorker()
+    driver = SregymFaultDriver(worker, namespace="hotel", row_start_tier2=recreate)
+    with pytest.raises(FastloopFaultError, match="partial injection"):
+        driver.inject_composite(("first", "second"))
+    assert ("recover" in [op for op, _ in worker.requests]) is (not recreate)

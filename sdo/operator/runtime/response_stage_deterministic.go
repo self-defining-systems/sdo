@@ -17,12 +17,56 @@ import (
 )
 
 // DefaultStageBudget is the one owner of the automatic stage's time: the
-// checks, the single apply with its rollout wait, and the post-repair
+// checks, sequential applies with their rollout waits, and the post-repair
 // observation share it. Matches the stage could not apply or verify inside it
 // go to the agent in the stage report (skip reason "stage_budget").
 const DefaultStageBudget = 45 * time.Second
 
 const stagePlanNotExecutable = "plan_not_executable"
+
+// stageIneffective skips a match whose program revision already applied in
+// this incident for the same findings and left them open (or matching). Its
+// replacement objects, such as the Pod a restart creates, are new bindings
+// but not new evidence. A finding the earlier attempt did not target is.
+const stageIneffective = "ineffective"
+
+// stageIneffectiveTargets maps a program revision to the findings it applied
+// for and did not clear.
+type stageIneffectiveTargets map[string]map[string]bool
+
+func ineffectiveStageTargets(attempts []*contracts.StageMitigation) stageIneffectiveTargets {
+	targets := stageIneffectiveTargets{}
+	for _, attempt := range attempts {
+		targets.add(attempt)
+	}
+	return targets
+}
+
+func (t stageIneffectiveTargets) add(attempt *contracts.StageMitigation) {
+	if attempt.GetResult() != "applied_still_matching" {
+		return
+	}
+	key := attempt.GetPlaybookId() + "\x00" + attempt.GetProgramRevision()
+	if t[key] == nil {
+		t[key] = map[string]bool{}
+	}
+	for _, fp := range append(append([]string(nil), attempt.GetClearedFindingFingerprints()...), attempt.GetRemainingFindingFingerprints()...) {
+		t[key][fp] = true
+	}
+}
+
+func (t stageIneffectiveTargets) covers(id, revision string, targets []string) bool {
+	seen := t[id+"\x00"+revision]
+	if len(seen) == 0 || len(targets) == 0 {
+		return false
+	}
+	for _, fp := range targets {
+		if !seen[fp] {
+			return false
+		}
+	}
+	return true
+}
 
 // DeterministicResponseStage uses the same plan/apply and immutable receipt
 // boundary as the responder, operating only on accepted registry programs.
@@ -181,8 +225,21 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 		}
 		attempted[key] = true
 	}
-	var ready []stageReady
-	for _, match := range matches {
+	ineffective := ineffectiveStageTargets(report.Mitigations)
+	// Only diagnoses that wrote nothing receive a second turn, and only after a
+	// turn that wrote or cleared something: an unchanged cluster would give the
+	// same diagnoses again. Keep the opening order; dependencies are learned
+	// from live state, never names.
+	deferred := map[string]bool{}
+	turnEnd, turnFindings, progressed := len(matches), len(state.Findings), false
+	for index := 0; index < len(matches); index++ {
+		if index == turnEnd {
+			if !progressed && len(state.Findings) >= turnFindings {
+				break
+			}
+			turnEnd, turnFindings, progressed = len(matches), len(state.Findings), false
+		}
+		match := matches[index]
 		if len(state.Findings) == 0 {
 			break
 		}
@@ -214,6 +271,12 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 		if terminal := loop.terminalPlanError(match.PlaybookId); terminal != nil {
 			attempt.Error = terminal.Error()
 			if err := skip(stagePlanNotExecutable); err != nil {
+				return report, err
+			}
+			continue
+		}
+		if ineffective.covers(attempt.PlaybookId, attempt.ProgramRevision, match.targets) {
+			if err := skip(stageIneffective); err != nil {
 				return report, err
 			}
 			continue
@@ -272,6 +335,12 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 		}
 		before := program.RunDiagnose(ctx, diagnoser, view, bindings, loop.deadline())
 		if before.Result != program.Match {
+			if len(matches) > 1 && !deferred[key] {
+				deferred[key] = true
+				delete(attempted, key)
+				retry[key] = attempt
+				matches = append(matches, match)
+			}
 			reason := "diagnose_unavailable"
 			if before.Result == program.NoMatch {
 				reason = "diagnose_no_longer_matches"
@@ -318,10 +387,18 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 			}
 			continue
 		}
-		ready = append(ready, stageReady{match: match, attempt: attempt, bindings: bindings, planID: planResponse.PlanID})
-	}
-	if err := stage.applyMatched(ctx, loop, state, ready, remaining, save); err != nil {
-		return report, err
+		if err := stage.applyMatch(ctx, loop, state, stagePlanned{match: match, attempt: attempt, bindings: bindings, planID: planResponse.PlanID}, remaining, save); err != nil {
+			return report, err
+		}
+		progressed = true
+		ineffective.add(attempt)
+		// Apply already waited as long as waiting can help, so a pending
+		// handoff (admission-blocked, stalled or bounded) keeps the pass: each
+		// later match diagnoses the live state afresh and may be the actor the
+		// rollout needs. A failed application hands the rest to the responder.
+		if attempt.ApplyReceipt.GetRolloutPending() == nil && attempt.Error != "" {
+			break
+		}
 	}
 	// Once all opening faults have verified repairs, let the remaining health
 	// detectors' own windows roll over before handoff.
@@ -634,45 +711,30 @@ func (l *ResponderLoop) locked(fn func()) {
 	fn()
 }
 
-// stageReady is one matched, planned binding waiting for the stage's apply.
-type stageReady struct {
+// stagePlanned is one freshly diagnosed and planned binding.
+type stagePlanned struct {
 	match    stageCandidate
 	attempt  *contracts.StageMitigation
 	bindings program.Bindings
 	planID   string
 }
 
-// applyMatched sends every planned binding through one apply and one rollout
-// wait, bounded by what is left of the stage budget. The application receipt
-// is the whole application; each attempt keeps its own plan, action range,
-// diagnosis and result.
-func (stage *DeterministicResponseStage) applyMatched(ctx context.Context, loop *ResponderLoop, state *IncidentState, ready []stageReady, remaining func() time.Duration, save func(bool) error) error {
-	if len(ready) == 0 {
-		return nil
-	}
+// applyMatch runs one binding through the ordinary executor lifecycle before
+// the next candidate may diagnose or plan. There is no merged stage batch.
+func (stage *DeterministicResponseStage) applyMatch(ctx context.Context, loop *ResponderLoop, state *IncidentState, item stagePlanned, remaining func() time.Duration, save func(bool) error) error {
 	if remaining() <= 0 {
-		for _, item := range ready {
-			item.attempt.Result, item.attempt.SkipReason = "skipped", "stage_budget"
-			recordStageFindingProgress(item.attempt, item.match.targets, state.Findings)
-		}
+		item.attempt.Result, item.attempt.SkipReason = "skipped", "stage_budget"
+		recordStageFindingProgress(item.attempt, item.match.targets, state.Findings)
 		return save(false)
 	}
-	planIDs := make([]string, 0, len(ready))
-	selected := make([]selectedPlan, 0, len(ready))
-	offset := 0
-	for _, item := range ready {
-		plan := loop.plans[item.planID]
-		count := len(plan.plan.Actions)
-		item.attempt.PlanId = item.planID
-		item.attempt.PlanActionStart, item.attempt.PlanActionCount = int32(offset), int32(count)
-		offset += count
-		// Persist intent before mutation. If interrupted, a later attempt hands this
-		// uncertainty to the agent instead of silently repeating a possible write.
-		item.attempt.Result = "apply_error"
-		item.attempt.Error = "application interrupted before a completed receipt; inspect current state and recorded actions"
-		planIDs = append(planIDs, item.planID)
-		selected = append(selected, plan)
-	}
+	plan := loop.plans[item.planID]
+	item.attempt.PlanId = item.planID
+	item.attempt.PlanActionCount = int32(len(plan.plan.Actions))
+	// Persist intent before mutation. Interrupted writes are never replayed.
+	item.attempt.Result = "apply_error"
+	item.attempt.Error = "application interrupted before a completed receipt; inspect current state and recorded actions"
+	planIDs := []string{item.planID}
+	selected := []selectedPlan{plan}
 	if err := save(false); err != nil {
 		return err
 	}
@@ -702,7 +764,7 @@ func (stage *DeterministicResponseStage) applyMatched(ctx context.Context, loop 
 		loop.verify(ctx, selected, &applied, true)
 	}
 	updateStageFindings(state, applied)
-	for _, item := range ready {
+	{
 		attempt := item.attempt
 		attempt.Error = applied.Error
 		attempt.ApplyReceipt = receipt

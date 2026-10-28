@@ -170,6 +170,30 @@ func (c *cluster) Patch(ctx context.Context, ref sdk.ObjectRef, kind types.Patch
 	_, err := c.fake.Invokes(ktesting.NewPatchAction(fixtureResource(ref), ref.Namespace, ref.Name, kind, patch), &unstructured.Unstructured{})
 	return err
 }
+
+// RecordAcceptance models the same metadata-only publication as the live API.
+func (c *cluster) RecordAcceptance(ctx context.Context, ref sdk.ObjectRef, record string, created *unstructured.Unstructured) error {
+	current, err := c.Get(ctx, ref)
+	if err != nil {
+		return err
+	}
+	if created == nil || created.GetUID() == "" || current.GetUID() != created.GetUID() {
+		return fmt.Errorf("acceptance publication requires the created object identity")
+	}
+	patch, err := json.Marshal(operator.AcceptanceRecordObject(ref, record, created).Object)
+	if err != nil {
+		return err
+	}
+	if err := c.Patch(ctx, ref, types.MergePatchType, patch); err != nil {
+		return err
+	}
+	if c.acceptanceWrites == nil {
+		c.acceptanceWrites = map[sdk.ObjectRef]map[string]string{}
+	}
+	c.acceptanceWrites[ref] = operator.AcceptanceRecordObject(ref, record, created).GetAnnotations()
+	return nil
+}
+
 func (c *cluster) Create(ctx context.Context, ref sdk.ObjectRef, object *unstructured.Unstructured) (*unstructured.Unstructured, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err

@@ -33,7 +33,8 @@ func structuredPlanRef(plan program.Plan, ref sdk.ObjectRef) bool {
 // verifyStructuredWrites proves intended fields with a direct current read.
 // It never substitutes an informer timeout or a stale verifier for write proof.
 func (e PlanExecutor) verifyStructuredWrites(ctx context.Context, result PlanApplicationResult) error {
-	for _, patch := range result.Patches {
+	for index := range result.Patches {
+		patch := &result.Patches[index]
 		if !patch.Structured {
 			continue
 		}
@@ -52,7 +53,7 @@ func (e PlanExecutor) verifyStructuredWrites(ctx context.Context, result PlanApp
 		if live == nil || !samePlanRef(live, patch.Ref) || live.GetUID() == "" || live.GetUID() != patch.Before.GetUID() {
 			return fmt.Errorf("structured write observation unknown: UID changed or absent")
 		}
-		for _, field := range planPatchFields(patch) {
+		for _, field := range planPatchFields(*patch) {
 			b, bok := planConfigurationField(patch.Before, field)
 			a, aok := planConfigurationField(patch.After, field)
 			v, vok := live.Object[field]

@@ -16,7 +16,7 @@ from sdo.agents.responder.reflection_authoring import OpenPhase
 if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
 
-    from sdo.contracts import OperationalMemorySnapshot
+    from sdo.contracts import OperationalMemorySnapshot, OutcomeRecord
 
 CapturePhase = OpenPhase | Literal["fixed"]
 CaptureSection = Literal[
@@ -34,7 +34,6 @@ CaptureSection = Literal[
     "events",
     "recordings",
 ]
-_MAX_CHARS = 12_000
 
 
 class ResourceSummary(BaseModel):
@@ -84,7 +83,6 @@ class CapturePage(BaseModel):
     items: list[Any] = Field(default_factory=list)
     total: int
     next_offset: int | None = None
-    oversized_indices: list[int] = Field(default_factory=list)
 
 
 def capture_inventory(captures: Path) -> dict[str, Any]:
@@ -221,44 +219,133 @@ def read_capture(
         sha256=hashlib.sha256(raw).hexdigest(),
         total=len(items),
     )
-    budget = 0
     stop = min(len(items), offset + limit)
-    for index in range(offset, stop):
-        value = {field: _field(items[index], field) for field in fields} if fields else items[index]
-        size = len(json.dumps(value))
-        if size > _MAX_CHARS:
-            page.oversized_indices.append(index)
-            continue
-        if budget + size > _MAX_CHARS:
-            stop = index
-            break
-        page.items.append(value)
-        budget += size
+    page.items.extend(
+        {field: _field(item, field) for field in fields} if fields else item for item in items[offset:stop]
+    )
     if stop < len(items):
         page.next_offset = stop
     return page.model_dump()
 
 
-def memory_view(snapshot: OperationalMemorySnapshot) -> dict[str, Any]:
-    """Inventory the accepted snapshot; full files remain in the proposal checkout."""
+def playbook_description(markdown: str) -> str:
+    """Prefer authored one-line metadata; index old accepted documents too."""
+    import yaml
+
+    if markdown.startswith("---\n"):
+        sections = markdown.split("---\n", 2)
+        if len(sections) == 3:
+            metadata = yaml.safe_load(sections[1])
+            if isinstance(metadata, dict) and isinstance(metadata.get("description"), str):
+                return " ".join(metadata["description"].split())
+            markdown = sections[2]
+    return next(
+        (line.lstrip("# ").strip() for line in markdown.splitlines() if line.startswith("#")),
+        "Description absent; open README.",
+    )
+
+
+def memory_view(snapshot: OperationalMemorySnapshot, *, linked_ids: set[str] | None = None) -> dict[str, Any]:
+    """Every logical ID and description, incident-linked first; bodies stay in files."""
+    linked = linked_ids or set()
     return {
         "accepted_commit": snapshot.accepted_commit,
-        "goal_markdown": snapshot.goal_markdown[:1000],
-        "architecture_markdown": snapshot.architecture_markdown[:2000],
-        "goal_omitted_characters": max(0, len(snapshot.goal_markdown) - 1000),
-        "architecture_omitted_characters": max(0, len(snapshot.architecture_markdown) - 2000),
         "detectors": [
-            {"id": item.id, "description": item.description[:200], "playbook_ids": list(item.possible_playbook_ids)}
-            for item in snapshot.detectors[:30]
+            {
+                "id": item.id,
+                "description": " ".join(item.description.split()),
+                "playbook_ids": list(item.possible_playbook_ids),
+            }
+            for item in sorted(snapshot.detectors, key=lambda item: item.id not in linked)
         ],
         "playbooks": [
-            {"id": item.id, "excerpt": item.markdown[:400], "script_names": [script.name for script in item.scripts]}
-            for item in snapshot.playbooks[:30]
+            {
+                "id": item.id,
+                "description": playbook_description(item.markdown),
+                "script_names": [script.name for script in item.scripts],
+            }
+            for item in sorted(snapshot.playbooks, key=lambda item: item.id not in linked)
         ],
-        "omitted_detectors": max(0, len(snapshot.detectors) - 30),
-        "omitted_playbooks": max(0, len(snapshot.playbooks) - 30),
-        "full_text": "Read relevant accepted files in the proposal checkout through the memory inventory.",
+        "full_text": "Open only relevant accepted files in the proposal checkout.",
     }
+
+
+def incident_memory_snapshot(snapshot: OperationalMemorySnapshot, outcome: OutcomeRecord) -> OperationalMemorySnapshot:
+    """Order all accepted memory with incident-linked items first; never filter it."""
+    detector_ids = {finding.detector_id for finding in outcome.findings}
+    detector_ids.update(item.detector_id for item in outcome.disabled_setup_detectors)
+    playbook_ids = set(outcome.applied_playbooks) | set(outcome.confirmed_playbooks)
+    playbook_ids.update(playbook_id for finding in outcome.findings for playbook_id in finding.playbook_ids)
+    playbook_ids.update(match.playbook_id for match in outcome.playbook_coverage.matches)
+    playbook_ids.update(mitigation.playbook_id for stage in outcome.prior_stages for mitigation in stage.mitigations)
+    for detector in snapshot.detectors:
+        if detector.id in detector_ids:
+            playbook_ids.update(detector.possible_playbook_ids)
+    ordered = type(snapshot)()
+    ordered.CopyFrom(snapshot)
+    del ordered.detectors[:]
+    del ordered.playbooks[:]
+    ordered.detectors.extend(
+        sorted(
+            snapshot.detectors,
+            key=lambda item: not (item.id in detector_ids or playbook_ids.intersection(item.possible_playbook_ids)),
+        )
+    )
+    ordered.playbooks.extend(sorted(snapshot.playbooks, key=lambda item: item.id not in playbook_ids))
+    return ordered
+
+
+def reflection_memory_view(
+    snapshot: OperationalMemorySnapshot, outcome: OutcomeRecord, *, linked_ids: set[str] | None = None
+) -> dict[str, Any]:
+    """Compact accepted inventory and controller stage facts; information only."""
+    view = memory_view(incident_memory_snapshot(snapshot, outcome), linked_ids=linked_ids)
+    if outcome.prior_stages or outcome.playbook_coverage.matches:
+        attempts = {
+            (item.playbook_id, item.program_revision, item.result)
+            for stage in outcome.prior_stages
+            for item in stage.mitigations
+            if item.result != "skipped"
+        }
+        mitigations = [
+            {
+                "playbook_id": playbook_id,
+                "program_revision": revision,
+                "result": result,
+            }
+            for playbook_id, revision, result in sorted(attempts)
+        ]
+        explained = sorted(
+            {
+                fingerprint
+                for match in outcome.playbook_coverage.matches
+                for fingerprint in match.explained_finding_fingerprints
+            }
+        )
+        view["incident_context"] = {
+            "accepted_commit": snapshot.accepted_commit,
+            "matches": [
+                {
+                    "playbook_id": match.playbook_id,
+                    "program_revision": match.program_revision,
+                }
+                for match in outcome.playbook_coverage.matches[:20]
+            ],
+            "omitted_matches": max(0, len(outcome.playbook_coverage.matches) - 20),
+            "stage_mitigations": mitigations[:20],
+            "omitted_stage_mitigations": max(0, len(mitigations) - 20),
+            "stage_skips": dict(
+                Counter(
+                    item.skip_reason
+                    for stage in outcome.prior_stages
+                    for item in stage.mitigations
+                    if item.result == "skipped"
+                )
+            ),
+            "explained_findings": len(explained),
+            "unexplained_findings": len(outcome.playbook_coverage.unexplained_finding_fingerprints),
+        }
+    return view
 
 
 def install_evidence_tools(server: FastMCP) -> None:
@@ -290,9 +377,9 @@ def install_evidence_tools(server: FastMCP) -> None:
         """Read captured resource fields or primitive recordings on demand.
 
         Fields are dotted paths; list indices are numeric (spec.containers.0.image).
-        Null collections are empty. Results are paginated and bounded to 12000
-        characters; oversized_indices identifies items needing narrower fields.
-        Missing fields are null, never evidence that a primitive succeeded.
+        Null collections are empty. Results are paginated; the shared reply cap
+        saves large complete pages to a session file. Extract relevant fields
+        from that file. Missing fields are null, never evidence that a primitive succeeded.
         """
         return CapturePage.model_validate(
             read_capture(

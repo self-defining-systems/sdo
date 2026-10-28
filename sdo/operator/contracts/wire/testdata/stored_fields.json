@@ -295,6 +295,7 @@
   "sdodev.contracts.v1alpha1.IncidentClosure.dispatched_at",
   "sdodev.contracts.v1alpha1.IncidentClosure.final_detector_states",
   "sdodev.contracts.v1alpha1.IncidentClosure.final_state_changes",
+  "sdodev.contracts.v1alpha1.IncidentClosure.frozen",
   "sdodev.contracts.v1alpha1.IncidentClosure.health_cleared_at",
   "sdodev.contracts.v1alpha1.IncidentClosure.incident_detector_fired_after_dispatch",
   "sdodev.contracts.v1alpha1.IncidentClosure.incident_detector_fired_before_dispatch",

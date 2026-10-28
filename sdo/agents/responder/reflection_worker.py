@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, cast
 
+from libs.agent_cli.session_ownership import SessionHandoffError, SessionHandoffTimeout
 from libs.agent_cli.structured import StructuredTurnTimeout
 from sdo.agents.provider import resolve_agent
 from sdo.agents.responder.credentials import prepare_claude_home, prepare_codex_home, skills_for_role
@@ -22,6 +23,7 @@ from sdo.agents.responder.reflection import (
     ReflectionGuidance,
     ReflectionSessionMode,
     ReflectionTurn,
+    ResponderSessionUnavailable,
     SessionReflector,
 )
 from sdo.agents.responder.termination import record_worker_failure, records_worker_failure
@@ -141,9 +143,7 @@ def run_reflection_task(
     if session_mode not in {"fresh", "resume"}:
         raise ValueError(f"invalid reflection session mode {session_mode!r}")
     prior_session = closure.result.responder_session_id if closure.HasField("result") else ""
-    if session_mode == "resume" and not _SESSION_TOKEN.fullmatch(prior_session or ""):
-        print("reflection: responder session ID is missing or invalid; starting fresh", file=sys.stderr)
-        session_mode = "fresh"
+    invalid_session = session_mode == "resume" and not _SESSION_TOKEN.fullmatch(prior_session or "")
     guidance = request.guidance or "baseline"
     if guidance not in REFLECTION_GUIDANCE_MODES:
         raise ValueError(f"invalid reflection guidance {guidance!r}")
@@ -161,6 +161,10 @@ def run_reflection_task(
     selected = reflector or _default_reflector(cast("ReflectionGuidance", guidance))
     try:
         os.environ.update(environment)
+        if invalid_session:
+            raise ResponderSessionUnavailable("reflection responder session ID is missing or invalid")
+        if reflector is None and session_mode == "resume" and not os.environ.get("SDO_SESSION_DIR"):
+            raise SessionHandoffError("reflection resume requires the durable incident session directory")
         turn: ReflectionTurn | None = selected.resume(
             session_id=prior_session or "",
             incident_id=outcome.incident_id,
@@ -212,6 +216,12 @@ def run_reflection_task(
 def _failure_reason(exc: BaseException) -> str:
     cause: BaseException | None = exc
     while cause is not None:
+        if isinstance(cause, SessionHandoffTimeout):
+            return "session_handoff_timeout"
+        if isinstance(cause, SessionHandoffError):
+            return "session_handoff_invalid"
+        if isinstance(cause, ResponderSessionUnavailable):
+            return "session_unavailable"
         if isinstance(cause, (StructuredTurnTimeout, ReflectionDeadlineExceeded)):
             return "agent_timeout"
         cause = cause.__cause__ or cause.__context__

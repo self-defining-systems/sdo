@@ -12,17 +12,21 @@ Declare object and value parameters, group actions that must run together, and s
 failure context for the report returned to the same responder session.
 Read the [memory principles](../sdo-memory/SKILL.md#memory-principles) for evidence, reuse, generalization and retirement; that skill also defines ownership and logical IDs.
 
-1. Compare the confirmed mechanism and repair with accepted playbooks using the memory principles.
+1. First judge whether all accepted memory already covers the incident: applied playbooks, matching detectors and unchanged source. Read across unrelated memory as needed. Only when existing playbooks match well may you return `no_change` with a short reason and finish; cover every recorded hand repair with an executable typed SDK or `RunScript` step, and update or retire applied playbooks that failed, left findings unresolved or needed later hand repair; otherwise make the smallest useful addition.
+   Keep revisions that applied cleanly unless this incident shows failure or incompleteness; add or narrowly edit, never rewrite working steps.
 2. For deterministic programs, read [program authoring](references/programs.md) before editing and the
    [generated program SDK](references/program-sdk.md) before choosing API types. The
    [authoring_reference](../sdo-memory/references/runtime.md#authoring_reference) tool retrieves these same
    shipped references as a section index or one section, with a file to search.
 3. Save each verified mechanical step as a diagnose and mitigation program, even with partial coverage.
-   Any performed repair, however nuanced, can be a `RunScript` bash step with relation-derived Env and
-   digest-to-receipt linkage; difficulty never justifies saving nothing. Put judgement about when and in
+   `RunScript` bash can express any probe or repair the responder ran: use relation-derived Env and
+   digest-to-receipt linkage to its original receipt; replay evidence is optional.
+   A program's diagnosis should check the conditions its action needs (for example, the cause is gone before
+   a restart), so the automatic stage, which runs programs one at a time with a fresh diagnosis before each,
+   can find a working order. Put judgement about when and in
    what order to run steps in the README, with observations and decisions that guide it.
    Stop the ongoing cause or producer before restarting its victims; if the repair cannot, state that limitation in the README.
-   Save README-only playbooks with verified, specific guidance too; these are never auto-applied. Add detector coverage. A detector may surface multiple playbooks;
+   README text holds only judgement and ordering; every recorded repair needs an executable step linked to its original receipt. Add detector coverage. A detector may surface multiple playbooks;
    `DetectionContext.DiffAgainstSource` observes field drift and source absence before playbook selection.
    Use the responder's recorded actions and existing session observations to build the replay fixture.
    Controller captures and the evidence tools are optional sources, never prerequisites for learning.
@@ -32,8 +36,7 @@ Read the [memory principles](../sdo-memory/SKILL.md#memory-principles) for evide
 5. Run the complete memory check. Compilation, imports, changed-source formatting and receipt provenance
    remain required. Replay runs as information: NoMatch, persistent Match and unavailable observations
    never block saving. Scope diagnosis to the step's resources for useful live decisions.
-   Return `updated` with changed playbook IDs and scoped `sdk_gaps` for unencoded parts of the same repair.
-   Use `sdk_gap` without edits only when no mechanical step or useful guidance can be saved.
+   Return `updated` with changed playbook IDs. Typed `sdk_gaps` name actually unavailable observations or effects; work not encoded yet is not a gap and cannot excuse a recorded repair.
    Controller-listed `undetected_causes` permit new detector coverage for measured repair transitions;
    bind the replay case to their captured open/fixed configuration without claiming independent health proof.
 
@@ -41,10 +44,29 @@ Mitigation returns to accepted or observed state;
 intended-state changes are source repairs. An emergency literal is a declared parameter the responder fills
 and justifies.
 
-Before returning memory edits, run the complete memory check and resolve every diagnostic until it passes.
+Before returning memory edits, run the complete memory check and resolve blocking diagnostics; do not correct informational replay results.
 
 Read [validator rules](references/rules.md) when a diagnostic names a playbook, script or corpus rule.
 
 For API reads, use the [recorded Kubernetes client](references/kubernetes-client.md) with upstream client-go conventions.
 
 For object, command, HTTP, Job or subresource repairs, read the [general action vocabulary](references/general-actions.md).
+
+<!-- reference-topics -->
+## Reference topics
+
+Open only the topic needed for the current edit.
+
+- [program-01](references/program-sdk/program-01.md)
+- [program-02](references/program-sdk/program-02.md)
+- [program-03](references/program-sdk/program-03.md)
+- [routing-01](references/program-sdk/routing-01.md)
+- [acceptance](references/programs/acceptance.md)
+- [database-catalogs](references/programs/database-catalogs.md)
+- [evidence-and-replay-fixtures](references/programs/evidence-and-replay-fixtures.md)
+- [go-owned-per-cause-work](references/programs/go-owned-per-cause-work.md)
+- [recorded-repair-coverage](references/programs/recorded-repair-coverage.md)
+- [removing-one-service-port](references/programs/removing-one-service-port.md)
+- [routing](references/programs/routing.md)
+- [source-restoration](references/programs/source-restoration.md)
+- [values-and-runtime-actions](references/programs/values-and-runtime-actions.md)
