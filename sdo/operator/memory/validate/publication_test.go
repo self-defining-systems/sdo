@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 )
 
 func TestLoadReflectionDecisionAcceptsTheReturnedResultShape(t *testing.T) {
@@ -32,5 +34,19 @@ func TestLoadReflectionDecisionStillRejectsUnknownFields(t *testing.T) {
 	_, err := LoadReflectionDecision(context.Background(), t.TempDir(), path)
 	if err == nil || !strings.Contains(err.Error(), "playbook_ids") {
 		t.Fatalf("misspelled field accepted or misreported: %v", err)
+	}
+}
+
+// A no_change decision over files Go (or the agent) already changed names the
+// exact decision to return instead.
+func TestNoChangeOverChangedFilesNamesTheUpdatedDecision(t *testing.T) {
+	paths := []string{".sdo/corpus/settled-case/labels.json", ".sdo/playbooks/source-drift/README.md", ".sdo/playbooks/webhook-ca/diagnose.go"}
+	ds := ReflectionDiagnostics(&contracts.ReflectionDecision{LearningDecision: "no_change", NoChangeReason: "covered"}, paths)
+	if len(ds) != 1 || !strings.Contains(ds[0].Hint, `learning_decision "updated"`) || !strings.Contains(ds[0].Hint, `["source-drift","webhook-ca"]`) {
+		t.Fatalf("no_change over changed files: %+v", ds)
+	}
+	ds = ReflectionDiagnostics(&contracts.ReflectionDecision{LearningDecision: "no_change", NoChangeReason: "covered"}, paths[:1])
+	if len(ds) != 1 || !strings.Contains(ds[0].Hint, `proposed_artifact_ids []`) {
+		t.Fatalf("corpus-only change: %+v", ds)
 	}
 }

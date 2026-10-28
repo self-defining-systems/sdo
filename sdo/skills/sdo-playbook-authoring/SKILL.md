@@ -7,13 +7,15 @@ description: Start here for reflection. Turn recorded hand repairs into validate
 
 Work in the proposal checkout, in this order. Open other files only when a step or a diagnostic names them.
 
-1. **Is anything new?** The prompt's per-cause work lists the open questions; the current outcome lists
-   `repair_actions` (receipts) and `plan_applications`. If no hand repair is left uncovered and no applied
-   playbook failed, call `check_memory` with `no_change` and a one-line `no_change_reason`, and finish.
-   Update or retire (`status: retired` and `retired_reason` in front matter) an applied playbook that failed,
-   left findings unresolved or needed a later hand repair.
-2. **Map each hand repair to a step.** Every successful hand repair needs an executable step: the typed
-   action matching what ran, or `RunScript` with the recorded bytes. README text and `sdk_gaps` never replace
+1. **Ask the check what is left.** Call `check_memory` with `learning_decision: no_change` and a one-line
+   `no_change_reason`. If it passes, memory already covers this incident: return that decision and finish.
+   Otherwise its diagnostics are the work list: each uncovered hand repair (`reflection.program-required`),
+   each applied playbook that failed, left findings unresolved or needed a later hand repair
+   (`reflection.stale-playbook`: update it, or retire it with `status: retired` and `retired_reason`), and
+   the decision to return when Go already settled evidence in this checkout.
+2. **Map each hand repair to a step.** Look up what each listed receipt ran in the current outcome
+   (`repair_actions`, `plan_applications`). Each needs an executable step: the typed action matching what
+   ran, or `RunScript` with the recorded bytes. README text and `sdk_gaps` never replace
    a step; work not encoded yet is not an SDK gap. One playbook per failure mechanism; partial coverage is fine.
 3. **Copy the closest worked example** from [assets/examples](assets/examples/) (`playbooks/<id>/` and
    its `corpus/<id>/`, each passing the memory check): `deployment-source-drift`, `webhook-ca-sync`,

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -225,7 +226,7 @@ func ReflectionDiagnostics(d *contracts.ReflectionDecision, paths []string) []Di
 			return fail("no-change or SDK-gap reflection requires a concrete reason")
 		}
 		if len(paths) != 0 || len(d.GetPlaybookIds()) != 0 {
-			return fail("no-change or SDK-gap reflection cannot change files or claim playbook IDs")
+			return failWith("no-change or SDK-gap reflection cannot change files or claim playbook IDs", changedFilesHint(paths))
 		}
 	default:
 		return fail("reflection result requires an explicit learning decision")
@@ -256,6 +257,25 @@ func ReflectionDiagnostics(d *contracts.ReflectionDecision, paths []string) []Di
 		}
 	}
 	return nil
+}
+
+// changedFilesHint names the decision that matches files already changed in
+// the checkout, including evidence Go materialized before reflection.
+func changedFilesHint(paths []string) string {
+	ids := []string{}
+	for _, p := range paths {
+		kind, id, ok := layout.Classify(p)
+		id, _, _ = strings.Cut(id, "/")
+		if ok && (kind == layout.KindPlaybook || kind == layout.KindPlaybookScript || kind == layout.KindPlaybookProgram) && !slices.Contains(ids, id) {
+			ids = append(ids, id)
+		}
+	}
+	slices.Sort(ids)
+	encoded, _ := json.Marshal(ids)
+	if len(paths) == 0 {
+		return "no_change and sdk_gap return proposed_artifact_ids []"
+	}
+	return fmt.Sprintf("%d memory files differ from the accepted base (yours or evidence Go settled); return learning_decision \"updated\" with proposed_artifact_ids %s, or revert your own edits", len(paths), encoded)
 }
 
 func sortDiagnostics(ds []Diagnostic) {
