@@ -81,7 +81,7 @@ func BuildWorkingProgram(ctx context.Context, config Config, id string) (_ *Work
 		return nil, "", err
 	}
 	binary := filepath.Join(directory, "program")
-	for _, args := range [][]string{{"mod", "tidy"}, {"build", "-buildvcs=false", "-o", binary, "./cmd/program"}} {
+	for _, args := range [][]string{{"mod", "tidy"}, lean("build", "-buildvcs=false", "-o", binary, "./cmd/program")} {
 		started := time.Now()
 		err = workspace.runGo(ctx, args...)
 		workspace.StageTimings = append(workspace.StageTimings, StageTiming{Stage: fmt.Sprint(args), Duration: time.Since(started)})

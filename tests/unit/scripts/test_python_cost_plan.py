@@ -14,8 +14,11 @@ SPEC.loader.exec_module(planner)
 
 def test_new_integration_test_gets_capacity_without_a_file_placement():
     plan = planner.build_plan(["a.py::test_old", "b.py::test_new"], {"a.py::test_old": 140})
-    assert len(plan["bins"]) == 2
+    # The new test reserves a small provisional slice, shares the old test's bin
+    # and is reported as unmeasured so the PR runs (and records) it.
+    assert len(plan["bins"]) == 1
     assert sorted(n for b in plan["bins"] for n in b) == ["a.py::test_old", "b.py::test_new"]
+    assert plan["unmeasured"] == ["b.py::test_new"]
 
 
 def test_integration_and_go_share_budget_guard():

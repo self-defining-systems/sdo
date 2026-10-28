@@ -8,6 +8,9 @@ export GOMAXPROCS="${GOMAXPROCS:-2}"
 export GOFLAGS="${GOFLAGS:--p=2 -trimpath}"
 case " $GOFLAGS " in *" -p="*) ;; *) GOFLAGS="$GOFLAGS -p=2" ;; esac
 case " $GOFLAGS " in *" -trimpath "*) ;; *) GOFLAGS="$GOFLAGS -trimpath" ;; esac
+# The test jobs reuse this wrapper to share linked binaries between tests.
+mkdir -p "$root/.fastloop/test-bin"
+go build -o "$root/.fastloop/test-bin/linkcache" "$root/scripts/linkcache/main.go"
 mode="${1:-normal}"
 case "$mode" in
   normal) build_flags=() ;;

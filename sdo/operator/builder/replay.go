@@ -43,7 +43,7 @@ func main(){registry,err:=generated.Programs();if err!=nil{fmt.Fprintln(os.Stder
 	// Same source inspection, module rewriting and compiler as the controller.
 	// Corpus-label acceptance remains separate: hand-written offline fixtures are
 	// inputs to this executable, not fabricated controller provenance.
-	for _, args := range [][]string{{"mod", "tidy"}, {"build", "-buildvcs=false", "-o", binary, "./cmd/replay"}} {
+	for _, args := range [][]string{{"mod", "tidy"}, lean("build", "-buildvcs=false", "-o", binary, "./cmd/replay")} {
 		start := time.Now()
 		err = workspace.runGo(ctx, args...)
 		workspace.StageTimings = append(workspace.StageTimings, StageTiming{Stage: args[0], Duration: time.Since(start)})

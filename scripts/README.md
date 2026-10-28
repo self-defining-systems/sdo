@@ -29,8 +29,18 @@ executed critical path is ten minutes; runner queue time is outside that bound.
   structured `--pytest-costs <reports...>`, with `--run <id> --head <sha> --write`.
   It retains subsecond/skip observations. `--local-log` stores raw Go bootstrap
   timings separately; max(10s, 10x local) is reserved until hosted data exists.
-  Genuinely unmeasured names reserve 210 seconds and therefore go nightly until
-  measured. No test-name or file-name placement list is maintained.
+  Genuinely unmeasured names reserve a provisional 15 seconds and run in the PR
+  (they are admitted before measured tests) until a run records them; unmeasured
+  work is never deferred. `ci_policy.json` `protected_patterns` name the memory,
+  broker, compile and publication guards, which are admitted before cheap filler.
+  No test-name or file-name placement list is maintained.
+- `link_cache.sh` + `linkcache/main.go`: a `go -toolexec` wrapper that serves a
+  repeated link from `SDO_LINK_CACHE` (key: linker arguments, importcfg and every
+  archive's Go build ID). Validating one detector workspace links the controller
+  and test binaries, the shared cost of memory/compile tests, and Go caches
+  compilation but never links. CI appends `bash scripts/link_cache.sh` to
+  `$GITHUB_ENV`; locally `eval "$(bash scripts/link_cache.sh --shell)"`. Without the
+  directory, or on any cache error, the real linker runs.
 - `test_go_integration.sh all` retains standalone prerequisite/compile warming;
   prepared CI buckets reuse builds instead. Legacy per-module shard scripts are
   local conveniences, not PR matrix inputs.
