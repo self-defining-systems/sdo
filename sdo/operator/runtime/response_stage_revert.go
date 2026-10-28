@@ -8,37 +8,27 @@ import (
 	"sdo.dev/operator/sdk/program"
 )
 
-// revertIneffective never hands the responder a half-fixed system. An attempt
-// of this run that applied, cleared none of its findings and whose program
-// still diagnoses the same fault on a fresh observation made no progress; its
-// writes are restored from the executor's preimages. An attempt that cleared
-// a finding or its own diagnosis is kept (partial), and so is one with an
-// effect a preimage cannot undo (irreversible). The rollback goes through the
-// ordinary tool boundary, so its receipt and fences are the responder's own.
+// revertIneffective never hands the responder a half-fixed system. Progress is
+// judged at handoff on a fresh observation, not at apply time: a finding that
+// cleared only until the replacement Pod failed again is not progress. An
+// applied attempt of this run whose target findings are all open and whose
+// program still diagnoses the same fault made none; its writes are restored
+// from the executor's preimages. An attempt that cleared a finding or its own
+// diagnosis is kept (partial), and so is one with an effect a preimage cannot
+// undo (irreversible). The rollback goes through the ordinary tool boundary,
+// so its receipt and fences are the responder's own.
 func (stage *DeterministicResponseStage) revertIneffective(ctx context.Context, loop *ResponderLoop, state *IncidentState, report *contracts.StageReport, attempts []*contracts.StageMitigation, save func(bool) error) error {
 	var candidates []*contracts.StageMitigation
 	var selected []selectedPlan
 	for _, attempt := range attempts {
-		if attempt.GetResult() != "applied_still_matching" {
-			continue
+		if attempt.GetResult() == "applied_still_matching" {
+			candidates = append(candidates, attempt)
+			selected = append(selected, selectedPlan{programID: attempt.PlaybookId, revision: attempt.ProgramRevision, bindings: programBindingsState(attempt.Bindings)})
 		}
-		if len(attempt.GetClearedFindingFingerprints()) > 0 {
-			attempt.KeptReason = "partial"
-			continue
-		}
-		application, ok := loop.applications[attempt.GetApplyReceipt().GetApplicationId()]
-		if !ok || !revertRestoresPreimage(application) || sharesApplication(report, attempt) {
-			attempt.KeptReason = "irreversible"
-			continue
-		}
-		candidates = append(candidates, attempt)
-		selected = append(selected, selectedPlan{programID: attempt.PlaybookId, revision: attempt.ProgramRevision, bindings: programBindingsState(attempt.Bindings)})
 	}
 	if len(candidates) == 0 {
-		return save(false)
+		return nil
 	}
-	// Later attempts may have changed what an earlier one diagnoses, so the
-	// decision uses a fresh observation, not the post-apply one.
 	observed := ToolResponse{}
 	loop.verify(ctx, selected, &observed, true)
 	updateStageFindings(state, observed)
@@ -47,16 +37,28 @@ func (stage *DeterministicResponseStage) revertIneffective(ctx context.Context, 
 		open[FindingFingerprint(finding)] = true
 	}
 	for _, attempt := range candidates {
+		targets := append(append([]string(nil), attempt.GetClearedFindingFingerprints()...), attempt.GetRemainingFindingFingerprints()...)
+		cleared := false
+		for _, fp := range targets {
+			cleared = cleared || !open[fp]
+		}
+		// A deleted or replaced binding no longer diagnoses at all, so the
+		// diagnosis counts as progress only for an effect that can be undone.
 		matching := false
 		for _, run := range observed.ProgramRuns {
 			if run.ProgramID == attempt.PlaybookId && run.ProgramRevision == attempt.ProgramRevision && run.Bindings.Equal(programBindingsState(attempt.Bindings)) {
 				matching = run.Verdict.Result == program.Match
 			}
 		}
-		for _, fp := range attempt.GetRemainingFindingFingerprints() {
-			matching = matching && open[fp]
-		}
-		if !matching {
+		application, known := loop.applications[attempt.GetApplyReceipt().GetApplicationId()]
+		switch {
+		case cleared:
+			attempt.KeptReason = "partial"
+			continue
+		case !known || !revertRestoresPreimage(application) || sharesApplication(report, attempt):
+			attempt.KeptReason = "irreversible"
+			continue
+		case !matching:
 			attempt.KeptReason = "partial"
 			continue
 		}
@@ -81,6 +83,7 @@ func (stage *DeterministicResponseStage) revertIneffective(ctx context.Context, 
 		} else {
 			attempt.Result = stageRevertedIneffective
 			updateStageFindings(state, reverted)
+			recordStageFindingProgress(attempt, targets, state.Findings)
 		}
 		if err := save(false); err != nil {
 			return err
