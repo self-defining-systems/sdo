@@ -31,7 +31,7 @@ Work in the proposal checkout, in this order. Open other files only when a step 
 6. **Check**: `check_memory` with `learning_decision: updated`, `proposed_artifact_ids` = the changed
    playbook IDs, and a summary. It formats changed Go first. Fix each blocking diagnostic as its hint says,
    then check again. Replay notes and `coverage_gaps` are information, not errors.
-7. Return the same decision and IDs.
+7. As soon as the check passes, return the same decision and IDs; do not polish passing memory.
 
 Keep revisions that applied cleanly unless this incident shows failure or incompleteness; add or narrowly edit, never rewrite working steps.
 
