@@ -244,3 +244,35 @@ func TestFrozenClosureIsDurableBeforeBrokerAttempt(t *testing.T) {
 		t.Fatalf("broker closure is not the durable frozen closure:\nsent   %v\nloaded %v", sent, loaded.GetPendingClosure())
 	}
 }
+
+// A closure that differs from the broker's stored frozen closure names the
+// differing fields and is not retried: the same durable closure would fail
+// the same comparison on every attempt.
+func TestBrokerIdentityMismatchNamesFieldsAndIsNotRetried(t *testing.T) {
+	ctx := context.Background()
+	target := nativeRepository(t)
+	repository, err := broker.New(target, filepath.Join(t.TempDir(), "proposals"), func(context.Context, string, []string) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	native := NativeIncidentBroker{Repository: repository, LedgerRoot: filepath.Join(t.TempDir(), "ledger"), ResponderBackend: "test", ResponderModel: "test",
+		Deriver: OutcomeDeriverFunc(func(context.Context, IncidentClosure, string, string, string) (DerivedOutcome, error) {
+			return DerivedOutcome{}, errors.New("controller exited for health refresh")
+		})}
+	workspace, err := native.PrepareIncident(ctx, "identity")
+	if err != nil {
+		t.Fatal(err)
+	}
+	closure := nativeClosure(workspace)
+	closure.Request.RepairPolicy = "recorded-actions"
+	if _, err := native.ProcessClosure(ctx, closure); err == nil {
+		t.Fatal("fixture must interrupt the first attempt")
+	}
+	changed := closure
+	changed.SourceCheckNotes = []string{"recomputed from later live state"}
+	_, err = native.ProcessClosure(ctx, changed)
+	var mismatch *ClosureIdentityError
+	if !errors.As(err, &mismatch) || !mismatch.NonRetryable() || strings.Join(mismatch.Fields, ",") != "source_check_notes" {
+		t.Fatalf("mismatch = %v, want a non-retryable error naming source_check_notes", err)
+	}
+}
