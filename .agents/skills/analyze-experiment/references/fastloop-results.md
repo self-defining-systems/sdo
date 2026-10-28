@@ -115,7 +115,7 @@ omit incident captures when its controller healthy reference is retained.
 ## Concurrent shared-memory lanes
 
 `fastloop parallel` joins ordinary per-lane rows into output `incidents.jsonl`
-and CSV. `parallel_plan.json` records encounter order; `parallel_result.json`
+and CSV. `parallel_plan.json` records order/provider/model; `parallel_result.json`
 reports requested/completed counts and every lane error. Completed peer evidence
 survives a lane failure. Aggregate `index` follows input order; `lane_id` names
 the private controller/cluster. Original rows and immutable grade checkpoints

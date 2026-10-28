@@ -53,6 +53,23 @@ func TestDetectionContextReplaysAcceptedSourceDiff(t *testing.T) {
 	}
 }
 
+func TestPresentButNotInSourceIsFalseOnceTheObjectIsGone(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		diff sdk.SourceDiff
+		want bool
+	}{
+		{"live object absent from source", sdk.SourceDiff{Changed: true, SourceAbsent: true}, true},
+		{"deleted: absent on both sides", sdk.SourceDiff{SourceAbsent: true}, false},
+		{"field drift", sdk.SourceDiff{Changed: true}, false},
+		{"matches source", sdk.SourceDiff{}, false},
+	} {
+		if got := tc.diff.PresentButNotInSource(); got != tc.want {
+			t.Errorf("%s: PresentButNotInSource = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
 type ignoringSourceDiffDetector struct{}
 
 func (ignoringSourceDiffDetector) Spec() sdk.DetectorSpec { return sdk.DetectorSpec{ID: "source-diff"} }

@@ -17,14 +17,24 @@ else:
     import tomli as tomllib
 
 
+# A spilled section's inline summary must carry at least this much real content.
+MIN_SUMMARY_CHARS = 256
+
+
 class ContextText(str):
-    """Bounded text with the exact private files its producer created."""
+    """Bounded text with the exact private files its producer created.
+
+    ``degraded`` marks a placeholder: the inline part is a field skeleton, a
+    fragment or nothing, so a reader learns almost nothing without the file.
+    """
 
     context_files: tuple[Path, ...]
+    degraded: bool
 
-    def __new__(cls, text: str, path: Path) -> ContextText:
+    def __new__(cls, text: str, path: Path, *, degraded: bool = False) -> ContextText:
         value = super().__new__(cls, text)
         value.context_files = (path,)
+        value.degraded = degraded
         return value
 
 
@@ -105,7 +115,10 @@ def cap_text(text: str, limit: int, *, json_output: bool = False, bytes_limit: b
         # Summarize structured payloads uniformly, including fenced prompt data.
         start, end = text.find("{"), text.rfind("}")
         try:
-            document = json.loads(text[start : end + 1]) if 0 <= start < end else None
+            # When the prose around a JSON block overflows on its own, the block is a
+            # fragment of a prose section and the head is the better summary.
+            prose = len(text) - (end + 1 - start)
+            document = json.loads(text[start : end + 1]) if 0 <= start < end and prose <= remaining else None
         except ValueError:
             document = None
 
@@ -130,11 +143,13 @@ def cap_text(text: str, limit: int, *, json_output: bool = False, bytes_limit: b
             for width, count in ((160, 4), (80, 2), (32, 1), (0, 0)):
                 summary = "Summary (partial):\n" + json.dumps(project(document, width, count), ensure_ascii=False)
                 if size(summary) <= remaining:
-                    return ContextText(result + summary, path)
+                    return ContextText(result + summary, path, degraded=width < 80)
         label = f"Summary ({len(text)} chars; partial):\n"
         if remaining > size(label) + 24:
             head = text[: min(1024, remaining - size(label))]
             while size(head) > remaining - size(label):
                 head = head[:-1]
             result += label + head
+            return ContextText(result, path, degraded=len(head) < min(len(text), MIN_SUMMARY_CHARS))
+        return ContextText(result, path, degraded=True)
     return ContextText(result, path)
