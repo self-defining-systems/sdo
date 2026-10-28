@@ -59,6 +59,9 @@
   "lifecycle/render_validation_feedback_03": {
     "hint": "template_data.lifecycle-render_validation_feedback_03-hint"
   },
+  "lifecycle/render_validation_feedback_04": {
+    "validation_attempt": "template_data.lifecycle-render_validation_feedback_04-validation_attempt"
+  },
   "lifecycle/run_deployer_01": {},
   "responder/branch_correction_01": {
     "branch": "template_data.responder-branch_correction_01-branch",
@@ -247,8 +250,11 @@
     "request": "template_data.responder-reflection_resume-request"
   },
   "responder/reflection_retry": {
-    "render_validation_feedback": "template_data.responder-reflection_retry-render_validation_feedback",
-    "request": "template_data.responder-reflection_retry-request"
+    "original_request": "template_data.responder-reflection_retry-original_request",
+    "render_validation_feedback": "template_data.responder-reflection_retry-render_validation_feedback"
+  },
+  "responder/reflection_retry_request": {
+    "request": "template_data.responder-reflection_retry_request-request"
   },
   "responder/reflection_shell": {
     "skills_root": "template_data.responder-reflection_shell-skills_root",
