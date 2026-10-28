@@ -554,7 +554,7 @@ class TimingMetrics(_message.Message):
     def __init__(self, started_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., completed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ...) -> None: ...
 
 class RepairActionReceipt(_message.Message):
-    __slots__ = ("action_id", "kind", "target", "resources", "summary", "details", "started_at", "completed_at", "success", "reversible", "failure_reason", "owners")
+    __slots__ = ("action_id", "kind", "target", "resources", "summary", "details", "started_at", "completed_at", "success", "reversible", "failure_reason", "owners", "script_digest")
     ACTION_ID_FIELD_NUMBER: _ClassVar[int]
     KIND_FIELD_NUMBER: _ClassVar[int]
     TARGET_FIELD_NUMBER: _ClassVar[int]
@@ -567,6 +567,7 @@ class RepairActionReceipt(_message.Message):
     REVERSIBLE_FIELD_NUMBER: _ClassVar[int]
     FAILURE_REASON_FIELD_NUMBER: _ClassVar[int]
     OWNERS_FIELD_NUMBER: _ClassVar[int]
+    SCRIPT_DIGEST_FIELD_NUMBER: _ClassVar[int]
     action_id: str
     kind: str
     target: str
@@ -579,7 +580,8 @@ class RepairActionReceipt(_message.Message):
     reversible: bool
     failure_reason: str
     owners: _containers.RepeatedCompositeFieldContainer[ResourceOwners]
-    def __init__(self, action_id: _Optional[str] = ..., kind: _Optional[str] = ..., target: _Optional[str] = ..., resources: _Optional[_Iterable[_Union[_common_pb2.ObjectRef, _Mapping]]] = ..., summary: _Optional[str] = ..., details: _Optional[str] = ..., started_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., completed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., success: _Optional[bool] = ..., reversible: _Optional[bool] = ..., failure_reason: _Optional[str] = ..., owners: _Optional[_Iterable[_Union[ResourceOwners, _Mapping]]] = ...) -> None: ...
+    script_digest: str
+    def __init__(self, action_id: _Optional[str] = ..., kind: _Optional[str] = ..., target: _Optional[str] = ..., resources: _Optional[_Iterable[_Union[_common_pb2.ObjectRef, _Mapping]]] = ..., summary: _Optional[str] = ..., details: _Optional[str] = ..., started_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., completed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., success: _Optional[bool] = ..., reversible: _Optional[bool] = ..., failure_reason: _Optional[str] = ..., owners: _Optional[_Iterable[_Union[ResourceOwners, _Mapping]]] = ..., script_digest: _Optional[str] = ...) -> None: ...
 
 class ResourceOwners(_message.Message):
     __slots__ = ("resource", "owner_chain")

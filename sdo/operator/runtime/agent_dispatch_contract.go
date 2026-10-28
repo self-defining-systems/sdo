@@ -107,6 +107,7 @@ func incidentResultFromAgent(result *contracts.AgentResult, task *contracts.Agen
 func withoutResponderOwners(result *contracts.IncidentResult) *contracts.IncidentResult {
 	for _, action := range result.GetRepairActions() {
 		action.Owners = nil
+		action.ScriptDigest = ""
 	}
 	return result
 }

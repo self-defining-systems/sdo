@@ -49,13 +49,7 @@ func (l *ResponderLoop) programFollowUp(ctx context.Context, entry menuEntry, bi
 	if err != nil {
 		return program.Plan{}, false, nil
 	}
-	deadline := l.deadline()
-	var next program.Plan
-	if stepErr := withoutResponderLocks(l, "follow-up mitigator", false, func() {
-		next, err = BuildMitigationPlan(ctx, mitigator, view, cloneProgramBindings(bindings), deadline)
-	}); stepErr != nil {
-		err = stepErr
-	}
+	next, err := l.runMitigator(ctx, entry.programID, mitigator, view, bindings)
 	if errors.Is(err, errEmptyMitigationPlan) {
 		return program.Plan{}, false, nil
 	}

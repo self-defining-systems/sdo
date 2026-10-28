@@ -45,15 +45,7 @@ Primitive recordings now carry optional `phase` metadata (`open`, `fixed`, or `h
 
 Program revision identity includes the accepted program directory and its transitive shared-library import closure. Unrelated libraries do not reset trust; changed imported helper sources do.
 
-Mitigator validation is best-effort for external effects. Diagnosis open/fixed,
-healthy-peer, generalization and rename replay remain mandatory. SetField-only
-plans must repair the open fixture to NoMatch; `program.mitigation-not-repaired`
-rejects a retained match, and unavailable post-plan observations remain
-`program.mitigation-unreplayable`. A plan containing any non-SetField effect passes
-plan validation with `skipped_unreplayable_effect`, without post-plan replay.
-`MemoryCheckReport.mitigation_replay_notes` carries typed `MitigationReplayNote`
-statuses `STATUS_REPLAYED` or `STATUS_SKIPPED_UNREPLAYABLE_EFFECT`, program/case IDs
-and effect types separately from rejecting diagnostics. Notes prove no external effect or trust.
+Memory publication keeps compilation, imports, changed-source formatting, ownership, hygiene and receipt provenance checks. All replay/test verdicts are informational: open NoMatch, post-plan Match, unavailable observations and missing cases never reject saving. Replay still uses production planning and effect semantics where evidence exists. Existing `mitigation_replay_notes` retain results and reasons; inconclusive replay uses `STATUS_SKIPPED_UNREPLAYABLE_EFFECT`. `program.replay-observation` notes persist in the incident reflection ledger and accepted commit trailers. These notes grant no live effect proof or trust.
 
 Corpus acceptance supplies no origin credit; current trust consumes only persisted covered instances. Verified successes and revision-attributed failures are informational counters. Equivalent
 ad-hoc repairs retain bound plan-equivalence receipts and post-repair NoMatch;

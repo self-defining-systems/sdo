@@ -23,7 +23,7 @@ import (
 // A reflection that leaves out learning the memory edge can live without is
 // accepted and records what it left out; the checks that protect memory quality
 // (detector tests, mitigations that repair) still reject.
-func TestReflectionCommitsWithRecordedGapsAndStillRejectsBrokenLearning(t *testing.T) {
+func TestReflectionRecordsReplayButStillRejectsInvalidCode(t *testing.T) {
 	ctx := context.Background()
 	binary := operatorCLIFixture(t)
 	operatorRoot, err := filepath.Abs("..")
@@ -70,6 +70,7 @@ func TestReflectionCommitsWithRecordedGapsAndStillRejectsBrokenLearning(t *testi
 	}
 	noCapture := validate.WithCaptureSource(ctx, "", "")
 	t.Run("gaps commit", func(t *testing.T) {
+		t.Parallel()
 		repository, root, _, decision := setup(t)
 		receipt, err := repository.PublishReflection(noCapture, "incident", decision)
 		if err != nil {
@@ -95,6 +96,7 @@ func TestReflectionCommitsWithRecordedGapsAndStillRejectsBrokenLearning(t *testi
 		}
 	})
 	t.Run("repeat-unreachable gap is the same on the CLI and the broker", func(t *testing.T) {
+		t.Parallel()
 		repository, _, proposal, decision := setup(t)
 		path := filepath.Join(proposal.Path, ".sdo/diagnostics/detectors/incidents/routing-relations/detector.go")
 		data, err := os.ReadFile(path)
@@ -138,7 +140,7 @@ func TestReflectionCommitsWithRecordedGapsAndStillRejectsBrokenLearning(t *testi
 			t.Fatalf("an unreachable repeat was refused: %v", err)
 		}
 		want, got := gapKeys(cliGaps), gapKeys(receipt.CoverageGaps)
-		if !strings.Contains(strings.Join(want, "\n"), validate.RuleProgramRepeatReachable+":") {
+		if !strings.Contains(strings.Join(want, "\n"), validate.RuleReplayObservation+":") {
 			t.Fatalf("CLI did not record the unreachable repeat: %v", want)
 		}
 		if strings.Join(want, "\n") != strings.Join(got, "\n") {
@@ -146,18 +148,21 @@ func TestReflectionCommitsWithRecordedGapsAndStillRejectsBrokenLearning(t *testi
 		}
 	})
 	for name, test := range map[string]struct {
-		path, content, rule string
+		path, content, reason string
+		reject                bool
 	}{
-		"failing detector test still rejects": {".sdo/diagnostics/detectors/incidents/cache/detector_test.go", "package detector\nimport \"testing\"\nfunc TestReject(t *testing.T){t.Fatal(\"sentinel detector failure\")}\n", validate.RuleDetectorTest},
-		"mitigation that does not repair still rejects": {".sdo/playbooks/service-targetport-mismatch/mitigate.go", `package targetport
+		"failing detector test still rejects": {".sdo/diagnostics/detectors/incidents/cache/detector_test.go", "package detector\nimport \"testing\"\nfunc TestReject(t *testing.T){t.Fatal(\"sentinel detector failure\")}\n", validate.RuleDetectorTest, true},
+		"mitigation that does not repair is information": {".sdo/playbooks/service-targetport-mismatch/mitigate.go", `package targetport
 import ("context"; "sdo.dev/operator/sdk/program")
 func (p Program) Mitigate(ctx context.Context,v program.ReadView,b program.Bindings)(program.Plan,error){
  verdict,err:=p.Diagnose(ctx,v,b);if err!=nil || verdict.Result!=program.Match{return program.Plan{},err}
  return program.Plan{Actions:[]program.Action{program.SetField{Ref:b.Objects["service"],Path:"spec.ports[0].targetPort",Value:program.FromObserved(b.Objects["service"],"spec.ports[0].targetPort")}}},nil
 }
-`, validate.RuleProgramMitigationRepair},
+`, "post diagnosis: Match", false},
+		"invalid code still rejects": {".sdo/playbooks/service-targetport-mismatch/mitigate.go", "package targetport\nvar broken UndefinedType\n", validate.RuleDetectorCompile, true},
 	} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			repository, _, proposal, decision := setup(t)
 			formatted, err := format.Source([]byte(test.content))
 			if err != nil {
@@ -166,18 +171,28 @@ func (p Program) Mitigate(ctx context.Context,v program.ReadView,b program.Bindi
 			if err := os.WriteFile(filepath.Join(proposal.Path, test.path), formatted, 0o644); err != nil {
 				t.Fatal(err)
 			}
-			_, err = repository.PublishReflection(noCapture, "incident", decision)
+			receipt, err := repository.PublishReflection(noCapture, "incident", decision)
+			if !test.reject {
+				if err != nil {
+					t.Fatalf("replay/test verdict blocked saving: %v", err)
+				}
+				if !strings.Contains(strings.Join(gapKeys(receipt.CoverageGaps), "\n"), test.reason) {
+					t.Fatalf("replay reason was lost: %v", receipt.CoverageGaps)
+				}
+				return
+			}
 			var failure *validate.Failure
 			if !errors.As(err, &failure) {
-				t.Fatalf("broken learning was accepted: %v", err)
+				t.Fatalf("invalid code was accepted: %v", err)
 			}
 			found := false
 			for _, d := range failure.Diagnostics {
-				found = found || d.Rule == test.rule
+				found = found || d.Rule == test.reason
 			}
 			if !found {
-				t.Fatalf("want %s, got %v", test.rule, failure.Diagnostics)
+				t.Fatalf("want %s, got %v", test.reason, failure.Diagnostics)
 			}
+
 		})
 	}
 }

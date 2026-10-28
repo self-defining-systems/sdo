@@ -71,15 +71,11 @@ const (
 	// Explicit Go health-bootstrap preparation.
 	RuleGenericHealth = "bootstrap.generic-health"
 
+	// Informational replay evidence, never an acceptance diagnostic.
+	RuleReplayObservation = "program.replay-observation"
+
 	// Compile.
-	RuleProgramRepeatReachable  = "program.repeat-unreachable"
-	RuleProgramRepeatDefect     = "program.repeat-unavailable"
-	RuleProgramDiagnoseNoMatch  = "program.diagnose-no-match"
-	RuleProgramMitigatorMissing = "program.mitigator-missing"
-	RuleDetectorInvalidFinding  = "detector.invalid-finding"
-	RuleDetectorFiresOnHealthy  = "detector.fires-on-healthy"
 	RuleProgramMitigationRepair = "program.mitigation-not-repaired"
-	RuleProgramMitigationReplay = "program.mitigation-unreplayable"
 	RuleDetectorCompile         = "detector.compile"
 	RuleDetectorVet             = "detector.vet"
 	RuleDetectorTest            = "detector.test"

@@ -38,7 +38,8 @@ commands:
         [--operator-root DIR] [--application-namespace NS] [--healthy-baseline]
         Publish through the broker and its isolated Kubernetes validator.
   check [--root .] [--json] [--decision FILE]
-        Run structural, semantic, ownership, build, vet, and detector tests.
+        Run structural, semantic, ownership, compilation and provenance checks.
+        Tests and replay run as information; their verdicts never block saving.
         SDO_CODE_PATH=shell selects text/size/credential hygiene and ownership
         without Go compilation or replay; broker launch policy is authoritative.
         SDO_ACTOR, SDO_PHASE, and SDO_BASE_COMMIT are required. Operator sources
@@ -54,7 +55,8 @@ commands:
         incidents' intent and preserve accepted learning before resubmitting.
         Coverage gaps (a verified cause without a program, a skipped healthy replay,
         a recorded fault no detector reaches) never fail the check: they print as
-        coverage_gap lines, or in the JSON coverage_gaps field.
+        coverage_gap lines, or in the JSON coverage_gaps field. Replay outcomes and
+        reasons use program.replay-observation and are retained with reflection.
         Exit 0 when clean,
         1 for diagnostics, 2 for missing inputs or infrastructure/usage errors.
   ls [--root .] [--kind goal|architecture|playbook|script|detector] [--json]

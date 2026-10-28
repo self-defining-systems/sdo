@@ -24,6 +24,9 @@ func ScriptOrigin(script program.RunScript, c CorpusCase) (program.ScriptOriginR
 		if receipt.IncidentID != c.Provenance.IncidentID || !receipt.Success || receipt.StartedAt.IsZero() || receipt.CompletedAt.IsZero() || receipt.CompletedAt.Before(receipt.StartedAt) {
 			return receipt, fmt.Errorf("RunScript origin receipt lacks a successful timed incident mutation")
 		}
+		if receipt.ScriptDigest == "" || receipt.ScriptDigest != program.ScriptDigest(script.Script) {
+			return receipt, fmt.Errorf("RunScript origin receipt does not record these script bytes")
+		}
 		return receipt, nil
 	}
 	return program.ScriptOriginReceipt{}, fmt.Errorf("RunScript original successful receipt %q unavailable", id)

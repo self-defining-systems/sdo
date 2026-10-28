@@ -8,7 +8,7 @@ For every new captured corpus case, including additions for an existing program,
 
 The shared validator compares added cases against protected captures; missing context is `program.capture-unavailable`, and incident/hash/byte mismatches are `program.capture-provenance`. Self-reported digests are insufficient. Captures omit sensitive environment values and Kubernetes write metadata. Synthetic NoMatch cases require `no_match_program_ids` and `synthetic_no_match_reason`; older cases without provenance are author reconstructions. Every accepted case, including legacy or synthetic cases, is immutable against the base commit (`program.corpus-immutable`). Add new IDs for new evidence. Changed Go must already be gofmt-formatted; the broker preserves authored bytes.
 
-Reflection may report `learning_decision=sdk_gap` with `fault_class`, missing `primitive`, `reason` and `scratch_script`; an updated decision may also carry gaps. Join ledger `reflection_decision` to the immutable outcome by incident ID and commit. A gap is not an accepted program. Acceptance requires the reflection commit and broker validation.
+Reflection may report `learning_decision=sdk_gap` with `fault_class`, missing `primitive`, `reason` and `scratch_script`; an updated decision may also carry gaps. Join ledger `reflection_decision` to the immutable outcome by incident ID and commit. A gap is not an accepted program. Acceptance requires the reflection commit and broker validation. Partial playbooks may save individual mechanical or receipt-linked RunScript steps plus README orchestration; `updated` with scoped `sdk_gaps` records useful learning alongside remaining gaps, including within one repair. Verified, specific README-only guidance is accepted memory but supplies no executable coverage and is never auto-applied. Replay verdicts never gate saving. Results and reasons are retained as `program.replay-observation` entries in the incident reflection ledger and accepted reflection commit trailers; existing mitigation replay notes also report them. Compilation and receipt provenance remain required, and global recovery still needs independent closure.
 
 An exhausted output correction records a failed worker result, ledger `learning_decision=failed`, its error, and `reflection_processed=true`; closure completes without a reflection commit. The previously committed successful outcome remains the mitigation record. Repeated identical requests are not distinct learning attempts.
 
@@ -186,6 +186,17 @@ items; no clearance, attribution or pre-incident capture is required for the res
 
 `drift_reprompt` records the controller's single extra response turn after healthy verification with remaining source drift. Presence means it was scheduled durably; `findings_before` counts the differences in its verify payload, and optional `findings_after` counts a fresh post-turn check (absent if no check returned). This turn consumes no mitigation round; drift still never changes the health verdict or gates closure after the turn. Worker-authored values are discarded.
 
+RunScript provenance is enforced on the actual returned actions by the shared runtime plan builder, against original successful timed receipts for that program in the incident accepted commit. `script_unprovenanced` in stage skip reasons or mitigation report reason codes means no script execution; the stage hands over without retrying that revision. Static acceptance or advisory replay does not grant script execution authority.
+
+`RepairActionReceipt.script_digest` is the controller-recorded SHA256 of exact
+executed RunScript bytes. It passes into protected `RepairReceipt` recordings;
+`script_origins` only points to that receipt. Missing or different digests grant
+no script authority, even for successful timed repairs. Worker-supplied digests
+are discarded. Detector tests and healthy-baseline checks remain save gates;
+playbook replay outcomes remain informational.
+
 Accepted-source/config restoration may also recycle blocked dependent Pods once within the same rollout budget. These are ordinary irreversible `PlanApplication.object_effects` delete receipts bound to the old Pod UID; the aggregate repair receipt includes confirmed deleted Pods and is not reversible. A stale service consumer is recycled only after a selector-related backend is observed Ready. API deletion or terminating evidence is not proof of application recovery. Generated ConfigMaps come from the accepted commit's local Kustomize inputs; Secret generators are excluded before input loading and Secret manifests remain identity references.
 
 Source inventory drift events with `source="missing from live inventory"` describe accepted declarations absent from an informer-ready live set, including generated ConfigMaps. They are restoration work, distinct from `absent from accepted source` removal candidates. Restoration clears the absence finding; Secret contents never enter the accepted inventory.
+
+A repair action receipt may report `script_unprovenanced` when planning refuses executable bytes without successful original-receipt lineage. This is a planning refusal, not an executed repair or a verified mitigation; inspect the error and accepted program revision before retrying.

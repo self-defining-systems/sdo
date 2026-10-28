@@ -12,8 +12,8 @@ import (
 )
 
 // The positive program binding is valid, but the independent detector inspects all
-// Services. An unlabelled peer with no pods must not be skipped by save-time checks.
-func TestProgramDetectorCorpusChecksEveryLocatedBinding(t *testing.T) {
+// Services. An unlabelled peer with no pods is reported without blocking save.
+func TestProgramDetectorCorpusUnknownIsInformation(t *testing.T) {
 	root := programFixture(t)
 	detectorPath := filepath.Join(root, ".sdo/diagnostics/detectors/incidents/missing-configmap/detector.go")
 	source, err := os.ReadFile(detectorPath)
@@ -69,8 +69,15 @@ func TestProgramDetectorCorpusChecksEveryLocatedBinding(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer workspace.Close()
-	if err := workspace.Check(context.Background()); err == nil || !strings.Contains(err.Error(), "detector.corpus-observation") {
-		t.Fatalf("unlabelled locator Unknown escaped complete memory check: %v", err)
+	if err := workspace.Check(context.Background()); err != nil {
+		t.Fatalf("locator Unknown blocked saving: %v", err)
+	}
+	notes, err := workspace.MitigationReplayResults()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(notes) != 1 || !strings.Contains(strings.Join(notes[0].Effects, " "), "unlabelled-peer") {
+		t.Fatalf("locator observation missing: %v", notes)
 	}
 	// A complete locator whose bindings are all observable remains valid.
 	for _, phase := range []string{"open", "fixed", "healthy"} {
