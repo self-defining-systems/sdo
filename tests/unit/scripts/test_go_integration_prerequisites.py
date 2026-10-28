@@ -54,6 +54,7 @@ def test_go_integration_initializes_inputs_before_starting_pytest(tmp_path: Path
     calls = [json.loads(line) for line in events.read_text().splitlines()]
     assert calls[0] == ["uv", "run", "python", "scripts/init_test_prereqs.py"]
     if shard == "all":
+        assert ["go", "test", "-run", "^$", "."] in calls
         pytest_call = next(call for call in calls if "pytest" in call)
         assert pytest_call[-1] == "tests"
     else:
