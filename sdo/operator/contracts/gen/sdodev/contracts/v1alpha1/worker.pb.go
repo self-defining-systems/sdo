@@ -845,7 +845,7 @@ const file_sdodev_contracts_v1alpha1_worker_proto_rawDesc = "" +
 	"\ttask_type\x18\x04 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\btaskType\x12.\n" +
 	"\arequest\x18\x05 \x01(\v2\x14.google.protobuf.AnyR\arequest\x12J\n" +
 	"\tworkspace\x18\x06 \x01(\v2,.sdodev.contracts.v1alpha1.ProposalWorkspaceR\tworkspace\x126\n" +
-	"\bdeadline\x18\a \x01(\v2\x1a.google.protobuf.TimestampR\bdeadline\"\x83\x03\n" +
+	"\bdeadline\x18\a \x01(\v2\x1a.google.protobuf.TimestampR\bdeadline\"\xcb\x03\n" +
 	"\vAgentResult\x12>\n" +
 	"\x0eschema_version\x18\x01 \x01(\tB\x17\xbaH\x14r\x12\n" +
 	"\x10sdo.dev/v1alpha1R\rschemaVersion\x12 \n" +
@@ -854,8 +854,8 @@ const file_sdodev_contracts_v1alpha1_worker_proto_rawDesc = "" +
 	"\bresponse\x18\x04 \x01(\v2\x14.google.protobuf.AnyR\bresponse\x12\x1f\n" +
 	"\vproposal_id\x18\x05 \x01(\tR\n" +
 	"proposalId\x12#\n" +
-	"\rerror_summary\x18\x06 \x01(\tR\ferrorSummary\x12]\n" +
-	"\x0efailure_reason\x18\a \x01(\tB6\xbaH3r1R\x00R\ragent_timeoutR\fagent_failedR\x10result_too_largeR\rfailureReason\"\x83\t\n" +
+	"\rerror_summary\x18\x06 \x01(\tR\ferrorSummary\x12\xa4\x01\n" +
+	"\x0efailure_reason\x18\a \x01(\tB}\xbaHzrxR\x00R\ragent_timeoutR\fagent_failedR\x17session_handoff_timeoutR\x17session_handoff_invalidR\x13session_unavailableR\x10result_too_largeR\rfailureReason\"\x83\t\n" +
 	"\x11ReflectionRequest\x12D\n" +
 	"\aclosure\x18\x01 \x01(\v2*.sdodev.contracts.v1alpha1.IncidentClosureR\aclosure\x12'\n" +
 	"\x0fproposal_commit\x18\x04 \x01(\tR\x0eproposalCommit\x12%\n" +

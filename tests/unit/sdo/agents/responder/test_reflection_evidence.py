@@ -62,21 +62,20 @@ def test_memory_view_omits_scripts_and_bounds_repeated_memory_text() -> None:
         book.scripts.add(name="inspect.sh", content="script body" * 1000)
     view = memory_view(snapshot)
     assert view["accepted_commit"] == "accepted"
-    assert view["omitted_playbooks"] == 0
     assert len(view["playbooks"]) == 100
+    assert {item["id"] for item in view["playbooks"]} == {f"book-{index}" for index in range(100)}
     assert "script body" not in json.dumps(view)
     assert len(json.dumps(view)) < 60_000
 
 
-def test_oversized_capture_item_is_explicit_and_narrow_fields_remain_exact(tmp_path: Path) -> None:
+def test_large_capture_page_is_lossless_before_shared_dispatch_cap(tmp_path: Path) -> None:
     (tmp_path / "open@detect.json").write_text(
         json.dumps(
             {"pods": [{"metadata": {"name": "large"}, "spec": {"unused": "x" * 20000}, "status": {"phase": "Pending"}}]}
         )
     )
     broad = read_capture(tmp_path, "detect", "pods")
-    assert broad["oversized_indices"] == [0]
-    assert broad["items"] == []
+    assert broad["items"][0]["spec"]["unused"] == "x" * 20000
     narrow = read_capture(tmp_path, "detect", "pods", fields=["status.phase"])
     assert narrow["items"] == [{"status.phase": "Pending"}]
 
@@ -144,3 +143,20 @@ def test_available_preapply_capture_and_recordings_remain_distinct(tmp_path: Pat
     assert recording_index(tmp_path, open_phase="pre-apply")["total"] == 2
     assert read_capture(tmp_path, "pre-apply", "recordings")["items"][0]["result"] == "before"
     assert read_capture(tmp_path, "fixed", "recordings", open_phase="pre-apply")["items"][0]["result"] == "after"
+
+
+def test_memory_index_uses_descriptions_and_orders_incident_links_first():
+    from sdo.agents.responder.reflection_evidence import memory_view
+    from sdo.contracts import OperationalMemorySnapshot
+
+    snapshot = OperationalMemorySnapshot(accepted_commit="accepted")
+    for identifier in ("a-unrelated", "z-linked"):
+        snapshot.playbooks.add(
+            id=identifier, markdown="---\ndescription: Inspect current endpoints.\n---\n" + "body " * 10000
+        )
+        snapshot.detectors.add(id=identifier, description="Detect missing endpoints.")
+    view = memory_view(snapshot, linked_ids={"z-linked"})
+    assert [item["id"] for item in view["playbooks"]] == ["z-linked", "a-unrelated"]
+    assert [item["id"] for item in view["detectors"]] == ["z-linked", "a-unrelated"]
+    assert all(item["description"] == "Inspect current endpoints." for item in view["playbooks"])
+    assert "body body" not in json.dumps(view)

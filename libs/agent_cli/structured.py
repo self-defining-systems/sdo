@@ -46,6 +46,7 @@ from agentshim import (
     CliTimeoutError,
     CodexProvider,
     CodexSandboxConfig,
+    HostCommandExecutor,
     OutputSchema,
     SandboxConfig,
     SessionStarted,
@@ -58,12 +59,29 @@ from agentshim import (
     normalized_usage,
     price_for,
 )
+from agentshim.execution.host import ProcessCommandHandle
 from agentshim.providers.codex import install_rules
 
+from libs.agent_cli.session_ownership import (
+    HANDOFF_TIMEOUT_SECONDS,
+    SessionOwnership,
+    WorkerIdentity,
+    WorkerTermination,
+)
 from libs.agent_cli.startup import StartupTelemetry
 
 if TYPE_CHECKING:
-    from agentshim import AgentEvent, CommandExecutor, McpServer, Provider, ProviderUsage
+    from agentshim import (
+        AgentEvent,
+        CommandExecutor,
+        CommandHandle,
+        CommandRequest,
+        CommandResult,
+        CommandStreamSink,
+        McpServer,
+        Provider,
+        ProviderUsage,
+    )
 
 AgentProvider = Literal["codex", "claude"]
 logger = logging.getLogger(__name__)
@@ -118,6 +136,18 @@ class StructuredTurnTimeout(StructuredTurnError):
     def __init__(self, timeout_seconds: float) -> None:
         self.timeout_seconds = timeout_seconds
         super().__init__(f"agent turn timed out after {timeout_seconds:g}s")
+
+
+class StructuredTurnInterrupted(StructuredTurnError):
+    """The caller stopped a running turn; its session can be resumed.
+
+    ``usage`` holds the accounting the stopped turn had already spent.
+    """
+
+    def __init__(self, session_id: str, usage: dict[str, int | float]) -> None:
+        self.session_id = session_id
+        self.usage = usage
+        super().__init__(f"agent turn interrupted (session {session_id or 'unknown'})")
 
 
 @dataclass(frozen=True)
@@ -230,13 +260,23 @@ def run_structured_turn(
     environment: Mapping[str, str] | None = None,
     on_session_started: Callable[[str], None] | None = None,
     on_usage: Callable[[dict[str, int | float], bool], None] | None = None,
+    session_ownership_directory: Path | None = None,
+    session_ownership_role: Literal["responder", "reflection"] = "responder",
+    session_ownership_worker: WorkerIdentity | None = None,
+    session_termination_observer: Callable[[WorkerIdentity, float], WorkerTermination | None] | None = None,
+    interrupt_when: Callable[[], bool] | None = None,
 ) -> StructuredTurn:
     """Run one structured turn, fresh or resumed, and return its output.
 
+    ``interrupt_when`` is polled while the turn runs; once it returns true the
+    running CLI is stopped. A turn that still finished normally is returned.
+
     Raises:
+        StructuredTurnInterrupted: ``interrupt_when`` stopped the turn.
         StructuredTurnTimeout: The turn exceeded ``timeout_seconds``.
         StructuredTurnError: The CLI failed, or reported no session id or no
             structured output.
+        SessionHandoffError: Persisted writer ownership does not authorize a resume.
         ValueError: An argument is invalid before any process starts.
     """
     if provider not in AGENT_PROVIDERS:
@@ -254,10 +294,64 @@ def run_structured_turn(
         raise ValueError("a Codex workspace-write turn cannot be resumed: its session lives in a per-turn CODEX_HOME")
 
     workspace = Path(cwd).resolve()
-    recorder = _ShellCommandRecorder(on_session_started=on_session_started, on_usage=on_usage)
+    ownership = (
+        SessionOwnership(
+            session_ownership_directory,
+            provider,
+            role=session_ownership_role,
+            worker=session_ownership_worker,
+            termination_observer=session_termination_observer,
+            timeout_seconds=min(timeout_seconds, HANDOFF_TIMEOUT_SECONDS)
+            if timeout_seconds is not None
+            else HANDOFF_TIMEOUT_SECONDS,
+        )
+        if session_ownership_directory is not None
+        else None
+    )
+
+    def session_started(session_id: str) -> None:
+        # Persist ownership before exposing the ID to the controller checkpoint.
+        if ownership is not None:
+            ownership.claim(session_id, resume=resume_session_id is not None)
+        if on_session_started is not None:
+            on_session_started(session_id)
+
+    recorder = _ShellCommandRecorder(on_session_started=session_started, on_usage=on_usage)
     started = time.monotonic()
+    interrupted = threading.Event()
+    codex_home: Path | None = None
+    rollout_before: _RolloutTotals | None = None
+
+    def spent_usage() -> dict[str, int | float]:
+        """Accounting of a stopped turn: its rollout delta, or Claude's incremental reports."""
+        if provider != "codex":
+            return dict(recorder.incremental)
+        latest = _codex_rollout_totals(codex_home, recorder.session_id or resume_session_id)
+        delta = latest.since(rollout_before) if latest is not None else None
+        if delta is None or delta.tokens is None or delta.requests == 0:
+            return {}
+        from agentshim import ProviderUsage
+
+        return turn_usage(
+            StructuredTurn(
+                "", recorder.session_id or "", ProviderUsage(tokens=delta.tokens), model_requests=delta.requests
+            )
+        )
+
+    def stopped() -> StructuredTurnInterrupted:
+        usage = spent_usage()
+        if usage and on_usage is not None:
+            on_usage(usage, True)
+        return StructuredTurnInterrupted(recorder.session_id or resume_session_id or "", usage)
+
     try:
         with ExitStack() as turn_scope:
+            writer = _WriterExecutor(executor or HostCommandExecutor())
+            if ownership is not None:
+                turn_scope.callback(lambda: ownership.close(writer_closed=writer.closed))
+                if resume_session_id is not None:
+                    ownership.claim(resume_session_id, resume=True)
+            executor = writer
             selected, extra_args, extra_env = _provider_for(provider, access, workspace, turn_scope)
             startup = turn_scope.enter_context(StartupTelemetry(provider))
             if provider == "codex":
@@ -278,7 +372,13 @@ def run_structured_turn(
             )
             if provider == "claude" and mcp_servers:
                 _exclude_claude_mcp_config(workspace)
-            session = agent.start_session(cwd=str(workspace), timeout=timeout_seconds)
+            # Ownership waiting consumes the existing turn budget.
+            remaining_timeout = timeout_seconds
+            if ownership is not None and timeout_seconds is not None:
+                remaining_timeout = timeout_seconds - (time.monotonic() - started)
+                if remaining_timeout <= 0:
+                    raise StructuredTurnTimeout(timeout_seconds)
+            session = agent.start_session(cwd=str(workspace), timeout=remaining_timeout)
             if resume_session_id is not None and not session.adopt(resume_session_id):
                 raise StructuredTurnError(f"{provider} cannot resume session {resume_session_id!r}")
             codex_home = _codex_session_home(effective_environment) if provider == "codex" else None
@@ -321,6 +421,18 @@ def run_structured_turn(
             monitor = threading.Thread(target=monitor_usage, name="sdo-usage-checkpoint", daemon=True)
             if on_usage is not None:
                 monitor.start()
+
+            def watch_interrupt() -> None:
+                assert interrupt_when is not None
+                while not stop_usage.wait(0.2):
+                    if interrupt_when():
+                        interrupted.set()
+                        session.cancel()
+                        return
+
+            watcher = threading.Thread(target=watch_interrupt, name="sdo-turn-interrupt", daemon=True)
+            if interrupt_when is not None:
+                watcher.start()
             try:
                 result = session.turn(
                     TurnRequest(
@@ -333,6 +445,8 @@ def run_structured_turn(
                 )
             finally:
                 stop_usage.set()
+                if interrupt_when is not None:
+                    watcher.join()
                 if on_usage is not None:
                     monitor.join()
                     sample_usage()
@@ -342,13 +456,19 @@ def run_structured_turn(
             # when the turn scope closes.
             rollout_after = _codex_rollout_totals(codex_home, result.session_id or resume_session_id)
     except CliTimeoutError as exc:
+        if interrupted.is_set():
+            raise stopped() from exc
         raise StructuredTurnTimeout(exc.timeout) from exc
     except CliExitError as exc:
+        if interrupted.is_set():
+            raise stopped() from exc
         # Both streams, stderr first: a provider may report the real cause on
         # either, and callers hand this text back to the next attempt.
         details = "\n".join(part.strip() for part in (exc.stderr, exc.stdout) if part.strip())
         raise StructuredTurnError(f"{provider} exited with code {exc.returncode}: {details or 'no output'}") from exc
     except AgentShimError as exc:
+        if interrupted.is_set():
+            raise stopped() from exc
         raise StructuredTurnError(f"{provider} turn failed: {exc}") from exc
 
     if on_usage is not None and provider == "codex" and resume_session_id is not None:
@@ -396,6 +516,56 @@ def run_structured_turn(
     if not session_id:
         raise StructuredTurnError(f"{provider} turn did not report a session id")
     return turn
+
+
+class _WriterExecutor:
+    """Track the executor's terminal process evidence, independently of parsing.
+
+    Local closure requires a reaped process; remote closure requires a terminal
+    result/exit. Unknown transport failures leave the durable owner active, including
+    after restart; an OS lock disappearing does not manufacture a release.
+    """
+
+    def __init__(self, live: CommandExecutor) -> None:
+        self.live = live
+        self.closed = True
+
+    def find_binary(self, name: str, env: Mapping[str, str]) -> str:
+        return self.live.find_binary(name, env)
+
+    def check_binary(self, path: str, env: Mapping[str, str], *, timeout: float) -> None:
+        self.live.check_binary(path, env, timeout=timeout)
+
+    def run(self, request: CommandRequest, sink: CommandStreamSink) -> CommandResult:
+        self.closed = False
+        process: subprocess.Popen[str] | None = None
+        terminal = False
+
+        class Sink:
+            def started(self, handle: CommandHandle) -> None:
+                nonlocal process
+                if isinstance(handle, ProcessCommandHandle):
+                    process = handle.process
+                sink.started(handle)
+
+            def stdout(self, line: str) -> None:
+                sink.stdout(line)
+
+            def stderr(self, line: str) -> None:
+                sink.stderr(line)
+
+        try:
+            result = self.live.run(request, Sink())
+            terminal = True
+            return result
+        except CliExitError:
+            terminal = True
+            raise
+        finally:
+            # For local processes, inspect actual reaping even on cancellation
+            # or callback failure. A timeout alone never proves writer closure.
+            # Remote executors must return a terminal result/exit to release.
+            self.closed = process.poll() is not None if process is not None else terminal
 
 
 def _exclude_claude_mcp_config(workspace: Path) -> None:

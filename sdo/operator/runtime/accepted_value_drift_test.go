@@ -328,7 +328,7 @@ func TestAcceptanceRecordKeepsValuesOfConfigurationOnly(t *testing.T) {
 	_ = unstructured.SetNestedField(live.Object, "key-value", "binaryData", "blob")
 	_ = unstructured.SetNestedField(live.Object, "Bound", "status", "phase")
 	_ = unstructured.SetNestedField(live.Object, "extra", "spec", "mode")
-	encoded, fits, err := buildAcceptanceRecord(source, live, live, false)
+	encoded, fits, err := buildAcceptanceRecord(source, live, live, nil, false)
 	if err != nil || !fits {
 		t.Fatalf("record: %v %v", fits, err)
 	}
@@ -348,7 +348,7 @@ func TestAcceptanceRecordKeepsValuesOfConfigurationOnly(t *testing.T) {
 	for i := range 800 {
 		_ = unstructured.SetNestedField(big.Object, strings.Repeat("v", 40), "spec", "knobs", string(rune('a'+i%26))+strings.Repeat("k", i/26+1))
 	}
-	encoded, fits, err = buildAcceptanceRecord(source, big, big, false)
+	encoded, fits, err = buildAcceptanceRecord(source, big, big, nil, false)
 	if err != nil || !fits {
 		t.Fatalf("a large object lost its whole record: %v %v", fits, err)
 	}

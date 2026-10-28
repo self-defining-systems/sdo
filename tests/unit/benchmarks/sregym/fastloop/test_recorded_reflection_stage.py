@@ -22,6 +22,7 @@ from benchmarks.sregym.fastloop.replay import CheckpointStore
 from benchmarks.sregym.fastloop.replay_worker import replay_live_worker
 from sdo.agents.responder import CodexSessionBackend, SessionReflector, run_reflection_task
 from sdo.contracts import AgentResult, AgentTask, ReflectionRequest, parse_json, to_canonical_json
+from tests.context_helpers import expand_context
 from tests.structured_turns import reply
 from tests.unit.sdo.agents.responder.test_reflection_outcomes import _outcome
 from tests.unit.sdo.agents.responder.test_reflection_worker import _closure
@@ -233,14 +234,15 @@ def frontmatter_output() -> dict:
 @pytest.mark.parametrize("unrelated_playbooks", [0, 100], ids=["covered-repeat", "late-line-repeat"])
 def test_recorded_covered_reflection_finishes_in_one_request(tmp_path: Path, unrelated_playbooks: int) -> None:
     def check_prompt(prompt: str) -> None:
+        prompt = expand_context(prompt)
         assert "accepted-program" in prompt
         assert "applied_cleared" in prompt
-        assert "Existing accepted repair" in prompt
-        # Reflection sees all accepted memory, incident-linked entries first,
-        # as bounded excerpts; full files stay readable in the checkout.
+        assert '"id": "missing-configmap"' in prompt
+        # Reflection sees every accepted ID, incident-linked entries first, with
+        # one-line descriptions; full files stay readable in the checkout.
         assert prompt.count("unrelated-") >= unrelated_playbooks
         if unrelated_playbooks:
-            assert prompt.index("Existing accepted repair") < prompt.index("unrelated prior learning")
+            assert prompt.index('"id": "missing-configmap"') < prompt.index('"id": "unrelated-0"')
             assert "unrelated prior learning" * 100 not in prompt
 
     store, source = reflection_recording(
@@ -400,7 +402,10 @@ def test_recorded_program_replay_accepts_session_fixture_without_captures(tmp_pa
         assert "Every recorded hand repair needs an executable typed SDK plan or RunScript step" in prompt
         assert "Replay is informational" in prompt
         assert "Use recorded actions as repair evidence" in prompt
-        current = json.loads(prompt.split("Current outcome:\n", 1)[1].split("\n\nOutcome history", 1)[0])
+        section = prompt.split("Current outcome:\n", 1)[1].split("\n\nOutcome history", 1)[0]
+        if section.startswith("Full: "):
+            section = Path(os.path.expandvars(section.splitlines()[0].removeprefix("Full: "))).read_text()
+        current = json.loads(section)
         assert current["classification"] == classification
         assert (
             current["repair_actions"][0]["details"]

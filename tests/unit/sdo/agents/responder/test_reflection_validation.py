@@ -241,10 +241,18 @@ async def test_every_reflection_tool_reply_stays_within_the_shared_budget(tmp_pa
         """Synthetic oversized reply."""
         return full
 
+    from sdo.agents.context_output import budgets
+
+    monkeypatch.setitem(budgets(), "tool_reply.big_evidence", MAX_TOOL_REPLY_BYTES)
+    monkeypatch.setitem(budgets(), "tool_description.big_evidence", 256)
     server.add_tool(big_evidence)
     (block,) = await server.call_tool("big_evidence", {})
     assert len(block.text.encode()) <= MAX_TOOL_REPLY_BYTES
-    (path,) = [line.removeprefix("Full reply: ") for line in block.text.splitlines() if line.startswith("Full reply: ")]
+    (path,) = [
+        line.removeprefix("Full: ").replace("$SDO_SESSION_SCRATCH", str(tmp_path / "scratch"))
+        for line in block.text.splitlines()
+        if line.startswith("Full: ")
+    ]
     assert pathlib.Path(path).read_text() == full
     assert "line 399" not in block.text
     # The bound sits on the server's single dispatch path, so no registered tool can bypass it.

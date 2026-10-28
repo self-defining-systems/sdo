@@ -461,7 +461,10 @@ turn=Turn("responder",175,Path.cwd(),rollout,EventStream(io.StringIO()))
 def select(program):
  code,text=turn.run(shlex.join([sys.executable,"-m","sdo.agents.responder.tools_cli","--json","menu"]),max_output_chars=MAX_STRUCTURED_OUTPUT_CHARS)
  assert code==0,text
- menu=json.loads(text.splitlines()[0])["menu"]
+ response=json.loads(text.splitlines()[0])
+ if response.get("summarized"):
+  response=json.loads(Path(response["details_file"]).read_text())
+ menu=response["menu"]
  option=next(o["option_id"] for o in menu["options"] if o.get("program_id")==program)
  code,text=turn.run(shlex.join([sys.executable,"-m","sdo.agents.responder.tools_cli","--json","mitigate",option,"--rounds","1"]))
  assert code==0,text

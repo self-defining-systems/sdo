@@ -203,7 +203,7 @@ func TestSourceReconcilePartialRetainedInMixedRuntimePlan(t *testing.T) {
 	plan := program.Plan{Actions: []program.Action{program.ReconcileFromSource{Ref: ref}, program.Exec{Pod: podRef, Container: "app", Command: []program.Value{program.FromParam("command")}}}}
 	result, err := executor.Apply(context.Background(), IncidentRequest{Namespace: ref.Namespace, SourceCommit: "accepted", RepairPolicy: "recorded-actions"}, plan, false)
 	var partial *SourceReconcilePartialError
-	if !errors.As(err, &partial) || !result.Applied || result.RolledBack || len(result.ActionsApplied) != 1 || result.ActionReports[0].Status != "partial" || result.ActionReports[0].SourceReconcile == nil {
+	if !errors.As(err, &partial) || !result.Applied || result.RolledBack || len(result.ActionsApplied) != 2 || result.ActionReports[0].Status != "partial" || result.ActionReports[0].SourceReconcile == nil {
 		t.Fatalf("mixed plan lost applied partial receipt: applied=%v actions=%d reports=%+v error=%v", result.Applied, len(result.ActionsApplied), result.ActionReports, err)
 	}
 }

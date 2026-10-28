@@ -6,8 +6,8 @@ from pathlib import Path
 from google.protobuf import json_format
 
 from sdo.contracts import IncidentRequest
+from tests.context_helpers import expand_context
 from tests.proto_messages import evolve
-from tests.unit.sdo.agents.prompts.cases import responder_prompt as _responder_prompt
 
 
 def _request() -> IncidentRequest:
@@ -53,10 +53,16 @@ def _request() -> IncidentRequest:
 
 
 def test_responder_uses_logical_snapshot_without_loading_memory_files() -> None:
+    from sdo.agents.responder.codex import render_incident_prompt
+    from sdo.agents.responder.incident_context import prepared_incident_data
+    from tests.context_helpers import incident_facts_path
+
     request = _request()
-    prompt = _responder_prompt(request)
-    assert "checkout-independent health objective" in prompt
-    assert "checkout-independent architecture" in prompt
+    with prepared_incident_data(request) as data:
+        prompt = render_incident_prompt(request, incident_data=data)
+        facts = incident_facts_path(prompt).read_text(encoding="utf-8")
+    assert "checkout-independent health objective" in facts
+    assert "checkout-independent architecture" in facts
     assert "missing-configmap" in prompt
     assert "Restore the ConfigMap safely" not in prompt
     assert ".sdo/" not in prompt
@@ -94,7 +100,7 @@ def test_reflection_brief_uses_logical_snapshot_without_loading_memory_files(tmp
         session_mode="fresh",
         closure=closure,
     )
-    prompt = str(backend.calls[-1]["prompt"])
+    prompt = expand_context(str(backend.calls[-1]["prompt"]))
     assert "Edit only authorized operational-memory files" in prompt
     assert "broker checks" in prompt
     assert "draft-test" not in prompt

@@ -257,7 +257,8 @@ def test_worker_deploy_uses_absent_profile_without_changing_problem_identity(mon
         MOUNTED = "mounted"
         ABSENT = "absent"
 
-    app = SimpleNamespace(namespace=NS, failure_scripts=Profile.MOUNTED)
+    app = SimpleNamespace(name="Hotel Reservation", namespace=NS, failure_scripts=Profile.MOUNTED, deploy=lambda: None)
+    monkeypatch.setenv("SREGYM_APP_SOURCE_DIR", "synthetic-source")
     problem = SimpleNamespace(namespace=NS, app=app)
     events: list[str] = []
     request = {

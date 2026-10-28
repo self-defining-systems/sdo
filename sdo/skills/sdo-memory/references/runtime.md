@@ -206,9 +206,9 @@ independent validation. Read relevant fields rather than entire captures.
 Read captured resource fields or primitive recordings on demand.
 
 Fields are dotted paths; list indices are numeric (spec.containers.0.image).
-Null collections are empty. Results are paginated and bounded to 12000
-characters; oversized_indices identifies items needing narrower fields.
-Missing fields are null, never evidence that a primitive succeeded.
+Null collections are empty. Results are paginated; the shared reply cap
+saves large complete pages to a session file. Extract relevant fields
+from that file. Missing fields are null, never evidence that a primitive succeeded.
 
 ## recordings_index
 

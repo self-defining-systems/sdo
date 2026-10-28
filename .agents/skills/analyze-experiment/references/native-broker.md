@@ -21,6 +21,8 @@ complete authoring reflection. The closure's `request.state_changes` (absent in 
 
 `IncidentClosure.source_check_notes` and `OutcomeRecord.source_check_notes` list source or render checks that were unavailable when health verified the closure (accepted source would not render, the source inventory had not loaded). They are information only: the closure stays a success decided by health alone. The notes also list each object that still differs from accepted source ("unexplained drift remains on Kind/name"); an observed source difference no longer contradicts a closure. Absent in older ledgers and outcomes.
 
+`IncidentClosure.frozen` is set when the controller persisted the closure, with the recheck's notes folded in, before the first broker attempt. The ledger's `closure` and the controller state's `pending_closure` must then be byte-identical; a retry rechecks only for contradiction and never rewrites notes or downgrades to unconfirmed. `closure differs from persisted broker evidence in <fields>` names the differing top-level closure fields and fails the closure on its first attempt (non-retryable, reason `BROKER_ERROR`); with frozen closures it is a real controller defect, not live drift. In older runs (no `frozen` key), retries recomputed notes from later live state and hit this error after any interrupted attempt.
+
 
 
 ### Historical Python broker fields
@@ -102,9 +104,26 @@ Each mitigation identifies the accepted playbook revision, bindings, plan,
 Results distinguish `applied_cleared`, `applied_still_matching`, `rollout_failed`,
 `rollout_pending_at_handoff`, `apply_error`, and `skipped` with `skip_reason`
 (`stage_budget` means the 45 s stage budget ran out before the match was applied).
-The stage sends all its matched plans in one apply: its mitigations share one
-`apply_receipt` (same `application_id`), and `plan_action_start`/`plan_action_count`
-select each mitigation's actions in that receipt's plan. Recorded stage `apply`
+`rollout_pending_at_handoff` whose `rollout_pending` reason says `cannot progress
+without another actor` is a stall handoff, a few seconds after the write: the
+replacement Pod is unschedulable (or the progress deadline passed) and the reason
+names the unschedulable Pod and any old-template Pod/ReplicaSet holding its place.
+A stall is not a budget expiry. The rollout wait keeps a reserved share of the
+deadline, so every written object has a readback; `observation_error` on a
+fast object now means a real read failure, not a slow neighbour. A stalled
+pending reservation releases responder writes after a 2 s grace with
+`rollout_stalled` naming the blocker, not after the 90 s bound.
+The stage applies matched bindings sequentially, re-running Diagnose on fresh
+state after the preceding application returns. A pending handoff
+(`admission_blocked`, stalled or bounded rollout) keeps the pass: later matches
+still get their fresh diagnosis and may unblock it. Only a failed application
+(`apply_error`, `rollout_failed`) ends the pass; matches after it have no stage
+entry. Runs before this rule ended the pass at the first pending handoff. A nonmatching or
+unavailable diagnosis gets one deferred turn after the other candidates, within
+the same 45 s budget. Each applied mitigation has its own `apply_receipt` and
+`application_id`; `plan_action_start` is zero and `plan_action_count` covers its
+plan. Historical merged-stage runs share one application ID and use the action
+range to select each mitigation's actions. Recorded stage `apply`
 tool calls carry `"stage":true` in `request_json`; agent applies do not.
 Stage-level fingerprints describe work remaining at each handoff. These scoped
 observations never replace independent controller closure/classification.

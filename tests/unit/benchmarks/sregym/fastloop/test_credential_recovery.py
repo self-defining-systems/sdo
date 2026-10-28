@@ -8,6 +8,7 @@ import pytest
 
 from benchmarks.sregym.fastloop.baseline_recovery import ApplicationBaseline
 from benchmarks.sregym.fastloop.fault_driver import FastloopFaultError, SregymFaultDriver
+from tests.unit.benchmarks.sregym.fastloop.accepted_source_fixture import fixed_source_provider
 
 CONTRACT = "seed-compatible/v1"
 
@@ -68,6 +69,10 @@ def driver(lane: CredentialLane) -> SregymFaultDriver:
         require_full_cleanup=True,
         health_timeout_seconds=1,
         health_poll_seconds=0.001,
+        accepted_source=fixed_source_provider(
+            ApplicationBaseline("toy", [{"kind": "ConfigMap", "metadata": {"name": "toy-init", "namespace": "toy"}}]),
+            "toy",
+        ),
     )
 
 
@@ -112,6 +117,7 @@ def test_seed_restore_refuses_legacy_harness_even_without_strict_flag() -> None:
         cluster=lane,
         health_timeout_seconds=0.01,
         health_poll_seconds=0.001,
+        accepted_source=fixed_source_provider(ApplicationBaseline("toy", []), "toy"),
     )
     with pytest.raises(FastloopFaultError, match="seed-compatible"):
         recovery.recover()

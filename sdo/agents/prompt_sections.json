@@ -1,0 +1,349 @@
+{
+  "deployer/describe_architecture_01": {},
+  "deployer/describe_architecture_02": {
+    "accepted_source_commit": "template_data.deployer-describe_architecture_02-accepted_source_commit",
+    "source_topology_fingerprint": "template_data.deployer-describe_architecture_02-source_topology_fingerprint"
+  },
+  "deployer/source_deployment": {
+    "application": "template_data.deployer-source_deployment-application",
+    "namespace": "template_data.deployer-source_deployment-namespace",
+    "health_objective": "template_data.deployer-source_deployment-health_objective",
+    "correction_feedback": "template_data.deployer-source_deployment-correction_feedback",
+    "registry_host": "template_data.deployer-source_deployment-registry_host",
+    "registry_host_2": "template_data.deployer-source_deployment-registry_host_2"
+  },
+  "health_judge/health_judge": {
+    "application": "template_data.health_judge-health_judge-application",
+    "round_index": "template_data.health_judge-health_judge-round_index",
+    "health_objective": "template_data.health_judge-health_judge-health_objective",
+    "objective_digest": "template_data.health_judge-health_judge-objective_digest",
+    "deployer": "template_data.health_judge-health_judge-deployer",
+    "active_payload": "template_data.health_judge-health_judge-active_payload",
+    "previous_payload": "template_data.health_judge-health_judge-previous_payload",
+    "feedback": "template_data.health_judge-health_judge-feedback",
+    "watch_list": "template_data.health_judge-health_judge-watch_list",
+    "round_index_2": "template_data.health_judge-health_judge-round_index_2",
+    "covered_kinds": "template_data.health_judge-health_judge-covered_kinds",
+    "traffic_authoring": "template_data.health_judge-health_judge-traffic_authoring",
+    "metrics_authoring": "template_data.health_judge-health_judge-metrics_authoring"
+  },
+  "health_judge/health_judge_shell": {
+    "skills_root": "template_data.health_judge-health_judge_shell-skills_root",
+    "application": "template_data.health_judge-health_judge_shell-application",
+    "round_index": "template_data.health_judge-health_judge_shell-round_index",
+    "objective_digest": "template_data.health_judge-health_judge_shell-objective_digest",
+    "source_commit": "template_data.health_judge-health_judge_shell-source_commit",
+    "health_objective": "template_data.health_judge-health_judge_shell-health_objective",
+    "deployer": "template_data.health_judge-health_judge_shell-deployer",
+    "previous_payload": "template_data.health_judge-health_judge_shell-previous_payload",
+    "feedback": "template_data.health_judge-health_judge_shell-feedback"
+  },
+  "health_judge/metrics_authoring": {},
+  "health_judge/run_health_judge_01": {},
+  "health_judge/traffic_authoring": {},
+  "lifecycle/architecture": {
+    "application": "template_data.lifecycle-architecture-application",
+    "feedback": "template_data.lifecycle-architecture-feedback"
+  },
+  "lifecycle/memory_conflict": {
+    "conflict_json": "template_data.lifecycle-memory_conflict-conflict_json"
+  },
+  "lifecycle/render_validation_feedback_01": {
+    "validation_attempt": "template_data.lifecycle-render_validation_feedback_01-validation_attempt"
+  },
+  "lifecycle/render_validation_feedback_02": {
+    "rule": "template_data.lifecycle-render_validation_feedback_02-rule",
+    "value": "template_data.lifecycle-render_validation_feedback_02-value",
+    "message": "template_data.lifecycle-render_validation_feedback_02-message"
+  },
+  "lifecycle/render_validation_feedback_03": {
+    "hint": "template_data.lifecycle-render_validation_feedback_03-hint"
+  },
+  "lifecycle/run_deployer_01": {},
+  "responder/branch_correction_01": {
+    "branch": "template_data.responder-branch_correction_01-branch",
+    "branch_2": "template_data.responder-branch_correction_01-branch_2",
+    "other_branch": "template_data.responder-branch_correction_01-other_branch"
+  },
+  "responder/branch_description_01": {},
+  "responder/branch_description_02": {},
+  "responder/branch_instruction_01": {
+    "branch": "template_data.responder-branch_instruction_01-branch",
+    "other_branch": "template_data.responder-branch_instruction_01-other_branch"
+  },
+  "responder/brief_heading_01": {},
+  "responder/brief_heading_02": {},
+  "responder/brief_heading_03": {},
+  "responder/brief_heading_04": {},
+  "responder/commands_section_01": {},
+  "responder/commands_section_02": {
+    "header": "template_data.responder-commands_section_02-header"
+  },
+  "responder/commands_section_03": {
+    "header": "template_data.responder-commands_section_03-header"
+  },
+  "responder/commands_section_04": {
+    "index": "template_data.responder-commands_section_04-index",
+    "clip": "template_data.responder-commands_section_04-clip"
+  },
+  "responder/commands_section_05": {
+    "header": "template_data.responder-commands_section_05-header",
+    "len": "template_data.responder-commands_section_05-len"
+  },
+  "responder/commands_section_06": {
+    "header": "template_data.responder-commands_section_06-header",
+    "len": "template_data.responder-commands_section_06-len"
+  },
+  "responder/commands_section_07": {
+    "omitted": "template_data.responder-commands_section_07-omitted"
+  },
+  "responder/continuation": {
+    "feedback": "template_data.responder-continuation-feedback"
+  },
+  "responder/fenced_01": {
+    "fence": "template_data.responder-fenced_01-fence",
+    "text": "reflection_brief.findings",
+    "fence_2": "template_data.responder-fenced_01-fence_2"
+  },
+  "responder/finding_01": {
+    "severity": "template_data.responder-finding_01-severity",
+    "detector_id": "template_data.responder-finding_01-detector_id",
+    "rule_id": "template_data.responder-finding_01-rule_id",
+    "status": "template_data.responder-finding_01-status",
+    "summary": "template_data.responder-finding_01-summary"
+  },
+  "responder/finding_02": {
+    "ref": "template_data.responder-finding_02-ref"
+  },
+  "responder/finding_03": {
+    "bindings": "template_data.responder-finding_03-bindings"
+  },
+  "responder/finding_04": {
+    "fingerprint": "template_data.responder-finding_04-fingerprint"
+  },
+  "responder/finding_05": {},
+  "responder/finding_06": {},
+  "responder/findings_section_01": {},
+  "responder/findings_section_02": {
+    "application": "template_data.responder-findings_section_02-application",
+    "namespace": "template_data.responder-findings_section_02-namespace",
+    "source_commit": "template_data.responder-findings_section_02-source_commit",
+    "deployed_commit": "template_data.responder-findings_section_02-deployed_commit"
+  },
+  "responder/findings_section_03": {
+    "iso": "template_data.responder-findings_section_03-iso",
+    "iso_2": "template_data.responder-findings_section_03-iso_2",
+    "iso_3": "template_data.responder-findings_section_03-iso_3",
+    "iso_4": "template_data.responder-findings_section_03-iso_4"
+  },
+  "responder/findings_section_04": {},
+  "responder/findings_section_05": {},
+  "responder/findings_section_06": {
+    "severity": "template_data.responder-findings_section_06-severity",
+    "detector_id": "template_data.responder-findings_section_06-detector_id",
+    "rule_id": "template_data.responder-findings_section_06-rule_id",
+    "summary": "template_data.responder-findings_section_06-summary",
+    "ref": "template_data.responder-findings_section_06-ref"
+  },
+  "responder/findings_section_07": {},
+  "responder/findings_section_08": {},
+  "responder/findings_section_09": {
+    "incident_id": "template_data.responder-findings_section_09-incident_id",
+    "match_reason": "template_data.responder-findings_section_09-match_reason",
+    "list": "template_data.responder-findings_section_09-list",
+    "list_2": "template_data.responder-findings_section_09-list_2",
+    "list_3": "template_data.responder-findings_section_09-list_3"
+  },
+  "responder/findings_section_10": {},
+  "responder/findings_section_11": {},
+  "responder/history_01": {
+    "detector_id": "template_data.responder-history_01-detector_id",
+    "len": "template_data.responder-history_01-len",
+    "iso": "template_data.responder-history_01-iso",
+    "iso_2": "template_data.responder-history_01-iso_2",
+    "statuses": "template_data.responder-history_01-statuses"
+  },
+  "responder/history_section_01": {},
+  "responder/history_section_02": {
+    "prior_json": "reflection.history"
+  },
+  "responder/incident_01": {
+    "extra_instructions": "template_data.responder-incident_01-extra_instructions"
+  },
+  "responder/incident_brief": {
+    "len": "template_data.responder-incident_brief-len",
+    "body": "template_data.responder-incident_brief-body"
+  },
+  "responder/incident_data": {
+    "request_json": "responder.incident_data"
+  },
+  "responder/incident_response_instructions": {
+    "incident_id": "template_data.responder-incident_response_instructions-incident_id",
+    "skills_root": "template_data.responder-incident_response_instructions-skills_root",
+    "repair_policy": "template_data.responder-incident_response_instructions-repair_policy",
+    "branch_instruction": "template_data.responder-incident_response_instructions-branch_instruction"
+  },
+  "responder/incident_shell": {
+    "incident_id": "template_data.responder-incident_shell-incident_id",
+    "skills_root": "template_data.responder-incident_shell-skills_root",
+    "branch_instruction": "template_data.responder-incident_shell-branch_instruction"
+  },
+  "responder/late_findings_guidance_01": {
+    "late_findings_command": "template_data.responder-late_findings_guidance_01-late_findings_command",
+    "incident_id": "template_data.responder-late_findings_guidance_01-incident_id"
+  },
+  "responder/late_findings_guidance_02": {
+    "command": "template_data.responder-late_findings_guidance_02-command"
+  },
+  "responder/learning_01": {
+    "work_json": "reflection.cause_work"
+  },
+  "responder/logical_memory_section_01": {},
+  "responder/logical_memory_section_02": {},
+  "responder/logical_memory_section_03": {},
+  "responder/logical_memory_section_04": {
+    "id": "template_data.responder-logical_memory_section_04-id",
+    "watches": "template_data.responder-logical_memory_section_04-watches",
+    "firing": "template_data.responder-logical_memory_section_04-firing",
+    "list": "template_data.responder-logical_memory_section_04-list",
+    "originating_incident": "template_data.responder-logical_memory_section_04-originating_incident",
+    "marker": "template_data.responder-logical_memory_section_04-marker"
+  },
+  "responder/logical_memory_section_05": {},
+  "responder/logical_memory_section_06": {},
+  "responder/logical_memory_section_07": {},
+  "responder/logical_memory_section_08": {},
+  "responder/logical_memory_section_09": {
+    "playbook_id": "template_data.responder-logical_memory_section_09-playbook_id"
+  },
+  "responder/namespace_onboarding": {
+    "onboarding_json": "template_data.responder-namespace_onboarding-onboarding_json"
+  },
+  "responder/ref_01": {
+    "api_version": "template_data.responder-ref_01-api_version"
+  },
+  "responder/ref_02": {
+    "kind": "template_data.responder-ref_02-kind",
+    "location": "template_data.responder-ref_02-location",
+    "version": "template_data.responder-ref_02-version"
+  },
+  "responder/reflection": {
+    "skills_root": "template_data.responder-reflection-skills_root",
+    "branch_instruction": "template_data.responder-reflection-branch_instruction",
+    "work_section": "template_data.responder-reflection-work_section",
+    "outcome_commit": "template_data.responder-reflection-outcome_commit",
+    "memory_view_json": "reflection.memory",
+    "current_outcome_view_json": "reflection.outcome",
+    "history_section": "template_data.responder-reflection-history_section"
+  },
+  "responder/reflection_check_correction": {
+    "diagnostics": "template_data.responder-reflection_check_correction-diagnostics"
+  },
+  "responder/reflection_fresh": {
+    "brief": "template_data.responder-reflection_fresh-brief",
+    "request": "template_data.responder-reflection_fresh-request"
+  },
+  "responder/reflection_resume": {
+    "request": "template_data.responder-reflection_resume-request"
+  },
+  "responder/reflection_retry": {
+    "render_validation_feedback": "template_data.responder-reflection_retry-render_validation_feedback",
+    "request": "template_data.responder-reflection_retry-request"
+  },
+  "responder/reflection_shell": {
+    "skills_root": "template_data.responder-reflection_shell-skills_root",
+    "branch_instruction": "template_data.responder-reflection_shell-branch_instruction",
+    "memory_view_json": "reflection.memory",
+    "outcome_commit": "template_data.responder-reflection_shell-outcome_commit",
+    "outcome_json": "reflection.outcome",
+    "history_section": "template_data.responder-reflection_shell-history_section"
+  },
+  "responder/reflection_shell_fresh": {
+    "request": "template_data.responder-reflection_shell_fresh-request"
+  },
+  "responder/result_correction": {
+    "result_type": "template_data.responder-result_correction-result_type",
+    "diagnostic": "template_data.responder-result_correction-diagnostic"
+  },
+  "responder/result_section_01": {},
+  "responder/result_section_02": {
+    "dispatch_error": "template_data.responder-result_section_02-dispatch_error"
+  },
+  "responder/result_section_03": {
+    "status": "template_data.responder-result_section_03-status"
+  },
+  "responder/result_section_04": {
+    "error": "template_data.responder-result_section_04-error"
+  },
+  "responder/result_section_05": {},
+  "responder/result_section_06": {
+    "program_id": "template_data.responder-result_section_06-program_id",
+    "join": "template_data.responder-result_section_06-join"
+  },
+  "responder/result_section_07": {
+    "len": "template_data.responder-result_section_07-len"
+  },
+  "responder/result_section_08": {},
+  "responder/result_section_09": {},
+  "responder/result_section_10": {
+    "application_id": "template_data.responder-result_section_10-application_id",
+    "programs": "template_data.responder-result_section_10-programs",
+    "state": "template_data.responder-result_section_10-state",
+    "verification": "template_data.responder-result_section_10-verification"
+  },
+  "responder/result_section_11": {
+    "clip": "template_data.responder-result_section_11-clip"
+  },
+  "responder/result_section_12": {
+    "len": "template_data.responder-result_section_12-len"
+  },
+  "responder/result_section_13": {},
+  "responder/result_section_14": {
+    "summary": "template_data.responder-result_section_14-summary",
+    "join": "template_data.responder-result_section_14-join"
+  },
+  "responder/result_section_15": {},
+  "responder/result_section_16": {
+    "value": "template_data.responder-result_section_16-value",
+    "kind": "template_data.responder-result_section_16-kind",
+    "target": "template_data.responder-result_section_16-target",
+    "summary": "template_data.responder-result_section_16-summary",
+    "clip": "template_data.responder-result_section_16-clip"
+  },
+  "responder/result_section_17": {},
+  "responder/result_section_18": {},
+  "responder/result_section_19": {
+    "value": "template_data.responder-result_section_19-value",
+    "name": "template_data.responder-result_section_19-name",
+    "clip": "template_data.responder-result_section_19-clip"
+  },
+  "responder/result_section_20": {},
+  "responder/result_section_21": {
+    "join": "template_data.responder-result_section_21-join"
+  },
+  "responder/result_section_22": {
+    "playbook_id": "template_data.responder-result_section_22-playbook_id",
+    "scripts": "template_data.responder-result_section_22-scripts"
+  },
+  "responder/run_01": {},
+  "responder/session_recovery": {
+    "reports": "template_data.responder-session_recovery-reports"
+  },
+  "responder/states_01": {
+    "label": "template_data.responder-states_01-label"
+  },
+  "responder/states_02": {
+    "fingerprints": "template_data.responder-states_02-fingerprints"
+  },
+  "responder/states_03": {
+    "error": "template_data.responder-states_03-error"
+  },
+  "responder/states_04": {
+    "label": "template_data.responder-states_04-label"
+  },
+  "responder/turn_01": {
+    "idempotency_key": "template_data.responder-turn_01-idempotency_key",
+    "prompt": "template_data.responder-turn_01-prompt"
+  },
+  "responder/verified_final": {}
+}

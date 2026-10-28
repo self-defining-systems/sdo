@@ -71,10 +71,6 @@ Outcome commit: dddddddddddddddddddddddddddddddddddddddd
 Operational memory snapshot:
 {
   "accepted_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-  "goal_markdown": "Keep the toy application available.\n",
-  "architecture_markdown": "# Toy architecture\nAPI depends on store.\n",
-  "goal_omitted_characters": 0,
-  "architecture_omitted_characters": 0,
   "detectors": [
     {
       "id": "detector-0",
@@ -87,21 +83,21 @@ Operational memory snapshot:
   "playbooks": [
     {
       "id": "repair-0",
-      "excerpt": "# Repair\nRestore the accepted target port.\n",
+      "description": "Repair",
       "script_names": [
         "diagnose.go"
       ]
     }
   ],
-  "omitted_detectors": 0,
-  "omitted_playbooks": 0,
-  "full_text": "Read relevant accepted files in the proposal checkout through the memory inventory."
+  "full_text": "Open only relevant accepted files in the proposal checkout.",
+  "full_index_path": "<context file>"
 }
 
+Full outcome and memory index: referenced files; open only what you need.
 Current outcome:
 {
-  "schema_version": 1,
   "incident_id": "toy-incident",
+  "classification": "success",
   "findings": [
     {
       "detector_id": "detector-0",
@@ -144,33 +140,11 @@ Current outcome:
       "parameter_bindings": {}
     }
   ],
-  "classification": "success",
-  "source_commit": "",
-  "deployed_commit": "",
-  "detector_history": [],
-  "surfaced_playbooks": [],
-  "inspected_playbooks": [],
-  "confirmed_playbooks": [],
-  "rejected_playbooks": [],
-  "applied_playbooks": [],
   "confirmed_root_causes": [],
-  "final_health_detector_state": [],
   "repair_actions": [],
-  "responder_backend": "",
-  "responder_model": "",
-  "program_tool_calls": [],
-  "program_runs": [],
   "plan_applications": [],
-  "program_failure_signals": [],
-  "response_loops_used": 0,
-  "response_loop_exhausted": false,
-  "drift_events": [],
-  "resolution_path": "",
-  "prior_stages": [],
-  "reflection_skip_reason": "",
-  "sdk_gaps": [],
   "undetected_causes": [],
-  "reflection_rejections": []
+  "full_current_outcome_path": "<context file>"
 }
 
 Outcome history (prior incidents, compact): none

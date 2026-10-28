@@ -30,6 +30,7 @@ from sdo.contracts import (
     StateChanges,
     datetime_timestamp,
 )
+from tests.context_helpers import expand_context
 from tests.proto_messages import evolve, from_dict
 from tests.structured_turns import ScriptedAgent, failure, reply
 
@@ -185,7 +186,7 @@ def test_reflection_prompt_requires_direct_edits_and_check_until_green(tmp_path:
     )
     (call,) = backend.calls
     assert call["mode"] == "fresh"
-    prompt = str(call["prompt"])
+    prompt = expand_context(str(call["prompt"]))
     assert "accepted source expresses intent." in prompt
     assert "memory is fallible advice" in prompt
     assert "artifact_proposal" not in prompt
@@ -193,7 +194,7 @@ def test_reflection_prompt_requires_direct_edits_and_check_until_green(tmp_path:
     assert "draft-test" not in prompt
     assert "sdo-memory/SKILL.md" in prompt
     assert "DetectionContext exposes" not in prompt  # the SDK reference lives in the skill, not the prompt
-    assert "Accepted architecture summary" in prompt
+    assert '"playbooks"' in prompt
     assert "Edit only authorized operational-memory files" in prompt
     assert "in the `reflection` field and leave `incident_result` null" in prompt
     assert "sdo.operational_memory" not in prompt
@@ -229,12 +230,12 @@ def test_reflection_saves_partial_learning_for_verified_parts(
         validation_attempt=2 if retry else 1,
         diagnostics=[MemoryDiagnostic(rule="program.replay", message="Correct the fixed case")] if retry else [],
     )
-    prompt = str(backend.calls[0]["prompt"])
+    prompt = expand_context(str(backend.calls[0]["prompt"]))
     assert "Preserve verified partial steps" in prompt
     assert "Use recorded actions as repair evidence" in prompt
     assert "Replay is informational" in prompt
     assert "README holds only judgement and ordering" in prompt
-    current = json.loads(prompt.split("Current outcome:\n", 1)[1].split("\n\nOutcome history", 1)[0])
+    current = json.JSONDecoder().raw_decode(prompt.split("Current outcome:\n", 1)[1].lstrip())[0]
     assert current["classification"] == classification
     assert current["repair_actions"][0]["details"] == outcome.repair_actions[0].details
 
@@ -315,7 +316,7 @@ def test_reflection_prompt_routes_to_one_shipped_guide_without_protocol_recipes(
         outcome_commit="outcome-sha",
         closure=_fresh_closure(tmp_path),
     )
-    prompt = str(backend.calls[0]["prompt"])
+    prompt = expand_context(str(backend.calls[0]["prompt"]))
     assert str(SKILLS_ROOT / "sdo-memory/SKILL.md") in prompt
     for tool in ("authoring_reference", "create_corpus", "check_memory"):
         assert tool not in prompt
@@ -352,9 +353,9 @@ def test_fresh_reflection_brief_keeps_observed_state_for_corpus(tmp_path: Path) 
         from_dict(StateChanges, {"baseline_at": observed, "observed_at": observed, "changes": []})
     )
     brief = incident_brief(closure, worktree=tmp_path)
-    assert "State changes at dispatch" in brief
-    assert "targetPort" in brief
-    assert "State changes at verification" in brief
+    assert "State changes at dispatch" in expand_context(brief)
+    assert "targetPort" in expand_context(brief)
+    assert "State changes at verification" in expand_context(brief)
 
 
 def test_fresh_reflection_brief_summarizes_program_diagnosis_and_application(tmp_path: Path) -> None:
@@ -378,30 +379,30 @@ def test_fresh_reflection_brief_summarizes_program_diagnosis_and_application(tmp
     ]
     closure.result.CopyFrom(from_dict(IncidentResult, payload))
     brief = incident_brief(closure, worktree=tmp_path)
-    assert "targetport: Match" in brief
-    assert "other: NoMatch" in brief
-    assert "application-1" in brief
-    assert "verification NoMatch" in brief
+    assert "targetport: Match" in expand_context(brief)
+    assert "other: NoMatch" in expand_context(brief)
+    assert "application-1" in expand_context(brief)
+    assert "verification NoMatch" in expand_context(brief)
 
 
-def test_missing_provider_session_restarts_reflection_fresh(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_missing_provider_session_fails_without_fresh_fallback(tmp_path: Path) -> None:
     class MissingSession(_CapturingBackend):
         def resume(self, *, session_id: str, worktree: Path, prompt: str, idempotency_key: str) -> ReflectionTurn:
+            self.calls.append({"mode": "resume"})
             raise ResponderSessionUnavailable("session not found")
 
     backend = MissingSession()
-    turn = SessionReflector(backend).resume(
-        session_id="missing",
-        incident_id="inc-1",
-        worktree=tmp_path,
-        outcome=_outcome(),
-        history=[],
-        outcome_commit="outcome-sha",
-        closure=_fresh_closure(tmp_path),
-    )
-    assert turn.learning_decision == "no_change"
-    assert backend.calls[0]["mode"] == "fresh"
-    assert "session not found" in capsys.readouterr().err
+    with pytest.raises(ResponderSessionUnavailable, match="session not found"):
+        SessionReflector(backend).resume(
+            session_id="missing",
+            incident_id="inc-1",
+            worktree=tmp_path,
+            outcome=_outcome(),
+            history=[],
+            outcome_commit="outcome-sha",
+            closure=_fresh_closure(tmp_path),
+        )
+    assert backend.calls == [{"mode": "resume"}]
 
 
 def test_generic_resume_failure_propagates_without_fresh_retry(tmp_path: Path) -> None:
@@ -512,7 +513,7 @@ def test_large_evidence_principle_is_stated_once(tmp_path: Path) -> None:
         outcome_commit="outcome-sha",
         closure=_fresh_closure(tmp_path),
     )
-    prompt = str(backend.calls[0]["prompt"])
+    prompt = expand_context(str(backend.calls[0]["prompt"]))
     assert prompt.count("never infer from truncated output") == 1
 
 
@@ -535,7 +536,7 @@ def test_reflection_exposes_verified_onboarding_separately_from_findings(tmp_pat
             outcome=_outcome(), history=[], outcome_commit="accepted", closure=closure, guidance="baseline"
         ),
     ):
-        assert "installer-script" in prompt
+        assert "installer-script" in expand_context(prompt)
         assert "Acknowledged at verified onboarding" in prompt
         assert "content unverified" in prompt
 
@@ -582,6 +583,6 @@ def test_reflection_preserves_mixed_learning_and_offers_undetected_repairs(tmp_p
         outcome_commit="accepted-outcome",
         closure=_fresh_closure(tmp_path),
     )
-    prompt = str(backend.calls[0]["prompt"])
-    current = json.loads(prompt.split("Current outcome:\n", 1)[1].split("\n\nOutcome history", 1)[0])
+    prompt = expand_context(str(backend.calls[0]["prompt"]))
+    current = json.JSONDecoder().raw_decode(prompt.split("Current outcome:\n", 1)[1].lstrip())[0]
     assert current["undetected_causes"][0]["repair_action_id"] == "recorded-patch"
