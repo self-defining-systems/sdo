@@ -236,7 +236,9 @@ def _coverage_brief(request: IncidentRequest) -> dict[str, Any]:
 
 def _rollout_pending(request: IncidentRequest) -> list[dict[str, Any]]:
     """Stalls the stage handed off and stalls left by earlier failed episodes."""
-    pending = [attempt.apply_receipt.rollout_pending for report in request.prior_stages for attempt in report.mitigations]
+    pending = [
+        attempt.apply_receipt.rollout_pending for report in request.prior_stages for attempt in report.mitigations
+    ]
     pending += [blocker for item in request.prior_response_progress for blocker in item.blockers]
     return [json_format.MessageToDict(item, preserving_proto_field_name=True) for item in pending]
 

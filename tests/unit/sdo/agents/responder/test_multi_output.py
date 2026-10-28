@@ -199,7 +199,11 @@ def test_stalled_mitigation_names_its_standard_release(tmp_path, monkeypatch):
     from sdo.agents.responder.multi_output import format_selection_response
 
     monkeypatch.setenv("SDO_SESSION_SCRATCH", str(tmp_path))
-    release = {"retire_old_revision": {"ref": {"api_version": "apps/v1", "kind": "ReplicaSet", "namespace": "app", "name": "web-old"}}}
+    release = {
+        "retire_old_revision": {
+            "ref": {"api_version": "apps/v1", "kind": "ReplicaSet", "namespace": "app", "name": "web-old"}
+        }
+    }
     pending = {
         "reason": "stalled",
         "blockers": [{"ref": {"kind": "Deployment", "namespace": "app", "name": "web"}, "release": [release]}],
