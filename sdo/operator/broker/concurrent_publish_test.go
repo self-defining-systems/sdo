@@ -274,3 +274,75 @@ func TestConcurrentMemoryReplayPreservesSourceProjectionAndFileChanges(t *testin
 		t.Fatal("source replay lost accepted peer")
 	}
 }
+
+// A rejected proposal is carried onto the newest accepted head: hunks that
+// merge cleanly are kept, and only colliding hunks are left as conflict
+// markers, so a correction resolves the collision instead of redoing the work.
+func TestConcurrentMemoryConflictRebasesRejectedProposal(t *testing.T) {
+	ctx := context.Background()
+	root, a, b := sharedReflectionFixture(t)
+	pa, pb := reflectionProposal(t, a, "lane-a"), reflectionProposal(t, b, "lane-b")
+	writeLearning(t, pa, "base", "Alpha intent")
+	writeLearning(t, pb, "beta", "Beta extra")
+	git(t, pb.Path, "add", ".")
+	git(t, pb.Path, "-c", "user.name=Agent", "-c", "user.email=agent@example.invalid", "commit", "-qm", "authored beta")
+	writeLearning(t, pb, "base", "Beta intent")
+	first, err := publishLearning(a, "lane-a", "base")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := publishLearning(b, "lane-b", "base"); err == nil {
+		t.Fatal("colliding proposal was accepted")
+	}
+	decision := []byte(`{"learning_decision":"updated","proposed_artifact_ids":["base","beta"]}`)
+	if err := os.WriteFile(filepath.Join(pb.Path, ".git", validate.DecisionFile), decision, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rebased, err := b.RebaseProposal(ctx, "lane-b", ReflectionPhase)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rebased.Path != pb.Path || rebased.BaseCommit != first.Commit || git(t, rebased.Path, "rev-parse", "HEAD") != first.Commit {
+		t.Fatalf("proposal not rebased onto accepted head %s: %+v", first.Commit, rebased)
+	}
+	if info, err := b.ProposalInfo("lane-b", ReflectionPhase); err != nil || info != rebased {
+		t.Fatalf("rebased proposal metadata = %+v, %v", info, err)
+	}
+	if kept, err := os.ReadFile(filepath.Join(rebased.Path, ".git", validate.DecisionFile)); err != nil || string(kept) != string(decision) {
+		t.Fatalf("intended decision not kept: %s %v", kept, err)
+	}
+	if paths, err := b.ChangedPaths(ctx, "lane-b", ReflectionPhase); err != nil || !slices.Equal(paths, []string{".sdo/playbooks/base/README.md", ".sdo/playbooks/beta/README.md"}) {
+		t.Fatalf("rebased changes = %v, %v", paths, err)
+	}
+	read := func(book string) string {
+		data, err := os.ReadFile(filepath.Join(rebased.Path, ".sdo/playbooks", book, "README.md"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(data)
+	}
+	if got := read("beta"); !strings.Contains(got, "Beta extra") || strings.Contains(got, "<<<<<<<") {
+		t.Fatalf("clean hunk not carried forward: %s", got)
+	}
+	if got := read("base"); !strings.Contains(got, "<<<<<<<") || !strings.Contains(got, "Alpha intent") || !strings.Contains(got, "Beta intent") {
+		t.Fatalf("colliding hunk not marked with both sides: %s", got)
+	}
+	both := &contracts.ReflectionDecision{LearningDecision: "updated", PlaybookIds: []string{"base", "beta"}}
+	_, err = b.PublishReflection(ctx, "lane-b", both)
+	if ds, _ := RejectionDiagnostics(err); err == nil || !slices.ContainsFunc(ds, func(d *contracts.MemoryDiagnostic) bool {
+		return strings.Contains(d.GetMessage(), "conflict marker")
+	}) {
+		t.Fatalf("unresolved conflict marker was not rejected: %v", err)
+	}
+	writeLearning(t, rebased, "base", "Alpha intent and Beta intent")
+	if again, err := b.RebaseProposal(ctx, "lane-b", ReflectionPhase); err != nil || again != rebased || !strings.Contains(read("base"), "Alpha intent and Beta intent") {
+		t.Fatalf("rebase onto the same head is not a no-op: %+v %v", again, err)
+	}
+	accepted, err := b.PublishReflection(ctx, "lane-b", both)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if git(t, root, "rev-parse", "HEAD^") != first.Commit || !strings.Contains(git(t, root, "show", accepted.Commit+":.sdo/playbooks/beta/README.md"), "Beta extra") {
+		t.Fatal("carried learning was not accepted on top of the peer")
+	}
+}

@@ -1,0 +1,1 @@
+This is validation attempt ${validation_attempt}. The controller's broker rejected your previous proposal. Fix every diagnostic below:

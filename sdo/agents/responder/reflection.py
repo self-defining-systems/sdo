@@ -354,15 +354,22 @@ class SessionReflector:
         )
         idempotency_key = f"reflection:{incident_id}:{outcome_commit}"
         if diagnostics:
-            # Keep the incident session; only rejected-edit feedback is new.
+            # Keep the incident session and the rejected edits; only the
+            # rejection is new. A fresh session also needs the request.
+            original_request = (
+                render_prompt("responder", "reflection_retry_request", part="reflection.instructions", request=request)
+                if session_mode == "fresh"
+                else RenderedPrompt(())
+            )
             prompt = render_prompt(
                 "responder",
                 "reflection_retry",
                 part="reflection.instructions",
                 render_validation_feedback=named_prompt(
-                    "reflection.validation_feedback", render_validation_feedback(validation_attempt, diagnostics)
+                    "reflection.validation_feedback",
+                    render_validation_feedback(validation_attempt, diagnostics, kept_edits=True),
                 ),
-                request=request,
+                original_request=original_request,
             )
             if session_mode == "resume":
                 return self.backend.resume(
