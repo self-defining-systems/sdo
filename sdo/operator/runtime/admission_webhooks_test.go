@@ -1,8 +1,11 @@
 package runtime
 
 import (
+	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"google.golang.org/protobuf/encoding/protojson"
 	admissionv1 "k8s.io/api/admissionregistration/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -27,7 +30,7 @@ func admissionCluster() *fake.Clientset {
 	port := int32(8443)
 	return fake.NewSimpleClientset(
 		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "app", Labels: map[string]string{"team": "shop"}}},
-		&admissionv1.MutatingWebhookConfiguration{ObjectMeta: metav1.ObjectMeta{Name: "pod-policy"}, Webhooks: []admissionv1.MutatingWebhook{{
+		&admissionv1.MutatingWebhookConfiguration{ObjectMeta: metav1.ObjectMeta{Name: "pod-policy", UID: "uid-1", ResourceVersion: "1"}, Webhooks: []admissionv1.MutatingWebhook{{
 			Name: "pod-policy.validation.k8s.io", FailurePolicy: &fail, Rules: podCreate,
 			NamespaceSelector: &metav1.LabelSelector{MatchExpressions: []metav1.LabelSelectorRequirement{{Key: "team", Operator: metav1.LabelSelectorOpIn, Values: []string{"shop"}}}},
 			ClientConfig:      admissionv1.WebhookClientConfig{CABundle: []byte("synthetic-ca"), Service: &admissionv1.ServiceReference{Namespace: "platform", Name: "pod-policy", Port: &port}},
@@ -116,5 +119,123 @@ func TestAdmissionWebhooksRejectSubjectsWithoutANamespace(t *testing.T) {
 		if _, err := view.AdmissionWebhooksFor(subject); err == nil {
 			t.Fatalf("subject %+v accepted", subject)
 		}
+	}
+}
+
+// webhookRepair is the shape a learned program takes: it binds only the
+// failing Namespace or workload and finds the webhook through the relation.
+type webhookRepair struct{}
+
+func (webhookRepair) Spec() program.ProgramSpec {
+	return program.ProgramSpec{ID: "webhook-repair", Params: []program.ParamSpec{
+		{Name: "namespace", Kind: "Namespace"}, {Name: "workload", Kind: "Deployment"},
+	}}
+}
+
+func (webhookRepair) Mitigate(_ context.Context, view program.ReadView, b program.Bindings) (program.Plan, error) {
+	subject := b.Objects["namespace"]
+	if subject.Name == "" {
+		subject = b.Objects["workload"]
+	}
+	webhooks, err := view.AdmissionWebhooksFor(subject)
+	if err != nil {
+		return program.Plan{}, err
+	}
+	var plan program.Plan
+	for _, w := range webhooks {
+		for _, secret := range w.ServingSecrets {
+			target := w.CATarget(secret)
+			if matches, err := view.WebhookCAMatchesSecret(target); err == nil && !matches {
+				plan.Actions = append(plan.Actions, program.SyncWebhookCA{Target: target, Reason: "trust the serving certificate"})
+			}
+		}
+	}
+	return plan, nil
+}
+
+// A finding shape that admission failures really produce (the controller's
+// admission-blocked rollout finding on a workload, and a detector's finding on
+// the Namespace) binds the program, and the relation reaches the webhook
+// configuration and Secret the repair needs.
+func TestAdmissionFindingsBindWebhookRepairAndRepair(t *testing.T) {
+	findings := map[string]sdk.Finding{
+		"workload finding":  deploymentRolloutFinding(sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "app", Name: "web"}, "admission_blocked", "x509: certificate signed by unknown authority"),
+		"namespace finding": {PrimaryResource: sdk.ObjectRef{APIVersion: "v1", Kind: "Namespace", Name: "app"}, Playbooks: []string{"webhook-repair"}},
+	}
+	for name, finding := range findings {
+		t.Run(name, func(t *testing.T) {
+			bindings, err := program.BindFinding((webhookRepair{}).Spec(), finding)
+			if err != nil {
+				t.Fatalf("finding does not bind the program: %v", err)
+			}
+			client := admissionCluster()
+			view := LiveReadView{DetectionContext: sdktest.Snapshot{NamespaceName: "app"}, Client: client}
+			plan, err := (webhookRepair{}).Mitigate(context.Background(), view, bindings)
+			if err != nil || len(plan.Actions) != 1 {
+				t.Fatalf("plan %+v err=%v", plan, err)
+			}
+			executor := PlanExecutor{Client: TypedPlanClient{Client: client}, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{true}}
+			if result, err := executor.Apply(context.Background(), IncidentRequest{Namespace: "app", RepairPolicy: "recorded-actions"}, plan, false); err != nil || !result.Applied {
+				t.Fatalf("apply: %v", err)
+			}
+			config, err := client.AdmissionregistrationV1().MutatingWebhookConfigurations().Get(context.Background(), "pod-policy", metav1.GetOptions{})
+			if err != nil || string(config.Webhooks[0].ClientConfig.CABundle) != "private-canary" {
+				t.Fatalf("webhook CA not repaired: %v", err)
+			}
+			if again, _ := (webhookRepair{}).Mitigate(context.Background(), view, bindings); len(again.Actions) != 0 {
+				t.Fatal("repaired webhook still planned")
+			}
+		})
+	}
+}
+
+// Repairing the service reference or failure policy of a webhook is an ordinary
+// PatchObject; it must not rewrite the private caBundle it never names, and the
+// durable receipt must not carry that bundle.
+func TestWebhookEntryPatchLeavesPrivateCABundle(t *testing.T) {
+	const canary = "synthetic-private-ca"
+	encoded := base64.StdEncoding.EncodeToString([]byte(canary))
+	ref := sdk.ObjectRef{APIVersion: "admissionregistration.k8s.io/v1", Kind: "MutatingWebhookConfiguration", Name: "pod-policy"}
+	client := generalDiscoveryClient(ref, "mutatingwebhookconfigurations", false)
+	executor := PlanExecutor{Client: client, Rollouts: generalNoRollouts{}, Verifier: generalHealthy{}}
+	incident := IncidentRequest{Namespace: "app", RepairPolicy: "recorded-actions"}
+	desired := map[string]any{"apiVersion": ref.APIVersion, "kind": ref.Kind, "metadata": map[string]any{"name": ref.Name}, "webhooks": []any{map[string]any{
+		"name": "pod-policy.validation.k8s.io", "failurePolicy": "Fail",
+		"clientConfig": map[string]any{"caBundle": encoded, "service": map[string]any{"namespace": "platform", "name": "pod-policy"}},
+	}}}
+	if _, err := executor.Apply(context.Background(), incident, program.Plan{Actions: []program.Action{program.ApplyObject{Ref: ref, Mode: "create", Object: desired}}}, false); err != nil {
+		t.Fatal(err)
+	}
+	patch := program.PatchObject{Ref: ref, Type: "json", Patch: json.RawMessage(`[{"op":"replace","path":"/webhooks/0/failurePolicy","value":"Ignore"},{"op":"replace","path":"/webhooks/0/clientConfig/service/name","value":"pod-policy-v2"}]`), Reason: "restore the webhook backend reference"}
+	result, err := executor.Apply(context.Background(), incident, program.Plan{Actions: []program.Action{patch}}, false)
+	if err != nil || !result.Applied {
+		t.Fatalf("patch: %v", err)
+	}
+	got, err := client.Get(context.Background(), ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	webhook := got.Object["webhooks"].([]any)[0].(map[string]any)
+	config := webhook["clientConfig"].(map[string]any)
+	if webhook["failurePolicy"] != "Ignore" || config["service"].(map[string]any)["name"] != "pod-policy-v2" || config["caBundle"] != encoded {
+		t.Fatalf("patch wrong or clobbered the CA: %+v", webhook)
+	}
+	wire, err := result.Proto()
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := protojson.Marshal(wire)
+	if strings.Contains(string(raw), canary) || strings.Contains(string(raw), encoded) {
+		t.Fatal("CA bytes reached the durable receipt")
+	}
+	// Undo restores the policy and reference and leaves the bundle as it was.
+	if err := executor.Rollback(context.Background(), result); err != nil {
+		t.Fatalf("rollback: %v", err)
+	}
+	got, _ = client.Get(context.Background(), ref)
+	webhook = got.Object["webhooks"].([]any)[0].(map[string]any)
+	config = webhook["clientConfig"].(map[string]any)
+	if webhook["failurePolicy"] != "Fail" || config["service"].(map[string]any)["name"] != "pod-policy" || config["caBundle"] != encoded {
+		t.Fatalf("rollback wrong or changed the CA: %+v", webhook)
 	}
 }

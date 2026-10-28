@@ -112,6 +112,7 @@ func (f *closureDriftFixture) step(t *testing.T, seconds int) {
 		t.Fatal(err)
 	}
 }
+
 // settle steps at seconds and again once the closure stability window has
 // held, when a verified success may commit.
 func (f *closureDriftFixture) settle(t *testing.T, seconds int) {

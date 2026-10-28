@@ -41,6 +41,7 @@ type WebhookSecretKey struct {
 // AdmissionWebhook is one webhook entry that admits Pod creation in the asked
 // namespace, with its backend: the Service, its ready endpoint count and the
 // Secrets its Pods mount. CABundle is a digest, never certificate bytes.
+// To repair a broken admission webhook, bind the failing Namespace or workload (not the webhook configuration or Secret), read it with ReadView.AdmissionWebhooksFor, and repair with SyncWebhookCA for the CA, PatchObject for failurePolicy or the service reference, or DeleteObject for an orphaned entry.
 type AdmissionWebhook struct {
 	Configuration  sdk.ObjectRef      `json:"configuration"`
 	Webhook        string             `json:"webhook"`
