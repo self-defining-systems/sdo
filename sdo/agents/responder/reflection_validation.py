@@ -211,8 +211,16 @@ async def _format_changed_memory_go(checkout: Path) -> None:
     """
     try:
         status = await asyncio.create_subprocess_exec(
-            "git", "status", "--porcelain", "-z", "--untracked-files=all", "--", ".sdo",
-            cwd=checkout, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+            "git",
+            "status",
+            "--porcelain",
+            "-z",
+            "--untracked-files=all",
+            "--",
+            ".sdo",
+            cwd=checkout,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
         )
         listing, _ = await status.communicate()
         if status.returncode != 0:
@@ -221,8 +229,13 @@ async def _format_changed_memory_go(checkout: Path) -> None:
         existing = [path for path in paths if (checkout / path).is_file()]
         if existing:
             gofmt = await asyncio.create_subprocess_exec(
-                "gofmt", "-w", "--", *existing,
-                cwd=checkout, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
+                "gofmt",
+                "-w",
+                "--",
+                *existing,
+                cwd=checkout,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
             )
             await gofmt.wait()
     except OSError:
